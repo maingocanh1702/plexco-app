@@ -290,3 +290,12 @@
 3. Naming: `--{category}-{variant}` → `--primary`, `--primary-hover`, `--bg-card`.
 4. Dark mode: override trong `@media (prefers-color-scheme: dark)` — chỉ override semantic tokens (`--bg-*`, `--text-*`, `--border`).
 5. Component-level tokens: đặt trong file CSS của component, reference foundation tokens.
+
+---
+
+## Changelog
+
+| Ngày | Version | Thay đổi |
+|------|---------|----------|
+| 19/06/2026 | — | Thêm Changelog table |
+| 18/06/2026 | v1.0 | Design tokens foundation |

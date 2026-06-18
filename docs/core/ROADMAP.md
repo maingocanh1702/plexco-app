@@ -1,7 +1,7 @@
 # 🗺️ ROADMAP — Plexco
 
 **Phiên bản:** v2.1
-**Ngày tạo:** 16/06/2026 · **Cập nhật:** 18/06/2026
+**Ngày tạo:** 16/06/2026 · **Cập nhật:** 19/06/2026
 **Căn cứ:** `BRD.md` v3.1 · `PRD.md` v2.1 · `TDD.md` v2.1 · `../appendices/saas-implementation-plan.md` · `../appendices/player-side-saas-reconciliation.md` · `../appendices/player-side-saas-AUDIT.md` · `../appendices/messenger-channel-design.md`
 
 > ROADMAP là nguồn sự thật cho **delivery order + dev progress**. Product scope thuộc BRD; behavior thuộc PRD; implementation contract thuộc TDD.

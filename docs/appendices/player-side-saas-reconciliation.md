@@ -265,3 +265,12 @@ Repo đã choke-point `tenantId` (saas §4.1) → helper player (`addMemberToSes
 ---
 
 *Nền multi-tenant SaaS giữ nguyên. Phụ lục bổ sung tầng **identity directory global** (Person/ChannelIdentity) để gộp đúng 1 người xuyên club + xuyên TG/Zalo, **player view** scoped-to-self, và 2 nhánh kênh: **Telegram shared-bot group-first + DM**, **Zalo Bot Platform bot-token per-club DM-only**. Tất cả là "lớp cộng thêm" trên repo tenant-scoped — không đụng đường tiền, không phá bất biến RLS (trừ đúng 1 đường read person-authorized §3b, có audit).*
+
+---
+
+## Changelog
+
+| Ngày | Version | Thay đổi |
+|------|---------|----------|
+| 19/06/2026 | — | Thêm Changelog table |
+| 18/06/2026 | v1.0 | Reconcile player-side với multi-tenant |

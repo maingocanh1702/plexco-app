@@ -189,3 +189,12 @@
 ---
 
 *Design tokens v0.1. Finalize trước P4 implementation. Khi dùng trong code: `color: var(--primary);` — không `color: #6366f1;`.*
+
+---
+
+## Changelog
+
+| Ngày | Version | Thay đổi |
+|------|---------|----------|
+| 19/06/2026 | — | Thêm Changelog table |
+| 18/06/2026 | v0.1 | Initial design tokens draft |

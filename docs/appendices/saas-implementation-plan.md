@@ -611,3 +611,12 @@ Cutover: chạy migrate trên copy → verify đối chiếu số dòng & vài s
 ---
 
 *Logic nghiệp vụ (matching, đường tiền, business-rules) giữ nguyên — SaaS hoá là bài toán **phạm vi dữ liệu + định tuyến + vòng đời tenant**, không phải viết lại lõi.*
+
+---
+
+## Changelog
+
+| Ngày | Version | Thay đổi |
+|------|---------|----------|
+| 19/06/2026 | — | Thêm Changelog table |
+| 18/06/2026 | v1.0 | Implementation plan SaaS multi-tenant |

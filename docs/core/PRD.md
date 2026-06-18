@@ -3,14 +3,18 @@
 
 **Sản phẩm:** **Plexco** — platform quản lý & khám phá hoạt động thể thao đa môn, 2 phía (host + player); bot-in-chat + web app sync 2 chiều; không app native
 **Phiên bản:** 2.1
-**Ngày cập nhật:** 18/06/2026
+**Ngày cập nhật:** 19/06/2026
 **Tài liệu tham chiếu:** `BRD.md` v3.1 · `TDD.md` v2.1 · `../appendices/saas-implementation-plan.md` · `../appendices/player-side-saas-reconciliation.md` · `../appendices/player-side-saas-AUDIT.md` · `../appendices/messenger-channel-design.md` (kênh Messenger, P4.8)
 
-> **Changelog**
-> - **v2.1 (18/06/2026):** Messenger ra khỏi MVP; canonical store = PostgreSQL/domain model; webhook durable-ingest; payment allocation hỗ trợ partial/overpay/multi-person.
-> - **v2.0 (18/06/2026):** **reposition** → platform đa môn 2 phía. Thêm persona P4 discovery, web app là surface trung tâm, đa môn trong FLOW 1/2, FLOW 12 discovery/tìm kèo, FLOW 13 join cross-club, FLOW 14 sync 2 chiều. Bỏ tuyên bố "không phải marketplace".
-> - **v1.1 (18/06/2026):** đổi tên → **Plexco**, thêm tham chiếu Messenger.
-> - **v1.0 (16/06/2026):** bản đầu — flows theo kênh, identity directory, đối soát CK đa-tenant, billing.
+## Changelog
+
+| Ngày | Version | Thay đổi |
+|------|---------|----------|
+| 19/06/2026 | v2.1 | Chuẩn hoá Changelog table format |
+| 18/06/2026 | v2.1 | Messenger ra khỏi MVP; canonical store = PostgreSQL/domain model; webhook durable-ingest; payment allocation hỗ trợ partial/overpay/multi-person |
+| 18/06/2026 | v2.0 | **Reposition** → platform đa môn 2 phía. Thêm persona P4 discovery, web app là surface trung tâm, đa môn trong FLOW 1/2, FLOW 12 discovery/tìm kèo, FLOW 13 join cross-club, FLOW 14 sync 2 chiều |
+| 18/06/2026 | v1.1 | Đổi tên → **Plexco**, thêm tham chiếu Messenger |
+| 16/06/2026 | v1.0 | Bản đầu — flows theo kênh, identity directory, đối soát CK đa-tenant, billing |
 
 ---
 

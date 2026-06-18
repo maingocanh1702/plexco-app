@@ -2,7 +2,7 @@
 ## Platform thể thao đa môn (host + player) — multi-tenant, marketplace discovery, sync đa surface, Telegram + Zalo + Web app *(Messenger post-MVP)*
 
 **Phiên bản:** 2.1 — chuẩn hoá canonical store, ledger tiền (`charges`/`bank_transactions`/`payment_allocations`), worker cross-tenant với RLS, durable webhook ingest và schema thời gian/discovery.
-**Ngày tạo:** 16/06/2026 · **Cập nhật:** 18/06/2026
+**Ngày tạo:** 16/06/2026 · **Cập nhật:** 19/06/2026
 **Tài liệu tham chiếu:**
 - `BRD.md` v3.1 — yêu cầu nghiệp vụ
 - `PRD.md` — user flows + edge cases
@@ -755,3 +755,13 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 ---
 
 *TDD v2.1 — implementation contract cho platform đa môn + marketplace + sync engine. Bốn bất biến: cô lập tenant · không lộ tiền/PII ra public · ledger không mất/đếm quá tiền · PostgreSQL/domain model là nguồn sự thật.*
+
+---
+
+## Changelog
+
+| Ngày | Version | Thay đổi |
+|------|---------|----------|
+| 16/06/2026 | v2.0 | Initial TDD — canonical store, multi-tenant, RLS, sync engine |
+| 18/06/2026 | v2.1 | Chuẩn hoá ledger, durable webhook, discovery schema |
+| 19/06/2026 | v2.1 | Thêm Changelog table |

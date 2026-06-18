@@ -458,3 +458,12 @@ Những điều cần **lưu ý ngay từ P4** (build web) để native không p
 ---
 
 *Tài liệu này là companion cho `TDD.md` v2.1 §3.8 (sync engine) và `ROADMAP.md` v2.1. Khi conflict, giữ thứ tự ưu tiên TDD → BRD → doc này.*
+
+---
+
+## Changelog
+
+| Ngày | Version | Thay đổi |
+|------|---------|----------|
+| 19/06/2026 | — | Thêm Changelog table |
+| 18/06/2026 | v1.0 | Phân tích thêm native app post-MVP |

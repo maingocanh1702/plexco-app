@@ -9,7 +9,7 @@
 |---|---|
 | **Sản phẩm** | **Plexco** — platform quản lý hoạt động thể thao cho **host** và khám phá/tham gia kèo cho **player**, đa môn (cầu lông, pickleball, tennis, bóng đá…), hoạt động ngay trong Telegram/Zalo + web app đồng bộ; Messenger là mở rộng post-MVP |
 | **Phiên bản** | v3.1 — chuẩn hoá MVP scope, canonical store, durable webhook và payment ledger/allocation sau review |
-| **Ngày** | 18/06/2026 |
+| **Ngày** | 19/06/2026 |
 | **Người soạn** | Ngoc-Anh |
 | **Người duyệt (approvers)** | Ngoc-Anh (solo founder, self-approved) |
 | **Trạng thái** | Draft để review |
@@ -360,3 +360,14 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 ---
 
 *BRD tập trung yêu cầu nghiệp vụ. Thiết kế kỹ thuật chi tiết — xem `../appendices/saas-implementation-plan.md`, `TDD.md`, `../appendices/player-side-saas-reconciliation.md`, `../appendices/player-side-saas-AUDIT.md`, `../appendices/messenger-channel-design.md`.*
+
+---
+
+## Changelog
+
+| Ngày | Version | Thay đổi |
+|------|---------|----------|
+| 16/06/2026 | v3.0 | Initial BRD — MVP scope, canonical store, identity model |
+| 18/06/2026 | v3.1 | Chuẩn hoá durable webhook, payment ledger/allocation, discovery |
+| 19/06/2026 | v3.1 | Thêm Changelog table, cập nhật cross-refs |
+

@@ -187,8 +187,11 @@ Không log raw bank content, account number, display name, secret hoặc provide
 | PAY-OQ-2 | Suspended tenant pause reconcile hay vẫn reconcile | Cần lifecycle decision trước P5; ingest luôn bật |
 | PAY-OQ-3 | Refund/void policy khi hủy session | Cần business rule riêng |
 
+## Changelog
+
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-06-19 | v1.2 | Thêm Changelog heading, verified format compliance |
 | 2026-06-19 | v1.2 | Fold AUDIT G1: STK change 24h confirmation delay (UC-13/14, edge case #17, acceptance criteria) |
 | 2026-06-18 | v1.1 | Durable ingest; charge/transaction/allocation ledger; partial/overpay/multi-person/cash/reversal; canonical phase |
 | 2026-06-18 | v1.0 | Initial legacy payment spec |

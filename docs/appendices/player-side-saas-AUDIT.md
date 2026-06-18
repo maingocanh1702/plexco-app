@@ -264,3 +264,12 @@ Rate Limit: PATCH /bank-accounts/:id — 5/min per account (đổi STK nhạy)
 
 *Kết: kiến trúc isolation & đường tiền **đúng và an toàn**. Rủi ro tập trung ở tầng **mapping danh tính** (mọi thao tác gắn/merge dính tiền cần khoá mạnh + audit; reachability Zalo per-bot), **public discovery layer** (rò field tiền/PII, phải field-whitelist + test bất biến public), **sync engine** (một canonical store, không multi-master), và **mutation controls** (STK change delay G1, rate limits G3). Đóng xong C1–C8b + B1–B6 + G1–G3 thì mới kết luận được "chính xác, an toàn, bảo mật". G4–G6 sửa ở P6 hardening.*
 
+
+---
+
+## Changelog
+
+| Ngày | Version | Thay đổi |
+|------|---------|----------|
+| 19/06/2026 | — | Thêm Changelog table |
+| 18/06/2026 | v1.0 | AUDIT bảo mật player-side + discovery |

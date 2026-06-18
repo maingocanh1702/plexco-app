@@ -177,3 +177,12 @@ F19 → F20
 2. **Test bất biến (F5)** — CI gate bắt buộc trước mọi feature sau F3.
 3. **Cross-cutting** (security, i18n, observability) — build dần, không đợi cuối.
 4. **Check graph trước mỗi sprint** — pick features đúng thứ tự.
+
+---
+
+## Changelog
+
+| Ngày | Version | Thay đổi |
+|------|---------|----------|
+| 19/06/2026 | — | Thêm Changelog table |
+| 18/06/2026 | v1.0 | Feature dependency graph Mermaid |

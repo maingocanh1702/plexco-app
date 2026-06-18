@@ -147,3 +147,12 @@ AUDIT → reconciliation → saas-implementation-plan → BRD → PRD → TDD �
 ```
 
 Business rules file này **tổng hợp** từ các doc trên. Khi phát hiện mâu thuẫn → update doc nguồn TRƯỚC, rồi sync lại file này.
+
+---
+
+## Changelog
+
+| Ngày | Version | Thay đổi |
+|------|---------|----------|
+| 19/06/2026 | — | Thêm Changelog table |
+| 18/06/2026 | v1.0 | Tổng hợp business rules từ BRD/PRD/TDD |

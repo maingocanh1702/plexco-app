@@ -137,3 +137,12 @@ Tài liệu hoàn tất:
 - **Public projection không filter → lộ tiền/PII.** Field whitelist là bắt buộc.
 - **Quên test bất biến → regression.** Test cô lập + public PHẢI xanh trong CI.
 - **Merge identity thiếu verify → chiếm nợ người khác.** Claim-có-tiền cần OTP.
+
+---
+
+## Changelog
+
+| Ngày | Version | Thay đổi |
+|------|---------|----------|
+| 19/06/2026 | — | Thêm Changelog table |
+| 18/06/2026 | v1.0 | Handoff checklist per feature |

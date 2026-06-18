@@ -186,7 +186,10 @@ Không gửi raw platform UID, phone, email, display name, bank account hoặc O
 | ID-OQ-2 | Recovery/split SLA và quyền support | Phải chốt trước production merge |
 | ID-OQ-3 | Guest vs full membership permissions | Chốt cùng discovery feature P4.3 |
 
+## Changelog
+
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-06-19 | v1.1 | Thêm Changelog heading, verified format compliance |
 | 2026-06-18 | v1.1 | Protected directory; tenant reachability; secure OTP; ledger-safe merge; recovery/audit; canonical phase |
 | 2026-06-18 | v1.0 | Initial identity spec |

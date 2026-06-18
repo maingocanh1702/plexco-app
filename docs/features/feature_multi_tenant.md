@@ -155,7 +155,10 @@ Không gửi schema/migration telemetry chứa row data hoặc PII.
 | BRD OD-8 | Danh sách môn + taxonomy trình độ | Chờ chốt |
 | MT-OQ-1 | Narrow worker functions cụ thể | Chốt trong backend tech spec trước P0 implementation |
 
+## Changelog
+
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-06-19 | v1.1 | Thêm Changelog heading, verified format compliance |
 | 2026-06-18 | v1.1 | Canonical phase; chuẩn hóa RLS setting/worker contract; protected identity; permission matrix; public fields |
 | 2026-06-18 | v1.0 | Initial foundation spec |

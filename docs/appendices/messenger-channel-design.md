@@ -254,3 +254,12 @@ sequenceDiagram
 - [Group and Chat Bots — Meta Workplace docs](https://developers.facebook.com/docs/workplace/bots/) — group chat bot chỉ tồn tại trên Workplace, không phải Messenger thường.
 
 *Tài liệu này là companion cho `tdd.md`/`prd.md`; khi conflict, giữ thứ tự ưu tiên AUDIT → reconciliation → saas-implementation-plan → BRD, và cập nhật `platform` enum thành 3 giá trị.*
+
+---
+
+## Changelog
+
+| Ngày | Version | Thay đổi |
+|------|---------|----------|
+| 19/06/2026 | — | Thêm Changelog table |
+| 18/06/2026 | v1.0 | Thiết kế kênh Messenger post-MVP |
