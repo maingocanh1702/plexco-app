@@ -49,3 +49,6 @@ docker-compose.override.yml
 # Misc
 .~lock.*
 *.tmp
+
+# Autopilot runtime state (registry/ledger/state) — never commit
+.autopilot/

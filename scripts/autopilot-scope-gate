@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# autopilot-scope-gate — parallel autopilot coordination (SCOPE_COLLISION gate).
+# REPO-AGNOSTIC template. Copy to <repo>/scripts/autopilot-scope-gate, chmod +x, commit.
+#
+#   scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<feature>.json
+#   scripts/autopilot-scope-gate ready    --manifest <manifest>
+#   scripts/autopilot-scope-gate cleanup  --manifest <manifest>     # or: cleanup --feature <slug>
+#
+# Lets MULTIPLE autopilot/Claude-Code sessions run in parallel (one git worktree each) without
+# clobbering each other: PARALLEL when file-scope + domain invariants are disjoint, SEQUENTIAL when
+# they overlap. Owns the SHARED runtime registry at MAIN-repo-root/.autopilot/INFLIGHT.md (resolved
+# via git-common-dir so every worktree hits the SAME file). Atomic across concurrent sessions via a
+# portable mkdir-lock (macOS has no flock). JSON parsed with python3 → node → jq (whichever exists).
+#
+# register HALTs if:
+#   - INVARIANT_UNKNOWN : a manifest invariant is not a canonical token in the repo catalog
+#                         (docs/autopilot-invariant-catalog.md). Prevents synonym drift bypassing (b).
+#   - DEP_MISSING       : a depends_on feature is still ACTIVE (in-flight|ready) = not merged on base.
+#   - SCOPE_COLLISION   : my scope files OR invariants intersect another ACTIVE feature.
+# On PASS it replaces any existing block for my feature (e.g. queued) with a fresh in-flight block.
+# ready  : flip my block status → ready (keeps the reservation).
+# cleanup: remove my block (after merge/close).
+#
+# NOTE (dependency semantics): v1 treats "prerequisite merged" == "not active in registry". For a
+# stronger check (grep prerequisite SYMBOLS present on base_ref — the stale-on-rebuild lesson,
+# DEP_MISSING #21), add a `dep_checks` array of {file,symbol} to the manifest and extend the check.
+set -euo pipefail
+
+cmd="${1:-}"; shift || true
+manifest=""; feature_arg=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --manifest) manifest="${2:-}"; shift 2 ;;
+    --feature)  feature_arg="${2:-}"; shift 2 ;;
+    *) echo "unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+# cleanup may target a feature by slug (manifest is often deleted after merge); every other path
+# needs a manifest. register/ready by --feature is not allowed (they need scope/invariants).
+if [ "$cmd" = "cleanup" ] && [ -n "$feature_arg" ]; then
+  :
+else
+  [ -n "$cmd" ] && [ -n "$manifest" ] || { echo "usage: autopilot-scope-gate <register|ready|cleanup> --manifest <path>   (or: cleanup --feature <slug>)" >&2; exit 2; }
+  [ -f "$manifest" ] || { echo "HALT: manifest not found: $manifest" >&2; exit 1; }
+fi
+
+# --- shared registry at MAIN repo root (works from any worktree) ---
+ROOT="$(cd "$(git rev-parse --git-common-dir)" && cd .. && pwd)"
+DIR="$ROOT/.autopilot"; INFLIGHT="$DIR/INFLIGHT.md"; LOCK="$DIR/INFLIGHT.lock"
+mkdir -p "$DIR"
+[ -f "$INFLIGHT" ] || printf '# Autopilot in-flight registry\n\n---\n' > "$INFLIGHT"
+
+# --- portable JSON reader: scalar -> one line; array -> one item per line ---
+json_get(){ # $1 = abs json path, $2 = key
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$1" "$2" <<'PY'
+import json,sys
+try: d=json.load(open(sys.argv[1]))
+except Exception as e: sys.stderr.write("HALT: invalid JSON %s: %s\n"%(sys.argv[1],e)); sys.exit(3)
+v=d.get(sys.argv[2])
+print("\n".join(map(str,v)) if isinstance(v,list) else ("" if v is None else str(v)))
+PY
+  elif command -v node >/dev/null 2>&1; then
+    node -e 'const m=require(process.argv[1]);const v=m[process.argv[2]];if(Array.isArray(v))console.log(v.join("\n"));else if(v!=null)console.log(v);' "$1" "$2"
+  elif command -v jq >/dev/null 2>&1; then
+    jq -r --arg k "$2" 'if (.[$k]|type)=="array" then .[$k][] else (.[$k]//empty) end' "$1"
+  else
+    echo "HALT: need python3, node, or jq to parse manifest JSON" >&2; exit 1
+  fi
+}
+
+# --- manifest fields — skipped for cleanup-by-slug ---
+if [ -n "$manifest" ]; then
+  MANABS="$(cd "$(dirname "$manifest")" && pwd)/$(basename "$manifest")"
+  FEATURE="$(json_get "$MANABS" feature)"; BRANCH="$(json_get "$MANABS" branch)"; RISK="$(json_get "$MANABS" risk)"
+  DEPS="$(json_get "$MANABS" depends_on)"; INVARIANTS="$(json_get "$MANABS" invariants)"; SCOPE="$(json_get "$MANABS" scope)"
+  [ -n "$FEATURE" ] || { echo "HALT: manifest missing 'feature'" >&2; exit 1; }
+  if command -v python3 >/dev/null 2>&1; then
+    MANREL="$(python3 - "$ROOT" "$MANABS" <<'PY'
+import os,sys;print(os.path.relpath(sys.argv[2],sys.argv[1]))
+PY
+)"
+  else MANREL="${MANABS#"$ROOT"/}"; fi
+  # invariant catalog lives at docs/autopilot-invariant-catalog.md (sibling of the manifests dir)
+  CATALOG="$(cd "$(dirname "$manifest")/.." 2>/dev/null && pwd)/autopilot-invariant-catalog.md"
+else
+  FEATURE="$feature_arg"
+fi
+
+# canonical invariant tokens between the catalog markers (token = text before the FIRST whitespace-
+# wrapped dash " — " or " - "; tokens may contain hyphens like `transport-a`, so the dash must have
+# surrounding whitespace to count as the separator).
+catalog_tokens(){ [ -f "$CATALOG" ] || return 1; awk '/<!-- catalog:start -->/{c=1;next} /<!-- catalog:end -->/{c=0} c' "$CATALOG" | sed -E 's/[[:space:]]+[—-][[:space:]].*$//; s/^[[:space:]]+//; s/[[:space:]]+$//' | grep -E '^[a-z][a-z0-9_-]*$' | sort -u; }
+
+# --- portable atomic lock (mkdir) ---
+acquire(){ local t=0; until mkdir "$LOCK" 2>/dev/null; do sleep 0.2; t=$((t+1)); [ $t -gt 150 ] && { echo "HALT: lock timeout ($LOCK) — another gate stuck? rmdir it if stale" >&2; exit 1; }; done; trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT; }
+
+# lines (scope|invariants values) for every ACTIVE (in-flight|ready) feature != me
+active_others(){ # $1 = scope|invariants
+  awk -v me="$FEATURE" -v want="$1" '
+    /^```/{f=!f;next} f{next}
+    /^## feature:/{cur=$3;st="";sec=""}
+    /^status:/{st=$2}
+    /^invariants:/{sec="invariants";next}
+    /^scope:/{sec="scope";next}
+    /^## /{sec=""}
+    sec==want && /^- / && (st=="in-flight"||st=="ready") && cur!=me {print $2}
+  ' "$INFLIGHT" | sort -u; }
+
+active_feature_names(){ awk '/^```/{f=!f;next} f{next} /^## feature:/{cur=$3} /^status:/{if(($2=="in-flight"||$2=="ready"))print cur}' "$INFLIGHT" | sort -u; }
+
+drop_my_block(){ awk -v me="$FEATURE" '
+    /^```/{f=!f} !f && /^## feature:/{drop=($3==me)} !drop{print}
+  ' "$INFLIGHT" > "$INFLIGHT.tmp.$$" && mv "$INFLIGHT.tmp.$$" "$INFLIGHT"; }
+
+append_block(){ # $1 = status
+  { printf '\n## feature: %s\nbranch: %s\nstatus: %s\nrisk: %s\nmanifest: %s\n' "$FEATURE" "$BRANCH" "$1" "$RISK" "$MANREL"
+    if [ -n "$DEPS" ]; then printf 'depends_on:\n'; printf '%s\n' "$DEPS" | sed 's/^/- /'; fi
+    printf 'invariants:\n'; printf '%s\n' "$INVARIANTS" | sed 's/^/- /'
+    printf 'scope:\n'; printf '%s\n' "$SCOPE" | sed 's/^/- /'
+  } >> "$INFLIGHT"; }
+
+case "$cmd" in
+  register)
+    acquire
+    # (0) invariant catalog check (#22): every manifest invariant MUST be a canonical token.
+    cat_tokens="$(catalog_tokens)" || { echo "HALT INVARIANT_UNKNOWN: catalog not found at $CATALOG (cannot validate invariants)." >&2; exit 1; }
+    if [ -n "$INVARIANTS" ]; then
+      unknown="$(comm -23 <(printf '%s\n' "$INVARIANTS" | sort -u) <(printf '%s\n' "$cat_tokens"))"
+      if [ -n "$unknown" ]; then
+        echo "HALT INVARIANT_UNKNOWN — '$FEATURE' uses token(s) not in catalog (docs/autopilot-invariant-catalog.md):" >&2
+        echo "$unknown" | sed 's/^/    /' >&2
+        echo "  → add the token to the catalog (if a real new domain) or use the canonical token (avoid synonyms)." >&2
+        exit 1
+      fi
+    fi
+    # (a) dependency check: a depends_on still active = not merged yet
+    if [ -n "$DEPS" ]; then
+      act="$(active_feature_names)"
+      while IFS= read -r d; do [ -z "$d" ] && continue
+        if printf '%s\n' "$act" | grep -qxF "$d"; then
+          echo "HALT DEP_MISSING: prerequisite '$d' still active (in-flight|ready) — not merged on base yet." >&2; exit 1
+        fi
+      done <<< "$DEPS"
+    fi
+    # (b) collision check: scope file OR invariant intersects another active feature
+    cf="$(comm -12 <(printf '%s\n' "$SCOPE" | sort -u) <(active_others scope))"
+    ci="$(comm -12 <(printf '%s\n' "$INVARIANTS" | sort -u) <(active_others invariants))"
+    if [ -n "$cf$ci" ]; then
+      echo "HALT SCOPE_COLLISION — '$FEATURE' intersects another active feature:" >&2
+      [ -n "$cf" ] && { echo "  files:" >&2;      echo "$cf" | sed 's/^/    /' >&2; }
+      [ -n "$ci" ] && { echo "  invariants:" >&2; echo "$ci" | sed 's/^/    /' >&2; }
+      echo "  → run sequentially: wait for the blocking feature to merge + cleanup, then rebase." >&2
+      exit 1
+    fi
+    drop_my_block; append_block in-flight
+    echo "registered: $FEATURE (in-flight)"
+    ;;
+  ready)   acquire; drop_my_block; append_block ready;   echo "ready: $FEATURE" ;;
+  cleanup) acquire; drop_my_block;                        echo "cleaned: $FEATURE" ;;
+  *) echo "usage: autopilot-scope-gate <register|ready|cleanup> --manifest <path>   (or: cleanup --feature <slug>)" >&2; exit 2 ;;
+esac

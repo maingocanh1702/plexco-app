@@ -1,0 +1,16 @@
+{
+  "feature": "my-feature-slug",
+  "branch": "feat/my-feature-slug",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "some-change-class",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "1x_clean",
+  "depends_on": [],
+  "invariants": ["<pick tokens from docs/autopilot-invariant-catalog.md>"],
+  "scope": [
+    "src/path/to/file-i-will-edit.ext",
+    "src/path/to/another.ext"
+  ]
+}
