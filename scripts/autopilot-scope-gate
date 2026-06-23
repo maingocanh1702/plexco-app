@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# KIT_VERSION: 2
 # autopilot-scope-gate — parallel autopilot coordination (SCOPE_COLLISION gate).
 # REPO-AGNOSTIC template. Copy to <repo>/scripts/autopilot-scope-gate, chmod +x, commit.
 #
@@ -21,9 +22,11 @@
 # ready  : flip my block status → ready (keeps the reservation).
 # cleanup: remove my block (after merge/close).
 #
-# NOTE (dependency semantics): v1 treats "prerequisite merged" == "not active in registry". For a
-# stronger check (grep prerequisite SYMBOLS present on base_ref — the stale-on-rebuild lesson,
-# DEP_MISSING #21), add a `dep_checks` array of {file,symbol} to the manifest and extend the check.
+# NOTE (dependency semantics): the registry check treats "prerequisite merged" == "not active in
+# registry". On TOP of that, an optional `dep_checks` array of {file,symbol} in the manifest greps each
+# prerequisite SYMBOL on base_ref (the stale-on-rebuild / interface-drift lesson, DEP_MISSING #21): a
+# re-run/rebuilt upstream may keep behavior but RENAME the interface, so a dependent's symbol refs must
+# be verified against the REAL merged code on base_ref, not assumed from a prior/discarded upstream.
 set -euo pipefail
 
 cmd="${1:-}"; shift || true
@@ -69,11 +72,33 @@ PY
   fi
 }
 
+# --- portable reader for dep_checks: array of {file,symbol} -> "file<TAB>symbol" per line ---
+json_get_dep_checks(){ # $1 = abs json path
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$1" <<'PY'
+import json,sys
+try: d=json.load(open(sys.argv[1]))
+except Exception as e: sys.stderr.write("HALT: invalid JSON %s: %s\n"%(sys.argv[1],e)); sys.exit(3)
+for c in (d.get("dep_checks") or []):
+    f=str(c.get("file","")).strip(); s=str(c.get("symbol","")).strip()
+    if f and s: print("%s\t%s"%(f,s))
+PY
+  elif command -v node >/dev/null 2>&1; then
+    node -e 'const m=require(process.argv[1]);for(const c of (m.dep_checks||[])){if(c&&c.file&&c.symbol)console.log(c.file+"\t"+c.symbol);}' "$1"
+  elif command -v jq >/dev/null 2>&1; then
+    jq -r '(.dep_checks // [])[] | select(.file and .symbol) | "\(.file)\t\(.symbol)"' "$1"
+  else
+    echo "HALT: need python3, node, or jq to parse manifest JSON" >&2; exit 1
+  fi
+}
+
 # --- manifest fields — skipped for cleanup-by-slug ---
 if [ -n "$manifest" ]; then
   MANABS="$(cd "$(dirname "$manifest")" && pwd)/$(basename "$manifest")"
   FEATURE="$(json_get "$MANABS" feature)"; BRANCH="$(json_get "$MANABS" branch)"; RISK="$(json_get "$MANABS" risk)"
   DEPS="$(json_get "$MANABS" depends_on)"; INVARIANTS="$(json_get "$MANABS" invariants)"; SCOPE="$(json_get "$MANABS" scope)"
+  BASE_REF="$(json_get "$MANABS" base_ref)"; [ -n "$BASE_REF" ] || BASE_REF="main"
+  DEP_CHECKS="$(json_get_dep_checks "$MANABS")"
   [ -n "$FEATURE" ] || { echo "HALT: manifest missing 'feature'" >&2; exit 1; }
   if command -v python3 >/dev/null 2>&1; then
     MANREL="$(python3 - "$ROOT" "$MANABS" <<'PY'
@@ -142,6 +167,18 @@ case "$cmd" in
           echo "HALT DEP_MISSING: prerequisite '$d' still active (in-flight|ready) — not merged on base yet." >&2; exit 1
         fi
       done <<< "$DEPS"
+    fi
+    # (a2) interface-drift check (#21): each dep_checks {file,symbol} MUST be present in the REAL
+    # merged code on base_ref — guards against a rebuilt/renamed upstream silently going stale.
+    if [ -n "$DEP_CHECKS" ]; then
+      git rev-parse --verify -q "$BASE_REF^{commit}" >/dev/null \
+        || { echo "HALT DEP_MISSING: base_ref '$BASE_REF' not found locally (git fetch first)." >&2; exit 1; }
+      while IFS="$(printf '\t')" read -r f sym; do [ -z "$f" ] && continue
+        blob="$(git show "$BASE_REF:$f" 2>/dev/null)" \
+          || { echo "HALT DEP_MISSING: '$FEATURE' expects '$f' on $BASE_REF but the file is absent there." >&2; exit 1; }
+        printf '%s' "$blob" | grep -qF -- "$sym" \
+          || { echo "HALT DEP_MISSING: symbol '$sym' not found in $BASE_REF:$f — upstream interface drifted; re-derive refs from the merged code." >&2; exit 1; }
+      done <<< "$DEP_CHECKS"
     fi
     # (b) collision check: scope file OR invariant intersects another active feature
     cf="$(comm -12 <(printf '%s\n' "$SCOPE" | sort -u) <(active_others scope))"
