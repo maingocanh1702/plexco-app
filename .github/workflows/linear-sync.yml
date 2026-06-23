@@ -1,0 +1,49 @@
+name: linear-sync
+
+# Tự đồng bộ trạng thái Linear → progress.json (Linear làm leader), gần realtime.
+# Trigger:
+#   • push            → mỗi lần bạn đẩy code (branch/PR đã flip Linear qua native integration)
+#   • repository_dispatch (linear-changed) → Linear webhook bắn sự kiện = realtime đúng nghĩa
+#   • workflow_dispatch → chạy tay
+#   • schedule */10    → lưới an toàn nếu webhook lỡ
+on:
+  push:
+    branches: [main]
+  repository_dispatch:
+    types: [linear-changed]
+  workflow_dispatch:
+  schedule:
+    - cron: "*/10 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linear-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Pull Linear → progress.json
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: node linear-sync.mjs
+
+      - name: Commit nếu có thay đổi
+        run: |
+          if [ -n "$(git status --porcelain progress.json linear-snapshot.json plexco-dashboard.html)" ]; then
+            git config user.name  "linear-sync[bot]"
+            git config user.email "actions@github.com"
+            git add progress.json linear-snapshot.json plexco-dashboard.html
+            git commit -m "chore: sync progress from Linear [skip ci]"
+            git push
+          else
+            echo "Không có thay đổi."
+          fi

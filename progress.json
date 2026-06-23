@@ -1,0 +1,760 @@
+{
+  "project": "Plexco",
+  "subtitle": "Platform thể thao đa môn 2 phía — multi-tenant + marketplace + sync engine",
+  "docsVersion": "BRD v3.1 · PRD v2.1 · TDD v2.1 · ROADMAP v2.2",
+  "updatedAt": "2026-06-21",
+  "northStar": "Số kèo \"hoàn tất vòng\" / tuần (tạo → có player join, gồm join qua discovery → đối soát/xác nhận)",
+  "linear": {
+    "project": "Plexco MVP",
+    "projectUrl": "https://linear.app/maingocanh1/project/plexco-mvp-5a5336c896c5",
+    "team": "maingocanh1",
+    "label": "plexco-mvp",
+    "defaultAssignee": "Ngoc-Anh Mai"
+  },
+  "statusLegend": {
+    "not_started": "Chưa bắt đầu",
+    "in_progress": "Đang làm",
+    "blocked": "Bị chặn",
+    "in_review": "Đang review",
+    "done": "Xong"
+  },
+  "invariants": [
+    {
+      "id": "INV-1",
+      "name": "Cô lập tenant — tiền/roster không rò cross-tenant",
+      "guard": "Repo choke-point + RLS ENABLE+FORCE+NOBYPASSRLS fail-closed + test bất biến CI",
+      "status": "not_started"
+    },
+    {
+      "id": "INV-2",
+      "name": "Không lộ tiền/PII ra public discovery",
+      "guard": "public_sessions chỉ field whitelist + test bất biến public CI",
+      "status": "not_started"
+    },
+    {
+      "id": "INV-3",
+      "name": "Ledger không mất / không đếm quá tiền",
+      "guard": "allocation ∈ [0, amount]; charge paid khi phủ đủ; reversal có audit",
+      "status": "not_started"
+    },
+    {
+      "id": "INV-4",
+      "name": "PostgreSQL/domain = nguồn sự thật, surface chỉ là projection",
+      "guard": "command/outbox idempotent + re-project; không multi-master",
+      "status": "not_started"
+    }
+  ],
+  "gates": [
+    {
+      "id": "ISO",
+      "name": "Isolation gate",
+      "intro": "P0",
+      "desc": "tenant A/B: repo B không thấy dữ liệu A; quên SET LOCAL → 0 dòng (fail-closed)",
+      "status": "not_started"
+    },
+    {
+      "id": "PUB",
+      "name": "Public gate",
+      "intro": "P0 (whitelist skeleton) → P4.3 (full leak)",
+      "desc": "P0: mọi cột public_sessions ∈ whitelist. P4.3: discovery/join không bao giờ trả tiền/PII/roster; private không lọt",
+      "status": "not_started"
+    },
+    {
+      "id": "LED",
+      "name": "Ledger gate",
+      "intro": "P3",
+      "desc": "1 CK chia nhiều charge/người; partial không paid; over-allocation chặn; duplicate/retry/reversal giữ đúng tổng",
+      "status": "not_started"
+    },
+    {
+      "id": "WRK",
+      "name": "Worker/RLS gate",
+      "intro": "P3",
+      "desc": "job SET LOCAL trước khi đọc/ghi; API role không scan cross-tenant; privileged call có audit",
+      "status": "not_started"
+    },
+    {
+      "id": "SYNC",
+      "name": "Sync gate",
+      "intro": "P4",
+      "desc": "áp lại cùng command/event → không double; re-project dựng đúng từ canonical",
+      "status": "not_started"
+    }
+  ],
+  "phases": [
+    {
+      "id": "P0-P1",
+      "name": "Foundation",
+      "goal": "Nền multi-tenant an toàn + đa môn + khung 3 tầng hiển thị, trước khi có feature.",
+      "modules": [
+        "M1",
+        "M2",
+        "M3"
+      ],
+      "kpi": "drizzle push sạch + RLS bật + test cô lập & test bất biến public xanh trong CI",
+      "status": "not_started"
+    },
+    {
+      "id": "P2-P3",
+      "name": "Tenant Engine",
+      "goal": "1 bot Telegram phục vụ nhiều CLB; CK tự đối soát đúng tenant; dogfood tenant #1.",
+      "modules": [
+        "M4",
+        "M5",
+        "M6"
+      ],
+      "kpi": "% CK auto-match (name-based) ≥ 70% · sự cố cross-tenant = 0",
+      "status": "not_started"
+    },
+    {
+      "id": "P3.5",
+      "name": "Identity",
+      "goal": "Person toàn cục + merge an toàn xuyên kênh.",
+      "modules": [
+        "M7"
+      ],
+      "kpi": "1 người qua TG+Zalo cùng CLB = 1 nợ; merge có audit, không vỡ UNIQUE",
+      "status": "not_started"
+    },
+    {
+      "id": "P4-P4.3",
+      "name": "Web + Sync + Marketplace",
+      "goal": "Postgres canonical; web & chat là surface đồng bộ; onboarding self-serve; player khám phá & join cross-club.",
+      "modules": [
+        "M8",
+        "M9",
+        "M10",
+        "M11",
+        "M12",
+        "M13"
+      ],
+      "kpi": "sync-lag p95 ≤ 3s, p99 ≤ 10s · lộ tiền/PII ra public = 0 · % join qua discovery tăng",
+      "status": "not_started"
+    },
+    {
+      "id": "P4.5-P4.7",
+      "name": "Player-side channels",
+      "goal": "Player join mượt từ kênh chat + nhắc/xác nhận tự động.",
+      "modules": [
+        "M14",
+        "M15",
+        "M16"
+      ],
+      "kpi": "% player tự join ≥ 60% · nhắc → thanh toán ≥ 40% · merge sai ~0",
+      "status": "not_started"
+    },
+    {
+      "id": "P4.8",
+      "name": "Messenger (post-MVP)",
+      "goal": "Kênh Messenger join + xác nhận — chặn bởi App Review Meta.",
+      "modules": [
+        "M17"
+      ],
+      "kpi": "Post-MVP — chỉ làm nếu quyết",
+      "status": "not_started"
+    },
+    {
+      "id": "P5",
+      "name": "Billing",
+      "goal": "Thu phí thuê bao host bền vững + vòng đời tenant.",
+      "modules": [
+        "M18"
+      ],
+      "kpi": "Trial → trả phí ≥ ngưỡng · MRR tăng, churn thấp",
+      "status": "not_started"
+    },
+    {
+      "id": "P6",
+      "name": "Harden & Scale",
+      "goal": "Pen-test, load test, observability, ToS/Privacy.",
+      "modules": [
+        "M19"
+      ],
+      "kpi": "Rò rỉ cross-tenant = 0 · lộ tiền/PII public = 0 · load p95 đạt mục tiêu",
+      "status": "not_started"
+    }
+  ],
+  "modules": [
+    {
+      "id": "M1",
+      "name": "Monorepo + lift core (+ sports)",
+      "track": "🏢 Core",
+      "phase": "P0-P1",
+      "doc": "ready",
+      "status": "not_started",
+      "points": 5,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-5",
+      "subtasks": [
+        {
+          "title": "Monorepo pnpm: packages/core, apps/bot, apps/web + CI chạy pnpm test",
+          "identifier": "MNA-24",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Postgres docker-compose dev (db:up / db:reset)",
+          "identifier": "MNA-25",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Lift core: matching/payments-logic/dates/format/i18n/sports (không phụ thuộc DB)",
+          "identifier": "MNA-26",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Port test cũ vào core, xanh lại làm reference",
+          "identifier": "MNA-27",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "CI job core fail PR nếu đỏ",
+          "identifier": "MNA-28",
+          "status": "not_started",
+          "assignee": null
+        }
+      ]
+    },
+    {
+      "id": "M2",
+      "name": "Postgres + Drizzle + RLS + public read model skeleton",
+      "track": "🏢 Core",
+      "phase": "P0-P1",
+      "doc": "ready",
+      "status": "not_started",
+      "points": 8,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-6",
+      "subtasks": [
+        {
+          "title": "Drizzle 01_tenants_rls + role app NOSUPERUSER NOBYPASSRLS",
+          "identifier": "MNA-29",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Mỗi bảng tenant-scoped: ENABLE+FORCE RLS, policy USING(...) fail-closed",
+          "identifier": "MNA-30",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "withTenant(tenantId, fn): tx + SET LOCAL app.tenant_id",
+          "identifier": "MNA-31",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "[ISO] test cô lập A/B + quên SET LOCAL → 0 dòng (CI)",
+          "identifier": "MNA-32",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "public_sessions skeleton (no RLS) đúng field whitelist",
+          "identifier": "MNA-33",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "[PUB] test whitelist skeleton (CI)",
+          "identifier": "MNA-34",
+          "status": "not_started",
+          "assignee": null
+        }
+      ]
+    },
+    {
+      "id": "M3",
+      "name": "Tenant schema đa môn + repo choke-point",
+      "track": "🏢 Core",
+      "phase": "P0-P1",
+      "doc": "ready",
+      "status": "not_started",
+      "points": 8,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-7",
+      "subtasks": [
+        {
+          "title": "02_sessions_players_charges: tenant_id + sports + sessions.{sport_id,visibility,slots_max,area,venue,skill_level,join_policy}",
+          "identifier": "MNA-35",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "UNIQUE players/charges/pay_code",
+          "identifier": "MNA-36",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "tenantRepo(tenantId) choke-point — nơi DUY NHẤT chèn tenant_id",
+          "identifier": "MNA-37",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Edge #30: chỉ chọn môn từ sports active",
+          "identifier": "MNA-38",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "03_settings (tenant_id,key) + RLS",
+          "identifier": "MNA-39",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "[ISO] mở rộng test cô lập cho mọi bảng mới → đóng Milestone MS1",
+          "identifier": "MNA-40",
+          "status": "not_started",
+          "assignee": null
+        }
+      ]
+    },
+    {
+      "id": "M4",
+      "name": "Telegram tenant middleware",
+      "track": "🏢 Core",
+      "phase": "P2-P3",
+      "doc": "ready",
+      "status": "not_started",
+      "points": 6,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-8",
+      "subtasks": [
+        {
+          "title": "Telegram long-poll → webhook /telegram/<secret>",
+          "identifier": "MNA-41",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Middleware resolve tenant từ kênh: chat_id → telegram_links → tenant",
+          "identifier": "MNA-42",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Deep-link /start link_<code> (admin bind) + /start club_<slug> (player context)",
+          "identifier": "MNA-43",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Authz 2 lớp: isTenantAdmin theo from.id (Edge #16)",
+          "identifier": "MNA-44",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Lệnh host: /newsession đa môn, /announce, /config, /cash + cron throttler",
+          "identifier": "MNA-45",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Fail-closed TENANT_NOT_LINKED; test routing 2 tenant không lẫn",
+          "identifier": "MNA-46",
+          "status": "not_started",
+          "assignee": null
+        }
+      ]
+    },
+    {
+      "id": "M5",
+      "name": "Durable webhook + ledger/allocation + /unmatched",
+      "track": "💰 Payment",
+      "phase": "P2-P3",
+      "doc": "ready",
+      "status": "not_started",
+      "points": 13,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-9",
+      "subtasks": [
+        {
+          "title": "06 bank_accounts/transactions/allocations + RLS",
+          "identifier": "MNA-47",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "/webhook/sepay/:token: token + timing-safe secret + verify account",
+          "identifier": "MNA-48",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Durable ingest: INSERT idempotent UNIQUE(tenant,provider,external_id) + enqueue rồi mới ACK",
+          "identifier": "MNA-49",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Matching: pay_code (nullable, chưa phụ thuộc) → tên+amount+ngày",
+          "identifier": "MNA-50",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Allocation partial/multi-person/overpay/reversal; FIFO; ∈[0,amount]; paid khi phủ đủ",
+          "identifier": "MNA-51",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Ledger invariants ở DB; không sửa/xoá allocation đã audit",
+          "identifier": "MNA-52",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "/unmatched gán tay + retry cron EVERY_HOUR",
+          "identifier": "MNA-53",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "[LED] + [WRK] test bất biến ledger + worker/RLS (CI)",
+          "identifier": "MNA-54",
+          "status": "not_started",
+          "assignee": null
+        }
+      ]
+    },
+    {
+      "id": "M6",
+      "name": "Migrate bot cũ → tenant #1 (dogfood)",
+      "track": "🏢 Core",
+      "phase": "P2-P3",
+      "doc": "ready",
+      "status": "not_started",
+      "points": 5,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-10",
+      "subtasks": [
+        {
+          "title": "Script SQLite→Postgres: tenant Bestminton + owner + TelegramLink + BankAccount, sport=cầu lông",
+          "identifier": "MNA-55",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Copy sessions/players/members/aliases gắn tenant_id; mỗi player-session → charge",
+          "identifier": "MNA-56",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Payment lịch sử → bank_transaction+allocation; thiếu gốc → legacy:<id> source=manual",
+          "identifier": "MNA-57",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Đối chiếu tổng charge/allocated/unallocated + roster trước cutover",
+          "identifier": "MNA-58",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Cutover: đổi webhook → tắt bot cũ (đóng băng làm reference)",
+          "identifier": "MNA-59",
+          "status": "not_started",
+          "assignee": null
+        },
+        {
+          "title": "Founder dogfood thật → đóng Milestone MS2",
+          "identifier": "MNA-60",
+          "status": "not_started",
+          "assignee": null
+        }
+      ]
+    },
+    {
+      "id": "M7",
+      "name": "Identity directory + merge",
+      "track": "🆔 Identity",
+      "phase": "P3.5",
+      "doc": "ready",
+      "status": "not_started",
+      "points": 8,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-11",
+      "subtasks": [
+        {
+          "title": "Mig 04_identity_directory: persons/channel_identities/channel_reachability/player_chat_context (GLOBAL protected)",
+          "identifier": "MNA-61",
+          "status": "not_started",
+          "assignee": "Ngoc-Anh Mai"
+        },
+        {
+          "title": "Mig 05_memberships: refactor members → membership(person_id); UNIQUE(tenant_id, person_id)",
+          "identifier": "MNA-62",
+          "status": "not_started",
+          "assignee": "Ngoc-Anh Mai"
+        },
+        {
+          "title": "Identity resolve: (platform,uid) → channel_identities → person → membership(∩tenant)",
+          "identifier": "MNA-63",
+          "status": "not_started",
+          "assignee": "Ngoc-Anh Mai"
+        },
+        {
+          "title": "Matcher tên scoped-tenant; claim-có-tiền CHẶN auto → khoá mạnh (CLAIM_REQUIRES_STRONG_KEY, AUDIT C2)",
+          "identifier": "MNA-64",
+          "status": "not_started",
+          "assignee": "Ngoc-Anh Mai"
+        },
+        {
+          "title": "ChannelReachability per (person, tenant, platform) + can_dm (AUDIT C1)",
+          "identifier": "MNA-65",
+          "status": "not_started",
+          "assignee": "Ngoc-Anh Mai"
+        },
+        {
+          "title": "Merge /link OTP (entropy/TTL/single-use/rate-limit) round-trip + xác nhận + audit (AUDIT C3)",
+          "identifier": "MNA-66",
+          "status": "not_started",
+          "assignee": "Ngoc-Anh Mai"
+        },
+        {
+          "title": "SĐT verified → auto-merge; STK/tên chỉ gợi ý owner duyệt (OD-1, AUDIT B4)",
+          "identifier": "MNA-67",
+          "status": "not_started",
+          "assignee": "Ngoc-Anh Mai"
+        },
+        {
+          "title": "Reconcile membership trùng cùng tenant → gộp 1 (cộng nợ) + cờ nghi-trùng (AUDIT C4/C5)",
+          "identifier": "MNA-68",
+          "status": "not_started",
+          "assignee": "Ngoc-Anh Mai"
+        },
+        {
+          "title": "Unit test core: identity-resolve + link-code OTP (TDD §6.1)",
+          "identifier": "MNA-69",
+          "status": "not_started",
+          "assignee": "Ngoc-Anh Mai"
+        }
+      ]
+    },
+    {
+      "id": "M8",
+      "name": "Web app surface + canonical backend",
+      "track": "🌐 Web+Sync",
+      "phase": "P4-P4.3",
+      "doc": "drafted",
+      "status": "not_started",
+      "points": 8,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-12",
+      "subtasks": []
+    },
+    {
+      "id": "M9",
+      "name": "Sync engine (command/outbox/projection + realtime)",
+      "track": "🌐 Web+Sync",
+      "phase": "P4-P4.3",
+      "doc": "drafted",
+      "status": "not_started",
+      "points": 13,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-13",
+      "subtasks": []
+    },
+    {
+      "id": "M10",
+      "name": "Onboarding self-serve (SePay, link TG, dán Zalo token)",
+      "track": "🌐 Web+Sync",
+      "phase": "P4-P4.3",
+      "doc": "drafted",
+      "status": "not_started",
+      "points": 6,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-14",
+      "subtasks": []
+    },
+    {
+      "id": "M11",
+      "name": "Publish kèo → public_sessions projection",
+      "track": "🔎 Marketplace",
+      "phase": "P4-P4.3",
+      "doc": "drafted",
+      "status": "not_started",
+      "points": 5,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-15",
+      "subtasks": []
+    },
+    {
+      "id": "M12",
+      "name": "Discovery / tìm kèo",
+      "track": "🔎 Marketplace",
+      "phase": "P4-P4.3",
+      "doc": "drafted",
+      "status": "not_started",
+      "points": 6,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-16",
+      "subtasks": []
+    },
+    {
+      "id": "M13",
+      "name": "Join cross-club",
+      "track": "🔎 Marketplace",
+      "phase": "P4-P4.3",
+      "doc": "drafted",
+      "status": "not_started",
+      "points": 6,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-17",
+      "subtasks": []
+    },
+    {
+      "id": "M14",
+      "name": "Player join Telegram (tap)",
+      "track": "🎯 Player",
+      "phase": "P4.5-P4.7",
+      "doc": "drafted",
+      "status": "not_started",
+      "points": 4,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-18",
+      "subtasks": []
+    },
+    {
+      "id": "M15",
+      "name": "Player join Zalo (number-reply)",
+      "track": "🎯 Player",
+      "phase": "P4.5-P4.7",
+      "doc": "drafted",
+      "status": "not_started",
+      "points": 5,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-19",
+      "subtasks": []
+    },
+    {
+      "id": "M16",
+      "name": "Reminder + notifyPlayersPaid (+ sync)",
+      "track": "🎯 Player",
+      "phase": "P4.5-P4.7",
+      "doc": "drafted",
+      "status": "not_started",
+      "points": 6,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-20",
+      "subtasks": []
+    },
+    {
+      "id": "M17",
+      "name": "Kênh Messenger (join + xác nhận)",
+      "track": "🎯 Player",
+      "phase": "P4.8",
+      "doc": "appendix",
+      "status": "not_started",
+      "points": 8,
+      "postMvp": true,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-21",
+      "subtasks": []
+    },
+    {
+      "id": "M18",
+      "name": "Billing + lifecycle",
+      "track": "💰 Payment",
+      "phase": "P5",
+      "doc": "drafted",
+      "status": "not_started",
+      "points": 8,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-22",
+      "subtasks": []
+    },
+    {
+      "id": "M19",
+      "name": "Hardening (pen/load/obs + public pen-test)",
+      "track": "🔒 Security",
+      "phase": "P6",
+      "doc": "drafted",
+      "status": "not_started",
+      "points": 10,
+      "postMvp": false,
+      "assignee": "Ngoc-Anh Mai",
+      "linearId": "MNA-23",
+      "subtasks": []
+    }
+  ],
+  "milestones": [
+    {
+      "id": "MS1",
+      "phase": "P0-P1",
+      "name": "Foundation xanh",
+      "criteria": "drizzle push lên Postgres sạch, RLS bật, test cô lập + test bất biến public xanh trong CI",
+      "status": "not_started"
+    },
+    {
+      "id": "MS2",
+      "phase": "P2-P3",
+      "name": "Dogfood tenant #1",
+      "criteria": "≥2 CLB trên 1 bot, lệnh + đối soát + nhắc không lẫn; tenant #1 chạy thật",
+      "status": "not_started"
+    },
+    {
+      "id": "MS3",
+      "phase": "P3.5",
+      "name": "1 người = 1 nợ",
+      "criteria": "1 người qua TG+Zalo cùng CLB = 1 nợ; merge có audit, không vỡ UNIQUE",
+      "status": "not_started"
+    },
+    {
+      "id": "MS4",
+      "phase": "P4-P4.3",
+      "name": "Web → TG + Marketplace",
+      "criteria": "host tạo kèo web → group TG + marketplace ≤ vài giây; player lạ join được; không lộ tiền/PII",
+      "status": "not_started"
+    },
+    {
+      "id": "MS5",
+      "phase": "P4.5-P4.7",
+      "name": "Vòng player khép kín",
+      "criteria": "player join TG/Zalo → CK tự xác nhận → chưa trả tự nhắc; mọi thứ sync web",
+      "status": "not_started"
+    },
+    {
+      "id": "MS6",
+      "phase": "P5",
+      "name": "Billing sống",
+      "criteria": "hết trial chặn lệnh nhưng CK player vẫn lưu; CK đúng mã tự kích hoạt; free_web không bị chặn",
+      "status": "not_started"
+    },
+    {
+      "id": "MS7",
+      "phase": "P6",
+      "name": "Production-hardened",
+      "criteria": "pen-test: rò rỉ cross-tenant = 0, lộ tiền/PII = 0; load p95 đạt mục tiêu",
+      "status": "not_started"
+    }
+  ]
+}
