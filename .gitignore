@@ -50,5 +50,8 @@ docker-compose.override.yml
 .~lock.*
 *.tmp
 
-# Autopilot runtime state (registry/ledger/state) — never commit
-.autopilot/
+# Autopilot runtime state (registry/state) — never commit, EXCEPT the per-repo maturity
+# ledger (GENERIC §A.6): a TRACKED credit ledger that auto-merge graduation reads.
+.autopilot/*
+!.autopilot/maturity-ledger.md
+.gitnexus
