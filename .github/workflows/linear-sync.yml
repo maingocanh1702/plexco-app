@@ -34,7 +34,12 @@ jobs:
       - name: Pull Linear → progress.json
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-        run: node linear-sync.mjs
+        run: |
+          if [ -z "$LINEAR_API_KEY" ]; then
+            echo "⏭  LINEAR_API_KEY chưa cấu hình — bỏ qua sync (không fail CI)."
+            exit 0
+          fi
+          node linear-sync.mjs
 
       - name: Commit nếu có thay đổi
         run: |
