@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 2
+# KIT_VERSION: 3
 # autopilot-scope-gate — parallel autopilot coordination (SCOPE_COLLISION gate).
 # REPO-AGNOSTIC template. Copy to <repo>/scripts/autopilot-scope-gate, chmod +x, commit.
 #
@@ -176,7 +176,7 @@ case "$cmd" in
       while IFS="$(printf '\t')" read -r f sym; do [ -z "$f" ] && continue
         blob="$(git show "$BASE_REF:$f" 2>/dev/null)" \
           || { echo "HALT DEP_MISSING: '$FEATURE' expects '$f' on $BASE_REF but the file is absent there." >&2; exit 1; }
-        printf '%s' "$blob" | grep -qF -- "$sym" \
+        grep -qF -- "$sym" <<< "$blob" \
           || { echo "HALT DEP_MISSING: symbol '$sym' not found in $BASE_REF:$f — upstream interface drifted; re-derive refs from the merged code." >&2; exit 1; }
       done <<< "$DEP_CHECKS"
     fi
