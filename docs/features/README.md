@@ -29,7 +29,7 @@ Core docs remain authoritative by topic. Feature specs add build/test detail but
 | P4.5 | Player Telegram | `feature_player_telegram.md` v2.0 | `BE/feature_player_telegram_tech.md` v2.0 | ✅ Standardized |
 | P4.6 | Player View | `feature_player_view.md` v2.0 | `BE/feature_player_view_tech.md` v2.0 | ✅ Standardized |
 | P4.7 | Zalo Channel | `feature_zalo_channel.md` v2.0 | `BE/feature_zalo_channel_tech.md` v2.0 | ✅ Standardized |
-| P5 | Billing Lifecycle | `feature_billing_lifecycle.md` v2.0 | `BE/feature_billing_lifecycle_tech.md` v2.0 | ✅ Standardized |
+| P5 | Billing Lifecycle | `feature_billing_lifecycle.md` v2.2 | `BE/feature_billing_lifecycle_tech.md` v2.2 | ✅ Standardized |
 | P6 | Security & Operations | `feature_security_operations.md` v2.0 | `BE/feature_security_operations_tech.md` v2.0 | ✅ Standardized |
 
 ## Post-MVP

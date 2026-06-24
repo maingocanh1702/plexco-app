@@ -186,7 +186,7 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 - **FR-8.1** Web + bot: liệt kê **CLB, kèo sắp tới, nợ/trạng thái** của chính person; **chỉ dữ liệu của họ**.
 
 ### MODULE 9 — Billing (host)
-- **FR-9.1** Subscription host; trial → active → past_due → suspended.
+- **FR-9.1** Subscription host (plan trả phí): trial → active → past_due → suspended. **`free_web` (0đ) vào thẳng `active` vô thời hạn — không trial/invoice, không past_due/suspended vì non-payment** (chỉ suspend vì ToS/abuse). Ref: DD-03, BL-BIL-1.
 - **FR-9.2** Thu qua CK vào tài khoản platform, khớp `invoiceCode`; idempotent.
 - **FR-9.3** Suspended: chặn lệnh quản trị nhưng vẫn nhận & lưu CK player; kèo đã public chỉ tiếp tục hiển thị tới lúc đóng/hết giờ, không được tạo mới hoặc gia hạn.
 
@@ -232,7 +232,16 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 ## 9. Mô hình doanh thu (Monetization)
 
 ### 9.1 Dòng cốt lõi — Subscription host
-- Host trả **thuê bao** cho bộ tool quản lý + đối soát + đa kênh + chỗ trên marketplace. (Giá khởi điểm đề xuất tiếp tục từ mốc cũ **99.000đ/tháng/CLB**, có **trial**; reposition platform có thể mở tier sau — OD-3.)
+- Host trả **thuê bao** theo tier cho bộ tool quản lý + đối soát + đa kênh + chỗ trên marketplace. Pricing host đã chốt ở **OD-3 / DD-03**:
+
+| Plan | Giá / tháng / CLB | Bao gồm |
+|---|---:|---|
+| `free_web` | **0đ** | Web app |
+| `telegram` | **79.000đ** | Web app + bot Telegram |
+| `plus_channel` | **159.000đ** | Web app + bot Telegram + **1 kênh chọn thêm**: Zalo hoặc Messenger |
+| `all_channels` | **199.000đ** | Web app + bot Telegram + bot Zalo + bot Messenger |
+
+> Messenger vẫn theo phase P4.8/post-MVP; plan có quyền Messenger chỉ unlock khi kênh GA.
 - Thu qua **CK vào tài khoản platform**, khớp `invoiceCode`; tách `subscription_invoices` khỏi player payment ledger (`bank_transactions`/`payment_allocations`).
 
 ### 9.2 Cấu trúc chi phí & nguyên tắc tiền
@@ -242,7 +251,7 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 - **LLM/STT** (OCR ảnh, voice) do **platform trả**, có **trần fair-use**.
 
 ### 9.3 Dòng tương lai (ngoài MVP)
-Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplace, managed Messenger/Zalo bot trả phí, nhiều tier host. **Không** làm loãng MVP.
+Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplace, managed Messenger/Zalo bot trả phí, add-on ngoài 4 tier host hiện tại. **Không** làm loãng MVP.
 
 ---
 
@@ -319,23 +328,25 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 - **AC-5** **Sync 2 chiều:** host tạo kèo trên web → hiện trong group TG & marketplace; player tap join trên Zalo → web + roster cập nhật; mọi nơi nhất quán ≤ vài giây.
 - **AC-6** CK tới đúng CLB; player join → CK → **xác nhận tự động**; chưa trả → **được nhắc**.
 - **AC-7** Một người qua TG + Zalo cùng CLB gộp về **1 nợ**.
-- **AC-8** Hết trial bị **chặn lệnh quản trị** nhưng CK player **vẫn lưu**; kèo public hiện có chỉ sống tới lúc đóng/hết giờ; CK đúng mã **tự kích hoạt lại**.
+- **AC-8** (plan trả phí) Hết trial bị **chặn lệnh quản trị** nhưng CK player **vẫn lưu**; kèo public hiện có chỉ sống tới lúc đóng/hết giờ; CK đúng mã **tự kích hoạt lại**. `free_web` **không** bị chặn vì non-payment.
 - **AC-9** Không có đường rò rỉ cross-tenant **và** không có đường lộ tiền/PII ra public (pen-test).
 
 ## 16. Quyết định mở (Open Decisions Log)
+
+> ⭐ **Nguồn canonical:** xem `../standards/decisions.md` (DD-01..DD-12). Bảng dưới giữ để tra nhanh; khi chốt, cập nhật ở `decisions.md`.
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
 | OD-1 | SĐT verified (share-contact) làm khoá merge chính | ✅ chốt |
 | OD-2 | `pay_code` hiển thị có prefix CLB, lưu code trần | Đề xuất ✅, chờ chốt cuối |
-| OD-3 | Giá/tier subscription host sau reposition (1 gói vs nhiều tier) | Chờ chốt |
-| OD-4 | Hosting Postgres (Neon/Supabase/Railway) | Chờ chọn |
+| OD-3 | Giá/tier subscription host | ✅ chốt 4 tier: free web · 79k Telegram · 159k thêm Zalo/Messenger · 199k tất cả (→ DD-03) |
+| OD-4 | Hosting Postgres — HA+PITR+Singapore ✅; provider Neon vs Supabase chờ chọn | 🟡 (→ DD-04) |
 | OD-5 | **Join cross-club mặc định:** open hay approval? (đề xuất: cấu hình per-kèo, mặc định open + host bật approval) | Chờ chốt |
 | OD-6 | **Độ chi tiết vị trí public:** khu vực/quận vs venue chính xác (đề xuất: khu vực cho tới khi join/duyệt) | Chờ chốt |
-| OD-7 | **Realtime web:** SSE vs WebSocket vs polling | Chờ chọn (đề xuất SSE) |
+| OD-7 | **Realtime web:** SSE + fan-out `LISTEN/NOTIFY` | ✅ chốt (→ DD-07) |
 | OD-8 | Danh sách môn khởi điểm (cầu lông, pickleball, …) + taxonomy trình độ | Chờ chốt |
 | OD-9 | Messenger vào lộ trình lúc nào | ✅ Post-MVP P4.8 |
-| OD-10 | Web stack: Next.js hay Express SSR | Chờ chọn; không ảnh hưởng canonical store |
+| OD-10 | Web stack — cùng container (không Vercel) ✅; Express SSR vs Next standalone chờ chọn | 🟡 (→ DD-10) |
 
 ## 17. Thuật ngữ (Glossary)
 
@@ -370,4 +381,4 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 | 16/06/2026 | v3.0 | Initial BRD — MVP scope, canonical store, identity model |
 | 18/06/2026 | v3.1 | Chuẩn hoá durable webhook, payment ledger/allocation, discovery |
 | 19/06/2026 | v3.1 | Thêm Changelog table, cập nhật cross-refs |
-
+| 20/06/2026 | v3.2 | FR-9.1 + AC-8: làm rõ `free_web` (0đ) vào thẳng active, không past_due/suspended vì non-payment (DD-03, BL-BIL-1) |

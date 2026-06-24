@@ -177,13 +177,14 @@ Sau **mọi** điểm markPaid (auto-match + gán tay) → `notifyPlayersPaid(te
 
 ---
 
-## FLOW 11: BILLING — 99k/tháng *(P5)*
+## FLOW 11: BILLING — host subscription tiers *(P5)*
 
-1. Tạo tenant → `trialing` (đề xuất 14 ngày).
-2. Owner CK 99k vào **tài khoản platform**, nội dung mang `invoiceCode` → webhook match → đẩy `currentPeriodEnd +1 tháng`, `status=active`.
-3. Hết hạn không gia hạn → `past_due` (nhắc TG/email) → sau X ngày → `suspended`.
-4. **Suspended:** chặn lệnh nhưng **vẫn nhận & lưu CK player** (không mất giao dịch khi quay lại).
-5. MVP có thể **manual-activate** trước khi tự động hoá match 99k.
+1. Tạo tenant: `free_web` → `active` ngay, không invoice; plan trả phí → `trialing` (đề xuất 14 ngày).
+2. Owner chọn plan: `free_web` (0đ), `telegram` (79k), `plus_channel` (159k, chọn Zalo hoặc Messenger), hoặc `all_channels` (199k).
+3. Với paid plan, owner CK đúng số tiền vào **tài khoản platform**, nội dung mang `invoiceCode` → webhook match → đẩy `currentPeriodEnd +1 tháng`, `status=active`.
+4. Hết hạn không gia hạn → `past_due` (nhắc TG/email) → sau X ngày → `suspended`.
+5. **Suspended:** chặn lệnh nhưng **vẫn nhận & lưu CK player** (không mất giao dịch khi quay lại).
+6. Free plan không cần payment để active nhưng bị giới hạn channel theo plan; MVP có thể **manual-activate** paid plan trước khi tự động hoá match.
 
 ---
 

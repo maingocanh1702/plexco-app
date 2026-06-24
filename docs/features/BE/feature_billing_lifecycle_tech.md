@@ -1,7 +1,7 @@
 # Feature: Host Billing & Tenant Lifecycle — Backend Tech Spec
 
 > **Canonical phase:** P5  
-> **Version:** 2.0 · 2026-06-19  
+> **Version:** 2.2 · 2026-06-20
 > **Status:** Reviewed  
 > **Product spec:** `../feature_billing_lifecycle.md`  
 > **References:** `../../standards/business-rules.md`
@@ -11,7 +11,7 @@
 ## 1. Tổng quan triển khai
 
 ```text
-Tenant creation → Start trial → Daily lifecycle job
+Tenant creation → free_web active immediately OR paid plan trial → Daily lifecycle job
     → Issue invoice → Platform billing webhook → Match → Extend period
     → Due transitions: active → past_due → suspended → cancelled
     → Central authorizeTenantAction(status, actionClass)
@@ -28,19 +28,27 @@ Billing ledger **separate schema/table set** from player ledger. Central `author
 ```sql
 CREATE TABLE plans (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_key text NOT NULL CHECK (plan_key IN ('free_web','telegram','plus_channel','all_channels')),
   version integer NOT NULL,
   price integer NOT NULL,
   currency text NOT NULL DEFAULT 'VND',
   interval text NOT NULL DEFAULT 'monthly',
   limits jsonb NOT NULL DEFAULT '{}',
+  entitlements jsonb NOT NULL DEFAULT '{}',
   active boolean NOT NULL DEFAULT true,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (plan_key, version)
 );
 
 CREATE TABLE subscriptions (
   tenant_id uuid PRIMARY KEY REFERENCES tenants(id),
+  plan_key text NOT NULL,
   plan_version integer NOT NULL,
+  selected_extra_channel text CHECK (selected_extra_channel IN ('zalo','messenger') OR selected_extra_channel IS NULL),
   status text NOT NULL DEFAULT 'trialing' CHECK (status IN ('trialing','active','past_due','suspended','cancelled')),
+  -- free_web (price=0): tạo row với status='active', trial_end/grace_end = NULL, period_end xa/null;
+  --   KHÔNG sinh invoice; lifecycle job bỏ qua (xem §4 + edge #17). Không có trạng thái riêng cho free —
+  --   phân biệt bằng plans.price=0. Free rời 'active' chỉ khi đổi plan / cancel / suspend-vì-abuse.
   trial_end timestamptz,
   period_start timestamptz NOT NULL,
   period_end timestamptz NOT NULL,
@@ -48,6 +56,13 @@ CREATE TABLE subscriptions (
   version integer NOT NULL DEFAULT 1,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Seed v1 (DD-03)
+INSERT INTO plans (plan_key, version, price, limits, entitlements) VALUES
+  ('free_web', 1, 0, '{}', '{"web_app": true, "telegram": false, "zalo": false, "messenger": false}'),
+  ('telegram', 1, 79000, '{}', '{"web_app": true, "telegram": true, "zalo": false, "messenger": false}'),
+  ('plus_channel', 1, 159000, '{}', '{"web_app": true, "telegram": true, "extra_channel_count": 1, "extra_channel_options": ["zalo", "messenger"]}'),
+  ('all_channels', 1, 199000, '{}', '{"web_app": true, "telegram": true, "zalo": true, "messenger": true}');
 
 CREATE TABLE subscription_invoices (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -104,6 +119,11 @@ CREATE TABLE billing_overrides (
 | 10 | Data Integrity | Reactivation replay jobs | Version check — no duplicate reminders/projectors |
 | 11 | Security | Override without expiry | ❌ Must have expiry — auto-expire enforced |
 | 12 | Cross-Feature | Owner lost access | Support ticket + audit — manual recovery |
+| 13 | Entitlement | Channel not included in plan | Block with `PLAN_UPGRADE_REQUIRED`; do not affect payment ingest |
+| 14 | Entitlement | `plus_channel` has no selected channel | Block Zalo/Messenger setup until owner selects one option |
+| 15 | Data Integrity | `free_web` (price=0) routed through trial/past_due/suspended | ❌ NEVER — created `status='active'`, no invoice; lifecycle job filters `WHERE p.price > 0`. Free chỉ suspend qua đường ToS/abuse, không qua non-payment |
+| 16 | Data Integrity | Invoice issued for price=0 plan | ❌ NEVER — `IssueInvoice` skip khi `plan.price = 0` |
+| 17 | Entitlement | Downgrade paid → `free_web` | Hạ entitlement cuối period đã trả; set `status='active'`, `period_end=NULL`, ngừng invoice; không retroactive refund tự động (BIL-OQ-2) |
 
 ---
 
@@ -141,10 +161,13 @@ CREATE TABLE billing_overrides (
 ### Daily Lifecycle Job
 
 ```text
-Cron (daily) → Claim due subscriptions (FOR UPDATE SKIP LOCKED)
+Cron (daily) → Claim due subscriptions JOIN plans WHERE plans.price > 0   (bỏ qua free_web)
+                 FOR UPDATE SKIP LOCKED
     → Per tenant TX: check dates → transition status
     → Send owner notices (outbox) → COMMIT
 ```
+
+> **free_web bỏ qua hoàn toàn:** join `plans.price > 0` loại mọi subscription 0đ khỏi nhánh `period expired → past_due → suspended`. `IssueInvoice` cũng skip khi `plan.price = 0`. Free chỉ đổi trạng thái qua `CancelSubscription`, đổi plan, hoặc `ApplyOverride`/suspend vì abuse (đường riêng, không phải lifecycle non-payment).
 
 ### Billing Webhook Ingest
 
@@ -163,7 +186,9 @@ Webhook → Durable ingest: billing_transaction + job COMMIT before ACK
 
 | # | Test | Input | Expected |
 |---|------|-------|----------|
-| 1 | Trial start | New tenant | trialing + dates set |
+| 1 | Trial start (paid plan) | New tenant, plan trả phí | trialing + dates set |
+| 1b | free_web start | New tenant, plan `free_web` | `active` ngay, không trial, không invoice |
+| 1c | free_web never past_due | free_web qua nhiều chu kỳ, không payment | vẫn `active`; lifecycle job bỏ qua; 0 invoice |
 | 2 | Trial → active | Payment before trial end | active |
 | 3 | Trial → past_due | No payment + trial expired | past_due |
 | 4 | Active → past_due | Period expired, no renewal | past_due |
@@ -183,6 +208,8 @@ Webhook → Durable ingest: billing_transaction + job COMMIT before ACK
 | 18 | Override without expiry | Missing expiry | Rejected |
 | 19 | Plan version immutable | Change price | New version created |
 | 20 | Cross-tenant billing isolation | Tenant A invoice | Not visible to B |
+| 21 | Entitlement gate | Free plan creates Telegram link | Rejected with `PLAN_UPGRADE_REQUIRED` |
+| 22 | Plus channel selection | `plus_channel` selected `zalo` then tries Messenger | Rejected unless plan selection changed/audited |
 
 ### Integration Tests
 
@@ -217,5 +244,7 @@ Webhook → Durable ingest: billing_transaction + job COMMIT before ACK
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-06-20 | v2.2 | Fix free_web lifecycle: tạo `status='active'` không trial/invoice; daily job join `plans.price>0` (skip free); `IssueInvoice` skip price=0; edge #15–17 + test #1b/1c; downgrade paid→free |
+| 2026-06-20 | v2.1 | Add DD-03 plan keys/prices/entitlements and selected extra channel for plus plan |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), DDL, 12 edge cases, suspended action matrix, 20 tests |

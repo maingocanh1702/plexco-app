@@ -1,7 +1,7 @@
 # Feature: Payment Reconciliation — Backend Tech Spec
 
 > **Canonical phase:** P3  
-> **Version:** 1.2 · 2026-06-19  
+> **Version:** 1.3 · 2026-06-20
 > **Status:** Implementation contract aligned with TDD v2.1  
 > **Product spec:** `../feature_payment_reconcile.md`  
 > **References:** `../../core/TDD.md` §3.2/3.6–3.8 · `../../standards/business-rules.md`
@@ -186,8 +186,8 @@ Manual request includes command ID and allocation array `{chargeId, amount}`. Se
 
 | Endpoint | Limit |
 |----------|-------|
-| `POST /webhook/sepay/:token` | No limit (provider-initiated) |
-| `POST /webhook/apipay/:token` | No limit (provider-initiated) |
+| `POST /webhook/sepay/:token` | Không áp app-level user limit; edge per-token/IP burst cap + body-size cap theo deployment-infra §6 |
+| `POST /webhook/apipay/:token` | Không áp app-level user limit; edge per-token/IP burst cap + body-size cap theo deployment-infra §6 |
 | `POST /transactions/:id/allocations` | 60/min per account |
 | `POST /allocations/:id/reverse` | 30/min per account |
 | `POST /cash` | 30/min per account |
@@ -266,5 +266,6 @@ Metrics: durable ACK latency, reconcile lag, auto-match rate by policy version, 
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-06-20 | v1.3 | Clarify provider webhooks are exempt from app-level user mutation limits but still require edge per-token/IP burst cap and body-size cap |
 | 2026-06-19 | v1.2 | Fold AUDIT G1 (STK change delay: schema + API + rate limit) and G3 (standardized rate limits) |
 | 2026-06-18 | v1.0 | Initial legacy backend spec |

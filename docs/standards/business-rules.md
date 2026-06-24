@@ -2,7 +2,7 @@
 
 > Registry quy tắc nghiệp vụ, tổng hợp từ `docs/core/BRD.md` v3.1 · `docs/core/PRD.md` v2.1 · `docs/core/TDD.md` v2.1 · `docs/appendices/player-side-saas-AUDIT.md`.
 > Khi conflict, authority theo topic trong BRD §0; security dùng rule nghiêm ngặt hơn.
-> v1.2 · 2026-06-19
+> v1.5 · 2026-06-20
 
 ---
 
@@ -10,7 +10,7 @@
 
 | ID | Luật | Chi tiết | Source |
 |---|---|---|---|
-| **BL-PAY-1** | **Durable trước ACK** | Trong một DB transaction: insert `bank_transaction` idempotent + enqueue reconcile job/outbox; commit rồi mới trả 200. Match chạy async, retry an toàn sau crash. | BRD FR-5.1, TDD §3.6 |
+| **BL-PAY-1** | **Durable trước ACK** | Trong một DB transaction: insert `bank_transaction` idempotent + enqueue reconcile job/outbox; commit rồi mới trả 200. Match chạy async, retry an toàn sau crash. Đây là tên catalog của AUDIT BL-1. | BRD FR-5.1, TDD §3.6, AUDIT BL-1 |
 | **BL-PAY-2** | **Không over-allocation** | Effective allocation của bank transaction nằm trong `[0, amount]`; allocation vào charge nằm trong `[0, amount_due]`. Charge chỉ paid khi phủ đủ. | BRD FR-5.2/5.3, NFR-R3 |
 | **BL-PAY-3** | **Matching phase-gated** | P3 dùng name + amount + date; pay_code deterministic chỉ được phát khi P4 rollout hoàn tất. Trường hợp một CK/nhiều người nhập nhằng phải manual allocation. | PRD FLOW 6, TDD §3.7 |
 | **BL-PAY-4** | **Idempotent per-tenant** | `UNIQUE(tenant_id, provider, external_id)` → webhook trùng skip, không double-count. | NFR-R2 |
@@ -84,7 +84,8 @@
 
 | ID | Luật | Chi tiết | Source |
 |---|---|---|---|
-| **BL-BIL-1** | **Subscription host** | Trial → active → past_due → suspended → cancelled. Invoice ledger tách khỏi player payment ledger. | BRD FR-9.1/9.2 |
+| **BL-BIL-1** | **Subscription host** | **Plan trả phí:** trial → active → past_due → suspended → cancelled. **`free_web` (0đ):** vào thẳng `active` vô thời hạn — không trial/invoice, **không bao giờ** past_due/suspended vì non-payment (chỉ suspend vì ToS/abuse hoặc owner cancel). Invoice ledger tách khỏi player payment ledger. Pricing theo DD-03: `free_web` 0đ, `telegram` 79k, `plus_channel` 159k, `all_channels` 199k mỗi CLB/tháng. | BRD FR-9.1/9.2, DD-03 |
+| **BL-BIL-1a** | **Plan entitlements** | `free_web` chỉ web app; `telegram` thêm bot Telegram; `plus_channel` thêm đúng 1 kênh Zalo hoặc Messenger; `all_channels` mở cả Telegram/Zalo/Messenger. Channel setup/use phải gate theo plan. | DD-03 |
 | **BL-BIL-2** | **Suspended behavior** | Chặn lệnh quản trị nhưng vẫn durable-ingest CK player. Kèo public hiện có chỉ sống tới khi đóng/hết giờ; không tạo/gia hạn mới. | BRD BR-11, FR-9.3 |
 | **BL-BIL-3** | **LLM/STT fair-use** | Platform trả chi phí LLM/STT; có trần fair-use per-tenant. | BRD §9.2 |
 
@@ -108,7 +109,7 @@
 | **BL-SEC-2** | **Webhook timing-safe verify** | Mọi webhook verify bằng constant-time compare (SePay API key) hoặc HMAC-SHA256 (ApiPay). | AUDIT B-webhook |
 | **BL-SEC-3** | **Audit trail** | Mọi thao tác chạm tiền/định danh: ghi admin_id, timestamp, method (auto/manual). | NFR-S6, BRD BR-12 |
 | **BL-SEC-4** | **PII consent + mã hoá** | SĐT/email thu có consent; AES at-rest; soft-delete; không vào URL/log. | NFR-P1 |
-| **BL-SEC-5** | **Mutation rate limit** | POST/PATCH/DELETE: 60/min per account, 200/min per tenant. Public endpoints (discovery, join): 100/min per IP. Sliding window. | AUDIT G3 |
+| **BL-SEC-5** | **Mutation rate limit** | POST/PATCH/DELETE: 60/min per account, 200/min per tenant. Public endpoints (discovery, join): 100/min per IP. Provider webhooks không áp user mutation limit nhưng vẫn có edge per-token/IP burst cap + body-size cap. Sliding window. | AUDIT G3, deployment-infra §6 |
 | **BL-SEC-6** | **Audit log retention** | Financial: 3 năm. Identity: 1 năm. Session/auth: 90 ngày. Không xoá — archive sau retention. | AUDIT G4 |
 
 ---
@@ -119,7 +120,7 @@
 
 | Category | Endpoint pattern | Limit | Scope | Error |
 |----------|-----------------|-------|-------|-------|
-| **Webhook (provider)** | `POST /webhook/*` | Unlimited | — | — |
+| **Webhook (provider)** | `POST /webhook/*` | No app-level user limit; edge per-token/IP burst cap sized ≥100/s/token target + body-size cap | token + IP | 429/413 at edge |
 | **Discovery (public)** | `GET /discover` | 100/min | IP | 429 `RATE_LIMITED` |
 | **Join (public)** | `POST /sessions/:id/join` | 10/min per person, 100/min per IP | person + IP | 429 `RATE_LIMITED` |
 | **Auth** | `POST /auth/*` | 10/min | IP | 429 `RATE_LIMITED` |
@@ -154,5 +155,8 @@ Business rules file này **tổng hợp** từ các doc trên. Khi phát hiện 
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 20/06/2026 | v1.4 | Add DD-03 host pricing tiers and entitlement gate rule |
+| 20/06/2026 | v1.5 | BL-BIL-1: làm rõ `free_web` (0đ) vào thẳng active vô thời hạn, không past_due/suspended vì non-payment |
+| 20/06/2026 | v1.3 | Clarify AUDIT BL-1 maps to BL-PAY-1 and provider webhooks require edge per-token/IP burst cap + body-size cap |
 | 19/06/2026 | — | Thêm Changelog table |
 | 18/06/2026 | v1.0 | Tổng hợp business rules từ BRD/PRD/TDD |

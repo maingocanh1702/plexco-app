@@ -2,16 +2,16 @@
 
 > **Canonical phase:** P4  
 > **Track:** 🌐 Web Auth & Onboarding  
-> **Version:** 2.0 · 2026-06-19  
+> **Version:** 2.1 · 2026-06-20
 > **Status:** Reviewed  
 > **Prerequisites:** P0–P1 foundation · P2 routing/authz · P3 ledger/provider model  
-> **Tài liệu liên quan:** `../core/BRD.md` FR-1 · `../core/PRD.md` FLOW 1 · BRD OD-10 · `BE/feature_web_auth_onboarding_tech.md`
+> **Tài liệu liên quan:** `../core/BRD.md` FR-1 · `../core/PRD.md` FLOW 1 · BRD OD-10 · `BE/feature_web_auth_onboarding_tech.md` · `feature_connector_onboarding.md` (auto-register webhook + verify 2 tầng)
 
 ---
 
 ## 1. Mô tả
 
-Cho host mới **authenticate trên web, tạo tenant và connect integrations MVP** mà không cần platform intervention. Wizard bao gồm: club config → TG group/admin binding → SePay/ApiPay bank account → optional Zalo bot token. Messenger excluded đến P4.8.
+Cho host mới **authenticate trên web, tạo tenant và connect integrations MVP** mà không cần platform intervention. Wizard bao gồm: club config → TG group/admin binding → SePay/ApiPay bank account → optional Zalo bot token. Messenger excluded đến P4.8. Bank/Zalo connect dùng **auto-register webhook** (owner KHÔNG dán webhook URL) theo `feature_connector_onboarding.md`.
 
 ### Bất biến
 
@@ -20,6 +20,15 @@ Cho host mới **authenticate trên web, tạo tenant và connect integrations M
 - Tenant creation/bind dùng **idempotency keys** — refresh/back KHÔNG duplicate.
 - Secrets: write-only, KMS encrypted, masked after save, rotatable.
 - Owner KHÔNG thể accidentally bind group/account đã thuộc tenant khác.
+
+### 1.1 Surface entry points (web-first vs bot-first)
+
+Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/OAuth trong khung chat (token lưu lại lịch sử chat = lộ, vi phạm BL-SEC-1; OAuth cần browser). Hai điểm vào, dùng chung endpoint `/api/onboarding/*`:
+
+- **Web-first:** host đăng nhập plexco.app → chạy trọn wizard (gồm bank/Zalo) tại chỗ.
+- **Bot-first:** host `/start` `@PlexcoBot`; phần không nhạy cảm (tên CLB, môn, giá, session đầu) hỏi ngay trong chat; phần nhạy cảm (SePay/ApiPay/Zalo) bot gửi **magic-link 1 lần** → host hoàn tất trên web → quay lại bot.
+
+> Telegram là **shared bot** (`@PlexcoBot`) → bind bằng cách thêm bot vào group, **không** dán token. Chỉ **Zalo** BYO token per-CLB (🟡 blocked CO-OQ-1). Chi tiết auto-register + verify 2 tầng (`registered → active`): `feature_connector_onboarding.md`.
 
 ---
 
@@ -32,9 +41,9 @@ Cho host mới **authenticate trên web, tạo tenant và connect integrations M
 | WAO-UC-1 | New Host | Authenticate (TG Login / web-account fallback) | Session created, CSRF token issued |
 | WAO-UC-2 | New Host | Tạo Account + Tenant | Idempotent create; assign owner role |
 | WAO-UC-3 | Host | Configure club: name, timezone, locale, sport, price, visibility/join defaults | Saved, validation per field |
-| WAO-UC-4 | Host | Connect bank provider (SePay/ApiPay) | Encrypted credential save → webhook verify |
+| WAO-UC-4 | Host | Connect bank provider (SePay OAuth / ApiPay key) | Plexco **tự đăng ký webhook** (không dán URL) → verify 2 tầng. Ref: `feature_connector_onboarding.md` §4.2–4.3 |
 | WAO-UC-5 | Host | Generate TG bind link + confirm group binding | TenantAdmin + TelegramLink created |
-| WAO-UC-6 | Host | Optional: connect Zalo bot + verify webhook | Zalo adapter configured |
+| WAO-UC-6 | Host | Optional: connect Zalo bot (BYO token) | 🟡 Dự kiến auto `setWebhook` (blocked CO-OQ-1); tới khi đó dán URL thủ công |
 | WAO-UC-7 | Host | Create first session + optional publish | Session live, ready to receive players |
 | WAO-UC-8 | Host | Resume incomplete onboarding | Each step has verified/not-configured/error state |
 | WAO-UC-9 | Host | Rotate bank credentials | Old masked, new saved encrypted |
@@ -65,9 +74,9 @@ Cho host mới **authenticate trên web, tạo tenant và connect integrations M
 |---------|--------|---------|-------|-------|-------|
 | Web | Login page | — | TG Login button + (OD-10) web fallback | "Xác thực thất bại" + retry | N/A |
 | Web | Onboarding wizard — Step 1: Club config | Skeleton form | Form: name, timezone, sport, price, visibility | Inline errors per field | Default values pre-filled |
-| Web | Onboarding wizard — Step 2: Bank connect | Skeleton | Bank form: provider, credentials, verify CTA | "Kết nối thất bại" + retry | N/A |
+| Web | Onboarding wizard — Step 2: Bank connect | Skeleton | SePay: nút "Kết nối" (OAuth) · ApiPay: dán accessKey/secretKey → chọn TK ACTIVE; auto-register webhook; chip `registered → active` | "Kết nối thất bại" + retry | N/A |
 | Web | Onboarding wizard — Step 3: TG bind | Skeleton | Link code display + QR + instructions | "Không tạo được link" + retry | N/A |
-| Web | Onboarding wizard — Step 4: Zalo (optional) | Skeleton | Token input + verify | "Kết nối thất bại — bỏ qua được" | N/A |
+| Web | Onboarding wizard — Step 4: Zalo (optional) | Skeleton | Dán bot token → auto `setWebhook` (🟡 blocked CO-OQ-1) → verify | "Kết nối thất bại — bỏ qua được" | N/A |
 | Web | Onboarding wizard — Step 5: First session | Session form | Create + optional publish | Inline validation | N/A |
 | Web | Readiness checklist | — | ✅/❌ per step + "Bắt đầu" CTA | — | N/A |
 
@@ -98,6 +107,8 @@ stateDiagram-v2
     complete --> [*]
     note right of zalo_optional: Optional — can skip
 ```
+
+> SM trên là cấp **wizard step**. Mỗi connector còn có SM riêng `connecting → registered → active → drift/error/revoked` (verify 2 tầng) — xem `feature_connector_onboarding.md` §3.3.
 
 ---
 
@@ -145,3 +156,4 @@ stateDiagram-v2
 |---|---|---|
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, onboarding wizard screen states, state machine |
+| 2026-06-20 | v2.1 | Cross-link `feature_connector_onboarding.md`: bank/Zalo connect chuyển sang auto-register + verify 2 tầng; thêm §1.1 surface entry points (web-first vs bot-first, deep-link handoff); cập nhật UC-4/UC-6 + screen states |

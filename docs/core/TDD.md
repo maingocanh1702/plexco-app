@@ -62,7 +62,7 @@ Matchmaking xếp cặp tự động · venue/booking nhà thi đấu · scoring
 | FR-10 | Reminder | System | manual (P2) → auto cron group-mention/DM theo Reachability (P3) | P2/P3 | P0 |
 | FR-11 | notifyPlayersPaid | System | xác nhận đa-kênh sau mọi markPaid + sync web | P4.5 | P0 |
 | FR-12 | Player view (person-self) | P3/P4 | clubs/kèo/nợ của tôi, person-authorized; web + bot | P4.6 | P1 |
-| FR-13 | Billing | System | subscription_invoices, trial→active→past_due→suspended | P5 | P0 |
+| FR-13 | Billing | System | subscription_invoices, trial→active→past_due→suspended (plan trả phí); `free_web` 0đ vào thẳng `active`, không invoice/past_due (DD-03, BL-BIL-1) | P5 | P0 |
 | **FR-14** | **Sync engine** | System | canonical store + command/event + **outbox** → projection ra TG/Zalo/web/public; Messenger adapter ở P4.8; idempotent; re-project khi lệch | P4 | P0 |
 | **FR-15** | **Web app (surface)** | P1/P3/P4 | host dashboard (kèo/roster/doanh thu), player view, discovery UI; mọi ghi đi qua canonical backend | P4 | P0 |
 | **FR-16** | **Publish kèo → public projection** | P1 | host set `visibility=public` → đẩy field-whitelist vào `public_sessions` (read model) | P4.3 | P0 |
@@ -107,7 +107,7 @@ graph TB
         ZWH["/webhook/zalo/:token"]
         PWH["/webhook/sepay/:token"]
         WAPI["Web API + SSE (realtime)"]
-        DISC["Discovery API (public, no-RLS, whitelist)"]
+        DISC["Discovery API (public projection, least-privilege readonly)"]
         MW["Tenant-resolve middleware"]
         AUTHZ["Authz (TenantAdmin / person-session)"]
         CMD["Command bus → Services"]
@@ -549,7 +549,7 @@ ACK chỉ xảy ra sau khi raw transaction và durable job đã commit. Duplicat
 | `reconcile` | `match` | on webhook | match bank transaction → payment allocations |
 | `reconcile` | `retry-unmatched` | EVERY_HOUR | thử khớp lại unmatched |
 | `remind` | `send` | due/cron | nhắc unpaid theo tenant |
-| `billing` | `lifecycle` | DAILY | trial→past_due→suspended + nhắc gia hạn |
+| `billing` | `lifecycle` | DAILY | trial→past_due→suspended + nhắc gia hạn (chỉ plan trả phí; bỏ qua `free_web` price=0) |
 | `security` | `webhook-drift` | HOURLY | `getWebhookInfo` Zalo, lệch URL → alert/auto-reset (AUDIT §B2) |
 | `session` | `transition` | EVERY_MIN | auto-close buổi quá giờ + hạ kèo khỏi public khi đóng/quá giờ |
 | `sync` | `dispatch-outbox` | on insert / EVERY_SEC | đẩy `outbox_events` chưa `dispatched_at` → projectors (idempotent) |
@@ -659,7 +659,7 @@ webhook burst (≤5s P99), cron 1k tenant (throttler), join đồng thời (race
 | staging | Postgres managed | pg-boss | Sentry | sandbox |
 | prod | Postgres managed (HA, PITR) | pg-boss | Sentry + metrics (log gắn `tenant_id`) | live |
 
-Monorepo pnpm: `packages/core` (logic thuần + test, gồm `sports`) · `apps/bot` (Express + grammY webhook + cron + projectors) · `apps/web` (host dashboard, player view, discovery UI, API + realtime). **PostgreSQL/domain services là canonical**, không phải UI app. Bỏ volume SQLite. **OD-4:** chọn Neon/Supabase/Railway theo region VN + giá.
+Monorepo pnpm: `packages/core` (logic thuần + test, gồm `sports`) · `apps/bot` (Express + grammY webhook + cron + projectors) · `apps/web` (host dashboard, player view, discovery UI, API + realtime). **PostgreSQL/domain services là canonical**, không phải UI app. Bỏ volume SQLite. **DD-04:** HA+PITR+Singapore đã chốt; provider còn lại Neon vs Supabase (Railway chỉ dev/staging).
 
 ---
 
@@ -725,15 +725,17 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 
 ## 11. Open Questions
 
+> ⭐ **Nguồn canonical:** xem `../standards/decisions.md` (DD-01..DD-12). Bảng dưới giữ để tra nhanh; khi chốt, cập nhật ở `decisions.md`.
+
 | # | Question | Status |
 |---|---|---|
-| 1 | Web stack: Next.js vs Express SSR | ⬜ (BRD OD-10) |
-| 2 | Postgres host: Neon / Supabase / Railway | ⬜ (OD-4) |
+| 1 | Web stack — cùng container ✅; Express SSR vs Next standalone | 🟡 (→ DD-10) |
+| 2 | Postgres host — HA+PITR+Singapore ✅; Neon vs Supabase | 🟡 (→ DD-04) |
 | 3 | `pay_code` prefix hiển thị (`BMC-`) vs code trần | đề xuất: trần trong DB, hiển thị prefix (OD-2) |
-| 4 | Con số trial/past_due/suspended | đề xuất 14/7 ngày; bổ sung vào quyết định pricing/lifecycle (BRD OD-3) |
+| 4 | Con số trial/past_due/suspended | đề xuất 14/7 ngày; pricing đã chốt ở DD-03, còn lifecycle timing |
 | 5 | Zalo Premium (khi owner >3 CLB/tài khoản) + add-on managed | hỏi Zalo |
 | 6 | Thu SĐT verified làm khoá merge | ✅ chốt |
-| 7 | Web realtime: SSE vs WebSocket vs polling | đề xuất SSE (BRD OD-7) |
+| 7 | Web realtime: SSE + fan-out `LISTEN/NOTIFY` | ✅ chốt (→ DD-07) |
 | 8 | Join cross-club mặc định: open vs approval | đề xuất per-kèo, mặc định open (BRD OD-5) |
 | 9 | Độ chi tiết vị trí public: area vs venue | đề xuất area cho tới khi join/duyệt (BRD OD-6) |
 | 10 | Public read model: bảng projection vs materialized view | đề xuất bảng `public_sessions` cập nhật qua projector |

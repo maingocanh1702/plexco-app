@@ -375,7 +375,7 @@ Web URL (plexco.app/session/xxx) mở **native app nếu cài**, fallback web n�
 
 ### Vấn đề Apple/Google 30% cut
 
-Nếu host trả 99k/tháng **qua App Store** → Apple/Google lấy 30% (29.7k) → margin vỡ.
+Nếu host trả paid tier **79k–199k/tháng** qua App Store → Apple/Google lấy khoảng 30% → margin bị ăn mạnh, đặc biệt ở tier 79k.
 
 ### Giải pháp
 

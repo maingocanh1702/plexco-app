@@ -4,7 +4,7 @@
 > **Deployable unit:** `apps/bot/telegram/`
 > **Framework:** grammY (TypeScript)
 > **Phase:** P2 (tenant middleware) → P4.5 (player join)
-> **Version:** v0.1 · 2026-06-19
+> **Version:** v0.2 · 2026-06-20
 > **Refs:** `../features/feature_tenant_routing_authz.md` · `../features/feature_player_telegram.md` · `../features/feature_session_management.md`
 
 ---
@@ -74,6 +74,35 @@ Inbound update
 
 DM sticky context: validate `membership` trước khi dùng. Nếu không còn membership → bỏ context, hiện picker. (AUDIT B1)
 
+### 3.1 Delivery Mode
+
+**MVP dùng webhook**, không long polling:
+
+| Env | Giá trị | Ghi chú |
+|-----|---------|---------|
+| `TELEGRAM_WEBHOOK_SECRET` | random 32+ bytes | Dùng trong path `/webhook/telegram/:secret` |
+| `TELEGRAM_BOT_TOKEN_ENC` | KMS encrypted | Không log raw token |
+| `TELEGRAM_ALLOWED_UPDATES` | `message,callback_query,my_chat_member` | Giảm noise và surface attack |
+
+Local/dev có thể bật long polling qua flag riêng, nhưng production dùng webhook để thống nhất với Zalo/Messenger/payment webhooks.
+
+### 3.2 Callback Data Contract
+
+Callback data phải ngắn, opaque và luôn validate lại từ DB:
+
+```text
+join:<sessionPublicRef>:<nonce>
+leave:<sessionPublicRef>:<nonce>
+ctx:<tenantSlugOrRef>:<nonce>
+```
+
+Rules:
+
+- `sessionPublicRef` không được là raw sequential DB id nếu có nguy cơ enumerate.
+- `nonce` map tới `surface_refs`/`callback_nonces`, TTL ngắn, single-use nếu action nhạy cảm.
+- Callback chỉ là hint; xử lý bắt buộc reload canonical session + tenant + actor từ DB.
+- Duplicate callback/update trả cùng semantic result, không tạo roster duplicate.
+
 ---
 
 ## 4. Projector
@@ -91,6 +120,19 @@ TG Projector nhận outbox events → edit/send messages trong group:
 
 Message ID lưu trong `surface_projections` để edit đúng message.
 
+### 4.1 Message Templates
+
+Các template bắt buộc tách theo privacy level:
+
+| Template | Surface | Được hiển thị | Không được hiển thị |
+|----------|---------|---------------|---------------------|
+| Group roster | TG group | Tên hiển thị, slot, trạng thái tham gia, icon paid tùy club policy | Số tiền nợ từng người, STK, PII |
+| Player reminder | TG DM | Club, session, số tiền của chính player, QR/memo | Người khác nợ gì |
+| Paid confirmation | TG DM | Khoản của chính player đã được ghi nhận | Sao kê/raw transaction |
+| Host admin | TG DM/group admin | Unmatched, payment action summary | Secret/token/raw provider payload |
+
+Default group policy: **không show số tiền nợ cá nhân trong group**; chỉ DM player hoặc host dashboard.
+
 ---
 
 ## 5. Security
@@ -101,9 +143,21 @@ Message ID lưu trong `surface_projections` để edit đúng message.
 - Group commands: validate `chat_id` ∈ `tenants` trước khi xử lý
 - Callback data: validate session/player belong to tenant
 
+## 6. Implementation Readiness
+
+| Hạng mục | Status | Ghi chú |
+|----------|--------|---------|
+| Product/UX spec | ✅ Reviewed | `feature_player_telegram.md` |
+| BE tech spec | ✅ Reviewed | Callback validation + 20 tests |
+| Existing reference | ✅ Strong | Bestminton Telegram bot có production flow |
+| Missing before coding | 🟡 Minor | Final DB table names, exact callback nonce table, message copy |
+| Delivery readiness | 🟡 Medium | Bắt đầu sau P0–P3: tenant/RLS/session/payment foundation |
+
+**Go/no-go:** Telegram là surface bot đầu tiên nên làm. Không cần chờ web UI hoàn thiện, nhưng phải có tenant routing, domain services, outbox và payment ledger tối thiểu.
+
 ---
 
-## 6. Cross-references
+## 7. Cross-references
 
 | Topic | Doc |
 |-------|-----|
@@ -115,4 +169,11 @@ Message ID lưu trong `surface_projections` để edit đúng message.
 
 ---
 
-*Telegram bot surface docs v0.1.*
+## 8. Changelog
+
+| Date | Version | Thay đổi |
+|------|---------|----------|
+| 2026-06-20 | v0.2 | Chốt production webhook, thêm callback contract, privacy templates, readiness checklist |
+| 2026-06-19 | v0.1 | Initial surface docs |
+
+*Telegram bot surface docs v0.2.*

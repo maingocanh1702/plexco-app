@@ -1,0 +1,87 @@
+# Plexco — Fly.io config: 1 image → 3 process group (web · discovery · worker).
+# Region Singapore (gần VN). DB qua private networking (KHÔNG public).
+# ⚠️ P0 TEMPLATE — đặt secret bằng `fly secrets set`, KHÔNG commit giá trị thật.
+# Deploy:   fly deploy -c infra/fly.toml
+# Secrets:  fly secrets set DATABASE_URL=... DATABASE_URL_DIRECT=... TELEGRAM_BOT_TOKEN=... ...
+
+app = "plexco"
+primary_region = "sin"   # Singapore — độ trễ thấp nhất tới VN
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Env CHUNG (không bí mật). Secret set qua `fly secrets set`.
+[env]
+  PORT = "3000"
+  NODE_ENV = "production"
+
+# --- Process groups: entrypoint.sh nhận role làm $1 -------------------------
+[processes]
+  web       = "web"        # dashboard + API + SSE + webhook (TG/Zalo/SePay)
+  discovery = "discovery"  # chỉ GET /discover (no-RLS, whitelist, read replica)
+  worker    = "worker"     # pg-boss scheduler/dispatcher/projector/cron (no ingress)
+
+# --- web: HTTP ingress, autoscale, luôn giữ ≥1 ------------------------------
+[[services]]
+  processes = ["web"]
+  internal_port = 3000
+  protocol = "tcp"
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1   # webhook/SSE cần luôn sẵn sàng
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [services.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+  [[services.http_checks]]
+    path = "/healthz"
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "10s"
+
+# --- discovery: HTTP ingress, scale ngang theo tải đọc ----------------------
+[[services]]
+  processes = ["discovery"]
+  internal_port = 3000
+  protocol = "tcp"
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "requests"
+    soft_limit = 400     # đường đọc public, chịu tải cao hơn
+    hard_limit = 500
+
+  [[services.http_checks]]
+    path = "/healthz"
+    interval = "10s"
+    timeout = "2s"
+
+# worker: KHÔNG có [[services]] → không ingress công khai.
+# pg-boss cần process sống lâu → KHÔNG auto-stop.
+
+# --- VM sizing per process group --------------------------------------------
+[[vm]]
+  processes = ["web", "discovery"]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[[vm]]
+  processes = ["worker"]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -204,6 +204,29 @@ Coverage and review status: [docs/features/README.md](./docs/features/README.md)
 
 ---
 
+## Project Tracking & Automation
+
+> Hệ thống theo dõi tiến độ + automation (hybrid `progress.json` ⇄ Linear). **Người mới đọc [`ONBOARDING-AUTOMATION.md`](./ONBOARDING-AUTOMATION.md) trước.**
+
+**👉 Bắt đầu:** [ONBOARDING-AUTOMATION.md](./ONBOARDING-AUTOMATION.md) — toàn bộ context + cách vận hành (2 nguồn sự thật, 3 chế độ automation, cookbook).
+
+| Nhóm | File | Vai trò |
+|---|---|---|
+| **Onboarding** | [ONBOARDING-AUTOMATION.md](./ONBOARDING-AUTOMATION.md) | Điểm vào của hệ tracking/automation |
+| **Phương pháp** | [EXECUTION-PLAYBOOK.md](./EXECUTION-PLAYBOOK.md) | Cách thi công: nguyên tắc, cadence, 5 quality gate, 2 tuần đầu |
+| **Backlog** | [BACKLOG-P0-P3.md](./BACKLOG-P0-P3.md) | Checklist DoD chi tiết M1–M6 |
+| **Automation** | [AUTOMATION.md](./AUTOMATION.md) | Chi tiết 3 chế độ: on-demand · scheduled · realtime |
+| **Tracker** | [progress.json](./progress.json) | Nguồn sự thật cấu trúc tiến độ; status mirror từ Linear khi realtime bật |
+| **Dashboard** | [plexco-dashboard.html](./plexco-dashboard.html) | Bảng theo dõi self-contained (mở bằng browser) |
+| **Scripts** | `sync-embedded.mjs` · `compare-linear.mjs` · `linear-sync.mjs` · `gen-linear-csv.mjs` | Đồng bộ EMBEDDED · so drift · pull Linear→progress · seed CSV |
+| **CI** | [.github/workflows/linear-sync.yml](./.github/workflows/linear-sync.yml) | Mirror Linear → progress.json (push/webhook/cron) |
+
+**Ownership theo field:** `progress.json` giữ roadmap/gate/invariant/subtask title/khoá; **Linear** [Plexco MVP](https://linear.app/maingocanh1/project/plexco-mvp-5a5336c896c5) giữ status qua issue `[M#]` + sub-issue. Khoá nối = prefix `[M#]`/`linearId`. Trạng thái suy từ hoạt động git, không bấm tay.
+
+**Automation:** ① on-demand (nói Claude `break M8` / `mark M5 done`) · ② scheduled (`plexco-weekly-break`, Thứ 2) · ③ realtime (Linear×GitHub + Action `linear-sync` — kích hoạt khi repo GitHub có ở P0/M1).
+
+---
+
 ## Contribution
 
 1. Đọc [`docs/standards/HANDOFF.md`](./docs/standards/HANDOFF.md) trước khi code

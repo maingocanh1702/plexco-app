@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P5  
 > **Track:** 💳 Host Billing  
-> **Version:** 2.0 · 2026-06-19  
+> **Version:** 2.2 · 2026-06-20
 > **Status:** Reviewed  
 > **Prerequisites:** P2 tenant/authz · P3 durable payment ingestion · P3 notifications  
 > **Tài liệu liên quan:** `../core/BRD.md` FR-9/BR-11 · `../core/PRD.md` FLOW 11 · BRD OD-3 · `BE/feature_billing_lifecycle_tech.md`
@@ -19,6 +19,18 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 - Period extension dựa trên invoice/plan policy — KHÔNG double-extend on duplicate webhook.
 - Grace days/price/tier versioned — KHÔNG retroactive mutation.
 - Suspension gating centralized by action class — safety/ingestion/read-only paths remain.
+- Entitlement channel gate theo plan, không hard-code theo tenant.
+
+### Pricing tiers (DD-03)
+
+| Plan key | Giá / tháng / CLB | Entitlements |
+|---|---:|---|
+| `free_web` | **0đ** | Web app |
+| `telegram` | **79.000đ** | Web app + bot Telegram |
+| `plus_channel` | **159.000đ** | Web app + bot Telegram + **1 kênh chọn thêm**: Zalo hoặc Messenger |
+| `all_channels` | **199.000đ** | Web app + bot Telegram + bot Zalo + bot Messenger |
+
+Messenger entitlement chỉ có hiệu lực khi kênh Messenger GA (P4.8/post-MVP); trước đó plan vẫn giữ quyền mở khoá sau.
 
 ---
 
@@ -28,7 +40,8 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|
-| BIL-UC-1 | System | Tenant creation | Start trial with explicit dates/plan version |
+| BIL-UC-1 | System | Tenant creation (plan trả phí) | Start trial with explicit dates/plan version |
+| BIL-UC-1b | System | Tenant creation (plan `free_web`) | Vào thẳng `active` vô thời hạn — **không** trial, **không** invoice, **không** past_due/suspended vì non-payment |
 | BIL-UC-2 | System | Issue invoice | Invoice code + payment instructions → platform account |
 | BIL-UC-3 | System | Platform billing webhook | Match invoice idempotently → extend period exactly once |
 | BIL-UC-4 | System | Daily lifecycle job | Transition due tenants + send owner notices |
@@ -54,7 +67,11 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 | 9 | Financial | Refund/chargeback | Support policy — manual review |
 | 10 | Data Integrity | Fair-use limit exceeded | Degrade expensive optional services — KHÔNG block payment ingestion/security |
 | 11 | Security | Manual override abuse | Privileged, temporary, audited — auto-expire |
-| 12 | Data Integrity | Trial → active transition with no payment | Require payment — no automatic active without billing event |
+| 12 | Data Integrity | Paid plan trial → active transition with no payment | Require payment — no automatic active without billing event |
+| 12b | Data Integrity | `free_web` (0đ) chạy qua trial→past_due→suspended | ❌ NEVER — free_web vào thẳng `active` vô thời hạn; daily lifecycle job **bỏ qua** plan 0đ ở nhánh past_due; không sinh invoice. Vẫn suspend được vì ToS/abuse (đường khác, không phải non-payment) |
+| 12c | Entitlement | Đổi `free_web` ↔ plan trả phí | Lên paid: tạo subscription period + invoice từ thời điểm đổi (không retroactive). Về free: hạ entitlement cuối kỳ đã trả, set `active` (free), dừng sinh invoice |
+| 13 | Entitlement | Host dùng kênh vượt plan | Block channel setup/use; show upgrade CTA; không ảnh hưởng player CK ingest |
+| 14 | Entitlement | `plus_channel` đổi lựa chọn Zalo ↔ Messenger giữa kỳ | Cho đổi theo policy versioned; audit; không retroactive invoice mutation |
 
 ---
 
@@ -75,7 +92,7 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 
 | Entity | Vai trò | Key constraints |
 |--------|---------|-----------------|
-| `subscriptions` | Plan/tier per tenant | `tenant_id` FK, `plan_version`, `status` enum, `period_start/end` |
+| `subscriptions` | Plan/tier per tenant | `tenant_id` FK, `plan_key`, `plan_version`, `status` enum, `period_start/end` |
 | `invoices` | Billing obligations | `UNIQUE(invoice_code)`, `tenant_id`, `amount`, `status` |
 | `billing_transactions` | Platform payment records | Separate from `webhook_transactions` (player) |
 | `billing_credits` | Overpayment/refund credits | `tenant_id`, `amount`, `reason` |
@@ -84,16 +101,21 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 
 ```mermaid
 stateDiagram-v2
-    [*] --> trialing
+    [*] --> active: Plan free_web (0đ) — vào thẳng, không trial/invoice
+    [*] --> trialing: Plan trả phí (79k/159k/199k)
     trialing --> active: Payment received
     trialing --> past_due: Trial expired, no payment
-    active --> past_due: Period expired, no renewal
+    active --> past_due: Period expired, no renewal (CHỈ plan trả phí)
     past_due --> suspended: Grace period expired
     past_due --> active: Payment received
     suspended --> active: Payment received / manual override
+    active --> suspended: ToS/abuse (mọi plan, kể cả free_web)
     suspended --> cancelled: Owner cancel / admin action
+    active --> cancelled: Owner cancel
     cancelled --> [*]
 ```
+
+> **`free_web` (0đ):** vào thẳng `active` và ở đó vô thời hạn. Daily lifecycle job **bỏ qua plan 0đ** ở nhánh `period expired → past_due` và **không sinh invoice**. Free chỉ rời `active` khi (a) owner đổi lên plan trả phí, (b) owner cancel, hoặc (c) suspend do ToS/abuse — **không bao giờ** vì non-payment. Nhánh `trialing/past_due/suspended-vì-non-payment` chỉ áp dụng cho plan trả phí.
 
 ---
 
@@ -122,6 +144,9 @@ stateDiagram-v2
 - [ ] Reactivation resumes operations/jobs without replay duplication
 - [ ] Owner notices/corrections best-effort and audited
 - [ ] Plan/version/fair-use behavior tests pass
+- [ ] Entitlement gate đúng cho `free_web`, `telegram`, `plus_channel`, `all_channels`
+- [ ] `free_web` ở `active` vô thời hạn — không sinh invoice, không bao giờ past_due/suspended vì non-payment
+- [ ] Paid invoice amount lấy từ immutable plan version, không hard-code
 
 ---
 
@@ -131,12 +156,14 @@ stateDiagram-v2
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| BIL-OQ-1 | BRD OD-3: price/tier/trial/grace values | ⬜ Chưa chốt |
+| BIL-OQ-1 | Pricing tiers (BRD OD-3/DD-03) | ✅ Chốt 4 tier; còn trial/grace timing |
 | BIL-OQ-2 | Cancellation/refund/credit policy + manual-override SLA | ⬜ Chưa chốt |
 
 ### Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-06-20 | v2.2 | Fix: `free_web` (0đ) vào thẳng `active` vô thời hạn — không trial/invoice/past_due/suspended vì non-payment (SM + UC-1b + edge 12b/12c); chỉ suspend free vì ToS/abuse |
+| 2026-06-20 | v2.1 | Chốt pricing tiers DD-03 (free/79k/159k/199k), thêm entitlement gate và plan_key |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, lifecycle state machine, billing screens |

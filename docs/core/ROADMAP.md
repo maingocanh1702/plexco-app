@@ -259,9 +259,9 @@ TG tap-join (validate group/tenant/session) · Zalo join bot-per-club number-rep
 > **Mục tiêu:** thu phí thuê bao host bền vững.
 > **Status:** ⬜ Not Started
 
-`subscription_invoices` (tách khỏi ledger player) · thu qua CK match `invoiceCode` → gia hạn · vòng đời trial→active→past_due→suspended · suspended: chặn lệnh quản trị, **vẫn lưu CK player; kèo public hiện có chỉ sống tới khi đóng/hết giờ** · fair-use LLM/STT.
+`subscription_invoices` (tách khỏi ledger player) · thu qua CK match `invoiceCode` → gia hạn · vòng đời **plan trả phí** trial→active→past_due→suspended · **`free_web` (0đ) vào thẳng `active` vô thời hạn — không trial/invoice, không past_due/suspended vì non-payment** (DD-03, BL-BIL-1) · suspended: chặn lệnh quản trị, **vẫn lưu CK player; kèo public hiện có chỉ sống tới khi đóng/hết giờ** · fair-use LLM/STT.
 
-**🎯 Milestone:** hết trial bị chặn lệnh nhưng CK player vẫn lưu & kèo public vẫn hiện; CK đúng mã tự kích hoạt lại.
+**🎯 Milestone:** (plan trả phí) hết trial bị chặn lệnh nhưng CK player vẫn lưu & kèo public vẫn hiện; CK đúng mã tự kích hoạt lại. `free_web` chạy bình thường không bị chặn vì non-payment.
 
 ### KPI P5
 Trial → trả phí ≥ ngưỡng · MRR tăng, churn thấp.
@@ -313,7 +313,7 @@ graph TD
 
 ## Monetization Alignment
 
-Host trả thuê bao cho bộ tool quản lý + đối soát + đa kênh + chỗ trên marketplace (khởi điểm từ mốc cũ **99k/tháng**, có thể mở tier sau — BRD OD-3).
+Host trả thuê bao theo 4 tier đã chốt ở BRD OD-3/DD-03: **free_web 0đ** (web app), **telegram 79k** (web + Telegram), **plus_channel 159k** (web + Telegram + Zalo hoặc Messenger), **all_channels 199k** (web + Telegram + Zalo + Messenger).
 
 | | Trial | Active | Suspended |
 |---|---|---|---|
@@ -323,7 +323,9 @@ Host trả thuê bao cho bộ tool quản lý + đối soát + đa kênh + chỗ
 | Nối SePay/ApiPay (BYO) · Zalo bot (BYO) | ✅ | ✅ | ✅ / — |
 | LLM/STT (platform trả, trần fair-use) | ✅ | ✅ | — |
 
-> Dòng tương lai (ngoài MVP): player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplace, managed Zalo/Messenger bot, nhiều tier host.
+> **`free_web` (0đ):** luôn ở cột **Active** vô thời hạn — không có cột Trial/Suspended-vì-non-payment (chỉ rơi vào Suspended nếu vi phạm ToS/abuse). Cột Trial/Suspended ở trên chỉ áp dụng cho plan trả phí.
+
+> Dòng tương lai (ngoài MVP): player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplace, managed Zalo/Messenger bot, add-on ngoài 4 tier host hiện tại.
 
 ---
 
@@ -361,7 +363,7 @@ Foundation(RLS+sports+3-tier) → TG-tenant → CK-reconcile → migrate #1 → 
 ## Next Actions (Priority Order)
 
 1. ✅ ~~BRD / PRD / TDD core review~~ — docs v2.1 đã đồng bộ scope/ledger/RLS/phase
-2. 🔴 Chốt OD: pay_code (OD-2), pricing/lifecycle (OD-3), Postgres host (OD-4), join policy (OD-5), vị trí public (OD-6), realtime (OD-7), taxonomy môn (OD-8), web stack (OD-10)
+2. 🔴 Chốt OD còn lại: pay_code (OD-2), lifecycle grace/trial (phần còn lại của OD-3), Postgres host (OD-4), join policy (OD-5), vị trí public (OD-6), taxonomy môn (OD-8), web stack (OD-10)
 3. 🔴 Review/sign-off feature specs của phase sắp build; chuyển acceptance criteria thành issue checklist
 4. 🔴 **Setup monorepo** (pnpm: core/bot/web) + Postgres docker
 5. 🔴 **Lift `core` + `sports`** + test xanh (reference)
@@ -381,6 +383,7 @@ Foundation(RLS+sports+3-tier) → TG-tenant → CK-reconcile → migrate #1 → 
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 20/06/2026 | v2.2 | P5 + Monetization Alignment: làm rõ `free_web` (0đ) vào thẳng active vô thời hạn, không trial/past_due/suspended vì non-payment (DD-03, BL-BIL-1). |
 | 18/06/2026 | v2.1 | Dùng duy nhất canonical phase; thêm durable webhook + payment ledger/allocation; canonical store = PostgreSQL/domain model; Messenger tách post-MVP. |
 | 18/06/2026 | v2.0 | **Reposition** → platform thể thao đa môn 2 phía. Re-sequence 7 phase (thêm **Phase 3 Web+Sync+Marketplace** = P4+P4.3, tách Identity thành Phase 2, Player-side thành Phase 4). Thêm track 🌐 Web+Sync & 🔎 Marketplace; module 8–13 mới; KPI/risk/North Star theo marketplace + sync + public layer. |
 | 18/06/2026 | v1.1 | Đổi tên → **Plexco**; bảng Phase Mapping; link Messenger doc. |

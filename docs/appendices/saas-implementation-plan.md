@@ -19,9 +19,9 @@
 | Đa môn | **`sport` là chiều dữ liệu** | `sessions.sport_id`; discovery lọc theo môn. Không kèm luật chơi từng môn. |
 | Hiển thị dữ liệu | **3 tầng** | public discovery (cross-tenant, whitelist) · tenant-private (RLS) · person-self. |
 | Database | **Postgres + Drizzle (single DB, `tenant_id` + RLS + public read model)** | Tối ưu maintain/scale >1k tenants. Bỏ `node:sqlite`. |
-| Billing | **1 plan phẳng 99k VND/tháng** | Trả cho bot + platform. Không tier. Có trial. |
+| Billing | **4 tier theo DD-03: 0đ / 79k / 159k / 199k VND/tháng** | Free web app; paid tiers mở Telegram/Zalo/Messenger theo entitlement. Có trial cho paid plan. |
 | Phí provider | **Tenant tự mang & tự trả SePay/ApiPay** | Phí giao dịch là việc giữa tenant ↔ provider; mình không trung gian tiền. |
-| LLM/STT | **Platform trả, có trần fair-use** | Chi phí nằm trong 99k → phải cap để giữ margin & chặn lạm dụng. |
+| LLM/STT | **Platform trả, có trần fair-use** | Chi phí nằm trong margin từng tier → phải cap để giữ margin & chặn lạm dụng. |
 
 **Vì sao Postgres chứ không SQLite-per-tenant ở mức >1k club:** một club = nhiều webhook ghi đồng thời (CK về bất cứ lúc nào) + cron nhắc nợ + lệnh bot. SQLite khoá ghi toàn-file (kể cả WAL chỉ 1 writer); 1k+ file `.db` thì backup/migrate/observability thành ác mộng vận hành. Postgres cho ghi đồng thời thật, 1 schema để migrate, và **Row-Level Security** làm lưới an toàn chống rò rỉ dữ liệu tài chính giữa các club. Domain hiện tại chỉ ~vài triệu dòng ở mức 1k club — Postgres dư sức.
 
@@ -146,12 +146,13 @@ interface BankAccount {
   active: boolean;
 }
 
-// Subscription của tenant (HỌ trả 99k/tháng cho mình) — tách hẳn khỏi "payment"
-// của player. MVP chỉ 1 plan phẳng; giữ field `plan` để mở tier sau nếu cần.
+// Subscription của tenant (HỌ trả phí host cho mình) — tách hẳn khỏi "payment"
+// của player. Pricing chốt theo DD-03; plan version immutable.
 interface Subscription {
   tenantId: string;
-  plan: "standard";                 // 99k/tháng — chỉ 1 plan ở MVP
-  priceVnd: number;                 // 99000
+  plan: "free_web" | "telegram" | "plus_channel" | "all_channels";
+  priceVnd: number;                 // 0 | 79000 | 159000 | 199000 theo plan_version
+  selectedExtraChannel?: "zalo" | "messenger";
   status: "trialing" | "active" | "past_due" | "suspended" | "cancelled";
   trialEndsAt: string | null;
   currentPeriodEnd: string;         // CK gia hạn đẩy mốc này +1 tháng
@@ -437,15 +438,25 @@ bot.use(async (ctx, next) => {
 
 ---
 
-## 6. Billing — 99k/tháng (VN bank/SePay)
+## 6. Billing — host subscription tiers (VN bank/SePay)
 
-**1 plan phẳng 99k VND/tháng**, trả cho bot + platform. Tenant **tự mang tài khoản SePay/ApiPay** và tự chịu phí provider — mình không cầm tiền của club, chỉ cầm 99k/tháng của chính tenant.
+Pricing host chốt theo **DD-03**:
 
-Thu 99k tái dùng đúng hạ tầng webhook, nhưng trỏ vào **tài khoản nhận của MÌNH** (không phải của club):
+| Plan | Giá / tháng / CLB | Bao gồm |
+|---|---:|---|
+| `free_web` | 0đ | Web app |
+| `telegram` | 79.000đ | Web app + bot Telegram |
+| `plus_channel` | 159.000đ | Web app + bot Telegram + Zalo hoặc Messenger |
+| `all_channels` | 199.000đ | Web app + bot Telegram + bot Zalo + bot Messenger |
 
-- **Thu phí:** tenant CK 99k vào TK của mình, nội dung gồm mã định danh (vd `BMC-<tenantSlug>`) → webhook match → đẩy `currentPeriodEnd` +1 tháng, set `status=active`. Giống y logic match của bot, chỉ khác bảng đích (`subscription_invoices`).
-- **Vòng đời:** tạo tenant → `trialing` 14 ngày → hết hạn không gia hạn → `past_due` (nhắc qua Telegram + email) → sau X ngày `suspended`. Khi `suspended`, middleware **chặn lệnh** nhưng **vẫn nhận & lưu webhook CK của player** để club không mất giao dịch khi quay lại.
-- **MVP có thể manual:** giai đoạn đầu mình tự xác nhận CK 99k → bật `active` bằng tay; tự động hoá khâu match nội dung sau. Không chặn launch.
+Tenant **tự mang tài khoản SePay/ApiPay** và tự chịu phí provider — mình không cầm tiền của club, chỉ cầm phí subscription của chính tenant. Messenger unlock theo P4.8/post-MVP khi kênh GA.
+
+Thu subscription tái dùng đúng hạ tầng webhook, nhưng trỏ vào **tài khoản nhận của MÌNH** (không phải của club):
+
+- **Thu phí:** tenant CK đúng số tiền invoice theo plan vào TK của mình, nội dung gồm mã định danh/invoiceCode (vd `BMC-<tenantSlug>`) → webhook match → đẩy `currentPeriodEnd` +1 tháng, set `status=active`. Giống y logic match của bot, chỉ khác bảng đích (`subscription_invoices`).
+- **Vòng đời (plan trả phí):** tạo tenant → `trialing` 14 ngày → hết hạn không gia hạn → `past_due` (nhắc qua Telegram + email) → sau X ngày `suspended`. Khi `suspended`, middleware **chặn lệnh** nhưng **vẫn nhận & lưu webhook CK của player** để club không mất giao dịch khi quay lại.
+- **`free_web` (0đ):** tạo tenant → thẳng `active` vô thời hạn — **không** trial/invoice, **không** `past_due`/`suspended` vì non-payment; daily job bỏ qua plan 0đ (chỉ suspend vì ToS/abuse). Ref: DD-03, BL-BIL-1.
+- **MVP có thể manual:** giai đoạn đầu mình tự xác nhận CK đúng invoice → bật `active` bằng tay; tự động hoá khâu match nội dung sau. Không chặn launch.
 
 ### Schema `subscription_invoices` (bank transfer dễ lệch → phải chặt)
 
@@ -457,7 +468,7 @@ interface SubscriptionInvoice {
   tenantId: string;
   invoiceCode: string;        // UNIQUE — mã nhúng vào nội dung CK, vd "BMC-a1b2-202606"
   periodYm: string;           // kỳ áp dụng, "2026-06"
-  amountDue: number;          // 99000
+  amountDue: number;          // lấy từ plan_version: 0 | 79000 | 159000 | 199000
   amountPaid: number;         // tổng đã khớp (có thể từ nhiều CK)
   status: "open" | "partial" | "paid" | "overpaid" | "void";
   providerTxnIds: string[];   // external_id đã áp vào invoice này — idempotency
@@ -477,12 +488,12 @@ Quy tắc xử lý:
 
 ### Fair-use LLM/STT (platform trả)
 
-Vì LLM/STT nằm trong 99k, `UsageCounter` đóng vai **trần chống lạm dụng**, không phải gate tier:
+Vì LLM/STT nằm trong margin từng tier, `UsageCounter` đóng vai **trần chống lạm dụng**, không phải gate tier:
 
 - Trần đề xuất/tháng/tenant: **OCR ~200 ảnh**, **STT ~500 voice** (thừa sức cho 1 club chơi 2–4 buổi/tuần). Vượt trần → degrade nhẹ: tắt OCR/STT, nhắc dùng `/add` thủ công + gõ lệnh, **không** chặn nghiệp vụ.
 - Theo dõi tổng usage để soi margin; nếu một provider rẻ hơn (Gemini Flash cho vision, Groq Whisper cho STT) thì set làm mặc định platform.
 
-> **Sanity-check margin:** 99k ≈ $3.8/tháng. Một club bình thường ~16–32 lượt OCR + ít STT/tháng; vision Flash + Whisper-turbo chỉ tốn **vài cent/tenant/tháng** → margin lành. Trần fair-use chỉ để chặn outlier (ai đó spam 10k ảnh), không phải để vắt tiền user.
+> **Sanity-check margin:** paid tiers 79k–199k/tháng vẫn đủ cho usage bình thường (~16–32 lượt OCR + ít STT/tháng); vision Flash + Whisper-turbo chỉ tốn **vài cent/tenant/tháng**. Trần fair-use chủ yếu để chặn outlier (ai đó spam 10k ảnh), không phải để vắt tiền user.
 
 ---
 
@@ -550,9 +561,9 @@ Next.js web **canonical**: đăng nhập → tạo tenant (+ chọn môn) → wi
 - **Marketplace (P4.3):** publish kèo (`visibility=public`) → projector đẩy field-whitelist `public_sessions`; **Discovery API** (`/discover`, cross-tenant, no-RLS, whitelist, rate-limit); **join cross-club** (open → membership guest; approval → `join_requests`).
 **DoD:** host tạo kèo trên web → hiện ở group TG **và** marketplace ≤ vài giây (sync 2 chiều); player lạ tìm kèo theo môn/khu vực và **join được**; test bất biến public (không lộ tiền/PII) xanh; không đụng env file.
 
-### Phase 5 — Billing 99k (≈2 tuần)
+### Phase 5 — Billing tiers (≈2 tuần)
 `subscription_invoices` đầy đủ (invoiceCode unique, amount due/paid, status, idempotency theo `providerTxnIds`, overpay/underpay/late); webhook gia hạn match theo `invoiceCode`; vòng đời trial → past_due → suspended (suspended vẫn lưu webhook player); trần fair-use `UsageCounter` cho LLM/STT + degrade nhẹ; nhắc gia hạn qua Telegram/email. (Có thể manual-activate trước khi tự động hoá match.)
-**DoD:** tenant hết trial bị chặn lệnh nhưng CK player vẫn được lưu; CK 99k đúng `invoiceCode` tự kích hoạt lại; trả thiếu→`partial`, trả dư→credit, webhook trùng không cộng 2 lần; nội dung sai code → vào unmatched chứ không tự đoán; vượt trần OCR → fallback `/add` chứ không vỡ.
+**DoD:** tenant hết trial bị chặn lệnh nhưng CK player vẫn được lưu; CK đúng `invoiceCode` + đúng/đủ amount theo plan tự kích hoạt lại; trả thiếu→`partial`, trả dư→credit, webhook trùng không cộng 2 lần; nội dung sai code → vào unmatched chứ không tự đoán; vượt trần OCR → fallback `/add` chứ không vỡ.
 
 ### Phase 6 — Hardening & scale (≈1–1.5 tuần)
 Pen-test cô lập (thử mọi endpoint với tenant sai); load test mô phỏng >1k tenant + burst webhook; observability (log có `tenant_id`, metrics, error tracking); rate-limit webhook; ToS/Privacy cho dữ liệu tài chính; runbook backup/restore.
@@ -571,7 +582,7 @@ Pen-test cô lập (thử mọi endpoint với tenant sai); load test mô phỏn
 | **Sync lệch trạng thái kênh ↔ web** | Cao | Canonical store + outbox + re-projection; idempotent `commandId`/`event.id`; metrics sync-lag |
 | **Webhook route nhầm club** | Cao | Token-in-URL + verify `accountNumber` + luôn lưu raw payload trước |
 | Telegram rate-limit khi cron 1k club | Trung bình | Throttler + rải giờ (jitter) + hàng đợi pg-boss |
-| Chi phí LLM/STT vượt 99k margin | Trung bình | Platform trả → trần fair-use `UsageCounter` + degrade về `/add` thủ công; chọn provider rẻ (Flash/Whisper-turbo) làm mặc định |
+| Chi phí LLM/STT vượt margin plan | Trung bình | Platform trả → trần fair-use `UsageCounter` + degrade về `/add` thủ công; chọn provider rẻ (Flash/Whisper-turbo) làm mặc định |
 | Refactor làm hỏng club hiện tại | **Thấp** | SaaS là repo riêng → bot cũ KHÔNG bị đụng; migrate từ bản copy; cutover chỉ khi SaaS đã ổn |
 | Lẫn "payment club" vs "subscription" | Trung bình | Tách bảng + đặt tên rõ (`payments` vs `subscription_invoices`) |
 
@@ -598,7 +609,7 @@ Cutover: chạy migrate trên copy → verify đối chiếu số dòng & vài s
 
 ## 11. Trạng thái quyết định
 
-**Đã chốt:** ✅ 1 plan phẳng **99k VND/tháng** (bot + platform) · ✅ tenant **tự mang & tự trả** phí SePay/ApiPay · ✅ **LLM/STT platform trả** + trần fair-use.
+**Đã chốt:** ✅ 4 tier host **0đ / 79k / 159k / 199k VND/tháng** (DD-03) · ✅ tenant **tự mang & tự trả** phí SePay/ApiPay · ✅ **LLM/STT platform trả** + trần fair-use.
 
 **Còn chốt tiếp (không chặn Phase 0–1):**
 

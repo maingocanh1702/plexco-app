@@ -1,0 +1,99 @@
+# 📋 BACKLOG — P0 → P3 (issue-ready checklist)
+
+> Mỗi `##` = 1 module (epic). Mỗi `- [ ]` = 1 issue/checkbox copy thẳng sang GitHub Issues.
+> Mỗi issue đóng được khi: code đúng AC + test xanh (gồm gate liên quan) + không phá gate phase trước.
+> Ký hiệu gate: **[ISO]** isolation · **[PUB]** public · **[LED]** ledger · **[SYNC]** sync · **[WRK]** worker/RLS.
+> **[PUB] có 2 mức:** *whitelist skeleton gate* (từ P0 — mọi cột `public_sessions` ∈ whitelist) và *full discovery-leak gate* (từ P4.3 — discovery/join không lộ tiền/PII/roster; chống scrape). Backlog P0–P3 chỉ bật **mức skeleton**.
+
+---
+
+## EPIC M1 — Monorepo + lift `core` (+ sports)  · P0 · 🏢
+
+- [ ] Khởi tạo monorepo pnpm: `packages/core`, `apps/bot`, `apps/web`; tsconfig + lint + CI skeleton (GitHub Actions chạy `pnpm test`).
+- [ ] Dựng Postgres qua docker-compose cho dev; script `db:up` / `db:reset`.
+- [ ] Lift logic thuần sang `packages/core`: `matching`, `payments-logic`, `dates`, `format`, `i18n`, **`sports`** — **không** phụ thuộc DB.
+- [ ] Port test cũ của bot single-club vào `core`; **toàn bộ xanh lại** làm reference (matching name/amount/ngày, FIFO 2-buổi-đồng-giá).
+- [ ] CI: job `core` chạy unit test, fail PR nếu đỏ.
+
+**DoD:** `pnpm -F core test` xanh; monorepo build sạch; CI bật.
+
+---
+
+## EPIC M2 — Postgres + Drizzle + RLS + public skeleton · P0 · 🏢
+
+- [ ] Drizzle schema + migration `01_tenants_rls`: bảng `tenants`, role SQL `app LOGIN NOSUPERUSER NOBYPASSRLS`.
+- [ ] Mỗi bảng tenant-scoped: `ENABLE` + `FORCE ROW LEVEL SECURITY` + policy `USING (tenant_id = current_setting('app.tenant_id', true)::uuid)` (missing → NULL → 0 dòng, fail-closed).
+- [ ] `withTenant(tenantId, fn)`: mở transaction, `SET LOCAL app.tenant_id`, hết tx tự xoá context.
+- [ ] **[ISO]** Test bất biến cô lập (CI bắt buộc): tenant A/B — repo B không thấy session/charge của A; query quên `SET LOCAL` → 0 dòng.
+- [ ] Bảng `public_sessions` skeleton (cross-tenant, **không RLS**) với đúng field whitelist: `session_id, tenant_id(join-routing), sport_key, starts_at, ends_at, area, skill_level, price, slots_open, host_display_name, club_display_name, join_policy`.
+- [ ] **[PUB]** Test bất biến public (CI bắt buộc): mọi cột `public_sessions` ∈ whitelist; không có cột tiền/PII/roster.
+
+**DoD:** `drizzle push` sạch; RLS bật; **[ISO]** + **[PUB]** xanh trong CI. → góp vào **Milestone MS1**.
+
+---
+
+## EPIC M3 — Tenant schema đa môn + repo choke-point · P0–P1 · 🏢
+
+- [ ] Migration `02_sessions_players_charges`: mọi bảng có `tenant_id`; `sports` (key/name/active); `sessions.{sport_id, starts_at, ends_at, timezone, price, slots_max, area, venue, skill_level, visibility(private|public), join_policy(open|approval), status}`.
+- [ ] UNIQUE quan trọng: `players(tenant_id,session_id,membership_id)`, `charges(tenant_id,session_id,player_id)`, `(tenant_id,pay_code)`.
+- [ ] `tenantRepo(tenantId)` choke-point: **nơi DUY NHẤT** chèn `tenant_id`; port toàn bộ API `db.ts` cũ vào, mỗi hàm khép kín tenantId; handler **không** tự viết `WHERE tenant_id`.
+- [ ] Edge #30: chỉ chọn môn từ `sports` active; không tự do nhập.
+- [ ] Migration `03_settings`: `settings(tenant_id,key)` + RLS.
+- [ ] **[ISO]** mở rộng test cô lập cho mọi bảng mới.
+
+**DoD:** schema đa môn đủ; repo choke-point thay mọi truy cập trực tiếp; **[ISO]** xanh. → đóng **Milestone MS1**, bật `P0-P1 = done`.
+
+---
+
+## EPIC M4 — Telegram tenant middleware · P2 · 🏢
+
+- [ ] Chuyển Telegram long-poll → webhook `/telegram/<secret>` (secret path).
+- [ ] Middleware resolve tenant **từ kênh**: `chat_id → telegram_links(group|admin) → tenant`; gắn `ctx.tenant` + `ctx.repo = tenantRepo(tenant.id)`. (NFR-S3 — không suy từ nội dung)
+- [ ] Deep-link: `/start link_<code>` → bind `TenantAdmin` + `TelegramLink`; `/start club_<slug>` → `PlayerChatContext` (KHÔNG join).
+- [ ] Authz 2 lớp: `ADMIN_CMD` → `isTenantAdmin(tenant.id, ctx.from.id)` theo `from.id`, **không** theo chat (Edge #16).
+- [ ] Lệnh host đa-tenant: `/newsession` (đa môn), `/announce`, `/config`, `/cash`; cron đa-tenant + throttler (jitter).
+- [ ] Fail-closed: chat chưa nối tenant → `TENANT_NOT_LINKED` (404), không lộ.
+- [ ] Test routing: 2 token/chat khác nhau → 2 club; lệnh admin từ non-admin → `NOT_TENANT_ADMIN`.
+
+**DoD:** 1 bot phục vụ ≥2 group khác tenant, lệnh không lẫn; authz theo `from.id` xanh.
+
+---
+
+## EPIC M5 — Durable webhook + ledger/allocation + /unmatched · P3 · 💰 (killer flow)
+
+- [ ] Migration `06_bank_accounts_transactions_allocations`: `bank_accounts`, `bank_transactions`, `charges`, `payment_allocations` + RLS.
+- [ ] Endpoint `/webhook/sepay/:token`: `findBankAccountByToken` + `timingSafe(secret)` + verify `account_number` (Edge #14 → 401/409, vẫn lưu raw, không log secret).
+- [ ] **Durable ingest:** trong 1 DB transaction — INSERT `bank_transactions` idempotent `UNIQUE(tenant,provider,external_id)` `ON CONFLICT DO NOTHING` + enqueue reconcile job (pg-boss) → **commit rồi mới ACK** provider (Edge #5; thiếu id → synthetic `sha256(provider|acct|amount|date|content)` Edge #6).
+- [ ] Matching engine tenant-scoped: ưu tiên `pay_code` (nullable, **chưa phụ thuộc** — TDD §10.5) → fallback tên + số tiền + ngày.
+- [ ] `payment_allocations`: hỗ trợ partial / multi-person / overpay / reversal; FIFO khi 2 buổi đồng giá cùng ngày (Edge #1); tổng allocation ∈ `[0, bank_tx.amount]` và ∈ `[0, charge.amount_due]`; charge chỉ `paid` khi phủ đủ.
+- [ ] Ledger invariants ở DB/transaction: bank allocation dương + bắt buộc `bank_transaction_id`; cash/waiver bắt buộc actor; reversal âm + ref allocation gốc; không sửa/xoá allocation đã audit.
+- [ ] `/unmatched`: CK không khớp/còn dư → danh sách; owner gán tay → `markPaid`; retry cron `EVERY_HOUR`.
+- [ ] **[LED]** Test bất biến ledger (CI): 1 CK chia nhiều charge/người; partial không paid; over-allocation chặn (`ALLOCATION_EXCEEDS_FUNDS` 409); duplicate/retry/reversal giữ đúng tổng.
+- [ ] **[WRK]** Test worker/RLS: job nhận `tenant_id` → `SET LOCAL` → gọi cùng service; claim `FOR UPDATE SKIP LOCKED`; privileged call có audit.
+
+**DoD:** webhook → markPaid ≤ 5s P99; **[LED]** + **[WRK]** xanh; webhook trùng → idempotent 1 lần. KPI phase: % auto-match name-based ≥ 70%.
+
+---
+
+## EPIC M6 — Migrate bot cũ → tenant #1 (dogfood) · P3 · 🏢
+
+- [ ] Script đọc `data/bot.db` (SQLite) → tạo tenant **"Bestminton"** + Account owner + `TelegramLink` + `BankAccount`, gắn **sport = cầu lông**.
+- [ ] Copy `sessions/players/members/aliases` gắn `tenant_id`; mỗi player-session → 1 `charge`.
+- [ ] Payment lịch sử: có giao dịch gốc → import thành `bank_transaction` + `payment_allocation`; thiếu bằng chứng → synthetic `legacy:<source-id>` + `source=manual` (giữ provenance).
+- [ ] **Đối chiếu trước cutover:** tổng charge / allocated / unallocated + số roster khớp giữa SQLite và Postgres.
+- [ ] Cutover: đổi webhook SePay sang Plexco → tắt bot cũ (bot cũ **đóng băng** làm reference).
+- [ ] Founder bắt đầu dogfood thật: 1 buổi/tuần chạy trên Plexco.
+
+**DoD:** đóng **Milestone MS2** — ≥2 CLB trên 1 bot, đối soát/nhắc không lẫn; tenant #1 vận hành thật; số đối chiếu khớp 100%.
+
+---
+
+## Gate matrix (cái gì phải xanh ở mỗi mốc)
+
+| Mốc | [ISO] | [PUB] | [LED] | [WRK] | [SYNC] |
+|---|:--:|:--:|:--:|:--:|:--:|
+| MS1 (P0–P1) | ✅ | ✅ skeleton | — | — | — |
+| MS2 (P2–P3) | ✅ | ✅ skeleton | ✅ | ✅ | — |
+
+> **[PUB] full leak gate** và **[SYNC] gate** bật ở **P4 / P4.3** (cùng Web+Sync+Marketplace), không thuộc backlog này.
+> Sau M6, đi tiếp **P3.5 Identity (M7)** rồi **P4 Web+Sync (M8/M9)**. Backlog P3.5+ tách file riêng khi tới gần (giữ WIP thấp, không decompose quá xa).

@@ -1,0 +1,78 @@
+# Plexco — dev compose: Postgres + web + worker (+ discovery optional).
+# Port theo Port Registry (README): web 3000 · postgres 5432 · drizzle studio 4983.
+# ⚠️ P0 TEMPLATE — chạy được sau khi scaffold apps/*. Dùng cho DEV, không phải prod.
+# Up:   docker compose -f infra/docker-compose.yml up -d
+# Chỉ Postgres (như README §Khởi tạo): docker compose -f infra/docker-compose.yml up -d postgres
+
+name: plexco
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: plexco
+      POSTGRES_PASSWORD: plexco_dev
+      POSTGRES_DB: plexco
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plexco -d plexco"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build:
+      context: ..              # repo root (cần packages/ + apps/)
+      dockerfile: infra/Dockerfile
+    environment:
+      PROCESS_ROLE: web
+      NODE_ENV: development
+      PORT: "3000"
+      # dev: pooled & direct trỏ cùng 1 Postgres (chưa cần PgBouncer)
+      DATABASE_URL: postgres://plexco:plexco_dev@postgres:5432/plexco
+      DATABASE_URL_DIRECT: postgres://plexco:plexco_dev@postgres:5432/plexco
+    env_file:
+      - ../.env            # secret dev (TELEGRAM_BOT_TOKEN, SEPAY_WEBHOOK_SECRET, ...)
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    environment:
+      PROCESS_ROLE: worker
+      NODE_ENV: development
+      # worker cần DIRECT connection (pg-boss LISTEN/NOTIFY + advisory lock)
+      DATABASE_URL_DIRECT: postgres://plexco:plexco_dev@postgres:5432/plexco
+    env_file:
+      - ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Optional: chạy riêng discovery để test đường đọc public (profile "full")
+  discovery:
+    profiles: ["full"]
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    environment:
+      PROCESS_ROLE: discovery
+      NODE_ENV: development
+      PORT: "3000"
+      DATABASE_URL: postgres://plexco:plexco_dev@postgres:5432/plexco
+    ports:
+      - "3001:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
