@@ -181,7 +181,14 @@ case "$cmd" in
       done <<< "$DEP_CHECKS"
     fi
     # (b) collision check: scope file OR invariant intersects another active feature
-    cf="$(comm -12 <(printf '%s\n' "$SCOPE" | sort -u) <(active_others scope))"
+    # COLLISION-EXEMPT files: shared append-only test-chain manifests that never carry feature logic.
+    #   package.json — every slice appends its NEW unique test invocation to the "test" script. Two parallel slices
+    #   touch the SAME "test" line, but the conflict is a trivial 1-line append that resolves on the sequential
+    #   merge/rebase workflow (first merges, second rebases + re-appends). Keep it in manifest scope (so the agent
+    #   may edit it WITHOUT SCOPE_DRIFT) but exempt it here so it does not force-serialize otherwise-disjoint slices.
+    #   Add more names only if equally trivially-mergeable.
+    EXEMPT='^(package\.json)$'
+    cf="$(comm -12 <(printf '%s\n' "$SCOPE" | grep -vE "$EXEMPT" | sort -u) <(active_others scope | grep -vE "$EXEMPT"))"
     ci="$(comm -12 <(printf '%s\n' "$INVARIANTS" | sort -u) <(active_others invariants))"
     if [ -n "$cf$ci" ]; then
       echo "HALT SCOPE_COLLISION — '$FEATURE' intersects another active feature:" >&2
