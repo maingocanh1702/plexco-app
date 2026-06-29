@@ -17,7 +17,11 @@ set -uo pipefail
 # REPO: ưu tiên env; else dò repo-root từ vị trí script (script nằm ở <repo>/scripts/ap-watch.sh); else cwd.
 REPO="${AP_WATCH_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)}"
 REPO="${REPO:-$(pwd)}"
+REPO_TAG="$(basename "$REPO")"   # prefix [repo] vào mọi alert → phân biệt khi nhiều repo chung 1 Telegram chat
 WT_ROOT="$REPO/.autopilot/worktrees"
+WT_ROOT2="$REPO/.codex-worktrees"    # clawbot & luồng codex dùng layout này (thường KHÔNG có INFLIGHT →
+                                     # dựa claude_active để theo dõi; chỉ có START/idle/crash, không READY/HALT/frc)
+wt_exists() { [ -d "$WT_ROOT/$1" ] || [ -d "$WT_ROOT2/$1" ]; }   # worktree <name> còn ở 1 trong 2 root?
 INFLIGHT="$REPO/.autopilot/INFLIGHT.md"
 INTERVAL="${1:-30}"
 STALL_MIN="${2:-8}"
@@ -41,14 +45,15 @@ AP_WATCH_TG_CHAT="${AP_WATCH_TG_CHAT:-}"
 now() { date +%s; }
 
 notify() { # $1=title $2=msg $3=sound
-  /usr/bin/osascript -e "display notification \"${2//\"/\'}\" with title \"${1//\"/\'}\" sound name \"${3:-Glass}\"" 2>/dev/null
+  local ttl="${REPO_TAG:+[$REPO_TAG] }$1"   # prefix [repo] để phân biệt khi nhiều repo chung 1 chat
+  /usr/bin/osascript -e "display notification \"${2//\"/\'}\" with title \"${ttl//\"/\'}\" sound name \"${3:-Glass}\"" 2>/dev/null
   printf '\a'
-  echo "[$(date '+%H:%M:%S')] $1 — $2"
+  echo "[$(date '+%H:%M:%S')] $ttl — $2"
   # Telegram push (nếu đã cấu hình ~/.ap-watch.env)
   if [ -n "$AP_WATCH_TG_TOKEN" ] && [ -n "$AP_WATCH_TG_CHAT" ]; then
     curl -s --max-time 10 "https://api.telegram.org/bot${AP_WATCH_TG_TOKEN}/sendMessage" \
       --data-urlencode "chat_id=${AP_WATCH_TG_CHAT}" \
-      --data-urlencode "text=$1
+      --data-urlencode "text=$ttl
 $2" >/dev/null 2>&1 || echo "  (telegram send failed)"
   fi
 }
@@ -109,7 +114,7 @@ claude_active() { # $1 = worktree dir — gắn worktree qua cwd HOẶC file đa
 # "đang chạy nhưng không attribute được vào worktree" (đừng khẳng định crash).
 any_claude_alive() { pgrep -f 'claude' >/dev/null 2>&1; }
 
-echo "ap-watch: theo dõi $WT_ROOT · poll ${INTERVAL}s · stall ${STALL_MIN}m · state $ST · Ctrl-C để dừng"
+echo "ap-watch: theo dõi $WT_ROOT + $WT_ROOT2 · poll ${INTERVAL}s · stall ${STALL_MIN}m · state $ST · Ctrl-C để dừng"
 while true; do
   shopt -s nullglob
 
@@ -126,12 +131,19 @@ while true; do
   for seen in "$ST"/*.seen; do
     [ -e "$seen" ] || continue
     nm="$(basename "$seen" .seen)"
-    if [ ! -d "$WT_ROOT/$nm" ]; then
+    if ! wt_exists "$nm"; then
       el="$(since_start "$nm")"   # tính TRƯỚC khi rm xoá .started
+      # ROOT-CAUSE FIX (STALE-after-DONE): worktree đã mất = DONE. Tự release reservation khỏi INFLIGHT
+      # NGAY ở đây (chạy trước check #5 trong cùng poll) để KHÔNG còn gì stale → khỏi bắn RESERVATION STALE.
+      # Idempotent: no-op nếu đã cleanup. Gộp "DONE + cleanup" làm một thay vì để khoá treo.
+      if [ -x "$REPO/scripts/autopilot-scope-gate" ]; then
+        "$REPO/scripts/autopilot-scope-gate" cleanup --feature "$nm" >/dev/null 2>&1
+      fi
+      rm -f "$ST/_res_$nm.stale" 2>/dev/null   # clear marker stale-alert cũ (nếu có) cho feature này
       if [ -f "$ST/$nm.alert.ready" ]; then
-        notify "✅ AUTOPILOT DONE${el}" "$nm — worktree đã gỡ (merged/cleanup hoặc đóng)" "Glass"
+        notify "✅ AUTOPILOT DONE${el}" "$nm — worktree đã gỡ + reservation đã release (merged/cleanup hoặc đóng)" "Glass"
       else
-        notify "✅ AUTOPILOT DONE${el}" "$nm — worktree đã gỡ (merged/cleanup). LƯU Ý: chưa kịp bắn READY (ready→merge nhanh, hoặc watchdog restart sau khi worktree đã gỡ)" "Glass"
+        notify "✅ AUTOPILOT DONE${el}" "$nm — worktree đã gỡ + reservation đã release (merged/cleanup). LƯU Ý: chưa kịp bắn READY (ready→merge nhanh, hoặc watchdog restart sau khi worktree đã gỡ)" "Glass"
       fi
       rm -f "$ST/$nm".*   # xoá mọi marker của nó (seen/fp/ts/alert/started) → không báo lại
     fi
@@ -151,7 +163,7 @@ while true; do
   while read -r s; do
     [ -n "$s" ] || continue
     found=0
-    for w in "$WT_ROOT"/*/; do
+    for w in "$WT_ROOT"/*/ "$WT_ROOT2"/*/; do
       [ -d "$w" ] || continue
       { [ -d "$w/.autopilot/state/$s" ] || [ "$(basename "$w")" = "$s" ]; } && { found=1; break; }
     done
@@ -159,7 +171,7 @@ while true; do
     alert_once "_res_$s" stale "⚠️ RESERVATION STALE" "$s: active trong INFLIGHT nhưng KHÔNG còn worktree — chạy: scripts/autopilot-scope-gate cleanup --feature $s" "Basso"
   done < <(awk '/^```/{f=!f;next} f{next} /^## feature:/{c=$3} /^status:/{if($2=="in-flight"||$2=="ready")print c}' "$INFLIGHT" 2>/dev/null)
 
-  for wt in "$WT_ROOT"/*/; do
+  for wt in "$WT_ROOT"/*/ "$WT_ROOT2"/*/; do
     [ -d "$wt" ] || continue
     dir="${wt%/}"; name="$(basename "$dir")"
     sdir="$dir/.autopilot/state"
