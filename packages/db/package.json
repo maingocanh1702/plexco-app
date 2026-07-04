@@ -1,0 +1,27 @@
+{
+  "name": "@plexco/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./schema.ts",
+      "default": "./schema.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.38.4",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.30.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
+  }
+}
