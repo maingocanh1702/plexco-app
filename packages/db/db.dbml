@@ -1,0 +1,651 @@
+// Plexco DB — auto-generated DBML. Paste into https://dbdiagram.io
+
+Table sports {
+  id uuid [pk]
+  key text [unique, not null]
+  name text [not null]
+  active boolean [not null]
+  created_at timestamptz [not null]
+}
+
+Table persons {
+  id uuid [pk]
+  display_name text
+  phone_enc bytea
+  phone_lookup_hash text
+  phone_verified_at timestamptz
+  status text [not null]
+  merged_into_person_id uuid
+  created_at timestamptz [not null]
+}
+
+Table channel_identities {
+  id uuid [pk]
+  person_id uuid [not null]
+  platform text [not null]
+  platform_user_id_enc bytea [not null]
+  platform_user_lookup_hash text [not null]
+  username_enc bytea
+  status text [not null]
+  created_at timestamptz [not null]
+}
+
+Table link_codes {
+  id uuid [pk]
+  source_person_id uuid [not null]
+  source_channel_identity_id uuid [not null]
+  code_lookup_hash text [unique, not null]
+  code_hash bytea [not null]
+  salt bytea [not null]
+  action text [not null]
+  expires_at timestamptz [not null]
+  consumed_at timestamptz
+  failed_attempts integer [not null]
+  created_at timestamptz [not null]
+}
+
+Table merge_audit {
+  id uuid [pk]
+  source_person_id uuid [not null]
+  target_person_id uuid [not null]
+  canonical_person_id uuid [not null]
+  method text [not null]
+  actor_type text [not null]
+  actor_id uuid
+  reason_code text
+  before_snapshot_enc bytea [not null]
+  after_snapshot_enc bytea [not null]
+  created_at timestamptz [not null]
+}
+
+Table merge_tombstones {
+  old_person_id uuid [pk]
+  canonical_person_id uuid [not null]
+  merge_audit_id uuid [not null]
+  created_at timestamptz [not null]
+}
+
+Table accounts {
+  id uuid [pk]
+  person_id uuid
+  created_at timestamptz [not null]
+}
+
+Table web_sessions {
+  id uuid [pk]
+  account_id uuid [not null]
+  token_hash text [unique, not null]
+  csrf_secret text [not null]
+  expires_at timestamptz [not null]
+  rotated_from uuid
+  revoked_at timestamptz
+  created_at timestamptz [not null]
+}
+
+Table account_identities {
+  id uuid [pk]
+  account_id uuid [not null]
+  platform text [not null]
+  platform_user_hash text [not null]
+  verified_at timestamptz [not null]
+}
+
+Table magic_links {
+  id uuid [pk]
+  hash text [unique, not null]
+  person_id uuid [not null]
+  channel text [not null]
+  session_id uuid
+  expires_at timestamptz [not null]
+  used_at timestamptz
+  created_at timestamptz [not null]
+}
+
+Table tenants {
+  id uuid [pk]
+  name text [not null]
+  slug text [unique, not null]
+  status text [not null]
+  locale text [not null]
+  timezone text [not null]
+  created_at timestamptz [not null]
+}
+
+Table memberships {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  person_id uuid [not null]
+  display_name text
+  pay_code text
+  status text [not null]
+  merged_into_membership_id uuid
+  created_at timestamptz [not null]
+}
+
+Table aliases {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  membership_id uuid [not null]
+  alias_norm text [not null]
+  created_at timestamptz [not null]
+}
+
+Table channel_reachability {
+  person_id uuid [not null]
+  tenant_id uuid [not null]
+  platform text [not null]
+  can_dm boolean [not null]
+  last_inbound_at timestamptz
+  window_expires_at timestamptz
+  otn_token_enc bytea
+}
+
+Table settings {
+  tenant_id uuid [not null]
+  key text [not null]
+  value jsonb [not null]
+  updated_at timestamptz [not null]
+}
+
+Table sessions {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  sport_id uuid [not null]
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  timezone text [not null]
+  venue_name text
+  venue_address text
+  area text
+  skill_level text
+  price_amount integer [not null]
+  slots_max integer
+  visibility text [not null]
+  join_policy text [not null]
+  status text [not null]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table session_recurrence_rules {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  rrule text [not null]
+  timezone text [not null]
+  version integer [not null]
+  last_generated_at timestamptz
+}
+
+Table session_occurrences {
+  id uuid [pk]
+  recurrence_rule_id uuid [not null]
+  session_id uuid [not null]
+  local_occurrence_key text [not null]
+}
+
+Table session_surface_refs {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  session_id uuid [not null]
+  platform text [not null]
+  target text [not null]
+  external_ref text
+}
+
+Table players {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  session_id uuid [not null]
+  membership_id uuid [not null]
+  status text [not null]
+  joined_at timestamptz [not null]
+  last_reminded_at timestamptz
+}
+
+Table telegram_links {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  chat_id bigint [not null]
+  kind text [not null]
+  active boolean [not null]
+  linked_at timestamptz [not null]
+  linked_by uuid
+}
+
+Table tenant_admins {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  platform text [not null]
+  platform_user_lookup_hash text [not null]
+  role text [not null]
+  active boolean [not null]
+  created_at timestamptz [not null]
+}
+
+Table tenant_link_codes {
+  id uuid [pk]
+  code_lookup_hash text [unique, not null]
+  code_hash text [not null]
+  tenant_id uuid [not null]
+  intended_role text [not null]
+  expires_at timestamptz [not null]
+  consumed_at timestamptz
+  revoked_at timestamptz
+  attempts integer [not null]
+}
+
+Table player_chat_context {
+  person_id uuid [not null]
+  platform text [not null]
+  tenant_id uuid [not null]
+  updated_at timestamptz [not null]
+}
+
+Table routing_audit {
+  id uuid [pk]
+  action text [not null]
+  actor_id uuid
+  tenant_id uuid
+  detail jsonb
+  created_at timestamptz [not null]
+}
+
+Table bank_accounts {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  provider text [not null]
+  account_number_enc bytea [not null]
+  account_fingerprint text [not null]
+  webhook_token text [unique, not null]
+  webhook_secret_enc bytea [not null]
+  active boolean [not null]
+  pending_account_number_enc bytea
+  pending_account_holder text
+  pending_change_at timestamptz
+  pending_expires_at timestamptz
+  pending_change_by uuid
+  provider_connection_id uuid
+  provider_webhook_id text
+  provider_bank_ref text
+  auto_registered boolean [not null]
+  webhook_status text [not null]
+  last_register_at timestamptz
+  created_at timestamptz [not null]
+}
+
+Table charges {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  session_id uuid [not null]
+  player_id uuid [not null]
+  membership_id uuid
+  amount_due integer [not null]
+  amount_allocated integer [not null]
+  status text [not null]
+  created_at timestamptz [not null]
+}
+
+Table bank_transactions {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  bank_account_id uuid [not null]
+  provider text [not null]
+  external_id text [not null]
+  amount integer [not null]
+  unallocated_amount integer [not null]
+  occurred_at timestamptz [not null]
+  content_enc bytea
+  raw_payload_enc bytea [not null]
+  reconcile_status text [not null]
+  received_at timestamptz [not null]
+}
+
+Table payment_allocations {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  bank_transaction_id uuid
+  charge_id uuid [not null]
+  amount integer [not null]
+  source text [not null]
+  reverses_allocation_id uuid
+  created_by uuid
+  reason_code text
+  created_at timestamptz [not null]
+}
+
+Table provider_connections {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  provider text [not null]
+  auth_mode text [not null]
+  access_token_enc bytea
+  refresh_token_enc bytea
+  scope text
+  token_expires_at timestamptz
+  api_access_key_enc bytea
+  api_secret_key_enc bytea
+  status text [not null]
+  last_error_code text
+  created_at timestamptz [not null]
+}
+
+Table oauth_transactions {
+  state text [pk]
+  tenant_id uuid [not null]
+  provider text [not null]
+  code_verifier_enc bytea [not null]
+  redirect_uri text [not null]
+  created_by uuid [not null]
+  created_at timestamptz [not null]
+  expires_at timestamptz [not null]
+}
+
+Table zalo_bots {
+  id uuid [pk]
+  tenant_id uuid [unique, not null]
+  bot_token_enc text [not null]
+  webhook_token text [not null]
+  secret text
+  status text [not null]
+  auto_registered boolean [not null]
+  rotation_pending boolean [not null]
+  last_setwebhook_at timestamptz
+  verified_at timestamptz
+  created_at timestamptz [not null]
+}
+
+Table zalo_reply_contexts {
+  id uuid [pk]
+  person_id uuid [not null]
+  tenant_id uuid [not null]
+  bot_id uuid [not null]
+  context_type text [not null]
+  item_ids jsonb [not null]
+  version integer [not null]
+  expires_at timestamptz [not null]
+  consumed_at timestamptz
+  created_at timestamptz [not null]
+}
+
+Table messenger_pages {
+  id uuid [pk]
+  tenant_id uuid [unique, not null]
+  page_id text [unique, not null]
+  page_token_enc bytea [not null]
+  app_secret_enc bytea
+  status text [not null]
+  verified_at timestamptz
+  created_at timestamptz [not null]
+}
+
+Table processed_commands {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  command_id text [not null]
+  command_type text [not null]
+  result_hash text
+  result_ref jsonb
+  created_at timestamptz [not null]
+}
+
+Table outbox_events {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  aggregate_type text [not null]
+  aggregate_id uuid [not null]
+  sequence integer [not null]
+  type text [not null]
+  schema_version integer [not null]
+  payload jsonb [not null]
+  created_at timestamptz [not null]
+  claimed_at timestamptz
+}
+
+Table projector_deliveries {
+  event_id uuid [not null]
+  projector text [not null]
+  status text [not null]
+  attempts integer [not null]
+  next_attempt_at timestamptz
+  delivered_at timestamptz
+  provider_ref text
+  error_code text
+}
+
+Table surface_refs {
+  id uuid [pk]
+  aggregate_id uuid [not null]
+  platform text [not null]
+  target text [not null]
+  external_ref text
+}
+
+Table public_sessions {
+  id uuid [pk]
+  session_id uuid [not null]
+  tenant_id uuid [not null]
+  sport_key text [not null]
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  area text [not null]
+  skill_level text
+  price_amount integer [not null]
+  slots_open integer [not null]
+  club_display_name text [not null]
+  host_display_name text
+  join_policy text [not null]
+  projected_at timestamptz [not null]
+  expires_at timestamptz [not null]
+}
+
+Table join_requests {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  session_id uuid [not null]
+  person_id uuid [not null]
+  status text [not null]
+  expires_at timestamptz [not null]
+  decided_by uuid
+  decided_at timestamptz
+  command_id text
+  created_at timestamptz [not null]
+}
+
+Table plans {
+  id uuid [pk]
+  plan_key text [not null]
+  version integer [not null]
+  price integer [not null]
+  currency text [not null]
+  interval text [not null]
+  limits jsonb [not null]
+  entitlements jsonb [not null]
+  active boolean [not null]
+  created_at timestamptz [not null]
+}
+
+Table subscriptions {
+  tenant_id uuid [pk]
+  plan_key text [not null]
+  plan_version integer [not null]
+  selected_extra_channel text
+  status text [not null]
+  trial_end timestamptz
+  period_start timestamptz [not null]
+  period_end timestamptz [not null]
+  grace_end timestamptz
+  version integer [not null]
+  updated_at timestamptz [not null]
+}
+
+Table subscription_invoices {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  invoice_code text [unique, not null]
+  amount_due integer [not null]
+  amount_paid integer [not null]
+  status text [not null]
+  due_at timestamptz [not null]
+  period_key text [not null]
+  created_at timestamptz [not null]
+}
+
+Table billing_transactions {
+  id uuid [pk]
+  provider text [not null]
+  external_id text [not null]
+  amount integer [not null]
+  content_enc text
+  status text [not null]
+  created_at timestamptz [not null]
+}
+
+Table billing_allocations {
+  id uuid [pk]
+  transaction_id uuid [not null]
+  invoice_id uuid [not null]
+  amount integer [not null]
+  created_at timestamptz [not null]
+}
+
+Table billing_overrides {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  actor_id uuid [not null]
+  reason text [not null]
+  expires_at timestamptz [not null]
+  created_at timestamptz [not null]
+}
+
+Table notification_policies {
+  id uuid [pk]
+  tenant_id uuid [unique, not null]
+  thresholds jsonb [not null]
+  quiet_hours_start time
+  quiet_hours_end time
+  max_count integer [not null]
+  cooldown_minutes integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table notification_intents {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  type text [not null]
+  aggregate_id uuid [not null]
+  state_version integer [not null]
+  person_id uuid [not null]
+  status text [not null]
+  intent_key text [unique, not null]
+  created_at timestamptz [not null]
+}
+
+Table notification_deliveries {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  intent_id uuid [not null]
+  platform text [not null]
+  target_ref text
+  status text [not null]
+  attempts integer [not null]
+  next_attempt_at timestamptz
+  provider_code text
+  delivery_key text [unique, not null]
+  created_at timestamptz [not null]
+}
+
+Table onboarding_runs {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  status text [not null]
+  created_at timestamptz [not null]
+}
+
+Table onboarding_steps {
+  id uuid [pk]
+  run_id uuid [not null]
+  step text [not null]
+  status text [not null]
+  idempotency_key text
+  error_code text
+  completed_at timestamptz
+}
+
+// ---- Relationships ----
+Ref: persons.merged_into_person_id > persons.id
+Ref: channel_identities.person_id > persons.id
+Ref: link_codes.source_person_id > persons.id
+Ref: link_codes.source_channel_identity_id > channel_identities.id
+Ref: merge_tombstones.canonical_person_id > persons.id
+Ref: merge_tombstones.merge_audit_id > merge_audit.id
+Ref: accounts.person_id > persons.id
+Ref: web_sessions.account_id > accounts.id
+Ref: web_sessions.rotated_from > web_sessions.id
+Ref: account_identities.account_id > accounts.id
+Ref: magic_links.person_id > persons.id
+Ref: magic_links.session_id > web_sessions.id
+Ref: memberships.tenant_id > tenants.id
+Ref: memberships.person_id > persons.id
+Ref: memberships.merged_into_membership_id > memberships.id
+Ref: aliases.tenant_id > tenants.id
+Ref: aliases.membership_id > memberships.id
+Ref: channel_reachability.person_id > persons.id
+Ref: channel_reachability.tenant_id > tenants.id
+Ref: settings.tenant_id > tenants.id
+Ref: sessions.tenant_id > tenants.id
+Ref: sessions.sport_id > sports.id
+Ref: session_recurrence_rules.tenant_id > tenants.id
+Ref: session_occurrences.recurrence_rule_id > session_recurrence_rules.id
+Ref: session_occurrences.session_id > sessions.id
+Ref: session_surface_refs.tenant_id > tenants.id
+Ref: session_surface_refs.session_id > sessions.id
+Ref: players.tenant_id > tenants.id
+Ref: players.session_id > sessions.id
+Ref: players.membership_id > memberships.id
+Ref: telegram_links.tenant_id > tenants.id
+Ref: telegram_links.linked_by > persons.id
+Ref: tenant_admins.tenant_id > tenants.id
+Ref: tenant_link_codes.tenant_id > tenants.id
+Ref: player_chat_context.person_id > persons.id
+Ref: player_chat_context.tenant_id > tenants.id
+Ref: bank_accounts.tenant_id > tenants.id
+Ref: charges.tenant_id > tenants.id
+Ref: charges.session_id > sessions.id
+Ref: charges.player_id > players.id
+Ref: charges.membership_id > memberships.id
+Ref: bank_transactions.tenant_id > tenants.id
+Ref: bank_transactions.bank_account_id > bank_accounts.id
+Ref: payment_allocations.tenant_id > tenants.id
+Ref: payment_allocations.bank_transaction_id > bank_transactions.id
+Ref: payment_allocations.charge_id > charges.id
+Ref: payment_allocations.reverses_allocation_id > payment_allocations.id
+Ref: provider_connections.tenant_id > tenants.id
+Ref: oauth_transactions.tenant_id > tenants.id
+Ref: zalo_bots.tenant_id > tenants.id
+Ref: zalo_reply_contexts.person_id > persons.id
+Ref: zalo_reply_contexts.tenant_id > tenants.id
+Ref: zalo_reply_contexts.bot_id > zalo_bots.id
+Ref: messenger_pages.tenant_id > tenants.id
+Ref: bank_accounts.provider_connection_id > provider_connections.id
+Ref: processed_commands.tenant_id > tenants.id
+Ref: outbox_events.tenant_id > tenants.id
+Ref: projector_deliveries.event_id > outbox_events.id
+Ref: join_requests.tenant_id > tenants.id
+Ref: join_requests.session_id > sessions.id
+Ref: join_requests.person_id > persons.id
+Ref: join_requests.decided_by > persons.id
+Ref: subscriptions.tenant_id > tenants.id
+Ref: subscription_invoices.tenant_id > tenants.id
+Ref: billing_allocations.transaction_id > billing_transactions.id
+Ref: billing_allocations.invoice_id > subscription_invoices.id
+Ref: billing_overrides.tenant_id > tenants.id
+Ref: notification_policies.tenant_id > tenants.id
+Ref: notification_intents.tenant_id > tenants.id
+Ref: notification_intents.person_id > persons.id
+Ref: notification_deliveries.tenant_id > tenants.id
+Ref: notification_deliveries.intent_id > notification_intents.id
+Ref: onboarding_runs.tenant_id > tenants.id
+Ref: onboarding_steps.run_id > onboarding_runs.id
+// public_sessions & surface_refs intentionally have no FK (read-model / aggregate key)

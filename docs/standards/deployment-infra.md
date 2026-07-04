@@ -25,7 +25,7 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 | **SLO** | Availability ≥ 99.5%/tháng · reconcile p99 ≤ 5s · sync lag p95 ≤ 3s, p99 ≤ 10s | security-operations-tech §3 |
 | **Tải mục tiêu** | ≥ 1k tenant đồng thời · webhook burst 100/s · 10k discovery search đồng thời · join contention 100 player/1 slot → đúng 1 winner | security-operations-tech §5 |
 | **Region** | Người dùng + provider (SePay/Telegram/Zalo) ở **VN** → ưu tiên độ trễ thấp | BRD §Bên thứ ba |
-| **Chi phí** | Thuê bao host theo tier **0đ / 79k / 159k / 199k mỗi CLB/tháng** → margin nhạy, infra phải rẻ ở giai đoạn đầu | BRD §9.1 · DD-03 |
+| **Chi phí** | Thuê bao host **0đ (free) / 250k (host_pro) mỗi CLB/tháng** (DD-29 thay DD-03) → margin nhạy, infra phải rẻ ở giai đoạn đầu | BRD §9.1 · DD-29 |
 | **Vận hành** | Team nhỏ → tối ưu **dễ maintain**, ít moving parts | mục tiêu user |
 | **Bản chất hệ thống** | Hệ thống **tiền + multi-tenant RLS** → bắt buộc HA, PITR, least-privilege | TDD §10 · AUDIT |
 
@@ -251,7 +251,7 @@ Thêm những thứ §5/§6 yêu cầu để an toàn tiền/đa-tenant ở tả
 
 Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill** định kỳ, **pen-test** thuê ngoài, PDPA/GDPR + audit-retention tooling (§7, §8, §11). Phần lớn là **chi phí CI/người/định kỳ**, ước lượng riêng theo đợt — **không** gộp vào hosting hằng tháng ở A/B.
 
-> Doanh thu phụ thuộc plan mix (0đ / 79k / 159k / 199k mỗi CLB/tháng). Tier B vẫn là baseline khi có tiền thật chạy qua; chi phí scale ~tuyến tính theo primary DB size + số replica. Điểm cần nhớ: **money-safe = Tier B**, không phải Tier A.
+> Doanh thu phụ thuộc plan mix (0đ free / 250k host_pro mỗi CLB/tháng — DD-29). Tier B vẫn là baseline khi có tiền thật chạy qua; chi phí scale ~tuyến tính theo primary DB size + số replica. Điểm cần nhớ: **money-safe = Tier B**, không phải Tier A.
 
 ---
 

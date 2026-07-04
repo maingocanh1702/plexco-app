@@ -37,6 +37,7 @@ Core docs remain authoritative by topic. Feature specs add build/test detail but
 | Phase | Feature | Current source | Required before implementation |
 |---|---|---|---|
 | P4.8 | Messenger channel | `../appendices/messenger-channel-design.md` | Convert to Product + BE feature specs and refresh against Meta policy/App Review |
+| P7 (đề xuất) | Club AI Assistant + Knowledge Base | `feature_club_assistant.md` v0.5 + `BE/feature_club_assistant_tech.md` v0.5 (🟡 Draft) · proposal `../proposals/club-ai-bot-knowledge-base.md` | Chốt DD-16..DD-23, DD-28 (đặc biệt DD-18 provider + privacy/ToS); migration additive `memberships` UNIQUE(id,tenant_id); bật `vector` extension; object storage cho file thô |
 
 ## Review gates
 
@@ -52,3 +53,4 @@ Core docs remain authoritative by topic. Feature specs add build/test detail but
 |---|---|---|
 | 2026-06-18 | v1.1 | Initial coverage index with 15/15 features |
 | 2026-06-19 | v2.0 | Standardized all specs to Vietnamese numbered format, updated versions and status |
+| 2026-07-05 | v2.1 | Thêm Post-MVP: Club AI Assistant + Knowledge Base (🟡 Draft, P7 đề xuất) — FE/BE specs + proposal, phụ thuộc DD-16..DD-23 |

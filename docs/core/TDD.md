@@ -62,7 +62,7 @@ Matchmaking xếp cặp tự động · venue/booking nhà thi đấu · scoring
 | FR-10 | Reminder | System | manual (P2) → auto cron group-mention/DM theo Reachability (P3) | P2/P3 | P0 |
 | FR-11 | notifyPlayersPaid | System | xác nhận đa-kênh sau mọi markPaid + sync web | P4.5 | P0 |
 | FR-12 | Player view (person-self) | P3/P4 | clubs/kèo/nợ của tôi, person-authorized; web + bot | P4.6 | P1 |
-| FR-13 | Billing | System | subscription_invoices, trial→active→past_due→suspended (plan trả phí); `free_web` 0đ vào thẳng `active`, không invoice/past_due (DD-03, BL-BIL-1) | P5 | P0 |
+| FR-13 | Billing | System | subscription_invoices, trial→active→past_due→suspended (plan trả phí `host_pro`); `free` 0đ vào thẳng `active`, không invoice/past_due; entitlement = capability flags config-driven (DD-29 thay DD-03, BL-BIL-1) | P5 | P0 |
 | **FR-14** | **Sync engine** | System | canonical store + command/event + **outbox** → projection ra TG/Zalo/web/public; Messenger adapter ở P4.8; idempotent; re-project khi lệch | P4 | P0 |
 | **FR-15** | **Web app (surface)** | P1/P3/P4 | host dashboard (kèo/roster/doanh thu), player view, discovery UI; mọi ghi đi qua canonical backend | P4 | P0 |
 | **FR-16** | **Publish kèo → public projection** | P1 | host set `visibility=public` → đẩy field-whitelist vào `public_sessions` (read model) | P4.3 | P0 |
@@ -549,7 +549,7 @@ ACK chỉ xảy ra sau khi raw transaction và durable job đã commit. Duplicat
 | `reconcile` | `match` | on webhook | match bank transaction → payment allocations |
 | `reconcile` | `retry-unmatched` | EVERY_HOUR | thử khớp lại unmatched |
 | `remind` | `send` | due/cron | nhắc unpaid theo tenant |
-| `billing` | `lifecycle` | DAILY | trial→past_due→suspended + nhắc gia hạn (chỉ plan trả phí; bỏ qua `free_web` price=0) |
+| `billing` | `lifecycle` | DAILY | trial→past_due→suspended + nhắc gia hạn (chỉ plan trả phí; bỏ qua `free` price=0) |
 | `security` | `webhook-drift` | HOURLY | `getWebhookInfo` Zalo, lệch URL → alert/auto-reset (AUDIT §B2) |
 | `session` | `transition` | EVERY_MIN | auto-close buổi quá giờ + hạ kèo khỏi public khi đóng/quá giờ |
 | `sync` | `dispatch-outbox` | on insert / EVERY_SEC | đẩy `outbox_events` chưa `dispatched_at` → projectors (idempotent) |

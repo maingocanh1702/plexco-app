@@ -19,18 +19,16 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 - Period extension dựa trên invoice/plan policy — KHÔNG double-extend on duplicate webhook.
 - Grace days/price/tier versioned — KHÔNG retroactive mutation.
 - Suspension gating centralized by action class — safety/ingestion/read-only paths remain.
-- Entitlement channel gate theo plan, không hard-code theo tenant.
+- Entitlement gate theo **capability flags** (config-driven), không hard-code theo tenant/plan_key.
 
-### Pricing tiers (DD-03)
+### Pricing tiers (DD-29 — thay DD-03)
 
-| Plan key | Giá / tháng / CLB | Entitlements |
+| Plan key | Giá / tháng / CLB | Gồm |
 |---|---:|---|
-| `free_web` | **0đ** | Web app |
-| `telegram` | **79.000đ** | Web app + bot Telegram |
-| `plus_channel` | **159.000đ** | Web app + bot Telegram + **1 kênh chọn thêm**: Zalo hoặc Messenger |
-| `all_channels` | **199.000đ** | Web app + bot Telegram + bot Zalo + bot Messenger |
+| `free` | **0đ** | Web app + **kết nối 3 bot** (Telegram/Zalo/Messenger*) + quản kèo/roster + **đối soát CK cơ bản (cập nhật thủ công)** + nhắc thủ công |
+| `host_pro` | **250.000đ** | Toàn bộ free + **đối soát CK tự động & báo thu phí** + **nhắc nợ tự động** + **Trợ lý AI + KB** + CRM dashboard |
 
-Messenger entitlement chỉ có hiệu lực khi kênh Messenger GA (P4.8/post-MVP); trước đó plan vẫn giữ quyền mở khoá sau.
+*Messenger chỉ hiệu lực khi kênh GA (DD-09/P4.8). Danh sách cờ tính năng chi tiết ở **Capability registry** (`BE/feature_billing_lifecycle_tech.md §4b`) — free/pro **config-driven** (đổi bằng `plans.entitlements`, không sửa code).
 
 ---
 
@@ -41,7 +39,7 @@ Messenger entitlement chỉ có hiệu lực khi kênh Messenger GA (P4.8/post-M
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|
 | BIL-UC-1 | System | Tenant creation (plan trả phí) | Start trial with explicit dates/plan version |
-| BIL-UC-1b | System | Tenant creation (plan `free_web`) | Vào thẳng `active` vô thời hạn — **không** trial, **không** invoice, **không** past_due/suspended vì non-payment |
+| BIL-UC-1b | System | Tenant creation (plan `free`) | Vào thẳng `active` vô thời hạn — **không** trial, **không** invoice, **không** past_due/suspended vì non-payment |
 | BIL-UC-2 | System | Issue invoice | Invoice code + payment instructions → platform account |
 | BIL-UC-3 | System | Platform billing webhook | Match invoice idempotently → extend period exactly once |
 | BIL-UC-4 | System | Daily lifecycle job | Transition due tenants + send owner notices |
@@ -68,10 +66,10 @@ Messenger entitlement chỉ có hiệu lực khi kênh Messenger GA (P4.8/post-M
 | 10 | Data Integrity | Fair-use limit exceeded | Degrade expensive optional services — KHÔNG block payment ingestion/security |
 | 11 | Security | Manual override abuse | Privileged, temporary, audited — auto-expire |
 | 12 | Data Integrity | Paid plan trial → active transition with no payment | Require payment — no automatic active without billing event |
-| 12b | Data Integrity | `free_web` (0đ) chạy qua trial→past_due→suspended | ❌ NEVER — free_web vào thẳng `active` vô thời hạn; daily lifecycle job **bỏ qua** plan 0đ ở nhánh past_due; không sinh invoice. Vẫn suspend được vì ToS/abuse (đường khác, không phải non-payment) |
-| 12c | Entitlement | Đổi `free_web` ↔ plan trả phí | Lên paid: tạo subscription period + invoice từ thời điểm đổi (không retroactive). Về free: hạ entitlement cuối kỳ đã trả, set `active` (free), dừng sinh invoice |
+| 12b | Data Integrity | `free` (0đ) chạy qua trial→past_due→suspended | ❌ NEVER — free vào thẳng `active` vô thời hạn; daily lifecycle job **bỏ qua** plan 0đ ở nhánh past_due; không sinh invoice. Vẫn suspend được vì ToS/abuse (đường khác, không phải non-payment) |
+| 12c | Entitlement | Đổi `free` ↔ plan trả phí | Lên paid: tạo subscription period + invoice từ thời điểm đổi (không retroactive). Về free: hạ entitlement cuối kỳ đã trả, set `active` (free), dừng sinh invoice |
 | 13 | Entitlement | Host dùng kênh vượt plan | Block channel setup/use; show upgrade CTA; không ảnh hưởng player CK ingest |
-| 14 | Entitlement | `plus_channel` đổi lựa chọn Zalo ↔ Messenger giữa kỳ | Cho đổi theo policy versioned; audit; không retroactive invoice mutation |
+| 14 | Entitlement | Đổi capability free↔pro (config `entitlements`) | Áp theo policy versioned; audit; không retroactive invoice mutation |
 
 ---
 
@@ -101,21 +99,21 @@ Messenger entitlement chỉ có hiệu lực khi kênh Messenger GA (P4.8/post-M
 
 ```mermaid
 stateDiagram-v2
-    [*] --> active: Plan free_web (0đ) — vào thẳng, không trial/invoice
-    [*] --> trialing: Plan trả phí (79k/159k/199k)
+    [*] --> active: Plan free (0đ) — vào thẳng, không trial/invoice
+    [*] --> trialing: Plan trả phí (host_pro 250k)
     trialing --> active: Payment received
     trialing --> past_due: Trial expired, no payment
     active --> past_due: Period expired, no renewal (CHỈ plan trả phí)
     past_due --> suspended: Grace period expired
     past_due --> active: Payment received
     suspended --> active: Payment received / manual override
-    active --> suspended: ToS/abuse (mọi plan, kể cả free_web)
+    active --> suspended: ToS/abuse (mọi plan, kể cả free)
     suspended --> cancelled: Owner cancel / admin action
     active --> cancelled: Owner cancel
     cancelled --> [*]
 ```
 
-> **`free_web` (0đ):** vào thẳng `active` và ở đó vô thời hạn. Daily lifecycle job **bỏ qua plan 0đ** ở nhánh `period expired → past_due` và **không sinh invoice**. Free chỉ rời `active` khi (a) owner đổi lên plan trả phí, (b) owner cancel, hoặc (c) suspend do ToS/abuse — **không bao giờ** vì non-payment. Nhánh `trialing/past_due/suspended-vì-non-payment` chỉ áp dụng cho plan trả phí.
+> **`free` (0đ):** vào thẳng `active` và ở đó vô thời hạn. Daily lifecycle job **bỏ qua plan 0đ** ở nhánh `period expired → past_due` và **không sinh invoice**. Free chỉ rời `active` khi (a) owner đổi lên plan trả phí, (b) owner cancel, hoặc (c) suspend do ToS/abuse — **không bao giờ** vì non-payment. Nhánh `trialing/past_due/suspended-vì-non-payment` chỉ áp dụng cho plan trả phí.
 
 ---
 
@@ -144,8 +142,8 @@ stateDiagram-v2
 - [ ] Reactivation resumes operations/jobs without replay duplication
 - [ ] Owner notices/corrections best-effort and audited
 - [ ] Plan/version/fair-use behavior tests pass
-- [ ] Entitlement gate đúng cho `free_web`, `telegram`, `plus_channel`, `all_channels`
-- [ ] `free_web` ở `active` vô thời hạn — không sinh invoice, không bao giờ past_due/suspended vì non-payment
+- [ ] Entitlement gate đúng theo capability flags (free vs host_pro) — config-driven
+- [ ] `free` ở `active` vô thời hạn — không sinh invoice, không bao giờ past_due/suspended vì non-payment
 - [ ] Paid invoice amount lấy từ immutable plan version, không hard-code
 
 ---
@@ -163,7 +161,8 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
-| 2026-06-20 | v2.2 | Fix: `free_web` (0đ) vào thẳng `active` vô thời hạn — không trial/invoice/past_due/suspended vì non-payment (SM + UC-1b + edge 12b/12c); chỉ suspend free vì ToS/abuse |
+| 2026-07-05 | v2.3 | **DD-29 pricing pivot:** bảng tier → `free` (0đ, web+3 bot+reconcile thủ công) / `host_pro` (250k, +auto reconcile/notify +nhắc nợ tự động +AI+CRM). Entitlement gate theo **capability flags config-driven** (registry ở BE §4b). Đổi edge #14, checklist, SM. Rename plan_key cũ `free_web`→`free`. |
+| 2026-06-20 | v2.2 | Fix: `free` (0đ) vào thẳng `active` vô thời hạn — không trial/invoice/past_due/suspended vì non-payment (SM + UC-1b + edge 12b/12c); chỉ suspend free vì ToS/abuse |
 | 2026-06-20 | v2.1 | Chốt pricing tiers DD-03 (free/79k/159k/199k), thêm entitlement gate và plan_key |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, lifecycle state machine, billing screens |

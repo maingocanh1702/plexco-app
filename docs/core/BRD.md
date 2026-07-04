@@ -186,7 +186,7 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 - **FR-8.1** Web + bot: liệt kê **CLB, kèo sắp tới, nợ/trạng thái** của chính person; **chỉ dữ liệu của họ**.
 
 ### MODULE 9 — Billing (host)
-- **FR-9.1** Subscription host (plan trả phí): trial → active → past_due → suspended. **`free_web` (0đ) vào thẳng `active` vô thời hạn — không trial/invoice, không past_due/suspended vì non-payment** (chỉ suspend vì ToS/abuse). Ref: DD-03, BL-BIL-1.
+- **FR-9.1** Subscription host (plan trả phí `host_pro`): trial → active → past_due → suspended. **`free` (0đ) vào thẳng `active` vô thời hạn — không trial/invoice, không past_due/suspended vì non-payment** (chỉ suspend vì ToS/abuse). Ref: DD-29 (thay DD-03), BL-BIL-1.
 - **FR-9.2** Thu qua CK vào tài khoản platform, khớp `invoiceCode`; idempotent.
 - **FR-9.3** Suspended: chặn lệnh quản trị nhưng vẫn nhận & lưu CK player; kèo đã public chỉ tiếp tục hiển thị tới lúc đóng/hết giờ, không được tạo mới hoặc gia hạn.
 
@@ -236,12 +236,10 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 
 | Plan | Giá / tháng / CLB | Bao gồm |
 |---|---:|---|
-| `free_web` | **0đ** | Web app |
-| `telegram` | **79.000đ** | Web app + bot Telegram |
-| `plus_channel` | **159.000đ** | Web app + bot Telegram + **1 kênh chọn thêm**: Zalo hoặc Messenger |
-| `all_channels` | **199.000đ** | Web app + bot Telegram + bot Zalo + bot Messenger |
+| `free` | **0đ** | Web app + **kết nối 3 bot** (TG/Zalo/Messenger*) + quản kèo/roster + **đối soát CK cơ bản (cập nhật thủ công)** + nhắc thủ công |
+| `host_pro` | **250.000đ** | Toàn bộ free + **đối soát CK tự động & báo thu** + **nhắc nợ tự động** + **Trợ lý AI + KB** + CRM dashboard |
 
-> Messenger vẫn theo phase P4.8/post-MVP; plan có quyền Messenger chỉ unlock khi kênh GA.
+> *Messenger vẫn theo P4.8/post-MVP — chỉ hiệu lực khi GA. Tính năng free/pro do **capability flags** quyết định (config-driven; registry ở `feature_billing_lifecycle_tech.md §4b`). Ref: **DD-29** (thay DD-03).
 - Thu qua **CK vào tài khoản platform**, khớp `invoiceCode`; tách `subscription_invoices` khỏi player payment ledger (`bank_transactions`/`payment_allocations`).
 
 ### 9.2 Cấu trúc chi phí & nguyên tắc tiền
@@ -328,7 +326,7 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 - **AC-5** **Sync 2 chiều:** host tạo kèo trên web → hiện trong group TG & marketplace; player tap join trên Zalo → web + roster cập nhật; mọi nơi nhất quán ≤ vài giây.
 - **AC-6** CK tới đúng CLB; player join → CK → **xác nhận tự động**; chưa trả → **được nhắc**.
 - **AC-7** Một người qua TG + Zalo cùng CLB gộp về **1 nợ**.
-- **AC-8** (plan trả phí) Hết trial bị **chặn lệnh quản trị** nhưng CK player **vẫn lưu**; kèo public hiện có chỉ sống tới lúc đóng/hết giờ; CK đúng mã **tự kích hoạt lại**. `free_web` **không** bị chặn vì non-payment.
+- **AC-8** (plan trả phí) Hết trial bị **chặn lệnh quản trị** nhưng CK player **vẫn lưu**; kèo public hiện có chỉ sống tới lúc đóng/hết giờ; CK đúng mã **tự kích hoạt lại**. `free` **không** bị chặn vì non-payment.
 - **AC-9** Không có đường rò rỉ cross-tenant **và** không có đường lộ tiền/PII ra public (pen-test).
 
 ## 16. Quyết định mở (Open Decisions Log)
@@ -339,7 +337,7 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 |---|---|---|
 | OD-1 | SĐT verified (share-contact) làm khoá merge chính | ✅ chốt |
 | OD-2 | `pay_code` hiển thị có prefix CLB, lưu code trần | Đề xuất ✅, chờ chốt cuối |
-| OD-3 | Giá/tier subscription host | ✅ chốt 4 tier: free web · 79k Telegram · 159k thêm Zalo/Messenger · 199k tất cả (→ DD-03) |
+| OD-3 | Giá/tier subscription host | 🔄 **Cập nhật DD-29** (Phase-1 pivot): `free` (web + 3 bot) · `host_pro` 250k (auto reconcile/nhắc + AI + CRM). Thay 4-tier DD-03. |
 | OD-4 | Hosting Postgres — HA+PITR+Singapore ✅; provider Neon vs Supabase chờ chọn | 🟡 (→ DD-04) |
 | OD-5 | **Join cross-club mặc định:** open hay approval? (đề xuất: cấu hình per-kèo, mặc định open + host bật approval) | Chờ chốt |
 | OD-6 | **Độ chi tiết vị trí public:** khu vực/quận vs venue chính xác (đề xuất: khu vực cho tới khi join/duyệt) | Chờ chốt |
@@ -382,3 +380,4 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 | 18/06/2026 | v3.1 | Chuẩn hoá durable webhook, payment ledger/allocation, discovery |
 | 19/06/2026 | v3.1 | Thêm Changelog table, cập nhật cross-refs |
 | 20/06/2026 | v3.2 | FR-9.1 + AC-8: làm rõ `free_web` (0đ) vào thẳng active, không past_due/suspended vì non-payment (DD-03, BL-BIL-1) |
+| 05/07/2026 | v3.3 | **DD-29 pricing pivot** (thay DD-03): bảng tier → `free` (0đ, web + 3 bot + đối soát thủ công) / `host_pro` (250k, auto reconcile/nhắc + AI + CRM); FR-9.1/AC-8/OD-3 cập nhật; tính năng free-pro theo capability flags config-driven. |

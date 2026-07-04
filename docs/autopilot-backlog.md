@@ -13,6 +13,15 @@ refine (grep code thật) trước khi promote thành manifest.
 ## Lifecycle
 `idea` → `planned` (scope rõ + chọn invariants) → tạo manifest → `ready` → `register` → `in-flight` → merge → `merged`.
 
+> **Phase-1 build (Fable 5) — FULL LAUNCH:** send-file orchestrator ở
+> `docs/autopilot-templates/phase1-fable5-orchestrator.md` chạy backlog 20 slice tuần tự
+> (S1 monorepo → S2 core-lift → S3 db-RLS → S4 auth → S5 session → S6 sync-engine → S7 reconcile →
+> S8 identity-merge → S9-S12 web PWA + marketplace → S13 cross-club → S14 billing → S15 host-pro-auto →
+> S16 reminders-auto → S17 TG → S18 Zalo → S19 club-assistant → S20 polish; chừa Messenger — Meta App
+> Review). Posture `FULL_AUTO_MONEY: yes` → mọi slice tự merge sau 2× Codex clean; guard cứng: không
+> merge khi còn finding tiền chưa sạch → HALT `FOUNDER_MERGE_GATE`. S19 có DD-gate (DD-16..28 phải ✅).
+> Các task idea dưới đây là feature-level (tham chiếu chéo với backlog orchestrator).
+
 ## Block format
 ```
 ## task: <slug>

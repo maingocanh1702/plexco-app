@@ -19,7 +19,7 @@
 | Đa môn | **`sport` là chiều dữ liệu** | `sessions.sport_id`; discovery lọc theo môn. Không kèm luật chơi từng môn. |
 | Hiển thị dữ liệu | **3 tầng** | public discovery (cross-tenant, whitelist) · tenant-private (RLS) · person-self. |
 | Database | **Postgres + Drizzle (single DB, `tenant_id` + RLS + public read model)** | Tối ưu maintain/scale >1k tenants. Bỏ `node:sqlite`. |
-| Billing | **4 tier theo DD-03: 0đ / 79k / 159k / 199k VND/tháng** | Free web app; paid tiers mở Telegram/Zalo/Messenger theo entitlement. Có trial cho paid plan. |
+| Billing | **DD-29 (thay DD-03): free 0đ / host_pro 250k VND/tháng** | Free = web + 3 bot + đối soát thủ công; host_pro = auto đối soát/nhắc + AI + CRM. Capability flags config-driven. Trial cho paid plan. |
 | Phí provider | **Tenant tự mang & tự trả SePay/ApiPay** | Phí giao dịch là việc giữa tenant ↔ provider; mình không trung gian tiền. |
 | LLM/STT | **Platform trả, có trần fair-use** | Chi phí nằm trong margin từng tier → phải cap để giữ margin & chặn lạm dụng. |
 
@@ -147,12 +147,11 @@ interface BankAccount {
 }
 
 // Subscription của tenant (HỌ trả phí host cho mình) — tách hẳn khỏi "payment"
-// của player. Pricing chốt theo DD-03; plan version immutable.
+// của player. Pricing chốt theo DD-29 (thay DD-03); plan version immutable.
 interface Subscription {
   tenantId: string;
-  plan: "free_web" | "telegram" | "plus_channel" | "all_channels";
-  priceVnd: number;                 // 0 | 79000 | 159000 | 199000 theo plan_version
-  selectedExtraChannel?: "zalo" | "messenger";
+  plan: "free" | "host_pro";
+  priceVnd: number;                 // 0 | 250000 theo plan_version
   status: "trialing" | "active" | "past_due" | "suspended" | "cancelled";
   trialEndsAt: string | null;
   currentPeriodEnd: string;         // CK gia hạn đẩy mốc này +1 tháng
@@ -440,22 +439,20 @@ bot.use(async (ctx, next) => {
 
 ## 6. Billing — host subscription tiers (VN bank/SePay)
 
-Pricing host chốt theo **DD-03**:
+Pricing host chốt theo **DD-29** (thay DD-03 4-tier theo kênh):
 
 | Plan | Giá / tháng / CLB | Bao gồm |
 |---|---:|---|
-| `free_web` | 0đ | Web app |
-| `telegram` | 79.000đ | Web app + bot Telegram |
-| `plus_channel` | 159.000đ | Web app + bot Telegram + Zalo hoặc Messenger |
-| `all_channels` | 199.000đ | Web app + bot Telegram + bot Zalo + bot Messenger |
+| `free` | 0đ | Web app + kết nối 3 bot (TG/Zalo/Messenger*) + quản kèo/roster + đối soát CK **thủ công** + nhắc thủ công |
+| `host_pro` | 250.000đ | Toàn bộ free + đối soát CK **tự động** & báo thu + **nhắc nợ tự động** + **Trợ lý AI + KB** + CRM dashboard |
 
-Tenant **tự mang tài khoản SePay/ApiPay** và tự chịu phí provider — mình không cầm tiền của club, chỉ cầm phí subscription của chính tenant. Messenger unlock theo P4.8/post-MVP khi kênh GA.
+Tính năng free/pro theo **capability flags config-driven** (registry ở `../features/BE/feature_billing_lifecycle_tech.md §4b`). Tenant **tự mang tài khoản** (hoặc dùng **APIpay enterprise auto-provision** — DD-30) và tự chịu phí provider — mình không cầm tiền của club, chỉ cầm phí subscription của chính tenant. *Messenger unlock theo P4.8/post-MVP khi kênh GA.
 
 Thu subscription tái dùng đúng hạ tầng webhook, nhưng trỏ vào **tài khoản nhận của MÌNH** (không phải của club):
 
 - **Thu phí:** tenant CK đúng số tiền invoice theo plan vào TK của mình, nội dung gồm mã định danh/invoiceCode (vd `BMC-<tenantSlug>`) → webhook match → đẩy `currentPeriodEnd` +1 tháng, set `status=active`. Giống y logic match của bot, chỉ khác bảng đích (`subscription_invoices`).
 - **Vòng đời (plan trả phí):** tạo tenant → `trialing` 14 ngày → hết hạn không gia hạn → `past_due` (nhắc qua Telegram + email) → sau X ngày `suspended`. Khi `suspended`, middleware **chặn lệnh** nhưng **vẫn nhận & lưu webhook CK của player** để club không mất giao dịch khi quay lại.
-- **`free_web` (0đ):** tạo tenant → thẳng `active` vô thời hạn — **không** trial/invoice, **không** `past_due`/`suspended` vì non-payment; daily job bỏ qua plan 0đ (chỉ suspend vì ToS/abuse). Ref: DD-03, BL-BIL-1.
+- **`free` (0đ):** tạo tenant → thẳng `active` vô thời hạn — **không** trial/invoice, **không** `past_due`/`suspended` vì non-payment; daily job bỏ qua plan 0đ (chỉ suspend vì ToS/abuse). Ref: DD-29, BL-BIL-1.
 - **MVP có thể manual:** giai đoạn đầu mình tự xác nhận CK đúng invoice → bật `active` bằng tay; tự động hoá khâu match nội dung sau. Không chặn launch.
 
 ### Schema `subscription_invoices` (bank transfer dễ lệch → phải chặt)
@@ -468,7 +465,7 @@ interface SubscriptionInvoice {
   tenantId: string;
   invoiceCode: string;        // UNIQUE — mã nhúng vào nội dung CK, vd "BMC-a1b2-202606"
   periodYm: string;           // kỳ áp dụng, "2026-06"
-  amountDue: number;          // lấy từ plan_version: 0 | 79000 | 159000 | 199000
+  amountDue: number;          // lấy từ plan_version: 0 | 250000
   amountPaid: number;         // tổng đã khớp (có thể từ nhiều CK)
   status: "open" | "partial" | "paid" | "overpaid" | "void";
   providerTxnIds: string[];   // external_id đã áp vào invoice này — idempotency
@@ -493,7 +490,7 @@ Vì LLM/STT nằm trong margin từng tier, `UsageCounter` đóng vai **trần c
 - Trần đề xuất/tháng/tenant: **OCR ~200 ảnh**, **STT ~500 voice** (thừa sức cho 1 club chơi 2–4 buổi/tuần). Vượt trần → degrade nhẹ: tắt OCR/STT, nhắc dùng `/add` thủ công + gõ lệnh, **không** chặn nghiệp vụ.
 - Theo dõi tổng usage để soi margin; nếu một provider rẻ hơn (Gemini Flash cho vision, Groq Whisper cho STT) thì set làm mặc định platform.
 
-> **Sanity-check margin:** paid tiers 79k–199k/tháng vẫn đủ cho usage bình thường (~16–32 lượt OCR + ít STT/tháng); vision Flash + Whisper-turbo chỉ tốn **vài cent/tenant/tháng**. Trần fair-use chủ yếu để chặn outlier (ai đó spam 10k ảnh), không phải để vắt tiền user.
+> **Sanity-check margin:** paid tier host_pro 250k/tháng vẫn đủ cho usage bình thường (~16–32 lượt OCR + ít STT/tháng); vision Flash + Whisper-turbo chỉ tốn **vài cent/tenant/tháng**. Trần fair-use chủ yếu để chặn outlier (ai đó spam 10k ảnh), không phải để vắt tiền user.
 
 ---
 
@@ -609,7 +606,7 @@ Cutover: chạy migrate trên copy → verify đối chiếu số dòng & vài s
 
 ## 11. Trạng thái quyết định
 
-**Đã chốt:** ✅ 4 tier host **0đ / 79k / 159k / 199k VND/tháng** (DD-03) · ✅ tenant **tự mang & tự trả** phí SePay/ApiPay · ✅ **LLM/STT platform trả** + trần fair-use.
+**Đã chốt:** ✅ **DD-29 (thay DD-03):** host **free 0đ / host_pro 250k VND/tháng**, capability flags config-driven · ✅ **DD-30:** APIpay enterprise auto-provision per-host (tiền vẫn về TK host) · ✅ tenant **tự mang & tự trả** phí SePay/ApiPay · ✅ **LLM/STT platform trả** + trần fair-use.
 
 **Còn chốt tiếp (không chặn Phase 0–1):**
 

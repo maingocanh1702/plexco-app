@@ -259,9 +259,9 @@ TG tap-join (validate group/tenant/session) · Zalo join bot-per-club number-rep
 > **Mục tiêu:** thu phí thuê bao host bền vững.
 > **Status:** ⬜ Not Started
 
-`subscription_invoices` (tách khỏi ledger player) · thu qua CK match `invoiceCode` → gia hạn · vòng đời **plan trả phí** trial→active→past_due→suspended · **`free_web` (0đ) vào thẳng `active` vô thời hạn — không trial/invoice, không past_due/suspended vì non-payment** (DD-03, BL-BIL-1) · suspended: chặn lệnh quản trị, **vẫn lưu CK player; kèo public hiện có chỉ sống tới khi đóng/hết giờ** · fair-use LLM/STT.
+`subscription_invoices` (tách khỏi ledger player) · thu qua CK match `invoiceCode` → gia hạn · vòng đời **plan trả phí** trial→active→past_due→suspended · **`free` (0đ) vào thẳng `active` vô thời hạn — không trial/invoice, không past_due/suspended vì non-payment** (DD-29, BL-BIL-1) · suspended: chặn lệnh quản trị, **vẫn lưu CK player; kèo public hiện có chỉ sống tới khi đóng/hết giờ** · fair-use LLM/STT.
 
-**🎯 Milestone:** (plan trả phí) hết trial bị chặn lệnh nhưng CK player vẫn lưu & kèo public vẫn hiện; CK đúng mã tự kích hoạt lại. `free_web` chạy bình thường không bị chặn vì non-payment.
+**🎯 Milestone:** (plan trả phí) hết trial bị chặn lệnh nhưng CK player vẫn lưu & kèo public vẫn hiện; CK đúng mã tự kích hoạt lại. `free` chạy bình thường không bị chặn vì non-payment.
 
 ### KPI P5
 Trial → trả phí ≥ ngưỡng · MRR tăng, churn thấp.
@@ -313,17 +313,17 @@ graph TD
 
 ## Monetization Alignment
 
-Host trả thuê bao theo 4 tier đã chốt ở BRD OD-3/DD-03: **free_web 0đ** (web app), **telegram 79k** (web + Telegram), **plus_channel 159k** (web + Telegram + Zalo hoặc Messenger), **all_channels 199k** (web + Telegram + Zalo + Messenger).
+Host trả thuê bao theo **DD-29** (Phase-1 pivot, thay DD-03 4-tier): **`free` 0đ** (web + kết nối 3 bot + quản kèo/roster + đối soát CK **thủ công** + nhắc thủ công) và **`host_pro` 250k** (thêm đối soát CK **tự động** & báo thu + **nhắc nợ tự động** + **Trợ lý AI + KB** + CRM dashboard). Tính năng free/pro theo **capability flags config-driven** (registry ở `../features/BE/feature_billing_lifecycle_tech.md §4b`).
 
 | | Trial | Active | Suspended |
 |---|---|---|---|
 | Tạo/quản kèo, đối soát, nhắc, xác nhận, player view | ✅ | ✅ | ❌ lệnh quản trị |
 | Nhận & lưu CK player | ✅ | ✅ | ✅ (vẫn lưu) |
 | **Kèo public trên marketplace** | ✅ | ✅ | 🟡 read-only: hiện có sống tới khi đóng/hết giờ; KHÔNG tạo mới/gia hạn |
-| Nối SePay/ApiPay (BYO) · Zalo bot (BYO) | ✅ | ✅ | ✅ / — |
+| Nối APIpay (enterprise auto-provision, DD-30) hoặc SePay · Zalo bot (BYO) | ✅ | ✅ | ✅ / — |
 | LLM/STT (platform trả, trần fair-use) | ✅ | ✅ | — |
 
-> **`free_web` (0đ):** luôn ở cột **Active** vô thời hạn — không có cột Trial/Suspended-vì-non-payment (chỉ rơi vào Suspended nếu vi phạm ToS/abuse). Cột Trial/Suspended ở trên chỉ áp dụng cho plan trả phí.
+> **`free` (0đ):** luôn ở cột **Active** vô thời hạn — không có cột Trial/Suspended-vì-non-payment (chỉ rơi vào Suspended nếu vi phạm ToS/abuse). Cột Trial/Suspended ở trên chỉ áp dụng cho plan trả phí.
 
 > Dòng tương lai (ngoài MVP): player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplace, managed Zalo/Messenger bot, add-on ngoài 4 tier host hiện tại.
 
@@ -384,6 +384,7 @@ Foundation(RLS+sports+3-tier) → TG-tenant → CK-reconcile → migrate #1 → 
 | Date | Version | Thay đổi |
 |---|---|---|
 | 20/06/2026 | v2.2 | P5 + Monetization Alignment: làm rõ `free_web` (0đ) vào thẳng active vô thời hạn, không trial/past_due/suspended vì non-payment (DD-03, BL-BIL-1). |
+| 05/07/2026 | v2.3 | **DD-29 pricing pivot** (thay DD-03): `free` (web + 3 bot + đối soát thủ công) / `host_pro` 250k (auto reconcile/nhắc + AI + CRM), capability flags config-driven; **DD-30** APIpay enterprise auto-provision (money-custody không đổi). |
 | 18/06/2026 | v2.1 | Dùng duy nhất canonical phase; thêm durable webhook + payment ledger/allocation; canonical store = PostgreSQL/domain model; Messenger tách post-MVP. |
 | 18/06/2026 | v2.0 | **Reposition** → platform thể thao đa môn 2 phía. Re-sequence 7 phase (thêm **Phase 3 Web+Sync+Marketplace** = P4+P4.3, tách Identity thành Phase 2, Player-side thành Phase 4). Thêm track 🌐 Web+Sync & 🔎 Marketplace; module 8–13 mới; KPI/risk/North Star theo marketplace + sync + public layer. |
 | 18/06/2026 | v1.1 | Đổi tên → **Plexco**; bảng Phase Mapping; link Messenger doc. |

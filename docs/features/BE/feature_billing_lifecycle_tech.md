@@ -11,7 +11,7 @@
 ## 1. Tổng quan triển khai
 
 ```text
-Tenant creation → free_web active immediately OR paid plan trial → Daily lifecycle job
+Tenant creation → free active immediately OR paid plan trial → Daily lifecycle job
     → Issue invoice → Platform billing webhook → Match → Extend period
     → Due transitions: active → past_due → suspended → cancelled
     → Central authorizeTenantAction(status, actionClass)
@@ -28,7 +28,7 @@ Billing ledger **separate schema/table set** from player ledger. Central `author
 ```sql
 CREATE TABLE plans (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  plan_key text NOT NULL CHECK (plan_key IN ('free_web','telegram','plus_channel','all_channels')),
+  plan_key text NOT NULL CHECK (plan_key IN ('free','host_pro')),  -- DD-29 (thay DD-03 4-tier)
   version integer NOT NULL,
   price integer NOT NULL,
   currency text NOT NULL DEFAULT 'VND',
@@ -44,11 +44,11 @@ CREATE TABLE subscriptions (
   tenant_id uuid PRIMARY KEY REFERENCES tenants(id),
   plan_key text NOT NULL,
   plan_version integer NOT NULL,
-  selected_extra_channel text CHECK (selected_extra_channel IN ('zalo','messenger') OR selected_extra_channel IS NULL),
   status text NOT NULL DEFAULT 'trialing' CHECK (status IN ('trialing','active','past_due','suspended','cancelled')),
-  -- free_web (price=0): tạo row với status='active', trial_end/grace_end = NULL, period_end xa/null;
+  -- free (price=0): tạo row với status='active', trial_end/grace_end = NULL, period_end xa/null;
   --   KHÔNG sinh invoice; lifecycle job bỏ qua (xem §4 + edge #17). Không có trạng thái riêng cho free —
   --   phân biệt bằng plans.price=0. Free rời 'active' chỉ khi đổi plan / cancel / suspend-vì-abuse.
+  -- DD-29: bỏ selected_extra_channel (không còn plus_channel/tính-theo-kênh); kênh & tính năng do capability flags quyết định.
   trial_end timestamptz,
   period_start timestamptz NOT NULL,
   period_end timestamptz NOT NULL,
@@ -57,12 +57,24 @@ CREATE TABLE subscriptions (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
--- Seed v1 (DD-03)
+-- Seed v1 (DD-29). entitlements.capabilities = cờ tính năng (config-driven — xem "Capability registry").
+-- Đổi tính năng nào free/pro = sửa seed/entitlements, KHÔNG sửa code (gate đọc hasCapability(tenant,key)).
 INSERT INTO plans (plan_key, version, price, limits, entitlements) VALUES
-  ('free_web', 1, 0, '{}', '{"web_app": true, "telegram": false, "zalo": false, "messenger": false}'),
-  ('telegram', 1, 79000, '{}', '{"web_app": true, "telegram": true, "zalo": false, "messenger": false}'),
-  ('plus_channel', 1, 159000, '{}', '{"web_app": true, "telegram": true, "extra_channel_count": 1, "extra_channel_options": ["zalo", "messenger"]}'),
-  ('all_channels', 1, 199000, '{}', '{"web_app": true, "telegram": true, "zalo": true, "messenger": true}');
+  ('free', 1, 0,
+     '{"max_clubs": 2, "ai_monthly_question_cap": 0}',
+     '{"capabilities": {"web_app": true, "bot_telegram": true, "bot_zalo": true, "bot_messenger": true,
+        "session_management": true, "discovery_marketplace": true,
+        "payment_reconcile_manual": true, "payment_reconcile_auto": false,
+        "reminders_manual": true, "reminders_auto": false,
+        "assistant_ai_kb": false, "crm_dashboard": false}}'),
+  ('host_pro', 1, 250000,
+     '{"max_clubs": null, "ai_monthly_question_cap": 2000}',
+     '{"capabilities": {"web_app": true, "bot_telegram": true, "bot_zalo": true, "bot_messenger": true,
+        "session_management": true, "discovery_marketplace": true,
+        "payment_reconcile_manual": true, "payment_reconcile_auto": true,
+        "reminders_manual": true, "reminders_auto": true,
+        "assistant_ai_kb": true, "crm_dashboard": true}}');
+-- Lưu ý: bot_messenger=true nhưng vẫn gated bởi GA Messenger (DD-09/P4.8) bất kể flag.
 
 CREATE TABLE subscription_invoices (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -119,11 +131,11 @@ CREATE TABLE billing_overrides (
 | 10 | Data Integrity | Reactivation replay jobs | Version check — no duplicate reminders/projectors |
 | 11 | Security | Override without expiry | ❌ Must have expiry — auto-expire enforced |
 | 12 | Cross-Feature | Owner lost access | Support ticket + audit — manual recovery |
-| 13 | Entitlement | Channel not included in plan | Block with `PLAN_UPGRADE_REQUIRED`; do not affect payment ingest |
-| 14 | Entitlement | `plus_channel` has no selected channel | Block Zalo/Messenger setup until owner selects one option |
-| 15 | Data Integrity | `free_web` (price=0) routed through trial/past_due/suspended | ❌ NEVER — created `status='active'`, no invoice; lifecycle job filters `WHERE p.price > 0`. Free chỉ suspend qua đường ToS/abuse, không qua non-payment |
+| 13 | Entitlement | Capability không có trong plan (vd `payment_reconcile_auto` ở free) | Block với `PLAN_UPGRADE_REQUIRED`; **không** ảnh hưởng payment ingest (CK vẫn lưu, chỉ chặn auto-settle/auto-notify) |
+| 14 | Entitlement | Toggle 1 capability free↔pro | Sửa `plans.entitlements.capabilities` (config), gate đọc `hasCapability(tenant,key)` — KHÔNG hardcode theo `plan_key` |
+| 15 | Data Integrity | `free` (price=0) routed through trial/past_due/suspended | ❌ NEVER — created `status='active'`, no invoice; lifecycle job filters `WHERE p.price > 0`. Free chỉ suspend qua đường ToS/abuse, không qua non-payment |
 | 16 | Data Integrity | Invoice issued for price=0 plan | ❌ NEVER — `IssueInvoice` skip khi `plan.price = 0` |
-| 17 | Entitlement | Downgrade paid → `free_web` | Hạ entitlement cuối period đã trả; set `status='active'`, `period_end=NULL`, ngừng invoice; không retroactive refund tự động (BIL-OQ-2) |
+| 17 | Entitlement | Downgrade paid → `free` | Hạ entitlement cuối period đã trả; set `status='active'`, `period_end=NULL`, ngừng invoice; không retroactive refund tự động (BIL-OQ-2) |
 
 ---
 
@@ -161,13 +173,13 @@ CREATE TABLE billing_overrides (
 ### Daily Lifecycle Job
 
 ```text
-Cron (daily) → Claim due subscriptions JOIN plans WHERE plans.price > 0   (bỏ qua free_web)
+Cron (daily) → Claim due subscriptions JOIN plans WHERE plans.price > 0   (bỏ qua free)
                  FOR UPDATE SKIP LOCKED
     → Per tenant TX: check dates → transition status
     → Send owner notices (outbox) → COMMIT
 ```
 
-> **free_web bỏ qua hoàn toàn:** join `plans.price > 0` loại mọi subscription 0đ khỏi nhánh `period expired → past_due → suspended`. `IssueInvoice` cũng skip khi `plan.price = 0`. Free chỉ đổi trạng thái qua `CancelSubscription`, đổi plan, hoặc `ApplyOverride`/suspend vì abuse (đường riêng, không phải lifecycle non-payment).
+> **free bỏ qua hoàn toàn:** join `plans.price > 0` loại mọi subscription 0đ khỏi nhánh `period expired → past_due → suspended`. `IssueInvoice` cũng skip khi `plan.price = 0`. Free chỉ đổi trạng thái qua `CancelSubscription`, đổi plan, hoặc `ApplyOverride`/suspend vì abuse (đường riêng, không phải lifecycle non-payment).
 
 ### Billing Webhook Ingest
 
@@ -180,6 +192,30 @@ Webhook → Durable ingest: billing_transaction + job COMMIT before ACK
 
 ---
 
+## 4b. Capability registry (config-driven — DD-29)
+
+Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements.capabilities[key]` của plan hiện hành. **Đổi tính năng nào ở free/pro = sửa seed/`entitlements` (config), KHÔNG sửa code.** `plan_key` chỉ là nhãn; quyền do capability flags quyết định.
+
+| Capability key | Free | Pro | Ghi chú |
+|---|:--:|:--:|---|
+| `web_app` | ✓ | ✓ | Web app + dashboard |
+| `bot_telegram` · `bot_zalo` | ✓ | ✓ | Kết nối bot kênh (miễn phí — DD-29) |
+| `bot_messenger` | ✓ | ✓ | Cờ bật nhưng vẫn **gated bởi GA Messenger** (DD-09/P4.8) |
+| `session_management` | ✓ | ✓ | Kèo/roster/waitlist/join |
+| `discovery_marketplace` | ✓ | ✓ | Player-side (cross-club) |
+| `payment_reconcile_manual` | ✓ | ✓ | Xem CK, match/allocate **thủ công**, `/unmatched` |
+| `payment_reconcile_auto` | ✗ | ✓ | **Auto-settle** CK khớp + **auto-notify** player đã trả |
+| `reminders_manual` | ✓ | ✓ | Host bấm nhắc thủ công |
+| `reminders_auto` | ✗ | ✓ | Nhắc nợ / pre-post-session **tự động theo lịch** |
+| `assistant_ai_kb` | ✗ | ✓ | Club Assistant + KB (DD-16..28) |
+| `crm_dashboard` | ✗ | ✓ | Analytics nâng cao (CRM_DASHBOARD_BRD) |
+
+**Limits** (`plans.limits`): `max_clubs` (free 2 · pro null=∞), `ai_monthly_question_cap` (free 0 · pro 2000). Chỉnh tự do theo config.
+
+**Bất biến gate:** (a) **CK ingest LUÔN chạy** bất kể plan (safety, BL-PAY-1) — capability chỉ gate hành vi **auto-settle/auto-notify**, không gate việc lưu giao dịch; (b) chặn capability trả về `PLAN_UPGRADE_REQUIRED`, không làm mất dữ liệu.
+
+---
+
 ## 5. Testing Plan
 
 ### Unit Tests
@@ -187,8 +223,8 @@ Webhook → Durable ingest: billing_transaction + job COMMIT before ACK
 | # | Test | Input | Expected |
 |---|------|-------|----------|
 | 1 | Trial start (paid plan) | New tenant, plan trả phí | trialing + dates set |
-| 1b | free_web start | New tenant, plan `free_web` | `active` ngay, không trial, không invoice |
-| 1c | free_web never past_due | free_web qua nhiều chu kỳ, không payment | vẫn `active`; lifecycle job bỏ qua; 0 invoice |
+| 1b | free start | New tenant, plan `free` | `active` ngay, không trial, không invoice |
+| 1c | free never past_due | free qua nhiều chu kỳ, không payment | vẫn `active`; lifecycle job bỏ qua; 0 invoice |
 | 2 | Trial → active | Payment before trial end | active |
 | 3 | Trial → past_due | No payment + trial expired | past_due |
 | 4 | Active → past_due | Period expired, no renewal | past_due |
@@ -208,8 +244,8 @@ Webhook → Durable ingest: billing_transaction + job COMMIT before ACK
 | 18 | Override without expiry | Missing expiry | Rejected |
 | 19 | Plan version immutable | Change price | New version created |
 | 20 | Cross-tenant billing isolation | Tenant A invoice | Not visible to B |
-| 21 | Entitlement gate | Free plan creates Telegram link | Rejected with `PLAN_UPGRADE_REQUIRED` |
-| 22 | Plus channel selection | `plus_channel` selected `zalo` then tries Messenger | Rejected unless plan selection changed/audited |
+| 21 | Entitlement gate | Free plan bật `payment_reconcile_auto` | Rejected `PLAN_UPGRADE_REQUIRED` (free chỉ reconcile thủ công); kênh TG/Zalo **được phép** ở free |
+| 22 | Capability config-driven | Set `crm_dashboard:true` cho free trong seed | Free có CRM ngay, không sửa code (gate đọc capability) |
 
 ### Integration Tests
 
@@ -244,7 +280,8 @@ Webhook → Durable ingest: billing_transaction + job COMMIT before ACK
 
 | Date | Version | Thay đổi |
 |---|---|---|
-| 2026-06-20 | v2.2 | Fix free_web lifecycle: tạo `status='active'` không trial/invoice; daily job join `plans.price>0` (skip free); `IssueInvoice` skip price=0; edge #15–17 + test #1b/1c; downgrade paid→free |
+| 2026-06-20 | v2.2 | Fix free lifecycle: tạo `status='active'` không trial/invoice; daily job join `plans.price>0` (skip free); `IssueInvoice` skip price=0; edge #15–17 + test #1b/1c; downgrade paid→free |
+| 2026-07-05 | v2.3 | **DD-29 pricing pivot:** `plan_key`→`('free','host_pro')`, host_pro 250k; bỏ `selected_extra_channel`/plus_channel; `entitlements`=**capability flags config-driven** + "Capability registry" (§4b: reconcile_manual free, reconcile_auto+reminders_auto+assistant+crm pro); edge #13/#14 + test #21/#22 đổi sang capability gate. Rename plan_key cũ `free_web`→`free`. |
 | 2026-06-20 | v2.1 | Add DD-03 plan keys/prices/entitlements and selected extra channel for plus plan |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), DDL, 12 edge cases, suspended action matrix, 20 tests |

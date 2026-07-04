@@ -179,8 +179,8 @@ Sau **mọi** điểm markPaid (auto-match + gán tay) → `notifyPlayersPaid(te
 
 ## FLOW 11: BILLING — host subscription tiers *(P5)*
 
-1. Tạo tenant: `free_web` → `active` ngay, không invoice; plan trả phí → `trialing` (đề xuất 14 ngày).
-2. Owner chọn plan: `free_web` (0đ), `telegram` (79k), `plus_channel` (159k, chọn Zalo hoặc Messenger), hoặc `all_channels` (199k).
+1. Tạo tenant: `free` → `active` ngay, không invoice; plan trả phí `host_pro` → `trialing` (đề xuất 14 ngày).
+2. Owner chọn plan: `free` (0đ — web + 3 bot + đối soát CK thủ công) hoặc `host_pro` (250k — thêm auto đối soát/báo thu + nhắc nợ tự động + Trợ lý AI + CRM). Tính năng do capability flags quyết định (DD-29, thay DD-03).
 3. Với paid plan, owner CK đúng số tiền vào **tài khoản platform**, nội dung mang `invoiceCode` → webhook match → đẩy `currentPeriodEnd +1 tháng`, `status=active`.
 4. Hết hạn không gia hạn → `past_due` (nhắc TG/email) → sau X ngày → `suspended`.
 5. **Suspended:** chặn lệnh nhưng **vẫn nhận & lưu CK player** (không mất giao dịch khi quay lại).

@@ -382,6 +382,18 @@ async function connectApiPay(ctx: TenantCtx, accessKey: string, secretKey: strin
 - **Verify (Tier 2):** `transaction.in` đầu tiên qua webhook → `webhook_status='active'`.
 - **Vòng đời:** `PATCH /v1/client/webhooks/:id`, `DELETE /v1/client/webhooks/:id`, `GET /v1/client/webhooks/:id/history`.
 
+### 4.3b — ApiPay ENTERPRISE auto-provision (DD-30) — 🟡 CANDIDATE (Phase-1 speed)
+
+Để **launch nhanh** (host phổ thông ngại tự lấy API key), platform giữ **1 credential ApiPay enterprise** và **tự động provision** per-host thay cho luồng BYO §4.3:
+
+- **Onboarding host:** platform (dùng enterprise credential) gọi ApiPay đăng ký **per-host** bank-account + webhook `/webhook/apipay/{webhookToken}` — **không** bắt host nhập `accessKey/secretKey`.
+- **Money-custody KHÔNG đổi:** tiền vẫn về **tài khoản ngân hàng RIÊNG của host**; Plexco **không** thu hộ → giữ invariant `feature_payment_reconcile` + 5 HARD RULES ("platform không giữ tiền player"). Routing tenant vẫn `:token → bank_accounts.webhook_token → tenant_id` (**BL-PAY-6**); verify `ApiPay-Signature` HMAC per-host **không đổi**.
+- **BYO (§4.3) giữ làm fallback** khi host muốn tự quản key, hoặc enterprise không phủ ngân hàng của họ.
+- **Bảo mật:** enterprise credential = tài sản **KMS cấp platform** (không per-tenant); **lộ = ảnh hưởng nhiều tenant** → cần rotation + audit riêng + rate-limit provisioning. Thêm `provider_connections.auth_mode='enterprise'` (giá trị mới) phân biệt với `api_key`.
+- **Ràng buộc ngoài (CO-OQ mới):** điều khoản enterprise ApiPay (giới hạn số account/webhook, phí, SLA) — xác nhận trước khi bật production.
+
+> Nguồn **DD-30** (`../../standards/decisions.md`). Provider vẫn `apipay`; chỉ khác **ai cấp credential** (platform-enterprise vs host-BYO) và **ai bấm provision** (auto vs host). KHÔNG đụng ledger/reconcile core.
+
 ---
 
 ## 5. Webhook receiver (thống nhất)

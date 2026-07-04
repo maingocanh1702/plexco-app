@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.maingocanh.ap-watch.plexco</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/maingocanh/Projects/Plexco app/scripts/ap-watch.sh</string>
+    <string>30</string>
+    <string>8</string>
+  </array>
+
+  <!-- chạy ngay khi load + giữ sống (tự restart nếu crash/exit) -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- log riêng (không đè Bestminton /tmp/ap-watch.log) -->
+  <key>StandardOutPath</key>
+  <string>/tmp/ap-watch-plexco.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/ap-watch-plexco.err</string>
+
+  <!-- chạy trong GUI session của user → osascript notification hiển thị được -->
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

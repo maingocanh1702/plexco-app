@@ -138,6 +138,20 @@ Tài liệu hoàn tất:
 - **Public projection không filter → lộ tiền/PII.** Field whitelist là bắt buộc.
 - **Quên test bất biến → regression.** Test cô lập + public PHẢI xanh trong CI.
 - **Merge identity thiếu verify → chiếm nợ người khác.** Claim-có-tiền cần OTP.
+- **Thiết kế schema/model từ nguyên tắc chung mà chưa đọc canonical → đề xuất sai + tạo bảng song song.** TRƯỚC khi đụng schema/data model/kiến trúc: đọc `packages/db/schema.ts` + `migrations/*.sql` (AUTHORITATIVE) → feature spec → `standards/decisions.md`. KHÔNG chế tên/bảng trùng khái niệm đã có (`persons`/`accounts`/`channel_identities`/`memberships`). Quyết định chưa chốt → proposal ở `decisions.md`, không viết vào spec đã Reviewed. (bài học session identity 2026-07-02)
+
+---
+
+## Identity — nơi tra cứu (tránh chế lại model)
+
+- **Source of truth:** `packages/db/schema.ts` + `packages/db/migrations/0001_global_directory.sql`;
+  contract ở `docs/features/feature_identity.md` + `BE/feature_identity_tech.md`; nguyên tắc §P6
+  ở `docs/standards/core-db-architecture-principles.md`.
+- **Model:** `Person` (người thật global, anchor) · `Account`/`account_identities`/`web_sessions`
+  (web-auth) · `channel_identities`/`channel_reachability` (bot) · `memberships` (person↔tenant).
+  `link_codes` (hash-only) nối bot↔person, KHÔNG cần SĐT. Phone = merge signal (DD-01).
+- **Orientation (KHÔNG phải chân lý):** `docs/identity-model.md`. Proposal/verify mới:
+  `decisions.md` DD-13 (web-auth Google/email), DD-14/DD-15 (Zalo Login/OA & bot `from.id` cross-bot).
 
 ---
 
@@ -145,5 +159,6 @@ Tài liệu hoàn tất:
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 02/07/2026 | v1.1 | Thêm bẫy "đọc canonical trước khi thiết kế schema" + mục Identity tra cứu (Person/Account/link_codes, DD-13/14/15); CLAUDE.md nay trỏ HANDOFF làm first-read |
 | 19/06/2026 | — | Thêm Changelog table |
 | 18/06/2026 | v1.0 | Handoff checklist per feature |

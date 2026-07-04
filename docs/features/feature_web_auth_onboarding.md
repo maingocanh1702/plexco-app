@@ -30,6 +30,8 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 
 > Telegram là **shared bot** (`@PlexcoBot`) → bind bằng cách thêm bot vào group, **không** dán token. Chỉ **Zalo** BYO token per-CLB (🟡 blocked CO-OQ-1). Chi tiết auto-register + verify 2 tầng (`registered → active`): `feature_connector_onboarding.md`.
 
+> **🟡 Đề xuất (DD-13, chưa chốt — không thuộc scope Reviewed):** mở rộng provider đăng nhập ngoài TG Login (thêm **Google**, và/hoặc **email-password self-register**) để không kẹt acquisition khi Zalo/FB login còn pending. Nếu chốt: thêm qua `account_identities.platform` + adapter (password → bảng credential riêng, migration mới), **không** tạo root table `users`; `persons` vẫn là anchor. Chi tiết & ràng buộc: `docs/standards/decisions.md` DD-13, `docs/identity-model.md §6`. WAO-UC-1 hiện chỉ cover "TG Login / web-account fallback" — chỉ mở rộng khi DD-13 ✅.
+
 ---
 
 ## 2. Use Cases + Edge Cases

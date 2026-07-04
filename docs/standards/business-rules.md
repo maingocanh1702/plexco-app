@@ -84,8 +84,8 @@
 
 | ID | Luật | Chi tiết | Source |
 |---|---|---|---|
-| **BL-BIL-1** | **Subscription host** | **Plan trả phí:** trial → active → past_due → suspended → cancelled. **`free_web` (0đ):** vào thẳng `active` vô thời hạn — không trial/invoice, **không bao giờ** past_due/suspended vì non-payment (chỉ suspend vì ToS/abuse hoặc owner cancel). Invoice ledger tách khỏi player payment ledger. Pricing theo DD-03: `free_web` 0đ, `telegram` 79k, `plus_channel` 159k, `all_channels` 199k mỗi CLB/tháng. | BRD FR-9.1/9.2, DD-03 |
-| **BL-BIL-1a** | **Plan entitlements** | `free_web` chỉ web app; `telegram` thêm bot Telegram; `plus_channel` thêm đúng 1 kênh Zalo hoặc Messenger; `all_channels` mở cả Telegram/Zalo/Messenger. Channel setup/use phải gate theo plan. | DD-03 |
+| **BL-BIL-1** | **Subscription host** | **Plan trả phí `host_pro`:** trial → active → past_due → suspended → cancelled. **`free` (0đ):** vào thẳng `active` vô thời hạn — không trial/invoice, **không bao giờ** past_due/suspended vì non-payment (chỉ suspend vì ToS/abuse hoặc owner cancel). Invoice ledger tách khỏi player payment ledger. Pricing theo **DD-29** (thay DD-03): `free` 0đ, `host_pro` 250k mỗi CLB/tháng. | BRD FR-9.1/9.2, DD-29 |
+| **BL-BIL-1a** | **Plan entitlements** | `free`: web + kết nối 3 bot (TG/Zalo/Messenger*) + đối soát CK **thủ công** + nhắc thủ công; `host_pro`: thêm đối soát **tự động** + nhắc nợ tự động + Trợ lý AI + CRM. Gate theo **capability flags config-driven** (registry `feature_billing_lifecycle_tech.md §4b`), không hardcode theo plan_key. (*Messenger khi GA — DD-09.) | DD-29 |
 | **BL-BIL-2** | **Suspended behavior** | Chặn lệnh quản trị nhưng vẫn durable-ingest CK player. Kèo public hiện có chỉ sống tới khi đóng/hết giờ; không tạo/gia hạn mới. | BRD BR-11, FR-9.3 |
 | **BL-BIL-3** | **LLM/STT fair-use** | Platform trả chi phí LLM/STT; có trần fair-use per-tenant. | BRD §9.2 |
 

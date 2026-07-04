@@ -22,6 +22,8 @@ Tables: `accounts`, `web_sessions`, `account_identities`, `onboarding_runs/steps
 - Onboarding commands use `UNIQUE(run_id, step, idempotency_key)` — refresh/back safe.
 - Integration verification async with status polling/outbox event — retries idempotent.
 
+> **🟡 Đề xuất (DD-13, chưa chốt):** Auth Adapter có thể mở rộng thêm provider `google` / `email-password` ngoài TG Login. Cắm cùng adapter → `account_identities(platform, platform_user_hash)`; password (nếu có) ở bảng credential riêng qua migration mới. `persons` vẫn anchor, không tạo `users`. Ref: `../../standards/decisions.md` DD-13, `../../identity-model.md §6`. Chỉ triển khai khi DD-13 ✅.
+
 ---
 
 ## 2. Database Schema + Edge Cases (BE)

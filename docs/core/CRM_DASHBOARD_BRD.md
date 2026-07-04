@@ -418,16 +418,16 @@ Required metrics:
 
 | Metric | Definition |
 |---|---|
-| **MRR** | Sum active paid subscription monthly amounts; excludes `free_web`. |
+| **MRR** | Sum active paid subscription monthly amounts; excludes `free`. |
 | **ARR** | `MRR * 12`. |
 | **Paid tenants** | Tenants on paid active plans. |
-| **Free tenants** | Tenants on `free_web` active. |
+| **Free tenants** | Tenants on `free` active. |
 | **Trialing tenants** | Paid plan trials only. |
 | **Past due / suspended** | Paid plan lifecycle states. |
 | **Trial-to-paid conversion** | Paid activations / trials started. |
 | **Logo churn** | Paid tenants cancelled/suspended beyond churn threshold / starting paid tenants. |
 | **ARPA** | MRR / active paid tenants. |
-| **Revenue by plan** | MRR grouped by `telegram`, `plus_channel`, `all_channels`. |
+| **Revenue by plan** | MRR grouped by paid plan (hiện chỉ `host_pro` 250k — DD-29). |
 | **Revenue by cell/sport/channel** | MRR attributed by tenant primary cell, default sport, enabled channels. |
 
 Required billing queues:
@@ -524,7 +524,7 @@ Recommended default segments:
 - **Host activation:** signed up, no first session in 24h.
 - **Host retention:** first session done, no second session in 7d.
 - **High-potential host:** >=2 sessions/week and unpaid/free.
-- **Upgrade candidate:** free_web with active usage and connected channels need.
+- **Upgrade candidate:** `free` with active usage needing auto-reconcile / auto-reminders / AI (host_pro features — DD-29).
 - **At-risk host:** active before, no session in 14d or connector broken.
 - **Liquidity champion:** host with repeated sessions and good attendance close rate.
 - **Reliable player:** high attendance, no recent negative events.

@@ -55,3 +55,7 @@ docker-compose.override.yml
 .autopilot/*
 !.autopilot/maturity-ledger.md
 .gitnexus
+
+.DS_Store
+
+.DS_Store
