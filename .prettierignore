@@ -19,3 +19,10 @@ scripts/
 !.prettierrc.json
 !packages/**/*.json
 !apps/**/*.json
+# Pre-existing root utility scripts + the authoritative schema (formatting them
+# is out-of-scope churn; schema.ts style is owned by packages/db conventions).
+/compare-linear.mjs
+/gen-linear-csv.mjs
+/linear-sync.mjs
+/sync-embedded.mjs
+packages/db/schema.ts
