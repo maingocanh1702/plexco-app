@@ -11,6 +11,7 @@
   "invariants": ["build-config", "test-chain"],
   "scope": [
     "docs/autopilot-manifests/monorepo-scaffold.json",
+    "infra/Dockerfile",
     "pnpm-workspace.yaml",
     "package.json",
     "pnpm-lock.yaml",
