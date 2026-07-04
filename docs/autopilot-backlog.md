@@ -97,13 +97,14 @@ depends_on: [monorepo-scaffold]
 invariants: [build-config]
 scope: [infra/fly.toml, .github/workflows/ci.yml]
 manifest: docs/autopilot-manifests/infra-fly-provisioning-secret-boundary.json
-notes: Codex S1 round-07 P1 — `[deploy] release_command` would force
-  DATABASE_URL_MIGRATION into Fly APP secrets, which are injected into every
-  runtime machine (web/discovery/worker), handing the DDL-owner credential to
-  the HTTP surface and defeating app/app_worker/readonly role isolation
-  (feature_multi_tenant_tech §1: migration role "not available to runtime").
-  Design options to decide: (a) CI job runs `entrypoint provision` against the
-  DB with a CI-scoped secret; (b) `fly machine run ... provision` one-shot with
-  machine-scoped env; (c) separate minimal Fly app holding only the migration
-  secret. Local dev path already works (compose queue-provision one-shot).
-  Blocks FIRST DEPLOY only — not S2..S20 development.
+notes: Codex S1 round-07/08 P1s — (a) `[deploy] release_command` would force
+  DATABASE_URL_MIGRATION into Fly APP secrets, injected into every runtime
+  machine, handing the DDL credential to the HTTP surface (breaks
+  feature_multi_tenant_tech §1); (b) ORDERING: DB prep = migrations 0000..0011
+  (creates roles) BEFORE `provision:queue` (grants to app_worker) — provisioning
+  on a fresh cluster without migrations fails `role "app_worker" does not
+  exist`. The migrations runner + dev/compose prep ordering land in
+  db-postgres-drizzle-rls; THIS slice covers the Fly-side secret boundary:
+  CI job / one-shot machine / separate minimal app holding the migration
+  secret, reusing entrypoint role `provision`. Blocks FIRST DEPLOY only —
+  not S2..S20 development.
