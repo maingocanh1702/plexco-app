@@ -7,7 +7,7 @@
     "build": "next build",
     "start:web": "next start -p ${PORT:-3000}",
     "start:discovery": "next start -p ${PORT:-3000}",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
