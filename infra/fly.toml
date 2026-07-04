@@ -10,6 +10,12 @@ primary_region = "sin"   # Singapore — độ trễ thấp nhất tới VN
 [build]
   dockerfile = "Dockerfile"
 
+# Chạy TRƯỚC mỗi deploy (máy tạm, có secrets): dựng pgboss schema + queues bằng
+# role migration — worker runtime start với migrate:false, không DDL.
+# Secret cần thêm: fly secrets set DATABASE_URL_MIGRATION=...
+[deploy]
+  release_command = "provision"
+
 # Env CHUNG (không bí mật). Secret set qua `fly secrets set`.
 [env]
   PORT = "3000"

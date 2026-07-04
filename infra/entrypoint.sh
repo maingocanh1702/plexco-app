@@ -23,8 +23,14 @@ case "$ROLE" in
     # pg-boss scheduler/dispatcher + projectors + cron — cần DATABASE_URL_DIRECT
     exec pnpm --filter @plexco/bot start:worker
     ;;
+  provision)
+    # One-shot trước worker: dựng pgboss schema + queues bằng role migration
+    # (DATABASE_URL_MIGRATION). Fly: [deploy] release_command = "provision";
+    # compose: service queue-provision (worker depends_on completed).
+    exec pnpm --filter @plexco/bot provision:queue
+    ;;
   *)
-    echo "[entrypoint] PROCESS_ROLE không hợp lệ: ${ROLE} (web|discovery|worker)" >&2
+    echo "[entrypoint] PROCESS_ROLE không hợp lệ: ${ROLE} (web|discovery|worker|provision)" >&2
     exit 1
     ;;
 esac

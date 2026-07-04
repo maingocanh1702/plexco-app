@@ -12,6 +12,9 @@
   "scope": [
     "docs/autopilot-manifests/monorepo-scaffold.json",
     "infra/Dockerfile",
+    "infra/entrypoint.sh",
+    "infra/docker-compose.yml",
+    "infra/fly.toml",
     ".dockerignore",
     "pnpm-workspace.yaml",
     "package.json",
