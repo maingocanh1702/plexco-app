@@ -28,9 +28,11 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile
 
 # ---- build: typecheck + build toàn monorepo --------------------------------
+# Root `build` = typecheck ALL workspaces first (the worker ships TS source run
+# via tsx — a type error must fail the image, not the process at boot).
 FROM deps AS build
 COPY . .
-RUN pnpm -r build
+RUN pnpm -w build
 
 # ---- prod-deps: prune về production-only -----------------------------------
 FROM deps AS prod-deps
@@ -53,6 +55,11 @@ RUN corepack enable && corepack install
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build     /app/packages ./packages
 COPY --from=build     /app/apps ./apps
+# The build stage's per-workspace node_modules carry DEV deps — strip them and
+# overlay the pruned per-workspace links from prod-deps instead.
+RUN find packages apps -mindepth 2 -maxdepth 2 -name node_modules -type d -exec rm -rf {} +
+COPY --from=prod-deps /app/packages ./packages
+COPY --from=prod-deps /app/apps ./apps
 COPY infra/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
