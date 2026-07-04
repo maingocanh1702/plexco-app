@@ -1,0 +1,62 @@
+import pg from "pg";
+import PgBoss from "pg-boss";
+import { QUEUE_SCHEMA } from "./queue.js";
+import { QUEUES } from "./queues.js";
+
+/**
+ * Provision the pg-boss schema + queues as the MIGRATION (DDL-owner) role.
+ *
+ * Runtime roles hold no DDL privileges (0000/0009), so the worker starts with
+ * `migrate: false`; this script is the single place pg-boss DDL happens:
+ *   1. construct/migrate the pgboss schema (pg-boss's own machinery),
+ *   2. create every registered queue (partition DDL in pg-boss v10),
+ *   3. grant the runtime `app_worker` role DML on the schema's objects.
+ * Idempotent — safe to run on every deploy. Usage:
+ *   DATABASE_URL_MIGRATION=postgres://... pnpm --filter @plexco/bot provision:queue
+ */
+export async function provisionQueue(migrationUrl: string): Promise<void> {
+  if (!migrationUrl) {
+    throw new Error("provisionQueue: DATABASE_URL_MIGRATION is required (DDL-owner role)");
+  }
+
+  // 1+2. Let pg-boss construct/upgrade its schema and queues under the DDL role.
+  const boss = new PgBoss({ connectionString: migrationUrl, schema: QUEUE_SCHEMA });
+  await boss.start();
+  for (const queue of QUEUES) {
+    await boss.createQueue(queue);
+  }
+  await boss.stop({ graceful: true, wait: true });
+
+  // 3. Runtime grants: app_worker gets DML only — no CREATE, no ownership.
+  const client = new pg.Client({ connectionString: migrationUrl });
+  await client.connect();
+  try {
+    await client.query(`GRANT USAGE ON SCHEMA ${QUEUE_SCHEMA} TO app_worker`);
+    await client.query(
+      `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${QUEUE_SCHEMA} TO app_worker`,
+    );
+    await client.query(`GRANT USAGE ON ALL SEQUENCES IN SCHEMA ${QUEUE_SCHEMA} TO app_worker`);
+    await client.query(
+      `ALTER DEFAULT PRIVILEGES IN SCHEMA ${QUEUE_SCHEMA}
+         GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_worker`,
+    );
+    await client.query(
+      `ALTER DEFAULT PRIVILEGES IN SCHEMA ${QUEUE_SCHEMA} GRANT USAGE ON SEQUENCES TO app_worker`,
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+const invokedDirectly = process.argv[1]?.endsWith("provision-queue.ts");
+if (invokedDirectly) {
+  provisionQueue(process.env.DATABASE_URL_MIGRATION ?? "")
+    .then(() => {
+      console.log("[provision-queue] pgboss schema + queues provisioned");
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error("[provision-queue] failed", error);
+      process.exit(1);
+    });
+}

@@ -32,6 +32,9 @@ importers:
       '@plexco/core':
         specifier: workspace:*
         version: link:../../packages/core
+      pg:
+        specifier: ^8.13.1
+        version: 8.22.0
       pg-boss:
         specifier: ^10.1.5
         version: 10.4.2
@@ -42,6 +45,9 @@ importers:
       '@types/node':
         specifier: ^22.10.7
         version: 22.20.0
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.20.0
       typescript:
         specifier: ^5.7.3
         version: 5.9.3

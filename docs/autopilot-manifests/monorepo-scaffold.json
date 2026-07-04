@@ -34,10 +34,13 @@
     "apps/web/next-env.d.ts",
     "apps/web/app/layout.tsx",
     "apps/web/app/page.tsx",
+    "apps/web/app/healthz/route.ts",
     "apps/bot/package.json",
     "apps/bot/tsconfig.json",
     "apps/bot/src/queue.ts",
     "apps/bot/src/queue.test.ts",
+    "apps/bot/src/queues.ts",
+    "apps/bot/src/provision-queue.ts",
     "apps/bot/src/worker.ts"
   ]
 }
