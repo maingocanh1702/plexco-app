@@ -87,3 +87,24 @@ depends_on: []
 invariants: [web-app, design-tokens]
 scope: []
 notes: docs/web-app/. Frontend riêng → thường DISJOINT với backend feature (song song tốt) trừ khi đụng core-api/i18n.
+
+## task: infra-fly-provisioning-secret-boundary
+title: Fly deploy — run pgboss/DB provisioning WITHOUT app-wide migration secret
+status: planned
+risk: P1
+change_class: build-config
+depends_on: [monorepo-scaffold]
+invariants: [build-config]
+scope: [infra/fly.toml, .github/workflows/ci.yml]
+manifest: docs/autopilot-manifests/infra-fly-provisioning-secret-boundary.json
+notes: Codex S1 round-07/08 P1s — (a) `[deploy] release_command` would force
+  DATABASE_URL_MIGRATION into Fly APP secrets, injected into every runtime
+  machine, handing the DDL credential to the HTTP surface (breaks
+  feature_multi_tenant_tech §1); (b) ORDERING: DB prep = migrations 0000..0011
+  (creates roles) BEFORE `provision:queue` (grants to app_worker) — provisioning
+  on a fresh cluster without migrations fails `role "app_worker" does not
+  exist`. The migrations runner + dev/compose prep ordering land in
+  db-postgres-drizzle-rls; THIS slice covers the Fly-side secret boundary:
+  CI job / one-shot machine / separate minimal app holding the migration
+  secret, reusing entrypoint role `provision`. Blocks FIRST DEPLOY only —
+  not S2..S20 development.

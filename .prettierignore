@@ -1,0 +1,28 @@
+node_modules/
+dist/
+build/
+.next/
+coverage/
+pnpm-lock.yaml
+.autopilot/
+.gitnexus/
+docs/
+templates/
+infra/
+scripts/
+*.md
+*.html
+*.csv
+*.json
+!package.json
+!tsconfig*.json
+!.prettierrc.json
+!packages/**/*.json
+!apps/**/*.json
+# Pre-existing root utility scripts + the authoritative schema (formatting them
+# is out-of-scope churn; schema.ts style is owned by packages/db conventions).
+/compare-linear.mjs
+/gen-linear-csv.mjs
+/linear-sync.mjs
+/sync-embedded.mjs
+packages/db/schema.ts

@@ -35,13 +35,26 @@ services:
       DATABASE_URL: postgres://plexco:plexco_dev@postgres:5432/plexco
       DATABASE_URL_DIRECT: postgres://plexco:plexco_dev@postgres:5432/plexco
     env_file:
-      - ../.env            # secret dev (TELEGRAM_BOT_TOKEN, SEPAY_WEBHOOK_SECRET, ...)
+      # secret dev (TELEGRAM_BOT_TOKEN, SEPAY_WEBHOOK_SECRET, ...) — optional để
+      # `docker compose up` chạy được trước khi copy .env.example → .env
+      - path: ../.env
+        required: false
     ports:
       - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
 
+  # ⚠️ Worker trên DB SẠCH cần bước chuẩn-bị-DB trước (theo THỨ TỰ):
+  #   1) migrations 0000→0011 (roles + schema + RLS — runner ở slice db-RLS),
+  #   2) pgboss provisioning (truyền URL migration AD-HOC, không qua .env —
+  #      .env bị nạp vào runtime services):
+  #      docker compose -f infra/docker-compose.yml run --rm \
+  #        -e DATABASE_URL_MIGRATION=postgres://plexco:plexco_dev@postgres:5432/plexco \
+  #        worker provision
+  # Chưa chạy 2 bước đó → worker fail-fast có chủ đích (migrate:false, không DDL
+  # bằng role runtime). Wiring tự động vào compose/Fly thuộc slice db-RLS +
+  # infra-fly-provisioning-secret-boundary.
   worker:
     build:
       context: ..
@@ -52,7 +65,8 @@ services:
       # worker cần DIRECT connection (pg-boss LISTEN/NOTIFY + advisory lock)
       DATABASE_URL_DIRECT: postgres://plexco:plexco_dev@postgres:5432/plexco
     env_file:
-      - ../.env
+      - path: ../.env
+        required: false
     depends_on:
       postgres:
         condition: service_healthy
