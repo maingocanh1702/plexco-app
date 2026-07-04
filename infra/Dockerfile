@@ -8,12 +8,18 @@ FROM node:22-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+# Shared cache path — NOT under $HOME, so the cache survives USER switches.
+ENV COREPACK_HOME=/corepack
+# No TTY in image builds: pnpm 10 aborts prod re-installs without CI=true.
+ENV CI=true
 RUN corepack enable
 WORKDIR /app
 
 # ---- deps: cài full deps theo lockfile (cache-friendly) --------------------
 FROM base AS deps
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+# Hydrate the pinned pnpm (packageManager) into Corepack's cache at BUILD time.
+RUN corepack install
 COPY packages/core/package.json packages/core/
 COPY packages/db/package.json packages/db/
 COPY apps/bot/package.json apps/bot/
@@ -37,19 +43,23 @@ ENV NODE_ENV=production
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable
+ENV COREPACK_HOME=/corepack
 WORKDIR /app
 
-# artifacts
+# artifacts — package.json first so corepack can pin pnpm at BUILD time
+# (a container must never lazy-download its package manager at boot).
+COPY --from=build     /app/package.json /app/pnpm-workspace.yaml ./
+RUN corepack enable && corepack install
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build     /app/packages ./packages
 COPY --from=build     /app/apps ./apps
-COPY --from=build     /app/package.json /app/pnpm-workspace.yaml ./
 COPY infra/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# non-root
-RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin plexco
+# non-root; the corepack cache must be readable+writable by the runtime user
+# (corepack updates lastKnownGood metadata on first use).
+RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin plexco \
+  && chown -R plexco:plexco "$COREPACK_HOME"
 USER plexco
 
 # web/discovery lắng nghe HTTP; worker không có ingress
