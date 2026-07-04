@@ -11,6 +11,7 @@
   "invariants": ["build-config", "test-chain"],
   "scope": [
     "docs/autopilot-manifests/monorepo-scaffold.json",
+    "docs/autopilot-backlog.md",
     "infra/Dockerfile",
     "infra/entrypoint.sh",
     "infra/docker-compose.yml",
