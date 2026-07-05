@@ -146,8 +146,14 @@ export function inferBuddyGroupByAmount(opts: {
  * Decide what to do with a transfer once we know the fee, the amount, and how
  * many players the content confidently matched.
  *
- *  - "mark-all"      : money PROVABLY covers everyone matched (exact split or
- *                      an overpay >= fee×matched) -> auto-mark, split evenly.
+ *  - "mark-all"      : ONE matched payer and the money provably covers them
+ *                      (exact or overpay) -> safe to settle that single person.
+ *  - "multi-exact"   : >=2 fuzzy/name matches and the money covers them all.
+ *                      BL-PAY-3: one transfer covering multiple people stays
+ *                      OWNER-CONFIRM in the name-matching era — auto-settle of
+ *                      multi-person plans exists ONLY via deterministic
+ *                      pay-codes. Callers render a pre-ticked confirm, never
+ *                      auto-split.
  *  - "need-more"     : amount is a clean multiple implying MORE people than
  *                      matched (220k, 1 name) -> suggest buddies, owner confirms.
  *  - "too-few-money" : amount < fee * matchCount (210k for 2, or 100k for 1) ->
@@ -161,6 +167,7 @@ export function inferBuddyGroupByAmount(opts: {
  */
 export type AmountDecision =
   | { kind: "mark-all"; expected: number }
+  | { kind: "multi-exact"; expected: number }
   | { kind: "need-more"; expected: number }
   | { kind: "too-few-money"; expected: number }
   | { kind: "unknown-fee"; expected: 0 }
@@ -185,7 +192,10 @@ export function classifyAmount(
   }
   // a clean multiple bigger than the names found -> someone paid for others too.
   if (cleanCount > matchCount) return { kind: "need-more", expected: cleanCount };
-  // exact split, or an overpay covering everyone matched -> mark all matched.
+  // money covers everyone matched: single payer may settle; a multi-person
+  // fuzzy plan is owner-confirm only (BL-PAY-3 — deterministic pay-codes are
+  // the sole multi auto-settle path).
+  if (matchCount >= 2) return { kind: "multi-exact", expected: cleanCount };
   return { kind: "mark-all", expected: cleanCount };
 }
 

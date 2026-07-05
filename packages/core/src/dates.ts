@@ -35,7 +35,18 @@ const MONTH_NAMES = [
   "Nov",
   "Dec",
 ];
-const MONTH_RE = Object.keys(MONTHS).join("|");
+
+/**
+ * BOUNDED month-token alternation — matches exactly a short form or the real
+ * full month name, never an arbitrary suffix: `(jun)[a-z]*` would turn
+ * "MAYBANK 13"/"MARTIN 13" into dates and falsely boost payment confidence.
+ * Wrap with token boundaries at the use site: (?<![a-z0-9]) … (?![a-z0-9]).
+ * Single source — matching.ts reuses it for memo date extraction.
+ */
+export const MONTH_TOKEN_ALT =
+  "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?" +
+  "|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
+const MONTH_RE = MONTH_TOKEN_ALT;
 
 function toIso(y: number, m: number, d: number): string {
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
@@ -115,7 +126,7 @@ export function parseFlexibleDate(text: string, now = new Date()): ParsedDate | 
     return { iso: toIso(+m[1]!, +m[2]!, +m[3]!), rest: t.slice(m[0].length).trim() };
   }
   // 2026 Jun 13
-  if ((m = t.match(new RegExp(`^(\\d{4})\\s+(${MONTH_RE})[a-z]*\\s+(\\d{1,2})\\b`, "i")))) {
+  if ((m = t.match(new RegExp(`^(\\d{4})\\s+(${MONTH_RE})(?![a-z0-9])\\s+(\\d{1,2})\\b`, "i")))) {
     const month = MONTHS[m[2]!.toLowerCase().slice(0, 3)]!;
     if (!isRealDate(+m[1]!, month, +m[3]!)) return null;
     return {
@@ -124,7 +135,9 @@ export function parseFlexibleDate(text: string, now = new Date()): ParsedDate | 
     };
   }
   // Jun 13 2026 | Jun 13
-  if ((m = t.match(new RegExp(`^(${MONTH_RE})[a-z]*\\s+(\\d{1,2})(?:\\s+(\\d{4}))?\\b`, "i")))) {
+  if (
+    (m = t.match(new RegExp(`^(${MONTH_RE})(?![a-z0-9])\\s+(\\d{1,2})(?:\\s+(\\d{4}))?\\b`, "i")))
+  ) {
     const month = MONTHS[m[1]!.toLowerCase().slice(0, 3)]!;
     const day = +m[2]!;
     const year = m[3] ? +m[3] : inferYear(month, day, now);

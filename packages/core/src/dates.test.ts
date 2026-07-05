@@ -26,6 +26,13 @@ describe("parseFlexibleDate", () => {
     expect(parseFlexibleDate("D2 Saturday Session", NOW)).toBeNull();
   });
 
+  it("month-prefixed words are not months (bounded token alternation)", () => {
+    expect(parseFlexibleDate("maybank 13", NOW)).toBeNull();
+    expect(parseFlexibleDate("martin 13 D2", NOW)).toBeNull();
+    expect(parseFlexibleDate("June 13", NOW)).toEqual({ iso: "2026-06-13", rest: "" });
+    expect(parseFlexibleDate("2026 June 13 D2", NOW)).toEqual({ iso: "2026-06-13", rest: "D2" });
+  });
+
   it("rejects impossible calendar dates (never emits a fake ISO)", () => {
     expect(parseFlexibleDate("31/2 D2", NOW)).toBeNull();
     expect(parseFlexibleDate("2026-13-40", NOW)).toBeNull();

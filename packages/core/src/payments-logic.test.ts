@@ -211,10 +211,13 @@ describe("classifyAmount (decision table)", () => {
     expect(classifyAmount(110000, 440000, 1)).toEqual({ kind: "need-more", expected: 4 });
   });
 
-  it("exact split / overpay covering all matched → mark-all", () => {
-    expect(classifyAmount(110000, 220000, 2)).toEqual({ kind: "mark-all", expected: 2 });
+  it("single payer covered → mark-all; multi-person fuzzy → multi-exact (owner-confirm)", () => {
     expect(classifyAmount(110000, 110000, 1)).toEqual({ kind: "mark-all", expected: 1 });
-    expect(classifyAmount(110000, 250000, 2)).toEqual({ kind: "mark-all", expected: 0 }); // messy overpay ≥ fee×M
+    expect(classifyAmount(110000, 150000, 1)).toEqual({ kind: "mark-all", expected: 0 }); // single overpay
+    // BL-PAY-3: 'kelly chi 220k' never auto-splits — owner confirms the pair
+    expect(classifyAmount(110000, 220000, 2)).toEqual({ kind: "multi-exact", expected: 2 });
+    expect(classifyAmount(110000, 250000, 2)).toEqual({ kind: "multi-exact", expected: 0 }); // messy overpay ≥ fee×M
+    expect(classifyAmount(110000, 330000, 3)).toEqual({ kind: "multi-exact", expected: 3 });
   });
 
   it("unpriced session → unknown-fee, NEVER auto-mark (INV-4 fail-closed)", () => {

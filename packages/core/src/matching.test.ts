@@ -153,6 +153,14 @@ describe("contentMentionsDate", () => {
     expect(contentMentionsDate("kelly jun 13", "2026-06-13")).toBe(true);
   });
 
+  it("month-prefixed WORDS are never dates (MAYBANK/MARTIN)", () => {
+    expect(contentMentionsDate("kelly transfer MAYBANK 13", "2026-05-13")).toBe(false);
+    expect(contentMentionsDate("MARTIN 13 transfer badminton", "2026-03-13")).toBe(false);
+    // real full month names still parse
+    expect(contentMentionsDate("kelly JUNE 13 badminton", "2026-06-13")).toBe(true);
+    expect(contentMentionsDate("kelly 13 October", "2026-10-13")).toBe(true);
+  });
+
   it("named-month forms honor an explicit year on either side", () => {
     expect(contentMentionsDate("kelly Jun 13 2025 badminton", "2026-06-13")).toBe(false);
     expect(contentMentionsDate("kelly 2025 Jun 13", "2026-06-13")).toBe(false);
@@ -170,6 +178,9 @@ describe("contentMentionsDate", () => {
     expect(contentMentionsDate("kelly transfer badminton 9999", "2026-06-13")).toBe(false);
     expect(contentMentionsDate("kelly chuyen tien FT26164000303242", "2026-06-13")).toBe(false);
     expect(contentMentionsDate("kelly transfer 1307", "2026-06-13")).toBe(false);
+    // compact form must be a STANDALONE token — reference fragments never count
+    expect(contentMentionsDate("kelly transfer badminton FT1306", "2026-06-13")).toBe(false);
+    expect(contentMentionsDate("kelly transfer badminton ref1306x", "2026-06-13")).toBe(false);
   });
 });
 

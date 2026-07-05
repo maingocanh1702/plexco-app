@@ -15,7 +15,7 @@
  *     badminton/cau long) — see ./sports.ts;
  *   - pay-code prefix/skip-list arrive via PayCodeConfig (were BMT/BMTRANS).
  */
-import { MONTHS } from "./dates.js";
+import { MONTHS, MONTH_TOKEN_ALT } from "./dates.js";
 
 export type PlayerId = string | number;
 
@@ -445,18 +445,17 @@ export function extractDates(content: string): { month: number; day: number; yea
   const out: { month: number; day: number; year?: number }[] = [];
 
   // Named-month forms, with an OPTIONAL explicit year on either side:
-  // "jun 13" / "2025 jun 13" / "jun 13 2025" / "13 jun [2025]". Only 19xx/20xx
-  // counts as a year — a 4-digit reference fragment ("jun 13 4821") must not
-  // turn a yearless date into a mismatching dated one.
-  const monthNames = Object.keys(MONTHS).join("|");
+  // "jun 13" / "2025 jun 13" / "jun 13 2025" / "13 jun [2025]". Month tokens
+  // use the BOUNDED alternation from dates.ts — "MAYBANK 13"/"MARTIN 13" must
+  // never read as May/Mar 13. Only 19xx/20xx counts as a year — a 4-digit
+  // reference fragment ("jun 13 4821") must not turn a yearless date into a
+  // mismatching dated one.
+  const MONTH = `(?<![a-z0-9])(${MONTH_TOKEN_ALT})(?![a-z0-9])`;
   const YEAR = "((?:19|20)\\d{2})";
   for (const m of norm.matchAll(
-    new RegExp(
-      `(?:(?<!\\d)${YEAR}\\s+)?(${monthNames})[a-z]*\\s+(\\d{1,2})(?!\\d)(?:\\s+${YEAR}(?!\\d))?`,
-      "g",
-    ),
+    new RegExp(`(?:(?<!\\d)${YEAR}\\s+)?${MONTH}\\s+(\\d{1,2})(?!\\d)(?:\\s+${YEAR}(?!\\d))?`, "g"),
   )) {
-    const month = MONTHS[m[2]!]!;
+    const month = MONTHS[m[2]!.slice(0, 3)]!;
     const day = Number(m[3]);
     const year = m[1] ?? m[4];
     if (day >= 1 && day <= 31) {
@@ -464,9 +463,9 @@ export function extractDates(content: string): { month: number; day: number; yea
     }
   }
   for (const m of norm.matchAll(
-    new RegExp(`(?<!\\d)(\\d{1,2})\\s+(${monthNames})[a-z]*(?:\\s+${YEAR}(?!\\d))?`, "g"),
+    new RegExp(`(?<!\\d)(\\d{1,2})\\s+${MONTH}(?:\\s+${YEAR}(?!\\d))?`, "g"),
   )) {
-    const month = MONTHS[m[2]!]!;
+    const month = MONTHS[m[2]!.slice(0, 3)]!;
     const day = Number(m[1]);
     if (day >= 1 && day <= 31) {
       out.push(m[3] ? { month, day, year: Number(m[3]) } : { month, day });
