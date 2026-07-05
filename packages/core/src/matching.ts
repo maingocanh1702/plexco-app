@@ -505,9 +505,9 @@ export function extractDates(content: string): { month: number; day: number; yea
  *   - yearless forms ("jun 13", "13/6")   → month+day comparison;
  *   - explicit-year forms ("13/6/2025", "2025-06-13") → month+day AND year —
  *     a stale-year memo must never earn a date-based confidence boost;
- *   - compact 4-digit ("1306"/"0613")     → accepted ONLY when equal to THIS
- *     session's ddmm/mmdd, so a reference-code fragment can't masquerade as a
- *     date; longer digit runs are ignored.
+ *   - compact 4-digit ("1306"/"0613")     → accepted ONLY as a STANDALONE
+ *     token equal to THIS session's ddmm/mmdd — a fragment inside a
+ *     reference run ("FT1306") or a longer digit run is never a date.
  */
 export function contentMentionsDate(content: string, isoDate: string): boolean {
   const [yy, mm, dd] = isoDate.split("-").map(Number);
@@ -520,8 +520,10 @@ export function contentMentionsDate(content: string, isoDate: string): boolean {
   }
   const ddmm = `${String(dd).padStart(2, "0")}${String(mm).padStart(2, "0")}`;
   const mmdd = `${String(mm).padStart(2, "0")}${String(dd).padStart(2, "0")}`;
-  for (const m of content.matchAll(/\d+/g)) {
-    if (m[0].length === 4 && (m[0] === ddmm || m[0] === mmdd)) return true;
+  // token-level: alnum runs stay glued after normalization, so "ft1306" can
+  // never equal the bare compact form
+  for (const tok of normalizeName(content).split(" ")) {
+    if (tok === ddmm || tok === mmdd) return true;
   }
   return false;
 }
