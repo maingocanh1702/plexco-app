@@ -29,4 +29,23 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // HR1 choke-point: apps never touch tenant tables directly — every
+    // tenant-scoped query goes through tenantRepo/withTenant (@plexco/db).
+    files: ["apps/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@plexco/db/schema",
+              message:
+                "Tenant tables are reached ONLY via tenantRepo/withTenant from @plexco/db (HR1 fail-closed RLS choke-point).",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );
