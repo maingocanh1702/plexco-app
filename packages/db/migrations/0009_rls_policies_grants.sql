@@ -59,18 +59,30 @@ BEGIN
 END
 $$;
 
--- session_occurrences has no tenant_id column; scope via its recurrence rule.
+-- session_occurrences has no tenant_id column; it references TWO tenant-bearing
+-- parents, so the policy must prove BOTH belong to the current tenant — else a
+-- tenant could link its recurrence rule to ANOTHER tenant's session by UUID.
 ALTER TABLE session_occurrences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE session_occurrences FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON session_occurrences
-  USING (EXISTS (
-    SELECT 1 FROM session_recurrence_rules r
-    WHERE r.id = session_occurrences.recurrence_rule_id
-      AND r.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid))
-  WITH CHECK (EXISTS (
-    SELECT 1 FROM session_recurrence_rules r
-    WHERE r.id = session_occurrences.recurrence_rule_id
-      AND r.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid));
+  USING (
+    EXISTS (
+      SELECT 1 FROM session_recurrence_rules r
+      WHERE r.id = session_occurrences.recurrence_rule_id
+        AND r.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+    AND EXISTS (
+      SELECT 1 FROM sessions s
+      WHERE s.id = session_occurrences.session_id
+        AND s.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid))
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM session_recurrence_rules r
+      WHERE r.id = session_occurrences.recurrence_rule_id
+        AND r.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+    AND EXISTS (
+      SELECT 1 FROM sessions s
+      WHERE s.id = session_occurrences.session_id
+        AND s.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid));
 GRANT SELECT, INSERT, UPDATE, DELETE ON session_occurrences TO app;
 
 -- onboarding_steps has no tenant_id column; scope via its run.

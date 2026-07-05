@@ -189,6 +189,41 @@ describe("public read model (INV-3 / HR2 / DD-12)", () => {
   });
 });
 
+describe("dual-parent child rows (session_occurrences)", () => {
+  it("tenant A cannot attach its recurrence rule to tenant B's session", async () => {
+    const { sessionRecurrenceRules, sessionOccurrences } = await import("../schema.js");
+    // A's rule, B's session
+    const ruleA = await withTenant(ctx.appDb.db, ctx.tenantA, async (tx) => {
+      const rows = await tx
+        .insert(sessionRecurrenceRules)
+        .values({ tenantId: ctx.tenantA, rrule: "FREQ=WEEKLY", timezone: "Asia/Ho_Chi_Minh" })
+        .returning();
+      return rows[0]!;
+    });
+    const sessionB = await createIn(ctx.tenantB, 20);
+
+    await expect(
+      withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+        tx.insert(sessionOccurrences).values({
+          recurrenceRuleId: ruleA.id,
+          sessionId: sessionB.id, // cross-tenant link attempt
+          localOccurrenceKey: "2026-07-17",
+        }),
+      ),
+    ).rejects.toThrow(/row-level security/i);
+
+    // same-tenant link works
+    const sessionA = await createIn(ctx.tenantA, 8);
+    await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      tx.insert(sessionOccurrences).values({
+        recurrenceRuleId: ruleA.id,
+        sessionId: sessionA.id,
+        localOccurrenceKey: "2026-07-18",
+      }),
+    );
+  });
+});
+
 describe("choke-point hygiene", () => {
   it("withTenant refuses a non-UUID tenant id (routing must supply it)", async () => {
     await expect(
