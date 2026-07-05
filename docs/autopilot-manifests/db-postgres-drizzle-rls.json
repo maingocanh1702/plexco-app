@@ -1,0 +1,39 @@
+{
+  "feature": "db-postgres-drizzle-rls",
+  "branch": "feat/db-postgres-drizzle-rls",
+  "base_ref": "feat/phase1-fable5",
+  "risk": "P1",
+  "change_class": "schema-rls",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_consecutive_clean",
+  "depends_on": [
+    "monorepo-scaffold"
+  ],
+  "dep_checks": [
+    {
+      "file": "packages/db/package.json",
+      "symbol": "@plexco/db"
+    }
+  ],
+  "invariants": [
+    "schema",
+    "auth"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/db-postgres-drizzle-rls.json",
+    "packages/db/migrations/0006_discovery.sql",
+    "packages/db/migrations/0009_rls_policies_grants.sql",
+    "packages/db/schema.ts",
+    "packages/db/package.json",
+    "packages/db/tsconfig.json",
+    "packages/db/vitest.config.ts",
+    "packages/db/src/migrate.ts",
+    "packages/db/src/client.ts",
+    "packages/db/src/tenant.ts",
+    "packages/db/src/index.ts",
+    "packages/db/src/test-harness.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "eslint.config.mjs"
+  ]
+}
