@@ -25,7 +25,10 @@ CREATE TABLE public_sessions (
   projected_at     timestamptz NOT NULL DEFAULT now(),
   expires_at       timestamptz NOT NULL
 );
-CREATE INDEX idx_public_starts ON public_sessions(starts_at) WHERE starts_at > now();
+-- No predicate: now() is STABLE, not IMMUTABLE — a WHERE starts_at > now()
+-- partial index is invalid SQL and made this migration unapplyable anywhere.
+-- The plain btree serves the discovery range scan (starts_at > $now) fine.
+CREATE INDEX idx_public_starts ON public_sessions(starts_at);
 CREATE INDEX idx_public_sport_time ON public_sessions(sport_key, starts_at);
 CREATE INDEX idx_public_area_time ON public_sessions(area, starts_at);
 CREATE INDEX idx_public_price ON public_sessions(price_amount);

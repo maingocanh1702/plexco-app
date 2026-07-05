@@ -600,7 +600,9 @@ export const publicSessions = pgTable("public_sessions", {
   projectedAt: timestamp("projected_at", { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 }, (t) => ({
-  startsIdx: index("idx_public_starts").on(t.startsAt).where(sql`${t.startsAt} > now()`),
+  // plain btree — a WHERE starts_at > now() predicate is invalid (now() is
+  // STABLE, not IMMUTABLE); mirrors the 0006 fix
+  startsIdx: index("idx_public_starts").on(t.startsAt),
   sportTimeIdx: index("idx_public_sport_time").on(t.sportKey, t.startsAt),
   areaTimeIdx: index("idx_public_area_time").on(t.area, t.startsAt),
   priceIdx: index("idx_public_price").on(t.priceAmount),
