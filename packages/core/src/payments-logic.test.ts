@@ -255,6 +255,17 @@ describe("splitNameAmount", () => {
     expect(splitNameAmount("Wang d")).toEqual({ name: "Wang d", amount: null });
     expect(splitNameAmount("Wang k")).toEqual({ name: "Wang k", amount: null });
   });
+
+  it("numeric name tails never inflate the amount (shortest trailing run wins)", () => {
+    expect(splitNameAmount("Player 2 110k")).toEqual({ name: "Player 2", amount: 110000 });
+    expect(splitNameAmount("Court 7 110 000")).toEqual({ name: "Court 7", amount: 110000 });
+    expect(splitNameAmount("San 2 220000")).toEqual({ name: "San 2", amount: 220000 });
+    expect(splitNameAmount("Player 2 110 k vnd")).toEqual({ name: "Player 2", amount: 110000 });
+    // degenerate "<name> <digit>" has no better parse — the digit reads as a
+    // (tiny) amount, exactly like the production splitter; downstream
+    // classification rejects it as under-payment, so no money can move on it
+    expect(splitNameAmount("Player 2")).toEqual({ name: "Player", amount: 2 });
+  });
 });
 
 describe("orderManualSettlementDebts", () => {

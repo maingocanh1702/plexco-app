@@ -25,8 +25,11 @@ export interface OpenDebt {
 
 /** Split "Wang 220k" / "Wang 110 000" / "Wang 110k vnd" into name + amount.
  * The trailing amount is validated by parseMoney ITSELF (single source of the
- * money grammar — no second regex to drift): take the maximal run of trailing
- * amount-shaped tokens that parseMoney accepts as one value. */
+ * money grammar — no second regex to drift). The SHORTEST parseable trailing
+ * run wins: a numeric tail of the NAME ("Player 2 110k") must never be pulled
+ * into the money ("2 110k" would inflate the amount 19×). Multi-token amounts
+ * still work because their partial tails don't parse alone ("000" -> 0,
+ * "k vnd" -> not digit-led), so the scan naturally widens until valid. */
 // Every token shape a parseMoney-valid amount can decompose into when split
 // on whitespace: digit groups, digit+k, digit(+k)+unit, standalone k(+unit),
 // standalone unit. Keep in lockstep with parseMoney's stripped grammar.
@@ -34,10 +37,11 @@ const AMOUNT_TOKEN_RE = /^(?:[\d.,]+k?(?:vnd|d|đ)?|k(?:vnd|d|đ)?|vnd|d|đ)$/i;
 
 export function splitNameAmount(raw: string): { name: string; amount: number | null } {
   const tokens = raw.trim().split(/\s+/);
-  // widest trailing run of amount-shaped tokens, keeping a non-empty name
+  // leftmost token that could still belong to a trailing amount run
   let start = tokens.length;
   while (start > 1 && AMOUNT_TOKEN_RE.test(tokens[start - 1]!)) start--;
-  for (let i = start; i < tokens.length; i++) {
+  // shortest valid trailing run first (scan right-to-left)
+  for (let i = tokens.length - 1; i >= start; i--) {
     const candidate = tokens.slice(i).join(" ");
     if (!/^\d/.test(candidate)) continue; // an amount starts with a digit
     const amount = parseMoney(candidate);
