@@ -108,3 +108,26 @@ notes: Codex S1 round-07/08 P1s — (a) `[deploy] release_command` would force
   CI job / one-shot machine / separate minimal app holding the migration
   secret, reusing entrypoint role `provision`. Blocks FIRST DEPLOY only —
   not S2..S20 development.
+
+## task: core-matcher-grouped-amount-parsing
+title: splitNameAmount misparses grouped trailing amounts with a non-zero final group
+status: planned
+risk: P2
+change_class: bugfix
+depends_on: []
+invariants: [money-model, shared-core]
+scope: [packages/core/src/payments-logic.ts, packages/core/src/payments-logic.test.ts]
+notes: Codex core-lift-v3 round-05 — manual `/transfer`/`/cash` args using spaces
+  as thousands separators misparse when the final group is non-zero, e.g.
+  "Wang 110 500" -> {name:"Wang 110", amount:500} instead of amount 110500.
+  Founder-approved 2026-07-05 to merge core-lift-v3 without fixing this round
+  (per the class-aware review gate: NL-parsing P2, not auth/money-authoritative
+  — matcher output is proposal-only, S7/S15 settle money via manual-allocate or
+  exact pay_code, never this function directly). Fix shape: the shortest-run
+  scan in splitNameAmount needs to also try LONGER trailing runs when a
+  shorter one parses, not just accept the first (shortest) match — same
+  family as round-01's "shortest-run amount split" fix, so extend that
+  decision table rather than patching in isolation. This is the 15th
+  cumulative NL-parsing finding across core-lift v1/v2/v3 — before starting,
+  re-read DECISIONS.md S2/S2b/S2c entries; a 16th quick patch risks the same
+  REGION_THRASH pattern that parked this branch three times already.

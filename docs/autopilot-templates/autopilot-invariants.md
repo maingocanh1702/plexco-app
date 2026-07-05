@@ -22,6 +22,15 @@
 - Thrash = a DESIGN smell → **converge to a clean design, do NOT keep patching edges**.
 - **Distinct findings that keep SPREADING across many files/regions round after round** (not the same region) =
   the SLICE is too big / under-specified, not thrash → still HALT at MAX_ROUNDS and **split the feature**, don't grind on.
+- **The "clean round" bar is CLASS-AWARE, not one bar for every finding.** P0/P1 on a money-path / RLS / PII /
+  auth-privilege surface → keep the strict bar: converge to ZERO open findings, 2 consecutive FULL-base clean
+  rounds, no relaxation, ever. P2 (style/edge-case) findings confined to NL-parsing / formatting / other
+  non-security surfaces → gate on "no OPEN P0/P1 AND no NEW P1+ for 2 consecutive rounds"; a lingering P2 there
+  does NOT block merge — file it to `docs/autopilot-backlog.md` as a tracked item instead. Never extend the
+  relaxed P2 gate to an auth/money/RLS/PII finding — those stay at the strict bar regardless of how the
+  reviewer labels severity. (decided 2026-07-05, phase1-fable5 resume: the S4b/S2c NL-parsing P2 tail was
+  cascade-blocking the whole dependency DAG over edge-case severity that didn't warrant it, while the same
+  leniency must never extend to auth findings — see DECISIONS.md.)
 
 ## Design contract (choke-points & derived data)
 - **Single source of truth for a derived aggregate** (money totals, counts, balances): one canonical field +
