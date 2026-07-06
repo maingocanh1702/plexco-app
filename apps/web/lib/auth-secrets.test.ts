@@ -26,6 +26,16 @@ describe("resolveAuthSecretKey — env fallback (dev)", () => {
     await expect(resolveAuthSecretKey()).rejects.toThrow(/ENCRYPTION_KEY/);
   });
 
+  it("fails closed on a short/weak key instead of silently accepting it (codex round-05)", async () => {
+    process.env.ENCRYPTION_KEY = Buffer.from("too-short").toString("base64");
+    await expect(resolveAuthSecretKey()).rejects.toThrow(/32/);
+  });
+
+  it("fails closed on malformed base64 that decodes below the minimum length", async () => {
+    process.env.ENCRYPTION_KEY = "not-valid-base64!!!";
+    await expect(resolveAuthSecretKey()).rejects.toThrow(/32/);
+  });
+
   it("caches the resolved key across calls (no re-read after the first)", async () => {
     process.env.ENCRYPTION_KEY = Buffer.from("b".repeat(32)).toString("base64");
     const first = await resolveAuthSecretKey();

@@ -24,6 +24,9 @@ export async function resolveAuthSecretKey(): Promise<Buffer> {
   return cachedKey;
 }
 
+/** HMAC-SHA256's own block size — the conventional minimum for a full-strength key. */
+const MIN_KEY_BYTES = 32;
+
 function resolveFromEnvFallback(): Buffer {
   const raw = process.env.ENCRYPTION_KEY;
   if (!raw) {
@@ -31,7 +34,18 @@ function resolveFromEnvFallback(): Buffer {
       "ENCRYPTION_KEY is not set (dev fallback) and KMS_PROVIDER=aws-kms is not configured",
     );
   }
-  return Buffer.from(raw, "base64");
+  // Node's base64 decoder is permissive (tolerates malformed/short input
+  // rather than throwing), so a misconfigured short/garbage value would
+  // otherwise silently produce a weak HMAC key (codex round-05) — fail
+  // closed instead of trusting whatever decoded.
+  const key = Buffer.from(raw, "base64");
+  if (key.length < MIN_KEY_BYTES) {
+    throw new Error(
+      `ENCRYPTION_KEY decodes to ${key.length} bytes, below the required ${MIN_KEY_BYTES} — ` +
+        "set a base64-encoded, high-entropy key of at least 32 bytes.",
+    );
+  }
+  return key;
 }
 
 async function resolveFromAwsKms(): Promise<Buffer> {

@@ -101,6 +101,12 @@ CREATE TABLE auth_login_state (
   consumed_at timestamptz,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+-- Every public /api/auth/telegram/state hit runs auth_login_state_issue's
+-- expiry sweep below (codex round-05, same shape as round-01's rate_limit_hits
+-- finding): the PK on state_hash alone can't serve a bare `expires_at < ...`
+-- predicate, so without this index the sweep degrades toward a full scan of
+-- up to a day of retained rows under distributed unauthenticated traffic.
+CREATE INDEX idx_auth_login_state_expires_at ON auth_login_state(expires_at);
 -- No grants: touched only inside SECURITY DEFINER fns.
 
 CREATE OR REPLACE FUNCTION auth_login_state_issue(p_state_hash text, p_ttl interval)

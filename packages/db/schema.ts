@@ -785,6 +785,9 @@ export const onboardingSteps = pgTable("onboarding_steps", {
   idempotencyKey: text("idempotency_key"),
   errorCode: text("error_code"),
   completedAt: timestamp("completed_at", { withTimezone: true }),
+  // Added by migration 0013 (DD-31 SI-8): retries leave multiple rows per
+  // (run_id, step); reads pick the MOST RECENT by this column.
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uq: uniqueIndex("onboarding_steps_uq").on(t.runId, t.step, t.idempotencyKey),
   statusChk: check("onboarding_steps_status_chk",

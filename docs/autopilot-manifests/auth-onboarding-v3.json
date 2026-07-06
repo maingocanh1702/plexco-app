@@ -23,6 +23,7 @@
   ],
   "scope": [
     "docs/autopilot-manifests/auth-onboarding-v3.json",
+    "packages/db/schema.ts",
     "packages/db/migrations/0012_auth_functions.sql",
     "packages/db/migrations/0013_onboarding_steps_recency.sql",
     "packages/db/src/auth.ts",

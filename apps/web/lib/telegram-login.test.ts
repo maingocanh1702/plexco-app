@@ -10,7 +10,7 @@ import {
 
 const BOT_TOKEN = "12345:TEST-token";
 
-process.env.ENCRYPTION_KEY ??= Buffer.from("test-pepper-32-bytes-000000000!").toString("base64");
+process.env.ENCRYPTION_KEY ??= Buffer.from("k".repeat(32)).toString("base64");
 
 beforeEach(() => {
   __resetAuthSecretCacheForTest();
@@ -123,9 +123,7 @@ describe("telegramUserLookupHash (DD-31 SI-2 — web-auth keyed hash)", () => {
   it("changing the configured key changes the output for the same id", async () => {
     const withKey1 = await telegramUserLookupHash("13131313");
     __resetAuthSecretCacheForTest();
-    process.env.ENCRYPTION_KEY = Buffer.from("different-pepper-32-bytes-000!!").toString(
-      "base64",
-    );
+    process.env.ENCRYPTION_KEY = Buffer.from("z".repeat(32)).toString("base64");
     const withKey2 = await telegramUserLookupHash("13131313");
     expect(withKey1).not.toBe(withKey2);
   });
