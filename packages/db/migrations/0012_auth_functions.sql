@@ -19,6 +19,13 @@ CREATE TABLE auth_login_nonces (
   login_hash text PRIMARY KEY,
   seen_at    timestamptz NOT NULL DEFAULT now()
 );
+-- Every successful callback runs the seen_at retention sweep below (codex
+-- round-09 — third instance of this shape after rate_limit_hits/round-01 and
+-- auth_login_state/round-05): the PK on login_hash alone can't serve a bare
+-- `seen_at < ...` predicate, so under public login traffic this would
+-- degrade toward a full scan. Audited this migration for every remaining
+-- sweep-style DELETE; this was the only unindexed one left.
+CREATE INDEX idx_auth_login_nonces_seen_at ON auth_login_nonces(seen_at);
 -- No grants: touched only inside SECURITY DEFINER fns.
 
 -- ---------------------------------------------------------------------------

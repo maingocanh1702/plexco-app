@@ -18,12 +18,23 @@ let cachedKey: Buffer | null = null;
 /** HMAC-SHA256's own block size — the conventional minimum for a full-strength key. */
 const MIN_KEY_BYTES = 32;
 
+/** The only KMS_PROVIDER values this helper understands (others: environments-setup.md documents gcp-kms etc. as a general secrets convention, but no such branch exists here). */
+const SUPPORTED_KMS_PROVIDERS = new Set([undefined, "local", "aws-kms"]);
+
 export async function resolveAuthSecretKey(): Promise<Buffer> {
   if (cachedKey) return cachedKey;
-  const key =
-    process.env.KMS_PROVIDER === "aws-kms"
-      ? await resolveFromAwsKms()
-      : resolveFromEnvFallback();
+  const provider = process.env.KMS_PROVIDER;
+  // Fail closed on anything unrecognized (codex round-09): silently falling
+  // through to the dev fallback for a misspelled or documented-but-
+  // unimplemented provider (e.g. "gcp-kms") would let staging/prod run on an
+  // unintended ENCRYPTION_KEY pepper without ever touching the real KMS.
+  if (!SUPPORTED_KMS_PROVIDERS.has(provider)) {
+    throw new Error(
+      `Unsupported KMS_PROVIDER "${provider}" — this helper supports only "aws-kms" or ` +
+        `"local"/unset (dev fallback). Refusing to silently use ENCRYPTION_KEY instead.`,
+    );
+  }
+  const key = provider === "aws-kms" ? await resolveFromAwsKms() : resolveFromEnvFallback();
   // Enforced ONCE here regardless of which branch produced the key (codex
   // round-06): validating inside only resolveFromEnvFallback (round-05) left
   // the KMS branch free to return a short/wrong-plaintext pepper unchecked.

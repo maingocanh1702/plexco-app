@@ -36,6 +36,19 @@ describe("resolveAuthSecretKey — env fallback (dev)", () => {
     await expect(resolveAuthSecretKey()).rejects.toThrow(/32/);
   });
 
+  it("KMS_PROVIDER=local behaves identically to unset", async () => {
+    process.env.KMS_PROVIDER = "local";
+    process.env.ENCRYPTION_KEY = Buffer.from("a".repeat(32)).toString("base64");
+    const key = await resolveAuthSecretKey();
+    expect(key.toString()).toBe("a".repeat(32));
+  });
+
+  it("fails closed on an unsupported/misspelled KMS_PROVIDER instead of silently using ENCRYPTION_KEY (codex round-09)", async () => {
+    process.env.KMS_PROVIDER = "gcp-kms";
+    process.env.ENCRYPTION_KEY = Buffer.from("a".repeat(32)).toString("base64");
+    await expect(resolveAuthSecretKey()).rejects.toThrow(/Unsupported KMS_PROVIDER/);
+  });
+
   it("caches the resolved key across calls (no re-read after the first)", async () => {
     process.env.ENCRYPTION_KEY = Buffer.from("b".repeat(32)).toString("base64");
     const first = await resolveAuthSecretKey();

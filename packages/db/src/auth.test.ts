@@ -76,6 +76,14 @@ describe("auth_login_telegram", () => {
       /permission denied/i,
     );
   });
+
+  it("has a standalone index on `seen_at` so the retention sweep never full-scans (codex round-09)", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT indexdef FROM pg_indexes WHERE tablename = 'auth_login_nonces' AND indexname = 'idx_auth_login_nonces_seen_at'`,
+    );
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as { indexdef: string }).indexdef).toMatch(/\(seen_at\)/);
+  });
 });
 
 describe("auth_login_telegram concurrency", () => {
