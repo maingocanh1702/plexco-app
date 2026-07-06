@@ -92,6 +92,26 @@ describe("resolveAuthSecretKey — AWS KMS (staging/prod)", () => {
     await expect(mod.resolveAuthSecretKey()).rejects.toThrow(/no plaintext/i);
     vi.doUnmock("@aws-sdk/client-kms");
   });
+
+  it("fails closed when KMS decrypts to a short/weak plaintext (codex round-06)", async () => {
+    vi.doMock("@aws-sdk/client-kms", () => ({
+      KMSClient: class {
+        send() {
+          return Promise.resolve({ Plaintext: Buffer.from("too-short") });
+        }
+      },
+      DecryptCommand: class {
+        constructor(public input: unknown) {}
+      },
+    }));
+    vi.resetModules();
+    const mod = await import("./auth-secrets");
+    process.env.KMS_PROVIDER = "aws-kms";
+    process.env.KMS_ENCRYPTED_AUTH_PEPPER = Buffer.from("ciphertext").toString("base64");
+
+    await expect(mod.resolveAuthSecretKey()).rejects.toThrow(/32/);
+    vi.doUnmock("@aws-sdk/client-kms");
+  });
 });
 
 describe("keyedHash", () => {

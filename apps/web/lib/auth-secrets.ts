@@ -15,17 +15,28 @@ import { createHmac } from "node:crypto";
 
 let cachedKey: Buffer | null = null;
 
+/** HMAC-SHA256's own block size — the conventional minimum for a full-strength key. */
+const MIN_KEY_BYTES = 32;
+
 export async function resolveAuthSecretKey(): Promise<Buffer> {
   if (cachedKey) return cachedKey;
-  cachedKey =
+  const key =
     process.env.KMS_PROVIDER === "aws-kms"
       ? await resolveFromAwsKms()
       : resolveFromEnvFallback();
+  // Enforced ONCE here regardless of which branch produced the key (codex
+  // round-06): validating inside only resolveFromEnvFallback (round-05) left
+  // the KMS branch free to return a short/wrong-plaintext pepper unchecked.
+  // A future third resolution path inherits this guarantee for free too.
+  if (key.length < MIN_KEY_BYTES) {
+    throw new Error(
+      `Auth secret key material is ${key.length} bytes, below the required ${MIN_KEY_BYTES} — ` +
+        "check ENCRYPTION_KEY (dev) or the KMS_ENCRYPTED_AUTH_PEPPER plaintext (staging/prod).",
+    );
+  }
+  cachedKey = key;
   return cachedKey;
 }
-
-/** HMAC-SHA256's own block size — the conventional minimum for a full-strength key. */
-const MIN_KEY_BYTES = 32;
 
 function resolveFromEnvFallback(): Buffer {
   const raw = process.env.ENCRYPTION_KEY;
@@ -35,17 +46,9 @@ function resolveFromEnvFallback(): Buffer {
     );
   }
   // Node's base64 decoder is permissive (tolerates malformed/short input
-  // rather than throwing), so a misconfigured short/garbage value would
-  // otherwise silently produce a weak HMAC key (codex round-05) — fail
-  // closed instead of trusting whatever decoded.
-  const key = Buffer.from(raw, "base64");
-  if (key.length < MIN_KEY_BYTES) {
-    throw new Error(
-      `ENCRYPTION_KEY decodes to ${key.length} bytes, below the required ${MIN_KEY_BYTES} — ` +
-        "set a base64-encoded, high-entropy key of at least 32 bytes.",
-    );
-  }
-  return key;
+  // rather than throwing) — decode only here; length is checked centrally
+  // in resolveAuthSecretKey() above.
+  return Buffer.from(raw, "base64");
 }
 
 async function resolveFromAwsKms(): Promise<Buffer> {
