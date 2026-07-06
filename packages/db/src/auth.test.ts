@@ -484,4 +484,29 @@ describe("onboardingSnapshot (tenant scoping — DD-31 SI-3)", () => {
     const tgStep = snapshot?.steps.find((s) => s.step === "tg_bind");
     expect(tgStep?.status).toBe("verified"); // the row inserted SECOND (higher seq), despite the created_at tie
   });
+
+  it("app role can insert a step row relying on seq's default nextval (codex round-12)", async () => {
+    // MUST run as the REAL `app` role (ctx.appDb, inside withTenant so RLS's
+    // WITH CHECK passes) — a bigserial's implicit sequence is a SEPARATE
+    // grantable object from its table, and every other test in this file
+    // inserts via the owner connection, which would never catch a missing
+    // sequence grant (app has table INSERT via 0009, but not sequence USAGE
+    // unless migration 0013 grants it explicitly).
+    const run = await ctx.owner.query(
+      `INSERT INTO onboarding_runs (tenant_id, status) VALUES ($1, 'in_progress') RETURNING id`,
+      [ctx.tenantA],
+    );
+    const runId = (run.rows[0] as { id: string }).id;
+
+    const { withTenant } = await import("./tenant.js");
+    const { sql } = await import("drizzle-orm");
+    await expect(
+      withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+        tx.execute(sql`
+          INSERT INTO onboarding_steps (run_id, step, status, idempotency_key)
+          VALUES (${runId}, 'club_config', 'verified', 'app-write-1')
+        `),
+      ),
+    ).resolves.not.toThrow();
+  });
 });

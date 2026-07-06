@@ -13,7 +13,17 @@
 --         allocation, strictly monotonic regardless of transaction timing) as
 --         the authoritative recency-ordering column; created_at stays for
 --         human-readable audit only, no longer used for ordering logic.
+--         codex round-12 — a bigserial's implicit sequence is a SEPARATE
+--         object from its table: 0009's `GRANT ... ON onboarding_steps TO
+--         app` does not cover it, so an app-role INSERT that omits `seq`
+--         (relying on its DEFAULT nextval(...)) would fail "permission
+--         denied for sequence" the first time anything writes this table as
+--         app — masked in this slice's own tests because they insert via
+--         the owner/superuser connection, never as app. Explicit USAGE
+--         grant below closes that for whichever future slice (bank/TG/Zalo
+--         step writers) is first to actually write onboarding_steps as app.
 -- ============================================================================
 
 ALTER TABLE onboarding_steps ADD COLUMN created_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE onboarding_steps ADD COLUMN seq bigserial NOT NULL;
+GRANT USAGE ON SEQUENCE onboarding_steps_seq_seq TO app;
