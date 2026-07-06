@@ -24,7 +24,9 @@ BL="$REPO/docs/autopilot-backlog.md"
 MODE="${1:-report}"
 
 # Parse blocks → emit "slug<TAB>status<TAB>probe_file<TAB>probe_regex" for status in planned|ready|blocked.
-mapfile -t ROWS < <(awk '
+# NOTE: macOS default /bin/bash is 3.2 — no `mapfile`. Use a portable read loop instead.
+ROWS=()
+while IFS= read -r __row; do ROWS+=("$__row"); done < <(awk '
   function flush(){ if (slug!="" && (st=="planned"||st=="ready"||st=="blocked")) printf "%s\t%s\t%s\t%s\n", slug, st, pf, pr; slug="" }
   /^## task:/ { flush(); slug=$3; gsub(/[()]/,"",slug); st=""; pf=""; pr="" }
   /^status:/  { st=$2 }
@@ -36,7 +38,8 @@ mapfile -t ROWS < <(awk '
 ' "$BL")
 
 stale=()
-for row in "${ROWS[@]}"; do
+# ${ROWS[@]+...} guards empty-array expansion under `set -u` on bash 3.2.
+for row in ${ROWS[@]+"${ROWS[@]}"}; do
   IFS=$'\t' read -r slug st pf pr <<< "$row"
   if [ -z "$pf" ] || [ -z "$pr" ]; then
     echo "  ?  $slug ($st) — no merged_probe (can't auto-verify; add: merged_probe: <file> :: <regex>)"
