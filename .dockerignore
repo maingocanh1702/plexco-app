@@ -1,0 +1,17 @@
+# Keep the Docker build context lean and NEVER ship host node_modules
+# (macOS binaries) into the Linux image — deps are installed inside the build.
+node_modules
+**/node_modules
+**/.next
+**/dist
+**/build
+.git
+.autopilot
+.gitnexus
+.env
+.env.*
+coverage
+*.log
+erd.png
+erd.svg
+plexco-dashboard.html

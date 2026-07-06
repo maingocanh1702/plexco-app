@@ -1,0 +1,37 @@
+{
+  "feature": "core-foundations",
+  "branch": "feat/core-foundations",
+  "base_ref": "feat/phase1-fable5",
+  "risk": "P2",
+  "change_class": "core-lift",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_consecutive_clean",
+  "depends_on": [
+    "monorepo-scaffold"
+  ],
+  "dep_checks": [
+    {
+      "file": "packages/core/package.json",
+      "symbol": "@plexco/core"
+    }
+  ],
+  "invariants": [
+    "shared-core",
+    "i18n-surface"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/core-foundations.json",
+    "packages/core/package.json",
+    "packages/core/src/index.ts",
+    "packages/core/src/index.test.ts",
+    "packages/core/src/i18n.ts",
+    "packages/core/src/i18n.test.ts",
+    "packages/core/src/format.ts",
+    "packages/core/src/format.test.ts",
+    "packages/core/src/vietqr.ts",
+    "packages/core/src/vietqr.test.ts",
+    "packages/core/src/sports.ts",
+    "packages/core/src/sports.test.ts"
+  ]
+}
