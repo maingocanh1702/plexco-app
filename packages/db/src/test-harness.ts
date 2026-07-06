@@ -16,7 +16,6 @@ import { createDb, type DbHandle } from "./client.js";
  *      auth-slice concern; tests only need two isolated tenants to exist).
  */
 
-const TEST_DB = "plexco_rls_check";
 const ROLE_PW: Record<string, string> = {
   app: "plexco_test_app",
   app_worker: "plexco_test_worker",
@@ -50,7 +49,14 @@ function testUrl(base: string, opts: { db?: string; user?: string; password?: st
   return url.toString();
 }
 
-export async function setupRlsTestContext(): Promise<RlsTestContext> {
+/**
+ * @param dbName Dedicated throwaway database for THIS test file. Vitest runs
+ *   test files in parallel by default; every caller MUST pass a name unique
+ *   to its own suite (codex round-02) — two suites sharing one name would
+ *   race their DROP/CREATE DATABASE against each other and could terminate
+ *   or wipe a sibling suite mid-run.
+ */
+export async function setupRlsTestContext(dbName: string): Promise<RlsTestContext> {
   const base = process.env.DATABASE_URL_TEST;
   if (!base) {
     throw new Error(
@@ -63,8 +69,8 @@ export async function setupRlsTestContext(): Promise<RlsTestContext> {
   // 1. fresh database
   const admin = new pg.Client({ connectionString: base });
   await admin.connect();
-  await admin.query(`DROP DATABASE IF EXISTS ${TEST_DB} WITH (FORCE)`);
-  await admin.query(`CREATE DATABASE ${TEST_DB}`);
+  await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+  await admin.query(`CREATE DATABASE ${dbName}`);
   // 3. runtime roles get passwords (cluster-global, idempotent)
   for (const [role, pw] of Object.entries(ROLE_PW)) {
     await admin.query(`ALTER ROLE ${role} WITH LOGIN PASSWORD '${pw}'`).catch(async (e) => {
@@ -75,7 +81,7 @@ export async function setupRlsTestContext(): Promise<RlsTestContext> {
   await admin.end();
 
   // 2. real runner against the fresh db
-  const migrationUrl = testUrl(base, { db: TEST_DB });
+  const migrationUrl = testUrl(base, { db: dbName });
   const migrateResult = await migrate(migrationUrl);
 
   // roles now certainly exist (0000) — ensure passwords
@@ -94,8 +100,8 @@ export async function setupRlsTestContext(): Promise<RlsTestContext> {
   );
   const sport = await owner.query(`SELECT id FROM sports WHERE key = 'badminton'`);
 
-  const appUrl = testUrl(base, { db: TEST_DB, user: "app", password: ROLE_PW.app });
-  const readonlyUrl = testUrl(base, { db: TEST_DB, user: "readonly", password: ROLE_PW.readonly });
+  const appUrl = testUrl(base, { db: dbName, user: "app", password: ROLE_PW.app });
+  const readonlyUrl = testUrl(base, { db: dbName, user: "readonly", password: ROLE_PW.readonly });
   const appDb = createDb(appUrl, { max: 4 });
   const readonlyPool = new pg.Pool({ connectionString: readonlyUrl, max: 2 });
   const superuserDb = createDb(migrationUrl, { max: 2 });

@@ -22,7 +22,7 @@ import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 let ctx: RlsTestContext;
 
 beforeAll(async () => {
-  ctx = await setupRlsTestContext();
+  ctx = await setupRlsTestContext("plexco_auth_check");
 }, 120_000);
 
 afterAll(async () => {
