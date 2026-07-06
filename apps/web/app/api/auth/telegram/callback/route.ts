@@ -26,12 +26,15 @@ import {
  * DB replay nonce (auth_login_nonces) only makes a payload single-use, it
  * does not prove THIS browser started the login. See
  * BE/auth-security-invariant-table.md SI-1.
+ *
+ * Ordering: the free same-origin check runs first, then the IP rate limiter,
+ * THEN login-state consume. The limiter must bound EVERY attempt regardless
+ * of login-state validity (codex round-04) — placing it after state-consume
+ * would let missing/expired/forged-cookie attempts hit the DB at unlimited
+ * rate, never touching the documented 10/min/IP callback bound (BL-SEC-5).
  */
 export async function POST(request: Request): Promise<Response> {
   if (!sameOriginRequest(request)) {
-    return err("AUTH_INVALID", t("Xác thực không hợp lệ.", "Invalid authentication."), 401);
-  }
-  if (!(await consumeLoginStateCookie())) {
     return err("AUTH_INVALID", t("Xác thực không hợp lệ.", "Invalid authentication."), 401);
   }
   const ip = clientIp(request);
@@ -41,6 +44,9 @@ export async function POST(request: Request): Promise<Response> {
       t("Quá nhiều lần thử — đợi một phút.", "Too many attempts — wait a minute."),
       429,
     );
+  }
+  if (!(await consumeLoginStateCookie())) {
+    return err("AUTH_INVALID", t("Xác thực không hợp lệ.", "Invalid authentication."), 401);
   }
 
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
