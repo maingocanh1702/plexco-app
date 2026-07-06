@@ -51,6 +51,7 @@
     "apps/web/app/api/auth/session/route.ts",
     "apps/web/app/api/onboarding/start/route.ts",
     "apps/web/app/api/onboarding/readiness/route.ts",
+    "apps/web/app/api/onboarding/readiness/route.test.ts",
     "pnpm-lock.yaml",
     ".env.example"
   ]

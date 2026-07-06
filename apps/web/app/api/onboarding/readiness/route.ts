@@ -5,8 +5,13 @@ import { appDb, currentSession } from "../../../../lib/session-cookies";
 
 /**
  * GET /api/onboarding/readiness?tenant=<uuid> — WAO-UC-10 checklist shell.
- * AuthZ: caller must be a WEB admin of that tenant (tenant_ids_for_person);
- * the read itself runs under withTenant → RLS double-guards it.
+ * AuthZ: the API contract documents this as TenantOwner-only (BE tech spec
+ * §3) — caller must hold the OWNER role for that tenant specifically, not
+ * merely any tenant_admins row (codex round-14: today tenant_provision()
+ * only ever grants 'owner', so this was equivalent in practice, but a
+ * future delegated-admin feature would silently widen access without this
+ * explicit check). The read itself also runs under withTenant → RLS
+ * double-guards it.
  * Steps beyond run-creation stay not_configured until their feature slices
  * (bank → payment-reconcile, TG bind → telegram-adapter, Zalo → zalo-adapter).
  */
@@ -19,8 +24,9 @@ export async function GET(request: Request): Promise<Response> {
 
   const tenantId = new URL(request.url).searchParams.get("tenant") ?? "";
   const mine = await tenantsForPerson(appDb().pool, session.personId);
-  if (!mine.some((m) => m.tenantId === tenantId)) {
-    return err("FORBIDDEN", t("Bạn không quản trị CLB này.", "Not an admin of this club."), 403);
+  const membership = mine.find((m) => m.tenantId === tenantId);
+  if (!membership || membership.role !== "owner") {
+    return err("FORBIDDEN", t("Bạn không phải chủ CLB này.", "Not the owner of this club."), 403);
   }
 
   const snapshot = await onboardingSnapshot(appDb().db, tenantId);
