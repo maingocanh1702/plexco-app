@@ -44,7 +44,7 @@ CREATE OR REPLACE FUNCTION auth_login_telegram(
 ) RETURNS TABLE (account_id uuid, person_id uuid, created boolean)
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_account uuid;
@@ -120,7 +120,7 @@ CREATE OR REPLACE FUNCTION auth_login_state_issue(p_state_hash text, p_ttl inter
 RETURNS void
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   DELETE FROM auth_login_state WHERE expires_at < now() - interval '1 day';
   INSERT INTO auth_login_state(state_hash, expires_at) VALUES (p_state_hash, now() + p_ttl);
@@ -135,7 +135,7 @@ CREATE OR REPLACE FUNCTION auth_login_state_consume(p_state_hash text)
 RETURNS boolean
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   UPDATE auth_login_state
   SET consumed_at = now()
@@ -155,7 +155,7 @@ CREATE OR REPLACE FUNCTION auth_create_web_session(
 ) RETURNS uuid
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   INSERT INTO web_sessions(account_id, token_hash, csrf_secret, expires_at)
   VALUES (p_account_id, p_token_hash, p_csrf_secret, now() + p_ttl)
@@ -169,7 +169,7 @@ RETURNS TABLE (session_id uuid, account_id uuid, person_id uuid,
                csrf_secret text, expires_at timestamptz)
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT s.id, s.account_id, a.person_id, s.csrf_secret, s.expires_at
   FROM web_sessions s
@@ -190,7 +190,7 @@ CREATE OR REPLACE FUNCTION auth_rotate_web_session(
 ) RETURNS uuid
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_old web_sessions%ROWTYPE;
@@ -216,7 +216,7 @@ CREATE OR REPLACE FUNCTION auth_revoke_web_session(p_token_hash text)
 RETURNS boolean
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   UPDATE web_sessions SET revoked_at = now()
   WHERE token_hash = p_token_hash AND revoked_at IS NULL
@@ -237,7 +237,7 @@ CREATE OR REPLACE FUNCTION tenant_provision(
 ) RETURNS uuid
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_tenant uuid;
@@ -306,7 +306,7 @@ CREATE OR REPLACE FUNCTION tenant_ids_for_person(p_person_id uuid)
 RETURNS TABLE (tenant_id uuid, role text)
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT ta.tenant_id, ta.role
   FROM tenant_admins ta
@@ -339,7 +339,7 @@ CREATE OR REPLACE FUNCTION rate_limit_check(
 ) RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_count integer;

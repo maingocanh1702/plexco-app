@@ -510,3 +510,58 @@ describe("onboardingSnapshot (tenant scoping — DD-31 SI-3)", () => {
     ).resolves.not.toThrow();
   });
 });
+
+describe("SECURITY DEFINER search_path hardening (codex round-15)", () => {
+  // A pg.Pool does not guarantee the same physical connection across calls,
+  // but CREATE TEMP TABLE is SESSION-scoped — this probe MUST hold one
+  // checked-out client for setup + the function call, or the temp table
+  // would silently not even be visible to the second query regardless of
+  // whether the vulnerability exists.
+  it("auth_resolve_web_session ignores an attacker's same-named temp table (pg_temp shadow attempt)", async () => {
+    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("shadow-victim"));
+    // A SECOND real account — the shadow row points here, so if the function
+    // is fooled, the join still succeeds (proving cross-account confusion)
+    // instead of just failing to join a fabricated id.
+    const attacker = await loginTelegram(ctx.appPool, freshLogin("shadow-attacker"));
+    const tokenHash = sha(randomBytes(32).toString("hex"));
+    await createWebSession(ctx.appPool, {
+      accountId,
+      tokenHash,
+      csrfSecret: "real-csrf",
+      ttlSeconds: 900,
+    });
+
+    const client = await ctx.appPool.connect();
+    try {
+      // Attacker (same `app` role — no elevated privilege needed, TEMP is
+      // PUBLIC-grantable by default) shadows the real table with a temp one
+      // matching its columns, seeded with attacker-controlled rows.
+      await client.query(`
+        CREATE TEMP TABLE web_sessions (
+          id uuid, account_id uuid, token_hash text, csrf_secret text,
+          expires_at timestamptz, rotated_from uuid, revoked_at timestamptz,
+          created_at timestamptz
+        )
+      `);
+      await client.query(
+        `INSERT INTO web_sessions (id, account_id, token_hash, csrf_secret, expires_at, created_at)
+         VALUES (gen_random_uuid(), $2, $1, 'attacker-csrf', now() + interval '1 day', now())`,
+        [tokenHash, attacker.accountId],
+      );
+
+      const { rows } = await client.query(
+        `SELECT session_id, account_id, csrf_secret FROM auth_resolve_web_session($1)`,
+        [tokenHash],
+      );
+
+      // If vulnerable: rows[0].account_id would be the ATTACKER's account
+      // and csrf_secret "attacker-csrf" instead of the REAL session's values.
+      expect(rows).toHaveLength(1);
+      expect((rows[0] as { account_id: string }).account_id).toBe(accountId);
+      expect((rows[0] as { csrf_secret: string }).csrf_secret).toBe("real-csrf");
+    } finally {
+      await client.query(`DROP TABLE IF EXISTS web_sessions`); // pg_temp cleanup
+      client.release();
+    }
+  });
+});
