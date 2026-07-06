@@ -9,6 +9,7 @@ function resetEnv() {
   delete process.env.ENCRYPTION_KEY;
   delete process.env.KMS_ENCRYPTED_AUTH_PEPPER;
   delete process.env.KMS_KEY_ID;
+  delete process.env.AWS_REGION;
   __resetAuthSecretCacheForTest();
 }
 
@@ -75,6 +76,7 @@ describe("resolveAuthSecretKey — AWS KMS (staging/prod)", () => {
     const mod = await import("./auth-secrets");
     process.env.KMS_PROVIDER = "aws-kms";
     process.env.KMS_ENCRYPTED_AUTH_PEPPER = Buffer.from("ciphertext").toString("base64");
+    process.env.AWS_REGION = "ap-southeast-1";
 
     const key = await mod.resolveAuthSecretKey();
     expect(key.equals(plaintext)).toBe(true);
@@ -84,6 +86,12 @@ describe("resolveAuthSecretKey — AWS KMS (staging/prod)", () => {
   it("throws when KMS_ENCRYPTED_AUTH_PEPPER is missing", async () => {
     process.env.KMS_PROVIDER = "aws-kms";
     await expect(resolveAuthSecretKey()).rejects.toThrow(/KMS_ENCRYPTED_AUTH_PEPPER/);
+  });
+
+  it("fails closed when AWS_REGION is not set (codex round-13 — AWS SDK v3 does not infer region from the key ARN)", async () => {
+    process.env.KMS_PROVIDER = "aws-kms";
+    process.env.KMS_ENCRYPTED_AUTH_PEPPER = Buffer.from("ciphertext").toString("base64");
+    await expect(resolveAuthSecretKey()).rejects.toThrow(/AWS_REGION/);
   });
 
   it("throws when KMS returns no plaintext (e.g. wrong key/region)", async () => {
@@ -101,6 +109,7 @@ describe("resolveAuthSecretKey — AWS KMS (staging/prod)", () => {
     const mod = await import("./auth-secrets");
     process.env.KMS_PROVIDER = "aws-kms";
     process.env.KMS_ENCRYPTED_AUTH_PEPPER = Buffer.from("x").toString("base64");
+    process.env.AWS_REGION = "ap-southeast-1";
 
     await expect(mod.resolveAuthSecretKey()).rejects.toThrow(/no plaintext/i);
     vi.doUnmock("@aws-sdk/client-kms");
@@ -121,6 +130,7 @@ describe("resolveAuthSecretKey — AWS KMS (staging/prod)", () => {
     const mod = await import("./auth-secrets");
     process.env.KMS_PROVIDER = "aws-kms";
     process.env.KMS_ENCRYPTED_AUTH_PEPPER = Buffer.from("ciphertext").toString("base64");
+    process.env.AWS_REGION = "ap-southeast-1";
 
     await expect(mod.resolveAuthSecretKey()).rejects.toThrow(/32/);
     vi.doUnmock("@aws-sdk/client-kms");
