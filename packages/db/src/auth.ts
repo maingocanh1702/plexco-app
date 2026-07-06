@@ -187,10 +187,15 @@ export async function onboardingSnapshot(
       latest_steps AS (
         -- retries legitimately leave multiple rows per step (unique on
         -- run_id/step/idempotency_key) — keep only the MOST RECENT per step.
+        -- Ordered by seq (bigserial), NOT created_at (codex round-11):
+        -- Postgres now() is transaction-stable and migration 0013 backfilled
+        -- every pre-existing row with one shared value, so created_at alone
+        -- can tie with no deterministic winner; seq is a sequence allocation
+        -- and is always strictly monotonic regardless of transaction timing.
         SELECT DISTINCT ON (s.step) s.step, s.status
         FROM onboarding_steps s
         WHERE s.run_id = (SELECT id FROM latest)
-        ORDER BY s.step, s.created_at DESC
+        ORDER BY s.step, s.seq DESC
       )
       SELECT latest.status AS run_status, latest_steps.step, latest_steps.status AS step_status
       FROM latest

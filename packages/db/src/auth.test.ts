@@ -448,4 +448,40 @@ describe("onboardingSnapshot (tenant scoping — DD-31 SI-3)", () => {
     expect(bankStep?.status).toBe("verified");
     expect(snapshot?.steps.filter((s) => s.step === "bank_connect")).toHaveLength(1);
   });
+
+  it("breaks an EXACT created_at tie deterministically via seq, not arbitrary Postgres tie-resolution (codex round-11)", async () => {
+    const run = await ctx.owner.query(
+      `INSERT INTO onboarding_runs (tenant_id, status) VALUES ($1, 'in_progress') RETURNING id`,
+      [ctx.tenantA],
+    );
+    const runId = (run.rows[0] as { id: string }).id;
+
+    // Force a genuine created_at TIE (transaction-stable now()) between an
+    // older-intent 'error' row and a newer-intent 'verified' row for the
+    // SAME step — exactly the scenario migration-0013 backfill / same-
+    // transaction retries can produce. seq still orders them correctly.
+    await ctx.owner.query(
+      `WITH tied_now AS (SELECT now() AS t)
+       INSERT INTO onboarding_steps (run_id, step, status, idempotency_key, created_at)
+       SELECT $1, 'tg_bind', 'error', 'attempt-1', t FROM tied_now`,
+      [runId],
+    );
+    await ctx.owner.query(
+      `INSERT INTO onboarding_steps (run_id, step, status, idempotency_key, created_at)
+       SELECT $1, 'tg_bind', 'verified', 'attempt-2', created_at
+       FROM onboarding_steps WHERE run_id = $1 AND step = 'tg_bind'`,
+      [runId],
+    );
+
+    const tie = await ctx.owner.query(
+      `SELECT count(DISTINCT created_at)::int AS distinct_timestamps
+       FROM onboarding_steps WHERE run_id = $1 AND step = 'tg_bind'`,
+      [runId],
+    );
+    expect((tie.rows[0] as { distinct_timestamps: number }).distinct_timestamps).toBe(1); // confirms the tie is real
+
+    const snapshot = await onboardingSnapshot(ctx.appDb.db, ctx.tenantA);
+    const tgStep = snapshot?.steps.find((s) => s.step === "tg_bind");
+    expect(tgStep?.status).toBe("verified"); // the row inserted SECOND (higher seq), despite the created_at tie
+  });
 });
