@@ -29,6 +29,7 @@
     "packages/db/src/auth.test.ts",
     "packages/db/src/index.ts",
     "packages/db/src/test-harness.ts",
+    "packages/db/src/rls-invariants.test.ts",
     "apps/web/package.json",
     "apps/web/next.config.mjs",
     "apps/web/lib/api-envelope.ts",

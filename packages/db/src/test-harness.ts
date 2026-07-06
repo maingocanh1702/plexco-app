@@ -29,6 +29,8 @@ export interface RlsTestContext {
   appDb: DbHandle;
   appPool: pg.Pool;
   readonlyPool: pg.Pool;
+  /** superuser-backed drizzle handle — for proving a query fails closed even when RLS is bypassed */
+  superuserDb: DbHandle;
   tenantA: string;
   tenantB: string;
   badmintonSportId: string;
@@ -96,12 +98,14 @@ export async function setupRlsTestContext(): Promise<RlsTestContext> {
   const readonlyUrl = testUrl(base, { db: TEST_DB, user: "readonly", password: ROLE_PW.readonly });
   const appDb = createDb(appUrl, { max: 4 });
   const readonlyPool = new pg.Pool({ connectionString: readonlyUrl, max: 2 });
+  const superuserDb = createDb(migrationUrl, { max: 2 });
 
   return {
     owner,
     appDb,
     appPool: appDb.pool,
     readonlyPool,
+    superuserDb,
     tenantA: (tenants.rows[0] as { id: string }).id,
     tenantB: (tenants.rows[1] as { id: string }).id,
     badmintonSportId: (sport.rows[0] as { id: string }).id,
@@ -110,6 +114,7 @@ export async function setupRlsTestContext(): Promise<RlsTestContext> {
     teardown: async () => {
       await appDb.close();
       await readonlyPool.end();
+      await superuserDb.close();
       await owner.end();
     },
   };
