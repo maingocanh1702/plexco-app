@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { sameOriginRequest } from "./session-cookies";
 
 function reqWith(headers: Record<string, string>): Request {
@@ -36,5 +36,40 @@ describe("sameOriginRequest", () => {
 
   it("fails closed when Host itself is missing", () => {
     expect(sameOriginRequest(reqWith({ origin: "https://plexco.app" }))).toBe(false);
+  });
+});
+
+describe("sameOriginRequest — scheme enforcement (codex round-03)", () => {
+  const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
+  afterEach(() => {
+    process.env.NODE_ENV = ORIGINAL_NODE_ENV;
+  });
+
+  it("in production, rejects a same-host Origin over the WRONG scheme", () => {
+    process.env.NODE_ENV = "production";
+    expect(
+      sameOriginRequest(reqWith({ host: "plexco.app", origin: "http://plexco.app" })),
+    ).toBe(false);
+  });
+
+  it("in production, still accepts a same-host Origin over https", () => {
+    process.env.NODE_ENV = "production";
+    expect(
+      sameOriginRequest(reqWith({ host: "plexco.app", origin: "https://plexco.app" })),
+    ).toBe(true);
+  });
+
+  it("in production, rejects a same-host Referer over the WRONG scheme", () => {
+    process.env.NODE_ENV = "production";
+    expect(
+      sameOriginRequest(reqWith({ host: "plexco.app", referer: "http://plexco.app/login" })),
+    ).toBe(false);
+  });
+
+  it("outside production, scheme is not enforced (local dev commonly runs plain http)", () => {
+    process.env.NODE_ENV = "test";
+    expect(
+      sameOriginRequest(reqWith({ host: "plexco.app", origin: "http://plexco.app" })),
+    ).toBe(true);
   });
 });

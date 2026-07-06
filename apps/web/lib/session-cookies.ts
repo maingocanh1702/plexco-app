@@ -99,26 +99,31 @@ export function csrfOk(request: Request, session: ResolvedSession): boolean {
  * same-origin ones, so its absence or mismatch against the request's own
  * Host means the request did not originate from this app's own pages.
  * Falls back to Referer only when Origin is entirely absent; fails closed.
+ *
+ * A browser origin is scheme + host + port (codex round-03) — comparing
+ * `.host` alone would accept e.g. `http://plexco.app` as "same-origin" for
+ * a `plexco.app` Host header even though browsers treat http/https as
+ * different origins. In production this must be `https:`; non-production
+ * (local dev, which commonly runs plain http) does not enforce a scheme,
+ * matching the existing `secure` cookie flag's own production gate.
  */
 export function sameOriginRequest(request: Request): boolean {
   const host = request.headers.get("host");
   if (!host) return false;
+  const requiredProtocol = process.env.NODE_ENV === "production" ? "https:" : null;
+  const matchesThisOrigin = (rawUrl: string): boolean => {
+    try {
+      const url = new URL(rawUrl);
+      if (url.host !== host) return false;
+      return requiredProtocol === null || url.protocol === requiredProtocol;
+    } catch {
+      return false;
+    }
+  };
   const origin = request.headers.get("origin");
-  if (origin) {
-    try {
-      return new URL(origin).host === host;
-    } catch {
-      return false;
-    }
-  }
+  if (origin) return matchesThisOrigin(origin);
   const referer = request.headers.get("referer");
-  if (referer) {
-    try {
-      return new URL(referer).host === host;
-    } catch {
-      return false;
-    }
-  }
+  if (referer) return matchesThisOrigin(referer);
   return false;
 }
 
