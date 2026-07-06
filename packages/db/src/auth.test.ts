@@ -233,6 +233,14 @@ describe("web sessions", () => {
 });
 
 describe("rate_limit_check (shared store)", () => {
+  it("has a standalone index on `at` so the global sweep never full-scans as buckets grow (codex round-01)", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT indexdef FROM pg_indexes WHERE tablename = 'rate_limit_hits' AND indexname = 'idx_rate_limit_at'`,
+    );
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as { indexdef: string }).indexdef).toMatch(/\(at\)/);
+  });
+
   it("allows up to the limit within the window, then refuses", async () => {
     const bucket = "test:limiter";
     expect(await rateLimitCheck(ctx.appPool, bucket, 2, 60)).toBe(true);

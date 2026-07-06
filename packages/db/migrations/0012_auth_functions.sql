@@ -313,6 +313,11 @@ CREATE UNLOGGED TABLE rate_limit_hits (
   at     timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_rate_limit_bucket_at ON rate_limit_hits(bucket, at);
+-- Separate index on `at` ALONE (codex round-01 finding): the composite
+-- (bucket, at) index above cannot serve a bare `at < ...` predicate without
+-- a leading bucket equality, so the global retention sweep below would
+-- degrade to a full scan as the number of distinct buckets grows.
+CREATE INDEX idx_rate_limit_at ON rate_limit_hits(at);
 -- No grants: touched only via the function below.
 
 -- true = allowed (hit recorded); false = over the limit for this window.
