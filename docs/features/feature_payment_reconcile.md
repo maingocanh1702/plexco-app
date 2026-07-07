@@ -5,7 +5,7 @@
 > **Version:** 1.2 · 2026-06-19  
 > **Status:** Reviewed against BRD v3.1 / PRD v2.1 / TDD v2.1  
 > **Prerequisites:** P0–P1 foundation + P2 tenant routing  
-> **Tài liệu liên quan:** `../core/BRD.md` FR-5 · `../core/PRD.md` FLOW 6/9 + §4.1 · `../core/TDD.md` §3.2/3.6/3.7 · `../standards/business-rules.md` BL-PAY · `../appendices/player-side-saas-reconciliation.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-5 · `../product/PRD.md` FLOW 6/9 + §4.1 · `../product/TDD.md` §3.2/3.6/3.7 · `../standards/business-rules.md` BL-PAY · `../research/player-side-saas-reconciliation.md`
 
 ---
 

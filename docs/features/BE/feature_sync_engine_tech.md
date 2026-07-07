@@ -4,7 +4,7 @@
 > **Version:** 2.0 · 2026-06-19  
 > **Status:** Reviewed  
 > **Product spec:** `../feature_sync_engine.md`  
-> **References:** `../../core/TDD.md` §3.8
+> **References:** `../../product/TDD.md` §3.8
 
 ---
 

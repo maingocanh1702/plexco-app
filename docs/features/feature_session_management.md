@@ -5,7 +5,7 @@
 > **Version:** 2.0 · 2026-06-19  
 > **Status:** Reviewed  
 > **Prerequisites:** P0–P1 foundation stable · P2 tenant routing/authz  
-> **Tài liệu liên quan:** `../core/BRD.md` FR-2 · `../core/PRD.md` FLOW 2 · `../core/TDD.md` §3.2/3.8 · `BE/feature_session_management_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-2 · `../product/PRD.md` FLOW 2 · `../product/TDD.md` §3.2/3.8 · `BE/feature_session_management_tech.md`
 
 ---
 

@@ -5,7 +5,7 @@
 > **Version:** 2.0 · 2026-06-19  
 > **Status:** Reviewed  
 > **Prerequisites:** P4.3 discovery · P3.5 identity · P2 session/slot transaction · P4 sync/notifications  
-> **Tài liệu liên quan:** `../core/BRD.md` FR-3.2 · `../core/PRD.md` FLOW 13 · BRD OD-5/OD-6 · `BE/feature_cross_club_join_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-3.2 · `../product/PRD.md` FLOW 13 · BRD OD-5/OD-6 · `BE/feature_cross_club_join_tech.md`
 
 ---
 

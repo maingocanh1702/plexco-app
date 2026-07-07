@@ -5,7 +5,7 @@
 > **Version:** 2.0 · 2026-06-19  
 > **Status:** Reviewed  
 > **Prerequisites:** All production features  
-> **Tài liệu liên quan:** `../core/BRD.md` §8/§13 · `../core/TDD.md` §4/6/7/10 · `../appendices/player-side-saas-AUDIT.md` · `../standards/business-rules.md` · `BE/feature_security_operations_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` §8/§13 · `../product/TDD.md` §4/6/7/10 · `../research/player-side-saas-AUDIT.md` · `../standards/business-rules.md` · `BE/feature_security_operations_tech.md`
 
 ---
 

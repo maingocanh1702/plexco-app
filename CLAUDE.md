@@ -1,6 +1,6 @@
 # ⚡ START HERE (mọi session mới)
 
-> **ĐỌC `docs/standards/HANDOFF.md` TRƯỚC TIÊN** — self-contained: project là gì, kiến trúc,
+> **ĐỌC `docs/00-start-here/HANDOFF.md` TRƯỚC TIÊN** — self-contained: project là gì, kiến trúc,
 > **5 HARD RULES** (RLS fail-closed · tiền/PII không ra public · không multi-master ·
 > claim-có-tiền cần khoá mạnh · i18n), workflow, doc map, bẫy cần tránh.
 >
@@ -8,7 +8,7 @@
 > viết — `packages/db/schema.ts` + `packages/db/migrations/*.sql` (AUTHORITATIVE) →
 > `docs/features/feature_<x>.md` + `BE/*_tech.md` → `docs/standards/decisions.md` (decision log).
 > KHÔNG thiết kế từ nguyên tắc chung, KHÔNG tạo bảng song song với khái niệm đã có
-> (`persons`/`accounts`/`channel_identities`/`memberships`). Identity: `docs/identity-model.md`
+> (`persons`/`accounts`/`channel_identities`/`memberships`). Identity: `docs/00-start-here/identity-model.md`
 > là orientation, KHÔNG phải source of truth.
 >
 > Quyết định chưa chốt → ghi vào `decisions.md` dạng proposal (🟡/⬜), KHÔNG viết vào spec đã Reviewed.

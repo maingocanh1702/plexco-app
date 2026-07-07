@@ -5,7 +5,7 @@
 > **Version:** 2.0 · 2026-06-19  
 > **Status:** Reviewed  
 > **Prerequisites:** P2 canonical domain services · P3 pg-boss/outbox · P4 channel adapters  
-> **Tài liệu liên quan:** `../core/BRD.md` FR-4 · `../core/PRD.md` FLOW 14 · `../core/TDD.md` §3.8 · BRD OD-7 · `BE/feature_sync_engine_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-4 · `../product/PRD.md` FLOW 14 · `../product/TDD.md` §3.8 · BRD OD-7 · `BE/feature_sync_engine_tech.md`
 
 ---
 

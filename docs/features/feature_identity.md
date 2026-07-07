@@ -5,7 +5,7 @@
 > **Version:** 1.1 · 2026-06-18  
 > **Status:** Reviewed against BRD v3.1 / PRD v2.1 / TDD v2.1  
 > **Prerequisites:** P2 tenant routing + P3 ledger stable  
-> **Tài liệu liên quan:** `../core/BRD.md` FR-7 · `../core/PRD.md` FLOW 5 + §4.2 · `../core/TDD.md` §3.2–3.4/§4 · `../appendices/player-side-saas-reconciliation.md` · `../appendices/player-side-saas-AUDIT.md` C1–C5
+> **Tài liệu liên quan:** `../product/BRD.md` FR-7 · `../product/PRD.md` FLOW 5 + §4.2 · `../product/TDD.md` §3.2–3.4/§4 · `../research/player-side-saas-reconciliation.md` · `../research/player-side-saas-AUDIT.md` C1–C5
 
 ---
 

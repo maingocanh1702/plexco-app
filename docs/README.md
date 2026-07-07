@@ -8,18 +8,25 @@ Bản đồ điều hướng cho toàn bộ docs. Bắt đầu từ đây.
 
 | Vai trò | Đọc theo thứ tự |
 |---|---|
-| **Mới vào / tổng quan** | `core/BRD.md` → `core/ROADMAP.md` → `core/TDD.md` |
-| **Product / PM** | `core/BRD.md` → `core/PRD.md` → `features/<feature>.md` |
-| **Founder / Ops / CRM** | `core/CRM_DASHBOARD_BRD.md` → `../Plexco_GTM_Strategy.md` → `standards/business-rules.md` |
-| **Backend** | `core/TDD.md` → `standards/business-rules.md` → `features/BE/<feature>_tech.md` |
-| **Frontend / Web** | `web-app/README.md` → `web-app/design-brief.md` → `web-app/design-tokens.md` |
-| **Bot / Channel** | `bot-telegram/` · `bot-zalo/` · `bot-messenger/` + feature kênh tương ứng |
+| **Mới vào / tổng quan** | `product/BRD.md` → `product/ROADMAP.md` → `product/TDD.md` |
+| **Product / PM** | `product/BRD.md` → `product/PRD.md` → `features/<feature>.md` |
+| **Founder / Ops / CRM** | `product/CRM_DASHBOARD_BRD.md` → `strategy/gtm-strategy.md` → `standards/business-rules.md` |
+| **Backend** | `product/TDD.md` → `standards/business-rules.md` → `features/BE/<feature>_tech.md` |
+| **Frontend / Web** | `channels/web/README.md` → `channels/web/design-brief.md` → `channels/web/design-tokens.md` |
+| **Bot / Channel** | `channels/telegram/` · `channels/zalo/` · `channels/messenger/` + feature kênh tương ứng |
 | **Bất kỳ quyết định nào** | `standards/decisions.md` ⭐ |
 | **Dev chạy autopilot** | `autopilot-ONBOARDING.md` ⭐ → `autopilot-backlog.md` → `autopilot-templates/` |
 
 ## 🗂️ Cấu trúc thư mục
 
-### `core/` — tài liệu nền (1 nguồn cho mỗi mối quan tâm)
+### `00-start-here/` — đọc trước tiên
+
+| File | Vai trò |
+|---|---|
+| `HANDOFF.md` ⭐ | Bàn giao / onboarding dev — project là gì, kiến trúc, 5 HARD RULES, workflow |
+| `identity-model.md` | Orientation mô hình định danh (Person/Account/ChannelIdentity/Membership) |
+
+### `product/` — tài liệu nền (1 nguồn cho mỗi mối quan tâm)
 
 | File | Vai trò |
 |---|---|
@@ -31,9 +38,9 @@ Bản đồ điều hướng cho toàn bộ docs. Bắt đầu từ đây.
 
 ### `features/` — spec theo từng feature
 
-- `features/<feature>.md` — Product/UX spec (dùng `templates/feature-spec-template.md`)
-- `features/BE/<feature>_tech.md` — Backend tech spec (dùng `templates/be-tech-spec-template.md`)
-- `features/README.md` — **danh mục feature** (16 feature: identity, multi-tenant, sync engine, marketplace, payment reconcile, billing, các kênh player…)
+- `features/<feature>.md` — Product/UX spec (dùng `../templates/feature-spec-template.md`)
+- `features/BE/<feature>_tech.md` — Backend tech spec (dùng `../templates/be-tech-spec-template.md`)
+- `features/README.md` — **danh mục feature** (identity, multi-tenant, sync engine, marketplace, payment reconcile, billing, các kênh player…)
 
 ### `standards/` — quy chuẩn dùng chung xuyên feature
 
@@ -41,29 +48,41 @@ Bản đồ điều hướng cho toàn bộ docs. Bắt đầu từ đây.
 |---|---|
 | `decisions.md` ⭐ | **Decision log (ADR-lite)** — mọi quyết định thiết kế/kỹ thuật |
 | `business-rules.md` | Quy tắc nghiệp vụ chuẩn hoá (tiền, identity, tenant) |
-| `feature-dependency-graph.md` | Đồ thị phụ thuộc giữa các feature |
-| `deployment-infra.md` | Hạ tầng, deploy, env |
-| `design-tokens.md` | Token thiết kế dùng chung |
-| `HANDOFF.md` | Hướng dẫn bàn giao / onboarding dev |
+| `feature-dependency-graph.md` | Đồ thị phụ thuộc giữa các feature (nguồn duy nhất) |
+| `deployment-infra.md` · `environments-setup.md` | Hạ tầng, deploy, env |
+| `core-db-architecture-principles.md` | Nguyên tắc DB/RLS |
+| `design-tokens.md` | Token thiết kế dùng chung (canonical) |
+| `BUILD-STATUS.md` | Trạng thái build |
 
-### `web-app/` · `bot-telegram/` · `bot-zalo/` · `bot-messenger/` — docs theo surface
+### `channels/` — docs theo surface
 
-Mỗi surface có `README.md`; `web-app/` thêm `design-brief.md`, `design-tokens.md`, `screens/`.
+`channels/telegram/` · `channels/zalo/` · `channels/messenger/` · `channels/web/`. Mỗi surface có `README.md`; `channels/web/` thêm `design-brief.md`, `design-tokens.md`, `screens/`; `channels/messenger/` có `messenger-channel-design.md` (chờ convert feature spec P4.8).
 
-### `appendices/` — phân tích & nền tảng quyết định
+### `research/` — phân tích & audit
 
-`saas-implementation-plan.md` (kiến trúc multi-tenant) · `player-side-saas-reconciliation.md` (identity/matching) · `player-side-saas-AUDIT.md` (threat model) · `messenger-channel-design.md` · `native-app-strategy.md` · `bestminton-to-plexco-analysis.md` · `saas-pnl-model.xlsx`.
+`bestminton-to-plexco-analysis.md` · `bestminton-latest-scan-2026-06-21.md` · `player-side-saas-AUDIT.md` (threat model) · `player-side-saas-reconciliation.md` (identity/matching).
 
-### `autopilot-*` — governance quy trình dev
+### `strategy/` — GTM & business
 
-**Người mới chạy autopilot: bắt đầu ở `autopilot-ONBOARDING.md`** (setup 1 lần + vòng đời 1 task, pin
-template v0.4.8). Các file kèm theo: `autopilot-backlog.md` · `autopilot-invariant-catalog.md` ·
-`autopilot-parallel-scope-gate.md` · `autopilot-manifests/` · `autopilot-templates/` (bản canonical 2
-template gốc) · `../.autopilot/maturity-ledger.md` (sổ tín nhiệm auto-merge).
+`gtm-strategy.md` · `gtm-doi-soat-decision.md` · `base-chat-package-feasibility.md` · `saas-implementation-plan.md` (kiến trúc multi-tenant) · `saas-pnl-model.xlsx`.
 
-### `templates/` (ở root repo, `../templates/`)
+### `proposals/` — đề xuất chờ chốt
 
-`feature-spec-template.md` · `be-tech-spec-template.md` · `feature-checklist.md` · `feature-dependency-graph.md` · `design-tokens.md`.
+Proposal 🟡 trước khi promote vào spec/decision (vd `plexco-global-kb-and-kb-autosync.md`, `repo-structure-reorg-*.md`).
+
+### `automation/` — docs hệ tracking/automation
+
+`onboarding.md` (điểm vào) · `playbook.md` (phương pháp thi công) · `automation-overview.md` (3 chế độ) · `product-backlog.md` (checklist DoD M1–M6).
+
+### `autopilot-*` — autopilot-kit (path ổn định, scripts phụ thuộc)
+
+**Người mới chạy autopilot: bắt đầu ở `autopilot-ONBOARDING.md`.** Kèm theo: `autopilot-backlog.md`
+(slice registry) · `autopilot-invariant-catalog.md` · `autopilot-parallel-scope-gate.md` ·
+`autopilot-manifests/` · `autopilot-templates/` · `../.autopilot/maturity-ledger.md` (sổ tín nhiệm auto-merge).
+
+### `templates/` — doc/spec templates
+
+`feature-spec-template.md` · `be-tech-spec-template.md` · `design-tokens-template.md` · `feature-dev/` (`feature-checklist.md`, `feature-dependency-graph-TEMPLATE.md`).
 
 ## 🔒 4 bất biến (không vi phạm ở mọi feature)
 
@@ -75,7 +94,7 @@ template gốc) · `../.autopilot/maturity-ledger.md` (sổ tín nhiệm auto-me
 ## ✍️ Quy ước khi sửa docs
 
 - Quyết định mới → ghi vào `standards/decisions.md`, **không** để rải ở BRD/TDD.
-- Feature mới → copy từ `../templates/`, đặt vào `features/` + `features/BE/`.
+- Feature mới → copy từ `templates/`, đặt vào `features/` + `features/BE/`.
 - Mỗi doc giữ bảng **Changelog** ở cuối.
 
 ---

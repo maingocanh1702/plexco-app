@@ -4,7 +4,7 @@
 > **Version:** 2.0 · 2026-06-19  
 > **Status:** Reviewed  
 > **Product spec:** `../feature_player_view.md`  
-> **References:** `../../core/TDD.md` §3.4/§4 (person-self contract)
+> **References:** `../../product/TDD.md` §3.4/§4 (person-self contract)
 
 ---
 

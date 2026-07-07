@@ -1,6 +1,6 @@
 # Business Rules — Plexco
 
-> Registry quy tắc nghiệp vụ, tổng hợp từ `docs/core/BRD.md` v3.1 · `docs/core/PRD.md` v2.1 · `docs/core/TDD.md` v2.1 · `docs/appendices/player-side-saas-AUDIT.md`.
+> Registry quy tắc nghiệp vụ, tổng hợp từ `docs/product/BRD.md` v3.1 · `docs/product/PRD.md` v2.1 · `docs/product/TDD.md` v2.1 · `docs/research/player-side-saas-AUDIT.md`.
 > Khi conflict, authority theo topic trong BRD §0; security dùng rule nghiêm ngặt hơn.
 > v1.5 · 2026-06-20
 

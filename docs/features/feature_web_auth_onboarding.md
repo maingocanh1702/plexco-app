@@ -5,7 +5,7 @@
 > **Version:** 2.1 · 2026-06-20
 > **Status:** Reviewed  
 > **Prerequisites:** P0–P1 foundation · P2 routing/authz · P3 ledger/provider model  
-> **Tài liệu liên quan:** `../core/BRD.md` FR-1 · `../core/PRD.md` FLOW 1 · BRD OD-10 · `BE/feature_web_auth_onboarding_tech.md` · `feature_connector_onboarding.md` (auto-register webhook + verify 2 tầng)
+> **Tài liệu liên quan:** `../product/BRD.md` FR-1 · `../product/PRD.md` FLOW 1 · BRD OD-10 · `BE/feature_web_auth_onboarding_tech.md` · `feature_connector_onboarding.md` (auto-register webhook + verify 2 tầng)
 
 ---
 
@@ -30,7 +30,7 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 
 > Telegram là **shared bot** (`@PlexcoBot`) → bind bằng cách thêm bot vào group, **không** dán token. Chỉ **Zalo** BYO token per-CLB (🟡 blocked CO-OQ-1). Chi tiết auto-register + verify 2 tầng (`registered → active`): `feature_connector_onboarding.md`.
 
-> **🟡 Đề xuất (DD-13, chưa chốt — không thuộc scope Reviewed):** mở rộng provider đăng nhập ngoài TG Login (thêm **Google**, và/hoặc **email-password self-register**) để không kẹt acquisition khi Zalo/FB login còn pending. Nếu chốt: thêm qua `account_identities.platform` + adapter (password → bảng credential riêng, migration mới), **không** tạo root table `users`; `persons` vẫn là anchor. Chi tiết & ràng buộc: `docs/standards/decisions.md` DD-13, `docs/identity-model.md §6`. WAO-UC-1 hiện chỉ cover "TG Login / web-account fallback" — chỉ mở rộng khi DD-13 ✅.
+> **🟡 Đề xuất (chưa chốt — không thuộc scope Reviewed):** mở rộng provider đăng nhập ngoài TG Login, mỗi provider có DD riêng: **DD-13** = **Google** và/hoặc **email-password self-register** (login "bật ngay được" cho acquisition); **DD-33** = **Facebook Login** (đường link cho phễu channel-first DD-32; phụ thuộc FB App Review); **DD-14** = **Zalo Login** (gating OA). Nếu chốt: thêm qua `account_identities.platform` + adapter (password → bảng credential riêng, migration mới), **không** tạo root table `users`; `persons` vẫn là anchor. Chi tiết & ràng buộc: `docs/standards/decisions.md` DD-13/DD-14/DD-33, `docs/00-start-here/identity-model.md §7` (provider/channel phase matrix). WAO-UC-1 hiện chỉ cover "TG Login / web-account fallback" — chỉ mở rộng khi DD tương ứng ✅.
 
 ---
 

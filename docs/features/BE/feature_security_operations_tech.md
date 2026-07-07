@@ -4,7 +4,7 @@
 > **Version:** 2.0 · 2026-06-19  
 > **Status:** Reviewed  
 > **Product spec:** `../feature_security_operations.md`  
-> **References:** `../../core/TDD.md` §4/6/7/10 · `../../appendices/player-side-saas-AUDIT.md`
+> **References:** `../../product/TDD.md` §4/6/7/10 · `../../research/player-side-saas-AUDIT.md`
 
 ---
 

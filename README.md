@@ -134,34 +134,34 @@ pnpm dev          # start bot + web đồng thời
 
 ## Doc Map
 
-### 📋 Core Specs (`docs/core/`)
+### 📋 Core Specs (`docs/product/`)
 
 | Tài liệu | Mô tả | Phiên bản |
 |---|---|---|
-| [BRD.md](./docs/core/BRD.md) | Yêu cầu nghiệp vụ (cái gì & vì sao) | v3.1 |
-| [PRD.md](./docs/core/PRD.md) | User flows + edge cases (14 flows) | v2.1 |
-| [TDD.md](./docs/core/TDD.md) | Thiết kế kỹ thuật (schema, RLS, ledger, routing, sync) | v2.1 |
-| [ROADMAP.md](./docs/core/ROADMAP.md) | Canonical phases + KPIs + dependency map | v2.1 |
+| [BRD.md](./docs/product/BRD.md) | Yêu cầu nghiệp vụ (cái gì & vì sao) | v3.1 |
+| [PRD.md](./docs/product/PRD.md) | User flows + edge cases (14 flows) | v2.1 |
+| [TDD.md](./docs/product/TDD.md) | Thiết kế kỹ thuật (schema, RLS, ledger, routing, sync) | v2.1 |
+| [ROADMAP.md](./docs/product/ROADMAP.md) | Canonical phases + KPIs + dependency map | v2.1 |
 
 ### 📐 Standards (`docs/standards/`)
 
 | Tài liệu | Mô tả | Phiên bản |
 |---|---|---|
-| [HANDOFF.md](./docs/standards/HANDOFF.md) | Tài liệu tiếp quản cho dev/AI mới | v1.0 |
+| [HANDOFF.md](./docs/00-start-here/HANDOFF.md) | Tài liệu tiếp quản cho dev/AI mới | v1.0 |
 | [business-rules.md](./docs/standards/business-rules.md) | Business rules tổng hợp (ID'd, cross-ref) | v1.1 |
 | [design-tokens.md](./docs/standards/design-tokens.md) | CSS variables, colors, typography | v1.0 |
 | [feature-dependency-graph.md](./docs/standards/feature-dependency-graph.md) | Mermaid dependency graph + matrix | v1.0 |
 
-### 📎 Appendices (`docs/appendices/`)
+### 📎 Research & Strategy (`docs/research/` · `docs/strategy/`)
 
 | Tài liệu | Mô tả | Phiên bản |
 |---|---|---|
-| [saas-implementation-plan.md](./docs/appendices/saas-implementation-plan.md) | Kiến trúc multi-tenant chi tiết | v2 |
-| [player-side-saas-reconciliation.md](./docs/appendices/player-side-saas-reconciliation.md) | Identity, kênh, matching | v2 |
-| [player-side-saas-AUDIT.md](./docs/appendices/player-side-saas-AUDIT.md) | Bảo mật, threat model (C1-C8, B1-B6) | v1 |
-| [messenger-channel-design.md](./docs/appendices/messenger-channel-design.md) | Kênh Messenger (post-MVP P4.8) | v1.1 |
-| [saas-pnl-model.xlsx](./docs/appendices/saas-pnl-model.xlsx) | PnL model | — |
-| [native-app-strategy.md](./docs/appendices/native-app-strategy.md) | Native iOS/Android — impact analysis, push, auth | v1.0 |
+| [saas-implementation-plan.md](./docs/strategy/saas-implementation-plan.md) | Kiến trúc multi-tenant chi tiết | v2 |
+| [player-side-saas-reconciliation.md](./docs/research/player-side-saas-reconciliation.md) | Identity, kênh, matching | v2 |
+| [player-side-saas-AUDIT.md](./docs/research/player-side-saas-AUDIT.md) | Bảo mật, threat model (C1-C8, B1-B6) | v1 |
+| [messenger-channel-design.md](./docs/channels/messenger/messenger-channel-design.md) | Kênh Messenger (post-MVP P4.8) | v1.1 |
+| [saas-pnl-model.xlsx](./docs/strategy/saas-pnl-model.xlsx) | PnL model | — |
+| [native-app-strategy.md](./docs/strategy/native-app-strategy.md) | Native iOS/Android — impact analysis, push, auth | v1.0 |
 
 ### 🔧 Feature Docs (`docs/features/`)
 
@@ -189,33 +189,33 @@ Coverage and review status: [docs/features/README.md](./docs/features/README.md)
 
 | Template | Mô tả |
 |---|---|
-| [design-tokens.md](./templates/design-tokens.md) | Template design tokens |
-| [feature-checklist.md](./templates/feature-dev/feature-checklist.md) | Checklist dev cho mỗi feature |
-| [feature-dependency-graph.md](./templates/feature-dev/feature-dependency-graph.md) | Template dependency graph |
+| [design-tokens.md](./docs/templates/design-tokens-template.md) | Template design tokens |
+| [feature-checklist.md](./docs/templates/feature-dev/feature-checklist.md) | Checklist dev cho mỗi feature |
+| [feature-dependency-graph.md](./docs/templates/feature-dev/feature-dependency-graph-TEMPLATE.md) | Template dependency graph |
 
 ### 🖥️ Surface Docs
 
 | Surface | Folder | Nội dung | Version |
 |---------|--------|---------|---------|
-| Web App | [docs/web-app/](./docs/web-app/) | Screen map, auth, SSE, [design-tokens](./docs/web-app/design-tokens.md) | v0.1 |
-| Telegram Bot | [docs/bot-telegram/](./docs/bot-telegram/) | Commands, tenant routing, projector, security | v0.1 |
-| Zalo Bot | [docs/bot-zalo/](./docs/bot-zalo/) | BYO token, DM-only, reply-context, webhook drift | v0.1 |
-| Messenger Bot | [docs/bot-messenger/](./docs/bot-messenger/) | Post-MVP, 24h window, Meta App Review | v0.1 |
+| Web App | [docs/channels/web/](./docs/channels/web/) | Screen map, auth, SSE, [design-tokens](./docs/channels/web/design-tokens.md) | v0.1 |
+| Telegram Bot | [docs/channels/telegram/](./docs/channels/telegram/) | Commands, tenant routing, projector, security | v0.1 |
+| Zalo Bot | [docs/channels/zalo/](./docs/channels/zalo/) | BYO token, DM-only, reply-context, webhook drift | v0.1 |
+| Messenger Bot | [docs/channels/messenger/](./docs/channels/messenger/) | Post-MVP, 24h window, Meta App Review | v0.1 |
 
 ---
 
 ## Project Tracking & Automation
 
-> Hệ thống theo dõi tiến độ + automation (hybrid `progress.json` ⇄ Linear). **Người mới đọc [`ONBOARDING-AUTOMATION.md`](./ONBOARDING-AUTOMATION.md) trước.**
+> Hệ thống theo dõi tiến độ + automation (hybrid `progress.json` ⇄ Linear). **Người mới đọc [onboarding.md](./docs/automation/onboarding.md) trước.**
 
-**👉 Bắt đầu:** [ONBOARDING-AUTOMATION.md](./ONBOARDING-AUTOMATION.md) — toàn bộ context + cách vận hành (2 nguồn sự thật, 3 chế độ automation, cookbook).
+**👉 Bắt đầu:** [onboarding.md](./docs/automation/onboarding.md) — toàn bộ context + cách vận hành (2 nguồn sự thật, 3 chế độ automation, cookbook).
 
 | Nhóm | File | Vai trò |
 |---|---|---|
-| **Onboarding** | [ONBOARDING-AUTOMATION.md](./ONBOARDING-AUTOMATION.md) | Điểm vào của hệ tracking/automation |
-| **Phương pháp** | [EXECUTION-PLAYBOOK.md](./EXECUTION-PLAYBOOK.md) | Cách thi công: nguyên tắc, cadence, 5 quality gate, 2 tuần đầu |
-| **Backlog** | [BACKLOG-P0-P3.md](./BACKLOG-P0-P3.md) | Checklist DoD chi tiết M1–M6 |
-| **Automation** | [AUTOMATION.md](./AUTOMATION.md) | Chi tiết 3 chế độ: on-demand · scheduled · realtime |
+| **Onboarding** | [onboarding.md](./docs/automation/onboarding.md) | Điểm vào của hệ tracking/automation |
+| **Phương pháp** | [playbook.md](./docs/automation/playbook.md) | Cách thi công: nguyên tắc, cadence, 5 quality gate, 2 tuần đầu |
+| **Backlog** | [product-backlog.md](./docs/automation/product-backlog.md) | Checklist DoD chi tiết M1–M6 |
+| **Automation** | [automation-overview.md](./docs/automation/automation-overview.md) | Chi tiết 3 chế độ: on-demand · scheduled · realtime |
 | **Tracker** | [progress.json](./progress.json) | Nguồn sự thật cấu trúc tiến độ; status mirror từ Linear khi realtime bật |
 | **Dashboard** | [plexco-dashboard.html](./plexco-dashboard.html) | Bảng theo dõi self-contained (mở bằng browser) |
 | **Scripts** | `sync-embedded.mjs` · `compare-linear.mjs` · `linear-sync.mjs` · `gen-linear-csv.mjs` | Đồng bộ EMBEDDED · so drift · pull Linear→progress · seed CSV |
@@ -229,9 +229,9 @@ Coverage and review status: [docs/features/README.md](./docs/features/README.md)
 
 ## Contribution
 
-1. Đọc [`docs/standards/HANDOFF.md`](./docs/standards/HANDOFF.md) trước khi code
+1. Đọc [`docs/00-start-here/HANDOFF.md`](./docs/00-start-here/HANDOFF.md) trước khi code
 2. Tạo feature branch, không sửa thẳng main
-3. PR theo [`PR_TEMPLATE.md`](./PR_TEMPLATE.md)
+3. PR theo [`PULL_REQUEST_TEMPLATE.md`](./.github/PULL_REQUEST_TEMPLATE.md)
 4. Commit format: `type(scope): mô tả` (xem HANDOFF §4)
 
 ---

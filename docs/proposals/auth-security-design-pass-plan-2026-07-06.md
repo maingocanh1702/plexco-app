@@ -3,7 +3,7 @@
 > **Trạng thái:** 🟡 Plan đề xuất — chờ founder duyệt · 2026-07-06
 > **Loại:** Planning artifact (chưa phải spec Reviewed). KHÔNG sửa `schema.ts`/`migrations`/spec đã Reviewed cho tới khi bảng invariant được chốt + DD-31 ✅.
 > **Bối cảnh:** Slice `auth-onboarding-v2` (autopilot Phase-1) parked @ `7407caa` sau **9 vòng codex review** — 4 vòng cuối (06→07→08→09) mỗi vòng lòi 1 finding MỚI ở FILE KHÁC → tín hiệu **non-convergence** (không phải thrash 1 vùng). Founder chọn dừng, làm security-design pass tổng thể thay vì vá lần 4.
-> **Canonical đối chiếu:** `feature_web_auth_onboarding.md` (Reviewed v2.1, WAO-UC-1) · `BE/feature_web_auth_onboarding_tech.md` (Reviewed v2.0) · `feature_identity.md` (Reviewed v1.1, §2/§5 link_codes) · `BE/feature_identity_tech.md` (L118/L139 keyed-KMS lookup hash) · `identity-model.md §7` · `decisions.md` DD-13/14/15 · `HANDOFF.md §3` (5 HARD RULES).
+> **Canonical đối chiếu:** `feature_web_auth_onboarding.md` (Reviewed v2.1, WAO-UC-1) · `BE/feature_web_auth_onboarding_tech.md` (Reviewed v2.0) · `feature_identity.md` (Reviewed v1.1, §2/§5 link_codes) · `BE/feature_identity_tech.md` (L118/L139 keyed-KMS lookup hash) · `00-start-here/identity-model.md §7` · `decisions.md` DD-13/14/15 · `HANDOFF.md §3` (5 HARD RULES).
 
 ---
 
@@ -36,7 +36,7 @@ Trail đầy đủ ở `.autopilot/worktrees/phase1-fable5/.autopilot/state/auth
 > ⚠️ Nhận định sơ bộ trước đây ("descope TG login sang S17") **SAI theo canonical**. Ghi lại để không lặp.
 
 - **TG Login (widget → web session) = CORE auth Phase-1.** `feature_web_auth_onboarding.md` WAO-UC-1: *"New Host — Authenticate (TG Login / web-account fallback) — Session created, CSRF token issued."* `_tech.md`: `POST /api/auth/telegram/callback` (Public) + bảng `account_identities(platform, platform_user_hash, verified_at)` → `web_sessions`. → round-08/09 nằm ĐÚNG path core này → **harden ngay, không descope, không stopgap-rồi-bỏ.**
-- **TG *bot* channel = S17 (tách).** `identity-model.md §7`: "Telegram Login / web fallback → web auth (P4)" **khác** "Telegram bot → channel (P3.5/P4.5), routing qua `telegram_links`". Chỉ phần bot messaging mới ở S17.
+- **TG *bot* channel = S17 (tách).** `00-start-here/identity-model.md §7`: "Telegram Login / web fallback → web auth (P4)" **khác** "Telegram bot → channel (P3.5/P4.5), routing qua `telegram_links`". Chỉ phần bot messaging mới ở S17.
 - **Không phụ thuộc chặn:** TG Login **không** cần S8 identity-merge (merge là post-onboarding), và **không bắt buộc** cả S9 PWA shell — state-nonce chống login-CSRF làm được **server-side + trang login tối thiểu**. → Bảo mật được **bây giờ**.
 - **Email/password/Google = DD-13 (🟡 chưa chốt)** → pass này **chỉ nhắm TG Login + web-account fallback**. Nếu cần login "bật ngay" cho go-to-market → là quyết định **DD-13 riêng**, không nhét vào pass này.
 

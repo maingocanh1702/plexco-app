@@ -5,7 +5,7 @@
 > **Version:** 2.0 · 2026-06-19  
 > **Status:** Reviewed  
 > **Prerequisites:** P3.5 identity · P3 ledger · P4 web auth/magic link · P4 sync realtime  
-> **Tài liệu liên quan:** `../core/BRD.md` FR-8 · `../core/PRD.md` FLOW 10 · `../core/TDD.md` §3.4/§4 (person-self contract) · `BE/feature_player_view_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-8 · `../product/PRD.md` FLOW 10 · `../product/TDD.md` §3.4/§4 (person-self contract) · `BE/feature_player_view_tech.md`
 
 ---
 

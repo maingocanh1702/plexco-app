@@ -5,7 +5,7 @@
 > **Version:** 2.0 · 2026-06-19  
 > **Status:** Reviewed  
 > **Prerequisites:** P0–P1 foundation stable  
-> **Tài liệu liên quan:** `../core/BRD.md` BR-1/BR-3/BR-12 · `../core/PRD.md` §2 + §4.2/4.3 · `../core/TDD.md` §3.3–3.5 · `BE/feature_tenant_routing_authz_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` BR-1/BR-3/BR-12 · `../product/PRD.md` §2 + §4.2/4.3 · `../product/TDD.md` §3.3–3.5 · `BE/feature_tenant_routing_authz_tech.md`
 
 ---
 

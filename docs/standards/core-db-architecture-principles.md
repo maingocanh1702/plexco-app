@@ -1,7 +1,7 @@
 # Core / DB / Architecture Principles — Plexco
 
 > Principles dùng khi thiết kế core domain, database schema, service boundary và architecture slice cho Plexco.
-> Tài liệu này không thay thế `core/TDD.md`, `standards/business-rules.md` hoặc `standards/decisions.md`; khi conflict, cập nhật decision/source document trước rồi sync lại file này.
+> Tài liệu này không thay thế `product/TDD.md`, `standards/business-rules.md` hoặc `standards/decisions.md`; khi conflict, cập nhật decision/source document trước rồi sync lại file này.
 
 **Version:** 1.0  
 **Date:** 2026-06-21  
@@ -564,13 +564,13 @@ Before merging any core/db architecture change, ask:
 
 ## Source References
 
-- `docs/core/TDD.md`
-- `docs/core/PRD.md`
+- `docs/product/TDD.md`
+- `docs/product/PRD.md`
 - `docs/standards/business-rules.md`
 - `docs/standards/decisions.md`
-- `docs/appendices/saas-implementation-plan.md`
-- `docs/appendices/player-side-saas-AUDIT.md`
-- `docs/appendices/player-side-saas-reconciliation.md`
+- `docs/strategy/saas-implementation-plan.md`
+- `docs/research/player-side-saas-AUDIT.md`
+- `docs/research/player-side-saas-reconciliation.md`
 
 ---
 

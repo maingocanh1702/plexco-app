@@ -4,7 +4,7 @@
 > **Version:** 1.1 · 2026-06-18  
 > **Status:** Implementation contract aligned with TDD v2.1  
 > **Product spec:** `../feature_identity.md`  
-> **References:** `../../core/TDD.md` §3.2–3.4/§4 · `../../appendices/player-side-saas-AUDIT.md`
+> **References:** `../../product/TDD.md` §3.2–3.4/§4 · `../../research/player-side-saas-AUDIT.md`
 
 ---
 

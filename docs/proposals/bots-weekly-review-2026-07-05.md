@@ -2,7 +2,7 @@
 
 > **Trạng thái:** 🟡 Draft đề xuất — chờ review · 2026-07-05
 > **Loại tài liệu:** Proposal (chưa Reviewed). KHÔNG sửa `schema.ts`/`migrations`/spec đã Reviewed cho tới khi các DD liên quan ✅.
-> **Phạm vi:** Chỉ soi **update MỚI trong tuần** của 2 bot, tiếp nối `appendices/bestminton-latest-scan-2026-06-21.md` (đã cũ ~2 tuần) và `appendices/bestminton-to-plexco-analysis.md`. Cái gì bản quét cũ đã bắt (lift pure logic, refund/credit, buddy roster, bank health, memo/pay_code) thì **không nhắc lại** — file này chỉ ghi phần **net-new**.
+> **Phạm vi:** Chỉ soi **update MỚI trong tuần** của 2 bot, tiếp nối `research/bestminton-latest-scan-2026-06-21.md` (đã cũ ~2 tuần) và `research/bestminton-to-plexco-analysis.md`. Cái gì bản quét cũ đã bắt (lift pure logic, refund/credit, buddy roster, bank health, memo/pay_code) thì **không nhắc lại** — file này chỉ ghi phần **net-new**.
 > **Nguồn & độ tin cậy:** verify từ **git log + PR diffs merged** 28/06→04/07 (đọc qua Linear diffs). **GitNexus index của 2 repo đang stale** (chatbot **347**, payment **93** commits behind HEAD, tại thời điểm quét 05/07) → chỉ dùng để **navigation**, KHÔNG phải nguồn code hiện tại. Các PR/commit dưới đây đã spot-check là có thật và đã **merge vào `main`** của 2 repo reference; **không** có bằng chứng deploy nên tránh mọi khẳng định "đang chạy production".
 > **Canonical đối chiếu:** `HANDOFF.md §3` (5 HARD RULES) · `standards/decisions.md` (**DD-19/20/21** đã làm rõ scope trợ lý 05/07) · `proposals/club-ai-bot-knowledge-base.md` · `feature_identity.md` (Bất biến + ID-UC-7/8) · `feature_payment_reconcile.md` + `business-rules.md` (BL-PAY-1..9) · `feature_tenant_routing_authz*`.
 

@@ -4,7 +4,7 @@
 > **Track:** 🏢 Multi-tenant Core + 3-tier  
 > **Version:** 1.1 · 2026-06-18  
 > **Status:** Reviewed against BRD v3.1 / PRD v2.1 / TDD v2.1  
-> **Tài liệu liên quan:** `../core/BRD.md` §6–8 · `../core/TDD.md` §3.2–3.4 · `../appendices/saas-implementation-plan.md` · `../appendices/player-side-saas-AUDIT.md`
+> **Tài liệu liên quan:** `../product/BRD.md` §6–8 · `../product/TDD.md` §3.2–3.4 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md`
 
 ---
 

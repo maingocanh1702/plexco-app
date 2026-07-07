@@ -3,7 +3,7 @@
 > **Version:** v1.3 · 2026-06-20
 > **Status:** Draft (chờ review)
 > **Scope:** Cách deploy Plexco tối ưu/hiệu quả/dễ maintain, kèm scalability & security ở tầng hạ tầng.
-> **References:** `../core/TDD.md` §3.4/§7/§8 · `../appendices/saas-implementation-plan.md` §4/§5/§7 · `../appendices/player-side-saas-AUDIT.md` (C1–C8b · B1–B6 · G1–G6) · `../features/BE/feature_security_operations_tech.md`
+> **References:** `../product/TDD.md` §3.4/§7/§8 · `../strategy/saas-implementation-plan.md` §4/§5/§7 · `../research/player-side-saas-AUDIT.md` (C1–C8b · B1–B6 · G1–G6) · `../features/BE/feature_security_operations_tech.md`
 > **Đề xuất kỹ thuật cho:** DD-04 (Postgres host) · DD-07 (realtime) · DD-10 (web stack) — xem §2. **Trạng thái chốt là canonical tại `decisions.md`**, file này chỉ cung cấp phân tích/đề xuất; không tự "chốt" độc lập.
 
 ---
@@ -69,7 +69,7 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 
 - Lý do: giữ web + bot + worker trong **một image, một platform** → dễ maintain nhất cho monolith.
 - **Tránh:** đẩy web lên Vercel rồi để bot/worker chỗ khác. Việc đó cắt đôi monolith, làm **SSE (long-lived), webhook durable-ingest, và pg-boss** khó sống trên serverless, đồng thời tăng đầu mối vận hành.
-- Contract API/DTO không đổi dù chọn stack nào (web-app/README §1.1).
+- Contract API/DTO không đổi dù chọn stack nào (channels/web/README §1.1).
 
 ---
 

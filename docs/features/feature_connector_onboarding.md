@@ -5,7 +5,7 @@
 > **Version:** 0.4 · 2026-06-20
 > **Status:** Draft (provider-contract reviewed)
 > **Prerequisites:** P3 webhook ingest stable · P4 onboarding wizard scaffold
-> **Tài liệu liên quan:** `feature_web_auth_onboarding.md` (nâng cấp step bank/zalo) · `feature_zalo_channel.md` · `feature_payment_reconcile.md` · `../bot-zalo/README.md` §6–7 · `../core/TDD.md` · `../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `../appendices/player-side-saas-AUDIT.md` §B2
+> **Tài liệu liên quan:** `feature_web_auth_onboarding.md` (nâng cấp step bank/zalo) · `feature_zalo_channel.md` · `feature_payment_reconcile.md` · `../channels/zalo/README.md` §6–7 · `../product/TDD.md` · `../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `../research/player-side-saas-AUDIT.md` §B2
 
 ---
 
@@ -15,7 +15,7 @@
 
 | Connector | Owner đang phải làm tay (theo spec hiện tại) |
 |---|---|
-| Zalo | Tạo bot → dán token → **tự vào Zalo platform dán webhook URL** `{api_base}/webhook/zalo/{token}` (`bot-zalo/README.md` §6) |
+| Zalo | Tạo bot → dán token → **tự vào Zalo platform dán webhook URL** `{api_base}/webhook/zalo/{token}` (`channels/zalo/README.md` §6) |
 | SePay | Nhập credential → **tự vào SePay dashboard tạo webhook** trỏ về Plexco (`feature_web_auth_onboarding` step bank) |
 | ApiPay | Nhập credential → **tự vào ApiPay dashboard tạo webhook** |
 
@@ -34,7 +34,7 @@ Bước "copy URL → mò vào dashboard bên thứ ba → dán đúng chỗ →
 Đây là **bản nâng cấp**, không thay thế:
 
 - `feature_web_auth_onboarding.md` — step `bank_connect`/`bank_verify` và `zalo_optional`: từ "manual portal config" → **auto-register + verify-by-event**.
-- `bot-zalo/README.md` §6 — giữ manual webhook cho tới khi gỡ CO-OQ-1; sau đó mới chuyển sang **Plexco gọi `setWebhook`**. §7 drift từ "alert" → **auto re-register** khi API chính thức được xác nhận.
+- `channels/zalo/README.md` §6 — giữ manual webhook cho tới khi gỡ CO-OQ-1; sau đó mới chuyển sang **Plexco gọi `setWebhook`**. §7 drift từ "alert" → **auto re-register** khi API chính thức được xác nhận.
 - `feature_payment_reconcile.md` — phần ingest giữ nguyên; chỉ thay đường *thiết lập* webhook.
 
 ### Nguồn kiểm chứng provider (snapshot 2026-06-20)
@@ -43,7 +43,7 @@ Bước "copy URL → mò vào dashboard bên thứ ba → dán đúng chỗ →
 |---|---|---|---|
 | SePay | `https://docs.sepay.vn/oauth2/api-webhooks.html`, `https://docs.sepay.vn/oauth2/api-tai-khoan-ngan-hang.html`, `https://docs.sepay.vn/oauth2/api-giao-dich.html` | scopes `bank-account:read`, `transaction:read`, `webhook:write`; `GET /api/v1/bank-accounts`; `POST /api/v1/webhooks`; `GET /api/v1/transactions` | header/body inbound thực tế khi `authen_type=Api_Key` (CO-OQ-7) |
 | ApiPay | `https://docs.apipay.vn/vi/api/authentication`, `https://docs.apipay.vn/vi/api/banks`, `https://docs.apipay.vn/vi/api/webhooks` | `Authorization: Bearer base64(accessKey:secretKey)`; banks `/v2/client/banks`; webhooks `/v1/client/webhooks`; `ApiPay-Signature` HMAC raw body | test với key sandbox để xác nhận status/error mapping |
-| Zalo | `bot-zalo/README.md` + SDK/community references | tenant routing + secret verify pattern | endpoint/tham số chính thức `getMe`/`setWebhook`/`getWebhookInfo` trên tier CLB (CO-OQ-1) |
+| Zalo | `channels/zalo/README.md` + SDK/community references | tenant routing + secret verify pattern | endpoint/tham số chính thức `getMe`/`setWebhook`/`getWebhookInfo` trên tier CLB (CO-OQ-1) |
 
 ---
 

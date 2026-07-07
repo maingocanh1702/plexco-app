@@ -4,7 +4,7 @@
 > **Version:** 1.3 · 2026-06-20
 > **Status:** Implementation contract aligned with TDD v2.1  
 > **Product spec:** `../feature_payment_reconcile.md`  
-> **References:** `../../core/TDD.md` §3.2/3.6–3.8 · `../../standards/business-rules.md`
+> **References:** `../../product/TDD.md` §3.2/3.6–3.8 · `../../standards/business-rules.md`
 
 ---
 

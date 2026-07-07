@@ -5,7 +5,7 @@
 > **Version:** 2.0 · 2026-06-19  
 > **Status:** Reviewed  
 > **Prerequisites:** P2 session management · P4 sync/public projector  
-> **Tài liệu liên quan:** `../core/BRD.md` FR-3/NFR-S2 · `../core/PRD.md` FLOW 12 · `../core/TDD.md` §3.9 · BRD OD-6/OD-8 · `BE/feature_marketplace_discovery_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-3/NFR-S2 · `../product/PRD.md` FLOW 12 · `../product/TDD.md` §3.9 · BRD OD-6/OD-8 · `BE/feature_marketplace_discovery_tech.md`
 
 ---
 

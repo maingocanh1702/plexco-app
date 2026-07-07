@@ -4,7 +4,7 @@
 > **Version:** 2.0 · 2026-06-19  
 > **Status:** Reviewed  
 > **Product spec:** `../feature_session_management.md`  
-> **References:** `../../core/TDD.md` §3.2/3.8 · `../../standards/business-rules.md`
+> **References:** `../../product/TDD.md` §3.2/3.8 · `../../standards/business-rules.md`
 
 ---
 

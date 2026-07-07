@@ -25,7 +25,7 @@ Tables: `accounts`, `web_sessions`, `account_identities`, `onboarding_runs/steps
 - **(DD-31 SI-2, added 2026-07-06)** `account_identities.platform_user_hash` is a keyed HMAC, never a bare hash — key sourced from AWS KMS in staging/prod, `ENCRYPTION_KEY` fallback in dev. See §4 "Web-Auth Identity Hash Keying".
 - **(DD-31 SI-3, added 2026-07-06)** Every tenant-scoped read on this surface combines `withTenant` (RLS) **and** an explicit `tenant_id` predicate in the query — belt-and-suspenders, not RLS alone. See §4 "Explicit Tenant-Filter Policy".
 
-> **🟡 Đề xuất (DD-13, chưa chốt):** Auth Adapter có thể mở rộng thêm provider `google` / `email-password` ngoài TG Login. Cắm cùng adapter → `account_identities(platform, platform_user_hash)`; password (nếu có) ở bảng credential riêng qua migration mới. `persons` vẫn anchor, không tạo `users`. Ref: `../../standards/decisions.md` DD-13, `../../identity-model.md §6`. Chỉ triển khai khi DD-13 ✅.
+> **🟡 Đề xuất (DD-13, chưa chốt):** Auth Adapter có thể mở rộng thêm provider `google` / `email-password` ngoài TG Login. Cắm cùng adapter → `account_identities(platform, platform_user_hash)`; password (nếu có) ở bảng credential riêng qua migration mới. `persons` vẫn anchor, không tạo `users`. Ref: `../../standards/decisions.md` DD-13 (Google/email) · DD-33 (Facebook) · DD-14 (Zalo), `../../00-start-here/identity-model.md §7` (provider/channel phase matrix). Chỉ triển khai khi DD tương ứng ✅.
 
 ---
 

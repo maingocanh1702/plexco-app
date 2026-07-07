@@ -86,7 +86,7 @@ change_class: web-feature
 depends_on: []
 invariants: [web-app, design-tokens]
 scope: []
-notes: docs/web-app/. Frontend riêng → thường DISJOINT với backend feature (song song tốt) trừ khi đụng core-api/i18n.
+notes: docs/channels/web/. Frontend riêng → thường DISJOINT với backend feature (song song tốt) trừ khi đụng core-api/i18n.
 
 ## task: infra-fly-provisioning-secret-boundary
 title: Fly deploy — run pgboss/DB provisioning WITHOUT app-wide migration secret

@@ -70,7 +70,7 @@ Quy ước thư mục: `docs/autopilot-*` = luật/kit; `.autopilot/` = runtime 
 
 Lưu ý: `progress.json` + `plexco-dashboard.html` = nguồn sự thật **tiến độ phase/module**; backlog ở
 trên là **task autopilot song song**. Linear/GitHub Projects chỉ cân nhắc khi có người thứ 2 / sau P5
-(xem `EXECUTION-PLAYBOOK.md` §2) — hiện flow KHÔNG dùng Linear.
+(xem `automation/playbook.md` §2) — hiện flow KHÔNG dùng Linear.
 
 ---
 

@@ -4,7 +4,7 @@
 > **Version:** 2.0 · 2026-06-19  
 > **Status:** Reviewed  
 > **Product spec:** `../feature_marketplace_discovery.md`  
-> **References:** `../../core/TDD.md` §3.9
+> **References:** `../../product/TDD.md` §3.9
 
 ---
 

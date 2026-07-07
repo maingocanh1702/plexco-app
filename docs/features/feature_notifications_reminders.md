@@ -5,7 +5,7 @@
 > **Version:** 2.0 · 2026-06-19  
 > **Status:** Reviewed  
 > **Prerequisites:** P3 ledger stable · P3.5 identity/reachability · P4 sync/projectors  
-> **Tài liệu liên quan:** `../core/BRD.md` FR-6 · `../core/PRD.md` FLOW 7/8 · `../standards/business-rules.md` BL-SEC-5 · `BE/feature_notifications_reminders_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-6 · `../product/PRD.md` FLOW 7/8 · `../standards/business-rules.md` BL-SEC-5 · `BE/feature_notifications_reminders_tech.md`
 
 ---
 

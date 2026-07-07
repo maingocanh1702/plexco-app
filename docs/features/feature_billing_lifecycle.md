@@ -5,7 +5,7 @@
 > **Version:** 2.2 · 2026-06-20
 > **Status:** Reviewed  
 > **Prerequisites:** P2 tenant/authz · P3 durable payment ingestion · P3 notifications  
-> **Tài liệu liên quan:** `../core/BRD.md` FR-9/BR-11 · `../core/PRD.md` FLOW 11 · BRD OD-3 · `BE/feature_billing_lifecycle_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-9/BR-11 · `../product/PRD.md` FLOW 11 · BRD OD-3 · `BE/feature_billing_lifecycle_tech.md`
 
 ---
 

@@ -5,7 +5,7 @@
 > **Version:** 2.0 · 2026-06-19  
 > **Status:** Reviewed  
 > **Prerequisites:** P4 onboarding (Zalo token connect) · P3.5 identity · P2 session/join · P3 notifications · P4 sync  
-> **Tài liệu liên quan:** `../core/PRD.md` FLOW 4 + §4.2/4.4 · `../core/BRD.md` CO-2 · `BE/feature_zalo_channel_tech.md`
+> **Tài liệu liên quan:** `../product/PRD.md` FLOW 4 + §4.2/4.4 · `../product/BRD.md` CO-2 · `BE/feature_zalo_channel_tech.md`
 
 ---
 

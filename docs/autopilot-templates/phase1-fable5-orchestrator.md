@@ -167,8 +167,8 @@ TOOLCHAIN MAP (Plexco)
   Backend:          TypeScript, Express + SSE, Drizzle ORM, PostgreSQL (RLS ENABLE+FORCE),
                     pg-boss (queues/cron on Postgres). grammY (Telegram), Zalo HTTP adapter.
   Frontend:         apps/web = PWA (installable, offline shell). Stack: **Next.js App Router** is the
-                    baseline per docs/web-app/README.md (Express SSR is only a fallback; DD-10 still open)
-                    — READ docs/web-app/README.md + design-brief.md before S9; do not invent a new stack.
+                    baseline per docs/channels/web/README.md (Express SSR is only a fallback; DD-10 still open)
+                    — READ docs/channels/web/README.md + design-brief.md before S9; do not invent a new stack.
   i18n:             every user-facing string via t(vi,en) (HR5). No hardcoded single language.
   <VERIFY_CMD>:     pnpm -w install && pnpm -w typecheck && pnpm -w lint && pnpm -w test
                     (test uses DATABASE_URL_TEST; CI-equivalent env). S1 establishes this.
@@ -179,13 +179,13 @@ TOOLCHAIN MAP (Plexco)
                      `full-output-enforcement` if you catch yourself truncating/placeholdering UI.
     - emilkowalski:  `emil-design-eng` (motion/easing: ease-out for enter, spring for interactive;
                      semi-transparent shadows not solid borders). Run `review-animations` in S20.
-  Design tokens:    docs/standards/design-tokens.md + docs/web-app/design-tokens.md — every
+  Design tokens:    docs/standards/design-tokens.md + docs/channels/web/design-tokens.md — every
                     color/spacing/typography via CSS var(--token); NEVER hardcode hex/rgba.
 
 =========================================================================
 REQUIRED READING (before S1, and re-read the slice-specific ones per slice)
 =========================================================================
-  Governance:  docs/standards/HANDOFF.md §3 (5 HARD RULES) + §8 (traps);
+  Governance:  docs/00-start-here/HANDOFF.md §3 (5 HARD RULES) + §8 (traps);
                docs/standards/decisions.md (esp. DD-01,05,06,07,12,13,16-30);
                docs/standards/business-rules.md (BL-PAY-1..9, BL-TEN, BL-ID, BL-BIL, BL-NTF, BL-SEC);
                docs/standards/core-db-architecture-principles.md (INV-1..10, P1..P16).
@@ -194,7 +194,7 @@ REQUIRED READING (before S1, and re-read the slice-specific ones per slice)
                ERD.md). NEVER invent a table/column that already exists there; the SQL migrations
                (esp. 0009 RLS/grants, 0010 functions/triggers) are the source of truth for RLS. Feature
                specs = the product/behaviour contract, not the schema source.
-  Frontend:    docs/web-app/README.md, design-brief.md, ux-sync-design.md, design-tokens.md.
+  Frontend:    docs/channels/web/README.md, design-brief.md, ux-sync-design.md, design-tokens.md.
 
 =========================================================================
 PHASE-1 BACKLOG (ordered; slugs are scope-gate slugs)
@@ -205,7 +205,7 @@ NEW distinct findings across many files → the slice is too big → MAX_ROUNDS 
 (money state across many flows must be split UP FRONT — invariants Captured-lessons).
 
 S1  monorepo-scaffold                              [P2 · build-config]  AUTO-INTEGRATE
-    Docs: HANDOFF §2; docs/core/ROADMAP.md P0-P1.
+    Docs: HANDOFF §2; docs/product/ROADMAP.md P0-P1.
     Do:  pnpm workspaces (packages/core, packages/db, apps/web, apps/bot); tsconfig strict;
          eslint/prettier; vitest; pg-boss wiring; CI running <VERIFY_CMD>; .env.example.
     DoD: `pnpm -w install` clean; `pnpm -w typecheck` green; CI green.
@@ -285,7 +285,7 @@ S8  identity-merge                                 [P1 · identity, auth]  money
     Depends_on: [auth-onboarding]. Invariants: [identity, auth].
 
 S9  web-pwa-shell                                  [P2 · web-app, design-tokens]  AUTO-INTEGRATE
-    Docs: docs/web-app/README, design-brief, design-tokens. LOAD frontend skills.
+    Docs: docs/channels/web/README, design-brief, design-tokens. LOAD frontend skills.
     Do:  apps/web PWA: manifest (installable), service worker (offline app shell; NEVER cache money/PII
          — network-first for authed data), router, layout, CSS-var tokens, i18n provider (t(vi,en)),
          auth-guarded routes, SSE client hook (S6).
@@ -293,7 +293,7 @@ S9  web-pwa-shell                                  [P2 · web-app, design-tokens
     Depends_on: [auth-onboarding, sync-engine]. Invariants: [web-app, design-tokens].
 
 S10 web-host-dashboard                             [P2 · web-app]  AUTO-INTEGRATE
-    Docs: docs/web-app/*. LOAD taste-skill + emil-design-eng.
+    Docs: docs/channels/web/*. LOAD taste-skill + emil-design-eng.
     Do:  host dashboard: sessions list (soonest-first), detail + roster + waitlist, MANUAL reconcile
          (unmatched CK → pick charge/allocate), debt overview, live updates via SSE. All mutations via
          backend command API. Full loading/empty/error states (full-output-enforcement).
@@ -356,7 +356,7 @@ S16 reminders-auto                                 [P1 · money-model, schema]  
     Depends_on: [payment-reconcile, sync-engine, billing-lifecycle]. Invariants: [money-model, schema].
 
 S17 telegram-adapter                               [P1 · transport-telegram]  money-guard
-    Docs: feature_player_telegram(_tech); docs/bot-telegram/README; bots-p1-portmap (transport thin,
+    Docs: feature_player_telegram(_tech); docs/channels/telegram/README; bots-p1-portmap (transport thin,
           logic in core); HANDOFF §8 (no logic copy across transports).
     Do:  grammY adapter in apps/bot with tenant middleware (chat_id → tenant_id); host commands +
          player join (tap) + confirm + reminder delivery, ALL via the SAME command/services/core (thin
@@ -367,7 +367,7 @@ S17 telegram-adapter                               [P1 · transport-telegram]  m
     Invariants: [transport-telegram].
 
 S18 zalo-adapter                                   [P1 · transport-zalo]  money-guard
-    Docs: feature_zalo_channel(_tech); docs/bot-zalo/README; DD-14/DD-15 (Zalo unknowns — link-code
+    Docs: feature_zalo_channel(_tech); docs/channels/zalo/README; DD-14/DD-15 (Zalo unknowns — link-code
           covers worst case); connector_onboarding §4.1.
     Do:  Zalo HTTP adapter (per-club BYO token), number-reply state; join/confirm; SAME core as TG
          (extract shared, adapters thin — do NOT copy TG logic). Webhook-drift detect (getWebhookInfo).
@@ -408,7 +408,7 @@ S20 pwa-polish                                     [P2 · web-app]  AUTO-INTEGRA
 
 --- OUT OF SCOPE (do NOT start) ---
   • Messenger channel (join + confirm): blocked by Meta App Review (DD-09 / P4.8 /
-    appendices/messenger-channel-design.md). Its own P1 transport slice (mirror S17/S18) once cleared.
+    channels/messenger/messenger-channel-design.md). Its own P1 transport slice (mirror S17/S18) once cleared.
   • Club Assistant **Phase B** — native in-app chat (`chat_channels/messages/members` + bot-participant,
     DD-19 Phase B): a large messaging subsystem; its own later track, NOT Phase-1 (Phase A ask-panel = S19b).
 
