@@ -16,7 +16,7 @@
  * (bytea) with deterministic *_lookup_hash for equality lookup.
  */
 import {
-  pgTable, uuid, text, integer, bigint, boolean, jsonb, timestamp,
+  pgTable, uuid, text, integer, bigint, bigserial, boolean, jsonb, timestamp,
   time, customType, uniqueIndex, index, primaryKey, check, foreignKey,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -785,6 +785,12 @@ export const onboardingSteps = pgTable("onboarding_steps", {
   idempotencyKey: text("idempotency_key"),
   errorCode: text("error_code"),
   completedAt: timestamp("completed_at", { withTimezone: true }),
+  // Added by migration 0013 (DD-31 SI-8): retries leave multiple rows per
+  // (run_id, step). createdAt is human-readable audit only — NOT used for
+  // ordering (codex round-11: transaction-stable now() + migration backfill
+  // can tie). `seq` (bigserial) is the authoritative recency tie-breaker.
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  seq: bigserial("seq", { mode: "number" }),
 }, (t) => ({
   uq: uniqueIndex("onboarding_steps_uq").on(t.runId, t.step, t.idempotencyKey),
   statusChk: check("onboarding_steps_status_chk",

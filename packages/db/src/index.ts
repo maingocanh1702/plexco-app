@@ -16,3 +16,21 @@ export {
   type TenantRepo,
 } from "./tenant.js";
 export { migrate, type MigrateResult } from "./migrate.js";
+export {
+  LoginReplayError,
+  SlugTakenError,
+  consumeLoginState,
+  createWebSession,
+  issueLoginState,
+  loginTelegram,
+  onboardingSnapshot,
+  provisionTenant,
+  rateLimitCheck,
+  resolveWebSession,
+  revokeWebSession,
+  rotateWebSession,
+  tenantsForPerson,
+  type LoginResult,
+  type OnboardingSnapshot,
+  type ResolvedSession,
+} from "./auth.js";

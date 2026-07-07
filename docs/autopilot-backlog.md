@@ -131,3 +131,36 @@ notes: Codex core-lift-v3 round-05 — manual `/transfer`/`/cash` args using spa
   cumulative NL-parsing finding across core-lift v1/v2/v3 — before starting,
   re-read DECISIONS.md S2/S2b/S2c entries; a 16th quick patch risks the same
   REGION_THRASH pattern that parked this branch three times already.
+
+## task: db-migration-0000-idempotent-role-create
+title: migration 0000 CREATE ROLE is non-atomic — real race, currently masked by serial test config
+status: planned
+risk: P2
+change_class: schema-bugfix
+depends_on: []
+invariants: [schema]
+scope: [packages/db/migrations/0000_roles_extensions.sql]
+notes: Codex auth-onboarding-v3 round-08 — migration 0000's role creation for
+  app/app_worker/readonly is `IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE
+  rolname = '<role>') THEN CREATE ROLE <role> ...; END IF;`, a check-then-act
+  that is NOT atomic against a CONCURRENT migrate() run: two migrations
+  against DIFFERENT throwaway databases on the SAME cluster (roles are
+  cluster-global, not per-database) can both observe "role missing" and both
+  attempt CREATE ROLE, one failing with duplicate_object.
+  Real bug in migration 0000 itself — NOT a false positive. Logged
+  out-of-scope for auth-onboarding-v3 (pre-existing shared migration infra,
+  not introduced by that slice) because it is currently MASKED, not fixed:
+  packages/db/vitest.config.ts sets `fileParallelism: false` +
+  `sequence.concurrent: false`, serializing DB test FILE execution
+  end-to-end — this is what actually prevents the race today (verified: 8
+  consecutive full `pnpm --filter @plexco/db run test` runs, zero
+  duplicate-role errors). auth-onboarding-v3 added the SECOND DB test file
+  (auth.test.ts) that first exercises this cluster-global-role path
+  concurrently with rls-invariants.test.ts; before that slice only one DB
+  test file existed, so the race had no second caller to collide with.
+  Fix shape: wrap each CREATE ROLE in an EXCEPTION handler catching
+  `duplicate_object` (Postgres has no `CREATE ROLE IF NOT EXISTS` syntax),
+  so the block is idempotent even under a genuine race, not just under the
+  current serialized-by-config test harness. Do not remove
+  `fileParallelism: false` until this lands — see the comment already added
+  to vitest.config.ts.

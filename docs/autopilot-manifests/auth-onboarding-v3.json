@@ -1,0 +1,58 @@
+{
+  "feature": "auth-onboarding-v3",
+  "branch": "feat/auth-onboarding-v3",
+  "base_ref": "feat/phase1-fable5",
+  "risk": "P1",
+  "change_class": "auth-feature",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_consecutive_clean",
+  "depends_on": [
+    "db-postgres-drizzle-rls"
+  ],
+  "dep_checks": [
+    {
+      "file": "packages/db/src/tenant.ts",
+      "symbol": "withTenant"
+    }
+  ],
+  "invariants": [
+    "auth",
+    "schema",
+    "build-config"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/auth-onboarding-v3.json",
+    "packages/db/schema.ts",
+    "packages/db/migrations/0012_auth_functions.sql",
+    "packages/db/migrations/0013_onboarding_steps_recency.sql",
+    "packages/db/src/auth.ts",
+    "packages/db/src/auth.test.ts",
+    "packages/db/src/index.ts",
+    "packages/db/src/test-harness.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "apps/web/package.json",
+    "apps/web/next.config.mjs",
+    "apps/web/lib/api-envelope.ts",
+    "apps/web/lib/session-cookies.ts",
+    "apps/web/lib/session-cookies.test.ts",
+    "apps/web/lib/telegram-login.ts",
+    "apps/web/lib/telegram-login.test.ts",
+    "apps/web/lib/login-state.ts",
+    "apps/web/lib/login-state.test.ts",
+    "apps/web/lib/auth-secrets.ts",
+    "apps/web/lib/auth-secrets.test.ts",
+    "apps/web/app/api/auth/telegram/callback/route.ts",
+    "apps/web/app/api/auth/telegram/callback/route.test.ts",
+    "apps/web/app/api/auth/telegram/state/route.ts",
+    "apps/web/app/api/auth/telegram/state/route.test.ts",
+    "apps/web/app/api/auth/logout/route.ts",
+    "apps/web/app/api/auth/logout/route.test.ts",
+    "apps/web/app/api/auth/session/route.ts",
+    "apps/web/app/api/onboarding/start/route.ts",
+    "apps/web/app/api/onboarding/readiness/route.ts",
+    "apps/web/app/api/onboarding/readiness/route.test.ts",
+    "pnpm-lock.yaml",
+    ".env.example"
+  ]
+}
