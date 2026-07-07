@@ -38,8 +38,8 @@ Bản đồ điều hướng cho toàn bộ docs. Bắt đầu từ đây.
 
 ### `features/` — spec theo từng feature
 
-- `features/<feature>.md` — Product/UX spec (dùng `../templates/feature-spec-template.md`)
-- `features/BE/<feature>_tech.md` — Backend tech spec (dùng `../templates/be-tech-spec-template.md`)
+- `features/<feature>.md` — Product/UX spec (dùng `templates/feature-spec-template.md`)
+- `features/BE/<feature>_tech.md` — Backend tech spec (dùng `templates/be-tech-spec-template.md`)
 - `features/README.md` — **danh mục feature** (identity, multi-tenant, sync engine, marketplace, payment reconcile, billing, các kênh player…)
 
 ### `standards/` — quy chuẩn dùng chung xuyên feature
