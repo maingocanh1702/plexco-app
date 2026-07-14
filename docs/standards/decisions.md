@@ -20,7 +20,7 @@
 | DD-05 | Join cross-club: open vs approval | 🟡 Đề xuất | P4.3 | BRD OD-5 · TDD Q8 |
 | DD-06 | Độ chi tiết vị trí public: area vs venue | 🟡 Đề xuất | P4.3 | BRD OD-6 · TDD Q9 |
 | DD-07 | Web realtime: SSE + fan-out qua `LISTEN/NOTIFY` | ✅ Chốt | P4 | BRD OD-7 · TDD Q7 · `deployment-infra.md §2` |
-| DD-08 | Danh sách môn khởi điểm + taxonomy trình độ | ⬜ Mở | P0 | BRD OD-8 |
+| DD-08 | Danh sách môn khởi điểm + taxonomy trình độ | ✅ Chốt (2026-07-13) | P0 | BRD OD-8 |
 | DD-09 | Messenger vào lộ trình lúc nào | 🔄 Thay bằng DD-37 (Messenger là kênh phase-1) | P4.8→P2.5 | BRD OD-9 |
 | DD-10 | Web stack = Next.js App Router, standalone/container; không Vercel | ✅ Chốt | P4 | live `apps/web` · BRD OD-10 · TDD Q1 · `deployment-infra.md §2` |
 | DD-11 | Zalo Premium + add-on managed (owner >3 CLB) | 🔗 Phụ thuộc ngoài | P4.7 | TDD Q5 |
@@ -137,11 +137,17 @@
   - Cần endpoint stream + reconnect; size memory theo số connection; tier thấp fallback polling.
 - **Chi tiết:** `deployment-infra.md §2 (DD-07)`.
 
-## DD-08 — Môn khởi điểm + taxonomy trình độ · ⬜ Mở
+## DD-08 — Môn khởi điểm + taxonomy trình độ · ✅ Chốt (2026-07-13, owner)
 
-- **Bối cảnh:** `Sport` là chiều dữ liệu của kèo; cần chốt danh sách môn ban đầu và thang trình độ.
-- **Gợi ý:** Cầu lông, pickleball, … + taxonomy trình độ chuẩn hoá.
-- **Hệ quả:** Ảnh hưởng schema/seed sớm (P0) và filter discovery.
+- **Bối cảnh:** `sports` là chiều dữ liệu của kèo; cần chốt danh sách môn ban đầu và thang trình độ. Level còn là nguồn cho **DD-41** (level gating) + **DD-43** (nhãn theo level) → một nguồn duy nhất.
+- **Quyết định (owner):**
+  1. **Môn Day-1 (seed):** cầu lông (badminton), pickleball, tennis, padel, volleyball, basketball, football — **thiết kế cho phép mở rộng thêm môn sau này** (không hardcode).
+  2. **Taxonomy trình độ (ordered, 5 bậc):** `beginner` < `intermediate` < `upper_intermediate` < `advanced` < `professional`.
+- **Biểu diễn (khớp canonical `packages/db/schema.ts`):**
+  - **Môn = bảng dữ liệu `sports` (đã có: `key`/`name`/`active`)** — mở rộng bằng **thêm hàng** (KHÔNG enum, KHÔNG migration cho môn mới); cờ `active` để bật/tắt. Seed 7 môn trên. ⇒ yêu cầu extensible đã được kiến trúc sẵn.
+  - **Level = tập canonical có THỨ TỰ**, cần **rank số** (vd 1..5) để so sánh min/max/strict ở đường JOIN (DD-41). Đề xuất: lookup `skill_levels` (`key`,`label`,`rank`) hoặc enum + ordinal; **thay** `sessions.skill_level text` tự do hiện tại (migration mở rộng, đi cùng đợt DD-41). Level dùng chung một nguồn cho DD-41/DD-43.
+- **Hệ quả:** seed `sports` (P0) + định nghĩa canonical level. `sessions.skill_level` (text) → chuẩn hoá về level canonical khi migration DD-41 land (min/max range). Filter discovery + gating dựa trên rank. Cập nhật `feature_marketplace_discovery` (filter môn/level) + DD-41/DD-43 khi build.
+- **Còn lại (impl, không chặn quyết định):** chốt `key` chuẩn hoá (snake_case: `badminton`/`pickleball`/`tennis`/`padel`/`volleyball`/`basketball`/`football`) + cơ chế i18n `name` (vi/en) qua `t()`; chọn lookup-table vs enum cho level (khuyến nghị lookup để thêm bậc không cần migration enum).
 
 ## DD-09 — Messenger vào lộ trình · 🔄 Thay bằng DD-37
 
@@ -558,4 +564,5 @@
 | 11/07/2026 | v1.17 | Thêm **DD-41..46 (🟡/⬜)** từ đối chiếu `feature_session_management` với 6 màn hình *Create Meet/Create Game* của 2 app tham khảo: **DD-41** field mô tả + gating cho `sessions` (title/notes/session_type/level min-max+strict/gender-restriction≠DD-39/age/instructions); **DD-42** subsystem no-show/attendance/reliability (deprioritize/ban per-tenant); **DD-43** nhãn/hạng thành viên + audience targeting khi announce; **DD-44** invite-link token cho kèo private; **DD-45** model hoá waitlist (đóng gap SES-UC-9); **DD-46** ⬜ kèo không CLB (Skip Club — đụng invariant `tenant_id`, chờ founder). Nguồn: session hỏi feature 2026-07-11. |
 | 11/07/2026 | v1.18 | Thêm **DD-47/48 (🟡)** cho `feature_user_settings` (follow + private/public): **DD-47** social follow graph `person_follows` (global, cạnh có hướng, `pending/accepted`, auto-accept public / approve private, merge re-parent+dedupe, **không** cấp quyền tiền/PII/roster); **DD-48** `persons.profile_visibility` (default `public`) + cross-user profile read whitelist non-PII + gating fail-closed (private ẩn **cả đồng đội cùng CLB** trừ host vận hành; **KHÔNG** nới RLS / **không** đụng đường tiền — HR1/HR2). Nguồn: session hỏi feature 2026-07-11. |
 | 13/07/2026 | v1.19 | Reconcile decision log với live repo: **DD-10 → ✅ Next.js App Router, standalone/container, không Vercel** (`apps/web` đã dùng Next.js); **DD-12 → ✅ bảng `public_sessions` cập nhật qua projector** (schema/migrations đã có projection table; projector implementation vẫn pending). Đồng bộ BRD/TDD/ROADMAP/HANDOFF/deployment docs. |
+| 13/07/2026 | v1.21 | **DD-08 → ✅ Chốt (owner).** Môn Day-1 seed: badminton/pickleball/tennis/padel/volleyball/basketball/football (extensible qua bảng `sports`, thêm hàng — không enum/migration cho môn mới). Level ordered 5 bậc: beginner < intermediate < upper_intermediate < advanced < professional (cần rank số cho gating DD-41; thay `sessions.skill_level` text — migration đi cùng DD-41). Một nguồn level cho DD-41/DD-43. |
 | 13/07/2026 | v1.20 | **DD-04 reopened.** Gate định nghĩa lại = auto-failover HA + uptime SLA + posture private-network trên Fly; thêm **QĐ-1 posture (a/b/c)** + ứng viên **DigitalOcean** (nghiêng chọn), Neon Scale á quân, Supabase chỉ đạt gate ở Enterprise, self-host/Railway-HA để dành. Sửa dữ kiện: Neon HA không Scale-gated, Supabase Pro không đạt HA/SLA, private-network chưa giải quyết trên Fly. Nguồn: `../dd-04-hosting-decision-brief.md` (rev 2). Kèm governance: sync `deployment-infra.md §2` (Railway row) + §6 (network posture). |
