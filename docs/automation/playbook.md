@@ -2,6 +2,8 @@
 
 **Cho:** Solo dev + AI co-pilot + Founder (PM/QA/dogfood)
 **Căn cứ:** BRD v3.1 · PRD v2.1 · TDD v2.1 · ROADMAP v2.2
+
+> ⚠️ **Version note (15/07/2026):** playbook ở baseline **v3.1/v2.1/v2.2**. Nguồn hiện hành: **BRD v3.5 · PRD v2.4 · TDD v2.4 · ROADMAP v2.7 · `../standards/decisions.md` v1.31**; chưa reflect pivot kênh (DD-37) + cụm session-model/social (DD-41–48). Khi lệch, ưu tiên ROADMAP/TDD hiện hành.
 **Mục đích:** biến 8 phase / 19 module trên ROADMAP thành một guồng execute *dễ quản lý* và *khó sai* cho một người.
 
 ---
