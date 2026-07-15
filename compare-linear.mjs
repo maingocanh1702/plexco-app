@@ -4,8 +4,9 @@
  *
  * Ownership theo field:
  *   • Linear         — sở hữu status (subtask + module roll-up).
- *   • progress.json  — sở hữu cấu trúc roadmap/gate/invariant/subtask title/khoá.
- * Script này CHỈ ĐỌC cả hai và báo CHỖ LỆCH (drift).
+ *   • progress.json  — sở hữu cấu trúc roadmap/gate/invariant/module + subtask title/khoá.
+ * Script này CHỈ ĐỌC cả hai và báo CHỖ LỆCH (drift). Status, title hoặc cấu trúc
+ * Linear bị thiếu đều làm exit 2 để gate fail-closed.
  *
  * Khoá đối chiếu: mỗi Linear issue có title prefix "[M#] ..." + label "plexco-mvp".
  *
@@ -21,6 +22,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { expectedLinearModuleTitle, validateProgressLinearContract } from "./linear-contract.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const LABEL = "plexco-mvp";
@@ -94,11 +96,16 @@ function deriveModuleStatus(module, byIdentifier) {
   const parent = module.linearId ? byIdentifier[module.linearId] : null;
   const subStatuses = [];
   let missingSubtasks = 0;
+  const mismatchedSubtaskTitles = [];
   for (const s of (module.subtasks || [])) {
     if (!s.identifier) continue;
     const sub = byIdentifier[s.identifier];
-    if (sub) subStatuses.push(sub.status);
-    else missingSubtasks++;
+    if (sub) {
+      subStatuses.push(sub.status);
+      if (sub.title !== s.title) {
+        mismatchedSubtaskTitles.push({ identifier: s.identifier, actual: sub.title, expected: s.title });
+      }
+    } else missingSubtasks++;
   }
   const rolled = missingSubtasks === 0 ? rollUpStatuses(subStatuses) : null;
   const status = rolled != null ? rolled : parent?.status;
@@ -107,9 +114,11 @@ function deriveModuleStatus(module, byIdentifier) {
     status,
     identifier: parent?.identifier || module.linearId,
     url: parent?.url,
-    title: parent?.title || `[${module.id}] ${module.name}`,
+    title: parent?.title || expectedLinearModuleTitle(module),
     source: rolled != null ? "subtask-rollup" : "parent",
-    missingSubtasks
+    missingParent: Boolean(module.linearId && !parent),
+    missingSubtasks,
+    mismatchedSubtaskTitles
   };
 }
 
@@ -119,6 +128,11 @@ const C = { red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m", dim: "\x1b[2
 async function main() {
   const progress = JSON.parse(readFileSync(join(__dir, "progress.json"), "utf8"));
   const modules = progress.modules;
+  const progressContractErrors = validateProgressLinearContract(progress);
+  if (progressContractErrors.length) {
+    console.error(`${C.red}✗ progress.json vi phạm Linear contract:${C.reset}\n` + progressContractErrors.map((e) => `  ${e}`).join("\n"));
+    process.exit(2);
+  }
 
   const apiKey = process.env.LINEAR_API_KEY;
   let linear = {};
@@ -141,25 +155,66 @@ async function main() {
   console.log(C.dim + pad("Mod", 5) + pad("progress.json", 16) + pad("Linear", 16) + "Drift" + C.reset);
   console.log(C.dim + "─".repeat(56) + C.reset);
 
-  let drift = 0, missing = 0, matched = 0;
+  let drift = 0, statusDrift = 0, titleDrift = 0, structuralDrift = 0, matched = 0;
   const snapshotOut = {};
   for (const m of modules) {
     const lin = linearByIdentifier ? deriveModuleStatus(m, linearByIdentifier) : linear[m.id];
     const pj = m.status;
-    let linStatus = lin ? lin.status : null;
+    const linStatus = lin ? lin.status : null;
+    const expectedTitle = expectedLinearModuleTitle(m);
     if (lin) snapshotOut[m.id] = lin;
 
     let flag, color;
-    if (!lin) { flag = "— (chưa có trên Linear)"; color = C.yellow; missing++; }
-    else if (lin.missingSubtasks) { flag = `⚠ thiếu ${lin.missingSubtasks} subtask trên Linear/label`; color = C.yellow; missing++; }
-    else if (lin.status === pj) { flag = "ok"; color = C.green; matched++; }
-    else { flag = `≠ LỆCH`; color = C.red; drift++; }
+    if (!lin) {
+      flag = "≠ THIẾU MODULE";
+      color = C.red;
+      structuralDrift++;
+      drift++;
+    } else {
+      const reasons = [];
+      if (lin.missingParent) {
+        reasons.push("THIẾU PARENT");
+        structuralDrift++;
+      }
+      if (lin.missingSubtasks) {
+        reasons.push(`THIẾU ${lin.missingSubtasks} SUBTASK`);
+        structuralDrift++;
+      }
+      if (lin.status !== pj) {
+        reasons.push("STATUS");
+        statusDrift++;
+      }
+      if (lin.title !== expectedTitle) {
+        reasons.push("TITLE");
+        titleDrift++;
+      }
+      if (lin.mismatchedSubtaskTitles?.length) {
+        reasons.push(`${lin.mismatchedSubtaskTitles.length} SUBTASK TITLE`);
+        titleDrift += lin.mismatchedSubtaskTitles.length;
+      }
+
+      if (reasons.length) {
+        flag = `≠ ${reasons.join("+")}`;
+        color = C.red;
+        drift++;
+      } else {
+        flag = "ok";
+        color = C.green;
+        matched++;
+      }
+    }
 
     console.log(color + pad(m.id, 5) + pad(pj, 16) + pad(linStatus || "—", 16) + flag + C.reset);
+    if (lin && lin.title !== expectedTitle) {
+      console.log(C.red + `      title Linear: ${JSON.stringify(lin.title)}; canonical: ${JSON.stringify(expectedTitle)}` + C.reset);
+    }
+    for (const sub of lin?.mismatchedSubtaskTitles || []) {
+      console.log(C.red + `      ${sub.identifier} title Linear: ${JSON.stringify(sub.actual)}; canonical: ${JSON.stringify(sub.expected)}` + C.reset);
+    }
   }
 
   console.log(C.dim + "─".repeat(56) + C.reset);
-  console.log(`${C.green}khớp: ${matched}${C.reset}  ${C.red}lệch: ${drift}${C.reset}  ${C.yellow}thiếu trên Linear: ${missing}${C.reset}\n`);
+  console.log(`${C.green}khớp: ${matched}${C.reset}  ${C.red}lệch: ${drift} (status ${statusDrift}, title ${titleDrift}, cấu trúc ${structuralDrift})${C.reset}\n`);
 
   if (WRITE && apiKey) {
     const out = { generatedAt: new Date().toISOString(), label: LABEL, modules: snapshotOut };
@@ -169,7 +224,7 @@ async function main() {
     console.log(`${C.yellow}--write bị bỏ qua vì không có LINEAR_API_KEY (đang đọc từ snapshot demo).${C.reset}\n`);
   }
 
-  process.exit(drift > 0 ? 2 : 0); // exit 2 nếu có drift → tiện gắn CI/cron
+  process.exit(drift > 0 ? 2 : 0); // fail-closed nếu status/title/cấu trúc Linear lệch
 }
 
 main().catch((e) => { console.error(`${C.red}Lỗi:${C.reset}`, e.message); process.exit(1); });

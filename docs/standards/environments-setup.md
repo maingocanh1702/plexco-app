@@ -4,7 +4,7 @@
 > Doc này bám sát hạ tầng thật trong repo: `infra/fly.toml`, `infra/Dockerfile`, `infra/entrypoint.sh`, `.env.example`, và `docs/standards/deployment-infra.md`.
 > ⚠️ Đây là app **money-safe / multi-tenant** (đối soát SePay, ledger, RLS). Cách ly env không phải "nice-to-have" — nó là yêu cầu blast-radius (deployment-infra §6, C7).
 >
-> **Cập nhật 13/07/2026 (DD-37 / BRD v3.4):** target phase-1 = **web + Zalo + Facebook Messenger**, auth **Google OAuth + email/password** (DD-13). Tuy nhiên live HEAD vẫn là Auth v3 Telegram-era: `/api/auth/telegram/callback` **còn bắt buộc `TELEGRAM_BOT_TOKEN`**. Chỉ gỡ secret/route này sau khi provider replacement land; Google/Facebook vars hiện là target contract, chưa được code consume đầy đủ.
+> **Cập nhật 13/07/2026 (DD-37 / BRD v3.4):** target phase-1 = **web + Zalo + Facebook Messenger**, auth **Google OAuth + email/password** (DD-13). Tuy nhiên code baseline `main@1eb6f60` vẫn là Auth v3 Telegram-era: `/api/auth/telegram/callback` **còn bắt buộc `TELEGRAM_BOT_TOKEN`**. Chỉ gỡ secret/route này sau khi provider replacement land; Google/Facebook vars hiện là target contract, chưa được code consume đầy đủ.
 
 ---
 

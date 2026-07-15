@@ -2,10 +2,12 @@
 
 > **Canonical phase:** Cross-cutting · Completion gate P6  
 > **Track:** 🛡️ Security & Ops  
-> **Version:** 2.0 · 2026-06-19  
+> **Version:** 2.1 · 2026-07-15<br>
 > **Status:** Reviewed  
 > **Prerequisites:** All production features  
 > **Tài liệu liên quan:** `../product/BRD.md` §8/§13 · `../product/TDD.md` §4/6/7/10 · `../research/player-side-saas-AUDIT.md` · `../standards/business-rules.md` · `BE/feature_security_operations_tech.md`
+
+> **DD-37 reconcile:** secret inventory/kill-switch phase-1 bao gồm Zalo Bot Token, Messenger Page token + Facebook app secret, Google OAuth secret và provider/web/KMS secrets. Telegram token chỉ là legacy runtime tới khi provider swap hoàn tất, không phải target production surface.
 
 ---
 
@@ -28,7 +30,7 @@
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|
 | SEC-UC-1 | System | Runtime DB connection | Least privilege role — no superuser/BYPASSRLS |
-| SEC-UC-2 | System | Secret rotation (TG/Zalo/provider/web/KMS) | Tested kill switch — no downtime |
+| SEC-UC-2 | System | Secret rotation (Zalo/Messenger/Google/provider/web/KMS) | Tested kill switch — no downtime |
 | SEC-UC-3 | Ops | PITR restore drill | Restore to isolated env → reconcile ledger/audit counts |
 | SEC-UC-4 | System | Structured logging | Redacted — opaque IDs, no PII |
 | SEC-UC-5 | System | SLO monitoring | Sync p95≤3s, payment p99≤5s, availability ≥99.5% |
@@ -46,7 +48,7 @@
 | 2 | Security | Public PII leak (marketplace) | Whitelist enforced — pen-test |
 | 3 | Financial | Wrong payment allocation | Ledger audit trail — reversal/correction path |
 | 4 | Security | Identity takeover (merge abuse) | Merge policy constraints — audit trail |
-| 5 | Security | Leaked channel token (TG/Zalo) | Kill switch → rotation → audit |
+| 5 | Security | Leaked channel token (Zalo/Messenger) | Kill switch → rotation → audit |
 | 6 | Resilience | Provider/webhook outage | Degrade gracefully — queue retry/DLQ |
 | 7 | Resilience | Outbox backlog | Alert + DLQ → operator intervention |
 | 8 | Resilience | DB corruption/region outage | PITR restore — RPO/RTO defined |
@@ -131,5 +133,6 @@
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-15 | v2.1 | **DD-37 closure:** target secret rotation/kill-switch = Zalo + Messenger + Google/provider/web/KMS; Telegram chỉ legacy runtime tới provider swap. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, control areas matrix |

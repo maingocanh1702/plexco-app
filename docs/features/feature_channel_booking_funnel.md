@@ -3,7 +3,7 @@
 > **Canonical phase:** P4.3 / P4.7 + Messenger **P2.5** (**DD-32 ✅ Option A; Messenger là kênh phase-1 P2.5 — DD-37 thay DD-09**)
 > **Track:** 🎣 Growth / Channel Acquisition
 > **Version:** 0.4 · 2026-07-15
-> **Status:** ✅ **DD-32 chốt Option A (phễu MỀM) — 2026-07-13** (`../standards/decisions.md` DD-32, authority v1.31). Doc này promote khỏi Draft khi build; **guest vẫn book kể cả kèo có phí** — active mới tạo charge, full vào waitlist/no-charge (DD-45); link chỉ mở giá trị, web-auth đầy đủ **KHÔNG** bắt buộc cho paid booking. Claim/merge membership đã có tiền phải qua evidence matrix + conflict checks + explicit confirmation/audit của `feature_identity`; DD-26 chỉ bảo vệ confirm-before-persist, không tự là proof. Provider login **DD-33** (FB) trước, **DD-14** (Zalo) sau.
+> **Status:** ✅ **DD-32 chốt Option A (phễu MỀM) — 2026-07-13** (`../standards/decisions.md` DD-32, authority v1.32). Doc này promote khỏi Draft khi build; **guest vẫn book kể cả kèo có phí** — active mới tạo charge, full vào waitlist/no-charge (DD-45); link chỉ mở giá trị, web-auth đầy đủ **KHÔNG** bắt buộc cho paid booking. Claim/merge membership đã có tiền phải qua evidence matrix + conflict checks + explicit confirmation/audit của `feature_identity`; DD-26 chỉ bảo vệ confirm-before-persist, không tự là proof. Provider login **DD-33** (FB) trước, **DD-14** (Zalo) sau.
 > **Prerequisites:** P3.5 identity (`feature_identity`) · P4.3 cross-club join (`feature_cross_club_join`) · P4.7 Zalo channel (`feature_zalo_channel`) · **P2.5 Messenger** (`channels/messenger/messenger-channel-design` — phase-1, DD-37) · P4 web-auth (`feature_web_auth_onboarding`)
 > **Tài liệu liên quan:** `../standards/decisions.md` **DD-32** (nguồn quyết định) · **DD-33** (Facebook Login) · **DD-14** (Zalo Login) · DD-13 (Google/email — KHÔNG bao Facebook) · DD-29 (acquisition-first pricing) · `../00-start-here/identity-model.md` §7 (provider/channel phase matrix) · `BE/feature_channel_booking_funnel_tech.md` (chưa viết — viết cùng build slice)
 
@@ -90,9 +90,9 @@ Feature **tái dùng** bảng canonical hiện có — **không đề xuất b�
 | Entity | Vai trò trong phễu | Key constraints (canonical — `packages/db/schema.ts`) |
 |--------|---------|-----------------|
 | `persons` | Anchor người thật (§P6) | GLOBAL protected; merge theo verified signal |
-| `channel_identities` | Zalo/Messenger/TG identity của user | `UNIQUE(platform, platform_user_lookup_hash)`, FK `person_id` |
+| `channel_identities` | Zalo/Messenger identity của user; `telegram` chỉ legacy tenant #1 | `UNIQUE(platform, platform_user_lookup_hash)`, FK `person_id` |
 | `accounts` | Plexco web-auth account | FK `person_id` — "linked" = account.person_id == channel_identity.person_id |
-| `account_identities` | Binding social login (FB/Zalo/Google/TG) | `UNIQUE(platform, platform_user_hash)`, `verified_at` — **đường tạo linked-state** |
+| `account_identities` | Binding web/social login (Google/email/Facebook/Zalo; không Telegram — DD-37) | `UNIQUE(platform, platform_user_hash)`, `verified_at` — **đường tạo linked-state** |
 | `link_codes` | OTP `/link` (fallback khi social login chưa bật) | hash-only, TTL, single-use, `action='merge_identity'` |
 | `memberships` | Guest/active membership tạo khi book | `UNIQUE(tenant_id, person_id)` active/guest; `status ∈ active\|guest\|left\|merged` |
 | `charges` | Nghĩa vụ tiền khi player active ở session có phí | UNIQUE `(tenant_id,session_id,player_id)`; waitlisted không charge; ledger giữ sau `left` |
@@ -162,14 +162,14 @@ stateDiagram-v2
 - `feature_zalo_channel` + `channels/messenger/messenger-channel-design`: thêm CTA link + post-book CTA + magic-link deep-action; giữ tenant-from-webhook.
 - `feature_identity(.md/_tech)`: pin guest/linked-lite/web-auth; đường tạo `account_identities(facebook/zalo)`; tương tác `/link` OTP; claim/merge tiền giữ evidence matrix hiện hữu.
 - `feature_web_auth_onboarding`: thêm provider `facebook` (DD-33) / `zalo` (DD-14) + SI-1 state-token cho callback (DD-31).
-- `docs/features/README.md`: thêm dòng Post-MVP (đã thêm — Draft).
-- Viết `BE/feature_channel_booking_funnel_tech.md` (schema delta nếu cần đo phễu/gate cứng, API, test).
+- `docs/features/README.md`: giữ row coverage phase-1 (đã thêm — product-only Draft).
+- Viết `BE/feature_channel_booking_funnel_tech.md` (schema delta nếu cần đo phễu/link, API, test; **không** dựng gate cứng nếu chưa reopen DD-32).
 
 ### Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
-| 2026-07-15 | v0.4 | **DD-45 propagation:** book outcome active-vs-waitlisted; full không còn error, không charge/venue/QR; analytics thêm outcome. |
+| 2026-07-15 | v0.4 | **DD-45 + DD-37 propagation:** book outcome active-vs-waitlisted; full không còn error, không charge/venue/QR; analytics thêm outcome. Provider matrix chỉ Google/email/Facebook/Zalo + channel Zalo/Messenger; Telegram legacy-only. |
 | 2026-07-15 | v0.3 | **DD-32 ✅ Option A:** đóng OQ-1..3; guest vẫn book free/paid; ba mức guest/linked-lite/web-auth; claim/merge money-bearing membership defer identity evidence/confirmation/audit; build checklist giữ CCJ guest path và thêm CTA ở channel specs. |
 | 2026-07-06 | v0.1 | Khởi tạo Draft từ **DD-32** (phễu channel-first: link FB/Zalo → book-in-chat → app). 12 use case, 14 edge case, state machine phễu, funnel events, propagation checklist. Giữ Draft tới khi DD-32 ✅. |
 | 2026-07-06 | v0.2 | Ref fixes: provider login trỏ **DD-33** (Facebook) + **DD-14** (Zalo) thay DD-13/14; cross-ref `identity-model §6` → **§7** (provider matrix); canonical phase thêm **Messenger P4.8** (giữ DD-09). |

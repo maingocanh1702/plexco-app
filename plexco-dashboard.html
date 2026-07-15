@@ -91,7 +91,7 @@
   <div class="toolbar">
     <button class="btn primary" onclick="cycleHelp()">▶ Click 1 module để đổi trạng thái</button>
     <label class="btn" style="display:flex;gap:7px;align-items:center;cursor:pointer">
-      <input type="checkbox" id="mvpOnly" checked onchange="render()" style="accent-color:var(--acc)"> MVP only (ẩn Messenger post-MVP)
+      <input type="checkbox" id="mvpOnly" checked onchange="render()" style="accent-color:var(--acc)"> MVP only (ẩn module post-MVP)
     </label>
     <div class="spacer"></div>
     <button onclick="doImport()">⬆ Load progress.json</button>
@@ -143,8 +143,8 @@
 const EMBEDDED = {
   "project": "Plexco",
   "subtitle": "Platform thể thao đa môn 2 phía — multi-tenant + marketplace + sync engine",
-  "docsVersion": "BRD v3.1 · PRD v2.1 · TDD v2.1 · ROADMAP v2.2",
-  "updatedAt": "2026-06-21",
+  "docsVersion": "BRD v3.5 · PRD v2.4 · TDD v2.4 · ROADMAP v2.7",
+  "updatedAt": "2026-07-15",
   "northStar": "Số kèo \"hoàn tất vòng\" / tuần (tạo → có player join, gồm join qua discovery → đối soát/xác nhận)",
   "linear": {
     "project": "Plexco MVP",
@@ -239,7 +239,7 @@ const EMBEDDED = {
     {
       "id": "P2-P3",
       "name": "Tenant Engine",
-      "goal": "1 bot Telegram phục vụ nhiều CLB; CK tự đối soát đúng tenant; dogfood tenant #1.",
+      "goal": "Zalo bot-per-club + Messenger Page-per-club phục vụ nhiều CLB; CK tự đối soát đúng tenant; dogfood tenant #1.",
       "modules": [
         "M4",
         "M5",
@@ -249,13 +249,23 @@ const EMBEDDED = {
       "status": "not_started"
     },
     {
+      "id": "P2.5",
+      "name": "Messenger base enablement (P2.5 — App Review)",
+      "goal": "Kênh Messenger join + xác nhận trong cửa sổ 24h; App Review là gate trước GA.",
+      "modules": [
+        "M17"
+      ],
+      "kpi": "App Review sẵn sàng trước GA · join/xác nhận trong 24h · sự cố cross-tenant = 0",
+      "status": "not_started"
+    },
+    {
       "id": "P3.5",
       "name": "Identity",
       "goal": "Person toàn cục + merge an toàn xuyên kênh.",
       "modules": [
         "M7"
       ],
-      "kpi": "1 người qua TG+Zalo cùng CLB = 1 nợ; merge có audit, không vỡ UNIQUE",
+      "kpi": "1 người qua Facebook+Zalo cùng CLB = 1 nợ; merge có audit, không vỡ UNIQUE",
       "status": "not_started"
     },
     {
@@ -283,16 +293,6 @@ const EMBEDDED = {
         "M16"
       ],
       "kpi": "% player tự join ≥ 60% · nhắc → thanh toán ≥ 40% · merge sai ~0",
-      "status": "not_started"
-    },
-    {
-      "id": "P2.5",
-      "name": "Messenger (phase-1, P2.5 — App Review)",
-      "goal": "Kênh Messenger join + xác nhận — chặn bởi App Review Meta.",
-      "modules": [
-        "M17"
-      ],
-      "kpi": "Post-MVP — chỉ làm nếu quyết",
       "status": "not_started"
     },
     {
@@ -463,7 +463,7 @@ const EMBEDDED = {
     },
     {
       "id": "M4",
-      "name": "Telegram tenant middleware",
+      "name": "Chat-channel tenant middleware (Zalo → Messenger P2.5)",
       "track": "🏢 Core",
       "phase": "P2-P3",
       "doc": "ready",
@@ -474,37 +474,37 @@ const EMBEDDED = {
       "linearId": "MNA-8",
       "subtasks": [
         {
-          "title": "Telegram long-poll → webhook /telegram/<secret>",
+          "title": "Zalo webhook /webhook/zalo/:token + Messenger webhook /webhook/messenger",
           "identifier": "MNA-41",
           "status": "not_started",
           "assignee": null
         },
         {
-          "title": "Middleware resolve tenant từ kênh: chat_id → telegram_links → tenant",
+          "title": "Resolve tenant từ trusted binding: Zalo webhook_token / Messenger page_id",
           "identifier": "MNA-42",
           "status": "not_started",
           "assignee": null
         },
         {
-          "title": "Deep-link /start link_<code> (admin bind) + /start club_<slug> (player context)",
+          "title": "Join/link theo kênh: Zalo number-reply + Messenger quick-reply/deep-link ref",
           "identifier": "MNA-43",
           "status": "not_started",
           "assignee": null
         },
         {
-          "title": "Authz 2 lớp: isTenantAdmin theo from.id (Edge #16)",
+          "title": "Authz 2 lớp theo stable channel identity, độc lập với tenant routing",
           "identifier": "MNA-44",
           "status": "not_started",
           "assignee": null
         },
         {
-          "title": "Lệnh host: /newsession đa môn, /announce, /config, /cash + cron throttler",
+          "title": "Lệnh host + mark-paid thủ công; throttler per-channel; nhắc web/Zalo chính",
           "identifier": "MNA-45",
           "status": "not_started",
           "assignee": null
         },
         {
-          "title": "Fail-closed TENANT_NOT_LINKED; test routing 2 tenant không lẫn",
+          "title": "Fail-closed TENANT_NOT_LINKED; test 2 token/Page → 2 tenant không lẫn",
           "identifier": "MNA-46",
           "status": "not_started",
           "assignee": null
@@ -586,7 +586,7 @@ const EMBEDDED = {
       "linearId": "MNA-10",
       "subtasks": [
         {
-          "title": "Script SQLite→Postgres: tenant Bestminton + owner + TelegramLink + BankAccount, sport=cầu lông",
+          "title": "Script SQLite→Postgres: tenant Bestminton + owner + BankAccount, sport=cầu lông; không tạo TelegramLink",
           "identifier": "MNA-55",
           "status": "not_started",
           "assignee": null
@@ -719,7 +719,7 @@ const EMBEDDED = {
     },
     {
       "id": "M10",
-      "name": "Onboarding self-serve (SePay, link TG, dán Zalo token)",
+      "name": "Onboarding self-serve (Google/email, SePay, Zalo, Messenger)",
       "track": "🌐 Web+Sync",
       "phase": "P4-P4.3",
       "doc": "drafted",
@@ -771,7 +771,7 @@ const EMBEDDED = {
     },
     {
       "id": "M14",
-      "name": "Player join Telegram (tap)",
+      "name": "Player join Messenger (quick-reply; base enablement P2.5)",
       "track": "🎯 Player",
       "phase": "P4.5-P4.7",
       "doc": "drafted",
@@ -860,35 +860,35 @@ const EMBEDDED = {
       "id": "MS2",
       "phase": "P2-P3",
       "name": "Dogfood tenant #1",
-      "criteria": "≥2 CLB trên 1 bot, lệnh + đối soát + nhắc không lẫn; tenant #1 chạy thật",
+      "criteria": "≥2 CLB qua Zalo/Messenger, lệnh + đối soát + nhắc không lẫn; tenant #1 chạy thật",
       "status": "not_started"
     },
     {
       "id": "MS3",
       "phase": "P3.5",
       "name": "1 người = 1 nợ",
-      "criteria": "1 người qua TG+Zalo cùng CLB = 1 nợ; merge có audit, không vỡ UNIQUE",
+      "criteria": "1 người qua Facebook+Zalo cùng CLB = 1 nợ; merge có audit, không vỡ UNIQUE",
       "status": "not_started"
     },
     {
       "id": "MS4",
       "phase": "P4-P4.3",
-      "name": "Web → TG + Marketplace",
-      "criteria": "host tạo kèo web → group TG + marketplace ≤ vài giây; player lạ join được; không lộ tiền/PII",
+      "name": "Web → Zalo/Messenger + Marketplace",
+      "criteria": "host tạo kèo web → Zalo/Messenger + marketplace ≤ vài giây; player lạ join được; không lộ tiền/PII",
       "status": "not_started"
     },
     {
       "id": "MS5",
       "phase": "P4.5-P4.7",
       "name": "Vòng player khép kín",
-      "criteria": "player join TG/Zalo → CK tự xác nhận → chưa trả tự nhắc; mọi thứ sync web",
+      "criteria": "player join Messenger/Zalo → CK tự xác nhận → chưa trả tự nhắc; mọi thứ sync web",
       "status": "not_started"
     },
     {
       "id": "MS6",
       "phase": "P5",
       "name": "Billing sống",
-      "criteria": "hết trial chặn lệnh nhưng CK player vẫn lưu; CK đúng mã tự kích hoạt; free_web không bị chặn",
+      "criteria": "hết trial chặn lệnh nhưng CK player vẫn lưu; CK đúng mã tự kích hoạt; free tier không bị chặn",
       "status": "not_started"
     },
     {

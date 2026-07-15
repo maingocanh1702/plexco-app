@@ -51,10 +51,10 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 | 6 | Security | Webhook drift (URL changed) | Monitor + alert — owner notification |
 | 7 | Security | DM reachability cross-club | ❌ NEVER — club A's bot ≠ club B's reachability |
 | 8 | Resilience | Rate-limit / provider outage | Degrade without corrupting state — retry with backoff |
-| 9 | Security | Venue/roster/debt exposed before auth | ❌ NEVER — same privacy rules as TG |
+| 9 | Security | Venue/roster/debt exposed before auth | ❌ NEVER — same person-self/privacy rules across Zalo/Messenger/web |
 | 10 | Data Integrity | Player messages between list versions | Reject stale — require fresh `/join` |
 | 11 | Security | Magic link issued from unverified conversation | Reject — conversation must be verified first |
-| 12 | Cross-Feature | Player has TG + Zalo identity → merge | Common identity service handles — Zalo adapter just updates reachability |
+| 12 | Cross-Feature | Player has Messenger + Zalo identity → merge | Common identity service handles — Zalo adapter just updates reachability |
 | 13 | Concurrency | Hai number-reply tranh final slot | Session lock: một active, người sau waitlisted với position dương; không charge/venue |
 | 14 | Financial | Existing player đã `left` join lại | `REJOIN_REQUIRES_REVIEW`; Zalo không tự reuse/duplicate charge |
 
@@ -119,6 +119,6 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 
 | Date | Version | Thay đổi |
 |---|---|---|
-| 2026-07-15 | v2.1 | **DD-45:** Zalo render active/waitlisted/current/rejoin-review; retire "Hết chỗ" outcome; sync events/AC. |
+| 2026-07-15 | v2.1 | **DD-45 + DD-37:** Zalo render active/waitlisted/current/rejoin-review; retire "Hết chỗ" outcome; sync events/AC; edge cases dùng identity/privacy Zalo+Messenger thay TG. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, Zalo DM screen states, reply context model |

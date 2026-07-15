@@ -142,4 +142,4 @@ Nếu spike fail cho scheduled reminders, Messenger vẫn có thể ship như **
 | 2026-06-20 | v0.2 | Sửa rate-limit assumption, thêm policy-safe delivery contract, required policy spike, readiness |
 | 2026-06-19 | v0.1 | Initial surface docs |
 
-*Messenger bot surface docs v0.3. **Phase-1 (DD-37)** — join + xác nhận trong 24h; nhắc chính qua web + Zalo; App Review là critical path.*
+*Messenger bot surface docs v0.4. **Phase-1 (DD-37)** — join + xác nhận trong 24h; nhắc chính qua web + Zalo; App Review là critical path.*

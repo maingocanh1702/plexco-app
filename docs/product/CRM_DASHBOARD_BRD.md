@@ -13,7 +13,7 @@
 | **Người soạn** | Codex |
 | **Người duyệt** | Ngoc-Anh |
 | **Trạng thái** | Draft để review |
-| **Tài liệu liên quan** | `BRD.md` v3.5 · `PRD.md` v2.4 · `ROADMAP.md` v2.7 · `../features/README.md` v2.10 · `../strategy/gtm-strategy.md` · `../standards/business-rules.md` v1.7 · `../standards/decisions.md` v1.31 |
+| **Tài liệu liên quan** | `BRD.md` v3.5 · `PRD.md` v2.4 · `ROADMAP.md` v2.7 · `../features/README.md` v2.11 · `../strategy/gtm-strategy.md` · `../standards/business-rules.md` v1.7 · `../standards/decisions.md` v1.32 |
 | **Nguồn tham khảo bên ngoài** | Mixpanel — "25+ ecommerce product metrics to track today" (Jun 2, 2026): https://mixpanel.com/blog/ecommerce-product-metrics/ |
 
 > Tài liệu này mô tả dashboard **nội bộ** để quản lý Plexco như một business/platform. Nó không thay thế host dashboard (`/dashboard`) của tenant, player view (`/me`) hoặc marketplace (`/discover`). Khi conflict: core BRD/PRD/business-rules thắng về scope, quyền dữ liệu và security.

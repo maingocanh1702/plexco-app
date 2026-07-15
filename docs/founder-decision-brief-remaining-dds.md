@@ -1,6 +1,6 @@
 # 📋 Founder Decision Brief — Các DD còn treo (hợp nhất)
 
-> ⚠️ **CẬP NHẬT 2026-07-15 — snapshot này đã superseded bởi `decisions.md` v1.31.** DD-02/05/06/08/32/41–46 đã chốt; DD-47/48 chốt framework P4+. **DD-04 đã reopen**: HA+PITR+Singapore giữ nguyên, provider còn gate auto-failover/SLA/network posture (ứng viên DO/Neon; xem `dd-04-hosting-decision-brief.md`). DD-14/15 là external Zalo spikes; DD-33 phụ thuộc Meta App Review; DD-18 chặn Club Assistant GO-LIVE; DD-34/35/36 còn P7 detail. Nội dung bên dưới là lịch sử trước closure, không phải status hiện hành.
+> ⚠️ **CẬP NHẬT 2026-07-15 — snapshot này đã superseded bởi `decisions.md` v1.32.** DD-02/05/06/08/32/41–46 đã chốt; DD-47/48 chốt framework P4+. **DD-04 đã reopen**: HA+PITR+Singapore giữ nguyên, provider còn gate auto-failover/SLA/network posture (ứng viên DO/Neon; xem `dd-04-hosting-decision-brief.md`). DD-14/15 là external Zalo spikes; DD-33 phụ thuộc Meta App Review; DD-18 chặn Club Assistant GO-LIVE; DD-34/35/36 còn P7 detail. Nội dung bên dưới là lịch sử trước closure, không phải status hiện hành.
 >
 > **Mục đích (gốc):** đưa MỌI decision đang chờ founder về trạng thái **quyết-định-được**. Nội dung bên dưới giữ làm lịch sử; trạng thái canonical = `decisions.md`.
 

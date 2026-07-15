@@ -1,7 +1,7 @@
 # Feature Dependency Graph — Plexco
 
 > Thứ tự phát triển features cho Plexco platform. Căn cứ `ROADMAP.md` v2.7 + `TDD.md` v2.4.
-> v1.2 · 2026-07-10 (DD-37: kênh chat = Zalo + Messenger, bỏ Telegram)
+> v1.3 · 2026-07-15 (DD-37: kênh chat = Zalo + Messenger, bỏ Telegram)
 
 ---
 
@@ -106,7 +106,7 @@ graph TD
 | 9 | Identity directory + merge | F3, F6 | P3.5 | 🆔 | Person/ChannelIdentity |
 | 10 | Web app canonical | F9 | P4 | 🌐 | Dashboard + player view |
 | 11 | Sync engine (outbox/projectors) | F10 | P4 | 🌐 | 2-chiều mọi kênh |
-| 12 | Onboarding self-serve | F10 | P4 | 🌐 | SePay/TG/Zalo wizard |
+| 12 | Onboarding self-serve | F10 | P4 | 🌐 | Google/email + SePay + Zalo + Messenger wizard |
 | 13 | Publish kèo → public projection | F4, F11 | P4.3 | 🔎 | |
 | 14 | Discovery / tìm kèo | F13 | P4.3 | 🔎 | Marketplace |
 | 15 | Join cross-club | F9, F14 | P4.3 | 🔎 | open/approval |
@@ -184,6 +184,7 @@ F19 → F20
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 15/07/2026 | v1.3 | Reconcile F12 onboarding theo DD-37/DD-13: Google/email + SePay + Zalo + Messenger; bỏ TG khỏi ghi chú hiện hành. |
 | 10/07/2026 | v1.2 | **DD-37:** F6 "TG tenant middleware" → "Chat-channel tenant middleware" (Zalo P2 · Messenger P2.5); F16 "Player join TG" → "Player join Messenger"; matrix/parallel/phase refs bỏ Telegram. Căn cứ ROADMAP v2.4 + TDD v2.2. Arrows/invariants giữ nguyên. |
 | 19/06/2026 | — | Thêm Changelog table |
 | 18/06/2026 | v1.0 | Feature dependency graph Mermaid |

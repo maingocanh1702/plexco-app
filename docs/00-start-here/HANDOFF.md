@@ -1,7 +1,7 @@
 # HANDOFF — Plexco
 
 > **Đọc file này ĐẦU TIÊN khi tiếp quản project.** Self-contained: không cần context phiên trước.
-> Cập nhật: 2026-07-15 (BRD v3.5 · PRD v2.4 · TDD v2.4 · ROADMAP v2.7 · decisions v1.31). Khi thay đổi convention/kiến trúc lớn → cập nhật file này.
+> Cập nhật: 2026-07-15 (BRD v3.5 · PRD v2.4 · TDD v2.4 · ROADMAP v2.7 · decisions v1.32). Khi thay đổi convention/kiến trúc lớn → cập nhật file này.
 >
 > **⚡ v3.4 Phase-1 pivot (DD-37 ✅, thay DD-09):** Kênh phase-1 = **web + Zalo + Facebook Messenger**;
 > **Telegram đã bị loại khỏi phạm vi** (không còn adapter/bot Telegram trong MVP). Auth phase-1 =
@@ -29,7 +29,7 @@
 - **Player**: khám phá kèo cross-CLB/môn (**marketplace**), join, theo dõi nợ — xuyên CLB.
 - **PostgreSQL + domain model = canonical store** — web và các kênh chat (Zalo/Messenger) đều là surface, sync 2 chiều.
 
-**Stack:** TypeScript, Next.js App Router + SSE (web), HTTP adapter kênh (Zalo/Messenger), Drizzle ORM, PostgreSQL (RLS). Chạy modular monolith trong container, không Vercel (DD-10). *(Telegram/grammY đã loại khỏi target — DD-37; auth route Telegram-era vẫn còn trên HEAD tới khi provider swap land.)*
+**Stack:** TypeScript, Next.js App Router + SSE (web), HTTP adapter kênh (Zalo/Messenger), Drizzle ORM, PostgreSQL (RLS). Chạy modular monolith trong container, không Vercel (DD-10). *(Telegram/grammY đã loại khỏi target — DD-37; auth route Telegram-era vẫn còn trong code baseline tới khi provider swap land.)*
 **Monorepo:** pnpm workspaces — `packages/core` + `apps/bot` + `apps/web`.
 **Bối cảnh:** lift logic thuần từ bot single-club (Bestminton) đã chạy production sang `packages/core`; viết lại data layer trên Postgres + RLS.
 **Song ngữ vi/en:** mọi chuỗi user-facing qua `t(vi, en)`; user đổi bằng cấu hình ngôn ngữ.
@@ -108,7 +108,7 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 
 ## 6. Trạng thái hiện tại (2026-07-10)
 
-**Planning & Docs — phần lớn hoàn tất** (v3.4 pivot → decisions v1.31); **còn OQ mở + DD-04 chưa chốt** (danh sách ở `docs/founder-decision-brief-2026-07-15.md`). **Foundation + Auth Onboarding v3 (Telegram-era) đã land trên `main@1eb6f60`.**
+**Planning & Docs — phần lớn hoàn tất** (v3.4 pivot → decisions v1.32); **còn OQ mở + DD-04 chưa chốt** (danh sách ở `docs/founder-decision-brief-2026-07-15.md`). **Foundation + Auth Onboarding v3 (Telegram-era) đã land trên `main@1eb6f60`.**
 
 - ✅ **Foundation merged:** monorepo (`packages/core` + `packages/db` + `apps/bot` + `apps/web`) + core logic thuần (test xanh) + Postgres/RLS choke-point (`tenantRepo`/`withTenant`) + **migrations `0000–0013`** committed (roles/RLS/grants/functions/seeds/auth_functions/onboarding_steps) + bộ RLS invariant test chạy trên role runtime thật.
 - ✅ **Auth Onboarding v3 (Telegram-era) merged** (`5b1193b`) + web tests. **DD-37 supersede provider** → thay bản Telegram-era bằng **Google/email** đã **spec'd nhưng CHƯA implement**.
@@ -117,7 +117,7 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 Tài liệu hoàn tất (bản mới nhất):
 - ✅ BRD v3.5 · PRD v2.4 · TDD v2.4 · ROADMAP v2.7 (canonical P-numbers)
 - ✅ 4 phụ lục (saas-plan, reconciliation, AUDIT, messenger)
-- Feature docs: **21 Product / 20 BE = 20 cặp hoàn chỉnh + 1 product-only Draft** (`channel_booking_funnel`); trong đó **3 cặp phase-1 mới (Messenger/chat/settings) committed trên branch `docs/dd-04-hosting-reopen` (chưa merge main)** — xem `features/README.md`
+- Feature docs: **21 Product / 20 BE = 20 cặp hoàn chỉnh + 1 product-only Draft** (`channel_booking_funnel`); trong đó **3 cặp phase-1 mới (Messenger/chat/settings) đã tracked trong documentation baseline, còn chờ migration/build** — xem `features/README.md`
 - ✅ Business rules, design tokens, dependency graph
 - ✅ README, CHANGELOG, PULL_REQUEST_TEMPLATE, HANDOFF, templates
 

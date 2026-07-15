@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.6  
 > **Track:** 👤 Player View  
-> **Version:** 2.1 · 2026-07-13
+> **Version:** 2.2 · 2026-07-15
 > **Status:** Reviewed  
 > **Prerequisites:** P3.5 identity · P3 ledger · P4 web auth/magic link · P4 sync realtime  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-8 · `../product/PRD.md` FLOW 10 · `../product/TDD.md` §3.4/§4 (person-self contract) · `BE/feature_player_view_tech.md`
@@ -30,8 +30,8 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|
 | PVW-UC-1 | Player (web) | Authenticate + view /me dashboard | Own clubs + sessions + debts summary |
-| PVW-UC-2 | Player (Zalo) | Nhận magic link → open web | Same person view as TG-authenticated |
-| PVW-UC-3 | Player (TG) | `/myclubs` DM command | Concise club/debt/session list |
+| PVW-UC-2 | Player (Zalo) | Nhận magic link → open web | Same person view as Google/email-authenticated web |
+| PVW-UC-3 | Player (Messenger) | Chọn **My Clubs** trong persistent menu | Concise club/debt/session list trong cửa sổ hợp lệ |
 | PVW-UC-4 | System | Join/payment/merge event | Realtime invalidate/refetch own data |
 | PVW-UC-5 | Player | View active club memberships | List with role, status, debt summary |
 | PVW-UC-6 | Player | View upcoming sessions across clubs | Timeline sorted by date |
@@ -118,6 +118,7 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-15 | v2.2 | **DD-37 closure:** active bot use cases chỉ còn Zalo/Messenger; thay TG-authenticated `/myclubs` bằng web-auth + Messenger persistent-menu contract. Telegram chỉ legacy trong domain note. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, /me dashboard screens |
 | 2026-07-13 | v2.1 | Reconcile live schema: `players`, `charges.player_id/membership_id`, `payment_allocations`; auth/channel wording separates target from Telegram legacy. |

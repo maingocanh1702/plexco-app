@@ -31,20 +31,20 @@ Goal phase: Nền multi-tenant an toàn + đa môn + khung 3 tầng hiển thị
 - [ ] Edge #30: chỉ chọn môn từ sports active
 - [ ] 03_settings (tenant_id,key) + RLS
 - [ ] [ISO] mở rộng cho mọi bảng mới → đóng Milestone MS1",Backlog,plexco-mvp,8
-[M4] Telegram tenant middleware,"Module M4 · 🏢 Core · phase P2-P3
+[M4] Chat-channel tenant middleware (Zalo → Messenger P2.5),"Module M4 · 🏢 Core · phase P2-P3
 
-Goal phase: 1 bot Telegram phục vụ nhiều CLB; CK tự đối soát đúng tenant; dogfood tenant #1.
+Goal phase: Zalo bot-per-club + Messenger Page-per-club phục vụ nhiều CLB; CK tự đối soát đúng tenant; dogfood tenant #1.
 
 **DoD (đóng issue khi đủ):**
-- [ ] Telegram long-poll → webhook /telegram/<secret>
-- [ ] Middleware resolve tenant từ kênh: chat_id → telegram_links → tenant
-- [ ] Deep-link /start link_<code> (admin bind) + /start club_<slug> (player context)
-- [ ] Authz 2 lớp: isTenantAdmin theo from.id (Edge #16)
-- [ ] Lệnh host: /newsession đa môn, /announce, /config, /cash + cron throttler
-- [ ] Fail-closed TENANT_NOT_LINKED; test routing 2 tenant không lẫn",Backlog,plexco-mvp,6
+- [ ] Zalo webhook /webhook/zalo/:token + Messenger webhook /webhook/messenger
+- [ ] Resolve tenant từ trusted binding: Zalo webhook_token / Messenger page_id
+- [ ] Join/link theo kênh: Zalo number-reply + Messenger quick-reply/deep-link ref
+- [ ] Authz 2 lớp theo stable channel identity, độc lập với tenant routing
+- [ ] Lệnh host + mark-paid thủ công; throttler per-channel; nhắc web/Zalo chính
+- [ ] Fail-closed TENANT_NOT_LINKED; test 2 token/Page → 2 tenant không lẫn",Backlog,plexco-mvp,6
 [M5] Durable webhook + ledger/allocation + /unmatched,"Module M5 · 💰 Payment · phase P2-P3
 
-Goal phase: 1 bot Telegram phục vụ nhiều CLB; CK tự đối soát đúng tenant; dogfood tenant #1.
+Goal phase: Zalo bot-per-club + Messenger Page-per-club phục vụ nhiều CLB; CK tự đối soát đúng tenant; dogfood tenant #1.
 
 **DoD (đóng issue khi đủ):**
 - [ ] 06 bank_accounts/transactions/allocations + RLS
@@ -57,10 +57,10 @@ Goal phase: 1 bot Telegram phục vụ nhiều CLB; CK tự đối soát đúng 
 - [ ] [LED] + [WRK] test bất biến (CI)",Backlog,plexco-mvp,13
 [M6] Migrate bot cũ → tenant #1 (dogfood),"Module M6 · 🏢 Core · phase P2-P3
 
-Goal phase: 1 bot Telegram phục vụ nhiều CLB; CK tự đối soát đúng tenant; dogfood tenant #1.
+Goal phase: Zalo bot-per-club + Messenger Page-per-club phục vụ nhiều CLB; CK tự đối soát đúng tenant; dogfood tenant #1.
 
 **DoD (đóng issue khi đủ):**
-- [ ] Script SQLite→Postgres: tenant Bestminton + owner + TelegramLink + BankAccount, sport=cầu lông
+- [ ] Script SQLite→Postgres: tenant Bestminton + owner + BankAccount, sport=cầu lông; không tạo TelegramLink
 - [ ] Copy sessions/players/members/aliases gắn tenant_id; mỗi player-session → charge
 - [ ] Payment lịch sử → bank_transaction+allocation; thiếu gốc → legacy:<id> source=manual
 - [ ] Đối chiếu tổng charge/allocated/unallocated + roster trước cutover
@@ -70,7 +70,16 @@ Goal phase: 1 bot Telegram phục vụ nhiều CLB; CK tự đối soát đúng 
 
 Goal phase: Person toàn cục + merge an toàn xuyên kênh.
 
-_(DoD chi tiết sẽ bổ sung khi tới gần phase — xem ROADMAP/PRD/TDD.)_",Backlog,plexco-mvp,8
+**DoD (đóng issue khi đủ):**
+- [ ] Mig 04_identity_directory: persons/channel_identities/channel_reachability/player_chat_context (GLOBAL protected)
+- [ ] Mig 05_memberships: refactor members → membership(person_id); UNIQUE(tenant_id, person_id)
+- [ ] Identity resolve: (platform,uid) → channel_identities → person → membership(∩tenant)
+- [ ] Matcher tên scoped-tenant; claim-có-tiền CHẶN auto → khoá mạnh (CLAIM_REQUIRES_STRONG_KEY, AUDIT C2)
+- [ ] ChannelReachability per (person, tenant, platform) + can_dm (AUDIT C1)
+- [ ] Merge /link OTP (entropy/TTL/single-use/rate-limit) round-trip + xác nhận + audit (AUDIT C3)
+- [ ] SĐT verified → auto-merge; STK/tên chỉ gợi ý owner duyệt (OD-1, AUDIT B4)
+- [ ] Reconcile membership trùng cùng tenant → gộp 1 (cộng nợ) + cờ nghi-trùng (AUDIT C4/C5)
+- [ ] Unit test core: identity-resolve + link-code OTP (TDD §6.1)",Backlog,plexco-mvp,8
 [M8] Web app surface + canonical backend,"Module M8 · 🌐 Web+Sync · phase P4-P4.3
 
 Goal phase: Postgres canonical; web & chat là surface đồng bộ; onboarding self-serve; player khám phá & join cross-club.
@@ -81,7 +90,7 @@ _(DoD chi tiết sẽ bổ sung khi tới gần phase — xem ROADMAP/PRD/TDD.)_
 Goal phase: Postgres canonical; web & chat là surface đồng bộ; onboarding self-serve; player khám phá & join cross-club.
 
 _(DoD chi tiết sẽ bổ sung khi tới gần phase — xem ROADMAP/PRD/TDD.)_",Backlog,plexco-mvp,13
-"[M10] Onboarding self-serve (SePay, link TG, dán Zalo token)","Module M10 · 🌐 Web+Sync · phase P4-P4.3
+"[M10] Onboarding self-serve (Google/email, SePay, Zalo, Messenger)","Module M10 · 🌐 Web+Sync · phase P4-P4.3
 
 Goal phase: Postgres canonical; web & chat là surface đồng bộ; onboarding self-serve; player khám phá & join cross-club.
 
@@ -101,7 +110,7 @@ _(DoD chi tiết sẽ bổ sung khi tới gần phase — xem ROADMAP/PRD/TDD.)_
 Goal phase: Postgres canonical; web & chat là surface đồng bộ; onboarding self-serve; player khám phá & join cross-club.
 
 _(DoD chi tiết sẽ bổ sung khi tới gần phase — xem ROADMAP/PRD/TDD.)_",Backlog,plexco-mvp,6
-[M14] Player join Telegram (tap),"Module M14 · 🎯 Player · phase P4.5-P4.7
+[M14] Player join Messenger (quick-reply; base enablement P2.5),"Module M14 · 🎯 Player · phase P4.5-P4.7
 
 Goal phase: Player join mượt từ kênh chat + nhắc/xác nhận tự động.
 
@@ -116,13 +125,11 @@ _(DoD chi tiết sẽ bổ sung khi tới gần phase — xem ROADMAP/PRD/TDD.)_
 Goal phase: Player join mượt từ kênh chat + nhắc/xác nhận tự động.
 
 _(DoD chi tiết sẽ bổ sung khi tới gần phase — xem ROADMAP/PRD/TDD.)_",Backlog,plexco-mvp,6
-[M17] Kênh Messenger (join + xác nhận),"Module M17 · 🎯 Player · phase P4.8
+[M17] Kênh Messenger (join + xác nhận),"Module M17 · 🎯 Player · phase P2.5
 
-Goal phase: Kênh Messenger join + xác nhận — chặn bởi App Review Meta.
+Goal phase: Kênh Messenger join + xác nhận trong cửa sổ 24h; App Review là gate trước GA.
 
-_(DoD chi tiết sẽ bổ sung khi tới gần phase — xem ROADMAP/PRD/TDD.)_
-
-> post-MVP (chặn bởi Meta App Review).",Backlog,plexco-mvp,8
+_(DoD chi tiết sẽ bổ sung khi tới gần phase — xem ROADMAP/PRD/TDD.)_",Backlog,plexco-mvp,8
 [M18] Billing + lifecycle,"Module M18 · 💰 Payment · phase P5
 
 Goal phase: Thu phí thuê bao host bền vững + vòng đời tenant.

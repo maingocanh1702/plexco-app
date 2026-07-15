@@ -1,7 +1,7 @@
 # Plexco Feature Specs — Coverage Index
 
-> **Version:** 2.10 · 2026-07-15
-> **Scope source:** `../product/BRD.md` v3.5 · `../product/PRD.md` v2.4 · `../product/TDD.md` v2.4 · `../product/ROADMAP.md` v2.7 · `../standards/decisions.md` v1.31 (DD-01..48). DD-02/05/06/08/32/41–46 đã chốt; DD-47/48 chốt framework P4+; DD-14/15 là external spikes; DD-18/34/35/36 còn open/approve-in-principle. Schema/code của các DD mới vẫn defer về đúng build slice.
+> **Version:** 2.11 · 2026-07-15
+> **Scope source:** `../product/BRD.md` v3.5 · `../product/PRD.md` v2.4 · `../product/TDD.md` v2.4 · `../product/ROADMAP.md` v2.7 · `../standards/decisions.md` v1.32 (DD-01..48). DD-02/05/06/08/32/41–46 đã chốt; DD-47/48 chốt framework P4+; DD-14/15 là external spikes; DD-18/34/35/36 còn open/approve-in-principle. Schema/code của các DD mới vẫn defer về đúng build slice.
 
 > **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (**Telegram loại khỏi phạm vi**). `feature_player_telegram` → **Archived (DD-37)**, thay bằng `feature_player_messenger`. Thêm phase-1: `feature_inapp_chat` (DD-38 ✅), `feature_user_settings` (DD-39 ✅), Google login (DD-13 ✅, trong `feature_web_auth_onboarding`), mark-paid thủ công (DD-40 ✅, trong `feature_payment_reconcile`).
 
@@ -20,9 +20,9 @@ Ba nhóm — "coverage" = **có spec + BE tech**, KHÔNG có nghĩa đã impleme
 
 - **Legacy coverage (pre-pivot)** — 15 cặp spec MVP viết trước DD-37 (bảng ngay dưới); trong đó `feature_player_telegram` nay **Archived**.
 - **Active phase-1 coverage** — spec Reviewed còn trong scope + cập nhật theo pivot = **14 cặp** (15 legacy − Telegram archived).
-- **Draft phase-1 — DD ✅, committed trên branch (chưa merge main)** — 3 **cặp** mới (Messenger/chat/settings): **quyết định DD ✅** (DD-37/38/39) nhưng **6 file đã committed trên branch `docs/dd-04-hosting-reopen`** (HEAD `0898513`; chưa merge `main`) và **chờ migration/build**. "DD ✅" = quyết định đã chốt, KHÔNG phải "đã commit vào git".
+- **Draft phase-1 — DD ✅, tracked; pending migration/build** — 3 **cặp** mới (Messenger/chat/settings): **quyết định DD ✅** (DD-37/38/39), **6 file đã tracked trong documentation baseline** nhưng chưa có migration/runtime implementation. "DD ✅" = quyết định đã chốt, KHÔNG phải "đã build".
 
-> ⚠️ **Reconcile với `../standards/BUILD-STATUS.md`:** trên disk có **21 Product/System specs + 20 BE specs = 20 cặp hoàn chỉnh + 1 product-only Draft** (`feature_channel_booking_funnel`; BE deferred tới build slice). 20 cặp gồm **15 legacy** (14 active Reviewed + 1 Telegram Archived), **2 cặp pre-existing** (connector + assistant) và **3 cặp phase-1 mới committed trên branch (chưa merge main)** (messenger/chat/settings). "Reviewed" = trạng thái *tài liệu*, không phải *đã build*.
+> ⚠️ **Reconcile với `../standards/BUILD-STATUS.md`:** trên disk có **21 Product/System specs + 20 BE specs = 20 cặp hoàn chỉnh + 1 product-only Draft** (`feature_channel_booking_funnel`; BE deferred tới build slice). 20 cặp gồm **15 legacy** (14 active Reviewed + 1 Telegram Archived), **2 cặp pre-existing** (connector + assistant) và **3 cặp phase-1 mới đã tracked, pending migration/build** (messenger/chat/settings). "Reviewed" = trạng thái *tài liệu*, không phải *đã build*.
 
 ### Legacy coverage — 15 cặp spec MVP (1 Archived)
 
@@ -39,14 +39,20 @@ Ba nhóm — "coverage" = **có spec + BE tech**, KHÔNG có nghĩa đã impleme
 | P4.3 | Marketplace Discovery | `feature_marketplace_discovery.md` v2.0 | `BE/feature_marketplace_discovery_tech.md` v2.0 | ✅ Reviewed |
 | P4.3 | Cross-club Join | `feature_cross_club_join.md` v2.3 | `BE/feature_cross_club_join_tech.md` v2.3 | ✅ Reviewed |
 | ~~P4.5~~ | ~~Player Telegram~~ | `feature_player_telegram.md` v2.1 | `BE/feature_player_telegram_tech.md` v2.1 | ⚠️ **Archived (DD-37)** → `feature_player_messenger.md` |
-| P4.6 | Player View | `feature_player_view.md` v2.1 | `BE/feature_player_view_tech.md` v2.2 | ✅ Reviewed |
+| P4.6 | Player View | `feature_player_view.md` v2.2 | `BE/feature_player_view_tech.md` v2.2 | ✅ Reviewed |
 | P4.7 | Zalo Channel | `feature_zalo_channel.md` v2.1 | `BE/feature_zalo_channel_tech.md` v2.1 | ✅ Reviewed |
 | P5 | Billing Lifecycle | `feature_billing_lifecycle.md` v2.5 | `BE/feature_billing_lifecycle_tech.md` v2.5 | ✅ Reviewed |
-| P6 | Security & Operations | `feature_security_operations.md` v2.0 | `BE/feature_security_operations_tech.md` v2.1 | ✅ Reviewed |
+| P6 | Security & Operations | `feature_security_operations.md` v2.1 | `BE/feature_security_operations_tech.md` v2.1 | ✅ Reviewed |
 
-### Draft — DD ✅, committed trên branch (pending merge/build) — Phase-1 additions (v3.4 — DD-37/38/39)
+### Cross-cutting tracked pair (pre-existing)
 
-3 feature pair mới (6 file) — **DD đã ✅**, Product spec + BE tech **đã committed trên branch `docs/dd-04-hosting-reopen`** (HEAD `0898513`; chưa merge `main`); chờ migration/build. KHÔNG tính vào 15 legacy.
+| Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
+|---|---|---|---|---|
+| P3/P4/P4.7 | Connector Onboarding (Zalo · SePay · ApiPay) | `feature_connector_onboarding.md` v0.5 | `BE/feature_connector_onboarding_tech.md` v0.2 | 🟡 Draft — provider-contract reviewed; Zalo auto-register còn blocked bởi sandbox confirmation |
+
+### Draft — DD ✅, tracked; pending migration/build — Phase-1 additions (v3.4 — DD-37/38/39)
+
+3 feature pair mới (6 file) — **DD đã ✅**, Product spec + BE tech **đã tracked trong documentation baseline**; chờ migration/build. KHÔNG tính vào 15 legacy.
 
 | Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
 |---|---|---|---|---|
@@ -76,6 +82,7 @@ Với spec mới hoặc spec được promote sang **Reviewed**, review gate k�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-15 | v2.11 | **Canonical-readiness closure:** authority → decisions v1.32; bỏ branch/HEAD wording khỏi status lâu dài; 3 cặp phase-1 = tracked nhưng chưa build; reconcile Player View v2.2 và Security/Ops v2.1 sau DD-37 cleanup; bổ sung row Connector còn thiếu để index đủ 20 cặp + 1 product-only Draft. |
 | 2026-07-15 | v2.10 | **Reality-check closure:** authority → decisions v1.31; sửa 12 version refs theo file trên disk, phase Messenger P2.5/P4.5 và Zalo P4.7, wording 3 feature pair/6 file, Club Assistant gate và Reviewed criteria. |
 | 2026-07-15 | v2.9 | **Light propagation:** neo DD-05/06/32/41–48 vào feature Open Questions/status; schema/code vẫn defer về build slice. |
 | 2026-07-15 | v2.8 | Sync decisions v1.27: DD-32/45 chốt implementation contract; DD-47/48 framework chốt; booking funnel BE deferred tới build thay vì chờ quyết định; user-settings v0.4; giữ counts 21 product/20 BE. |

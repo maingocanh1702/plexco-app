@@ -1,7 +1,7 @@
 # 🧭 Founder Decision Brief — Open items (2026-07-15, rev 4)
 
 > **Mục đích:** gom các item **còn cần founder quyết** thành một chỗ để duyệt một lượt. Mỗi item = **câu hỏi · options · đề xuất · tác động/độ gấp · pointer canonical**.
-> **Authority:** `standards/decisions.md` v1.31. Brief này KHÔNG thay quyết định — khi chốt, ghi vào `decisions.md` (+ feature spec OQ) rồi mới propagate.
+> **Authority:** `standards/decisions.md` v1.32. Brief này KHÔNG thay quyết định — khi chốt, ghi vào `decisions.md` (+ feature spec OQ) rồi mới propagate.
 > **Phân loại nguồn:** 🔴 = cần founder (business/product/legal). Item spike (DD-14/15 Zalo, DD-33 Facebook App Review, connector CO-OQ) là **verify kỹ thuật/bên ngoài**, KHÔNG nằm trong brief này.
 >
 > ⚠️ **Không phải tư vấn tài chính/pháp lý.** Item 3 (tiền) và Item 6 (pháp lý) đưa thông tin để quyết. **Item 6 bắt buộc luật sư VN** rà theo **Luật 91/2025/QH15 + Nghị định 356/2025/NĐ-CP** (hiệu lực 01/01/2026) — **KHÔNG** dùng Nghị định 13/2023 (đã hết hiệu lực). Theo hiểu biết hiện tại (**cần luật sư VN xác nhận, chưa phải kết luận pháp lý**), NĐ 356 dường như xếp ngày sinh và giới tính vào **dữ liệu cá nhân cơ bản** chứ không phải nhóm nhạy cảm; Plexco vẫn mã hoá + xin consent theo product/security policy — không dựa vào phân loại này cho tới khi luật sư xác nhận.

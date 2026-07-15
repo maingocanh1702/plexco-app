@@ -6,6 +6,8 @@
  *   • progress.json   — subtasks[].status (theo identifier) + module.status roll-up từ subtasks
  *   • linear-snapshot.json — cho dashboard so sánh
  *   rồi chạy sync-embedded.mjs để dashboard offline khớp.
+ * progress.json vẫn sở hữu module/subtask title; thiếu issue hoặc lệch title là contract
+ * drift và làm sync dừng fail-closed trước khi ghi file.
  *
  * Dùng cho auto-update REALTIME: GitHub Action gọi script này khi push / Linear webhook /
  * cron. Bạn không phải nhắc — branch/PR của bạn flip Linear, Linear flip progress.json.
@@ -17,6 +19,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { expectedLinearModuleTitle, validateProgressLinearContract } from "./linear-contract.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const API = "https://api.linear.app/graphql";
@@ -59,6 +62,11 @@ async function fetchProject() {
 async function main() {
   const pjPath = join(__dir, "progress.json");
   const pj = JSON.parse(readFileSync(pjPath, "utf8"));
+  const progressContractErrors = validateProgressLinearContract(pj);
+  if (progressContractErrors.length) {
+    console.error("✗ progress.json vi phạm Linear contract:\n" + progressContractErrors.map((e) => `  ${e}`).join("\n"));
+    process.exit(2);
+  }
   const linear = await fetchProject();
 
   // Roll-up: module status SUY TỪ subtasks khi có subtasks (vì branch/PR flip sub-issue,
@@ -74,16 +82,26 @@ async function main() {
   }
 
   let changes = [];
-  let warnings = [];
+  let contractErrors = [];
   const snapModules = {};
 
   for (const m of pj.modules) {
     const parent = m.linearId ? linear[m.linearId] : null;
+    const expectedParentTitle = expectedLinearModuleTitle(m);
+    if (m.linearId && !parent) {
+      contractErrors.push(`${m.id}/${m.linearId}: không thấy module trên Linear với label ${LABEL}`);
+    } else if (parent && parent.title !== expectedParentTitle) {
+      contractErrors.push(`${m.id}/${m.linearId}: title Linear ${JSON.stringify(parent.title)} != canonical ${JSON.stringify(expectedParentTitle)}`);
+    }
     // 1) cập nhật từng subtask từ Linear
     for (const s of (m.subtasks || [])) {
       const sub = s.identifier ? linear[s.identifier] : null;
       if (sub && sub.status !== s.status) { changes.push(`  ${s.identifier}: ${s.status} → ${sub.status}`); s.status = sub.status; }
-      else if (s.identifier && !sub) { warnings.push(`${m.id}/${s.identifier}: không thấy trên Linear với label ${LABEL}`); }
+      if (sub && sub.title !== s.title) {
+        contractErrors.push(`${m.id}/${s.identifier}: title Linear ${JSON.stringify(sub.title)} != canonical ${JSON.stringify(s.title)}`);
+      } else if (s.identifier && !sub) {
+        contractErrors.push(`${m.id}/${s.identifier}: không thấy subtask trên Linear với label ${LABEL}`);
+      }
     }
     // 2) module status: roll-up từ subtasks (nếu có), else status issue cha
     const subs = m.subtasks || [];
@@ -103,9 +121,12 @@ async function main() {
     p.status = pc >= 1 ? "done" : pc > 0 ? "in_progress" : "not_started";
   }
 
-  if (warnings.length) console.warn("Cảnh báo:\n" + warnings.map(w => `  ${w}`).join("\n"));
-  if (!changes.length) { console.log("✓ Không có thay đổi từ Linear. progress.json đã khớp."); return; }
-  console.log("Thay đổi từ Linear:\n" + changes.join("\n"));
+  if (changes.length) console.log("Thay đổi status từ Linear:\n" + changes.join("\n"));
+  if (contractErrors.length) {
+    console.error("✗ Contract Linear lệch canonical progress.json; không ghi file:\n" + contractErrors.map(e => `  ${e}`).join("\n"));
+    process.exit(2);
+  }
+  if (!changes.length) { console.log("✓ Không có thay đổi từ Linear. Status và title đã khớp."); return; }
   if (CHECK) { console.log("\n(--check: không ghi file)"); process.exit(2); }
 
   pj.updatedAt = new Date().toISOString().slice(0, 10);

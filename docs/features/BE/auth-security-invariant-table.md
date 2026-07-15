@@ -43,9 +43,9 @@ SI-2 below is about the **web-auth** column only. It must not be confused with, 
 
 | | |
 |---|---|
-| **Invariant** | Before the TG Login Widget is shown, the server issues a single-use, short-TTL, browser-bound login-state token (httpOnly pre-auth cookie + matching server-side row). The callback must receive and consume the exact matching state — reject if missing, mismatched, expired, or already consumed — independent of Origin/Referer transport. |
-| **Threat blocked** | Login CSRF / account-binding confusion: an attacker who owns their *own* valid Telegram credentials gets their *own* validly-signed widget payload delivered through the victim's browser (any vector where Origin/Referer isn't a reliable signal — e.g. a same-origin top-level navigation/redirect carrying attacker-controlled query data), binding the victim's browser to the attacker's Plexco account without the attacker ever compromising the victim's Telegram account. |
-| **Test (concrete)** | (a) valid TG payload + missing login-state cookie → 401 `AUTH_INVALID`, no session minted; (b) state consumed once → second consume with the same state → reject; (c) expired state (past TTL) → reject; (d) a state token is bound to the issuing browser's session, not replayable from a captured request on a different client. |
+| **Invariant** | Before provider login begins (Google OAuth redirect or email auth), the server issues/binds the required single-use, short-TTL anti-CSRF state to the browser session. The callback/submit path must consume the exact matching state — reject if missing, mismatched, expired, or already consumed — independent of Origin/Referer transport. |
+| **Threat blocked** | Login CSRF / account-binding confusion: an attacker delivers their own valid provider callback/login payload through the victim's browser and binds the victim session to the attacker's account. Provider signature/token validity alone does not prove browser intent. |
+| **Test (concrete)** | (a) valid provider callback/login payload + missing browser-bound state → 401 `AUTH_INVALID`, no session minted; (b) state consumed once → second consume rejects; (c) expired state rejects; (d) captured state cannot replay from another client. |
 | **Canonical/schema ref** | Gap-to-pin, DD-31. Today's only mitigation is `sameOriginRequest()` (`apps/web/lib/session-cookies.ts:96-123`, carried over from `auth-onboarding-v2` round-08 — see `regions.log:14-15`). SI-1 supplements this (defense-in-depth), it does not replace the Origin check. |
 | **Exact column + layer** | NEW `auth_login_state` table (GLOBAL protected plane, same pattern as `auth_login_nonces` in migration `0012_auth_functions.sql:15-18`) + NEW issue route (e.g. `GET/POST /api/auth/telegram/state`) + consume logic inside `POST /api/auth/telegram` — **web-auth layer**. |
 
@@ -93,7 +93,7 @@ SI-2 below is about the **web-auth** column only. It must not be confused with, 
 
 | | |
 |---|---|
-| **Invariant** | Concurrent identical requests never create duplicate rows: (a) two concurrent FIRST Telegram logins for the same platform user converge on ONE account/person; (b) two concurrent `tenant_provision` calls for the same slug by the SAME owner both resolve to the SAME tenant, while a DIFFERENT actor re-submitting an existing slug gets `SLUG_TAKEN` rather than silently joining or taking it over. |
+| **Invariant** | Concurrent identical requests never create duplicate rows: (a) two concurrent FIRST logins for the same verified provider subject converge on ONE account/person; (b) two concurrent `tenant_provision` calls for the same slug by the SAME owner both resolve to the SAME tenant, while a DIFFERENT actor re-submitting an existing slug gets `SLUG_TAKEN` rather than silently joining or taking it over. |
 | **Threat blocked** | Duplicate persons/accounts/tenants from double-submits or multi-tab races (data integrity), and slug-squatting/tenant-takeover by a non-owner. |
 | **Test (v2 reference @7407caa — port & must pass in v3)** | `packages/db/src/auth.test.ts:80-98` (concurrent first logins converge), `:276-298` (idempotent re-submit vs. `SLUG_TAKEN` for another person), `:300-319` (concurrent same-owner submissions, no false 409), `:321-340` (a mere member re-submitting the slug gets `SLUG_TAKEN`). |
 | **Canonical/schema ref** | `../feature_web_auth_onboarding.md` Bất biến L20 + edge case #3 L60; BE tech spec edge cases #4/#5 (`L86-87`). |
@@ -137,14 +137,14 @@ Founder DECISIONS on all four gaps are RESOLVED (OQ-1/2/3, §5, 2026-07-06). N�
 ## 4. Open items surfaced while authoring this table
 
 - ~~Approved plan missing~~ **RESOLVED**: `docs/proposals/auth-security-design-pass-plan-2026-07-06.md` is now synced into this branch and this table has been reconciled against it (SI-1..SI-8 + 4 gaps + layer split match).
-- See `docs/standards/decisions.md` DD-31 (new, proposal) for the full decision record.
+- See `docs/standards/decisions.md` DD-31 for the merged Telegram-era baseline and DD-13/DD-37 for the current Google/email provider port.
 
 ---
 
-## 5. Founder decisions (2026-07-06)
+## 5. Founder decisions (2026-07-06; OQ-1/OQ-3 superseded 2026-07-10)
 
 | | Question | Answer |
 |---|---|---|
-| **OQ-1** | DD-13 scope — Phase-1 auth = TG Login + web-account fallback only, or add Google/email-password now? | **TG Login only.** DD-13 stays 🟡 deferred, unchanged. `auth-onboarding-v3` scope does not grow to cover a second provider. |
+| **OQ-1 (historical)** | DD-13 scope — Phase-1 auth = TG Login + web-account fallback only, or add Google/email-password now? | ~~TG Login only; DD-13 deferred.~~ **Superseded by DD-13/DD-37 on 2026-07-10:** phase-1 auth = Google OAuth + email/password; Telegram Login removed from target scope. |
 | **OQ-2** | KMS/secret source — which store provides the keyed-hash pepper (SI-2) + login-state secret (SI-1)? | **AWS KMS** for staging/prod (`KMS_PROVIDER=aws-kms`, matches the existing fly-secrets example); local dev keeps the documented `ENCRYPTION_KEY` fallback. Wiring itself is Phase B work — nothing changes in this table's gap-3 status beyond "key source decided." |
-| **OQ-3** | Record DD-31 now, or keep it proposal until v3 merges? | **Keep as proposal (🟡).** DD-31 flips to ✅ only after `auth-onboarding-v3` merges with 2 consecutive clean codex rounds. |
+| **OQ-3 (historical)** | Record DD-31 now, or keep it proposal until v3 merges? | ~~Keep as proposal until v3 merges.~~ **Resolved:** v3 merged on `main@1eb6f60`; DD-31 is ✅ merged (Telegram-era), residual provider port lives under DD-13/DD-37. |

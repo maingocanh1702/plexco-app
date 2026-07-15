@@ -1,7 +1,7 @@
 # 🗄️ DD-04 Decision Brief — Postgres Hosting (rev 3)
 
 > **Mục đích:** đủ dữ kiện để founder **chốt provider** cho hệ tiền multi-tenant RLS.
-> **Ngày:** 2026-07-15 (rev 3; rev 2 factual analysis giữ nguyên, rev 3 đóng governance drift) · **Nguồn nội bộ hiện hành:** `deployment-infra.md §2/§6` (DD-04) · `decisions.md` v1.31 (DD-04) · `feature_security_operations_tech.md`. **Số liệu provider:** web (07/2026), xem Sources.
+> **Ngày:** 2026-07-15 (rev 3; rev 2 factual analysis giữ nguyên, rev 3 đóng governance drift) · **Nguồn nội bộ hiện hành:** `deployment-infra.md §2/§6` (DD-04) · `decisions.md` v1.32 (DD-04) · `feature_security_operations_tech.md`. **Số liệu provider:** web (07/2026), xem Sources.
 > **Đã chốt (không bàn lại):** Managed Postgres **HA + PITR**, **region Singapore**. Railway PG chỉ dev/staging. Compute app hiện target **Fly.io** (DD-10).
 
 > ⚠️ **REV 2 sửa lỗi factual của rev 1** (xem §0.1) và **thêm gate private-network** làm quyết định chốt-trước. Do rev 2 mở rộng phạm vi DD-04 (thêm DigitalOcean + gate network), tại thời điểm đó DD-04 cần được reopen/update trước khi founder phê duyệt; rev 3 ghi nhận gate này đã hoàn tất.

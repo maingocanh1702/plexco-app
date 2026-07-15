@@ -1,7 +1,7 @@
 # Bestminton Latest Scan -> Plexco Reuse Notes
 
 > Ngay quet: 2026-06-21 (Asia/Ho_Chi_Minh)  
-> Source: `/Users/maingocanh/Projects/Bestminton Club Payment check bot`  
+> Source: [bestmintonclub-payment-check-bot](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot) (local checkout tại thời điểm quét)<br>
 > Source branch/HEAD: `Payment-check` @ `e191ba7` (`2026-06-21 21:34:13 +0700`)  
 > Target repo: Plexco app `main` @ `367b1b5`  
 > Muc dich: cap nhat nhung feature/update moi nhat cua Bestminton va ghi lai phan co the tham khao/ke thua cho Plexco.

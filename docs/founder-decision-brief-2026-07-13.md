@@ -1,6 +1,6 @@
 # 📋 Founder Decision Brief — Plexco
 
-> ⚠️ **Historical snapshot — superseded 15/07/2026 bởi `docs/standards/decisions.md` v1.31.** DD-02/05/06/08/32/41–46 đã chốt; DD-47/48 chốt framework. DD-04 đã reopen theo provider gate mới; DD-14/15 và DD-33 còn phụ thuộc bên ngoài; DD-18 là GO-LIVE gate, DD-34/35/36 còn P7 detail. Không dùng status trong body bên dưới làm authority hiện hành.
+> ⚠️ **Historical snapshot — superseded 15/07/2026 bởi `docs/standards/decisions.md` v1.32.** DD-02/05/06/08/32/41–46 đã chốt; DD-47/48 chốt framework. DD-04 đã reopen theo provider gate mới; DD-14/15 và DD-33 còn phụ thuộc bên ngoài; DD-18 là GO-LIVE gate, DD-34/35/36 còn P7 detail. Không dùng status trong body bên dưới làm authority hiện hành.
 >
 > **Mục đích:** gom mọi quyết định đang chờ founder để **mở khoá tiến độ**. Mỗi mục: bối cảnh · phương án · khuyến nghị · hệ quả nếu trì hoãn.
 > **Nguồn:** `docs/standards/decisions.md` v1.19 · `ROADMAP` v2.5 · `HANDOFF` (2026-07-13). Trạng thái code: `main@1eb6f60`, ~20% (foundation + Auth v3 Telegram-era đã land; feature layer chưa build).

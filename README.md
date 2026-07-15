@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Phiên bản** | v0.0.1 — Foundation merged, feature build in progress |
-| **Trạng thái** | 🟢 Scaffold + foundation ĐÃ CÓ: monorepo (`packages/*`,`apps/*`) + **migrations 0000–0013** (RLS/auth/onboarding) đã merge trên `main@1eb6f60`; Auth v3 (Telegram-era) landed → **DD-37 provider replacement (Google/email + Zalo/Messenger) đang chờ**. Docs: 14 active Reviewed + 3 cặp Draft phase-1 committed trên branch `docs/dd-04-hosting-reopen` (chưa merge `main`); Telegram archived (DD-37). Chi tiết: [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md). |
+| **Trạng thái** | 🟢 Scaffold + foundation ĐÃ CÓ: monorepo (`packages/*`,`apps/*`) + **migrations 0000–0013** (RLS/auth/onboarding) đã merge trên `main@1eb6f60`; Auth v3 (Telegram-era) landed → **DD-37 provider replacement (Google/email + Zalo/Messenger) đang chờ**. Docs: 14 active Reviewed + 3 cặp Draft phase-1 đã tracked trong documentation baseline, chưa migration/build; Telegram archived (DD-37). Chi tiết: [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md). |
 | **Ngày tạo** | 18/06/2026 |
 | **Stack** | TypeScript · Next.js App Router · Zalo/Messenger HTTP adapters *(target — chưa build)* · Drizzle ORM · PostgreSQL (RLS) · pg-boss · SSE/`LISTEN/NOTIFY` (DD-07/DD-10) |
 | **Monorepo** | pnpm workspaces: `packages/core` · `apps/bot` · `apps/web` |
@@ -70,14 +70,14 @@
 
 ## Setup theo code hiện tại
 
-> Scaffold ĐÃ CÓ trên `main@1eb6f60`: monorepo (`package.json`, `pnpm-workspace.yaml`), `.env.example`, `infra/docker-compose.yml`, `packages/db` + **migrations 0000–0013**. Các lệnh dưới đây là script có thật trên HEAD; phần lớn tầng feature còn ở spec/Draft (xem [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md)).
+> Scaffold ĐÃ CÓ trên `main@1eb6f60`: monorepo (`package.json`, `pnpm-workspace.yaml`), `.env.example`, `infra/docker-compose.yml`, `packages/db` + **migrations 0000–0013**. Các lệnh dưới đây là script đang được track trong repo; phần lớn tầng feature còn ở spec/Draft (xem [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md)).
 
 ### Prerequisites
 
 - Node.js ≥ 22.x
 - pnpm ≥ 9.x
 - Docker (cho PostgreSQL dev)
-- **Hiện tại:** Telegram bot token cho auth-v3 legacy đang chạy trên HEAD
+- **Code baseline `main@1eb6f60`:** Telegram bot token vẫn bắt buộc cho auth-v3 legacy
 - **Target DD-37:** Google OAuth client + email/password; Facebook App cho account-link/Messenger khi các adapter tương ứng land
 - Zalo bot token per-club (onboarding)
 - SePay/ApiPay account (nhận webhook CK)
@@ -127,7 +127,7 @@ pnpm --filter @plexco/bot start:worker
 
 ## Port Registry
 
-> ⚠️ **Live trên HEAD (`main@1eb6f60`):** chỉ `Web app (Next.js)` + `/healthz` + **auth Telegram-era** (`/api/auth/telegram/*`) + onboarding routes. Các webhook Messenger/Zalo/SePay dưới là **spec/target — CHƯA build** (`apps/bot` hiện chỉ pg-boss queue/worker). Xem [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md).
+> ⚠️ **Code baseline (`main@1eb6f60`):** chỉ `Web app (Next.js)` + `/healthz` + **auth Telegram-era** (`/api/auth/telegram/*`) + onboarding routes. Các webhook Messenger/Zalo/SePay dưới là **spec/target — CHƯA build** (`apps/bot` hiện chỉ pg-boss queue/worker). Xem [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md).
 
 | Service | Port | Ghi chú |
 |---|---|---|
@@ -172,7 +172,7 @@ pnpm --filter @plexco/bot start:worker
 | [player-side-saas-AUDIT.md](./docs/research/player-side-saas-AUDIT.md) | Bảo mật, threat model (C1-C8, B1-B6) | v1 |
 | [messenger-channel-design.md](./docs/channels/messenger/messenger-channel-design.md) | Kênh Messenger (phase-1 P2.5, Meta App Review — DD-37) | v2.1 |
 | [saas-pnl-model.xlsx](./docs/strategy/saas-pnl-model.xlsx) | PnL model | — |
-| [native-app-strategy.md](./docs/strategy/native-app-strategy.md) | Native iOS/Android — impact analysis, push, auth | v1.0 |
+| [native-app-strategy.md](./docs/strategy/native-app-strategy.md) | Native iOS/Android — impact analysis, push, auth | v1.1 |
 
 ### 🔧 Feature Docs (`docs/features/`)
 
@@ -190,16 +190,16 @@ Coverage and review status: [docs/features/README.md](./docs/features/README.md)
 | Sync Engine | [feature_sync_engine.md](./docs/features/feature_sync_engine.md) | [feature_sync_engine_tech.md](./docs/features/BE/feature_sync_engine_tech.md) | P4 |
 | Marketplace Discovery | [feature_marketplace_discovery.md](./docs/features/feature_marketplace_discovery.md) | [feature_marketplace_discovery_tech.md](./docs/features/BE/feature_marketplace_discovery_tech.md) | P4.3 |
 | Cross-club Join | [feature_cross_club_join.md](./docs/features/feature_cross_club_join.md) | [feature_cross_club_join_tech.md](./docs/features/BE/feature_cross_club_join_tech.md) | P4.3 |
-| Player Messenger (thay Telegram — DD-37) | [feature_player_messenger.md](./docs/features/feature_player_messenger.md) | [feature_player_messenger_tech.md](./docs/features/BE/feature_player_messenger_tech.md) | P2.5 |
+| Player Messenger (thay Telegram — DD-37) | [feature_player_messenger.md](./docs/features/feature_player_messenger.md) | [feature_player_messenger_tech.md](./docs/features/BE/feature_player_messenger_tech.md) | P2.5/P4.5 |
 | ~~Player Telegram~~ (Archived — DD-37) | ~~[feature_player_telegram.md](./docs/features/feature_player_telegram.md)~~ | ~~[feature_player_telegram_tech.md](./docs/features/BE/feature_player_telegram_tech.md)~~ | ~~P4.5~~ |
 | Player View | [feature_player_view.md](./docs/features/feature_player_view.md) | [feature_player_view_tech.md](./docs/features/BE/feature_player_view_tech.md) | P4.6 |
 | Zalo Channel | [feature_zalo_channel.md](./docs/features/feature_zalo_channel.md) | [feature_zalo_channel_tech.md](./docs/features/BE/feature_zalo_channel_tech.md) | P4.7 |
 | Billing Lifecycle | [feature_billing_lifecycle.md](./docs/features/feature_billing_lifecycle.md) | [feature_billing_lifecycle_tech.md](./docs/features/BE/feature_billing_lifecycle_tech.md) | P5 |
 | Security & Operations | [feature_security_operations.md](./docs/features/feature_security_operations.md) | [feature_security_operations_tech.md](./docs/features/BE/feature_security_operations_tech.md) | P6 |
-| Connector Onboarding | [feature_connector_onboarding.md](./docs/features/feature_connector_onboarding.md) | [feature_connector_onboarding_tech.md](./docs/features/BE/feature_connector_onboarding_tech.md) | P1/P2 |
-| In-app Chat (DD-38) | [feature_inapp_chat.md](./docs/features/feature_inapp_chat.md) | [feature_inapp_chat_tech.md](./docs/features/BE/feature_inapp_chat_tech.md) | P4 · Draft (committed on branch, chưa merge main) |
-| User Settings & Profile (DD-39/47/48) | [feature_user_settings.md](./docs/features/feature_user_settings.md) | [feature_user_settings_tech.md](./docs/features/BE/feature_user_settings_tech.md) | P4 · Draft (committed on branch, chưa merge main) |
-| Channel Booking Funnel (DD-32) | [feature_channel_booking_funnel.md](./docs/features/feature_channel_booking_funnel.md) | _BE deferred → build slice_ | P2.5/P4.3 · product-only Draft |
+| Connector Onboarding | [feature_connector_onboarding.md](./docs/features/feature_connector_onboarding.md) | [feature_connector_onboarding_tech.md](./docs/features/BE/feature_connector_onboarding_tech.md) | P3/P4/P4.7 · Draft |
+| In-app Chat (DD-38) | [feature_inapp_chat.md](./docs/features/feature_inapp_chat.md) | [feature_inapp_chat_tech.md](./docs/features/BE/feature_inapp_chat_tech.md) | P4 · Draft (tracked; pending migration/build) |
+| User Settings & Profile (DD-39/47/48) | [feature_user_settings.md](./docs/features/feature_user_settings.md) | [feature_user_settings_tech.md](./docs/features/BE/feature_user_settings_tech.md) | P4 · Draft (tracked; pending migration/build) |
+| Channel Booking Funnel (DD-32) | [feature_channel_booking_funnel.md](./docs/features/feature_channel_booking_funnel.md) | _BE deferred → build slice_ | P2.5/P4.3/P4.7 · product-only Draft |
 | Club Assistant (RAG/KB) | [feature_club_assistant.md](./docs/features/feature_club_assistant.md) | [feature_club_assistant_tech.md](./docs/features/BE/feature_club_assistant_tech.md) | P7 |
 
 ### 📝 Templates (`templates/`)
@@ -235,10 +235,10 @@ Coverage and review status: [docs/features/README.md](./docs/features/README.md)
 | **Automation** | [automation-overview.md](./docs/automation/automation-overview.md) | Chi tiết 3 chế độ: on-demand · scheduled · realtime |
 | **Tracker** | [progress.json](./progress.json) | Nguồn sự thật cấu trúc tiến độ; status mirror từ Linear khi realtime bật |
 | **Dashboard** | [plexco-dashboard.html](./plexco-dashboard.html) | Bảng theo dõi self-contained (mở bằng browser) |
-| **Scripts** | `sync-embedded.mjs` · `compare-linear.mjs` · `linear-sync.mjs` · `gen-linear-csv.mjs` | Đồng bộ EMBEDDED · so drift · pull Linear→progress · seed CSV |
+| **Scripts** | `sync-embedded.mjs` · `linear-contract.mjs` · `compare-linear.mjs` · `linear-sync.mjs` · `gen-linear-csv.mjs` | Đồng bộ EMBEDDED · validate contract · so drift · pull Linear→progress · seed CSV |
 | **CI** | [.github/workflows/linear-sync.yml](./.github/workflows/linear-sync.yml) | Mirror Linear → progress.json (push/webhook/cron) |
 
-**Ownership theo field:** `progress.json` giữ roadmap/gate/invariant/subtask title/khoá; **Linear** [Plexco MVP](https://linear.app/maingocanh1/project/plexco-mvp-5a5336c896c5) giữ status qua issue `[M#]` + sub-issue. Khoá nối = prefix `[M#]`/`linearId`. Trạng thái suy từ hoạt động git, không bấm tay.
+**Ownership theo field:** `progress.json` giữ roadmap/gate/invariant/module + subtask title/khoá; **Linear** [Plexco MVP](https://linear.app/maingocanh1/project/plexco-mvp-5a5336c896c5) giữ status qua issue `[M#]` + sub-issue. Khoá nối = prefix `[M#]`/`linearId`; thiếu/trùng ID hoặc lệch title làm compare/sync fail-closed. Trạng thái suy từ hoạt động git, không bấm tay.
 
 **Automation:** ① on-demand (nói Claude `break M8` / `mark M5 done`) · ② scheduled (`plexco-weekly-break`, Thứ 2) · ③ realtime (Linear×GitHub + Action `linear-sync` — kích hoạt khi repo GitHub có ở P0/M1).
 

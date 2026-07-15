@@ -124,7 +124,7 @@ stateDiagram-v2
 |-------|---------|-------------------|
 | `onboarding_started` | Host bắt đầu wizard | `person_id` (opaque), `auth_method` |
 | `tenant_created` | Tenant created thành công | `tenant_id`, `sport_default` |
-| `integration_connected` | Bank/TG/Zalo verified | `tenant_id`, `integration_type`, `provider` |
+| `integration_connected` | Bank/Zalo/Messenger verified | `tenant_id`, `integration_type`, `provider` |
 | `integration_failed` | Verify thất bại | `tenant_id`, `integration_type`, `error_class` |
 | `first_session_created` | Host tạo session đầu tiên | `tenant_id`, `visibility` |
 | `first_session_published` | Session published public | `tenant_id` |
@@ -165,5 +165,5 @@ stateDiagram-v2
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, onboarding wizard screen states, state machine |
 | 2026-06-20 | v2.1 | Cross-link `feature_connector_onboarding.md`: bank/Zalo connect chuyển sang auto-register + verify 2 tầng; thêm §1.1 surface entry points (web-first vs bot-first, deep-link handoff); cập nhật UC-4/UC-6 + screen states |
-| 2026-07-15 | v2.3 | **Propagation (light):** thêm WAO-OQ-4 (DD-46 personal tenant auto-provision) với pointer; auto-provision path/schema propagate lúc build slice (không đổi Reviewed body). |
+| 2026-07-15 | v2.3 | **Propagation (light):** thêm WAO-OQ-4 (DD-46 personal tenant auto-provision) với pointer; auto-provision path/schema propagate lúc build slice. Analytics integration provider được reconcile Bank/Zalo/Messenger theo DD-37. |
 | 2026-07-10 | v2.2 | **DD-13 + DD-37:** bỏ **Telegram Login** adapter; auth phase-1 = **Google OAuth + email/password** (`account_identities.platform ∈ {google,email,facebook,zalo}`). Kênh onboarding phase-1 = **Zalo + Facebook Messenger** (drop TG bind step, thêm Messenger Page step). **Facebook Login/link** = DD-33 (🟡 phase-1). Cập nhật §1/§1.1, UC-1/5/6, edge #1/2/8, screens, domain model, state machine, acceptance. |

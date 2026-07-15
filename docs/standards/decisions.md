@@ -66,7 +66,7 @@
 
 ## DD-01 — SĐT verified là khoá merge chính · ✅ Chốt
 
-- **Bối cảnh:** Một người thật xuất hiện ở nhiều kênh (Telegram/Zalo/web); cần tránh gán nhầm tiền/merge sai (AUDIT C1/C2/C4/C5).
+- **Bối cảnh:** Một người thật xuất hiện ở nhiều kênh phase-1 (Zalo/Messenger/web; Telegram chỉ còn legacy tenant #1); cần tránh gán nhầm tiền/merge sai (AUDIT C1/C2/C4/C5).
 - **Quyết định:** Dùng số điện thoại đã verified qua share-contact làm khoá định danh chính để merge `Person`.
 - **Lý do:** SĐT verified là tín hiệu định danh mạnh nhất, người dùng kiểm soát được; giảm rủi ro merge nhầm so với tên/username.
 - **Hệ quả:** Luồng claim/merge bắt buộc bước verify SĐT; kênh không cấp SĐT verified chỉ link mềm cho tới khi verify.
@@ -566,6 +566,7 @@
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 15/07/2026 | v1.32 | **Canonical channel-vocabulary closure:** DD-01 dùng Zalo/Messenger/web cho phase-1 và đánh dấu Telegram legacy-only; không đổi merge contract hay quyết định sản phẩm. Đồng bộ authority refs downstream. |
 | 20/06/2026 | v1.0 | Khởi tạo decision log; gom OD-1..OD-10 (BRD §16) + Open Questions (TDD §11) thành DD-01..DD-12 |
 | 20/06/2026 | v1.1 | Đồng bộ với `deployment-infra.md`: DD-07 → ✅ Chốt (SSE+`LISTEN/NOTIFY`); DD-04 & DD-10 → 🟡 đã thu hẹp; thêm ghi chú grant scope `readonly` vào DD-12 |
 | 20/06/2026 | v1.2 | Chốt DD-03 pricing 4 tier: free web, 79k Telegram, 159k thêm Zalo/Messenger, 199k tất cả |
