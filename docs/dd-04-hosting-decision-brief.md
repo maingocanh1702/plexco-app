@@ -9,6 +9,8 @@
 
 ---
 
+> ✅ **FINAL DECISION (2026-07-16): chọn (c) — co-locate DigitalOcean** (App Platform + Managed PG HA-standby, VPC private, Singapore). Brief này là **phân tích/nguồn**; đề xuất **(a)** ở TL;DR dưới đã **SUPERSEDED** bởi record chốt `dd-04-hosting-final-decision.md`. Provider facts + gate ở dưới vẫn dùng làm tham chiếu; **pre-build gate = egress-IP verify (§7.1 của record)**.
+
 ## 0. Khuyến nghị (TL;DR)
 
 **Có HAI quyết định, phải chốt theo thứ tự:**
@@ -198,7 +200,7 @@ Repo trước ghi "Railway dev/staging only"; dữ kiện hiện tại cần c�
 ## 7. Governance + checklist xác minh
 
 **Governance (bắt buộc):**
-1. ✅ **DD-04 đã reopen** trong `decisions.md` (2026-07-13, DD-04 = 🟡 reopened): đã thêm **DigitalOcean** ứng viên + **QĐ-1 posture network** + sửa dữ kiện HA Neon/Supabase. Founder chỉ còn chọn **QĐ-1 posture** + **QĐ-2 provider** (không còn "duyệt reopen").
+1. ✅ **DD-04 reopen → Accepted:** reopen 2026-07-13 (thêm DigitalOcean + QĐ-1 posture + sửa dữ kiện HA Neon/Supabase), **founder chốt 2026-07-16 = (c) co-locate DO** (QĐ-1=c, QĐ-2=DigitalOcean). `decisions.md` DD-04 = ✅ Accepted (v1.32); record `dd-04-hosting-final-decision.md`. Pre-build gate = egress-IP verify.
 2. ⏳ **Sau khi founder chốt QĐ-1**, cập nhật `deployment-infra.md §6` theo posture thực tế được chọn.
 3. ✅ **`deployment-infra.md §2` đã sync** Railway row: template DB là *unmanaged*; có one-click PgBouncer; PITR single-node + HA qua pgBackRest. Verdict "chỉ dev/staging" giữ nguyên với lý do đã sửa đúng dữ kiện.
 

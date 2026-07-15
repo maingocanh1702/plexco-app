@@ -668,7 +668,7 @@ webhook burst (≤5s P99), cron 1k tenant (throttler), join đồng thời (race
 | staging | Postgres managed | pg-boss | Sentry | sandbox |
 | prod | Postgres managed (HA, PITR) | pg-boss | Sentry + metrics (log gắn `tenant_id`) | live |
 
-Monorepo pnpm: `packages/core` (logic thuần + test, gồm `sports`) · `apps/bot` (HTTP channel adapters + cron + projectors) · `apps/web` (Next.js App Router: host dashboard, player view, discovery UI, API routes + realtime). **PostgreSQL/domain services là canonical**, không phải UI app. Bỏ volume SQLite. **DD-04 (reopened 2026-07-13):** HA+PITR+Singapore đã chốt; finalist **DigitalOcean Managed / Neon Scale** + gate posture-network trên Fly (Supabase chỉ đạt ở Enterprise; Railway dev/staging). Chi tiết `../dd-04-hosting-decision-brief.md`.
+Monorepo pnpm: `packages/core` (logic thuần + test, gồm `sports`) · `apps/bot` (HTTP channel adapters + cron + projectors) · `apps/web` (Next.js App Router: host dashboard, player view, discovery UI, API routes + realtime). **PostgreSQL/domain services là canonical**, không phải UI app. Bỏ volume SQLite. **DD-04 ✅ (2026-07-16) — (c) co-locate DigitalOcean:** compute = **DO App Platform** (thay Fly), DB = **DO Managed PG HA-standby cùng VPC private**, Singapore. Fly = fallback (a); pre-build gate = egress-IP verify (§7.1). Chi tiết `../dd-04-hosting-final-decision.md`.
 
 ---
 
@@ -740,7 +740,7 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 | # | Question | Status |
 |---|---|---|
 | 1 | Web stack = Next.js App Router, standalone/container; không Vercel | ✅ (→ DD-10) |
-| 2 | Postgres host — HA+PITR+Singapore ✅; reopened: **DO Managed / Neon Scale** + posture gate | 🟡 (→ DD-04) |
+| 2 | Postgres host — HA+PITR+Singapore ✅; ✅ **(c) co-locate DigitalOcean** (App Platform + Managed PG, VPC private); Fly = fallback; egress-IP gate | ✅ (→ DD-04) |
 | 3 | `pay_code` contract: suffix trần 4 ký tự + prefix namespace; resolver own/foreign/none; allocation invariant | ✅ chốt (→ DD-02) |
 | 4 | Con số trial/past_due/suspended | đề xuất 14/7 ngày; pricing đã chốt ở DD-29, còn lifecycle timing |
 | 5 | Zalo Premium (khi owner >3 CLB/tài khoản) + add-on managed | hỏi Zalo |

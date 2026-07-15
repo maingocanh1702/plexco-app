@@ -100,7 +100,7 @@ Mỗi env một Postgres độc lập. Hai lựa chọn, theo deployment-infra �
 | Provider | Khi nào dùng | Ghi chú |
 |---|---|---|
 | **Fly Postgres** (private networking) | dev, staging | Cùng platform, DX đơn giản; **Postgres KHÔNG expose public** (deployment-infra §6.1). PITR/HA yếu hơn → chỉ dev/staging. |
-| **Managed (DO Managed / Neon Scale — DD-04 reopened)** | **prod** (bắt buộc), staging nên dùng | HA + PITR + auto-failover + posture gate + restore drill (deployment-infra §8; `dd-04-hosting-decision-brief.md`). Prod money-safe = Tier B. |
+| **DigitalOcean Managed PG (co-locate, VPC private — DD-04 ✅ (c))** | **prod** (bắt buộc), staging nên dùng | HA standby + PITR + auto-failover + private VPC + restore drill (deployment-infra §8; `dd-04-hosting-final-decision.md`; egress-IP gate §7.1). Prod money-safe = Tier B. |
 
 ```bash
 # Ví dụ Fly Postgres cho dev & staging (private, attach vào app tương ứng)

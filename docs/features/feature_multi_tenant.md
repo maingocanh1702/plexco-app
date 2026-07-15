@@ -153,7 +153,7 @@ Không gửi schema/migration telemetry chứa row data hoặc PII.
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| BRD OD-4 | Managed Postgres provider | 🟡 DD-04 reopened — gate auto-failover+SLA+posture; nghiêng DO Managed → `../dd-04-hosting-decision-brief.md` |
+| BRD OD-4 | Managed Postgres provider | ✅ **DD-04 (2026-07-16): (c) co-locate DigitalOcean** (App Platform + Managed PG, VPC private); Fly=fallback; egress-IP gate → `../dd-04-hosting-final-decision.md` |
 | BRD OD-8 | Danh sách môn + taxonomy trình độ | ✅ **Chốt DD-08** (2026-07-13) — môn mở rộng được + level 5-bậc rank |
 | MT-OQ-1 | Narrow worker functions cụ thể | Chốt trong backend tech spec trước P0 implementation |
 | MT-OQ-2 | Kèo không thuộc CLB (Skip Club / personal meet) | ✅ **Chốt DD-46** — Option B "personal tenant" (`tenants.kind='personal'`+`owner_person_id`, auto-provision, free; giữ `tenant_id NOT NULL`+RLS; CẤM nullable). Schema/provision propagate lúc build → `../dd-46-skip-club-analysis.md` |

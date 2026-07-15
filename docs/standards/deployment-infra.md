@@ -1,6 +1,6 @@
 # Deployment & Infrastructure — Plexco
 
-> **Version:** v1.4 · 2026-07-13 (DD-04 reopened: gate auto-failover+SLA+posture-network; +DigitalOcean; §2 Railway row + §6 network posture synced)
+> **Version:** v1.5 · 2026-07-16 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**: compute DO App Platform + DO Managed PG cùng VPC private; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../dd-04-hosting-final-decision.md`)
 > **Status:** Draft (chờ review)
 > **Scope:** Cách deploy Plexco tối ưu/hiệu quả/dễ maintain, kèm scalability & security ở tầng hạ tầng.
 > **References:** `../product/TDD.md` §3.4/§7/§8 · `../strategy/saas-implementation-plan.md` §4/§5/§7 · `../research/player-side-saas-AUDIT.md` (C1–C8b · B1–B6 · G1–G6) · `../features/BE/feature_security_operations_tech.md`
@@ -10,7 +10,7 @@
 
 ## 0. TL;DR
 
-Deploy Plexco như **một modular monolith container-hoá**: **1 Docker image → 3 process group** (`web` · `discovery` · `worker`) cùng codebase, khác entrypoint/DB-role. Chạy trên **container PaaS** (Fly.io hoặc Railway) ở **region Singapore**, dùng **managed Postgres HA + PITR** (DD-04 reopened → finalist **DigitalOcean Managed / Neon Scale** + gate posture-network; Supabase chỉ Ent — xem `../dd-04-hosting-decision-brief.md`). Queue/cron nằm trên Postgres qua **pg-boss** (không Redis/Kafka). Realtime = **SSE fan-out qua Postgres `LISTEN/NOTIFY`** (không cần message broker).
+Deploy Plexco như **một modular monolith container-hoá**: **1 Docker image → 3 process group** (`web` · `discovery` · `worker`) cùng codebase, khác entrypoint/DB-role. Chạy trên **DigitalOcean App Platform** (compute) + **DO Managed Postgres HA-standby cùng VPC private**, **region Singapore** (DD-04 ✅ (c), 2026-07-16 — thay Fly; Fly = fallback (a); pre-build **egress-IP gate §7.1** — xem `../dd-04-hosting-final-decision.md`). Full infra spec (DO App Spec, supersede `fly.toml`) làm ở **build slice riêng**. Queue/cron nằm trên Postgres qua **pg-boss** (không Redis/Kafka). Realtime = **SSE fan-out qua Postgres `LISTEN/NOTIFY`** (không cần message broker).
 
 **KHÔNG:** Kubernetes · tách microservices · serverless function cho worker/webhook/SSE · Redis cho queue.
 
@@ -37,11 +37,13 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 
 > Mục này là **phân tích/đề xuất**. Mỗi quyết định cuối cùng (chốt/đang mở) được ghi ở `decisions.md`; khi đọc, lấy trạng thái từ đó.
 
-### DD-04 (OD-4) — Postgres hosting · 🟡 reopened 2026-07-13
+### DD-04 (OD-4) — Postgres hosting · ✅ Accepted 2026-07-16 — Option (c) DO co-locate
 
-**Đã chốt:** Managed Postgres **HA (auto-failover) + PITR**, **region Singapore**. Compute app target **Fly.io** (DD-10).
-**Gate cứng:** **auto-failover HA + uptime SLA + posture private-network trên nền Fly**.
-**Phân tích đầy đủ + nguồn:** `../dd-04-hosting-decision-brief.md` (rev 3) — bảng dưới là tóm tắt canonical.
+> ✅ **FINAL (2026-07-16):** chọn **(c) co-locate DigitalOcean** — compute = **DO App Platform** (thay Fly), DB = **DO Managed PG HA-standby cùng VPC private**, Singapore. Fly = **fallback (a)**. **Pre-build gate = egress-IP verify (§7.1)**; full DO App Spec + supersede `fly.toml` = **infra build slice**. Record: `../dd-04-hosting-final-decision.md`.
+
+**Đã chốt:** Managed Postgres **HA (auto-failover) + PITR**, **region Singapore**, **private VPC** (co-locate). Compute = **DigitalOcean App Platform** (DD-10 giữ nguyên: standalone container, không Vercel).
+**Gate cứng (đã đạt qua (c)):** **auto-failover HA + uptime SLA + posture private-network** (VPC by construction).
+**Phân tích đầy đủ + nguồn:** `../dd-04-hosting-final-decision.md` (final ✅) · `../dd-04-hosting-decision-brief.md` (rev 3, phân tích) — bảng dưới là tóm tắt (a/b/c ứng viên, giữ làm tham chiếu; (c) đã chọn).
 
 **QĐ-1 (chốt trước) — posture network:** compute (Fly) khác cloud với DB managed → không private thật trừ PrivateLink/co-locate. **(a)** public TLS + `sslmode=verify-full` + static-egress-IP allowlist [**đề xuất**, giữ Fly] · **(b)** PrivateLink AWS [rời Fly] · **(c)** co-locate compute+DB cùng cloud [rời Fly].
 
@@ -234,8 +236,8 @@ Single primary (PITR bật, **chưa** read replica), free tier WAF/Sentry. Chấ
 
 | Hạng mục | Provider (ví dụ) | Chi phí/tháng |
 |---|---|---|
-| App hosting (web+discovery+worker) | Fly.io / Railway, vài instance nhỏ | ~$5–20 |
-| Managed Postgres (HA + PITR, auto-failover standby) | DO Managed (≥1 standby) / Neon Scale | ~$30+ (benchmark trước cam kết) |
+| App hosting (web+discovery+worker) | **DigitalOcean App Platform** (2 web + 2 discovery + 1–2 worker, plan 1 GiB) | ~$60–72 |
+| Managed Postgres (HA + PITR, auto-failover standby) | **DO Managed PG** (co-locate VPC, primary+standby) | ~$60 |
 | CDN/WAF | Cloudflare free | $0 |
 | Error tracking | Sentry free | $0 |
 | **Tổng Tier A** | | **~$30–50** |

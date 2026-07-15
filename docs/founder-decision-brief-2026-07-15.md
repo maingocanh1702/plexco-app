@@ -27,7 +27,7 @@
 
 | # | Item | DD/OQ | Độ gấp | Ai quyết |
 |---|---|---|---|---|
-| 1 | Hosting provider + network posture | DD-04 | 🔴 **P0 — sớm nhất** | Founder |
+| 1 | Hosting provider + network posture | DD-04 | ✅ **CHỐT (c) DO co-locate** (2026-07-16); còn egress-IP gate | Founder |
 | 2 | Billing lifecycle Host Pro (trial/grace/refund/override) | BIL-OQ-2 · DD-29 | 🟠 trước khi bật thu Host Pro (P5) | Founder |
 | 3 | Money correction lifecycle (đổi giá / leave-cancel / rejoin) | SES-OQ-1 · PAY-OQ-3 | 🟠 P2/P3 — chặn correction flow DD-45 | Founder + product |
 | 4 | Guest→full membership + club ban policy | CCJ-OQ-2 | 🟡 P4.3 | Founder + product |
@@ -39,9 +39,11 @@
 
 ---
 
-## 1. 🔴 Hosting provider + network posture — DD-04 (P0)
+## 1. ✅ Hosting provider + network posture — DD-04 (P0) — CHỐT (c) DO co-locate
 
-**Câu hỏi:** (1) posture mạng nào? (2) nếu giữ Fly → provider Postgres nào? *(DD-04 **đã reopen** 2026-07-13 — founder chỉ còn chọn posture + provider, không cần "duyệt reopen" nữa.)*
+> ✅ **ĐÃ CHỐT (2026-07-16):** QĐ-1 = **(c) co-locate DigitalOcean** (compute DO App Platform + DB DO Managed PG HA-standby, **VPC private**, Singapore). Supersede đề xuất (a) trong brief. **Pre-build gate:** verify SePay/ApiPay/Zalo/Messenger fixed-outbound-IP (DO App Platform không đồng thời VPC + dedicated egress) → fail thì fallback (a) Fly+DO. Record: `dd-04-hosting-final-decision.md` · `decisions.md` DD-04 v1.32.
+
+**Câu hỏi (đã trả lời):** (1) posture = **(c) private VPC (co-locate DO)**; (2) provider = **DigitalOcean**.
 
 **QĐ-1 — Posture (chốt trước, kéo theo có rời Fly hay không):**
 - **(a) public-TLS + `verify-full` + static-IP allowlist**, giữ Fly.io. Đủ an toàn cho hệ tiền khi làm đúng (CA + hostname validation + allowlist + least-privilege role).
