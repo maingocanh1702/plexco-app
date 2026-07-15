@@ -144,8 +144,8 @@
       "status": "not_started"
     },
     {
-      "id": "P4.8",
-      "name": "Messenger (post-MVP)",
+      "id": "P2.5",
+      "name": "Messenger (phase-1, P2.5 — App Review)",
       "goal": "Kênh Messenger join + xác nhận — chặn bởi App Review Meta.",
       "modules": [
         "M17"
@@ -670,11 +670,11 @@
       "id": "M17",
       "name": "Kênh Messenger (join + xác nhận)",
       "track": "🎯 Player",
-      "phase": "P4.8",
+      "phase": "P2.5",
       "doc": "appendix",
       "status": "not_started",
       "points": 8,
-      "postMvp": true,
+      "postMvp": false,
       "assignee": "Ngoc-Anh Mai",
       "linearId": "MNA-21",
       "subtasks": []

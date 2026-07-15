@@ -1,6 +1,6 @@
 # Plexco — Base Chat / Acquisition Package: Feasibility & Hạ tầng
 
-> **Cập nhật 10/07/2026 (DD-37 / BRD v3.4):** Kênh phase-1 nay là **Zalo + Facebook Messenger + web**; **Telegram đã bỏ khỏi phạm vi**. Messenger lên **phase-1 (P2.5)**, không còn post-MVP/P4.8. Phần phân tích Telegram/Messenger bên dưới giữ nguyên làm **feasibility/technical reference**; khung "Telegram = trụ cột" đã bị DD-37 thay.
+> **Cập nhật 10/07/2026 (DD-37 / BRD v3.4):** Kênh phase-1 nay là **Zalo + Facebook Messenger + web**; **Telegram đã bỏ khỏi phạm vi**. Messenger lên **phase-1 (P2.5)**, không còn post-MVP/P4.8. Phần phân tích Telegram/Messenger bên dưới giữ nguyên làm **feasibility/technical reference**; khung "Telegram = trụ cột" đã bị DD-37 thay. **Pricing** = **DD-29** (`free`/`host_pro`) — **bỏ khung 4-tier DD-03** nhắc ở §4 body. Mọi phát biểu "post-MVP/Page-per-club/4-tier" trong body là **pre-pivot reference**, không phải canonical hiện hành.
 
 > Ngày 30/06/2026 · Rev 3 (sau review canonical). Scope gói này: host/group owner **connect club** — **Telegram/Zalo là scope chính**; **Messenger chỉ là optional proposal/spike, KHÔNG thuộc base package** cho tới khi có decision override BRD/PRD/ROADMAP (xem §6). Mục tiêu: hook host + player, tạo tiền đề bán Pro.
 

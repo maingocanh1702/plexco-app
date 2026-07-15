@@ -138,3 +138,4 @@ Surface → Command → Domain Service → [State + Deduped Command + Outbox] CO
 |---|---|---|
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, pipeline diagram, SLO targets |
+| 2026-07-10 | v2.1 | **DD-37 channel pivot:** projector fan-out Zalo DM / Messenger (cửa sổ 24h) / web SSE / public projection — bỏ TG projector; "Messenger P4.8" cũ → **phase-1 P2.5**. Nội dung sync pipeline/SLO không đổi. |

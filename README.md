@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Phiên bản** | v0.0.1 — Foundation merged, feature build in progress |
-| **Trạng thái** | 🟢 Scaffold + foundation ĐÃ CÓ: monorepo (`packages/*`,`apps/*`) + **migrations 0000–0013** (RLS/auth/onboarding) đã merge trên `main@1eb6f60`; Auth v3 (Telegram-era) landed → **DD-37 provider replacement (Google/email + Zalo/Messenger) đang chờ**. Docs: 14 active Reviewed + 3 Draft phase-1 chưa commit; Telegram archived (DD-37). Chi tiết: [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md). |
+| **Trạng thái** | 🟢 Scaffold + foundation ĐÃ CÓ: monorepo (`packages/*`,`apps/*`) + **migrations 0000–0013** (RLS/auth/onboarding) đã merge trên `main@1eb6f60`; Auth v3 (Telegram-era) landed → **DD-37 provider replacement (Google/email + Zalo/Messenger) đang chờ**. Docs: 14 active Reviewed + 3 cặp Draft phase-1 committed trên branch `docs/dd-04-hosting-reopen` (chưa merge `main`); Telegram archived (DD-37). Chi tiết: [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md). |
 | **Ngày tạo** | 18/06/2026 |
 | **Stack** | TypeScript · Next.js App Router · Zalo/Messenger HTTP adapters *(target — chưa build)* · Drizzle ORM · PostgreSQL (RLS) · pg-boss · SSE/`LISTEN/NOTIFY` (DD-07/DD-10) |
 | **Monorepo** | pnpm workspaces: `packages/core` · `apps/bot` · `apps/web` |
@@ -197,8 +197,8 @@ Coverage and review status: [docs/features/README.md](./docs/features/README.md)
 | Billing Lifecycle | [feature_billing_lifecycle.md](./docs/features/feature_billing_lifecycle.md) | [feature_billing_lifecycle_tech.md](./docs/features/BE/feature_billing_lifecycle_tech.md) | P5 |
 | Security & Operations | [feature_security_operations.md](./docs/features/feature_security_operations.md) | [feature_security_operations_tech.md](./docs/features/BE/feature_security_operations_tech.md) | P6 |
 | Connector Onboarding | [feature_connector_onboarding.md](./docs/features/feature_connector_onboarding.md) | [feature_connector_onboarding_tech.md](./docs/features/BE/feature_connector_onboarding_tech.md) | P1/P2 |
-| In-app Chat (DD-38) | [feature_inapp_chat.md](./docs/features/feature_inapp_chat.md) | [feature_inapp_chat_tech.md](./docs/features/BE/feature_inapp_chat_tech.md) | P4 · Draft (untracked) |
-| User Settings & Profile (DD-39/47/48) | [feature_user_settings.md](./docs/features/feature_user_settings.md) | [feature_user_settings_tech.md](./docs/features/BE/feature_user_settings_tech.md) | P4 · Draft (untracked) |
+| In-app Chat (DD-38) | [feature_inapp_chat.md](./docs/features/feature_inapp_chat.md) | [feature_inapp_chat_tech.md](./docs/features/BE/feature_inapp_chat_tech.md) | P4 · Draft (committed on branch, chưa merge main) |
+| User Settings & Profile (DD-39/47/48) | [feature_user_settings.md](./docs/features/feature_user_settings.md) | [feature_user_settings_tech.md](./docs/features/BE/feature_user_settings_tech.md) | P4 · Draft (committed on branch, chưa merge main) |
 | Channel Booking Funnel (DD-32) | [feature_channel_booking_funnel.md](./docs/features/feature_channel_booking_funnel.md) | _BE deferred → build slice_ | P2.5/P4.3 · product-only Draft |
 | Club Assistant (RAG/KB) | [feature_club_assistant.md](./docs/features/feature_club_assistant.md) | [feature_club_assistant_tech.md](./docs/features/BE/feature_club_assistant_tech.md) | P7 |
 
@@ -214,8 +214,8 @@ Coverage and review status: [docs/features/README.md](./docs/features/README.md)
 
 | Surface | Folder | Nội dung | Version |
 |---------|--------|---------|---------|
-| Web App | [docs/channels/web/](./docs/channels/web/) | Screen map, auth, SSE, [design-tokens](./docs/channels/web/design-tokens.md) | v0.1 |
-| ~~Telegram Bot~~ | [docs/channels/telegram/](./docs/channels/telegram/) | **Archived (DD-37)** — chỉ tham chiếu lịch sử | v0.1 |
+| Web App | [docs/channels/web/](./docs/channels/web/) | Screen map, auth, SSE, [design-tokens](./docs/channels/web/design-tokens.md) | v0.3 |
+| ~~Telegram Bot~~ | [docs/channels/telegram/](./docs/channels/telegram/) | **Archived (DD-37)** — chỉ tham chiếu lịch sử | v0.2 |
 | Zalo Bot | [docs/channels/zalo/](./docs/channels/zalo/) | BYO token, DM-only, reply-context, webhook drift | v0.4 |
 | Messenger Bot | [docs/channels/messenger/](./docs/channels/messenger/) | **Phase-1 (P2.5)**, 24h window, Meta App Review | v0.4 |
 

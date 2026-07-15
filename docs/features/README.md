@@ -20,21 +20,21 @@ Ba nhóm — "coverage" = **có spec + BE tech**, KHÔNG có nghĩa đã impleme
 
 - **Legacy coverage (pre-pivot)** — 15 cặp spec MVP viết trước DD-37 (bảng ngay dưới); trong đó `feature_player_telegram` nay **Archived**.
 - **Active phase-1 coverage** — spec Reviewed còn trong scope + cập nhật theo pivot = **14 cặp** (15 legacy − Telegram archived).
-- **Draft phase-1 — DD ✅, chưa commit git** — 3 **cặp** mới (Messenger/chat/settings): **quyết định DD ✅** (DD-37/38/39) nhưng **6 file hiện còn untracked** (chưa `git add`/commit) và **chờ migration/build**. "DD ✅" = quyết định đã chốt, KHÔNG phải "đã commit vào git".
+- **Draft phase-1 — DD ✅, committed trên branch (chưa merge main)** — 3 **cặp** mới (Messenger/chat/settings): **quyết định DD ✅** (DD-37/38/39) nhưng **6 file đã committed trên branch `docs/dd-04-hosting-reopen`** (HEAD `0898513`; chưa merge `main`) và **chờ migration/build**. "DD ✅" = quyết định đã chốt, KHÔNG phải "đã commit vào git".
 
-> ⚠️ **Reconcile với `../standards/BUILD-STATUS.md`:** trên disk có **21 Product/System specs + 20 BE specs = 20 cặp hoàn chỉnh + 1 product-only Draft** (`feature_channel_booking_funnel`; BE deferred tới build slice). 20 cặp gồm **15 legacy** (14 active Reviewed + 1 Telegram Archived), **2 cặp pre-existing** (connector + assistant) và **3 cặp phase-1 mới untracked** (messenger/chat/settings). "Reviewed" = trạng thái *tài liệu*, không phải *đã build*.
+> ⚠️ **Reconcile với `../standards/BUILD-STATUS.md`:** trên disk có **21 Product/System specs + 20 BE specs = 20 cặp hoàn chỉnh + 1 product-only Draft** (`feature_channel_booking_funnel`; BE deferred tới build slice). 20 cặp gồm **15 legacy** (14 active Reviewed + 1 Telegram Archived), **2 cặp pre-existing** (connector + assistant) và **3 cặp phase-1 mới committed trên branch (chưa merge main)** (messenger/chat/settings). "Reviewed" = trạng thái *tài liệu*, không phải *đã build*.
 
 ### Legacy coverage — 15 cặp spec MVP (1 Archived)
 
 | Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
 |---|---|---|---|---|
-| P0–P1 | Multi-tenant Foundation | `feature_multi_tenant.md` v1.2 | `BE/feature_multi_tenant_tech.md` v1.2 | ✅ Reviewed |
+| P0–P1 | Multi-tenant Foundation | `feature_multi_tenant.md` v1.3 | `BE/feature_multi_tenant_tech.md` v1.2 | ✅ Reviewed |
 | P2 | Tenant Routing & Authz | `feature_tenant_routing_authz.md` v2.1 | `BE/feature_tenant_routing_authz_tech.md` v2.1 | ✅ Reviewed |
 | P2/P4 | Session Management | `feature_session_management.md` v2.6 | `BE/feature_session_management_tech.md` v2.4 | ✅ Reviewed |
 | P3 | Payment Reconciliation | `feature_payment_reconcile.md` v1.4 | `BE/feature_payment_reconcile_tech.md` v1.5 | ✅ Reviewed |
 | P3.5 | Identity Directory & Merge | `feature_identity.md` v1.2 | `BE/feature_identity_tech.md` v1.2 | ✅ Reviewed |
 | P3/P4.5–P4.7 | Notifications & Reminders | `feature_notifications_reminders.md` v2.3 | `BE/feature_notifications_reminders_tech.md` v2.2 | ✅ Reviewed |
-| P4 | Web Auth & Onboarding | `feature_web_auth_onboarding.md` v2.2 | `BE/feature_web_auth_onboarding_tech.md` v2.2 | ✅ Reviewed |
+| P4 | Web Auth & Onboarding | `feature_web_auth_onboarding.md` v2.3 | `BE/feature_web_auth_onboarding_tech.md` v2.2 | ✅ Reviewed |
 | P4 | Sync Engine | `feature_sync_engine.md` v2.1 | `BE/feature_sync_engine_tech.md` v2.1 | ✅ Reviewed |
 | P4.3 | Marketplace Discovery | `feature_marketplace_discovery.md` v2.0 | `BE/feature_marketplace_discovery_tech.md` v2.0 | ✅ Reviewed |
 | P4.3 | Cross-club Join | `feature_cross_club_join.md` v2.3 | `BE/feature_cross_club_join_tech.md` v2.3 | ✅ Reviewed |
@@ -44,9 +44,9 @@ Ba nhóm — "coverage" = **có spec + BE tech**, KHÔNG có nghĩa đã impleme
 | P5 | Billing Lifecycle | `feature_billing_lifecycle.md` v2.5 | `BE/feature_billing_lifecycle_tech.md` v2.5 | ✅ Reviewed |
 | P6 | Security & Operations | `feature_security_operations.md` v2.0 | `BE/feature_security_operations_tech.md` v2.1 | ✅ Reviewed |
 
-### Draft — DD ✅, chưa commit git (pending build) — Phase-1 additions (v3.4 — DD-37/38/39)
+### Draft — DD ✅, committed trên branch (pending merge/build) — Phase-1 additions (v3.4 — DD-37/38/39)
 
-3 feature pair mới (6 file) — **DD đã ✅**, Product spec + BE tech **đã viết nhưng CHƯA commit git**; chờ `git add`/commit + migration/build. "DD ✅" = quyết định chốt, KHÔNG phải "đã commit git". KHÔNG tính vào 15 legacy.
+3 feature pair mới (6 file) — **DD đã ✅**, Product spec + BE tech **đã committed trên branch `docs/dd-04-hosting-reopen`** (HEAD `0898513`; chưa merge `main`); chờ migration/build. KHÔNG tính vào 15 legacy.
 
 | Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
 |---|---|---|---|---|

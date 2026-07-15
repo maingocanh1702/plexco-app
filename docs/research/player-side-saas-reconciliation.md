@@ -1,5 +1,7 @@
 # Phụ lục — Reconcile Player-side ↔ multi-tenant (Plexco)
 
+> ⚠️ **Pre-pivot reference (superseded by DD-37, 2026-07-15):** doc này mô tả kênh **Telegram + Zalo, Messenger post-MVP** — **KHÔNG còn là canonical**. Authority hiện hành: kênh phase-1 = **Zalo + Facebook Messenger + web** (Telegram loại; Messenger **P2.5 phase-1**); auth = Google/email (DD-13); pricing = DD-29. Xem `../standards/decisions.md` DD-37/13/29. **Phần nền multi-tenant/identity/RLS/public-layer bên dưới vẫn hợp lệ làm reference.**
+
 > Bản nháp để review. **Chưa code.** Doc này **gộp toàn bộ tầng player-side (Telegram + Zalo)** + tầng identity, đặt chồng lên `docs/saas-implementation-plan.md` (nền multi-tenant). Phần nền (Postgres + RLS + repo choke point + routing owner) **giữ nguyên**. Kênh Messenger (post-MVP): `messenger-channel-design.md`.
 >
 > **Reposition v2 (18/06/2026):** Plexco là **platform đa môn 2 phía**. Tầng identity ở đây là **nền cho 2 thứ mới**: (1) **player view person-self** (§3b) = tầng hiển thị thứ 3; (2) **join cross-club từ marketplace** (TDD §3.9) — reuse đúng cơ chế *claim/membership* ở §3 (người lạ join kèo public → tạo **membership guest**; có tiền/định danh nhạy cảm vẫn cần khoá mạnh C2). **Public discovery layer** (đọc kèo cross-tenant, field-whitelist) **không** chứa identity/tiền → nằm ngoài phạm vi doc này (xem TDD §3.9 + AUDIT C8). Reachability bổ sung surface **web (SSE)** ngoài TG/Zalo/Msgr.

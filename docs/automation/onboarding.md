@@ -78,7 +78,7 @@ Không phải "hai nguồn độc lập hoàn toàn" — mà **mỗi field có 1
 }
 ```
 
-**% tiến độ** tính theo điểm có trọng số: `done=1, in_review=.85, in_progress=.5, blocked=.25, not_started=0`. Module post-MVP (Messenger M17) loại khỏi % MVP.
+**% tiến độ** tính theo điểm có trọng số: `done=1, in_review=.85, in_progress=.5, blocked=.25, not_started=0`. Messenger (M17) nay là **phase-1 (P2.5, DD-37)** → **tính vào % MVP** (không còn loại post-MVP); vẫn phụ thuộc App Review Meta.
 
 ---
 

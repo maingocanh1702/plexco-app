@@ -286,8 +286,8 @@ const EMBEDDED = {
       "status": "not_started"
     },
     {
-      "id": "P4.8",
-      "name": "Messenger (post-MVP)",
+      "id": "P2.5",
+      "name": "Messenger (phase-1, P2.5 — App Review)",
       "goal": "Kênh Messenger join + xác nhận — chặn bởi App Review Meta.",
       "modules": [
         "M17"
@@ -812,11 +812,11 @@ const EMBEDDED = {
       "id": "M17",
       "name": "Kênh Messenger (join + xác nhận)",
       "track": "🎯 Player",
-      "phase": "P4.8",
+      "phase": "P2.5",
       "doc": "appendix",
       "status": "not_started",
       "points": 8,
-      "postMvp": true,
+      "postMvp": false,
       "assignee": "Ngoc-Anh Mai",
       "linearId": "MNA-21",
       "subtasks": []
@@ -989,7 +989,7 @@ function render(){
     </div>`).join('');
 
   // critical path
-  document.getElementById('path').innerHTML=data.phases.filter(p=>!(mvpOnly()&&p.id==='P4.8')).map(p=>{
+  document.getElementById('path').innerHTML=data.phases.filter(p=>!(mvpOnly()&&p.postMvp===true)).map(p=>{
     const pc=pct(phaseModules(p));
     return `<div class="step"><div class="pid">${p.id}</div><div class="pn">${p.name}</div>
       <div class="bar"><i style="width:${pc}%"></i></div>
@@ -997,7 +997,7 @@ function render(){
   }).join('<div style="align-self:center;color:var(--slate)">›</div>');
 
   // phase cards
-  document.getElementById('phases').innerHTML=data.phases.filter(p=>!(mvpOnly()&&p.id==='P4.8')).map(p=>{
+  document.getElementById('phases').innerHTML=data.phases.filter(p=>!(mvpOnly()&&p.postMvp===true)).map(p=>{
     const pc=pct(phaseModules(p));
     const st=pc===100?'done':pc>0?'in_progress':'not_started';
     const ms=(data.milestones||[]).find(x=>x.phase===p.id);

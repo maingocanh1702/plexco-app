@@ -117,7 +117,7 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 Tài liệu hoàn tất (bản mới nhất):
 - ✅ BRD v3.5 · PRD v2.4 · TDD v2.4 · ROADMAP v2.7 (canonical P-numbers)
 - ✅ 4 phụ lục (saas-plan, reconciliation, AUDIT, messenger)
-- Feature docs: **21 Product / 20 BE = 20 cặp hoàn chỉnh + 1 product-only Draft** (`channel_booking_funnel`); trong đó **3 cặp phase-1 mới (Messenger/chat/settings) còn untracked** — xem `features/README.md`
+- Feature docs: **21 Product / 20 BE = 20 cặp hoàn chỉnh + 1 product-only Draft** (`channel_booking_funnel`); trong đó **3 cặp phase-1 mới (Messenger/chat/settings) committed trên branch `docs/dd-04-hosting-reopen` (chưa merge main)** — xem `features/README.md`
 - ✅ Business rules, design tokens, dependency graph
 - ✅ README, CHANGELOG, PULL_REQUEST_TEMPLATE, HANDOFF, templates
 

@@ -1,6 +1,6 @@
 # Phân tích — Thêm Native App (iOS / Android) sau Web MVP
 
-**Phiên bản:** 1.0
+**Phiên bản:** 1.1
 **Ngày tạo:** 18/06/2026
 **Tài liệu tham chiếu:** `BRD.md` v3.1 · `PRD.md` v2.1 · `TDD.md` v2.1 · `ROADMAP.md` v2.1 · `feature_sync_engine.md` · `feature_marketplace_discovery.md` · `feature_identity.md`
 

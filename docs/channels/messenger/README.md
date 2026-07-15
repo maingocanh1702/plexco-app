@@ -137,6 +137,7 @@ Nếu spike fail cho scheduled reminders, Messenger vẫn có thể ship như **
 
 | Date | Version | Thay đổi |
 |------|---------|----------|
+| 2026-07-15 | v0.4 | **Version/index reconcile:** đồng bộ header về v0.4 khớp README surface index; Messenger giữ **P2.5 phase-1** (DD-37); không đổi nội dung kỹ thuật. |
 | 2026-07-10 | v0.3 | **Promote phase-1 (DD-37 ✅, thay DD-09):** P4.8/post-MVP → **P2.5 phase-1**. Reframe §2 (blockers → ràng buộc phải quản lý), OD-9 ✅, host-command bỏ TG, reminder chính = web + Zalo, readiness/go-no-go phase-1. Facebook auth-link = DD-33. Giữ nguyên ràng buộc 24h/App Review/Message Tags/Page per-club. |
 | 2026-06-20 | v0.2 | Sửa rate-limit assumption, thêm policy-safe delivery contract, required policy spike, readiness |
 | 2026-06-19 | v0.1 | Initial surface docs |

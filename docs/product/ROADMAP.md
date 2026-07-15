@@ -120,7 +120,7 @@ Plexco xây **repo riêng**; lift logic thuần (matching, payments-logic, dates
 
 ```text
 Core Planning & Docs       ████████████████████ 100%  ✅ BRD, PRD, TDD, ROADMAP + appendices
-Feature Specs              ███████████████████░  95%  20 cặp hiện có + 1 product-only Draft (booking funnel: DD-32 đã chốt, BE viết cùng build slice); 3 cặp phase-1 mới còn untracked
+Feature Specs              ███████████████████░  95%  20 cặp hiện có + 1 product-only Draft (booking funnel: DD-32 đã chốt, BE viết cùng build slice); 3 cặp phase-1 mới committed trên branch (chưa merge main)
 P0–P1: Foundation         ███████████████░░░░░  75%  🚧 core+DB/RLS+migrations 0000–0013 merged; Auth v3 (Telegram-era) merged; Google/email provider (DD-37) chưa code
 P2–P3: Tenant Engine      ░░░░░░░░░░░░░░░░░░░░   0%  ⬜ Not Started
 P3.5: Identity            ░░░░░░░░░░░░░░░░░░░░   0%  ⬜ Not Started
@@ -132,7 +132,7 @@ P6: Harden                ░░░░░░░░░░░░░░░░░░
 TỔNG (code)                ████░░░░░░░░░░░░░░░░  ~20%  🚧 foundation + Auth v3 (Telegram-era) land trên main@1eb6f60; feature layer chưa build
 ```
 
-> **Trạng thái:** Core docs sync theo v3.4 channel pivot; feature specs = **15 Reviewed** (14 active + Telegram archived) + 3 non-Reviewed (connector/assistant/funnel) + **3 Draft mới untracked** (Messenger player, chat in-app, cài đặt hồ sơ). **Foundation + Auth Onboarding v3 (Telegram-era) đã land trên `main@1eb6f60`** (migrations `0000–0013`, có web tests); **DD-37 supersede provider → Google/email chưa implement**; feature layer nghiệp vụ chưa build.
+> **Trạng thái:** Core docs sync theo v3.4 channel pivot; feature specs = **15 Reviewed** (14 active + Telegram archived) + 3 non-Reviewed (connector/assistant/funnel) + **3 Draft mới committed trên branch (chưa merge main)** (Messenger player, chat in-app, cài đặt hồ sơ). **Foundation + Auth Onboarding v3 (Telegram-era) đã land trên `main@1eb6f60`** (migrations `0000–0013`, có web tests); **DD-37 supersede provider → Google/email chưa implement**; feature layer nghiệp vụ chưa build.
 
 ### Module Progress
 
