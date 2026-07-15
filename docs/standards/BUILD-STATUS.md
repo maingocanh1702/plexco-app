@@ -166,7 +166,7 @@ Nói cách khác: session này **khép lại Phase 1** (nền móng) và **mở 
 3. **S6 Sync-engine**: viết projectors đọc `outbox_events` fan-out (Zalo/Messenger/SSE/public_sessions).
 4. **S8 Identity-merge**: bảng đã sẵn; cần luồng claim/merge có OTP (HR4).
 
-**Quyết định/gate còn treo có thể chặn hoặc định hình build:** **DD-04** (hosting provider), **DD-14/15**
+**Quyết định/gate còn treo có thể chặn hoặc định hình build:** **DD-04** provider ✅ **chốt (c) DO co-locate** (còn build-time gate: egress-IP verify + provision + restore/failover drill + RPO/RTO + KMS), **DD-14/15**
 (Zalo external spikes), **DD-33** (Facebook link/App Review), lifecycle grace/trial timing, và **DD-34/35/36**
 (Club Assistant P7 detail). **DD-18 chỉ chặn GO-LIVE Club Assistant, không chặn build interface-swappable.**
 **DD-02/05/06/08/10/12/41–46 đã ✅ chốt; DD-47/48 đã chốt framework** nhưng schema/code vẫn pending.

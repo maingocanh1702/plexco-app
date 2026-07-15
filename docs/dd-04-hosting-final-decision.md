@@ -73,6 +73,55 @@ sizing must come from staging load tests and observed connection counts.
 The minimum figures are not equivalent to production HA. For the selected option, budget against
 **`$120–132/month`**, then add contingency for logs, support, outbound transfer, and later read replicas.
 
+## 4.6 Scale-tier planning estimates (100 / 1000 / 2000 hosts)
+
+> ⚠️ **These are planning estimates, not benchmarked.** Tenant count does **not** map linearly to
+> RAM/CU (see §3). The database is a **step-function** (2→4→8→16 GiB doubles each step, then ×2 again for
+> HA), so the higher tiers carry the most uncertainty. Final sizing must come from staging load tests.
+> DO prices verified 2026-07-16 (Basic shared-CPU tier); Fly/Neon/AWS anchors from §5.
+
+**Selected option (c) — DigitalOcean co-locate, USD/month (compute App Platform + DO Managed PG HA + misc/logs/offsite-backup):**
+
+| Item | 100 hosts | 1000 hosts | 2000 hosts |
+|---|---|---|---|
+| Compute (App Platform) | 2 web + 2 disc + 1 worker ≈ **$60–72** | 3–4 each + 2 worker ≈ **$100–150** | more/larger (2 GiB) instances ≈ **$150–250** |
+| Database (Managed PG HA) | 2–4 GiB ≈ **$61–122** | 8 GiB ≈ **$244** (+ read replica $61–122) | 16 GiB ≈ **$489** (+ replica $122–244) |
+| Transfer + logs + **offsite backup** | ~**$10–25** | ~**$25–50** | ~**$40–80** |
+| **Total ≈** | **$130–220** | **$370–570** | **$700–1,100** |
+
+**Cross-topology comparison (same tiers, total ≈ USD/month incl. HA + misc):**
+
+| Topology | Network posture | Ops (solo dev) | 100 | 1000 | 2000 |
+|---|---|---|---:|---:|---:|
+| (a) Fly + Neon Scale | Public TLS + IP-allow | 2 providers + CU tuning | ~$72–134 | ~$235–470 | ~$460–900 |
+| (a) Fly + DO Managed PG | Public TLS + IP-allow | 2 providers, flat DB | ~$90–170 | ~$310–490 | ~$720–930 |
+| **(c) DO co-locate [SELECTED]** | **Private VPC** | **1 provider (simplest)** | **~$130–220** | **~$370–570** | **~$700–1,100** |
+| (b) AWS Fargate + Neon PrivateLink | Strict private | Most layers (ECS/ALB/NAT/endpoint) | ~$210–330 | ~$400–700+ | ~$700–1,300+ |
+| Supabase Enterprise | PrivateLink (AWS VPC) | Enterprise contract | quote (~$600+ base) | quote | quote |
+
+**Reading the comparison:**
+- DB cost is identical for (a)-DO and (c); the (c) premium over (a) Fly+DO (~$40–130/mo) is **almost entirely
+  App Platform compute** being pricier per GiB than a Fly machine. That premium buys private-DB-by-construction
+  + one provider + `LISTEN/NOTIFY` session-pool fit. Cost is not the deciding criterion for a money system.
+- Neon is cheapest at low load but **consumption-variable** ($0.222/CU-hr always-on: 0.25 CU $40 → 1 CU $162
+  → 2–4 CU $324–648) with a public path and AWS-only PrivateLink.
+- AWS (b) is expensive due to the base fabric (ALB + NAT + endpoints) before compute/DB, with no product
+  benefit for single-region Plexco.
+
+**Caveats (apply to all options):**
+- DB figures use **Basic shared-CPU**. At 1000–2000 hosts a money system may need **General Purpose (dedicated
+  CPU) → ~2× the DB price** — the single largest variable at the high tiers.
+- HA = ×2. Read replicas for discovery/marketplace reads are extra at 1000+. Excludes VAT, paid support, object
+  storage, unusual egress, migration labour.
+
+**Compute-cost optimization (for the infra slice):** if App Platform compute becomes the cost driver at ~2000
+hosts, move compute to **DO Droplets or DOKS in the same VPC** — cheaper per GiB than App Platform while keeping
+the private-DB path and one-provider boundary. This preserves the (c) intent and only changes the compute layer.
+
+**Sources:** [DO Managed Databases pricing](https://www.digitalocean.com/pricing/managed-databases) ·
+[DO PostgreSQL HA pricing](https://docs.digitalocean.com/products/databases/postgresql/details/pricing/) ·
+[Fly.io pricing](https://fly.io/docs/about/pricing/) · [Neon pricing](https://neon.com/pricing) · §5 below.
+
 ## 5. Estimate detail
 
 ### 5.1 Option (a) — Fly + DigitalOcean Managed PostgreSQL
@@ -178,6 +227,16 @@ dependency requires a fixed outbound source IP.
   bounded fallback, or separately design a DO compute substrate with both private DB access and controlled
   egress.
 
+**Verify checklist (clear before infra slice):**
+
+| Dependency | Question to answer | Nguồn xác minh |
+|---|---|---|
+| **SePay** | Outbound API call Plexco→SePay có allowlist theo IP nguồn không? Webhook inbound có yêu cầu IP cố định để verify không? | SePay partner docs/support; connector spike CO-OQ-2/3/7 |
+| **ApiPay** | Enterprise auto-provision (DD-30) có ràng buộc source-IP cho API call không? | ApiPay enterprise onboarding |
+| **Zalo Bot** | Gọi Zalo send API có cần fixed egress IP không (thường token-based → không)? | Zalo Bot API docs; DD-14/15 spike |
+| **Messenger (Meta)** | Graph API call có allowlist IP không (thường không)? | Meta docs |
+| **Kết luận** | Bất kỳ "có" → outbound cần fixed IP → **(c) as-is gãy** → fallback (a) Fly+DO hoặc DO substrate riêng có cả private-DB + controlled egress | — |
+
 ### 7.2 Accepted risk: provider and region concentration
 
 Co-locating compute and database reduces network and operating complexity, but a DigitalOcean regional
@@ -203,16 +262,13 @@ runbook.
 
 ## 8. Consequences and required propagation
 
-After this record is approved as canonical:
+> **Status (2026-07-16):** record accepted as canonical. **DOCS propagation ✅ done; INFRA build ⬜ pending (gated on §7.1).**
 
-1. Update DD-04 in [`standards/decisions.md`](standards/decisions.md) from reopened to accepted and link
-   this record.
-2. Replace Fly-specific production wording in
-   [`standards/deployment-infra.md`](standards/deployment-infra.md) and environment/runbook docs.
-3. Create the DigitalOcean App Spec in a dedicated infra slice; do not hand-convert `fly.toml` during a
-   docs-only change.
-4. Mark `infra/fly.toml` as superseded or remove it only when the DO deployment path is verified.
-5. Record measured staging costs and replace planning estimates before procurement/launch sign-off.
+1. ✅ **DONE** — DD-04 in [`standards/decisions.md`](standards/decisions.md) → **Accepted (v1.32)**, links this record.
+2. ✅ **DONE (docs)** — Fly-specific production wording reframed in BRD OD-4 · TDD · [`standards/deployment-infra.md`](standards/deployment-infra.md) (§2 + TL;DR + cost) · security specs; [`standards/environments-setup.md`](standards/environments-setup.md) got a superseded banner. ⬜ **environments-setup full DO runbook rewrite = infra slice.**
+3. ⬜ **PENDING (infra slice)** — Create the DigitalOcean App Spec; do not hand-convert `fly.toml` during a docs-only change. **Gate: §7.1 egress-IP verify must pass first.**
+4. ⬜ **PENDING** — Mark `infra/fly.toml` as superseded or remove it only when the DO deployment path is verified.
+5. ⬜ **PENDING** — Record measured staging costs and replace planning estimates before procurement/launch sign-off.
 
 ## 9. Sources
 

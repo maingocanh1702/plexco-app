@@ -108,10 +108,12 @@
 >
 > **2026-07-13 (reopen):** Phân tích lại trong `../dd-04-hosting-decision-brief.md` (rev 3; factual analysis rev 2 + governance closure rev 3) sửa vài dữ kiện của lần thu hẹp trước và **mở rộng phạm vi**. Chi tiết/nguồn ở brief; tóm tắt canonical dưới đây.
 
-- **Bối cảnh:** Cần chọn nhà cung cấp Postgres cho hệ tiền multi-tenant RLS; compute app hiện target **Fly.io** (DD-10).
-- **Đã chốt:** Managed Postgres **HA (auto-failover) + PITR**, **region Singapore**. Railway PG chỉ dev/staging.
-- **Gate cứng (định nghĩa lại):** **auto-failover HA + uptime SLA + posture private-network trên nền Fly** — không phải "HA chung chung".
-- **QĐ-1 (chốt trước) — posture network:** vì compute (Fly) khác cloud với DB managed → không private thật trừ PrivateLink/co-locate. Chọn: **(a)** public TLS + `sslmode=verify-full` + static-egress-IP allowlist [**đề xuất**, giữ Fly] · **(b)** PrivateLink AWS [rời Fly] · **(c)** co-locate compute+DB cùng cloud [rời Fly, đổi DD-10].
+> *(§ dưới = lịch sử phân tích reopen-era; kết quả cuối = **(c)** ở block ✅ FINAL trên.)*
+
+- **Bối cảnh:** Cần chọn nhà cung cấp Postgres cho hệ tiền multi-tenant RLS; compute app ban đầu target Fly.io — **DD-04 chốt (c) → DO App Platform** (DD-10 giữ nguyên: standalone container).
+- **Đã chốt:** Managed Postgres **HA (auto-failover) + PITR**, **region Singapore**, **private VPC** (co-locate). Railway PG chỉ dev/staging.
+- **Gate cứng (đã đạt qua (c)):** **auto-failover HA + uptime SLA + posture private-network** (VPC by construction).
+- **QĐ-1 — posture network:** (a) public TLS + `sslmode=verify-full` + static-egress-IP allowlist [giữ Fly — **fallback**] · (b) PrivateLink AWS [rời Fly — loại] · **(c) co-locate compute+DB cùng cloud [đổi target Fly→DO, KHÔNG đảo DD-10] — ✅ ĐÃ CHỌN**.
 - **QĐ-2 — ứng viên (theo posture a):**
   - **DigitalOcean Managed [nghiêng chọn]** — auto-failover standby + SLA 99.95% + PITR; bill phẳng, vận hành đơn giản; margin dự đoán chắc nhất (không nhất thiết rẻ nhất).
   - **Neon Scale** — HA multi-AZ **mọi plan**; SLA + PrivateLink ở Scale (PrivateLink **AWS-only → vô dụng từ Fly**); consumption floor 0.25 CU, trần = max-CU; rẻ hơn ở tải thấp nhưng cần benchmark.

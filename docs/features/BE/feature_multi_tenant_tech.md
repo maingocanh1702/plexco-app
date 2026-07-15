@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P0–P1
 > **Version:** 1.2 · 2026-07-10
-> **Status:** Implementation contract aligned with TDD v2.2 — **full-review baseline cũ; light-propagated → TDD v2.4**
+> **Status:** Implementation contract aligned with TDD v2.2 — **full-review baseline cũ; light-propagated → TDD v2.5**
 > **Product spec:** `../feature_multi_tenant.md`
 > **References:** `../../product/TDD.md` §3.1–3.4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37
 

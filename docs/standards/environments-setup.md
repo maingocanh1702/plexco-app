@@ -8,9 +8,11 @@
 
 ---
 
+> 🚨 **DD-04 ĐÃ CHỐT (2026-07-16): hosting = (c) co-locate DigitalOcean** (App Platform + Managed PG HA-standby, **VPC private**, Singapore) — **KHÔNG phải Fly**. Toàn bộ runbook Fly dưới đây (`fly.toml`, `fly deploy`/`fly secrets`, rollback Fly, 3 Fly app, Fly Postgres) là **SUPERSEDED** — **KHÔNG provision Fly cho production**. Runbook DO đầy đủ (DO App Spec · VPC trusted-sources · 4 DB roles least-privilege · pooled/direct conn · failover/PITR drill) viết ở **infra build slice** (xem `dd-04-hosting-final-decision.md` §7.3). **Staging PHẢI chạy topology DO tương đương prod** (test VPC + auto-failover + promotion, không chỉ smoke). Fly runbook giữ làm **fallback (a)** *chỉ nếu* egress-IP gate (§7.1) fail. Dev local (docker compose) không đổi.
+
 ## 0. TL;DR — chốt model
 
-**Khuyến nghị: 3 Fly app riêng + DB riêng mỗi env, cộng vòng lặp dev local.**
+**Model: 3 env riêng (dev · staging · prod) + DB riêng mỗi env, cộng vòng lặp dev local.** ⚠️ *(Prod/staging target = **DO App Platform components + DO Managed PG cùng VPC** — runbook Fly dưới đây superseded/fallback; xem banner 🚨.)*
 
 ```
 ┌─────────────┐   git push        ┌──────────────┐  promote (cùng image)  ┌────────────┐
@@ -241,7 +243,7 @@ fly deploy -a plexco-prod --image <digest-bản-trước>   # về image trướ
 
 ---
 
-## 8. Checklist go-live (lần đầu lên prod)
+## 8. Checklist go-live (lần đầu lên prod) — ⚠️ SUPERSEDED (Fly checklist; DO go-live + acceptance §7.3 viết ở infra slice — xem banner 🚨)
 
 - [ ] 3 Fly app tạo xong (`plexco-dev/staging/prod`), region `sin`.
 - [ ] 3 DB riêng, Postgres **không** public, attach private networking.

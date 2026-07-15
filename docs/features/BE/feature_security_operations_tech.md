@@ -99,7 +99,7 @@ No new business tables — cross-cutting controls applied to all existing tables
 
 - Managed HA + PITR with encrypted backups.
 - Restore drill: isolated DB → apply roles/policies → schema checksums → reconcile counts (tenants, charges, transactions, allocations, outbox, audit).
-- RPO/RTO defined after OD-4 provider choice.
+- RPO/RTO measured after DO provision + restore/failover drill (DD-04 ✅ (c) — provider chốt; RPO/RTO = build-time gate, không còn blocked bởi provider choice).
 
 ### CI/Release Gates
 

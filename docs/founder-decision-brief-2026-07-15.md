@@ -19,6 +19,7 @@
 > - **Re-check ban:** manual ban không tự evict roster/queue; waitlisted bị skip nhưng giữ queue đúng DD-45; removal là command riêng qua money policy.
 > - **Re-check governance:** plan key logical = `free` (live legacy `free_web` chờ migration); tách “ready for founder review” khỏi “post-decision closure”.
 >
+> **Rev 5 — DD-04 chốt (2026-07-16):** Item 1 = ✅ **CHỐT (c) co-locate DigitalOcean**; options a/b/c → historical (bỏ CTA chọn (a)); sửa claim "(c) đổi DD-10" (thực tế KHÔNG đảo DD-10). Còn egress-IP gate + build-time gates.
 > **Rev 4 — operational closure (2026-07-15):** DD-04 reopen/governance wording đóng nhất quán; thêm Item 9 cho identity/account recovery + merge-split authority; phân loại toàn bộ OQ còn mở thành founder, delegated build-time hoặc external verification với default fail-closed.
 
 ---
@@ -45,17 +46,19 @@
 
 **Câu hỏi (đã trả lời):** (1) posture = **(c) private VPC (co-locate DO)**; (2) provider = **DigitalOcean**.
 
-**QĐ-1 — Posture (chốt trước, kéo theo có rời Fly hay không):**
-- **(a) public-TLS + `verify-full` + static-IP allowlist**, giữ Fly.io. Đủ an toàn cho hệ tiền khi làm đúng (CA + hostname validation + allowlist + least-privilege role).
-- (b) strict-private qua PrivateLink (AWS + Neon) — đắt/phức tạp, **rời Fly**.
-- (c) co-locate compute **DO** + **DO Managed PG cùng VPC** — private thật, rẻ, nhưng **rời Fly** (đổi DD-10).
+> *(§ dưới là **options đã xét** — lịch sử phân tích; kết quả đã chốt **(c)** ở box đầu Item. KHÔNG còn CTA chọn.)*
 
-**QĐ-2 — Provider (nếu QĐ-1 = a):**
-- **DigitalOcean Managed với ≥1 standby node** — auto-failover + 99.95% SLA; cluster không standby chỉ 99.5% SLA. Bill phẳng/dự đoán được, vận hành đơn giản.
-- **Neon Scale** — storage multi-AZ by default; **99.95% SLA chỉ áp dụng cho Compute Endpoints** (không bao phủ các phần khác của Platform, API hoặc service). PrivateLink của Neon hiện là **AWS-only → vô dụng với Fly**.
-- Supabase: **chỉ đạt gate ở Enterprise** (Pro không có uptime SLA).
+**QĐ-1 — Posture:**
+- (a) public-TLS + `verify-full` + static-IP allowlist, giữ Fly.io — **fallback** nếu egress-IP gate fail.
+- (b) strict-private qua PrivateLink (AWS + Neon) — đắt/phức tạp, rời Fly. *(loại)*
+- **(c) co-locate compute DO + DO Managed PG cùng VPC — ✅ CHỌN.** Private thật; **đổi deployment target Fly→DO nhưng KHÔNG đảo DD-10** (App Platform chạy standalone container, khớp DD-10).
 
-**Đề xuất:** QĐ-1 = **(a)**; QĐ-2 = **DigitalOcean Managed có ≥1 standby node**. *(Reviewer: directionally sound, pending benchmark + vendor/security verify.)*
+**QĐ-2 — Provider:**
+- **DigitalOcean Managed với ≥1 standby node — ✅ CHỌN** — auto-failover + 99.95% SLA; cluster không standby chỉ 99.5% SLA. Bill phẳng/dự đoán được, vận hành đơn giản.
+- Neon Scale — storage multi-AZ by default; **99.95% SLA chỉ áp dụng cho Compute Endpoints**; PrivateLink AWS-only → vô dụng với Fly. *(loại)*
+- Supabase: chỉ đạt gate ở Enterprise (Pro không có SLA). *(loại)*
+
+**Kết quả (2026-07-16): chốt (c) co-locate DigitalOcean.** Đề xuất (a) ban đầu đã **superseded** (xem box ✅ đầu Item + `dd-04-hosting-final-decision.md`). Pre-build gate = **egress-IP verify**.
 **Tác động/gấp:** P0 hạ tầng, cần trước production. ⚠️ Mọi con số phải **benchmark trước khi cam kết**.
 **Kéo theo SEC-OQ-1** (`feature_security_operations`): **RPO/RTO cuối + KMS implementation** chốt theo provider đã chọn — deliverable **derived/build-time**, không phải quyết định founder độc lập.
 **Pointer:** `dd-04-hosting-decision-brief.md` (rev 3) · `decisions.md` DD-04 · `deployment-infra.md §2/§6` · [DigitalOcean Managed Databases SLA](https://www.digitalocean.com/sla/databases) · [Neon pricing/HA scope](https://neon.com/pricing) · [Neon Compute Endpoint SLA](https://neon.com/sla) · [Neon Private Networking scope](https://neon.com/docs/security/security-overview).

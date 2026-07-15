@@ -1,7 +1,7 @@
 # Plexco Web App — Design Brief cho Designer
 
 > **Version:** 1.1 · 2026-07-10
-> **Tài liệu tham chiếu:** `../../product/BRD.md` v3.5 · `../../product/PRD.md` · `../../product/TDD.md` · `../../features/README.md`
+> **Tài liệu tham chiếu:** `../../product/BRD.md` v3.6 · `../../product/PRD.md` · `../../product/TDD.md` · `../../features/README.md`
 > **Target audience:** Designer (UI/UX)
 >
 > **Cập nhật v3.4 (DD-37 ✅):** Đăng nhập = **Google + email** (bỏ Telegram Login). Kênh phase-1 = **web + Zalo + Facebook Messenger** (Telegram loại). Onboarding link **Zalo + Facebook Messenger** (không còn bước Telegram). Thêm màn **chat in-app** (DD-38 ✅), **cài đặt hồ sơ + giá theo giới tính** (DD-39 ✅), **mark-paid thủ công tap/multi-select** (DD-40 ✅).

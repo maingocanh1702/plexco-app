@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P3 (auto-reconcile) · P2 (manual mark-paid)
 > **Version:** 1.5 · 2026-07-10
-> **Status:** Implementation contract aligned with TDD v2.2 — **full-review baseline cũ; light-propagated → TDD v2.4**
+> **Status:** Implementation contract aligned with TDD v2.2 — **full-review baseline cũ; light-propagated → TDD v2.5**
 > **Product spec:** `../feature_payment_reconcile.md`
 > **References:** `../../product/TDD.md` §3.2/3.6–3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-40 · DD-25
 

@@ -1,7 +1,7 @@
 # Plexco Feature Specs — Coverage Index
 
 > **Version:** 2.11 · 2026-07-15
-> **Scope source:** `../product/BRD.md` v3.5 · `../product/PRD.md` v2.4 · `../product/TDD.md` v2.4 · `../product/ROADMAP.md` v2.7 · `../standards/decisions.md` v1.32 (DD-01..48). DD-02/05/06/08/32/41–46 đã chốt; DD-47/48 chốt framework P4+; DD-14/15 là external spikes; DD-18/34/35/36 còn open/approve-in-principle. Schema/code của các DD mới vẫn defer về đúng build slice.
+> **Scope source:** `../product/BRD.md` v3.6 · `../product/PRD.md` v2.4 · `../product/TDD.md` v2.5 · `../product/ROADMAP.md` v2.7 · `../standards/decisions.md` v1.32 (DD-01..48). DD-02/05/06/08/32/41–46 đã chốt; DD-47/48 chốt framework P4+; DD-14/15 là external spikes; DD-18/34/35/36 còn open/approve-in-principle. Schema/code của các DD mới vẫn defer về đúng build slice.
 
 > **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (**Telegram loại khỏi phạm vi**). `feature_player_telegram` → **Archived (DD-37)**, thay bằng `feature_player_messenger`. Thêm phase-1: `feature_inapp_chat` (DD-38 ✅), `feature_user_settings` (DD-39 ✅), Google login (DD-13 ✅, trong `feature_web_auth_onboarding`), mark-paid thủ công (DD-40 ✅, trong `feature_payment_reconcile`).
 

@@ -4,7 +4,7 @@
 **Sản phẩm:** **Plexco** — platform quản lý & khám phá hoạt động thể thao đa môn, 2 phía (host + player); bot-in-chat (Zalo/Messenger) + web app sync 2 chiều; không app native
 **Phiên bản:** 2.4
 **Ngày cập nhật:** 15/07/2026
-**Tài liệu tham chiếu:** `BRD.md` v3.5 · `TDD.md` v2.4 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-reconciliation.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` (kênh Messenger — nay là phase-1) · `../standards/decisions.md` (DD-05/06/08/32/37/13/33/38/39/40/41/42/43/44/45/46/47/48)
+**Tài liệu tham chiếu:** `BRD.md` v3.6 · `TDD.md` v2.5 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-reconciliation.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` (kênh Messenger — nay là phase-1) · `../standards/decisions.md` (DD-05/06/08/32/37/13/33/38/39/40/41/42/43/44/45/46/47/48)
 
 ## Changelog
 

@@ -3,7 +3,7 @@
 > **Canonical phase:** P3.5
 > **Track:** 🆔 Identity & Merge
 > **Version:** 1.2 · 2026-07-10
-> **Status:** Reviewed against BRD v3.4 / PRD v2.2 / TDD v2.2 — **full-review baseline cũ; light-propagated → current (BRD v3.5/PRD v2.4/TDD v2.4)**
+> **Status:** Reviewed against BRD v3.4 / PRD v2.2 / TDD v2.2 — **full-review baseline cũ; light-propagated → current (BRD v3.6/PRD v2.4/TDD v2.5)**
 > **Prerequisites:** P2 tenant routing + P3 ledger stable
 > **Tài liệu liên quan:** `../product/BRD.md` FR-7 · `../product/PRD.md` FLOW 5 + §4.2 · `../product/TDD.md` §3.2–3.4/§4 · `../standards/decisions.md` DD-37/DD-13/DD-33/DD-01 · `../research/player-side-saas-reconciliation.md` · `../research/player-side-saas-AUDIT.md` C1–C5
 

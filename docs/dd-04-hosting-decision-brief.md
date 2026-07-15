@@ -119,7 +119,7 @@ Rút từ `deployment-infra.md` (+ bổ sung rev 2):
 
 **Anchor chắc chắn:**
 - **DO:** HA 2GB = **$30 primary + $30 standby = $60/mo**, PITR 7 ngày, SLA 99.95%, storage I/O included, đồng giá Singapore. 4GB HA ≈ ~$120; 16GB HA ≈ ~$490 (bậc thang plan).
-- **Neon Scale:** $0.222/CU-h. Chạy always-on ở **floor 0.25 CU ≈ $41.63/mo trước storage/history** — **thấp hơn DO HA $60/mo** ở tải thấp. Cộng thêm: storage $0.35/GB-mo; PITR history $0.20/GB-mo; SLA + **quyền dùng** PrivateLink included ở Scale (không phí license) — **nhưng private network transfer vẫn tính `$0.01/GB` cả hai chiều**. Chi phí tăng theo tải nhưng **có trần cứng = max-CU đã cấu hình**.
+- **Neon Scale:** $0.222/CU-h. Chạy always-on ở **floor 0.25 CU ≈ $40.52/mo trước storage/history** ($0.222×730×0.25, khớp final record) — **thấp hơn DO HA $60/mo** ở tải thấp. Cộng thêm: storage $0.35/GB-mo; PITR history $0.20/GB-mo; SLA + **quyền dùng** PrivateLink included ở Scale (không phí license) — **nhưng private network transfer vẫn tính `$0.01/GB` cả hai chiều**. Chi phí tăng theo tải nhưng **có trần cứng = max-CU đã cấu hình**.
 - **Fly egress IP:** $3.60/mo/region (IPv4) cho allowlist.
 
 > ⚠️ **Không có "cost winner" trước benchmark.** Ở tải thấp Neon (0.25 CU) **có thể rẻ hơn** DO; khi tải tăng Neon leo tới max-CU đã đặt còn DO vẫn phẳng. Không quy đổi "tenant → CU/RAM" nếu chưa **đo trên staging**. Nguyên tắc: **DO = bill phẳng, dự đoán chắc, vận hành đơn giản; Neon = có thể rẻ hơn ở tải thấp nhưng phải cân max-CU (chi phí ↔ hiệu năng) + benchmark.**
@@ -216,13 +216,13 @@ Repo trước ghi "Railway dev/staging only"; dữ kiện hiện tại cần c�
 
 ---
 
-## 8. Quyết định đề xuất
+## 8. Quyết định đề xuất — HISTORICAL (SUPERSEDED)
 
-> **Bước 1 — QĐ-1 posture:** khuyến nghị **(a) public-TLS + verify-full + static-IP allowlist**, giữ Fly (đơn giản, đủ an toàn khi làm đúng). Chọn (b)/(c) chỉ nếu strict-private là yêu cầu cứng — chấp nhận rời Fly (đổi DD-10).
-> **Bước 2 — provider (theo (a)):** **DigitalOcean Managed Postgres** là finalist nghiêng — **đạt gate HA/SLA + định phí phẳng + vận hành đơn giản nhất**, cho margin DD-29 **dự đoán chắc nhất** (không nhất thiết rẻ nhất — Neon 0.25 CU có thể rẻ hơn ở tải thấp). **Neon Scale** là đối thủ hợp lý nếu ưu tiên autoscaling/branching hoặc chi phí tải-thấp (cần benchmark + PrivateLink vô dụng trên Fly). **Supabase** chỉ vào cuộc ở **Enterprise** (Pro không đạt gate SLA) → để ngoài trừ khi chấp nhận Enterprise.
-> **Ràng buộc xuyên suốt:** chỉ Postgres thuần (portability); DD-04 đã reopen. Sau khi founder chốt posture/provider, ghi quyết định vào `decisions.md` và sửa `deployment-infra.md §6` trước khi land cấu hình production.
+> ⚠️ **Section này là khuyến nghị BAN ĐẦU (đề xuất (a)) — đã bị THAY bởi quyết định cuối `(c) co-locate DigitalOcean` (2026-07-16, `dd-04-hosting-final-decision.md`).** Giữ làm lịch sử phân tích. **KHÔNG còn CTA "chọn (a)".**
+>
+> *(Lịch sử) Bước 1 từng đề xuất (a) giữ Fly + public-TLS; Bước 2 provider DO Managed. Kết quả cuối founder chọn **(c) co-locate DO** (private VPC) — **(a) = fallback** nếu egress-IP gate fail. **(c) đổi deployment target Fly→DO nhưng KHÔNG đảo DD-10** (App Platform chạy standalone container). Neon/Supabase loại như phân tích trên.*
 
-**Cần founder:** (1) chốt **QĐ-1 posture**; (2) nếu (a) → chọn **DigitalOcean** (đề xuất) hay **Neon Scale**. **Không** cần duyệt reopen lần nữa.
+**Trạng thái:** ✅ **DD-04 = Accepted (c)** — `decisions.md` v1.32 + `dd-04-hosting-final-decision.md`. Còn lại (build slice): **egress-IP gate** + provision + restore/failover drill + đo RPO/RTO + KMS wiring.
 
 ---
 

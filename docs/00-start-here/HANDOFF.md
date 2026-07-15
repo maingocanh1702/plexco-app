@@ -1,7 +1,7 @@
 # HANDOFF — Plexco
 
 > **Đọc file này ĐẦU TIÊN khi tiếp quản project.** Self-contained: không cần context phiên trước.
-> Cập nhật: 2026-07-15 (BRD v3.5 · PRD v2.4 · TDD v2.4 · ROADMAP v2.7 · decisions v1.32). Khi thay đổi convention/kiến trúc lớn → cập nhật file này.
+> Cập nhật: 2026-07-16 (BRD v3.6 · PRD v2.4 · TDD v2.5 · ROADMAP v2.7 · decisions v1.32). Khi thay đổi convention/kiến trúc lớn → cập nhật file này.
 >
 > **⚡ v3.4 Phase-1 pivot (DD-37 ✅, thay DD-09):** Kênh phase-1 = **web + Zalo + Facebook Messenger**;
 > **Telegram đã bị loại khỏi phạm vi** (không còn adapter/bot Telegram trong MVP). Auth phase-1 =
@@ -108,14 +108,14 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 
 ## 6. Trạng thái hiện tại (2026-07-10)
 
-**Planning & Docs — phần lớn hoàn tất** (v3.4 pivot → decisions v1.32); **còn OQ mở + DD-04 chưa chốt** (danh sách ở `docs/founder-decision-brief-2026-07-15.md`). **Foundation + Auth Onboarding v3 (Telegram-era) đã land trên `main@1eb6f60`.**
+**Planning & Docs — phần lớn hoàn tất** (v3.4 pivot → decisions v1.32); **DD-04 đã chốt (c) DO co-locate (2026-07-16)** — còn OQ founder khác + build-time gates (egress-IP verify…); danh sách ở `docs/founder-decision-brief-2026-07-15.md`. **Foundation + Auth Onboarding v3 (Telegram-era) đã land trên `main@1eb6f60`.**
 
 - ✅ **Foundation merged:** monorepo (`packages/core` + `packages/db` + `apps/bot` + `apps/web`) + core logic thuần (test xanh) + Postgres/RLS choke-point (`tenantRepo`/`withTenant`) + **migrations `0000–0013`** committed (roles/RLS/grants/functions/seeds/auth_functions/onboarding_steps) + bộ RLS invariant test chạy trên role runtime thật.
 - ✅ **Auth Onboarding v3 (Telegram-era) merged** (`5b1193b`) + web tests. **DD-37 supersede provider** → thay bản Telegram-era bằng **Google/email** đã **spec'd nhưng CHƯA implement**.
 - ⬜ **Feature layer chưa build:** session/reconcile/sync/marketplace/billing/bot handlers/UI (bảng DB đã dựng sẵn; tầng command/service/projector/UI còn trắng).
 
 Tài liệu hoàn tất (bản mới nhất):
-- ✅ BRD v3.5 · PRD v2.4 · TDD v2.4 · ROADMAP v2.7 (canonical P-numbers)
+- ✅ BRD v3.6 · PRD v2.4 · TDD v2.5 · ROADMAP v2.7 (canonical P-numbers)
 - ✅ 4 phụ lục (saas-plan, reconciliation, AUDIT, messenger)
 - Feature docs: **21 Product / 20 BE = 20 cặp hoàn chỉnh + 1 product-only Draft** (`channel_booking_funnel`); trong đó **3 cặp phase-1 mới (Messenger/chat/settings) đã tracked trong documentation baseline, còn chờ migration/build** — xem `features/README.md`
 - ✅ Business rules, design tokens, dependency graph

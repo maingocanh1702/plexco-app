@@ -126,7 +126,7 @@
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| SEC-OQ-1 | Hosting/provider selection → final RPO/RTO + KMS implementation | ⬜ Chưa chốt |
+| SEC-OQ-1 | Hosting/provider selection → final RPO/RTO + KMS implementation | ✅ Provider chốt **DD-04 (c) DO co-locate**; RPO/RTO + KMS wiring = **build-time gate** (đo sau provision + restore/failover drill) → `../dd-04-hosting-final-decision.md` |
 | SEC-OQ-2 | VN legal retention periods + incident notification obligations | ⬜ Chưa chốt |
 
 ### Changelog

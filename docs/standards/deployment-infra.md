@@ -240,7 +240,7 @@ Single primary (PITR bật, **chưa** read replica), free tier WAF/Sentry. Chấ
 | Managed Postgres (HA + PITR, auto-failover standby) | **DO Managed PG** (co-locate VPC, primary+standby) | ~$60 |
 | CDN/WAF | Cloudflare free | $0 |
 | Error tracking | Sentry free | $0 |
-| **Tổng Tier A** | | **~$30–50** |
+| **Tổng Tier A** | | **~$120–132** (production baseline topology; smoke/1-container-per-component ≈ $75) |
 
 ### Tier B — Production money-safe baseline (mặc định khi có tiền thật chạy qua)
 
@@ -251,9 +251,9 @@ Thêm những thứ §5/§6 yêu cầu để an toàn tiền/đa-tenant ở tả
 | **Read replica** (discovery + player-view) | §5.2 — offload hot public reads | ~$25–40 |
 | **WAF/CDN Pro** | §6 — rate-limit tập trung, DDoS G6 | ~$20 |
 | **Sentry Team** | alerting/retention | ~$26 |
-| App scale (nhiều replica) | autoscale theo RPS | ~$20–50 |
+| ~~App scale~~ | Topology 2 web + 2 discovery + 1–2 worker **đã nằm trong Tier A** — KHÔNG cộng lại (tránh double-count) | — |
 | Secret/KMS managed | envelope encryption token | ~$0–10 |
-| **Tổng Tier B (≈ A + bổ sung)** | | **~$120–200** |
+| **Tổng Tier B (= A $120–132 + bổ sung)** | | **~$191–228** |
 
 ### Tier C — P6 hardening (one-off + định kỳ, không phải hosting cố định)
 
@@ -293,3 +293,4 @@ Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill
 | 2026-06-20 | v1.2 | Sync connector review: thêm ApiPay vào webhook topology/process; đổi tham chiếu durable ACK sang BL-PAY-1/AUDIT BL-1. |
 | 2026-06-20 | v1.3 | Sync DD-03 pricing tiers 0đ/79k/159k/199k vào cost assumptions. |
 | 2026-07-10 | v1.4 | **DD-37 channel pivot (BRD v3.4):** bỏ Telegram; kênh phase-1 = web + Zalo + Facebook Messenger (Messenger P2.5). Webhook topology/process + rate-limit/reminder refs đổi TG→Zalo/Messenger (nhắc chính web push + Zalo DM, Messenger best-effort 24h). Auth phase-1 = Google/email (DD-13). |
+| 2026-07-16 | v1.5 | **DD-04 ✅ Accepted — (c) co-locate DigitalOcean:** compute DO App Platform + DO Managed PG cùng **VPC private** (thay Fly; Fly = fallback (a)). §2 DD-04 section + §0 TL;DR → (c). **Cost table sửa:** Tier A $30–50 → **$120–132** (compute $60–72 + DB $60); Tier B bỏ double-count "app scale" → **$191–228**. Full DO App Spec + supersede `fly.toml` = **infra slice**; pre-build **egress-IP gate §7.1**. Record `../dd-04-hosting-final-decision.md`. |

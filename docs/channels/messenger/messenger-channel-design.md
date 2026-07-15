@@ -4,7 +4,7 @@
 
 **Phiên bản:** 2.1
 **Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 15/07/2026
-**Tài liệu tham chiếu:** `BRD.md` v3.5 · `PRD.md` · `TDD.md` · `player-side-saas-reconciliation.md` · `player-side-saas-AUDIT.md`
+**Tài liệu tham chiếu:** `BRD.md` v3.6 · `PRD.md` · `TDD.md` · `player-side-saas-reconciliation.md` · `player-side-saas-AUDIT.md`
 
 > **Cập nhật v3.4 (DD-37 ✅):** Messenger nay là **kênh phase-1 (P2.5)** — không còn post-MVP. Telegram đã bị loại khỏi phạm vi; nhắc nợ chính = **web + Zalo**, Messenger best-effort trong standard window 24h. Ngoài cửa sổ chỉ dùng cơ chế Meta đủ điều kiện/được phê duyệt; **App Review bắt buộc**, Page per-club. Phase-label **P2.5.x** bên dưới thay cho P4.8.x cũ. Auth-link Facebook = **DD-33 🟡** (phase-1).
 

@@ -1,10 +1,10 @@
 # Technical Design Document (TDD) — Plexco
 ## Platform thể thao đa môn (host + player) — multi-tenant, marketplace discovery, sync đa surface, Zalo + Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi — DD-37)*
 
-**Phiên bản:** 2.4 — **v3.4 channel pivot (DD-37) + DD-45 waitlist contract**: bỏ Telegram; kênh phase-1 = web + Zalo + Facebook Messenger; auth Google/email; mark-paid thủ công; final join active-vs-waitlisted dưới lock; chuẩn hoá canonical store và ledger tiền. **v2.4:** tham chiếu cụm session-model + social (DD-06/08/41–48) — contract build P2–P4+, chi tiết ở feature specs.
+**Phiên bản:** 2.5 — **v3.4 channel pivot (DD-37) + DD-45 waitlist contract**: bỏ Telegram; kênh phase-1 = web + Zalo + Facebook Messenger; auth Google/email; mark-paid thủ công; final join active-vs-waitlisted dưới lock; chuẩn hoá canonical store và ledger tiền. **v2.4:** tham chiếu cụm session-model + social (DD-06/08/41–48) — contract build P2–P4+, chi tiết ở feature specs. **v2.5 (16/07):** DD-04 ✅ (c) DO co-locate (Postgres host = DO App Platform + Managed PG VPC private).
 **Ngày tạo:** 16/06/2026 · **Cập nhật:** 15/07/2026
 **Tài liệu tham chiếu:**
-- `BRD.md` v3.5 — yêu cầu nghiệp vụ
+- `BRD.md` v3.6 — yêu cầu nghiệp vụ
 - `PRD.md` v2.4 — user flows + edge cases
 - `../strategy/saas-implementation-plan.md` — kiến trúc multi-tenant
 - `../research/player-side-saas-reconciliation.md` — identity/kênh/matching
@@ -770,7 +770,7 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 
 ---
 
-*TDD v2.4 — implementation contract cho platform đa môn + marketplace + sync engine; kênh phase-1 = web + Zalo + Messenger (Telegram đã loại, DD-37). Join full → waitlisted/no-charge, promotion mới tạo charge (DD-45). Bốn bất biến: cô lập tenant (gồm chat) · không lộ tiền/PII/giới tính ra public · ledger không mất/đếm quá tiền · PostgreSQL/domain model là nguồn sự thật.*
+*TDD v2.5 — implementation contract cho platform đa môn + marketplace + sync engine; kênh phase-1 = web + Zalo + Messenger (Telegram đã loại, DD-37). Join full → waitlisted/no-charge, promotion mới tạo charge (DD-45). Bốn bất biến: cô lập tenant (gồm chat) · không lộ tiền/PII/giới tính ra public · ledger không mất/đếm quá tiền · PostgreSQL/domain model là nguồn sự thật.*
 
 ---
 
@@ -779,6 +779,7 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
 | 15/07/2026 | v2.4 | **Propagation (light):** mở rộng tham chiếu decisions.md sang cụm session-model + social (DD-06/08/41/42/43/44/46/47/48). Contract build P2–P4+, giữ 4 bất biến (tenant isolation/không lộ tiền-PII-tag public/ledger đúng/domain-model là nguồn sự thật). Schema/DDL + implementation contract chi tiết viết cùng build slice (không đổi §3 canonical schema body ở pass này). |
+| 16/07/2026 | v2.5 | **DD-04 ✅ Accepted:** Postgres host = **(c) co-locate DigitalOcean** (App Platform + Managed PG VPC private); runtime summary + Q2 → (c). Fly = fallback; egress-IP gate; full DO App Spec = infra slice. Record `../dd-04-hosting-final-decision.md`. |
 | 15/07/2026 | v2.3 | **DD-45:** retire `SESSION_FULL` cho joinable session; full→waitlisted/no-charge/no-venue, approval full cùng outcome; add `REJOIN_REQUIRES_REVIEW` fail-closed money guard. |
 | 10/07/2026 | v2.2 (review fixes) | **Money vocab → canonical ledger:** FR-7b + ER diagram + bảng tổng hợp + ledger invariants + API + testing — mark-paid = INSERT `payment_allocations` (cash/manual) + cập nhật `charges`; bỏ bảng `payment` & source `bank_transfer` (enum canonical `auto/manual/cash/waiver/reversal`); CK host tự xác nhận chưa có bank_txn = impl còn mở. **DD-38/39 ✅ scope-committed phase-1** (FR-19/20, bảng §3.2 row 26/27, §3.5, §8, open questions) — schema `chat_*`/`person.gender` chờ migration (không claim done). Đồng bộ `decisions.md` v1.16. |
 | 16/06/2026 | v2.0 | Initial TDD — canonical store, multi-tenant, RLS, sync engine |
