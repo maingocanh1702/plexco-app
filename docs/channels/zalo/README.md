@@ -3,9 +3,11 @@
 > **Surface:** Zalo Official Account (OA) — DM only
 > **Deployable unit:** `apps/bot/zalo/`
 > **API:** Zalo OA API v3 (HTTP REST, không SDK)
-> **Phase:** P4.7 (player join + notifications)
-> **Version:** v0.3 · 2026-06-20
+> **Phase:** **P2 — Phase-1 MVP** (DD-37 ✅; player join + notifications)
+> **Version:** v0.4 · 2026-07-10
 > **Refs:** `../../features/feature_zalo_channel.md` · `../../features/BE/feature_zalo_channel_tech.md` · `../../research/player-side-saas-AUDIT.md` §B2
+
+> **Cập nhật v3.4 (DD-37 ✅, thay DD-09):** Zalo là **kênh phase-1** cùng web + Facebook Messenger; **Telegram đã bị loại khỏi phạm vi**. Zalo DM là **kênh nhắc nợ chính** (cùng web push); Messenger chỉ best-effort trong cửa sổ 24h. Bảng "Khác biệt vs Telegram" bên dưới giữ làm **design rationale** — không hàm ý Telegram còn trong scope.
 
 ---
 
@@ -170,9 +172,9 @@ Provider event id phải được dedupe trước khi gọi domain service.
 | BE tech spec | ✅ Reviewed | Có DDL `zalo_bots`, `zalo_reply_contexts` |
 | Existing reference | ✅ Strong | Bestminton có Zalo transport production-ish cùng TG |
 | Missing before coding | 🟡 Minor/Medium | Confirm exact Zalo event names/payloads với sandbox, rate limits, token verify behavior |
-| Delivery readiness | 🟡 Medium | Làm sau Telegram + onboarding token connect |
+| Delivery readiness | 🟡 Medium | **Kênh chat đầu tiên của phase-1 (P2)** — làm sau P0–P1 foundation + onboarding token connect (Telegram đã loại — DD-37) |
 
-**Go/no-go:** Zalo đủ khả thi cho MVP Việt Nam. Bắt buộc giữ DM-only, number-reply TTL, token drift và `ChannelReachability` per tenant.
+**Go/no-go:** Zalo đủ khả thi cho MVP Việt Nam và là **kênh nhắc nợ chính** (cùng web push). Bắt buộc giữ DM-only, number-reply TTL, token drift và `ChannelReachability` per tenant.
 
 ---
 
@@ -191,8 +193,9 @@ Provider event id phải được dedupe trước khi gọi domain service.
 
 | Date | Version | Thay đổi |
 |------|---------|----------|
+| 2026-07-10 | v0.4 | **Phase-1 pivot (DD-37 ✅):** Zalo nay là kênh phase-1 (P2) + **kênh nhắc nợ chính** (cùng web push); Telegram loại khỏi phạm vi. Cập nhật phase/readiness/go-no-go; bảng "vs Telegram" giữ làm design rationale. |
 | 2026-06-20 | v0.3 | Sửa token rotation: dùng `rotation_pending`/pending secret thay vì một lifecycle status ngoài enum |
 | 2026-06-20 | v0.2 | Chốt `zalo_bots` làm routing source, thêm number-reply/event contract, token rotation, readiness |
 | 2026-06-19 | v0.1 | Initial surface docs |
 
-*Zalo bot surface docs v0.3.*
+*Zalo bot surface docs v0.4. Kênh phase-1 (DD-37) — nhắc nợ chính cùng web push.*

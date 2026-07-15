@@ -83,7 +83,7 @@ Thiếu 1 trong 5 → module vẫn `in_progress`, không được tính %.
 ## 5. Thứ tự build (critical path — không thương lượng)
 
 ```
-P0–P1 Foundation ─▶ P2 TG-tenant ─▶ P3 CK-reconcile ─▶ P3 Migrate #1
+P0–P1 Foundation ─▶ P2 Zalo-tenant (Messenger P2.5) ─▶ P3 CK-reconcile ─▶ P3 Migrate #1
    ─▶ P3.5 Identity ─▶ P4 Web+Sync ─▶ P4.3 Marketplace ─▶ P4.5–4.7 Player
    ─▶ P5 Billing ─▶ P6 Harden
                          (Messenger P2.5: phase-1 nhưng phụ thuộc App Review, tách nhánh)
@@ -141,7 +141,7 @@ Sau đó theo critical path: M4 → M5 (killer) → M6 (dogfood) → …
 - **Quên `SET LOCAL` ở đường worker.** Scheduler/dispatcher phải quay lại tenant context trước khi đọc/ghi; đừng cấp `BYPASSRLS` toàn cục cho process (TDD §3.4). Test Worker/RLS gate.
 - **Cho `pay_code` vào memo quá sớm.** P3 phát hành memo **name-based**; `pay_code`/VietQR chỉ phát cho player từ P4 sau khi rollout+migration+test nhánh đó xong (TDD §10.5).
 - **Project ra surface trước khi command/outbox idempotent.** Sai thứ tự này = roster "nhảy lùi" và double-notify. Outbox + `commandId`/`event.id` dedupe phải có *trước* khi bật projector thật.
-- **Coi `free_web` như plan trả phí.** `free_web` (0đ) vào thẳng `active` vô thời hạn — không trial/past_due/suspended vì non-payment (BRD FR-9.1, DD-03). Đừng để billing cron đụng nó.
+- **Coi plan `free` như plan trả phí.** Authority = **DD-29** (logical plans `free`/`host_pro`, thay DD-03). Plan `free` (0đ) vào thẳng `active` vô thời hạn — không trial/past_due/suspended vì non-payment (BRD FR-9.1). Đừng để billing cron đụng nó. *(Live schema còn key legacy `free_web` cho tới khi migration DD-29 đổi CHECK → `('free','host_pro')`; đừng dùng `free_web` làm vocabulary.)*
 - **Để Messenger (P2.5, App Review) khoá critical path.** Là phase-1 nhưng phụ thuộc App Review Meta; tách nhánh, không chặn phần MVP còn lại.
 
 ---

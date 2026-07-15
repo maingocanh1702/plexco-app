@@ -1,10 +1,12 @@
 # Feature: Identity Directory & Merge — Backend Tech Spec
 
-> **Canonical phase:** P3.5  
-> **Version:** 1.1 · 2026-06-18  
-> **Status:** Implementation contract aligned with TDD v2.1  
-> **Product spec:** `../feature_identity.md`  
-> **References:** `../../product/TDD.md` §3.2–3.4/§4 · `../../research/player-side-saas-AUDIT.md`
+> **Canonical phase:** P3.5
+> **Version:** 1.2 · 2026-07-10
+> **Status:** Implementation contract aligned with TDD v2.2 — **full-review baseline cũ; light-propagated → TDD v2.4**
+> **Product spec:** `../feature_identity.md`
+> **References:** `../../product/TDD.md` §3.2–3.4/§4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37 · DD-13
+
+> **Cập nhật v1.2 (DD-37 ✅, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** (bỏ Telegram). `ChannelIdentity.platform` phase-1 ∈ {`zalo`, `messenger`}; một Person link **Google + Facebook + Zalo** (web-auth: DD-13/DD-33/DD-14, `feature_web_auth_onboarding_tech.md`). Merge signal vẫn theo DD-01 (SĐT verified) + verified email (DD-13). `telegram` = legacy tenant-1 only.
 
 ---
 
@@ -21,7 +23,7 @@ admin suggestion → tenant authz → merge planner → merge transaction
 
 Global does not mean public. Runtime API role receives no broad SELECT on persons/channel identities/link codes/audit. Access occurs through identity service functions with authenticated actor, purpose and audit.
 
-Messenger enum/data migration is P4.8; P3.5 runtime accepts Telegram/Zalo only.
+Phase-1 runtime accepts **Zalo + Messenger** channel identities (DD-37, Messenger promoted to P2.5). `telegram` remains only as a legacy tenant-1 enum value in the canonical schema — no new Telegram identities are created.
 
 ---
 
@@ -46,7 +48,7 @@ WHERE phone_verified_at IS NOT NULL AND status = 'active';
 CREATE TABLE channel_identities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   person_id uuid NOT NULL REFERENCES persons(id),
-  platform text NOT NULL CHECK (platform IN ('telegram','zalo')),
+  platform text NOT NULL CHECK (platform IN ('zalo','messenger')),  -- phase-1 (DD-37); canonical schema.ts keeps 'telegram' as legacy tenant-1 enum
   platform_user_id_enc bytea NOT NULL,
   platform_user_lookup_hash text NOT NULL,
   username_enc bytea,
@@ -171,6 +173,8 @@ No data changes occur during planning.
 5. For each tenant, enter tenant RLS context or use audited narrow merge function:
    - no conflict: re-parent membership;
    - conflict: select survivor, re-parent players/charges, mark loser `merged`, set tombstone link;
+     **pay_code (DD-02): KEEP on tombstone (do NOT re-parent); reconcile recognition follows
+     `merged_into_membership_id` to survivor (tenant/status/cycle guards) so old QR/memo still resolve;**
    - merge reachability deterministically per tenant/platform.
 6. Do **not** update/delete bank transactions or payment allocations. Allocations remain attached to charges; re-parented charges preserve ledger totals.
 7. Mark old Person `merged`, create person tombstone.
@@ -283,5 +287,6 @@ Metrics: person/channel creation, merge success/failure by method, claim rejecti
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-10 | v1.2 | **DD-37 ✅:** phase-1 channels = Zalo + Messenger; `channel_identities.platform` phase-1 ∈ {`zalo`,`messenger`}, `telegram` legacy tenant-1 only. Person links Google+Facebook+Zalo (web-auth DD-13/33/14). Merge signals: verified SĐT (DD-01) + verified email (DD-13). |
 | 2026-06-18 | v1.1 | Protected identity, tenant reachability, secure OTP, ledger-safe merge and recovery contract |
 | 2026-06-18 | v1.0 | Initial legacy backend spec |

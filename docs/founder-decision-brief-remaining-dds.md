@@ -1,8 +1,8 @@
 # 📋 Founder Decision Brief — Các DD còn treo (hợp nhất)
 
-> **Mục đích:** đưa MỌI decision đang chờ founder (trừ DD-04 đã có brief riêng) về trạng thái **quyết-định-được**. Mỗi DD: bối cảnh · phương án · khuyến nghị · hệ quả · **cần founder gì**.
-> **Ngày:** 2026-07-13 · **Nguồn:** `docs/standards/decisions.md` v1.20 (bản canonical — brief này KHÔNG thay thế, chỉ tóm tắt để quyết). DD-04 → xem `dd-04-hosting-decision-brief.md`.
-> **Quy ước:** các DD 🟡 phần lớn đã có phương án đề xuất trong decisions.md; "duyệt" nghĩa là chuyển 🟡→✅ để mở khoá build. ⬜ = chưa có đề xuất, cần founder định hướng.
+> ⚠️ **CẬP NHẬT 2026-07-15 — snapshot này đã superseded bởi `decisions.md` v1.31.** DD-02/05/06/08/32/41–46 đã chốt; DD-47/48 chốt framework P4+. **DD-04 đã reopen**: HA+PITR+Singapore giữ nguyên, provider còn gate auto-failover/SLA/network posture (ứng viên DO/Neon; xem `dd-04-hosting-decision-brief.md`). DD-14/15 là external Zalo spikes; DD-33 phụ thuộc Meta App Review; DD-18 chặn Club Assistant GO-LIVE; DD-34/35/36 còn P7 detail. Nội dung bên dưới là lịch sử trước closure, không phải status hiện hành.
+>
+> **Mục đích (gốc):** đưa MỌI decision đang chờ founder về trạng thái **quyết-định-được**. Nội dung bên dưới giữ làm lịch sử; trạng thái canonical = `decisions.md`.
 
 ---
 
@@ -15,12 +15,10 @@
 - **Biểu diễn:** `sports` đã là bảng dữ liệu (`key`/`name`/`active`) → extensible sẵn. Level cần **rank số 1..5** cho gating DD-41 → lookup `skill_levels(key,label,rank)` thay `sessions.skill_level` text (migration đi cùng DD-41). Một nguồn level cho DD-41/DD-43.
 - **Ghi canonical:** `decisions.md` DD-08 → ✅ + changelog v1.21.
 
-### DD-02 · Format `pay_code` — 🟡 Đề xuất — *P3*
-- **Bối cảnh:** mã đối soát CK cần dễ đọc cho player nhưng match bền ở backend. Đề xuất: **lưu trần** trong DB; **hiển thị** kèm prefix CLB (vd `BMC-xxxx`); parser webhook strip prefix trước khi match.
-- **Còn lại:** chốt **format prefix cuối cùng** (độ dài, ký tự, per-club).
-- **Khuyến nghị:** duyệt đề xuất; format cụ thể: `<CLUB>-<base32 5–6 ký tự>` (bỏ ký tự dễ nhầm 0/O/1/I); parser chấp nhận cả có/không prefix + chuẩn hoá hoa-thường.
-- **Hệ quả:** chặn build payment ledger + parser đối soát (P3) nếu chưa chốt.
-- **Cần founder:** OK đề xuất + duyệt quy ước prefix.
+### DD-02 · `pay_code` contract — ✅ CHỐT (2026-07-13) — *P4*
+- **Quyết định (owner):** suffix trần **4 ký tự** (A-Z+2-9 trừ 0/O/1/I/L), unique per-tenant, immutable; prefix = `tenants.pay_prefix` (canonical, UNIQUE, lock); memo `<PREFIX>-<CODE>`. Recognition qua resolver **own/foreign/none** (prefix bắt buộc, `PAYMENT` không chặn oan); allocation invariant (auto exact/over/under-partial); provider-agnostic (ApiPay primary, SePay evidence); merge follow tombstone.
+- **Phân tích đầy đủ:** `dd-02-paycode-analysis.md` (rev 4). Ghi canonical: `decisions.md` DD-02 ✅ + phase **P3→P4** + changelog v1.22.
+- **Propagation khi build P4:** wire core+tests, `classifyIncoming`→partial, migration pay_prefix+CHECK, extend merge contract, connector ApiPay ✅.
 
 ### DD-33 · Facebook Login / Messenger account-link — 🟡 (phase-1) — *P2.5*
 - **Bối cảnh:** Messenger là kênh MVP (DD-37); feature-4 cần link Plexco↔Facebook. FB Login = provider `account_identities.platform='facebook'`. FB Login (web-auth) và Messenger PSID (page-scoped) là **hai subject khác nhau** → cần link (OTP/verified) về cùng `person`, **không** auto-link chéo.
@@ -35,16 +33,15 @@
 
 > Cả cụm đụng schema `sessions`/`players`/`memberships` + public whitelist. **DD-46 phải chốt trước** vì đụng invariant `tenant_id NOT NULL`.
 
-### DD-46 · Kèo không thuộc CLB (Skip Club / personal meet) — ⬜ Mở — **kiến trúc, chốt TRƯỚC cụm**
-- **Bối cảnh:** app đối thủ có "Skip Club"/tạo kèo không cần club. Plexco: `sessions.tenant_id NOT NULL` là bất biến HR1 (mọi session qua choke-point RLS). Session không tenant = **không có RLS** (ai own? tiền thế nào?) → đụng thẳng 5 HARD RULES.
-- **Phương án:** (A) **không hỗ trợ** kèo không-CLB trong MVP (giữ invariant); (B) **"personal tenant"** — mỗi host một tenant cá nhân nhẹ (giữ invariant nhưng ảnh hưởng onboarding/billing/identity).
-- **Khuyến nghị:** **(A) cho MVP** — đơn giản, không phá HR1; cân nhắc (B) phase sau nếu có nhu cầu thật.
-- **Cần founder:** chọn A/B (hoặc hoãn công khai) — **trước** khi viết schema cụm session-model.
+### DD-46 · Kèo không thuộc CLB (Skip Club) — ✅ CHỐT (2026-07-13) — **Option B**
+- **Quyết định (owner):** **Option B — personal tenant.** Auto-provision tenant cá nhân (`tenants.kind='personal'`, plan free, owner=self, tái dùng WAO-UC-2) → giữ nguyên `tenant_id NOT NULL` + RLS + money. Nullable tenant_id **CẤM vĩnh viễn**.
+- **Phân tích:** `dd-46-skip-club-analysis.md`. Ghi canonical: `decisions.md` DD-46 ✅ + changelog v1.24.
+- **Mở khoá:** cụm session-model (DD-41/42/43/44/45) build thẳng trên tenant_id (personal = một loại tenant).
 
-### DD-41 · Field mô tả + gating cho `sessions` — 🟡
-- **Bối cảnh:** `sessions` thiếu `title`/`notes`, chỉ 1 `skill_level` text không enforce. Đề xuất thêm **mô tả** (`title`,`notes`,`session_type` enum,`byoe`/`cost_shared`/`instructions`) + **gating enforce ở đường JOIN** (`level_min/max/strict`,`gender_restriction`,`age_group`). Gender ở đây = **điều kiện JOIN**, khác gender **PRICING** (DD-39).
-- **Khuyến nghị:** duyệt; taxonomy `session_type` chốt chung DD-08.
-- **Cần founder:** duyệt (mở khoá parity mô tả/targeting + filter discovery).
+### DD-41 · Field mô tả + gating cho `sessions` — ✅ CHỐT (2026-07-13)
+- **Quyết định (owner):** mô tả (title/notes/**`session_type` 1-field** social/class/coaching/tournament/singles/byoe/cost_shared/instructions) + gating enforce **CCJ fail-closed** (level_min/max_rank+strict [DD-08], gender_restriction, **age_min/max**). **level+gender+age cả ba in-scope**; enforce **self-attested**.
+- **Dependencies:** level per-sport source (chưa có → level advisory), `person.gender` (DD-39), **`person.dob`+consent (MỚI cho age)**.
+- **Phân tích:** `dd-41-session-fields-gating-analysis.md`. Canonical: `decisions.md` DD-41 ✅ + v1.25.
 
 ### DD-45 · Model hoá waitlist (đóng gap SES-UC-9) — 🟡
 - **Bối cảnh:** spec Reviewed SES-UC-9 hứa "leave → slot freed, waitlist auto-promote" nhưng `players.status` chỉ `active|left`. Đề xuất thêm `waitlisted` + thứ tự; auto-promote **trong cùng transaction** (`FOR UPDATE`) để không over-fill.

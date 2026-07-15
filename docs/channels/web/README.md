@@ -1,16 +1,18 @@
 # 🌐 Web App — Surface Docs
 
-> **Surface:** plexco.app (web dashboard + marketplace + player view)
+> **Surface:** plexco.app (web dashboard + marketplace + player view + chat in-app)
 > **Deployable unit:** `apps/web`
 > **Tech stack:** Next.js App Router baseline · Route Handlers/API · SSE · vanilla CSS · Google Fonts
-> **Version:** v0.2 · 2026-06-20
+> **Version:** v0.3 · 2026-07-10
 > **Refs:** `../../product/TDD.md` §3.9 · `../../features/feature_web_auth_onboarding.md` · `../../features/feature_sync_engine.md` · `../../features/feature_marketplace_discovery.md` · `../../features/feature_player_view.md`
+
+> **Cập nhật v3.4 (DD-37 ✅):** Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅, thay TG Login) + link **Facebook** (DD-33 🟡) / **Zalo** (DD-14 ⬜). Kênh phase-1 = **web + Zalo + Facebook Messenger** (Telegram loại). Web nay còn là surface của **chat in-app** (DD-38 ✅) + **cài đặt hồ sơ/giá theo giới tính** (DD-39 ✅) + **mark-paid thủ công** (DD-40 ✅).
 
 ---
 
 ## 1. Vai trò trong hệ thống
 
-Web app là **1 trong 4 surfaces** của Plexco (cùng TG bot, Zalo bot, Messenger). Tất cả surfaces ghi vào **cùng PostgreSQL canonical store** qua `packages/core` domain services.
+Web app là **1 trong 3 surfaces phase-1** của Plexco (cùng Zalo bot, Facebook Messenger — Telegram đã loại, DD-37). Tất cả surfaces ghi vào **cùng PostgreSQL canonical store** qua `packages/core` domain services.
 
 ```
 plexco.app
@@ -42,8 +44,8 @@ Nếu sau P0 chọn Express SSR vì deploy đơn giản hơn, API/DTO contract b
 
 | Route | Screen | Auth | Data scope | Phase |
 |-------|--------|------|-----------|-------|
-| `/` | Landing + login (TG Login Widget) | Public | — | P4 |
-| `/onboarding` | Wizard 4 bước (SePay, TG, Zalo, môn) | Authenticated | — | P4 |
+| `/` | Landing + login (Google OAuth + email/password) | Public | — | P1 |
+| `/onboarding` | Wizard (SePay, Zalo, Facebook Messenger, môn) | Authenticated | — | P4 |
 | `/dashboard` | Host overview (sessions, payments, members) | TenantAdmin | Tenant RLS | P4 |
 | `/dashboard/sessions` | Session list + CRUD | TenantAdmin | Tenant RLS | P4 |
 | `/dashboard/sessions/:id` | Session detail (roster, payments, QR) | TenantAdmin | Tenant RLS | P4 |
@@ -71,17 +73,19 @@ Chi tiết states (Loading/Ready/Error/Empty) → xem từng feature spec + `scr
 
 ---
 
-## 3. Auth Flow
+## 3. Auth Flow (DD-13 ✅ — phase-1)
 
 ```
-Landing → TG Login Widget → POST /auth/telegram { initData }
-  → Verify HMAC (bot token) server-side
-  → Account lookup/create → Person resolve
+Landing → chọn provider:
+  ├── Google OAuth  → /auth/google/callback   → verify id_token (google.sub)
+  └── Email/password → POST /auth/email        → verify credential (bảng riêng)
+  → account_identities lookup/create (platform ∈ {google, email}) → Person resolve
   → Set httpOnly session cookie (access 15m + refresh 30d)
   → Redirect: có tenant? → /dashboard : /onboarding hoặc /discover
 ```
 
-Tương lai (P7 native): thêm Apple/Google Sign-In → cùng Account → Person pipeline.
+- **Bỏ TG Login adapter** (DD-37). `account_identities.platform ∈ { google, email, facebook(DD-33), zalo(DD-14) }`; SI-2 keyed-hash cho `google.sub`/email (DD-31).
+- **Link tài khoản:** person có thể link **Facebook** (DD-33 🟡, phase-1 — phụ thuộc App Review) + **Zalo** (DD-14 ⬜) vào cùng Person qua verified signal/OTP `/link`, **không** auto-link bằng tên. Google/email không cấp SĐT → phone chỉ là merge signal (DD-01).
 
 ---
 
@@ -140,7 +144,7 @@ Quy tắc:
 ```
 apps/web/
 ├── api/
-│   ├── auth/          ← TG Login, session, refresh
+│   ├── auth/          ← Google OAuth + email/password, session, refresh, link Facebook/Zalo
 │   ├── sessions/      ← CRUD, join
 │   ├── payments/      ← ledger, allocate, reverse, cash
 │   ├── members/       ← membership, merge
@@ -256,7 +260,8 @@ Duplicate `commandId` returns previous semantic result. UI must not retry with a
 
 | Date | Version | Thay đổi |
 |------|---------|----------|
+| 2026-07-10 | v0.3 | **v3.4 pivot (DD-37 ✅):** auth = Google + email (DD-13 ✅, bỏ TG Login) + link Facebook (DD-33 🟡)/Zalo (DD-14 ⬜); surfaces phase-1 = web + Zalo + Messenger (Telegram loại); web thêm surface chat in-app (DD-38 🟡), settings/giá theo giới tính (DD-39 🟡), mark-paid thủ công (DD-40 ✅). Cập nhật §1/§2/§3/§6. |
 | 2026-06-20 | v0.2 | Chốt Next.js App Router baseline, thêm permission matrix, SSE topics, DTO/API contract, readiness |
 | 2026-06-19 | v0.1 | Initial surface docs |
 
-*Web app surface docs v0.2. Screen handoffs sẽ được tạo per-screen trong `screens/` trước P4.*
+*Web app surface docs v0.3. Screen handoffs sẽ được tạo per-screen trong `screens/` trước P4.*

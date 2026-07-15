@@ -3,9 +3,11 @@
 > Principles dùng khi thiết kế core domain, database schema, service boundary và architecture slice cho Plexco.
 > Tài liệu này không thay thế `product/TDD.md`, `standards/business-rules.md` hoặc `standards/decisions.md`; khi conflict, cập nhật decision/source document trước rồi sync lại file này.
 
-**Version:** 1.0  
-**Date:** 2026-06-21  
+**Version:** 1.1
+**Date:** 2026-06-21 (cập nhật 2026-07-10)
 **Scope:** multi-tenant core, PostgreSQL/RLS, sync engine, identity, payment ledger, marketplace discovery, web/chat/native surfaces.
+
+> **Cập nhật v1.1 — 10/07/2026 (DD-37 / BRD v3.4):** kênh phase-1 = **Zalo + Facebook Messenger + web** (bỏ Telegram); các ví dụ adapter/provider-ingest/idempotency bên dưới đổi Telegram→Messenger. Identity link phase-1 = **Google + Facebook + Zalo** (DD-13/33/14). **Nguyên tắc không đổi** — chỉ đổi nhãn kênh ví dụ.
 
 ---
 
@@ -64,7 +66,7 @@ Mọi ghi dữ liệu phải thuộc một trong ba nhóm:
 | Write path | Source | Required controls |
 |---|---|---|
 | User command | Web, bot, native app | `command_id`, authz, tenant/person resolution, aggregate lock, domain mutation, outbox in same transaction. |
-| Provider ingest | SePay/ApiPay/Zalo/Telegram webhook | Signature/token verify, raw durable insert before ACK, idempotency, async processing, audit. |
+| Provider ingest | SePay/ApiPay/Zalo/Messenger webhook | Signature/token verify, raw durable insert before ACK, idempotency, async processing, audit. |
 | Operator correction | Admin/support/manual reconcile | Strong authz, reason code, before/after audit, append-only correction/reversal where money/identity is involved. |
 
 Nếu một path không fit bảng trên, thiết kế chưa đủ rõ.
@@ -126,7 +128,7 @@ trusted channel/web session -> resolve tenant -> authorize actor -> tenantRepo(t
 
 ### P3. Keep Adapters Thin; Put Behavior in Core Services
 
-Telegram, Zalo, Messenger, web and native app should normalize input into commands. They should not own business rules.
+Zalo, Messenger, web and native app should normalize input into commands. They should not own business rules.
 
 Adapter responsibilities:
 
@@ -188,7 +190,7 @@ Required rules:
 Keep these concepts separate:
 
 - `Person`: real-world user identity, global protected.
-- `ChannelIdentity`: Telegram/Zalo/Messenger/native identity linked to Person.
+- `ChannelIdentity`: Zalo/Messenger/Google/native identity linked to Person.
 - `Membership`: relation between Person and Tenant.
 - `Player/session roster row`: participation in a session.
 
@@ -221,7 +223,7 @@ Every path that can retry must define a durable dedupe key.
 | Path | Dedupe key |
 |---|---|
 | Web/native command | `(tenant_id, command_id)` or `(person_id, command_id)` depending on scope. |
-| Telegram update/callback | Provider update ID + route context. |
+| Channel message/callback (Zalo/Messenger) | Provider message/update ID + route context. |
 | Webhook transaction | `(tenant_id, provider, external_id)` or deterministic hash fallback. |
 | Outbox event | `(aggregate_id, sequence)` plus event ID. |
 | Projector delivery | `(event_id, projector)`. |
@@ -242,7 +244,7 @@ Use DB transactions for invariants that must be true immediately after commit:
 
 Use workers/projectors for eventual side effects:
 
-- Telegram/Zalo/Messenger sends/edits;
+- Zalo/Messenger sends/edits;
 - web realtime invalidation;
 - public projection update;
 - retryable notification;
@@ -579,3 +581,4 @@ Before merging any core/db architecture change, ask:
 | Date | Version | Change |
 |---|---|---|
 | 2026-06-21 | 1.0 | Initial Plexco core/db/architecture principles. |
+| 2026-07-10 | 1.1 | DD-37 channel pivot (BRD v3.4): ví dụ adapter/provider-ingest/idempotency đổi Telegram→Zalo/Messenger; `ChannelIdentity` = Zalo/Messenger/Google/native. Không đổi nguyên tắc. |

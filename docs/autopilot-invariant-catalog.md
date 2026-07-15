@@ -12,6 +12,8 @@ này; token lạ → **HALT INVARIANT_UNKNOWN** (chống synonym drift). Chi ti�
 
 ## Canonical tokens (Plexco — refine khi codebase lớn lên)
 
+> **DD-37 (v3.4):** kênh phase-1 = **Zalo + Facebook Messenger** (bỏ Telegram). `transport-telegram` giữ lại (archived) để không vỡ validator/manifest cũ; slice kênh mới dùng `transport-zalo` + `transport-messenger`.
+
 <!-- catalog:start -->
 schema — Supabase/Postgres tables, migrations, RLS policies
 auth — authentication / authorization / session / Supabase auth
@@ -21,9 +23,9 @@ identity — member/account identity link/merge (feature_identity)
 cross-club — cross-club join logic (feature_cross_club_join)
 marketplace — marketplace discovery / listing (feature_marketplace_discovery)
 core-api — shared backend API contract consumed by web + bots
-transport-telegram — Telegram bot adapter (docs/bot-telegram, src tg)
-transport-zalo — Zalo bot adapter (docs/bot-zalo, src zalo)
-transport-messenger — Messenger bot adapter (docs/bot-messenger, src messenger)
+transport-telegram — Telegram bot adapter — ARCHIVED (DD-37: bỏ khỏi phase-1; giữ token để không vỡ manifest cũ)
+transport-zalo — Zalo bot adapter, phase-1 P2 (docs/channels/zalo, src zalo)
+transport-messenger — Messenger bot adapter, phase-1 P2.5 (docs/channels/messenger, src messenger)
 web-app — web frontend (docs/web-app, src web)
 shared-core — transport/UI-agnostic compute shared by ≥2 channels
 i18n-surface — user-facing strings / translations

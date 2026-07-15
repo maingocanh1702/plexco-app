@@ -1,10 +1,12 @@
 # Feature: Security, Reliability & Operations — Engineering/Ops Spec
 
-> **Canonical phase:** Cross-cutting / P6  
-> **Version:** 2.0 · 2026-06-19  
-> **Status:** Reviewed  
-> **Product spec:** `../feature_security_operations.md`  
-> **References:** `../../product/TDD.md` §4/6/7/10 · `../../research/player-side-saas-AUDIT.md`
+> **Canonical phase:** Cross-cutting / P6
+> **Version:** 2.1 · 2026-07-10
+> **Status:** Reviewed
+> **Product spec:** `../feature_security_operations.md`
+> **References:** `../../product/TDD.md` §4/6/7/10 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37
+
+> **Cập nhật v2.1 (DD-37 ✅, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** (bỏ Telegram). Secret rotation/kill-switch nay bao **Zalo Bot Token**, **Messenger Page token + FB app secret**, **Google OAuth client secret** (thay Telegram bot token).
 
 ---
 
@@ -86,9 +88,10 @@ No new business tables — cross-cutting controls applied to all existing tables
 
 | Secret Type | Rotation | Kill Switch |
 |-------------|----------|-------------|
-| Telegram bot token | Manual + runbook | Yes — immediate revoke |
-| Zalo bot token | Manual + runbook | Yes |
-| Provider webhooks | Rotatable | Yes |
+| Zalo bot token | Manual + runbook | Yes — immediate revoke |
+| Messenger Page token + FB app secret | Manual + runbook | Yes — immediate revoke |
+| Google OAuth client secret | Manual + runbook | Yes — revoke + re-issue |
+| Provider webhooks (SePay/ApiPay) | Rotatable | Yes |
 | Web session keys | Automatic (30d) | Yes — invalidate all sessions |
 | KMS data keys | Automatic | Yes — re-encrypt |
 
@@ -187,3 +190,4 @@ Required runbooks: cross-tenant leak, public PII, wrong allocation, identity com
 |---|---|---|
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), control areas matrix, secret rotation table, CI gates, 20 tests |
+| 2026-07-10 | v2.1 | **DD-37 ✅:** secret rotation table — bỏ Telegram bot token; thêm Messenger Page token + FB app secret + Google OAuth client secret (kênh phase-1 Zalo/Messenger). |

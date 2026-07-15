@@ -10,7 +10,7 @@
 
 ## 0. TL;DR
 
-Deploy Plexco như **một modular monolith container-hoá**: **1 Docker image → 3 process group** (`web` · `discovery` · `worker`) cùng codebase, khác entrypoint/DB-role. Chạy trên **container PaaS** (Fly.io hoặc Railway) ở **region Singapore**, dùng **managed Postgres HA + PITR** (Neon hoặc Supabase). Queue/cron nằm trên Postgres qua **pg-boss** (không Redis/Kafka). Realtime = **SSE fan-out qua Postgres `LISTEN/NOTIFY`** (không cần message broker).
+Deploy Plexco như **một modular monolith container-hoá**: **1 Docker image → 3 process group** (`web` · `discovery` · `worker`) cùng codebase, khác entrypoint/DB-role. Chạy trên **container PaaS** (Fly.io hoặc Railway) ở **region Singapore**, dùng **managed Postgres HA + PITR** (DD-04 reopened → finalist **DigitalOcean Managed / Neon Scale** + gate posture-network; Supabase chỉ Ent — xem `../dd-04-hosting-decision-brief.md`). Queue/cron nằm trên Postgres qua **pg-boss** (không Redis/Kafka). Realtime = **SSE fan-out qua Postgres `LISTEN/NOTIFY`** (không cần message broker).
 
 **KHÔNG:** Kubernetes · tách microservices · serverless function cho worker/webhook/SSE · Redis cho queue.
 
@@ -41,7 +41,7 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 
 **Đã chốt:** Managed Postgres **HA (auto-failover) + PITR**, **region Singapore**. Compute app target **Fly.io** (DD-10).
 **Gate cứng:** **auto-failover HA + uptime SLA + posture private-network trên nền Fly**.
-**Phân tích đầy đủ + nguồn:** `../dd-04-hosting-decision-brief.md` (rev 2) — bảng dưới là tóm tắt canonical.
+**Phân tích đầy đủ + nguồn:** `../dd-04-hosting-decision-brief.md` (rev 3) — bảng dưới là tóm tắt canonical.
 
 **QĐ-1 (chốt trước) — posture network:** compute (Fly) khác cloud với DB managed → không private thật trừ PrivateLink/co-locate. **(a)** public TLS + `sslmode=verify-full` + static-egress-IP allowlist [**đề xuất**, giữ Fly] · **(b)** PrivateLink AWS [rời Fly] · **(c)** co-locate compute+DB cùng cloud [rời Fly].
 
@@ -235,7 +235,7 @@ Single primary (PITR bật, **chưa** read replica), free tier WAF/Sentry. Chấ
 | Hạng mục | Provider (ví dụ) | Chi phí/tháng |
 |---|---|---|
 | App hosting (web+discovery+worker) | Fly.io / Railway, vài instance nhỏ | ~$5–20 |
-| Managed Postgres (HA + PITR, no replica) | Supabase Pro / Neon scale | ~$25–30 |
+| Managed Postgres (HA + PITR, auto-failover standby) | DO Managed (≥1 standby) / Neon Scale | ~$30+ (benchmark trước cam kết) |
 | CDN/WAF | Cloudflare free | $0 |
 | Error tracking | Sentry free | $0 |
 | **Tổng Tier A** | | **~$30–50** |

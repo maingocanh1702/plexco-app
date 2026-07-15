@@ -1,10 +1,10 @@
 # Feature: Cross-club Join & Approval — Backend Tech Spec
 
 > **Canonical phase:** P4.3  
-> **Version:** 2.0 · 2026-06-19  
+> **Version:** 2.3 · 2026-07-15
 > **Status:** Reviewed  
 > **Product spec:** `../feature_cross_club_join.md`  
-> **References:** `../../standards/business-rules.md`
+> **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-39/DD-45 · `../../dd-45-waitlist-analysis.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`)
 
 ---
 
@@ -12,8 +12,8 @@
 
 ```text
 Public Session ID → Protected resolver → Canonical session/tenant
-    → Open Join TX: Lock session → Validate → Guest membership → Player + Charge → Outbox
-    → Approval TX: Create request → Notify host → Approve/Reject/Expire
+    → Open Join TX: Lock session → Validate → Guest membership → Active+Charge OR Waitlisted → Outbox
+    → Approval TX: Create request → Notify host → Approve(Active OR Waitlisted)/Reject/Expire
 ```
 
 Commands: `JoinPublicSession`, `CancelJoinRequest`, `ApproveJoinRequest`, `RejectJoinRequest`, `ExpireJoinRequests`, `LeaveSession`. Public ID resolved via protected service to canonical session/tenant — enter tenant context → authorize.
@@ -42,14 +42,14 @@ ALTER TABLE join_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE join_requests FORCE ROW LEVEL SECURITY;
 ```
 
-Existing tables used: `memberships` (guest status), `session_roster`, `charges`.
+Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 expands `players.status` with `waitlisted` + positive `waitlist_position`; waitlisted rows have no charge.
 
 ### Edge Cases (Backend)
 
 | # | Category | Case | Xử lý |
 |---|----------|------|-------|
-| 1 | Concurrency | 2 players join last slot | Lock session row → first-commit-wins |
-| 2 | Concurrency | Approve after capacity full | Safe conflict — terminal with reason "full" |
+| 1 | Concurrency | 2 players join last slot | Lock session row → first active+charge, second waitlisted without charge/venue |
+| 2 | Concurrency | Approve after capacity full | Mark request approved + create waitlisted player/position under same lock; no charge/venue |
 | 3 | Concurrency | Approve after request expired | Safe conflict — terminal with reason "expired" |
 | 4 | Concurrency | Duplicate join command | Command dedup + UNIQUE active request index |
 | 5 | Security | Body contains arbitrary person_id | ❌ Reject — use authenticated session identity |
@@ -60,6 +60,10 @@ Existing tables used: `memberships` (guest status), `session_roster`, `charges`.
 | 10 | Security | Public error reveals tenant state | Generic error messages — no private info |
 | 11 | Data Integrity | Suspended tenant new offer | Existing sessions OK — no new extensions |
 | 12 | Concurrency | Deadlock: session/request/membership | Stable lock order documented: session → request → membership |
+| 13 | Financial | Existing player `left` joins/requests again | `REJOIN_REQUIRES_REVIEW`; no player/charge/allocation mutation |
+| 14 | Financial | Promotion sees waitlisted player with charge | Skip candidate, audit `WAITLIST_CHARGE_CONFLICT` + owner-review; never upsert/overwrite charge |
+| 15 | Financial/Resilience | Promotion amount derivation KMS/decrypt/price failure | Candidate stays waitlisted/no-charge/no-venue; audit `WAITLIST_CHARGE_DERIVATION_FAILED` + one canonical failure outbox event for retry/alert consumers; opener commits; continue next; no fallback price |
+| 16 | Financial/Resilience | Direct open/approve active path cannot derive amount | Abort that join/approve transaction fail-closed: no active player/charge/venue; newly-created guest membership rolls back; request stays pending; retry safely |
 
 ---
 
@@ -79,8 +83,7 @@ Existing tables used: `memberships` (guest status), `session_roster`, `charges`.
 
 | Code | Error Code | Message | Trigger |
 |------|-----------|---------|---------|
-| 409 | `SESSION_FULL` | Buổi chơi đã đầy | Capacity exceeded |
-| 409 | `ALREADY_JOINED` | Bạn đã tham gia buổi này | Duplicate join |
+| 409 | `REJOIN_REQUIRES_REVIEW` | Cần host kiểm tra lần tham gia trước | Existing player row `status='left'` |
 | 409 | `REQUEST_EXPIRED` | Yêu cầu đã hết hạn | Expired request |
 | 409 | `REQUEST_DECIDED` | Yêu cầu đã được xử lý | Already approved/rejected |
 | 403 | `PLAYER_BANNED` | Bạn không thể tham gia club này | Banned player |
@@ -101,20 +104,28 @@ Existing tables used: `memberships` (guest status), `session_roster`, `charges`.
 
 ```text
 1. Lock session (SELECT FOR UPDATE)
-2. Validate: public? open? future? capacity?
+2. Validate: public? open? future? DD-41 eligibility/ban?
 3. Resolve/create guest membership (idempotent)
-4. Insert session_roster + charge (session price)
-5. Store processed command + outbox event
-6. COMMIT → Return venue in joined-person DTO
+4. Lookup player by UNIQUE (tenant_id, session_id, membership_id):
+   a. active/waitlisted → return current outcome idempotently
+   b. left → REJOIN_REQUIRES_REVIEW; no mutation
+5. Re-count active under lock:
+   a. capacity available/unlimited → derive amount first; on success insert active player + exactly one charge atomically; on DD-39 derivation failure abort this join tx (no player/charge/venue, new guest membership rollback)
+   b. full → insert waitlisted player + tail position; no charge/venue
+6. Store processed command + outbox event
+7. COMMIT → active DTO includes venue; waitlisted DTO includes area + position only
 ```
 
 ### Approval Transaction
 
 ```text
-1. Create join_request (UNIQUE active per person/session)
-2. Notify host (outbox event)
+1. Request create: lookup existing membership/player without creating membership:
+   a. active/waitlisted → return current outcome idempotently; do not create request
+   b. left → REJOIN_REQUIRES_REVIEW; no request/player/charge mutation
+   c. no player → create join_request (UNIQUE active per person/session); still no membership/player/charge
+2. Notify host for a newly-created pending request (outbox event)
 3. [Host decides]:
-   a. Approve: Lock request → lock session → verify status/expiry/capacity → membership/player/charge → COMMIT
+   a. Approve: read request keys → lock session → lock request → verify status/expiry/eligibility → resolve membership/player rejoin guard → if capacity, derive amount then active+charge atomically (derivation fail rolls back, request remains pending); otherwise approved+waitlisted/no-charge → COMMIT
    b. Reject: Lock request → mark rejected → notify player
    c. System: Expire job → mark expired → notify player
 ```
@@ -134,7 +145,7 @@ Existing tables used: `memberships` (guest status), `session_roster`, `charges`.
 | # | Test | Input | Expected |
 |---|------|-------|----------|
 | 1 | Open join happy path | Public/open/capacity | Joined + charge created |
-| 2 | Open join full | No capacity | `SESSION_FULL` |
+| 2 | Open join full | No capacity | Waitlisted + positive position; no charge/venue |
 | 3 | Open join closed | Status=closed | `SESSION_NOT_JOINABLE` |
 | 4 | Open join private | Visibility=private | `SESSION_NOT_JOINABLE` |
 | 5 | Guest membership created | Non-member join | membership role=guest |
@@ -143,16 +154,22 @@ Existing tables used: `memberships` (guest status), `session_roster`, `charges`.
 | 8 | Approval request created | Approval policy | Request status=pending |
 | 9 | Duplicate request | Same person/session | Idempotent |
 | 10 | Approve happy path | Capacity available | Approved + joined |
-| 11 | Approve full | No capacity at decision | Safe conflict "full" |
+| 11 | Approve full | No capacity at decision | Request approved + waitlisted player; no charge/venue |
 | 12 | Approve expired | Past expires_at | Safe conflict "expired" |
 | 13 | Reject happy path | Admin rejects | Status=rejected |
 | 14 | Cancel request | Player cancels | Status=cancelled |
 | 15 | Expire job | Expired requests | Batch mark expired |
-| 16 | Concurrent last-slot | 2 parallel joins | One success, one full |
+| 16 | Concurrent last-slot | 2 parallel joins | One active+charge, one waitlisted without charge |
 | 17 | Paid leave | Player with charge | Financial policy applied |
 | 18 | Venue hidden before join | Pre-join DTO | No venue |
 | 19 | Venue revealed after join | Post-join DTO | Venue present |
 | 20 | Cross-tenant admin spoof | Wrong tenant admin | 403 |
+| 21 | Duplicate active/waitlisted join | Existing player | Return current state idempotently; no rank/charge change |
+| 22 | Rejoin after left | Existing player `left` + any charge state | `REJOIN_REQUIRES_REVIEW`; player/charge/allocations unchanged |
+| 23 | Waitlist charge conflict | Candidate already has charge | No promotion/charge mutation; audit+owner-review; continue next candidate |
+| 24 | Promotion amount derivation failure | Waitlisted candidate has encrypted gender; KMS/decrypt throws | Candidate unchanged waitlisted/no-charge/no-venue; one audit + one canonical failure outbox event; opener committed; retry/alert consume event; continue next; no fallback price |
+| 25 | Direct open join amount derivation failure | Capacity available; KMS/decrypt throws | Join transaction aborts; no player/charge/venue; new guest membership absent; retry safe |
+| 26 | Approval amount derivation failure | Pending request + capacity; KMS/decrypt throws | Approve transaction aborts; request remains pending; no player/charge/venue; retry safe |
 
 ### Integration Tests
 
@@ -161,7 +178,7 @@ Existing tables used: `memberships` (guest status), `session_roster`, `charges`.
 | 1 | Open join E2E | Browse → join → verify roster | Full flow |
 | 2 | Approval E2E | Request → approve → verify | Full flow |
 | 3 | Expiry E2E | Request → wait → expire | Auto-expired |
-| 4 | Concurrent final-slot | 10 parallel joins, 1 slot | Exactly 1 joined |
+| 4 | Concurrent final-slot | 10 parallel joins, 1 slot | Exactly 1 active+charge; 9 waitlisted with unique positive positions and no charge |
 
 ---
 
@@ -176,7 +193,7 @@ Existing tables used: `memberships` (guest status), `session_roster`, `charges`.
 
 ### Metrics
 
-- Attempts / success / pending / full / expired
+- Attempts / active / waitlisted / pending / expired / rejoin-review
 - Approval latency (request → decision)
 - Duplicate/conflict rate
 - Abuse blocks
@@ -186,5 +203,8 @@ Existing tables used: `memberships` (guest status), `session_roster`, `charges`.
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-15 | v2.3 | **DD-39×DD-45 fail-closed charge derivation:** direct active join/approve aborts atomically on derivation failure; waitlist promotion keeps candidate unchanged, audits/retries without rolling back opener, then continues queue; add no-fallback tests. |
+| 2026-07-15 | v2.2 | **DD-45 propagation:** unify open/approval full→waitlisted, exact active-vs-waitlisted transaction outcomes, stable lock order, fail-closed `left` rejoin and existing-charge promotion guard; update tests/metrics. |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), DDL, 12 edge cases, transaction details, 20 tests |
+| 2026-07-13 | v2.1 | Reconcile live schema: `session_roster` → `players`; join transaction inserts `players` + `charges` with canonical foreign keys. |

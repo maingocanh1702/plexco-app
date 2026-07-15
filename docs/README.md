@@ -2,7 +2,7 @@
 
 Bản đồ điều hướng cho toàn bộ docs. Bắt đầu từ đây.
 
-> **Plexco** — platform thể thao đa môn (host + player), multi-tenant, marketplace discovery, sync đa surface: Telegram · Zalo · Web *(Messenger post-MVP P4.8)*.
+> **Plexco** — platform thể thao đa môn (host + player), multi-tenant, marketplace discovery, sync đa surface: **Zalo · Facebook Messenger · Web** *(Telegram đã bỏ khỏi phạm vi — DD-37; Messenger nay là phase-1, P2.5)*.
 
 ## 🚀 Đọc theo vai trò
 
@@ -13,7 +13,7 @@ Bản đồ điều hướng cho toàn bộ docs. Bắt đầu từ đây.
 | **Founder / Ops / CRM** | `product/CRM_DASHBOARD_BRD.md` → `strategy/gtm-strategy.md` → `standards/business-rules.md` |
 | **Backend** | `product/TDD.md` → `standards/business-rules.md` → `features/BE/<feature>_tech.md` |
 | **Frontend / Web** | `channels/web/README.md` → `channels/web/design-brief.md` → `channels/web/design-tokens.md` |
-| **Bot / Channel** | `channels/telegram/` · `channels/zalo/` · `channels/messenger/` + feature kênh tương ứng |
+| **Bot / Channel** | `channels/zalo/` · `channels/messenger/` + feature kênh tương ứng (`channels/telegram/` **archived — DD-37**) |
 | **Bất kỳ quyết định nào** | `standards/decisions.md` ⭐ |
 | **Dev chạy autopilot** | `autopilot-ONBOARDING.md` ⭐ → `autopilot-backlog.md` → `autopilot-templates/` |
 
@@ -31,7 +31,7 @@ Bản đồ điều hướng cho toàn bộ docs. Bắt đầu từ đây.
 | File | Vai trò |
 |---|---|
 | `BRD.md` | Yêu cầu **nghiệp vụ** — vấn đề, personas, scope, monetization, glossary |
-| `PRD.md` | **User flows** chi tiết (14 flows) + edge cases, surface & command map |
+| `PRD.md` | **User flows** chi tiết (15 flows) + edge cases, surface & command map |
 | `TDD.md` | **Thiết kế kỹ thuật** — kiến trúc, data model, RLS, sync engine, security, testing |
 | `ROADMAP.md` | **Lộ trình** P0–P6, dependency map, critical path, North Star |
 | `CRM_DASHBOARD_BRD.md` | BRD cho **dashboard nội bộ** quản lý growth, CRM, marketplace liquidity, payment/billing, trust và ops |
@@ -56,7 +56,7 @@ Bản đồ điều hướng cho toàn bộ docs. Bắt đầu từ đây.
 
 ### `channels/` — docs theo surface
 
-`channels/telegram/` · `channels/zalo/` · `channels/messenger/` · `channels/web/`. Mỗi surface có `README.md`; `channels/web/` thêm `design-brief.md`, `design-tokens.md`, `screens/`; `channels/messenger/` có `messenger-channel-design.md` (chờ convert feature spec P4.8).
+`channels/zalo/` · `channels/messenger/` · `channels/web/` (`channels/telegram/` **archived — DD-37, giữ làm lịch sử**). Mỗi surface có `README.md`; `channels/web/` thêm `design-brief.md`, `design-tokens.md`, `screens/`; `channels/messenger/` có `messenger-channel-design.md` (kênh **phase-1 P2.5**); feature spec player đã có: `features/feature_player_messenger.md` + `features/BE/feature_player_messenger_tech.md` (Draft, DD-37 ✅).
 
 ### `research/` — phân tích & audit
 
@@ -99,4 +99,4 @@ Proposal 🟡 trước khi promote vào spec/decision (vd `plexco-global-kb-and-
 
 ---
 
-*Index v1.1 — 21/06/2026.*
+*Index v1.2 — 10/07/2026 (v3.4/DD-37: kênh phase-1 = Zalo + Facebook Messenger + web; bỏ Telegram; Messenger lên P2.5). · v1.1 — 21/06/2026.*

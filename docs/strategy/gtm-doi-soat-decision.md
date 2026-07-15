@@ -3,14 +3,16 @@
 > Tài liệu quyết định, tổng hợp nghiên cứu ngày 30/06/2026. Mục đích: chốt kiến trúc kênh + đối soát cho mô hình "host connect club", và làm checklist đi hỏi sales.
 >
 > **Rev 30/06/2026 (sau review):** sửa nhãn gói ApiPay (BUSINESS↔ENTERPRISE), reframe GTM theo web/app-first, hạ payOS từ "default free" → "candidate pending sales" (P0 same-owner), tách reconcile thành add-on, thêm quyết định overflow Zalo.
+>
+> **Rev 10/07/2026 (DD-37 / BRD v3.4):** **bỏ Telegram** khỏi phạm vi; kênh phase-1 = **Zalo + Facebook Messenger + web**; Messenger **lên phase-1 (P2.5)**, không còn post-MVP. Auth phase-1 = Google/email (DD-13). Các bảng/nhãn "Telegram (MVP)" và "Messenger (post-MVP)" bên dưới đã cập nhật theo DD-37.
 
 ---
 
 ## 1. Tóm tắt GTM mới
 
-> **Framing (đã chỉnh theo product direction):** Plexco là **web/app-first operations product**; chat (Telegram/Zalo; Messenger **post-MVP**) là kênh **acquisition + notification/deep-link**, KHÔNG phải sản phẩm chính. GTM đúng là *"vận hành trên web/app + thu hút & nhắc việc qua chat"*, không phải "chat là sản phẩm chính". Tham chiếu: `docs/product/PRD.md` (MVP = web app + Telegram + Zalo, Messenger post-MVP) và `docs/channels/web/ux-sync-design.md` (web/app là main product, bot = notification/deep-link adapter).
+> **Framing (đã chỉnh theo product direction):** Plexco là **web/app-first operations product**; chat (**Zalo + Facebook Messenger**; Telegram bỏ — DD-37) là kênh **acquisition + notification/deep-link**, KHÔNG phải sản phẩm chính. GTM đúng là *"vận hành trên web/app + thu hút & nhắc việc qua chat"*, không phải "chat là sản phẩm chính". Tham chiếu: `docs/product/PRD.md` (MVP = web app + Zalo + Facebook Messenger) và `docs/channels/web/ux-sync-design.md` (web/app là main product, bot = notification/deep-link adapter).
 
-- **Acquisition qua chat giá rẻ:** cho host connect club qua Telegram / Zalo (Messenger post-MVP), chi phí rất thấp (từ ~70k/tháng) để kéo user vào — rồi **điều hướng nghiệp vụ chính về web/app**.
+- **Acquisition qua chat giá rẻ:** cho host connect club qua **Zalo / Facebook Messenger**, chi phí rất thấp (từ ~70k/tháng) để kéo user vào — rồi **điều hướng nghiệp vụ chính về web/app**.
 - **Upsell bằng tính năng vận hành:** tier trả phí cao hơn có tự động đối soát chuyển khoản của player và các tính năng khác.
 - **Kết luận tài chính cốt lõi:** kênh chat gần như không tốn chi phí biên → gói 70k có biên tốt. Nhưng **đối soát là chi phí biến theo giao dịch/host**, dễ vượt 70k → phải tách thành **add-on/tier riêng** và chọn rail chi phí thấp.
 
@@ -20,20 +22,20 @@
 
 | Kênh | Thiết kế | Chi phí messaging |
 |---|---|---|
-| Telegram *(MVP)* | 1 bot chung Plexco cho tất cả host & player | Miễn phí |
-| Zalo *(MVP)* | **Mỗi host tự tạo & own 1 bot** qua Zalo Bot Platform, deploy trên hạ tầng Plexco | **Free (đang Beta)** |
-| Messenger *(post-MVP, P4.8)* | Page per-club | Gần như free (cửa sổ 24h) — **chưa thuộc MVP** |
+| Zalo *(phase-1)* | **Mỗi host tự tạo & own 1 bot** qua Zalo Bot Platform, deploy trên hạ tầng Plexco | **Free (đang Beta)** |
+| Messenger *(phase-1, P2.5)* | **1 App Plexco, Page per-club**; cửa sổ 24h; cần App Review | Gần như free trong 24h (ngoài 24h trả phí) |
+| ~~Telegram~~ | **Bỏ khỏi phạm vi (DD-37 thay DD-09)** | — |
 
-> Theo PRD: surface MVP = **web app + Telegram + Zalo**; Messenger là post-MVP. Web/app là workspace chính, bot chỉ giữ action cực ngắn + nhắc/deep-link.
+> Theo BRD v3.4/DD-37: surface phase-1 = **web app + Zalo + Facebook Messenger** (Telegram bỏ; Messenger P2.5). Web/app là workspace chính, bot chỉ giữ action cực ngắn + nhắc/deep-link.
 
 **Lưu ý Zalo Bot Platform:**
 - Mỗi tài khoản Zalo cá nhân tạo tối đa 3 bot free → quota tính trên từng host, không dồn về Plexco.
 - Trần free: **50 user/bot** và **3.000 tin/tháng/bot** → host 3+ sân có thể vượt 50 player, cần xử lý tràn.
 - **Rủi ro: đây là giá Beta.** Khi Zalo công bố pricing chính thức, chi phí có thể từ 0 → có phí. Không xây mô hình tài chính dựa trên "Zalo free mãi mãi".
 
-**Quyết định cần chốt — overflow Zalo (host > 50 player/bot):** fallback theo thứ tự — (1) điều hướng player sang **web/app + Telegram** (đúng product direction, COGS ~0); (2) chỉ khi bắt buộc mới lên **Zalo OA/ZNS có phí** (200–800đ/tin). Mặc định KHÔNG mua ZNS để giữ biên; web/app là surface chính, Zalo bot chỉ là 1 kênh nhắc.
+**Quyết định cần chốt — overflow Zalo (host > 50 player/bot):** fallback theo thứ tự — (1) điều hướng player sang **web/app + Messenger** (đúng product direction, COGS ~0); (2) chỉ khi bắt buộc mới lên **Zalo OA/ZNS có phí** (200–800đ/tin). Mặc định KHÔNG mua ZNS để giữ biên; web/app là surface chính, Zalo bot chỉ là 1 kênh nhắc.
 
-**Hệ quả:** hiện cả 3 kênh ≈ 0đ messaging → chi phí kênh thực chất chỉ là **hạ tầng deploy**. Nên route các thông báo (nhắc đóng tiền…) qua Telegram/Messenger/in-app để giữ free; tránh Zalo OA/ZNS (200–800đ/tin) khi không cần.
+**Hệ quả:** cả 2 kênh chat + web ≈ 0đ messaging (Messenger free trong 24h) → chi phí kênh thực chất chỉ là **hạ tầng deploy**. Nên route thông báo (nhắc đóng tiền…) qua **web push + Zalo DM** (chính) + Messenger best-effort trong 24h + in-app để giữ free; tránh Zalo OA/ZNS (200–800đ/tin) khi không cần.
 
 ---
 
@@ -141,7 +143,7 @@ Plexco sở hữu **1 tài khoản provider duy nhất**; mỗi host **link tài
 
 ## 7. Khuyến nghị kiến trúc
 
-1. **Kênh:** web/app là sản phẩm chính; MVP = web + 1 bot chung Telegram + mỗi host 1 Zalo bot (Messenger post-MVP). Dự phòng khi Zalo Bot hết Beta (đẩy về web/app + Telegram, hoặc ZNS có phí).
+1. **Kênh:** web/app là sản phẩm chính; phase-1 = web + mỗi host 1 **Zalo bot** + **Facebook Messenger** (1 App, Page per-club, P2.5). Telegram bỏ (DD-37). Dự phòng khi Zalo Bot hết Beta (đẩy về web/app + Messenger, hoặc ZNS có phí).
 2. **Đối soát — tách 2 đường:**
    - **Candidate default (free, chờ xác minh sales):** ưu tiên rail đã rõ cơ chế — **SePay app chia sẻ BĐSD** / **VPBank free tier**; **payOS free** chỉ khi xác nhận có partner/multi-merchant model (P0). COGS ~0, scale 100+ host chỉ tăng hạ tầng.
    - **Cao cấp (managed, có phí):** host muốn "bao mượt" hoặc dùng bank không có rail free → gom apipay (ENTERPRISE)/SePay-API, charge add-on cao hơn để cover ~64k COGS.

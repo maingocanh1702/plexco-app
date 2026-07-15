@@ -60,13 +60,14 @@
 - **Canonical:** `players.status` CHECK `('active','left')` (`schema.ts:288`); UNIQUE player/session/membership + UNIQUE charge/session/player; waitlist chưa có live schema.
 - **Chốt — lifecycle + ordering PIN:**
   - Mở `players_status_chk` **+ `waitlisted`**. **`waitlisted` KHÔNG chiếm capacity, KHÔNG tạo charge, KHÔNG lộ venue** (như pending — venue sau khi thành active).
-  - **Open/approval full cùng tạo waitlisted**. Promotion assert no existing charge rồi tạo đúng một charge ATOMICALLY khi `waitlisted→active`; existing-charge conflict → skip+audit owner-review.
+  - **Open/approval full cùng tạo waitlisted**. Promotion assert no existing charge + derive amount trước mutation rồi tạo đúng một charge ATOMICALLY khi `waitlisted→active`; existing-charge conflict → skip+audit owner-review.
+  - **DD-39 derivation failure:** KMS/decrypt/price error → candidate giữ waitlisted/no-charge/no-venue; audit `WAITLIST_CHARGE_DERIVATION_FAILED` + one canonical outbox event cho session retry/owner alert; triggering leave/capacity vẫn commit; xét candidate kế; không fallback giá.
   - **Một ordering duy nhất:** `waitlist_position, joined_at, id`; position dương + state-shape CHECK; deprioritize (DD-42) chuyển xuống tail dưới session lock.
   - **Candidate fail eligibility (DD-41)/ban lúc promote:** **skip → promote người kế tiếp**; candidate bị skip **giữ trong waitlist** (không remove) trừ khi họ tự leave.
   - Active leave/capacity increase fill toàn bộ `slots_max-active_count`; finite→NULL promote mọi eligible. Capacity decrease không promote/evict và dưới active roster → `CAPACITY_BELOW_ROSTER`.
   - Existing `active|waitlisted` join lại idempotent; existing `left` → `REJOIN_REQUIRES_REVIEW`, không mutation ledger.
   - Promote → notify (`feature_notifications_reminders`).
-- **An toàn:** atomic + idempotent; test total order/không over-fill/skip-on-ineligible+charge-conflict/capacity boundaries/rejoin fail-closed/exactly-one-charge-on-promotion.
+- **An toàn:** atomic + idempotent; test total order/không over-fill/skip-on-ineligible+charge-conflict+derivation-failure/capacity boundaries/rejoin fail-closed/exactly-one-charge-on-promotion.
 
 ## DD-47 — Social follow graph (person↔person) · ✅ framework (build P4+)
 - **Chốt (owner): duyệt framework, build P4+.** Bảng **GLOBAL `person_follows`** (cạnh có hướng, **KHÔNG `tenant_id`** — identity global plane, §P6).

@@ -1,10 +1,11 @@
-# 🗄️ DD-04 Decision Brief — Postgres Hosting (rev 2)
+# 🗄️ DD-04 Decision Brief — Postgres Hosting (rev 3)
 
 > **Mục đích:** đủ dữ kiện để founder **chốt provider** cho hệ tiền multi-tenant RLS.
-> **Ngày:** 2026-07-13 (rev 2) · **Nguồn nội bộ:** `deployment-infra.md §2/§6` (DD-04) · `decisions.md` v1.19 (DD-04 line 96) · `feature_security_operations_tech.md`. **Số liệu provider:** web (07/2026), xem Sources.
+> **Ngày:** 2026-07-15 (rev 3; rev 2 factual analysis giữ nguyên, rev 3 đóng governance drift) · **Nguồn nội bộ hiện hành:** `deployment-infra.md §2/§6` (DD-04) · `decisions.md` v1.31 (DD-04) · `feature_security_operations_tech.md`. **Số liệu provider:** web (07/2026), xem Sources.
 > **Đã chốt (không bàn lại):** Managed Postgres **HA + PITR**, **region Singapore**. Railway PG chỉ dev/staging. Compute app hiện target **Fly.io** (DD-10).
 
-> ⚠️ **REV 2 sửa lỗi factual của rev 1** (xem §0.1) và **thêm gate private-network** làm quyết định chốt-trước. **Rev 2 mở rộng phạm vi DD-04** (thêm DigitalOcean + gate network) → **phải reopen/update DD-04 trong `decisions.md`** trước khi founder phê duyệt (§7).
+> ⚠️ **REV 2 sửa lỗi factual của rev 1** (xem §0.1) và **thêm gate private-network** làm quyết định chốt-trước. Do rev 2 mở rộng phạm vi DD-04 (thêm DigitalOcean + gate network), tại thời điểm đó DD-04 cần được reopen/update trước khi founder phê duyệt; rev 3 ghi nhận gate này đã hoàn tất.
+> ✅ **REV 3 governance closure:** DD-04 đã reopen và `deployment-infra.md §2` đã sync; phần còn lại chỉ là founder chọn posture/provider rồi propagate option đã chọn. Không đổi provider facts/recommendation của rev 2.
 
 ---
 
@@ -13,7 +14,7 @@
 **Có HAI quyết định, phải chốt theo thứ tự:**
 
 **QĐ-1 (gate, chốt trước): posture private-network** — vì compute ở **Fly.io** và mọi managed DB nằm ở cloud khác, **không có** private networking thật trừ khi PrivateLink (Supabase Team/Ent + AWS VPC) hoặc **co-locate compute vào cùng cloud DB**. Chọn 1:
-- **(a) Public TLS + `sslmode=verify-full` + static-egress-IP allowlist** — giữ Fly, DB provider allowlist Fly egress IP. Đơn giản, giữ kiến trúc hiện tại. **Mâu thuẫn câu chữ `deployment-infra.md §6`** ("Postgres KHÔNG bao giờ expose public") → phải cập nhật §6 thành "không public *unauthenticated*; truy cập qua TLS verify-full + IP allowlist".
+- **(a) Public TLS + `sslmode=verify-full` + static-egress-IP allowlist** — giữ Fly, DB provider allowlist Fly egress IP. Đơn giản, giữ kiến trúc hiện tại. Câu chữ cũ ở `deployment-infra.md §6` ("Postgres KHÔNG bao giờ expose public") từng mâu thuẫn với posture này; rev 3 đã sync baseline thành "không public *unauthenticated*; truy cập qua TLS verify-full + IP allowlist".
 - **(b) Strict private (PrivateLink/VPC)** — buộc **co-locate compute + DB cùng cloud** (vd chuyển compute sang DO, hoặc sang AWS + Neon PrivateLink). Đây là **thay đổi DD-10** (rời Fly) — hệ quả lớn.
 
 **QĐ-2 (provider), phụ thuộc QĐ-1:**
@@ -63,13 +64,13 @@ Rút từ `deployment-infra.md` (+ bổ sung rev 2):
 
 | Posture | Cách làm | Ưu | Nhược |
 |---|---|---|---|
-| **(a) Public TLS + verify-full + IP allowlist** | Cấp **Fly static egress IP** ($3.60/mo/region, IPv4); DB provider allowlist IP đó; ép `sslmode=verify-full` (**CA validation + hostname verification**) | Giữ Fly nguyên trạng; đơn giản; đủ mạnh cho phần lớn hệ tiền | Traffic qua public internet (đã mã hoá + IP-restricted); **phải sửa câu chữ `§6`** |
+| **(a) Public TLS + verify-full + IP allowlist** | Cấp **Fly static egress IP** ($3.60/mo/region, IPv4); DB provider allowlist IP đó; ép `sslmode=verify-full` (**CA validation + hostname verification**) | Giữ Fly nguyên trạng; đơn giản; đủ mạnh cho phần lớn hệ tiền | Traffic qua public internet (đã mã hoá + IP-restricted); baseline `§6` đã sync, cần pin làm final nếu founder chọn (a) |
 | **(b) PrivateLink (AWS)** | Compute phải ở **AWS VPC**; dùng Neon PrivateLink / RDS | Private thật, không qua public | **Rời Fly** (đổi DD-10); phức tạp/đắt; Supabase PrivateLink = Team/Ent |
 | **(c) Co-locate cùng cloud** | Chuyển compute sang **DO** (Droplet/App Platform) + **DO Managed PG cùng VPC** | Private thật + rẻ + đơn giản trong một hệ | **Rời Fly** (đổi DD-10) |
 
 **Khuyến nghị QĐ-1:** **(a) public-TLS + verify-full + static-IP allowlist** cho giai đoạn hiện tại — giữ Fly, đủ an toàn cho hệ tiền khi làm đúng (`sslmode=verify-full` = CA validation + hostname verification, + allowlist + role least-privilege). Coi (b)/(c) là lựa chọn *khi* muốn strict-private, và cả hai **đều kéo theo rời Fly** nên phải cân với DD-10.
 
-> 📌 **Bắt buộc:** dù chọn gì, **cập nhật `deployment-infra.md §6`** — hiện §6 giả định private-networking cùng cloud, không đúng với Fly + managed DB ngoài. Diễn đạt lại thành "không public *unauthenticated*; bắt buộc TLS verify-full + IP allowlist; private networking khi co-locate".
+> 📌 **Governance:** rev 3 đã sync `deployment-infra.md §6` về baseline trung lập: "không public *unauthenticated*; bắt buộc TLS verify-full + IP allowlist; private networking khi co-locate". Sau khi founder chọn (a/b/c), pin đúng posture được chọn làm final; không cần reopen DD-04 lần nữa.
 
 ---
 
@@ -197,9 +198,9 @@ Repo trước ghi "Railway dev/staging only"; dữ kiện hiện tại cần c�
 ## 7. Governance + checklist xác minh
 
 **Governance (bắt buộc):**
-1. **Reopen DD-04** trong `decisions.md` (line 96 vẫn ghi "Neon vs Supabase") → cập nhật: (a) thêm **DigitalOcean** làm ứng viên; (b) thêm **QĐ-1 posture network**; (c) sửa dữ kiện HA Neon/Supabase. **Không** để brief này drift khỏi canonical.
-2. **Cập nhật `deployment-infra.md §6`** theo posture chốt ở QĐ-1 (network).
-3. **Sync `deployment-infra.md §2` (line 49 — Railway row):** hiện ghi "không pooling / PITR Pro rollout" — **stale**. Sửa: Railway DB template = *unmanaged*; **có** one-click PgBouncer; **PITR** single-node + HA qua pgBackRest. Verdict "chỉ dev/staging" giữ nguyên nhưng **lý do phải đúng dữ kiện**.
+1. ✅ **DD-04 đã reopen** trong `decisions.md` (2026-07-13, DD-04 = 🟡 reopened): đã thêm **DigitalOcean** ứng viên + **QĐ-1 posture network** + sửa dữ kiện HA Neon/Supabase. Founder chỉ còn chọn **QĐ-1 posture** + **QĐ-2 provider** (không còn "duyệt reopen").
+2. ⏳ **Sau khi founder chốt QĐ-1**, cập nhật `deployment-infra.md §6` theo posture thực tế được chọn.
+3. ✅ **`deployment-infra.md §2` đã sync** Railway row: template DB là *unmanaged*; có one-click PgBouncer; PITR single-node + HA qua pgBackRest. Verdict "chỉ dev/staging" giữ nguyên với lý do đã sửa đúng dữ kiện.
 
 **Checklist xác minh trước khi ký (đo, đừng tin brochure):**
 1. **QĐ-1 posture** đã chốt? (a/b/c) — kéo theo có rời Fly hay không.
@@ -217,9 +218,9 @@ Repo trước ghi "Railway dev/staging only"; dữ kiện hiện tại cần c�
 
 > **Bước 1 — QĐ-1 posture:** khuyến nghị **(a) public-TLS + verify-full + static-IP allowlist**, giữ Fly (đơn giản, đủ an toàn khi làm đúng). Chọn (b)/(c) chỉ nếu strict-private là yêu cầu cứng — chấp nhận rời Fly (đổi DD-10).
 > **Bước 2 — provider (theo (a)):** **DigitalOcean Managed Postgres** là finalist nghiêng — **đạt gate HA/SLA + định phí phẳng + vận hành đơn giản nhất**, cho margin DD-29 **dự đoán chắc nhất** (không nhất thiết rẻ nhất — Neon 0.25 CU có thể rẻ hơn ở tải thấp). **Neon Scale** là đối thủ hợp lý nếu ưu tiên autoscaling/branching hoặc chi phí tải-thấp (cần benchmark + PrivateLink vô dụng trên Fly). **Supabase** chỉ vào cuộc ở **Enterprise** (Pro không đạt gate SLA) → để ngoài trừ khi chấp nhận Enterprise.
-> **Ràng buộc xuyên suốt:** chỉ Postgres thuần (portability); reopen DD-04 + sửa §6 trước khi land.
+> **Ràng buộc xuyên suốt:** chỉ Postgres thuần (portability); DD-04 đã reopen. Sau khi founder chốt posture/provider, ghi quyết định vào `decisions.md` và sửa `deployment-infra.md §6` trước khi land cấu hình production.
 
-**Cần founder:** (1) chốt **QĐ-1 posture**; (2) nếu (a) → chọn **DigitalOcean** (đề xuất) hay **Neon Scale**; (3) duyệt reopen DD-04.
+**Cần founder:** (1) chốt **QĐ-1 posture**; (2) nếu (a) → chọn **DigitalOcean** (đề xuất) hay **Neon Scale**. **Không** cần duyệt reopen lần nữa.
 
 ---
 

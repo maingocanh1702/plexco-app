@@ -2,10 +2,12 @@
 
 > **Canonical phase:** P4.6  
 > **Track:** 👤 Player View  
-> **Version:** 2.0 · 2026-06-19  
+> **Version:** 2.1 · 2026-07-13
 > **Status:** Reviewed  
 > **Prerequisites:** P3.5 identity · P3 ledger · P4 web auth/magic link · P4 sync realtime  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-8 · `../product/PRD.md` FLOW 10 · `../product/TDD.md` §3.4/§4 (person-self contract) · `BE/feature_player_view_tech.md`
+
+> **DD-48 boundary:** `/me` vẫn person-self và không nhận arbitrary person id. Cross-user social profile thuộc `feature_user_settings` (`GET /api/persons/:id/profile`) với DTO riêng; host operational member/roster data đi tenant-scoped path riêng. Không tái dùng `/me` serializer cho hai path đó.
 
 ---
 
@@ -67,7 +69,7 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 | Web | /me — join requests | Skeleton list | Pending/approved/rejected list | Error banner | "Không có yêu cầu nào" |
 | Web | Auth required (unauthenticated /me) | — | Login CTA + magic link instructions | — | N/A |
 | Web | Account merged banner | — | "🔄 Tài khoản đã được gộp — dữ liệu cập nhật" | — | N/A |
-| TG Bot | `/myclubs` | "Đang tải..." | Club list + debt + upcoming session per club | "Lỗi" | "Bạn chưa tham gia club nào" |
+| Zalo/Messenger Bot | `/myclubs` (Zalo) · menu (Messenger) | "Đang tải..." | Club list + debt + upcoming session per club | "Lỗi" | "Bạn chưa tham gia club nào" |
 
 ---
 
@@ -75,11 +77,11 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 
 | Entity | Vai trò | Key constraints |
 |--------|---------|-----------------|
-| `persons` | Global identity | Verified via TG/Zalo/web auth |
+| `persons` | Global identity | Verified/linked via web auth (Google/email target) và channel identities Zalo/Messenger; Telegram chỉ legacy |
 | `memberships` | Person ↔ Tenant per club | `UNIQUE(person_id, tenant_id)`, historical kept |
-| `session_roster` | Player in sessions | `session_id`, `person_id` |
-| `charges` | Payment obligations | `person_id`, `session_id`, effective status |
-| `allocations` | Bank tx → charge mapping | `charge_id`, `amount`, attribution |
+| `players` | Player in sessions | `tenant_id`, `session_id`, `membership_id`, `status` |
+| `charges` | Payment obligations | `player_id`, `membership_id`, `session_id`, effective status |
+| `payment_allocations` | Bank tx/manual/cash → charge ledger | `charge_id`, `bank_transaction_id`, `amount`, `source` |
 | `magic_links` | Short-lived web access tokens | `UNIQUE(hash)`, `person_id`, `channel`, `expires_at`, `used_at` |
 
 ---
@@ -118,3 +120,4 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 |---|---|---|
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, /me dashboard screens |
+| 2026-07-13 | v2.1 | Reconcile live schema: `players`, `charges.player_id/membership_id`, `payment_allocations`; auth/channel wording separates target from Telegram legacy. |

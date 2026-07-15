@@ -1,17 +1,19 @@
 # Feature: Sync Engine & Re-projection — Product/UX Spec
 
-> **Canonical phase:** P4  
-> **Track:** 🔄 Sync Engine  
-> **Version:** 2.0 · 2026-06-19  
-> **Status:** Reviewed  
-> **Prerequisites:** P2 canonical domain services · P3 pg-boss/outbox · P4 channel adapters  
+> **Canonical phase:** P4
+> **Track:** 🔄 Sync Engine
+> **Version:** 2.1 · 2026-07-10
+> **Status:** Reviewed (v2.1: DD-37 channel pivot — TG→Zalo/Messenger)
+> **Prerequisites:** P2 canonical domain services · P3 pg-boss/outbox · P4 channel adapters
 > **Tài liệu liên quan:** `../product/BRD.md` FR-4 · `../product/PRD.md` FLOW 14 · `../product/TDD.md` §3.8 · BRD OD-7 · `BE/feature_sync_engine_tech.md`
+
+> **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (bỏ Telegram). Projector fan-out ra **Zalo DM / Messenger (cửa sổ 24h) / web realtime / public projection** — **không còn TG projector**; "Messenger P4.8" cũ nay là **phase-1 P2.5**. Các đề cập "TG" dưới đây là projector Zalo/Messenger tương ứng.
 
 ---
 
 ## 1. Mô tả
 
-Normalize writes từ web/chat/webhooks thành **idempotent commands**, persist canonical state + outbox atomically, project changes tới web/TG/Zalo/public và **repair derived surface state**. Messenger adapter deliver P4.8.
+Normalize writes từ web/chat/webhooks thành **idempotent commands**, persist canonical state + outbox atomically, project changes tới **web/Zalo/Messenger/public** và **repair derived surface state**. Messenger là kênh **phase-1 (P2.5)** — deliver trong cửa sổ 24h (Telegram đã loại — DD-37).
 
 ### Bất biến
 
@@ -30,12 +32,12 @@ Normalize writes từ web/chat/webhooks thành **idempotent commands**, persist 
 |---|---|---|---|
 | SYN-UC-1 | Host (any surface) | Gửi command (create/edit/close) | Command ID → domain service → state + command deduped + outbox commit |
 | SYN-UC-2 | System | Dispatcher claim ordered events | Tạo projector delivery records |
-| SYN-UC-3 | TG Projector | Nhận event | Edit/send TG message idempotently |
+| SYN-UC-3 | Zalo/Messenger Projector | Nhận event | Edit/send Zalo DM / Messenger message idempotently (Messenger: cửa sổ 24h) |
 | SYN-UC-4 | Web Projector | Nhận event | Push SSE/invalidation → client refetch canonical |
 | SYN-UC-5 | Public Projector | Nhận event | Update/remove public session listing |
 | SYN-UC-6 | Web client | Realtime disconnect | Fallback refetch/polling — không mất data |
 | SYN-UC-7 | Admin | Reproject command | Rebuild 1/all derived projections từ canonical state |
-| SYN-UC-8 | System | TG message gửi fail | Retry → replacement message + surface-ref update |
+| SYN-UC-8 | System | Zalo/Messenger message gửi fail | Retry → replacement message + surface-ref update |
 | SYN-UC-9 | System | Event processing 1 projector fail | Track failure per projector, others continue |
 | SYN-UC-10 | System | DLQ threshold reached | Alert → operator review |
 
@@ -47,7 +49,7 @@ Normalize writes từ web/chat/webhooks thành **idempotent commands**, persist 
 | 2 | Concurrency | Duplicate command (same command ID) | Return previous semantic result — idempotent |
 | 3 | Concurrency | Duplicate event delivery | No-op — delivery key deduplicate |
 | 4 | Data Integrity | Out-of-order events cùng aggregate | Ordering key enforced per aggregate/session — reject regressed version |
-| 5 | Resilience | TG message reference missing | Trigger replacement + surface-ref update |
+| 5 | Resilience | Zalo/Messenger message reference missing | Trigger replacement + surface-ref update |
 | 6 | Resilience | Realtime SSE disconnect | Client falls back to refetch/polling — không data loss |
 | 7 | Security | Public projector expose private data | Strict whitelist — delete private/closed/expired sessions |
 | 8 | Security | Reproject replay external side effects | ❌ CANNOT replay blindly — authorized/rate-limited/audited |
@@ -77,7 +79,7 @@ Normalize writes từ web/chat/webhooks thành **idempotent commands**, persist 
 | `commands` | Command dedup registry | `UNIQUE(command_id)`, `status` enum (processed/rejected) |
 | `outbox_events` | Ordered event stream | `aggregate_id`, `sequence`, `claimed_at` nullable |
 | `projector_deliveries` | Per-projector delivery tracking | `UNIQUE(event_id, projector)`, `status`, `attempts` |
-| `surface_refs` | External reference tracking (TG message_id, etc.) | `UNIQUE(aggregate_id, surface, ref_type)` |
+| `surface_refs` | External reference tracking (Zalo/Messenger message_id, etc.) | `UNIQUE(aggregate_id, surface, ref_type)` |
 
 ### Sync Pipeline
 
@@ -87,7 +89,7 @@ Surface → Command → Domain Service → [State + Deduped Command + Outbox] CO
                               Dispatcher (pg-boss) claims ordered events
                                               ↓
                          ┌──────────┬──────────┬──────────┐
-                         │ TG Proj  │ Web Proj │ Pub Proj │
+                         │ Ch Proj  │ Web Proj │ Pub Proj │
                          │ (edit/   │ (SSE     │ (search  │
                          │  send)   │  push)   │  index)  │
                          └──────────┴──────────┴──────────┘
@@ -114,7 +116,7 @@ Surface → Command → Domain Service → [State + Deduped Command + Outbox] CO
 - [ ] Per-projector delivery ledger prevents duplicate side effects
 - [ ] Aggregate ordering prevents roster/state regression
 - [ ] Failed projector retries independently, reaches DLQ/alert policy
-- [ ] Reproject repairs TG/public/web derived state
+- [ ] Reproject repairs Zalo/Messenger/public/web derived state
 - [ ] Realtime topics enforce tenant/person authz, recover after disconnect
 - [ ] Public projection invariant passes under replay
 - [ ] SLO: p95 ≤3s, p99 ≤10s — load tests pass
@@ -127,7 +129,7 @@ Surface → Command → Domain Service → [State + Deduped Command + Outbox] CO
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| SYN-OQ-1 | BRD OD-7: SSE/WebSocket/polling — baseline contract transport-neutral | ⬜ Chưa chốt |
+| SYN-OQ-1 | Realtime web transport | ✅ SSE + Postgres `LISTEN/NOTIFY` (DD-07) |
 | SYN-OQ-2 | Event retention/replay horizon và DLQ operator UX | ⬜ Chưa chốt |
 
 ### Changelog

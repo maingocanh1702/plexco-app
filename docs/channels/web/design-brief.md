@@ -1,8 +1,10 @@
 # Plexco Web App — Design Brief cho Designer
 
-> **Version:** 1.0 · 2026-06-19  
-> **Tài liệu tham chiếu:** `../product/BRD.md` · `../product/PRD.md` · `../product/TDD.md` · `../features/README.md`  
+> **Version:** 1.1 · 2026-07-10
+> **Tài liệu tham chiếu:** `../../product/BRD.md` v3.5 · `../../product/PRD.md` · `../../product/TDD.md` · `../../features/README.md`
 > **Target audience:** Designer (UI/UX)
+>
+> **Cập nhật v3.4 (DD-37 ✅):** Đăng nhập = **Google + email** (bỏ Telegram Login). Kênh phase-1 = **web + Zalo + Facebook Messenger** (Telegram loại). Onboarding link **Zalo + Facebook Messenger** (không còn bước Telegram). Thêm màn **chat in-app** (DD-38 ✅), **cài đặt hồ sơ + giá theo giới tính** (DD-39 ✅), **mark-paid thủ công tap/multi-select** (DD-40 ✅).
 
 ---
 
@@ -12,10 +14,10 @@
 
 | Vai trò | Mô tả | Access |
 |---------|-------|--------|
-| **Host** (Admin) | Quản lý club, tạo buổi chơi, quản lý tài chính, kết nối bot Telegram/Zalo | Web dashboard + bot admin |
-| **Player** | Khám phá buổi chơi, tham gia, xem lịch sử/nợ, thanh toán | Web /me + bot commands |
+| **Host** (Admin) | Quản lý club, tạo buổi chơi, quản lý tài chính, kết nối bot Zalo/Facebook Messenger | Web dashboard + bot admin |
+| **Player** | Khám phá buổi chơi, tham gia, xem lịch sử/nợ, thanh toán, chat in-app | Web /me + bot commands |
 
-**Triết lý:** Bot-first (Telegram/Zalo) cho interactions nhanh, Web app cho **dashboard quản lý** (host) + **personal view** (player) + **marketplace khám phá** (public).
+**Triết lý:** Bot (Zalo/Facebook Messenger) cho interactions nhanh nơi user đã ở, Web app cho **dashboard quản lý** (host) + **personal view** (player) + **marketplace khám phá** (public) + **chat in-app**. *(Telegram đã loại khỏi phạm vi — DD-37.)*
 
 ---
 
@@ -31,7 +33,7 @@
 - Không biết ai nợ bao nhiêu
 
 **Journey trên Web:**
-1. **Onboarding** → Đăng nhập via Telegram Login → Tạo club → Kết nối bank (SePay) → Link bot Telegram → (tuỳ chọn) Kết nối Zalo bot → Hoàn tất
+1. **Onboarding** → Đăng nhập via Google/email → Tạo club → Kết nối bank (SePay) → Link Zalo bot → (tuỳ chọn) Kết nối Facebook Messenger (App Review) → Hoàn tất
 2. **Hàng ngày** → Dashboard: upcoming sessions, outstanding debts, recent payments
 3. **Quản lý** → Sessions: tạo/sửa/clone/recurring → Financial: xem debts, payment status → Members: roster, ban list
 4. **Tài chính** → Billing: subscription, invoices
@@ -43,7 +45,7 @@
 **Journey trên Web:**
 1. **Discover** → Browse marketplace → Filter sport/area/time/price → Join buổi chơi
 2. **My stuff** → /me: clubs, upcoming, debts → View payment instructions → Track payment status
-3. **Quick access** → Magic link từ Zalo/TG → Open web → View personal data
+3. **Quick access** → Magic link từ Zalo/Facebook Messenger → Open web → View personal data
 
 ### 2.3 Public visitor — Chưa đăng nhập
 
@@ -57,12 +59,12 @@
 /                           → Landing page (public)
 ├── /discover               → Marketplace discovery (public)
 │   └── /discover/:id       → Session detail (public)
-├── /auth/login             → Telegram Login
+├── /auth/login             → Google OAuth + email/password (DD-13)
 ├── /auth/onboarding        → Club onboarding wizard (4 steps)
 │   ├── Step 1: Club info
 │   ├── Step 2: Bank (SePay)
-│   ├── Step 3: Telegram group
-│   └── Step 4: Zalo (optional) + Readiness check
+│   ├── Step 3: Zalo bot (dán token)
+│   └── Step 4: Facebook Messenger (FB Login + chọn Page, App Review) + Readiness check
 │
 ├── /dashboard              → Host dashboard (auth required)
 │   ├── /sessions           → Session management
@@ -311,7 +313,7 @@
 ┌────────────────────────────────────────────────────────┐
 │  Thiết lập club                                        │
 │  ┌─●──────●──────●──────○─┐                            │
-│  │ Club  Bank    TG     Zalo                           │
+│  │ Club  Bank   Zalo   FB Msg                          │
 │  └────────────────────────┘                            │
 │                                                        │
 │  Step 1: Thông tin club                                │
@@ -344,38 +346,39 @@ Step 2: Kết nối bank
 │  [← Quay lại]  [Tiếp tục →]                           │
 └────────────────────────────────────────────────────────┘
 
-Step 3: Liên kết Telegram
+Step 3: Liên kết Zalo bot
 ┌────────────────────────────────────────────────────────┐
-│  Thêm bot vào nhóm Telegram của club                  │
+│  Kết nối Zalo bot của club (BYO bot-token)            │
 │                                                        │
-│  1. Copy mã liên kết bên dưới                         │
-│  2. Gửi vào nhóm Telegram                             │
-│  3. Bot sẽ tự động liên kết                           │
+│  1. Tạo Zalo bot trong Zalo Bot Creator               │
+│  2. Copy Bot Token                                     │
+│  3. Dán vào ô bên dưới → Xác minh                      │
 │                                                        │
-│  Mã liên kết:                                          │
+│  Bot Token:                                            │
 │  ┌────────────────────────────────────────┐            │
-│  │  /link abc123xyz              [📋 Copy]│            │
+│  │  [●●●●●●●●●●●●]                 [Dán]  │            │
 │  └────────────────────────────────────────┘            │
 │                                                        │
-│  Trạng thái: ⏳ Đang chờ liên kết...                   │
-│  (auto-refresh, polling)                               │
+│  Trạng thái: ⏳ Đang xác minh token...                 │
+│  (verify API call + set webhook)                       │
 │                                                        │
 │  [← Quay lại]  [Tiếp tục →]                           │
 └────────────────────────────────────────────────────────┘
 
-Step 4: Zalo + Readiness
+Step 4: Facebook Messenger + Readiness
 ┌────────────────────────────────────────────────────────┐
-│  Kết nối Zalo (tuỳ chọn)                              │
+│  Kết nối Facebook Messenger (tuỳ chọn)                │
 │  ┌────────────────────────────────────────────┐        │
-│  │ Zalo bot token *     [                    ] │        │
+│  │ [🔵 Đăng nhập Facebook + chọn Page]        │        │
 │  │ [Kết nối] hoặc [Bỏ qua →]                 │        │
+│  │ ⓘ Cần App Review của platform trước GA    │        │
 │  └────────────────────────────────────────────┘        │
 │                                                        │
 │  ── Kiểm tra sẵn sàng ──                              │
 │  ✅ Thông tin club                                     │
 │  ✅ Kết nối bank                                       │
-│  ✅ Liên kết Telegram                                  │
-│  ⚪ Kết nối Zalo (tuỳ chọn)                           │
+│  ✅ Liên kết Zalo bot                                  │
+│  ⚪ Kết nối Facebook Messenger (tuỳ chọn)             │
 │                                                        │
 │  🎉 Club sẵn sàng hoạt động!                          │
 │  [Vào Dashboard →]                                     │
@@ -434,9 +437,12 @@ Step 4: Zalo + Readiness
 │        │  Đăng nhập                       │            │
 │        │                                  │            │
 │        │  ┌──────────────────────────┐    │            │
-│        │  │ 🔵 Đăng nhập bằng       │    │            │
-│        │  │    Telegram              │    │            │
+│        │  │ 🔵 Đăng nhập bằng Google │    │            │
 │        │  └──────────────────────────┘    │            │
+│        │  ─────── hoặc ───────            │            │
+│        │  Email    [                 ]    │            │
+│        │  Mật khẩu [                 ]    │            │
+│        │  [Đăng nhập]     [Đăng ký]      │            │
 │        │                                  │            │
 │        │  Bằng việc đăng nhập, bạn       │            │
 │        │  đồng ý với Điều khoản và       │            │
@@ -450,7 +456,7 @@ Step 4: Zalo + Readiness
 **Notes:**
 - Centered card, max-width: 400px (90vw on mobile)
 - Background: gradient/pattern
-- Single login method (Telegram Login widget) — expandable later
+- Login phase-1 (DD-13): **Google OAuth + email/password**. Bỏ Telegram Login (DD-37). Link **Facebook** (DD-33)/**Zalo** (DD-14) vào Person sau khi đăng nhập.
 
 ---
 
@@ -564,8 +570,8 @@ Step 4: Zalo + Readiness
 | Sidebar IDs | `#sidebar`, `#sidebar-backdrop`, `#menu-toggle` |
 | Login card | `max-width: 90vw` |
 | Data | Tiếng Việt thực tế trong mockups |
-| Privacy | Marketplace KHÔNG hiển thị venue address (chỉ area/quận) |
-| Auth | Telegram Login widget (phase 1) |
+| Privacy | Marketplace KHÔNG hiển thị venue address (chỉ area/quận); KHÔNG lộ giới tính (DD-39) |
+| Auth | Google OAuth + email/password (phase-1, DD-13); link Facebook (DD-33)/Zalo (DD-14). Bỏ Telegram Login (DD-37) |
 
 ---
 
@@ -573,4 +579,5 @@ Step 4: Zalo + Readiness
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-10 | v1.1 | **v3.4 pivot (DD-37 ✅):** auth wireframe/notes → Google + email (bỏ Telegram Login, DD-13); onboarding Step 3/4 → Zalo bot + Facebook Messenger (bỏ bước Telegram group); triết lý/personas → Zalo/Messenger; constraint auth + privacy giới tính (DD-39). Sửa cross-ref path `../product` → `../../product`. |
 | 2026-06-19 | v1.0 | Initial design brief with wireframes, personas, sitemap, design system requirements |

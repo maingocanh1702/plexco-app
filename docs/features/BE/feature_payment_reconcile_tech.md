@@ -1,10 +1,12 @@
 # Feature: Payment Reconciliation — Backend Tech Spec
 
-> **Canonical phase:** P3  
-> **Version:** 1.3 · 2026-06-20
-> **Status:** Implementation contract aligned with TDD v2.1  
-> **Product spec:** `../feature_payment_reconcile.md`  
-> **References:** `../../product/TDD.md` §3.2/3.6–3.8 · `../../standards/business-rules.md`
+> **Canonical phase:** P3 (auto-reconcile) · P2 (manual mark-paid)
+> **Version:** 1.5 · 2026-07-10
+> **Status:** Implementation contract aligned with TDD v2.2 — **full-review baseline cũ; light-propagated → TDD v2.4**
+> **Product spec:** `../feature_payment_reconcile.md`
+> **References:** `../../product/TDD.md` §3.2/3.6–3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-40 · DD-25
+
+> **Cập nhật v1.5 (review fixes → canonical ledger, 2026-07-10):** mark-paid thủ công = INSERT `payment_allocations` + cập nhật `charges` (KHÔNG có bảng `payment`). Host tap/multi-select player, đánh dấu **tiền mặt** (`source='cash'`, không bank txn, `created_by` set) hoặc **CK** đã ingest (`source='manual'`, khớp một `bank_transactions` row). **Bỏ `source='bank_transfer'`** — không có trong enum canonical `('auto','manual','cash','waiver','reversal')` (`packages/db/schema.ts`). CK host tự xác nhận nhưng **chưa có** `bank_transaction` = **hạng mục impl còn mở** (synthetic manual bank_txn HOẶC mở enum qua migration); không dùng `cash` cho CK. Idempotent theo `commandId`; áp **DD-25** (preview + 2-pha confirm). **Auto-reconcile CK** (webhook match) = capability `payment_reconcile_auto` = **`host_pro`** (`feature_billing_lifecycle_tech.md §4b`); manual mark-paid = `payment_mark_manual` (mọi tier). *(Charge amount có thể suy theo giới tính — xem DD-39, `feature_user_settings_tech.md`.)*
 
 ---
 
@@ -71,6 +73,7 @@ CREATE TABLE bank_transactions (
   unallocated_amount integer NOT NULL CHECK (unallocated_amount >= 0),
   occurred_at timestamptz NOT NULL,
   content_enc bytea,
+  provider_code_enc bytea,          -- (DD-02) code provider bóc sẵn, normalized (SePay optional; ApiPay không có) — EVIDENCE, không canonical
   raw_payload_enc bytea NOT NULL,
   reconcile_status text NOT NULL CHECK (reconcile_status IN ('pending','matched','partial','unmatched','ignored')),
   received_at timestamptz NOT NULL DEFAULT now(),
@@ -84,6 +87,12 @@ CREATE TABLE payment_allocations (
   bank_transaction_id uuid REFERENCES bank_transactions(id),
   charge_id uuid NOT NULL REFERENCES charges(id),
   amount integer NOT NULL CHECK (amount <> 0),
+  -- Canonical enum authoritative in packages/db/schema.ts + migrations:
+  --   auto/manual = có bank_transactions row (auto = webhook match; manual = host gán / đối soát CK).
+  --   cash = tiền mặt host xác nhận (bank_transaction_id NULL, created_by set); waiver = miễn.
+  --   DD-40 mark-paid thủ công: tiền mặt → 'cash'; CK đã ingest → 'manual' (khớp bank txn).
+  --   Host-attested "đã CK" chưa có bank_transaction = impl còn mở: synthetic manual bank_txn
+  --   HOẶC mở enum qua migration — KHÔNG dùng 'cash' cho CK, KHÔNG thêm 'bank_transfer'.
   source text NOT NULL CHECK (source IN ('auto','manual','cash','waiver','reversal')),
   reverses_allocation_id uuid REFERENCES payment_allocations(id),
   created_by uuid,
@@ -91,6 +100,7 @@ CREATE TABLE payment_allocations (
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (
     (source IN ('auto','manual') AND amount > 0 AND bank_transaction_id IS NOT NULL)
+    -- cash/waiver: host-initiated, no bank_transaction row, requires actor
     OR (source IN ('cash','waiver') AND amount > 0 AND bank_transaction_id IS NULL AND created_by IS NOT NULL)
     OR (source = 'reversal' AND amount < 0 AND reverses_allocation_id IS NOT NULL)
   )
@@ -127,13 +137,30 @@ Input: `{tenantId, bankTransactionId}`.
 withTenant(tenantId)
   lock bank_transaction FOR UPDATE
   if terminal and unallocated=0 → no-op
-  load eligible charges in deterministic order
-  core matcher returns candidates + evidence
-  if exactly one safe plan → applyAllocations()
-  else mark partial/unmatched with reason
+
+  # --- Pay-code recognition pipeline (DD-02, P4) ---
+  normalize(memo)                       # uppercase + bỏ dấu; giữ '-'/space
+  cands = discoverPayCodeCandidates(memo)   # mọi split prefix{3,4}×'-?'×suffix{4}; KHÔNG loại skipCodes
+  classes = batchResolve(cands)         # narrow SECURITY DEFINER → own|foreign|none (full-issued = registry.locked_at NOT NULL + pay_code match)
+  memo-level precedence:                # hard-token THẮNG name-fallback
+    any hard (foreign / own-prefix+unissued / dash-unresolved / >1 full-issued interpretation / error) → UNMATCHED
+    ≥2 distinct own                                                                    → UNMATCHED
+    exactly 1 own → membership := resolve(own); follow merged_into_membership_id (guards)
+    only none / no candidate → fall through to name+amount+date (P3)
+
+  # --- Provider-code evidence cross-check (invariant; reconcile is async) ---
+  # bank_transactions.provider_code_enc = normalized code provider bóc sẵn (SePay optional; ApiPay không có).
+  if bank_transaction.provider_code IS NOT NULL:
+    if provider_code KHÔNG khớp candidate đã resolve (suffix/prefix/tenant) HOẶC không nằm trong content
+        → UNMATCHED (fail-closed; không tự chọn bên nào)   # provider code chỉ là EVIDENCE, không canonical
+
+  # --- Allocation plan (ledger canonical) ---
+  plan = planIncomingAllocations(openDebts(membership), amount)   # FIFO priced debts; keep proven part
+    exact/over/under(partial)/unknown-fee-trailing → applyAllocations(plan) (over → hold overpay)
+    unknown-fee-first / already-paid               → mark unmatched with reason
 ```
 
-P3 matching uses name + amount + date. Pay-code parser may exist behind a disabled feature flag but memo only-có-code is not issued until P4 rollout.
+P3 matching uses name + amount + date only. **DD-02 pay-code path (above) là P4** — parser/resolver/`planIncomingAllocations` sống sau feature flag tới khi P4 rollout; memo only-có-code chưa phát trước P4. **Contract này là canonical; §8 Testing chỉ tham chiếu lại.**
 
 No automatic `fee × N` split without identified people/charges. Confidence threshold must come from calibration fixtures; it is configuration/versioned policy, not an unexplained hard-coded 88%.
 
@@ -162,17 +189,35 @@ Idempotency keys:
 
 ---
 
+## 5b. Manual mark-paid (DD-40 ✅ — every tier)
+
+Host đánh dấu player **đã trả** thủ công — có ở **mọi tier** (capability `payment_mark_manual`), độc lập với auto-reconcile (`payment_reconcile_auto`, chỉ `host_pro`).
+
+- **Multi-select / tap:** host chọn **1 hoặc nhiều** player trong một kèo, chọn method **tiền mặt** (`cash`) hoặc **CK** — CK đã ingest thành một `bank_transactions` row (free tier không có webhook thì CK phải được ingest trước, hoặc dùng đường impl-mở bên dưới).
+- **Ledger write:** với mỗi charge được chọn, `ledger.applyAllocations` INSERT một `payment_allocations` **host-initiated** + cập nhật `charges.amount_allocated`/`status`:
+  - **tiền mặt →** `source='cash'`, `bank_transaction_id = NULL`, `created_by = host actor`, `amount = remaining amount_due` hoặc số nhập.
+  - **CK →** `source='manual'`, `bank_transaction_id` = row `bank_transactions` khớp (không tạo bank txn giả).
+  - **CK chưa có `bank_transaction`** (host tự xác nhận) = **impl còn mở**: tạo synthetic manual `bank_transaction` HOẶC mở rộng enum qua migration — **không** dùng `cash` cho CK. Enum canonical **không** có `bank_transfer`.
+  - Cùng invariants sum như §5 (không mark quá `amount_due`).
+- **DD-25 preview + 2-pha confirm:** mark-paid là **human-initiated money mutation** → phải **preview** (danh sách player + method + tổng tiền) → **confirm** (single-slot fail-closed, DD-24) trước khi persist. Áp cho cả tap đơn lẫn multi-select.
+- **Idempotent:** một `commandId` cho cả batch (ghi `processed_commands`); retry trả kết quả cũ, không double-allocate. Mỗi (charge, commandId) chỉ tạo một allocation.
+- **Audit + confirm player:** ghi actor/method/reason; sau markPaid → outbox `payment.settled` → **xác nhận tự động tới player** (FR-6.2, `feature_notifications_reminders_tech.md`), best-effort, không chặn.
+- **Không** cần bank webhook; **không** đụng auto-matcher. Auto-reconcile CK (webhook match tên+tiền+ngày) vẫn là đường riêng (§3–§5), gated `payment_reconcile_auto` = `host_pro`.
+
+---
+
 ## 6. API/command contract
 
 | Interface | Auth | Result |
 |---|---|---|
 | `/unmatched` | TenantAdmin | Transactions with remainder + safe redacted candidates |
-| `POST /transactions/:id/allocations` | TenantAdmin + CSRF/session | One or more manual allocations |
+| `POST /transactions/:id/allocations` | TenantAdmin + CSRF/session | One or more manual allocations (matched to a bank txn) |
+| `POST /sessions/:id/mark-paid` | TenantAdmin + CSRF/session | **DD-40** multi-select mark-paid: `{commandId, method: 'cash'\|'bank_transfer', playerIds\|chargeIds[]}` → preview → confirm → INSERT `payment_allocations` (all tiers). Mapping ledger: `cash` → allocation `source='cash'`; `bank_transfer` → allocation `source='manual'` khớp một `bank_transactions` row (CK chưa ingest = impl-mở, không tạo bank txn giả) |
 | `POST /allocations/:id/reverse` | TenantAdmin + reason | Immutable reversal |
-| `/cash` / cash endpoint | TenantAdmin | Cash allocation against charge |
-| Worker reconcile | System job | Auto allocations or unmatched reason |
+| `/cash` / cash endpoint | TenantAdmin | Cash allocation against charge (single) |
+| Worker reconcile | System job | Auto allocations or unmatched reason (`host_pro`) |
 
-Manual request includes command ID and allocation array `{chargeId, amount}`. Server ignores tenant/actor supplied in body and derives both from auth context.
+Manual request includes command ID and allocation array `{chargeId, amount}` (hoặc `playerIds` cho mark-paid multi-select). Server ignores tenant/actor supplied in body and derives both from auth context.
 
 ### STK change endpoints (G1)
 
@@ -189,6 +234,7 @@ Manual request includes command ID and allocation array `{chargeId, amount}`. Se
 | `POST /webhook/sepay/:token` | Không áp app-level user limit; edge per-token/IP burst cap + body-size cap theo deployment-infra §6 |
 | `POST /webhook/apipay/:token` | Không áp app-level user limit; edge per-token/IP burst cap + body-size cap theo deployment-infra §6 |
 | `POST /transactions/:id/allocations` | 60/min per account |
+| `POST /sessions/:id/mark-paid` | 30/min per account (multi-select batch, DD-40) |
 | `POST /allocations/:id/reverse` | 30/min per account |
 | `POST /cash` | 30/min per account |
 | `GET /unmatched` | 60/min per account |
@@ -218,6 +264,8 @@ Error codes: `INVALID_WEBHOOK_SECRET`, `ACCOUNT_MISMATCH`, `DUPLICATE_TXN` (200)
 - FIFO ordering and partial plans.
 - Ambiguous multi-person returns manual, never auto split.
 - Ledger sum/reversal/state derivation.
+- **Pay-code resolver + allocation (DD-02 — assert the §4 worker contract; full spec `../../dd-02-paycode-analysis.md`):** `discoverPayCodeCandidates` → `batchResolve` (full-issued ⟺ `registry.locked_at NOT NULL` + `pay_code` match) → memo-level precedence → `planIncomingAllocations`. Fixtures:
+  - `THANH TOAN`; `PAYMENT` (own vs non-own `PAY`); `BMT7Q2B` unissued → hard; foreign full-issued → hard; `ABC-7Q2A` foreign dash → hard; `BMTRANS` noise → `none`; `BMT-RANS` → hard; full-issued token in `skipCodes` → resolve (issued wins); `BMT7Q2A`/`BMT-7Q2A` both accepted; prefix-change-before-first-issuance (`BMT9K2P` none / `BMT-9K2P` hard); unknown-fee 100k→unknown pay 150k → allocate 100k keep 50k; unknown-fee-first → unmatched; concurrent prefix claim → 1 tx wins; lowercase/all-digit CHECK reject; `merged` → follow tombstone.
 
 ### Integration
 
@@ -225,6 +273,8 @@ Error codes: `INVALID_WEBHOOK_SECRET`, `ACCOUNT_MISMATCH`, `DUPLICATE_TXN` (200)
 - Injected crash after ACK is recovered by durable job/sweeper.
 - Concurrent duplicate webhooks create one transaction.
 - Concurrent auto/manual/cash cannot over-allocate.
+- **(DD-02) SePay `provider_code` ↔ content mismatch** (provider bóc code khác với code trong `content`/prefix/tenant) → **hard-unmatched** (fail-closed, không tự chọn bên nào); ApiPay (không có provider code) → chỉ dựa content resolver.
+- **Mark-paid (DD-40):** tiền mặt → allocation `source='cash'`+`created_by`, không tạo bank txn giả; CK → allocation `source='manual'` khớp một `bank_transactions` row; enum không có `bank_transfer`; multi-select batch idempotent theo `commandId` (retry không double); DD-25 preview→confirm bắt buộc; markPaid → 1 confirm intent tới player.
 - Partial, overpay, multi-charge and multi-person manual allocation totals.
 - Reversal restores bank remainder/charge status exactly.
 - Cash/waiver requires actor and no fake bank transaction.
@@ -266,6 +316,8 @@ Metrics: durable ACK latency, reconcile lag, auto-match rate by policy version, 
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-10 | v1.5 | **Review fixes → canonical ledger.** Bỏ `source='bank_transfer'` khỏi enum/CHECK — khớp `packages/db/schema.ts` `('auto','manual','cash','waiver','reversal')`. Mark-paid thủ công: tiền mặt → `source='cash'`; CK đã ingest → `source='manual'` (khớp một `bank_transactions`). CK host tự xác nhận chưa có bank txn = impl còn mở (synthetic manual bank_txn / enum migration), không dùng `cash`. Cập nhật header, §2 schema, §5b, API mapping, tests. |
+| 2026-07-10 | v1.4 | **DD-40 ✅:** thêm §5b **manual mark-paid mọi tier** (multi-select, idempotent theo `commandId`, DD-25 preview+confirm); endpoint `POST /sessions/:id/mark-paid` + rate limit + tests. Auto-reconcile CK gated `payment_reconcile_auto`=`host_pro`. Pointer DD-39 gender-pricing cho charge. |
 | 2026-06-20 | v1.3 | Clarify provider webhooks are exempt from app-level user mutation limits but still require edge per-token/IP burst cap and body-size cap |
 | 2026-06-19 | v1.2 | Fold AUDIT G1 (STK change delay: schema + API + rate limit) and G3 (standardized rate limits) |
 | 2026-06-18 | v1.0 | Initial legacy backend spec |

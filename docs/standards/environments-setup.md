@@ -3,6 +3,8 @@
 > Mục tiêu: build & test ổn ở **dev** và **staging** trước khi **go-live** trên **prod**.
 > Doc này bám sát hạ tầng thật trong repo: `infra/fly.toml`, `infra/Dockerfile`, `infra/entrypoint.sh`, `.env.example`, và `docs/standards/deployment-infra.md`.
 > ⚠️ Đây là app **money-safe / multi-tenant** (đối soát SePay, ledger, RLS). Cách ly env không phải "nice-to-have" — nó là yêu cầu blast-radius (deployment-infra §6, C7).
+>
+> **Cập nhật 13/07/2026 (DD-37 / BRD v3.4):** target phase-1 = **web + Zalo + Facebook Messenger**, auth **Google OAuth + email/password** (DD-13). Tuy nhiên live HEAD vẫn là Auth v3 Telegram-era: `/api/auth/telegram/callback` **còn bắt buộc `TELEGRAM_BOT_TOKEN`**. Chỉ gỡ secret/route này sau khi provider replacement land; Google/Facebook vars hiện là target contract, chưa được code consume đầy đủ.
 
 ---
 
@@ -30,7 +32,7 @@
 | Mục đích | tích hợp end-to-end, data vứt đi | bản sao prod, cổng kiểm thử cuối (UAT/DAST/load) | live, tiền thật |
 | Deploy khi | push nhánh `develop` (auto) | merge `main` / `release/*` | **promote** image từ staging (thủ công + duyệt) |
 | Database | Postgres riêng, nhỏ nhất | Postgres riêng (managed, PITR) | Postgres riêng (managed, HA + PITR) |
-| Bot token / webhook | bot **test** riêng | bot **staging** riêng | bot **prod** thật |
+| Kênh/Auth (Zalo bot · Messenger app · Google/FB OAuth) | test riêng | staging riêng | prod thật |
 | Cost tier (deployment-infra §9) | Tier A tối thiểu | Tier A → B | **Tier B (money-safe)** |
 | Dữ liệu | giả lập / seed | giống prod (đã ẩn danh PII) | thật |
 
@@ -40,10 +42,10 @@ Local docker-compose (`infra/docker-compose.yml`) vẫn là vòng lặp nhanh nh
 
 ## 1. Vì sao 3 Fly app riêng là phù hợp nhất với project này
 
-Quyết định này gắn trực tiếp với roadmap: **Phase 1 = bot Zalo/Telegram/Messenger + webapp PWA**, sau đó **native iOS/Android**.
+Quyết định này gắn trực tiếp với roadmap: **Phase 1 = bot Zalo + Facebook Messenger + webapp PWA** (Telegram đã bỏ — DD-37), sau đó **native iOS/Android**.
 
 1. **Webhook đa kênh cần URL công khai ổn định, tách biệt mỗi env.**
-   web role nhận *mọi* webhook (`entrypoint.sh`: TG/Zalo/SePay). Telegram set webhook 1 URL/bot; SePay verify theo account+Apikey; Zalo BYO token per-club. Nếu gộp chung 1 app, callback của staging và prod đụng nhau. 3 app riêng ⇒ `plexco-staging.fly.dev` vs `plexco-prod.fly.dev`, mỗi env đăng ký bot/secret riêng, không bao giờ lẫn.
+   web role nhận *mọi* webhook (`entrypoint.sh`: Zalo/Messenger/SePay). Zalo BYO token per-club (`setWebhook` per bot); Messenger verify webhook theo App/Page + verify-token; SePay verify theo account+Apikey. Nếu gộp chung 1 app, callback của staging và prod đụng nhau. 3 app riêng ⇒ `plexco-staging.fly.dev` vs `plexco-prod.fly.dev`, mỗi env đăng ký bot/app/secret riêng, không bao giờ lẫn.
 
 2. **PWA + native bake sẵn API base URL theo env.**
    PWA đọc base URL lúc build; **native iOS/Android còn cứng hơn** — binary lên store trỏ cố định 1 API host + OAuth/deep-link callback. Phải có host ổn định cho từng env để QA bản staging trước khi submit store. Mô hình "1 app nhiều config" không cho native một host staging ổn định.
@@ -98,7 +100,7 @@ Mỗi env một Postgres độc lập. Hai lựa chọn, theo deployment-infra �
 | Provider | Khi nào dùng | Ghi chú |
 |---|---|---|
 | **Fly Postgres** (private networking) | dev, staging | Cùng platform, DX đơn giản; **Postgres KHÔNG expose public** (deployment-infra §6.1). PITR/HA yếu hơn → chỉ dev/staging. |
-| **Managed (Supabase Pro / Neon)** | **prod** (bắt buộc), staging nên dùng | HA + PITR + restore drill (deployment-infra §8). Prod money-safe = Tier B. |
+| **Managed (DO Managed / Neon Scale — DD-04 reopened)** | **prod** (bắt buộc), staging nên dùng | HA + PITR + auto-failover + posture gate + restore drill (deployment-infra §8; `dd-04-hosting-decision-brief.md`). Prod money-safe = Tier B. |
 
 ```bash
 # Ví dụ Fly Postgres cho dev & staging (private, attach vào app tương ứng)
@@ -135,14 +137,20 @@ fly postgres attach  plexco-db-staging  --app plexco-staging
 fly secrets set -a plexco-staging \
   DATABASE_URL="postgres://app:...@.../plexco?sslmode=require" \
   DATABASE_URL_DIRECT="postgres://app_worker:...@.../plexco?sslmode=require" \
-  TELEGRAM_BOT_TOKEN="<bot-staging>" \
-  TELEGRAM_WEBHOOK_SECRET="<random-staging>" \
+  TELEGRAM_BOT_TOKEN="<temporary-auth-v3-token>" \
+  GOOGLE_OAUTH_CLIENT_ID="<google-client-id>" \
+  GOOGLE_OAUTH_CLIENT_SECRET="<google-secret-staging>" \
+  FACEBOOK_APP_ID="<fb-app-id>" \
+  FACEBOOK_APP_SECRET="<fb-secret-staging>" \
+  MESSENGER_VERIFY_TOKEN="<random-staging>" \
   SEPAY_WEBHOOK_SECRET="<staging>" \
   SESSION_SECRET="<random>" \
   KMS_PROVIDER="aws-kms" KMS_KEY_ID="<arn-staging>" \
   SENTRY_DSN="<staging-dsn>" LOG_LEVEL="info"
 
-# Lặp lại cho -a plexco-prod với GIÁ TRỊ THẬT (bot prod, KMS prod, DB prod).
+# `TELEGRAM_BOT_TOKEN` ở trên chỉ phục vụ auth-v3 hiện tại; xoá sau provider replacement DD-13/DD-37.
+# Zalo bot token = per-club, mã hoá KMS lưu trong DB (KHÔNG phải global secret).
+# Lặp lại cho -a plexco-prod với GIÁ TRỊ THẬT (Google/Facebook app prod, KMS prod, DB prod).
 ```
 
 Biến **chung không bí mật** (`PORT`, `NODE_ENV`, `PROCESS_ROLE`) để trong `[env]` của fly.toml. `NODE_ENV=production` ở cả staging lẫn prod (staging là bản sao prod); phân biệt env bằng app name + secret, không bằng `NODE_ENV`.
@@ -153,14 +161,14 @@ Biến **chung không bí mật** (`PORT`, `NODE_ENV`, `PROCESS_ROLE`) để tro
 
 | Kênh | dev | staging | prod |
 |---|---|---|---|
-| Telegram | bot test → webhook `https://plexco-dev.fly.dev/telegram/<secret>` | bot staging → `plexco-staging.fly.dev` | bot thật → `plexco-prod.fly.dev` |
 | Zalo (BYO per-club) | club test | club staging | token thật, mã hoá KMS |
-| Messenger | app FB ở chế độ Dev/Test | app FB staging | app FB Live |
+| Messenger *(phase-1, P2.5)* | app FB ở chế độ Dev/Test | app FB staging | app FB Live (sau App Review) |
+| Google/Facebook OAuth | client dev + redirect `plexco-dev.fly.dev` | client staging | client prod (domain thật) |
 | SePay | sandbox/bank test | tài khoản test | tài khoản thật |
 | PWA base URL | `plexco-dev.fly.dev` | `plexco-staging.fly.dev` | domain prod (vd `app.plexco.vn`) |
 | Native iOS/Android (sau) | build `dev` scheme | build `staging` (TestFlight / Internal testing) | build `prod` (store) |
 
-> Mỗi lần redeploy đổi host, nhớ **re-set Telegram webhook** (`setWebhook`) cho đúng env. Đặt việc này thành script trong CI sau deploy.
+> Mỗi lần redeploy đổi host, nhớ **re-set webhook Zalo bot** (`setWebhook` per bot) + cập nhật **Messenger callback URL** (Meta App) + **Google/Facebook OAuth redirect URI** cho đúng env. Đặt việc này thành script trong CI sau deploy. *(Telegram đã bỏ — DD-37.)*
 
 ---
 
@@ -238,8 +246,8 @@ fly deploy -a plexco-prod --image <digest-bản-trước>   # về image trướ
 - [ ] 3 Fly app tạo xong (`plexco-dev/staging/prod`), region `sin`.
 - [ ] 3 DB riêng, Postgres **không** public, attach private networking.
 - [ ] 4 role DB tách (`migration`/`app`/`app_worker`/`readonly`) cho staging & prod.
-- [ ] Secrets set per env qua `fly secrets` (bot/KMS/SESSION khác nhau); prod dùng KMS thật.
-- [ ] Webhook TG/Zalo/Messenger/SePay đăng ký đúng host từng env.
+- [ ] Secrets set per env qua `fly secrets` (Google/FB app · KMS · SESSION khác nhau); prod dùng KMS thật.
+- [ ] Webhook Zalo/Messenger/SePay + OAuth redirect (Google/Facebook) đăng ký đúng host từng env.
 - [ ] CI gates §7 xanh trên staging (gồm DAST + load/soak + duyệt thủ công).
 - [ ] Migration chạy controlled job, forward-safe, test trên staging trước.
 - [ ] Sentry + structured log gắn `tenant_id` (không PII/secret) bật ở staging & prod.

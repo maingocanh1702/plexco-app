@@ -8,12 +8,12 @@
 | | |
 |---|---|
 | **Sản phẩm** | **Plexco CRM & Operations Dashboard** — dashboard nội bộ cho Platform Owner/CS/Ops theo dõi user, host, player, session, marketplace, payment, billing, trust, security và vận hành hệ thống |
-| **Phiên bản** | v1.2 — fix timezone/calendar rule, tách engaged vs participating player, đồng bộ metric dictionary |
-| **Ngày** | 21/06/2026 |
+| **Phiên bản** | v1.3 — **v3.4 channel pivot**: kênh Telegram→Zalo/Facebook Messenger, thêm Google login/chat/giá theo giới tính (DD-37/13/33/38/39/40); + fix timezone/calendar rule, tách engaged vs participating player, đồng bộ metric dictionary |
+| **Ngày** | 10/07/2026 |
 | **Người soạn** | Codex |
 | **Người duyệt** | Ngoc-Anh |
 | **Trạng thái** | Draft để review |
-| **Tài liệu liên quan** | `BRD.md` v3.1 · `PRD.md` v2.1 · `ROADMAP.md` v2.1 · `../features/README.md` v2.0 · `../strategy/gtm-strategy.md` · `../standards/business-rules.md` |
+| **Tài liệu liên quan** | `BRD.md` v3.5 · `PRD.md` v2.4 · `ROADMAP.md` v2.7 · `../features/README.md` v2.10 · `../strategy/gtm-strategy.md` · `../standards/business-rules.md` v1.7 · `../standards/decisions.md` v1.31 |
 | **Nguồn tham khảo bên ngoài** | Mixpanel — "25+ ecommerce product metrics to track today" (Jun 2, 2026): https://mixpanel.com/blog/ecommerce-product-metrics/ |
 
 > Tài liệu này mô tả dashboard **nội bộ** để quản lý Plexco như một business/platform. Nó không thay thế host dashboard (`/dashboard`) của tenant, player view (`/me`) hoặc marketplace (`/discover`). Khi conflict: core BRD/PRD/business-rules thắng về scope, quyền dữ liệu và security.
@@ -22,7 +22,7 @@
 
 ## 1. Executive Summary
 
-Plexco là platform hai phía: **host tạo/quản lý kèo** và **player khám phá/join kèo**, hoạt động qua web app + Telegram/Zalo, với canonical store là PostgreSQL/domain model. Vì vậy CRM dashboard không chỉ đo "total user" hay "sessions", mà phải trả lời 5 câu hỏi vận hành:
+Plexco là platform hai phía: **host tạo/quản lý kèo** và **player khám phá/join kèo**, hoạt động qua web app + Zalo/Facebook Messenger (Telegram đã loại — DD-37), với canonical store là PostgreSQL/domain model. Vì vậy CRM dashboard không chỉ đo "total user" hay "sessions", mà phải trả lời 5 câu hỏi vận hành:
 
 1. **Plexco có đang tăng trưởng thật không?** Total users, new signups, active users, active hosts, engaged/participating players, total sessions, completed sessions, sessions per host.
 2. **Marketplace có thanh khoản không?** Số kèo publish, slots trống, fill success, external slots filled, discovery join rate, cross-host player rate.
@@ -164,7 +164,7 @@ Mỗi phase ở §15 phải gắn ít nhất một SM ở trên làm điều ki�
 - Session/marketplace analytics: total sessions, active sessions, completed sessions, public/private, join funnel, fill-slot.
 - Payment ops: bank transactions, charge settlement, unmatched, auto-match, reminders, confirmations.
 - Billing ops: subscription, invoices, MRR, churn, plan entitlement, overdue.
-- Channel/connector ops: Telegram/Zalo/web, SePay/ApiPay, status/drift/error, delivery health.
+- Channel/connector ops: Zalo/Facebook Messenger/web, SePay/ApiPay, status/drift/error, delivery health.
 - Trust & safety: attendance, no-show, dispute, merge risk, audit events, incidents.
 - Cohort, segmentation, filters, CSV export with redaction.
 - Alerts/thresholds for metrics and SLO breaches.
@@ -234,13 +234,13 @@ Required metrics:
 | **Active users** | Distinct persons matching §4.3 role-aware engagement definition. Executive DAU/WAU/MAU uses `host-active ∪ engaged-player`; participation views may additionally show `participating players`. |
 | **DAU/WAU/MAU** | Distinct active persons over 1/7/30-day windows. |
 | **Activation rate** | `% new users who complete activation event within X days`; host = first session, player = first join/attendance. |
-| **Signup source** | Web/TG/Zalo/discovery/manual import/referral/host invite. |
+| **Signup source** | Web (Google/email)/Zalo/Messenger/discovery/manual import/referral/host invite. |
 
 Required views:
 
 - Signup trend by day/week.
 - Active users by role: host, co-admin, engaged player, participating player, discovery-only.
-- Channel mix: web, Telegram, Zalo, Messenger post-MVP.
+- Channel mix: web (Google/email), Zalo, Facebook Messenger (phase-1); Telegram = legacy tenant #1 only.
 - Cohort retention: D1/D7/D30 for players; W1/W4/W8 for hosts.
 - User detail search with redacted profile, memberships, channel reachability, activity timeline.
 
@@ -250,8 +250,8 @@ Required tenant fields:
 
 - Tenant ID, display name, sport default, area/cell, owner, status.
 - Plan, subscription status, trial/period dates, billing health.
-- Onboarding checklist: bank, Telegram, Zalo, first session, first public session.
-- Connector status: SePay/ApiPay, Telegram link, Zalo bot, webhook status.
+- Onboarding checklist: Google/email account, bank, Zalo, Facebook Messenger, first session, first public session.
+- Connector status: SePay/ApiPay, Zalo bot, Messenger Page (App Review), webhook status.
 - Activity: sessions/week, last active, engaged players, participating players, roster size, payment health.
 - Marketplace: sessions published, fill-only/public usage, external slots filled, join approval latency.
 - Risk score: no session after signup, connector failed, no second session, payment backlog, churn risk.
@@ -333,7 +333,7 @@ Required breakdowns:
 
 - Sport: badminton, pickleball, tennis, football, future taxonomy.
 - Area/cell: sport + area + skill + time bucket.
-- Source: web, Telegram, Zalo, recurring, manual import.
+- Source: web, Zalo, Facebook Messenger, recurring, manual import.
 - Visibility: private, fill-only (if adopted), public.
 - Join policy: open, approval.
 - Status: draft, open, closed, cancelled.
@@ -411,6 +411,7 @@ Data rules:
 - Amounts can be bucketed in aggregate analytics; exact amounts only in privileged detail view.
 - Never classify unmatched as paid or safe.
 - Payment and billing ledgers remain separate.
+- **Manual mark-paid (tiền mặt / CK, tap/multi-select) is available on all tiers (DD-40); auto-reconcile CK is `host_pro`.** Allocation `source ∈ auto|manual|cash|waiver|reversal` (canonical enum — **no `bank_transfer`**): tiền mặt → `source='cash'` (no bank_transaction); CK host-confirmed → `source='manual'` (linked to a `bank_transaction`); auto-reconcile → `source='auto'`. Free-tier tenants show high manual/cash-allocation share by design (not a risk signal).
 
 ### MODULE 8 — Billing & Revenue Dashboard
 
@@ -444,12 +445,12 @@ Required metrics:
 
 | Area | Metrics |
 |---|---|
-| **Telegram** | linked groups, callback success/failure, roster edit failures, DM reachability |
-| **Zalo** | bot connected/active/drift/error, command volume, number reply success, provider failures |
-| **Web** | active sessions, SSE reconnects, onboarding step drop-off |
+| **Zalo** | bot connected/active/drift/error, command volume, number reply success, DM reachability, provider failures |
+| **Facebook Messenger** | Page connected/active/drift/error, App Review status, quick-reply join success, 24h-window reachability, provider failures |
+| **Web** | active sessions (Google/email), SSE reconnects, onboarding step drop-off, chat in-app volume (DD-38 ✅) |
 | **SePay/ApiPay** | connection status, webhook active, ingest success/failure, token drift |
 | **Sync engine** | command volume, projector success/failure, lag p50/p95/p99, DLQ count, reproject count |
-| **Notification** | reminder sent/skipped/failed, quiet-hour skips, delivery failed by provider |
+| **Notification** | reminder sent/skipped/failed (web + Zalo chính; Messenger best-effort 24h), quiet-hour skips, delivery failed by provider |
 
 Required views:
 
@@ -642,7 +643,7 @@ BR-CRM-3 requires every metric to show its date window and dedupe key; this sect
 | `/internal/marketplace` | Discovery, fill-slot, liquidity cells |
 | `/internal/payments` | Payment ops, unmatched, settlement health |
 | `/internal/billing` | Subscription/MRR/invoices/churn |
-| `/internal/channels` | Telegram/Zalo/web/connectors health |
+| `/internal/channels` | Zalo/Facebook Messenger/web/connectors health |
 | `/internal/trust` | Attendance, no-show, disputes, reliability bands |
 | `/internal/security` | Incidents, invariants, SLOs, secret/backup status |
 | `/internal/alerts` | Unified alert queue |
@@ -677,8 +678,9 @@ Default hidden or redacted:
 
 - Raw bank content, account numbers, provider payloads.
 - Bot tokens, webhook secrets, OAuth tokens.
-- Raw Telegram/Zalo IDs, chat IDs.
+- Raw Zalo/Messenger IDs, page IDs, chat IDs, Google/Facebook account IDs.
 - Phone/email unless support role opens detail with reason.
+- Gender/date of birth (PII with consent, per DD-39) — never in aggregate/public views; visible only in privileged support detail with audit.
 - Full venue address for public sessions unless tenant-private support context requires it.
 - Roster names in aggregate marketplace views.
 
@@ -870,3 +872,4 @@ Audit is required for:
 | 2026-06-21 | v1.0 | Initial CRM & Operations Dashboard BRD based on Plexco BRD/PRD/feature specs/GTM and Mixpanel ecommerce metric framework. |
 | 2026-06-21 | v1.1 | Chốt định nghĩa Active user theo role (§4.3, resolve CRM-OQ-1); thêm project success metrics có target (§4.4); thêm section Assumptions/Dependencies/Risks (§17). |
 | 2026-06-21 | v1.2 | Fix timezone/calendar reference bằng §9.4; tách `Engaged player` và `Participating player`; đồng bộ Active users ở Module 2/metric dictionary; thêm `reminder_response` event. |
+| 2026-07-10 | v1.3 | **v3.4 channel pivot: drop Telegram, Messenger + Zalo phase-1 + Google login/chat/gender-pricing/manual mark-paid — DD-37/13/33/38/39/40.** Channel/connector ops + Module 9 đổi Telegram→Zalo/Facebook Messenger (Messenger phase-1 + App Review + 24h-window health); signup source/channel mix thêm Google/email, Messenger (Telegram = legacy tenant #1); onboarding checklist + connector status đổi Zalo/Messenger; Module 7 thêm rule mark-paid thủ công (cash/bank_transfer) mọi tier vs auto-reconcile `host_pro`; redaction thêm gender/dob (PII, DD-39) + Google/Facebook IDs. |

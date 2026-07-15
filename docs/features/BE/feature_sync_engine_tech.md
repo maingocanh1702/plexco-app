@@ -1,10 +1,12 @@
 # Feature: Sync Engine & Re-projection — Backend Tech Spec
 
-> **Canonical phase:** P4  
-> **Version:** 2.0 · 2026-06-19  
-> **Status:** Reviewed  
-> **Product spec:** `../feature_sync_engine.md`  
-> **References:** `../../product/TDD.md` §3.8
+> **Canonical phase:** P4
+> **Version:** 2.1 · 2026-07-10
+> **Status:** Reviewed
+> **Product spec:** `../feature_sync_engine.md`
+> **References:** `../../product/TDD.md` §3.8 · `../../standards/decisions.md` DD-37
+
+> **Cập nhật v2.1 (DD-37 ✅, 2026-07-10):** projectors fan-out phase-1 = **Zalo DM · Facebook Messenger (cửa sổ 24h) · web realtime · public projection**. **Bỏ Telegram** edit-message projectors (`tg_announcement`/`tg_roster`) — Zalo không có inline button (DM number-reply), Messenger gửi message mới trong 24h. Idempotent/re-projection contract không đổi.
 
 ---
 
@@ -100,7 +102,7 @@ CREATE INDEX idx_surface_refs_aggregate ON surface_refs(aggregate_id);
 | 5 | Resilience | Crash before provider call | Retry claims event — delivery pending |
 | 6 | Resilience | Crash after provider success | Provider idempotency or convergent upsert |
 | 7 | Resilience | Projector A fails, B succeeds | Independent tracking — B delivered, A retries |
-| 8 | Data Integrity | TG message missing/deleted | Surface ref lookup fails → replacement + ref update |
+| 8 | Data Integrity | Surface message (Zalo/Messenger) missing/deleted | Surface ref lookup fails → send replacement + ref update. Messenger ngoài cửa sổ 24h: không gửi được → dồn qua web + Zalo (best-effort) |
 | 9 | Security | Public projector emits private data | Strict whitelist — delete private/closed/expired |
 | 10 | Security | Reproject replays notifications | ❌ BLOCK — no re-send unless projector supports correction mode |
 | 11 | Security | Realtime topic guessing | AuthZ per subscription — reject unauthorized |
@@ -143,12 +145,12 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 
 | Projector | Surface | Behavior |
 |-----------|---------|----------|
-| `tg_announcement` | Telegram group | Edit/send message, update surface_ref |
-| `tg_roster` | Telegram group | Edit inline roster display |
-| `zalo_dm` | Zalo DM | Send/update DM |
+| `zalo_dm` | Zalo DM (bot per-club) | Send/update DM (number-reply); no inline button |
+| `messenger` | Messenger (Page per-club) | Send message trong **cửa sổ 24h**; ngoài 24h skip (best-effort), dồn qua web/Zalo |
 | `web_realtime` | Web SSE/WS | Push invalidation event |
 | `public_sessions` | Public search | Upsert/delete projection |
-| `messenger` | Messenger (P4.8) | Registered, not active |
+
+> **DD-37:** Telegram edit-message projectors (`tg_announcement`, `tg_roster`) **removed** — Telegram out of phase-1 scope. Không có "edit inline roster in group" cho Zalo/Messenger; roster hiển thị qua web + DM.
 
 ### SLO Targets
 
@@ -174,7 +176,7 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 | 5 | Aggregate ordering | Events out of order | Monotonic sequence enforced |
 | 6 | Worker claim skip locked | Parallel workers | No duplicate claims |
 | 7 | Projector A fail B success | Mixed results | Independent tracking |
-| 8 | TG missing message | Deleted message ref | Replacement created |
+| 8 | Missing surface message | Deleted Zalo/Messenger message ref | Replacement created (Messenger: only within 24h) |
 | 9 | Public whitelist | Private session event | Not projected |
 | 10 | Public deletion | Session closed event | Projection deleted |
 | 11 | Reproject no notifications | Reproject command | No notification re-send |
@@ -193,7 +195,7 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 | # | Test | Setup | Expected |
 |---|------|-------|----------|
 | 1 | Command → outbox → projector | Create session | All projectors receive event |
-| 2 | Reproject repair | Delete TG message → reproject | Message recreated |
+| 2 | Reproject repair | Delete Zalo/Messenger message → reproject | Message recreated (Messenger within 24h) |
 | 3 | Realtime end-to-end | Subscribe → trigger event | Client receives update |
 | 4 | Load test 1k tenants | Parallel commands | SLO met, no data corruption |
 
@@ -205,7 +207,7 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 
 1. Deploy command/outbox schema
 2. Shadow dispatcher (log events, no delivery)
-3. Enable TG projector
+3. Enable Zalo DM projector (P2) + Messenger projector (P2.5, 24h window)
 4. Enable web realtime
 5. Enable public projector
 6. Monitor SLO targets
@@ -224,3 +226,4 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 |---|---|---|
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), full DDL, 12 BE edge cases, projector registry, SLO targets, 20 tests |
+| 2026-07-10 | v2.1 | **DD-37 ✅:** projector registry — bỏ `tg_announcement`/`tg_roster` (Telegram); phase-1 fan-out = `zalo_dm` · `messenger` (24h window) · `web_realtime` · `public_sessions`. Cập nhật edge #8, tests #8/int#2, rollout step 3. |

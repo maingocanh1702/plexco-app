@@ -1,6 +1,6 @@
 # Proposal: Tổ chức lại cấu trúc repo & docs — Plexco
 
-> **Trạng thái:** 🟡 Đề xuất (chỉ đề xuất — CHƯA thực hiện di chuyển gì)
+> **Trạng thái:** ⚠️ **HISTORICAL / phần lớn SUPERSEDED (2026-07-15)** — `docs/channels/{messenger,zalo,telegram}/` đã tồn tại; Messenger nay **P2.5 phase-1** (không còn P4.8). Proposal 07-06 giữ làm tham chiếu lịch sử, KHÔNG phải kế hoạch hiện hành.
 > **Ngày:** 2026-07-06
 > **Phạm vi:** cấu trúc thư mục root + `docs/` (không đụng logic code trong `apps/`, `packages/`)
 > **Nguyên tắc:** không phá cross-reference/tooling; mọi thay đổi làm bằng `git mv` + link-update pass; giữ ổn định các file được tham chiếu dày (features/, decisions.md)

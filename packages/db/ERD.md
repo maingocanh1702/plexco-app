@@ -195,4 +195,3 @@ erDiagram
 | **Drizzle Studio** | `npx drizzle-kit studio` | đọc `schema.ts`, xem bảng + dữ liệu live |
 | **DBeaver / pgAdmin** | kết nối DB đã migrate | ER Diagram tự sinh từ FK thật |
 | **Mermaid Live** | https://mermaid.live | dán block ở mục 1 để export SVG |
-```

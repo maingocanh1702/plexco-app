@@ -1,4 +1,4 @@
-# 🧭 Founder Decision Brief — Open items (2026-07-15, rev 3)
+# 🧭 Founder Decision Brief — Open items (2026-07-15, rev 4)
 
 > **Mục đích:** gom các item **còn cần founder quyết** thành một chỗ để duyệt một lượt. Mỗi item = **câu hỏi · options · đề xuất · tác động/độ gấp · pointer canonical**.
 > **Authority:** `standards/decisions.md` v1.31. Brief này KHÔNG thay quyết định — khi chốt, ghi vào `decisions.md` (+ feature spec OQ) rồi mới propagate.
@@ -18,6 +18,8 @@
 > - **Re-check money:** charge state chỉ `open|partial|paid|void`; `waiver|reversal` là allocation source. Table C chỉ mở **undo mistaken leave** có snapshot; genuine rejoin vẫn fail-closed.
 > - **Re-check ban:** manual ban không tự evict roster/queue; waitlisted bị skip nhưng giữ queue đúng DD-45; removal là command riêng qua money policy.
 > - **Re-check governance:** plan key logical = `free` (live legacy `free_web` chờ migration); tách “ready for founder review” khỏi “post-decision closure”.
+>
+> **Rev 4 — operational closure (2026-07-15):** DD-04 reopen/governance wording đóng nhất quán; thêm Item 9 cho identity/account recovery + merge-split authority; phân loại toàn bộ OQ còn mở thành founder, delegated build-time hoặc external verification với default fail-closed.
 
 ---
 
@@ -33,12 +35,13 @@
 | 6 | PII retention/erasure + nghĩa vụ pháp lý VN | USR-OQ-3 · SEC-OQ-2 | 🔴 trước go-live thu PII | Founder + **legal** |
 | 7 | LLM provider trợ lý (chat + embedding tách) | DD-18 | 🟢 P7 (chặn go-live, không chặn build) | Founder + legal |
 | 8 | Global KB plane (approve-in-principle) | DD-34/35/36 | 🟢 P7 — deferred | Founder (khi build P7) |
+| 9 | Identity/account recovery + merge-split authority | ID-OQ-2 · ID-MERGE-1 · RTE-OQ-2 | 🔴 trước production identity merge/recovery | Founder + security |
 
 ---
 
 ## 1. 🔴 Hosting provider + network posture — DD-04 (P0)
 
-**Câu hỏi:** (1) posture mạng nào? (2) nếu giữ Fly → provider Postgres nào? (3) duyệt reopen DD-04.
+**Câu hỏi:** (1) posture mạng nào? (2) nếu giữ Fly → provider Postgres nào? *(DD-04 **đã reopen** 2026-07-13 — founder chỉ còn chọn posture + provider, không cần "duyệt reopen" nữa.)*
 
 **QĐ-1 — Posture (chốt trước, kéo theo có rời Fly hay không):**
 - **(a) public-TLS + `verify-full` + static-IP allowlist**, giữ Fly.io. Đủ an toàn cho hệ tiền khi làm đúng (CA + hostname validation + allowlist + least-privilege role).
@@ -52,7 +55,8 @@
 
 **Đề xuất:** QĐ-1 = **(a)**; QĐ-2 = **DigitalOcean Managed có ≥1 standby node**. *(Reviewer: directionally sound, pending benchmark + vendor/security verify.)*
 **Tác động/gấp:** P0 hạ tầng, cần trước production. ⚠️ Mọi con số phải **benchmark trước khi cam kết**.
-**Pointer:** `dd-04-hosting-decision-brief.md` (rev 2) · `decisions.md` DD-04 · `deployment-infra.md §2/§6` · [DigitalOcean Managed Databases SLA](https://www.digitalocean.com/sla/databases) · [Neon pricing/HA scope](https://neon.com/pricing) · [Neon Compute Endpoint SLA](https://neon.com/sla) · [Neon Private Networking scope](https://neon.com/docs/security/security-overview).
+**Kéo theo SEC-OQ-1** (`feature_security_operations`): **RPO/RTO cuối + KMS implementation** chốt theo provider đã chọn — deliverable **derived/build-time**, không phải quyết định founder độc lập.
+**Pointer:** `dd-04-hosting-decision-brief.md` (rev 3) · `decisions.md` DD-04 · `deployment-infra.md §2/§6` · [DigitalOcean Managed Databases SLA](https://www.digitalocean.com/sla/databases) · [Neon pricing/HA scope](https://neon.com/pricing) · [Neon Compute Endpoint SLA](https://neon.com/sla) · [Neon Private Networking scope](https://neon.com/docs/security/security-overview).
 
 ---
 
@@ -208,6 +212,48 @@
 
 ---
 
+## 9. 🔴 Identity/account recovery + merge-split authority — ID-OQ-2 / ID-MERGE-1 / RTE-OQ-2
+
+> Identity recovery là đường **global-protected + money-adjacent**: một split/relink sai có thể gắn channel, membership, charge hoặc lịch sử thanh toán cho nhầm người. Không delegate policy này cho build slice và không mở recovery bằng tên/display ID/raw social ID.
+
+**Câu hỏi founder cần chốt:**
+
+1. Ai được **freeze** một identity nghi merge sai, ai được **approve/apply** split plan?
+2. Có bắt buộc hai người duyệt không; solo-founder dùng break-glass thế nào?
+3. SLA chuẩn/khẩn cấp và evidence tối thiểu cho account recovery khi mất Google/Facebook/Zalo là gì?
+
+**Đề xuất fail-closed:**
+
+- Một `PlatformAdmin` được **freeze ngay**; chỉ `PlatformAdmin` được tạo plan. Tenant owner/admin không có quyền global split/relink.
+- Apply split cần **hai approval độc lập**. Khi chưa có người duyệt thứ hai, giữ frozen và phục vụ correction thủ công; break-glass một người chỉ cho tình huống khẩn cấp, bắt buộc ticket/reason, expiry, immutable before/after audit và review hậu kiểm.
+- Recovery account cần strong proof từ verified account/email/phone hoặc recovery artifact đã cấp trước. Không đủ strong proof → không relink; chuyển manual review.
+- Split plan phải map rõ channel identities, memberships, players và charges; **không rewrite bank transactions/payment allocations**. Apply idempotent, re-run tenant/ledger invariants rồi mới unfreeze.
+- SLA đề xuất: freeze ≤4 giờ khi nghi sai tiền/identity; plan chuẩn ≤1 ngày làm việc. SLA không được biến thành quyền bypass evidence.
+
+**Pointer:** `features/feature_identity.md` ID-OQ-2 · `00-start-here/identity-model.md` ID-MERGE-1 · `features/BE/feature_identity_tech.md §7–§8` · `features/feature_tenant_routing_authz.md` RTE-OQ-2.
+
+---
+
+## Delegated / build-time decisions (KHÔNG cần founder duyệt riêng)
+
+> Brief này one-stop cho việc **phân loại** mọi OQ còn mở. Chỉ delegate khi founder-level policy và fail-closed invariant đã pin; build slice được chọn UX/schema/transport nhưng **không** được tự đổi money/identity/PII/legal policy. OQ nào còn thiếu policy nhạy cảm phải nâng thành founder item trước khi code.
+> - **Đổi giá khi đã có charge** → **KHÔNG delegate**, đã nằm trong **Item 3** (money policy).
+> - **Recurrence editing** (sửa 1 occurrence vs this-and-future) — `feature_session_management` SES-OQ-2.
+> - **Reminder policy** (threshold/max/copy; DM có kèm số tiền không) — `feature_notifications_reminders` NTF-OQ-1/2.
+> - **DM / moderation / media policy** in-app chat (ai được DM, quyền host xoá/ẩn/ban, media phase-1) — `feature_inapp_chat` CHT-OQ-1/2/3.
+> - **Co-admin permission granularity** — `feature_tenant_routing_authz` RTE-OQ-1.
+> - **Suspended tenant có tiếp tục auto-reconcile không (PAY-OQ-2)** — ingest **luôn bật** (an toàn); auto-settle/auto-notify cho tenant `suspended` **default fail-closed (OFF)** tới khi chốt lifecycle (gắn **Item 2** billing, trước P5). Bật lại = billing/founder policy, không phải mặc định build.
+> - Marketplace ranking (MKT-OQ-3), min onboarding steps (WAO-OQ-2), persistent menu/quick replies (PMS-OQ-1) — product/eng default.
+> - Event retention/replay + DLQ UX (SYN-OQ-2) — eng/SRE chốt trước sync-engine rollout; retention không được xoá undelivered money/identity events.
+> - Phone verification UX/provider (ID-OQ-1) — ưu tiên provider-verified share-contact; SMS chỉ bật sau security/DPA review. Guest/full permission (ID-OQ-3) đã nằm trong Item 4.
+> - **Gender price-storage schema (USR-OQ-2)** — eng được chọn cột hay bảng vì pricing policy đã pin ở Item 5, nhưng phải có **một canonical price lookup/helper**, migration + money-invariant tests; không được tạo công thức thứ hai ở consumer.
+> - **DD-47/48 build-time OQ (USR-OQ-4…9)** — default fail-closed tới khi slice pin: không cross-tenant stats; private counts/lists hidden; không mở DM/profile visibility mới; không ship block/roster-name expansion; notify follow-request dùng một person-directed core, không clone tenant outbox semantics.
+> - **External/technical gates, không phải founder policy:** DD-14/15 Zalo spike; DD-33/PMS-OQ-2 App Review + degrade verification; connector CO-OQ-1…7 sandbox/provider facts. Gate chưa verify → feature liên quan không GA.
+>
+> ⚠️ Nếu build khám phá policy mới chạm **tiền/identity/PII/legal** ngoài invariant đã pin → HALT và nâng thành founder item; không tự chọn default fail-open.
+
+---
+
 ## Đề xuất thứ tự quyết
 
 1. **DD-04 hosting** (P0) — sớm nhất, trước production.
@@ -216,7 +262,8 @@
 4. **Item 5 gender pricing** (P2/P4) — tách pricing/eligibility → mở DD-39 build.
 5. **Item 2 billing** (P5) — gồm override PlatformAdmin — trước khi thu Host Pro.
 6. **Item 4 guest→full/ban** (P4.3).
-7. **Item 7 LLM** + **Item 8 Global KB** (P7) — post-MVP.
+7. **Item 9 identity/account recovery** — chốt trước production merge/recovery.
+8. **Item 7 LLM** + **Item 8 Global KB** (P7) — post-MVP.
 
 ## Ready for founder/legal review
 
@@ -224,8 +271,9 @@
 - Money correction dùng đúng charge/allocation vocabulary và giữ genuine rejoin fail-closed.
 - Legal assertions chỉ pin những gì nguồn chính thức xác nhận; retention/deadline/transfer obligations còn lại ghi rõ cần luật sư map article-level.
 - Deferred item có owner, trigger và promotion gate.
+- Identity/account recovery giữ global split/relink fail-closed và không delegate authority policy cho build slice.
 
-> **Trạng thái rev 3:** ready để founder + legal **ra quyết định**; chưa phải canonical decision và chưa authorise implementation.
+> **Trạng thái rev 4:** ready để founder + legal **ra quyết định**; chưa phải canonical decision và chưa authorise implementation.
 
 ## Post-decision closure checklist
 

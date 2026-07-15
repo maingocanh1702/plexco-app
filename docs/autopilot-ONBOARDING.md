@@ -2,7 +2,7 @@
 
 Đọc file này 1 lần là đủ để chạy autopilot flow của repo đúng theo template mới nhất.
 Pinned version: **`autopilot-prompt-GENERIC` v0.6.0** + **`autopilot-invariants`** (đã sync từ canonical 2026-07-15).
-> ✅ **Đã sync với canonical `Claude template` (2026-07-15):** GENERIC v0.6.0, invariants (161 dòng), scope-gate **KIT_VERSION 4**, backlog-reconcile **KIT_VERSION 2**. (Plexco-specific token vẫn ở `docs/autopilot-invariant-catalog.md`, không đụng.)
+> ✅ **Đã sync với canonical `Claude template` (2026-07-15):** GENERIC v0.6.0, invariants (162 dòng), scope-gate **KIT_VERSION 4**, backlog-reconcile **KIT_VERSION 2**. (Plexco-specific token vẫn ở `docs/autopilot-invariant-catalog.md`, không đụng.)
 Bản canonical nằm trong repo tại `docs/autopilot-templates/` — luôn coi đó là source of truth.
 
 ---

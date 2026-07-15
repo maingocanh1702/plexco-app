@@ -1,10 +1,12 @@
 # Feature: Multi-tenant Foundation — Product/System Spec
 
-> **Canonical phase:** P0–P1  
-> **Track:** 🏢 Multi-tenant Core + 3-tier  
-> **Version:** 1.1 · 2026-06-18  
-> **Status:** Reviewed against BRD v3.1 / PRD v2.1 / TDD v2.1  
-> **Tài liệu liên quan:** `../product/BRD.md` §6–8 · `../product/TDD.md` §3.2–3.4 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md`
+> **Canonical phase:** P0–P1
+> **Track:** 🏢 Multi-tenant Core + 3-tier
+> **Version:** 1.3 · 2026-07-15
+> **Status:** Reviewed against BRD v3.4 / PRD v2.2 / TDD v2.2 — **full-review baseline cũ; light-propagated → current (BRD v3.5/PRD v2.4/TDD v2.4)**
+> **Tài liệu liên quan:** `../product/BRD.md` §6–8 · `../product/TDD.md` §3.2–3.4 · `../standards/decisions.md` DD-37 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md`
+
+> **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (bỏ Telegram). Nền multi-tenant/RLS không đổi; chỉ cập nhật tham chiếu kênh ngoài phạm vi.
 
 ---
 
@@ -27,11 +29,11 @@ Xây nền bắt buộc cho mọi feature: monorepo, PostgreSQL + Drizzle, schem
 
 ### Ngoài phạm vi
 
-- Telegram tenant routing P2.
+- Tenant routing kênh (Zalo/Messenger) P2 (Telegram loại — DD-37).
 - Payment reconciliation/ledger hoàn chỉnh P3.
 - Identity merge P3.5.
 - Web/onboarding/sync engine P4; marketplace projector P4.3.
-- Player channels P4.5–P4.7; Messenger P4.8; billing P5.
+- Player channels P4.5–P4.7 (Zalo/Messenger phase-1); billing P5.
 
 ---
 
@@ -151,14 +153,18 @@ Không gửi schema/migration telemetry chứa row data hoặc PII.
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| BRD OD-4 | Managed Postgres provider | Chờ chốt |
-| BRD OD-8 | Danh sách môn + taxonomy trình độ | Chờ chốt |
+| BRD OD-4 | Managed Postgres provider | 🟡 DD-04 reopened — gate auto-failover+SLA+posture; nghiêng DO Managed → `../dd-04-hosting-decision-brief.md` |
+| BRD OD-8 | Danh sách môn + taxonomy trình độ | ✅ **Chốt DD-08** (2026-07-13) — môn mở rộng được + level 5-bậc rank |
 | MT-OQ-1 | Narrow worker functions cụ thể | Chốt trong backend tech spec trước P0 implementation |
+| MT-OQ-2 | Kèo không thuộc CLB (Skip Club / personal meet) | ✅ **Chốt DD-46** — Option B "personal tenant" (`tenants.kind='personal'`+`owner_person_id`, auto-provision, free; giữ `tenant_id NOT NULL`+RLS; CẤM nullable). Schema/provision propagate lúc build → `../dd-46-skip-club-analysis.md` |
+| MT-OQ-3 | Nhãn/hạng thành viên (audience targeting) | ✅ **Chốt DD-43** — `membership_tags` many-to-many per-tenant, host-defined; MVP chỉ announce audience; public không lộ tag; bỏ `membership_tier` MVP → `../dd-43-membership-tags-analysis.md` |
 
 ## Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-15 | v1.3 | **Propagation (light):** OD-8 → ✅ DD-08; OD-4 → 🟡 DD-04 reopened; thêm MT-OQ-2 (DD-46 personal tenant) + MT-OQ-3 (DD-43 membership_tags) với pointer. Nền RLS/tenant không đổi; schema (`tenants.kind`/`membership_tags`) propagate lúc build slice. |
+| 2026-07-10 | v1.2 | **DD-37:** cập nhật tham chiếu kênh ngoài phạm vi — tenant routing Zalo/Messenger P2, player channels Zalo/Messenger phase-1 (bỏ Telegram, bỏ "Messenger P4.8"). Nền RLS/tenant không đổi. |
 | 2026-06-19 | v1.1 | Thêm Changelog heading, verified format compliance |
 | 2026-06-18 | v1.1 | Canonical phase; chuẩn hóa RLS setting/worker contract; protected identity; permission matrix; public fields |
 | 2026-06-18 | v1.0 | Initial foundation spec |

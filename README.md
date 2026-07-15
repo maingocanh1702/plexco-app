@@ -7,7 +7,7 @@
 | **Phiên bản** | v0.0.1 — Foundation merged, feature build in progress |
 | **Trạng thái** | 🟢 Scaffold + foundation ĐÃ CÓ: monorepo (`packages/*`,`apps/*`) + **migrations 0000–0013** (RLS/auth/onboarding) đã merge trên `main@1eb6f60`; Auth v3 (Telegram-era) landed → **DD-37 provider replacement (Google/email + Zalo/Messenger) đang chờ**. Docs: 14 active Reviewed + 3 Draft phase-1 chưa commit; Telegram archived (DD-37). Chi tiết: [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md). |
 | **Ngày tạo** | 18/06/2026 |
-| **Stack** | TypeScript · Next.js App Router · Zalo/Messenger HTTP adapters · Drizzle ORM · PostgreSQL (RLS) · pg-boss · SSE/`LISTEN/NOTIFY` (DD-07/DD-10) |
+| **Stack** | TypeScript · Next.js App Router · Zalo/Messenger HTTP adapters *(target — chưa build)* · Drizzle ORM · PostgreSQL (RLS) · pg-boss · SSE/`LISTEN/NOTIFY` (DD-07/DD-10) |
 | **Monorepo** | pnpm workspaces: `packages/core` · `apps/bot` · `apps/web` |
 
 ---
@@ -28,7 +28,7 @@
 | Layer | Tech | Ghi chú |
 |---|---|---|
 | **Core** (logic thuần) | TypeScript | `packages/core` — matching, payments-logic, dates, format, i18n, sports |
-| **Bot** | Zalo HTTP + Facebook Messenger HTTP adapters (Telegram bỏ — DD-37) | `apps/bot` |
+| **Bot** | Zalo HTTP + Facebook Messenger HTTP adapters (Telegram bỏ — DD-37) — **spec/target, CHƯA build**; `apps/bot` live = pg-boss queue/worker | `apps/bot` |
 | **Web** | Next.js App Router, standalone/container; SSE | `apps/web` — surface dashboard + discovery (DD-07/DD-10) |
 | **Database** | PostgreSQL + Drizzle ORM | RLS fail-closed, `tenantRepo` choke-point |
 | **Queue** | pg-boss | Cron, jobs trên Postgres |
@@ -127,10 +127,12 @@ pnpm --filter @plexco/bot start:worker
 
 ## Port Registry
 
+> ⚠️ **Live trên HEAD (`main@1eb6f60`):** chỉ `Web app (Next.js)` + `/healthz` + **auth Telegram-era** (`/api/auth/telegram/*`) + onboarding routes. Các webhook Messenger/Zalo/SePay dưới là **spec/target — CHƯA build** (`apps/bot` hiện chỉ pg-boss queue/worker). Xem [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md).
+
 | Service | Port | Ghi chú |
 |---|---|---|
 | Web app (Next.js) | 3000 | Dashboard + API routes + SSE |
-| Messenger webhook | 3000 `/webhook/messenger` | Per-page routing (page_id → tenant); Meta App Review |
+| Messenger webhook *(spec)* | 3000 `/webhook/messenger` | Per-page routing (page_id → tenant); Meta App Review |
 | Zalo webhook | 3000 `/webhook/zalo/:token` | Per-club token |
 | SePay webhook | 3000 `/webhook/sepay/:token` | Per-bank token |
 | PostgreSQL | 5432 | Docker compose |
@@ -155,7 +157,7 @@ pnpm --filter @plexco/bot start:worker
 
 | Tài liệu | Mô tả | Phiên bản |
 |---|---|---|
-| [HANDOFF.md](./docs/00-start-here/HANDOFF.md) | Tài liệu tiếp quản cho dev/AI mới | v1.0 |
+| [HANDOFF.md](./docs/00-start-here/HANDOFF.md) | Tài liệu tiếp quản cho dev/AI mới | v1.4 |
 | [business-rules.md](./docs/standards/business-rules.md) | Business rules tổng hợp (ID'd, cross-ref) | v1.7 |
 | [design-tokens.md](./docs/standards/design-tokens.md) | CSS variables, colors, typography | v1.0 |
 | [feature-dependency-graph.md](./docs/standards/feature-dependency-graph.md) | Mermaid dependency graph + matrix | v1.2 |
@@ -194,6 +196,11 @@ Coverage and review status: [docs/features/README.md](./docs/features/README.md)
 | Zalo Channel | [feature_zalo_channel.md](./docs/features/feature_zalo_channel.md) | [feature_zalo_channel_tech.md](./docs/features/BE/feature_zalo_channel_tech.md) | P4.7 |
 | Billing Lifecycle | [feature_billing_lifecycle.md](./docs/features/feature_billing_lifecycle.md) | [feature_billing_lifecycle_tech.md](./docs/features/BE/feature_billing_lifecycle_tech.md) | P5 |
 | Security & Operations | [feature_security_operations.md](./docs/features/feature_security_operations.md) | [feature_security_operations_tech.md](./docs/features/BE/feature_security_operations_tech.md) | P6 |
+| Connector Onboarding | [feature_connector_onboarding.md](./docs/features/feature_connector_onboarding.md) | [feature_connector_onboarding_tech.md](./docs/features/BE/feature_connector_onboarding_tech.md) | P1/P2 |
+| In-app Chat (DD-38) | [feature_inapp_chat.md](./docs/features/feature_inapp_chat.md) | [feature_inapp_chat_tech.md](./docs/features/BE/feature_inapp_chat_tech.md) | P4 · Draft (untracked) |
+| User Settings & Profile (DD-39/47/48) | [feature_user_settings.md](./docs/features/feature_user_settings.md) | [feature_user_settings_tech.md](./docs/features/BE/feature_user_settings_tech.md) | P4 · Draft (untracked) |
+| Channel Booking Funnel (DD-32) | [feature_channel_booking_funnel.md](./docs/features/feature_channel_booking_funnel.md) | _BE deferred → build slice_ | P2.5/P4.3 · product-only Draft |
+| Club Assistant (RAG/KB) | [feature_club_assistant.md](./docs/features/feature_club_assistant.md) | [feature_club_assistant_tech.md](./docs/features/BE/feature_club_assistant_tech.md) | P7 |
 
 ### 📝 Templates (`templates/`)
 
@@ -209,8 +216,8 @@ Coverage and review status: [docs/features/README.md](./docs/features/README.md)
 |---------|--------|---------|---------|
 | Web App | [docs/channels/web/](./docs/channels/web/) | Screen map, auth, SSE, [design-tokens](./docs/channels/web/design-tokens.md) | v0.1 |
 | ~~Telegram Bot~~ | [docs/channels/telegram/](./docs/channels/telegram/) | **Archived (DD-37)** — chỉ tham chiếu lịch sử | v0.1 |
-| Zalo Bot | [docs/channels/zalo/](./docs/channels/zalo/) | BYO token, DM-only, reply-context, webhook drift | v0.1 |
-| Messenger Bot | [docs/channels/messenger/](./docs/channels/messenger/) | **Phase-1 (P2.5)**, 24h window, Meta App Review | v0.1 |
+| Zalo Bot | [docs/channels/zalo/](./docs/channels/zalo/) | BYO token, DM-only, reply-context, webhook drift | v0.4 |
+| Messenger Bot | [docs/channels/messenger/](./docs/channels/messenger/) | **Phase-1 (P2.5)**, 24h window, Meta App Review | v0.4 |
 
 ---
 
