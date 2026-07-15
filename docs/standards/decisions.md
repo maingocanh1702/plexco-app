@@ -17,8 +17,8 @@
 | DD-02 | `pay_code` contract: suffix trần 4-ký-tự + prefix namespace + resolver own/foreign/none + allocation invariant | ✅ Chốt (2026-07-13) | P4 | BRD OD-2 · TDD Q3 · `../dd-02-paycode-analysis.md` |
 | DD-03 | Pricing/tier subscription host (4 tier theo kênh) | 🔄 Thay bằng DD-29 | P5 | BRD OD-3 · TDD Q4 |
 | DD-04 | Hosting PostgreSQL — HA+PITR+Singapore chốt; **reopen**: gate = auto-failover+SLA+posture-network trên Fly; ứng viên DO/Neon (Supabase chỉ Ent); nghiêng **DO Managed** | 🟡 Đề xuất (reopened 2026-07-13) | P0 | BRD OD-4 · TDD Q2 · `deployment-infra.md §2` · `../dd-04-hosting-decision-brief.md` |
-| DD-05 | Join cross-club: open vs approval | 🟡 Đề xuất | P4.3 | BRD OD-5 · TDD Q8 |
-| DD-06 | Độ chi tiết vị trí public: area vs venue | 🟡 Đề xuất | P4.3 | BRD OD-6 · TDD Q9 |
+| DD-05 | Join cross-club: open vs approval → ✅ **per-session, default open**; approval → `join_requests` + eligibility re-check in tx | ✅ Chốt (2026-07-13) | P4.3 | `../dd-05-join-policy-analysis.md` |
+| DD-06 | Độ chi tiết vị trí public → ✅ **`area` only public; venue post-join** (invariant test) | ✅ Chốt (2026-07-13) | P4.3 | `../dd-06-location-granularity-analysis.md` |
 | DD-07 | Web realtime: SSE + fan-out qua `LISTEN/NOTIFY` | ✅ Chốt | P4 | BRD OD-7 · TDD Q7 · `deployment-infra.md §2` |
 | DD-08 | Danh sách môn khởi điểm + taxonomy trình độ | ✅ Chốt (2026-07-13) | P0 | BRD OD-8 |
 | DD-09 | Messenger vào lộ trình lúc nào | 🔄 Thay bằng DD-37 (Messenger là kênh phase-1) | P4.8→P2.5 | BRD OD-9 |
@@ -26,8 +26,8 @@
 | DD-11 | Zalo Premium + add-on managed (owner >3 CLB) | 🔗 Phụ thuộc ngoài | P4.7 | TDD Q5 |
 | DD-12 | Public read model = bảng `public_sessions` cập nhật qua projector | ✅ Chốt | P4.3 | live schema/migrations · TDD Q10 |
 | DD-13 | Web-auth provider **Google + email-password** là auth **phase-1** (thay TG Login đã bỏ) | ✅ Chốt | P1 | session 2026-07-02 · **owner 2026-07-10 (DD-37)** · `feature_web_auth_onboarding.md` · `00-start-here/identity-model.md §7` |
-| DD-14 | Zalo Login (Social API) có bị chặn bởi cửa đăng ký OA không | ⬜ Mở | P4+ | cần xác minh Zalo |
-| DD-15 | Zalo Bot `from.id` có ổn định xuyên nhiều bot khác nhau không | ⬜ Mở | P4+ | cần xác minh Zalo |
+| DD-14 | Zalo Login (Social API) có bị chặn bởi cửa đăng ký OA không | ⬜ Mở — **SPIKE xác minh Zalo** (không phải quyết định nội bộ) | P4+ | cần xác minh Zalo |
+| DD-15 | Zalo Bot `from.id` có ổn định xuyên nhiều bot khác nhau không | ⬜ Mở — **SPIKE xác minh Zalo** | P4+ | cần xác minh Zalo |
 | DD-16 | Feature Club AI Assistant + Knowledge Base (RAG per-CLB) | ✅ Chốt | P7 (post-MVP) | `proposals/club-ai-bot-knowledge-base.md` |
 | DD-17 | Vector store = pgvector tenant-private (không vector DB ngoài giai đoạn đầu) | ✅ Chốt | P7 | proposal §7.1 |
 | DD-18 | Provider embedding/LLM cho trợ lý + review privacy/ToS/khu vực dữ liệu | ⬜ Mở (chặn GO-LIVE, không chặn build) | P7 | proposal §7.2 |
@@ -44,23 +44,23 @@
 | DD-29 | **Phase-1 pricing pivot**: free web + bot (**Zalo + Messenger**); 1 gói trả phí **Host Pro 250k/tháng** (thay 4-tier theo kênh) | ✅ Chốt | P5 | owner 2026-07-05 · thay DD-03 · kênh cập nhật DD-37 |
 | DD-30 | Provider onboarding: **APIpay enterprise auto-provision per-host** (tiền vẫn về TK host — giữ money-custody) | ✅ Chốt | P3/P4 | owner 2026-07-05 · `feature_connector_onboarding` |
 | DD-31 | Auth security invariant + test matrix (auth-onboarding v3): 8 bất biến SI-1..SI-8. **v3 đã MERGE vào `main@1eb6f60`** (Telegram-era; migrations 0012/0013 + KMS pepper client + tests). Residual = **audit SI trên main + thay provider Telegram Login → Google/email** (DD-37/DD-13) | ✅ Merged (Telegram-era) · residual = Google/email swap | P4 | session 2026-07-06 · merge `5b1193b` · `BE/auth-security-invariant-table.md` |
-| DD-32 | Phễu channel-first (proposal, **mặc định phễu MỀM**): link Plexco↔FB/Zalo → book slot trong Messenger/Zalo (lớp nhẹ, hook), hành động sâu/analytics → lên app. Giữ guest-join (CCJ-UC-1, ID-UC-2); phụ thuộc DD-33 (FB Login) + DD-14 (Zalo Login) | 🟡 Đề xuất | P4.3/P4.7 + Messenger **P2.5** (DD-37) | session 2026-07-06 · `feature_channel_booking_funnel.md` |
+| DD-32 | Phễu channel-first → ✅ **Option A (phễu MỀM)**: guest book free/paid; OTP đủ linked-lite; web-auth không phải booking gate và không tự cấp quyền claim tiền; claim/merge defer identity evidence+confirm contract | ✅ Chốt (2026-07-13) | P4.3 + Messenger **P2.5** | `../dd-32-booking-funnel-analysis.md` |
 | DD-33 | Facebook Login / Messenger account-link như web-auth provider (`account_identities.platform='facebook'`) — **phase-1** (kênh Messenger + link account); phụ thuộc App Review | 🟡 Đề xuất (phase-1) | P2.5 | session 2026-07-06 · **owner 2026-07-10 (DD-37)** · `00-start-here/identity-model.md §7` |
-| DD-34 | Plexco Global KB plane (global read-only, non-PII) + union retrieval KB-club ∪ KB-Plexco — trợ lý trả lời cả về nền tảng | 🟡 Đề xuất | P7 | session 2026-07-06 · `proposals/plexco-global-kb-and-kb-autosync.md` |
-| DD-35 | Auto-derive KB-club từ dữ liệu canonical (projector, field-whitelist mô tả, tách DD-28 live-context) | 🟡 Đề xuất | P7 | session 2026-07-06 · proposal §4 |
-| DD-36 | Freshness: scheduled re-crawl URL + re-ingest KB-Plexco, change-detect `content_hash` | 🟡 Đề xuất | P7 | session 2026-07-06 · proposal §5 |
+| DD-34 | Plexco Global KB plane + union retrieval | 🟡 Approve-in-principle (P7; chi tiết+patch DD-21 khi build) | P7 | `proposals/plexco-global-kb-and-kb-autosync.md` |
+| DD-35 | Auto-derive KB-club từ canonical | 🟡 Approve-in-principle (P7) | P7 | proposal §4 |
+| DD-36 | Freshness: scheduled re-crawl + re-ingest KB-Plexco | 🟡 Approve-in-principle (P7) | P7 | proposal §5 |
 | DD-37 | **Phase-1 channel pivot: BỎ Telegram; Facebook Messenger + Zalo + web là kênh MVP** (thay DD-09) | ✅ Chốt | P1–P2.5 | owner 2026-07-10 · thay DD-09 · BRD v3.4 |
 | DD-38 | **Chat cơ bản trong app phase-1** (toàn CLB + 1-1, chỉ Plexco, không bridge) — dựng hạ tầng `chat_*` sớm; trợ lý (DD-19) tái dùng ở P7 | ✅ Chốt | P4 | owner 2026-07-10 · BRD v3.4 MODULE 10 |
 | DD-39 | **Giá theo giới tính** (kèo giá nam/nữ); giới tính từ hồ sơ person, PII có consent, không lộ public | ✅ Chốt | P2/P4 | owner 2026-07-10 · BRD v3.4 MODULE 11 |
 | DD-40 | **Mark-paid thủ công (tiền mặt/CK, tap/multi-select) mặc định MỌI tier** → ghi `payment_allocations` (source `cash`/`manual`), KHÔNG bảng `payment`; auto-reconcile + nhắc tự động là `host_pro` (giải nuance DD-29) | ✅ Chốt | P2/P3 | owner 2026-07-10 · giải DD-29 nuance |
 | DD-41 | **Field mô tả + gating cho `sessions`** → ✅: title/notes/`session_type`(1 field)/byoe/cost_shared/instructions + gating level-rank/gender/**age** (enforce ở **shared `evaluateSessionEligibility`**←`addMemberToSession`, self-attested, 9 exact codes); gender/age dùng `gender_enc`/`dob_enc`+consent state; retire `skill_level`→rank | ✅ Chốt (2026-07-13) | P2/P4 | `../dd-41-session-fields-gating-analysis.md` |
-| DD-42 | **Subsystem no-show / attendance / reliability** (điểm danh trên `players`, độ tin cậy trên `memberships`, policy deprioritize/ban per-tenant) | 🟡 Đề xuất | P4+ | session 2026-07-11 · ảnh 1 · bot Bestminton |
-| DD-43 | **Nhãn/hạng thành viên + audience targeting** khi tạo/announce kèo (Bronze/Champions/Supporter/level…) — thuộc membership, không phải field session | 🟡 Đề xuất | P4+ | session 2026-07-11 · ảnh 1 |
-| DD-44 | **Invite-link token** cho kèo private (share link, không hạ visibility) | 🟡 Đề xuất | P4 | session 2026-07-11 · ảnh 4 (Invite Only) |
-| DD-45 | **Model hoá waitlist** (`players.status` thêm `waitlisted` + auto-promote atomic) — đóng gap SES-UC-9 | 🟡 Đề xuất | P2/P4 | session 2026-07-11 · feature_session_management |
+| DD-42 | **No-show/attendance/reliability** → ✅ **per-tenant** (attendance trên `players`, reliability trên `memberships`, policy deprioritize/ban; RLS, không public) | ✅ Chốt (2026-07-13) | P4+ | `../dd-42-reliability-analysis.md` |
+| DD-43 | **Nhãn/hạng thành viên + audience targeting** → ✅ per-tenant tags (host-defined; announce audience; public không lộ tag; level dùng DD-08; `membership_tier` bỏ khỏi MVP) | ✅ Chốt (2026-07-13) | P4+ | `../dd-43-membership-tags-analysis.md` |
+| DD-44 | **Invite-link token** cho kèo private → ✅ `session_invite_tokens` (entropy ≥128-bit/hash/expires/max_uses; used_count-on-redeem; vẫn qua join_policy+gating; không hạ visibility) | ✅ Chốt (2026-07-13) | P4 | `../dd-44-invite-token-analysis.md` |
+| DD-45 | **Model hoá waitlist** → ✅ full→waitlisted cho open/approval; state-shape/total order; atomic exactly-one-charge promotion; `left` rejoin fail-closed; preserve capacity-below-active reject | ✅ Chốt (2026-07-13; re-check 2026-07-15) | P2/P4 | `../dd-45-waitlist-analysis.md` |
 | DD-46 | **Kèo không thuộc CLB (Skip Club)** → ✅ **Option B "personal tenant"** (auto-provision, free, `tenants.kind`; giữ tenant_id NOT NULL; CẤM nullable) | ✅ Chốt (2026-07-13) | P4 | `../dd-46-skip-club-analysis.md` |
-| DD-47 | **Social follow graph (person↔person)** — bảng global `person_follows`, cạnh có hướng, `pending/accepted`, auto-accept khi followee public / approve khi private; merge re-parent+dedupe; KHÔNG cấp quyền tiền/PII/roster | 🟡 Đề xuất | P4+ | session 2026-07-11 · `feature_user_settings` |
-| DD-48 | **Profile visibility (public/private)** — `persons.profile_visibility` default `public`; cross-user profile read whitelist non-PII + gating fail-closed; private ẩn cả đồng đội cùng CLB (trừ host vận hành); KHÔNG nới RLS/không đụng đường tiền | 🟡 Đề xuất | P4+ | session 2026-07-11 · `feature_user_settings` |
+| DD-47 | **Social follow graph** → ✅ framework: global-protected `person_follows`, no table grant, narrow `SECURITY DEFINER`, state-idempotent, actor session-bound, merge lock+dedupe | ✅ Chốt framework (2026-07-13) | P4+ | `../dd-47-follow-graph-analysis.md` |
+| DD-48 | **Profile visibility** → ✅ framework: new user public/existing private; sourced social whitelist; self + host operational routes tách riêng; fail-closed, không nới RLS/tiền; **5 open item lúc build** | ✅ Chốt framework (2026-07-13) | P4+ | `../dd-48-profile-visibility-analysis.md` |
 
 ---
 
@@ -119,14 +119,16 @@
 - **Còn lại (chờ founder):** (1) chốt **QĐ-1 posture** (a/b/c — kéo theo có rời Fly không); (2) chọn **DO** (đề xuất) hay **Neon Scale**; (3) 3 điều kiện xác minh khi ký (test auto-failover, PITR depth + restore drill, region Singapore).
 - **Chi tiết:** `../dd-04-hosting-decision-brief.md` (rev 2) · `deployment-infra.md §2/§6 (DD-04)`.
 
-## DD-05 — Join cross-club: open vs approval · 🟡 Đề xuất
+## DD-05 — Join cross-club: open vs approval · ✅ Chốt (2026-07-13) — `../dd-05-join-policy-analysis.md`
+> **Chốt:** per-session, **mặc định `open`**. **`pending` join_request KHÔNG tạo membership/player/charge**. Final open/approve lock session + eligibility re-check (DD-41) dưới tenant RLS: còn slot → membership+active player+charge+venue; full → membership+waitlisted player, không charge/venue (DD-45). Approve là tenant state-write; capacity-available branch là money-write.
 
 - **Bối cảnh:** Player join kèo từ marketplace xuyên CLB.
 - **Quyết định (đề xuất):** Cấu hình **per-kèo**, mặc định **open**, host có thể bật **approval**.
 - **Lý do:** Cân bằng tốc độ lấp slot (open) và quyền kiểm soát của host.
 - **Hệ quả:** Thêm field cấu hình ở session; state machine join có nhánh chờ duyệt.
 
-## DD-06 — Độ chi tiết vị trí public · 🟡 Đề xuất
+## DD-06 — Độ chi tiết vị trí public · ✅ Chốt (2026-07-13) — `../dd-06-location-granularity-analysis.md`
+> **Chốt:** public projector emit **`area` (quận/khu vực) only**; `venue_name`/`venue_address`+SĐT/bản đồ **chỉ lộ sau join/approval**. Invariant test: venue KHÔNG vào `public_sessions`.
 
 - **Bối cảnh:** Lộ địa điểm chính xác ra public gây rủi ro riêng tư/spam.
 - **Quyết định (đề xuất):** Public chỉ hiện **khu vực/quận**; lộ **venue chính xác** sau khi join/được duyệt.
@@ -199,13 +201,15 @@
   - **SI-2 keyed-hash (DD-31):** cột `account_identities.platform_user_hash` cho `google.sub`/email — dùng keyed HMAC (Google `sub` entropy cao hơn TG id nhưng vẫn keyed để nhất quán).
 - **Hệ quả:** Cập nhật `feature_web_auth_onboarding(.md/_tech)` (WAO-UC-1, Auth Adapter: **bỏ Telegram, thêm Google/email**) + `00-start-here/identity-model.md §7`. Đây là spec-change có DD ✅ → được sửa spec Reviewed theo checklist DD-37.
 
-## DD-14 — Zalo Login (Social API) có bị chặn bởi cửa đăng ký OA không · ⬜ Mở
+## DD-14 — Zalo Login (Social API) có bị chặn bởi cửa đăng ký OA không · ⬜ Mở — SPIKE (2026-07-13) — `../dd-14-15-zalo-spike-analysis.md`
+> **Không phải quyết định nội bộ** — cần **spike xác minh với Zalo** (developers.zalo.me). Không chặn (link_codes bao ca xấu nhất). Giao spike trước khi phụ thuộc auto-match / bật DD-32 nhánh Zalo.
 
 - **Bối cảnh:** Zalo có nhiều bề mặt tách biệt (Bot Open API, Mini App, OA OpenAPI, Social/Login). Chiến lược auto-match "Zalo login ↔ Zalo bot" (giảm friction, thay cho SĐT) phụ thuộc việc bật được Zalo Login.
 - **Cần xác minh:** Zalo Login yêu cầu đăng ký app trên developers.zalo.me — có buộc phải có OA verified không (thứ đang pending), hay độc lập.
 - **Hệ quả:** Nếu độc lập → có thể bật Zalo Login trước OA, dùng làm cầu nối auto-match. Ảnh hưởng **DD-32 / provider-link path** (KHÔNG phải DD-13 — đã fence Google/email) và thiết kế link (`00-start-here/identity-model.md §5 link-code contract · §7 provider/channel phase matrix`).
 
-## DD-15 — Zalo Bot `from.id` có ổn định xuyên nhiều bot khác nhau không · ⬜ Mở
+## DD-15 — Zalo Bot `from.id` có ổn định xuyên nhiều bot khác nhau không · ⬜ Mở — SPIKE (2026-07-13) — `../dd-14-15-zalo-spike-analysis.md`
+> **Spike xác minh Zalo** (gộp với DD-14). Không chặn (link_codes). Kết quả chỉ ảnh hưởng mức auto-match.
 
 - **Bối cảnh:** Plexco đa-bot (mỗi host/CLB một bot). Cùng một người ở hai bot khác nhau: `from.id` là id toàn cục theo user Zalo, hay scoped-per-bot? (Messenger PSID đã xác nhận page-scoped.)
 - **Cần xác minh:** với Zalo Bot Platform.
@@ -227,7 +231,8 @@
 - **Lý do:** Tái dùng luôn ranh giới cô lập RLS (INV-1) — không phải bảo mật hệ thống thứ 2; 1 DB/1 backup/PITR (hợp modular monolith, P14); KB mỗi CLB nhỏ nên ANN trên tập đã filter theo tenant rất nhẹ.
 - **Hệ quả:** Bật extension `vector` (review riêng ở migration roles/extensions); cân nhắc tương tác ANN index (HNSW/IVFFlat) với RLS filter — cần benchmark recall khi filter chặt. Chuyển vector DB ngoài chỉ khi đo lường thực sự cần (P14 partition-when-measured).
 
-## DD-18 — Provider embedding/LLM + privacy/ToS · ⬜ Mở
+## DD-18 — Provider embedding/LLM + privacy/ToS · ⬜ Mở (hướng ✅, chặn GO-LIVE) — `../dd-18-llm-provider-analysis.md`
+> **Hướng (2026-07-13):** MVP trợ lý dùng **API hosted-first** sau interface swappable `EmbeddingProvider`/`ChatProvider`. **Provider cụ thể + ToS/DPA/data-region review CHẶN GO-LIVE** (P6), KHÔNG chặn build. Giữ ⬜ vì open item pháp lý.
 
 - **Bối cảnh:** Cần chọn provider embedding + generation. Câu trả lời phụ thuộc chất lượng tiếng Việt, chi phí/câu, độ trễ, và **quyền riêng tư** (gửi doc nội bộ CLB tới LLM bên thứ 3 = xử lý dữ liệu tenant).
 - **Cần chốt:** Provider cụ thể (API hosted cho tốc độ MVP vs đường self-host cho privacy) + review ToS/DPA/khu vực dữ liệu, và công bố ở Privacy/ToS (đưa vào P6 Harden).
@@ -351,25 +356,14 @@
 - **⚠️ Cập nhật 2026-07-10 (DD-37):** **OQ-1 đã bị đảo.** Telegram bị bỏ khỏi phạm vi (DD-37) ⇒ **không còn TG Login**; auth phase-1 = **Google + email-password** (DD-13 nay ✅). SI-2 keyed-hash áp cho `google.sub`/email thay cho `telegram:id`. Auth-onboarding v3 scope phải cập nhật: bỏ Telegram adapter, thêm Google/email adapter; các SI-1..SI-8 còn nguyên hiệu lực nhưng "telegram user id entropy thấp" (round-09 finding) nay là moot — vẫn giữ keyed HMAC cho nhất quán.
 - **⚠️ Cập nhật 2026-07-10 (trạng thái merge):** **v3 đã MERGE vào `main@1eb6f60`** (`5b1193b`) — Telegram-era, kèm migrations `0012/0013`, **KMS pepper client** (`37296ef`), `SECURITY DEFINER search_path` fix (`3ce516f`), tests. Nên DD-31 chuyển từ 🟡 "chờ v3 merge" → **✅ Merged (Telegram-era)**. Mô tả "chưa có code KMS / SI phải build mới" trong `BE/auth-security-invariant-table.md §2/§3` là **pre-merge, đã đánh dấu lỗi thời**. **Residual thực sự:** audit SI-1..SI-8 trên code đã merge + **thay provider Telegram Login → Google/email** (DD-37/DD-13, chưa implement) — theo dõi như hạng mục con của DD-13, không phải DD-31 mở lại.
 
-## DD-32 — Channel-first booking funnel (link → book-in-chat → app) · 🟡 Đề xuất
+## DD-32 — Channel-first booking funnel · ✅ Chốt (2026-07-13) Option A — `../dd-32-booking-funnel-analysis.md`
+> **Chốt (owner): A — phễu MỀM.** Guest book free/paid qua common join service; link chỉ mở giá trị + CTA. Web-auth cho paid booking là Option C và **không được áp dụng** nếu DD-32 chưa reopen.
 
-> **Đây là PROPOSAL cho một phễu tăng trưởng, KHÔNG phải một luật đã chốt.** Mặc định khuyến nghị là **phễu MỀM** (guest vẫn book được). Implementer **KHÔNG** được coi đây là gate cứng hay thu hẹp guest-join hiện tại cho tới khi founder chốt phương án + DD-32 chuyển ✅.
-
-- **Mục tiêu (owner 2026-07-06):** **Phễu tăng trưởng channel-first**, KHÔNG phải gate chống gian lận. Ý đồ: user **link Plexco account ↔ Facebook + Zalo** → mở khoá **đặt slot ngay trong Messenger/Zalo** (giá trị tức thì, ở nơi user đã có mặt) → **hook** user vào hệ Plexco. Book-in-chat = **lớp engagement nhẹ**; muốn làm nhiều hành động hơn / theo dõi chỉ số / phân tích sâu → **lên app Plexco** (lớp sâu). Link account là **cửa vào phễu**, không phải rào cản.
-- **Bối cảnh — trạng thái docs hiện tại (giữ nguyên, không phải "thành luật"):** spec Reviewed hiện cho phép book **không cần link trước** (guest-join thuần). Proposal này **thêm một lớp phễu bên trên** đường guest đó, không thay nó:
-  - `feature_identity.md` **ID-UC-2**: "Join một tenant lần đầu → tạo membership idempotently" — channel identity gắn `Person` tự động khi nhắn bot; không có bước link bắt buộc.
-  - `feature_cross_club_join.md` **CCJ-UC-1**: open-join tạo **guest membership** on-the-fly; "verified identity" = player sở hữu channel identity của chính mình (CCJ edge #3), **không** đồng nghĩa "đã link web/Plexco account".
-  - `feature_zalo_channel.md` **ZAL-UC-2/3**: `/join` → reply số → common join service; `/link` (OTP) chỉ để **merge cross-channel** (ID-UC-3, `link_codes`), **không** phải cổng chặn booking.
-- **Phương án đưa link vào phễu (founder chọn 1):**
-  - **(A) Phễu mềm — KHUYẾN NGHỊ (mặc định):** guest vẫn book được (**giữ nguyên CCJ-UC-1**); link account **chỉ mở thêm giá trị** (lịch sử xuyên club, nhắc nợ/nhắc kèo, magic-link lên app, giữ slot nhanh hơn) + **CTA link** hiện sau mỗi lần book guest. Không thu hẹp guest-join.
-  - **(B) Gate cứng toàn hệ:** mọi book qua bot đều cần link trước — **thu hẹp** guest-join. Chỉ cân nhắc nếu đo được lạm dụng guest thực sự.
-  - **(C) Gate theo điều kiện:** chỉ session **có tiền** mới cần link; free session vẫn guest-join.
-- **Lý do (khớp DD-29 acquisition-first):**
-  - Book-in-chat trên Messenger/Zalo phủ user tại đúng nơi họ dùng hằng ngày → giảm ma sát so với bắt cài app trước. Chặn cứng ngay bước book dễ **làm rớt chính nhóm user đang muốn kéo vào** → đó là lý do khuyến nghị (A).
-  - **Tiered engagement:** channel = lớp nhẹ (book/nhắc/xác nhận), app = lớp sâu (nhiều hành động, dashboard, phân tích) → tạo lý do tự nhiên để user lên app; đồng thời định danh chắc hơn trước khi phát sinh nghĩa vụ tiền (củng cố HR4/DD-01 ở nhánh có tiền).
-- **Phụ thuộc provider login (đường tạo linked-state):** "link ↔ Facebook" phụ thuộc **DD-33** (Facebook Login/Messenger account-link — ⬜); "link ↔ Zalo" phụ thuộc **DD-14** (Zalo Login gating — ⬜). Nếu social login chưa bật → phễu tạm dùng OTP `/link` thủ công (ma sát cao hơn, giảm hiệu quả hook). **DD-13** (Google/email-password) **KHÔNG** bao Facebook — xem `00-start-here/identity-model.md` §7 (provider/channel phase matrix).
-- **Hệ quả (chỉ áp dụng KHI DD-32 ✅ + founder chốt phương án):** propagation vào spec Reviewed **theo phương án đã chọn** — với (A) là **thêm** lớp CTA/giá trị mà không sửa nhánh guest; với (B)/(C) mới cần chèn điều kiện require-link trước join. Chi tiết + use case + state machine phễu ở feature doc Draft `feature_channel_booking_funnel.md`. **KHÔNG** sửa thân spec Reviewed cho tới khi DD-32 ✅.
-- **Còn lại (chờ founder chốt):** (1) Phương án **A / B / C** (khuyến nghị A); (2) định nghĩa "linked" — chỉ cần OTP `/link` đã confirm hay cần **web-auth account đầy đủ** (`accounts` + `account_identities` verified); (3) thứ tự bật **DD-33/DD-14** (FB/Zalo Login social); (4) neo hiện thực "book qua bot" trên **common join service** (CCJ).
+- **Ba mức:** guest (channel identity) → book; linked-lite (OTP `/link` confirmed) → hook; web-auth (`accounts` + verified `account_identities`) → app/deep actions.
+- **Ranh giới identity-money:** web-auth/OTP/confirmation riêng lẻ không tự cấp quyền claim membership cụ thể có tiền. Claim/merge defer nguyên `feature_identity` evidence matrix, conflict checks, explicit confirmation + audit. DD-26 chỉ chặn persist alias/name/claim-suggestion khi chưa confirm; không biến soft key thành proof.
+- **Lý do:** Option A giữ acquisition-first DD-29 và không thu hẹp CCJ guest path. B/C là phương án đã loại; muốn bật bất kỳ linked gate nào phải reopen DD-32.
+- **Provider order:** DD-33 Facebook trước, DD-14 Zalo sau; khi chưa có social login, OTP `/link` là fallback.
+- **Hệ quả:** build slice thêm CTA/deep action vào Zalo/Messenger, pin ba mức trong identity/funnel docs và viết BE funnel spec. `feature_cross_club_join` chỉ thêm regression guest-vẫn-book free/paid; không tạo đường booking song song hoặc linked-tier gate.
 
 ## DD-33 — Facebook Login / Messenger account-link như web-auth provider · 🟡 Đề xuất (phase-1)
 
@@ -381,7 +375,8 @@
 
 ---
 
-## DD-34 — Plexco Global KB plane + union retrieval (KB-club ∪ KB-Plexco) · 🟡 Đề xuất
+## DD-34 — Plexco Global KB plane + union retrieval (KB-club ∪ KB-Plexco) · 🟡 Approve-in-principle P7 (2026-07-13) — `../dd-34-36-kb-platform-analysis.md`
+> **Duyệt hướng** với các guard đã nêu (grant-isolated + scanner PII). **Chi tiết + patch DD-21 khi build P7.** Không chặn MVP.
 
 - **Bối cảnh:** Club Assistant đã chốt (DD-16..28) chỉ bao **KB per-CLB tenant-private**; trợ lý chỉ biết KB của đúng club. Owner (06/07) muốn trợ lý trả lời cả câu hỏi **về chính nền tảng Plexco** (tính năng, cách dùng, chính sách chung) — không có plane cho tri thức dùng chung không thuộc tenant nào.
 - **Quyết định (đề xuất):** Thêm plane **GLOBAL read model** `platform_kb_*` (`platform_kb_sources/documents/chunks`) — **KHÔNG có `tenant_id`**, do process **platform-admin** ghi, role `app` chỉ **`GRANT SELECT`** (cô lập-bằng-grant như DD-12/`readonly`, KHÔNG vào RLS list `0009`). Mở rộng `searchKnowledgeBase(tenantCtx, query)` thành **union 2 nhánh**: `kb_chunks` WHERE tenant (RLS) ∪ `platform_kb_chunks` (global), hợp nhất RRF, gắn nhãn scope; **precedence club > platform** khi trùng chủ đề (`bot_configs.include_platform_kb`/`platform_kb_weight`).
@@ -390,7 +385,8 @@
 - **Cô lập & guard (bảng SELECT cho mọi tenant nên phải chặt):** thiếu `tenant_id` chỉ ngăn **routing/association** — **KHÔNG** tự ngăn nội dung tenant bị ingest **nhầm** vào `content`. Vì `platform_kb_*` đọc-chung mọi tenant, `platform_kb_*` **KHÔNG ĐƯỢC chứa** (không phải "không thể chứa") dữ liệu tenant/PII ⇒ cần guard nhiều lớp: (1) **source allowlist** — chỉ ingest tài liệu sản phẩm Plexco (platform-docs-only), không nhận nguồn tenant; (2) **admin review** trước khi `status='active'`; (3) **scanner + test bất biến** assert `content` không chứa tenant identifier/PII pattern (SĐT/email/`pay_code`/tên roster). Grant: role `app` chỉ SELECT; ghi bởi role platform-admin.
 - **Hệ quả:** Test bất biến: platform table không `tenant_id`; role `app` không ghi được; **scanner PII/tenant-id trên `content` = xanh**; union không rò KB club A↔B; câu hỏi nền tảng nhận chunk platform. Chi tiết `proposals/plexco-global-kb-and-kb-autosync.md §3`. **Không** sửa spec Reviewed tới khi ✅ (khi ✅ mới patch DD-21 + Club Assistant specs).
 
-## DD-35 — Auto-derive KB-club từ dữ liệu canonical · 🟡 Đề xuất
+## DD-35 — Auto-derive KB-club từ dữ liệu canonical · 🟡 Approve-in-principle P7 (2026-07-13) — `../dd-34-36-kb-platform-analysis.md`
+> **Duyệt hướng** (field-whitelist, cấm ledger/PII). Chi tiết khi build P7.
 
 - **Bối cảnh:** KB-club hiện tại là host **nạp thủ công** (`kind ∈ faq/doc_upload/pasted/url`). Owner muốn KB **tự cập nhật theo update của từng club** — không bắt host nạp lại khi đổi mô tả/luật/chính sách.
 - **Quyết định (đề xuất):** Thêm `kb_sources.kind='derived'`. Khi field **mô tả** canonical của club đổi → **command→outbox→projector** (HR3) tự dựng lại KB document từ **field-whitelist** (tên/mô tả CLB, nội quy, chính sách giá dạng text, khung lịch, hướng dẫn tham gia). 1 aggregate canonical : 1 derived source (upsert theo `derive_key`), idempotent `content_hash`.
@@ -398,7 +394,8 @@
 - **Ranh giới (giữ HR2/DD-21/DD-28):** **CẤM** derive `charges`/`memberships`/`persons`/SĐT/`pay_code`/số dư vào KB. **KHÔNG** derive dữ liệu vận hành realtime (slot buổi cụ thể, ai join) — cái đó là **DD-28 live-context tool**, không phải KB. Precedence: host-manual > derived (host tắt được từng mảng derived).
 - **Hệ quả:** Thêm projector + field-whitelist (enumerate ở BE tech). Test bất biến: derived doc ⊆ whitelist (không ledger/PII); đổi field non-whitelist → KB không đổi; derive qua outbox (không ghi KB thẳng). Chi tiết proposal §4. **Không** sửa spec Reviewed tới khi ✅.
 
-## DD-36 — Freshness: scheduled re-crawl + re-ingest KB-Plexco · 🟡 Đề xuất
+## DD-36 — Freshness: scheduled re-crawl + re-ingest KB-Plexco · 🟡 Approve-in-principle P7 (2026-07-13) — `../dd-34-36-kb-platform-analysis.md`
+> **Duyệt hướng** (pg-boss cron, change-detect). Chi tiết khi build P7.
 
 - **Bối cảnh:** "Update KB theo update của **Plexco**" + nguồn URL cần tự làm mới; hiện ingest chỉ chạy khi host thao tác.
 - **Quyết định (đề xuất):** (a) **KB-Plexco** re-ingest khi team Plexco đổi tài liệu sản phẩm (change-detect `platform_kb_sources.content_hash`); (b) nguồn `kind='url'` (tenant + platform) **scheduled re-crawl** bằng **pg-boss cron**: refetch → so `source_etag`/`content_hash` → chỉ re-ingest khi đổi. Thêm field freshness (`last_synced_at`, `next_sync_at`, `sync_interval`, `source_etag`).
@@ -479,36 +476,41 @@
 - **Phân biệt DD-39:** gender ở đây = **ĐIỀU KIỆN JOIN**; DD-39 = **PRICING** — độc lập.
 - **Propagation (khi build):** `feature_session_management(.md/_tech)` (`evaluateSessionEligibility`/`addMemberToSession`) + `feature_cross_club_join(.md/_tech)` (enforce + approval re-check) + `feature_marketplace_discovery` (whitelist) + `business-rules` (gating invariants) + TDD discovery/join + **BRD NFR-S2 clarify (gender_restriction=policy≠player PII)** + **`feature_user_settings(.md/_tech)`** (gender/dob consent + age-at-starts_at) + `schema.ts`+migration+DBML + projector + invariant test (`rls-invariants.test.ts:133`). Session/CCJ domain **chưa implement** (live = schema + minimal `tenantRepo.sessions`). Chi tiết → slice riêng.
 
-## DD-42 — Subsystem no-show / attendance / reliability · 🟡 Đề xuất
+## DD-42 — Subsystem no-show / attendance / reliability · ✅ Chốt (2026-07-13) per-tenant — `../dd-42-reliability-analysis.md`
+> **Chốt (owner): per-tenant.** Attendance trên `players` (`present|no_show|excused|unknown`); reliability aggregate trên `memberships` **per-tenant** (RLS, không lộ xuyên CLB); policy per-tenant deprioritize (hạ waitlist DD-45)/ban. **KHÔNG public.**
 
 - **Bối cảnh:** Ảnh 1 (Create Meet, app club-centric) có filter **"No show - Deprioritize"** và **"No show twice - Banned 1 month"** — hệ thống điểm danh/độ tin cậy của club. Plexco: `players.status` chỉ `active|left` (không attendance/no-show); `memberships` không có reliability/score. Bot reference (Bestminton) có khái niệm này nhưng **chưa** đưa vào canonical/spec.
-- **Quyết định (đề xuất):** Subsystem **RIÊNG** (không nhét vào session CRUD):
+- **Quyết định:** Subsystem **RIÊNG, per-tenant** (không nhét vào session CRUD):
   - **Attendance** trên `players`: `attendance ∈ {present|no_show|excused|unknown}`, host mark sau buổi.
   - **Reliability** tổng hợp trên `memberships`: đếm no-show gần đây / score.
   - **Policy per-tenant** (setting): vd deprioritize khi 1 no-show; ban N ngày khi 2 no-show liên tiếp. Deprioritize = hạ ưu tiên join/waitlist (DD-45); ban = chặn join tạm thời (state có hạn trên membership).
 - **Lý do:** Giá trị vận hành thật (giảm no-show phá kèo) — điểm mạnh của bot cũ; nhưng ảnh hưởng roster/eligibility → phải là subsystem có test riêng, không phải field lẻ.
-- **Hệ quả:** Bảng/cột mới (attendance + reliability + tenant policy) — migration mới; command `markAttendance`; đường join phải check ban; waitlist ordering (DD-45) đọc reliability. **Ràng buộc:** attendance/reliability là **TENANT-scoped (RLS)**, **KHÔNG ra public** (như nợ/PII). **Cần chốt:** reliability **per-tenant** (đề xuất — khớp RLS, không lộ hành vi xuyên CLB) hay cross-tenant. **Không** sửa spec Reviewed tới khi ✅.
+- **Hệ quả:** Bảng/cột mới (attendance + reliability + tenant policy) — migration mới; command `markAttendance`; đường join phải check ban; waitlist ordering (DD-45) đọc reliability. Attendance/reliability **đã chốt TENANT-scoped (RLS)**, **KHÔNG ra public** (như nợ/PII); propagation vào spec/schema thực hiện cùng build slice.
 
-## DD-43 — Nhãn/hạng thành viên + audience targeting khi announce · 🟡 Đề xuất
+## DD-43 — Nhãn/hạng thành viên + audience targeting khi announce · ✅ Chốt (2026-07-13) — `../dd-43-membership-tags-analysis.md`
+> **Chốt — 2 contract RIÊNG:** (1) **`membership_tags`** (many-to-many, per-tenant, host-defined) chỉ cho **notification audience** khi announce (MVP); (2) **join eligibility = DD-41 gating + join_policy** (KHÔNG dùng tag gate join MVP). Bỏ `membership_tier` khỏi MVP; "join sớm theo tag" = slice sau. **Public không lộ tag**; level dùng DD-08.
 
 - **Bối cảnh:** Ảnh 1 có chip lọc thành viên: **Bronze / Runner Up / Champions / Membership / Supporter / level 1–8** — phân hạng/nhãn thành viên của club, dùng để **nhắm đối tượng** khi tạo/announce kèo. Plexco `memberships` chỉ có `status` (`active|guest|left|merged`) + `pay_code`; **không** có tier/segment/label.
-- **Quyết định (đề xuất):** Thêm cơ chế **nhãn/hạng thành viên per-tenant** do host tự định nghĩa (bảng `membership_tags`/`member_segments` many-to-many, hoặc `membership_tier`). Khi tạo/announce kèo → chọn **audience** theo tag/tier (giới hạn ai thấy / được mời / được join sớm). Đây là **AUDIENCE TARGETING**, không phải field của `sessions`.
+- **Quyết định:** Thêm **`membership_tags` many-to-many, per-tenant, host-defined**. MVP chỉ dùng tag để chọn **notification audience khi announce**; join eligibility vẫn do DD-41 + `join_policy`. Không có `membership_tier` hay tag-gated early join trong MVP.
 - **Lý do:** Cho host điều phối kèo theo nhóm (VIP/supporter/theo trình độ) như app đối thủ; tái dùng `memberships` hiện có, **không** tạo identity song song (§P6).
-- **Hệ quả:** Schema tags/tiers (tenant-scoped, RLS); tích hợp bước announce (`session_surface_refs`/announcement) + tuỳ chọn join eligibility; **public projection KHÔNG lộ tag nội bộ**. Thuộc `feature_multi_tenant`/membership + `feature_session_management` (bước announce). Phần "level" trùng một phần **DD-08** (taxonomy trình độ) — thống nhất một nguồn. **Không** sửa spec Reviewed tới khi ✅.
+- **Hệ quả:** Schema tag tenant-scoped + RLS; tích hợp bước announce (`session_surface_refs`/announcement); **public projection KHÔNG lộ tag nội bộ**. Thuộc `feature_multi_tenant`/membership + `feature_session_management` (bước announce). Level tiếp tục dùng một nguồn DD-08; propagation thực hiện cùng build slice.
 
-## DD-44 — Invite-link token cho kèo private · 🟡 Đề xuất
+## DD-44 — Invite-link token cho kèo private · ✅ Chốt (2026-07-13) — `../dd-44-invite-token-analysis.md`
+> **Chốt + redemption:** `session_invite_tokens` — **entropy ≥128-bit**, lưu **hash**, **bound `session_id`+`tenant_id`**, `expires_at`/`max_uses`/`used_count`/`revoked_at` (revoke/rotate). Mở link → join kèo **private**, vẫn qua `join_policy`+gating (DD-41). **`used_count` tăng khi REDEEM thành công** (không phải lúc mở link); **lock+idempotency lượt cuối** (`FOR UPDATE`). Token = MỜI, không hạ `visibility`; venue ẩn tới join (DD-06).
 
 - **Bối cảnh:** Ảnh 4 (Create Game) có **"Invite Only"** = *"restricted to invited players and can be accessed by anyone via shared link"*. Plexco có `visibility` (private/public) + `join_policy` (open/approval) + `join_requests`, nhưng **KHÔNG** có token link chia sẻ cho kèo private (private hiện = ẩn khỏi marketplace, chưa có đường mời qua link).
-- **Quyết định (đề xuất):** Thêm **invite-link token per-session** (`session_invite_tokens`: token hash, `expires_at`, `max_uses`, `used_count`). Ai có link mở được trang join của kèo **private** (không cần public marketplace), vẫn đi qua `join_policy` (open/approval) + gating (DD-41). Token là cách **MỜI**, **không** hạ `visibility`.
+- **Quyết định:** Thêm **invite-link token per-session** (`session_invite_tokens`): entropy ≥128-bit, chỉ lưu hash, bound tenant+session, có expiry/max-use/revoke/rotate. Ai có link mở được trang join kèo **private**, vẫn đi qua `join_policy` + DD-41; token là cách **MỜI**, không hạ `visibility`. `used_count` chỉ tăng khi redeem thành công, dưới row lock/idempotency cho lượt cuối.
 - **Lý do:** Đáp ứng use case "mời nhóm riêng qua link" phổ biến; giữ private khỏi marketplace nhưng vẫn share được.
-- **Hệ quả:** Bảng token (tenant-scoped, RLS); route join-by-token; venue/PII vẫn theo rule ẩn tới khi join/approve (**DD-06**); rate-limit/anti-scrape (token hash-only, không đoán được). Test: token hết hạn / quá `max_uses` / không lộ tiền/PII. `feature_session_management` (+ có thể `feature_cross_club_join`). **Không** sửa spec Reviewed tới khi ✅.
+- **Hệ quả:** Bảng token tenant-scoped + RLS; route join-by-token; venue/PII vẫn ẩn tới khi join/approve (**DD-06**); rate-limit/anti-scrape. Test expiry/revoke/max-use/concurrent-last-use/idempotency/no-leak; propagation vào session/cross-club specs thực hiện cùng build slice.
 
-## DD-45 — Model hoá waitlist (đóng gap SES-UC-9) · 🟡 Đề xuất
+## DD-45 — Model hoá waitlist (đóng gap SES-UC-9) · ✅ Chốt (2026-07-13) — `../dd-45-waitlist-analysis.md`
+> **Chốt — lifecycle:** open join hoặc approval khi full → `waitlisted`, không chiếm capacity/charge/venue; state-shape CHECK buộc position dương chỉ có ở waitlisted. Promotion lock session, re-count active, re-check eligibility/ban + assert no existing charge, fill toàn bộ `slots_max-active_count` hoặc mọi eligible khi `slots_max→NULL`, tạo đúng một charge + clear position + notify atomically. `left` self-rejoin fail-closed `REJOIN_REQUIRES_REVIEW`; không reuse/overwrite ledger. Total order = position/joined_at/id; ineligible/charge-conflict giữ queue; decrease dưới active roster vẫn reject.
 
 - **Bối cảnh:** `feature_session_management` FE spec **SES-UC-9** hứa *"leave trước giờ chơi → slot freed, waitlist auto-promote"*, nhưng `players.status` chỉ có `active|left` (`players_status_chk`) — **chưa model** waitlist. Cả 2 app đối thủ ngầm có khái niệm đầy chỗ.
-- **Quyết định (đề xuất):** Mở rộng roster: `players.status` thêm `waitlisted` + thứ tự (`waitlist_position` hoặc theo `joined_at`); **auto-promote** khi có slot trống, thực hiện **trong cùng transaction** với leave/capacity-change (dùng `SELECT ... FOR UPDATE` sẵn có — BE edge #1) để **không over-fill**. Tương tác reliability (**DD-42**): deprioritize hạ vị trí waitlist.
+- **Quyết định:** Mở `players.status` thêm `waitlisted`, `waitlist_position`, CHECK `waitlisted ⇔ position non-null` + position dương, queue index và total order `position,joined_at,id`. Open join/approval khi full cùng tạo waitlisted row, không charge/venue. Queue entry/deprioritize gán `max(position)+1` dưới session lock; rank không cần contiguous/monotonic lịch sử. Leave/capacity+ re-count active rồi promote theo vòng lặp tới khi đầy; finite→unlimited promote mọi eligible. Promotion chỉ insert charge khi assert chưa có charge; conflict → skip+audit owner-review. Capacity decrease không promote/evict và `slots_max < active_count` → `CAPACITY_BELOW_ROSTER`.
+- **Rejoin fail-closed:** UNIQUE player/session/membership + UNIQUE charge/session/player không cho lifecycle thứ hai. Existing `active|waitlisted` trả current outcome idempotently; existing `left` → `REJOIN_REQUIRES_REVIEW`, không mutation. Correction tương lai phải preview ledger disposition, host confirm và audit; không tự reopen/void/reset charge khi PAY-OQ-3 chưa chốt.
 - **Lý do:** Đóng gap giữa spec đã Reviewed và data model thực tế; nhu cầu thật khi kèo full.
-- **Hệ quả:** Migration mở `players_status_chk` (+ cột position); logic auto-promote atomic + idempotent; event notify khi được promote (`feature_notifications_reminders`). Test: promote đúng thứ tự, không vượt capacity, idempotent, tương tác reliability. Cập nhật `feature_session_management(.md/_tech)`. **Không** sửa spec Reviewed tới khi ✅.
+- **Hệ quả:** Migration status+position CHECK+index; capacity/projector chỉ đếm active; triggering command cung cấp idempotency nên retry không double-promote/charge. Product/BE session + cross-club specs đã pin full→waitlist và rejoin guard; schema/code migration vẫn pending build.
 
 ## DD-46 — Kèo không thuộc CLB (Skip Club / personal meet) · ✅ Chốt (2026-07-13, owner) — Option B "personal tenant"
 
@@ -531,38 +533,32 @@
 
 ---
 
-## DD-47 — Social follow graph (person↔person) · 🟡 Đề xuất
+## DD-47 — Social follow graph (person↔person) · ✅ Chốt framework (2026-07-13), build P4+ — `../dd-47-follow-graph-analysis.md`
+> **Chốt (owner): duyệt framework, build P4+.** Bảng GLOBAL `person_follows` (directed, `pending/accepted`, no `tenant_id`). **⚠️ = GLOBAL PROTECTED** (như persons/accounts): grants theo `0009` — **no blanket grant cho `app`, chỉ qua identity service/`SECURITY DEFINER`** (không chỉ app choke-point). Auto-accept public/approve private (DD-48); **KHÔNG tiền/PII/roster**; merge re-parent+dedupe.
 
 - **Bối cảnh:** `feature_user_settings` yêu cầu **cơ chế follow** (theo dõi) giữa các user. Plexco hiện **KHÔNG có social graph**: `persons` là anchor global (no `tenant_id`); `feature_player_view` chỉ cho xem dữ liệu của **chính mình** (person-self) — chưa có "user A theo dõi user B" hay "xem hồ sơ user khác". `memberships`/`players` là quan hệ person↔tenant/session, **KHÔNG** phải person↔person → không có bảng nào diễn tả được quan hệ theo dõi.
-- **Quyết định (đề xuất):** Thêm bảng **GLOBAL** `person_follows` (cạnh **có hướng** follower→followee), **KHÔNG** `tenant_id` (như `persons`/`accounts` — identity là global protected, §P6/§P7). Vì global plane không có RLS → authz thực thi ở **application choke-point** (như `accounts`/`web_sessions`/`magic_links`), fail-closed.
-  - Cột: `id`, `follower_person_id`, `followee_person_id` (FK `persons`), `status ∈ {pending, accepted}`, `requested_at`, `decided_at`, `created_at`. `UNIQUE(follower_person_id, followee_person_id)` + `CHECK(follower_person_id <> followee_person_id)` (cấm self-follow).
-  - **Auto-accept theo visibility (DD-48):** followee **public** → tạo edge `accepted` ngay (mọi user follow **tự động**); followee **private** → edge `pending`, followee phải **approve** (→ `accepted`) hoặc **reject** (xoá edge; có thể mở `blocked` — open item).
-  - **KHÔNG cấp quyền dữ liệu tiền/PII:** follow **chỉ** mở **profile view** theo whitelist non-PII (DD-48). **Tuyệt đối không** mở `charges`/nợ/roster/SĐT/email/gender/`pay_code` (HR2). Follower ≠ membership; follow **không** tạo/đụng `memberships`.
+- **Quyết định:** Thêm bảng **GLOBAL PROTECTED** `person_follows` (cạnh follower→followee, không `tenant_id`). Không RLS nhưng cũng **không table grant** cho `app`/PUBLIC; mọi thao tác qua identity service + narrow `SECURITY DEFINER` functions (fixed search path, explicit revoke/grant). Actor resolve từ verified session/channel identity, không từ URL/body.
+  - Cột: `id`, `follower_person_id`, `followee_person_id` (FK `persons`), `status ∈ {pending, accepted}` **không default**, `requested_at`, `decided_at`, `created_at`. `UNIQUE(follower_person_id, followee_person_id)` + no-self + decision-shape CHECK (`pending⇔decided_at NULL`).
+  - **Auto-accept theo visibility (DD-48):** follow/visibility functions cùng lock target `persons` row. Followee **public** → ghi tường minh edge `accepted`+`decided_at`; followee **private** → `pending`+NULL, followee phải **approve** hoặc **reject**. Không có default-accepted fail-open.
+  - **KHÔNG cấp quyền dữ liệu tiền/PII:** follow **chỉ** mở approved social-profile fields có canonical source (DD-48). **Tuyệt đối không** mở `charges`/nợ/roster/SĐT/email/gender/`pay_code` (HR2). Follower ≠ membership; follow **không** tạo/đụng `memberships`.
 - **Ràng buộc đóng gap:**
-  - **Merge identity (DD-01/§P6):** khi merge 2 person, edge follow phải **re-parent** về canonical person + **dedupe** (collapse edge trùng, giữ trạng thái mạnh hơn: `accepted` > `pending`) + **drop self-edge** sinh ra sau merge. Nằm trong merge plan (như re-parent ledger), có test — **không** rewrite/nhân bản.
+  - **Merge identity (DD-01/§P6):** lock incident edges; canonicalize endpoints; drop self + collapse duplicate (`accepted > pending`) **trước** update survivors để không vỡ UNIQUE; cùng merge transaction/audit.
   - **Đổi visibility (DD-48):** `public→private`: follower `accepted` cũ **giữ nguyên** (grandfather); follow mới → `pending`. `private→public`: edge `pending` hiện có **auto-accept**.
-  - **Idempotent (P8):** follow lại khi đã có edge → trả edge hiện tại, dedupe theo `command_id`.
+  - **Idempotent theo state:** follow/approve trùng trả edge hiện tại; delete trùng success/no-op. Không tái dùng `processed_commands` vì store đó tenant-scoped.
   - **Thông báo follow-request (impl-gap):** notify tới followee là **person-directed GLOBAL**; hạ tầng `notification_intents`/`outbox_events` hiện **tenant-scoped** (`tenant_id NOT NULL`) → **KHÔNG** cover trực tiếp. Chọn khi build: (a) đường notify global mới, hoặc (b) tái dùng SSE person-self / in-app inbox (DD-38). Ghi open item ở `_tech`.
 - **Lý do:** Follow là quan hệ xã hội cross-tenant giữa người thật → thuộc **global plane**, gắn `persons` anchor, **KHÔNG** tạo bảng identity song song (§P6). Một model cạnh-có-hướng + `pending/accepted` phục vụ **cả** public (auto) lẫn private (approval).
-- **Hệ quả:** Bảng mới global (migration **sau** các migration chat/gender đang chờ); authz choke-point global (không RLS); command `follow`/`unfollow`/`approve`/`reject`/`removeFollower` + endpoint; merge plan thêm bước re-parent follow. Test: cấm self-follow; unique idempotent; auto-accept public; pending private; re-parent+dedupe khi merge; **profile/follow path không rò tiền/PII/roster**. Cập nhật `feature_user_settings(.md/_tech)`; đụng `feature_identity` (merge) + `feature_player_view` (profile view cross-user mới). **KHÔNG** sửa spec Reviewed / **KHÔNG** migration tới khi ✅.
+- **Hệ quả:** Migration sau profile fields; no-table-grant + narrow functions + grants tests. Merge phải lock incident edges, canonicalize/drop-self/collapse duplicate (`accepted>pending`) trước update survivors để không vỡ UNIQUE. Follow path không rò tiền/PII/roster. Framework đã propagate vào user-settings/player-view docs; migration/code chờ P4+.
 
-## DD-48 — Profile visibility (public/private) + cross-user profile gating · 🟡 Đề xuất
+## DD-48 — Profile visibility (public/private) + cross-user profile gating · ✅ Chốt framework (2026-07-13), build P4+ — `../dd-48-profile-visibility-analysis.md`
+> **Chốt (owner): duyệt framework, build P4+.** User mới default public; existing profile backfill private trước khi set default/NOT NULL. Social profile chỉ trả approved fields có canonical source; avatar/sports/aggregate excluded tới khi có model. Self dùng `/api/me`; host operational data dùng tenant path riêng. Private chỉ mở social fields cho accepted follower; không nới RLS/tiền. **5 open item chốt lúc build.**
 
-- **Bối cảnh:** `feature_user_settings` yêu cầu **chế độ private/public**: private → mọi **thông tin/thống kê** của user ẩn với người **không phải follower**; private cần **approve** follower; public thì follow **tự động**. Plexco chưa có cả cờ visibility lẫn "cross-user profile view" (mới chỉ có person-self ở `feature_player_view`).
-- **Quyết định (đề xuất):**
-  - Thêm `persons.profile_visibility text NOT NULL DEFAULT 'public' CHECK (profile_visibility IN ('public','private'))` — **KHÔNG** PII, **không** mã hoá (chỉ cờ hiển thị). **Mặc định `public`** (owner 2026-07-11, hợp acquisition-first DD-29).
-  - Thêm **profile read path cross-user** (`GET /api/persons/:id/profile`) với **field-whitelist non-PII** (analog `public_sessions`, §P7, nhưng cho person): `display_name`, `username`, avatar, môn chơi (`sports`), "member since", (đề xuất) số buổi đã chơi dạng aggregate. **CẤM** trong path này: SĐT/email/`dob`/`gender`, `charges`/nợ/`pay_code`, reliability per-tenant (DD-42 — tenant-scoped, không lộ cross-tenant), roster người khác, venue chính xác.
-  - **Gating (fail-closed, default-deny):** viewer `V` xem target `T`:
-    - `V == T` → self view đầy đủ.
-    - `T` **public** → whitelist non-PII.
-    - `T` **private** → whitelist chỉ khi `person_follows(V→T) = accepted` (DD-47). **Ngoại lệ vận hành:** **host của tenant mà `T` là member** vẫn thấy mức cần cho vận hành/suy giá (DD-39) — cấp qua **membership authz**, **KHÔNG** qua follow. Ngược lại → **card tối thiểu** (display_name/avatar + "Hồ sơ riêng tư" + nút follow/request), không thống kê.
-  - **Phạm vi ẩn (founder chốt 2026-07-11): private ẩn CẢ với đồng đội cùng CLB** (trừ host). Non-follower cùng CLB **cũng không** xem được profile/stats xã hội của `T`; **chỉ host** được (vận hành).
-- **Ranh giới BẮT BUỘC (HR1/HR2 — không được hiểu nhầm):** visibility gating là **lớp gate BỔ SUNG trên đường đọc profile xã hội**, **KHÔNG thay / không nới** RLS/membership authz và **KHÔNG** đụng đường tiền:
-  - Private **KHÔNG** gỡ `T` khỏi roster/session đã join (capacity/vận hành giữ nguyên); **KHÔNG** giấu `charges`/pay-status của `T` với **host** (host cần đối soát tiền — HR2 không đổi).
-  - Private **KHÔNG** ẩn `host_display_name` của `T` trên `public_sessions` do `T` host (marketplace vận hành đã whitelist — §P7/DD-06).
-  - Money/PII **không bao giờ** vào profile path bất kể public/private (HR2, như DD-39).
-- **Lý do:** Tách rõ "hiển thị hồ sơ **xã hội**" (gate bằng follow) khỏi "hiển thị **roster/tiền vận hành**" (gate bằng RLS/membership) → thoả yêu cầu private mà **không** phá HR1/HR2. Default `public` hợp DD-29.
-- **Hệ quả:** Cột `persons.profile_visibility` (cùng họ migration DD-39/DD-47, sau `0013`); profile read service + whitelist + gating fail-closed. Test bất biến: profile path **không** lộ PII/tiền/reliability cross-tenant; private + non-follower + non-host → card tối thiểu; host-of-tenant thấy mức vận hành; đổi visibility áp DD-47 (auto-accept/grandfather). **Open (chờ chốt):** (1) tập "stats" chính xác + có aggregate **cross-tenant** không (rủi ro lộ hoạt động xuyên CLB); (2) follower-count / following-list của user private có ẩn với non-follower không; (3) private có ảnh hưởng quyền **DM in-app** (DD-38) không; (4) có cần cơ chế **block** không; (5) trong session **chung**, đồng đội thấy tên `T` tới mức nào (căng với "ẩn cả đồng đội" — roster-presence là vận hành, khác profile xã hội). Cập nhật `feature_user_settings(.md/_tech)`; đụng `feature_player_view`/`feature_marketplace_discovery`. **KHÔNG** sửa spec Reviewed / **KHÔNG** migration tới khi ✅.
+- **Bối cảnh:** Plexco chưa có visibility flag hay cross-user social profile; `feature_player_view` hiện chỉ person-self.
+- **Migration:** add nullable/no-default → existing=`private` → set new default=`public` → NOT NULL/CHECK trong một transaction. Không public hoá ngầm profile cũ.
+- **Approved social fields:** `display_name`; `username` khi DD-39 migration tồn tại; `plexco_since` coarse từ `persons.created_at`. Avatar/sports/aggregate default exclude; không suy từ memberships/sessions.
+- **Gating:** self đi `/api/me`; public hoặc private+accepted follower nhận sourced fields; mọi trường hợp khác (kể cả teammate/host non-follower) nhận fixed minimal card không có profile fields.
+- **Operational split:** host vẫn đọc roster/suy giá/charge qua tenant-scoped APIs dưới RLS. Host role không widen social serializer; money/PII không bao giờ vào `GET /api/persons/:id/profile`. Private không gỡ user khỏi roster và không ẩn `host_display_name` trên public session.
+- **Hệ quả:** User-settings product/BE + player-view boundary đã pin; schema/code chờ P4+. Tests cover existing-private/new-public migration, unsupported-field absence, social-vs-operational separation và no-leak.
+- **Open:** (1) stats/aggregate cross-tenant; (2) follower counts/lists; (3) DM; (4) block; (5) roster display trong shared session.
 
 ---
 
@@ -590,6 +586,11 @@
 | 11/07/2026 | v1.17 | Thêm **DD-41..46 (🟡/⬜)** từ đối chiếu `feature_session_management` với 6 màn hình *Create Meet/Create Game* của 2 app tham khảo: **DD-41** field mô tả + gating cho `sessions` (title/notes/session_type/level min-max+strict/gender-restriction≠DD-39/age/instructions); **DD-42** subsystem no-show/attendance/reliability (deprioritize/ban per-tenant); **DD-43** nhãn/hạng thành viên + audience targeting khi announce; **DD-44** invite-link token cho kèo private; **DD-45** model hoá waitlist (đóng gap SES-UC-9); **DD-46** ⬜ kèo không CLB (Skip Club — đụng invariant `tenant_id`, chờ founder). Nguồn: session hỏi feature 2026-07-11. |
 | 11/07/2026 | v1.18 | Thêm **DD-47/48 (🟡)** cho `feature_user_settings` (follow + private/public): **DD-47** social follow graph `person_follows` (global, cạnh có hướng, `pending/accepted`, auto-accept public / approve private, merge re-parent+dedupe, **không** cấp quyền tiền/PII/roster); **DD-48** `persons.profile_visibility` (default `public`) + cross-user profile read whitelist non-PII + gating fail-closed (private ẩn **cả đồng đội cùng CLB** trừ host vận hành; **KHÔNG** nới RLS / **không** đụng đường tiền — HR1/HR2). Nguồn: session hỏi feature 2026-07-11. |
 | 13/07/2026 | v1.19 | Reconcile decision log với live repo: **DD-10 → ✅ Next.js App Router, standalone/container, không Vercel** (`apps/web` đã dùng Next.js); **DD-12 → ✅ bảng `public_sessions` cập nhật qua projector** (schema/migrations đã có projection table; projector implementation vẫn pending). Đồng bộ BRD/TDD/ROADMAP/HANDOFF/deployment docs. |
+| 15/07/2026 | v1.27 | **DD-32/45/47/48 review closure:** DD-32 defer money claim proof về identity evidence matrix (DD-26 không tự là proof) + close funnel OQ; DD-45 pin positive state-shape/total order/fill-available+unlimited/capacity-below-active; DD-47 global-protected narrow functions + state-idempotency + safe merge order; DD-48 existing-private/new-public migration + sourced fields + social/self/host-route split. Dọn wording proposal đã stale trong body DD-42–44; đồng bộ feature/BE specs, README, BUILD-STATUS, ROADMAP. |
+| 15/07/2026 | v1.28 | **DD-45 money/propagation closure:** open join + approval full cùng vào waitlist; promotion assert no existing charge rồi tạo đúng một charge; malformed existing-charge candidate skip+audit; `left` self-rejoin fail-closed `REJOIN_REQUIRES_REVIEW` do UNIQUE player/charge + refund/void policy còn mở. Đồng bộ DD-05/44, cluster quick-ref, channel funnel, session + cross-club product/BE specs và tests. |
+| 13/07/2026 | v1.26c | **Per-DD detailed analysis files (toàn bộ DD còn lại).** Mỗi DD có file riêng theo template DD-02/41: DD-05/06/32/42/43/44/45/47/48 (session-model/marketplace/social) + **P7/external mới: DD-18 (`dd-18-llm-provider-analysis.md`), DD-34/35/36 (`dd-34-36-kb-platform-analysis.md`), DD-14/15 (`dd-14-15-zalo-spike-analysis.md`)**. Reconcile toàn bộ (analysis files ↔ decisions.md notes ↔ cluster quick-ref): DD-48 host-route-split + field-source (không "ngoại lệ host"/không avatar-sports), DD-32 identity-evidence (DD-26 không phải proof), DD-45 total-order+capacity-boundaries, DD-47 global-protected `0009`. Cluster doc = index. |
+| 13/07/2026 | v1.26b | **DD cluster review-fix (2026-07-13).** DD-05: pending=no player/charge, **approve=money-write dưới RLS** (không "chỉ policy"). DD-32: A ⇒ **guest book paid được** (open-join tạo charge); strong-proof chỉ cho **claim/merge membership có tiền** (≠ paid-booking); paid-booking-cần-web-auth = C (không chọn). DD-43: **tags-only cho notification audience**, join eligibility = DD-41 (bỏ tier khỏi MVP). DD-44: redemption contract (entropy, session/tenant-bound, revoke, used_count-on-redeem, lock lượt cuối). DD-45: waitlist lifecycle (no-capacity/no-charge/no-venue; promote tạo charge atomic; ordering+tie-break; skip-on-ineligible; capacity-decrease-no-promote). DD-47: `person_follows` = **global protected → grants `0009` SECURITY DEFINER**, không chỉ app choke-point. DD-48: approved-public-profile-fields (aggregate=open item); **migration backfill trước default public**. **Propagation:** cross_club_join CCJ-OQ-1, marketplace MKT-OQ-1/2, session_management SES-UC-9, channel_booking_funnel status, user_settings §7 → ✅. |
+| 13/07/2026 | v1.26 | **Chốt loạt DD còn lại (owner).** **DD-05** per-session default open (approval→join_requests+re-check); **DD-06** area-only public, venue post-join; **DD-32** ✅ **Option A phễu mềm** (guest vẫn book; "linked"=OTP đủ hook, web-auth chỉ nhánh tiền; bật DD-33 trước DD-14); **DD-42** ✅ **per-tenant** reliability (attendance players / reliability memberships / policy deprioritize-ban; không public); **DD-43** per-tenant tags/tier targeting (public không lộ); **DD-44** `session_invite_tokens` (không hạ visibility); **DD-45** waitlist `players.status+waitlisted` auto-promote atomic + re-check; **DD-47/48** ✅ **framework, build P4+** (person_follows global fail-closed / profile_visibility default public, whitelist non-PII, 5 open item lúc build). **P7:** DD-34/35/36 approve-in-principle; DD-18 hướng hosted-first swappable (provider+DPA chặn go-live). **External:** DD-14/15 = SPIKE xác minh Zalo (không phải quyết định nội bộ). Nguồn: `../dd-remaining-cluster-analysis.md`. |
 | 13/07/2026 | v1.25 | **DD-41 → ✅ Chốt (owner).** `sessions` +mô tả (title/notes/**`session_type` 1-field**; **`cost_shared` descriptive-only** không đổi charge) + **gating enforce ở shared `evaluateSessionEligibility`** (gọi từ `addMemberToSession`, universal — không chỉ CCJ) **decision table self-attested** (level_rank+strict [DD-08]/gender/**age**; **age tính tại `starts_at`/session tz**; **9 error codes exact** gồm `*_CONSENT_REQUIRED` cho gender/age; consent-denied ≠ missing; **chặn transition open/public khi source chưa có**; approval re-check trong tx). **Consent source per-attribute** (`gender_consent`/`dob_consent` — enc NULL không phân biệt missing/denied). **`skill_level` retire → `level_*_rank`** (expand→contract, backfill, drop). `gender_restriction`=policy≠player PII. `level_strict` vào public whitelist. Scope: level+gender+**age in-scope**. **Dependencies:** level per-sport source (chưa có → level advisory), `persons.gender_enc`/`dob_enc` = **BRD FR-11 contract có, migration chưa** (KHÔNG mới). `session_type` trộn 2 trục (tách sau cần backfill). Propagation rộng (CCJ/business-rules/TDD/schema/migration/DBML/projector/invariant-test/README); Session+CCJ **chưa implement** (schema-only). Nguồn: `../dd-41-session-fields-gating-analysis.md`. |
 | 13/07/2026 | v1.24 | **DD-46 → ✅ Chốt (owner) — Option B "personal tenant".** Kèo không-CLB: `getOrCreatePersonalTenant(person_id)` auto-provision (`tenants.kind='personal'` + **`owner_person_id` + `UNIQUE WHERE kind='personal'`** = 1/person, DB-level; logical free tier) → **giữ nguyên `tenant_id NOT NULL` + RLS + money**. Schema fail-closed (`CHECK kind⇔owner`, partial unique INDEX). Provision: extend `tenant_provision`/`provisionTenant` → `tenant_get_or_create_personal`/`getOrCreatePersonalTenant` (lock `persons` row cùng merge, không advisory). Provision **tái dùng shared core** → owner membership **luôn được tạo**; **public alias = `owner membership.display_name`**. Marketplace **fail-closed**: alias trống → không project public; giữ `club_display_name` NOT NULL. Participant → guest membership+player+charge (tiền y hệt). Merge: collision → loser personal→`kind='club'`; **re-parent cả `memberships` LẪN `tenant_admins.platform_user_lookup_hash`** (person UUID text, no FK → không rewrite = mất owner web). **CẤM vĩnh viễn** nullable tenant_id (rủi ro = phải dựng authz/money plane thứ hai). **Mở khoá cụm session-model**. Nguồn: `../dd-46-skip-club-analysis.md`. |
 | 13/07/2026 | v1.23 | **DD-02 rev6 + propagation.** Full-issued code = `registry.locked_at IS NOT NULL` + `pay_code` khớp (retired-chưa-lock không false-issued); prefix immutable sau first issuance + choke-point atomic; `discoverPayCodeCandidates` (enumerate mọi split, batch-resolve — foreign token không bị bỏ sót; **`skipCodes` xét SAU resolve, issued thắng skipCodes**); `PAYMENT`→none chỉ khi `PAY` không own. **Propagated (spec):** `identity-model`+`feature_identity_tech` (pay_code tombstone) · connector 4.3b+`_tech` M2 (ApiPay ✅ **primary**) + **`provider_connections.auth_mode='enterprise'` + CHECK shape đầy đủ per provider/auth_mode** + CO-OQ-6 đóng (`skip_if_no_code=0`) · `feature_payment_reconcile_tech` **§4 worker pipeline + `bank_transactions.provider_code_enc` (providerCode↔content cross-check)** + §8 fixtures. **Migration backfill guard:** query DB thật cho `pay_code IS NOT NULL` → HALT + map prefix thủ công + set `locked_at` (không suy từ slug). |
