@@ -1,10 +1,12 @@
 # Plexco — Base Chat / Acquisition Package: Feasibility & Hạ tầng
 
+> **Cập nhật 10/07/2026 (DD-37 / BRD v3.4):** Kênh phase-1 nay là **Zalo + Facebook Messenger + web**; **Telegram đã bỏ khỏi phạm vi**. Messenger lên **phase-1 (P2.5)**, không còn post-MVP/P4.8. Phần phân tích Telegram/Messenger bên dưới giữ nguyên làm **feasibility/technical reference**; khung "Telegram = trụ cột" đã bị DD-37 thay.
+
 > Ngày 30/06/2026 · Rev 3 (sau review canonical). Scope gói này: host/group owner **connect club** — **Telegram/Zalo là scope chính**; **Messenger chỉ là optional proposal/spike, KHÔNG thuộc base package** cho tới khi có decision override BRD/PRD/ROADMAP (xem §6). Mục tiêu: hook host + player, tạo tiền đề bán Pro.
 
 > **Làm rõ "KHÔNG có đối soát":** nghĩa là **không có auto bank reconcile** (đọc biến động số dư tự gán player — thuộc Pro/P2–P3). Gói base **vẫn có** payment instruction (hiển thị QR/STK, `/pay`) + **trạng thái nợ thủ công** (host tự đánh dấu đã/chưa trả, `/cash`). Tức là thu tiền + theo dõi nợ **bằng tay**, chưa tự động khớp giao dịch.
 
-> **⚠️ Naming — tránh đụng canonical phases.** "Base chat/acquisition package" ở đây **KHÔNG phải** "Phase 1" của repo. Theo ROADMAP/PRD: **P0–P1** = foundation + connector onboarding; **P2–P3** = tenant engine + ledger/đối soát; **Messenger = P4.8 (post-MVP)**. Gói này là một **lát cắt GTM/packaging** dựng trên P0–P1 + connector, **không** override BRD/PRD/ROADMAP. Nếu muốn đưa Messenger lên sớm (xem §6) thì **phải cập nhật BRD/PRD/ROADMAP** như một scope override chính thức.
+> **⚠️ Naming — tránh đụng canonical phases.** "Base chat/acquisition package" ở đây **KHÔNG phải** "Phase 1" của repo. Theo ROADMAP/PRD: **P0–P1** = foundation + connector onboarding; **P2–P3** = tenant engine + ledger/đối soát; **Messenger = P2.5 (phase-1 sau DD-37, phụ thuộc App Review)** — không còn P4.8/post-MVP (khớp note đầu file). Gói này là một **lát cắt GTM/packaging** dựng trên P0–P1 + connector, **không** override BRD/PRD/ROADMAP; scope override kênh đã do **DD-37** thực hiện chính thức.
 
 ---
 
