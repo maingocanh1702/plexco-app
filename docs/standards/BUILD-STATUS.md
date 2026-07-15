@@ -6,7 +6,7 @@
 > **Nguồn số liệu:** `git log`, cây `packages/`+`apps/`, `docs/features/*`, `docs/standards/decisions.md`,
 > `docs/autopilot-backlog.md`. Số liệu code = đếm tại **`main@1eb6f60`** (foundation + Auth v3 đã merge).
 >
-> **Reconcile 2026-07-15:** channel target vẫn theo DD-37, nhưng code snapshot còn Auth v3 Telegram-era và bắt buộc `TELEGRAM_BOT_TOKEN`. Google/email replacement đã spec nhưng **chưa implement, chưa có launcher-ready slice**. Decision authority trong checkout này tới **v1.32/DD-48**: DD-41–46 đã chốt, DD-47/48 chốt framework; các quyết định đó **chưa đồng nghĩa đã build**. Code snapshot vẫn **`main@1eb6f60`**, migrations `0000–0013` (14 file).
+> **Reconcile 2026-07-16:** channel target vẫn theo DD-37, nhưng code snapshot còn Auth v3 Telegram-era và bắt buộc `TELEGRAM_BOT_TOKEN`. Google/email replacement đã spec nhưng **chưa implement, chưa có launcher-ready slice**. Decision authority trong checkout này tới **v1.34/DD-48** (v1.33 = DD-04 ✅ accept (c) + cost/facts; v1.34 = DD-04 cost model Rev 2 → Day-1 baseline + trigger-based): DD-41–46 đã chốt, DD-47/48 chốt framework; các quyết định đó **chưa đồng nghĩa đã build**. Code snapshot vẫn **`main@1eb6f60`**, migrations `0000–0013` (14 file).
 
 ---
 
@@ -14,7 +14,7 @@
 
 | Trục | Trạng thái | Ước lượng |
 |---|---|---|
-| **Tài liệu / thiết kế** | **21 Product specs + 20 BE specs** = **20 cặp hiện có + 1 product-only Draft** (`channel_booking_funnel`; BE sẽ viết cùng build slice, **DD-32 đã chốt**). Trong 20 cặp: 14 active Reviewed + 1 Telegram Archived + connector + assistant + 3 Draft phase-1 **đã tracked, còn chờ migration/build**. Decision log tới **DD-48 / v1.32**; DD-41–46 đã chốt, DD-47/48 chốt framework nhưng vẫn chờ implementation. | ~90% cho MVP (docs) |
+| **Tài liệu / thiết kế** | **21 Product specs + 20 BE specs** = **20 cặp hiện có + 1 product-only Draft** (`channel_booking_funnel`; BE sẽ viết cùng build slice, **DD-32 đã chốt**). Trong 20 cặp: 14 active Reviewed + 1 Telegram Archived + connector + assistant + 3 Draft phase-1 **đã tracked, còn chờ migration/build**. Decision log tới **DD-48 / v1.34**; DD-41–46 đã chốt, DD-47/48 chốt framework nhưng vẫn chờ implementation. | ~90% cho MVP (docs) |
 | **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations `0000–0013` đã merge, có test | **✅ xong** |
 | **Code — lớp auth** | **Auth Onboarding v3 (Telegram-era) đã merge** (`5b1193b`) + web tests; **DD-37 supersede provider** → Google/email replacement đã spec, **chưa implement** | 🟡 provider replacement pending |
 | **Code — lớp feature nghiệp vụ** | chưa bắt đầu (session/reconcile/sync/marketplace/billing/bot…) | ⬜ chưa build |
@@ -29,7 +29,7 @@ Project vừa qua **Phase 0→1**: foundation + auth-v3 đã land trên **`main@
 
 ## 1. Bức tranh tổng: docs đi trước code rất xa
 
-Repo được xây theo hướng **docs-first**: **20 cặp spec hiện có + 1 product-only Draft**; trong đó **15 legacy** (14 active Reviewed + Telegram Archived), connector/assistant, và 3 cặp phase-1 mới (Draft, đã tracked, còn chờ migration/build). Decision log đã ghi tới **DD-48/v1.32**; DD-41–46 đã chốt, DD-47/48 chốt framework nhưng code/migration vẫn chưa build. Các quyết định đã
+Repo được xây theo hướng **docs-first**: **20 cặp spec hiện có + 1 product-only Draft**; trong đó **15 legacy** (14 active Reviewed + Telegram Archived), connector/assistant, và 3 cặp phase-1 mới (Draft, đã tracked, còn chờ migration/build). Decision log đã ghi tới **DD-48/v1.34**; DD-41–46 đã chốt, DD-47/48 chốt framework nhưng code/migration vẫn chưa build. Các quyết định đã
 được review/chốt *trước* khi viết code. Vì vậy khoảng cách hiện tại **không phải** là thiếu thiết
 kế — mà là thiết kế đã sẵn sàng, thực thi mới chạy được ~20% roadmap (foundation + auth-v3 đã land).
 

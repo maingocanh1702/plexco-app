@@ -2,7 +2,7 @@
 
 **Phiên bản:** v2.7
 **Ngày tạo:** 16/06/2026 · **Cập nhật:** 15/07/2026
-**Căn cứ:** `BRD.md` v3.6 · `PRD.md` v2.4 · `TDD.md` v2.5 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-reconciliation.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` v1.32
+**Căn cứ:** `BRD.md` v3.6 · `PRD.md` v2.4 · `TDD.md` v2.5 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-reconciliation.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` v1.34
 
 > ROADMAP là nguồn sự thật cho **delivery order + dev progress**. Product scope thuộc BRD; behavior thuộc PRD; implementation contract thuộc TDD.
 

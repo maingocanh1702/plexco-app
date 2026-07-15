@@ -4,7 +4,7 @@
 **Ngày tạo:** 18/06/2026
 **Tài liệu tham chiếu:** `BRD.md` v3.1 · `PRD.md` v2.1 · `TDD.md` v2.1 · `ROADMAP.md` v2.1 · `feature_sync_engine.md` · `feature_marketplace_discovery.md` · `feature_identity.md`
 
-> ⚠️ **Version note (15/07/2026):** companion doc ở baseline **v3.1/v2.1**. Nguồn hiện hành: **BRD v3.6 · PRD v2.4 · TDD v2.5 · ROADMAP v2.7 · `decisions.md` v1.32**; chưa reflect pivot kênh (DD-37) + cụm session-model/social (DD-41–48). Khi conflict, ưu tiên TDD → BRD hiện hành.
+> ⚠️ **Version note (16/07/2026):** companion doc ở baseline **v3.1/v2.1**. Nguồn hiện hành: **BRD v3.6 · PRD v2.4 · TDD v2.5 · ROADMAP v2.7 · `decisions.md` v1.34**; chưa reflect pivot kênh (DD-37) + cụm session-model/social (DD-41–48) + DD-04 cost closure. Khi conflict, ưu tiên TDD → BRD → decisions hiện hành.
 
 > **TL;DR:** Kiến trúc canonical-store + surface-projection của Plexco **đã future-proof cho native app**. Native iOS/Android chỉ là thêm 1 surface — backend API, sync engine, marketplace discovery, identity pipeline **không cần đổi**. Effort chính nằm ở: (1) Native UI, (2) Push Notification projector, (3) Auth providers mở rộng (Apple/Google Sign-In), (4) Offline cache strategy. Không có breaking change.
 

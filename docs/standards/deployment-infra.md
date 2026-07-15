@@ -1,6 +1,6 @@
 # Deployment & Infrastructure — Plexco
 
-> **Version:** v1.5 · 2026-07-16 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**: compute DO App Platform + DO Managed PG cùng VPC private; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../dd-04-hosting-final-decision.md`)
+> **Version:** v1.7 · 2026-07-16 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; cost model = `$120–135` Day-1 baseline + **trigger-based upgrades** (Rev 2, thay Tier A/B $121–133/$202–254); Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../dd-04-hosting-final-decision.md`)
 > **Status:** Draft (chờ review)
 > **Scope:** Cách deploy Plexco tối ưu/hiệu quả/dễ maintain, kèm scalability & security ở tầng hạ tầng.
 > **References:** `../product/TDD.md` §3.4/§7/§8 · `../strategy/saas-implementation-plan.md` §4/§5/§7 · `../research/player-side-saas-AUDIT.md` (C1–C8b · B1–B6 · G1–G6) · `../features/BE/feature_security_operations_tech.md`
@@ -43,15 +43,15 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 
 **Đã chốt:** Managed Postgres **HA (auto-failover) + PITR**, **region Singapore**, **private VPC** (co-locate). Compute = **DigitalOcean App Platform** (DD-10 giữ nguyên: standalone container, không Vercel).
 **Gate cứng (đã đạt qua (c)):** **auto-failover HA + uptime SLA + posture private-network** (VPC by construction).
-**Phân tích đầy đủ + nguồn:** `../dd-04-hosting-final-decision.md` (final ✅) · `../dd-04-hosting-decision-brief.md` (rev 3, phân tích) — bảng dưới là tóm tắt (a/b/c ứng viên, giữ làm tham chiếu; (c) đã chọn).
+**Phân tích đầy đủ + nguồn:** `../dd-04-hosting-final-decision.md` (final ✅) · `../dd-04-hosting-decision-brief.md` (rev 4, phân tích) — bảng dưới là tóm tắt (a/b/c ứng viên, giữ làm tham chiếu; (c) đã chọn).
 
-**QĐ-1 (chốt trước) — posture network:** compute (Fly) khác cloud với DB managed → không private thật trừ PrivateLink/co-locate. **(a)** public TLS + `sslmode=verify-full` + static-egress-IP allowlist [**đề xuất**, giữ Fly] · **(b)** PrivateLink AWS [rời Fly] · **(c)** co-locate compute+DB cùng cloud [rời Fly].
+**Lịch sử QĐ-1 (đã superseded bởi quyết định ở trên):** khi compute còn target Fly, DB managed khác cloud nên không private thật trừ PrivateLink/co-locate. **(a)** public TLS + `sslmode=verify-full` + static-egress-IP allowlist [Fly, nay chỉ là fallback] · **(b)** PrivateLink AWS [loại] · **(c)** co-locate compute+DB cùng cloud [**đã chọn**; đổi deployment target nhưng không đảo DD-10].
 
 | Option | Đạt gate? | Ưu | Nhược |
 |---|---|---|---|
-| **DigitalOcean Managed** [nghiêng chọn] | ✅ | Auto-failover standby + SLA 99.95% + PITR; bill phẳng, vận hành đơn giản; margin dự đoán chắc | Không branching CI (thay bằng CI ephemeral); private thật chỉ khi co-locate compute lên DO |
+| **DigitalOcean Managed** [đã chọn] | ✅ | Auto-failover standby + SLA 99.95% + PITR; bill phẳng, vận hành đơn giản; margin dự đoán chắc | Không branching CI (thay bằng CI ephemeral); private thật chỉ khi co-locate compute lên DO |
 | **Neon Scale** | ✅ | HA multi-AZ **mọi plan**; SLA + IP-allow ở Scale; branching hợp CI; rẻ hơn ở tải thấp (floor 0.25 CU) | PrivateLink **AWS-only → vô dụng từ Fly**; scale-to-zero xung đột pg-boss (phải tắt, xem ⚠️); consumption cần benchmark + cân max-CU |
-| **Supabase** | ❌ Pro / ⚠️ Ent | RLS-native ergonomics; Supavisor pooler sẵn | **Pro rớt gate: không uptime SLA**; auto-failover nêu là Enterprise-only (xác nhận sales); đạt gate chỉ ở **Enterprise = báo giá** |
+| **Supabase** | ❌ Pro/Team · ⚠️ Enterprise | RLS-native ergonomics; Supavisor pooler sẵn | Team từ `$599` có AWS PrivateLink nhưng **không uptime SLA**; SLA chỉ ở Enterprise custom, còn auto-failover phải contract-confirm |
 | Railway single-node (unmanaged template) | ❌ | Cùng platform với app, DX đơn giản; **có** one-click PgBouncer; PITR single-node + HA qua pgBackRest | **KHÔNG auto-failover** → không đạt gate như managed HA; **chỉ dev/staging** |
 | Railway HA (template Patroni cộng đồng) | ⚙️ self-host | Private networking nếu co-locate compute lên Railway | **Là self-host HA tự vận hành — KHÔNG phải managed failover**; cùng gánh vận hành/rủi ro như self-host; xem brief §6b |
 | Self-host VPS (DIY HA) | ⚙️ self-host | Hạ tầng rẻ nhất | Patroni/etcd/pgBackRest + runbook đã test; **KHÔNG Day-1** (hệ tiền + solo dev) — brief §6 |
@@ -185,12 +185,12 @@ RLS, repo choke-point, field-whitelist nằm ở **code**. Deploy phải thêm l
 | **B3 / edge#1** webhook giả | timing-safe verify ×3 (code) + **body-size cap + per-token rate-limit** (edge); lưu raw trước ACK. |
 | **B5** cron privileged cross-tenant | `app_worker` chỉ gọi narrow function (`claim_outbox_batch`, `list_due_tenant_jobs`); mọi privileged call **ghi audit** (`job_id`,`tenant_id`,actor=system). |
 | **edge#12 / G4** log chứa PII · audit retention | Structured log **gắn `tenant_id`, KHÔNG secret/OTP/STK/SĐT/email/body**; audit append-only, retention định nghĩa; SLO alert → on-call + runbook. |
-| **edge#8** mất DB/region | **Managed PITR + restore drill** định kỳ; backup mã hoá; RPO/RTO chốt sau OD-4. |
+| **edge#8** mất DB/region | **Managed PITR + encrypted offsite backup + restore drill** định kỳ; đo và chốt RPO/RTO sau provision/failover/restore drill. |
 | **G5** PDPA/GDPR | Quy trình export/delete data-subject + ToS/Privacy/retention (P6; tooling là việc deploy). |
 | **C6 / G2** player-view auth · session steal | session key auto-rotate (30d) + kill-switch invalidate-all (security-operations-tech §4); `person_id` suy từ phiên verify, không từ tham số. |
 
 **Hai nguyên tắc mạng then chốt:**
-1. **Postgres KHÔNG public *unauthenticated*** — vì compute (Fly) và DB managed ở **khác cloud**, private networking nội-cloud **không** áp dụng trừ khi PrivateLink (Team/Ent + AWS VPC) hoặc co-locate compute cùng cloud DB. Posture bắt buộc tối thiểu (DD-04 QĐ-1a): **TLS `sslmode=verify-full` (CA validation + hostname verification) + IP allowlist theo Fly static egress IP + DB role least-privilege**. Private networking thật chỉ khi chọn co-locate (QĐ-1 b/c). *(Câu cũ "không bao giờ expose public / Fly private networking" là sai với kiến trúc Fly + DB ngoài — xem `../dd-04-hosting-decision-brief.md §2`.)*
+1. **Postgres production đi qua VPC private theo DD-04 (c)** — DO App Platform và DO Managed PG co-locate cùng VPC; trusted sources + DB role least-privilege vẫn bắt buộc. **Không** mở public path âm thầm để lấy dedicated egress IP: nếu pre-build egress-IP gate không đạt, chuyển nguyên vẹn sang fallback (a) Fly + DO với TLS `sslmode=verify-full` + Fly static-egress-IP allowlist. DD-10 không đổi vì cả hai substrate đều chạy standalone container.
 2. **CDN/WAF đứng trước mọi thứ** — vừa chắn DDoS (G6) vừa là chỗ đặt rate-limit tập trung.
 
 ---
@@ -218,7 +218,7 @@ push → build immutable image (signed) → CI gates → deploy staging → prom
 
 ## 8. Backup/DR & Observability
 
-**Backup/DR:** Managed HA + PITR, backup mã hoá. **Restore drill:** DB cô lập → apply roles/policies → checksum schema → đối chiếu count (tenants, charges, transactions, allocations, outbox, audit). RPO/RTO chốt sau OD-4.
+**Backup/DR:** Managed HA + PITR + **encrypted offsite backup ngoài DO** để giảm concentration risk. **Restore drill:** DB cô lập → apply roles/policies → checksum schema → đối chiếu count (tenants, charges, transactions, allocations, outbox, audit). RPO/RTO được chốt bằng số đo sau provision, failover drill và restore drill; DD-04 provider choice đã đóng.
 
 **Observability:** structured log gắn opaque `tenant_id`/`job_id` (không secret/PII) → metrics → traces → **SLO alert** (sync lag, reconcile p99, availability) → on-call + runbook link. Sentry cho error tracking (TDD §7).
 
@@ -226,40 +226,49 @@ push → build immutable image (signed) → CI gates → deploy staging → prom
 
 ---
 
-## 9. Cost estimate — theo 3 tier
+## 9. Cost estimate — Day-1 baseline + trigger-based upgrades (DD-04 Rev 2)
 
-> ⚠️ **Đọc kỹ ranh giới tier.** Con số "MVP" **không** bao gồm read replica, WAF Pro, hay tooling hardening (DAST/load/soak/pen-test/restore drill) mà chính doc này đặt làm baseline ở §5/§6/§7. Đừng dùng `~$30–95` để kết luận "đã đủ production money-safe".
+> **Model (thay Tier A/B cũ $121–133 / $202–254).** Day-1 chạy **baseline money-safe tối thiểu** `$120–135/tháng` — đã gồm non-negotiables: HA primary+standby, PITR, VPC private, fail-closed RLS, KMS envelope encryption, offsite-backup allowance, cùng **§9.3 read-isolation controls**. Các add-on đắt (read replica vật lý, WAF Pro, Sentry Team, worker thứ 2, resize DB) **KHÔNG bắt buộc Day-1** — bật theo **telemetry trigger đo được** (§9.2). Nguồn chuẩn: `../dd-04-hosting-final-decision.md` §5.
 
-### Tier A — MVP cheap (≤ vài trăm tenant, validate sản phẩm)
-
-Single primary (PITR bật, **chưa** read replica), free tier WAF/Sentry. Chấp nhận discovery đọc trực tiếp primary + CDN cache (chưa offload replica).
+### Tier A — Day-1 baseline (money-safe với fail-closed + §9.3 read isolation)
 
 | Hạng mục | Provider (ví dụ) | Chi phí/tháng |
 |---|---|---|
-| App hosting (web+discovery+worker) | **DigitalOcean App Platform** (2 web + 2 discovery + 1–2 worker, plan 1 GiB) | ~$60–72 |
-| Managed Postgres (HA + PITR, auto-failover standby) | **DO Managed PG** (co-locate VPC, primary+standby) | ~$60 |
-| CDN/WAF | Cloudflare free | $0 |
-| Error tracking | Sentry free | $0 |
-| **Tổng Tier A** | | **~$120–132** (production baseline topology; smoke/1-container-per-component ≈ $75) |
+| Web (2× 1 GiB) | **DO App Platform** | ~$24 |
+| Discovery (2× 1 GiB) | **DO App Platform** | ~$24 |
+| Worker (1×, pg-boss) | **DO App Platform** | ~$10 |
+| Managed Postgres HA (primary+standby, PITR, auto-failover) | **DO Managed PG** (co-locate VPC private) | ~$60.90 |
+| CDN/WAF | Cloudflare **Free** | $0 |
+| Error tracking | Sentry **Developer** | $0 |
+| Secret/KMS (envelope encryption) | managed KMS | ~$1–3 |
+| Structured logs + encrypted offsite backup | log allowance + bản sao ngoài DO (R2) | ~$0–5 |
+| Egress buffer | | ~$0–8 |
+| **Tổng Day-1** | | **~$120–135** (fixed subtotal $118.90 + variable allowances) |
 
-### Tier B — Production money-safe baseline (mặc định khi có tiền thật chạy qua)
+### Tier B — Trigger-based upgrades (bật khi telemetry chạm ngưỡng, KHÔNG mặc định Day-1)
 
-Thêm những thứ §5/§6 yêu cầu để an toàn tiền/đa-tenant ở tải mục tiêu.
-
-| Hạng mục bổ sung so với A | Ghi chú | Chi phí/tháng |
+| Upgrade | Trigger đo được | Chi phí thêm/tháng |
 |---|---|---|
-| **Read replica** (discovery + player-view) | §5.2 — offload hot public reads | ~$25–40 |
-| **WAF/CDN Pro** | §6 — rate-limit tập trung, DDoS G6 | ~$20 |
-| **Sentry Team** | alerting/retention | ~$26 |
-| ~~App scale~~ | Topology 2 web + 2 discovery + 1–2 worker **đã nằm trong Tier A** — KHÔNG cộng lại (tránh double-count) | — |
-| Secret/KMS managed | envelope encryption token | ~$0–10 |
-| **Tổng Tier B (= A $120–132 + bổ sung)** | | **~$191–228** |
+| Worker thứ 2 (HA queue) | queue depth / job latency vượt ngưỡng, hoặc cần zero-downtime deploy worker | +$14 |
+| Read node vật lý (discovery/player-view) | primary read contention đo được (§9.3 controls không đủ) | +$30.45 |
+| Cloudflare **Pro** (WAF/rate-limit tập trung) | abuse/bot/DDoS pattern hoặc cần L7 rule | +$20 ($25 month-to-month) |
+| Sentry **Team** (alerting/retention) | cần alert routing + retention dài | +$26 |
+| Resize component 1→2 GiB | memory pressure đo được | +$13/component |
+| Resize PG 2→4 GiB | DB CPU/RAM/connection ceiling | +$60.90 |
 
-### Tier C — P6 hardening (one-off + định kỳ, không phải hosting cố định)
+### 9.3 Read isolation KHÔNG cần replica Day-1
 
-Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill** định kỳ, **pen-test** thuê ngoài, PDPA/GDPR + audit-retention tooling (§7, §8, §11). Phần lớn là **chi phí CI/người/định kỳ**, ước lượng riêng theo đợt — **không** gộp vào hosting hằng tháng ở A/B.
+Discovery/public reads được cô lập khỏi money-path **ngay trên primary** bằng: **projection-only DB role** (zero grant trên bảng tiền/PII) · **bounded pool + statement_timeout** · **reserved connection budget** cho money-path · **CDN cache** cho public reads · **circuit-breaker** ngắt read khi primary áp lực. Read replica vật lý = upgrade Tier B khi contention đo được, **không** phải điều kiện money-safe Day-1. (record §5.3)
 
-> Doanh thu phụ thuộc plan mix (0đ free / 250k host_pro mỗi CLB/tháng — DD-29). Tier B vẫn là baseline khi có tiền thật chạy qua; chi phí scale ~tuyến tính theo primary DB size + số replica. Điểm cần nhớ: **money-safe = Tier B**, không phải Tier A.
+### 9.4 Ephemeral staging
+
+Staging chạy đúng topology DO (VPC/failover/gate acceptance) nhưng **ephemeral** (spin-up cho drill rồi teardown): ~$8–18/tháng → tổng prod+staging **~$128–153/tháng**. (record §5.4)
+
+### Tier C — Hardening một lần / định kỳ (không phải hosting cố định)
+
+Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill** định kỳ (~$10–30/drill), **pen-test** thuê ngoài, PDPA/GDPR + audit-retention tooling (§7, §8, §11). Phần lớn là **chi phí CI/người/định kỳ**, ước lượng riêng theo đợt — **không** gộp vào hosting hằng tháng.
+
+> Doanh thu phụ thuộc plan mix (0đ free / 250k host_pro mỗi CLB/tháng — DD-29). Day-1 baseline `$120–135` đã money-safe nhờ non-negotiables + §9.3 controls thật; chi phí scale ~tuyến tính theo primary DB size + add-on trigger. **Điểm cần nhớ:** money-safe = baseline + fail-closed controls **được build thật**, không phải một tier đắt cố định. Deferral (replica/WAF Pro/Sentry Team) chỉ an toàn khi §9.3 controls ship + telemetry trigger được giám sát.
 
 ---
 
@@ -293,4 +302,6 @@ Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill
 | 2026-06-20 | v1.2 | Sync connector review: thêm ApiPay vào webhook topology/process; đổi tham chiếu durable ACK sang BL-PAY-1/AUDIT BL-1. |
 | 2026-06-20 | v1.3 | Sync DD-03 pricing tiers 0đ/79k/159k/199k vào cost assumptions. |
 | 2026-07-10 | v1.4 | **DD-37 channel pivot (BRD v3.4):** bỏ Telegram; kênh phase-1 = web + Zalo + Facebook Messenger (Messenger P2.5). Webhook topology/process + rate-limit/reminder refs đổi TG→Zalo/Messenger (nhắc chính web push + Zalo DM, Messenger best-effort 24h). Auth phase-1 = Google/email (DD-13). |
-| 2026-07-16 | v1.5 | **DD-04 ✅ Accepted — (c) co-locate DigitalOcean:** compute DO App Platform + DO Managed PG cùng **VPC private** (thay Fly; Fly = fallback (a)). §2 DD-04 section + §0 TL;DR → (c). **Cost table sửa:** Tier A $30–50 → **$120–132** (compute $60–72 + DB $60); Tier B bỏ double-count "app scale" → **$191–228**. Full DO App Spec + supersede `fly.toml` = **infra slice**; pre-build **egress-IP gate §7.1**. Record `../dd-04-hosting-final-decision.md`. |
+| 2026-07-16 | v1.5 | **DD-04 ✅ Accepted — (c) co-locate DigitalOcean:** compute DO App Platform + DO Managed PG cùng **VPC private** (thay Fly; Fly = fallback (a)). §2 DD-04 section + §0 TL;DR → (c). Bản đầu của cost split dùng Tier A `$120–132` / Tier B `$191–228`; v1.6 dưới đây thay các số đó. |
+| 2026-07-16 | v1.6 | **DD-04 cost-model closure:** so sánh production theo cùng 5–6 replica × 1 GiB; DO DB dùng list price `$60.90`; core production = **`$121–133`**. Thêm khoản bắt buộc logs + encrypted offsite backup và giữ read isolation/WAF/Sentry/KMS → money-safe Tier B = **`$202–254`**. Pin VPC private là steady state; Fly public-TLS chỉ là fallback nếu egress-IP gate fail. |
+| 2026-07-16 | v1.7 | **DD-04 Rev 2 — cost model đổi sang Day-1 baseline + trigger-based (record §8.2 PROPAGATION).** §9 viết lại: bỏ "Tier B money-safe bắt buộc `$202–254`", thay bằng **Day-1 baseline `$120–135`** (2 web + 2 discovery + 1 worker × 1 GiB + DO PG HA `$60.90` + Cloudflare Free + Sentry Developer + KMS `$1–3` + logs/R2 `$0–5` + egress `$0–8`; subtotal cố định `$118.90`) money-safe nhờ non-negotiables + **§9.3 read-isolation controls** (projection-role, bounded pool, reserved budget, CDN, circuit-breaker). Read replica/WAF Pro/Sentry Team/worker-2/DB-resize = **trigger-based upgrade** (§9.2), không mặc định Day-1. Ephemeral staging `$8–18` → prod+staging `$128–153` (§9.4). **Caveat:** deferral chỉ an toàn khi §9.3 controls ship thật + telemetry trigger được giám sát. |

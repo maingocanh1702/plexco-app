@@ -1,11 +1,12 @@
-# 🗄️ DD-04 Decision Brief — Postgres Hosting (rev 3)
+# 🗄️ DD-04 Decision Brief — Postgres Hosting (rev 4)
 
 > **Mục đích:** đủ dữ kiện để founder **chốt provider** cho hệ tiền multi-tenant RLS.
-> **Ngày:** 2026-07-15 (rev 3; rev 2 factual analysis giữ nguyên, rev 3 đóng governance drift) · **Nguồn nội bộ hiện hành:** `deployment-infra.md §2/§6` (DD-04) · `decisions.md` v1.32 (DD-04) · `feature_security_operations_tech.md`. **Số liệu provider:** web (07/2026), xem Sources.
-> **Đã chốt (không bàn lại):** Managed Postgres **HA + PITR**, **region Singapore**. Railway PG chỉ dev/staging. Compute app hiện target **Fly.io** (DD-10).
+> **Ngày:** 2026-07-16 (rev 4; sửa provider facts/cost comparison sau final decision) · **Nguồn nội bộ hiện hành:** `deployment-infra.md §2/§6/§9` (DD-04) · `decisions.md` v1.34 (DD-04) · `feature_security_operations_tech.md`. **Số liệu provider:** web (07/2026), xem Sources.
+> **Đã chốt (không bàn lại):** Managed Postgres **HA + PITR**, **region Singapore**; compute = **DO App Platform**, DB = **DO Managed PG cùng VPC private**. Railway PG chỉ dev/staging. DD-10 giữ nguyên (standalone container, không Vercel).
 
 > ⚠️ **REV 2 sửa lỗi factual của rev 1** (xem §0.1) và **thêm gate private-network** làm quyết định chốt-trước. Do rev 2 mở rộng phạm vi DD-04 (thêm DigitalOcean + gate network), tại thời điểm đó DD-04 cần được reopen/update trước khi founder phê duyệt; rev 3 ghi nhận gate này đã hoàn tất.
-> ✅ **REV 3 governance closure:** DD-04 đã reopen và `deployment-infra.md §2` đã sync; phần còn lại chỉ là founder chọn posture/provider rồi propagate option đã chọn. Không đổi provider facts/recommendation của rev 2.
+> ✅ **REV 3 governance closure:** DD-04 đã reopen và `deployment-infra.md §2` đã sync; founder sau đó chọn (c).
+> ✅ **REV 4 factual/cost closure:** giữ quyết định (c), sửa Supabase plan facts, bỏ mọi claim “rời Fly = đổi DD-10”, và chuẩn hoá so sánh production theo cùng tài nguyên. Cost authority nằm ở final record.
 
 ---
 
@@ -15,17 +16,17 @@
 
 **Có HAI quyết định, phải chốt theo thứ tự:**
 
-**QĐ-1 (gate, chốt trước): posture private-network** — vì compute ở **Fly.io** và mọi managed DB nằm ở cloud khác, **không có** private networking thật trừ khi PrivateLink (Supabase Team/Ent + AWS VPC) hoặc **co-locate compute vào cùng cloud DB**. Chọn 1:
+**QĐ-1 (lịch sử gate): posture private-network** — khi compute còn ở **Fly.io**, mọi managed DB nằm ở cloud khác nên **không có** private networking thật trừ khi PrivateLink (Supabase Team/Ent + AWS VPC) hoặc **co-locate compute vào cùng cloud DB**. Ba posture đã xét:
 - **(a) Public TLS + `sslmode=verify-full` + static-egress-IP allowlist** — giữ Fly, DB provider allowlist Fly egress IP. Đơn giản, giữ kiến trúc hiện tại. Câu chữ cũ ở `deployment-infra.md §6` ("Postgres KHÔNG bao giờ expose public") từng mâu thuẫn với posture này; rev 3 đã sync baseline thành "không public *unauthenticated*; truy cập qua TLS verify-full + IP allowlist".
-- **(b) Strict private (PrivateLink/VPC)** — buộc **co-locate compute + DB cùng cloud** (vd chuyển compute sang DO, hoặc sang AWS + Neon PrivateLink). Đây là **thay đổi DD-10** (rời Fly) — hệ quả lớn.
+- **(b) Strict private (PrivateLink/VPC)** — buộc chuyển deployment target khỏi Fly (vd sang AWS + Neon PrivateLink, hoặc co-locate DO). Đây là thay đổi hạ tầng, **KHÔNG đảo DD-10** vì DD-10 chỉ pin standalone container/không Vercel.
 
 **QĐ-2 (provider), phụ thuộc QĐ-1:**
-- Nếu **(a) public-TLS**: gate HA/SLA thật sự loại **Supabase Pro** (**không uptime SLA**; auto-failover có thể còn Enterprise-only — cần xác nhận sales). Còn lại **DigitalOcean Managed** (auto-failover standby + 99.95% SLA, rẻ, đơn giản) vs **Neon Scale** (HA multi-AZ + 99.95% SLA; PrivateLink của Neon là AWS-only → *không dùng được từ Fly*, chỉ IP-allow + TLS). → **nghiêng DigitalOcean**.
+- Nếu **(a) public-TLS**: gate HA/SLA loại **Supabase Pro và Team** (đều không có uptime SLA). Team từ `$599` thêm AWS PrivateLink; uptime SLA chỉ ở Enterprise custom, còn auto-failover phải contract-confirm. Còn lại **DigitalOcean Managed** vs **Neon Scale**. → lịch sử phân tích nghiêng DigitalOcean.
 - Nếu **(b) strict-private**: hợp lý nhất là **DO compute + DO Managed PG cùng VPC** (private thật, rẻ) — kéo theo rời Fly; hoặc AWS + Neon PrivateLink (đắt/phức tạp hơn).
 
 **Self-host VPS DIY:** **KHÔNG Day-1** (hệ tiền + solo dev, §6-selfhost).
 
-**Một dòng:** gate quyết định không phải "HA chung chung" mà là **auto-failover + SLA + posture network trên nền Fly**. Trên gate đó, **Supabase Pro rớt** (thiếu SLA), **DigitalOcean nghiêng-chọn nhờ bill phẳng + vận hành đơn giản** (KHÔNG phải vì rẻ nhất — Neon Scale ở floor 0.25 CU có thể rẻ hơn trước storage/history, §4.1), **Neon Scale đạt-gate nhưng PrivateLink vô dụng với Fly**.
+**Một dòng (historical):** gate không phải "HA chung chung" mà là **auto-failover + SLA + posture network**. Final decision đã nâng posture lên private VPC bằng option (c); bảng dưới giải thích vì sao DO thắng về boundary vận hành, không phải vì luôn rẻ nhất.
 
 ---
 
@@ -35,7 +36,7 @@
 |---|---|
 | "Neon Launch không HA; HA chỉ ở Scale" | **Neon HA multi-AZ có ở MỌI plan** (storage multi-AZ mặc định, compute auto-reschedule AZ). **Scale** thêm **PrivateLink + 99.95% SLA + IP-allow rules + SOC2/HIPAA** — đó mới là thứ Scale-gated, không phải HA. |
 | "Neon always-on = ~1 CU ⇒ $120–160" | Tắt scale-to-zero **vẫn giữ autoscaling**, floor **0.25 CU**. Ước tính 1 CU thổi phồng chi phí Neon. |
-| "Supabase Pro là finalist đạt HA nhờ Pro + replica" | **Supabase Pro KHÔNG đạt gate.** Read replica là **read-only, async, KHÔNG auto-promote** (warm standby). Auto-failover được nêu là Enterprise-only (blog 2023 — **xác nhận lại sales**). Gate chốt bởi **Pro không có uptime SLA**. |
+| "Supabase Pro là finalist đạt HA nhờ Pro + replica" | **Supabase Pro và Team KHÔNG đạt gate SLA.** Team từ `$599` thêm PrivateLink nhưng vẫn không có uptime SLA; uptime SLA chỉ ở Enterprise custom. Public material hiện tại chưa pin auto-failover theo plan, nên phải xác nhận hợp đồng. |
 | "Bảng scale cost theo tenant count" | Tenant count **không** map thẳng ra RAM/CU; Neon 1 CU chưa benchmark; Team $599 không bắt buộc chỉ vì DB lớn. Bảng cost hạ cấp thành **minh hoạ**, chỉ giữ anchor có nguồn (§5). |
 | "IPv4 add-on Supabase mặc định cần" | Fly egress **IPv6** được; Supabase direct là IPv6 → **không mặc định cần IPv4 add-on** (chỉ cần khi allowlist bằng IPv4). |
 | Private network coi như đã lo ("Fly private networking / Supabase network restrictions") | Fly private networking chỉ nội-bộ-Fly; **DB managed ở cloud khác ⇒ không private thật** trừ PrivateLink/co-locate. **Gate chưa giải quyết** → §2. |
@@ -67,12 +68,12 @@ Rút từ `deployment-infra.md` (+ bổ sung rev 2):
 | Posture | Cách làm | Ưu | Nhược |
 |---|---|---|---|
 | **(a) Public TLS + verify-full + IP allowlist** | Cấp **Fly static egress IP** ($3.60/mo/region, IPv4); DB provider allowlist IP đó; ép `sslmode=verify-full` (**CA validation + hostname verification**) | Giữ Fly nguyên trạng; đơn giản; đủ mạnh cho phần lớn hệ tiền | Traffic qua public internet (đã mã hoá + IP-restricted); baseline `§6` đã sync, cần pin làm final nếu founder chọn (a) |
-| **(b) PrivateLink (AWS)** | Compute phải ở **AWS VPC**; dùng Neon PrivateLink / RDS | Private thật, không qua public | **Rời Fly** (đổi DD-10); phức tạp/đắt; Supabase PrivateLink = Team/Ent |
-| **(c) Co-locate cùng cloud** | Chuyển compute sang **DO** (Droplet/App Platform) + **DO Managed PG cùng VPC** | Private thật + rẻ + đơn giản trong một hệ | **Rời Fly** (đổi DD-10) |
+| **(b) PrivateLink (AWS)** | Compute phải ở **AWS VPC**; dùng Neon PrivateLink / RDS | Private thật, không qua public | Rời Fly nhưng **không đảo DD-10**; phức tạp/đắt; Supabase PrivateLink = Team/Ent |
+| **(c) Co-locate cùng cloud** | Chuyển compute sang **DO** (Droplet/App Platform) + **DO Managed PG cùng VPC** | Private thật + rẻ + đơn giản trong một hệ | Rời Fly nhưng **không đảo DD-10**; egress-IP compatibility phải verify |
 
-**Khuyến nghị QĐ-1:** **(a) public-TLS + verify-full + static-IP allowlist** cho giai đoạn hiện tại — giữ Fly, đủ an toàn cho hệ tiền khi làm đúng (`sslmode=verify-full` = CA validation + hostname verification, + allowlist + role least-privilege). Coi (b)/(c) là lựa chọn *khi* muốn strict-private, và cả hai **đều kéo theo rời Fly** nên phải cân với DD-10.
+**Khuyến nghị lịch sử QĐ-1 (SUPERSEDED):** rev 2 từng đề xuất (a). Founder đã chọn **(c)** ngày 2026-07-16 để lấy private DB by construction + một provider boundary; DD-10 không đổi. Fallback (a) chỉ kích hoạt nếu egress-IP gate của final record thất bại.
 
-> 📌 **Governance:** rev 3 đã sync `deployment-infra.md §6` về baseline trung lập: "không public *unauthenticated*; bắt buộc TLS verify-full + IP allowlist; private networking khi co-locate". Sau khi founder chọn (a/b/c), pin đúng posture được chọn làm final; không cần reopen DD-04 lần nữa.
+> 📌 **Governance:** founder đã chọn (c); `deployment-infra.md §6` hiện pin VPC private là steady state và chỉ giữ TLS verify-full + IP allowlist cho fallback (a). Không reopen DD-04 nếu pre-build gate fail; dùng fallback đã định nghĩa.
 
 ---
 
@@ -80,15 +81,15 @@ Rút từ `deployment-infra.md` (+ bổ sung rev 2):
 
 | Provider | Auto-failover HA | Uptime SLA | Private option (từ Fly) | Đạt gate? |
 |---|---|---|---|---|
-| **DigitalOcean Managed** | ✅ **standby node tự failover** ($30 primary + $30 standby, 2GB) | ✅ **99.95%** | Trusted-sources IP allowlist (public-TLS); VPC nếu co-locate DO | ✅ **ĐẠT** |
+| **DigitalOcean Managed** | ✅ **standby node tự failover** (`$30.45` primary + `$30.45` standby, 2GB) | ✅ **99.95%** | Trusted-sources IP allowlist (public-TLS); VPC nếu co-locate DO | ✅ **ĐẠT** |
 | **Neon Scale** | ✅ HA multi-AZ (storage multi-AZ, compute auto-reschedule) | ✅ **99.95%** (Scale) | PrivateLink **AWS-only → KHÔNG dùng được từ Fly**; còn IP-allow + TLS | ✅ **ĐẠT** (nhưng private=chỉ IP-allow trên Fly) |
-| **Supabase Pro** | ⚠️ auto-failover được nêu là **Enterprise-only** (nguồn: blog 2023 — **cần xác nhận lại với sales**); Pro = warm standby (manual promote) | ❌ **không uptime SLA ở Pro** | ❌ PrivateLink = Team/Ent | ❌ **KHÔNG đạt ở Pro** (chốt bởi **thiếu SLA**, độc lập với tình trạng failover) |
-| **Supabase Enterprise** | ✅ (auto-failover) | ✅ (Ent) | ✅ PrivateLink (AWS VPC) | ⚠️ đạt nhưng **giá Enterprise/opaque**, và PrivateLink vẫn cần AWS |
+| **Supabase Pro** | Public material không pin auto-failover theo Pro | ❌ **không uptime SLA ở Pro** | ❌ PrivateLink = Team/Ent | ❌ **KHÔNG đạt ở Pro** |
+| **Supabase Team / Enterprise** | **Cần contract confirmation** cho auto-failover | ❌ Team không có uptime SLA; ✅ Enterprise có SLA | ✅ PrivateLink (AWS VPC) | Team từ **`$599`** vẫn rớt SLA gate; Enterprise custom, không cost-comparable và vẫn cần AWS |
 | **Self-host VPS** | ⚙️ tự dựng (Patroni/pg_auto_failover) | ❌ tự chịu | VPC nếu cùng cloud | ❌ rủi ro (§6) |
 
-> ⚠️ **Về Supabase auto-failover:** khẳng định "Enterprise-only" đến từ [blog Read Replicas 2023](https://supabase.com/blog/introducing-read-replicas) — **thông tin plan có thể đã đổi, phải xác nhận lại với Supabase sales**. Tuy nhiên điều đó **không đổi kết luận gate**: Supabase Pro rớt **chủ yếu vì không có uptime SLA** (pricing page), là gate cứng của hệ tiền — độc lập với việc auto-failover nay thuộc tier nào.
+> ⚠️ **Về Supabase auto-failover:** blog 2023 từng gọi auto-failover là Enterprise-only, nhưng không dùng claim cũ đó làm current fact. Pricing hiện tại cho Team PrivateLink nhưng **không** uptime SLA; uptime SLA chỉ ở Enterprise. Auto-failover vẫn phải được sales/contract xác nhận.
 
-**Kết luận gate:** với posture (a) trên Fly, **finalist đạt-gate = DigitalOcean Managed và Neon Scale**. **Supabase chỉ đạt-gate ở Enterprise** (do gate SLA) → loại khỏi finalist "giá hợp lý" trừ khi chấp nhận Enterprise.
+**Kết luận gate lịch sử:** với posture (a) trên Fly, finalist Day-1 là DigitalOcean Managed và Neon Scale. Supabase Pro/Team rớt uptime-SLA gate; Enterprise không cost-comparable và còn auto-failover contract gate. Final decision sau đó chọn (c) + DigitalOcean.
 
 ---
 
@@ -118,13 +119,13 @@ Rút từ `deployment-infra.md` (+ bổ sung rev 2):
 ## 5. Chi phí — chỉ anchor có nguồn (bảng scale = MINH HOẠ)
 
 **Anchor chắc chắn:**
-- **DO:** HA 2GB = **$30 primary + $30 standby = $60/mo**, PITR 7 ngày, SLA 99.95%, storage I/O included, đồng giá Singapore. 4GB HA ≈ ~$120; 16GB HA ≈ ~$490 (bậc thang plan).
-- **Neon Scale:** $0.222/CU-h. Chạy always-on ở **floor 0.25 CU ≈ $40.52/mo trước storage/history** ($0.222×730×0.25, khớp final record) — **thấp hơn DO HA $60/mo** ở tải thấp. Cộng thêm: storage $0.35/GB-mo; PITR history $0.20/GB-mo; SLA + **quyền dùng** PrivateLink included ở Scale (không phí license) — **nhưng private network transfer vẫn tính `$0.01/GB` cả hai chiều**. Chi phí tăng theo tải nhưng **có trần cứng = max-CU đã cấu hình**.
+- **DO:** HA 2GB = **`$30.45` primary + `$30.45` standby = `$60.90/mo`**, PITR 7 ngày, SLA 99.95%, storage I/O included, đồng giá Singapore. 4GB HA ≈ `$121.80`; 16GB HA ≈ `$488.70` (bậc thang plan).
+- **Neon Scale:** $0.222/CU-h. Chạy always-on ở **floor 0.25 CU ≈ $40.52/mo trước storage/history** ($0.222×730×0.25, khớp final record) — **thấp hơn DO HA `$60.90/mo`** ở tải thấp. Cộng thêm: storage $0.35/GB-mo; PITR history $0.20/GB-mo; SLA + **quyền dùng** PrivateLink included ở Scale (không phí license) — **nhưng private network transfer vẫn tính `$0.01/GB` cả hai chiều**. Chi phí tăng theo tải nhưng **có trần cứng = max-CU đã cấu hình**.
 - **Fly egress IP:** $3.60/mo/region (IPv4) cho allowlist.
 
 > ⚠️ **Không có "cost winner" trước benchmark.** Ở tải thấp Neon (0.25 CU) **có thể rẻ hơn** DO; khi tải tăng Neon leo tới max-CU đã đặt còn DO vẫn phẳng. Không quy đổi "tenant → CU/RAM" nếu chưa **đo trên staging**. Nguyên tắc: **DO = bill phẳng, dự đoán chắc, vận hành đơn giản; Neon = có thể rẻ hơn ở tải thấp nhưng phải cân max-CU (chi phí ↔ hiệu năng) + benchmark.**
 
-**Đối chiếu margin DD-29:** ở HA nhỏ, cả hai đều ~$40–130/mo tuỳ cấu hình/tải → cần ~4–13 host trả phí (250k) hoà vốn tầng DB. **DO thắng về *tính dự đoán* của margin, không nhất thiết về con số tuyệt đối** — Neon ở tải thấp có thể rẻ hơn.
+**Đối chiếu margin DD-29 (DB-only):** ở cấu hình nhỏ trong bảng, DB ≈ `$46–122/mo` tuỳ provider/tải/size → khoảng 5–13 host_pro ở planning conversion `$10/host/mo` để bù riêng tầng DB. Đây không phải full-infra break-even; final record budget (Rev 2) = **Day-1 baseline money-safe `$120–135/mo`** trước scale, upgrade theo trigger. **DO thắng về tính dự đoán, không nhất thiết về giá sàn.**
 
 ---
 
@@ -155,9 +156,9 @@ Rút từ `deployment-infra.md` (+ bổ sung rev 2):
 - **Self-host** = Σ node VPS (primary+standby+monitor) + object storage (~$5–20) **+ lao động ~$150–500/mo (§6)**.
 - **Fly egress IP** $3.60/mo/region (mọi option managed, cho allowlist).
 
-> **Benchmark hypotheses (CHƯA phải estimate — cần đo mới xác nhận):** giả thuyết *khởi điểm để đo*, KHÔNG dùng làm kết luận margin: 100 host *có thể* vừa 2–4GB primary (chưa cần replica); 1000 host *có thể* cần 8–16GB + 1 read replica. **Con số cứng chỉ có sau benchmark** (peak connections, CU-hours thực, replica size) — đừng dùng các dải này cho quyết định chi phí trước khi đo.
+> **Benchmark hypotheses (CHƯA phải estimate — cần đo mới xác nhận):** 100 host *có thể* vừa primary 2–4GB; 1000 host *có thể* cần primary 8–16GB. Đây chỉ là giả thuyết sizing primary. **Money-safe topology vẫn có read replica từ Day 1 để cô lập public/discovery reads**; benchmark quyết định size replica, không quyết định bỏ isolation. Con số cứng chỉ có sau khi đo peak connections, CU-hours và replica load.
 
-**Supabase:** Pro **rớt gate** (no uptime SLA) bất kể cấu hình; chỉ đạt gate ở **Enterprise = báo giá (quote required)** — không đặt range giả định.
+**Supabase:** Pro và Team **rớt gate uptime SLA**. Team từ `$599` có PrivateLink nhưng không SLA; Enterprise có SLA, custom quote, và auto-failover cần contract confirmation. Không đặt range giả định ngoài giá công khai.
 
 ### Độ nhạy doanh thu (không dùng 1 conversion rate làm forecast)
 
@@ -191,7 +192,7 @@ Repo trước ghi "Railway dev/staging only"; dữ kiện hiện tại cần c�
 
 - **Railway single-node (unmanaged template):** Railway **tự gọi các DB template là *unmanaged*** — bạn sở hữu instance, KHÔNG phải managed-DB-as-a-service. Đã có **one-click PgBouncer** (connection pooling — không còn thiếu). **PITR** hỗ trợ **cả single-node lẫn HA qua pgBackRest** (docs không nêu cố định 7-ngày hay chỉ-Pro). **Vẫn thiếu:** single-node **không auto-failover HA** + không managed-failover → **không đạt gate hệ tiền như một managed HA service; hợp dev/staging** (hoặc dùng bản HA bên dưới nếu tự vận hành).
 - **Railway HA (template Patroni cộng đồng):** cụm **nhiều service tự vận hành** (etcd + Postgres/Patroni + HAProxy). **Đây là self-host HA (Option D) chạy trên hạ tầng Railway — KHÔNG phải managed-failover-as-a-service.** Cùng gánh vận hành/rủi ro như §6, chỉ khác substrate. *(Chi tiết cluster/auto-failover: xác minh theo template cụ thể.)*
-- **Ưu điểm riêng:** nếu **co-locate compute lên Railway** → private networking nội-project (DB không cần public ingress) = lời giải cho **QĐ-1 posture (c)**, nhưng **rời Fly** (đổi DD-10).
+- **Ưu điểm riêng:** nếu **co-locate compute lên Railway** → private networking nội-project (DB không cần public ingress) = lời giải cho **QĐ-1 posture (c)**, nhưng rời Fly; **DD-10 vẫn không đổi** nếu chạy standalone container.
 - **Chi phí (usage-based, xác minh unit rate):** single-node theo cấu hình (§5b, tier tương ứng); HA Patroni = Σ node theo bảng self-host §5b **+ bạn tự vận hành**.
 - **Verdict:** không đổi lựa chọn. Railway single-node = dev/staging; Railway HA = biến thể self-host, không rẻ/nhẹ hơn DO. Chỉ cân khi muốn *một-platform + private networking* và chấp nhận rời Fly + tự nuôi Patroni. So (c) co-locate: **DO (compute+Managed PG+VPC, failover managed)** vẫn hơn **Railway (compute + Patroni tự vận hành)**.
 
@@ -200,16 +201,16 @@ Repo trước ghi "Railway dev/staging only"; dữ kiện hiện tại cần c�
 ## 7. Governance + checklist xác minh
 
 **Governance (bắt buộc):**
-1. ✅ **DD-04 reopen → Accepted:** reopen 2026-07-13 (thêm DigitalOcean + QĐ-1 posture + sửa dữ kiện HA Neon/Supabase), **founder chốt 2026-07-16 = (c) co-locate DO** (QĐ-1=c, QĐ-2=DigitalOcean). `decisions.md` DD-04 = ✅ Accepted (v1.32); record `dd-04-hosting-final-decision.md`. Pre-build gate = egress-IP verify.
-2. ⏳ **Sau khi founder chốt QĐ-1**, cập nhật `deployment-infra.md §6` theo posture thực tế được chọn.
+1. ✅ **DD-04 reopen → Accepted:** reopen 2026-07-13, founder chốt 2026-07-16 = (c) co-locate DO. `decisions.md` DD-04 = ✅ Accepted (v1.34); record `dd-04-hosting-final-decision.md`. Pre-build gate = egress-IP verify.
+2. ✅ **`deployment-infra.md §6` đã pin steady-state VPC private**; public TLS + allowlist chỉ là fallback nếu egress-IP gate fail.
 3. ✅ **`deployment-infra.md §2` đã sync** Railway row: template DB là *unmanaged*; có one-click PgBouncer; PITR single-node + HA qua pgBackRest. Verdict "chỉ dev/staging" giữ nguyên với lý do đã sửa đúng dữ kiện.
 
 **Checklist xác minh trước khi ký (đo, đừng tin brochure):**
-1. **QĐ-1 posture** đã chốt? (a/b/c) — kéo theo có rời Fly hay không.
+1. ✅ **QĐ-1 posture = (c)**; trước build chỉ còn verify egress-IP compatibility, không reopen decision.
 2. **Auto-failover** thật sự (không chỉ warm standby) ở tier định mua — test kill primary trên staging.
 3. **PITR** retention + giá; **restore drill** ngay sau provision (nghiệm thu RPO/RTO thật).
 4. **Direct/session connection** cho pg-boss + `LISTEN` hoạt động (DO direct string; Neon tắt scale-to-zero).
-5. **IP allowlist** nhận Fly **static egress IP**; ép `sslmode=verify-full` (CA validation + hostname verification).
+5. **Steady-state (c):** verify VPC trusted sources. **Chỉ ở fallback (a):** verify Fly static egress IP allowlist + ép `sslmode=verify-full`.
 6. **Region Singapore** ở tier + auto-failover cùng region.
 7. **Benchmark tải** trên staging trước khi cam kết chi phí (đặc biệt Neon consumption): connection count = (web replica × 1 LISTEN) + (worker × pool).
 8. **max_connections** ở compute size vs tổng session-mode conn.
@@ -222,7 +223,7 @@ Repo trước ghi "Railway dev/staging only"; dữ kiện hiện tại cần c�
 >
 > *(Lịch sử) Bước 1 từng đề xuất (a) giữ Fly + public-TLS; Bước 2 provider DO Managed. Kết quả cuối founder chọn **(c) co-locate DO** (private VPC) — **(a) = fallback** nếu egress-IP gate fail. **(c) đổi deployment target Fly→DO nhưng KHÔNG đảo DD-10** (App Platform chạy standalone container). Neon/Supabase loại như phân tích trên.*
 
-**Trạng thái:** ✅ **DD-04 = Accepted (c)** — `decisions.md` v1.32 + `dd-04-hosting-final-decision.md`. Còn lại (build slice): **egress-IP gate** + provision + restore/failover drill + đo RPO/RTO + KMS wiring.
+**Trạng thái:** ✅ **DD-04 = Accepted (c)** — `decisions.md` v1.34 + `dd-04-hosting-final-decision.md`. Còn lại (build slice): **egress-IP gate** + provision + restore/failover drill + đo RPO/RTO + KMS wiring.
 
 ---
 
@@ -235,7 +236,7 @@ Repo trước ghi "Railway dev/staging only"; dữ kiện hiện tại cần c�
 - [Neon Network Transfer — PrivateLink transfer $0.01/GB both directions](https://neon.com/docs/introduction/network-transfer)
 - [Supabase Read Replicas — read-only, async, no auto-promote](https://supabase.com/docs/guides/platform/read-replicas)
 - [Supabase blog: Introducing Read Replicas (2023) — auto-failover "Enterprise-only" (verify with sales)](https://supabase.com/blog/introducing-read-replicas)
-- [Supabase Pricing — uptime SLA listed at Enterprise only](https://supabase.com/pricing)
+- [Supabase Pricing — Team starts at $599; uptime SLA is Enterprise-only; Enterprise custom](https://supabase.com/pricing)
 - [Supabase PrivateLink (Team/Enterprise, AWS VPC)](https://supabase.com/docs/guides/platform/privatelink)
 - [DigitalOcean Managed PostgreSQL pricing (HA standby, storage included)](https://docs.digitalocean.com/products/databases/postgresql/details/pricing/)
 - [DigitalOcean DB security (trusted sources / VPC)](https://docs.digitalocean.com/products/databases/postgresql/how-to/secure/)

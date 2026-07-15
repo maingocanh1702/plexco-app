@@ -16,7 +16,7 @@
 - **Zalo 🟡 BLOCKED:** mỗi host 1 bot (BYO) deploy chung hạ tầng — **đang vướng CO-OQ-1**: chưa confirm sandbox `getMe`/`setWebhook`/`getWebhookInfo` trên tier CLB. Hiện giữ fallback "owner dán webhook URL". Auto-register là **thiết kế dự kiến**, chưa chốt.
 - **Messenger 🟡 (proposal):** đa tenant kiểu Telegram **làm được** qua **1 Page Plexco + routing `ref`**, nhưng PSID là **person-scoped, không phải tenant-scoped** → player đa club làm vỡ routing mặc định; cần decision table + consent (xem §6). Canonical hiện chọn **Page-per-club/post-MVP**.
 - **Nhắc chủ động trên Messenger ngoài 24h ở VN = trả phí** (Marketing Messages); Message Tags/OTN/Recurring Notifications đang bị bỏ → nhắc nhở đẩy qua **Telegram/Zalo/web**.
-- **Hạ tầng:** theo `deployment-infra.md` §9 — gói base chat (không tiền) ≈ **Tier A ~$30–50/tháng** cho ≤ vài trăm tenant. **Ngay khi bật Pro/đối soát (tiền thật) → bắt buộc Tier B ~$120–200/tháng** (money-safe). Stack: monolith + managed Postgres + **pg-boss + SSE LISTEN/NOTIFY**, **không Redis, không serverless**.
+- **Hạ tầng:** theo `deployment-infra.md` §9 (DD-04 Rev 2) — gói base chat (không tiền) có thể bắt đầu ở **smoke topology DO ≈ `$76/tháng`**; production shape khi có tiền thật = **Day-1 baseline money-safe `$120–135/tháng`** (đã gồm non-negotiables + read-isolation controls; read replica/WAF Pro/Sentry Team = trigger-based, không mặc định Day-1). Stack: monolith + managed Postgres + **pg-boss + SSE LISTEN/NOTIFY**, **không Redis, không serverless**.
 - **Giá:** dư biên so với **giá đề xuất base chat ~70k** *(GTM draft)* — lưu ý đây **không phải** plan billing canonical **0đ / 79k / 159k / 199k** (DD-03).
 
 ---
@@ -56,19 +56,20 @@
 
 ---
 
-## 3. Chi phí hạ tầng — theo Tier A/B canonical
+## 3. Chi phí hạ tầng — Day-1 baseline + trigger-based (DD-04 Rev 2)
 
 > Nguồn chuẩn: `docs/standards/deployment-infra.md` §9. Stack: monolith (web+discovery+worker) + managed Postgres (HA+PITR) + pg-boss + SSE; Cloudflare; Sentry. **Không Redis, không serverless cho worker/webhook/SSE.**
 
-**Gói base chat/acquisition KHÔNG có dòng tiền** (đối soát ở P2–P3) → có thể chạy **Tier A** để validate:
+**Gói base chat/acquisition KHÔNG có dòng tiền** (đối soát ở P2–P3) → có thể chạy **smoke topology** để validate; khi lên production shape thì Day-1 baseline đã money-safe:
 
-| Tier | Khi nào | Thành phần | Chi phí/tháng |
+| Cấu hình | Khi nào | Thành phần | Chi phí/tháng |
 |---|---|---|---|
-| **A — MVP cheap** | ≤ vài trăm tenant, **chưa có tiền thật** | App hosting (Fly.io/Railway) $5–20 · Managed Postgres (HA+PITR, no replica) $25–30 · Cloudflare free · Sentry free | **~$30–50** |
-| **B — Money-safe baseline** | **bắt buộc khi bật Pro/đối soát** | A + read replica $25–40 · WAF/CDN Pro $20 · Sentry Team $26 · app scale $20–50 · KMS $0–10 | **~$120–200** |
-| C — Hardening (P6) | DAST/load/soak/pen-test/restore drill | one-off + định kỳ, không gộp hosting | ước riêng |
+| **Smoke / early validation** | **chưa có tiền thật**; một container mỗi process, không phải compute HA | DO App Platform `3 × $5` + DO Managed PG HA `$60.90` | **~$76** |
+| **Day-1 baseline (money-safe)** | production shape; đủ an toàn khi có tiền thật | 2 web + 2 discovery + 1 worker × 1 GiB · DO PG HA+PITR `$60.90` · Cloudflare Free · Sentry Developer · KMS `$1–3` · logs/R2 `$0–5` · egress `$0–8` · **+ §9.3 read-isolation controls** | **~$120–135** |
+| **Trigger-based upgrades** | khi telemetry chạm ngưỡng (KHÔNG mặc định Day-1) | read replica `+$30.45` · WAF Pro `+$20` · Sentry Team `+$26` · worker-2 `+$14` · resize DB/component | theo trigger |
+| Hardening (P6) | DAST/load/soak/pen-test/restore drill | one-off + định kỳ, không gộp hosting | ước riêng |
 
-**Ranh giới quan trọng (cảnh báo của chính deployment-infra §9):** **money-safe = Tier B**, KHÔNG phải Tier A. Đừng dùng số Tier A để kết luận "đã đủ production khi có tiền chạy qua". Gói base chat hợp Tier A *vì chưa có tiền*; chuyển sang Pro phải lên Tier B.
+**Ranh giới quan trọng (DD-04 Rev 2):** Day-1 baseline `$120–135` **đã money-safe** nhờ non-negotiables (HA/PITR/VPC/fail-closed/KMS/offsite backup) + read-isolation controls — KHÔNG cần một tier `$202–254` cố định. Smoke `$76` vẫn chỉ dùng *vì chưa có tiền*; trước khi bật money flow phải lên Day-1 baseline. Read replica/WAF Pro/Sentry Team = **trigger-based**, an toàn để hoãn **chỉ khi** §9.3 controls ship thật + trigger được giám sát.
 
 **Messaging API:** Telegram free · Zalo beta · Messenger free **trong 24h** (ngoài 24h trả phí, §6) → ~0đ ở gói base chat. Chi phí scale ~tuyến tính theo primary DB size + số replica.
 
@@ -90,7 +91,7 @@
 - **Zalo (CO-OQ-1):** confirm sandbox `getMe`/`setWebhook`/`getWebhookInfo` + cơ chế webhook per-bot (path/`webhookToken`) trước khi cam kết auto-register.
 - **Messenger:** quyết Model A vs B; nếu A → bổ sung decision table routing + consent vào BRD/PRD; xác nhận lại giá Marketing Messages + danh sách loại trừ Recurring Notifications tại VN.
 - **Telegram:** webhook vs long-polling; thiết kế queue/throttle; ngưỡng cân nhắc paid broadcast.
-- **Hạ tầng:** chốt mốc chuyển Tier A → Tier B trùng với mốc bật Pro/đối soát.
+- **Hạ tầng:** định nghĩa telemetry trigger cho từng upgrade (read replica / WAF Pro / Sentry Team / worker-2) và giám sát; xác nhận §9.3 read-isolation controls ship trong infra slice.
 
 ---
 

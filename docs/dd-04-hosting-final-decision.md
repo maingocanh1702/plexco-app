@@ -2,8 +2,10 @@
 
 > **Status:** ✅ Accepted<br>
 > **Decision date:** 2026-07-16<br>
+> **Revision:** 2 — cost-optimized, upgradeable, provider-portable baseline<br>
 > **Owner:** Founder<br>
-> **Scope:** production compute, PostgreSQL hosting, network posture, and planning cost<br>
+> **Scope:** production compute, PostgreSQL hosting, network posture, operating cost, scaling, backup,
+> and provider-exit contract<br>
 > **Supersedes:** recommendation `(a) giữ Fly + public TLS` in
 > [`dd-04-hosting-decision-brief.md`](dd-04-hosting-decision-brief.md). Provider facts and hard gates in
 > that brief remain useful; this record is the final choice.
@@ -12,7 +14,7 @@
 
 Choose **QĐ-1 (c): co-locate compute and database on DigitalOcean in Singapore**:
 
-- **Compute:** DigitalOcean App Platform, one immutable image deployed as three component types:
+- **Compute:** DigitalOcean App Platform, one immutable OCI image deployed as three component types:
   `web`, `discovery`, and `worker`.
 - **Database:** DigitalOcean Managed PostgreSQL, **HA cluster with at least one standby node**.
 - **Network:** App Platform and PostgreSQL connect through the same DigitalOcean VPC in `sgp`/`sgp1`;
@@ -21,283 +23,339 @@ Choose **QĐ-1 (c): co-locate compute and database on DigitalOcean in Singapore*
   roles, separate pooled and direct/session connection strings, and no migration credential in runtime
   components.
 - **Region:** Singapore for both compute and database.
+- **Day-1 planning budget:** **`$120–135/month`**, including HA/PITR, private DB connectivity, two
+  `web`, two `discovery`, one durable worker, KMS, low-volume observability, and encrypted offsite backup.
 
-This is the highest-benefit option for Plexco because it combines private DB connectivity, managed
-failover, predictable operations, and one provider boundary. It costs more than the cheapest Fly
-topology, but cost is not the deciding criterion for a multi-tenant money system.
+This is the highest-benefit option for Plexco because it combines a private DB path, managed failover,
+predictable operations, and one production-provider boundary without buying capacity before telemetry
+requires it. The lower Day-1 cost comes from trigger-based upgrades, **not** from removing HA, PITR,
+RLS, encryption, backup, or fail-closed money controls.
 
 This decision changes the deployment target currently represented by [`infra/fly.toml`](../infra/fly.toml).
 It does **not** reverse DD-10: DD-10 chooses Next.js App Router, standalone containers, and no Vercel; it
 does not canonically require Fly.io.
 
-## 2. Hard requirements preserved
+## 2. Non-negotiable requirements
 
 1. Managed PostgreSQL with automatic failover, PITR, and contractual uptime SLA.
-2. Singapore region.
-3. Transaction-pooled URL for request traffic plus direct/session URLs for SSE `LISTEN/NOTIFY` and
+2. Singapore region for the steady-state production topology.
+3. Private VPC DB path; public TLS + static-IP allowlist is a fallback posture, not equivalent to private.
+4. Transaction-pooled URL for request traffic plus direct/session URLs for SSE `LISTEN/NOTIFY` and
    pg-boss workers.
-4. Four connection-level roles with least privilege: runtime web, discovery/readonly, worker, and
+5. Four connection-level roles with least privilege: runtime web, discovery/readonly, worker, and
    migration.
-5. RLS and money paths remain fail-closed.
-6. PostgreSQL portability: no provider-exclusive data model or business logic.
-7. Restore drill, failover drill, and reconnect validation before production acceptance.
+6. RLS, allocation, idempotency, and money paths remain fail-closed.
+7. KMS envelope encryption, encrypted offsite logical backup, and tested restore outside DigitalOcean.
+8. PostgreSQL portability: no provider-exclusive data model, queue, or business logic.
+9. Failover, reconnect, rolling-deploy, restore, and provider-exit drills must pass before production
+   acceptance.
 
-## 3. Cost-estimate assumptions
+## 3. Cost model and assumptions
 
-All figures are **USD/month, list price, planning estimates as of 2026-07-16**.
+All figures are **USD/month, list-price planning estimates verified 2026-07-16**. They exclude VAT/tax,
+paid support, third-party API fees, unusual egress, migration labour, and usage beyond the stated free or
+low-volume allowances. Procurement must re-price before launch.
 
 | Assumption | Value used |
 |---|---|
-| Billing month | 730 hours |
-| Current process topology | `web` + `discovery` + `worker` |
-| Minimum topology | One instance/container per process; useful for smoke/early staging, not HA compute |
-| Production compute topology | Two `web`, two `discovery`, one or two `worker` instances |
-| DO database | 2 GiB/1 vCPU primary `$30` + matching standby `$30` |
-| Neon database | Scale plan, always on; average `0.25–0.5 CU`; 10 GB active storage + 10 GB history |
-| AWS strict-private topology | Six Fargate tasks across two AZs, each `0.25 vCPU / 0.5 GB`; one ALB; PrivateLink in two AZs; one or two NAT gateways |
-| Excluded | VAT/tax, paid support, third-party API fees, object storage, large log volume, migration labour, credits/discounts, and unusual data transfer |
+| Billing month | 730 hours where hourly pricing applies |
+| Production processes | `web` + `discovery` + `worker` from the same immutable image |
+| Day-1 compute | Two 1 GiB scalable `web`, two 1 GiB scalable `discovery`, one fixed 1 GiB `worker` |
+| DO database | 2 GiB/1 vCPU primary `$30.45` + matching standby `$30.45` = `$60.90` |
+| Edge | Cloudflare Free at Day 1; Pro only on a capability/abuse trigger |
+| Error monitoring | Sentry Developer at Day 1; Team only on a team/integration/quota trigger |
+| Secrets | One AWS KMS key plus low request volume: `$1–3` planning allowance |
+| Logs and offsite backup | Low-volume logs plus encrypted logical exports to R2: `$0–5` |
+| Traffic/variance buffer | `$0–8`; raise only from measured egress or retained-log volume |
+| Staging | Full production-shape environment created from IaC for 48–96 hours per release/drill, then destroyed |
 
-These numbers are not a traffic forecast. Tenant count does not map directly to RAM/CU; production
-sizing must come from staging load tests and observed connection counts.
+Tenant/host count is **not** a capacity formula. The prior 100/1000/2000-host envelopes are superseded
+because they multiplied unbenchmarked infrastructure assumptions. Size from active concurrency, webhook
+RPS, query time, DB CPU/RAM/connections, queue lag, egress, and p95/p99 latency.
 
-## 4. Option comparison
+## 4. Option comparison after cost optimization
 
-| Option | Estimated monthly cost | Network posture | Operational shape | Decision |
-|---|---:|---|---|---|
-| **(a) Fly + DO Managed PostgreSQL** | **~`$76` minimum; `~$88` with two Fly machines per process** | Public internet, TLS verify-full, static-IP allowlist | Two providers; flat DB bill | Bounded fallback only |
-| **(a) Fly + Neon Scale** | **~`$62–74` at 0.25 CU; `~$102–114` at 0.5 CU** | Public internet, TLS verify-full, static-IP allowlist | Two providers; variable DB bill; always-on tuning | Not chosen |
-| **(b) AWS Fargate + Neon PrivateLink** | **~`$210–330` planning range** | Strict private DB path | Most moving parts: ECS, ALB, NAT, endpoints, CloudWatch, Neon | Not chosen |
-| **(c) DO App Platform + DO Managed PostgreSQL** | **`~$75` minimum; `~$120–132` production baseline** | Private VPC | One provider; managed compute + managed DB | **Selected** |
-| Supabase Enterprise | Quote required | PrivateLink requires AWS VPC | Enterprise contract and extra provider boundary | Not cost-comparable |
+These ranges compare a small-production shape with HA where the option can meet that gate. Paid WAF,
+paid Sentry, and a permanent read replica are excluded unless their trigger fires.
 
-The minimum figures are not equivalent to production HA. For the selected option, budget against
-**`$120–132/month`**, then add contingency for logs, support, outbound transfer, and later read replicas.
+| Option | Estimated monthly cost | Security / operations | Decision |
+|---|---:|---|---|
+| **DO App Platform + DO Managed PG HA** | **`$120–135`** | Private VPC, one provider, managed compute + DB | **Selected** |
+| DO Droplets + DO Managed PG HA | `~$100–115` | Private VPC, but OS, rollout, patching, capacity and LB ownership move to the team | Upgrade/fallback substrate, not Day-1 default |
+| Fly + DO Managed PG HA | `~$105–120` | Public DB path with `verify-full` + static-IP allowlist; two providers | Bounded fallback if §7.1 fails |
+| Fly + Neon Scale | `~$90–105` at 0.25 CU; `~$130–145` at 0.5 CU | Public DB path, two providers, variable CU bill, always-on tuning | Not chosen |
+| AWS Fargate + Neon PrivateLink | `~$225–350` | Strict-private, but ECS/ALB/NAT/endpoints/CloudWatch add cost and operating surface | Not chosen |
+| DO App Platform + single-node DO PG | `~$90–100` | Removes standby HA and the 99.95% DB SLA gate | Rejected |
+| Supabase / Railway / self-hosted PG | Plan- or quote-dependent | Fails the combined Day-1 HA/SLA/private-path/low-ops gates, or costs more | Rejected for production baseline |
 
-## 4.6 Scale-tier planning estimates (100 / 1000 / 2000 hosts)
+The selected option is not the absolute cheapest line item. It maximizes total project benefit: about
+`$5–30/month` above the credible low-cost alternatives buys a private DB path, one incident boundary,
+and lower solo-team operating load. The AWS/private topology buys more infrastructure than the current
+single-region product needs.
 
-> ⚠️ **These are planning estimates, not benchmarked.** Tenant count does **not** map linearly to
-> RAM/CU (see §3). The database is a **step-function** (2→4→8→16 GiB doubles each step, then ×2 again for
-> HA), so the higher tiers carry the most uncertainty. Final sizing must come from staging load tests.
-> DO prices verified 2026-07-16 (Basic shared-CPU tier); Fly/Neon/AWS anchors from §5.
+## 5. Selected-option cost detail
 
-**Selected option (c) — DigitalOcean co-locate, USD/month (compute App Platform + DO Managed PG HA + misc/logs/offsite-backup):**
+### 5.1 Day-1 production baseline
 
-| Item | 100 hosts | 1000 hosts | 2000 hosts |
-|---|---|---|---|
-| Compute (App Platform) | 2 web + 2 disc + 1 worker ≈ **$60–72** | 3–4 each + 2 worker ≈ **$100–150** | more/larger (2 GiB) instances ≈ **$150–250** |
-| Database (Managed PG HA) | 2–4 GiB ≈ **$61–122** | 8 GiB ≈ **$244** (+ read replica $61–122) | 16 GiB ≈ **$489** (+ replica $122–244) |
-| Transfer + logs + **offsite backup** | ~**$10–25** | ~**$25–50** | ~**$40–80** |
-| **Total ≈** | **$130–220** | **$370–570** | **$700–1,100** |
-
-**Cross-topology comparison (same tiers, total ≈ USD/month incl. HA + misc):**
-
-| Topology | Network posture | Ops (solo dev) | 100 | 1000 | 2000 |
-|---|---|---|---:|---:|---:|
-| (a) Fly + Neon Scale | Public TLS + IP-allow | 2 providers + CU tuning | ~$72–134 | ~$235–470 | ~$460–900 |
-| (a) Fly + DO Managed PG | Public TLS + IP-allow | 2 providers, flat DB | ~$90–170 | ~$310–490 | ~$720–930 |
-| **(c) DO co-locate [SELECTED]** | **Private VPC** | **1 provider (simplest)** | **~$130–220** | **~$370–570** | **~$700–1,100** |
-| (b) AWS Fargate + Neon PrivateLink | Strict private | Most layers (ECS/ALB/NAT/endpoint) | ~$210–330 | ~$400–700+ | ~$700–1,300+ |
-| Supabase Enterprise | PrivateLink (AWS VPC) | Enterprise contract | quote (~$600+ base) | quote | quote |
-
-**Reading the comparison:**
-- DB cost is identical for (a)-DO and (c); the (c) premium over (a) Fly+DO (~$40–130/mo) is **almost entirely
-  App Platform compute** being pricier per GiB than a Fly machine. That premium buys private-DB-by-construction
-  + one provider + `LISTEN/NOTIFY` session-pool fit. Cost is not the deciding criterion for a money system.
-- Neon is cheapest at low load but **consumption-variable** ($0.222/CU-hr always-on: 0.25 CU $40 → 1 CU $162
-  → 2–4 CU $324–648) with a public path and AWS-only PrivateLink.
-- AWS (b) is expensive due to the base fabric (ALB + NAT + endpoints) before compute/DB, with no product
-  benefit for single-region Plexco.
-
-**Caveats (apply to all options):**
-- DB figures use **Basic shared-CPU**. At 1000–2000 hosts a money system may need **General Purpose (dedicated
-  CPU) → ~2× the DB price** — the single largest variable at the high tiers.
-- HA = ×2. Read replicas for discovery/marketplace reads are extra at 1000+. Excludes VAT, paid support, object
-  storage, unusual egress, migration labour.
-
-**Compute-cost optimization (for the infra slice):** if App Platform compute becomes the cost driver at ~2000
-hosts, move compute to **DO Droplets or DOKS in the same VPC** — cheaper per GiB than App Platform while keeping
-the private-DB path and one-provider boundary. This preserves the (c) intent and only changes the compute layer.
-
-**Sources:** [DO Managed Databases pricing](https://www.digitalocean.com/pricing/managed-databases) ·
-[DO PostgreSQL HA pricing](https://docs.digitalocean.com/products/databases/postgresql/details/pricing/) ·
-[Fly.io pricing](https://fly.io/docs/about/pricing/) · [Neon pricing](https://neon.com/pricing) · §5 below.
-
-## 5. Estimate detail
-
-### 5.1 Option (a) — Fly + DigitalOcean Managed PostgreSQL
-
-Current Singapore Fly size in `infra/fly.toml` is `shared-cpu-1x / 512 MB`, listed at `$4.05/month` per
-running machine.
-
-| Item | Minimum | Two machines/process |
+| Item | Calculation | Monthly estimate |
 |---|---:|---:|
-| Fly compute | `3 × $4.05 = $12.15` | `6 × $4.05 = $24.30` |
-| Fly static egress IP | `$3.60` | `$3.60` |
-| DO PostgreSQL primary + standby | `$60.00` | `$60.00` |
-| **Estimated total** | **`$75.75`** | **`$87.90`** |
+| `web` | `2 × $12` scalable 1 GiB | `$24.00` |
+| `discovery` | `2 × $12` scalable 1 GiB | `$24.00` |
+| `worker` | `1 × $10` fixed 1 GiB | `$10.00` |
+| DO Managed PostgreSQL HA | primary `$30.45` + standby `$30.45` | `$60.90` |
+| Cloudflare | Free WAF subset, one rate-limit rule, unmetered DDoS protection | `$0` |
+| Sentry | Developer: one user, error monitoring, tracing, email alerts | `$0` |
+| AWS KMS | one key + low request volume; cache data keys for envelope encryption | `$1–3` |
+| Logs + encrypted R2 offsite backup | low-volume allowance; money/identity audit remains DB-canonical | `$0–5` |
+| Egress/variance buffer | measured, not pre-purchased | `$0–8` |
+| **Planning total** | exact subtotal `$118.90` before variable allowances | **`$120–135`** |
 
-Not included: Fly Asia-Pacific public egress at `$0.04/GB` under granular bandwidth pricing, paid
-support, logs, or larger machines. This is the cheapest predictable managed-HA fallback if App Platform
-VPC proves incompatible with a hard outbound-network requirement.
+The fixed `$10` worker is intentional at Day 1: there is one durable consumer until idempotency and
+duplicate-delivery tests prove horizontal safety. When a second worker is justified, move to two scalable
+1 GiB workers; the incremental planning cost is approximately `$14/month`.
 
-### 5.2 Option (a) — Fly + Neon Scale
+### 5.2 Trigger-based upgrades
 
-Neon Scale compute is `$0.222/CU-hour`. Always-on is required because pg-boss and SSE listeners cannot
-depend on scale-to-zero behaviour.
+| Upgrade | Trigger — require telemetry or a failed gate | Approximate monthly delta |
+|---|---|---:|
+| Second scalable worker | Sustained queue lag breaches SLO after safe concurrency tuning; idempotency and duplicate-delivery tests green | `+$14` from the fixed-worker baseline |
+| DO read-only node | Discovery load causes measured primary contention or money-path p95/p99 regression after pool/rate/cache controls | `+$30.45` minimum at the current 2 GiB primary size |
+| Cloudflare Pro | Free managed rules + one rate-limit rule cannot express the required control, or observed abuse requires it | `+$20` annual equivalent / `+$25` month-to-month |
+| Sentry Team | More than one operator, third-party integrations, or Developer quota/retention is insufficient | `+$26` annual equivalent |
+| Paid log retention | Free/low-volume retention cannot meet incident, audit, or compliance needs | Usage/policy-based |
+| App component 1→2 GiB | Component CPU/RAM or latency remains saturated after horizontal tuning | `+$13` per upgraded instance |
+| PostgreSQL 2→4 GiB HA | DB CPU/RAM/connections/query latency breach the capacity gate under representative load | `+$60.90` for primary + standby together |
 
-| Item | 0.25 CU average | 0.5 CU average |
-|---|---:|---:|
-| Neon compute | `0.25 × 730 × $0.222 = $40.52` | `0.5 × 730 × $0.222 = $81.03` |
-| 10 GB storage + 10 GB history | `$3.50 + $2.00 = $5.50` | `$5.50` |
-| Fly compute + egress IP, minimum topology | `$15.75` | `$15.75` |
-| **Total, minimum topology** | **`$61.77`** | **`$102.28`** |
-| Fly compute + egress IP, two machines/process | `$27.90` | `$27.90` |
-| **Total, two machines/process** | **`$73.92`** | **`$114.43`** |
+Do **not** use the HA standby as the default discovery replica. DigitalOcean allows reads from standby,
+but warns that read load can overwhelm its ability to replace the primary. A DO read-only node is also
+not a cheap same-VPC copy: it must be at least the primary size, is geographically separate, and primary
+replication traffic is SSL-encrypted over the public network. Add it only when benchmark evidence pays for
+that tradeoff.
 
-At an average 1 CU, Neon compute alone is `$162.06/month`. Neon can be cheaper at its floor, but its
-bill and capacity ceiling require benchmark-driven min/max-CU tuning. Its SLA applies to Compute
-Endpoints, and its PrivateLink path is AWS-only, so Fly still uses public TLS + IP allowlisting.
+### 5.3 Read isolation without a Day-1 replica
 
-### 5.3 Option (b) — AWS Fargate + Neon PrivateLink
+`discovery` remains isolated from money workloads through all of the following:
 
-Planning model for Singapore (`ap-southeast-1`):
+- a projection-only DB role with zero grants on canonical money/PII tables;
+- a separate bounded pool with a hard connection cap and statement timeout;
+- CDN caching for public projections, edge and application rate limits, and cache-safe invalidation;
+- a circuit breaker that degrades discovery to stale data, `429`, or `503` before web/worker pools suffer;
+- reserved connection budgets for `web`, `worker`, and session-mode listeners;
+- a physical read-only node only after load tests show the controls above are insufficient.
 
-| Item | Estimate |
-|---|---:|
-| Six Fargate tasks (`1.5 vCPU + 3 GB` total) | `$67.47` |
-| Application Load Balancer + assumed 1 LCU | `$24.24` |
-| Interface VPC endpoint in two AZs | `$18.98` |
-| One or two NAT gateways, before data processing | `$43.07–86.14` |
-| Neon Scale at 0.25–0.5 CU + 10 GB storage/history | `$46.02–86.53` |
-| CloudWatch/ECR/public IPv4/data allowance | `$10–40` |
-| **Planning total** | **`~$210–330`** |
+### 5.4 Ephemeral staging instead of an always-on mirror
 
-Rate anchors used: Fargate `$0.05056/vCPU-hour` + `$0.00553/GB-hour`; ALB `$0.0252/hour` +
-`$0.008/LCU-hour`; interface endpoint `$0.013/AZ-hour` + `$0.01/GB`; NAT gateway `$0.059/hour` +
-`$0.059/GB`. A final AWS estimate must be regenerated in AWS Pricing Calculator with real traffic,
-logging, public IPv4, and AZ choices.
-
-This option buys strict-private DB connectivity but introduces the largest operational surface and the
-highest cost variance. It has no compensating product benefit for the current single-region Plexco
-architecture.
-
-### 5.4 Option (c) — DigitalOcean App Platform + DO Managed PostgreSQL
-
-| Topology | Compute | Database | Estimated total |
-|---|---:|---:|---:|
-| Minimum: one 512 MiB `$5` container per component | `3 × $5 = $15` | `$60` | **`$75`** |
-| Production baseline: 2 web + 2 discovery + 1 worker on scalable 1 GiB `$12` plan | `5 × $12 = $60` | `$60` | **`$120`** |
-| Production baseline with 2 workers | `6 × $12 = $72` | `$60` | **`$132`** |
-
-The `$5` and fixed `$10` App Platform plans do not support manual horizontal scaling; the production
-budget therefore uses the scalable 1 GiB `$12` plan. Additional App Platform outbound transfer is
-`$0.02/GiB` after the pooled allowance. DigitalOcean states that traffic to/from Managed Databases does
-not count against bandwidth billing transfer allowance.
-
-Use two workers only after job idempotency and pg-boss concurrency have been verified. Otherwise keep
-one worker and treat worker recovery time as an explicit operational SLO.
+Provision a full production-shape staging environment from IaC for 48–96 hours around each release,
+load/soak test, failover drill, restore drill, or provider-exit rehearsal, then destroy it automatically
+with a TTL. At the Day-1 shape this averages approximately **`$8–18/month`**, making the expected
+production-plus-staging envelope **`$128–153/month`**. Keep a minimal non-production smoke surface only
+if a persistent integration callback requires it; it is not a second production stack.
 
 ## 6. Why option (c) maximizes project benefit
 
-1. **Security:** the DB path is private by construction; public exposure is not the steady-state design.
-2. **Money correctness:** managed standby failover, 99.95% database SLA, PITR, and one-provider incident
-   boundary reduce the number of failure modes around writes and reconnects.
-3. **Maintainability:** one account, one region, one VPC, one billing surface, and no AWS NAT/endpoint/ECS
-   layer for a small team.
-4. **Architecture fit:** Plexco already needs long-lived worker and listener connections. DO Managed
-   PostgreSQL supports session-mode pooling for `LISTEN/NOTIFY`, without a scale-to-zero lifecycle.
-5. **Timing:** the checked-in Fly configuration is still a P0 template, so changing the deployment target
-   before production and feature-layer rollout is materially cheaper than migrating later.
-6. **Portability:** the application remains a standalone container using standard PostgreSQL contracts;
-   leaving DigitalOcean later does not require rewriting business logic.
-
-Accepted cost: the production baseline is approximately `$32–56/month` above Fly + DO at the small
-sizes modelled here. That premium buys a private DB path and simpler operations; it is intentional.
+1. **Security:** the steady-state DB path is private; public exposure is not accepted silently to save cost.
+2. **Money correctness:** managed standby failover, 99.95% DB SLA, PITR, isolated connection pools, and
+   one-provider incident handling reduce failure modes around writes and reconnects.
+3. **Maintainability:** one account, region, VPC, bill, and managed compute layer are a better solo-team
+   trade than maintaining VMs or AWS network fabric for a small saving.
+4. **Scalability:** App Platform can scale components horizontally, and DO Managed PostgreSQL can resize
+   CPU/RAM/storage without downtime; expensive capacity is added from telemetry.
+5. **Architecture fit:** Plexco needs durable pg-boss and `LISTEN/NOTIFY` session connections, so there is
+   no dependency on a serverless DB scale-to-zero lifecycle.
+6. **Portability:** immutable images, standard PostgreSQL, configuration-only connection endpoints, IaC,
+   and an executable migration contract prevent provider choice from leaking into business logic.
 
 ## 7. Risks and acceptance gates
 
 ### 7.1 Hard gate: VPC versus dedicated egress IP
 
-DigitalOcean App Platform currently cannot enable VPC network access and dedicated egress IPs at the
-same time. Before implementation, verify whether Zalo, Messenger, SePay, ApiPay, or any other production
-dependency requires a fixed outbound source IP.
+DigitalOcean App Platform cannot enable VPC network access and dedicated egress IPs at the same time.
+Before implementation, verify whether Zalo, Messenger, SePay, ApiPay, or any other production dependency
+requires a fixed outbound source IP.
 
 - If none requires it, proceed with option (c).
 - If one requires it, **do not silently disable the private DB path**. Use option `(a) Fly + DO` as the
-  bounded fallback, or separately design a DO compute substrate with both private DB access and controlled
-  egress.
+  bounded fallback, or design a DO Droplet/DOKS substrate with both private DB access and controlled egress.
 
-**Verify checklist (clear before infra slice):**
-
-| Dependency | Question to answer | Nguồn xác minh |
+| Dependency | Question to answer | Verification source |
 |---|---|---|
-| **SePay** | Outbound API call Plexco→SePay có allowlist theo IP nguồn không? Webhook inbound có yêu cầu IP cố định để verify không? | SePay partner docs/support; connector spike CO-OQ-2/3/7 |
-| **ApiPay** | Enterprise auto-provision (DD-30) có ràng buộc source-IP cho API call không? | ApiPay enterprise onboarding |
-| **Zalo Bot** | Gọi Zalo send API có cần fixed egress IP không (thường token-based → không)? | Zalo Bot API docs; DD-14/15 spike |
-| **Messenger (Meta)** | Graph API call có allowlist IP không (thường không)? | Meta docs |
-| **Kết luận** | Bất kỳ "có" → outbound cần fixed IP → **(c) as-is gãy** → fallback (a) Fly+DO hoặc DO substrate riêng có cả private-DB + controlled egress | — |
+| **SePay** | Does Plexco→SePay require source-IP allowlisting? Does inbound webhook verification require a fixed Plexco IP? | SePay partner docs/support; connector spike CO-OQ-2/3/7 |
+| **ApiPay** | Does enterprise auto-provisioning (DD-30) restrict API calls by source IP? | ApiPay enterprise onboarding |
+| **Zalo Bot** | Does the send API require fixed egress IP? | Zalo Bot API docs; DD-14/15 spike |
+| **Messenger (Meta)** | Does the Graph API require fixed egress IP? | Meta docs |
+| **Conclusion** | Any confirmed “yes” breaks option (c) as-is and activates the bounded fallback/design branch | Recorded provider evidence |
 
-### 7.2 Accepted risk: provider and region concentration
+### 7.2 Provider-neutral application contract
 
-Co-locating compute and database reduces network and operating complexity, but a DigitalOcean regional
-or control-plane incident can affect both layers. Day-1 accepts that concentration instead of buying the
-AWS operating surface. Mitigation is mandatory: tested PITR, encrypted logical exports outside the
-production account/provider, an immutable container image, and a documented restore-to-another-Postgres
-runbook.
+Co-location intentionally accepts DigitalOcean account/region concentration instead of buying an AWS
+control plane on Day 1. That risk is acceptable only while the off-provider backup, restore rehearsal,
+immutable image, and migration contract below remain green.
 
-### 7.3 Production acceptance checklist
+The application must satisfy all of these before production:
 
-- App Platform is deployed in `sgp` and connected to the correct `sgp1` VPC.
-- PostgreSQL trusted sources contain only the application VPC/private identity required by the design.
-- All four DB roles and all pooled/direct connection strings are validated on the private route.
-- TLS CA + hostname verification remains enabled on private connections.
-- Primary-failure drill proves automatic DB failover and application reconnection.
-- SSE listeners re-subscribe after connection loss; pg-boss resumes without duplicate money mutations.
-- PITR restore drill proves the chosen RPO/RTO; a backup without a tested restore is not accepted.
-- Edge caching is disabled for SSE routes.
-- Two-instance `web` and `discovery` topology passes health-check and rolling-deploy tests.
-- Worker horizontal scaling is enabled only after idempotency and duplicate-delivery tests are green.
-- Staging load tests measure peak connections, latency, CPU/RAM, and DB saturation before final sizing.
-- Monthly budget alerts cover compute, database, outbound transfer, and logs.
+- build one immutable OCI image that runs on App Platform, Fly, Droplets, DOKS, ECS, or equivalent;
+- read provider endpoints only from `DATABASE_URL`, `DATABASE_URL_DIRECT`, and
+  `DATABASE_URL_LISTEN`; no provider hostname or SDK in domain/business code;
+- use standard PostgreSQL plus an extension allowlist verified against at least two credible target
+  providers; migrations own schema, roles, grants, RLS, extensions, and sequence setup;
+- keep queue durability in PostgreSQL/pg-boss and realtime durability in canonical tables/outbox;
+  `LISTEN/NOTIFY` is a wake-up hint, not the durable record;
+- keep provider-specific deployment modules behind IaC/config boundaries;
+- do not add a permanent cross-cloud DB proxy only for portability: it adds latency and a new single point
+  of failure without removing migration work.
+
+### 7.3 Upgrade paths that preserve application performance
+
+- **App Platform:** scale `web` and `discovery` horizontally on the shared scalable plan; move to an
+  autoscaling-eligible dedicated plan only when request/CPU telemetry justifies it.
+- **PostgreSQL:** resize CPU/RAM/storage and enable storage autoscaling before introducing a new data layer.
+  DO documents these resize operations as no-downtime, but Plexco still validates reconnects and p95/p99.
+- **Compute substrate:** if App Platform cost or network features become limiting, blue-green the same OCI
+  image to DO Droplets or DOKS in the same VPC, then drain old instances. The DB path and app contracts stay
+  unchanged.
+- **Database provider:** provision the target at equal-or-greater tested capacity and the same or newer
+  PostgreSQL major version. Migrate with logical replication and a bounded write freeze; do not restore a
+  stale dump over a live target.
+
+### 7.4 Cross-provider migration and rollback contract
+
+Required migration flow:
+
+```text
+source live
+  → validate target versions/extensions/roles
+  → initial copy
+  → logical replication
+  → shadow reads + checksums + ledger/outbox reconciliation
+  → freeze writes
+  → drain pg-boss worker and all mutation traffic
+  → replication lag = 0
+  → sync sequences
+  → switch DATABASE_URL* atomically
+  → restart/re-subscribe LISTEN/NOTIFY consumers
+  → resume worker and writes
+  → observe before decommissioning source
+```
+
+PostgreSQL logical replication does **not** replicate DDL/schema changes, sequence state, large objects,
+views, or roles/grants. Apply and verify those separately. During shadow validation the target is read-only;
+dual-writing money data is prohibited because it creates split-brain and makes rollback ambiguous.
+
+Cutover acceptance gates under the same production-shaped load:
+
+- zero lost or duplicated charge, transaction, allocation, outbox, or audit records;
+- public reads remain available; mutation pause is **≤5 minutes** in the rehearsal at Day-1 data size;
+- target error rate is no worse by more than `0.1` percentage point and p95/p99 latency is no worse by
+  more than `10%` versus the source benchmark;
+- target connection usage remains below `80%` of its safe connection budget and queue lag returns to SLO;
+- SSE listeners re-subscribe and pg-boss resumes without duplicate money mutations;
+- DNS/connection TTL, credential rotation, and old-source isolation are proven in the runbook.
+
+Rollback is asymmetric:
+
+- **Before** the target accepts writes: switch connections back to the still-current source.
+- **After** the target accepts writes: never point back to a stale source. Use forward-fix, or prove reverse
+  replication and sequence/ledger reconciliation before rollback.
+- Keep the source read-only for at least **72 hours and one completed money-reconciliation cycle**, then
+  destroy it only after the observation gate passes.
+
+No provider migration can promise literally zero impact. The contract is bounded write interruption,
+uninterrupted public reads where practical, no split-brain, and no statistically material performance
+regression.
+
+### 7.5 Backup and disaster-recovery contract
+
+- Maintain three independent recovery forms: live HA data, provider PITR, and encrypted logical exports
+  outside the DigitalOcean account/provider.
+- Export schema, migrations, roles/grants, RLS, extensions, sequence state, and data; a data-only dump is
+  not a portable recovery set.
+- Run logical exports off-peak with bandwidth/concurrency caps and abort if production p95/p99 or queue
+  SLO regresses. At larger data sizes, use a temporary replica/target for the initial copy instead of paying
+  for a permanent monthly migration replica.
+- Quarterly, restore to temporary vanilla PostgreSQL outside DigitalOcean and run schema checksum,
+  row-count, ledger/allocation/outbox reconciliation, smoke tests, and representative load tests.
+- Day-1 temporary portability/restore target allowance is approximately **`$10–30 per drill`** plus egress;
+  this is a drill cost, not an always-on monthly standby.
+
+### 7.6 Production acceptance checklist
+
+- [ ] §7.1 fixed-egress-IP gate is closed with written provider evidence.
+- [ ] App Platform is deployed in `sgp` and connected to the correct `sgp1` VPC.
+- [ ] PostgreSQL trusted sources contain only the required application private identity.
+- [ ] All four DB roles and pooled/direct/listener connection strings work on the private route with TLS
+      CA + hostname verification enabled.
+- [ ] Two-instance `web` and `discovery` topology passes health-check and rolling-deploy tests.
+- [ ] Discovery pool caps, timeouts, rate limits, cache policy, and circuit breaker protect money pools.
+- [ ] Primary-failure drill proves automatic DB failover and application reconnection.
+- [ ] SSE listeners re-subscribe; pg-boss resumes without duplicate money mutations.
+- [ ] PITR and off-provider restore drills prove the selected RPO/RTO and reconciliation checks.
+- [ ] KMS envelope encryption, key rotation, and degraded/fail-closed paths are tested.
+- [ ] Ephemeral staging is reproducible from IaC and destroys itself on TTL.
+- [ ] Load tests record concurrency, RPS, DB CPU/RAM/connections/query time, queue lag, p95/p99, error rate,
+      egress, and projected monthly cost before any scale purchase.
+- [ ] Cross-provider rehearsal passes §7.4, including rollback semantics and performance gates.
+- [ ] Monthly budget alerts cover compute, DB, transfer, logs, backups, and KMS.
 
 ## 8. Consequences and required propagation
 
-> **Status (2026-07-16):** record accepted as canonical. **DOCS propagation ✅ done; INFRA build ⬜ pending (gated on §7.1).**
+> **Status (2026-07-16):** provider decision remains accepted and canonical. Revision 2 replaces the old
+> `$202–254` mandatory Day-1 budget with a `$120–135` trigger-based baseline and adds executable upgrade,
+> backup, and provider-exit gates.
 
-1. ✅ **DONE** — DD-04 in [`standards/decisions.md`](standards/decisions.md) → **Accepted (v1.32)**, links this record.
-2. ✅ **DONE (docs)** — Fly-specific production wording reframed in BRD OD-4 · TDD · [`standards/deployment-infra.md`](standards/deployment-infra.md) (§2 + TL;DR + cost) · security specs; [`standards/environments-setup.md`](standards/environments-setup.md) got a superseded banner. ⬜ **environments-setup full DO runbook rewrite = infra slice.**
-3. ⬜ **PENDING (infra slice)** — Create the DigitalOcean App Spec; do not hand-convert `fly.toml` during a docs-only change. **Gate: §7.1 egress-IP verify must pass first.**
-4. ⬜ **PENDING** — Mark `infra/fly.toml` as superseded or remove it only when the DO deployment path is verified.
-5. ⬜ **PENDING** — Record measured staging costs and replace planning estimates before procurement/launch sign-off.
+1. ✅ **DONE** — provider/network decision is recorded in
+   [`standards/decisions.md`](standards/decisions.md) and
+   [`standards/deployment-infra.md`](standards/deployment-infra.md).
+2. ✅ **DONE (2026-07-16)** — `$121–133 core / $202–254 money-safe` and Day-1 replica/Pro/Team wording
+   replaced with this revision’s `$120–135` baseline + trigger table in `standards/decisions.md`
+   (v1.34), `standards/deployment-infra.md` (v1.7, §9 rewrite), `standards/environments-setup.md` (§9),
+   `strategy/base-chat-package-feasibility.md` (§3), and `dd-04-hosting-decision-brief.md`. Pointer version
+   refs cascaded decisions.md v1.33→v1.34 across dependent docs.
+3. ⬜ **PENDING (infra slice)** — close §7.1, create the DigitalOcean App Spec/IaC, implement ephemeral
+   staging, and encode the acceptance/rollback gates; do not hand-convert `fly.toml` in a docs-only change.
+4. ⬜ **PENDING** — mark `infra/fly.toml` superseded only after the DO deployment path is verified.
+5. ⬜ **PENDING** — replace planning allowances with measured staging/production data before procurement
+   and every material scale step.
+6. ⬜ **PENDING** — execute the first off-provider restore and migration rehearsal before production launch.
 
 ## 9. Sources
 
 ### DigitalOcean
 
-- [App Platform pricing](https://docs.digitalocean.com/products/app-platform/details/pricing/)
+- [App Platform pricing and scaling eligibility](https://docs.digitalocean.com/products/app-platform/details/pricing/)
+- [App Platform horizontal and request/CPU scaling](https://docs.digitalocean.com/products/app-platform/how-to/scale-app/)
 - [App Platform VPC support and dedicated-egress incompatibility](https://docs.digitalocean.com/products/app-platform/how-to/enable-vpc/)
 - [App Platform SLA — 99.95% per component instance](https://www.digitalocean.com/sla/app-platform)
-- [Managed PostgreSQL pricing](https://docs.digitalocean.com/products/databases/postgresql/details/pricing/)
+- [Managed PostgreSQL pricing](https://www.digitalocean.com/pricing/managed-databases)
 - [Managed Databases SLA — 99.95% with standby](https://www.digitalocean.com/sla/databases)
+- [PostgreSQL standby nodes and read-load warning](https://docs.digitalocean.com/products/databases/postgresql/how-to/add-standby-nodes/)
+- [PostgreSQL read-only nodes: same/larger sizing and public replication path](https://docs.digitalocean.com/products/databases/postgresql/how-to/add-read-only-nodes/)
+- [PostgreSQL no-downtime resize and storage autoscaling](https://docs.digitalocean.com/products/databases/postgresql/how-to/resize/)
 - [PostgreSQL PITR restore](https://docs.digitalocean.com/products/databases/postgresql/how-to/restore-from-backups/)
 - [PostgreSQL connection pools; session mode supports LISTEN/NOTIFY](https://docs.digitalocean.com/products/databases/postgresql/how-to/manage-connection-pools/)
+- [Outbound PostgreSQL migration with validation and logical replication](https://docs.digitalocean.com/products/databases/postgresql/how-to/migrate-to-self-managed/)
+- [Droplet pricing](https://www.digitalocean.com/pricing/droplets) and
+  [Regional Load Balancer pricing](https://docs.digitalocean.com/products/networking/load-balancers/details/pricing/)
 
-### Fly, Neon, Supabase
+### Portability and low-cost operations
+
+- [PostgreSQL logical-replication restrictions](https://www.postgresql.org/docs/17/logical-replication-restrictions.html)
+- [Cloudflare WAF plan capabilities](https://developers.cloudflare.com/waf/)
+- [Cloudflare unmetered DDoS protection](https://developers.cloudflare.com/ddos-protection/frequently-asked-questions/)
+- [Cloudflare Free/Pro pricing](https://www.cloudflare.com/plans/)
+- [Cloudflare R2 pricing and free tier](https://developers.cloudflare.com/r2/pricing/)
+- [Sentry Developer and Team pricing](https://sentry.io/pricing/)
+- [AWS KMS key/request pricing](https://aws.amazon.com/kms/pricing/)
+- [Better Stack low-volume logs/monitoring pricing](https://betterstack.com/pricing)
+
+### Rejected/fallback providers
 
 - [Fly.io compute, egress, and static-egress-IP pricing](https://fly.io/docs/about/pricing/)
 - [Neon pricing](https://neon.com/pricing)
 - [Neon SLA](https://neon.com/sla)
 - [Neon network transfer](https://neon.com/docs/introduction/network-transfer)
-- [Supabase pricing; uptime SLA is Enterprise](https://supabase.com/pricing)
-
-### AWS Singapore price anchors
-
+- [Supabase pricing](https://supabase.com/pricing)
+- [Supabase PrivateLink](https://supabase.com/docs/guides/platform/privatelink)
 - [AWS Fargate pricing](https://aws.amazon.com/fargate/pricing/)
 - [Elastic Load Balancing pricing](https://aws.amazon.com/elasticloadbalancing/pricing/)
 - [AWS PrivateLink pricing](https://aws.amazon.com/privatelink/pricing/)
 - [Amazon VPC/NAT Gateway pricing](https://aws.amazon.com/vpc/pricing/)
-- Official `ap-southeast-1` public price lists:
-  [ECS](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/ap-southeast-1/index.json),
-  [ELB](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSELB/current/ap-southeast-1/index.json),
-  [VPC](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonVPC/current/ap-southeast-1/index.json),
-  [EC2/NAT](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-southeast-1/index.json)

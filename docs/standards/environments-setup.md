@@ -22,7 +22,7 @@
 │ (+ tunnel)  │      │            │ (Fly app)    │                         │ (Fly app)  │
 └─────────────┘      ▼            └──────────────┘                         └────────────┘
                 ┌──────────┐         DB staging riêng                       DB prod riêng
-                │ plexco-  │         (Tier A/B nhỏ)                          (Tier B money-safe)
+                │ plexco-  │         (baseline nhỏ)                          (Day-1 baseline money-safe)
                 │ dev (Fly)│
                 └──────────┘
                  DB dev riêng
@@ -35,7 +35,7 @@
 | Deploy khi | push nhánh `develop` (auto) | merge `main` / `release/*` | **promote** image từ staging (thủ công + duyệt) |
 | Database | Postgres riêng, nhỏ nhất | Postgres riêng (managed, PITR) | Postgres riêng (managed, HA + PITR) |
 | Kênh/Auth (Zalo bot · Messenger app · Google/FB OAuth) | test riêng | staging riêng | prod thật |
-| Cost tier (deployment-infra §9) | Tier A tối thiểu | Tier A → B | **Tier B (money-safe)** |
+| Cost (deployment-infra §9) | baseline nhỏ ~$5–15 | ephemeral drill ~$8–18 | **Day-1 baseline money-safe ~$120–135** (+ trigger-based upgrades) |
 | Dữ liệu | giả lập / seed | giống prod (đã ẩn danh PII) | thật |
 
 Local docker-compose (`infra/docker-compose.yml`) vẫn là vòng lặp nhanh nhất hằng ngày; `plexco-dev` là env **chia sẻ** để test webhook/PWA thật khi cần URL công khai.
@@ -102,7 +102,7 @@ Mỗi env một Postgres độc lập. Hai lựa chọn, theo deployment-infra �
 | Provider | Khi nào dùng | Ghi chú |
 |---|---|---|
 | **Fly Postgres** (private networking) | dev, staging | Cùng platform, DX đơn giản; **Postgres KHÔNG expose public** (deployment-infra §6.1). PITR/HA yếu hơn → chỉ dev/staging. |
-| **DigitalOcean Managed PG (co-locate, VPC private — DD-04 ✅ (c))** | **prod** (bắt buộc), staging nên dùng | HA standby + PITR + auto-failover + private VPC + restore drill (deployment-infra §8; `dd-04-hosting-final-decision.md`; egress-IP gate §7.1). Prod money-safe = Tier B. |
+| **DigitalOcean Managed PG (co-locate, VPC private — DD-04 ✅ (c))** | **prod** (bắt buộc), staging nên dùng | HA standby + PITR + auto-failover + private VPC + restore drill (deployment-infra §8; `dd-04-hosting-final-decision.md`; egress-IP gate §7.1). Prod money-safe = Day-1 baseline `$120–135` + trigger-based upgrades (deployment-infra §9). |
 
 ```bash
 # Ví dụ Fly Postgres cho dev & staging (private, attach vào app tương ứng)
@@ -260,13 +260,13 @@ fly deploy -a plexco-prod --image <digest-bản-trước>   # về image trướ
 
 ## 9. Chi phí tham chiếu (deployment-infra §9)
 
-| Env | Tier | Ước tính/tháng |
+| Env | Topology | Ước tính/tháng |
 |---|---|---|
-| dev | Tier A tối thiểu (VM nhỏ, min machines = 0) | ~$5–15 |
-| staging | Tier A → chớm B | ~$30–60 |
-| **prod** | **Tier B money-safe** (managed PG HA+PITR, WAF Pro, Sentry, scale) | **~$120–200** |
+| dev | local / VM nhỏ (min machines = 0) | ~$5–15 |
+| staging | **Ephemeral** — đúng topology DO (VPC/failover/gate acceptance) nhưng spin-up→teardown cho drill | **~$8–18** (record §5.4) |
+| **prod** | **Day-1 baseline money-safe** (2 web + 2 discovery + 1 worker × 1 GiB + DO PG HA `$60.90` + Cloudflare Free + Sentry Developer + KMS `$1–3` + logs/R2 `$0–5` + egress `$0–8`) + **§9.3 read-isolation controls** | **~$120–135** |
 
-> Nhắc lại từ deployment-infra: **money-safe = Tier B**, không phải Tier A. Đừng cắt prod xuống Tier A khi đã có tiền thật chạy qua.
+> **Model (DD-04 Rev 2 — thay Tier A/B `$121–133`/`$202–254`).** Prod Day-1 `$120–135` **đã money-safe** nhờ non-negotiables (HA/PITR/VPC private/fail-closed/KMS/offsite backup) + read-isolation controls (projection-role · bounded pool + statement_timeout · reserved connection budget · CDN · circuit-breaker). Read replica vật lý / WAF Pro / Sentry Team / worker-2 / DB-resize = **trigger-based upgrade** khi telemetry chạm ngưỡng (deployment-infra §9.2), **KHÔNG** bắt buộc Day-1. Prod + ephemeral staging ≈ `$128–153`. **Caveat money-system:** deferral chỉ an toàn khi read-isolation controls ship thật + trigger được giám sát.
 
 ---
 

@@ -1,7 +1,7 @@
-# 🧭 Founder Decision Brief — Open items (2026-07-15, rev 4)
+# 🧭 Founder Decision Brief — Open items (2026-07-15, rev 5)
 
 > **Mục đích:** gom các item **còn cần founder quyết** thành một chỗ để duyệt một lượt. Mỗi item = **câu hỏi · options · đề xuất · tác động/độ gấp · pointer canonical**.
-> **Authority:** `standards/decisions.md` v1.32. Brief này KHÔNG thay quyết định — khi chốt, ghi vào `decisions.md` (+ feature spec OQ) rồi mới propagate.
+> **Authority:** `standards/decisions.md` v1.34. Brief này KHÔNG thay quyết định — khi chốt, ghi vào `decisions.md` (+ feature spec OQ) rồi mới propagate.
 > **Phân loại nguồn:** 🔴 = cần founder (business/product/legal). Item spike (DD-14/15 Zalo, DD-33 Facebook App Review, connector CO-OQ) là **verify kỹ thuật/bên ngoài**, KHÔNG nằm trong brief này.
 >
 > ⚠️ **Không phải tư vấn tài chính/pháp lý.** Item 3 (tiền) và Item 6 (pháp lý) đưa thông tin để quyết. **Item 6 bắt buộc luật sư VN** rà theo **Luật 91/2025/QH15 + Nghị định 356/2025/NĐ-CP** (hiệu lực 01/01/2026) — **KHÔNG** dùng Nghị định 13/2023 (đã hết hiệu lực). Theo hiểu biết hiện tại (**cần luật sư VN xác nhận, chưa phải kết luận pháp lý**), NĐ 356 dường như xếp ngày sinh và giới tính vào **dữ liệu cá nhân cơ bản** chứ không phải nhóm nhạy cảm; Plexco vẫn mã hoá + xin consent theo product/security policy — không dựa vào phân loại này cho tới khi luật sư xác nhận.
@@ -42,7 +42,7 @@
 
 ## 1. ✅ Hosting provider + network posture — DD-04 (P0) — CHỐT (c) DO co-locate
 
-> ✅ **ĐÃ CHỐT (2026-07-16):** QĐ-1 = **(c) co-locate DigitalOcean** (compute DO App Platform + DB DO Managed PG HA-standby, **VPC private**, Singapore). Supersede đề xuất (a) trong brief. **Pre-build gate:** verify SePay/ApiPay/Zalo/Messenger fixed-outbound-IP (DO App Platform không đồng thời VPC + dedicated egress) → fail thì fallback (a) Fly+DO. Record: `dd-04-hosting-final-decision.md` · `decisions.md` DD-04 v1.32.
+> ✅ **ĐÃ CHỐT (2026-07-16):** QĐ-1 = **(c) co-locate DigitalOcean** (compute DO App Platform + DB DO Managed PG HA-standby, **VPC private**, Singapore). Supersede đề xuất (a) trong brief. **Pre-build gate:** verify SePay/ApiPay/Zalo/Messenger fixed-outbound-IP (DO App Platform không đồng thời VPC + dedicated egress) → fail thì fallback (a) Fly+DO. Cost planning (record Rev 2) = **Day-1 baseline money-safe `$120–135`** (non-negotiables + read-isolation controls; read replica/WAF Pro/Sentry Team = trigger-based, không mặc định Day-1); prod+ephemeral staging `$128–153`. Record: `dd-04-hosting-final-decision.md` · `decisions.md` DD-04 v1.34.
 
 **Câu hỏi (đã trả lời):** (1) posture = **(c) private VPC (co-locate DO)**; (2) provider = **DigitalOcean**.
 
@@ -56,12 +56,12 @@
 **QĐ-2 — Provider:**
 - **DigitalOcean Managed với ≥1 standby node — ✅ CHỌN** — auto-failover + 99.95% SLA; cluster không standby chỉ 99.5% SLA. Bill phẳng/dự đoán được, vận hành đơn giản.
 - Neon Scale — storage multi-AZ by default; **99.95% SLA chỉ áp dụng cho Compute Endpoints**; PrivateLink AWS-only → vô dụng với Fly. *(loại)*
-- Supabase: chỉ đạt gate ở Enterprise (Pro không có SLA). *(loại)*
+- Supabase: Team từ `$599` có AWS PrivateLink nhưng **vẫn không có uptime SLA**; SLA chỉ ở Enterprise custom, còn auto-failover cần contract confirmation. Không cost-comparable. *(loại)*
 
 **Kết quả (2026-07-16): chốt (c) co-locate DigitalOcean.** Đề xuất (a) ban đầu đã **superseded** (xem box ✅ đầu Item + `dd-04-hosting-final-decision.md`). Pre-build gate = **egress-IP verify**.
 **Tác động/gấp:** P0 hạ tầng, cần trước production. ⚠️ Mọi con số phải **benchmark trước khi cam kết**.
 **Kéo theo SEC-OQ-1** (`feature_security_operations`): **RPO/RTO cuối + KMS implementation** chốt theo provider đã chọn — deliverable **derived/build-time**, không phải quyết định founder độc lập.
-**Pointer:** `dd-04-hosting-decision-brief.md` (rev 3) · `decisions.md` DD-04 · `deployment-infra.md §2/§6` · [DigitalOcean Managed Databases SLA](https://www.digitalocean.com/sla/databases) · [Neon pricing/HA scope](https://neon.com/pricing) · [Neon Compute Endpoint SLA](https://neon.com/sla) · [Neon Private Networking scope](https://neon.com/docs/security/security-overview).
+**Pointer:** `dd-04-hosting-decision-brief.md` (rev 4) · `decisions.md` DD-04 · `deployment-infra.md §2/§6/§9` · [DigitalOcean Managed Databases SLA](https://www.digitalocean.com/sla/databases) · [Neon pricing/HA scope](https://neon.com/pricing) · [Neon Compute Endpoint SLA](https://neon.com/sla) · [Neon Private Networking scope](https://neon.com/docs/security/security-overview).
 
 ---
 
