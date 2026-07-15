@@ -1,6 +1,6 @@
 # Deployment & Infrastructure — Plexco
 
-> **Version:** v1.3 · 2026-06-20
+> **Version:** v1.4 · 2026-07-13 (DD-04 reopened: gate auto-failover+SLA+posture-network; +DigitalOcean; §2 Railway row + §6 network posture synced)
 > **Status:** Draft (chờ review)
 > **Scope:** Cách deploy Plexco tối ưu/hiệu quả/dễ maintain, kèm scalability & security ở tầng hạ tầng.
 > **References:** `../product/TDD.md` §3.4/§7/§8 · `../strategy/saas-implementation-plan.md` §4/§5/§7 · `../research/player-side-saas-AUDIT.md` (C1–C8b · B1–B6 · G1–G6) · `../features/BE/feature_security_operations_tech.md`
@@ -10,7 +10,7 @@
 
 ## 0. TL;DR
 
-Deploy Plexco như **một modular monolith container-hoá**: **1 Docker image → 3 process group** (`web` · `discovery` · `worker`) cùng codebase, khác entrypoint/DB-role. Chạy trên **container PaaS** (Fly.io hoặc Railway) ở **region Singapore**, dùng **managed Postgres HA + PITR** (Neon hoặc Supabase). Queue/cron nằm trên Postgres qua **pg-boss** (không Redis/Kafka). Realtime = **SSE fan-out qua Postgres `LISTEN/NOTIFY`** (không cần message broker).
+Deploy Plexco như **một modular monolith container-hoá**: **1 Docker image → 3 process group** (`web` · `discovery` · `worker`) cùng codebase, khác entrypoint/DB-role. Chạy trên **container PaaS** (Fly.io hoặc Railway) ở **region Singapore**, dùng **managed Postgres HA + PITR** (DD-04 reopened → finalist **DigitalOcean Managed / Neon Scale** + gate posture-network; Supabase chỉ Ent — xem `../dd-04-hosting-decision-brief.md`). Queue/cron nằm trên Postgres qua **pg-boss** (không Redis/Kafka). Realtime = **SSE fan-out qua Postgres `LISTEN/NOTIFY`** (không cần message broker).
 
 **KHÔNG:** Kubernetes · tách microservices · serverless function cho worker/webhook/SSE · Redis cho queue.
 
@@ -24,7 +24,7 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 |---|---|---|
 | **SLO** | Availability ≥ 99.5%/tháng · reconcile p99 ≤ 5s · sync lag p95 ≤ 3s, p99 ≤ 10s | security-operations-tech §3 |
 | **Tải mục tiêu** | ≥ 1k tenant đồng thời · webhook burst 100/s · 10k discovery search đồng thời · join contention 100 player/1 slot → đúng 1 winner | security-operations-tech §5 |
-| **Region** | Người dùng + provider (SePay/Telegram/Zalo) ở **VN** → ưu tiên độ trễ thấp | BRD §Bên thứ ba |
+| **Region** | Người dùng + provider (SePay/Zalo/Messenger) ở **VN** → ưu tiên độ trễ thấp | BRD §Bên thứ ba |
 | **Chi phí** | Thuê bao host **0đ (free) / 250k (host_pro) mỗi CLB/tháng** (DD-29 thay DD-03) → margin nhạy, infra phải rẻ ở giai đoạn đầu | BRD §9.1 · DD-29 |
 | **Vận hành** | Team nhỏ → tối ưu **dễ maintain**, ít moving parts | mục tiêu user |
 | **Bản chất hệ thống** | Hệ thống **tiền + multi-tenant RLS** → bắt buộc HA, PITR, least-privilege | TDD §10 · AUDIT |
@@ -37,16 +37,22 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 
 > Mục này là **phân tích/đề xuất**. Mỗi quyết định cuối cùng (chốt/đang mở) được ghi ở `decisions.md`; khi đọc, lấy trạng thái từ đó.
 
-### DD-04 (OD-4) — Postgres hosting · 🟡 đã thu hẹp
+### DD-04 (OD-4) — Postgres hosting · 🟡 reopened 2026-07-13
 
-**Đã chốt:** Managed Postgres có **HA + PITR**, **region Singapore (ap-southeast-1)**.
-**Còn lại:** chọn provider giữa **Neon** vs **Supabase** (đề xuất bên dưới).
+**Đã chốt:** Managed Postgres **HA (auto-failover) + PITR**, **region Singapore**. Compute app target **Fly.io** (DD-10).
+**Gate cứng:** **auto-failover HA + uptime SLA + posture private-network trên nền Fly**.
+**Phân tích đầy đủ + nguồn:** `../dd-04-hosting-decision-brief.md` (rev 3) — bảng dưới là tóm tắt canonical.
 
-| Option | Ưu | Nhược | Ghi chú |
+**QĐ-1 (chốt trước) — posture network:** compute (Fly) khác cloud với DB managed → không private thật trừ PrivateLink/co-locate. **(a)** public TLS + `sslmode=verify-full` + static-egress-IP allowlist [**đề xuất**, giữ Fly] · **(b)** PrivateLink AWS [rời Fly] · **(c)** co-locate compute+DB cùng cloud [rời Fly].
+
+| Option | Đạt gate? | Ưu | Nhược |
 |---|---|---|---|
-| **Supabase** (Pro) | "Sinh ra để dùng RLS", hợp triết lý fail-closed; PITR + connection pooler (Supavisor) sẵn; có region Singapore | Một số tính năng platform thừa (auth) — ta không dùng | Khuyến nghị nếu ưu tiên RLS-native + đơn giản |
-| **Neon** | Branching DB rất hợp **CI migration gate** (fresh/upgrade/rollback); pooler sẵn; Singapore | Scale-to-zero **xung đột** với worker pg-boss (xem ⚠️) | Khuyến nghị nếu coi trọng CI branching |
-| Railway PG | Cùng platform với app, DX đơn giản | PITR/HA yếu hơn cho hệ tiền | Chỉ dùng cho dev/staging |
+| **DigitalOcean Managed** [nghiêng chọn] | ✅ | Auto-failover standby + SLA 99.95% + PITR; bill phẳng, vận hành đơn giản; margin dự đoán chắc | Không branching CI (thay bằng CI ephemeral); private thật chỉ khi co-locate compute lên DO |
+| **Neon Scale** | ✅ | HA multi-AZ **mọi plan**; SLA + IP-allow ở Scale; branching hợp CI; rẻ hơn ở tải thấp (floor 0.25 CU) | PrivateLink **AWS-only → vô dụng từ Fly**; scale-to-zero xung đột pg-boss (phải tắt, xem ⚠️); consumption cần benchmark + cân max-CU |
+| **Supabase** | ❌ Pro / ⚠️ Ent | RLS-native ergonomics; Supavisor pooler sẵn | **Pro rớt gate: không uptime SLA**; auto-failover nêu là Enterprise-only (xác nhận sales); đạt gate chỉ ở **Enterprise = báo giá** |
+| Railway single-node (unmanaged template) | ❌ | Cùng platform với app, DX đơn giản; **có** one-click PgBouncer; PITR single-node + HA qua pgBackRest | **KHÔNG auto-failover** → không đạt gate như managed HA; **chỉ dev/staging** |
+| Railway HA (template Patroni cộng đồng) | ⚙️ self-host | Private networking nếu co-locate compute lên Railway | **Là self-host HA tự vận hành — KHÔNG phải managed failover**; cùng gánh vận hành/rủi ro như self-host; xem brief §6b |
+| Self-host VPS (DIY HA) | ⚙️ self-host | Hạ tầng rẻ nhất | Patroni/etcd/pgBackRest + runbook đã test; **KHÔNG Day-1** (hệ tiền + solo dev) — brief §6 |
 
 > ⚠️ **pg-boss cần connection DIRECT (session-mode)** cho `LISTEN/NOTIFY` + advisory lock, và **poll liên tục**. Nếu dùng Neon: worker phải cắm **non-pooled connection string** và **tắt autosuspend** (worker giữ DB luôn thức → mất lợi ích serverless). Web/discovery request path dùng **pooled** (transaction-mode); riêng web SSE listener dùng `DATABASE_URL_LISTEN` session/direct như DD-07.
 
@@ -62,10 +68,10 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 
 > ⚠️ **Connection cho `LISTEN`:** transaction-mode pooler (PgBouncer/Supavisor) **không** hỗ trợ `LISTEN/NOTIFY` (connection bị multiplex giữa các txn). Vì vậy listener SSE ở `web` phải dùng **một session/direct connection riêng** — biến `DATABASE_URL_LISTEN` — **một connection cố định mỗi `web` replica** chỉ để `LISTEN`, tách hoàn toàn khỏi pool phục vụ request (vẫn là `DATABASE_URL` pooled txn-mode). Đây là connection chỉ-LISTEN, không chạy query nghiệp vụ.
 
-### DD-10 (OD-10) — Web stack · 🟡 đã thu hẹp
+### DD-10 (OD-10) — Web stack · ✅ Chốt
 
 **Đã chốt:** web chạy **trong cùng container/monolith** (không tách lên Vercel).
-**Còn lại:** **Express SSR** vs **Next.js standalone/custom-server** (đề xuất bên dưới).
+**Chốt:** **Next.js App Router**, build standalone/chạy trong cùng container; không Vercel. SSE dùng Node runtime + direct LISTEN connection theo DD-07. Đây là stack đang có trong `apps/web`; không dựng Express SSR song song.
 
 - Lý do: giữ web + bot + worker trong **một image, một platform** → dễ maintain nhất cho monolith.
 - **Tránh:** đẩy web lên Vercel rồi để bot/worker chỗ khác. Việc đó cắt đôi monolith, làm **SSE (long-lived), webhook durable-ingest, và pg-boss** khó sống trên serverless, đồng thời tăng đầu mối vận hành.
@@ -87,11 +93,11 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
         │                   │                                  │
  ┌──────▼────────┐   ┌──────▼─────────┐               ┌────────▼──────────┐
  │ PROCESS: web   │   │ PROCESS:        │               │ PROCESS: worker    │
- │ Express/Next   │   │ discovery (RO)  │               │ pg-boss scheduler  │
+ │ Next.js        │   │ discovery (RO)  │               │ pg-boss scheduler  │
  │ dashboard+API  │   │ GET /discover   │               │ dispatcher         │
  │ +SSE +webhook  │   │ public view only│               │ projectors         │
- │ (TG/Zalo/SePay/│   │ +cache          │               │ cron (remind…)     │
- │ ApiPay)        │   │                 │               │ (no HTTP ingress)  │
+ │ (Zalo/Msgr/    │   │ +cache          │               │ cron (remind…)     │
+ │ SePay/ApiPay)  │   │                 │               │ (no HTTP ingress)  │
  │ port 3000      │   │                 │               │                    │
  └──────┬─────────┘   └──────┬──────────┘               └────────┬───────────┘
         │ role=app           │ role=readonly                     │ role=app_worker
@@ -116,7 +122,7 @@ Ví von: **một căn bếp, nhiều ca làm** — cùng công thức (image), m
 
 | Process | Vai trò | DB role | Connection | Ingress | Scale |
 |---|---|---|---|---|---|
-| **web** | dashboard, API, SSE, **mọi webhook** (TG/Zalo/SePay/ApiPay) | `app` (NOSUPERUSER NOBYPASSRLS) | **pooled** (txn) cho request + **1 direct (session)** cho SSE `LISTEN` (`DATABASE_URL_LISTEN`) | HTTP :3000 | ngang, N replica, autoscale CPU/RPS |
+| **web** | dashboard, API, SSE, **mọi webhook** (Zalo/Messenger/SePay/ApiPay) | `app` (NOSUPERUSER NOBYPASSRLS) | **pooled** (txn) cho request + **1 direct (session)** cho SSE `LISTEN` (`DATABASE_URL_LISTEN`) | HTTP :3000 | ngang, N replica, autoscale CPU/RPS |
 | **discovery** | chỉ `GET /discover` (cross-tenant, đọc **projection công khai**) | `readonly` (**chỉ SELECT trên `public_sessions` + public view**) | **pooled** trên **read replica** | HTTP (route con) | ngang + CDN cache |
 | **worker** | pg-boss scheduler/dispatcher, projectors, cron nhắc nợ | `app_worker` (chỉ narrow functions) | **DIRECT** (session-mode) | **không** ingress | 1 → vài replica (claim `SKIP LOCKED`) |
 
@@ -151,7 +157,7 @@ Discovery (10k search đồng thời) + player-view reads → đẩy sang **repl
 
 ### 5.3 Worker scale an toàn nhờ `FOR UPDATE SKIP LOCKED`
 pg-boss claim job atomic → chạy được **nhiều worker replica** không trùng. Bắt đầu 1, tăng dần.
-- Cron nhắc nợ 1k club cùng giờ đụng trần **Telegram ~30 msg/s global, 1 msg/s mỗi chat** → giữ **throttler (`@grammyjs/transformer-throttler`) + jitter**, rải batch theo tenant (saas §5.3).
+- Cron nhắc nợ 1k club cùng giờ đụng trần **rate-limit Zalo (OA/bot) + cửa sổ 24h Messenger** → giữ **throttler per-channel + jitter**, rải batch theo tenant; nhắc chính qua **web push + Zalo DM**, Messenger best-effort trong 24h (saas §5.3, DD-37).
 - Zalo BYO 1 bot/club ⇒ **phân tán tải gửi** (free-at-scale), không dồn vào 1 bot.
 
 ### 5.4 Vertical trước, shard sau (gần như không cần)
@@ -160,7 +166,7 @@ pg-boss claim job atomic → chạy được **nhiều worker replica** không t
 - Nếu *rất xa* sau này mới cần shard → mọi thứ đã key theo `tenant_id`, shard theo đó là tự nhiên. Coi là việc tương lai, không làm sớm.
 
 ### 5.5 Trần scale ngoài tầm kiểm soát
-Telegram/Zalo rate-limit là **trần scale ngoại sinh** → giải quyết bằng throttler + queue + jitter, không phải bằng thêm máy.
+Zalo/Messenger rate-limit là **trần scale ngoại sinh** → giải quyết bằng throttler + queue + jitter, không phải bằng thêm máy.
 
 ---
 
@@ -182,7 +188,7 @@ RLS, repo choke-point, field-whitelist nằm ở **code**. Deploy phải thêm l
 | **C6 / G2** player-view auth · session steal | session key auto-rotate (30d) + kill-switch invalidate-all (security-operations-tech §4); `person_id` suy từ phiên verify, không từ tham số. |
 
 **Hai nguyên tắc mạng then chốt:**
-1. **Postgres KHÔNG bao giờ expose public** — private networking/VPC giữa app PaaS và DB + IP allowlist (Fly private networking / Supabase network restrictions).
+1. **Postgres KHÔNG public *unauthenticated*** — vì compute (Fly) và DB managed ở **khác cloud**, private networking nội-cloud **không** áp dụng trừ khi PrivateLink (Team/Ent + AWS VPC) hoặc co-locate compute cùng cloud DB. Posture bắt buộc tối thiểu (DD-04 QĐ-1a): **TLS `sslmode=verify-full` (CA validation + hostname verification) + IP allowlist theo Fly static egress IP + DB role least-privilege**. Private networking thật chỉ khi chọn co-locate (QĐ-1 b/c). *(Câu cũ "không bao giờ expose public / Fly private networking" là sai với kiến trúc Fly + DB ngoài — xem `../dd-04-hosting-decision-brief.md §2`.)*
 2. **CDN/WAF đứng trước mọi thứ** — vừa chắn DDoS (G6) vừa là chỗ đặt rate-limit tập trung.
 
 ---
@@ -229,7 +235,7 @@ Single primary (PITR bật, **chưa** read replica), free tier WAF/Sentry. Chấ
 | Hạng mục | Provider (ví dụ) | Chi phí/tháng |
 |---|---|---|
 | App hosting (web+discovery+worker) | Fly.io / Railway, vài instance nhỏ | ~$5–20 |
-| Managed Postgres (HA + PITR, no replica) | Supabase Pro / Neon scale | ~$25–30 |
+| Managed Postgres (HA + PITR, auto-failover standby) | DO Managed (≥1 standby) / Neon Scale | ~$30+ (benchmark trước cam kết) |
 | CDN/WAF | Cloudflare free | $0 |
 | Error tracking | Sentry free | $0 |
 | **Tổng Tier A** | | **~$30–50** |
@@ -284,3 +290,4 @@ Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill
 | 2026-06-20 | v1.1 | Fix review: (1) SSE listener cần `DATABASE_URL_LISTEN` session-mode (txn pooler không `LISTEN`); (2) trạng thái ADR trỏ canonical về `decisions.md` (DD-04/10 đề xuất, DD-07 chốt); (3) role `readonly` chỉ SELECT projection, zero grant canonical; (4) cost tách 3 tier (MVP/baseline/hardening); (5) rule read-your-writes primary cho post-write reads. |
 | 2026-06-20 | v1.2 | Sync connector review: thêm ApiPay vào webhook topology/process; đổi tham chiếu durable ACK sang BL-PAY-1/AUDIT BL-1. |
 | 2026-06-20 | v1.3 | Sync DD-03 pricing tiers 0đ/79k/159k/199k vào cost assumptions. |
+| 2026-07-10 | v1.4 | **DD-37 channel pivot (BRD v3.4):** bỏ Telegram; kênh phase-1 = web + Zalo + Facebook Messenger (Messenger P2.5). Webhook topology/process + rate-limit/reminder refs đổi TG→Zalo/Messenger (nhắc chính web push + Zalo DM, Messenger best-effort 24h). Auth phase-1 = Google/email (DD-13). |

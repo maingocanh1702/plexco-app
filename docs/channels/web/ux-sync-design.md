@@ -1,19 +1,21 @@
 # Web/App-first UX + Multi-surface Sync Design
 
-> Version: v0.1 · 2026-06-21  
-> Scope: UX architecture cho web/app khi Plexco có nhiều bot surfaces: Telegram, Zalo, Messenger post-MVP.  
-> Related docs: `README.md`, `design-brief.md`, `../features/feature_sync_engine.md`, `../features/feature_session_management.md`, `../features/feature_payment_reconcile.md`, `../features/feature_marketplace_discovery.md`, `../features/feature_player_view.md`, `../standards/business-rules.md`
+> Version: v0.2 · 2026-07-10
+> Scope: UX architecture cho web/app khi Plexco có các bot surfaces phase-1: **Zalo + Facebook Messenger** (Telegram đã loại — DD-37).
+> Related docs: `README.md`, `design-brief.md`, `../../features/feature_sync_engine.md`, `../../features/feature_session_management.md`, `../../features/feature_payment_reconcile.md`, `../../features/feature_marketplace_discovery.md`, `../../features/feature_player_view.md`, `../../standards/business-rules.md`
+>
+> **Cập nhật v3.4 (DD-37 ✅):** kênh phase-1 = **web + Zalo + Facebook Messenger**; **Telegram loại khỏi phạm vi**. Nhắc nợ chính = **web + Zalo DM**, Messenger best-effort trong 24h. Auth phase-1 = Google + email (DD-13). Action-mapping cột Telegram thay bằng **Messenger** (player-only surface).
 
 ## 1. Tóm tắt
 
-Web/app là main product của Plexco. Bot vẫn tồn tại vì người dùng đã ở trong Telegram/Zalo/Messenger, nhưng vai trò dài hạn của bot là **kênh thông tin, thông báo, nhắc việc và deep-link router** về web/app. Các tương tác nghiệp vụ chính của user nên được điều hướng sang web/app để có UX đầy đủ, kiểm soát quyền tốt hơn, audit rõ hơn và tránh phân mảnh flow theo từng nền tảng chat.
+Web/app là main product của Plexco. Bot vẫn tồn tại vì người dùng đã ở trong Zalo/Facebook Messenger, nhưng vai trò dài hạn của bot là **kênh thông tin, thông báo, nhắc việc và deep-link router** về web/app. Các tương tác nghiệp vụ chính của user nên được điều hướng sang web/app để có UX đầy đủ, kiểm soát quyền tốt hơn, audit rõ hơn và tránh phân mảnh flow theo từng nền tảng chat.
 
 Web/app không nên được thiết kế như "bot có giao diện". Web/app là workspace chính để host và player nhìn tổng thể, xử lý ngoại lệ, cấu hình, audit, khám phá kèo và thực hiện hành động. Bot chỉ nên giữ các action cực ngắn hoặc các fallback cần thiết trong chat.
 
 Mọi surface đều phải ghi vào cùng canonical domain model:
 
 ```text
-Web/App / Telegram / Zalo / Webhook
+Web/App / Zalo / Messenger / Webhook
   → command API
   → domain service
   → PostgreSQL canonical store
@@ -79,7 +81,7 @@ Web/app phù hợp cho:
   → member list, duplicate review, merge identity, role/status
 
 /dashboard/settings
-  → tenant config, bank account, Telegram group, Zalo token, notification policy
+  → tenant config, bank account, Zalo token, Facebook Messenger Page, notification policy
 
 /dashboard/billing
   → plan, subscription status, invoices, channel entitlements
@@ -117,8 +119,8 @@ Player UX phải mobile-first. Các flow chính cần ít bước: tìm kèo, jo
 /onboarding
   1. Club info
   2. Bank / SePay
-  3. Telegram group link
-  4. Zalo OA token optional
+  3. Zalo bot token
+  4. Facebook Messenger (Page) optional
   5. Readiness checklist
 ```
 
@@ -135,21 +137,23 @@ Connector UI phải hiển thị rõ trạng thái:
 
 Feature parity là domain parity, không phải UI parity. Web/app là primary interaction path. Bot có thể khởi tạo intent hoặc phục vụ transitional quick actions, nhưng default UX phải điều hướng user về web/app để hoàn tất hành động.
 
-| Domain action | Telegram | Zalo | Web/app | Canonical command |
+> Messenger = **player-only surface** (host commands ❌ — host thao tác ở web); nhắc/xác nhận Messenger phải tôn trọng cửa sổ 24h.
+
+| Domain action | Messenger (player-only) | Zalo | Web/app | Canonical command |
 |---|---|---|---|---|
-| Tạo session | Notify/link tới create screen; legacy `/newsession` optional | Không ưu tiên | Create form | `CreateSession` |
+| Tạo session | Notify/link tới web (không phải host surface) | Không ưu tiên | Create form | `CreateSession` |
 | Sửa session | Notify/link tới session detail | Không ưu tiên | Edit form | `UpdateSession` |
-| Publish session | Notify/link tới publish controls | Không ưu tiên | Visibility toggle | `PublishSession` / `UpdateVisibility` |
-| Join session | CTA mở web/app; quick tap optional | CTA mở web/app; number reply transitional | Join CTA | `JoinSession` |
-| Leave session | CTA mở web/app; quick leave optional | CTA mở web/app | Leave button | `LeaveSession` |
-| Close session | CTA mở web/app | Không ưu tiên | Close action | `CloseSession` |
-| Cash payment | CTA mở web ledger | Không ưu tiên | Cash allocation form | `RecordCashPayment` |
+| Publish session | Notify/link tới web | Không ưu tiên | Visibility toggle | `PublishSession` / `UpdateVisibility` |
+| Join session | Quick-reply/postback (trong 24h); CTA mở web/app | CTA mở web/app; number reply transitional | Join CTA | `JoinSession` |
+| Leave session | Quick-reply/postback; CTA mở web/app | CTA mở web/app | Leave button | `LeaveSession` |
+| Close session | Notify/link tới web | Không ưu tiên | Close action | `CloseSession` |
+| Mark-paid / cash (DD-40) | Xác nhận tới player (best-effort 24h) | Xác nhận tới player | Mark-paid tap/multi-select + cash form | `RecordCashPayment` |
 | Unmatched allocation | Alert + link tới ledger | Alert + link tới ledger nếu có | Ledger allocation UI | `AllocatePayment` |
 | Payment reversal | Alert/link only | Không ưu tiên | Reversal modal | `ReverseAllocation` |
-| Identity link | Send OTP/magic-link | Send OTP/magic-link | Merge tool / magic link | `LinkChannelIdentity` |
-| Host approval | Alert + approval link; quick approve optional | Alert + approval link | Approval queue | `ApproveJoinRequest` |
+| Identity link | Send OTP `/link` / magic-link | Send OTP/magic-link | Merge tool / magic link | `LinkChannelIdentity` |
+| Host approval | Alert + approval link tới web | Alert + approval link | Approval queue | `ApproveJoinRequest` |
 
-Adapter-specific details such as Telegram callback data, Zalo reply-context, and Messenger postback payloads are hints only. Every mutation must reload canonical state and validate permissions before commit. For new features, prefer bot notification + web/app deep-link over adding another chat-native workflow.
+Adapter-specific details such as Messenger postback payloads and Zalo reply-context are hints only. Every mutation must reload canonical state and validate permissions before commit. For new features, prefer bot notification + web/app deep-link over adding another chat-native workflow.
 
 ## 5. Sync architecture
 
@@ -162,12 +166,12 @@ Web/App action or bot intent
   → canonical state + processed_commands + outbox_events commit
   → dispatcher
   → projector_deliveries
-  → Web/App realtime / Telegram / Zalo / Public projection
+  → Web/App realtime / Zalo / Messenger / Public projection
 ```
 
 Rules:
 
-- Web/app, Telegram, Zalo and Messenger must not maintain independent truth.
+- Web/app, Zalo and Messenger must not maintain independent truth.
 - Web/app is the primary UX for mutations; bot mutations are compatibility or convenience adapters.
 - Duplicate `commandId` returns the previous semantic result.
 - Outbox event and domain mutation commit atomically.
@@ -192,8 +196,8 @@ Web UI must separate canonical save status from projection delivery status.
 Copy guidance:
 
 - Canonical success: "Đã lưu".
-- Projection lag: "Đã lưu, đang đồng bộ Telegram/Zalo".
-- Delivery warning: "Dữ liệu đã an toàn. Telegram chưa cập nhật, hệ thống sẽ thử lại."
+- Projection lag: "Đã lưu, đang đồng bộ Zalo/Messenger".
+- Delivery warning: "Dữ liệu đã an toàn. Zalo chưa cập nhật, hệ thống sẽ thử lại."
 - Hard failure: "Cần kiểm tra đồng bộ. Dữ liệu gốc không bị mất."
 
 ## 7. Data scope and privacy
@@ -284,7 +288,7 @@ Sections:
 - Header: sport, time, status, visibility, join policy.
 - Roster: player, join source, join status, payment status.
 - Payment: charge summary, paid/partial/unpaid, QR or payment instruction.
-- Announcements: Telegram message ref, public projection status.
+- Announcements: Zalo/Messenger message ref, public projection status.
 - Actions: edit, close, cancel, announce, reproject.
 - Activity timeline: joins, leaves, payments, edits, projector warnings.
 
@@ -359,7 +363,7 @@ Player view should not route by URL-provided `person_id`; authority comes from v
 7. Connector delivery failure is visible but does not mutate business state.
 8. Admin correction actions on money or identity require audit.
 9. Reproject must not blindly resend notifications with side effects.
-10. Messenger remains post-MVP and delivery must respect the 24h policy window.
+10. Messenger is a **phase-1 channel** (DD-37) and delivery must respect the 24h policy window; nhắc chính vẫn qua web + Zalo.
 
 ## 10. Recommended implementation sequence
 

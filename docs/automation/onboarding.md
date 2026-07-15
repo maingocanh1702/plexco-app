@@ -30,7 +30,7 @@ Không phải "hai nguồn độc lập hoàn toàn" — mà **mỗi field có 1
 | Dữ liệu | Chủ (nguồn ghi) | Bên kia |
 |---|---|---|
 | `module.status`, `subtasks[].status` | **Linear** (sau khi bật realtime) — suy từ git/branch/PR | progress.json là **bản sao**, do `linear-sync.mjs` ghi |
-| `doc`, `gates`, `invariants`, `phases`, `milestones`, points, `subtasks[].title`, `linearId`, `assignee map` | **progress.json** (versioned trong repo) | Linear không đụng |
+| `doc`, `gates`, `invariants`, `phases`, `milestones`, points, module/subtask title, `linearId`, `assignee map` | **progress.json** (versioned trong repo) | Title Linear phải mirror chính xác; lệch hoặc thiếu issue làm compare/sync fail-closed |
 | khối `EMBEDDED` trong dashboard | **dẫn xuất** từ progress.json (qua `sync-embedded.mjs`) | chỉ là projection để mở offline |
 
 > Tóm: **Linear sở hữu "đang ở đâu" (status)**; **progress.json sở hữu "bản đồ + cấu trúc"** (gate/invariant/roadmap/điểm/khoá). Dashboard chỉ vẽ lại. Trước khi bật realtime, có thể click trên dashboard để thử local, nhưng khi realtime đã bật thì **đừng sửa `status` tay** — `linear-sync` sẽ ghi đè.
@@ -46,8 +46,9 @@ Không phải "hai nguồn độc lập hoàn toàn" — mà **mỗi field có 1
 | `progress.json` | **Nguồn sự thật cấu trúc tiến độ** (phase/module/gate/milestone/subtasks/assignee); status là bản mirror từ Linear khi realtime bật. | Script ghi; hiếm khi sửa tay |
 | `plexco-dashboard.html` | Dashboard self-contained (mở bằng browser). Có cột so sánh Linear. | Mở để xem; không sửa tay phần `EMBEDDED` |
 | `sync-embedded.mjs` | Ghi `progress.json` → khối `EMBEDDED` trong dashboard (chống lệch). | Chạy sau mỗi lần đổi `progress.json` |
-| `compare-linear.mjs` | **Đọc** Linear + progress.json → in bảng drift; `--write` xuất snapshot. | Khi muốn so 2 nguồn |
-| `linear-sync.mjs` | **Ghi** status từ Linear → progress.json (Linear leader). Engine của realtime. | Action gọi; hoặc chạy tay |
+| `linear-contract.mjs` | Shared validator cho module/subtask ID, status và title contract. | `compare-linear`/`linear-sync` gọi tự động; không chạy riêng |
+| `compare-linear.mjs` | **Đọc** Linear + progress.json → in bảng drift status/title/cấu trúc; `--write` xuất snapshot. | Exit 2 nếu status/title lệch hoặc thiếu module/subtask |
+| `linear-sync.mjs` | **Ghi** status từ Linear → progress.json (Linear leader); không ghi nếu contract title/cấu trúc lệch. | Action gọi; hoặc chạy tay |
 | `linear-snapshot.json` | Ảnh chụp trạng thái Linear cho dashboard so sánh. | Do script sinh |
 | `gen-linear-csv.mjs` / `linear-import.csv` | Đường seed Linear bằng CSV (không cần OAuth). | Khi seed lại / nơi khác |
 | `.github/workflows/linear-sync.yml` | GitHub Action chạy `linear-sync` khi push/webhook/cron. | Kích hoạt khi có repo GitHub |
@@ -78,7 +79,7 @@ Không phải "hai nguồn độc lập hoàn toàn" — mà **mỗi field có 1
 }
 ```
 
-**% tiến độ** tính theo điểm có trọng số: `done=1, in_review=.85, in_progress=.5, blocked=.25, not_started=0`. Module post-MVP (Messenger M17) loại khỏi % MVP.
+**% tiến độ** tính theo điểm có trọng số: `done=1, in_review=.85, in_progress=.5, blocked=.25, not_started=0`. Messenger (M17) nay là **phase-1 (P2.5, DD-37)** → **tính vào % MVP** (không còn loại post-MVP); vẫn phụ thuộc App Review Meta.
 
 ---
 
@@ -127,7 +128,7 @@ graph LR
 
 **"Module sắp tới chưa có sub-task"** → nói Claude `break M8`, hoặc đợi scheduled Thứ 2. **Break chỉ tạo subtask, KHÔNG bật module in_progress** — module chỉ "đang làm" khi bạn thật sự bắt đầu một subtask. WIP=1: scheduled tự **no-op** nếu còn module dở.
 
-**"Hai nguồn có lệch không?"** → `node compare-linear.mjs` (cần `LINEAR_API_KEY`). Khớp = im lặng/xanh; lệch = bảng đỏ + exit code 2.
+**"Hai nguồn có lệch không?"** → `node compare-linear.mjs` (cần `LINEAR_API_KEY`). Khớp = im lặng/xanh; lệch status/title hoặc thiếu module/subtask = bảng đỏ + exit code 2.
 
 **"Tôi sửa progress.json tay (hiếm)"** → luôn chạy `node sync-embedded.mjs` sau đó để dashboard offline khớp.
 
@@ -161,7 +162,7 @@ node gen-linear-csv.mjs                                   # sinh linear-import.c
 ## 10. Nguyên tắc bất di bất dịch
 
 1. **Không đổi prefix `[M#]`** trong title Linear — đó là khoá nối 2 nguồn.
-2. **Linear sở hữu `status`** (suy từ git); progress.json sở hữu cấu trúc (gate/invariant/roadmap/subtask/khoá). Khi realtime đã bật, **đừng sửa `status` tay**.
+2. **Linear sở hữu `status`** (suy từ git); progress.json sở hữu cấu trúc (gate/invariant/roadmap/module + subtask title/khoá). Title Linear phải mirror canonical; compare/sync fail-closed nếu lệch. Khi realtime đã bật, **đừng sửa `status` tay**.
 3. **Module status = roll-up từ subtasks** (all done→done · any blocked→blocked · any in_progress→in_progress · any in_review→in_review · any done→in_progress · else not_started; module chưa có subtask thì lấy issue cha). **Break không bật in_progress** — module "đang làm" chỉ khi một subtask thật sự bắt đầu.
 4. **WIP = 1**: mỗi lúc chỉ 1 module thực sự đang làm; scheduled tự no-op nếu còn module dở (xem playbook).
 5. **Gate đỏ = không merge**, không sang phase sau (4 bất biến + 5 quality gate).

@@ -1,25 +1,29 @@
 # Implementation Plan — Plexco (platform thể thao đa môn, host + player)
 
-> Xây **Plexco** như **một sản phẩm riêng** (repo riêng), tái dùng phần logic đã kiểm chứng của bot single-club hiện tại — KHÔNG refactor tại chỗ trên bot đang chạy live. Plexco là **platform 2 phía, đa môn**: **host** tự đăng ký, nối bank/SePay, link kênh, quản & publish kèo; **player** khám phá kèo xuyên CLB/môn (marketplace) & join. **Web app = canonical store**, đồng bộ 2 chiều với Zalo/Telegram/Messenger. Tài liệu làm **ngược từ end goal** về kiến trúc, rồi chia phase.
+> Xây **Plexco** như **một sản phẩm riêng** (repo riêng), tái dùng phần logic đã kiểm chứng của bot single-club hiện tại — KHÔNG refactor tại chỗ trên bot đang chạy live. Plexco là **platform 2 phía, đa môn**: **host** tự đăng ký, nối bank/SePay, link kênh, quản & publish kèo; **player** khám phá kèo xuyên CLB/môn (marketplace) & join. **PostgreSQL + domain model = canonical store**; web/Zalo/Messenger là surface đồng bộ 2 chiều (Telegram archived theo DD-37). Tài liệu làm **ngược từ end goal** về kiến trúc, rồi chia phase.
 >
 > **Reposition (v2 doc, 18/06/2026):** từ "SaaS thu phí cầu lông" → **platform đa môn + marketplace discovery + web sync 2 chiều**. Module đối soát CK (killer cũ) giữ nguyên thiết kế, thành 1 module. Thêm **3 tầng hiển thị** (public discovery / tenant-private RLS / person-self), **sync engine**, **chiều `sport`**.
 >
 > **Tài liệu liên quan:** `../product/BRD.md` v3.1 · `../product/PRD.md` v2.1 · `../product/TDD.md` v2.1 (kiến trúc 3 tầng + sync + discovery) · `player-side-saas-reconciliation.md` · `player-side-saas-AUDIT.md` (threat model + public layer) · `messenger-channel-design.md` (P4.8 post-MVP).
+>
+> ⚠️ **Version note (15/07/2026):** strategy doc này viết ở baseline **v3.1/v2.1** (kiến trúc 3 tầng vẫn đúng). Nguồn hiện hành: **BRD v3.5 · PRD v2.4 · TDD v2.4 · ROADMAP v2.7 · `decisions.md` v1.32** — Messenger nay là **phase-1 P2.5** (không còn "P4.8 post-MVP"); chưa reflect đầy đủ pivot kênh (DD-37) + cụm session-model/social (DD-41–48). Khi lệch, ưu tiên BRD/PRD/TDD/ROADMAP hiện hành.
+>
+> ⚠️ **SUPERSEDED PARTIALLY — v3.4 / DD-37 (10/07/2026):** doc gốc (v1.0, viết theo BRD v3.1) architect quanh **Telegram 1-bot-dùng-chung**. Theo **DD-37** (BRD v3.4): **Telegram đã bỏ khỏi phạm vi**; kênh **phase-1 = web + Zalo (bot-token per-club, DM number-reply) + Facebook Messenger (1 App, Page per-club, cửa sổ 24h, cần App Review)**; **Messenger lên P2.5** (không còn post-MVP). **Web-auth = Google OAuth + email/password** (DD-13 ✅) + link Facebook (DD-33 🟡) / Zalo (DD-14 ⬜) — thay Telegram Login. Free-tier bots = **Zalo + Messenger** + **mark-paid thủ công tiền mặt/CK** (DD-40). Các đoạn Telegram-specific bên dưới (đặc biệt §5.2, các interface sketch §3) **giữ làm tham chiếu cơ chế lift từ bot cũ** — nguyên tắc "route tenant suy từ kênh, authz theo person, canonical store + outbox" **không đổi**, chỉ đổi nhãn kênh sang Zalo/Messenger.
 
 ## 0. Quyết định đã chốt
 
 | Trục | Lựa chọn | Hệ quả |
 |---|---|---|
 | Sản phẩm | **Repo/sản phẩm riêng** | Bot cá nhân hiện tại đóng băng, vẫn chạy; SaaS build mới, lift logic thuần sang `core`. Không refactor tại chỗ. |
-| Telegram | **1 bot dùng chung** | Bỏ `OWNER_CHAT_ID`, route update theo `chat_id → tenant`. Chuyển long-polling → webhook. |
+| Kênh chat *(v3.4/DD-37)* | **Zalo (bot-token per-club) + Facebook Messenger (1 App, Page per-club)** | Telegram **bỏ khỏi phạm vi**. Route tenant **suy từ kênh** (Zalo `webhookToken` / Messenger `page_id`), authz theo person. Cơ chế "1 bot chung route theo `chat_id`" ở §5.2 giữ làm tham chiếu lift từ bot cũ. |
 | Khách hàng | **Host CLB VN (đa môn), thu phí qua bank/SePay** | Billing VND, không cần Stripe ở MVP. |
 | Định vị | **Platform 2 phía, đa môn** (reposition) | Host quản lý + player khám phá/join (marketplace). Payment là 1 module. |
-| Web UI | **Web app = canonical store** (đổi từ "tối thiểu") | Web: onboarding, dashboard host, **discovery/tìm kèo**, player view, billing. Mọi kênh là **surface** sync 2 chiều với web. |
-| Đa kênh | **Telegram + Zalo + Messenger** (Messenger post-MVP) | Mỗi action ở 1 kênh sync sang web + kênh khác qua **sync engine** (command/outbox/projection). |
+| Web UI | **Primary product surface** (không phải canonical store) | Web: onboarding, dashboard host, **discovery/tìm kèo**, player view, billing. PostgreSQL/domain model là canonical; mọi surface sync qua command/outbox/projector. |
+| Đa kênh | **Zalo + Facebook Messenger + web** (Telegram bỏ — DD-37; Messenger **phase-1, P2.5**) | Mỗi action ở 1 kênh sync sang web + kênh khác qua **sync engine** (command/outbox/projection). |
 | Đa môn | **`sport` là chiều dữ liệu** | `sessions.sport_id`; discovery lọc theo môn. Không kèm luật chơi từng môn. |
 | Hiển thị dữ liệu | **3 tầng** | public discovery (cross-tenant, whitelist) · tenant-private (RLS) · person-self. |
 | Database | **Postgres + Drizzle (single DB, `tenant_id` + RLS + public read model)** | Tối ưu maintain/scale >1k tenants. Bỏ `node:sqlite`. |
-| Billing | **DD-29 (thay DD-03): free 0đ / host_pro 250k VND/tháng** | Free = web + 3 bot + đối soát thủ công; host_pro = auto đối soát/nhắc + AI + CRM. Capability flags config-driven. Trial cho paid plan. |
+| Billing | **DD-29 (thay DD-03): free 0đ / host_pro 250k VND/tháng** | Free = web + Zalo + Messenger bot + **mark-paid thủ công tiền mặt/CK (DD-40)**; host_pro = auto đối soát/nhắc + AI + CRM. Capability flags config-driven. Trial cho paid plan. |
 | Phí provider | **Tenant tự mang & tự trả SePay/ApiPay** | Phí giao dịch là việc giữa tenant ↔ provider; mình không trung gian tiền. |
 | LLM/STT | **Platform trả, có trần fair-use** | Chi phí nằm trong margin từng tier → phải cap để giữ margin & chặn lạm dụng. |
 
@@ -40,22 +44,22 @@ Bot cũ **đóng băng, vẫn chạy** làm (a) công cụ cho club của m, (b)
 ## 1. End goal (làm ngược về)
 
 > **Hai phía cùng đúng:**
-> - **Host:** một chủ club (cầu lông/pickleball/…) ở VN thấy Plexco → đăng ký web → nối bank qua SePay → link Telegram/Zalo → quản kèo trên **chat hoặc web** (nhất quán), **publish kèo lên marketplace**, trả phí tháng.
+> - **Host:** một chủ club (cầu lông/pickleball/…) ở VN thấy Plexco → đăng ký web (Google/email) → nối bank qua SePay → link Zalo/Messenger → quản kèo trên **chat hoặc web** (nhất quán), **publish kèo lên marketplace**, trả phí tháng.
 > - **Player:** mở Plexco → **tìm kèo** theo môn/khu vực/giờ → **join** (kể cả CLB chưa từng tham gia) → được xác nhận/nhắc, xem kèo & nợ của mình — tất cả sync giữa kênh chat ↔ web.
 
 Để điều đó đúng, lần ngược các điều kiện cần (mỗi cái là một phase về sau):
 
 ```
 J. Billing sống          → plan, thu phí SePay, trial, dunning, gate theo plan
-I. Player-side channels   → join TG/Zalo/Msgr + nhắc/xác nhận theo Reachability
+I. Player-side channels   → join Zalo/Msgr + nhắc/xác nhận theo Reachability (web push + Zalo DM chính; Msgr 24h)
 H. Marketplace discovery  → publish kèo → public_sessions → tìm kèo → join cross-club
 G. Web app + Sync engine  → web canonical + command/outbox/projection + SSE (2 chiều)
 F. Onboarding self-serve  → web signup → tạo tenant (+ chọn môn) → wizard SePay → link kênh
 E. Identity directory     → Person/ChannelIdentity/Membership + merge an toàn
-D. Bot biết tenant        → 1 bot route update về đúng tenant theo chat_id
+D. Bot biết tenant        → route update về đúng tenant suy từ kênh (Zalo webhookToken / Msgr page_id)
 C. Webhook biết tenant    → CK SePay route về đúng club (token URL + match số TK)
 B. Cô lập + 3 tầng        → tenant_id + RLS (tenant-private) · public read model · person-self
-A. Domain đa môn          → Tenant, Account, TelegramLink, BankAccount, Subscription, Sport, Session(public/slot/join_policy)
+A. Domain đa môn          → Tenant, Account, ChannelLink(Zalo/Msgr), BankAccount, Subscription, Sport, Session(public/slot/join_policy)
 ```
 
 Build xuôi là `A → B → … → J`, mỗi phase ship được. (Đối chiếu phase narrative ↔ canonical: xem `../product/ROADMAP.md`.)
@@ -83,6 +87,8 @@ Tin tốt: i18n `t(vi,en)` + `/lang` đã xong và `lang` đã nằm trong `sett
 ---
 
 ## 3. Domain model (thiết kế trước)
+
+> ⚠️ **DD-37 (v3.4):** các interface sketch dưới đây là bản v1.0 (viết theo Telegram). Kênh phase-1 nay là **Zalo + Messenger**; `TelegramLink` → **`ChannelLink`** (Zalo `webhookToken` / Messenger `page_id`), `Account.telegramUserId` → **Google/email** (DD-13). **Canonical schema là `packages/db/schema.ts`** (`persons/accounts/channel_identities/memberships`, `account_identities.platform ∈ {google,email,facebook,zalo}`) — không dùng sketch dưới làm nguồn schema.
 
 Hai nhóm: **aggregate mới** (lớp SaaS) và **entity cũ** (giờ thuộc về 1 tenant).
 
@@ -169,14 +175,16 @@ interface UsageCounter {
 }
 ```
 
-> **Phân biệt 2 chữ "payment" — cực quan trọng để không lẫn:**
-> - `players.payment` (CK của người chơi vào club) → giữ nguyên bảng `payments` cũ.
-> - Subscription invoice (club trả phí cho mình) → bảng **mới** `subscription_invoices`. Đừng trộn.
+> **Phân biệt 2 dòng tiền — cực quan trọng để không lẫn (bám canonical `packages/db/schema.ts`):**
+> - **Tiền player vào club** (CK/tiền mặt): **KHÔNG** có bảng `payments` — dùng ledger canonical **`charges`** (khoản nợ mỗi lượt chơi) + **`bank_transactions`** (CK webhook) + **`payment_allocations`** (phân bổ; `source ∈ auto|manual|cash|waiver|reversal`). *(Note lịch sử: bot single-club cũ có bảng `payments`; Plexco **KHÔNG** port nó — đã thay bằng charges/allocations.)*
+> - **Club trả phí thuê bao cho platform**: bảng riêng **`subscription_invoices`** + `billing_transactions` + `billing_allocations`. Đừng trộn với ledger player.
 
 ### 3.2 Entity cũ — thêm `tenant_id`
 
+> ⛔ **SUPERSEDED bởi canonical schema (`packages/db/schema.ts`).** §3.2 dưới đây là **bản lift-and-shift GỐC** từ bot single-club (giữ làm lịch sử). Schema thực tế đã land **KHÔNG** giữ bảng `payments`/`payment_players` cũ: đường tiền player được thay bằng ledger **`charges` + `bank_transactions` + `payment_allocations`** (xem note §3.1 + `feature_payment_reconcile(.md/_tech)`). Các `ALTER TABLE payments ...` / `insert(payments)` bên dưới **KHÔNG còn áp dụng** — đọc như bối cảnh, không phải hướng dẫn migration hiện hành. `sessions`/`players`/`members` vẫn tồn tại (đã có `tenant_id` trong schema.ts).
+
 Tất cả nhận thêm cột `tenant_id NOT NULL` (FK → `tenants.id`):
-`sessions`, `players`, `members`, `payments`, `aliases`, `buddies`, `payment_players`, và `settings` (giờ là `(tenant_id, key)`).
+`sessions`, `players`, `members`, ~~`payments`~~, `aliases`, `buddies`, ~~`payment_players`~~, và `settings` (giờ là `(tenant_id, key)`). *(payments/payment_players: thay bằng charges/bank_transactions/payment_allocations — xem banner trên.)*
 
 Các ràng buộc UNIQUE phải kèm tenant:
 
@@ -233,7 +241,7 @@ interface OutboxEvent {
 }
 ```
 
-**Sync model (web canonical ⇄ surfaces) — xem TDD §3.8:** web app là **nguồn sự thật**; TG/Zalo/Messenger/web đều là surface. Action ở 1 surface → **command** (có `commandId`) → ghi qua `tenantRepo` (RLS) + INSERT `outbox_events` cùng transaction → dispatcher fan-out projectors: edit message TG, DM Zalo/Msgr, push SSE web, upsert `public_sessions`. **Không multi-master** → không cần conflict-resolution; surface lệch thì **re-project** từ canonical.
+**Sync model (web canonical ⇄ surfaces) — xem TDD §3.8:** web app là **nguồn sự thật**; Zalo/Messenger/web đều là surface. Action ở 1 surface → **command** (có `commandId`) → ghi qua `tenantRepo` (RLS) + INSERT `outbox_events` cùng transaction → dispatcher fan-out projectors: reply Zalo, DM Messenger (24h), push SSE web, upsert `public_sessions`. **Không multi-master** → không cần conflict-resolution; surface lệch thì **re-project** từ canonical.
 
 **Marketplace (3 tầng hiển thị) — xem TDD §3.9:** publish kèo (`visibility=public`) → projector đẩy field-whitelist vào `public_sessions`. Discovery API đọc read model này **cross-tenant, ngoài RLS, không tiền/PII**. Join từ marketplace → route `session_id → tenant` → `open`: tạo membership guest + addMember; `approval`: tạo `join_requests` host duyệt.
 
@@ -360,12 +368,18 @@ app.post("/webhook/sepay/:token", async (req, res) => {
 });
 ```
 
-`processRecordedPayment`/`pickSession`/`settleMemberDebts` giữ nguyên logic, chỉ đổi `db.*` → `repo.*`. Bảng `payments` vẫn lưu **trước khi ack** (BL-1) — nay kèm `tenant_id`.
+> ⛔ **SUPERSEDED bởi canonical durable-webhook (schema.ts + `feature_payment_reconcile(.md/_tech)`).** Đoạn code + note trên là **lift từ bot single-club** (lịch sử). Đường tiền thực tế **KHÔNG** dùng bảng `payments`/`rec.payment`:
+> 1. Trong **cùng 1 transaction**: lưu **`bank_transactions`** (raw payload enc, `unallocated_amount=amount`, `reconcile_status='pending'`) **+ enqueue reconcile job / ghi outbox** → **commit rồi mới ACK** (NFR-R1: không mất CK). Không "process" đồng bộ sau `res.json`.
+> 2. **Reconcile worker** (idempotent) match tên+tiền+ngày → tạo **`payment_allocations`** (`source='auto'`) vào **`charges`** tương ứng, cập nhật `amount_allocated`/`status`; không khớp → `reconcile_status='unmatched'` (`/unmatched` gán tay = `source='manual'`).
+>
+> _Historical:_ ~~`processRecordedPayment`/`settleMemberDebts` + bảng `payments` lưu trước ack (BL-1)~~ — thay bằng `bank_transactions` + outbox + allocation vào `charges`.
 
 > **Dedupe & id (generic vì đã có SePay + ApiPay):** đổi cột `sepay_id` → `external_id` + thêm cột `provider`. Unique là **`UNIQUE(tenant_id, provider, external_id)`** — không chỉ `(tenant_id, sepay_id)`, vì id chỉ duy nhất *trong phạm vi 1 provider* (SePay id 12345 ≠ ApiPay id 12345).
 > Provider gửi **thiếu/empty id** → KHÔNG drop (mất tiền): sinh khoá tổng hợp deterministic `external_id = sha256(provider|accountNumber|amount|txDate|content)` để vẫn idempotent + vẫn lưu vào `/unmatched`. (Hiện `IncomingTransaction.externalId` đã generic; chỉ cần đổi cột DB + chỗ sinh id.)
 
-### 5.2 Telegram (1 bot dùng chung)
+### 5.2 Telegram (1 bot dùng chung) — *superseded (DD-37), giữ làm tham chiếu cơ chế*
+
+> ⚠️ **DD-37 (v3.4): Telegram bỏ khỏi phạm vi.** Phần dưới mô tả cơ chế "route tenant suy từ kênh + authz theo person" lift từ bot cũ — **giữ làm tham chiếu**. Áp cho kênh phase-1: **Zalo** = webhook `/webhook/zalo/:token` (bot-token per-club), không inline button, GROUP Beta → **DM number-reply**; **Messenger** = 1 App, `/webhook/messenger` route theo `page_id`, cửa sổ 24h, cần App Review. Nguyên tắc routing/authz **không đổi**, chỉ đổi khoá định tuyến `chat_id` → `webhookToken`/`page_id`.
 
 Chuyển long-polling → **webhook** (1 endpoint, scale tốt, không cần nhiều process):
 
@@ -443,15 +457,15 @@ Pricing host chốt theo **DD-29** (thay DD-03 4-tier theo kênh):
 
 | Plan | Giá / tháng / CLB | Bao gồm |
 |---|---:|---|
-| `free` | 0đ | Web app + kết nối 3 bot (TG/Zalo/Messenger*) + quản kèo/roster + đối soát CK **thủ công** + nhắc thủ công |
+| `free` | 0đ | Web app + kết nối **Zalo + Facebook Messenger** bot + quản kèo/roster + **mark-paid thủ công (tiền mặt/CK)** + nhắc thủ công |
 | `host_pro` | 250.000đ | Toàn bộ free + đối soát CK **tự động** & báo thu + **nhắc nợ tự động** + **Trợ lý AI + KB** + CRM dashboard |
 
-Tính năng free/pro theo **capability flags config-driven** (registry ở `../features/BE/feature_billing_lifecycle_tech.md §4b`). Tenant **tự mang tài khoản** (hoặc dùng **APIpay enterprise auto-provision** — DD-30) và tự chịu phí provider — mình không cầm tiền của club, chỉ cầm phí subscription của chính tenant. *Messenger unlock theo P4.8/post-MVP khi kênh GA.
+Tính năng free/pro theo **capability flags config-driven** (registry ở `../features/BE/feature_billing_lifecycle_tech.md §4b`). Tenant **tự mang tài khoản** (hoặc dùng **APIpay enterprise auto-provision** — DD-30) và tự chịu phí provider — mình không cầm tiền của club, chỉ cầm phí subscription của chính tenant. *Messenger nay là kênh **phase-1 (P2.5)** — DD-37 (thay ghi chú post-MVP cũ).
 
 Thu subscription tái dùng đúng hạ tầng webhook, nhưng trỏ vào **tài khoản nhận của MÌNH** (không phải của club):
 
 - **Thu phí:** tenant CK đúng số tiền invoice theo plan vào TK của mình, nội dung gồm mã định danh/invoiceCode (vd `BMC-<tenantSlug>`) → webhook match → đẩy `currentPeriodEnd` +1 tháng, set `status=active`. Giống y logic match của bot, chỉ khác bảng đích (`subscription_invoices`).
-- **Vòng đời (plan trả phí):** tạo tenant → `trialing` 14 ngày → hết hạn không gia hạn → `past_due` (nhắc qua Telegram + email) → sau X ngày `suspended`. Khi `suspended`, middleware **chặn lệnh** nhưng **vẫn nhận & lưu webhook CK của player** để club không mất giao dịch khi quay lại.
+- **Vòng đời (plan trả phí):** tạo tenant → `trialing` 14 ngày → hết hạn không gia hạn → `past_due` (nhắc qua Zalo/web + email) → sau X ngày `suspended`. Khi `suspended`, middleware **chặn lệnh** nhưng **vẫn nhận & lưu webhook CK của player** để club không mất giao dịch khi quay lại.
 - **`free` (0đ):** tạo tenant → thẳng `active` vô thời hạn — **không** trial/invoice, **không** `past_due`/`suspended` vì non-payment; daily job bỏ qua plan 0đ (chỉ suspend vì ToS/abuse). Ref: DD-29, BL-BIL-1.
 - **MVP có thể manual:** giai đoạn đầu mình tự xác nhận CK đúng invoice → bật `active` bằng tay; tự động hoá khâu match nội dung sau. Không chặn launch.
 
@@ -497,30 +511,30 @@ Vì LLM/STT nằm trong margin từng tier, `UsageCounter` đóng vai **trần c
 ## 7. Kiến trúc & tech stack
 
 ```
-┌─────────────── apps/web (Next.js) — CANONICAL ───────────┐
+┌──────────── apps/web (Next.js) — PRIMARY WEB SURFACE ────┐
 │  onboarding · dashboard host (kèo/roster/doanh thu) ·    │
 │  DISCOVERY/tìm kèo · player view · billing · API + SSE   │
 └───────────────────────┬───────────────────────────────────┘
                          │  dùng chung
 ┌──────────────── packages/core ────────────────────────────┐
-│  domain types (+ Sport) · Drizzle schema · tenantRepo() · │
+│  domain types (+ Sport) · pure business logic              │
 │  payments-logic · matching · sports     (logic thuần, test)│
 └───────────────────────┬───────────────────────────────────┘
-┌──────────────── apps/bot (Express) ───────────────────────┐
-│  grammY webhook + middleware tenant · command bus ·       │
-│  /webhook/sepay/:token · /telegram/<secret> · /webhook/   │
+┌──────────── apps/bot (HTTP adapters + worker) ────────────┐
+│  Zalo/Msgr webhook + middleware tnt · command bus ·       │
+│  /webhook/sepay/:token · /webhook/messenger · /webhook/   │
 │  zalo/:token · cron (pg-boss) · throttler · PROJECTORS    │
-│  (edit TG msg · DM Zalo/Msgr · SSE · upsert public_sessions)│
+│  (reply Zalo · DM · Msgr 24h · SSE · upsert public_sessions)│
 └───────────────────────┬───────────────────────────────────┘
                          ▼
    Postgres (RLS tenant-private) + public_sessions (read model, no money/PII)
                          ←  managed (Neon/Supabase/Railway)
 ```
 
-> **Web = canonical store**; bot/web/webhook gửi **command** → ghi + `outbox` (cùng tx) → projectors fan-out ra surfaces. Đọc chia 3 đường: tenant-private (RLS), person-self, public discovery (read model, no-RLS, whitelist). Chi tiết sync/discovery: TDD §3.8/§3.9.
+> **PostgreSQL + domain model = canonical store**; bot/web/webhook gửi **command** → ghi + `outbox` (cùng tx) → projectors fan-out ra surfaces. Đọc chia 3 đường: tenant-private (RLS), person-self, public discovery (read model, no-RLS, whitelist). Chi tiết sync/discovery: TDD §3.8/§3.9.
 
-- **Monorepo** (pnpm workspaces): `packages/core` chứa domain + Drizzle + logic thuần (chia sẻ giữa web & bot, giữ test hiện có). Hợp gu domain-modeling: logic không biết gì về Telegram/HTTP.
-- **Web auth**: Telegram Login Widget làm primary — đăng nhập bằng chính Telegram, account ⇄ chat link tự nhiên, không cần lưu mật khẩu.
+- **Monorepo** (pnpm workspaces): `packages/core` chứa domain logic thuần; `packages/db` chứa Drizzle schema + `tenantRepo`/RLS boundary; web & bot dùng chung core. Logic core không biết gì về kênh/HTTP.
+- **Web auth**: **Google OAuth + email/password** làm primary (DD-13 ✅); link **Facebook** (DD-33 🟡) + **Zalo** (DD-14 ⬜) vào cùng Person để nhận diện xuyên kênh. *(Telegram Login đã bỏ — DD-37.)*
 - **Queue/cron**: `pg-boss` (hàng đợi trên chính Postgres) — không thêm hạ tầng, đủ cho reminders + dunning ở mức 1k.
 - **Secrets tenant** (SePay secret, BYO LLM key nếu có): mã hoá at-rest (AES-GCM với master key, hoặc KMS).
 - **Deploy**: app 1 service (web có thể tách sau), Postgres managed có PITR backup. Bỏ volume SQLite của Railway.
@@ -553,13 +567,13 @@ Long-polling → webhook; middleware resolve tenant; thay `isOwner`/`OWNER_CHAT_
 **DoD:** CK tới 2 token khác nhau vào đúng 2 club; sai token/secret/số TK đều bị từ chối; thiếu accountNumber xử lý đúng theo cờ; webhook trùng (cùng external_id) chỉ xử lý 1 lần.
 
 ### Phase 4 — Web app canonical + Sync engine + Onboarding + Marketplace (≈4–5 tuần) ⚠️ trụ mới
-Next.js web **canonical**: đăng nhập → tạo tenant (+ chọn môn) → wizard SePay → link Telegram/Zalo → dashboard host (kèo/roster/doanh thu) + player view.
-- **Sync engine (P4):** command bus + `outbox_events` (ghi cùng tx) + dispatcher + projectors (edit msg TG · DM Zalo · **SSE web** · upsert `public_sessions`); idempotent `commandId`/`event.id`; re-project khi lệch.
+Next.js web **canonical**: đăng nhập (Google/email) → tạo tenant (+ chọn môn) → wizard SePay → link Zalo/Messenger → dashboard host (kèo/roster/doanh thu) + player view.
+- **Sync engine (P4):** command bus + `outbox_events` (ghi cùng tx) + dispatcher + projectors (reply Zalo · DM Messenger · **SSE web** · upsert `public_sessions`); idempotent `commandId`/`event.id`; re-project khi lệch.
 - **Marketplace (P4.3):** publish kèo (`visibility=public`) → projector đẩy field-whitelist `public_sessions`; **Discovery API** (`/discover`, cross-tenant, no-RLS, whitelist, rate-limit); **join cross-club** (open → membership guest; approval → `join_requests`).
-**DoD:** host tạo kèo trên web → hiện ở group TG **và** marketplace ≤ vài giây (sync 2 chiều); player lạ tìm kèo theo môn/khu vực và **join được**; test bất biến public (không lộ tiền/PII) xanh; không đụng env file.
+**DoD:** host tạo kèo trên web → hiện ở Zalo/Messenger **và** marketplace ≤ vài giây (sync 2 chiều); player lạ tìm kèo theo môn/khu vực và **join được**; test bất biến public (không lộ tiền/PII) xanh; không đụng env file.
 
 ### Phase 5 — Billing tiers (≈2 tuần)
-`subscription_invoices` đầy đủ (invoiceCode unique, amount due/paid, status, idempotency theo `providerTxnIds`, overpay/underpay/late); webhook gia hạn match theo `invoiceCode`; vòng đời trial → past_due → suspended (suspended vẫn lưu webhook player); trần fair-use `UsageCounter` cho LLM/STT + degrade nhẹ; nhắc gia hạn qua Telegram/email. (Có thể manual-activate trước khi tự động hoá match.)
+`subscription_invoices` đầy đủ (invoiceCode unique, amount due/paid, status, idempotency theo `providerTxnIds`, overpay/underpay/late); webhook gia hạn match theo `invoiceCode`; vòng đời trial → past_due → suspended (suspended vẫn lưu webhook player); trần fair-use `UsageCounter` cho LLM/STT + degrade nhẹ; nhắc gia hạn qua Zalo/web + email. (Có thể manual-activate trước khi tự động hoá match.)
 **DoD:** tenant hết trial bị chặn lệnh nhưng CK player vẫn được lưu; CK đúng `invoiceCode` + đúng/đủ amount theo plan tự kích hoạt lại; trả thiếu→`partial`, trả dư→credit, webhook trùng không cộng 2 lần; nội dung sai code → vào unmatched chứ không tự đoán; vượt trần OCR → fallback `/add` chứ không vỡ.
 
 ### Phase 6 — Hardening & scale (≈1–1.5 tuần)
@@ -578,12 +592,12 @@ Pen-test cô lập (thử mọi endpoint với tenant sai); load test mô phỏn
 | **Lộ tiền/PII ra public marketplace** | Nghiêm trọng | `public_sessions` field-whitelist; tiền/PII không vào read model; test bất biến public; rate-limit chống scrape; `venue` ẩn tới khi join |
 | **Sync lệch trạng thái kênh ↔ web** | Cao | Canonical store + outbox + re-projection; idempotent `commandId`/`event.id`; metrics sync-lag |
 | **Webhook route nhầm club** | Cao | Token-in-URL + verify `accountNumber` + luôn lưu raw payload trước |
-| Telegram rate-limit khi cron 1k club | Trung bình | Throttler + rải giờ (jitter) + hàng đợi pg-boss |
+| Zalo/Messenger rate-limit khi cron 1k club | Trung bình | Throttler + rải giờ (jitter) + hàng đợi pg-boss |
 | Chi phí LLM/STT vượt margin plan | Trung bình | Platform trả → trần fair-use `UsageCounter` + degrade về `/add` thủ công; chọn provider rẻ (Flash/Whisper-turbo) làm mặc định |
 | Refactor làm hỏng club hiện tại | **Thấp** | SaaS là repo riêng → bot cũ KHÔNG bị đụng; migrate từ bản copy; cutover chỉ khi SaaS đã ổn |
-| Lẫn "payment club" vs "subscription" | Trung bình | Tách bảng + đặt tên rõ (`payments` vs `subscription_invoices`) |
+| Lẫn "payment club" vs "subscription" | Trung bình | Tách 2 ledger rõ ràng: **player** = `charges`/`bank_transactions`/`payment_allocations` (KHÔNG bảng `payments`) vs **subscription** = `subscription_invoices`/`billing_transactions`/`billing_allocations` |
 
-**Bất biến phải giữ:** (1) mọi truy cập DB tenant-private đi qua repo có `tenantId` (RLS); (2) lưu payment trước khi ack 200 (BL-1) — kèm `tenant_id`; (3) không bao giờ auto-mark nhiều người hơn số tiền phủ (BL-2); (4) **`public_sessions` chỉ field whitelist — tiền/PII/roster không bao giờ vào** (test bất biến public); (5) **canonical store là nguồn sự thật duy nhất** — surface là projection, không multi-master (sync idempotent qua `commandId`/`event.id`).
+**Bất biến phải giữ:** (1) mọi truy cập DB tenant-private đi qua repo có `tenantId` (RLS); (2) lưu **`bank_transaction`** (raw enc) + **enqueue reconcile job/outbox** trong cùng txn **trước khi ack 200** (BL-1/NFR-R1) — kèm `tenant_id`; allocation vào `charges` do worker (không bảng `payments`); (3) không bao giờ auto-mark nhiều người hơn số tiền phủ (BL-2); (4) **`public_sessions` chỉ field whitelist — tiền/PII/roster không bao giờ vào** (test bất biến public); (5) **canonical store là nguồn sự thật duy nhất** — surface là projection, không multi-master (sync idempotent qua `commandId`/`event.id`).
 
 ---
 
@@ -596,7 +610,9 @@ Bot cũ chạy **song song** tới khi SaaS đã chứng minh ổn định; lúc
 // 1. tạo tenant "Bestminton" + Account của Ngoc-Anh + Membership(owner)
 // 2. TelegramLink: OWNER_CHAT_ID(.env) → kind=admin; GROUP_CHAT_ID → kind=group
 // 3. BankAccount: số TK + SEPAY_API_KEY cũ → webhookSecret, sinh webhookToken mới
-// 4. copy sessions/players/members/payments/aliases/buddies/payment_players + gắn tenant_id
+// 4. copy sessions/players/members/aliases/buddies + gắn tenant_id;
+//    map tiền cũ: bot.db `payments`/`payment_players` → canonical `bank_transactions` + `payment_allocations` + `charges`
+//    (KHÔNG tạo bảng `payments` trong Postgres — schema.ts không có)
 // 5. settings cũ (lang, default_fee, host...) → settings per-tenant + cột Tenant
 ```
 
@@ -610,11 +626,12 @@ Cutover: chạy migrate trên copy → verify đối chiếu số dòng & vài s
 
 **Còn chốt tiếp (không chặn Phase 0–1):**
 
-1. **Web stack**: Next.js (đề xuất) hay giữ siêu mỏng (Express + vài trang server-render)?
-2. **Hosting Postgres**: Neon / Supabase / Railway PG — chọn theo region gần VN + giá.
-3. Có cần **nhiều admin/1 club** ngay từ đầu không, hay 1 owner là đủ cho MVP (model vẫn để sẵn n-n).
-4. **Trial & grace** cụ thể: mặc định đề xuất trial 14 ngày, `past_due` 7 ngày rồi `suspended` — chốt con số.
-5. **Trần fair-use** chính thức: OCR/STT bao nhiêu/tháng (đề xuất 200/500) trước khi degrade.
+1. **Hosting Postgres**: Neon / Supabase — chọn theo region gần VN + HA/PITR/giá (Railway chỉ dev/staging).
+2. Có cần **nhiều admin/1 club** ngay từ đầu không, hay 1 owner là đủ cho MVP (model vẫn để sẵn n-n).
+3. **Trial & grace** cụ thể: mặc định đề xuất trial 14 ngày, `past_due` 7 ngày rồi `suspended` — chốt con số.
+4. **Trần fair-use** chính thức: OCR/STT bao nhiêu/tháng (đề xuất 200/500) trước khi degrade.
+
+**Đã chốt sau bản gốc:** web stack = Next.js App Router, standalone/container (DD-10 ✅); public read model = `public_sessions` projector (DD-12 ✅).
 
 ---
 
@@ -628,3 +645,4 @@ Cutover: chạy migrate trên copy → verify đối chiếu số dòng & vài s
 |------|---------|----------|
 | 19/06/2026 | — | Thêm Changelog table |
 | 18/06/2026 | v1.0 | Implementation plan SaaS multi-tenant |
+| 10/07/2026 | v1.1 | **DD-37 channel pivot (BRD v3.4):** bỏ Telegram; kênh phase-1 = web + Zalo + Facebook Messenger (Messenger P2.5). §0 decision table + §1 end-goal + §6/§7 đổi TG→Zalo/Messenger; web-auth = Google/email (DD-13); free-tier bots = Zalo+Messenger + mark-paid thủ công tiền mặt/CK (DD-40). Cơ chế Telegram §5.2 + interface sketch §3 giữ làm tham chiếu lift từ bot cũ (superseded). |

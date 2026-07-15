@@ -1,5 +1,7 @@
 # AUDIT — Plexco: Mapping player/user × multi-tenant × data isolation
 
+> ⚠️ **Pre-pivot audit reference (superseded in channel scope by DD-37, 2026-07-15):** Telegram/shared-bot examples below describe the pre-DD-37 model and are **not phase-1 runtime scope**. Current channels are **web + Zalo + Facebook Messenger**; auth is Google/email; Telegram data is legacy tenant #1 only. The isolation, identity/merge, money, public-whitelist and canonical-store findings C1–C8/B1–B6 remain applicable by substituting the current channel bindings. Authority: `../standards/decisions.md` DD-37/DD-13/DD-29.
+
 > Soát lại mô hình trong `player-side-saas-reconciliation.md` + `saas-implementation-plan.md` + `tdd.md` về **chính xác / an toàn / bảo mật** cho phần: mapping player giữa Telegram + Zalo, multi-tenant (shared TG bot), BYO-bot Zalo, đồng bộ `players`/`payments`, **và (reposition v2) lớp public discovery cross-tenant + sync engine**.
 > **Phán quyết tổng:** nền isolation (repo choke-point + RLS) **chắc**. Tầng **identity/mapping** có **7 lỗ critical (C1–C7)** phải sửa — quanh *claim membership có tiền*, *canDm sai tầng Zalo*, *link-code như bearer secret*. **Reposition thêm 1 lỗ critical (C8): public discovery layer** — đường đọc cross-tenant có chủ đích, rủi ro **rò field tiền/PII** ra marketplace. Chưa thể nói "đã an toàn" cho tới khi đóng C1–C8.
 

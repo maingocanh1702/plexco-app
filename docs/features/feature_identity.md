@@ -1,17 +1,19 @@
 # Feature: Identity Directory & Merge — Product/UX Spec
 
-> **Canonical phase:** P3.5  
-> **Track:** 🆔 Identity & Merge  
-> **Version:** 1.1 · 2026-06-18  
-> **Status:** Reviewed against BRD v3.1 / PRD v2.1 / TDD v2.1  
-> **Prerequisites:** P2 tenant routing + P3 ledger stable  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-7 · `../product/PRD.md` FLOW 5 + §4.2 · `../product/TDD.md` §3.2–3.4/§4 · `../research/player-side-saas-reconciliation.md` · `../research/player-side-saas-AUDIT.md` C1–C5
+> **Canonical phase:** P3.5
+> **Track:** 🆔 Identity & Merge
+> **Version:** 1.2 · 2026-07-10
+> **Status:** Reviewed against BRD v3.4 / PRD v2.2 / TDD v2.2 — **full-review baseline cũ; light-propagated → current (BRD v3.5/PRD v2.4/TDD v2.4)**
+> **Prerequisites:** P2 tenant routing + P3 ledger stable
+> **Tài liệu liên quan:** `../product/BRD.md` FR-7 · `../product/PRD.md` FLOW 5 + §4.2 · `../product/TDD.md` §3.2–3.4/§4 · `../standards/decisions.md` DD-37/DD-13/DD-33/DD-01 · `../research/player-side-saas-reconciliation.md` · `../research/player-side-saas-AUDIT.md` C1–C5
+
+> **Cập nhật v3.4 (DD-37 + DD-13, 2026-07-10):** một `Person` link **Google + Facebook + Zalo** (bỏ **Telegram** identity — loại khỏi phạm vi). Auth phase-1 = Google/email (DD-13); Facebook link = DD-33 (🟡 phase-1). Merge signal giữ **DD-01** (SĐT verified) + verified email.
 
 ---
 
 ## 1. Mục tiêu và nguyên tắc
 
-Mỗi người thật có một `Person` toàn cục; tài khoản Telegram/Zalo được gắn bằng `ChannelIdentity`; quan hệ với CLB nằm ở `Membership`. Messenger chỉ mở rộng enum/adapter ở P4.8.
+Mỗi người thật có một `Person` toàn cục; tài khoản **Zalo / Facebook Messenger** được gắn bằng `ChannelIdentity`, **Google / email / Facebook** (web-auth) gắn qua `account_identities` (DD-13); quan hệ với CLB nằm ở `Membership`. **Telegram đã loại khỏi phạm vi (DD-37)** — không còn Telegram identity/adapter.
 
 **Giá trị:** cùng một người hoạt động qua nhiều kênh vẫn có một lịch sử membership/charge, không tách đôi nợ và không nhận nhắc/xác nhận sai tenant.
 
@@ -30,11 +32,12 @@ Mỗi người thật có một `Person` toàn cục; tài khoản Telegram/Zalo
 
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|
-| ID-UC-1 | Player | Xuất hiện lần đầu trên TG/Zalo | Tạo ChannelIdentity + Person nếu chưa tồn tại |
+| ID-UC-1 | Player | Xuất hiện lần đầu trên Zalo/Messenger | Tạo ChannelIdentity + Person nếu chưa tồn tại |
 | ID-UC-2 | Player | Join một tenant lần đầu | Tạo membership idempotently |
 | ID-UC-3 | Player | `/link` ở kênh A | Sinh OTP entropy cao, TTL ngắn, single-use |
 | ID-UC-4 | Player | Nhập OTP ở kênh B | Confirm rõ ràng rồi merge identities/persons |
 | ID-UC-5 | Player | Share verified contact | Gắn phone verified; auto-merge nếu policy và conflict checks đạt |
+| ID-UC-13 | Host/Player | Đăng nhập Google/email rồi **link Facebook + Zalo** vào cùng Person | account_identities/ChannelIdentity gắn về 1 Person; claim membership có tiền cần khoá mạnh (DD-13/DD-33) |
 | ID-UC-6 | System | Tên khớp membership chưa có tài chính | Có thể claim theo policy low-risk |
 | ID-UC-7 | System | Tên khớp membership có charge/allocation | Chặn; yêu cầu OTP/verified phone/CK match/owner confirmation |
 | ID-UC-8 | Host | Duyệt claim/merge suggestion | Authz admin + confirm impact + audit |
@@ -54,8 +57,8 @@ Mỗi người thật có một `Person` toàn cục; tài khoản Telegram/Zalo
 | Signal | Hành vi |
 |---|---|
 | Cross-channel link OTP đã confirm | Auto-merge sau conflict checks |
-| Verified phone/share-contact | Auto-merge theo BRD OD-1 + conflict checks |
-| Verified email | Auto-merge khi email verification được triển khai |
+| Verified phone/share-contact | Auto-merge theo BRD OD-1 / **DD-01** + conflict checks |
+| Verified email (Google OAuth / email verified) | Auto-merge signal (DD-13) sau conflict checks |
 | CK match có strong provenance | Có thể strong-claim membership liên quan; audit |
 | Bank account/name | Suggestion, owner duyệt |
 | Fuzzy display name | Suggestion hoặc low-risk claim khi membership chưa có tài chính; không auto với debt/history |
@@ -94,14 +97,14 @@ Mỗi người thật có một `Person` toàn cục; tài khoản Telegram/Zalo
 | 6 | Hai persons có membership cùng tenant | Survivor/tombstone strategy; không xoá history |
 | 7 | Membership conflict có charge paid/partial | Re-parent charge; ledger immutable; tổng không đổi |
 | 8 | Reachability trùng | Merge deterministic; không làm `can_dm` tenant A ảnh hưởng tenant B |
-| 9 | TG username đổi | Dùng stable numeric platform user ID |
+| 9 | Display name/username kênh (Zalo/Facebook) đổi | Dùng stable platform user ID (Zalo user id / Messenger PSID page-scoped) |
 | 10 | Channel account bị xoá | Mark inactive; giữ audit/history |
 | 11 | Admin override không đủ quyền | 403 + audit attempted action |
 | 12 | Person-self đoán person ID | 403; identity service chỉ dùng authenticated person |
 | 13 | Phone verified trùng nhưng merge conflict nguy hiểm | Pause auto-merge; yêu cầu review |
 | 14 | Merge sai đã phát notification | Recovery/split runbook + correction event; không rewrite audit |
 | 15 | Player yêu cầu xóa PII | Áp retention/anonymization; không phá financial audit obligations |
-| 16 | Messenger identity trước P4.8 | Không nhận runtime traffic; schema enum migration phase-gated |
+| 16 | Facebook Login link phụ thuộc App Review (DD-33) | Chưa duyệt → degrade sang OTP `/link` thủ công; không auto-link chéo PSID↔FB Login |
 
 ---
 
@@ -109,8 +112,9 @@ Mỗi người thật có một `Person` toàn cục; tài khoản Telegram/Zalo
 
 | Entity | Zone | Quy tắc |
 |---|---|---|
-| `persons` | GLOBAL protected | API role không SELECT trực tiếp; PII encrypted/verified metadata |
-| `channel_identities` | GLOBAL protected | UNIQUE `(platform, platform_user_id)`; stable ID |
+| `persons` | GLOBAL protected | API role không SELECT trực tiếp; PII encrypted/verified metadata; anchor (KHÔNG root table `users`) |
+| `channel_identities` | GLOBAL protected | UNIQUE `(platform, platform_user_id)`; `platform ∈ {zalo, messenger}`; stable ID (Messenger PSID page-scoped) |
+| `account_identities` | GLOBAL protected | Web-auth provider (DD-13): `platform ∈ {google, email, facebook, zalo}`; `platform_user_hash` keyed-HMAC (SI-2) |
 | `memberships` | TENANT + RLS | UNIQUE `(tenant_id, person_id)` cho active/survivor policy |
 | `channel_reachability` | TENANT + RLS | UNIQUE `(person_id, tenant_id, platform)` |
 | `link_codes` | GLOBAL protected | Hash-only, TTL, attempts, single-use |
@@ -159,7 +163,8 @@ Không gửi raw platform UID, phone, email, display name, bank account hoặc O
 
 ## 8. Acceptance Criteria
 
-- [ ] TG/Zalo first contact tạo identity/person idempotently.
+- [ ] Zalo/Messenger first contact + Google/email login tạo identity/person idempotently (không Telegram — DD-37).
+- [ ] Person link Google + Facebook + Zalo về 1 anchor; claim membership có tiền cần khoá mạnh (DD-13/DD-33).
 - [ ] Global identity tables không query trực tiếp từ API role.
 - [ ] Reachability tenant-scoped + RLS; tenant A không ảnh hưởng tenant B.
 - [ ] Membership creation idempotent.
@@ -182,14 +187,15 @@ Không gửi raw platform UID, phone, email, display name, bank account hoặc O
 | ID | Quyết định | Trạng thái |
 |---|---|---|
 | BRD OD-1 | Verified phone là merge key chính | ✅ Chốt |
-| ID-OQ-1 | Phone verification UX/provider cụ thể | Chờ design; ưu tiên share-contact, SMS nếu cần |
-| ID-OQ-2 | Recovery/split SLA và quyền support | Phải chốt trước production merge |
-| ID-OQ-3 | Guest vs full membership permissions | Chốt cùng discovery feature P4.3 |
+| ID-OQ-1 | Phone verification UX/provider cụ thể | ⬜ Product/security build-time; ưu tiên verified share-contact, SMS chỉ sau provider/DPA review — founder brief §Delegated |
+| ID-OQ-2 | Recovery/split SLA và quyền support | 🔴 Founder + security phải chốt trước production merge — `../founder-decision-brief-2026-07-15.md` Item 9 |
+| ID-OQ-3 | Guest vs full membership permissions | ⬜ Đã gom vào founder brief Item 4 (guest→full + ban policy) |
 
 ## Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-10 | v1.2 | **DD-37 + DD-13:** Person link **Google + Facebook + Zalo** (bỏ Telegram identity/adapter). `channel_identities.platform ∈ {zalo, messenger}`; thêm `account_identities` (google/email/facebook/zalo). Verified email = merge signal (giữ DD-01 phone). Facebook link phụ thuộc App Review (DD-33). Cập nhật §1, UC-1/13, trust order, domain, edge #9/16, acceptance. |
 | 2026-06-19 | v1.1 | Thêm Changelog heading, verified format compliance |
 | 2026-06-18 | v1.1 | Protected directory; tenant reachability; secure OTP; ledger-safe merge; recovery/audit; canonical phase |
 | 2026-06-18 | v1.0 | Initial identity spec |

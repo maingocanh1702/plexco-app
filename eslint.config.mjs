@@ -1,4 +1,5 @@
 import js from "@eslint/js";
+import nextPlugin from "@next/eslint-plugin-next";
 import tseslint from "typescript-eslint";
 import prettier from "eslint-config-prettier";
 
@@ -11,15 +12,27 @@ export default tseslint.config(
       "**/.next/**",
       "**/coverage/**",
       "**/next-env.d.ts",
+      "*.mjs",
+      "!eslint.config.mjs",
       ".autopilot/**",
       ".gitnexus/**",
-      "*.mjs",
       "*.cjs",
       "plexco-dashboard.html",
     ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    plugins: {
+      "@next/next": nextPlugin,
+    },
+    rules: {
+      ...nextPlugin.configs.recommended.rules,
+      ...nextPlugin.configs["core-web-vitals"].rules,
+      // App Router project: there is intentionally no pages/ directory.
+      "@next/next/no-html-link-for-pages": "off",
+    },
+  },
   prettier,
   {
     rules: {

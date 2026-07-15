@@ -1,10 +1,12 @@
+> **⚠️ ARCHIVED (DD-37, 2026-07-10):** Telegram out of phase-1 scope; kênh phase-1 = Zalo + Facebook Messenger + web. Đường player-Messenger thay thế: xem `feature_player_messenger_tech.md`. Doc này **giữ làm lịch sử** (không cập nhật theo v3.4). Ref: `../../standards/decisions.md` DD-37.
+
 # Feature: Player Telegram Experience — Backend Tech Spec
 
-> **Canonical phase:** P4.5  
-> **Version:** 2.0 · 2026-06-19  
-> **Status:** Reviewed  
-> **Product spec:** `../feature_player_telegram.md`  
-> **References:** `../../product/TDD.md` §3.3/3.4
+> **Canonical phase:** P4.5 *(archived)*
+> **Version:** 2.1 · 2026-07-13
+> **Status:** ⚠️ ARCHIVED (DD-37, 2026-07-10) — superseded by `feature_player_messenger_tech.md`
+> **Product spec:** `../feature_player_telegram.md`
+> **References:** `../../product/TDD.md` §3.3/3.4 · `../../standards/decisions.md` DD-37
 
 ---
 
@@ -24,7 +26,7 @@ Adapter contract: validate all callback fields independently — actor, chat bin
 
 ### Schema
 
-Uses existing tables: `telegram_links`, `channel_reachability`, `surface_refs`, `session_roster`, `memberships`. No new tables — adapter uses shared domain services.
+Uses existing tables: `telegram_links`, `channel_reachability`, `surface_refs`, `players`, `memberships`. No new tables — adapter uses shared domain services. *(Archived adapter; vocabulary kept aligned to canonical schema.)*
 
 ### Edge Cases (Backend)
 
@@ -154,3 +156,4 @@ Uses existing tables: `telegram_links`, `channel_reachability`, `surface_refs`, 
 |---|---|---|
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), 12 edge cases, callback validation chain, 20 tests |
+| 2026-07-13 | v2.1 | Archived behavior unchanged; align canonical roster table name to `players`. |

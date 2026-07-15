@@ -1,9 +1,10 @@
 # Feature: Zalo Player Channel — Backend Tech Spec
 
 > **Canonical phase:** P4.7  
-> **Version:** 2.0 · 2026-06-19  
+> **Version:** 2.1 · 2026-07-15
 > **Status:** Reviewed  
 > **Product spec:** `../feature_zalo_channel.md`
+> **References:** `../../standards/decisions.md` DD-45 · `feature_cross_club_join_tech.md` shared join outcomes
 
 ---
 
@@ -60,13 +61,14 @@ ALTER TABLE zalo_reply_contexts FORCE ROW LEVEL SECURITY;
 | 3 | Data Integrity | Number out of range | "Số không hợp lệ" |
 | 4 | Security | Forged/unknown webhook | Reject — verify provider secret |
 | 5 | Concurrency | Replayed event | Update dedup — idempotent |
-| 6 | Concurrency | Concurrent number replies last slot | Lock session — first-commit-wins |
+| 6 | Concurrency | Concurrent number replies last slot | Shared service locks session: first active, second waitlisted/no-charge/no-venue |
 | 7 | Security | Bot token in logs | ❌ NEVER — KMS encrypted, log redaction |
 | 8 | Data Integrity | Webhook drift (URL changed) | Hourly `getWebhookInfo` — alert on drift |
 | 9 | Security | DM reachability cross-club | Scoped per tenant bot — independent |
 | 10 | Resilience | Provider rate-limit/outage | Degrade — no canonical corruption |
 | 11 | Security | Free numeric message without context | NEVER execute join — require active context |
 | 12 | Data Integrity | Token rotation overlap | Support overlap period before revoke |
+| 13 | Financial | Existing player `left` join lại | Render `REJOIN_REQUIRES_REVIEW`; adapter không đổi player/charge/ledger |
 
 ---
 
@@ -82,13 +84,16 @@ ALTER TABLE zalo_reply_contexts FORCE ROW LEVEL SECURITY;
 | `/pay` | Player DM | Payment instructions |
 | `/leave` | Player DM | Leave session |
 
-### Error Responses (Zalo DM)
+### Join/Error Responses (Zalo DM)
 
 | Situation | Response |
 |-----------|----------|
 | Stale list | "Danh sách đã thay đổi, gõ /join để xem lại" |
 | Invalid number | "Số không hợp lệ — chọn từ 1 đến N" |
-| Full | "Hết chỗ" |
+| Active | "✅ Đã tham gia [session]! [venue]" |
+| Waitlisted | "⏳ Bạn đang ở vị trí N" (không venue/QR) |
+| Existing active/waitlisted | Render current state idempotently |
+| Rejoin after `left` | "Cần host kiểm tra lần tham gia trước" |
 | Unsupported | "Lệnh không được hỗ trợ" |
 
 ---
@@ -130,7 +135,7 @@ Player replies "2" → Lock context → Validate:
 | 7 | Wrong bot reply | Different bot/tenant | Rejected |
 | 8 | Number out of range | "99" | "Số không hợp lệ" |
 | 9 | Free numeric no context | "3" without /join | No action |
-| 10 | Concurrent final slot | 2 replies same slot | One success |
+| 10 | Concurrent final slot | 2 replies same slot | One active+charge; one waitlisted/no-charge with positive position |
 | 11 | Event replay | Same event ID | Idempotent |
 | 12 | Reachability set | First interaction | Reachable |
 | 13 | Reachability isolated | Club A vs B | Independent |
@@ -141,6 +146,7 @@ Player replies "2" → Lock context → Validate:
 | 18 | Unsupported message | Image/sticker | Safe fallback |
 | 19 | Rate limit | Excessive requests | Throttled |
 | 20 | Canonical independence | Provider error | State intact |
+| 21 | Rejoin after left | Existing player `left` | Rejoin-review response; player/charge/allocations unchanged |
 
 ### Integration Tests
 
@@ -175,5 +181,6 @@ Player replies "2" → Lock context → Validate:
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-15 | v2.1 | **DD-45:** thin adapter renders active/waitlisted/current/rejoin-review; final-slot and ledger-unchanged tests; remove "Full" error. |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), DDL, 12 edge cases, reply context detail, 20 tests |

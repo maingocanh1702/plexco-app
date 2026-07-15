@@ -4,6 +4,8 @@
 > Mỗi issue đóng được khi: code đúng AC + test xanh (gồm gate liên quan) + không phá gate phase trước.
 > Ký hiệu gate: **[ISO]** isolation · **[PUB]** public · **[LED]** ledger · **[SYNC]** sync · **[WRK]** worker/RLS.
 > **[PUB] có 2 mức:** *whitelist skeleton gate* (từ P0 — mọi cột `public_sessions` ∈ whitelist) và *full discovery-leak gate* (từ P4.3 — discovery/join không lộ tiền/PII/roster; chống scrape). Backlog P0–P3 chỉ bật **mức skeleton**.
+>
+> **Cập nhật 10/07/2026 (DD-37 / BRD v3.4):** **Telegram bỏ khỏi phạm vi.** Kênh chat phase-1 = **Zalo (P2)** + **Facebook Messenger (P2.5)**; nhắc chính = **web push + Zalo DM**, Messenger best-effort trong 24h. Auth phase-1 = **Google OAuth + email/password** (DD-13). EPIC M4 dưới đây đã reframe Telegram→Zalo/Messenger (giữ nguyên cơ chế routing/authz).
 
 ---
 
@@ -45,17 +47,19 @@
 
 ---
 
-## EPIC M4 — Telegram tenant middleware · P2 · 🏢
+## EPIC M4 — Chat-channel tenant middleware (Zalo · P2 → Messenger P2.5) · P2 · 🏢
 
-- [ ] Chuyển Telegram long-poll → webhook `/telegram/<secret>` (secret path).
-- [ ] Middleware resolve tenant **từ kênh**: `chat_id → telegram_links(group|admin) → tenant`; gắn `ctx.tenant` + `ctx.repo = tenantRepo(tenant.id)`. (NFR-S3 — không suy từ nội dung)
-- [ ] Deep-link: `/start link_<code>` → bind `TenantAdmin` + `TelegramLink`; `/start club_<slug>` → `PlayerChatContext` (KHÔNG join).
-- [ ] Authz 2 lớp: `ADMIN_CMD` → `isTenantAdmin(tenant.id, ctx.from.id)` theo `from.id`, **không** theo chat (Edge #16).
-- [ ] Lệnh host đa-tenant: `/newsession` (đa môn), `/announce`, `/config`, `/cash`; cron đa-tenant + throttler (jitter).
-- [ ] Fail-closed: chat chưa nối tenant → `TENANT_NOT_LINKED` (404), không lộ.
-- [ ] Test routing: 2 token/chat khác nhau → 2 club; lệnh admin từ non-admin → `NOT_TENANT_ADMIN`.
+> **DD-37:** Telegram bỏ. Kênh phase-1 = Zalo (P2, chính) + Facebook Messenger (P2.5). Cơ chế "route tenant suy từ kênh + authz theo person" giữ nguyên; chỉ đổi khoá định tuyến.
 
-**DoD:** 1 bot phục vụ ≥2 group khác tenant, lệnh không lẫn; authz theo `from.id` xanh.
+- [ ] Zalo bot webhook `/webhook/zalo/:token` (bot-token per-club); Messenger webhook `/webhook/messenger` (1 App Plexco, Page per-club) — P2.5. *(Telegram bỏ — DD-37.)*
+- [ ] Middleware resolve tenant **từ kênh** (NFR-S3 — không suy từ nội dung): Zalo `webhookToken → zalo_bot → tenant`; Messenger `page_id → tenant`; gắn `ctx.tenant` + `ctx.repo = tenantRepo(tenant.id)`.
+- [ ] Join/link theo kênh: Zalo **DM number-reply** (`/join` + số; GROUP còn Beta, không inline button); Messenger quick-reply/persistent menu + deep-link `ref=club_<slug>`; bind `TenantAdmin` + channel-link; player context KHÔNG auto-join.
+- [ ] Authz 2 lớp: `ADMIN_CMD` → `isTenantAdmin(tenant.id, <định danh người của kênh>)` theo người, **không** theo chat/PSID (Edge #16).
+- [ ] Lệnh host đa-tenant: `/newsession` (đa môn), `/announce`, `/config`, **mark-paid thủ công (tiền mặt/CK)**; cron đa-tenant + throttler per-channel (jitter); nhắc chính **web push + Zalo DM**, Messenger best-effort trong 24h.
+- [ ] Fail-closed: kênh chưa nối tenant → `TENANT_NOT_LINKED` (404), không lộ.
+- [ ] Test routing: 2 token/Page khác nhau → 2 club; lệnh admin từ non-admin → `NOT_TENANT_ADMIN`.
+
+**DoD:** kênh phase-1 (Zalo per-club + Messenger Page-per-club) phục vụ ≥2 club khác tenant, lệnh không lẫn; authz theo định danh người xanh. *(Telegram bỏ — DD-37.)*
 
 ---
 
@@ -77,7 +81,7 @@
 
 ## EPIC M6 — Migrate bot cũ → tenant #1 (dogfood) · P3 · 🏢
 
-- [ ] Script đọc `data/bot.db` (SQLite) → tạo tenant **"Bestminton"** + Account owner + `TelegramLink` + `BankAccount`, gắn **sport = cầu lông**.
+- [ ] Script đọc `data/bot.db` (SQLite) → tạo tenant **"Bestminton"** + Account owner + `BankAccount`, gắn **sport = cầu lông**. *(DD-37: kênh Plexco phase-1 = Zalo/Messenger; player re-link qua Zalo/Messenger + Person link — KHÔNG tạo TelegramLink. Bot Telegram cũ đóng băng làm reference.)*
 - [ ] Copy `sessions/players/members/aliases` gắn `tenant_id`; mỗi player-session → 1 `charge`.
 - [ ] Payment lịch sử: có giao dịch gốc → import thành `bank_transaction` + `payment_allocation`; thiếu bằng chứng → synthetic `legacy:<source-id>` + `source=manual` (giữ provenance).
 - [ ] **Đối chiếu trước cutover:** tổng charge / allocated / unallocated + số roster khớp giữa SQLite và Postgres.

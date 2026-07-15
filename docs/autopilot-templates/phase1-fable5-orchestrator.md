@@ -1,11 +1,13 @@
 # Phase-1 Autopilot Orchestrator — single send-file for Claude Code (model: claude-fable-5)
 
+> ⛔ **SUPERSEDED — DO NOT RUN AS-IS (2026-07-10).** Foundation + Auth v3 + migrations **0000–0013 đã merge trên `main@1eb6f60`** (foundation + auth-v3 merged); **Bước 0 "commit untracked schema 0000–0011" KHÔNG còn đúng** — schema/migrations đã committed, không còn untracked. Cần **soạn lại orchestrator cho trạng thái post-merge + DD-37** (Google/email auth, kênh Zalo/Messenger) trước khi chạy. Xem `docs/standards/BUILD-STATUS.md`.
+
 > **Cách dùng (owner):** mở repo trong **Claude Code**, chọn model **`claude-fable-5`**, paste nguyên khối trong ``` bên dưới. Prompt tự chạy qua backlog Phase-1 theo thứ tự, mỗi slice review chéo bằng `$CODEX`. Yêu cầu trước khi paste:
 > 1. Đã chạy `scripts/autopilot-onboard.sh --codex /abs/path/to/codex` (pin `AUTOPILOT_CODEX_BIN`, @import invariants) — xem `docs/autopilot-ONBOARDING.md §1`.
 > 2. Đã cài 2 frontend skills: `npx skills add https://github.com/Leonxlnx/taste-skill` và `npx skills@latest add emilkowalski/skills`.
 > 3. Có Postgres test DB (env `DATABASE_URL_TEST`) cho `<VERIFY_CMD>`.
 >
-> **Scope build lần này = FULL LAUNCH (DD-29)** — toàn bộ: foundation + RLS + sync engine + session/roster + đối soát CK + identity/merge + web PWA + marketplace/cross-club + **billing** + **host_pro auto-reconcile/nhắc nợ tự động** + **channel bots TG/Zalo** + **Club AI Assistant + KB**. Chỉ **Messenger** để ngoài (kẹt Meta App Review — DD-09/P4.8).
+> **Scope build lần này = FULL LAUNCH (DD-29)** — toàn bộ: foundation + RLS + sync engine + session/roster + đối soát CK + identity/merge + web PWA + marketplace/cross-club + **billing** + **host_pro auto-reconcile/nhắc nợ tự động** + **channel bots Zalo/Messenger** + **Club AI Assistant + KB**. **Telegram bỏ khỏi phạm vi (DD-37 thay DD-09);** Messenger nay **trong scope (S18, P2.5)**, cần Meta App Review trước GA. Auth phase-1 = Google/email (DD-13).
 >
 > **Posture: INTEGRATION-BRANCH autonomous (founder offline, KHÔNG giới hạn thời gian).** Prompt kiểu **outcome + ràng buộc** cho Fable 5, GIỮ nguyên gate governance (Codex 2×clean, money guard, invariant DoD, decision-table trước code tiền). **KHÔNG auto-merge vào `main`** — đúng invariant "P1 never auto-merge; ledger pilot/0": build cả backlog lên **1 integration branch `feat/phase1-fable5`** (off main), mỗi slice qua **Codex 2× clean + verify green** rồi fast-forward vào đó; `main` **sạch nguyên**, bạn review + merge integration→main khi về. Chạy **không hỏi** tới khi mọi slice `INTEGRATED` hoặc `BLOCKED`. Breaker giữ **HALT-cho-slice-đó + giữ branch forensics** (không reset), orchestrator nhảy sang slice độc lập khác. Guard cứng KHÔNG bỏ: không fold money chưa 2× clean vào integration, không fake `$CODEX`, không phá RLS/không lộ tiền-PII, không auto-đoán số tiền lạ.
 >
@@ -15,7 +17,7 @@
 
 ```text
 Task: Build Plexco Phase-1 (FULL LAUNCH, DD-29) end-to-end — feature. NOT greenfield: the DB schema
-(packages/db/schema.ts + migrations 0000-0011, incl RLS/grants/functions/seeds) ALREADY EXISTS and is
+(packages/db/schema.ts + migrations 0000-0013, incl RLS/grants/functions/seeds) ALREADY EXISTS and is
 AUTHORITATIVE — ADOPT/EXTEND it, never redesign. No live tenant money yet.
 
 You are working in <REPO_PATH> (Plexco: multi-tenant, multi-sport platform for
@@ -30,7 +32,7 @@ MODE: AUTOPILOT ORCHESTRATOR
 =========================================================================
 You process the PHASE-1 BACKLOG (below) as an ordered list of slices, back-to-back,
 each slice run through the FULL per-slice discipline of
-`docs/autopilot-templates/autopilot-prompt-GENERIC.md` (v0.5.1) and the ALWAYS-APPLY
+`docs/autopilot-templates/autopilot-prompt-GENERIC.md` (v0.6.0) and the ALWAYS-APPLY
 rules in `~/.claude/CLAUDE.md` (autopilot-invariants). This orchestrator adds only the
 cross-slice sequencing; it does NOT relax any invariant or circuit breaker.
 
@@ -85,7 +87,7 @@ Global Risk header (applies to every slice unless the slice overrides)
         for forensics; do NOT integrate it); continue with other slices. Never `--no-verify`, never
         type-ignore, never grind past MAX_ROUNDS.
   Schema is NOT greenfield:  the DB schema ALREADY EXISTS and is AUTHORITATIVE — `packages/db/schema.ts`
-                        + `packages/db/migrations/0000-0011` (roles/extensions, global_directory,
+                        + `packages/db/migrations/0000-0013` (roles/extensions, global_directory,
                         tenants_core, payments_ledger, channels_connectors, sync_engine, discovery,
                         billing, notifications_onboarding, RLS policies/grants, functions/triggers,
                         seeds). No live tenant money yet. Slices ADOPT/EXTEND this schema (never redesign
@@ -107,7 +109,7 @@ Setup once (Step 0): You are ALREADY running INSIDE the worktree `.autopilot/wor
   AND `git branch --show-current` == `feat/phase1-fable5`; if NOT → HALT and tell the owner to open Claude
   Code inside that worktree (do NOT create it from here, do NOT work in repo root). `main` is NEVER touched.
   Resolve Codex ONCE: `CODEX="${AUTOPILOT_CODEX_BIN:?HALT CODEX_UNAVAILABLE}"; [ -x "$CODEX" ] ||
-  { echo HALT CODEX_UNAVAILABLE; exit 1; }`; smoke `"$CODEX" review --base main` — auth-fatal or 0 bytes →
+  { echo HALT CODEX_UNAVAILABLE; exit 1; }`; smoke `"$CODEX" review -c model="gpt-5.6-sol" --base main` — auth-fatal or 0 bytes →
   HALT CODEX_UNAVAILABLE (never substitute a sub-agent / PATH codex). Create PROGRESS.md + DECISIONS.md
   under .autopilot/phase1/.
 
@@ -129,7 +131,7 @@ Per-slice loop (OUTCOMES + gate ORDER — do the mechanics yourself, don't narra
    • Implement the minimum that makes the slice's DoD true. Commit logically; stage PER-FILE or PER-DIR
      with intent — NEVER `git add -A` / `git add .` (invariant). A file outside declared scope = you
      drifted → stop and re-scope.
-   • Review: run EXACTLY `"$CODEX" review --base feat/phase1-fable5 2>&1 | tee
+   • Review: run EXACTLY `"$CODEX" review -c model="gpt-5.6-sol" --base feat/phase1-fable5 2>&1 | tee
      .autopilot/state/<slug>/codex/round-NN.txt` (use "$CODEX", not a bare word; persist every round).
      Fix EVERY finding (money/data P2 included; a P2 the reviewer says "fix before merging" is NOT clean).
      Re-review until 2 consecutive FULL rounds with ZERO findings. >5 fix rounds, or the same region ×3,
@@ -165,7 +167,7 @@ TOOLCHAIN MAP (Plexco)
 =========================================================================
   Package manager:  pnpm workspaces (packages/core, packages/db, apps/web, apps/bot).
   Backend:          TypeScript, Express + SSE, Drizzle ORM, PostgreSQL (RLS ENABLE+FORCE),
-                    pg-boss (queues/cron on Postgres). grammY (Telegram), Zalo HTTP adapter.
+                    pg-boss (queues/cron on Postgres). Zalo + Messenger HTTP adapters (Telegram bỏ — DD-37).
   Frontend:         apps/web = PWA (installable, offline shell). Stack: **Next.js App Router** is the
                     baseline per docs/channels/web/README.md (Express SSR is only a fallback; DD-10 still open)
                     — READ docs/channels/web/README.md + design-brief.md before S9; do not invent a new stack.
@@ -186,11 +188,11 @@ TOOLCHAIN MAP (Plexco)
 REQUIRED READING (before S1, and re-read the slice-specific ones per slice)
 =========================================================================
   Governance:  docs/00-start-here/HANDOFF.md §3 (5 HARD RULES) + §8 (traps);
-               docs/standards/decisions.md (esp. DD-01,05,06,07,12,13,16-30);
+               docs/standards/decisions.md (esp. DD-01,05,06,07,12,13,16-30, 33, 37, 40);
                docs/standards/business-rules.md (BL-PAY-1..9, BL-TEN, BL-ID, BL-BIL, BL-NTF, BL-SEC);
                docs/standards/core-db-architecture-principles.md (INV-1..10, P1..P16).
   Canonical schema (AUTHORITATIVE — PRESENT already; read FIRST for every schema/data-model slice):
-               packages/db/schema.ts + packages/db/migrations/0000-0011 (+ packages/db/README.md,
+               packages/db/schema.ts + packages/db/migrations/0000-0013 (+ packages/db/README.md,
                ERD.md). NEVER invent a table/column that already exists there; the SQL migrations
                (esp. 0009 RLS/grants, 0010 functions/triggers) are the source of truth for RLS. Feature
                specs = the product/behaviour contract, not the schema source.
@@ -221,10 +223,10 @@ S2  core-lift                                      [P1 · money-model, shared-co
     Depends_on: [monorepo-scaffold]. Invariants: [money-model, shared-core].
 
 S3  db-postgres-drizzle-rls                        [P1 · schema, auth]  money-guard  ← keystone (ADOPT existing)
-    Docs: packages/db/schema.ts + migrations/0000-0011 (AUTHORITATIVE) + packages/db/README.md;
+    Docs: packages/db/schema.ts + migrations/0000-0013 (AUTHORITATIVE) + packages/db/README.md;
           HANDOFF §2/§3 (HR1); BL-TEN; core-db-principles INV-1; feature_multi_tenant(_tech).
     Do:  ADOPT the existing authoritative schema — do NOT redesign or duplicate it. Wire Drizzle
-         (packages/db/drizzle.config.ts), apply migrations 0000-0011 to Postgres, verify the Drizzle
+         (packages/db/drizzle.config.ts), apply migrations 0000-0013 to Postgres, verify the Drizzle
          client matches schema.ts. Implement the `tenantRepo(tenantId)`/`withTenant`
          (`SET LOCAL app.tenant_id`) choke-point IN CODE. RLS/grants/functions already live in 0009/0010
          — verify them, don't re-create. Anything genuinely missing for a slice → a NEW migration
@@ -235,8 +237,8 @@ S3  db-postgres-drizzle-rls                        [P1 · schema, auth]  money-g
     Depends_on: [monorepo-scaffold]. Invariants: [schema, auth].
 
 S4  auth-onboarding                                [P1 · auth, identity]
-    Docs: feature_web_auth_onboarding(_tech); DD-13 (TG Login + web fallback; NO Google/email unless
-          DD-13 ✅); feature_identity(_tech); feature_connector_onboarding §4.3b (DD-30, provisioning).
+    Docs: feature_web_auth_onboarding(_tech); DD-13 ✅ (Google OAuth + email/password — TG Login bỏ, DD-37);
+          DD-33 (Facebook link 🟡) · DD-14 (Zalo login ⬜); feature_identity(_tech); feature_connector_onboarding §4.3b (DD-30, provisioning).
     Do:  web auth + session; tenant creation → plan `free` active immediately (BL-BIL-1); onboarding
          shell (connect APIpay via enterprise auto-provision — DD-30; money still lands in host bank).
          `persons` anchor (§P6); no root `users`.
@@ -355,24 +357,28 @@ S16 reminders-auto                                 [P1 · money-model, schema]  
          reads ChannelReachability per tenant; entitlement gate test.
     Depends_on: [payment-reconcile, sync-engine, billing-lifecycle]. Invariants: [money-model, schema].
 
-S17 telegram-adapter                               [P1 · transport-telegram]  money-guard
-    Docs: feature_player_telegram(_tech); docs/channels/telegram/README; bots-p1-portmap (transport thin,
-          logic in core); HANDOFF §8 (no logic copy across transports).
-    Do:  grammY adapter in apps/bot with tenant middleware (chat_id → tenant_id); host commands +
-         player join (tap) + confirm + reminder delivery, ALL via the SAME command/services/core (thin
-         adapter, NO business logic in the transport). Projector delivers TG messages.
-    DoD: tenant routing correct; adapter has NO money/matching logic (calls core); join/confirm work;
-         tenant isolation preserved through the transport.
-    Depends_on: [session-management, payment-reconcile, sync-engine, identity-merge].
-    Invariants: [transport-telegram].
-
-S18 zalo-adapter                                   [P1 · transport-zalo]  money-guard
+S17 zalo-adapter                                   [P1 · transport-zalo]  money-guard  ← phase-1 P2 (DD-37)
     Docs: feature_zalo_channel(_tech); docs/channels/zalo/README; DD-14/DD-15 (Zalo unknowns — link-code
-          covers worst case); connector_onboarding §4.1.
-    Do:  Zalo HTTP adapter (per-club BYO token), number-reply state; join/confirm; SAME core as TG
-         (extract shared, adapters thin — do NOT copy TG logic). Webhook-drift detect (getWebhookInfo).
-    DoD: shared core reused (no duplicated logic vs S17); tenant routing; join/confirm; drift alert.
-    Depends_on: [telegram-adapter]. Invariants: [transport-zalo].
+          covers worst case); connector_onboarding §4.1; HANDOFF §8 (no logic copy across transports).
+    Do:  Zalo HTTP adapter in apps/bot (per-club BYO token), tenant middleware (webhookToken → tenant_id);
+         number-reply state (GROUP Beta → DM number-reply, no inline buttons); host commands + player
+         join + confirm + reminder delivery, ALL via the SAME command/services/core (thin adapter, NO
+         business logic in the transport). Webhook-drift detect (getWebhookInfo). Projector delivers Zalo DMs.
+    DoD: tenant routing correct (webhookToken); adapter has NO money/matching logic (calls core);
+         join/confirm work; tenant isolation preserved; drift alert.
+    Depends_on: [session-management, payment-reconcile, sync-engine, identity-merge].
+    Invariants: [transport-zalo].
+
+S18 messenger-adapter                              [P1 · transport-messenger]  money-guard  ← phase-1 P2.5, Meta App Review
+    Docs: feature_player_messenger(_tech); docs/channels/messenger/messenger-channel-design.md;
+          DD-37 (channel pivot) + DD-33 (Facebook link); connector_onboarding.
+    Do:  Messenger adapter (1 Plexco App, Page per-club), tenant middleware (page_id → tenant_id; ref
+         deep-link for join); 24h-window messaging (Message Tags dead → join+confirm; reminders
+         best-effort in 24h only, else web+Zalo); SAME core as S17 (extract shared, adapters thin — do
+         NOT copy Zalo logic). App Review required before GA.
+    DoD: shared core reused (no duplicated logic vs S17); tenant routing (page_id); join/confirm within
+         24h; no auto-reminder outside 24h; tenant isolation; App-Review-gated GA noted.
+    Depends_on: [zalo-adapter]. Invariants: [transport-messenger].
 
 S19a assistant-kb-schema-ingest                    [P1 · schema, core-api]  ← DD gate
     Docs: club-ai-bot-knowledge-base §4-§5; decisions DD-16/17/20/23/28; feature_club_assistant_tech.
@@ -407,8 +413,9 @@ S20 pwa-polish                                     [P2 · web-app]  AUTO-INTEGRA
     Invariants: [web-app].
 
 --- OUT OF SCOPE (do NOT start) ---
-  • Messenger channel (join + confirm): blocked by Meta App Review (DD-09 / P4.8 /
-    channels/messenger/messenger-channel-design.md). Its own P1 transport slice (mirror S17/S18) once cleared.
+  • Telegram channel: REMOVED from scope (DD-37 supersedes DD-09) — NO Telegram adapter in Phase-1.
+    Phase-1 chat channels = Zalo (S17) + Facebook Messenger (S18). feature_player_telegram +
+    channels/telegram/ are ARCHIVED (historical reference only).
   • Club Assistant **Phase B** — native in-app chat (`chat_channels/messages/members` + bot-participant,
     DD-19 Phase B): a large messaging subsystem; its own later track, NOT Phase-1 (Phase A ask-panel = S19b).
 
@@ -427,7 +434,7 @@ FINAL report (emit when every in-scope slice is INTEGRATED or BLOCKED — no tim
                    durable-before-ack / person-self authz / entitlement-gate (free vs host_pro)
   Money proof: over-allocation blocked · unknown-amount fail-closed · reversal-only · idempotent webhook
   <VERIFY_CMD> final on feat/phase1-fable5: green   ·   PWA: installable + offline shell (evidence)
-  Not attempted: Messenger (Meta App Review — DD-09/P4.8); Club Assistant Phase B native chat (DD-19 pha B).
+  Not attempted: Telegram (REMOVED — DD-37); Club Assistant Phase B native chat (DD-19 pha B). Messenger = S18 (App-Review-gated GA).
   Founder next: review feat/phase1-fable5 → merge to main; skim DECISIONS.md; handle BLOCKED branches.
 ```
 
@@ -435,7 +442,8 @@ FINAL report (emit when every in-scope slice is INTEGRATED or BLOCKED — no tim
 
 ## Ghi chú cho owner (không paste)
 
-- **⚠️ Precondition trước khi chạy:** repo phải **sạch + main đã push** (Pre-flight yêu cầu `git status` trống + main synced). Hiện tree đang dirty (các doc phiên này) + main ahead → **commit + push trước**: `git add -A && git commit -m "docs: phase-1 planning + orchestrator" && git push origin main`. Rồi mới tạo integration branch.
+- **⛔ SUPERSEDED (2026-07-10):** foundation + Auth v3 (Telegram-era) + **migrations 0000–0013 đã merge trên `main@1eb6f60`**. Orchestrator này viết cho trạng thái **PRE-merge** (Bước 0 "commit untracked schema" đã sai) → **phải soạn lại cho post-merge + DD-37** (Google/email auth; kênh Zalo/Messenger, bỏ Telegram) trước khi chạy. Xem `docs/standards/BUILD-STATUS.md`.
+- **⚠️ Precondition trước khi chạy:** repo phải **sạch + main đã push**. Chỉ commit **doc phiên này** (KHÔNG `git add -A` cả schema đã committed) rồi mới tạo integration branch. `main` đã có scaffold + migrations 0000–0013 nên KHÔNG commit lại baseline.
 - **Model = integration branch, KHÔNG auto-merge main.** Build cả 21 slice (S1→S20, S19 tách S19a+S19b) lên `feat/phase1-fable5`; mỗi slice Codex 2× clean + verify green → fast-forward vào integration. `main` không bị đụng khi bạn offline. Đúng invariant "P1 never auto-merge". Money/RLS/identity ở S2,S3,S7,S8,S13,S14,S15,S16,S17,S18,S19a (đánh dấu `money-guard`/DD-gate).
 - **S19 tách đôi (fix "slice quá to"):** **S19a** = KB schema + ingest; **S19b** = answer worker + web ask-panel (**chỉ DD-19 Phase A**). Native in-app chat (Phase B) = **out of scope** phiên này. DD-16..28 ✅ (trừ DD-18 = go-live gate) → build được.
 - **Breaker giữ nghĩa HALT:** slice bế tắc (MAX_ROUNDS/REGION_THRASH/DESIGN_UNFIT/money không 2× clean) → **BLOCK slice đó, GIỮ branch cho forensics** (không reset/xoá), orchestrator làm slice độc lập khác. Không có "HALT chờ founder".

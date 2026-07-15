@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.7  
 > **Track:** 💬 Zalo Channel  
-> **Version:** 2.0 · 2026-06-19  
+> **Version:** 2.1 · 2026-07-15
 > **Status:** Reviewed  
 > **Prerequisites:** P4 onboarding (Zalo token connect) · P3.5 identity · P2 session/join · P3 notifications · P4 sync  
 > **Tài liệu liên quan:** `../product/PRD.md` FLOW 4 + §4.2/4.4 · `../product/BRD.md` CO-2 · `BE/feature_zalo_channel_tech.md`
@@ -30,7 +30,7 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 |---|---|---|---|
 | ZAL-UC-1 | Host | Connect BYO bot token + webhook during onboarding | Zalo adapter configured per tenant |
 | ZAL-UC-2 | Player | DM `/join` | Bot lists current open sessions with numbered choices |
-| ZAL-UC-3 | Player | Reply number (e.g. "2") | Resolve listed session → identity + tenant → common join service |
+| ZAL-UC-3 | Player | Reply number (e.g. "2") | Common join service: còn slot→active+charge+venue; full→waitlisted/no-charge/no-venue |
 | ZAL-UC-4 | Player | DM `/me` | Personal summary for this club |
 | ZAL-UC-5 | Player | DM `/pay [session]` | QR/payment instructions |
 | ZAL-UC-6 | Player | DM `/leave [session]` | Leave with financial policy check |
@@ -51,10 +51,12 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 | 6 | Security | Webhook drift (URL changed) | Monitor + alert — owner notification |
 | 7 | Security | DM reachability cross-club | ❌ NEVER — club A's bot ≠ club B's reachability |
 | 8 | Resilience | Rate-limit / provider outage | Degrade without corrupting state — retry with backoff |
-| 9 | Security | Venue/roster/debt exposed before auth | ❌ NEVER — same privacy rules as TG |
+| 9 | Security | Venue/roster/debt exposed before auth | ❌ NEVER — same person-self/privacy rules across Zalo/Messenger/web |
 | 10 | Data Integrity | Player messages between list versions | Reject stale — require fresh `/join` |
 | 11 | Security | Magic link issued from unverified conversation | Reject — conversation must be verified first |
-| 12 | Cross-Feature | Player has TG + Zalo identity → merge | Common identity service handles — Zalo adapter just updates reachability |
+| 12 | Cross-Feature | Player has Messenger + Zalo identity → merge | Common identity service handles — Zalo adapter just updates reachability |
+| 13 | Concurrency | Hai number-reply tranh final slot | Session lock: một active, người sau waitlisted với position dương; không charge/venue |
+| 14 | Financial | Existing player đã `left` join lại | `REJOIN_REQUIRES_REVIEW`; Zalo không tự reuse/duplicate charge |
 
 ---
 
@@ -63,7 +65,7 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 | Surface | Screen | Loading | Ready | Error | Empty |
 |---------|--------|---------|-------|-------|-------|
 | Zalo DM | `/join` session list | "Đang tải danh sách..." | Numbered list: "1. [Sport] [Time] [Area] — [Slots]" | "Lỗi — thử lại" | "Chưa có buổi chơi nào mở" |
-| Zalo DM | Number reply → joined | "Đang xử lý..." | "✅ Đã tham gia [session]! Địa chỉ: [venue]" | "❌ Hết chỗ / Số không hợp lệ / Danh sách hết hạn" | N/A |
+| Zalo DM | Number reply → join outcome | "Đang xử lý..." | Active: "✅ Đã tham gia [session]! [venue]"; waitlisted: "⏳ Vị trí N" | Số không hợp lệ / danh sách hết hạn / rejoin cần host review | N/A |
 | Zalo DM | `/me` summary | "Đang tải..." | Club info + debt + upcoming | "Lỗi" | "Chưa có hoạt động" |
 | Zalo DM | `/pay` | — | QR image + payment instructions | "Lỗi — thử lại" | N/A |
 | Zalo DM | Reminder received | — | "[Club] Bạn còn nợ [amount]" | — | N/A |
@@ -88,7 +90,7 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 |-------|---------|-------------------|
 | `zalo_command_received` | Player gửi command | `tenant_id`, `command_type` (join/me/pay/leave/unknown) |
 | `zalo_list_shown` | Session list gửi cho player | `tenant_id`, `session_count` |
-| `zalo_choice_result` | Number reply processed | `tenant_id`, `result` (joined/full/stale/invalid) |
+| `zalo_choice_result` | Number reply processed | `tenant_id`, `result` (active/waitlisted/rejoin_review/stale/invalid) |
 | `zalo_reachability_changed` | DM reachability set/lost | `tenant_id`, `available` |
 | `zalo_provider_failure` | API/rate-limit error | `tenant_id`, `error_class` |
 | `zalo_token_drift` | Webhook drift detected | `tenant_id` |
@@ -107,6 +109,7 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 - [ ] Unsupported message/provider outage safe fallback works
 - [ ] Magic link secure and person-bound
 - [ ] Rate-limit/privacy tests pass
+- [ ] Full→waitlisted/no-charge/no-venue; existing `left`→rejoin review; adapter chỉ render shared-domain outcome.
 
 ---
 
@@ -116,5 +119,6 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-15 | v2.1 | **DD-45 + DD-37:** Zalo render active/waitlisted/current/rejoin-review; retire "Hết chỗ" outcome; sync events/AC; edge cases dùng identity/privacy Zalo+Messenger thay TG. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, Zalo DM screen states, reply context model |

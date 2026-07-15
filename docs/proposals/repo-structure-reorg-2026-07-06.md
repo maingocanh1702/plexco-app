@@ -1,6 +1,6 @@
 # Proposal: Tổ chức lại cấu trúc repo & docs — Plexco
 
-> **Trạng thái:** 🟡 Đề xuất (chỉ đề xuất — CHƯA thực hiện di chuyển gì)
+> **Trạng thái:** ⚠️ **HISTORICAL / phần lớn SUPERSEDED (2026-07-15)** — `docs/channels/{messenger,zalo,telegram}/` đã tồn tại; Messenger nay **P2.5 phase-1** (không còn P4.8). Proposal 07-06 giữ làm tham chiếu lịch sử, KHÔNG phải kế hoạch hiện hành.
 > **Ngày:** 2026-07-06
 > **Phạm vi:** cấu trúc thư mục root + `docs/` (không đụng logic code trong `apps/`, `packages/`)
 > **Nguyên tắc:** không phá cross-reference/tooling; mọi thay đổi làm bằng `git mv` + link-update pass; giữ ổn định các file được tham chiếu dày (features/, decisions.md)
@@ -217,4 +217,4 @@ Mỗi phase: chạy link-checker + `git grep` path cũ để không sót referen
 - `docs/`: từ **file lẻ trộn thư mục + 3 folder channel 1-README** → 9 nhóm rõ mục đích, `channels/` gom kênh, thứ tự đọc qua `00-start-here/`. `automation/` chỉ gom **docs-thuần**; **autopilot-kit giữ nguyên path** (executable contract) trừ khi làm phase P3b high-risk.
 - Hợp nhất 2 cặp docs overlap (`design-tokens`: **merge token web-only vào standards trước**, không xoá; `feature-dependency-graph`), dọn `.DS_Store` (local, không tracked), `PR_TEMPLATE → .github/` (kèm update README/HANDOFF).
 
-> **✅ ĐÃ TRIỂN KHAI 2026-07-06** theo mặc định khuyến nghị: **P1 + P3a + P4 + P5** (git mv giữ history + update toàn bộ cross-link). **Bỏ P2** (Linear + `progress.json`/dashboard/snapshot giữ nguyên ở root). **Bỏ P3b** (autopilot-kit path giữ nguyên — scripts không đụng). Q1=chỉ `00-start-here/`; Q2=không đổi tên `feature_*.md`; Q3=`channels/messenger/`. Link-checker: 0 broken (trừ link `file://` trỏ ra project Bestminton — pre-existing). **Dọn thủ công trên máy bạn:** `rm -f .git/index.lock` (lock cũ do mount) + `rmdir docs/appendices` (thư mục rỗng) — git không track dir rỗng nên vô hại.
+> **✅ ĐÃ TRIỂN KHAI 2026-07-06** theo mặc định khuyến nghị: **P1 + P3a + P4 + P5** (git mv giữ history + update toàn bộ cross-link). **Bỏ P2** (Linear + `progress.json`/dashboard/snapshot giữ nguyên ở root). **Bỏ P3b** (autopilot-kit path giữ nguyên — scripts không đụng). Q1=chỉ `00-start-here/`; Q2=không đổi tên `feature_*.md`; Q3=`channels/messenger/`. Link-checker: 0 broken; các link companion Bestminton đã được chuẩn hoá sang GitHub URL ngày 2026-07-15. **Dọn thủ công trên máy bạn:** `rm -f .git/index.lock` (lock cũ do mount) + `rmdir docs/appendices` (thư mục rỗng) — git không track dir rỗng nên vô hại.

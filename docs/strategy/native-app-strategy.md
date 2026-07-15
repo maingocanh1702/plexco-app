@@ -1,8 +1,10 @@
 # Phân tích — Thêm Native App (iOS / Android) sau Web MVP
 
-**Phiên bản:** 1.0
+**Phiên bản:** 1.1
 **Ngày tạo:** 18/06/2026
 **Tài liệu tham chiếu:** `BRD.md` v3.1 · `PRD.md` v2.1 · `TDD.md` v2.1 · `ROADMAP.md` v2.1 · `feature_sync_engine.md` · `feature_marketplace_discovery.md` · `feature_identity.md`
+
+> ⚠️ **Version note (15/07/2026):** companion doc ở baseline **v3.1/v2.1**. Nguồn hiện hành: **BRD v3.5 · PRD v2.4 · TDD v2.4 · ROADMAP v2.7 · `decisions.md` v1.32**; chưa reflect pivot kênh (DD-37) + cụm session-model/social (DD-41–48). Khi conflict, ưu tiên TDD → BRD hiện hành.
 
 > **TL;DR:** Kiến trúc canonical-store + surface-projection của Plexco **đã future-proof cho native app**. Native iOS/Android chỉ là thêm 1 surface — backend API, sync engine, marketplace discovery, identity pipeline **không cần đổi**. Effort chính nằm ở: (1) Native UI, (2) Push Notification projector, (3) Auth providers mở rộng (Apple/Google Sign-In), (4) Offline cache strategy. Không có breaking change.
 
@@ -19,7 +21,7 @@ P3:    Payment reconcile
 P3.5:  Identity directory
 P4:    Web app canonical + Sync engine + Onboarding
 P4.3:  Marketplace discovery
-P4.5–P4.7: Player channels (TG/Zalo)
+P2.5:  Messenger (join+confirm, App Review) · P4.x: Player channels (Zalo/Messenger) — Telegram bỏ (DD-37)
 P5:    Billing
 P6:    Hardening
 ```
@@ -50,10 +52,10 @@ P7.6:  App Store / Play Store submission
 
 ```
 ┌─── Surfaces hiện tại ──┐     ┌─── Surfaces thêm sau ──┐
-│  Telegram bot           │     │  iOS App               │
-│  Zalo bot               │     │  Android App           │
+│  Zalo bot               │     │  iOS App               │
+│  Messenger (phase-1)    │     │  Android App           │
 │  Web app (Next.js)      │     │                        │
-│  Messenger (post-MVP)   │     │                        │
+│  (Telegram bỏ — DD-37)  │     │                        │
 └──────────┬──────────────┘     └──────────┬─────────────┘
            │                               │
            │  command (commandId)          │  command (cùng API)
@@ -72,8 +74,8 @@ P7.6:  App Store / Play Store submission
                          │
          ┌───────────────┼───────────────────────────┐
          ▼               ▼               ▼           ▼
-    TG Projector   Zalo Projector   Web Projector  🆕 Push
-    (edit msg)     (sendMessage)    (SSE)          Projector
+    Zalo Projector  Msgr Projector  Web Projector  🆕 Push
+    (reply)         (24h window)    (SSE)          Projector
                                                    (FCM/APNs)
                          │
                          ▼
@@ -88,7 +90,7 @@ P7.6:  App Store / Play Store submission
 | Component | Hiện tại | Native app thêm gì? | Breaking change? |
 |-----------|---------|---------------------|-----------------|
 | **REST API** (`apps/web` hoặc `apps/api`) | JSON endpoints cho web | Native gọi **cùng endpoints** | ❌ Không |
-| **Sync Engine** (outbox + projector) | TG/Zalo/Web projectors | Thêm **Push Projector** (FCM/APNs) | ❌ Không — thêm projector, không sửa cũ |
+| **Sync Engine** (outbox + projector) | Zalo/Messenger/Web projectors | Thêm **Push Projector** (FCM/APNs) | ❌ Không — thêm projector, không sửa cũ |
 | **Marketplace Discovery** | `GET /discover` → JSON | Native gọi **cùng API** → render native UI | ❌ Không |
 | **Identity pipeline** | Person → ChannelIdentity → Membership | Thêm **ChannelIdentity `platform='ios'/'android'`** hoặc dùng Account auth trực tiếp | ❌ Không — extend, không sửa |
 | **Auth** | Telegram Login Widget → Account | Thêm **Apple Sign-In + Google Sign-In** auth providers | 🟡 Extend — thêm fields vào `accounts`, thêm auth strategy |
@@ -104,7 +106,7 @@ P7.6:  App Store / Play Store submission
    - PostgreSQL schema (trừ thêm device_tokens)
    - tenantRepo / RLS
    - Outbox / dispatcher
-   - Existing projectors (TG/Zalo/Web)
+   - Existing projectors (Zalo/Messenger/Web)
    - Marketplace Discovery API
    - Identity pipeline (Person/ChannelIdentity/Membership)
    - Payment reconcile logic
@@ -176,7 +178,7 @@ outbox_event: { type: "session.created", tenantId, payload }
 
 ### 3.2 Auth mở rộng
 
-**Hiện tại:** Telegram Login Widget → `accounts.telegram_user_id` → Account → Person
+**Hiện tại (phase-1, DD-13):** Google OAuth + email/password → `account_identities(platform ∈ google/email)` → Account → Person (Telegram Login bỏ — DD-37; link Facebook/Zalo vào cùng Person)
 
 **Thêm cho native:**
 
@@ -184,8 +186,9 @@ outbox_event: { type: "session.created", tenantId, payload }
 -- Mở rộng accounts table
 ALTER TABLE accounts ADD COLUMN apple_id    text UNIQUE;
 ALTER TABLE accounts ADD COLUMN google_id   text UNIQUE;
-ALTER TABLE accounts ADD COLUMN auth_method text DEFAULT 'telegram'
-    CHECK (auth_method IN ('telegram', 'apple', 'google', 'phone'));
+ALTER TABLE accounts ADD COLUMN auth_method text DEFAULT 'google'
+    CHECK (auth_method IN ('google', 'email', 'apple', 'facebook', 'zalo', 'phone'));
+-- DD-37: Telegram bỏ; canonical = account_identities.platform ∈ {google,email,facebook,zalo}
 ```
 
 **Auth flow native:**
@@ -209,11 +212,11 @@ Android App:
 ```
 
 **Link Account cross-auth:**
-User đăng nhập web bằng TG, native bằng Apple → 2 Account khác nhau? Giải pháp:
+User đăng nhập web bằng Google, native bằng Apple → 2 Account khác nhau? Giải pháp:
 
 | Trường hợp | Giải pháp |
 |------------|-----------|
-| Cùng email (TG email = Apple email) | Auto-link Account nếu **email verified** cả hai phía |
+| Cùng email (Google email = Apple email) | Auto-link Account nếu **email verified** cả hai phía |
 | Khác email | Manual link: đăng nhập 1 → Settings → "Liên kết tài khoản" → đăng nhập cái kia |
 | Cùng SĐT verified | Auto-link qua Person.phone |
 
@@ -225,7 +228,7 @@ User đăng nhập web bằng TG, native bằng Apple → 2 Account khác nhau? 
 -- Thêm platform values
 ALTER TABLE channel_reachability
     ALTER COLUMN platform TYPE text;
--- platform IN ('telegram', 'zalo', 'messenger', 'ios', 'android', 'web')
+-- platform IN ('zalo', 'messenger', 'google', 'ios', 'android', 'web')  -- DD-37: Telegram bỏ
 ```
 
 Projector chọn kênh thông báo theo `ChannelReachability`:
@@ -234,15 +237,15 @@ Projector chọn kênh thông báo theo `ChannelReachability`:
 notifyPlayer(person, tenant, event):
   reachability = SELECT * FROM channel_reachability
                  WHERE person_id = person AND tenant_id = tenant AND can_dm = true
-                 ORDER BY priority -- ưu tiên native push > TG > Zalo
+                 ORDER BY priority -- ưu tiên native push > web push + Zalo DM > Messenger (24h)
 
   for each channel in reachability:
     if channel.platform == 'ios' || 'android':
       → Push Projector (FCM/APNs)
-    elif channel.platform == 'telegram':
-      → TG Projector (sendMessage)
     elif channel.platform == 'zalo':
       → Zalo Projector (sendMessage)
+    elif channel.platform == 'messenger':
+      → Messenger Projector (best-effort trong cửa sổ 24h)
 ```
 
 ---
@@ -394,7 +397,7 @@ Nếu host trả paid tier **host_pro 250k/tháng** qua App Store → Apple/Goog
 | # | Rủi ro / Câu hỏi | Mitigation / Trạng thái |
 |---|---|---|
 | R1 | App Store review reject (đặc biệt Apple — strict về "login with Apple" requirement) | Phải có Apple Sign-In nếu có Google Sign-In; compliance check trước submit |
-| R2 | Push notification opt-in rate thấp (iOS ~50%) | Fallback: TG/Zalo DM vẫn hoạt động; push là bonus |
+| R2 | Push notification opt-in rate thấp (iOS ~50%) | Fallback: web push + Zalo DM vẫn hoạt động; push là bonus |
 | R3 | FCM/APNs token invalid (user uninstall/reinstall) | Token cleanup trong Push Projector — invalid → `active=false` |
 | R4 | 2 codebase maintenance nếu chọn native | Spike P7.0 test React Native/Expo trước |
 | OD-N1 | Tech stack native: Swift+Kotlin vs React Native vs Flutter? | ⬜ Chốt ở P7.0 Spike |
@@ -467,3 +470,4 @@ Những điều cần **lưu ý ngay từ P4** (build web) để native không p
 |------|---------|----------|
 | 19/06/2026 | — | Thêm Changelog table |
 | 18/06/2026 | v1.0 | Phân tích thêm native app post-MVP |
+| 10/07/2026 | 1.1 | DD-37 channel pivot (BRD v3.4): surfaces hiện tại = Zalo/Messenger/Web (bỏ Telegram); projector/ChannelReachability refs đổi TG→Zalo/Messenger; auth "hiện tại" = Google/email (DD-13). Kiến trúc canonical-store + surface-projection **không đổi**. |

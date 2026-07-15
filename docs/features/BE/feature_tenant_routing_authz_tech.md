@@ -1,28 +1,32 @@
 # Feature: Tenant Routing & Admin Authorization — Backend Tech Spec
 
-> **Canonical phase:** P2  
-> **Version:** 2.0 · 2026-06-19  
-> **Status:** Reviewed  
-> **Product spec:** `../feature_tenant_routing_authz.md`  
-> **References:** `../../product/TDD.md` §3.3–3.5 · `../../standards/business-rules.md` BL-SEC-2/BL-SEC-5
+> **Canonical phase:** P2
+> **Version:** 2.1 · 2026-07-10
+> **Status:** Reviewed
+> **Product spec:** `../feature_tenant_routing_authz.md`
+> **References:** `../../product/TDD.md` §3.3–3.5 · `../../standards/business-rules.md` BL-SEC-2/BL-SEC-5 · `../../standards/decisions.md` DD-37
 
 ---
 
 ## 1. Tổng quan triển khai
 
+> **Cập nhật v2.1 (DD-37 ✅, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger + web**; **bỏ Telegram**. Tenant routing nay suy từ **Zalo `webhook_token` per-club** (`zalo_bots.webhook_token → tenant_id`) và **Messenger `page_id` per-club** (`messenger_pages.page_id → tenant_id`). Route Telegram `chat_id` (`telegram_links`) = **legacy tenant-1 only**, không dùng cho tenant mới. Nguyên tắc "routing suy từ kênh, không từ nội dung" (NFR-S3) giữ nguyên cho mọi kênh.
+
 ```text
-Telegram Update → telegramResolver(chat_id/user_id/deep_link)
+Channel event (Zalo webhook_token · Messenger page_id · web session) → channelResolver
     → AuthZ Middleware(action, actor, tenant)
         → tenant-bound Service/Repo (RLS set)
 ```
 
-**Pipeline:** `telegramResolver` maps incoming update to tenant via trusted bindings. `authzMiddleware` derives stable actor identity and calls `authorize(action, actor, tenant)`. Handler cannot override either value.
+**Pipeline:** `channelResolver` maps incoming event to tenant via **trusted channel bindings** (Zalo `webhook_token`, Messenger `page_id`, web authenticated context; legacy Telegram `chat_id` for tenant-1). `authzMiddleware` derives stable actor identity and calls `authorize(action, actor, tenant)`. Handler cannot override either value.
 
 **Design decisions:**
 - Routing ≠ authorization — 2 separate middleware steps.
-- Store keyed hashes for TG user lookup — encrypt recoverable IDs only if needed.
+- Tenant **luôn** suy từ kênh (webhook_token / page_id / auth session), **không** từ nội dung message (NFR-S3, edge #1).
+- Store keyed hashes for per-channel user lookup — encrypt recoverable IDs only if needed.
 - Link codes: hash-only storage (no plaintext), TTL, single-use.
 - Global context/link lookup via narrow service access — not open queries.
+- **Messenger PSID là page-scoped** (mỗi Page một namespace) → resolver phải neo theo `page_id`; **Zalo `from.id`** ổn định per-bot (DD-15 ⬜) → neo theo `webhook_token`.
 
 ---
 
@@ -85,6 +89,8 @@ CREATE TABLE routing_audit (
 
 All tenant-scoped tables: `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY`.
 
+> **Channel bindings (DD-37):** `telegram_links` (chat_id → tenant) is **legacy, tenant-1 only** — no new tenant is routed via Telegram. Phase-1 routing uses `zalo_bots.webhook_token → tenant_id` (Zalo, bot per-club) and `messenger_pages.page_id → tenant_id` (Messenger, Page per-club) — both defined in `feature_zalo_channel_tech.md` / `feature_player_messenger_tech.md`, canonical in `packages/db/schema.ts`. `tenant_admins.platform` / `player_chat_context.platform` default `'telegram'` in the live schema is retained for history; new rows use `'zalo'` / `'messenger'`.
+
 ### Indexes
 
 ```sql
@@ -102,7 +108,7 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 | 2 | Concurrency | Link consume + admin create race | Single transaction + row lock on link code |
 | 3 | Concurrency | Rebind chat to new tenant | Lock chat/current/new tenant rows — write before/after audit |
 | 4 | Security | Callback contains spoofed session/tenant | Canonical session lookup validates tenant — reject mismatch |
-| 5 | Concurrency | Replayed Telegram update_id | Idempotency key on update_id — return previous result |
+| 5 | Concurrency | Replayed channel event id (Zalo/Messenger mid/event; legacy TG update_id) | Idempotency key on event id — return previous result |
 | 6 | Security | Link code brute force | Rate-limit `attempts` counter + account lockout |
 | 7 | Security | Bot secret/webhook path in logs | ❌ NEVER — KMS-managed, logs redact |
 | 8 | Data Integrity | Username change affects auth | No impact — use stable numeric user_id |
@@ -118,8 +124,11 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 ### Resolution Precedence
 
 ```text
-1. Group message → chat_id → telegram_links(active=true) → tenant_id
-2. Admin DM → platform_user_lookup_hash → tenant_admins → 
+1. Zalo event   → webhook_token → zalo_bots(active) → tenant_id
+   Messenger evt → page_id      → messenger_pages   → tenant_id
+   Web request   → authenticated session → tenant context
+   (legacy) TG group message → chat_id → telegram_links(active=true) → tenant_id  [tenant-1 only]
+2. Admin DM → platform_user_lookup_hash → tenant_admins →
      1 tenant → auto-select
      N tenants → picker
 3. Player DM → sticky context → validate membership active
@@ -194,7 +203,7 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 | 13 | Link brute force | >5 attempts/10min | Rate limited |
 | 14 | Rebind race | Concurrent rebind attempts | One success, one fails |
 | 15 | Update replay | Same update_id twice | Idempotent |
-| 16 | Username change | Changed TG username | Auth unaffected |
+| 16 | Username change | Changed channel username (Zalo/Messenger) | Auth unaffected — use stable numeric user id/PSID |
 | 17 | Non-admin admin command | Player actor | 403 |
 | 18 | Co-admin exceeds scope | Unauthorized action | 403 |
 | 19 | Suspended tenant mutation | Admin mutate | 403 `TENANT_SUSPENDED` |
@@ -236,3 +245,4 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 |---|---|---|
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), thêm full DDL, 12 BE edge cases, authz matrix, rate limits, 20 unit tests, 4 integration tests |
+| 2026-07-10 | v2.1 | **DD-37 ✅:** routing pivot — tenant suy từ **Zalo `webhook_token`** + **Messenger `page_id`** per-club; Telegram `chat_id`/`telegram_links` xuống **legacy tenant-1 only**. Cập nhật overview, channel-binding note, resolution precedence. Nguyên tắc routing-từ-kênh (NFR-S3) không đổi. |

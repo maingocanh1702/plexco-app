@@ -48,8 +48,9 @@ Một scheduled task chạy **mỗi Thứ 2** làm đúng vòng "break module k�
 | Script | Việc | Khi nào chạy |
 |---|---|---|
 | `sync-embedded.mjs` | Ghi `progress.json` → khối `EMBEDDED` trong dashboard (hết drift) | **Sau mỗi lần sửa `progress.json`** |
-| `compare-linear.mjs [--write]` | Đối chiếu drift; `--write` xuất `linear-snapshot.json` | Khi muốn so 2 nguồn (cần `LINEAR_API_KEY`) |
-| `linear-sync.mjs [--check]` | Pull Linear → ghi status vào `progress.json` theo roll-up subtask | GitHub Action realtime hoặc chạy tay |
+| `linear-contract.mjs` | Shared validator cho module/subtask ID, status và title contract | `compare-linear`/`linear-sync` import tự động |
+| `compare-linear.mjs [--write]` | Đối chiếu drift status/title/cấu trúc; `--write` xuất `linear-snapshot.json` | Exit 2 nếu lệch hoặc thiếu module/subtask (cần `LINEAR_API_KEY`) |
+| `linear-sync.mjs [--check]` | Pull Linear → ghi status theo roll-up; dừng trước khi ghi nếu title/cấu trúc lệch | GitHub Action realtime hoặc chạy tay |
 | `gen-linear-csv.mjs` | Sinh `linear-import.csv` (đường CSV, không cần OAuth) | Khi cần re-seed / seed nơi khác |
 
 ```bash
@@ -64,7 +65,7 @@ LINEAR_API_KEY=lin_api_xxx node linear-sync.mjs --check       # dry-run: Linear 
 ## Nguyên tắc ownership theo field (để compare có nghĩa)
 
 - **Linear sở hữu status**: `subtasks[].status` lấy theo identifier Linear; `module.status` được roll-up từ subtask nếu module có subtask, còn module chưa break thì lấy issue cha `[M#]`.
-- **progress.json sở hữu cấu trúc**: roadmap, gate, invariant, điểm, assignee map, `linearId`, và title subtask. Khi break/assign, Claude ghi cấu trúc vào cả Linear lẫn `progress.json` để hai bên khởi điểm khớp.
+- **progress.json sở hữu cấu trúc**: roadmap, gate, invariant, điểm, assignee map, `linearId`, và title module/subtask. Khi break/assign, Claude ghi cấu trúc vào cả Linear lẫn `progress.json` để hai bên khởi điểm khớp. `compare-linear`/`linear-sync` fail-closed nếu title lệch hoặc issue bị thiếu.
 - `compare-linear.mjs` chỉ **đọc** và báo drift. `linear-sync.mjs` mới là engine **ghi** status từ Linear về `progress.json`.
 
 ---
@@ -101,7 +102,7 @@ commit "chore: sync progress from Linear [skip ci]"  → dashboard khớp
 **Hai chiều:**
 - *Code → status*: branch/PR của **sub-issue** (vd `maingocanh/mna-63-...`) flip sub-issue tức thì → `linear-sync` **roll-up** lên module cha → ghi progress.json. Không cần đụng issue `[M#]`.
 - *Linear UI → status*: bạn kéo sub-issue (hoặc issue cha khi module không có subtask) → webhook/cron → roll-up → progress.json tự đổi.
-- **Ownership:** Linear sở hữu `status` (module + subtask); progress.json sở hữu cấu trúc (gate/invariant/roadmap/subtask title/khoá). Đừng sửa `status` tay khi realtime đã bật.
+- **Ownership:** Linear sở hữu `status` (module + subtask); progress.json sở hữu cấu trúc (gate/invariant/roadmap/module + subtask title/khoá). Title Linear phải mirror canonical; lệch hoặc thiếu issue làm gate fail-closed. Đừng sửa `status` tay khi realtime đã bật.
 - **Roll-up rule:** module có subtasks → status = (all done→done · any blocked→blocked · any in_progress→in_progress · any in_review→in_review · any done→in_progress · else not_started); không có subtasks → status issue cha.
 
 **Trước khi có repo:** dùng tạm Chế độ 1/2 (on-demand "mark M7 done" / scheduled weekly). `linear-sync.mjs` cũng chạy tay được ngay nếu có `LINEAR_API_KEY`:

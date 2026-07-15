@@ -2,10 +2,12 @@
 
 > **Canonical phase:** P3 (payment ingest) · P4 (web onboarding) · P4.7 (Zalo) — *cross-cutting upgrade*
 > **Track:** 🔌 Connector / Onboarding
-> **Version:** 0.4 · 2026-06-20
+> **Version:** 0.5 · 2026-07-10
 > **Status:** Draft (provider-contract reviewed)
 > **Prerequisites:** P3 webhook ingest stable · P4 onboarding wizard scaffold
-> **Tài liệu liên quan:** `feature_web_auth_onboarding.md` (nâng cấp step bank/zalo) · `feature_zalo_channel.md` · `feature_payment_reconcile.md` · `../channels/zalo/README.md` §6–7 · `../product/TDD.md` · `../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `../research/player-side-saas-AUDIT.md` §B2
+> **Tài liệu liên quan:** `feature_web_auth_onboarding.md` (nâng cấp step bank/zalo/messenger) · `feature_zalo_channel.md` · `feature_player_messenger.md` · `feature_payment_reconcile.md` · `../channels/zalo/README.md` §6–7 · `../standards/decisions.md` DD-37/DD-33 · `../product/TDD.md` · `../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `../research/player-side-saas-AUDIT.md` §B2
+
+> **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (**Telegram loại khỏi phạm vi**). Doc này giữ nguyên connector **Zalo · SePay · ApiPay**. **Facebook Messenger** onboarding = FB Login + chọn **Page per-club** (App Review, DD-33) — chi tiết ở `feature_player_messenger.md` + `feature_web_auth_onboarding.md`.
 
 ---
 
@@ -25,7 +27,7 @@ Bước "copy URL → mò vào dashboard bên thứ ba → dán đúng chỗ →
 
 - **SePay** — ✅ *verified*. Có **OAuth2** (scopes `bank-account:read`, `transaction:read`, `webhook:write`) + `POST /api/v1/webhooks` (contract đầy đủ — §4.2) + `GET /api/v1/transactions` + **giả lập giao dịch** → "Kết nối SePay" 1 nút, không dán token.
 - **ApiPay** — ✅ *verified*. `GET /v2/client/banks` (liệt kê TK đã liên kết) + `POST /v1/client/webhooks` (trả về `id` + `secret`) → dán 2 key, tự đăng ký webhook.
-- **Zalo** — 🟡 *candidate, blocked by sandbox confirmation (CO-OQ-1)*. Pattern token + `getMe`/`setWebhook` khớp Telegram và các SDK Zalo Bot cộng đồng, **nhưng chưa kiểm chứng endpoint/tham số chính thức** trên tier Zalo Bot mà CLB dùng. **Không** đưa vào triển khai cho tới khi confirm sandbox; trước đó giữ luồng nhập tay hiện có.
+- **Zalo** — 🟡 *candidate, blocked by sandbox confirmation (CO-OQ-1)*. Pattern token + `getMe`/`setWebhook` xuất hiện trong các SDK Zalo Bot cộng đồng, **nhưng chưa kiểm chứng endpoint/tham số chính thức** trên tier Zalo Bot mà CLB dùng. **Không** đưa vào triển khai cho tới khi confirm sandbox; trước đó giữ luồng nhập tay hiện có.
 
 **Kết quả:** 3 flow rối → 1 pattern "Kết nối" thống nhất, kết thúc bằng tín hiệu xanh "đã nhận giao dịch/tin nhắn thử". Bỏ bước dán webhook URL ở 2 connector đã verified; Zalo theo sau khi gỡ block.
 
@@ -74,7 +76,7 @@ Owner chỉ đưa đúng **một thứ chỉ họ mới có**; mọi thao tác c
 | ApiPay ✅ | accessKey + secretKey | `GET /v2/client/banks` → `POST /v1/client/webhooks` | Copy 2 key từ ApiPay → Plexco |
 | Zalo 🟡 | Bot token (per-CLB) | `getMe` → `setWebhook` → store enc *(sau khi gỡ CO-OQ-1)* | Tạo bot trong Zalo Bot Creator |
 
-> Zalo còn 1 bước tạo bot vì Zalo (như Telegram) **không** có API tạo bot. SePay là "rảnh tay" nhất nhờ OAuth2.
+> Zalo còn 1 bước tạo bot vì Zalo **không** có API tạo bot (owner tự tạo trong Zalo Bot Creator). SePay là "rảnh tay" nhất nhờ OAuth2.
 
 ### 2.2 Capability-driven UI
 
@@ -382,7 +384,7 @@ async function connectApiPay(ctx: TenantCtx, accessKey: string, secretKey: strin
 - **Verify (Tier 2):** `transaction.in` đầu tiên qua webhook → `webhook_status='active'`.
 - **Vòng đời:** `PATCH /v1/client/webhooks/:id`, `DELETE /v1/client/webhooks/:id`, `GET /v1/client/webhooks/:id/history`.
 
-### 4.3b — ApiPay ENTERPRISE auto-provision (DD-30) — 🟡 CANDIDATE (Phase-1 speed)
+### 4.3b — ApiPay ENTERPRISE auto-provision (DD-30) — ✅ CHỐT (Phase-1 PRIMARY; DD-30 ✅ · DD-02)
 
 Để **launch nhanh** (host phổ thông ngại tự lấy API key), platform giữ **1 credential ApiPay enterprise** và **tự động provision** per-host thay cho luồng BYO §4.3:
 
@@ -406,20 +408,21 @@ async function connectApiPay(ctx: TenantCtx, accessKey: string, secretKey: strin
 
 ### 5.1 Raw-body requirement (sửa theo góp ý)
 
-Chữ ký HMAC **phải** tính trên **bytes thô của request**, không phải JSON đã parse → stringify lại (re-serialize đổi thứ tự key/spacing làm sai chữ ký). Cấu hình Express:
+Chữ ký HMAC **phải** tính trên **bytes thô của request**, không phải JSON đã parse → stringify lại (re-serialize đổi thứ tự key/spacing làm sai chữ ký). Contract handler (Next.js Route Handler hoặc adapter HTTP tương đương):
 
 ```typescript
-// giữ rawBody cho đúng route webhook
-app.use("/webhook", express.json({
-  verify: (req, _res, buf) => { (req as any).rawBody = buf; },  // Buffer thô
-}));
+// Đọc raw bytes MỘT LẦN trước khi JSON.parse; không gọi request.json() trước.
+const rawBody = Buffer.from(await request.arrayBuffer());
 
-function verifyApipay(req): boolean {
-  const sig = req.header("ApiPay-Signature") ?? "";
+function verifyApipay(request: Request, rawBody: Buffer): boolean {
+  const sig = request.headers.get("ApiPay-Signature") ?? "";
   const expected = crypto.createHmac("sha256", secret)
-                         .update(req.rawBody)            // RAW, không JSON.stringify(req.body)
+                         .update(rawBody)                // RAW, không JSON.stringify(parsedBody)
                          .digest("hex");
-  return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  const actualBytes = Buffer.from(sig, "hex");
+  const expectedBytes = Buffer.from(expected, "hex");
+  return actualBytes.length === expectedBytes.length
+    && crypto.timingSafeEqual(actualBytes, expectedBytes);
 }
 ```
 
@@ -565,7 +568,7 @@ Tỉ lệ kết nối không-chạm-webhook, `time_to_verify_ms` trung vị, t�
 | CO-OQ-3 | SePay: webhook (`webhook:write`) hay poll `/transactions`, hay hybrid theo TK | ⬜ Chưa chốt |
 | CO-OQ-4 | Giữ luồng "dán webhook URL tay" làm fallback chính thức hay chỉ cứu hộ | ⬜ Chưa chốt |
 | CO-OQ-5 | Verify Tier 2 SePay: ưu tiên "giả lập giao dịch" hay CK thật số nhỏ | ⬜ Chưa chốt |
-| CO-OQ-6 | SePay `is_verify_payment`/`skip_if_no_code`: để `0` (Plexco tự match P3) hay bật khi rollout pay-code P4 | ⬜ Chưa chốt |
+| CO-OQ-6 | SePay `is_verify_payment`/`skip_if_no_code` | ✅ Chốt (DD-02): **`skip_if_no_code=0`** (giữ tx không-code cho name-fallback), `is_verify_payment=0` (Plexco tự match qua resolver core). Options này chỉ thuộc **SePay adapter**, không vào core contract. |
 | CO-OQ-7 | SePay inbound webhook khi `authen_type=Api_Key`: header chính xác (`Apikey`/khác), payload body, retry semantics — confirm bằng sandbox | ⬜ Chưa chốt |
 
 ---
@@ -574,6 +577,7 @@ Tỉ lệ kết nối không-chạm-webhook, `time_to_verify_ms` trung vị, t�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-10 | v0.5 | **DD-37:** note kênh phase-1 = Zalo + Messenger + web (Telegram loại). Messenger onboarding (FB Login + Page per-club, DD-33) trỏ `feature_player_messenger.md`; connector Zalo/SePay/ApiPay không đổi. Bỏ ẩn dụ "như Telegram". |
 | 2026-06-20 | v0.4 | Fix review: dùng `rotation_pending` thay lifecycle status ngoài enum; `oauth_transactions` dùng SECURITY DEFINER lookup-by-state thay vì tenant RLS; backfill `bank_accounts.webhook_status`; định nghĩa owner/rollup của `provider_connections.status`; đồng bộ edge webhook limit |
 | 2026-06-20 | v0.3 | Thêm bảng nguồn kiểm chứng provider, làm rõ Zalo vẫn manual đến khi gỡ CO-OQ-1, sửa endpoint UI ApiPay thành `/v2/client/banks`, làm rõ acceptance cho fallback manual, thêm CO-OQ-7 cho SePay inbound webhook sandbox. Patch nit: bổ sung scope `bank-account:read` ở TL;DR cho khớp §2.1/§4.2, ghi nguồn `bank_sub_account_ids` = `/bank-accounts/{id}/sub-accounts` (verified docs). |
 | 2026-06-20 | v0.2 | **Sửa theo review:** (1) Zalo hạ xuống *candidate, blocked CO-OQ-1*, nhất quán đầu↔cuối file. (2) SePay `POST /api/v1/webhooks` viết lại contract đầy đủ (`bank_account_id`, `name`, `event_type`, `authen_type`, `is_verify_payment`, `api_key`, `request_content_type`...). (3) ApiPay banks → `/v2/client/banks` + xử lý `ACTIVE/INACTIVE/PENDING`/`manualActivationPending`. (4) Thống nhất vocabulary trạng thái + migration đổi CHECK `zalo_bots`. (5) SePay OAuth state/PKCE + `oauth_transactions`, callback không dựa cookie. (6) Verify HMAC trên raw body. |

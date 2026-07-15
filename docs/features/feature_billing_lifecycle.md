@@ -2,10 +2,12 @@
 
 > **Canonical phase:** P5  
 > **Track:** 💳 Host Billing  
-> **Version:** 2.2 · 2026-06-20
+> **Version:** 2.5 · 2026-07-10
 > **Status:** Reviewed  
 > **Prerequisites:** P2 tenant/authz · P3 durable payment ingestion · P3 notifications  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-9/BR-11 · `../product/PRD.md` FLOW 11 · BRD OD-3 · `BE/feature_billing_lifecycle_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-9/BR-11 · `../product/PRD.md` FLOW 11 · `../standards/decisions.md` DD-29/DD-40/DD-37 · `BE/feature_billing_lifecycle_tech.md`
+
+> **Cập nhật v3.4 (DD-40 + DD-37, 2026-07-10):** free-tier bots = **Zalo + Facebook Messenger** (bỏ Telegram). Capability flags DD-40: **free** = `payment_mark_manual` (cash/bank), `reminders_manual`; **`host_pro`** += `payment_reconcile_auto`, `reminders_auto`, `assistant_ai_kb`, `crm_dashboard`.
 
 ---
 
@@ -25,10 +27,12 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 
 | Plan key | Giá / tháng / CLB | Gồm |
 |---|---:|---|
-| `free` | **0đ** | Web app + **kết nối 3 bot** (Telegram/Zalo/Messenger*) + quản kèo/roster + **đối soát CK cơ bản (cập nhật thủ công)** + nhắc thủ công |
+| `free` | **0đ** | Web app + **kết nối bot Zalo + Facebook Messenger** + quản kèo/roster + **mark-paid thủ công (tiền mặt/CK, tap/multi-select)** + nhắc thủ công |
 | `host_pro` | **250.000đ** | Toàn bộ free + **đối soát CK tự động & báo thu phí** + **nhắc nợ tự động** + **Trợ lý AI + KB** + CRM dashboard |
 
-*Messenger chỉ hiệu lực khi kênh GA (DD-09/P4.8). Danh sách cờ tính năng chi tiết ở **Capability registry** (`BE/feature_billing_lifecycle_tech.md §4b`) — free/pro **config-driven** (đổi bằng `plans.entitlements`, không sửa code).
+> ⚠️ **`plans.plan_key` CHECK → `('free','host_pro')` là migration còn chờ (DD-29):** live `packages/db/schema.ts` vẫn giữ CHECK 4-tier `('free_web','telegram','plus_channel','all_channels')`. **Không** coi việc đổi CHECK là đã xong cho tới khi có migration.
+
+Kênh phase-1 = **Zalo + Facebook Messenger** (Telegram loại — DD-37; Messenger nay phase-1 P2.5, không còn chờ P4.8). Capability flags (DD-40): free = `payment_mark_manual`, `reminders_manual`; host_pro thêm `payment_reconcile_auto`, `reminders_auto`, `assistant_ai_kb`, `crm_dashboard`. Danh sách cờ chi tiết ở **Capability registry** (`BE/feature_billing_lifecycle_tech.md §4b`) — free/pro **config-driven** (đổi bằng `plans.entitlements`, không sửa code). *(Chat cơ bản + giá theo giới tính nay **✅ phase-1** — xem DD-38/DD-39 (✅ Chốt) + `feature_inapp_chat` / `feature_user_settings`.)*
 
 ---
 
@@ -56,7 +60,7 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 |---|----------|------|-------------------|
 | 1 | Data Integrity | Billing tx mixed with player allocation | ❌ NEVER — separate ledgers |
 | 2 | Concurrency | Duplicate billing webhook | Idempotent — extend period once only |
-| 3 | Financial | Partial/overpayment | Billing credit / manual review — KHÔNG allocate to player charges |
+| 3 | Financial | Partial/overpayment | Billing review queue / manual review (KHÔNG có bảng `billing_credits`) — KHÔNG allocate to player charges |
 | 4 | Data Integrity | Retroactive price/tier mutation | ❌ NEVER — versioned, immutable |
 | 5 | Data Integrity | Clock/timezone billing date | UTC billing dates — no timezone ambiguity |
 | 6 | Security | Suspended tenant push new public sessions | ❌ Block — existing sessions expire naturally only |
@@ -82,7 +86,7 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 | Web | Payment instructions | — | QR + bank info + invoice code | — | N/A |
 | Web | Subscription status badges | — | ✅ Active / ⚠️ Expiring / 🔴 Past Due / ⛔ Suspended | — | N/A |
 | Web | Reactivation | — | "Thanh toán để kích hoạt lại" + payment CTA | "Lỗi — liên hệ support" | N/A |
-| TG Bot | Owner notice | — | "⚠️ [Club] sắp hết hạn / đã bị tạm ngưng" | — | N/A |
+| Bot (Zalo/Messenger) | Owner notice | — | "⚠️ [Club] sắp hết hạn / đã bị tạm ngưng" | — | N/A |
 
 ---
 
@@ -91,9 +95,10 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 | Entity | Vai trò | Key constraints |
 |--------|---------|-----------------|
 | `subscriptions` | Plan/tier per tenant | `tenant_id` FK, `plan_key`, `plan_version`, `status` enum, `period_start/end` |
-| `invoices` | Billing obligations | `UNIQUE(invoice_code)`, `tenant_id`, `amount`, `status` |
-| `billing_transactions` | Platform payment records | Separate from `webhook_transactions` (player) |
-| `billing_credits` | Overpayment/refund credits | `tenant_id`, `amount`, `reason` |
+| `subscription_invoices` | Billing obligations | `UNIQUE(invoice_code)`, `tenant_id`, `amount_due`, `status` |
+| `billing_transactions` | Platform payment records | Tách hoàn toàn khỏi player `bank_transactions` |
+| `billing_allocations` | Phân bổ `billing_transaction` → `subscription_invoice` | `transaction_id`, `invoice_id`, `amount` |
+| `billing_overrides` | Manual override per-tenant (có expiry) | `tenant_id`, `actor_id`, `reason`, `expires_at` |
 
 ### Lifecycle State Machine
 
@@ -154,13 +159,15 @@ stateDiagram-v2
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| BIL-OQ-1 | Pricing tiers (BRD OD-3/DD-03) | ✅ Chốt 4 tier; còn trial/grace timing |
+| BIL-OQ-1 | Pricing tiers (BRD OD-3 → DD-29) | ✅ DD-29: 2 tier `free`/`host_pro` (thay DD-03 4-tier); còn trial/grace timing. `plans` CHECK `('free','host_pro')` = migration còn chờ (live schema 4-tier) |
 | BIL-OQ-2 | Cancellation/refund/credit policy + manual-override SLA | ⬜ Chưa chốt |
 
 ### Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-10 | v2.5 | **Review fixes → canonical billing vocab.** Domain model: `invoices`→**`subscription_invoices`**; `billing_credits`/credit concept → **`billing_allocations`** (+ `billing_overrides`); `webhook_transactions`→player `bank_transactions`. Note `plans` CHECK `('free','host_pro')` = migration còn chờ (live schema 4-tier — không claim done). Overpay/partial = billing review queue (không có bảng `billing_credits`). BIL-OQ-1 → DD-29 2 tier. |
+| 2026-07-10 | v2.4 | **DD-40 + DD-37:** free-tier bots = **Zalo + Messenger** (bỏ Telegram; Messenger nay phase-1, bỏ chờ P4.8). Capability flags DD-40: free = `payment_mark_manual`,`reminders_manual`; host_pro += `payment_reconcile_auto`,`reminders_auto`,`assistant_ai_kb`,`crm_dashboard`. Free-tier "đối soát CK cơ bản" → **mark-paid thủ công (tiền mặt/CK, tap/multi-select)**. One-line pointer chat/gender → DD-38/DD-39 (proposal). Owner notice screen: Zalo/Messenger. |
 | 2026-07-05 | v2.3 | **DD-29 pricing pivot:** bảng tier → `free` (0đ, web+3 bot+reconcile thủ công) / `host_pro` (250k, +auto reconcile/notify +nhắc nợ tự động +AI+CRM). Entitlement gate theo **capability flags config-driven** (registry ở BE §4b). Đổi edge #14, checklist, SM. Rename plan_key cũ `free_web`→`free`. |
 | 2026-06-20 | v2.2 | Fix: `free` (0đ) vào thẳng `active` vô thời hạn — không trial/invoice/past_due/suspended vì non-payment (SM + UC-1b + edge 12b/12c); chỉ suspend free vì ToS/abuse |
 | 2026-06-20 | v2.1 | Chốt pricing tiers DD-03 (free/79k/159k/199k), thêm entitlement gate và plan_key |

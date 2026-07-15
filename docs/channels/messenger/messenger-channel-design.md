@@ -2,13 +2,15 @@
 
 ## Plexco — platform thể thao đa môn: thêm kênh Messenger (port từ Telegram + Zalo)
 
-**Phiên bản:** 1.1
-**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 18/06/2026
-**Tài liệu tham chiếu:** `BRD.md` v3.1 · `PRD.md` v2.1 · `TDD.md` v2.1 · `player-side-saas-reconciliation.md` · `player-side-saas-AUDIT.md`
+**Phiên bản:** 2.1
+**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 15/07/2026
+**Tài liệu tham chiếu:** `BRD.md` v3.5 · `PRD.md` · `TDD.md` · `player-side-saas-reconciliation.md` · `player-side-saas-AUDIT.md`
 
-> **TL;DR:** Về kiến trúc, Messenger là **kênh thứ ba kiểu DM-only**, gần Zalo hơn Telegram. Nó **fit gần như nguyên** vào channel-abstraction sẵn có (chỉ thêm 1 enum + 1 bảng + 1 adapter + 1 webhook route). **Rủi ro lớn nhất KHÔNG phải kỹ thuật mà là chính sách:** từ 2026 Meta đã siết cửa sổ 24h và bỏ message tags → **nhắc nợ tự động ngoài 24h ở Việt Nam gần như không làm được**. Đây là điểm phải quyết định trước khi build (xem §2 và §7).
+> **Cập nhật v3.4 (DD-37 ✅):** Messenger nay là **kênh phase-1 (P2.5)** — không còn post-MVP. Telegram đã bị loại khỏi phạm vi; nhắc nợ chính = **web + Zalo**, Messenger best-effort trong standard window 24h. Ngoài cửa sổ chỉ dùng cơ chế Meta đủ điều kiện/được phê duyệt; **App Review bắt buộc**, Page per-club. Phase-label **P2.5.x** bên dưới thay cho P4.8.x cũ. Auth-link Facebook = **DD-33 🟡** (phase-1).
 
-> **Reposition v2 (Plexco platform):** Messenger là **một surface** trong sync engine (TDD §3.8) — action ở Messenger → command → canonical store → projection; xác nhận/nhắc là projection của event. Quick-reply/button của Messenger **hợp với discovery** (liệt kê kèo để chọn) hơn Zalo number-reply. Vẫn **post-MVP (P4.8)**: làm sau khi web+sync+marketplace (P4–P4.3) và player-side TG/Zalo ổn.
+> **TL;DR:** Về kiến trúc, Messenger là **kênh thứ ba kiểu DM-only**, gần Zalo hơn Telegram. Nó **fit gần như nguyên** vào channel-abstraction sẵn có (chỉ thêm 1 enum + 1 bảng + 1 adapter + 1 webhook route). **Rủi ro lớn nhất KHÔNG phải kỹ thuật mà là chính sách:** standard messaging bị giới hạn 24h; mọi đường ngoài cửa sổ phụ thuộc eligibility/approval theo cơ chế Meta hiện hành. Vì vậy MVP fail-closed sang web + Zalo (xem §2 và §7).
+
+> **Reposition v3.4 (Plexco platform, DD-37):** Messenger là **một surface** trong sync engine (TDD §3.8) — action ở Messenger → command → canonical store → projection; xác nhận/nhắc là projection của event. Quick-reply/button của Messenger **hợp với discovery** (liệt kê kèo để chọn) hơn Zalo number-reply. Nay là **kênh phase-1 (P2.5)** cùng web + Zalo; đường tới hạn là **App Review + Business Verification** (nộp sớm). Tái dùng ~90% khung Zalo — không còn phụ thuộc player-side Telegram (đã loại).
 
 ---
 
@@ -53,7 +55,7 @@ Messenger có **cửa sổ nhắn 24 giờ**: Page chỉ được nhắn user t�
 - **(B) OTN opt-in:** lúc player join, hỏi "Cho phép bot nhắc bạn 1 lần khi tới hạn đóng tiền?" → nhận token → bắn đúng 1 nhắc ngoài 24h.
 - **(C) Human-agent fallback:** ngoài 24h, **owner bấm gửi** (HUMAN_AGENT, ≤7 ngày) — bán tự động, nằm trong giới hạn "trả lời câu hỏi của user".
 
-> Khuyến nghị MVP: **(A) + (C)**, thêm **(B)** nếu OTN còn mở ở VN. Tài liệu hoá rõ cho chủ CLB rằng "nhắc tự động" trên Messenger = best-effort trong 24h, ngoài đó là Telegram/Zalo gánh hoặc owner bấm tay.
+> Khuyến nghị phase-1: **(A) + (C)**, thêm **(B)** nếu OTN còn mở ở VN. Tài liệu hoá rõ cho chủ CLB rằng "nhắc tự động" trên Messenger = best-effort trong 24h, ngoài đó **web + Zalo** gánh hoặc owner bấm tay. (Telegram đã loại — DD-37.)
 
 ---
 
@@ -123,7 +125,7 @@ otn_token_enc: varchar nullable  -- MỚI: token One-Time Notification nếu use
 
 | # | Table | Vùng | RLS | Pha |
 |---|---|---|---|---|
-| 20 | `messenger_pages` | TENANT | ✅ | P4.8 |
+| 20 | `messenger_pages` | TENANT | ✅ | P2.5 |
 
 ---
 
@@ -203,21 +205,21 @@ sequenceDiagram
 
 ---
 
-# 7. Kế hoạch theo phase (cắm vào roadmap sau Zalo)
+# 7. Kế hoạch theo phase (P2.5 — phase-1, ngay sau Zalo)
 
-> Nguyên tắc: **lift logic thuần đã có** (matching, payments, identity-resolve, format) — **0 thay đổi**. Chỉ thêm tầng kênh. Đặt sau khi Zalo (P4.7) ổn định vì Messenger tái dùng gần hết khung Zalo.
+> Nguyên tắc: **lift logic thuần đã có** (matching, payments, identity-resolve, format) — **0 thay đổi**. Chỉ thêm tầng kênh. Đặt **P2.5** ngay sau Zalo (P2) vì Messenger tái dùng gần hết khung Zalo; **App Review + Business Verification chạy song song từ đầu** (critical path).
 
 | Phase | Hạng mục | DoD |
 |---|---|---|
-| **P4.8.0 — Spike chính sách** | Xác nhận thực địa: OTN còn mở ở VN? Utility Templates khả dụng? App Review `pages_messaging` mất bao lâu? | Có/không từng cơ chế ngoài-24h → chốt chiến lược (A/B/C) |
-| **P4.8.1 — App & webhook** | Tạo FB App, verify chữ ký `X-Hub-Signature-256`, GET verify, route theo `page_id`, `messenger_pages` + migration `09_messenger_pages`, enum `messenger`. | curl giả event 2 Page → route đúng 2 tenant; sai chữ ký → 401 |
-| **P4.8.2 — Adapter gửi** | `ChannelAdapter` Messenger: sendText/sendChoices (quick-reply), throttler per-page, `canDeliver` theo cửa sổ 24h. | Gửi được DM + nút; quá 24h → `canDeliver=false` |
-| **P4.8.3 — Join flow** | `GET_STARTED` → resolve identity → `/join` (button list buổi, postback `pjoin:<id>`) → `addMemberToSession` (idempotent) → xác nhận + nội dung CK. | Player join qua nút; roster cập nhật |
-| **P4.8.4 — Reachability 24h + reminder** | Upsert `window_expires_at` mỗi inbound; reminder cron lọc cửa sổ; OTN opt-in (nếu có); HUMAN_AGENT path cho owner bấm. | Nhắc trong 24h chạy; ngoài 24h fallback đúng |
-| **P4.8.5 — notifyPlayersPaid + /myclubs** | Thêm Messenger vào `ChannelReachability` multi-kênh; magic-link cho web view. | Xác nhận trả tiền tới đúng kênh khả dụng |
-| **P4.8.6 — Onboarding web** | FB Login + chọn Page + subscribe webhook + token refresh/revoke detection. | Owner lạ nối Page tới khi join được, không đụng env |
+| **P2.5.0 — Spike chính sách** | Xác nhận thực địa: OTN còn mở ở VN? Utility Templates khả dụng? App Review `pages_messaging` mất bao lâu? | Có/không từng cơ chế ngoài-24h → chốt chiến lược (A/B/C) |
+| **P2.5.1 — App & webhook** | Tạo FB App, verify chữ ký `X-Hub-Signature-256`, GET verify, route theo `page_id`, `messenger_pages` + migration `09_messenger_pages`, enum `messenger`. | curl giả event 2 Page → route đúng 2 tenant; sai chữ ký → 401 |
+| **P2.5.2 — Adapter gửi** | `ChannelAdapter` Messenger: sendText/sendChoices (quick-reply), throttler per-page, `canDeliver` theo cửa sổ 24h. | Gửi được DM + nút; quá 24h → `canDeliver=false` |
+| **P2.5.3 — Join flow** | `GET_STARTED` → resolve identity → `/join` (button list buổi, postback `pjoin:<id>`) → `addMemberToSession` (idempotent) → xác nhận + nội dung CK. | Player join qua nút; roster cập nhật |
+| **P2.5.4 — Reachability 24h + reminder** | Upsert `window_expires_at` mỗi inbound; reminder cron lọc cửa sổ; OTN opt-in (nếu có); HUMAN_AGENT path cho owner bấm. | Nhắc trong 24h chạy; ngoài 24h fallback đúng (web + Zalo) |
+| **P2.5.5 — notifyPlayersPaid + /myclubs** | Thêm Messenger vào `ChannelReachability` multi-kênh; magic-link cho web view. | Xác nhận trả tiền tới đúng kênh khả dụng |
+| **P2.5.6 — Onboarding web** | FB Login + chọn Page + subscribe webhook + token refresh/revoke detection. | Owner lạ nối Page tới khi join được, không đụng env |
 
-**Đường tới hạn (critical path):** App Review + Business Verification → bắt đầu ngay từ P4.8.0 vì nó chặn mọi thứ khác.
+**Đường tới hạn (critical path):** App Review + Business Verification → bắt đầu ngay từ P2.5.0 vì nó chặn mọi thứ khác.
 
 ---
 
@@ -225,14 +227,14 @@ sequenceDiagram
 
 | # | Rủi ro / Câu hỏi | Mitigation / Trạng thái |
 |---|---|---|
-| R1 | **Nhắc nợ ngoài 24h không khả thi (VN)** — tính năng lõi yếu trên Messenger | Chiến lược A+C (+B nếu OTN mở); nói rõ kỳ vọng cho chủ CLB; định vị Messenger là kênh "join + xác nhận", Telegram/Zalo gánh nhắc |
-| R2 | **App Review chậm/bị từ chối** | Nộp sớm; chuẩn screencast use-case rõ ràng; có sản phẩm Telegram/Zalo chạy thật để minh hoạ |
+| R1 | **Nhắc nợ ngoài 24h không khả thi (VN)** — tính năng lõi yếu trên Messenger | Chiến lược A+C (+B nếu OTN mở); nói rõ kỳ vọng cho chủ CLB; định vị Messenger là kênh "join + xác nhận", **web + Zalo** gánh nhắc |
+| R2 | **App Review chậm/bị từ chối** | Nộp sớm; chuẩn screencast use-case rõ ràng; có sản phẩm Zalo/web chạy thật để minh hoạ; degrade → OTP `/link` thủ công (DD-33) |
 | R3 | **Không merge được bằng SĐT** (no contact share) | Chỉ dùng OTP `/link` + owner duyệt (AUDIT C3); chấp nhận tỉ lệ merge thấp hơn |
 | R4 | **PSID page-scoped** — cùng người ở 2 club = 2 PSID khác | Đúng kỳ vọng multi-tenant; merge xuyên-Page qua FB Login app-scoped id (optional) hoặc OTP |
 | R5 | **Page token bị thu hồi** | webhook-drift/health cron → báo owner nối lại; blast-radius gói trong 1 Page |
-| OD-A | OTN còn mở ở VN không? | ⬜ Spike P4.8.0 |
-| OD-B | Utility Templates khả dụng VN + có hợp "nhắc đóng phí"? | ⬜ Spike P4.8.0 |
-| OD-C | Có cần Messenger ở MVP, hay để sau Telegram+Zalo? | ⬜ Quyết định sản phẩm — xem khuyến nghị dưới |
+| OD-A | OTN còn mở ở VN không? | ⬜ Spike P2.5.0 |
+| OD-B | Utility Templates khả dụng VN + có hợp "nhắc đóng phí"? | ⬜ Spike P2.5.0 |
+| OD-C | Có cần Messenger ở MVP? | ✅ **Có — kênh phase-1 (DD-37, thay DD-09)**; xem khuyến nghị dưới |
 
 ---
 
@@ -240,20 +242,20 @@ sequenceDiagram
 
 1. **Có làm được** — Messenger lắp vào kiến trúc hiện tại sạch sẽ (1 enum + 1 bảng + 1 adapter + 1 webhook). Phần code **không phải** chỗ khó.
 2. **Chỗ khó là chính sách 2026**, không phải kỹ thuật. Messenger **mạnh ở join (nút bấm) và xác nhận trong ngày**, nhưng **yếu ở nhắc nợ chủ động** — đúng tính năng giá trị nhất.
-3. **Thứ tự nên làm:** hoàn thiện Telegram (mạnh nhất, group-first) → Zalo (phổ biến VN) → **Messenger sau cùng** như kênh bổ sung cho CLB có cộng đồng sống trên FB. Tái dùng ~90% khung Zalo.
-4. **Bắt đầu App Review + Business Verification NGAY** nếu chắc làm Messenger — đó là đường tới hạn duy nhất.
-5. **Định vị lại với chủ CLB:** trên Messenger, "join + xác nhận" tự động tốt; "nhắc nợ" là best-effort trong 24h hoặc owner bấm — không hứa nhắc tự động vô hạn như Telegram.
+3. **Thứ tự phase-1:** Zalo (P2, phổ biến VN) → **Messenger (P2.5)** cho CLB có cộng đồng sống trên FB, tái dùng ~90% khung Zalo. *(Telegram đã loại khỏi phạm vi — DD-37.)*
+4. **Bắt đầu App Review + Business Verification NGAY** — đó là đường tới hạn duy nhất của lịch phase-1.
+5. **Định vị với chủ CLB:** trên Messenger, "join + xác nhận" tự động tốt; "nhắc nợ" là best-effort trong 24h hoặc owner bấm — ngoài 24h **web + Zalo** gánh; không hứa nhắc tự động vô hạn.
 
 ---
 
-## Nguồn (chính sách Messenger 2026)
+## Nguồn (chính sách Messenger — re-verify khi build/GA)
 
-- [Messenger Platform Changelog — Meta for Developers](https://developers.facebook.com/docs/messenger-platform/changelog/) — "Effective April 27, 2026 ... deprecated Message Tags ... receive error code 100 ... Migrate to Utility Templates or Marketing Messages API"; Human Agent tag = 7 ngày, người thật.
+- [Messenger Platform Changelog — Meta for Developers](https://developers.facebook.com/docs/messenger-platform/changelog/) — nguồn primary để kiểm tra standard window và cơ chế outside-window còn eligible tại thời điểm build/GA; không hardcode một Tag/template là luôn khả dụng.
 - [How To Comply with Facebook Messenger Rules in 2026 — Chatimize](https://chatimize.com/facebook-messenger-policy/) — quy tắc 24h, OTN, Marketing Messages (region-dependent 2026), HUMAN_AGENT 7 ngày.
 - [Meta's deprecation of the Message Tags feature — Manychat](https://community.manychat.com/product-updates/meta-s-deprecation-of-the-message-tags-feature-on-messenger-9010) — Marketing Messages tắt 10/02/2026 trừ AU/EU/JP/KR/UK; cooldown subscription_token 24h→48h từ 01/09/2025.
 - [Group and Chat Bots — Meta Workplace docs](https://developers.facebook.com/docs/workplace/bots/) — group chat bot chỉ tồn tại trên Workplace, không phải Messenger thường.
 
-*Tài liệu này là companion cho `tdd.md`/`prd.md`; khi conflict, giữ thứ tự ưu tiên AUDIT → reconciliation → saas-implementation-plan → BRD, và cập nhật `platform` enum thành 3 giá trị.*
+*Tài liệu này là companion cho `tdd.md`/`prd.md`; khi conflict, giữ thứ tự ưu tiên AUDIT → reconciliation → saas-implementation-plan → BRD, và cập nhật `platform` enum để có giá trị `messenger` (phase-1 — DD-37; Telegram loại khỏi phạm vi, enum có thể giữ `telegram` forward-compat trong `schema.ts`).*
 
 ---
 
@@ -261,5 +263,7 @@ sequenceDiagram
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 15/07/2026 | v2.1 | Chuẩn hoá policy contract: standard window 24h; outside-window chỉ khi Meta eligibility/approval cho phép; MVP fail-closed sang web + Zalo. Bỏ claim tuyệt đối rằng ngoài cửa sổ không còn bất kỳ cơ chế nào. |
+| 10/07/2026 | v2.0 | **Promote phase-1 (DD-37 ✅, thay DD-09):** post-MVP/P4.8.x → **phase-1/P2.5.x**; nhắc chính = **web + Zalo** (bỏ Telegram); OD-C ✅; refs BRD v3.4. Ghi nhận ràng buộc cửa sổ 24h · outside-window policy · App Review · Page per-club. Auth-link Facebook = DD-33 🟡. |
 | 19/06/2026 | — | Thêm Changelog table |
 | 18/06/2026 | v1.0 | Thiết kế kênh Messenger post-MVP |

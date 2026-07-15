@@ -2,6 +2,8 @@
 
 **Cho:** Solo dev + AI co-pilot + Founder (PM/QA/dogfood)
 **Căn cứ:** BRD v3.1 · PRD v2.1 · TDD v2.1 · ROADMAP v2.2
+
+> ⚠️ **Version note (15/07/2026):** playbook ở baseline **v3.1/v2.1/v2.2**. Nguồn hiện hành: **BRD v3.5 · PRD v2.4 · TDD v2.4 · ROADMAP v2.7 · `../standards/decisions.md` v1.32**; chưa reflect pivot kênh (DD-37) + cụm session-model/social (DD-41–48). Khi lệch, ưu tiên ROADMAP/TDD hiện hành.
 **Mục đích:** biến 8 phase / 19 module trên ROADMAP thành một guồng execute *dễ quản lý* và *khó sai* cho một người.
 
 ---
@@ -81,10 +83,10 @@ Thiếu 1 trong 5 → module vẫn `in_progress`, không được tính %.
 ## 5. Thứ tự build (critical path — không thương lượng)
 
 ```
-P0–P1 Foundation ─▶ P2 TG-tenant ─▶ P3 CK-reconcile ─▶ P3 Migrate #1
+P0–P1 Foundation ─▶ P2 Zalo-tenant (Messenger P2.5) ─▶ P3 CK-reconcile ─▶ P3 Migrate #1
    ─▶ P3.5 Identity ─▶ P4 Web+Sync ─▶ P4.3 Marketplace ─▶ P4.5–4.7 Player
    ─▶ P5 Billing ─▶ P6 Harden
-                         (P4.8 Messenger: post-MVP, tách nhánh, chỉ khi quyết)
+                         (Messenger P2.5: phase-1 nhưng phụ thuộc App Review, tách nhánh)
 ```
 
 Lý do thứ tự này *đúng* và bạn nên bám: mỗi node là **prerequisite cứng** của node sau (xem Dependency Map TDD §3 / ROADMAP). Đừng nhảy cóc làm marketplace trước khi có sync engine, hay làm billing trước khi có tenant thật để thu. Cám dỗ lớn nhất là nhảy sang phần "vui" (web UI, discovery) — đừng; không có móng RLS + ledger thì phần vui là nợ kỹ thuật chờ nổ.
@@ -139,8 +141,8 @@ Sau đó theo critical path: M4 → M5 (killer) → M6 (dogfood) → …
 - **Quên `SET LOCAL` ở đường worker.** Scheduler/dispatcher phải quay lại tenant context trước khi đọc/ghi; đừng cấp `BYPASSRLS` toàn cục cho process (TDD §3.4). Test Worker/RLS gate.
 - **Cho `pay_code` vào memo quá sớm.** P3 phát hành memo **name-based**; `pay_code`/VietQR chỉ phát cho player từ P4 sau khi rollout+migration+test nhánh đó xong (TDD §10.5).
 - **Project ra surface trước khi command/outbox idempotent.** Sai thứ tự này = roster "nhảy lùi" và double-notify. Outbox + `commandId`/`event.id` dedupe phải có *trước* khi bật projector thật.
-- **Coi `free_web` như plan trả phí.** `free_web` (0đ) vào thẳng `active` vô thời hạn — không trial/past_due/suspended vì non-payment (BRD FR-9.1, DD-03). Đừng để billing cron đụng nó.
-- **Để Messenger (P4.8) chen vào MVP.** Chặn bởi App Review Meta; tách nhánh, không khoá critical path.
+- **Coi plan `free` như plan trả phí.** Authority = **DD-29** (logical plans `free`/`host_pro`, thay DD-03). Plan `free` (0đ) vào thẳng `active` vô thời hạn — không trial/past_due/suspended vì non-payment (BRD FR-9.1). Đừng để billing cron đụng nó. *(Live schema còn key legacy `free_web` cho tới khi migration DD-29 đổi CHECK → `('free','host_pro')`; đừng dùng `free_web` làm vocabulary.)*
+- **Để Messenger (P2.5, App Review) khoá critical path.** Là phase-1 nhưng phụ thuộc App Review Meta; tách nhánh, không chặn phần MVP còn lại.
 
 ---
 

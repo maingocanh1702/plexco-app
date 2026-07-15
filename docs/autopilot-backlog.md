@@ -17,8 +17,8 @@ refine (grep code thật) trước khi promote thành manifest.
 > `docs/autopilot-templates/phase1-fable5-orchestrator.md` chạy backlog 20 slice tuần tự
 > (S1 monorepo → S2 core-lift → S3 db-RLS → S4 auth → S5 session → S6 sync-engine → S7 reconcile →
 > S8 identity-merge → S9-S12 web PWA + marketplace → S13 cross-club → S14 billing → S15 host-pro-auto →
-> S16 reminders-auto → S17 TG → S18 Zalo → S19 club-assistant → S20 polish; chừa Messenger — Meta App
-> Review). Posture `FULL_AUTO_MONEY: yes` → mọi slice tự merge sau 2× Codex clean; guard cứng: không
+> S16 reminders-auto → **S17 Zalo → S18 Messenger** (Telegram bỏ khỏi phạm vi — DD-37; Messenger cần Meta
+> App Review) → S19 club-assistant → S20 polish). Posture `FULL_AUTO_MONEY: yes` → mọi slice tự merge sau 2× Codex clean; guard cứng: không
 > merge khi còn finding tiền chưa sạch → HALT `FOUNDER_MERGE_GATE`. S19 có DD-gate (DD-16..28 phải ✅).
 > Các task idea dưới đây là feature-level (tham chiếu chéo với backlog orchestrator).
 
@@ -37,6 +37,16 @@ notes: <link spec>
 ```
 
 ---
+
+## task: auth-provider-google-email-swap
+title: Replace Telegram-era web auth with Google OAuth + email/password while preserving SI-1..SI-8
+status: idea
+risk: P1
+change_class: auth-feature
+depends_on: []
+invariants: [auth, identity, schema, build-config]
+scope: []
+notes: DD-13/DD-37 + `docs/features/feature_web_auth_onboarding.md` + `docs/features/BE/auth-security-invariant-table.md`. Auth v3 Telegram-era is already merged; this is a provider-port, not a greenfield auth rewrite. **NOT launcher-ready:** run live impact/prescan, pin password credential schema + provider adapter boundary, then author manifest/slice doc/launcher before register. Preserve fail-closed SI-1..SI-8 and remove `TELEGRAM_BOT_TOKEN` only after route/test replacement lands.
 
 ## task: feature-identity
 title: Account/member identity (link, merge, claim) — nền cho mọi feature khác
@@ -97,6 +107,7 @@ depends_on: [monorepo-scaffold]
 invariants: [build-config]
 scope: [infra/fly.toml, .github/workflows/ci.yml]
 manifest: docs/autopilot-manifests/infra-fly-provisioning-secret-boundary.json
+merged_probe: .github/workflows/ci.yml :: ^  provision-production-db:
 notes: Codex S1 round-07/08 P1s — (a) `[deploy] release_command` would force
   DATABASE_URL_MIGRATION into Fly APP secrets, injected into every runtime
   machine, handing the DDL credential to the HTTP surface (breaks
@@ -107,7 +118,9 @@ notes: Codex S1 round-07/08 P1s — (a) `[deploy] release_command` would force
   db-postgres-drizzle-rls; THIS slice covers the Fly-side secret boundary:
   CI job / one-shot machine / separate minimal app holding the migration
   secret, reusing entrypoint role `provision`. Blocks FIRST DEPLOY only —
-  not S2..S20 development.
+  not S2..S20 development. Completion contract pins the CI job key
+  `provision-production-db`: migrations run before pg-boss provisioning and
+  `DATABASE_URL_MIGRATION` stays job-scoped, never a Fly app secret.
 
 ## task: core-matcher-grouped-amount-parsing
 title: splitNameAmount misparses grouped trailing amounts with a non-zero final group
@@ -117,6 +130,7 @@ change_class: bugfix
 depends_on: []
 invariants: [money-model, shared-core]
 scope: [packages/core/src/payments-logic.ts, packages/core/src/payments-logic.test.ts]
+merged_probe: packages/core/src/payments-logic.test.ts :: Wang 110 500
 notes: Codex core-lift-v3 round-05 — manual `/transfer`/`/cash` args using spaces
   as thousands separators misparse when the final group is non-zero, e.g.
   "Wang 110 500" -> {name:"Wang 110", amount:500} instead of amount 110500.
@@ -140,6 +154,7 @@ change_class: schema-bugfix
 depends_on: []
 invariants: [schema]
 scope: [packages/db/migrations/0000_roles_extensions.sql]
+merged_probe: packages/db/migrations/0000_roles_extensions.sql :: EXCEPTION[[:space:]]+WHEN[[:space:]]+duplicate_object
 notes: Codex auth-onboarding-v3 round-08 — migration 0000's role creation for
   app/app_worker/readonly is `IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE
   rolname = '<role>') THEN CREATE ROLE <role> ...; END IF;`, a check-then-act

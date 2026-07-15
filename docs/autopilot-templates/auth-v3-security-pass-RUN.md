@@ -1,9 +1,13 @@
 # RUN — Auth security-design pass (auth-onboarding v3)
 
+> ⛔ **SUPERSEDED — DO NOT RUN AS-IS (2026-07-10).** Auth-onboarding **v3 đã MERGE vào `main@1eb6f60`** (`5b1193b`); migrations `0012/0013` + auth code (Telegram-era) đã committed. Tip `3717659` + "tạo `feat/auth-onboarding-v3` từ base cũ / build from zero" **KHÔNG còn đúng**. Ngoài ra **DD-37** bỏ Telegram → auth phase-1 = **Google OAuth + email/password** (DD-13 ✅), nên pass này phải **soạn lại** thành: (1) audit bất biến SI-1..SI-8 trên code đã merge; (2) **swap provider** Telegram Login → Google/email. Xem `docs/standards/BUILD-STATUS.md` + `BE/auth-security-invariant-table.md`. Giữ file làm tham chiếu quy trình, **không chạy nguyên trạng**.
+
 > **Model:** Sonnet 5 (1M). **cwd:** `.autopilot/worktrees/phase1-fable5` (branch `feat/phase1-fable5` @ `3717659`).
 > **Posture:** NORMAL INTERACTIVE. Autopilot làm **PHASE A (design) → STOP chờ founder chốt → PHASE B (re-slice)**.
 > Plan nguồn: `docs/proposals/auth-security-design-pass-plan-2026-07-06.md` (approved 2026-07-06).
 > Paste khối `text` dưới vào Claude Code trong worktree.
+>
+> ⚠️ **v3.4 / DD-37 + DD-13 (10/07/2026):** OQ-1 ĐÃ CHỐT — phase-1 web-auth = **Google OAuth + email/password** (Telegram Login **bỏ**, DD-37); link Facebook (DD-33 🟡) + Zalo (DD-14 ⬜). **SI-2 keyed-hash áp cho `google.sub` / email** (không còn `telegram:id`). Coi các nhắc "TG Login" bên dưới = **Google/email**.
 
 ```text
 AUTH SECURITY-DESIGN PASS — auth-onboarding v3 — NORMAL INTERACTIVE FLOW
@@ -28,6 +32,7 @@ CRITICAL LAYER DISTINCTION (v2 blurred this — do not repeat):
   web-auth identity  = account_identities.platform_user_hash        (schema.ts L129 / migration 0001 L112; PLAIN text today)
   channel identity   = channel_identities.platform_user_lookup_hash (schema.ts L60; keyed-KMS mandated)
   round-09 is on the WEB-AUTH column → keying it is a NEW decision (gap), not drift from the channel mandate.
+  (DD-37: phase-1 web-auth provider = Google `sub` / email — the keyed hash covers those, NOT telegram:id.)
 
 ======================= PHASE A — DESIGN (do, then STOP) =======================
 
@@ -46,7 +51,7 @@ A3. Draft a DD-31 entry (proposal 🟡) for docs/standards/decisions.md: "Auth s
     matrix" — the executable invariants + the 4 gaps. Do NOT mark ✅ yet.
 
 A4. Surface these OPEN QUESTIONS for the founder — DO NOT self-decide:
-    OQ-1: DD-13 scope — Phase-1 auth = TG Login + web-account fallback ONLY, or add Google/email-password now?
+    OQ-1: RESOLVED (DD-13 ✅, DD-37) — Phase-1 auth = **Google OAuth + email/password** (Telegram Login REMOVED per DD-37); link Facebook (DD-33 🟡) + Zalo (DD-14 ⬜). Implement Google/email; no longer open.
     OQ-2: KMS/secret source — which store provides the keyed-hash key + login-state secret (env / secret manager)?
     OQ-3: Record DD-31 now, or keep it proposal until v3 merges?
 
@@ -59,7 +64,7 @@ B1. Apply founder answers. Pin ONLY the 4 real gaps into BE/feature_web_auth_onb
     rewrite the parts already mandating rotation / channel keyed-hash / HMAC. Finalize DD-31 per OQ-3.
 
 B2. Author the slice manifest for auth-onboarding-v3 (cp _TEMPLATE.json). Scope MUST include: the 3 SI-1
-    artifacts + telegram-login keyed hash (SI-2, web-auth column) + tenant-filter (SI-3) + logout (SI-4)
+    artifacts + web-auth keyed hash for Google `sub` / email (SI-2, web-auth column — DD-37: replaces telegram:id) + tenant-filter (SI-3) + logout (SI-4)
     + rate-limit (SI-5) + creation-race/idempotency (SI-6) + session rotation (SI-7) + onboarding_steps
     dedupe 0013 (SI-8).
 
@@ -67,7 +72,7 @@ B3. git checkout -b feat/auth-onboarding-v3 from feat/phase1-fable5 tip (3717659
     to every invariant (incl. superuser-harness for SI-3). Use feat/auth-onboarding-v2 @ 7407caa as
     reference — this is coherent re-implementation to the table, not throwaway.
 
-B4. "$CODEX" review --base feat/phase1-fable5 | tee .autopilot/state/auth-onboarding-v3/codex/round-NN.txt
+B4. "$CODEX" review -c model="gpt-5.6-sol" --base feat/phase1-fable5 | tee .autopilot/state/auth-onboarding-v3/codex/round-NN.txt
     STRICT auth gate: zero auth/security/PII finding regardless of P-level; require 2 CONSECUTIVE CLEAN
     rounds. If a genuine NEW P1 surfaces (not a style nit) → STOP and report (do not grind past it).
 

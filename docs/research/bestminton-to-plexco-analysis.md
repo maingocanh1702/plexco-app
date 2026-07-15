@@ -76,12 +76,12 @@ Các module này **pure logic, không phụ thuộc DB hay transport** — lift 
 
 | Module | File | Size | Lift Effort | Notes |
 |--------|------|:----:|:-----------:|-------|
-| **Name matching** | [matching.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/matching.ts) | 552 lines | ⚡ Trivial | Core fuzzy match + normalize VN names + alias learning + confidence scoring. **Thay `badminton` stopwords bằng configurable sport keywords** |
-| **Date parsing** | [dates.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/dates.ts) | 151 lines | ⚡ Trivial | `parseFlexibleDate`, `parseMoney`, `parseTimeAtStart`, `fmtDate` — 100% pure |
-| **VietQR** | [vietqr.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/vietqr.ts) | 24 lines | ⚡ Trivial | `buildVietQrUrl` — no deps, pure URL builder |
-| **i18n** | [i18n.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/i18n.ts) | 33 lines | ⚡ Trivial | `t(vi, en)`, `setLang`, `parseLang`. Plexco cần per-tenant lang → nâng thành context-based |
-| **Format/display** | [format.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/format.ts) | 223 lines | 🔧 Minor | `fmtMoney`, `esc`, `progressView`, `sessionStatusText`. **Tách display logic khỏi `db` import** |
-| **Pay core** | [pay-core.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/pay-core.ts) | 231 lines | 🔧 Minor | Self-pay / combo-pay compute. **Tách khỏi `db` import → inject repo** |
+| **Name matching** | [matching.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/matching.ts) | 552 lines | ⚡ Trivial | Core fuzzy match + normalize VN names + alias learning + confidence scoring. **Thay `badminton` stopwords bằng configurable sport keywords** |
+| **Date parsing** | [dates.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/dates.ts) | 151 lines | ⚡ Trivial | `parseFlexibleDate`, `parseMoney`, `parseTimeAtStart`, `fmtDate` — 100% pure |
+| **VietQR** | [vietqr.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/vietqr.ts) | 24 lines | ⚡ Trivial | `buildVietQrUrl` — no deps, pure URL builder |
+| **i18n** | [i18n.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/i18n.ts) | 33 lines | ⚡ Trivial | `t(vi, en)`, `setLang`, `parseLang`. Plexco cần per-tenant lang → nâng thành context-based |
+| **Format/display** | [format.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/format.ts) | 223 lines | 🔧 Minor | `fmtMoney`, `esc`, `progressView`, `sessionStatusText`. **Tách display logic khỏi `db` import** |
+| **Pay core** | [pay-core.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/pay-core.ts) | 231 lines | 🔧 Minor | Self-pay / combo-pay compute. **Tách khỏi `db` import → inject repo** |
 
 **Total liftable pure logic: ~1,200 lines** — đây là phần giá trị nhất, đã battle-tested với ~85% auto-match rate.
 
@@ -89,15 +89,15 @@ Các module này **pure logic, không phụ thuộc DB hay transport** — lift 
 
 | Module | File | Size | Adapt Effort | Notes |
 |--------|------|:----:|:------------:|-------|
-| **Payment processing** | [payments.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/payments.ts) | 37k | 🔨 Medium | Core flow: dedupe → session select → match → allocate → notify. **Cần thay SQLite calls bằng Drizzle + tenant-scoped queries + ledger model** |
-| **Payment logic** | [payments-logic.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/payments-logic.ts) | 6.4k | 🔧 Minor | Amount classification (mark-all/need-more/too-few). **Mostly pure, minor db deps** |
-| **SePay provider** | [sepay.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/providers/sepay.ts) | 53 lines | 🔧 Minor | Webhook handler: auth + parse → `recordIncomingTransaction`. **Cần thêm tenant routing (`/webhook/sepay/:token`)** |
-| **ApiPay provider** | [apipay.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/providers/apipay.ts) | ~80 lines | 🔧 Minor | HMAC-SHA256 verify + parse. **Same: thêm tenant routing** |
-| **Notifications** | [notify.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/notify.ts) | ~6k | 🔨 Medium | Fan-out TG+Zalo. **Cần outbox pattern thay direct send** |
-| **Reminder** | [reminder.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/reminder.ts) | ~12k | 🔨 Medium | Cron jobs: nhắc nợ, weekly, backup. **Cần pg-boss thay node-cron, loop qua tenants** |
-| **LLM (photo import)** | [llm.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/llm.ts) | ~16k | 🔧 Minor | Multi-provider vision API. **Đã transport-agnostic, lift dễ** |
-| **Banks** | [banks.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/banks.ts) | ~7k | 🔨 Medium | Multi-bank management. **Cần tenant-scope** |
-| **Members/Merge** | [merge-members.ts](file:///Users/maingocanh/Projects/Bestminton%20Club%20Payment%20check%20bot/src/merge-members.ts) | ~3.7k | 🔨 Medium | Merge logic. **Plexco cần Person/ChannelIdentity model phức tạp hơn** |
+| **Payment processing** | [payments.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/payments.ts) | 37k | 🔨 Medium | Core flow: dedupe → session select → match → allocate → notify. **Cần thay SQLite calls bằng Drizzle + tenant-scoped queries + ledger model** |
+| **Payment logic** | [payments-logic.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/payments-logic.ts) | 6.4k | 🔧 Minor | Amount classification (mark-all/need-more/too-few). **Mostly pure, minor db deps** |
+| **SePay provider** | [sepay.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/providers/sepay.ts) | 53 lines | 🔧 Minor | Webhook handler: auth + parse → `recordIncomingTransaction`. **Cần thêm tenant routing (`/webhook/sepay/:token`)** |
+| **ApiPay provider** | [apipay.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/providers/apipay.ts) | ~80 lines | 🔧 Minor | HMAC-SHA256 verify + parse. **Same: thêm tenant routing** |
+| **Notifications** | [notify.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/notify.ts) | ~6k | 🔨 Medium | Fan-out TG+Zalo. **Cần outbox pattern thay direct send** |
+| **Reminder** | [reminder.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/reminder.ts) | ~12k | 🔨 Medium | Cron jobs: nhắc nợ, weekly, backup. **Cần pg-boss thay node-cron, loop qua tenants** |
+| **LLM (photo import)** | [llm.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/llm.ts) | ~16k | 🔧 Minor | Multi-provider vision API. **Đã transport-agnostic, lift dễ** |
+| **Banks** | [banks.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/banks.ts) | ~7k | 🔨 Medium | Multi-bank management. **Cần tenant-scope** |
+| **Members/Merge** | [merge-members.ts](https://github.com/maingocanh1702/bestmintonclub-payment-check-bot/blob/main/src/merge-members.ts) | ~3.7k | 🔨 Medium | Merge logic. **Plexco cần Person/ChannelIdentity model phức tạp hơn** |
 
 ### 🔴 Cannot Lift — Plexco-only (New build)
 

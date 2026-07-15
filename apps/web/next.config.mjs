@@ -1,6 +1,14 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Pin tracing to this monorepo; do not let unrelated lockfiles above the
+  // repository make Next.js infer /Users/maingocanh as the workspace root.
+  outputFileTracingRoot: repoRoot,
   // Workspace packages are consumed as TypeScript source (see their `exports`).
   transpilePackages: ["@plexco/core", "@plexco/db"],
   webpack: (config) => {

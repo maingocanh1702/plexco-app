@@ -1,10 +1,14 @@
 # Feature: Player View (Person-self) — Backend Tech Spec
 
 > **Canonical phase:** P4.6  
-> **Version:** 2.0 · 2026-06-19  
+> **Version:** 2.2 · 2026-07-13
 > **Status:** Reviewed  
 > **Product spec:** `../feature_player_view.md`  
-> **References:** `../../product/TDD.md` §3.4/§4 (person-self contract)
+> **References:** `../../product/TDD.md` §3.4/§4 (person-self contract) · `../../standards/decisions.md` DD-37
+
+> **DD-48 boundary:** endpoints `/api/me*` chỉ self. Cross-user social profile dùng service/DTO trong `feature_user_settings_tech` §6; host operational reads tiếp tục qua tenant-scoped membership/roster authz. Không thêm `:personId` vào player-view API và không share serializer có tiền/PII.
+
+> **Cập nhật v2.1 (DD-37 ✅, 2026-07-10):** magic-link/bot surfaces phase-1 = **Zalo + Facebook Messenger** (bỏ Telegram); đăng nhập web = Google/email (DD-13). Person-self contract không đổi.
 
 ---
 
@@ -29,7 +33,7 @@ CREATE TABLE magic_links (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   hash text NOT NULL UNIQUE,
   person_id uuid NOT NULL REFERENCES persons(id),
-  channel text NOT NULL,  -- 'zalo', 'telegram'
+  channel text NOT NULL,  -- 'zalo', 'messenger' (phase-1, DD-37); 'telegram' legacy tenant-1
   session_id uuid REFERENCES web_sessions(id),
   expires_at timestamptz NOT NULL,
   used_at timestamptz,
@@ -38,7 +42,7 @@ CREATE TABLE magic_links (
 CREATE INDEX idx_magic_links_hash ON magic_links(hash) WHERE used_at IS NULL;
 ```
 
-Uses existing tables: `persons`, `memberships`, `session_roster`, `charges`, `allocations`.
+Uses existing tables: `persons`, `memberships`, `players`, `charges`, `payment_allocations`.
 
 ### Edge Cases (Backend)
 
@@ -90,15 +94,15 @@ Uses existing tables: `persons`, `memberships`, `session_roster`, `charges`, `al
 | Field | Source | Allowed |
 |-------|--------|---------|
 | Own memberships | memberships WHERE person_id = self | ✅ role, status, club display name |
-| Own sessions | session_roster WHERE person_id = self | ✅ session info, starts_at, status |
-| Own charges | charges WHERE person_id = self | ✅ amount, status, allocations |
-| Other player roster | session_roster WHERE person_id ≠ self | ❌ NEVER |
+| Own sessions | `players` JOIN `memberships` WHERE `memberships.person_id = self` | ✅ session info, starts_at, player status |
+| Own charges | `charges` JOIN `memberships` WHERE `memberships.person_id = self` | ✅ amount, status, `payment_allocations` |
+| Other player roster | `players` joined to membership of another person | ❌ NEVER |
 | Admin data | tenant settings, other charges | ❌ NEVER |
 
 ### Magic Link Flow
 
 ```text
-Bot conversation (Zalo/TG) → Verify conversation → Issue magic link
+Bot conversation (Zalo/Messenger) → Verify conversation → Issue magic link
     → Hash stored, expires in 5min, single-use, person+channel bound
     → Player clicks → Consume hash → Create web session → Redirect to /me
 ```
@@ -136,8 +140,8 @@ Bot conversation (Zalo/TG) → Verify conversation → Issue magic link
 
 | # | Test | Setup | Expected |
 |---|------|-------|----------|
-| 1 | TG auth → /me | Login → view | Own data shown |
-| 2 | Magic link E2E | Zalo → magic link → /me | Works |
+| 1 | Web auth → /me | Google/email login → view | Own data shown |
+| 2 | Magic link E2E | Zalo/Messenger → magic link → /me | Works |
 | 3 | Merge → view update | Merge 2 persons → /me | Combined |
 | 4 | Realtime update | Join session → /me update | SSE received |
 
@@ -147,8 +151,8 @@ Bot conversation (Zalo/TG) → Verify conversation → Issue magic link
 
 ### Rollout
 
-1. TG-authenticated /me only
-2. Magic link support
+1. Web-authenticated /me only (Google/email — DD-13)
+2. Magic link support (Zalo/Messenger)
 3. Realtime topic
 4. Cross-club summary
 
@@ -165,3 +169,5 @@ Bot conversation (Zalo/TG) → Verify conversation → Issue magic link
 |---|---|---|
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), DDL, 12 edge cases, DTO allowlist, 20 tests |
+| 2026-07-10 | v2.1 | **DD-37 ✅:** magic-link channels = Zalo/Messenger (bỏ Telegram); /me web auth = Google/email (DD-13). Cập nhật `magic_links.channel` comment, Magic Link Flow, rollout, tests. |
+| 2026-07-13 | v2.2 | Person-self query contract dùng canonical `players` + `memberships` và `payment_allocations`; bỏ tên bảng giả `session_roster`/`allocations`. |

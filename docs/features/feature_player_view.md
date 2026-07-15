@@ -2,10 +2,12 @@
 
 > **Canonical phase:** P4.6  
 > **Track:** 👤 Player View  
-> **Version:** 2.0 · 2026-06-19  
+> **Version:** 2.2 · 2026-07-15
 > **Status:** Reviewed  
 > **Prerequisites:** P3.5 identity · P3 ledger · P4 web auth/magic link · P4 sync realtime  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-8 · `../product/PRD.md` FLOW 10 · `../product/TDD.md` §3.4/§4 (person-self contract) · `BE/feature_player_view_tech.md`
+
+> **DD-48 boundary:** `/me` vẫn person-self và không nhận arbitrary person id. Cross-user social profile thuộc `feature_user_settings` (`GET /api/persons/:id/profile`) với DTO riêng; host operational member/roster data đi tenant-scoped path riêng. Không tái dùng `/me` serializer cho hai path đó.
 
 ---
 
@@ -28,8 +30,8 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|
 | PVW-UC-1 | Player (web) | Authenticate + view /me dashboard | Own clubs + sessions + debts summary |
-| PVW-UC-2 | Player (Zalo) | Nhận magic link → open web | Same person view as TG-authenticated |
-| PVW-UC-3 | Player (TG) | `/myclubs` DM command | Concise club/debt/session list |
+| PVW-UC-2 | Player (Zalo) | Nhận magic link → open web | Same person view as Google/email-authenticated web |
+| PVW-UC-3 | Player (Messenger) | Chọn **My Clubs** trong persistent menu | Concise club/debt/session list trong cửa sổ hợp lệ |
 | PVW-UC-4 | System | Join/payment/merge event | Realtime invalidate/refetch own data |
 | PVW-UC-5 | Player | View active club memberships | List with role, status, debt summary |
 | PVW-UC-6 | Player | View upcoming sessions across clubs | Timeline sorted by date |
@@ -67,7 +69,7 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 | Web | /me — join requests | Skeleton list | Pending/approved/rejected list | Error banner | "Không có yêu cầu nào" |
 | Web | Auth required (unauthenticated /me) | — | Login CTA + magic link instructions | — | N/A |
 | Web | Account merged banner | — | "🔄 Tài khoản đã được gộp — dữ liệu cập nhật" | — | N/A |
-| TG Bot | `/myclubs` | "Đang tải..." | Club list + debt + upcoming session per club | "Lỗi" | "Bạn chưa tham gia club nào" |
+| Zalo/Messenger Bot | `/myclubs` (Zalo) · menu (Messenger) | "Đang tải..." | Club list + debt + upcoming session per club | "Lỗi" | "Bạn chưa tham gia club nào" |
 
 ---
 
@@ -75,11 +77,11 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 
 | Entity | Vai trò | Key constraints |
 |--------|---------|-----------------|
-| `persons` | Global identity | Verified via TG/Zalo/web auth |
+| `persons` | Global identity | Verified/linked via web auth (Google/email target) và channel identities Zalo/Messenger; Telegram chỉ legacy |
 | `memberships` | Person ↔ Tenant per club | `UNIQUE(person_id, tenant_id)`, historical kept |
-| `session_roster` | Player in sessions | `session_id`, `person_id` |
-| `charges` | Payment obligations | `person_id`, `session_id`, effective status |
-| `allocations` | Bank tx → charge mapping | `charge_id`, `amount`, attribution |
+| `players` | Player in sessions | `tenant_id`, `session_id`, `membership_id`, `status` |
+| `charges` | Payment obligations | `player_id`, `membership_id`, `session_id`, effective status |
+| `payment_allocations` | Bank tx/manual/cash → charge ledger | `charge_id`, `bank_transaction_id`, `amount`, `source` |
 | `magic_links` | Short-lived web access tokens | `UNIQUE(hash)`, `person_id`, `channel`, `expires_at`, `used_at` |
 
 ---
@@ -116,5 +118,7 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-15 | v2.2 | **DD-37 closure:** active bot use cases chỉ còn Zalo/Messenger; thay TG-authenticated `/myclubs` bằng web-auth + Messenger persistent-menu contract. Telegram chỉ legacy trong domain note. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, /me dashboard screens |
+| 2026-07-13 | v2.1 | Reconcile live schema: `players`, `charges.player_id/membership_id`, `payment_allocations`; auth/channel wording separates target from Telegram legacy. |

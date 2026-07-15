@@ -1,10 +1,12 @@
 # Feature: Host Billing & Tenant Lifecycle — Backend Tech Spec
 
 > **Canonical phase:** P5  
-> **Version:** 2.2 · 2026-06-20
+> **Version:** 2.5 · 2026-07-10
 > **Status:** Reviewed  
 > **Product spec:** `../feature_billing_lifecycle.md`  
-> **References:** `../../standards/business-rules.md`
+> **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-29 · DD-40 · DD-37
+
+> **Cập nhật v2.4 (DD-40 ✅ + DD-37 ✅, 2026-07-10):** §4b capability registry — free = `payment_mark_manual` (tiền mặt/CK thủ công) + `reminders_manual`; host_pro thêm `payment_reconcile_auto` + `reminders_auto` + `assistant_ai_kb` + `crm_dashboard`. Bot kênh free = **Zalo + Facebook Messenger** (bỏ Telegram — DD-37).
 
 ---
 
@@ -28,7 +30,9 @@ Billing ledger **separate schema/table set** from player ledger. Central `author
 ```sql
 CREATE TABLE plans (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  plan_key text NOT NULL CHECK (plan_key IN ('free','host_pro')),  -- DD-29 (thay DD-03 4-tier)
+  plan_key text NOT NULL CHECK (plan_key IN ('free','host_pro')),  -- DD-29 target (thay DD-03 4-tier)
+  -- ⚠️ PENDING MIGRATION: live packages/db/schema.ts vẫn CHECK 4-tier
+  --   ('free_web','telegram','plus_channel','all_channels'). CHECK ('free','host_pro') chưa land — không claim done.
   version integer NOT NULL,
   price integer NOT NULL,
   currency text NOT NULL DEFAULT 'VND',
@@ -62,19 +66,21 @@ CREATE TABLE subscriptions (
 INSERT INTO plans (plan_key, version, price, limits, entitlements) VALUES
   ('free', 1, 0,
      '{"max_clubs": 2, "ai_monthly_question_cap": 0}',
-     '{"capabilities": {"web_app": true, "bot_telegram": true, "bot_zalo": true, "bot_messenger": true,
+     '{"capabilities": {"web_app": true, "bot_zalo": true, "bot_messenger": true,
         "session_management": true, "discovery_marketplace": true,
-        "payment_reconcile_manual": true, "payment_reconcile_auto": false,
+        "payment_mark_manual": true, "payment_reconcile_auto": false,
         "reminders_manual": true, "reminders_auto": false,
         "assistant_ai_kb": false, "crm_dashboard": false}}'),
   ('host_pro', 1, 250000,
      '{"max_clubs": null, "ai_monthly_question_cap": 2000}',
-     '{"capabilities": {"web_app": true, "bot_telegram": true, "bot_zalo": true, "bot_messenger": true,
+     '{"capabilities": {"web_app": true, "bot_zalo": true, "bot_messenger": true,
         "session_management": true, "discovery_marketplace": true,
-        "payment_reconcile_manual": true, "payment_reconcile_auto": true,
+        "payment_mark_manual": true, "payment_reconcile_auto": true,
         "reminders_manual": true, "reminders_auto": true,
         "assistant_ai_kb": true, "crm_dashboard": true}}');
--- Lưu ý: bot_messenger=true nhưng vẫn gated bởi GA Messenger (DD-09/P4.8) bất kể flag.
+-- DD-37: bỏ bot_telegram; kênh free = Zalo + Messenger. bot_messenger=true nhưng
+--   vẫn gated bởi App Review Messenger (DD-37/P2.5) bất kể flag.
+-- DD-40: payment_mark_manual (mark-paid thủ công tiền mặt/CK) = mọi tier; auto = pro.
 
 CREATE TABLE subscription_invoices (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -122,7 +128,7 @@ CREATE TABLE billing_overrides (
 | 1 | Data Integrity | Billing mixed with player ledger | ❌ NEVER — separate tables/schema |
 | 2 | Concurrency | Duplicate billing webhook | `UNIQUE(provider, external_id)` — idempotent |
 | 3 | Concurrency | Duplicate lifecycle job | Row/version lock — no double transition |
-| 4 | Financial | Partial/overpayment | Billing credit/manual review — NOT allocated to player |
+| 4 | Financial | Partial/overpayment | Billing review queue / manual review (KHÔNG có bảng `billing_credits`; đối chiếu qua `billing_allocations`) — NOT allocated to player |
 | 5 | Data Integrity | Double period extension | `UNIQUE(tenant_id, period_key)` — exactly once |
 | 6 | Data Integrity | Retroactive price change | ❌ NEVER — plan version immutable |
 | 7 | Data Integrity | Clock/timezone billing date | UTC billing dates only |
@@ -199,14 +205,13 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 | Capability key | Free | Pro | Ghi chú |
 |---|:--:|:--:|---|
 | `web_app` | ✓ | ✓ | Web app + dashboard |
-| `bot_telegram` · `bot_zalo` | ✓ | ✓ | Kết nối bot kênh (miễn phí — DD-29) |
-| `bot_messenger` | ✓ | ✓ | Cờ bật nhưng vẫn **gated bởi GA Messenger** (DD-09/P4.8) |
+| `bot_zalo` · `bot_messenger` | ✓ | ✓ | Kết nối bot kênh phase-1 (miễn phí — DD-29/DD-37). `bot_messenger` vẫn **gated bởi App Review Messenger** (DD-37/P2.5). *(Telegram đã bỏ — DD-37.)* |
 | `session_management` | ✓ | ✓ | Kèo/roster/waitlist/join |
 | `discovery_marketplace` | ✓ | ✓ | Player-side (cross-club) |
-| `payment_reconcile_manual` | ✓ | ✓ | Xem CK, match/allocate **thủ công**, `/unmatched` |
-| `payment_reconcile_auto` | ✗ | ✓ | **Auto-settle** CK khớp + **auto-notify** player đã trả |
+| `payment_mark_manual` | ✓ | ✓ | **Mark-paid thủ công** tiền mặt/CK (tap/multi-select), audit, idempotent, áp DD-25 confirm (DD-40) |
+| `payment_reconcile_auto` | ✗ | ✓ | **Auto-settle** CK khớp (webhook match tên+tiền+ngày) + **auto-notify** player đã trả |
 | `reminders_manual` | ✓ | ✓ | Host bấm nhắc thủ công |
-| `reminders_auto` | ✗ | ✓ | Nhắc nợ / pre-post-session **tự động theo lịch** |
+| `reminders_auto` | ✗ | ✓ | Nhắc nợ / pre-post-session **tự động theo lịch** (2h→24h→…) |
 | `assistant_ai_kb` | ✗ | ✓ | Club Assistant + KB (DD-16..28) |
 | `crm_dashboard` | ✗ | ✓ | Analytics nâng cao (CRM_DASHBOARD_BRD) |
 
@@ -235,7 +240,7 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 | 9 | Duplicate webhook | Same external_id | Idempotent |
 | 10 | Duplicate lifecycle job | Concurrent workers | One transition |
 | 11 | One invoice per period | Same period_key | UNIQUE conflict |
-| 12 | Partial payment | Amount < due | Billing credit |
+| 12 | Partial payment | Amount < due | Billing review queue (không bảng `billing_credits`) |
 | 13 | Overpayment | Amount > due | Manual review |
 | 14 | Suspended blocks mutation | Admin create session | Blocked |
 | 15 | Suspended allows CK ingest | Player payment | Allowed |
@@ -244,7 +249,7 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 | 18 | Override without expiry | Missing expiry | Rejected |
 | 19 | Plan version immutable | Change price | New version created |
 | 20 | Cross-tenant billing isolation | Tenant A invoice | Not visible to B |
-| 21 | Entitlement gate | Free plan bật `payment_reconcile_auto` | Rejected `PLAN_UPGRADE_REQUIRED` (free chỉ reconcile thủ công); kênh TG/Zalo **được phép** ở free |
+| 21 | Entitlement gate | Free plan bật `payment_reconcile_auto` | Rejected `PLAN_UPGRADE_REQUIRED` (free chỉ `payment_mark_manual`); kênh Zalo/Messenger **được phép** ở free |
 | 22 | Capability config-driven | Set `crm_dashboard:true` cho free trong seed | Free có CRM ngay, không sửa code (gate đọc capability) |
 
 ### Integration Tests
@@ -280,8 +285,9 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 
 | Date | Version | Thay đổi |
 |---|---|---|
-| 2026-06-20 | v2.2 | Fix free lifecycle: tạo `status='active'` không trial/invoice; daily job join `plans.price>0` (skip free); `IssueInvoice` skip price=0; edge #15–17 + test #1b/1c; downgrade paid→free |
+| 2026-07-10 | v2.5 | **Review fixes → canonical billing vocab.** Thêm ghi chú **PENDING MIGRATION** cho `plans` CHECK `('free','host_pro')` (live schema.ts vẫn 4-tier — không claim done). Overpay/partial = billing review queue qua `billing_allocations` (KHÔNG có bảng `billing_credits`); edge #4 + test #12 cập nhật. Schema đã dùng `subscription_invoices`/`billing_transactions`/`billing_allocations`/`billing_overrides` (canonical). |
 | 2026-07-05 | v2.3 | **DD-29 pricing pivot:** `plan_key`→`('free','host_pro')`, host_pro 250k; bỏ `selected_extra_channel`/plus_channel; `entitlements`=**capability flags config-driven** + "Capability registry" (§4b: reconcile_manual free, reconcile_auto+reminders_auto+assistant+crm pro); edge #13/#14 + test #21/#22 đổi sang capability gate. Rename plan_key cũ `free_web`→`free`. |
+| 2026-07-10 | v2.4 | **DD-40 ✅ + DD-37 ✅:** §4b registry — free capability `payment_reconcile_manual` → **`payment_mark_manual`** (mark-paid thủ công tiền mặt/CK, DD-40); host_pro giữ `payment_reconcile_auto`/`reminders_auto`/`assistant_ai_kb`/`crm_dashboard`. Seed bỏ `bot_telegram`; kênh free = **Zalo + Messenger** (DD-37); `bot_messenger` gated bởi App Review (DD-37/P2.5, thay DD-09/P4.8). Test #21 cập nhật. |
 | 2026-06-20 | v2.1 | Add DD-03 plan keys/prices/entitlements and selected extra channel for plus plan |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), DDL, 12 edge cases, suspended action matrix, 20 tests |

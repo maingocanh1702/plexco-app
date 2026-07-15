@@ -5,13 +5,15 @@
 > **Version:** 0.5 · 2026-07-05
 > **Status:** ✅ DD chốt (2026-07-05: DD-16,17,19,20,21,22,23,24,25,26,27,28 ✅) — sẵn sàng promote sang Reviewed để build (S19). **DD-18** (provider LLM + privacy/ToS) ⬜ = gate **GO-LIVE**, không gate build (interface swappable).
 > **Prerequisites:** P4 web/app surface + sync engine · P3.5 identity · P5 billing entitlement · (KHÔNG cần channel adapters — trợ lý chỉ chạy trong app Plexco)
-> **Tài liệu liên quan:** proposal `../proposals/club-ai-bot-knowledge-base.md` · BE `BE/feature_club_assistant_tech.md` · `../standards/decisions.md` DD-16..DD-23 · `../standards/core-db-architecture-principles.md`
+> **Tài liệu liên quan:** proposal `../proposals/club-ai-bot-knowledge-base.md` · BE `BE/feature_club_assistant_tech.md` · `feature_inapp_chat.md` (chat cơ bản, DD-38) · `../standards/decisions.md` DD-16..DD-23 · DD-37/DD-38 · `../standards/core-db-architecture-principles.md`
+
+> **Cập nhật v3.4 (DD-37 + DD-38, 2026-07-10):** hạ tầng `chat_*` (native chat in-app) nay **được dựng sớm ở P4** bởi **DD-38** (chat cơ bản phase-1, người↔người) — trợ lý (pha B, DD-19) **tái dùng** cùng bộ bảng ở P7, không tạo model song song. Kênh phase-1 = **Zalo + Messenger** (Telegram loại — DD-37); trợ lý vẫn **chỉ trong app Plexco**, không trả lời ở kênh ngoài.
 
 ---
 
 ## 1. Mô tả
 
-Mỗi CLB (tenant) bật được một **trợ lý AI** riêng **bên trong app Plexco**. Host nạp **knowledge base** từ FAQ + tài liệu nội bộ (dán text, **upload PDF/DOCX/MD/TXT**, URL) và chọn **tone giọng**. Khi thành viên **@mention** trợ lý trong **kênh chat in-app của CLB** (hoặc dùng panel "Hỏi trợ lý"), trợ lý tự trả lời theo KB bằng **RAG hybrid** (BM25 + semantic + RRF), có trích dẫn, có ngưỡng "chưa biết". Mỗi CLB có **1 KB riêng**, cô lập bằng RLS. **Trợ lý CHỈ hoạt động trong app Plexco — KHÔNG trả lời ở Telegram/Zalo/Messenger.**
+Mỗi CLB (tenant) bật được một **trợ lý AI** riêng **bên trong app Plexco**. Host nạp **knowledge base** từ FAQ + tài liệu nội bộ (dán text, **upload PDF/DOCX/MD/TXT**, URL) và chọn **tone giọng**. Khi thành viên **@mention** trợ lý trong **kênh chat in-app của CLB** (hoặc dùng panel "Hỏi trợ lý"), trợ lý tự trả lời theo KB bằng **RAG hybrid** (BM25 + semantic + RRF), có trích dẫn, có ngưỡng "chưa biết". Mỗi CLB có **1 KB riêng**, cô lập bằng RLS. **Trợ lý CHỈ hoạt động trong app Plexco — KHÔNG trả lời ở kênh ngoài (Zalo/Messenger).** *(Telegram đã loại khỏi phạm vi — DD-37.)*
 
 Hai pha surface, đều trong app Plexco (DD-19): **Pha A** = panel "Hỏi trợ lý" (Q&A trực tiếp, MVP feature). **Pha B** = kênh chat in-app native (channel/message/realtime) có bot là thành viên, trả lời khi @mention.
 
@@ -158,3 +160,4 @@ Hai pha surface, đều trong app Plexco (DD-19): **Pha A** = panel "Hỏi trợ
 | 2026-07-05 | v0.3 | Đồng bộ review fixes BE: retention contract (edge #12 → TTL + purge job); `bot.ask` hai pha + same-tenant FK ở BE §2/§4.2 |
 | 2026-07-05 | v0.4 | Ask-panel bất đồng bộ (202 + SSE/poll); domain model thêm `reason_code`/retention; reword open question "group công khai" → in-app member-only; bump version |
 | 2026-07-05 | v0.5 | Thêm bất biến: **live-context (DD-28) tách khỏi prompt KB** (không trộn dữ liệu vận hành vào KB-RAG) |
+| 2026-07-10 | v0.5 | **DD-37 + DD-38:** bỏ Telegram khỏi danh sách kênh ("không trả lời ở kênh ngoài Zalo/Messenger"); ghi rõ hạ tầng `chat_*` dựng sớm ở **P4 bởi DD-38** (chat cơ bản phase-1), trợ lý pha B tái dùng ở P7 — cùng bộ bảng, không model song song. Trỏ `feature_inapp_chat.md`. |

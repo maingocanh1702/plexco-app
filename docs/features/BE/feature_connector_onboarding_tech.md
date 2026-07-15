@@ -16,8 +16,8 @@ Hai pipeline:
 
 ```text
 CONNECT (owner-initiated, trong onboarding wizard)
-  credential {oauth2 | api_key | bot_token}
-    → validate()           [SePay: token exchange + /me · ApiPay: GET /v2/client/banks · Zalo: getMe*]
+  credential {oauth2 | api_key | enterprise | bot_token}
+    → validate()           [SePay: token exchange + /me · ApiPay BYO: GET /v2/client/banks · ApiPay enterprise: platform-credential auto-provision per-host (DD-30) · Zalo: getMe*]
     → autoRegisterWebhook() [SePay: POST /api/v1/webhooks · ApiPay: POST /v1/client/webhooks · Zalo: setWebhook*]
     → persist provider_connections / bank_accounts / zalo_bots  (status = registered)   ← Tier 1
     → chờ event thật                                            (status = active)        ← Tier 2
@@ -48,19 +48,41 @@ CREATE TABLE provider_connections (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id          uuid NOT NULL REFERENCES tenants(id),
   provider           text NOT NULL CHECK (provider IN ('sepay','apipay')),
-  auth_mode          text NOT NULL CHECK (auth_mode IN ('oauth2','api_key')),
+  auth_mode          text NOT NULL CHECK (auth_mode IN ('oauth2','api_key','enterprise')),
   access_token_enc   bytea,                 -- SePay OAuth (KMS)
   refresh_token_enc  bytea,                 -- SePay OAuth (KMS)
   scope              text,
   token_expires_at   timestamptz,
-  api_access_key_enc bytea,                 -- ApiPay (KMS)
-  api_secret_key_enc bytea,                 -- ApiPay (KMS)
+  api_access_key_enc bytea,                 -- ApiPay BYO api_key (KMS)
+  api_secret_key_enc bytea,                 -- ApiPay BYO api_key (KMS)
   status             text NOT NULL DEFAULT 'connecting'
                      CHECK (status IN ('connecting','registered','active','drift','error','revoked')),
   last_error_code    text,
   created_at         timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, provider)
+  UNIQUE (tenant_id, provider),
+  -- Shape ĐẦY ĐỦ theo (provider, auth_mode) — enforce mọi credential column + chặn cặp không hỗ trợ:
+  CHECK (
+    -- SePay OAuth2: access token bắt buộc; KHÔNG có ApiPay key columns
+    (provider = 'sepay'  AND auth_mode = 'oauth2'
+       AND access_token_enc   IS NOT NULL
+       AND api_access_key_enc IS NULL AND api_secret_key_enc IS NULL)
+    OR
+    -- ApiPay BYO api_key: cả access + secret key bắt buộc; KHÔNG có OAuth columns
+    (provider = 'apipay' AND auth_mode = 'api_key'
+       AND api_access_key_enc IS NOT NULL AND api_secret_key_enc IS NOT NULL
+       AND access_token_enc   IS NULL AND refresh_token_enc IS NULL)
+    OR
+    -- ApiPay ENTERPRISE: MỌI credential column NULL (credential ở platform/KMS, không per-tenant)
+    (provider = 'apipay' AND auth_mode = 'enterprise'
+       AND access_token_enc   IS NULL AND refresh_token_enc  IS NULL
+       AND api_access_key_enc IS NULL AND api_secret_key_enc IS NULL)
+    -- Mọi cặp (provider, auth_mode) khác → vi phạm CHECK (fail-closed)
+  )
 );
+-- ApiPay ENTERPRISE (DD-30 · Phase-1 primary): credential enterprise của PLATFORM lấy từ
+-- secret-manager/KMS ở runtime (KHÔNG lưu trong provider_connections). Row enterprise chỉ
+-- ánh xạ tenant → bank_account đã auto-provision; các cột *_enc = NULL. Auth webhook vẫn
+-- verify per-tenant (token + account) như §receiver.
 
 -- (NEW) Giao dịch OAuth ngắn hạn — PKCE + state, KHÔNG dựa cookie (§4.3)
 CREATE TABLE oauth_transactions (
@@ -335,7 +357,7 @@ function verifyHmacSha256(req, secret: string): boolean {        // ApiPay
 ### Rollout (khớp product §11)
 
 1. **M1** — receiver verify 2 tầng + raw-body HMAC; flip `active` khi event đầu.
-2. **M2** — ApiPay auto-register (`api_key`) + xử lý bank `PENDING`. *(rủi ro thấp nhất, giao trước)*
+2. **M2** — **ApiPay ENTERPRISE auto-provision per-host = Phase-1 PRIMARY (DD-30 ✅ · DD-02)**: platform giữ 1 credential enterprise, tự provision per-host (không bắt host tự lấy `api_key`); BYO `api_key` là fallback. Xử lý bank `PENDING`. *(rủi ro thấp nhất, giao trước)*
 3. **M3** — SePay OAuth2 (cần partner CO-OQ-2) + state/PKCE + refresh job; fallback token mode; tùy chọn poll `/transactions`.
 4. **M4** — Zalo auto `setWebhook` *(chỉ sau khi gỡ CO-OQ-1)* + drift auto re-register.
 5. **M5** — dọn fallback, telemetry, ẩn dần luồng nhập tay.

@@ -1,17 +1,19 @@
 # Feature: Payment Reconciliation — Product/UX Spec
 
-> **Canonical phase:** P3  
-> **Track:** 💰 Payment Reconciliation  
-> **Version:** 1.2 · 2026-06-19  
-> **Status:** Reviewed against BRD v3.1 / PRD v2.1 / TDD v2.1  
-> **Prerequisites:** P0–P1 foundation + P2 tenant routing  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-5 · `../product/PRD.md` FLOW 6/9 + §4.1 · `../product/TDD.md` §3.2/3.6/3.7 · `../standards/business-rules.md` BL-PAY · `../research/player-side-saas-reconciliation.md`
+> **Canonical phase:** P3
+> **Track:** 💰 Payment Reconciliation
+> **Version:** 1.4 · 2026-07-10
+> **Status:** Reviewed against BRD v3.4 / PRD v2.2 / TDD v2.2 — **full-review baseline cũ; light-propagated → current (BRD v3.5/PRD v2.4/TDD v2.4)**
+> **Prerequisites:** P0–P1 foundation + P2 tenant routing
+> **Tài liệu liên quan:** `../product/BRD.md` FR-5 · `../product/PRD.md` FLOW 6/9 + §4.1 · `../product/TDD.md` §3.2/3.6/3.7 · `../standards/decisions.md` DD-40/DD-25 · `../standards/business-rules.md` BL-PAY · `../research/player-side-saas-reconciliation.md`
+
+> **Cập nhật v3.4 (DD-40, 2026-07-10):** **Mark-paid thủ công (tiền mặt/CK, tap/multi-select) mặc định MỌI tier** (kể cả `free`) — áp DD-25 (human-initiated money mutation cần preview+confirm). **Đối soát CK tự động** (webhook match) là tính năng **`host_pro`**.
 
 ---
 
 ## 1. Mục tiêu và nguyên tắc
 
-Tự động nhận chuyển khoản của từng CLB, lưu bền vững, đối chiếu với các khoản phải thu và cho host xử lý phần chưa khớp. Platform không giữ tiền player; ledger chỉ phản ánh giao dịch và phân bổ.
+Nhận & đối soát tiền sân của từng CLB. **Mọi tier**: host **đánh dấu đã trả thủ công** (tiền mặt/CK) bằng tap/multi-select. **`host_pro`**: thêm **tự động nhận chuyển khoản** qua webhook, lưu bền vững, đối chiếu với các khoản phải thu và cho host xử lý phần chưa khớp. Platform không giữ tiền player; ledger chỉ phản ánh giao dịch và phân bổ.
 
 ### Bất biến
 
@@ -35,13 +37,15 @@ Tự động nhận chuyển khoản của từng CLB, lưu bền vững, đối
 | PAY-UC-5 | System | Nhận pay code sau khi P4 rollout | Deterministic match; P3 không phụ thuộc memo chỉ-có-code |
 | PAY-UC-6 | Host | Mở `/unmatched` | Xem transaction còn `unallocated_amount` + lý do |
 | PAY-UC-7 | Host | Gán một CK cho nhiều người/charge | Tạo nhiều manual allocations; tổng không vượt CK |
-| PAY-UC-8 | Host | Ghi nhận tiền mặt `/cash` | Tạo settlement allocation nguồn `cash`; không giả lập bank webhook |
+| PAY-UC-8 | Host (mọi tier) | Ghi nhận tiền mặt `/cash` | Tạo settlement allocation nguồn `cash`; không giả lập bank webhook |
 | PAY-UC-9 | Host | Hoàn tác gán nhầm | Tạo reversal tham chiếu allocation gốc + audit |
-| PAY-UC-10 | System | Retry unmatched | Idempotent worker thử lại transaction còn dư |
+| PAY-UC-10 | System (`host_pro`) | Retry unmatched | Idempotent worker thử lại transaction còn dư |
 | PAY-UC-11 | System | Charge được phủ đủ | Chuyển `paid`, phát `payment.settled` outbox event |
 | PAY-UC-12 | System | Charge chỉ được phủ một phần | Chuyển `partial`, chưa gửi thông báo “đã trả đủ” |
 | PAY-UC-13 | Host | Đổi STK primary | Tạo `pending_change` 24h; QR vẫn dùng STK cũ; notify tất cả kênh đã link |
 | PAY-UC-14 | Host | Cancel pending STK change | Huỷ pending; giữ STK hiện tại |
+| PAY-UC-15 | Host (mọi tier) | **Mark-paid thủ công multi-select** — chọn 1 hoặc nhiều player (tap/multi-select), đánh dấu **tiền mặt** (`cash`) hoặc **CK** (khớp một `bank_transaction` đã ingest → `manual`) | Preview danh sách + tổng tiền → **confirm** (DD-25) → **INSERT `payment_allocations`** cho từng player (tiền mặt → `source='cash'`, không bank txn; CK khớp `bank_transactions` → `source='manual'`) + cập nhật `charges.amount_allocated`/`status`; audit; idempotent |
+| PAY-UC-16 | Host | Bỏ chọn / sửa trước confirm | Preview cập nhật real-time; chỉ ghi ledger sau khi confirm |
 
 ---
 
@@ -67,6 +71,28 @@ Worker reconcile(tenant_id, bank_transaction_id)
 
 **Không auto-split theo `fee × N` nếu chưa xác định được danh tính.** Một CK trả nhiều người phải có pay code xác định hoặc host gán tay.
 
+### 3.1 Mark-paid thủ công (mọi tier — DD-40)
+
+Không phụ thuộc webhook. Áp dụng cho **cả `free`**:
+
+```text
+Host mở roster/danh sách nợ (bot Zalo / Messenger / web)
+  → tap chọn 1 hoặc NHIỀU player (multi-select)
+  → chọn nguồn: tiền mặt (cash) | CK (khớp một bank_transaction đã ingest → manual)
+  → PREVIEW: danh sách player + charge + tổng tiền  (DD-25 — human-initiated money mutation)
+  → CONFIRM
+  → cho từng player: INSERT payment_allocations
+       tiền mặt → source=cash, bank_transaction_id NULL, created_by=host
+       CK       → source=manual, khớp một bank_transactions row
+     + cập nhật charges.amount_allocated/status; actor=host, audit
+     idempotent theo (charge, actor, intent); charge → paid/partial
+  → phát payment.settled → xác nhận tự động tới player (feature_notifications_reminders FR-6.2)
+```
+
+- **Mark-paid CK thủ công** ≠ auto-reconcile: nếu CK đã có `bank_transaction` (đã ingest) → host gán → allocation `source='manual'`. Nếu host tự xác nhận "đã CK" nhưng **chưa có** `bank_transaction` → **hạng mục impl còn mở** (tạo synthetic manual `bank_transaction`, HOẶC mở rộng enum qua migration); **không** dùng `source='cash'` cho một khoản CK, **không** tạo `bank_transaction` giả tuỳ tiện và **không** đoán số tiền. Enum canonical `source ∈ (auto,manual,cash,waiver,reversal)` — không có `bank_transfer`.
+- **Auto-reconcile CK (webhook match tên+tiền+ngày, `/unmatched`)** chỉ ở tier **`host_pro`** (capability `payment_reconcile_auto`). Free = `payment_mark_manual`.
+- Charge của mỗi lượt chơi suy theo giá kèo; nếu kèo đặt giá nam/nữ → xem **DD-39 (✅ Chốt)** / `feature_user_settings` (suy `amount_due` theo `person.gender`; decrypt lỗi → fail-closed).
+
 ---
 
 ## 4. Edge Cases
@@ -89,7 +115,9 @@ Worker reconcile(tenant_id, bank_transaction_id)
 | 14 | Tenant suspended | Vẫn durable-ingest; reconcile có thể pause theo lifecycle policy; không mất CK |
 | 15 | Session bị hủy sau khi paid | Charge void/refund-needed theo policy; platform không tự hoàn tiền |
 | 16 | Amount ≤ 0 | Reject validation; log metadata tối thiểu |
-| 17 | Attacker chiếm account host → đổi STK | Đổi STK primary → `pending_change` 24h. Hệ thống vẫn dùng STK cũ cho QR. Thông báo đổi gửi MỌI kênh đã link (TG/Zalo/email/web). Rate-limit: max 2 lần/30 ngày. Ref: AUDIT G1, BL-PAY-10 |
+| 17 | Attacker chiếm account host → đổi STK | Đổi STK primary → `pending_change` 24h. Hệ thống vẫn dùng STK cũ cho QR. Thông báo đổi gửi MỌI kênh đã link (Zalo/Messenger/email/web). Rate-limit: max 2 lần/30 ngày. Ref: AUDIT G1, BL-PAY-10 |
+| 18 | Mark-paid multi-select: 1 player trong batch đã paid | Skip player đó (idempotent), preview cảnh báo; các player còn lại vẫn ghi bình thường |
+| 19 | Double-tap "Confirm" mark-paid | Idempotent theo `(charge, actor, intent)` — không tạo allocation trùng, không over-pay |
 
 ---
 
@@ -105,8 +133,9 @@ Worker reconcile(tenant_id, bank_transaction_id)
 
 ### Ledger rules
 
-- Bank allocation: `bank_transaction_id` bắt buộc; source `auto|manual`.
-- Cash/waiver: không có bank transaction; source `cash|waiver`, actor admin bắt buộc.
+- Bank allocation (auto-reconcile, `host_pro`): `bank_transaction_id` bắt buộc; source `auto|manual`.
+- Mark-paid thủ công (mọi tier): **tiền mặt → source `cash`** (không có `bank_transaction`, `created_by` bắt buộc); **CK đã ingest → host gán → source `manual`** (khớp một `bank_transactions` row). Actor admin bắt buộc + audit; áp preview+confirm (DD-25). *(CK host tự xác nhận chưa có `bank_transaction` = impl còn mở — synthetic manual bank_transaction / enum migration; không dùng `cash` cho CK. Không có source `bank_transfer` trong enum canonical.)*
+- Waiver: không có bank transaction; source `waiver`, actor admin bắt buộc.
 - Reversal: amount âm, `reverses_allocation_id` bắt buộc; không reversal quá phần còn hiệu lực.
 - Charge paid khi effective allocations = `amount_due`; partial khi nằm giữa 0 và amount due.
 - `unallocated_amount` chỉ áp dụng bank transaction và được cập nhật dưới lock hoặc tính từ ledger.
@@ -133,12 +162,13 @@ Charge: `open → partial → paid`; reversal có thể đưa `paid → partial/
 
 | Surface | Loading | Ready | Error | Empty |
 |---|---|---|---|---|
-| `/unmatched` TG | Đang tải | CK còn dư + candidate + assign CTA | Retry, không mất selection | Không có CK chưa khớp |
+| `/unmatched` (Zalo/web, `host_pro`) | Đang tải | CK còn dư + candidate + assign CTA | Retry, không mất selection | Không có CK chưa khớp |
+| Mark-paid thủ công (mọi tier) | Validating | Roster + multi-select player + chọn tiền mặt (`cash`) / CK (`manual` khớp bank txn) → **Preview** (tổng tiền) → **Confirm** (DD-25) | Conflict → reload latest ledger; player đã paid → skip | Không có charge phù hợp |
 | Manual allocation | Validating | Chọn một/nhiều charges + tổng allocated/remaining | Conflict → reload latest ledger | Không có charge phù hợp |
 | Cash confirmation | Validating permission | Amount + player/session + confirm | Duplicate/conflict notice | N/A |
 | Web ledger P4 | Skeleton | Transaction, allocations, charge status, audit | Retry banner | Chưa có giao dịch |
 
-P3 bắt buộc Telegram host flow. Web ledger và realtime projection là integration ở P4; notification đa kênh đầy đủ ở P4.5–P4.7.
+P2/P3 bắt buộc host flow qua **bot Zalo + web** (mark-paid thủ công mọi tier). Auto-reconcile webhook (`host_pro`) ở P3. Web ledger và realtime projection ở P4; notification đa kênh đầy đủ ở P4.5–P4.7 (Zalo/Messenger). *(Telegram đã loại — DD-37.)*
 
 ---
 
@@ -158,6 +188,8 @@ Không log raw bank content, account number, display name, secret hoặc provide
 
 ## 8. Acceptance Criteria
 
+- [ ] Mark-paid thủ công (mọi tier): multi-select player → preview + confirm (DD-25) → INSERT `payment_allocations` (tiền mặt `source='cash'`; CK khớp `bank_transactions` `source='manual'`) + cập nhật `charges` + audit; idempotent; không tạo bank transaction giả; enum `source` không có `bank_transfer`.
+- [ ] Auto-reconcile CK (webhook match) gated `host_pro` (`payment_reconcile_auto`); free chỉ có `payment_mark_manual`.
 - [ ] Verify webhook timing-safe và route bằng trusted token + account.
 - [ ] Raw `bank_transaction` + durable job commit trước ACK.
 - [ ] Duplicate/retry/crash không tạo giao dịch hoặc allocation trùng.
@@ -182,7 +214,7 @@ Không log raw bank content, account number, display name, secret hoặc provide
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| BRD OD-2 | Pay-code prefix/format | Chờ chốt; không block P3 name-based |
+| BRD OD-2 / DD-02 | Pay-code prefix/format + resolver/allocation invariant | ✅ Chốt 13/07/2026; P3 name-based vẫn không phụ thuộc rollout pay_code P4 |
 | PAY-OQ-1 | Retry cadence/backoff unmatched | Chốt trong backend spec |
 | PAY-OQ-2 | Suspended tenant pause reconcile hay vẫn reconcile | Cần lifecycle decision trước P5; ingest luôn bật |
 | PAY-OQ-3 | Refund/void policy khi hủy session | Cần business rule riêng |
@@ -191,6 +223,8 @@ Không log raw bank content, account number, display name, secret hoặc provide
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-10 | v1.4 | **Review fixes: money vocab → canonical ledger.** Mark-paid = INSERT `payment_allocations` + cập nhật `charges` (KHÔNG có bảng `payment`): tiền mặt → `source='cash'`; CK khớp một `bank_transactions` → `source='manual'`. Bỏ `source='bank_transfer'` (không có trong enum canonical `auto/manual/cash/waiver/reversal`). Host tự xác nhận "đã CK" nhưng chưa có `bank_transaction` = impl còn mở (synthetic manual bank_txn / enum migration). Cập nhật UC-15, §3.1, ledger rules, screens, acceptance. |
+| 2026-07-10 | v1.3 | **DD-40:** thêm **mark-paid thủ công mọi tier** (tap/multi-select, preview+confirm DD-25) — §1, §3.1, UC-15/16, edge #18/19, ledger rules, screens, acceptance. Auto-reconcile CK = `host_pro`. Kênh host flow: Zalo+web (bỏ Telegram, DD-37). One-line pointer giá theo giới tính → DD-39. |
 | 2026-06-19 | v1.2 | Thêm Changelog heading, verified format compliance |
 | 2026-06-19 | v1.2 | Fold AUDIT G1: STK change 24h confirmation delay (UC-13/14, edge case #17, acceptance criteria) |
 | 2026-06-18 | v1.1 | Durable ingest; charge/transaction/allocation ledger; partial/overpay/multi-person/cash/reversal; canonical phase |

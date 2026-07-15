@@ -1,10 +1,16 @@
 # 🤖 Telegram Bot — Surface Docs
 
+> # ⚠️ ARCHIVED (DD-37, 2026-07-10): Telegram đã bị loại khỏi phạm vi phase-1. Giữ làm lịch sử. Kênh phase-1: Zalo + Facebook Messenger — xem [`channels/messenger`](../messenger/README.md), [`channels/zalo`](../zalo/README.md).
+>
+> *Toàn bộ nội dung dưới đây mô tả thiết kế Telegram surface cũ (khi Telegram còn là kênh chính, BRD ≤ v3.3). Không dùng cho phase-1; không cập nhật tiếp. Auth phase-1 không còn TG Login (DD-13 ✅). Bot Telegram single-club Bestminton là bằng chứng lịch sử — xem `docs/research/bestminton-*`.*
+
+---
+
 > **Surface:** Telegram group + DM
 > **Deployable unit:** `apps/bot/telegram/`
 > **Framework:** grammY (TypeScript)
-> **Phase:** P2 (tenant middleware) → P4.5 (player join)
-> **Version:** v0.2 · 2026-06-20
+> **Phase:** ~~P2 (tenant middleware) → P4.5 (player join)~~ — **ARCHIVED (DD-37): out of scope phase-1**
+> **Version:** v0.2 · 2026-06-20 (archived 2026-07-10)
 > **Refs:** `../../features/feature_tenant_routing_authz.md` · `../../features/feature_player_telegram.md` · `../../features/feature_session_management.md`
 
 ---
@@ -173,6 +179,7 @@ Default group policy: **không show số tiền nợ cá nhân trong group**; ch
 
 | Date | Version | Thay đổi |
 |------|---------|----------|
+| 2026-07-10 | — | **ARCHIVED (DD-37):** Telegram loại khỏi phase-1 (thay DD-09). Thêm banner deprecation; giữ toàn bộ body làm lịch sử. Kênh phase-1: Zalo + Facebook Messenger. |
 | 2026-06-20 | v0.2 | Chốt production webhook, thêm callback contract, privacy templates, readiness checklist |
 | 2026-06-19 | v0.1 | Initial surface docs |
 

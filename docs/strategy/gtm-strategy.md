@@ -5,6 +5,8 @@
 **Niche khởi đầu:** Kèo thể thao cộng đồng, ưu tiên cầu lông và pickleball  
 **Trạng thái:** Strategy + beta operating plan
 
+> **Cập nhật 10/07/2026 (DD-37 / BRD v3.4):** kênh Plexco phase-1 = **Zalo + Facebook Messenger + web** (bỏ Telegram; Messenger nay là phase-1, không còn post-MVP). Các đoạn nhắc Telegram như **nơi cộng đồng đang sinh hoạt** (market reality) giữ nguyên; các đoạn **fallback/kênh Plexco tự xây** đã đổi Telegram→Messenger.
+
 ---
 
 ## Executive summary
@@ -27,7 +29,7 @@ Luận điểm cốt lõi: Plexco không nên cố kéo người chơi rời Zal
 
 **Beta gates không được bỏ qua:**
 
-1. Zalo OA/bot flow phải pass technical feasibility, nếu không phải chuyển sang web/Telegram fallback.
+1. Zalo OA/bot flow phải pass technical feasibility, nếu không phải chuyển sang **web/Messenger** fallback.
 2. Player **New** phải có trust bridge: host-vouch, deposit hoặc manual approval.
 3. Phải đo được `repeat through Plexco rate` để biết marketplace có bị rò ra ngoài Zalo direct không.
 4. Monetization giai đoạn đầu nên ưu tiên Host Pro; success fee chỉ thử khi attribution đủ sạch.
@@ -498,7 +500,7 @@ Technical validation bắt buộc:
 - Xác nhận flow nào chạy được qua Zalo OA, flow nào cần web fallback.
 - Kiểm tra rate limit, quota tin nhắn, quyền gửi tin, webhook và chính sách template nếu dùng notification.
 - Đo chi phí/khả năng gửi reminder, RSVP confirmation, attendance dispute và fill-slot prompt.
-- Chuẩn bị fallback Telegram/web nếu Zalo không cho phép automation đủ mượt trong beta cell.
+- Chuẩn bị fallback **web (+ Messenger)** nếu Zalo không cho phép automation đủ mượt trong beta cell.
 
 Output:
 
@@ -859,7 +861,7 @@ Mitigation:
 - Không thiết kế flow nào chỉ có thể chạy nếu Zalo behave như Telegram.
 - Web fallback cho RSVP và profile.
 - Identity gắn với phone/account, không chỉ chat ID.
-- Bot đa kênh theo thứ tự nhu cầu: Zalo trước nếu cell dùng Zalo, sau đó Telegram/Messenger.
+- Bot đa kênh theo thứ tự nhu cầu: Zalo trước nếu cell dùng Zalo, sau đó **Messenger** (Telegram đã bỏ — DD-37).
 
 ---
 

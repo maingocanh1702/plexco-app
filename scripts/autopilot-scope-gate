@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 3
+# KIT_VERSION: 4
 # autopilot-scope-gate — parallel autopilot coordination (SCOPE_COLLISION gate).
 # REPO-AGNOSTIC template. Copy to <repo>/scripts/autopilot-scope-gate, chmod +x, commit.
 #
@@ -51,7 +51,8 @@ fi
 ROOT="$(cd "$(git rev-parse --git-common-dir)" && cd .. && pwd)"
 DIR="$ROOT/.autopilot"; INFLIGHT="$DIR/INFLIGHT.md"; LOCK="$DIR/INFLIGHT.lock"
 mkdir -p "$DIR"
-[ -f "$INFLIGHT" ] || printf '# Autopilot in-flight registry\n\n---\n' > "$INFLIGHT"
+# INFLIGHT initialisation happens inside the lock (register/ready/cleanup) to avoid
+# a race where two concurrent fresh-repo runs both see the file absent and clobber each other.
 
 # --- portable JSON reader: scalar -> one line; array -> one item per line ---
 json_get(){ # $1 = abs json path, $2 = key
@@ -148,6 +149,7 @@ append_block(){ # $1 = status
 case "$cmd" in
   register)
     acquire
+    [ -f "$INFLIGHT" ] || printf '# Autopilot in-flight registry\n\n---\n' > "$INFLIGHT"
     # (0) invariant catalog check (#22): every manifest invariant MUST be a canonical token.
     cat_tokens="$(catalog_tokens)" || { echo "HALT INVARIANT_UNKNOWN: catalog not found at $CATALOG (cannot validate invariants)." >&2; exit 1; }
     if [ -n "$INVARIANTS" ]; then
@@ -181,14 +183,7 @@ case "$cmd" in
       done <<< "$DEP_CHECKS"
     fi
     # (b) collision check: scope file OR invariant intersects another active feature
-    # COLLISION-EXEMPT files: shared append-only test-chain manifests that never carry feature logic.
-    #   package.json — every slice appends its NEW unique test invocation to the "test" script. Two parallel slices
-    #   touch the SAME "test" line, but the conflict is a trivial 1-line append that resolves on the sequential
-    #   merge/rebase workflow (first merges, second rebases + re-appends). Keep it in manifest scope (so the agent
-    #   may edit it WITHOUT SCOPE_DRIFT) but exempt it here so it does not force-serialize otherwise-disjoint slices.
-    #   Add more names only if equally trivially-mergeable.
-    EXEMPT='^(package\.json)$'
-    cf="$(comm -12 <(printf '%s\n' "$SCOPE" | grep -vE "$EXEMPT" | sort -u) <(active_others scope | grep -vE "$EXEMPT"))"
+    cf="$(comm -12 <(printf '%s\n' "$SCOPE" | sort -u) <(active_others scope))"
     ci="$(comm -12 <(printf '%s\n' "$INVARIANTS" | sort -u) <(active_others invariants))"
     if [ -n "$cf$ci" ]; then
       echo "HALT SCOPE_COLLISION — '$FEATURE' intersects another active feature:" >&2
@@ -200,7 +195,32 @@ case "$cmd" in
     drop_my_block; append_block in-flight
     echo "registered: $FEATURE (in-flight)"
     ;;
-  ready)   acquire; drop_my_block; append_block ready;   echo "ready: $FEATURE" ;;
-  cleanup) acquire; drop_my_block;                        echo "cleaned: $FEATURE" ;;
+  ready)
+    acquire
+    [ -f "$INFLIGHT" ] || printf '# Autopilot in-flight registry\n\n---\n' > "$INFLIGHT"
+    # Require a prior active block: ready must follow a successful register.
+    me_status="$(awk -v me="$FEATURE" '
+      /^## feature:/{cur=$3;st=""}
+      /^status:/{if(cur==me)st=$2}
+      END{print st}
+    ' "$INFLIGHT")"
+    if [ "$me_status" != "in-flight" ] && [ "$me_status" != "ready" ]; then
+      echo "HALT: '$FEATURE' has no active block in registry — run register first." >&2; exit 1
+    fi
+    # Re-check collisions: another feature may have registered between our register and ready calls.
+    cf="$(comm -12 <(printf '%s\n' "$SCOPE" | sort -u) <(active_others scope))"
+    ci="$(comm -12 <(printf '%s\n' "$INVARIANTS" | sort -u) <(active_others invariants))"
+    if [ -n "$cf$ci" ]; then
+      echo "HALT SCOPE_COLLISION — '$FEATURE' intersects another active feature (collision at ready):" >&2
+      [ -n "$cf" ] && { echo "  files:" >&2; echo "$cf" | sed 's/^/    /' >&2; }
+      [ -n "$ci" ] && { echo "  invariants:" >&2; echo "$ci" | sed 's/^/    /' >&2; }
+      echo "  → wait for the conflicting feature to merge + cleanup, then rebase." >&2
+      exit 1
+    fi
+    drop_my_block; append_block ready; echo "ready: $FEATURE" ;;
+  cleanup)
+    acquire
+    [ -f "$INFLIGHT" ] || printf '# Autopilot in-flight registry\n\n---\n' > "$INFLIGHT"
+    drop_my_block; echo "cleaned: $FEATURE" ;;
   *) echo "usage: autopilot-scope-gate <register|ready|cleanup> --manifest <path>   (or: cleanup --feature <slug>)" >&2; exit 2 ;;
 esac

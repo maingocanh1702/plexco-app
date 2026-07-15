@@ -66,7 +66,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 | Web | Filter panel | — | Sport/area/time/skill/price/slot pickers | — | N/A |
 | Web | Session public detail | Skeleton | Whitelist info + Join CTA | "Buổi chơi không còn khả dụng" | N/A |
 | Web | Rate-limited | — | "Quá nhiều truy vấn — thử lại sau [countdown]" | — | N/A |
-| TG Bot | `/search` command | "🔍 Đang tìm..." | Inline results (max 10) + "Xem thêm" link | "Không tìm thấy" | "Không có buổi nào phù hợp" |
+| Zalo/Messenger Bot | `/search` (Zalo) · quick-reply (Messenger) | "🔍 Đang tìm..." | Kết quả (max 10) + "Xem thêm" link | "Không tìm thấy" | "Không có buổi nào phù hợp" |
 
 ---
 
@@ -129,8 +129,8 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| MKT-OQ-1 | BRD OD-6: public location granularity (quận vs bán kính) | ⬜ Chưa chốt |
-| MKT-OQ-2 | BRD OD-8: initial sport/skill taxonomy | ⬜ Chưa chốt |
+| MKT-OQ-1 | BRD OD-6: public location granularity | ✅ Chốt (DD-06, 2026-07-13): **`area` (quận/khu vực) only public; venue post-join** (invariant test). |
+| MKT-OQ-2 | BRD OD-8: initial sport/skill taxonomy | ✅ Chốt (DD-08, 2026-07-13): 7 môn seed (badminton/pickleball/tennis/padel/volleyball/basketball/football, extensible qua `sports`) + level 5-bậc ordered rank. |
 | MKT-OQ-3 | Initial ranking: upcoming/area vs optional distance provider | ⬜ Chưa chốt |
 
 ### Changelog

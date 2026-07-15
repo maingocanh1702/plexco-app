@@ -16,7 +16,7 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 
 const progress = JSON.parse(readFileSync(join(__dir, "progress.json"), "utf8"));
 
-// DoD checklist cho M1–M6 (rút từ BACKLOG-P0-P3.md). M7–M19 dùng goal của phase.
+// DoD checklist chi tiết cho M1–M6; module sau đó dùng subtasks trong progress.json khi có.
 const DOD = {
   M1: [
     "Monorepo pnpm: packages/core, apps/bot, apps/web + CI chạy pnpm test",
@@ -42,12 +42,12 @@ const DOD = {
     "[ISO] mở rộng cho mọi bảng mới → đóng Milestone MS1",
   ],
   M4: [
-    "Telegram long-poll → webhook /telegram/<secret>",
-    "Middleware resolve tenant từ kênh: chat_id → telegram_links → tenant",
-    "Deep-link /start link_<code> (admin bind) + /start club_<slug> (player context)",
-    "Authz 2 lớp: isTenantAdmin theo from.id (Edge #16)",
-    "Lệnh host: /newsession đa môn, /announce, /config, /cash + cron throttler",
-    "Fail-closed TENANT_NOT_LINKED; test routing 2 tenant không lẫn",
+    "Zalo webhook /webhook/zalo/:token + Messenger webhook /webhook/messenger",
+    "Resolve tenant từ trusted binding: Zalo webhook_token / Messenger page_id",
+    "Join/link theo kênh: Zalo number-reply + Messenger quick-reply/deep-link ref",
+    "Authz 2 lớp theo stable channel identity, độc lập với tenant routing",
+    "Lệnh host + mark-paid thủ công; throttler per-channel; nhắc web/Zalo chính",
+    "Fail-closed TENANT_NOT_LINKED; test 2 token/Page → 2 tenant không lẫn",
   ],
   M5: [
     "06 bank_accounts/transactions/allocations + RLS",
@@ -60,7 +60,7 @@ const DOD = {
     "[LED] + [WRK] test bất biến (CI)",
   ],
   M6: [
-    "Script SQLite→Postgres: tenant Bestminton + owner + TelegramLink + BankAccount, sport=cầu lông",
+    "Script SQLite→Postgres: tenant Bestminton + owner + BankAccount, sport=cầu lông; không tạo TelegramLink",
     "Copy sessions/players/members/aliases gắn tenant_id; mỗi player-session → charge",
     "Payment lịch sử → bank_transaction+allocation; thiếu gốc → legacy:<id> source=manual",
     "Đối chiếu tổng charge/allocated/unallocated + roster trước cutover",
@@ -82,11 +82,11 @@ const phaseGoal = Object.fromEntries(progress.phases.map((p) => [p.id, p.goal]))
 const rows = [["Title", "Description", "Status", "Labels", "Estimate"]];
 
 for (const m of progress.modules) {
-  const dod = DOD[m.id];
+  const dod = DOD[m.id] || (m.subtasks || []).map((s) => s.title).filter(Boolean);
   let desc = `Module ${m.id} · ${m.track} · phase ${m.phase}\n\nGoal phase: ${phaseGoal[m.phase] || ""}`;
-  if (dod) desc += `\n\n**DoD (đóng issue khi đủ):**\n` + dod.map((x) => `- [ ] ${x}`).join("\n");
+  if (dod.length) desc += `\n\n**DoD (đóng issue khi đủ):**\n` + dod.map((x) => `- [ ] ${x}`).join("\n");
   else desc += `\n\n_(DoD chi tiết sẽ bổ sung khi tới gần phase — xem ROADMAP/PRD/TDD.)_`;
-  if (m.postMvp) desc += `\n\n> post-MVP (chặn bởi Meta App Review).`;
+  if (m.postMvp) desc += `\n\n> post-MVP.`;
   rows.push([`[${m.id}] ${m.name}`, desc, statusToLinear(m.status), "plexco-mvp", m.points]);
 }
 

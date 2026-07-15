@@ -1,10 +1,12 @@
 # Feature: Player Telegram Experience — Product/UX Spec
 
-> **Canonical phase:** P4.5  
-> **Track:** 📱 Player TG  
-> **Version:** 2.0 · 2026-06-19  
-> **Status:** Reviewed  
-> **Prerequisites:** P2 routing/authz · P3.5 identity · P2 session/join · P3 notifications · P4 sync  
+> ⚠️ **ARCHIVED (DD-37, 2026-07-10):** Telegram loại khỏi phạm vi phase-1. Thay bằng `feature_player_messenger.md` + `feature_zalo_channel.md`. Giữ làm lịch sử. Xem `../standards/decisions.md` DD-37.
+
+> **Canonical phase:** P4.5 *(archived)*
+> **Track:** 📱 Player TG
+> **Version:** 2.1 · 2026-07-13
+> **Status:** Archived (DD-37)
+> **Prerequisites:** P2 routing/authz · P3.5 identity · P2 session/join · P3 notifications · P4 sync
 > **Tài liệu liên quan:** `../product/BRD.md` FR-3.1/BR-4 · `../product/PRD.md` FLOW 3 + §4.2/4.4 · `../product/TDD.md` §3.3/3.4 · `BE/feature_player_telegram_tech.md`
 
 ---
@@ -79,7 +81,7 @@ Cung cấp **group-first join/leave** và safe DM commands qua 1 shared Telegram
 | `telegram_links` | Group → tenant binding | Routing source |
 | `channel_reachability` | DM availability per person/tenant/platform | `UNIQUE(person_id, tenant_id, platform)` |
 | `surface_refs` | TG message references (roster msg, announcement) | `UNIQUE(aggregate_id, surface, ref_type)` |
-| `session_roster` | Player join state | Domain service shared with web |
+| `players` | Player join state | Canonical schema name; domain service shared with web |
 
 ---
 
@@ -117,3 +119,4 @@ Cung cấp **group-first join/leave** và safe DM commands qua 1 shared Telegram
 |---|---|---|
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, callback screen states |
+| 2026-07-13 | v2.1 | Archived behavior unchanged; align only canonical roster table name to `players` so historical docs do not invent a nonexistent schema object. |

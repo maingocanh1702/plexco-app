@@ -1,10 +1,12 @@
 # Feature: Multi-tenant Foundation — Backend Tech Spec
 
-> **Canonical phase:** P0–P1  
-> **Version:** 1.1 · 2026-06-18  
-> **Status:** Implementation contract aligned with TDD v2.1  
-> **Product spec:** `../feature_multi_tenant.md`  
-> **References:** `../../product/TDD.md` §3.1–3.4 · `../../research/player-side-saas-AUDIT.md`
+> **Canonical phase:** P0–P1
+> **Version:** 1.2 · 2026-07-10
+> **Status:** Implementation contract aligned with TDD v2.2 — **full-review baseline cũ; light-propagated → TDD v2.4**
+> **Product spec:** `../feature_multi_tenant.md`
+> **References:** `../../product/TDD.md` §3.1–3.4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37
+
+> **Cập nhật v1.2 (DD-37 ✅, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger + web** (bỏ Telegram). Channel adapters ở `apps/bot` nay là Zalo (P2) + Messenger (P2.5); tenant vẫn suy từ kênh, không từ nội dung.
 
 ---
 
@@ -12,7 +14,7 @@
 
 ```text
 packages/core       pure domain logic, no DB/bot dependency
-apps/bot            Telegram/Zalo adapters (P2+)
+apps/bot            Zalo (P2) + Facebook Messenger (P2.5) channel adapters
 apps/web            web/API surface (P4+)
 packages/db         Drizzle schema, migrations, tenantRepo, privileged DB functions
 packages/jobs       pg-boss producers/handlers, tenant-scoped execution wrapper
@@ -203,5 +205,6 @@ Fail if any tenant table lacks `tenant_id`, ENABLE/FORCE RLS, policy USING/WITH 
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-10 | v1.2 | **DD-37 ✅:** channel adapters = Zalo (P2) + Facebook Messenger (P2.5); bỏ Telegram. Cập nhật architecture note (`apps/bot`). |
 | 2026-06-18 | v1.1 | Replaced legacy payments schema; standardized RLS setting; added worker/protected/public contracts |
 | 2026-06-18 | v1.0 | Initial backend spec |
