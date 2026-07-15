@@ -1,7 +1,8 @@
 # Autopilot — onboarding cho người mới join Plexco
 
 Đọc file này 1 lần là đủ để chạy autopilot flow của repo đúng theo template mới nhất.
-Pinned version: **`autopilot-prompt-GENERIC` v0.4.8** + **`autopilot-invariants`** (bản 2026-06-20).
+Pinned version: **`autopilot-prompt-GENERIC` v0.6.0** + **`autopilot-invariants`** (đã sync từ canonical 2026-07-15).
+> ✅ **Đã sync với canonical `Claude template` (2026-07-15):** GENERIC v0.6.0, invariants (161 dòng), scope-gate **KIT_VERSION 4**, backlog-reconcile **KIT_VERSION 2**. (Plexco-specific token vẫn ở `docs/autopilot-invariant-catalog.md`, không đụng.)
 Bản canonical nằm trong repo tại `docs/autopilot-templates/` — luôn coi đó là source of truth.
 
 ---
@@ -66,7 +67,7 @@ Quy ước thư mục: `docs/autopilot-*` = luật/kit; `.autopilot/` = runtime 
 | `docs/autopilot-backlog.md` | Backlog machine-scannable: task nào chạy song song được (scope + invariants rời nhau, không phụ thuộc chưa-merge). |
 | `.autopilot/maturity-ledger.md` | Sổ tín nhiệm per-repo (TRACKED). Class P2 đạt ≥3 clean-merge-unchanged → `mature` → mới được auto-merge. P0/P1 không bao giờ auto-merge. |
 | `docs/autopilot-parallel-scope-gate.md` | Giải thích WHY của scope-gate (worktree không đủ, cần catalog + lock). |
-| `docs/autopilot-templates/` | Bản canonical của 2 template gốc (invariants + GENERIC v0.4.8). |
+| `docs/autopilot-templates/` | Bản canonical của 2 template gốc (invariants + GENERIC v0.6.0; synced từ `Claude template` 2026-07-15). |
 
 Lưu ý: `progress.json` + `plexco-dashboard.html` = nguồn sự thật **tiến độ phase/module**; backlog ở
 trên là **task autopilot song song**. Linear/GitHub Projects chỉ cân nhắc khi có người thứ 2 / sau P5
@@ -109,5 +110,5 @@ trên là **task autopilot song song**. Linear/GitHub Projects chỉ cân nhắc
 - **`dep_checks` (interface-drift, DEP_MISSING #21)** đã implement trong scope-gate + có trong `_TEMPLATE.json`.
 - **Maturity-ledger** đã được track (`.gitignore` whitelist `.autopilot/maturity-ledger.md`), seed sẵn 5 class.
 
-Khi template global lên version mới hơn v0.4.8: cập nhật `docs/autopilot-templates/` rồi rà lại 3 mục trên
+Khi template global lên version mới hơn v0.6.0: cập nhật `docs/autopilot-templates/` rồi rà lại 3 mục trên
 + catalog tokens. Nếu GENERIC và bản rationale lệch nhau → **GENERIC thắng**.

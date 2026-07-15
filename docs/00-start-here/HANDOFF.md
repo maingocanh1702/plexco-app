@@ -18,7 +18,7 @@
 3. Đọc `README.md` (tính năng + setup + doc map).
 4. **TRƯỚC mọi việc đụng code/git: nắm 5 HARD RULES ở §3 — vi phạm = rò rỉ tiền/PII thật.**
 5. Việc mới: theo workflow ở §5 (không tự ý sửa thẳng main).
-6. **Autopilot — bắt đầu ở `docs/autopilot-ONBOARDING.md`** (entry point duy nhất, pin template v0.4.8). Setup máy nhanh: chạy **`scripts/autopilot-onboard.sh --codex /abs/path/to/codex`** (idempotent: `@import` invariants vào `~/.claude/CLAUDE.md`, pin `AUTOPILOT_CODEX_BIN`, verify kit). Chạy nhiều session/feature song song qua **git worktree riêng (base `main`) + `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<slug>.json`** (HALT nếu đụng `scope`/`invariants`/dep). Token domain chuẩn ở `docs/autopilot-invariant-catalog.md`; backlog ở `docs/autopilot-backlog.md`; bản canonical template ở `docs/autopilot-templates/`. Song song khi scope+invariant rời nhau, tuần tự khi đụng (vd cùng `schema`/`identity`/`money-model`).
+6. **Autopilot — bắt đầu ở `docs/autopilot-ONBOARDING.md`** (entry point duy nhất, pin template v0.6.0, bản canonical repo tại `docs/autopilot-templates/`, đã sync từ `Claude template` 2026-07-15). Setup máy nhanh: chạy **`scripts/autopilot-onboard.sh --codex /abs/path/to/codex`** (idempotent: `@import` invariants vào `~/.claude/CLAUDE.md`, pin `AUTOPILOT_CODEX_BIN`, verify kit). Chạy nhiều session/feature song song qua **git worktree riêng (base `main`) + `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<slug>.json`** (HALT nếu đụng `scope`/`invariants`/dep). Token domain chuẩn ở `docs/autopilot-invariant-catalog.md`; backlog ở `docs/autopilot-backlog.md`; bản canonical template ở `docs/autopilot-templates/`. Song song khi scope+invariant rời nhau, tuần tự khi đụng (vd cùng `schema`/`identity`/`money-model`).
 
 ---
 
@@ -89,7 +89,7 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 - Mọi constructor NestJS (nếu dùng tsx): phải có `@Inject()` decorator
 
 ### Test
-- `DB_PATH=/tmp/test.db pnpm test`
+- `DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco pnpm test` (harness **bắt buộc `DATABASE_URL_TEST`**, `packages/db/src/test-harness.ts`; local chạy `docker compose -f infra/docker-compose.yml up -d postgres` trước. KHÔNG dùng `DB_PATH`/SQLite.)
 - Test bất biến: cô lập tenant A/B + public chỉ field whitelist
 - Seed data: tiếng Việt, mọi trạng thái, idempotent, 8-10 records/entity
 
@@ -108,7 +108,7 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 
 ## 6. Trạng thái hiện tại (2026-07-10)
 
-**Planning & Docs DONE** (v3.4 pivot). **Foundation + Auth Onboarding v3 (Telegram-era) đã land trên `main@1eb6f60`.**
+**Planning & Docs — phần lớn hoàn tất** (v3.4 pivot → decisions v1.31); **còn OQ mở + DD-04 chưa chốt** (danh sách ở `docs/founder-decision-brief-2026-07-15.md`). **Foundation + Auth Onboarding v3 (Telegram-era) đã land trên `main@1eb6f60`.**
 
 - ✅ **Foundation merged:** monorepo (`packages/core` + `packages/db` + `apps/bot` + `apps/web`) + core logic thuần (test xanh) + Postgres/RLS choke-point (`tenantRepo`/`withTenant`) + **migrations `0000–0013`** committed (roles/RLS/grants/functions/seeds/auth_functions/onboarding_steps) + bộ RLS invariant test chạy trên role runtime thật.
 - ✅ **Auth Onboarding v3 (Telegram-era) merged** (`5b1193b`) + web tests. **DD-37 supersede provider** → thay bản Telegram-era bằng **Google/email** đã **spec'd nhưng CHƯA implement**.
@@ -117,7 +117,7 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 Tài liệu hoàn tất (bản mới nhất):
 - ✅ BRD v3.5 · PRD v2.4 · TDD v2.4 · ROADMAP v2.7 (canonical P-numbers)
 - ✅ 4 phụ lục (saas-plan, reconciliation, AUDIT, messenger)
-- ✅ Feature docs 15/15 (FE + BE pairs) + 3 draft mới v3.4 (Messenger player/chat/settings)
+- Feature docs: **21 Product / 20 BE = 20 cặp hoàn chỉnh + 1 product-only Draft** (`channel_booking_funnel`); trong đó **3 cặp phase-1 mới (Messenger/chat/settings) còn untracked** — xem `features/README.md`
 - ✅ Business rules, design tokens, dependency graph
 - ✅ README, CHANGELOG, PULL_REQUEST_TEMPLATE, HANDOFF, templates
 
