@@ -1,12 +1,13 @@
-# 🗄️ DD-04 Decision Brief — Postgres Hosting (rev 4)
+# 🗄️ DD-04 Decision Brief — Postgres Hosting (rev 5)
 
 > **Mục đích:** đủ dữ kiện để founder **chốt provider** cho hệ tiền multi-tenant RLS.
-> **Ngày:** 2026-07-16 (rev 4; sửa provider facts/cost comparison sau final decision) · **Nguồn nội bộ hiện hành:** `deployment-infra.md §2/§6/§9` (DD-04) · `decisions.md` v1.34 (DD-04) · `feature_security_operations_tech.md`. **Số liệu provider:** web (07/2026), xem Sources.
+> **Ngày:** 2026-07-16 (rev 5; đồng bộ read-isolation/portability với final decision Rev 2) · **Nguồn nội bộ hiện hành:** `deployment-infra.md §2/§6/§9` (DD-04) · `decisions.md` v1.34 (DD-04) · `feature_security_operations_tech.md`. **Số liệu provider:** web (07/2026), xem Sources.
 > **Đã chốt (không bàn lại):** Managed Postgres **HA + PITR**, **region Singapore**; compute = **DO App Platform**, DB = **DO Managed PG cùng VPC private**. Railway PG chỉ dev/staging. DD-10 giữ nguyên (standalone container, không Vercel).
 
 > ⚠️ **REV 2 sửa lỗi factual của rev 1** (xem §0.1) và **thêm gate private-network** làm quyết định chốt-trước. Do rev 2 mở rộng phạm vi DD-04 (thêm DigitalOcean + gate network), tại thời điểm đó DD-04 cần được reopen/update trước khi founder phê duyệt; rev 3 ghi nhận gate này đã hoàn tất.
 > ✅ **REV 3 governance closure:** DD-04 đã reopen và `deployment-infra.md §2` đã sync; founder sau đó chọn (c).
 > ✅ **REV 4 factual/cost closure:** giữ quyết định (c), sửa Supabase plan facts, bỏ mọi claim “rời Fly = đổi DD-10”, và chuẩn hoá so sánh production theo cùng tài nguyên. Cost authority nằm ở final record.
+> ✅ **REV 5 contract closure:** read isolation là bắt buộc Day-1; read-only node vật lý chỉ bật theo telemetry. Portability gồm immutable image + migration/rehearsal/performance gates, không phải chỉ đổi connection string.
 
 ---
 
@@ -50,14 +51,14 @@ Rút từ `deployment-infra.md` (+ bổ sung rev 2):
 1. **RLS fail-closed** (HR1) — RLS là tính năng Postgres core, chạy đầy đủ ở **mọi** provider Postgres thuần (không phụ thuộc "RLS-native platform").
 2. **3 connection string:** pooled txn (request) · session/direct (SSE `LISTEN` ở web) · session/direct (worker pg-boss). Cần provider cho **direct/session connection** (không bị pooler chặn `LISTEN`).
 3. **pg-boss + `LISTEN/NOTIFY`** cần connection session *luôn thức*.
-4. **Read replica** cho discovery/public reads.
+4. **Read isolation** cho discovery/public reads ngay Day-1; read-only node vật lý chỉ bật khi bounded pool/cache/circuit-breaker không đủ và telemetry chạm trigger.
 5. **HA = auto-failover** (không chỉ "warm standby") + **PITR** — vì hệ tiền. ⬅️ **gate cứng**.
 6. **Uptime SLA** cam kết — hệ tiền cần cam kết hợp đồng, không chỉ best-effort. ⬅️ **gate cứng**.
 7. **Posture network:** DB không nhận traffic public *unauthenticated*; phải TLS verify-full + IP allowlist **tối thiểu**, private networking nếu khả thi. ⬅️ **QĐ-1**.
 8. **Region Singapore** (VN latency).
 9. **4 DB role** tách connection-level (least-privilege).
 10. **Chi phí nhạy** (DD-29: host 0đ/250k) + **team nhỏ** (ít moving parts).
-11. **Portability:** chỉ dùng Postgres thuần (không tính năng platform độc quyền) → đổi provider = đổi connection string + migrate. Bảo hiểm cho mọi lựa chọn.
+11. **Portability:** immutable OCI image + Postgres thuần + provider config nằm ngoài domain code; đổi provider vẫn cần rehearsal, logical replication/cutover, sequence/ledger reconciliation và performance gate — không được giản lược thành “đổi connection string”.
 
 ---
 
@@ -156,7 +157,7 @@ Rút từ `deployment-infra.md` (+ bổ sung rev 2):
 - **Self-host** = Σ node VPS (primary+standby+monitor) + object storage (~$5–20) **+ lao động ~$150–500/mo (§6)**.
 - **Fly egress IP** $3.60/mo/region (mọi option managed, cho allowlist).
 
-> **Benchmark hypotheses (CHƯA phải estimate — cần đo mới xác nhận):** 100 host *có thể* vừa primary 2–4GB; 1000 host *có thể* cần primary 8–16GB. Đây chỉ là giả thuyết sizing primary. **Money-safe topology vẫn có read replica từ Day 1 để cô lập public/discovery reads**; benchmark quyết định size replica, không quyết định bỏ isolation. Con số cứng chỉ có sau khi đo peak connections, CU-hours và replica load.
+> **Benchmark hypotheses (CHƯA phải estimate — cần đo mới xác nhận):** 100 host *có thể* vừa primary 2–4GB; 1000 host *có thể* cần primary 8–16GB. Đây chỉ là giả thuyết sizing primary. **Money-safe topology Day-1 bắt buộc read isolation** bằng role projection-only + bounded pool/timeout + reserved connection budget + CDN + circuit-breaker; read-only node là upgrade khi contention đã đo được. Con số cứng chỉ có sau khi đo peak connections, CPU/read I/O, query latency và pool saturation.
 
 **Supabase:** Pro và Team **rớt gate uptime SLA**. Team từ `$599` có PrivateLink nhưng không SLA; Enterprise có SLA, custom quote, và auto-failover cần contract confirmation. Không đặt range giả định ngoài giá công khai.
 
@@ -184,7 +185,7 @@ DD-29/canonical **không** định nghĩa tỷ lệ host trả phí → xét **�
 
 ## 6. Self-host VPS DIY (giữ nguyên verdict)
 
-VPS Singapore rẻ (4GB ~$24–42, 8GB ~$48–63; 3 node ~$70–150/mo). **KHÔNG khuyến nghị Day-1:** HA production cần Patroni + etcd quorum (hoặc pg_auto_failover + monitor) + PgBouncer + WAL archiving (pgBackRest/WAL-G) + tuning + monitoring + OS patching + **runbook failover đã test**. Với **hệ tiền + solo dev không DBA**: *failover chưa test = mất tiền thật; backup chưa restore = không phải backup.* Tiết kiệm ~$50–150/mo **không đáng** so rủi ro + chi phí cơ hội (feature layer đang 0%). Để dành khi có SRE — portability (Postgres thuần) khiến chuyển sang self-host sau này là *đổi connection string + migrate*.
+VPS Singapore rẻ (4GB ~$24–42, 8GB ~$48–63; 3 node ~$70–150/mo). **KHÔNG khuyến nghị Day-1:** HA production cần Patroni + etcd quorum (hoặc pg_auto_failover + monitor) + PgBouncer + WAL archiving (pgBackRest/WAL-G) + tuning + monitoring + OS patching + **runbook failover đã test**. Với **hệ tiền + solo dev không DBA**: *failover chưa test = mất tiền thật; backup chưa restore = không phải backup.* Tiết kiệm ~$50–150/mo **không đáng** so rủi ro + chi phí cơ hội (feature layer đang 0%). Để dành khi có SRE — chuyển sang self-host sau này *khả thi* (Postgres thuần + config ngoài domain code), nhưng vẫn cần rehearsal + logical-replication/cutover + ledger reconciliation + performance gate (§1.11), **không** chỉ đổi connection string.
 
 ## 6b. Railway (2 hình thái — đừng gộp)
 
