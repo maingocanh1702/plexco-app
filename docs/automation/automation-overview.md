@@ -51,6 +51,7 @@ Một scheduled task chạy **mỗi Thứ 2** làm đúng vòng "break module k�
 | `linear-contract.mjs` | Shared validator cho module/subtask ID, status và title contract | `compare-linear`/`linear-sync` import tự động |
 | `compare-linear.mjs [--write]` | Đối chiếu drift status/title/cấu trúc; `--write` xuất `linear-snapshot.json` | Exit 2 nếu lệch hoặc thiếu module/subtask (cần `LINEAR_API_KEY`) |
 | `linear-sync.mjs [--check]` | Pull Linear → ghi status theo roll-up; dừng trước khi ghi nếu title/cấu trúc lệch | GitHub Action realtime hoặc chạy tay |
+| `linear-reconcile.mjs --check\|--apply` | Push title/subtask/parent/project/label canonical từ `progress.json` → Linear; default read-only, apply explicit, idempotent | Khi `linear-sync` báo structural/title drift; chạy `reconcile-check` trước `reconcile-apply` trong workflow |
 | `gen-linear-csv.mjs` | Sinh `linear-import.csv` (đường CSV, không cần OAuth) | Khi cần re-seed / seed nơi khác |
 
 ```bash
@@ -58,6 +59,8 @@ Một scheduled task chạy **mỗi Thứ 2** làm đúng vòng "break module k�
 node sync-embedded.mjs        # dashboard offline khớp progress.json
 LINEAR_API_KEY=lin_api_xxx node compare-linear.mjs --write   # snapshot để dashboard so sánh
 LINEAR_API_KEY=lin_api_xxx node linear-sync.mjs --check       # dry-run: Linear status sẽ đổi gì?
+LINEAR_API_KEY=lin_api_xxx node linear-reconcile.mjs --check  # dry-run structure progress → Linear
+LINEAR_API_KEY=lin_api_xxx node linear-reconcile.mjs --apply  # explicit mutation + post-verify
 ```
 
 ---
@@ -66,7 +69,7 @@ LINEAR_API_KEY=lin_api_xxx node linear-sync.mjs --check       # dry-run: Linear 
 
 - **Linear sở hữu status**: `subtasks[].status` lấy theo identifier Linear; `module.status` được roll-up từ subtask nếu module có subtask, còn module chưa break thì lấy issue cha `[M#]`.
 - **progress.json sở hữu cấu trúc**: roadmap, gate, invariant, điểm, assignee map, `linearId`, và title module/subtask. Khi break/assign, Claude ghi cấu trúc vào cả Linear lẫn `progress.json` để hai bên khởi điểm khớp. `compare-linear`/`linear-sync` fail-closed nếu title lệch hoặc issue bị thiếu.
-- `compare-linear.mjs` chỉ **đọc** và báo drift. `linear-sync.mjs` mới là engine **ghi** status từ Linear về `progress.json`.
+- `compare-linear.mjs` chỉ **đọc** và báo drift. `linear-sync.mjs` ghi status từ Linear về `progress.json`; `linear-reconcile.mjs` đi chiều ngược lại **chỉ cho structure/title canonical** và chỉ mutate khi có `--apply` explicit.
 
 ---
 

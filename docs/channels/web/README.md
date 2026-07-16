@@ -130,7 +130,7 @@ Example:
 → **Bắt đầu design FE:** [`./designer-kickoff.md`](./designer-kickoff.md) (🟡 — entry point: gói tài liệu + thứ tự system→screens + checklist nghiệm thu).
 → Tokens (SoT): [`../../standards/design-tokens.md`](../../standards/design-tokens.md). Bản `./design-tokens.md` là surface note — 🟡 DD-59 đề xuất trỏ hẳn về SoT để tránh drift.
 → Kiến trúc FE: [`../../standards/frontend-architecture.md`](../../standards/frontend-architecture.md) (🟡 DD-57).
-→ Pipeline `.pen`→code: [`./frontend-pipeline.md`](./frontend-pipeline.md) (🟡 DD-58).
+→ Pipeline visual-source→code: [`./frontend-pipeline.md`](./frontend-pipeline.md) (🟡 DD-58; visual SoT mới chưa chốt).
 → Benchmark method: [`../../standards/design-tokens-benchmark.md`](../../standards/design-tokens-benchmark.md) (🟡 DD-59).
 → API convention: [`../../standards/api-reference-convention.md`](../../standards/api-reference-convention.md) (🟡 DD-60).
 

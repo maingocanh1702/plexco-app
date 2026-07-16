@@ -1,6 +1,6 @@
 # Business Rules — Plexco
 
-> Registry quy tắc nghiệp vụ, tổng hợp từ `docs/product/BRD.md` v3.7 · `docs/product/PRD.md` v2.5 · `docs/product/TDD.md` v2.6 · `docs/standards/decisions.md` v1.39 · `docs/research/player-side-saas-AUDIT.md`.
+> Registry quy tắc nghiệp vụ, tổng hợp từ `docs/product/BRD.md` v3.7 · `docs/product/PRD.md` v2.5 · `docs/product/TDD.md` v2.6 · `docs/standards/decisions.md` v1.40 · `docs/research/player-side-saas-AUDIT.md`.
 >
 > **Reconcile 16/07/2026:** đã đồng bộ full DD-49–56 và DD-40 v1.39; decision log vẫn là authority khi một DD thay đổi, registry này là mirror để review/build.
 > Khi conflict, authority theo topic trong BRD §0; security dùng rule nghiêm ngặt hơn.

@@ -3,7 +3,7 @@
 > **Canonical phase:** P4.3 / P4.7 + Messenger **P2.5** (**DD-32 ✅ Option A; Messenger là kênh phase-1 P2.5 — DD-37 thay DD-09**)
 > **Track:** 🎣 Growth / Channel Acquisition
 > **Version:** 0.4 · 2026-07-15
-> **Status:** ✅ DD-32 Option A, reconciled to decisions v1.39. Guest vẫn book kèo có phí; active mới tạo charge, full waitlisted/no-charge. Transactional `link_code` chỉ tạo linked-lite; debt-bearing claim vẫn cần DD-50 proof. BE companion được author cùng P4.3 build slice.
+> **Status:** ✅ DD-32 Option A, reconciled to decisions v1.40. Guest vẫn book kèo có phí; active mới tạo charge, full waitlisted/no-charge. Transactional `link_code` chỉ tạo linked-lite; debt-bearing claim vẫn cần DD-50 proof. BE companion được author cùng P4.3 build slice.
 > **Prerequisites:** P3.5 identity (`feature_identity`) · P4.3 cross-club join (`feature_cross_club_join`) · P4.7 Zalo channel (`feature_zalo_channel`) · **P2.5 Messenger** (`channels/messenger/messenger-channel-design` — phase-1, DD-37) · P4 web-auth (`feature_web_auth_onboarding`)
 > **Tài liệu liên quan:** `../standards/decisions.md` **DD-32** (nguồn quyết định) · **DD-33** (Facebook Login) · **DD-14** (Zalo Login) · DD-13 (Google/email — KHÔNG bao Facebook) · DD-29 (acquisition-first pricing) · `../00-start-here/identity-model.md` §7 (provider/channel phase matrix) · `BE/feature_channel_booking_funnel_tech.md` (chưa viết — viết cùng build slice)
 

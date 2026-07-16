@@ -1,7 +1,7 @@
 # HANDOFF — Plexco
 
 > **Đọc file này ĐẦU TIÊN khi tiếp quản project.** Self-contained: không cần context phiên trước.
-> Cập nhật: 2026-07-16 (BRD v3.7 · PRD v2.5 · TDD v2.6 · ROADMAP v2.9 · decisions v1.39 — DD-49..56 closure ở v1.37; DD-57..60 là proposal, chưa gate build). Khi thay đổi convention/kiến trúc lớn → cập nhật file này.
+> Cập nhật: 2026-07-17 (BRD v3.7 · PRD v2.5 · TDD v2.6 · ROADMAP v2.9 · decisions v1.40 — DD-49..56 closure ở v1.37; DD-57..60 là proposal, chưa gate build). Khi thay đổi convention/kiến trúc lớn → cập nhật file này.
 >
 > **⚡ v3.4 Phase-1 pivot (DD-37 ✅, thay DD-09):** Kênh phase-1 = **web + Zalo + Facebook Messenger**;
 > **Telegram đã bị loại khỏi phạm vi** (không còn adapter/bot Telegram trong MVP). Auth phase-1 =

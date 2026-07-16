@@ -3,10 +3,10 @@
 > **Template** — copy sang `docs/channels/web/handoff/<screen>-handoff.md` khi làm 1 màn mới.
 > Nguồn: ported từ Sporta `docs/handoff/*-pixel-perfect-handoff.md`. Pipeline: `../../channels/web/frontend-pipeline.md`.
 >
-> **Screen:** {tên} · **`.pen` node:** `{node_id}` · **Source:** `Plexco-DS-fable5.pen`
+> **Screen:** {tên} · **Node/frame:** `{node_or_frame_id}` · **Source:** `{tracked_pen_path_or_figma_url}`
 > **Status:** Draft | Reviewed · **Version:** 0.1 · {YYYY-MM-DD}
 >
-> ⚠️ **Chỉ ghi giá trị ĐỌC ĐƯỢC từ `.pen` — KHÔNG suy đoán.** Thiếu → đo lại.
+> ⚠️ **Chỉ ghi giá trị ĐỌC ĐƯỢC từ visual source đã chốt — KHÔNG suy đoán.** Thiếu → đo lại.
 
 ---
 
@@ -30,7 +30,7 @@
 | {Body} | {--font-sans} | {14px} | {400} | {1.5} | {var(--text-muted)} |
 
 ## 4. Layout chi tiết theo block
-> Mỗi block = 1 sub-section, ghi geometry + màu + token + typography + shadow. Đặt `.pen` node id trong tiêu đề.
+> Mỗi block = 1 sub-section, ghi geometry + màu + token + typography + shadow. Đặt node/frame id trong tiêu đề.
 
 ### 4.1 {Block name} (`{node_id}`)
 - size: `{W} × {H}` px · padding `[T,R,B,L]` = `{[16,24,16,24]}` · gap `{8}` · justify `{space-between}`
@@ -50,7 +50,7 @@
 - …
 
 ## 6. Checklist QA pixel-perfect
-- [ ] Frame size khớp `.pen`
+- [ ] Frame size khớp visual source đã chốt
 - [ ] Mọi spacing/padding/gap khớp
 - [ ] Radius đúng (`{16 / 24 / 9999}`)
 - [ ] Gradient + shadow đúng màu/stop/rotation

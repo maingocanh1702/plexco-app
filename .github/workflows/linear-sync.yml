@@ -4,7 +4,7 @@ name: linear-sync
 # Trigger:
 #   • push            → mỗi lần bạn đẩy code (branch/PR đã flip Linear qua native integration)
 #   • repository_dispatch (linear-changed) → Linear webhook bắn sự kiện = realtime đúng nghĩa
-#   • workflow_dispatch → chạy tay
+#   • workflow_dispatch → sync hoặc reconcile structure có kiểm soát
 #   • schedule */10    → lưới an toàn nếu webhook lỡ
 on:
   push:
@@ -12,6 +12,16 @@ on:
   repository_dispatch:
     types: [linear-changed]
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "Linear operation"
+        required: true
+        default: sync
+        type: choice
+        options:
+          - sync
+          - reconcile-check
+          - reconcile-apply
   schedule:
     - cron: "*/10 * * * *"
 
@@ -20,7 +30,9 @@ permissions:
 
 concurrency:
   group: linear-sync
-  cancel-in-progress: true
+  # Reconcile can push a projection commit, which triggers another run. Queue it
+  # instead of canceling the mutation/post-verification job that caused the push.
+  cancel-in-progress: false
 
 jobs:
   sync:
@@ -31,7 +43,30 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Check canonical structure → Linear
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'reconcile-check'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          if [ -z "$LINEAR_API_KEY" ]; then
+            echo "✗ LINEAR_API_KEY chưa cấu hình."
+            exit 1
+          fi
+          node linear-reconcile.mjs --check
+
+      - name: Reconcile canonical structure → Linear
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'reconcile-apply'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          if [ -z "$LINEAR_API_KEY" ]; then
+            echo "✗ LINEAR_API_KEY chưa cấu hình."
+            exit 1
+          fi
+          node linear-reconcile.mjs --apply
+
       - name: Pull Linear → progress.json
+        if: github.event_name != 'workflow_dispatch' || inputs.mode == 'sync' || inputs.mode == 'reconcile-apply'
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: |

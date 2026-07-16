@@ -10,7 +10,7 @@
 
 > **Decision reconcile 15/07/2026:** DD-32 và DD-45 đã chốt; DD-47/48 chốt framework. Đây là delivery contract cho các slice tương lai, **không phải bằng chứng code/migration đã land**.
 >
-> **Cập nhật 16/07/2026 (current decisions v1.39; DD-49..56 closure v1.37):** policy/contracts đã chốt và full-propagate. Không còn founder choice chặn S4→S8, nhưng code-readiness vẫn phụ thuộc B0 auth, DD-49 mutation-path, B1 payment source, B2 gender price, B3 sync delivery, external evidence và legal gate theo `../pre-code-open-items-2026-07-16.md`. DD-57..60 là proposal, chưa gate build.
+> **Cập nhật 17/07/2026 (current decisions v1.40; DD-49..56 closure v1.37):** policy/contracts đã chốt và full-propagate. Không còn founder choice chặn S4→S8, nhưng code-readiness vẫn phụ thuộc B0 auth, DD-49 mutation-path, B1 payment source, B2 gender price, B3 sync delivery, external evidence và legal gate theo `../pre-code-open-items-2026-07-16.md`. DD-57..60 là proposal; FE còn thiếu visual SoT mới được track/link.
 
 > **Đánh số phase:** toàn bộ tài liệu dùng duy nhất **canonical P-number**. Các tên Foundation/Tenant Engine/... chỉ là delivery-group label, không tạo một hệ số thứ hai.
 

@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P3.5
 > **Version:** 1.3 · 2026-07-16
-> **Status:** Implementation contract reconciled to TDD v2.6 / decisions v1.39; schema/code pending B0 and identity build slices
+> **Status:** Implementation contract reconciled to TDD v2.6 / decisions v1.40; schema/code pending B0 and identity build slices
 > **Product spec:** `../feature_identity.md`
 > **References:** `../../product/TDD.md` §3.2–3.4/§4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-13/DD-37/DD-50/DD-53
 

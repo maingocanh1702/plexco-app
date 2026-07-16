@@ -1,8 +1,8 @@
 # Designer Kickoff — Plexco Web FE
 
-> **Status:** 🟡 Proposal · **Version:** 0.1 · 2026-07-16
+> **Status:** 🟡 Proposal · **Version:** 0.2 · 2026-07-17
 > **Đọc file này ĐẦU TIÊN khi bắt đầu design FE.** Là entry point gộp mọi tài liệu + thứ tự làm + checklist nghiệm thu.
-> **Design tool:** `.pen` (Pencil) — SoT hiện tại là `Plexco-DS-fable5.pen` (repo root). *(Figma = phương án thay thế; nếu đổi, cập nhật `frontend-pipeline.md`.)*
+> **Visual source:** chưa chọn/chưa có asset được track. `Plexco-DS-fable5.pen` không có trong repo và đã superseded; chốt `.pen` mới hoặc Figma file/node trong `theme-direction-2026-07.md` trước handoff/code.
 > **Operationalize:** DD-57 (FE architecture) · DD-58 (pipeline + template) · DD-59 (tokens) · DD-60 (API convention).
 
 ---
@@ -15,15 +15,16 @@
 | 2 | `../../standards/design-tokens.md` | **Token canonical** — designer bám giá trị này |
 | 3 | `../../standards/frontend-architecture.md` | Ràng buộc bắt buộc (FE-INV-1..6): 4-state, tokens-only, i18n vi/en, touch ≥44 |
 | 4 | `./README.md §2` | **Route/auth/phase canonical** (Screen Map + Permission Matrix) |
-| 5 | `./frontend-pipeline.md` + `../../templates/feature-dev/fe-*-template.md` | Cách bàn giao từng màn `.pen`→code |
+| 5 | `./frontend-pipeline.md` + `../../templates/feature-dev/fe-*-template.md` | Cách bàn giao từng màn visual-source→code |
 | 6 | `../../standards/design-tokens-benchmark.md` | Khi cần đề xuất đổi/thêm token (không tự chế) |
 | 7 | `../../features/feature_*.md §Screens & States / §Use Cases + Edge Cases` | Chi tiết state + edge case mỗi feature |
 
 ## 1. Chốt trước khi bắt đầu (owner)
 
-- [ ] **Design SoT = `design-tokens.md`** — designer match token; đổi token phải qua benchmark (DD-59). *(đã note ở `design-brief §5.1`)*
+- [ ] **Theme màu + font** — đang trao đổi ở [`./theme-direction-2026-07.md`](./theme-direction-2026-07.md) (🟡 chờ chốt hue: Volt Green / Lime / Orange / Pink + font Sora+Inter). Chốt xong mới ghi vào `design-tokens.md`.
+- [ ] **Token SoT = `design-tokens.md`** — designer match token; đổi token phải qua benchmark (DD-59). *(đã note ở `design-brief §5.1`)*
 - [ ] **Route canonical = `README.md §2`** — nơi lệch với `design-brief §3` thì README thắng. *(đã note ở `design-brief §3`)*
-- [ ] **Tool = `.pen` (Pencil)** hay Figma — mặc định `.pen`.
+- [ ] **Visual SoT = `.pen` mới được commit hoặc Figma file/node được link** — ghi exact path/URL + node/frame id; chưa chốt thì không handoff/code.
 - [ ] Xác nhận scope phase-1 (mục §3 dưới).
 
 ## 2. Ràng buộc bắt buộc (mọi màn phải thoả — FE-INV)
@@ -38,7 +39,7 @@
 ## 3. Trình tự làm việc
 
 ### Giai đoạn A — Design System (làm TRƯỚC, khoá trước khi vẽ màn)
-1. **Tokens** trong `.pen` khớp `design-tokens.md`: color · typography · spacing · radius · shadow · motion (+ sport accents §9, dark mode §Dark).
+1. **Tokens** trong visual source đã chọn khớp `design-tokens.md`: color · typography · spacing · radius · shadow · motion (+ sport accents §9, dark mode §Dark).
 2. **Primitives / Component Library** (theo `design-brief §5.4/§9`): Button, Input/Field, Card, Table/List, Badge/Tag, Toast, Skeleton, **Empty state**, **Slot indicator**, Modal, Tabs, Avatar.
    - Mỗi component đủ **states**: default · hover · focus · active · disabled · loading.
    - Có biến thể light + dark; text mẫu vi + en.
@@ -64,7 +65,7 @@
 | 12 | Settings | Hồ sơ + **giá theo giới tính** | `feature_user_settings.md` (DD-39) |
 
 ### Giai đoạn C — Handoff từng màn (pipeline DD-58)
-Với mỗi màn xong design: node id → `handoff/<screen>-handoff.md` (template) → `handoff/<screen>-token-mapping.md` (template) → code → verify screenshot ×3 breakpoint.
+Với mỗi màn xong design: source path/URL + node/frame id → `handoff/<screen>-handoff.md` (template) → `handoff/<screen>-token-mapping.md` (template) → code → verify screenshot ×3 breakpoint.
 
 ## 4. Checklist nghiệm thu per-screen (owner ký trước khi code)
 
@@ -78,10 +79,10 @@ Với mỗi màn xong design: node id → `handoff/<screen>-handoff.md` (templat
 - [ ] Cover edge case liệt kê trong `feature_*.md §Use Cases + Edge Cases`
 - [ ] **Không tiền/PII trên màn public** (`/discover*` chỉ field-whitelist — HARD RULE 2)
 - [ ] Money hiển thị tabular-nums; status color đúng mapping paid/partial/unpaid
-- [ ] Node `.pen` đặt tên rõ để làm handoff
+- [ ] Node/frame đặt tên rõ và handoff ghi exact source path/URL + ID
 
 ## 5. Deliverables mong đợi (tóm từ `design-brief §9`)
-1. Design system file (`.pen`) — tokens + component library đủ states.
+1. Design system source (`.pen` được track hoặc Figma file/node được link) — tokens + component library đủ states.
 2. Screen designs theo §3B — mỗi màn 4 state × light/dark × 3 breakpoint.
 3. Handoff per-screen (§C) — để FE code pixel-perfect.
 
@@ -89,4 +90,5 @@ Với mỗi màn xong design: node id → `handoff/<screen>-handoff.md` (templat
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 17/07/2026 | 0.2 | Gỡ `.pen` SoT không tồn tại; tách token SoT và visual SoT; thêm hard gate chọn + track/link source mới trước handoff/code. |
 | 16/07/2026 | 0.1 | 🟡 Kickoff đầu tiên — gộp gói tài liệu + thứ tự design-system→screens + checklist nghiệm thu. Vá drift color (`design-brief §5.1`) + route (`§3`). Operationalize DD-57..60. |

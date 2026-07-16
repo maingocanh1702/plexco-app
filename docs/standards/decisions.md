@@ -655,13 +655,14 @@
 - **Lý do:** đóng gap FE thiếu chuẩn kiến trúc; neo mọi bất biến FE về HARD RULES đã có, không tạo luật mới.
 - **Hệ quả:** doc là 🟡 proposal — chưa gate build. Khi ✅: bổ sung lint (no-literal-color, no-`@plexco/db`-in-client), thêm vào PR template, cập nhật `channels/web/README §5/§6`.
 
-## DD-58 — FE design→code pipeline `.pen`→pixel-perfect (adopt từ Sporta) · 🟡 Đề xuất
+## DD-58 — FE visual-source→code pipeline (adopt từ Sporta) · 🟡 Đề xuất
 
 > **Nguồn:** ported từ Sporta `front-end/README.md` + handoff docs. Chi tiết: `../channels/web/frontend-pipeline.md` + 2 template `../templates/feature-dev/fe-handoff-template.md`, `fe-token-mapping-template.md`.
 
-- **Bối cảnh:** Plexco có design SoT (`Plexco-DS-fable5.pen`) nhưng chưa có quy trình chuẩn từ `.pen` ra code pixel-perfect + truy vết ngược. Sporta có pipeline 5 bước + handoff/mapping template + luật source-comment.
-- **Quyết định (đề xuất):** pipeline 5 bước **`.pen → handoff → token-mapping → code → verify`**; đọc `.pen` qua Pencil MCP; **CSS-variable mapping (KHÔNG Tailwind)** cho khớp `apps/web`; luật vàng: `.pen` = SoT, không suy đoán, 3-file-đồng-bộ, **`// Source: <screen>-token-mapping §X · handoff §Y` comment trên mỗi component** (song song luật BE `/** Source: feature_x_tech.md §Y */`). Kèm icon-rule 5 thuộc tính.
-- **Lý do:** biến design-to-code thành quy trình lặp lại + audit được; giảm drift `.pen`↔code.
+- **Bối cảnh:** Plexco cần quy trình chuẩn từ visual design ra code pixel-perfect + truy vết ngược. File `Plexco-DS-fable5.pen` từng được docs nhắc tới nhưng không tồn tại trong repo và đã superseded; visual SoT mới chưa được chọn. Sporta có pipeline 5 bước + handoff/mapping template + luật source-comment.
+- **Quyết định (đề xuất):** pipeline 5 bước **`visual source → handoff → token-mapping → code → verify`**; visual source mỗi screen phải là `.pen` được track + node id hoặc Figma URL + node/frame id được link; **CSS-variable mapping (KHÔNG Tailwind)** cho khớp `apps/web`; luật vàng: source đã chốt = visual SoT, không suy đoán, các mắt xích đồng bộ, **`// Source: <screen>-token-mapping §X · handoff §Y` comment trên mỗi component** (song song luật BE `/** Source: feature_x_tech.md §Y */`). Kèm icon-rule 5 thuộc tính.
+- **Implementation gate:** token SoT vẫn là `design-tokens.md`; không author handoff/code screen cho tới khi owner chốt theme + visual tool và asset/URL mới được track/link bền vững.
+- **Lý do:** biến design-to-code thành quy trình lặp lại + audit được; giảm drift visual-source↔code.
 - **Hệ quả:** 🟡 proposal. Khi ✅: thêm bước handoff/mapping vào `feature-dev/feature-checklist.md`, tạo `docs/channels/web/handoff/` khi build màn đầu.
 
 ## DD-59 — Design-token benchmark method + usage-token layer (adopt từ Sporta) · 🟡 Đề xuất
@@ -688,6 +689,7 @@
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 17/07/2026 | v1.40 | **DD-58 visual-source truthfulness:** gỡ claim `Plexco-DS-fable5.pen` là SoT vì asset không tồn tại trong repo và theme mới đã supersede nó; tách token SoT (`design-tokens.md`) khỏi visual SoT; pipeline fail-closed cho tới khi owner chốt `.pen` mới được track hoặc Figma file/node được link. Không đổi trạng thái proposal của DD-57..60. |
 | 16/07/2026 | v1.39 | **Post-v1.38 authority reconcile:** DD-40 xoá lựa chọn synthetic bank transaction cho host-attested CK chưa ingest; pin hard boundary = dedicated allocation source migration + actor/opaque evidence, reject trước migration, exact DDL qua B1 design-probe. Reconcile body cũ DD-01→DD-50 và DD-45 rejoin→DD-49 để không còn hai contract hoạt động. Refresh Product/BE/HANDOFF/BUILD-STATUS/feature index/tracker/workbook authority sau full DD-49..56 propagation; DD-57..60 vẫn proposal, không gate build. |
 | 16/07/2026 | v1.38 | **FE docs practices adopt từ Sporta (🟡 proposal, không gate build).** Thêm **DD-57** (FE architecture principles → `standards/frontend-architecture.md`, FE-INV-1..6), **DD-58** (design→code pipeline `.pen→handoff→token-mapping→code→verify` + 2 template + luật `// Source:` comment; CSS-var không Tailwind), **DD-59** (design-token benchmark method + usage-token layer + reconcile file token trùng), **DD-60** (API reference convention: auth legend + envelope + endpoint block format). Tất cả adapt sang stack Plexco (Next.js/React, CSS-var tokens, `apps/web`, HARD RULES) — KHÔNG copy nguyên Tailwind/Flutter. Doc-map HANDOFF §7 + README + `channels/web/README` cập nhật pointer. Nguồn: so sánh docs Plexco↔Sporta 2026-07-16. |
 | 16/07/2026 | v1.37 | **Code-aware contract closure sau founder batch:** DD-49 giữ policy nhưng bỏ giả định row `delta/new charge`; pin append-only signed obligation adjustment + một canonical balance helper, storage/API chờ mutation-path design-probe vì live UNIQUE charge/player/session. DD-50 pin proof matrix Google OIDC (`iss/aud/nonce/exp/iat/email_verified`) + transactional `link_code` consume + credential lifecycle gate. DD-52 summary nhận amend actor. DD-55 nâng block/report/rate-limit thành hard enablement gate open-DM. DD-56 thay blanket role inheritance bằng exact capability registry + least-privilege defaults/delegation audit. Propagate full body Product/BE + tracker/HANDOFF/BUILD-STATUS. |

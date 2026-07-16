@@ -4,6 +4,7 @@
 > **Nguồn:** ported từ Sporta `docs/design/sporta-design-tokens-recommendation.md`.
 > **Decision:** `decisions.md` DD-59 (🟡).
 > **Quan hệ:** đây là **method doc** — feed vào `design-tokens.md` (canonical tokens). KHÔNG thay `design-tokens.md`.
+> **Đang trao đổi (live):** hướng theme bright/modern/sporty + 4 palette candidate + font → [`../channels/web/theme-direction-2026-07.md`](../channels/web/theme-direction-2026-07.md).
 
 Hai mục tiêu:
 1. **Method** — cách luận/điều chỉnh token từ benchmark app đối thủ (thay vì "tự chế").

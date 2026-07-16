@@ -112,7 +112,7 @@ type ScreenState<T> =
 Trước khi code 1 màn mới, phải có đủ:
 
 - [ ] Product spec `../features/feature_<name>.md` §Screens & States (Reviewed).
-- [ ] `Plexco-DS-fable5.pen` có node cho màn đó (design SoT).
+- [ ] Visual source đã được owner chốt và truy cập được: `.pen` mới được track hoặc Figma file/node được link; node/frame ID của màn tồn tại.
 - [ ] Handoff `docs/channels/web/handoff/<screen>-handoff.md` (template `../templates/feature-dev/fe-handoff-template.md`).
 - [ ] Token mapping `<screen>-token-mapping.md` (template `../templates/feature-dev/fe-token-mapping-template.md`).
 - [ ] Pipeline: xem `../channels/web/frontend-pipeline.md`.
@@ -132,7 +132,7 @@ Trước khi code 1 màn mới, phải có đủ:
 ## 10. Cross-references
 
 - Tokens: `design-tokens.md` · benchmark/method: `design-tokens-benchmark.md`
-- Pipeline `.pen→code`: `../channels/web/frontend-pipeline.md`
+- Pipeline visual-source→code: `../channels/web/frontend-pipeline.md`
 - API convention: `api-reference-convention.md`
 - BE counterpart: `core-db-architecture-principles.md` · HARD RULES: `../00-start-here/HANDOFF.md §3`
 
@@ -140,4 +140,5 @@ Trước khi code 1 màn mới, phải có đủ:
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 17/07/2026 | 0.2 | Reconcile DD-58 v1.40: visual source có thể là `.pen` track hoặc Figma link; không claim asset cũ không tồn tại. |
 | 16/07/2026 | 0.1 | 🟡 Proposal đầu tiên — ported từ Sporta FE architecture; adapt Next.js/React + CSS-var tokens. DD-57. |

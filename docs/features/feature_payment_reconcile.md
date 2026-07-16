@@ -3,7 +3,7 @@
 > **Canonical phase:** P3
 > **Track:** 💰 Payment Reconciliation
 > **Version:** 1.6 · 2026-07-16
-> **Status:** Reviewed and reconciled to BRD v3.7 / PRD v2.5 / TDD v2.6 / decisions v1.39; B1/schema/code pending build slices
+> **Status:** Reviewed and reconciled to BRD v3.7 / PRD v2.5 / TDD v2.6 / decisions v1.40; B1/schema/code pending build slices
 > **Prerequisites:** P0–P1 foundation + P2 tenant routing
 > **Tài liệu liên quan:** `../product/BRD.md` FR-5 · `../product/PRD.md` FLOW 6/9 + §4.1 · `../product/TDD.md` §3.2/3.6/3.7 · `../standards/decisions.md` DD-40/DD-25 · `../standards/business-rules.md` BL-PAY · `../research/player-side-saas-reconciliation.md`
 

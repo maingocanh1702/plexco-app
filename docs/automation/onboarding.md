@@ -49,6 +49,7 @@ Không phải "hai nguồn độc lập hoàn toàn" — mà **mỗi field có 1
 | `linear-contract.mjs` | Shared validator cho module/subtask ID, status và title contract. | `compare-linear`/`linear-sync` gọi tự động; không chạy riêng |
 | `compare-linear.mjs` | **Đọc** Linear + progress.json → in bảng drift status/title/cấu trúc; `--write` xuất snapshot. | Exit 2 nếu status/title lệch hoặc thiếu module/subtask |
 | `linear-sync.mjs` | **Ghi** status từ Linear → progress.json (Linear leader); không ghi nếu contract title/cấu trúc lệch. | Action gọi; hoặc chạy tay |
+| `linear-reconcile.mjs` | **Ghi structure canonical** từ progress.json → Linear (title/subtask/parent/project/label); `--check` read-only, `--apply` explicit + post-verify. | Chỉ dùng khi compare/sync báo structural/title drift |
 | `linear-snapshot.json` | Ảnh chụp trạng thái Linear cho dashboard so sánh. | Do script sinh |
 | `gen-linear-csv.mjs` / `linear-import.csv` | Đường seed Linear bằng CSV (không cần OAuth). | Khi seed lại / nơi khác |
 | `.github/workflows/linear-sync.yml` | GitHub Action chạy `linear-sync` khi push/webhook/cron. | Kích hoạt khi có repo GitHub |
@@ -142,6 +143,8 @@ LINEAR_API_KEY=lin_api_xxx node compare-linear.mjs       # so 2 nguồn, in drif
 LINEAR_API_KEY=lin_api_xxx node compare-linear.mjs --write   # + xuất linear-snapshot.json
 LINEAR_API_KEY=lin_api_xxx node linear-sync.mjs          # pull Linear → GHI progress.json (Linear leader)
 LINEAR_API_KEY=lin_api_xxx node linear-sync.mjs --check  # dry-run (không ghi)
+LINEAR_API_KEY=lin_api_xxx node linear-reconcile.mjs --check  # dry-run structure → Linear
+LINEAR_API_KEY=lin_api_xxx node linear-reconcile.mjs --apply  # mutation explicit + post-verify
 node gen-linear-csv.mjs                                   # sinh linear-import.csv (seed không cần OAuth)
 ```
 

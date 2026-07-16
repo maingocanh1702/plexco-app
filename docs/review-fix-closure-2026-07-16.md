@@ -99,7 +99,7 @@ New file `.github/workflows/security.yml` adds:
 - Read-only repository permissions.
 - SARIF upload disabled because this private repository does not currently have GitHub Advanced Security enabled.
 
-Remote workflow runs become durable release evidence only after these local files are committed and pushed.
+Remote workflow runs are durable release evidence after the closure was committed and pushed; see §14 for the exact HEAD and run URLs.
 
 ## 4. Dependency and supply-chain closure
 
@@ -293,7 +293,7 @@ These are intentional project gates or future implementation work, not defects l
 4. Preserve B1/B2/B3 and DD-49 correction boundaries before money/session/sync mutations.
 5. Complete external/legal/provider evidence before the related go-live gates.
 6. Enter sourced provider/support COGS before using P&L contribution or margin outputs for planning.
-7. Obtain remote CI/Security evidence after an intentional per-file commit and push.
+7. ✅ Remote CI/Security evidence for the runtime closure was obtained after an intentional per-file commit and push; see §14. Future runtime changes require fresh evidence.
 
 ## 11. Git/worktree caution
 
@@ -323,3 +323,12 @@ Independent re-verification of this report against the working tree, plus closur
 Spot-check matrix from the independent review (all ✅): resolver contract in `session-cookies.ts:131-170` + env/fly propagation; `ci.yml` postgres service + `DATABASE_URL_TEST` + gate order; `security.yml` pinned digest/SHA; lockfile resolves `drizzle-orm@0.45.2` / `esbuild@0.25.12` / `postcss@8.5.16` (overrides effective); `nosemgrep` only at the two `escapeRegExp`-guarded lines; `expectErrorChainToMatch` retains `/row-level security/` assertion; BUILD-STATUS 223-test evidence; tracker D8/D9; `feature_multi_tenant.md` v1.5 matches index; test-count arithmetic internally consistent (web 56→65 = +9 new resolver tests; full 214→223).
 
 Known accepted tradeoff: missing/malformed trusted headers collapse into one bounded `untrusted` bucket per provider — fail-closed by design; legitimate traffic behind a broken ingress shares that rate-limit bucket.
+
+## 14. Remote evidence addendum (2026-07-17)
+
+The runtime/security closure was committed and pushed to `main` at `299338d`. GitHub produced durable evidence for that exact HEAD:
+
+- [CI run 29518494545](https://github.com/maingocanh1702/plexco-app/actions/runs/29518494545): install, workspace typecheck, format, lint, production build and canonical PostgreSQL-backed full suite all passed.
+- [Security run 29518495006](https://github.com/maingocanh1702/plexco-app/actions/runs/29518495006): Semgrep CE and OSV full dependency scan passed.
+
+This closes the remote-evidence condition recorded in §3/§10. It does not replace provider sandbox evidence, production provisioning, backup/restore/failover drills, RPO/RTO measurement or other production gates in `pre-code-open-items-2026-07-16.md §C`.

@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P0–P1
 > **Version:** 1.2 · 2026-07-10
-> **Status:** Implementation contract reconciled to TDD v2.6 / decisions v1.39; P0–P1 live schema/migrations/tests remain the reality baseline
+> **Status:** Implementation contract reconciled to TDD v2.6 / decisions v1.40; P0–P1 live schema/migrations/tests remain the reality baseline
 > **Product spec:** `../feature_multi_tenant.md`
 > **References:** `../../product/TDD.md` §3.1–3.4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37
 

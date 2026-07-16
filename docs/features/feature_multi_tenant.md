@@ -3,7 +3,7 @@
 > **Canonical phase:** P0–P1
 > **Track:** 🏢 Multi-tenant Core + 3-tier
 > **Version:** 1.5 · 2026-07-16
-> **Status:** Reviewed and reconciled to BRD v3.7 / PRD v2.5 / TDD v2.6 / decisions v1.39; P0–P1 live implementation remains the reality baseline
+> **Status:** Reviewed and reconciled to BRD v3.7 / PRD v2.5 / TDD v2.6 / decisions v1.40; P0–P1 live implementation remains the reality baseline
 > **Tài liệu liên quan:** `../product/BRD.md` §6–8 · `../product/TDD.md` §3.2–3.4 · `../standards/decisions.md` DD-37 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md`
 
 > **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (bỏ Telegram). Nền multi-tenant/RLS không đổi; chỉ cập nhật tham chiếu kênh ngoài phạm vi.

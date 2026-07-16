@@ -363,7 +363,7 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 | ID | Quyết định | Trạng thái |
 |---|---|---|
 | OD-1 | SĐT verified (share-contact) làm khoá merge chính | 🔄 **Điều chỉnh bởi DD-50 (16/07):** phase-1 không thu SĐT; khoá mạnh = verified email + link_code; phone dormant |
-| OD-17 | **Founder batch 16/07/2026** — money correction (đổi giá/leave-refund/rejoin carry-over), Host Pro lifecycle, guest→full + ban, identity recovery authority, PII collection config, DM/media chat, co-admin capability | ✅ **DD-49..56** (full clarification v1.37; current `decisions.md` v1.39) |
+| OD-17 | **Founder batch 16/07/2026** — money correction (đổi giá/leave-refund/rejoin carry-over), Host Pro lifecycle, guest→full + ban, identity recovery authority, PII collection config, DM/media chat, co-admin capability | ✅ **DD-49..56** (full clarification v1.37; current `decisions.md` v1.40) |
 | OD-2 | `pay_code` contract: suffix trần 4 ký tự + prefix namespace; resolver own/foreign/none; allocation invariant | ✅ **DD-02 chốt 13/07/2026** |
 | OD-3 | Giá/tier subscription host | ✅ **DD-29**: `free` (web + Zalo + Messenger + mark-paid thủ công + chat) · `host_pro` 250k (auto reconcile/nhắc + AI + CRM). |
 | OD-4 | Hosting Postgres — HA+PITR+Singapore ✅; ✅ **(2026-07-16): (c) co-locate DigitalOcean** (App Platform + Managed PG HA-standby, VPC private); Fly = fallback; pre-build gate = egress-IP verify | ✅ (→ DD-04, `../dd-04-hosting-final-decision.md`) |

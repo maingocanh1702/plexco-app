@@ -2,11 +2,11 @@
 
 > **Mục đích:** ảnh chụp tiến độ *thực thi* so với khối tài liệu đã Reviewed. Trả lời gọn:
 > "code đã có tới đâu, còn cách MVP bao xa". Đây là doc **living**, cập nhật mỗi khi một slice merge.
-> **Cập nhật:** 2026-07-16 (current authority **decisions v1.39**; DD-49..56 contract closure ở v1.37; DD-57..60 là proposal, chưa gate build; functional implementation baseline không đổi).
+> **Cập nhật:** 2026-07-17 (current authority **decisions v1.40**; DD-49..56 contract closure ở v1.37; DD-57..60 là proposal, chưa gate build; v1.40 sửa visual-source truthfulness, functional implementation baseline không đổi).
 > **Nguồn số liệu:** `git log`, cây `packages/`+`apps/`, `docs/features/*`, `docs/standards/decisions.md`,
 > `docs/autopilot-backlog.md`. Số liệu chức năng = baseline **`main@1eb6f60`** (foundation + Auth v3 đã merge), không phải khẳng định đây là HEAD hiện tại.
 >
-> **Reconcile 2026-07-16:** channel target vẫn theo DD-37, nhưng functional implementation baseline còn Auth v3 Telegram-era và bắt buộc `TELEGRAM_BOT_TOKEN`. Google/email replacement đã spec đầy đủ nhưng **chưa implement, chưa có launcher-ready slice**; B0 mutation-path/storage/revoke-all design-probe vẫn chặn authoring. Decision authority tới **v1.39/DD-60** (DD-57..60 proposal-only). HEAD hiện tại có thêm docs/config/tooling sau `1eb6f60`, nhưng chưa thêm feature layer; migrations vẫn `0000–0013` (14 file).
+> **Reconcile 2026-07-17:** channel target vẫn theo DD-37, nhưng functional implementation baseline còn Auth v3 Telegram-era và bắt buộc `TELEGRAM_BOT_TOKEN`. Google/email replacement đã spec đầy đủ nhưng **chưa implement, chưa có launcher-ready slice**; B0 mutation-path/storage/revoke-all design-probe vẫn chặn authoring. Decision authority tới **v1.40/DD-60** (DD-57..60 proposal-only). HEAD hiện tại có thêm docs/config/tooling sau `1eb6f60`, nhưng chưa thêm feature layer; migrations vẫn `0000–0013` (14 file). FE visual SoT mới cũng chưa được chọn/track/link, nên chưa handoff/code screen.
 
 ---
 
@@ -14,7 +14,7 @@
 
 | Trục | Trạng thái | Ước lượng |
 |---|---|---|
-| **Tài liệu / thiết kế** | **21 Product specs + 20 BE specs** = **20 cặp hiện có + 1 product-only Draft** (`channel_booking_funnel`; BE sẽ viết cùng build slice, **DD-32 đã chốt**). Decision log tới **DD-60 / v1.39**; DD-57..60 là proposal. DD-49..56 đã full-propagate, nhưng B0/B1/B2/B3 + correction mutation-path probes, external evidence và legal gate vẫn mở. | Contract coverage cao; **không dùng % này làm code-readiness** |
+| **Tài liệu / thiết kế** | **21 Product specs + 20 BE specs** = **20 cặp hiện có + 1 product-only Draft** (`channel_booking_funnel`; BE sẽ viết cùng build slice, **DD-32 đã chốt**). Decision log tới **DD-60 / v1.40**; DD-57..60 là proposal. DD-49..56 đã full-propagate, nhưng B0/B1/B2/B3 + correction mutation-path probes, external evidence, legal gate và FE visual source vẫn mở. | Contract coverage cao; **không dùng % này làm code-readiness** |
 | **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations `0000–0013` đã merge, có test | **✅ xong** |
 | **Code — lớp auth** | **Auth Onboarding v3 (Telegram-era) đã merge** (`5b1193b`) + web tests; **DD-37 supersede provider** → Google/email replacement đã spec, **chưa implement** | 🟡 provider replacement pending |
 | **Code — lớp feature nghiệp vụ** | chưa bắt đầu (session/reconcile/sync/marketplace/billing/bot…) | ⬜ chưa build |
@@ -168,7 +168,7 @@ Nói cách khác: session này **khép lại Phase 1** (nền móng) và **mở 
 **Quyết định/gate còn treo có thể chặn hoặc định hình build:** **DD-04** provider ✅ **chốt (c) DO co-locate** (còn build-time gate: egress-IP verify + provision + restore/failover drill + RPO/RTO + KMS), **DD-14/15**
 (Zalo external spikes), **DD-33** (Facebook link/App Review), và **DD-34/35/36**
 (Club Assistant P7 detail). **DD-18 chỉ chặn GO-LIVE Club Assistant, không chặn build interface-swappable.**
-**DD-49..56 closure 2026-07-16 (v1.37; current decisions v1.39): ✅ policy/contracts propagated** — money correction, không-thu-SĐT/HR4, Host Pro lifecycle, guest→full/ban, identity recovery, PII config, DM/media, co-admin. Không còn founder choice chặn S4→S8, nhưng B0/B1/B2/B3 + DD-49 correction probes vẫn chặn các path tương ứng; legal A3 chặn go-live. Checklist: `../pre-code-open-items-2026-07-16.md`.
+**DD-49..56 closure 2026-07-16 (v1.37; current decisions v1.40): ✅ policy/contracts propagated** — money correction, không-thu-SĐT/HR4, Host Pro lifecycle, guest→full/ban, identity recovery, PII config, DM/media, co-admin. Không còn founder choice chặn S4→S8, nhưng B0/B1/B2/B3 + DD-49 correction probes vẫn chặn các path tương ứng; legal A3 chặn go-live. Checklist: `../pre-code-open-items-2026-07-16.md`.
 **DD-02/05/06/08/10/12/41–46 đã ✅ chốt; DD-47/48 đã chốt framework** nhưng schema/code vẫn pending.
 DD-13 (Google/email) ✅ nhưng provider chưa implement; auth đã land vẫn là Telegram-era. DD-37/38/39 ✅;
 chat/giá theo giới tính còn chờ migration.
@@ -189,9 +189,11 @@ Reality-check trên local working tree hiện tại; giữ kết quả full-suit
 | Canonical DB/full test (16/07) | ✅ Docker PostgreSQL `/plexco_test`: **20 files / 223 tests pass** (core 111 · DB/RLS/auth 44 · web 65 · bot 3); container được stop sau verify |
 | Previous full-suite baseline (13/07, historical) | ✅ **20 files / 214 tests pass** trước trusted-ingress regression expansion |
 | Local Markdown link + anchor scan (16/07) | ✅ **151 Markdown files** trong current working tree, 0 broken local links/anchors · 0 unbalanced fence |
+| Remote CI (`main@299338d`, 17/07) | ✅ [Run 29518494545](https://github.com/maingocanh1702/plexco-app/actions/runs/29518494545): install/typecheck/format/lint/build/full PostgreSQL suite pass |
+| Remote Security (`main@299338d`, 17/07) | ✅ [Run 29518495006](https://github.com/maingocanh1702/plexco-app/actions/runs/29518495006): Semgrep CE + OSV full dependency scan pass |
 
-Phạm vi xác nhận hiện tại: local working tree; full PostgreSQL suite 16/07 là current green cho checkout này.
-Đây không thay remote CI/Security workflow, staging/restore/provider evidence và không có nghĩa feature layer đã implement.
+Phạm vi xác nhận hiện tại: local working tree + remote runtime closure `299338d`; full PostgreSQL suite 16/07 là current local green cho checkout này.
+Remote CI/Security đã có cho runtime closure nhưng không thay staging/restore/provider evidence và không có nghĩa feature layer đã implement.
 
 ---
 

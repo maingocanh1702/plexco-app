@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P3 (auto-reconcile) · P2 (manual mark-paid)
 > **Version:** 1.6 · 2026-07-16
-> **Status:** Implementation contract reconciled to TDD v2.6 / decisions v1.39; B1/schema/code pending design-probe/build slices
+> **Status:** Implementation contract reconciled to TDD v2.6 / decisions v1.40; B1/schema/code pending design-probe/build slices
 > **Product spec:** `../feature_payment_reconcile.md`
 > **References:** `../../product/TDD.md` §3.2/3.6–3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-25/DD-40/DD-49/DD-51
 
