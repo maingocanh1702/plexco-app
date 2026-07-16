@@ -81,9 +81,9 @@ GitNexus reported a **LOW** blast radius for the resolver change: two direct aut
 
 GitHub actions are pinned to immutable commit SHAs rather than mutable tags:
 
-- `actions/checkout` v4.
-- `pnpm/action-setup` v4.
-- `actions/setup-node` v4.
+- `actions/checkout` v7 (Node 24 action runtime).
+- `pnpm/action-setup` v6 (Node 24 action runtime).
+- `actions/setup-node` v7 (Node 24 action runtime; project CI remains Node 22 per `engines.node >=22`).
 
 The existing `.github/workflows/linear-sync.yml` action references were pinned as well.
 
@@ -317,7 +317,7 @@ This report itself adds one additional untracked Markdown file until staged. Do 
 Independent re-verification of this report against the working tree, plus closure of the three review findings:
 
 1. **pnpm supply-chain keys — VERIFIED VALID, with the pnpm 10 boundary stated exactly.** Repo pins `pnpm@10.30.2`; the version-matched pnpm 10.x documentation confirms: `minimumReleaseAge` was added in v10.16.0 and delays resolution of direct and transitive releases younger than the configured age; `trustPolicy` was added in v10.21.0 and `no-downgrade` rejects a package whose trust evidence is weaker than an earlier-published version; `blockExoticSubdeps` was added in v10.26.0, defaults to `false` in pnpm 10, and is enabled here explicitly with `true`. pnpm 10 does **not** provide the pnpm 11 `minimumReleaseAgeStrict` setting, so this report makes no strict-fallback claim. These are dependency-resolution guards; OSV separately audits the resolved lockfile already present in the repository.
-2. **GitHub Action SHA pins — VERIFIED chính chủ** via `git ls-remote --tags` (2026-07-16): `actions/checkout@34e11487…` = **v4.3.1** · `pnpm/action-setup@b906affc…` = **v4.3.0** (peeled annotated tag) · `actions/setup-node@49933ea5…` = **v4.4.0** · `google/osv-scanner-action@9a498708…` = **v2.3.8** (exact). Workflow comments updated from generic `# v4` to exact verified tags. Semgrep image is content-addressed by digest within the official `semgrep/semgrep` repository.
+2. **GitHub Action SHA pins — VERIFIED chính chủ** via `git ls-remote --tags` (2026-07-16): `actions/checkout@34e11487…` = **v4.3.1** · `pnpm/action-setup@b906affc…` = **v4.3.0** (peeled annotated tag) · `actions/setup-node@49933ea5…` = **v4.4.0** · `google/osv-scanner-action@9a498708…` = **v2.3.8** (exact). These were the verified closure pins at that time; §15 records their Node 24-compatible supersession. Semgrep image is content-addressed by digest within the official `semgrep/semgrep` repository.
 3. **Report location:** verified under `docs/` (this file) so the closure record ships with the docs tree; commit per-file as §11 instructs (no `git add -A`).
 
 Spot-check matrix from the independent review (all ✅): resolver contract in `session-cookies.ts:131-170` + env/fly propagation; `ci.yml` postgres service + `DATABASE_URL_TEST` + gate order; `security.yml` pinned digest/SHA; lockfile resolves `drizzle-orm@0.45.2` / `esbuild@0.25.12` / `postcss@8.5.16` (overrides effective); `nosemgrep` only at the two `escapeRegExp`-guarded lines; `expectErrorChainToMatch` retains `/row-level security/` assertion; BUILD-STATUS 223-test evidence; tracker D8/D9; `feature_multi_tenant.md` v1.5 matches index; test-count arithmetic internally consistent (web 56→65 = +9 new resolver tests; full 214→223).
@@ -332,3 +332,9 @@ The runtime/security closure was committed and pushed to `main` at `299338d`. Gi
 - [Security run 29518495006](https://github.com/maingocanh1702/plexco-app/actions/runs/29518495006): Semgrep CE and OSV full dependency scan passed.
 
 This closes the remote-evidence condition recorded in §3/§10. It does not replace provider sandbox evidence, production provisioning, backup/restore/failover drills, RPO/RTO measurement or other production gates in `pre-code-open-items-2026-07-16.md §C`.
+
+## 15. Automation and Linear closure addendum (2026-07-17)
+
+- Added committed launcher `.claude/commands/ap-21-infra-do-app-vpc-deployment.md`; the infra task is now genuinely launcher-ready on `main`, while its provider fixed-egress pre-flight and STOP_AT_READY boundaries remain unchanged.
+- Added fail-closed, idempotent `linear-reconcile.mjs` plus workflow modes `reconcile-check`/`reconcile-apply`. [Apply run 29521615796](https://github.com/maingocanh1702/plexco-app/actions/runs/29521615796) repaired the three module titles, canonicalized drifted subtask titles and attached `plexco-mvp` to MNA-24…MNA-69. It created no duplicate issues; post-verify and the subsequent Linear→progress sync both reported exact agreement.
+- Superseded deprecated Node 20 action runtimes with immutable official pins verified 2026-07-17: `actions/checkout@9c091bb…` = v7.0.0; `actions/setup-node@8207627…` = v7.0.0; `pnpm/action-setup@0ebf471…` = v6.0.9 peeled commit. All three declare `runs.using: node24`; project commands continue on Node 22, matching root `engines.node >=22`.

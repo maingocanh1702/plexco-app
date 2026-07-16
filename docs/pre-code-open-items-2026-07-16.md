@@ -119,6 +119,7 @@ Nếu không enforce được một negative scope ở boundary thật, **không
 
 | Ngày | Thay đổi |
 |---|---|
+| 2026-07-17 | **Readiness/automation closure:** committed AP-21 launcher; Linear reconcile repaired 3 module titles + 46 existing subtask labels/titles without duplicates and post-verify passed; FE docs stop claiming missing `Plexco-DS-fable5.pen` as SoT; GitHub actions upgraded to verified immutable Node 24-runtime pins (checkout v7.0.0 · setup-node v7.0.0 · pnpm-setup v6.0.9). |
 | 2026-07-16 | **Review-fix closure verified + 3 findings đóng:** (1) pnpm keys `minimumReleaseAge`/`trustPolicy`/`blockExoticSubdeps` verified hợp lệ & enforced với pnpm 10.30.2 (docs pnpm); (2) SHA pins verified chính chủ qua `git ls-remote` (checkout v4.3.1 · pnpm-setup v4.3.0 · setup-node v4.4.0 · osv v2.3.8 exact) — comment workflows đổi sang exact tag; (3) report lưu vào `docs/review-fix-closure-2026-07-16.md` (§13 addendum verify). |
 | 2026-07-16 | **Code-aware closure v1.37:** sửa DD-49 storage assumption theo live UNIQUE charge/player/session; pin DD-50 OIDC/link-code proof; DD-55 hard abuse-safety gate; DD-56 exact capability matrix; full-propagate Product+BE body/tests; dọn dependencies A1/A2/A5 đã đóng; thống nhất test URL. |
 | 2026-07-16 | **Founder batch 2** → decisions.md v1.36: DD-54 (PII config trên CMS admin — A3 còn legal), DD-55 (DM phase-1 open / phase-2 follow-gated + request box; media in-scope full stack — B7a/B7b ✅), DD-56 (co-admin = admin trừ role mgmt, được ban — B8 ✅, amend DD-52). Note DD-33: chatbot review ≠ Login review. |
