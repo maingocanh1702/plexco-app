@@ -29,6 +29,13 @@ jobs:
   osv-pr:
     name: OSV dependency diff
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    # Reusable workflow declares these job permissions; caller must grant them
+    # or the run dies at startup ("startup_failure", no logs). SARIF upload stays
+    # disabled (no GHAS on this private repo).
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
     with:
       upload-sarif: false
@@ -36,6 +43,10 @@ jobs:
   osv-full:
     name: OSV full dependency scan
     if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
     with:
       upload-sarif: false
