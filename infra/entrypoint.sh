@@ -4,7 +4,7 @@
 # worker:        không HTTP (role DB = app_worker, connection DIRECT = DATABASE_URL_DIRECT)
 set -eu
 
-# Ưu tiên arg ($1) — Fly process group truyền "web|discovery|worker" làm command;
+# Ưu tiên arg ($1) — deployment process group truyền "web|discovery|worker" làm command;
 # fallback PROCESS_ROLE env (dùng cho docker-compose); cuối cùng default web.
 ROLE="${1:-${PROCESS_ROLE:-web}}"
 echo "[entrypoint] starting role=${ROLE}"
@@ -15,8 +15,8 @@ case "$ROLE" in
     exec pnpm --filter @plexco/web start:web
     ;;
   discovery)
-    # chỉ GET /discover — no-RLS, field-whitelist, đọc read replica
-    # dùng readonly role + (khuyến nghị) DATABASE_URL_REPLICA nếu có
+    # chỉ GET /discover — projection-only, field-whitelist, readonly role.
+    # DATABASE_URL được scope theo component: primary Day-1, read-only node khi telemetry trigger.
     exec pnpm --filter @plexco/web start:discovery
     ;;
   worker)
@@ -25,8 +25,8 @@ case "$ROLE" in
     ;;
   provision)
     # One-shot trước worker: dựng pgboss schema + queues bằng role migration
-    # (DATABASE_URL_MIGRATION). Fly: [deploy] release_command = "provision";
-    # compose: service queue-provision (worker depends_on completed).
+    # (DATABASE_URL_MIGRATION). Prod: CI/one-shot job-scoped secret;
+    # local compose: service queue-provision (worker depends_on completed).
     exec pnpm --filter @plexco/bot provision:queue
     ;;
   *)

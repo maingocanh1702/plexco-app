@@ -8,7 +8,7 @@ import { createDb, type DbHandle } from "./client.js";
  * Needs DATABASE_URL_TEST = a SUPERUSER url on a THROWAWAY cluster (CI service
  * container / local compose postgres). The harness:
  *   1. drops + recreates a dedicated database (never touches the url's own db),
- *   2. runs the real migration runner against it (0000..0011),
+ *   2. runs the real migration runner against it (current baseline 0000..0013),
  *   3. gives the cluster-global runtime roles passwords so tests can connect
  *      AS app/readonly — proving RLS/grants from the runtime roles' seats,
  *      never from superuser (FORCE RLS is meaningless to a superuser),
@@ -62,7 +62,7 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
     throw new Error(
       "DATABASE_URL_TEST is required for the RLS invariant suite (CI sets it; " +
         "locally: docker compose -f infra/docker-compose.yml up -d postgres and " +
-        "export DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco)",
+        "export DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test)",
     );
   }
 

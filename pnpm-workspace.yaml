@@ -1,3 +1,16 @@
 packages:
   - "packages/*"
   - "apps/*"
+
+# Supply-chain policy: delay brand-new releases, reject trust downgrades, and
+# prevent transitive dependencies from fetching arbitrary git/tarball sources.
+minimumReleaseAge: 10080
+trustPolicy: no-downgrade
+blockExoticSubdeps: true
+
+# Patched transitive floors. Next 15 currently pins an older PostCSS and
+# drizzle-kit carries legacy esbuild-loader branches; both APIs are compatible
+# with these maintained releases and the full build/DB suite guards the override.
+overrides:
+  "esbuild@<0.25.0": 0.25.12
+  "postcss@<8.5.10": 8.5.16

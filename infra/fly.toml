@@ -1,5 +1,6 @@
-# Plexco — Fly.io config: 1 image → 3 process group (web · discovery · worker).
-# Region Singapore (gần VN). DB qua private networking (KHÔNG public).
+# Plexco — BOUNDED FALLBACK config (DD-04): 1 image → 3 process group.
+# KHÔNG phải production primary. Chỉ dùng nếu egress-IP gate buộc fallback (a):
+# Fly static egress + DO trusted-source allowlist + TLS sslmode=verify-full.
 # ⚠️ P0 TEMPLATE — đặt secret bằng `fly secrets set`, KHÔNG commit giá trị thật.
 # Deploy:   fly deploy -c infra/fly.toml
 # Secrets:  fly secrets set DATABASE_URL=... DATABASE_URL_DIRECT=... TELEGRAM_BOT_TOKEN=... ...
@@ -10,23 +11,24 @@ primary_region = "sin"   # Singapore — độ trễ thấp nhất tới VN
 [build]
   dockerfile = "Dockerfile"
 
-# ⚠️ Provisioning DB (migrations 0000→0011 RỒI pgboss schema/queues, đều bằng
+# ⚠️ Provisioning DB (current baseline migrations 0000→0013 RỒI pgboss schema/queues, đều bằng
 # role migration): KHÔNG dùng `[deploy] release_command` — nó đòi
 # DATABASE_URL_MIGRATION làm APP secret, mà Fly inject app secret vào MỌI máy
 # runtime (web/discovery/worker) → lộ DDL credential, phá cách ly role
 # (feature_multi_tenant_tech §1). Chạy từ CI hoặc one-shot machine với secret
-# riêng — slice backlog: `infra-fly-provisioning-secret-boundary`; runner
-# migrations + thứ tự chuẩn-bị-DB thuộc slice db-postgres-drizzle-rls.
+# riêng. Production DO dùng task `infra-do-app-vpc-deployment`; runner migrations
+# + thứ tự chuẩn-bị-DB thuộc slice db-postgres-drizzle-rls.
 
 # Env CHUNG (không bí mật). Secret set qua `fly secrets set`.
 [env]
   PORT = "3000"
   NODE_ENV = "production"
+  TRUSTED_INGRESS_PROVIDER = "fly"
 
 # --- Process groups: entrypoint.sh nhận role làm $1 -------------------------
 [processes]
   web       = "web"        # dashboard + API + SSE + webhook (TG/Zalo/SePay)
-  discovery = "discovery"  # chỉ GET /discover (no-RLS, whitelist, read replica)
+  discovery = "discovery"  # chỉ GET /discover (projection-only readonly role)
   worker    = "worker"     # pg-boss scheduler/dispatcher/projector/cron (no ingress)
 
 # --- web: HTTP ingress, autoscale, luôn giữ ≥1 ------------------------------

@@ -86,7 +86,10 @@ export function parsePlusOneSuffix(
 ): { name: string; host: string | null } {
   const s = raw.trim();
   for (const h of [...new Set(knownHosts)].filter(Boolean).sort((a, b) => b.length - a.length)) {
-    const m = s.match(new RegExp(`^(.+?)\\s+${escapeRegExp(h)}['’]s\\s*\\+\\s*1$`, "iu"));
+    // `h` is escaped into literal text before interpolation; it cannot add regex structure.
+    const m = s.match(
+      new RegExp(`^(.+?)\\s+${escapeRegExp(h)}['’]s\\s*\\+\\s*1$`, "iu"), // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
+    );
     if (m) return { name: m[1]!.trim(), host: h };
   }
   // "<guest> <host>'s +1" with a single-token host (fallback)
@@ -627,7 +630,8 @@ const ALL_DIGIT_SUFFIX_RE = /^\d+$/;
 // with the code (e.g. "BADMINTONBMT7Q2A"). Trailing \b still prevents
 // partial-suffix matches.
 const payCodeRe = (prefix: string) =>
-  new RegExp(`${escapeRegExp(prefix)}([A-HJ-KM-NP-Z2-9]{4})\\b`, "gi");
+  // `prefix` is escaped into literal text; the only active pattern is the fixed 4-char suffix.
+  new RegExp(`${escapeRegExp(prefix)}([A-HJ-KM-NP-Z2-9]{4})\\b`, "gi"); // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
 
 function isSkippedPayCode(suffix: string, code: string, cfg: PayCodeConfig): boolean {
   return (cfg.skipCodes?.has(code) ?? false) || ALL_DIGIT_SUFFIX_RE.test(suffix);

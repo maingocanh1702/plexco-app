@@ -227,4 +227,7 @@ async function main() {
   process.exit(drift > 0 ? 2 : 0); // fail-closed nếu status/title/cấu trúc Linear lệch
 }
 
-main().catch((e) => { console.error(`${C.red}Lỗi:${C.reset}`, e.message); process.exit(1); });
+main().catch((e) => {
+  console.error("%s %s", `${C.red}Lỗi:${C.reset}`, e instanceof Error ? e.message : String(e));
+  process.exit(1);
+});

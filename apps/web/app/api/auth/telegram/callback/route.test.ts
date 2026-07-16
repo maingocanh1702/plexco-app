@@ -15,11 +15,12 @@ vi.mock("../../../../../lib/login-state", () => ({
 }));
 
 process.env.DATABASE_URL ??= "postgres://test:test@localhost:5432/test";
+process.env.TRUSTED_INGRESS_PROVIDER = "digitalocean";
 
 function reqFrom(ip: string): Request {
   return new Request("https://plexco.app/api/auth/telegram/callback", {
     method: "POST",
-    headers: { host: "plexco.app", origin: "https://plexco.app", "fly-client-ip": ip },
+    headers: { host: "plexco.app", origin: "https://plexco.app", "do-connecting-ip": ip },
     body: "{}",
   });
 }

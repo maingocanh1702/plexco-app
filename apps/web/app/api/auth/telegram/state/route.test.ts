@@ -15,6 +15,7 @@ vi.mock("next/headers", () => ({
 }));
 
 process.env.DATABASE_URL ??= "postgres://test:test@localhost:5432/test";
+process.env.TRUSTED_INGRESS_PROVIDER = "digitalocean";
 
 function mockCookieStore() {
   const store = { get: vi.fn(), delete: vi.fn(), set: vi.fn() };
@@ -24,7 +25,7 @@ function mockCookieStore() {
 
 function reqFrom(ip: string): Request {
   return new Request("https://plexco.app/api/auth/telegram/state", {
-    headers: { "fly-client-ip": ip },
+    headers: { "do-connecting-ip": ip },
   });
 }
 
@@ -66,7 +67,19 @@ describe("GET /api/auth/telegram/state", () => {
     await GET(reqFrom("1.1.1.1"));
     await GET(reqFrom("2.2.2.2"));
 
-    expect(rateLimitCheck).toHaveBeenNthCalledWith(1, expect.anything(), "login-state:1.1.1.1", 10, 60);
-    expect(rateLimitCheck).toHaveBeenNthCalledWith(2, expect.anything(), "login-state:2.2.2.2", 10, 60);
+    expect(rateLimitCheck).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      "login-state:1.1.1.1",
+      10,
+      60,
+    );
+    expect(rateLimitCheck).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      "login-state:2.2.2.2",
+      10,
+      60,
+    );
   });
 });

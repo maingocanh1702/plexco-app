@@ -1,6 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
-import { consumeLoginState as dbConsumeLoginState, issueLoginState as dbIssueLoginState } from "@plexco/db";
+import {
+  consumeLoginState as dbConsumeLoginState,
+  issueLoginState as dbIssueLoginState,
+} from "@plexco/db";
 import { appDb } from "./session-cookies";
 
 /**

@@ -408,13 +408,15 @@ describe("tenant_provision (BL-BIL-1)", () => {
 
 describe("onboardingSnapshot (tenant scoping — DD-31 SI-3)", () => {
   it("returns the caller's OWN run even under a superuser connection that bypasses RLS", async () => {
-    await ctx.owner.query(`INSERT INTO onboarding_runs (tenant_id, status) VALUES ($1, 'completed')`, [
-      ctx.tenantA,
-    ]);
+    await ctx.owner.query(
+      `INSERT INTO onboarding_runs (tenant_id, status) VALUES ($1, 'completed')`,
+      [ctx.tenantA],
+    );
     // inserted AFTER A's row: the globally-latest row belongs to tenant B.
-    await ctx.owner.query(`INSERT INTO onboarding_runs (tenant_id, status) VALUES ($1, 'abandoned')`, [
-      ctx.tenantB,
-    ]);
+    await ctx.owner.query(
+      `INSERT INTO onboarding_runs (tenant_id, status) VALUES ($1, 'abandoned')`,
+      [ctx.tenantB],
+    );
 
     const viaApp = await onboardingSnapshot(ctx.appDb.db, ctx.tenantA);
     expect(viaApp?.runStatus).toBe("completed");

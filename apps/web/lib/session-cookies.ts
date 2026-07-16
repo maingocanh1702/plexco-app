@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { isIP } from "node:net";
 import { cookies } from "next/headers";
 import { createDb, resolveWebSession, type DbHandle, type ResolvedSession } from "@plexco/db";
 
@@ -127,20 +128,46 @@ export function sameOriginRequest(request: Request): boolean {
   return false;
 }
 
+export type TrustedIngressProvider = "digitalocean" | "fly" | "direct";
+
 /**
- * Client IP for rate limiting. Order of trust: Fly-Client-IP (set/overwritten
- * by the Fly edge — not client-forgeable through it), else the LAST value of
- * X-Forwarded-For (appended by the nearest trusted proxy; the FIRST value is
- * client-supplied and would let an attacker mint a fresh bucket per request).
+ * Production must name the proxy whose client-IP header is trusted. Accepting
+ * every provider's header, or guessing from X-Forwarded-For, lets a request
+ * choose its own rate-limit bucket when that header is not overwritten by the
+ * actual edge. Local development is the only implicit direct mode.
  */
-export function clientIp(request: Request): string {
-  const fly = request.headers.get("fly-client-ip");
-  if (fly) return fly.trim();
-  const xff = request.headers.get("x-forwarded-for");
-  if (xff) {
-    const parts = xff.split(",");
-    const last = parts[parts.length - 1]?.trim();
-    if (last) return last;
+export function trustedIngressProvider(): TrustedIngressProvider {
+  const configured = process.env.TRUSTED_INGRESS_PROVIDER?.trim().toLowerCase();
+  if (configured === "digitalocean" || configured === "fly") return configured;
+  if (configured === "direct") {
+    if (process.env.NODE_ENV !== "production") return configured;
+    throw new Error("TRUSTED_INGRESS_PROVIDER=direct is forbidden in production");
+  }
+  if (!configured && process.env.NODE_ENV !== "production") return "direct";
+  throw new Error("TRUSTED_INGRESS_PROVIDER must be digitalocean or fly in production");
+}
+
+function singleIpHeader(request: Request, header: string): string | null {
+  const value = request.headers.get(header)?.trim();
+  if (!value || value.includes(",") || isIP(value) === 0) return null;
+  return value;
+}
+
+/**
+ * Resolve the rate-limit identity from exactly one configured trusted edge.
+ * DigitalOcean App Platform overwrites `do-connecting-ip`; Fly overwrites
+ * `fly-client-ip`. Missing/invalid trusted headers collapse into one bounded
+ * bucket instead of falling back to a client-forgeable cross-provider header.
+ */
+export function clientIp(
+  request: Request,
+  provider: TrustedIngressProvider = trustedIngressProvider(),
+): string {
+  if (provider === "digitalocean") {
+    return singleIpHeader(request, "do-connecting-ip") ?? "digitalocean:untrusted";
+  }
+  if (provider === "fly") {
+    return singleIpHeader(request, "fly-client-ip") ?? "fly:untrusted";
   }
   return "local";
 }

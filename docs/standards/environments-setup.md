@@ -1,283 +1,350 @@
-# Plexco — Hướng dẫn setup 3 môi trường: dev · staging · prod
+# Plexco — Setup dev · staging · production
 
-> Mục tiêu: build & test ổn ở **dev** và **staging** trước khi **go-live** trên **prod**.
-> Doc này bám sát hạ tầng thật trong repo: `infra/fly.toml`, `infra/Dockerfile`, `infra/entrypoint.sh`, `.env.example`, và `docs/standards/deployment-infra.md`.
-> ⚠️ Đây là app **money-safe / multi-tenant** (đối soát SePay, ledger, RLS). Cách ly env không phải "nice-to-have" — nó là yêu cầu blast-radius (deployment-infra §6, C7).
->
-> **Cập nhật 13/07/2026 (DD-37 / BRD v3.4):** target phase-1 = **web + Zalo + Facebook Messenger**, auth **Google OAuth + email/password** (DD-13). Tuy nhiên code baseline `main@1eb6f60` vẫn là Auth v3 Telegram-era: `/api/auth/telegram/callback` **còn bắt buộc `TELEGRAM_BOT_TOKEN`**. Chỉ gỡ secret/route này sau khi provider replacement land; Google/Facebook vars hiện là target contract, chưa được code consume đầy đủ.
+> **Version:** v2.1 · 2026-07-16
+> **Authority:** DD-04 = DigitalOcean co-location: App Platform + Managed PostgreSQL HA in Singapore,
+> connected through the `sgp1` VPC. The accepted record is
+> [`../dd-04-hosting-final-decision.md`](../dd-04-hosting-final-decision.md).
+> **Current repository state:** the local Docker Compose definition exists and validates; Docker-daemon
+> availability remains machine state and **must be checked before each run**. The daemon was started for the
+> 2026-07-16 closure and the canonical PostgreSQL/RLS/auth suite passed; the test container was then stopped.
+> The production DigitalOcean App Spec and deployment workflows are still an infra-slice deliverable.
+> `infra/fly.toml` is a bounded fallback artifact, not the production runbook.
+
+Plexco is a money-safe, multi-tenant system. Environment separation, DB-role separation, immutable promotion,
+and restore/failover drills are release gates rather than optional hardening.
 
 ---
 
-> 🚨 **DD-04 ĐÃ CHỐT (2026-07-16): hosting = (c) co-locate DigitalOcean** (App Platform + Managed PG HA-standby, **VPC private**, Singapore) — **KHÔNG phải Fly**. Toàn bộ runbook Fly dưới đây (`fly.toml`, `fly deploy`/`fly secrets`, rollback Fly, 3 Fly app, Fly Postgres) là **SUPERSEDED** — **KHÔNG provision Fly cho production**. Runbook DO đầy đủ (DO App Spec · VPC trusted-sources · 4 DB roles least-privilege · pooled/direct conn · failover/PITR drill) viết ở **infra build slice** (xem `dd-04-hosting-final-decision.md` §7.3). **Staging PHẢI chạy topology DO tương đương prod** (test VPC + auto-failover + promotion, không chỉ smoke). Fly runbook giữ làm **fallback (a)** *chỉ nếu* egress-IP gate (§7.1) fail. Dev local (docker compose) không đổi.
+## 0. Target environment model
 
-## 0. TL;DR — chốt model
-
-**Model: 3 env riêng (dev · staging · prod) + DB riêng mỗi env, cộng vòng lặp dev local.** ⚠️ *(Prod/staging target = **DO App Platform components + DO Managed PG cùng VPC** — runbook Fly dưới đây superseded/fallback; xem banner 🚨.)*
-
+```text
+local development
+  docker compose + local PostgreSQL
+            │
+            │ build one immutable OCI image (release tag + verified digest)
+            ▼
+ephemeral staging on DigitalOcean
+  production-shaped App Platform components + separate Managed PostgreSQL
+  sgp App Platform ── private route ── sgp1 VPC
+            │
+            │ promote the exact tested image; do not rebuild
+            ▼
+production on DigitalOcean
+  2 web + 2 discovery + 1 worker + Managed PostgreSQL primary/standby
 ```
-┌─────────────┐   git push        ┌──────────────┐  promote (cùng image)  ┌────────────┐
-│  LOCAL loop │  feature/* ─PR──▶ │   STAGING    │ ───── sau khi gate ───▶ │    PROD    │
-│ docker-     │                   │ plexco-      │       xanh + duyệt      │  plexco-   │
-│ compose     │   develop ─auto─▶ │ staging      │                         │  prod      │
-│ (+ tunnel)  │      │            │ (Fly app)    │                         │ (Fly app)  │
-└─────────────┘      ▼            └──────────────┘                         └────────────┘
-                ┌──────────┐         DB staging riêng                       DB prod riêng
-                │ plexco-  │         (baseline nhỏ)                          (Day-1 baseline money-safe)
-                │ dev (Fly)│
-                └──────────┘
-                 DB dev riêng
-```
 
-| | **dev** | **staging** | **prod** |
-|---|---|---|---|
-| Fly app | `plexco-dev` | `plexco-staging` | `plexco-prod` (hoặc `plexco`) |
-| Mục đích | tích hợp end-to-end, data vứt đi | bản sao prod, cổng kiểm thử cuối (UAT/DAST/load) | live, tiền thật |
-| Deploy khi | push nhánh `develop` (auto) | merge `main` / `release/*` | **promote** image từ staging (thủ công + duyệt) |
-| Database | Postgres riêng, nhỏ nhất | Postgres riêng (managed, PITR) | Postgres riêng (managed, HA + PITR) |
-| Kênh/Auth (Zalo bot · Messenger app · Google/FB OAuth) | test riêng | staging riêng | prod thật |
-| Cost (deployment-infra §9) | baseline nhỏ ~$5–15 | ephemeral drill ~$8–18 | **Day-1 baseline money-safe ~$120–135** (+ trigger-based upgrades) |
-| Dữ liệu | giả lập / seed | giống prod (đã ẩn danh PII) | thật |
+| Environment | Purpose | Lifetime | Database | Public hostname |
+|---|---|---|---|---|
+| **local** | Fast development and focused tests | Persistent on developer machine | Local Docker PostgreSQL; disposable data | `localhost` / tunnel only when a webhook needs it |
+| **integration smoke** | Optional shared callback target while a channel integration is active | Minimal and explicitly owned | Separate non-production DB; never production data | Stable non-production domain if required |
+| **staging** | UAT, DAST, load/soak, failover, PITR and provider-exit rehearsal | Ephemeral 48–96h with TTL | Separate production-shaped DO Managed PG | Staging-only domain/callbacks |
+| **production** | Live users and real money data | Persistent | DO Managed PG primary + standby, HA/PITR | Production domain |
 
-Local docker-compose (`infra/docker-compose.yml`) vẫn là vòng lặp nhanh nhất hằng ngày; `plexco-dev` là env **chia sẻ** để test webhook/PWA thật khi cần URL công khai.
+Staging must exercise the same process groups, VPC path, DB roles, migration job, and reconnect behavior as
+production. “Production-shaped” does not mean always-on: IaC creates it for a release/drill and destroys it
+automatically after the TTL.
 
 ---
 
-## 1. Vì sao 3 Fly app riêng là phù hợp nhất với project này
+## 1. Hard gates before provisioning
 
-Quyết định này gắn trực tiếp với roadmap: **Phase 1 = bot Zalo + Facebook Messenger + webapp PWA** (Telegram đã bỏ — DD-37), sau đó **native iOS/Android**.
+### 1.1 Fixed outbound-IP gate — DD-04 §7.1
 
-1. **Webhook đa kênh cần URL công khai ổn định, tách biệt mỗi env.**
-   web role nhận *mọi* webhook (`entrypoint.sh`: Zalo/Messenger/SePay). Zalo BYO token per-club (`setWebhook` per bot); Messenger verify webhook theo App/Page + verify-token; SePay verify theo account+Apikey. Nếu gộp chung 1 app, callback của staging và prod đụng nhau. 3 app riêng ⇒ `plexco-staging.fly.dev` vs `plexco-prod.fly.dev`, mỗi env đăng ký bot/app/secret riêng, không bao giờ lẫn.
+DigitalOcean App Platform cannot use VPC networking and dedicated public egress IPs at the same time. Record
+written evidence for every production dependency before creating the App Spec:
 
-2. **PWA + native bake sẵn API base URL theo env.**
-   PWA đọc base URL lúc build; **native iOS/Android còn cứng hơn** — binary lên store trỏ cố định 1 API host + OAuth/deep-link callback. Phải có host ổn định cho từng env để QA bản staging trước khi submit store. Mô hình "1 app nhiều config" không cho native một host staging ổn định.
+| Dependency | Required answer |
+|---|---|
+| SePay | Does Plexco→SePay require source-IP allowlisting? Inbound webhook verification alone does not imply that it does. |
+| ApiPay | Does enterprise provisioning restrict API callers by fixed source IP? |
+| Zalo Bot | Does the send API require fixed outbound IP? |
+| Meta Messenger | Does the Graph API require fixed outbound IP? |
 
-3. **Money-safe = cách ly blast-radius.**
-   deployment-infra C7 tách 4 role DB ở mức connection (`migration` chỉ trong CI, không bao giờ ở runtime; `app` NOSUPERUSER NOBYPASSRLS; `app_worker`; `readonly`). Tách hẳn DB + secrets per env đảm bảo cred/migration của staging **không thể** chạm dữ liệu tiền của prod. Dùng chung DB/app là vi phạm trực tiếp nguyên tắc này.
+- All answers **no** → continue with App Platform + VPC.
+- Any answer **yes** → stop. Do not disable the private DB path silently. Activate the bounded Fly+DO
+  fallback or design a DO Droplet/DOKS substrate with private DB access and controlled egress.
 
-4. **Promote immutable artifact.** deployment-infra §7 yêu cầu `build image (signed) → CI gates → deploy staging → promote prod`. Prod chạy **đúng image** đã pass ở staging — không build lại. Việc này cần staging và prod là 2 app tách biệt nhận cùng artifact.
+### 1.2 Repository preconditions
 
-> Phương án "1 Fly app nhiều DB/biến môi trường" bị loại: rẻ hơn chút nhưng phá cách ly webhook, host native, và blast-radius tiền — không chấp nhận với app đối soát tiền.
-
----
-
-## 2. Tạo hạ tầng từng env
-
-### 2.1 Fly apps
+Before the infra slice runs:
 
 ```bash
-# Tạo 3 app (chạy 1 lần). KHÔNG deploy vội — chỉ tạo app trước.
-fly apps create plexco-dev
-fly apps create plexco-staging
-fly apps create plexco-prod      # hoặc giữ tên hiện tại "plexco"
-
-# Region: Singapore (gần VN) cho mọi env — khớp infra/fly.toml (primary_region = "sin")
+test -f infra/Dockerfile
+test -f infra/entrypoint.sh
+test -f .github/workflows/ci.yml
+test -f infra/app.prod.yaml       # created and reviewed by the infra slice
+test -f infra/app.staging.yaml    # created and reviewed by the infra slice
 ```
 
-### 2.2 Một `fly.toml` per env (tách app + sizing)
+If either App Spec is absent, this runbook is a deployment contract only: **do not improvise a console-only
+production setup**. IaC must remain the reproducible source.
 
-Hiện repo có 1 file `infra/fly.toml` (app = `plexco`). Tách thành 3 file, **giữ nguyên** phần `[processes]`, `[[services]]`, healthcheck — chỉ đổi `app`, và sizing/scale theo env:
+---
 
-```
-infra/
-  fly.dev.toml        # app = "plexco-dev"        | VM nhỏ nhất, min_machines_running = 0 (tiết kiệm)
-  fly.staging.toml    # app = "plexco-staging"    | giống prod nhưng scale nhỏ
-  fly.prod.toml       # app = "plexco-prod"       | min_machines_running ≥1, VM lớn hơn cho web
-```
+## 2. DigitalOcean resource layout
 
-Deploy chỉ định file:
+Use one DO team/account with separate staging and production resources, tags, secrets, domains, and budgets.
+Co-location is a failure-domain trade: off-provider backup and restore rehearsal remain mandatory.
 
-```bash
-fly deploy -c infra/fly.dev.toml
-fly deploy -c infra/fly.staging.toml
-fly deploy -c infra/fly.prod.toml
-```
-
-> Giữ 3 process group (web · discovery · worker) ở **mọi** env để staging thật sự giống prod (worker/pg-boss, discovery read-path đều được test). Riêng dev có thể tắt `discovery` nếu chưa cần.
-
-### 2.3 Database riêng mỗi env (bạn đã chọn: DB riêng)
-
-Mỗi env một Postgres độc lập. Hai lựa chọn, theo deployment-infra §5/§9:
-
-| Provider | Khi nào dùng | Ghi chú |
+| Resource | Staging | Production |
 |---|---|---|
-| **Fly Postgres** (private networking) | dev, staging | Cùng platform, DX đơn giản; **Postgres KHÔNG expose public** (deployment-infra §6.1). PITR/HA yếu hơn → chỉ dev/staging. |
-| **DigitalOcean Managed PG (co-locate, VPC private — DD-04 ✅ (c))** | **prod** (bắt buộc), staging nên dùng | HA standby + PITR + auto-failover + private VPC + restore drill (deployment-infra §8; `dd-04-hosting-final-decision.md`; egress-IP gate §7.1). Prod money-safe = Day-1 baseline `$120–135` + trigger-based upgrades (deployment-infra §9). |
+| App Platform app | `plexco-staging` | `plexco-prod` |
+| App region | `sgp` | `sgp` |
+| VPC | dedicated staging VPC in `sgp1` | dedicated production VPC in `sgp1` |
+| PostgreSQL | temporary production-shaped cluster | 2 GiB primary + 2 GiB standby at Day 1 |
+| DB trusted sources | staging app private identity + controlled admin/drill path only | production app private identity only; temporary admin path time-boxed and audited |
+| Domains/callbacks | staging-only Google/Meta/Zalo/SePay configuration | production configuration |
+| Budget alerts | TTL + staging ceiling | compute, DB, transfer, logs, backup, KMS |
 
-```bash
-# Ví dụ Fly Postgres cho dev & staging (private, attach vào app tương ứng)
-fly postgres create --name plexco-db-dev      --region sin --vm-size shared-cpu-1x
-fly postgres attach  plexco-db-dev      --app plexco-dev
+Do not share a database, VPC, OAuth client, Messenger app/page token, Zalo bot token, webhook secret, KMS
+ciphertext, or session secret across staging and production.
 
-fly postgres create --name plexco-db-staging  --region sin
-fly postgres attach  plexco-db-staging  --app plexco-staging
+---
 
-# Prod: dùng managed Postgres (Supabase/Neon) → lấy connection string → set qua fly secrets (mục 3)
-```
+## 3. One image, three App Platform components
 
-**4 connection / role mỗi DB** (theo `.env.example` + deployment-infra C7):
+The App Specs deploy the same immutable image as three components. Use a unique release tag such as the git SHA,
+resolve and record its registry digest, and prohibit mutable `latest` promotion.
 
-| Biến | Role | Dùng cho | Pooling |
+| Component | Day-1 production shape | Command | DB identity | Scaling contract |
+|---|---:|---|---|---|
+| `web` | `2 × apps-s-1vcpu-1gb` | `infra/entrypoint.sh web` | `app` pooled URL + `app` direct listener URL | Request-based RPS/p95 autoscaling is eligible on shared CPU; CPU autoscaling requires dedicated CPU |
+| `discovery` | `2 × apps-s-1vcpu-1gb` | `infra/entrypoint.sh discovery` | `readonly` pooled URL on the primary at Day 1 | Bounded pool + timeout + CDN + circuit breaker; read-only node only after telemetry trigger |
+| `worker` | `1 × apps-s-1vcpu-1gb-fixed` | `infra/entrypoint.sh worker` | `app_worker` direct/session URL | One durable consumer at Day 1; add a second scalable worker only after idempotency and queue-lag gates pass |
+
+App Platform high availability for the HTTP paths requires at least two containers, hence `web=2` and
+`discovery=2`. The worker starts single by design; pg-boss durability is in PostgreSQL, not local disk.
+
+### Required App Spec controls
+
+- VPC attachment to the environment's `sgp1` VPC; no dedicated egress-IP block on the VPC path.
+- Set `TRUSTED_INGRESS_PROVIDER=digitalocean` on every public HTTP component. Application rate limits trust
+  only DigitalOcean's overwritten `do-connecting-ip`; they never fall back to `X-Forwarded-For` or a header
+  owned by another provider. The bounded Fly fallback must instead set `fly`; `direct` is local-only.
+- Health checks on `/healthz` for both HTTP services.
+- Separate component-level environment variables and secrets.
+- Explicit instance size/count; no console-only drift.
+- Image release tag/digest recorded in deployment evidence.
+- Deployment-failure and domain-failure alerts.
+- TTL metadata and destruction job for staging.
+
+---
+
+## 4. Database roles and connection variables
+
+Create four roles per database. The migration/owner credential is never injected into an App Platform runtime
+component.
+
+| Role | Runtime surface | Permissions | Connection mode |
 |---|---|---|---|
-| `DATABASE_URL` | `app` (NOSUPERUSER, NOBYPASSRLS) | web/discovery | POOLED (transaction-mode) |
-| `DATABASE_URL_DIRECT` | `app_worker` | worker / pg-boss (LISTEN/NOTIFY + advisory lock) | DIRECT (session-mode, **không qua pooler**) |
-| `DATABASE_URL_LISTEN` | `app` (chỉ LISTEN) | SSE listener trong web | DIRECT |
-| `DATABASE_URL_REPLICA` | `readonly` | discovery / player-view reads (tuỳ chọn) | replica |
-| *(chỉ trong CI)* | `migration` | job migrate | **KHÔNG BAO GIỜ** có trong runtime prod |
+| `migration` | CI deployment job only | DDL, migrations, grants, controlled queue provisioning | Direct; job-scoped secret |
+| `app` | `web` | Tenant RLS, application functions; `NOSUPERUSER NOBYPASSRLS` | Transaction pool for requests; separate direct connection for `LISTEN` |
+| `readonly` | `discovery` | `SELECT` only on `public_sessions` and approved public views; zero grant on canonical money/PII tables | Bounded transaction pool |
+| `app_worker` | `worker` | Narrow worker functions, pg-boss/outbox/projector operations | Direct/session connection |
+
+The application contract intentionally stays provider-neutral:
+
+| Variable | Component value |
+|---|---|
+| `DATABASE_URL` | `web`: pooled `app` URL; `discovery`: pooled `readonly` URL. Same key, different component-scoped secret. |
+| `DATABASE_URL_DIRECT` | `worker`: direct/session `app_worker` URL. |
+| `DATABASE_URL_LISTEN` | `web`: direct/session `app` URL used only by the SSE listener. |
+| `DATABASE_URL_MIGRATION` | Deployment job only; absent from `web`, `discovery`, and `worker`. |
+
+There is **no mandatory `DATABASE_URL_REPLICA`**. If the trigger-based DO read-only node is purchased, replace
+only the `discovery` component's `DATABASE_URL` with that node's pooled `readonly` endpoint. Business code and
+the other components do not change. Authenticated post-write reads remain on the primary.
+
+Require TLS CA and hostname verification even on the private path. Trusted sources and least-privilege roles
+remain active; VPC routing is not a substitute for database authorization.
 
 ---
 
-## 3. Secrets per env — không bao giờ commit
+## 5. Secrets and KMS
 
-`.gitignore` đã chặn `.env*`. Quy tắc (`.env.example`, `fly.toml`):
+- Store runtime secrets as App Platform encrypted environment values, scoped to the component that consumes
+  each value. Never commit literal secrets or place them in an App Spec.
+- Keep `DATABASE_URL_MIGRATION` in the protected CI environment/job only.
+- Continue the accepted application encryption contract: AWS KMS envelope encryption for staging/production,
+  local `ENCRYPTION_KEY` fallback only for local development. KMS is an application-level portability boundary,
+  not permission to expose plaintext secrets in App Platform.
+- Separate Google OAuth, Meta, Messenger, Zalo, SePay/ApiPay, session, KMS ciphertext, Sentry and webhook values
+  per environment.
+- Rotate session/auth/webhook secrets with an audited runbook; test fail-closed behavior when KMS decrypt fails.
 
-- **dev local**: copy `.env.example` → `.env` (chỉ máy bạn). `KMS_PROVIDER=local`, `ENCRYPTION_KEY` fallback dev.
-- **dev / staging / prod trên Fly**: set qua `fly secrets set`, **không** dùng file `.env`. Prod dùng **KMS thật** (envelope AES-GCM), `SESSION_SECRET` auto-rotate 30d.
+The current code still contains Telegram-era auth and requires `TELEGRAM_BOT_TOKEN`. Keep that temporary secret
+only until the DD-13/DD-37 Google/email replacement lands and the Telegram route/tests are removed.
 
-```bash
-# Mỗi env set secret riêng (token/bot/webhook KHÁC NHAU giữa các env)
-fly secrets set -a plexco-staging \
-  DATABASE_URL="postgres://app:...@.../plexco?sslmode=require" \
-  DATABASE_URL_DIRECT="postgres://app_worker:...@.../plexco?sslmode=require" \
-  TELEGRAM_BOT_TOKEN="<temporary-auth-v3-token>" \
-  GOOGLE_OAUTH_CLIENT_ID="<google-client-id>" \
-  GOOGLE_OAUTH_CLIENT_SECRET="<google-secret-staging>" \
-  FACEBOOK_APP_ID="<fb-app-id>" \
-  FACEBOOK_APP_SECRET="<fb-secret-staging>" \
-  MESSENGER_VERIFY_TOKEN="<random-staging>" \
-  SEPAY_WEBHOOK_SECRET="<staging>" \
-  SESSION_SECRET="<random>" \
-  KMS_PROVIDER="aws-kms" KMS_KEY_ID="<arn-staging>" \
-  SENTRY_DSN="<staging-dsn>" LOG_LEVEL="info"
+---
 
-# `TELEGRAM_BOT_TOKEN` ở trên chỉ phục vụ auth-v3 hiện tại; xoá sau provider replacement DD-13/DD-37.
-# Zalo bot token = per-club, mã hoá KMS lưu trong DB (KHÔNG phải global secret).
-# Lặp lại cho -a plexco-prod với GIÁ TRỊ THẬT (Google/Facebook app prod, KMS prod, DB prod).
+## 6. Build, deploy and immutable promotion
+
+Required flow:
+
+```text
+pull request
+  → format + typecheck + lint + production build + full tests
+  → Semgrep CE code scan + OSV dependency scan
+  → build OCI image once
+  → sign image; record release tag + digest
+  → create/update ephemeral staging from IaC
+  → migration + queue provisioning job with DATABASE_URL_MIGRATION
+  → UAT/DAST/load/failover/PITR/provider-exit gates
+  → update production App Spec with the exact tested release
+  → verify running digest + health + money smoke
 ```
 
-Biến **chung không bí mật** (`PORT`, `NODE_ENV`, `PROCESS_ROLE`) để trong `[env]` của fly.toml. `NODE_ENV=production` ở cả staging lẫn prod (staging là bản sao prod); phân biệt env bằng app name + secret, không bằng `NODE_ENV`.
+App creation/update is automated from reviewed specs:
+
+```bash
+# First create; use `doctl apps update` for later reconciliations.
+doctl apps create --spec infra/app.staging.yaml
+doctl apps create --spec infra/app.prod.yaml
+```
+
+The CI workflow supplies the immutable release value to both specs. Do not rebuild for production and do not
+promote a mutable tag.
+
+### Required CI order
+
+1. Validate target PostgreSQL version/extensions and roles.
+2. Run migrations with `DATABASE_URL_MIGRATION`.
+3. Run `infra/entrypoint.sh provision` using the same job-scoped credential.
+4. Deploy/reconcile components.
+5. Wait for health/readiness; execute smoke and reconnect checks.
+
+Migration and queue provisioning must not be implemented as an App Platform runtime command that injects the DDL
+credential into all components.
 
 ---
 
-## 4. Webhook & URL theo env
+## 7. URLs and channel configuration
 
-| Kênh | dev | staging | prod |
+Use distinct domains and provider registrations:
+
+| Surface | Local/integration | Staging | Production |
 |---|---|---|---|
-| Zalo (BYO per-club) | club test | club staging | token thật, mã hoá KMS |
-| Messenger *(phase-1, P2.5)* | app FB ở chế độ Dev/Test | app FB staging | app FB Live (sau App Review) |
-| Google/Facebook OAuth | client dev + redirect `plexco-dev.fly.dev` | client staging | client prod (domain thật) |
-| SePay | sandbox/bank test | tài khoản test | tài khoản thật |
-| PWA base URL | `plexco-dev.fly.dev` | `plexco-staging.fly.dev` | domain prod (vd `app.plexco.vn`) |
-| Native iOS/Android (sau) | build `dev` scheme | build `staging` (TestFlight / Internal testing) | build `prod` (store) |
+| Google OAuth redirect | local/tunnel client | staging client + staging domain | production client + production domain |
+| Meta Login/Messenger | developer/test app or test users | staging app/page | live reviewed app/page |
+| Zalo | test club/bot | staging club/bot | per-club production tokens encrypted in DB |
+| SePay/ApiPay | sandbox/test account | staging account | production accounts/webhooks |
+| PWA/API base | localhost/tunnel | staging domain | production domain |
 
-> Mỗi lần redeploy đổi host, nhớ **re-set webhook Zalo bot** (`setWebhook` per bot) + cập nhật **Messenger callback URL** (Meta App) + **Google/Facebook OAuth redirect URI** cho đúng env. Đặt việc này thành script trong CI sau deploy. *(Telegram đã bỏ — DD-37.)*
-
----
-
-## 5. Branch ↔ env & luồng CI/CD
-
-Khớp `push → build immutable image → CI gates → deploy staging → promote prod` (deployment-infra §7). README §Quy trình: tạo feature branch, không sửa thẳng `main`.
-
-```
-feature/*  ──PR──▶  CI (build + test + scan, KHÔNG deploy)
-                       │ merge
-                       ▼
-   develop  ──────▶  build image  ──auto-deploy──▶  plexco-dev
-                       │ merge / tag release
-                       ▼
-     main   ──────▶  build image (signed)  ──deploy──▶  plexco-staging
-                       │ gate xanh + duyệt thủ công
-                       ▼
-                    PROMOTE cùng image  ─────────────▶  plexco-prod
-```
-
-**Gate bắt buộc xanh trước khi promote** (deployment-infra §7):
-1. Unit/integration/E2E + invariants RLS / public-projection / person-self / **ledger**
-2. Migration fresh / upgrade / rollback-forward
-3. Dependency / license / secret scan / SAST / container scan
-4. **DAST trên staging**
-5. Event/schema compatibility
-6. Load/soak: webhook burst, discovery, final-slot contention, queue recovery
-7. **Duyệt bảo mật thủ công** cho: auth · money · identity · public projection · privileged DB
-
-Repo hiện chỉ có workflow `linear-sync.yml`. Cần thêm (đề xuất, làm ở bước sau nếu bạn muốn):
-`.github/workflows/ci.yml` (PR gates), `deploy-dev.yml` (push develop), `deploy-staging.yml` (push main), `promote-prod.yml` (manual `workflow_dispatch` + environment protection rule yêu cầu reviewer).
+Webhook updates are idempotent deployment steps. Verify the registered callback after every domain/app change; do
+not rely on a manual checklist entry without provider-side evidence.
 
 ---
 
-## 6. Migration — controlled job, không chạy trong runtime
+## 8. Rollback and recovery
 
-deployment-infra C7: role `migration` **chỉ** sống trong CI job, không bao giờ trong web/worker runtime.
+### Application rollback
 
-```
-deploy staging → CI chạy migrate (role=migration) lên DB staging → test → OK
-promote prod   → CI chạy migrate lên DB prod (controlled job) → rồi mới release image
-```
+- Select the previously verified immutable release in the App Spec and reconcile the app.
+- Confirm `web`/`discovery` health, SSE re-subscription, worker queue lag and no duplicate money mutations.
+- If a forward migration has run, do not execute destructive down-migrations. Use expand/contract and forward-fix.
 
-- Migration phải **forward-safe** (không rollback irreversible) — dùng expand/contract.
-- worker/projector hỗ trợ mixed event version trong lúc rollout (deployment-infra §7).
+### Database recovery
 
----
-
-## 7. Promote & Rollback
-
-**Promote (staging → prod):** release đúng image đã pass staging.
-
-```bash
-# Lấy image ref đang chạy ở staging
-fly status -a plexco-staging          # hoặc fly releases -a plexco-staging
-# Deploy CHÍNH image đó lên prod (không build lại)
-fly deploy -a plexco-prod --image <registry>/plexco@sha256:<digest>
-```
-
-**Rollback prod nhanh:**
-
-```bash
-fly releases -a plexco-prod           # xem lịch sử
-fly deploy -a plexco-prod --image <digest-bản-trước>   # về image trước
-```
-
-- App có healthcheck `/healthz` (fly.toml) → bật tiêu chí **auto-rollback** theo health/readiness.
-- Migration đã chạy thì **không** rollback ngược DB — sửa bằng forward migration (xem §6).
-- Sự cố tiền/cross-tenant → theo **runbook** bắt buộc (deployment-infra §8).
+- Provider PITR and HA are not sufficient alone. Maintain encrypted logical exports outside the DO account.
+- Quarterly, restore to vanilla PostgreSQL outside DigitalOcean and run schema/role/RLS/sequence checks plus
+  ledger, allocation, outbox and row-count reconciliation.
+- Rehearse the cross-provider flow and rollback semantics from DD-04 §7.4. Never dual-write money data during
+  migration and never point back to a stale source after the target has accepted writes.
 
 ---
 
-## 8. Checklist go-live (lần đầu lên prod) — ⚠️ SUPERSEDED (Fly checklist; DO go-live + acceptance §7.3 viết ở infra slice — xem banner 🚨)
+## 9. Ephemeral staging lifecycle
 
-- [ ] 3 Fly app tạo xong (`plexco-dev/staging/prod`), region `sin`.
-- [ ] 3 DB riêng, Postgres **không** public, attach private networking.
-- [ ] 4 role DB tách (`migration`/`app`/`app_worker`/`readonly`) cho staging & prod.
-- [ ] Secrets set per env qua `fly secrets` (Google/FB app · KMS · SESSION khác nhau); prod dùng KMS thật.
-- [ ] Webhook Zalo/Messenger/SePay + OAuth redirect (Google/Facebook) đăng ký đúng host từng env.
-- [ ] CI gates §7 xanh trên staging (gồm DAST + load/soak + duyệt thủ công).
-- [ ] Migration chạy controlled job, forward-safe, test trên staging trước.
-- [ ] Sentry + structured log gắn `tenant_id` (không PII/secret) bật ở staging & prod.
-- [ ] Backup/PITR + 1 lần **restore drill** trên staging trước go-live.
-- [ ] Promote đúng image staging → prod; xác nhận `/healthz` xanh; sẵn lệnh rollback.
+Every staging creation requires an owner, release/drill purpose, `expires_at`, and cost ceiling. The automation:
+
+1. creates the VPC/app/database from IaC;
+2. restores anonymized/representative data or seeds production-shaped fixtures;
+3. runs the selected gates;
+4. exports drill evidence;
+5. destroys the app, DB, VPC and temporary credentials on TTL;
+6. alerts and fails closed if deletion does not complete.
+
+Persistent callback smoke infrastructure, when genuinely required, is a separate minimal resource and must not
+silently become an always-on production mirror.
 
 ---
 
-## 9. Chi phí tham chiếu (deployment-infra §9)
+## 10. Production acceptance checklist
 
-| Env | Topology | Ước tính/tháng |
+This list mirrors the accepted record §7.6 and must be represented as executable checks/evidence in the infra
+slice:
+
+- [ ] Fixed-egress-IP gate closed with written evidence.
+- [ ] App Platform `sgp` is attached to the intended `sgp1` VPC.
+- [ ] PostgreSQL trusted sources contain only required private identities.
+- [ ] Four DB roles and pooled/direct/listener URLs work over the private route with TLS verification.
+- [ ] Two-instance `web` and `discovery` pass rolling-deploy and health tests.
+- [ ] Discovery pool cap, `statement_timeout`, reserved money connection budget, CDN/rate limits and circuit breaker pass load tests.
+- [ ] Primary-failure drill proves DB failover and application reconnect.
+- [ ] SSE re-subscribes and pg-boss resumes without duplicate money mutations.
+- [ ] PITR and off-provider restores meet measured RPO/RTO and reconciliation gates.
+- [ ] KMS rotation and decrypt-failure paths pass.
+- [ ] Ephemeral staging reproduces from IaC and destroys itself on TTL.
+- [ ] Load evidence captures RPS/concurrency, DB CPU/RAM/connections/query time, queue lag, p95/p99, error rate, egress and projected cost.
+- [ ] Cross-provider rehearsal and asymmetric rollback pass DD-04 §7.4.
+- [ ] Budget alerts cover compute, DB, transfer, logs, backup and KMS.
+
+---
+
+## 11. Cost planning
+
+| Environment | Planning envelope |
+|---|---:|
+| Local/integration smoke | `$0–15/month`, depending on whether a shared public callback target is kept |
+| Ephemeral staging | `$8–18/month` average at 48–96h per release/drill |
+| Production Day 1 | **`$120–135/month`** |
+| Production + expected staging | **`$128–153/month`** |
+
+The production baseline includes two `web`, two `discovery`, one worker, DO PostgreSQL primary+standby,
+Cloudflare Free, Sentry Developer, KMS, low-volume logs/offsite backup and egress allowances. Physical read-only
+node, second worker, WAF Pro, Sentry Team and resizing are telemetry-triggered upgrades, not Day-1 requirements.
+
+Host count does not select a resource tier. Scale purchases require staging/production measurements and the
+triggers in DD-04 §5.2.
+
+---
+
+## 12. Bounded Fly fallback
+
+`infra/fly.toml` is retained only because DD-04 pre-authorizes fallback `(a)` when a production dependency proves
+that fixed outbound IP is mandatory and App Platform+VPC cannot satisfy it.
+
+Activating fallback requires a recorded gate result and a separate reviewed App/DB network plan:
+
+- compute on Fly with static egress;
+- DO PostgreSQL reached over public TLS with `sslmode=verify-full` and IP allowlist;
+- the same four DB roles, immutable image, migration-job boundary, backup/restore and acceptance gates;
+- a new cost reconciliation before procurement.
+
+Do not use the old “three Fly apps + Fly Postgres” topology. If fallback is not activated, no production Fly
+resource is provisioned.
+
+---
+
+## 13. Anti-patterns
+
+- One app/database or shared secrets across staging and production.
+- Console-only production resources that IaC cannot reproduce.
+- Migration/owner credential in any runtime component.
+- Mutable image tags or rebuilding between staging and production.
+- Treating the HA standby as the discovery replica.
+- Buying a read-only node from host count rather than measured contention.
+- Disabling VPC to obtain a fixed egress IP without activating the approved fallback/design branch.
+- Treating provider PITR as the off-provider backup.
+- Leaving ephemeral staging alive without an owner and TTL.
+
+---
+
+## Changelog
+
+| Date | Version | Change |
 |---|---|---|
-| dev | local / VM nhỏ (min machines = 0) | ~$5–15 |
-| staging | **Ephemeral** — đúng topology DO (VPC/failover/gate acceptance) nhưng spin-up→teardown cho drill | **~$8–18** (record §5.4) |
-| **prod** | **Day-1 baseline money-safe** (2 web + 2 discovery + 1 worker × 1 GiB + DO PG HA `$60.90` + Cloudflare Free + Sentry Developer + KMS `$1–3` + logs/R2 `$0–5` + egress `$0–8`) + **§9.3 read-isolation controls** | **~$120–135** |
+| 2026-07-16 | v2.1 | Reality-check: Docker Compose definition valid but daemon availability is not guaranteed; current DB/full-suite gate remains open. Pin official non-provisioning App Spec validation/proposal commands in the infra slice. |
+| 2026-07-16 | v2.0 | Replaced the superseded Fly production body with the accepted DigitalOcean App Platform + Managed PG VPC runbook; made replica trigger-based; added component-scoped DB URLs, immutable promotion, CI secret boundary, TTL staging, DD-04 §7.6 acceptance and isolated Fly fallback. |
 
-> **Model (DD-04 Rev 2 — thay Tier A/B `$121–133`/`$202–254`).** Prod Day-1 `$120–135` **đã money-safe** nhờ non-negotiables (HA/PITR/VPC private/fail-closed/KMS/offsite backup) + read-isolation controls (projection-role · bounded pool + statement_timeout · reserved connection budget · CDN · circuit-breaker). Read replica vật lý / WAF Pro / Sentry Team / worker-2 / DB-resize = **trigger-based upgrade** khi telemetry chạm ngưỡng (deployment-infra §9.2), **KHÔNG** bắt buộc Day-1. Prod + ephemeral staging ≈ `$128–153`. **Caveat money-system:** deferral chỉ an toàn khi read-isolation controls ship thật + trigger được giám sát.
-
----
-
-## 10. Anti-patterns cần tránh (deployment-infra §10)
-
-- ❌ Gộp 3 env vào 1 Fly app / 1 DB — phá cách ly webhook + blast-radius tiền.
-- ❌ Dùng `.env` file ở prod — luôn dùng secret manager / KMS.
-- ❌ Mang role `migration`/superuser vào runtime — phá RLS.
-- ❌ Build lại image cho prod thay vì promote image staging — mất tính immutable.
-- ❌ Kubernetes / tách microservices / Redis / serverless cho worker-webhook-SSE — thừa với quy mô này.
-
----
-
-*Tham chiếu: `docs/standards/deployment-infra.md` (§5–§11), `infra/fly.toml`, `infra/Dockerfile`, `infra/entrypoint.sh`, `infra/docker-compose.yml`, `.env.example`, `README.md` (Port Registry).*
+*Sources: DD-04 final record §5/§7; `deployment-infra.md`; DigitalOcean App Spec, VPC, scaling, Managed PostgreSQL, pricing and SLA documentation linked from the final record.*

@@ -11,6 +11,26 @@ import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 
 let ctx: RlsTestContext;
 
+async function expectErrorChainToMatch(promise: Promise<unknown>, pattern: RegExp) {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (error) {
+    caught = error;
+  }
+
+  expect(caught).toBeInstanceOf(Error);
+  const messages: string[] = [];
+  const seen = new Set<Error>();
+  let current = caught;
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    messages.push(current.message);
+    current = current.cause;
+  }
+  expect(messages.join("\n")).toMatch(pattern);
+}
+
 beforeAll(async () => {
   ctx = await setupRlsTestContext("plexco_rls_check");
 }, 120_000);
@@ -80,7 +100,7 @@ describe("tenant isolation (INV-1: security boundary, not a filter)", () => {
   });
 
   it("a tenant-A context cannot write a row claiming tenant B (WITH CHECK)", async () => {
-    await expect(
+    await expectErrorChainToMatch(
       withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
         tx.insert(sessions).values({
           tenantId: ctx.tenantB, // spoof attempt
@@ -90,7 +110,8 @@ describe("tenant isolation (INV-1: security boundary, not a filter)", () => {
           timezone: "Asia/Ho_Chi_Minh",
         }),
       ),
-    ).rejects.toThrow(/row-level security/i);
+      /row-level security/i,
+    );
   });
 
   it("a wrong-but-valid tenant id sees nothing it does not own", async () => {
@@ -202,7 +223,7 @@ describe("dual-parent child rows (session_occurrences)", () => {
     });
     const sessionB = await createIn(ctx.tenantB, 20);
 
-    await expect(
+    await expectErrorChainToMatch(
       withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
         tx.insert(sessionOccurrences).values({
           recurrenceRuleId: ruleA.id,
@@ -210,7 +231,8 @@ describe("dual-parent child rows (session_occurrences)", () => {
           localOccurrenceKey: "2026-07-17",
         }),
       ),
-    ).rejects.toThrow(/row-level security/i);
+      /row-level security/i,
+    );
 
     // same-tenant link works
     const sessionA = await createIn(ctx.tenantA, 8);
