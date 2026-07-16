@@ -2,10 +2,10 @@
 
 > **Canonical phase:** P4  
 > **Track:** 🌐 Web Auth & Onboarding  
-> **Version:** 2.3 · 2026-07-15
+> **Version:** 2.5 · 2026-07-16
 > **Status:** Reviewed  
 > **Prerequisites:** P0–P1 foundation · P2 routing/authz · P3 ledger/provider model  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-1 · `../product/PRD.md` FLOW 1 · BRD OD-11 · `../standards/decisions.md` DD-13/DD-33/DD-37 · `BE/feature_web_auth_onboarding_tech.md` · `feature_connector_onboarding.md` (auto-register webhook + verify 2 tầng)
+> **Tài liệu liên quan:** `../product/BRD.md` FR-1 · `../product/PRD.md` FLOW 1 · BRD OD-11 · `../standards/decisions.md` DD-13/DD-33/DD-37/DD-50 · `BE/feature_web_auth_onboarding_tech.md` · `feature_connector_onboarding.md` (auto-register webhook + verify 2 tầng)
 
 > **Cập nhật v3.4 (DD-37 + DD-13, 2026-07-10):** bỏ **Telegram Login**; auth phase-1 = **Google OAuth + email/password** (DD-13 ✅). Kênh onboarding phase-1 = **Zalo + Facebook Messenger** (Telegram loại khỏi phạm vi). **Facebook Login / Messenger link** = DD-33 (🟡 phase-1, phụ thuộc App Review).
 
@@ -17,7 +17,8 @@ Cho host mới **authenticate trên web, tạo tenant và connect integrations M
 
 ### Bất biến
 
-- Google OAuth **state/nonce/PKCE** + email-password (hash mạnh Argon2/bcrypt, KHÔNG log plaintext) **PHẢI verify** — không trust returned fields alone. *(TG Login adapter đã bỏ — DD-13/DD-37.)*
+- Google OIDC **PHẢI** verify chữ ký bằng provider key, exact `iss`/`aud`, `state`/`nonce`/PKCE, `exp`/`iat` và `email_verified === true`; không trust returned fields alone.
+- Email/password chỉ được bật khi có **đủ lifecycle**: password hash mạnh; verify-email token hash-only, TTL ngắn, single-use; forgot/reset enumeration-safe; reset thành công revoke mọi web session bị ảnh hưởng. Thiếu bất kỳ phần nào → email auth **OFF**, không ship partial lifecycle (DD-50).
 - Session cookies: `secure`, `httpOnly`, `sameSite=strict`, CSRF protection, rotation sau privilege change.
 - Tenant creation/bind dùng **idempotency keys** — refresh/back KHÔNG duplicate.
 - Secrets: write-only, KMS encrypted, masked after save, rotatable.
@@ -52,12 +53,15 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 | WAO-UC-8 | Host | Resume incomplete onboarding | Each step has verified/not-configured/error state |
 | WAO-UC-9 | Host | Rotate bank credentials | Old masked, new saved encrypted |
 | WAO-UC-10 | Host | Xem readiness checklist | Summary: ✅/❌ per step, proceed/block |
+| WAO-UC-11 | New Host | Verify email sau self-register | Token hợp lệ được consume đúng một lần; account mới được phép login |
+| WAO-UC-12 | Host | Forgot/reset password | Luôn trả response enumeration-safe; token hash-only + TTL + single-use; reset xong revoke toàn bộ web sessions của account |
+| WAO-UC-13 | Host | Revoke all sessions | Mọi session hiện hành của account bị revoke atomically; thiết bị phải login lại |
 
 ### Edge Cases
 
 | # | Category | Case | Hành vi bắt buộc |
 |---|----------|------|-------------------|
-| 1 | Security | Google OAuth state/nonce invalid hoặc email-password sai | Reject auth — "Xác thực không hợp lệ" |
+| 1 | Security | Google signature/issuer/audience/state/nonce/PKCE/time claim sai hoặc email chưa verified | Reject auth — "Xác thực không hợp lệ"; không tạo session |
 | 2 | Security | OAuth state replay / stale nonce (replay attack) | Reject — state + nonce single-use + timestamp check. Ref: BL-SEC-1 |
 | 3 | Concurrency | Refresh/back during tenant create | Idempotency key → return existing tenant |
 | 4 | Security | Secret exposed in URL/log | ❌ NEVER — write-only, KMS, masked display |
@@ -69,6 +73,10 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 | 10 | Data Integrity | Onboarding partially complete → resume | Each step independent, verified state persisted |
 | 11 | Security | CSRF on state-changing requests | Token verified per request — reject without valid CSRF |
 | 12 | Security | Privilege escalation during onboarding | Session rotation after each privilege-granting step |
+| 13 | Security | Verify/reset token bị replay, quá hạn hoặc đã consume | Reject generic; token không được hồi sinh hay consume lần hai |
+| 14 | Privacy | Forgot-password với email không tồn tại | Response/status/timing cùng class với email tồn tại; không lộ account existence |
+| 15 | Security | Reset password thành công nhưng session cũ còn sống | ❌ NEVER — revoke-all phải commit cùng credential change hoặc fail toàn bộ |
+| 16 | Security | Email auth mới có register/login nhưng thiếu verify/reset/revoke-all | Fail-closed feature flag OFF; Google vẫn hoạt động độc lập |
 
 ---
 
@@ -76,7 +84,8 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 
 | Surface | Screen | Loading | Ready | Error | Empty |
 |---------|--------|---------|-------|-------|-------|
-| Web | Login page | — | Google Login button + email/password form | "Xác thực thất bại" + retry | N/A |
+| Web | Login page | — | Google Login button + email/password form + "Quên mật khẩu" | "Xác thực thất bại" + retry | N/A |
+| Web | Verify email / reset password | Validating token | Generic success + login CTA | Generic invalid/expired message + safe retry | N/A |
 | Web | Onboarding wizard — Step 1: Club config | Skeleton form | Form: name, timezone, sport, price, visibility | Inline errors per field | Default values pre-filled |
 | Web | Onboarding wizard — Step 2: Bank connect | Skeleton | SePay: nút "Kết nối" (OAuth) · ApiPay: dán accessKey/secretKey → chọn TK ACTIVE; auto-register webhook; chip `registered → active` | "Kết nối thất bại" + retry | N/A |
 | Web | Onboarding wizard — Step 3: Zalo bot | Skeleton | Dán bot token → auto `setWebhook` (🟡 blocked CO-OQ-1) → verify | "Kết nối thất bại" + retry | N/A |
@@ -90,8 +99,10 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 
 | Entity | Vai trò | Key constraints |
 |--------|---------|-----------------|
-| `persons` | Global identity (anchor) | `UNIQUE(phone)`; identity qua `account_identities`/`channel_identities`, KHÔNG root table `users` |
+| `persons` | Global identity (anchor) | Identity qua `account_identities`/`channel_identities`, KHÔNG root table `users`; phone dormant phase-1, không phải login/merge proof |
 | `account_identities` | Web-auth provider per person (DD-13) | `platform ∈ {google,email,facebook,zalo}`; `platform_user_hash` keyed-HMAC (SI-2); password → bảng credential riêng |
+| Email credential (logical contract) | Password hash + verification state per email identity | Storage/constraints chốt ở B0 design-probe; không lưu plaintext, unverified không login |
+| Email verify/reset token (logical contract) | Một lần, TTL ngắn, purpose-bound | Chỉ lưu token hash; consume atomically; reset revoke-all sessions trong cùng transaction boundary |
 | `tenants` | Club/org | `UNIQUE(slug)`, `owner_person_id` FK |
 | `memberships` | Person ↔ Tenant | `UNIQUE(person_id, tenant_id)`, `role` enum |
 | `bank_accounts` | Payment provider credentials | `tenant_id` FK, encrypted fields, `verified_at` |
@@ -137,7 +148,9 @@ stateDiagram-v2
 ## 6. Acceptance Criteria
 
 - [ ] Unknown host completes tenant → first session không cần env/manual DB work
-- [ ] Google OAuth state/nonce + email-password + session/CSRF tests pass
+- [ ] Google signature + exact issuer/audience + state/nonce/PKCE + exp/iat + `email_verified=true` tests pass
+- [ ] Email verify/forgot/reset/revoke-all contract pass; token replay/expiry/enumeration-safe/old-session tests pass
+- [ ] Email auth remains disabled until the whole lifecycle is deployable and verified end-to-end
 - [ ] Duplicate submissions KHÔNG duplicate tenant/provider/link (idempotency)
 - [ ] Secrets encrypted, masked, not logged, rotatable
 - [ ] Messenger Page / Zalo / bank ownership verification + conflict handling work
@@ -157,6 +170,7 @@ stateDiagram-v2
 | WAO-OQ-2 | Minimum required steps trước khi mark onboarding complete | ⬜ Chưa chốt |
 | WAO-OQ-3 | DD-33: Facebook Login / Messenger link phụ thuộc App Review — degrade path nếu chậm | 🟡 phase-1 |
 | WAO-OQ-4 | Skip Club / personal meet: đường tạo không-gian-cá-nhân | ✅ **Chốt DD-46** — auto-provision personal tenant (tái dùng `provisionTenant` core, wrapper `getOrCreatePersonalTenant`, free plan, bỏ bước "đặt tên club", owner=self); propagate lúc build → `../dd-46-skip-club-analysis.md` |
+| WAO-OQ-5 | Email credential lifecycle + phase-1 không thu SĐT | ✅ **Chốt DD-50 (2026-07-16)** — contract đầy đủ đã pin: verify email, forgot/reset enumeration-safe, token hash-only/TTL/single-use, reset revoke-all sessions; khoá mạnh claim = verified email + `link_code` (phone dormant). B0 (`../pre-code-open-items-2026-07-16.md`) chỉ còn design-probe mutation paths + storage/DDL trước khi author slice S4 |
 
 ### Changelog
 
@@ -166,4 +180,6 @@ stateDiagram-v2
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, onboarding wizard screen states, state machine |
 | 2026-06-20 | v2.1 | Cross-link `feature_connector_onboarding.md`: bank/Zalo connect chuyển sang auto-register + verify 2 tầng; thêm §1.1 surface entry points (web-first vs bot-first, deep-link handoff); cập nhật UC-4/UC-6 + screen states |
 | 2026-07-15 | v2.3 | **Propagation (light):** thêm WAO-OQ-4 (DD-46 personal tenant auto-provision) với pointer; auto-provision path/schema propagate lúc build slice. Analytics integration provider được reconcile Bank/Zalo/Messenger theo DD-37. |
+| 2026-07-16 | v2.4 | **Propagation (light) DD-50:** thêm WAO-OQ-5 (email verify bắt buộc; không thu SĐT; khoá mạnh = verified email + link_code; credential lifecycle → B0). Authority: decisions v1.36. |
+| 2026-07-16 | v2.5 | **Full propagation DD-50 (decisions v1.37):** pin Google OIDC claim matrix; email verify/forgot/reset/revoke-all lifecycle; hash-only single-use tokens; enumeration-safe responses; partial email auth fail-closed OFF. Domain storage/DDL vẫn phải qua B0 design-probe. |
 | 2026-07-10 | v2.2 | **DD-13 + DD-37:** bỏ **Telegram Login** adapter; auth phase-1 = **Google OAuth + email/password** (`account_identities.platform ∈ {google,email,facebook,zalo}`). Kênh onboarding phase-1 = **Zalo + Facebook Messenger** (drop TG bind step, thêm Messenger Page step). **Facebook Login/link** = DD-33 (🟡 phase-1). Cập nhật §1/§1.1, UC-1/5/6, edge #1/2/8, screens, domain model, state machine, acceptance. |

@@ -1,7 +1,9 @@
 # 🧭 Founder Decision Brief — Open items (2026-07-15, rev 5)
 
+> ✅ **CLOSED (2026-07-16):** founder đã chốt toàn bộ Items 2–9; canonical hiện tại là `standards/decisions.md` **v1.39**. DD-49..56 được code-aware clarify/full-propagate ở v1.37 (append-only correction, OIDC/email lifecycle, open-DM hard safety gate, exact capability matrix); DD-57..60 là proposal mới, không đổi closure này. Item 7/8 giữ nguyên trạng thái (DD-18 ⬜ go-live gate; DD-34/35/36 approve-in-principle). Brief này giữ làm **lịch sử phân tích** — các table/CTA cũ bên dưới đã bị canonical decisions supersede; tracking hiện hành ở `pre-code-open-items-2026-07-16.md`.
+
 > **Mục đích:** gom các item **còn cần founder quyết** thành một chỗ để duyệt một lượt. Mỗi item = **câu hỏi · options · đề xuất · tác động/độ gấp · pointer canonical**.
-> **Authority:** `standards/decisions.md` v1.34. Brief này KHÔNG thay quyết định — khi chốt, ghi vào `decisions.md` (+ feature spec OQ) rồi mới propagate.
+> **Authority hiện tại:** `standards/decisions.md` v1.39. Brief rev 5 này chỉ là historical input; nếu body mâu thuẫn DD-49..56 v1.37+ thì decisions + propagated feature specs thắng.
 > **Phân loại nguồn:** 🔴 = cần founder (business/product/legal). Item spike (DD-14/15 Zalo, DD-33 Facebook App Review, connector CO-OQ) là **verify kỹ thuật/bên ngoài**, KHÔNG nằm trong brief này.
 >
 > ⚠️ **Không phải tư vấn tài chính/pháp lý.** Item 3 (tiền) và Item 6 (pháp lý) đưa thông tin để quyết. **Item 6 bắt buộc luật sư VN** rà theo **Luật 91/2025/QH15 + Nghị định 356/2025/NĐ-CP** (hiệu lực 01/01/2026) — **KHÔNG** dùng Nghị định 13/2023 (đã hết hiệu lực). Theo hiểu biết hiện tại (**cần luật sư VN xác nhận, chưa phải kết luận pháp lý**), NĐ 356 dường như xếp ngày sinh và giới tính vào **dữ liệu cá nhân cơ bản** chứ không phải nhóm nhạy cảm; Plexco vẫn mã hoá + xin consent theo product/security policy — không dựa vào phân loại này cho tới khi luật sư xác nhận.
@@ -61,7 +63,7 @@
 **Kết quả (2026-07-16): chốt (c) co-locate DigitalOcean.** Đề xuất (a) ban đầu đã **superseded** (xem box ✅ đầu Item + `dd-04-hosting-final-decision.md`). Pre-build gate = **egress-IP verify**.
 **Tác động/gấp:** P0 hạ tầng, cần trước production. ⚠️ Mọi con số phải **benchmark trước khi cam kết**.
 **Kéo theo SEC-OQ-1** (`feature_security_operations`): **RPO/RTO cuối + KMS implementation** chốt theo provider đã chọn — deliverable **derived/build-time**, không phải quyết định founder độc lập.
-**Pointer:** `dd-04-hosting-decision-brief.md` (rev 4) · `decisions.md` DD-04 · `deployment-infra.md §2/§6/§9` · [DigitalOcean Managed Databases SLA](https://www.digitalocean.com/sla/databases) · [Neon pricing/HA scope](https://neon.com/pricing) · [Neon Compute Endpoint SLA](https://neon.com/sla) · [Neon Private Networking scope](https://neon.com/docs/security/security-overview).
+**Pointer:** `dd-04-hosting-decision-brief.md` (rev 5) · `decisions.md` DD-04 · `deployment-infra.md §2/§6/§9` · [DigitalOcean Managed Databases SLA](https://www.digitalocean.com/sla/databases) · [Neon pricing/HA scope](https://neon.com/pricing) · [Neon Compute Endpoint SLA](https://neon.com/sla) · [Neon Private Networking scope](https://neon.com/docs/security/security-overview).
 
 ---
 

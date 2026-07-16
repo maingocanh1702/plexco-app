@@ -11,7 +11,7 @@
 >
 > **v3.4 Phase-1 pivot (DD-37 ✅):** một Person link **Google + Facebook + Zalo** — **không còn Telegram**.
 > Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅, thay TG Login) · link **Facebook** (DD-33 🟡, phase-1)
-> · **Zalo Login** (DD-14 ⬜). Merge key vẫn là **SĐT verified** (DD-01). Xem §7 matrix.
+> · **Zalo Login** (DD-14 ⬜). **DD-50:** phase-1 không thu SĐT; strong proof cho claim có tiền = verified account email hoặc transactional one-time `link_code`. Phone fields giữ dormant. Xem §7 matrix.
 
 ---
 
@@ -28,11 +28,12 @@
 4. **Membership là tenant data.** `memberships(person_id, tenant_id)` mới là quan hệ một
    người với một club. First contact có thể tạo `Person`/`ChannelIdentity`, nhưng không
    tự cấp membership nếu chưa có join/approval rõ ràng.
-5. **Verified phone là merge key mạnh, không phải điều kiện đăng ký.** Phone được lưu
-   encrypted + lookup hash, chỉ unique khi đã verify. Google/email/Zalo/Messenger không
-   được giả định luôn cấp phone.
-6. **Chỉ auto-link/merge bằng tín hiệu đã verify.** Tên hiển thị, username, bank holder
-   name, email chưa verify chỉ là hint/suggestion.
+5. **Phone là tín hiệu dormant, không phải phase-1 proof.** Physical schema encrypted +
+   lookup hash được giữ cho tương lai nhưng phase-1 không thu phone, không tích hợp SMS OTP
+   và không dùng phone để claim/merge.
+6. **Claim có tiền chỉ mở bằng proof DD-50.** Verified account email hoặc transactional
+   one-time `link_code` mới là strong proof. Tên, alias, username, bank holder/CK và owner
+   assertion chỉ là hint/review evidence; không được bypass.
 7. **Xung đột identity fail-closed.** Khi một provider/channel/link-code chạm account
    hoặc person khác, không tự merge im lặng. Tạo plan/review hoặc yêu cầu host/support
    xử lý bằng flow merge/unlink có audit.
@@ -55,7 +56,7 @@
 | `status` | `active` / `merged` / `deleted` |
 | `merged_into_person_id` | tombstone pointer khi đã merge |
 
-Invariant: `UNIQUE(phone_lookup_hash) WHERE phone_verified_at IS NOT NULL AND status = 'active'`.
+Invariant vật lý giữ dormant cho tương lai: `UNIQUE(phone_lookup_hash) WHERE phone_verified_at IS NOT NULL AND status = 'active'`. Phase-1 không populate hoặc dùng các cột này làm proof.
 
 ### `accounts` + `web_sessions` - web/app auth principal
 
@@ -123,7 +124,7 @@ Invariant: một active/guest membership cho một `(tenant_id, person_id)`.
 
 ## 3. Invariants phải enforce ở DB/service
 
-- `persons`: verified phone unique bằng lookup hash, không plaintext.
+- `persons`: phone schema dormant; nếu tương lai enable thì verified phone unique bằng lookup hash, không plaintext. Phase-1 không thu/không dùng làm proof.
 - `account_identities`: `UNIQUE(platform, platform_user_hash)`.
 - `channel_identities`: `UNIQUE(platform, platform_user_lookup_hash)`.
 - `memberships`: active person unique theo tenant.
@@ -155,12 +156,13 @@ Invariant: một active/guest membership cho một `(tenant_id, person_id)`.
 2. Tra `account_identities(platform, platform_user_hash)`.
    - Có -> tạo/rotate `web_sessions`.
    - Không -> tạo `accounts` + `account_identities` theo flow onboarding.
-3. Nếu account cần gắn với `Person`, dùng verified signal: channel link, magic link, verified
-   phone/email, hoặc support-approved merge. Không gắn bằng tên.
+3. Nếu account cần gắn với `Person`, chỉ dùng strong proof DD-50: verified account email
+   hoặc transactional one-time `link_code`. Support/owner assertion, tên/alias và CK chỉ tạo
+   review evidence; không gắn hoặc claim membership có tiền bằng các tín hiệu đó.
 
 ### C. Link bot channel với Person hiện có
 
-Đường chính là link-code/OTP tường minh:
+Đường chính là transactional one-time `link_code` tường minh:
 
 - Channel A hoặc web/app phát hành code cho `source_person_id`/`source_channel_identity_id`.
 - Người dùng nhập code ở Channel B hoặc web/app.
@@ -235,7 +237,7 @@ Rollback toàn bộ nếu bất kỳ tenant/money step nào fail.
 |---|---|---|---|
 | **Google login (OAuth)** | web auth | **phase-1 ✅ (DD-13)** | `account_identities.platform='google'` + `web_sessions`; SI-2 keyed-hash cho `google.sub` |
 | **Email/password (self-register)** | web auth | **phase-1 ✅ (DD-13)** | credential/verification table riêng (P12 expand→contract); verified email = auto-merge signal |
-| **Facebook Login** | web auth | **phase-1 🟡 (DD-33)** | `platform='facebook'`; phụ thuộc App Review/BM verification; degrade → OTP `/link` thủ công; **không** auto-link chéo với Messenger PSID |
+| **Facebook Login** | web auth | **phase-1 🟡 (DD-33)** | `platform='facebook'`; phụ thuộc App Review/BM verification; degrade → one-time `/link` code thủ công; **không** auto-link chéo với Messenger PSID |
 | **Zalo Login** | web auth | ⬜ (DD-14) | `platform='zalo'`; cần xác minh gating OA; đường link cho auto-match Zalo bot |
 | ~~Telegram Login / web fallback~~ | web auth | **loại khỏi phase-1 (DD-37)** | adapter TG Login đã bỏ; không còn là đường auth |
 | **Zalo bot** | channel | **phase-1** | BYO bot token per club, tenant routing qua `zalo_bots`; DM-only, number-reply |
@@ -259,10 +261,10 @@ Thêm provider/channel mới không được viết là "chỉ thêm dòng vào 
 | ID-AUTH-2 | Email credential là password, magic-link, hay OAuth-only email claim? | ✅ **DD-13**: email + password self-register (credential table riêng) |
 | ID-AUTH-3 | Facebook Login/Messenger account-link như web-auth provider (`platform='facebook'`) | 🟡 **phase-1 — DD-33** (nâng từ ⬜; Messenger nay là kênh MVP); phụ thuộc App Review |
 | ID-LINK-1 | Per-provider bot id có scoped theo bot/page/OA thế nào? | verify khi implement → **DD-14** (Zalo Login/OA), **DD-15** (Zalo bot `from.id` cross-bot) |
-| ID-MERGE-1 | Support recovery/split SLA và quyền support cụ thể | 🔴 Founder + security phải chốt trước production merge — `../founder-decision-brief-2026-07-15.md` Item 9 |
+| ID-MERGE-1 | Support recovery/split SLA và quyền support cụ thể | ✅ **DD-53:** PlatformAdmin freeze; split apply cần 2 approval; break-glass có ticket/expiry/audit; recovery proof không tự mở debt claim |
 
 > **Truy vết:** file này là orientation, KHÔNG chốt quyết định. Mọi mục ở trên phải được
-> chốt tại `docs/standards/decisions.md` (DD-13/14/15/33 — trong đó **Facebook OAuth/Login governed by DD-33**,
+> chốt tại `docs/standards/decisions.md` (DD-13/14/15/33/50/53 — trong đó **Facebook OAuth/Login governed by DD-33**,
 > DD-13 chỉ bao Google/email). Nếu DD được ✅, cập nhật spec tương
 > ứng (`feature_web_auth_onboarding(.md/_tech)`) rồi mới sửa dòng ở đây cho khớp.
 

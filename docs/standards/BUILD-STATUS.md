@@ -2,11 +2,11 @@
 
 > **Mục đích:** ảnh chụp tiến độ *thực thi* so với khối tài liệu đã Reviewed. Trả lời gọn:
 > "code đã có tới đâu, còn cách MVP bao xa". Đây là doc **living**, cập nhật mỗi khi một slice merge.
-> **Cập nhật:** 2026-07-15 (reconcile live docs/decisions; code snapshot không đổi).
+> **Cập nhật:** 2026-07-16 (current authority **decisions v1.39**; DD-49..56 contract closure ở v1.37; DD-57..60 là proposal, chưa gate build; functional implementation baseline không đổi).
 > **Nguồn số liệu:** `git log`, cây `packages/`+`apps/`, `docs/features/*`, `docs/standards/decisions.md`,
-> `docs/autopilot-backlog.md`. Số liệu code = đếm tại **`main@1eb6f60`** (foundation + Auth v3 đã merge).
+> `docs/autopilot-backlog.md`. Số liệu chức năng = baseline **`main@1eb6f60`** (foundation + Auth v3 đã merge), không phải khẳng định đây là HEAD hiện tại.
 >
-> **Reconcile 2026-07-16:** channel target vẫn theo DD-37, nhưng code snapshot còn Auth v3 Telegram-era và bắt buộc `TELEGRAM_BOT_TOKEN`. Google/email replacement đã spec nhưng **chưa implement, chưa có launcher-ready slice**. Decision authority trong checkout này tới **v1.34/DD-48** (v1.33 = DD-04 ✅ accept (c) + cost/facts; v1.34 = DD-04 cost model Rev 2 → Day-1 baseline + trigger-based): DD-41–46 đã chốt, DD-47/48 chốt framework; các quyết định đó **chưa đồng nghĩa đã build**. Code snapshot vẫn **`main@1eb6f60`**, migrations `0000–0013` (14 file).
+> **Reconcile 2026-07-16:** channel target vẫn theo DD-37, nhưng functional implementation baseline còn Auth v3 Telegram-era và bắt buộc `TELEGRAM_BOT_TOKEN`. Google/email replacement đã spec đầy đủ nhưng **chưa implement, chưa có launcher-ready slice**; B0 mutation-path/storage/revoke-all design-probe vẫn chặn authoring. Decision authority tới **v1.39/DD-60** (DD-57..60 proposal-only). HEAD hiện tại có thêm docs/config/tooling sau `1eb6f60`, nhưng chưa thêm feature layer; migrations vẫn `0000–0013` (14 file).
 
 ---
 
@@ -14,7 +14,7 @@
 
 | Trục | Trạng thái | Ước lượng |
 |---|---|---|
-| **Tài liệu / thiết kế** | **21 Product specs + 20 BE specs** = **20 cặp hiện có + 1 product-only Draft** (`channel_booking_funnel`; BE sẽ viết cùng build slice, **DD-32 đã chốt**). Trong 20 cặp: 14 active Reviewed + 1 Telegram Archived + connector + assistant + 3 Draft phase-1 **đã tracked, còn chờ migration/build**. Decision log tới **DD-48 / v1.34**; DD-41–46 đã chốt, DD-47/48 chốt framework nhưng vẫn chờ implementation. | ~90% cho MVP (docs) |
+| **Tài liệu / thiết kế** | **21 Product specs + 20 BE specs** = **20 cặp hiện có + 1 product-only Draft** (`channel_booking_funnel`; BE sẽ viết cùng build slice, **DD-32 đã chốt**). Decision log tới **DD-60 / v1.39**; DD-57..60 là proposal. DD-49..56 đã full-propagate, nhưng B0/B1/B2/B3 + correction mutation-path probes, external evidence và legal gate vẫn mở. | Contract coverage cao; **không dùng % này làm code-readiness** |
 | **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations `0000–0013` đã merge, có test | **✅ xong** |
 | **Code — lớp auth** | **Auth Onboarding v3 (Telegram-era) đã merge** (`5b1193b`) + web tests; **DD-37 supersede provider** → Google/email replacement đã spec, **chưa implement** | 🟡 provider replacement pending |
 | **Code — lớp feature nghiệp vụ** | chưa bắt đầu (session/reconcile/sync/marketplace/billing/bot…) | ⬜ chưa build |
@@ -29,12 +29,10 @@ Project vừa qua **Phase 0→1**: foundation + auth-v3 đã land trên **`main@
 
 ## 1. Bức tranh tổng: docs đi trước code rất xa
 
-Repo được xây theo hướng **docs-first**: **20 cặp spec hiện có + 1 product-only Draft**; trong đó **15 legacy** (14 active Reviewed + Telegram Archived), connector/assistant, và 3 cặp phase-1 mới (Draft, đã tracked, còn chờ migration/build). Decision log đã ghi tới **DD-48/v1.34**; DD-41–46 đã chốt, DD-47/48 chốt framework nhưng code/migration vẫn chưa build. Các quyết định đã
-được review/chốt *trước* khi viết code. Vì vậy khoảng cách hiện tại **không phải** là thiếu thiết
-kế — mà là thiết kế đã sẵn sàng, thực thi mới chạy được ~20% roadmap (foundation + auth-v3 đã land).
+Repo được xây theo hướng **docs-first**: **20 cặp spec hiện có + 1 product-only Draft**; trong đó **15 legacy** (14 active Reviewed + Telegram Archived), connector/assistant, và 3 cặp phase-1 mới (Draft, đã tracked, còn chờ migration/build). Decision log đã ghi tới **DD-60/v1.39**; DD-57..60 là proposal. DD-41–56 có nhiều contract đã chốt, nhưng chốt policy không đồng nghĩa code-ready: B0/B1/B2/B3, DD-49 mutation-path design, external evidence và legal go-live vẫn phải đóng. Thực thi hiện mới chạy được ~20% roadmap (foundation + auth-v3 đã land).
 
 ```
-Thiết kế  ███████████████████░░  ~90%   (21 Product + 20 BE; funnel BE viết cùng build slice; DD tới DD-48)
+Contract ███████████████████░░  coverage cao (21 Product + 20 BE; không phải readiness score; DD tới DD-60)
 Nền móng  ████████████████████░  ~90%   (core + db-RLS + migrations 0000–0013, có test)
 Auth      ███████████░░░░░░░░░░  ~55%   (Onboarding v3 Telegram-era merged + web tests; DD-37 provider→Google/email chưa code)
 Feature   █░░░░░░░░░░░░░░░░░░░░░  ~5%    (mới có logic thuần trong core, chưa wiring)
@@ -113,8 +111,9 @@ Chưa có: command handlers, services, projectors, API nghiệp vụ đầy đ�
 | Marketplace/Sync… | — | — |
 
 **Đọc bảng này thế nào:** gần như mọi feature đã có (a) spec Reviewed và (b) *bảng DB tương ứng* dựng
-sẵn ở S3 — nhưng (c) tầng command/service/projector/UI thì trắng. Đây là dấu hiệu lành mạnh của
-docs-first + schema-first: rủi ro thiết kế đã hạ, việc còn lại là "điền code" theo spec.
+sẵn ở S3 — nhưng (c) tầng command/service/projector/UI thì trắng. Docs-first + schema-first đã giảm
+rủi ro khám phá, **không biến phần còn lại thành việc "điền code" cơ học**: B0–B3, DD-49 correction
+probes và các negative scope S5/S7 vẫn là design gate bắt buộc trước khi chốt storage/API hoặc mutation path.
 
 ---
 
@@ -150,7 +149,7 @@ Nguồn: `docs/autopilot-backlog.md` (Phase-1 full-launch, S1→S20; **DD-37: Me
 
 Nói cách khác: session này **khép lại Phase 1** (nền móng) và **mở màn thiết kế lớp Auth** (S4).
 
-> **Cập nhật 2026-07-10:** Auth Onboarding v3 (Telegram-era) sau đó **đã merge** — code baseline hiện được neo tại **`main@1eb6f60`** (`5b1193b Merge feat/auth-onboarding-v3`), migrations `0000–0013` committed, có web tests. **DD-37 supersede provider** → thay Telegram-era bằng Google/email **đã spec nhưng chưa implement**.
+> **Cập nhật 2026-07-16:** Auth Onboarding v3 (Telegram-era) đã merge trong functional baseline **`main@1eb6f60`** (`5b1193b Merge feat/auth-onboarding-v3`), migrations `0000–0013` committed, có web tests. Các commit sau đó chủ yếu docs/config/tooling và chưa thêm feature layer. **DD-37 supersede provider** → thay Telegram-era bằng Google/email **đã spec nhưng chưa implement**.
 
 ---
 
@@ -159,36 +158,40 @@ Nói cách khác: session này **khép lại Phase 1** (nền móng) và **mở 
 **Còn thiếu để có MVP chạy được:** residual S4 provider swap + tầng feature S5→S19. Ưu tiên theo dependency:
 
 1. **S4 — Web Auth & Onboarding**: Onboarding v3 (Telegram-era) **đã merge** (`5b1193b`) + web tests.
-   Việc kế tiếp: **author + review slice thay provider Telegram-era → Google/email (DD-13/DD-37)** — đã spec, **chưa implement và chưa launcher-ready**;
-   + port/verify đủ 8 bất biến SI-1..SI-8. Đây là ưu tiên gần nhất nhưng **chưa runnable** cho tới khi có prescan + manifest/slice/launcher.
+   Việc kế tiếp: chạy **B0 mutation-path/design-probe** cho token storage/consume + account-wide revoke, rồi **author + review bộ slice mechanism-named thay provider Telegram-era → Google/email (DD-13/DD-37/DD-50)** — Product/BE contract đã pin, **chưa implement và chưa launcher-ready**;
+   + port/verify đủ 8 bất biến SI-1..SI-8. Đây là ưu tiên gần nhất nhưng **chưa runnable** cho tới khi B0 + prescan + manifest/slice/launcher hoàn tất.
 2. **S5 Session** + **S7 Reconcile**: reconcile đã có sẵn `core` logic → chỉ cần wiring
    webhook → tenantRepo → outbox → notify. Đòn bẩy cao nhất (đường tiền).
 3. **S6 Sync-engine**: viết projectors đọc `outbox_events` fan-out (Zalo/Messenger/SSE/public_sessions).
-4. **S8 Identity-merge**: bảng đã sẵn; cần luồng claim/merge có OTP (HR4).
+4. **S8 Identity-merge**: bảng đã sẵn; cần luồng claim/merge bằng verified account email hoặc transactional one-time `link_code` (HR4/DD-50).
 
 **Quyết định/gate còn treo có thể chặn hoặc định hình build:** **DD-04** provider ✅ **chốt (c) DO co-locate** (còn build-time gate: egress-IP verify + provision + restore/failover drill + RPO/RTO + KMS), **DD-14/15**
-(Zalo external spikes), **DD-33** (Facebook link/App Review), lifecycle grace/trial timing, và **DD-34/35/36**
+(Zalo external spikes), **DD-33** (Facebook link/App Review), và **DD-34/35/36**
 (Club Assistant P7 detail). **DD-18 chỉ chặn GO-LIVE Club Assistant, không chặn build interface-swappable.**
+**DD-49..56 closure 2026-07-16 (v1.37; current decisions v1.39): ✅ policy/contracts propagated** — money correction, không-thu-SĐT/HR4, Host Pro lifecycle, guest→full/ban, identity recovery, PII config, DM/media, co-admin. Không còn founder choice chặn S4→S8, nhưng B0/B1/B2/B3 + DD-49 correction probes vẫn chặn các path tương ứng; legal A3 chặn go-live. Checklist: `../pre-code-open-items-2026-07-16.md`.
 **DD-02/05/06/08/10/12/41–46 đã ✅ chốt; DD-47/48 đã chốt framework** nhưng schema/code vẫn pending.
 DD-13 (Google/email) ✅ nhưng provider chưa implement; auth đã land vẫn là Telegram-era. DD-37/38/39 ✅;
 chat/giá theo giới tính còn chờ migration.
 
 ---
 
-## 7. Live verification (2026-07-15)
+## 7. Live verification (2026-07-16)
 
 Reality-check trên local working tree hiện tại; giữ kết quả full-suite gần nhất làm historical evidence riêng:
 
 | Gate | Kết quả |
 |---|---|
-| `pnpm lint` (15/07) | ✅ Pass; Next.js Core Web Vitals plugin active |
-| `pnpm build` (15/07) | ✅ Pass; typecheck + Next production build; live routes vẫn gồm Telegram-era auth callback/state như code snapshot đã nêu |
-| `pnpm format:check` (15/07) | ⚠️ Full-repo còn 4 file code/test ngoài scope docs chưa format; **toàn bộ file sửa trong pass này đã Prettier pass** |
-| Canonical DB/full test (15/07) | ⚠️ **Chưa revalidate được DB**: `pnpm test` fail-closed vì thiếu `DATABASE_URL_TEST`; Docker daemon đang offline. Non-DB xanh: core 111 · web 56 · bot 3 |
-| Full-suite gần nhất (13/07, historical) | ✅ `DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test`: **20 files / 214 tests pass** (core 111 · DB/RLS/auth 44 · web 56 · bot 3) |
-| Local Markdown link + anchor scan (15/07) | ✅ **139 tracked Markdown files**, 0 broken local links/anchors; 15 Bestminton GitHub targets map tới file thật trong companion repo |
+| `pnpm lint` (16/07) | ✅ Pass |
+| `pnpm build` (16/07) | ✅ Pass; typecheck + Next production build; live routes vẫn gồm Telegram-era auth callback/state như code snapshot đã nêu |
+| `pnpm format:check` (16/07) | ✅ Pass full repo sau trusted-ingress/CI/docs/P&L closure |
+| Non-DB tests (16/07) | ✅ Core **111** · web **65** · bot **3** pass; web có thêm provider-pinned client-IP regression matrix |
+| Static infra/config (16/07) | ✅ Manifest JSON parse · `/bin/bash -n` · Compose config · `git diff --check` pass |
+| Canonical DB/full test (16/07) | ✅ Docker PostgreSQL `/plexco_test`: **20 files / 223 tests pass** (core 111 · DB/RLS/auth 44 · web 65 · bot 3); container được stop sau verify |
+| Previous full-suite baseline (13/07, historical) | ✅ **20 files / 214 tests pass** trước trusted-ingress regression expansion |
+| Local Markdown link + anchor scan (16/07) | ✅ **151 Markdown files** trong current working tree, 0 broken local links/anchors · 0 unbalanced fence |
 
-Phạm vi xác nhận hiện tại: local working tree; DB evidence 13/07 là snapshot lịch sử, **không** được coi là full-green mới cho checkout 15/07. Đây không thay CI/staging/restore/security gates và không có nghĩa feature layer đã implement.
+Phạm vi xác nhận hiện tại: local working tree; full PostgreSQL suite 16/07 là current green cho checkout này.
+Đây không thay remote CI/Security workflow, staging/restore/provider evidence và không có nghĩa feature layer đã implement.
 
 ---
 

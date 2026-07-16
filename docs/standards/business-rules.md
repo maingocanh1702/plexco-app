@@ -1,10 +1,10 @@
 # Business Rules — Plexco
 
-> Registry quy tắc nghiệp vụ, tổng hợp từ `docs/product/BRD.md` v3.6 · `docs/product/PRD.md` v2.4 · `docs/product/TDD.md` v2.5 · `docs/standards/decisions.md` v1.34 · `docs/research/player-side-saas-AUDIT.md`.
+> Registry quy tắc nghiệp vụ, tổng hợp từ `docs/product/BRD.md` v3.7 · `docs/product/PRD.md` v2.5 · `docs/product/TDD.md` v2.6 · `docs/standards/decisions.md` v1.39 · `docs/research/player-side-saas-AUDIT.md`.
 >
-> **Reconcile 15/07/2026:** đã đồng bộ pivot kênh (DD-37), pricing/mark-paid (DD-29/40), session-model (DD-41–46) và social framework (DD-47/48). Decision log vẫn là authority khi một DD thay đổi; registry này là mirror để review/build.
+> **Reconcile 16/07/2026:** đã đồng bộ full DD-49–56 và DD-40 v1.39; decision log vẫn là authority khi một DD thay đổi, registry này là mirror để review/build.
 > Khi conflict, authority theo topic trong BRD §0; security dùng rule nghiêm ngặt hơn.
-> v1.7 · 2026-07-15 (full decision reconcile qua DD-48)
+> v1.8 · 2026-07-16 (full decision reconcile qua DD-56; DD-57–60 vẫn proposal)
 
 ---
 
@@ -22,7 +22,7 @@
 | **BL-PAY-8** | **Immutable ledger** | Không sửa/xóa bank transaction/allocation đã audit; điều chỉnh bằng signed reversal tham chiếu allocation gốc. | TDD §3.2 |
 | **BL-PAY-9** | **Cash/waiver có provenance** | `/cash`/waiver tạo allocation không có bank transaction nhưng bắt buộc authorized actor; không tạo webhook giả. | PRD command map, Payment feature v1.1 |
 | **BL-PAY-10** | **STK change confirmation delay** | Đổi STK primary → pending 24h → hệ thống vẫn dùng STK cũ cho QR. Thông báo đổi gửi qua MỌI kênh đã link. Owner cancel được. Rate-limit: max 2 lần/30 ngày. | AUDIT G1 |
-| **BL-PAY-11** | **Mark-paid = allocation, mọi tier (DD-40)** | Host xác nhận "đã thu" thủ công → INSERT `payment_allocations` + cập nhật `charges` (`amount_allocated`/`status`). **KHÔNG** ghi bảng `payment`/`payments` (không tồn tại trong schema). Tiền mặt → `source='cash'` (không `bank_transaction`, bắt buộc `created_by`); CK host xác nhận khớp một `bank_transaction` có sẵn → `source='manual'`. **KHÔNG** dùng `bank_transfer` làm source. Mark-paid có ở **mọi tier** (free + host_pro); đối soát **tự động** chỉ host_pro (capability `payment_reconcile_auto`, BL-BIL-1a). | DD-40, schema.ts §payment_allocations |
+| **BL-PAY-11** | **Mark-paid = allocation, mọi tier (DD-40)** | Host xác nhận "đã thu" thủ công → INSERT `payment_allocations` + cập nhật `charges` (`amount_allocated`/`status`). **KHÔNG** ghi bảng `payment`/`payments`. Tiền mặt → `source='cash'` (`bank_transaction_id=NULL`, `created_by` bắt buộc); CK đã ingest → `source='manual'` + exact `bank_transaction_id`. CK host-attested **chưa ingest** chỉ được dùng dedicated allocation source sau migration, `bank_transaction_id=NULL`, actor + opaque evidence/audit; trước migration reject fail-closed. **Cấm** synthetic `bank_transaction` và cấm map sang `cash|manual|bank_transfer`. Mark-paid có ở mọi tier; auto-reconcile chỉ `host_pro`. | DD-40 v1.39, schema.ts §payment_allocations |
 
 ---
 
@@ -31,8 +31,8 @@
 | ID | Luật | Chi tiết | Source |
 |---|---|---|---|
 | **BL-ID-1** | **Person toàn cục** | Mỗi người = 1 `Person`; mỗi identity Zalo/Messenger = 1 `ChannelIdentity` (Telegram chỉ còn legacy data, không phải surface MVP); quan hệ với CLB = `Membership`. | BRD BR-9, FR-7.1, DD-37 |
-| **BL-ID-2** | **Claim-có-tiền cần khoá mạnh** | Claim membership đã có nợ/lịch sử tiền: chỉ qua (1) owner gán, (2) CK khớp từ cùng STK, (3) mã link OTP. **KHÔNG** cho claim bằng tên/alias. | AUDIT C2, BRD FR-7.2 |
-| **BL-ID-3** | **Merge xuyên kênh** | Thứ tự tin cậy merge: mã link OTP → SĐT verified → email verified → STK+tên (gợi ý, owner duyệt). **Chỉ verified mới auto-merge.** | AUDIT C3/C5, BRD FR-7.3 |
+| **BL-ID-2** | **Claim-có-tiền cần khoá mạnh** | Claim membership đã có nợ/lịch sử tiền chỉ qua verified account email hoặc transactional one-time `link_code`. Tên/alias, owner assertion và CK/STK chỉ là review evidence; không được bypass. | DD-50, BRD FR-7.2 |
+| **BL-ID-3** | **Merge xuyên kênh** | Phase-1 proof = verified account email hoặc `link_code` được lock/verify/consume once trong transaction + explicit impact confirm. Phone giữ dormant; tên/STK/owner chỉ tạo suggestion/review. Conflict fail-closed. | DD-50, BRD FR-7.3 |
 | **BL-ID-4** | **UNIQUE per tenant + merge-safe** | Active membership unique per `(tenant,person)`; conflict merge dùng survivor+tombstone, re-parent charge/history, không sửa ledger rows. | TDD §3.2, Identity feature v1.1 |
 | **BL-ID-5** | **Auto-create ChannelIdentity** | Tin nhắn đầu tiên từ kênh mới → tạo ChannelIdentity + gắn Person (mới hoặc merge nếu verified). | PRD FLOW 5 |
 | **BL-ID-6** | **Routing theo kênh, KHÔNG nội dung** | Tenant luôn suy từ kênh (group chat_id / Zalo bot / page_id / deep-link / web-session). KHÔNG suy từ nội dung tin (chống spoof). | BRD CO-4, NFR-S3 |
@@ -63,7 +63,7 @@
 | **BL-SES-6** | **Attendance/reliability tenant-private** | No-show/attendance là dữ liệu vận hành per-tenant; reliability có provenance, correction/audit và không được đưa vào public projection hay suy thành global score. | DD-42 |
 | **BL-SES-7** | **Membership tags chỉ định audience** | `membership_tags` là nhãn per-tenant để lọc người nhận announcement/invite; tag không tạo eligibility, role, giá, quyền hay dữ liệu public. | DD-43 |
 | **BL-SES-8** | **Private invite token** | Invite token phải opaque, hash-at-rest, scoped đúng session, có expiry/revoke/max-use và redeem atomic/idempotent. Token hợp lệ chỉ mở đường join; vẫn re-check session, eligibility, capacity và waitlist. | DD-44 |
-| **BL-SES-9** | **Waitlist là state canonical** | Full → `waitlisted` với position dương, không charge/venue. Capacity chỉ đếm active; promotion theo total order canonical và idempotent. Player `left` không tự rejoin: trả `REJOIN_REQUIRES_REVIEW`. | DD-45 |
+| **BL-SES-9** | **Waitlist là state canonical** | Full → `waitlisted` với position dương, không charge/venue. Capacity chỉ đếm active; promotion theo total order canonical và idempotent. `left` rejoin chạy join bình thường; carry-over obligation nếu chưa refund hoặc append lifecycle nếu đã refund. Chỉ fallback `REJOIN_REQUIRES_REVIEW` khi correction core chưa land/không chứng minh được disposition. | DD-45, DD-49 |
 | **BL-SES-10** | **Derive charge trước promotion mutation** | Khi promote, suy giá theo DD-39 trước khi đổi state. KMS/decrypt/price failure → giữ waitlisted/no-charge/no-venue; phát đúng một audit + canonical outbox event cho retry/owner alert, không rollback capacity opener và tiếp tục candidate kế. | DD-39/45 |
 
 ---
@@ -95,7 +95,7 @@
 
 | ID | Luật | Chi tiết | Source |
 |---|---|---|---|
-| **BL-BIL-1** | **Subscription host** | **Plan trả phí `host_pro`:** trial → active → past_due → suspended → cancelled. **`free` (0đ):** vào thẳng `active` vô thời hạn — không trial/invoice, **không bao giờ** past_due/suspended vì non-payment (chỉ suspend vì ToS/abuse hoặc owner cancel). Invoice ledger tách khỏi player payment ledger. Pricing theo **DD-29** (thay DD-03): `free` 0đ, `host_pro` 250k mỗi CLB/tháng. | BRD FR-9.1/9.2, DD-29 |
+| **BL-BIL-1** | **Subscription host** | `host_pro`: trial 14 ngày, nhắc trước 2 ngày, hết trial không trả thì khoá ngay về free; invoice renewal trễ có grace 7 ngày rồi suspended. Cancel giữa kỳ được hoàn toàn bộ nếu request trong 7 ngày từ lúc paid, sau đó không hoàn và dùng tới cuối kỳ. PlatformAdmin override tối đa 7 ngày, có reason/ticket/expiry/audit. `free` active vô thời hạn, không trial/invoice/past_due vì non-payment. Invoice ledger tách player ledger. | DD-29, DD-51 |
 | **BL-BIL-1a** | **Plan entitlements** | `free`: web + kết nối 2 bot chat (**Zalo/Messenger** — Telegram bỏ, DD-37) + đối soát CK **thủ công** (mark-paid = allocation, BL-PAY-11/DD-40) + nhắc thủ công; `host_pro`: thêm đối soát **tự động** + nhắc nợ tự động + Trợ lý AI + CRM. Gate theo **capability flags config-driven** (registry `feature_billing_lifecycle_tech.md §4b`), không hardcode theo plan_key. (Messenger cần Meta App Review trước GA — DD-33/DD-37.) | DD-29 |
 | **BL-BIL-2** | **Suspended behavior** | Chặn lệnh quản trị nhưng vẫn durable-ingest CK player. Kèo public hiện có chỉ sống tới khi đóng/hết giờ; không tạo/gia hạn mới. | BRD BR-11, FR-9.3 |
 | **BL-BIL-3** | **LLM/STT fair-use** | Platform trả chi phí LLM/STT; có trần fair-use per-tenant. | BRD §9.2 |
@@ -166,11 +166,12 @@
 
 ## Source of Truth (khi conflict)
 
-```
-AUDIT → reconciliation → saas-implementation-plan → BRD → PRD → TDD → business-rules
-```
+1. Live schema + migrations + invariant tests cho implementation reality.
+2. `standards/decisions.md` cho quyết định canonical.
+3. BRD → PRD → TDD cho requirement và architecture.
+4. Rule security/money nghiêm ngặt hơn khi hai nguồn cùng áp dụng.
 
-Business rules file này **tổng hợp** từ các doc trên. Khi phát hiện mâu thuẫn → update doc nguồn TRƯỚC, rồi sync lại file này.
+Business rules file này là **mirror**, không tự tạo authority. Khi phát hiện mâu thuẫn → update đúng nguồn canonical trước, rồi sync lại file này.
 
 ---
 
@@ -178,6 +179,7 @@ Business rules file này **tổng hợp** từ các doc trên. Khi phát hiện 
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 16/07/2026 | v1.8 | Reconcile decisions v1.39: DD-40 dedicated host-attested allocation source/no synthetic transaction; DD-49 rejoin/correction; DD-50 verified-email + transactional `link_code`; DD-51 exact lifecycle; source-of-truth order theo BRD §0. |
 | 15/07/2026 | v1.7 | Reconcile authority qua decisions v1.31: public field whitelist/gating (DD-41), approval/waitlist/derivation fail-closed (DD-05/45), attendance/tags/invite (DD-42/43/44), personal tenant (DD-46), follow graph/profile visibility (DD-47/48); bỏ stale-baseline disclaimer. |
 | 10/07/2026 | v1.6 | **DD-37 pivot:** Messenger P4.8 → phase-1 (P2.5, Meta App Review); free = 2 bot Zalo/Messenger (bỏ Telegram); nhắc = web + Zalo (bỏ group-mention TG). **DD-40:** thêm BL-PAY-11 mark-paid = INSERT `payment_allocations` (source cash/manual) + update `charges`, KHÔNG bảng `payment`, mọi tier; auto-reconcile chỉ host_pro. |
 | 20/06/2026 | v1.4 | Add DD-03 host pricing tiers and entitlement gate rule |

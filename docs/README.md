@@ -99,4 +99,4 @@ Proposal 🟡 trước khi promote vào spec/decision (vd `plexco-global-kb-and-
 
 ---
 
-*Index v1.2 — 10/07/2026 (v3.4/DD-37: kênh phase-1 = Zalo + Facebook Messenger + web; bỏ Telegram; Messenger lên P2.5). · v1.1 — 21/06/2026.*
+*Index v1.3 — 16/07/2026 (DD-04: production target = DO App Platform + Managed PG HA/VPC; canonical runbook = `standards/environments-setup.md` v2.0; cost model = `dd-04-hosting-final-decision.md` Rev 2). · v1.2 — 10/07/2026.*

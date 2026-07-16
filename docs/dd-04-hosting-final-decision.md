@@ -206,8 +206,9 @@ The application must satisfy all of these before production:
 
 ### 7.3 Upgrade paths that preserve application performance
 
-- **App Platform:** scale `web` and `discovery` horizontally on the shared scalable plan; move to an
-  autoscaling-eligible dedicated plan only when request/CPU telemetry justifies it.
+- **App Platform:** scale `web` and `discovery` horizontally. Request-rate and p95-response-time
+  autoscaling can run on shared or dedicated compute; CPU-utilization autoscaling requires dedicated CPU.
+  Start shared/scalable and move to dedicated only when CPU isolation or CPU-based policy is justified.
 - **PostgreSQL:** resize CPU/RAM/storage and enable storage autoscaling before introducing a new data layer.
   DO documents these resize operations as no-downtime, but Plexco still validates reconnects and p95/p99.
 - **Compute substrate:** if App Platform cost or network features become limiting, blue-green the same OCI
@@ -307,7 +308,7 @@ regression.
    [`standards/deployment-infra.md`](standards/deployment-infra.md).
 2. ✅ **DONE (2026-07-16)** — `$121–133 core / $202–254 money-safe` and Day-1 replica/Pro/Team wording
    replaced with this revision’s `$120–135` baseline + trigger table in `standards/decisions.md`
-   (v1.34), `standards/deployment-infra.md` (v1.7, §9 rewrite), `standards/environments-setup.md` (§9),
+   (v1.34), `standards/deployment-infra.md` (v1.8, §5/§9), `standards/environments-setup.md` (v2.0),
    `strategy/base-chat-package-feasibility.md` (§3), and `dd-04-hosting-decision-brief.md`. Pointer version
    refs cascaded decisions.md v1.33→v1.34 across dependent docs.
 3. ⬜ **PENDING (infra slice)** — close §7.1, create the DigitalOcean App Spec/IaC, implement ephemeral

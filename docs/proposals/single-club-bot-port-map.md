@@ -3,6 +3,7 @@
 > **Trạng thái:** Draft để review · 2026-06-24
 > **Mục tiêu:** Chỉ ra phần logic bot single-club **lift nguyên** sang `packages/core`, phần **phải viết lại** trên tầng data multi-tenant, và các **gap** phát sinh do lên đa-tenant.
 > **Nguồn spec:** TDD §3.2/§3.6–3.8 · `feature_payment_reconcile_tech.md` · `player-side-saas-reconciliation.md` · `business-rules.md` · AUDIT.
+> **Authority note (16/07/2026):** đây là proposal/reference. Khi conflict, theo `standards/decisions.md` v1.39; đặc biệt DD-50 thay phone/OTP bằng verified account email hoặc transactional one-time `link_code`, và DD-40 cấm synthetic bank transaction cho host-attested CK chưa ingest.
 >
 > ⚠️ **Phạm vi & giả định:** Bot single-club là **repo riêng** (không nằm trong repo Plexco này), và repo Plexco **hiện chỉ có docs, chưa có code TS**. Bản đối chiếu dưới đây dựng từ **mô tả của spec** về bot cũ ("lift logic thuần: matching, payments-logic, dates, format, i18n, sports" — TDD §dẫn nhập). Để có **port-map cấp file/hàm chính xác**, cần trỏ tôi tới repo bot cũ; chỗ nào suy từ spec tôi đánh dấu *(giả định)*.
 

@@ -8,12 +8,12 @@
 | | |
 |---|---|
 | **Sản phẩm** | **Plexco CRM & Operations Dashboard** — dashboard nội bộ cho Platform Owner/CS/Ops theo dõi user, host, player, session, marketplace, payment, billing, trust, security và vận hành hệ thống |
-| **Phiên bản** | v1.3 — **v3.4 channel pivot**: kênh Telegram→Zalo/Facebook Messenger, thêm Google login/chat/giá theo giới tính (DD-37/13/33/38/39/40); + fix timezone/calendar rule, tách engaged vs participating player, đồng bộ metric dictionary |
-| **Ngày** | 10/07/2026 |
+| **Phiên bản** | v1.4 — thêm CRM-OQ-7 PII collection config (DD-54); trước đó v1.3 **v3.4 channel pivot**: kênh Telegram→Zalo/Facebook Messenger, thêm Google login/chat/giá theo giới tính (DD-37/13/33/38/39/40) |
+| **Ngày** | 16/07/2026 |
 | **Người soạn** | Codex |
 | **Người duyệt** | Ngoc-Anh |
 | **Trạng thái** | Draft để review |
-| **Tài liệu liên quan** | `BRD.md` v3.6 · `PRD.md` v2.4 · `ROADMAP.md` v2.7 · `../features/README.md` v2.11 · `../strategy/gtm-strategy.md` · `../standards/business-rules.md` v1.7 · `../standards/decisions.md` v1.34 |
+| **Tài liệu liên quan** | `BRD.md` v3.7 · `PRD.md` v2.5 · `ROADMAP.md` v2.9 · `../features/README.md` v2.13 · `../strategy/gtm-strategy.md` · `../standards/business-rules.md` v1.8 · `../standards/decisions.md` v1.39 |
 | **Nguồn tham khảo bên ngoài** | Mixpanel — "25+ ecommerce product metrics to track today" (Jun 2, 2026): https://mixpanel.com/blog/ecommerce-product-metrics/ |
 
 > Tài liệu này mô tả dashboard **nội bộ** để quản lý Plexco như một business/platform. Nó không thay thế host dashboard (`/dashboard`) của tenant, player view (`/me`) hoặc marketplace (`/discover`). Khi conflict: core BRD/PRD/business-rules thắng về scope, quyền dữ liệu và security.
@@ -862,6 +862,7 @@ Audit is required for:
 | CRM-OQ-4 | Host/player LTV/CAC cần nguồn marketing spend nào? | Pha đầu cho phép nhập tay spend theo channel/cell. |
 | CRM-OQ-5 | Attendance/no-show đã nằm trong MVP core hay beta extension? | Nên instrument sớm vì là trust moat, có thể không chặn P0-P3. |
 | CRM-OQ-6 | Export ra CSV hay tích hợp Linear/CRM ngoài? | CSV redacted trước; tool ngoài post-MVP. |
+| CRM-OQ-7 | **DD-54 (✅ 2026-07-16): PII collection config** — dashboard cần mục config cho PlatformAdmin bật/tắt thu thập field PII optional (gender/DOB…; default OFF); field vận hành (email/display name/bank ingest) không config-off | Thêm vào module settings/platform-config khi build; audit mọi thay đổi config. |
 
 ---
 
@@ -872,4 +873,5 @@ Audit is required for:
 | 2026-06-21 | v1.0 | Initial CRM & Operations Dashboard BRD based on Plexco BRD/PRD/feature specs/GTM and Mixpanel ecommerce metric framework. |
 | 2026-06-21 | v1.1 | Chốt định nghĩa Active user theo role (§4.3, resolve CRM-OQ-1); thêm project success metrics có target (§4.4); thêm section Assumptions/Dependencies/Risks (§17). |
 | 2026-06-21 | v1.2 | Fix timezone/calendar reference bằng §9.4; tách `Engaged player` và `Participating player`; đồng bộ Active users ở Module 2/metric dictionary; thêm `reminder_response` event. |
+| 2026-07-16 | v1.4 | **DD-54:** thêm CRM-OQ-7 — PII collection config (PlatformAdmin bật/tắt field PII optional trên dashboard, default OFF, audit). Authority: decisions v1.36. |
 | 2026-07-10 | v1.3 | **v3.4 channel pivot: drop Telegram, Messenger + Zalo phase-1 + Google login/chat/gender-pricing/manual mark-paid — DD-37/13/33/38/39/40.** Channel/connector ops + Module 9 đổi Telegram→Zalo/Facebook Messenger (Messenger phase-1 + App Review + 24h-window health); signup source/channel mix thêm Google/email, Messenger (Telegram = legacy tenant #1); onboarding checklist + connector status đổi Zalo/Messenger; Module 7 thêm rule mark-paid thủ công (cash/bank_transfer) mọi tier vs auto-reconcile `host_pro`; redaction thêm gender/dob (PII, DD-39) + Google/Facebook IDs. |

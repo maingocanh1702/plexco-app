@@ -1,12 +1,12 @@
 # Feature: Identity Directory & Merge — Backend Tech Spec
 
 > **Canonical phase:** P3.5
-> **Version:** 1.2 · 2026-07-10
-> **Status:** Implementation contract aligned with TDD v2.2 — **full-review baseline cũ; light-propagated → TDD v2.5**
+> **Version:** 1.3 · 2026-07-16
+> **Status:** Implementation contract reconciled to TDD v2.6 / decisions v1.39; schema/code pending B0 and identity build slices
 > **Product spec:** `../feature_identity.md`
-> **References:** `../../product/TDD.md` §3.2–3.4/§4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37 · DD-13
+> **References:** `../../product/TDD.md` §3.2–3.4/§4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-13/DD-37/DD-50/DD-53
 
-> **Cập nhật v1.2 (DD-37 ✅, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** (bỏ Telegram). `ChannelIdentity.platform` phase-1 ∈ {`zalo`, `messenger`}; một Person link **Google + Facebook + Zalo** (web-auth: DD-13/DD-33/DD-14, `feature_web_auth_onboarding_tech.md`). Merge signal vẫn theo DD-01 (SĐT verified) + verified email (DD-13). `telegram` = legacy tenant-1 only.
+> **Cập nhật v1.3 (DD-50/v1.37):** phase-1 không thu SĐT; phone columns remain dormant. Debt-bearing claim proof = server-verified account email or transactional one-time `link_code`; schema presence alone is not runtime implementation.
 
 ---
 
@@ -17,7 +17,7 @@ channel adapter → resolve stable platform identity
                 → identity service (protected global directory)
                 → tenantRepo membership/reachability (RLS)
 
-/link → OTP service → merge planner → merge transaction
+/link → link-code service → merge planner → merge transaction
 admin suggestion → tenant authz → merge planner → merge transaction
 ```
 
@@ -117,7 +117,7 @@ CREATE TABLE merge_tombstones (
 
 `memberships` and `channel_reachability` use ENABLE + FORCE RLS with `app.tenant_id`. Protected global tables use grants/narrow service functions rather than tenant RLS.
 
-Phone/platform IDs use keyed lookup hashes for equality and encryption for display/recovery. Keys come from KMS; never store/log plaintext OTP or raw IDs.
+Phone columns are dormant phase-1. Platform IDs and link-code lookups use keyed hashes; never store/log plaintext code, email or raw IDs.
 
 ---
 
@@ -135,17 +135,18 @@ Deep links/sticky context route interaction only; they never grant admin/player 
 
 ---
 
-## 4. OTP link service
+## 4. Verified-proof + `link_code` service
 
-- Generate cryptographically random alphanumeric code with ≥32 bits entropy.
+- Generate cryptographically random code/deep link with ≥64 bits entropy.
 - Store keyed lookup hash for indexed lookup plus salted slow hash for verification; return plaintext once.
 - TTL default 10 minutes, single-use.
 - Rate-limit issue/verify by source identity, target identity/IP and tenant context where present.
-- Verification transaction locks link-code row, increments failures atomically and sets consumed time exactly once.
+- Consume transaction locks the link-code row; verifies source channel/person, exact action and TTL; increments failures atomically; sets `consumed_at` exactly once; then creates a merge plan.
 - Code authorizes only merge proposal; explicit confirmation is required before merge commit.
+- Verified account-email evidence comes only from the auth service: Google OIDC signature+issuer+audience+nonce+`exp/iat`+`email_verified=true`, or a consumed email verify token. Never accept a request-body boolean/email as proof.
 - Notify both source and target channels after success.
 
-Errors are generic: `LINK_CODE_INVALID`, `LINK_CODE_RATE_LIMITED`, `MERGE_REQUIRES_REVIEW`; do not reveal whether a person/phone exists.
+Errors are generic: `LINK_CODE_INVALID`, `LINK_CODE_RATE_LIMITED`, `MERGE_REQUIRES_REVIEW`; do not reveal whether a person/email exists.
 
 ---
 
@@ -190,9 +191,9 @@ Cross-tenant merge capability is isolated from normal HTTP role and audited per 
 `claimMembership(personId, membershipId, evidence)`:
 
 - Load membership under tenant RLS and compute `hasFinancialHistory` from charges/allocations.
-- If financial history exists, accept only verified OTP/phone, strong CK evidence or authorized owner confirmation.
-- Name/fuzzy/bank-name evidence may create suggestion but cannot auto-claim debt-bearing membership.
-- Owner confirmation records actor, evidence type and reason.
+- If financial history exists, accept only server-verified account email or valid consumed `link_code`. A pre-issued recovery artifact restores account access under DD-53 but does not itself claim a debt-bearing membership.
+- Name/fuzzy/bank/CK/owner assertion may create review evidence but cannot auto-claim debt-bearing membership or replace strong proof.
+- Review records actor/evidence/reason but does not bypass proof.
 - Claim race uses membership/person locks and active uniqueness constraint.
 
 ---
@@ -231,8 +232,8 @@ PII deletion uses anonymization/crypto-shredding subject to financial/legal rete
 ### Unit
 
 - Stable lookup hashes, encryption boundaries and redaction.
-- OTP entropy/hash/TTL/single-use/rate-limit.
-- Merge planner for no conflict, membership conflict and risky phone collision.
+- Link-code entropy/hash/source-action binding/TTL/single-use/atomic-attempt/rate-limit.
+- Merge planner for no conflict, membership conflict and dormant-phone collision.
 - Survivor/reachability deterministic rules.
 - Claim strong-key matrix.
 
@@ -252,8 +253,9 @@ PII deletion uses anonymization/crypto-shredding subject to financial/legal rete
 
 ### Security
 
-- OTP brute-force and enumeration tests.
-- Logs/analytics contain no raw platform ID, phone, code or display name.
+- Link-code brute-force, wrong-action, expired, concurrent double-consume and enumeration tests.
+- Google/email proof cannot be forged from client fields; invalid `iss/aud/nonce/time/email_verified` rejected.
+- Logs/analytics contain no raw platform ID, phone/email, code or display name.
 - Protected function grants/search path tests.
 - KMS rotation/backward decryption test.
 
@@ -264,18 +266,18 @@ PII deletion uses anonymization/crypto-shredding subject to financial/legal rete
 1. Add protected tables/grants and tenant RLS tables.
 2. Backfill Person/ChannelIdentity from tenant #1 with provenance.
 3. Shadow identity suggestions; no auto merge.
-4. Enable link OTP for internal dogfood.
+4. Enable `link_code` for internal dogfood after transactional consume tests pass.
 5. Exercise conflict/recovery runbooks.
-6. Enable verified-phone auto merge with risk flags.
+6. Enable debt-bearing claim only after verified account-email/link-code evidence matrix passes; phone remains dormant.
 
-Metrics: person/channel creation, merge success/failure by method, claim rejection, conflicts, OTP failure/rate-limit, recovery count. Analytics uses opaque IDs only.
+Metrics: person/channel creation, merge success/failure by method, claim rejection, conflicts, link-code failure/rate-limit, proof rejection reason, recovery count. Analytics uses opaque IDs only.
 
 ---
 
 ## 11. Definition of Done
 
 - [ ] Protected grants and tenant RLS tests pass.
-- [ ] Secure OTP and concurrency tests pass.
+- [ ] Secure `link_code`, verified-email evidence and concurrency tests pass.
 - [ ] Merge preserves membership/history/ledger invariants.
 - [ ] Claim-with-financial-history gate passes attack tests.
 - [ ] Audit/tombstones/recovery runbook verified.
@@ -287,6 +289,7 @@ Metrics: person/channel creation, merge success/failure by method, claim rejecti
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-16 | v1.3 | **DD-50 full propagation:** transactional one-time `link_code`, server-only verified-email evidence matrix, phone dormant, no CK/name/owner bypass, and new security/concurrency tests. |
 | 2026-07-10 | v1.2 | **DD-37 ✅:** phase-1 channels = Zalo + Messenger; `channel_identities.platform` phase-1 ∈ {`zalo`,`messenger`}, `telegram` legacy tenant-1 only. Person links Google+Facebook+Zalo (web-auth DD-13/33/14). Merge signals: verified SĐT (DD-01) + verified email (DD-13). |
 | 2026-06-18 | v1.1 | Protected identity, tenant reachability, secure OTP, ledger-safe merge and recovery contract |
 | 2026-06-18 | v1.0 | Initial legacy backend spec |

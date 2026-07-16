@@ -22,11 +22,11 @@ Telegram (1 bot chung): các dòng cùng giá trị — vô hại. Zalo: khác n
 **Hiện:** §3 — channel identity lần đầu vào club → matcher tên "khớp chắc 1 member" → **claim + kế thừa nợ/lịch sử**. Tên VN trùng nhiều ("Minh", "Hùng"); player tự đặt được display name (Zalo `/name`) → có thể **cố tình** trùng. Hệ quả: A thấy/được gán nợ của B, hoặc xoá nợ người khác. **Đây là rủi ro toàn vẹn tiền nặng nhất.**
 **Đúng:** tách 2 việc:
 - Tạo membership **mới** (chưa có payment/nợ) theo tên → an toàn, giữ tự động.
-- **Claim membership đã có payment/nợ** → **không** auto theo tên. Cần ≥1 khoá mạnh: owner xác nhận, **hoặc** CK khớp từ STK của chính họ, **hoặc** mã link. Name-match chỉ **đề xuất ứng viên**, không tự gán tiền.
+- **Claim membership đã có payment/nợ** → **không** auto theo tên. Theo DD-50, chỉ verified account email hoặc transactional one-time `link_code` là strong proof. Owner/CK/STK/name chỉ tạo review evidence, không tự gán tiền hoặc bypass proof.
 
 ### C3. Link-code merge = bearer secret → chiếm Person nếu yếu
 **Hiện:** §3 mã link round-trip merge ChannelIdentity B vào Person A. Nếu mã ngắn/không TTL/không rate-limit → brute-force → kẻ gắn **kênh của hắn** vào Person nạn nhân → thấy mọi club + nhận DM của nạn nhân.
-**Đúng:** coi mã như OTP: **entropy cao, single-use, TTL ngắn (vài phút), rate-limit, sinh on-demand**, chỉ hiện cho chủ A; B gắn xong phải **xác nhận tường minh** ("Liên kết tài khoản này với <tên/club>?"). Log audit mọi merge.
+**Đúng:** transactional one-time `link_code` phải **entropy cao, hash-at-rest, single-use, TTL ngắn, rate-limit, sinh on-demand và consume dưới row lock**; B gắn xong phải xác nhận impact tường minh. Log audit mọi merge. Đây không phải SMS OTP.
 
 ### C4. Merge Person khi cả hai đã có membership CÙNG 1 tenant → vỡ UNIQUE + nhập nhằng nợ
 **Hiện:** chưa định nghĩa. `UNIQUE(tenant_id, person_id)` chặn 1 person 2 membership/tenant, nhưng merge A+B mà cả hai đều có membership trong tenant T → sau merge thành 2 membership cùng person trong T → **vi phạm constraint / crash / nợ tách đôi**.
@@ -98,7 +98,7 @@ Token cấp full API của 1 bot (`bot-api.zaloplatforms.com/bot<TOKEN>/...`) v�
 ## D. Must-fix checklist trước khi viết code
 
 1. [ ] C1 — `ChannelReachability` per (person,tenant,platform); bỏ `canDm` global.
-2. [ ] C2 — claim membership-có-tiền: cấm auto theo tên; cần owner/CK/mã link.
+2. [ ] C2 — claim membership-có-tiền: cấm auto theo tên; chỉ verified account email hoặc transactional one-time `link_code`; owner/CK chỉ là review evidence.
 3. [ ] C3 — link-code: high-entropy, single-use, TTL ngắn, rate-limit, xác nhận + audit.
 4. [ ] C4 — quy trình merge reconcile membership trùng-tenant (gộp nợ, 1 id).
 5. [ ] C5 — tool owner merge 2 membership + cờ nghi-trùng ở join.
@@ -241,11 +241,11 @@ Rate Limit: PATCH /bank-accounts/:id — 5/min per account (đổi STK nhạy)
 |---|---------|---------|
 | G6-a | **Rate limit per IP** | 100 req/min. Cursor-based pagination max 20 items/page |
 | G6-b | **CDN cache** | Popular queries (default sort, popular sports) → cache 60s tại CDN edge. Cache-Control headers |
-| G6-c | **Read replica** | Discovery query chạy trên **read replica**, không đụng primary DB |
+| G6-c | **Read isolation + trigger-based node** | Day-1: projection-only role + bounded pool/timeout + reserved money-path budget + circuit-breaker; khi contention đo được mới chuyển discovery sang read-only node |
 | G6-d | **Query complexity limit** | Max 3 filter params. Không cho arbitrary sort/filter → prevent slow query |
 | G6-e | **Response size cap** | Max 20 sessions per page. Không cho `limit=1000` |
 
-**Timing:** G6-a (rate limit) implement ở P4.3 (marketplace). G6-b/c (CDN/replica) khi traffic justify.
+**Timing:** G6-a + isolation controls G6-c implement ở P4.3/infra slice; CDN bật Day-1. Read-only node vật lý chỉ provision khi telemetry justify.
 
 ---
 

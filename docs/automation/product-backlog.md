@@ -83,7 +83,7 @@
 
 - [ ] Script đọc `data/bot.db` (SQLite) → tạo tenant **"Bestminton"** + Account owner + `BankAccount`, gắn **sport = cầu lông**. *(DD-37: kênh Plexco phase-1 = Zalo/Messenger; player re-link qua Zalo/Messenger + Person link — KHÔNG tạo TelegramLink. Bot Telegram cũ đóng băng làm reference.)*
 - [ ] Copy `sessions/players/members/aliases` gắn `tenant_id`; mỗi player-session → 1 `charge`.
-- [ ] Payment lịch sử: có giao dịch gốc → import thành `bank_transaction` + `payment_allocation`; thiếu bằng chứng → synthetic `legacy:<source-id>` + `source=manual` (giữ provenance).
+- [ ] Payment lịch sử: có giao dịch gốc → import real `bank_transaction` + allocation; thiếu bằng chứng → chỉ import sau B1 dedicated legacy/attested source (`bank_transaction_id=NULL`, migration actor + opaque evidence), chưa có contract thì halt/manual review. Cấm synthetic bank transaction.
 - [ ] **Đối chiếu trước cutover:** tổng charge / allocated / unallocated + số roster khớp giữa SQLite và Postgres.
 - [ ] Cutover: đổi webhook SePay sang Plexco → tắt bot cũ (bot cũ **đóng băng** làm reference).
 - [ ] Founder bắt đầu dogfood thật: 1 buổi/tuần chạy trên Plexco.

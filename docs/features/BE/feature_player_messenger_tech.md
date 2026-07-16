@@ -55,7 +55,7 @@ Dùng bảng canonical `messenger_pages` (schema.ts) + `channel_reachability` (2
 | 2 | Security | Webhook giả mạo | ❌ Reject — verify `X-Hub-Signature-256` (app secret, timing-safe) |
 | 3 | Concurrency | Replay message (mid/event) | Update dedup — idempotent |
 | 4 | Reachability | Gửi ngoài cửa sổ 24h | ❌ Không standard-send; chỉ gửi nếu eligible/approved mechanism tồn tại, nếu không fallback web + Zalo; đánh dấu unreachable-24h |
-| 5 | Data Integrity | PSID cùng người khác Page | Page-scoped — 2 PSID; link về cùng Person qua DD-33/OTP, không auto-merge chéo |
+| 5 | Data Integrity | PSID cùng người khác Page | Page-scoped — 2 PSID; link về cùng Person qua verified account identity hoặc transactional `link_code`; không auto-merge chéo |
 | 5b | Data Integrity | Hash va chạm xuyên Page (unique `(platform,hash)`) | `platform_user_lookup_hash = keyed(page_id\|\|':'\|\|PSID)` — page_id trong hash để PSID trùng ở 2 Page không đụng unique / không gán nhầm identity xuyên tenant |
 | 6 | Concurrency | Number/quick-reply reply last slot | Shared service locks session: first active, second waitlisted/no-charge/no-venue |
 | 7 | Security | Page token / app secret trong log | ❌ NEVER — KMS enc, log redaction |
@@ -64,7 +64,7 @@ Dùng bảng canonical `messenger_pages` (schema.ts) + `channel_reachability` (2
 | 10 | Data Integrity | Stale quick-reply payload | Reject — "Danh sách đã thay đổi" |
 | 11 | Cross-Feature | Account merge invalidates PSID context | Invalidate old context → merged person |
 | 12 | Onboarding | Page chưa qua App Review | Degrade — kênh join hạn chế; nhắc qua web + Zalo |
-| 13 | Financial | Existing player `left` join lại | Render `REJOIN_REQUIRES_REVIEW`; adapter không tự đổi player/charge/ledger |
+| 13 | Financial | Existing player `left` join lại | Emit shared join payload; render canonical DD-49 outcome. Only pass through `REJOIN_REQUIRES_REVIEW` for unknown/unimplemented disposition; no adapter ledger logic |
 
 ---
 
@@ -125,7 +125,7 @@ Join qua quick-reply/persistent menu → domain join service chung → canonical
 
 ### Account link (DD-33 🟡 phase-1)
 
-FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSID** (channel, page-scoped) là **hai subject khác nhau** → gắn về cùng `person` qua **OTP `/link`** hoặc verified signal (không auto-link chéo). Phụ thuộc **App Review / FB Business Verification**; nếu chậm → phễu Facebook tạm dùng OTP thủ công (DD-32). **KHÔNG** đụng core `Person`/`Membership`.
+FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSID** là hai subject khác nhau → gắn về cùng `person` qua verified account identity hoặc transactional one-time `link_code`, không auto-link chéo. Nếu App Review chậm, dùng `/link` fallback (DD-32). Không đụng core `Person`/`Membership`.
 
 ---
 
@@ -142,7 +142,7 @@ FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSI
 | 5 | Event replay | Same mid | Idempotent |
 | 6 | Outbound in 24h | Window open | Sent |
 | 7 | Outbound outside 24h | Window expired | Skip Messenger, fallback web/Zalo |
-| 8 | PSID page-scoped | Same person, 2 pages | 2 PSID, link via OTP |
+| 8 | PSID page-scoped | Same person, 2 pages | 2 PSID, link via transactional `link_code` |
 | 9 | Stale quick-reply | Expired payload | "Danh sách đã thay đổi" |
 | 10 | Reachability isolated | Page A vs B | Independent |
 | 11 | Token/secret redaction | Logs | No page token/app secret |
@@ -170,7 +170,7 @@ FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSI
 3. Page-per-club onboarding (FB Login + chọn Page) — `feature_web_auth_onboarding_tech.md`.
 4. Join quick-reply + persistent menu + 24h window send.
 5. Settled confirm + best-effort reminder trong 24h; ngoài 24h dồn web/Zalo.
-6. (DD-33) Account-link OTP/verified.
+6. (DD-33/DD-50) Account-link verified identity/transactional `link_code`.
 
 ### Metrics
 

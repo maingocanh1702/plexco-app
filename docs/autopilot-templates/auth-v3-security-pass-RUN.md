@@ -72,7 +72,7 @@ B3. git checkout -b feat/auth-onboarding-v3 from feat/phase1-fable5 tip (3717659
     to every invariant (incl. superuser-harness for SI-3). Use feat/auth-onboarding-v2 @ 7407caa as
     reference — this is coherent re-implementation to the table, not throwaway.
 
-B4. "$CODEX" review -c model="gpt-5.6-sol" --base feat/phase1-fable5 | tee .autopilot/state/auth-onboarding-v3/codex/round-NN.txt
+B4. "$CODEX" review -c model="gpt-5.6-sol" -c model_reasoning_effort="xhigh" --base feat/phase1-fable5 | tee .autopilot/state/auth-onboarding-v3/codex/round-NN.txt
     STRICT auth gate: zero auth/security/PII finding regardless of P-level; require 2 CONSECUTIVE CLEAN
     rounds. If a genuine NEW P1 surfaces (not a style nit) → STOP and report (do not grind past it).
 

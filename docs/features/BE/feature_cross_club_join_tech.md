@@ -1,10 +1,10 @@
 # Feature: Cross-club Join & Approval — Backend Tech Spec
 
 > **Canonical phase:** P4.3  
-> **Version:** 2.3 · 2026-07-15
+> **Version:** 2.4 · 2026-07-16
 > **Status:** Reviewed  
 > **Product spec:** `../feature_cross_club_join.md`  
-> **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-39/DD-45 · `../../dd-45-waitlist-analysis.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`)
+> **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-39/DD-45/DD-49 · `../../dd-45-waitlist-analysis.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`) · `feature_session_management_tech.md` (shared rejoin/correction core)
 
 ---
 
@@ -60,7 +60,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 | 10 | Security | Public error reveals tenant state | Generic error messages — no private info |
 | 11 | Data Integrity | Suspended tenant new offer | Existing sessions OK — no new extensions |
 | 12 | Concurrency | Deadlock: session/request/membership | Stable lock order documented: session → request → membership |
-| 13 | Financial | Existing player `left` joins/requests again | `REJOIN_REQUIRES_REVIEW`; no player/charge/allocation mutation |
+| 13 | Financial | Existing player `left` joins/requests again | Reuse shared DD-49 rejoin disposition: carry-over if not refunded, append obligation lifecycle if refunded; unknown/unimplemented → `REJOIN_REQUIRES_REVIEW`, no mutation |
 | 14 | Financial | Promotion sees waitlisted player with charge | Skip candidate, audit `WAITLIST_CHARGE_CONFLICT` + owner-review; never upsert/overwrite charge |
 | 15 | Financial/Resilience | Promotion amount derivation KMS/decrypt/price failure | Candidate stays waitlisted/no-charge/no-venue; audit `WAITLIST_CHARGE_DERIVATION_FAILED` + one canonical failure outbox event for retry/alert consumers; opener commits; continue next; no fallback price |
 | 16 | Financial/Resilience | Direct open/approve active path cannot derive amount | Abort that join/approve transaction fail-closed: no active player/charge/venue; newly-created guest membership rolls back; request stays pending; retry safely |
@@ -83,7 +83,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 
 | Code | Error Code | Message | Trigger |
 |------|-----------|---------|---------|
-| 409 | `REJOIN_REQUIRES_REVIEW` | Cần host kiểm tra lần tham gia trước | Existing player row `status='left'` |
+| 409 | `REJOIN_REQUIRES_REVIEW` | Cần host kiểm tra trạng thái tiền trước | `left` nhưng shared correction core không chứng minh được carry-over/refunded disposition |
 | 409 | `REQUEST_EXPIRED` | Yêu cầu đã hết hạn | Expired request |
 | 409 | `REQUEST_DECIDED` | Yêu cầu đã được xử lý | Already approved/rejected |
 | 403 | `PLAYER_BANNED` | Bạn không thể tham gia club này | Banned player |
@@ -108,7 +108,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 3. Resolve/create guest membership (idempotent)
 4. Lookup player by UNIQUE (tenant_id, session_id, membership_id):
    a. active/waitlisted → return current outcome idempotently
-   b. left → REJOIN_REQUIRES_REVIEW; no mutation
+   b. left → call shared DD-49 rejoin disposition under the session/financial locks; carry-over/refunded path continues, unknown → `REJOIN_REQUIRES_REVIEW`
 5. Re-count active under lock:
    a. capacity available/unlimited → derive amount first; on success insert active player + exactly one charge atomically; on DD-39 derivation failure abort this join tx (no player/charge/venue, new guest membership rollback)
    b. full → insert waitlisted player + tail position; no charge/venue
@@ -121,7 +121,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 ```text
 1. Request create: lookup existing membership/player without creating membership:
    a. active/waitlisted → return current outcome idempotently; do not create request
-   b. left → REJOIN_REQUIRES_REVIEW; no request/player/charge mutation
+   b. left → create/keep request only after the shared DD-49 disposition can be represented; unknown/unimplemented → `REJOIN_REQUIRES_REVIEW`, no request/player/financial mutation
    c. no player → create join_request (UNIQUE active per person/session); still no membership/player/charge
 2. Notify host for a newly-created pending request (outbox event)
 3. [Host decides]:
@@ -165,11 +165,13 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 | 19 | Venue revealed after join | Post-join DTO | Venue present |
 | 20 | Cross-tenant admin spoof | Wrong tenant admin | 403 |
 | 21 | Duplicate active/waitlisted join | Existing player | Return current state idempotently; no rank/charge change |
-| 22 | Rejoin after left | Existing player `left` + any charge state | `REJOIN_REQUIRES_REVIEW`; player/charge/allocations unchanged |
-| 23 | Waitlist charge conflict | Candidate already has charge | No promotion/charge mutation; audit+owner-review; continue next candidate |
-| 24 | Promotion amount derivation failure | Waitlisted candidate has encrypted gender; KMS/decrypt throws | Candidate unchanged waitlisted/no-charge/no-venue; one audit + one canonical failure outbox event; opener committed; retry/alert consume event; continue next; no fallback price |
-| 25 | Direct open join amount derivation failure | Capacity available; KMS/decrypt throws | Join transaction aborts; no player/charge/venue; new guest membership absent; retry safe |
-| 26 | Approval amount derivation failure | Pending request + capacity; KMS/decrypt throws | Approve transaction aborts; request remains pending; no player/charge/venue; retry safe |
+| 22 | Rejoin after left, not refunded | Existing `left` + paid obligation without refund reversal | Active/waitlisted per capacity; carry-over same obligation/allocation; no duplicate financial row |
+| 23 | Rejoin after full refund | Existing `left` + completed refund | Append one idempotent obligation-lifecycle entry through shared correction core; no duplicate `charges` row |
+| 24 | Rejoin disposition unknown | Partial/ambiguous/unimplemented correction state | `REJOIN_REQUIRES_REVIEW`; player/request/charge/allocations unchanged |
+| 25 | Waitlist charge conflict | Candidate already has charge | No promotion/charge mutation; audit+owner-review; continue next candidate |
+| 26 | Promotion amount derivation failure | Waitlisted candidate has encrypted gender; KMS/decrypt throws | Candidate unchanged waitlisted/no-charge/no-venue; one audit + one canonical failure outbox event; opener committed; retry/alert consume event; continue next; no fallback price |
+| 27 | Direct open join amount derivation failure | Capacity available; KMS/decrypt throws | Join transaction aborts; no player/charge/venue; new guest membership absent; retry safe |
+| 28 | Approval amount derivation failure | Pending request + capacity; KMS/decrypt throws | Approve transaction aborts; request remains pending; no player/charge/venue; retry safe |
 
 ### Integration Tests
 
@@ -193,7 +195,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 
 ### Metrics
 
-- Attempts / active / waitlisted / pending / expired / rejoin-review
+- Attempts / active / waitlisted / pending / expired / rejoin-carry-over / rejoin-new-obligation / rejoin-review
 - Approval latency (request → decision)
 - Duplicate/conflict rate
 - Abuse blocks
@@ -203,6 +205,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-16 | v2.4 | **DD-49 full propagation:** all open/approval rejoin paths route to the shared locked correction disposition; carry-over/refunded/unknown tests replace blanket left rejection; no duplicate `charges` row. |
 | 2026-07-15 | v2.3 | **DD-39×DD-45 fail-closed charge derivation:** direct active join/approve aborts atomically on derivation failure; waitlist promotion keeps candidate unchanged, audits/retries without rolling back opener, then continues queue; add no-fallback tests. |
 | 2026-07-15 | v2.2 | **DD-45 propagation:** unify open/approval full→waitlisted, exact active-vs-waitlisted transaction outcomes, stable lock order, fail-closed `left` rejoin and existing-charge promotion guard; update tests/metrics. |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |

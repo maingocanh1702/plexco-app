@@ -1,0 +1,35 @@
+{
+  "feature": "infra-do-app-vpc-deployment",
+  "branch": "feat/infra-do-app-vpc-deployment",
+  "base_ref": "main",
+  "risk": "P1",
+  "change_class": "build-config",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_consecutive_clean",
+  "depends_on": [
+    "monorepo-scaffold",
+    "db-postgres-drizzle-rls"
+  ],
+  "dep_checks": [
+    {
+      "file": "infra/entrypoint.sh",
+      "symbol": "provision)"
+    },
+    {
+      "file": "packages/db/src/migrate.ts",
+      "symbol": "export async function migrate"
+    }
+  ],
+  "invariants": [
+    "build-config",
+    "schema"
+  ],
+  "scope": [
+    ".github/workflows/deploy.yml",
+    "infra/app.prod.yaml",
+    "infra/app.staging.yaml",
+    "infra/fly.toml",
+    "docs/standards/environments-setup.md"
+  ]
+}

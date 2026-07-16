@@ -1,7 +1,7 @@
 # HANDOFF — Plexco
 
 > **Đọc file này ĐẦU TIÊN khi tiếp quản project.** Self-contained: không cần context phiên trước.
-> Cập nhật: 2026-07-16 (BRD v3.6 · PRD v2.4 · TDD v2.5 · ROADMAP v2.7 · decisions v1.34). Khi thay đổi convention/kiến trúc lớn → cập nhật file này.
+> Cập nhật: 2026-07-16 (BRD v3.7 · PRD v2.5 · TDD v2.6 · ROADMAP v2.9 · decisions v1.39 — DD-49..56 closure ở v1.37; DD-57..60 là proposal, chưa gate build). Khi thay đổi convention/kiến trúc lớn → cập nhật file này.
 >
 > **⚡ v3.4 Phase-1 pivot (DD-37 ✅, thay DD-09):** Kênh phase-1 = **web + Zalo + Facebook Messenger**;
 > **Telegram đã bị loại khỏi phạm vi** (không còn adapter/bot Telegram trong MVP). Auth phase-1 =
@@ -68,7 +68,7 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 
 3. **KHÔNG multi-master.** PostgreSQL + domain model = canonical store. Surfaces (Zalo/Messenger/web) chỉ gửi command, **không** tự sở hữu bản ghi song song. Mutation đi qua service/tenantRepo; đồng bộ qua outbox → projectors.
 
-4. **CLAIM-CÓ-TIỀN CẦN KHOÁ MẠNH.** Merge identity phải OTP/SĐT-verified. Không cho người lạ claim membership đang có nợ bằng tên/alias. (AUDIT C2/C5)
+4. **CLAIM-CÓ-TIỀN CẦN KHOÁ MẠNH.** Merge/claim identity phải qua **verified factor: email đã verify (web) hoặc `link_code` deterministic dùng-một-lần (bot)** — DD-50, phase-1 không thu SĐT (phone fields dormant). Không cho người lạ claim membership đang có nợ bằng tên/alias. (AUDIT C2/C5)
 
 5. **i18n BẮT BUỘC:** mọi chuỗi user-facing = `t(vi, en)`. Không hardcode 1 thứ tiếng.
 
@@ -89,7 +89,7 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 - Mọi constructor NestJS (nếu dùng tsx): phải có `@Inject()` decorator
 
 ### Test
-- `DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco pnpm test` (harness **bắt buộc `DATABASE_URL_TEST`**, `packages/db/src/test-harness.ts`; local chạy `docker compose -f infra/docker-compose.yml up -d postgres` trước. KHÔNG dùng `DB_PATH`/SQLite.)
+- `DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test` (harness **bắt buộc `DATABASE_URL_TEST`**, `packages/db/src/test-harness.ts`; local chạy `docker compose -f infra/docker-compose.yml up -d postgres` trước. KHÔNG dùng `DB_PATH`/SQLite.)
 - Test bất biến: cô lập tenant A/B + public chỉ field whitelist
 - Seed data: tiếng Việt, mọi trạng thái, idempotent, 8-10 records/entity
 
@@ -108,14 +108,14 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 
 ## 6. Trạng thái hiện tại (2026-07-10)
 
-**Planning & Docs — phần lớn hoàn tất** (v3.4 pivot → decisions v1.34); **DD-04 đã chốt (c) DO co-locate (2026-07-16)** — còn OQ founder khác + build-time gates (egress-IP verify…); danh sách ở `docs/founder-decision-brief-2026-07-15.md`. **Foundation + Auth Onboarding v3 (Telegram-era) đã land trên `main@1eb6f60`.**
+**Planning & Docs — decision coverage cao** (current decisions **v1.39**); **DD-04 chốt (c) DO co-locate + DD-49..56 chốt/clarify (2026-07-16)**. Không còn founder choice chặn S4→S8, nhưng code-readiness vẫn bị gate bởi B0 auth design-probe, DD-49 correction probe, B1 payment-source decision, B2 gender-price probe, B3 sync-delivery probe, external evidence và legal A3 go-live; checklist ở `docs/pre-code-open-items-2026-07-16.md`. **Foundation + Auth Onboarding v3 (Telegram-era) đã land trên `main@1eb6f60`.**
 
 - ✅ **Foundation merged:** monorepo (`packages/core` + `packages/db` + `apps/bot` + `apps/web`) + core logic thuần (test xanh) + Postgres/RLS choke-point (`tenantRepo`/`withTenant`) + **migrations `0000–0013`** committed (roles/RLS/grants/functions/seeds/auth_functions/onboarding_steps) + bộ RLS invariant test chạy trên role runtime thật.
 - ✅ **Auth Onboarding v3 (Telegram-era) merged** (`5b1193b`) + web tests. **DD-37 supersede provider** → thay bản Telegram-era bằng **Google/email** đã **spec'd nhưng CHƯA implement**.
 - ⬜ **Feature layer chưa build:** session/reconcile/sync/marketplace/billing/bot handlers/UI (bảng DB đã dựng sẵn; tầng command/service/projector/UI còn trắng).
 
 Tài liệu hoàn tất (bản mới nhất):
-- ✅ BRD v3.6 · PRD v2.4 · TDD v2.5 · ROADMAP v2.7 (canonical P-numbers)
+- ✅ BRD v3.7 · PRD v2.5 · TDD v2.6 · ROADMAP v2.9 (canonical P-numbers)
 - ✅ 4 phụ lục (saas-plan, reconciliation, AUDIT, messenger)
 - Feature docs: **21 Product / 20 BE = 20 cặp hoàn chỉnh + 1 product-only Draft** (`channel_booking_funnel`); trong đó **3 cặp phase-1 mới (Messenger/chat/settings) đã tracked trong documentation baseline, còn chờ migration/build** — xem `features/README.md`
 - ✅ Business rules, design tokens, dependency graph
@@ -131,13 +131,13 @@ Tài liệu hoàn tất (bản mới nhất):
 |---|---|
 | `docs/00-start-here/` | HANDOFF (file này), identity-model — đọc trước tiên |
 | `docs/product/` | BRD, PRD, TDD, ROADMAP, CRM_DASHBOARD_BRD — tài liệu cốt lõi |
-| `docs/standards/` | decisions, business-rules, design-tokens, feature-dependency-graph, deployment-infra |
+| `docs/standards/` | decisions, business-rules, design-tokens, feature-dependency-graph, deployment-infra · **FE (🟡 DD-57..60): frontend-architecture, design-tokens-benchmark, api-reference-convention** |
 | `docs/features/` · `docs/features/BE/` | Feature specs FE (Product) · BE (Tech) |
-| `docs/channels/` | telegram **(archived — DD-37)**, zalo, messenger (phase-1), web (+ messenger-channel-design) |
+| `docs/channels/` | telegram **(archived — DD-37)**, zalo, messenger (phase-1), web (+ messenger-channel-design, **designer-kickoff + frontend-pipeline 🟡 DD-57..60**) |
 | `docs/research/` | bestminton analysis/scan, player-side-saas AUDIT & reconciliation |
 | `docs/strategy/` | gtm-strategy, gtm-doi-soat-decision, saas-implementation-plan, PnL model |
 | `docs/automation/` | onboarding, playbook, automation-overview, product-backlog (autopilot-kit vẫn ở `docs/autopilot-*`) |
-| `docs/templates/` | Templates tái sử dụng (feature-spec, be-tech-spec, design-tokens-template, feature-dev/) |
+| `docs/templates/` | Templates tái sử dụng (feature-spec, be-tech-spec, design-tokens-template, feature-dev/ + **fe-handoff-template, fe-token-mapping-template 🟡 DD-58**) |
 
 **Source of truth khi conflict (theo topic):**
 
@@ -155,7 +155,7 @@ Research/reconciliation/strategy là input định hướng, không được ove
 - **Copy logic qua 2 transport → DRIFT.** Rút logic ra core chung, transport = adapter mỏng.
 - **Public projection không filter → lộ tiền/PII.** Field whitelist là bắt buộc.
 - **Quên test bất biến → regression.** Test cô lập + public PHẢI xanh trong CI.
-- **Merge identity thiếu verify → chiếm nợ người khác.** Claim-có-tiền cần OTP.
+- **Merge identity thiếu strong proof → chiếm nợ người khác.** Claim-có-tiền cần verified account email hoặc transactional one-time `link_code`; tên/alias/owner assertion không thay proof DD-50.
 - **Thiết kế schema/model từ nguyên tắc chung mà chưa đọc canonical → đề xuất sai + tạo bảng song song.** TRƯỚC khi đụng schema/data model/kiến trúc: đọc `packages/db/schema.ts` + `migrations/*.sql` (AUTHORITATIVE) → feature spec → `standards/decisions.md`. KHÔNG chế tên/bảng trùng khái niệm đã có (`persons`/`accounts`/`channel_identities`/`memberships`). Quyết định chưa chốt → proposal ở `decisions.md`, không viết vào spec đã Reviewed. (bài học session identity 2026-07-02)
 
 ---
@@ -167,7 +167,7 @@ Research/reconciliation/strategy là input định hướng, không được ove
   ở `docs/standards/core-db-architecture-principles.md`.
 - **Model:** `Person` (người thật global, anchor) · `Account`/`account_identities`/`web_sessions`
   (web-auth) · `channel_identities`/`channel_reachability` (bot) · `memberships` (person↔tenant).
-  `link_codes` (hash-only) nối bot↔person, KHÔNG cần SĐT. Phone = merge signal (DD-01).
+  `link_codes` (hash-only) nối bot↔person, KHÔNG cần SĐT. **Phase-1 không thu SĐT (DD-50)** — khoá mạnh = verified email + link_code; phone = merge signal tương lai (DD-01, dormant).
 - **Orientation (KHÔNG phải chân lý):** `docs/00-start-here/identity-model.md`. Auth/link phase-1:
   `decisions.md` DD-13 (Google/email ✅), DD-33 (Facebook Login/Messenger link 🟡, phase-1), DD-14/DD-15
   (Zalo Login/OA ⬜ & bot `from.id` cross-bot). Person link **Google + Facebook + Zalo** (không còn Telegram).
@@ -178,6 +178,7 @@ Research/reconciliation/strategy là input định hướng, không được ove
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 16/07/2026 | v1.5 | Reconcile current authority decisions v1.39; DD-49..56 full contract propagation; DD-40 synthetic-transaction conflict removed; HR4/auth/chat/authz wording fail-closed; canonical local test DB = `plexco_test`; readiness names B0/B1/B2/B3 + correction/external/legal gates. |
 | 13/07/2026 | v1.4 | Chốt source-of-truth theo topic; canonical store = PostgreSQL/domain model; web stack = Next.js App Router (DD-10); decisions v1.19; next auth step chưa launcher-ready. |
 | 10/07/2026 | v1.3 | **Review fixes → build-status reality + canonical vocab.** §6 trạng thái: foundation + Auth v3 (Telegram-era) đã land trên `main@1eb6f60`, migrations `0000–0013` committed, web tests có; DD-37 supersede provider → Google/email spec'd nhưng chưa implement (bỏ "code chưa bắt đầu"). §2 vùng TENANT: `payments`/`webhook_transactions` → `charges`/`bank_transactions`/`payment_allocations` (canonical ledger). **DD-38/39 ✅ scope-committed phase-1** (top callout — schema chờ migration). decisions v1.16. |
 | 10/07/2026 | v1.2 | **v3.4 Phase-1 pivot (DD-37 ✅):** bỏ Telegram; kênh phase-1 = web + Zalo + Facebook Messenger. Cập nhật §1/§2 (stack, apps/bot, projector fan-out), §3 HR3 (surface list), §7 doc map. Auth phase-1 = Google + email (DD-13 ✅) + link Facebook (DD-33 🟡) + Zalo (DD-14 ⬜). Thêm 4 feature phase-1: Google login · chat in-app (DD-38 🟡) · settings/giá theo giới tính (DD-39 🟡) · mark-paid thủ công (DD-40 ✅). |

@@ -162,7 +162,7 @@ Setup once (Step 0): You are ALREADY running INSIDE the worktree `.autopilot/wor
   AND `git branch --show-current` == `feat/phase1-fable5`; if NOT → HALT and tell the owner to open Claude
   Code inside that worktree (do NOT create it from here, do NOT work in repo root). `main` is NEVER touched.
   Resolve Codex ONCE: `CODEX="${AUTOPILOT_CODEX_BIN:?HALT CODEX_UNAVAILABLE}"; [ -x "$CODEX" ] ||
-  { echo HALT CODEX_UNAVAILABLE; exit 1; }`; smoke `"$CODEX" review -c model="gpt-5.6-sol" --base main` — auth-fatal or 0 bytes →
+  { echo HALT CODEX_UNAVAILABLE; exit 1; }`; smoke `"$CODEX" review -c model="gpt-5.6-sol" -c model_reasoning_effort="xhigh" --base main` — auth-fatal or 0 bytes →
   HALT CODEX_UNAVAILABLE (never substitute a sub-agent / PATH codex). Create PROGRESS.md + DECISIONS.md
   under .autopilot/phase1/.
 
@@ -184,7 +184,7 @@ Per-slice loop (OUTCOMES + gate ORDER — do the mechanics yourself, don't narra
    • Implement the minimum that makes the slice's DoD true. Commit logically; stage PER-FILE or PER-DIR
      with intent — NEVER `git add -A` / `git add .` (invariant). A file outside declared scope = you
      drifted → stop and re-scope.
-   • Review: run EXACTLY `"$CODEX" review -c model="gpt-5.6-sol" --base feat/phase1-fable5 2>&1 | tee
+   • Review: run EXACTLY `"$CODEX" review -c model="gpt-5.6-sol" -c model_reasoning_effort="xhigh" --base feat/phase1-fable5 2>&1 | tee
      .autopilot/state/<slug>/codex/round-NN.txt` (use "$CODEX", not a bare word; persist every round).
      Fix EVERY finding (money/data P2 included; a P2 the reviewer says "fix before merging" is NOT clean).
      Re-review until 2 consecutive FULL rounds with ZERO findings. >5 fix rounds, or the same region ×3,

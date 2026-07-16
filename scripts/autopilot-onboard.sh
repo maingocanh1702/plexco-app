@@ -109,5 +109,5 @@ if bash -n "$REPO_ROOT/scripts/autopilot-scope-gate" 2>/dev/null; then ok "scope
 echo
 echo "Done. Next:"
 echo "  • Read   docs/autopilot-ONBOARDING.md   (mental model + per-task lifecycle)"
-echo "  • Prompt template: docs/autopilot-templates/autopilot-prompt-GENERIC.md (v0.4.8)"
+echo "  • Prompt template: docs/autopilot-templates/autopilot-prompt-GENERIC.md (v0.6.0)"
 echo "  • If TODO above: source ~/.zshrc (codex) and/or restart Claude Code so CLAUDE.md reloads."

@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P5  
 > **Track:** 💳 Host Billing  
-> **Version:** 2.5 · 2026-07-10
+> **Version:** 2.7 · 2026-07-16
 > **Status:** Reviewed  
 > **Prerequisites:** P2 tenant/authz · P3 durable payment ingestion · P3 notifications  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-9/BR-11 · `../product/PRD.md` FLOW 11 · `../standards/decisions.md` DD-29/DD-40/DD-37 · `BE/feature_billing_lifecycle_tech.md`
@@ -42,7 +42,7 @@ Kênh phase-1 = **Zalo + Facebook Messenger** (Telegram loại — DD-37; Messen
 
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|
-| BIL-UC-1 | System | Tenant creation (plan trả phí) | Start trial with explicit dates/plan version |
+| BIL-UC-1 | System | Tenant creation (plan trả phí) | Start trial 14 ngày; reminder đúng một lần khi còn 2 ngày |
 | BIL-UC-1b | System | Tenant creation (plan `free`) | Vào thẳng `active` vô thời hạn — **không** trial, **không** invoice, **không** past_due/suspended vì non-payment |
 | BIL-UC-2 | System | Issue invoice | Invoice code + payment instructions → platform account |
 | BIL-UC-3 | System | Platform billing webhook | Match invoice idempotently → extend period exactly once |
@@ -51,8 +51,8 @@ Kênh phase-1 = **Zalo + Facebook Messenger** (Telegram loại — DD-37; Messen
 | BIL-UC-6 | System | Suspend tenant | Block admin mutations/integration changes |
 | BIL-UC-7 | System | Suspended tenant CK ingestion | Still durable-ingest player CK — safety path |
 | BIL-UC-8 | Host | Pay overdue invoice | Reactivate + resume paused jobs safely |
-| BIL-UC-9 | Platform Admin | Manual override (temporary) | Privileged, temporary, audited |
-| BIL-UC-10 | Host | Cancel subscription | Cancellation policy + data retention |
+| BIL-UC-9 | Platform Admin | Manual override (temporary) | Max 7 ngày, `ticket_ref`+reason+expiry, audited, auto-expire |
+| BIL-UC-10 | Host | Cancel/refund subscription | Trong 7 ngày từ invoice `paid_at`: full refund; sau đó không refund, entitlement tới hết kỳ |
 
 ### Edge Cases
 
@@ -66,7 +66,7 @@ Kênh phase-1 = **Zalo + Facebook Messenger** (Telegram loại — DD-37; Messen
 | 6 | Security | Suspended tenant push new public sessions | ❌ Block — existing sessions expire naturally only |
 | 7 | Security | Suspended tenant player CK arrives | ✅ Still ingest — safety/ingestion paths remain |
 | 8 | Cross-Feature | Owner lost access | Support/audit policy required |
-| 9 | Financial | Refund/chargeback | Support policy — manual review |
+| 9 | Financial | Refund request | Dùng invoice `paid_at`; ≤7 ngày → full refund + audit, >7 ngày → no refund + dùng hết kỳ. Missing/unprovable `paid_at` → fail-closed manual review |
 | 10 | Data Integrity | Fair-use limit exceeded | Degrade expensive optional services — KHÔNG block payment ingestion/security |
 | 11 | Security | Manual override abuse | Privileged, temporary, audited — auto-expire |
 | 12 | Data Integrity | Paid plan trial → active transition with no payment | Require payment — no automatic active without billing event |
@@ -74,6 +74,7 @@ Kênh phase-1 = **Zalo + Facebook Messenger** (Telegram loại — DD-37; Messen
 | 12c | Entitlement | Đổi `free` ↔ plan trả phí | Lên paid: tạo subscription period + invoice từ thời điểm đổi (không retroactive). Về free: hạ entitlement cuối kỳ đã trả, set `active` (free), dừng sinh invoice |
 | 13 | Entitlement | Host dùng kênh vượt plan | Block channel setup/use; show upgrade CTA; không ảnh hưởng player CK ingest |
 | 14 | Entitlement | Đổi capability free↔pro (config `entitlements`) | Áp theo policy versioned; audit; không retroactive invoice mutation |
+| 15 | Billing safety | Tenant `suspended` có player CK tới | Ingest ON; auto-settle/auto-notify OFF; không mất dữ liệu, không phát thông báo sai |
 
 ---
 
@@ -94,11 +95,11 @@ Kênh phase-1 = **Zalo + Facebook Messenger** (Telegram loại — DD-37; Messen
 
 | Entity | Vai trò | Key constraints |
 |--------|---------|-----------------|
-| `subscriptions` | Plan/tier per tenant | `tenant_id` FK, `plan_key`, `plan_version`, `status` enum, `period_start/end` |
-| `subscription_invoices` | Billing obligations | `UNIQUE(invoice_code)`, `tenant_id`, `amount_due`, `status` |
+| `subscriptions` | Plan/tier per tenant | `tenant_id` FK, `plan_key`, `plan_version`, `status`; free có `period_start/end=NULL` |
+| `subscription_invoices` | Billing obligations | `UNIQUE(invoice_code)`, `tenant_id`, `amount_due`, `status`, canonical `paid_at` cho refund window |
 | `billing_transactions` | Platform payment records | Tách hoàn toàn khỏi player `bank_transactions` |
 | `billing_allocations` | Phân bổ `billing_transaction` → `subscription_invoice` | `transaction_id`, `invoice_id`, `amount` |
-| `billing_overrides` | Manual override per-tenant (có expiry) | `tenant_id`, `actor_id`, `reason`, `expires_at` |
+| `billing_overrides` | Manual override per-tenant | PlatformAdmin, `ticket_ref`, reason, max-7d `expires_at`, auto-expire, audit |
 
 ### Lifecycle State Machine
 
@@ -107,18 +108,21 @@ stateDiagram-v2
     [*] --> active: Plan free (0đ) — vào thẳng, không trial/invoice
     [*] --> trialing: Plan trả phí (host_pro 250k)
     trialing --> active: Payment received
-    trialing --> past_due: Trial expired, no payment
+    trialing --> active: Trial expired, no payment → downgrade free immediately
     active --> past_due: Period expired, no renewal (CHỈ plan trả phí)
     past_due --> suspended: Grace period expired
     past_due --> active: Payment received
     suspended --> active: Payment received / manual override
     active --> suspended: ToS/abuse (mọi plan, kể cả free)
     suspended --> cancelled: Owner cancel / admin action
-    active --> cancelled: Owner cancel
+    active --> cancelled: Refund eligible ≤7d from paid_at
+    active --> active: Cancel >7d → use through period, then downgrade free
     cancelled --> [*]
 ```
 
 > **`free` (0đ):** vào thẳng `active` và ở đó vô thời hạn. Daily lifecycle job **bỏ qua plan 0đ** ở nhánh `period expired → past_due` và **không sinh invoice**. Free chỉ rời `active` khi (a) owner đổi lên plan trả phí, (b) owner cancel, hoặc (c) suspend do ToS/abuse — **không bao giờ** vì non-payment. Nhánh `trialing/past_due/suspended-vì-non-payment` chỉ áp dụng cho plan trả phí.
+
+> **Host Pro DD-51:** trial đúng 14 ngày, reminder khi còn 2 ngày; trial hết chưa trả → downgrade `free` ngay, không vào invoice grace. Grace 7 ngày chỉ áp invoice của kỳ trả phí đã active. Refund window tính duy nhất từ invoice `paid_at`; override không thay đổi refund window.
 
 ---
 
@@ -150,6 +154,9 @@ stateDiagram-v2
 - [ ] Entitlement gate đúng theo capability flags (free vs host_pro) — config-driven
 - [ ] `free` ở `active` vô thời hạn — không sinh invoice, không bao giờ past_due/suspended vì non-payment
 - [ ] Paid invoice amount lấy từ immutable plan version, không hard-code
+- [ ] Trial 14d/reminder D-2/downgrade-free không-payment và invoice grace 7d có boundary tests
+- [ ] Refund window dùng canonical `paid_at`; override bắt buộc PlatformAdmin+ticket+reason+expiry≤7d và auto-expire
+- [ ] Suspended: player CK ingest ON, auto-settle/auto-notify OFF
 
 ---
 
@@ -159,13 +166,14 @@ stateDiagram-v2
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| BIL-OQ-1 | Pricing tiers (BRD OD-3 → DD-29) | ✅ DD-29: 2 tier `free`/`host_pro` (thay DD-03 4-tier); còn trial/grace timing. `plans` CHECK `('free','host_pro')` = migration còn chờ (live schema 4-tier) |
-| BIL-OQ-2 | Cancellation/refund/credit policy + manual-override SLA | ⬜ Chưa chốt |
+| BIL-OQ-1 | Pricing tiers (BRD OD-3 → DD-29) | ✅ DD-29: 2 tier `free`/`host_pro`; trial/grace đã chốt DD-51. `plans` CHECK `('free','host_pro')` + nullable free period = migration còn chờ |
+| BIL-OQ-2 | Cancellation/refund/credit policy + manual-override SLA | ✅ **Chốt + full-propagate DD-51:** trial 14d/remind D-2/downgrade free ngay; invoice grace 7d; refund full ≤7d từ `paid_at`, sau đó no refund/use period; PlatformAdmin override max7d + ticket/reason/expiry/audit |
 
 ### Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-16 | v2.7 | **DD-51 full propagation:** use cases, edge table, domain fields, state machine and AC now pin trial/reminder/downgrade, invoice grace, refund `paid_at` window, override and suspended automation behavior. Authority: decisions v1.37. |
 | 2026-07-10 | v2.5 | **Review fixes → canonical billing vocab.** Domain model: `invoices`→**`subscription_invoices`**; `billing_credits`/credit concept → **`billing_allocations`** (+ `billing_overrides`); `webhook_transactions`→player `bank_transactions`. Note `plans` CHECK `('free','host_pro')` = migration còn chờ (live schema 4-tier — không claim done). Overpay/partial = billing review queue (không có bảng `billing_credits`). BIL-OQ-1 → DD-29 2 tier. |
 | 2026-07-10 | v2.4 | **DD-40 + DD-37:** free-tier bots = **Zalo + Messenger** (bỏ Telegram; Messenger nay phase-1, bỏ chờ P4.8). Capability flags DD-40: free = `payment_mark_manual`,`reminders_manual`; host_pro += `payment_reconcile_auto`,`reminders_auto`,`assistant_ai_kb`,`crm_dashboard`. Free-tier "đối soát CK cơ bản" → **mark-paid thủ công (tiền mặt/CK, tap/multi-select)**. One-line pointer chat/gender → DD-38/DD-39 (proposal). Owner notice screen: Zalo/Messenger. |
 | 2026-07-05 | v2.3 | **DD-29 pricing pivot:** bảng tier → `free` (0đ, web+3 bot+reconcile thủ công) / `host_pro` (250k, +auto reconcile/notify +nhắc nợ tự động +AI+CRM). Entitlement gate theo **capability flags config-driven** (registry ở BE §4b). Đổi edge #14, checklist, SM. Rename plan_key cũ `free_web`→`free`. |
@@ -173,3 +181,4 @@ stateDiagram-v2
 | 2026-06-20 | v2.1 | Chốt pricing tiers DD-03 (free/79k/159k/199k), thêm entitlement gate và plan_key |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, lifecycle state machine, billing screens |
+| 2026-07-16 | v2.6 | **Propagation (light) DD-51:** OQ pointer added; body was full-propagated in v2.7. |

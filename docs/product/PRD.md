@@ -2,14 +2,15 @@
 ## Plexco — platform thể thao đa môn (host + player): Zalo · Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi)*
 
 **Sản phẩm:** **Plexco** — platform quản lý & khám phá hoạt động thể thao đa môn, 2 phía (host + player); bot-in-chat (Zalo/Messenger) + web app sync 2 chiều; không app native
-**Phiên bản:** 2.4
+**Phiên bản:** 2.5
 **Ngày cập nhật:** 15/07/2026
-**Tài liệu tham chiếu:** `BRD.md` v3.6 · `TDD.md` v2.5 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-reconciliation.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` (kênh Messenger — nay là phase-1) · `../standards/decisions.md` (DD-05/06/08/32/37/13/33/38/39/40/41/42/43/44/45/46/47/48)
+**Tài liệu tham chiếu:** `BRD.md` v3.7 · `TDD.md` v2.6 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` **v1.39** (DD-01..60; DD-57..60 proposal)
 
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 16/07/2026 | v2.5 | **Founder batch DD-49..56 (decisions v1.36):** merge path bỏ SĐT verified → email verified (DD-50, FLOW link/merge); FLOW 11 billing chốt DD-51 (trial 14d/remind 2d/khoá ngay; grace 7d; refund window 7d). Correction/rejoin/DM/co-admin contract chi tiết ở feature specs + DD-49/55/56. |
 | 15/07/2026 | v2.4 | **Decision reconcile + review fixes:** refs qua DD-48 theo `decisions.md` v1.32; đồng bộ phase Messenger P2.5/P4.5 và Zalo P4.7; chuẩn hoá policy wording Messenger 24h. Session/social là contract build P2–P4+; flow chi tiết (gating/attendance/tags/invite/Skip-Club/follow) viết cùng build slice. |
 | 15/07/2026 | v2.3 | **DD-45:** FLOW 13 và discovery race đổi `SESSION_FULL` thành active-vs-waitlisted outcome; full không charge/venue, promotion mới tạo charge; approval full cũng vào waitlist. |
 | 10/07/2026 | v2.2 (review fixes) | **DD-38/39 ✅ scope-committed phase-1** — FLOW 15 + surface map + FLOW 1/2/6 bỏ 🟡/proposal (schema `chat_*`/`person.gender` vẫn chờ migration, không claim done). **Money vocab → canonical ledger:** FLOW 6 mark-paid = INSERT `payment_allocations` (cash/manual) + cập nhật `charges`, bỏ bảng `payment` & source `bank_transfer`. Đồng bộ `decisions.md` v1.16. |
@@ -122,13 +123,13 @@ Bề mặt tương tác phase-1 = **web app + Zalo + Facebook Messenger**. **Tel
    - Chưa có → matcher tên scoped-tenant:
      - Không khớp → **tạo membership mới** (an toàn, auto).
      - Khớp membership **chưa có tiền** → claim auto.
-     - ⚠️ Khớp membership **đã có nợ/payment** → **KHÔNG auto theo tên** → cần khoá mạnh (owner xác nhận / CK khớp / mã link). (AUDIT C2)
+     - ⚠️ Khớp membership **đã có nợ/payment** → **KHÔNG auto theo tên**. Chỉ verified account email hoặc transactional one-time `link_code` mở claim; owner assertion/CK chỉ là review evidence. (DD-50)
      - Mơ hồ → hỏi chọn (Zalo số / Messenger quick-reply).
 
 **Merge xuyên kênh (Facebook Messenger ⇄ Zalo cùng người; link vào Person đăng nhập Google):**
 
-1. **`/link`** ở bot A → cấp **mã OTP** (entropy cao, TTL ngắn, single-use, rate-limit) → player gửi mã ở bot B → gắn ChannelIdentity B vào Person A + **xác nhận tường minh** + audit. (AUDIT C3)
-2. **SĐT verified** (share-contact Zalo / Messenger, hoặc email verified qua Google) → auto-merge.
+1. **`/link`** ở bot A → cấp **`link_code` purpose-bound** (entropy cao, hash-at-rest, TTL ngắn, single-use, rate-limit/attempts) → player gửi mã ở bot B → transaction lock+re-check source/action/TTL, tạo merge plan, **xác nhận tường minh** + audit. (DD-50)
+2. **Email verified** (Google OAuth hoặc email/password đã verify) → auto-merge. *(DD-50: phase-1 không thu SĐT — share-contact/SĐT bỏ khỏi merge path, phone dormant.)*
 3. STK/tên → **chỉ gợi ý, owner duyệt** (không auto). (AUDIT B4)
 
 > Merge mà 2 Person đều có membership cùng tenant → **reconcile gộp 1 membership** (cộng nợ, 1 id) + cờ nghi-trùng. (AUDIT C4/C5)
@@ -139,7 +140,7 @@ Bề mặt tương tác phase-1 = **web app + Zalo + Facebook Messenger**. **Tel
 
 **Mark-paid thủ công (mọi tier — DD-40):**
 1. Host mở danh sách roster (web/bot) → chọn **1 hoặc nhiều player (tap/multi-select)** → đánh dấu **đã trả bằng tiền mặt** hoặc **đã trả bằng CK**.
-2. Áp **preview + confirm** (DD-25, human-initiated money mutation) → INSERT `payment_allocations` (tiền mặt → `source='cash'`; CK khớp một `bank_transaction` → `source='manual'`) + cập nhật `charges`, có audit, **idempotent** → trigger FLOW 8 (xác nhận). *(Không có bảng `payment`; enum `source` không có `bank_transfer`; CK host tự xác nhận chưa có `bank_transaction` = impl còn mở.)*
+2. Áp **preview + confirm** (DD-25, human-initiated money mutation) → INSERT `payment_allocations` (tiền mặt → `source='cash'`; CK đã ingest → `source='manual'` + exact `bank_transaction_id`) + cập nhật `charges`, có audit, **idempotent** → trigger FLOW 8. CK host-attested chưa ingest chỉ được ghi qua dedicated allocation source sau migration (`bank_transaction_id=NULL`, actor + opaque evidence); trước migration reject. Cấm synthetic `bank_transaction` hoặc map sang `cash|manual`. (DD-40 v1.39)
 
 **Đối soát CK tự động (`host_pro` — P3):**
 3. CK về → **webhook SePay** `/webhook/sepay/:token` → route đúng tenant theo `webhookToken` + verify số TK.
@@ -187,10 +188,10 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 
 ## FLOW 11: BILLING — host subscription tiers *(P5)*
 
-1. Tạo tenant: `free` → `active` ngay, không invoice; plan trả phí `host_pro` → `trialing` (đề xuất 14 ngày).
+1. Tạo tenant: `free` → `active` ngay, không invoice; plan trả phí `host_pro` → `trialing` (**✅ DD-51: 14 ngày**, remind khi còn 2 ngày; hết trial không thanh toán → khoá ngay về `free`; trễ invoice khi đang active → grace 7 ngày; huỷ giữa kỳ: hoàn toàn bộ nếu request trong 7 ngày từ khi thanh toán).
 2. Owner chọn plan: `free` (0đ — web + **kết nối Zalo + Messenger** + **mark-paid thủ công (tiền mặt/CK)** + nhắc thủ công + **chat cơ bản in-app**) hoặc `host_pro` (250k — thêm **đối soát CK tự động** + báo thu + **nhắc nợ tự động** + Trợ lý AI + CRM). Tính năng do capability flags quyết định (DD-29, DD-40 giải nuance).
 3. Với paid plan, owner CK đúng số tiền vào **tài khoản platform**, nội dung mang `invoiceCode` → webhook match → đẩy `currentPeriodEnd +1 tháng`, `status=active`.
-4. Hết hạn không gia hạn → `past_due` (nhắc web/email) → sau X ngày → `suspended`.
+4. Invoice active trễ hạn → `past_due` + grace **7 ngày** (nhắc web/email) → `suspended`; riêng trial hết mà chưa trả → khoá ngay về `free`, không đi qua grace (DD-51).
 5. **Suspended:** chặn lệnh nhưng **vẫn nhận & lưu CK player** (không mất giao dịch khi quay lại).
 6. Free plan không cần payment để active nhưng bị giới hạn tính năng theo capability flags; MVP có thể **manual-activate** paid plan trước khi tự động hoá match.
 
@@ -269,7 +270,7 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 | 8 | **Player thuộc >1 CLB (web session / DM)** | Zalo bot-per-club & Messenger Page-per-club **tự ghim tenant**; trên web dùng picker tenant; ∈1 club → auto | P4.5 |
 | 9 | **Membership trùng do race (Zalo join trước khi link Messenger)** | cờ nghi-trùng + tool owner merge (reconcile gộp nợ) | P3.5 |
 | 10 | **Claim membership có tiền theo tên** | Cấm auto → yêu cầu owner/CK/mã link | P3.5 |
-| 11 | **Mã link bị đoán/brute-force** | OTP entropy cao + TTL ngắn + rate-limit + single-use + xác nhận | P3.5 |
+| 11 | **Mã link bị đoán/brute-force** | `link_code` entropy cao + hash-at-rest + TTL/purpose + attempts/rate-limit + atomic single-use + xác nhận | P3.5 |
 | 12 | **Context trỏ club player không còn là member** | fail-closed → bỏ context → picker | P4.5 |
 | 13 | **Zalo `message.unsupported.received`** (user nhóm bảo vệ) | không nhận nội dung → fallback owner xử tay | P4.7 |
 

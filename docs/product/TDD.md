@@ -1,16 +1,16 @@
 # Technical Design Document (TDD) — Plexco
 ## Platform thể thao đa môn (host + player) — multi-tenant, marketplace discovery, sync đa surface, Zalo + Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi — DD-37)*
 
-**Phiên bản:** 2.5 — **v3.4 channel pivot (DD-37) + DD-45 waitlist contract**: bỏ Telegram; kênh phase-1 = web + Zalo + Facebook Messenger; auth Google/email; mark-paid thủ công; final join active-vs-waitlisted dưới lock; chuẩn hoá canonical store và ledger tiền. **v2.4:** tham chiếu cụm session-model + social (DD-06/08/41–48) — contract build P2–P4+, chi tiết ở feature specs. **v2.5 (16/07):** DD-04 ✅ (c) DO co-locate (Postgres host = DO App Platform + Managed PG VPC private).
+**Phiên bản:** 2.6 — **v2.6 (16/07): founder batch DD-49..56** (merge không SĐT, trial/grace chốt, rejoin carry-over). Trước đó: **v3.4 channel pivot (DD-37) + DD-45 waitlist contract**: bỏ Telegram; kênh phase-1 = web + Zalo + Facebook Messenger; auth Google/email; mark-paid thủ công; final join active-vs-waitlisted dưới lock; chuẩn hoá canonical store và ledger tiền. **v2.4:** tham chiếu cụm session-model + social (DD-06/08/41–48) — contract build P2–P4+, chi tiết ở feature specs. **v2.5 (16/07):** DD-04 ✅ (c) DO co-locate (Postgres host = DO App Platform + Managed PG VPC private).
 **Ngày tạo:** 16/06/2026 · **Cập nhật:** 15/07/2026
 **Tài liệu tham chiếu:**
-- `BRD.md` v3.6 — yêu cầu nghiệp vụ
-- `PRD.md` v2.4 — user flows + edge cases
+- `BRD.md` v3.7 — yêu cầu nghiệp vụ
+- `PRD.md` v2.5 — user flows + edge cases
 - `../strategy/saas-implementation-plan.md` — kiến trúc multi-tenant
 - `../research/player-side-saas-reconciliation.md` — identity/kênh/matching
 - `../research/player-side-saas-AUDIT.md` — threat model & must-fix (C1–C7, B1–B6, §B2, + threat model public discovery)
 - `../channels/messenger/messenger-channel-design.md` — kênh Messenger (**phase-1, P2.5**): delta data model, routing theo `page_id`
-- `../standards/decisions.md` — DD-05/45 (join/waitlist ✅), DD-06 (venue granularity ✅), DD-08 (sports+level rank ✅), DD-37 (channel pivot ✅), DD-13 (Google auth ✅), DD-33 (Facebook link 🟡), DD-38 (chat ✅), DD-39 (giá theo giới tính ✅), DD-40 (mark-paid thủ công ✅), DD-41 (session fields+gating ✅), DD-42/43/44 (attendance/tags/invite ✅ build P4+), DD-46 (personal tenant ✅), DD-47/48 (follow/visibility ✅ framework P4+) — contract chi tiết ở feature specs + `dd-*-analysis.md`
+- `../standards/decisions.md` **v1.39** — DD-01..56 canonical contracts; DD-57..60 proposal. DD-49..56 full clarification ở v1.37; DD-40 host-attested transfer hard boundary reconciled v1.39; implementation detail ở feature specs + `dd-*-analysis.md`.
 
 > [!IMPORTANT]
 > **Scope:** TDD cover tới **P6** ở mức thiết kế. BRD là nguồn sự thật cho product scope; PRD cho behavior; TDD là implementation contract; ROADMAP cho thứ tự/progress. Security constraints nghiêm ngặt hơn giữa BRD và AUDIT luôn thắng.
@@ -56,9 +56,9 @@ Matchmaking xếp cặp tự động · venue/booking nhà thi đấu · scoring
 | FR-3 | Join Messenger | P3 | quick-reply/persistent menu (Page-per-club) + validate `page_id`/tenant/session; cửa sổ 24h | P2.5/P4.5 | P0 |
 | FR-4 | Join Zalo | P3 | `/join` + number-reply (bot-per-club DM) | P4.7 | P0 |
 | FR-5 | Identity resolve | System | (platform,uid)→ChannelIdentity→Person→Membership(∩tenant); `platform ∈ {zalo,messenger}` (chat), account ∈ {google,email,facebook,zalo} | P3.5 | P0 |
-| FR-6 | Claim/merge | System | claim-có-tiền cần khoá mạnh; merge OTP/SĐT-verified; **link Facebook/Zalo vào Person**; reconcile trùng | P3.5 | P0 |
+| FR-6 | Claim/merge | System | claim-có-tiền cần khoá mạnh — **verified email hoặc link_code deterministic (DD-50; phase-1 không thu SĐT, phone dormant)**; **link Facebook/Zalo vào Person**; reconcile trùng | P3.5 | P0 |
 | FR-7 | Webhook reconcile (auto = `host_pro`) | System | durable ingest → match (pay_code→tên/amount/ngày) → allocate transaction vào charges | P3 | P0 |
-| **FR-7b** | **Mark-paid thủ công (mọi tier, DD-40)** | P1 | host chọn 1/nhiều player (tap/multi-select) đánh dấu **tiền mặt** (`source='cash'`) hoặc **CK** khớp `bank_transaction` (`source='manual'`); INSERT `payment_allocations` + cập nhật `charges`, audit, idempotent; preview+confirm (DD-25) | P2 | P0 |
+| **FR-7b** | **Mark-paid thủ công (mọi tier, DD-40)** | P1 | tiền mặt=`cash`; CK đã ingest=`manual` + exact bank txn; CK host-attested chưa ingest chỉ qua dedicated source migration + actor/evidence, trước đó reject; cấm synthetic bank txn; preview+confirm (DD-25) | P2 | P0 |
 | FR-8 | Payment ledger / BL-2 | System | charge (suy giá theo giới tính member nếu đặt giá nam/nữ) + bank transaction + allocation; hỗ trợ partial/multi-person; không phân bổ quá số tiền CK | P3 | P0 |
 | FR-9 | /unmatched | P1 | gán tay + retry cron | P3 | P0 |
 | FR-10 | Reminder | System | manual (mọi tier) → auto cron (`host_pro`) qua **web push + Zalo DM** (chính); Messenger best-effort trong cửa sổ 24h; theo Reachability | P2/P3 | P0 |
@@ -195,7 +195,7 @@ erDiagram
     PERSON {
         uuid id PK
         varchar display_name
-        varchar phone "nullable, verified"
+        varchar phone "nullable, dormant phase-1"
     }
     CHANNEL_IDENTITY {
         uuid id PK
@@ -327,7 +327,7 @@ erDiagram
     PAYMENT_ALLOCATION {
         uuid id PK
         uuid tenant_id FK
-        uuid bank_transaction_id FK "nullable for cash/waiver (auto/manual = có bank txn)"
+        uuid bank_transaction_id FK "nullable for cash/waiver and migrated attested source; auto/manual require real bank txn"
         uuid charge_id FK
         int amount "signed; reversal âm"
         varchar source "auto|manual|cash|waiver|reversal (DD-40: cash=tiền mặt; CK thủ công khớp bank txn = manual)"
@@ -414,7 +414,7 @@ erDiagram
 
 **UNIQUE quan trọng:** `channel_identities (platform, platform_user_id)` GLOBAL · `memberships (tenant_id, person_id)` · `(tenant_id, pay_code)` · `channel_reachability (person_id, tenant_id, platform)` · `players (tenant_id, session_id, membership_id)` · `charges (tenant_id, session_id, player_id)` · `bank_transactions (tenant_id, provider, external_id)` · `processed_commands (tenant_id, command_id)` · `projector_deliveries (event_id, projector)` · `(tenant_id, norm)`, `(tenant_id, alias_norm)`.
 
-**Ledger invariants (DB constraint/transaction test):** `amount_due ≥ 0`; auto/manual bank allocation (đối soát CK tự động, `host_pro`) dương và bắt buộc có `bank_transaction_id`; **mark-paid thủ công tiền mặt `cash` (DD-40, mọi tier)** và `waiver` không có bank transaction nhưng **bắt buộc actor** (host, preview+confirm DD-25), idempotent theo (charge, membership); CK thủ công dùng `source='manual'` (khớp một `bank_transaction`); enum `source` canonical không có `bank_transfer`; reversal âm và tham chiếu allocation gốc. Tổng allocation hiệu lực của một bank transaction nằm trong `[0, bank_transactions.amount]`; tổng vào charge nằm trong `[0, amount_due]`; `unallocated_amount = amount - bank allocations`; charge chỉ `paid` khi được phủ đủ. `amount_allocated` được cập nhật dưới row lock hoặc tính từ ledger, không cho client tự ghi. Không sửa/xoá giao dịch gốc hoặc allocation đã audit—điều chỉnh bằng reversal entry.
+**Ledger invariants (DB constraint/transaction test):** `amount_due ≥ 0`; auto/manual bank allocation dương và bắt buộc exact `bank_transaction_id`; tiền mặt `cash` và `waiver` không có bank transaction nhưng bắt buộc actor, preview+confirm DD-25 và idempotency. Host-attested CK chưa ingest chỉ được dùng dedicated source sau B1 migration với `bank_transaction_id=NULL`, actor + opaque evidence; trước migration reject, không synthetic bank transaction hoặc `cash|manual` fallback. Reversal âm và tham chiếu allocation gốc. Tổng allocation hiệu lực của một bank transaction nằm trong `[0, bank_transactions.amount]`; tổng vào charge nằm trong `[0, amount_due]`; charge chỉ `paid` khi được phủ đủ. `amount_allocated` do một helper canonical/locked writer sở hữu; không sửa/xoá fact đã audit.
 
 ### 3.3 Routing & Tenant Resolution (lõi multi-tenant)
 
@@ -545,7 +545,7 @@ sequenceDiagram
 
 ACK chỉ xảy ra sau khi raw transaction và durable job đã commit. Duplicate external ID trả 200 với transaction hiện có và không enqueue trùng. Nếu worker chết sau ACK, pg-boss retry idempotently; trạng thái `pending/unmatched` còn tồn tại để sweeper phục hồi.
 
-**Identity merge (P3.5):** `/link` OTP round-trip → gắn ChannelIdentity vào Person → nếu trùng membership cùng tenant → reconcile gộp (1 id, cộng nợ) → audit. (AUDIT C3/C4/C5)
+**Identity merge (P3.5):** transactional one-time `link_code` hoặc verified account email → conflict/evidence matrix → explicit confirmation → merge plan + audit. Trùng membership cùng tenant phải preserve/re-parent references theo DD-50/53; **không cộng/rewrite ledger bằng công thức ad hoc**.
 
 **Reminder cron (P3, auto = `host_pro`):** pg-boss `EVERY_MINUTE` → group theo tenant → mỗi tenant: query unpaid quá ngưỡng (mặc định 2h → 24h → …) → gửi qua **web push + Zalo DM** (chính) + **Messenger best-effort trong cửa sổ 24h** theo `ChannelReachability` → throttler + jitter → set `last_reminded_at`. Free tier: nhắc thủ công.
 
@@ -556,7 +556,7 @@ ACK chỉ xảy ra sau khi raw transaction và durable job đã commit. Duplicat
 | `reconcile` | `match` | on webhook | match bank transaction → payment allocations |
 | `reconcile` | `retry-unmatched` | EVERY_HOUR | thử khớp lại unmatched |
 | `remind` | `send` | due/cron | nhắc unpaid theo tenant (auto = `host_pro`; web + Zalo chính, Messenger best-effort 24h) |
-| `billing` | `lifecycle` | DAILY | trial→past_due→suspended + nhắc gia hạn (chỉ plan trả phí; bỏ qua `free` price=0) |
+| `billing` | `lifecycle` | DAILY | trial remind D-2; unpaid trial end→`free` ngay; active invoice overdue→past_due→7d grace→suspended; bỏ qua `free` price=0 (DD-51) |
 | `security` | `webhook-drift` | HOURLY | `getWebhookInfo` Zalo / Messenger Page subscription, lệch URL → alert/auto-reset (AUDIT §B2) |
 | `session` | `transition` | EVERY_MIN | auto-close buổi quá giờ + hạ kèo khỏi public khi đóng/quá giờ |
 | `sync` | `dispatch-outbox` | on insert / EVERY_SEC | đẩy `outbox_events` chưa `dispatched_at` → projectors (idempotent) |
@@ -607,7 +607,7 @@ ACK chỉ xảy ra sau khi raw transaction và durable job đã commit. Duplicat
 - **Secret:** `bot_token_enc`, `page_token_enc`/app secret, `webhook_secret_enc`, Google OAuth client secret → KMS/envelope AES-GCM; che UI; reset path. Token Zalo/Page lộ → blast-radius messaging 1 club (không chạm tiền/DB/club khác) + `getWebhookInfo`/Page-subscription drift detection (AUDIT §B2).
 - **Authz:** routing (ZaloBot/MessengerPage) tách phân quyền (`TenantAdmin` theo `from.id`; web = phiên Google/email); player không gated.
 - **Chat in-app (DD-38 ✅):** club-chat scoped `tenant_id` + RLS; 1-1 person-self path; **không bridge** ra kênh ngoài; chống spam/rate-limit.
-- **Identity:** claim-có-tiền cần khoá mạnh; merge chỉ verified; mã link = OTP (AUDIT C1/C2/C3).
+- **Identity:** claim-có-tiền cần verified account email hoặc transactional one-time `link_code`; name/alias/owner/CK evidence không tự bypass proof (DD-50).
 - **PII:** SĐT/email consent + AES at-rest + soft-delete + không vào URL/log.
 - **Realtime/auth:** mọi SSE subscription authorize theo tenant admin hoặc chính person; chống topic guessing, CSRF/session fixation và reconnect token reuse.
 
@@ -629,10 +629,10 @@ ACK chỉ xảy ra sau khi raw transaction và durable job đã commit. Duplicat
 | Payment | `ALLOCATION_EXCEEDS_FUNDS` | 409 | tổng allocation vượt số tiền CK hoặc số tiền charge còn thiếu |
 | Identity | `CLAIM_REQUIRES_STRONG_KEY` | 409 | claim membership-có-tiền theo tên bị chặn |
 | Identity | `MERGE_CONFLICT_SAME_TENANT` | 409 | 2 membership cùng tenant → cần reconcile |
-| Identity | `LINK_CODE_INVALID` | 400 | OTP sai/hết hạn |
+| Identity | `LINK_CODE_INVALID` | 400 | `link_code` sai/hết hạn/sai purpose/đã consume; message generic |
 | Discovery | `SESSION_NOT_PUBLIC` | 404 | kèo không publish / đã hạ khỏi marketplace |
 | Join | `JOIN_REQUIRES_APPROVAL` | 202 | đã tạo `join_requests` chờ host duyệt |
-| Join | `REJOIN_REQUIRES_REVIEW` | 409 | existing player đã `left`; không tự reuse/duplicate charge/ledger |
+| Join | `REJOIN_REQUIRES_REVIEW` | 409 | **DD-49 (16/07) thu hẹp:** rejoin = join logic thường + carry-over paid charge chưa refund; error này CHỈ còn cho case không chứng minh được charge/ledger state |
 | Sync | `STALE_COMMAND` | 409 | command trùng/đã áp (idempotent) → bỏ qua |
 
 ---
@@ -640,14 +640,14 @@ ACK chỉ xảy ra sau khi raw transaction và durable job đã commit. Duplicat
 ## 6. Testing Plan
 
 ### 6.1 Unit (core thuần — lift + test xanh trước)
-matching (pay_code/tên/amount/ngày, FIFO 2-buổi-identical), ledger allocation (partial/overpay/multi-person/reversal, BL-2), **mark-paid thủ công (cash tiền mặt / manual CK khớp bank txn, idempotent) — DD-40**, identity-resolve, Zalo number-reply parse / Messenger quick-reply parse, dedupe external_id, link-code OTP.
+matching (pay_code/tên/amount/ngày, FIFO 2-buổi-identical), ledger allocation (partial/overpay/multi-person/reversal, BL-2), **mark-paid thủ công (cash tiền mặt / manual CK khớp bank txn, idempotent) — DD-40**, identity-resolve, Zalo number-reply parse / Messenger quick-reply parse, dedupe external_id, transactional link-code consume.
 
 ### 6.2 Integration (Postgres)
 - **Bất biến cô lập (CI bắt buộc):** tenant A/B — repo B không thấy session A; raw query quên `SET LOCAL` → 0 dòng (fail-closed).
 - **Bất biến public (CI bắt buộc):** mọi field `public_sessions` ∈ whitelist; discovery/join không bao giờ trả tiền/PII/roster người khác; kèo private không xuất hiện trong discovery.
 - **Sync (CI):** tạo kèo trên web → outbox phát event → projector gửi Zalo/Messenger + upsert public_sessions + SSE; áp lại cùng command/event → **không** double; re-project dựng đúng từ canonical.
 - **Worker/RLS (CI):** API role không scan được cross-tenant; worker claim đúng batch nhưng từng job chỉ thấy tenant được `SET LOCAL`; privileged call có audit.
-- **Ledger (CI):** một CK phân bổ nhiều charge/người; partial không mark paid; over-allocation bị chặn; **mark-paid thủ công tiền mặt `cash`** yêu cầu actor và không tạo bank transaction giả; CK thủ công dùng `source='manual'` khớp một `bank_transaction`; duplicate/retry/reversal giữ đúng tổng.
+- **Ledger (CI):** một CK phân bổ nhiều charge/người; partial không mark paid; over-allocation bị chặn; `cash` yêu cầu actor và không tạo bank transaction giả; CK đã ingest dùng `manual` + exact txn; CK chưa ingest reject trước B1 và sau B1 dùng dedicated source + NULL txn + actor/evidence; duplicate/retry/reversal giữ đúng tổng.
 - **Chat (CI, DD-38 ✅):** club-chat không rò cross-tenant; 1-1 chỉ 2 person đọc được; không xuất hiện ở kênh ngoài.
 - E2E đa surface: host tạo kèo (web) → hiện ở Zalo/Messenger + marketplace; player join (Zalo number-reply / Messenger quick-reply) → roster web cập nhật; join cross-club open/approval đúng.
 - E2E tiền: join → **mark-paid thủ công** hoặc CK (curl SePay) → notify + SSE; webhook trùng → idempotent 1 lần.
@@ -686,7 +686,7 @@ drizzle: 01_tenants_rls → 02_sessions_players_charges(tenant_id) → 03_settin
 09_processed_commands_outbox_projector_deliveries · 10_public_sessions_projection · 11_chat (DD-38 ✅, migration còn chờ) · 12_person_profile_gender (DD-39 ✅, migration còn chờ)
 ```
 
-**Migrate club hiện tại → tenant #1:** script đọc `data/bot.db` (SQLite của bot Telegram cũ — bằng chứng lịch sử) → tạo tenant "Bestminton" + Account owner (Google/email) + BankAccount → copy sessions/players/members/aliases gắn `tenant_id` → mỗi player-session tạo `charge`; payment lịch sử có giao dịch gốc thì import thành `bank_transaction` + `payment_allocation`, record thiếu bằng chứng gốc dùng synthetic `legacy:<source-id>` và `source=manual` để giữ provenance. Đối chiếu tổng charge/allocated/unallocated và số roster trước cutover; **go-forward CLB link Zalo + Facebook Messenger** (bot Telegram cũ đóng băng làm reference, DD-37).
+**Migrate club hiện tại → tenant #1:** script đọc `data/bot.db` (SQLite của bot Telegram cũ — bằng chứng lịch sử) → tạo tenant "Bestminton" + Account owner (Google/email) + BankAccount → copy sessions/players/members/aliases gắn `tenant_id` → mỗi player-session tạo `charge`. Payment có giao dịch gốc thì import real `bank_transaction` + allocation; record thiếu bằng chứng gốc **không** tạo synthetic bank transaction — chỉ import sau khi dedicated legacy/attested allocation source được pin qua B1, với `bank_transaction_id=NULL`, actor/migration batch + opaque legacy evidence; chưa có contract thì halt/manual review. Đối chiếu tổng charge/allocated/unallocated và roster trước cutover; go-forward link Zalo + Messenger.
 
 ---
 
@@ -742,9 +742,9 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 | 1 | Web stack = Next.js App Router, standalone/container; không Vercel | ✅ (→ DD-10) |
 | 2 | Postgres host — HA+PITR+Singapore ✅; ✅ **(c) co-locate DigitalOcean** (App Platform + Managed PG, VPC private); Fly = fallback; egress-IP gate | ✅ (→ DD-04) |
 | 3 | `pay_code` contract: suffix trần 4 ký tự + prefix namespace; resolver own/foreign/none; allocation invariant | ✅ chốt (→ DD-02) |
-| 4 | Con số trial/past_due/suspended | đề xuất 14/7 ngày; pricing đã chốt ở DD-29, còn lifecycle timing |
-| 5 | Zalo Premium (khi owner >3 CLB/tài khoản) + add-on managed | hỏi Zalo |
-| 6 | Thu SĐT verified làm khoá merge | ✅ chốt |
+| 4 | Con số trial/past_due/suspended | ✅ **chốt DD-51 (16/07):** trial 14 ngày (remind 2d, hết → khoá ngay); invoice grace 7 ngày; refund window 7 ngày từ khi thanh toán; override PlatformAdmin 7d/ticket/audit |
+| 5 | Zalo Premium (khi owner >3 CLB/tài khoản) + add-on managed | hỏi Zalo (DD-11) |
+| 6 | Thu SĐT verified làm khoá merge | 🔄 **DD-50 (16/07):** phase-1 KHÔNG thu SĐT; khoá mạnh = verified email + link_code; phone dormant |
 | 7 | Web realtime: SSE + fan-out `LISTEN/NOTIFY` (dùng chung sync + chat) | ✅ chốt (→ DD-07) |
 | 8 | Join cross-club mặc định: open vs approval | ✅ per-kèo, mặc định open; approval re-check trong tx (→ DD-05) |
 | 9 | Độ chi tiết vị trí public: area vs venue | ✅ public area-only; venue sau active join/approval (→ DD-06) |
@@ -770,7 +770,7 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 
 ---
 
-*TDD v2.5 — implementation contract cho platform đa môn + marketplace + sync engine; kênh phase-1 = web + Zalo + Messenger (Telegram đã loại, DD-37). Join full → waitlisted/no-charge, promotion mới tạo charge (DD-45). Bốn bất biến: cô lập tenant (gồm chat) · không lộ tiền/PII/giới tính ra public · ledger không mất/đếm quá tiền · PostgreSQL/domain model là nguồn sự thật.*
+*TDD v2.6 — implementation contract cho platform đa môn + marketplace + sync engine; kênh phase-1 = web + Zalo + Messenger (Telegram đã loại, DD-37). Join full → waitlisted/no-charge; DD-49 governs rejoin/correction. Bốn bất biến: cô lập tenant · không lộ tiền/PII/giới tính ra public · ledger không mất/đếm quá tiền · PostgreSQL/domain model là nguồn sự thật.*
 
 ---
 
@@ -780,6 +780,7 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 |------|---------|----------|
 | 15/07/2026 | v2.4 | **Propagation (light):** mở rộng tham chiếu decisions.md sang cụm session-model + social (DD-06/08/41/42/43/44/46/47/48). Contract build P2–P4+, giữ 4 bất biến (tenant isolation/không lộ tiền-PII-tag public/ledger đúng/domain-model là nguồn sự thật). Schema/DDL + implementation contract chi tiết viết cùng build slice (không đổi §3 canonical schema body ở pass này). |
 | 16/07/2026 | v2.5 | **DD-04 ✅ Accepted:** Postgres host = **(c) co-locate DigitalOcean** (App Platform + Managed PG VPC private); runtime summary + Q2 → (c). Fly = fallback; egress-IP gate; full DO App Spec = infra slice. Record `../dd-04-hosting-final-decision.md`. |
+| 16/07/2026 | v2.6 | **Founder batch DD-49..56 (decisions v1.36):** FR-6 merge = verified email + link_code (DD-50, bỏ SĐT phase-1); §11 Q4 ✅ DD-51 (trial/grace/refund), Q6 🔄 DD-50; `REJOIN_REQUIRES_REVIEW` thu hẹp theo DD-49 (rejoin thường + carry-over). Correction/DM/co-admin contract ở feature specs + DD-49/55/56; schema/DDL defer build slice. |
 | 15/07/2026 | v2.3 | **DD-45:** retire `SESSION_FULL` cho joinable session; full→waitlisted/no-charge/no-venue, approval full cùng outcome; add `REJOIN_REQUIRES_REVIEW` fail-closed money guard. |
 | 10/07/2026 | v2.2 (review fixes) | **Money vocab → canonical ledger:** FR-7b + ER diagram + bảng tổng hợp + ledger invariants + API + testing — mark-paid = INSERT `payment_allocations` (cash/manual) + cập nhật `charges`; bỏ bảng `payment` & source `bank_transfer` (enum canonical `auto/manual/cash/waiver/reversal`); CK host tự xác nhận chưa có bank_txn = impl còn mở. **DD-38/39 ✅ scope-committed phase-1** (FR-19/20, bảng §3.2 row 26/27, §3.5, §8, open questions) — schema `chat_*`/`person.gender` chờ migration (không claim done). Đồng bộ `decisions.md` v1.16. |
 | 16/06/2026 | v2.0 | Initial TDD — canonical store, multi-tenant, RLS, sync engine |

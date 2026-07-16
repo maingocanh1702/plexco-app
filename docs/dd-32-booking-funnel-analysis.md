@@ -10,8 +10,8 @@
 - **Tách rõ 3 việc (không lẫn):**
   1. **Tạo guest booking outcome** → **được** theo A (không cần link): active mới tạo charge; waitlisted chưa có charge.
   2. **Claim/merge một membership ĐÃ CÓ TIỀN** (nhận nợ/lịch sử người khác) → đi nguyên contract `feature_identity`: verified evidence phù hợp (OTP/phone/email/CK provenance hoặc authorized owner evidence), conflict checks, explicit confirmation + audit. **DD-26 chỉ chặn persist alias/name/claim-suggestion khi chưa confirm; KHÔNG tự nó là bằng chứng sở hữu.**
-  3. **"Linked" cho hook** = OTP `/link` confirmed **đủ** (lịch sử xuyên club, nhắc, magic-link app).
-- **Thứ tự bật social login:** **DD-33 (FB) trước** (Messenger MVP), rồi **DD-14 (Zalo)**. Chưa bật → OTP `/link` thủ công.
+  3. **"Linked" cho hook** = transactional one-time `/link` code confirmed **đủ** (lịch sử xuyên club, nhắc, magic-link app).
+- **Thứ tự bật social login:** DD-33 (FB) trước, rồi DD-14 (Zalo). Chưa bật → transactional `/link` code.
 - **⚠️ Nếu founder muốn paid-booking BẮT BUỘC web-auth → đó là Option C, phải ĐỔI quyết định** (hiện = A).
 
 ---
@@ -33,7 +33,7 @@
 | CCJ-UC-1: open-join tạo guest membership on-the-fly | `feature_cross_club_join.md` |
 | Claim/merge money-bearing membership cần verified evidence + conflict checks + explicit confirmation/audit | `feature_identity.md` §3 · `feature_identity_tech.md` §5–6 · DD-01/13/26 |
 | DD-26 chỉ govern alias/name/claim-suggestion confirm-before-persist; không thay identity evidence | DD-26 |
-| "linked" cho FB/Zalo phụ thuộc DD-33/DD-14 (chưa bật → OTP `/link`) | DD-33/14 · identity-model §7 |
+| "linked" cho FB/Zalo phụ thuộc DD-33/DD-14 (chưa bật → transactional `/link` code) | DD-33/14 · identity-model §7 |
 
 ---
 
@@ -46,7 +46,7 @@
 
 ## 3. Contract "linked" (3 mức)
 1. **guest** (channel identity, không link) → book (incl paid) + CTA link.
-2. **linked-lite** (OTP `/link` confirmed) → hook: lịch sử xuyên club, nhắc, magic-link, giữ slot nhanh.
+2. **linked-lite** (transactional one-time `/link` code confirmed) → hook: lịch sử xuyên club, nhắc, magic-link, giữ slot nhanh.
 3. **web-auth đầy đủ** (`accounts`+`account_identities` verified) → một nguồn verified identity cho app/deep actions; **không bắt buộc để tạo booking và không tự nó đủ để claim một membership cụ thể có tiền**. Claim/merge luôn theo evidence matrix + conflict checks + confirmation/audit của `feature_identity`.
 
 ## 4. Money/identity invariants

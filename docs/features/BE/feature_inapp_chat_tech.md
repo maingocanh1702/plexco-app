@@ -1,10 +1,10 @@
 # Feature: In-app Chat (club-wide + 1-1) — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.10 · 2026-07-11
+> **Version:** 0.11 · 2026-07-16
 > **Status:** ✅ DD-38 chốt (2026-07-10) — Draft, pending migration (schema aligned với `packages/db/schema.ts`)
 > **Product spec:** `../feature_inapp_chat.md` *(Draft)*
-> **References:** `../../standards/decisions.md` DD-38 (chat cơ bản phase-1) · DD-19/DD-20 (trợ lý tái dùng hạ tầng chat) · DD-07 (SSE + LISTEN/NOTIFY) · `../BE/feature_multi_tenant_tech.md` (RLS template) · `../BE/feature_sync_engine_tech.md` (realtime authz)
+> **References:** `../../standards/decisions.md` DD-38 (chat cơ bản phase-1) · DD-55 (open-DM safety + media) · DD-19/DD-20 (trợ lý tái dùng hạ tầng chat) · DD-07 (SSE + LISTEN/NOTIFY) · `../BE/feature_multi_tenant_tech.md` (RLS template) · `../BE/feature_sync_engine_tech.md` (realtime authz)
 
 > ✅ **DD-38 chốt (2026-07-10).** Schema dưới đây là **thiết kế đã pin** (ràng buộc trong DD-38: 2 loại channel, DM guard, dedupe theo `client_msg_id`); nguồn authoritative khi thực thi vẫn là `packages/db/schema.ts` + `packages/db/migrations/*.sql` (**thêm `chat_*` + RLS qua migration mới sau `0013`**) + `decisions.md` DD-38. **KHÔNG** tạo bảng song song với `persons/memberships/tenants`.
 
@@ -25,6 +25,20 @@ Chat **chỉ sống trong Plexco** (web + app surface). **KHÔNG bridge** ra gro
 - Trợ lý AI (DD-19 pha B, P7) **tái dùng** chính bộ bảng `chat_*` — phát ngôn với `author_type='assistant'` (DD-20), **không** tạo Person/ChannelIdentity mới. Chat cơ bản (DD-38) dựng hạ tầng sớm ở P4; trợ lý plug vào sau.
 - Idempotent theo `client_msg_id` (chống double khi retry/mạng chờn).
 - Anti-spam: rate-limit per (person, channel) + cap kích thước message.
+- **DD-55 hard gate:** open DM remains disabled until block, report, per-sender/per-target throttles, and abuse audit all pass. Host/support/tenant-admin roles never gain DM read access.
+- **DD-55 media:** private object storage + short-lived signed access + content-derived MIME/type/size/quota checks + malware scan + moderation + deletion/orphan lifecycle. A message can attach only an actor-owned object in `ready` state.
+
+### DD-55 design-probe gates before migration
+
+The existing `chat_*` DDL below covers text/DM invariants. Before authoring its migration, the chat slice must also map these finite state machines and pin exact storage constraints; do not bolt media or abuse checks onto scattered endpoints.
+
+```text
+DM request: blocked? -> deny | safety gates unavailable? -> deny | limits pass -> create/reuse DM
+Media: initiated -> uploaded -> pending_scan -> ready | rejected | quarantined -> deleted/tombstone
+Report: submitted -> triaged -> actioned | closed  (audit append-only; no tenant-host DM read grant)
+```
+
+One canonical DM safety decision owns pair block state and is called at request/create/send/read boundaries. The pre-send core additionally checks membership, sender/channel limit, sender/target limit and attachment readiness/ownership before writing. No endpoint may implement its own block formula.
 
 ---
 
@@ -323,13 +337,17 @@ GRANT  SELECT, INSERT ON chat_messages TO app;
 | 4 | Concurrency | Double-send (retry cùng client_msg_id) | UNIQUE(channel_id, client_msg_id) → trả message cũ, no dup; **dedupe cả assistant/system** (author NULL) vì không phụ thuộc author |
 | 4b | Data Integrity | DM thêm người thứ 3 (ghi) | ❌ Trigger `chat_dm_members_guard` chặn — DM đúng 2 member khớp `dm_key` |
 | 5 | Anti-spam | Flood messages | Rate-limit per (person, channel) + max_count/window; 429 |
-| 6 | Anti-spam | Message quá dài / media lớn | Cap size (text; media/emoji tối thiểu phase-1) — reject over cap |
+| 6 | Anti-spam | Message quá dài / media lớn | Content-derived type + size/quota cap; reject before attach/serve |
 | 7 | Security | Bridge ra Zalo/Messenger | ❌ NEVER phase-1 — không có projector kênh ngoài (CO-7) |
 | 8 | Realtime | Topic guessing (SSE) | AuthZ per subscription — reject unauthorized (giống sync engine §3) |
 | 9 | Data Integrity | Assistant/system message (DD-20) | `author_type≠'person'` → `membership_id` NULL (CHECK) |
 | 10 | Cross-Feature | Account merge → chat authorship | Re-parent `author_person_id`/members về canonical person (identity merge) |
 | 11 | Data Integrity | DM tạo trùng cho cùng cặp | `dm_key` normalized + UNIQUE — 1 kênh/cặp, idempotent |
 | 12 | Security | Member rời CLB vẫn đọc club chat | Membership `left` → mất quyền club channel (authz theo membership active) |
+| 13 | Abuse | Actor or target has blocked the other | Deny DM request/create/send/read at boundary; public error stays generic |
+| 14 | Abuse | Sender targets many users or repeatedly targets one user | Enforce both per-sender and per-target/pair windows; audit limit outcome |
+| 15 | Security | Media pending, quarantined, rejected, deleted, wrong owner, or wrong channel | Never attach/serve; signed-read endpoint re-checks current channel authz |
+| 16 | Security | Host/support tries to inspect a reported DM | Deny by person-self RLS; report stores bounded abuse artifact/reference only, not a host-readable transcript |
 
 ---
 
@@ -342,6 +360,13 @@ GRANT  SELECT, INSERT ON chat_messages TO app;
 | POST | /api/chat/channels/:id/messages | Member of channel | Gửi message `{client_msg_id, body}` (idempotent) |
 | POST | /api/chat/dm | Authenticated Person | Mở/lấy DM với `personId` (idempotent theo `dm_key`) |
 | POST | /api/chat/channels/:id/read | Member of channel | Cập nhật `last_read_at` |
+| POST | /api/chat/block | Authenticated Person | Block target deterministically; close future create/send in either direction per policy |
+| DELETE | /api/chat/block/:targetPersonId | Authenticated Person | Unblock target; audited |
+| POST | /api/chat/report | Authenticated Person | Report person/message with bounded reason code; no host DM-read grant |
+| POST | /api/chat/media/initiate | Authenticated Person | Validate declared size/type/quota; return private short-lived upload grant |
+| POST | /api/chat/media/:id/finalize | Attachment owner | Verify object metadata; enqueue malware/moderation scan idempotently |
+| GET | /api/chat/media/:id/access | Authorized channel member | Re-authorize current membership/state; issue short-lived signed read only for `ready` object |
+| DELETE | /api/chat/media/:id | Attachment owner or authorized moderator | Apply deletion policy; tombstone references; revoke future signed access |
 | GET | /api/chat/subscribe | Authenticated | SSE — topic `tenant:<id>:chat:<channel>` (club) / `person:<id>:chat` (dm) |
 
 ### Realtime Authorization (reuse DD-07 / sync engine §3)
@@ -359,6 +384,10 @@ Topic person:<id>:chat          → requires authenticated person == <id> (perso
 | 409 | `CHAT_DUP_MESSAGE` (200-safe) | — | Duplicate `client_msg_id` → trả message cũ |
 | 413 | `CHAT_MESSAGE_TOO_LARGE` | Tin nhắn quá dài | Over size cap |
 | 429 | `CHAT_RATE_LIMITED` | Gửi quá nhanh — thử lại | Anti-spam limit |
+| 403 | `CHAT_SAFETY_BLOCKED` | Không thể thực hiện thao tác | Blocked pair or open-DM safety gate unavailable; intentionally generic |
+| 409 | `CHAT_MEDIA_NOT_READY` | Tệp chưa sẵn sàng | Pending/rejected/quarantined/deleted/wrong-owner attachment |
+| 415 | `CHAT_MEDIA_TYPE_REJECTED` | Loại tệp không được hỗ trợ | Content-derived MIME not allow-listed |
+| 422 | `CHAT_MEDIA_REJECTED` | Tệp không thể sử dụng | Malware/moderation rejection; no signed access |
 
 ### Rate Limits
 
@@ -366,6 +395,9 @@ Topic person:<id>:chat          → requires authenticated person == <id> (perso
 |----------|-------|-------|
 | POST message | 20/10s (burst), 300/min | Per (person, channel) |
 | POST /chat/dm | 30/min | Per person |
+| POST /chat/dm + DM sends | Product-tuned bounded windows | Both per sender and per sender-target pair; no open-DM launch without verified thresholds |
+| Media initiate/finalize | Product-tuned object + byte quota | Per person/day + concurrent pending objects + channel |
+| Report | Bounded burst + daily cap | Per reporter/target; preserve legitimate safety escalation path |
 
 ---
 
@@ -374,12 +406,14 @@ Topic person:<id>:chat          → requires authenticated person == <id> (perso
 ### Send pipeline
 
 ```text
-Validate member + rate-limit → INSERT chat_messages (ON CONFLICT client_msg_id → return existing)
+Resolve actor/channel → shared safety core (membership + block + sender + target/pair limits)
+    → validate every attachment is actor-owned + channel-bound + ready
+    → INSERT chat_messages (ON CONFLICT client_msg_id → return existing)
     → pg NOTIFY 'chat_<channel>' (payload = message id, không PII)
     → SSE dispatcher đọc canonical message, đẩy tới subscribers authorized
 ```
 
-Message body escape/sanitize; text phase-1 (media/emoji tối thiểu). NOTIFY payload **không** chứa body/PII — subscriber refetch canonical dưới authz.
+Message body escape/sanitize. Media upload is private and separate from send: validate declared metadata → direct private upload → verify object metadata/content-derived MIME → scan/moderate → mark `ready`; pending/rejected/quarantined/deleted objects are never attached or served. Read access is short-lived and re-authorized on each request; deletion revokes future grants and leaves a message tombstone. Orphan pending objects expire through a cleanup job. NOTIFY payload **không** chứa body/object key/PII — subscriber refetch canonical dưới authz.
 
 ### Trợ lý tái dùng (DD-19 pha B, DD-20 — P7, ngoài phase-1)
 
@@ -420,6 +454,15 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 | 25 | **Provision bằng MIGRATION ROLE thật (không superuser)** | Chạy migration DDL dưới `DATABASE_URL_MIGRATION` (DDL-owner, NOSUPERUSER): (a) `CREATE ROLE … BYPASSRLS` do migration role → **FAIL** (PG16: cần superuser hoặc role có BYPASSRLS+CREATEROLE); (b) khi `chat_definer` đã pre-provision + `GRANT chat_definer TO migration_owner` → `CREATE FUNCTION` + `ALTER … OWNER TO chat_definer` + GRANT table **chạy OK**; (c) thiếu pre-provision → migration FAIL sớm. Test harness **không** được dùng superuser để "che" |
 | 26 | **ALTER OWNER thiếu CREATE ON SCHEMA (PG16)** | Fresh PG16 (public không cấp CREATE mặc định): `ALTER FUNCTION … OWNER TO chat_definer` khi chat_definer **chưa** có `CREATE ON SCHEMA public` → **FAIL**; sau `GRANT CREATE … TO chat_definer` → OK; `REVOKE CREATE` sau đó không phá runtime (chỉ cần USAGE) |
 | 27 | **Pre-provision idempotent + attribute check ĐỦ BỘ** | Re-run với chat_definer đúng exact attributes → **no-op**; `CREATE ROLE` thuần (không guard) → FAIL "already exists". **chat_definer tồn tại với BẤT KỲ attribute thừa** — `LOGIN`, `NOBYPASSRLS`, `SUPERUSER`, `CREATEDB`, `CREATEROLE`, **`INHERIT`**, hoặc **`REPLICATION`** → DO-block **RAISE fail-closed**, KHÔNG cấp table grants. Từng attribute phải có case riêng (regression: thiếu kiểm `rolinherit`/`rolreplication` → role privilege thừa vẫn lọt validation) |
+| 28 | **Open-DM hard gate** | Disable any one of block/report/sender-target-limit/audit capabilities | `create_dm` and DM send both fail closed; feature cannot launch |
+| 29 | **Block bypass** | A blocks B; either side reuses existing DM and attempts request/create/send/read | Every boundary denies per canonical block decision; no block detail leaked |
+| 30 | **Sender-target throttle** | One sender fans out and repeatedly targets one person | Independent sender and pair/target windows enforce + audit |
+| 31 | **Host/support DM denial** | Tenant owner/support queries normal or reported DM | RLS/authz deny; reporting does not grant transcript read |
+| 32 | **Media content validation** | Declared image with executable bytes / oversize / quota exceeded | Reject or quarantine; never `ready`, attachable, or signed-readable |
+| 33 | **Media ready-only attach** | Pending/rejected/wrong-owner/wrong-channel object in send command | Transaction rejected; no message/attachment partial write |
+| 34 | **Signed read re-authz** | Member gets old URL then leaves channel/object is deleted | New access denied; short-lived old grant expires; tombstone remains |
+| 35 | **Media scan idempotency + orphan cleanup** | Finalize retry + abandoned upload | One scan lifecycle; stale orphan deleted after TTL |
+| 36 | **Media deletion lifecycle** | Delete attached media | Object unavailable, future grants denied, message renders tombstone, audit retained |
 
 ---
 
@@ -430,8 +473,10 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 0. **PRE-PROVISION (tier superuser, production-equivalent, TRƯỚC migration):** idempotent DO-block `CREATE ROLE chat_definer NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION` + **kiểm exact attributes** (login/super/bypassrls/createdb/createrole/inherit/replication) → fail-closed nếu role đã tồn tại sai (BYPASSRLS: **superuser** hoặc role đã có BYPASSRLS + CREATEROLE — PG16) + `GRANT chat_definer TO <migration_owner_role>` (SET ROLE) + `GRANT USAGE ON SCHEMA public TO chat_definer` (runtime). **KHÔNG** đặt trong migration DDL-owner.
 1. **Migration mới sau `0013`** (`0014+`) tạo `chat_*` + functions (`chat_current_is_member`/`create_dm`/`mark_read`); **`GRANT CREATE ON SCHEMA public TO chat_definer`** (PG16: owner mới cần CREATE trên schema; fresh PG15+ không cấp mặc định) → `ALTER … OWNER TO chat_definer` (cả 3) → **`REVOKE CREATE ON SCHEMA public FROM chat_definer`** (giữ USAGE); + GRANT table (chat_definer + app) + thêm vào RLS list (KHÔNG sửa `0009`). **Chạy/kiểm bằng migration role thật (không superuser)** để bắt gap provision. Test bất biến cô lập xanh.
 2. Club channel (1 kênh/tenant) — send/read + SSE.
-3. DM 1-1 (person-self, bootstrap qua `create_dm`) + anti-spam.
-4. (P7) Trợ lý bot-participant tái dùng `chat_*` (DD-19/20).
+3. Land one shared pre-send safety core + block/report tables/audit + sender/pair throttles; verify host/support DM denial.
+4. Land private media lifecycle (storage grants, scan/moderation worker, ready-only attach, signed read, delete/orphan cleanup).
+5. Enable DM 1-1 only after the complete DD-55 safety gate passes; otherwise keep DM OFF.
+6. (P7) Trợ lý bot-participant tái dùng `chat_*` (DD-19/20).
 
 ### Changelog
 
@@ -447,3 +492,4 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 | 2026-07-11 | v0.8 | **Round-6 fix (review, PG16 chính xác):** (a) **`ALTER FUNCTION … OWNER TO chat_definer` cần owner mới có `CREATE ON SCHEMA public`** — PG15+/PG16 KHÔNG cấp `CREATE public` mặc định → `GRANT chat_definer TO migration_owner` (SET ROLE) là **chưa đủ**; thêm bracket `GRANT CREATE ON SCHEMA public TO chat_definer` → ALTER OWNER (cả 3) → `REVOKE CREATE` (giữ USAGE, least-privilege). (b) role-creation block nay **idempotent** (`DO … IF NOT EXISTS`, không `CREATE ROLE` thuần), + wording PG16 đúng: gán BYPASSRLS cần **superuser hoặc role đã có BYPASSRLS (+CREATEROLE)**. (c) test 26 (ALTER OWNER thiếu CREATE ON SCHEMA → FAIL) + test 27 (idempotent re-run). |
 | 2026-07-11 | v0.9 | **Round-7 fix (review, SQL chạy được thật):** (a) **`GRANT/REVOKE CREATE ON SCHEMA public` nay là câu lệnh THẬT, đúng thứ tự** — gom 3 `ALTER FUNCTION … OWNER` vào **BLOCK CHUYỂN OWNER** cuối, bracket bởi GRANT CREATE (trước ALTER đầu) và REVOKE CREATE (sau ALTER cuối); bỏ ALTER OWNER rải rác inline (trước đây chạy TRƯỚC grant → copy/chạy dưới migration role sẽ fail). (b) **DO-block kiểm ATTRIBUTE, không chỉ existence**: nếu chat_definer tồn tại với LOGIN/NOBYPASSRLS/SUPERUSER/CREATEROLE → **RAISE fail-closed** (LOGIN+BYPASSRLS nguy hiểm khi nhận table grants); kèm option chuẩn hoá `ALTER ROLE`. (c) test 27 mở rộng: attribute sai → fail-closed. |
 | 2026-07-11 | v0.10 | **Round-8 fix (review, attribute check ĐỦ BỘ):** DO-block trước chỉ kiểm login/super/bypassrls/createdb/createrole → role thừa **`INHERIT`** hoặc **`REPLICATION`** vẫn lọt. Thêm `rolinherit, rolreplication` vào `SELECT` + điều kiện `ELSIF` (inherit phải FALSE, replication phải FALSE); `CREATE ROLE`/normalize thêm **`NOINHERIT NOREPLICATION`**; RAISE log đủ 7 field. Test 27 mở rộng phủ INHERIT/REPLICATION. |
+| 2026-07-16 | v0.11 | **Full propagation DD-55 (decisions v1.37):** open-DM hard gate (block/report/per-sender+pair limits/abuse audit), shared pre-send core, host/support DM denial, and complete private media upload/scan/moderation/ready-only attach/signed access/deletion/orphan lifecycle. Added APIs, errors, rollout gates and tests 28–36. |

@@ -23,7 +23,7 @@
 | Webhook | 1 endpoint `/telegram/<secret>` | per-bot `/webhook/zalo/:token` | **1 endpoint duy nhất**, route theo `entry[].id` (page_id) |
 | Nút bấm / inline | ✅ inline keyboard + callback | ❌ number-reply | **✅ quick replies + buttons + postback** (giàu hơn Zalo) |
 | User id | global `from.id` | per-OA user id | **PSID — page-scoped** (mỗi Page 1 id khác nhau) |
-| Chia sẻ SĐT verified | ✅ `request_contact` | ✅ | **❌ không có native** → merge khó hơn |
+| Phase-1 identity proof | Verified account email / transactional `link_code` (DD-50) | Cùng contract | Cùng contract; không phụ thuộc phone |
 | Nhắn chủ động ngoài 24h | ✅ không giới hạn | ⚠️ có hạn chế | **❌ rất hạn chế (xem §2)** |
 
 **Hệ quả thiết kế cốt lõi:**
@@ -67,7 +67,7 @@ Messenger có **cửa sổ nhắn 24 giờ**: Page chỉ được nhắn user t�
 | **2. Tạo & đăng buổi** | **Không có group để auto-announce.** Owner tạo buổi như cũ; "đăng" = bot **broadcast DM** tới member còn trong cửa sổ 24h / đã OTN-opt-in. | Cần đổi |
 | **3. Join (Telegram group tap)** | **Không port.** Thay bằng FLOW-4-style. | N/A |
 | **4. Join (Zalo number-reply)** | **Map thẳng + nâng cấp:** `/join` → bot gửi **danh sách buổi dạng quick-reply/button** → user bấm (postback `pjoin:<id>`) thay vì gõ số. | Dễ (tốt hơn Zalo) |
-| **5. Identity claim & merge** | Như cũ, **trừ auto-merge bằng SĐT** (Messenger không share contact) → chỉ còn **OTP `/link`** + owner duyệt. PSID page-scoped → identity tự gắn tenant. | Vừa |
+| **5. Identity claim & merge** | PSID page-scoped; verified account identity hoặc transactional one-time `/link` code. Owner/name/CK chỉ là review evidence, không bypass DD-50. | Vừa |
 | **6. Đối soát CK & gạch nợ** | **Không đổi** — kênh tiền (SePay) độc lập với kênh chat. | Không đổi |
 | **7. Nhắc nợ** | **Điểm đau** — xem §2. Tự động chỉ trong 24h / OTN; ngoài đó owner bấm (HUMAN_AGENT). | Khó (chính sách) |
 | **8. Xác nhận đã trả** | Gửi DM xác nhận; **chỉ chắc gửi được nếu còn trong 24h**. Đưa vào `notifyPlayersPaid` theo `ChannelReachability(messenger)`. | Vừa |
@@ -228,9 +228,9 @@ sequenceDiagram
 | # | Rủi ro / Câu hỏi | Mitigation / Trạng thái |
 |---|---|---|
 | R1 | **Nhắc nợ ngoài 24h không khả thi (VN)** — tính năng lõi yếu trên Messenger | Chiến lược A+C (+B nếu OTN mở); nói rõ kỳ vọng cho chủ CLB; định vị Messenger là kênh "join + xác nhận", **web + Zalo** gánh nhắc |
-| R2 | **App Review chậm/bị từ chối** | Nộp sớm; chuẩn screencast use-case rõ ràng; có sản phẩm Zalo/web chạy thật để minh hoạ; degrade → OTP `/link` thủ công (DD-33) |
-| R3 | **Không merge được bằng SĐT** (no contact share) | Chỉ dùng OTP `/link` + owner duyệt (AUDIT C3); chấp nhận tỉ lệ merge thấp hơn |
-| R4 | **PSID page-scoped** — cùng người ở 2 club = 2 PSID khác | Đúng kỳ vọng multi-tenant; merge xuyên-Page qua FB Login app-scoped id (optional) hoặc OTP |
+| R2 | **App Review chậm/bị từ chối** | Nộp sớm; degrade → transactional one-time `/link` code (DD-33/DD-50) |
+| R3 | **Không có native phone share** | Không ảnh hưởng phase-1 proof: dùng verified account email hoặc transactional `link_code`; phone dormant |
+| R4 | **PSID page-scoped** — cùng người ở 2 club = 2 PSID khác | Đúng kỳ vọng multi-tenant; merge xuyên-Page qua verified FB identity hoặc transactional `link_code` |
 | R5 | **Page token bị thu hồi** | webhook-drift/health cron → báo owner nối lại; blast-radius gói trong 1 Page |
 | OD-A | OTN còn mở ở VN không? | ⬜ Spike P2.5.0 |
 | OD-B | Utility Templates khả dụng VN + có hợp "nhắc đóng phí"? | ⬜ Spike P2.5.0 |

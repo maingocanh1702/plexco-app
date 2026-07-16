@@ -6,7 +6,7 @@
 
 > **Canonical phase:** P4 (hồ sơ + nguồn `gender` cho giá kèo; follow/visibility P4+)
 > **Track:** ⚙️ User Settings & Profile
-> **Version:** 0.5 · 2026-07-15
+> **Version:** 0.6 · 2026-07-16
 > **Status:** DD-39 ✅ · DD-47/48 ✅ framework — Draft (pending migration/build)
 > **Prerequisites:** P3.5 identity (Person) · P4 web/app surface · (giá theo giới tính đọc bởi `feature_session_management` + `feature_payment_reconcile`) · (follow/visibility: `feature_identity` merge + `feature_player_view` profile path)
 > **Tài liệu liên quan:** `../product/BRD.md` MODULE 11 / BR-16 / FR-11 / AC-11-12 · `../standards/decisions.md` **DD-39 · DD-47 · DD-48** · `feature_session_management.md` (đặt giá nam/nữ) · `feature_payment_reconcile.md` (suy charge) · `feature_identity.md` · `feature_player_view.md` · `packages/db/schema.ts` (**AUTHORITATIVE** khi triển khai)
@@ -46,7 +46,7 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|
-| USR-UC-1 | User | Đặt/sửa giới tính (tập giá trị **đề xuất** nam/nữ/khác/không tiết lộ — chờ USR-OQ-1 / brief Item 5) | Lưu vào hồ sơ Person (PII consent); dùng cho suy giá |
+| USR-UC-1 | User | Đặt/sửa giới tính (tập giá trị **✅ chốt DD-39 addendum**: nam/nữ/khác/không tiết lộ) | Lưu vào hồ sơ Person (PII consent); dùng cho suy giá |
 | USR-UC-2 | User | Đặt ngày sinh | Lưu PII mã hoá; không lộ public |
 | USR-UC-3 | User | Đổi tên hiển thị | Cập nhật + sync mọi surface |
 | USR-UC-4 | User | Đặt/đổi username | Kiểm tra trùng toàn hệ; reject nếu trùng |
@@ -218,9 +218,9 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 | DD-39 | Giá theo giới tính (giá nam/nữ; gender từ hồ sơ; không lộ public) | ✅ Chốt |
 | DD-47 | Social follow graph `person_follows` global protected | ✅ Chốt framework, build P4+ |
 | DD-48 | `profile_visibility` + sourced social whitelist + route split | ✅ Chốt framework, 5 open item lúc build |
-| USR-OQ-1 | Tập giá trị gender (nam/nữ/khác/không tiết lộ) + xử lý "khác" cho giá kèo | ⬜ Chưa chốt |
+| USR-OQ-1 | Tập giá trị gender + xử lý "khác" cho giá kèo | ✅ **Chốt DD-39 addendum (2026-07-16)** — `male`/`female`/`other`/`undisclosed`; `other`/`undisclosed`/NULL → **giá base**; fail-closed CHỈ khi KMS/decrypt lỗi. Kèm **DD-54**: gender/DOB là PII optional — thu thập theo platform config trên CMS admin dashboard |
 | USR-OQ-2 | Lưu giá theo giới tính: cột `price_male/price_female` vs bảng `session_price_by_gender` | ⬜ Chưa chốt |
-| USR-OQ-3 | Retention/anonymization SLA cho PII hồ sơ | ⬜ Chưa chốt |
+| USR-OQ-3 | Retention/anonymization SLA cho PII hồ sơ | 🟠 **Partial (DD-54, 2026-07-16):** collection policy ✅ (PII optional theo platform config; field vận hành không config-off); retention/erasure matrix vẫn chờ legal review VN (Luật 91/2025 + NĐ 356/2025) — founder brief Item 6 |
 | USR-OQ-4 | Tập "stats" trong profile whitelist + có aggregate **cross-tenant** không (rủi ro lộ hoạt động xuyên CLB) | ⬜ Build-time — **DD-48 open item #1** (framework ✅; default exclude tới khi có model) → `../dd-48-profile-visibility-analysis.md` §5 |
 | USR-OQ-5 | Follower-count / following-list của user **private** có ẩn với non-follower không | ⬜ Build-time — **DD-48 open item #2** (framework ✅) → `../dd-48-profile-visibility-analysis.md` §5 |
 | USR-OQ-6 | Private có ảnh hưởng quyền **DM in-app** (DD-38) không | ⬜ Build-time — **DD-48 open item #3** (framework ✅) → `../dd-48-profile-visibility-analysis.md` §5 |
@@ -233,6 +233,7 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 | Date | Version | Thay đổi |
 |---|---|---|
 | 2026-07-15 | v0.5 | **Propagation (light):** neo USR-OQ-4..9 vào DD-48 (5 open item) / DD-47 (notify impl-gap) — framework đã ✅, các item này chốt lúc build P4+; trỏ file phân tích. Không đổi schema/body Reviewed. |
+| 2026-07-16 | v0.6 | **Propagation (light) DD-39 addendum + DD-54:** USR-OQ-1 ✅ (value set `male/female/other/undisclosed`, fallback base, fail-closed chỉ KMS/decrypt); USR-OQ-3 🟠 partial (collection theo platform config DD-54; retention chờ legal); USR-UC-1 bỏ "đề xuất". Schema/migration defer build slice. Authority: decisions v1.36. |
 | 2026-07-15 | v0.4 | **DD-47/48 framework ✅:** global-protected functions; state-idempotent follow; existing user private/new user public migration; sourced field whitelist; `/api/me`, social profile và host operational routes tách biệt. |
 | 2026-07-11 | v0.3 | **Thêm §7 Follow & Profile Visibility (DD-47/48 🟡).** Follow graph `person_follows` (global, có hướng, pending/accepted, auto-accept public / approve private); `persons.profile_visibility` (default `public`); gating profile cross-user fail-closed, whitelist non-PII; private ẩn **cả đồng đội cùng CLB** trừ host (ngoại lệ vận hành); **KHÔNG** nới RLS / không đụng tiền (HR1/HR2). Use/edge cases, screens, analytics, AC, USR-OQ-4..9. Renumber Open Questions/Changelog → §8. |
 | 2026-07-10 | v0.1 | Khởi tạo Draft (DD-39 + hồ sơ): gender/dob/name/username/language; giá theo giới tính (suy charge theo `person.gender`); PII consent, không lộ public. Schema proposal-level trỏ decisions.md + `packages/db/schema.ts`; hồ sơ gắn `persons` (không root table `users`). |

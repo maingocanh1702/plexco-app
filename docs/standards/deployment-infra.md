@@ -1,6 +1,6 @@
 # Deployment & Infrastructure — Plexco
 
-> **Version:** v1.7 · 2026-07-16 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; cost model = `$120–135` Day-1 baseline + **trigger-based upgrades** (Rev 2, thay Tier A/B $121–133/$202–254); Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../dd-04-hosting-final-decision.md`)
+> **Version:** v1.8 · 2026-07-16 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; Day-1 `$120–135` với read isolation trên primary; read-only node là upgrade theo telemetry; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../dd-04-hosting-final-decision.md`)
 > **Status:** Draft (chờ review)
 > **Scope:** Cách deploy Plexco tối ưu/hiệu quả/dễ maintain, kèm scalability & security ở tầng hạ tầng.
 > **References:** `../product/TDD.md` §3.4/§7/§8 · `../strategy/saas-implementation-plan.md` §4/§5/§7 · `../research/player-side-saas-AUDIT.md` (C1–C8b · B1–B6 · G1–G6) · `../features/BE/feature_security_operations_tech.md`
@@ -43,7 +43,7 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 
 **Đã chốt:** Managed Postgres **HA (auto-failover) + PITR**, **region Singapore**, **private VPC** (co-locate). Compute = **DigitalOcean App Platform** (DD-10 giữ nguyên: standalone container, không Vercel).
 **Gate cứng (đã đạt qua (c)):** **auto-failover HA + uptime SLA + posture private-network** (VPC by construction).
-**Phân tích đầy đủ + nguồn:** `../dd-04-hosting-final-decision.md` (final ✅) · `../dd-04-hosting-decision-brief.md` (rev 4, phân tích) — bảng dưới là tóm tắt (a/b/c ứng viên, giữ làm tham chiếu; (c) đã chọn).
+**Phân tích đầy đủ + nguồn:** `../dd-04-hosting-final-decision.md` (final ✅) · `../dd-04-hosting-decision-brief.md` (rev 5, phân tích) — bảng dưới là tóm tắt (a/b/c ứng viên, giữ làm tham chiếu; (c) đã chọn).
 
 **Lịch sử QĐ-1 (đã superseded bởi quyết định ở trên):** khi compute còn target Fly, DB managed khác cloud nên không private thật trừ PrivateLink/co-locate. **(a)** public TLS + `sslmode=verify-full` + static-egress-IP allowlist [Fly, nay chỉ là fallback] · **(b)** PrivateLink AWS [loại] · **(c)** co-locate compute+DB cùng cloud [**đã chọn**; đổi deployment target nhưng không đảo DD-10].
 
@@ -103,13 +103,13 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
  │ port 3000      │   │                 │               │                    │
  └──────┬─────────┘   └──────┬──────────┘               └────────┬───────────┘
         │ role=app           │ role=readonly                     │ role=app_worker
-        │ pooled (txn)       │ pooled (txn, replica)             │ DIRECT (session)
+        │ pooled (txn)       │ pooled (txn, bounded)             │ DIRECT (session)
         ▼                    ▼                                   ▼
- ┌────────────────────────────────────┐         ┌──────────────────────────────┐
- │  Postgres PRIMARY (HA + PITR)       │────────▶│  Read replica                 │
- │  RLS fail-closed · writes · money   │  stream │  discovery + player-view reads│
- │  pg-boss queue/cron · outbox        │         │  (offload hot public reads)   │
- └────────────────────────────────────┘         └──────────────────────────────┘
+ ┌────────────────────────────────────────────────────────────────────────────┐
+ │  Postgres PRIMARY + HA STANDBY (PITR, auto-failover)                       │
+ │  writes/money + pg-boss; discovery bị giới hạn pool/timeout/circuit-breaker│
+ └────────────────────────────────────────────────────────────────────────────┘
+        └── [upgrade theo telemetry] read-only node cho public reads nóng
         │
         └── KMS / Secret manager (bot_token_enc, webhook_secret_enc, session keys)
 ```
@@ -124,11 +124,11 @@ Ví von: **một căn bếp, nhiều ca làm** — cùng công thức (image), m
 
 | Process | Vai trò | DB role | Connection | Ingress | Scale |
 |---|---|---|---|---|---|
-| **web** | dashboard, API, SSE, **mọi webhook** (Zalo/Messenger/SePay/ApiPay) | `app` (NOSUPERUSER NOBYPASSRLS) | **pooled** (txn) cho request + **1 direct (session)** cho SSE `LISTEN` (`DATABASE_URL_LISTEN`) | HTTP :3000 | ngang, N replica, autoscale CPU/RPS |
-| **discovery** | chỉ `GET /discover` (cross-tenant, đọc **projection công khai**) | `readonly` (**chỉ SELECT trên `public_sessions` + public view**) | **pooled** trên **read replica** | HTTP (route con) | ngang + CDN cache |
+| **web** | dashboard, API, SSE, **mọi webhook** (Zalo/Messenger/SePay/ApiPay) | `app` (NOSUPERUSER NOBYPASSRLS) | **pooled** (txn) cho request + **1 direct (session)** cho SSE `LISTEN` (`DATABASE_URL_LISTEN`) | HTTP :3000 | ngang; RPS/p95 autoscale dùng shared hoặc dedicated, CPU autoscale cần dedicated CPU |
+| **discovery** | chỉ `GET /discover` (cross-tenant, đọc **projection công khai**) | `readonly` (**chỉ SELECT trên `public_sessions` + public view**) | **pooled, bounded** trên primary Day-1; đổi riêng component `DATABASE_URL` sang read-only node khi trigger | HTTP (route con) | ngang + CDN cache |
 | **worker** | pg-boss scheduler/dispatcher, projectors, cron nhắc nợ | `app_worker` (chỉ narrow functions) | **DIRECT** (session-mode) | **không** ingress | 1 → vài replica (claim `SKIP LOCKED`) |
 
-> **Vì sao tách `discovery` ra process riêng** (dù cùng image): đây là đường đọc *cố ý cross-tenant*, *không PII*, và *chịu DDoS cao nhất* (G6). Tách ra cho phép gắn **read replica + CDN cache + rate-limit policy riêng**, cô lập hoàn toàn khỏi đường tiền/ghi trên primary. Nếu sau này phải "tách 1 thứ" thành service thật, đây là ứng viên duy nhất hợp lý.
+> **Vì sao tách `discovery` ra process riêng** (dù cùng image): đây là đường đọc *cố ý cross-tenant*, *không PII*, và *chịu DDoS cao nhất* (G6). Tách process + DB role cho phép áp **pool/timeout/circuit-breaker + CDN/rate-limit riêng** ngay Day-1; khi telemetry chạm trigger, chỉ đổi connection của component này sang read-only node, không đổi code hay API. Nếu sau này phải "tách 1 thứ" thành service thật, đây là ứng viên duy nhất hợp lý.
 
 > 🔒 **"Cross-tenant không qua RLS" KHÔNG có nghĩa bypass cô lập.** Role `readonly` **chỉ được `GRANT SELECT` trên các object projection công khai** (`public_sessions` và public view do projector sinh — xem DD-12), và **zero grant** trên mọi bảng canonical chứa tiền/PII (`charges`, `bank_transactions`, `allocations`, `memberships`, `person`…). Bất biến cô lập tenant vẫn được giữ ở **tầng quyền** (least-privilege), không phải ở RLS — vì bảng `public_sessions` theo thiết kế **không chứa** dữ liệu tenant-private nên không cần RLS để bảo vệ. Phải có **test gate** khẳng định `readonly` không đọc được bảng canonical (CI §7 — "public-projection invariant").
 
@@ -148,10 +148,10 @@ N web replica × pool → **bùng nổ connection**, giết Postgres trước c�
 - ⇒ **ba connection string**: `DATABASE_URL` (pooled, request) · `DATABASE_URL_LISTEN` (session, SSE listener ở web) · `DATABASE_URL_DIRECT` (session, worker pg-boss).
 - 💡 Tổng connection session-mode = (số web replica × 1) + (số worker replica × pool worker). Tính vào trần connection của Postgres khi sizing.
 
-### 5.2 Read replica cho đường đọc public
-Discovery (10k search đồng thời) + player-view reads → đẩy sang **replica + CDN cache** (response không PII nên cache được, TTL ngắn). Tách khỏi primary để đường tiền/ghi không bị đường đọc làm nghẽn.
+### 5.2 Read isolation trước; read-only node khi có trigger
+Day-1, discovery/player-view dùng projection-only `readonly` role trên primary với pool riêng có trần, `statement_timeout`, reserved connection budget cho money path, CDN TTL ngắn và circuit-breaker. Khi DB CPU/read I/O/connection pressure hoặc p95 discovery vượt ngưỡng đã chốt, provision read-only node rồi đổi **riêng** `discovery.DATABASE_URL`; code, image và public contract không đổi.
 
-> ⚠️ **Consistency replica ⇄ SSE (read-your-writes).** Replica trễ so với primary; `worker` có thể `NOTIFY` trước khi replica bắt kịp → client nhận event SSE rồi đọc lại **dữ liệu cũ** nếu đọc từ replica. Quy tắc bắt buộc:
+> ⚠️ **Khi đã bật read-only node: consistency replica ⇄ SSE (read-your-writes).** Replica trễ so với primary; `worker` có thể `NOTIFY` trước khi replica bắt kịp → client nhận event SSE rồi đọc lại **dữ liệu cũ** nếu đọc từ replica. Quy tắc bắt buộc:
 > 1. **Authenticated post-write reads → đọc PRIMARY** (host dashboard/roster sau khi vừa mutate). Đây là đường nhạy nhất; read-your-writes phải đúng tuyệt đối.
 > 2. **Public/discovery reads** chấp nhận replica lag (đã có CDN TTL ngắn) — không cần read-your-writes; chỉ cần eventual.
 > 3. Nếu muốn vẫn dùng replica cho post-write read: dùng **LSN wait** (đọc với `wait_for_lsn` của commit vừa rồi) hoặc trả **staleness header** để client biết tự retry. Mặc định ưu tiên (1) cho đơn giản & đúng.
@@ -163,7 +163,7 @@ pg-boss claim job atomic → chạy được **nhiều worker replica** không t
 - Zalo BYO 1 bot/club ⇒ **phân tán tải gửi** (free-at-scale), không dồn vào 1 bot.
 
 ### 5.4 Vertical trước, shard sau (gần như không cần)
-Ở ≥1k tenant: **scale primary lên + thêm replica** là đủ.
+Ở ≥1k tenant: scale theo telemetry — resize primary khi write/connection pressure chạm ngưỡng; chỉ thêm read-only node khi read contention đã đo được và controls §5.2 không đủ.
 - Bảng churn cao (`outbox_events`, `bank_transactions`, audit): index theo `tenant_id`+time; **dọn `outbox` đã deliver**; partition theo thời gian khi lớn.
 - Nếu *rất xa* sau này mới cần shard → mọi thứ đã key theo `tenant_id`, shard theo đó là tự nhiên. Coi là việc tương lai, không làm sớm.
 
@@ -180,7 +180,7 @@ RLS, repo choke-point, field-whitelist nằm ở **code**. Deploy phải thêm l
 |---|---|
 | **C7 / edge#11** blast-radius secret · migration cred lọt prod | **4 DB role tách ở connection level**: `migration` (chỉ CI job, *KHÔNG BAO GIỜ* trong runtime) · `app` (NOSUPERUSER NOBYPASSRLS) · `app_worker` (narrow functions) · `readonly`. Runtime prod **không mang** superuser/migration cred. |
 | **C7 / B2** token lộ | Secret manager + **KMS envelope** (`bot_token_enc`/`webhook_secret_enc`); không bake vào image/log; **rotation + kill-switch runbook**; job `getWebhookInfo`-drift. Token Zalo lộ = 1 club messaging, không chạm tiền/DB. |
-| **C8 / G6** rò public · scrape · DDoS discovery | Role `readonly` **chỉ SELECT trên `public_sessions`/public view, zero grant bảng canonical tiền/PII** (least-privilege, không phụ thuộc RLS); Discovery qua **replica + CDN cache + rate-limit + WAF**; per-IP/per-token throttle; phân trang; `venue` ẩn tới khi join; không lộ `tenant_id`. |
+| **C8 / G6** rò public · scrape · DDoS discovery | Role `readonly` **chỉ SELECT trên `public_sessions`/public view, zero grant bảng canonical tiền/PII**; Day-1 có bounded pool + timeout + circuit-breaker + CDN/rate-limit/WAF; read-only node bật theo trigger; per-IP/per-token throttle; phân trang; `venue` ẩn tới khi join; không lộ `tenant_id`. |
 | **G3 / G1** admin mutation chưa rate-limit · đổi STK | WAF rule + rate-limit riêng cho mutation/auth; STK-change confirmation delay (service) + **audit** (infra). |
 | **B3 / edge#1** webhook giả | timing-safe verify ×3 (code) + **body-size cap + per-token rate-limit** (edge); lưu raw trước ACK. |
 | **B5** cron privileged cross-tenant | `app_worker` chỉ gọi narrow function (`claim_outbox_batch`, `list_due_tenant_jobs`); mọi privileged call **ghi audit** (`job_id`,`tenant_id`,actor=system). |
@@ -305,3 +305,4 @@ Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill
 | 2026-07-16 | v1.5 | **DD-04 ✅ Accepted — (c) co-locate DigitalOcean:** compute DO App Platform + DO Managed PG cùng **VPC private** (thay Fly; Fly = fallback (a)). §2 DD-04 section + §0 TL;DR → (c). Bản đầu của cost split dùng Tier A `$120–132` / Tier B `$191–228`; v1.6 dưới đây thay các số đó. |
 | 2026-07-16 | v1.6 | **DD-04 cost-model closure:** so sánh production theo cùng 5–6 replica × 1 GiB; DO DB dùng list price `$60.90`; core production = **`$121–133`**. Thêm khoản bắt buộc logs + encrypted offsite backup và giữ read isolation/WAF/Sentry/KMS → money-safe Tier B = **`$202–254`**. Pin VPC private là steady state; Fly public-TLS chỉ là fallback nếu egress-IP gate fail. |
 | 2026-07-16 | v1.7 | **DD-04 Rev 2 — cost model đổi sang Day-1 baseline + trigger-based (record §8.2 PROPAGATION).** §9 viết lại: bỏ "Tier B money-safe bắt buộc `$202–254`", thay bằng **Day-1 baseline `$120–135`** (2 web + 2 discovery + 1 worker × 1 GiB + DO PG HA `$60.90` + Cloudflare Free + Sentry Developer + KMS `$1–3` + logs/R2 `$0–5` + egress `$0–8`; subtotal cố định `$118.90`) money-safe nhờ non-negotiables + **§9.3 read-isolation controls** (projection-role, bounded pool, reserved budget, CDN, circuit-breaker). Read replica/WAF Pro/Sentry Team/worker-2/DB-resize = **trigger-based upgrade** (§9.2), không mặc định Day-1. Ephemeral staging `$8–18` → prod+staging `$128–153` (§9.4). **Caveat:** deferral chỉ an toàn khi §9.3 controls ship thật + telemetry trigger được giám sát. |
+| 2026-07-16 | v1.8 | Đồng bộ topology/process/security với Rev 2: Day-1 discovery dùng read isolation trên primary; read-only node chỉ bật theo telemetry và chỉ đổi component-scoped `DATABASE_URL`. Sửa mô tả autoscale DO: RPS/p95 dùng shared hoặc dedicated, CPU autoscale cần dedicated CPU. |

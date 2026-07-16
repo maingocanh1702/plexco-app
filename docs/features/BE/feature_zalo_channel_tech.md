@@ -68,7 +68,7 @@ ALTER TABLE zalo_reply_contexts FORCE ROW LEVEL SECURITY;
 | 10 | Resilience | Provider rate-limit/outage | Degrade — no canonical corruption |
 | 11 | Security | Free numeric message without context | NEVER execute join — require active context |
 | 12 | Data Integrity | Token rotation overlap | Support overlap period before revoke |
-| 13 | Financial | Existing player `left` join lại | Render `REJOIN_REQUIRES_REVIEW`; adapter không đổi player/charge/ledger |
+| 13 | Financial | Existing player `left` join lại | Emit shared join payload; render canonical DD-49 outcome. Only pass through `REJOIN_REQUIRES_REVIEW` for unknown/unimplemented disposition; no adapter ledger logic |
 
 ---
 

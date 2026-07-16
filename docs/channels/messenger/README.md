@@ -23,10 +23,10 @@ Messenger là **surface phase-1** cho player — tương tự Zalo (DM-only). M�
 
 | Ràng buộc | Chi tiết |
 |---------|---------|
-| **Meta App Review** | Cần submit app review với use case, privacy policy, demo video. Timeline không kiểm soát được → **rủi ro lịch phase-1** (§13 BRD Risks); degrade sang OTP `/link` thủ công nếu chậm |
+| **Meta App Review** | Cần submit app review với use case, privacy policy, demo video. Timeline không kiểm soát được; degrade sang transactional one-time `/link` code nếu chậm |
 | **24h standard messaging window** | Standard send chỉ dùng trong 24h sau tin nhắn cuối của user. Nhắc nợ scheduled = **best-effort trong 24h**; ngoài đó fallback web + Zalo nếu không có cơ chế Meta đủ điều kiện/được phê duyệt |
 | **Outside-window mechanisms** | Không giả định Message Tag/template/subscription nào luôn khả dụng. Adapter phải kiểm tra eligibility + approval theo use case/region và fail-closed sang web + Zalo; xem `messenger-channel-design.md` §2 |
-| **PSID per-page** | Mỗi user có PSID khác nhau per Page → identity mapping page-scoped (buộc vào tenant); merge xuyên Page qua OTP `/link` |
+| **PSID per-page** | Mỗi user có PSID khác nhau per Page → identity mapping page-scoped; merge xuyên Page qua verified account identity hoặc transactional `link_code` |
 | **Rate limits / policy limits** | Rate limit chính thức phụ thuộc loại message/Page/app tier; **không dùng giả định 200 calls/hour/page**. Rào cản thật là 24h window + App Review |
 
 ---
@@ -61,7 +61,7 @@ Tenant route: page_id → tenants.messenger_page_id
 | Nhắc nợ | 🟡 Best-effort | Chỉ nếu user nhắn trong 24h gần nhất, hoặc có Utility Template/OTN hợp lệ sau policy spike |
 | Xác nhận payment | ✅ | Nếu trong 24h window |
 | Host commands | ❌ | Host dùng web — Messenger = player-only surface |
-| Identity merge | ✅ | `/link` → OTP → merge ChannelIdentity(messenger) vào Person |
+| Identity merge | ✅ | transactional `/link` code → lock/consume once → confirm merge ChannelIdentity vào Person |
 
 ### 4.1 Policy-Safe Delivery Contract
 
@@ -89,9 +89,9 @@ Rules:
 | # | Item | Status |
 |---|------|--------|
 | OD-9 | Có làm Messenger không? | ✅ **Có — kênh phase-1 (DD-37, thay DD-09)** |
-| R1 | Meta App Review reject/chậm | Prepare + nộp sớm: privacy policy, demo video, use case doc; degrade → OTP `/link` thủ công (DD-33) |
+| R1 | Meta App Review reject/chậm | Prepare + nộp sớm; degrade → transactional one-time `/link` code (DD-33/DD-50) |
 | R2 | 24h window = nhắc nợ unreliable | Accept: Messenger là kênh join + xác nhận, **web + Zalo** gánh nhắc chính |
-| R3 | PSID mapping per-page | ChannelIdentity pipeline handle (UNIQUE platform_user_id); merge xuyên Page qua OTP `/link` |
+| R3 | PSID mapping per-page | ChannelIdentity pipeline handle; merge xuyên Page qua verified identity/transactional `link_code` |
 
 ### 5.1 Required Policy Spike Before Coding
 

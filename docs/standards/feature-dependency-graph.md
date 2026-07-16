@@ -1,6 +1,6 @@
 # Feature Dependency Graph — Plexco
 
-> Thứ tự phát triển features cho Plexco platform. Căn cứ `ROADMAP.md` v2.7 + `TDD.md` v2.5.
+> Thứ tự phát triển features cho Plexco platform. Căn cứ `ROADMAP.md` v2.9 + `TDD.md` v2.6 + `decisions.md` v1.39.
 > v1.3 · 2026-07-15 (DD-37: kênh chat = Zalo + Messenger, bỏ Telegram)
 
 ---

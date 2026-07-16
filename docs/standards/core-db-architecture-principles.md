@@ -3,11 +3,11 @@
 > Principles dùng khi thiết kế core domain, database schema, service boundary và architecture slice cho Plexco.
 > Tài liệu này không thay thế `product/TDD.md`, `standards/business-rules.md` hoặc `standards/decisions.md`; khi conflict, cập nhật decision/source document trước rồi sync lại file này.
 
-**Version:** 1.1
-**Date:** 2026-06-21 (cập nhật 2026-07-10)
+**Version:** 1.2
+**Date:** 2026-06-21 (cập nhật 2026-07-16)
 **Scope:** multi-tenant core, PostgreSQL/RLS, sync engine, identity, payment ledger, marketplace discovery, web/chat/native surfaces.
 
-> **Cập nhật v1.1 — 10/07/2026 (DD-37 / BRD v3.4):** kênh phase-1 = **Zalo + Facebook Messenger + web** (bỏ Telegram); các ví dụ adapter/provider-ingest/idempotency bên dưới đổi Telegram→Messenger. Identity link phase-1 = **Google + Facebook + Zalo** (DD-13/33/14). **Nguyên tắc không đổi** — chỉ đổi nhãn kênh ví dụ.
+> **Cập nhật v1.2 — 16/07/2026 (DD-50):** phase-1 không thu SĐT. Strong proof cho claim membership có tiền chỉ là verified account email hoặc transactional one-time `link_code`; owner/name/CK chỉ là review evidence. Phone schema giữ dormant.
 
 ---
 
@@ -197,7 +197,7 @@ Keep these concepts separate:
 Rules:
 
 - First contact may create `Person`/`ChannelIdentity`, but should not grant tenant membership unless there is an explicit join/approval action.
-- Membership with existing money/history needs strong proof or owner confirmation before claim.
+- Membership with existing money/history needs verified account email or a transactional one-time `link_code` before claim; owner confirmation/name/CK are review evidence only.
 - Merge produces a plan first, then a transaction with locks, tombstones and audit.
 - Merge must preserve ledger rows and re-parent references; it must not rewrite payment facts.
 
@@ -465,7 +465,7 @@ If one state is mutated across many paths, design the interaction table first an
 | Passing `tenant_id` from request body into repo | Tenant spoof risk | Resolve tenant from trusted channel/session, then inject into tenantRepo. |
 | API queries canonical session table for discovery and strips fields | Easy to leak PII/money/venue later | Public projection with least-privilege readonly role. |
 | `is_paid` manually toggled in multiple places | Money drift | Derive from ledger allocations through one helper/projection. |
-| Fuzzy name auto-claim for debt-bearing membership | Wrong person can inherit debt/payment | Strong proof or owner-confirmed claim with audit. |
+| Fuzzy name auto-claim for debt-bearing membership | Wrong person can inherit debt/payment | Verified account email or transactional one-time `link_code`; owner/name/CK cannot bypass. |
 | Bot handler contains business rule duplicated from web | Divergent behavior across surfaces | Normalize to command and use core service. |
 | Worker uses superuser/bypass RLS for convenience | Cross-tenant blast radius | Narrow claim function, then tenant-scoped mutation. |
 | Event payload contains full row snapshot | PII/secret leakage and schema coupling | Minimal versioned event; projector reloads allowed state. |
@@ -582,3 +582,4 @@ Before merging any core/db architecture change, ask:
 |---|---|---|
 | 2026-06-21 | 1.0 | Initial Plexco core/db/architecture principles. |
 | 2026-07-10 | 1.1 | DD-37 channel pivot (BRD v3.4): ví dụ adapter/provider-ingest/idempotency đổi Telegram→Zalo/Messenger; `ChannelIdentity` = Zalo/Messenger/Google/native. Không đổi nguyên tắc. |
+| 2026-07-16 | 1.2 | DD-50: replace phone/owner-confirm claim language with verified account email or transactional one-time `link_code`; keep phone schema dormant. |

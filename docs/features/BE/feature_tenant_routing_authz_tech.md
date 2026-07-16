@@ -1,10 +1,10 @@
 # Feature: Tenant Routing & Admin Authorization — Backend Tech Spec
 
 > **Canonical phase:** P2
-> **Version:** 2.1 · 2026-07-10
+> **Version:** 2.2 · 2026-07-16
 > **Status:** Reviewed
 > **Product spec:** `../feature_tenant_routing_authz.md`
-> **References:** `../../product/TDD.md` §3.3–3.5 · `../../standards/business-rules.md` BL-SEC-2/BL-SEC-5 · `../../standards/decisions.md` DD-37
+> **References:** `../../product/TDD.md` §3.3–3.5 · `../../standards/business-rules.md` BL-SEC-2/BL-SEC-5 · `../../standards/decisions.md` DD-27 · DD-37 · DD-51 · DD-53 · DD-56
 
 ---
 
@@ -27,6 +27,7 @@ Channel event (Zalo webhook_token · Messenger page_id · web session) → chann
 - Link codes: hash-only storage (no plaintext), TTL, single-use.
 - Global context/link lookup via narrow service access — not open queries.
 - **Messenger PSID là page-scoped** (mỗi Page một namespace) → resolver phải neo theo `page_id`; **Zalo `from.id`** ổn định per-bot (DD-15 ⬜) → neo theo `webhook_token`.
+- **DD-56:** one canonical action→capability registry owns authorization. Unknown action/capability, missing grant, expired grant, or registry failure all deny. Adapters/API/UI may render registry output but may not infer privileges from role labels.
 
 ---
 
@@ -116,6 +117,9 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 | 10 | Security | Co-admin exceeds permitted actions | Action matrix enforcement in authz middleware |
 | 11 | Cross-Feature | Suspended tenant admin mutation | Billing gating check in middleware |
 | 12 | Security | Cross-platform user ID collision | Impossible — lookup hash includes platform prefix |
+| 13 | Security | Co-admin sensitive action without a current explicit grant | Deny before service mutation; audit denial class |
+| 14 | Security | Owner tries to grant `role.manage` or a PlatformAdmin-only action | Deny; these capabilities are absent from delegable registry set |
+| 15 | Security | Grant expires/revokes during request | Re-evaluate inside mutation transaction; missing/expired grant denies |
 
 ---
 
@@ -147,6 +151,7 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 | 409 | `CHAT_ALREADY_BOUND` | Nhóm đã liên kết club khác | Rebind without owner confirmation |
 | 400 | `STALE_CALLBACK` | Yêu cầu đã hết hạn — thử lại | Old callback data |
 | 403 | `TENANT_SUSPENDED` | Club đang tạm ngưng | Suspended tenant mutation |
+| 403 | `CAPABILITY_DENIED` | Bạn không có quyền thực hiện thao tác này | Missing/default-denied/expired capability; no tenant internals exposed |
 
 ### Rate Limits
 
@@ -162,13 +167,27 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 
 ### AuthZ Action Matrix
 
-| Action | Owner | Admin | Co-admin | Player |
-|--------|:-----:|:-----:|:--------:|:------:|
-| Bind/rebind group | ✅ | ❌ | ❌ | ❌ |
-| Session CRUD | ✅ | ✅ | Configured | ❌ |
-| Manage admins | ✅ | ❌ | ❌ | ❌ |
-| View settings | ✅ | ✅ | ✅ | ❌ |
-| Player commands | ✅ | ✅ | ✅ | ✅ (own) |
+Every route declares one exact action key. `authorize(action, actor, tenant, now)` resolves the key through one registry and returns a capability decision; no handler repeats formulas or role checks.
+
+| Action key / class | Co-admin preset | Delegable by owner? | Authority rule |
+|---|:---:|:---:|---|
+| `session.manage` | ✅ | N/A | Routine session CRUD |
+| `content.manage` | ✅ | N/A | Tenant content/settings excluding secrets/billing |
+| `member.manage_routine` | ✅ | N/A | Routine member actions; no role mutation |
+| `member.ban` | ✅ | N/A | DD-52 actor amendment |
+| `money.read` | ✅ | N/A | Read-only tenant money surface |
+| `money.mark_paid` | ✅ | N/A | Must still execute DD-25 preview+confirm+audit core |
+| `money.correct` | ❌ | ✅ | Explicit current grant with actor/reason/expiry/audit |
+| `money.refund` | ❌ | ✅ | Same; canonical money core remains fail-closed |
+| `money.waive_or_void` | ❌ | ✅ | Same |
+| `bank_account.manage` | ❌ | ✅ | Same; secret handling rules still apply |
+| `connector.secret_manage` | ❌ | ✅ | Same; never expose secret value |
+| `billing.manage` | ❌ | ✅ | Tenant billing only; not DD-51 global override |
+| `role.manage` | ❌ | ❌ | TenantOwner-only; co-admin cannot remove/demote owner/admin |
+| DD-51 global billing override | ❌ | ❌ | PlatformAdmin-only dedicated service |
+| DD-53 freeze/split/relink | ❌ | ❌ | PlatformAdmin + DD-53 two-approval/break-glass contract |
+
+Logical grant record (physical DDL must be pinned by the authz build slice after mutation-path probe): `tenant_id`, `grantee_person_id`, exact `capability`, `reason`, `granted_by`, `granted_at`, `expires_at`, `revoked_at`. Unique active semantics, grant/revoke, capability re-check and target mutation share a transaction boundary where required. `role.manage` and PlatformAdmin-only keys are rejected before persistence.
 
 ### Suspended Tenant Gating
 
@@ -208,6 +227,14 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 | 18 | Co-admin exceeds scope | Unauthorized action | 403 |
 | 19 | Suspended tenant mutation | Admin mutate | 403 `TENANT_SUSPENDED` |
 | 20 | Tenant A/B isolation | Tenant A query | No tenant B data |
+| 21 | Default co-admin preset | Iterate six preset capabilities | Allowed; mark-paid still invokes preview+confirm+audit |
+| 22 | Sensitive deny table | Iterate correct/refund/waive-void/bank/secret/billing without grant | 403 before mutation for every action |
+| 23 | Sensitive valid grant | Each delegable sensitive action with current audited grant | Allowed only for exact capability/tenant/grantee |
+| 24 | Expired/revoked/wrong-tenant grant | Time or tenant mismatch | 403 fail-closed |
+| 25 | Role management non-delegable | Owner attempts grant; co-admin attempts remove/demote | Grant rejected; mutation 403 |
+| 26 | Global action non-delegable | Co-admin/owner invokes DD-51 override or DD-53 split | 403; only PlatformAdmin dedicated path can proceed |
+| 27 | Unknown registry action | Route declares unknown key or registry unavailable | Startup/build validation fails or runtime deny; never fallback to role |
+| 28 | Mid-request expiry/revoke | Grant valid at request entry, invalid at mutation | Transactional re-check denies; no partial mutation |
 
 ### Integration Tests
 
@@ -217,6 +244,7 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 | 2 | Multi-club DM → picker → select | Player in 3 clubs | Picker shown, selection routes correctly |
 | 3 | Rebind group | Chat bound A → rebind B | A removed, B active, audit logged |
 | 4 | Suspended flow | Suspend tenant → test mutation + CK ingest | Mutation blocked, CK ingest works |
+| 5 | Registry used by every surface | Same action via web/Zalo/Messenger | Same allow/deny result and audit class; adapters contain no role formula |
 
 ---
 
@@ -246,3 +274,4 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), thêm full DDL, 12 BE edge cases, authz matrix, rate limits, 20 unit tests, 4 integration tests |
 | 2026-07-10 | v2.1 | **DD-37 ✅:** routing pivot — tenant suy từ **Zalo `webhook_token`** + **Messenger `page_id`** per-club; Telegram `chat_id`/`telegram_links` xuống **legacy tenant-1 only**. Cập nhật overview, channel-binding note, resolution precedence. Nguyên tắc routing-từ-kênh (NFR-S3) không đổi. |
+| 2026-07-16 | v2.2 | **Full propagation DD-56 (closure v1.37; current decisions v1.39):** canonical action→capability registry, exact co-admin preset, expiring/audited sensitive grants, non-delegable `role.manage`/DD-51/DD-53 actions, transaction-time re-check, and deny tests for every sensitive class. |

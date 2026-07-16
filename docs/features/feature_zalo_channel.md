@@ -56,7 +56,7 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 | 11 | Security | Magic link issued from unverified conversation | Reject — conversation must be verified first |
 | 12 | Cross-Feature | Player has Messenger + Zalo identity → merge | Common identity service handles — Zalo adapter just updates reachability |
 | 13 | Concurrency | Hai number-reply tranh final slot | Session lock: một active, người sau waitlisted với position dương; không charge/venue |
-| 14 | Financial | Existing player đã `left` join lại | `REJOIN_REQUIRES_REVIEW`; Zalo không tự reuse/duplicate charge |
+| 14 | Financial | Existing player đã `left` join lại | Route shared DD-49 join/correction handler; render canonical outcome. `REJOIN_REQUIRES_REVIEW` only for unknown/unimplemented disposition; Zalo không tự mutate ledger |
 
 ---
 

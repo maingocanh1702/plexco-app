@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.3  
 > **Track:** 🤝 Cross-club Join  
-> **Version:** 2.3 · 2026-07-15
+> **Version:** 2.5 · 2026-07-16
 > **Status:** Reviewed  
 > **Prerequisites:** P4.3 discovery · P3.5 identity · P2 session/slot transaction · P4 sync/notifications  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-3.2 · `../product/PRD.md` FLOW 13 · BRD OD-5/OD-6 · `BE/feature_cross_club_join_tech.md`
@@ -20,7 +20,7 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 - Capacity checked **under lock** tại final join/approval — browse slot là advisory.
 - Open join và approval cùng dùng một capacity outcome: còn slot → active+charge+venue; full → waitlisted, không charge/venue.
 - Paid player leave/cancel theo financial/refund policy — KHÔNG silent allocation deletion.
-- Player đã `left` không được self-rejoin tự động trong phase-1: `REJOIN_REQUIRES_REVIEW`, giữ nguyên ledger.
+- Player `left` rejoin theo DD-49: chạy lại eligibility/ban/capacity; chưa refund thì carry-over obligation/allocation, đã refund thì correction core append obligation lifecycle mới. Chưa chứng minh được disposition → `REJOIN_REQUIRES_REVIEW` fail-closed.
 
 ---
 
@@ -57,7 +57,7 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 | 10 | Data Integrity | Suspended tenant new stale offers | Existing public sessions OK per billing rule — no new offer extension |
 | 11 | Cross-Feature | Player already member of this club | Use existing membership — no duplicate guest |
 | 12 | Cross-Feature | Player banned from this club | Reject join — "Bạn không thể tham gia club này" |
-| 13 | Financial | Player đã `left` tự join/request lại | Reject `REJOIN_REQUIRES_REVIEW`; không chuyển state hoặc reuse/duplicate charge |
+| 13 | Financial | Player đã `left` tự join/request lại | Rejoin bình thường theo DD-49; carry-over nếu chưa refund, lifecycle mới nếu refunded; không duplicate charge. Unknown/unimplemented disposition → `REJOIN_REQUIRES_REVIEW`, không mutation |
 | 14 | Financial/Resilience | Không suy được giá khi active join/approve hoặc waitlist promotion | Direct join/approve fail-closed, không player/charge/venue; promotion giữ candidate waitlisted + audit/retry, không rollback leave/capacity opener và xét candidate kế; không fallback giá |
 
 ---
@@ -66,7 +66,7 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 
 | Surface | Screen | Loading | Ready | Error | Empty |
 |---------|--------|---------|-------|-------|-------|
-| Web | Join CTA (public detail) | "Đang xử lý..." | Còn slot: "✅ Đã tham gia! [Venue]"; full: "⏳ Bạn đang ở vị trí N" (area only) | "❌ Cần đăng nhập" / rejoin cần host review | N/A |
+| Web | Join CTA (public detail) | "Đang xử lý..." | Còn slot: "✅ Đã tham gia! [Venue]"; full: "⏳ Bạn đang ở vị trí N" (area only) | "❌ Cần đăng nhập" / "Cần host kiểm tra trạng thái tiền" khi disposition không chứng minh được | N/A |
 | Web | Pending approval | — | "⏳ Đang chờ host duyệt" + Cancel CTA | "❌ Yêu cầu hết hạn" | N/A |
 | Web | Rejected | — | "❌ Host từ chối — [reason nếu có]" | — | N/A |
 | Web | Closed | — | "Buổi chơi đã đóng" | — | N/A |
@@ -128,7 +128,7 @@ stateDiagram-v2
 - [ ] Leave/cancel with financial history follows ledger policy
 - [ ] Host approval requires correct tenant role
 - [ ] Abuse/rate-limit/audit tests pass
-- [ ] Approval full → approved+waitlisted; existing `left` rejoin → `REJOIN_REQUIRES_REVIEW` và ledger unchanged
+- [ ] Approval full → approved+waitlisted; existing `left` rejoin theo DD-49 carry-over/refunded decision table; unknown/unimplemented disposition → `REJOIN_REQUIRES_REVIEW` và ledger unchanged
 - [ ] DD-39 derivation fail: direct active join/approve không tạo player/charge/venue; promotion giữ waitlisted/no-charge/no-venue + audit/retry, không rollback opener, không fallback giá
 
 ---
@@ -140,14 +140,16 @@ stateDiagram-v2
 | ID | Quyết định | Trạng thái |
 |---|---|---|
 | CCJ-OQ-1 | BRD OD-5: default open vs approval policy | ✅ Chốt (DD-05/DD-45): **per-session, default `open`**; approval → `join_requests(pending)` (KHÔNG player/charge) → approve re-check DD-41 dưới tenant RLS; còn slot tạo active+charge, full tạo waitlisted không charge/venue. `../standards/decisions.md` |
-| CCJ-OQ-2 | Guest → full membership transition + club ban policy | ⬜ Chưa chốt |
+| CCJ-OQ-2 | Guest → full membership transition + club ban policy | ✅ **Chốt DD-52 + DD-56 (2026-07-16)** — host invite/approve **và** player-request+host-approve coexist (auto-upgrade defer); manual safety ban = **TenantOwner + co-admin** (DD-56 amend), reason+evidence bắt buộc, `expires_at` hoặc permanent, **không auto-evict** (waitlisted giữ queue + skip theo DD-45); storage tách khỏi reliability-ban DD-42; mọi join path qua một `evaluateJoinRestriction()` core. Schema/command propagate lúc build |
 
 ### Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-16 | v2.5 | **DD-49 full propagation:** invariants/edge/UI/AC đổi blanket left-rejoin reject thành normal rejoin với carry-over/refunded disposition; unknown state mới cần review. Không duplicate `charges` row. Authority: decisions v1.37. |
 | 2026-07-15 | v2.3 | **DD-39×DD-45 failure contract:** direct active join/approve aborts fail-closed on amount derivation failure; promotion keeps candidate waitlisted/no-charge/no-venue, audits/retries without rolling back opener, then continues queue. |
 | 2026-07-15 | v2.2 | **DD-45 propagation:** open/approval full→waitlisted (no charge/venue), concurrent last-slot loser waitlisted, `left` self-rejoin fail-closed `REJOIN_REQUIRES_REVIEW`; sync UX/events/AC. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, join request state machine, screen states |
 | 2026-07-13 | v2.1 | Reconcile canonical roster/ledger vocabulary: `players` keyed by membership; `charges` linked by `player_id`/`membership_id`; origin direct/approved stays in command/audit contract. |
+| 2026-07-16 | v2.4 | **Propagation (light) DD-52/56:** CCJ-OQ-2 ✅ (guest→full invite+request coexist; manual ban TenantOwner+co-admin, không auto-evict, tách DD-42; `evaluateJoinRestriction()` core). Schema/command defer build slice. Authority: decisions v1.36. |

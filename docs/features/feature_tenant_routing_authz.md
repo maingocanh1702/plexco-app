@@ -2,10 +2,10 @@
 
 > **Canonical phase:** P2
 > **Track:** 🔐 Routing & AuthZ
-> **Version:** 2.1 · 2026-07-10
+> **Version:** 2.3 · 2026-07-16
 > **Status:** Reviewed
 > **Prerequisites:** P0–P1 foundation stable
-> **Tài liệu liên quan:** `../product/BRD.md` BR-1/BR-3/BR-12 · `../product/PRD.md` §2 + §4.2/4.3 · `../product/TDD.md` §3.3–3.5 · `../standards/decisions.md` DD-37/DD-27 · `BE/feature_tenant_routing_authz_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` BR-1/BR-3/BR-12 · `../product/PRD.md` §2 + §4.2/4.3 · `../product/TDD.md` §3.3–3.5 · `../standards/decisions.md` DD-37/DD-27/DD-56 · `BE/feature_tenant_routing_authz_tech.md`
 
 > **Cập nhật v3.4 (DD-37, 2026-07-10):** bỏ **Telegram** (shared bot + `chat_id` routing). Kênh phase-1 = **Zalo (bot-token per-club)** + **Facebook Messenger (Page per-club)** + web. Routing vẫn **suy từ kênh, KHÔNG từ nội dung** (NFR-S3). Giữ **DD-27 channel-aware authz**.
 
@@ -21,6 +21,7 @@ Route mọi Zalo/Messenger/admin interaction tới **đúng tenant** từ truste
 - Routing **KHÔNG BAO GIỜ** grant authorization — đây là 2 bước tách biệt (**DD-27 channel-aware authz**: quyền theo person, tách khỏi kênh).
 - Link code phải high-entropy, short-lived, single-use, bound to tenant/role.
 - Fail-closed: nếu không resolve được tenant → reject, không guess.
+- Authorization dùng **một registry action→capability canonical**, không rải `role === ...` trong adapter/API/UI. Co-admin preset least-privilege và sensitive grants tuân exact DD-56 matrix; grant thiếu/hết hạn → deny.
 
 ---
 
@@ -40,6 +41,8 @@ Route mọi Zalo/Messenger/admin interaction tới **đúng tenant** từ truste
 | RTE-UC-8 | Owner | Rebind kênh sang tenant mới | Require owner confirmation + audit trail |
 | RTE-UC-9 | Admin | Tài khoản kênh (Zalo/Facebook) bị mất | Support runbook — owner recovery path |
 | RTE-UC-10 | System | Rate limit link attempts | Block sau N attempts/window — fail closed |
+| RTE-UC-11 | Owner | Cấp capability nhạy cảm cho co-admin | Explicit grant có actor/reason/expiry/audit; không thể grant `role.manage` |
+| RTE-UC-12 | Co-admin | Manual ban hoặc mark-paid | Chỉ qua `member.ban` / `money.mark_paid`; mark-paid vẫn preview+confirm+audit DD-25 |
 
 ### Edge Cases
 
@@ -57,6 +60,9 @@ Route mọi Zalo/Messenger/admin interaction tới **đúng tenant** từ truste
 | 10 | Security | Admin command from non-admin | 403 — routing thành công ≠ có quyền (DD-27) |
 | 11 | Security | Suspended tenant admin cố mutate | Block mutation — chỉ cho read + system safety paths |
 | 12 | Cross-Feature | Routing thành công nhưng authz fail | Trả lỗi authz, KHÔNG expose tenant info trong error message |
+| 13 | Security | Co-admin gọi correction/refund/waiver/void/bank/secret/billing không có grant | Deny từ registry; không được suy quyền từ nhãn admin/co-admin |
+| 14 | Security | Sensitive grant hết hạn/thiếu reason/audit hoặc actor cố grant `role.manage` | Deny fail-closed; owner-only role management không delegable |
+| 15 | Security | Co-admin cố remove/demote owner/admin hoặc gọi DD-51/DD-53 global action | Deny; global override/split/relink chỉ PlatformAdmin theo dedicated path |
 
 ---
 
@@ -81,6 +87,20 @@ Route mọi Zalo/Messenger/admin interaction tới **đúng tenant** từ truste
 | Messenger Page binding | Binding Facebook Page per-club → tenant (DD-33/DD-37, proposal-level) | Page ID → tenant; PSID page-scoped. Canonical → decisions.md + `packages/db/schema.ts` |
 | `admin_links` | One-time link codes | `code` unique, `expires_at`, `used_at`, `tenant_id` FK, `intended_role` |
 | `memberships` | Person ↔ Tenant relationship | `UNIQUE(person_id, tenant_id)`, `role` enum |
+| Capability registry (canonical contract) | Exact action → capability mapping | Một source dùng chung cho API/UI/adapters; unknown action/capability deny |
+| Sensitive capability grant (proposal) | Delegation owner → co-admin | Tenant+actor+capability+reason+expiry+granted_by+audit; không hỗ trợ `role.manage`; expired/revoked deny |
+
+### DD-56 capability matrix
+
+| Action class | Co-admin default | Explicit owner grant | Owner / global rule |
+|---|:---:|:---:|---|
+| Session/content management | ✅ | N/A | Owner ✅ |
+| Routine member management + manual ban | ✅ | N/A | Requires `member.manage_routine` / `member.ban` |
+| Money read + manual mark-paid | ✅ | N/A | `money.mark_paid` vẫn DD-25 preview+confirm+audit |
+| Money correction/refund/waiver/void | ❌ | ✅ có expiry/audit | Owner default ✅ |
+| Bank account / connector secret / tenant billing | ❌ | ✅ có expiry/audit | Owner default ✅ |
+| Role management | ❌ | ❌ không delegable | Owner-only; co-admin không remove/demote owner/admin |
+| DD-51 billing override / DD-53 split-relink | ❌ | ❌ | PlatformAdmin-only |
 
 ### Link State Machine
 
@@ -137,6 +157,9 @@ stateDiagram-v2
 - [ ] Multi-club DM picker và stale-context invalidation hoạt động
 - [ ] Suspended behavior khớp billing contract
 - [ ] Tenant A/B routing/authz isolation tests pass
+- [ ] One canonical action→capability registry drives API/UI/adapters; unknown action and missing/expired grants deny
+- [ ] Every DD-56 sensitive action has allow-with-valid-grant and deny-without/expired-grant tests
+- [ ] `role.manage`, DD-51 override and DD-53 split/relink cannot be delegated to co-admin
 
 ---
 
@@ -146,8 +169,8 @@ stateDiagram-v2
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| RTE-OQ-1 | Co-admin permission granularity — finalize trước P2 UI polish | ⬜ Chưa chốt |
-| RTE-OQ-2 | Owner recovery path khi mất tài khoản provider (Google/Facebook/Zalo — Telegram đã loại DD-37) — support runbook | 🔴 Founder + security — gom vào founder brief Item 9; fail-closed, không recover bằng tên/raw social ID |
+| RTE-OQ-1 | Co-admin permission granularity | ✅ **Chốt DD-56 (2026-07-16)** — exact matrix ở §4: default routine session/content/member/ban/money-read/mark-paid; correction/refund/waiver/void/bank/secret/billing chỉ qua explicit expiring audited grant; `role.manage` không delegable; DD-51/DD-53 PlatformAdmin-only. Implement = một capability registry, không blanket role inheritance |
+| RTE-OQ-2 | Owner recovery path khi mất tài khoản provider (Google/Facebook/Zalo) | ✅ **Chốt DD-53 (2026-07-16)** — strong proof (verified email/recovery artifact), không recover bằng tên/raw social ID; freeze/split authority = PlatformAdmin + 2-approval; runbook + drill evidence trước production |
 
 ### Changelog
 
@@ -156,3 +179,5 @@ stateDiagram-v2
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered format, thêm 10 use cases, 12 edge cases, link state machine, routing resolution order, screen states, analytics payload |
 | 2026-07-10 | v2.1 | **DD-37:** bỏ Telegram (`chat_id` routing + shared bot); channel routing = **Zalo bot-token per-club** (`webhook_token → tenant`) + **Messenger Page per-club** (Page ID → tenant, PSID page-scoped). Giữ **DD-27 channel-aware authz**. Cập nhật §1, UC, edge (#1/4/6/7/8/9), screens, domain model (`telegram_links` → `zalo_bots` + Messenger Page), routing order, analytics. |
+| 2026-07-16 | v2.2 | **Propagation (light) DD-53/56:** RTE-OQ-1 ✅ (co-admin = admin trừ role mgmt, được ban; capability registry), RTE-OQ-2 ✅ (recovery strong proof + PlatformAdmin authority). Registry/runbook defer build slice. Authority: decisions v1.36. |
+| 2026-07-16 | v2.3 | **Full propagation DD-56 (closure v1.37; current decisions v1.39):** replace blanket co-admin inheritance with exact capability matrix, explicit expiring/audited sensitive grants, non-delegable role/global actions, and fail-closed acceptance cases. |

@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P2 (chat CRUD) · P4 (web parity)  
 > **Track:** 📋 Session CRUD  
-> **Version:** 2.6 · 2026-07-15
+> **Version:** 2.8 · 2026-07-16
 > **Status:** Reviewed  
 > **Prerequisites:** P0–P1 foundation stable · P2 tenant routing/authz  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-2 · `../product/PRD.md` FLOW 2 · `../product/TDD.md` §3.2/3.8 · `../standards/decisions.md` DD-37 · `BE/feature_session_management_tech.md`
@@ -60,7 +60,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 | 10 | Resilience | Announcement gửi group fail | KHÔNG rollback canonical write — projector retries/reprojects |
 | 11 | Security | Mutation on closed/cancelled/past session | Reject mọi mutation — trừ privileged correction với audit trail |
 | 12 | Security | Non-admin cố sửa session | 403 — routing ≠ authz. Ref: tenant_routing_authz |
-| 13 | Financial | Player đã `left` tự join lại cùng session | Reject `REJOIN_REQUIRES_REVIEW`; giữ nguyên player+charge/allocation history, không tự `left→waitlisted|active` |
+| 13 | Financial | Player đã `left` tự join lại cùng session | Chạy join/gating/ban bình thường. Chưa refund → carry-over obligation/allocation; đã refund → obligation lifecycle mới qua correction core; không double charge. Chưa chứng minh được disposition → `REJOIN_REQUIRES_REVIEW`, không mutation |
 | 14 | Financial/Resilience | Active join hoặc promotion không suy được amount do KMS/decrypt/price error | Direct active join aborts, không player/charge/venue; promotion giữ waitlisted/no-charge/no-venue + audit + đúng một canonical failure outbox event cho retry/owner-alert consumers, leave/capacity opener vẫn commit và xét candidate kế; không fallback giá |
 
 ---
@@ -126,7 +126,7 @@ stateDiagram-v2
 - [ ] Concurrent capacity/join operations không thể over-fill (lock test)
 - [ ] Waitlisted không chiếm capacity/charge/venue; position dương + total order; promote tạo charge/clear position/notify atomically
 - [ ] Active leave/capacity increase fill toàn bộ slot available; finite→unlimited fill mọi eligible; decrease dưới active roster reject
-- [ ] Existing `active|waitlisted` join lại trả current outcome idempotently; existing `left` fail-closed `REJOIN_REQUIRES_REVIEW`, không mutation ledger
+- [ ] Existing `active|waitlisted` join lại trả current outcome idempotently; existing `left` re-activate theo DD-49 khi correction core chứng minh được refunded/carry-over disposition; unknown/unimplemented → `REJOIN_REQUIRES_REVIEW` fail-closed
 - [ ] Mọi active join/promotion derive amount trước mutation: direct join fail thì không player/charge/venue; promotion fail giữ candidate waitlisted/no-charge/no-venue, audit+retry một lần, không rollback opener; không fallback giá
 - [ ] Price/cancel changes khi đã có charge → bắt buộc explicit impact handling
 - [ ] Public/private/closed projection behavior correct (projector test)
@@ -142,7 +142,7 @@ stateDiagram-v2
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| SES-OQ-1 | Behavior khi host change price mà đã có charges: giữ nguyên existing hay tạo adjustment? | ⬜ Chưa chốt |
+| SES-OQ-1 | Behavior khi host change price mà đã có charges | ✅ **Chốt DD-49/v1.37** — host chọn per-change: append signed obligation adjustment hoặc grandfather; allocation reversal chỉ đảo tiền đã nhận, không phải price adjustment. Rejoin thường: chưa refund carry-over, đã refund append obligation lifecycle mới; không mặc định row `charges` thứ hai. Storage/API chờ mutation-path design-probe live UNIQUE charge/player/session. |
 | SES-OQ-2 | Recurrence editing: sửa 1 occurrence hay this-and-future? | ⬜ Chưa chốt |
 | SES-OQ-3 | Waitlist + auto-promote | ✅ **Chốt DD-45** — thuộc Reviewed contract; schema/code migration pending build |
 | SES-OQ-4 | Field mô tả session + gating (title/notes/`session_type`/byoe/cost_shared + gating level-rank/gender/age) | ✅ **Chốt DD-41** — enforce ở shared `evaluateSessionEligibility`←`addMemberToSession`, self-attested, 9 exact codes; body/schema propagate lúc build → `../dd-41-session-fields-gating-analysis.md` |
@@ -154,6 +154,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-16 | v2.8 | **Full DD-49 propagation:** body/edge/AC thay left-rejoin reject mặc định bằng normal rejoin + carry-over/refunded disposition; giữ `REJOIN_REQUIRES_REVIEW` chỉ cho unknown/unimplemented correction state. Price change dùng signed obligation adjustment contract, không giả định delta/new `charges` row. Authority: decisions v1.37. |
 | 2026-07-15 | v2.6 | **DD-39×DD-45 failure contract:** promotion derive amount trước mutation; derivation fail giữ waitlisted/no-charge/no-venue, audit+retry/owner-alert, không rollback leave/capacity opener và tiếp tục candidate kế. |
 | 2026-07-15 | v2.5 | **Propagation (light):** neo DD-41 (session fields+gating), DD-42 (attendance/reliability), DD-43 (membership_tags audience), DD-44 (invite token) vào Open Questions với pointer file phân tích. Decision-level đã ✅; body/schema/migration propagate lúc build slice (không đổi Reviewed body). |
 | 2026-07-15 | v2.4 | **DD-45 closure:** pin open/approval full→waitlisted và `left` self-rejoin fail-closed `REJOIN_REQUIRES_REVIEW`; không reuse/duplicate charge khi refund/void policy còn mở. |
@@ -162,3 +163,4 @@ stateDiagram-v2
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered format, thêm 10 use cases, 12 edge cases, state machine, screen states chi tiết |
 | 2026-07-10 | v2.1 | **DD-37:** kênh phase-1 = Zalo + Messenger (bỏ Telegram); screens "TG Bot" → "Bot (Zalo/Messenger)". Thêm **one-line pointer giá theo giới tính → DD-39 (proposal) / feature_user_settings** (không thêm schema giới tính vào body Reviewed). |
 | 2026-07-13 | v2.2 | Reconcile canonical schema vocabulary: `players`, `session_surface_refs`, `session_recurrence_rules/session_occurrences`. SES-UC-9 chỉ giải phóng slot; waitlist auto-promote deferred tới khi DD-45 được chốt + migration. |
+| 2026-07-16 | v2.7 | **Propagation (light) DD-49:** SES-OQ-1 ✅ (đổi giá host-choice delta/grandfather; rejoin carry-over thay left-rejoin fail-closed DD-45). Body/schema từng defer build slice; được full-propagate ở v2.8. |

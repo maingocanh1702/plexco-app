@@ -1,12 +1,12 @@
 # Feature: Session Management — Backend Tech Spec
 
 > **Canonical phase:** P2/P4  
-> **Version:** 2.4 · 2026-07-15
+> **Version:** 2.5 · 2026-07-16
 > **Status:** Reviewed  
 > **Product spec:** `../feature_session_management.md`  
-> **References:** `../../product/TDD.md` §3.2/3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-39/DD-45 · `../../dd-45-waitlist-analysis.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`)
+> **References:** `../../product/TDD.md` §3.2/3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-39/DD-45/DD-49 · `../../dd-45-waitlist-analysis.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`)
 
-> **DD-45 ✅ waitlist contract:** open/approval full→`waitlisted` không chiếm capacity/charge/venue; promotion assert no existing charge + derive amount trước mutation, rồi tạo đúng một charge atomic, clear position và fill đủ slot trống theo total order. DD-39 derivation fail giữ candidate waitlisted/no-charge/no-venue, audit+retry/owner-alert, không rollback opener và tiếp tục candidate kế. Existing `left` self-rejoin fail-closed `REJOIN_REQUIRES_REVIEW`. Schema dưới đây là contract đã pin nhưng migration/code vẫn pending build.
+> **DD-45 + DD-49 contract:** open/approval full→`waitlisted` không chiếm capacity/charge/venue; promotion assert no existing charge + derive amount trước mutation. Existing `left` rejoin bình thường khi correction core chứng minh refunded/carry-over disposition; unknown/unimplemented state mới fail-closed `REJOIN_REQUIRES_REVIEW`. Live UNIQUE charge/player/session nghĩa là storage correction cần design-probe; spec không giả định row `charges` thứ hai.
 
 ---
 
@@ -129,7 +129,7 @@ CREATE INDEX idx_players_waitlist_order
 | 14 | Concurrency | Leave/capacity+ chạy đồng thời join | Lock session trước; re-count active; không over-fill/double-charge |
 | 15 | Boundary | Capacity tăng hoặc finite→unlimited | Re-count active; fill `new_slots_max-active_count` hoặc mọi candidate eligible trong cùng locked transition |
 | 16 | Boundary | Capacity giảm dưới active roster | Reject `CAPACITY_BELOW_ROSTER`; không evict/không mutation |
-| 17 | Financial | Existing player `status='left'` join lại | Reject `REJOIN_REQUIRES_REVIEW`; không đổi player/charge/allocation history |
+| 17 | Financial | Existing player `status='left'` join lại | Re-check eligibility/ban/capacity. Carry-over nếu chưa refund; refunded → append obligation lifecycle mới qua correction core. Unknown/unimplemented disposition → `REJOIN_REQUIRES_REVIEW`, byte-for-byte unchanged |
 | 18 | Financial | Waitlisted candidate có existing charge (invalid/legacy) | Không promote/không mutate charge; audit `WAITLIST_CHARGE_CONFLICT`, owner-review, tiếp tục candidate kế |
 | 19 | Financial/Resilience | `deriveChargeAmount` KMS/decrypt/price failure lúc promote | Candidate giữ `waitlisted`, no charge/venue; audit `WAITLIST_CHARGE_DERIVATION_FAILED` + one canonical failure outbox event cho retry/alert consumers; leave/capacity opener commit; continue next; không fallback price |
 
@@ -161,7 +161,7 @@ CREATE INDEX idx_players_waitlist_order
 | 400 | `PRICE_CHANGE_REQUIRES_POLICY` | Cần chọn chính sách cho charges hiện tại | Price change with existing charges |
 | 400 | `CANCEL_REQUIRES_REVIEW` | Cần xác nhận huỷ — có người đã thanh toán | Cancel with paid roster |
 | 400 | `MISSING_DISCOVERY_FIELDS` | Thiếu thông tin bắt buộc cho buổi chơi public | Public visibility without required fields |
-| 409 | `REJOIN_REQUIRES_REVIEW` | Cần host kiểm tra lần tham gia trước | Existing player row có `status='left'` |
+| 409 | `REJOIN_REQUIRES_REVIEW` | Cần host kiểm tra trạng thái tiền trước | `left` nhưng correction core chưa có hoặc không chứng minh được carry-over/refunded disposition |
 
 ### Idempotency
 
@@ -190,12 +190,12 @@ CREATE INDEX idx_players_waitlist_order
 | `player.waitlisted` | Join khi full | `session_id`, `player_id`, `waitlist_position` |
 | `player.promoted` | Leave/capacity+ mở slot | `session_id`, `player_id`, `charge_id` |
 
-### Waitlist entry + rejoin guard (DD-45)
+### Waitlist entry + rejoin disposition (DD-45/DD-49)
 
 1. Lock session row `FOR UPDATE`; resolve membership, rồi lookup player theo UNIQUE `(tenant_id,session_id,membership_id)` trước mọi player/charge write.
 2. Không có player row: còn slot/unlimited → derive amount trước mutation; success thì insert `active` + đúng một charge atomically; DD-39 derivation failure aborts join fail-closed (không player/charge/venue, không fallback). Full → insert `waitlisted` + tail position, không charge/venue.
 3. Existing `active` hoặc `waitlisted`: return current outcome idempotently; không đổi position và không tạo charge.
-4. Existing `left`: return `REJOIN_REQUIRES_REVIEW`; không update player, không create/reopen/void charge, không ghi allocation. Host correction là flow riêng có preview+confirm+audit sau khi refund/void policy được chốt.
+4. Existing `left`: re-check `evaluateSessionEligibility` + `evaluateJoinRestriction` + capacity, rồi lock canonical financial aggregate. Nếu obligation đã paid và chưa refund: carry-over, re-activate player, không tạo obligation/allocation mới. Nếu refund đã hoàn tất: append idempotent obligation-lifecycle entry qua correction core rồi re-activate; không INSERT duplicate `charges` row. Nếu partial/ambiguous, correction core chưa land, hoặc không chứng minh được disposition: return `REJOIN_REQUIRES_REVIEW`, không mutation. Mọi path dùng preview/confirm/audit theo DD-25/49 và một helper effective-balance canonical.
 
 ### Waitlist promotion (DD-45)
 
@@ -252,11 +252,13 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 | 25 | Capacity below active | `slots_max < active_count` | `CAPACITY_BELOW_ROSTER`, no mutation |
 | 26 | Candidate ineligible | First in queue fails DD-41 | Skip first, promote next, first keeps position |
 | 27 | Promotion retry | Same commandId twice | Same result; no double charge/promotion |
-| 28 | Rejoin after left | Existing player `left` + any charge state | `REJOIN_REQUIRES_REVIEW`; player/charge/allocations byte-for-byte unchanged |
-| 29 | Promotion charge conflict | Waitlisted candidate already has charge | Candidate not promoted; audit+owner-review; next eligible candidate may fill slot |
-| 30 | Promotion amount derivation fails | `gender_enc != NULL`; KMS/decrypt throws | Candidate byte-for-byte waitlisted, no charge/venue; one audit + one canonical failure outbox event; opener committed; retry/alert consume event; next candidate may fill slot; no fallback price |
-| 31 | Derivation retry after another candidate filled slot | Same retry key; capacity now full | No-op; no promotion/charge; failed candidate keeps queue rank |
-| 32 | Direct active join amount derivation fails | Capacity available; KMS/decrypt throws | Join aborts; no player/charge/venue; no fallback; retry safe |
+| 28 | Rejoin after left, paid not refunded | Existing player `left` + paid obligation, no refund reversal | Re-activate/waitlist theo capacity; carry-over same obligation/allocation; no duplicate financial row |
+| 29 | Rejoin after full refund | Existing player `left` + proven completed refund | Append one idempotent obligation-lifecycle entry via correction core; re-activate/waitlist; no duplicate `charges` row |
+| 30 | Rejoin financial disposition unknown | Partial/ambiguous/unimplemented correction state | `REJOIN_REQUIRES_REVIEW`; player/charge/allocations byte-for-byte unchanged |
+| 31 | Promotion charge conflict | Waitlisted candidate already has charge | Candidate not promoted; audit+owner-review; next eligible candidate may fill slot |
+| 32 | Promotion amount derivation fails | `gender_enc != NULL`; KMS/decrypt throws | Candidate byte-for-byte waitlisted, no charge/venue; one audit + one canonical failure outbox event; opener committed; retry/alert consume event; next candidate may fill slot; no fallback price |
+| 33 | Derivation retry after another candidate filled slot | Same retry key; capacity now full | No-op; no promotion/charge; failed candidate keeps queue rank |
+| 34 | Direct active join amount derivation fails | Capacity available; KMS/decrypt throws | Join aborts; no player/charge/venue; no fallback; retry safe |
 
 ### Integration Tests
 
@@ -296,6 +298,7 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-16 | v2.5 | **DD-49 full propagation:** replace blanket left-rejoin reject with locked disposition table (carry-over/refunded/unknown); unknown stays fail-closed. Pin append-only obligation lifecycle + canonical balance helper and explicitly forbid assuming a second `charges` row under live uniqueness. |
 | 2026-07-15 | v2.4 | **DD-39×DD-45 fail-closed propagation:** derive charge amount before promotion mutation; KMS/decrypt/price failure keeps candidate waitlisted/no-charge/no-venue, writes idempotent audit+retry/owner-alert, does not rollback leave/capacity opener, then continues the queue; add retry no-op tests. |
 | 2026-07-15 | v2.3 | **DD-45 money closure:** add entry/rejoin decision table; full path creates waitlisted without charge; promotion assert-no-charge + exactly-one insert; `left` rejoin fails closed; conflict audit/test coverage. |
 | 2026-07-15 | v2.2 | **DD-45 ✅:** pin schema state-shape/positive position + queue index; total order position/joined_at/id; locked fill-available/unlimited promotion; atomic status+charge+notify; capacity-below-active reject; add edge/test/rollout coverage. |

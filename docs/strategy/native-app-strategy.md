@@ -1,10 +1,10 @@
 # Phân tích — Thêm Native App (iOS / Android) sau Web MVP
 
-**Phiên bản:** 1.1
+**Phiên bản:** 1.2
 **Ngày tạo:** 18/06/2026
 **Tài liệu tham chiếu:** `BRD.md` v3.1 · `PRD.md` v2.1 · `TDD.md` v2.1 · `ROADMAP.md` v2.1 · `feature_sync_engine.md` · `feature_marketplace_discovery.md` · `feature_identity.md`
 
-> ⚠️ **Version note (16/07/2026):** companion doc ở baseline **v3.1/v2.1**. Nguồn hiện hành: **BRD v3.6 · PRD v2.4 · TDD v2.5 · ROADMAP v2.7 · `decisions.md` v1.34**; chưa reflect pivot kênh (DD-37) + cụm session-model/social (DD-41–48) + DD-04 cost closure. Khi conflict, ưu tiên TDD → BRD → decisions hiện hành.
+> ⚠️ **Version note (16/07/2026):** companion strategy, không phải source of truth. Nguồn hiện hành: **BRD v3.7 · PRD v2.5 · TDD v2.6 · ROADMAP v2.9 · `decisions.md` v1.39**. Nội dung native là định hướng P7; khi conflict, theo authority-by-topic trong BRD §0.
 
 > **TL;DR:** Kiến trúc canonical-store + surface-projection của Plexco **đã future-proof cho native app**. Native iOS/Android chỉ là thêm 1 surface — backend API, sync engine, marketplace discovery, identity pipeline **không cần đổi**. Effort chính nằm ở: (1) Native UI, (2) Push Notification projector, (3) Auth providers mở rộng (Apple/Google Sign-In), (4) Offline cache strategy. Không có breaking change.
 
@@ -218,7 +218,9 @@ User đăng nhập web bằng Google, native bằng Apple → 2 Account khác nh
 |------------|-----------|
 | Cùng email (Google email = Apple email) | Auto-link Account nếu **email verified** cả hai phía |
 | Khác email | Manual link: đăng nhập 1 → Settings → "Liên kết tài khoản" → đăng nhập cái kia |
-| Cùng SĐT verified | Auto-link qua Person.phone |
+| Cùng verified account email | Auto-link chỉ sau proof matrix DD-50 + conflict checks |
+| Transactional one-time `link_code` | Link thủ công, lock/consume once + explicit impact confirm |
+| Cùng SĐT | Không dùng phase-1; phone schema dormant |
 
 > **Nguyên tắc:** Account là **authentication record** (cách đăng nhập). Person là **identity** (con người). Nhiều Account có thể trỏ về 1 Person — reuse đúng cơ chế identity merge (AUDIT C3).
 
@@ -468,6 +470,7 @@ Những điều cần **lưu ý ngay từ P4** (build web) để native không p
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 16/07/2026 | 1.2 | Rebase authority refs lên decisions v1.39; native account linking dùng verified account email hoặc transactional `link_code`; phone dormant theo DD-50. |
 | 19/06/2026 | — | Thêm Changelog table |
 | 18/06/2026 | v1.0 | Phân tích thêm native app post-MVP |
 | 10/07/2026 | 1.1 | DD-37 channel pivot (BRD v3.4): surfaces hiện tại = Zalo/Messenger/Web (bỏ Telegram); projector/ChannelReachability refs đổi TG→Zalo/Messenger; auth "hiện tại" = Google/email (DD-13). Kiến trúc canonical-store + surface-projection **không đổi**. |

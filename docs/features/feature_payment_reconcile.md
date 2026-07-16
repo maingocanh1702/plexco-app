@@ -2,8 +2,8 @@
 
 > **Canonical phase:** P3
 > **Track:** 💰 Payment Reconciliation
-> **Version:** 1.4 · 2026-07-10
-> **Status:** Reviewed against BRD v3.4 / PRD v2.2 / TDD v2.2 — **full-review baseline cũ; light-propagated → current (BRD v3.6/PRD v2.4/TDD v2.5)**
+> **Version:** 1.6 · 2026-07-16
+> **Status:** Reviewed and reconciled to BRD v3.7 / PRD v2.5 / TDD v2.6 / decisions v1.39; B1/schema/code pending build slices
 > **Prerequisites:** P0–P1 foundation + P2 tenant routing
 > **Tài liệu liên quan:** `../product/BRD.md` FR-5 · `../product/PRD.md` FLOW 6/9 + §4.1 · `../product/TDD.md` §3.2/3.6/3.7 · `../standards/decisions.md` DD-40/DD-25 · `../standards/business-rules.md` BL-PAY · `../research/player-side-saas-reconciliation.md`
 
@@ -89,7 +89,7 @@ Host mở roster/danh sách nợ (bot Zalo / Messenger / web)
   → phát payment.settled → xác nhận tự động tới player (feature_notifications_reminders FR-6.2)
 ```
 
-- **Mark-paid CK thủ công** ≠ auto-reconcile: nếu CK đã có `bank_transaction` (đã ingest) → host gán → allocation `source='manual'`. Nếu host tự xác nhận "đã CK" nhưng **chưa có** `bank_transaction` → **hạng mục impl còn mở** (tạo synthetic manual `bank_transaction`, HOẶC mở rộng enum qua migration); **không** dùng `source='cash'` cho một khoản CK, **không** tạo `bank_transaction` giả tuỳ tiện và **không** đoán số tiền. Enum canonical `source ∈ (auto,manual,cash,waiver,reversal)` — không có `bank_transfer`.
+- **Mark-paid CK thủ công** ≠ auto-reconcile: CK đã ingest → host gán allocation `source='manual'`. Host attest CK **chưa có** `bank_transaction` cần B1 enum migration/source riêng + actor/evidence reference; **cấm synthetic bank transaction**, cấm map sang `cash|manual`, cấm đoán số tiền. Trước khi B1 land, boundary reject fail-closed.
 - **Auto-reconcile CK (webhook match tên+tiền+ngày, `/unmatched`)** chỉ ở tier **`host_pro`** (capability `payment_reconcile_auto`). Free = `payment_mark_manual`.
 - Charge của mỗi lượt chơi suy theo giá kèo; nếu kèo đặt giá nam/nữ → xem **DD-39 (✅ Chốt)** / `feature_user_settings` (suy `amount_due` theo `person.gender`; decrypt lỗi → fail-closed).
 
@@ -112,8 +112,8 @@ Host mở roster/danh sách nợ (bot Zalo / Messenger / web)
 | 11 | Webhook và `/cash` cùng lúc | Lock charge; tổng hiệu lực không vượt amount due |
 | 12 | Auto-match và host gán tay cùng lúc | Lock bank transaction + charges; loser reload state/no-op |
 | 13 | Gán nhầm đã notify | Reversal + audit + correction event; không sửa row cũ |
-| 14 | Tenant suspended | Vẫn durable-ingest; reconcile có thể pause theo lifecycle policy; không mất CK |
-| 15 | Session bị hủy sau khi paid | Charge void/refund-needed theo policy; platform không tự hoàn tiền |
+| 14 | Tenant suspended | Durable-ingest ON; auto-settle/auto-notify OFF theo DD-51/PAY-OQ-2; không mất CK |
+| 15 | Session bị hủy/player paid rời | Host-cancel refund toàn bộ; player-leave theo policy CLB + refund request; refund ngoài Plexco, log opaque reference; ledger append-only |
 | 16 | Amount ≤ 0 | Reject validation; log metadata tối thiểu |
 | 17 | Attacker chiếm account host → đổi STK | Đổi STK primary → `pending_change` 24h. Hệ thống vẫn dùng STK cũ cho QR. Thông báo đổi gửi MỌI kênh đã link (Zalo/Messenger/email/web). Rate-limit: max 2 lần/30 ngày. Ref: AUDIT G1, BL-PAY-10 |
 | 18 | Mark-paid multi-select: 1 player trong batch đã paid | Skip player đó (idempotent), preview cảnh báo; các player còn lại vẫn ghi bình thường |
@@ -134,9 +134,10 @@ Host mở roster/danh sách nợ (bot Zalo / Messenger / web)
 ### Ledger rules
 
 - Bank allocation (auto-reconcile, `host_pro`): `bank_transaction_id` bắt buộc; source `auto|manual`.
-- Mark-paid thủ công (mọi tier): **tiền mặt → source `cash`** (không có `bank_transaction`, `created_by` bắt buộc); **CK đã ingest → host gán → source `manual`** (khớp một `bank_transactions` row). Actor admin bắt buộc + audit; áp preview+confirm (DD-25). *(CK host tự xác nhận chưa có `bank_transaction` = impl còn mở — synthetic manual bank_transaction / enum migration; không dùng `cash` cho CK. Không có source `bank_transfer` trong enum canonical.)*
+- Mark-paid thủ công (mọi tier): tiền mặt → `cash`; CK đã ingest → `manual` + real `bank_transactions`. CK chưa ingest chỉ được ghi sau B1 dedicated source migration (`bank_transaction_id=NULL`, actor + opaque evidence bắt buộc); trước đó reject. **Không synthetic bank transaction** và không map sai `cash|manual`.
 - Waiver: không có bank transaction; source `waiver`, actor admin bắt buộc.
 - Reversal: amount âm, `reverses_allocation_id` bắt buộc; không reversal quá phần còn hiệu lực.
+- DD-49 correction: price/obligation delta là append-only signed obligation entry trong canonical charge aggregate; allocation reversal chỉ đảo tiền đã nhận. Một helper tính effective due/balance cho mọi consumer. Tên bảng/API chờ design-probe live UNIQUE charge/player/session; không giả định row charge thứ hai.
 - Charge paid khi effective allocations = `amount_due`; partial khi nằm giữa 0 và amount due.
 - `unallocated_amount` chỉ áp dụng bank transaction và được cập nhật dưới lock hoặc tính từ ledger.
 
@@ -216,16 +217,18 @@ Không log raw bank content, account number, display name, secret hoặc provide
 |---|---|---|
 | BRD OD-2 / DD-02 | Pay-code prefix/format + resolver/allocation invariant | ✅ Chốt 13/07/2026; P3 name-based vẫn không phụ thuộc rollout pay_code P4 |
 | PAY-OQ-1 | Retry cadence/backoff unmatched | Chốt trong backend spec |
-| PAY-OQ-2 | Suspended tenant pause reconcile hay vẫn reconcile | Cần lifecycle decision trước P5; ingest luôn bật |
-| PAY-OQ-3 | Refund/void policy khi hủy session | Cần business rule riêng |
+| PAY-OQ-2 | Suspended tenant pause reconcile hay vẫn reconcile | ✅ **Chốt DD-51/B10:** ingest ON; auto-settle/auto-notify OFF fail-closed. Enable lại cần decision + telemetry/evidence mới |
+| PAY-OQ-3 | Refund/void policy khi hủy session | ✅ **Chốt DD-49/v1.37:** host cancel đã thu → hoàn toàn bộ; player leave paid → policy CLB + refund request; refund ngoài + opaque reference. Obligation adjustment và allocation reversal là hai ledger entry khác nghĩa; storage chờ design-probe, không duplicate/mutate charge |
 
 ## Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-16 | v1.6 | **Full money propagation:** DD-49 append-only obligation-vs-allocation semantics + refund request contract; PAY-OQ-2 closed ingest-ON/automation-OFF for suspended. B1 chooses dedicated source migration and explicitly forbids synthetic bank transactions. Authority: decisions v1.37. |
 | 2026-07-10 | v1.4 | **Review fixes: money vocab → canonical ledger.** Mark-paid = INSERT `payment_allocations` + cập nhật `charges` (KHÔNG có bảng `payment`): tiền mặt → `source='cash'`; CK khớp một `bank_transactions` → `source='manual'`. Bỏ `source='bank_transfer'` (không có trong enum canonical `auto/manual/cash/waiver/reversal`). Host tự xác nhận "đã CK" nhưng chưa có `bank_transaction` = impl còn mở (synthetic manual bank_txn / enum migration). Cập nhật UC-15, §3.1, ledger rules, screens, acceptance. |
 | 2026-07-10 | v1.3 | **DD-40:** thêm **mark-paid thủ công mọi tier** (tap/multi-select, preview+confirm DD-25) — §1, §3.1, UC-15/16, edge #18/19, ledger rules, screens, acceptance. Auto-reconcile CK = `host_pro`. Kênh host flow: Zalo+web (bỏ Telegram, DD-37). One-line pointer giá theo giới tính → DD-39. |
 | 2026-06-19 | v1.2 | Thêm Changelog heading, verified format compliance |
 | 2026-06-19 | v1.2 | Fold AUDIT G1: STK change 24h confirmation delay (UC-13/14, edge case #17, acceptance criteria) |
 | 2026-06-18 | v1.1 | Durable ingest; charge/transaction/allocation ledger; partial/overpay/multi-person/cash/reversal; canonical phase |
 | 2026-06-18 | v1.0 | Initial legacy payment spec |
+| 2026-07-16 | v1.5 | **Propagation (light) DD-49:** PAY-OQ-3 ✅; body/schema được full-propagate ở v1.6. |

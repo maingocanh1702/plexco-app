@@ -8,7 +8,7 @@
 ## 0. TL;DR — ⬜ SPIKE (không phải decision)
 - **DD-14:** Zalo Login (Social API) có **bị chặn bởi cửa đăng ký OA verified** (đang pending) không, hay độc lập? → **verify với developers.zalo.me**.
 - **DD-15:** Zalo Bot `from.id` có **ổn định xuyên nhiều bot** (id toàn cục theo user Zalo) hay **scoped-per-bot**? (Messenger PSID đã xác nhận page-scoped.) → **verify với Zalo Bot Platform**.
-- **KHÔNG chặn build:** `link_codes` (OTP `/link`) đã bao **ca xấu nhất** (mỗi CLB link một lần). Kết quả spike chỉ ảnh hưởng **mức auto-match** (giảm số lần link) + đường tạo linked-state Zalo cho **DD-32**.
+- **KHÔNG chặn build:** transactional one-time `link_codes` đã bao **ca xấu nhất** (mỗi CLB link một lần). Kết quả spike chỉ ảnh hưởng mức auto-match + linked-state Zalo cho DD-32.
 
 ---
 
@@ -19,7 +19,7 @@
 | Plexco đa-bot (mỗi host/CLB một bot) | ROADMAP · identity-model |
 | `link_codes` (OTP) = đường link/merge cross-channel — bao ca xấu nhất | identity-model §3/§5 |
 | Messenger PSID = **page-scoped** (đã xác nhận) | messenger-channel-design |
-| DD-32 funnel: "link ↔ Zalo" phụ thuộc DD-14 (chưa bật → OTP `/link` thủ công) | DD-32 |
+| DD-32 funnel: "link ↔ Zalo" phụ thuộc DD-14 (chưa bật → transactional `/link` code) | DD-32 |
 
 ---
 
@@ -28,7 +28,7 @@
 - **Cách verify:** đọc docs developers.zalo.me (Social/Login) + thử tạo app Login sandbox (không cần OA) → xem có bật được không.
 - **Kết quả → tác động:**
   - **Độc lập** → có thể bật Zalo Login **trước** OA → làm cầu **auto-match "Zalo login ↔ Zalo bot"** (giảm friction, thay SĐT). Ảnh hưởng **DD-32/provider-link path** (KHÔNG phải DD-13 — đã fence Google/email).
-  - **Phụ thuộc OA verified** → chờ OA; phễu Zalo tạm dùng OTP `/link` thủ công.
+  - **Phụ thuộc OA verified** → chờ OA; phễu Zalo tạm dùng transactional `/link` code.
 
 ## 3. DD-15 — Spike plan (Bot `from.id` cross-bot)
 - **Câu hỏi:** cùng một người ở hai bot khác nhau: `from.id` là **id toàn cục theo user Zalo** hay **scoped-per-bot**?
@@ -38,7 +38,7 @@
   - **Scoped-per-bot** → mỗi CLB link một lần (như hiện tại). **Không chặn** — `link_codes` đã bao.
 
 ## 4. Invariants (bất kể kết quả spike)
-- **Không auto-link chéo** dựa suy đoán — link/merge money-adjacent vẫn cần strong proof (DD-01 SĐT verified / evidence matrix `feature_identity`).
+- **Không auto-link chéo** dựa suy đoán — debt-bearing claim vẫn cần verified account email hoặc transactional one-time `link_code` theo DD-50.
 - `link_codes` là đường an toàn mặc định; auto-match chỉ là tối ưu friction, **không** thay khoá merge.
 - Token/PII Zalo lộ = giới hạn 1 CLB messaging, không chạm DB/tiền (AUDIT).
 

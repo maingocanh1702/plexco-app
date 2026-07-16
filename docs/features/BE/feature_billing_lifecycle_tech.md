@@ -1,10 +1,10 @@
 # Feature: Host Billing & Tenant Lifecycle — Backend Tech Spec
 
 > **Canonical phase:** P5  
-> **Version:** 2.5 · 2026-07-10
+> **Version:** 2.6 · 2026-07-16
 > **Status:** Reviewed  
 > **Product spec:** `../feature_billing_lifecycle.md`  
-> **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-29 · DD-40 · DD-37
+> **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-29/DD-37/DD-40/DD-51
 
 > **Cập nhật v2.4 (DD-40 ✅ + DD-37 ✅, 2026-07-10):** §4b capability registry — free = `payment_mark_manual` (tiền mặt/CK thủ công) + `reminders_manual`; host_pro thêm `payment_reconcile_auto` + `reminders_auto` + `assistant_ai_kb` + `crm_dashboard`. Bot kênh free = **Zalo + Facebook Messenger** (bỏ Telegram — DD-37).
 
@@ -54,8 +54,8 @@ CREATE TABLE subscriptions (
   --   phân biệt bằng plans.price=0. Free rời 'active' chỉ khi đổi plan / cancel / suspend-vì-abuse.
   -- DD-29: bỏ selected_extra_channel (không còn plus_channel/tính-theo-kênh); kênh & tính năng do capability flags quyết định.
   trial_end timestamptz,
-  period_start timestamptz NOT NULL,
-  period_end timestamptz NOT NULL,
+  period_start timestamptz,
+  period_end timestamptz,
   grace_end timestamptz,
   version integer NOT NULL DEFAULT 1,
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -90,6 +90,7 @@ CREATE TABLE subscription_invoices (
   amount_paid integer NOT NULL DEFAULT 0,
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','partial','overdue','cancelled')),
   due_at timestamptz NOT NULL,
+  paid_at timestamptz,
   period_key text NOT NULL,
   UNIQUE (tenant_id, period_key)
 );
@@ -115,6 +116,7 @@ CREATE TABLE billing_overrides (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL REFERENCES tenants(id),
   actor_id uuid NOT NULL,
+  ticket_ref text NOT NULL,
   reason text NOT NULL,
   expires_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
@@ -141,7 +143,10 @@ CREATE TABLE billing_overrides (
 | 14 | Entitlement | Toggle 1 capability free↔pro | Sửa `plans.entitlements.capabilities` (config), gate đọc `hasCapability(tenant,key)` — KHÔNG hardcode theo `plan_key` |
 | 15 | Data Integrity | `free` (price=0) routed through trial/past_due/suspended | ❌ NEVER — created `status='active'`, no invoice; lifecycle job filters `WHERE p.price > 0`. Free chỉ suspend qua đường ToS/abuse, không qua non-payment |
 | 16 | Data Integrity | Invoice issued for price=0 plan | ❌ NEVER — `IssueInvoice` skip khi `plan.price = 0` |
-| 17 | Entitlement | Downgrade paid → `free` | Hạ entitlement cuối period đã trả; set `status='active'`, `period_end=NULL`, ngừng invoice; không retroactive refund tự động (BIL-OQ-2) |
+| 17 | Entitlement | Downgrade/cancel paid → `free` | Trial unpaid: immediate free. Paid cancel >7d: keep entitlement to period end then free. Refund eligible ≤7d: full refund path. Always clear free period fields; no hidden retroactive refund |
+| 18 | Financial | Refund window cannot prove `paid_at` | Fail-closed manual review; never treat as within window or zero-risk |
+| 19 | Security | Override missing/overlong ticket fields | Reject unless PlatformAdmin + ticket_ref + reason + expires_at≤7d; auto-expire idempotently |
+| 20 | Billing safety | Tenant suspended receives player CK | Ingest ON; auto-settle/auto-notify OFF regardless plan capability |
 
 ---
 
@@ -179,13 +184,23 @@ CREATE TABLE billing_overrides (
 ### Daily Lifecycle Job
 
 ```text
-Cron (daily) → Claim due subscriptions JOIN plans WHERE plans.price > 0   (bỏ qua free)
-                 FOR UPDATE SKIP LOCKED
-    → Per tenant TX: check dates → transition status
+Cron (daily) → Claim due subscriptions JOIN plans WHERE plans.price > 0 FOR UPDATE SKIP LOCKED
+    → trialing: at trial_end-2d emit one deduped reminder
+    → trialing unpaid at trial_end: switch plan/version to free + active immediately (no past_due)
+    → active paid period expired/unpaid invoice: past_due + grace_end=due_at+7d
+    → past_due after grace_end: suspended
+    → expire billing_overrides where expires_at<=now()
     → Send owner notices (outbox) → COMMIT
 ```
 
 > **free bỏ qua hoàn toàn:** join `plans.price > 0` loại mọi subscription 0đ khỏi nhánh `period expired → past_due → suspended`. `IssueInvoice` cũng skip khi `plan.price = 0`. Free chỉ đổi trạng thái qua `CancelSubscription`, đổi plan, hoặc `ApplyOverride`/suspend vì abuse (đường riêng, không phải lifecycle non-payment).
+
+### Refund/cancel + override contract (DD-51)
+
+- Refund eligibility reads canonical invoice `paid_at`; request at `paid_at + 7 days` is eligible, after that is not. NULL/unprovable `paid_at` fails closed to manual review.
+- Eligible refund is full invoice amount; actual money movement remains external/provider-specific and must be evidenced/audited before marking complete.
+- Cancel after the window sets cancel-at-period-end; entitlement remains until period end, then subscription becomes free active with NULL period fields.
+- `ApplyOverride` derives actor from PlatformAdmin auth, requires `ticket_ref`, reason and expiry no more than 7 calendar days, records before/after, and auto-expires. It never changes invoice `paid_at` or refund eligibility.
 
 ### Billing Webhook Ingest
 
@@ -231,7 +246,7 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 | 1b | free start | New tenant, plan `free` | `active` ngay, không trial, không invoice |
 | 1c | free never past_due | free qua nhiều chu kỳ, không payment | vẫn `active`; lifecycle job bỏ qua; 0 invoice |
 | 2 | Trial → active | Payment before trial end | active |
-| 3 | Trial → past_due | No payment + trial expired | past_due |
+| 3 | Trial expiry unpaid | No payment + trial expired | Immediate free active; no past_due/grace/invoice |
 | 4 | Active → past_due | Period expired, no renewal | past_due |
 | 5 | Past_due → suspended | Grace expired | suspended |
 | 6 | Past_due → active | Payment received | active |
@@ -251,6 +266,12 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 | 20 | Cross-tenant billing isolation | Tenant A invoice | Not visible to B |
 | 21 | Entitlement gate | Free plan bật `payment_reconcile_auto` | Rejected `PLAN_UPGRADE_REQUIRED` (free chỉ `payment_mark_manual`); kênh Zalo/Messenger **được phép** ở free |
 | 22 | Capability config-driven | Set `crm_dashboard:true` cho free trong seed | Free có CRM ngay, không sửa code (gate đọc capability) |
+| 23 | Trial reminder boundary | 2 days before trial_end, job retries | Exactly one reminder; no duplicate |
+| 24 | Refund at paid_at+7d | Exact boundary | Eligible full refund |
+| 25 | Refund after paid_at+7d | Boundary + 1 second | Not eligible; retain entitlement through period |
+| 26 | Refund paid_at NULL | Missing proof | Manual review fail-closed |
+| 27 | Override authorization/expiry | Co-admin or expiry>7d or missing ticket | Rejected; PlatformAdmin valid override auto-expires |
+| 28 | Suspended automation | Player bank transaction arrives | Durable ingest succeeds; no auto allocation/notification |
 
 ### Integration Tests
 
@@ -285,6 +306,7 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-16 | v2.6 | **DD-51 full propagation:** nullable free period fields, invoice `paid_at`, override `ticket_ref`, exact trial/grace/refund/override commands, suspended automation-off and boundary tests. |
 | 2026-07-10 | v2.5 | **Review fixes → canonical billing vocab.** Thêm ghi chú **PENDING MIGRATION** cho `plans` CHECK `('free','host_pro')` (live schema.ts vẫn 4-tier — không claim done). Overpay/partial = billing review queue qua `billing_allocations` (KHÔNG có bảng `billing_credits`); edge #4 + test #12 cập nhật. Schema đã dùng `subscription_invoices`/`billing_transactions`/`billing_allocations`/`billing_overrides` (canonical). |
 | 2026-07-05 | v2.3 | **DD-29 pricing pivot:** `plan_key`→`('free','host_pro')`, host_pro 250k; bỏ `selected_extra_channel`/plus_channel; `entitlements`=**capability flags config-driven** + "Capability registry" (§4b: reconcile_manual free, reconcile_auto+reminders_auto+assistant+crm pro); edge #13/#14 + test #21/#22 đổi sang capability gate. Rename plan_key cũ `free_web`→`free`. |
 | 2026-07-10 | v2.4 | **DD-40 ✅ + DD-37 ✅:** §4b registry — free capability `payment_reconcile_manual` → **`payment_mark_manual`** (mark-paid thủ công tiền mặt/CK, DD-40); host_pro giữ `payment_reconcile_auto`/`reminders_auto`/`assistant_ai_kb`/`crm_dashboard`. Seed bỏ `bot_telegram`; kênh free = **Zalo + Messenger** (DD-37); `bot_messenger` gated bởi App Review (DD-37/P2.5, thay DD-09/P4.8). Test #21 cập nhật. |

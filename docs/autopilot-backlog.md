@@ -98,29 +98,17 @@ invariants: [web-app, design-tokens]
 scope: []
 notes: docs/channels/web/. Frontend riêng → thường DISJOINT với backend feature (song song tốt) trừ khi đụng core-api/i18n.
 
-## task: infra-fly-provisioning-secret-boundary
-title: Fly deploy — run pgboss/DB provisioning WITHOUT app-wide migration secret
-status: planned
+## task: infra-do-app-vpc-deployment
+title: DigitalOcean App Platform + Managed PostgreSQL VPC deployment contract
+status: ready
 risk: P1
 change_class: build-config
-depends_on: [monorepo-scaffold]
-invariants: [build-config]
-scope: [infra/fly.toml, .github/workflows/ci.yml]
-manifest: docs/autopilot-manifests/infra-fly-provisioning-secret-boundary.json
-merged_probe: .github/workflows/ci.yml :: ^  provision-production-db:
-notes: Codex S1 round-07/08 P1s — (a) `[deploy] release_command` would force
-  DATABASE_URL_MIGRATION into Fly APP secrets, injected into every runtime
-  machine, handing the DDL credential to the HTTP surface (breaks
-  feature_multi_tenant_tech §1); (b) ORDERING: DB prep = migrations 0000..0011
-  (creates roles) BEFORE `provision:queue` (grants to app_worker) — provisioning
-  on a fresh cluster without migrations fails `role "app_worker" does not
-  exist`. The migrations runner + dev/compose prep ordering land in
-  db-postgres-drizzle-rls; THIS slice covers the Fly-side secret boundary:
-  CI job / one-shot machine / separate minimal app holding the migration
-  secret, reusing entrypoint role `provision`. Blocks FIRST DEPLOY only —
-  not S2..S20 development. Completion contract pins the CI job key
-  `provision-production-db`: migrations run before pg-boss provisioning and
-  `DATABASE_URL_MIGRATION` stays job-scoped, never a Fly app secret.
+depends_on: [monorepo-scaffold, db-postgres-drizzle-rls]
+invariants: [build-config, schema]
+scope: [.github/workflows/deploy.yml, infra/app.prod.yaml, infra/app.staging.yaml, infra/fly.toml, docs/standards/environments-setup.md]
+manifest: docs/autopilot-manifests/infra-do-app-vpc-deployment.json
+merged_probe: infra/app.prod.yaml :: ^name:[[:space:]]+plexco-prod$
+notes: Launcher-ready P1 slice; canonical prompt v0.6.0. Pre-flight MUST close DD-04 §7.1 with primary-source evidence for SePay/ApiPay/Zalo/Messenger. Any fixed-egress requirement → HALT DESIGN_UNFIT before authoring DO App Specs and re-slice bounded Fly fallback; never disable VPC silently. Green path creates prod+ephemeral-staging App Specs from one immutable image (web/discovery/worker), component-scoped DB roles/URLs, no migration credential in runtime, and a manual/approval-gated deploy workflow whose one-shot migration runs before pg-boss provisioning. Read isolation is Day-1; read-only node remains trigger-based. Full contract: `docs/autopilot-infra-do-app-vpc-deployment.md`.
 
 ## task: core-matcher-grouped-amount-parsing
 title: splitNameAmount misparses grouped trailing amounts with a non-zero final group

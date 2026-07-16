@@ -3,7 +3,7 @@
 > **Canonical phase:** P4.3 / P4.7 + Messenger **P2.5** (**DD-32 ✅ Option A; Messenger là kênh phase-1 P2.5 — DD-37 thay DD-09**)
 > **Track:** 🎣 Growth / Channel Acquisition
 > **Version:** 0.4 · 2026-07-15
-> **Status:** ✅ **DD-32 chốt Option A (phễu MỀM) — 2026-07-13** (`../standards/decisions.md` DD-32, authority v1.32). Doc này promote khỏi Draft khi build; **guest vẫn book kể cả kèo có phí** — active mới tạo charge, full vào waitlist/no-charge (DD-45); link chỉ mở giá trị, web-auth đầy đủ **KHÔNG** bắt buộc cho paid booking. Claim/merge membership đã có tiền phải qua evidence matrix + conflict checks + explicit confirmation/audit của `feature_identity`; DD-26 chỉ bảo vệ confirm-before-persist, không tự là proof. Provider login **DD-33** (FB) trước, **DD-14** (Zalo) sau.
+> **Status:** ✅ DD-32 Option A, reconciled to decisions v1.39. Guest vẫn book kèo có phí; active mới tạo charge, full waitlisted/no-charge. Transactional `link_code` chỉ tạo linked-lite; debt-bearing claim vẫn cần DD-50 proof. BE companion được author cùng P4.3 build slice.
 > **Prerequisites:** P3.5 identity (`feature_identity`) · P4.3 cross-club join (`feature_cross_club_join`) · P4.7 Zalo channel (`feature_zalo_channel`) · **P2.5 Messenger** (`channels/messenger/messenger-channel-design` — phase-1, DD-37) · P4 web-auth (`feature_web_auth_onboarding`)
 > **Tài liệu liên quan:** `../standards/decisions.md` **DD-32** (nguồn quyết định) · **DD-33** (Facebook Login) · **DD-14** (Zalo Login) · DD-13 (Google/email — KHÔNG bao Facebook) · DD-29 (acquisition-first pricing) · `../00-start-here/identity-model.md` §7 (provider/channel phase matrix) · `BE/feature_channel_booking_funnel_tech.md` (chưa viết — viết cùng build slice)
 
@@ -25,7 +25,7 @@
 
 - **Book qua bot chạy trên common join service (CCJ)** — KHÔNG tạo đường đặt slot song song. Capacity vẫn checked-under-lock tại final join (CCJ bất biến).
 - **Tenant vẫn resolved từ webhook token/bot binding** — KHÔNG BAO GIỜ từ message content (ZAL/MSG bất biến).
-- **Ba mức identity:** guest = channel identity chưa link; linked-lite = OTP `/link` confirmed đủ cho hook; web-auth = `accounts` + verified `account_identities` cho app/deep actions. Link không bao giờ auto bằng tên. Claim/merge membership có tiền vẫn theo evidence matrix + conflict checks + confirmation/audit của `feature_identity`; web-auth hoặc soft-key confirmation riêng lẻ không tự cấp quyền claim.
+- **Ba mức identity:** guest = channel identity chưa link; linked-lite = transactional one-time `/link` code confirmed đủ cho hook; web-auth = `accounts` + verified `account_identities` cho app/deep actions. Claim/merge membership có tiền vẫn theo DD-50 evidence matrix; linked-state riêng lẻ không tự cấp quyền claim.
 - **Money/PII không rò qua kênh:** venue ẩn cho tới khi join thành công (DD-06); không expose nợ/roster người khác (HR2). Book-in-chat không nới các bất biến này.
 - **Phễu MỀM (DD-32 Option A đã chốt):** guest-join thuần vẫn hoạt động, kể cả paid session; link chỉ **mở thêm** giá trị, không thu hẹp đường guest. B/C là phương án đã loại và chỉ sống lại khi DD-32 được reopen.
 
@@ -44,7 +44,7 @@
 | CBF-UC-5 | Player (linked) | Yêu cầu "xem chi tiết / chỉ số" | Bot phát **magic-link** mở app Plexco (deep tier) — không trả full analytics trong chat |
 | CBF-UC-6 | Player | Link qua FB Login (Messenger) | `account_identities(platform='facebook')` verified; bind account↔person (DD-33) |
 | CBF-UC-7 | Player | Link qua Zalo Login | `account_identities(platform='zalo')` verified; bind (DD-14) |
-| CBF-UC-8 | Player | Login social chưa khả dụng → fallback OTP `/link` | `link_codes` OTP confirm → coi như linked-lite (định nghĩa "linked" theo DD-32) |
+| CBF-UC-8 | Player | Login social chưa khả dụng → fallback `/link` | Transactional one-time `link_code` confirmed → linked-lite theo DD-32 |
 | CBF-UC-9 | Player (linked ở kênh A) | Book ở kênh B cùng person | Không cần link lại nếu channel identity đã cùng person (tùy DD-15 `from.id` cross-bot) |
 | CBF-UC-10 | Player | Rời slot đã book qua bot | CCJ leave policy (unpaid free slot / paid refund policy) — audit trail |
 | CBF-UC-11 | System | Đo phễu | Emit funnel events (link_started/linked/book_in_chat/app_opened) để đo conversion |
@@ -54,17 +54,17 @@
 
 | # | Category | Case | Hành vi bắt buộc |
 |---|----------|------|-------------------|
-| 1 | Security | Message content khai person/account ID để "đã link" | ❌ Reject — linked-state chỉ từ verified `accounts`/`account_identities` hoặc OTP `/link` single-use đã confirm; không từ ID/text tự khai |
+| 1 | Security | Message content khai person/account ID để "đã link" | ❌ Reject — linked-state chỉ từ verified account identity hoặc transactional one-time `/link` code đã consume; không từ ID/text tự khai |
 | 2 | Security | FB/Zalo Login callback bị giả/replay | Reject — state token single-use/TTL/origin-bound (theo web-auth SI-1, DD-31) |
-| 3 | Security | Link gắn nhầm person (2 người, 1 máy) | Verified social identity hoặc OTP single-use; conflict → pause, không auto-merge (ID edge) |
+| 3 | Security | Link gắn nhầm person (2 người, 1 máy) | Verified account identity hoặc transactional `link_code`; conflict → pause, không auto-merge |
 | 4 | Data Integrity | Book khi capacity đầy | CCJ lock — vào `waitlisted` với position dương; không charge/venue |
 | 5 | Data Integrity | Stale numbered list khi book | Reject — "Danh sách đã thay đổi, gõ /join" (ZAL edge #2) |
 | 6 | UX/Growth | User bỏ ngang bước link | Phễu mềm: vẫn cho guest-book; không loop ép link (bounded CTA, không spam) |
 | 7 | Security | CTA link chứa URL lạ | Chỉ phát domain Plexco đã whitelisted; magic-link hash-only/TTL/single-use |
 | 8 | Cross-Feature | Đã link FB nhưng chưa link Zalo (hoặc ngược lại) | Book được ở kênh đã link; kênh chưa link → guest hoặc CTA link riêng kênh đó |
-| 9 | Security | Book session có tiền khi chỉ linked-lite (OTP) | **DD-32 = A:** guest/linked-lite **ĐƯỢC** book paid session; active tạo charge, full waitlisted/no-charge (DD-45). Claim/merge membership đã có tiền vẫn qua identity evidence/conflict/confirmation/audit. |
+| 9 | Security | Book session có tiền khi chỉ linked-lite | **DD-32 = A:** guest/linked-lite được book paid session; active tạo charge, full waitlisted/no-charge. Linked-lite không tự claim membership có tiền; claim vẫn qua DD-50 proof. |
 | 10 | Privacy | Bot lộ chỉ số/nợ trong chat | ❌ NEVER — deep analytics chỉ trên app; chat chỉ book/nhắc/xác nhận (HR2) |
-| 11 | Resilience | FB/Zalo Login provider outage | Degrade: fallback OTP `/link`; guest-book vẫn chạy; không corrupt state |
+| 11 | Resilience | FB/Zalo Login provider outage | Degrade: fallback transactional one-time `/link` code; guest-book vẫn chạy; không corrupt state |
 | 12 | Data Integrity | Account merge sau khi đã link 2 kênh | Common identity/merge service reconcile; magic-link/link cũ invalidate (ID/PVW edge) |
 | 13 | Cross-Feature | Player bị ban ở club | Reject book bất kể linked (CCJ edge #12) |
 | 14 | Concurrency | Link + book gần như đồng thời | Idempotent theo person/session; một active membership/person/tenant (CCJ edge #4) |
@@ -93,7 +93,7 @@ Feature **tái dùng** bảng canonical hiện có — **không đề xuất b�
 | `channel_identities` | Zalo/Messenger identity của user; `telegram` chỉ legacy tenant #1 | `UNIQUE(platform, platform_user_lookup_hash)`, FK `person_id` |
 | `accounts` | Plexco web-auth account | FK `person_id` — "linked" = account.person_id == channel_identity.person_id |
 | `account_identities` | Binding web/social login (Google/email/Facebook/Zalo; không Telegram — DD-37) | `UNIQUE(platform, platform_user_hash)`, `verified_at` — **đường tạo linked-state** |
-| `link_codes` | OTP `/link` (fallback khi social login chưa bật) | hash-only, TTL, single-use, `action='merge_identity'` |
+| `link_codes` | Transactional `/link` fallback khi social login chưa bật | hash-only, TTL, attempts, single-use, `action='merge_identity'` |
 | `memberships` | Guest/active membership tạo khi book | `UNIQUE(tenant_id, person_id)` active/guest; `status ∈ active\|guest\|left\|merged` |
 | `charges` | Nghĩa vụ tiền khi player active ở session có phí | UNIQUE `(tenant_id,session_id,player_id)`; waitlisted không charge; ledger giữ sau `left` |
 | `magic_links` | Cầu chat → app (deep tier) | `UNIQUE(hash)`, `person_id`, `channel`, TTL, single-use |
@@ -105,7 +105,7 @@ Feature **tái dùng** bảng canonical hiện có — **không đề xuất b�
 ```mermaid
 stateDiagram-v2
     [*] --> Unlinked
-    Unlinked --> Linked: FB/Zalo Login verified (DD-33/DD-14) hoặc OTP /link
+    Unlinked --> Linked: FB/Zalo Login verified (DD-33/DD-14) hoặc transactional /link code
     Unlinked --> Booked_Guest: book qua bot (phễu mềm, CCJ-UC-1)
     Booked_Guest --> Linked: nhận CTA → link
     Linked --> Booked_Linked: /join → book (linked tier)
@@ -133,10 +133,10 @@ stateDiagram-v2
 ## 6. Acceptance Criteria
 
 - [ ] Book qua bot chạy trên **common join service** — không đường song song; capacity lock giữ nguyên.
-- [ ] "Linked" xác định **chỉ** từ `accounts`/`account_identities` verified (hoặc `/link` OTP theo định nghĩa DD-32) — không từ message content.
+- [ ] "Linked" xác định chỉ từ verified account identity hoặc consumed transactional `/link` code — không từ message content.
 - [ ] Phễu mềm: guest-book vẫn thành công khi chưa link; CTA link hiện sau book, **bounded** (không spam/loop).
 - [ ] Deep analytics/chỉ số **không** trả trong chat — chỉ magic-link mở app.
-- [ ] FB/Zalo Login callback fail-closed (state token single-use/TTL/origin-bound — align SI-1/DD-31); fallback OTP khi provider outage.
+- [ ] FB/Zalo Login callback fail-closed (state token single-use/TTL/origin-bound — align SI-1/DD-31); fallback transactional `/link` code khi provider outage.
 - [ ] Venue/nợ/roster privacy giữ nguyên (DD-06/HR2) — book-in-chat không nới.
 - [ ] Capacity full trả waitlisted position, không charge/venue/QR; promotion mới tạo charge atomically (DD-45).
 - [ ] Funnel events phát đủ để đo conversion link→book→app; không chứa PII.
@@ -151,7 +151,7 @@ stateDiagram-v2
 | ID | Quyết định | Trạng thái |
 |---|---|---|
 | CBF-OQ-1 | Phễu cứng hay mềm | ✅ **A — mềm** (DD-32): guest vẫn book free/paid; link chỉ mở giá trị + CTA |
-| CBF-OQ-2 | Định nghĩa "linked" | ✅ Ba mức: guest · linked-lite OTP · web-auth; claim/merge tiền defer identity policy |
+| CBF-OQ-2 | Định nghĩa "linked" | ✅ Ba mức: guest · linked-lite one-time `link_code` · web-auth; claim/merge tiền defer DD-50 identity policy |
 | CBF-OQ-3 | Session có tiền có yêu cầu web-auth không | ✅ Không dưới A; bắt web-auth cho paid booking = C, phải reopen DD-32 |
 | CBF-OQ-4 | Thứ tự bật FB/Zalo Login social (DD-33 Facebook / DD-14 Zalo) — chặn đường link tự nhiên | 🔗 Phụ thuộc DD-33/DD-14 |
 | CBF-OQ-5 | `from.id` Zalo có ổn định cross-bot không (ảnh hưởng CBF-UC-9 số lần link) | 🔗 Phụ thuộc DD-15 |
@@ -160,7 +160,7 @@ stateDiagram-v2
 
 - `feature_cross_club_join(.md/_tech)`: giữ nguyên guest path; acceptance test guest-vẫn-book free/paid phải cover active→charge và full→waitlisted/no-charge, không tạo linked-tier gate.
 - `feature_zalo_channel` + `channels/messenger/messenger-channel-design`: thêm CTA link + post-book CTA + magic-link deep-action; giữ tenant-from-webhook.
-- `feature_identity(.md/_tech)`: pin guest/linked-lite/web-auth; đường tạo `account_identities(facebook/zalo)`; tương tác `/link` OTP; claim/merge tiền giữ evidence matrix hiện hữu.
+- `feature_identity(.md/_tech)`: pin guest/linked-lite/web-auth; đường tạo `account_identities(facebook/zalo)`; transactional `/link` contract; claim/merge tiền giữ DD-50 evidence matrix.
 - `feature_web_auth_onboarding`: thêm provider `facebook` (DD-33) / `zalo` (DD-14) + SI-1 state-token cho callback (DD-31).
 - `docs/features/README.md`: giữ row coverage phase-1 (đã thêm — product-only Draft).
 - Viết `BE/feature_channel_booking_funnel_tech.md` (schema delta nếu cần đo phễu/link, API, test; **không** dựng gate cứng nếu chưa reopen DD-32).

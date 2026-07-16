@@ -4,9 +4,9 @@
 >
 > **Reposition (v2 doc, 18/06/2026):** từ "SaaS thu phí cầu lông" → **platform đa môn + marketplace discovery + web sync 2 chiều**. Module đối soát CK (killer cũ) giữ nguyên thiết kế, thành 1 module. Thêm **3 tầng hiển thị** (public discovery / tenant-private RLS / person-self), **sync engine**, **chiều `sport`**.
 >
-> **Tài liệu liên quan:** `../product/BRD.md` v3.1 · `../product/PRD.md` v2.1 · `../product/TDD.md` v2.1 (kiến trúc 3 tầng + sync + discovery) · `player-side-saas-reconciliation.md` · `player-side-saas-AUDIT.md` (threat model + public layer) · `messenger-channel-design.md` (P4.8 post-MVP).
+> **Tài liệu liên quan hiện hành:** `../product/BRD.md` v3.7 · `../product/PRD.md` v2.5 · `../product/TDD.md` v2.6 · `../product/ROADMAP.md` v2.9 · `../standards/decisions.md` v1.39 · `../research/player-side-saas-AUDIT.md` (threat model + public layer) · `../channels/messenger/messenger-channel-design.md` (phase-1 P2.5).
 >
-> ⚠️ **Version note (16/07/2026):** strategy doc này viết ở baseline **v3.1/v2.1** (kiến trúc 3 tầng vẫn đúng). Nguồn hiện hành: **BRD v3.6 · PRD v2.4 · TDD v2.5 · ROADMAP v2.7 · `decisions.md` v1.34** — Messenger nay là **phase-1 P2.5**; chưa reflect đầy đủ pivot kênh (DD-37) + cụm session-model/social (DD-41–48) + DD-04 cost closure. Khi lệch, ưu tiên BRD/PRD/TDD/ROADMAP/decisions hiện hành.
+> ⚠️ **Version note (16/07/2026):** body gốc viết ở baseline **v3.1/v2.1**; kiến trúc 3 tầng vẫn đúng nhưng canonical authority nay là **BRD v3.7 · PRD v2.5 · TDD v2.6 · ROADMAP v2.9 · `decisions.md` v1.39**. DD-49..56 đã full-propagate; DD-57..60 là proposal. Khi body lịch sử lệch, ưu tiên các nguồn hiện hành trên.
 >
 > ⚠️ **SUPERSEDED PARTIALLY — v3.4 / DD-37 (10/07/2026):** doc gốc (v1.0, viết theo BRD v3.1) architect quanh **Telegram 1-bot-dùng-chung**. Theo **DD-37** (BRD v3.4): **Telegram đã bỏ khỏi phạm vi**; kênh **phase-1 = web + Zalo (bot-token per-club, DM number-reply) + Facebook Messenger (1 App, Page per-club, cửa sổ 24h, cần App Review)**; **Messenger lên P2.5** (không còn post-MVP). **Web-auth = Google OAuth + email/password** (DD-13 ✅) + link Facebook (DD-33 🟡) / Zalo (DD-14 ⬜) — thay Telegram Login. Free-tier bots = **Zalo + Messenger** + **mark-paid thủ công tiền mặt/CK** (DD-40). Các đoạn Telegram-specific bên dưới (đặc biệt §5.2, các interface sketch §3) **giữ làm tham chiếu cơ chế lift từ bot cũ** — nguyên tắc "route tenant suy từ kênh, authz theo person, canonical store + outbox" **không đổi**, chỉ đổi nhãn kênh sang Zalo/Messenger.
 
@@ -465,7 +465,7 @@ Tính năng free/pro theo **capability flags config-driven** (registry ở `../f
 Thu subscription tái dùng đúng hạ tầng webhook, nhưng trỏ vào **tài khoản nhận của MÌNH** (không phải của club):
 
 - **Thu phí:** tenant CK đúng số tiền invoice theo plan vào TK của mình, nội dung gồm mã định danh/invoiceCode (vd `BMC-<tenantSlug>`) → webhook match → đẩy `currentPeriodEnd` +1 tháng, set `status=active`. Giống y logic match của bot, chỉ khác bảng đích (`subscription_invoices`).
-- **Vòng đời (plan trả phí):** tạo tenant → `trialing` 14 ngày → hết hạn không gia hạn → `past_due` (nhắc qua Zalo/web + email) → sau X ngày `suspended`. Khi `suspended`, middleware **chặn lệnh** nhưng **vẫn nhận & lưu webhook CK của player** để club không mất giao dịch khi quay lại.
+- **Vòng đời (plan trả phí, DD-51):** `trialing` 14 ngày, remind D-2; hết trial chưa trả → khoá ngay về `free` (không grace). Subscription active trễ invoice → `past_due` + grace 7 ngày → `suspended`. Khi suspended, middleware chặn admin mutation nhưng vẫn durable-ingest CK player; auto-settle/auto-notify OFF fail-closed.
 - **`free` (0đ):** tạo tenant → thẳng `active` vô thời hạn — **không** trial/invoice, **không** `past_due`/`suspended` vì non-payment; daily job bỏ qua plan 0đ (chỉ suspend vì ToS/abuse). Ref: DD-29, BL-BIL-1.
 - **MVP có thể manual:** giai đoạn đầu mình tự xác nhận CK đúng invoice → bật `active` bằng tay; tự động hoá khâu match nội dung sau. Không chặn launch.
 
@@ -624,12 +624,9 @@ Cutover: chạy migrate trên copy → verify đối chiếu số dòng & vài s
 
 **Đã chốt:** ✅ **DD-29 (thay DD-03):** host **free 0đ / host_pro 250k VND/tháng**, capability flags config-driven · ✅ **DD-30:** APIpay enterprise auto-provision per-host (tiền vẫn về TK host) · ✅ tenant **tự mang & tự trả** phí SePay/ApiPay · ✅ **LLM/STT platform trả** + trần fair-use.
 
-**Còn chốt tiếp (không chặn Phase 0–1):**
+**Đã chốt sau bản gốc:** hosting = DigitalOcean App Platform + Managed PG HA/VPC (DD-04; còn egress/provider evidence + infra drill); tenant roles dùng exact capability registry + co-admin preset/delegation DD-56; trial/grace/refund/override = DD-51. Các quyết định này không tự chứng minh code đã land.
 
-1. **Hosting Postgres**: Neon / Supabase — chọn theo region gần VN + HA/PITR/giá (Railway chỉ dev/staging).
-2. Có cần **nhiều admin/1 club** ngay từ đầu không, hay 1 owner là đủ cho MVP (model vẫn để sẵn n-n).
-3. **Trial & grace** cụ thể: mặc định đề xuất trial 14 ngày, `past_due` 7 ngày rồi `suspended` — chốt con số.
-4. **Trần fair-use** chính thức: OCR/STT bao nhiêu/tháng (đề xuất 200/500) trước khi degrade.
+**Còn mở:** trần fair-use OCR/STT chính thức trước P7 go-live; provider LLM/privacy due-diligence DD-18; external DD-14/15/33; legal A3 và các design-probe B0/B1/B2/B3 trong `../pre-code-open-items-2026-07-16.md`.
 
 **Đã chốt sau bản gốc:** web stack = Next.js App Router, standalone/container (DD-10 ✅); public read model = `public_sessions` projector (DD-12 ✅).
 
@@ -643,6 +640,7 @@ Cutover: chạy migrate trên copy → verify đối chiếu số dòng & vài s
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 16/07/2026 | v1.2 | Authority refresh v1.39; replace stale hosting/admin/trial open items with DD-04/51/56 outcomes; pin suspended ingest ON + automation OFF; retain explicit historical/superseded boundary. |
 | 19/06/2026 | — | Thêm Changelog table |
 | 18/06/2026 | v1.0 | Implementation plan SaaS multi-tenant |
 | 10/07/2026 | v1.1 | **DD-37 channel pivot (BRD v3.4):** bỏ Telegram; kênh phase-1 = web + Zalo + Facebook Messenger (Messenger P2.5). §0 decision table + §1 end-goal + §6/§7 đổi TG→Zalo/Messenger; web-auth = Google/email (DD-13); free-tier bots = Zalo+Messenger + mark-paid thủ công tiền mặt/CK (DD-40). Cơ chế Telegram §5.2 + interface sketch §3 giữ làm tham chiếu lift từ bot cũ (superseded). |
