@@ -85,7 +85,7 @@ Landing → chọn provider:
 ```
 
 - **Bỏ TG Login adapter** (DD-37). `account_identities.platform ∈ { google, email, facebook(DD-33), zalo(DD-14) }`; SI-2 keyed-hash cho `google.sub`/email (DD-31).
-- **Link tài khoản:** person có thể link **Facebook** (DD-33 🟡, phase-1 — phụ thuộc App Review) + **Zalo** (DD-14 ⬜) vào cùng Person qua verified signal/OTP `/link`, **không** auto-link bằng tên. Google/email không cấp SĐT → phone chỉ là merge signal (DD-01).
+- **Link tài khoản:** person có thể link **Facebook** (DD-33 🟡) + **Zalo** (DD-14 ⬜) vào cùng Person qua verified account identity hoặc transactional one-time `/link` code, không auto-link bằng tên/owner/CK. DD-50: phase-1 không thu SĐT; phone dormant.
 
 ---
 
@@ -127,7 +127,12 @@ Example:
 
 ## 5. Design System
 
-→ Xem [design-tokens.md](./design-tokens.md) (CSS variables, typography, colors, spacing).
+→ **Bắt đầu design FE:** [`./designer-kickoff.md`](./designer-kickoff.md) (🟡 — entry point: gói tài liệu + thứ tự system→screens + checklist nghiệm thu).
+→ Tokens (SoT): [`../../standards/design-tokens.md`](../../standards/design-tokens.md). Bản `./design-tokens.md` là surface note — 🟡 DD-59 đề xuất trỏ hẳn về SoT để tránh drift.
+→ Kiến trúc FE: [`../../standards/frontend-architecture.md`](../../standards/frontend-architecture.md) (🟡 DD-57).
+→ Pipeline `.pen`→code: [`./frontend-pipeline.md`](./frontend-pipeline.md) (🟡 DD-58).
+→ Benchmark method: [`../../standards/design-tokens-benchmark.md`](../../standards/design-tokens-benchmark.md) (🟡 DD-59).
+→ API convention: [`../../standards/api-reference-convention.md`](../../standards/api-reference-convention.md) (🟡 DD-60).
 
 Quy tắc:
 - **Mọi color/spacing/typography = CSS variable** — không hardcode hex/rgba

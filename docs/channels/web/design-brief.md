@@ -55,6 +55,8 @@
 
 ## 3. Cấu trúc Screens & Sitemap
 
+> ⚠️ **Route/auth/phase canonical = [`./README.md §2 Screen Map`](./README.md) + §2.1 Permission Matrix.** Sitemap dưới cho *bức tranh tổng* + chi tiết sub-flow (onboarding steps, `/me/*`); khi route/tên lệch với README §2 thì **README §2 thắng** (vd `/dashboard/payments` là canonical, không phải `/dashboard/finance/debts`). Cần sửa lệch → chốt ở README §2 trước.
+
 ```
 /                           → Landing page (public)
 ├── /discover               → Marketplace discovery (public)
@@ -464,9 +466,11 @@ Step 4: Facebook Messenger + Readiness
 
 ### 5.1 Color Palette
 
+> ⚠️ **Giá trị màu canonical ở [`../../standards/design-tokens.md`](../../standards/design-tokens.md)** (đã chốt: Primary = Indigo → Deep Blue). Bảng dưới chỉ mô tả *vai trò* token; designer **bám giá trị token**, muốn đổi thì đề xuất qua `../../standards/design-tokens-benchmark.md` (🟡 DD-59) — KHÔNG tự chọn màu mới.
+
 | Token | Sử dụng | Ghi chú |
 |-------|---------|---------|
-| `--primary` | CTA buttons, links, active states | Energetic sport-feel (suggest: vibrant blue or teal) |
+| `--primary` | CTA buttons, links, active states | **Canonical = Indigo → Deep Blue** (`design-tokens.md §1`) |
 | `--primary-hover` | Button hover | Slightly darker/brighter |
 | `--secondary` | Secondary actions, tags | Complementary color |
 | `--bg-page` | Page background | Light mode: off-white, Dark mode: deep navy |

@@ -150,7 +150,7 @@ Feature parity là domain parity, không phải UI parity. Web/app là primary i
 | Mark-paid / cash (DD-40) | Xác nhận tới player (best-effort 24h) | Xác nhận tới player | Mark-paid tap/multi-select + cash form | `RecordCashPayment` |
 | Unmatched allocation | Alert + link tới ledger | Alert + link tới ledger nếu có | Ledger allocation UI | `AllocatePayment` |
 | Payment reversal | Alert/link only | Không ưu tiên | Reversal modal | `ReverseAllocation` |
-| Identity link | Send OTP `/link` / magic-link | Send OTP/magic-link | Merge tool / magic link | `LinkChannelIdentity` |
+| Identity link | Issue transactional one-time `/link` code | Consume `/link` code | Merge/recovery tool | `LinkChannelIdentity` |
 | Host approval | Alert + approval link tới web | Alert + approval link | Approval queue | `ApproveJoinRequest` |
 
 Adapter-specific details such as Messenger postback payloads and Zalo reply-context are hints only. Every mutation must reload canonical state and validate permissions before commit. For new features, prefer bot notification + web/app deep-link over adding another chat-native workflow.
