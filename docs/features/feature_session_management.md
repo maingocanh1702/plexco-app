@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P2 (chat CRUD) · P4 (web parity)  
 > **Track:** 📋 Session CRUD  
-> **Version:** 2.9a · 2026-07-17
+> **Version:** 2.9b · 2026-07-19
 > **Status:** Reviewed  
 > **Prerequisites:** P0–P1 foundation stable · P2 tenant routing/authz  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-2 · `../product/PRD.md` FLOW 2 · `../product/TDD.md` §3.2/3.8 · `../standards/decisions.md` DD-37/**DD-65..68** · `BE/feature_session_management_tech.md`
@@ -149,7 +149,7 @@ stateDiagram-v2
 |---|---|---|
 | SES-OQ-1 | Behavior khi host change price mà đã có charges | ✅ **Chốt DD-49/v1.37** — host chọn per-change: append signed obligation adjustment hoặc grandfather; allocation reversal chỉ đảo tiền đã nhận, không phải price adjustment. Rejoin thường: chưa refund carry-over, đã refund append obligation lifecycle mới; không mặc định row `charges` thứ hai. Storage/API chờ mutation-path design-probe live UNIQUE charge/player/session. |
 | SES-OQ-2 | Recurrence editing: sửa 1 occurrence hay this-and-future? | ⬜ Chưa chốt |
-| SES-OQ-3 | Waitlist + auto-promote | ✅ **Chốt DD-45** — thuộc Reviewed contract; schema/code migration pending build |
+| SES-OQ-3 | Waitlist + auto-promote | ✅ **Chốt DD-45** — thuộc Reviewed contract. **Schema đã land** (migration `0014_players_waitlist`, 2026-07-19: `waitlisted` + `waitlist_position` + state-shape/positive CHECK + queue index). **Auto-promote chưa build** — promotion là money-write, chờ `deriveChargeAmount` (DD-39), `evaluateSessionEligibility` (DD-41), ban source (DD-42) |
 | SES-OQ-4 | Field mô tả session + gating (title/notes/`session_type`/byoe/cost_shared + gating level-rank/gender/age) | ✅ **Chốt DD-41** — enforce ở shared `evaluateSessionEligibility`←`addMemberToSession`, self-attested, 9 exact codes; body/schema propagate lúc build → `../dd-41-session-fields-gating-analysis.md` |
 | SES-OQ-5 | No-show/attendance/reliability + policy deprioritize/ban | ✅ **Chốt DD-42** — per-tenant (attendance trên `players`, reliability trên `memberships`, RLS, không public); build P4+ → `../dd-42-reliability-analysis.md` |
 | SES-OQ-6 | Nhãn thành viên + audience targeting khi announce | ✅ **Chốt DD-43** — `membership_tags` per-tenant chỉ cho notification audience; join eligibility vẫn DD-41; public không lộ tag; build P4+ → `../dd-43-membership-tags-analysis.md` |
@@ -159,6 +159,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.9b | **DD-45 schema landed:** SES-OQ-3 tách rõ schema vs behavior — migration `0014_players_waitlist` đã merge (status domain + `waitlist_position` + state-shape/positive CHECK + `idx_players_waitlist_order`, 21 DDL invariant test gồm app-role RLS/grant). Auto-promote vẫn **chưa build**: là money-write, chờ DD-39/41/42. Status-only, body Reviewed không đổi. |
 | 2026-07-17 | v2.9a | §1 Ngoài phạm vi: thêm **pointer** court booking + scoring → `feature_session_organize` (DD-61..64 🟡 proposal, post-phase-1). Pointer-only, không thêm scope organize vào body Reviewed (cùng pattern one-line pointer DD-39 ở v2.1). |
 | 2026-07-17 | v2.9 | **DD-65..68:** host create-session parity trên central+optional tenant Page; durable pre-dispatch wizard, protected tenant context, final AuthZ/snapshot re-check và idempotent shared command acceptance. |
 | 2026-07-16 | v2.8 | **Full DD-49 propagation:** body/edge/AC thay left-rejoin reject mặc định bằng normal rejoin + carry-over/refunded disposition; giữ `REJOIN_REQUIRES_REVIEW` chỉ cho unknown/unimplemented correction state. Price change dùng signed obligation adjustment contract, không giả định delta/new `charges` row. Authority: decisions v1.37. |

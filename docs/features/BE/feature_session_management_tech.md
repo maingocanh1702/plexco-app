@@ -1,7 +1,7 @@
 # Feature: Session Management — Backend Tech Spec
 
 > **Canonical phase:** P2/P4  
-> **Version:** 2.7 · 2026-07-17
+> **Version:** 2.8 · 2026-07-19
 > **Status:** Reviewed  
 > **Product spec:** `../feature_session_management.md`  
 > **References:** `../../product/TDD.md` §3.2/3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-39/DD-45/DD-49/**DD-65..68** · `../../dd-45-waitlist-analysis.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`)
@@ -91,19 +91,29 @@ CREATE TABLE players (
   tenant_id uuid NOT NULL REFERENCES tenants(id),
   session_id uuid NOT NULL REFERENCES sessions(id),
   membership_id uuid NOT NULL REFERENCES memberships(id),
-  status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'left', 'waitlisted')),
-  waitlist_position integer,
+  status text NOT NULL DEFAULT 'active'
+    CONSTRAINT players_status_chk CHECK (status IN ('active', 'left', 'waitlisted')),
+  waitlist_position integer,            -- live: appended last by 0014's ALTER TABLE
   joined_at timestamptz NOT NULL DEFAULT now(),
   last_reminded_at timestamptz,
-  CHECK ((status = 'waitlisted') = (waitlist_position IS NOT NULL)),
-  CHECK (waitlist_position IS NULL OR waitlist_position > 0),
+  CONSTRAINT players_waitlist_shape_chk
+    CHECK ((status = 'waitlisted') = (waitlist_position IS NOT NULL)),
+  CONSTRAINT players_waitlist_position_positive_chk
+    CHECK (waitlist_position IS NULL OR waitlist_position > 0),
   UNIQUE (tenant_id, session_id, membership_id)
 );
 
+-- CHECK constraints phải đặt tên TƯỜNG MINH. Bài học từ 0002: khai báo inline
+-- unnamed khiến Postgres tự đặt `players_status_check`, lệch với tên
+-- `players_status_chk` mà schema.ts khai báo — tên đó chưa từng được apply lên
+-- database nào. 0014 drop cả hai spelling rồi add lại đúng tên; đừng lặp lại
+-- kiểu inline unnamed cho bảng mới.
+--
 -- Migration triển khai phải thêm same-tenant composite candidate keys/FKs cho:
 -- (tenant_id, session_id) → sessions và (tenant_id, membership_id) → memberships,
 -- đồng thời buộc session_surface_refs(tenant_id, session_id) cùng tenant.
 -- Các FK id đơn hiện tại không đủ chứng minh tenant integrity (DD-68 prerequisite).
+-- CHƯA có trong 0014 — đó là DD-68 scope, không phải DD-45.
 ```
 
 ### Indexes
@@ -224,6 +234,8 @@ CREATE INDEX idx_players_waitlist_order
 
 Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-42 deprioritize moves a candidate to the tail with the same rule; positions need not be contiguous because `joined_at,id` complete the total order.
 
+> **Open (raised by the 0014 build slice, 2026-07-19):** this DDL carries **no uniqueness** constraint on `waitlist_position`, and migration 0014 matched it verbatim rather than tightening past the spec. Note that non-contiguous ≠ non-unique: `max(position)+1` under the session lock cannot produce a duplicate, and neither DD-45 nor this doc ever sanctions one. Whether to add `UNIQUE (session_id, waitlist_position) WHERE status = 'waitlisted'` belongs to the promotion slice — see `decisions.md` DD-45. Deliberately not pinned by a test in either direction.
+
 ### Recurrence Implementation
 
 - Store local wall-clock rule + IANA timezone.
@@ -299,8 +311,8 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 ### Rollout
 
 1. Migrate session fields/backfill timezone
-2. Expand `players` with waitlist status/position CHECK/index; keep code dark until backfill/verification passes
-3. Enable atomic waitlist entry/promotion + charge/notify path
+2. ✅ **Done 2026-07-19** — `0014_players_waitlist`: status domain opened to `waitlisted`, `waitlist_position`, state-shape + positive CHECKs, `idx_players_waitlist_order`. Code stays dark. Covered by 21 DDL invariant tests in `packages/db/src/waitlist-invariants.test.ts`, including app-role grant/RLS on the new column. **Not** online-safe (validated CHECKs + non-concurrent index in one runner transaction) — fine on today's empty `players`, must be split per file if ever re-run against a populated table.
+3. Enable atomic waitlist entry/promotion + charge/notify path — **blocked**: promotion is a money-write and needs `deriveChargeAmount` (DD-39), `evaluateSessionEligibility` (DD-41) and the DD-42 ban source, none of which exist in code yet. Wiring it before those exist would make every candidate stay `waitlisted` by the fail-closed rule anyway.
 4. Enable chat CRUD
 5. Recurrence shadow generation
 6. Web API parity
@@ -319,6 +331,7 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.8 | **DD-45 schema landed (rollout step 2):** migration `0014_players_waitlist` merged — status domain opened, `waitlist_position`, state-shape + positive CHECKs, queue index; 21 DDL invariant tests incl. app-role grant/RLS. Records that the previously-inline `players` status CHECK was auto-named `players_status_check` (schema.ts's `players_status_chk` had never been applied) and 0014 reconciles the two. Flags the position-uniqueness question and the DD-68 composite-FK omission as explicitly out of scope. Step 3 marked blocked on DD-39/41/42. Contract body unchanged. |
 | 2026-07-17 | v2.7 | **Live DDL closure:** restore current `sessions.skill_level` and `price_amount >= 0` CHECK in the documented schema; add upgrade/negative-price regressions while DD-41 future rank migration remains expand→contract. |
 | 2026-07-17 | v2.6 | **DD-65..68:** central/tenant Messenger create parity, single durable wizard interceptor, final capability/context/snapshot re-check, shared idempotent command path, same-tenant FK prerequisite and hybrid integration gate. |
 | 2026-07-16 | v2.5 | **DD-49 full propagation:** replace blanket left-rejoin reject with locked disposition table (carry-over/refunded/unknown); unknown stays fail-closed. Pin append-only obligation lifecycle + canonical balance helper and explicitly forbid assuming a second `charges` row under live uniqueness. |
