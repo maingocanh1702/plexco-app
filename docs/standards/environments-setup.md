@@ -50,19 +50,35 @@ automatically after the TTL.
 
 ### 1.1 Fixed outbound-IP gate — DD-04 §7.1
 
-DigitalOcean App Platform cannot use VPC networking and dedicated public egress IPs at the same time. Record
-written evidence for every production dependency before creating the App Spec:
+DigitalOcean App Platform cannot use VPC networking and dedicated public egress IPs at the same time. The
+table below records the current attributable evidence state of this gate, one row per production dependency
+and its exact Plexco outbound call surface. Evidence rule (DD-04 §7.1): official documentation silence is not
+`NO`; a row that rests only on inference stays `UNRESOLVED` until an attributable provider support or
+contractual response supplied by the owner closes it.
 
-| Dependency | Required answer |
-|---|---|
-| SePay | Does Plexco→SePay require source-IP allowlisting? Inbound webhook verification alone does not imply that it does. |
-| ApiPay | Does enterprise provisioning restrict API callers by fixed source IP? |
-| Zalo Bot | Does the send API require fixed outbound IP? |
-| Meta Messenger | Does the Graph API require fixed outbound IP? |
+| Dependency — Plexco outbound call surface | Fixed source IP | Primary source | Checked | Why the source supports the conclusion |
+|---|---|---|---|---|
+| **SePay** — backend calls to `https://my.sepay.vn/api/v1` (OAuth2 or API token; transaction read, webhook and bank-account management) | **UNRESOLVED** | SePay Developer Docs: [Tạo API Token](https://developer.sepay.vn/vi/sepay-api/v2/tao-api-token) · [OAuth 2.0 tổng quan](https://developer.sepay.vn/vi/sepay-oauth2/tong-quan) · [Địa chỉ IP](https://developer.sepay.vn/vi/dia-chi-ip) | 2026-07-18 | Official docs specify token/OAuth2 issuance with no source-IP registration step, and the docs' only IP-allowlist page covers the reverse direction (merchants allowlist SePay's webhook egress IPs). No page affirmatively states the outbound-caller source-IP policy, so documentation silence cannot close this row as `NO`. Closes with an attributable SePay support/contract answer on source-IP policy for `my.sepay.vn` API callers. |
+| **ApiPay** — primary: DD-30 enterprise auto-provisioning contract (per-host provisioning; contractual surface, not publicly documented) · fallback: BYO-key calls to `https://app.apipay.vn` (`/v2/client/banks`, `/v1/client/webhooks`) | **UNRESOLVED** | ApiPay Docs: [Authentication](https://docs.apipay.vn/vi/api/authentication) — the site is client-rendered, so the full published docs corpus was retrieved and searched | 2026-07-18 | Published docs fully specify BYO auth (`Authorization: Bearer base64(accessKey:secretKey)`) and contain no IP-allowlist or caller-IP-restriction concept (the only IP mentions are custom-domain DNS A records), but they are silent on caller source-IP policy — and the DD-30 primary enterprise provisioning surface is contractual, so public docs cannot answer it at all. Closes with the ApiPay enterprise onboarding/contract answer covering both surfaces. |
+| **Zalo Bot** — backend calls to `https://bot-api.zaloplatforms.com/bot<token>/<method>` (`sendMessage`, `setWebhook`, …) with the per-tenant bot token | **UNRESOLVED** | Zalo Bot Docs: [Xác thực](https://bot.zapps.me/docs/authorize/) · [Sử dụng API](https://bot.zapps.me/docs/call-api/) · [Bảng mã lỗi](https://bot.zapps.me/docs/error-code/) | 2026-07-18 | The published calling contract is HTTPS plus the bot token as the sole credential (Telegram-style token-in-URL), with no IP-declaration step and no origin/IP error class — but no page affirmatively states the caller source-IP policy, so documentation silence cannot close this row as `NO`. Closes with an attributable Zalo Bot support answer on source-IP policy for `bot-api.zaloplatforms.com` callers. |
+| **Meta Messenger** — backend `POST https://graph.facebook.com/v<ver>/<page_id>/messages` with `page_access_token` | **NO** | Meta: [Securing Graph API Requests](https://developers.facebook.com/docs/graph-api/securing-requests) | 2026-07-18 | Meta affirmatively documents server-IP allowlisting as an opt-in app security control the developer may enable, alongside the optional `appsecret_proof` / "Require App Secret" hardening. By default Graph API calls are token-authenticated from any IP, so no fixed egress IP is required. |
 
-- All answers **no** → continue with App Platform + VPC.
-- Any answer **yes** → stop. Do not disable the private DB path silently. Activate the bounded Fly+DO
-  fallback or design a DO Droplet/DOKS substrate with private DB access and controlled egress.
+**Gate status: `HALT-EVIDENCE_INCOMPLETE`** — SePay, ApiPay and Zalo Bot are `UNRESOLVED` (2026-07-18). No
+overall result is recorded and the closure marker is intentionally absent: their official documentation never
+affirmatively addresses outbound caller source-IP policy, and inference from omitted registration steps does
+not meet this gate's evidence bar. The owner must obtain an attributable support or contractual response from
+each of the three providers (for ApiPay: the DD-30 enterprise onboarding contract explicitly, not only the
+BYO API) before this gate can close.
+
+- All four rows attributable and **NO** → record `Overall result: DO_VPC_COMPATIBLE` plus the closure marker.
+  That permits the App Platform + VPC green path to proceed to later **manual design review only**; it does
+  not by itself authorize the infra slice or any provisioning.
+- All four rows attributable and one or more **YES** → record `Overall result: FIXED_EGRESS_REQUIRED`. That
+  blocks the DO App Platform + VPC green path and requires a separate fallback design: the bounded Fly+DO
+  fallback or a DO Droplet/DOKS substrate with private DB access and controlled egress.
+- Any row still missing, ambiguous, stale, or only inferred → gate status stays `HALT-EVIDENCE_INCOMPLETE`;
+  no overall result or closure marker may be recorded, even if another row is already an attributable `YES`.
+- Until the gate closes, do not create the App Spec and do not disable the private DB path silently.
 
 ### 1.2 Repository preconditions
 
@@ -274,7 +290,8 @@ silently become an always-on production mirror.
 This list mirrors the accepted record §7.6 and must be represented as executable checks/evidence in the infra
 slice:
 
-- [ ] Fixed-egress-IP gate closed with written evidence.
+- [ ] Fixed-egress-IP gate closed with written evidence — still open: §1.1 gate status
+      `HALT-EVIDENCE_INCOMPLETE` (SePay/ApiPay/Zalo Bot unresolved, checked 2026-07-18).
 - [ ] App Platform `sgp` is attached to the intended `sgp1` VPC.
 - [ ] PostgreSQL trusted sources contain only required private identities.
 - [ ] Four DB roles and pooled/direct/listener URLs work over the private route with TLS verification.
