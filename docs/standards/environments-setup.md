@@ -73,9 +73,11 @@ BYO API) before this gate can close.
 - All four rows attributable and **NO** → record `Overall result: DO_VPC_COMPATIBLE` plus the closure marker.
   That permits the App Platform + VPC green path to proceed to later **manual design review only**; it does
   not by itself authorize the infra slice or any provisioning.
-- Any attributable **YES** → record `Overall result: FIXED_EGRESS_REQUIRED`. That blocks the DO App Platform +
-  VPC green path and requires a separate fallback design: the bounded Fly+DO fallback or a DO Droplet/DOKS
-  substrate with private DB access and controlled egress.
+- All four rows attributable and one or more **YES** → record `Overall result: FIXED_EGRESS_REQUIRED`. That
+  blocks the DO App Platform + VPC green path and requires a separate fallback design: the bounded Fly+DO
+  fallback or a DO Droplet/DOKS substrate with private DB access and controlled egress.
+- Any row still missing, ambiguous, stale, or only inferred → gate status stays `HALT-EVIDENCE_INCOMPLETE`;
+  no overall result or closure marker may be recorded, even if another row is already an attributable `YES`.
 - Until the gate closes, do not create the App Spec and do not disable the private DB path silently.
 
 ### 1.2 Repository preconditions
