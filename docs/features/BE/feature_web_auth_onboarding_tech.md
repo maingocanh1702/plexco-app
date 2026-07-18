@@ -1,11 +1,11 @@
 # Feature: Web Authentication & Tenant Onboarding — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.7a · 2026-07-19
+> **Version:** 2.8 · 2026-07-19
 > **Status:** Reviewed
 > **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google/email DD-37 chưa code · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_web_auth_onboarding.md`
-> **References:** `../../standards/business-rules.md` BL-SEC-1/BL-SEC-3/BL-MSG · `../../standards/decisions.md` DD-13 · DD-31 · **DD-33** · DD-50 · DD-60 · **DD-65..67** · `../../standards/api-reference-convention.md` · `auth-security-invariant-table.md`
+> **References:** `../../standards/business-rules.md` BL-SEC-1/BL-SEC-3/BL-MSG · `../../standards/decisions.md` DD-13 · DD-31 · **DD-33** · DD-50 · DD-60 · **DD-65..67** · **DD-80 (B0 ✅ v1.77)** · `../../b0-auth-credential-lifecycle-design-probe.md` · `../../standards/api-reference-convention.md` · `auth-security-invariant-table.md`
 
 ---
 
@@ -297,6 +297,45 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 
 ## 5. Testing Plan
 
+### Acceptance matrix — slice D0 `auth-s4-d0-revoke-core` (DD-80 §6/§9a)
+
+> Điều kiện PASS của slice: mọi row dưới có test executable với expected result đúng; grant/RLS chạy trên Postgres thật. Manifest: `../../autopilot-manifests/auth-s4-d0-revoke-core.json`.
+
+| # | Case | Setup | Expected |
+|---|---|---|---|
+| D0-1 | Internal revoke-by-account | Account A có 3 web_sessions, B có 1; gọi `auth_revoke_account_sessions(A)` (owner conn) | 3 session của A có `revoked_at`, session B nguyên vẹn; return count=3 |
+| D0-2 | Helper không granted | Role `app` EXECUTE internal helper | `permission denied`; grant matrix chỉ có public wrapper |
+| D0-3 | Public wrapper derive account | Session cookie hợp lệ + CSRF đúng → `POST /api/auth/logout-all` | Mọi session của account hiện tại (kể cả current) revoked; response ok; wrapper KHÔNG nhận `account_id` param |
+| D0-4 | Logout-all replay | Gọi lại với cookie đã revoked | 401 `AUTH_INVALID`, zero mutation (B0 §6.2) |
+| D0-5 | CSRF fail | Thiếu/sai CSRF secret | 403 `CSRF_INVALID`, không revoke gì |
+| D0-6 | Rotated chain | rotate session rồi logout-all | Cả token cũ (rotated_from chain) lẫn mới đều không resolve được |
+| D0-7 | Race logout-all × rotate | 2 connection concurrent | Không deadlock; trạng thái cuối: không token nào của account còn resolve; rotate-sau-revoke trả AUTH_INVALID |
+| D0-8 | Audit atomic | logout-all thành công | `logout_all` audit ghi cùng transaction; không log token/raw |
+| D0-9 | Schema mirror §9(a) | `schema.ts` mirror `auth_login_nonces`/`auth_login_state`/`rate_limit_hits` | Type-check + Drizzle mirror pass; zero runtime/DDL behavior change |
+| D0-10 | Lock order | Helper lock `accounts` parent trước `web_sessions` con (§5.2 B0) | Trace/regression: không path nào lock sessions trước accounts |
+
+### Acceptance matrix — slice D1 `auth-s4-d1-google-adapter` (DD-80 §2/§4/§4.1/§8.2)
+
+> Google độc lập với email-password flag; Facebook giữ `AUTH_PROVIDER_UNAVAILABLE`. Manifest: `../../autopilot-manifests/auth-s4-d1-google-adapter.json`.
+
+| # | Case | Setup | Expected |
+|---|---|---|---|
+| D1-1 | State issue + bucket-trước-mutation | 11 GET `/api/auth/google/state` cùng trusted-IP trong 1 phút | 10 lần đầu: row `auth_oauth_transactions` + Lax path-scoped binding cookie; lần 11: 429, KHÔNG tạo row/cookie |
+| D1-2 | Callback happy path (cell new/new) | State+binding+PKCE+nonce hợp lệ, id_token JWKS-verified, `email_verified=true`, sub/email chưa tồn tại | Một transaction tạo Person+Account+verified `account_emails`+Google identity; session mint; cookie session `Strict` |
+| D1-3 | State single-use | Replay callback cùng state | Generic reject, zero mutation |
+| D1-4 | Binding cookie thiếu/sai | Callback không có/lệch binding cookie | Reject; transaction không bị claim |
+| D1-5 | Proof matrix negatives | Từng cell sai: `iss`/`aud`/`azp`/`exp`/nonce/`email_verified=false` | Generic reject từng cell; zero account/session mutation (table-driven) |
+| D1-6 | Collision: email thuộc account A | Sub mới + verified email của A | Attach Google identity vào A (DD-50 strong proof); không account thứ hai |
+| D1-7 | Collision: pending account A | Email đang pending 2 attempts | Promote email cho A; supersede TOÀN BỘ attempts+tokens, NULL password/key candidates, không copy candidate; attach identity |
+| D1-8 | Collision: sub thuộc A, email thuộc B | Hai account khác nhau | `AUTH_IDENTITY_CONFLICT`; không auto-merge, không mint session (→ DD-53) |
+| D1-9 | Collision: sub thuộc A, email pending B | — | Login A bằng stable subject; KHÔNG mutate/supersede attempt/token của B |
+| D1-10 | Collision: sub thuộc A, email mới từ Google | Google trả email khác đã lưu | Login A; KHÔNG tự tạo/promote `account_emails` (email-change là workflow riêng, ngoài scope) |
+| D1-11 | Callback bucket độc lập | Exhaust `oauth-state` bucket | `oauth-callback` bucket không bị ảnh hưởng và ngược lại |
+| D1-12 | PKCE ciphertext | Kiểm tra storage | Canonical `bytea` + key version text riêng (v2.7 contract) |
+| D1-13 | Không same-origin gate | Cross-site GET callback với binding Lax | Hoạt động; KHÔNG gọi `sameOriginRequest()`; session cookie vẫn Strict |
+| D1-14 | Telegram regression | Chạy test suite Telegram hiện có | Pass nguyên vẹn (chưa remove route nào) |
+| D1-15 | Facebook negative scope | GET facebook state/callback | `AUTH_PROVIDER_UNAVAILABLE` như v2.6; zero mutation |
+
 ### Unit Tests
 
 | # | Test | Input | Expected |
@@ -392,6 +431,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.8 | **DD-80 propagate + slice artifacts:** refs thêm DD-80/B0 probe (owner-approved v1.77); thêm acceptance matrix D0 revoke-core (10 case) + D1 Google adapter (15 case) bind manifests `auth-s4-d0-revoke-core.json`/`auth-s4-d1-google-adapter.json`. Contract §2–§4 không đổi; chưa claim runtime. |
 | 2026-07-19 | v2.7a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
 | 2026-07-18 | v2.7 | **Cross-site auth + final review correction:** live Strict/same-origin login-state remains only for same-origin form; Google/Facebook use protected OAuth transaction + provider-specific Lax binding; verify/reset links use non-mutating GET → explicit same-origin POST. OAuth state issue now has a pre-insert/cookie trusted-IP bucket distinct from callback; verify/reset pin IP→non-mutating target resolve→target/invalid-artifact bucket→consume ordering; Google PKCE KMS ciphertext uses canonical `bytea` while key version remains separate text metadata. Add transport/link-scanner/rate-order/Google-PKCE tests. |
 | 2026-07-18 | v2.6 | **DD-33 + DD-60:** add gated Facebook state/callback contract, server-side exchange + app-scoped subject verification, domain-separated HMAC, PSID separation, exact external evidence gate/fallback, live-schema no-CHECK truth and auth legend convention. |
