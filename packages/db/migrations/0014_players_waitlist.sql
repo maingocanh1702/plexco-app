@@ -3,7 +3,7 @@
 -- DD-45 waitlist model — EXPAND ONLY, code stays dark.
 --
 -- Contract: docs/dd-45-waitlist-analysis.md §2/§3 ·
---           docs/features/BE/feature_session_management_tech.md v2.9 (DDL +
+--           docs/features/BE/feature_session_management_tech.md v2.11 (DDL +
 --           rollout step 2: "Expand players with waitlist status/position
 --           CHECK/index; keep code dark until backfill/verification passes").
 --
@@ -13,18 +13,24 @@
 --           queue-ordering index.
 --   DOES NOT — write any promotion/join/leave logic. There is no SessionService,
 --           no deriveChargeAmount (DD-39), no evaluateSessionEligibility
---           (DD-41) and no reliability/ban source (DD-42) in the codebase yet.
+--           (DD-41), reliability restriction (DD-42), or shared
+--           evaluateJoinRestriction (DD-52) in the codebase yet.
 --           The DD-49 correction core is also absent. First-activation
 --           promotion is a MONEY-WRITE (derive + exactly one charge); proven
---           DD-49 rejoin promotion revalidates/carries the canonical aggregate
---           and creates no second charge. Neither path may be wired until its
---           prerequisites exist — see §4 of the DD-45 analysis.
+--           DD-49 rejoin promotion revalidates the canonical aggregate, then
+--           carries a non-refunded lifecycle or appends a refunded lifecycle
+--           atomically with activation; it creates no second charge row.
+--           0014 also has no waitlist_entry_version/root promotion-retry job
+--           store: candidate-event binding, CAS leases, sweep worker and DLQ
+--           belong to a later migration.
+--           Neither path may be wired until those prerequisites exist.
 --
 -- Why the CHECKs live in the DB and not only in the service:
 --   'waitlisted' rows must never occupy capacity or see the venue. A first-entry
 --   waitlisted row creates no charge; a proven DD-49 rejoin-waitlisted row may
---   retain its canonical historical obligation/allocation but creates no new
---   charge. Those financial dispositions belong to the future service/core;
+--   retain a non-refunded historical obligation/allocation. A refunded rejoin
+--   creates no new obligation while waitlisted; append happens only atomically
+--   with later activation. Those dispositions belong to the future service/core;
 --   this migration only makes the state/position shape unambiguous. The single
 --   fact the rest of the system keys off is
 --   status = 'waitlisted' <=> waitlist_position IS NOT NULL. If a service bug
@@ -83,14 +89,15 @@ ALTER TABLE players ADD CONSTRAINT players_status_chk
 -- is (waitlist_position, joined_at, id) precisely so gaps do not matter.
 --
 -- No uniqueness constraint — matching the documented DDL in
--- feature_session_management_tech.md verbatim. Note this is NOT the same as
--- saying duplicates are intended: max(position)+1 under a session lock cannot
--- produce one, and neither DD-45 nor the tech spec ever sanctions a duplicate
--- rank. The DB is simply left as permissive as the spec wrote it rather than
--- tightened past it. Whether to add
+-- feature_session_management_tech.md verbatim. Normal max(position)+1 under a
+-- session lock does not generate duplicates, but the current invariant suite
+-- intentionally inserts an equal (position, joined_at) pair and verifies the
+-- id tie-break. Duplicate ranks are therefore representable and test-pinned in
+-- this schema version. Whether a future monotonic migration should add
 --   UNIQUE (session_id, waitlist_position) WHERE status = 'waitlisted'
--- is an open question for the promotion slice, to be raised in decisions.md —
--- not settled here, and deliberately not pinned by a test either way.
+-- remains DD-45a for the promotion slice; that change must also replace the
+-- permissive duplicate fixture/test rather than claiming current behavior is
+-- unpinned.
 ALTER TABLE players ADD COLUMN waitlist_position integer;
 
 -- ---- 3. State-shape invariants -------------------------------------------
@@ -109,7 +116,7 @@ ALTER TABLE players ADD CONSTRAINT players_waitlist_position_positive_chk
 --   WHERE session_id = $1 AND status = 'waitlisted'
 --   ORDER BY waitlist_position, joined_at, id  FOR UPDATE
 -- Left as a FULL index (not partial on status='waitlisted') to match the
--- documented DDL in feature_session_management_tech.md v2.9; status is the
+-- documented DDL in feature_session_management_tech.md v2.11; status is the
 -- second key column so the waitlisted slice is still a contiguous range scan.
 CREATE INDEX idx_players_waitlist_order
   ON players(session_id, status, waitlist_position, joined_at, id);

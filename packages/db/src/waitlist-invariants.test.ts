@@ -11,11 +11,13 @@ import {
  * DD-45 waitlist DDL invariants (migration 0014).
  *
  * These assert the DATABASE half of the contract only — the half that must hold
- * even when a future service has a bug. Promotion BEHAVIOUR (atomic
- * charge-on-promote, skip-on-ineligible, fill-available) is deliberately NOT
- * tested here: no SessionService, deriveChargeAmount (DD-39) or
- * evaluateSessionEligibility (DD-41) exists yet, and 0014 is expand-only with
- * the code dark. See docs/dd-45-waitlist-analysis.md §3.
+ * even when a future service has a bug. Promotion BEHAVIOUR (first-activation
+ * derive + exactly-one-charge; DD-49 carry-or-append-at-activation;
+ * skip-on-ineligible; fill-available) is deliberately NOT tested here: no
+ * SessionService, deriveChargeAmount (DD-39), evaluateSessionEligibility
+ * (DD-41), DD-42 restriction source, evaluateJoinRestriction (DD-52),
+ * waitlist-entry version or root promotion-retry sweep worker exists yet. 0014 is
+ * expand-only with the code dark. See docs/dd-45-waitlist-analysis.md §3.
  *
  * Most assertions run on the OWNER connection: a CHECK constraint binds
  * superusers too, so proving it there proves it for every role. The grant/RLS
