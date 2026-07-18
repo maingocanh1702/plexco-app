@@ -22,4 +22,11 @@ to the round file; never use `tee`, degraded review, or a substitute reviewer. D
 migrations, secrets, Reviewed specs, decisions.md, or the verdicts file. Any authority conflict is
 `HALT-AUTHORITY_AMBIGUOUS`, never a local design decision. This packet does not authorize P0 auth codegen.
 
+Model continuity: the pinned chain is `claude-fable-5` -> `claude-sonnet-5` (effort `xhigh`); no other model.
+On a resume after a usage-limit block, first re-run steps 1-4 above (they are idempotent), read
+`.autopilot/state/docs-auth-d0-d1-implementation-packet/` and existing commits to locate the exact stopping
+point, append one line `MODEL_SWITCH: <from> -> <to> @ <UTC time>` to `regions.log`, and continue the SAME
+slice from that point. A model switch never relaxes any gate: Codex FULL-base clean round, verification,
+scope, and HALT rules are unchanged. Include the full model trail in the final report.
+
 Begin with Pre-flight, then Step 1.

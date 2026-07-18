@@ -86,6 +86,37 @@ Mở Claude Code với cwd **chính xác**:
 Chọn model `claude-fable-5`, gõ `/ap-26-docs-auth-d0-d1-implementation-packet`. Không mở ở repo root, không
 paste prompt lịch sử. Bất kỳ pre-launch check nào fail → dừng; không xoá branch/worktree/reservation.
 
+### 3.1 Model policy — fallback & usage-limit resume
+
+- **Model chain pin:** `claude-fable-5` → `claude-sonnet-5` (effort **`xhigh`**). Không model nào khác.
+- **Overload/unavailable (tự động):** repo đã commit `.claude/settings.json` với `"fallbackModel":
+  "claude-sonnet-5"`; nếu chạy bằng CLI có thể pin tường minh:
+
+  ```bash
+  claude --model claude-fable-5 --fallback-model claude-sonnet-5
+  ```
+
+  Lưu ý đúng tài liệu: fallback này chỉ trigger khi model **overloaded/unavailable** — usage limit KHÔNG
+  trigger nó.
+- **Usage limit (resume tay hoặc watchdog):** khi Claude Code báo "hit your session/weekly limit", session
+  block tới giờ reset; state trong `.autopilot/state/docs-auth-d0-d1-implementation-packet/` và commit trên
+  feature branch không mất. Mở lại **đúng worktree đó** với sonnet-5 effort tối đa và invoke lại launcher:
+
+  ```bash
+  cd "/Users/maingocanh/Projects/Plexco app/.autopilot/worktrees/docs-auth-d0-d1-implementation-packet"
+  claude --model claude-sonnet-5
+  # trong session: /model → effort xhigh (nếu selector có), rồi:
+  # /ap-26-docs-auth-d0-d1-implementation-packet
+  ```
+
+  Pre-flight của launcher idempotent (re-register manifest, giữ regions.log/fix-round-count) nên resume tiếp
+  đúng chỗ dừng. HARD_STOP tính lại từ lần resume nhưng tổng ngân sách vẫn là một slice — không nới scope.
+- **Caveat trung thực:** session/weekly limit có thể **shared across models**; đổi sang sonnet-5 chỉ mở khoá
+  nếu fable-5 dùng pool riêng. Nếu resume bằng sonnet-5 vẫn báo limit → chờ reset, không lách bằng account/
+  model ngoài chain.
+- **Gates không đổi theo model:** Codex 1× FULL-base clean, verification, scope-gate, HALT sentinels giữ
+  nguyên bất kể model nào đang chạy. Model degrade không bao giờ là lý do hạ chuẩn.
+
 ## 4. Runtime contract (tóm tắt — chi tiết trong task contract + launcher)
 
 - `T0=$(date +%s)`; `HARD_STOP=$((T0 + 7*3600))`; 20 phút finish margin. Hết giờ giữa chừng → safe commit,
@@ -107,6 +138,7 @@ paste prompt lịch sử. Bất kỳ pre-launch check nào fail → dừng; khô
 ## 5. Final report (một task duy nhất)
 
 - status: `READY_FOR_MANUAL_MERGE` | `HALT-<REASON>` | `HALT-TIMEBOX`;
+- **MODEL_TRAIL:** danh sách model đã dùng theo thứ tự + lý do switch/resume (vd `fable-5 → sonnet-5[xhigh] @ usage-limit 03:20`); section nào của packet được viết bởi model nào nếu có switch;
 - branch + HEAD/base SHA + PR/compare URL nếu có;
 - bảng self-check §D của packet (PASS/GAP từng section, marker có/không);
 - verification results + Codex verdict line cuối;
