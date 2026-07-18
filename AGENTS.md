@@ -1,3 +1,21 @@
+<!-- review-code-readiness:start -->
+# Review / Plan Readiness — mandatory for every session
+
+For every session that reviews, reconciles, fixes, or finalizes docs, decisions, specs, plans, or readiness:
+
+1. **MUST read** `docs/standards/review-code-readiness-gate.md` before editing or issuing a final verdict.
+2. **MUST use** `docs/templates/review-doc-plan-session-template.md` as the execution/output template; do not improvise a weaker review format.
+3. **MUST verify live repo truth** (current base/commit, schema, migrations, code, grants/RLS, tests, dependent specs); prose alone is never sufficient.
+4. **MUST keep status boundaries explicit:** `DECISION_FINAL` ≠ `PLAN_READY` ≠ `CODE_READY` ≠ `ENABLE_READY` ≠ `IMPLEMENTED`.
+5. **MUST pin authority by commit SHA + exact target files.** Never invalidate a reviewed slice merely because an unrelated global decision version advanced; re-open only the affected blast radius.
+6. **MUST finish with the canonical verdict block** from the gate file. `CODE_READY` requires G1–G5 PASS, G6 PASS/named enablement-only, the 12/12 closure matrix, `OPEN_QUESTIONS_IN_SCOPE: 0`, merged hard dependencies (or the slice is the root dependency), a complete acceptance matrix, and an executable first slice.
+7. If not ready, return `NOT_PLAN_READY` or `NOT_CODE_READY` with the exact blocker, owner, binary resolution condition, and `NEXT_REVIEW_TRIGGER`; do not end with vague wording such as "almost final" or repeat an unbounded polish loop.
+8. A later-phase or enablement-only question may remain open only when current behavior and negative scope are pinned and it cannot affect the slice being authorized.
+9. Never call docs/contracts runtime proof. Code, migration, tests, deployment, and production E2E require separate evidence.
+
+These rules are repo policy and apply even when the user only says "review", "check", "updated", "fix", "final", or asks whether a plan can start coding.
+<!-- review-code-readiness:end -->
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
