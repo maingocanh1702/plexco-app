@@ -1,7 +1,7 @@
 # Feature: Payment Reconciliation — Backend Tech Spec
 
 > **Canonical phase:** P3 (auto-reconcile) · P2 (manual mark-paid)
-> **Version:** 1.9a · 2026-07-19
+> **Version:** 1.10 · 2026-07-19
 > **Status:** Implementation contract reconciled to TDD v3.1 / current decisions v1.67; B1/schema/code pending design-probe/build slices
 > **Implementation:** In progress — core matching/payments-logic đã có; wiring webhook→settle→notify chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_payment_reconcile.md`
@@ -301,6 +301,17 @@ ALTER TABLE payment_allocations
 COMMIT;
 ```
 
+### 2.2 Rollback
+
+- **Trong lúc apply:** upgrade là **một transaction atomic** (§2.1) — mọi preflight mismatch RAISE EXCEPTION ⇒ toàn bộ abort, không để lại partial constraint set (đã có schema-upgrade fixture ở §8 assert điều này).
+- **Sau khi apply (revert migration mới):**
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Disable reconcile worker + mark-paid/allocation routes | ✅ |
+| 2 | Migration revert mới: DROP các composite FK/candidate key thêm ở §2.1, restore scalar FK cũ, DROP `charges.membership_id NOT NULL` | ✅ Constraint-only; dữ liệu backfill `membership_id` giữ nguyên (đúng theo player, vô hại) |
+| 3 | Drop các bảng ledger baseline (`charges`/`bank_transactions`/`payment_allocations`/`bank_accounts`) | ❌ NEVER — bảng thuộc `0002`/`0003` đã apply, có thể chứa ledger thật |
+
 ---
 
 ## 3. Durable webhook ingest
@@ -413,6 +424,46 @@ Host đánh dấu player **đã trả** thủ công — có ở **mọi tier** (
 
 Manual request includes command ID and allocation array `{chargeId, amount}` (hoặc `playerIds` cho mark-paid multi-select). Server ignores tenant/actor supplied in body and derives both from auth context.
 
+### Request/Response Examples
+
+> Minh hoạ theo contract đã pin; envelope chuẩn DD-60 (`../../standards/api-reference-convention.md` §1.1). Field name DTO + HTTP mapping cho code chưa pin sẽ chốt ở build slice.
+
+**POST `/sessions/:id/mark-paid`** (DD-40, DD-25 preview→confirm 2 pha):
+
+- Request (preview):
+
+```json
+{ "commandId": "cmd_…", "method": "cash", "playerIds": ["…", "…"] }
+```
+
+- `200` — preview (chưa mutate; confirm single-slot fail-closed DD-24):
+
+```json
+{ "data": { "preview": { "players": 2, "method": "cash", "total": 240000 } }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+- Attested transfer trước B1 migration (HTTP mapping minh hoạ):
+
+```json
+{ "data": null, "error": { "code": "ATTESTED_TRANSFER_UNSUPPORTED", "message": "…", "statusCode": 409 }, "meta": { "requestId": "req_…" } }
+```
+
+**POST `/webhook/sepay/:token`** (HTTP status đã pin ở §3):
+
+- `401` — signature/timestamp fail (trước durable row/job): `error.code = "INVALID_WEBHOOK_SECRET"`.
+- `200` — duplicate `(tenant, provider, external_id)`: trả existing transaction ID, `DUPLICATE_TXN`, **không** enqueue job thứ hai.
+
+### Idempotency
+
+> Tổng hợp per-endpoint từ keys đã pin ở §5 (canonical — bảng này chỉ tham chiếu).
+
+| Interface | Idempotent? | Key |
+|-----------|-------------|-----|
+| Webhook ingest | ✅ | `(tenant, provider, external_id)` — duplicate trả 200 + existing ID |
+| Worker reconcile | ✅ | Job unique key per transaction/version; at-least-once + idempotent |
+| Mark-paid / manual allocation | ✅ | `commandId` trong `processed_commands` — retry trả kết quả cũ; mỗi (charge, commandId) đúng 1 allocation |
+| Reversal | ✅ | Unique command + target allocation checks |
+
 ### STK change endpoints (G1)
 
 | Interface | Auth | Result |
@@ -455,6 +506,25 @@ Error codes: `INVALID_WEBHOOK_SECRET`, `ACCOUNT_MISMATCH`, `DUPLICATE_TXN` (200)
 - Sweeper finds old `pending` transactions with no live job and re-enqueues.
 - Suspended tenants always ingest; auto-settle/auto-notify are OFF fail-closed under DD-51/PAY-OQ-2. Enabling later requires a new decision + telemetry evidence.
 - Projector failure does not roll back settlement; outbox retries notification.
+
+### Caching Strategy
+
+| Data | Cache? | TTL | Invalidation |
+|------|--------|-----|-------------|
+| Ledger state (charges/allocations/bank_transactions) | ❌ | — | Mọi quyết định tiền đọc under lock trong transaction (§5, §7) — fail-closed, không đọc cache |
+| `/unmatched` list | ❌ | — | Live read + redacted candidates |
+| Metrics/monitoring (§9) | Aggregate async | — | Không được dùng làm input cho allocation |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §6: TenantAdmin/TenantOwner + CSRF/session per interface; server derive tenant/actor từ auth context, ignore body |
+| Injection/validation | §3: normalize payload trước persist; stable JSON errors; §6: không tin tenant/actor từ body |
+| Secret & log redaction | §3: payload/secret errors không log sensitive; §9: logs chỉ IDs/reason codes, never raw bank content/account/secret |
+| Webhook signature + replay | §3: SePay HMAC raw-body ±300s timing-safe + no-downgrade; ApiPay HMAC riêng, không dùng chéo header |
+| Idempotency | §5 keys + bảng Idempotency §6 |
+| Data retention/xoá | Bank content/payload/STK lưu encrypted (`*_enc`); retention/erasure policy per-table chưa pin ở doc này — theo `feature_security_operations_tech.md` |
 
 ---
 
@@ -528,6 +598,7 @@ Metrics: durable ACK latency, reconcile lag, auto-match rate by policy version, 
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-19 | v1.10 | **Template v2.30/v2.33 uplift (pilot #2):** thêm §2.2 Rollback (atomic abort + revert constraint-only + NEVER drop baseline), §6 Request/Response Examples (DD-60 envelope) + bảng Idempotency (tham chiếu §5), §7 Caching Strategy + Security Checklist (map về §3/§5/§6/§9; retention → security_operations). Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v1.9a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
 | 2026-07-19 | v1.9 | **DD-49 timing mirror:** refunded rejoin appends an idempotent lifecycle only when active; full→waitlisted defers until activation. No duplicate `charges` row or runtime change. |
 | 2026-07-17 | v1.8 | **Ledger referential-integrity closure:** adds executable candidate keys and composite same-tenant FKs across players, charges, bank accounts/transactions and allocations; charge is bound to its exact session/player/membership and reversal to its original charge. Pins atomic legacy backfill/preflight/validation plus cross-tenant, cross-session and upgrade-parity tests. |

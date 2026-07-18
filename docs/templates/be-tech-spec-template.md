@@ -72,18 +72,18 @@ CREATE TABLE {table_name} (
 
 ### Request/Response Examples
 
-> Success DTO minh hoạ shape theo contract; field name cụ thể chốt ở build slice trừ khi spec/invariant đã pin. Error dùng envelope chuẩn API (HANDOFF §4): `{ "error": true, "message": "...", "code": "ERROR_CODE" }`.
+> Success DTO minh hoạ shape theo contract; field name cụ thể chốt ở build slice trừ khi spec/invariant đã pin. Envelope chuẩn theo **DD-60** (`../standards/api-reference-convention.md` §1.1, khớp live `apps/web/lib/api-envelope.ts`).
 
 **POST `/api/{resource}`** — `200`:
 
 ```json
-{ "status": "..." }
+{ "data": { "status": "..." }, "error": null, "meta": { "requestId": "req_..." } }
 ```
 
 — `4xx`:
 
 ```json
-{ "error": true, "message": "{Message tiếng Việt}", "code": "{ERROR_CODE}" }
+{ "data": null, "error": { "code": "{ERROR_CODE}", "message": "{Message tiếng Việt}", "statusCode": 400 }, "meta": { "requestId": "req_..." } }
 ```
 
 ### Rate Limits
