@@ -50,19 +50,29 @@ automatically after the TTL.
 
 ### 1.1 Fixed outbound-IP gate — DD-04 §7.1
 
-DigitalOcean App Platform cannot use VPC networking and dedicated public egress IPs at the same time. Record
-written evidence for every production dependency before creating the App Spec:
+DigitalOcean App Platform cannot use VPC networking and dedicated public egress IPs at the same time. The
+table below closes this gate with attributable evidence from current official provider documentation, one row
+per production dependency and its exact Plexco outbound call surface.
 
-| Dependency | Required answer |
-|---|---|
-| SePay | Does Plexco→SePay require source-IP allowlisting? Inbound webhook verification alone does not imply that it does. |
-| ApiPay | Does enterprise provisioning restrict API callers by fixed source IP? |
-| Zalo Bot | Does the send API require fixed outbound IP? |
-| Meta Messenger | Does the Graph API require fixed outbound IP? |
+| Dependency — Plexco outbound call surface | Fixed source IP | Primary source | Checked | Why the source supports the conclusion |
+|---|---|---|---|---|
+| **SePay** — backend calls to `https://my.sepay.vn/api/v1` (OAuth2 or API token; transaction read, webhook and bank-account management) | **NO** | SePay Developer Docs: [Tạo API Token](https://developer.sepay.vn/vi/sepay-api/v2/tao-api-token) · [OAuth 2.0 tổng quan](https://developer.sepay.vn/vi/sepay-oauth2/tong-quan) · [Địa chỉ IP](https://developer.sepay.vn/vi/dia-chi-ip) | 2026-07-18 | API-token issuance (name + status only, tokens get full access) and the OAuth2 contract are fully specified with no source-IP registration or restriction step. The docs' only IP-allowlist page lists SePay's own egress IPs for merchants to allowlist SePay→merchant webhook delivery — the reverse direction — so inbound webhook hardening has no outbound-caller counterpart. |
+| **ApiPay** — backend calls to `https://app.apipay.vn` (`/v2/client/banks`, `/v1/client/webhooks`) for DD-30 enterprise auto-provisioning and the BYO-key fallback | **NO** | ApiPay Docs: [Authentication](https://docs.apipay.vn/vi/api/authentication) — the site is client-rendered, so the full published docs corpus was retrieved and searched | 2026-07-18 | Authentication is fully specified as `Authorization: Bearer base64(accessKey:secretKey)` with keys issued in the ApiPay dashboard. The entire docs corpus contains no IP-allowlist, IP-registration or caller-IP-restriction concept; the only IP mentions are custom-domain DNS A-record instructions pointing at ApiPay's own server. |
+| **Zalo Bot** — backend calls to `https://bot-api.zaloplatforms.com/bot<token>/<method>` (`sendMessage`, `setWebhook`, …) with the per-tenant bot token | **NO** | Zalo Bot Docs: [Xác thực](https://bot.zapps.me/docs/authorize/) · [Sử dụng API](https://bot.zapps.me/docs/call-api/) · [Bảng mã lỗi](https://bot.zapps.me/docs/error-code/) | 2026-07-18 | The complete calling contract is HTTPS plus the bot token as the sole credential (Telegram-style token-in-URL). Bot creation and authentication define no place to declare a caller IP, and the documented error model (400/401/403/404/408/429) has no origin/IP-denial class — a mandatory source-IP allowlist cannot be operated without such a mechanism. |
+| **Meta Messenger** — backend `POST https://graph.facebook.com/v<ver>/<page_id>/messages` with `page_access_token` | **NO** | Meta: [Securing Graph API Requests](https://developers.facebook.com/docs/graph-api/securing-requests) | 2026-07-18 | Meta documents server-IP allowlisting as an opt-in app security control the developer may enable, alongside the optional `appsecret_proof` / "Require App Secret" hardening. By default Graph API calls are token-authenticated from any IP, so no fixed egress IP is required. |
 
-- All answers **no** → continue with App Platform + VPC.
-- Any answer **yes** → stop. Do not disable the private DB path silently. Activate the bounded Fly+DO
-  fallback or design a DO Droplet/DOKS substrate with private DB access and controlled egress.
+<!-- DD04_EGRESS_EVIDENCE_CLOSED -->
+
+**Overall result: DO_VPC_COMPATIBLE** — all four rows are attributable and all are **NO**.
+
+- `DO_VPC_COMPATIBLE` permits the App Platform + VPC green path to proceed to later **manual design review
+  only**; it does not by itself authorize the infra slice or any provisioning. The marker above proves
+  evidence completeness, not that the answer was favorable.
+- A `FIXED_EGRESS_REQUIRED` result would have blocked the DO App Platform + VPC green path and required a
+  separate fallback design: the bounded Fly+DO fallback or a DO Droplet/DOKS substrate with private DB access
+  and controlled egress.
+- If a future provider or contract change turns any row **YES**, stop. Do not disable the private DB path
+  silently; re-open this gate and the fallback decision before touching the App Spec.
 
 ### 1.2 Repository preconditions
 
@@ -274,7 +284,8 @@ silently become an always-on production mirror.
 This list mirrors the accepted record §7.6 and must be represented as executable checks/evidence in the infra
 slice:
 
-- [ ] Fixed-egress-IP gate closed with written evidence.
+- [x] Fixed-egress-IP gate closed with written evidence — §1.1, checked 2026-07-18, overall result
+      `DO_VPC_COMPATIBLE`.
 - [ ] App Platform `sgp` is attached to the intended `sgp1` VPC.
 - [ ] PostgreSQL trusted sources contain only required private identities.
 - [ ] Four DB roles and pooled/direct/listener URLs work over the private route with TLS verification.
