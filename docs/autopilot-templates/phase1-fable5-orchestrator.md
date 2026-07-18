@@ -1,6 +1,6 @@
 # Phase-1 Autopilot Orchestrator — single send-file for Claude Code (model: claude-fable-5)
 
-> ⛔ **SUPERSEDED — DO NOT RUN AS-IS (2026-07-10).** Foundation + Auth v3 + migrations **0000–0013 đã merge trên `main@1eb6f60`** (foundation + auth-v3 merged); **Bước 0 "commit untracked schema 0000–0011" KHÔNG còn đúng** — schema/migrations đã committed, không còn untracked. Cần **soạn lại orchestrator cho trạng thái post-merge + DD-37** (Google/email auth, kênh Zalo/Messenger) trước khi chạy. Xem `docs/standards/BUILD-STATUS.md`.
+> ⛔ **HISTORICAL — NEVER RUN (superseded 2026-07-18).** File này chứa mô hình full-launch/integration-branch, P0 auth/money codegen và cross-slice execution không còn hợp lệ. Owner handoff hiện hành là `phase1-fable5-7h-PR-RUN.md`: đúng AP-22 docs-only, một worktree/session, STOP_AT_READY; AP-21 deployment là P0/manual. Giữ phần dưới chỉ làm forensic history; không copy/paste hoặc phục hồi từng đoạn.
 
 > **Cách dùng (owner):** mở repo trong **Claude Code**, chọn model **`claude-fable-5`**, paste nguyên khối trong ``` bên dưới. Prompt tự chạy qua backlog Phase-1 theo thứ tự, mỗi slice review chéo bằng `$CODEX`. Yêu cầu trước khi paste:
 > 1. Đã chạy `scripts/autopilot-onboard.sh --codex /abs/path/to/codex` (pin `AUTOPILOT_CODEX_BIN`, @import invariants) — xem `docs/autopilot-ONBOARDING.md §1`.
@@ -371,13 +371,20 @@ S17 zalo-adapter                                   [P1 · transport-zalo]  money
 
 S18 messenger-adapter                              [P1 · transport-messenger]  money-guard  ← phase-1 P2.5, Meta App Review
     Docs: feature_player_messenger(_tech); docs/channels/messenger/messenger-channel-design.md;
-          DD-37 (channel pivot) + DD-33 (Facebook link); connector_onboarding.
-    Do:  Messenger adapter (1 Plexco App, Page per-club), tenant middleware (page_id → tenant_id; ref
-         deep-link for join); 24h-window messaging (Message Tags dead → join+confirm; reminders
-         best-effort in 24h only, else web+Zalo); SAME core as S17 (extract shared, adapters thin — do
-         NOT copy Zalo logic). App Review required before GA.
-    DoD: shared core reused (no duplicated logic vs S17); tenant routing (page_id); join/confirm within
-         24h; no auto-reminder outside 24h; tenant isolation; App-Review-gated GA noted.
+          DD-37 + DD-65..68 (hybrid Page/routing/identity/delivery); feature_session_management(_tech);
+          feature_cross_club_join(_tech); connector_onboarding.
+    Do:  Messenger adapter (1 Meta App; central Plexco Page always + optional per-club Page); global-protected
+         Page registry (`central|tenant`); page_id resolves endpoint/default context ONLY, then protected
+         opaque action/ref/server picker resolves target tenant. Bind identity + reachability to Page+PSID;
+         never auto-merge across Pages. Give host/player role-aware menus on either Page; `/newsession` uses
+         one durable pre-dispatch wizard + shared idempotent SessionService; discovery/join uses paginated
+         opaque actions + shared Join core. Revalidate tenant/person/AuthZ at every consume and mutation;
+         fail closed on wrong/stale/replayed action. Delivery selects ONE reachable route (tenant Page →
+         central Page → web/Zalo), deduped; 24h-window reminders stay best-effort. App Review required before GA.
+    DoD: no duplicated Session/Join/business logic vs other transports; matrix covers central+tenant Page,
+         2 tenants including a club without a Page, host/player/multi-role/multi-club/cross-club, stale/replay,
+         races, provider-fail-after-commit, 24h boundary and one-route/no-duplicate delivery; tenant isolation;
+         App-Review-gated GA noted.
     Depends_on: [zalo-adapter]. Invariants: [transport-messenger].
 
 S19a assistant-kb-schema-ingest                    [P1 · schema, core-api]  ← DD gate

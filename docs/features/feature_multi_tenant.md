@@ -2,11 +2,13 @@
 
 > **Canonical phase:** P0–P1
 > **Track:** 🏢 Multi-tenant Core + 3-tier
-> **Version:** 1.5 · 2026-07-16
-> **Status:** Reviewed and reconciled to BRD v3.7 / PRD v2.5 / TDD v2.6 / decisions v1.40; P0–P1 live implementation remains the reality baseline
-> **Tài liệu liên quan:** `../product/BRD.md` §6–8 · `../product/TDD.md` §3.2–3.4 · `../standards/decisions.md` DD-37 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md`
+> **Version:** 1.7 · 2026-07-17
+> **Status:** Reviewed and reconciled to BRD v3.9b / PRD v2.8 / TDD v3.1 / decisions v1.45; P0–P1 live implementation remains the reality baseline, DD-15/DD-65..68 migration pending
+> **Tài liệu liên quan:** `../product/BRD.md` §6–8 · `../product/TDD.md` §3.2–3.4 · `../standards/decisions.md` DD-37/**DD-65..68** · `feature_identity.md` · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md`
 
 > **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (bỏ Telegram). Nền multi-tenant/RLS không đổi; chỉ cập nhật tham chiếu kênh ngoài phạm vi.
+>
+> **Cập nhật DD-15/DD-65..68 (v1.45):** tenant-private business data vẫn RLS. Channel identity/reachability của Messenger và Zalo là **GLOBAL protected + narrow resolver**, scoped theo Page/bot/OA endpoint và keyed bằng `channel_identity_id`; Messenger Page registry cũng global-protected. Endpoint/default context không tự cấp target-tenant authority.
 
 ---
 
@@ -81,8 +83,8 @@ Xây nền bắt buộc cho mọi feature: monorepo, PostgreSQL + Drizzle, schem
 
 | Zone | Ví dụ | Quyền |
 |---|---|---|
-| **GLOBAL protected** | `sports`; sau này `persons`, `channel_identities` | Lookup công khai có whitelist; identity chỉ qua protected service |
-| **TENANT private** | sessions, players, memberships, reachability, ledger, settings | RLS theo `app.tenant_id` + authz theo vai trò |
+| **GLOBAL protected** | `sports`; `persons`, endpoint-scoped `channel_identities` + reachability; Messenger Page registry | Lookup công khai có whitelist; identity/endpoint data chỉ qua protected service + exact relation checks |
+| **TENANT private** | sessions, players, memberships, Zalo bot/tenant config, ledger, settings | RLS theo `app.tenant_id` + authz theo vai trò |
 | **PUBLIC** | `public_sessions` | Cross-tenant read-only, field whitelist, rate-limit |
 | **WORKER** | queue/outbox claim metadata | Narrow privileged functions; không expose qua HTTP |
 
@@ -163,6 +165,8 @@ Không gửi schema/migration telemetry chứa row data hoặc PII.
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v1.7 | **DD-67 v1.45 generalization:** identity/reachability của Messenger + Zalo scoped theo provider endpoint; reachability gắn `channel_identity_id`, target-tenant eligibility authorize riêng. Live P0–P1 RLS baseline không đổi; migration pending. |
+| 2026-07-17 | v1.6 | **DD-65..68 boundary propagation:** Messenger registry/identity/endpoint reachability chuyển target contract sang GLOBAL protected+narrow resolver; tenant Page chỉ default context, không cấp target authority. Live P0–P1 RLS baseline không đổi; migration pending. |
 | 2026-07-16 | v1.5 | Reconcile MT-OQ-1 sau P0: worker security boundary đã canonical ở BE §4; exact per-queue function name được pin trong slice triển khai, không còn wording "trước P0". |
 | 2026-07-15 | v1.3 | **Propagation (light):** OD-8 → ✅ DD-08; OD-4 → 🟡 DD-04 reopened; thêm MT-OQ-2 (DD-46 personal tenant) + MT-OQ-3 (DD-43 membership_tags) với pointer. Nền RLS/tenant không đổi; schema (`tenants.kind`/`membership_tags`) propagate lúc build slice. |
 | 2026-07-16 | v1.4 | **DD-04 ✅ Accepted:** OD-4 row → **(c) co-locate DigitalOcean** (App Platform + Managed PG, VPC private); Fly = fallback; egress-IP gate. Nền RLS/tenant không đổi. → `../dd-04-hosting-final-decision.md`. |

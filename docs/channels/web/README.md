@@ -3,10 +3,10 @@
 > **Surface:** plexco.app (web dashboard + marketplace + player view + chat in-app)
 > **Deployable unit:** `apps/web`
 > **Tech stack:** Next.js App Router baseline · Route Handlers/API · SSE · vanilla CSS · Google Fonts
-> **Version:** v0.3 · 2026-07-10
+> **Version:** v0.4 · 2026-07-18
 > **Refs:** `../../product/TDD.md` §3.9 · `../../features/feature_web_auth_onboarding.md` · `../../features/feature_sync_engine.md` · `../../features/feature_marketplace_discovery.md` · `../../features/feature_player_view.md`
 
-> **Cập nhật v3.4 (DD-37 ✅):** Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅, thay TG Login) + link **Facebook** (DD-33 🟡) / **Zalo** (DD-14 ⬜). Kênh phase-1 = **web + Zalo + Facebook Messenger** (Telegram loại). Web nay còn là surface của **chat in-app** (DD-38 ✅) + **cài đặt hồ sơ/giá theo giới tính** (DD-39 ✅) + **mark-paid thủ công** (DD-40 ✅).
+> **Cập nhật 18/07:** Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅) + link **Facebook** (DD-33 ✅; external approval evidence là enablement gate, capability chưa pass phải OFF + one-time `link_code` fallback) / **Zalo** (DD-14 ⬜). Kênh phase-1 = **web + Zalo + Facebook Messenger** (Telegram loại). Web còn là surface của chat in-app, settings/giá theo giới tính và mark-paid thủ công.
 
 ---
 
@@ -85,7 +85,7 @@ Landing → chọn provider:
 ```
 
 - **Bỏ TG Login adapter** (DD-37). `account_identities.platform ∈ { google, email, facebook(DD-33), zalo(DD-14) }`; SI-2 keyed-hash cho `google.sub`/email (DD-31).
-- **Link tài khoản:** person có thể link **Facebook** (DD-33 🟡) + **Zalo** (DD-14 ⬜) vào cùng Person qua verified account identity hoặc transactional one-time `/link` code, không auto-link bằng tên/owner/CK. DD-50: phase-1 không thu SĐT; phone dormant.
+- **Link tài khoản:** person có thể link **Facebook** (DD-33 ✅; external evidence pending nên non-test capability fail-closed OFF) + **Zalo** (DD-14 ⬜) vào cùng Person qua verified account identity hoặc transactional one-time `/link` code, không auto-link PSID/tên/owner/CK. DD-50: phase-1 không thu SĐT; phone dormant.
 
 ---
 
@@ -127,12 +127,12 @@ Example:
 
 ## 5. Design System
 
-→ **Bắt đầu design FE:** [`./designer-kickoff.md`](./designer-kickoff.md) (🟡 — entry point: gói tài liệu + thứ tự system→screens + checklist nghiệm thu).
-→ Tokens (SoT): [`../../standards/design-tokens.md`](../../standards/design-tokens.md). Bản `./design-tokens.md` là surface note — 🟡 DD-59 đề xuất trỏ hẳn về SoT để tránh drift.
-→ Kiến trúc FE: [`../../standards/frontend-architecture.md`](../../standards/frontend-architecture.md) (🟡 DD-57).
-→ Pipeline visual-source→code: [`./frontend-pipeline.md`](./frontend-pipeline.md) (🟡 DD-58; visual SoT mới chưa chốt).
-→ Benchmark method: [`../../standards/design-tokens-benchmark.md`](../../standards/design-tokens-benchmark.md) (🟡 DD-59).
-→ API convention: [`../../standards/api-reference-convention.md`](../../standards/api-reference-convention.md) (🟡 DD-60).
+→ **Designer kickoff:** [`./designer-kickoff.md`](./designer-kickoff.md) — DD-57..59 deferred/reference-only, không gate delivery hiện tại.
+→ Tokens (SoT): [`../../standards/design-tokens.md`](../../standards/design-tokens.md). Bản `./design-tokens.md` giữ nguyên surface note; reconcile proposal DD-59 chưa active.
+→ Kiến trúc FE: [`../../standards/frontend-architecture.md`](../../standards/frontend-architecture.md) (🟡 DD-57 deferred/reference-only).
+→ Pipeline visual-source→code: [`./frontend-pipeline.md`](./frontend-pipeline.md) (🟡 DD-58 deferred/reference-only; visual SoT mới chưa chốt).
+→ Benchmark method: [`../../standards/design-tokens-benchmark.md`](../../standards/design-tokens-benchmark.md) (🟡 DD-59 deferred/reference-only).
+→ API convention: [`../../standards/api-reference-convention.md`](../../standards/api-reference-convention.md) (✅ DD-60; áp cho API blocks mới/materially changed).
 
 Quy tắc:
 - **Mọi color/spacing/typography = CSS variable** — không hardcode hex/rgba
@@ -265,8 +265,9 @@ Duplicate `commandId` returns previous semantic result. UI must not retry with a
 
 | Date | Version | Thay đổi |
 |------|---------|----------|
+| 2026-07-18 | v0.4 | Reconcile DD-33 external enablement gate; DD-57..59 deferred/reference-only; DD-60 accepted forward-looking convention. |
 | 2026-07-10 | v0.3 | **v3.4 pivot (DD-37 ✅):** auth = Google + email (DD-13 ✅, bỏ TG Login) + link Facebook (DD-33 🟡)/Zalo (DD-14 ⬜); surfaces phase-1 = web + Zalo + Messenger (Telegram loại); web thêm surface chat in-app (DD-38 🟡), settings/giá theo giới tính (DD-39 🟡), mark-paid thủ công (DD-40 ✅). Cập nhật §1/§2/§3/§6. |
 | 2026-06-20 | v0.2 | Chốt Next.js App Router baseline, thêm permission matrix, SSE topics, DTO/API contract, readiness |
 | 2026-06-19 | v0.1 | Initial surface docs |
 
-*Web app surface docs v0.3. Screen handoffs sẽ được tạo per-screen trong `screens/` trước P4.*
+*Web app surface docs v0.4. Screen handoffs chỉ theo pipeline DD-58 nếu proposal được reopen/chốt.*

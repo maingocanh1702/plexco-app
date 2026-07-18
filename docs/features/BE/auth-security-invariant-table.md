@@ -24,10 +24,12 @@
 
 | Layer | Table.column | Status today | Mandate | Ref |
 |---|---|---|---|---|
-| **Web-auth** (Google OAuth / email → `accounts`; ex-TG Login, dropped DD-37) | `account_identities.platform_user_hash` | v2 ref was **unkeyed** `sha256("telegram:" + id)`; phase-1 subject is now `google.sub` / normalized email (DD-13). Bare hash still reversible under exposure → keyed HMAC required | Gap-to-pin — SI-2 | `schema.ts:129`, migration `0001_global_directory.sql:112`; v2 ref hash at `apps/web/lib/telegram-login.ts:78-81` (historical — v3 uses Google/email adapter) |
+| **Web-auth** (Google OAuth / email / Facebook → `accounts`; ex-TG Login, dropped DD-37) | `account_identities.platform_user_hash` | v2 ref was **unkeyed** `sha256("telegram:" + id)`; phase-1 subjects are now `google.sub` / normalized email (DD-13) **và Facebook app-scoped subject (DD-33 ✅ owner 18/07; capability gated tới khi có external evidence)**. Bare hash still reversible under exposure → keyed HMAC required, domain/provider-separated per subject | Gap-to-pin — SI-2 | `schema.ts:129`, migration `0001_global_directory.sql:112`; v2 ref hash at `apps/web/lib/telegram-login.ts:78-81` (historical — v3 uses Google/email/Facebook adapters) |
 | **Channel** (bot adapters → `persons`) | `channel_identities.platform_user_lookup_hash` | Keyed-KMS **mandated** by spec; not touched by this pass | Already governed, different feature/owner | `schema.ts:60`, migration `0001_global_directory.sql:44`; mandate at `BE/feature_identity_tech.md:118` ("keyed lookup hashes... Keys come from KMS") |
 
 SI-2 below is about the **web-auth** column only. It must not be confused with, merged into, or used to justify deferring the channel layer's own (separately governed) keyed-hash work.
+
+> **DD-33 ✅ (owner 18/07):** Facebook app-scoped subject là **một web-auth subject nữa** dưới SI-2 — keyed HMAC domain/provider-separated như `google.sub`/email. Nó **không** phải Messenger Page-scoped PSID (channel layer, `channel_identities`) và **không** được auto-link chéo; chỉ quy về cùng `person` qua verified account identity hoặc transactional one-time `link_code`. Capability non-test OFF tới khi external evidence (C4) pass.
 
 ---
 

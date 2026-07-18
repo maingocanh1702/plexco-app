@@ -2,15 +2,15 @@
 
 > **Trạng thái:** 🟡 Draft đề xuất — chờ review · 2026-07-06
 > **Loại:** Proposal (chưa Reviewed). **KHÔNG** sửa `schema.ts`/`migrations`/spec đã Reviewed cho tới khi DD-34/35/36 ✅.
-> **Quan hệ:** mở rộng feature **Club Assistant** đã chốt (DD-16..DD-28, `feature_club_assistant.md` v0.5 + BE `feature_club_assistant_tech.md`). Bản này CHỈ thêm 2 chiều mới, **không** viết lại phần đã Reviewed.
-> **Quyết định mở:** `standards/decisions.md` **DD-34** (Plexco global KB plane), **DD-35** (auto-derive KB-club từ canonical), **DD-36** (freshness / scheduled re-ingest).
-> **Nguồn tham chiếu:** `core-db-architecture-principles.md` (INV-1..10, P1–P16) · `HANDOFF.md §3` (5 HARD RULES) · `feature_club_assistant.md` · `BE/feature_club_assistant_tech.md` · DD-12 (public read-model + readonly grant) · DD-28 (live-context tool) · migrations `0009` (RLS list).
+> **Quan hệ:** mở rộng pair **Club Assistant** v0.9 (`../features/feature_club_assistant.md` + `../features/BE/feature_club_assistant_tech.md`). DD-16..28 liên quan đã chốt nhưng pair vẫn 🟡 Draft tới formal promotion; proposal DD-34/35/36 này không tự promote hoặc viết lại contract hiện hành.
+> **Quyết định mở:** `../standards/decisions.md` **DD-34** (Plexco global KB plane), **DD-35** (auto-derive KB-club từ canonical), **DD-36** (freshness / scheduled re-ingest).
+> **Nguồn tham chiếu:** `../standards/core-db-architecture-principles.md` (INV-1..10, P1–P16) · `../00-start-here/HANDOFF.md §3` (5 HARD RULES) · Club Assistant pair v0.9 · DD-12 (public read-model + readonly grant) · DD-28 (live-context tool). Migration mới phải self-contained; không sửa `0009` đã apply.
 
 ---
 
 ## 0. TL;DR
 
-Feature Club Assistant hiện tại (đã chốt) mới bao **KB per-CLB, host nạp thủ công**. Yêu cầu owner (06/07) thêm **2 chiều mới**:
+Feature Club Assistant v0.9 hiện tại (core DD đã chốt nhưng pair vẫn Draft) mới bao **KB per-CLB, host nạp thủ công**. Yêu cầu owner (06/07) thêm **2 chiều mới**:
 
 1. **Hỏi về chính Plexco** — trợ lý trả lời được câu hỏi về **nền tảng Plexco** (tính năng, cách dùng, chính sách chung), không chỉ về club. ⇒ thêm **tầng KB toàn nền tảng** (`platform_kb_*`) — **global, read-only cho mọi tenant, non-PII** — và **retrieval hợp nhất** KB-club (RLS) ∪ KB-Plexco (global). **DD-34.**
 2. **Auto-update KB** theo update của **Plexco** và **từng club** — không bắt host nạp lại tay:
@@ -221,7 +221,7 @@ Kế thừa 8 test proposal gốc, **thêm**:
 - [~] Precedence host-manual vs derived — chốt quy tắc + UX tắt từng mảng
 - [x] Idempotency/P9/P12 (§4,§5) · Entitlement (§6) · Tests (§7)
 
-⇒ Sau khi DD-34/35/36 ✅: promote thành **delta cho `feature_club_assistant(.md/_tech)`** (thêm plane platform + kind `derived` + freshness) + migration `00xx_platform_kb.sql` + cập nhật grant (không thêm vào RLS `0009` vì global) + `schema.ts`.
+⇒ Sau khi DD-34/35/36 ✅: patch rồi review/promote delta cho Club Assistant Product/BE pair (thêm plane platform + kind `derived` + freshness), sau đó mới tạo migration mới `00xx_platform_kb.sql` với explicit global grant/revoke + `schema.ts`. `platform_kb_*` không dùng tenant RLS vì global, nhưng migration mới vẫn phải tự chứa security grants; không sửa `0009` đã apply.
 
 ---
 
@@ -241,5 +241,6 @@ Chi tiết ở `standards/decisions.md`.
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 17/07/2026 | v0.3 | Reconcile dependency về Club Assistant v0.9 Draft; DD-34/35/36 không tự promote base pair; mọi global-KB grants nằm trong migration mới self-contained, không sửa `0009` lịch sử. |
 | 06/07/2026 | v0.1 | Khởi tạo: mở rộng Club Assistant với KB-Plexco toàn nền tảng (DD-34), auto-derive KB-club từ canonical (DD-35), freshness/scheduled re-ingest (DD-36). Giữ nguyên DD-21/DD-28/HR2. |
 | 06/07/2026 | v0.2 | Review fixes: **DD-34 = extension của DD-21** (không "nguyên vẹn") — mở allowed KB sources sang `platform_kb`, patch DD-21 + Club Assistant specs khi ✅ (§0/§3.2/§3.3); soften "không thể chứa" → "**không được chứa**" + thêm **guard 3 lớp** platform-KB (source allowlist/platform-docs-only, admin review, scanner+test PII) ở §2/§3.1/§3.3. |

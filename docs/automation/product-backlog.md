@@ -6,6 +6,8 @@
 > **[PUB] có 2 mức:** *whitelist skeleton gate* (từ P0 — mọi cột `public_sessions` ∈ whitelist) và *full discovery-leak gate* (từ P4.3 — discovery/join không lộ tiền/PII/roster; chống scrape). Backlog P0–P3 chỉ bật **mức skeleton**.
 >
 > **Cập nhật 10/07/2026 (DD-37 / BRD v3.4):** **Telegram bỏ khỏi phạm vi.** Kênh chat phase-1 = **Zalo (P2)** + **Facebook Messenger (P2.5)**; nhắc chính = **web push + Zalo DM**, Messenger best-effort trong 24h. Auth phase-1 = **Google OAuth + email/password** (DD-13). EPIC M4 dưới đây đã reframe Telegram→Zalo/Messenger (giữ nguyên cơ chế routing/authz).
+>
+> **Authority update 17/07/2026 (DD-65..68):** Messenger dùng **một Meta App + central Plexco Page luôn có + optional per-club Page**. `page_id` chỉ xác định endpoint/default context, không mặc định là target tenant; target tenant phải đến từ opaque action/protected ref/server picker và được AuthZ lại theo person + membership.
 
 ---
 
@@ -47,19 +49,22 @@
 
 ---
 
-## EPIC M4 — Chat-channel tenant middleware (Zalo · P2 → Messenger P2.5) · P2 · 🏢
+## EPIC M4 — Shared host/player chat surface (Zalo · P2 → Messenger P2.5) · P2 · 🏢
 
-> **DD-37:** Telegram bỏ. Kênh phase-1 = Zalo (P2, chính) + Facebook Messenger (P2.5). Cơ chế "route tenant suy từ kênh + authz theo person" giữ nguyên; chỉ đổi khoá định tuyến.
+> **DD-37 + DD-65..68:** Telegram bỏ. Kênh phase-1 = Zalo (P2, chính) + Facebook Messenger (P2.5). Zalo vẫn route tenant từ endpoint per-club; Messenger hybrid tách **source Page** khỏi **target tenant** và dùng chung Session/Join/AuthZ core cho host lẫn player.
 
-- [ ] Zalo bot webhook `/webhook/zalo/:token` (bot-token per-club); Messenger webhook `/webhook/messenger` (1 App Plexco, Page per-club) — P2.5. *(Telegram bỏ — DD-37.)*
-- [ ] Middleware resolve tenant **từ kênh** (NFR-S3 — không suy từ nội dung): Zalo `webhookToken → zalo_bot → tenant`; Messenger `page_id → tenant`; gắn `ctx.tenant` + `ctx.repo = tenantRepo(tenant.id)`.
-- [ ] Join/link theo kênh: Zalo **DM number-reply** (`/join` + số; GROUP còn Beta, không inline button); Messenger quick-reply/persistent menu + deep-link `ref=club_<slug>`; bind `TenantAdmin` + channel-link; player context KHÔNG auto-join.
-- [ ] Authz 2 lớp: `ADMIN_CMD` → `isTenantAdmin(tenant.id, <định danh người của kênh>)` theo người, **không** theo chat/PSID (Edge #16).
-- [ ] Lệnh host đa-tenant: `/newsession` (đa môn), `/announce`, `/config`, **mark-paid thủ công (tiền mặt/CK)**; cron đa-tenant + throttler per-channel (jitter); nhắc chính **web push + Zalo DM**, Messenger best-effort trong 24h.
+- [ ] Zalo bot webhook `/webhook/zalo/:token` (bot-token per-club); Messenger webhook `/webhook/messenger` dùng **1 Meta App**, central Plexco Page bắt buộc và per-club Page tuỳ chọn — P2.5. *(Telegram bỏ — DD-37.)*
+- [ ] Messenger Page registry là global-protected: `scope = central|tenant`; central có `tenant_id IS NULL`, tenant Page có đúng một `tenant_id`; không cấp blanket tenant role trực tiếp lên registry.
+- [ ] Middleware routing: Zalo `webhookToken → zalo_bot → tenant`; Messenger `page_id → endpoint/default context`, sau đó opaque signed/server action, protected referral hoặc server-side picker → **target tenant**. Cấm free text/client-supplied tenant/raw tenant ID làm authority; chỉ sau resolve mới gắn `ctx.tenant` + `ctx.repo = tenantRepo(tenant.id)`.
+- [ ] Identity/reachability Messenger theo exact endpoint: `provider_scope_lookup_hash=HMAC("channel-scope:messenger:"+page_id)` và `platform_user_lookup_hash=HMAC("channel-user:messenger:"+PSID)` bằng key/domain riêng; unique ba phần với platform. Không auto-merge xuyên Page; chỉ link bằng verified email hoặc transactional one-time `link_code`. Reachability gắn `channel_identity_id`.
+- [ ] Host và player đều dùng được central/per-club Page với role-aware menu. Host `/newsession` chạy durable pre-dispatch wizard, revalidate tenant/admin/quota ở từng consume và final submit, cuối cùng gọi **một** idempotent SessionService command.
+- [ ] Player discovery/join dùng opaque action, local/global listing tối đa 8 business choices/page + Prev/Next/Cancel; wrong/stale/replayed action fail-closed rồi re-render. Join gọi cùng Join core và revalidate tại mutation boundary.
+- [ ] Authz 2 lớp: mọi host command → `isTenantAdmin(targetTenantId, personId)`; player action → person/membership/visibility/join-policy/quota theo target tenant. Source Page hay PSID **không** tự cấp quyền (Edge #16).
+- [ ] Projector chọn đúng **một** route cho một logical notification: tenant Page nếu identity reachable ở đó → central Page nếu reachable → web/Zalo fallback; dedup logical delivery. Nhắc Messenger vẫn best-effort trong 24h.
 - [ ] Fail-closed: kênh chưa nối tenant → `TENANT_NOT_LINKED` (404), không lộ.
-- [ ] Test routing: 2 token/Page khác nhau → 2 club; lệnh admin từ non-admin → `NOT_TENANT_ADMIN`.
+- [ ] E2E matrix: central + tenant Page, 2 tenant (ít nhất 1 club không có Page), host/player/multi-role, multi-club/cross-club, wrong/stale/replay, concurrent final submit/join, provider-fail-after-commit, 24h boundary, và one-route/no-duplicate delivery.
 
-**DoD:** kênh phase-1 (Zalo per-club + Messenger Page-per-club) phục vụ ≥2 club khác tenant, lệnh không lẫn; authz theo định danh người xanh. *(Telegram bỏ — DD-37.)*
+**DoD:** Zalo per-club và Messenger hybrid cùng phục vụ host/player của ≥2 club khác tenant, gồm club không có Page; source Page không bao giờ thay target-tenant AuthZ; shared Session/Join core không bị copy vào transport; matrix routing/isolation/race/delivery xanh. *(Telegram bỏ — DD-37.)*
 
 ---
 

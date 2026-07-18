@@ -1,6 +1,7 @@
 # Pixel-Perfect Handoff — {Screen Name}
 
 > **Template** — copy sang `docs/channels/web/handoff/<screen>-handoff.md` khi làm 1 màn mới.
+> **Authority:** DD-58 đã owner-defer 2026-07-18; template này là optional reference, chưa phải delivery gate.
 > Nguồn: ported từ Sporta `docs/handoff/*-pixel-perfect-handoff.md`. Pipeline: `../../channels/web/frontend-pipeline.md`.
 >
 > **Screen:** {tên} · **Node/frame:** `{node_or_frame_id}` · **Source:** `{tracked_pen_path_or_figma_url}`
@@ -68,4 +69,4 @@
 - Data: fetch `/api/{resource}` → envelope `{ data | error,message,code }` (FE-INV-6)
 
 ---
-_Template v0.1 · pipeline `../../channels/web/frontend-pipeline.md` · DD-58 (🟡)_
+_Template v0.2 · pipeline `../../channels/web/frontend-pipeline.md` · DD-58 (🟡 deferred/reference-only)_

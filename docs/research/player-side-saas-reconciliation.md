@@ -3,6 +3,10 @@
 > ⚠️ **Pre-pivot reference (superseded by DD-37, 2026-07-15):** doc này mô tả kênh **Telegram + Zalo, Messenger post-MVP** — **KHÔNG còn là canonical**. Authority hiện hành: kênh phase-1 = **Zalo + Facebook Messenger + web** (Telegram loại; Messenger **P2.5 phase-1**); auth = Google/email (DD-13); pricing = DD-29. Xem `../standards/decisions.md` DD-37/13/29. **Phần nền multi-tenant/identity/RLS/public-layer bên dưới vẫn hợp lệ làm reference.**
 >
 > ⚠️ **Identity note (DD-50, 2026-07-16):** mọi trust ladder SĐT/OTP/owner-approval bên dưới là lịch sử. Phase-1 không thu phone; debt-bearing claim chỉ dùng verified account email hoặc transactional one-time `link_code`. Owner/name/CK chỉ là review evidence.
+>
+> ⚠️ **Channel endpoint refinement (DD-15/DD-65..68 v1.45, 2026-07-17):** mọi row/pseudocode bên dưới dùng identity raw/global hoặc reachability `(person,tenant,platform)` là lịch sử cho cả Messenger và Zalo. Target hiện hành dùng hai keyed HMAC domain-separated, unique `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`; Messenger scope Page, Zalo scope bot/OA; reachability gắn `channel_identity_id`; target tenant authorize riêng và delivery chọn một route.
+>
+> ⚠️ **SePay auth refinement (2026-07-17):** mọi dòng bên dưới gọi SePay inbound auth là bare `Apikey` chỉ là pre-closure history. Production contract hiện hành dùng `HMAC_SHA256`, `X-SePay-Timestamp` ±300s và `X-SePay-Signature` trên `{timestamp}.{raw_body}`; xem `../features/feature_connector_onboarding.md` v0.6.
 
 > Bản nháp để review. **Chưa code.** Doc này **gộp toàn bộ tầng player-side (Telegram + Zalo)** + tầng identity, đặt chồng lên `docs/saas-implementation-plan.md` (nền multi-tenant). Phần nền (Postgres + RLS + repo choke point + routing owner) **giữ nguyên**. Kênh Messenger (post-MVP): `messenger-channel-design.md`.
 >

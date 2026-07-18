@@ -2,22 +2,23 @@
 
 > **Canonical phase:** P4  
 > **Track:** 🌐 Web Auth & Onboarding  
-> **Version:** 2.5 · 2026-07-16
+> **Version:** 2.9 · 2026-07-18
 > **Status:** Reviewed  
 > **Prerequisites:** P0–P1 foundation · P2 routing/authz · P3 ledger/provider model  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-1 · `../product/PRD.md` FLOW 1 · BRD OD-11 · `../standards/decisions.md` DD-13/DD-33/DD-37/DD-50 · `BE/feature_web_auth_onboarding_tech.md` · `feature_connector_onboarding.md` (auto-register webhook + verify 2 tầng)
+> **Tài liệu liên quan:** `../product/BRD.md` FR-1 · `../product/PRD.md` FLOW 1 · `../standards/decisions.md` DD-13/DD-30/DD-33/DD-50/**DD-65** · `BE/feature_web_auth_onboarding_tech.md` · `feature_connector_onboarding.md`
 
-> **Cập nhật v3.4 (DD-37 + DD-13, 2026-07-10):** bỏ **Telegram Login**; auth phase-1 = **Google OAuth + email/password** (DD-13 ✅). Kênh onboarding phase-1 = **Zalo + Facebook Messenger** (Telegram loại khỏi phạm vi). **Facebook Login / Messenger link** = DD-33 (🟡 phase-1, phụ thuộc App Review).
+> **Cập nhật 18/07:** bỏ Telegram Login; baseline auth = Google OAuth + email/password. **Facebook Login / Messenger link** = DD-33 ✅, nhưng exact external approval evidence là enablement gate; chưa pass thì capability OFF + transactional one-time `link_code` fallback.
 
 ---
 
 ## 1. Mô tả
 
-Cho host mới **authenticate trên web, tạo tenant và connect integrations MVP** mà không cần platform intervention. Auth phase-1 = **Google OAuth + email/password self-register** (DD-13). Wizard bao gồm: club config → SePay/ApiPay bank account → **link Zalo (dán Bot Token)** → **link Facebook Messenger (FB Login + chọn Page)**. **Telegram đã loại khỏi phạm vi (DD-37)**; Messenger nay là kênh phase-1 (P2.5). Bank/Zalo connect dùng **auto-register webhook** (owner KHÔNG dán webhook URL) theo `feature_connector_onboarding.md`.
+Cho host mới authenticate, tạo tenant và connect integrations. Readiness matrix đã pin: **required per tenant** = club config (hoặc personal-tenant auto-provision DD-46) + bank verified + first session created; **optional/non-blocking** = Zalo bot và tenant Messenger Page. Bank step mặc định dùng **ApiPay enterprise auto-provision** (DD-30, không nhập platform key); ApiPay BYO key chỉ là fallback do owner chọn. **Messenger central Page** là release gate cấp platform, không phải step per tenant (DD-65).
 
 ### Bất biến
 
 - Google OIDC **PHẢI** verify chữ ký bằng provider key, exact `iss`/`aud`, `state`/`nonce`/PKCE, `exp`/`iat` và `email_verified === true`; không trust returned fields alone.
+- Facebook Login chỉ bật cho non-test user khi exact App Review/Business Verification/permission evidence đã được ghi nhận; code exchange + subject verification chạy server-side. Subject web-auth là stable app-scoped subject của đúng Meta App, **không phải** Messenger Page-scoped PSID và không auto-link với PSID.
 - Email/password chỉ được bật khi có **đủ lifecycle**: password hash mạnh; verify-email token hash-only, TTL ngắn, single-use; forgot/reset enumeration-safe; reset thành công revoke mọi web session bị ảnh hưởng. Thiếu bất kỳ phần nào → email auth **OFF**, không ship partial lifecycle (DD-50).
 - Session cookies: `secure`, `httpOnly`, `sameSite=strict`, CSRF protection, rotation sau privilege change.
 - Tenant creation/bind dùng **idempotency keys** — refresh/back KHÔNG duplicate.
@@ -28,12 +29,12 @@ Cho host mới **authenticate trên web, tạo tenant và connect integrations M
 
 Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/OAuth trong khung chat (token lưu lại lịch sử chat = lộ, vi phạm BL-SEC-1; OAuth cần browser). Hai điểm vào, dùng chung endpoint `/api/onboarding/*`:
 
-- **Web-first:** host đăng nhập plexco.app (Google/email) → chạy trọn wizard (gồm bank/Zalo/Messenger) tại chỗ.
-- **Bot-first:** host mở bot CLB qua **Zalo** hoặc **Facebook Messenger**; phần không nhạy cảm (tên CLB, môn, giá, session đầu) hỏi ngay trong chat; phần nhạy cảm (SePay/ApiPay/token kênh) bot gửi **magic-link 1 lần** → host hoàn tất trên web → quay lại bot.
+- **Web-first:** host đăng nhập plexco.app → chạy wizard; Page riêng Messenger có thể skip vì central Page đã dùng được.
+- **Bot-first:** host mở bot CLB qua **Zalo** hoặc **Facebook Messenger**; phần không nhạy cảm (tên CLB, môn, giá, session đầu) hỏi ngay trong chat; bank selection/OAuth/BYO credential và token kênh đều đi qua **magic-link 1 lần** → host hoàn tất trên web → quay lại bot.
 
-> **Zalo** = BYO Bot Token per-CLB (dán token; 🟡 auto-`setWebhook` blocked CO-OQ-1). **Facebook Messenger** = 1 App platform + **Page per-club** (FB Login → chọn Page → App Review). *(Telegram shared-bot đã loại khỏi phạm vi — DD-37.)* Chi tiết auto-register + verify 2 tầng (`registered → active`): `feature_connector_onboarding.md`.
+> **Zalo** = BYO Bot Token per-CLB. **Messenger** = một platform App + central Page; optional tenant Page qua FB Login → chọn Page. Central Page readiness do platform ops sở hữu, không lặp trong từng tenant wizard.
 
-> **Auth phase-1 (DD-13 ✅):** `account_identities.platform ∈ {google, email, facebook, zalo}`. **Google OAuth + email-password self-register** là đường auth chính (login "bật ngay được" cho acquisition) — thêm qua `account_identities.platform` + adapter (password → bảng credential riêng, migration mới), **không** tạo root table `users`; `persons` vẫn là anchor. **DD-33** = **Facebook Login** (🟡 phase-1, đường link cho Messenger + phễu channel-first DD-32; phụ thuộc FB App Review). **DD-14** = **Zalo Login** (⬜ gating OA). Chi tiết & ràng buộc: `docs/standards/decisions.md` DD-13/DD-14/DD-33, `docs/00-start-here/identity-model.md §7` (provider/channel phase matrix).
+> **Auth phase-1 (DD-13/DD-33):** Google OAuth + email-password là baseline; Facebook Login đã accepted nhưng fail-closed OFF cho non-test users tới khi external evidence active. Target providers là `{google,email,facebook,zalo}` nhưng live DB chưa có platform CHECK; `persons` vẫn là anchor và Zalo Login vẫn gated DD-14. Chi tiết: decisions DD-13/14/33 + identity-model §7.
 
 ---
 
@@ -46,8 +47,8 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 | WAO-UC-1 | New Host | Authenticate (Google OAuth / email-password) | Session created, CSRF token issued |
 | WAO-UC-2 | New Host | Tạo Account + Tenant | Idempotent create; assign owner role |
 | WAO-UC-3 | Host | Configure club: name, timezone, locale, sport, price, visibility/join defaults | Saved, validation per field |
-| WAO-UC-4 | Host | Connect bank provider (SePay OAuth / ApiPay key) | Plexco **tự đăng ký webhook** (không dán URL) → verify 2 tầng. Ref: `feature_connector_onboarding.md` §4.2–4.3 |
-| WAO-UC-5 | Host | Link Facebook Messenger (FB Login + chọn Page) | Page bound to tenant; PSID routing per-Page. Ref: DD-33/DD-37 (🟡 App Review) |
+| WAO-UC-4 | Host | Connect bank provider (ApiPay enterprise primary / SePay OAuth; ApiPay BYO explicit fallback) | ApiPay primary chỉ chọn/xác nhận TK host rồi enterprise provision; không nhập platform key. Plexco tự đăng ký webhook → verify 2 tầng. Ref: `feature_connector_onboarding.md` §4.2–4.3 |
+| WAO-UC-5 | Host | Optional link Facebook Page riêng | Tenant Page endpoint active; central Page vẫn fallback; Page-scoped identity/reachability. Ref DD-65..67 |
 | WAO-UC-6 | Host | Connect Zalo bot (BYO token) — phase-1 | 🟡 Dự kiến auto `setWebhook` (blocked CO-OQ-1); tới khi đó dán URL thủ công |
 | WAO-UC-7 | Host | Create first session + optional publish | Session live, ready to receive players |
 | WAO-UC-8 | Host | Resume incomplete onboarding | Each step has verified/not-configured/error state |
@@ -56,6 +57,7 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 | WAO-UC-11 | New Host | Verify email sau self-register | Token hợp lệ được consume đúng một lần; account mới được phép login |
 | WAO-UC-12 | Host | Forgot/reset password | Luôn trả response enumeration-safe; token hash-only + TTL + single-use; reset xong revoke toàn bộ web sessions của account |
 | WAO-UC-13 | Host | Revoke all sessions | Mọi session hiện hành của account bị revoke atomically; thiết bị phải login lại |
+| WAO-UC-14 | Host/Player | Đăng nhập hoặc link Plexco account bằng Facebook khi provider gate đã active | Tạo/lookup verified `account_identities(platform='facebook')`; không auto-link Messenger PSID; nếu gate chưa active thì dùng transactional one-time `link_code` |
 
 ### Edge Cases
 
@@ -77,6 +79,8 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 | 14 | Privacy | Forgot-password với email không tồn tại | Response/status/timing cùng class với email tồn tại; không lộ account existence |
 | 15 | Security | Reset password thành công nhưng session cũ còn sống | ❌ NEVER — revoke-all phải commit cùng credential change hoặc fail toàn bộ |
 | 16 | Security | Email auth mới có register/login nhưng thiếu verify/reset/revoke-all | Fail-closed feature flag OFF; Google vẫn hoạt động độc lập |
+| 17 | External/Security | Facebook provider chưa có exact review/verification/permission evidence hoặc provider verification fail | Capability OFF/ẩn CTA cho non-test user; không tạo identity/session; hiển thị fallback transactional one-time `link_code` |
+| 18 | Identity | Facebook Login subject trùng tên/email với Messenger PSID profile | Không auto-link; chỉ link qua verified account identity hoặc consume transactional one-time `link_code` |
 
 ---
 
@@ -84,12 +88,12 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 
 | Surface | Screen | Loading | Ready | Error | Empty |
 |---------|--------|---------|-------|-------|-------|
-| Web | Login page | — | Google Login button + email/password form + "Quên mật khẩu" | "Xác thực thất bại" + retry | N/A |
+| Web | Login page | — | Google + email/password; Facebook CTA chỉ hiện khi provider external gate active; "Quên mật khẩu" | "Xác thực thất bại" + retry hoặc `link_code` fallback | N/A |
 | Web | Verify email / reset password | Validating token | Generic success + login CTA | Generic invalid/expired message + safe retry | N/A |
 | Web | Onboarding wizard — Step 1: Club config | Skeleton form | Form: name, timezone, sport, price, visibility | Inline errors per field | Default values pre-filled |
-| Web | Onboarding wizard — Step 2: Bank connect | Skeleton | SePay: nút "Kết nối" (OAuth) · ApiPay: dán accessKey/secretKey → chọn TK ACTIVE; auto-register webhook; chip `registered → active` | "Kết nối thất bại" + retry | N/A |
+| Web | Onboarding wizard — Step 2: Bank connect | Skeleton | **ApiPay primary:** "Thiết lập tài khoản nhận tiền" → chọn/xác nhận TK host → enterprise provision → chip `registered → active`; SePay OAuth là lựa chọn provider khác; "Dùng ApiPay key riêng" là CTA phụ mở BYO form | Enterprise unsupported/unavailable → mời BYO; provision fail → retry idempotent; không tự downgrade. BYO key/PENDING có lỗi riêng | Chưa chọn bank: giải thích tiền về TK riêng của host; BYO không hiện như đường mặc định |
 | Web | Onboarding wizard — Step 3: Zalo bot | Skeleton | Dán bot token → auto `setWebhook` (🟡 blocked CO-OQ-1) → verify | "Kết nối thất bại" + retry | N/A |
-| Web | Onboarding wizard — Step 4: Facebook Messenger | Skeleton | FB Login → chọn Page → App Review → chip `registered → active` | "App Review chưa duyệt — degrade web+Zalo" | N/A |
+| Web | Optional Messenger Page | Skeleton | “Dùng Plexco central Page” (default) hoặc FB Login → chọn Page riêng → active | Lỗi Page riêng → tiếp tục central Page | Central selected |
 | Web | Onboarding wizard — Step 5: First session | Session form | Create + optional publish | Inline validation | N/A |
 | Web | Readiness checklist | — | ✅/❌ per step + "Bắt đầu" CTA | — | N/A |
 
@@ -100,14 +104,14 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 | Entity | Vai trò | Key constraints |
 |--------|---------|-----------------|
 | `persons` | Global identity (anchor) | Identity qua `account_identities`/`channel_identities`, KHÔNG root table `users`; phone dormant phase-1, không phải login/merge proof |
-| `account_identities` | Web-auth provider per person (DD-13) | `platform ∈ {google,email,facebook,zalo}`; `platform_user_hash` keyed-HMAC (SI-2); password → bảng credential riêng |
+| `account_identities` | Web-auth provider per person (DD-13/DD-33) | Target `platform ∈ {google,email,facebook,zalo}`; live DB hiện là unrestricted `text` và chưa có platform CHECK. Migration phải audit/backfill legacy rows rồi thêm validation self-contained; `platform_user_hash` keyed-HMAC, domain/provider-separated; password → bảng credential riêng |
 | Email credential (logical contract) | Password hash + verification state per email identity | Storage/constraints chốt ở B0 design-probe; không lưu plaintext, unverified không login |
 | Email verify/reset token (logical contract) | Một lần, TTL ngắn, purpose-bound | Chỉ lưu token hash; consume atomically; reset revoke-all sessions trong cùng transaction boundary |
-| `tenants` | Club/org | `UNIQUE(slug)`, `owner_person_id` FK |
+| `tenants` | Club/org hoặc personal tenant target | Live club tenant: `UNIQUE(slug)`, ownership qua membership/admin (không có universal owner FK). DD-46 target adds `kind`; `owner_person_id` required/unique only iff `kind='personal'`, NULL for club |
 | `memberships` | Person ↔ Tenant | `UNIQUE(person_id, tenant_id)`, `role` enum |
-| `bank_accounts` | Payment provider credentials | `tenant_id` FK, encrypted fields, `verified_at` |
+| `bank_accounts` | Per-host payment-provider binding | `tenant_id` FK, bank/webhook thuộc đúng host; ApiPay enterprise row không chứa platform credential; BYO secret fields encrypted; `verified_at` |
 | `zalo_bots` | Zalo channel binding (BYO token per-CLB) | `webhook_token`, `tenant_id` FK, secret enc |
-| Messenger Page binding | Facebook Page per-club (DD-33/DD-37, proposal-level) | Page-per-club routing; PSID page-scoped. Canonical schema → decisions.md + `packages/db/schema.ts` |
+| Messenger Page registry | Central + optional tenant Page | DD-65 global-protected registry; live schema cần migration; PSID/reachability Page-scoped |
 | `onboarding_state` | Progress tracking per tenant | `tenant_id` FK, step statuses JSON |
 
 ### Onboarding State Machine
@@ -115,14 +119,15 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 ```mermaid
 stateDiagram-v2
     [*] --> auth
-    auth --> club_config: Google/email verified
+    auth --> club_config: Google/email/Facebook verified
     club_config --> bank_connect: Club saved
     bank_connect --> zalo_link: Bank verified
-    zalo_link --> messenger_link: Zalo bot linked
-    messenger_link --> first_session: Messenger Page linked (App Review) / skip
+    zalo_link --> messenger_link: linked / skipped / retry later
+    messenger_link --> first_session: central default / tenant Page linked / skip
     first_session --> complete: Session created
     complete --> [*]
-    note right of messenger_link: Messenger phase-1 — degrade nếu App Review chậm
+    note right of zalo_link: optional per tenant; does not gate readiness
+    note right of messenger_link: optional tenant Page; central readiness là platform release gate
 ```
 
 > SM trên là cấp **wizard step**. Mỗi connector còn có SM riêng `connecting → registered → active → drift/error/revoked` (verify 2 tầng) — xem `feature_connector_onboarding.md` §3.3.
@@ -151,9 +156,15 @@ stateDiagram-v2
 - [ ] Google signature + exact issuer/audience + state/nonce/PKCE + exp/iat + `email_verified=true` tests pass
 - [ ] Email verify/forgot/reset/revoke-all contract pass; token replay/expiry/enumeration-safe/old-session tests pass
 - [ ] Email auth remains disabled until the whole lifecycle is deployable and verified end-to-end
+- [ ] Facebook code exchange/subject verification is server-side; raw code/access token never logged/persisted; lookup hash write/read parity passes
+- [ ] Facebook Login subject and Messenger Page-scoped PSID cannot auto-link; transactional one-time `link_code` is the only fallback link path
+- [ ] Facebook CTA/capability for non-test users remains OFF until exact external approval evidence is recorded; unavailable provider degrades without a broken CTA
 - [ ] Duplicate submissions KHÔNG duplicate tenant/provider/link (idempotency)
 - [ ] Secrets encrypted, masked, not logged, rotatable
-- [ ] Messenger Page / Zalo / bank ownership verification + conflict handling work
+- [ ] ApiPay bank step mặc định gọi enterprise `/api/onboarding/apipay/provision` với opaque bank-selection ref + idempotency key; không thu/hiện platform credential; retry không tạo bank/webhook trùng
+- [ ] ApiPay enterprise unsupported/unavailable chỉ hiện CTA BYO fallback; không tự chuyển auth mode hoặc gọi BYO endpoint
+- [ ] Club không Page hoàn tất onboarding + tạo session qua central; optional Page ownership/conflict/fallback work
+- [ ] Readiness is true only after club-or-personal space + verified bank + first session; Zalo and tenant Page may be skipped/error without changing readiness; central Page availability is checked at platform release level
 - [ ] Zalo + Messenger là kênh phase-1 trong wizard; Telegram absent (DD-37)
 - [ ] Resume/retry và partial onboarding states work
 - [ ] Tenant owner authorization enforced after every step
@@ -167,8 +178,8 @@ stateDiagram-v2
 | ID | Quyết định | Trạng thái |
 |---|---|---|
 | WAO-OQ-1 | Web stack | ✅ Next.js App Router, standalone/container (DD-10) |
-| WAO-OQ-2 | Minimum required steps trước khi mark onboarding complete | ⬜ Chưa chốt |
-| WAO-OQ-3 | DD-33: Facebook Login / Messenger link phụ thuộc App Review — degrade path nếu chậm | 🟡 phase-1 |
+| WAO-OQ-2 | Minimum required steps trước khi mark onboarding complete | ✅ **Chốt contract:** club config hoặc DD-46 personal provision + bank `verified` + first session. Zalo + tenant Messenger Page optional/non-blocking; central Messenger availability is a platform release gate, not tenant state. |
+| WAO-OQ-3 | DD-33 Facebook Login/Messenger link | ✅ Design phase-1 đã chốt; App Review/Business Verification/permission evidence là external enablement gate. Chưa pass → capability OFF + transactional one-time `link_code` fallback. |
 | WAO-OQ-4 | Skip Club / personal meet: đường tạo không-gian-cá-nhân | ✅ **Chốt DD-46** — auto-provision personal tenant (tái dùng `provisionTenant` core, wrapper `getOrCreatePersonalTenant`, free plan, bỏ bước "đặt tên club", owner=self); propagate lúc build → `../dd-46-skip-club-analysis.md` |
 | WAO-OQ-5 | Email credential lifecycle + phase-1 không thu SĐT | ✅ **Chốt DD-50 (2026-07-16)** — contract đầy đủ đã pin: verify email, forgot/reset enumeration-safe, token hash-only/TTL/single-use, reset revoke-all sessions; khoá mạnh claim = verified email + `link_code` (phone dormant). B0 (`../pre-code-open-items-2026-07-16.md`) chỉ còn design-probe mutation paths + storage/DDL trước khi author slice S4 |
 
@@ -176,6 +187,10 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-18 | v2.9 | **DD-33 propagation:** pin Facebook Login server-side exchange + app-scoped subject, external enablement gate, fail-closed CTA/capability, PSID separation và one-time `link_code` fallback; ghi đúng live schema chưa có platform CHECK. |
+| 2026-07-17 | v2.8 | **DD-30 enterprise-first propagation:** make ApiPay enterprise provisioning the default bank screen/use case; demote accessKey/secretKey to an explicit owner-selected fallback; pin idempotent retry, secret-free UI and no-silent-downgrade acceptance. |
+| 2026-07-17 | v2.7 | **Readiness/live-schema closure:** close WAO-OQ-2 with required club-or-personal + bank + first-session matrix; Zalo/tenant Page optional; clarify live club ownership vs DD-46 conditional personal `owner_person_id`. |
+| 2026-07-17 | v2.6 | **DD-65..67:** central Page là platform default; tenant Page onboarding optional, không block readiness/first session; Page-scoped identity/reachability + fallback. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, onboarding wizard screen states, state machine |
 | 2026-06-20 | v2.1 | Cross-link `feature_connector_onboarding.md`: bank/Zalo connect chuyển sang auto-register + verify 2 tầng; thêm §1.1 surface entry points (web-first vs bot-first, deep-link handoff); cập nhật UC-4/UC-6 + screen states |

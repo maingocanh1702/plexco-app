@@ -3,6 +3,8 @@
 > **Trạng thái:** Draft để review · 2026-06-24
 > **Liên quan:** TDD §3.6/§3.7 · `feature_payment_reconcile_tech.md` §4 · `business-rules.md` BL-PAY-3 · `player-side-saas-reconciliation.md` §1/§3 · AUDIT C2/G1
 > **Câu hỏi gốc:** Cơ chế "bot tự gửi QR cá nhân hóa cho từng session/player + auto-confirm CK" — có thể bật sớm trên Plexco không, và phải xử lý gì?
+>
+> ⚠️ **Current channel note (DD-37/DD-15/DD-65..68):** Telegram examples và `ChannelReachability(person,tenant,platform)` bên dưới là historical input. Kênh hiện hành = Zalo + Messenger + web; cả Zalo và Messenger dùng provider-endpoint identity, reachability gắn `channel_identity_id`, tenant eligibility authorize riêng và delivery chọn một route. Khi conflict, theo `../standards/decisions.md` v1.45 và feature identity/notification specs hiện hành.
 
 ---
 

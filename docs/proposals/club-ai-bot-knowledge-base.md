@@ -1,10 +1,10 @@
 # Proposal: Club AI Assistant + Knowledge Base (bot tư vấn RAG per-CLB)
 
-> **Trạng thái:** 🟡 Draft đề xuất — chờ review · 2026-07-05
+> **Trạng thái:** 🗂️ Proposal lịch sử đã reconcile · **v0.7 · 2026-07-17**. Giữ lại rationale ban đầu; **không còn là implementation authority**.
 > **Scope:** Feature mới, **post-MVP**, **CHỈ trong app Plexco** (không Telegram/Zalo/Messenger). Phụ thuộc: web/app surface + sync engine (P4), identity (P3.5), billing entitlement (P5).
-> **Loại tài liệu:** Proposal (chưa Reviewed). KHÔNG sửa `schema.ts`/`migrations`/spec đã Reviewed cho tới khi các DD liên quan ✅.
-> **Quyết định mở:** xem `standards/decisions.md` DD-16 … DD-22 (bản proposal này là phần "chi tiết" của các DD đó).
-> **Nguồn tham chiếu:** `core-db-architecture-principles.md` (INV-1..10, P1–P16) · `HANDOFF.md §3` (5 HARD RULES) · `feature_sync_engine_tech.md` · `feature_zalo_channel_tech.md` · `feature_connector_onboarding_tech.md` · migrations `0004`/`0005`/`0009`.
+> **Implementation authority:** Product/BE pair `../features/feature_club_assistant.md` + `../features/BE/feature_club_assistant_tech.md`; chat canonical `../features/feature_inapp_chat.md` + `../features/BE/feature_inapp_chat_tech.md`; quyết định `../standards/decisions.md`. Nếu proposal này khác các tài liệu đó, **authority hiện hành thắng**.
+> **Readiness:** Club Assistant Product/BE vẫn **Draft**, phải được formally promote sang Reviewed trước implementation; In-app Chat cũng **Draft, pending migration**. DD-18 còn mở và chặn **GO-LIVE**, không chặn việc thiết kế sau interface swappable. Proposal này không tự cấp quyền sửa `schema.ts`/migrations.
+> **Nguồn tham chiếu:** `../standards/core-db-architecture-principles.md` (INV-1..10, P1–P16) · `../00-start-here/HANDOFF.md §3` (5 HARD RULES) · các authority ở trên.
 
 ---
 
@@ -21,13 +21,17 @@ Bốn khối việc:
 
 **Đề xuất stack RAG:** pgvector trong Postgres hiện có (tenant-private, dưới RLS) + provider embedding/LLM đặt sau interface swappable (chốt provider ở DD-18 sau khi review privacy/ToS).
 
+> **Lưu ý authority:** các schema/API/rollout dưới đây chỉ giải thích hướng thiết kế. DDL, RLS, API envelope, test matrix và migration thực thi phải lấy từ hai BE spec canonical nêu ở đầu tài liệu.
+
 ---
 
 ## 1. Bối cảnh & vì sao đây là feature mới
 
-Plexco hôm nay: chat nằm ở **group ngoài** (Telegram/Zalo/Messenger); web app là **canonical store**; "bot" trong repo = **channel adapter** (grammY/Zalo HTTP) để gửi/nhận command, **không** phải trợ lý AI. Không có bảng nào về knowledge base, vector, hay chat in-app (đã grep toàn bộ `docs/` + `schema.ts`).
+**Baseline lúc proposal được viết (05/07/2026):** chat chủ yếu nằm ở group ngoài; web app là canonical store; "bot" trong repo là channel adapter, chưa phải trợ lý AI; live schema chưa có KB/vector/chat in-app.
 
-⇒ Đây là **track feature mới**, không chồng lấn khái niệm cũ. Nó **tái dùng** hạ tầng đã thiết kế (identity, tenantRepo/RLS, sync engine outbox/projector, channel adapter, billing entitlement) thay vì dựng song song.
+**Hiện tại (17/07/2026):** DD-38 và Product/BE In-app Chat đã pin model chat canonical ở P4, còn Club Assistant Product/BE đã harden contract P7. Cả hai vẫn Draft/pending migration, nên đây là **spec progress**, không phải tuyên bố runtime đã triển khai. Proposal này chỉ còn giữ lịch sử hình thành feature; không được dùng câu "không có chat in-app" để thiết kế một schema chat mới.
+
+⇒ Đây là **track mới ở thời điểm proposal**, nay đã có Product/BE specs riêng. Nó tái dùng identity, tenantRepo/RLS, sync engine, billing entitlement và canonical In-app Chat; **không phụ thuộc channel adapter ngoài** và không dựng schema song song.
 
 Yêu cầu người dùng (nguyên văn rút gọn): *mỗi club tạo bot giống Telegram; bot update KB từ FAQ + docs nội bộ; mỗi club có 1 kênh chat giống Telegram; ai tag bot vào thì bot tự trả lời theo KB như chatbot tư vấn.* **Chốt scope (05/07): trợ lý CHỈ chạy trong app Plexco** — "giống Telegram" là mô tả trải nghiệm kênh chat in-app, KHÔNG phải chạy trên Telegram/Zalo/Messenger.
 
@@ -37,14 +41,14 @@ Yêu cầu người dùng (nguyên văn rút gọn): *mỗi club tạo bot giố
 
 | HARD RULE / INV | Feature này tuân thủ thế nào |
 |---|---|
-| **HR1 / INV-1 — RLS fail-closed** | Mọi bảng `bot_*`, `kb_*`, `chat_*` là **tenant-private**: `tenant_id NOT NULL`, RLS `ENABLE+FORCE`, policy theo `app.tenant_id`, đi qua `tenantRepo`. Vector search chạy **trong** tenant context → KB CLB A không bao giờ retrieve được từ CLB B. |
+| **HR1 / INV-1 — RLS fail-closed** | Bảng Assistant `bot_*`/`kb_*` là tenant-private; chat phải tái dùng RLS/person-self boundary của canonical In-app Chat (club row có tenant, DM là person-self). Vector search chạy **trong** tenant context → KB CLB A không bao giờ retrieve được từ CLB B. |
 | **HR2 / INV-3 — tiền/PII không ra public** | KB + chat + query-log **tuyệt đối không** vào `public_sessions` hay bất kỳ public projection. Trợ lý **chỉ** ground trên KB (FAQ/docs), **không** nối vào ledger/roster/SĐT ⇒ không có đường để LLM đọc rồi lộ nợ/PII (DD-21). |
-| **HR3 / INV-2 — không multi-master** | Tin nhắn chat in-app + câu trả lời bot ghi canonical qua **command → service → outbox → projector**; fan-out realtime bằng SSE. Không có surface ngoài ghi thẳng DB. |
+| **HR3 / INV-2 — không multi-master** | Tin nhắn người dùng đi qua guarded canonical chat writer rồi `NOTIFY` để SSE refetch; câu trả lời Assistant đi qua `bot.answered` projector + bot writer hẹp vào **cùng** `chat_messages`. Không có message projector/store thứ hai và không có surface ngoài ghi thẳng DB. |
 | **HR4 — claim-có-tiền cần khoá mạnh** | Không đổi. Trợ lý **không** thao tác tiền/merge; nếu sau này thêm "hỏi nợ của tôi" thì phải qua **person-self authz** riêng, không qua RAG chung. |
 | **HR5 — i18n** | Câu trả lời + fallback qua `t(vi,en)`; ngôn ngữ trả lời bám locale tenant/person hoặc ngôn ngữ câu hỏi. |
-| **INV-6 / P8 — idempotency** | Ingest dedupe theo `content_hash`; câu hỏi có `command_id`; outbox `(aggregate_id, sequence)`; projector `(event_id, projector)`. |
+| **INV-6 / P8 — idempotency** | Nguồn có identity ổn định `(tenant_id, source_key)`; `content_hash` chỉ dedupe/change-detect trong identity đó. Câu hỏi có `command_id`; assistant message dùng `client_msg_id='assistant:' || query_id` + `bot_query_id`. |
 | **INV-9 / P11 — không rò secret/PII qua log/event** | Outbox payload chỉ mang ID (không nội dung thô); `bot_queries` có chính sách retention/redaction; không log doc content thô. |
-| **P9 — txn own consistency, worker own progress** | Gọi embedding/LLM (mạng, chậm) **ngoài** DB txn: ghi canonical + outbox trước → worker gọi provider → ghi kết quả. Không giữ lock khi gọi provider. |
+| **P9 — txn own consistency, worker own progress** | Gọi embedding/LLM (mạng, chậm) **ngoài** DB txn. `bot_provider_attempts` ghi durable attempt/usage để audit và cap retry; một durable answer/message được đảm bảo, nhưng provider có thể bị gọi lại nếu crash sau response trước DB checkpoint. Không hứa exactly-once billing. |
 | **P14 — bounded access first** | Bắt đầu bằng Postgres+pgvector (KB mỗi tenant nhỏ). Tách vector DB ngoài chỉ khi đo lường thực sự cần. |
 
 ---
@@ -54,193 +58,66 @@ Yêu cầu người dùng (nguyên văn rút gọn): *mỗi club tạo bot giố
 ### 3.1 Actor & aggregate
 
 - **Assistant (trợ lý)** = **cấu hình cấp tenant** (`bot_configs`), **KHÔNG** là `Person`/`ChannelIdentity` mới. (DD-20 — tránh bảng identity song song, tránh phá P6.) Khi trợ lý "nói", tin nhắn được **attribute** cho actor hệ thống (`author_type='assistant'`) trong kênh chat in-app và log ở `bot_queries`. Trợ lý **chỉ phát ngôn bên trong app Plexco**, không đi ra kênh ngoài.
-- **KB source → document → chunk** = aggregate thuộc tenant; owner lifecycle: admin CLB.
-- **Chat channel → message** = aggregate thuộc tenant (native surface mới).
+- **KB source → document → chunk** = aggregate thuộc tenant; source có `source_key` ổn định, mỗi lần nội dung đổi tạo generation mới và fence worker cũ.
+- **Chat channel → member → message** = aggregate canonical do In-app Chat P4 sở hữu; Assistant chỉ là adapter/projector P7, không sở hữu schema chat riêng.
 - **Bot query** = 1 lượt hỏi→đáp; append-only log (observability + analytics + "câu chưa trả lời được").
+- **Provider attempt** = evidence bền cho từng external call/possible usage; không biến provider thành exactly-once.
 
 ### 3.2 State machines
 
 ```
-kb_source:      draft → processing → active → archived
-                                   ↘ error (re-ingest được)
-kb_chunk:       (tồn tại khi document active) — reindex khi đổi embedding model (P12)
-bot_query:      received → answered | no_answer | blocked | error
-chat_message:   created → (edited) → (deleted, soft)
+kb_source:       draft → processing → active | blocked_sensitive_content | error | archived
+kb_doc/chunk:    active → superseded | archived
+                  (đổi content: supersede generation cũ trong txn trước khi enqueue generation mới)
+provider_attempt: started → succeeded | failed | unknown_after_crash
+bot_query:       received → answered | no_answer | blocked | error
+chat_message:    theo canonical In-app Chat (proposal này không định nghĩa lifecycle/schema riêng)
 ```
 
 ---
 
-## 4. Schema đề xuất (SKETCH — chưa apply; sẽ thành migration `00xx` sau khi chốt DD)
+## 4. Hướng schema (proposal lịch sử; **không phải DDL authority**)
 
-> ⚠️ Đây là **bản phác** trong proposal. **Không** thêm vào `schema.ts`/`migrations` cho tới khi DD-16/17/19/20 ✅. Tất cả bảng dưới là **tenant-private** (trừ ghi chú), phải nằm trong list RLS ở `0009` khi hiện thực.
+> Không implement DDL từ proposal này. Schema/RLS/migration contract hiện hành nằm ở `../features/BE/feature_club_assistant_tech.md`; schema chat nằm ở `../features/BE/feature_inapp_chat_tech.md`. Migration phải là file monotonic mới sau migration hiện hành, không sửa/chạy lại `0009` lịch sử.
 
 ### 4.1 Cấu hình trợ lý
 
-```sql
--- Trợ lý per-CLB. Tenant-private. 1 tenant : 1 assistant (MVP).
-CREATE TABLE bot_configs (
-  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id           uuid NOT NULL REFERENCES tenants(id) UNIQUE,
-  display_name        text NOT NULL DEFAULT 'Trợ lý CLB',
-  tone                text NOT NULL DEFAULT 'friendly'   -- điểm 3: host chọn giọng
-                        CHECK (tone IN ('polite','formal','friendly','humorous','concise','enthusiastic')),
-  persona_prompt      text,                    -- tuỳ biến thêm (tenant tự soạn, coi là DATA)
-  enabled             boolean NOT NULL DEFAULT false,
-  answer_mode         text NOT NULL DEFAULT 'mention_only'
-                        CHECK (answer_mode IN ('mention_only','always_in_native')),
-  min_similarity      real NOT NULL DEFAULT 0.75,  -- ngưỡng "không biết"
-  fallback_message    text,                    -- i18n key hoặc text; rỗng => t(vi,en) mặc định
-  model_profile       jsonb NOT NULL DEFAULT '{}',  -- {embed_model, chat_model, dims} — resolve qua interface
-  monthly_question_cap integer,               -- entitlement (DD-22)
-  created_at          timestamptz NOT NULL DEFAULT now(),
-  updated_at          timestamptz NOT NULL DEFAULT now()
-);
-```
+`bot_configs` vẫn là config tenant-private 1:1 cho Assistant: tên hiển thị, tone/persona (coi là DATA), enable/answer mode, similarity/rerank, fallback, model profile, cap và retention. Exact columns/CHECK/default/API shape thuộc BE spec canonical; proposal chỉ giữ quyết định sản phẩm "mỗi CLB một config, provider swappable".
 
 ### 4.2 Knowledge base
 
-```sql
--- Nguồn tri thức thô do admin nạp. Tenant-private.
-CREATE TABLE kb_sources (
-  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id      uuid NOT NULL REFERENCES tenants(id),
-  kind           text NOT NULL CHECK (kind IN ('faq','doc_upload','pasted','url')),
-  title          text NOT NULL,
-  origin_ref     text,                         -- tên file / URL / null
-  mime_type      text,                         -- application/pdf, docx, md, txt... (điểm 2)
-  storage_ref    text,                         -- key file thô ở object storage (KHÔNG để trong DB)
-  uploaded_by    uuid REFERENCES persons(id),  -- ai nạp (admin)
-  content_hash   text NOT NULL,                -- MD5/SHA của file → dedupe + change-detect (INV-6)
-  status         text NOT NULL DEFAULT 'draft'
-                   CHECK (status IN ('draft','processing','active','error','archived')),
-  error_code     text,
-  created_at     timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, content_hash)
-);
+Contract hiện hành đã thay bản sketch đầu tiên bằng identity/revision fail-closed:
 
--- Document đã chuẩn hoá text từ 1 source (1 source có thể ra nhiều doc). Tenant-private.
-CREATE TABLE kb_documents (
-  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id    uuid NOT NULL REFERENCES tenants(id),
-  source_id    uuid NOT NULL REFERENCES kb_sources(id),
-  title        text,
-  lang         text,                           -- 'vi' | 'en' | ...
-  content_text text NOT NULL,                  -- text đã trích (không lưu file thô ở đây)
-  version      integer NOT NULL DEFAULT 1,
-  status       text NOT NULL DEFAULT 'active'
-                 CHECK (status IN ('active','archived')),
-  created_at   timestamptz NOT NULL DEFAULT now()
-);
+- `kb_sources` có identity logic ổn định `UNIQUE (tenant_id, source_key)`; `source_key` là opaque key do server tạo, **không** derive chỉ từ title/URL/hash. `content_hash` chỉ mô tả generation hiện tại.
+- Nội dung đổi phải atomically đánh dấu document/chunk generation cũ `superseded`, tăng `current_generation`, chuyển source sang `processing`, xoá `dlp_cleared_at`, rồi mới enqueue job chứa `(source_id, generation)`.
+- Extracted text phải qua content-DLP **trước** chunk/summary/embed. Hit secret/credential/PII → `blocked_sensitive_content` + quarantine metadata opaque, tạo 0 active chunk/embedding; generation cũ vẫn superseded, không được fallback.
+- Worker/activation phải compare `job.generation = current_generation`; chỉ current document/chunk `active` của source `active` có `dlp_cleared_at IS NOT NULL` mới được retrieve.
+- Same-tenant child relations dùng composite FK theo `(parent_id, tenant_id)` như BE spec; object raw ở private pending/quarantine storage và không lộ storage key cho app.
+- `embedding_cache` là cache global hẹp, nhưng key **không còn** là một hash đơn. Exact key là `(embed_model, embed_dims, profile_version, content_sha256)`; `content_sha256` hash đúng normalized provider-input bytes, vector dùng dimension được pin bởi key. Cache không grant cho `app`/`readonly`/`PUBLIC`.
 
--- Chunk + embedding. Tenant-private. pgvector.
--- CREATE EXTENSION vector;  (đặt ở migration roles/extensions, review riêng)
-CREATE TABLE kb_chunks (
-  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id     uuid NOT NULL REFERENCES tenants(id),
-  document_id   uuid NOT NULL REFERENCES kb_documents(id),
-  chunk_index   integer NOT NULL,
-  content       text NOT NULL,
-  summary       text,                          -- tóm tắt chunk (LLM rẻ) — tăng recall khái niệm (từ pipeline mẫu)
-  content_hash  text NOT NULL,
-  token_count   integer,
-  embed_model   text NOT NULL,                 -- model đã embed (để reindex khi đổi)
-  embedding     vector(1536),                  -- vec nội dung; dim theo model; đổi model => P12
-  summary_embedding vector(1536),              -- vec tóm tắt (2-vector index, optional §12)
-  -- BM25/keyword: tsvector sinh sẵn cho hybrid search (không cần cột phụ trợ ngoài)
-  fts_vector    tsvector GENERATED ALWAYS AS (to_tsvector('simple', coalesce(content,''))) STORED,
-  created_at    timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, document_id, chunk_index)
-);
--- Semantic: HNSW ANN (xem tương tác với RLS §6.1). Keyword: GIN trên tsvector.
-CREATE INDEX idx_kb_chunks_embedding ON kb_chunks USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX idx_kb_chunks_fts       ON kb_chunks USING gin (fts_vector);
-CREATE INDEX idx_kb_chunks_tenant    ON kb_chunks(tenant_id);
-
--- Cache embedding theo hash nội dung → khỏi gọi provider lại cho text trùng (tiết kiệm cost).
--- Tenant-agnostic (chỉ là cache hash→vector, không chứa ngữ cảnh tenant). Access qua service.
-CREATE TABLE embedding_cache (
-  content_sha256 bytea PRIMARY KEY,            -- SHA256(text + embed_model)
-  embed_model    text NOT NULL,
-  embedding      vector(1536) NOT NULL,
-  created_at     timestamptz NOT NULL DEFAULT now()
-);
-```
+Exact statuses, columns, indexes, RLS và migration order thuộc BE spec canonical; danh sách này chỉ giữ các invariants không được regress.
 
 ### 4.3 Q&A log
 
-```sql
--- 1 lượt hỏi→đáp (mọi surface). Append-only. Tenant-private.
-CREATE TABLE bot_queries (
-  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id        uuid NOT NULL REFERENCES tenants(id),
-  surface          text NOT NULL CHECK (surface IN ('native_chat','ask_panel')),  -- chỉ trong app Plexco
-  channel_ref      text,                        -- chat_channel_id / message ref (in-app)
-  asker_person_id  uuid REFERENCES persons(id), -- nullable (chưa link)
-  command_id       text NOT NULL,               -- idempotency (P8)
-  question_text    text,                        -- có retention/redaction policy (INV-9)
-  answer_text      text,
-  retrieved_chunk_ids jsonb NOT NULL DEFAULT '[]',
-  model            text,
-  tokens_in        integer,
-  tokens_out       integer,
-  latency_ms       integer,
-  confidence       real,
-  status           text NOT NULL DEFAULT 'received'  -- received→answered|no_answer|blocked|error (bot.ask hai pha)
-                     CHECK (status IN ('received','answered','no_answer','blocked','error')),
-  retention_expires_at timestamptz,                 -- TTL redact (BE §4.3)
-  redacted_at          timestamptz,
-  created_at       timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, command_id)
-);
--- Ràng buộc same-tenant (P1-b): các bảng con dùng **composite FK** (parent_id, tenant_id)
--- thay cho FK theo id đơn — xem BE §2 (yêu cầu parent + `memberships` có UNIQUE(id, tenant_id)).
-```
+`bot_queries` là canonical durable result cho một lượt hỏi, dedupe bởi `UNIQUE (tenant_id, command_id)`, có surface/channel binding, terminal status/reason, retrieval evidence và retention/redaction fields.
+
+`bot_provider_attempts` là ledger kỹ thuật riêng cho từng external chat-provider attempt: `attempt_no` monotonic per query, provider/model/request-id opaque, status `started|succeeded|failed|unknown_after_crash`, token/cost và timestamps. Nó làm possible duplicate usage **nhìn thấy được và cap được**; nó không biến external provider thành transactional exactly-once.
 
 ### 4.4 Kênh chat in-app native (Phase B — khối lớn)
 
-```sql
--- Kênh chat của CLB (MVP: 1 kênh chính / tenant). Tenant-private.
-CREATE TABLE chat_channels (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id   uuid NOT NULL REFERENCES tenants(id),
-  kind        text NOT NULL DEFAULT 'club_main' CHECK (kind IN ('club_main','topic')),
-  name        text NOT NULL,
-  created_at  timestamptz NOT NULL DEFAULT now()
-);
+Proposal **không còn định nghĩa lại chat DDL**. DD-38/In-app Chat P4 là authority cho:
 
-CREATE TABLE chat_channel_members (
-  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id     uuid NOT NULL REFERENCES tenants(id),
-  channel_id    uuid NOT NULL REFERENCES chat_channels(id),
-  membership_id uuid NOT NULL REFERENCES memberships(id),
-  role          text NOT NULL DEFAULT 'member' CHECK (role IN ('member','admin')),
-  last_read_at  timestamptz,
-  joined_at     timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, channel_id, membership_id)
-);
+- `chat_channels.kind IN ('club','dm')` và club-vs-DM tenant/person-self boundaries;
+- canonical membership/read-state table **`chat_members`**;
+- `chat_messages.author_type IN ('person','assistant','system')`;
+- dedupe độc lập author bằng `client_msg_id`, unique theo `(channel_id, client_msg_id)`;
+- guarded human send + transactional `NOTIFY`, SSE refetch dưới authz; không có message projector/writer thứ hai.
 
-CREATE TABLE chat_messages (
-  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id     uuid NOT NULL REFERENCES tenants(id),
-  channel_id    uuid NOT NULL REFERENCES chat_channels(id),
-  author_type   text NOT NULL CHECK (author_type IN ('member','assistant','system')),
-  membership_id uuid REFERENCES memberships(id),  -- null khi assistant/system
-  body          text NOT NULL,
-  mentions      jsonb NOT NULL DEFAULT '[]',       -- [{type:'member'|'assistant', id?}]
-  reply_to_id   uuid REFERENCES chat_messages(id),
-  bot_query_id  uuid REFERENCES bot_queries(id),   -- nếu message này là câu trả lời bot
-  created_at    timestamptz NOT NULL DEFAULT now(),
-  edited_at     timestamptz,
-  deleted_at    timestamptz
-);
-CREATE INDEX idx_chat_messages_channel_time ON chat_messages(tenant_id, channel_id, created_at DESC);
-```
-
-> **Constraint shape:** `author_type='member'` ⇒ `membership_id NOT NULL`; `author_type IN ('assistant','system')` ⇒ `membership_id IS NULL` (thêm CHECK khi hiện thực).
+P7 Assistant chỉ thêm nullable same-tenant `bot_query_id` relation + bot/definer writer/projector hẹp. Projector authorize bằng canonical `chat_members`, chỉ phát vào `kind='club'`, derive `author_type='assistant'`, `author_person_id=NULL`, `membership_id=NULL`, `client_msg_id='assistant:' || query_id`; retry trả existing message nhờ `client_msg_id`/`bot_query_id`, không nhân đôi.
 
 ### 4.5 Entitlement / billing (không thêm bảng)
 
-Dùng `plans.entitlements` (jsonb) sẵn có: thêm key `assistant` + `limits` (KB size, câu hỏi/tháng). Gate ở service. Cấu hình per-tenant nằm ở `bot_configs`. Định giá add-on: DD-22.
+Dùng `plans.entitlements` (jsonb) với key `assistant` + limits (KB size, câu hỏi/tháng); gate ở service, config per-tenant ở `bot_configs`. DD-22 đã chốt gộp quyền Assistant vào **Host Pro** theo DD-29, không còn pricing decision mở ở proposal này.
 
 ---
 
@@ -251,22 +128,29 @@ Dùng `plans.entitlements` (jsonb) sẵn có: thêm key `assistant` + `limits` (
 ```
 Admin/host (web dashboard) nạp FAQ · upload PDF/DOCX/MD/TXT · dán text · URL
   → COMMAND kb.ingest → service (tenant ctx):
-       lưu file thô vào object storage (storage_ref) · tính content_hash (MD5/SHA)
-       INSERT kb_sources(status=processing, content_hash)   -- dedupe UNIQUE(tenant,hash) = change-detect
-       + OUTBOX 'kb.source.ingested' (chỉ mang source_id)    -- P11
+       resolve stable (tenant_id, source_key) · lưu raw object private · tính SHA-256 content_hash
+       SELECT source FOR UPDATE
+       same source + same hash → return current generation/status, không enqueue lại
+       changed hash → trong MỘT txn:
+         supersede document/chunks generation cũ
+         bump current_generation · source=processing · dlp_cleared_at=NULL
+         + OUTBOX 'kb.source.ingested' (source_id + generation; opaque IDs only)
   → INGEST WORKER (ngoài txn — P9):
-       1. extract text theo mime (PDF/DOCX/…→text)          -- điểm 2
-       2. parse theo heading → chunk có overlap              -- structure-aware (pipeline mẫu)
-       3. (optional) summary mỗi chunk bằng LLM rẻ           -- 2-vector index (§12)
-       4. embed(content) [+ embed(summary)] qua provider,
-          TRA embedding_cache(SHA256(text+model)) trước       -- khỏi gọi lại nếu trùng
-       → tenant txn: UPSERT kb_documents + kb_chunks(embedding, summary_embedding, embed_model)
-          (fts_vector tự sinh GENERATED ALWAYS — không cần bước riêng)
-       → kb_sources.status = active   (hoặc error + error_code, re-ingest được)
+       reload + verify job.generation == source.current_generation; stale → discard
+       1. extract text theo mime (PDF/DOCX/…→text)
+       2. content-DLP secret/credential/PII TRƯỚC chunk/embed
+          hit → blocked_sensitive_content + quarantine opaque; 0 active chunks; không fallback generation cũ
+       3. parse theo heading → chunk có overlap
+       4. (optional) summary mỗi chunk bằng LLM rẻ
+       5. embed(content) [+ embed(summary)] qua provider,
+          tra embedding_cache(model+dims+profile+SHA256(normalized provider input))
+       → activation txn compare-and-set generation:
+          INSERT current kb_document + kb_chunks(active)
+          source=active + dlp_cleared_at=now() trong cùng commit
 ```
 
 - Đổi embedding model ⇒ **P12 expand-backfill-contract**: thêm không gian vec mới, re-embed batch resumable, flip đọc, bỏ cũ. Không destructive.
-- FAQ = cặp Q/A ⇒ mỗi cặp là 1 document nhỏ (retrieve chuẩn hơn).
+- FAQ = cặp Q/A ⇒ mỗi cặp là 1 document nhỏ (retrieve chuẩn hơn), nhưng vẫn thuộc stable source/generation.
 - File thô để ở **object storage**, DB chỉ giữ text đã trích + vector (tránh phình DB, dễ re-extract).
 
 ### 5.2 Answer (retrieve → ground → generate)
@@ -276,11 +160,11 @@ Câu hỏi tới trong app Plexco (chat_messages @mention bot · hoặc panel "H
   → resolve tenant (chat_channel_id / context app) + person (phiên đăng nhập app)
   → GATE (≈ "eligibility" của pipeline mẫu): person là member? tenant enabled? entitlement/cap còn?  -- nếu fail → refuse
   → PHA 1 — COMMAND bot.ask (command_id):  txn INSERT bot_queries(status='received') + enqueue job  (KHÔNG gọi LLM)
-  → PHA 2 — ANSWER WORKER (ngoài txn; reload, nếu status≠received → SKIP, không gọi LLM lại):   -- dưới RLS
+  → PHA 2 — ANSWER WORKER (ngoài txn; reload, nếu status≠received → SKIP provider):   -- dưới RLS
        0. INTENT ROUTE (rẻ, pre-LLM — TF-IDF/keyword seeds; không gọi LLM):
             KB-question → hybrid-retrieve (bước 1) · live-context → tool riêng (DD-28) · out-of-scope → fallback
             (mục tiêu: tiết kiệm token + tăng precision; chỉ KB-question mới tốn retrieve/LLM)
-       1. HYBRID RETRIEVE trên kb_chunks WHERE tenant_id=$ctx (RLS tự chặn cross-tenant):
+       1. HYBRID RETRIEVE chỉ current-generation/DLP-cleared active chunks WHERE tenant_id=$ctx:
             a. BM25/keyword: fts_vector @@ websearch_to_tsquery(question)
             b. semantic: embedding <=> embed(question)  (HNSW; dùng cả summary_embedding)
             c. MERGE + RRF fusion (mặc định, ~0ms; nghiêng ~70% semantic / ~30% BM25)
@@ -288,12 +172,18 @@ Câu hỏi tới trong app Plexco (chat_messages @mention bot · hoặc panel "H
        2. nếu score cao nhất < min_similarity (mẫu dùng ~0.3) → no_answer → fallback t(vi,en)
        3. build prompt = system(tone + persona, "CHỈ trả lời từ NGỮ CẢNH; thiếu thì nói chưa có")
                          + retrieved chunks (nhãn DATA, không phải lệnh)  + question
-       4. gọi CHAT provider → answer + citations
-       5. UPDATE bot_queries(status, answer_text, scores...) + OUTBOX 'bot.answered'
-  → PROJECTOR (chỉ in-app): native_chat → INSERT chat_messages(author_type=assistant) → SSE · ask_panel → SSE/poll result
+       4. allocate + COMMIT bot_provider_attempts(status=started, attempt_no=N)
+          → gọi CHAT provider → answer + citations
+       5. txn UPDATE provider attempt (request-id/usage/outcome)
+              + UPDATE bot_queries(status, answer_text, scores...)
+              + OUTBOX 'bot.answered'
+  → PROJECTOR (chỉ in-app): native_chat → canonical bot writer INSERT chat_messages(
+       author_type=assistant, client_msg_id='assistant:'||query_id, bot_query_id=query_id)
+       → transactional NOTIFY/SSE refetch · ask_panel → SSE/poll result
 ```
 
-- Native chat: khi member gửi `chat_messages` có mention bot → outbox `chat.message.created` → answer worker → chèn message assistant → SSE (DD-07). LLM gọi ở worker, **không** trong txn ghi message.
+- Native chat: @mention đã ghi bởi guarded In-app Chat path mới được chuyển thành `bot.ask`; output Assistant dùng bot projector/writer hẹp ở trên. Proposal không tạo `chat.message.created` writer/projector song song với canonical Chat.
+- **Guarantee đúng:** terminal `bot_queries` + deterministic chat projection cho một durable answer/message. Crash sau provider response nhưng trước terminal DB commit có thể gọi provider lại; attempt cũ chuyển `unknown_after_crash`, retry bị cap/budget và mọi possible usage được audit. Chỉ dùng provider idempotency key khi provider chính thức hỗ trợ; không tuyên bố exactly-once/no-double-charge.
 - Multi-turn: MVP single-turn (+ vài message gần nhất của thread làm ngữ cảnh); hội thoại đầy đủ để Phase C.
 - **Intent router pre-LLM (bước 0)** — kế thừa từ chatbot reference (`bestminton-club-chatbot`: TF-IDF classifier + topic seeds leave/refund, semantic context-fetch gating). Ở Plexco đây là gate rẻ **trước** hybrid-retrieve, giúp: (a) không tốn token cho câu out-of-scope, (b) tách rõ câu **KB** vs câu **live-context** (đường sau đi qua **DD-28**, không phải KB-RAG). Bằng chứng: PR #55/#34/#32 repo chatbot.
 
@@ -306,7 +196,7 @@ Câu hỏi tới trong app Plexco (chat_messages @mention bot · hoặc panel "H
 - **Lưu ý kỹ thuật:** ANN index (HNSW/IVFFlat) + RLS predicate — Postgres áp RLS như filter; ở quy mô KB nhỏ/tenant, kết hợp `WHERE tenant_id=$` + ANN ổn. Cần benchmark recall khi filter chặt; nếu cần, ép pre-filter theo tenant hoặc partial index. Ghi rõ ở tech spec khi hiện thực.
 
 ### 6.2 KB-only grounding — chống lộ tiền/PII (DD-21, HR2)
-- Trợ lý **chỉ** đọc `kb_chunks` (FAQ/docs). **Không** nối `charges`/`memberships`/`persons`/SĐT vào context LLM. ⇒ không có đường để prompt kéo nợ/PII của người khác ra.
+- Trợ lý **chỉ** đọc current-generation `kb_chunks` đã pass content-DLP. **Không** nối `charges`/`memberships`/`persons`/SĐT vào context LLM. Extracted secret/credential/PII phải bị quarantine trước chunk/embed/retrieve; retrieval/output guard fail-closed và chỉ alert bằng evidence opaque.
 - Nếu tương lai muốn "trợ lý biết nợ của tôi": làm **tool riêng** có **person-self authz** (chỉ trả về nợ của chính người hỏi), không gộp vào RAG chung. Là DD tách sau.
 - **Live-context (DD-28) TÁCH khỏi prompt KB — bất biến implementation:** intent router (§5.2 bước 0) định tuyến câu vận hành (slot/capacity) sang **tool riêng** với field-whitelist + authz. Kết quả live-context **KHÔNG BAO GIỜ** được concat vào prompt KB-RAG; hai đường build **prompt riêng biệt**. Context builder KB = **chỉ** `kb_chunks`. Giữ DD-21 nguyên vẹn — DD-28 chỉ mở đường vận hành, không nới grounding KB. Test bất biến: prompt KB không chứa output live-context/ledger/PII (BE §5 unit #3, #29).
 
@@ -324,7 +214,7 @@ Câu hỏi tới trong app Plexco (chat_messages @mention bot · hoặc panel "H
 - `bot_queries.question_text/answer_text` có thể chứa PII người dùng gõ → **contract retention** (BE §4.3): `bot_configs.query_retention_days` → set `retention_expires_at`; purge job null content + set `redacted_at`, giữ metadata phi-PII. Outbox/log chỉ mang ID (INV-9).
 
 ### 6.6 Observability (P15)
-- Metric: ingest success/fail, độ trễ answer, tỉ lệ no_answer, tokens/cost theo tenant, DLQ projector.
+- Metric: ingest success/fail/quarantine + stale-generation discard, độ trễ answer, tỉ lệ no_answer, tokens/cost theo tenant, mọi `bot_provider_attempts` (kể cả `unknown_after_crash`), cap hit và DLQ projector.
 - "Câu chưa trả lời được" (no_answer) ⇒ gợi ý admin bổ sung KB (vòng cải thiện, Phase C).
 - **Grounding / truthfulness counters (kế thừa chatbot reference — A1):** đếm theo tenant — câu **được ground đủ** (có chunk đạt ngưỡng + trả lời trong phạm vi KB) vs câu **bị chặn/gắn cờ vì thiếu ground** (grounding-based hallucination trigger). Đây là **bằng chứng đo được** cho DD-21 (KB-only): nếu tỉ lệ "vượt khỏi KB" tăng → cảnh báo. Kèm cơ chế **ambiguity-soften** (câu mơ hồ → hỏi lại/nới nhẹ thay vì bịa). Bằng chứng: PR #66 (grounding/truthfulness Phase-1 counters) + #36 (grounding-based hallucination trigger) repo chatbot.
 - **Over-deflection watch:** theo dõi tỉ lệ no_answer theo tenant để tinh chỉnh `bot_configs.min_similarity` (ngưỡng cao → "chưa có thông tin" quá nhiều; PR #49).
@@ -333,7 +223,7 @@ Câu hỏi tới trong app Plexco (chat_messages @mention bot · hoặc panel "H
 
 ## 7. Đề xuất stack RAG (câu hỏi "bạn đề xuất")
 
-### 7.1 Vector store — **pgvector trong Postgres tenant-private** (khuyến nghị) · DD-17
+### 7.1 Vector store — **pgvector trong Postgres tenant-private** (DD-17 đã chốt)
 | Tiêu chí | pgvector (đề xuất) | Vector DB ngoài (Qdrant/Pinecone/…) |
 |---|---|---|
 | Cô lập tenant | ✅ Dùng lại **RLS** đang có — không phải bảo mật hệ thống thứ 2 (INV-1) | ⚠️ Phải tự dựng isolation/namespace per-tenant, thêm bề mặt lỗi |
@@ -342,12 +232,12 @@ Câu hỏi tới trong app Plexco (chat_messages @mention bot · hoặc panel "H
 | Scale ANN cực lớn | ⚠️ Yếu hơn khi rất lớn | ✅ Mạnh |
 | Phù hợp Plexco | ✅ KB mỗi CLB **nhỏ** (FAQ + vài doc) → k-NN trên tập đã filter theo tenant rất nhẹ | Overkill giai đoạn này |
 
-⇒ **Bắt đầu pgvector.** Chuyển vector DB ngoài **chỉ khi đo lường** thực sự cần (P14: partition-when-measured).
+⇒ **DD-17 đã chốt bắt đầu bằng pgvector.** Chuyển vector DB ngoài **chỉ khi đo lường** thực sự cần (P14: partition-when-measured).
 
-### 7.2 Provider embedding + generation — **đặt sau interface, chốt ở DD-18** (⬜ mở)
+### 7.2 Provider embedding + generation — **đặt sau interface; DD-18 còn mở và chặn GO-LIVE**
 - Trong `packages/core`: interface `EmbeddingProvider` + `ChatProvider` (adapter mỏng, swappable) → không khoá vendor, dễ đổi/self-host sau.
 - Tiêu chí chốt: **chất lượng tiếng Việt** (KB chủ yếu vi), **privacy/khu vực dữ liệu + ToS/DPA**, chi phí/câu, độ trễ, rate limit.
-- Ứng viên để đánh giá (cần benchmark VN + review pháp lý, **chưa chốt**): API hosted (OpenAI, Google Gemini, …) cho MVP tốc độ; đường self-host (embedding mở + LLM VN) cho privacy dài hạn.
+- Hướng hiện tại là hosted-first sau interface swappable, nhưng provider/DPA/khu vực dữ liệu vẫn **chưa chốt**; không được suy ra provider production từ ví dụ trong proposal.
 - `embedding` dim theo model đã chọn; đổi model ⇒ reindex P12.
 
 ---
@@ -357,58 +247,52 @@ Câu hỏi tới trong app Plexco (chat_messages @mention bot · hoặc panel "H
 | Pha | Nội dung | Phụ thuộc | Ghi chú scope |
 |---|---|---|---|
 | **A — Ask panel (Plexco app)** (MVP feature) | KB ingest (FAQ + upload PDF) ở dashboard · panel "Hỏi trợ lý" Q&A trực tiếp trong app | Web/app surface + sync engine (P4) | **Slice nhỏ nhất** — không cần hệ nhắn tin đầy đủ. Ưu tiên làm trước. |
-| **B — Native in-app chat (Plexco app)** | `chat_channels/messages/members` + realtime SSE + bot là thành viên trả lời khi @mention | Web/app surface (P4) + SSE (DD-07) | **Khối lớn = hệ nhắn tin mới** trong app Plexco; tách nhiều slice (kênh, message, realtime, bot-participant). |
+| **B — Native in-app chat (Plexco app)** | Tái dùng `chat_channels` + `chat_members` + `chat_messages` canonical, realtime SSE + Assistant trả lời khi @mention | Canonical In-app Chat P4 đã migrate + SSE (DD-07) | P7 chỉ thêm bot adapter/relation/projector; **không** tạo hệ nhắn tin/schema song song. |
 | **C — Nâng cao** | multi-turn, feedback 👍/👎 cải thiện KB, gợi ý lấp gap KB từ no_answer, thêm nguồn (URL/Google Docs), analytics | A+B | Sau khi A/B ổn định. |
 
-**Vị trí roadmap:** track mới, **sau P4** (cần sync engine + web/app). Đề xuất đặt tạm **P7 — Club Assistant** (hoặc P4.9 post-MVP), không chèn vào MVP đường tiền.
+**Vị trí roadmap hiện hành:** **P7 — Club Assistant**, sau P4 web/app + sync; pha B còn phụ thuộc canonical In-app Chat P4 đã migrate. Không chèn vào MVP đường tiền.
 
 ---
 
-## 9. Mapping "Definition of Ready" (core-db §10) — còn thiếu gì để thành spec thực thi
+## 9. Readiness hiện tại (proposal không còn là DoR authority)
 
-- [x] Aggregate & lifecycle (§3)
-- [x] Tenant/person/public boundary (§2, §6.2)
-- [x] Authz & routing source — matrix ở **BE §3** (host config/upload/archive/analytics · member ask-panel/native-chat · left/guest/non-member · suspended · cap)
-- [x] Schema + constraints + index (sketch §4) — **composite same-tenant FK** đóng ở BE §2 (yêu cầu `memberships` UNIQUE(id,tenant_id))
-- [x] RLS/grant plan (thêm bảng vào list `0009`)
-- [x] Idempotency (§2, §5.1) — `bot.ask` **hai pha** (BE §4.2): insert `received`+job trong txn → worker LLM → update, không double-call
-- [x] Transaction/locking (§2 P9)
-- [x] Outbox/projector impact (§5)
-- [x] Audit/log/metrics (§6.6) + **retention contract** (BE §4.3)
-- [~] Migration/backfill/rollback — cần chi tiết bật `vector` extension + P12 reindex + migration additive `memberships` UNIQUE(id,tenant_id)
-- [x] Tests — enumerated ở BE §5 (27 unit + 7 integration; gồm cross-tenant FK reject, two-phase no-double-LLM, retention purge)
-
-⇒ Sau khi các DD ✅: promote proposal này thành **`feature_club_assistant.md` (FE/Product)** + **`BE/feature_club_assistant_tech.md` (Tech)**, và thêm migration `00xx_club_assistant.sql` + cập nhật `0009` RLS list + `schema.ts`.
+- Product + BE Club Assistant hiện ở **v0.9, Draft**: contract đã harden nhưng chưa build-ready cho tới khi pair được formally promote sang Reviewed.
+- DD-16/17/19/20/21/22/23/28 đã chốt. DD-18 còn mở; đây là gate GO-LIVE về provider/privacy/ToS/DPA, không thay thế formal promotion gate.
+- Canonical In-app Chat P4 hiện **Draft, pending migration**. Pha B chỉ được làm sau migration chat; Assistant không được tự dựng schema chat để đi trước dependency này.
+- Chưa có migration/runtime Assistant được chứng minh bởi proposal. Build slice sau promotion phải tạo migration monotonic mới, self-contained (`vector`, schema, ENABLE+FORCE RLS, policy, explicit grants/revokes), không sửa/chạy lại `0000`/`0009` lịch sử.
+- Exact authz matrix, API envelope, edge cases, test matrix, rollback và rollout thuộc Product/BE specs canonical. Checklist lịch sử trong proposal không phải readiness pass.
 
 ---
 
 ## 10. Test bất biến bắt buộc (core-db §11/§16)
 
 1. Tenant A hỏi → **không** nhận chunk/kb/chat của tenant B (RLS cô lập vector + chat).
-2. Thiếu `app.tenant_id` → KB/chat query trả **0 rows** (fail-closed).
+2. Thiếu/sai `app.tenant_id` → KB query trả **0 rows** (fail-closed); Chat dùng đúng canonical club/DM authz, không áp giả định tenant-only lên DM.
 3. KB/chat/query-log **không** xuất hiện trong public projection (bất biến public).
-4. Ingest trùng (cùng `content_hash`) → không tạo chunk lặp (idempotent).
-5. Cùng `command_id` hỏi 2 lần → 1 câu trả lời (converge, không double-charge token).
+4. Re-ingest cùng `(tenant,source_key)` + cùng hash → không tăng generation/không tạo chunk lặp; hash mới → generation cũ superseded atomically.
+5. DLP hit hoặc revision mới bị block → 0 active chunk/embedding cho generation đó và **không fallback** generation cũ; stale worker không activate được.
 6. Similarity < ngưỡng → status `no_answer` + fallback, **không** bịa.
-7. Prompt không bao giờ chứa ledger/PII/secret (assert context = chỉ kb_chunks tenant).
-8. Worker crash sau commit message, trước khi gọi LLM → retry an toàn, không mất/nhân đôi câu trả lời.
+7. Prompt không bao giờ chứa ledger/PII/secret; context chỉ dùng current-generation/DLP-cleared chunks của đúng tenant.
+8. Cùng `command_id`/projector retry → một durable query/answer/message. Crash sau provider response trước DB checkpoint có thể retry provider, nhưng mọi attempt/possible usage được ghi và cap; không claim exactly-once billing.
+9. Assistant projection chỉ ghi canonical club `chat_messages` qua bot writer, authorize bằng `chat_members`, với `author_type='assistant'` và deterministic `client_msg_id`; không có chat schema/store/writer thứ hai.
 
 ---
 
-## 11. Câu hỏi mở → đã ghi thành DD (proposal)
+## 11. Trạng thái DD hiện hành
 
 | DD | Nội dung | Trạng thái |
 |---|---|---|
-| DD-16 | Feature Club AI Assistant + KB — scope, plane, actor | 🟡 đề xuất |
-| DD-17 | Vector store = pgvector tenant-private (không vector DB ngoài giai đoạn đầu) | 🟡 đề xuất |
-| DD-18 | Provider embedding/LLM + review privacy/ToS/khu vực dữ liệu | ⬜ mở |
-| DD-19 | Trợ lý CHỈ trong app Plexco; pha A ask-panel, pha B native chat | 🟡 đề xuất |
-| DD-20 | Trợ lý là **config tenant**, không phải Person/ChannelIdentity mới | 🟡 đề xuất |
-| DD-21 | Grounding **chỉ KB**, không nối ledger/PII vào LLM (bảo mật) | 🟡 đề xuất |
-| DD-22 | Entitlement/định giá trợ lý (add-on gói) | 🟡 đề xuất |
-| DD-23 | Hybrid retrieval (BM25 + semantic + RRF), Postgres-native | 🟡 đề xuất |
+| DD-16 | Feature Club AI Assistant + KB — scope, plane, actor | ✅ Chốt |
+| DD-17 | Vector store = pgvector tenant-private (không vector DB ngoài giai đoạn đầu) | ✅ Chốt |
+| DD-18 | Provider embedding/LLM + review privacy/ToS/khu vực dữ liệu | ⬜ Mở — chặn GO-LIVE, không chặn build sau formal promotion |
+| DD-19 | Trợ lý CHỈ trong app Plexco; pha A ask-panel, pha B native chat | ✅ Chốt |
+| DD-20 | Trợ lý là **config tenant**, không phải Person/ChannelIdentity mới | ✅ Chốt |
+| DD-21 | Grounding chỉ KB đã qua DLP; không ingest/retrieve secret, PII, ledger vào LLM | ✅ Chốt (DLP clarified v1.45) |
+| DD-22 | Entitlement/định giá trợ lý | ✅ Chốt — gộp Host Pro theo DD-29 |
+| DD-23 | Hybrid retrieval (BM25 + semantic + RRF), Postgres-native | ✅ Chốt |
+| DD-28 | Live-context non-PII là tool riêng, không trộn vào KB-RAG | ✅ Chốt |
 
-Chi tiết ở `standards/decisions.md`.
+Chi tiết và trạng thái canonical ở `../standards/decisions.md`.
 
 ---
 
@@ -418,11 +302,11 @@ Pipeline mẫu là một RAG production tốt. Đối chiếu từng kỹ thuậ
 
 | Kỹ thuật trong ảnh | Quyết định | Vì sao / cách áp dụng ở Plexco |
 |---|---|---|
-| **MD5 detect** (nạp lại khi file đổi) | ✅ **Adopt** | = `kb_sources.content_hash` (MD5/SHA) + `UNIQUE(tenant, hash)`. Idempotent (INV-6). |
+| **Hash detect** (nạp lại khi file đổi) | ✅ **Adopt, đã harden** | `source_key` là identity ổn định per tenant; SHA-256 `content_hash` chỉ dedupe/change-detect trong source. Hash mới tăng generation + supersede cũ atomically. |
 | **Parse heading → Chunk** | ✅ **Adopt** | Chunk theo cấu trúc heading > chunk cố định. Vào §5.1 bước 2. |
 | **Summary (Gemini Flash) → Embed 2 vec** | ⚠️ **Adopt-optional** | Thêm `summary` + `summary_embedding` (2-vector). Tăng recall khái niệm nhưng **gấp đôi cost embed** → bật theo tenant/khi cần. Provider (Gemini Flash…) vẫn để mở ở **DD-18**, không hardcode. |
 | **PostgreSQL: VECTOR(1536) + fts_vector GENERATED ALWAYS** | ✅ **Adopt** | Khớp DD-17 (pgvector). Thêm `fts_vector` GENERATED cho keyword — không cần hạ tầng ngoài. |
-| **embedding_cache (BYTEA SHA256)** | ✅ **Adopt** | Bảng `embedding_cache(content_sha256)` — tiết kiệm cost embed cho text trùng. |
+| **embedding_cache (BYTEA SHA256)** | ✅ **Adopt, key theo profile** | Composite key `(embed_model, embed_dims, profile_version, content_sha256)`; hash exact normalized provider input, không tái dùng vector sai model/dimension/profile. |
 | **Hybrid: BM25 + Semantic (HNSW), 70/30, Merge + RRF (rerank LLM optional)** | ✅ **Adopt** → **DD-23** | Cả hai đều native Postgres (`websearch_to_tsquery` + pgvector HNSW). RRF mặc định (~0ms), LLM rerank optional khi cần precision. |
 | **Integration Path A — FunctionTool `search_vuix2_info`/`search_ewa_info` (LLM tự gọi)** | 🔁 **Adapt** | Tool **cứng theo từng KB** → **không scale N CLB**. Plexco dùng **1 tool tổng quát** `search_knowledge_base` **tham số hoá theo tenant + RLS**, không tạo tool-per-club. Path A (agentic) chỉ bật sau, có guardrail chống gọi cross-tenant. |
 | **Integration Path B — Orchestrator: search → manifest → eligibility → score≥0.3 → grounding → LLM** | ✅ **Adopt làm mặc định** | An toàn & tất định hơn Path A → hợp DD-21 (KB-only grounding). Ánh xạ: **manifest** = KB của tenant; **eligibility** = member? + entitlement + **RLS**; **score≥0.3** = `min_similarity` (gate no-answer). |
@@ -444,6 +328,7 @@ Pipeline mẫu là một RAG production tốt. Đối chiếu từng kỹ thuậ
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 17/07/2026 | v0.7 | Reconcile proposal thành historical/supporting rationale: implementation authority chuyển sang Club Assistant + In-app Chat Product/BE specs; bỏ parallel chat DDL; pin stable `source_key` + generation/DLP fail-closed, cache composite model+dims+profile+hash, provider-attempt audit/retry truth; đồng bộ trạng thái DD và formal Draft/promotion boundary. |
 | 05/07/2026 | v0.1 | Khởi tạo proposal Club AI Assistant + Knowledge Base (RAG per-CLB); thêm DD-16..DD-22. |
 | 05/07/2026 | v0.2 | Đối chiếu pipeline mẫu (§12): adopt hybrid BM25+semantic+RRF (DD-23), fts_vector GENERATED, embedding_cache, summary 2-vector (optional), parse-heading; adapt Path A→tool tổng quát theo tenant, Path B orchestrator làm mặc định; thêm `tone` (điểm 3) + upload PDF (`mime_type`/`storage_ref`, điểm 2). |
 | 05/07/2026 | v0.3 | **Thu hẹp scope: trợ lý CHỈ trong app Plexco** (bỏ trả lời ở TG/Zalo/Messenger). `surface ∈ {native_chat, ask_panel}`; bỏ phụ thuộc channel adapter; cập nhật §0/§1/§2/§3/§5.2/§8 + DD-19. |

@@ -2,8 +2,8 @@
 
 > **Canonical phase:** P3
 > **Track:** 💰 Payment Reconciliation
-> **Version:** 1.6 · 2026-07-16
-> **Status:** Reviewed and reconciled to BRD v3.7 / PRD v2.5 / TDD v2.6 / decisions v1.40; B1/schema/code pending build slices
+> **Version:** 1.7 · 2026-07-17
+> **Status:** Reviewed and reconciled to BRD v3.9b / PRD v2.8 / TDD v3.1 / decisions v1.45; B1/schema/code pending build slices
 > **Prerequisites:** P0–P1 foundation + P2 tenant routing
 > **Tài liệu liên quan:** `../product/BRD.md` FR-5 · `../product/PRD.md` FLOW 6/9 + §4.1 · `../product/TDD.md` §3.2/3.6/3.7 · `../standards/decisions.md` DD-40/DD-25 · `../standards/business-rules.md` BL-PAY · `../research/player-side-saas-reconciliation.md`
 
@@ -99,7 +99,7 @@ Host mở roster/danh sách nợ (bot Zalo / Messenger / web)
 
 | # | Case | Hành vi bắt buộc |
 |---|---|---|
-| 1 | Secret/HMAC sai | 401; không persist payload nghiệp vụ; security log không chứa secret |
+| 1 | Provider authentication sai | 401 trước parse/persist: SePay production requires `X-SePay-Signature: sha256=<hex>` over `{X-SePay-Timestamp}.{raw_body}`, timestamp ±300s, constant-time; HMAC failure never downgrades to API key. Explicit SePay fallback accepts only `Authorization: Apikey <key>`. ApiPay separately verifies `ApiPay-Signature = HMAC-SHA256(raw_body, per-webhook secret)`. Không log secret/raw body. |
 | 2 | Token tenant A + account tenant B | 409/401; không route bằng nội dung CK |
 | 3 | Provider thiếu external ID | Synthetic hash ổn định từ provider/account/amount/time/content |
 | 4 | Duplicate đồng thời | UNIQUE `(tenant, provider, external_id)`; một durable job |
@@ -224,6 +224,7 @@ Không log raw bank content, account number, display name, secret hoặc provide
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v1.7 | **Durable-ingest auth closure:** pin exact SePay timestamp/raw-body HMAC format, freshness and no-downgrade plus exact API-key fallback; keep ApiPay raw-body verifier as a separate provider contract. |
 | 2026-07-16 | v1.6 | **Full money propagation:** DD-49 append-only obligation-vs-allocation semantics + refund request contract; PAY-OQ-2 closed ingest-ON/automation-OFF for suspended. B1 chooses dedicated source migration and explicitly forbids synthetic bank transactions. Authority: decisions v1.37. |
 | 2026-07-10 | v1.4 | **Review fixes: money vocab → canonical ledger.** Mark-paid = INSERT `payment_allocations` + cập nhật `charges` (KHÔNG có bảng `payment`): tiền mặt → `source='cash'`; CK khớp một `bank_transactions` → `source='manual'`. Bỏ `source='bank_transfer'` (không có trong enum canonical `auto/manual/cash/waiver/reversal`). Host tự xác nhận "đã CK" nhưng chưa có `bank_transaction` = impl còn mở (synthetic manual bank_txn / enum migration). Cập nhật UC-15, §3.1, ledger rules, screens, acceptance. |
 | 2026-07-10 | v1.3 | **DD-40:** thêm **mark-paid thủ công mọi tier** (tap/multi-select, preview+confirm DD-25) — §1, §3.1, UC-15/16, edge #18/19, ledger rules, screens, acceptance. Auto-reconcile CK = `host_pro`. Kênh host flow: Zalo+web (bỏ Telegram, DD-37). One-line pointer giá theo giới tính → DD-39. |

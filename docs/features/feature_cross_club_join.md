@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.3  
 > **Track:** 🤝 Cross-club Join  
-> **Version:** 2.5 · 2026-07-16
+> **Version:** 2.6 · 2026-07-17
 > **Status:** Reviewed  
 > **Prerequisites:** P4.3 discovery · P3.5 identity · P2 session/slot transaction · P4 sync/notifications  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-3.2 · `../product/PRD.md` FLOW 13 · BRD OD-5/OD-6 · `BE/feature_cross_club_join_tech.md`
@@ -21,6 +21,7 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 - Open join và approval cùng dùng một capacity outcome: còn slot → active+charge+venue; full → waitlisted, không charge/venue.
 - Paid player leave/cancel theo financial/refund policy — KHÔNG silent allocation deletion.
 - Player `left` rejoin theo DD-49: chạy lại eligibility/ban/capacity; chưa refund thì carry-over obligation/allocation, đã refund thì correction core append obligation lifecycle mới. Chưa chứng minh được disposition → `REJOIN_REQUIRES_REVIEW` fail-closed.
+- Trên Messenger, source Page chỉ là endpoint/default/audit. Target session→tenant phải resolve từ opaque actor+Page-bound action/protected public ref; valid cross-club target có thể khác tenant Page nguồn (DD-66/68).
 
 ---
 
@@ -59,6 +60,7 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 | 12 | Cross-Feature | Player banned from this club | Reject join — "Bạn không thể tham gia club này" |
 | 13 | Financial | Player đã `left` tự join/request lại | Rejoin bình thường theo DD-49; carry-over nếu chưa refund, lifecycle mới nếu refunded; không duplicate charge. Unknown/unimplemented disposition → `REJOIN_REQUIRES_REVIEW`, không mutation |
 | 14 | Financial/Resilience | Không suy được giá khi active join/approve hoặc waitlist promotion | Direct join/approve fail-closed, không player/charge/venue; promotion giữ candidate waitlisted + audit/retry, không rollback leave/capacity opener và xét candidate kế; không fallback giá |
+| 15 | Security | Messenger raw/wrong/stale/replayed session action | Reject/re-render; no request/player/charge. Source Page không grant target tenant |
 
 ---
 
@@ -71,7 +73,7 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 | Web | Rejected | — | "❌ Host từ chối — [reason nếu có]" | — | N/A |
 | Web | Closed | — | "Buổi chơi đã đóng" | — | N/A |
 | Web | Rate-limited | — | "Quá nhiều yêu cầu — thử lại sau" | — | N/A |
-| Messenger Bot | Host approval queue | "📋 Danh sách chờ duyệt" | Quick-reply: Approve/Reject per player (Zalo: number-reply) | "Không có yêu cầu nào" | "Không có yêu cầu" |
+| Messenger Bot | Host approval queue | "📋 Danh sách chờ duyệt" | Opaque Approve/Reject actions, max 8/page + navigation; exact host capability | "Không có yêu cầu nào" | "Không có yêu cầu" |
 | Zalo/Messenger Bot | Player join confirm | — | Active: "✅ Đã join [session]. [venue]"; waitlisted: "⏳ Vị trí N" (không venue) | Rejoin cần host review | N/A |
 
 ---
@@ -130,6 +132,7 @@ stateDiagram-v2
 - [ ] Abuse/rate-limit/audit tests pass
 - [ ] Approval full → approved+waitlisted; existing `left` rejoin theo DD-49 carry-over/refunded decision table; unknown/unimplemented disposition → `REJOIN_REQUIRES_REVIEW` và ledger unchanged
 - [ ] DD-39 derivation fail: direct active join/approve không tạo player/charge/venue; promotion giữ waitlisted/no-charge/no-venue + audit/retry, không rollback opener, không fallback giá
+- [ ] Messenger central/tenant Page dùng opaque actor+Page-bound actions; valid cross-club target đúng, wrong/stale/replay không mutate
 
 ---
 
@@ -146,6 +149,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v2.6 | **DD-65..68:** cross-club Messenger action tách source Page khỏi target tenant; opaque bounded approval/join actions và replay-safe acceptance. |
 | 2026-07-16 | v2.5 | **DD-49 full propagation:** invariants/edge/UI/AC đổi blanket left-rejoin reject thành normal rejoin với carry-over/refunded disposition; unknown state mới cần review. Không duplicate `charges` row. Authority: decisions v1.37. |
 | 2026-07-15 | v2.3 | **DD-39×DD-45 failure contract:** direct active join/approve aborts fail-closed on amount derivation failure; promotion keeps candidate waitlisted/no-charge/no-venue, audits/retries without rolling back opener, then continues queue. |
 | 2026-07-15 | v2.2 | **DD-45 propagation:** open/approval full→waitlisted (no charge/venue), concurrent last-slot loser waitlisted, `left` self-rejoin fail-closed `REJOIN_REQUIRES_REVIEW`; sync UX/events/AC. |

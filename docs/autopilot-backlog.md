@@ -13,14 +13,13 @@ refine (grep code thật) trước khi promote thành manifest.
 ## Lifecycle
 `idea` → `planned` (scope rõ + chọn invariants) → tạo manifest → `ready` → `register` → `in-flight` → merge → `merged`.
 
-> **Phase-1 build (Fable 5) — FULL LAUNCH:** send-file orchestrator ở
-> `docs/autopilot-templates/phase1-fable5-orchestrator.md` chạy backlog 20 slice tuần tự
-> (S1 monorepo → S2 core-lift → S3 db-RLS → S4 auth → S5 session → S6 sync-engine → S7 reconcile →
-> S8 identity-merge → S9-S12 web PWA + marketplace → S13 cross-club → S14 billing → S15 host-pro-auto →
-> S16 reminders-auto → **S17 Zalo → S18 Messenger** (Telegram bỏ khỏi phạm vi — DD-37; Messenger cần Meta
-> App Review) → S19 club-assistant → S20 polish). Posture `FULL_AUTO_MONEY: yes` → mọi slice tự merge sau 2× Codex clean; guard cứng: không
-> merge khi còn finding tiền chưa sạch → HALT `FOUNDER_MERGE_GATE`. S19 có DD-gate (DD-16..28 phải ✅).
-> Các task idea dưới đây là feature-level (tham chiếu chéo với backlog orchestrator).
+> **Phase-1 7h run (Fable 5) — SAFE SINGLE-SLICE:** owner handoff hiện hành là
+> `docs/autopilot-templates/phase1-fable5-7h-PR-RUN.md`. Mỗi session chỉ chạy **một** task `ready`, non-P0,
+> trong worktree riêng rồi `scope-gate ready` + STOP_AT_READY; không stacked PR, integration branch, degraded
+> Codex mode hay full-launch. Hiện chỉ `infra-egress-compatibility-evidence` đủ artifact và trạng thái để launch;
+> `infra-do-app-vpc-deployment` là P0/manual vì chạm migration + secret-bearing deployment wiring.
+> `phase1-fable5-RUN.md` và `phase1-fable5-orchestrator.md` là lịch sử, cấm chạy. Product S4+ phải được
+> re-slice theo mechanism, risk-classify và merge prerequisites vào `main` giữa các session.
 
 ## Block format
 ```
@@ -41,32 +40,32 @@ notes: <link spec>
 ## task: auth-provider-google-email-swap
 title: Replace Telegram-era web auth with Google OAuth + email/password while preserving SI-1..SI-8
 status: idea
-risk: P1
-change_class: auth-feature
+risk: P0
+change_class: manual-auth-feature
 depends_on: []
 invariants: [auth, identity, schema, build-config]
 scope: []
-notes: DD-13/DD-37 + `docs/features/feature_web_auth_onboarding.md` + `docs/features/BE/auth-security-invariant-table.md`. Auth v3 Telegram-era is already merged; this is a provider-port, not a greenfield auth rewrite. **NOT launcher-ready:** run live impact/prescan, pin password credential schema + provider adapter boundary, then author manifest/slice doc/launcher before register. Preserve fail-closed SI-1..SI-8 and remove `TELEGRAM_BOT_TOKEN` only after route/test replacement lands.
+notes: DD-13/DD-37 + `docs/features/feature_web_auth_onboarding.md` + `docs/features/BE/auth-security-invariant-table.md`. Auth v3 Telegram-era is already merged; this is a provider-port, not a greenfield auth rewrite. Canonical v0.6.0 classifies auth/token scope as P0, so this is **manual workflow only and NOT launcher-ready**. Split Google OIDC proof/provider-login/route wiring from the atomic email credential lifecycle; run live impact/prescan and pin decision tables first. Preserve fail-closed SI-1..SI-8 and remove `TELEGRAM_BOT_TOKEN` only after replacement routes/tests land.
 
 ## task: feature-identity
 title: Account/member identity (link, merge, claim) — nền cho mọi feature khác
 status: idea
-risk: P1
-change_class: identity-feature
+risk: P0
+change_class: manual-identity-feature
 depends_on: []
 invariants: [identity, schema, auth]
 scope: []
-notes: docs/features/feature_identity.md. Đụng schema+auth → nền tảng, ưu tiên land sớm + standalone (de-risk dependents).
+notes: docs/features/feature_identity.md. Đụng auth/token + migration + debt-bearing claim/ledger preservation nên P0 manual-only; split core directory, link-code lifecycle và merge/claim mutation thành các reviewable manual slices, không launch qua unattended autopilot.
 
 ## task: feature-billing-lifecycle
 title: Subscription / billing lifecycle
 status: idea
-risk: P1
-change_class: billing-feature
+risk: P0
+change_class: manual-billing-feature
 depends_on: [feature-identity]
 invariants: [billing, money-model, schema]
 scope: []
-notes: docs/features/feature_billing_lifecycle.md. Tiền → fail-closed + single-source paid/balance (xem autopilot-invariants).
+notes: docs/features/feature_billing_lifecycle.md. Billing/transactions/migration scope is P0 manual-only; fail-closed + single-source paid/balance remain mandatory.
 
 ## task: feature-cross-club-join
 title: Cross-club join
@@ -100,15 +99,63 @@ notes: docs/channels/web/. Frontend riêng → thường DISJOINT với backend 
 
 ## task: infra-do-app-vpc-deployment
 title: DigitalOcean App Platform + Managed PostgreSQL VPC deployment contract
-status: ready
-risk: P1
-change_class: build-config
+status: idea
+risk: P0
+change_class: manual-infra-security-deployment
 depends_on: [monorepo-scaffold, db-postgres-drizzle-rls]
 invariants: [build-config, schema]
 scope: [.github/workflows/deploy.yml, infra/app.prod.yaml, infra/app.staging.yaml, infra/fly.toml, docs/standards/environments-setup.md]
 manifest: docs/autopilot-manifests/infra-do-app-vpc-deployment.json
 merged_probe: infra/app.prod.yaml :: ^name:[[:space:]]+plexco-prod$
-notes: Launcher-ready P1 slice; canonical prompt v0.6.0. Pre-flight MUST close DD-04 §7.1 with primary-source evidence for SePay/ApiPay/Zalo/Messenger. Any fixed-egress requirement → HALT DESIGN_UNFIT before authoring DO App Specs and re-slice bounded Fly fallback; never disable VPC silently. Green path creates prod+ephemeral-staging App Specs from one immutable image (web/discovery/worker), component-scoped DB roles/URLs, no migration credential in runtime, and a manual/approval-gated deploy workflow whose one-shot migration runs before pg-boss provisioning. Read isolation is Day-1; read-only node remains trigger-based. Full contract: `docs/autopilot-infra-do-app-vpc-deployment.md`.
+notes: P0 manual workflow only; canonical v0.6.0 classifies its migration orchestration and secret-bearing DB/deploy wiring as ineligible for autopilot codegen. AP-21 is a disabled historical launcher, not an execution entry point. First merge `infra-egress-compatibility-evidence`; then manually re-slice/prove the provider-specific design without weakening VPC, DB-role, secret or migration boundaries. Full design contract: `docs/autopilot-infra-do-app-vpc-deployment.md`.
+
+## task: infra-egress-compatibility-evidence
+title: Close DD-04 fixed-egress compatibility evidence for SePay, ApiPay, Zalo and Meta
+status: ready
+risk: P2
+change_class: docs-provider-evidence
+depends_on: []
+invariants: [build-config]
+scope: [docs/standards/environments-setup.md]
+manifest: docs/autopilot-manifests/infra-egress-compatibility-evidence.json
+merged_probe: docs/standards/environments-setup.md :: DD04_EGRESS_EVIDENCE_CLOSED
+notes: Launcher-ready docs-only AP-22 slice. Record current attributable evidence for each outbound API, distinguish outbound source-IP requirements from inbound webhook verification, and fail closed on any missing/ambiguous row. Scope explicitly excludes App Specs, workflows, code, config, migrations, secret handling and provider mutation. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-infra-egress-compatibility-evidence.md`.
+
+## task: infra-inbound-webhook-auth-evidence
+title: Inbound webhook verification contract evidence for SePay, ApiPay, Zalo and Meta
+status: ready
+risk: P2
+change_class: docs-provider-evidence
+depends_on: []
+invariants: [api-contract]
+scope: [docs/standards/webhook-verification-matrix.md]
+manifest: docs/autopilot-manifests/infra-inbound-webhook-auth-evidence.json
+merged_probe: docs/standards/webhook-verification-matrix.md :: WEBHOOK_AUTH_EVIDENCE_CLOSED
+notes: Launcher-ready docs-only AP-23 slice (opposite direction from AP-22 egress). Document the INBOUND webhook verification contract per provider — signature header, algorithm, raw-body vs parsed, replay/timestamp window — from current official docs; never handle secret VALUES. Fail closed on any ambiguous row. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-infra-inbound-webhook-auth-evidence.md`.
+
+## task: infra-provider-limits-evidence
+title: Messaging limits and tier evidence for Zalo Bot, Meta Messenger, SePay and ApiPay
+status: ready
+risk: P2
+change_class: docs-provider-evidence
+depends_on: []
+invariants: [build-config]
+scope: [docs/standards/provider-limits-evidence.md]
+manifest: docs/autopilot-manifests/infra-provider-limits-evidence.json
+merged_probe: docs/standards/provider-limits-evidence.md :: PROVIDER_LIMITS_EVIDENCE_CLOSED
+notes: Launcher-ready docs-only AP-24 slice. Record current attributable messaging limits/tier gates (Zalo free-tier caps, Messenger 24h window + App Review, SePay/ApiPay tiers), re-verifying any figure currently in gtm-doi-soat-decision.md. Evidence only — no pricing/GTM/capacity decision, no invention. Fail closed on ambiguity. Shares `build-config` with the egress slice → run them sequentially, not in parallel. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-infra-provider-limits-evidence.md`.
+
+## task: docs-session-management-acceptance-checklist
+title: Issue-ready acceptance checklist derived from Session Management specs
+status: ready
+risk: P2
+change_class: docs-traceability
+depends_on: []
+invariants: [schema]
+scope: [docs/issues/session-management-acceptance-checklist.md]
+manifest: docs/autopilot-manifests/docs-session-management-acceptance-checklist.json
+merged_probe: docs/issues/session-management-acceptance-checklist.md :: SESSION_MGMT_CHECKLIST_CLOSED
+notes: Launcher-ready docs-only AP-25 slice. Convert acceptance criteria + DoD from feature_session_management(_tech) into a traceable issue checklist (LOCAL specs only, every item src-traced, no invention); serves ROADMAP Next Actions #3. Docs traceability only, NOT session build authorization. `schema` token = domain only; scope is one checklist markdown file. Fail closed if a referenced spec section is missing. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-docs-session-management-acceptance-checklist.md`.
 
 ## task: core-matcher-grouped-amount-parsing
 title: splitNameAmount misparses grouped trailing amounts with a non-zero final group
@@ -136,14 +183,13 @@ notes: Codex core-lift-v3 round-05 — manual `/transfer`/`/cash` args using spa
 
 ## task: db-migration-0000-idempotent-role-create
 title: migration 0000 CREATE ROLE is non-atomic — real race, currently masked by serial test config
-status: planned
-risk: P2
-change_class: schema-bugfix
+status: idea
+risk: P0
+change_class: manual-schema-design
 depends_on: []
 invariants: [schema]
-scope: [packages/db/migrations/0000_roles_extensions.sql]
-merged_probe: packages/db/migrations/0000_roles_extensions.sql :: EXCEPTION[[:space:]]+WHEN[[:space:]]+duplicate_object
-notes: Codex auth-onboarding-v3 round-08 — migration 0000's role creation for
+scope: []
+notes: DESIGN_UNFIT as previously scoped: `0000` is already applied and immutable, while canonical v0.6.0 also classifies migration scope as P0 manual-only. Re-scope manually around migration-runner/bootstrap serialization or another forward-safe mechanism; never edit `0000_roles_extensions.sql` in place. Original evidence from Codex auth-onboarding-v3 round-08: migration 0000's role creation for
   app/app_worker/readonly is `IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE
   rolname = '<role>') THEN CREATE ROLE <role> ...; END IF;`, a check-then-act
   that is NOT atomic against a CONCURRENT migrate() run: two migrations

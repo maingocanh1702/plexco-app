@@ -4,18 +4,18 @@
 >
 > **Reposition (v2 doc, 18/06/2026):** từ "SaaS thu phí cầu lông" → **platform đa môn + marketplace discovery + web sync 2 chiều**. Module đối soát CK (killer cũ) giữ nguyên thiết kế, thành 1 module. Thêm **3 tầng hiển thị** (public discovery / tenant-private RLS / person-self), **sync engine**, **chiều `sport`**.
 >
-> **Tài liệu liên quan hiện hành:** `../product/BRD.md` v3.7 · `../product/PRD.md` v2.5 · `../product/TDD.md` v2.6 · `../product/ROADMAP.md` v2.9 · `../standards/decisions.md` v1.40 · `../research/player-side-saas-AUDIT.md` (threat model + public layer) · `../channels/messenger/messenger-channel-design.md` (phase-1 P2.5).
+> **Tài liệu liên quan hiện hành:** `../product/BRD.md` v3.9d · `../product/PRD.md` v2.8b · `../product/TDD.md` v3.1 · `../product/ROADMAP.md` v3.3b · `../standards/decisions.md` v1.47 · `../dd-69-app-native-analysis.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md`.
 >
-> ⚠️ **Version note (17/07/2026):** body gốc viết ở baseline **v3.1/v2.1**; kiến trúc 3 tầng vẫn đúng nhưng canonical authority nay là **BRD v3.7 · PRD v2.5 · TDD v2.6 · ROADMAP v2.9 · `decisions.md` v1.40**. DD-49..56 đã full-propagate; DD-57..60 là proposal. Khi body lịch sử lệch, ưu tiên các nguồn hiện hành trên.
+> ⚠️ **Version note (18/07/2026):** body gốc là historical implementation analysis. Authority hiện hành = BRD 3.9d/PRD 2.8b/TDD 3.1/ROADMAP 3.3b/decisions 1.47. DD-57..59 deferred; DD-60 accepted; DD-61..64 accepted-in-principle/no-runtime; DD-69 direction accepted. PWA vẫn là target chưa có runtime evidence, native phase 2 chưa có lịch, và mọi implementation phải qua technical/store/legal gates trong DD-69.
 >
-> ⚠️ **SUPERSEDED PARTIALLY — v3.4 / DD-37 (10/07/2026):** doc gốc (v1.0, viết theo BRD v3.1) architect quanh **Telegram 1-bot-dùng-chung**. Theo **DD-37** (BRD v3.4): **Telegram đã bỏ khỏi phạm vi**; kênh **phase-1 = web + Zalo (bot-token per-club, DM number-reply) + Facebook Messenger (1 App, Page per-club, cửa sổ 24h, cần App Review)**; **Messenger lên P2.5** (không còn post-MVP). **Web-auth = Google OAuth + email/password** (DD-13 ✅) + link Facebook (DD-33 🟡) / Zalo (DD-14 ⬜) — thay Telegram Login. Free-tier bots = **Zalo + Messenger** + **mark-paid thủ công tiền mặt/CK** (DD-40). Các đoạn Telegram-specific bên dưới (đặc biệt §5.2, các interface sketch §3) **giữ làm tham chiếu cơ chế lift từ bot cũ** — nguyên tắc "route tenant suy từ kênh, authz theo person, canonical store + outbox" **không đổi**, chỉ đổi nhãn kênh sang Zalo/Messenger.
+> ⚠️ **SUPERSEDED PARTIALLY:** Telegram historical sections remain reference only. Messenger target was updated again by DD-65..68: one App, central Page always + optional tenant Page; host/player parity, Page-scoped identity/reachability, protected target routing and one-route delivery. Any body text saying Page-per-club-only or `page_id→tenant` is superseded.
 
 ## 0. Quyết định đã chốt
 
 | Trục | Lựa chọn | Hệ quả |
 |---|---|---|
 | Sản phẩm | **Repo/sản phẩm riêng** | Bot cá nhân hiện tại đóng băng, vẫn chạy; SaaS build mới, lift logic thuần sang `core`. Không refactor tại chỗ. |
-| Kênh chat *(v3.4/DD-37)* | **Zalo (bot-token per-club) + Facebook Messenger (1 App, Page per-club)** | Telegram **bỏ khỏi phạm vi**. Route tenant **suy từ kênh** (Zalo `webhookToken` / Messenger `page_id`), authz theo person. Cơ chế "1 bot chung route theo `chat_id`" ở §5.2 giữ làm tham chiếu lift từ bot cũ. |
+| Kênh chat *(DD-37/DD-65..68)* | **Zalo per-club + Messenger central/optional tenant Page** | Zalo token pins tenant. Messenger Page pins endpoint/default; protected action/ref/picker resolves target; exact AuthZ follows. |
 | Khách hàng | **Host CLB VN (đa môn), thu phí qua bank/SePay** | Billing VND, không cần Stripe ở MVP. |
 | Định vị | **Platform 2 phía, đa môn** (reposition) | Host quản lý + player khám phá/join (marketplace). Payment là 1 module. |
 | Web UI | **Primary product surface** (không phải canonical store) | Web: onboarding, dashboard host, **discovery/tìm kèo**, player view, billing. PostgreSQL/domain model là canonical; mọi surface sync qua command/outbox/projector. |
@@ -147,7 +147,7 @@ interface BankAccount {
   accountNumber: string;            // verify với payload webhook
   bankCode: string | null;
   webhookToken: string;             // unique, nằm trong URL /webhook/sepay/:token
-  webhookSecret: string;            // tenant nhập vào dashboard SePay (Apikey)
+  webhookSecret: string;            // SePay HMAC secret, KMS-encrypted; không log/plaintext UI
   requireAccountMatch: boolean;     // provider luôn gửi accountNumber → bắt buộc khớp
   active: boolean;
 }
@@ -241,7 +241,7 @@ interface OutboxEvent {
 }
 ```
 
-**Sync model (web canonical ⇄ surfaces) — xem TDD §3.8:** web app là **nguồn sự thật**; Zalo/Messenger/web đều là surface. Action ở 1 surface → **command** (có `commandId`) → ghi qua `tenantRepo` (RLS) + INSERT `outbox_events` cùng transaction → dispatcher fan-out projectors: reply Zalo, DM Messenger (24h), push SSE web, upsert `public_sessions`. **Không multi-master** → không cần conflict-resolution; surface lệch thì **re-project** từ canonical.
+**Sync model — xem TDD §3.8:** PostgreSQL/domain services là nguồn sự thật. Dispatcher project Zalo/web/public và chọn đúng một Messenger endpoint (tenant Page reachable → central Page reachable) bằng logical delivery dedup; provider failure không rollback canonical.
 
 **Marketplace (3 tầng hiển thị) — xem TDD §3.9:** publish kèo (`visibility=public`) → projector đẩy field-whitelist vào `public_sessions`. Discovery API đọc read model này **cross-tenant, ngoài RLS, không tiền/PII**. Join từ marketplace → route `session_id → tenant` → `open`: tạo membership guest + addMember; `approval`: tạo `join_requests` host duyệt.
 
@@ -333,10 +333,10 @@ test("raw query không set tenant context thì không thấy gì", async () => {
 
 ### 5.1 Webhook SePay (điểm khó nhất)
 
-CK về thì làm sao biết của club nào? **Token trong URL + verify số tài khoản** (defense in depth):
+CK về thì làm sao biết của club nào? **Token trong URL route account + HMAC timestamp/raw-body + verify số tài khoản** (defense in depth):
 
-1. Khi tenant nối bank, sinh `webhookToken` (random) + `webhookSecret`. Web hiện hướng dẫn: trong dashboard SePay, trỏ webhook về
-   `https://app.../webhook/sepay/<webhookToken>` và đặt Apikey = `<webhookSecret>`.
+1. Khi tenant nối bank, sinh `webhookToken` (random) + `webhookSecret`; OAuth Webhooks API đăng ký URL
+   `https://app.../webhook/sepay/<webhookToken>` với `authen_type=HMAC_SHA256` + `secret_key`. `Api_Key` chỉ là explicit bounded fallback, không tự downgrade production.
 2. Endpoint động:
 
 ```ts
@@ -344,11 +344,13 @@ app.post("/webhook/sepay/:token", async (req, res) => {
   const acct = await findBankAccountByWebhookToken(req.params.token); // route theo token
   if (!acct) return res.status(404).json({ success: false });
 
-  const expected = `Apikey ${acct.webhookSecret}`;                    // auth per-tenant
-  const auth = req.headers.authorization ?? "";
-  if (!timingSafeEq(auth, expected)) return res.status(401).json({ success: false });
+  const timestamp = requireSepayTimestamp(req.headers["x-sepay-timestamp"]);
+  const signature = requireSha256Signature(req.headers["x-sepay-signature"]);
+  if (!isWithinSeconds(timestamp, 300)) return res.status(401).json({ success: false });
+  if (!timingSafeHmacEq(acct.webhookSecret, `${timestamp}.${req.rawBody}`, signature))
+    return res.status(401).json({ success: false });
 
-  const body = req.body as SepayWebhookBody;
+  const body = parseSepayBody(req.rawBody); // parse chỉ sau auth; không ký JSON re-serialize
   // defense in depth: số TK nhận phải khớp TK đã đăng ký. ⚠️ KHÔNG để
   // "thiếu accountNumber thì pass" — đó là lỗ hổng. Quan điểm theo payload THẬT:
   //   - provider LUÔN gửi accountNumber (xác nhận bằng fixture) → require, thiếu = 400
@@ -379,7 +381,7 @@ app.post("/webhook/sepay/:token", async (req, res) => {
 
 ### 5.2 Telegram (1 bot dùng chung) — *superseded (DD-37), giữ làm tham chiếu cơ chế*
 
-> ⚠️ **DD-37 (v3.4): Telegram bỏ khỏi phạm vi.** Phần dưới mô tả cơ chế "route tenant suy từ kênh + authz theo person" lift từ bot cũ — **giữ làm tham chiếu**. Áp cho kênh phase-1: **Zalo** = webhook `/webhook/zalo/:token` (bot-token per-club), không inline button, GROUP Beta → **DM number-reply**; **Messenger** = 1 App, `/webhook/messenger` route theo `page_id`, cửa sổ 24h, cần App Review. Nguyên tắc routing/authz **không đổi**, chỉ đổi khoá định tuyến `chat_id` → `webhookToken`/`page_id`.
+> ⚠️ **Historical mechanism only.** Zalo token still pins tenant. Messenger `/webhook/messenger` resolves Page endpoint, then actor/Page-bound opaque action/protected ref/server picker resolves target; `page_id→tenant` alone is invalid for central/cross-club. AuthZ stays separate.
 
 Chuyển long-polling → **webhook** (1 endpoint, scale tốt, không cần nhiều process):
 
@@ -534,7 +536,7 @@ Vì LLM/STT nằm trong margin từng tier, `UsageCounter` đóng vai **trần c
 > **PostgreSQL + domain model = canonical store**; bot/web/webhook gửi **command** → ghi + `outbox` (cùng tx) → projectors fan-out ra surfaces. Đọc chia 3 đường: tenant-private (RLS), person-self, public discovery (read model, no-RLS, whitelist). Chi tiết sync/discovery: TDD §3.8/§3.9.
 
 - **Monorepo** (pnpm workspaces): `packages/core` chứa domain logic thuần; `packages/db` chứa Drizzle schema + `tenantRepo`/RLS boundary; web & bot dùng chung core. Logic core không biết gì về kênh/HTTP.
-- **Web auth**: **Google OAuth + email/password** làm primary (DD-13 ✅); link **Facebook** (DD-33 🟡) + **Zalo** (DD-14 ⬜) vào cùng Person để nhận diện xuyên kênh. *(Telegram Login đã bỏ — DD-37.)*
+- **Web auth**: **Google OAuth + email/password** làm primary (DD-13 ✅); link **Facebook** (DD-33 ✅ phase-1; App Review pending) + **Zalo** (DD-14 ⬜) vào cùng Person để nhận diện xuyên kênh. *(Telegram Login đã bỏ — DD-37.)*
 - **Queue/cron**: `pg-boss` (hàng đợi trên chính Postgres) — không thêm hạ tầng, đủ cho reminders + dunning ở mức 1k.
 - **Secrets tenant** (SePay secret, BYO LLM key nếu có): mã hoá at-rest (AES-GCM với master key, hoặc KMS).
 - **Deploy**: app 1 service (web có thể tách sau), Postgres managed có PITR backup. Bỏ volume SQLite của Railway.
@@ -567,7 +569,7 @@ Long-polling → webhook; middleware resolve tenant; thay `isOwner`/`OWNER_CHAT_
 **DoD:** CK tới 2 token khác nhau vào đúng 2 club; sai token/secret/số TK đều bị từ chối; thiếu accountNumber xử lý đúng theo cờ; webhook trùng (cùng external_id) chỉ xử lý 1 lần.
 
 ### Phase 4 — Web app canonical + Sync engine + Onboarding + Marketplace (≈4–5 tuần) ⚠️ trụ mới
-Next.js web **canonical**: đăng nhập (Google/email) → tạo tenant (+ chọn môn) → wizard SePay → link Zalo/Messenger → dashboard host (kèo/roster/doanh thu) + player view.
+Next.js web: Google/email → tenant → bank/Zalo; Messenger central is platform-ready, optional tenant Page connect; dashboard host + player view.
 - **Sync engine (P4):** command bus + `outbox_events` (ghi cùng tx) + dispatcher + projectors (reply Zalo · DM Messenger · **SSE web** · upsert `public_sessions`); idempotent `commandId`/`event.id`; re-project khi lệch.
 - **Marketplace (P4.3):** publish kèo (`visibility=public`) → projector đẩy field-whitelist `public_sessions`; **Discovery API** (`/discover`, cross-tenant, no-RLS, whitelist, rate-limit); **join cross-club** (open → membership guest; approval → `join_requests`).
 **DoD:** host tạo kèo trên web → hiện ở Zalo/Messenger **và** marketplace ≤ vài giây (sync 2 chiều); player lạ tìm kèo theo môn/khu vực và **join được**; test bất biến public (không lộ tiền/PII) xanh; không đụng env file.
@@ -624,7 +626,7 @@ Cutover: chạy migrate trên copy → verify đối chiếu số dòng & vài s
 
 **Đã chốt:** ✅ **DD-29 (thay DD-03):** host **free 0đ / host_pro 250k VND/tháng**, capability flags config-driven · ✅ **DD-30:** APIpay enterprise auto-provision per-host (tiền vẫn về TK host) · ✅ tenant **tự mang & tự trả** phí SePay/ApiPay · ✅ **LLM/STT platform trả** + trần fair-use.
 
-**Đã chốt sau bản gốc:** hosting = DigitalOcean App Platform + Managed PG HA/VPC (DD-04; còn egress/provider evidence + infra drill); tenant roles dùng exact capability registry + co-admin preset/delegation DD-56; trial/grace/refund/override = DD-51. Các quyết định này không tự chứng minh code đã land.
+**Đã chốt sau bản gốc:** hosting DD-04; capability registry DD-56; lifecycle DD-51; Messenger hybrid/shared surface DD-65..68. Các quyết định không tự chứng minh code đã land.
 
 **Còn mở:** trần fair-use OCR/STT chính thức trước P7 go-live; provider LLM/privacy due-diligence DD-18; external DD-14/15/33; legal A3 và các design-probe B0/B1/B2/B3 trong `../pre-code-open-items-2026-07-16.md`.
 
@@ -640,6 +642,12 @@ Cutover: chạy migrate trên copy → verify đối chiếu số dòng & vài s
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 18/07/2026 | v1.8 | Current authority → BRD v3.9d/PRD v2.8b/TDD v3.1/ROADMAP v3.3b/decisions v1.47; reconcile DD-57..64 statuses and DD-69 accepted direction without changing historical body/runtime claims. |
+| 18/07/2026 | v1.7 | Current authority → BRD v3.9c/PRD v2.8a/TDD v3.1/ROADMAP v3.3a/decisions v1.46; link DD-69 proposal và ghi rõ không đổi phase-1 scope/timeline. Historical body unchanged. |
+| 17/07/2026 | v1.6 | Current authority → BRD v3.9b/PRD v2.8/TDD v3.1/ROADMAP v3.3/decisions v1.45; feature-doc closure only, historical body/scope unchanged. |
+| 17/07/2026 | v1.5 | Authority → TDD v3.0/decisions v1.45; generalized provider-endpoint identity/reachability cho Messenger + Zalo. Historical body/scope không đổi. |
+| 17/07/2026 | v1.4 | Current-reference closure: BRD v3.9a + feature contract propagation DD-67; historical body/scope không đổi. |
+| 17/07/2026 | v1.3 | Authority v1.44/ROADMAP 3.2; supersede Page-per-club-only with DD-65..68 hybrid shared surface, protected target resolver and one-route delivery. |
 | 16/07/2026 | v1.2 | Authority refresh v1.39; replace stale hosting/admin/trial open items with DD-04/51/56 outcomes; pin suspended ingest ON + automation OFF; retain explicit historical/superseded boundary. |
 | 19/06/2026 | — | Thêm Changelog table |
 | 18/06/2026 | v1.0 | Implementation plan SaaS multi-tenant |

@@ -1,12 +1,12 @@
 # Phân tích — Thêm Native App (iOS / Android) sau Web MVP
 
-**Phiên bản:** 1.2
-**Ngày tạo:** 18/06/2026
-**Tài liệu tham chiếu:** `BRD.md` v3.1 · `PRD.md` v2.1 · `TDD.md` v2.1 · `ROADMAP.md` v2.1 · `feature_sync_engine.md` · `feature_marketplace_discovery.md` · `feature_identity.md`
+**Phiên bản:** 1.6
+**Ngày tạo:** 18/06/2026 · **Cập nhật:** 18/07/2026
+**Tài liệu tham chiếu:** `../product/BRD.md` v3.9d · `../product/PRD.md` v2.8b · `../product/TDD.md` v3.1 · `../product/ROADMAP.md` v3.3b · `../features/feature_sync_engine.md` · `../features/feature_marketplace_discovery.md` · `../features/feature_identity.md` · `../standards/decisions.md` v1.47 · `../dd-69-app-native-analysis.md`
 
-> ⚠️ **Version note (17/07/2026):** companion strategy, không phải source of truth. Nguồn hiện hành: **BRD v3.7 · PRD v2.5 · TDD v2.6 · ROADMAP v2.9 · `decisions.md` v1.40**. Nội dung native là định hướng P7; khi conflict, theo authority-by-topic trong BRD §0.
+> ⚠️ **Version note (18/07/2026):** companion strategy, không phải source of truth. Authority hiện hành: **BRD v3.9d · PRD v2.8b · TDD v3.1 · ROADMAP v3.3b · decisions v1.47/DD-69**. Native direction đã accepted nhưng build là **phase-2 · TBD**, không tạo canonical `P7`; RN+Expo vẫn là recommendation sau spike.
 
-> **TL;DR:** Kiến trúc canonical-store + surface-projection của Plexco **đã future-proof cho native app**. Native iOS/Android chỉ là thêm 1 surface — backend API, sync engine, marketplace discovery, identity pipeline **không cần đổi**. Effort chính nằm ở: (1) Native UI, (2) Push Notification projector, (3) Auth providers mở rộng (Apple/Google Sign-In), (4) Offline cache strategy. Không có breaking change.
+> **TL;DR:** Canonical-store + server-owned rules là nền tốt cho native, nhưng native **không chỉ là thêm UI**. Trước GA phải bổ sung client-safe contracts, versioned API, bearer/refresh auth, Apple/equivalent iOS login, protected device push và old-client/store gates. Core domain/RLS/outbox được giữ; identity/channel schema không được mở rộng sai để chứa device token. Offline v1 read-only.
 
 ---
 
@@ -26,17 +26,16 @@ P5:    Billing
 P6:    Hardening
 ```
 
-### Native app = Phase tiếp theo (P7+)
+### Native app = phase-2 sau P6 (accepted direction, build chưa schedule)
 
-```
-P7.0:  Spike — chọn tech (Swift/Kotlin native vs React Native/Flutter)
-P7.1:  Core UI (auth, home, discovery, session detail)
-P7.2:  Push notification projector + device token management
-P7.3:  Host dashboard native
-P7.4:  Player flow (join, view, pay)
-P7.5:  Offline mode + cache
-P7.6:  App Store / Play Store submission
-```
+Work packages đề xuất, **không phải canonical P-number**:
+
+1. Native spike — RN+Expo recommendation, test capability/perf/store constraints.
+2. Client-safe contracts + `/api/v1` compatibility boundary.
+3. Bearer/refresh auth + Google PKCE + Apple/equivalent iOS login.
+4. Protected device push + notification policy/privacy.
+5. Core UI, host dashboard, player flows và chat/discovery.
+6. Offline read-only cache + hardening + App Store/Play submission.
 
 > **Vì sao web trước, native sau?**
 > - Web = **0 cài đặt** cho player (khám phá + join ngay) — phù hợp marketplace discovery
@@ -48,7 +47,7 @@ P7.6:  App Store / Play Store submission
 
 ## 2. Phân tích ảnh hưởng lên kiến trúc hiện tại
 
-### 2.1 Canonical Store + Outbox — KHÔNG đổi
+### 2.1 Giữ canonical-store/outbox pattern; mở auth/API/push boundaries
 
 ```
 ┌─── Surfaces hiện tại ──┐     ┌─── Surfaces thêm sau ──┐
@@ -63,7 +62,7 @@ P7.6:  App Store / Play Store submission
            ▼                               ▼
 ┌──────────────────────────────────────────────────────────┐
 │              PostgreSQL — CANONICAL STORE                 │
-│   sessions · members · charges · bank_transactions       │
+│   sessions · memberships · players · charges · bank_transactions │
 │   (tenant-scoped, RLS)                                   │
 │                                                          │
 │   outbox_events (ghi cùng transaction với mutation)       │
@@ -83,41 +82,27 @@ P7.6:  App Store / Play Store submission
                   (upsert public_sessions)
 ```
 
-**Kết luận:** Canonical store, outbox, dispatcher, projector pattern — **không thay đổi**. Native app gửi command qua **cùng REST API** như web app. Thêm 1 Push Projector cho native notifications.
+**Kết luận:** canonical store, RLS và outbox pattern được giữ. Native gọi cùng canonical services qua target `/api/v1`, nhưng cần thêm compatibility/auth/device-push boundaries; đây là extension có migration/tests, không phải “chỉ thêm UI/projector”.
 
 ### 2.2 Component-by-component impact analysis
 
 | Component | Hiện tại | Native app thêm gì? | Breaking change? |
 |-----------|---------|---------------------|-----------------|
-| **REST API** (`apps/web` hoặc `apps/api`) | JSON endpoints cho web | Native gọi **cùng endpoints** | ❌ Không |
-| **Sync Engine** (outbox + projector) | Zalo/Messenger/Web projectors | Thêm **Push Projector** (FCM/APNs) | ❌ Không — thêm projector, không sửa cũ |
-| **Marketplace Discovery** | `GET /discover` → JSON | Native gọi **cùng API** → render native UI | ❌ Không |
-| **Identity pipeline** | Person → ChannelIdentity → Membership | Thêm **ChannelIdentity `platform='ios'/'android'`** hoặc dùng Account auth trực tiếp | ❌ Không — extend, không sửa |
-| **Auth** | Telegram Login Widget → Account | Thêm **Apple Sign-In + Google Sign-In** auth providers | 🟡 Extend — thêm fields vào `accounts`, thêm auth strategy |
+| **REST API** (`apps/web`) | Live envelope + một số `/api/auth/*`/onboarding routes; chưa có full `/api/v1` | Inventory/version DTO; native gọi cùng canonical handlers | 🟡 Compatibility layer + tests |
+| **Sync Engine** (outbox + projector) | Command/outbox schema live; channel projectors còn feature work | Thêm privacy-safe Push Projector (FCM/APNs) | 🟡 Thêm projector/policy, giữ outbox core |
+| **Marketplace Discovery** | Schema/spec có; full API chưa live | Native gọi cùng future `/api/v1` DTO | 🟡 Không claim endpoint đã implement |
+| **Identity pipeline** | Person + AccountIdentity + endpoint-scoped ChannelIdentity + Membership | Native auth qua AccountIdentity; push qua device subscription riêng | 🟡 Thêm provider/store, không thêm iOS/Android ChannelIdentity |
+| **Auth** | Live baseline còn Telegram-era cookie; Google/email là phase-1 target | Google PKCE + Apple/equivalent iOS login + bearer/refresh family | 🟡 New auth transport/provider work; không thêm provider-id cột vào `accounts` |
 | **RLS / tenantRepo** | `SET LOCAL app.tenant_id` | Native dùng **cùng API** → cùng RLS path | ❌ Không |
 | **public_sessions** (read model) | Field-whitelist, cross-tenant | Native đọc **cùng data** | ❌ Không |
-| **Realtime updates** | SSE (Server-Sent Events) | Đổi sang **Push notification** cho native; giữ SSE cho web | 🟡 Thêm channel, không bỏ SSE |
+| **Realtime updates** | SSE contract DD-07 | SSE foreground + push background | 🟡 Thêm protected device plane, không bỏ SSE |
 | **Billing** | Web dashboard payment | Có thể thêm In-App Purchase (Apple/Google) | 🟡 Mở rộng nếu cần |
 
 ### 2.3 Kết luận impact
 
-```
-❌ KHÔNG đổi (90% hệ thống):
-   - PostgreSQL schema (trừ thêm device_tokens)
-   - tenantRepo / RLS
-   - Outbox / dispatcher
-   - Existing projectors (Zalo/Messenger/Web)
-   - Marketplace Discovery API
-   - Identity pipeline (Person/ChannelIdentity/Membership)
-   - Payment reconcile logic
-   - Business rules
+**Giữ nguyên authority/core:** PostgreSQL canonical store, tenantRepo/RLS, outbox pattern, public/person-self/tenant-private boundary, payment/session business rules.
 
-🟡 MỞ RỘNG (10%):
-   - Thêm Push Projector
-   - Thêm device_tokens table
-   - Thêm auth providers (Apple/Google)
-   - Thêm ChannelReachability platform values
-```
+**Bắt buộc mở rộng trước native:** client-safe contract boundary, `/api/v1` compatibility, bearer/refresh auth, Apple/equivalent iOS login, `device_push_subscriptions`, push projector/policy, privacy-safe payload, old-client/OTA/store tests. Không thêm `ios/android/push` vào `ChannelIdentity/channel_reachability`.
 
 ---
 
@@ -130,26 +115,7 @@ P7.6:  App Store / Play Store submission
 - Push notification (FCM/APNs) = OS-level delivery, hoạt động khi app đóng
 - Web giữ SSE (browser support tốt, không cần push permission)
 
-**Schema:**
-
-```sql
--- Device tokens cho push notification
-CREATE TABLE device_tokens (
-    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id  uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    platform    text NOT NULL CHECK (platform IN ('ios', 'android')),
-    token       text NOT NULL,        -- FCM token hoặc APNs device token
-    app_version text,                 -- track version để gửi compatible payload
-    active      boolean DEFAULT true,
-    created_at  timestamptz DEFAULT now(),
-    updated_at  timestamptz DEFAULT now(),
-
-    UNIQUE(token)                     -- 1 token = 1 device, không trùng
-);
-CREATE INDEX idx_device_tokens_account ON device_tokens(account_id, active);
-```
-
-> **Lưu ý:** KHÔNG cần `tenant_id` trên `device_tokens` — device thuộc về **Account** (global), không phải tenant. Khi gửi push, projector tra `Account → Person → Membership(tenant) → device_tokens` để chọn đúng devices.
+**Schema authority:** dùng duy nhất `device_push_subscriptions` ở §3.3. Endpoint/token raw không lưu plaintext: DB giữ lookup hash + encrypted endpoint, bind `person_id + app_instance_id`, lifecycle `active|revoked|invalid`. Không có `tenant_id` authority trên subscription; dispatcher phải re-check person eligibility cho từng target tenant/event trước send.
 
 **Projector logic:**
 
@@ -158,7 +124,7 @@ outbox_event: { type: "session.created", tenantId, payload }
   │
   Push Projector:
   1. Lấy membership[] của tenant đó có liên quan đến event
-  2. membership.personId → account → device_tokens (active=true)
+  2. membership.personId → device_push_subscriptions (active)
   3. Group by platform (ios/android)
   4. FCM batch send (Android + iOS qua FCM, hoặc APNs trực tiếp cho iOS)
   5. Handle token invalid → set active=false (cleanup)
@@ -166,57 +132,63 @@ outbox_event: { type: "session.created", tenantId, payload }
 
 **Event → Push mapping:**
 
-| Event type | Push title (vi) | Push body | Deep link |
+| Event type | Lock-screen copy | Payload tối thiểu | Protected deep link |
 |-----------|----------------|-----------|-----------|
-| `session.created` | "Kèo mới 🏸" | "{host} tạo kèo {sport} lúc {time}" | `plexco://session/{id}` |
-| `session.updated` | "Kèo cập nhật" | "{field} đã đổi" | `plexco://session/{id}` |
-| `player.joined` | "Có người join" | "{name} đã tham gia kèo {date}" | `plexco://session/{id}` |
-| `player.left` | "Có người rời" | "{name} đã rời kèo" | `plexco://session/{id}` |
-| `payment.matched` | "CK đã khớp ✅" | "{name} đã thanh toán {amount}" | `plexco://session/{id}/payments` |
-| `join_request.pending` | "Yêu cầu join" | "{name} muốn tham gia kèo {date}" | `plexco://session/{id}/requests` |
-| `reminder.debt` | "Nhắc thanh toán" | "Bạn còn nợ {amount} cho kèo {date}" | `plexco://session/{id}/pay` |
+| `session.created` | "Plexco có kèo mới" | `notification_id`, `type` | `plexco://notifications/{id}` → fetch sau auth |
+| `session.updated` | "Một kèo đã được cập nhật" | `notification_id`, `type` | `plexco://notifications/{id}` |
+| `player.joined|left` | "Roster có cập nhật" | `notification_id`, `type` | `plexco://notifications/{id}` |
+| `payment.matched` | "Có cập nhật thanh toán" | `notification_id`, `type` | `plexco://notifications/{id}` |
+| `join_request.pending` | "Có yêu cầu tham gia mới" | `notification_id`, `type` | `plexco://notifications/{id}` |
+| `reminder.debt` | "Bạn có thông báo cần xem" | `notification_id`, `type` | `plexco://notifications/{id}` |
+
+> **HR2:** lock-screen payload không chứa player/payer name, amount/debt, roster, venue riêng tư, provider token hay tenant authority. App mở deep link rồi fetch DTO whitelist sau auth + target authorization.
 
 ### 3.2 Auth mở rộng
 
-**Hiện tại (phase-1, DD-13):** Google OAuth + email/password → `account_identities(platform ∈ google/email)` → Account → Person (Telegram Login bỏ — DD-37; link Facebook/Zalo vào cùng Person)
+**Phase-1 target (DD-13, chưa live):** Google OAuth + email/password → `account_identities(platform ∈ google/email)` → Account → Person. Live baseline vẫn Telegram-era cookie auth cho tới provider-swap slice; Telegram đã bị DD-37 loại khỏi target. Facebook/Zalo link vào cùng Person theo các gate tương ứng.
 
 **Thêm cho native:**
 
-```sql
--- Mở rộng accounts table
-ALTER TABLE accounts ADD COLUMN apple_id    text UNIQUE;
-ALTER TABLE accounts ADD COLUMN google_id   text UNIQUE;
-ALTER TABLE accounts ADD COLUMN auth_method text DEFAULT 'google'
-    CHECK (auth_method IN ('google', 'email', 'apple', 'facebook', 'zalo', 'phone'));
--- DD-37: Telegram bỏ; canonical = account_identities.platform ∈ {google,email,facebook,zalo}
+```text
+Target active providers sau native:
+account_identities.platform ∈ {google, email, apple, facebook, zalo}
+provider subject → keyed HMAC → canonical account_identities
 ```
+
+Live `0001_global_directory.sql`/`schema.ts` đang để `platform` là `text` **không có**
+`account_identities_platform_chk`, đồng thời baseline auth còn Telegram-era. Vì vậy migration phase-2 không được
+`DROP` một constraint giả định. Provider-swap phải audit/backfill legacy rows trước; migration mới, self-contained
+sau đó mới thêm validation/lookup cho active providers (có `apple`) hoặc giữ legacy value theo lifecycle retire rõ ràng.
+Không thêm `apple_id`/`google_id` trực tiếp vào `accounts`.
 
 **Auth flow native:**
 
 ```
 iOS App:
-  Apple Sign-In → Apple ID token
-    → POST /auth/apple { identityToken }
-    → Verify với Apple servers
-    → Tìm Account(apple_id) hoặc tạo mới
-    → JWT access + refresh token
+  Sign in with Apple/equivalent privacy login → authorization code + PKCE/nonce
+    → POST /api/v1/auth/native/apple { code, codeVerifier, redirectUri }
+    → Verify issuer/audience/nonce/code server-side
+    → Resolve/create account_identities(platform='apple', keyed subject hash)
+    → Bearer access 15m + rotating refresh family 30d
     → Account → Person (reuse identity pipeline)
 
 Android App:
-  Google Sign-In → Google ID token
-    → POST /auth/google { idToken }
-    → Verify với Google servers
-    → Tìm Account(google_id) hoặc tạo mới
-    → JWT access + refresh token
+  Google Authorization Code + PKCE
+    → POST /api/v1/auth/native/google { code, codeVerifier, redirectUri }
+    → Verify issuer/audience/nonce/code server-side
+    → Resolve/create account_identities(platform='google', keyed subject hash)
+    → Bearer access 15m + rotating refresh family 30d
     → Account → Person (reuse identity pipeline)
 ```
+
+Nếu iOS cũng offer Google login cho primary account, phải có privacy-equivalent option theo App Review 4.8 hoặc documented exception/evidence. Token format opaque-vs-JWT được chốt ở auth design-probe; token không mang tenant authority bất biến.
 
 **Link Account cross-auth:**
 User đăng nhập web bằng Google, native bằng Apple → 2 Account khác nhau? Giải pháp:
 
 | Trường hợp | Giải pháp |
 |------------|-----------|
-| Cùng email (Google email = Apple email) | Auto-link Account nếu **email verified** cả hai phía |
+| Cùng email (Google email = Apple email) | Chỉ link sau exact verified-email proof matrix + conflict checks DD-50; không tin email string tự khai |
 | Khác email | Manual link: đăng nhập 1 → Settings → "Liên kết tài khoản" → đăng nhập cái kia |
 | Cùng verified account email | Auto-link chỉ sau proof matrix DD-50 + conflict checks |
 | Transactional one-time `link_code` | Link thủ công, lock/consume once + explicit impact confirm |
@@ -224,88 +196,107 @@ User đăng nhập web bằng Google, native bằng Apple → 2 Account khác nh
 
 > **Nguyên tắc:** Account là **authentication record** (cách đăng nhập). Person là **identity** (con người). Nhiều Account có thể trỏ về 1 Person — reuse đúng cơ chế identity merge (AUDIT C3).
 
-### 3.3 ChannelReachability mở rộng
+### 3.3 Native push tách khỏi ChannelIdentity reachability
 
 ```sql
--- Thêm platform values
-ALTER TABLE channel_reachability
-    ALTER COLUMN platform TYPE text;
--- platform IN ('zalo', 'messenger', 'google', 'ios', 'android', 'web')  -- DD-37: Telegram bỏ
+-- Phase-2 proposal: native/web push endpoint is NOT a bot ChannelIdentity.
+CREATE TABLE device_push_subscriptions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  person_id uuid NOT NULL REFERENCES persons(id),
+  platform text NOT NULL CHECK (platform IN ('ios','android','web')),
+  endpoint_lookup_hash text NOT NULL,
+  endpoint_enc bytea NOT NULL,
+  app_instance_id text NOT NULL,
+  status text NOT NULL CHECK (status IN ('active','revoked','invalid')),
+  last_seen_at timestamptz NOT NULL,
+  revoked_at timestamptz,
+  UNIQUE (platform, endpoint_lookup_hash),
+  UNIQUE (person_id, app_instance_id, platform)
+);
 ```
 
-Projector chọn kênh thông báo theo `ChannelReachability`:
+`channel_reachability` **không thêm platform `push`**. DD-67 target sẽ key channel reachability bằng exact endpoint-bound `channel_identity_id` sau migration riêng (live schema hiện vẫn legacy `(person_id,tenant_id,platform)`). Messenger Page và Zalo bot/OA đi qua protected ChannelIdentity; target-tenant permission là check riêng. `device_push_subscriptions` là protected person/device store độc lập cho APNs/FCM/Web Push.
+
+Notification dispatcher combines the two sources without turning them into one polymorphic table:
 
 ```
 notifyPlayer(person, tenant, event):
-  reachability = SELECT * FROM channel_reachability
-                 WHERE person_id = person AND tenant_id = tenant AND can_dm = true
-                 ORDER BY priority -- ưu tiên native push > web push + Zalo DM > Messenger (24h)
+  assert target person is eligible for tenant/event       -- separate tenant auth
+  push = load active device_push_subscriptions(person)
+  bot_candidates = identityDeliveryService.resolveExactReachability(person)
+    # each candidate carries one channel_identity_id bound to a Page/bot/OA
 
-  for each channel in reachability:
-    if channel.platform == 'ios' || 'android':
-      → Push Projector (FCM/APNs)
-    elif channel.platform == 'zalo':
-      → Zalo Projector (sendMessage)
-    elif channel.platform == 'messenger':
-      → Messenger Projector (best-effort trong cửa sổ 24h)
+  apply notification policy:
+    native/web push → Push Projector (APNs/FCM/Web Push) using device subscription
+    Zalo           → choose one exact eligible bot/OA route
+    Messenger      → choose one exact eligible tenant Page, else central Page,
+                     only inside current allowed messaging window/mechanism
+  claim logical delivery key before send; never broadcast the same logical
+  notification across multiple Page/bot identities by accident
 ```
+
+Device revocation invalidates only that subscription. Bot reachability changes only the exact `channel_identity_id` row. Neither store can authorize the other, and a tenant id is never inferred from a push token or provider payload.
 
 ---
 
 ## 4. API — Native gọi cùng Web API
 
-### 4.1 Endpoints không đổi
+### 4.1 Target `/api/v1` dùng chung
 
-Native app gọi **chính xác** cùng endpoints mà web app đang dùng:
+Native và PWA phải gọi cùng canonical handlers/DTO, nhưng bảng dưới là **target contract, chưa phải live route inventory**. Live `apps/web` hiện chủ yếu có `/api/auth/*` + onboarding; discovery/session/player API còn phải land. Trước native cần compatibility layer để PWA hiện tại không đổi hành vi.
 
 | Category | Endpoint | Web dùng | Native dùng |
 |----------|---------|----------|-------------|
-| **Discovery** | `GET /discover` | ✅ | ✅ Cùng |
-| **Session CRUD** | `POST/GET/PATCH /sessions` | ✅ | ✅ Cùng |
-| **Join** | `POST /sessions/:id/join` | ✅ | ✅ Cùng |
-| **Player view** | `GET /me/clubs` | ✅ | ✅ Cùng |
-| **Payment** | `GET /sessions/:id/payments` | ✅ | ✅ Cùng |
-| **Roster** | `GET /sessions/:id/members` | ✅ | ✅ Cùng |
-| **Onboarding** | `POST /tenants` | ✅ | ✅ Cùng |
+| **Discovery** | `GET /api/v1/discover` | Target | Cùng DTO/authz |
+| **Session CRUD** | `POST/GET/PATCH /api/v1/sessions` | Target | Cùng handler/service |
+| **Join** | `POST /api/v1/sessions/:id/join` | Target | Cùng join core + revalidation |
+| **Player view** | `GET /api/v1/me/clubs` | Target | Cùng person-self boundary |
+| **Payment** | `GET /api/v1/sessions/:id/payments` | Target | Tenant/person authz; không public |
+| **Roster** | `GET /api/v1/sessions/:id/members` | Target | Tenant-private DTO whitelist |
+| **Onboarding** | `POST /api/v1/tenants` | Target | Cùng onboarding service |
 
 ### 4.2 Endpoints mới cho native
 
 | Endpoint | Mô tả |
 |----------|-------|
-| `POST /auth/apple` | Apple Sign-In verify + login/register |
-| `POST /auth/google` | Google Sign-In verify + login/register |
-| `POST /auth/refresh` | Refresh JWT token (mobile cần rotate thường xuyên hơn) |
-| `PUT /devices/token` | Register/update FCM/APNs device token |
-| `DELETE /devices/token` | Unregister device token (logout) |
-| `GET /notifications/settings` | Notification preferences per user |
-| `PUT /notifications/settings` | Update preferences (mute club, quiet hours) |
+| `POST /api/v1/auth/native/apple` | Apple authorization-code verify + login/register |
+| `POST /api/v1/auth/native/google` | Google authorization-code + PKCE verify + login/register |
+| `POST /api/v1/auth/refresh` | Rotate refresh family; reuse detection revokes family |
+| `PUT /api/v1/devices/push-subscription` | Register/rotate encrypted APNs/FCM endpoint |
+| `DELETE /api/v1/devices/push-subscription` | Revoke installation subscription |
+| `GET /api/v1/notifications/settings` | Notification preferences per person |
+| `PUT /api/v1/notifications/settings` | Update preferences (mute club, quiet hours) |
 
-### 4.3 Response format — đã compatible
+### 4.3 Response envelope — live helper, target DTO
 
-API hiện tại trả **JSON** (không HTML) → native parse nguyên.
+`apps/web/lib/api-envelope.ts` đã có envelope canonical; resource DTO dưới đây vẫn là target cho discovery API.
 
 ```json
-// GET /discover?sport=badminton&area=quan_7
+// GET /api/v1/discover?sport=badminton&area=quan_7
 {
-  "sessions": [
-    {
-      "id": "sess-abc",
-      "sportKey": "badminton",
-      "startsAt": "2026-06-20T19:00:00+07:00",
-      "area": "Quận 7",
-      "price": 80000,
-      "slotsOpen": 3,
-      "hostDisplayName": "Minh",
-      "clubDisplayName": "Bestminton Club",
-      "joinPolicy": "open"
-    }
-  ],
-  "nextCursor": "xxx",
-  "total": 42
+  "data": {
+    "sessions": [
+      {
+        "id": "sess-abc",
+        "sportKey": "badminton",
+        "startsAt": "2026-06-20T19:00:00+07:00",
+        "area": "Quận 7",
+        "price": 80000,
+        "slotsOpen": 3,
+        "hostDisplayName": "Minh",
+        "clubDisplayName": "Bestminton Club",
+        "joinPolicy": "open"
+      }
+    ],
+    "nextCursor": "xxx",
+    "total": 42
+  },
+  "error": null,
+  "meta": { "requestId": "req_..." }
 }
 ```
 
-Web render → HTML; Native render → SwiftUI/Compose. **Cùng data, khác presentation.**
+Web/RN render khác presentation nhưng parse cùng `{data,error,meta.requestId}` + DTO whitelist.
 
 ---
 
@@ -315,19 +306,19 @@ Web render → HTML; Native render → SwiftUI/Compose. **Cùng data, khác pres
 
 | Data | Cache policy | Lý do |
 |------|-------------|-------|
-| **Discovery results** | Cache 5 phút + pull-to-refresh | Dữ liệu thay đổi thường xuyên (slot fill) |
-| **Session detail** | Cache + invalidate on push notification | Push event `session.updated` → refetch |
-| **Player's clubs** | Cache dài (1h) + pull-to-refresh | Ít thay đổi |
-| **Payment status** | **KHÔNG cache** — luôn fetch fresh | Tiền phải chính xác, không stale |
-| **User profile** | Cache dài | Hiếm thay đổi |
+| **Public discovery results** | Cache tối đa 5 phút + stale label/pull-to-refresh | Chỉ public DTO whitelist; slot có thể đổi |
+| **Public session summary** | Cache ngắn + stale label; push chỉ trigger refetch khi online | Không roster/venue riêng tư/tiền |
+| **Player's clubs/membership** | **Không disk-cache ở v1** | Person-private relationship |
+| **Payment/debt/status** | **Không cache** | Tiền phải fetch fresh sau auth |
+| **User profile/identity** | **Không disk-cache** | PII/identity; secure storage chỉ giữ auth secret tối thiểu |
 
 ### 5.2 Offline mode (limited)
 
 ```
 Online:  Full functionality — mọi command gửi được
 Offline: Read-only từ cache
-         - Xem session đã cache
-         - Xem club list đã cache
+         - Xem public discovery/session summary đã cache, có stale label
+         - KHÔNG hiện club membership/profile/roster/venue riêng tư/tiền từ disk
          - KHÔNG join/leave/pay (cần server)
          - Queue action? ❌ KHÔNG — tiền/roster cần real-time consistency
 ```
@@ -350,6 +341,8 @@ plexco://link/{code}            → Identity merge link
 
 Web URL (plexco.app/session/xxx) mở **native app nếu cài**, fallback web nếu chưa cài → **App Links (Android) / Universal Links (iOS)**.
 
+Deep link chỉ là locator, không phải authorization. App phải authenticate, resolve protected ref server-side và re-authorize target tenant/action. `link_code` vẫn purpose-bound/TTL/single-use theo DD-50; không log raw code.
+
 ---
 
 ## 6. Tech stack — Quyết định mở
@@ -359,38 +352,40 @@ Web URL (plexco.app/session/xxx) mở **native app nếu cài**, fallback web n�
 | Option | Pro | Con |
 |--------|-----|-----|
 | **Swift (iOS) + Kotlin (Android)** | Performance tốt nhất, native UX, App Store ưu tiên | 2 codebase, 2x effort UI |
-| **React Native** | 1 codebase JS/TS, share types với `packages/core` | Performance kém hơn native, dependency nặng |
+| **React Native** | Một codebase JS/TS; share client-safe contracts/format sau khi tách boundary | Cần native QA/dependency/runtime discipline |
 | **Flutter** | 1 codebase Dart, UI đẹp, performance tốt | Khác ngôn ngữ (Dart ≠ TypeScript), không share types |
-| **Expo (React Native)** | Dễ nhất: 1 codebase, OTA update, EAS build | Giới hạn native modules, performance |
+| **Expo (React Native)** | Một codebase, EAS build/update, notification/secure-store/auth modules | OTA chỉ cho JS/assets tương thích runtime; native module đổi phải rebuild |
 
 ### 6.2 Khuyến nghị sơ bộ
 
 **React Native / Expo** — lý do:
-- **Share TypeScript types** với `packages/core` (enums, DTOs, error codes, validation)
+- Share **client-safe** TypeScript DTO/error/validator/format boundary sau khi tách khỏi server i18n/money modules
 - 1 codebase cho iOS + Android
-- Team đã quen TypeScript
-- OTA update (không qua App Store cho minor fixes)
-- Có thể dùng `packages/shared` constants trực tiếp
+- Stack hiện tại đã dùng TypeScript
+- EAS Update hỗ trợ JS/assets cùng runtime, có rollout/rollback; không thay native binary contract
+- Expo modules phù hợp push/secure storage/auth baseline của Plexco
 
-> ⬜ **Chốt ở P7.0 Spike** — test performance với Plexco use cases thực tế trước khi commit.
+> 🟡 **Recommendation của DD-69, chốt sau native spike** — test performance, auth/push/deep-link, old-client compatibility và store constraints trước khi accept.
 
 ---
 
 ## 7. Billing — In-App Purchase consideration
 
-### Vấn đề Apple/Google 30% cut
+### Vấn đề store billing/distribution
 
-Nếu host trả paid tier **host_pro 250k/tháng** qua App Store → Apple/Google lấy khoảng 30% → margin bị ăn mạnh.
+`host_pro` là SaaS capability cho host. Store billing, external-link và bank-transfer presentation phụ thuộc policy/region/app classification tại thời điểm submit; không được suy từ “reader app” nếu Plexco chưa chứng minh đủ điều kiện.
 
 ### Giải pháp
 
 | Approach | Khả thi? |
 |----------|----------|
-| **Thu phí qua web** (hiện tại) — app chỉ redirect tới plexco.app/billing | ✅ Hợp lệ — "reader app" rule |
-| **Thu phí qua bank transfer** (hiện tại) — app hiện QR code | ✅ Hợp lệ — không qua IAP |
-| ❌ Thu qua IAP | Mất 30%, margin âm |
+| **Thu phí qua web / external link** | 🔗 External/legal/store gate theo region + entitlement/current policy; chưa claim hợp lệ |
+| **Hiện QR/bank transfer trong app** | 🔗 Review current policy + Vietnamese legal/tax flow; chưa claim automatic exemption |
+| **Store IAP** | 🔗 Đánh giá fee/economics/current small-business terms tại native spike |
 
-> **Quyết định đề xuất:** Giữ billing qua bank transfer / web — **không dùng In-App Purchase**. Native app là tool quản lý, không phải marketplace bán digital goods. Phù hợp Apple "reader app" guidelines.
+> **Quyết định hiện tại:** chưa chốt distribution billing cho native. Phase-1 web/bank flow không tự động cấp quyền tái dùng trong app store binary. Native GA fail-closed: không hiển thị purchase/redirect/QR path cho tới khi external/legal/store evidence được lưu và owner accept.
+
+Policy source phải refresh tại thời điểm spike/submit, tối thiểu Apple App Review Guidelines §3.1/§4.8: <https://developer.apple.com/app-store/review/guidelines/>.
 
 ---
 
@@ -399,12 +394,12 @@ Nếu host trả paid tier **host_pro 250k/tháng** qua App Store → Apple/Goog
 | # | Rủi ro / Câu hỏi | Mitigation / Trạng thái |
 |---|---|---|
 | R1 | App Store review reject (đặc biệt Apple — strict về "login with Apple" requirement) | Phải có Apple Sign-In nếu có Google Sign-In; compliance check trước submit |
-| R2 | Push notification opt-in rate thấp (iOS ~50%) | Fallback: web push + Zalo DM vẫn hoạt động; push là bonus |
-| R3 | FCM/APNs token invalid (user uninstall/reinstall) | Token cleanup trong Push Projector — invalid → `active=false` |
-| R4 | 2 codebase maintenance nếu chọn native | Spike P7.0 test React Native/Expo trước |
-| OD-N1 | Tech stack native: Swift+Kotlin vs React Native vs Flutter? | ⬜ Chốt ở P7.0 Spike |
-| OD-N2 | Offline mode: read-only hay queue mutations? | ✅ Đề xuất: read-only (tiền cần consistency) |
-| OD-N3 | Billing qua IAP hay giữ bank transfer? | ✅ Đề xuất: giữ bank transfer (tránh 30% cut) |
+| R2 | User không cấp push permission | Fallback theo notification policy; core action vẫn dùng được, không bắt bật push |
+| R3 | FCM/APNs endpoint invalid (uninstall/reinstall/rotation) | Provider error → subscription `invalid`; rotate/re-register theo app installation |
+| R4 | Dependency/native runtime drift | RN+Expo spike + runtime-version policy + staged OTA rollout/rollback |
+| OD-N1 | Tech stack native | 🟡 RN+Expo recommendation; owner accept sau spike |
+| OD-N2 | Offline mode | ✅ Proposal boundary: read-only v1; mutation queue là quyết định allowlist riêng |
+| OD-N3 | Billing distribution | 🔗 Chưa chốt; external/legal/store evidence trước mọi purchase path |
 
 ---
 
@@ -412,57 +407,30 @@ Nếu host trả paid tier **host_pro 250k/tháng** qua App Store → Apple/Goog
 
 Những điều cần **lưu ý ngay từ P4** (build web) để native không phải refactor sau:
 
-- [x] API trả **JSON** thuần, không mix HTML response
-- [x] Auth endpoint tách riêng (không cookie-only, hỗ trợ Bearer token)
-- [x] Outbox/projector pattern — extensible (thêm projector không sửa cũ)
-- [x] Discovery API stateless (cursor-based pagination, không session-dependent)
-- [x] `public_sessions` là read model riêng — native đọc cùng query
-- [x] Deep link URLs deterministic (`/session/:id`, `/discover`)
-- [ ] *(P7)* Device token management
-- [ ] *(P7)* Push notification projector
-- [ ] *(P7)* Apple/Google Sign-In auth providers
+- [x] Live JSON envelope helper `{data,error,meta.requestId}`
+- [ ] Full `/api/v1` route inventory + DTO compatibility tests
+- [ ] Bearer access + rotating refresh family; cookie↔bearer parity
+- [x] Outbox/`processed_commands` schema foundation; feature service/projector wiring còn pending
+- [ ] Discovery/session/player APIs live + stateless pagination contract
+- [x] `public_sessions` read-model schema; native read API/authz còn pending
+- [ ] Client-safe contracts/i18n package + import boundary cấm money/server modules
+- [ ] Universal/App Links + protected notification deep links
+- [ ] `device_push_subscriptions` + privacy-safe Push Projector
+- [ ] Google PKCE + Apple/equivalent iOS login + account-link matrix
+- [ ] Offline read-only cache evidence; no mutation queue
+- [ ] Store/privacy/account-deletion/demo/external billing evidence
 
-> ✅ **6/9 đã được design sẵn** trong TDD v2.1 + feature specs. 3 còn lại là P7 work.
+> Checklist phân biệt **live** và **target**; spec/design không được đánh dấu như runtime evidence.
 
 ---
 
 ## 10. Tổng kết
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                    Native App Impact Summary                     │
-│                                                                  │
-│  ❌ KHÔNG ĐỔI:                                                  │
-│     PostgreSQL + RLS + tenantRepo                                │
-│     Outbox + dispatcher + existing projectors                    │
-│     Marketplace Discovery API (GET /discover)                    │
-│     Identity pipeline (Person / ChannelIdentity / Membership)    │
-│     Payment reconcile logic                                      │
-│     Business rules (37 rules, 9 domains)                         │
-│     Session management                                           │
-│                                                                  │
-│  🟡 MỞ RỘNG:                                                    │
-│     + Push Projector (FCM/APNs)                    ~ 1–2 tuần    │
-│     + device_tokens table                          ~ 1 ngày      │
-│     + Apple/Google Sign-In auth providers          ~ 1 tuần      │
-│     + ChannelReachability thêm ios/android         ~ 1 ngày      │
-│     + Notification preferences API                 ~ 3 ngày      │
-│                                                                  │
-│  🆕 BUILD MỚI:                                                   │
-│     Native UI (SwiftUI/Compose hoặc React Native)  ~ 6–10 tuần  │
-│     Offline cache layer                            ~ 1–2 tuần    │
-│     Deep linking + Universal Links                 ~ 3 ngày      │
-│     App Store / Play Store submission              ~ 1 tuần      │
-│                                                                  │
-│  TỔNG ESTIMATE (1 dev): ~ 12–16 tuần cho P7                     │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-**Kiến trúc canonical-store + surface-projection đã tính trước native app. Khi đến P7, effort chính là UI — backend/API/sync/marketplace không đổi.**
+Canonical store, RLS, outbox pattern và server-owned business rules là phần được giữ. Native vẫn cần backend-adjacent work thật: client-safe contracts, versioned API compatibility, bearer/refresh auth, Apple/equivalent iOS login, protected device push, privacy-safe delivery, deep links, old-client/OTA tests và store/legal evidence. Estimate chỉ được lập sau native spike + live API inventory; không giữ con số 12–16 tuần như một commitment chưa có evidence.
 
 ---
 
-*Tài liệu này là companion cho `TDD.md` v2.1 §3.8 (sync engine) và `ROADMAP.md` v2.1. Khi conflict, giữ thứ tự ưu tiên TDD → BRD → doc này.*
+*Tài liệu này là companion cho `../product/TDD.md` v3.1, `../product/ROADMAP.md` v3.3b và DD-69 analysis. Khi conflict, giữ thứ tự ưu tiên theo authority-by-topic trong `../product/BRD.md` §0 + `../standards/decisions.md` v1.47.*
 
 ---
 
@@ -470,6 +438,10 @@ Những điều cần **lưu ý ngay từ P4** (build web) để native không p
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 18/07/2026 | 1.6 | DD-69 direction accepted; refresh PRD/ROADMAP refs, preserve native build phase-2 TBD and RN+Expo recommendation/gates as not-yet-accepted implementation choices. |
+| 18/07/2026 | 1.5 | **DD-69 review closure:** phase-2/TBD thay P7; RN+Expo recommendation sau spike; PWA/Capacitor không claim live/store-ready; tách client-safe contracts; target `/api/v1`; AccountIdentity auth + Apple/equivalent iOS gate; encrypted device push tách ChannelIdentity; privacy-safe lock-screen payload; offline read-only; checklist live-vs-target; billing chuyển thành external/legal/store gate, bỏ claim reader-app/fee chắc chắn. |
+| 17/07/2026 | 1.4 | **DD-67 mirror closure:** remove proposed polymorphic `channel_reachability.platform`; separate native/web device subscriptions from exact Page/bot/OA-bound ChannelIdentity reachability and tenant authorization. |
+| 17/07/2026 | 1.3 | Refresh current authority refs to BRD v3.9b/PRD v2.8/TDD v3.1/ROADMAP v3.3/decisions v1.45; native scope vẫn là định hướng P7. |
 | 16/07/2026 | 1.2 | Rebase authority refs lên decisions v1.39; native account linking dùng verified account email hoặc transactional `link_code`; phone dormant theo DD-50. |
 | 19/06/2026 | — | Thêm Changelog table |
 | 18/06/2026 | v1.0 | Phân tích thêm native app post-MVP |

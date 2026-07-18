@@ -1,0 +1,14 @@
+{
+  "feature": "infra-inbound-webhook-auth-evidence",
+  "branch": "feat/infra-inbound-webhook-auth-evidence",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "docs-provider-evidence",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "1x_clean",
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": ["api-contract"],
+  "scope": ["docs/standards/webhook-verification-matrix.md"]
+}

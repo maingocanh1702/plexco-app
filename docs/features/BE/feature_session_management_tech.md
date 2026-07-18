@@ -1,10 +1,10 @@
 # Feature: Session Management — Backend Tech Spec
 
 > **Canonical phase:** P2/P4  
-> **Version:** 2.5 · 2026-07-16
+> **Version:** 2.7 · 2026-07-17
 > **Status:** Reviewed  
 > **Product spec:** `../feature_session_management.md`  
-> **References:** `../../product/TDD.md` §3.2/3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-39/DD-45/DD-49 · `../../dd-45-waitlist-analysis.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`)
+> **References:** `../../product/TDD.md` §3.2/3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-39/DD-45/DD-49/**DD-65..68** · `../../dd-45-waitlist-analysis.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`)
 
 > **DD-45 + DD-49 contract:** open/approval full→`waitlisted` không chiếm capacity/charge/venue; promotion assert no existing charge + derive amount trước mutation. Existing `left` rejoin bình thường khi correction core chứng minh refunded/carry-over disposition; unknown/unimplemented state mới fail-closed `REJOIN_REQUIRES_REVIEW`. Live UNIQUE charge/player/session nghĩa là storage correction cần design-probe; spec không giả định row `charges` thứ hai.
 
@@ -25,6 +25,7 @@ Commands: `CreateSession`, `UpdateSession`, `AnnounceSession`, `CloseSession`, `
 - Single domain service shared by chat + web — no duplicate logic.
 - Optimistic concurrency via `version` column — stale edits rejected.
 - Outbox events carry identifiers + safe changed fields — projectors reload canonical data cho sensitive rendering.
+- Messenger central/tenant adapters emit the same commands. A single pre-dispatch interaction interceptor owns create wizard state; final consume re-authorizes `session.manage` and target tenant before `SessionService`.
 
 ---
 
@@ -43,7 +44,8 @@ CREATE TABLE sessions (
   venue_name text,
   venue_address text,
   area text,  -- public whitelist (quận/khu vực)
-  price_amount integer NOT NULL DEFAULT 0,
+  skill_level text, -- current live field; DD-41 expand→contract retires only after ranked source/backfill lands
+  price_amount integer NOT NULL DEFAULT 0 CHECK (price_amount >= 0),
   slots_max integer,  -- NULL = unlimited
   visibility text NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'public')),
   join_policy text NOT NULL DEFAULT 'open' CHECK (join_policy IN ('open', 'approval')),
@@ -97,6 +99,11 @@ CREATE TABLE players (
   CHECK (waitlist_position IS NULL OR waitlist_position > 0),
   UNIQUE (tenant_id, session_id, membership_id)
 );
+
+-- Migration triển khai phải thêm same-tenant composite candidate keys/FKs cho:
+-- (tenant_id, session_id) → sessions và (tenant_id, membership_id) → memberships,
+-- đồng thời buộc session_surface_refs(tenant_id, session_id) cùng tenant.
+-- Các FK id đơn hiện tại không đủ chứng minh tenant integrity (DD-68 prerequisite).
 ```
 
 ### Indexes
@@ -132,6 +139,7 @@ CREATE INDEX idx_players_waitlist_order
 | 17 | Financial | Existing player `status='left'` join lại | Re-check eligibility/ban/capacity. Carry-over nếu chưa refund; refunded → append obligation lifecycle mới qua correction core. Unknown/unimplemented disposition → `REJOIN_REQUIRES_REVIEW`, byte-for-byte unchanged |
 | 18 | Financial | Waitlisted candidate có existing charge (invalid/legacy) | Không promote/không mutate charge; audit `WAITLIST_CHARGE_CONFLICT`, owner-review, tiếp tục candidate kế |
 | 19 | Financial/Resilience | `deriveChargeAmount` KMS/decrypt/price failure lúc promote | Candidate giữ `waitlisted`, no charge/venue; audit `WAITLIST_CHARGE_DERIVATION_FAILED` + one canonical failure outbox event cho retry/alert consumers; leave/capacity opener commit; continue next; không fallback price |
+| 20 | Security/State | Messenger wizard wrong Page/actor/tenant, stale, expired or replayed | Single interceptor denies/clears; final command re-checks capability/snapshot; no partial/double create |
 
 ---
 
@@ -172,6 +180,13 @@ CREATE INDEX idx_players_waitlist_order
 | POST /sessions/:id/announce | ✅ | `commandId` |
 | POST /sessions/:id/close | ✅ | Close already-closed = no-op |
 | POST /sessions/:id/cancel | ✅ | Cancel already-cancelled = no-op |
+
+### Messenger create-session command path
+
+1. Endpoint/context layer resolves central/tenant Page, actor and eligible target tenant per DD-65/66.
+2. One durable pre-dispatch interaction stores validated draft, step, expiry, version/snapshot and `commandId`; cancel/context-switch/expiry clears it.
+3. Final preview does not mutate. Confirm re-checks actor+Page binding, `session.manage`, tenant status and snapshot under the command boundary.
+4. Adapter emits the same `CreateSession` input as web/Zalo. `SessionService` owns validation/write/outbox; duplicate confirm returns the stored command result.
 
 ---
 
@@ -259,6 +274,11 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 | 32 | Promotion amount derivation fails | `gender_enc != NULL`; KMS/decrypt throws | Candidate byte-for-byte waitlisted, no charge/venue; one audit + one canonical failure outbox event; opener committed; retry/alert consume event; next candidate may fill slot; no fallback price |
 | 33 | Derivation retry after another candidate filled slot | Same retry key; capacity now full | No-op; no promotion/charge; failed candidate keeps queue rank |
 | 34 | Direct active join amount derivation fails | Capacity available; KMS/decrypt throws | Join aborts; no player/charge/venue; no fallback; retry safe |
+| 35 | Messenger host create parity | Same validated input via central, tenant Page and web | Same command/service result and canonical session shape |
+| 36 | Messenger wizard lifecycle | cancel/expire/context-switch/wrong actor/Page/stale snapshot | Deny/clear; zero sessions created |
+| 37 | Messenger duplicate confirm | Same opaque action/webhook/commandId replay | Exactly one session/outbox sequence; previous result returned |
+| 38 | Negative base price | Create/update `price_amount < 0` through API or direct migration fixture | DB CHECK rejects; no session/outbox mutation |
+| 39 | Live skill-level upgrade | Upgrade fixture with non-null `sessions.skill_level` | Value preserved and public projection/filter remains valid until DD-41 ranked-field contract completes |
 
 ### Integration Tests
 
@@ -270,6 +290,7 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 | 4 | Outbox → projector delivery | Create session → check projector | Event delivered, projection updated |
 | 5 | Concurrent leave + join last slot | Two transactions | Lock order preserves capacity; one canonical outcome, no double charge |
 | 6 | Leave + first waitlisted candidate KMS failure | One leave, two waitlisted candidates | Leave commits; first unchanged + one retry/audit; second may promote with one charge; no venue/charge for first |
+| 7 | Hybrid Page host matrix | central + tenant Page; host/player/dual-role across two tenants | Authorized host creates correct tenant session; non-admin and wrong context denied |
 
 ---
 
@@ -298,6 +319,8 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v2.7 | **Live DDL closure:** restore current `sessions.skill_level` and `price_amount >= 0` CHECK in the documented schema; add upgrade/negative-price regressions while DD-41 future rank migration remains expand→contract. |
+| 2026-07-17 | v2.6 | **DD-65..68:** central/tenant Messenger create parity, single durable wizard interceptor, final capability/context/snapshot re-check, shared idempotent command path, same-tenant FK prerequisite and hybrid integration gate. |
 | 2026-07-16 | v2.5 | **DD-49 full propagation:** replace blanket left-rejoin reject with locked disposition table (carry-over/refunded/unknown); unknown stays fail-closed. Pin append-only obligation lifecycle + canonical balance helper and explicitly forbid assuming a second `charges` row under live uniqueness. |
 | 2026-07-15 | v2.4 | **DD-39×DD-45 fail-closed propagation:** derive charge amount before promotion mutation; KMS/decrypt/price failure keeps candidate waitlisted/no-charge/no-venue, writes idempotent audit+retry/owner-alert, does not rollback leave/capacity opener, then continues the queue; add retry no-op tests. |
 | 2026-07-15 | v2.3 | **DD-45 money closure:** add entry/rejoin decision table; full path creates waitlisted without charge; promotion assert-no-charge + exactly-one insert; `left` rejoin fails closed; conflict audit/test coverage. |

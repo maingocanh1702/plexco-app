@@ -5,6 +5,8 @@
 > **Rev 30/06/2026 (sau review):** sửa nhãn gói ApiPay (BUSINESS↔ENTERPRISE), reframe GTM theo web/app-first, hạ payOS từ "default free" → "candidate pending sales" (P0 same-owner), tách reconcile thành add-on, thêm quyết định overflow Zalo.
 >
 > **Rev 10/07/2026 (DD-37 / BRD v3.4):** **bỏ Telegram** khỏi phạm vi; kênh phase-1 = **Zalo + Facebook Messenger + web**; Messenger **lên phase-1 (P2.5)**, không còn post-MVP. Auth phase-1 = Google/email (DD-13). Các bảng/nhãn "Telegram (MVP)" và "Messenger (post-MVP)" bên dưới đã cập nhật theo DD-37.
+>
+> **Rev 18/07/2026:** Messenger hybrid giữ nguyên. Authority hiện hành: `../standards/decisions.md` **v1.47** · BRD v3.9d · PRD v2.8b · TDD v3.1; DD-69 app-first direction accepted. Đây là tài liệu GTM lịch sử; khi lệch, ưu tiên authority hiện hành.
 
 ---
 
@@ -23,7 +25,7 @@
 | Kênh | Thiết kế | Chi phí messaging |
 |---|---|---|
 | Zalo *(phase-1)* | **Mỗi host tự tạo & own 1 bot** qua Zalo Bot Platform, deploy trên hạ tầng Plexco | **Free (đang Beta)** |
-| Messenger *(phase-1, P2.5)* | **1 App Plexco, Page per-club**; cửa sổ 24h; cần App Review | Gần như free trong 24h (ngoài 24h trả phí) |
+| Messenger *(phase-1, P2.5)* | **1 App; central Plexco Page + optional Page per-club**; 24h/App Review | Central covers clubs without Page; optional branded endpoint; outside-window fail-closed |
 | ~~Telegram~~ | **Bỏ khỏi phạm vi (DD-37 thay DD-09)** | — |
 
 > Theo BRD v3.4/DD-37: surface phase-1 = **web app + Zalo + Facebook Messenger** (Telegram bỏ; Messenger P2.5). Web/app là workspace chính, bot chỉ giữ action cực ngắn + nhắc/deep-link.
@@ -143,7 +145,7 @@ Plexco sở hữu **1 tài khoản provider duy nhất**; mỗi host **link tài
 
 ## 7. Khuyến nghị kiến trúc
 
-1. **Kênh:** web/app là sản phẩm chính; phase-1 = web + mỗi host 1 **Zalo bot** + **Facebook Messenger** (1 App, Page per-club, P2.5). Telegram bỏ (DD-37). Dự phòng khi Zalo Bot hết Beta (đẩy về web/app + Messenger, hoặc ZNS có phí).
+1. **Kênh:** web/app + Zalo bot per host + Messenger hybrid (central always, optional club Page; DD-65..68). Host/player capability parity trên Messenger; Telegram bỏ.
 2. **Đối soát — tách 2 đường:**
    - **Candidate default (free, chờ xác minh sales):** ưu tiên rail đã rõ cơ chế — **SePay app chia sẻ BĐSD** / **VPBank free tier**; **payOS free** chỉ khi xác nhận có partner/multi-merchant model (P0). COGS ~0, scale 100+ host chỉ tăng hạ tầng.
    - **Cao cấp (managed, có phí):** host muốn "bao mượt" hoặc dùng bank không có rail free → gom apipay (ENTERPRISE)/SePay-API, charge add-on cao hơn để cover ~64k COGS.

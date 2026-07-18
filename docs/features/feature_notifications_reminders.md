@@ -2,12 +2,14 @@
 
 > **Canonical phase:** P3 (manual/auto baseline) · P4.5–P4.7 (channel delivery)  
 > **Track:** 🔔 Notifications  
-> **Version:** 2.3 · 2026-07-15
-> **Status:** Reviewed  
+> **Version:** 2.5 · 2026-07-17
+> **Status:** Reviewed · reconciled to decisions v1.45/DD-15/DD-67; runtime migration pending
 > **Prerequisites:** P3 ledger stable · P3.5 identity/reachability · P4 sync/projectors  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-6 · `../product/PRD.md` FLOW 7/8 · `../standards/decisions.md` DD-37/DD-40/DD-45 · `../standards/business-rules.md` BL-SEC-5 · `BE/feature_notifications_reminders_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-6 · `../product/PRD.md` FLOW 7/8 · `../standards/decisions.md` DD-37/DD-40/DD-45/**DD-67** · `../standards/business-rules.md` BL-MSG-3/5, BL-NTF-1..3, BL-SEC-5 · `feature_identity.md` · `BE/feature_notifications_reminders_tech.md`
 
 > **Cập nhật v3.4 (DD-40 + DD-37, 2026-07-10):** kênh nhắc chính = **web push + Zalo DM**; **Messenger best-effort trong cửa sổ standard 24h**, ngoài cửa sổ chỉ khi có cơ chế Meta đủ điều kiện/được phê duyệt. **Telegram loại khỏi phạm vi (DD-37).** Sau **mọi** markPaid (thủ công tiền mặt/CK & auto CK) → **xác nhận tự động tới player** (FR-6.2). **Nhắc tự động nâng cao = `host_pro`; free = nhắc thủ công** (DD-40).
+>
+> **Cập nhật DD-15/DD-67:** reachability của cả Zalo và Messenger gắn exact `channel_identity_id`/provider endpoint. Khi Messenger là route phù hợp, dispatcher chọn **một** route: tenant Page reachable → central Page reachable → fallback web/Zalo; không broadcast cả hai Page. Target-tenant eligibility được kiểm tra riêng, không suy từ reachability row.
 
 ---
 
@@ -20,10 +22,10 @@ Nhắc nợ players chưa trả mà **không spam**, đồng thời confirm than
 ### Bất biến
 
 - Reminder chỉ gửi dựa trên **effective charge state** — không cache cũ.
-- `ChannelReachability` scoped `(person, tenant, platform)` — KHÔNG global.
+- Zalo/Messenger reachability/window scoped exact `channel_identity_id`; identity đã bind bot/OA hoặc Page endpoint. Tenant eligibility là authorization riêng.
 - Provider failure KHÔNG rollback ledger — delivery retry riêng.
 - Quiet hours tính theo **tenant timezone**.
-- Deduplicate bằng intent key + recipient + state version.
+- Deduplicate bằng logical intent key + recipient + state version; Messenger key không chứa Page để retry/fallback không tạo lần gửi logic thứ hai.
 
 ---
 
@@ -37,12 +39,12 @@ Nhắc nợ players chưa trả mà **không spam**, đồng thời confirm than
 | NTF-UC-2 | System (`host_pro`) | Scheduler auto-remind overdue charges (ngưỡng mặc định 2h → 24h → …) | Select theo tenant policy, quiet hours, cooldown — gửi batch |
 | NTF-UC-3 | System | `payment.settled` event (sau markPaid thủ công tiền mặt/CK **hoặc** auto CK) | Gửi confirmation **1 lần** per charge/settlement version |
 | NTF-UC-4 | System | Reversal sau confirmation | Gửi **correction**, KHÔNG gửi lại paid confirmation |
-| NTF-UC-5 | System | Channel selection | **web push + Zalo DM** (chính) → **Messenger best-effort trong 24h** → owner digest fallback |
+| NTF-UC-5 | System | Channel selection | Policy chọn web/Zalo chính; nếu chọn Messenger thì resolve tenant Page reachable → central Page reachable → fallback web/Zalo, đúng một logical route |
 | NTF-UC-6 | Host | Manual remind override cooldown | Require reason — vẫn rate-limited |
 | NTF-UC-7 | Player | Nhận reminder qua Zalo DM / web push | Hiện số tiền còn nợ + QR link |
 | NTF-UC-8 | Player | Nhận paid confirmation | "✅ Đã nhận CK [amount]. Cảm ơn!" |
 | NTF-UC-9 | Host | Xem delivery report | Sent/failed/skipped — KHÔNG expose provider secrets |
-| NTF-UC-10 | System | P4.5 Zalo player delivery; Messenger best-effort trong 24h | Channel-specific delivery logic (Telegram đã loại — DD-37) |
+| NTF-UC-10 | System | P4.5 Zalo player delivery; Messenger best-effort trong 24h | Zalo tenant route; Messenger exact Page endpoint + one-route dedup (Telegram đã loại — DD-37) |
 | NTF-UC-11 | System | Waitlist promotion không derive được charge amount (DD-39/DD-45) | Domain retry do session service sở hữu; notification projector tạo tối đa một owner-alert/digest từ event, không gửi promotion/venue cho candidate; recipient unresolved thì durable event vào skipped/DLQ để ops thấy |
 
 ### Edge Cases
@@ -54,14 +56,15 @@ Nhắc nợ players chưa trả mà **không spam**, đồng thời confirm than
 | 3 | Security | Expose debt amount/name ra kênh chung | ❌ Nhắc nợ đi **DM riêng** (Zalo DM / web push / Messenger 24h), không tiết lộ số tiền/tên ra kênh công khai |
 | 4 | Data Integrity | Player đã leave club nhưng còn nợ | Tuỳ policy: gửi final notice hoặc skip. KHÔNG gửi reminder nếu policy không cho phép |
 | 5 | Concurrency | Duplicate send (intent + recipient + version) | Deduplicate bằng UNIQUE delivery key — idempotent |
-| 6 | Resilience | Provider blocked/24h-window/rate-limit error | Update reachability/delivery state, classify retry vs permanent failure |
+| 6 | Resilience | Provider blocked/24h-window/rate-limit error | Update đúng endpoint reachability/delivery state; classify retry vs permanent/ambiguous failure; không mở send thứ hai nếu delivery outcome chưa chứng minh |
 | 7 | Data Integrity | Quiet hours overlap với scheduled send | Defer to next valid window — dùng tenant timezone |
 | 8 | Concurrency | Scheduler jitter — burst gửi 1000 tenants cùng lúc | Jitter prevents provider bursts — stagger sends |
 | 9 | Security | Manual reminder bypass cooldown | Cooldown/rate-limit vẫn enforce — owner override cần reason |
 | 10 | Cross-Feature | Reversal xảy ra sau confirmation đã gửi | Gửi **correction** message — preserve audit trail |
-| 11 | Security | Reachability cross-tenant | ❌ NEVER — `(person, tenant, platform)` scoped |
+| 11 | Security | Reachability cross-tenant/cross-endpoint | ❌ NEVER — Page/bot/OA A không cấp window/token cho endpoint B; target tenant luôn re-authorize riêng |
 | 12 | Resilience | Delivery fail — retry exhaust | Move to owner digest fallback — KHÔNG retry vô hạn |
 | 13 | Financial/Resilience | Duplicate `waitlist.charge_derivation_failed` event | Owner alert dedupe theo session+player+trigger+reason; không duplicate digest, không đổi player/charge và không gửi venue |
+| 14 | Data Integrity | Central và tenant Page cùng reachable | Chọn đúng một Messenger route theo priority; logical key suppress route còn lại và retry không double-send |
 
 ---
 
@@ -84,9 +87,9 @@ Nhắc nợ players chưa trả mà **không spam**, đồng thời confirm than
 |--------|---------|-----------------|
 | `notification_policies` | Tenant-level thresholds, quiet hours, cooldown, max count | Per tenant; RLS |
 | `notification_intents` | Semantic notification record (type + aggregate + state version) | `UNIQUE` intent key prevents duplicate; RLS |
-| `notification_deliveries` | Per-platform delivery attempt tracking | `UNIQUE` delivery key prevents duplicate send; RLS |
+| `notification_deliveries` | Per-logical-route delivery attempt tracking | `UNIQUE(intent,platform)`/logical key không chứa Page; lưu endpoint đã claim, không tạo row thứ hai khi đổi candidate |
 | `charges` | Source of eligible reminder recipients | Effective state drives eligibility |
-| `channel_reachability` | Tenant+platform DM availability | `UNIQUE(person_id, tenant_id, platform)` scoped |
+| `channel_reachability` | Exact provider-endpoint DM/window eligibility | Protected `UNIQUE(channel_identity_id)`; identity bind Page/bot/OA; target tenant authorize riêng |
 
 Full schema: [BE/feature_notifications_reminders_tech.md](./BE/feature_notifications_reminders_tech.md).
 
@@ -101,7 +104,7 @@ Full schema: [BE/feature_notifications_reminders_tech.md](./BE/feature_notificat
 | `reminder_skipped` | Bị cooldown/quiet-hours skip | `tenant_id`, `reason_code` |
 | `payment_confirmation_sent` | Confirm CK gửi cho player | `tenant_id`, `charge_id` (opaque) |
 | `payment_correction_sent` | Correction sau reversal | `tenant_id`, `charge_id` (opaque) |
-| `delivery_failed` | Provider error | `tenant_id`, `platform`, `error_class` (blocked/rate-limited/unknown) |
+| `delivery_failed` | Provider error | `tenant_id`, `platform`, `route_class` (tenant_page/central_page/web/zalo), `error_class` — không log Page/PSID raw |
 | `waitlist_charge_derivation_alerted` | Owner alert được tạo từ failure event | `tenant_id`, `session_id`, `player_id` (opaque), `reason_code` |
 
 > Chỉ dùng opaque IDs. Không log tên, số tiền, nội dung message trong analytics.
@@ -113,11 +116,11 @@ Full schema: [BE/feature_notifications_reminders_tech.md](./BE/feature_notificat
 - [ ] Reminders derive từ effective charge state — không gửi cho paid/void
 - [ ] Nhắc thủ công = free; nhắc tự động (cron ngưỡng 2h→24h) = `host_pro` (DD-40)
 - [ ] Sau markPaid (thủ công tiền mặt/CK & auto CK) → xác nhận tự động tới player (FR-6.2)
-- [ ] Kênh chính web push + Zalo DM; Messenger chỉ best-effort trong cửa sổ 24h (không gửi ngoài 24h)
+- [ ] Kênh chính web push + Zalo DM; Messenger best-effort chỉ khi exact Page endpoint eligible, ngoài cửa sổ fail-closed/fallback theo policy
 - [ ] Settled confirmation emit 1 lần; partial KHÔNG emit paid copy
 - [ ] Reversal emit correction, preserve audit trail
 - [ ] Quiet hours/cooldown/max-N pass tests với tenant timezone
-- [ ] Reachability KHÔNG cross tenant — `(person, tenant, platform)` test
+- [ ] Zalo/Messenger window/token không cross Page/bot/OA; target tenant re-authorize riêng; both-Page reachable vẫn đúng một logical send
 - [ ] Provider failure KHÔNG rollback ledger
 - [ ] Manual preview/exclusions và owner digest fallback work
 - [ ] Rate-limit burst test pass cho 1k tenants concurrent
@@ -140,6 +143,8 @@ Full schema: [BE/feature_notifications_reminders_tech.md](./BE/feature_notificat
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v2.5 | **DD-15/DD-67 v1.45:** unify exact endpoint reachability by `channel_identity_id` cho Zalo+Messenger; separate tenant eligibility; preserve one-route delivery. Runtime migration pending. |
+| 2026-07-17 | v2.4 | **DD-67 full propagation:** Messenger Page-endpoint reachability, tenant→central candidate priority, logical one-route key không chứa Page, fail-closed unknown outcome và no-double-send Product acceptance. Zalo vẫn tenant-scoped; runtime migration pending. |
 | 2026-07-15 | v2.3 | **DD-39×DD-45 failure alert:** consume waitlist charge-derivation failure event thành owner alert/digest idempotent; không gửi candidate promotion/venue; domain retry vẫn thuộc session service. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, screen states, analytics payload |

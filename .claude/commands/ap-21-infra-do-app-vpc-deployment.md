@@ -1,20 +1,11 @@
-# AP-21 — DigitalOcean App Platform + VPC deployment
+# AP-21 — DISABLED: P0 DigitalOcean deployment wiring
 
-Read the canonical `/Users/maingocanh/Projects/Claude template/autopilot/autopilot-prompt-GENERIC.md`
-and confirm v0.6.0 or newer; then verify the repo mirror
-`docs/autopilot-templates/autopilot-prompt-GENERIC.md` is not older. Execute the task contract in
-`docs/autopilot-infra-do-app-vpc-deployment.md` with manifest
-`docs/autopilot-manifests/infra-do-app-vpc-deployment.json`.
+HALT immediately. Do not register a manifest, create/edit files, create a branch, or run codegen.
 
-Before any feature work:
+Canonical `autopilot-prompt-GENERIC` v0.6.0 classifies scopes touching migrations or secrets as P0. The AP-21
+contract orchestrates a migration job and secret-bearing database/deploy configuration, so unattended
+autopilot is prohibited even though the files are infrastructure configuration rather than application code.
 
-1. Confirm these artifacts are committed on and pushed to `main`.
-2. Register the manifest.
-3. Create `.autopilot/worktrees/infra-do-app-vpc-deployment` from named base `main`; verify both SHAs match.
-4. Enter that worktree and create the required counter files.
-5. Execute the DD-04 §7.1 evidence gate before writing either App Spec.
-
-This is P1/manual-only: two consecutive FULL-base clean Codex rounds, verify green, then scope-gate READY
-and STOP. Do not provision resources, upload secrets, change DNS/webhooks, merge, or push `main`.
-
-Begin with Pre-flight, then Step 1.
+The only current safe launcher is `/ap-22-infra-egress-compatibility-evidence`, which edits one documentation
+file to close DD-04 §7.1 evidence and still stops at manual merge. AP-22 completion does not promote AP-21 out
+of P0. AP-21 requires a separately authorized manual workflow and bounded manual slices.

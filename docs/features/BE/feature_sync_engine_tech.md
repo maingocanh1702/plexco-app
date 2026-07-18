@@ -1,10 +1,11 @@
 # Feature: Sync Engine & Re-projection — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.1 · 2026-07-10
-> **Status:** Reviewed
+> **Version:** 2.4 · 2026-07-17
+> **Status:** Reviewed (v2.4: live-schema rollout truth + endpoint-exact channel delivery)
 > **Product spec:** `../feature_sync_engine.md`
-> **References:** `../../product/TDD.md` §3.8 · `../../standards/decisions.md` DD-37
+> **References:** `../../product/TDD.md` §3.8 · `../../standards/decisions.md` DD-37 · **DD-65..68**
+> **⚠️ Live-schema boundary:** endpoint-exact delivery ở đây dựa trên `channel_identity_id` và reachability theo `channel_identity_id` — đó là **target** DD-67; live `channel_reachability` vẫn PK `(person_id, tenant_id, platform)` và `channel_identities` là key 2-phần. Cần migration mới (**≥0014**) land trước runtime; live tables sync (`processed_commands`/`outbox_events`/`projector_deliveries`/`surface_refs`/`public_sessions`) không đổi.
 
 > **Cập nhật v2.1 (DD-37 ✅, 2026-07-10):** projectors fan-out phase-1 = **Zalo DM · Facebook Messenger (cửa sổ 24h) · web realtime · public projection**. **Bỏ Telegram** edit-message projectors (`tg_announcement`/`tg_roster`) — Zalo không có inline button (DM number-reply), Messenger gửi message mới trong 24h. Idempotent/re-projection contract không đổi.
 
@@ -27,6 +28,7 @@ Worker (FOR UPDATE SKIP LOCKED) → Claim events by aggregate order
 - Event schemas versioned — avoid secrets/PII in payload.
 - Crash after provider success handled via provider idempotency or convergent edit/upsert.
 - Worker partitions by aggregate ordering key (not tenant-wide).
+- Messenger và Zalo delivery đều resolve exact endpoint-bound `channel_identity_id` (Page hoặc bot/OA), authorize target tenant bằng check riêng, rồi chọn đúng một route. Logical notification id dedups mọi candidate; không broadcast.
 
 ---
 
@@ -56,7 +58,8 @@ CREATE TABLE outbox_events (
   schema_version integer NOT NULL DEFAULT 1,
   payload jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
-  claimed_at timestamptz
+  claimed_at timestamptz,
+  UNIQUE (aggregate_id, sequence)
 );
 
 CREATE TABLE projector_deliveries (
@@ -107,6 +110,8 @@ CREATE INDEX idx_surface_refs_aggregate ON surface_refs(aggregate_id);
 | 10 | Security | Reproject replays notifications | ❌ BLOCK — no re-send unless projector supports correction mode |
 | 11 | Security | Realtime topic guessing | AuthZ per subscription — reject unauthorized |
 | 12 | Resilience | DLQ overflow | Alert threshold → operator review — bounded retry |
+| 13 | Data Integrity | Nhiều Messenger Page hoặc Zalo bot/OA candidate reachable / retry đổi endpoint | Resolve endpoint-bound `channel_identity_id`, authorize target tenant riêng; one logical delivery only, priority policy + claim/dedup ngăn broadcast/double send |
+| 14 | Concurrency | Hai transaction cấp cùng sequence cho một aggregate | `UNIQUE(aggregate_id, sequence)` cho đúng một commit; loser retry sau khi reload next sequence, không ghi event trùng |
 
 ---
 
@@ -145,12 +150,14 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 
 | Projector | Surface | Behavior |
 |-----------|---------|----------|
-| `zalo_dm` | Zalo DM (bot per-club) | Send/update DM (number-reply); no inline button |
-| `messenger` | Messenger (Page per-club) | Send message trong **cửa sổ 24h**; ngoài 24h skip (best-effort), dồn qua web/Zalo |
+| `zalo_dm` | Zalo DM (exact bot/OA endpoint) | Resolve endpoint-bound `channel_identity_id`, authorize target tenant separately, then send/update through exactly one bot/OA; no inline button or broadcast |
+| `messenger` | Messenger hybrid | Resolve endpoint-bound `channel_identity_id`, authorize target tenant separately, then select tenant Page reachable → central Page reachable; send one with logical dedup; outside policy window fallback web/Zalo |
 | `web_realtime` | Web SSE/WS | Push invalidation event |
 | `public_sessions` | Public search | Upsert/delete projection |
 
 > **DD-37:** Telegram edit-message projectors (`tg_announcement`, `tg_roster`) **removed** — Telegram out of phase-1 scope. Không có "edit inline roster in group" cho Zalo/Messenger; roster hiển thị qua web + DM.
+
+**Channel delivery boundary (DD-67):** candidate route là tuple server-derived `(channel_identity_id, provider_endpoint_id, target_tenant_id)`. Dispatcher phải (1) load reachability theo exact `channel_identity_id`; (2) xác minh identity thuộc đúng Messenger Page hoặc Zalo bot/OA registry row; (3) authorize `target_tenant_id` riêng, không suy tenant từ reachability/default endpoint; (4) claim logical notification key trước provider call và chọn đúng một route theo priority. Không candidate hoặc auth mơ hồ thì fail closed sang policy fallback; tuyệt đối không fan-out thử nhiều endpoint.
 
 ### SLO Targets
 
@@ -188,7 +195,10 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 | 17 | DLQ threshold | Max retries exhausted | Moved to DLQ + alert |
 | 18 | Event schema version | V1 vs V2 payload | Correct deserialization |
 | 19 | Reproject audit | Reproject triggered | Audit entry created |
-| 20 | Tenant isolation | Events from tenant A | Not visible to tenant B |
+| 20 | Messenger route priority | both/tenant-only/central-only/neither reachable | Exactly expected one route or fallback; no duplicate |
+| 21 | Zalo exact endpoint route | Two bot/OA identities for one Person; only one authorized for target tenant | Deliver through the authorized endpoint-bound `channel_identity_id` exactly once; no cross-bot/OA broadcast |
+| 22 | Tenant isolation | Events from tenant A | Not visible to tenant B |
+| 23 | Aggregate sequence race | Two concurrent transactions append the same `(aggregate_id, sequence)` | Exactly one event commits; unique loser reloads next sequence/retries, no duplicate or silent overwrite |
 
 ### Integration Tests
 
@@ -198,6 +208,8 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 | 2 | Reproject repair | Delete Zalo/Messenger message → reproject | Message recreated (Messenger within 24h) |
 | 3 | Realtime end-to-end | Subscribe → trigger event | Client receives update |
 | 4 | Load test 1k tenants | Parallel commands | SLO met, no data corruption |
+| 5 | Messenger retry endpoint switch | Tenant Page fails/revokes after claim | Convergent fallback/no double-send according to delivery ledger |
+| 6 | Concurrent aggregate append | Race two writers at the same next sequence | `UNIQUE(aggregate_id,sequence)` rejects duplicate; retry preserves strict monotonic order |
 
 ---
 
@@ -205,12 +217,13 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 
 ### Rollout
 
-1. Deploy command/outbox schema
-2. Shadow dispatcher (log events, no delivery)
-3. Enable Zalo DM projector (P2) + Messenger projector (P2.5, 24h window)
-4. Enable web realtime
-5. Enable public projector
-6. Monitor SLO targets
+1. Verify the existing live command/outbox tables and `UNIQUE(aggregate_id,sequence)` from migration `0005`; do **not** create a duplicate sync migration.
+2. Land the separate forward migration for endpoint-scoped identity/reachability before enabling endpoint-exact channel delivery.
+3. Shadow dispatcher (log events, no delivery).
+4. Enable Zalo DM projector (P2) + Messenger projector (P2.5, 24h window).
+5. Enable web realtime.
+6. Enable public projector.
+7. Monitor SLO targets.
 
 ### Metrics
 
@@ -224,6 +237,9 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v2.4 | **Live-schema rollout closure:** clarify that migration `0005` already owns the command/outbox schema and aggregate-sequence uniqueness; only the separate endpoint identity/reachability migration remains before endpoint-exact delivery. |
+| 2026-07-17 | v2.3 | Restore the already-live `UNIQUE(aggregate_id,sequence)` to this documentation and add its race regression; pin exact endpoint-bound identity, separate target-tenant authorization and one-route/no-broadcast for both Messenger Page and Zalo bot/OA; fix duplicate test IDs. |
+| 2026-07-17 | v2.2 | **DD-65..68:** Page-endpoint candidate resolution, tenant→central priority, logical one-route dedup and retry/fallback tests. |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), full DDL, 12 BE edge cases, projector registry, SLO targets, 20 tests |
 | 2026-07-10 | v2.1 | **DD-37 ✅:** projector registry — bỏ `tg_announcement`/`tg_roster` (Telegram); phase-1 fan-out = `zalo_dm` · `messenger` (24h window) · `web_realtime` · `public_sessions`. Cập nhật edge #8, tests #8/int#2, rollout step 3. |

@@ -4,16 +4,16 @@
 > **Deployable unit:** `apps/bot/messenger/`
 > **API:** Messenger Platform API (Send API + Webhooks)
 > **Phase:** **P2.5 — Phase-1 MVP** (DD-37 ✅, thay DD-09; App Review bắt buộc trước GA)
-> **Version:** v0.4 · 2026-07-15
+> **Version:** v0.6 · 2026-07-17
 > **Refs:** `messenger-channel-design.md` · `../../features/feature_player_messenger.md` · `../../features/feature_notifications_reminders.md`
 
-> **Cập nhật v3.4 (DD-37 ✅):** Messenger nay là **kênh phase-1** (cùng web + Zalo); Telegram đã bị loại. Auth-link Facebook = **DD-33 🟡** (phase-1, phụ thuộc App Review). Ràng buộc chính sách bên dưới **giữ nguyên** — chúng là điều kiện thiết kế, không phải lý do hoãn.
+> **Authority hiện hành:** DD-65..68 ✅ thay topology Page-per-club/player-only cũ: **Page Plexco trung tâm luôn có + Page riêng per-club tuỳ chọn**; cả host và player dùng được trên cả hai. Auth-link Facebook = **DD-33 ✅ (phase-1; App Review pending)**; policy delivery vẫn phải fail-closed.
 
 ---
 
 ## 1. Vai trò
 
-Messenger là **surface phase-1** cho player — tương tự Zalo (DM-only). Mỗi CLB tạo Facebook Page → connect Plexco app (**1 FB App của platform, Page per-club**). **Cần Meta App Review + Business Verification trước GA** — nộp **sớm** vì đây là đường tới hạn (critical path) của lịch phase-1.
+Messenger là **shared role-aware surface phase-1** cho host và player. Plexco vận hành **một Meta App + một central Page** cho mọi CLB; CLB có Facebook Page có thể nối thêm Page riêng để dùng cùng capability với branding/context của CLB. CLB không có Page dùng central Page, không bị giảm chức năng session cơ bản. **Cần Meta App Review + Business Verification trước GA**.
 
 ---
 
@@ -34,18 +34,19 @@ Messenger là **surface phase-1** cho player — tương tự Zalo (DM-only). M�
 ## 3. Architecture (khi implement)
 
 ```
-CLB Bestminton → Facebook Page "Bestminton Club" → Plexco App
-CLB Pickle HCM → Facebook Page "Pickle Saigon"  → Plexco App
+mọi CLB              → Plexco central Page ┐
+CLB có Page (optional) → own Facebook Page  ├→ cùng Plexco Meta App → cùng domain core
+web/Zalo                                    ┘
 
-Mỗi Page = 1 tenant (BYO tương tự Zalo)
-Tenant route: page_id → tenants.messenger_page_id
+central Page: không pin tenant; resolve bằng opaque action/public ref/server-side picker
+tenant Page: pin default tenant, nhưng target cross-club vẫn resolve từ protected action
 ```
 
 ### Khác biệt key vs TG/Zalo
 
 | Aspect | Messenger |
 |--------|----------|
-| Identity | PSID (Page-Scoped User ID) — khác per Page → `ChannelIdentity.platform_user_id` = PSID |
+| Identity | PSID là Page-scoped; hai HMAC domain-separated cho `page_id` và PSID, unique `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)` |
 | Rich UI | Generic Template, Button Template (giống InlineKeyboard) |
 | Consent | User nhắn trước → consent implicit (tương tự Zalo) |
 | 24h window | ⚠️ Bot chỉ gửi được trong 24h. Ngoài 24h cần Utility Template/OTN/Human Agent path hợp lệ |
@@ -58,9 +59,11 @@ Tenant route: page_id → tenants.messenger_page_id
 | Feature | Support? | Ghi chú |
 |---------|---------|---------|
 | Player join session | ✅ | Generic Template + Postback button |
+| Player discover cross-club | ✅ | Central = global; tenant Page = local mặc định + “Khám phá tất cả”; target từ opaque action |
 | Nhắc nợ | 🟡 Best-effort | Chỉ nếu user nhắn trong 24h gần nhất, hoặc có Utility Template/OTN hợp lệ sau policy spike |
 | Xác nhận payment | ✅ | Nếu trong 24h window |
-| Host commands | ❌ | Host dùng web — Messenger = player-only surface |
+| Host create/manage session | ✅ | Role-aware menu; `/newsession` wizard cơ bản hoàn tất trên cả central/tenant Page; shared `SessionService` |
+| Host approvals/status/announce/close | ✅ | Exact capability registry; advanced edit có thể deep-link web |
 | Identity merge | ✅ | transactional `/link` code → lock/consume once → confirm merge ChannelIdentity vào Person |
 
 ### 4.1 Policy-Safe Delivery Contract
@@ -68,8 +71,8 @@ Tenant route: page_id → tenants.messenger_page_id
 Messenger adapter bắt buộc gọi `canDeliver()` trước mọi outbound:
 
 ```text
-canDeliver(person, tenant, "messenger") =
-  now < channel_reachability.window_expires_at
+canDeliver(channel_identity_id, messenger_page_id) =
+  now < endpoint_reachability.window_expires_at
   OR has_valid_one_time_notification_token
   OR operator_initiated_human_agent_path
 ```
@@ -81,6 +84,7 @@ Rules:
 - Reminder copy phải là transactional, không marketing/promo.
 - Mọi delivery failure cần phân loại: `window_closed`, `permission_denied`, `rate_limited`, `token_revoked`, `unknown`.
 - Messenger **không** là primary reminder channel; **web + Zalo** gánh primary notification (Telegram đã loại — DD-37). Messenger = join + xác nhận + nhắc best-effort trong 24h.
+- Một logical notification chỉ chọn **một** Messenger endpoint: tenant Page reachable → central Page reachable → web/Zalo; không gửi trùng cả hai Page.
 
 ---
 
@@ -92,6 +96,7 @@ Rules:
 | R1 | Meta App Review reject/chậm | Prepare + nộp sớm; degrade → transactional one-time `/link` code (DD-33/DD-50) |
 | R2 | 24h window = nhắc nợ unreliable | Accept: Messenger là kênh join + xác nhận, **web + Zalo** gánh nhắc chính |
 | R3 | PSID mapping per-page | ChannelIdentity pipeline handle; merge xuyên Page qua verified identity/transactional `link_code` |
+| R4 | Central Page không pin tenant | Signed/opaque action hoặc server-side role/membership picker; missing/stale/ambiguous → deny/re-pick, không đoán |
 
 ### 5.1 Required Policy Spike Before Coding
 
@@ -112,10 +117,10 @@ Nếu spike fail cho scheduled reminders, Messenger vẫn có thể ship như **
 
 | Hạng mục | Status | Ghi chú |
 |----------|--------|---------|
-| Architecture fit | ✅ Good | DM-only adapter giống Zalo, route theo Page |
+| Architecture fit | ✅ Contract chốt | Hybrid registry + protected resolver + one shared adapter/domain core (DD-65..68) |
 | Product reliability | 🔴 Low for reminders | 24h window làm nhắc nợ ngoài 24h không đáng tin → web + Zalo gánh nhắc chính |
-| Docs | 🟡 Medium | Appendix đủ sâu, README đã thêm policy contract; player-flow ở `feature_player_messenger` (Draft) |
-| Missing before coding | 🔴 Required | Policy spike + App Review + Business Verification (bắt đầu ngay) |
+| Docs | 🟢 Authority chốt | DD-65..68; Product/BE specs phải bám hybrid/shared-surface contract |
+| Missing before coding | 🔴 Required | Migration hybrid registry/page-scoped reachability + shared services + policy spike/App Review/Business Verification |
 | Delivery readiness | 🟡 Medium | **Phase-1 (P2.5)**; đường tới hạn = App Review + Business Verification |
 
 **Go/no-go:** Messenger **trong phase-1 (DD-37 ✅)**. Bắt đầu **App Review + Business Verification ngay** (critical path duy nhất). Ship như **join + xác nhận trong 24h** trước; nhắc ngoài 24h dồn qua **web + Zalo** (Messenger best-effort trong 24h). Không hứa nhắc tự động vô hạn.
@@ -137,9 +142,11 @@ Nếu spike fail cho scheduled reminders, Messenger vẫn có thể ship như **
 
 | Date | Version | Thay đổi |
 |------|---------|----------|
+| 2026-07-17 | v0.6 | Reconcile shared endpoint contract: hai HMAC domain-separated, unique ba phần; App Secret deployment-level và Page access token protected per Page. Runtime vẫn chưa implement. |
+| 2026-07-17 | v0.5 | **DD-65..68:** central Plexco Page + optional Page per-club; host/player parity trên cả hai; protected tenant/action resolver, Page-scoped identity/reachability, one-route delivery và create-session wizard shared core. Runtime vẫn chưa implement. |
 | 2026-07-15 | v0.4 | **Version/index reconcile:** đồng bộ header về v0.4 khớp README surface index; Messenger giữ **P2.5 phase-1** (DD-37); không đổi nội dung kỹ thuật. |
 | 2026-07-10 | v0.3 | **Promote phase-1 (DD-37 ✅, thay DD-09):** P4.8/post-MVP → **P2.5 phase-1**. Reframe §2 (blockers → ràng buộc phải quản lý), OD-9 ✅, host-command bỏ TG, reminder chính = web + Zalo, readiness/go-no-go phase-1. Facebook auth-link = DD-33. Giữ nguyên ràng buộc 24h/App Review/Message Tags/Page per-club. |
 | 2026-06-20 | v0.2 | Sửa rate-limit assumption, thêm policy-safe delivery contract, required policy spike, readiness |
 | 2026-06-19 | v0.1 | Initial surface docs |
 
-*Messenger bot surface docs v0.4. **Phase-1 (DD-37)** — join + xác nhận trong 24h; nhắc chính qua web + Zalo; App Review là critical path.*
+*Messenger bot surface docs v0.6. **Phase-1 (DD-37, DD-65..68)** — hybrid shared surface cho host/player; nhắc chính qua web + Zalo; App Review là critical path.*

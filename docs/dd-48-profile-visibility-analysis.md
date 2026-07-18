@@ -2,6 +2,8 @@
 
 > **Mục đích:** chốt framework visibility + **whitelist approved fields + migration + ranh giới HR1/HR2**. Build P4+.
 > **Ngày:** 2026-07-13 · **Canonical:** `schema.ts` (persons) · `feature_marketplace_discovery` (public whitelist) · `feature_user_settings` §7 · `feature_player_view` · DD-47 (follow) · DD-39 (gender PII) · DD-42 (reliability per-tenant) · `0009` RLS. Ghi → `decisions.md` DD-48.
+>
+> **Closure overlay 2026-07-17 (DD-55):** item #3 DM và #4 block đã đóng. Phase-1 profile visibility không gate DM nhưng mọi boundary dùng canonical safety core; phase-2 accepted follow DM trực tiếp, non-follower vào request box. Block dùng `chat_blocks` chung chat/social. Chỉ còn item #1, #2 và #5.
 
 ---
 
@@ -10,7 +12,7 @@
 - Cross-user social profile (`GET /api/persons/:id/profile`) = **APPROVED PUBLIC-PROFILE FIELDS có source tường minh**; không derive từ memberships/sessions để tránh lộ cross-tenant. Initial safe set: `display_name`, `username` khi migration DD-39 tồn tại, `plexco_since` coarse từ `persons.created_at`; avatar/sports chưa có canonical source nên chưa trả.
 - **Gating fail-closed:** public→approved fields; private→approved fields chỉ khi `person_follows(V→T)=accepted` (DD-47); còn lại → **card tối thiểu**. Self dùng `/api/me`; host operational view dùng tenant membership/roster path riêng — không mở rộng social-profile DTO.
 - **Private ẩn social profile với cả đồng đội và host non-follower.** Host chỉ giữ operational access qua tenant membership/roster route riêng; đây không phải ngoại lệ trên social DTO. **KHÔNG nới RLS/membership authz, KHÔNG đụng tiền.**
-- **5 open item chốt lúc build** (§5).
+- **3 open item còn lại chốt lúc build** (§5); DM + block đã đóng bởi DD-55.
 
 ---
 
@@ -67,14 +69,14 @@
 ## 4. Dependencies
 - **DD-47** follow graph (gating private).
 - **DD-39** gender (không lộ profile), **DD-42** reliability (không cross-tenant), **DD-06** venue.
-- **DD-38** DM in-app (open item #3).
+- **DD-38/DD-55** DM in-app: item #3 đã đóng; phase-1 open-DM qua safety gate, phase-2 follow/request-box.
 - Migration: DD-39 profile fields trước/đồng slice; `profile_visibility` staged backfill existing=`private`; profile read service. Avatar/sports cần decision/model riêng trước khi thêm whitelist. Build **P4+**.
 
-## 5. 5 Open item (chốt lúc build)
+## 5. Open items — 3 còn lại, 2 đã đóng
 1. Tập "stats" chính xác + có **aggregate cross-tenant** không (rủi ro lộ hoạt động xuyên CLB) — hiện **CHƯA** vào whitelist.
 2. follower-count / following-list của user private có ẩn với non-follower không.
-3. private có ảnh hưởng quyền **DM in-app (DD-38)** không.
-4. có cần cơ chế **block** không.
+3. ~~private có ảnh hưởng quyền **DM in-app (DD-38)** không~~ → ✅ DD-55: không ở phase-1; safety gate bắt buộc, phase-2 follow/request-box.
+4. ~~có cần cơ chế **block** không~~ → ✅ DD-55: có, canonical `chat_blocks` dùng chung chat/social.
 5. trong session **chung**, đồng đội thấy tên T tới mức nào (roster-presence vận hành khác profile xã hội).
 
 ## 6. Propagation (khi build P4+)
@@ -84,6 +86,6 @@
 existing user→private, new user→public · migration interruption ở mỗi stage fail-closed · `/api/me` self đầy đủ · public→only sourced approved fields · private+follower accepted→approved · private+non-follower/host-nonfollower→fixed minimal card không profile fields · host operational route vẫn thấy đúng tenant-scoped data nhưng social DTO không đổi · avatar/sports absent khi chưa có source · profile path KHÔNG lộ PII/tiền/reliability/membership cross-tenant · đổi visibility áp DD-47 · host_display_name vẫn trên public_sessions.
 
 ## 8. Quyết định (đã chốt framework, build P4+)
-profile_visibility default public cho user mới, existing backfill private; approved fields chỉ khi có canonical source; gating social fail-closed theo follower; self và host operational data đi route riêng; private ẩn social profile với đồng đội/host non-follower nhưng không giảm operational authz; không nới RLS/tiền; 5 open item lúc build. Ghi `decisions.md` DD-48 ✅ framework.
+profile_visibility default public cho user mới, existing backfill private; approved fields chỉ khi có canonical source; gating social fail-closed theo follower; self và host operational data đi route riêng; private ẩn social profile với đồng đội/host non-follower nhưng không giảm operational authz; không nới RLS/tiền; DD-55 đóng DM+block, còn 3 open item lúc build. Ghi `decisions.md` DD-48 ✅ framework.
 
 **Nguồn:** `schema.ts:39` · `feature_marketplace_discovery.md:82` · `feature_user_settings` §7 · `feature_player_view` · DD-47/39/42/06/38 · `0009`.

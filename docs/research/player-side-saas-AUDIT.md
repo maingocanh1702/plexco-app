@@ -1,6 +1,6 @@
 # AUDIT — Plexco: Mapping player/user × multi-tenant × data isolation
 
-> ⚠️ **Pre-pivot audit reference (superseded in channel scope by DD-37, 2026-07-15):** Telegram/shared-bot examples below describe the pre-DD-37 model and are **not phase-1 runtime scope**. Current channels are **web + Zalo + Facebook Messenger**; auth is Google/email; Telegram data is legacy tenant #1 only. The isolation, identity/merge, money, public-whitelist and canonical-store findings C1–C8/B1–B6 remain applicable by substituting the current channel bindings. Authority: `../standards/decisions.md` DD-37/DD-13/DD-29.
+> ⚠️ **Pre-pivot audit reference (superseded in channel scope by DD-37, refined by DD-15/DD-65..68 v1.45):** Telegram/shared-bot examples below describe the pre-DD-37 model and are **not phase-1 runtime scope**. Current channels are **web + Zalo + Facebook Messenger**; auth is Google/email; Telegram data is legacy tenant #1 only. Isolation, identity/merge, money, public-whitelist and canonical-store findings C1–C8/B1–B6 remain applicable after current-binding substitution. Canonical C1 remediation is now endpoint-scoped for both channels: identity unique `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`, Messenger scope Page, Zalo scope bot/OA, reachability gắn `channel_identity_id`; tenant eligibility authorize riêng. SePay B3 hiện dùng HMAC timestamp/raw-body ±300s; các dòng API-key cũ chỉ là historical. Authority: `../standards/decisions.md` v1.45 + `../features/feature_connector_onboarding.md` v0.6.
 
 > Soát lại mô hình trong `player-side-saas-reconciliation.md` + `saas-implementation-plan.md` + `tdd.md` về **chính xác / an toàn / bảo mật** cho phần: mapping player giữa Telegram + Zalo, multi-tenant (shared TG bot), BYO-bot Zalo, đồng bộ `players`/`payments`, **và (reposition v2) lớp public discovery cross-tenant + sync engine**.
 > **Phán quyết tổng:** nền isolation (repo choke-point + RLS) **chắc**. Tầng **identity/mapping** có **7 lỗ critical (C1–C7)** phải sửa — quanh *claim membership có tiền*, *canDm sai tầng Zalo*, *link-code như bearer secret*. **Reposition thêm 1 lỗ critical (C8): public discovery layer** — đường đọc cross-tenant có chủ đích, rủi ro **rò field tiền/PII** ra marketplace. Chưa thể nói "đã an toàn" cho tới khi đóng C1–C8.
@@ -9,14 +9,14 @@
 
 ### C1. `canDm` đặt sai tầng → reminder/confirm Zalo gửi nhầm hoặc fail
 **Hiện:** `ChannelIdentity.canDm` là **global** (1 cờ / zalo_user_id). **Sai cho Zalo** vì Zalo **bot-per-club**: Minh đã nhắn bot club A ⇏ club B DM được. Global `canDm=true` (từ A) → club B tưởng gửi được → `sendMessage` fail (Minh chưa từng nhắn bot B), player **không nhận xác nhận đã trả tiền**.
-**Đúng:** reachability là **per (person × tenant × platform)**, không global.
+**Đúng hiện hành (DD-15/DD-67 v1.45):** reachability gắn exact endpoint-scoped `channel_identity_id`, không phải global flag hoặc `(person,tenant,platform)` aggregate.
 ```ts
 interface ChannelReachability {   // thay canDm khỏi ChannelIdentity
-  personId: string; tenantId: string; platform: "telegram"|"zalo";
-  canDm: boolean; lastInboundAt: string;   // UNIQUE(person,tenant,platform)
+  channelIdentityId: string; // identity includes platform + provider scope + provider user hash
+  canDm: boolean; lastInboundAt: string;   // UNIQUE(channelIdentityId)
 }
 ```
-Telegram (1 bot chung): các dòng cùng giá trị — vô hại. Zalo: khác nhau theo bot/club — **bắt buộc**. `notifyPlayersPaid` chọn kênh phải đọc reachability theo **đúng tenant**.
+Zalo tách theo bot/OA; Messenger tách theo Page. `notifyPlayersPaid` phải đọc exact endpoint reachability, re-check tenant eligibility rồi chọn đúng một route.
 
 ### C2. Auto-claim membership-có-tiền theo TÊN = gán nhầm nợ / chiếm dụng
 **Hiện:** §3 — channel identity lần đầu vào club → matcher tên "khớp chắc 1 member" → **claim + kế thừa nợ/lịch sử**. Tên VN trùng nhiều ("Minh", "Hùng"); player tự đặt được display name (Zalo `/name`) → có thể **cố tình** trùng. Hệ quả: A thấy/được gán nợ của B, hoặc xoá nợ người khác. **Đây là rủi ro toàn vẹn tiền nặng nhất.**
@@ -65,7 +65,7 @@ Telegram (1 bot chung): các dòng cùng giá trị — vô hại. Zalo: khác n
 
 - **B1. Sticky context phải fail-closed.** `PlayerChatContext` (telegramUserId→tenant) là cross-tenant, ngoài RLS. Lúc dùng **phải validate tenant ∈ membership của Person**; nếu không còn → bỏ context, hỏi picker. Không bao giờ để context quyết định tenant mà không qua giao Membership.
 - **B2. Deep-link `club_<slug>` ≠ join, slug không phải capability.** Bind context chỉ đặt "DM nhắm club nào", **không** auto-tạo membership. Join vẫn qua tap-in-group / `/join` + linking (+ duyệt nếu club kín). Slug đoán được → đừng cho slug quyền gì; nếu cần cấp quyền dùng **token opaque**.
-- **B3. Verify timing-safe cả 3 webhook.** SePay (`Apikey`), Zalo (`X-Bot-Api-Secret-Token`), Telegram (secret path) — so sánh `timingSafeEq`, sai → 401, **luôn lưu raw payload trước khi xử** (BL-1) nhưng **không** log secret/token.
+- **B3. Verify fail-closed mọi webhook.** SePay production: `X-SePay-Timestamp` ±300s + `X-SePay-Signature: sha256=<hex>` trên `{timestamp}.{raw_body}`, constant-time compare và không auth downgrade. Zalo: `X-Bot-Api-Secret-Token`; Messenger: `X-Hub-Signature-256`. Sai → 401 trước parse/persist nghiệp vụ; sau khi auth hợp lệ mới lưu raw durable trước ACK; **không** log secret/token.
 - **B4. Bank-account-number làm khoá merge = đồ thị tài chính xuyên club (privacy).** Dùng STK để merge Person xuyên tenant nghĩa là build index `account→person` toàn hệ thống. Nên giữ **matching STK trong-tenant**; merge xuyên club bằng STK chỉ **owner-mediated / opt-in**, không tự động — tránh tự dựng hồ sơ tài chính cá nhân tập trung.
 - **B5. Cron nhắc nợ là path privileged cross-tenant.** "1 query mọi tenant" (saas §5.3) chạy ngoài RLS per-tenant → phải là **job role có kiểm soát**, group theo tenant, dispatch đúng bot/group từng club; đừng để pattern "select mọi tenant" rò ra ngoài cron.
 - **B6. `message.unsupported.received` (Zalo, user nhóm bảo vệ).** Không nhận nội dung → không tự xử join/pay bằng text → **fallback owner xử tay**, đừng để luồng tự động kẹt/đoán.
@@ -273,5 +273,6 @@ Rate Limit: PATCH /bank-accounts/:id — 5/min per account (đổi STK nhạy)
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 17/07/2026 | v1.1 | Current-contract overlay: endpoint-scoped channel identity/reachability và SePay production timestamp/raw-body HMAC; giữ body pre-pivot làm historical audit evidence. |
 | 19/06/2026 | — | Thêm Changelog table |
 | 18/06/2026 | v1.0 | AUDIT bảo mật player-side + discovery |

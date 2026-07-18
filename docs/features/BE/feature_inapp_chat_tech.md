@@ -1,7 +1,7 @@
 # Feature: In-app Chat (club-wide + 1-1) — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.11 · 2026-07-16
+> **Version:** 0.14 · 2026-07-17
 > **Status:** ✅ DD-38 chốt (2026-07-10) — Draft, pending migration (schema aligned với `packages/db/schema.ts`)
 > **Product spec:** `../feature_inapp_chat.md` *(Draft)*
 > **References:** `../../standards/decisions.md` DD-38 (chat cơ bản phase-1) · DD-55 (open-DM safety + media) · DD-19/DD-20 (trợ lý tái dùng hạ tầng chat) · DD-07 (SSE + LISTEN/NOTIFY) · `../BE/feature_multi_tenant_tech.md` (RLS template) · `../BE/feature_sync_engine_tech.md` (realtime authz)
@@ -38,7 +38,7 @@ Media: initiated -> uploaded -> pending_scan -> ready | rejected | quarantined -
 Report: submitted -> triaged -> actioned | closed  (audit append-only; no tenant-host DM read grant)
 ```
 
-One canonical DM safety decision owns pair block state and is called at request/create/send/read boundaries. The pre-send core additionally checks membership, sender/channel limit, sender/target limit and attachment readiness/ownership before writing. No endpoint may implement its own block formula.
+One canonical DM safety decision owns enablement, pair block state, per-sender/per-target limits and abuse audit, and is called at request/create/**SECURITY DEFINER bootstrap**/send/read boundaries. The pre-send core additionally checks membership and attachment readiness/ownership before writing. No endpoint or RPC may implement or bypass its own block formula.
 
 ---
 
@@ -47,8 +47,11 @@ One canonical DM safety decision owns pair block state and is called at request/
 ### Schema (đề xuất, trỏ schema.ts/migrations khi thực thi)
 
 ```sql
--- FK target phụ (để bind child ↔ tenant của đúng channel):
---   memberships cần UNIQUE(id, person_id, tenant_id) [id đã PK; thêm unique phụ làm FK target].
+-- FK target phụ (BẮT BUỘC tạo TRƯỚC chat_members/chat_messages): PK(id) không đủ
+-- làm target cho FK ba cột. Đây là DDL thực thi trong migration chat, không phải comment TODO.
+ALTER TABLE memberships
+  ADD CONSTRAINT memberships_id_person_tenant_uq UNIQUE (id, person_id, tenant_id);
+
 CREATE TABLE chat_channels (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id uuid REFERENCES tenants(id),           -- NOT NULL cho 'club'; NULL cho 'dm'
@@ -220,36 +223,59 @@ Vì một bảng chứa **cả** club-row (`tenant_id NOT NULL`) lẫn dm-row (`
 --    ⚠️ PG16 `ALTER FUNCTION … OWNER TO chat_definer`: owner mới phải có **CREATE trên schema** chứa function.
 --       Fresh PG15+/PG16 KHÔNG cấp `CREATE ON SCHEMA public` mặc định → phải grant tạm rồi revoke (least-privilege):
 --         GRANT CREATE ON SCHEMA public TO chat_definer;      -- chỉ để nhận ownership
---         ALTER FUNCTION chat_current_is_member(uuid) OWNER TO chat_definer;
---         ALTER FUNCTION create_dm(uuid) OWNER TO chat_definer;
---         ALTER FUNCTION mark_read(uuid) OWNER TO chat_definer;
+--         ALTER FUNCTION ... OWNER TO chat_definer;  -- toàn bộ membership/safety/mutation RPC bên dưới
 --         REVOKE CREATE ON SCHEMA public FROM chat_definer;   -- runtime KHÔNG cần CREATE (giữ USAGE)
 --    Nếu chat_definer chưa provision → migration FAIL sớm (fail-closed), không im lặng chạy dưới NOBYPASSRLS.
 
 -- Helper: CHỈ dùng CURRENT person (không nhận person tùy ý → không membership oracle).
 CREATE FUNCTION chat_current_is_member(p_channel uuid) RETURNS boolean
   LANGUAGE sql SECURITY DEFINER STABLE SET search_path = pg_catalog, public AS $$
-  SELECT EXISTS (SELECT 1 FROM chat_members
-                 WHERE channel_id = p_channel
-                   AND person_id = current_setting('app.person_id', true)::uuid);
+  SELECT EXISTS (
+    SELECT 1
+    FROM chat_members cm
+    JOIN chat_channels c ON c.id = cm.channel_id
+    LEFT JOIN memberships m
+      ON (m.id, m.person_id, m.tenant_id) = (cm.membership_id, cm.person_id, cm.tenant_id)
+    WHERE cm.channel_id = p_channel
+      AND cm.person_id = current_setting('app.person_id', true)::uuid
+      AND (c.kind = 'dm' OR (c.kind = 'club' AND m.status = 'active'))
+  );
 $$;
 -- (OWNER TO chat_definer làm ở BLOCK CHUYỂN OWNER cuối — sau khi có GRANT CREATE ON SCHEMA, xem dưới)
 REVOKE ALL ON FUNCTION chat_current_is_member(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION chat_current_is_member(uuid) TO app;   -- chỉ role runtime app
 
+-- Predicate đọc THUẦN, không consume rate bucket/ghi audit: membership + safety-enabled + no block pair.
+-- Schema/function safety phải được tạo TRƯỚC policy và create_dm; missing capability/error => FALSE.
+CREATE FUNCTION dm_current_read_allowed(p_channel uuid) RETURNS boolean
+  LANGUAGE sql SECURITY DEFINER STABLE SET search_path = pg_catalog, public AS $$
+  SELECT dm_safety_enabled()
+     AND EXISTS (
+       SELECT 1
+       FROM chat_members me
+       JOIN chat_members peer ON peer.channel_id = me.channel_id AND peer.person_id <> me.person_id
+       WHERE me.channel_id = p_channel
+         AND me.person_id = current_setting('app.person_id', true)::uuid
+         AND NOT chat_pair_blocked(me.person_id, peer.person_id));
+$$;
+REVOKE ALL ON FUNCTION dm_current_read_allowed(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION dm_current_read_allowed(uuid) TO app;
+
 -- chat_channels
 ALTER TABLE chat_channels ENABLE ROW LEVEL SECURITY;  ALTER TABLE chat_channels FORCE ROW LEVEL SECURITY;
 CREATE POLICY chat_channels_club ON chat_channels USING (
-  tenant_id IS NOT NULL AND tenant_id = current_setting('app.tenant_id', true)::uuid);
+  tenant_id IS NOT NULL AND tenant_id = current_setting('app.tenant_id', true)::uuid
+  AND chat_current_is_member(id));
 CREATE POLICY chat_channels_dm ON chat_channels USING (
-  tenant_id IS NULL AND chat_current_is_member(id));
+  tenant_id IS NULL AND dm_current_read_allowed(id));
 
 -- chat_members
 ALTER TABLE chat_members ENABLE ROW LEVEL SECURITY;   ALTER TABLE chat_members FORCE ROW LEVEL SECURITY;
 CREATE POLICY chat_members_club ON chat_members USING (
-  tenant_id IS NOT NULL AND tenant_id = current_setting('app.tenant_id', true)::uuid);
+  tenant_id IS NOT NULL AND tenant_id = current_setting('app.tenant_id', true)::uuid
+  AND chat_current_is_member(channel_id));
 CREATE POLICY chat_members_dm ON chat_members USING (
-  tenant_id IS NULL AND chat_current_is_member(channel_id));
+  tenant_id IS NULL AND dm_current_read_allowed(channel_id));
 
 -- chat_messages: USING (đọc) + WITH CHECK (ghi) — author phải LÀ current person (chống mạo danh trong DM/club).
 ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;  ALTER TABLE chat_messages FORCE ROW LEVEL SECURITY;
@@ -258,16 +284,18 @@ ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;  ALTER TABLE chat_messages 
 --    (mạo danh trợ lý). Message assistant/system CHỈ được ghi qua đường SECURITY DEFINER của bot (P7), KHÔNG qua
 --    role app dưới RLS thường.
 CREATE POLICY chat_messages_club ON chat_messages
-  USING      (tenant_id IS NOT NULL AND tenant_id = current_setting('app.tenant_id', true)::uuid)
+  USING      (tenant_id IS NOT NULL AND tenant_id = current_setting('app.tenant_id', true)::uuid
+              AND chat_current_is_member(channel_id))
   WITH CHECK (tenant_id IS NOT NULL AND tenant_id = current_setting('app.tenant_id', true)::uuid
+              AND chat_current_is_member(channel_id)
               AND author_type = 'person' AND author_person_id = current_setting('app.person_id', true)::uuid);
 CREATE POLICY chat_messages_dm ON chat_messages
-  USING      (tenant_id IS NULL AND chat_current_is_member(channel_id))
-  WITH CHECK (tenant_id IS NULL AND chat_current_is_member(channel_id)
+  USING      (tenant_id IS NULL AND dm_current_read_allowed(channel_id))
+  WITH CHECK (tenant_id IS NULL AND dm_current_read_allowed(channel_id)
               AND author_type = 'person' AND author_person_id = current_setting('app.person_id', true)::uuid);
 ```
 
-**Bootstrap mutations qua SECURITY DEFINER (RLS chicken-and-egg):** dưới FORCE RLS, member đầu tiên của một DM chưa tồn tại → policy `chat_members_dm`/`chat_channels_dm` (yêu cầu đã là member) sẽ **chặn chính bước tạo**. Nên **mọi mutation channel/member đi qua SECURITY DEFINER RPC**, **OWNER = `chat_definer` (BYPASSRLS)** — chỉ khi owner có BYPASSRLS thì SECURITY DEFINER mới thực sự thoát FORCE RLS (SECURITY DEFINER *một mình* không bypass). RPC tự enforce authz trong code; RLS `USING` chỉ lo **đọc**. Quyền bảng được pin (revoke DML thẳng khỏi `app`, chỉ RPC + SELECT) để contract "mutation qua RPC" là **enforce**, không phải prose. Tin nhắn (`chat_messages`) vẫn ghi trực tiếp dưới RLS `WITH CHECK` (member đã tồn tại lúc gửi).
+**Mọi DM boundary phải enforce được ở DB/service choke-point.** `dm_current_read_allowed` là predicate thuần cho RLS GET/list/SSE filtering: membership + safety enabled + no block; unavailable/error state yields false or aborts the request, never grants access. Mutations đi qua SECURITY DEFINER RPC **OWNER = `chat_definer` (BYPASSRLS)**. `create_dm`, DM send và DM mark-read đều resolve peer rồi gọi canonical side-effecting `assert_dm_allowed(actor, peer, action)` trước read/reuse/write; primitive fail-closed nếu capability block/report/sender-target-limit/abuse-audit chưa enabled, consume đúng rate bucket và ghi bounded audit. Club send/read vẫn dùng tenant membership rules nhưng cũng qua shared send RPC. Runtime `app` không có direct INSERT vào `chat_messages`, nên không thể bypass block/rate/audit bằng DML.
 
 ```sql
 -- Tạo DM nguyên tử: caller (current person) phải là 1 trong 2; tạo channel + ĐÚNG 2 member trong 1 txn.
@@ -275,6 +303,7 @@ CREATE FUNCTION create_dm(p_other uuid) RETURNS uuid
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 DECLARE me uuid := current_setting('app.person_id', true)::uuid; a uuid; b uuid; k text; ch uuid; BEGIN
   IF me IS NULL OR p_other IS NULL OR me = p_other THEN RAISE EXCEPTION 'invalid DM participants'; END IF;
+  PERFORM assert_dm_allowed(me, p_other, 'create'); -- fail-closed enablement+block+rate+audit; before create/reuse
   a := least(me, p_other); b := greatest(me, p_other); k := a || ':' || b;
   INSERT INTO chat_channels(kind, dm_key) VALUES ('dm', k)
     ON CONFLICT (dm_key) DO NOTHING RETURNING id INTO ch;              -- idempotent
@@ -292,23 +321,110 @@ GRANT EXECUTE ON FUNCTION create_dm(uuid) TO app;
 --    Role tạo mới không có privilege mặc định (0000_roles_extensions.sql) → thiếu grant thì helper SELECT /
 --    create_dm INSERT sẽ 'permission denied'. Owner bảng (migration role) cấp:
 GRANT SELECT, INSERT, UPDATE, DELETE ON chat_channels, chat_members TO chat_definer;
-GRANT SELECT                         ON chat_messages              TO chat_definer;  -- (bot P7 dùng INSERT riêng)
+GRANT SELECT, INSERT                 ON chat_messages              TO chat_definer;
+-- Migration DD-55 phải GRANT tường minh các quyền tối thiểu mà `assert_dm_allowed` dùng trên
+-- canonical chat_blocks + rate/audit state; không dựa vào ownership ngầm hay PUBLIC.
+
+-- Gửi message qua MỘT choke-point. Khoá idempotency key trước safety side effects để hai retry đồng thời
+-- không double-consume rate bucket/audit. API không nhận author_type/author_person_id/membership_id.
+CREATE FUNCTION send_chat_message(p_channel uuid, p_client_msg_id text, p_body text)
+RETURNS chat_messages
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE
+  me uuid := current_setting('app.person_id', true)::uuid;
+  ch chat_channels%ROWTYPE;
+  peer uuid;
+  member_id uuid;
+  out_msg chat_messages%ROWTYPE;
+BEGIN
+  IF me IS NULL OR p_channel IS NULL OR p_client_msg_id IS NULL OR p_client_msg_id = '' THEN
+    RAISE EXCEPTION 'invalid chat send';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_channel::text || ':' || p_client_msg_id, 0));
+  SELECT * INTO ch FROM chat_channels WHERE id = p_channel FOR SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'chat forbidden'; END IF;
+
+  SELECT * INTO out_msg FROM chat_messages
+   WHERE channel_id = p_channel AND client_msg_id = p_client_msg_id;
+  IF FOUND THEN
+    IF out_msg.author_type <> 'person' OR out_msg.author_person_id IS DISTINCT FROM me THEN
+      RAISE EXCEPTION 'duplicate message key';
+    END IF;
+    IF ch.kind = 'dm' AND NOT dm_current_read_allowed(p_channel) THEN
+      RAISE EXCEPTION 'chat safety blocked';
+    ELSIF ch.kind = 'club' AND NOT chat_current_is_member(p_channel) THEN
+      RAISE EXCEPTION 'chat forbidden';
+    END IF;
+    RETURN out_msg;
+  END IF;
+
+  IF ch.kind = 'dm' THEN
+    SELECT other_member.person_id INTO peer
+      FROM chat_members self_member
+      JOIN chat_members other_member
+        ON other_member.channel_id = self_member.channel_id
+       AND other_member.person_id <> self_member.person_id
+     WHERE self_member.channel_id = p_channel AND self_member.person_id = me;
+    IF peer IS NULL THEN RAISE EXCEPTION 'chat forbidden'; END IF;
+    PERFORM assert_dm_allowed(me, peer, 'send');
+  ELSE
+    IF ch.tenant_id IS DISTINCT FROM current_setting('app.tenant_id', true)::uuid THEN
+      RAISE EXCEPTION 'chat forbidden';
+    END IF;
+    SELECT cm.membership_id INTO member_id
+      FROM chat_members cm JOIN memberships m ON m.id = cm.membership_id
+     WHERE cm.channel_id = p_channel AND cm.person_id = me AND m.status = 'active';
+    IF member_id IS NULL THEN RAISE EXCEPTION 'chat forbidden'; END IF;
+  END IF;
+
+  -- validate_chat_body/attachment ownership+ready-state chạy trong cùng command trước INSERT.
+  INSERT INTO chat_messages(channel_id, tenant_id, author_type, author_person_id,
+                            membership_id, body, client_msg_id)
+  VALUES (p_channel, ch.tenant_id, 'person', me, member_id, p_body, p_client_msg_id)
+  RETURNING * INTO out_msg;
+  -- Transactional NOTIFY is delivered only after COMMIT; payload is opaque message id, never body/object/PII.
+  PERFORM pg_notify('chat_' || p_channel::text, out_msg.id::text);
+  RETURN out_msg;
+END; $$;
+REVOKE ALL ON FUNCTION send_chat_message(uuid, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION send_chat_message(uuid, text, text) TO app;
 
 -- Cập nhật read-state: KHÔNG dùng GRANT UPDATE(last_read_at) trực tiếp — policy hiện tại cho member sửa
--- last_read_at của NGƯỜI KHÁC trong cùng DM/tenant. Dùng RPC khoá theo current person.
+-- last_read_at của NGƯỜI KHÁC trong cùng DM/tenant. Dùng RPC khoá theo current person; DM phải re-check
+-- canonical safety ngay tại consume boundary, club phải còn membership active.
 CREATE FUNCTION mark_read(p_channel uuid) RETURNS void
-  LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE me uuid := current_setting('app.person_id', true)::uuid; k text; peer uuid; changed int; BEGIN
+  SELECT kind INTO k FROM chat_channels WHERE id = p_channel;
+  IF me IS NULL OR k IS NULL THEN RAISE EXCEPTION 'chat forbidden'; END IF;
+  IF k = 'dm' THEN
+    SELECT other_member.person_id INTO peer
+      FROM chat_members self_member
+      JOIN chat_members other_member
+        ON other_member.channel_id = self_member.channel_id
+       AND other_member.person_id <> self_member.person_id
+     WHERE self_member.channel_id = p_channel AND self_member.person_id = me;
+    IF peer IS NULL THEN RAISE EXCEPTION 'chat forbidden'; END IF;
+    PERFORM assert_dm_allowed(me, peer, 'read');
+  ELSIF NOT chat_current_is_member(p_channel) THEN
+    RAISE EXCEPTION 'chat forbidden';
+  END IF;
   UPDATE chat_members SET last_read_at = now()
-   WHERE channel_id = p_channel AND person_id = current_setting('app.person_id', true)::uuid;
-$$;
+   WHERE channel_id = p_channel AND person_id = me;
+  GET DIAGNOSTICS changed = ROW_COUNT;
+  IF changed <> 1 THEN RAISE EXCEPTION 'chat forbidden'; END IF;
+END; $$;
 REVOKE ALL ON FUNCTION mark_read(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION mark_read(uuid) TO app;
 
--- BLOCK CHUYỂN OWNER (câu lệnh THẬT, đúng thứ tự): GRANT CREATE TRƯỚC ALTER đầu → 3 ALTER → REVOKE CREATE SAU ALTER cuối.
+-- BLOCK CHUYỂN OWNER (câu lệnh THẬT, đúng thứ tự): GRANT CREATE trước toàn bộ ALTER → REVOKE sau ALTER cuối.
 -- (Chạy bởi migration owner; owner phải sở hữu schema public để GRANT/REVOKE trên nó — nếu không, làm ở pre-provision superuser.)
 GRANT USAGE, CREATE ON SCHEMA public TO chat_definer;   -- PG16: owner mới cần CREATE trên schema mới nhận được ownership
 ALTER FUNCTION chat_current_is_member(uuid) OWNER TO chat_definer;
+ALTER FUNCTION dm_current_read_allowed(uuid) OWNER TO chat_definer;
+ALTER FUNCTION assert_dm_allowed(uuid, uuid, text) OWNER TO chat_definer;
 ALTER FUNCTION create_dm(uuid)              OWNER TO chat_definer;
+ALTER FUNCTION send_chat_message(uuid, text, text) OWNER TO chat_definer;
 ALTER FUNCTION mark_read(uuid)              OWNER TO chat_definer;
 REVOKE CREATE ON SCHEMA public FROM chat_definer;       -- giữ USAGE (runtime); bỏ CREATE (least-privilege)
 
@@ -316,12 +432,12 @@ REVOKE CREATE ON SCHEMA public FROM chat_definer;       -- giữ USAGE (runtime)
 -- Cấu trúc channel/member + read-state CHỈ đổi qua RPC (definer). App KHÔNG có UPDATE/DELETE trên chat_members.
 REVOKE INSERT, UPDATE, DELETE ON chat_channels, chat_members FROM app;
 GRANT  SELECT ON chat_channels, chat_members TO app;                  -- đọc; ghi/last_read qua RPC
--- Tin nhắn: app được SELECT + INSERT (dưới RLS WITH CHECK author = current person); KHÔNG UPDATE/DELETE (immutable phase-1).
-REVOKE UPDATE, DELETE ON chat_messages FROM app;
-GRANT  SELECT, INSERT ON chat_messages TO app;
+-- Tin nhắn: app chỉ SELECT; mọi send qua send_chat_message, KHÔNG direct INSERT/UPDATE/DELETE.
+REVOKE INSERT, UPDATE, DELETE ON chat_messages FROM app;
+GRANT  SELECT ON chat_messages TO app;
 ```
 
-> **Đóng các đường fail-open (review):** (1) `chat_bind_tenant` set/assert `tenant_id` = channel → club-child không thể NULL "giả DM" (FK MATCH SIMPLE không đủ); (2) deferred check trên **cả** `chat_channels` → DM 0-member vẫn bị bắt ở COMMIT; (3) `FOR UPDATE` khoá channel row → hai insert đồng thời không cùng thấy count=1; (4) helper chỉ đọc **current person** + `REVOKE PUBLIC`/`GRANT app` → không phải membership oracle; (5) `WITH CHECK author_type='person' AND author_person_id = app.person_id` (**cả club lẫn dm**) → không ghi message mạo danh, không tự tạo assistant/system message; (6) DB CHECK `assistant/system ⇒ author_person_id IS NULL`; (7) constraint trigger tách 2 function theo bảng (không tham chiếu cột chéo → không lỗi runtime); (8) `create_dm()` SECURITY DEFINER bootstrap DM (RLS không tự chặn bước tạo); (9) **definer functions OWNER = `chat_definer` (BYPASSRLS)** — SECURITY DEFINER một mình KHÔNG thoát FORCE RLS; (10) **`chat_definer` được GRANT table privileges** (BYPASSRLS bỏ qua policy nhưng KHÔNG thay grant bảng — thiếu grant → permission denied); (11) **pin quyền `app`** (revoke DML thẳng, chỉ RPC + SELECT + INSERT message) và **read-state qua `mark_read()` RPC** khoá theo current person (bỏ `GRANT UPDATE(last_read_at)` vốn cho sửa read-state của member khác).
+> **Đóng các đường fail-open (review):** (1) `chat_bind_tenant` set/assert `tenant_id` = channel → club-child không thể NULL "giả DM" (FK MATCH SIMPLE không đủ); (2) deferred check trên **cả** `chat_channels` → DM 0-member vẫn bị bắt ở COMMIT; (3) `FOR UPDATE` khoá channel row → hai insert đồng thời không cùng thấy count=1; (4) helper chỉ đọc **current person** + `REVOKE PUBLIC`/`GRANT app` → không phải membership oracle và club member `left` mất read/send; (5) `WITH CHECK author_type='person' AND author_person_id = app.person_id` (**cả club lẫn dm**) → defense-in-depth chống mạo danh; (6) DB CHECK `assistant/system ⇒ author_person_id IS NULL`; (7) constraint trigger tách 2 function theo bảng (không tham chiếu cột chéo → không lỗi runtime); (8) `create_dm()` SECURITY DEFINER bootstrap DM nhưng gọi `assert_dm_allowed` trước create/reuse, nên BYPASSRLS không thành safety bypass; (9) **toàn bộ definer functions OWNER = `chat_definer` (BYPASSRLS)**; (10) **`chat_definer` được GRANT đúng table privileges**, gồm canonical block/rate/audit rows; (11) **pin quyền `app`**: no direct DML, send qua `send_chat_message`, read-state qua guarded `mark_read()`.
 
 - `chat_channels(kind='club')`, club `chat_members`/`chat_messages(tenant_id NOT NULL)` = **tenant-private** (template `feature_multi_tenant_tech.md §3`), cô lập cross-tenant (NFR-S1).
 - `chat_channels(kind='dm')` + DM rows = **person-self**: chỉ 2 person ∈ `chat_members` đọc/ghi (policy (b) + DM 2-member guard ở trên). App phải set `app.person_id` cho đường person-self (giống `resolvePersonSelf`, identity §7).
@@ -357,7 +473,7 @@ GRANT  SELECT, INSERT ON chat_messages TO app;
 |--------|------|------|-------|
 | GET | /api/chat/channels | Authenticated Person | Kênh của tôi (club của các tenant tôi là member + DM) |
 | GET | /api/chat/channels/:id/messages | Member of channel | Lịch sử (phân trang, cursor) |
-| POST | /api/chat/channels/:id/messages | Member of channel | Gửi message `{client_msg_id, body}` (idempotent) |
+| POST | /api/chat/channels/:id/messages | Member of channel | Gọi `send_chat_message(channel, client_msg_id, body)`; API không nhận author fields, không INSERT trực tiếp |
 | POST | /api/chat/dm | Authenticated Person | Mở/lấy DM với `personId` (idempotent theo `dm_key`) |
 | POST | /api/chat/channels/:id/read | Member of channel | Cập nhật `last_read_at` |
 | POST | /api/chat/block | Authenticated Person | Block target deterministically; close future create/send in either direction per policy |
@@ -372,9 +488,12 @@ GRANT  SELECT, INSERT ON chat_messages TO app;
 ### Realtime Authorization (reuse DD-07 / sync engine §3)
 
 ```text
-Topic tenant:<id>:chat:<channel> → requires club membership (RLS tenant) + chat_members
-Topic person:<id>:chat          → requires authenticated person == <id> (person-self)
+Topic tenant:<id>:chat:<channel> → requires active club membership + chat_members
+Topic person:<id>:chat          → subscription requires authenticated person == <id>; every event reloads
+                                 its channel and requires dm_current_read_allowed(channel)
 ```
+
+SSE re-authorizes before every event and on a heartbeat no slower than 30 seconds. A block, membership `left`, disabled safety capability or auth-session revocation closes delivery immediately; topic possession alone never authorizes a DM payload.
 
 ### Error Codes
 
@@ -406,11 +525,13 @@ Topic person:<id>:chat          → requires authenticated person == <id> (perso
 ### Send pipeline
 
 ```text
-Resolve actor/channel → shared safety core (membership + block + sender + target/pair limits)
+API → send_chat_message(channel, client_msg_id, body) SECURITY DEFINER
+    → deterministic idempotency lock + existing-owned-message check
+    → resolve actor/channel → shared safety core (active membership OR DM block + sender + target/pair limits)
     → validate every attachment is actor-owned + channel-bound + ready
     → INSERT chat_messages (ON CONFLICT client_msg_id → return existing)
     → pg NOTIFY 'chat_<channel>' (payload = message id, không PII)
-    → SSE dispatcher đọc canonical message, đẩy tới subscribers authorized
+    → SSE dispatcher đọc canonical message, re-authorize current channel access, rồi mới đẩy
 ```
 
 Message body escape/sanitize. Media upload is private and separate from send: validate declared metadata → direct private upload → verify object metadata/content-derived MIME → scan/moderate → mark `ready`; pending/rejected/quarantined/deleted objects are never attached or served. Read access is short-lived and re-authorized on each request; deletion revokes future grants and leaves a message tombstone. Orphan pending objects expire through a cleanup job. NOTIFY payload **không** chứa body/object key/PII — subscriber refetch canonical dưới authz.
@@ -441,16 +562,16 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 | 12 | Left member loses club chat | Membership `left` → 403 |
 | 13 | **DM bootstrap** | `create_dm(other)` (RLS bật) → tạo channel + 2 member OK; gọi lại cùng cặp → cùng channel (idempotent). Input xấu `create_dm(self)`/`create_dm(NULL)` → reject (caller LUÔN là 1 trong 2 nên không test "ngoài cặp") |
 | 14 | **Shared-trigger execution** | INSERT `chat_channels(kind='dm')` không kèm 2 member trong txn → **FAIL ở COMMIT** (trigger `chat_channels` chạy, KHÔNG lỗi "field channel_id not found"); club channel/message không bị trigger DM đụng |
-| 15 | **Assistant/system spoof** | Role `app` (dưới RLS) INSERT message `author_type='assistant'`/`'system'` → **rejected** (WITH CHECK); chỉ đường SECURITY DEFINER của bot ghi được |
-| 16 | **Author spoof** | Member DM/club ghi message với `author_person_id` = người khác → rejected (WITH CHECK) |
+| 15 | **Assistant/system spoof** | Role `app` direct INSERT bất kỳ `chat_messages` → **permission denied**; user RPC không nhận `author_type`, chỉ bot SECURITY DEFINER riêng ở P7 mới ghi assistant/system |
+| 16 | **Author spoof** | Gọi user send API/RPC với payload cố chèn `author_person_id`/`membership_id`/`author_type` → field bị từ chối/không có trong signature; persisted author luôn là current person + membership server-resolved |
 | 17 | **Nullable-tenant giả DM** | Club message/member cố đặt `tenant_id=NULL` → `chat_bind_tenant` set lại = tenant channel (không lọt shape DM) |
 | 18 | **DM member immutable** | DELETE 1 member của DM → rejected; thêm người thứ 3 → rejected (insert guard + deferred) |
 | 19 | **create_dm dưới FORCE RLS (role `app` THẬT)** | `SET ROLE app` + set `app.person_id` → `create_dm(other)` **chạy OK** (definer OWNER BYPASSRLS + có table grant); tạo channel + 2 member. Input xấu: `create_dm(self)` hoặc `create_dm(NULL)` → reject `invalid DM participants` (caller LUÔN là 1 trong 2 nên không test "ngoài cặp") |
-| 20 | **Direct DML bị chặn (role `app`)** | `app` INSERT/UPDATE/DELETE **thẳng** `chat_channels`/`chat_members` → **permission denied** (đã revoke, gồm cả `UPDATE(last_read_at)`); chỉ `create_dm`/`mark_read`/RPC làm được. Read-state chỉ qua `mark_read(channel)` |
+| 20 | **Direct DML bị chặn (role `app`)** | `app` INSERT/UPDATE/DELETE **thẳng** `chat_channels`/`chat_members`/`chat_messages` → **permission denied**; chỉ `create_dm`/`send_chat_message`/`mark_read` và bot RPC hẹp làm được |
 | 21 | **Helper không đệ quy (role `app`)** | SELECT DM dưới RLS (policy gọi `chat_current_is_member`) → trả kết quả, **không** stack-overflow/recursion (helper OWNER BYPASSRLS đọc `chat_members` ngoài RLS) |
-| 22 | **Assistant/system direct insert (role `app`)** | `app` INSERT `chat_messages` `author_type='assistant'`/`'system'` → **rejected** (WITH CHECK); chỉ đường definer/bot ghi được |
+| 22 | **Bot writer tách biệt** | User role không EXECUTE bot writer; bot writer chỉ chấp nhận `bot_query_id` đã authorized và cố định `author_type='assistant'`, không cho caller chọn system/person |
 | 23 | **chat_definer thiếu grant** | Nếu quên `GRANT … TO chat_definer` → `create_dm`/helper báo **permission denied** (regression: BYPASSRLS không thay table privilege) |
-| 24 | **Read-state isolation** | `app` gọi `mark_read(channel)` → chỉ cập nhật `last_read_at` của **chính mình**; KHÔNG có đường sửa `last_read_at` của member khác (đã revoke `UPDATE ON chat_members` khỏi app) |
+| 24 | **Read-state isolation + safety** | `app` gọi `mark_read(channel)` → chỉ current person được update; DM blocked/safety-off và club membership `left` bị deny trước UPDATE; không có direct UPDATE grant |
 | 25 | **Provision bằng MIGRATION ROLE thật (không superuser)** | Chạy migration DDL dưới `DATABASE_URL_MIGRATION` (DDL-owner, NOSUPERUSER): (a) `CREATE ROLE … BYPASSRLS` do migration role → **FAIL** (PG16: cần superuser hoặc role có BYPASSRLS+CREATEROLE); (b) khi `chat_definer` đã pre-provision + `GRANT chat_definer TO migration_owner` → `CREATE FUNCTION` + `ALTER … OWNER TO chat_definer` + GRANT table **chạy OK**; (c) thiếu pre-provision → migration FAIL sớm. Test harness **không** được dùng superuser để "che" |
 | 26 | **ALTER OWNER thiếu CREATE ON SCHEMA (PG16)** | Fresh PG16 (public không cấp CREATE mặc định): `ALTER FUNCTION … OWNER TO chat_definer` khi chat_definer **chưa** có `CREATE ON SCHEMA public` → **FAIL**; sau `GRANT CREATE … TO chat_definer` → OK; `REVOKE CREATE` sau đó không phá runtime (chỉ cần USAGE) |
 | 27 | **Pre-provision idempotent + attribute check ĐỦ BỘ** | Re-run với chat_definer đúng exact attributes → **no-op**; `CREATE ROLE` thuần (không guard) → FAIL "already exists". **chat_definer tồn tại với BẤT KỲ attribute thừa** — `LOGIN`, `NOBYPASSRLS`, `SUPERUSER`, `CREATEDB`, `CREATEROLE`, **`INHERIT`**, hoặc **`REPLICATION`** → DO-block **RAISE fail-closed**, KHÔNG cấp table grants. Từng attribute phải có case riêng (regression: thiếu kiểm `rolinherit`/`rolreplication` → role privilege thừa vẫn lọt validation) |
@@ -463,6 +584,15 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 | 34 | **Signed read re-authz** | Member gets old URL then leaves channel/object is deleted | New access denied; short-lived old grant expires; tombstone remains |
 | 35 | **Media scan idempotency + orphan cleanup** | Finalize retry + abandoned upload | One scan lifecycle; stale orphan deleted after TTL |
 | 36 | **Media deletion lifecycle** | Delete attached media | Object unavailable, future grants denied, message renders tombstone, audit retained |
+| 37 | **DM bootstrap safety parity** | Block A↔B, disable từng safety capability, hoặc vượt create target-rate rồi gọi `create_dm` trực tiếp dưới real `app` role | Generic denial before INSERT/reuse; no channel/member mutation; bounded audit, no block-detail leak |
+| 38 | **Existing DM reuse safety** | DM đã tồn tại rồi A blocks B; B gọi `create_dm(A)` | `assert_dm_allowed` denies before returning existing channel; reuse cannot bypass block |
+| 39 | **Direct-send bypass closure** | `SET ROLE app; INSERT INTO chat_messages ...` cho club/DM | Permission denied; block/rate/audit không thể bị né bằng raw DML |
+| 40 | **Blocked DM read/mark-read** | A/B đã có DM, sau đó một bên block; GET list/history và `mark_read` | Zero rows/generic denial; `last_read_at` không đổi |
+| 41 | **Blocked DM realtime** | Block xảy ra khi SSE đang mở | Re-auth ở event/heartbeat kế tiếp đóng stream; không phát message mới hoặc body qua stale subscription |
+| 42 | **Club membership lifecycle** | Club member chuyển `active → left` trong lúc list/SSE/send | RLS read về zero, send/mark-read deny, SSE đóng; quay lại active thì quyền được tính từ membership hiện hành |
+| 43 | **Concurrent send retry** | Hai transaction cùng `(channel_id, client_msg_id)` | Idempotency advisory lock serialize; đúng 1 message và rate/audit side effect không bị double-consume |
+| 44 | **Transactional realtime signal** | First send commits, duplicate retries, and injected rollback after INSERT | Successful first commit emits exactly one `chat_<channel>` notification containing message ID only; duplicate retry emits none; rollback delivers none |
+| 45 | **Composite parent key tồn tại thật** | Chạy migration chat trên schema hiện tại sau `0013`; query `pg_constraint`, rồi thử club member/message đúng và sai `(membership_id, person_id, tenant_id)` | Có `memberships_id_person_tenant_uq` trước khi tạo FK; tuple đúng insert được, đổi person hoặc tenant bị FK reject; migration không lỗi “there is no unique constraint matching given keys” |
 
 ---
 
@@ -471,9 +601,9 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 ### Rollout (khi DD-38 ✅)
 
 0. **PRE-PROVISION (tier superuser, production-equivalent, TRƯỚC migration):** idempotent DO-block `CREATE ROLE chat_definer NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION` + **kiểm exact attributes** (login/super/bypassrls/createdb/createrole/inherit/replication) → fail-closed nếu role đã tồn tại sai (BYPASSRLS: **superuser** hoặc role đã có BYPASSRLS + CREATEROLE — PG16) + `GRANT chat_definer TO <migration_owner_role>` (SET ROLE) + `GRANT USAGE ON SCHEMA public TO chat_definer` (runtime). **KHÔNG** đặt trong migration DDL-owner.
-1. **Migration mới sau `0013`** (`0014+`) tạo `chat_*` + functions (`chat_current_is_member`/`create_dm`/`mark_read`); **`GRANT CREATE ON SCHEMA public TO chat_definer`** (PG16: owner mới cần CREATE trên schema; fresh PG15+ không cấp mặc định) → `ALTER … OWNER TO chat_definer` (cả 3) → **`REVOKE CREATE ON SCHEMA public FROM chat_definer`** (giữ USAGE); + GRANT table (chat_definer + app) + thêm vào RLS list (KHÔNG sửa `0009`). **Chạy/kiểm bằng migration role thật (không superuser)** để bắt gap provision. Test bất biến cô lập xanh.
+1. **Migration mới sau `0013`** (`0014+`) trước hết tạo candidate key thực thi `memberships_id_person_tenant_uq UNIQUE(id, person_id, tenant_id)`, sau đó mới tạo `chat_*` và các FK ba cột; tiếp theo tạo **safety schema trước** (`chat_blocks`, `chat_reports`, rate/audit state), rồi canonical `assert_dm_allowed`; chỉ sau đó mới tạo functions phụ thuộc (`chat_current_is_member`/`dm_current_read_allowed`/`create_dm`/`send_chat_message`/`mark_read`). **`GRANT CREATE ON SCHEMA public TO chat_definer`** (PG16: owner mới cần CREATE trên schema; fresh PG15+ không cấp mặc định) → `ALTER … OWNER TO chat_definer` cho toàn bộ definer functions → **`REVOKE CREATE ON SCHEMA public FROM chat_definer`** (giữ USAGE); + least-privilege GRANT tables (chat_definer + app) + thêm tenant tables vào RLS list (KHÔNG sửa `0009`). **Chạy/kiểm bằng migration role thật (không superuser)** để bắt gap provision. Migration fail nếu candidate key/safety primitive thiếu; no DM function lands before dependencies. Test bất biến cô lập xanh.
 2. Club channel (1 kênh/tenant) — send/read + SSE.
-3. Land one shared pre-send safety core + block/report tables/audit + sender/pair throttles; verify host/support DM denial.
+3. Wire mọi request/create/send/read path vào safety core đã land ở migration, verify sender/pair throttles + audit + host/support DM denial; DM vẫn OFF nếu một capability chưa xanh.
 4. Land private media lifecycle (storage grants, scan/moderation worker, ready-only attach, signed read, delete/orphan cleanup).
 5. Enable DM 1-1 only after the complete DD-55 safety gate passes; otherwise keep DM OFF.
 6. (P7) Trợ lý bot-participant tái dùng `chat_*` (DD-19/20).
@@ -482,6 +612,9 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v0.14 | **Executable parent-key closure:** migration chat nay bắt buộc chạy `ALTER TABLE memberships ADD CONSTRAINT memberships_id_person_tenant_uq UNIQUE(id, person_id, tenant_id)` trước khi tạo `chat_members/messages`; thêm schema-parity và cross-person/cross-tenant FK regression để các composite FK không còn trỏ tới một candidate key chỉ tồn tại trong comment. |
+| 2026-07-17 | v0.13 | **DD-55 enforceability closure:** pure read predicate gates DM RLS/list/SSE; guarded `send_chat_message` and `mark_read` resolve current membership/peer and call canonical safety core; runtime `app` loses direct message INSERT; all definer ownership/grants and blocked-read/realtime/concurrent-idempotency tests pinned. Club `left` is denied at RLS/RPC boundaries. |
+| 2026-07-17 | v0.12 | **DD-55 bootstrap closure:** `create_dm` calls canonical fail-closed `assert_dm_allowed` before create/reuse; pins direct-RPC parity and existing-DM reuse tests. |
 | 2026-07-10 | v0.1 | Draft khởi tạo (DD-38 🟡): schema đề xuất `chat_channels/messages/members`, RLS tenant cho club + person-self cho DM, SSE reuse DD-07, idempotency `client_msg_id`, anti-spam; note trợ lý DD-19/20 tái dùng ở P7; không bridge kênh ngoài (CO-7). |
 | 2026-07-10 | v0.2 | **DD-38 ✅ + hard-constraint (review fix):** DM guard nay là **DDL thật** — DEFERRABLE constraint trigger đảm bảo trạng thái cuối = ĐÚNG 2 member khớp `dm_key` (không chỉ chặn insert thứ 3), delete guard (member bất biến, soft-close qua `archived_at`). Bind cứng bằng composite FK: `message/member.tenant_id` = tenant channel `(channel_id,tenant_id)→chat_channels(id,tenant_id)`, và author/member membership khớp `(membership_id,person_id,tenant_id)→memberships`. RLS child (`chat_members`/`chat_messages`) policy TƯỜNG MINH + helper SECURITY DEFINER (chống đệ quy RLS). |
 | 2026-07-10 | v0.3 | **Đóng 5 đường fail-open (review):** (1) trigger `chat_bind_tenant` set/assert `tenant_id := channel.tenant_id` (`IS NOT DISTINCT FROM`) — club-child không thể NULL "giả DM" (FK MATCH SIMPLE không đủ); (2) deferred exactly-2 gắn trên **cả `chat_channels`** — DM 0-member cũng bị bắt ở COMMIT; (3) `SELECT … FOR UPDATE` khoá channel row trong insert guard — chống race 2 txn cùng thấy count=1; (4) helper đổi thành `chat_current_is_member(channel)` chỉ dùng **current person** + `REVOKE PUBLIC` / `GRANT app` — không còn membership oracle; (5) policy `chat_messages` thêm `WITH CHECK author_person_id = app.person_id` — chống ghi message mạo danh. |

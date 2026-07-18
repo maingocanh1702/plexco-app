@@ -8,12 +8,12 @@
 | | |
 |---|---|
 | **Sản phẩm** | **Plexco CRM & Operations Dashboard** — dashboard nội bộ cho Platform Owner/CS/Ops theo dõi user, host, player, session, marketplace, payment, billing, trust, security và vận hành hệ thống |
-| **Phiên bản** | v1.4 — thêm CRM-OQ-7 PII collection config (DD-54); trước đó v1.3 **v3.4 channel pivot**: kênh Telegram→Zalo/Facebook Messenger, thêm Google login/chat/giá theo giới tính (DD-37/13/33/38/39/40) |
-| **Ngày** | 16/07/2026 |
+| **Phiên bản** | v1.11 — refresh authority refs theo founder batch 18/07 (decisions v1.47); v1.10 final feature-index integrity closure; v1.4 thêm CRM-OQ-7 PII collection config (DD-54); trước đó v1.3 **v3.4 channel pivot** |
+| **Ngày** | 18/07/2026 |
 | **Người soạn** | Codex |
 | **Người duyệt** | Ngoc-Anh |
 | **Trạng thái** | Draft để review |
-| **Tài liệu liên quan** | `BRD.md` v3.7 · `PRD.md` v2.5 · `ROADMAP.md` v2.9 · `../features/README.md` v2.13 · `../strategy/gtm-strategy.md` · `../standards/business-rules.md` v1.8 · `../standards/decisions.md` v1.40 |
+| **Tài liệu liên quan** | `BRD.md` v3.9d · `PRD.md` v2.8b · `TDD.md` v3.1 · `ROADMAP.md` v3.3b · `../features/README.md` v2.23 · `../strategy/gtm-strategy.md` · `../standards/business-rules.md` v1.16 · `../standards/decisions.md` v1.47 |
 | **Nguồn tham khảo bên ngoài** | Mixpanel — "25+ ecommerce product metrics to track today" (Jun 2, 2026): https://mixpanel.com/blog/ecommerce-product-metrics/ |
 
 > Tài liệu này mô tả dashboard **nội bộ** để quản lý Plexco như một business/platform. Nó không thay thế host dashboard (`/dashboard`) của tenant, player view (`/me`) hoặc marketplace (`/discover`). Khi conflict: core BRD/PRD/business-rules thắng về scope, quyền dữ liệu và security.
@@ -870,6 +870,13 @@ Audit is required for:
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-18 | v1.11 | Refresh authority refs theo founder batch 18/07: BRD v3.9d · PRD v2.8b · ROADMAP v3.3b · feature index v2.23 · business rules v1.16 · decisions v1.47 (DD-33 ✅ · DD-60 ✅ · DD-61..64 accept-in-principle · DD-69 direction ✅). No CRM scope change. |
+| 2026-07-17 | v1.10 | Refresh feature index reference to v2.22 after final integrity/Assistant readiness closure; no CRM scope change. |
+| 2026-07-17 | v1.9 | Refresh feature index reference to v2.20 after deep feature-contract closure; no CRM scope change. |
+| 2026-07-17 | v1.8 | Refresh current references to BRD v3.9b, PRD v2.8, TDD v3.1, ROADMAP v3.3, feature index v2.19, business rules v1.14 and decisions v1.45; no CRM scope change. |
+| 2026-07-17 | v1.7 | Refresh current references to TDD v3.0, feature index v2.18, business rules v1.13 and decisions v1.45; no CRM scope change. |
+| 2026-07-17 | v1.6 | Close current reference drift: BRD v3.9a, feature index v2.17, PRD v2.7, ROADMAP v3.2, business rules v1.12 and decisions v1.44; no CRM scope change. |
+| 2026-07-17 | v1.5 | Refresh current authority references to BRD v3.9, PRD v2.7, ROADMAP v3.2, feature index v2.15, business rules v1.12 and decisions v1.44; no CRM scope change. |
 | 2026-06-21 | v1.0 | Initial CRM & Operations Dashboard BRD based on Plexco BRD/PRD/feature specs/GTM and Mixpanel ecommerce metric framework. |
 | 2026-06-21 | v1.1 | Chốt định nghĩa Active user theo role (§4.3, resolve CRM-OQ-1); thêm project success metrics có target (§4.4); thêm section Assumptions/Dependencies/Risks (§17). |
 | 2026-06-21 | v1.2 | Fix timezone/calendar reference bằng §9.4; tách `Engaged player` và `Participating player`; đồng bộ Active users ở Module 2/metric dictionary; thêm `reminder_response` event. |

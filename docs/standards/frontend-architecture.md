@@ -1,10 +1,12 @@
 # Frontend Architecture Principles — Plexco Web
 
-> **Status:** 🟡 Proposal (chờ owner review) · **Version:** 0.1 · 2026-07-16
+> **Status:** 🟡 Deferred proposal (owner 2026-07-18) · **Version:** 0.4 · 2026-07-18
 > **Nguồn:** ported từ Sporta `architecture/frontend_architecture_flutter.md` — adapt sang stack Plexco (Next.js App Router + React, CSS-variable tokens, **không Tailwind**).
 > **Decision:** `decisions.md` DD-57 (🟡).
 > **Áp dụng cho:** `apps/web` (Next.js 15 App Router · React 19 · SSE).
 > **Đây là counterpart FE của** `core-db-architecture-principles.md` (BE). Không override HARD RULES ở `00-start-here/HANDOFF.md §3`.
+>
+> **Inactive contract:** DD-57 đã được owner defer. Mọi `PHẢI`/checklist bên dưới mô tả hướng đề xuất để tham khảo; **không gate build hoặc review hiện tại** cho tới khi DD-57 được reopen và chốt. HARD RULES đã accepted ở HANDOFF vẫn áp dụng độc lập.
 
 Tài liệu này định nghĩa **cách cấu trúc code FE** — không phải design tokens (xem `design-tokens.md`) và không phải screen spec (xem `../features/feature_*.md` §Screens & States + `../channels/web/design-brief.md`).
 
@@ -19,7 +21,7 @@ Tài liệu này định nghĩa **cách cấu trúc code FE** — không phải 
 | **FE-INV-3** | **UI không tự gọi DB/tenantRepo** — client component gọi API route (`app/api/*`); mọi mutation tiền/roster đi qua service → `tenantRepo` (RLS choke-point, HARD RULE 1). | Không rò rỉ cross-tenant từ FE. |
 | **FE-INV-4** | **i18n bắt buộc** — mọi chuỗi user-facing = `t(vi, en)` (HARD RULE 5). Không hardcode 1 thứ tiếng trong JSX. | Song ngữ vi/en. |
 | **FE-INV-5** | **Không tiền/PII vào client bundle hoặc public route** — discovery UI đọc `public_sessions` (field-whitelist, HARD RULE 2). Roster/nợ/SĐT/email chỉ trong route đã auth + RLS. | Bất biến rò rỉ. |
-| **FE-INV-6** | **API envelope chuẩn** — client parse `{ error, message, code }` (xem `apps/web/lib/api-envelope.ts`); không đọc raw exception. | Error model thống nhất FE↔BE. |
+| **FE-INV-6** | **API envelope chuẩn** — client parse `{ data, error, meta.requestId }`; khi lỗi đọc `error.{code,message,statusCode}` (xem `apps/web/lib/api-envelope.ts`), không đọc raw exception. | Error model thống nhất FE↔BE. |
 
 > Test/lint bắt buộc: không có hex/rgba literal trong `styles/components/*` (ngoài `:root`); mọi chuỗi hiển thị qua `t()`.
 
@@ -70,7 +72,7 @@ apps/web/
 
 ```
 Client Component
-  → fetch('/api/<resource>')            (envelope { data } | { error,message,code })
+  → fetch('/api/<resource>')            (envelope { data,error,meta.requestId })
     → Route Handler (app/api/*)          validate input + auth + SET LOCAL tenant
       → Service (packages/core / apps/web service)
         → tenantRepo(tenantId)           RLS choke-point (HARD RULE 1)
@@ -98,7 +100,7 @@ type ScreenState<T> =
 ## 6. Error model
 
 - Mọi lỗi API map về sealed `AppError`: `network | unauthorized | forbidden | notFound | validation | server | unknown`.
-- Nguồn: parse envelope `{ error:true, message, code }` (`lib/api-envelope.ts`) → `AppError`. **Không** ném raw `Error`/HTTP status lên UI.
+- Nguồn: parse canonical envelope `{ data:null, error:{code,message,statusCode}, meta:{requestId} }` (`lib/api-envelope.ts`) → `AppError`. **Không** ném raw `Error`/HTTP status lên UI.
 - `code` map sang message i18n `t(vi,en)`; không hiển thị `code` thô cho user.
 
 ## 7. Realtime (SSE — DD-07)
@@ -124,7 +126,7 @@ Trước khi code 1 màn mới, phải có đủ:
 - [ ] Đủ 4 state loading/ready/empty/error (FE-INV-1); empty có icon+message+CTA; error có retry.
 - [ ] Mọi chuỗi qua `t(vi,en)` (FE-INV-4).
 - [ ] Không tiền/PII trong discovery/public route (FE-INV-5).
-- [ ] Parse envelope `{ error,message,code }` (FE-INV-6), không raw exception.
+- [ ] Parse envelope `{ data, error, meta.requestId }` và `error.{code,message,statusCode}` (FE-INV-6), không raw exception.
 - [ ] Touch target ≥ 44px (xem `design-brief.md §8`).
 - [ ] `pnpm --filter @plexco/web typecheck` + `test` xanh.
 - [ ] Component mang comment `// Source: <screen>-token-mapping.md §X` (xem pipeline).
@@ -140,5 +142,7 @@ Trước khi code 1 màn mới, phải có đủ:
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 18/07/2026 | 0.4 | Owner defer DD-57; đánh dấu toàn bộ FE-INV/checklist là reference proposal, không active delivery gate. |
+| 17/07/2026 | 0.3 | Reconcile FE-INV-6, data flow, error model và checklist với live canonical API envelope. |
 | 17/07/2026 | 0.2 | Reconcile DD-58 v1.40: visual source có thể là `.pen` track hoặc Figma link; không claim asset cũ không tồn tại. |
 | 16/07/2026 | 0.1 | 🟡 Proposal đầu tiên — ported từ Sporta FE architecture; adapt Next.js/React + CSS-var tokens. DD-57. |

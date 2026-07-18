@@ -8,12 +8,12 @@
 | | |
 |---|---|
 | **Sản phẩm** | **Plexco** — platform quản lý hoạt động thể thao cho **host** và khám phá/tham gia kèo cho **player**, đa môn (cầu lông, pickleball, tennis, bóng đá…), hoạt động ngay trong Zalo/Facebook Messenger + web app đồng bộ |
-| **Phiên bản** | v3.7 — **DD-49..56 (16/07), full contract closure ở decisions v1.37; current authority v1.39:** OD-1 🔄 DD-50 (không thu SĐT), FR-9.1 + DD-51, OD-17. Trước đó: **v3.4** phase-1 pivot kênh; **v3.5** reconcile §16; **v3.6** OD-4 → ✅ DD-04 (c) DO co-locate |
-| **Ngày** | 15/07/2026 |
+| **Phiên bản** | v3.9d — **Founder batch (18/07):** DD-69 **định hướng app-first accepted** (phase-1 target web PWA → phase-2 native; native build TBD, technical gates mở); DD-33 Facebook Login phase-1 ✅; DD-61..64 Session Organize accept-in-principle (post-P4). Phase-1 committed scope không đổi. (v3.9c: DD-69 proposal review closure.) |
+| **Ngày** | 18/07/2026 |
 | **Người soạn** | Ngoc-Anh |
 | **Người duyệt (approvers)** | Ngoc-Anh (solo founder, self-approved) |
 | **Trạng thái** | Draft để review |
-| **Tài liệu liên quan** | `../strategy/saas-implementation-plan.md` (kiến trúc) · `PRD.md` (user flows) · `TDD.md` (thiết kế kỹ thuật) · `../standards/decisions.md` **v1.39** (canonical decisions; DD-57..60 proposal) · `../research/player-side-saas-reconciliation.md` (historical input) · `../research/player-side-saas-AUDIT.md` (bảo mật + threat model discovery) · `../channels/messenger/messenger-channel-design.md` |
+| **Tài liệu liên quan** | `../strategy/saas-implementation-plan.md` (kiến trúc) · `PRD.md` v2.8b · `TDD.md` v3.1 · `../standards/decisions.md` **v1.47** (canonical; DD-69 direction ✅ + DD-61..64 accept-in-principle post-P4 + DD-33/60 ✅; DD-57..59 defer; DD-65..68 ✅) · `../dd-69-app-native-analysis.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` |
 
 > BRD là nguồn sự thật cho **product scope & business rules**; PRD cho hành vi/user flow; TDD cho implementation contract; ROADMAP cho thứ tự và tiến độ. Security constraints đã chốt trong AUDIT là bắt buộc. Khi có conflict cùng một chủ đề: **BRD → PRD → TDD → ROADMAP**; riêng security: quy tắc nghiêm ngặt hơn giữa BRD và AUDIT thắng.
 >
@@ -117,10 +117,10 @@ Một platform **2 phía** + **đa kênh** + **đa môn**:
 ## 5. Phạm vi (Scope)
 
 ### 5.1 Trong phạm vi (MVP — đa môn + web sync + discovery + chat)
-**Đa môn** (sport là một chiều dữ liệu) · **đăng nhập bằng Google + tài khoản web (email)** · onboarding host self-serve (nối SePay/ApiPay, **link Zalo (dán Bot Token)**, **link Facebook Messenger (FB Login + chọn Page)**) · quản lý kèo (host) trên cả chat lẫn web · **giá theo giới tính** (giá nam/nữ tùy chọn) · **publish kèo công khai** + **marketplace discovery** (lọc môn/khu vực/giờ/trình độ/giá) · **player join cross-club** (open / approval theo cấu hình kèo) · player join/leave member · **đánh dấu đã trả thủ công (tiền mặt/CK) qua tap/multi-select** + **đối soát CK tự động** (`host_pro`) + `/unmatched` gán tay · **nhắc & xác nhận tự động** (web + Zalo; Messenger best-effort trong 24h) · **định danh xuyên kênh** (global Person) + **link tài khoản Facebook/Zalo** + merge an toàn · **player view** (clubs/nợ/kèo của tôi) · **chat cơ bản trong app** (toàn CLB + riêng 1-1, chỉ trong Plexco) · **cài đặt hồ sơ người dùng** (giới tính, ngày sinh, tên, username, ngôn ngữ) · **PostgreSQL/domain model là canonical store + sync engine** (Zalo/Messenger/web) · billing thuê bao host + vòng đời tenant · **multi-tenant isolation 3 tầng**.
+**Đa môn** · Google/email · onboarding host self-serve (SePay/ApiPay, Zalo, **Messenger central có sẵn + optional link Page riêng**) · host quản lý kèo trên chat/web · giá theo giới tính · marketplace/cross-club join · mark-paid + auto reconcile · nhắc/xác nhận · global Person/link account · player view · chat in-app · profile · canonical PostgreSQL/domain services + sync · billing · multi-tenant isolation. Messenger central/tenant Page đều phục vụ host+player; Page riêng không phải prerequisite.
 
 ### 5.2 Ngoài phạm vi
-Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt sân/quản lý lịch sân (booking nhà thi đấu) · app mobile native · BI nâng cao · **Telegram và các nền tảng chat ngoài Zalo/Messenger** · **bridge/đồng bộ chat in-app ra group Zalo/Messenger** (chat in-app chỉ sống trong Plexco ở phase-1) · matchmaking xếp cặp theo trình độ tự động (discovery là *tìm kèo*, không phải xếp đối thủ) — để ngỏ tương lai.
+Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt sân/quản lý lịch sân (booking nhà thi đấu) · **app mobile native trong phase-1** (phase-1 target = web app PWA installable/offline; S9/S20 còn là delivery plan, không phải runtime evidence; native là đích **phase-2** — DD-69/OD-20 direction ✅ accepted, native build TBD) · BI nâng cao · **Telegram và các nền tảng chat ngoài Zalo/Messenger** · **bridge/đồng bộ chat in-app ra group Zalo/Messenger** (chat in-app chỉ sống trong Plexco ở phase-1) · matchmaking xếp cặp theo trình độ tự động (discovery là *tìm kèo*, không phải xếp đối thủ) — để ngỏ tương lai.
 
 ---
 
@@ -130,7 +130,7 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 |---|---|
 | **BR-1** | Nhiều host/CLB dùng chung nhưng **dữ liệu tiền/roster/chat cô lập tuyệt đối**. |
 | **BR-2** | Hỗ trợ **nhiều môn thể thao**; mỗi kèo gắn 1 môn; discovery lọc theo môn. |
-| **BR-3** | Host **tự onboarding** SePay + **Zalo + Facebook Messenger** không cần can thiệp kỹ thuật (Telegram không còn trong phạm vi). |
+| **BR-3** | Host tự onboarding SePay + Zalo; Messenger central dùng ngay, Page riêng là optional self-serve integration, không cần platform can thiệp. |
 | **BR-4** | Host **publish kèo công khai** (chọn từng kèo) → lên **marketplace**; thông tin public KHÔNG gồm tiền/PII/roster đầy đủ. |
 | **BR-5** | Player **khám phá kèo** xuyên CLB/môn theo bộ lọc; **join** kèo (kể cả CLB chưa tham gia), open hoặc cần host duyệt theo cấu hình. |
 | **BR-6** | **PostgreSQL + domain model là nguồn sự thật (canonical)**; web và các kênh là surface. Một hành động ở một surface → ghi canonical → project sang web + kênh liên quan. |
@@ -140,11 +140,12 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 | **BR-10** | Người chơi xem được **CLB, kèo & nợ của chính mình** xuyên CLB, không thấy của người khác. |
 | **BR-11** | Host trả **thuê bao**; quá hạn **tạm ngừng lệnh quản trị** nhưng **vẫn lưu CK player** & vẫn hiển thị kèo đã publish. |
 | **BR-12** | Thao tác chạm tiền/định danh phải **an toàn, có quyền, có audit**; **tiền/PII không bao giờ lọt ra public layer**. |
-| **BR-13** | CLB **tự mang** tài khoản nhận tiền & bot/kênh (Zalo Bot Token, Facebook Page); platform **không trung gian dòng tiền**. |
-| **BR-14** | **Đăng ký/đăng nhập bằng Google** (OAuth) hoặc tài khoản web (email); **link tài khoản Facebook & Zalo** vào cùng một Person để nhận diện xuyên kênh. |
+| **BR-13** | CLB tự mang tài khoản nhận tiền + Zalo bot; Facebook Page riêng là optional. Plexco sở hữu central Page/App nhưng không trung gian dòng tiền. |
+| **BR-14** | Đăng ký/đăng nhập bằng **Google**, **email/password**, hoặc **Facebook khi external enablement gate active**; Facebook Login subject không auto-link Messenger PSID. Zalo Login vẫn gated riêng. |
 | **BR-15** | **Chat cơ bản trong app**: chat **toàn CLB** (member trong tenant) và chat **riêng 1-1** (person ↔ person); chỉ sống trong Plexco, **không bridge** ra group Zalo/Messenger ở phase-1; tôn trọng cô lập tenant + person-self. |
 | **BR-16** | Người dùng **cài đặt hồ sơ**: giới tính, ngày sinh, tên, username, ngôn ngữ. **Host có thể đặt giá theo giới tính** (giá nam/nữ khác nhau) cho kèo; hệ suy giá đúng cho từng member theo giới tính đã set. |
-| **BR-17** | Player **join kèo qua Zalo bot hoặc Facebook Messenger bot** của nhóm sau khi đã link; hành động join tự **sync lên web app** (add đúng vào session tương ứng). |
+| **BR-17** | Player join qua Zalo hoặc Messenger central/club Page; protected target resolver bảo đảm đúng session/tenant và sync web. |
+| **BR-18** | Host tạo/quản lý session cơ bản trên **cả central Plexco Page và optional club Page**; role-aware context + capability check; cùng domain service với web/Zalo. |
 
 ---
 
@@ -156,25 +157,26 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 - **FR-0.3** **Person-self**: query xuyên CLB scoped theo person đã xác thực.
 
 ### MODULE 1 — Onboarding & Tenant (host)
-- **FR-1.1** Đăng ký/đăng nhập host qua web bằng **Google Login (OAuth)** hoặc **tài khoản web (email + mật khẩu)**.
+- **FR-1.1** Đăng ký/đăng nhập host qua web bằng **Google Login**, **email + mật khẩu**, hoặc **Facebook Login** khi DD-33 external evidence active; chưa pass thì capability OFF + transactional one-time `link_code` fallback.
 - **FR-1.2** Wizard nối SePay/ApiPay (token + secret webhook).
-- **FR-1.3** **Link Zalo** (dán Bot Token) + **Link Facebook Messenger** (FB Login + chọn Page + hoàn tất App Review của platform). Cả hai kênh đều thuộc phase-1. *(Telegram: đã loại.)*
+- **FR-1.3** Link Zalo. Messenger central Page thuộc platform và luôn sẵn; FB Login + chọn Page riêng là optional tenant onboarding. App Review của platform vẫn bắt buộc.
 - **FR-1.4** Cấu hình CLB: **môn mặc định**, ngôn ngữ, **giá mặc định + tùy chọn giá theo giới tính (nam/nữ)**, roster on/off, auto-announce, **chính sách publish & join** (open/approval).
 
 ### MODULE 2 — Quản lý kèo (Host) — chat **và** web
 - **FR-2.1** Tạo kèo (web / bot / định kỳ); set **môn**, ngày/giờ, **khu vực/venue**, **giá** (một mức, hoặc **giá nam / giá nữ** riêng), **slot tối đa**, **trình độ**, **visibility (private/public)**, **join policy**.
 - **FR-2.2** Đăng kèo + đường tham gia vào group (auto/thủ công); cập nhật roster trực tiếp; **mọi thay đổi sync sang web + marketplace + kênh (Zalo/Messenger)**.
 - **FR-2.3** Đóng kèo; xem danh sách & trạng thái trả; dashboard club (lịch, doanh thu, ai hay đi) trên web.
+- **FR-2.4** Messenger `/newsession` trên central/tenant Page dùng role-aware picker + durable wizard + preview/confirm; final command re-authorize và idempotent qua shared SessionService.
 
 ### MODULE 3 — Discovery & Join (Player) — **marketplace**
 - **FR-3.1** **Tìm kèo** trên web/bot: lọc **môn, khu vực, ngày/giờ, trình độ, giá, còn slot**; xếp theo gần/sắp diễn ra.
 - **FR-3.2** Xem chi tiết kèo công khai (KHÔNG roster đầy đủ/tiền người khác); **join** → nếu CLB chưa tham gia thì tạo membership (guest) + (nếu cấu hình) **gửi request host duyệt**.
-- **FR-3.3** Join member quen thuộc: **Zalo `/join` + số** (DM number-reply); **Messenger quick-reply / persistent menu**; web 1-click. *(Không còn Telegram tap-nút.)*
-- **FR-3.4** Routing đúng CLB suy **từ kênh** (bot Zalo / Facebook Page / deep-link), không từ nội dung.
+- **FR-3.3** Join member: Zalo number-reply; Messenger central/global hoặc tenant/local-default quick-reply; web 1-click. Messenger choices dùng opaque server action, bounded pagination.
+- **FR-3.4** Zalo/web trusted context và Messenger endpoint+protected action/picker resolve đúng target; không lấy tenant/resource từ message/client body.
 
 ### MODULE 4 — Sync Engine (web ⇄ kênh)
 - **FR-4.1** PostgreSQL + domain model = **canonical store**; mỗi action (mọi surface) → command → áp vào store → phát **domain event**.
-- **FR-4.2** Event **fan-out projection** ra surfaces phase-1: **DM/message Zalo**, **message Messenger (trong cửa sổ 24h)**, push web realtime, cập nhật public projection. **Idempotent**, không double.
+- **FR-4.2** Event project ra Zalo, web, public và **đúng một Messenger endpoint** (tenant Page reachable → central Page reachable). Idempotent; ngoài policy window fallback, không rollback canonical.
 - **FR-4.3** Surface state lệch → **re-project** từ event (sửa lại message/UI). Web realtime (SSE + `LISTEN/NOTIFY`) theo tenant/person.
 
 ### MODULE 5 — Đánh dấu tiền, đối soát & gạch nợ (module tiền — killer kế thừa)
@@ -185,11 +187,11 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 - **FR-5.5** CK không khớp hoặc còn dư → `/unmatched` gán tay; retry và thao tác gán đều **idempotent**.
 
 ### MODULE 6 — Nhắc & Xác nhận
-- **FR-6.1** Cron nhắc người chưa trả theo **ngưỡng cấu hình (mặc định 2h → 24h → …)**, qua **web push + Zalo DM** (kênh chính); **Messenger chỉ best-effort trong cửa sổ standard 24h**; ngoài cửa sổ chỉ gửi khi có cơ chế Meta đủ điều kiện/được phê duyệt, còn MVP fallback web + Zalo; chống spam, theo `ChannelReachability` đúng tenant.
+- **FR-6.1** Cron nhắc qua web+Zalo chính; Messenger best-effort theo Page-endpoint reachability, one-route delivery; ngoài cửa sổ/không eligible fallback, chống spam.
 - **FR-6.2** Sau **mọi** điểm markPaid (thủ công tiền mặt/CK & auto CK) → **xác nhận tới player** (best-effort, không chặn dòng tiền) + sync web.
 
 ### MODULE 7 — Định danh & Gộp người chơi
-- **FR-7.1** Mỗi người = **Person** toàn cục; mỗi tài khoản **Zalo/Facebook Messenger/Google** = **ChannelIdentity**; quan hệ với CLB = **Membership** (chứa nợ/lịch sử).
+- **FR-7.1** Person toàn cục; Messenger identity là Page-scoped bằng hai HMAC domain-separated cho Page id và PSID, unique theo ba phần với platform; không auto-merge xuyên Page; quan hệ CLB = Membership.
 - **FR-7.2** **Link tài khoản**: person đăng nhập Google có thể **link Facebook + Zalo** vào cùng Person. Claim membership đã có tiền cần strong proof = **verified account email hoặc transactional one-time `link_code`**; owner assertion/CK/name chỉ là evidence hỗ trợ, không được bypass DD-50.
 - **FR-7.3** Merge xuyên kênh: verified account identity hoặc `link_code` purpose-bound/TTL/single-use → conflict checks → explicit confirmation + audit. STK/tên chỉ gợi ý review, không auto-merge. *(DD-50: phase-1 không thu SĐT — phone dormant làm merge signal tương lai.)*
 
@@ -220,7 +222,7 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 - **NFR-S2** **Public layer tách bạch:** chỉ field whitelist (môn/giờ/khu vực/giá/slot/host-name); **không bao giờ** tiền/PII/roster đầy đủ/STK/giới tính; chống enumeration & scraping (rate-limit, phân trang).
 - **NFR-S3** Định tuyến tenant **luôn suy từ kênh**, không từ nội dung (chống spoof).
 - **NFR-S4** Webhook xác thực per-tenant, timing-safe; lưu payload trước khi xử.
-- **NFR-S5** Secret (Zalo Bot Token, Facebook Page token/app secret, secret SePay, Google OAuth client secret) mã hoá at-rest (KMS); không log; có reset.
+- **NFR-S5** Secret (Zalo Bot Token, Facebook Page access token, SePay HMAC secret, Google OAuth client secret) mã hoá at-rest (KMS); không log; có reset. Meta App Secret là deployment-level secret cấp App, không lặp theo Page registry.
 - **NFR-S6** Thao tác chạm tiền/định danh qua **path có kiểm soát + audit**.
 - **NFR-S7** Phân quyền theo định danh người, tách khỏi routing theo kênh.
 
@@ -257,7 +259,7 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 
 | Plan | Giá / tháng / CLB | Bao gồm |
 |---|---:|---|
-| `free` | **0đ** | Web app + **kết nối bot Zalo + Facebook Messenger** + quản kèo/roster + **giá theo giới tính** + **mark-paid thủ công (tiền mặt/CK, tap/multi-select)** + nhắc thủ công + **chat cơ bản trong app** |
+| `free` | **0đ** | Web + Zalo + Messenger central/optional club Page + quản kèo/roster + giá theo giới tính + mark-paid thủ công + nhắc thủ công + chat in-app |
 | `host_pro` | **250.000đ** | Toàn bộ free + **đối soát CK tự động & báo thu** + **nhắc nợ tự động** + **Trợ lý AI + KB** + CRM dashboard |
 
 > Tính năng free/pro do **capability flags** quyết định (config-driven; registry ở `feature_billing_lifecycle_tech.md §4b`). Ref: **DD-29** (thay DD-03).
@@ -266,7 +268,7 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 ### 9.2 Cấu trúc chi phí & nguyên tắc tiền
 - **Tenant tự mang & tự trả** phí provider thu CK (SePay/ApiPay) — platform **không trung gian dòng tiền player**.
 - **Zalo Bot**: free 3 bot/tài khoản → BYO bot dưới tài khoản host ⇒ free-at-scale (1 bot/club).
-- **Messenger**: FB App của platform + Page per-club (BYO Page); cần App Review — nay là kênh phase-1.
+- **Messenger:** FB App + central Page của Plexco; Page per-club optional. Cần App Review; token/reachability tách theo endpoint.
 - **LLM/STT** (OCR ảnh, voice) do **platform trả**, có **trần fair-use**.
 
 ### 9.3 Dòng tương lai (ngoài MVP)
@@ -277,27 +279,28 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 ## 10. Giả định (Assumptions)
 - **AS-1** Người chơi đã dùng Zalo/Facebook Messenger; CLB sinh hoạt qua nhóm chat.
 - **AS-2** Player CK ngân hàng là chính; tên/nội dung CK gần tên trong CLB.
-- **AS-3** Host tự nối SePay & tạo bot Zalo / kết nối Facebook Page theo hướng dẫn (~vài phút).
+- **AS-3** Host tự nối SePay/Zalo; nếu có Facebook Page thì có thể nối optional, nếu không dùng central Page.
 - **AS-4** Logic matching/đường tiền bot single-club hiện tại **đúng** & tái dùng được.
 - **AS-5** Player **muốn** khám phá kèo mới nếu được hiển thị thuận tiện (giả định marketplace — cần validate sớm).
 - **AS-6** Đa số kèo host sẵn lòng publish công khai (ít nhất phần thông tin cơ bản) để hút người.
 - **AS-7** Người dùng chấp nhận đăng nhập Google và link tài khoản Facebook/Zalo để nhận diện xuyên kênh.
 
 ## 11. Ràng buộc (Constraints)
-- **CO-1** **Zalo = bot-token per-club**; **Messenger = 1 App (platform), Page per-club**. *(Telegram đã loại khỏi phạm vi.)*
+- **CO-1** Zalo = bot-token per-club; Messenger = một platform App, central Page luôn có + optional tenant Page (DD-65).
 - **CO-2** Zalo Bot không inline button, GROUP còn Beta → player-flow Zalo bám **DM number-reply**.
 - **CO-3** Messenger ràng buộc bởi **cửa sổ standard 24h**; gửi ngoài cửa sổ chỉ qua cơ chế Meta cho phép khi đúng eligibility/approval → kênh MVP là "join + xác nhận", **nhắc best-effort trong 24h**, fallback web + Zalo; cần **App Review** trước GA.
 - **CO-4** **PostgreSQL/domain model là canonical store**; web và kênh chat là surface — command ghi vào store + projection ra surface, **không multi-master**.
 - **CO-5** **Public marketplace KHÔNG bao giờ chứa tiền/PII/giới tính**; chỉ projection field whitelist.
 - **CO-6** Plexco xây **repo riêng**, không refactor tại chỗ bot live.
 - **CO-7** **Chat in-app không bridge** ra Zalo/Messenger ở phase-1 (chỉ trong Plexco).
+- **CO-8** Messenger Page/source tenant không grant target authority; identity/reachability Page-scoped, action opaque/replay-safe và delivery chỉ một route (DD-66..68).
 
 ## 12. Phụ thuộc bên ngoài (Dependencies)
 
 | Phụ thuộc | Vai trò | Rủi ro |
 |---|---|---|
 | Zalo Bot Platform | Kênh Zalo (bot per-club) | GROUP Beta; cap 3 bot free/tài khoản; không inline button |
-| Meta Messenger Platform | Kênh Messenger (phase-1) | Cửa sổ standard 24h; ngoài cửa sổ phụ thuộc eligibility/approval của Meta; App Review bắt buộc |
+| Meta Platform | Messenger + Facebook Login/account-link (phase-1) | Ghi exact evidence riêng cho messaging và login/account-link; capability chưa pass phải OFF; Messenger có cửa sổ standard 24h |
 | Google Identity (OAuth) | Đăng nhập Google + định danh | Cấu hình OAuth; đồng ý người dùng |
 | SePay / ApiPay | Webhook đối soát CK | Payload; độ trễ; thiếu trường |
 | Postgres managed | Lưu trữ + RLS + read model public | Region VN; giá; backup |
@@ -329,7 +332,7 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 |---|---|
 | **P0–P1** | Nền multi-tenant + Postgres/RLS + **schema đa môn** + **3 tầng hiển thị** (cô lập) + **Google login / tài khoản web** |
 | **P2** | Bot **Zalo** biết tenant; lệnh host + **mark-paid thủ công (tiền mặt/CK)** + nhắc nợ đa-tenant (Zalo DM + web) |
-| **P2.5** | Kênh **Facebook Messenger** (join + xác nhận, best-effort trong 24h) — App Review |
+| **P2.5** | Messenger hybrid base: central+optional Page, role-aware host/player, protected actions, 24h/App Review |
 | **P3** | Webhook đối soát CK biết tenant (module tiền, tier `host_pro`) |
 | **P3.5** | Identity directory (Person/ChannelIdentity/Membership) + **link Facebook/Zalo** + merge an toàn |
 | **P4** | **Web app + canonical backend + Sync engine** (Zalo/Messenger ⇄ web) + onboarding self-serve + **chat trong app** + **cài đặt hồ sơ + giá theo giới tính** |
@@ -339,11 +342,13 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 | **P6** | Hardening, load test, observability sync-lag, pen-test public layer, ToS/Privacy |
 
 > Có thể **soft-launch miễn phí sau P4.3** để validate marketplace trước khi bật billing.
+>
+> **Phase-2 (DD-69 direction ✅ accepted; build TBD):** app native là đích sau phase-1; React Native + Expo là recommendation sau spike (framework chưa chốt). Phase-1 **target** = web app PWA installable/offline, nhưng PWA chưa live cho tới khi S9/S20 có evidence. Native chưa lên lịch; chat vẫn là acquisition 0-install, native cho retention. Technical gates: client-safe contracts, bearer/refresh + iOS login compliance, dedicated device push, privacy-safe payload, `/api/v1` compatibility và offline read-only — xem `../dd-69-app-native-analysis.md`.
 
 ---
 
 ## 15. Tiêu chí nghiệm thu (Acceptance Criteria)
-- **AC-1** Host lạ tự đi hết onboarding (**đăng nhập Google**, nối SePay, link Zalo + Messenger) tới khi tạo & publish kèo đầu, không cần platform can thiệp.
+- **AC-1** Host lạ onboarding và tạo/publish kèo; club không Page dùng central Messenger đầy đủ, optional Page tự nối không cần platform can thiệp.
 - **AC-2** Hai CLB cùng hệ thống: tiền/nhắc/CK/roster/**chat** **không lẫn nhau**; test cô lập xanh.
 - **AC-3** **Public marketplace** hiển thị kèo của nhiều CLB/môn; field public không lộ tiền/PII/giới tính (test bất biến public xanh).
 - **AC-4** Player **chưa thuộc CLB** tìm thấy kèo qua bộ lọc và **join được** (open) / gửi request (approval).
@@ -355,6 +360,7 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 - **AC-10** **Chat trong app:** member gửi được chat toàn CLB và chat riêng 1-1; chỉ đúng người đọc được; không rò rỉ cross-tenant; **không** xuất hiện ở group Zalo/Messenger.
 - **AC-11** **Giá theo giới tính:** host đặt giá nam/nữ khác nhau; hệ tạo `charge` đúng theo giới tính từng member; giới tính không lộ ra public.
 - **AC-12** **Cài đặt hồ sơ:** người dùng đặt giới tính/ngày sinh/tên/username/ngôn ngữ; username trùng bị chặn; thay đổi sync mọi surface.
+- **AC-13** Hybrid E2E: central+tenant Page, hai tenant, host/player/dual-role, multi-club/cross-club, wizard replay/context-switch, final-slot race, 24h/fallback và one-route delivery đều pass; non-admin/wrong/stale action không mutate.
 
 ## 16. Quyết định mở (Open Decisions Log)
 
@@ -363,7 +369,9 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 | ID | Quyết định | Trạng thái |
 |---|---|---|
 | OD-1 | SĐT verified (share-contact) làm khoá merge chính | 🔄 **Điều chỉnh bởi DD-50 (16/07):** phase-1 không thu SĐT; khoá mạnh = verified email + link_code; phone dormant |
-| OD-17 | **Founder batch 16/07/2026** — money correction (đổi giá/leave-refund/rejoin carry-over), Host Pro lifecycle, guest→full + ban, identity recovery authority, PII collection config, DM/media chat, co-admin capability | ✅ **DD-49..56** (full clarification v1.37; current `decisions.md` v1.40) |
+| OD-17 | **Founder batch 16/07/2026** — money correction (đổi giá/leave-refund/rejoin carry-over), Host Pro lifecycle, guest→full + ban, identity recovery authority, PII collection config, DM/media chat, co-admin capability | ✅ **DD-49..56** (batch closure ở `decisions.md` v1.45; current authority v1.47 không đổi batch này) |
+| OD-18 | Messenger Page topology + host/player same surface | ✅ **DD-65..68 (owner 17/07):** central always + optional tenant Page; shared role-aware core; Page-scoped identity/reachability; durable opaque interactions |
+| OD-19 | **Session Organize** (điều phối trong buổi: sân + trận hai phía + xếp người 4-mode + live score) | ✅ **DD-61..64 accept in-principle (owner 18/07)** — build **post-P4**, phased; tenant-private không lộ public, hang off `sessions`/`players`, không đổi phase-1 scope; DD-63 `balanced` degrade tới khi có level source. Spec: `../features/feature_session_organize.md`. |
 | OD-2 | `pay_code` contract: suffix trần 4 ký tự + prefix namespace; resolver own/foreign/none; allocation invariant | ✅ **DD-02 chốt 13/07/2026** |
 | OD-3 | Giá/tier subscription host | ✅ **DD-29**: `free` (web + Zalo + Messenger + mark-paid thủ công + chat) · `host_pro` 250k (auto reconcile/nhắc + AI + CRM). |
 | OD-4 | Hosting Postgres — HA+PITR+Singapore ✅; ✅ **(2026-07-16): (c) co-locate DigitalOcean** (App Platform + Managed PG HA-standby, VPC private); Fly = fallback; pre-build gate = egress-IP verify | ✅ (→ DD-04, `../dd-04-hosting-final-decision.md`) |
@@ -373,12 +381,13 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 | OD-8 | Danh sách môn khởi điểm (cầu lông, pickleball, …) + taxonomy trình độ | ✅ **DD-08:** 7 môn seed (extensible qua `sports`) + level 5-bậc ordered rank |
 | OD-9 | **Kênh phase-1** | ✅ **v3.4: Zalo + Facebook Messenger + web; bỏ Telegram** (→ DD-37 ✅, thay DD-09) |
 | OD-10 | Web stack = **Next.js App Router**, standalone/container; không Vercel | ✅ (→ DD-10) |
-| OD-11 | **Auth phase-1:** Google OAuth + tài khoản web (email); link Facebook/Zalo vào Person | ✅ **DD-13 ✅** (Google+email) · **DD-33** (Facebook link, phase-1) · DD-14 (Zalo login, ⬜) |
+| OD-11 | **Auth phase-1:** Google OAuth + email/password + gated Facebook Login/account-link | ✅ **DD-13** (Google+email) · **DD-33** (Facebook accepted; external enablement evidence pending; no PSID auto-link) · DD-14 (Zalo login, ⬜) |
 | OD-12 | **Chat in-app:** club-wide + 1-1, **chỉ Plexco, không bridge** kênh ngoài ở phase-1 | ✅ (→ DD-38 scope-committed phase-1; schema `chat_*` chờ migration) |
 | OD-13 | **Giá theo giới tính:** kèo có giá nam/nữ; giới tính lấy từ hồ sơ, không lộ public | ✅ (→ DD-39 scope-committed phase-1; cột `person.gender` chờ migration) |
 | OD-14 | **Mark-paid thủ công tiền mặt/CK (tap/multi-select)** mặc định mọi tier; auto-reconcile là `host_pro` | ✅ (→ DD-40 ✅, giải nuance DD-29) |
 | OD-15 | **Session-model cluster** (mô tả kèo + gating, no-show/reliability, nhãn thành viên, invite-token kèo private, waitlist, kèo-không-CLB) | ✅ **DD-41/42/43/44/45/46** (build P2–P4+; contract chi tiết ở `../standards/decisions.md` + `../dd-*-analysis.md`). Giữ `tenant_id NOT NULL`+RLS; không lộ tiền/PII/tag ra public. |
-| OD-16 | **Social layer** (follow user + hồ sơ public/private cross-user) | ✅ framework **DD-47/48** (build P4+; `person_follows` global-protected, `profile_visibility`; KHÔNG nới RLS/tiền — HR1/HR2). 5 open item chốt lúc build. |
+| OD-16 | **Social layer** (follow user + hồ sơ public/private cross-user) | ✅ framework **DD-47/48** (build P4+; `person_follows` global-protected, `profile_visibility`; KHÔNG nới RLS/tiền — HR1/HR2). DD-55 đã đóng DM + block; còn 3 open item lúc build. |
+| OD-20 | **Định vị app-native:** phase-1 target web app PWA → phase-2 app native; chat = acquisition 0-install, native = retention | ✅ **DD-69 direction accepted (owner 18/07)** — app-first; native ngoài phase-1 committed scope, **build phase-2 TBD**; technical gates (framework/platform/API-auth-push/offline/store) còn mở. Xem `../standards/decisions.md` DD-69 + `../dd-69-app-native-analysis.md` |
 
 ## 17. Thuật ngữ (Glossary)
 
@@ -397,7 +406,7 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 | **Surface** | Một bề mặt tương tác (Zalo/Messenger/web) trên cùng store |
 | **CK** | Chuyển khoản ngân hàng |
 | **Mark-paid** | Đánh dấu đã trả (tiền mặt hoặc CK), thủ công hoặc auto-reconcile |
-| **Person / ChannelIdentity / Membership** | Người thật toàn cục / tài khoản 1 kênh (Google/Facebook/Zalo) / quan hệ người ⇄ club |
+| **Person / AccountIdentity / ChannelIdentity / Membership** | Người thật toàn cục / định danh đăng nhập (Google/email/Apple tương lai) / định danh provider endpoint-scoped (Zalo/Messenger) / quan hệ người ⇄ club |
 | **Chat in-app** | Chat toàn CLB + riêng 1-1 sống trong Plexco, không bridge kênh ngoài |
 | **RLS** | Row-Level Security (cô lập tiền/roster/chat ở tầng DB) |
 | **3 tầng hiển thị** | public discovery · tenant-private (RLS) · person-self |
@@ -412,6 +421,12 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 18/07/2026 | v3.9d | **Founder batch (owner 18/07, decisions v1.47):** DD-69 **định hướng accepted** (§5.2/§14/§16 OD-20 "proposal"→"direction accepted"; native build phase-2 TBD, gates mở); DD-33 Facebook Login phase-1 ✅; DD-61..64 Session Organize accept-in-principle (post-P4). Phase-1 committed scope không đổi. |
+| 18/07/2026 | v3.9c | **DD-69 proposal + review closure:** §5.2/§14/§16 pin phase-1 PWA là target chưa live, phase-2 native chưa committed; RN+Expo chỉ recommendation sau spike. Technical contract tách client-safe package, Google PKCE + Apple/equivalent iOS gate, device push khỏi ChannelIdentity, privacy-safe payload, `/api/v1` compatibility và offline read-only. Phase-1 scope không đổi. Xem `../standards/decisions.md` DD-69 + `../dd-69-app-native-analysis.md`. |
+| 17/07/2026 | v3.9b | Feature-doc closure theo decisions v1.45/TDD v3.1: mirror exact endpoint identity/reachability, SePay HMAC, DM safety/block source, Assistant DLP và bounded Session Organize correction/SSE. Không đổi phase hoặc runtime readiness. |
+| 17/07/2026 | v3.9a | §16: thêm **OD-19** Session Organize quick-ref (proposal, trỏ DD-61..64) cho khớp pattern OD-15/16/18 — mỗi cluster có row riêng. Không đổi scope/phase; vẫn proposal. |
+| 17/07/2026 | v3.9 | Authority → decisions v1.44 / PRD v2.7 / TDD v2.9. Mirror Session Organize v0.3 contract hardening nhưng giữ DD-61..64 proposal và không đổi phase-1 scope/runtime readiness. |
+| 17/07/2026 | v3.8 | **DD-65..68:** chốt hybrid Messenger central+optional club Page, host/player parity, protected target routing, Page-scoped identity/reachability, durable wizard/actions, one-route delivery và AC-13. Runtime/schema còn pending. |
 | 16/06/2026 | v3.0 | Initial BRD — MVP scope, canonical store, identity model |
 | 18/06/2026 | v3.1 | Chuẩn hoá durable webhook, payment ledger/allocation, discovery |
 | 19/06/2026 | v3.1 | Thêm Changelog table, cập nhật cross-refs |

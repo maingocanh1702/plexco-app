@@ -1,10 +1,11 @@
 # Feature: Cross-club Join & Approval — Backend Tech Spec
 
 > **Canonical phase:** P4.3  
-> **Version:** 2.4 · 2026-07-16
+> **Version:** 2.5 · 2026-07-17
 > **Status:** Reviewed  
 > **Product spec:** `../feature_cross_club_join.md`  
-> **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-39/DD-45/DD-49 · `../../dd-45-waitlist-analysis.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`) · `feature_session_management_tech.md` (shared rejoin/correction core)
+> **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-39/DD-45/DD-49/**DD-65..68** · `../../dd-45-waitlist-analysis.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`) · `feature_session_management_tech.md`
+> **⚠️ Live-schema boundary:** Messenger hybrid Page registry + Page-bound opaque action (DD-65..68) và gender-aware `deriveChargeAmount` (DD-39) là **target contracts**, chưa có trong live schema (`0000–0013`); cần migration mới (**≥0014**) land trước runtime. `deriveChargeAmount` do `feature_user_settings_tech.md` sở hữu (pending build). Live `join_requests` không phụ thuộc các contract này.
 
 ---
 
@@ -17,6 +18,8 @@ Public Session ID → Protected resolver → Canonical session/tenant
 ```
 
 Commands: `JoinPublicSession`, `CancelJoinRequest`, `ApproveJoinRequest`, `RejectJoinRequest`, `ExpireJoinRequests`, `LeaveSession`. Public ID resolved via protected service to canonical session/tenant — enter tenant context → authorize.
+
+Messenger never sends raw public/session/request IDs as authority. The Page-bound opaque action resolves target/session/request server-side with TTL+snapshot/version; source tenant Page may differ from a valid cross-club target and remains audit/default only.
 
 ---
 
@@ -64,6 +67,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 | 14 | Financial | Promotion sees waitlisted player with charge | Skip candidate, audit `WAITLIST_CHARGE_CONFLICT` + owner-review; never upsert/overwrite charge |
 | 15 | Financial/Resilience | Promotion amount derivation KMS/decrypt/price failure | Candidate stays waitlisted/no-charge/no-venue; audit `WAITLIST_CHARGE_DERIVATION_FAILED` + one canonical failure outbox event for retry/alert consumers; opener commits; continue next; no fallback price |
 | 16 | Financial/Resilience | Direct open/approve active path cannot derive amount | Abort that join/approve transaction fail-closed: no active player/charge/venue; newly-created guest membership rolls back; request stays pending; retry safely |
+| 17 | Security | Messenger action wrong actor/Page, stale, expired or replayed | Reject before tenant repo/mutation; re-render bounded choices; raw ID never accepted |
 
 ---
 
@@ -181,6 +185,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 | 2 | Approval E2E | Request → approve → verify | Full flow |
 | 3 | Expiry E2E | Request → wait → expire | Auto-expired |
 | 4 | Concurrent final-slot | 10 parallel joins, 1 slot | Exactly 1 active+charge; 9 waitlisted with unique positive positions and no charge |
+| 5 | Messenger cross-club action | tenant Page A + valid session B token; then wrong/stale/replay variants | Valid routes B under B rules; invalid variants make zero mutations |
 
 ---
 
@@ -205,6 +210,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v2.5 | **DD-65..68:** Page-bound opaque target resolution for Messenger, source/target tenant separation and hybrid cross-club integration test. |
 | 2026-07-16 | v2.4 | **DD-49 full propagation:** all open/approval rejoin paths route to the shared locked correction disposition; carry-over/refunded/unknown tests replace blanket left rejection; no duplicate `charges` row. |
 | 2026-07-15 | v2.3 | **DD-39×DD-45 fail-closed charge derivation:** direct active join/approve aborts atomically on derivation failure; waitlist promotion keeps candidate unchanged, audits/retries without rolling back opener, then continues queue; add no-fallback tests. |
 | 2026-07-15 | v2.2 | **DD-45 propagation:** unify open/approval full→waitlisted, exact active-vs-waitlisted transaction outcomes, stable lock order, fail-closed `left` rejoin and existing-charge promotion guard; update tests/metrics. |

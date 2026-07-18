@@ -4,10 +4,12 @@
 > **Deployable unit:** `apps/bot/zalo/`
 > **API:** Zalo OA API v3 (HTTP REST, không SDK)
 > **Phase:** **P2 — Phase-1 MVP** (DD-37 ✅; player join + notifications)
-> **Version:** v0.4 · 2026-07-10
+> **Version:** v0.6 · 2026-07-17
 > **Refs:** `../../features/feature_zalo_channel.md` · `../../features/BE/feature_zalo_channel_tech.md` · `../../research/player-side-saas-AUDIT.md` §B2
 
 > **Cập nhật v3.4 (DD-37 ✅, thay DD-09):** Zalo là **kênh phase-1** cùng web + Facebook Messenger; **Telegram đã bị loại khỏi phạm vi**. Zalo DM là **kênh nhắc nợ chính** (cùng web push); Messenger chỉ best-effort trong cửa sổ 24h. Bảng "Khác biệt vs Telegram" bên dưới giữ làm **design rationale** — không hàm ý Telegram còn trong scope.
+>
+> **Cập nhật DD-15/DD-67 (decisions v1.45):** Zalo identity/reachability scoped theo exact bot/OA endpoint. Identity unique `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)` bằng hai HMAC domain-separated; reachability gắn `channel_identity_id`. Bot/OA có thể pin ingress/default tenant, nhưng target-tenant eligibility vẫn authorize riêng.
 
 ---
 
@@ -33,7 +35,7 @@ Player Minh DM bot Bestminton → tenant route bằng bot webhook token
 | Tenant routing | `chat_id` → tenant | `webhook_token` → tenant |
 | Rich UI | InlineKeyboard, callback | **Text reply + number-based menu** |
 | Player consent | Implicit (join group) | Player phải **nhắn trước** → consent implicit |
-| canDm | Global (1 bot) | **Per-tenant** (AUDIT C1) |
+| canDm | Global (1 bot) | **Per exact bot/OA-scoped channel identity**; tenant eligibility riêng (AUDIT C1/DD-67) |
 | Token scope | 1 token = mọi tenant | 1 token = 1 tenant |
 | Token leak impact | 🔴 All tenants messaging | 🟡 1 tenant messaging |
 
@@ -83,7 +85,7 @@ Context expires sau 10 phút → gửi lại sẽ bị reset menu
 Number reply chỉ hợp lệ khi có context active:
 
 ```text
-context_key = person_id + tenant_id + bot_id + context_type
+context_key = channel_identity_id + target_tenant_id + bot_or_oa_id + context_type
 context_payload = {
   list_version,
   item_ids: [session_id...],
@@ -102,18 +104,18 @@ Rules:
 
 ---
 
-## 5. ChannelReachability (AUDIT C1)
+## 5. ChannelReachability (AUDIT C1 · DD-67)
 
 ```
 ChannelReachability:
-  personId + tenantId + platform='zalo'
+  channelIdentityId  // exact identity already binds platform + bot/OA scope + from.id
   canDm: true/false
   lastInboundAt: timestamp
 
-Zalo: canDm=true CHỈ KHI player đã DM bot CỦA CLUB ĐÓ
-  → Minh DM bot CLB A: canDm(Minh, A, zalo) = true
-  → Minh CHƯA DM bot CLB B: canDm(Minh, B, zalo) = false
-  → Gửi DM CLB B cho Minh = FAIL (Zalo policy)
+Zalo: canDm=true CHỈ KHI player đã DM exact bot/OA endpoint đó
+  → Minh DM bot/OA A: canDm(channelIdentity(A, Minh)) = true
+  → Minh CHƯA DM bot/OA B: không có reachable channelIdentity(B, Minh)
+  → Không copy/OR reachability A sang B; target tenant được authorize riêng trước delivery
 ```
 
 ---
@@ -122,9 +124,10 @@ Zalo: canDm=true CHỈ KHI player đã DM bot CỦA CLUB ĐÓ
 
 ```
 POST /webhook/zalo/:token
-  → token → zalo_bots.webhook_token → tenant_id
+  → token → exact bot/OA endpoint + ingress/default tenant
   → Verify X-Bot-Api-Secret-Token (timing-safe)
-  → Route tenant
+  → HMAC(scope domain, bot/OA id) + HMAC(user domain, from.id)
+  → Resolve/create exact channel identity; authorize target tenant riêng
   → Handle event:
        user_send_text → parse reply-context / menu
        user_send_image → unsupported → fallback message
@@ -140,7 +143,7 @@ POST /webhook/zalo/:token
 | `user_send_text` | Parse command hoặc reply-context | Unknown command → help menu |
 | `user_send_image` | Safe fallback | Không xử lý ảnh trong MVP Zalo |
 | `message.unsupported.received` | Owner digest + player fallback | Không expose lỗi kỹ thuật |
-| `follow` / first inbound | `ChannelReachability.canDm=true` | Per `(person, tenant, zalo)` |
+| `follow` / first inbound | Upsert exact endpoint identity reachability `canDm=true` | Key = `channel_identity_id`; không tenant/platform aggregate |
 | `unfollow` / send failure | `canDm=false` | Không retry vô hạn |
 
 Provider event id phải được dedupe trước khi gọi domain service.
@@ -151,6 +154,8 @@ Provider event id phải được dedupe trước khi gọi domain service.
 
 - Token **BYO per-club** → lộ = chỉ ảnh hưởng **1 CLB messaging**
 - Token **không hết hạn** → rotation = owner reset trong Zalo Bot Creator + dán lại
+- Bot token và `X-Bot-Api-Secret-Token` verification secret chỉ tồn tại at-rest dưới KMS/envelope ciphertext; `webhook_token` trong URL là opaque locator, không phải verification secret
+- Live legacy `zalo_bots.secret text` phải được KMS-backfill hoặc connector chuyển `error`/reconnect, sau đó drop cột; runtime không được dual-read plaintext
 - **Webhook drift detection**: cron gọi `getWebhookInfo` → so URL → lệch = alert + auto-reset
 - **QR giả risk**: attacker có token → sendMessage giả STK → player CK nhầm
 - Mitigation: STK cố định trong hệ thống; educate player "STK không đổi qua tin nhắn"
@@ -159,10 +164,10 @@ Provider event id phải được dedupe trước khi gọi domain service.
 ### 7.1 Token Rotation Runbook
 
 1. Owner dán token mới trong web onboarding/settings.
-2. Backend encrypt token mới vào pending secret/version, set `zalo_bots.rotation_pending=true`, **giữ `zalo_bots.status='active'` và token cũ vẫn phục vụ tenant**.
+2. Backend encrypt token/verification secret mới vào pending KMS credential version, set `zalo_bots.rotation_pending=true`, **giữ `zalo_bots.status='active'` và credential cũ vẫn phục vụ tenant**; không dùng DB plaintext staging field.
 3. Verify token mới bằng test API call + set webhook URL.
-4. Nếu verify OK → promote pending secret thành `bot_token_enc`, set `rotation_pending=false`, status vẫn `active`; revoke/disable old token nếu provider hỗ trợ.
-5. Nếu fail → discard pending secret, set `rotation_pending=false`, giữ token cũ active, lưu redacted error code, không làm gián đoạn tenant.
+4. Nếu verify OK → atomically promote **cả** pending bot token và pending webhook-verification secret thành current KMS credential version (`bot_token_enc` + `webhook_secret_enc` logical fields), set `rotation_pending=false`, status vẫn `active`; revoke/disable old provider credential nếu hỗ trợ.
+5. Nếu fail → discard **cả hai** pending credential values, set `rotation_pending=false`, giữ current token+verification secret active, lưu redacted error code, không làm gián đoạn tenant.
 
 ## 8. Implementation Readiness
 
@@ -174,7 +179,7 @@ Provider event id phải được dedupe trước khi gọi domain service.
 | Missing before coding | 🟡 Minor/Medium | Confirm exact Zalo event names/payloads với sandbox, rate limits, token verify behavior |
 | Delivery readiness | 🟡 Medium | **Kênh chat đầu tiên của phase-1 (P2)** — làm sau P0–P1 foundation + onboarding token connect (Telegram đã loại — DD-37) |
 
-**Go/no-go:** Zalo đủ khả thi cho MVP Việt Nam và là **kênh nhắc nợ chính** (cùng web push). Bắt buộc giữ DM-only, number-reply TTL, token drift và `ChannelReachability` per tenant.
+**Go/no-go:** Zalo đủ khả thi cho MVP Việt Nam và là **kênh nhắc nợ chính** (cùng web push). Bắt buộc giữ DM-only, number-reply TTL, token drift và exact endpoint-scoped `ChannelReachability`; target-tenant eligibility không suy từ reachability.
 
 ---
 
@@ -193,9 +198,11 @@ Provider event id phải được dedupe trước khi gọi domain service.
 
 | Date | Version | Thay đổi |
 |------|---------|----------|
+| 2026-07-17 | v0.6 | BL-SEC-1/lifecycle closure: bot token + webhook secret KMS/write-only; legacy backfill-or-disable/drop/no-dual-read; atomically promote/discard both pending values and preserve `active` through registration races. |
+| 2026-07-17 | v0.5 | DD-15/DD-67 closure: identity/reachability theo exact bot/OA endpoint, hai HMAC domain-separated, reachability gắn `channel_identity_id`; ingress/default tenant và target authorization tách riêng. Runtime/migration pending. |
 | 2026-07-10 | v0.4 | **Phase-1 pivot (DD-37 ✅):** Zalo nay là kênh phase-1 (P2) + **kênh nhắc nợ chính** (cùng web push); Telegram loại khỏi phạm vi. Cập nhật phase/readiness/go-no-go; bảng "vs Telegram" giữ làm design rationale. |
 | 2026-06-20 | v0.3 | Sửa token rotation: dùng `rotation_pending`/pending secret thay vì một lifecycle status ngoài enum |
 | 2026-06-20 | v0.2 | Chốt `zalo_bots` làm routing source, thêm number-reply/event contract, token rotation, readiness |
 | 2026-06-19 | v0.1 | Initial surface docs |
 
-*Zalo bot surface docs v0.4. Kênh phase-1 (DD-37) — nhắc nợ chính cùng web push.*
+*Zalo bot surface docs v0.6. Kênh phase-1 (DD-37/DD-67) — nhắc nợ chính cùng web push; endpoint identity/reachability + legacy-secret encryption migrations pending.*

@@ -1,10 +1,10 @@
 # Feature: Web Authentication & Tenant Onboarding — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.3 · 2026-07-16
+> **Version:** 2.6 · 2026-07-18
 > **Status:** Reviewed
 > **Product spec:** `../feature_web_auth_onboarding.md`
-> **References:** `../../standards/business-rules.md` BL-SEC-1/BL-SEC-3 · `../../standards/decisions.md` DD-13 · DD-37 · DD-31 · DD-50 · `auth-security-invariant-table.md`
+> **References:** `../../standards/business-rules.md` BL-SEC-1/BL-SEC-3/BL-MSG · `../../standards/decisions.md` DD-13 · DD-31 · **DD-33** · DD-50 · DD-60 · **DD-65..67** · `../../standards/api-reference-convention.md` · `auth-security-invariant-table.md`
 
 ---
 
@@ -13,23 +13,23 @@
 > **Cập nhật v2.2 (DD-37 + DD-13 ✅, 2026-07-10):** Bỏ **Telegram Login** adapter (Telegram out-of-scope — DD-37). Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅). Việc này **đảo** OQ-1 của DD-31 (2026-07-06 "giữ TG Login only"): OQ-1 nay hết hiệu lực. `account_identities.platform ∈ {google, email, facebook, zalo}`; SI-2 keyed-hash áp cho `google.sub`/email thay `telegram:id` (§4). SI-1/SI-3 giữ nguyên hiệu lực.
 
 ```text
-Auth Adapter (Google OAuth / email-password) → Account/Session Service → Onboarding Workflow
+Auth Adapter (Google OAuth / email-password / Facebook gated) → Account/Session Service → Onboarding Workflow
     → Tenant Service → Integration Services (Bank/Zalo/Messenger)
 ```
 
-Tables: `accounts`, `web_sessions`, `account_identities`, `onboarding_runs/steps`; existing `tenant_admins`, `bank_accounts`, `zalo_bots`, `messenger_pages`. Authentication tables = protected global. Tenant resources = RLS-scoped. *(`telegram_links` = legacy, tenant-1 only — DD-37.)*
+Tables: auth/onboarding + tenant bank/Zalo. Messenger central/tenant registry and Page identity/reachability are global-protected via narrow services (DD-65..67); live tenant-only `messenger_pages` needs a new migration. Tenant Page is optional onboarding state, central readiness is a platform-level gate.
 
 **Design decisions:**
-- **(DD-13 ✅)** Auth phase-1 = provider `google` (OAuth) + `email` (email + password self-register). **KHÔNG** tạo root table `users` — `persons` vẫn là anchor; password ở bảng credential riêng qua migration mới (expand→contract). `facebook` (DD-33 🟡) + `zalo` (DD-14 ⬜) cắm cùng adapter khi ✅.
+- **(DD-13/DD-33 ✅)** Auth phase-1 = `google` + `email`, và `facebook` khi external enablement gate đã pass. **KHÔNG** tạo root table `users` — `persons` vẫn là anchor; password ở bảng credential riêng qua migration mới. Facebook adapter chỉ exchange code server-side, verify stable app-scoped subject của đúng configured Meta App, không log/persist raw code/access token và không auto-link Messenger PSID. `zalo` (DD-14 ⬜) chỉ cắm khi gate riêng được chốt.
 - **(DD-50 ✅)** Google OIDC only mints a session after signature, exact issuer/audience, browser state/nonce/PKCE, `exp`/`iat`, and `email_verified === true` all pass. Email auth is one atomic feature set: verified-email gate + hash-only TTL/single-use verify/reset tokens + enumeration-safe forgot/reset + revoke-all sessions on password reset. Partial implementation remains disabled.
 - Session token stored as hash — rotate on login, ownership assignment, tenant switch.
 - Onboarding commands use `UNIQUE(run_id, step, idempotency_key)` — refresh/back safe.
 - Integration verification async with status polling/outbox event — retries idempotent.
 - **(DD-31 SI-1, added 2026-07-06)** Login is gated by a pre-auth, single-use, short-TTL, browser-bound login-state token (httpOnly cookie + `auth_login_state` row) — additive to, not a replacement for, the same-origin check. Áp cho OAuth callback (Google) và form email/password. See §4 "Login-State CSRF Binding".
-- **(DD-31 SI-2, updated 2026-07-10)** `account_identities.platform_user_hash` is a keyed HMAC over the provider subject (`google.sub` / normalized email), never a bare hash — key sourced from AWS KMS in staging/prod, `ENCRYPTION_KEY` fallback in dev. See §4 "Web-Auth Identity Hash Keying".
+- **(DD-31 SI-2, DD-33)** `account_identities.platform_user_hash` is a domain/provider-separated keyed HMAC over the provider subject (`google.sub`, normalized email, or Facebook app-scoped subject), never a bare hash — key sourced from AWS KMS in staging/prod, `ENCRYPTION_KEY` fallback in dev. See §4 "Web-Auth Identity Hash Keying".
 - **(DD-31 SI-3, added 2026-07-06)** Every tenant-scoped read on this surface combines `withTenant` (RLS) **and** an explicit `tenant_id` predicate in the query — belt-and-suspenders, not RLS alone. See §4 "Explicit Tenant-Filter Policy".
 
-> **Provider roadmap (DD-13 ✅ · DD-33 🟡 phase-1 · DD-14 ⬜):** phase-1 auth = `google` + `email`. `facebook` và `zalo` cắm cùng adapter khi gate tương ứng pass. DD-50: phase-1 không thu SĐT; phone dormant. Verified account email chỉ là strong proof sau exact Google OIDC matrix hoặc consumed email-verification token; debt claim còn có transactional one-time `link_code`. Ref: decisions DD-13/33/14/50 và identity-model §7.
+> **Provider roadmap:** `google` + `email` là baseline; DD-33 đã chốt `facebook`, nhưng capability cho non-test users fail-closed OFF tới khi exact App Review/Business Verification/permission evidence được ghi nhận. Nếu chưa pass, dùng transactional one-time `link_code`. Facebook Login subject và Messenger Page-scoped PSID là hai identity layers độc lập. DD-14 `zalo` vẫn open.
 
 ---
 
@@ -82,6 +82,19 @@ CREATE TABLE onboarding_steps (
   UNIQUE (run_id, step, idempotency_key)
 );
 ```
+
+> **Live-schema truth (2026-07-18):** `account_identities.platform` hiện là unrestricted `text`; migrations `0000`–`0013` không có `account_identities_platform_chk`. Build DD-33 phải audit/backfill legacy Telegram-era values rồi thêm validation gồm `facebook` trong **một migration self-contained dùng next available number**. Không được `DROP` một constraint giả định chưa tồn tại.
+
+### Tenant readiness matrix (WAO-OQ-2 closed)
+
+`GET /api/onboarding/readiness` and the only transition to `onboarding_runs.status='completed'` use one shared predicate:
+
+- authenticated/verified account owns the run;
+- tenant space is ready: club-config step `verified`, **or** DD-46 personal tenant was atomically provisioned (target `kind='personal'`, conditional owner relation);
+- bank step is `verified` (not merely `registered`/`pending`);
+- at least one first session exists for this tenant and its step is `verified`.
+
+Zalo bot and tenant Messenger Page are optional: `not_configured|skipped|error|verified` never changes the predicate. Central Messenger availability is a deployment/platform release gate and cannot be copied into a per-tenant step. Handlers and UI call this shared predicate; they do not re-derive required steps.
 
 ### New table (DD-31 SI-1, added 2026-07-06)
 
@@ -141,24 +154,26 @@ The lifecycle below is normative; physical tables/indexes remain **provisional**
 
 | Method | Path | Auth | Mô tả |
 |--------|------|------|-------|
-| GET | /api/auth/google/state | Public | Issue pre-auth login-state token + cookie (DD-31 SI-1) — call before redirecting to Google OAuth |
-| GET | /api/auth/google/callback | Public | Google OAuth verify (id_token/nonce) **+ login-state consume (DD-31 SI-1, additive — see §4)** |
-| POST | /api/auth/email/register | Public | Email + password self-register (email verification) |
-| POST | /api/auth/email/verify | Public | Atomically consume verify token; mark email identity verified |
-| POST | /api/auth/email/login | Public | Email + password login **+ login-state consume (DD-31 SI-1)** |
-| POST | /api/auth/email/forgot | Public | Enumeration-safe reset request; issue hash-only TTL/single-use reset token when eligible |
-| POST | /api/auth/email/reset | Public | Atomically consume reset token, update password hash, revoke every affected web session |
-| POST | /api/auth/logout | Authenticated | Revoke session |
-| POST | /api/auth/logout-all | Authenticated | Revoke all web sessions for current account |
-| GET | /api/auth/session | Authenticated | Current session info |
-| POST | /api/onboarding/start | Authenticated | Create tenant + run |
-| PATCH | /api/onboarding/club | TenantOwner | Club config |
-| POST | /api/onboarding/bank/connect | TenantOwner | Connect bank provider |
-| POST | /api/onboarding/bank/verify | TenantOwner | Verify bank webhook |
-| POST | /api/onboarding/zalo/connect | TenantOwner | Connect Zalo (dán Bot Token) |
-| POST | /api/onboarding/messenger/connect | TenantOwner | Connect Facebook Messenger (FB Login + chọn Page) |
-| GET | /api/onboarding/messenger/status | TenantOwner | Check Messenger Page bind status |
-| GET | /api/onboarding/readiness | TenantOwner | Readiness checklist |
+| GET | /api/auth/google/state | ⬜ Public | Issue pre-auth login-state token + cookie (DD-31 SI-1) — call before redirecting to Google OAuth |
+| GET | /api/auth/google/callback | ⬜ Public | Google OAuth verify (id_token/nonce) **+ login-state consume (DD-31 SI-1, additive — see §4)** |
+| GET | /api/auth/facebook/state | ⬜ Public | Issue browser-bound, single-use login-state; return provider redirect only when external gate/config active |
+| GET | /api/auth/facebook/callback | ⬜ Public | Consume login-state; server-side code exchange; verify configured-App app-scoped subject; issue/rotate session |
+| POST | /api/auth/email/register | ⬜ Public | Email + password self-register (email verification) |
+| POST | /api/auth/email/verify | ⬜ Public | Atomically consume verify token; mark email identity verified |
+| POST | /api/auth/email/login | ⬜ Public | Email + password login **+ login-state consume (DD-31 SI-1)** |
+| POST | /api/auth/email/forgot | ⬜ Public | Enumeration-safe reset request; issue hash-only TTL/single-use reset token when eligible |
+| POST | /api/auth/email/reset | ⬜ Public | Atomically consume reset token, update password hash, revoke every affected web session |
+| POST | /api/auth/logout | ✅ Account/Person | Revoke current session |
+| POST | /api/auth/logout-all | ✅ Account/Person | Revoke all web sessions for current account |
+| GET | /api/auth/session | ✅ Account/Person | Current session info; exact account-self |
+| POST | /api/onboarding/start | ✅ Account/Person | Create tenant + run; becomes owner only through successful provision |
+| PATCH | /api/onboarding/club | 🔑 Exact capability | Club config |
+| POST | /api/onboarding/bank/connect | 🔑 Exact capability | Connect bank provider |
+| POST | /api/onboarding/bank/verify | 🔑 Exact capability | Verify bank webhook |
+| POST | /api/onboarding/zalo/connect | 🔑 Exact capability | Connect Zalo (dán Bot Token) |
+| POST | /api/onboarding/messenger/connect | 🔑 Exact capability | Optional connect tenant Facebook Page; central fallback remains |
+| GET | /api/onboarding/messenger/status | 🔑 Exact capability | Return central availability + optional tenant Page status |
+| GET | /api/onboarding/readiness | 🔑 Exact capability | Readiness checklist |
 
 ### Error Codes
 
@@ -171,6 +186,7 @@ The lifecycle below is normative; physical tables/indexes remain **provisional**
 | 403 | `CSRF_INVALID` | Yêu cầu không hợp lệ | Missing/invalid CSRF |
 | 429 | `LOGIN_RATE_LIMITED` | Quá nhiều lần thử — đợi | Rate limit |
 | 400 | `AUTH_TOKEN_INVALID` | Liên kết không hợp lệ hoặc đã hết hạn | Verify/reset token invalid, expired, wrong-purpose, or consumed; intentionally generic |
+| 503 | `AUTH_PROVIDER_UNAVAILABLE` | Phương thức đăng nhập chưa khả dụng | Facebook external gate/config/evidence chưa active; no identity/session mutation |
 
 ### Rate Limits
 
@@ -212,8 +228,8 @@ One canonical token-consume helper owns purpose/TTL/single-use checks. One canon
 Three artifacts, additive to the existing same-origin check (defense-in-depth, does not replace it):
 
 1. **Migration:** `auth_login_state` table (§2) — single-use, short-TTL (10 min), keyed by `state_hash`.
-2. **Issue route:** `GET /api/auth/google/state` — mints a random state token, stores `sha256(token)` in `auth_login_state`, sets it in a short-TTL httpOnly pre-auth cookie (separate from the post-login session cookie). Called before redirecting the browser to Google OAuth; the OAuth `state` param is bound to this row. The email/password login form reuses the same pre-auth state cookie.
-3. **Callback consume:** `GET /api/auth/google/callback` (and `POST /api/auth/email/login`) reads the pre-auth cookie, hashes it, looks up `auth_login_state` — reject (`AUTH_INVALID`) if the row is missing, expired, or already consumed; otherwise consume it (single-use) alongside Google id_token/nonce (or password) + same-origin verification. Only after all checks pass does the flow proceed to session issuance/rotation.
+2. **Issue route:** `GET /api/auth/{google|facebook}/state` mints a random state token, stores `sha256(token)` in `auth_login_state`, and sets a short-TTL httpOnly pre-auth cookie. It only redirects when that provider's config/gate is active. The email/password login form reuses the same pre-auth state cookie.
+3. **Callback consume:** `GET /api/auth/{google|facebook}/callback` (and `POST /api/auth/email/login`) reads the pre-auth cookie, hashes it, looks up `auth_login_state` — reject (`AUTH_INVALID`) if missing, expired or consumed; otherwise consume it single-use alongside provider proof/password + same-origin verification. Only after every provider-specific check passes may the flow issue/rotate a session.
 
 This closes the gap the Origin/Referer check alone cannot: it proves the callback is a continuation of the SAME browser session that started the login (state-bound), independent of which transport delivered the callback request.
 
@@ -221,7 +237,7 @@ This closes the gap the Origin/Referer check alone cannot: it proves the callbac
 
 `account_identities.platform_user_hash` (web-auth layer — **not** `channel_identities.platform_user_lookup_hash`; see `feature_identity_tech.md` for the separately-governed channel-layer mandate) is computed as a keyed HMAC over the provider subject:
 
-- Subject = Google `sub` (provider `google`) or the normalized email (provider `email`); `facebook`/`zalo` subjects plug in the same way when DD-33/DD-14 land.
+- Subject = Google `sub` (`google`), normalized email (`email`), or verified stable app-scoped subject of the configured Meta App (`facebook`). HMAC input is explicitly domain/provider separated (for example version + provider + subject); Messenger Page-scoped PSID stays exclusively in the channel-identity layer. `zalo` remains gated by DD-14.
 - Key sourced per "Secret / KMS Source" below (DD-31 gap 3) — never hardcoded, never derived from the plaintext subject alone.
 - The SAME key is used at write time (login/register, creating the `account_identities` row) and read time (login lookup), resolved through one shared helper — a key mismatch between the two silently breaks login for every existing user.
 - The old `sha256("telegram:" + id)` value is dropped with Telegram Login (DD-37). The round-09 "Telegram user ID low-entropy / enumerable" finding is therefore **moot**, but the keyed HMAC is **retained** for consistency (Google `sub` is higher-entropy but still keyed).
@@ -276,6 +292,8 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | 17 | Zalo skip | Skip Zalo step | Status=skipped, proceed |
 | 18 | Readiness check | All required done | Ready=true |
 | 19 | Readiness check partial | Bank not verified | Ready=false |
+| 19b | Readiness without first session | Club + bank verified, no session | Ready=false |
+| 19c | Optional channel failures | Required matrix complete; Zalo skipped/error and no tenant Page | Ready=true; central platform route reported separately |
 | 20 | Tenant RLS isolation | Other tenant's data | Not accessible |
 | 21 | Login-state missing | Valid Google/email login payload, no/wrong pre-auth cookie | 401 `AUTH_INVALID`, no session (DD-31 SI-1) |
 | 22 | Login-state replay | Same state consumed twice | Second consume rejected (DD-31 SI-1) |
@@ -291,15 +309,24 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | 32 | Reset revoke-all atomicity | Account has multiple live sessions | Password changes and all sessions revoke in one commit |
 | 33 | Revoke-all failure | Force session update failure | Password/token consume rolls back; old credential remains valid |
 | 34 | Partial lifecycle gate | Verify/reset/revoke-all unavailable | Email provider disabled; Google login still works |
+| 35 | Messenger central default | Tenant has no Page | Readiness can pass; central endpoint available for basic host/player flows |
+| 36 | Optional Page conflict/failure | Page bound elsewhere/revoked | Reject/mark error; central fallback unchanged; no secret leak |
+| 37 | Valid Facebook Login | Active external gate + browser-bound state + valid server-side code exchange for configured App | Facebook identity created/looked up; session issued; no raw code/token persisted |
+| 38 | Facebook wrong App/subject proof | Provider response cannot be bound to configured App or has missing/invalid stable subject | 401; no identity/session mutation |
+| 39 | Facebook login-state replay | Reuse a consumed Facebook callback state | Reject; provider result cannot mint a second session |
+| 40 | Facebook hash parity | Same verified app-scoped subject on create then login | Identical domain/provider-separated HMAC; no lockout |
+| 41 | Login subject vs PSID | Same person/profile hints exist in Messenger channel identity | No automatic link/merge; requires verified identity or consumed one-time `link_code` |
+| 42 | Facebook external gate OFF | Non-test user requests state/callback without recorded evidence | Capability hidden/OFF or 503; no redirect, exchange, identity or session |
 
 ### Integration Tests
 
 | # | Test | Setup | Expected |
 |---|------|-------|----------|
-| 1 | Full onboarding E2E | Login (Google/email) → club → bank → Zalo/Messenger → session | Tenant operational |
+| 1 | Full onboarding E2E | Login → club → bank → skip Zalo + tenant Page → first session via central | Tenant operational; readiness true only after session commit |
 | 2 | Resume from bank fail | Club done → bank error → retry | Resumes correctly |
 | 3 | Concurrent wizard sessions | 2 tabs same wizard | Idempotent |
 | 4 | First session readiness | Complete all steps → create session | Session created |
+| 5 | Optional tenant Page | Connect Page then revoke/fail | Branded endpoint status changes; central route remains available |
 
 ---
 
@@ -310,8 +337,9 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 1. Founder-only auth → tenant #1 replay.
 2. Enable Google independently after OIDC matrix passes.
 3. Enable email only after B0 design-probe + full verify/forgot/reset/revoke-all E2E pass; no partial rollout.
-4. Invited beta hosts.
-5. Self-serve public launch.
+4. Enable Facebook for approved test users first; enable non-test users only after exact App Review/Business Verification/permission evidence is recorded and callback/PSID-separation E2E passes. Otherwise keep capability OFF and retain one-time `link_code` fallback.
+5. Invited beta hosts.
+6. Self-serve public launch.
 
 ### Metrics
 
@@ -325,6 +353,9 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-18 | v2.6 | **DD-33 + DD-60:** add gated Facebook state/callback contract, server-side exchange + app-scoped subject verification, domain-separated HMAC, PSID separation, exact external evidence gate/fallback, live-schema no-CHECK truth and auth legend convention. |
+| 2026-07-17 | v2.5 | **WAO-OQ-2 closure:** one shared readiness predicate requires club-or-personal space, verified bank and first session; Zalo/tenant Page remain optional and central Messenger stays a platform release gate. |
+| 2026-07-17 | v2.4 | **DD-65..67:** central Page is platform default; tenant Page optional, readiness can pass without it; hybrid registry migration/fallback tests added. |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), DDL, 12 edge cases, API contract, 20 tests |
 | 2026-07-06 | v2.1 | Pin DD-31 gaps (security-design pass, auth-onboarding v3): login-state CSRF binding (SI-1, new `auth_login_state` table + issue route + callback consume), keyed web-auth identity hash (SI-2, `account_identities.platform_user_hash`), explicit tenant-filter policy (SI-3), AWS KMS secret source (gap 3). Additive only — rotation/channel-hash/HMAC mandates unchanged. Ref: `../../standards/decisions.md` DD-31, `auth-security-invariant-table.md`. |

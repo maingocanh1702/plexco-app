@@ -1,12 +1,22 @@
 # Autopilot slice — DigitalOcean App Platform + VPC deployment
 
 > **Slug:** `infra-do-app-vpc-deployment`  
-> **Risk:** P1 · `manual_only` · STOP_AT_READY · 2 consecutive FULL-base Codex clean rounds  
+> **Status:** P0 manual design contract · **AUTOPILOT CODEGEN PROHIBITED**  
+> **Risk:** P0 · manual workflow only · no AP launcher/review loop  
 > **Canonical framework:** `autopilot-prompt-GENERIC` v0.6.0  
 > **Authority:** `dd-04-hosting-final-decision.md` Rev 2 + `standards/environments-setup.md` v2.1  
 > **Manifest:** `docs/autopilot-manifests/infra-do-app-vpc-deployment.json`
 
-## Task
+## Policy gate
+
+Canonical v0.6.0 classifies scope touching migrations or secrets as P0. This design necessarily coordinates a
+one-shot migration and secret-bearing database/deploy configuration, so it must not be executed by unattended
+autopilot. `.claude/commands/ap-21-infra-do-app-vpc-deployment.md` is intentionally disabled.
+
+First close DD-04 §7.1 through the P2 docs-only `infra-egress-compatibility-evidence` slice. A compatible result
+does not lower this contract's risk tier; implementation still requires separately authorized manual slices.
+
+## Manual task authority
 
 ```text
 Implement the first production-grade DigitalOcean deployment contract for Plexco without changing
@@ -105,14 +115,13 @@ that activation requires a separate fallback slice with static egress, trusted-s
    - staging and production identifiers/endpoints cannot cross;
    - migration precedes queue provisioning;
    - production promotion has an approval environment and exact-artifact input.
-4. Run `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm build`, and the canonical test command.
+4. Start the throwaway local PostgreSQL service, require `DATABASE_URL_TEST` to point to `plexco_test`, then
+   run `pnpm install --frozen-lockfile`, `pnpm -w typecheck`, `pnpm -w lint`, `pnpm -w test`, and
+   `pnpm -w build`. Never use a development, staging, or production database for the suite.
 5. Run `git diff --check` and confirm the diff is non-empty and limited to manifest scope.
 
-## Review and stop condition
+## Manual review and stop condition
 
-Register the manifest before edits. Step 1 creates `regions.log` and `fix-round-count.txt`. P1 requires two
-consecutive FULL reviews against current `main` with zero findings on the current HEAD. Any finding resets
-the clean streak. Never substitute a sub-agent for `$AUTOPILOT_CODEX_BIN`.
-
-After verification, run scope-gate `ready`, leave the branch/worktree intact, and STOP_AT_READY. The founder
-will merge and separately authorize any provider mutation, secret upload, DNS/webhook change, or spend.
+Do not register this P0 manifest or invoke AP-21. A founder-authorized manual implementation must be split by
+mechanism, preserve the full verification contract above, and stop before any provider mutation, secret upload,
+DNS/webhook change, or spend unless those external actions are separately and explicitly authorized.

@@ -2,12 +2,16 @@
 
 > **Canonical phase:** P3.5
 > **Track:** 🆔 Identity & Merge
-> **Version:** 1.4 · 2026-07-16
-> **Status:** Reviewed and reconciled to BRD v3.7 / PRD v2.5 / TDD v2.6 / decisions v1.40; schema/code pending build slices
+> **Version:** 1.7 · 2026-07-17
+> **Status:** Reviewed and reconciled to BRD v3.9b / PRD v2.8 / TDD v3.1 / decisions v1.45; endpoint-scoped identity/reachability schema/runtime pending build slices
 > **Prerequisites:** P2 tenant routing + P3 ledger stable
-> **Tài liệu liên quan:** `../product/BRD.md` FR-7 · `../product/PRD.md` FLOW 5 + §4.2 · `../product/TDD.md` §3.2–3.4/§4 · `../standards/decisions.md` DD-37/DD-13/DD-33/DD-50/DD-53 · `../research/player-side-saas-AUDIT.md` C1–C5
+> **Tài liệu liên quan:** `../product/BRD.md` FR-7 · `../product/PRD.md` FLOW 5 + §4.2 · `../product/TDD.md` §3.2–3.4/§4 · `../standards/decisions.md` DD-13/DD-33/DD-37/DD-50/DD-53/**DD-65..68** · `feature_player_messenger.md` · `../research/player-side-saas-AUDIT.md` C1–C5
 
 > **Cập nhật DD-50/v1.37:** phase-1 không thu SĐT. Strong proof cho claim/merge có tiền = verified account email (Google OIDC đủ claim hoặc email-password đã verify) hoặc deterministic one-time `link_code`; phone fields dormant.
+>
+> **Cập nhật DD-15/DD-67/v1.45:** identity và reachability đều thuộc **đúng provider endpoint**. Uniqueness là `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`; Messenger scope Page, Zalo scope bot/OA cho tới khi DD-15 chứng minh có thể nới. Reachability gắn `channel_identity_id`, không thu gọn về `(person,tenant,platform)`.
+>
+> **Cập nhật v1.7:** exact endpoint binding phải được chứng minh bằng registry relation, không chỉ lookup hash: Messenger identity có Page FK, Zalo identity có bot/OA FK, và đúng một FK phải khớp `platform`. Consume `link_code` re-derive current source Person từ đúng một issuer trước mọi attempt/consume atomic.
 
 ---
 
@@ -20,6 +24,7 @@ Mỗi người thật có một `Person` toàn cục; tài khoản **Zalo / Face
 ### Bất biến
 
 - Routing tenant và authorization người dùng là hai việc độc lập.
+- Messenger `page_id` chỉ resolve endpoint/default context; PSID/window là Page-scoped và target tenant/resource được resolve riêng qua protected action/ref/picker.
 - Claim membership có tiền không bao giờ dựa vào tên đơn thuần.
 - Chỉ proof đã pin ở DD-50 mới mở claim/merge có tiền; tên/STK/owner assertion chỉ tạo suggestion/review, không thay strong proof.
 - Merge không sửa/xóa bank transaction hoặc payment allocation đã audit.
@@ -32,9 +37,9 @@ Mỗi người thật có một `Person` toàn cục; tài khoản **Zalo / Face
 
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|
-| ID-UC-1 | Player | Xuất hiện lần đầu trên Zalo/Messenger | Tạo ChannelIdentity + Person nếu chưa tồn tại |
+| ID-UC-1 | Player | Xuất hiện lần đầu trên Zalo/Messenger | Tạo ChannelIdentity + Person idempotently; bind bằng đúng một Page hoặc bot/OA registry relation khớp platform rồi server derive hai domain-separated lookup hashes |
 | ID-UC-2 | Player | Join một tenant lần đầu | Tạo membership idempotently |
-| ID-UC-3 | Player | `/link` ở kênh A | Sinh deterministic one-time `link_code`, hash-at-rest, TTL ngắn, bound source/action |
+| ID-UC-3 | Player/account | `/link` ở channel hoặc authenticated web/app | Sinh deterministic one-time `link_code`, hash-at-rest, TTL ngắn, bound đúng một issuer channel/account + action |
 | ID-UC-4 | Player | Consume `link_code` ở kênh B | Lock+verify+consume once, hiển thị impact rồi explicit confirm merge |
 | ID-UC-5 | Player | Verify account email | Email-password verify token hoặc Google OIDC proof hợp lệ gắn evidence vào account; không trust client field |
 | ID-UC-13 | Host/Player | Đăng nhập Google/email rồi **link Facebook + Zalo** vào cùng Person | account_identities/ChannelIdentity gắn về 1 Person; claim membership có tiền cần khoá mạnh (DD-13/DD-33) |
@@ -42,7 +47,7 @@ Mỗi người thật có một `Person` toàn cục; tài khoản **Zalo / Face
 | ID-UC-7 | System | Tên khớp membership có charge/allocation | Chặn; chỉ verified account email hoặc valid `link_code` mở claim. Recovery artifact chỉ phục hồi account theo DD-53, không tự cấp claim. CK/name/owner assertion chỉ tạo review evidence |
 | ID-UC-8 | Host | Duyệt claim/merge suggestion | Authz admin + confirm impact + audit |
 | ID-UC-9 | System | Merge có hai membership cùng tenant | Reconcile về một survivor, giữ toàn bộ history |
-| ID-UC-10 | System | Merge reachability trùng | Upsert theo `(person, tenant, platform)`, giữ trạng thái hợp lệ nhất |
+| ID-UC-10 | System | Merge reachability trùng | Re-parent theo exact `channel_identity_id`; giữ từng provider endpoint/window độc lập, không OR/copy token xuyên Page/bot/OA |
 | ID-UC-11 | Player | Rời CLB | Membership chuyển `left`; lịch sử giữ nguyên |
 | ID-UC-12 | Support admin | Xử lý merge sai | Manual split/recovery procedure có audit; không tự động undo mù |
 
@@ -67,21 +72,22 @@ Mỗi người thật có một `Person` toàn cục; tài khoản **Zalo / Face
 
 - Random cryptographic code/deep link; entropy mục tiêu ≥64 bits.
 - Chỉ lưu hash + salt, không log plaintext.
-- TTL mặc định 10 phút; single-use; `consumed_at` immutable.
-- Bind source person/channel và intended action; không dùng như bearer permission cho tenant.
-- Consume transaction lock row, re-check source/action/TTL, increment failures atomically và set `consumed_at` đúng một lần.
+- TTL mặc định 10 phút; single-use; `consumed_at` immutable; có `max_attempts`, `locked_until`, `revoked_at`.
+- Bind `source_person_id` và **exactly one** issuer: `source_channel_identity_id` XOR `source_account_id`; issuer phải resolve về source Person hiện hành dưới lock. Không nhận source Person do client tự khai và không dùng code như bearer permission cho tenant.
+- Consume transaction lock row rồi reject `consumed/revoked/expired/locked/max-attempt` trước khi ghi attempt hoặc tạo plan; các path này không làm đổi counter. Sau đó lock đúng một issuer, re-derive current source Person server-side và require khớp source đã bind, rồi mới verify action/hash.
+- Wrong verifier increment đúng một lần bằng conditional atomic update; valid verifier conditional-set `consumed_at` đúng một lần và tạo merge plan từ re-derived Person trong cùng transaction. Concurrent/stale issuer hoặc zero-row update đều fail closed bằng lỗi generic.
 - Tối đa 5 attempts/10 phút theo source + IP/platform identity; exponential cooldown.
 - Yêu cầu explicit confirmation trước khi merge; thông báo cả hai channel sau merge.
 
 ### Merge transaction
 
 1. Authorize actor/signal; load source/target Person theo thứ tự ID ổn định để tránh deadlock.
-2. Lock Person, memberships, charges và reachability liên quan.
+2. Lock Person, channel identities, memberships, charges và reachability liên quan.
 3. Chọn canonical Person; chuyển ChannelIdentity.
 4. Với tenant chỉ có một membership: re-parent membership sang canonical Person.
 5. Với membership conflict: chọn survivor theo history/age; re-parent players/charges; giữ merged membership làm tombstone/audit mapping.
 6. Không sửa bank transactions hoặc payment allocations; chúng tiếp tục trỏ charge lịch sử đã được re-parent hợp lệ.
-7. Reconcile reachability; invalidate link codes/sessions nhạy cảm.
+7. Re-parent endpoint reachability theo exact channel identity; dedupe chỉ cùng endpoint identity và không copy/OR window-token xuyên Page/bot/OA; invalidate link codes/sessions nhạy cảm.
 8. Ghi `merge_audit` + outbox event trong cùng transaction.
 
 ---
@@ -97,8 +103,8 @@ Mỗi người thật có một `Person` toàn cục; tài khoản **Zalo / Face
 | 5 | Hai merge ngược chiều đồng thời | Lock ordered IDs + idempotency key; một transaction thắng |
 | 6 | Hai persons có membership cùng tenant | Survivor/tombstone strategy; không xoá history |
 | 7 | Membership conflict có charge paid/partial | Re-parent charge; ledger immutable; tổng không đổi |
-| 8 | Reachability trùng | Merge deterministic; không làm `can_dm` tenant A ảnh hưởng tenant B |
-| 9 | Display name/username kênh (Zalo/Facebook) đổi | Dùng stable platform user ID (Zalo user id / Messenger PSID page-scoped) |
+| 8 | Reachability trùng | Không dùng window/token của Page/bot/OA A cho endpoint B và không double-send sau merge |
+| 9 | Display name/username kênh (Zalo/Facebook) đổi | Dùng endpoint-scoped hashes: Messenger Page+PSID; Zalo bot/OA+`from.id` |
 | 10 | Channel account bị xoá | Mark inactive; giữ audit/history |
 | 11 | Admin override không đủ quyền | 403 + audit attempted action |
 | 12 | Person-self đoán person ID | 403; identity service chỉ dùng authenticated person |
@@ -106,6 +112,8 @@ Mỗi người thật có một `Person` toàn cục; tài khoản **Zalo / Face
 | 14 | Merge sai đã phát notification | Recovery/split runbook + correction event; không rewrite audit |
 | 15 | Player yêu cầu xóa PII | Áp retention/anonymization; không phá financial audit obligations |
 | 16 | Facebook Login link phụ thuộc App Review (DD-33) | Chưa duyệt → dùng deterministic `link_code`; không auto-link chéo PSID↔FB Login |
+| 17 | Endpoint hash đúng nhưng registry relation sai/thiếu | Reject create/resolve; Messenger cần duy nhất Page FK, Zalo cần duy nhất bot/OA FK và service tự derive scope hash từ registry row |
+| 18 | Consume code terminal hoặc issuer đã đổi Person | Reject trước attempt/plan; không increment terminal counter, không trust `source_person_id` từ request |
 
 ---
 
@@ -114,11 +122,11 @@ Mỗi người thật có một `Person` toàn cục; tài khoản **Zalo / Face
 | Entity | Zone | Quy tắc |
 |---|---|---|
 | `persons` | GLOBAL protected | API role không SELECT trực tiếp; PII encrypted/verified metadata; anchor (KHÔNG root table `users`) |
-| `channel_identities` | GLOBAL protected | UNIQUE `(platform, platform_user_id)`; `platform ∈ {zalo, messenger}`; stable ID (Messenger PSID page-scoped) |
+| `channel_identities` | GLOBAL protected | UNIQUE `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)` + relation uniques; đúng một `messenger_page_id`/`zalo_bot_id` FK phải khớp platform; protected writer derive scope hash từ registry row; không auto-merge xuyên endpoint |
 | `account_identities` | GLOBAL protected | Web-auth provider (DD-13): `platform ∈ {google, email, facebook, zalo}`; `platform_user_hash` keyed-HMAC (SI-2) |
 | `memberships` | TENANT + RLS | UNIQUE `(tenant_id, person_id)` cho active/survivor policy |
-| `channel_reachability` | TENANT + RLS | UNIQUE `(person_id, tenant_id, platform)` |
-| `link_codes` | GLOBAL protected | Hash-only, TTL, attempts, single-use |
+| `channel_reachability` | GLOBAL protected + narrow service | UNIQUE `channel_identity_id`; window/eligibility thuộc exact Page/bot/OA+provider user endpoint. Target-tenant eligibility được authorize riêng |
+| `link_codes` | GLOBAL protected | Keyed lookup hash + salted slow verification hash; issuer XOR channel/account; TTL, max-attempt/lock/revoke, single-use |
 | `merge_audit` | GLOBAL protected | Immutable actor/signal/before-after/reason |
 | `merge_tombstones` | GLOBAL protected | Old→canonical mapping cho replay/support |
 
@@ -164,13 +172,13 @@ Không gửi raw platform UID, phone/email, display name, bank account hoặc `l
 
 ## 8. Acceptance Criteria
 
-- [ ] Zalo/Messenger first contact + Google/email login tạo identity/person idempotently (không Telegram — DD-37).
+- [ ] Zalo/Messenger first contact + Google/email login tạo identity/person idempotently; Messenger same PSID trên hai Page tạo hai Page-bound identities hợp lệ.
 - [ ] Person link Google + Facebook + Zalo về 1 anchor; claim membership có tiền cần khoá mạnh (DD-13/DD-33).
 - [ ] Global identity tables không query trực tiếp từ API role.
-- [ ] Reachability tenant-scoped + RLS; tenant A không ảnh hưởng tenant B.
+- [ ] Zalo/Messenger identity và reachability exact endpoint-scoped bằng Page/bot-OA registry FK + platform CHECK + server-derived hashes; không reuse window/token xuyên endpoint hoặc gửi trùng central+tenant Page.
 - [ ] Membership creation idempotent.
 - [ ] Claim membership có tài chính bằng tên bị chặn.
-- [ ] `link_code` cryptographic, hash-at-rest, bound source/action, TTL, atomic attempts, single-use và explicit confirm.
+- [ ] `link_code` cryptographic ≥64-bit, hash-at-rest, issuer XOR channel/account, current source Person re-derived under lock, terminal states rejected before counter mutation, atomic attempts, conditional single-use consume và explicit confirm.
 - [ ] Merge concurrent/ngược chiều không deadlock hoặc tạo duplicate.
 - [ ] Membership conflict tạo survivor + tombstone, giữ players/charges/history.
 - [ ] Merge không sửa/xóa bank transaction/payment allocation và không đổi tổng ledger.
@@ -196,6 +204,9 @@ Không gửi raw platform UID, phone/email, display name, bank account hoặc `l
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v1.7 | **Enforceability closure:** exact Page/bot-OA registry relation/FK+CHECK beside server-derived HMAC; `link_code` terminal-first consume, XOR issuer/current-Person revalidation and conditional atomic attempt/consume. Runtime/migration vẫn pending. |
+| 2026-07-17 | v1.6 | **DD-15/DD-50/DD-67 v1.45:** generalize endpoint-scoped identity/reachability cho Messenger+Zalo; uniqueness 3-part với domain-separated hashes; `link_code` issuer XOR channel/account + terminal lifecycle. Runtime/migration vẫn pending. |
+| 2026-07-17 | v1.5 | **DD-65..68/DD-67 full propagation:** Messenger identity HMAC gồm `page_id+PSID`, explicit Page binding, endpoint-scoped reachability/window, merge không collapse token xuyên Page và one-route acceptance. Zalo vẫn tenant-scoped; live migration/runtime pending. |
 | 2026-07-16 | v1.4 | **DD-50 full propagation:** replace OTP/phone-era use cases, trust order, edge cases, analytics and AC with verified account-email + transactional one-time `link_code`; CK/name/owner evidence cannot bypass strong proof. Authority: decisions v1.37. |
 | 2026-07-10 | v1.2 | **DD-37 + DD-13:** Person link **Google + Facebook + Zalo** (bỏ Telegram identity/adapter). `channel_identities.platform ∈ {zalo, messenger}`; thêm `account_identities` (google/email/facebook/zalo). Verified email = merge signal (giữ DD-01 phone). Facebook link phụ thuộc App Review (DD-33). Cập nhật §1, UC-1/13, trust order, domain, edge #9/16, acceptance. |
 | 2026-06-19 | v1.1 | Thêm Changelog heading, verified format compliance |

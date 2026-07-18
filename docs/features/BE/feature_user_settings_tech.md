@@ -1,7 +1,7 @@
 # Feature: User Settings & Gender-based Pricing — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.5 · 2026-07-15
+> **Version:** 0.7 · 2026-07-17
 > **Status:** DD-39 ✅ · DD-47/48 ✅ framework — Draft, pending migration/build
 > **Product spec:** `../feature_user_settings.md` *(Draft)*
 > **References:** `../../standards/decisions.md` DD-39 (giá theo giới tính) · **DD-47 (follow graph) · DD-48 (profile visibility)** · DD-13 (Google/email — nguồn hồ sơ web) · `../BE/feature_payment_reconcile_tech.md` (suy charge) · `../BE/feature_session_management_tech.md` (đặt giá) · `feature_identity.md` (merge re-parent) · `feature_player_view.md` (profile path) · BRD MODULE 11 / FR-11 / NFR-P1
@@ -40,7 +40,7 @@ Public projection → field-whitelist (KHÔNG gender, KHÔNG per-gender price/PI
 ```sql
 -- Mở rộng persons (anchor có sẵn) — expand→contract migration, KHÔNG tạo bảng users
 ALTER TABLE persons
-  ADD COLUMN gender_enc bytea,                    -- PII enc at-rest (KMS); values (ĐỀ XUẤT, chờ USR-OQ-1 / brief Item 5): male|female|other|undisclosed
+  ADD COLUMN gender_enc bytea,                    -- PII enc at-rest (KMS); DD-39 set: male|female|other|undisclosed
   ADD COLUMN dob_enc bytea,                        -- PII enc at-rest
   ADD COLUMN username text,                        -- duy nhất toàn hệ (unique global)
   ADD COLUMN language text NOT NULL DEFAULT 'vi' CHECK (language IN ('vi','en'));
@@ -52,7 +52,7 @@ ALTER TABLE sessions
   ADD COLUMN price_male integer CHECK (price_male IS NULL OR price_male >= 0),
   ADD COLUMN price_female integer CHECK (price_female IS NULL OR price_female >= 0);
 -- Quy ước: cả hai NULL → dùng price_amount (giá đơn). Set ≥1 trong hai → chế độ giá theo giới tính
--- (bên thiếu fallback về price_amount). (Phương án bảng session_price_by_gender để mở nếu cần nhiều nhóm giá.)
+-- (bên thiếu fallback về price_amount). Phase-1 storage is these columns; no parallel price table.
 ```
 
 > **Chọn hình thức giá:** phase-1 dùng **cột `price_male`/`price_female` trên `sessions`** (2 nhóm giá phổ biến CLB cầu lông/pickleball VN). Nếu tương lai cần >2 nhóm → mở quyết định/migration sang bảng `session_price_by_gender(session_id, gender, amount)`. **DD-39 đã ✅** — hình thức cột (2 nhóm) chốt ở migration (`0014+`).
@@ -200,6 +200,7 @@ REVOKE ALL ON TABLE person_follows FROM app, PUBLIC;
 ```text
 follow(actor, target):
   if actor == target → FOLLOW_SELF_FORBIDDEN
+  if canonical chat_blocks says either direction blocked → FOLLOW_NOT_ALLOWED (generic)
   lock persons[target] FOR UPDATE
   visibility = persons[target].profile_visibility
   status = (visibility == 'public') ? 'accepted' : 'pending'
@@ -208,7 +209,13 @@ follow(actor, target):
 
 approve/reject(followee=actor, follower):   # chỉ followee
   approve → status='accepted', decided_at=now()
-  reject  → DELETE edge   (block: open USR-OQ-7)
+  reject  → DELETE edge
+
+block(actor, target):
+  call canonical DD-55 chat safety service / `chat_blocks` store
+  in one command: upsert block + delete follow edges actor↔target + audit
+  future follow/approve/DM request-create-send-read → generic deny
+unblock(actor, target): delete own block + audit; DO NOT restore old follow edges/DM access
 
 unfollow(actor=follower) → fn DELETE own edge; absent = success/no-op
 removeFollower(actor=followee, follower) → fn DELETE incoming edge; absent = success/no-op
@@ -250,6 +257,8 @@ getProfile(viewer V, target T):
 | POST | /api/me/followers/:followerId/reject | Followee | Từ chối (xoá edge) |
 | DELETE | /api/me/followers/:followerId | Followee | Remove follower |
 | GET | /api/me/following · /api/me/followers | Authenticated Person | Danh sách của tôi |
+| POST | /api/chat/block | Authenticated Person | Canonical DD-55 block service; User Settings/Profile chỉ là surface |
+| DELETE | /api/chat/block/:targetPersonId | Authenticated Person | Canonical unblock; không restore follow edge |
 
 **Error codes:** `FOLLOW_SELF_FORBIDDEN` (400), `FOLLOW_NOT_FOUND` (404), `NOT_FOLLOWEE` (403). Private social profile trả `200` với minimal-card DTO cố định, không dùng 403 body biến thiên làm oracle.
 
@@ -264,12 +273,14 @@ getProfile(viewer V, target T):
 | F5 | Cross-Feature | Merge person (DD-01) | Lock incident edges; canonicalize endpoints; drop self + collapse duplicate (`accepted>pending`) **trước** update survivors để không vỡ UNIQUE; cùng merge tx/audit |
 | F6 | Data Integrity | Đổi visibility | private→public: pending→accepted; public→private: grandfather accepted |
 | F7 | Cross-Feature | Private ảnh hưởng roster/charge của host | ❌ KHÔNG — RLS/membership + tiền không đổi (HR1/HR2) |
-| F8 | Abuse | reject rồi re-request | Rate-limit; block (open USR-OQ-7) |
+| F8 | Abuse | reject rồi re-request | Rate-limit; canonical `chat_blocks` chặn follow/approve/DM ở shared predicate |
 | F9 | Privacy | reliability per-tenant (DD-42) lộ qua profile | ❌ NEVER — tenant-scoped, không vào approved social fields |
 | F10 | Security | role `app`/PUBLIC đọc bảng trực tiếp hoặc PUBLIC execute fn | ❌ REVOKED; test grants chỉ cho narrow function execution |
 | F11 | Privacy | Host mở social profile của member private | Minimal/approved theo follow như viewer khác; operational data chỉ ở tenant route |
 | F12 | Migration | Existing profile gặp migration giữa chừng | Transaction rollback hoặc vẫn private; không có window public hoá ngầm |
 | F13 | Concurrency | Follow đồng thời private↔public toggle | Cùng target-row lock; edge phản ánh visibility theo serialization order, không default-accepted fail-open |
+| F14 | Abuse | Block pair đã có follow pending/accepted | Block command gỡ edge hai chiều atomically; future follow/approve/DM generic deny; unblock không restore |
+| F15 | Architecture | User Settings tạo bảng/block predicate riêng | ❌ NEVER — reuse `chat_blocks` + canonical DD-55 safety service |
 
 ### 6.6 Testing Plan (framework đã pin)
 
@@ -288,6 +299,9 @@ getProfile(viewer V, target T):
 | F-11 | DB grants — `app`/PUBLIC direct table access + PUBLIC execute | denied; `app` execute narrow fn only |
 | F-12 | Migration existing/new — existing rows + row tạo sau migration | existing=`private`, new=`public`, no NULL/window leak |
 | F-13 | Follow ↔ visibility race — hai transaction ngược thứ tự | Target-row lock serialize; private không nhận edge auto-accepted do stale read |
+| F-14 | Block vs follow race | Canonical pair lock serialize; end-state blocked + no follow edge; no notification/DM leak |
+| F-15 | Unblock | Block removed, no old follow edge restored; new follow obeys current visibility |
+| F-16 | Cross-surface parity | Block from profile/settings then DM/follow from chat/API | Same canonical denial and audit; one block row/store |
 
 ### 6.7 Chi tiết triển khai (impl-gap)
 
@@ -307,6 +321,7 @@ getProfile(viewer V, target T):
 4. Social profile serializer theo field/source matrix; `/api/me` và host operational routes giữ tách biệt.
 5. Merge plan thêm lock/canonicalize/drop-self/dedupe-before-update cho follow edges.
 6. Test migration, grants, actor binding và invariant không lộ tiền/PII/roster/tenant activity.
+7. Wire profile/settings Block UI to canonical DD-55 chat safety service; do not add a User Settings block table.
 
 ### Rollout gender-pricing (khi DD-39 ✅)
 
@@ -319,6 +334,8 @@ getProfile(viewer V, target T):
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v0.7 | **DD-39 storage/value-set closure:** gender enum is resolved; phase-1 pricing uses only additive `price_male/price_female` columns beside `price_amount`, with no competing table path. |
+| 2026-07-17 | v0.6 | **USR-OQ-7 closure:** follow lifecycle consults canonical DD-55 `chat_blocks`; block atomically removes bilateral follow edges and gates DM/follow; profile/settings are thin surfaces, no second store. |
 | 2026-07-15 | v0.5 | **DD-39×DD-45 caller behavior:** direct active join/approve derivation failure rolls back that transaction; waitlist promotion keeps candidate waitlisted/no-charge/no-venue, writes one audit + canonical failure outbox event without rolling back opener, and continues queue; retry/alert consume the event. |
 | 2026-07-15 | v0.4 | **DD-47/48 framework ✅:** global-protected narrow functions + actor binding; state-idempotency không dùng tenant command ledger; staged existing-private/new-public migration; sourced social field matrix; tách `/api/me`, social profile và host operational paths. |
 | 2026-07-10 | v0.1 | Draft khởi tạo (DD-39 🟡): đề xuất `persons.{gender,dob,username,language}` (PII enc), `sessions.price_male/price_female`, `deriveChargeAmount` theo gender, public projection loại gender. Chạm `feature_session_management`/`feature_payment_reconcile` là pointer tới khi DD-39 ✅. |

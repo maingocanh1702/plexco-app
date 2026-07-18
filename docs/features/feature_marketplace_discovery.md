@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.3  
 > **Track:** 🔍 Discovery & Marketplace  
-> **Version:** 2.0 · 2026-06-19  
+> **Version:** 2.2 · 2026-07-17
 > **Status:** Reviewed  
 > **Prerequisites:** P2 session management · P4 sync/public projector  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-3/NFR-S2 · `../product/PRD.md` FLOW 12 · `../product/TDD.md` §3.9 · BRD OD-6/OD-8 · `BE/feature_marketplace_discovery_tech.md`
@@ -19,6 +19,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 - Private/incomplete/closed/cancelled/past sessions **KHÔNG BAO GIỜ** xuất hiện.
 - Exact venue chỉ reveal sau successful join/approval.
 - `slots_open` trong browse là advisory — join recheck capacity transactionally.
+- Messenger central mặc định global discovery; tenant Page mặc định local + “Khám phá tất cả”. Mỗi trang tối đa 8 business choices; Join CTA là opaque action, không raw routing ID.
 
 ---
 
@@ -55,6 +56,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 | 10 | Data Integrity | Closed/cancelled session vẫn trong search index | Projector must delete — reproject verifies clean |
 | 11 | Security | Unknown filter values probe taxonomy | Return empty — KHÔNG expose taxonomy internals in error |
 | 12 | Security | Scraping/bot abuse | Rate-limit + CAPTCHA challenge sau threshold |
+| 13 | Privacy | Personal-tenant session has blank/unverified owner alias | Fail closed: do not project; never fall back to internal tenant name, person name or account identity |
 
 ---
 
@@ -66,7 +68,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 | Web | Filter panel | — | Sport/area/time/skill/price/slot pickers | — | N/A |
 | Web | Session public detail | Skeleton | Whitelist info + Join CTA | "Buổi chơi không còn khả dụng" | N/A |
 | Web | Rate-limited | — | "Quá nhiều truy vấn — thử lại sau [countdown]" | — | N/A |
-| Zalo/Messenger Bot | `/search` (Zalo) · quick-reply (Messenger) | "🔍 Đang tìm..." | Kết quả (max 10) + "Xem thêm" link | "Không tìm thấy" | "Không có buổi nào phù hợp" |
+| Zalo/Messenger Bot | `/search` (Zalo) · quick-reply (Messenger) | "🔍 Đang tìm..." | Messenger: max 8 kết quả/page + Prev/Next/Cancel; Zalo theo number-reply contract | "Không tìm thấy" | "Không có buổi nào phù hợp" |
 
 ---
 
@@ -74,7 +76,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 
 | Entity | Vai trò | Key constraints |
 |--------|---------|-----------------|
-| `public_sessions` | Materialized view / projection table | Whitelist columns only, `session_id` FK, auto-expire |
+| `public_sessions` | Materialized public read/projection table | Whitelist columns only; `id=session.id` + internal `session_id` reference **without FK by design** so public plane cannot cascade/query canonical tenant tables; auto-expire |
 | `sessions` | Canonical source | `visibility` enum, required discovery fields |
 
 ### Public Contract (whitelist)
@@ -85,14 +87,17 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 | `sport_key` | sessions.sport_id → sports | Taxonomy key |
 | `starts_at` / `ends_at` | sessions | UTC timestamptz |
 | `area` | sessions.area | Coarse — quận/khu vực, KHÔNG address |
-| `skill_level` | sessions | Optional enum |
+| `skill_level` | sessions | **Live legacy only** during DD-41 expand/backfill; must disappear from projection at cutover |
+| `level_min_rank` / `level_max_rank` / `level_strict` | sessions policy (DD-41 target) | Ordered DD-08 ranks + advisory/hard flag; replaces `skill_level`, never exposes a player's level |
 | `price` | sessions.price_amount | Amount in VND |
 | `slots_open` | calculated | Advisory |
-| `club_display_name` | tenants.display_name | Moderated |
-| `host_display_name` | memberships.display_name | Moderated |
+| `club_display_name` | Club tenant: moderated `tenants.display_name`; personal tenant (DD-46 target): owner membership `display_name` | Personal tenant must never expose internal tenant name; blank alias => no projection |
+| `host_display_name` | memberships.display_name | Moderated; never raw person/account identity fallback |
 | `join_policy` | sessions | open / approval |
 
 > **Excluded:** tenant_id, venue address, roster, phone, email, bank, charges, channel IDs.
+
+> **DD-41 target delta (decided, migration pending):** expand projector/API to public `title`, `session_type`, `level_min_rank`, `level_max_rank`, `level_strict`, `gender_restriction`, `age_min`, `age_max`; backfill rank fields, switch readers, then stop projecting/drop legacy `skill_level`. `notes`, `instructions`, `byoe`, `cost_shared` remain private. Until this expand→contract slice lands, the live legacy field is compatibility evidence, not the final Product contract.
 
 ---
 
@@ -120,6 +125,8 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 - [ ] Rate-limit/pagination/cache không bypass privacy
 - [ ] Public invariant test pass under replay
 - [ ] Browse latency target documented và met
+- [ ] Messenger central/tenant Page local-vs-global context đúng; opaque action TTL/snapshot/replay tests pass
+- [ ] Personal-tenant session uses only nonblank moderated owner-membership alias for `club_display_name`; blank alias stays absent and internal tenant/person name never leaks
 
 ---
 
@@ -137,5 +144,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v2.2 | **Live/DD-46 projection closure:** document intentional no-FK public session reference; personal tenants source public club alias only from owner membership and fail closed when blank; ranking remains deterministic time-order until MKT-OQ-3 is resolved. |
+| 2026-07-17 | v2.1 | **DD-65/66/68:** Messenger central global vs tenant Page local-default discovery; max 8 business choices/page và opaque Join actions. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, public contract whitelist, screen states |

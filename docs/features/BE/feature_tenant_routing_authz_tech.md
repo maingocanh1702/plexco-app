@@ -1,39 +1,41 @@
 # Feature: Tenant Routing & Admin Authorization — Backend Tech Spec
 
 > **Canonical phase:** P2
-> **Version:** 2.2 · 2026-07-16
-> **Status:** Reviewed
+> **Version:** 2.5 · 2026-07-17
+> **Status:** Reviewed · reconciled to TDD v3.1 / decisions v1.45
 > **Product spec:** `../feature_tenant_routing_authz.md`
-> **References:** `../../product/TDD.md` §3.3–3.5 · `../../standards/business-rules.md` BL-SEC-2/BL-SEC-5 · `../../standards/decisions.md` DD-27 · DD-37 · DD-51 · DD-53 · DD-56
+> **References:** `../../product/TDD.md` §3.3–3.5 · `../../standards/business-rules.md` BL-SEC-2/BL-SEC-5 · `../../standards/decisions.md` DD-27 · DD-51 · DD-53 · DD-56 · **DD-65..68**
 
 ---
 
 ## 1. Tổng quan triển khai
 
-> **Cập nhật v2.1 (DD-37 ✅, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger + web**; **bỏ Telegram**. Tenant routing nay suy từ **Zalo `webhook_token` per-club** (`zalo_bots.webhook_token → tenant_id`) và **Messenger `page_id` per-club** (`messenger_pages.page_id → tenant_id`). Route Telegram `chat_id` (`telegram_links`) = **legacy tenant-1 only**, không dùng cho tenant mới. Nguyên tắc "routing suy từ kênh, không từ nội dung" (NFR-S3) giữ nguyên cho mọi kênh.
+> **Authority DD-15/DD-65..68 v1.45 (2026-07-17):** Zalo token/Messenger Page resolve provider endpoint + optional default ingress tenant; identity/reachability scoped theo bot/OA/Page. Target tenant/resource đến từ protected opaque action/public ref/server context và được authorize riêng; không từ message/client body. Telegram legacy không dùng cho tenant mới.
 
 ```text
-Channel event (Zalo webhook_token · Messenger page_id · web session) → channelResolver
-    → AuthZ Middleware(action, actor, tenant)
+Channel event → endpointResolver (Zalo tenant | Messenger central/tenant | web session)
+    → protected context/action resolver → AuthZ Middleware(action, actor, target tenant/resource)
         → tenant-bound Service/Repo (RLS set)
 ```
 
-**Pipeline:** `channelResolver` maps incoming event to tenant via **trusted channel bindings** (Zalo `webhook_token`, Messenger `page_id`, web authenticated context; legacy Telegram `chat_id` for tenant-1). `authzMiddleware` derives stable actor identity and calls `authorize(action, actor, tenant)`. Handler cannot override either value.
+**Pipeline:** `channelResolver` maps trusted endpoint; Messenger identity lookup includes Page ID. `contextActionResolver` resolves target from opaque actor/Page-bound action, protected public ref or eligible-role picker. `authzMiddleware` then calls `authorize(action, actor, target)`; handler cannot override endpoint, actor or target.
 
 **Design decisions:**
 - Routing ≠ authorization — 2 separate middleware steps.
-- Tenant **luôn** suy từ kênh (webhook_token / page_id / auth session), **không** từ nội dung message (NFR-S3, edge #1).
+- Tenant/resource **không bao giờ** suy từ free text/client body. Zalo/web may pin it; Messenger Page supplies only endpoint/default and protected resolver owns final target (NFR-S3/DD-66).
 - Store keyed hashes for per-channel user lookup — encrypt recoverable IDs only if needed.
 - Link codes: hash-only storage (no plaintext), TTL, single-use.
 - Global context/link lookup via narrow service access — not open queries.
-- **Messenger PSID là page-scoped** (mỗi Page một namespace) → resolver phải neo theo `page_id`; **Zalo `from.id`** ổn định per-bot (DD-15 ⬜) → neo theo `webhook_token`.
+- **Channel identity/reachability là provider-endpoint scoped** → 3-part key `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`; Messenger scope Page, Zalo scope bot/OA; explicit endpoint binding, không reuse window/token hoặc auto-merge xuyên endpoint.
 - **DD-56:** one canonical action→capability registry owns authorization. Unknown action/capability, missing grant, expired grant, or registry failure all deny. Adapters/API/UI may render registry output but may not infer privileges from role labels.
 
 ---
 
 ## 2. Database Schema + Edge Cases (BE)
 
-### Schema
+### Live legacy baseline — reference only, NOT target DDL
+
+Khối DDL dưới đây mô tả baseline Telegram-era đang tồn tại để migration có điểm xuất phát; **không được copy làm target schema** cho tenant mới. Target delta ở ngay sau block phải được thực hiện bằng migration mới: Zalo/Messenger provider bindings, endpoint-scoped identity/reachability, hybrid Page registry/context và defaults không còn Telegram.
 
 ```sql
 CREATE TABLE telegram_links (
@@ -90,7 +92,9 @@ CREATE TABLE routing_audit (
 
 All tenant-scoped tables: `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY`.
 
-> **Channel bindings (DD-37):** `telegram_links` (chat_id → tenant) is **legacy, tenant-1 only** — no new tenant is routed via Telegram. Phase-1 routing uses `zalo_bots.webhook_token → tenant_id` (Zalo, bot per-club) and `messenger_pages.page_id → tenant_id` (Messenger, Page per-club) — both defined in `feature_zalo_channel_tech.md` / `feature_player_messenger_tech.md`, canonical in `packages/db/schema.ts`. `tenant_admins.platform` / `player_chat_context.platform` default `'telegram'` in the live schema is retained for history; new rows use `'zalo'` / `'messenger'`.
+> **Target delta (Reviewed):** Telegram is legacy only. Zalo uses `webhook_token → endpoint/default tenant`; Messenger requires a new DD-65 migration for global-protected central+tenant Page registry and server-side action/context storage. Both channel identities use the DD-67 3-part endpoint key and reachability by `channel_identity_id`; target tenant authorize separately. Live `messenger_pages.tenant_id NOT NULL UNIQUE` is implementation truth today but insufficient; do not edit historical migration. Defaults `'telegram'` above remain historical and are not target defaults.
+
+`tenant_link_codes` is the canonical table for **tenant-admin onboarding** in this feature. It is not the DD-50 identity `link_codes` table; do not merge their purposes or schemas. Current lifecycle fields are `consumed_at`/`revoked_at`/`attempts`, never the Product alias `used_at`.
 
 ### Indexes
 
@@ -105,18 +109,18 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 
 | # | Category | Case | Xử lý |
 |---|----------|------|-------|
-| 1 | Security | Tenant resolved from message text/body | ❌ NEVER — only trusted bindings (chat_id, link code hash) |
+| 1 | Security | Tenant resolved from message text/body | ❌ NEVER — trusted endpoint + protected context/action resolver only |
 | 2 | Concurrency | Link consume + admin create race | Single transaction + row lock on link code |
 | 3 | Concurrency | Rebind chat to new tenant | Lock chat/current/new tenant rows — write before/after audit |
-| 4 | Security | Callback contains spoofed session/tenant | Canonical session lookup validates tenant — reject mismatch |
+| 4 | Security | Callback contains raw/spoofed session/tenant | Reject. Only opaque actor+Page-bound action may resolve target; valid cross-club target need not equal source Page default |
 | 5 | Concurrency | Replayed channel event id (Zalo/Messenger mid/event; legacy TG update_id) | Idempotency key on event id — return previous result |
 | 6 | Security | Link code brute force | Rate-limit `attempts` counter + account lockout |
 | 7 | Security | Bot secret/webhook path in logs | ❌ NEVER — KMS-managed, logs redact |
 | 8 | Data Integrity | Username change affects auth | No impact — use stable numeric user_id |
-| 9 | Data Integrity | Stale membership/context | Fail closed — invalidate and reject |
+| 9 | Data Integrity | Stale membership/context/action snapshot | Fail closed — invalidate/re-pick; re-check capability and target at consume |
 | 10 | Security | Co-admin exceeds permitted actions | Action matrix enforcement in authz middleware |
 | 11 | Cross-Feature | Suspended tenant admin mutation | Billing gating check in middleware |
-| 12 | Security | Cross-platform user ID collision | Impossible — lookup hash includes platform prefix |
+| 12 | Security | Cross-platform/Page user ID collision | Lookup hash includes platform + Page + PSID; no cross-Page auto-merge |
 | 13 | Security | Co-admin sensitive action without a current explicit grant | Deny before service mutation; audit denial class |
 | 14 | Security | Owner tries to grant `role.manage` or a PlatformAdmin-only action | Deny; these capabilities are absent from delegable registry set |
 | 15 | Security | Grant expires/revokes during request | Re-evaluate inside mutation transaction; missing/expired grant denies |
@@ -128,16 +132,17 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 ### Resolution Precedence
 
 ```text
-1. Zalo event   → webhook_token → zalo_bots(active) → tenant_id
-   Messenger evt → page_id      → messenger_pages   → tenant_id
-   Web request   → authenticated session → tenant context
+1. Zalo event → webhook_token → bot/OA endpoint + optional ingress tenant + endpoint-scoped identity
+   Messenger evt → page_id → endpoint(scope, optional default tenant) + Page-scoped identity
+   Web request → authenticated session → tenant context
    (legacy) TG group message → chat_id → telegram_links(active=true) → tenant_id  [tenant-1 only]
-2. Admin DM → platform_user_lookup_hash → tenant_admins →
+2. Messenger opaque action/protected public ref → target tenant/resource;
+   otherwise actor memberships/roles →
      1 tenant → auto-select
-     N tenants → picker
-3. Player DM → sticky context → validate membership active
-4. Deep link → slug → tenant_id (sticky, no admin grant)
-5. Fallback → fail closed (403)
+     N tenants → bounded server-side picker
+3. Revalidate action TTL/snapshot/version + membership/capability at consume
+4. Source tenant Page is audit/default only; valid cross-club target resolves independently
+5. Fallback → fail closed/re-pick (403)
 ```
 
 ### Internal Error Codes
@@ -214,8 +219,8 @@ Logical grant record (physical DDL must be pinned by the authz build slice after
 | 5 | Player DM valid context | Active sticky context | Correct tenant |
 | 6 | Player DM stale context | Membership deleted | Fail closed |
 | 7 | Deep link routing | Valid slug | Sticky context set, no admin |
-| 8 | Spoofed tenant in body | Client-supplied tenant_id | Ignored — use trusted binding |
-| 9 | Callback wrong group | chat_id ≠ session tenant | Rejected |
+| 8 | Spoofed tenant in body | Client-supplied tenant_id | Ignored/rejected — protected resolver only |
+| 9 | Callback wrong/stale actor/Page | Token binding/snapshot mismatch | Rejected; no mutation |
 | 10 | Link consume happy | Valid code + first use | Admin created |
 | 11 | Link consume expired | Expired code | `LINK_CODE_INVALID` |
 | 12 | Link consume replay | Already consumed code | `LINK_CODE_INVALID` |
@@ -235,6 +240,9 @@ Logical grant record (physical DDL must be pinned by the authz build slice after
 | 26 | Global action non-delegable | Co-admin/owner invokes DD-51 override or DD-53 split | 403; only PlatformAdmin dedicated path can proceed |
 | 27 | Unknown registry action | Route declares unknown key or registry unavailable | Startup/build validation fails or runtime deny; never fallback to role |
 | 28 | Mid-request expiry/revoke | Grant valid at request entry, invalid at mutation | Transactional re-check denies; no partial mutation |
+| 29 | Messenger central context | actor has 0/1/N eligible tenants | Discovery / auto-select / bounded picker; never guess |
+| 30 | Messenger cross-club action | tenant Page A, protected session B ref | Target B resolves; source A grants no capability; B authz/join rules apply |
+| 31 | Messenger raw callback ID | raw tenant/session/member id | Rejected even if ID exists |
 
 ### Integration Tests
 
@@ -245,6 +253,7 @@ Logical grant record (physical DDL must be pinned by the authz build slice after
 | 3 | Rebind group | Chat bound A → rebind B | A removed, B active, audit logged |
 | 4 | Suspended flow | Suspend tenant → test mutation + CK ingest | Mutation blocked, CK ingest works |
 | 5 | Registry used by every surface | Same action via web/Zalo/Messenger | Same allow/deny result and audit class; adapters contain no role formula |
+| 6 | Hybrid endpoint matrix | central + tenant Page; host/player/dual-role in 2 tenants | Correct context, isolation and capability across all combinations |
 
 ---
 
@@ -271,6 +280,9 @@ Logical grant record (physical DDL must be pinned by the authz build slice after
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v2.5 | **decisions v1.45:** generalized provider-endpoint identity/reachability cho Messenger + Zalo; reachability keyed by `channel_identity_id`, target tenant authorize separately. |
+| 2026-07-17 | v2.4 | **Legacy/target closure:** Telegram DDL labeled reference-only; target delta points to endpoint-scoped Zalo/Messenger model; `tenant_link_codes` naming/lifecycle aligned and separated from identity `link_codes`. |
+| 2026-07-17 | v2.3 | **DD-65..68:** Messenger endpoint/default-context split, protected opaque target resolver, Page-scoped identity/reachability, central picker and valid cross-club action semantics; live schema flagged migration-pending. |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), thêm full DDL, 12 BE edge cases, authz matrix, rate limits, 20 unit tests, 4 integration tests |
 | 2026-07-10 | v2.1 | **DD-37 ✅:** routing pivot — tenant suy từ **Zalo `webhook_token`** + **Messenger `page_id`** per-club; Telegram `chat_id`/`telegram_links` xuống **legacy tenant-1 only**. Cập nhật overview, channel-binding note, resolution precedence. Nguyên tắc routing-từ-kênh (NFR-S3) không đổi. |

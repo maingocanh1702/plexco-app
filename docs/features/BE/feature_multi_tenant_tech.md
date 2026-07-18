@@ -1,12 +1,18 @@
 # Feature: Multi-tenant Foundation — Backend Tech Spec
 
 > **Canonical phase:** P0–P1
-> **Version:** 1.2 · 2026-07-10
-> **Status:** Implementation contract reconciled to TDD v2.6 / decisions v1.40; P0–P1 live schema/migrations/tests remain the reality baseline
+> **Version:** 1.5 · 2026-07-17
+> **Status:** Implementation contract reconciled to TDD v3.1 / decisions v1.45; P0–P1 live schema/migrations/tests remain the reality baseline, DD-15/DD-65..68 migration pending
 > **Product spec:** `../feature_multi_tenant.md`
-> **References:** `../../product/TDD.md` §3.1–3.4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37
+> **References:** `../../product/TDD.md` §3.1–3.4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37/**DD-65..68** · `feature_identity_tech.md` · `feature_tenant_routing_authz_tech.md`
 
-> **Cập nhật v1.2 (DD-37 ✅, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger + web** (bỏ Telegram). Channel adapters ở `apps/bot` nay là Zalo (P2) + Messenger (P2.5); tenant vẫn suy từ kênh, không từ nội dung.
+> **Cập nhật v1.2 (DD-37 ✅, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger + web** (bỏ Telegram). Channel adapters ở `apps/bot` nay là Zalo (P2) + Messenger (P2.5).
+>
+> **Cập nhật v1.3 (DD-65..68):** Zalo token/web auth có thể pin tenant. Messenger `page_id` chỉ resolve global-protected endpoint/default context; target tenant/resource phải từ opaque action/protected ref/server picker. Page-bound identity/reachability không dùng tenant RLS làm authorization.
+>
+> **Cập nhật v1.4 (decisions v1.45):** identity/reachability được generalized cho Messenger + Zalo: unique `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`, reachability gắn `channel_identity_id`; endpoint ingress/default và target-tenant authorization là hai lớp riêng.
+>
+> **Cập nhật v1.5:** `sessions` DDL dưới mirror chính xác live migration `0002`/Drizzle schema; không dùng một field subset trông như full-table authority.
 
 ---
 
@@ -20,7 +26,7 @@ packages/db         Drizzle schema, migrations, tenantRepo, privileged DB functi
 packages/jobs       pg-boss producers/handlers, tenant-scoped execution wrapper
 ```
 
-PostgreSQL/domain services are canonical. Runtime requests never set tenant from untrusted body/content. Tenant comes from channel routing or authenticated web context, followed by role authorization.
+PostgreSQL/domain services are canonical. Runtime requests never set tenant from untrusted body/content. Zalo/web can provide trusted tenant context; Messenger resolves endpoint first and target tenant separately through protected server state, followed by role/action authorization.
 
 ### Database roles
 
@@ -38,11 +44,12 @@ Core P0–P1 tables:
 
 - Global lookup: `sports`.
 - Tenant root/config: `tenants`, `settings`.
-- Tenant-private: `sessions`, `players`; later migrations add memberships/reachability/ledger but inherit the same RLS template.
+- Tenant-private: `sessions`, `players`; later migrations add memberships, Zalo bot/tenant config and ledger under the same RLS template.
+- Global-protected: Messenger Page registry plus endpoint-scoped channel identity/reachability for Messenger and Zalo; no blanket app grant, narrow resolver only.
 - Public: `public_sessions` skeleton.
 - Worker metadata/functions: queue schema + audit entries; no public HTTP access.
 
-### Required session fields
+### Live `sessions` table (migration `0002`)
 
 ```sql
 CREATE TABLE sessions (
@@ -52,15 +59,20 @@ CREATE TABLE sessions (
   starts_at timestamptz NOT NULL,
   ends_at timestamptz NOT NULL,
   timezone text NOT NULL,
-  price integer NOT NULL CHECK (price >= 0),
-  slots_max integer CHECK (slots_max IS NULL OR slots_max > 0),
-  area text NOT NULL,
-  venue text,
+  venue_name text,
+  venue_address text,
+  area text,
   skill_level text,
-  visibility text NOT NULL CHECK (visibility IN ('private','public')),
-  join_policy text NOT NULL CHECK (join_policy IN ('open','approval')),
-  status text NOT NULL CHECK (status IN ('open','closed','cancelled')),
-  CHECK (ends_at > starts_at)
+  price_amount integer NOT NULL DEFAULT 0 CHECK (price_amount >= 0),
+  slots_max integer,
+  visibility text NOT NULL DEFAULT 'private' CHECK (visibility IN ('private','public')),
+  join_policy text NOT NULL DEFAULT 'open' CHECK (join_policy IN ('open','approval')),
+  status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','open','closed','cancelled')),
+  version integer NOT NULL DEFAULT 1,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (ends_at > starts_at),
+  CHECK (slots_max IS NULL OR slots_max > 0)
 );
 ```
 
@@ -124,7 +136,7 @@ Security-definer functions must be owned by a non-login role; revoke PUBLIC exec
 
 ### Global identity
 
-When P3.5 adds `persons/channel_identities`, runtime API role receives no direct SELECT. Identity service uses narrow functions/queries authorized by authenticated person. `channel_reachability` remains tenant-scoped + RLS.
+When P3.5 adds `persons/channel_identities`, runtime API role receives no direct SELECT. Identity service uses narrow functions/queries authorized by authenticated person. Both Messenger and Zalo identities are endpoint-scoped through `provider_scope_lookup_hash`; reachability is keyed by `channel_identity_id`. These rows are global-protected and require exact endpoint relation plus separate target-tenant authorization at the consumer. Tenant-owned Zalo bot configuration remains tenant-private.
 
 ### Person-self
 
@@ -205,6 +217,9 @@ Fail if any tenant table lacks `tenant_id`, ENABLE/FORCE RLS, policy USING/WITH 
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-17 | v1.5 | **Live-schema closure:** replace the abridged `sessions` block with the exact `0002`/Drizzle contract, including nullable `area`, venue address, defaults, optimistic version and audit timestamps. |
+| 2026-07-17 | v1.4 | **DD-67 v1.45 generalization:** endpoint-scope identity/reachability for Messenger + Zalo, three-part uniqueness and `channel_identity_id` reachability; target tenant remains separately authorized. Live baseline unchanged; migration pending. |
+| 2026-07-17 | v1.3 | **DD-65..68 boundary propagation:** split Zalo tenant reachability from global-protected Messenger Page registry/identity/endpoint reachability; endpoint/default context no longer equals target tenant. Live P0–P1 baseline unchanged; migration pending. |
 | 2026-07-10 | v1.2 | **DD-37 ✅:** channel adapters = Zalo (P2) + Facebook Messenger (P2.5); bỏ Telegram. Cập nhật architecture note (`apps/bot`). |
 | 2026-06-18 | v1.1 | Replaced legacy payments schema; standardized RLS setting; added worker/protected/public contracts |
 | 2026-06-18 | v1.0 | Initial backend spec |

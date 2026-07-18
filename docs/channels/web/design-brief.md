@@ -1,10 +1,12 @@
 # Plexco Web App — Design Brief cho Designer
 
-> **Version:** 1.1 · 2026-07-10
-> **Tài liệu tham chiếu:** `../../product/BRD.md` v3.6 · `../../product/PRD.md` · `../../product/TDD.md` · `../../features/README.md`
+> **Version:** 1.7 · 2026-07-18
+> **Tài liệu tham chiếu:** `../../product/BRD.md` v3.9d · `../../product/PRD.md` v2.8b · `../../product/TDD.md` v3.1 · `../../product/ROADMAP.md` v3.3b · `../../features/README.md` v2.23 · `../../standards/decisions.md` v1.47
 > **Target audience:** Designer (UI/UX)
 >
 > **Cập nhật v3.4 (DD-37 ✅):** Đăng nhập = **Google + email** (bỏ Telegram Login). Kênh phase-1 = **web + Zalo + Facebook Messenger** (Telegram loại). Onboarding link **Zalo + Facebook Messenger** (không còn bước Telegram). Thêm màn **chat in-app** (DD-38 ✅), **cài đặt hồ sơ + giá theo giới tính** (DD-39 ✅), **mark-paid thủ công tap/multi-select** (DD-40 ✅).
+>
+> **Cập nhật DD-65..68:** central Plexco Page luôn có; Page riêng là optional. UI onboarding phải hiển thị central readiness trước, không block completion vì thiếu club Page; host/player dùng shared surface và protected actions, runtime vẫn pending.
 
 ---
 
@@ -66,7 +68,7 @@
 │   ├── Step 1: Club info
 │   ├── Step 2: Bank (SePay)
 │   ├── Step 3: Zalo bot (dán token)
-│   └── Step 4: Facebook Messenger (FB Login + chọn Page, App Review) + Readiness check
+│   └── Step 4: Messenger central ready + optional FB Login/chọn Page riêng
 │
 ├── /dashboard              → Host dashboard (auth required)
 │   ├── /sessions           → Session management
@@ -337,7 +339,7 @@ Step 2: Kết nối bank
 │                                                        │
 │  ┌────────────────────────────────────────────┐        │
 │  │ Nhà cung cấp *      [SePay ▼]             │        │
-│  │ SePay API key *      [●●●●●●●●           ] │        │
+│  │ SePay               [Kết nối bằng OAuth]   │        │
 │  │ Số tài khoản *       [                    ] │        │
 │  │ Ngân hàng *          [Vietcombank ▼]       │        │
 │  └────────────────────────────────────────────┘        │
@@ -466,7 +468,7 @@ Step 4: Facebook Messenger + Readiness
 
 ### 5.1 Color Palette
 
-> ⚠️ **Giá trị màu canonical ở [`../../standards/design-tokens.md`](../../standards/design-tokens.md)** (đã chốt: Primary = Indigo → Deep Blue). Bảng dưới chỉ mô tả *vai trò* token; designer **bám giá trị token**, muốn đổi thì đề xuất qua `../../standards/design-tokens-benchmark.md` (🟡 DD-59) — KHÔNG tự chọn màu mới.
+> ⚠️ **Giá trị màu canonical ở [`../../standards/design-tokens.md`](../../standards/design-tokens.md)**. DD-59 benchmark đã defer/reference-only, nên không phải active change gate; mọi thay đổi token phải theo authority hiện hành của token SoT.
 
 | Token | Sử dụng | Ghi chú |
 |-------|---------|---------|
@@ -583,5 +585,11 @@ Step 4: Facebook Messenger + Readiness
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-18 | v1.7 | Refresh authority v1.47/feature index v2.23; DD-59 benchmark is deferred reference, not an active gate. |
+| 2026-07-17 | v1.6 | Refresh feature index reference to v2.22 after final integrity/Assistant readiness closure; no UI scope change. |
+| 2026-07-17 | v1.5 | Refresh feature index reference to v2.20 after deep contract closure; no UI scope change. |
+| 2026-07-17 | v1.4 | Refresh current authority refs to BRD v3.9b/PRD v2.8/TDD v3.1/ROADMAP v3.3/features v2.19/decisions v1.45; no UI scope change. |
+| 2026-07-17 | v1.3 | Refresh current authority refs to TDD v3.0/features v2.18/decisions v1.45; no UI scope change. |
+| 2026-07-17 | v1.2 | **DD-65..68:** central Messenger readiness + optional club Page, không block onboarding; refresh current authority refs tới BRD v3.9a/PRD v2.7/TDD v2.9/ROADMAP v3.2/features v2.17/decisions v1.44. |
 | 2026-07-10 | v1.1 | **v3.4 pivot (DD-37 ✅):** auth wireframe/notes → Google + email (bỏ Telegram Login, DD-13); onboarding Step 3/4 → Zalo bot + Facebook Messenger (bỏ bước Telegram group); triết lý/personas → Zalo/Messenger; constraint auth + privacy giới tính (DD-39). Sửa cross-ref path `../product` → `../../product`. |
 | 2026-06-19 | v1.0 | Initial design brief with wireframes, personas, sitemap, design system requirements |

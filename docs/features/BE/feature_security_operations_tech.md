@@ -1,12 +1,12 @@
 # Feature: Security, Reliability & Operations — Engineering/Ops Spec
 
 > **Canonical phase:** Cross-cutting / P6
-> **Version:** 2.1 · 2026-07-10
+> **Version:** 2.2 · 2026-07-17
 > **Status:** Reviewed
 > **Product spec:** `../feature_security_operations.md`
-> **References:** `../../product/TDD.md` §4/6/7/10 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37
+> **References:** `../../product/TDD.md` §4/6/7/10 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37/DD-65
 
-> **Cập nhật v2.1 (DD-37 ✅, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** (bỏ Telegram). Secret rotation/kill-switch nay bao **Zalo Bot Token**, **Messenger Page token + FB app secret**, **Google OAuth client secret** (thay Telegram bot token).
+> **Cập nhật v2.2 (DD-65 ✅, 2026-07-17):** kênh phase-1 = **Zalo + Facebook Messenger**. Messenger secret ownership tách bắt buộc: Page access token là secret **per Page endpoint** trong protected store; Meta App Secret là **một deployment/platform secret** dùng verify webhook cho toàn App. Hai loại có blast radius và runbook riêng.
 
 ---
 
@@ -52,7 +52,7 @@ No new business tables — cross-cutting controls applied to all existing tables
 | 2 | Security | Public PII leak | Whitelist enforced — output invariant test |
 | 3 | Financial | Wrong payment allocation | Ledger audit trail — reversal path |
 | 4 | Security | Identity takeover (merge abuse) | Merge policy constraints + audit |
-| 5 | Security | Leaked channel token | Kill switch → rotation → audit |
+| 5 | Security | Leaked channel/Page token | Revoke/rotate exact endpoint → audit; other endpoints remain valid |
 | 6 | Resilience | Provider/webhook outage | Degrade — queue retry/DLQ |
 | 7 | Resilience | Outbox backlog | Alert + DLQ → operator |
 | 8 | Resilience | DB corruption/region outage | PITR restore — RPO/RTO |
@@ -89,7 +89,8 @@ No new business tables — cross-cutting controls applied to all existing tables
 | Secret Type | Rotation | Kill Switch |
 |-------------|----------|-------------|
 | Zalo bot token | Manual + runbook | Yes — immediate revoke |
-| Messenger Page token + FB app secret | Manual + runbook | Yes — immediate revoke |
+| Messenger Page access token | Per Page endpoint; protected registry row, rotate/revoke exact Page | Disable that Page route only; preserve other Pages |
+| Meta App Secret | One deployment/platform secret; coordinated dual-secret verification window then redeploy | Platform-wide webhook containment; never store/rotate per Page |
 | Google OAuth client secret | Manual + runbook | Yes — revoke + re-issue |
 | Provider webhooks (SePay/ApiPay) | Rotatable | Yes |
 | Web session keys | Automatic (30d) | Yes — invalidate all sessions |
@@ -154,6 +155,9 @@ Required runbooks: cross-tenant leak, public PII, wrong allocation, identity com
 | 18 | Analytics PII audit | All events | Opaque IDs only |
 | 19 | Least privilege grant | DB role permissions | Minimal grants |
 | 20 | Container scan | Production image | No vulnerabilities |
+| 21 | Messenger Page-token isolation | Rotate/revoke Page A token with Page B active | A outbound fails/recovers after rotation; B remains unaffected; audit scope_ref=A |
+| 22 | Meta App Secret rollover | New App Secret deployed with bounded dual-secret window | All Page webhooks verify during rollover; old secret rejected after cutoff; one deployment inventory record/evidence |
+| 23 | Secret scope invariant | Attempt per-Page App Secret or deployment-wide Page token record | Validation rejects the wrong scope_kind; no ambiguous combined inventory row |
 
 ### Load Tests
 
@@ -188,6 +192,7 @@ Required runbooks: cross-tenant leak, public PII, wrong allocation, identity com
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v2.2 | **DD-65 secret ownership:** separate Page-token endpoint rotation from single Meta App Secret platform rollover; add isolation/blast-radius tests and forbid combined inventory rows. |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), control areas matrix, secret rotation table, CI gates, 20 tests |
 | 2026-07-10 | v2.1 | **DD-37 ✅:** secret rotation table — bỏ Telegram bot token; thêm Messenger Page token + FB app secret + Google OAuth client secret (kênh phase-1 Zalo/Messenger). |

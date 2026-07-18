@@ -2,11 +2,11 @@
   "feature": "auth-onboarding-v3",
   "branch": "feat/auth-onboarding-v3",
   "base_ref": "feat/phase1-fable5",
-  "risk": "P1",
-  "change_class": "auth-feature",
+  "risk": "P0",
+  "change_class": "historical-auth-feature-do-not-run",
   "merge_policy": "manual_only",
   "auto_merge": false,
-  "codex_review": "2x_consecutive_clean",
+  "codex_review": "not_applicable",
   "depends_on": [
     "db-postgres-drizzle-rls"
   ],

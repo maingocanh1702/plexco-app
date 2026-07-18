@@ -10,8 +10,9 @@
 > `docs/standards/core-db-architecture-principles.md`.
 >
 > **v3.4 Phase-1 pivot (DD-37 ✅):** một Person link **Google + Facebook + Zalo** — **không còn Telegram**.
-> Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅, thay TG Login) · link **Facebook** (DD-33 🟡, phase-1)
+> Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅, thay TG Login) · link **Facebook** (DD-33 ✅, phase-1)
 > · **Zalo Login** (DD-14 ⬜). **DD-50:** phase-1 không thu SĐT; strong proof cho claim có tiền = verified account email hoặc transactional one-time `link_code`. Phone fields giữ dormant. Xem §7 matrix.
+> **DD-15/DD-65..68 (decisions v1.47):** channel identity/reachability luôn scoped theo provider endpoint. Messenger scope = Page; Zalo scope = bot/OA cho tới khi DD-15 chứng minh rộng hơn. Reachability gắn `channel_identity_id`, không thu gọn thành `(person,tenant,platform)`.
 
 ---
 
@@ -74,7 +75,7 @@ Invariant vật lý giữ dormant cho tương lai: `UNIQUE(phone_lookup_hash) WH
 UNIQUE(platform, platform_user_hash)
 ```
 
-Product **đã chốt Google/email/password (DD-13 ✅, phase-1)** + link Facebook (DD-33 🟡): đó là
+Product **đã chốt Google/email/password (DD-13 ✅, phase-1)** + link Facebook (DD-33 ✅): đó là
 **web-auth schema/adaptor delta** trên `account_identities`/credential tables với
 `platform ∈ { google, email, facebook(DD-33), zalo(DD-14) }` — **không** phải lý do tạo thêm root
 table `users`. Adapter TG Login đã bỏ (DD-37).
@@ -86,27 +87,28 @@ table `users`. Adapter TG Login đã bỏ (DD-37).
 | `id` | uuid PK |
 | `person_id` | FK -> `persons.id` |
 | `platform` | `zalo` / `messenger` (phase-1). *(Telegram archived — DD-37; enum trong `schema.ts` có thể giữ giá trị `telegram` forward-compat, nhưng không nhận runtime ở phase-1.)* |
+| `provider_scope_lookup_hash` | keyed HMAC domain-separated của Page/bot/OA endpoint |
 | `platform_user_id_enc` | raw provider id encrypted |
 | `platform_user_lookup_hash` | lookup hash cho uniqueness |
+| Provider endpoint binding | relation tới Page/bot/OA registry; exact physical FK chốt trong migration DD-15/DD-65..67 |
 | `username_enc` | optional, không phải key |
 | `status` | `active` / `inactive` |
 
-Invariant: `UNIQUE(platform, platform_user_lookup_hash)`.
+Invariant: `UNIQUE(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`. Hai hash dùng key/domain riêng: scope hash từ Page/bot/OA id, user hash từ PSID/`from.id`. Không ghép hai raw id thành một hash duy nhất và không auto-merge identity xuyên endpoint bằng tên/alias.
 
-Runtime phase-1 (DD-37): channel accepts **Zalo + Messenger**. Messenger nay là **phase-1 (P2.5)**,
-route theo `messenger_pages.page_id`, phụ thuộc App Review. **Telegram loại khỏi phase-1** (không nhận runtime).
+Runtime target: Messenger `page_id` resolve central/tenant endpoint; target tenant/resource resolve riêng bằng opaque action/protected ref/server picker. App Review vẫn bắt buộc. Live runtime/schema chưa implement DD-65..68.
 
-### `channel_reachability` - nhắn được trong tenant nào
+### Reachability - nhắn được từ endpoint nào
 
-`channel_identities` là global. Reachability là tenant-scoped:
+Reachability của mọi channel gắn trực tiếp exact endpoint-scoped identity:
 
 ```text
-PRIMARY KEY (person_id, tenant_id, platform)
-can_dm, last_inbound_at, window_expires_at, otn_token_enc...
+Unified key: channel_identity_id
+can_dm, last_inbound_at, provider window/policy metadata...
+endpoint binding lives on channel_identity; target-tenant eligibility is checked separately
 ```
 
-Không dùng `ChannelIdentity` global để suy ra "nhắn được mọi club"; mỗi tenant/platform
-có trạng thái reachability riêng.
+Không dùng window/token cho endpoint khác. Delivery chọn đúng một route: reachable tenant endpoint → reachable central/shared endpoint → web/kênh khác theo policy, có logical dedup.
 
 ### `memberships` - Person trong một club
 
@@ -126,10 +128,10 @@ Invariant: một active/guest membership cho một `(tenant_id, person_id)`.
 
 - `persons`: phone schema dormant; nếu tương lai enable thì verified phone unique bằng lookup hash, không plaintext. Phase-1 không thu/không dùng làm proof.
 - `account_identities`: `UNIQUE(platform, platform_user_hash)`.
-- `channel_identities`: `UNIQUE(platform, platform_user_lookup_hash)`.
+- `channel_identities`: `UNIQUE(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`.
 - `memberships`: active person unique theo tenant.
-- `channel_reachability`: unique theo `(person_id, tenant_id, platform)`.
-- `link_codes`: hash-only, TTL ngắn, single-use, attempts/rate-limit.
+- `channel_reachability`: unique theo `channel_identity_id` + global-protected narrow service; không reuse window/token xuyên Page/bot/OA. Target-tenant eligibility được authorize riêng.
+- `link_codes`: hash-only, TTL ngắn, single-use, `max_attempts` + cooldown/lock + revoke; issuer đúng một channel/account.
 - `merge_audit` + `merge_tombstones`: mọi merge có actor, method, reason, before/after.
 - Runtime API role không broad SELECT global protected tables; đi qua identity/auth service
   hoặc SECURITY DEFINER function hẹp, có purpose/audit.
@@ -140,19 +142,19 @@ Invariant: một active/guest membership cho một `(tenant_id, person_id)`.
 
 ### A. Bot/native first contact
 
-1. Adapter verify provider signature/token và lấy stable `(platform, platform_user_id)`.
-2. Identity service hash/encrypt provider id.
-3. Tra `channel_identities(platform, lookup_hash)`.
+1. Adapter verify provider signature/token và lấy cả provider endpoint + stable subject (`page_id`+PSID hoặc bot/OA id+`from.id`).
+2. Identity service tạo hai keyed HMAC domain-separated: provider scope và provider user; raw IDs được encrypt theo purpose nếu cần lưu.
+3. Tra `channel_identities(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`.
    - Có -> lấy `person_id`.
    - Không -> tạo `persons` + `channel_identities` idempotently; unique race thì reload.
-4. Resolve tenant riêng bằng route context (Zalo bot token, Messenger Page — cả hai phase-1).
+4. Resolve trusted context: Zalo token pins tenant; Messenger Page pins endpoint/default only, target từ protected action/ref/picker.
    *(Telegram group/admin đã loại — DD-37.)*
 5. Chỉ tạo `membership` khi có join/approved action. Tin nhắn đầu tiên không tự thành member.
 
 ### B. Web/app login
 
 1. Auth adapter verify login provider: **Google OAuth + email/password** (DD-13 ✅, phase-1) và
-   **Facebook Login** (DD-33 🟡, phase-1 — phụ thuộc App Review). **Adapter TG Login đã bỏ** (DD-37).
+   **Facebook Login** (DD-33 ✅ owner 18/07). Facebook chỉ bật khi external approval evidence active; server-side exchange phải trả stable app-scoped subject của đúng Meta App. Subject này **không phải Messenger PSID**. **Adapter TG Login đã bỏ** (DD-37).
 2. Tra `account_identities(platform, platform_user_hash)`.
    - Có -> tạo/rotate `web_sessions`.
    - Không -> tạo `accounts` + `account_identities` theo flow onboarding.
@@ -164,7 +166,7 @@ Invariant: một active/guest membership cho một `(tenant_id, person_id)`.
 
 Đường chính là transactional one-time `link_code` tường minh:
 
-- Channel A hoặc web/app phát hành code cho `source_person_id`/`source_channel_identity_id`.
+- Đúng một channel identity đã xác thực hoặc web/app account đã xác thực phát hành code cho `source_person_id`.
 - Người dùng nhập code ở Channel B hoặc web/app.
 - Service verify code, tạo merge plan, yêu cầu confirmation rõ ràng nếu thay đổi Person.
 - Commit chỉ xảy ra trong transaction có lock/audit.
@@ -181,20 +183,24 @@ Canonical table: `link_codes`, không phải `identity_link_codes`.
 | trường | yêu cầu |
 |---|---|
 | `source_person_id` | Person phát hành code |
-| `source_channel_identity_id` | channel nguồn đã authenticated |
+| `source_channel_identity_id` | nullable; channel issuer đã authenticated |
+| `source_account_id` | nullable; web/app account issuer đã authenticated |
 | `code_lookup_hash` | indexed lookup hash, unique |
 | `code_hash` + `salt` | slow hash để verify plaintext code |
 | `action` | ví dụ `merge_identity` |
 | `expires_at` | TTL mặc định 10 phút |
 | `consumed_at` | single-use |
 | `failed_attempts` | rate-limit/cooldown |
+| `max_attempts` | ngưỡng fail-closed trước khi khoá |
+| `locked_until` | thời điểm hết cooldown; còn hiệu lực thì verify bị từ chối |
+| `revoked_at` | thu hồi khi merge/session/issuer đổi hoặc có tín hiệu rủi ro |
 
 Yêu cầu:
 
-- Code cryptographic, entropy mục tiêu >=32 bits. Không dùng 6 số nếu chỉ đạt khoảng
-  20 bits entropy.
+- Issuer XOR: đúng một trong `source_channel_identity_id` hoặc `source_account_id`; issuer phải resolve về `source_person_id` hiện hành dưới lock.
+- Code cryptographic, entropy tối thiểu 64 bits. Không dùng mã ngắn có không gian đoán được.
 - Plaintext code chỉ trả một lần, không log.
-- Verify transaction lock row, tăng failed attempts atomically, consume đúng một lần.
+- Verify transaction lock row, từ chối code expired/consumed/revoked/locked, tăng failed attempts atomically, khoá khi chạm `max_attempts`, consume đúng một lần.
 - Error generic: không tiết lộ code/person/channel có tồn tại.
 - Code chỉ tạo quyền lập merge proposal; merge commit cần confirmation và conflict checks.
 
@@ -218,7 +224,7 @@ Transaction bắt buộc:
      re-parent players/charges, giữ tombstone mapping;
      **`pay_code` (DD-02): GIỮ trên tombstone (KHÔNG re-parent); recognition follow
      `merged_into_membership_id` sang survivor (guards tenant/status/cycle) → QR/memo cũ vẫn chạy;**
-   - merge `channel_reachability` deterministic theo tenant/platform.
+   - re-parent reachability theo exact `channel_identity_id`; chỉ dedupe khi cùng provider endpoint + user identity và không copy/OR window-token xuyên Page/bot/OA.
 7. Không sửa/xóa `bank_transactions` hoặc `payment_allocations`. Ledger facts giữ nguyên;
    charges/players được re-parent hợp lệ.
 8. Mark old Person `merged`, tạo `merge_tombstones`.
@@ -237,11 +243,11 @@ Rollback toàn bộ nếu bất kỳ tenant/money step nào fail.
 |---|---|---|---|
 | **Google login (OAuth)** | web auth | **phase-1 ✅ (DD-13)** | `account_identities.platform='google'` + `web_sessions`; SI-2 keyed-hash cho `google.sub` |
 | **Email/password (self-register)** | web auth | **phase-1 ✅ (DD-13)** | credential/verification table riêng (P12 expand→contract); verified email = auto-merge signal |
-| **Facebook Login** | web auth | **phase-1 🟡 (DD-33)** | `platform='facebook'`; phụ thuộc App Review/BM verification; degrade → one-time `/link` code thủ công; **không** auto-link chéo với Messenger PSID |
+| **Facebook Login** | web auth | **phase-1 ✅ (DD-33, owner 18/07)** | `platform='facebook'`; external evidence pending nên non-test capability OFF; degrade → transactional one-time `/link` code; **không** auto-link chéo với Messenger PSID |
 | **Zalo Login** | web auth | ⬜ (DD-14) | `platform='zalo'`; cần xác minh gating OA; đường link cho auto-match Zalo bot |
 | ~~Telegram Login / web fallback~~ | web auth | **loại khỏi phase-1 (DD-37)** | adapter TG Login đã bỏ; không còn là đường auth |
-| **Zalo bot** | channel | **phase-1** | BYO bot token per club, tenant routing qua `zalo_bots`; DM-only, number-reply |
-| **Messenger Page** | channel | **phase-1 (P2.5)** | route theo `messenger_pages.page_id`; PSID page-scoped; cửa sổ 24h; App Review/BM bắt buộc |
+| **Zalo bot** | channel | **phase-1** | BYO bot token per club; identity scope bot/OA + `from.id`; ingress có default tenant nhưng tenant eligibility vẫn authorize riêng; DM-only, number-reply |
+| **Messenger central + optional tenant Page** | channel | **phase-1 (P2.5), DD-65..68 ✅** | Page→endpoint/default; Page-scoped PSID, reachability theo `channel_identity_id`; target protected; 24h/App Review; runtime pending |
 | ~~Telegram bot~~ | channel | **archived (DD-37)** | `channels/telegram/` giữ làm lịch sử; không có adapter/bot Telegram ở MVP |
 
 Thêm provider/channel mới không được viết là "chỉ thêm dòng vào bảng" theo nghĩa tuyệt đối.
@@ -259,7 +265,7 @@ Thêm provider/channel mới không được viết là "chỉ thêm dòng vào 
 |---|---|---|
 | ID-AUTH-1 | Google/email làm auth phase-1? | ✅ **CHỐT — DD-13** (Google OAuth + email/password là auth phase-1, bỏ TG Login theo DD-37) |
 | ID-AUTH-2 | Email credential là password, magic-link, hay OAuth-only email claim? | ✅ **DD-13**: email + password self-register (credential table riêng) |
-| ID-AUTH-3 | Facebook Login/Messenger account-link như web-auth provider (`platform='facebook'`) | 🟡 **phase-1 — DD-33** (nâng từ ⬜; Messenger nay là kênh MVP); phụ thuộc App Review |
+| ID-AUTH-3 | Facebook Login/Messenger account-link như web-auth provider (`platform='facebook'`) | ✅ **phase-1 — DD-33**; external evidence là enablement gate, capability OFF + one-time `link_code` fallback tới khi pass; không auto-link PSID |
 | ID-LINK-1 | Per-provider bot id có scoped theo bot/page/OA thế nào? | verify khi implement → **DD-14** (Zalo Login/OA), **DD-15** (Zalo bot `from.id` cross-bot) |
 | ID-MERGE-1 | Support recovery/split SLA và quyền support cụ thể | ✅ **DD-53:** PlatformAdmin freeze; split apply cần 2 approval; break-glass có ticket/expiry/audit; recovery proof không tự mở debt claim |
 

@@ -1,8 +1,8 @@
 # API Reference — Convention & Template
 
-> **Status:** 🟡 Proposal · **Version:** 0.1 · 2026-07-16
+> **Status:** ✅ Accepted (owner 2026-07-18) · **Version:** 0.3 · 2026-07-18
 > **Nguồn:** ported từ Sporta `docs/architecture/sporta-api-reference.md` — adapt envelope + auth model Plexco.
-> **Decision:** `decisions.md` DD-60 (🟡).
+> **Decision:** `decisions.md` DD-60 (✅ owner 2026-07-18). Áp cho mọi `BE/feature_*_tech.md §API Contract` mới (forward-looking; không bắt retrofit gấp).
 > **Quan hệ:** convention thống nhất cho phần **"API Contract"** trong mọi `../features/BE/feature_*_tech.md` §3, và cho aggregate reference `apps/web` routes. Bổ sung `channels/web/README §7 (API DTO Baseline)`, không thay.
 
 Mục tiêu: mọi endpoint mô tả **cùng một format** (auth level + request + response + error) để đọc/aggregate được thành 1 API reference.
@@ -16,24 +16,24 @@ Khớp `apps/web/lib/api-envelope.ts` + CLAUDE.md §4:
 
 ```jsonc
 // ✅ Success
-{ "data": { /* DTO whitelist */ }, "meta": { "page": 1, "limit": 20, "total": 0, "hasNext": false } }
+{ "data": { /* DTO whitelist */ }, "error": null, "meta": { "requestId": "req_..." } }
 
 // ❌ Error (LUÔN JSON)
-{ "error": true, "message": "…", "code": "ERROR_CODE" }
+{ "data": null, "error": { "code": "ERROR_CODE", "message": "…", "statusCode": 400 }, "meta": { "requestId": "req_..." } }
 ```
-- `message` = human text (map i18n `t(vi,en)` ở FE); `code` = hằng máy đọc (`SCREAMING_SNAKE`).
-- Field bổ sung inline khi cần: `retryAfter`, `attemptsRemaining` …
+- `error.message` = human text (map i18n `t(vi,en)` ở FE); `error.code` = hằng máy đọc (`SCREAMING_SNAKE`); `error.statusCode` khớp HTTP status.
+- `meta.requestId` luôn có. Domain metadata/advisory/pagination hiện nằm trong DTO `data` vì live `ok()` chỉ tạo `meta.requestId`; muốn mở rộng `meta` phải sửa helper + baseline + tests trước.
 - **DTO chỉ chứa field whitelist** — không tiền/PII ra public route (HARD RULE 2).
 
 ### 1.2 Auth levels (legend — gắn icon vào mỗi endpoint)
 | Icon | Level | Mô tả |
 |---|---|---|
-| ⬜ | Public | Không auth — chỉ public read model (`public_sessions`) hoặc webhook-by-token. Không tiền/PII. |
-| ✅ | User | Person đã đăng nhập (web session / account). Qua RLS theo membership. |
-| 🔑 | Host/Admin | Thao tác host/tenant-admin (money-write, config). `tenantRepo` + role check. |
-| 🔒 | HMAC/Token | Webhook (SePay/ApiPay) — verify chữ ký timing-safe / token, không phải user session. |
+| ⬜ | Public | Không auth — chỉ public read model (`public_sessions`). Không webhook, tiền hoặc PII. |
+| ✅ | Account/Person | Person đã đăng nhập. Route tenant-scoped cần membership + RLS; route person-self phải kiểm tra đúng subject, không giả định membership. |
+| 🔑 | Exact capability | Host/admin/co-admin chỉ được action/resource cụ thể trong canonical registry; `tenantRepo` + exact capability check, không blanket role inheritance. |
+| 🔒 | Provider-authenticated | Webhook/connector verify đúng contract provider (timing-safe HMAC hoặc token phù hợp), không phải public hay user session. |
 
-> Mọi endpoint tenant-scoped đi qua `tenantRepo(tenantId)` (HARD RULE 1). Public read model KHÔNG RLS nhưng chỉ field-whitelist.
+> Mọi endpoint tenant-scoped đi qua `tenantRepo(tenantId)` (HARD RULE 1). Public read model KHÔNG RLS nhưng chỉ field-whitelist. Webhook luôn là 🔒 kể cả khi credential nằm trong URL/header.
 
 ## 2. Format 1 endpoint (lặp cố định)
 
@@ -49,12 +49,12 @@ Kèm 1 fenced block `jsonc`:
 { /* body */ }
 
 // ✅ Response 2xx
-{ "data": { /* … */ } }
+{ "data": { /* … */ }, "error": null, "meta": { "requestId": "req_..." } }
 
 // ❌ Response 4xx — CODE_A
-{ "error": true, "message": "…", "code": "CODE_A" }
+{ "data": null, "error": { "code": "CODE_A", "message": "…", "statusCode": 400 }, "meta": { "requestId": "req_..." } }
 // ❌ Response 4xx — CODE_B
-{ "error": true, "message": "…", "code": "CODE_B" }
+{ "data": null, "error": { "code": "CODE_B", "message": "…", "statusCode": 409 }, "meta": { "requestId": "req_..." } }
 ```
 - **Side effects (async)** ghi bullet dưới block (vd: outbox event, fan-out projector, notify).
 - Endpoint cách nhau bằng `---`.
@@ -70,14 +70,14 @@ Player join 1 kèo. Rate-limit theo BL-SEC-5. Concurrency: waitlist promote atom
 { "note": "string?" }
 
 // ✅ 200 — active
-{ "data": { "playerId": "uuid", "status": "active", "chargeId": "uuid|null" } }
+{ "data": { "playerId": "uuid", "status": "active", "chargeId": "uuid|null" }, "error": null, "meta": { "requestId": "req_..." } }
 // ✅ 200 — waitlisted (full)
-{ "data": { "playerId": "uuid", "status": "waitlisted", "chargeId": null } }
+{ "data": { "playerId": "uuid", "status": "waitlisted", "chargeId": null }, "error": null, "meta": { "requestId": "req_..." } }
 
 // ❌ 403 — GATING_FAILED
-{ "error": true, "message": "…", "code": "GATING_FAILED" }
+{ "data": null, "error": { "code": "GATING_FAILED", "message": "…", "statusCode": 403 }, "meta": { "requestId": "req_..." } }
 // ❌ 409 — REJOIN_REQUIRES_REVIEW
-{ "error": true, "message": "…", "code": "REJOIN_REQUIRES_REVIEW" }
+{ "data": null, "error": { "code": "REJOIN_REQUIRES_REVIEW", "message": "…", "statusCode": 409 }, "meta": { "requestId": "req_..." } }
 ```
 - Side effects: outbox `session_updated` → fan-out SSE + upsert `public_sessions`.
 
@@ -100,4 +100,6 @@ Player join 1 kèo. Rate-limit theo BL-SEC-5. Concurrency: waitlist promote atom
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 18/07/2026 | 0.3 | DD-60 ✅. Tách public khỏi provider webhook; sửa ✅ person-self vs tenant membership; 🔑 dùng exact capability/resource. Convention áp forward-looking và on-touch retrofit. |
+| 17/07/2026 | 0.2 | Reconcile toàn bộ example với live `apps/web/lib/api-envelope.ts`: success/error đều có `data`, `error`, `meta.requestId`; error fields nằm dưới `error`. |
 | 16/07/2026 | 0.1 | 🟡 Proposal — convention API reference (envelope + auth legend + block format). DD-60. |

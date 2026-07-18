@@ -1,6 +1,7 @@
 # Token Mapping — {Screen Name}
 
 > **Template** — copy sang `docs/channels/web/handoff/<screen>-token-mapping.md`.
+> **Authority:** DD-58 đã owner-defer 2026-07-18; template này là optional reference, chưa phải delivery gate.
 > Nguồn: ported từ Sporta `docs/handoff/*-tailwind-mapping.md` — adapt **CSS variables (không Tailwind)**.
 > Pipeline: `../../channels/web/frontend-pipeline.md` · Handoff: `<screen>-handoff.md` · Tokens: `../../standards/design-tokens.md`.
 >
@@ -46,4 +47,4 @@
 - [ ] Component có `// Source: <screen>-token-mapping.md §X · handoff §Y`
 
 ---
-_Template v0.1 · DD-58 (🟡)_
+_Template v0.2 · DD-58 (🟡 deferred/reference-only)_

@@ -1,10 +1,10 @@
 # Business Rules — Plexco
 
-> Registry quy tắc nghiệp vụ, tổng hợp từ `docs/product/BRD.md` v3.7 · `docs/product/PRD.md` v2.5 · `docs/product/TDD.md` v2.6 · `docs/standards/decisions.md` v1.40 · `docs/research/player-side-saas-AUDIT.md`.
+> Registry quy tắc nghiệp vụ, tổng hợp từ `docs/product/BRD.md` · `docs/product/PRD.md` · `docs/product/TDD.md` v3.1 · `docs/standards/decisions.md` v1.47 · `docs/research/player-side-saas-AUDIT.md`.
 >
-> **Reconcile 16/07/2026:** đã đồng bộ full DD-49–56 và DD-40 v1.39; decision log vẫn là authority khi một DD thay đổi, registry này là mirror để review/build.
+> **Reconcile 18/07/2026:** đã đồng bộ full DD-49–56 và accepted-in-principle DD-61–64. DD-69 direction ✅ accepted; chưa tạo active business rule mới; decision log vẫn là authority khi một DD thay đổi, registry này là mirror để review/build.
 > Khi conflict, authority theo topic trong BRD §0; security dùng rule nghiêm ngặt hơn.
-> v1.8 · 2026-07-16 (full decision reconcile qua DD-56; DD-57–60 vẫn proposal)
+> v1.16 · 2026-07-18 (authority v1.47/TDD v3.1; DD-69 chưa tạo active business rule; BL-ORG/rate contracts đã accepted-in-principle nhưng **chưa implement/activate**)
 
 ---
 
@@ -22,7 +22,7 @@
 | **BL-PAY-8** | **Immutable ledger** | Không sửa/xóa bank transaction/allocation đã audit; điều chỉnh bằng signed reversal tham chiếu allocation gốc. | TDD §3.2 |
 | **BL-PAY-9** | **Cash/waiver có provenance** | `/cash`/waiver tạo allocation không có bank transaction nhưng bắt buộc authorized actor; không tạo webhook giả. | PRD command map, Payment feature v1.1 |
 | **BL-PAY-10** | **STK change confirmation delay** | Đổi STK primary → pending 24h → hệ thống vẫn dùng STK cũ cho QR. Thông báo đổi gửi qua MỌI kênh đã link. Owner cancel được. Rate-limit: max 2 lần/30 ngày. | AUDIT G1 |
-| **BL-PAY-11** | **Mark-paid = allocation, mọi tier (DD-40)** | Host xác nhận "đã thu" thủ công → INSERT `payment_allocations` + cập nhật `charges` (`amount_allocated`/`status`). **KHÔNG** ghi bảng `payment`/`payments`. Tiền mặt → `source='cash'` (`bank_transaction_id=NULL`, `created_by` bắt buộc); CK đã ingest → `source='manual'` + exact `bank_transaction_id`. CK host-attested **chưa ingest** chỉ được dùng dedicated allocation source sau migration, `bank_transaction_id=NULL`, actor + opaque evidence/audit; trước migration reject fail-closed. **Cấm** synthetic `bank_transaction` và cấm map sang `cash|manual|bank_transfer`. Mark-paid có ở mọi tier; auto-reconcile chỉ `host_pro`. | DD-40 v1.39, schema.ts §payment_allocations |
+| **BL-PAY-11** | **Mark-paid = allocation, mọi tier (DD-40)** | Host xác nhận "đã thu" thủ công → INSERT `payment_allocations` + cập nhật `charges` (`amount_allocated`/`status`). **KHÔNG** ghi bảng `payment`/`payments`. Tiền mặt → `source='cash'` (`bank_transaction_id=NULL`, `created_by` bắt buộc); CK đã ingest → `source='manual'` + exact `bank_transaction_id`. CK host-attested **chưa ingest** chỉ được dùng dedicated allocation source sau migration, `bank_transaction_id=NULL`, actor + opaque evidence/audit; trước migration reject fail-closed. **Cấm** synthetic `bank_transaction` và cấm map sang `cash\|manual\|bank_transfer`. Mark-paid có ở mọi tier; auto-reconcile chỉ `host_pro`. | DD-40 v1.39, schema.ts §payment_allocations |
 
 ---
 
@@ -34,8 +34,8 @@
 | **BL-ID-2** | **Claim-có-tiền cần khoá mạnh** | Claim membership đã có nợ/lịch sử tiền chỉ qua verified account email hoặc transactional one-time `link_code`. Tên/alias, owner assertion và CK/STK chỉ là review evidence; không được bypass. | DD-50, BRD FR-7.2 |
 | **BL-ID-3** | **Merge xuyên kênh** | Phase-1 proof = verified account email hoặc `link_code` được lock/verify/consume once trong transaction + explicit impact confirm. Phone giữ dormant; tên/STK/owner chỉ tạo suggestion/review. Conflict fail-closed. | DD-50, BRD FR-7.3 |
 | **BL-ID-4** | **UNIQUE per tenant + merge-safe** | Active membership unique per `(tenant,person)`; conflict merge dùng survivor+tombstone, re-parent charge/history, không sửa ledger rows. | TDD §3.2, Identity feature v1.1 |
-| **BL-ID-5** | **Auto-create ChannelIdentity** | Tin nhắn đầu tiên từ kênh mới → tạo ChannelIdentity + gắn Person (mới hoặc merge nếu verified). | PRD FLOW 5 |
-| **BL-ID-6** | **Routing theo kênh, KHÔNG nội dung** | Tenant luôn suy từ kênh (group chat_id / Zalo bot / page_id / deep-link / web-session). KHÔNG suy từ nội dung tin (chống spoof). | BRD CO-4, NFR-S3 |
+| **BL-ID-5** | **ChannelIdentity scoped theo endpoint** | Tin nhắn đầu tiên tạo/resolve identity bằng `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`: Messenger scope Page; Zalo scope bot/OA tới khi DD-15 chứng minh rộng hơn. Không auto-merge xuyên endpoint bằng tên/alias. | PRD FLOW 5, DD-15/67 |
+| **BL-ID-6** | **Routing theo trusted context, KHÔNG nội dung** | Zalo bot/Messenger Page chỉ pin endpoint và có thể cho default ingress context. Target tenant/resource eligibility luôn authorize riêng; action/ref/picker phải protected, KHÔNG lấy authority từ free text/client body. | BRD CO-4, NFR-S3, DD-66/67 |
 | **BL-ID-7** | **Social profile tách khỏi dữ liệu vận hành** | Follow/profile cross-user chỉ trả approved social fields có canonical source. Host operational access vẫn qua tenant-scoped APIs; follow không mở roster, tiền, PII, `pay_code` hay membership. | DD-47/48 |
 
 ---
@@ -68,6 +68,22 @@
 
 ---
 
+## BL-ORG — Session Organize (**ACCEPT-IN-PRINCIPLE · INACTIVE, build post-P4**)
+
+> Các rule BL-ORG chỉ là mirror của DD-61..64 (✅ accept-in-principle, build post-P4). Không gate runtime và không được implement trước khi có build slice + prerequisites (SessionService, DD-56 registry/grant, level source).
+
+| ID | Luật | Chi tiết | Source |
+|---|---|---|---|
+| **BL-ORG-1** | **Lifecycle theo status + time** | Setup/assignment chỉ khi session `open` và `now < ends_at`; start/score chỉ khi `open` và `starts_at <= now < ends_at`. `past` là derived time, không phải session status; mutation sau end fail closed. | DD-61 accepted-in-principle |
+| **BL-ORG-2** | **V0.4 chỉ hai phía** | `side_count=2`; scoring chỉ `none\|live`. Live cần target/win-by dương và best-of lẻ dương. N-side cần DD riêng. | DD-61/62 accepted-in-principle |
+| **BL-ORG-3** | **Tenant/session integrity** | Organize rows dùng same-tenant/session composite FKs, ENABLE+FORCE RLS và migration mới; chỉ active player đúng session được assign/read. RLS không thay relation authz. | DD-61/64 accepted-in-principle |
+| **BL-ORG-4** | **Live fence + participant stint** | Một court tối đa một live match; một match tối đa một live set; một player không ở hai live match. Participant withdraw giữ row lịch sử; replacement/re-entry tạo stint mới; partial unique chỉ trên player/slot đang `assigned`. Session-first lock order + race tests bắt buộc. | DD-61 accepted-in-principle |
+| **BL-ORG-5** | **Score append-only + idempotent** | `point\|reversal`; correction = reversal + replacement point cùng transaction. Terminal winning point chỉ sửa trước session end, khi vẫn là latest effective point, chưa có dependent action và court chưa reassigned; nếu không chứng minh được thì fail-closed. Không UPDATE/DELETE ledger; mọi mutation dùng durable `commandId` + RFC 8785 canonical request hash. Retry chỉ trả prior DTO sau current authz re-check; payload/resource/version khác cùng key → conflict. | DD-62 accepted-in-principle |
+| **BL-ORG-6** | **Private read/realtime + exact capability** | Không public projection. Owner/admin có built-in access; `session.organize` và `session.score` là grant session-scoped độc lập, không imply nhau. Read/SSE cho actor có grant hợp lệ hoặc active player đúng session; active stream re-authorize trước mỗi event và heartbeat ≤30s, đóng khi grant/session/participant relation hết hiệu lực; event không mang actor/PII/contact/payment/venue-private. | DD-64 accepted-in-principle |
+| **BL-ORG-7** | **Không tự đổi attendance** | Match participation không tự đánh attendance/reliability. Leave/substitute chuyển stint thành `withdrawn`; replacement tạo row mới. Close hook cancel match nhưng giữ ledger và audit. | DD-42/61/64 accepted-in-principle |
+
+---
+
 ## BL-SYN — Sync Engine
 
 | ID | Luật | Chi tiết | Source |
@@ -84,10 +100,22 @@
 |---|---|---|---|
 | **BL-TEN-1** | **RLS fail-closed** | ENABLE + FORCE RLS; role `app` = `NOBYPASSRLS`; `SET LOCAL app.tenant_id`. Mọi tenant query qua `tenantRepo`. | BRD BR-1, NFR-S1 |
 | **BL-TEN-2** | **3 tầng hiển thị** | Public (cross-tenant, field whitelist) / Tenant-private (RLS) / Person-self (person-authorized). | BRD §7 FR-0, TDD §3.2 |
-| **BL-TEN-3** | **CLB tự mang provider** | Tenant tự nối SePay/ApiPay và Zalo bot; Messenger Page là **phase-1** (P2.5, cần Meta App Review — DD-37). Telegram bỏ khỏi phạm vi (DD-37). Platform không trung gian dòng tiền. | BRD BR-13, CO-1 |
+| **BL-TEN-3** | **Provider boundary** | Tenant tự nối SePay/ApiPay và Zalo bot. Messenger dùng central Plexco Page mặc định; Page riêng là optional tenant integration. Telegram bỏ khỏi phạm vi. Platform không trung gian dòng tiền. | BRD BR-13, CO-1, DD-65 |
 | **BL-TEN-4** | **Đa môn** | `sports` table (badminton, pickleball, tennis, bóng đá…); mỗi session gắn 1 sport_id; discovery lọc theo môn. | BRD BR-2 |
 | **BL-TEN-5** | **Worker không bypass rộng** | Cross-tenant scheduler/outbox chỉ claim qua narrow privileged function; từng job quay lại `SET LOCAL app.tenant_id` và audit. | TDD §3.4 |
 | **BL-TEN-6** | **Kèo cá nhân vẫn có tenant** | Skip Club auto-provision đúng một `tenants.kind='personal'` per Person, owner=self, logical free tier. `sessions.tenant_id` luôn NOT NULL; RLS, membership, participant và money model giữ nguyên. Không tạo session tenant-null. | DD-46 |
+
+---
+
+## BL-MSG — Messenger Hybrid Surface
+
+| ID | Luật | Chi tiết | Source |
+|---|---|---|---|
+| **BL-MSG-1** | **Central luôn có, Page riêng optional** | Một Meta App; đúng một active central Page và tối đa một active tenant Page/tenant. Cả hai phục vụ host+player; club không Page vẫn hoàn tất create/join cơ bản. Registry global-protected, narrow resolver, không blanket grant. | DD-65 |
+| **BL-MSG-2** | **Page không tự grant target tenant** | Tenant Page chỉ là default; central/multi-club/cross-club target từ opaque action, protected public ref hoặc server-side picker. Missing/stale/ambiguous/replayed → deny/re-pick. | DD-66 |
+| **BL-MSG-3** | **Endpoint-scoped identity/reachability** | Messenger dùng Page scope + PSID theo contract chung ba phần; Zalo dùng bot/OA scope + `from.id`. Reachability/window gắn `channel_identity_id`; tenant eligibility authorize riêng. Không auto-merge xuyên endpoint. | DD-15, DD-50, DD-67 |
+| **BL-MSG-4** | **Shared core + durable interaction** | Host wizard và player actions gọi cùng AuthZ/Session/Join services với web/Zalo. Một pre-dispatch owner giữ wizard; consume re-authorize/revalidate. Choice token opaque, actor+Page-bound, TTL+snapshot+version; tối đa 8 business choices/page + navigation. | DD-24, DD-56, DD-68 |
+| **BL-MSG-5** | **One-route delivery** | Một logical notification chọn tenant Page reachable → central Page reachable → web/Zalo; provider failure không rollback canonical command và không gửi trùng hai Page. | DD-67, BL-SYN-2, BL-NTF-2 |
 
 ---
 
@@ -106,7 +134,7 @@
 
 | ID | Luật | Chi tiết | Source |
 |---|---|---|---|
-| **BL-NTF-1** | **Nhắc chống spam** | Cron nhắc theo ngưỡng (cấu hình), chống lặp, quiet-hours. Kênh nhắc: **web (in-app/SSE) + DM Zalo**; Messenger chỉ best-effort trong cửa sổ 24h (BL-NTF-3). Fan-out theo `ChannelReachability` đúng tenant (Telegram bỏ — DD-37). | BRD FR-6.1 |
+| **BL-NTF-1** | **Nhắc chống spam** | Cron nhắc theo ngưỡng, chống lặp, quiet-hours. Kênh chính web+Zalo; Messenger best-effort trong 24h. Dispatcher đọc exact `channel_identity_id` reachability, re-check tenant eligibility và chọn một route; không tenant-level fan-out sang nhiều endpoint. | BRD FR-6.1, DD-67 |
 | **BL-NTF-2** | **Xác nhận best-effort** | Chỉ sau `payment.settled` (charge phủ đủ) → xác nhận player. Lỗi gửi không rollback ledger; correction event xử lý reversal sau notify. | BRD FR-6.2 |
 | **BL-NTF-3** | **Messenger cửa sổ 24h** | Standard send chỉ dùng trong 24h sau inbound cuối. Ngoài cửa sổ chỉ dùng cơ chế Meta đủ điều kiện/được phê duyệt; nếu không fallback web + Zalo. Nhắc nợ best-effort, không đảm bảo. | CO-3, messenger doc |
 | **BL-NTF-4** | **Audience theo tag không đổi quyền** | Announcement có thể lọc theo `membership_tags` per-tenant; dispatcher chỉ thu hẹp audience đã hợp lệ, không dùng tag để mở eligibility/visibility hoặc gửi cross-tenant. | DD-43 |
@@ -121,6 +149,7 @@
 | **BL-SOC-2** | **Visibility migration an toàn** | Existing profiles backfill `private`; user mới default `public` sau khi migration hoàn tất. `public→private` giữ accepted followers cũ; follow mới pending. `private→public` auto-accept pending edges. | DD-47/48 |
 | **BL-SOC-3** | **Approved social fields only** | Cross-user profile chỉ có `display_name`, `username` khi canonical field tồn tại, và `plexco_since` coarse. Avatar/sports/aggregate excluded tới khi có model; private non-follower nhận fixed minimal card. | DD-48 |
 | **BL-SOC-4** | **Merge follow fail-closed** | Identity merge lock incident edges, canonicalize endpoints, drop self-edge và collapse duplicate (`accepted > pending`) trước update để không vỡ UNIQUE; cùng transaction/audit. | DD-47 |
+| **BL-SOC-5** | **Một block source cho social + DM** | Block/unblock chỉ ghi canonical `chat_blocks`; block atomically xoá follow edges hai chiều, chặn follow request/DM request-create-send-read và không tự restore quan hệ khi unblock. Mọi follow/DM path consult cùng safety decision; không tạo `social_blocks`/store thứ hai. | DD-55 · TDD chat safety contract |
 
 ---
 
@@ -129,7 +158,7 @@
 | ID | Luật | Chi tiết | Source |
 |---|---|---|---|
 | **BL-SEC-1** | **Secret mã hoá at-rest** | Token bot/page, secret SePay: KMS at-rest. Không log. Có reset path. | NFR-S5, AUDIT §B2 |
-| **BL-SEC-2** | **Webhook timing-safe verify** | Mọi webhook verify bằng constant-time compare (SePay API key) hoặc HMAC-SHA256 (ApiPay). | AUDIT B-webhook |
+| **BL-SEC-2** | **Webhook verify fail-closed** | SePay production dùng `HMAC_SHA256`: parse `X-SePay-Signature: sha256=<hex>`, kiểm tra `X-SePay-Timestamp`, reject lệch quá 300 giây và constant-time compare HMAC của `{timestamp}.{raw_body}`; không downgrade sang `Api_Key`. API-key fallback chỉ dành connector không hỗ trợ HMAC và phải exact `Authorization: Apikey <key>`. Provider khác dùng contract ký riêng đã pin. | AUDIT B-webhook, connector contract |
 | **BL-SEC-3** | **Audit trail** | Mọi thao tác chạm tiền/định danh: ghi admin_id, timestamp, method (auto/manual). | NFR-S6, BRD BR-12 |
 | **BL-SEC-4** | **PII consent + mã hoá** | SĐT/email thu có consent; AES at-rest; soft-delete; không vào URL/log. | NFR-P1 |
 | **BL-SEC-5** | **Mutation rate limit** | POST/PATCH/DELETE: 60/min per account, 200/min per tenant. Public endpoints (discovery, join): 100/min per IP. Provider webhooks không áp user mutation limit nhưng vẫn có edge per-token/IP burst cap + body-size cap. Sliding window. | AUDIT G3, deployment-infra §6 |
@@ -156,7 +185,9 @@
 | **Identity merge** | `POST /identity/merge` | 10/min | account (admin) | 429 `RATE_LIMITED` |
 | **Membership CRUD** | `POST/PATCH/DELETE /memberships` | 60/min | account | 429 `RATE_LIMITED` |
 | **Tenant mutation** | `PATCH /tenants/:id` | 30/min | account (owner) | 429 `RATE_LIMITED` |
-| **Tenant aggregate** | All mutations combined | 200/min | tenant | 429 `TENANT_RATE_LIMITED` |
+| **Organize score — ACCEPTED-IN-PRINCIPLE, NOT IMPLEMENTED** | `POST /api/matches/:id/score/{points,reversals}` | 5/s burst per match; 120/min per actor; 600/min dedicated organize bucket per tenant | match + actor + tenant; khi activate thì exempt generic tenant 200/min | 429 `RATE_LIMITED` |
+| **Organize assignment preview — ACCEPTED-IN-PRINCIPLE, NOT IMPLEMENTED** | `POST /api/sessions/:id/assignments/preview` | 10/min per session; 30/min per actor | session + actor + generic tenant bucket | 429 `RATE_LIMITED` |
+| **Tenant aggregate** | All mutations combined | 200/min | tenant; trừ endpoint có dedicated tenant bucket được registry chấp thuận rõ | 429 `TENANT_RATE_LIMITED` |
 | **Default mutation** | Any POST/PATCH/DELETE not listed | 60/min | account | 429 `RATE_LIMITED` |
 | **Default read** | Any GET not listed | 120/min | account | 429 `RATE_LIMITED` |
 
@@ -179,6 +210,14 @@ Business rules file này là **mirror**, không tự tạo authority. Khi phát 
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 18/07/2026 | v1.16 | Authority v1.47: DD-61..64 accepted-in-principle; update BL-ORG sources/rate labels while retaining explicit not-implemented/inactive boundary. DD-69 accepted direction still creates no active business rule. |
+| 18/07/2026 | v1.15 | Authority → decisions v1.46. DD-69 vẫn proposal kỹ thuật app client và không tạo active business rule mới; registry body unchanged. |
+| 17/07/2026 | v1.14 | Feature-doc closure: SePay production HMAC timestamp/raw-body contract; bounded terminal-point correction + active SSE re-auth ≤30s; User Settings block tái dùng canonical `chat_blocks`. Runtime/migration vẫn pending. |
+| 17/07/2026 | v1.13 | Authority → decisions v1.45/TDD v3.0. Generalize BL-ID/BL-MSG/BL-NTF từ Messenger Page-only sang provider-endpoint identity/reachability cho Messenger + Zalo; reachability gắn `channel_identity_id`, tenant eligibility authorize riêng. |
+| 17/07/2026 | v1.12 | Reconcile BL-ORG với Session Organize v0.3: participant stint + partial assigned uniqueness, independent organize/score grants, canonical request hash và replay re-authorization. Vẫn proposal inactive. |
+| 17/07/2026 | v1.11 | Authority refresh v1.44; giữ BL-MSG active, BL-ORG summary inactive proposal; chi tiết Session Organize v0.3 ở feature specs. |
+| 17/07/2026 | v1.10 | Reconcile decisions v1.43/DD-65..68. Thêm BL-MSG-1..5: hybrid central+optional Page, shared host/player surface, protected target routing, Page-scoped identity/reachability, durable opaque interaction và one-route delivery. |
+| 17/07/2026 | v1.9 | Reconcile decisions v1.42. Thêm BL-ORG-1..7 và exact organize score/assignment rate rows, đều ghi rõ **proposal inactive** tới khi owner accept DD-61..64; live score dùng dedicated tenant bucket thay generic 200/min khi/ nếu được activate. |
 | 16/07/2026 | v1.8 | Reconcile decisions v1.39: DD-40 dedicated host-attested allocation source/no synthetic transaction; DD-49 rejoin/correction; DD-50 verified-email + transactional `link_code`; DD-51 exact lifecycle; source-of-truth order theo BRD §0. |
 | 15/07/2026 | v1.7 | Reconcile authority qua decisions v1.31: public field whitelist/gating (DD-41), approval/waitlist/derivation fail-closed (DD-05/45), attendance/tags/invite (DD-42/43/44), personal tenant (DD-46), follow graph/profile visibility (DD-47/48); bỏ stale-baseline disclaimer. |
 | 10/07/2026 | v1.6 | **DD-37 pivot:** Messenger P4.8 → phase-1 (P2.5, Meta App Review); free = 2 bot Zalo/Messenger (bỏ Telegram); nhắc = web + Zalo (bỏ group-mention TG). **DD-40:** thêm BL-PAY-11 mark-paid = INSERT `payment_allocations` (source cash/manual) + update `charges`, KHÔNG bảng `payment`, mọi tier; auto-reconcile chỉ host_pro. |

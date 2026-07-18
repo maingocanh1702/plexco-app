@@ -1,14 +1,18 @@
 # HANDOFF — Plexco
 
 > **Đọc file này ĐẦU TIÊN khi tiếp quản project.** Self-contained: không cần context phiên trước.
-> Cập nhật: 2026-07-17 (BRD v3.7 · PRD v2.5 · TDD v2.6 · ROADMAP v2.9 · decisions v1.40 — DD-49..56 closure ở v1.37; DD-57..60 là proposal, chưa gate build). Khi thay đổi convention/kiến trúc lớn → cập nhật file này.
+> Cập nhật: 2026-07-18 (BRD v3.9d · PRD v2.8b · TDD v3.1 · ROADMAP v3.3b · decisions v1.47). **Founder batch 18/07:** DD-33 ✅ (Facebook phase-1) · DD-60 ✅ · DD-61..64 ✅ accept-in-principle (Session Organize, build **post-P4**) · DD-69 ✅ định hướng accepted (native phase-2 TBD, gates mở) · DD-57..59 defer. Session Organize/native **chưa build**; runtime baseline không đổi.
 >
 > **⚡ v3.4 Phase-1 pivot (DD-37 ✅, thay DD-09):** Kênh phase-1 = **web + Zalo + Facebook Messenger**;
 > **Telegram đã bị loại khỏi phạm vi** (không còn adapter/bot Telegram trong MVP). Auth phase-1 =
-> **Google OAuth + email/password** (DD-13 ✅, thay TG Login) + link **Facebook** (DD-33 🟡, phase-1, phụ thuộc App Review)
+> **Google OAuth + email/password** (DD-13 ✅, thay TG Login) + link **Facebook** (DD-33 ✅; external approval evidence là enablement gate, capability OFF + one-time `link_code` fallback tới khi pass)
 > + **Zalo** (DD-14 ⬜). Feature phase-1 mới: **Google login**, **chat cơ bản trong app** (DD-38 ✅, scope-committed phase-1),
 > **cài đặt hồ sơ + giá theo giới tính** (DD-39 ✅, scope-committed phase-1), **mark-paid thủ công tiền mặt/CK, tap/multi-select** (DD-40 ✅).
 > *(DD-38/39 committed — schema `chat_*`/`person.gender` chưa vào canonical `schema.ts`, migration còn chờ.)*
+>
+> **⚡ Channel endpoint DD-15/DD-65..68:** một Meta App; central Plexco Page luôn có + optional Page per-club. Identity uniqueness = `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`; Messenger scope Page, Zalo scope bot/OA tới khi DD-15 chứng minh rộng hơn; reachability gắn `channel_identity_id`. Endpoint/default context không tự cấp target tenant; one-route delivery. Live schema/runtime chưa đáp ứng contract.
+>
+> **📱 DD-69 app-native (✅ direction accepted, owner 18/07):** phase-1 target = PWA qua S9/S20 nhưng live `apps/web` chưa có manifest/service worker; phase-2 native build **chưa schedule** (technical gates mở). RN+Expo là recommendation sau spike. Native push dùng protected device subscription riêng, không phải ChannelIdentity; offline v1 read-only. Xem `../dd-69-app-native-analysis.md`.
 
 ---
 
@@ -43,12 +47,12 @@
 
 **Packages:**
 - `packages/core` — logic thuần (matching, payments-logic, dates, format, i18n, sports). Test trong isolation.
-- `apps/bot` — Zalo (HTTP DM, bot-token per-club, number-reply), Messenger (HTTP DM, Page per-club, cửa sổ 24h — App Review). Tenant middleware. *(Telegram đã loại — DD-37.)*
+- `apps/bot` target — Zalo DM + Messenger hybrid central/tenant Page, role-aware host/player, 24h/App Review. **Reality hiện tại:** chỉ queue/provision shell, chưa Messenger adapter/handler/projector.
 - `apps/web` — Next.js App Router/API routes + SSE realtime + web UI (dashboard host, player view, discovery).
 
 **Flow đối soát CK (đường tiền — hiểu kỹ trước khi sửa):**
 ```
-SePay webhook → /webhook/sepay/:token → verify (timing-safe) → lưu raw trước ack
+SePay webhook → /webhook/sepay/:token → verify timestamp/raw-body HMAC (timing-safe, ±300s) → lưu raw trước ack
   → matching: pay_code tier → name matcher → classifyAmount
   → FIFO settle → notifyPlayersPaid (fan-out mọi kênh + sync web)
 ```
@@ -57,7 +61,7 @@ SePay webhook → /webhook/sepay/:token → verify (timing-safe) → lưu raw tr
 ```
 Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-point, RLS)
   → ghi + Outbox event (cùng tx)
-  → Projectors fan-out: DM Zalo · message Messenger (trong cửa sổ 24h) · SSE web · upsert public_sessions
+  → Projectors: Zalo · Messenger one-route (tenant Page→central) · SSE web · public_sessions
 ```
 
 ## 3. ⛔ 5 HARD RULES (vi phạm = rò rỉ thật)
@@ -106,18 +110,18 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 4. **Review:** code review trước merge
 5. **Merge:** squash 1 commit/feature vào `main`
 
-## 6. Trạng thái hiện tại (2026-07-10)
+## 6. Trạng thái hiện tại (2026-07-17)
 
-**Planning & Docs — decision coverage cao** (current decisions **v1.39**); **DD-04 chốt (c) DO co-locate + DD-49..56 chốt/clarify (2026-07-16)**. Không còn founder choice chặn S4→S8, nhưng code-readiness vẫn bị gate bởi B0 auth design-probe, DD-49 correction probe, B1 payment-source decision, B2 gender-price probe, B3 sync-delivery probe, external evidence và legal A3 go-live; checklist ở `docs/pre-code-open-items-2026-07-16.md`. **Foundation + Auth Onboarding v3 (Telegram-era) đã land trên `main@1eb6f60`.**
+**Planning & Docs — decision coverage cao** (current **v1.47/DD-69**). Feature-doc closure đã reconcile endpoint identity/reachability, SePay HMAC, DM safety/block source, Assistant DLP và Session Organize v0.5 correction/SSE; DD-69 thêm native direction ✅ accepted (build phase-2 TBD) nhưng không đổi runtime. Implementation vẫn cần migrations/services/adapters/E2E; DD-57..59 defer, DD-61..64 accept-in-principle (post-P4) + DD-69 direction accepted — canonical build phase chưa mở. Code-readiness vẫn bị B0/B1/B2/B3/external/legal gates; foundation + Auth v3 Telegram-era đã land.
 
 - ✅ **Foundation merged:** monorepo (`packages/core` + `packages/db` + `apps/bot` + `apps/web`) + core logic thuần (test xanh) + Postgres/RLS choke-point (`tenantRepo`/`withTenant`) + **migrations `0000–0013`** committed (roles/RLS/grants/functions/seeds/auth_functions/onboarding_steps) + bộ RLS invariant test chạy trên role runtime thật.
 - ✅ **Auth Onboarding v3 (Telegram-era) merged** (`5b1193b`) + web tests. **DD-37 supersede provider** → thay bản Telegram-era bằng **Google/email** đã **spec'd nhưng CHƯA implement**.
 - ⬜ **Feature layer chưa build:** session/reconcile/sync/marketplace/billing/bot handlers/UI (bảng DB đã dựng sẵn; tầng command/service/projector/UI còn trắng).
 
 Tài liệu hoàn tất (bản mới nhất):
-- ✅ BRD v3.7 · PRD v2.5 · TDD v2.6 · ROADMAP v2.9 (canonical P-numbers)
+- ✅ BRD v3.9d · PRD v2.8b · TDD v3.1 · ROADMAP v3.3b (founder batch decisions v1.47 reconciled; runtime pending)
 - ✅ 4 phụ lục (saas-plan, reconciliation, AUDIT, messenger)
-- Feature docs: **21 Product / 20 BE = 20 cặp hoàn chỉnh + 1 product-only Draft** (`channel_booking_funnel`); trong đó **3 cặp phase-1 mới (Messenger/chat/settings) đã tracked trong documentation baseline, còn chờ migration/build** — xem `features/README.md`
+- Feature docs: **22 Product/System / 21 BE = 21 cặp + 1 product-only Draft** (`channel_booking_funnel`). Cặp thứ 21 là Session Organize v0.5 (DD-61..64 ✅ accept-in-principle, build post-P4); coverage không có nghĩa runtime/build-ready — xem `features/README.md`.
 - ✅ Business rules, design tokens, dependency graph
 - ✅ README, CHANGELOG, PULL_REQUEST_TEMPLATE, HANDOFF, templates
 
@@ -131,13 +135,13 @@ Tài liệu hoàn tất (bản mới nhất):
 |---|---|
 | `docs/00-start-here/` | HANDOFF (file này), identity-model — đọc trước tiên |
 | `docs/product/` | BRD, PRD, TDD, ROADMAP, CRM_DASHBOARD_BRD — tài liệu cốt lõi |
-| `docs/standards/` | decisions, business-rules, design-tokens, feature-dependency-graph, deployment-infra · **FE (🟡 DD-57..60): frontend-architecture, design-tokens-benchmark, api-reference-convention** |
+| `docs/standards/` | decisions, business-rules, design-tokens, feature-dependency-graph, deployment-infra · **DD-57..59 deferred reference** · **DD-60 accepted** · **DD-61..64 accepted-in-principle/no-runtime** |
 | `docs/features/` · `docs/features/BE/` | Feature specs FE (Product) · BE (Tech) |
-| `docs/channels/` | telegram **(archived — DD-37)**, zalo, messenger (phase-1), web (+ messenger-channel-design, **designer-kickoff + frontend-pipeline 🟡 DD-57..60**) |
+| `docs/channels/` | telegram **(archived — DD-37)**, zalo, messenger (phase-1), web (+ messenger-channel-design; designer-kickoff/pipeline are DD-57..59 deferred references; API convention DD-60 accepted) |
 | `docs/research/` | bestminton analysis/scan, player-side-saas AUDIT & reconciliation |
 | `docs/strategy/` | gtm-strategy, gtm-doi-soat-decision, saas-implementation-plan, PnL model |
 | `docs/automation/` | onboarding, playbook, automation-overview, product-backlog (autopilot-kit vẫn ở `docs/autopilot-*`) |
-| `docs/templates/` | Templates tái sử dụng (feature-spec, be-tech-spec, design-tokens-template, feature-dev/ + **fe-handoff-template, fe-token-mapping-template 🟡 DD-58**) |
+| `docs/templates/` | Templates tái sử dụng; FE handoff/token-mapping templates là **DD-58 deferred/optional reference**, không active gate |
 
 **Source of truth khi conflict (theo topic):**
 
@@ -169,7 +173,7 @@ Research/reconciliation/strategy là input định hướng, không được ove
   (web-auth) · `channel_identities`/`channel_reachability` (bot) · `memberships` (person↔tenant).
   `link_codes` (hash-only) nối bot↔person, KHÔNG cần SĐT. **Phase-1 không thu SĐT (DD-50)** — khoá mạnh = verified email + link_code; phone = merge signal tương lai (DD-01, dormant).
 - **Orientation (KHÔNG phải chân lý):** `docs/00-start-here/identity-model.md`. Auth/link phase-1:
-  `decisions.md` DD-13 (Google/email ✅), DD-33 (Facebook Login/Messenger link 🟡, phase-1), DD-14/DD-15
+  `decisions.md` DD-13 (Google/email ✅), DD-33 (Facebook Login/Messenger link ✅; external enablement gate pending), DD-14/DD-15
   (Zalo Login/OA ⬜ & bot `from.id` cross-bot). Person link **Google + Facebook + Zalo** (không còn Telegram).
 
 ---
@@ -178,6 +182,15 @@ Research/reconciliation/strategy là input định hướng, không được ove
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 18/07/2026 | v1.14 | Founder batch v1.47 propagation: DD-33 external gate/link-code fallback; DD-57..59 deferred references; DD-60 accepted; Session Organize v0.5 accepted-in-principle/no-runtime; DD-69 accepted direction. |
+| 18/07/2026 | v1.13 | Authority → BRD v3.9c/PRD v2.8a/TDD v3.1/ROADMAP v3.3a/decisions v1.46; mirror DD-69 proposal boundaries: PWA planned-not-live, native phase-2 TBD, RN+Expo after spike, device push separate, offline read-only. Runtime baseline không đổi. |
+| 17/07/2026 | v1.12 | Feature-doc closure → BRD v3.9b/PRD v2.8/TDD v3.1/ROADMAP v3.3; exact endpoint identity, SePay HMAC, DM safety/block source, Assistant DLP và Session Organize v0.4 được mirror; không claim code/migration. |
+| 17/07/2026 | v1.11 | Authority → TDD v3.0/decisions v1.45. Generalize endpoint-scoped identity/reachability cho Messenger + Zalo; live schema/runtime gap và tenant-eligibility boundary được ghi rõ. |
+| 17/07/2026 | v1.10 | Review-fix closure: authority → BRD v3.9a; DD-67 Page-scoped identity/reachability + one-route delivery đã propagate vào multi-tenant/identity/notification Product+BE contracts; runtime/migration vẫn pending. |
+| 17/07/2026 | v1.9 | ROADMAP v3.2 propagation: hybrid Messenger milestone + delivery order; authority vẫn decisions v1.44. |
+| 17/07/2026 | v1.8 | Authority → BRD 3.9/PRD 2.7/TDD 2.9/ROADMAP 3.2/decisions 1.44. Session Organize pair → v0.3 nhưng DD-61..64 vẫn proposal, phase TBD và chưa migration/service. |
+| 17/07/2026 | v1.7 | Authority → BRD 3.8/PRD 2.6/TDD 2.8/ROADMAP 3.1/decisions 1.43. DD-65..68 Messenger hybrid contract + explicit live runtime/schema gap; host/player shared surface and one-route delivery. |
+| 17/07/2026 | v1.6 | Authority → TDD v2.7 / ROADMAP v3.0 / decisions v1.42. Coverage → 22 Product/System + 21 BE; Session Organize v0.2 là cặp proposal, phase TBD/earliest after P4, chưa migration/service và không thay code readiness. |
 | 16/07/2026 | v1.5 | Reconcile current authority decisions v1.39; DD-49..56 full contract propagation; DD-40 synthetic-transaction conflict removed; HR4/auth/chat/authz wording fail-closed; canonical local test DB = `plexco_test`; readiness names B0/B1/B2/B3 + correction/external/legal gates. |
 | 13/07/2026 | v1.4 | Chốt source-of-truth theo topic; canonical store = PostgreSQL/domain model; web stack = Next.js App Router (DD-10); decisions v1.19; next auth step chưa launcher-ready. |
 | 10/07/2026 | v1.3 | **Review fixes → build-status reality + canonical vocab.** §6 trạng thái: foundation + Auth v3 (Telegram-era) đã land trên `main@1eb6f60`, migrations `0000–0013` committed, web tests có; DD-37 supersede provider → Google/email spec'd nhưng chưa implement (bỏ "code chưa bắt đầu"). §2 vùng TENANT: `payments`/`webhook_transactions` → `charges`/`bank_transactions`/`payment_allocations` (canonical ledger). **DD-38/39 ✅ scope-committed phase-1** (top callout — schema chờ migration). decisions v1.16. |

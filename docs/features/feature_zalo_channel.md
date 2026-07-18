@@ -2,8 +2,8 @@
 
 > **Canonical phase:** P4.7  
 > **Track:** 💬 Zalo Channel  
-> **Version:** 2.1 · 2026-07-15
-> **Status:** Reviewed  
+> **Version:** 2.3 · 2026-07-17
+> **Status:** Reviewed · reconciled to decisions v1.45/DD-15/DD-49/DD-67
 > **Prerequisites:** P4 onboarding (Zalo token connect) · P3.5 identity · P2 session/join · P3 notifications · P4 sync  
 > **Tài liệu liên quan:** `../product/PRD.md` FLOW 4 + §4.2/4.4 · `../product/BRD.md` CO-2 · `BE/feature_zalo_channel_tech.md`
 
@@ -17,8 +17,8 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 
 - Webhook token/bot binding xác định tenant — **KHÔNG BAO GIỜ** từ message content.
 - Number choice bound to `person/bot/tenant/list_version/TTL` — stale number KHÔNG join item mới.
-- Bot token: encrypted, masked, rotatable — webhook drift monitored.
-- DM availability là **tenant bot-specific** — club A's bot ≠ club B's bot reachability.
+- Bot token and webhook verification secret: KMS/envelope encrypted, write-only/masked and rotatable; legacy plaintext `zalo_bots.secret` must be migrated-or-disabled and removed before runtime — webhook drift monitored.
+- Identity + DM availability là **bot/OA-endpoint specific** — keyed scope hash gồm bot/OA id; club A's endpoint không reuse identity/window/token của club B. Target tenant được authorize riêng.
 
 ---
 
@@ -34,7 +34,7 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 | ZAL-UC-4 | Player | DM `/me` | Personal summary for this club |
 | ZAL-UC-5 | Player | DM `/pay [session]` | QR/payment instructions |
 | ZAL-UC-6 | Player | DM `/leave [session]` | Leave with financial policy check |
-| ZAL-UC-7 | System | Inbound message | Update tenant-specific reachability |
+| ZAL-UC-7 | System | Inbound message | Update reachability cho exact channel identity/bot-OA endpoint |
 | ZAL-UC-8 | System | Send reminder/confirmation | Outbound via Zalo DM — obey provider constraints |
 | ZAL-UC-9 | Player | Request web magic link | Bot issues short-lived link for player view |
 | ZAL-UC-10 | System | Unsupported/protected message | Safe fallback response + owner digest |
@@ -79,7 +79,8 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 | Entity | Vai trò | Key constraints |
 |--------|---------|-----------------|
 | `zalo_bot_configs` | Bot token + webhook per tenant | `tenant_id` FK, encrypted token, `webhook_url`, `verified_at` |
-| `channel_reachability` | DM availability | `UNIQUE(person_id, tenant_id, platform='zalo')` |
+| `channel_identities` | Bot/OA-scoped Zalo identity | `UNIQUE(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`; raw `from.id` không là plaintext lookup |
+| `channel_reachability` | DM availability | protected `UNIQUE(channel_identity_id)`; target tenant authorize riêng |
 | `zalo_reply_contexts` | Numbered list state | `person_id`, `tenant_id`, `list_version`, `expires_at` |
 
 ---
@@ -104,12 +105,14 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 - [ ] Bot-per-club webhook always routes correct tenant
 - [ ] Number reply context-bound, TTL, idempotent
 - [ ] Join/leave/pay/me use common domain services
-- [ ] Reachability tenant+Zalo specific — no cross-club
+- [ ] Same `from.id` trên hai bot/OA tạo hai endpoint-bound identities/reachability; không cross-endpoint hoặc cross-tenant authorization
 - [ ] Token KMS/rotation/drift detection tests pass
+- [ ] Webhook verification secret is ciphertext-only at rest; legacy plaintext rows are KMS-backfilled or disabled, plaintext column dropped and no dual-read remains
+- [ ] Signed early event with ciphertext may CAS `connecting→active`; register finalization preserves `active`; missing ciphertext/`error|revoked` fail closed and duplicate events do not re-emit analytics
 - [ ] Unsupported message/provider outage safe fallback works
 - [ ] Magic link secure and person-bound
 - [ ] Rate-limit/privacy tests pass
-- [ ] Full→waitlisted/no-charge/no-venue; existing `left`→rejoin review; adapter chỉ render shared-domain outcome.
+- [ ] Full→waitlisted/no-charge/no-venue; existing `left` render canonical `active|waitlisted|current|rejoin_review`; review chỉ khi core không chứng minh được disposition; adapter không tự quyết money/capacity.
 
 ---
 
@@ -119,6 +122,8 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v2.3 | **BL-SEC-1/lifecycle closure:** make bot token + webhook secret KMS/write-only; require legacy migration-or-disable/drop/no-dual-read and CAS-safe early-event/finalization behavior before runtime. |
+| 2026-07-17 | v2.2 | **DD-15/DD-49/DD-67:** Zalo identity/reachability scoped bot/OA endpoint; target-tenant auth tách riêng; rejoin render canonical carry-over/refunded outcome, review chỉ fail-closed fallback. |
 | 2026-07-15 | v2.1 | **DD-45 + DD-37:** Zalo render active/waitlisted/current/rejoin-review; retire "Hết chỗ" outcome; sync events/AC; edge cases dùng identity/privacy Zalo+Messenger thay TG. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, Zalo DM screen states, reply context model |

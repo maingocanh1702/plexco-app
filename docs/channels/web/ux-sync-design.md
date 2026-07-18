@@ -1,10 +1,10 @@
 # Web/App-first UX + Multi-surface Sync Design
 
-> Version: v0.2 · 2026-07-10
+> Version: v0.3 · 2026-07-17
 > Scope: UX architecture cho web/app khi Plexco có các bot surfaces phase-1: **Zalo + Facebook Messenger** (Telegram đã loại — DD-37).
 > Related docs: `README.md`, `design-brief.md`, `../../features/feature_sync_engine.md`, `../../features/feature_session_management.md`, `../../features/feature_payment_reconcile.md`, `../../features/feature_marketplace_discovery.md`, `../../features/feature_player_view.md`, `../../standards/business-rules.md`
 >
-> **Cập nhật v3.4 (DD-37 ✅):** kênh phase-1 = **web + Zalo + Facebook Messenger**; **Telegram loại khỏi phạm vi**. Nhắc nợ chính = **web + Zalo DM**, Messenger best-effort trong 24h. Auth phase-1 = Google + email (DD-13). Action-mapping cột Telegram thay bằng **Messenger** (player-only surface).
+> **Cập nhật DD-65..68:** Messenger là shared host/player surface trên central Plexco Page hoặc optional per-club Page. Host tạo session cơ bản bằng durable `/newsession` wizard; player discover/join bằng opaque action. Cả hai gọi cùng canonical services với web; web vẫn là control plane/fallback cho tác vụ nâng cao. Nhắc nợ chính = web + Zalo DM, Messenger best-effort trong 24h.
 
 ## 1. Tóm tắt
 
@@ -81,7 +81,7 @@ Web/app phù hợp cho:
   → member list, duplicate review, merge identity, role/status
 
 /dashboard/settings
-  → tenant config, bank account, Zalo token, Facebook Messenger Page, notification policy
+  → tenant config, bank account, Zalo token, Messenger central status + optional tenant Page, notification policy
 
 /dashboard/billing
   → plan, subscription status, invoices, channel entitlements
@@ -137,11 +137,11 @@ Connector UI phải hiển thị rõ trạng thái:
 
 Feature parity là domain parity, không phải UI parity. Web/app là primary interaction path. Bot có thể khởi tạo intent hoặc phục vụ transitional quick actions, nhưng default UX phải điều hướng user về web/app để hoàn tất hành động.
 
-> Messenger = **player-only surface** (host commands ❌ — host thao tác ở web); nhắc/xác nhận Messenger phải tôn trọng cửa sổ 24h.
+> Messenger = **shared role-aware surface**. `page_id` chỉ chọn endpoint/default context; target tenant/resource phải đến từ protected opaque action/ref/server picker và được revalidate trước mutation. Nhắc/xác nhận vẫn phải tôn trọng cửa sổ 24h.
 
-| Domain action | Messenger (player-only) | Zalo | Web/app | Canonical command |
+| Domain action | Messenger (host + player) | Zalo | Web/app | Canonical command |
 |---|---|---|---|---|
-| Tạo session | Notify/link tới web (không phải host surface) | Không ưu tiên | Create form | `CreateSession` |
+| Tạo session | Host `/newsession` durable wizard; advanced fields có thể mở web | Không ưu tiên | Create form | `CreateSession` |
 | Sửa session | Notify/link tới session detail | Không ưu tiên | Edit form | `UpdateSession` |
 | Publish session | Notify/link tới web | Không ưu tiên | Visibility toggle | `PublishSession` / `UpdateVisibility` |
 | Join session | Quick-reply/postback (trong 24h); CTA mở web/app | CTA mở web/app; number reply transitional | Join CTA | `JoinSession` |
@@ -363,7 +363,7 @@ Player view should not route by URL-provided `person_id`; authority comes from v
 7. Connector delivery failure is visible but does not mutate business state.
 8. Admin correction actions on money or identity require audit.
 9. Reproject must not blindly resend notifications with side effects.
-10. Messenger is a **phase-1 channel** (DD-37) and delivery must respect the 24h policy window; nhắc chính vẫn qua web + Zalo.
+10. Messenger is a **phase-1 shared host/player channel** (DD-37, DD-65..68); delivery must respect the 24h policy window and choose one route only: reachable tenant Page → reachable central Page → web/Zalo fallback.
 
 ## 10. Recommended implementation sequence
 

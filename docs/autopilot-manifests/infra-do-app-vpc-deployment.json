@@ -2,11 +2,11 @@
   "feature": "infra-do-app-vpc-deployment",
   "branch": "feat/infra-do-app-vpc-deployment",
   "base_ref": "main",
-  "risk": "P1",
-  "change_class": "build-config",
+  "risk": "P0",
+  "change_class": "manual-infra-security-deployment",
   "merge_policy": "manual_only",
   "auto_merge": false,
-  "codex_review": "2x_consecutive_clean",
+  "codex_review": "not_applicable",
   "depends_on": [
     "monorepo-scaffold",
     "db-postgres-drizzle-rls"

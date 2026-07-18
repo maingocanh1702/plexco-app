@@ -1,9 +1,9 @@
 # Designer Kickoff — Plexco Web FE
 
-> **Status:** 🟡 Proposal · **Version:** 0.2 · 2026-07-17
-> **Đọc file này ĐẦU TIÊN khi bắt đầu design FE.** Là entry point gộp mọi tài liệu + thứ tự làm + checklist nghiệm thu.
+> **Status:** 🟡 Deferred reference · **Version:** 0.3 · 2026-07-18
+> **Reference kickoff:** dùng để định hướng khi owner reopen FE design system; chưa phải tài liệu gate bắt buộc hiện tại.
 > **Visual source:** chưa chọn/chưa có asset được track. `Plexco-DS-fable5.pen` không có trong repo và đã superseded; chốt `.pen` mới hoặc Figma file/node trong `theme-direction-2026-07.md` trước handoff/code.
-> **Operationalize:** DD-57 (FE architecture) · DD-58 (pipeline + template) · DD-59 (tokens) · DD-60 (API convention).
+> **Authority:** DD-57/58/59 đã owner-defer (reference-only, không gate delivery). DD-60 API convention đã ✅ accepted và áp độc lập cho API docs mới/materially changed.
 
 ---
 
@@ -13,7 +13,7 @@
 |---|---|---|
 | 1 | `design-brief.md` | Sản phẩm, personas, key screens, deliverables §9, a11y §8 |
 | 2 | `../../standards/design-tokens.md` | **Token canonical** — designer bám giá trị này |
-| 3 | `../../standards/frontend-architecture.md` | Ràng buộc bắt buộc (FE-INV-1..6): 4-state, tokens-only, i18n vi/en, touch ≥44 |
+| 3 | `../../standards/frontend-architecture.md` | Reference proposal DD-57 (FE-INV-1..6); chưa active gate |
 | 4 | `./README.md §2` | **Route/auth/phase canonical** (Screen Map + Permission Matrix) |
 | 5 | `./frontend-pipeline.md` + `../../templates/feature-dev/fe-*-template.md` | Cách bàn giao từng màn visual-source→code |
 | 6 | `../../standards/design-tokens-benchmark.md` | Khi cần đề xuất đổi/thêm token (không tự chế) |
@@ -27,7 +27,7 @@
 - [ ] **Visual SoT = `.pen` mới được commit hoặc Figma file/node được link** — ghi exact path/URL + node/frame id; chưa chốt thì không handoff/code.
 - [ ] Xác nhận scope phase-1 (mục §3 dưới).
 
-## 2. Ràng buộc bắt buộc (mọi màn phải thoả — FE-INV)
+## 2. Ràng buộc đề xuất (inactive tới khi DD-57 được reopen/chốt)
 
 - **4-state**: mọi màn data-driven vẽ đủ `loading · ready · empty · error`. Empty = icon + text + CTA; error = message + retry.
 - **Tokens-only**: chỉ dùng token trong `design-tokens.md`; không màu/spacing tự do. Thiếu token → đề xuất, không hardcode.
@@ -44,7 +44,7 @@
    - Mỗi component đủ **states**: default · hover · focus · active · disabled · loading.
    - Có biến thể light + dark; text mẫu vi + en.
 3. **Patterns**: navigation (dashboard sidebar / player bottom-nav), form layout, money display (tabular-nums), status color mapping (paid/partial/unpaid).
-4. ✅ **Gate lock** — owner duyệt token khớp `design-tokens.md`. **Không sửa token sau khi khoá** (đổi thì qua DD-59).
+4. **Proposed gate lock** — chỉ activate khi DD-59 được reopen/chốt; hiện tại thay đổi token vẫn phải theo authority hiện hành của `design-tokens.md`.
 
 ### Giai đoạn B — Màn theo feature (thứ tự ưu tiên)
 > Route lấy từ `README.md §2`. Mỗi màn đủ 4-state + 3 breakpoint + edge case từ `feature_*.md`.
@@ -90,5 +90,6 @@ Với mỗi màn xong design: source path/URL + node/frame id → `handoff/<scre
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 18/07/2026 | 0.3 | Owner defer DD-57..59; kickoff/pipeline/checklists chuyển thành reference-only. Tách rõ DD-60 vẫn accepted và áp độc lập. |
 | 17/07/2026 | 0.2 | Gỡ `.pen` SoT không tồn tại; tách token SoT và visual SoT; thêm hard gate chọn + track/link source mới trước handoff/code. |
 | 16/07/2026 | 0.1 | 🟡 Kickoff đầu tiên — gộp gói tài liệu + thứ tự design-system→screens + checklist nghiệm thu. Vá drift color (`design-brief §5.1`) + route (`§3`). Operationalize DD-57..60. |

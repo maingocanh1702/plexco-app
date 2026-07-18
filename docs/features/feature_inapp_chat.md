@@ -4,7 +4,7 @@
 
 > **Canonical phase:** P4 (đề xuất — dựng sớm hạ tầng `chat_*`)
 > **Track:** 💬 In-app Chat
-> **Version:** 0.5 · 2026-07-16
+> **Version:** 0.7 · 2026-07-17
 > **Status:** ✅ DD chốt — Draft (pending migration)
 > **Prerequisites:** P4 web/app surface + sync engine · **DD-07** (SSE + `LISTEN/NOTIFY`) · P3.5 identity (Person/Membership)
 > **Tài liệu liên quan:** `../product/BRD.md` MODULE 10 / BR-15 / AC-10 / FR-10 · `../standards/decisions.md` **DD-38/DD-55** · DD-07 · DD-19/DD-20 (trợ lý tái dùng `chat_*` ở P7) · `feature_club_assistant.md` · `feature_identity.md` · `packages/db/schema.ts` (**AUTHORITATIVE** khi triển khai)
@@ -28,10 +28,10 @@ Chat **chỉ sống trong Plexco** (web + surface app của Plexco), **KHÔNG br
 - Chat `dm` **chỉ 2 người** đọc được — đường **person-self**, không cho query person khác.
 - **KHÔNG bridge** ra Zalo/Messenger/kênh ngoài ở phase-1 (CO-7); chat không xuất hiện ở group ngoài.
 - Tenant + person resolve từ **phiên đăng nhập app**, **KHÔNG** từ nội dung message.
-- Tin nhắn ghi canonical qua **command → outbox → projector** (không multi-master, HR3); realtime qua SSE, idempotent theo `command_id`.
+- Guarded send RPC atomically ghi canonical `chat_messages`, rồi `NOTIFY` message-id để SSE refetch dưới authz; side effect ngoài chat (nếu có) mới đi outbox. Không có message projector/writer thứ hai; idempotent theo **`client_msg_id` UNIQUE `(channel_id, client_msg_id)`**.
 - **Tiền/PII không lộ** qua chat; chat KHÔNG thuộc public plane (không vào `public_sessions`).
 - Rate-limit / anti-spam theo person + tenant.
-- Phase-1 open DM chỉ được bật sau khi **block + report + per-sender/per-target rate-limit + abuse audit** đều hoạt động fail-closed. Host/support/tenant admin không có quyền đọc DM.
+- Phase-1 open DM chỉ được bật sau khi **block + report + per-sender/per-target rate-limit + abuse audit** đều hoạt động fail-closed qua **một canonical safety decision** tại request/create/bootstrap/send/read. Host/support/tenant admin không có quyền đọc DM.
 - Media object mặc định private; pending/quarantined/rejected/deleted không được serve. Mọi signed access phải re-authorize channel membership tại thời điểm đọc.
 
 ---
@@ -64,7 +64,7 @@ Chat **chỉ sống trong Plexco** (web + surface app của Plexco), **KHÔNG br
 | 3 | Security | Resolve tenant/person từ nội dung message | ❌ NEVER — chỉ từ phiên đăng nhập + kênh |
 | 4 | Security | Bridge chat ra Zalo/Messenger | ❌ NEVER phase-1 (CO-7) — chat chỉ sống trong Plexco |
 | 5 | Abuse | Spam flood tin nhắn | Rate-limit per person+tenant; chặn/slow-mode |
-| 6 | Concurrency | Double-send / retry (mất mạng) | Idempotent theo `command_id` — 1 tin |
+| 6 | Concurrency | Double-send / retry (mất mạng) | Idempotent theo `client_msg_id` trong channel — 1 tin; concurrent retry không double-consume rate/audit |
 | 7 | Data Integrity | Non-member cố gửi vào chat CLB | Eligibility fail — 403, không ghi |
 | 8 | Abuse | DM giữa hai user không có quan hệ CLB | Phase-1 được phép **chỉ khi** safety gate DD-55 xanh; nếu gate/config chưa sẵn sàng → fail-closed, không tạo DM |
 | 9 | Privacy | Tin chứa PII/số tiền người khác | Không có đường public; không đưa vào analytics/log thô |
@@ -75,6 +75,7 @@ Chat **chỉ sống trong Plexco** (web + surface app của Plexco), **KHÔNG br
 | 14 | Abuse | Report DM | Ghi reason/status/audit tối thiểu; abuse operator chỉ thấy artifact đúng policy, host/support tenant không đọc DM |
 | 15 | Security | Upload giả MIME, malware, quá size/quota | Quarantine/reject; không tạo attachment `ready`, không phát signed URL |
 | 16 | Data Integrity | Upload xong nhưng gửi message fail / object bị xoá | Orphan cleanup theo TTL; message chỉ tham chiếu attachment `ready`; deleted object hiển thị tombstone |
+| 17 | Security | SQL/RPC `create_dm` bootstrap bỏ qua block/rate gate | ❌ NEVER — bootstrap gọi cùng canonical safety decision; safety subsystem thiếu/disabled thì fail-closed trước INSERT hoặc reuse |
 
 ---
 
@@ -98,10 +99,10 @@ Chat **chỉ sống trong Plexco** (web + surface app của Plexco), **KHÔNG br
 | Entity (proposal) | Plane | Vai trò | Key constraints (dự kiến) |
 |--------|-------|---------|-----------------|
 | `chat_channels` | `club`: Tenant-private · `dm`: **Person-self (global)** | Kênh chat | `kind ∈ {club, dm}`; **club** → `tenant_id` NOT NULL, `dm_key` NULL, 1 kênh chính/CLB; **dm** → `tenant_id` **NULL**, `dm_key='least:greatest'` 2 person UNIQUE (CHECK XOR) |
-| `chat_channel_members` | theo channel (`club` tenant-private / `dm` person-self) | Thành viên kênh | **club**: `tenant_id`+`membership_id` NOT NULL, `UNIQUE(tenant, channel, membership)`; **dm**: `tenant_id`/`membership_id` NULL, đúng 2 person theo `dm_key` |
-| `chat_messages` | theo channel (`club` tenant-private / `dm` person-self) | Tin nhắn | `author_type ∈ {person, assistant, system}`; assistant/system ⇒ `membership_id` NULL; **dm** ⇒ `tenant_id`/`membership_id` NULL; `command_id` idempotent |
+| `chat_members` | theo channel (`club` tenant-private / `dm` person-self) | Thành viên kênh | **club**: `tenant_id`+`membership_id` NOT NULL, `UNIQUE(tenant, channel, membership)`; **dm**: `tenant_id`/`membership_id` NULL, đúng 2 person theo `dm_key` |
+| `chat_messages` | theo channel (`club` tenant-private / `dm` person-self) | Tin nhắn | `author_type ∈ {person, assistant, system}`; assistant/system ⇒ `membership_id` NULL; **dm** ⇒ `tenant_id`/`membership_id` NULL; `client_msg_id` idempotent per channel |
 | `chat_attachments` (proposal) | Private, channel-authorized | Metadata + storage/scan/deletion state | Owner + object key; `pending_scan → ready | rejected | quarantined | deleted`; message chỉ attach `ready`; no raw signed URL persisted |
-| `chat_blocks` / `chat_reports` (proposal) | Person-self / abuse-control | Open-DM safety gate | Deterministic actor-target block; report reason/status + immutable audit; không làm DM readable cho host/support |
+| `chat_blocks` / `chat_reports` (DD-55 canonical contract; schema pending) | Person-self / abuse-control | Open-DM safety gate | Deterministic actor-target block; report reason/status + immutable audit; không làm DM readable cho host/support |
 
 - **RLS:** `club` channel → thêm `chat_*` vào RLS list (ENABLE + FORCE theo `app.tenant_id`). `dm` (`tenant_id` NULL) **không** qua tenant-RLS mà gate **person-self** (chỉ 2 person trong `dm_key`) — khớp `BE/feature_inapp_chat_tech.md`. Migration RLS list tương lai.
 - **Realtime:** SSE + `LISTEN/NOTIFY` theo tenant/person (DD-07) — cùng cơ chế sync engine.
@@ -131,12 +132,14 @@ Chat **chỉ sống trong Plexco** (web + surface app của Plexco), **KHÔNG br
 - [ ] DM 1-1 chỉ 2 người đọc được — person-self test pass.
 - [ ] Không bridge ra Zalo/Messenger; chat không xuất hiện ở kênh ngoài (CO-7).
 - [ ] Tenant/person resolve từ phiên đăng nhập, không từ nội dung.
-- [ ] Gửi tin idempotent theo `command_id`; SSE realtime độ trễ thấp.
+- [ ] Gửi tin idempotent theo `client_msg_id`; runtime app không có direct INSERT, mọi user send qua guarded RPC cố định actor server-side.
 - [ ] Rate-limit/anti-spam hoạt động theo person+tenant.
 - [ ] Tin/PII/tiền không lộ ra public; không vào analytics thô.
 - [ ] Dùng chung `chat_*` với trợ lý (DD-19/DD-20) — không model song song.
 - [ ] Reconnect/re-sync không mất/không trùng tin.
-- [ ] Open DM remains OFF until block/report/per-sender+per-target limits/abuse audit pass; blocked pair cannot request/create/send/read through the DM boundary.
+- [ ] Open DM remains OFF until block/report/per-sender+per-target limits/abuse audit pass through one canonical decision; blocked pair cannot request/create/bootstrap/send/read through any HTTP/RPC/SQL path.
+- [ ] `create_dm` under real `app` role calls the safety primitive before create/reuse; disabling any safety capability or blocking either direction yields generic denial and no channel/member mutation.
+- [ ] DM history/list/mark-read/SSE re-authorize canonical block+safety state; active stream closes by event/heartbeat ≤30s after block or authz loss.
 - [ ] Host/support/tenant admin cannot read DM, including after a report.
 - [ ] Media E2E passes private upload, MIME sniff, size/quota, malware scan, moderation, ready-only attach, signed read authz, delete/tombstone and orphan cleanup.
 
@@ -157,6 +160,8 @@ Chat **chỉ sống trong Plexco** (web + surface app của Plexco), **KHÔNG br
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v0.7 | **Canonical chat-model closure:** rename duplicate `chat_channel_members` reference to `chat_members`; message dedupe is `client_msg_id` per channel; user sends only through guarded server-authored RPC; DM read/list/mark/SSE re-authorize safety and concurrent retry consumes rate/audit once. |
+| 2026-07-17 | v0.6 | **DD-55 bootstrap closure:** one canonical DM safety decision now explicitly owns request/create/bootstrap/send/read; `create_dm` cannot bypass block/rate/enablement gates. |
 | 2026-07-16 | v0.4 | **Propagation (light) DD-55:** CHT-OQ-1 ✅ (phase-1 open DM / phase-2 follow-gated + request box; host không đọc DM), CHT-OQ-3 ✅ (media in-scope full stack). CHT-OQ-2 giữ mở (build-time). Media stack/schema defer build slice — BE tech cần bổ sung media requirements. Authority: decisions v1.36. |
 | 2026-07-16 | v0.5 | **Full propagation DD-55 (decisions v1.37):** open-DM hard safety gate; block/report abuse contract; host/support DM denial; full private media upload/scan/signed-access/quota/moderation/deletion lifecycle; acceptance + domain proposals pinned. |
 | 2026-07-15 | v0.3 | Làm rõ §4 Domain Model: `dm` là **person-self** (`tenant_id` NULL, `dm_key` cặp person) tách khỏi `club` tenant-private — khớp §1 + `BE/feature_inapp_chat_tech.md`. RLS note tách club (tenant-RLS) vs dm (person-self gate). Đồng bộ version header ↔ changelog. |

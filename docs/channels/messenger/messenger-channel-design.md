@@ -2,13 +2,13 @@
 
 ## Plexco — platform thể thao đa môn: thêm kênh Messenger (port từ Telegram + Zalo)
 
-**Phiên bản:** 2.1
-**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 15/07/2026
-**Tài liệu tham chiếu:** `BRD.md` v3.6 · `PRD.md` · `TDD.md` · `player-side-saas-reconciliation.md` · `player-side-saas-AUDIT.md`
+**Phiên bản:** 2.4
+**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 17/07/2026
+**Tài liệu tham chiếu:** `../../product/BRD.md` v3.9b · `../../product/PRD.md` v2.8 · `../../product/TDD.md` v3.1 · `../../standards/decisions.md` v1.45 · `../../research/player-side-saas-reconciliation.md` · `../../research/player-side-saas-AUDIT.md`
 
-> **Cập nhật v3.4 (DD-37 ✅):** Messenger nay là **kênh phase-1 (P2.5)** — không còn post-MVP. Telegram đã bị loại khỏi phạm vi; nhắc nợ chính = **web + Zalo**, Messenger best-effort trong standard window 24h. Ngoài cửa sổ chỉ dùng cơ chế Meta đủ điều kiện/được phê duyệt; **App Review bắt buộc**, Page per-club. Phase-label **P2.5.x** bên dưới thay cho P4.8.x cũ. Auth-link Facebook = **DD-33 🟡** (phase-1).
+> **Authority hiện hành (DD-65..68 ✅):** topology là **hybrid** — Plexco central Page luôn có, Page per-club là tuỳ chọn; cả hai là shared role-aware surface cho host và player. Các assumption Page-per-club-only/player-only trước v2.2 bị supersede. Auth-link Facebook = DD-33 ✅ (phase-1; App Review pending).
 
-> **TL;DR:** Về kiến trúc, Messenger là **kênh thứ ba kiểu DM-only**, gần Zalo hơn Telegram. Nó **fit gần như nguyên** vào channel-abstraction sẵn có (chỉ thêm 1 enum + 1 bảng + 1 adapter + 1 webhook route). **Rủi ro lớn nhất KHÔNG phải kỹ thuật mà là chính sách:** standard messaging bị giới hạn 24h; mọi đường ngoài cửa sổ phụ thuộc eligibility/approval theo cơ chế Meta hiện hành. Vì vậy MVP fail-closed sang web + Zalo (xem §2 và §7).
+> **TL;DR:** Messenger là kênh DM-only dùng **một adapter + shared domain services**. Delta không chỉ là enum/bảng: cần global-protected hybrid Page registry, Page-scoped identity/reachability, protected context/action resolver và durable interaction owner. Rủi ro delivery lớn nhất vẫn là policy window; ngoài cửa sổ phải fail-closed sang web + Zalo.
 
 > **Reposition v3.4 (Plexco platform, DD-37):** Messenger là **một surface** trong sync engine (TDD §3.8) — action ở Messenger → command → canonical store → projection; xác nhận/nhắc là projection của event. Quick-reply/button của Messenger **hợp với discovery** (liệt kê kèo để chọn) hơn Zalo number-reply. Nay là **kênh phase-1 (P2.5)** cùng web + Zalo; đường tới hạn là **App Review + Business Verification** (nộp sớm). Tái dùng ~90% khung Zalo — không còn phụ thuộc player-side Telegram (đã loại).
 
@@ -19,7 +19,7 @@
 | Tiêu chí | Telegram | Zalo | **Messenger** |
 |---|---|---|---|
 | Bot trong **group chat** | ✅ (core flow) | ❌ DM-only | **❌ DM-only** (Chat Extensions đã khai tử; group bot chỉ có trên Workplace) |
-| Mô hình bot | 1 shared bot, nhiều group | bot-per-club (BYO token) | **1 App, nhiều Page** (mỗi club 1 Page) |
+| Mô hình bot | 1 shared bot, nhiều group | bot-per-club (BYO token) | **1 App; central Page + optional Page per-club** |
 | Webhook | 1 endpoint `/telegram/<secret>` | per-bot `/webhook/zalo/:token` | **1 endpoint duy nhất**, route theo `entry[].id` (page_id) |
 | Nút bấm / inline | ✅ inline keyboard + callback | ❌ number-reply | **✅ quick replies + buttons + postback** (giàu hơn Zalo) |
 | User id | global `from.id` | per-OA user id | **PSID — page-scoped** (mỗi Page 1 id khác nhau) |
@@ -28,9 +28,9 @@
 
 **Hệ quả thiết kế cốt lõi:**
 
-1. **Không có "phòng chung".** Flow Telegram "đăng vào group + tap [✅ Tham gia]" (PRD FLOW 3) **không port được**. Messenger phải dùng mô hình **DM bot-per-Page giống Zalo** (PRD FLOW 4) — nhưng nâng cấp number-reply thành **button/quick-reply**.
-2. **Routing theo Page**, không theo nội dung — khớp đúng nguyên tắc TDD §3.3 ("tenant từ kênh, không từ nội dung").
-3. **PSID page-scoped là một điểm cộng** cho multi-tenant: PSID chỉ có nghĩa trong phạm vi 1 Page = 1 tenant → `channel_identities` của Messenger **tự nhiên bị buộc vào tenant**, không lo cross-tenant id collision.
+1. **Không có "phòng chung".** Messenger dùng DM + button/quick-reply; host và player đều thao tác trên central hoặc tenant Page.
+2. **Page là trusted endpoint, không luôn là tenant.** Tenant Page pin default context; central Page và cross-club action resolve target qua opaque action/public ref/server-side picker. Tenant/session không bao giờ lấy từ free text/client body.
+3. **PSID chỉ có nghĩa cùng `page_id`.** Identity dùng hai keyed HMAC domain-separated: `provider_scope_lookup_hash = HMAC("channel-scope:messenger:" + page_id)` và `platform_user_lookup_hash = HMAC("channel-user:messenger:" + PSID)`, unique theo ba phần với platform. Hai PSID xuyên Page chỉ link cùng Person bằng verified identity/transactional `link_code`, không auto-merge.
 
 ---
 
@@ -87,31 +87,37 @@ Messenger có **cửa sổ nhắn 24 giờ**: Page chỉ được nhắn user t�
 platform: 'telegram' | 'zalo' | 'messenger'   // channel_identities, channel_reachability
 ```
 
-**Bảng mới — `messenger_pages`** (TENANT-scoped, RLS ✅; song song `zalo_bots`):
+**Registry `messenger_pages`** (GLOBAL-protected; thay schema tenant-only hiện tại bằng migration mới):
 
 ```
 MESSENGER_PAGE {
     uuid id PK
-    uuid tenant_id FK
+    enum scope 'central|tenant'
+    uuid tenant_id FK nullable    -- NULL iff central
     varchar page_id UK            -- route key: entry[].id từ webhook
     varchar page_access_token_enc -- KMS/AES-GCM, không log (NFR-6)
     varchar app_scoped_verify     -- (optional) phục vụ matching identity xuyên Page qua FB Login
     timestamptz token_expires_at  -- token Page có thể cần refresh
     enum status 'active|revoked'
+    CHECK scope/tenant_id consistent
+    UNIQUE active central; UNIQUE active tenant binding
 }
 ```
+
+Meta **App Secret là deployment-level secret cấp App**, không nằm/lặp trong từng Page row. Page registry/secret store chỉ sở hữu Page access token và metadata rotation/revoke tương ứng.
 
 **`channel_identities`** (GLOBAL) — thêm bản ghi cho Messenger:
 
 ```
 platform = 'messenger'
-platform_user_id = PSID   -- LƯU Ý: page-scoped. UNIQUE(platform, platform_user_id) vẫn đúng
-                          -- vì PSID khác nhau giữa các Page → không đụng nhau.
-                          -- Nếu cần merge Person xuyên Page, dùng FB Login app-scoped ID
-                          -- làm canonical platform_user_id (hoặc thêm UNIQUE(platform, platform_user_id, page_id)).
+provider_scope_lookup_hash = HMAC("channel-scope:messenger:" + page_id)
+platform_user_lookup_hash = HMAC("channel-user:messenger:" + PSID)
+messenger_page_id = resolved registry row
+UNIQUE(platform, provider_scope_lookup_hash, platform_user_lookup_hash)
+// Hai hash dùng key/domain riêng; PSID thô không phải global key; không auto-link xuyên Page.
 ```
 
-**`channel_reachability`** — thêm dòng `(person, tenant, platform='messenger')` với:
+**Page-endpoint reachability** — gắn với `channel_identity_id`/`messenger_page_id`, không chỉ `(person, tenant, platform)`:
 
 ```
 can_dm: bool              -- còn trong cửa sổ 24h?
@@ -125,7 +131,7 @@ otn_token_enc: varchar nullable  -- MỚI: token One-Time Notification nếu use
 
 | # | Table | Vùng | RLS | Pha |
 |---|---|---|---|---|
-| 20 | `messenger_pages` | TENANT | ✅ | P2.5 |
+| 20 | `messenger_pages` | GLOBAL protected | resolver hẹp; no blanket grant | P2.5 |
 
 ---
 
@@ -140,23 +146,25 @@ Khác Zalo (per-bot URL). Messenger gửi **mọi** event của **mọi** Page v
 | GET | `/webhook/messenger` | `hub.verify_token` (so khớp hằng số App) | xác thực webhook lúc đăng ký |
 | POST | `/webhook/messenger` | **`X-Hub-Signature-256`** (HMAC app_secret, timing-safe) | nhận event mọi Page |
 
-**Tenant resolution (bám TDD §3.3 — từ kênh, không từ nội dung):**
+**Context/action resolution (DD-65..68; fail-closed):**
 
 ```
 INBOUND Messenger:
   verify X-Hub-Signature-256 (timing-safe, app_secret)   // NFR-6
   for each entry in body.entry:
       page_id = entry.id
-      tenant  = messenger_pages.findByPageId(page_id) -> tenant   // route key
+      endpoint = messenger_pages.findActiveByPageId(page_id)      // central | tenant(default)
       for each messaging in entry.messaging:
           psid = messaging.sender.id
-          // cập nhật cửa sổ 24h MỖI inbound:
-          reachability.upsert(person, tenant, 'messenger',
-                              can_dm=true, window_expires_at = now()+24h)
-          (platform='messenger', psid) -> channel_identities -> person
-          membership = person ∩ tenant     // RLS qua tenantRepo
-          route theo postback/text:
-            'GET_STARTED' | 'pjoin:<id>' | '/me' | '/leave' | '/pay' | '/link' ...
+          scope_hash = HMAC("channel-scope:messenger:" + page_id)
+          user_hash = HMAC("channel-user:messenger:" + psid)
+          identity = lookup("messenger", scope_hash, user_hash)
+          reachability.upsert(identity.id, endpoint.id, window_expires_at=now()+24h)
+          action = resolveOpaqueActionOrRolePicker(message, identity, endpoint)
+          context = resolveTargetTenantAndResource(action)
+          authorize(action.capability, identity.person, context.tenant)
+          sharedDomainService.execute(action.command)
+          // missing/stale/ambiguous/replayed => deny/re-pick; never guess
 ```
 
 ### 5.2 Adapter trong `packages/core` / `apps/bot`
@@ -172,13 +180,14 @@ interface ChannelAdapter {
 ```
 
 - **Messenger send:** `POST https://graph.facebook.com/v<ver>/<page_id>/messages` với `page_access_token`.
-- `sendChoices` → Messenger **quick replies** hoặc **button template** (postback payload = `pjoin:<sessionId>`).
+- `sendChoices` → quick replies/button template với **opaque server-side action token** (TTL + actor/Page binding + target + snapshot/version), không raw `sessionId`.
 - `canDeliver` (Messenger) = `now() < reachability.window_expires_at` **HOẶC** có `otn_token` chưa dùng → đây là choke-point chống vi phạm 24h.
 - **Throttler** dùng lại `@grammyjs/transformer-throttler`-tư-tưởng; Messenger có rate-limit riêng theo Page → thêm bucket per page_id.
+- Choice list có tối đa **8 business choices/page** + Prev/Next/Cancel. Root menu role-aware; `/newsession` dùng một durable pre-dispatch interaction owner và final confirm phát đúng một idempotent `CreateSession` command.
 
 ---
 
-# 6. Onboarding tenant — nối Facebook Page (bổ sung FLOW 1)
+# 6. Onboarding tenant — Page riêng là optional
 
 ```mermaid
 sequenceDiagram
@@ -186,21 +195,21 @@ sequenceDiagram
     participant Web as Web onboarding
     participant FB as Facebook Login
     participant App as Backend (App)
-    Owner->>Web: "Nối Facebook Page"
+    Owner->>Web: "Nối Page riêng (không bắt buộc)"
     Web->>FB: OAuth (scope: pages_show_list, pages_messaging, pages_manage_metadata)
     FB-->>Web: short-lived user token + danh sách Page
     Owner->>Web: chọn Page CLB
     Web->>App: exchange -> long-lived Page Access Token
     App->>App: lưu messenger_pages(page_id, token_enc) [KMS]
     App->>FB: subscribe Page vào App webhook (subscribed_apps)
-    App-->>Owner: ✅ Page đã nối; gửi thử "GET_STARTED"
+    App-->>Owner: ✅ Page riêng đã nối; central Page vẫn là fallback
 ```
 
 **Phải có để chạy production:**
 
 - **Facebook App** (của platform owner) + **App Review** cho `pages_messaging` (và `Human Agent` nếu dùng cách (C)). Đây là rào cản thời gian — Meta review có thể vài ngày–tuần; **bắt đầu sớm**.
 - **Business Verification** cho Business của bạn.
-- Mỗi club nối Page riêng → token Page riêng (blast-radius lộ token = messaging 1 Page, không chạm tiền/DB — giống lập luận token Zalo trong AUDIT §B2).
+- Plexco central Page token do platform quản lý; Page riêng chỉ tồn tại khi club opt-in. Token leak vẫn giới hạn ở Page tương ứng và bắt buộc rotation/audit.
 - **Webhook drift / token revoke detection** (cron, bám TDD §3.7 `security/webhook-drift`): Page token có thể bị thu hồi khi owner đổi mật khẩu/gỡ App → phát hiện → báo owner nối lại.
 
 ---
@@ -212,12 +221,12 @@ sequenceDiagram
 | Phase | Hạng mục | DoD |
 |---|---|---|
 | **P2.5.0 — Spike chính sách** | Xác nhận thực địa: OTN còn mở ở VN? Utility Templates khả dụng? App Review `pages_messaging` mất bao lâu? | Có/không từng cơ chế ngoài-24h → chốt chiến lược (A/B/C) |
-| **P2.5.1 — App & webhook** | Tạo FB App, verify chữ ký `X-Hub-Signature-256`, GET verify, route theo `page_id`, `messenger_pages` + migration `09_messenger_pages`, enum `messenger`. | curl giả event 2 Page → route đúng 2 tenant; sai chữ ký → 401 |
+| **P2.5.1 — App, hybrid registry & webhook** | Tạo FB App, verify signature, migration mới chuyển registry thành central+tenant, protected resolver, Page-scoped identity/reachability. | central + 2 tenant Page route/context đúng; sai signature/context → deny |
 | **P2.5.2 — Adapter gửi** | `ChannelAdapter` Messenger: sendText/sendChoices (quick-reply), throttler per-page, `canDeliver` theo cửa sổ 24h. | Gửi được DM + nút; quá 24h → `canDeliver=false` |
-| **P2.5.3 — Join flow** | `GET_STARTED` → resolve identity → `/join` (button list buổi, postback `pjoin:<id>`) → `addMemberToSession` (idempotent) → xác nhận + nội dung CK. | Player join qua nút; roster cập nhật |
+| **P2.5.3 — Role-aware session flows** | `GET_STARTED` → host/player/dual menu; host create wizard; player local/global discovery + opaque join action; cùng Session/Join services với web/Zalo. | Host tạo session và player join trên central lẫn tenant Page; roster/web sync |
 | **P2.5.4 — Reachability 24h + reminder** | Upsert `window_expires_at` mỗi inbound; reminder cron lọc cửa sổ; OTN opt-in (nếu có); HUMAN_AGENT path cho owner bấm. | Nhắc trong 24h chạy; ngoài 24h fallback đúng (web + Zalo) |
-| **P2.5.5 — notifyPlayersPaid + /myclubs** | Thêm Messenger vào `ChannelReachability` multi-kênh; magic-link cho web view. | Xác nhận trả tiền tới đúng kênh khả dụng |
-| **P2.5.6 — Onboarding web** | FB Login + chọn Page + subscribe webhook + token refresh/revoke detection. | Owner lạ nối Page tới khi join được, không đụng env |
+| **P2.5.5 — one-route delivery + /myclubs** | Page-endpoint reachability; tenant Page → central → web/Zalo priority; logical dedup. | Xác nhận tới đúng một route khả dụng, không gửi trùng |
+| **P2.5.6 — Optional Page onboarding** | FB Login + chọn Page + subscribe webhook + token refresh/revoke detection. | Club không nối Page vẫn dùng central đầy đủ; club nối Page có branded parity |
 
 **Đường tới hạn (critical path):** App Review + Business Verification → bắt đầu ngay từ P2.5.0 vì nó chặn mọi thứ khác.
 
@@ -263,6 +272,10 @@ sequenceDiagram
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 17/07/2026 | v2.4 | Feature-doc closure: identity dùng hai HMAC domain-separated + unique ba phần; App Secret là deployment-level, Page store chỉ giữ Page access token. Authority → BRD v3.9b/PRD v2.8/TDD v3.1. Runtime chưa implement. |
+| 17/07/2026 | v2.3 | Authority → TDD v3.0/decisions v1.45. Messenger Page scope is one provider-endpoint instance of the shared channel identity/reachability contract; runtime scope unchanged. |
+| 17/07/2026 | v2.2 (reference fix) | Current references → BRD v3.9a/PRD v2.7/TDD v2.9/decisions v1.44; contract/scope không đổi. |
+| 17/07/2026 | v2.2 | **DD-65..68:** hybrid central+optional tenant Page, shared host/player surface, protected context/action resolver, Page-scoped identity/reachability, durable wizard, opaque paginated actions và one-route delivery. Gỡ assumption mỗi Page luôn bằng một tenant. |
 | 15/07/2026 | v2.1 | Chuẩn hoá policy contract: standard window 24h; outside-window chỉ khi Meta eligibility/approval cho phép; MVP fail-closed sang web + Zalo. Bỏ claim tuyệt đối rằng ngoài cửa sổ không còn bất kỳ cơ chế nào. |
 | 10/07/2026 | v2.0 | **Promote phase-1 (DD-37 ✅, thay DD-09):** post-MVP/P4.8.x → **phase-1/P2.5.x**; nhắc chính = **web + Zalo** (bỏ Telegram); OD-C ✅; refs BRD v3.4. Ghi nhận ràng buộc cửa sổ 24h · outside-window policy · App Review · Page per-club. Auth-link Facebook = DD-33 🟡. |
 | 19/06/2026 | — | Thêm Changelog table |

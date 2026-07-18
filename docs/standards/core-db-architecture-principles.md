@@ -3,11 +3,13 @@
 > Principles dùng khi thiết kế core domain, database schema, service boundary và architecture slice cho Plexco.
 > Tài liệu này không thay thế `product/TDD.md`, `standards/business-rules.md` hoặc `standards/decisions.md`; khi conflict, cập nhật decision/source document trước rồi sync lại file này.
 
-**Version:** 1.2
-**Date:** 2026-06-21 (cập nhật 2026-07-16)
+**Version:** 1.3
+**Date:** 2026-06-21 (cập nhật 2026-07-17)
 **Scope:** multi-tenant core, PostgreSQL/RLS, sync engine, identity, payment ledger, marketplace discovery, web/chat/native surfaces.
 
 > **Cập nhật v1.2 — 16/07/2026 (DD-50):** phase-1 không thu SĐT. Strong proof cho claim membership có tiền chỉ là verified account email hoặc transactional one-time `link_code`; owner/name/CK chỉ là review evidence. Phone schema giữ dormant.
+>
+> **Cập nhật v1.3 — 17/07/2026 (DD-15/DD-67):** channel identity/reachability scoped theo provider endpoint cho Messenger + Zalo; reachability canonical gắn `channel_identity_id`, target-tenant eligibility authorize riêng.
 
 ---
 
@@ -160,7 +162,7 @@ Examples:
 | `slots_open` | Session capacity helper/projection from canonical roster and capacity. |
 | `public_sessions.slots_open` | Public projector, never hand-computed by discovery API. |
 | Person's clubs/debts | Person-self query service, not tenant dashboard query reused with bypass. |
-| Reachability | `channel_reachability(person, tenant, platform)`. |
+| Reachability | `channel_reachability(channel_identity_id)`; endpoint binding thuộc `channel_identities`, tenant eligibility kiểm tra riêng. |
 
 Never let each endpoint compute its own version of money, slot count or paid state.
 
@@ -583,3 +585,4 @@ Before merging any core/db architecture change, ask:
 | 2026-06-21 | 1.0 | Initial Plexco core/db/architecture principles. |
 | 2026-07-10 | 1.1 | DD-37 channel pivot (BRD v3.4): ví dụ adapter/provider-ingest/idempotency đổi Telegram→Zalo/Messenger; `ChannelIdentity` = Zalo/Messenger/Google/native. Không đổi nguyên tắc. |
 | 2026-07-16 | 1.2 | DD-50: replace phone/owner-confirm claim language with verified account email or transactional one-time `link_code`; keep phone schema dormant. |
+| 2026-07-17 | 1.3 | DD-15/DD-67: provider-endpoint channel identity/reachability for Messenger + Zalo; reachability keyed by `channel_identity_id`, tenant eligibility separate. |

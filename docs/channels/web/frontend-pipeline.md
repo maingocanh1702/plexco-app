@@ -1,11 +1,13 @@
 # Front-End Design → Code Pipeline — Visual Source → Pixel-Perfect
 
-> **Status:** 🟡 Proposal · **Version:** 0.2 · 2026-07-17
+> **Status:** 🟡 Deferred proposal (owner 2026-07-18) · **Version:** 0.3 · 2026-07-18
 > **Nguồn:** ported từ Sporta `front-end/README.md` — adapt cho Pencil/Figma + CSS-variable tokens (không Tailwind).
 > **Decision:** `decisions.md` DD-58 (🟡).
 > **Token SoT:** `../../standards/design-tokens.md`.
 > **Visual SoT hiện tại:** **chưa chọn/chưa có asset được track**. `Plexco-DS-fable5.pen` không có trong repo và đã superseded theo `theme-direction-2026-07.md`; phải chốt một `.pen` mới được commit hoặc Figma file/node được link trước handoff/code.
 > **Kiến trúc FE:** `../../standards/frontend-architecture.md` · **Tokens:** `../../standards/design-tokens.md`.
+>
+> **Reference-only:** DD-58 đã defer. Pipeline, source-comment và templates bên dưới chưa phải gate bắt buộc; chỉ activate sau khi owner reopen/chốt DD-58 và chọn visual source bền vững.
 
 Quy trình đưa 1 màn từ visual source đã chọn ra code pixel-perfect, có **truy vết ngược** về design. Áp dụng cho mọi màn `apps/web`.
 
@@ -68,5 +70,6 @@ visual source ──► handoff.md ──► token-mapping.md ──► code ─
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 18/07/2026 | 0.3 | Owner defer DD-58; pipeline/templates chuyển thành reference-only, không gate delivery hiện tại. |
 | 17/07/2026 | 0.2 | Gỡ claim sai về `Plexco-DS-fable5.pen` không tồn tại; tách token SoT khỏi visual SoT và fail-closed cho tới khi `.pen` mới/Figma source được chốt, track/link. |
 | 16/07/2026 | 0.1 | 🟡 Proposal — ported từ Sporta `.pen→code` pipeline; adapt Pencil + CSS-var tokens. DD-58. |

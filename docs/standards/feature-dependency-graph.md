@@ -1,7 +1,7 @@
 # Feature Dependency Graph — Plexco
 
-> Thứ tự phát triển features cho Plexco platform. Căn cứ `ROADMAP.md` v2.9 + `TDD.md` v2.6 + `decisions.md` v1.40.
-> v1.3 · 2026-07-15 (DD-37: kênh chat = Zalo + Messenger, bỏ Telegram)
+> Thứ tự phát triển features cho Plexco platform. Căn cứ `../product/ROADMAP.md` v3.3b + `../product/TDD.md` v3.1 + `decisions.md` v1.47.
+> v1.9 · 2026-07-18. Node Session Organize v0.5 là **accept-in-principle (build post-P4), dependency-only** — không phải canonical timeline commitment. DD-69 direction accepted; native build phase-2 chưa có lịch nên chưa thêm node/cạnh vào critical path.
 
 ---
 
@@ -29,6 +29,7 @@ graph TD
     F18["🎯 Reminder + notifyPlayersPaid<br/><i>cần F16, F17</i>"]
     F19["💰 Billing + lifecycle<br/><i>cần F15, F18</i>"]
     F20["🔒 Hardening (pen/load/obs)<br/><i>cần F19</i>"]
+    F21["✅ Session Organize (accept-in-principle)<br/>court · two-side match · live score<br/><i>cần Session CRUD + Sync; build post-P4</i>"]
 
     F1 --> F2 --> F3
     F3 --> F4
@@ -57,6 +58,7 @@ graph TD
     F15 --> F19
     F18 --> F19
     F19 --> F20
+    F11 --> F21
 
     style F1 fill:#6366f1,color:#fff
     style F2 fill:#6366f1,color:#fff
@@ -78,6 +80,7 @@ graph TD
     style F18 fill:#10b981,color:#fff
     style F19 fill:#8b5cf6,color:#fff
     style F20 fill:#ef4444,color:#fff
+    style F21 fill:#fef3c7,color:#78350f,stroke:#d97706,stroke-width:3px
 ```
 
 **Color convention:**
@@ -115,6 +118,7 @@ graph TD
 | 18 | Reminder + notifyPlayersPaid | F16, F17 | P4.5–P4.7 | 🎯 | |
 | 19 | Billing + lifecycle | F15, F18 | P5 | 💰 | Subscription host |
 | 20 | Hardening (pen/load/obs) | F19 | P6 | 🔒 | |
+| 21 | Session Organize | Session CRUD prerequisite + F11 Sync | post-P4 / phase TBD | 🎾 | DD-61..64 accepted-in-principle; build chưa scheduled, no runtime |
 
 ---
 
@@ -184,6 +188,12 @@ F19 → F20
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 18/07/2026 | v1.9 | Authority → ROADMAP v3.3b/decisions v1.47; add missing F21 matrix row, pin external Session CRUD prerequisite + F11 Sync, and retain post-P4/no-runtime boundary. |
+| 18/07/2026 | v1.8 | Authority → ROADMAP v3.3a/TDD v3.1/decisions v1.46. DD-69 vẫn phase-2 proposal chưa có lịch; dependency graph và critical path không đổi. |
+| 17/07/2026 | v1.7 | Authority → ROADMAP v3.3/TDD v3.1/decisions v1.45; F21 trỏ Session Organize v0.4. Feature-doc closure không đổi dependency graph hoặc proposal phase. |
+| 17/07/2026 | v1.6 | Authority → ROADMAP v3.2/TDD v3.0/decisions v1.45. Endpoint-scoped identity/reachability contract updated; graph order unchanged. |
+| 17/07/2026 | v1.5 | Authority → ROADMAP v3.2/TDD v2.9/decisions v1.44. F21 trỏ Session Organize v0.3; dependency/phase proposal không đổi. |
+| 17/07/2026 | v1.4 | Authority → ROADMAP v3.0/TDD v2.7/decisions v1.42. Thêm F21 Session Organize như proposal dependency-only sau tenant/session foundation + Sync; phase TBD, không chèn critical path/timeline trước owner accept DD-61..64. |
 | 15/07/2026 | v1.3 | Reconcile F12 onboarding theo DD-37/DD-13: Google/email + SePay + Zalo + Messenger; bỏ TG khỏi ghi chú hiện hành. |
 | 10/07/2026 | v1.2 | **DD-37:** F6 "TG tenant middleware" → "Chat-channel tenant middleware" (Zalo P2 · Messenger P2.5); F16 "Player join TG" → "Player join Messenger"; matrix/parallel/phase refs bỏ Telegram. Căn cứ ROADMAP v2.4 + TDD v2.2. Arrows/invariants giữ nguyên. |
 | 19/06/2026 | — | Thêm Changelog table |

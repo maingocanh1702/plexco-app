@@ -2,11 +2,11 @@
 
 > ⚙️ **Status:** ✅ **DD-39 chốt (2026-07-10)** — Draft, pending migration. Nguồn canonical: `../standards/decisions.md` **DD-39** (ràng buộc đã pin: decrypt-fail → fail-closed, chỉ fallback khi gender NULL thật).
 >
-> ✅ **Follow + private/public (DD-47/48 — framework CHỐT 2026-07-13, build P4+):** khung design duyệt; §7 dưới đây là contract-level. `person_follows` là **global protected**, chỉ qua narrow `SECURITY DEFINER`; `profile_visibility` default public cho user mới nhưng backfill user cũ=`private`; social profile chỉ trả field có canonical source; self/host operational data đi route riêng. **5 open item DD-48 chốt lúc build.** Chi tiết `../dd-47-follow-graph-analysis.md` + `../dd-48-profile-visibility-analysis.md`.
+> ✅ **Follow + private/public (DD-47/48 — framework CHỐT 2026-07-13, build P4+):** khung design duyệt; §7 dưới đây là contract-level. `person_follows` là **global protected**, chỉ qua narrow `SECURITY DEFINER`; `profile_visibility` default public cho user mới nhưng backfill user cũ=`private`; social profile chỉ trả field có canonical source; self/host operational data đi route riêng. DD-55 đã đóng DM + block; còn **3 open item DD-48** chốt lúc build. Chi tiết `../dd-47-follow-graph-analysis.md` + `../dd-48-profile-visibility-analysis.md`.
 
 > **Canonical phase:** P4 (hồ sơ + nguồn `gender` cho giá kèo; follow/visibility P4+)
 > **Track:** ⚙️ User Settings & Profile
-> **Version:** 0.6 · 2026-07-16
+> **Version:** 0.8 · 2026-07-17
 > **Status:** DD-39 ✅ · DD-47/48 ✅ framework — Draft (pending migration/build)
 > **Prerequisites:** P3.5 identity (Person) · P4 web/app surface · (giá theo giới tính đọc bởi `feature_session_management` + `feature_payment_reconcile`) · (follow/visibility: `feature_identity` merge + `feature_player_view` profile path)
 > **Tài liệu liên quan:** `../product/BRD.md` MODULE 11 / BR-16 / FR-11 / AC-11-12 · `../standards/decisions.md` **DD-39 · DD-47 · DD-48** · `feature_session_management.md` (đặt giá nam/nữ) · `feature_payment_reconcile.md` (suy charge) · `feature_identity.md` · `feature_player_view.md` · `packages/db/schema.ts` (**AUTHORITATIVE** khi triển khai)
@@ -92,7 +92,7 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 | Entity | Plane | Vai trò | Key constraints khi build |
 |--------|-------|---------|-----------------|
 | `persons` (mở rộng) | GLOBAL protected | Giữ `display_name`; thêm `gender`, `dob` (PII enc), `username`, `language` | `UNIQUE(lower(username))`; gender/dob mã hoá at-rest, consent |
-| `sessions` (mở rộng) | Tenant-private | Giá theo giới tính | `price` đơn **hoặc** `price_male`/`price_female` (hoặc bảng `session_price_by_gender`) |
+| `sessions` (mở rộng) | Tenant-private | Giá theo giới tính | Canonical `price_amount` base + nullable `price_male`/`price_female` columns; both NULL = base-only, missing gender-specific side falls back to base |
 | `charges` | Tenant-private | Suy giá theo `person.gender` khi tạo | Không retroactive khi đổi gender |
 
 - **PII:** `gender`/`dob` mã hoá at-rest, retention + quyền xoá; **không** vào `public_sessions`.
@@ -130,7 +130,7 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 
 ## 7. Follow & Profile Visibility (DD-47/48 · ✅ Framework, build P4+)
 
-> **Framework đã chốt; chưa implement.** Nguồn canonical khi build: `../standards/decisions.md` DD-47/48 + dedicated analyses + `packages/db/schema.ts`. Build slice phải pin 5 open item trước khi thêm field/behavior tương ứng.
+> **Framework đã chốt; chưa implement.** Nguồn canonical khi build: `../standards/decisions.md` DD-47/48/55 + dedicated analyses + `packages/db/schema.ts`. Build slice phải pin 3 open item còn lại trước khi thêm field/behavior tương ứng.
 
 ### 7.1 Mô hình
 
@@ -152,6 +152,7 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 | USR-UC-18 | Viewer (non-follower) | Xem profile user **private** | **Fixed minimal card**: không profile fields; chỉ placeholder + "Hồ sơ riêng tư" + nút follow/request |
 | USR-UC-19 | Host | Xem member private của CLB mình | Social route vẫn gated như mọi viewer; operational membership/roster route riêng trả đúng mức vận hành/suy giá dưới RLS |
 | USR-UC-20 | System | Merge 2 person | Re-parent + dedupe edge follow (accepted > pending), drop self-edge |
+| USR-UC-21 | User | Block/unblock user từ profile/settings | Reuse canonical `chat_blocks`/DD-55 safety service; block gỡ follow edges hai chiều và chặn follow/DM mới; unblock không tự restore |
 
 ### 7.3 Edge Cases
 
@@ -165,7 +166,7 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 | F6 | Cross-Feature | Private có gỡ user khỏi roster/giấu charge với host? | ❌ KHÔNG — RLS-membership + đường tiền không đổi (HR1/HR2) |
 | F7 | Cross-Feature | Host mở social profile user private | Không có host exception: approved/minimal DTO theo follow như mọi viewer; tenant operational data chỉ qua route riêng |
 | F8 | Data Integrity | Merge → edge trùng / self-edge sau merge | Re-parent + dedupe (accepted > pending) + drop self-edge |
-| F9 | Data Integrity | reject rồi re-request spam | Rate-limit; (block — open item USR-OQ-7) |
+| F9 | Abuse | reject rồi re-request spam | Rate-limit; user có thể block bằng canonical `chat_blocks`; blocked pair không tạo follow request/DM, lỗi generic |
 | F10 | Marketplace | Private user host kèo public | `host_display_name` vẫn hiện trên `public_sessions` (vận hành, §P7) — private **không** ẩn |
 
 ### 7.4 Screens & States (bổ sung)
@@ -184,6 +185,7 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 |--------|-------|---------|-----------------|
 | `persons.profile_visibility` | GLOBAL protected | Cờ hiển thị social profile | user mới default public; existing backfill private; `CHECK public/private` |
 | `person_follows` (mới) | GLOBAL protected | Cạnh follow có hướng | no table grant cho app/PUBLIC; narrow functions; `UNIQUE`, no-self, pending/accepted |
+| `chat_blocks` (DD-55 canonical) | GLOBAL protected/person-self | Một block pair dùng chung social + DM | không tạo block store thứ hai trong User Settings; block/unblock qua narrow safety service |
 
 > Schema chi tiết + gating + API ở `BE/feature_user_settings_tech.md` §6. **KHÔNG** tạo bảng identity song song (`persons` là anchor, §P6).
 
@@ -206,6 +208,7 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 - [ ] Self-follow bị chặn; follow trùng idempotent; unfollow/remove-follower hoạt động.
 - [ ] Đổi visibility: private→public auto-accept pending; public→private grandfather accepted.
 - [ ] Merge person: re-parent + dedupe edge follow + drop self-edge.
+- [ ] Block từ profile/settings dùng đúng canonical `chat_blocks`; atomically gỡ follow edges hai chiều, chặn re-request/DM; unblock không restore relationship cũ.
 
 ---
 
@@ -217,14 +220,14 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 |---|---|---|
 | DD-39 | Giá theo giới tính (giá nam/nữ; gender từ hồ sơ; không lộ public) | ✅ Chốt |
 | DD-47 | Social follow graph `person_follows` global protected | ✅ Chốt framework, build P4+ |
-| DD-48 | `profile_visibility` + sourced social whitelist + route split | ✅ Chốt framework, 5 open item lúc build |
+| DD-48 | `profile_visibility` + sourced social whitelist + route split | ✅ Chốt framework; DD-55 đóng item DM+block, còn 3 open item lúc build |
 | USR-OQ-1 | Tập giá trị gender + xử lý "khác" cho giá kèo | ✅ **Chốt DD-39 addendum (2026-07-16)** — `male`/`female`/`other`/`undisclosed`; `other`/`undisclosed`/NULL → **giá base**; fail-closed CHỈ khi KMS/decrypt lỗi. Kèm **DD-54**: gender/DOB là PII optional — thu thập theo platform config trên CMS admin dashboard |
-| USR-OQ-2 | Lưu giá theo giới tính: cột `price_male/price_female` vs bảng `session_price_by_gender` | ⬜ Chưa chốt |
+| USR-OQ-2 | Lưu giá theo giới tính: cột `price_male/price_female` vs bảng `session_price_by_gender` | ✅ **Chốt phase-1:** additive columns `sessions.price_male/price_female` beside canonical `price_amount`, matching BE/TDD/DD-39. A generalized table requires a future decision + migration, not an alternate current implementation. |
 | USR-OQ-3 | Retention/anonymization SLA cho PII hồ sơ | 🟠 **Partial (DD-54, 2026-07-16):** collection policy ✅ (PII optional theo platform config; field vận hành không config-off); retention/erasure matrix vẫn chờ legal review VN (Luật 91/2025 + NĐ 356/2025) — founder brief Item 6 |
 | USR-OQ-4 | Tập "stats" trong profile whitelist + có aggregate **cross-tenant** không (rủi ro lộ hoạt động xuyên CLB) | ⬜ Build-time — **DD-48 open item #1** (framework ✅; default exclude tới khi có model) → `../dd-48-profile-visibility-analysis.md` §5 |
 | USR-OQ-5 | Follower-count / following-list của user **private** có ẩn với non-follower không | ⬜ Build-time — **DD-48 open item #2** (framework ✅) → `../dd-48-profile-visibility-analysis.md` §5 |
-| USR-OQ-6 | Private có ảnh hưởng quyền **DM in-app** (DD-38) không | ⬜ Build-time — **DD-48 open item #3** (framework ✅) → `../dd-48-profile-visibility-analysis.md` §5 |
-| USR-OQ-7 | Có cần cơ chế **block** user không (chống re-request spam) | ⬜ Build-time — **DD-48 open item #4** (framework ✅) → `../dd-48-profile-visibility-analysis.md` §5 |
+| USR-OQ-6 | Private có ảnh hưởng quyền **DM in-app** (DD-38) không | ✅ **Chốt DD-55:** phase-1 profile private/public không đổi quyền DM; mọi DM qua safety gate. Phase-2 accepted follow DM trực tiếp, non-follower vào request box |
+| USR-OQ-7 | Có cần cơ chế **block** user không (chống re-request spam) | ✅ **Chốt DD-55/decisions v1.45:** có; reuse canonical `chat_blocks` + safety service của In-app Chat cho follow/profile/DM, không tạo bảng block thứ hai |
 | USR-OQ-8 | Trong session **chung**, đồng đội thấy tên user tới mức nào (roster-presence vận hành vs profile xã hội — căng với "ẩn cả đồng đội") | ⬜ Build-time — **DD-48 open item #5** (framework ✅) → `../dd-48-profile-visibility-analysis.md` §5 |
 | USR-OQ-9 | Đường **notify follow-request** (person-directed global): global notify path mới vs SSE person-self / in-app inbox (`outbox`/`notification_intents` hiện tenant-scoped) | ⬜ Build-time — **DD-47 notify impl-gap** (framework ✅) → `../dd-47-follow-graph-analysis.md` §4 |
 
@@ -232,6 +235,8 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v0.8 | **DD-39 storage closure:** close USR-OQ-2 on phase-1 `price_male/price_female` columns beside canonical `price_amount`; remove the competing current-table implementation path. |
+| 2026-07-17 | v0.7 | **USR-OQ-6/7 closure:** DD-55 pin phase-1 open-DM qua safety gate, phase-2 follow/request-box; User Settings tái dùng canonical `chat_blocks`, block gỡ follow edges hai chiều và chặn re-request/DM; còn 3 DD-48 item thực sự mở. |
 | 2026-07-15 | v0.5 | **Propagation (light):** neo USR-OQ-4..9 vào DD-48 (5 open item) / DD-47 (notify impl-gap) — framework đã ✅, các item này chốt lúc build P4+; trỏ file phân tích. Không đổi schema/body Reviewed. |
 | 2026-07-16 | v0.6 | **Propagation (light) DD-39 addendum + DD-54:** USR-OQ-1 ✅ (value set `male/female/other/undisclosed`, fallback base, fail-closed chỉ KMS/decrypt); USR-OQ-3 🟠 partial (collection theo platform config DD-54; retention chờ legal); USR-UC-1 bỏ "đề xuất". Schema/migration defer build slice. Authority: decisions v1.36. |
 | 2026-07-15 | v0.4 | **DD-47/48 framework ✅:** global-protected functions; state-idempotent follow; existing user private/new user public migration; sourced field whitelist; `/api/me`, social profile và host operational routes tách biệt. |

@@ -1,6 +1,6 @@
 # Plexco — Base Chat / Acquisition Package: Feasibility & Hạ tầng
 
-> **Cập nhật 10/07/2026 (DD-37 / BRD v3.4):** Kênh phase-1 nay là **Zalo + Facebook Messenger + web**; **Telegram đã bỏ khỏi phạm vi**. Messenger lên **phase-1 (P2.5)**, không còn post-MVP/P4.8. Phần phân tích Telegram/Messenger bên dưới giữ nguyên làm **feasibility/technical reference**; khung "Telegram = trụ cột" đã bị DD-37 thay. **Pricing** = **DD-29** (`free`/`host_pro`) — **bỏ khung 4-tier DD-03** nhắc ở §4 body. Mọi phát biểu "post-MVP/Page-per-club/4-tier" trong body là **pre-pivot reference**, không phải canonical hiện hành.
+> **Authority update 17/07/2026:** DD-65..68 đã chọn **hybrid**: central Plexco Page + optional per-club Page, shared host/player core; DD-67 v1.45 generalized endpoint-scoped identity/reachability cho Messenger + Zalo. Phần so sánh Model A/B và câu "Page-per-club canonical" bên dưới là historical feasibility input, không phải authority. Routing/identity/reachability hiện theo `standards/decisions.md` v1.45.
 
 > Ngày 30/06/2026 · Rev 3 (sau review canonical). Scope gói này: host/group owner **connect club** — **Telegram/Zalo là scope chính**; **Messenger chỉ là optional proposal/spike, KHÔNG thuộc base package** cho tới khi có decision override BRD/PRD/ROADMAP (xem §6). Mục tiêu: hook host + player, tạo tiền đề bán Pro.
 
@@ -14,7 +14,7 @@
 
 - **Telegram 🟢:** 1 bot chung đa tenant, route theo `chat_id`. Free (1 msg/s/chat, 20/phút/group, ~30/s bulk; paid broadcast qua Stars nếu cần). Kênh trụ cột — đủ flow group + DM.
 - **Zalo 🟡 BLOCKED:** mỗi host 1 bot (BYO) deploy chung hạ tầng — **đang vướng CO-OQ-1**: chưa confirm sandbox `getMe`/`setWebhook`/`getWebhookInfo` trên tier CLB. Hiện giữ fallback "owner dán webhook URL". Auto-register là **thiết kế dự kiến**, chưa chốt.
-- **Messenger 🟡 (proposal):** đa tenant kiểu Telegram **làm được** qua **1 Page Plexco + routing `ref`**, nhưng PSID là **person-scoped, không phải tenant-scoped** → player đa club làm vỡ routing mặc định; cần decision table + consent (xem §6). Canonical hiện chọn **Page-per-club/post-MVP**.
+- **Messenger 🟡 (historical proposal):** phân tích cũ cho thấy đa tenant qua **1 Page Plexco + routing `ref`** là khả thi nhưng PSID không phải tenant key. DD-65..68 sau đó đã chọn hybrid và thay routing mặc định bằng protected action/ref/server picker (xem authority note đầu file).
 - **Nhắc chủ động trên Messenger ngoài 24h ở VN = trả phí** (Marketing Messages); Message Tags/OTN/Recurring Notifications đang bị bỏ → nhắc nhở đẩy qua **Telegram/Zalo/web**.
 - **Hạ tầng:** theo `deployment-infra.md` §9 (DD-04 Rev 2) — gói base chat (không tiền) có thể bắt đầu ở **smoke topology DO ≈ `$76/tháng`**; production shape khi có tiền thật = **Day-1 baseline money-safe `$120–135/tháng`** (đã gồm non-negotiables + read-isolation controls; read replica/WAF Pro/Sentry Team = trigger-based, không mặc định Day-1). Stack: monolith + managed Postgres + **pg-boss + SSE LISTEN/NOTIFY**, **không Redis, không serverless**.
 - **Giá:** dư biên so với **giá đề xuất base chat ~70k** *(GTM draft)* — lưu ý đây **không phải** plan billing canonical **0đ / 79k / 159k / 199k** (DD-03).
@@ -27,7 +27,7 @@
 |---|---|---|---|
 | **Telegram** | 1 bot chung, route theo `chat_id` | 🟢 **Cao** | Rate limit → queue/throttle |
 | **Zalo** | Mỗi host 1 bot (BYO), deploy chung | 🟡 **BLOCKED (CO-OQ-1)** | Chưa confirm sandbox API; giữ fallback dán webhook |
-| **Messenger** | 1 Page Plexco + `ref` (Model A) HOẶC Page-per-club (Model B) | 🟡 **Được nhưng cần decision** | PSID person-scoped; multi-club routing; nhắc ngoài 24h trả phí; App Review |
+| **Messenger** | Historical alternatives: central Page hoặc Page-per-club; canonical nay là hybrid | ✅ **Đã chốt DD-65..68; chưa build** | PSID theo Page; multi-club target routing; nhắc ngoài 24h; App Review |
 
 ### 1.1 Telegram — 1 bot đa tenant (🟢)
 
@@ -50,7 +50,7 @@
 
 - **Canonical store** = PostgreSQL/domain model; mọi surface → command API → domain service → Postgres → outbox event → projectors.
 - **Queue/realtime:** **pg-boss** (queue) + **`LISTEN/NOTIFY`** cho SSE. **KHÔNG Redis** (anti-pattern §10). Webhook **durable-ingest**: ghi bền → ACK-sau-commit → xử lý async + dedup.
-- **Tenant routing suy từ kênh:** Telegram `chat_id`; Zalo `webhookToken`; Messenger `page_id` (Model B) hoặc `ref`→PSID→club (Model A, xem cảnh báo §6).
+- **Tenant routing suy từ kênh/context bảo vệ:** Telegram `chat_id`; Zalo `webhookToken`; Messenger `page_id` chỉ cho endpoint/default context, còn target tenant đến từ protected opaque action/ref/server picker (DD-66).
 - **Cô lập tiền/roster ở tầng app** (RLS + 3 tầng hiển thị, BRD §3.2 / TDD §3.2).
 - **Web/app là sản phẩm chính**; bot là kênh thông báo + deep-link router.
 
@@ -78,7 +78,7 @@
 ## 4. Rủi ro & quyết định cần chốt
 
 1. **Zalo CO-OQ-1 (blocker).** Auto `getMe`/`setWebhook`/`getWebhookInfo` chưa confirm trên tier CLB → **phải test sandbox trước**. Đến lúc đó onboarding Zalo = owner dán webhook URL thủ công (ma sát cao). Đây là **điều kiện tiên quyết**, không chỉ là câu hỏi "bao nhiêu bot".
-2. **Messenger multi-club routing (§6.3).** PSID person-scoped → player đa club vỡ routing `/me /pay /join`. Phải chốt: sticky-context / picker / qualifier + fallback nhập mã + consent. Nếu chọn Model A phải cập nhật canonical docs.
+2. **Messenger multi-club routing (§6.3).** Đã chốt ở DD-66: không dùng PSID/source Page hay sticky context làm tenant authority; dùng protected opaque action/ref/server picker rồi revalidate AuthZ. Phần decision table trong §6 là historical input.
 3. **Messenger nhắc ngoài 24h = trả phí** ở VN. Không hứa nhắc nhở free; route qua Telegram/Zalo/web.
 4. **Overflow Zalo (host >50 player/bot).** Fallback: (1) đẩy player sang web/app + Telegram (COGS ~0); (2) chỉ khi bắt buộc mới lên Zalo OA/ZNS có phí.
 5. **Telegram rate limit.** Queue + throttle bắt buộc cho broadcast; cân nhắc paid broadcast (Stars) nếu volume lớn.
@@ -89,15 +89,15 @@
 ## 5. Câu cần xác minh / việc tiếp
 
 - **Zalo (CO-OQ-1):** confirm sandbox `getMe`/`setWebhook`/`getWebhookInfo` + cơ chế webhook per-bot (path/`webhookToken`) trước khi cam kết auto-register.
-- **Messenger:** quyết Model A vs B; nếu A → bổ sung decision table routing + consent vào BRD/PRD; xác nhận lại giá Marketing Messages + danh sách loại trừ Recurring Notifications tại VN.
+- **Messenger:** Model A/B đã được thay bằng hybrid DD-65..68; việc còn lại là build migration/registry/actions/shared core/E2E và xác nhận live policy/giá Marketing Messages tại VN trước GA.
 - **Telegram:** webhook vs long-polling; thiết kế queue/throttle; ngưỡng cân nhắc paid broadcast.
 - **Hạ tầng:** định nghĩa telemetry trigger cho từng upgrade (read replica / WAF Pro / Sentry Team / worker-2) và giám sát; xác nhận §9.3 read-isolation controls ship trong infra slice.
 
 ---
 
-## 6. Deep-dive Messenger — đa tenant 1 Page (proposal, chấp nhận 24h)
+## 6. Deep-dive Messenger — historical Model A/B input (superseded by hybrid DD-65..68)
 
-**Câu hỏi:** chấp nhận giới hạn 24h, Messenger có đa tenant như Telegram không? **Kỹ thuật: CÓ** (1 Page Plexco + `ref`). **Nhưng** có 2 vấn đề thật phải xử lý: (a) routing multi-club do PSID không phải tenant-key; (b) policy nhắc ngoài 24h. Canonical hiện chọn **Page-per-club/post-MVP**, nên Model A là **đề xuất cần bổ sung thiết kế**.
+**Kết quả historical:** 1 Page Plexco + `ref` là khả thi, nhưng PSID không phải tenant key và policy 24h vẫn là giới hạn thật. DD-65..68 đã chọn **central Page + optional per-club Page**, tách Page endpoint khỏi target tenant và chuẩn hoá protected routing; bảng dưới đây chỉ giữ lại rationale.
 
 ### 6.1 Cơ chế (giống Telegram 1-bot)
 
@@ -138,10 +138,10 @@
 
 ### 6.4 Hai mô hình & App Review
 
-| | **1 Page Plexco (Model A)** | Page-per-club (Model B, canonical) |
+| | **1 Page Plexco (Model A, historical)** | **Page-per-club (Model B, historical)** |
 |---|---|---|
 | Giống | Telegram 1-bot | Zalo bot-per-host |
-| Routing | `ref`→PSID→club (**cần decision §6.2**) | `page_id` = tenant (sạch) |
+| Routing | `ref`→PSID→club (không còn canonical) | `page_id` = tenant (không còn canonical) |
 | Onboarding host | Nhẹ — share link `m.me?ref=` | Nặng — host cần FB Page + OAuth |
 | Branding | Plexco | Của host |
 | Identity (PSID) | 1 PSID/người xuyên club | Phân mảnh theo Page |
@@ -149,7 +149,7 @@
 | App Review | 1 lần (Page Plexco) | 1 lần app + mỗi host grant quyền |
 
 - **App Review + Business Verification:** để nhắn **công chúng** (người không có role) cần **Advanced Access** → App Review + xác minh doanh nghiệp (1 lần). Rate KHÔNG phải vấn đề: 300 calls/s/Page; ngân sách 24h = 200 × engaged users.
-- **Khuyến nghị:** nếu muốn "Messenger của Plexco" đa tenant như Telegram → **Model A**, nhưng **bắt buộc** kèm: decision routing §6.2, consent/isolation, fallback mã, và **cập nhật BRD/PRD/ROADMAP** (vì canonical đang là Model B/post-MVP).
+- **Quyết định thay thế:** DD-65..68 lấy lợi ích của cả hai model bằng hybrid; target tenant luôn resolve từ protected server context/action và được revalidate, không lấy `page_id` hay PSID làm authority.
 
 ---
 

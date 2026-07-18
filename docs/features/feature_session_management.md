@@ -2,10 +2,10 @@
 
 > **Canonical phase:** P2 (chat CRUD) · P4 (web parity)  
 > **Track:** 📋 Session CRUD  
-> **Version:** 2.8 · 2026-07-16
+> **Version:** 2.9a · 2026-07-17
 > **Status:** Reviewed  
 > **Prerequisites:** P0–P1 foundation stable · P2 tenant routing/authz  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-2 · `../product/PRD.md` FLOW 2 · `../product/TDD.md` §3.2/3.8 · `../standards/decisions.md` DD-37 · `BE/feature_session_management_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-2 · `../product/PRD.md` FLOW 2 · `../product/TDD.md` §3.2/3.8 · `../standards/decisions.md` DD-37/**DD-65..68** · `BE/feature_session_management_tech.md`
 
 > **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Messenger** + web (bỏ Telegram). **Giá theo giới tính** (giá nam/nữ) nay **✅ phase-1** — xem **DD-39 (✅ Chốt)** / `feature_user_settings.md`; schema giới tính sống ở `feature_user_settings`, KHÔNG thêm vào doc này (chỉ pointer).
 
@@ -13,9 +13,9 @@
 
 ## 1. Mô tả
 
-Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **session thể thao đa môn** — với time, venue, price, capacity, visibility và join policy nhất quán. P2 deliver qua **bot Zalo / admin commands**; P4 bổ sung web parity và event projections. *(Telegram loại khỏi phạm vi — DD-37.)*
+Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **session thể thao đa môn** — với time, venue, price, capacity, visibility và join policy nhất quán. P2 deliver qua **Zalo + Messenger admin commands**; trên Messenger host dùng được **central Plexco Page hoặc optional Page riêng của club** với chức năng cơ bản tương đương. P4 bổ sung web parity và event projections.
 
-**Ngoài phạm vi:** Đặt sân (court booking), chấm điểm theo môn (sport-specific scoring).
+**Ngoài phạm vi:** Đặt sân (court booking), chấm điểm theo môn (sport-specific scoring) — **được theo dõi riêng ở `feature_session_organize.md` + `BE/feature_session_organize_tech.md` (DD-61..64 ✅ accept-in-principle, build post-P4)**; pointer only, không thêm scope organize vào body Reviewed này.
 
 ### Bất biến
 
@@ -24,6 +24,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 - Capacity không bao giờ bị vượt (concurrent join/capacity change lock session).
 - Giá thay đổi sau khi đã charge → bắt buộc preview + explicit policy.
 - Venue chi tiết (tên, SĐT, bản đồ) chỉ hiện sau join/approval — area là public whitelist.
+- Messenger `/newsession` dùng một durable wizard owner ở pre-dispatch boundary; mỗi bước/final confirm re-check `session.manage`, tenant context và snapshot. Central/tenant Page chỉ là adapter/context surface, không chứa business rule riêng.
 
 ---
 
@@ -43,6 +44,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 | SES-UC-8 | Player | Join session public | Request → auto-approve hoặc host-approve tuỳ policy; nếu full thì cả hai path vào `waitlisted`, không charge/venue |
 | SES-UC-9 | Player | Leave session trước giờ chơi | Player → `left`, slot giải phóng → **auto-promote waitlist ATOMICALLY** (DD-45 ✅): `waitlisted` không chiếm capacity/charge; promote derive giá trước mutation rồi tạo charge + clear position + eligibility re-check. DD-39 derivation fail giữ candidate waitlisted/no-charge/no-venue, audit+retry, không rollback leave và xét candidate kế. Total order `waitlist_position, joined_at, id`; leave/capacity increase fill toàn bộ `slots_max-active_count`, `slots_max→NULL` fill mọi eligible; decrease dưới active roster reject. Xem `../dd-45-waitlist-analysis.md`. |
 | SES-UC-10 | System | Auto-close session hết giờ | Status → closed, projection removed |
+| SES-UC-11 | Host (Messenger central/tenant Page) | Chạy `/newsession` | Role-aware tenant picker nếu cần → wizard → preview → confirm → đúng một shared `CreateSession` command |
 
 ### Edge Cases
 
@@ -62,6 +64,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 | 12 | Security | Non-admin cố sửa session | 403 — routing ≠ authz. Ref: tenant_routing_authz |
 | 13 | Financial | Player đã `left` tự join lại cùng session | Chạy join/gating/ban bình thường. Chưa refund → carry-over obligation/allocation; đã refund → obligation lifecycle mới qua correction core; không double charge. Chưa chứng minh được disposition → `REJOIN_REQUIRES_REVIEW`, không mutation |
 | 14 | Financial/Resilience | Active join hoặc promotion không suy được amount do KMS/decrypt/price error | Direct active join aborts, không player/charge/venue; promotion giữ waitlisted/no-charge/no-venue + audit + đúng một canonical failure outbox event cho retry/owner-alert consumers, leave/capacity opener vẫn commit và xét candidate kế; không fallback giá |
+| 15 | Security/State | Messenger wizard stale/expired/context-switch/non-admin | Clear/deny fail-closed; final confirm không tạo partial/duplicate session |
 
 ---
 
@@ -122,6 +125,8 @@ stateDiagram-v2
 ## 6. Acceptance Criteria
 
 - [ ] Chat và web gọi cùng domain service — không duplicate logic
+- [ ] Host tạo session cơ bản thành công trên cả central Page và tenant Page; club không Page không bị buộc sang web
+- [ ] Messenger role/tenant picker + wizard cancel/expiry/context-switch/replay/non-admin tests pass; duplicate confirm chỉ tạo một session
 - [ ] Timezone, sport, price, capacity, visibility và join-policy validations pass
 - [ ] Concurrent capacity/join operations không thể over-fill (lock test)
 - [ ] Waitlisted không chiếm capacity/charge/venue; position dương + total order; promote tạo charge/clear position/notify atomically
@@ -154,6 +159,8 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v2.9a | §1 Ngoài phạm vi: thêm **pointer** court booking + scoring → `feature_session_organize` (DD-61..64 🟡 proposal, post-phase-1). Pointer-only, không thêm scope organize vào body Reviewed (cùng pattern one-line pointer DD-39 ở v2.1). |
+| 2026-07-17 | v2.9 | **DD-65..68:** host create-session parity trên central+optional tenant Page; durable pre-dispatch wizard, protected tenant context, final AuthZ/snapshot re-check và idempotent shared command acceptance. |
 | 2026-07-16 | v2.8 | **Full DD-49 propagation:** body/edge/AC thay left-rejoin reject mặc định bằng normal rejoin + carry-over/refunded disposition; giữ `REJOIN_REQUIRES_REVIEW` chỉ cho unknown/unimplemented correction state. Price change dùng signed obligation adjustment contract, không giả định delta/new `charges` row. Authority: decisions v1.37. |
 | 2026-07-15 | v2.6 | **DD-39×DD-45 failure contract:** promotion derive amount trước mutation; derivation fail giữ waitlisted/no-charge/no-venue, audit+retry/owner-alert, không rollback leave/capacity opener và tiếp tục candidate kế. |
 | 2026-07-15 | v2.5 | **Propagation (light):** neo DD-41 (session fields+gating), DD-42 (attendance/reliability), DD-43 (membership_tags audience), DD-44 (invite token) vào Open Questions với pointer file phân tích. Decision-level đã ✅; body/schema/migration propagate lúc build slice (không đổi Reviewed body). |

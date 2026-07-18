@@ -2,12 +2,12 @@
 
 > **Canonical phase:** Cross-cutting · Completion gate P6  
 > **Track:** 🛡️ Security & Ops  
-> **Version:** 2.1 · 2026-07-15<br>
+> **Version:** 2.2 · 2026-07-17<br>
 > **Status:** Reviewed  
 > **Prerequisites:** All production features  
 > **Tài liệu liên quan:** `../product/BRD.md` §8/§13 · `../product/TDD.md` §4/6/7/10 · `../research/player-side-saas-AUDIT.md` · `../standards/business-rules.md` · `BE/feature_security_operations_tech.md`
 
-> **DD-37 reconcile:** secret inventory/kill-switch phase-1 bao gồm Zalo Bot Token, Messenger Page token + Facebook app secret, Google OAuth secret và provider/web/KMS secrets. Telegram token chỉ là legacy runtime tới khi provider swap hoàn tất, không phải target production surface.
+> **DD-37/DD-65 reconcile:** secret inventory tách đúng ownership: Zalo Bot Token; **Messenger Page access token per Page/endpoint** trong protected store; **một Meta App Secret cấp deployment/platform**; Google OAuth và provider/web/KMS secrets. Không gộp Page token với App Secret thành một rotation unit. Telegram token chỉ là legacy runtime tới khi provider swap hoàn tất.
 
 ---
 
@@ -30,7 +30,7 @@
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|
 | SEC-UC-1 | System | Runtime DB connection | Least privilege role — no superuser/BYPASSRLS |
-| SEC-UC-2 | System | Secret rotation (Zalo/Messenger/Google/provider/web/KMS) | Tested kill switch — no downtime |
+| SEC-UC-2 | System | Secret rotation theo đúng scope (Zalo bot, Messenger Page token, Meta App Secret, Google/provider/web/KMS) | Page-token drill cô lập endpoint; App-Secret drill chứng minh platform-wide verifier rollover/kill switch |
 | SEC-UC-3 | Ops | PITR restore drill | Restore to isolated env → reconcile ledger/audit counts |
 | SEC-UC-4 | System | Structured logging | Redacted — opaque IDs, no PII |
 | SEC-UC-5 | System | SLO monitoring | Sync p95≤3s, payment p99≤5s, availability ≥99.5% |
@@ -48,7 +48,8 @@
 | 2 | Security | Public PII leak (marketplace) | Whitelist enforced — pen-test |
 | 3 | Financial | Wrong payment allocation | Ledger audit trail — reversal/correction path |
 | 4 | Security | Identity takeover (merge abuse) | Merge policy constraints — audit trail |
-| 5 | Security | Leaked channel token (Zalo/Messenger) | Kill switch → rotation → audit |
+| 5 | Security | Leaked Zalo/Messenger Page token | Revoke/rotate đúng endpoint, audit; Page khác không bị thay secret ngoài ý muốn |
+| 13 | Security | Leaked Meta App Secret | Platform-wide containment + coordinated dual-secret verifier rollover/redeploy; evidence bao phủ mọi Page |
 | 6 | Resilience | Provider/webhook outage | Degrade gracefully — queue retry/DLQ |
 | 7 | Resilience | Outbox backlog | Alert + DLQ → operator intervention |
 | 8 | Resilience | DB corruption/region outage | PITR restore — RPO/RTO defined |
@@ -76,7 +77,7 @@
 | Entity | Vai trò | Key constraints |
 |--------|---------|-----------------|
 | `audit_log` | Immutable action trail | `APPEND ONLY`, `actor_id`, `action`, `aggregate`, `timestamp` |
-| `secret_inventory` | Secret metadata (not values) | `type`, `last_rotated_at`, `expires_at` |
+| `secret_inventory` | Secret metadata (not values) | `type`, `scope_kind ∈ {deployment,provider_endpoint,tenant}`, opaque `scope_ref`, `last_rotated_at`, `expires_at`; App Secret=deployment, Page token=endpoint |
 | `incident_log` | Incident records | `severity`, `status`, `owner`, `resolved_at` |
 
 ### Control Areas Matrix
@@ -109,7 +110,7 @@
 ## 6. Acceptance Criteria
 
 - [ ] Zero known critical tenant/public/person isolation paths
-- [ ] Secret inventory/rotation/kill-switch drills pass
+- [ ] Secret inventory/rotation/kill-switch drills pass separately: per-Page token isolation and deployment-wide Meta App Secret rollover/containment evidence
 - [ ] PITR restore drill meets defined RPO/RTO + ledger reconciliation
 - [ ] SLO dashboards/alerts/runbooks cover API, webhook, queue, projector, provider
 - [ ] Load tests: 1k tenants, webhook bursts, discovery + join contention
@@ -133,6 +134,7 @@
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-17 | v2.2 | **DD-65 secret ownership closure:** split per-Page Messenger access tokens from the single deployment/platform Meta App Secret across inventory, rotation, kill-switch and blast-radius evidence. |
 | 2026-07-15 | v2.1 | **DD-37 closure:** target secret rotation/kill-switch = Zalo + Messenger + Google/provider/web/KMS; Telegram chỉ legacy runtime tới provider swap. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, control areas matrix |
