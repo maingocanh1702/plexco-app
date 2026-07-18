@@ -3,13 +3,17 @@
 > Principles dùng khi thiết kế core domain, database schema, service boundary và architecture slice cho Plexco.
 > Tài liệu này không thay thế `product/TDD.md`, `standards/business-rules.md` hoặc `standards/decisions.md`; khi conflict, cập nhật decision/source document trước rồi sync lại file này.
 
-**Version:** 1.3
-**Date:** 2026-06-21 (cập nhật 2026-07-17)
+**Version:** 1.5
+**Date:** 2026-06-21 (cập nhật 2026-07-19)
 **Scope:** multi-tenant core, PostgreSQL/RLS, sync engine, identity, payment ledger, marketplace discovery, web/chat/native surfaces.
 
 > **Cập nhật v1.2 — 16/07/2026 (DD-50):** phase-1 không thu SĐT. Strong proof cho claim membership có tiền chỉ là verified account email hoặc transactional one-time `link_code`; owner/name/CK chỉ là review evidence. Phone schema giữ dormant.
 >
 > **Cập nhật v1.3 — 17/07/2026 (DD-15/DD-67):** channel identity/reachability scoped theo provider endpoint cho Messenger + Zalo; reachability canonical gắn `channel_identity_id`, target-tenant eligibility authorize riêng.
+>
+> **Cập nhật v1.4 — 19/07/2026:** initial DD-70 lock-order propagation; superseded by v1.5.
+>
+> **Cập nhật v1.5 — 19/07/2026 (DD-70(a) proposal, decisions v1.70):** known global-notification producers use bounded read-only Person discovery → inbox fences UUID-order → canonical Person/source/audit → same-transaction item. `link_code` consume emits nothing; merge commit owns `identity_merged`. Tenant outbox is never a global fallback; an unfit path is a build halt pending an explicit GLOBAL PROTECTED source-event contract.
 
 ---
 
@@ -263,6 +267,7 @@ Examples:
 - Join/capacity change locks the session aggregate.
 - Payment allocation locks the bank transaction and target charges.
 - Identity merge locks involved persons in deterministic order.
+- When DD-70(a) notification rows/fences are in scope, identity merge/delete first discovers affected Persons read-only and locks their inbox fences in deterministic UUID order; only then does it lock Persons/sources and append from the canonical locked audit. Drift restarts. Known producers must be reordered; inability to obey is a build halt, not permission to emit through tenant outbox or take a late fence.
 - Tenant routing rebind locks current and target binding rows.
 - Subscription state transition locks the subscription row.
 
@@ -586,3 +591,5 @@ Before merging any core/db architecture change, ask:
 | 2026-07-10 | 1.1 | DD-37 channel pivot (BRD v3.4): ví dụ adapter/provider-ingest/idempotency đổi Telegram→Zalo/Messenger; `ChannelIdentity` = Zalo/Messenger/Google/native. Không đổi nguyên tắc. |
 | 2026-07-16 | 1.2 | DD-50: replace phone/owner-confirm claim language with verified account email or transactional one-time `link_code`; keep phone schema dormant. |
 | 2026-07-17 | 1.3 | DD-15/DD-67: provider-endpoint channel identity/reachability for Messenger + Zalo; reachability keyed by `channel_identity_id`, tenant eligibility separate. |
+| 2026-07-19 | 1.5 | DD-70(a) v1.70 ownership: known global producers append from canonical audit in the same fence-first transaction; link-code consume emits nothing; tenant outbox fallback forbidden and unfit paths halt. No runtime. |
+| 2026-07-19 | 1.4 | Superseded initial DD-70(a) lock-order propagation. No runtime. |

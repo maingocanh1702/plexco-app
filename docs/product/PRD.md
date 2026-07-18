@@ -2,14 +2,17 @@
 ## Plexco — platform thể thao đa môn (host + player): Zalo · Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi)*
 
 **Sản phẩm:** **Plexco** — platform quản lý & khám phá hoạt động thể thao đa môn, 2 phía (host + player); bot-in-chat (Zalo/Messenger) + web app sync 2 chiều; **phase-1 không app native** (target = web app PWA installable/offline; S9/S20 chưa phải runtime evidence) — **native là hướng phase-2** (DD-69 direction ✅ accepted; build TBD)
-**Phiên bản:** 2.8b
-**Ngày cập nhật:** 18/07/2026
-**Tài liệu tham chiếu:** `BRD.md` v3.9d · `TDD.md` v3.1 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` **v1.47** (DD-65..68 ✅; DD-69 direction ✅ + DD-61..64 accept-in-principle + DD-33/60 ✅; DD-57..59 defer) · `../dd-69-app-native-analysis.md`
+**Phiên bản:** 2.8e
+**Ngày cập nhật:** 19/07/2026
+**Tài liệu tham chiếu:** `BRD.md` v3.9f · `TDD.md` v3.1 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` **v1.74** (v1.68–v1.74 BE-contract closure no-runtime: join/invite idempotency · notification v1.69–71/74 · DD-45a test-truth · DD-50 lock-order; DD-70..72 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; DD-69 direction ✅; DD-59 ✅ reconcile) · `../dd-69-app-native-analysis.md`
 
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 19/07/2026 | v2.8e | Authority pointer refresh v1.67→v1.74 + BRD v3.9f: v1.68–v1.74 là BE-contract closure no-runtime (join/invite idempotency v1.68 · notification v1.69–71/74 · DD-45a v1.72 · DD-50 v1.73). Pointer-only, không thêm flow/runtime. |
+| 19/07/2026 | v2.8d | Current authority v1.65/BRD v3.9e; DD-73..78 sequencing correction ở v1.64. DD-74/75 tạo baseline; chỉ DD-76/77 evidence-gated; DD-78 đi cùng consumer. Pointer-only, không thêm flow/runtime. |
+| 19/07/2026 | v2.8c | **DD-05/06/45/49 integrity:** approval rejoin preflight nhưng không persist proof; approve re-derive live aggregate. Venue active-only; refunded rejoin waitlisted không new lifecycle. Waitlist retry one origin event + max 3/backoff/no recursion/exhausted review-DLQ. `0014` branch-only; behavior chưa build. Authority v1.58. |
 | 18/07/2026 | v2.8b | **Founder batch (decisions v1.47):** DD-69 định hướng accepted (native phase-2 TBD, gates mở); DD-33 Facebook Login phase-1 ✅; DD-61..64 accept-in-principle. PRD không thêm native flow vào phase-1; flow/scope phase-1 không đổi. |
 | 18/07/2026 | v2.8a | **DD-69 proposal + review closure:** phase-1 target là web PWA nhưng chưa claim live; native là phase-2 TBD. Technical details (RN+Expo recommendation, auth/push/API/offline/store gates) ở DD-69 analysis; PRD không thêm native flow vào phase-1. Phase-1 flow/scope không đổi. |
 | 17/07/2026 | v2.8 | Feature-doc closure: endpoint identity dùng hai HMAC domain-separated; SePay production webhook dùng timestamp/raw-body HMAC; DM safety + canonical block store; rejoin/merge không cộng nợ ad hoc; Assistant DLP và Session Organize correction/SSE giữ đúng proposal boundary. |
@@ -210,18 +213,18 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 4. Xem chi tiết kèo công khai — **KHÔNG** roster người khác, **KHÔNG** STK/PII/giới tính, **KHÔNG** ai trả/chưa.
 5. Bấm **Join** → FLOW 13.
 
-> ⚠️ **Bất biến public (AUDIT §C8):** marketplace chỉ chứa field whitelist; tiền/PII/giới tính/roster không bao giờ lộ. `venue` chi tiết chỉ hiện sau khi join/được duyệt (OD-6). Rate-limit + phân trang chống scrape.
+> ⚠️ **Bất biến public (AUDIT §C8):** marketplace chỉ chứa field whitelist; tiền/PII/giới tính/roster không bao giờ lộ. `venue` chi tiết chỉ hiện khi canonical player outcome là `active`; approved-but-waitlisted vẫn ẩn (OD-6). Rate-limit + phân trang chống scrape.
 
 ---
 
 ## FLOW 13: JOIN CROSS-CLUB — từ marketplace *(P4.3)*
 
 1. Player bấm Join bằng opaque action/public session ref → protected resolver route `session→tenant`; raw ID/client tenant không có authority.
-2. Resolve identity (FLOW 5): `(platform/web-session) → Person`. Chưa là member CLB → tạo **membership guest**.
+2. Resolve identity (FLOW 5): `(platform/web-session) → Person`, rồi lookup processed command + membership/player + pending request hiện có. **Không eager-create guest membership** ở bước này. Existing `active|waitlisted|pending` trả current outcome idempotently; DD-52 ban áp sau đó không auto-evict và không tạo alert/write mới.
 3. Theo `join_policy` của kèo:
-   - **`open`** → final join dưới session lock: còn slot → active player + charge + venue/nội dung CK; full → waitlisted + position, **không charge/venue/QR**.
-   - **`approval`** → tạo `join_requests(pending)` (không membership/player/charge/capacity) → host duyệt; còn slot → active+charge+venue, full → approved+waitlisted/no-charge/no-venue; từ chối/hết hạn → báo.
-4. Active outcome: kèo + nợ xuất hiện trong **player view** (FLOW 10). Waitlisted outcome: hiện queue position, chưa có nợ/venue; promotion mới tạo charge atomically. Mọi surface sync (FLOW 14).
+   - **`open`** → absent/`left` final join dưới session lock chỉ sau DD-41/DD-42/shared DD-52. First-entry còn slot → active+exactly-one charge+venue; full → waitlisted, không charge/venue/QR. Existing `left` re-derive DD-49: active carry-over/append refunded lifecycle; full waitlisted, refunded không new lifecycle; unknown→review.
+   - **`approval`** → absent/`left` request-create preflight DD-41/DD-42/DD-52; first-entry pending only. Existing `left` chỉ preflight live DD-49 disposition; `join_requests` không lưu/bind financial proof. Host approve lock session→root-job→request→player/aggregate, re-check restrictions và re-derive; drift/unknown giữ pending + zero mutation. Active carry-over/append lifecycle; full approved+waitlisted/no-new-lifecycle/no-venue. Active fill resolves all nonterminal promotion roots.
+4. Chỉ active outcome hiện venue + canonical obligation mới. Waitlisted chỉ queue position: chưa-refund rejoin có thể giữ historical aggregate, refunded không new lifecycle. Promotion re-derive rồi carry-over/append lifecycle khi activation. Mọi surface sync (FLOW 14).
 
 > Slug/elink chỉ ghim context, **không** tự cấp quyền (AUDIT B2). Join có tiền/định danh nhạy cảm vẫn theo khoá mạnh (AUDIT C2).
 
@@ -302,10 +305,10 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 | # | Edge case | Hành vi | Canonical phase |
 |---|---|---|---|
 | 22 | **Kèo public bị sửa/đóng/huỷ** | Projector upsert/xoá `public_sessions`; đóng/quá giờ → tự hạ khỏi marketplace | P4.3 |
-| 23 | **Join khi vừa hết slot (race)** | Session lock → một active+charge, người còn lại waitlisted/positive-position/no-charge; không over-fill | P4.3 |
+| 23 | **Join khi vừa hết slot (race)** | Session lock → một first-entry active+charge, người còn lại first-entry waitlisted/positive-position/no-charge; proven DD-49 rejoin giữ aggregate nhưng không tạo charge mới; không over-fill | P4.3 |
 | 24 | **Approval-mode: host không duyệt** | `join_requests` hết hạn → tự huỷ + báo player; player có thể tìm kèo khác | P4.3 |
 | 25 | **Scrape/enumerate marketplace** | Rate-limit + phân trang + chỉ field whitelist; không trả tiền/PII/giới tính dù lặp request | P4.3 |
-| 26 | **Vị trí riêng tư** | Public chỉ `area`; `venue` chi tiết lộ sau khi join/được duyệt (OD-6) | P4.3 |
+| 26 | **Vị trí riêng tư** | Public chỉ `area`; `venue` chỉ cho `players.status='active'`, không cho approved-waitlisted (OD-6) | P4.3 |
 | 27 | **Sync: 2 surface sửa gần như đồng thời** | Command serialize ở canonical store (transaction) per-tenant/session; event theo thứ tự → không lệch | P4 |
 | 28 | **Surface state cũ** (msg roster lỗi thời / SSE rớt) | Re-project từ canonical (edit lại msg / refresh SSE); surface không giữ sự thật | P4 |
 | 29 | **Command lặp** (retry kênh) | Idempotent theo `commandId` → `STALE_COMMAND` bỏ qua, không double | P4 |

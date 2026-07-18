@@ -67,19 +67,19 @@ Player join 1 kèo. Rate-limit theo BL-SEC-5. Concurrency: waitlist promote atom
 ```
 ```jsonc
 // Request
-{ "note": "string?" }
+{}
 
-// ✅ 200 — active
-{ "data": { "playerId": "uuid", "status": "active", "chargeId": "uuid|null" }, "error": null, "meta": { "requestId": "req_..." } }
-// ✅ 200 — waitlisted (full)
-{ "data": { "playerId": "uuid", "status": "waitlisted", "chargeId": null }, "error": null, "meta": { "requestId": "req_..." } }
+// ✅ 200 — active. Exact venue chỉ có ở active DTO.
+{ "data": { "status": "active", "session": { "publicId": "…", "startAt": "…" }, "venue": { "name": "…", "address": "…" } }, "error": null, "meta": { "requestId": "req_..." } }
+// ✅ 200 — waitlisted. Chỉ area + position; không expose charge/disposition internals.
+{ "data": { "status": "waitlisted", "waitlistPosition": 3, "session": { "publicId": "…", "startAt": "…", "area": "…" } }, "error": null, "meta": { "requestId": "req_..." } }
 
 // ❌ 403 — GATING_FAILED
 { "data": null, "error": { "code": "GATING_FAILED", "message": "…", "statusCode": 403 }, "meta": { "requestId": "req_..." } }
-// ❌ 409 — REJOIN_REQUIRES_REVIEW
+// ❌ 409 — REJOIN_REQUIRES_REVIEW (chỉ khi DD-49 disposition unknown/unimplemented)
 { "data": null, "error": { "code": "REJOIN_REQUIRES_REVIEW", "message": "…", "statusCode": 409 }, "meta": { "requestId": "req_..." } }
 ```
-- Side effects: outbox `session_updated` → fan-out SSE + upsert `public_sessions`.
+- Side effects: outbox `session_updated` → fan-out SSE + upsert `public_sessions`. Client cần debt/charge thì đọc canonical person-self money API riêng; join response không tạo nguồn sự thật tiền thứ hai.
 
 ## 4. WebSocket / SSE events (nếu có)
 | Event | Direction | Payload | Trigger |

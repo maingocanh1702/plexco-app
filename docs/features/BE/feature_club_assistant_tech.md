@@ -1,8 +1,9 @@
 # Feature: Club AI Assistant + Knowledge Base — Backend Tech Spec
 
 > **Canonical phase:** P7 (post-MVP, **đề xuất**)
-> **Version:** 0.9 · 2026-07-17
+> **Version:** 0.9a · 2026-07-19
 > **Status:** 🟡 Draft — contract đã harden và sẵn sàng cho review/promotion, nhưng **chưa build-ready cho tới khi được formally promote sang Reviewed**. **DD-18** (provider LLM + privacy/ToS/DPA) ⬜ là gate GO-LIVE sau khi scope implementation được duyệt, không phải lý do tự động promote/build (provider đặt sau interface `EmbeddingProvider`/`ChatProvider` swappable).
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_club_assistant.md`
 > **Nguồn:** proposal `../../proposals/club-ai-bot-knowledge-base.md` · `../../standards/core-db-architecture-principles.md` (INV-1..10, P1–P16) · migrations `0004`/`0005`/`0009` **chỉ là historical schema/RLS baselines, không phải edit targets**
 
@@ -586,6 +587,7 @@ Contract enforceable: `project_assistant_answer(query_id)` là `SECURITY DEFINER
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.9a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.9 | **Readiness + migration/security closure:** giữ formal status Draft tới khi promote Reviewed; migration mới tự cài/verify `vector` và chứa RLS/policy/grant contract thay vì sửa `0000`/`0009` đã apply; chuẩn hoá API envelope; sửa numbering unit tests 43–46. |
 | 2026-07-17 | v0.8 | **External-call truth + cache isolation:** guarantee one durable result/message, not exactly-once provider billing before DB checkpoint; document attempt telemetry/caps. Embedding cache key now includes model, dimensions, profile version and normalized-input hash. |
 | 2026-07-17 | v0.7 | **DLP re-ingest + canonical chat closure:** stable `(tenant,source_key)` + generation; atomically supersede prior document/chunks before processing; current-generation/DLP-cleared retrieval fence; blocked replacement keeps old revision excluded; quarantine UI/test coverage. Removed duplicate chat/channel/membership DDL and pinned reuse of canonical In-app Chat (`chat_members`, `author_type=person|assistant|system`, `client_msg_id`) with only nullable `bot_query_id` relation + idempotent assistant projector. |

@@ -8,12 +8,12 @@
 | | |
 |---|---|
 | **Sản phẩm** | **Plexco CRM & Operations Dashboard** — dashboard nội bộ cho Platform Owner/CS/Ops theo dõi user, host, player, session, marketplace, payment, billing, trust, security và vận hành hệ thống |
-| **Phiên bản** | v1.11 — refresh authority refs theo founder batch 18/07 (decisions v1.47); v1.10 final feature-index integrity closure; v1.4 thêm CRM-OQ-7 PII collection config (DD-54); trước đó v1.3 **v3.4 channel pivot** |
-| **Ngày** | 18/07/2026 |
+| **Phiên bản** | v1.14 — pointer refresh decisions v1.74 + product-doc refs (BRD v3.9f · PRD v2.8e · ROADMAP v3.3e · feature index v2.34); v1.13 — ref-only sync notification/business-rules/current decisions; v1.11 refresh authority refs theo founder batch 18/07; v1.10 final feature-index integrity closure; v1.4 thêm CRM-OQ-7 PII collection config (DD-54); trước đó v1.3 **v3.4 channel pivot** |
+| **Ngày** | 19/07/2026 |
 | **Người soạn** | Codex |
 | **Người duyệt** | Ngoc-Anh |
 | **Trạng thái** | Draft để review |
-| **Tài liệu liên quan** | `BRD.md` v3.9d · `PRD.md` v2.8b · `TDD.md` v3.1 · `ROADMAP.md` v3.3b · `../features/README.md` v2.23 · `../strategy/gtm-strategy.md` · `../standards/business-rules.md` v1.16 · `../standards/decisions.md` v1.47 |
+| **Tài liệu liên quan** | `BRD.md` v3.9f · `PRD.md` v2.8e · `TDD.md` v3.1 · `ROADMAP.md` v3.3e · `../features/README.md` v2.34 · `../strategy/gtm-strategy.md` · `../standards/business-rules.md` v1.20 · `../standards/decisions.md` v1.74 |
 | **Nguồn tham khảo bên ngoài** | Mixpanel — "25+ ecommerce product metrics to track today" (Jun 2, 2026): https://mixpanel.com/blog/ecommerce-product-metrics/ |
 
 > Tài liệu này mô tả dashboard **nội bộ** để quản lý Plexco như một business/platform. Nó không thay thế host dashboard (`/dashboard`) của tenant, player view (`/me`) hoặc marketplace (`/discover`). Khi conflict: core BRD/PRD/business-rules thắng về scope, quyền dữ liệu và security.
@@ -450,7 +450,7 @@ Required metrics:
 | **Web** | active sessions (Google/email), SSE reconnects, onboarding step drop-off, chat in-app volume (DD-38 ✅) |
 | **SePay/ApiPay** | connection status, webhook active, ingest success/failure, token drift |
 | **Sync engine** | command volume, projector success/failure, lag p50/p95/p99, DLQ count, reproject count |
-| **Notification** | reminder sent/skipped/failed (web + Zalo chính; Messenger best-effort 24h), quiet-hour skips, delivery failed by provider |
+| **Notification** | reminder/confirmation/correction sent; waitlist derivation owner-alerts; sent/skipped/failed/**unknown** theo route (web + Zalo chính; Messenger best-effort 24h); quiet-hour skips; proven-failure rate; unknown reconciliation age/outcome — không gộp ambiguous vào failed hoặc kích hoạt fallback |
 
 Required views:
 
@@ -587,7 +587,7 @@ Dashboard should consume the analytics events already specified in feature docs:
 - Marketplace: `marketplace_searched`, `marketplace_detail_opened`, `marketplace_join_cta_clicked`, `marketplace_no_results`, `marketplace_projection_lag`.
 - Join: `join_attempted`, `join_succeeded`, `join_rejected`, `join_full_conflict`, `approval_latency`, `join_leave`.
 - Payment: `payment_webhook_ingested`, `payment_reconcile_completed`, `payment_allocation_created`, `payment_allocation_reversed`, `payment_charge_settled`.
-- Notification: `reminder_sent`, `reminder_skipped`, `payment_confirmation_sent`, `delivery_failed`.
+- Notification: `reminder_sent`, `reminder_skipped`, `payment_confirmation_sent`, `payment_correction_sent`, `delivery_failed`, `delivery_unknown`, `waitlist_charge_derivation_alerted`; các event inbox/announcement/push chỉ thêm khi DD-70..72 được chốt và runtime tương ứng land.
 - Identity: `identity_person_created`, `identity_link_requested`, `identity_link_verified`, `identity_merge_completed`, `identity_claim_rejected`.
 - Sync: `sync_command_received`, `sync_projected`, `sync_projection_failed`, `sync_slo_breach`.
 - Billing: `billing_lifecycle_transition`, `billing_invoice_issued`, `billing_invoice_paid`, `billing_churn`.
@@ -870,6 +870,9 @@ Audit is required for:
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-19 | v1.14 | Pointer refresh: decisions v1.67→v1.74 · BRD v3.9f · PRD v2.8e · ROADMAP v3.3e · feature index v2.34. No CRM scope/runtime change. |
+| 2026-07-19 | v1.13 | Ref-only sync tới feature index v2.29 · business rules v1.20 · decisions v1.67 · PRD v2.8c. No CRM scope/runtime change. |
+| 2026-07-18 | v1.12 | Ref-only sync sau notification review: feature index v2.26 · business rules v1.17 · current decisions v1.51 (DD-70..72 notification + DD-73..78 share/activity đều còn proposal theo authority). No CRM scope/runtime change. |
 | 2026-07-18 | v1.11 | Refresh authority refs theo founder batch 18/07: BRD v3.9d · PRD v2.8b · ROADMAP v3.3b · feature index v2.23 · business rules v1.16 · decisions v1.47 (DD-33 ✅ · DD-60 ✅ · DD-61..64 accept-in-principle · DD-69 direction ✅). No CRM scope change. |
 | 2026-07-17 | v1.10 | Refresh feature index reference to v2.22 after final integrity/Assistant readiness closure; no CRM scope change. |
 | 2026-07-17 | v1.9 | Refresh feature index reference to v2.20 after deep feature-contract closure; no CRM scope change. |

@@ -6,10 +6,11 @@
 
 > **Canonical phase:** P4 (hồ sơ + nguồn `gender` cho giá kèo; follow/visibility P4+)
 > **Track:** ⚙️ User Settings & Profile
-> **Version:** 0.8 · 2026-07-17
+> **Version:** 0.9a · 2026-07-19
 > **Status:** DD-39 ✅ · DD-47/48 ✅ framework — Draft (pending migration/build)
+> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3.5 identity (Person) · P4 web/app surface · (giá theo giới tính đọc bởi `feature_session_management` + `feature_payment_reconcile`) · (follow/visibility: `feature_identity` merge + `feature_player_view` profile path)
-> **Tài liệu liên quan:** `../product/BRD.md` MODULE 11 / BR-16 / FR-11 / AC-11-12 · `../standards/decisions.md` **DD-39 · DD-47 · DD-48** · `feature_session_management.md` (đặt giá nam/nữ) · `feature_payment_reconcile.md` (suy charge) · `feature_identity.md` · `feature_player_view.md` · `packages/db/schema.ts` (**AUTHORITATIVE** khi triển khai)
+> **Tài liệu liên quan:** `../product/BRD.md` MODULE 11 / BR-16 / FR-11 / AC-11-12 · `../standards/decisions.md` **DD-39 · DD-47 · DD-48 · DD-70** · `feature_session_management.md` (đặt giá nam/nữ) · `feature_payment_reconcile.md` (suy charge) · `feature_identity.md` · `feature_player_view.md` · `packages/db/schema.ts` (**AUTHORITATIVE** khi triển khai)
 
 ---
 
@@ -20,6 +21,8 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 **Giá theo giới tính (DD-39):** host có thể đặt kèo **giá nam / giá nữ khác nhau**; khi tạo `charge`/`debt` cho member, hệ **suy giá theo `person.gender`**. Giới tính là **PII có consent**, mã hoá at-rest, **KHÔNG lộ ra public marketplace**.
 
 **Follow + private/public (DD-47/48 — ✅ framework):** user có thể follow user khác và đặt `public`/`private`. User mới default public; user tồn tại trước migration được backfill private. Private cần approve follower và ẩn social profile với non-follower, kể cả đồng đội. Host vẫn thấy dữ liệu cần cho vận hành/suy giá qua tenant membership/roster path riêng; host role không mở rộng social-profile DTO. Đây là gate bổ sung, không thay/nới RLS và không đụng đường tiền/PII.
+
+**DD-70(a) proposal (authority v1.70):** chỉ private follow mới tạo durable `follow_request`. `follow_accepted` trong bảng analytics dưới đây **không phải notification type**; public follow và private→public bulk auto-accept không fan-out thông báo hay lock follower fences hàng loạt.
 
 ### Bất biến
 
@@ -194,7 +197,7 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 | Event | Khi nào | Payload tối thiểu |
 |-------|---------|-------------------|
 | `follow_requested` | Follow user private | `actor` + `target` (opaque) |
-| `follow_accepted` | Auto (public) hoặc approve | `actor` + `target` (opaque) |
+| `follow_accepted` *(analytics-only)* | Auto (public) hoặc approve; **không emit notification** | `actor` + `target` (opaque) |
 | `follow_rejected` / `unfollowed` / `follower_removed` | Tương ứng | opaque ids |
 | `profile_visibility_changed` | Đổi public↔private | `person_id` (opaque), `to` |
 | `profile_viewed` | Xem social profile cross-user | `viewer` + `target` (opaque), `visibility`, `access` (public/follower/minimal) |
@@ -207,6 +210,7 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 - [ ] Private **không** gỡ user khỏi roster, **không** giấu `charges` với host (HR1/HR2 giữ nguyên).
 - [ ] Self-follow bị chặn; follow trùng idempotent; unfollow/remove-follower hoạt động.
 - [ ] Đổi visibility: private→public auto-accept pending; public→private grandfather accepted.
+- [ ] Private→public bulk auto-accept chỉ ghi state + analytics; zero `follow_accepted` notification/fan-out và không acquire unbounded follower inbox fences.
 - [ ] Merge person: re-parent + dedupe edge follow + drop self-edge.
 - [ ] Block từ profile/settings dùng đúng canonical `chat_blocks`; atomically gỡ follow edges hai chiều, chặn re-request/DM; unblock không restore relationship cũ.
 
@@ -235,6 +239,8 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.9a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
+| 2026-07-19 | v0.9 | **DD-70(a) v1.70 propagation:** `follow_accepted` is analytics-only; private→public bulk auto-accept creates no notification/fan-out or unbounded follower-fence work. No runtime/migration. |
 | 2026-07-17 | v0.8 | **DD-39 storage closure:** close USR-OQ-2 on phase-1 `price_male/price_female` columns beside canonical `price_amount`; remove the competing current-table implementation path. |
 | 2026-07-17 | v0.7 | **USR-OQ-6/7 closure:** DD-55 pin phase-1 open-DM qua safety gate, phase-2 follow/request-box; User Settings tái dùng canonical `chat_blocks`, block gỡ follow edges hai chiều và chặn re-request/DM; còn 3 DD-48 item thực sự mở. |
 | 2026-07-15 | v0.5 | **Propagation (light):** neo USR-OQ-4..9 vào DD-48 (5 open item) / DD-47 (notify impl-gap) — framework đã ✅, các item này chốt lúc build P4+; trỏ file phân tích. Không đổi schema/body Reviewed. |

@@ -8,12 +8,12 @@
 | | |
 |---|---|
 | **Sản phẩm** | **Plexco** — platform quản lý hoạt động thể thao cho **host** và khám phá/tham gia kèo cho **player**, đa môn (cầu lông, pickleball, tennis, bóng đá…), hoạt động ngay trong Zalo/Facebook Messenger + web app đồng bộ |
-| **Phiên bản** | v3.9d — **Founder batch (18/07):** DD-69 **định hướng app-first accepted** (phase-1 target web PWA → phase-2 native; native build TBD, technical gates mở); DD-33 Facebook Login phase-1 ✅; DD-61..64 Session Organize accept-in-principle (post-P4). Phase-1 committed scope không đổi. (v3.9c: DD-69 proposal review closure.) |
-| **Ngày** | 18/07/2026 |
+| **Phiên bản** | v3.9f — authority pointer refresh: decisions v1.74 (pointer-only); trước đó v3.9e — authority refresh DD-73..78: DD-73 acquisition trước; DD-74/75 tạo activity baseline sau dependency + reprioritization; chỉ DD-76/77 hard-gated bởi liquidity; DD-78 đi cùng consumer. Không đổi phase-1 committed scope. |
+| **Ngày** | 19/07/2026 |
 | **Người soạn** | Ngoc-Anh |
 | **Người duyệt (approvers)** | Ngoc-Anh (solo founder, self-approved) |
 | **Trạng thái** | Draft để review |
-| **Tài liệu liên quan** | `../strategy/saas-implementation-plan.md` (kiến trúc) · `PRD.md` v2.8b · `TDD.md` v3.1 · `../standards/decisions.md` **v1.47** (canonical; DD-69 direction ✅ + DD-61..64 accept-in-principle post-P4 + DD-33/60 ✅; DD-57..59 defer; DD-65..68 ✅) · `../dd-69-app-native-analysis.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` |
+| **Tài liệu liên quan** | `../strategy/saas-implementation-plan.md` (kiến trúc) · `PRD.md` v2.8e · `TDD.md` v3.1 · `../standards/decisions.md` **v1.74** (canonical; DD-45 retry/lock-order + DD-45a test-truth closure; notification closure v1.69–v1.71/v1.74, DD-70..72 vẫn 🟡; DD-50 lock-order v1.73; DD-59 ✅ reconcile; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated) · `../dd-69-app-native-analysis.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` |
 
 > BRD là nguồn sự thật cho **product scope & business rules**; PRD cho hành vi/user flow; TDD cho implementation contract; ROADMAP cho thứ tự và tiến độ. Security constraints đã chốt trong AUDIT là bắt buộc. Khi có conflict cùng một chủ đề: **BRD → PRD → TDD → ROADMAP**; riêng security: quy tắc nghiêm ngặt hơn giữa BRD và AUDIT thắng.
 >
@@ -31,6 +31,8 @@
 **Định vị cốt lõi:** Plexco gặp người dùng **ở nơi họ đã ở** (Zalo/Messenger — 0 cài app cho player) và cung cấp web app làm hub tương tác. **PostgreSQL + domain model là canonical store**; web và các kênh chat là surface. Một hành động ở bất kỳ surface nào tự động được ghi vào canonical store rồi project sang các surface liên quan.
 
 **Kênh phase-1:** **Web app + Facebook Messenger + Zalo**. **Telegram đã bị loại khỏi phạm vi** (v3.4). Data từ 3 nguồn — web app, Messenger, Zalo — sync 2 chiều qua canonical store.
+
+**Lộ trình sản phẩm — app-first (DD-69 ✅ direction accepted):** Plexco định vị **app-first**: **phase-1** giao sản phẩm qua **web app PWA** (installable/offline) + chat Zalo/Messenger; **phase-2** lên **app native** cho retention (build TBD, **chưa lên lịch**, còn technical gates — xem `../dd-69-app-native-analysis.md`). Điều này **không** mâu thuẫn với "0 cài app": chat vẫn là **phễu acquisition 0-install** (player tìm/join kèo không phải cài gì), native phục vụ **người dùng gắn bó** (host + player thường xuyên). **Native nằm ngoài phase-1 committed scope** (§5.2).
 
 **GTM:** MVP tích hợp Zalo/Messenger—các platform đã có sẵn user—thay vì bắt cài app mới. Web app gom và đồng bộ session từ các kênh. **1 host mới ⇒ kéo nguyên community player vào** → chi phí acquisition ≈ 0.
 
@@ -344,6 +346,8 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 > Có thể **soft-launch miễn phí sau P4.3** để validate marketplace trước khi bật billing.
 >
 > **Phase-2 (DD-69 direction ✅ accepted; build TBD):** app native là đích sau phase-1; React Native + Expo là recommendation sau spike (framework chưa chốt). Phase-1 **target** = web app PWA installable/offline, nhưng PWA chưa live cho tới khi S9/S20 có evidence. Native chưa lên lịch; chat vẫn là acquisition 0-install, native cho retention. Technical gates: client-safe contracts, bearer/refresh + iOS login compliance, dedicated device push, privacy-safe payload, `/api/v1` compatibility và offline read-only — xem `../dd-69-app-native-analysis.md`.
+>
+> **Go/no-go phase-2 native còn cần product-evidence gate (độc lập với technical gates):** PWA phase-1 là **bước validate thị trường** — retention (host active 8–12 tuần · player join kèo thứ 2+) · liquidity marketplace (kèo publish/tuần · % join qua discovery) · monetization đủ bù chi phí hai nền tảng · **độ tin cậy push PWA/iOS đo trong phase-1** (giá trị lõi là nhắc nợ/xác nhận). Ngưỡng chốt khi có baseline. **PWA đủ tốt là lý do hợp lệ để hoãn native.** Chi tiết: `../standards/decisions.md` DD-69.
 
 ---
 
@@ -376,7 +380,7 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 | OD-3 | Giá/tier subscription host | ✅ **DD-29**: `free` (web + Zalo + Messenger + mark-paid thủ công + chat) · `host_pro` 250k (auto reconcile/nhắc + AI + CRM). |
 | OD-4 | Hosting Postgres — HA+PITR+Singapore ✅; ✅ **(2026-07-16): (c) co-locate DigitalOcean** (App Platform + Managed PG HA-standby, VPC private); Fly = fallback; pre-build gate = egress-IP verify | ✅ (→ DD-04, `../dd-04-hosting-final-decision.md`) |
 | OD-5 | **Join cross-club mặc định:** open hay approval? | ✅ **DD-05:** per-kèo, mặc định `open`; approval → `join_requests(pending)` re-check eligibility trong tx |
-| OD-6 | **Độ chi tiết vị trí public:** khu vực/quận vs venue chính xác | ✅ **DD-06:** public `area` only; venue post-join (invariant test) |
+| OD-6 | **Độ chi tiết vị trí public:** khu vực/quận vs venue chính xác | ✅ **DD-06:** public `area` only; venue chỉ khi player `active` (approved-waitlisted vẫn ẩn) |
 | OD-7 | **Realtime web:** SSE + fan-out `LISTEN/NOTIFY` (dùng chung cho sync + chat) | ✅ chốt (→ DD-07) |
 | OD-8 | Danh sách môn khởi điểm (cầu lông, pickleball, …) + taxonomy trình độ | ✅ **DD-08:** 7 môn seed (extensible qua `sports`) + level 5-bậc ordered rank |
 | OD-9 | **Kênh phase-1** | ✅ **v3.4: Zalo + Facebook Messenger + web; bỏ Telegram** (→ DD-37 ✅, thay DD-09) |
@@ -421,7 +425,9 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
-| 18/07/2026 | v3.9d | **Founder batch (owner 18/07, decisions v1.47):** DD-69 **định hướng accepted** (§5.2/§14/§16 OD-20 "proposal"→"direction accepted"; native build phase-2 TBD, gates mở); DD-33 Facebook Login phase-1 ✅; DD-61..64 Session Organize accept-in-principle (post-P4). Phase-1 committed scope không đổi. |
+| 19/07/2026 | v3.9f | Authority pointer refresh v1.67→v1.74: v1.68–v1.74 đều là BE-contract closure no-runtime (DD-05/44/52 idempotency v1.68 · notification v1.69–v1.71/v1.74 · DD-45a test-truth v1.72 · DD-50 lock-order v1.73). Pointer-only, không đổi product scope/phase/runtime. |
+| 19/07/2026 | v3.9e | Current authority v1.65; DD-73..78 sequencing correction ở v1.64. DD-74/75 tạo baseline nên không nằm sau gate dùng chính baseline; chỉ DD-76/77 hard-gated; DD-78 đi cùng consumer. Pointer-only, không đổi product scope/runtime. |
+| 18/07/2026 | v3.9d | **Founder batch (owner 18/07, decisions v1.47):** DD-69 **định hướng accepted** (§1/§5.2/§14/§16 OD-20 "proposal"→"direction accepted"; native build phase-2 TBD, gates mở). **§1 thêm đoạn "Lộ trình sản phẩm — app-first"** để mục định vị nhất quán với DD-69 (chat = phễu acquisition 0-install, native = retention; native ngoài phase-1 scope). DD-33 Facebook Login phase-1 ✅; DD-61..64 Session Organize accept-in-principle (post-P4). **§14 thêm go/no-go product-evidence gate cho phase-2 native** (PWA = bước validate thị trường; ngưỡng `TBD` chờ baseline; PWA đủ tốt = lý do hợp lệ hoãn native). Phase-1 committed scope không đổi. |
 | 18/07/2026 | v3.9c | **DD-69 proposal + review closure:** §5.2/§14/§16 pin phase-1 PWA là target chưa live, phase-2 native chưa committed; RN+Expo chỉ recommendation sau spike. Technical contract tách client-safe package, Google PKCE + Apple/equivalent iOS gate, device push khỏi ChannelIdentity, privacy-safe payload, `/api/v1` compatibility và offline read-only. Phase-1 scope không đổi. Xem `../standards/decisions.md` DD-69 + `../dd-69-app-native-analysis.md`. |
 | 17/07/2026 | v3.9b | Feature-doc closure theo decisions v1.45/TDD v3.1: mirror exact endpoint identity/reachability, SePay HMAC, DM safety/block source, Assistant DLP và bounded Session Organize correction/SSE. Không đổi phase hoặc runtime readiness. |
 | 17/07/2026 | v3.9a | §16: thêm **OD-19** Session Organize quick-ref (proposal, trỏ DD-61..64) cho khớp pattern OD-15/16/18 — mỗi cluster có row riêng. Không đổi scope/phase; vẫn proposal. |

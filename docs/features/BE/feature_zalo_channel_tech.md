@@ -1,11 +1,12 @@
 # Feature: Zalo Player Channel — Backend Tech Spec
 
 > **Canonical phase:** P4.7  
-> **Version:** 2.3 · 2026-07-17
-> **Status:** Reviewed · reconciled to decisions v1.45/DD-15/DD-49/DD-67
+> **Version:** 2.5a · 2026-07-19
+> **Status:** Reviewed · reconciled to decisions v1.67/DD-15/DD-45/DD-49/DD-67
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_zalo_channel.md`
 > **References:** `../../standards/decisions.md` DD-15/DD-45/DD-49/DD-67 · `../feature_connector_onboarding.md` BL-SEC-1 secret lifecycle · `feature_cross_club_join_tech.md` shared join outcomes
-> **⚠️ Live-schema boundary:** live `channel_identities` vẫn là key **2-phần** `(platform, platform_user_lookup_hash)` và `channel_reachability` PK `(person_id, tenant_id, platform)`. Mô hình endpoint-scoped DD-67 (3-phần `provider_scope_lookup_hash`, reachability theo `channel_identity_id`) là **target**, cần migration mới (**≥0014**) land trước runtime; không sửa migration lịch sử. Live `zalo_bots` đã có lifecycle mới ở `0004` và RLS tenant-private ở `0009`, nhưng vẫn còn legacy `secret text`; cột này **không đạt BL-SEC-1**. Target DDL dưới thay nó bằng `webhook_secret_enc`; forward migration phải KMS-encrypt/backfill hoặc vô hiệu hóa connector chưa backfill được trước khi runtime Zalo được bật.
+> **⚠️ Live-schema boundary:** live `channel_identities` vẫn là key **2-phần** `(platform, platform_user_lookup_hash)` và `channel_reachability` PK `(person_id, tenant_id, platform)`. Mô hình endpoint-scoped DD-67 (3-phần `provider_scope_lookup_hash`, reachability theo `channel_identity_id`) là **target**, cần migration mới land trước runtime. `0014_players_waitlist` hiện chỉ ở nhánh `feat/session-waitlist-expand`, chưa merge; slice Zalo phải sync mọi prerequisite đã merge rồi chọn **next available monotonic number**, không pin `≥0014` và không sửa migration lịch sử. Live `zalo_bots` đã có lifecycle mới ở `0004` và RLS tenant-private ở `0009`, nhưng vẫn còn legacy `secret text`; cột này **không đạt BL-SEC-1**. Target DDL dưới thay nó bằng `webhook_secret_enc`; forward migration phải KMS-encrypt/backfill hoặc vô hiệu hóa connector chưa backfill được trước khi runtime Zalo được bật.
 
 ---
 
@@ -71,7 +72,7 @@ ALTER TABLE zalo_reply_contexts FORCE ROW LEVEL SECURITY;
 | 3 | Data Integrity | Number out of range | "Số không hợp lệ" |
 | 4 | Security | Forged/unknown webhook | Reject — narrow KMS decrypt + timing-safe verify; no plaintext fallback |
 | 5 | Concurrency | Replayed event | Update dedup — idempotent |
-| 6 | Concurrency | Concurrent number replies last slot | Shared service locks session: first active, second waitlisted/no-charge/no-venue |
+| 6 | Concurrency | Concurrent first-entry number replies last slot | Shared service locks session: first active+exactly-one-charge, second waitlisted/no-charge/no-venue |
 | 7 | Security | Bot token in logs | ❌ NEVER — KMS encrypted, log redaction |
 | 8 | Data Integrity | Webhook drift (URL changed) | Hourly `getWebhookInfo` — alert on drift |
 | 9 | Security | DM reachability cross-club/bot | Scoped exact `channel_identity_id` bound bot/OA; independent; target tenant re-authorized |
@@ -147,7 +148,7 @@ Before resolving Person, compute `provider_scope_lookup_hash=HMAC("channel-scope
 | 7 | Wrong bot reply | Different bot/tenant | Rejected |
 | 8 | Number out of range | "99" | "Số không hợp lệ" |
 | 9 | Free numeric no context | "3" without /join | No action |
-| 10 | Concurrent final slot | 2 replies same slot | One active+charge; one waitlisted/no-charge with positive position |
+| 10 | Concurrent first-entry final slot | 2 replies same slot | One active+exactly-one-charge; one waitlisted/no-charge with positive position |
 | 11 | Event replay | Same event ID | Idempotent |
 | 12 | Reachability set | First interaction | Reachable |
 | 13 | Reachability isolated | Same `from.id`, two bot/OA endpoints | Two endpoint-bound identities/reachability rows; no token/window reuse |
@@ -159,7 +160,7 @@ Before resolving Person, compute `provider_scope_lookup_hash=HMAC("channel-scope
 | 19 | Rate limit | Excessive requests | Throttled |
 | 20 | Canonical independence | Provider error | State intact |
 | 21 | Rejoin after left, carry-over | Existing `left`, paid and not refunded | Shared core rejoins active/waitlisted/current and preserves effective obligation/allocation; no duplicate charge |
-| 22 | Rejoin after refund | Existing `left`, refund complete | Shared core starts canonical new obligation lifecycle; adapter renders result |
+| 22 | Rejoin after refund | Existing `left`, refund complete | Capacity available→shared core appends one lifecycle + active; full→waitlisted/no new lifecycle until promotion. Adapter only renders result |
 | 23 | Rejoin disposition unknown | Existing `left`, correction core cannot prove state | `REJOIN_REQUIRES_REVIEW`; player/charge/allocations unchanged |
 | 24 | Webhook secret persistence | Connect/rotate Zalo credential | DB/log/API contain ciphertext/redacted metadata only; no raw header or plaintext secret |
 | 25 | Legacy secret cutover | Legacy row can/cannot be KMS-backfilled | Encrypt then drop plaintext; unprovable row becomes `error`; receiver accepts only `connecting|registered|active|drift` with ciphertext |
@@ -201,6 +202,9 @@ Before resolving Person, compute `provider_scope_lookup_hash=HMAC("channel-scope
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
+| 2026-07-19 | v2.5 | **DD-49 timing mirror:** refunded rejoin active→append; full→waitlisted/defer until promotion. Adapter remains thin and creates no financial state. |
+| 2026-07-19 | v2.4 | **DD-45×DD-49 mirror consistency:** final-slot no-charge test is explicitly first-entry; existing-left rejoin remains delegated to shared correction core and never creates a duplicate charge in the adapter. |
 | 2026-07-17 | v2.3 | **Security/lifecycle closure:** target current connector lifecycle; replace plaintext `secret` with KMS `webhook_secret_enc`; require backfill-or-disable/drop/no-dual-read plus ciphertext/state matrix and CAS race regressions before runtime. |
 | 2026-07-17 | v2.2 | **DD-15/DD-49/DD-67:** endpoint-scoped Zalo identity/reachability using two domain-separated hashes; target tenant re-auth; rejoin carry-over/refunded/review test matrix. |
 | 2026-07-15 | v2.1 | **DD-45:** thin adapter renders active/waitlisted/current/rejoin-review; final-slot and ledger-unchanged tests; remove "Full" error. |

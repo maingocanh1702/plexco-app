@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Phiên bản** | v0.0.1 — Foundation merged, feature build in progress |
-| **Trạng thái** | 🟢 Scaffold + foundation ĐÃ CÓ: monorepo (`packages/*`,`apps/*`) + **migrations 0000–0013** (RLS/auth/onboarding) đã merge trên `main@1eb6f60`; Auth v3 (Telegram-era) landed → **DD-37 provider replacement (Google/email + Zalo/Messenger) đang chờ**. Docs: 14 active Reviewed + 3 cặp Draft phase-1 đã tracked trong documentation baseline, chưa migration/build; Telegram archived (DD-37). Chi tiết: [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md). |
+| **Trạng thái** | 🟢 Scaffold + foundation ĐÃ CÓ: monorepo (`packages/*`,`apps/*`) + **migrations 0000–0013** (RLS/auth/onboarding) đã merge trên `main@22c23aa`; Auth v3 (Telegram-era) landed → **DD-37 provider replacement (Google/email + Zalo/Messenger) đang chờ**. Waitlist schema `0014_players_waitlist` mới ở `feat/session-waitlist-expand`, chưa merge; auto-promotion/runtime chưa build. Chi tiết: [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md). |
 | **Ngày tạo** | 18/06/2026 |
 | **Stack** | TypeScript · Next.js App Router · Zalo/Messenger HTTP adapters *(target — chưa build)* · Drizzle ORM · PostgreSQL (RLS) · pg-boss · SSE/`LISTEN/NOTIFY` (DD-07/DD-10) |
 | **Monorepo** | pnpm workspaces: `packages/core` · `apps/bot` · `apps/web` |
@@ -70,14 +70,14 @@
 
 ## Setup theo code hiện tại
 
-> Scaffold ĐÃ CÓ trên `main@1eb6f60`: monorepo (`package.json`, `pnpm-workspace.yaml`), `.env.example`, `infra/docker-compose.yml`, `packages/db` + **migrations 0000–0013**. Các lệnh dưới đây là script đang được track trong repo; phần lớn tầng feature còn ở spec/Draft (xem [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md)).
+> Scaffold ĐÃ CÓ trên current `main@22c23aa`: monorepo (`package.json`, `pnpm-workspace.yaml`), `.env.example`, `infra/docker-compose.yml`, `packages/db` + **migrations 0000–0013**. Phần lớn tầng feature còn ở spec/Draft (xem [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md)).
 
 ### Prerequisites
 
 - Node.js ≥ 22.x
 - pnpm ≥ 9.x
 - Docker (cho PostgreSQL dev)
-- **Code baseline `main@1eb6f60`:** Telegram bot token vẫn bắt buộc cho auth-v3 legacy
+- **Auth-v3 landing commit `1eb6f60` (vẫn nằm trong current main):** Telegram bot token còn bắt buộc cho legacy runtime
 - **Target DD-37:** Google OAuth client + email/password; Facebook App cho account-link/Messenger khi các adapter tương ứng land
 - Zalo bot token per-club (onboarding)
 - SePay/ApiPay account (nhận webhook CK)
@@ -127,12 +127,12 @@ pnpm --filter @plexco/bot start:worker
 
 ## Port Registry
 
-> ⚠️ **Code baseline (`main@1eb6f60`):** chỉ `Web app (Next.js)` + `/healthz` + **auth Telegram-era** (`/api/auth/telegram/*`) + onboarding routes. Các webhook Messenger/Zalo/SePay dưới là **spec/target — CHƯA build** (`apps/bot` hiện chỉ pg-boss queue/worker). Xem [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md).
+> ⚠️ **Code baseline (`main@22c23aa`):** chỉ `Web app (Next.js)` + `/healthz` + **auth Telegram-era** (`/api/auth/telegram/*`) + onboarding routes. Các webhook Messenger/Zalo/SePay dưới là **spec/target — CHƯA build** (`apps/bot` hiện chỉ pg-boss queue/worker). Xem [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md).
 
 | Service | Port | Ghi chú |
 |---|---|---|
 | Web app (Next.js) | 3000 | Dashboard + API routes + SSE |
-| Messenger webhook *(spec)* | 3000 `/webhook/messenger` | Per-page routing (page_id → tenant); Meta App Review |
+| Messenger webhook *(spec)* | 3000 `/webhook/messenger` | Hybrid central/optional club Page; protected context routing; Meta App Review |
 | Zalo webhook | 3000 `/webhook/zalo/:token` | Per-club token |
 | SePay webhook | 3000 `/webhook/sepay/:token` | Per-bank token |
 | PostgreSQL | 5432 | Docker compose |
@@ -148,20 +148,20 @@ pnpm --filter @plexco/bot start:worker
 
 | Tài liệu | Mô tả | Phiên bản |
 |---|---|---|
-| [BRD.md](./docs/product/BRD.md) | Yêu cầu nghiệp vụ (cái gì & vì sao) | v3.5 |
-| [PRD.md](./docs/product/PRD.md) | User flows + edge cases | v2.4 |
-| [TDD.md](./docs/product/TDD.md) | Thiết kế kỹ thuật (schema, RLS, ledger, routing, sync) | v2.4 |
-| [ROADMAP.md](./docs/product/ROADMAP.md) | Canonical phases + KPIs + dependency map | v2.7 |
+| [BRD.md](./docs/product/BRD.md) | Yêu cầu nghiệp vụ (cái gì & vì sao) | v3.9d |
+| [PRD.md](./docs/product/PRD.md) | User flows + edge cases | v2.8c |
+| [TDD.md](./docs/product/TDD.md) | Thiết kế kỹ thuật (schema, RLS, ledger, routing, sync) | v3.1 |
+| [ROADMAP.md](./docs/product/ROADMAP.md) | Canonical phases + KPIs + dependency map | v3.3b |
 
 ### 📐 Standards (`docs/standards/`)
 
 | Tài liệu | Mô tả | Phiên bản |
 |---|---|---|
-| [HANDOFF.md](./docs/00-start-here/HANDOFF.md) | Tài liệu tiếp quản cho dev/AI mới | v1.4 |
-| [business-rules.md](./docs/standards/business-rules.md) | Business rules tổng hợp (ID'd, cross-ref) | v1.7 |
-| [design-tokens.md](./docs/standards/design-tokens.md) | CSS variables, colors, typography | v1.0 |
-| [feature-dependency-graph.md](./docs/standards/feature-dependency-graph.md) | Mermaid dependency graph + matrix | v1.2 |
-| [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md) | Đã build vs. đã spec (living snapshot) | 2026-07-15 |
+| [HANDOFF.md](./docs/00-start-here/HANDOFF.md) | Tài liệu tiếp quản cho dev/AI mới | v1.17 |
+| [business-rules.md](./docs/standards/business-rules.md) | Business rules tổng hợp (ID'd, cross-ref) | v1.18 |
+| [design-tokens.md](./docs/standards/design-tokens.md) | CSS variables, colors, typography | v1.1 |
+| [feature-dependency-graph.md](./docs/standards/feature-dependency-graph.md) | Mermaid dependency graph + matrix | v1.9a |
+| [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md) | Đã build vs. đã spec (living snapshot) | 2026-07-19 |
 
 ### 📎 Research & Strategy (`docs/research/` · `docs/strategy/`)
 
@@ -170,9 +170,9 @@ pnpm --filter @plexco/bot start:worker
 | [saas-implementation-plan.md](./docs/strategy/saas-implementation-plan.md) | Kiến trúc multi-tenant chi tiết | v2 |
 | [player-side-saas-reconciliation.md](./docs/research/player-side-saas-reconciliation.md) | Identity, kênh, matching | v2 |
 | [player-side-saas-AUDIT.md](./docs/research/player-side-saas-AUDIT.md) | Bảo mật, threat model (C1-C8, B1-B6) | v1 |
-| [messenger-channel-design.md](./docs/channels/messenger/messenger-channel-design.md) | Kênh Messenger (phase-1 P2.5, Meta App Review — DD-37) | v2.1 |
+| [messenger-channel-design.md](./docs/channels/messenger/messenger-channel-design.md) | Kênh Messenger (phase-1 P2.5, Meta App Review — DD-37) | v2.4a |
 | [saas-pnl-model.xlsx](./docs/strategy/saas-pnl-model.xlsx) | PnL model | — |
-| [native-app-strategy.md](./docs/strategy/native-app-strategy.md) | Native iOS/Android — impact analysis, push, auth | v1.1 |
+| [native-app-strategy.md](./docs/strategy/native-app-strategy.md) | Native iOS/Android — impact analysis, push, auth | v1.7 |
 
 ### 🔧 Feature Docs (`docs/features/`)
 
@@ -265,4 +265,4 @@ Security:                    quy tắc nghiêm ngặt hơn giữa BRD và AUDIT
 
 ---
 
-*Plexco v0.0.1 — foundation + Auth v3 (Telegram-era) + migrations 0000–0013 đã merge trên `main@1eb6f60`; DD-37 provider replacement (Google/email + Zalo/Messenger) đang chờ. Build-status thực tế: [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md).*
+*Plexco v0.0.1 — foundation + Auth v3 (Telegram-era) + migrations 0000–0013 có trên current `main@22c23aa` (Auth-v3 landed tại `1eb6f60`); DD-37 provider replacement đang chờ. Build-status: [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md).*

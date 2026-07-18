@@ -1,7 +1,7 @@
 # 🗄️ DD-04 Decision Brief — Postgres Hosting (rev 5)
 
 > **Mục đích:** đủ dữ kiện để founder **chốt provider** cho hệ tiền multi-tenant RLS.
-> **Ngày:** 2026-07-16 (rev 5; đồng bộ read-isolation/portability với final decision Rev 2) · **Nguồn nội bộ:** `deployment-infra.md §2/§6/§9` (DD-04) · `decisions.md` DD-04 (record tại v1.34; authority hiện hành v1.47) · `feature_security_operations_tech.md`. **Số liệu provider:** web (07/2026), xem Sources.
+> **Ngày:** 2026-07-16 (rev 5; đồng bộ read-isolation/portability với final decision Rev 2) · **Nguồn nội bộ:** `deployment-infra.md §2/§6/§9` (DD-04) · `decisions.md` DD-04 (record tại v1.34; authority hiện hành v1.67) · `feature_security_operations_tech.md`. **Số liệu provider:** web (07/2026), xem Sources.
 > **Đã chốt (không bàn lại):** Managed Postgres **HA + PITR**, **region Singapore**; compute = **DO App Platform**, DB = **DO Managed PG cùng VPC private**. Railway PG chỉ dev/staging. DD-10 giữ nguyên (standalone container, không Vercel).
 
 > ⚠️ **REV 2 sửa lỗi factual của rev 1** (xem §0.1) và **thêm gate private-network** làm quyết định chốt-trước. Do rev 2 mở rộng phạm vi DD-04 (thêm DigitalOcean + gate network), tại thời điểm đó DD-04 cần được reopen/update trước khi founder phê duyệt; rev 3 ghi nhận gate này đã hoàn tất.

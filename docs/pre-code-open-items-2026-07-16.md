@@ -1,7 +1,7 @@
 # 📋 Pre-code Open Items — DD/vấn đề cần xử lý nốt (2026-07-16)
 
 > **Mục đích:** checklist một trang các DD/OQ/design gate còn mở trước khi code feature layer (S4→S8).
-> **Authority snapshot:** `standards/decisions.md` v1.47. DD-57..59 deferred/reference-only; DD-60 accepted; DD-61..64 Session Organize v0.5 accepted-in-principle nhưng build post-P4/no-runtime; DD-69 accepted direction; DD-65..68 đã chốt. Founder briefs là historical input; implementation truth là live schema/migrations/tests.
+> **Authority snapshot:** `standards/decisions.md` v1.67. DD-45 retry/order/restriction closure; DD-59 đã reconcile; DD-70..72 vẫn 🟡; **DD-73..78 ✅ chốt 19/07 (build gated)**. Founder briefs là historical input; implementation truth là live schema/migrations/tests.
 > File này chỉ **tracking**, KHÔNG tự biến đề xuất thành quyết định. Khi chốt: ghi authority canonical trước → propagate spec → author slice → tick ✅ ở đây.
 >
 > **Phạm vi:** FE track riêng, chờ design files (`docs/channels/web/screens/`). File này tập trung BE, security, data, infra và external gates.
@@ -10,7 +10,7 @@
 
 ## 0. TL;DR
 
-- **S4 chưa code-ready hoàn toàn:** Product + BE contract đã pin Google OIDC proof matrix và trọn email verify/forgot/reset/revoke-all lifecycle; B0 còn mutation-path/design-probe cho storage, token consume và account-wide revoke semantics. Xong probe mới author bộ slice D1; không gom thành một mega-slice "provider swap".
+- **S4 chưa code-ready hoàn toàn:** Product + BE contract và B0 design-probe đã pin Google OIDC proof matrix, cross-site callback, email verify/forgot/reset/revoke-all lifecycle, storage/token consume và account-wide revoke semantics. B0 còn **owner approval + ghi DD**; xong mới author bộ slice D1, không gom thành một mega-slice "provider swap".
 - **A1/A2 không chặn toàn bộ S5/S7:** chỉ chặn correction/refund/undo-leave và gender-pricing paths. Base slice chỉ được chạy sớm khi manifest ghi rõ negative scope, endpoint/CTA liên quan bị disable và test chứng minh fail-closed (xem §E).
 - **Khởi động ngay vì lead-time:** A3 legal/compliance, A7 LLM due-diligence và các external gates ở §C. Chọn provider/build P7 có thể để sau; legal/data-region/DPA không nên để sau.
 - **Không pin schema trước design-probe** cho money correction, auth credential lifecycle và sync delivery. Pin policy + decision table trước; storage/API cuối cùng phải đi ra từ probe các mutation/delivery paths thật.
@@ -25,11 +25,35 @@
 
 ---
 
+## Triage — item nào vào §A (founder), item nào vào §B (engineering)
+
+> **Thêm 2026-07-19.** Lý do: một item DDL thuần từng nằm chung hàng đợi với quyết định monetization (DD-45a), khiến **một build slice đang chạy phải chờ một cái gật hiển nhiên**. Founder queue chỉ nên chứa thứ mà **chỉ founder mới trả lời được**.
+
+**Mặc định:** item chỉ vào **§A** khi câu trả lời phụ thuộc **ý chí kinh doanh/sản phẩm của owner**, không phải chỉ phụ thuộc kỹ thuật.
+
+**Vào §A (founder)** nếu quyết định ít nhất một trong:
+
+- **Tiền / packaging** — tier, giá, free vs `host_pro`, refund, thu phí.
+- **Scope / phase** — đưa gì vào/ra phase-1, thứ tự pha, cam kết build.
+- **Pháp lý / PII** — thu dữ liệu gì, giữ bao lâu, chia sẻ với ai.
+- **Trade-off sản phẩm có mặt trái thật** — hai phương án đều hợp lệ, khác nhau ở trải nghiệm/độ tin cậy mà kỹ thuật **không** phân định được.
+- **Cam kết bên thứ ba** — chọn vendor/provider, ký DPA, nộp review.
+
+**Vào §B (engineering pin)** nếu item là:
+
+- **DDL/constraint hardening không đổi hành vi sản phẩm** — ví dụ thêm `UNIQUE`/`CHECK` để biến một trạng thái *vốn đã bất khả thi* thành **bất khả biểu diễn**.
+- Index, lock order, khuôn function, tên cột, thứ tự migration.
+- Chọn giữa nhiều cách triển khai cho **cùng một contract đã chốt**.
+
+**Escalate ngược §B → §A** khi và chỉ khi lựa chọn kỹ thuật đó **đổi hành vi người dùng thấy được**, chạm tiền/identity/PII/legal ngoài invariant đã pin, hoặc **khoá một quyết định sản phẩm sau này**. Lúc đó HALT và nâng lên §A — đúng như note sẵn có ở đầu §B.
+
+---
+
 ## A. Founder / policy decisions
 
 | # | Decision boundary cần chốt | DD/OQ | Chặn thật sự | Trạng thái / đề xuất |
 |---|---|---|---|---|
-| A1 | **Money-correction policy** | SES-OQ-1 · PAY-OQ-3 → **DD-49** | Correction core + refund edge; S5/S7 base chạy được theo §E | ✅ **CHỐT policy (2026-07-16, DD-49/v1.37):** đổi giá = host chọn per-change (append signed obligation adjustment HOẶC grandfather; không auto chuyển tiền); allocation reversal chỉ đảo tiền đã nhận; host-cancel đã thu → hoàn toàn bộ; player-leave paid → policy CLB + refund request; rejoin thường + carry-over nếu chưa refund, đã refund → obligation lifecycle mới. **Không mặc định row `charges` thứ hai**; design-probe live UNIQUE charge/player/session trước storage/API. |
+| A1 | **Money-correction policy** | SES-OQ-1 · PAY-OQ-3 → **DD-49** | Correction core + refund edge; S5/S7 base chạy được theo §E | ✅ **CHỐT policy (2026-07-16, DD-49/v1.37; timing clarified 2026-07-19):** đổi giá = host chọn per-change (append signed obligation adjustment HOẶC grandfather; không auto chuyển tiền); allocation reversal chỉ đảo tiền đã nhận; host-cancel đã thu → hoàn toàn bộ; player-leave paid → policy CLB + refund request. Rejoin chưa refund carry-over; refunded + outcome active → append lifecycle idempotent atomic với activation; refunded + full → waitlisted và defer lifecycle/nợ mới tới promotion. **Không mặc định row `charges` thứ hai**; design-probe live UNIQUE charge/player/session trước storage/API. |
 | A2 | **Public gender value set + pricing behavior** | USR-OQ-1 · DD-39 addendum | Gender-pricing charge path | ✅ **CHỐT (2026-07-16):** `male`/`female`/`other`/`undisclosed`; other/undisclosed/NULL → giá base; fail-closed chỉ khi KMS/decrypt lỗi. → mở B2. |
 | A3 | **PII data-class matrix** (scope đã thu hẹp: **không thu SĐT — DD-50**; PII optional thu theo **platform config — DD-54**; còn email, tên, bank memo bắt buộc vận hành) | USR-OQ-3 · SEC-OQ-2 · DD-54 | Go-live thu PII | 🟠 **Collection policy ✅ (DD-54); legal review còn mở — start counsel VN ngay.** Config không thay nghĩa vụ pháp lý cho data đang thu; bank memo từng xếp *nhạy cảm* dưới NĐ 13/2023 cũ — counsel confirm phân loại theo Luật 91/2025 + NĐ 356/2025. |
 | A4 | **Identity recovery + merge/split authority** | ID-OQ-2 · ID-MERGE-1 · RTE-OQ-2 → **DD-53** | Production enablement của S8 | ✅ **CHỐT (2026-07-16, DD-53):** PlatformAdmin freeze (1 người); split apply = 2 approval độc lập; break-glass ticket+expiry+audit; strong proof = verified email/recovery artifact; không rewrite ledger; SLA freeze ≤4h. Build + shadow/dry-run được ngay; bật production cần runbook + drill evidence. |
@@ -44,7 +68,7 @@
 
 | # | Pin / recommended solution | Authority | Chốt trước | Trạng thái |
 |---|---|---|---|---|
-| B0 | **Auth proof + credential lifecycle contract:** Google verify signature + exact issuer/audience + state/nonce/PKCE + `exp/iat` + `email_verified=true`; email credential register → verify → login → forgot/reset → revoke all affected sessions. Verify/reset token hash-at-rest, TTL, purpose-bound, single-use; enumeration-safe response, rate limit, password policy, audit. `link_code` consume lock+TTL/action/source+attempts+single-use trong một transaction. Cấm enable partial lifecycle chỉ có register/login. | Security + Eng | S4 auth implementation | 🟡 Contract đã pin đầy đủ vào Product v2.5 + BE v2.3 theo DD-50/v1.37; còn design-probe schema/functions + transactional revoke-all semantics trước D1. |
+| B0 | **Auth proof + credential lifecycle contract:** Google verify signature + exact issuer/audience + state/nonce/PKCE + `exp/iat` + `email_verified=true`; email credential register → verify → login → forgot/reset → revoke all affected sessions. Verify/reset token hash-at-rest, TTL, purpose-bound, single-use; enumeration-safe response, rate limit, password policy, audit. `link_code` consume lock+TTL/action/source+attempts+single-use trong một transaction. Cấm enable partial lifecycle chỉ có register/login. | Security + Eng | S4 auth implementation | 🟡 Contract đã pin vào Product v2.10 + BE v2.7 theo DD-50/v1.37. **Design-probe đã có (2026-07-18): `b0-auth-credential-lifecycle-design-probe.md`** — map đủ Google proof + email lifecycle + reuse `link_code`; pin account-wide revoke, multi-attempt verify-first registration, complete existing-subject collision cells, protected outbox → pg-boss delivery + DLQ, login finalizer đóng race với reset, trusted-IP reuse live DO/Fly resolver, schema-mirror resolution (a), **OAuth cross-site transaction + Lax browser binding**, **state-issue limiter trước row/cookie**, canonical PKCE ciphertext `bytea`, **email-link non-mutating GET → same-origin POST** và exact IP→target/invalid-artifact rate-limit ordering trước consume. **Chưa đóng:** chờ owner duyệt §3/§3.2/§4/§5/§8/§10 rồi ghi DD vào `standards/decisions.md`; chưa author D1 migration/DDL; email provider vẫn OFF (gate **C7**). |
 | B1 | **Chọn enum migration, không synthetic bank transaction.** Thêm source riêng cho CK do host attest khi chưa ingest (tên cuối pin trong design, ví dụ `attested_bank_transfer`); `bank_transaction_id=NULL`, `created_by` bắt buộc, evidence chỉ lưu opaque reference + audit, không lưu raw receipt mặc định. Giữ `manual` chỉ cho allocation của bank transaction đã ingest. | Money design + Eng; escalate nếu evidence policy chứa PII/legal | S7 manual-transfer path | ⬜ Pin decision table + migration/CHECK/tests; không dùng `cash`, không tạo bank txn giả. |
 | B2 | **Gender price contract:** một canonical price resolver cho mọi charge path; charge/obligation snapshot amount + `price_basis`/rule version, không re-derive theo profile hiện tại. Candidate storage = nullable `sessions.price_male` + `price_female` cạnh base `price_amount`, nhưng final DDL chỉ pin sau decision-table + mutation-path probe. | Money design + Eng; A2 đã đóng | Gender-pricing slice | ⬜ Ready for design-probe: value × override × decrypt/error × price fields; không còn chờ founder A2. |
 | B3 | **Sync delivery correctness**, không chỉ retention: lease owner/expiry, stale-claim reclaim, aggregate head-of-line ordering, per-projector retry/backoff, DLQ + replay authority, idempotency và operator evidence. Chỉ purge khi event terminal cho tất cả required projectors, hết legal/incident hold và qua horizon đã pin. | Reliability + Security/Eng | S6 sync-engine rollout | ⬜ Current `claimed_at` là permanent flag nên crash-reclaim contract chưa enforce được. Design-probe `outbox_events` + `projector_deliveries` trước schema. |
@@ -54,7 +78,7 @@
 | B7a | **DM policy + abuse safety gate** | Founder/Product + Privacy/Legal | Trước in-app DM enablement | ✅ **CHỐT (DD-55/v1.37):** phase-1 open-DM chỉ enable khi block + report + per-sender/per-target rate-limit + abuse audit enforce fail-closed; phase-2 follower accepted direct, còn lại request box. Host/support không đọc DM. CHT-OQ-2 club moderation + retention/legal còn build/go-live gate riêng. |
 | B7b | **Media scope** | Founder/Product + Security/Eng | Chat slice | ✅ **CHỐT (2026-07-16, DD-55): media in-scope phase-1** — build đủ object storage, signed access, malware scan, quota/type/size, moderation, deletion lifecycle. Không ship half-built. |
 | B8 | **Co-admin capability matrix** | Founder + Security; Eng implement registry | Authz slice | ✅ **CHỐT exact matrix (DD-56/v1.37):** default allow routine session/content/member, `member.ban`, money read, manual mark-paid có DD-25; default owner-only role management, correction/refund/waiver/void, bank account, connector secret, billing. Sensitive delegation (trừ role) cần explicit grant+expiry+audit; global DD-51/53 vẫn PlatformAdmin-only. |
-| B9 | **Person-directed notification core cho follow/visibility (DD-47/48):** `notification_intents`/`outbox` hiện tenant-scoped, không cover được global follow-request notify — cần một person-directed core, không clone tenant outbox semantics. USR-OQ-4..9 default fail-closed tới khi slice pin: không cross-tenant stats, private counts/lists hidden, không mở DM/profile visibility mới, không ship block/roster-name expansion. | Product + Privacy + Eng | Settings/follow slice (P4+) | ⬜ Impl-gap ghi trong `BE/feature_user_settings_tech.md`; chưa có design. |
+| B9 | **Person-directed notification core cho follow/visibility (DD-47/48):** `notification_intents`/`outbox` hiện tenant-scoped, không cover được global follow-request notify — cần một person-directed core, không clone tenant outbox semantics. USR-OQ-4..9 default fail-closed tới khi slice pin: không cross-tenant stats, private counts/lists hidden, không mở DM/profile visibility mới, không ship block/roster-name expansion. | Product + Privacy + Eng | Settings/follow slice (P4+) | 🟡 **Đã có design proposal DD-70**, vẫn chờ owner: phương án (a) dùng GLOBAL PROTECTED durable plane; security alert còn phải dispatch qua email identity có `verified_at < event_at` hoặc device subscription có `trusted_at < event_at`. Chốt DD-70 chỉ đóng design-gap; migration/runtime vẫn chưa có. |
 | B10 | **Suspended-tenant reconcile (PAY-OQ-2):** ingest bank transaction **luôn bật**; auto-settle/auto-notify cho tenant `suspended` **OFF fail-closed**. Bật lại về sau cần decision mới + telemetry/evidence, không phải default build. | DD-51 + Eng | S7 rollout | ✅ Policy đã chốt; §E + billing BE contract phải enforce/test. |
 
 ## C. External spikes / verification gates — chạy song song ngay
@@ -69,6 +93,7 @@
 | C4 | **Meta external enablement evidence:** named owner, submission date, exact permissions/artifacts/status/retry và fallback; ghi riêng evidence cho Messenger capability và Facebook Login/account-link, không coi một approval tự bao nhóm còn lại. | DD-33 ✅ (decision owner 18/07) · DD-37 · PMS-OQ-2 | Messenger + Facebook Login/account-link GA | ⬜ **Submission chưa nộp — kick off ngay**; capability non-test phải OFF tới khi exact evidence pass, fallback transactional one-time `link_code`. |
 | C5 | **Production-readiness evidence pack:** provision reproducible; backup restore + failover drill; measured RPO/RTO; KMS key access/rotation/recovery; alert/on-call/runbook; signed result và date. | DD-04 · SEC-OQ-1 (derived) | Production | ⬜ Config/spec không được tính là evidence; phải có drill output. |
 | C6 | **Zalo Premium + add-on managed** (owner >3 CLB): xác nhận pricing/điều kiện Premium OA + khả thi mô hình managed add-on với Zalo. | DD-11 🔗 | Packaging/billing Zalo P4.7 — không chặn S4–S8 | ⬜ Phụ thuộc ngoài; gom evidence cùng lane C3a/C3b khi làm việc với Zalo. |
+| C7 | **Email delivery provider evidence:** (a) **upstream idempotency guarantee** chứng minh được — exact header/param, hành vi khi timeout/crash mơ hồ (điều kiện cứng của B0 probe §5.4); (b) DPA + data region + retention + subprocessors; (c) deliverability: SPF/DKIM/DMARC, domain warm-up, bounce/complaint handling; (d) named owner + due date + fallback. | `b0-auth-credential-lifecycle-design-probe.md` §5.4 · DD-13 (email auth) | **Email auth feature flag** (D1 email-credential-lifecycle bundle) | ⬜ **Chưa khởi động — kick off song song vì lead-time.** Không chứng minh được upstream dedupe ⇒ email provider giữ **OFF**; cấm gọi external send rồi giả định exactly-once. Local receipt ledger không phải proof. Fallback: Google-only auth vẫn ship độc lập (probe §10 order 3). |
 
 ## D. Work items trước khi start code
 
@@ -80,7 +105,7 @@
 | D4 | Reconcile doc wording `MT-OQ-1` "trước P0" đã moot vì P0 merged; worker security contract giữ ở BE §4, exact per-queue function name chốt trong slice triển khai. | ✅ DONE 2026-07-16; Product spec v1.5. |
 | D5 | Author `BE/feature_channel_booking_funnel_tech.md` cùng build slice P4.3 (DD-32 ✅ Option A; theo convention "BE companion viết cùng build slice") — không phải gap quyết định, chỉ là work item chưa track. | ⬜ Trước funnel slice. |
 | D6 | Product/eng defaults delegated (không cần founder, chốt nhanh khi vào slice): WAO-OQ-2 min onboarding steps · MKT-OQ-3 ranking ban đầu · PMS-OQ-1 persistent menu/quick replies. ~~ID-OQ-1 phone-verify~~ → đã resolve bởi DD-50 (không thu SĐT phase-1). | ⬜ Ghi default vào spec OQ khi chốt. |
-| D7 | **Full propagation DD-49..56 + v1.37 safety clarification**: session/cross-club rejoin + append-only correction contract; payment refund/adjustment semantics; billing lifecycle; identity verified-email/link-code body; web auth OIDC + credential lifecycle; chat media + block/report safety; routing exact capability matrix; dependent README/HANDOFF/BUILD-STATUS/founder brief. | ✅ **DONE 2026-07-16; still valid under current decisions v1.47:** DD-57..59 defer, DD-60/DD-61..64/DD-69 status changes do not reopen this closure. Schema/code remain explicitly pending build slices. |
+| D7 | **Full propagation DD-49..56 + v1.37 safety clarification**: session/cross-club rejoin + append-only correction contract; payment refund/adjustment semantics; billing lifecycle; identity verified-email/link-code body; web auth OIDC + credential lifecycle; chat media + block/report safety; routing exact capability matrix; dependent README/HANDOFF/BUILD-STATUS/founder brief. | ✅ **DONE 2026-07-16 under authority v1.47; still valid under current decisions v1.67:** later decisions do not reopen this closure. DD-49 timing clarification now explicitly defers refunded/full lifecycle until activation; schema/code remain pending build slices. |
 | D8 | **Provider-pinned client-IP resolver + CI truthfulness:** DO trusts only `do-connecting-ip`; Fly fallback trusts only `fly-client-ip`; production requires explicit provider; missing/invalid header collapses fail-closed. CI runs format/typecheck/lint/build/full DB suite; separate Security workflow runs Semgrep CE + OSV PR/full dependency scans. | ✅ DONE + REMOTE EVIDENCE 2026-07-17: local web 65 + canonical 223 tests pass; pushed HEAD `299338d` has [CI green](https://github.com/maingocanh1702/plexco-app/actions/runs/29518494545) (install/typecheck/format/lint/build/full test) and [Security green](https://github.com/maingocanh1702/plexco-app/actions/runs/29518495006) (Semgrep CE + OSV full dependency scan). Provider/staging drills remain separate production gates in §C. |
 | D9 | **`phase1-fable5` worktree ownership:** branch hiện có 0 unique commit và đã nằm trong `origin/main`, nhưng ignored `.autopilot/state/**` vẫn là forensic evidence được auth/security docs tham chiếu. Giữ worktree **read-only**, không dùng làm base cho slice mới. Chỉ `ap-finish` sau khi đã archive/migrate các evidence path còn được docs cite; không bare-remove. | ✅ Ownership đã pin; đây là retained forensic worktree, không phải in-flight implementation. |
 
@@ -100,7 +125,7 @@ Nếu không enforce được một negative scope ở boundary thật, **không
 ## Thứ tự xử lý đề xuất
 
 1. Chạy song song lead-time: **A3 legal**, **A7 LLM due-diligence** và **C1–C4 external evidence**.
-2. Chạy decision tables/design-probes cho **B0 auth proof+lifecycle**, **DD-49 money-correction paths**, **B2 gender pricing** và **B3 sync delivery correctness**; storage/API chỉ chốt sau probe.
+2. Owner duyệt **B0 auth proof+lifecycle** và ghi DD; song song chạy decision tables/design-probes cho **DD-49 money-correction paths**, **B2 gender pricing** và **B3 sync delivery correctness**; storage/API chỉ chốt sau probe.
 3. Chốt B1, rồi author mechanism-named manifests/slices: canonical core trước, edge/adapters sau; money/identity invariants serialize.
 4. Thực hiện D1; song song khôi phục current verification evidence D2/D3. Không enable S4 cho đến khi email credential lifecycle hoàn chỉnh.
 5. S5/S7 base chỉ chạy sớm nếu §E pass; nếu không thì chờ correction/gender core + B1.

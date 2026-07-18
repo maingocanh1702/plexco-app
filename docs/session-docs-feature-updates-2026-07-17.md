@@ -41,6 +41,14 @@ The follow-up attempted a manual P0 security slice in:
 
 `/Users/maingocanh/Projects/Plexco app/.autopilot/worktrees/identity-link-security-core`
 
+> ⚠️ **Cập nhật 2026-07-19 — candidate này giờ là bản duy nhất và không được git bảo vệ.**
+>
+> - **Không còn là git worktree.** `.git/worktrees/identity-link-security-core` đã biến mất → `git -C <dir> status` trả `fatal: not a git repository`. `git worktree list` báo *prunable* chính vì lý do này.
+> - **Không recover được từ branch.** Branch `feat/identity-link-security-core` vẫn ở `21e42ea` và **chỉ có `0000–0013`**; toàn bộ 27 file candidate chưa từng được commit.
+> - **Git không nhìn thấy thư mục.** `.gitignore:56` có `.autopilot/*`, nên nội dung không nằm trong bất kỳ commit/stash/reflog nào.
+> - ⇒ 292 file trong thư mục đó là **bản sao duy nhất**. Một lệnh `rm -rf` là mất vĩnh viễn, và `git worktree prune` **không** dọn nó (prune chỉ xoá metadata đã mất sẵn). Muốn giữ thì phải commit vào một branch thật hoặc archive ra ngoài `.autopilot/`.
+> - Mọi link `../.autopilot/worktrees/...` trong file này (20 link) hiện **vẫn mở được**, nhưng chỉ nhờ thư mục còn trên đĩa — không phải nhờ git.
+
 The worktree still points at base commit `21e42ea`, has no feature commit, and contains staged candidate changes. The slice stopped at `HALT MAX_ROUNDS`; therefore every item in this subsection is **candidate-only**.
 
 #### Feature-doc candidates
@@ -66,7 +74,7 @@ The worktree still points at base commit `21e42ea`, has no feature commit, and c
 | [Zalo README candidate](../.autopilot/worktrees/identity-link-security-core/docs/channels/zalo/README.md) | `v0.4 → v0.5`; mirrored HMAC route lookup, encrypted current/pending credentials and fail-closed rotation. |
 | [PRD candidate](../.autopilot/worktrees/identity-link-security-core/docs/product/PRD.md) | `v2.5 → v2.6`; propagated the proposed secure link and channel behavior into user flows. |
 | [TDD candidate](../.autopilot/worktrees/identity-link-security-core/docs/product/TDD.md) | `v2.6 → v2.7`; propagated three-part identity keys, link-code invariants and secret-table architecture. |
-| [BUILD-STATUS candidate](../.autopilot/worktrees/identity-link-security-core/docs/standards/BUILD-STATUS.md) | Recorded candidate migration `0014`, 55 migrated tables, 15 migrations and the 53-table mirror while keeping channel/link runtime pending. |
+| [BUILD-STATUS candidate](../.autopilot/worktrees/identity-link-security-core/docs/standards/BUILD-STATUS.md) | Recorded candidate migration `0014`, 55 migrated tables, 15 migrations and the 53-table mirror while keeping channel/link runtime pending. ⚠️ **Số `0014` nay đã bị chiếm** bởi `0014_players_waitlist.sql` (DD-45, commit `1a6ac38` trên `feat/session-waitlist-expand`). File candidate `0014_identity_channel_security.sql` phải **đánh số lại** theo số monotonic còn trống tại lúc revive — hai file `0014_*` khác tên sẽ **cùng apply** chứ không báo lỗi, nên collision này im lặng. |
 | [DB ERD candidate](../.autopilot/worktrees/identity-link-security-core/packages/db/ERD.md) | Mirrored 55 SQL tables, 78 physical FKs, 53 diagrammed tables and link-code lock ordering. |
 | [DB README candidate](../.autopilot/worktrees/identity-link-security-core/packages/db/README.md) | Documented candidate global-protected identity/link/secret tables and grants. |
 | [DBML candidate](../.autopilot/worktrees/identity-link-security-core/packages/db/db.dbml) | Mirrored the proposed physical schema for diagramming. |

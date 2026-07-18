@@ -2,8 +2,9 @@
 
 > **Canonical phase:** P7 (post-MVP, **đề xuất**)
 > **Track:** 🤖 Club Assistant
-> **Version:** 0.9 · 2026-07-17
+> **Version:** 0.9a · 2026-07-19
 > **Status:** 🟡 Draft — DD-16/17/19–28 liên quan đã chốt và contract đã harden; sẵn sàng cho review/promotion, nhưng **chưa build-ready cho tới khi được formally promote sang Reviewed**. **DD-18** (provider LLM + privacy/ToS) ⬜ là gate **GO-LIVE** sau khi scope implementation được duyệt, không phải lý do tự động promote/build (interface swappable).
+> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web/app surface + sync engine · P3.5 identity · P5 billing entitlement · (KHÔNG cần channel adapters — trợ lý chỉ chạy trong app Plexco)
 > **Tài liệu liên quan:** proposal `../proposals/club-ai-bot-knowledge-base.md` · BE `BE/feature_club_assistant_tech.md` · `feature_inapp_chat.md` (chat cơ bản, DD-38) · `../standards/decisions.md` DD-16..DD-23 · DD-37/DD-38 · `../standards/core-db-architecture-principles.md`
 
@@ -166,6 +167,7 @@ Hai pha surface, đều trong app Plexco (DD-19): **Pha A** = panel "Hỏi trợ
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.9a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.9 | **Readiness closure:** giữ formal status 🟡 Draft cho tới khi Product + BE pair được promote Reviewed; DD-18 tiếp tục là gate GO-LIVE, không tự biến spec thành build-ready. BE companion đồng thời chuyển migration/RLS sang migration mới self-contained và canonical API envelope. |
 | 2026-07-17 | v0.8 | **Provider-truth/cache closure:** narrow idempotency claim to one durable result/message while acknowledging pre-checkpoint provider retries; key embedding cache by model+dims+profile+content hash to prevent cross-model vector reuse. |
 | 2026-07-17 | v0.7 | **DLP re-ingest + canonical chat closure:** pin stable tenant-scoped `source_key`, generation fencing, atomic supersession và fail-closed khi revision mới bị quarantine; UI hiển `blocked_sensitive_content`; bỏ membership/chat model song song, tái dùng canonical `chat_members`/`chat_messages` + `client_msg_id`. |

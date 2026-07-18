@@ -2,8 +2,9 @@
 
 > **Canonical phase:** P4
 > **Track:** 🔄 Sync Engine
-> **Version:** 2.3 · 2026-07-17
+> **Version:** 2.3a · 2026-07-19
 > **Status:** Reviewed (v2.3: canonical command/outbox keys + endpoint-exact channel delivery)
+> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 canonical domain services · P3 pg-boss/outbox · P4 channel adapters
 > **Tài liệu liên quan:** `../product/BRD.md` FR-4 · `../product/PRD.md` FLOW 14 · `../product/TDD.md` §3.8 · BRD OD-7 · `BE/feature_sync_engine_tech.md`
 
@@ -142,6 +143,7 @@ Surface → Command → Domain Service → [State + Deduped Command + Outbox] CO
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.3a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.3 | Reconcile canonical stores/keys: `processed_commands UNIQUE(tenant_id,command_id)`, ordered outbox key và `surface_refs(aggregate_id,platform,target)`; pin exact endpoint-bound identity + separate target-tenant authorization + one-route/no-broadcast cho cả Messenger và Zalo; sửa duplicate use-case IDs. |
 | 2026-07-17 | v2.2 | **DD-65..68:** hybrid Messenger endpoint selection, Page-scoped reachability and one-route logical dedup. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |

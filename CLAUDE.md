@@ -15,6 +15,23 @@
 
 ---
 
+## Review / Plan Readiness — bắt buộc cho mọi session
+
+Mọi session review, reconcile, fix hoặc final docs/decisions/specs/plans/readiness phải:
+
+1. **Đọc trước** `docs/standards/review-code-readiness-gate.md` trước khi sửa hoặc ra verdict.
+2. **Verify live repo truth**: current base/commit, schema, migrations, code, grants/RLS, tests và dependent specs; prose không đủ làm bằng chứng.
+3. Tách rõ `DECISION_FINAL` ≠ `PLAN_READY` ≠ `CODE_READY` ≠ `ENABLE_READY` ≠ `IMPLEMENTED`.
+4. Pin authority bằng **commit SHA + exact target files**. Global decision version tăng do thay đổi ngoài blast radius không tự invalidate slice đã review.
+5. Kết thúc bằng **canonical verdict block** trong gate file. `CODE_READY` chỉ hợp lệ khi closure matrix 12/12 PASS, `OPEN_QUESTIONS_IN_SCOPE: 0`, hard dependencies đã merge (hoặc slice là root dependency), acceptance matrix đủ và first slice có thể thực thi.
+6. Nếu chưa ready, ghi `NOT_PLAN_READY` hoặc `NOT_CODE_READY` kèm exact blocker, owner, binary resolution và `NEXT_REVIEW_TRIGGER`; cấm kết luận mơ hồ “gần final” hoặc tiếp tục polish vòng lặp không giới hạn.
+7. Open question phase sau/enablement-only chỉ được giữ mở khi current behavior + negative scope đã pin và không ảnh hưởng slice đang authorize.
+8. Docs/contract không phải runtime proof; code, migration, tests, deployment và production E2E cần bằng chứng riêng.
+
+Policy này áp dụng kể cả khi user chỉ nói “review”, “check”, “updated”, “fix”, “final” hoặc hỏi plan đã bắt đầu code được chưa.
+
+---
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 

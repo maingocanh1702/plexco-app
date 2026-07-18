@@ -1,8 +1,9 @@
 # Feature: Identity Directory & Merge — Backend Tech Spec
 
 > **Canonical phase:** P3.5
-> **Version:** 1.7 · 2026-07-17
-> **Status:** Implementation contract reconciled to TDD v3.1 / decisions v1.45; endpoint-scoped schema/code pending identity/channel build slices
+> **Version:** 1.10a · 2026-07-19
+> **Status:** Identity implementation contract; DD-50 parent-first consume + DD-70(a) global-notification ownership aligned with current decisions v1.73. Endpoint-scoped schema/code pending identity/channel build slices
+> **Implementation:** Not started — bảng `link_codes`/`merge_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_identity.md`
 > **References:** `../../product/TDD.md` §3.2–3.4/§4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-13/DD-37/DD-50/DD-53/**DD-65..68** · `feature_player_messenger_tech.md`
 
@@ -182,11 +183,11 @@ Errors are generic: `LINK_CODE_INVALID`, `LINK_CODE_RATE_LIMITED`, `MERGE_REQUIR
 
 The consume service is the only runtime principal granted access to `link_codes`. In one transaction it:
 
-1. Resolves the opaque lookup component, locks the matching `link_codes` row `FOR UPDATE`, and re-checks `num_nonnulls(source_channel_identity_id, source_account_id) = 1` even though the database CHECK also enforces it. A missing/corrupt row returns the same generic error.
-2. **Before verifier accounting or merge-plan creation**, rejects when `consumed_at IS NOT NULL`, `revoked_at IS NOT NULL`, `expires_at <= transaction_timestamp()`, `failed_attempts >= max_attempts`, or `locked_until > transaction_timestamp()`. These terminal/locked paths do not increment attempts, unlock, consume or create a plan.
-3. Locks exactly one issuer relation plus the stored source Person. For a channel issuer it loads the active `channel_identities` row and its current `person_id`; for an account issuer it loads the authenticated `accounts.person_id` relation. It derives that current Person server-side and requires exact equality with stored `source_person_id`; the stored Person must still be `active`, with no merge/tombstone redirect. A missing/inactive issuer, changed binding, XOR violation or stale/merged source fails closed; merge commit also revokes outstanding codes so this is defense in depth.
-4. Re-checks `action = 'merge_identity'` and verifies the salted slow hash in constant time. A wrong verifier performs one conditional atomic update `failed_attempts = failed_attempts + 1` only while all step-2 predicates and issuer binding still hold; reaching the cap applies cooldown/lock policy. The service returns a result rather than throwing before that update commits.
-5. For a valid verifier, atomically claims the code with a conditional `UPDATE ... SET consumed_at = transaction_timestamp() WHERE consumed_at IS NULL AND revoked_at IS NULL AND expires_at > transaction_timestamp() AND failed_attempts < max_attempts AND (locked_until IS NULL OR locked_until <= transaction_timestamp()) RETURNING ...`. Exactly one returned row is required. Using the re-derived source Person, it creates the merge plan in the same transaction; zero rows means generic invalid and no plan.
+1. Resolves the opaque lookup component **read-only** to a candidate `{code_id, issuer kind/id, source_person_id}`. A missing/corrupt candidate returns the same generic error; discovery confers no authority and holds no blocking row.
+2. Locks the candidate's canonical owner parents in the shared auth/identity order before the code row. Account-issued: lock canonical account/email parent then current Person; channel-issued: lock current Person then exact active `channel_identities` row. IDs within a tier are UUID-sorted. Re-read issuer binding and derive current Person server-side; missing/inactive issuer, owner drift, stale/merged Person or XOR violation rolls back/retries or returns generic invalid without touching the code.
+3. Locks the exact `link_codes` row `FOR UPDATE`, re-checks lookup hash, issuer refs, `source_person_id`, `num_nonnulls(source_channel_identity_id, source_account_id)=1`, and the parent-derived current Person. Then, **before verifier accounting or merge-plan creation**, rejects `consumed/revoked/expired/locked/max-attempt`; these paths do not increment, unlock, consume or create a plan. This parent-first sequence supersedes code-row-first wording and matches password-reset revoke/cancel.
+4. Re-checks `action = 'merge_identity'` and verifies the salted slow hash in constant time. A wrong verifier performs one conditional atomic update `failed_attempts = failed_attempts + 1` only while every step-3 predicate and issuer binding still holds; reaching the cap applies cooldown/lock policy. The service returns a result rather than throwing before that update commits.
+5. For a valid verifier, atomically claims the already-locked code with a conditional `UPDATE ... SET consumed_at = transaction_timestamp() WHERE consumed_at IS NULL AND revoked_at IS NULL AND expires_at > transaction_timestamp() AND failed_attempts < max_attempts AND (locked_until IS NULL OR locked_until <= transaction_timestamp()) RETURNING ...`. Exactly one returned row is required. Using the re-derived source Person, it creates the merge plan in the same transaction; zero rows means generic invalid and no plan. Barrier tests cover account reset/revoke versus consume and merge commit versus consume; one side wins without deadlock, the loser revalidates fail-closed.
 
 Rate-limit counters outside the row use the same transaction-safe service boundary. Concurrent consumes therefore cannot both pass; terminal rows remain immutable apart from separately audited support revocation policy.
 
@@ -209,8 +210,9 @@ No data changes occur during planning.
 
 ### Commit algorithm
 
+0. If DD-70(a) is enabled, validate capability and inventory all affected Person IDs read-only; call owner-only ordered inbox-fence helper before any merge-plan/Person/source/child lock, then re-inventory after locks. Drift or a newly discovered Person rolls back/retries.
 1. Validate idempotency key, actor authorization and verified method.
-2. Sort source/target person IDs; lock in stable order.
+2. Sort source/target person IDs; lock in stable order after inbox fences.
 3. Reload plan and reject if stale.
 4. Move ChannelIdentity rows to canonical Person.
 5. For each tenant, enter tenant RLS context or use audited narrow merge function:
@@ -222,8 +224,10 @@ No data changes occur during planning.
    - re-parent Messenger reachability only for the same Page endpoint; keep windows/tokens separate across Pages and fail closed on conflicting endpoint rows.
 6. Do **not** update/delete bank transactions or payment allocations. Allocations remain attached to charges; re-parented charges preserve ledger totals.
 7. Mark old Person `merged`, create person tombstone.
+
+`link_code` consume only verifies/consumes and creates the merge plan; it emits no global notification. The merge commit inventories the bounded source/survivor Person set read-only, acquires ordered inbox fences before blocking merge rows, revalidates, and appends `identity_merged` from the exact locked `merge_audit` in the same transaction. An implementation that cannot obey this order is a build halt; tenant outbox is not a global-notification fallback.
 8. Invalidate outstanding link codes and sensitive sessions.
-9. Write encrypted before/after audit + outbox event atomically.
+9. Write encrypted before/after `merge_audit`; when DD-70(a) is active, append the source-derived `identity_merged` item atomically. Any domain outbox is separate and cannot project this global item.
 
 Cross-tenant merge capability is isolated from normal HTTP role and audited per affected tenant. If any tenant step fails, the whole merge rolls back.
 
@@ -339,6 +343,10 @@ Metrics: person/channel creation, merge success/failure by method, claim rejecti
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-19 | v1.10a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
+| 2026-07-19 | v1.10 | **DD-50 v1.73 lock-order closure:** read-only link-code candidate resolve → issuer/account+Person parent locks → code-row lock/revalidation → conditional accounting/consume. Removes reset/revoke-vs-consume inversion; no runtime/migration. |
+| 2026-07-19 | v1.9 | **DD-70(a) v1.70 propagation:** link-code consume emits nothing; merge commit inventories/fences/revalidates and appends `identity_merged` from locked audit in one transaction. Tenant outbox fallback is forbidden; unfit implementation halts. No runtime/migration. |
+| 2026-07-19 | v1.8 | **Superseded by v1.9:** initial DD-70 lock-order propagation; no runtime/migration. |
 | 2026-07-17 | v1.7 | **Zalo trust-boundary correction:** keep `zalo_bots` tenant-private under ENABLE + FORCE RLS and exact tenant context; reserve global-protected/no-blanket-grant semantics for hybrid Messenger registry plus identity/reachability/link-code tables; require narrow endpoint resolver to validate Zalo row, tenant and secret access without reclassification. Runtime migration pending. |
 | 2026-07-17 | v1.6 | **Enforceability closure:** add mutually-exclusive Messenger Page/Zalo bot-OA registry FKs plus relation-based unique indexes and protected hash derivation; pin `link_code` consume ordering, current issuer→Person revalidation and conditional atomic attempt/consume semantics. Runtime migration pending. |
 | 2026-07-17 | v1.5 | **DD-15/DD-50/DD-67 v1.45:** 3-part endpoint-scoped identity key, unified protected reachability by `channel_identity_id`, target-tenant eligibility separated, and XOR channel/account link-code issuer with lock/revoke lifecycle. Runtime migration pending. |

@@ -1,9 +1,9 @@
 # Phase-1 Autopilot — 7h unattended READY run (safe dispatcher)
 
-> **Status:** current owner handoff · 2026-07-18  
+> **Status:** current owner handoff · 2026-07-19
 > **Model:** `claude-fable-5`  
 > **Framework:** canonical `autopilot-prompt-GENERIC` **v0.6.0** or newer  
-> **Authority:** decisions **v1.47** (DD-69 app-native direction ✅ accepted; native build = phase-2 TBD, out of phase-1 committed scope) · feature index **v2.23** · schema/migrations **0000–0013**  
+> **Authority:** decisions **v1.67** (DD-05/06/45/49 integrity; DD-59 ✅; DD-70..72 🟡; DD-73..78 ✅ (build gated)) · PRD **v2.8c** · feature index **v2.29** · merged `main` schema/migrations **0000–0013**; `0014_players_waitlist` chỉ ở `feat/session-waitlist-expand`, chưa merge và behavior chưa build
 > **Supersedes:** `phase1-fable5-RUN.md` and `phase1-fable5-orchestrator.md` — both are historical and
 > must never be executed.
 

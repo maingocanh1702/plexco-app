@@ -2,8 +2,9 @@
 
 > **Canonical phase:** P5  
 > **Track:** 💳 Host Billing  
-> **Version:** 2.7 · 2026-07-16
+> **Version:** 2.7a · 2026-07-19
 > **Status:** Reviewed  
+> **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 tenant/authz · P3 durable payment ingestion · P3 notifications  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-9/BR-11 · `../product/PRD.md` FLOW 11 · `../standards/decisions.md` DD-29/DD-40/DD-37 · `BE/feature_billing_lifecycle_tech.md`
 
@@ -173,6 +174,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.7a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-16 | v2.7 | **DD-51 full propagation:** use cases, edge table, domain fields, state machine and AC now pin trial/reminder/downgrade, invoice grace, refund `paid_at` window, override and suspended automation behavior. Authority: decisions v1.37. |
 | 2026-07-10 | v2.5 | **Review fixes → canonical billing vocab.** Domain model: `invoices`→**`subscription_invoices`**; `billing_credits`/credit concept → **`billing_allocations`** (+ `billing_overrides`); `webhook_transactions`→player `bank_transactions`. Note `plans` CHECK `('free','host_pro')` = migration còn chờ (live schema 4-tier — không claim done). Overpay/partial = billing review queue (không có bảng `billing_credits`). BIL-OQ-1 → DD-29 2 tier. |
 | 2026-07-10 | v2.4 | **DD-40 + DD-37:** free-tier bots = **Zalo + Messenger** (bỏ Telegram; Messenger nay phase-1, bỏ chờ P4.8). Capability flags DD-40: free = `payment_mark_manual`,`reminders_manual`; host_pro += `payment_reconcile_auto`,`reminders_auto`,`assistant_ai_kb`,`crm_dashboard`. Free-tier "đối soát CK cơ bản" → **mark-paid thủ công (tiền mặt/CK, tap/multi-select)**. One-line pointer chat/gender → DD-38/DD-39 (proposal). Owner notice screen: Zalo/Messenger. |

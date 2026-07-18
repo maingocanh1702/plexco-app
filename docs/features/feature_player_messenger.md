@@ -2,10 +2,11 @@
 
 > **Canonical phase:** P2.5 / P4.5 (kênh phase-1 — thay `feature_player_telegram` đã archive)
 > **Track:** 📱 Shared Host & Player Messenger
-> **Version:** 0.5 · 2026-07-17
+> **Version:** 0.7a · 2026-07-19
 > **Status:** Reviewed contract · Implementation pending
+> **Implementation:** Not started — bot mới có queue shell · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 routing/authz · P3.5 identity · P2 session/join · P3 notifications · P4 sync · **App Review Meta** (DD-33)
-> **Tài liệu liên quan:** `../product/BRD.md` FR-3.3 / BR-17 / CO-3 · `../standards/decisions.md` **DD-37, DD-65..68** · **DD-33** (Facebook Login/link ✅ phase-1; App Review pending) · `../channels/messenger/messenger-channel-design.md` · `feature_session_management.md` · `feature_tenant_routing_authz.md` · `feature_identity.md` · `BE/feature_player_messenger_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-3.3 / BR-17 / CO-3 · `../standards/decisions.md` **DD-37, DD-45, DD-49, DD-65..68** · **DD-33** (Facebook Login/link ✅ phase-1; App Review pending) · `../channels/messenger/messenger-channel-design.md` · `feature_session_management.md` · `feature_tenant_routing_authz.md` · `feature_identity.md` · `BE/feature_player_messenger_tech.md`
 
 > **Kênh (DD-37 ✅):** Facebook Messenger là kênh phase-1. **Link tài khoản Facebook (DD-33 ✅ phase-1):** App Review/BM verification submission pending; nếu chậm → degrade sang transactional one-time `/link` code.
 
@@ -37,7 +38,7 @@ Cho host **tạo/quản lý session cơ bản** và player **discover/join/leave
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|
 | PMS-UC-1 | Host/player/dual-role | Nhắn bot / mở persistent menu | Menu đúng capability; central Page auto-select một club hoặc hiện picker khi có nhiều context |
-| PMS-UC-2 | Player | Chọn quick-reply "Tham gia kèo [X]" | Common join service: còn slot→active+charge+venue; full→waitlisted/no-charge/no-venue; sync web |
+| PMS-UC-2 | Player | Chọn quick-reply "Tham gia kèo [X]" | Common join service: first-entry còn slot→active+exactly-one-charge+venue, full→waitlisted/no-charge/no-venue; existing `left`→DD-49 active/waitlisted carry-over/refunded outcome, no duplicate charge; sync web |
 | PMS-UC-3 | Player | Chọn "Rời kèo" | Financial policy check → leave/block |
 | PMS-UC-4 | Player | Xem "Kèo của tôi" | Person-self summary (chỉ dữ liệu của họ) |
 | PMS-UC-5 | Player | Xem "Nợ của tôi" | Hiện số tiền còn nợ + QR/hướng dẫn CK |
@@ -67,7 +68,7 @@ Cho host **tạo/quản lý session cơ bản** và player **discover/join/leave
 | 10 | Cross-Feature | Account merge → PSID context cũ | Invalidate context cũ — dùng merged person |
 | 11 | Financial | Paid/partial player rời kèo | Financial policy check — có thể cần host review |
 | 12 | Security | Page token leak | Blast radius theo đúng Page (central hoặc tenant); rotation/runbook + audit; token không vào tenant query/log |
-| 13 | Concurrency | Quick-reply ở final slot | Session lock: một active, người sau waitlisted với position dương; không charge/venue |
+| 13 | Concurrency | Hai first-entry quick-reply ở final slot | Session lock: một active+exactly-one-charge, người sau waitlisted với position dương; không charge/venue |
 | 14 | Financial | Existing player đã `left` join lại | Route shared DD-49 join/correction handler; render active/waitlisted/carry-over outcome. Chỉ render `REJOIN_REQUIRES_REVIEW` khi core trả unknown/unimplemented; adapter không tự mutate ledger |
 | 15 | Security | Stale/wrong/replayed action token | Deny/re-render choices; token bound actor+Page, TTL, target, snapshot/version; raw ID không có authority |
 | 16 | State | Wizard context-switch/cancel/expire | Một pre-dispatch owner clear state; final confirm luôn re-authorize/revalidate, không partial create |
@@ -129,7 +130,7 @@ Cho host **tạo/quản lý session cơ bản** và player **discover/join/leave
 - [ ] Duplicate webhook/replay idempotent; Meta API fail không rollback canonical.
 - [ ] App Review chưa duyệt → degrade transactional one-time `/link` code; kênh nhắc chính web + Zalo.
 - [ ] Tiền/PII không lộ; identity/reachability Page-scoped; delivery priority không gửi trùng central+tenant Page.
-- [ ] Full→waitlisted/no-charge/no-venue; existing `left` render canonical `active|waitlisted|current|rejoin_review`; review chỉ khi core không chứng minh disposition; Messenger không tự quyết money/capacity.
+- [ ] First-entry full→waitlisted/no-charge/no-venue. Existing `left` render canonical `active|waitlisted|current|rejoin_review`; DD-49 active→carry-or-append, full→carry-history-or-defer-refunded; Messenger không tự quyết money/capacity.
 - [ ] Choices phân trang tối đa 8 business items/page + Prev/Next/Cancel; token TTL/snapshot/version/actor/Page-bound.
 
 ---
@@ -150,6 +151,9 @@ Cho host **tạo/quản lý session cơ bản** và player **discover/join/leave
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.7a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
+| 2026-07-19 | v0.7 | **DD-49 timing mirror:** active rejoin carry/append; full rejoin carry-history/defer-refunded. Messenger remains a thin renderer; authority v1.67. |
+| 2026-07-19 | v0.6 | **DD-45×DD-49 mirror consistency:** qualify no-charge final-slot outcome as first-entry; existing-left rejoin renders shared carry-over/refunded active/waitlisted outcome without creating a new charge. |
 | 2026-07-17 | v0.5 | **decisions v1.45:** 3-part Page-scoped identity key, App-secret ownership clarified in BE, link analytics bỏ OTP-era label, và DD-49 rejoin canonical outcomes. |
 | 2026-07-17 | v0.4 | **DD-65..68:** nâng từ player/Page-per-club spec thành shared host+player hybrid surface; central fallback, optional tenant Page, protected routing, Page-scoped identity/reachability, wizard/opaque actions/one-route delivery và E2E acceptance. |
 | 2026-07-15 | v0.3 | **DD-45:** Messenger render active/waitlisted/current-state/rejoin-review; retire "Hết chỗ" outcome và không tạo charge/venue cho waitlisted. |

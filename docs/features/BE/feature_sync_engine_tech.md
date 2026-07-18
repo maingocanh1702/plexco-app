@@ -1,11 +1,12 @@
 # Feature: Sync Engine & Re-projection — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.4 · 2026-07-17
+> **Version:** 2.4a · 2026-07-19
 > **Status:** Reviewed (v2.4: live-schema rollout truth + endpoint-exact channel delivery)
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_sync_engine.md`
 > **References:** `../../product/TDD.md` §3.8 · `../../standards/decisions.md` DD-37 · **DD-65..68**
-> **⚠️ Live-schema boundary:** endpoint-exact delivery ở đây dựa trên `channel_identity_id` và reachability theo `channel_identity_id` — đó là **target** DD-67; live `channel_reachability` vẫn PK `(person_id, tenant_id, platform)` và `channel_identities` là key 2-phần. Cần migration mới (**≥0014**) land trước runtime; live tables sync (`processed_commands`/`outbox_events`/`projector_deliveries`/`surface_refs`/`public_sessions`) không đổi.
+> **⚠️ Live-schema boundary:** endpoint-exact delivery ở đây dựa trên `channel_identity_id` và reachability theo `channel_identity_id` — đó là **target** DD-67; live `channel_reachability` vẫn PK `(person_id, tenant_id, platform)` và `channel_identities` là key 2-phần. Cần migration mới land trước runtime; `0014_players_waitlist` hiện branch-only/chưa merge, nên slice Sync phải sync mọi prerequisite đã merge rồi chọn **next available monotonic number**, không pin `≥0014`. Live tables sync (`processed_commands`/`outbox_events`/`projector_deliveries`/`surface_refs`/`public_sessions`) không đổi.
 
 > **Cập nhật v2.1 (DD-37 ✅, 2026-07-10):** projectors fan-out phase-1 = **Zalo DM · Facebook Messenger (cửa sổ 24h) · web realtime · public projection**. **Bỏ Telegram** edit-message projectors (`tg_announcement`/`tg_roster`) — Zalo không có inline button (DM number-reply), Messenger gửi message mới trong 24h. Idempotent/re-projection contract không đổi.
 
@@ -237,6 +238,7 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.4a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.4 | **Live-schema rollout closure:** clarify that migration `0005` already owns the command/outbox schema and aggregate-sequence uniqueness; only the separate endpoint identity/reachability migration remains before endpoint-exact delivery. |
 | 2026-07-17 | v2.3 | Restore the already-live `UNIQUE(aggregate_id,sequence)` to this documentation and add its race regression; pin exact endpoint-bound identity, separate target-tenant authorization and one-route/no-broadcast for both Messenger Page and Zalo bot/OA; fix duplicate test IDs. |
 | 2026-07-17 | v2.2 | **DD-65..68:** Page-endpoint candidate resolution, tenant→central priority, logical one-route dedup and retry/fallback tests. |

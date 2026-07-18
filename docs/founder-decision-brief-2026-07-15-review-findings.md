@@ -5,6 +5,7 @@
 > **Scope:** Review-only against the current working tree, canonical decisions, feature specs, schema/migrations, and current provider/legal sources.
 > **Closure update:** 2026-07-15, target rev 4.
 > **Verdict:** **REMEDIATED FOR FOUNDER/LEGAL REVIEW.** The findings below are retained as the historical review record; they no longer describe unresolved defects in rev 4. Founder/legal decisions and canonical propagation remain pending by design.
+> **Supersession note (DD-49, 2026-07-16):** F-04's “genuine rejoin remains fail-closed” records the reviewed pre-decision brief, not the current contract. DD-49 now routes rejoin through common join + proven carry-over/refunded disposition; only unknown/unimplemented disposition fails closed with `REJOIN_REQUIRES_REVIEW`.
 
 ## Closure map — target rev 4
 

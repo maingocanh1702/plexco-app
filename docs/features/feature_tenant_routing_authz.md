@@ -2,8 +2,9 @@
 
 > **Canonical phase:** P2
 > **Track:** 🔐 Routing & AuthZ
-> **Version:** 2.6 · 2026-07-17
+> **Version:** 2.6a · 2026-07-19
 > **Status:** Reviewed · reconciled to TDD v3.1 / decisions v1.45
+> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P0–P1 foundation stable
 > **Tài liệu liên quan:** `../product/BRD.md` BR-1/BR-3/BR-12 · `../product/PRD.md` §2 + §4.2/4.3 · `../product/TDD.md` §3.3–3.5 · `../standards/decisions.md` DD-27/DD-56/**DD-65..68** · `BE/feature_tenant_routing_authz_tech.md`
 
@@ -180,6 +181,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.6a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.6 | **decisions v1.45:** generalized provider-endpoint identity/reachability cho Messenger + Zalo; endpoint/default context tách khỏi target-tenant eligibility. |
 | 2026-07-17 | v2.5 | **Model naming closure:** Product now uses canonical `tenant_link_codes` + `consumed_at`/revoke/attempt lifecycle; explicitly distinct from identity merge `link_codes`. BE legacy DDL marked reference-only. |
 | 2026-07-17 | v2.4 | **DD-65..68:** Messenger hybrid endpoint/default-context model, protected target resolver, central multi-club picker và cross-club opaque action; Page không còn đồng nghĩa tenant. |

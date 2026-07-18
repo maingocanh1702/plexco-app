@@ -3,7 +3,8 @@
 > **Canonical phase:** Px  
 > **Track:** {emoji} {Track name}  
 > **Version:** x.y · YYYY-MM-DD  
-> **Status:** Draft | Reviewed | Approved  
+> **Status:** Draft | Reviewed | Approved *(Reviewed của Plexco ≡ Approved trong `feature-docs-playbook.md` — đã qua review gate + DD)*  
+> **Implementation:** Not started | In progress | Implemented | Verified — đồng bộ `../standards/BUILD-STATUS.md`; từ Implemented trở lên ghi kèm code ref (commit/branch) + test evidence. **Doc status ≠ Implementation status — không suy diễn từ nhau.**  
 > **Prerequisites:** Px–Py stable  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-x · `../product/PRD.md` §x · `../standards/business-rules.md` BL-xxx · `BE/feature_{name}_tech.md`
 
@@ -35,7 +36,7 @@
 |---|----------|------|-------------------|
 | 1 | {Security/Data/Concurrency/UX} | {Case} | {Required behavior}. Ref: {BL/AUDIT} |
 
-> Minimum 10 edge cases, 4+ categories.
+> Minimum 10 edge cases, 4+ categories — **floor chống lười, không phải target**. Feature money/auth/PII (high-risk): bắt buộc decision table cho mọi nhánh tiền/quyền + abuse cases; reviewer hỏi "đường nguy hiểm nào chưa có dòng nào?" thay vì đếm dòng.
 
 ---
 
@@ -45,7 +46,7 @@
 |---------|---------|-------|-------|-------|
 | {Screen/route} | {Skeleton/spinner} | {Main state} | {Error handling} | {Empty state} |
 
-> Mỗi screen cover đủ 4 states. Nếu Empty = N/A → ghi rõ.
+> Coverage theo matrix `state × role × device`, không blanket: screen dữ liệu động mặc định đủ 4 states; static screen/confirmation sheet/permission gate được phép `N/A + lý do` per ô. Error state phải map về Error Codes trong BE tech §3 (message tiếng Việt nhất quán, một catalog duy nhất).
 
 ---
 

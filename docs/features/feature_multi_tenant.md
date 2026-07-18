@@ -2,8 +2,9 @@
 
 > **Canonical phase:** P0–P1
 > **Track:** 🏢 Multi-tenant Core + 3-tier
-> **Version:** 1.7 · 2026-07-17
+> **Version:** 1.7a · 2026-07-19
 > **Status:** Reviewed and reconciled to BRD v3.9b / PRD v2.8 / TDD v3.1 / decisions v1.45; P0–P1 live implementation remains the reality baseline, DD-15/DD-65..68 migration pending
+> **Implementation:** Implemented (foundation) — RLS + tenantRepo + migrations 0000–0013 trên `main` · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Tài liệu liên quan:** `../product/BRD.md` §6–8 · `../product/TDD.md` §3.2–3.4 · `../standards/decisions.md` DD-37/**DD-65..68** · `feature_identity.md` · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md`
 
 > **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (bỏ Telegram). Nền multi-tenant/RLS không đổi; chỉ cập nhật tham chiếu kênh ngoài phạm vi.
@@ -165,6 +166,7 @@ Không gửi schema/migration telemetry chứa row data hoặc PII.
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v1.7a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Implemented (foundation)). Không đổi contract. |
 | 2026-07-17 | v1.7 | **DD-67 v1.45 generalization:** identity/reachability của Messenger + Zalo scoped theo provider endpoint; reachability gắn `channel_identity_id`, target-tenant eligibility authorize riêng. Live P0–P1 RLS baseline không đổi; migration pending. |
 | 2026-07-17 | v1.6 | **DD-65..68 boundary propagation:** Messenger registry/identity/endpoint reachability chuyển target contract sang GLOBAL protected+narrow resolver; tenant Page chỉ default context, không cấp target authority. Live P0–P1 RLS baseline không đổi; migration pending. |
 | 2026-07-16 | v1.5 | Reconcile MT-OQ-1 sau P0: worker security boundary đã canonical ở BE §4; exact per-queue function name được pin trong slice triển khai, không còn wording "trước P0". |

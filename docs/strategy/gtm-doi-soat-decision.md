@@ -6,7 +6,7 @@
 >
 > **Rev 10/07/2026 (DD-37 / BRD v3.4):** **bỏ Telegram** khỏi phạm vi; kênh phase-1 = **Zalo + Facebook Messenger + web**; Messenger **lên phase-1 (P2.5)**, không còn post-MVP. Auth phase-1 = Google/email (DD-13). Các bảng/nhãn "Telegram (MVP)" và "Messenger (post-MVP)" bên dưới đã cập nhật theo DD-37.
 >
-> **Rev 18/07/2026:** Messenger hybrid giữ nguyên. Authority hiện hành: `../standards/decisions.md` **v1.47** · BRD v3.9d · PRD v2.8b · TDD v3.1; DD-69 app-first direction accepted. Đây là tài liệu GTM lịch sử; khi lệch, ưu tiên authority hiện hành.
+> **Rev 19/07/2026:** Messenger hybrid giữ nguyên. Authority hiện hành: `../standards/decisions.md` **v1.67** · BRD v3.9d · PRD v2.8c · TDD v3.1. Đây là tài liệu GTM lịch sử; khi lệch, ưu tiên authority hiện hành.
 
 ---
 

@@ -2,8 +2,9 @@
 
 > **Canonical phase:** P3 (payment ingest) · P4 (web onboarding) · P4.7 (Zalo) — *cross-cutting upgrade*
 > **Track:** 🔌 Connector / Onboarding
-> **Version:** 0.9 · 2026-07-17
+> **Version:** 0.9a · 2026-07-19
 > **Status:** Draft (standard provider contracts reviewed; ApiPay enterprise provider gate open)
+> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3 webhook ingest stable · P4 onboarding wizard scaffold
 > **Tài liệu liên quan:** `feature_web_auth_onboarding.md` (nâng cấp step bank/zalo/messenger) · `feature_zalo_channel.md` · `feature_player_messenger.md` · `feature_payment_reconcile.md` · `../channels/zalo/README.md` §6–7 · `../standards/decisions.md` DD-30/DD-37/DD-33 · `../product/TDD.md` · `../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `../research/player-side-saas-AUDIT.md` §B2
 
@@ -225,7 +226,9 @@ WHERE provider_connection_id IS NULL
 -- connecting|registered|active|drift|error|revoked cùng auto_registered,
 -- rotation_pending và last_setwebhook_at. Không deploy lại phần schema đó.
 
--- TARGET forward migration (>=0014): legacy `secret text` không đạt BL-SEC-1.
+-- TARGET forward migration: chọn next available monotonic number sau khi sync
+-- merged prerequisites (`0014_players_waitlist` hiện branch-only); legacy
+-- `secret text` không đạt BL-SEC-1.
 -- Add nullable first; application migration KMS-encrypts every usable legacy value.
 ALTER TABLE zalo_bots ADD COLUMN webhook_secret_enc bytea;
 
@@ -636,6 +639,7 @@ Tỉ lệ kết nối không-chạm-webhook, `time_to_verify_ms` trung vị, t�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.9a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.9 | **Zalo secret/lifecycle closure:** distinguish live `0004` from the pending KMS migration; replace plaintext `secret` with `webhook_secret_enc`, backfill-or-disable/drop/no-dual-read; pin ciphertext+state receiver matrix and CAS transitions so an early event cannot be downgraded from `active` to `registered`. |
 | 2026-07-17 | v0.8 | **ApiPay enterprise-first closure:** make DD-30 provisioning the primary Product/UI/API path; move BYO API key to explicit owner-selected fallback; pin `/apipay/provision` input, secret-free response boundary, durable idempotency and enterprise-specific errors/tests mirror. |
 | 2026-07-17 | v0.7 | **DD-30/DD-67 closure:** Product capability/DDL/API/rollout now represent ApiPay `enterprise` as phase-1 primary with BYO `api_key` fallback; Zalo Tier-2 reachability binds the exact bot/OA-scoped channel identity instead of a tenant/person-wide row. |

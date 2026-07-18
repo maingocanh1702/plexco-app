@@ -85,7 +85,7 @@
 - **Cần founder:** duyệt.
 
 ### DD-06 · Độ chi tiết vị trí public — 🟡
-- **Đề xuất:** public chỉ hiện **khu vực/quận**; lộ **venue chính xác** sau khi join/được duyệt.
+- **Đã chốt DD-06 (clarified v1.60):** public chỉ hiện khu vực/quận; venue chính xác chỉ khi player active, không phải chỉ vì request approved.
 - **Khuyến nghị:** duyệt (bảo vệ host/venue, vẫn đủ để player quyết định).
 - **Cần founder:** duyệt.
 

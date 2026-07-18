@@ -4,9 +4,9 @@
 >
 > **Reposition (v2 doc, 18/06/2026):** từ "SaaS thu phí cầu lông" → **platform đa môn + marketplace discovery + web sync 2 chiều**. Module đối soát CK (killer cũ) giữ nguyên thiết kế, thành 1 module. Thêm **3 tầng hiển thị** (public discovery / tenant-private RLS / person-self), **sync engine**, **chiều `sport`**.
 >
-> **Tài liệu liên quan hiện hành:** `../product/BRD.md` v3.9d · `../product/PRD.md` v2.8b · `../product/TDD.md` v3.1 · `../product/ROADMAP.md` v3.3b · `../standards/decisions.md` v1.47 · `../dd-69-app-native-analysis.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md`.
+> **Tài liệu liên quan hiện hành:** `../product/BRD.md` v3.9d · `../product/PRD.md` v2.8c · `../product/TDD.md` v3.1 · `../product/ROADMAP.md` v3.3c · `../standards/decisions.md` v1.67 · `../dd-69-app-native-analysis.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md`.
 >
-> ⚠️ **Version note (18/07/2026):** body gốc là historical implementation analysis. Authority hiện hành = BRD 3.9d/PRD 2.8b/TDD 3.1/ROADMAP 3.3b/decisions 1.47. DD-57..59 deferred; DD-60 accepted; DD-61..64 accepted-in-principle/no-runtime; DD-69 direction accepted. PWA vẫn là target chưa có runtime evidence, native phase 2 chưa có lịch, và mọi implementation phải qua technical/store/legal gates trong DD-69.
+> ⚠️ **Version note (19/07/2026):** body gốc là historical implementation analysis. Authority hiện hành = BRD 3.9d/PRD 2.8c/TDD 3.1/ROADMAP 3.3c/decisions v1.67. DD-57..59 deferred; DD-60 accepted; DD-61..64 accepted-in-principle/no-runtime; DD-69 direction accepted; DD-70..72 🟡, DD-73..78 ✅ chốt (build gated). PWA vẫn là target chưa có runtime evidence, native phase 2 chưa có lịch, và mọi implementation phải qua technical/store/legal gates trong DD-69.
 >
 > ⚠️ **SUPERSEDED PARTIALLY:** Telegram historical sections remain reference only. Messenger target was updated again by DD-65..68: one App, central Page always + optional tenant Page; host/player parity, Page-scoped identity/reachability, protected target routing and one-route delivery. Any body text saying Page-per-club-only or `page_id→tenant` is superseded.
 
@@ -215,7 +215,7 @@ interface Session {
   date: string; price: number;
   slotsMax: number | null;               // MỚI — giới hạn slot (discovery hiển thị slot trống)
   area: string | null;                   // MỚI — khu vực (PUBLIC); địa chỉ chi tiết để ở `venue`
-  venue: string | null;                  // chi tiết — CHỈ lộ sau khi join/được duyệt
+  venue: string | null;                  // chi tiết — CHỈ khi player active
   skillLevel: string | null;             // MỚI — gợi ý trình độ
   visibility: "private" | "public";      // MỚI — public ⇒ đẩy lên marketplace
   joinPolicy: "open" | "approval";       // MỚI — join trực tiếp hay chờ host duyệt

@@ -1,8 +1,9 @@
 # Feature: Payment Reconciliation — Backend Tech Spec
 
 > **Canonical phase:** P3 (auto-reconcile) · P2 (manual mark-paid)
-> **Version:** 1.8 · 2026-07-17
-> **Status:** Implementation contract reconciled to TDD v3.1 / decisions v1.45; B1/schema/code pending design-probe/build slices
+> **Version:** 1.9a · 2026-07-19
+> **Status:** Implementation contract reconciled to TDD v3.1 / current decisions v1.67; B1/schema/code pending design-probe/build slices
+> **Implementation:** In progress — core matching/payments-logic đã có; wiring webhook→settle→notify chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_payment_reconcile.md`
 > **References:** `../../product/TDD.md` §3.2/3.6–3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-25/DD-40/DD-49/DD-51
 
@@ -441,7 +442,7 @@ Error codes: `INVALID_WEBHOOK_SECRET`, `ACCOUNT_MISMATCH`, `DUPLICATE_TXN` (200)
 2. Compute preview from one `effectiveAmountDue/effectiveBalance` helper; no call site re-derives totals.
 3. Price change: append signed obligation adjustment or grandfather. Allocation reversal is only for reversing received money.
 4. Refund: record requested/approved/executed state + opaque external reference; append linked allocation reversal only after the real refund disposition being represented. Never mutate/delete original entries.
-5. Rejoin reuses the shared DD-49 disposition from session service: carry-over if not refunded; refunded creates a new obligation lifecycle entry, **not** a duplicate `charges` row.
+5. Rejoin reuses the shared DD-49 disposition from session service: outcome active→carry-over if not refunded or append one idempotent refunded lifecycle; full→waitlisted keeps non-refunded history or defers refunded lifecycle until activation. Never duplicate the `charges` row.
 6. Schema/API names, idempotency keys and participation-lifecycle shape must come from design-probe before migration; current UNIQUE `(tenant,session,player)` is an explicit gate.
 
 ---
@@ -480,7 +481,7 @@ Error codes: `INVALID_WEBHOOK_SECRET`, `ACCOUNT_MISMATCH`, `DUPLICATE_TXN` (200)
 - **(DD-02) SePay `provider_code` ↔ content mismatch** (provider bóc code khác với code trong `content`/prefix/tenant) → **hard-unmatched** (fail-closed, không tự chọn bên nào); ApiPay (không có provider code) → chỉ dựa content resolver.
 - **Mark-paid (DD-40):** tiền mặt → allocation `source='cash'`+`created_by`, không tạo bank txn giả; CK → allocation `source='manual'` khớp một `bank_transactions` row; enum không có `bank_transfer`; multi-select batch idempotent theo `commandId` (retry không double); DD-25 preview→confirm bắt buộc; markPaid → 1 confirm intent tới player.
 - **B1 attested transfer:** before migration → `ATTESTED_TRANSFER_UNSUPPORTED`; after migration → dedicated source, NULL bank txn, actor+opaque evidence; never synthetic bank transaction or `cash|manual` fallback.
-- **DD-49 correction:** price up/down append obligation adjustment; refund reversal links original allocation; carry-over rejoin creates no financial row; refunded rejoin creates one idempotent obligation lifecycle; unknown state fails closed. Every assertion reads the canonical balance helper.
+- **DD-49 correction:** price up/down append obligation adjustment; refund reversal links original allocation; carry-over rejoin creates no financial row. Refunded rejoin creates one idempotent lifecycle **only with active outcome**; full→waitlisted creates none until activation. Unknown state fails closed. Every assertion reads the canonical balance helper.
 - Partial, overpay, multi-charge and multi-person manual allocation totals.
 - Reversal restores bank remainder/charge status exactly.
 - Cash/waiver requires actor and no fake bank transaction.
@@ -527,6 +528,8 @@ Metrics: durable ACK latency, reconcile lag, auto-match rate by policy version, 
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-19 | v1.9a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
+| 2026-07-19 | v1.9 | **DD-49 timing mirror:** refunded rejoin appends an idempotent lifecycle only when active; full→waitlisted defers until activation. No duplicate `charges` row or runtime change. |
 | 2026-07-17 | v1.8 | **Ledger referential-integrity closure:** adds executable candidate keys and composite same-tenant FKs across players, charges, bank accounts/transactions and allocations; charge is bound to its exact session/player/membership and reversal to its original charge. Pins atomic legacy backfill/preflight/validation plus cross-tenant, cross-session and upgrade-parity tests. |
 | 2026-07-17 | v1.7 | **Webhook-auth closure:** durable ingest delegates to exact provider verifiers; SePay timestamp/raw-body `sha256=` HMAC, ±300s and no-downgrade are mandatory, with explicit exact API-key fallback; ApiPay remains separate raw-body HMAC. |
 | 2026-07-16 | v1.6 | **Full DD-49/B1 propagation:** append-only obligation correction + refund/rejoin core, canonical balance helper, live uniqueness design gate; dedicated attested-transfer source and hard ban on synthetic bank transactions; suspended ingest ON / automation OFF. |

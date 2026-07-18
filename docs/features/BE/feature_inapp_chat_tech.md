@@ -1,8 +1,9 @@
 # Feature: In-app Chat (club-wide + 1-1) — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.14 · 2026-07-17
+> **Version:** 0.14a · 2026-07-19
 > **Status:** ✅ DD-38 chốt (2026-07-10) — Draft, pending migration (schema aligned với `packages/db/schema.ts`)
+> **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_inapp_chat.md` *(Draft)*
 > **References:** `../../standards/decisions.md` DD-38 (chat cơ bản phase-1) · DD-55 (open-DM safety + media) · DD-19/DD-20 (trợ lý tái dùng hạ tầng chat) · DD-07 (SSE + LISTEN/NOTIFY) · `../BE/feature_multi_tenant_tech.md` (RLS template) · `../BE/feature_sync_engine_tech.md` (realtime authz)
 
@@ -601,7 +602,7 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 ### Rollout (khi DD-38 ✅)
 
 0. **PRE-PROVISION (tier superuser, production-equivalent, TRƯỚC migration):** idempotent DO-block `CREATE ROLE chat_definer NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION` + **kiểm exact attributes** (login/super/bypassrls/createdb/createrole/inherit/replication) → fail-closed nếu role đã tồn tại sai (BYPASSRLS: **superuser** hoặc role đã có BYPASSRLS + CREATEROLE — PG16) + `GRANT chat_definer TO <migration_owner_role>` (SET ROLE) + `GRANT USAGE ON SCHEMA public TO chat_definer` (runtime). **KHÔNG** đặt trong migration DDL-owner.
-1. **Migration mới sau `0013`** (`0014+`) trước hết tạo candidate key thực thi `memberships_id_person_tenant_uq UNIQUE(id, person_id, tenant_id)`, sau đó mới tạo `chat_*` và các FK ba cột; tiếp theo tạo **safety schema trước** (`chat_blocks`, `chat_reports`, rate/audit state), rồi canonical `assert_dm_allowed`; chỉ sau đó mới tạo functions phụ thuộc (`chat_current_is_member`/`dm_current_read_allowed`/`create_dm`/`send_chat_message`/`mark_read`). **`GRANT CREATE ON SCHEMA public TO chat_definer`** (PG16: owner mới cần CREATE trên schema; fresh PG15+ không cấp mặc định) → `ALTER … OWNER TO chat_definer` cho toàn bộ definer functions → **`REVOKE CREATE ON SCHEMA public FROM chat_definer`** (giữ USAGE); + least-privilege GRANT tables (chat_definer + app) + thêm tenant tables vào RLS list (KHÔNG sửa `0009`). **Chạy/kiểm bằng migration role thật (không superuser)** để bắt gap provision. Migration fail nếu candidate key/safety primitive thiếu; no DM function lands before dependencies. Test bất biến cô lập xanh.
+1. Sau khi sync mọi prerequisite đã merge, chọn **migration number monotonic kế tiếp còn trống tại lúc implement** (`0014_players_waitlist` hiện branch-only, nên không pin `0014+`). Migration trước hết tạo candidate key thực thi `memberships_id_person_tenant_uq UNIQUE(id, person_id, tenant_id)`, sau đó mới tạo `chat_*` và các FK ba cột; tiếp theo tạo **safety schema trước** (`chat_blocks`, `chat_reports`, rate/audit state), rồi canonical `assert_dm_allowed`; chỉ sau đó mới tạo functions phụ thuộc (`chat_current_is_member`/`dm_current_read_allowed`/`create_dm`/`send_chat_message`/`mark_read`). **`GRANT CREATE ON SCHEMA public TO chat_definer`** (PG16: owner mới cần CREATE trên schema; fresh PG15+ không cấp mặc định) → `ALTER … OWNER TO chat_definer` cho toàn bộ definer functions → **`REVOKE CREATE ON SCHEMA public FROM chat_definer`** (giữ USAGE); + least-privilege GRANT tables (chat_definer + app) + thêm tenant tables vào RLS list (KHÔNG sửa `0009`). **Chạy/kiểm bằng migration role thật (không superuser)** để bắt gap provision. Migration fail nếu candidate key/safety primitive thiếu; no DM function lands before dependencies. Test bất biến cô lập xanh.
 2. Club channel (1 kênh/tenant) — send/read + SSE.
 3. Wire mọi request/create/send/read path vào safety core đã land ở migration, verify sender/pair throttles + audit + host/support DM denial; DM vẫn OFF nếu một capability chưa xanh.
 4. Land private media lifecycle (storage grants, scan/moderation worker, ready-only attach, signed read, delete/orphan cleanup).
@@ -612,6 +613,7 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.14a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.14 | **Executable parent-key closure:** migration chat nay bắt buộc chạy `ALTER TABLE memberships ADD CONSTRAINT memberships_id_person_tenant_uq UNIQUE(id, person_id, tenant_id)` trước khi tạo `chat_members/messages`; thêm schema-parity và cross-person/cross-tenant FK regression để các composite FK không còn trỏ tới một candidate key chỉ tồn tại trong comment. |
 | 2026-07-17 | v0.13 | **DD-55 enforceability closure:** pure read predicate gates DM RLS/list/SSE; guarded `send_chat_message` and `mark_read` resolve current membership/peer and call canonical safety core; runtime `app` loses direct message INSERT; all definer ownership/grants and blocked-read/realtime/concurrent-idempotency tests pinned. Club `left` is denied at RLS/RPC boundaries. |
 | 2026-07-17 | v0.12 | **DD-55 bootstrap closure:** `create_dm` calls canonical fail-closed `assert_dm_allowed` before create/reuse; pins direct-RPC parity and existing-DM reuse tests. |

@@ -1,8 +1,9 @@
 # Feature: Web Authentication & Tenant Onboarding — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.6 · 2026-07-18
+> **Version:** 2.7a · 2026-07-19
 > **Status:** Reviewed
+> **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google/email DD-37 chưa code · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_web_auth_onboarding.md`
 > **References:** `../../standards/business-rules.md` BL-SEC-1/BL-SEC-3/BL-MSG · `../../standards/decisions.md` DD-13 · DD-31 · **DD-33** · DD-50 · DD-60 · **DD-65..67** · `../../standards/api-reference-convention.md` · `auth-security-invariant-table.md`
 
@@ -25,7 +26,7 @@ Tables: auth/onboarding + tenant bank/Zalo. Messenger central/tenant registry an
 - Session token stored as hash — rotate on login, ownership assignment, tenant switch.
 - Onboarding commands use `UNIQUE(run_id, step, idempotency_key)` — refresh/back safe.
 - Integration verification async with status polling/outbox event — retries idempotent.
-- **(DD-31 SI-1, added 2026-07-06)** Login is gated by a pre-auth, single-use, short-TTL, browser-bound login-state token (httpOnly cookie + `auth_login_state` row) — additive to, not a replacement for, the same-origin check. Áp cho OAuth callback (Google) và form email/password. See §4 "Login-State CSRF Binding".
+- **(DD-31 SI-1, corrected 2026-07-18)** Pre-auth continuity has two transport-specific owners. Same-origin email login keeps the live `auth_login_state` + Strict cookie + `sameOriginRequest()` pattern. Google/Facebook redirect uses `auth_oauth_transactions` + dedicated path-scoped Lax binding cookie; the cross-site GET callback **must not** call `sameOriginRequest()`. See §4.
 - **(DD-31 SI-2, DD-33)** `account_identities.platform_user_hash` is a domain/provider-separated keyed HMAC over the provider subject (`google.sub`, normalized email, or Facebook app-scoped subject), never a bare hash — key sourced from AWS KMS in staging/prod, `ENCRYPTION_KEY` fallback in dev. See §4 "Web-Auth Identity Hash Keying".
 - **(DD-31 SI-3, added 2026-07-06)** Every tenant-scoped read on this surface combines `withTenant` (RLS) **and** an explicit `tenant_id` predicate in the query — belt-and-suspenders, not RLS alone. See §4 "Explicit Tenant-Filter Policy".
 
@@ -96,24 +97,45 @@ CREATE TABLE onboarding_steps (
 
 Zalo bot and tenant Messenger Page are optional: `not_configured|skipped|error|verified` never changes the predicate. Central Messenger availability is a deployment/platform release gate and cannot be copied into a per-tenant step. Handlers and UI call this shared predicate; they do not re-derive required steps.
 
-### New table (DD-31 SI-1, added 2026-07-06)
+### Pre-auth continuity stores (DD-31 SI-1; cross-site correction 2026-07-18)
 
-Login-state CSRF binding needs its own server-side row per issued state — distinct from `auth_login_nonces` (which is a *replay* guard on the already-signed OAuth id_token / login payload, not a pre-auth browser-binding mechanism):
+The live table remains the owner for same-origin pre-auth continuity (Telegram today; email form target); it is not sufficient for OAuth redirect state:
 
 ```sql
 CREATE TABLE auth_login_state (
-  state_hash  text PRIMARY KEY,   -- sha256(raw state token); raw token lives only in the pre-auth cookie, never in DB
+  state_hash  text PRIMARY KEY,   -- live Telegram today; same-origin email form target; raw token only in Strict cookie
   expires_at  timestamptz NOT NULL,
   consumed_at timestamptz,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 ```
 
-Single-use: a second consume attempt on the same `state_hash` must fail. Short TTL (10 minutes, matching `auth_login_nonces`'s freshness window).
+Google adapter adds one protected transaction table; Facebook reuses it only when its external gate is active:
+
+```sql
+CREATE TABLE auth_oauth_transactions (
+  state_hash           text PRIMARY KEY,
+  provider             text NOT NULL CHECK (provider IN ('google','facebook')),
+  browser_binding_hash text NOT NULL,
+  nonce_hash           text,
+  pkce_verifier_enc    bytea,            -- canonical KMS ciphertext type; Google PKCE S256 only
+  kms_key_version      text,             -- opaque KMS key/version reference metadata
+  expires_at           timestamptz NOT NULL,
+  consumed_at          timestamptz,
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  CHECK (provider <> 'google' OR
+         (nonce_hash IS NOT NULL AND pkce_verifier_enc IS NOT NULL AND kms_key_version IS NOT NULL))
+);
+CREATE INDEX auth_oauth_transactions_expiry_idx ON auth_oauth_transactions(expires_at);
+```
+
+No table grant to runtime roles. Narrow issue/claim functions hash state+binding, encrypt/decrypt the Google PKCE verifier with AAD `(state_hash,provider,key_version)`, consume once and NULL verifier ciphertext at terminal/expiry. `pkce_verifier_enc` stays `bytea`, matching canonical live `*_enc` storage and `oauth_transactions.code_verifier_enc`; `kms_key_version` is separate text metadata, not a ciphertext envelope type. Both stores use a 10-minute TTL; the OAuth callback also verifies exact provider, cookie binding and query state. This is distinct from `auth_login_nonces`, which remains a replay guard on the verified provider payload.
 
 ### DD-50 email-auth storage design gate (required before DDL)
 
 The lifecycle below is normative; physical tables/indexes remain **provisional** until B0 maps every register/verify/login/forgot/reset/revoke path and proves one transactional consume boundary. The probe must produce a decision table and exact uniqueness/expiry/cleanup constraints. It must not assume that the current single-token `revokeWebSession` helper already provides account-wide revocation.
+
+> **(2026-07-18) Probe draft:** `../../b0-auth-credential-lifecycle-design-probe.md` — maps every register/verify/login/forgot/reset/revoke path, pins the single transactional consume boundary, the account-wide revoke primitive (ungranted internal helper + current-session-derived public wrapper), multi-attempt verify-first registration, the protected outbox → pg-boss delivery boundary and the login finalizer that closes the stale-password/reset race. **Still awaiting owner approval**, so the tables/indexes below stay provisional: no migration/DDL may be authored from it yet and the email provider stays fail-closed OFF (external gate `C7` in `../../pre-code-open-items-2026-07-16.md` §C).
 
 - Credential record: one active password hash per email identity; unverified identity cannot login.
 - Verify/reset artifact: purpose-bound, random high-entropy raw token returned only to the delivery boundary; database stores only its hash, `expires_at`, `consumed_at`, and audit metadata.
@@ -154,14 +176,16 @@ The lifecycle below is normative; physical tables/indexes remain **provisional**
 
 | Method | Path | Auth | Mô tả |
 |--------|------|------|-------|
-| GET | /api/auth/google/state | ⬜ Public | Issue pre-auth login-state token + cookie (DD-31 SI-1) — call before redirecting to Google OAuth |
-| GET | /api/auth/google/callback | ⬜ Public | Google OAuth verify (id_token/nonce) **+ login-state consume (DD-31 SI-1, additive — see §4)** |
-| GET | /api/auth/facebook/state | ⬜ Public | Issue browser-bound, single-use login-state; return provider redirect only when external gate/config active |
-| GET | /api/auth/facebook/callback | ⬜ Public | Consume login-state; server-side code exchange; verify configured-App app-scoped subject; issue/rotate session |
+| GET | /api/auth/google/state | ⬜ Public | Trusted-IP issue bucket trước row/cookie; issue OAuth transaction + provider-specific Lax binding; redirect với state+nonce+PKCE S256 |
+| GET | /api/auth/google/callback | ⬜ Public | Separate trusted-IP callback bucket; cross-site GET claims exact state+binding, exchanges code+PKCE, verifies OIDC proof; **no `sameOriginRequest()`** |
+| GET | /api/auth/facebook/state | ⬜ Public | Shared trusted-IP issue bucket trước row/cookie; issue OAuth transaction + Lax binding only when external gate/config active |
+| GET | /api/auth/facebook/callback | ⬜ Public | Separate trusted-IP callback bucket; claim state+binding; server-side code exchange + configured-App subject proof; **no same-origin header gate** |
 | POST | /api/auth/email/register | ⬜ Public | Email + password self-register (email verification) |
-| POST | /api/auth/email/verify | ⬜ Public | Atomically consume verify token; mark email identity verified |
+| GET | /auth/email/verify | ⬜ Public | Non-mutating landing; scrub token; no lookup/consume; explicit user confirmation only |
+| POST | /api/auth/email/verify | ⬜ Public | Same-origin POST + exact Strict registration cookie; atomically consume token/attempt and verify |
 | POST | /api/auth/email/login | ⬜ Public | Email + password login **+ login-state consume (DD-31 SI-1)** |
 | POST | /api/auth/email/forgot | ⬜ Public | Enumeration-safe reset request; issue hash-only TTL/single-use reset token when eligible |
+| GET | /auth/email/reset | ⬜ Public | Non-mutating reset landing; scrub token; no consume/credential mutation before explicit form submit |
 | POST | /api/auth/email/reset | ⬜ Public | Atomically consume reset token, update password hash, revoke every affected web session |
 | POST | /api/auth/logout | ✅ Account/Person | Revoke current session |
 | POST | /api/auth/logout-all | ✅ Account/Person | Revoke all web sessions for current account |
@@ -192,10 +216,15 @@ The lifecycle below is normative; physical tables/indexes remain **provisional**
 
 | Endpoint | Limit | Scope |
 |----------|-------|-------|
-| Login callback | 10/min | Per IP |
-| Email register/verify/forgot/reset | 5/15min | Per normalized email hash + IP; public response remains enumeration-safe |
+| OAuth state issue | 10/min | Shared trusted-IP bucket across Google+Facebook; check before transaction insert/cookie; limiter/storage failure creates neither |
+| OAuth callback | 10/min | Separate trusted-IP bucket; check before claim/provider exchange |
+| Email login | 10/min trusted-IP + 5/15min normalized-email-HMAC | Independent buckets; both must pass before Argon2/session path |
+| Email register/forgot | 5/15min | Independent normalized-email-HMAC + trusted-IP buckets |
+| Email verify/reset | 5/15min | Trusted-IP first; then non-consuming active-token→stored-email-hash target bucket, or domain-separated invalid-artifact bucket; both before consume |
 | Tenant creation | 3/hour | Per account |
 | Provider verify | 5/10min | Per tenant |
+
+Verify/reset ordering is normative: trusted-IP limit runs before token lookup; a protected non-mutating resolver may map only an active, unexpired token hash to the stored `email_lookup_hash`. The second bucket is target-email for a resolved token, otherwise `HMAC(domain='auth-invalid-artifact-rate', token_hash)`. No branch returns email/account data or changes the public response. Any bucket/rate-limit-storage failure fails closed with zero token consume or credential/session mutation.
 
 ---
 
@@ -203,7 +232,7 @@ The lifecycle below is normative; physical tables/indexes remain **provisional**
 
 ### Session Security
 
-- `secure`, `httpOnly`, `sameSite=strict` cookies.
+- Session cookie: `Secure`, `HttpOnly`, `SameSite=Strict`, host-only. Email login/registration pre-auth cookies are also path-scoped Strict. OAuth binding is a separate provider-specific `Secure; HttpOnly; SameSite=Lax` cookie scoped to the exact callback path and ≤10 minutes; it is never accepted as a session.
 - CSRF token per session — verify on all mutations.
 - CSP, X-Frame-Options, clickjacking protections.
 - Session rotation on: login, owner assignment, tenant switch.
@@ -223,15 +252,15 @@ reset    -> atomic consume -> replace password hash + revoke all account session
 
 One canonical token-consume helper owns purpose/TTL/single-use checks. One canonical account-session revoke helper owns revoke-all. Delivery logs contain no raw token; analytics contain only outcome class. Enabling `email` requires all lifecycle endpoints, jobs/cleanup, audit fields, and regression tests to be green together.
 
-### Login-State CSRF Binding (DD-31 SI-1, added 2026-07-06 · updated 2026-07-10 DD-13)
+### Pre-auth browser continuity (DD-31 SI-1 · cross-site correction 2026-07-18)
 
-Three artifacts, additive to the existing same-origin check (defense-in-depth, does not replace it):
+The transport is part of the security contract; one cookie policy cannot safely serve both:
 
-1. **Migration:** `auth_login_state` table (§2) — single-use, short-TTL (10 min), keyed by `state_hash`.
-2. **Issue route:** `GET /api/auth/{google|facebook}/state` mints a random state token, stores `sha256(token)` in `auth_login_state`, and sets a short-TTL httpOnly pre-auth cookie. It only redirects when that provider's config/gate is active. The email/password login form reuses the same pre-auth state cookie.
-3. **Callback consume:** `GET /api/auth/{google|facebook}/callback` (and `POST /api/auth/email/login`) reads the pre-auth cookie, hashes it, looks up `auth_login_state` — reject (`AUTH_INVALID`) if missing, expired or consumed; otherwise consume it single-use alongside provider proof/password + same-origin verification. Only after every provider-specific check passes may the flow issue/rotate a session.
+1. **Same-origin credential form:** `GET /api/auth/email/state` mints a row in live `auth_login_state` and a host-only `Secure; HttpOnly; SameSite=Strict` cookie scoped to `/api/auth/email/login`. `POST /api/auth/email/login` requires both `sameOriginRequest()` and atomic state consume before credential finalization.
+2. **Cross-site OAuth redirect:** `GET /api/auth/{google|facebook}/state` always generates independent 32-byte state + browser binding; Google additionally generates nonce + PKCE verifier and stores the encrypted verifier in `auth_oauth_transactions`. It sets a provider-specific host-only `SameSite=Lax` cookie containing `{state,binding}` at the exact callback path, then redirects with provider-specific parameters. The callback is a top-level cross-site GET, so it intentionally does **not** call `sameOriginRequest()` or require same-origin Origin/Referer. It atomically claims exact state+provider+binding+TTL before exchange/proof; missing/mismatch/replay always rejects, Google additionally rejects PKCE/nonce downgrade, and Facebook verifies the stable subject of the exact configured App. Session mint occurs only after full provider-specific proof, and the new session cookie is Strict.
+3. **Email links:** verify/reset GET is non-mutating landing only, with no third-party resources and token scrub. An explicit user action submits same-origin POST. Verify additionally requires the exact Strict registration-key cookie; wrong browser gets handoff/re-register without consuming the token. Reset GET never consumes or changes credentials. This makes link scanners/prefetch harmless.
 
-This closes the gap the Origin/Referer check alone cannot: it proves the callback is a continuation of the SAME browser session that started the login (state-bound), independent of which transport delivered the callback request.
+OAuth state/binding, authorization code, nonce, verifier and email URL token are excluded from logs/analytics. Callback/landing responses set `Referrer-Policy: no-referrer`. These bindings prove browser continuity without misclassifying a legitimate provider redirect as same-origin.
 
 ### Web-Auth Identity Hash Keying (DD-31 SI-2, added 2026-07-06 · updated 2026-07-10 DD-13/DD-37)
 
@@ -317,6 +346,14 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | 40 | Facebook hash parity | Same verified app-scoped subject on create then login | Identical domain/provider-separated HMAC; no lockout |
 | 41 | Login subject vs PSID | Same person/profile hints exist in Messenger channel identity | No automatic link/merge; requires verified identity or consumed one-time `link_code` |
 | 42 | Facebook external gate OFF | Non-test user requests state/callback without recorded evidence | Capability hidden/OFF or 503; no redirect, exchange, identity or session |
+| 43 | Google cross-site callback | Top-level GET from Google; Origin absent or Referer=provider; matching Lax binding/state/PKCE/nonce | Login succeeds; callback never invokes `sameOriginRequest()`; issued session cookie remains Strict |
+| 44 | OAuth callback wrong browser/binding | Valid provider code+state opened without matching provider binding cookie | 401 generic; no exchange-derived identity/session mutation; transaction not reusable after a valid claim |
+| 45 | Google PKCE downgrade/mix-up | Missing challenge/verifier, wrong provider row or callback path | Reject; no token/identity/session; exact redirect/provider enforced. Facebook remains state/binding + configured-App proof unless a later provider contract explicitly adds PKCE |
+| 46 | Email link scanner | GET verify/reset URL without user POST | 200 landing or generic page; zero token consume, verification, credential or session mutation |
+| 47 | Verify wrong browser | Valid token but missing/wrong Strict registration cookie on same-origin POST | Generic handoff/re-register; token and pending winner remain unconsumed |
+| 48 | OAuth state issue exhaustion | 11 starts/min from one trusted IP, alternating Google/Facebook | 11th returns 429 before row/cookie; callback bucket remains independent; limiter error also creates nothing |
+| 49 | Verify/reset limit ordering | IP over limit; valid target over limit; invalid/expired token | IP denial performs no token lookup; target denial performs no consume; invalid uses HMAC artifact bucket; all responses remain generic/no mutation |
+| 50 | OAuth PKCE ciphertext schema parity | Schema/migration/catalog inspection | `auth_oauth_transactions.pkce_verifier_enc=bytea`; no base64-text exception; key version remains separate metadata |
 
 ### Integration Tests
 
@@ -327,6 +364,8 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | 3 | Concurrent wizard sessions | 2 tabs same wizard | Idempotent |
 | 4 | First session readiness | Complete all steps → create session | Session created |
 | 5 | Optional tenant Page | Connect Page then revoke/fail | Branded endpoint status changes; central route remains available |
+| 6 | Real redirect transport | Browser starts Google flow, returns by cross-site top-level GET | Lax binding arrives and full proof succeeds; Strict session cookie is issued only afterward |
+| 7 | Webmail/link-scanner transport | Scanner GET then user opens link in original/wrong browser | Scanner is no-op; original-browser explicit POST can verify; wrong browser cannot install its attempt credential |
 
 ---
 
@@ -353,6 +392,8 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.7a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
+| 2026-07-18 | v2.7 | **Cross-site auth + final review correction:** live Strict/same-origin login-state remains only for same-origin form; Google/Facebook use protected OAuth transaction + provider-specific Lax binding; verify/reset links use non-mutating GET → explicit same-origin POST. OAuth state issue now has a pre-insert/cookie trusted-IP bucket distinct from callback; verify/reset pin IP→non-mutating target resolve→target/invalid-artifact bucket→consume ordering; Google PKCE KMS ciphertext uses canonical `bytea` while key version remains separate text metadata. Add transport/link-scanner/rate-order/Google-PKCE tests. |
 | 2026-07-18 | v2.6 | **DD-33 + DD-60:** add gated Facebook state/callback contract, server-side exchange + app-scoped subject verification, domain-separated HMAC, PSID separation, exact external evidence gate/fallback, live-schema no-CHECK truth and auth legend convention. |
 | 2026-07-17 | v2.5 | **WAO-OQ-2 closure:** one shared readiness predicate requires club-or-personal space, verified bank and first session; Zalo/tenant Page remain optional and central Messenger stays a platform release gate. |
 | 2026-07-17 | v2.4 | **DD-65..67:** central Page is platform default; tenant Page optional, readiness can pass without it; hybrid registry migration/fallback tests added. |
