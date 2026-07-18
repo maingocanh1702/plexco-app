@@ -127,9 +127,7 @@ describe("players.status domain (DD-45)", () => {
 
 describe("state-shape invariant: waitlisted <=> has position", () => {
   it("rejects waitlisted WITHOUT a position", async () => {
-    await expect(insertPlayer(0, "waitlisted", null)).rejects.toThrow(
-      /players_waitlist_shape_chk/,
-    );
+    await expect(insertPlayer(0, "waitlisted", null)).rejects.toThrow(/players_waitlist_shape_chk/);
   });
 
   it("rejects active KEEPING a stale position", async () => {
