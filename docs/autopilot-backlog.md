@@ -111,7 +111,7 @@ notes: P0 manual workflow only; canonical v0.6.0 classifies its migration orches
 
 ## task: infra-egress-compatibility-evidence
 title: Close DD-04 fixed-egress compatibility evidence for SePay, ApiPay, Zalo and Meta
-status: ready
+status: planned
 risk: P2
 change_class: docs-provider-evidence
 depends_on: []
