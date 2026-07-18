@@ -1,0 +1,28 @@
+{
+  "feature": "docs-auth-d0-d1-implementation-packet",
+  "branch": "feat/docs-auth-d0-d1-implementation-packet",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "docs-traceability",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "1x_clean",
+  "authority": "DD-80 (decisions v1.77) · b0-auth-credential-lifecycle-design-probe.md (owner-approved) · feature_web_auth_onboarding_tech.md v2.8 acceptance D0/D1 · slice-readiness-verdicts.md v0.3 Verdict 3/4",
+  "depends_on": [],
+  "dep_checks": [
+    { "file": "docs/autopilot-manifests/auth-s4-d0-revoke-core.json", "symbol": "auth-s4-d0-revoke-core" },
+    { "file": "docs/b0-auth-credential-lifecycle-design-probe.md", "symbol": "DD-80" }
+  ],
+  "invariants": ["auth", "schema"],
+  "negative_scope": [
+    "NO file under packages/ or apps/ may be created or modified — DDL/code exists ONLY as fenced draft text inside the packet doc",
+    "NO migration files, NO secret values, NO provider resources, NO App Specs/workflows",
+    "NO edit to Reviewed specs (feature_web_auth_onboarding*.md), decisions.md, or slice-readiness-verdicts.md",
+    "NO new business/security rule may be invented — any contract ambiguity is HALT-AUTHORITY_AMBIGUOUS, not a local decision",
+    "This packet does NOT authorize D0/D1 build; P0 auth code remains founder-attended manual workflow"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/docs-auth-d0-d1-implementation-packet.json",
+    "docs/auth-d0-d1-implementation-packet.md"
+  ]
+}
