@@ -2,8 +2,9 @@
 
 > **Canonical phase:** P3.5
 > **Track:** 🆔 Identity & Merge
-> **Version:** 1.7 · 2026-07-17
-> **Status:** Reviewed and reconciled to BRD v3.9b / PRD v2.8 / TDD v3.1 / decisions v1.45; endpoint-scoped identity/reachability schema/runtime pending build slices
+> **Version:** 1.10a · 2026-07-19
+> **Status:** Reviewed identity contract; DD-50 parent-first consume + DD-70(a) global-notification ownership aligned with current decisions v1.73. Endpoint-scoped identity/reachability schema/runtime pending build slices
+> **Implementation:** Not started — bảng `link_codes`/`merge_*` có sẵn · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 tenant routing + P3 ledger stable
 > **Tài liệu liên quan:** `../product/BRD.md` FR-7 · `../product/PRD.md` FLOW 5 + §4.2 · `../product/TDD.md` §3.2–3.4/§4 · `../standards/decisions.md` DD-13/DD-33/DD-37/DD-50/DD-53/**DD-65..68** · `feature_player_messenger.md` · `../research/player-side-saas-AUDIT.md` C1–C5
 
@@ -74,21 +75,24 @@ Mỗi người thật có một `Person` toàn cục; tài khoản **Zalo / Face
 - Chỉ lưu hash + salt, không log plaintext.
 - TTL mặc định 10 phút; single-use; `consumed_at` immutable; có `max_attempts`, `locked_until`, `revoked_at`.
 - Bind `source_person_id` và **exactly one** issuer: `source_channel_identity_id` XOR `source_account_id`; issuer phải resolve về source Person hiện hành dưới lock. Không nhận source Person do client tự khai và không dùng code như bearer permission cho tenant.
-- Consume transaction lock row rồi reject `consumed/revoked/expired/locked/max-attempt` trước khi ghi attempt hoặc tạo plan; các path này không làm đổi counter. Sau đó lock đúng một issuer, re-derive current source Person server-side và require khớp source đã bind, rồi mới verify action/hash.
+- Consume first resolves the candidate code + stored issuer/source refs **read-only**. It locks the canonical issuer/account and current Person parent in the shared deterministic order, then locks/re-reads the exact code row and requires candidate hash/issuer/source still match. Only then does it reject `consumed/revoked/expired/locked/max-attempt`, re-derive current source Person and verify action/hash; terminal/drift paths create no attempt/plan. This parent-first order is shared with password-reset revoke/cancel and supersedes code-row-first wording.
 - Wrong verifier increment đúng một lần bằng conditional atomic update; valid verifier conditional-set `consumed_at` đúng một lần và tạo merge plan từ re-derived Person trong cùng transaction. Concurrent/stale issuer hoặc zero-row update đều fail closed bằng lỗi generic.
 - Tối đa 5 attempts/10 phút theo source + IP/platform identity; exponential cooldown.
 - Yêu cầu explicit confirmation trước khi merge; thông báo cả hai channel sau merge.
 
 ### Merge transaction
 
+0. If DD-70(a) is enabled, read-only inventory every affected Person, lock inbox fences UUID-ascending before any Person/source/child row, then re-inventory after locks; drift rolls back. This includes merge source/survivor and any notification-owned actor/reference.
 1. Authorize actor/signal; load source/target Person theo thứ tự ID ổn định để tránh deadlock.
-2. Lock Person, channel identities, memberships, charges và reachability liên quan.
+2. Lock Person, channel identities, memberships, charges và reachability liên quan after inbox fences.
 3. Chọn canonical Person; chuyển ChannelIdentity.
 4. Với tenant chỉ có một membership: re-parent membership sang canonical Person.
 5. Với membership conflict: chọn survivor theo history/age; re-parent players/charges; giữ merged membership làm tombstone/audit mapping.
 6. Không sửa bank transactions hoặc payment allocations; chúng tiếp tục trỏ charge lịch sử đã được re-parent hợp lệ.
 7. Re-parent endpoint reachability theo exact channel identity; dedupe chỉ cùng endpoint identity và không copy/OR window-token xuyên Page/bot/OA; invalidate link codes/sessions nhạy cảm.
-8. Ghi `merge_audit` + outbox event trong cùng transaction.
+8. Ghi `merge_audit`; nếu DD-70(a) active, append `identity_merged` từ exact locked audit trong cùng transaction. Domain outbox khác (nếu có) không sở hữu global notification.
+
+`link_code` consume chỉ verify/consume và tạo merge plan; nó **không emit global notification**. Merge commit luôn inventory bounded source/survivor read-only, lock inbox fences trước mọi blocking Person/source row, revalidate rồi append từ locked `merge_audit`. Nếu implementation không tuân được order này thì build HALT; tenant `outbox_events` không phải global fallback.
 
 ---
 
@@ -178,7 +182,7 @@ Không gửi raw platform UID, phone/email, display name, bank account hoặc `l
 - [ ] Zalo/Messenger identity và reachability exact endpoint-scoped bằng Page/bot-OA registry FK + platform CHECK + server-derived hashes; không reuse window/token xuyên endpoint hoặc gửi trùng central+tenant Page.
 - [ ] Membership creation idempotent.
 - [ ] Claim membership có tài chính bằng tên bị chặn.
-- [ ] `link_code` cryptographic ≥64-bit, hash-at-rest, issuer XOR channel/account, current source Person re-derived under lock, terminal states rejected before counter mutation, atomic attempts, conditional single-use consume và explicit confirm.
+- [ ] `link_code` cryptographic ≥64-bit, hash-at-rest, issuer XOR channel/account; read-only candidate resolve → canonical issuer/account+Person parent locks → code-row lock/revalidation; current source Person re-derived, terminal states rejected before counter mutation, atomic attempts, conditional single-use consume và explicit confirm. Reset/revoke-vs-consume barrier tests show no deadlock and one fail-closed loser.
 - [ ] Merge concurrent/ngược chiều không deadlock hoặc tạo duplicate.
 - [ ] Membership conflict tạo survivor + tombstone, giữ players/charges/history.
 - [ ] Merge không sửa/xóa bank transaction/payment allocation và không đổi tổng ledger.
@@ -204,6 +208,10 @@ Không gửi raw platform UID, phone/email, display name, bank account hoặc `l
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v1.10a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
+| 2026-07-19 | v1.10 | **DD-50 v1.73 lock-order closure:** link-code consume resolves read-only, locks issuer/account + Person parent before the code row, then revalidates and conditionally accounts/consumes. Removes reset/revoke-vs-consume inversion; no runtime/migration. |
+| 2026-07-19 | v1.9 | **DD-70(a) v1.70 propagation:** link-code consume emits nothing; merge commit inventories/fences/revalidates then appends `identity_merged` from locked audit in the same transaction. Tenant outbox fallback is forbidden; unfit implementation halts. No runtime/migration. |
+| 2026-07-19 | v1.8 | **Superseded by v1.9:** initial DD-70 lock-order propagation; no runtime/migration. |
 | 2026-07-17 | v1.7 | **Enforceability closure:** exact Page/bot-OA registry relation/FK+CHECK beside server-derived HMAC; `link_code` terminal-first consume, XOR issuer/current-Person revalidation and conditional atomic attempt/consume. Runtime/migration vẫn pending. |
 | 2026-07-17 | v1.6 | **DD-15/DD-50/DD-67 v1.45:** generalize endpoint-scoped identity/reachability cho Messenger+Zalo; uniqueness 3-part với domain-separated hashes; `link_code` issuer XOR channel/account + terminal lifecycle. Runtime/migration vẫn pending. |
 | 2026-07-17 | v1.5 | **DD-65..68/DD-67 full propagation:** Messenger identity HMAC gồm `page_id+PSID`, explicit Page binding, endpoint-scoped reachability/window, merge không collapse token xuyên Page và one-route acceptance. Zalo vẫn tenant-scoped; live migration/runtime pending. |

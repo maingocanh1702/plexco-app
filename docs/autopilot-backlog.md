@@ -157,6 +157,18 @@ manifest: docs/autopilot-manifests/docs-session-management-acceptance-checklist.
 merged_probe: docs/issues/session-management-acceptance-checklist.md :: SESSION_MGMT_CHECKLIST_CLOSED
 notes: Launcher-ready docs-only AP-25 slice. Convert acceptance criteria + DoD from feature_session_management(_tech) into a traceable issue checklist (LOCAL specs only, every item src-traced, no invention); serves ROADMAP Next Actions #3. Docs traceability only, NOT session build authorization. `schema` token = domain only; scope is one checklist markdown file. Fail closed if a referenced spec section is missing. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-docs-session-management-acceptance-checklist.md`.
 
+## task: docs-auth-d0-d1-implementation-packet
+title: Copy-paste-grade implementation packet for auth slices D0 revoke-core + D1 google-adapter
+status: ready
+risk: P2
+change_class: docs-traceability
+depends_on: []
+invariants: [auth, schema]
+scope: [docs/auth-d0-d1-implementation-packet.md]
+manifest: docs/autopilot-manifests/docs-auth-d0-d1-implementation-packet.json
+merged_probe: docs/auth-d0-d1-implementation-packet.md :: AUTH_D0_D1_PACKET_COMPLETE
+notes: Launcher-ready docs-only AP-26 slice. Transcribe DD-80/B0 (owner-approved v1.77) into draft DDL 0015/0016, schema-mirror plan, route/adapter outlines and test skeletons mapped 1-1 to acceptance D0-1..10/D1-1..15 (web_auth tech v2.8), plus DD-38/39 readiness listing src-traced from existing specs. All drafts live ONLY inside the packet doc — no packages/apps edits, no Reviewed-spec/decisions/verdicts edits, no new rules (ambiguity = HALT-AUTHORITY_AMBIGUOUS). Does NOT authorize P0 auth codegen; D0/D1 build stays founder-attended. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-docs-auth-d0-d1-implementation-packet.md`.
+
 ## task: core-matcher-grouped-amount-parsing
 title: splitNameAmount misparses grouped trailing amounts with a non-zero final group
 status: planned

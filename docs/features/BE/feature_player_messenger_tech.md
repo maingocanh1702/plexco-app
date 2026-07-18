@@ -1,10 +1,11 @@
 # Feature: Shared Host & Player Facebook Messenger Experience — Backend Tech Spec
 
 > **Canonical phase:** P2.5
-> **Version:** 0.4 · 2026-07-17
+> **Version:** 0.6a · 2026-07-19
 > **Status:** Reviewed contract · Implementation pending
+> **Implementation:** Not started — bot mới có queue shell · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_player_messenger.md`
-> **References:** `../../standards/decisions.md` DD-37 · **DD-65..68** · DD-33 · DD-45 · `../../channels/messenger/messenger-channel-design.md` · `feature_session_management_tech.md` · `feature_tenant_routing_authz_tech.md`
+> **References:** `../../standards/decisions.md` DD-37 · **DD-65..68** · DD-33 · DD-45 · **DD-49** · `../../channels/messenger/messenger-channel-design.md` · `feature_session_management_tech.md` · `feature_tenant_routing_authz_tech.md`
 
 > Adapter dùng **Session/Join/AuthZ services chung** với web/Zalo. `packages/db/schema.ts` là live truth nhưng **chưa đáp ứng** hybrid contract; DD-65..68 là authority cho migration triển khai mới, không được sửa migration lịch sử.
 
@@ -65,7 +66,7 @@ Live schema hiện có chỉ biểu diễn one-tenant↔one-Page. Slice Messenge
 | 4 | Reachability | Gửi ngoài cửa sổ 24h | ❌ Không standard-send; chỉ gửi nếu eligible/approved mechanism tồn tại, nếu không fallback web + Zalo; đánh dấu unreachable-24h |
 | 5 | Data Integrity | PSID cùng người khác Page | Page-scoped — 2 PSID; link về cùng Person qua verified account identity hoặc transactional `link_code`; không auto-merge chéo |
 | 5b | Data Integrity | PSID text trùng xuyên Page | Hai domain-separated hashes + unique 3-part key; Page scope tách identity, không gán nhầm xuyên endpoint |
-| 6 | Concurrency | Number/quick-reply reply last slot | Shared service locks session: first active, second waitlisted/no-charge/no-venue |
+| 6 | Concurrency | Two first-entry number/quick-reply replies at last slot | Shared service locks session: first active+exactly-one-charge, second waitlisted/no-charge/no-venue |
 | 7 | Security | Page token / App Secret trong log/row sai owner | ❌ NEVER — Page token ở protected endpoint store; App Secret chỉ ở deployment secret manager; log redaction |
 | 8 | Resilience | Provider rate-limit/outage | Backoff — không rollback canonical |
 | 9 | Security | Cross-Page reachability | Scoped per channel identity + Page endpoint; never reuse window/token across Pages |
@@ -178,9 +179,9 @@ FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSI
 | 10 | Reachability isolated | Page A vs B | Independent |
 | 11 | Token/secret ownership + redaction | Config rows/logs | Page token only in endpoint secret store; App Secret only deployment secret manager; neither logged |
 | 12 | Account merge | Old PSID context | Invalidated → merged person |
-| 13 | Concurrent final slot | 2 quick-replies | One active+charge; one waitlisted/no-charge with positive position |
+| 13 | Concurrent first-entry final slot | 2 quick-replies | One active+exactly-one-charge; one waitlisted/no-charge with positive position |
 | 14 | Rejoin after left, carry-over | Paid, not refunded | Shared core rejoins with canonical current outcome; allocation preserved; no duplicate charge |
-| 14b | Rejoin after refund | Refund complete | Shared core starts canonical new obligation lifecycle; adapter renders outcome |
+| 14b | Rejoin after refund | Refund complete | Capacity available→shared core appends one lifecycle + active; full→waitlisted/no new lifecycle until promotion. Adapter only renders outcome |
 | 14c | Rejoin disposition unknown | Core cannot prove state | `REJOIN_REQUIRES_REVIEW`; player/charge/allocations unchanged |
 | 15 | Host create authorized | central and tenant Page | Same preview/command/result; one session only |
 | 16 | Host create denied | player/non-admin/expired grant | `CAPABILITY_DENIED`; no session |
@@ -225,6 +226,9 @@ FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSI
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.6a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
+| 2026-07-19 | v0.6 | **DD-49 timing mirror:** refunded rejoin active→append; full→waitlisted/defer until promotion. Messenger adapter remains thin and creates no financial state. |
+| 2026-07-19 | v0.5 | **DD-45×DD-49 mirror consistency:** final-slot no-charge test is explicitly first-entry; existing-left rejoin remains delegated to shared correction core and never creates a duplicate charge in the adapter. |
 | 2026-07-17 | v0.4 | **decisions v1.45:** App Secret stays deployment-level; Page token moves to narrow endpoint secret store; Page/user HMAC split with 3-part key; DD-49 rejoin carry-over/refunded/review matrix. |
 | 2026-07-17 | v0.3 | **DD-65..68:** hybrid registry, shared host/player pipeline, central/tenant fail-closed resolver, Page-scoped identity/reachability, durable wizard, opaque paginated actions, one-route delivery và full hybrid E2E matrix. Live schema/runtime vẫn pending migration/implementation. |
 | 2026-07-15 | v0.2 | **DD-45:** thin adapter renders active/waitlisted/current/rejoin-review; final-slot and ledger-unchanged tests; remove "Full" error. |

@@ -7,27 +7,27 @@
 > - **P7/External:** DD-18 → `dd-18-llm-provider-analysis.md` · DD-34/35/36 → `dd-34-36-kb-platform-analysis.md` · DD-14/15 → `dd-14-15-zalo-spike-analysis.md`
 >
 > **Mục đích:** chốt các DD còn lại ở **decision level** (contract + enforce point + money/PII-safety + dependency), ground vào canonical. Chi tiết SQL/tests → slice riêng khi build (pattern DD-46/41).
-> **Ngày:** 2026-07-13 · **Re-check:** 2026-07-15 · **Owner decisions:** DD-32=**A (phễu mềm)**, DD-42=**per-tenant**, DD-47/48=**framework, build P4+**. Còn lại (05/06/43/44/45) = duyệt đề xuất.
-> **Canonical:** `schema.ts` (sessions/players:276/join_requests:611/memberships/persons) · `feature_session_management` · `feature_cross_club_join` · `feature_marketplace_discovery` (whitelist) · DD-08/39/41/46. Ghi → `decisions.md`.
+> **Ngày:** 2026-07-13 · **Re-check:** 2026-07-19 · **Owner decisions:** DD-32=**A (phễu mềm)**, DD-42=**per-tenant**, DD-47/48=**framework, build P4+**. Còn lại (05/06/43/44/45) = duyệt đề xuất; DD-49 supersedes DD-45 default rejoin reject.
+> **Canonical:** `packages/db/schema.ts` + migrations · `feature_session_management` · `feature_cross_club_join` · `feature_marketplace_discovery` (whitelist) · DD-08/39/41/46/**49**. Ghi → `decisions.md`.
 
 ---
 
 ## DD-05 — Join cross-club: open vs approval · ✅ (duyệt)
 - **Canonical:** `sessions.join_policy` (`open|approval`); `join_requests` sẵn; final outcome theo capacity dưới lock (DD-45).
 - **Chốt:** **per-session, mặc định `open`**; host bật `approval` từng kèo.
-  - **`pending` join_request KHÔNG tạo player/charge** (chưa chiếm capacity, chưa phát sinh nợ).
-  - Approve dưới tenant RLS + lock session/request + **eligibility re-check (DD-41)**: còn slot → membership+active player+charge; full → approved+waitlisted/no-charge (DD-45).
-- **An toàn (sửa):** **CÓ** đụng state tiền + RLS — approve còn slot là money-write; full chỉ queue. Pending = no membership/player/charge.
+  - Resolve existing player/request trước: `active|waitlisted|pending` trả current outcome idempotently, không alert/write mới. Chỉ absent/`left` mới chạy DD-41/DD-42/shared DD-52. First-entry pending chỉ tạo `join_requests`; existing `left` request-create preflight live DD-49 disposition nhưng không persist proof. Không capacity/venue/financial mutation khi pending.
+  - Approve dưới tenant RLS + lock session/root-job/request + **DD-41/DD-42/DD-52 re-check** và DD-49 re-derive. First-entry còn slot → active+exactly-one-charge; full → approved+waitlisted/no-charge. DD-49 rejoin active→carry-over/append-refunded; full→waitlisted giữ history/defer-refunded; unknown/restriction fail-closed giữ pending. Active fill resolves old promotion roots.
+- **An toàn (sửa):** **CÓ** đụng state tiền + RLS — approve first-entry còn slot là money-write; first-entry full chỉ queue; proven rejoin phải resolve financial disposition trước khi tạo/giữ request và trước final mutation. First-entry pending chỉ có request; existing-`left` pending không tạo row/mutation mới và giữ nguyên aggregate lịch sử; unknown disposition không tạo request.
 
 ## DD-06 — Độ chi tiết vị trí public · ✅ (duyệt)
 - **Canonical:** `sessions.area` + `venue_name`/`venue_address`; public whitelist emit **`area` only** (`feature_marketplace_discovery:87`).
-- **Chốt:** public projector emit **`area` (quận/khu vực) only**; `venue_name`/`venue_address` (+ SĐT/bản đồ) **chỉ lộ sau join/approval** (SES-UC-8, edge#6). **Invariant test:** venue KHÔNG bao giờ vào `public_sessions`.
+- **Chốt:** public projector emit **`area` only**; venue details **chỉ lộ khi player active**. Pending/approved-waitlisted vẫn ẩn. **Invariant test:** venue không vào `public_sessions`.
 - **An toàn:** privacy host/venue; đủ để player quyết định.
 
 ## DD-32 — Booking funnel · ✅ Option A (phễu MỀM)
-- **Chốt (owner): A — phễu mềm.** Guest **vẫn book** (giữ CCJ-UC-1/ID-UC-2) — **kể cả kèo CÓ PHÍ**; active thì tạo charge, full thì waitlisted/no-charge tới promotion (DD-45). Link account **chỉ mở thêm giá trị** + **CTA link sau guest-book**. **KHÔNG** bắt web-auth cho paid booking (đó là Option C — không chọn).
+- **Chốt (owner): A — phễu mềm.** Guest **vẫn book** — kể cả kèo có phí. First-entry active tạo exactly-one charge, full waitlisted/no-charge. DD-49 rejoin active→carry-over/append-refunded; full→waitlisted giữ history/defer-refunded. Link account chỉ mở giá trị + CTA; không bắt web-auth cho paid booking.
 - **Tách rõ 3 việc (không lẫn):**
-  1. **Tạo guest booking** → **được** theo A (không cần link); charge chỉ tạo khi guest active, không phải lúc waitlisted.
+  1. **Tạo guest booking** → **được** theo A (không cần link); first-entry charge chỉ tạo khi guest active, không phải lúc waitlisted. Existing `left` theo DD-49, không duplicate charge.
   2. **Claim/merge một membership ĐÃ CÓ TIỀN** → đi nguyên **evidence matrix của `feature_identity`** (DD-01/DD-13: verified signal + conflict checks + confirmation/audit). **DD-26 chỉ là confirm-before-persist, KHÔNG tự nó là proof.** HR4 — **không** phải "web-auth cho booking".
   3. **"Linked" cho hook** = OTP `/link` confirmed đủ (lịch sử xuyên club, nhắc, magic-link).
 - **Thứ tự bật social login:** DD-33 (FB) trước, rồi DD-14 (Zalo). Chưa bật → OTP `/link` thủ công.
@@ -52,22 +52,22 @@
 - **Canonical:** `visibility`+`join_policy`+`join_requests` có; thiếu token share.
 - **Chốt — token + REDEMPTION contract:**
   - `session_invite_tokens` (tenant-scoped): **token = random entropy cao (≥128-bit)**, lưu **hash** (không lưu raw); **bound `session_id`+`tenant_id`**; `expires_at`, `max_uses`, `used_count`, `revoked_at` (revoke/rotate được).
-  - Mở link → trang join kèo **private**, **vẫn qua `join_policy`+gating DD-41**. Token = **MỜI**, không hạ `visibility`.
-  - **`used_count` tăng khi REDEEM thành công** (open→active+charge hoặc waitlisted/no-charge; approval→pending), **KHÔNG** tăng lúc chỉ mở link và không hoàn sau cancel/reject/expire/leave. **Lock + idempotency** khi 2 request dùng lượt token cuối → đúng 1 thắng.
-- **An toàn:** venue/PII ẩn tới join (DD-06); rate-limit/anti-scrape; test hết hạn / quá `max_uses` / revoked / race lượt cuối / không lộ tiền-PII.
+  - Mở link → trang join kèo **private**, **vẫn qua `join_policy` + DD-41/DD-42/shared DD-52**. Token = **MỜI**, không hạ `visibility`.
+  - Redeem lock `session→token`: validate hash/binding/expiry/revoke, rồi resolve exact replay/current `active|waitlisted|pending` trước dynamic gates. Current/replay không consume thêm; `max_uses` + restrictions chỉ gate absent/`left` transition mới. **`used_count` tăng atomic cùng transition thành công**; restriction/unknown → zero request/player/charge/token/host-alert mutation.
+- **An toàn:** venue/PII ẩn tới active outcome (DD-06); rate-limit/anti-scrape; test hết hạn / quá `max_uses` transition mới / current replay không extra use / revoked / current-ban / race lượt cuối / không lộ tiền-PII.
 
 ## DD-45 — Model hoá waitlist (đóng gap SES-UC-9) · ✅ (duyệt)
-- **Canonical:** `players.status` CHECK `('active','left')` (`schema.ts:288`); UNIQUE player/session/membership + UNIQUE charge/session/player; waitlist chưa có live schema.
+- **Canonical state:** `main`/`origin/main`@`22c23aa` vẫn chỉ `active|left`; `0014_players_waitlist` land tại `1a6ac38` trên feature branch nhưng chưa merge. Schema branch có `waitlisted` + positive `waitlist_position`; behavior chưa build.
 - **Chốt — lifecycle + ordering PIN:**
-  - Mở `players_status_chk` **+ `waitlisted`**. **`waitlisted` KHÔNG chiếm capacity, KHÔNG tạo charge, KHÔNG lộ venue** (như pending — venue sau khi thành active).
-  - **Open/approval full cùng tạo waitlisted**. Promotion assert no existing charge + derive amount trước mutation rồi tạo đúng một charge ATOMICALLY khi `waitlisted→active`; existing-charge conflict → skip+audit owner-review.
-  - **DD-39 derivation failure:** KMS/decrypt/price error → candidate giữ waitlisted/no-charge/no-venue; audit `WAITLIST_CHARGE_DERIVATION_FAILED` + one canonical outbox event cho session retry/owner alert; triggering leave/capacity vẫn commit; xét candidate kế; không fallback giá.
+  - Mở `players_status_chk` **+ `waitlisted`**. First-entry waitlisted KHÔNG chiếm capacity, KHÔNG tạo charge, KHÔNG lộ venue. DD-49 rejoin-waitlisted chưa-refund giữ canonical history; refunded defer lifecycle/nợ mới tới activation.
+  - **Open/approval first-entry full cùng tạo waitlisted**. Promotion first-activation assert no charge + derive amount rồi tạo exactly-one charge. DD-49 rejoin promotion re-derive; chưa-refund carry-over, refunded append chỉ atomic với activation; không charge row thứ hai.
+  - **DD-39 derivation failure:** giữ candidate waitlisted/no-new-charge/no-venue; first failure lazy-creates one root promotion job `(tenant,session,origin)` rồi emit exactly-one candidate event bound `promotion_retry_id`+`waitlist_entry_version`+root `origin_command_id`, tiếp tục queue. Root CAS/lease job owns max 3 claimed attempts; each completed sweep visits each candidate once, sibling events share budget; DD-41/DD-42/DD-52 + financial state revalidated. Expired final claim finalizes under `session→job` to resolved-or-terminal without derivation/attempt 4; owner digest dedupes per root.
   - **Một ordering duy nhất:** `waitlist_position, joined_at, id`; position dương + state-shape CHECK; deprioritize (DD-42) chuyển xuống tail dưới session lock.
-  - **Candidate fail eligibility (DD-41)/ban lúc promote:** **skip → promote người kế tiếp**; candidate bị skip **giữ trong waitlist** (không remove) trừ khi họ tự leave.
+  - **Candidate fail eligibility DD-41, DD-42 restriction hoặc manual ban DD-52 lúc promote/retry:** **skip → promote người kế tiếp**; candidate bị skip **giữ trong waitlist** (không remove) trừ khi họ tự leave.
   - Active leave/capacity increase fill toàn bộ `slots_max-active_count`; finite→NULL promote mọi eligible. Capacity decrease không promote/evict và dưới active roster → `CAPACITY_BELOW_ROSTER`.
-  - Existing `active|waitlisted` join lại idempotent; existing `left` → `REJOIN_REQUIRES_REVIEW`, không mutation ledger.
+  - Existing `active|waitlisted` join lại idempotent; existing `left` chạy DD-49 correction core. Active→carry-over hoặc append-refunded; full→waitlisted giữ history hoặc defer-refunded. Chỉ unknown/unimplemented → `REJOIN_REQUIRES_REVIEW`.
   - Promote → notify (`feature_notifications_reminders`).
-- **An toàn:** atomic + idempotent; test total order/không over-fill/skip-on-ineligible+charge-conflict+derivation-failure/capacity boundaries/rejoin fail-closed/exactly-one-charge-on-promotion.
+- **An toàn:** atomic + idempotent; test total order/không over-fill/capacity, active-vs-full refunded timing, stale entry, two-worker CAS, lease crash recovery, max-3 terminal retry. Exactly-one-charge chỉ cho first-activation; rejoin không duplicate charge row.
 
 ## DD-47 — Social follow graph (person↔person) · ✅ framework (build P4+)
 - **Chốt (owner): duyệt framework, build P4+.** Bảng **GLOBAL `person_follows`** (cạnh có hướng, **KHÔNG `tenant_id`** — identity global plane, §P6).

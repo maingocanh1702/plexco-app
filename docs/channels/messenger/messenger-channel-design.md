@@ -2,9 +2,9 @@
 
 ## Plexco — platform thể thao đa môn: thêm kênh Messenger (port từ Telegram + Zalo)
 
-**Phiên bản:** 2.4
-**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 17/07/2026
-**Tài liệu tham chiếu:** `../../product/BRD.md` v3.9b · `../../product/PRD.md` v2.8 · `../../product/TDD.md` v3.1 · `../../standards/decisions.md` v1.45 · `../../research/player-side-saas-reconciliation.md` · `../../research/player-side-saas-AUDIT.md`
+**Phiên bản:** 2.4a
+**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 19/07/2026
+**Tài liệu tham chiếu:** `../../product/BRD.md` v3.9d · `../../product/PRD.md` v2.8c · `../../product/TDD.md` v3.1 · `../../standards/decisions.md` v1.67 · `../../research/player-side-saas-reconciliation.md` · `../../research/player-side-saas-AUDIT.md`
 
 > **Authority hiện hành (DD-65..68 ✅):** topology là **hybrid** — Plexco central Page luôn có, Page per-club là tuỳ chọn; cả hai là shared role-aware surface cho host và player. Các assumption Page-per-club-only/player-only trước v2.2 bị supersede. Auth-link Facebook = DD-33 ✅ (phase-1; App Review pending).
 
@@ -272,6 +272,7 @@ sequenceDiagram
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 19/07/2026 | v2.4a | Current-reference refresh → BRD v3.9d/PRD v2.8c/TDD v3.1/decisions v1.59. Messenger contract/runtime scope không đổi. |
 | 17/07/2026 | v2.4 | Feature-doc closure: identity dùng hai HMAC domain-separated + unique ba phần; App Secret là deployment-level, Page store chỉ giữ Page access token. Authority → BRD v3.9b/PRD v2.8/TDD v3.1. Runtime chưa implement. |
 | 17/07/2026 | v2.3 | Authority → TDD v3.0/decisions v1.45. Messenger Page scope is one provider-endpoint instance of the shared channel identity/reachability contract; runtime scope unchanged. |
 | 17/07/2026 | v2.2 (reference fix) | Current references → BRD v3.9a/PRD v2.7/TDD v2.9/decisions v1.44; contract/scope không đổi. |

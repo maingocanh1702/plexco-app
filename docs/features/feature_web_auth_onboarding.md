@@ -2,12 +2,15 @@
 
 > **Canonical phase:** P4  
 > **Track:** 🌐 Web Auth & Onboarding  
-> **Version:** 2.9 · 2026-07-18
+> **Version:** 2.10a · 2026-07-19
 > **Status:** Reviewed  
+> **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google/email DD-37 chưa code · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P0–P1 foundation · P2 routing/authz · P3 ledger/provider model  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-1 · `../product/PRD.md` FLOW 1 · `../standards/decisions.md` DD-13/DD-30/DD-33/DD-50/**DD-65** · `BE/feature_web_auth_onboarding_tech.md` · `feature_connector_onboarding.md`
 
 > **Cập nhật 18/07:** bỏ Telegram Login; baseline auth = Google OAuth + email/password. **Facebook Login / Messenger link** = DD-33 ✅, nhưng exact external approval evidence là enablement gate; chưa pass thì capability OFF + transactional one-time `link_code` fallback.
+>
+> **Cross-site auth correction (18/07):** session cookie vẫn `SameSite=Strict`. Google/Facebook callback dùng dedicated short-lived browser-binding cookie `SameSite=Lax` + one-time OAuth transaction vì redirect là cross-site GET; callback không dùng same-origin header check. Email verify/reset dùng non-mutating landing GET → explicit same-origin POST, nên link scanner không consume token và registration-key cookie `Strict` vẫn dùng được.
 
 ---
 
@@ -20,7 +23,7 @@ Cho host mới authenticate, tạo tenant và connect integrations. Readiness ma
 - Google OIDC **PHẢI** verify chữ ký bằng provider key, exact `iss`/`aud`, `state`/`nonce`/PKCE, `exp`/`iat` và `email_verified === true`; không trust returned fields alone.
 - Facebook Login chỉ bật cho non-test user khi exact App Review/Business Verification/permission evidence đã được ghi nhận; code exchange + subject verification chạy server-side. Subject web-auth là stable app-scoped subject của đúng Meta App, **không phải** Messenger Page-scoped PSID và không auto-link với PSID.
 - Email/password chỉ được bật khi có **đủ lifecycle**: password hash mạnh; verify-email token hash-only, TTL ngắn, single-use; forgot/reset enumeration-safe; reset thành công revoke mọi web session bị ảnh hưởng. Thiếu bất kỳ phần nào → email auth **OFF**, không ship partial lifecycle (DD-50).
-- Session cookies: `secure`, `httpOnly`, `sameSite=strict`, CSRF protection, rotation sau privilege change.
+- Session cookies: `secure`, `httpOnly`, `sameSite=strict`, CSRF protection, rotation sau privilege change. Pre-auth cookie tách theo transport: OAuth binding = short-lived/path-scoped `Lax`; email-login/registration binding = path-scoped `Strict`; không cookie nào thay session.
 - Tenant creation/bind dùng **idempotency keys** — refresh/back KHÔNG duplicate.
 - Secrets: write-only, KMS encrypted, masked after save, rotatable.
 - Owner KHÔNG thể accidentally bind group/account đã thuộc tenant khác.
@@ -81,6 +84,8 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 | 16 | Security | Email auth mới có register/login nhưng thiếu verify/reset/revoke-all | Fail-closed feature flag OFF; Google vẫn hoạt động độc lập |
 | 17 | External/Security | Facebook provider chưa có exact review/verification/permission evidence hoặc provider verification fail | Capability OFF/ẩn CTA cho non-test user; không tạo identity/session; hiển thị fallback transactional one-time `link_code` |
 | 18 | Identity | Facebook Login subject trùng tên/email với Messenger PSID profile | Không auto-link; chỉ link qua verified account identity hoặc consume transactional one-time `link_code` |
+| 19 | Security/Browser | Google/Facebook redirect về từ provider nhưng callback đòi cookie `Strict` hoặc same-origin `Origin/Referer` | ❌ NEVER — dùng one-time OAuth transaction + dedicated Lax binding cookie; session cookie vẫn Strict |
+| 20 | Security/Browser | Email scanner/prefetch mở verify/reset link hoặc user mở verify link ở browser khác | GET không mutation/consume; explicit same-origin POST mới act; verify thiếu matching registration cookie chỉ handoff/re-register |
 
 ---
 
@@ -154,7 +159,9 @@ stateDiagram-v2
 
 - [ ] Unknown host completes tenant → first session không cần env/manual DB work
 - [ ] Google signature + exact issuer/audience + state/nonce/PKCE + exp/iat + `email_verified=true` tests pass
+- [ ] Google/Facebook callback cross-site GET pass bằng one-time state + path-scoped Lax binding; missing/wrong/replayed binding fail; callback không dùng `sameOriginRequest()`; session cookie sau login vẫn Strict
 - [ ] Email verify/forgot/reset/revoke-all contract pass; token replay/expiry/enumeration-safe/old-session tests pass
+- [ ] Verify/reset landing GET không mutation/consume dưới link scanner; explicit same-origin POST mới act; verify wrong-browser/missing Strict registration key fail closed
 - [ ] Email auth remains disabled until the whole lifecycle is deployable and verified end-to-end
 - [ ] Facebook code exchange/subject verification is server-side; raw code/access token never logged/persisted; lookup hash write/read parity passes
 - [ ] Facebook Login subject and Messenger Page-scoped PSID cannot auto-link; transactional one-time `link_code` is the only fallback link path
@@ -181,12 +188,14 @@ stateDiagram-v2
 | WAO-OQ-2 | Minimum required steps trước khi mark onboarding complete | ✅ **Chốt contract:** club config hoặc DD-46 personal provision + bank `verified` + first session. Zalo + tenant Messenger Page optional/non-blocking; central Messenger availability is a platform release gate, not tenant state. |
 | WAO-OQ-3 | DD-33 Facebook Login/Messenger link | ✅ Design phase-1 đã chốt; App Review/Business Verification/permission evidence là external enablement gate. Chưa pass → capability OFF + transactional one-time `link_code` fallback. |
 | WAO-OQ-4 | Skip Club / personal meet: đường tạo không-gian-cá-nhân | ✅ **Chốt DD-46** — auto-provision personal tenant (tái dùng `provisionTenant` core, wrapper `getOrCreatePersonalTenant`, free plan, bỏ bước "đặt tên club", owner=self); propagate lúc build → `../dd-46-skip-club-analysis.md` |
-| WAO-OQ-5 | Email credential lifecycle + phase-1 không thu SĐT | ✅ **Chốt DD-50 (2026-07-16)** — contract đầy đủ đã pin: verify email, forgot/reset enumeration-safe, token hash-only/TTL/single-use, reset revoke-all sessions; khoá mạnh claim = verified email + `link_code` (phone dormant). B0 (`../pre-code-open-items-2026-07-16.md`) chỉ còn design-probe mutation paths + storage/DDL trước khi author slice S4 |
+| WAO-OQ-5 | Email credential lifecycle + phase-1 không thu SĐT | ✅ **Chốt DD-50 (2026-07-16)** — contract đầy đủ đã pin: verify email, forgot/reset enumeration-safe, token hash-only/TTL/single-use, reset revoke-all sessions; khoá mạnh claim = verified email + `link_code` (phone dormant). B0 (`../pre-code-open-items-2026-07-16.md`) **đã có design-probe: `../b0-auth-credential-lifecycle-design-probe.md` (2026-07-18)** — mutation paths + storage/DDL đã map, gồm account-wide revoke primitive, multi-attempt verify-first registration, cross-site OAuth transaction/Lax binding, non-mutating email-link landing, outbox→pg-boss delivery và login finalizer. Còn **chờ owner duyệt** rồi ghi DD; chưa author slice S4, email provider OFF (gate `C7`) |
 
 ### Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.10a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
+| 2026-07-18 | v2.10 | **Cross-site auth correction:** tách OAuth redirect khỏi live Telegram same-origin primitive bằng one-time transaction + path-scoped Lax binding cookie; email verify/reset dùng non-mutating landing GET → explicit same-origin POST; thêm link-scanner/wrong-browser tests; session cookie giữ Strict. |
 | 2026-07-18 | v2.9 | **DD-33 propagation:** pin Facebook Login server-side exchange + app-scoped subject, external enablement gate, fail-closed CTA/capability, PSID separation và one-time `link_code` fallback; ghi đúng live schema chưa có platform CHECK. |
 | 2026-07-17 | v2.8 | **DD-30 enterprise-first propagation:** make ApiPay enterprise provisioning the default bank screen/use case; demote accessKey/secretKey to an explicit owner-selected fallback; pin idempotent retry, secret-free UI and no-silent-downgrade acceptance. |
 | 2026-07-17 | v2.7 | **Readiness/live-schema closure:** close WAO-OQ-2 with required club-or-personal + bank + first-session matrix; Zalo/tenant Page optional; clarify live club ownership vs DD-46 conditional personal `owner_person_id`. |

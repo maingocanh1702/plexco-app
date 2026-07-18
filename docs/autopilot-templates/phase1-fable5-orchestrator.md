@@ -320,7 +320,7 @@ S12 marketplace-discovery                          [P2 · marketplace, web-app] 
 S13 cross-club-join                                [P1 · cross-club, identity]  money-guard
     Docs: feature_cross_club_join(_tech); DD-05 (open vs approval, per-kèo default open).
     Do:  player joins a kèo from marketplace across tenant; join request + optional approval (DD-05);
-         creates membership/roster entry idempotently; reveals venue only after join/approval (DD-06).
+         creates membership/roster entry idempotently; reveals venue only when player outcome is active (DD-06).
     DoD: cross-tenant join respects join_policy; approval branch; no premature venue/PII leak; idempotent.
     Depends_on: [identity-merge, marketplace-discovery]. Invariants: [cross-club, identity].
 

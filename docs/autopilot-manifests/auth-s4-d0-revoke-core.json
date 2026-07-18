@@ -1,0 +1,36 @@
+{
+  "feature": "auth-s4-d0-revoke-core",
+  "branch": "feat/auth-s4-d0-revoke-core",
+  "base_ref": "main",
+  "risk": "P0",
+  "change_class": "identity-feature",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "authority": "DD-80 (decisions v1.77) · b0-auth-credential-lifecycle-design-probe.md §6/§9(a) · feature_web_auth_onboarding_tech.md v2.8 §3/§5-acceptance-D0",
+  "depends_on": ["db-postgres-drizzle-rls", "auth-onboarding-v3"],
+  "dep_checks": [
+    { "file": "packages/db/migrations/0012_auth_functions.sql", "symbol": "auth_revoke_web_session" },
+    { "file": "packages/db/migrations/0012_auth_functions.sql", "symbol": "auth_resolve_web_session" },
+    { "file": "packages/db/migrations/0012_auth_functions.sql", "symbol": "rate_limit_check" }
+  ],
+  "invariants": ["auth", "schema"],
+  "negative_scope": [
+    "NO email/credential/token/delivery tables or routes (D1 email-token-core)",
+    "NO Google/Facebook adapter or auth_oauth_transactions (D1 google-adapter)",
+    "NO Telegram route removal (expand->contract slice cuoi)",
+    "NO new grant to role app beyond exact public wrapper",
+    "Internal revoke-by-account helper is NOT granted to app/app_worker; wrapper derives account from current session only, never accepts account_id from caller"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/auth-s4-d0-revoke-core.json",
+    "packages/db/schema.ts",
+    "packages/db/migrations/0015_auth_revoke_account.sql",
+    "packages/db/src/auth.ts",
+    "packages/db/src/auth.test.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "apps/web/app/api/auth/logout-all/route.ts",
+    "apps/web/app/api/auth/logout-all/route.test.ts",
+    "docs/features/BE/feature_web_auth_onboarding_tech.md"
+  ]
+}

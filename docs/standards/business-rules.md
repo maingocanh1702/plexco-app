@@ -1,10 +1,10 @@
 # Business Rules — Plexco
 
-> Registry quy tắc nghiệp vụ, tổng hợp từ `docs/product/BRD.md` · `docs/product/PRD.md` · `docs/product/TDD.md` v3.1 · `docs/standards/decisions.md` v1.47 · `docs/research/player-side-saas-AUDIT.md`.
+> Registry quy tắc nghiệp vụ, tổng hợp từ `docs/product/BRD.md` · `docs/product/PRD.md` · `docs/product/TDD.md` v3.1 · `docs/standards/decisions.md` v1.69 · `docs/research/player-side-saas-AUDIT.md`.
 >
 > **Reconcile 18/07/2026:** đã đồng bộ full DD-49–56 và accepted-in-principle DD-61–64. DD-69 direction ✅ accepted; chưa tạo active business rule mới; decision log vẫn là authority khi một DD thay đổi, registry này là mirror để review/build.
 > Khi conflict, authority theo topic trong BRD §0; security dùng rule nghiêm ngặt hơn.
-> v1.16 · 2026-07-18 (authority v1.47/TDD v3.1; DD-69 chưa tạo active business rule; BL-ORG/rate contracts đã accepted-in-principle nhưng **chưa implement/activate**)
+> v1.23 · 2026-07-19 (current authority v1.69/TDD v3.1; DD-70..72 vẫn 🟡 và các rate row bên dưới là **PROPOSAL/INACTIVE**; share/activity sequencing corrected nhưng BL mới vẫn chờ downstream propagation; không claim runtime)
 
 ---
 
@@ -46,7 +46,7 @@
 |---|---|---|---|
 | **BL-DSC-1** | **Field whitelist cho public** | `public_sessions`: sport_key, starts_at, ends_at, area, price, slots_open, host/club display name, join_policy; session policy fields an toàn gồm `title`, `session_type`, `level_min_rank`, `level_max_rank`, `level_strict`, `gender_restriction`, `age_min`, `age_max`. Retire public `skill_level`. Routing tenant ID không serialize. Không roster, debt/payment, contact, venue chi tiết, STK, `notes`, `instructions`, `byoe` hay `cost_shared`. | BRD BR-4, DD-41, NFR-S2, AUDIT §public |
 | **BL-DSC-2** | **Publish theo từng kèo** | Host chọn `visibility=public` per-session → projector đẩy vào `public_sessions`. Đóng kèo → hạ khỏi marketplace. | BRD FR-3.1, PRD FLOW 12 |
-| **BL-DSC-3** | **Join cross-club** | Player join kèo CLB chưa tham gia. `open`: trong transaction lock/re-check eligibility+capacity; còn chỗ → membership/player active + charge + venue, full → waitlisted, không charge/venue. `approval`: chỉ tạo `join_requests(pending)`; chưa tạo membership/player/charge, chưa chiếm capacity và chưa lộ venue. Khi duyệt phải re-check cùng contract active-vs-waitlisted. | BRD FR-3.2, DD-05/06/45 |
+| **BL-DSC-3** | **Join cross-club** | Resolve current player/request trước: `active|waitlisted|pending` trả current outcome idempotently, không write/alert mới. Chỉ absent/`left` mới pass DD-41/DD-42/shared DD-52 trước membership/request/player mutation. `open`: còn chỗ → active + exactly-one charge + venue, full → waitlisted không charge/venue. `approval`: pending không membership/player/charge/capacity/venue; existing `left` request-create chỉ preflight live DD-49, không persist proof. Approve lock session→root-job→request, re-check restrictions + re-derive aggregate; drift/unknown giữ pending/zero mutation. Active fill resolves old promotion roots. | BRD FR-3.2, DD-05/06/41/42/45/49/52 |
 | **BL-DSC-4** | **Rate-limit + anti-scraping** | Discovery API: rate-limit per IP, phân trang, không expose danh sách toàn bộ tenant. | NFR-S2 |
 
 ---
@@ -62,9 +62,9 @@
 | **BL-SES-5** | **Session gating fail-closed** | `level_min_rank ≤ level_max_rank`; strict level, gender restriction và age range được kiểm tra tại join/approve/promote dưới lock. Không đủ hoặc không chứng minh được eligibility → không active/charge/venue. | DD-41 |
 | **BL-SES-6** | **Attendance/reliability tenant-private** | No-show/attendance là dữ liệu vận hành per-tenant; reliability có provenance, correction/audit và không được đưa vào public projection hay suy thành global score. | DD-42 |
 | **BL-SES-7** | **Membership tags chỉ định audience** | `membership_tags` là nhãn per-tenant để lọc người nhận announcement/invite; tag không tạo eligibility, role, giá, quyền hay dữ liệu public. | DD-43 |
-| **BL-SES-8** | **Private invite token** | Invite token phải opaque, hash-at-rest, scoped đúng session, có expiry/revoke/max-use và redeem atomic/idempotent. Token hợp lệ chỉ mở đường join; vẫn re-check session, eligibility, capacity và waitlist. | DD-44 |
-| **BL-SES-9** | **Waitlist là state canonical** | Full → `waitlisted` với position dương, không charge/venue. Capacity chỉ đếm active; promotion theo total order canonical và idempotent. `left` rejoin chạy join bình thường; carry-over obligation nếu chưa refund hoặc append lifecycle nếu đã refund. Chỉ fallback `REJOIN_REQUIRES_REVIEW` khi correction core chưa land/không chứng minh được disposition. | DD-45, DD-49 |
-| **BL-SES-10** | **Derive charge trước promotion mutation** | Khi promote, suy giá theo DD-39 trước khi đổi state. KMS/decrypt/price failure → giữ waitlisted/no-charge/no-venue; phát đúng một audit + canonical outbox event cho retry/owner alert, không rollback capacity opener và tiếp tục candidate kế. | DD-39/45 |
+| **BL-SES-8** | **Private invite token** | Invite token opaque/hash-at-rest, bound session, expiry/revoke/max-use, redeem atomic under `session→token`. Validate hash/binding/expiry/revoke, then current `active|waitlisted|pending`/exact actor-bound replay returns without extra use. `max_uses` + DD-41/DD-42/DD-52 gate only absent/left transition; restriction/unknown gives zero request/player/charge/token/host-alert mutation. Venue only after active. | DD-44 |
+| **BL-SES-9** | **Waitlist là state canonical** | First-entry full → `waitlisted` với position dương, không tạo charge/venue. Capacity chỉ đếm active; initial promotion và retry đều chạy canonical current-order selector, không direct-promote theo stale event rank. Mỗi candidate re-check DD-41, DD-42 và shared `evaluateJoinRestriction()` DD-52; restricted candidate giữ queue nhưng bị skip. Existing-`left` rejoin re-derive DD-49: outcome active thì chưa-refund carry-over hoặc refunded append lifecycle; full→waitlisted thì chưa-refund giữ historical aggregate, refunded defer lifecycle mới tới activation. Chỉ fallback `REJOIN_REQUIRES_REVIEW` khi correction core chưa land/không chứng minh được disposition. | DD-41/42/45/49/52 |
+| **BL-SES-10** | **Resolve financial disposition trước promotion mutation** | First-activation promotion phải suy giá theo DD-39 trước khi đổi state và tạo đúng một charge. DD-49 rejoin promotion re-derive live aggregate; chưa-refund carry-over, refunded append lifecycle mới atomic với activation, không tạo charge row thứ hai. First derivation failure lazy-creates one root job `(tenant,session,origin)`; job owns one CAS/lease claimed-attempt counter max 3, còn candidate events chỉ bind entry + root for audit. Each completed current-order sweep tries each candidate once and re-checks DD-41/DD-42/DD-52. Expired final claim finalizes under `session→job` to resolved-or-terminal without derivation/attempt 4. Owner digest dedupes per root; sibling events cannot multiply job/budget/alerts. | DD-39/41/42/45/49/52 |
 
 ---
 
@@ -115,7 +115,7 @@
 | **BL-MSG-2** | **Page không tự grant target tenant** | Tenant Page chỉ là default; central/multi-club/cross-club target từ opaque action, protected public ref hoặc server-side picker. Missing/stale/ambiguous/replayed → deny/re-pick. | DD-66 |
 | **BL-MSG-3** | **Endpoint-scoped identity/reachability** | Messenger dùng Page scope + PSID theo contract chung ba phần; Zalo dùng bot/OA scope + `from.id`. Reachability/window gắn `channel_identity_id`; tenant eligibility authorize riêng. Không auto-merge xuyên endpoint. | DD-15, DD-50, DD-67 |
 | **BL-MSG-4** | **Shared core + durable interaction** | Host wizard và player actions gọi cùng AuthZ/Session/Join services với web/Zalo. Một pre-dispatch owner giữ wizard; consume re-authorize/revalidate. Choice token opaque, actor+Page-bound, TTL+snapshot+version; tối đa 8 business choices/page + navigation. | DD-24, DD-56, DD-68 |
-| **BL-MSG-5** | **One-route delivery** | Một logical notification chọn tenant Page reachable → central Page reachable → web/Zalo; provider failure không rollback canonical command và không gửi trùng hai Page. | DD-67, BL-SYN-2, BL-NTF-2 |
+| **BL-MSG-5** | **One-route delivery** | Một logical notification giữ tối đa một active route xuyên platform và một live physical claim per exact target; tenant Page reachable → central Page reachable → web/Zalo. Fallback/retry chỉ sau proven-no-send dưới owner lock và fresh type-specific authorization/state check; provider failure không rollback canonical command. | DD-67, BL-SYN-2, BL-NTF-2 |
 
 ---
 
@@ -187,11 +187,21 @@
 | **Tenant mutation** | `PATCH /tenants/:id` | 30/min | account (owner) | 429 `RATE_LIMITED` |
 | **Organize score — ACCEPTED-IN-PRINCIPLE, NOT IMPLEMENTED** | `POST /api/matches/:id/score/{points,reversals}` | 5/s burst per match; 120/min per actor; 600/min dedicated organize bucket per tenant | match + actor + tenant; khi activate thì exempt generic tenant 200/min | 429 `RATE_LIMITED` |
 | **Organize assignment preview — ACCEPTED-IN-PRINCIPLE, NOT IMPLEMENTED** | `POST /api/sessions/:id/assignments/preview` | 10/min per session; 30/min per actor | session + actor + generic tenant bucket | 429 `RATE_LIMITED` |
+| **Notification inbox read — PROPOSAL/INACTIVE (DD-70)** | `GET /api/notifications/inbox`, `/unread-count` | 60/min list; 120/min unread | person | 429 `RATE_LIMITED` |
+| **Notification inbox mutation — PROPOSAL/INACTIVE (DD-70)** | `POST /api/notifications/inbox/*/read`, `/read-all` | 120/min | person | 429 `RATE_LIMITED` |
+| **Notification inbox SSE — PROPOSAL/INACTIVE (DD-70)** | `GET /api/notifications/inbox/stream` | 5 concurrent | person | 429 `RATE_LIMITED` |
+| **Announcement preview — PROPOSAL/INACTIVE (DD-71)** | `POST /api/announcements/preview` | 60/min | tenant + actor | 429 `RATE_LIMITED` |
+| **Announcement confirm — PROPOSAL/INACTIVE (DD-71)** | `POST /api/announcements` | initial shadow 10/day + 3/hour commands; fan-out threshold `TBD` config | tenant + actor + fan-out recipients; exact command fingerprint + atomic reservation, outage fail closed | 409 `IDEMPOTENCY_KEY_REUSED` · 429 `ANNOUNCEMENT_RATE_LIMITED` |
+| **Announcement retry — PROPOSAL/INACTIVE (DD-71)** | `POST /api/announcements/:id/retry-failed` | 5/hour | announcement + actor + tenant + command; no active outcome, deterministic current-policy route rank + persisted per-intent result before one-route CAS; fresh checks; no second fan-out charge | 429 `ANNOUNCEMENT_RATE_LIMITED` |
+| **Membership tag mutation — PROPOSAL/INACTIVE (DD-71)** | `POST/PATCH/DELETE /api/membership-tags`, `POST /api/memberships/tags` | 60/min actor + 120/min tenant | actor + tenant | 429 `RATE_LIMITED` |
+| **Announcement preference — PROPOSAL/INACTIVE (DD-71)** | `PUT /api/notifications/preferences/:tenantId` | 20/min | person + tenant | 429 `RATE_LIMITED` |
+| **Web Push subscription — PROPOSAL/INACTIVE (DD-72)** | `POST/DELETE /api/push/subscriptions` | 10/hour | person; POST requires actor-scoped UUID Idempotency-Key | 429 `RATE_LIMITED` |
+| **Web Push telemetry — PROPOSAL/INACTIVE (DD-72)** | `POST /api/push/telemetry` | 300/hour | subscription + signed capability scope | 429 `RATE_LIMITED` |
 | **Tenant aggregate** | All mutations combined | 200/min | tenant; trừ endpoint có dedicated tenant bucket được registry chấp thuận rõ | 429 `TENANT_RATE_LIMITED` |
 | **Default mutation** | Any POST/PATCH/DELETE not listed | 60/min | account | 429 `RATE_LIMITED` |
 | **Default read** | Any GET not listed | 120/min | account | 429 `RATE_LIMITED` |
 
-**Implementation:** Sliding window middleware. Config-driven. Redis/pg-boss counter cho distributed.
+**Implementation:** Sliding window, config-driven. Confirm first locks structural tenant+actor+command receipt, compares versioned canonical fingerprint, then under ordered bucket locks writes durable `announcement_quota_reservations` with fixed tenant/actor/fan-out units + expiry/status and canonical announcement in one transaction. Same fingerprint replays; mismatch rejects before reserve; outage fails closed; janitor releases only canonical-absent row after proof expiry+grace. Retry has separate actor receipt + per-intent selected-delivery/skip result; it locks intent, blocks active outcomes, ranks current eligible failed routes by canonical policy+UUID, persists result then CASes one route. Push registration separately uses actor+command/JTI receipt and trust epoch; network retry must not become a new trust reset.
 
 ---
 
@@ -210,6 +220,13 @@ Business rules file này là **mirror**, không tự tạo authority. Khi phát 
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 19/07/2026 | v1.23 | Authority v1.69. BL-DSC-3/SES-8 pin current-state-before-restriction and no-extra token use. BL-SES-10 pins lazy root, max 3 claimed attempts, expired-final resolve-or-terminal, tenant-private narrow claim and one owner digest/root. No runtime. |
+| 19/07/2026 | v1.22 | Authority v1.65. BL-SES-9/10 pin one root max-3 sweep job/opener; candidate events are sibling audit/alert refs, not budgets. Sweeps re-enter current order + DD-41/DD-42/DD-52; final-slot/no-failure resolves old root so it cannot sweep a later opening. No runtime. |
+| 19/07/2026 | v1.21 | Authority v1.64. DD-74/75 là baseline producer sau dependency + reprioritization; chỉ DD-76/77 hard-gated bởi product evidence; DD-78 đi cùng consumer. Chưa thêm BL share/activity vì downstream spec/schema vẫn chưa author; không runtime. |
+| 19/07/2026 | v1.20 | Authority v1.63; BL-SES-9 pin active-only refunded lifecycle, full→waitlisted defer. BL-SES-10 pin entry-bound origin event + CAS/lease max-3 retry and consume-time revalidation. Notification security-factor cutoff mirrored at immutable context start; DD-70..72 remain inactive proposals. No runtime. |
+| 19/07/2026 | v1.19 | Authority v1.60. DD-73..78 ✅ chốt — **chưa thêm BL nào cho cụm share/activity** (BL whitelist card + revoke thuộc propagation chưa thực hiện). Không đổi rule hiện hành. |
+| 19/07/2026 | v1.18 | Authority v1.62; waitlist integrity mirror + notification implementation closure v1.61: durable quota/retry receipts, deterministic route select, external push idempotency/trust epoch. DD-70..72/rate rows inactive; no runtime. |
+| 18/07/2026 | v1.17 | Authority v1.50; thêm registry rows **PROPOSAL/INACTIVE** cho DD-70/71/72 notification endpoints. Announcement confirm pin atomic idempotent tenant+actor+fan-out reservation và fail-closed outage; chưa activate threshold/runtime. |
 | 18/07/2026 | v1.16 | Authority v1.47: DD-61..64 accepted-in-principle; update BL-ORG sources/rate labels while retaining explicit not-implemented/inactive boundary. DD-69 accepted direction still creates no active business rule. |
 | 18/07/2026 | v1.15 | Authority → decisions v1.46. DD-69 vẫn proposal kỹ thuật app client và không tạo active business rule mới; registry body unchanged. |
 | 17/07/2026 | v1.14 | Feature-doc closure: SePay production HMAC timestamp/raw-body contract; bounded terminal-point correction + active SSE re-auth ≤30s; User Settings block tái dùng canonical `chat_blocks`. Runtime/migration vẫn pending. |

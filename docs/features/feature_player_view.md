@@ -2,8 +2,9 @@
 
 > **Canonical phase:** P4.6  
 > **Track:** 👤 Player View  
-> **Version:** 2.2 · 2026-07-15
+> **Version:** 2.2a · 2026-07-19
 > **Status:** Reviewed  
+> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3.5 identity · P3 ledger · P4 web auth/magic link · P4 sync realtime  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-8 · `../product/PRD.md` FLOW 10 · `../product/TDD.md` §3.4/§4 (person-self contract) · `BE/feature_player_view_tech.md`
 
@@ -118,6 +119,7 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.2a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-15 | v2.2 | **DD-37 closure:** active bot use cases chỉ còn Zalo/Messenger; thay TG-authenticated `/myclubs` bằng web-auth + Messenger persistent-menu contract. Telegram chỉ legacy trong domain note. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, /me dashboard screens |

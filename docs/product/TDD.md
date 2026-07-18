@@ -1,16 +1,16 @@
 # Technical Design Document (TDD) — Plexco
 ## Platform thể thao đa môn (host + player) — multi-tenant, marketplace discovery, sync đa surface, Zalo + Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi — DD-37)*
 
-**Phiên bản:** 3.1 — **amendment 18/07:** authority v1.47; DD-33/DD-60 accepted, DD-57..59 deferred, DD-61..64 accepted-in-principle post-P4, DD-69 accepted direction. Không đổi phase hoặc claim runtime/migration đã implement.
-**Ngày tạo:** 16/06/2026 · **Cập nhật:** 18/07/2026
+**Phiên bản:** 3.1 — **amendment history 18/07:** nội dung v3.1 được chốt trên authority v1.47; **current authority pointer là decisions v1.74 bên dưới**. Không đổi phase hoặc claim runtime/migration đã implement.
+**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 19/07/2026
 **Tài liệu tham chiếu:**
-- `BRD.md` v3.9d — yêu cầu nghiệp vụ
-- `PRD.md` v2.8b — user flows + edge cases
+- `BRD.md` v3.9f — yêu cầu nghiệp vụ
+- `PRD.md` v2.8e — user flows + edge cases
 - `../strategy/saas-implementation-plan.md` — kiến trúc multi-tenant
 - `../research/player-side-saas-reconciliation.md` — identity/kênh/matching
 - `../research/player-side-saas-AUDIT.md` — threat model & must-fix (C1–C7, B1–B6, §B2, + threat model public discovery)
 - `../channels/messenger/messenger-channel-design.md` — kênh Messenger (**phase-1, P2.5**): hybrid endpoint + protected routing/action contract
-- `../standards/decisions.md` **v1.47** — current authority qua DD-69: DD-33/60 ✅; DD-57..59 deferred; DD-61..64 accepted-in-principle/no-runtime; DD-65..68 ✅; DD-69 accepted direction.
+- `../standards/decisions.md` **v1.74** — current authority qua DD-78; v1.68–v1.74 BE-contract closure no-runtime (join/invite idempotency · notification v1.69–71/74 · DD-45a test-truth · DD-50 lock-order); DD-59 ✅ reconcile; DD-70..72 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated.
 
 > [!IMPORTANT]
 > **Scope:** TDD cover tới **P6** ở mức thiết kế. BRD là nguồn sự thật cho product scope; PRD cho behavior; TDD là implementation contract; ROADMAP cho thứ tự/progress. Security constraints nghiêm ngặt hơn giữa BRD và AUDIT luôn thắng.
@@ -237,7 +237,7 @@ erDiagram
         int price
         int slots_max "nullable"
         varchar area "khu vực (public)"
-        varchar venue "địa điểm chi tiết (private tới khi join)"
+        varchar venue "địa điểm chi tiết (private tới khi player active)"
         varchar skill_level "nullable"
         enum visibility "private|public"
         enum join_policy "open|approval"
@@ -602,8 +602,8 @@ ACK chỉ xảy ra sau khi raw transaction và durable job đã commit. Duplicat
 
 - **Publish:** host set `sessions.visibility='public'` → projector upsert `public_sessions` **chỉ field whitelist**: `sport_key, starts_at, area, skill_level, price, slots_open, host_display_name, club_display_name, join_policy`. **KHÔNG** roster, **KHÔNG** STK/PII, **KHÔNG** danh sách người trả/chưa trả. Đóng/huỷ/quá giờ → xoá khỏi `public_sessions`.
 - **Đọc (Discovery API):** `GET /discover?sport=&area=&date=&skill=&price_max=` → query **`public_sessions`** (read model), **không** `SET LOCAL app.tenant_id`, **không** đụng bảng tiền. Rate-limit + phân trang chống enumeration/scrape (NFR-S2).
-- **Vị trí (privacy, OD-6):** public chỉ hiện **`area`** (quận/khu vực); **`venue`** chi tiết chỉ lộ sau khi join/được duyệt.
-- **Join từ marketplace:** `POST /sessions/:id/join` → route `session_id → tenant` → nếu `join_policy=open`: resolve/tạo `Person` + **membership guest** + `addMemberToSession`; nếu `approval`: tạo `join_requests(pending)` → host duyệt (event → projector thông báo player). Slot hết → từ chối.
+- **Vị trí (privacy, OD-6):** public chỉ hiện **`area`**; **`venue`** chi tiết chỉ lộ khi canonical player outcome là `active`; approved-but-waitlisted vẫn ẩn.
+- **Join từ marketplace:** `POST /sessions/:id/join` → route `session_id → tenant` → resolve trusted Person rồi **lookup-only** processed command + existing membership/player/pending request. Current `active|waitlisted|pending` trả current outcome, không write/alert mới. Chỉ absent/`left` mới re-check DD-41/DD-42/DD-52 dưới session lock; sau guard, `open` mới create/reuse guest membership + `addMemberToSession`, còn `approval` mới create `join_requests(pending)`. Còn slot→`active` (+ canonical financial path, venue visible); full→`waitlisted` (no new charge/obligation/venue), kể cả approval.
 - **Bất biến public (test CI):** mọi field trong `public_sessions` ∈ whitelist; thử join/đọc không bao giờ trả tiền/PII/roster người khác.
 
 ---
@@ -612,7 +612,7 @@ ACK chỉ xảy ra sau khi raw transaction và durable job đã commit. Duplicat
 
 - **Cô lập (NFR-1):** repo choke-point + RLS (ENABLE+FORCE, role `NOBYPASSRLS`, fail-closed). Path **privileged cross-tenant** (merge Person, player-view, discovery) chạy ngoài RLS qua service có audit (AUDIT C4/C6).
 - **Worker cross-tenant:** scheduler/dispatcher chỉ dùng narrow DB functions; business job luôn quay lại tenant context (`SET LOCAL`) trước khi đọc/ghi. Không dùng một API role `BYPASSRLS` toàn năng.
-- **Public layer (NFR-1b):** `public_sessions` chỉ chứa field whitelist; **tiền/PII/roster không bao giờ ghi vào**. Discovery API read-only, rate-limit, phân trang, không lộ `venue`/SĐT tới khi join/duyệt; chống scrape/enumeration. Bất biến public test trong CI.
+- **Public layer (NFR-1b):** `public_sessions` chỉ chứa field whitelist; **tiền/PII/roster không bao giờ ghi vào**. Discovery API không lộ `venue`/SĐT trước active outcome; approval→waitlisted vẫn ẩn. Bất biến public test trong CI.
 - **Sync (NFR-1c):** command/outbox idempotent (`commandId`/`event.id`); canonical store là nơi duy nhất giữ sự thật; surface re-project được — không có ghi 2 chiều multi-master để lệch tiền.
 - **Tenant từ kênh, không từ nội dung** (chống spoof) — §3.3.
 - **Webhook:** timing-safe verify ×3 (SePay `HMAC_SHA256` timestamp + raw body, reject >300s / Zalo `X-Bot-Api-Secret-Token` / Messenger `X-Hub-Signature-256`); lưu raw trước ack; không log secret. Không downgrade SePay production webhook sang `Api_Key`; exact `Authorization: Apikey <key>` chỉ là bounded fallback cho connector không hỗ trợ HMAC.
@@ -747,7 +747,7 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 
 ## 11. Open Questions
 
-> ⭐ **Nguồn canonical:** xem `../standards/decisions.md` v1.47 tới DD-69. DD-57..59 deferred/reference-only; DD-60 accepted; DD-61..64 accepted-in-principle nhưng implementation inactive; DD-69 accepted direction. Bảng dưới giữ để tra nhanh.
+> ⭐ **Nguồn canonical:** xem `../standards/decisions.md` v1.74 tới DD-78. DD-45 retry/manual-ban closure; DD-70..72 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; DD-59 reconcile ✅. Bảng dưới giữ để tra nhanh.
 
 | # | Question | Status |
 |---|---|---|
@@ -759,7 +759,7 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 | 6 | Thu SĐT verified làm khoá merge | 🔄 **DD-50 (16/07):** phase-1 KHÔNG thu SĐT; khoá mạnh = verified email + link_code; phone dormant |
 | 7 | Web realtime: SSE + fan-out `LISTEN/NOTIFY` (dùng chung sync + chat) | ✅ chốt (→ DD-07) |
 | 8 | Join cross-club mặc định: open vs approval | ✅ per-kèo, mặc định open; approval re-check trong tx (→ DD-05) |
-| 9 | Độ chi tiết vị trí public: area vs venue | ✅ public area-only; venue sau active join/approval (→ DD-06) |
+| 9 | Độ chi tiết vị trí public: area vs venue | ✅ public area-only; venue chỉ cho active player (→ DD-06) |
 | 10 | Public read model = bảng `public_sessions` cập nhật qua projector | ✅ (→ DD-12; bảng đã có, projector implementation pending) |
 | 11 | Danh sách môn khởi điểm + taxonomy trình độ | ✅ 7 môn seed extensible + level rank 5 bậc (→ DD-08) |
 | 12 | Chat in-app schema (`chat_*`) | ✅ DD-38 scope-committed phase-1; schema chờ migration; tái dùng SSE (DD-07), RLS tenant + person-self |
@@ -778,11 +778,11 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 | 4 | `../research/player-side-saas-reconciliation.md` | Identity/kênh/matching |
 | 5 | `../research/player-side-saas-AUDIT.md` | Threat model & must-fix (+ public discovery) |
 | 6 | `../channels/messenger/messenger-channel-design.md` | Kênh Messenger (phase-1, P2.5) |
-| 7 | `../standards/decisions.md` | Decision log v1.47/current authority tới DD-69; accepted-in-principle không đồng nghĩa runtime đã land |
+| 7 | `../standards/decisions.md` | Decision log v1.74/current authority tới DD-78; accepted-in-principle không đồng nghĩa runtime đã land |
 
 ---
 
-*TDD v3.1 (18/07 amendment) — implementation contract cho platform đa môn + marketplace + sync engine; current authority decisions v1.47, runtime/migration còn pending. Session Organize v0.5/DD-61..64 accept-in-principle, build post-P4 (chưa land).*
+*TDD v3.1 (current authority refresh 19/07) — implementation contract cho platform đa môn + marketplace + sync engine; current authority decisions v1.74, runtime/migration còn pending.*
 
 ---
 
@@ -790,6 +790,8 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 19/07/2026 | v3.1 (authority refresh v1.74) | Pointer refresh decisions v1.67→v1.74 + BRD v3.9f/PRD v2.8e: v1.68–v1.74 BE-contract closure no-runtime. Không đổi implementation body/phase/runtime. |
+| 19/07/2026 | v3.1 (authority refresh) | Current decisions v1.65/BRD v3.9e/PRD v2.8d; DD-73..78 sequencing correction ở v1.64. DD-74/75 tạo baseline; chỉ DD-76/77 evidence-gated; DD-78 đi cùng consumer. Không đổi implementation body/runtime. |
 | 18/07/2026 | v3.1 | Amendment authority v1.47: DD-33/DD-60 accepted; DD-57..59 deferred; DD-61..64 accepted-in-principle post-P4; DD-69 accepted direction. Preserve prior feature closure and explicit runtime/migration-pending boundary. |
 | 17/07/2026 | v3.0 | Authority → decisions v1.45. Generalize DD-67 từ Page-only thành provider-endpoint identity/reachability cho Messenger + Zalo: uniqueness ba phần, reachability gắn `channel_identity_id`, endpoint và target-tenant eligibility tách rời. Không claim runtime/migration đã land. |
 | 17/07/2026 | v2.9 (review fix) | Đóng drift hiện hành: authority pointer tới DD-68/v1.44; tách Zalo tenant reachability khỏi Messenger Page-endpoint reachability theo DD-65..67. Không đổi phase/scope/runtime readiness. |

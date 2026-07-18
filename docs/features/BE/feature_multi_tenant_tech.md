@@ -1,8 +1,9 @@
 # Feature: Multi-tenant Foundation — Backend Tech Spec
 
 > **Canonical phase:** P0–P1
-> **Version:** 1.5 · 2026-07-17
+> **Version:** 1.5a · 2026-07-19
 > **Status:** Implementation contract reconciled to TDD v3.1 / decisions v1.45; P0–P1 live schema/migrations/tests remain the reality baseline, DD-15/DD-65..68 migration pending
+> **Implementation:** Implemented (foundation) — RLS + tenantRepo + migrations 0000–0013 trên `main` · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_multi_tenant.md`
 > **References:** `../../product/TDD.md` §3.1–3.4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37/**DD-65..68** · `feature_identity_tech.md` · `feature_tenant_routing_authz_tech.md`
 
@@ -217,6 +218,7 @@ Fail if any tenant table lacks `tenant_id`, ENABLE/FORCE RLS, policy USING/WITH 
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-19 | v1.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Implemented (foundation)). Không đổi contract. |
 | 2026-07-17 | v1.5 | **Live-schema closure:** replace the abridged `sessions` block with the exact `0002`/Drizzle contract, including nullable `area`, venue address, defaults, optimistic version and audit timestamps. |
 | 2026-07-17 | v1.4 | **DD-67 v1.45 generalization:** endpoint-scope identity/reachability for Messenger + Zalo, three-part uniqueness and `channel_identity_id` reachability; target tenant remains separately authorized. Live baseline unchanged; migration pending. |
 | 2026-07-17 | v1.3 | **DD-65..68 boundary propagation:** split Zalo tenant reachability from global-protected Messenger Page registry/identity/endpoint reachability; endpoint/default context no longer equals target tenant. Live P0–P1 baseline unchanged; migration pending. |

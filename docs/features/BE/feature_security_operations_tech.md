@@ -1,8 +1,9 @@
 # Feature: Security, Reliability & Operations — Engineering/Ops Spec
 
 > **Canonical phase:** Cross-cutting / P6
-> **Version:** 2.2 · 2026-07-17
+> **Version:** 2.2a · 2026-07-19
 > **Status:** Reviewed
+> **Implementation:** In progress — RLS/HR1 guard đã thực thi; phần còn lại chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_security_operations.md`
 > **References:** `../../product/TDD.md` §4/6/7/10 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37/DD-65
 
@@ -192,6 +193,7 @@ Required runbooks: cross-tenant leak, public PII, wrong allocation, identity com
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.2a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
 | 2026-07-17 | v2.2 | **DD-65 secret ownership:** separate Page-token endpoint rotation from single Meta App Secret platform rollover; add isolation/blast-radius tests and forbid combined inventory rows. |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), control areas matrix, secret rotation table, CI gates, 20 tests |

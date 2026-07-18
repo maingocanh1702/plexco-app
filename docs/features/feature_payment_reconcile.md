@@ -2,8 +2,9 @@
 
 > **Canonical phase:** P3
 > **Track:** 💰 Payment Reconciliation
-> **Version:** 1.7 · 2026-07-17
+> **Version:** 1.7a · 2026-07-19
 > **Status:** Reviewed and reconciled to BRD v3.9b / PRD v2.8 / TDD v3.1 / decisions v1.45; B1/schema/code pending build slices
+> **Implementation:** In progress — core matching/payments-logic đã có; wiring webhook→settle→notify chưa · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P0–P1 foundation + P2 tenant routing
 > **Tài liệu liên quan:** `../product/BRD.md` FR-5 · `../product/PRD.md` FLOW 6/9 + §4.1 · `../product/TDD.md` §3.2/3.6/3.7 · `../standards/decisions.md` DD-40/DD-25 · `../standards/business-rules.md` BL-PAY · `../research/player-side-saas-reconciliation.md`
 
@@ -224,6 +225,7 @@ Không log raw bank content, account number, display name, secret hoặc provide
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v1.7a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
 | 2026-07-17 | v1.7 | **Durable-ingest auth closure:** pin exact SePay timestamp/raw-body HMAC format, freshness and no-downgrade plus exact API-key fallback; keep ApiPay raw-body verifier as a separate provider contract. |
 | 2026-07-16 | v1.6 | **Full money propagation:** DD-49 append-only obligation-vs-allocation semantics + refund request contract; PAY-OQ-2 closed ingest-ON/automation-OFF for suspended. B1 chooses dedicated source migration and explicitly forbids synthetic bank transactions. Authority: decisions v1.37. |
 | 2026-07-10 | v1.4 | **Review fixes: money vocab → canonical ledger.** Mark-paid = INSERT `payment_allocations` + cập nhật `charges` (KHÔNG có bảng `payment`): tiền mặt → `source='cash'`; CK khớp một `bank_transactions` → `source='manual'`. Bỏ `source='bank_transfer'` (không có trong enum canonical `auto/manual/cash/waiver/reversal`). Host tự xác nhận "đã CK" nhưng chưa có `bank_transaction` = impl còn mở (synthetic manual bank_txn / enum migration). Cập nhật UC-15, §3.1, ledger rules, screens, acceptance. |

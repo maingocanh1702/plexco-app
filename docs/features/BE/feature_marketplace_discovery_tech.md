@@ -1,8 +1,9 @@
 # Feature: Marketplace Discovery & Public Projection — Backend Tech Spec
 
 > **Canonical phase:** P4.3  
-> **Version:** 2.1 · 2026-07-17
+> **Version:** 2.1a · 2026-07-19
 > **Status:** Reviewed  
+> **Implementation:** Not started — `public_sessions` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_marketplace_discovery.md`  
 > **References:** `../../product/TDD.md` §3.9
 
@@ -191,6 +192,7 @@ Periodic sweep: DELETE WHERE expires_at < now()
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.1a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.1 | **Live schema/DD-46 closure:** replace invalid `now()` partial index with live plain btree; pin no-FK public reference, personal-tenant owner-membership alias fail-closed projection, and deterministic time ranking while MKT-OQ-3 stays open. |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), DDL, 12 edge cases, 20 tests |

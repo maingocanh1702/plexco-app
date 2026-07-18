@@ -1,7 +1,7 @@
 # HANDOFF — Plexco
 
 > **Đọc file này ĐẦU TIÊN khi tiếp quản project.** Self-contained: không cần context phiên trước.
-> Cập nhật: 2026-07-18 (BRD v3.9d · PRD v2.8b · TDD v3.1 · ROADMAP v3.3b · decisions v1.47). **Founder batch 18/07:** DD-33 ✅ (Facebook phase-1) · DD-60 ✅ · DD-61..64 ✅ accept-in-principle (Session Organize, build **post-P4**) · DD-69 ✅ định hướng accepted (native phase-2 TBD, gates mở) · DD-57..59 defer. Session Organize/native **chưa build**; runtime baseline không đổi.
+> Cập nhật: 2026-07-19 (BRD v3.9e · PRD v2.8d · TDD v3.1 · ROADMAP v3.3d · decisions v1.67). DD-59 ✅ reconcile; DD-70..72 🟡; **DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated**. DD-45 retry/manual-ban closure không đổi runtime baseline.
 >
 > **⚡ v3.4 Phase-1 pivot (DD-37 ✅, thay DD-09):** Kênh phase-1 = **web + Zalo + Facebook Messenger**;
 > **Telegram đã bị loại khỏi phạm vi** (không còn adapter/bot Telegram trong MVP). Auth phase-1 =
@@ -112,20 +112,20 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 
 ## 6. Trạng thái hiện tại (2026-07-17)
 
-**Planning & Docs — decision coverage cao** (current **v1.47/DD-69**). Feature-doc closure đã reconcile endpoint identity/reachability, SePay HMAC, DM safety/block source, Assistant DLP và Session Organize v0.5 correction/SSE; DD-69 thêm native direction ✅ accepted (build phase-2 TBD) nhưng không đổi runtime. Implementation vẫn cần migrations/services/adapters/E2E; DD-57..59 defer, DD-61..64 accept-in-principle (post-P4) + DD-69 direction accepted — canonical build phase chưa mở. Code-readiness vẫn bị B0/B1/B2/B3/external/legal gates; foundation + Auth v3 Telegram-era đã land.
+**Planning & Docs — decision coverage cao** (current **v1.65/DD-78**; DD-70..72 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated). Waitlist contract đã khép approval/venue/lifecycle/retry ambiguity nhưng behavior vẫn chưa build. Implementation còn cần migrations/services/adapters/E2E; code-readiness vẫn bị B0/B1/B2/B3 và external/legal gates.
 
 - ✅ **Foundation merged:** monorepo (`packages/core` + `packages/db` + `apps/bot` + `apps/web`) + core logic thuần (test xanh) + Postgres/RLS choke-point (`tenantRepo`/`withTenant`) + **migrations `0000–0013`** committed (roles/RLS/grants/functions/seeds/auth_functions/onboarding_steps) + bộ RLS invariant test chạy trên role runtime thật.
-- ✅ **Auth Onboarding v3 (Telegram-era) merged** (`5b1193b`) + web tests. **DD-37 supersede provider** → thay bản Telegram-era bằng **Google/email** đã **spec'd nhưng CHƯA implement**.
+- ✅ **Auth Onboarding v3 (Telegram-era) merged** (`5b1193b`) + web tests. **DD-37 supersede provider** → Google/email đã spec ở Product v2.10/BE v2.7, gồm OAuth transaction/Lax binding + email-link two-hop, nhưng **CHƯA implement** và B0 còn chờ owner duyệt.
 - ⬜ **Feature layer chưa build:** session/reconcile/sync/marketplace/billing/bot handlers/UI (bảng DB đã dựng sẵn; tầng command/service/projector/UI còn trắng).
 
 Tài liệu hoàn tất (bản mới nhất):
-- ✅ BRD v3.9d · PRD v2.8b · TDD v3.1 · ROADMAP v3.3b (founder batch decisions v1.47 reconciled; runtime pending)
+- ✅ BRD v3.9e · PRD v2.8d · TDD v3.1 · ROADMAP v3.3d (current authority v1.67; runtime pending)
 - ✅ 4 phụ lục (saas-plan, reconciliation, AUDIT, messenger)
 - Feature docs: **22 Product/System / 21 BE = 21 cặp + 1 product-only Draft** (`channel_booking_funnel`). Cặp thứ 21 là Session Organize v0.5 (DD-61..64 ✅ accept-in-principle, build post-P4); coverage không có nghĩa runtime/build-ready — xem `features/README.md`.
 - ✅ Business rules, design tokens, dependency graph
 - ✅ README, CHANGELOG, PULL_REQUEST_TEMPLATE, HANDOFF, templates
 
-**Việc tiếp theo:** trước hết author/review slice thay provider auth Telegram-era → **Google/email** (DD-13/DD-37, đã spec nhưng chưa có launcher-ready slice), rồi implement; sau đó bắt đầu feature layer (session → reconcile → sync). Xem `docs/standards/BUILD-STATUS.md` + `docs/product/ROADMAP.md` → Next Actions.
+**Việc tiếp theo:** owner duyệt B0 và ghi DD; sau đó author/review slice thay provider auth Telegram-era → **Google/email** (DD-13/DD-37, chưa có launcher-ready slice), rồi implement; tiếp theo mới vào feature layer (session → reconcile → sync). Xem `docs/standards/BUILD-STATUS.md` + `docs/product/ROADMAP.md` → Next Actions.
 
 **Reference:** Bot single-club (Bestminton) đang chạy production — logic tiền đã kiểm chứng, đã lift sang `packages/core`, migrate thành tenant #1.
 
@@ -138,10 +138,12 @@ Tài liệu hoàn tất (bản mới nhất):
 | `docs/standards/` | decisions, business-rules, design-tokens, feature-dependency-graph, deployment-infra · **DD-57..59 deferred reference** · **DD-60 accepted** · **DD-61..64 accepted-in-principle/no-runtime** |
 | `docs/features/` · `docs/features/BE/` | Feature specs FE (Product) · BE (Tech) |
 | `docs/channels/` | telegram **(archived — DD-37)**, zalo, messenger (phase-1), web (+ messenger-channel-design; designer-kickoff/pipeline are DD-57..59 deferred references; API convention DD-60 accepted) |
+| `docs/dd-73-78-share-activity-analysis.md` + `docs/founder-decision-brief-2026-07-19-share-activity.md` | Cụm **Share & Activity** (DD-73..78 ✅ 19/07): phân tích đầy đủ + bản ghi 6 quyết định |
 | `docs/research/` | bestminton analysis/scan, player-side-saas AUDIT & reconciliation |
 | `docs/strategy/` | gtm-strategy, gtm-doi-soat-decision, saas-implementation-plan, PnL model |
 | `docs/automation/` | onboarding, playbook, automation-overview, product-backlog (autopilot-kit vẫn ở `docs/autopilot-*`) |
 | `docs/templates/` | Templates tái sử dụng; FE handoff/token-mapping templates là **DD-58 deferred/optional reference**, không active gate |
+| `docs/archive/` | **KHÔNG phải authority** — nội dung cứu khỏi `.autopilot/worktrees/` (không còn là git worktree + bị gitignore ⇒ chưa commit = chưa được bảo vệ). Gồm patch slice P0 identity/link/secret chưa từng commit, và ledger autopilot phase-1 (`DECISIONS.md`/`PROGRESS.md` — không có bản nào khác trong repo). Đọc `docs/archive/README.md` trước khi revive bất cứ thứ gì trong đó |
 
 **Source of truth khi conflict (theo topic):**
 
@@ -182,6 +184,11 @@ Research/reconciliation/strategy là input định hướng, không được ove
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 19/07/2026 | v1.19 | Current authority → decisions v1.65 / BRD v3.9e / PRD v2.8d / ROADMAP v3.3d; DD-73..78 sequencing correction ở v1.64. DD-74/75 tạo baseline; chỉ DD-76/77 evidence-gated; DD-78 đi cùng consumer. Không đổi runtime baseline. |
+| 19/07/2026 | v1.18 | Authority → decisions **v1.60**. **DD-73..78 ✅ chốt (owner 19/07)**: 6 câu đều phương án (a); Q5 kèm re-scope đưa fence/guarded-view/grant migration về **DD-12**; **DD-64 amended** (self-aggregate). Sequencing wording của entry này được corrected ở v1.19; runtime baseline không đổi. |
+| 19/07/2026 | v1.17 | Current authority → decisions v1.59/PRD v2.8c. DD-05/06/45/49 integrity closure pins approval re-derive, venue active-only, activation-time refunded lifecycle và bounded waitlist retry. Không migration/runtime mới. |
+| 19/07/2026 | v1.16 | Authority → decisions v1.52. Consistency pass cụm DD-73..78: điều kiện render `/s/<id>` là **sự tồn tại row `public_sessions`** (không phải predicate `visibility`/`status` — check hai cột đó là buộc đọc `sessions`); tách `gender` người chơi khỏi `gender_restriction`; DD-73 phase **P4.3** theo DD-12; card ≠ profile field (không mở DD-48 item 1); revoke chốt 404. Founder-batch recheck còn surface DD-72 `trusted_at/trust_source` + reset-on-rebind, DD-71 component-wise vector rule và auth collision/rate-limit/KMS precision. Vẫn 🟡/design-gated ⇒ runtime baseline không đổi. |
+| 18/07/2026 | v1.15 | Authority → decisions v1.51. Thêm pointer cụm **DD-73..78 🟡 đề xuất** + DD-78 default share image. Review correction cùng snapshot: Auth v2.10/v2.7 tách OAuth cross-site transaction/Lax binding khỏi Strict session/email flow; Notification v3.3 pin exact trusted route, dispatch-time roster và app-level vendor boundary. Chưa chốt/build ⇒ runtime baseline không đổi. |
 | 18/07/2026 | v1.14 | Founder batch v1.47 propagation: DD-33 external gate/link-code fallback; DD-57..59 deferred references; DD-60 accepted; Session Organize v0.5 accepted-in-principle/no-runtime; DD-69 accepted direction. |
 | 18/07/2026 | v1.13 | Authority → BRD v3.9c/PRD v2.8a/TDD v3.1/ROADMAP v3.3a/decisions v1.46; mirror DD-69 proposal boundaries: PWA planned-not-live, native phase-2 TBD, RN+Expo after spike, device push separate, offline read-only. Runtime baseline không đổi. |
 | 17/07/2026 | v1.12 | Feature-doc closure → BRD v3.9b/PRD v2.8/TDD v3.1/ROADMAP v3.3; exact endpoint identity, SePay HMAC, DM safety/block source, Assistant DLP và Session Organize v0.4 được mirror; không claim code/migration. |

@@ -12,7 +12,7 @@ Bản đồ điều hướng cho toàn bộ docs. Bắt đầu từ đây.
 | **Product / PM** | `product/BRD.md` → `product/PRD.md` → `features/<feature>.md` |
 | **Founder / Ops / CRM** | `product/CRM_DASHBOARD_BRD.md` → `strategy/gtm-strategy.md` → `standards/business-rules.md` |
 | **Backend** | `product/TDD.md` → `standards/business-rules.md` → `features/BE/<feature>_tech.md` |
-| **Frontend / Web** | `channels/web/README.md` → `channels/web/design-brief.md` → `channels/web/design-tokens.md` |
+| **Frontend / Web** | `channels/web/README.md` → `channels/web/design-brief.md` → `standards/design-tokens.md` (token SoT — v1.57: `channels/web/design-tokens.md` chỉ còn là pointer) |
 | **Bot / Channel** | `channels/zalo/` · `channels/messenger/` + feature kênh tương ứng (`channels/telegram/` **archived — DD-37**) |
 | **Bất kỳ quyết định nào** | `standards/decisions.md` ⭐ |
 | **Dev chạy autopilot** | `autopilot-ONBOARDING.md` ⭐ → `autopilot-backlog.md` → `autopilot-templates/` |

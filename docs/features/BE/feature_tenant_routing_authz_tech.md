@@ -1,8 +1,9 @@
 # Feature: Tenant Routing & Admin Authorization — Backend Tech Spec
 
 > **Canonical phase:** P2
-> **Version:** 2.5 · 2026-07-17
+> **Version:** 2.5a · 2026-07-19
 > **Status:** Reviewed · reconciled to TDD v3.1 / decisions v1.45
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_tenant_routing_authz.md`
 > **References:** `../../product/TDD.md` §3.3–3.5 · `../../standards/business-rules.md` BL-SEC-2/BL-SEC-5 · `../../standards/decisions.md` DD-27 · DD-51 · DD-53 · DD-56 · **DD-65..68**
 
@@ -280,6 +281,7 @@ Logical grant record (physical DDL must be pinned by the authz build slice after
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.5 | **decisions v1.45:** generalized provider-endpoint identity/reachability cho Messenger + Zalo; reachability keyed by `channel_identity_id`, target tenant authorize separately. |
 | 2026-07-17 | v2.4 | **Legacy/target closure:** Telegram DDL labeled reference-only; target delta points to endpoint-scoped Zalo/Messenger model; `tenant_link_codes` naming/lifecycle aligned and separated from identity `link_codes`. |
 | 2026-07-17 | v2.3 | **DD-65..68:** Messenger endpoint/default-context split, protected opaque target resolver, Page-scoped identity/reachability, central picker and valid cross-club action semantics; live schema flagged migration-pending. |

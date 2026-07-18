@@ -2,7 +2,8 @@
 
 > Foundation-level design tokens cho web app. Khai báo CSS custom properties trong `:root`.
 > **Khi cần color/spacing/font mới → thêm vào đây kèm ghi chú.**
-> v1.0 · 2026-06-18
+> v1.1 · 2026-07-19 · **SoT duy nhất cho giá trị token** — `channels/web/design-tokens.md` đã merge về đây (DD-59 reconcile, owner 19/07) và chỉ còn là pointer.
+> ⚠️ Giá trị brand/semantic hiện tại sẽ thay khi chốt theme mới (`../channels/web/theme-direction-2026-07.md` 🟡). Nhu cầu token còn thiếu: `token-needs-matrix.md`.
 
 ---
 
@@ -274,12 +275,55 @@
 ```css
 :root {
   --sport-badminton: hsl(262, 83%, 58%);     /* purple — cầu lông */
-  --sport-pickleball: hsl(142, 71%, 45%);    /* green — pickleball */
-  --sport-tennis: hsl(38, 92%, 50%);         /* amber — tennis */
+  --sport-pickleball: hsl(142, 71%, 45%);    /* green — ⚠️ trùng --success, re-check khi chốt theme */
+  --sport-tennis: hsl(48, 96%, 53%);         /* yellow — v1.1: đổi từ hsl(38,92%,50%) vì trùng --warning */
   --sport-football: hsl(217, 91%, 60%);      /* blue — bóng đá */
   --sport-default: var(--gray-500);          /* fallback */
+  /* ⚠️ DD-08 seed 7 môn — còn thiếu padel/volleyball/basketball (xem token-needs-matrix.md §2) */
 }
 ```
+
+---
+
+## 10. Tokens merged từ `channels/web` (v1.1 — 19/07/2026)
+
+> Các token chỉ tồn tại ở `channels/web/design-tokens.md` cũ, đưa về SoT dưới dạng **alias về foundation token** khi có thể (playbook: token per-surface chỉ được alias, không giá trị mới).
+
+```css
+:root {
+  --font-heading: 'Outfit', var(--font-sans);  /* ⚠️ theme-direction 0.1 đề xuất 'Sora' — chờ chốt */
+  --bg-page: var(--bg-secondary);              /* alias — nền page */
+  --bg-input: var(--gray-100);                 /* alias — input, search */
+  --bg-sidebar: hsl(230, 25%, 18%);            /* sidebar dark-trong-light (giữ từ channels/web); ⚠️ hue 230 lệch thang neutral 220 — re-check khi chốt theme */
+  --text-inverse: hsl(0, 0%, 100%);
+  --text-link: var(--primary);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-input: var(--bg-elevated);
+    --bg-sidebar: hsl(230, 30%, 12%);
+  }
+}
+```
+
+---
+
+## Conflict Resolution Log
+
+> Merge 19/07/2026 (`channels/web/design-tokens.md` v0.1 → SoT). Quy tắc: SoT thắng trừ khi có lý do ghi rõ.
+
+| Ngày | Token | SoT (giữ) | channels/web (bỏ) | Quyết định / lý do |
+|---|---|---|---|---|
+| 19/07 | `--success` | hsl(142,71%,45%) | hsl(152,69%,41%) | SoT thắng; toàn bộ semantic re-check khi chốt theme |
+| 19/07 | `--info` | hsl(217,91%,60%) | hsl(205,86%,53%) | SoT thắng |
+| 19/07 | `--primary-hover` | 52% lightness | 50% | SoT thắng |
+| 19/07 | `--primary-dark` | — (dùng `--primary-active`) | hsl(243,75%,35%) | Drop — trùng vai trò |
+| 19/07 | `--sport-badminton` | purple 262 | green 142 | SoT thắng — bản channels/web trùng `--success` |
+| 19/07 | `--sport-pickleball` | green 142 ⚠️ | orange 25 | SoT thắng tạm; green trùng `--success` → đổi khi chốt theme (needs-matrix §2) |
+| 19/07 | `--sport-tennis` | **hsl(48,96%,53%)** ← đổi | (nguồn giá trị mới) | **channels/web thắng** — giá trị SoT cũ hsl(38,92%,50%) trùng đúng `--warning` |
+| 19/07 | `--leading-relaxed` | 1.625 | 1.75 | SoT thắng |
+| 19/07 | `--transition-fast/base/slow` | dùng `--duration-*` + `--ease-*` | alias gộp | Drop — 1 hệ motion duy nhất |
 
 ---
 
@@ -297,5 +341,6 @@
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 19/07/2026 | v1.1 | **DD-59 reconcile (owner 19/07):** merge `channels/web/design-tokens.md` v0.1 về đây — file đó thành pointer. Thêm §10 (font-heading/bg-page/bg-input/bg-sidebar/text-inverse/text-link, alias-first) + Conflict Resolution Log. Sửa `--sport-tennis` → hsl(48,96%,53%) (SoT cũ trùng `--warning`). Header khai báo SoT duy nhất; link `token-needs-matrix.md`. |
 | 19/06/2026 | — | Thêm Changelog table |
 | 18/06/2026 | v1.0 | Design tokens foundation |

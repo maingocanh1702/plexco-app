@@ -1,7 +1,7 @@
 # Feature Dependency Graph — Plexco
 
-> Thứ tự phát triển features cho Plexco platform. Căn cứ `../product/ROADMAP.md` v3.3b + `../product/TDD.md` v3.1 + `decisions.md` v1.47.
-> v1.9 · 2026-07-18. Node Session Organize v0.5 là **accept-in-principle (build post-P4), dependency-only** — không phải canonical timeline commitment. DD-69 direction accepted; native build phase-2 chưa có lịch nên chưa thêm node/cạnh vào critical path.
+> Thứ tự phát triển features cho Plexco platform. Căn cứ `../product/ROADMAP.md` v3.3c + `../product/TDD.md` v3.1 + `decisions.md` v1.67.
+> v1.9c · 2026-07-19. Current reference tới decisions v1.67; dependency order không đổi. Node Session Organize v0.5 là **accept-in-principle (build post-P4), dependency-only**.
 
 ---
 
@@ -188,6 +188,9 @@ F19 → F20
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 19/07/2026 | v1.9c | Authority → decisions v1.67. **Sửa framing v1.64 sequencing:** (8a) fence/guarded-view thuộc DD-12/marketplace → (8b) DD-73 acquisition (chặn thêm bởi DD-41 projection migration) → **DD-74/75 activity baseline (KHÔNG bị social evidence gate chặn)** → **chỉ DD-76/77 hard-gated bởi liquidity**; DD-78 đi cùng consumer. Bỏ framing cũ "DD-74..78 sau evidence gate" (vòng lặp: gate cần baseline DD-74/75). |
+| 19/07/2026 | v1.9b | Authority → decisions v1.60; DD-73..78 ✅ chốt nhưng **chưa đổi thứ tự dependency**: (8a) fence/guarded-view nằm trong DD-12/marketplace, (8b) DD-73 sau đó. ~~DD-74..78 sau evidence gate~~ *(superseded v1.9c: chỉ DD-76/77 gated).* |
+| 19/07/2026 | v1.9a | Current references → ROADMAP v3.3b/TDD v3.1/decisions v1.59; dependency graph/critical path không đổi. |
 | 18/07/2026 | v1.9 | Authority → ROADMAP v3.3b/decisions v1.47; add missing F21 matrix row, pin external Session CRUD prerequisite + F11 Sync, and retain post-P4/no-runtime boundary. |
 | 18/07/2026 | v1.8 | Authority → ROADMAP v3.3a/TDD v3.1/decisions v1.46. DD-69 vẫn phase-2 proposal chưa có lịch; dependency graph và critical path không đổi. |
 | 17/07/2026 | v1.7 | Authority → ROADMAP v3.3/TDD v3.1/decisions v1.45; F21 trỏ Session Organize v0.4. Feature-doc closure không đổi dependency graph hoặc proposal phase. |

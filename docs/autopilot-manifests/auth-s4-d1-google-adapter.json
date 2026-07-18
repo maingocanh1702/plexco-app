@@ -1,0 +1,47 @@
+{
+  "feature": "auth-s4-d1-google-adapter",
+  "branch": "feat/auth-s4-d1-google-adapter",
+  "base_ref": "main",
+  "risk": "P0",
+  "change_class": "identity-feature",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "authority": "DD-80 (decisions v1.77) · b0-auth-credential-lifecycle-design-probe.md §2/§4/§4.1/§8.2 · feature_web_auth_onboarding_tech.md v2.8 §3/§4/§5-acceptance-D1",
+  "depends_on": ["auth-s4-d0-revoke-core"],
+  "dep_checks": [
+    { "file": "packages/db/migrations/0015_auth_revoke_account.sql", "symbol": "auth_revoke_account_sessions" }
+  ],
+  "invariants": ["auth", "schema", "build-config"],
+  "enablement_gates": [
+    "google-oauth-client-config (Google console client-id/secret via KMS/env; khong hard-code)",
+    "A3-legal-PII (go-live gate, khong chan code)"
+  ],
+  "negative_scope": [
+    "NO email/password/token/delivery lifecycle (D1 email bundle rieng, flag OFF)",
+    "NO Facebook adapter (external gate DD-33 rieng; routes tra AUTH_PROVIDER_UNAVAILABLE nhu v2.6)",
+    "NO email-change/rebind workflow from Google claims (ngoai D1 negative scope theo B0 SS4)",
+    "NO auto-merge Person/Account on identity conflict (AUTH_IDENTITY_CONFLICT -> DD-53)",
+    "NO reuse of sameOriginRequest()/Strict callback cookie tu Telegram flow cho OAuth callback",
+    "NO Telegram route removal"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/auth-s4-d1-google-adapter.json",
+    "packages/db/schema.ts",
+    "packages/db/migrations/0016_oauth_transactions.sql",
+    "packages/db/src/auth.ts",
+    "packages/db/src/auth.test.ts",
+    "apps/web/lib/google-oidc.ts",
+    "apps/web/lib/google-oidc.test.ts",
+    "apps/web/lib/oauth-transaction.ts",
+    "apps/web/lib/oauth-transaction.test.ts",
+    "apps/web/app/api/auth/google/state/route.ts",
+    "apps/web/app/api/auth/google/state/route.test.ts",
+    "apps/web/app/api/auth/google/callback/route.ts",
+    "apps/web/app/api/auth/google/callback/route.test.ts",
+    "apps/web/package.json",
+    "pnpm-lock.yaml",
+    ".env.example",
+    "docs/features/BE/feature_web_auth_onboarding_tech.md"
+  ]
+}

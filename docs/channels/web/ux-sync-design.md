@@ -222,7 +222,7 @@ Allowed fields:
 Never expose:
 
 - Tenant routing ID.
-- Exact venue before join/approval.
+- Exact venue before active player outcome (including approved-but-waitlisted).
 - Roster.
 - Payment/debt status.
 - Bank account.

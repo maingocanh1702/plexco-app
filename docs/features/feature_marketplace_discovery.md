@@ -2,8 +2,9 @@
 
 > **Canonical phase:** P4.3  
 > **Track:** 🔍 Discovery & Marketplace  
-> **Version:** 2.2 · 2026-07-17
+> **Version:** 2.2a · 2026-07-19
 > **Status:** Reviewed  
+> **Implementation:** Not started — `public_sessions` có sẵn · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 session management · P4 sync/public projector  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-3/NFR-S2 · `../product/PRD.md` FLOW 12 · `../product/TDD.md` §3.9 · BRD OD-6/OD-8 · `BE/feature_marketplace_discovery_tech.md`
 
@@ -17,7 +18,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 
 - Public serializer **chỉ** emit whitelist fields — không bao giờ expose internal routing/tenant ID.
 - Private/incomplete/closed/cancelled/past sessions **KHÔNG BAO GIỜ** xuất hiện.
-- Exact venue chỉ reveal sau successful join/approval.
+- Exact venue chỉ reveal khi canonical player outcome là `active`; approved-but-waitlisted vẫn ẩn.
 - `slots_open` trong browse là advisory — join recheck capacity transactionally.
 - Messenger central mặc định global discovery; tenant Page mặc định local + “Khám phá tất cả”. Mỗi trang tối đa 8 business choices; Join CTA là opaque action, không raw routing ID.
 
@@ -136,7 +137,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| MKT-OQ-1 | BRD OD-6: public location granularity | ✅ Chốt (DD-06, 2026-07-13): **`area` (quận/khu vực) only public; venue post-join** (invariant test). |
+| MKT-OQ-1 | BRD OD-6: public location granularity | ✅ Chốt (DD-06, clarified v1.60): **`area` only public; venue active-only** (approved-waitlisted no venue). |
 | MKT-OQ-2 | BRD OD-8: initial sport/skill taxonomy | ✅ Chốt (DD-08, 2026-07-13): 7 môn seed (badminton/pickleball/tennis/padel/volleyball/basketball/football, extensible qua `sports`) + level 5-bậc ordered rank. |
 | MKT-OQ-3 | Initial ranking: upcoming/area vs optional distance provider | ⬜ Chưa chốt |
 
@@ -144,6 +145,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.2a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.2 | **Live/DD-46 projection closure:** document intentional no-FK public session reference; personal tenants source public club alias only from owner membership and fail closed when blank; ranking remains deterministic time-order until MKT-OQ-3 is resolved. |
 | 2026-07-17 | v2.1 | **DD-65/66/68:** Messenger central global vs tenant Page local-default discovery; max 8 business choices/page và opaque Join actions. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |

@@ -13,6 +13,7 @@
 > Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅, thay TG Login) · link **Facebook** (DD-33 ✅, phase-1)
 > · **Zalo Login** (DD-14 ⬜). **DD-50:** phase-1 không thu SĐT; strong proof cho claim có tiền = verified account email hoặc transactional one-time `link_code`. Phone fields giữ dormant. Xem §7 matrix.
 > **DD-15/DD-65..68 (decisions v1.47):** channel identity/reachability luôn scoped theo provider endpoint. Messenger scope = Page; Zalo scope = bot/OA cho tới khi DD-15 chứng minh rộng hơn. Reachability gắn `channel_identity_id`, không thu gọn thành `(person,tenant,platform)`.
+> **DD-50/DD-70(a) (decisions v1.73):** `link_code` consume read-only resolves candidate, locks issuer/account+Person parent before the code row, then revalidates/conditionally consumes; it emits no notification. Merge commit inventory/fence/revalidate bounded source+survivor rồi append `identity_merged` từ locked `merge_audit` trong cùng transaction; tenant outbox không phải global fallback.
 
 ---
 
@@ -131,7 +132,7 @@ Invariant: một active/guest membership cho một `(tenant_id, person_id)`.
 - `channel_identities`: `UNIQUE(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`.
 - `memberships`: active person unique theo tenant.
 - `channel_reachability`: unique theo `channel_identity_id` + global-protected narrow service; không reuse window/token xuyên Page/bot/OA. Target-tenant eligibility được authorize riêng.
-- `link_codes`: hash-only, TTL ngắn, single-use, `max_attempts` + cooldown/lock + revoke; issuer đúng một channel/account.
+- `link_codes`: hash-only, TTL ngắn, single-use, `max_attempts` + cooldown/lock + revoke; issuer đúng một channel/account; consume order = read-only candidate → canonical issuer/account+Person parent → code row → revalidation/conditional accounting.
 - `merge_audit` + `merge_tombstones`: mọi merge có actor, method, reason, before/after.
 - Runtime API role không broad SELECT global protected tables; đi qua identity/auth service
   hoặc SECURITY DEFINER function hẹp, có purpose/audit.
@@ -200,7 +201,7 @@ Yêu cầu:
 - Issuer XOR: đúng một trong `source_channel_identity_id` hoặc `source_account_id`; issuer phải resolve về `source_person_id` hiện hành dưới lock.
 - Code cryptographic, entropy tối thiểu 64 bits. Không dùng mã ngắn có không gian đoán được.
 - Plaintext code chỉ trả một lần, không log.
-- Verify transaction lock row, từ chối code expired/consumed/revoked/locked, tăng failed attempts atomically, khoá khi chạm `max_attempts`, consume đúng một lần.
+- Verify transaction resolves candidate read-only, locks canonical issuer/account + current Person parent before the exact code row, revalidates binding, then rejects expired/consumed/revoked/locked before atomic attempt accounting or single-use consume. Reset/revoke-vs-consume must follow the same order and has barrier tests.
 - Error generic: không tiết lộ code/person/channel có tồn tại.
 - Code chỉ tạo quyền lập merge proposal; merge commit cần confirmation và conflict checks.
 
@@ -213,8 +214,9 @@ canonical là `Person`.
 
 Transaction bắt buộc:
 
+0. Nếu DD-70(a) đã bật: authorize/read-only inventory toàn bộ affected Person UUID, lock `notification_inbox_fences` theo UUID tăng dần **trước** mọi Person/source/child row, rồi re-inventory sau lock; drift ⇒ rollback/retry. Đây là prefix bắt buộc cho merge/delete có notification graph.
 1. Authorize actor/signal; load source/target Person theo thứ tự ID ổn định để tránh deadlock.
-2. Lock persons, channel identities, memberships, charges và reachability liên quan.
+2. Lock persons, channel identities, memberships, charges và reachability liên quan sau inbox fences.
 3. Reload merge plan; reject nếu stale.
 4. Chọn canonical Person.
 5. Move `channel_identities` sang canonical Person, xử lý unique conflict fail-closed.
@@ -229,7 +231,9 @@ Transaction bắt buộc:
    charges/players được re-parent hợp lệ.
 8. Mark old Person `merged`, tạo `merge_tombstones`.
 9. Invalidate outstanding link codes/sensitive sessions.
-10. Ghi `merge_audit` + outbox event trong cùng transaction.
+10. Ghi `merge_audit`; nếu DD-70(a) active, append source-derived `identity_merged` trong cùng transaction. Domain outbox khác (nếu có) không sở hữu global notification.
+
+`link_code` consume chỉ verify/consume và tạo merge plan; nó **không emit global notification**. Merge commit phải inventory source/survivor read-only, acquire inbox fences trước mọi blocking merge row, revalidate rồi append từ exact locked audit. Không tuân được order này thì build HALT tới khi có GLOBAL PROTECTED source-event contract riêng; không dùng tenant `outbox_events` hoặc tenant giả làm fallback.
 
 Rollback toàn bộ nếu bất kỳ tenant/money step nào fail.
 

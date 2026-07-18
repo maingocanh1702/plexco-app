@@ -1,7 +1,7 @@
 # Plexco Web App — Design Brief cho Designer
 
-> **Version:** 1.7 · 2026-07-18
-> **Tài liệu tham chiếu:** `../../product/BRD.md` v3.9d · `../../product/PRD.md` v2.8b · `../../product/TDD.md` v3.1 · `../../product/ROADMAP.md` v3.3b · `../../features/README.md` v2.23 · `../../standards/decisions.md` v1.47
+> **Version:** 1.8 · 2026-07-19
+> **Tài liệu tham chiếu:** `../../product/BRD.md` v3.9d · `../../product/PRD.md` v2.8c · `../../product/TDD.md` v3.1 · `../../product/ROADMAP.md` v3.3b · `../../features/README.md` v2.29 · `../../standards/decisions.md` v1.67
 > **Target audience:** Designer (UI/UX)
 >
 > **Cập nhật v3.4 (DD-37 ✅):** Đăng nhập = **Google + email** (bỏ Telegram Login). Kênh phase-1 = **web + Zalo + Facebook Messenger** (Telegram loại). Onboarding link **Zalo + Facebook Messenger** (không còn bước Telegram). Thêm màn **chat in-app** (DD-38 ✅), **cài đặt hồ sơ + giá theo giới tính** (DD-39 ✅), **mark-paid thủ công tap/multi-select** (DD-40 ✅).
@@ -585,6 +585,7 @@ Step 4: Facebook Messenger + Readiness
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v1.8 | Ref-only sync tới BRD v3.9d · PRD v2.8c · TDD v3.1 · ROADMAP v3.3b · feature index v2.29 · decisions v1.67; no UI scope/runtime change. |
 | 2026-07-18 | v1.7 | Refresh authority v1.47/feature index v2.23; DD-59 benchmark is deferred reference, not an active gate. |
 | 2026-07-17 | v1.6 | Refresh feature index reference to v2.22 after final integrity/Assistant readiness closure; no UI scope change. |
 | 2026-07-17 | v1.5 | Refresh feature index reference to v2.20 after deep contract closure; no UI scope change. |

@@ -53,7 +53,7 @@ Zalo tách theo bot/OA; Messenger tách theo Page. `notifyPlayersPaid` phải đ
 - **Spoof join / spam join-request** làm nhiễu host.
 **Đúng:**
 - `public_sessions` là **read model riêng**, projector chỉ ghi **field whitelist** cứng (`sport_key, starts_at, area, price, slots_open, host_display_name, club_display_name, join_policy`); **không bao giờ** tiền/PII/roster/STK. **Test bất biến public trong CI** (mọi field ∈ whitelist; kèo private không xuất hiện; join không trả tiền/PII).
-- **`venue` chi tiết chỉ lộ sau khi join/được duyệt**; public chỉ `area` (quận/khu vực) — OD-6.
+- **`venue` chi tiết chỉ lộ khi player `active`**; pending/approved-waitlisted chỉ có `area` — OD-6.
 - Discovery API **rate-limit + phân trang**; cân nhắc che bớt độ chính xác thời gian/vị trí; abuse controls cho join-request (approval mode + giới hạn tần suất).
 - Join từ marketplace: `session_id → tenant` route nội bộ, **không lộ `tenant_id`/cấu trúc nội bộ** ra response.
 

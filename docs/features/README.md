@@ -1,9 +1,9 @@
 # Plexco Feature Specs — Coverage Index
 
-> **Version:** 2.23 · 2026-07-18
-> **Scope source:** `../product/BRD.md` v3.9d · `../product/PRD.md` v2.8b · `../product/TDD.md` v3.1 · `../product/ROADMAP.md` v3.3b · `../standards/decisions.md` **v1.47 (DD-01..69)**. DD-49..56 đã full-propagate; **DD-57..59 defer, DD-60 ✅, DD-61..64 ✅ accept-in-principle (build post-P4), DD-69 ✅ định hướng accepted**; DD-65..68 đã chốt, với DD-67 generalized endpoint scope cho Messenger + Zalo. Session Organize (DD-61..64) accept-in-principle nhưng **chưa build** — cần prerequisite implementation + canonical phase. Schema/code cùng các design-probe B0/B1/B2/B3 vẫn defer về đúng build slice.
+> **Version:** 2.37 · 2026-07-19
+> **Scope source:** `../product/BRD.md` v3.9f · `../product/PRD.md` v2.8e · `../product/TDD.md` v3.1 · `../product/ROADMAP.md` v3.3e · `../standards/decisions.md` **v1.76 (DD-01..79)**. DD-05/06/45/49 integrity closed; DD-59 ✅ reconcile; DD-70..72 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; **DD-79 ✅ Home (S9)**. Runtime gates unchanged.
 
-> **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (**Telegram loại khỏi phạm vi**). `feature_player_telegram` → **Archived (DD-37)**, thay bằng `feature_player_messenger`. Thêm phase-1: `feature_inapp_chat` (DD-38 ✅), `feature_user_settings` (DD-39 ✅), Google login (DD-13 ✅, trong `feature_web_auth_onboarding`), mark-paid thủ công (DD-40 ✅, trong `feature_payment_reconcile`).
+> **Cập nhật DD-37 (2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (**Telegram loại khỏi phạm vi**). `feature_player_telegram` → **Archived (DD-37)**, thay bằng `feature_player_messenger`. Thêm phase-1: `feature_inapp_chat` (DD-38 ✅), `feature_user_settings` (DD-39 ✅), Google login (DD-13 ✅, trong `feature_web_auth_onboarding`), mark-paid thủ công (DD-40 ✅, trong `feature_payment_reconcile`).
 
 Core docs remain authoritative by topic. Feature specs add build/test detail but cannot silently change scope, security invariants or canonical phase. **Ngoại lệ hiện tại:** `feature_channel_booking_funnel.md` là product-only Draft; DD-32 đã chốt A nhưng BE companion được viết cùng build slice, không phải gate quyết định còn mở.
 
@@ -13,6 +13,14 @@ Core docs remain authoritative by topic. Feature specs add build/test detail but
 - **Backend Tech spec** (`BE/feature_{name}_tech.md`) — 6 sections: Tổng quan triển khai, Database Schema + Edge Cases (BE), API Contract, Chi tiết triển khai, Testing Plan, Rollout Plan + Changelog.
 - Template files: `../templates/feature-spec-template.md` and `../templates/be-tech-spec-template.md`.
 - Language: Vietnamese numbered headers (`## 1. Mô tả`, `## 2. Use Cases + Edge Cases`, ...).
+- **BE subsections bắt buộc (từ template v2.30, uplift theo chuẩn Sporta):** §2 **Migration & Rollback** · §3 **Request/Response Examples** (error envelope `{error, message, code}`; DTO minh hoạ theo invariant đã pin, field name chốt ở build slice) + **Idempotency** · §4 **Caching Strategy**. Edge-case categories gồm thêm **Infra**. Áp dụng bắt buộc cho spec mới; spec hiện có bổ sung khi được sửa lần kế (pilot: CCJ BE v2.8). Product spec: Error state trong Screens & States phải map về Error Codes catalog ở BE §3.
+- **Governance uplift v2.33 (theo `../templates/feature-docs-playbook.md` v1.1):**
+  - **Contract mapping:** Plexco `Reviewed` ≡ `Approved` của playbook chung (đã qua review gate + DD) — giữ nguyên thang, không re-label. Chỉ Reviewed+ là contract.
+  - **Doc status ≠ Implementation status:** template thêm trường `Implementation` per-doc (Not started → Verified, đồng bộ BUILD-STATUS; Implemented+ kèm code ref + test evidence). Coverage/Reviewed KHÔNG suy ra runtime.
+  - **Review gate theo risk class:** floor số lượng (≥10 UC/≥12 edge/≥20 test) giữ nguyên nhưng chỉ là điều kiện cần; feature money/auth/PII bắt buộc decision table + abuse cases theo **Security Checklist** mới trong BE template §4 (authz/ownership, injection, redaction, webhook replay, idempotency, retention).
+  - **Gate 3 chiều:** spec claim ↔ snippet trong spec ↔ live code/schema phải khớp trước khi Reviewed; sửa 1 → re-check 2.
+  - **Coverage states theo matrix** `state × role × device` — ô không áp dụng ghi `N/A + lý do`, không blanket 4 states.
+  - **Sample/seed data:** synthetic production-shaped (đúng cấu trúc/locale VN), tuyệt đối không PII/số tài khoản thật.
 
 ## Coverage taxonomy (inventory partition + status lens)
 
@@ -23,35 +31,35 @@ Bốn nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**
 - **Phase-1 additions — DD ✅, tracked; pending migration/build** — 3 **cặp** mới (Messenger/chat/settings): Messenger đã **Reviewed contract**; chat/settings vẫn Draft. Cả 6 file đã tracked nhưng chưa có migration/runtime implementation. "DD ✅/Reviewed" không có nghĩa "đã build".
 - **Post-phase-1 (accept-in-principle)** — 1 cặp Session Organize v0.5: DD-61..64 ✅ accept-in-principle (owner 18/07), build **post-P4**; file coverage không phải runtime/build-ready.
 
-**Status lens (không cộng thêm vào inventory):** **15 Reviewed contracts** = 14 legacy active + Shared Host/Player Messenger; Telegram Archived; connector/assistant/chat/settings/session-organize giữ status riêng. Tất cả vẫn phải đọc cột code trong BUILD-STATUS.
+**Status lens (không cộng thêm vào inventory):** **15 Reviewed contracts** = 13 legacy active + Shared Host/Player Messenger + Home (DD-79 ✅, S9); Telegram Archived; **cặp Notifications xuống 🟡 Draft 18/07** (gộp cụm 🔔 — §A contract nhắc/xác nhận vẫn reviewed, chờ DD-70/71/72 cho §B/C/D); connector/assistant/chat/settings/session-organize giữ status riêng. Tất cả vẫn phải đọc cột code trong BUILD-STATUS.
 
-> ⚠️ **Reconcile với `../standards/BUILD-STATUS.md`:** trên disk có **22 Product/System specs + 21 BE specs = 21 cặp + 1 product-only Draft** (`feature_channel_booking_funnel`; BE deferred tới build slice). 21 cặp gồm **15 legacy** (14 active Reviewed + 1 Telegram Archived), **2 cặp pre-existing** (connector + assistant), **3 cặp phase-1** pending migration/build và **1 cặp Session Organize (accept-in-principle, build post-P4)**. Coverage chỉ nghĩa là file tồn tại; không phải canonical phase hay implementation readiness.
+> ⚠️ **Reconcile với `../standards/BUILD-STATUS.md`:** trên disk có **23 Product/System specs + 22 BE specs = 22 cặp + 1 product-only Draft** (`feature_channel_booking_funnel` — BE deferred tới build slice). Cặp thứ 22 = Home (DD-79 ✅, S9). 21 cặp gồm **15 legacy** (13 active Reviewed + 1 Notifications Draft + 1 Telegram Archived), **2 cặp pre-existing** (connector + assistant), **3 cặp phase-1** pending migration/build và **1 cặp Session Organize (accept-in-principle, build post-P4)**. Coverage chỉ nghĩa là file tồn tại; không phải canonical phase hay implementation readiness.
 
 ### Legacy coverage — 15 cặp spec MVP (1 Archived)
 
 | Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
 |---|---|---|---|---|
-| P0–P1 | Multi-tenant Foundation | `feature_multi_tenant.md` v1.7 | `BE/feature_multi_tenant_tech.md` v1.5 | ✅ Reviewed |
-| P2 | Tenant Routing & Authz | `feature_tenant_routing_authz.md` v2.6 | `BE/feature_tenant_routing_authz_tech.md` v2.5 | ✅ Reviewed |
-| P2/P4 | Session Management | `feature_session_management.md` v2.9a | `BE/feature_session_management_tech.md` v2.7 | ✅ Reviewed |
-| P3 | Payment Reconciliation | `feature_payment_reconcile.md` v1.7 | `BE/feature_payment_reconcile_tech.md` v1.8 | ✅ Reviewed |
-| P3.5 | Identity Directory & Merge | `feature_identity.md` v1.7 | `BE/feature_identity_tech.md` v1.7 | ✅ Reviewed |
-| P3/P4.5–P4.7 | Notifications & Reminders | `feature_notifications_reminders.md` v2.5 | `BE/feature_notifications_reminders_tech.md` v2.5 | ✅ Reviewed |
-| P4 | Web Auth & Onboarding | `feature_web_auth_onboarding.md` v2.9 | `BE/feature_web_auth_onboarding_tech.md` v2.6 | ✅ Reviewed; DD-33 contract propagated, Facebook external enablement gate/runtime pending |
-| P4 | Sync Engine | `feature_sync_engine.md` v2.3 | `BE/feature_sync_engine_tech.md` v2.4 | ✅ Reviewed |
-| P4.3 | Marketplace Discovery | `feature_marketplace_discovery.md` v2.2 | `BE/feature_marketplace_discovery_tech.md` v2.1 | ✅ Reviewed |
-| P4.3 | Cross-club Join | `feature_cross_club_join.md` v2.6 | `BE/feature_cross_club_join_tech.md` v2.5 | ✅ Reviewed |
+| P0–P1 | Multi-tenant Foundation | `feature_multi_tenant.md` v1.7a | `BE/feature_multi_tenant_tech.md` v1.5a | ✅ Reviewed |
+| P2 | Tenant Routing & Authz | `feature_tenant_routing_authz.md` v2.6a | `BE/feature_tenant_routing_authz_tech.md` v2.5a | ✅ Reviewed |
+| P2/P4 | Session Management | `feature_session_management.md` v2.12a | `BE/feature_session_management_tech.md` v2.12a | ✅ Reviewed |
+| P3 | Payment Reconciliation | `feature_payment_reconcile.md` v1.7a | `BE/feature_payment_reconcile_tech.md` v1.10 | ✅ Reviewed |
+| P3.5 | Identity Directory & Merge | `feature_identity.md` v1.10a | `BE/feature_identity_tech.md` v1.10a | ✅ Reviewed |
+| P3 · P4 · P4.5–P4.7 · P4+ | Notifications — Reminders · Inbox · Announcements · Web Push | `feature_notifications_reminders.md` v3.4h | `BE/feature_notifications_reminders_tech.md` v3.4h | 🟡 **Draft** — §A reminder/confirm/correction **business invariants đã reviewed** (reconciled decisions v1.45/DD-15/DD-67); §B/C/D inbox·announce·push chờ **DD-70/71/72**. Hạ Reviewed→Draft 18/07 do **gộp tài liệu**, không phải luật tiền bị mở lại |
+| P4 | Web Auth & Onboarding | `feature_web_auth_onboarding.md` v2.10a | `BE/feature_web_auth_onboarding_tech.md` v2.7a | ✅ Reviewed; cross-site OAuth/email-link boundary corrected; DD-33 external enablement gate/runtime pending |
+| P4 | Sync Engine | `feature_sync_engine.md` v2.3a | `BE/feature_sync_engine_tech.md` v2.4a | ✅ Reviewed |
+| P4.3 | Marketplace Discovery | `feature_marketplace_discovery.md` v2.2a | `BE/feature_marketplace_discovery_tech.md` v2.1a | ✅ Reviewed |
+| P4.3 | Cross-club Join | `feature_cross_club_join.md` v2.10a | `BE/feature_cross_club_join_tech.md` v2.11a | ✅ Reviewed |
 | ~~P4.5~~ | ~~Player Telegram~~ | `feature_player_telegram.md` v2.1 | `BE/feature_player_telegram_tech.md` v2.1 | ⚠️ **Archived (DD-37)** → `feature_player_messenger.md` |
-| P4.6 | Player View | `feature_player_view.md` v2.2 | `BE/feature_player_view_tech.md` v2.2 | ✅ Reviewed |
-| P4.7 | Zalo Channel | `feature_zalo_channel.md` v2.3 | `BE/feature_zalo_channel_tech.md` v2.3 | ✅ Reviewed |
-| P5 | Billing Lifecycle | `feature_billing_lifecycle.md` v2.7 | `BE/feature_billing_lifecycle_tech.md` v2.6 | ✅ Reviewed |
-| P6 | Security & Operations | `feature_security_operations.md` v2.2 | `BE/feature_security_operations_tech.md` v2.2 | ✅ Reviewed |
+| P4.6 | Player View | `feature_player_view.md` v2.2a | `BE/feature_player_view_tech.md` v2.2a | ✅ Reviewed |
+| P4.7 | Zalo Channel | `feature_zalo_channel.md` v2.5a | `BE/feature_zalo_channel_tech.md` v2.5a | ✅ Reviewed |
+| P5 | Billing Lifecycle | `feature_billing_lifecycle.md` v2.7a | `BE/feature_billing_lifecycle_tech.md` v2.6a | ✅ Reviewed |
+| P6 | Security & Operations | `feature_security_operations.md` v2.2a | `BE/feature_security_operations_tech.md` v2.2a | ✅ Reviewed |
 
 ### Cross-cutting tracked pair (pre-existing)
 
 | Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
 |---|---|---|---|---|
-| P3/P4/P4.7 | Connector Onboarding (Zalo · SePay · ApiPay) | `feature_connector_onboarding.md` v0.9 | `BE/feature_connector_onboarding_tech.md` v0.6 | 🟡 Draft — provider-contract reviewed; Zalo auto-register còn blocked bởi sandbox confirmation |
+| P3/P4/P4.7 | Connector Onboarding (Zalo · SePay · ApiPay) | `feature_connector_onboarding.md` v0.9a | `BE/feature_connector_onboarding_tech.md` v0.6a | 🟡 Draft — provider-contract reviewed; Zalo auto-register còn blocked bởi sandbox confirmation |
 
 ### Phase-1 additions — DD ✅, tracked; pending migration/build (DD-37/38/39/65..68)
 
@@ -59,20 +67,39 @@ Bốn nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**
 
 | Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
 |---|---|---|---|---|
-| P2.5/P4.5 | Shared Host & Player Facebook Messenger (thay Telegram) | `feature_player_messenger.md` v0.5 | `BE/feature_player_messenger_tech.md` v0.4 | ✅ Reviewed contract, implementation pending (DD-37/DD-65..68 ✅ · DD-33 ✅ link, App Review pending) |
-| P4 | In-app Chat (toàn CLB + 1-1) | `feature_inapp_chat.md` v0.7 | `BE/feature_inapp_chat_tech.md` v0.14 | ✅ DD chốt — Draft, pending migration (DD-38 ✅ · DD-55 safety/media contract ✅) |
-| P4/P4+ | User Settings & Profile + Follow/Visibility | `feature_user_settings.md` v0.8 | `BE/feature_user_settings_tech.md` v0.7 | ✅ DD-39(+addendum)/54 + DD-47/48 framework — Draft, pending migration/build |
+| P2.5/P4.5 | Shared Host & Player Facebook Messenger (thay Telegram) | `feature_player_messenger.md` v0.7a | `BE/feature_player_messenger_tech.md` v0.6a | ✅ Reviewed contract, implementation pending (DD-37/DD-45/DD-49/DD-65..68 ✅ · DD-33 ✅ link, App Review pending) |
+| P4 | In-app Chat (toàn CLB + 1-1) | `feature_inapp_chat.md` v0.7a | `BE/feature_inapp_chat_tech.md` v0.14a | ✅ DD chốt — Draft, pending migration (DD-38 ✅ · DD-55 safety/media contract ✅) |
+| P4/P4+ | User Settings & Profile + Follow/Visibility | `feature_user_settings.md` v0.9a | `BE/feature_user_settings_tech.md` v0.13a | ✅ DD-39(+addendum)/54 + DD-47/48 framework — Draft, pending migration/build |
 
-> Reviewed docs cập nhật theo DD ✅ (không đổi trạng thái Reviewed): `feature_web_auth_onboarding` (DD-13 Google+email), `feature_payment_reconcile` + `feature_notifications_reminders` (DD-40 mark-paid thủ công), `feature_tenant_routing_authz` + `feature_identity` + `feature_multi_tenant` + `feature_billing_lifecycle` + `feature_session_management` (DD-37 channel pivot).
+### Notification cluster — DD-70/71/72 ĐỀ XUẤT, CHƯA CHỐT, KHÔNG build-ready
+
+**Một cặp** cross-cutting mở rộng cụm 🔔 Notifications — cùng khuôn `feature_connector_onboarding` (gom Zalo · SePay · ApiPay, 3 phase, trong 1 cặp) và `feature_user_settings` (đa DD/đa phase trong 1 cặp).
+
+| Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
+|---|---|---|---|---|
+| P3 · P4 · P4.5–P4.7 · P4+ | Notifications — Reminders · Inbox · Announcements · Web Push | `feature_notifications_reminders.md` v3.4h | `BE/feature_notifications_reminders_tech.md` v3.4h | 🟡 Draft — §A business invariants đã reviewed; §B/C/D cần **DD-70/71/72**, chưa có migration |
+
+**Không có cặp riêng cho cụm 🔔.** Ba mảng mới **nhập vào cặp `feature_notifications_reminders` sẵn có** (gộp ở v3.0, review-fix ở v3.1, reconcile authority ở v3.2, semantic drift closure ở v3.3, integrity closure ở v3.4–v3.4b — 2026-07-19) thay vì đứng riêng — mỗi mảng đóng một gap **đã ghi trong authority docs**, không mở scope mới:
+
+- **Inbox (cần DD-70 · NTF-OQ-6)** — đóng *impl-gap* DD-47 đã ghi tường minh: notify person-directed GLOBAL vs `notification_intents`/`outbox_events` `tenant_id NOT NULL`. Doc đặc tả (a) durable global plane; security alert chỉ dùng email/device đã verified/trusted trước immutable `trigger_context_started_at`, không dùng factor thiết lập trong chính triggering session/context. **Owner chốt**.
+- **Announcements (cần DD-71 · NTF-OQ-9)** — DD-43 ✅ đã chốt audience contract + BL-NTF-4 đã pin, nhưng `membership_tags` chưa migration. Đề xuất manual cơ bản free; `host_pro` bán automation/quota cao hơn; quota free theo tenant+actor+fan-out. Preview/confirm dùng opaque consume-once proof bind exact content/audience/count/version (**DD-25 không phủ broadcast**).
+- **Web Push (cần DD-72 · NTF-OQ-13)** — phase-1 đề xuất direct Web Push + VAPID, chỉ freeze `kind='web'`; browser push service vẫn trong data flow, native shape/provider chờ DD-69 spike. Telemetry là điều kiện cứng của **NTF-OQ-5 + DD-69 gate #4**. `unknown` cấm alternate-route fallback; tenant `settled|correction` tối đa 2 same-route retry với stable topic/tag, còn global `security_alert` chờ attempt ledger DD-70. Phụ thuộc migration DD-67 (`platform` CHECK + `route_class`) land trước.
+
+> **Vì sao cả cặp xuống Draft:** ba mảng trên chưa chốt, mà CLAUDE.md cấm viết proposal chưa chốt vào spec đã Reviewed. Gộp một doc ⇒ nhãn phải lấy mức bảo thủ hơn. **Các business invariant §A** (nhắc nợ/xác nhận/correction/one-route/quiet hours) vẫn đã reviewed; v3.1 sửa ranh giới Draft, v3.2 reconcile proposal authority để contract không tự mâu thuẫn — **không** mở lại luật tiền. Khuôn này giống `feature_connector_onboarding` ("🟡 Draft — provider-contract reviewed").
+>
+> ⚠️ **Hệ quả lên status lens:** Reviewed contracts **15 → 14**; on-disk giữ **22 Product/System + 21 BE** (không thêm cặp nào). Code-readiness không đổi.
+
+> Reviewed docs cập nhật theo DD ✅ (không đổi trạng thái Reviewed): `feature_web_auth_onboarding` (DD-13 Google+email), `feature_payment_reconcile` (DD-40 mark-paid thủ công), `feature_tenant_routing_authz` + `feature_identity` + `feature_multi_tenant` + `feature_billing_lifecycle` + `feature_session_management` (DD-37 channel pivot). Riêng `feature_notifications_reminders` hiện Draft nhưng §A vẫn giữ reviewed business invariants.
 
 ## Post-MVP
 
 | Phase | Feature | Current source | Required before implementation |
 |---|---|---|---|
-| ~~P4.8~~ → **phase-1 (P2.5/P4.5)** | Messenger channel | **nay là phase-1 (DD-37/DD-65..68)** → `feature_player_messenger.md` v0.5 + `BE/feature_player_messenger_tech.md` v0.4 + `../channels/messenger/messenger-channel-design.md` v2.4 | Shared host/player contract Reviewed; runtime/migration/E2E pending; App Review Meta / DD-33 trước GA |
-| P7 (đề xuất) | Club AI Assistant + Knowledge Base | `feature_club_assistant.md` v0.9 + `BE/feature_club_assistant_tech.md` v0.9 (🟡 Draft) · proposal `../proposals/club-ai-bot-knowledge-base.md` | **Formally promote Product + BE pair sang Reviewed trước implementation.** DD-16/17/19–23/28 đã chốt; **DD-18 provider + privacy/ToS chặn GO-LIVE**, không tự biến Draft thành build-ready. DD-34/35/36 chưa chốt nên không tự mở rộng scope. Migration mới monotonic phải tự cài/verify `vector`, chứa ENABLE + FORCE RLS/policy/grant matrix (không sửa `0000`/`0009` đã apply); object storage cho file thô |
-| P4.3/P4.7 + Messenger P2.5 | Channel-first Booking Funnel | `feature_channel_booking_funnel.md` v0.6 (DD-32 ✅ A, Draft) | Build BE companion; phụ thuộc DD-33/DD-14 cho natural social login, transactional one-time `link_code` fallback; giữ CCJ guest free/paid với active→charge, full→waitlisted/no-charge; không linked gate/đường book song song |
-| Post-P4 (accept-in-principle, owner 18/07) — sau Session CRUD + Sync | Session Organize (court + match + live score) | `feature_session_organize.md` v0.5 + `BE/feature_session_organize_tech.md` v0.5 (accepted design, DD-61..64 ✅ accept-in-principle; no runtime) | Build post-P4: extend DD-56 registry/grant storage và triển khai SessionService prerequisites. V0.4 two-side; participant stint + partial assigned uniqueness; migration mới + tenant-safe FKs/RLS; point/reversal ledger idempotent; independent organize/score grants; relation-based read/SSE; balanced phụ thuộc level source. **Đã tính vào file coverage 22/21, chưa tính là runtime/build-ready.** |
+| ~~P4.8~~ → **phase-1 (P2.5/P4.5)** | Messenger channel | **nay là phase-1 (DD-37/DD-65..68)** → `feature_player_messenger.md` v0.7a + `BE/feature_player_messenger_tech.md` v0.6a + `../channels/messenger/messenger-channel-design.md` v2.4a | Shared host/player contract Reviewed; runtime/migration/E2E pending; App Review Meta / DD-33 trước GA |
+| P7 (đề xuất) | Club AI Assistant + Knowledge Base | `feature_club_assistant.md` v0.9a + `BE/feature_club_assistant_tech.md` v0.9a (🟡 Draft) · proposal `../proposals/club-ai-bot-knowledge-base.md` | **Formally promote Product + BE pair sang Reviewed trước implementation.** DD-16/17/19–23/28 đã chốt; **DD-18 provider + privacy/ToS chặn GO-LIVE**, không tự biến Draft thành build-ready. DD-34/35/36 chưa chốt nên không tự mở rộng scope. Migration mới monotonic phải tự cài/verify `vector`, chứa ENABLE + FORCE RLS/policy/grant matrix (không sửa `0000`/`0009` đã apply); object storage cho file thô |
+| P4.3/P4.7 + Messenger P2.5 | Channel-first Booking Funnel | `feature_channel_booking_funnel.md` v0.8a (DD-32 ✅ A, Draft) | Build BE companion; giữ CCJ guest free/paid: first-entry active→charge/full→waitlisted-no-charge; DD-49 rejoin active→carry-or-append, full→carry-history-or-defer-refunded. Không linked gate/đường book song song |
+| S9 (**DD-79 ✅ owner 2026-07-19**) | Home — Personal Dashboard (PWA) | `feature_home.md` v0.2 + `BE/feature_home_tech.md` v0.1 (✅ Reviewed contract — fork từ Sporta feature_home v2.5 + hero recipe theme-direction §7) | Implementation pending S9. Composition-only: aggregate `GET /api/me/home` thuộc surface `/api/me*`, **không bảng/migration mới**; HOME-OQ-1 (c) defer chip Chưa thu · OQ-3 defer streak; landing = Home (OQ-2 ✅). DTO tiền/PII theo allowlist player_view |
+| Post-P4 (accept-in-principle, owner 18/07) — sau Session CRUD + Sync | Session Organize (court + match + live score) | `feature_session_organize.md` v0.5a + `BE/feature_session_organize_tech.md` v0.5a (accepted design, DD-61..64 ✅ accept-in-principle; no runtime) | Build post-P4: extend DD-56 registry/grant storage và triển khai SessionService prerequisites. V0.4 two-side; participant stint + partial assigned uniqueness; migration mới + tenant-safe FKs/RLS; point/reversal ledger idempotent; independent organize/score grants; relation-based read/SSE; balanced phụ thuộc level source. **Đã tính vào file coverage 22/21, chưa tính là runtime/build-ready.** |
 
 ## Review gates
 
@@ -86,6 +113,20 @@ Với spec mới hoặc spec được promote sang **Reviewed**, review gate k�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.37 | **DD-79 ✅ chốt (owner 19/07) — Home pair promote Reviewed contract:** Product v0.2 + **BE `feature_home_tech.md` v0.1 mới** (composition-only, không migration; aggregate person-self `GET /api/me/home`; per-section degradation; suggested qua public read model HR2; template v2.30/v2.33 đầy đủ). On-disk → **23 Product + 22 BE = 22 cặp + 1 product-only**; status lens 14 → **15 Reviewed contracts**. Implementation pending S9 — không đổi code-readiness. |
+| 2026-07-19 | v2.36 | **Thêm `feature_home.md` v0.1 (🟡 Draft PROPOSAL, chưa có DD)** — fork từ Sporta feature_home v2.5, adapt sang canonical Plexco (person-self player_view, HR2 whitelist, HR5 i18n, SSE, onboarding_steps sẵn có; hero theo theme-direction §7). On-disk → **23 Product + 21 BE = 21 cặp + 2 product-only Draft**. Không thành scope/contract tới khi owner ghi DD; HOME-OQ-1 chặn riêng chip host receivable. |
+| 2026-07-19 | v2.35 | **Implementation-field sweep (playbook v1.1 / governance v2.33):** thêm trường **Implementation** (đồng bộ BUILD-STATUS) vào 41/43 feature docs (trừ 2 file Telegram Archived), mỗi doc bump version-letter + changelog riêng. Giá trị lấy từ BUILD-STATUS §3: Implemented-foundation (multi_tenant ×2), In progress (payment_reconcile, web_auth, security_ops ×2), còn lại Not started. Đồng thời sync toàn bộ version cells trong index theo disk (fix drift tích luỹ từ các đợt sửa song song). Không đổi contract/runtime. |
+| 2026-07-19 | v2.34 | Authority pointer refresh: decisions v1.74 · BRD v3.9f · PRD v2.8e · ROADMAP v3.3e; notification pair realign v3.4g/v3.4g. v1.68–v1.74 BE-contract closure no-runtime; coverage/runtime không đổi. |
+| 2026-07-19 | v2.33 | **Governance uplift (feature-docs-playbook v1.1):** contract mapping Reviewed≡Approved; template thêm trường Implementation per-doc (BUILD-STATUS sync, code ref + test evidence); review gate theo risk class + Security Checklist trong BE template §4; gate 3 chiều spec↔snippet↔live code; coverage matrix thay blanket 4-states; sample data synthetic production-shaped. Templates → xem changelog từng file; docs hiện có áp khi sửa lần kế. Contract/runtime không đổi. |
+| 2026-07-19 | v2.32 | Current authority v1.67/BRD v3.9e/PRD v2.8d/ROADMAP v3.3d; DD-73..78 sequencing correction ở v1.67. DD-74/75 tạo baseline, chỉ DD-76/77 evidence-gated, DD-78 đi cùng consumer. Không đổi coverage/runtime. |
+| 2026-07-19 | v2.31 | **Current-pointer + waitlist mirror reconciliation:** authority → decisions v1.67/ROADMAP v3.3c; refresh Session v2.10/2.10, Payment BE v1.9, Notification v3.4b/v3.4b, Zalo v2.5/v2.5, Messenger v0.7/v0.6, User Settings BE v0.9 và booking funnel v0.8. Chỉ đồng bộ contract index; runtime baseline không đổi. |
+| 2026-07-19 | v2.30 | **Template uplift (Sporta parity):** BE template thêm subsections bắt buộc — §2 Migration & Rollback, §3 Request/Response Examples (error envelope `{error, message, code}`) + Idempotency, §4 Caching Strategy; edge-case category thêm Infra. Product template: note Error state map về BE Error Codes catalog. Pilot: CCJ BE → **v2.8** (đồng thời fix index drift — bảng ghi v2.6 trong khi disk đã v2.7). Áp dụng cho spec mới + spec hiện có khi sửa lần kế; contract/runtime không đổi. |
+| 2026-07-19 | v2.29 | **Integrity closure:** DD-05/06/45/49 mirrors plus Notification v3.4a stable-attempt/global-owner/durable quota-retry/external push-idempotency+trust-epoch/context-start contract. DD-70..72 remain Draft; decisions v1.67; runtime unchanged. |
+| 2026-07-19 | v2.28 | **DD-45×DD-49 waitlist consistency:** refresh Session Management → v2.9c/v2.9 và Cross-club Join → v2.7/v2.6. Các cặp spec tách first-entry waitlist/no-charge khỏi proven rejoin carry-over, đồng thời ghi đúng `0014_players_waitlist` mới ở nhánh `feat/session-waitlist-expand`, chưa merge `main`; Reviewed contract/runtime status không đổi. |
+| 2026-07-18 | v2.27 | Auth pair → v2.10/v2.7: OAuth cross-site transaction+Lax binding, email-link non-mutating GET→same-origin POST, opaque KMS key-ref type aligned. Notification pair → v3.3: exact trusted route predicates, server-owned `trusted_at/trust_source` + reset-on-rebind, component-wise announcement vector rule, dispatch-time roster, app-level vendor wording. Status/runtime unchanged; current authority pointer reconciled to v1.52. |
+| 2026-07-18 | v2.26 | **Notification review-fix closure:** đồng bộ cặp spec v3.2 với notification authority v1.49 (current log đã lên v1.51 do cụm DD-73..78 ngoài scope); DD-70/71/72 vẫn 🟡 đề xuất. Contract Draft pin durable inbox + server-owned read-all watermark + trusted security-alert route (global attempt owner là build/enablement gate, không cản founder accept hướng DD-70); announcement layered quota atomic/idempotent/fail-closed + proof-bound confirm, proof receipt trên canonical row, same-tenant session/tag FK, fan-out status tách delivery aggregate và plain-text/body-size fence; DD-72 chỉ freeze direct Web Push/VAPID phase-1, native chờ DD-69 spike; `unknown` cấm alternate fallback nhưng high-value same-route recovery tối đa 2 lần. Topic/tag HMAC base64url 32 ký tự, worker-only resolver và scoped/idempotent telemetry dùng canonical key. Không runtime/migration mới. |
+| 2026-07-18 | v2.25 | **Notification cluster nhập vào cặp sẵn có** (owner: 1 feature = 1 cặp). `feature_notification_center` (tạo cùng ngày, v1.0) **đã xoá**, nội dung nhập vào `feature_notifications_reminders` v3.0 + BE v3.0. On-disk trở lại **22 Product + 21 BE** (không thêm cặp). **Status lens: 15 → 14 Reviewed** — cặp notification xuống 🟡 Draft vì §B/C/D chờ DD-70/71/72; §A contract tiền **không đổi, không mở lại**. BUILD-STATUS đồng bộ. |
+| 2026-07-18 | v2.24 | *(Superseded bởi v2.25 trong cùng ngày.)* Thêm notification cluster Draft dưới dạng cặp riêng `feature_notification_center`. |
 | 2026-07-18 | v2.23 | DD-33 auth specs → v2.9/v2.6; Session Organize → v0.5 accepted-in-principle/no-runtime; preserve coverage vs implementation boundary. |
 | 2026-07-17 | v2.22 | Final review-fix closure: Club Assistant formal Draft gate; Identity keeps `zalo_bots` tenant-private; Zalo/Connector KMS-migrates-or-disables legacy secrets, forbids dual-read and pins ciphertext/state + CAS-safe early-event lifecycle; Multi-tenant mirrors live `sessions`; Sync distinguishes existing `0005`. Runtime/migrations remain pending. |
 | 2026-07-17 | v2.21 | Final integrity closure: payment ledger same-tenant/same-session composite FKs; notification intent/delivery tenant fence + endpoint-derived routing; executable chat membership parent key; ApiPay enterprise-first Product/BE/onboarding contract with explicit BYO fallback. Runtime/migrations remain pending. |

@@ -2,8 +2,9 @@
 
 > **Canonical phase:** P4.7  
 > **Track:** 💬 Zalo Channel  
-> **Version:** 2.3 · 2026-07-17
-> **Status:** Reviewed · reconciled to decisions v1.45/DD-15/DD-49/DD-67
+> **Version:** 2.5a · 2026-07-19
+> **Status:** Reviewed · reconciled to decisions v1.67/DD-15/DD-45/DD-49/DD-67
+> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 onboarding (Zalo token connect) · P3.5 identity · P2 session/join · P3 notifications · P4 sync  
 > **Tài liệu liên quan:** `../product/PRD.md` FLOW 4 + §4.2/4.4 · `../product/BRD.md` CO-2 · `BE/feature_zalo_channel_tech.md`
 
@@ -30,7 +31,7 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 |---|---|---|---|
 | ZAL-UC-1 | Host | Connect BYO bot token + webhook during onboarding | Zalo adapter configured per tenant |
 | ZAL-UC-2 | Player | DM `/join` | Bot lists current open sessions with numbered choices |
-| ZAL-UC-3 | Player | Reply number (e.g. "2") | Common join service: còn slot→active+charge+venue; full→waitlisted/no-charge/no-venue |
+| ZAL-UC-3 | Player | Reply number (e.g. "2") | Common join service: first-entry còn slot→active+exactly-one-charge+venue, full→waitlisted/no-charge/no-venue; existing `left`→DD-49 active/waitlisted carry-over/refunded outcome, no duplicate charge |
 | ZAL-UC-4 | Player | DM `/me` | Personal summary for this club |
 | ZAL-UC-5 | Player | DM `/pay [session]` | QR/payment instructions |
 | ZAL-UC-6 | Player | DM `/leave [session]` | Leave with financial policy check |
@@ -55,7 +56,7 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 | 10 | Data Integrity | Player messages between list versions | Reject stale — require fresh `/join` |
 | 11 | Security | Magic link issued from unverified conversation | Reject — conversation must be verified first |
 | 12 | Cross-Feature | Player has Messenger + Zalo identity → merge | Common identity service handles — Zalo adapter just updates reachability |
-| 13 | Concurrency | Hai number-reply tranh final slot | Session lock: một active, người sau waitlisted với position dương; không charge/venue |
+| 13 | Concurrency | Hai first-entry number-reply tranh final slot | Session lock: một active+exactly-one-charge, người sau waitlisted với position dương; không charge/venue |
 | 14 | Financial | Existing player đã `left` join lại | Route shared DD-49 join/correction handler; render canonical outcome. `REJOIN_REQUIRES_REVIEW` only for unknown/unimplemented disposition; Zalo không tự mutate ledger |
 
 ---
@@ -112,7 +113,7 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 - [ ] Unsupported message/provider outage safe fallback works
 - [ ] Magic link secure and person-bound
 - [ ] Rate-limit/privacy tests pass
-- [ ] Full→waitlisted/no-charge/no-venue; existing `left` render canonical `active|waitlisted|current|rejoin_review`; review chỉ khi core không chứng minh được disposition; adapter không tự quyết money/capacity.
+- [ ] First-entry full→waitlisted/no-charge/no-venue. Existing `left` render canonical `active|waitlisted|current|rejoin_review`; DD-49 active→carry-or-append, full→carry-history-or-defer-refunded; adapter không tự quyết money/capacity.
 
 ---
 
@@ -122,6 +123,9 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
+| 2026-07-19 | v2.5 | **DD-49 timing mirror:** active rejoin carry/append; full rejoin carry-history/defer-refunded. Zalo remains a thin renderer; authority v1.67. |
+| 2026-07-19 | v2.4 | **DD-45×DD-49 mirror consistency:** qualify no-charge final-slot outcome as first-entry; existing-left rejoin renders shared carry-over/refunded active/waitlisted outcome without creating a new charge. |
 | 2026-07-17 | v2.3 | **BL-SEC-1/lifecycle closure:** make bot token + webhook secret KMS/write-only; require legacy migration-or-disable/drop/no-dual-read and CAS-safe early-event/finalization behavior before runtime. |
 | 2026-07-17 | v2.2 | **DD-15/DD-49/DD-67:** Zalo identity/reachability scoped bot/OA endpoint; target-tenant auth tách riêng; rejoin render canonical carry-over/refunded outcome, review chỉ fail-closed fallback. |
 | 2026-07-15 | v2.1 | **DD-45 + DD-37:** Zalo render active/waitlisted/current/rejoin-review; retire "Hết chỗ" outcome; sync events/AC; edge cases dùng identity/privacy Zalo+Messenger thay TG. |

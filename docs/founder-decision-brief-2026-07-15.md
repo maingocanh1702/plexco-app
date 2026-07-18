@@ -1,9 +1,10 @@
 # 🧭 Founder Decision Brief — Open items (2026-07-15, rev 5)
 
-> ✅ **CLOSED (2026-07-16):** founder đã chốt toàn bộ Items 2–9; canonical hiện tại là `standards/decisions.md` **v1.47**. DD-49..56 closure vẫn nguyên; DD-57..59 đã defer, DD-60 accepted, DD-61..64 accepted-in-principle, DD-65..69 không reopen closure này. Brief giữ làm **lịch sử phân tích** — tracking hiện hành ở `pre-code-open-items-2026-07-16.md`.
+> ✅ **CLOSED (2026-07-16):** founder đã chốt toàn bộ Items 2–9; canonical tại thời điểm closure là `standards/decisions.md` **v1.47**, authority hiện hành là **v1.67**. Brief giữ làm lịch sử; current authority thắng khi lệch.
+> **Supersession note (DD-49):** các dòng trong brief nói genuine rejoin mặc định fail-closed phản ánh pre-decision snapshot và **không còn là contract hiện hành**. Current rule: rejoin chạy common join với carry-over/refunded disposition trong canonical aggregate; chỉ unknown/unimplemented disposition mới `REJOIN_REQUIRES_REVIEW`.
 
 > **Mục đích:** gom các item **còn cần founder quyết** thành một chỗ để duyệt một lượt. Mỗi item = **câu hỏi · options · đề xuất · tác động/độ gấp · pointer canonical**.
-> **Authority hiện tại:** `standards/decisions.md` v1.47. Brief rev 5 này chỉ là historical input; nếu body mâu thuẫn current decisions/propagated feature specs thì authority hiện hành thắng.
+> **Authority hiện tại:** `standards/decisions.md` v1.67. Brief rev 5 này chỉ là historical input; nếu body mâu thuẫn current decisions/propagated feature specs thì authority hiện hành thắng.
 > **Phân loại nguồn:** 🔴 = cần founder (business/product/legal). Item spike (DD-14/15 Zalo, DD-33 Facebook App Review, connector CO-OQ) là **verify kỹ thuật/bên ngoài**, KHÔNG nằm trong brief này.
 >
 > ⚠️ **Không phải tư vấn tài chính/pháp lý.** Item 3 (tiền) và Item 6 (pháp lý) đưa thông tin để quyết. **Item 6 bắt buộc luật sư VN** rà theo **Luật 91/2025/QH15 + Nghị định 356/2025/NĐ-CP** (hiệu lực 01/01/2026) — **KHÔNG** dùng Nghị định 13/2023 (đã hết hiệu lực). Theo hiểu biết hiện tại (**cần luật sư VN xác nhận, chưa phải kết luận pháp lý**), NĐ 356 dường như xếp ngày sinh và giới tính vào **dữ liệu cá nhân cơ bản** chứ không phải nhóm nhạy cảm; Plexco vẫn mã hoá + xin consent theo product/security policy — không dựa vào phân loại này cho tới khi luật sư xác nhận.

@@ -1,0 +1,2397 @@
+Candidate P0 identity/link/connector-secret security slice — RESCUED PATCH
+=========================================================================
+
+Nguồn:  .autopilot/worktrees/identity-link-security-core  (thư mục thường, KHÔNG
+        còn là git worktree; .gitignore:56 có `.autopilot/*` nên git không thấy)
+Base:   21e42ea  (= branch feat/identity-link-security-core, chỉ có 0000-0013)
+Ngày rescue: 2026-07-19
+Phạm vi: 27 file (26 modified + 1 new migration). Đã loại .autopilot/state/*
+        (log autopilot round) và apps/web/tsconfig.tsbuildinfo (build artifact).
+
+VÌ SAO CÓ FILE NÀY
+------------------
+Công việc này CHƯA TỪNG ĐƯỢC COMMIT ở bất kỳ đâu. Branch
+feat/identity-link-security-core vẫn ở 21e42ea. Trước khi có patch này, 27 file
+trên chỉ tồn tại dưới dạng file thường trong một thư mục bị gitignore — không
+nằm trong commit/stash/reflog nào, một `rm -rf` là mất vĩnh viễn.
+
+Bối cảnh vì sao candidate không thành authority: docs/session-docs-feature-updates-2026-07-17.md §2.2
+
+CÁCH DÙNG
+---------
+    git checkout -b feat/identity-link-security-core-revive 21e42ea
+    git apply --3way docs/archive/identity-link-security-core-candidate-2026-07-19.patch
+
+⚠️ TRƯỚC KHI APPLY — hai việc bắt buộc:
+
+1. ĐÁNH SỐ LẠI MIGRATION. Patch tạo `packages/db/migrations/0014_identity_channel_security.sql`,
+   nhưng số 0014 đã bị `0014_players_waitlist.sql` (DD-45) chiếm. Hai file `0014_*`
+   khác tên sẽ CÙNG apply chứ không báo lỗi — collision im lặng, không guard nào bắt.
+   Đổi sang số monotonic còn trống tại lúc revive.
+
+2. REBASE NỘI DUNG. Base 21e42ea đã cũ so với main; các file docs/ trong patch
+   (PRD, TDD, BUILD-STATUS, feature specs) đã được sửa tiếp trên main sau đó.
+   `--3way` sẽ báo conflict ở những chỗ đó — đọc và merge thủ công, đừng lấy
+   nguyên bản candidate đè lên.
+
+Round 6 của autopilot còn bỏ ngỏ: `messenger_page_secrets` vẫn nhận ciphertext/
+KMS-version rỗng. Xem §"Why the candidate did not become authority".
+
+=========================================================================
+
+diff -ruN base/.env.example cand/.env.example
+--- a/.env.example	2026-07-19 01:08:42.735006434 +0700
++++ b/.env.example	2026-07-19 01:08:42.740006434 +0700
+@@ -51,13 +51,16 @@
+ # 1 Meta App: FB Login (account-link, DD-33) + Messenger Platform (kênh player).
+ FACEBOOK_APP_ID=                    # Meta App ID
+ FACEBOOK_APP_SECRET=                # App Secret (dùng cho FB Login + verify Messenger webhook)
+-MESSENGER_PAGE_ACCESS_TOKEN=        # Page access token (per-club nếu nhiều Page)
++# Page access token KHÔNG có singleton env fallback: onboarding lưu ciphertext
++# per-Page trong protected messenger_page_secrets; sender resolve exact page_id.
+ MESSENGER_VERIFY_TOKEN=             # verify webhook subscription (GET hub.challenge)
+ MESSENGER_APP_SECRET=               # HMAC X-Hub-Signature-256 (= FACEBOOK_APP_SECRET; tách nếu App khác)
+ 
+ # ── Zalo (BYO bot per-club) ──────────────────────────────────────────────
+-# Token mỗi club nhập khi onboarding → lưu zalo_bots.webhook_token (mã hoá KMS).
+-# Verify header: X-Bot-Api-Secret-Token (timing-safe).
++# Raw webhook path token: sinh entropy cao, trả một lần; DB chỉ lưu keyed HMAC tại
++# zalo_bots.webhook_token_lookup_hash. Bot token/webhook secret ciphertext nằm trong
++# protected zalo_bot_secrets, chỉ narrow ingress accessor được đọc.
++# Verify header: X-Bot-Api-Secret-Token (timing-safe); không log raw token/header.
+ 
+ # ── SePay / ApiPay (webhook đối soát CK, per-bank token) ─────────────────
+ SEPAY_WEBHOOK_SECRET=               # verify Apikey (timing-safe) + verify account
+diff -ruN base/docs/00-start-here/identity-model.md cand/docs/00-start-here/identity-model.md
+--- a/docs/00-start-here/identity-model.md	2026-07-19 01:08:42.755006434 +0700
++++ b/docs/00-start-here/identity-model.md	2026-07-19 01:08:42.758006434 +0700
+@@ -12,6 +12,7 @@
+ > **v3.4 Phase-1 pivot (DD-37 ✅):** một Person link **Google + Facebook + Zalo** — **không còn Telegram**.
+ > Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅, thay TG Login) · link **Facebook** (DD-33 🟡, phase-1)
+ > · **Zalo Login** (DD-14 ⬜). **DD-50:** phase-1 không thu SĐT; strong proof cho claim có tiền = verified account email hoặc transactional one-time `link_code`. Phone fields giữ dormant. Xem §7 matrix.
++> **v3.5 security boundary (2026-07-17):** channel user IDs are scoped by Page/OA/bot; link-code issuance locks source Person then issuer and verifies ownership; connector credentials never live in routable metadata.
+ 
+ ---
+ 
+@@ -87,11 +88,12 @@
+ | `person_id` | FK -> `persons.id` |
+ | `platform` | `zalo` / `messenger` (phase-1). *(Telegram archived — DD-37; enum trong `schema.ts` có thể giữ giá trị `telegram` forward-compat, nhưng không nhận runtime ở phase-1.)* |
+ | `platform_user_id_enc` | raw provider id encrypted |
++| `provider_scope_lookup_hash` | domain-separated keyed hash của Page/OA/bot scope |
+ | `platform_user_lookup_hash` | lookup hash cho uniqueness |
+ | `username_enc` | optional, không phải key |
+ | `status` | `active` / `inactive` |
+ 
+-Invariant: `UNIQUE(platform, platform_user_lookup_hash)`.
++Invariant: `UNIQUE(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`.
+ 
+ Runtime phase-1 (DD-37): channel accepts **Zalo + Messenger**. Messenger nay là **phase-1 (P2.5)**,
+ route theo `messenger_pages.page_id`, phụ thuộc App Review. **Telegram loại khỏi phase-1** (không nhận runtime).
+@@ -126,10 +128,10 @@
+ 
+ - `persons`: phone schema dormant; nếu tương lai enable thì verified phone unique bằng lookup hash, không plaintext. Phase-1 không thu/không dùng làm proof.
+ - `account_identities`: `UNIQUE(platform, platform_user_hash)`.
+-- `channel_identities`: `UNIQUE(platform, platform_user_lookup_hash)`.
++- `channel_identities`: `UNIQUE(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`; scope và user ID dùng domain-separated keyed hashes.
+ - `memberships`: active person unique theo tenant.
+ - `channel_reachability`: unique theo `(person_id, tenant_id, platform)`.
+-- `link_codes`: hash-only, TTL ngắn, single-use, attempts/rate-limit.
++- `link_codes`: hash-only, đúng một issuer, TTL ngắn, bounded attempts, terminal single-use. Trigger lock source Person trước rồi issuer khi issue, validate ownership và lưu original `source_person_id`; cùng lock order với merge và không dùng FK làm kẹt re-parent.
+ - `merge_audit` + `merge_tombstones`: mọi merge có actor, method, reason, before/after.
+ - Runtime API role không broad SELECT global protected tables; đi qua identity/auth service
+   hoặc SECURITY DEFINER function hẹp, có purpose/audit.
+@@ -140,9 +142,9 @@
+ 
+ ### A. Bot/native first contact
+ 
+-1. Adapter verify provider signature/token và lấy stable `(platform, platform_user_id)`.
+-2. Identity service hash/encrypt provider id.
+-3. Tra `channel_identities(platform, lookup_hash)`.
++1. Adapter verify provider signature/token và lấy stable `(platform, provider_scope, platform_user_id)`.
++2. Identity service hash scope/user riêng bằng domain-separated keyed HMAC và encrypt provider user id.
++3. Tra `channel_identities(platform, scope_lookup_hash, user_lookup_hash)`.
+    - Có -> lấy `person_id`.
+    - Không -> tạo `persons` + `channel_identities` idempotently; unique race thì reload.
+ 4. Resolve tenant riêng bằng route context (Zalo bot token, Messenger Page — cả hai phase-1).
+@@ -260,7 +262,7 @@
+ | ID-AUTH-1 | Google/email làm auth phase-1? | ✅ **CHỐT — DD-13** (Google OAuth + email/password là auth phase-1, bỏ TG Login theo DD-37) |
+ | ID-AUTH-2 | Email credential là password, magic-link, hay OAuth-only email claim? | ✅ **DD-13**: email + password self-register (credential table riêng) |
+ | ID-AUTH-3 | Facebook Login/Messenger account-link như web-auth provider (`platform='facebook'`) | 🟡 **phase-1 — DD-33** (nâng từ ⬜; Messenger nay là kênh MVP); phụ thuộc App Review |
+-| ID-LINK-1 | Per-provider bot id có scoped theo bot/page/OA thế nào? | verify khi implement → **DD-14** (Zalo Login/OA), **DD-15** (Zalo bot `from.id` cross-bot) |
++| ID-LINK-1 | Per-provider bot id có scoped theo bot/page/OA thế nào? | ✅ Security posture: luôn scope theo Page/OA/bot; chỉ được nới sau provider spike chứng minh namespace rộng hơn (**DD-14/DD-15**) |
+ | ID-MERGE-1 | Support recovery/split SLA và quyền support cụ thể | ✅ **DD-53:** PlatformAdmin freeze; split apply cần 2 approval; break-glass có ticket/expiry/audit; recovery proof không tự mở debt claim |
+ 
+ > **Truy vết:** file này là orientation, KHÔNG chốt quyết định. Mọi mục ở trên phải được
+diff -ruN base/docs/channels/messenger/messenger-channel-design.md cand/docs/channels/messenger/messenger-channel-design.md
+--- a/docs/channels/messenger/messenger-channel-design.md	2026-07-19 01:08:42.841006434 +0700
++++ b/docs/channels/messenger/messenger-channel-design.md	2026-07-19 01:08:42.844006434 +0700
+@@ -2,8 +2,8 @@
+ 
+ ## Plexco — platform thể thao đa môn: thêm kênh Messenger (port từ Telegram + Zalo)
+ 
+-**Phiên bản:** 2.1
+-**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 15/07/2026
++**Phiên bản:** 2.2
++**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 17/07/2026
+ **Tài liệu tham chiếu:** `BRD.md` v3.6 · `PRD.md` · `TDD.md` · `player-side-saas-reconciliation.md` · `player-side-saas-AUDIT.md`
+ 
+ > **Cập nhật v3.4 (DD-37 ✅):** Messenger nay là **kênh phase-1 (P2.5)** — không còn post-MVP. Telegram đã bị loại khỏi phạm vi; nhắc nợ chính = **web + Zalo**, Messenger best-effort trong standard window 24h. Ngoài cửa sổ chỉ dùng cơ chế Meta đủ điều kiện/được phê duyệt; **App Review bắt buộc**, Page per-club. Phase-label **P2.5.x** bên dưới thay cho P4.8.x cũ. Auth-link Facebook = **DD-33 🟡** (phase-1).
+@@ -94,21 +94,32 @@
+     uuid id PK
+     uuid tenant_id FK
+     varchar page_id UK            -- route key: entry[].id từ webhook
+-    varchar page_access_token_enc -- KMS/AES-GCM, không log (NFR-6)
+-    varchar app_scoped_verify     -- (optional) phục vụ matching identity xuyên Page qua FB Login
+-    timestamptz token_expires_at  -- token Page có thể cần refresh
+-    enum status 'active|revoked'
++    enum status 'connecting|registered|active|drift|error|revoked'
++}
++
++MESSENGER_PAGE_SECRET {            -- GLOBAL protected; no general runtime grants
++    uuid page_id PK/FK
++    bytea page_token_enc           -- KMS/AES-GCM, không log (NFR-6)
++    varchar kms_key_version
+ }
+ ```
+ 
++Facebook App Secret là platform-global secret trong deployment secret manager,
++không nhân bản theo Page. Facebook Login subject nằm riêng ở
++`account_identities.platform='facebook'`; không lưu app-scoped verify ID trong
++`messenger_pages` và không auto-link nó với PSID.
++
+ **`channel_identities`** (GLOBAL) — thêm bản ghi cho Messenger:
+ 
+ ```
+ platform = 'messenger'
+-platform_user_id = PSID   -- LƯU Ý: page-scoped. UNIQUE(platform, platform_user_id) vẫn đúng
+-                          -- vì PSID khác nhau giữa các Page → không đụng nhau.
+-                          -- Nếu cần merge Person xuyên Page, dùng FB Login app-scoped ID
+-                          -- làm canonical platform_user_id (hoặc thêm UNIQUE(platform, platform_user_id, page_id)).
++provider_scope_lookup_hash = domain_hmac('messenger-scope', page_id)
++platform_user_lookup_hash = domain_hmac('messenger-user', PSID)
++platform_user_id_enc = kms.enc(PSID)
++UNIQUE(platform, provider_scope_lookup_hash, platform_user_lookup_hash)
++
++-- PSID cùng giá trị ở hai Page vẫn là hai identity. Link xuyên Page hoặc với
++-- Facebook Login chỉ qua verified identity/transactional link_code.
+ ```
+ 
+ **`channel_reachability`** — thêm dòng `(person, tenant, platform='messenger')` với:
+@@ -263,6 +274,7 @@
+ 
+ | Ngày | Version | Thay đổi |
+ |------|---------|----------|
++| 17/07/2026 | v2.2 | Canonical `0014` sync: secret-free Page metadata, protected Page-token table, platform App Secret in secret manager and separate Page-scope/PSID HMACs. |
+ | 15/07/2026 | v2.1 | Chuẩn hoá policy contract: standard window 24h; outside-window chỉ khi Meta eligibility/approval cho phép; MVP fail-closed sang web + Zalo. Bỏ claim tuyệt đối rằng ngoài cửa sổ không còn bất kỳ cơ chế nào. |
+ | 10/07/2026 | v2.0 | **Promote phase-1 (DD-37 ✅, thay DD-09):** post-MVP/P4.8.x → **phase-1/P2.5.x**; nhắc chính = **web + Zalo** (bỏ Telegram); OD-C ✅; refs BRD v3.4. Ghi nhận ràng buộc cửa sổ 24h · outside-window policy · App Review · Page per-club. Auth-link Facebook = DD-33 🟡. |
+ | 19/06/2026 | — | Thêm Changelog table |
+diff -ruN base/docs/channels/zalo/README.md cand/docs/channels/zalo/README.md
+--- a/docs/channels/zalo/README.md	2026-07-19 01:08:42.875006434 +0700
++++ b/docs/channels/zalo/README.md	2026-07-19 01:08:42.918006435 +0700
+@@ -4,7 +4,7 @@
+ > **Deployable unit:** `apps/bot/zalo/`
+ > **API:** Zalo OA API v3 (HTTP REST, không SDK)
+ > **Phase:** **P2 — Phase-1 MVP** (DD-37 ✅; player join + notifications)
+-> **Version:** v0.4 · 2026-07-10
++> **Version:** v0.5 · 2026-07-17
+ > **Refs:** `../../features/feature_zalo_channel.md` · `../../features/BE/feature_zalo_channel_tech.md` · `../../research/player-side-saas-AUDIT.md` §B2
+ 
+ > **Cập nhật v3.4 (DD-37 ✅, thay DD-09):** Zalo là **kênh phase-1** cùng web + Facebook Messenger; **Telegram đã bị loại khỏi phạm vi**. Zalo DM là **kênh nhắc nợ chính** (cùng web push); Messenger chỉ best-effort trong cửa sổ 24h. Bảng "Khác biệt vs Telegram" bên dưới giữ làm **design rationale** — không hàm ý Telegram còn trong scope.
+@@ -122,8 +122,9 @@
+ 
+ ```
+ POST /webhook/zalo/:token
+-  → token → zalo_bots.webhook_token → tenant_id
+-  → Verify X-Bot-Api-Secret-Token (timing-safe)
++  → HMAC(token) → zalo_bots.webhook_token_lookup_hash → tenant_id
++  → Read encrypted credential via narrow protected accessor
++  → Verify provider-defined signature/secret timing-safe (CO-OQ-1)
+   → Route tenant
+   → Handle event:
+        user_send_text → parse reply-context / menu
+@@ -131,7 +132,7 @@
+        follow / unfollow → update ChannelReachability
+ ```
+ 
+-`zalo_bots` là source of truth duy nhất cho Zalo tenant routing. Không reuse `bank_accounts` token để tránh coupling giữa kênh chat và kênh tiền.
++`zalo_bots` là source of truth duy nhất cho Zalo tenant routing, nhưng chỉ chứa metadata + lookup hash; raw path token không persist. `zalo_bot_secrets` chứa KMS ciphertext và không cấp direct table access cho general runtime roles. Không reuse `bank_accounts` token để tránh coupling giữa kênh chat và kênh tiền.
+ 
+ ### 6.1 Event Contract
+ 
+@@ -159,10 +160,10 @@
+ ### 7.1 Token Rotation Runbook
+ 
+ 1. Owner dán token mới trong web onboarding/settings.
+-2. Backend encrypt token mới vào pending secret/version, set `zalo_bots.rotation_pending=true`, **giữ `zalo_bots.status='active'` và token cũ vẫn phục vụ tenant**.
++2. Backend encrypt token mới vào `pending_bot_token_enc` + optional `pending_webhook_secret_enc` + `pending_kms_key_version` + `pending_created_at` trong cùng row, set `zalo_bots.rotation_pending=true`, **giữ current credential và `zalo_bots.status='active'` để token cũ vẫn phục vụ tenant**.
+ 3. Verify token mới bằng test API call + set webhook URL.
+-4. Nếu verify OK → promote pending secret thành `bot_token_enc`, set `rotation_pending=false`, status vẫn `active`; revoke/disable old token nếu provider hỗ trợ.
+-5. Nếu fail → discard pending secret, set `rotation_pending=false`, giữ token cũ active, lưu redacted error code, không làm gián đoạn tenant.
++4. Nếu verify OK → atomically promote toàn bộ pending slot thành current `bot_token_enc`/optional `webhook_secret_enc`/`kms_key_version`, clear pending, set `rotation_pending=false`, status vẫn `active`; revoke/disable old token nếu provider hỗ trợ.
++5. Nếu fail → atomically clear toàn bộ pending slot, set `rotation_pending=false`, giữ current token active, lưu redacted error code, không làm gián đoạn tenant.
+ 
+ ## 8. Implementation Readiness
+ 
+@@ -193,9 +194,10 @@
+ 
+ | Date | Version | Thay đổi |
+ |------|---------|----------|
++| 2026-07-17 | v0.5 | HMAC-only webhook routing token, protected credential accessor and OA/bot-scoped channel identity boundary. |
+ | 2026-07-10 | v0.4 | **Phase-1 pivot (DD-37 ✅):** Zalo nay là kênh phase-1 (P2) + **kênh nhắc nợ chính** (cùng web push); Telegram loại khỏi phạm vi. Cập nhật phase/readiness/go-no-go; bảng "vs Telegram" giữ làm design rationale. |
+ | 2026-06-20 | v0.3 | Sửa token rotation: dùng `rotation_pending`/pending secret thay vì một lifecycle status ngoài enum |
+ | 2026-06-20 | v0.2 | Chốt `zalo_bots` làm routing source, thêm number-reply/event contract, token rotation, readiness |
+ | 2026-06-19 | v0.1 | Initial surface docs |
+ 
+-*Zalo bot surface docs v0.4. Kênh phase-1 (DD-37) — nhắc nợ chính cùng web push.*
++*Zalo bot surface docs v0.5. Kênh phase-1 (DD-37) — nhắc nợ chính cùng web push.*
+diff -ruN base/docs/features/BE/feature_connector_onboarding_tech.md cand/docs/features/BE/feature_connector_onboarding_tech.md
+--- a/docs/features/BE/feature_connector_onboarding_tech.md	2026-07-19 01:08:43.044006435 +0700
++++ b/docs/features/BE/feature_connector_onboarding_tech.md	2026-07-19 01:08:43.049006435 +0700
+@@ -1,7 +1,7 @@
+ # Feature: Connector Onboarding (Zalo · SePay · ApiPay) — Backend Tech Spec
+ 
+ > **Canonical phase:** P3 (payment ingest) · P4 (onboarding) · P4.7 (Zalo) — *cross-cutting*
+-> **Version:** 0.2 · 2026-06-20
++> **Version:** 0.3 · 2026-07-17
+ > **Status:** Draft
+ > **Product spec:** `../feature_connector_onboarding.md`
+ > **References:** `../../product/TDD.md` §3.2/3.6 · `../../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `feature_payment_reconcile_tech.md` (ingest downstream) · `feature_zalo_channel_tech.md` (channel events downstream) · `feature_web_auth_onboarding_tech.md` (wizard) · `../../research/player-side-saas-AUDIT.md` §B2
+@@ -24,7 +24,7 @@
+ 
+ WEBHOOK (provider-initiated)
+   POST /webhook/{provider}/:token
+-    → :token → tenant + secret                       (B1, BL-PAY-6)
++    → :token → keyed lookup → tenant; narrow secret accessor (B1, BL-PAY-6)
+     → timing-safe verify trên RAW body               (B3, BL-SEC-2)
+     → nếu là event ĐẦU TIÊN của connection → flip status=active + emit analytics (idempotent)
+     → delegate:
+@@ -138,6 +138,13 @@
+ 
+ `provider_connections`, `bank_accounts` (đã có), `zalo_bots` (đã có) đều tenant-scoped với **ENABLE + FORCE RLS** dùng `app.tenant_id` (BL-TEN-1). `oauth_transactions` là ngoại lệ bootstrap: direct table access bị revoke khỏi runtime role; callback dùng SECURITY DEFINER `consume_oauth_transaction(state)` để lookup-by-state single-use trước khi set `app.tenant_id`, sau đó mọi ghi tenant-scoped quay lại RLS thường.
+ 
++Migration `0014` makes `zalo_bots` secret-free metadata: only
++`webhook_token_lookup_hash` is routable. `bot_token_enc` and
++optional `webhook_secret_enc`, plus a coherent durable pending credential slot, live
++in GLOBAL-protected `zalo_bot_secrets`; general
++`app`/`app_worker`/`readonly` roles have no table grant. Connector lifecycle and
++ingress use separate narrow audited accessors.
++
+ > **Vocabulary status** (product §3.1): `connecting → registered`(Tier 1) `→ active`(Tier 2); `drift`/`error`/`revoked`. `provider_connections.status` chỉ do connector lifecycle service ghi: direct provider events (connect/retry/revoke/OAuth refresh) set provider-level state; sau mỗi child update, service recompute rollup từ `bank_accounts.webhook_status` theo product §3.1.1. Không update raw table từ webhook/job/UI ngoài service này.
+ 
+ ### Indexes
+@@ -145,7 +152,7 @@
+ - `provider_connections (status)` và `(token_expires_at) WHERE auth_mode='oauth2'` — cho job refresh token.
+ - `bank_accounts (provider_connection_id)`; `(webhook_status) WHERE webhook_status IN ('connecting','registered')` — cho recheck pending / drift.
+ - `oauth_transactions (expires_at)` — sweep hết hạn.
+-- `zalo_bots (webhook_token)` — lookup webhook (đã cần ở routing).
++- `zalo_bots (webhook_token_lookup_hash)` — exact lookup after edge HMAC; raw path token is never stored.
+ - Đã có: `bank_accounts.webhook_token UNIQUE`, `bank_transactions (tenant,provider,external_id) UNIQUE`.
+ 
+ ### Edge Cases (Backend)
+@@ -192,7 +199,7 @@
+ |--------|------|-----------------------------------|----------|
+ | POST | `/webhook/sepay/:token` | header api-key SePay gửi khi `authen_type=Api_Key` == `webhook_secret` (header chính xác: CO-OQ-7) | bank_transactions ingest |
+ | POST | `/webhook/apipay/:token` | `ApiPay-Signature` == HMAC-SHA256(rawBody, `webhook_secret`) | bank_transactions ingest |
+-| POST | `/webhook/zalo/:token` 🟡 | `X-Bot-Api-Secret-Token` == `zalo_bots.secret` | channel event handler |
++| POST | `/webhook/zalo/:token` 🟡 | HMAC token lookup; provider-defined verification uses optional `webhook_secret_enc` through the narrow accessor when CO-OQ-1 confirms it (never fabricate a secret) | channel event handler |
+ 
+ ### Rate Limits (BL-SEC-5)
+ 
+@@ -381,5 +388,6 @@
+ 
+ | Date | Version | Thay đổi |
+ |---|---|---|
++| 2026-07-17 | v0.3 | Align Zalo onboarding/routing with `0014`: raw token HMAC lookup, secret-free metadata, protected KMS credential table and narrow accessors. |
+ | 2026-06-20 | v0.2 | Fix review: `rotation_pending` thay lifecycle state ngoài enum; `oauth_transactions` bootstrap qua SECURITY DEFINER lookup-by-state; backfill `bank_accounts.webhook_status`; định nghĩa owner/rollup của `provider_connections.status`; webhook receiver dùng edge per-token/body cap thay vì wording unbounded. |
+ | 2026-06-20 | v0.1 | BE tech spec đầu: provisioning + auto-register + verify 2 tầng + lifecycle (refresh/drift/recheck/cleanup); schema delta `provider_connections`/`oauth_transactions` + ALTER `bank_accounts`/`zalo_bots`; 16 edge cases; 24 unit + 6 integration tests. Delegate ingest→`payment_reconcile_tech`, channel→`zalo_channel_tech`. |
+diff -ruN base/docs/features/BE/feature_identity_tech.md cand/docs/features/BE/feature_identity_tech.md
+--- a/docs/features/BE/feature_identity_tech.md	2026-07-19 01:08:43.084006435 +0700
++++ b/docs/features/BE/feature_identity_tech.md	2026-07-19 01:08:43.086006435 +0700
+@@ -1,12 +1,12 @@
+ # Feature: Identity Directory & Merge — Backend Tech Spec
+ 
+ > **Canonical phase:** P3.5
+-> **Version:** 1.3 · 2026-07-16
+-> **Status:** Implementation contract reconciled to TDD v2.6 / decisions v1.40; schema/code pending B0 and identity build slices
++> **Version:** 1.4 · 2026-07-17
++> **Status:** Security schema/migration implemented in `0014`; identity/link runtime remains a separate build slice
+ > **Product spec:** `../feature_identity.md`
+ > **References:** `../../product/TDD.md` §3.2–3.4/§4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-13/DD-37/DD-50/DD-53
+ 
+-> **Cập nhật v1.3 (DD-50/v1.37):** phase-1 không thu SĐT; phone columns remain dormant. Debt-bearing claim proof = server-verified account email or transactional one-time `link_code`; schema presence alone is not runtime implementation.
++> **Cập nhật v1.4:** channel identity is provider-scoped; `link_code` proves its issuer-person relation and has bounded, one-way state; connector credentials are separated from routable tenant metadata. Schema presence still does not mean the Messenger/Zalo runtime exists.
+ 
+ ---
+ 
+@@ -50,10 +50,11 @@
+   person_id uuid NOT NULL REFERENCES persons(id),
+   platform text NOT NULL CHECK (platform IN ('zalo','messenger')),  -- phase-1 (DD-37); canonical schema.ts keeps 'telegram' as legacy tenant-1 enum
+   platform_user_id_enc bytea NOT NULL,
++  provider_scope_lookup_hash text NOT NULL,
+   platform_user_lookup_hash text NOT NULL,
+   username_enc bytea,
+   status text NOT NULL CHECK (status IN ('active','inactive')),
+-  UNIQUE (platform, platform_user_lookup_hash)
++  UNIQUE (platform, provider_scope_lookup_hash, platform_user_lookup_hash)
+ );
+ 
+ CREATE TABLE memberships (
+@@ -82,7 +83,8 @@
+ CREATE TABLE link_codes (
+   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+   source_person_id uuid NOT NULL REFERENCES persons(id),
+-  source_channel_identity_id uuid NOT NULL REFERENCES channel_identities(id),
++  source_channel_identity_id uuid REFERENCES channel_identities(id),
++  source_account_id uuid REFERENCES accounts(id),
+   code_lookup_hash text NOT NULL UNIQUE,
+   code_hash bytea NOT NULL,
+   salt bytea NOT NULL,
+@@ -90,7 +92,12 @@
+   expires_at timestamptz NOT NULL,
+   consumed_at timestamptz,
+   failed_attempts integer NOT NULL DEFAULT 0,
+-  created_at timestamptz NOT NULL DEFAULT now()
++  max_attempts integer NOT NULL DEFAULT 5,
++  locked_until timestamptz,
++  revoked_at timestamptz,
++  created_at timestamptz NOT NULL DEFAULT now(),
++  CHECK (num_nonnulls(source_channel_identity_id, source_account_id) = 1),
++  CHECK (failed_attempts BETWEEN 0 AND max_attempts AND max_attempts BETWEEN 1 AND 10)
+ );
+ 
+ CREATE TABLE merge_audit (
+@@ -117,21 +124,26 @@
+ 
+ `memberships` and `channel_reachability` use ENABLE + FORCE RLS with `app.tenant_id`. Protected global tables use grants/narrow service functions rather than tenant RLS.
+ 
+-Phone columns are dormant phase-1. Platform IDs and link-code lookups use keyed hashes; never store/log plaintext code, email or raw IDs.
++Phone columns are dormant phase-1. `provider_scope_lookup_hash` is a keyed hash of the Page/OA/bot scope, while `platform_user_lookup_hash` is a separately domain-separated keyed hash of the provider user ID. Never store/log plaintext code, email, provider scope or raw IDs. Messenger PSID and Facebook Login subject remain different namespaces.
+ 
+ ---
+ 
+ ## 3. Identity resolution
+ 
+-Input from trusted adapter: platform + stable provider user ID + routed tenant.
++Input from trusted adapter: platform + provider scope + stable provider user ID + routed tenant.
+ 
+-1. Compute keyed lookup hash.
++1. Compute domain-separated keyed hashes for provider scope and user ID; never concatenate raw scope/user into one persisted lookup field.
+ 2. Resolve channel identity through protected service.
+ 3. If absent, create Person + ChannelIdentity idempotently; handle unique race by reload.
+ 4. Within tenant RLS context, resolve active/guest membership.
+ 5. Create membership only for explicit join/approved action; first contact alone does not grant tenant membership.
+ 
+ Deep links/sticky context route interaction only; they never grant admin/player data permission.
++All provider payload fields remain data: validate size/type/enum at the adapter,
++pass values through parameterized repository calls, and never interpolate an
++event name, user ID, Page/OA ID, command or link code into SQL/HTML/log templates.
++Unknown event/action variants reject or no-op with an opaque reason code; no
++blocklist-based “sanitization” is an authorization control.
+ 
+ ---
+ 
+@@ -139,9 +151,10 @@
+ 
+ - Generate cryptographically random code/deep link with ≥64 bits entropy.
+ - Store keyed lookup hash for indexed lookup plus salted slow hash for verification; return plaintext once.
+-- TTL default 10 minutes, single-use.
+-- Rate-limit issue/verify by source identity, target identity/IP and tenant context where present.
+-- Consume transaction locks the link-code row; verifies source channel/person, exact action and TTL; increments failures atomically; sets `consumed_at` exactly once; then creates a merge plan.
++- Exactly one authenticated issuer: channel identity XOR verified web account. At issue time, the service/DB trigger locks the declared source Person first, then the issuer row, and proves its current `person_id`; this matches merge lock order and prevents a person↔issuer deadlock. The immutable link-code retains original evidence without a persistent composite FK that would block merge re-parenting.
++- TTL default 10 minutes, single-use; terminal consumed/revoked rows are immutable.
++- Rate-limit issue/verify by source identity, target identity/IP and tenant context where present. Increment failures atomically; at `max_attempts` lock/revoke fail-closed without revealing whether the lookup existed.
++- Consume transaction locks the row; verifies issuer, exact action, not expired/revoked/locked and attempts remaining; sets `consumed_at` exactly once; then creates a merge plan.
+ - Code authorizes only merge proposal; explicit confirmation is required before merge commit.
+ - Verified account-email evidence comes only from the auth service: Google OIDC signature+issuer+audience+nonce+`exp/iat`+`email_verified=true`, or a consumed email verify token. Never accept a request-body boolean/email as proof.
+ - Notify both source and target channels after success.
+@@ -289,6 +302,7 @@
+ 
+ | Date | Version | Change |
+ |---|---|---|
++| 2026-07-17 | v1.4 | Provider-scoped channel identity; row-locked issuer-person validation; bounded terminal-immutable link codes; connector secret separation and DB attack tests. |
+ | 2026-07-16 | v1.3 | **DD-50 full propagation:** transactional one-time `link_code`, server-only verified-email evidence matrix, phone dormant, no CK/name/owner bypass, and new security/concurrency tests. |
+ | 2026-07-10 | v1.2 | **DD-37 ✅:** phase-1 channels = Zalo + Messenger; `channel_identities.platform` phase-1 ∈ {`zalo`,`messenger`}, `telegram` legacy tenant-1 only. Person links Google+Facebook+Zalo (web-auth DD-13/33/14). Merge signals: verified SĐT (DD-01) + verified email (DD-13). |
+ | 2026-06-18 | v1.1 | Protected identity, tenant reachability, secure OTP, ledger-safe merge and recovery contract |
+diff -ruN base/docs/features/BE/feature_notifications_reminders_tech.md cand/docs/features/BE/feature_notifications_reminders_tech.md
+--- a/docs/features/BE/feature_notifications_reminders_tech.md	2026-07-19 01:08:43.125006435 +0700
++++ b/docs/features/BE/feature_notifications_reminders_tech.md	2026-07-19 01:08:43.198006435 +0700
+@@ -1,7 +1,7 @@
+ # Feature: Notifications & Reminders — Backend Tech Spec
+ 
+ > **Canonical phase:** P3 / P4.5–P4.7  
+-> **Version:** 2.2 · 2026-07-15
++> **Version:** 2.3 · 2026-07-17
+ > **Status:** Reviewed  
+ > **Product spec:** `../feature_notifications_reminders.md`  
+ > **References:** `../../standards/business-rules.md` BL-SEC-5 · `../../standards/decisions.md` DD-37/DD-40/DD-45 · `../../dd-45-waitlist-analysis.md`
+@@ -135,7 +135,7 @@
+ ### Waitlist derivation failure alert (DD-45)
+ 
+ 1. Consume tenant-scoped outbox event `waitlist.charge_derivation_failed` emitted by the session transaction with opaque `session_id`, `player_id`, `trigger_command_id`, `reason_code`.
+-2. Load active owner/admin key from tenant-scoped `tenant_admins`, then resolve its exact `(platform,platform_user_lookup_hash)` → `person_id` through the identity service / narrow `SECURITY DEFINER` lookup (global-protected `channel_identities`, never a direct app-table join). Create `owner_alert` intent with deterministic key `waitlist-charge-derivation:{session}:{player}:{trigger}:{reason}`; duplicate event = no-op. Nếu không resolve được recipient, mark projector delivery skipped/DLQ reason `OWNER_RECIPIENT_UNRESOLVED`; outbox/audit vẫn durable và không ảnh hưởng domain retry.
++2. Load active owner/admin key from tenant-scoped `tenant_admins`, including the stable Page/OA/bot scope resolved by its channel binding, then resolve exact `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)` → `person_id` through the identity service / narrow `SECURITY DEFINER` lookup (global-protected `channel_identities`, never a direct app-table join). Missing/ambiguous scope fails closed. Create `owner_alert` intent with deterministic key `waitlist-charge-derivation:{session}:{player}:{trigger}:{reason}`; duplicate event = no-op. Nếu không resolve được recipient, mark projector delivery skipped/DLQ reason `OWNER_RECIPIENT_UNRESOLVED`; outbox/audit vẫn durable và không ảnh hưởng domain retry.
+ 3. Alert copy contains no player PII, amount, gender, venue or decrypted error detail. Candidate receives no promotion notification because state remains waitlisted.
+ 4. This projector **does not run promotion retry**. Session service consumes the same event/retry job, re-locks session and re-counts capacity under DD-45.
+ 
+@@ -213,6 +213,7 @@
+ 
+ | Date | Version | Thay đổi |
+ |---|---|---|
++| 2026-07-17 | v2.3 | Owner-alert recipient resolution now requires exact provider scope + user hash; ambiguous two-part lookup removed. |
+ | 2026-07-15 | v2.2 | **DD-39×DD-45 owner-alert projection:** consume `waitlist.charge_derivation_failed` into at most one tenant owner alert/digest with deterministic key; unresolved recipient→skipped/DLQ; no candidate/venue/PII delivery; promotion retry remains session-service owned. |
+ | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
+ | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), full DDL, 12 BE edge cases, 20 tests |
+diff -ruN base/docs/features/BE/feature_player_messenger_tech.md cand/docs/features/BE/feature_player_messenger_tech.md
+--- a/docs/features/BE/feature_player_messenger_tech.md	2026-07-19 01:08:43.932006435 +0700
++++ b/docs/features/BE/feature_player_messenger_tech.md	2026-07-19 01:08:44.023006435 +0700
+@@ -1,8 +1,8 @@
+ # Feature: Player Facebook Messenger Experience — Backend Tech Spec
+ 
+ > **Canonical phase:** P2.5
+-> **Version:** 0.2 · 2026-07-15
+-> **Status:** Draft (kênh DD-37 ✅; account-link DD-33 🟡 phase-1)
++> **Version:** 0.3 · 2026-07-17
++> **Status:** Draft; identity/link/secret DB boundary implemented, Messenger runtime pending
+ > **Product spec:** `../feature_player_messenger.md` *(Draft)*
+ > **References:** `../../standards/decisions.md` DD-37 (Messenger phase-1) · DD-33 (account-link) · DD-45 (waitlist/rejoin) · **PSID page-scoped = Meta platform fact** (`../../channels/messenger/messenger-channel-design.md`) · `../BE/feature_zalo_channel_tech.md` · `../BE/feature_tenant_routing_authz_tech.md`
+ 
+@@ -13,7 +13,7 @@
+ ## 1. Tổng quan triển khai
+ 
+ ```text
+-Messenger webhook (page_id → tenant) → Verify X-Hub-Signature (app secret)
++Messenger webhook → Verify X-Hub-Signature-256 over raw body → page_id → tenant
+     → Normalize PSID (page-scoped) → Update dedup
+     → Identity/Domain Service (shared) → Outbox → Delivery (24h window)
+ ```
+@@ -36,15 +36,18 @@
+ 
+ ```sql
+ -- Có sẵn trong schema.ts (tham chiếu, KHÔNG tạo lại):
+--- messenger_pages(id, tenant_id UNIQUE, page_id UNIQUE, page_token_enc, app_secret_enc, status, verified_at, ...)
++-- messenger_pages(id, tenant_id UNIQUE, page_id UNIQUE, status, verified_at, ...)
++-- messenger_page_secrets(page_id PK/FK, page_token_enc, kms_key_version, ...)
++--   → GLOBAL protected; no app/app_worker/readonly table grants
++-- Facebook App Secret is platform-global and lives only in the deployment secret manager.
+ -- channel_reachability(person_id, tenant_id, platform, can_dm, last_inbound_at, window_expires_at, otn_token_enc)
+ --   → platform='messenger'; window_expires_at = last_inbound_at + 24h (cửa sổ 24h)
+--- channel_identities(platform='messenger', platform_user_lookup_hash=keyed(page_id || ':' || PSID), ...)
+---   ⚠️ PSID là PAGE-SCOPED nhưng UNIQUE của bảng là (platform, platform_user_lookup_hash) với platform='messenger'
+---      (KHÔNG có cột page). Nếu hash chỉ keyed(PSID) → hai người ở hai Page khác nhau có thể trùng hash
+---      (PSID không unique xuyên Page) → va chạm unique / gán nhầm identity xuyên tenant.
+---   ✅ Bắt buộc đưa page_id vào hash: platform_user_lookup_hash = keyed(page_id || ':' || PSID).
+---      platform_user_id_enc lưu PSID (page-scoped) đã mã hoá.
++-- channel_identities(platform='messenger',
++--   provider_scope_lookup_hash=domain_hmac('messenger-scope', page_id),
++--   platform_user_lookup_hash=domain_hmac('messenger-user', PSID), ...)
++--   UNIQUE(platform, provider_scope_lookup_hash, platform_user_lookup_hash)
++--   → PSID giống nhau ở hai Page vẫn là hai identity độc lập; không concatenate raw values.
++--   platform_user_id_enc lưu PSID (page-scoped) đã mã hoá.
+ ```
+ 
+ ### Edge Cases (Backend)
+@@ -56,9 +59,9 @@
+ | 3 | Concurrency | Replay message (mid/event) | Update dedup — idempotent |
+ | 4 | Reachability | Gửi ngoài cửa sổ 24h | ❌ Không standard-send; chỉ gửi nếu eligible/approved mechanism tồn tại, nếu không fallback web + Zalo; đánh dấu unreachable-24h |
+ | 5 | Data Integrity | PSID cùng người khác Page | Page-scoped — 2 PSID; link về cùng Person qua verified account identity hoặc transactional `link_code`; không auto-merge chéo |
+-| 5b | Data Integrity | Hash va chạm xuyên Page (unique `(platform,hash)`) | `platform_user_lookup_hash = keyed(page_id\|\|':'\|\|PSID)` — page_id trong hash để PSID trùng ở 2 Page không đụng unique / không gán nhầm identity xuyên tenant |
++| 5b | Data Integrity | Hash va chạm xuyên Page | Hash scope và user riêng bằng domain-separated HMAC; unique `(platform, scope_hash, user_hash)` — không gán nhầm identity xuyên tenant |
+ | 6 | Concurrency | Number/quick-reply reply last slot | Shared service locks session: first active, second waitlisted/no-charge/no-venue |
+-| 7 | Security | Page token / app secret trong log | ❌ NEVER — KMS enc, log redaction |
++| 7 | Security | Page token / App Secret trong DB metadata hoặc log | ❌ NEVER — Page token ở protected KMS table; App Secret chỉ ở deployment secret manager; log redaction |
+ | 8 | Resilience | Provider rate-limit/outage | Backoff — không rollback canonical |
+ | 9 | Security | Cross-tenant reachability | Scoped per (person, tenant, platform='messenger') |
+ | 10 | Data Integrity | Stale quick-reply payload | Reject — "Danh sách đã thay đổi" |
+@@ -105,14 +108,19 @@
+ ### Routing + PSID
+ 
+ ```text
+-1. Verify X-Hub-Signature-256 (app secret per-page)
++1. Enforce method/content-type/body-size; capture raw body; verify `X-Hub-Signature-256` with the platform App Secret using constant-time comparison before JSON parse/dispatch
+ 2. page_id → messenger_pages(active) → tenant_id
+-3. PSID (page-scoped) → keyed lookup hash → channel_identities(platform='messenger')
++3. PSID (page-scoped) → separate Page-scope/user HMACs → channel_identities(platform='messenger')
+    - absent → create Person + ChannelIdentity idempotently (join/approved action mới tạo membership)
+ 4. Set/refresh channel_reachability: can_dm=true, last_inbound_at=now, window_expires_at=now+24h
+ 5. → Domain service (same as web/Zalo)
+ ```
+ 
++Only allowlisted webhook object/event shapes continue after signature validation;
++bound array/string sizes before dispatch. All `page_id`, PSID, message text and
++quick-reply payloads stay parameter values—never SQL identifiers/fragments, HTML,
++or unredacted structured-log fields. Unknown variants reject/no-op fail-closed.
++
+ ### 24h Window Handling
+ 
+ - Mọi outbound (join xác nhận, nhắc, settled confirm) kiểm `window_expires_at > now()`.
+@@ -125,7 +133,7 @@
+ 
+ ### Account link (DD-33 🟡 phase-1)
+ 
+-FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSID** là hai subject khác nhau → gắn về cùng `person` qua verified account identity hoặc transactional one-time `link_code`, không auto-link chéo. Nếu App Review chậm, dùng `/link` fallback (DD-32). Không đụng core `Person`/`Membership`.
++FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSID** là hai subject khác nhau → gắn về cùng `person` qua verified account identity hoặc transactional one-time `link_code`, không auto-link chéo. Code phải có đúng một issuer (verified account XOR Messenger identity); lúc issue phải lock source Person trước rồi mới lock issuer để cùng thứ tự với merge, sau đó validate issuer-person, TTL/attempt limit và terminal single-use. Issuer evidence không dùng persistent composite FK vì merge phải re-parent identity/account được. Nếu App Review chậm, dùng `/link` fallback (DD-32). Không đụng core `Person`/`Membership`.
+ 
+ ---
+ 
+@@ -183,5 +191,6 @@
+ 
+ | Date | Version | Thay đổi |
+ |---|---|---|
++| 2026-07-17 | v0.3 | Separate Page-scope/user HMAC identity, raw-body signature gate, Page-token secret table, platform App Secret in deployment secret manager, one-way account-link contract. |
+ | 2026-07-15 | v0.2 | **DD-45:** thin adapter renders active/waitlisted/current/rejoin-review; final-slot and ledger-unchanged tests; remove "Full" error. |
+ | 2026-07-10 | v0.1 | Draft khởi tạo (DD-37 ✅ kênh + DD-33 🟡 link): routing `page_id → tenant`, PSID page-scoped identity, standard window 24h (join+confirm, nhắc best-effort 24h; outside-window chỉ khi Meta eligibility/approval cho phép), quick-reply/persistent menu, join→sync web; account-link FB↔PSID qua OTP/verified. Thay `feature_player_telegram_tech.md` (archived). |
+diff -ruN base/docs/features/BE/feature_tenant_routing_authz_tech.md cand/docs/features/BE/feature_tenant_routing_authz_tech.md
+--- a/docs/features/BE/feature_tenant_routing_authz_tech.md	2026-07-19 01:08:44.233006435 +0700
++++ b/docs/features/BE/feature_tenant_routing_authz_tech.md	2026-07-19 01:08:44.241006435 +0700
+@@ -1,7 +1,7 @@
+ # Feature: Tenant Routing & Admin Authorization — Backend Tech Spec
+ 
+ > **Canonical phase:** P2
+-> **Version:** 2.2 · 2026-07-16
++> **Version:** 2.3 · 2026-07-17
+ > **Status:** Reviewed
+ > **Product spec:** `../feature_tenant_routing_authz.md`
+ > **References:** `../../product/TDD.md` §3.3–3.5 · `../../standards/business-rules.md` BL-SEC-2/BL-SEC-5 · `../../standards/decisions.md` DD-27 · DD-37 · DD-51 · DD-53 · DD-56
+@@ -10,23 +10,23 @@
+ 
+ ## 1. Tổng quan triển khai
+ 
+-> **Cập nhật v2.1 (DD-37 ✅, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger + web**; **bỏ Telegram**. Tenant routing nay suy từ **Zalo `webhook_token` per-club** (`zalo_bots.webhook_token → tenant_id`) và **Messenger `page_id` per-club** (`messenger_pages.page_id → tenant_id`). Route Telegram `chat_id` (`telegram_links`) = **legacy tenant-1 only**, không dùng cho tenant mới. Nguyên tắc "routing suy từ kênh, không từ nội dung" (NFR-S3) giữ nguyên cho mọi kênh.
++> **Cập nhật v2.3:** Zalo raw webhook path token is never stored. Edge computes a keyed lookup hash, then resolves `zalo_bots.webhook_token_lookup_hash → tenant_id`; Messenger still resolves `messenger_pages.page_id → tenant_id` after signature verification.
+ 
+ ```text
+-Channel event (Zalo webhook_token · Messenger page_id · web session) → channelResolver
++Channel event (Zalo HMAC(:token) · Messenger page_id · web session) → channelResolver
+     → AuthZ Middleware(action, actor, tenant)
+         → tenant-bound Service/Repo (RLS set)
+ ```
+ 
+-**Pipeline:** `channelResolver` maps incoming event to tenant via **trusted channel bindings** (Zalo `webhook_token`, Messenger `page_id`, web authenticated context; legacy Telegram `chat_id` for tenant-1). `authzMiddleware` derives stable actor identity and calls `authorize(action, actor, tenant)`. Handler cannot override either value.
++**Pipeline:** `channelResolver` maps incoming event to tenant via **trusted channel bindings** (Zalo keyed webhook-token lookup, Messenger `page_id`, web authenticated context; legacy Telegram `chat_id` for tenant-1). `authzMiddleware` derives stable actor identity and calls `authorize(action, actor, tenant)`. Handler cannot override either value.
+ 
+ **Design decisions:**
+ - Routing ≠ authorization — 2 separate middleware steps.
+-- Tenant **luôn** suy từ kênh (webhook_token / page_id / auth session), **không** từ nội dung message (NFR-S3, edge #1).
++- Tenant **luôn** suy từ kênh (exact token-HMAC lookup / page_id / auth session), **không** từ nội dung message (NFR-S3, edge #1).
+ - Store keyed hashes for per-channel user lookup — encrypt recoverable IDs only if needed.
+ - Link codes: hash-only storage (no plaintext), TTL, single-use.
+ - Global context/link lookup via narrow service access — not open queries.
+-- **Messenger PSID là page-scoped** (mỗi Page một namespace) → resolver phải neo theo `page_id`; **Zalo `from.id`** ổn định per-bot (DD-15 ⬜) → neo theo `webhook_token`.
++- **Messenger PSID là page-scoped** → identity scope = stable `page_id`. Zalo user ID is treated as OA/bot-scoped until DD-15 proves otherwise → scope = stable OA/bot ID, never the rotatable webhook path token.
+ - **DD-56:** one canonical action→capability registry owns authorization. Unknown action/capability, missing grant, expired grant, or registry failure all deny. Adapters/API/UI may render registry output but may not infer privileges from role labels.
+ 
+ ---
+@@ -90,7 +90,7 @@
+ 
+ All tenant-scoped tables: `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY`.
+ 
+-> **Channel bindings (DD-37):** `telegram_links` (chat_id → tenant) is **legacy, tenant-1 only** — no new tenant is routed via Telegram. Phase-1 routing uses `zalo_bots.webhook_token → tenant_id` (Zalo, bot per-club) and `messenger_pages.page_id → tenant_id` (Messenger, Page per-club) — both defined in `feature_zalo_channel_tech.md` / `feature_player_messenger_tech.md`, canonical in `packages/db/schema.ts`. `tenant_admins.platform` / `player_chat_context.platform` default `'telegram'` in the live schema is retained for history; new rows use `'zalo'` / `'messenger'`.
++> **Channel bindings (DD-37):** `telegram_links` is legacy tenant-1 only. Phase-1 routing uses exact `zalo_bots.webhook_token_lookup_hash → tenant_id` after edge HMAC and `messenger_pages.page_id → tenant_id` after signature verification. Zalo credentials live in `zalo_bot_secrets` behind a narrow accessor; Messenger Page token lives in `messenger_page_secrets`, while the platform App Secret stays in deployment secret manager.
+ 
+ ### Indexes
+ 
+@@ -128,7 +128,7 @@
+ ### Resolution Precedence
+ 
+ ```text
+-1. Zalo event   → webhook_token → zalo_bots(active) → tenant_id
++1. Zalo event   → HMAC(raw path token) → exact zalo_bots(active).webhook_token_lookup_hash → tenant_id
+    Messenger evt → page_id      → messenger_pages   → tenant_id
+    Web request   → authenticated session → tenant context
+    (legacy) TG group message → chat_id → telegram_links(active=true) → tenant_id  [tenant-1 only]
+@@ -271,6 +271,7 @@
+ 
+ | Date | Version | Thay đổi |
+ |---|---|---|
++| 2026-07-17 | v2.3 | Zalo token-HMAC routing, stable Page/OA identity scope and protected connector-secret accessor contract. |
+ | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
+ | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), thêm full DDL, 12 BE edge cases, authz matrix, rate limits, 20 unit tests, 4 integration tests |
+ | 2026-07-10 | v2.1 | **DD-37 ✅:** routing pivot — tenant suy từ **Zalo `webhook_token`** + **Messenger `page_id`** per-club; Telegram `chat_id`/`telegram_links` xuống **legacy tenant-1 only**. Cập nhật overview, channel-binding note, resolution precedence. Nguyên tắc routing-từ-kênh (NFR-S3) không đổi. |
+diff -ruN base/docs/features/BE/feature_zalo_channel_tech.md cand/docs/features/BE/feature_zalo_channel_tech.md
+--- a/docs/features/BE/feature_zalo_channel_tech.md	2026-07-19 01:08:44.302006435 +0700
++++ b/docs/features/BE/feature_zalo_channel_tech.md	2026-07-19 01:08:44.304006435 +0700
+@@ -1,7 +1,7 @@
+ # Feature: Zalo Player Channel — Backend Tech Spec
+ 
+ > **Canonical phase:** P4.7  
+-> **Version:** 2.1 · 2026-07-15
++> **Version:** 2.2 · 2026-07-17
+ > **Status:** Reviewed  
+ > **Product spec:** `../feature_zalo_channel.md`
+ > **References:** `../../standards/decisions.md` DD-45 · `feature_cross_club_join_tech.md` shared join outcomes
+@@ -11,7 +11,7 @@
+ ## 1. Tổng quan triển khai
+ 
+ ```text
+-Webhook (opaque token → bot/tenant) → Verify provider secret
++Webhook (opaque token HMAC → bot/tenant) → Verify provider signature
+     → Normalize stable event/user IDs → Update dedup
+     → Identity/Domain Service (shared) → Outbox → Delivery
+ ```
+@@ -28,14 +28,34 @@
+ CREATE TABLE zalo_bots (
+   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+   tenant_id uuid NOT NULL REFERENCES tenants(id) UNIQUE,
+-  bot_token_enc text NOT NULL,
+-  webhook_token text NOT NULL,
+-  secret text,
+-  status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'drift')),
++  webhook_token_lookup_hash text NOT NULL UNIQUE,
++  status text NOT NULL DEFAULT 'connecting'
++    CHECK (status IN ('connecting','registered','active','drift','error','revoked')),
+   verified_at timestamptz,
+   created_at timestamptz NOT NULL DEFAULT now()
+ );
+ 
++-- GLOBAL protected: no app/app_worker/readonly table grants.
++CREATE TABLE zalo_bot_secrets (
++  bot_id uuid PRIMARY KEY REFERENCES zalo_bots(id) ON DELETE CASCADE,
++  bot_token_enc bytea NOT NULL,
++  webhook_secret_enc bytea, -- nullable until CO-OQ-1 confirms provider contract
++  kms_key_version text NOT NULL,
++  pending_bot_token_enc bytea,
++  pending_webhook_secret_enc bytea,
++  pending_kms_key_version text,
++  pending_created_at timestamptz,
++  created_at timestamptz NOT NULL DEFAULT now(),
++  rotated_at timestamptz,
++  CHECK (
++    (pending_bot_token_enc IS NULL AND pending_webhook_secret_enc IS NULL
++      AND pending_kms_key_version IS NULL AND pending_created_at IS NULL)
++    OR
++    (pending_bot_token_enc IS NOT NULL AND pending_kms_key_version IS NOT NULL
++      AND pending_created_at IS NOT NULL)
++  )
++);
++
+ CREATE TABLE zalo_reply_contexts (
+   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+   person_id uuid NOT NULL REFERENCES persons(id),
+@@ -52,6 +72,18 @@
+ ALTER TABLE zalo_reply_contexts FORCE ROW LEVEL SECURITY;
+ ```
+ 
++`zalo_bots` is routable metadata only. The raw webhook path token is never stored;
++the adapter HMACs it with a dedicated lookup key. Token/secret ciphertext can be
++read only through a narrow audited ingress function, not by general runtime roles.
++The current credential stays active while a complete pending token/key/timestamp set
++is durably verified. `webhook_secret_enc` is optional on both slots until CO-OQ-1
++confirms whether Zalo supplies a distinct verification secret; no fabricated secret.
++For channel identity, persist separate keyed hashes for OA/bot scope and Zalo
++`user_id`; uniqueness is `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`.
++After authentication, accept only allowlisted event/action variants and bounded
++field sizes. Repository calls are parameterized; payload values never select a
++table/column or enter SQL, HTML, callback payloads or structured logs by interpolation.
++
+ ### Edge Cases (Backend)
+ 
+ | # | Category | Case | Xử lý |
+@@ -59,10 +91,10 @@
+ | 1 | Security | Tenant from message content | ❌ NEVER — webhook token/bot binding only |
+ | 2 | Data Integrity | Stale number (list expired/changed) | Reject — "Danh sách đã thay đổi" |
+ | 3 | Data Integrity | Number out of range | "Số không hợp lệ" |
+-| 4 | Security | Forged/unknown webhook | Reject — verify provider secret |
++| 4 | Security | Forged/unknown webhook | Reject before parsing/dispatch — exact opaque-token lookup, provider signature verification over the provider-defined input, constant-time compare |
+ | 5 | Concurrency | Replayed event | Update dedup — idempotent |
+ | 6 | Concurrency | Concurrent number replies last slot | Shared service locks session: first active, second waitlisted/no-charge/no-venue |
+-| 7 | Security | Bot token in logs | ❌ NEVER — KMS encrypted, log redaction |
++| 7 | Security | Token/secret in logs or tenant metadata | ❌ NEVER — KMS ciphertext in protected table only; structured log redaction |
+ | 8 | Data Integrity | Webhook drift (URL changed) | Hourly `getWebhookInfo` — alert on drift |
+ | 9 | Security | DM reachability cross-club | Scoped per tenant bot — independent |
+ | 10 | Resilience | Provider rate-limit/outage | Degrade — no canonical corruption |
+@@ -181,6 +213,7 @@
+ 
+ | Date | Version | Thay đổi |
+ |---|---|---|
++| 2026-07-17 | v2.2 | Secret-free routing metadata, HMAC webhook lookup, protected KMS credential table, provider-scoped identity and verify-before-dispatch contract. |
+ | 2026-07-15 | v2.1 | **DD-45:** thin adapter renders active/waitlisted/current/rejoin-review; final-slot and ledger-unchanged tests; remove "Full" error. |
+ | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
+ | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), DDL, 12 edge cases, reply context detail, 20 tests |
+diff -ruN base/docs/features/README.md cand/docs/features/README.md
+--- a/docs/features/README.md	2026-07-19 01:08:44.353006435 +0700
++++ b/docs/features/README.md	2026-07-19 01:08:44.355006435 +0700
+@@ -20,27 +20,27 @@
+ 
+ - **Legacy coverage (pre-pivot)** — 15 cặp spec MVP viết trước DD-37 (bảng ngay dưới); trong đó `feature_player_telegram` nay **Archived**.
+ - **Active phase-1 coverage** — spec Reviewed còn trong scope + cập nhật theo pivot = **14 cặp** (15 legacy − Telegram archived).
+-- **Draft phase-1 — DD ✅, tracked; pending migration/build** — 3 **cặp** mới (Messenger/chat/settings): **quyết định DD ✅** (DD-37/38/39), **6 file đã tracked trong documentation baseline** nhưng chưa có migration/runtime implementation. "DD ✅" = quyết định đã chốt, KHÔNG phải "đã build".
++- **Draft phase-1 — DD ✅, tracked; pending runtime/remaining migrations** — 3 **cặp** mới (Messenger/chat/settings). Messenger's shared identity/link/secret DB boundary now exists in `0014`, but its adapter/runtime is still absent; chat/settings migrations and all three runtimes remain pending. "DD ✅" = quyết định đã chốt, KHÔNG phải "đã build".
+ 
+-> ⚠️ **Reconcile với `../standards/BUILD-STATUS.md`:** trên disk có **21 Product/System specs + 20 BE specs = 20 cặp hoàn chỉnh + 1 product-only Draft** (`feature_channel_booking_funnel`; BE deferred tới build slice). 20 cặp gồm **15 legacy** (14 active Reviewed + 1 Telegram Archived), **2 cặp pre-existing** (connector + assistant) và **3 cặp phase-1 mới đã tracked, pending migration/build** (messenger/chat/settings). "Reviewed" = trạng thái *tài liệu*, không phải *đã build*.
++> ⚠️ **Reconcile với `../standards/BUILD-STATUS.md`:** trên disk có **21 Product/System specs + 20 BE specs = 20 cặp hoàn chỉnh + 1 product-only Draft** (`feature_channel_booking_funnel`; BE deferred tới build slice). 20 cặp gồm **15 legacy** (14 active Reviewed + 1 Telegram Archived), **2 cặp pre-existing** (connector + assistant) và **3 cặp phase-1 mới** (messenger/chat/settings). `0014` only implements the shared identity/link/connector-secret DB boundary; it does not implement a channel adapter, join flow or account-link service. "Reviewed" = trạng thái *tài liệu*, không phải *đã build*.
+ 
+ ### Legacy coverage — 15 cặp spec MVP (1 Archived)
+ 
+ | Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
+ |---|---|---|---|---|
+ | P0–P1 | Multi-tenant Foundation | `feature_multi_tenant.md` v1.5 | `BE/feature_multi_tenant_tech.md` v1.2 | ✅ Reviewed |
+-| P2 | Tenant Routing & Authz | `feature_tenant_routing_authz.md` v2.3 | `BE/feature_tenant_routing_authz_tech.md` v2.2 | ✅ Reviewed |
++| P2 | Tenant Routing & Authz | `feature_tenant_routing_authz.md` v2.4 | `BE/feature_tenant_routing_authz_tech.md` v2.3 | ✅ Reviewed |
+ | P2/P4 | Session Management | `feature_session_management.md` v2.8 | `BE/feature_session_management_tech.md` v2.5 | ✅ Reviewed |
+ | P3 | Payment Reconciliation | `feature_payment_reconcile.md` v1.6 | `BE/feature_payment_reconcile_tech.md` v1.6 | ✅ Reviewed |
+-| P3.5 | Identity Directory & Merge | `feature_identity.md` v1.4 | `BE/feature_identity_tech.md` v1.3 | ✅ Reviewed |
+-| P3/P4.5–P4.7 | Notifications & Reminders | `feature_notifications_reminders.md` v2.3 | `BE/feature_notifications_reminders_tech.md` v2.2 | ✅ Reviewed |
+-| P4 | Web Auth & Onboarding | `feature_web_auth_onboarding.md` v2.5 | `BE/feature_web_auth_onboarding_tech.md` v2.3 | ✅ Reviewed |
++| P3.5 | Identity Directory & Merge | `feature_identity.md` v1.5 | `BE/feature_identity_tech.md` v1.4 | ✅ Reviewed |
++| P3/P4.5–P4.7 | Notifications & Reminders | `feature_notifications_reminders.md` v2.3 | `BE/feature_notifications_reminders_tech.md` v2.3 | ✅ Reviewed |
++| P4 | Web Auth & Onboarding | `feature_web_auth_onboarding.md` v2.6 | `BE/feature_web_auth_onboarding_tech.md` v2.3 | ✅ Reviewed |
+ | P4 | Sync Engine | `feature_sync_engine.md` v2.1 | `BE/feature_sync_engine_tech.md` v2.1 | ✅ Reviewed |
+ | P4.3 | Marketplace Discovery | `feature_marketplace_discovery.md` v2.0 | `BE/feature_marketplace_discovery_tech.md` v2.0 | ✅ Reviewed |
+ | P4.3 | Cross-club Join | `feature_cross_club_join.md` v2.5 | `BE/feature_cross_club_join_tech.md` v2.4 | ✅ Reviewed |
+ | ~~P4.5~~ | ~~Player Telegram~~ | `feature_player_telegram.md` v2.1 | `BE/feature_player_telegram_tech.md` v2.1 | ⚠️ **Archived (DD-37)** → `feature_player_messenger.md` |
+ | P4.6 | Player View | `feature_player_view.md` v2.2 | `BE/feature_player_view_tech.md` v2.2 | ✅ Reviewed |
+-| P4.7 | Zalo Channel | `feature_zalo_channel.md` v2.1 | `BE/feature_zalo_channel_tech.md` v2.1 | ✅ Reviewed |
++| P4.7 | Zalo Channel | `feature_zalo_channel.md` v2.1 | `BE/feature_zalo_channel_tech.md` v2.2 | ✅ Reviewed |
+ | P5 | Billing Lifecycle | `feature_billing_lifecycle.md` v2.7 | `BE/feature_billing_lifecycle_tech.md` v2.6 | ✅ Reviewed |
+ | P6 | Security & Operations | `feature_security_operations.md` v2.1 | `BE/feature_security_operations_tech.md` v2.1 | ✅ Reviewed |
+ 
+@@ -48,15 +48,15 @@
+ 
+ | Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
+ |---|---|---|---|---|
+-| P3/P4/P4.7 | Connector Onboarding (Zalo · SePay · ApiPay) | `feature_connector_onboarding.md` v0.5 | `BE/feature_connector_onboarding_tech.md` v0.2 | 🟡 Draft — provider-contract reviewed; Zalo auto-register còn blocked bởi sandbox confirmation |
++| P3/P4/P4.7 | Connector Onboarding (Zalo · SePay · ApiPay) | `feature_connector_onboarding.md` v0.6 | `BE/feature_connector_onboarding_tech.md` v0.3 | 🟡 Draft — DB secret boundary implemented; Zalo provider contract/auto-register still blocked by sandbox confirmation |
+ 
+-### Draft — DD ✅, tracked; pending migration/build — Phase-1 additions (v3.4 — DD-37/38/39)
++### Draft — DD ✅, tracked; pending runtime/remaining migrations — Phase-1 additions
+ 
+-3 feature pair mới (6 file) — **DD đã ✅**, Product spec + BE tech **đã tracked trong documentation baseline**; chờ migration/build. KHÔNG tính vào 15 legacy.
++3 feature pair mới (6 file) — **DD đã ✅**, Product spec + BE tech **đã tracked**. `0014` supplies Messenger's shared identity/link/secret DB boundary only; Messenger runtime and chat/settings schema/runtime are pending. KHÔNG tính vào 15 legacy.
+ 
+ | Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
+ |---|---|---|---|---|
+-| P2.5/P4.5 | Player Facebook Messenger (thay Telegram) | `feature_player_messenger.md` v0.3 | `BE/feature_player_messenger_tech.md` v0.2 | ✅ DD chốt — Draft, pending migration (DD-37 ✅ kênh · DD-33 🟡 link) |
++| P2.5/P4.5 | Player Facebook Messenger (thay Telegram) | `feature_player_messenger.md` v0.4 | `BE/feature_player_messenger_tech.md` v0.3 | ✅ DD chốt — Draft; shared DB boundary implemented, adapter/join/link runtime pending (DD-37 ✅ kênh · DD-33 🟡 link) |
+ | P4 | In-app Chat (toàn CLB + 1-1) | `feature_inapp_chat.md` v0.5 | `BE/feature_inapp_chat_tech.md` v0.11 | ✅ DD chốt — Draft, pending migration (DD-38 ✅ · DD-55 safety/media contract ✅) |
+ | P4/P4+ | User Settings & Profile + Follow/Visibility | `feature_user_settings.md` v0.6 | `BE/feature_user_settings_tech.md` v0.5 | ✅ DD-39(+addendum)/54 + DD-47/48 framework — Draft, pending migration/build |
+ 
+@@ -66,9 +66,9 @@
+ 
+ | Phase | Feature | Current source | Required before implementation |
+ |---|---|---|---|
+-| ~~P4.8~~ → **phase-1 (P2.5/P4.5)** | Messenger channel | **nay là phase-1 (DD-37)** → `feature_player_messenger.md` v0.3 + `BE/feature_player_messenger_tech.md` v0.2 + `../channels/messenger/messenger-channel-design.md` | Product + BE Draft đã có; App Review Meta / DD-33 trước GA |
++| ~~P4.8~~ → **phase-1 (P2.5/P4.5)** | Messenger channel | **nay là phase-1 (DD-37)** → `feature_player_messenger.md` v0.4 + `BE/feature_player_messenger_tech.md` v0.3 + `../channels/messenger/messenger-channel-design.md` | Shared DB boundary có; adapter/runtime chưa có; App Review Meta / DD-33 trước GA |
+ | P7 (đề xuất) | Club AI Assistant + Knowledge Base | `feature_club_assistant.md` v0.5 + `BE/feature_club_assistant_tech.md` v0.5 (🟡 Draft) · proposal `../proposals/club-ai-bot-knowledge-base.md` | DD-16/17/19–23/28 đã chốt nên không chặn build; **DD-18 provider + privacy/ToS chặn GO-LIVE**. DD-34/35/36 chưa chốt nên không tự mở rộng scope. Migration additive `memberships` UNIQUE(id,tenant_id); bật `vector`; object storage cho file thô |
+-| P4.3/P4.7 + Messenger P2.5 | Channel-first Booking Funnel | `feature_channel_booking_funnel.md` v0.4 (DD-32 ✅ A, Draft) | Build BE companion; phụ thuộc DD-33/DD-14 cho natural social login, transactional one-time `link_code` fallback; giữ CCJ guest free/paid với active→charge, full→waitlisted/no-charge; không linked gate/đường book song song |
++| P4.3/P4.7 + Messenger P2.5 | Channel-first Booking Funnel | `feature_channel_booking_funnel.md` v0.5 (DD-32 ✅ A, Draft) | Build BE companion; phụ thuộc DD-33/DD-14 cho natural social login, transactional one-time `link_code` fallback; giữ CCJ guest free/paid với active→charge, full→waitlisted/no-charge; không linked gate/đường book song song |
+ 
+ ## Review gates
+ 
+diff -ruN base/docs/features/feature_channel_booking_funnel.md cand/docs/features/feature_channel_booking_funnel.md
+--- a/docs/features/feature_channel_booking_funnel.md	2026-07-19 01:08:44.377006435 +0700
++++ b/docs/features/feature_channel_booking_funnel.md	2026-07-19 01:08:44.381006435 +0700
+@@ -2,7 +2,7 @@
+ 
+ > **Canonical phase:** P4.3 / P4.7 + Messenger **P2.5** (**DD-32 ✅ Option A; Messenger là kênh phase-1 P2.5 — DD-37 thay DD-09**)
+ > **Track:** 🎣 Growth / Channel Acquisition
+-> **Version:** 0.4 · 2026-07-15
++> **Version:** 0.5 · 2026-07-17
+ > **Status:** ✅ DD-32 Option A, reconciled to decisions v1.40. Guest vẫn book kèo có phí; active mới tạo charge, full waitlisted/no-charge. Transactional `link_code` chỉ tạo linked-lite; debt-bearing claim vẫn cần DD-50 proof. BE companion được author cùng P4.3 build slice.
+ > **Prerequisites:** P3.5 identity (`feature_identity`) · P4.3 cross-club join (`feature_cross_club_join`) · P4.7 Zalo channel (`feature_zalo_channel`) · **P2.5 Messenger** (`channels/messenger/messenger-channel-design` — phase-1, DD-37) · P4 web-auth (`feature_web_auth_onboarding`)
+ > **Tài liệu liên quan:** `../standards/decisions.md` **DD-32** (nguồn quyết định) · **DD-33** (Facebook Login) · **DD-14** (Zalo Login) · DD-13 (Google/email — KHÔNG bao Facebook) · DD-29 (acquisition-first pricing) · `../00-start-here/identity-model.md` §7 (provider/channel phase matrix) · `BE/feature_channel_booking_funnel_tech.md` (chưa viết — viết cùng build slice)
+@@ -90,7 +90,7 @@
+ | Entity | Vai trò trong phễu | Key constraints (canonical — `packages/db/schema.ts`) |
+ |--------|---------|-----------------|
+ | `persons` | Anchor người thật (§P6) | GLOBAL protected; merge theo verified signal |
+-| `channel_identities` | Zalo/Messenger identity của user; `telegram` chỉ legacy tenant #1 | `UNIQUE(platform, platform_user_lookup_hash)`, FK `person_id` |
++| `channel_identities` | Zalo/Messenger identity của user; `telegram` chỉ legacy tenant #1 | `UNIQUE(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`; separate keyed scope/user hashes; FK `person_id` |
+ | `accounts` | Plexco web-auth account | FK `person_id` — "linked" = account.person_id == channel_identity.person_id |
+ | `account_identities` | Binding web/social login (Google/email/Facebook/Zalo; không Telegram — DD-37) | `UNIQUE(platform, platform_user_hash)`, `verified_at` — **đường tạo linked-state** |
+ | `link_codes` | Transactional `/link` fallback khi social login chưa bật | hash-only, TTL, attempts, single-use, `action='merge_identity'` |
+@@ -169,6 +169,7 @@
+ 
+ | Date | Version | Thay đổi |
+ |---|---|---|
++| 2026-07-17 | v0.5 | Sync provider-scoped channel key and protected connector-secret boundary from migration `0014`. |
+ | 2026-07-15 | v0.4 | **DD-45 + DD-37 propagation:** book outcome active-vs-waitlisted; full không còn error, không charge/venue/QR; analytics thêm outcome. Provider matrix chỉ Google/email/Facebook/Zalo + channel Zalo/Messenger; Telegram legacy-only. |
+ | 2026-07-15 | v0.3 | **DD-32 ✅ Option A:** đóng OQ-1..3; guest vẫn book free/paid; ba mức guest/linked-lite/web-auth; claim/merge money-bearing membership defer identity evidence/confirmation/audit; build checklist giữ CCJ guest path và thêm CTA ở channel specs. |
+ | 2026-07-06 | v0.1 | Khởi tạo Draft từ **DD-32** (phễu channel-first: link FB/Zalo → book-in-chat → app). 12 use case, 14 edge case, state machine phễu, funnel events, propagation checklist. Giữ Draft tới khi DD-32 ✅. |
+diff -ruN base/docs/features/feature_connector_onboarding.md cand/docs/features/feature_connector_onboarding.md
+--- a/docs/features/feature_connector_onboarding.md	2026-07-19 01:08:44.406006435 +0700
++++ b/docs/features/feature_connector_onboarding.md	2026-07-19 01:08:44.409006435 +0700
+@@ -2,7 +2,7 @@
+ 
+ > **Canonical phase:** P3 (payment ingest) · P4 (web onboarding) · P4.7 (Zalo) — *cross-cutting upgrade*
+ > **Track:** 🔌 Connector / Onboarding
+-> **Version:** 0.5 · 2026-07-10
++> **Version:** 0.6 · 2026-07-17
+ > **Status:** Draft (provider-contract reviewed)
+ > **Prerequisites:** P3 webhook ingest stable · P4 onboarding wizard scaffold
+ > **Tài liệu liên quan:** `feature_web_auth_onboarding.md` (nâng cấp step bank/zalo/messenger) · `feature_zalo_channel.md` · `feature_player_messenger.md` · `feature_payment_reconcile.md` · `../channels/zalo/README.md` §6–7 · `../standards/decisions.md` DD-37/DD-33 · `../product/TDD.md` · `../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `../research/player-side-saas-AUDIT.md` §B2
+@@ -55,8 +55,8 @@
+ 
+ ### Bất biến
+ 
+-- **B1 — Routing theo opaque token, KHÔNG theo nội dung payload.** Tenant luôn suy ra từ `:token` trong path → `*.webhook_token → tenant_id`, rồi mới verify `account_fingerprint`/account khớp. Ref: **BL-PAY-6**, **BL-ID-6**.
+-- **B2 — Secret at-rest qua KMS, write-only.** Mọi token/secret (`bot_token_enc`, `webhook_secret_enc`, OAuth tokens, PKCE verifier) mã hoá envelope (AES-GCM); không log; không trả lại sau khi lưu; có reset path. Ref: **BL-SEC-1**.
++- **B1 — Routing theo opaque token, KHÔNG theo nội dung payload.** Zalo edge HMACs raw `:token` then resolves `zalo_bots.webhook_token_lookup_hash`; payment connectors keep their canonical `bank_accounts.webhook_token` path. Never persist the raw Zalo path token. Ref: **BL-PAY-6**, **BL-ID-6**.
++- **B2 — Secret at-rest qua KMS, write-only.** Zalo ciphertext lives only in GLOBAL-protected `zalo_bot_secrets` (no general runtime-role table grant); `zalo_bots` is secret-free metadata. Rotation persists a coherent current+pending credential pair so current stays live until atomic promote; the separate webhook secret remains nullable while CO-OQ-1 is open and must never be fabricated. Other connector/OAuth secrets remain in their canonical KMS fields/secret manager. Không log; không trả lại sau khi lưu; có reset path. Ref: **BL-SEC-1**.
+ - **B3 — Verify webhook timing-safe trên RAW body.** Sai chữ ký → 401, không persist payload nghiệp vụ, security log không chứa secret. HMAC tính trên **raw request body**, không phải JSON đã parse lại. Ref: **BL-SEC-2**, AUDIT B-webhook.
+ - **B4 — RLS fail-closed.** Mọi bảng tenant-scoped ENABLE + FORCE RLS theo `app.tenant_id`. Riêng `oauth_transactions` là bảng bootstrap trước-tenant cho OAuth callback, không đọc trực tiếp qua tenant RLS; chỉ truy cập qua SECURITY DEFINER function lookup-by-state single-use. Ref: **BL-TEN-1**.
+ - **B5 — Tự động hoá KHÔNG nới lỏng bảo mật.** Auto-register chỉ chạy trong context tenant đã auth (TenantOwner), idempotent, chịu rate limit **BL-SEC-5**.
+@@ -243,15 +243,20 @@
+ ```typescript
+ async function connectZalo(ctx: TenantCtx, botToken: string) {
+   const me = await zalo.getMe(botToken);              // ⚠️ endpoint cần confirm (CO-OQ-1)
+-  const webhookToken = randomOpaque();                // route key, KHÔNG phải bot token
+-  const secret = randomSecret();
+-  await db.zaloBots.upsert(ctx, {
+-    botTokenEnc: kms.enc(botToken), webhookToken, secret: kms.enc(secret),
+-    status: "connecting",
++  const rawWebhookToken = randomOpaque();             // returned once, never persisted
++  const webhookTokenLookupHash = tokenHmac(rawWebhookToken);
++  const webhookSecret = randomSecret();
++  await connectorCredentialService.upsertZalo(ctx, {
++    metadata: { webhookTokenLookupHash, status: "connecting" },
++    protectedSecrets: {
++      botTokenEnc: kms.enc(botToken),
++      webhookSecretEnc: kms.enc(webhookSecret),
++      kmsKeyVersion: kms.currentVersion,
++    },
+   });
+   await zalo.setWebhook(botToken, {                    // ⚠️ AUTO — owner KHÔNG đụng
+-    url: `${API_BASE_URL}/webhook/zalo/${webhookToken}`,
+-    secret_token: secret,                             // verify X-Bot-Api-Secret-Token timing-safe (raw)
++    url: `${API_BASE_URL}/webhook/zalo/${rawWebhookToken}`,
++    secret_token: webhookSecret,                      // provider contract pending CO-OQ-1
+   });
+   await db.zaloBots.update(ctx, { status: "registered", autoRegistered: true,
+                                   lastSetwebhookAt: now() });   // Tier 1
+@@ -402,7 +407,7 @@
+ 
+ | Method | Path | Verify chữ ký (timing-safe trên RAW body, BL-SEC-2) |
+ |---|---|---|
+-| POST | `/webhook/zalo/:token` | header `X-Bot-Api-Secret-Token` == `zalo_bots.secret` |
++| POST | `/webhook/zalo/:token` | HMAC token lookup + provider-defined signature/secret via protected accessor (exact header/algorithm pending CO-OQ-1) |
+ | POST | `/webhook/sepay/:token` | header API-key do SePay gửi khi `authen_type=Api_Key` == `webhook_secret` (dự kiến `Apikey`, confirm CO-OQ-7) |
+ | POST | `/webhook/apipay/:token` | `ApiPay-Signature` == HMAC-SHA256(**rawBody**, `webhook_secret`) |
+ 
+@@ -429,7 +434,7 @@
+ ### 5.2 Pipeline (giữ ingest hiện có — TDD §3.6)
+ 
+ ```
+-1. :token → (zalo_bots | bank_accounts).webhook_token → tenant_id      (B1)
++1. Zalo: HMAC(:token) → zalo_bots.webhook_token_lookup_hash → tenant; payment: :token → bank_accounts.webhook_token → tenant (B1)
+ 2. timing-safe verify trên RAW body; fail → 401, không persist          (B3)
+ 3. verify account_fingerprint khớp payload (token A + account B → 409)   (BL-PAY-6)
+ 4. BEGIN; SET LOCAL app.tenant_id;
+@@ -577,6 +582,7 @@
+ 
+ | Date | Version | Thay đổi |
+ |---|---|---|
++| 2026-07-17 | v0.6 | Align Zalo connector with `0014`: HMAC-only routing token, secret-free tenant metadata, protected KMS credential service and no direct secret column reads. |
+ | 2026-07-10 | v0.5 | **DD-37:** note kênh phase-1 = Zalo + Messenger + web (Telegram loại). Messenger onboarding (FB Login + Page per-club, DD-33) trỏ `feature_player_messenger.md`; connector Zalo/SePay/ApiPay không đổi. Bỏ ẩn dụ "như Telegram". |
+ | 2026-06-20 | v0.4 | Fix review: dùng `rotation_pending` thay lifecycle status ngoài enum; `oauth_transactions` dùng SECURITY DEFINER lookup-by-state thay vì tenant RLS; backfill `bank_accounts.webhook_status`; định nghĩa owner/rollup của `provider_connections.status`; đồng bộ edge webhook limit |
+ | 2026-06-20 | v0.3 | Thêm bảng nguồn kiểm chứng provider, làm rõ Zalo vẫn manual đến khi gỡ CO-OQ-1, sửa endpoint UI ApiPay thành `/v2/client/banks`, làm rõ acceptance cho fallback manual, thêm CO-OQ-7 cho SePay inbound webhook sandbox. Patch nit: bổ sung scope `bank-account:read` ở TL;DR cho khớp §2.1/§4.2, ghi nguồn `bank_sub_account_ids` = `/bank-accounts/{id}/sub-accounts` (verified docs). |
+diff -ruN base/docs/features/feature_identity.md cand/docs/features/feature_identity.md
+--- a/docs/features/feature_identity.md	2026-07-19 01:08:44.436006435 +0700
++++ b/docs/features/feature_identity.md	2026-07-19 01:08:44.440006435 +0700
+@@ -2,8 +2,8 @@
+ 
+ > **Canonical phase:** P3.5
+ > **Track:** 🆔 Identity & Merge
+-> **Version:** 1.4 · 2026-07-16
+-> **Status:** Reviewed and reconciled to BRD v3.7 / PRD v2.5 / TDD v2.6 / decisions v1.40; schema/code pending build slices
++> **Version:** 1.5 · 2026-07-17
++> **Status:** Reviewed; identity/link/connector-secret DB security boundary implemented, runtime merge service pending
+ > **Prerequisites:** P2 tenant routing + P3 ledger stable
+ > **Tài liệu liên quan:** `../product/BRD.md` FR-7 · `../product/PRD.md` FLOW 5 + §4.2 · `../product/TDD.md` §3.2–3.4/§4 · `../standards/decisions.md` DD-37/DD-13/DD-33/DD-50/DD-53 · `../research/player-side-saas-AUDIT.md` C1–C5
+ 
+@@ -114,11 +114,11 @@
+ | Entity | Zone | Quy tắc |
+ |---|---|---|
+ | `persons` | GLOBAL protected | API role không SELECT trực tiếp; PII encrypted/verified metadata; anchor (KHÔNG root table `users`) |
+-| `channel_identities` | GLOBAL protected | UNIQUE `(platform, platform_user_id)`; `platform ∈ {zalo, messenger}`; stable ID (Messenger PSID page-scoped) |
++| `channel_identities` | GLOBAL protected | UNIQUE `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`; Page/OA/bot scope and user ID use separate keyed hashes; `platform ∈ {zalo, messenger}` |
+ | `account_identities` | GLOBAL protected | Web-auth provider (DD-13): `platform ∈ {google, email, facebook, zalo}`; `platform_user_hash` keyed-HMAC (SI-2) |
+ | `memberships` | TENANT + RLS | UNIQUE `(tenant_id, person_id)` cho active/survivor policy |
+ | `channel_reachability` | TENANT + RLS | UNIQUE `(person_id, tenant_id, platform)` |
+-| `link_codes` | GLOBAL protected | Hash-only, TTL, attempts, single-use |
++| `link_codes` | GLOBAL protected | Hash-only; exactly one channel/account issuer; source-Person-before-issuer lock + ownership proof; TTL/bounded attempts; terminal immutable single-use without blocking merge re-parent |
+ | `merge_audit` | GLOBAL protected | Immutable actor/signal/before-after/reason |
+ | `merge_tombstones` | GLOBAL protected | Old→canonical mapping cho replay/support |
+ 
+@@ -196,6 +196,7 @@
+ 
+ | Date | Version | Thay đổi |
+ |---|---|---|
++| 2026-07-17 | v1.5 | Provider-scoped channel key, row-locked link-code issuer proof, terminal lifecycle and protected connector-secret boundary. Runtime merge remains a separate slice. |
+ | 2026-07-16 | v1.4 | **DD-50 full propagation:** replace OTP/phone-era use cases, trust order, edge cases, analytics and AC with verified account-email + transactional one-time `link_code`; CK/name/owner evidence cannot bypass strong proof. Authority: decisions v1.37. |
+ | 2026-07-10 | v1.2 | **DD-37 + DD-13:** Person link **Google + Facebook + Zalo** (bỏ Telegram identity/adapter). `channel_identities.platform ∈ {zalo, messenger}`; thêm `account_identities` (google/email/facebook/zalo). Verified email = merge signal (giữ DD-01 phone). Facebook link phụ thuộc App Review (DD-33). Cập nhật §1, UC-1/13, trust order, domain, edge #9/16, acceptance. |
+ | 2026-06-19 | v1.1 | Thêm Changelog heading, verified format compliance |
+diff -ruN base/docs/features/feature_player_messenger.md cand/docs/features/feature_player_messenger.md
+--- a/docs/features/feature_player_messenger.md	2026-07-19 01:08:44.505006435 +0700
++++ b/docs/features/feature_player_messenger.md	2026-07-19 01:08:44.508006435 +0700
+@@ -2,8 +2,8 @@
+ 
+ > **Canonical phase:** P2.5 / P4.5 (kênh phase-1 — thay `feature_player_telegram` đã archive)
+ > **Track:** 📱 Player Messenger
+-> **Version:** 0.3 · 2026-07-15
+-> **Status:** Draft
++> **Version:** 0.4 · 2026-07-17
++> **Status:** Draft; shared identity/link/secret DB boundary implemented, Messenger adapter pending
+ > **Prerequisites:** P2 routing/authz (Page per-club) · P3.5 identity · P2 session/join · P3 notifications · P4 sync · **App Review Meta** (DD-33)
+ > **Tài liệu liên quan:** `../product/BRD.md` FR-3.3 / BR-17 / CO-3 · `../standards/decisions.md` **DD-37** (kênh ✅) · **DD-33** (Facebook Login/link 🟡 phase-1) · `../channels/messenger/messenger-channel-design.md` · `feature_zalo_channel.md` · `feature_tenant_routing_authz.md` · `feature_identity.md` · `BE/feature_player_messenger_tech.md`
+ 
+@@ -84,8 +84,8 @@
+ 
+ | Entity | Vai trò | Key constraints (dự kiến) |
+ |--------|---------|-----------------|
+-| Messenger Page binding | Page per-club → tenant (routing) | Page ID → `tenant_id`; secret/verify per-Page |
+-| `channel_identities` | PSID (page-scoped) ↔ Person | `platform='messenger'`; UNIQUE `(platform, platform_user_id)` |
++| Messenger Page binding | Page per-club → tenant (routing) | Page ID → `tenant_id`; Page token in protected KMS table; platform App Secret only in deployment secret manager |
++| `channel_identities` | PSID (page-scoped) ↔ Person | `platform='messenger'`; separate Page-scope/user HMACs; UNIQUE `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)` |
+ | `account_identities` | Facebook Login link (DD-33) | `platform='facebook'`; link về Person qua verified identity/transactional `link_code` |
+ | `channel_reachability` | DM availability per person/tenant/platform | `UNIQUE(person_id, tenant_id, platform='messenger')`; cửa sổ 24h |
+ | `players` | Player join state | Domain service dùng chung với web; lookup qua `membership_id` |
+@@ -134,6 +134,7 @@
+ 
+ | Date | Version | Thay đổi |
+ |---|---|---|
++| 2026-07-17 | v0.4 | Page-scoped identity key, protected Page token/App Secret boundary and bounded one-way account-link contract. |
+ | 2026-07-15 | v0.3 | **DD-45:** Messenger render active/waitlisted/current-state/rejoin-review; retire "Hết chỗ" outcome và không tạo charge/venue cho waitlisted. |
+ | 2026-07-13 | v0.2 | Reconcile join-state table với canonical `players` + `membership_id`; không dùng tên giả `session_roster`. |
+ | 2026-07-10 | v0.1 | Khởi tạo Draft (DD-37 kênh ✅ + DD-33 link 🟡): join qua Messenger bot (quick-reply/persistent menu), Page-per-club routing, cửa sổ 24h (nhắc best-effort 24h, ngoài 24h dồn web+Zalo), sync lên web. Thay `feature_player_telegram` (đã archive). Schema binding Page proposal-level trỏ decisions.md + `packages/db/schema.ts`. |
+diff -ruN base/docs/features/feature_tenant_routing_authz.md cand/docs/features/feature_tenant_routing_authz.md
+--- a/docs/features/feature_tenant_routing_authz.md	2026-07-19 01:08:44.534006435 +0700
++++ b/docs/features/feature_tenant_routing_authz.md	2026-07-19 01:08:44.540006435 +0700
+@@ -2,12 +2,12 @@
+ 
+ > **Canonical phase:** P2
+ > **Track:** 🔐 Routing & AuthZ
+-> **Version:** 2.3 · 2026-07-16
++> **Version:** 2.4 · 2026-07-17
+ > **Status:** Reviewed
+ > **Prerequisites:** P0–P1 foundation stable
+ > **Tài liệu liên quan:** `../product/BRD.md` BR-1/BR-3/BR-12 · `../product/PRD.md` §2 + §4.2/4.3 · `../product/TDD.md` §3.3–3.5 · `../standards/decisions.md` DD-37/DD-27/DD-56 · `BE/feature_tenant_routing_authz_tech.md`
+ 
+-> **Cập nhật v3.4 (DD-37, 2026-07-10):** bỏ **Telegram** (shared bot + `chat_id` routing). Kênh phase-1 = **Zalo (bot-token per-club)** + **Facebook Messenger (Page per-club)** + web. Routing vẫn **suy từ kênh, KHÔNG từ nội dung** (NFR-S3). Giữ **DD-27 channel-aware authz**.
++> **Cập nhật v2.4:** raw Zalo webhook token không lưu DB; edge HMAC rồi exact-lookup `zalo_bots.webhook_token_lookup_hash`. Connector ciphertext nằm trong protected table/accessor, tách khỏi routable metadata.
+ 
+ ---
+ 
+@@ -17,7 +17,7 @@
+ 
+ ### Bất biến
+ 
+-- Routing **KHÔNG BAO GIỜ** resolve tenant từ message text, pay code, username hay client-supplied tenant ID. Tenant suy từ **credential kênh**: Zalo `webhook_token` per-club / Messenger Page ID.
++- Routing **KHÔNG BAO GIỜ** resolve tenant từ message text, pay code, username hay client-supplied tenant ID. Tenant suy từ **credential kênh**: exact Zalo token-HMAC lookup / verified Messenger Page ID.
+ - Routing **KHÔNG BAO GIỜ** grant authorization — đây là 2 bước tách biệt (**DD-27 channel-aware authz**: quyền theo person, tách khỏi kênh).
+ - Link code phải high-entropy, short-lived, single-use, bound to tenant/role.
+ - Fail-closed: nếu không resolve được tenant → reject, không guess.
+@@ -32,7 +32,7 @@
+ | ID | Actor | Hành động | Kết quả |
+ |---|---|---|---|
+ | RTE-UC-1 | Owner | Mở one-time admin link + kết nối kênh (Zalo bot-token / Messenger Page) | TenantAdmin + channel binding (`zalo_bots` / Messenger Page) created atomically |
+-| RTE-UC-2 | System | Zalo/Messenger message/callback arrives | Zalo `webhook_token → tenant` · Messenger Page ID `→ tenant`; session thuộc cùng tenant |
++| RTE-UC-2 | System | Zalo/Messenger message/callback arrives | Zalo `HMAC(:token) → webhook_token_lookup_hash → tenant` · Messenger Page ID `→ tenant`; session thuộc cùng tenant |
+ | RTE-UC-3 | Admin | DM arrives | Bound admin context hoặc explicit tenant picker |
+ | RTE-UC-4 | Player | Mở `club_<slug>` deep link | Sticky context only — KHÔNG grant membership/admin |
+ | RTE-UC-5 | Player | Thuộc nhiều clubs, DM bot | Valid sticky context hoặc picker nếu ambiguous |
+@@ -48,7 +48,7 @@
+ 
+ | # | Category | Case | Hành vi bắt buộc |
+ |---|----------|------|-------------------|
+-| 1 | Security | Resolve tenant từ message text | ❌ NEVER — chỉ dùng trusted bindings (Zalo `webhook_token` / Messenger Page ID, link code) |
++| 1 | Security | Resolve tenant từ message text | ❌ NEVER — chỉ dùng trusted bindings (exact Zalo token-HMAC / verified Messenger Page ID, link code) |
+ | 2 | Security | Link code reuse | ❌ Single-use — consumed/expired/revoked. Ref: BL-SEC-2 |
+ | 3 | Security | Link code brute force | Rate-limit per IP/actor. Ref: BL-SEC-5 |
+ | 4 | Concurrency | Callback: channel binding ≠ session tenant | Reject — validate channel binding, callback session tenant, actor riêng biệt |
+@@ -83,7 +83,8 @@
+ 
+ | Entity | Vai trò | Key constraints |
+ |--------|---------|-----------------|
+-| `zalo_bots` | Binding Zalo bot-token per-club → tenant | `UNIQUE(webhook_token)`, `tenant_id` FK, secret enc |
++| `zalo_bots` | Secret-free Zalo routing metadata → tenant | `UNIQUE(webhook_token_lookup_hash)`, `tenant_id` FK; raw token never stored |
++| `zalo_bot_secrets` | Protected Zalo credential row | KMS ciphertext; no app/app_worker/readonly table grant; narrow accessor only |
+ | Messenger Page binding | Binding Facebook Page per-club → tenant (DD-33/DD-37, proposal-level) | Page ID → tenant; PSID page-scoped. Canonical → decisions.md + `packages/db/schema.ts` |
+ | `admin_links` | One-time link codes | `code` unique, `expires_at`, `used_at`, `tenant_id` FK, `intended_role` |
+ | `memberships` | Person ↔ Tenant relationship | `UNIQUE(person_id, tenant_id)`, `role` enum |
+@@ -118,7 +119,7 @@
+ ### Routing Resolution Order (TDD §3.4)
+ 
+ ```text
+-1. Zalo message   → webhook_token (per-club) → zalo_bots → tenant_id
++1. Zalo message   → HMAC(raw path token) → exact zalo_bots.webhook_token_lookup_hash → tenant_id
+    Messenger msg   → Page ID (recipient.id)   → messenger page binding → tenant_id
+ 2. Admin DM → person_id → memberships (role=admin) →
+    - 1 tenant → auto-select
+@@ -149,7 +150,7 @@
+ 
+ ## 6. Acceptance Criteria
+ 
+-- [ ] Zalo/Messenger/admin/player DM routing theo TDD precedence, fail closed (Zalo `webhook_token` / Messenger Page ID)
++- [ ] Zalo/Messenger/admin/player DM routing theo TDD precedence, fail closed (exact Zalo token-HMAC lookup / verified Messenger Page ID)
+ - [ ] Routing KHÔNG BAO GIỜ grant authorization — 2 bước tách biệt (DD-27)
+ - [ ] Non-admin không thể execute bất kỳ admin mutation
+ - [ ] Link/rebind: TTL, single-use, rate-limited, audited
+@@ -176,6 +177,7 @@
+ 
+ | Date | Version | Thay đổi |
+ |---|---|---|
++| 2026-07-17 | v2.4 | Token-HMAC Zalo routing, secret-free metadata and protected connector-secret contract. |
+ | 2026-06-18 | v1.0 | Initial spec (English format) |
+ | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered format, thêm 10 use cases, 12 edge cases, link state machine, routing resolution order, screen states, analytics payload |
+ | 2026-07-10 | v2.1 | **DD-37:** bỏ Telegram (`chat_id` routing + shared bot); channel routing = **Zalo bot-token per-club** (`webhook_token → tenant`) + **Messenger Page per-club** (Page ID → tenant, PSID page-scoped). Giữ **DD-27 channel-aware authz**. Cập nhật §1, UC, edge (#1/4/6/7/8/9), screens, domain model (`telegram_links` → `zalo_bots` + Messenger Page), routing order, analytics. |
+diff -ruN base/docs/features/feature_web_auth_onboarding.md cand/docs/features/feature_web_auth_onboarding.md
+--- a/docs/features/feature_web_auth_onboarding.md	2026-07-19 01:08:44.577006435 +0700
++++ b/docs/features/feature_web_auth_onboarding.md	2026-07-19 01:08:44.579006435 +0700
+@@ -2,7 +2,7 @@
+ 
+ > **Canonical phase:** P4  
+ > **Track:** 🌐 Web Auth & Onboarding  
+-> **Version:** 2.5 · 2026-07-16
++> **Version:** 2.6 · 2026-07-17
+ > **Status:** Reviewed  
+ > **Prerequisites:** P0–P1 foundation · P2 routing/authz · P3 ledger/provider model  
+ > **Tài liệu liên quan:** `../product/BRD.md` FR-1 · `../product/PRD.md` FLOW 1 · BRD OD-11 · `../standards/decisions.md` DD-13/DD-33/DD-37/DD-50 · `BE/feature_web_auth_onboarding_tech.md` · `feature_connector_onboarding.md` (auto-register webhook + verify 2 tầng)
+@@ -106,7 +106,8 @@
+ | `tenants` | Club/org | `UNIQUE(slug)`, `owner_person_id` FK |
+ | `memberships` | Person ↔ Tenant | `UNIQUE(person_id, tenant_id)`, `role` enum |
+ | `bank_accounts` | Payment provider credentials | `tenant_id` FK, encrypted fields, `verified_at` |
+-| `zalo_bots` | Zalo channel binding (BYO token per-CLB) | `webhook_token`, `tenant_id` FK, secret enc |
++| `zalo_bots` | Secret-free Zalo channel binding metadata | `webhook_token_lookup_hash`, `tenant_id` FK; raw webhook token never stored |
++| `zalo_bot_secrets` | Protected BYO bot credential | KMS ciphertext + key version; narrow lifecycle/ingress accessor only, no general runtime table grants |
+ | Messenger Page binding | Facebook Page per-club (DD-33/DD-37, proposal-level) | Page-per-club routing; PSID page-scoped. Canonical schema → decisions.md + `packages/db/schema.ts` |
+ | `onboarding_state` | Progress tracking per tenant | `tenant_id` FK, step statuses JSON |
+ 
+@@ -176,6 +177,7 @@
+ 
+ | Date | Version | Thay đổi |
+ |---|---|---|
++| 2026-07-17 | v2.6 | Onboarding writes token-HMAC metadata and protected Zalo credential rows through a narrow service; removed inline secret columns. |
+ | 2026-06-18 | v1.0 | Initial spec (English format) |
+ | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered, thêm 10 use cases, 12 edge cases, onboarding wizard screen states, state machine |
+ | 2026-06-20 | v2.1 | Cross-link `feature_connector_onboarding.md`: bank/Zalo connect chuyển sang auto-register + verify 2 tầng; thêm §1.1 surface entry points (web-first vs bot-first, deep-link handoff); cập nhật UC-4/UC-6 + screen states |
+diff -ruN base/docs/product/PRD.md cand/docs/product/PRD.md
+--- a/docs/product/PRD.md	2026-07-19 01:08:44.595006435 +0700
++++ b/docs/product/PRD.md	2026-07-19 01:08:44.598006435 +0700
+@@ -2,14 +2,15 @@
+ ## Plexco — platform thể thao đa môn (host + player): Zalo · Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi)*
+ 
+ **Sản phẩm:** **Plexco** — platform quản lý & khám phá hoạt động thể thao đa môn, 2 phía (host + player); bot-in-chat (Zalo/Messenger) + web app sync 2 chiều; không app native
+-**Phiên bản:** 2.5
+-**Ngày cập nhật:** 15/07/2026
+-**Tài liệu tham chiếu:** `BRD.md` v3.7 · `TDD.md` v2.6 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` **v1.39** (DD-01..60; DD-57..60 proposal)
++**Phiên bản:** 2.6
++**Ngày cập nhật:** 17/07/2026
++**Tài liệu tham chiếu:** `BRD.md` v3.7 · `TDD.md` v2.7 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` **v1.40** (DD-01..60; DD-57..60 proposal)
+ 
+ ## Changelog
+ 
+ | Ngày | Version | Thay đổi |
+ |------|---------|----------|
++| 17/07/2026 | v2.6 | Security contract sync: Zalo tenant routing uses exact token-HMAC lookup; Messenger/Zalo user identity is provider-scoped; raw connector secrets stay outside routable metadata. Runtime remains pending. |
+ | 16/07/2026 | v2.5 | **Founder batch DD-49..56 (decisions v1.36):** merge path bỏ SĐT verified → email verified (DD-50, FLOW link/merge); FLOW 11 billing chốt DD-51 (trial 14d/remind 2d/khoá ngay; grace 7d; refund window 7d). Correction/rejoin/DM/co-admin contract chi tiết ở feature specs + DD-49/55/56. |
+ | 15/07/2026 | v2.4 | **Decision reconcile + review fixes:** refs qua DD-48 theo `decisions.md` v1.32; đồng bộ phase Messenger P2.5/P4.5 và Zalo P4.7; chuẩn hoá policy wording Messenger 24h. Session/social là contract build P2–P4+; flow chi tiết (gating/attendance/tags/invite/Skip-Club/follow) viết cùng build slice. |
+ | 15/07/2026 | v2.3 | **DD-45:** FLOW 13 và discovery race đổi `SESSION_FULL` thành active-vs-waitlisted outcome; full không charge/venue, promotion mới tạo charge; approval full cũng vào waitlist. |
+@@ -56,7 +57,7 @@
+ | `/name` | Zalo/Messenger DM | P3 |
+ | `/link` (sinh mã merge) | Zalo/Messenger DM | P3 |
+ 
+-> Định tuyến tenant **suy từ kênh** (Zalo `webhook_token` / Messenger `page_id` / deep-link / web-session) — KHÔNG từ nội dung tin (TDD §3.3). **Discovery KHÔNG gắn 1 tenant** — đọc public read model cross-tenant (TDD §3.9).
++> Định tuyến tenant **suy từ kênh** (exact Zalo token-HMAC lookup / verified Messenger `page_id` / deep-link / web-session) — KHÔNG từ nội dung tin (TDD §3.3). **Discovery KHÔNG gắn 1 tenant** — đọc public read model cross-tenant (TDD §3.9).
+ 
+ > **Kênh Messenger (phase-1):** DM bot-per-Page (quick-reply/persistent menu), route theo `page_id`; standard messaging trong **cửa sổ 24h**, ngoài cửa sổ chỉ qua cơ chế Meta đủ điều kiện/được phê duyệt → MVP tập trung "join + xác nhận" và nhắc **best-effort trong 24h**; cần **App Review** trước GA. Flows map sang Messenger ở `../channels/messenger/messenger-channel-design.md` §3 (không port tap-nút group; nhắc nợ chính dồn qua web + Zalo).
+ 
+diff -ruN base/docs/product/TDD.md cand/docs/product/TDD.md
+--- a/docs/product/TDD.md	2026-07-19 01:08:44.618006435 +0700
++++ b/docs/product/TDD.md	2026-07-19 01:08:44.619006435 +0700
+@@ -1,8 +1,8 @@
+ # Technical Design Document (TDD) — Plexco
+ ## Platform thể thao đa môn (host + player) — multi-tenant, marketplace discovery, sync đa surface, Zalo + Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi — DD-37)*
+ 
+-**Phiên bản:** 2.6 — **v2.6 (16/07): founder batch DD-49..56** (merge không SĐT, trial/grace chốt, rejoin carry-over). Trước đó: **v3.4 channel pivot (DD-37) + DD-45 waitlist contract**: bỏ Telegram; kênh phase-1 = web + Zalo + Facebook Messenger; auth Google/email; mark-paid thủ công; final join active-vs-waitlisted dưới lock; chuẩn hoá canonical store và ledger tiền. **v2.4:** tham chiếu cụm session-model + social (DD-06/08/41–48) — contract build P2–P4+, chi tiết ở feature specs. **v2.5 (16/07):** DD-04 ✅ (c) DO co-locate (Postgres host = DO App Platform + Managed PG VPC private).
+-**Ngày tạo:** 16/06/2026 · **Cập nhật:** 15/07/2026
++**Phiên bản:** 2.7 — **v2.7 (17/07): identity/channel security schema** (`0014`: provider-scoped identity, bounded one-way link code, protected connector secrets). Runtime Messenger/Zalo/link service remains pending. **v2.6 (16/07): founder batch DD-49..56** (merge không SĐT, trial/grace chốt, rejoin carry-over). Trước đó: **v3.4 channel pivot (DD-37) + DD-45 waitlist contract**.
++**Ngày tạo:** 16/06/2026 · **Cập nhật:** 17/07/2026
+ **Tài liệu tham chiếu:**
+ - `BRD.md` v3.7 — yêu cầu nghiệp vụ
+ - `PRD.md` v2.5 — user flows + edge cases
+@@ -10,7 +10,7 @@
+ - `../research/player-side-saas-reconciliation.md` — identity/kênh/matching
+ - `../research/player-side-saas-AUDIT.md` — threat model & must-fix (C1–C7, B1–B6, §B2, + threat model public discovery)
+ - `../channels/messenger/messenger-channel-design.md` — kênh Messenger (**phase-1, P2.5**): delta data model, routing theo `page_id`
+-- `../standards/decisions.md` **v1.39** — DD-01..56 canonical contracts; DD-57..60 proposal. DD-49..56 full clarification ở v1.37; DD-40 host-attested transfer hard boundary reconciled v1.39; implementation detail ở feature specs + `dd-*-analysis.md`.
++- `../standards/decisions.md` **v1.40** — DD-01..56 canonical contracts; DD-57..60 proposal. DD-49..56 full clarification ở v1.37; DD-40 host-attested transfer hard boundary reconciled v1.39; implementation detail ở feature specs + `dd-*-analysis.md`.
+ 
+ > [!IMPORTANT]
+ > **Scope:** TDD cover tới **P6** ở mức thiết kế. BRD là nguồn sự thật cho product scope; PRD cho behavior; TDD là implementation contract; ROADMAP cho thứ tự/progress. Security constraints nghiêm ngặt hơn giữa BRD và AUDIT luôn thắng.
+@@ -29,7 +29,7 @@
+ | Scope | Pha | Ghi chú |
+ |---|---|---|
+ | **Nền tenant + Postgres/RLS + schema đa môn + 3 tầng hiển thị + Google login** | P0–P1 | repo choke-point + RLS fail-closed + `sports` + public read model skeleton + Google OAuth/email (DD-13) |
+-| **Zalo biết tenant** | P2 | bot-per-club, middleware resolve tenant theo `webhook_token`, mark-paid thủ công (DD-40), cron đa-tenant |
++| **Zalo biết tenant** | P2 | bot-per-club, middleware HMAC raw path token rồi exact lookup, mark-paid thủ công (DD-40), cron đa-tenant |
+ | **Facebook Messenger** (kênh phase-1) | P2.5 | Page per-club, route theo `page_id`, cửa sổ 24h, join+xác nhận, App Review |
+ | **Webhook CK biết tenant** (module tiền, auto = `host_pro`) | P3 | `/webhook/sepay/:token`, dedupe, FIFO settle |
+ | **Identity directory** | P3.5 | Person/ChannelIdentity/Reachability/Membership + link Facebook/Zalo + merge |
+@@ -55,7 +55,7 @@
+ | FR-2 | Session CRUD (chat + web) | P1 | tạo/đóng kèo: môn/giá (một mức hoặc **giá nam/nữ**, DD-39 ✅)/giờ/khu vực/slot/trình độ/visibility/join_policy; auto/`/announce`; sửa trên web | P2/P4 | P0 |
+ | FR-3 | Join Messenger | P3 | quick-reply/persistent menu (Page-per-club) + validate `page_id`/tenant/session; cửa sổ 24h | P2.5/P4.5 | P0 |
+ | FR-4 | Join Zalo | P3 | `/join` + number-reply (bot-per-club DM) | P4.7 | P0 |
+-| FR-5 | Identity resolve | System | (platform,uid)→ChannelIdentity→Person→Membership(∩tenant); `platform ∈ {zalo,messenger}` (chat), account ∈ {google,email,facebook,zalo} | P3.5 | P0 |
++| FR-5 | Identity resolve | System | `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`→ChannelIdentity→Person→Membership(∩tenant); Page/OA/bot scope và user ID dùng domain-separated keyed HMAC; `platform ∈ {zalo,messenger}` (chat), account ∈ {google,email,facebook,zalo} | P3.5 | P0 |
+ | FR-6 | Claim/merge | System | claim-có-tiền cần khoá mạnh — **verified email hoặc link_code deterministic (DD-50; phase-1 không thu SĐT, phone dormant)**; **link Facebook/Zalo vào Person**; reconcile trùng | P3.5 | P0 |
+ | FR-7 | Webhook reconcile (auto = `host_pro`) | System | durable ingest → match (pay_code→tên/amount/ngày) → allocate transaction vào charges | P3 | P0 |
+ | **FR-7b** | **Mark-paid thủ công (mọi tier, DD-40)** | P1 | tiền mặt=`cash`; CK đã ingest=`manual` + exact bank txn; CK host-attested chưa ingest chỉ qua dedicated source migration + actor/evidence, trước đó reject; cấm synthetic bank txn; preview+confirm (DD-25) | P2 | P0 |
+@@ -181,6 +181,7 @@
+     TENANT ||--o{ TELEGRAM_LINK : routes
+     TENANT ||--o{ TENANT_ADMIN : authorizes
+     TENANT ||--o{ ZALO_BOT : "channel (BYO)"
++    ZALO_BOT ||--|| ZALO_BOT_SECRET : "protected credential"
+     TENANT ||--o{ BANK_ACCOUNT : receives
+     TENANT ||--o| SUBSCRIPTION : billed
+     TENANT ||--o{ SUBSCRIPTION_INVOICE : invoices
+@@ -201,7 +202,8 @@
+         uuid id PK
+         uuid person_id FK
+         enum platform "zalo|messenger (chat) · google|email|facebook (account)"
+-        varchar platform_user_id "UNIQUE(platform,uid)"
++        varchar provider_scope_lookup_hash "Page/OA/bot keyed HMAC"
++        varchar platform_user_lookup_hash "UNIQUE(platform,scope_hash,user_hash)"
+         varchar username
+     }
+     CHANNEL_REACHABILITY {
+@@ -348,8 +350,18 @@
+     ZALO_BOT {
+         uuid id PK
+         uuid tenant_id FK
+-        varchar bot_token_enc
+-        varchar webhook_token UK
++        varchar webhook_token_lookup_hash UK
++        enum status
++    }
++    ZALO_BOT_SECRET {
++        uuid bot_id PK
++        bytea bot_token_enc
++        bytea webhook_secret_enc "nullable; CO-OQ-1 gated"
++        varchar kms_key_version
++        bytea pending_bot_token_enc
++        bytea pending_webhook_secret_enc "nullable"
++        varchar pending_kms_key_version
++        timestamptz pending_created_at
+     }
+     BANK_ACCOUNT {
+         uuid id PK
+@@ -412,7 +424,7 @@
+ 
+ > **Account identities (auth, DD-13):** `account_identities.platform ∈ {google,email,facebook,zalo}`; SI-2 keyed-hash áp cho `google.sub`/email (thay `telegram:id`). Chat/gender schema (`chat_*`, hồ sơ gender/dob): DD-38/DD-39 **scope-committed phase-1** nhưng **schema chưa vào canonical** (migration còn chờ) — nguồn authoritative vẫn là `packages/db/schema.ts` + `packages/db/migrations/*.sql`.
+ 
+-**UNIQUE quan trọng:** `channel_identities (platform, platform_user_id)` GLOBAL · `memberships (tenant_id, person_id)` · `(tenant_id, pay_code)` · `channel_reachability (person_id, tenant_id, platform)` · `players (tenant_id, session_id, membership_id)` · `charges (tenant_id, session_id, player_id)` · `bank_transactions (tenant_id, provider, external_id)` · `processed_commands (tenant_id, command_id)` · `projector_deliveries (event_id, projector)` · `(tenant_id, norm)`, `(tenant_id, alias_norm)`.
++**UNIQUE quan trọng:** `channel_identities (platform, provider_scope_lookup_hash, platform_user_lookup_hash)` GLOBAL (scope/user là domain-separated keyed hashes) · `memberships (tenant_id, person_id)` · `(tenant_id, pay_code)` · `channel_reachability (person_id, tenant_id, platform)` · `players (tenant_id, session_id, membership_id)` · `charges (tenant_id, session_id, player_id)` · `bank_transactions (tenant_id, provider, external_id)` · `processed_commands (tenant_id, command_id)` · `projector_deliveries (event_id, projector)` · `(tenant_id, norm)`, `(tenant_id, alias_norm)`.
+ 
+ **Ledger invariants (DB constraint/transaction test):** `amount_due ≥ 0`; auto/manual bank allocation dương và bắt buộc exact `bank_transaction_id`; tiền mặt `cash` và `waiver` không có bank transaction nhưng bắt buộc actor, preview+confirm DD-25 và idempotency. Host-attested CK chưa ingest chỉ được dùng dedicated source sau B1 migration với `bank_transaction_id=NULL`, actor + opaque evidence; trước migration reject, không synthetic bank transaction hoặc `cash|manual` fallback. Reversal âm và tham chiếu allocation gốc. Tổng allocation hiệu lực của một bank transaction nằm trong `[0, bank_transactions.amount]`; tổng vào charge nằm trong `[0, amount_due]`; charge chỉ `paid` khi được phủ đủ. `amount_allocated` do một helper canonical/locked writer sở hữu; không sửa/xoá fact đã audit.
+ 
+@@ -420,14 +432,15 @@
+ 
+ ```
+ INBOUND → resolve Tenant theo KÊNH (không từ nội dung):
+-  • Zalo              : webhook_token (bot-per-club) → zalo_bots → tenant
++  • Zalo              : HMAC(raw path token) → zalo_bots.webhook_token_lookup_hash → tenant
+   • Messenger (P2.5)  : entry[].id (page_id) → messenger_pages → tenant
+   • Web (host/admin)  : session Google/email + tenant đang chọn → AUTHZ(TenantAdmin) → tenant
+   • SePay/ApiPay      : webhook_token + verify account_number → bank_accounts → tenant
+   • (legacy) Telegram : chat_id → telegram_links → tenant #1 migration only (DD-37: out of scope)
+ 
+ THEN identity (nếu là tin nhắn người chơi):
+-  (platform, platform_user_id) → channel_identities → person   [platform ∈ zalo|messenger]
++  (platform, provider_scope_hash, user_hash) → channel_identities → person
++    [Messenger scope=page_id; Zalo scope=stable OA/bot id; never rotatable webhook token]
+   → membership = (person ∩ tenant) qua tenantRepo  [RLS]
+ 
+ ĐƯỜNG ĐỌC KHÔNG GẮN 1 TENANT:
+@@ -443,9 +456,9 @@
+ 
+ ```ts
+ bot.use(async (ctx, next) => {
+-  // Zalo: webhook_token trong path → zalo_bots → tenant (bot-per-club)
++  // Zalo: HMAC(raw token in path) → exact zalo_bots.webhook_token_lookup_hash → tenant
+   // Messenger: entry[].id (page_id) → messenger_pages → tenant (Page-per-club)
+-  const tenant = await resolveTenantByChannel(ctx);   // theo webhook_token / page_id, KHÔNG từ nội dung
++  const tenant = await resolveTenantByChannel(ctx);   // theo token-HMAC / page_id, KHÔNG từ nội dung
+   if (!tenant) return ctx.reply("Chưa nối club...");   // fail-closed
+   ctx.tenant = tenant; ctx.repo = tenantRepo(tenant.id); await next();
+ });
+@@ -603,8 +616,8 @@
+ - **Public layer (NFR-1b):** `public_sessions` chỉ chứa field whitelist; **tiền/PII/roster không bao giờ ghi vào**. Discovery API read-only, rate-limit, phân trang, không lộ `venue`/SĐT tới khi join/duyệt; chống scrape/enumeration. Bất biến public test trong CI.
+ - **Sync (NFR-1c):** command/outbox idempotent (`commandId`/`event.id`); canonical store là nơi duy nhất giữ sự thật; surface re-project được — không có ghi 2 chiều multi-master để lệch tiền.
+ - **Tenant từ kênh, không từ nội dung** (chống spoof) — §3.3.
+-- **Webhook:** timing-safe verify ×3 (SePay `Apikey` / Zalo `X-Bot-Api-Secret-Token` / Messenger `X-Hub-Signature-256`); lưu raw trước ack; không log secret.
+-- **Secret:** `bot_token_enc`, `page_token_enc`/app secret, `webhook_secret_enc`, Google OAuth client secret → KMS/envelope AES-GCM; che UI; reset path. Token Zalo/Page lộ → blast-radius messaging 1 club (không chạm tiền/DB/club khác) + `getWebhookInfo`/Page-subscription drift detection (AUDIT §B2).
++- **Webhook:** enforce method/content-type/body cap, verify provider contract timing-safe over required raw input before parse/dispatch; Zalo exact header/algorithm remains gated by CO-OQ-1; Messenger uses `X-Hub-Signature-256`; no secret/raw body in logs.
++- **Secret:** routable `zalo_bots`/`messenger_pages` metadata contains no credential. `zalo_bot_secrets` and `messenger_page_secrets` hold KMS ciphertext with no general runtime-role table grant; Facebook App Secret + Google OAuth client secret stay in deployment secret manager. Access only through narrow audited functions; rotation/reset is explicit.
+ - **Authz:** routing (ZaloBot/MessengerPage) tách phân quyền (`TenantAdmin` theo `from.id`; web = phiên Google/email); player không gated.
+ - **Chat in-app (DD-38 ✅):** club-chat scoped `tenant_id` + RLS; 1-1 person-self path; **không bridge** ra kênh ngoài; chống spam/rate-limit.
+ - **Identity:** claim-có-tiền cần verified account email hoặc transactional one-time `link_code`; name/alias/owner/CK evidence không tự bypass proof (DD-50).
+@@ -770,7 +783,7 @@
+ 
+ ---
+ 
+-*TDD v2.6 — implementation contract cho platform đa môn + marketplace + sync engine; kênh phase-1 = web + Zalo + Messenger (Telegram đã loại, DD-37). Join full → waitlisted/no-charge; DD-49 governs rejoin/correction. Bốn bất biến: cô lập tenant · không lộ tiền/PII/giới tính ra public · ledger không mất/đếm quá tiền · PostgreSQL/domain model là nguồn sự thật.*
++*TDD v2.7 — implementation contract cho platform đa môn + marketplace + sync engine; kênh phase-1 = web + Zalo + Messenger (Telegram đã loại, DD-37). Identity/connector DB boundary is implemented; channel/link runtimes are pending. Bốn bất biến: cô lập tenant · không lộ tiền/PII/giới tính ra public · ledger không mất/đếm quá tiền · PostgreSQL/domain model là nguồn sự thật.*
+ 
+ ---
+ 
+@@ -778,6 +791,7 @@
+ 
+ | Ngày | Version | Thay đổi |
+ |------|---------|----------|
++| 17/07/2026 | v2.7 | Migration `0014`: Page/OA-scoped channel identity, issue-time link issuer proof + terminal lifecycle, token-HMAC routing metadata and protected connector-secret tables. Runtime remains pending. |
+ | 15/07/2026 | v2.4 | **Propagation (light):** mở rộng tham chiếu decisions.md sang cụm session-model + social (DD-06/08/41/42/43/44/46/47/48). Contract build P2–P4+, giữ 4 bất biến (tenant isolation/không lộ tiền-PII-tag public/ledger đúng/domain-model là nguồn sự thật). Schema/DDL + implementation contract chi tiết viết cùng build slice (không đổi §3 canonical schema body ở pass này). |
+ | 16/07/2026 | v2.5 | **DD-04 ✅ Accepted:** Postgres host = **(c) co-locate DigitalOcean** (App Platform + Managed PG VPC private); runtime summary + Q2 → (c). Fly = fallback; egress-IP gate; full DO App Spec = infra slice. Record `../dd-04-hosting-final-decision.md`. |
+ | 16/07/2026 | v2.6 | **Founder batch DD-49..56 (decisions v1.36):** FR-6 merge = verified email + link_code (DD-50, bỏ SĐT phase-1); §11 Q4 ✅ DD-51 (trial/grace/refund), Q6 🔄 DD-50; `REJOIN_REQUIRES_REVIEW` thu hẹp theo DD-49 (rejoin thường + carry-over). Correction/DM/co-admin contract ở feature specs + DD-49/55/56; schema/DDL defer build slice. |
+diff -ruN base/docs/standards/BUILD-STATUS.md cand/docs/standards/BUILD-STATUS.md
+--- a/docs/standards/BUILD-STATUS.md	2026-07-19 01:08:44.633006435 +0700
++++ b/docs/standards/BUILD-STATUS.md	2026-07-19 01:08:44.635006435 +0700
+@@ -6,7 +6,7 @@
+ > **Nguồn số liệu:** `git log`, cây `packages/`+`apps/`, `docs/features/*`, `docs/standards/decisions.md`,
+ > `docs/autopilot-backlog.md`. Số liệu chức năng = baseline **`main@1eb6f60`** (foundation + Auth v3 đã merge), không phải khẳng định đây là HEAD hiện tại.
+ >
+-> **Reconcile 2026-07-17:** channel target vẫn theo DD-37, nhưng functional implementation baseline còn Auth v3 Telegram-era và bắt buộc `TELEGRAM_BOT_TOKEN`. Google/email replacement đã spec đầy đủ nhưng **chưa implement, chưa có launcher-ready slice**; B0 mutation-path/storage/revoke-all design-probe vẫn chặn authoring. Decision authority tới **v1.40/DD-60** (DD-57..60 proposal-only). HEAD hiện tại có thêm docs/config/tooling sau `1eb6f60`, nhưng chưa thêm feature layer; migrations vẫn `0000–0013` (14 file). FE visual SoT mới cũng chưa được chọn/track/link, nên chưa handoff/code screen.
++> **Reconcile 2026-07-17:** migration `0014` adds the shared cross-channel identity/link/connector-secret DB boundary (55 migrated tables, 15 migrations total; 53-table Drizzle/DBML mirror). It does **not** implement Messenger/Zalo ingress, session join, account-link/merge runtime or Google/email replacement; the functional baseline still contains Telegram-era Auth v3. Decision authority remains **v1.40/DD-60** (DD-57..60 proposal-only).
+ 
+ ---
+ 
+@@ -15,12 +15,12 @@
+ | Trục | Trạng thái | Ước lượng |
+ |---|---|---|
+ | **Tài liệu / thiết kế** | **21 Product specs + 20 BE specs** = **20 cặp hiện có + 1 product-only Draft** (`channel_booking_funnel`; BE sẽ viết cùng build slice, **DD-32 đã chốt**). Decision log tới **DD-60 / v1.40**; DD-57..60 là proposal. DD-49..56 đã full-propagate, nhưng B0/B1/B2/B3 + correction mutation-path probes, external evidence, legal gate và FE visual source vẫn mở. | Contract coverage cao; **không dùng % này làm code-readiness** |
+-| **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations `0000–0013` đã merge, có test | **✅ xong** |
++| **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations `0000–0014`; identity/link/secret boundary tested | **✅ foundation + security schema** |
+ | **Code — lớp auth** | **Auth Onboarding v3 (Telegram-era) đã merge** (`5b1193b`) + web tests; **DD-37 supersede provider** → Google/email replacement đã spec, **chưa implement** | 🟡 provider replacement pending |
+ | **Code — lớp feature nghiệp vụ** | chưa bắt đầu (session/reconcile/sync/marketplace/billing/bot…) | ⬜ chưa build |
+ | **Roadmap build** | **S1–S3 + S4 Auth v3 (Telegram-era)** đã land trên `main@1eb6f60`; provider replacement (DD-37) chưa code | ~20% |
+ 
+-**Một câu:** phần *khó và nền tảng nhất* (đường tiền thuần + DB có RLS fail-closed + migrations `0000–0013`)
++**Một câu:** phần *khó và nền tảng nhất* (đường tiền thuần + DB có RLS fail-closed + migrations `0000–0014`)
+ đã dựng xong và được test; **Auth Onboarding v3 (Telegram-era) cũng đã merge** — nhưng **DD-37 supersede
+ provider** nên phải thay bằng Google/email (đã spec, chưa code). Tầng feature nghiệp vụ còn nằm trên giấy.
+ Project vừa qua **Phase 0→1**: foundation + auth-v3 đã land trên **`main@1eb6f60`**.
+@@ -33,7 +33,7 @@
+ 
+ ```
+ Contract ███████████████████░░  coverage cao (21 Product + 20 BE; không phải readiness score; DD tới DD-60)
+-Nền móng  ████████████████████░  ~90%   (core + db-RLS + migrations 0000–0013, có test)
++Nền móng  ████████████████████░  ~90%   (core + db-RLS + migrations 0000–0014, có test)
+ Auth      ███████████░░░░░░░░░░  ~55%   (Onboarding v3 Telegram-era merged + web tests; DD-37 provider→Google/email chưa code)
+ Feature   █░░░░░░░░░░░░░░░░░░░░░  ~5%    (mới có logic thuần trong core, chưa wiring)
+ ```
+@@ -62,16 +62,16 @@
+ 
+ ### 2.2 `packages/db` — data layer Postgres + RLS ✅ (keystone)
+ 
+-**~2.522 dòng, 51 bảng trong `schema.ts`, 14 migration (`0000–0013`), có bộ RLS invariant test chạy trên role runtime thật.**
++**55 bảng trong migrated PostgreSQL, 15 migration (`0000–0014`), có bộ RLS/security invariant test chạy trên role runtime thật.**
+ 
+-- **Migrations 0000→0013:** roles/extensions → global directory → tenants → payments-ledger →
++- **Migrations 0000→0014:** roles/extensions → global directory → tenants → payments-ledger →
+   channels/connectors → sync-engine → discovery → billing → notifications/onboarding → RLS
+-  policies/grants → functions/triggers → seeds → auth_functions → onboarding_steps.
++  policies/grants → functions/triggers → seeds → auth_functions → onboarding_steps → identity/channel security.
+ - **Choke-point:** `tenant.ts` (`tenantRepo`/`withTenant`) — mọi query tenant-scoped bắt buộc qua đây,
+   `SET LOCAL app.tenant_id`, client theo role. `migrate.ts` = runner transactional, immutability + RLS guard.
+ - **Bất biến đã test (`rls-invariants.test.ts`):** RLS fail-closed trên role thật; occurrence chứng minh
+   **cả hai** parent thuộc đúng tenant; app **không** import `@plexco/db/schema` trực tiếp (HR1 lint guard).
+-- 51 bảng đã dựng đủ cho hầu hết feature phía sau (persons/accounts/channel_identities/memberships,
++- 55 bảng đã dựng đủ cho hầu hết feature phía sau (persons/accounts/channel_identities/memberships,
+   charges/payment_allocations/bank_transactions, public_sessions, outbox_events/projector_deliveries,
+   subscriptions/billing_*, link_codes/merge_audit/merge_tombstones, magic_links/web_sessions/oauth_transactions…).
+   → **Schema đi trước; code feature dùng chúng thì chưa có.**
+@@ -91,11 +91,11 @@
+ 
+ | Feature (Phase) | Spec | Code hiện tại |
+ |---|---|---|
+-| Multi-tenant Foundation (P0–P1) | ✅ Reviewed | **✅ Có** — RLS + tenantRepo + 51 bảng |
++| Multi-tenant Foundation (P0–P1) | ✅ Reviewed | **✅ Có** — RLS + tenantRepo + 55 bảng |
+ | Tenant Routing & Authz (P2) | ✅ Reviewed | ⬜ Chưa (DD-27 channel-aware authz đã chốt trên giấy) |
+ | Session Management (P2/P4) | ✅ Reviewed | ⬜ Chưa (bảng sessions/occurrences/recurrence có sẵn) |
+ | Payment Reconciliation (P3) | ✅ Reviewed | 🟡 Một phần — **logic** đã có ở `core` (matching + payments-logic); **wiring** webhook→settle→notify chưa |
+-| Identity & Merge (P3.5) | ✅ Reviewed | ⬜ Chưa (bảng link_codes/merge_audit/tombstones có sẵn) |
++| Identity & Merge (P3.5) | ✅ Reviewed | 🟡 DB security boundary có (`0014` scoped identity + guarded link codes); issue/consume/merge runtime chưa có |
+ | Notifications & Reminders (P3/P4.5) | ✅ Reviewed | ⬜ Chưa (bảng notification_* có sẵn) |
+ | Web Auth & Onboarding (P4) | ✅ Reviewed | 🟡 **Auth Onboarding v3 (Telegram-era) merged** (`5b1193b`) + web tests; DD-37 supersede provider → Google/email chưa implement |
+ | Sync Engine (P4) | ✅ Reviewed | ⬜ Chưa (outbox/projector tables có sẵn, projectors chưa viết) |
+@@ -103,7 +103,7 @@
+ | Cross-club Join (P4.3) | ✅ Reviewed | ⬜ Chưa (join_requests có sẵn) |
+ | ~~Player Telegram~~ → Player Messenger (P2.5, DD-37) | 🟡 Draft (feature_player_telegram **archived**) | ⬜ Chưa (bot mới có khung queue) |
+ | Player View (P4.6) | ✅ Reviewed | ⬜ Chưa |
+-| Zalo Channel (P4.7) | ✅ Reviewed | ⬜ Chưa (zalo_bots/reply_contexts có sẵn) |
++| Zalo Channel (P4.7) | ✅ Reviewed | 🟡 secret-free routing metadata/protected credential schema có; ingress/join adapter chưa có |
+ | Billing Lifecycle (P5) | ✅ Reviewed | ⬜ Chưa (subscriptions/subscription_invoices/billing_* có sẵn) |
+ | Security & Operations (P6) | ✅ Reviewed | 🟡 Một phần — RLS/HR1 guard đã thực thi; phần còn lại chưa |
+ | Club Assistant (P7 post-MVP) | ✅ DD chốt (DD-16..28) | ⬜ Chưa (player_chat_context có sẵn) |
+@@ -125,7 +125,7 @@
+ |---|---|---|
+ | **S1** monorepo-scaffold | pnpm workspace, toolchain, CI, runtime shells, infra | ✅ **merged** |
+ | **S2** core-lift (+S2d foundations) | matching/dates/payments-logic + i18n/format/vietqr/sports | ✅ **merged** |
+-| **S3** db-postgres-drizzle-rls | schema + 14 migration (`0000–0013`) + RLS choke-point + invariant suite | ✅ **merged** |
++| **S3** db-postgres-drizzle-rls | schema + 15 migrations (`0000–0014`) + RLS/security choke-points + invariant suite | ✅ foundation merged; `0014` security boundary in current slice |
+ | **S4** auth | web-auth/onboarding | 🟡 **Onboarding v3 (Telegram-era) merged** (`5b1193b`) + web tests; DD-37 provider→Google/email chưa code |
+ | S5 session · S6 sync-engine · S7 reconcile · S8 identity-merge | | ⬜ chưa |
+ | S9–S12 web PWA + marketplace · S13 cross-club · S14 billing | | ⬜ chưa |
+@@ -149,7 +149,7 @@
+ 
+ Nói cách khác: session này **khép lại Phase 1** (nền móng) và **mở màn thiết kế lớp Auth** (S4).
+ 
+-> **Cập nhật 2026-07-16:** Auth Onboarding v3 (Telegram-era) đã merge trong functional baseline **`main@1eb6f60`** (`5b1193b Merge feat/auth-onboarding-v3`), migrations `0000–0013` committed, có web tests. Các commit sau đó chủ yếu docs/config/tooling và chưa thêm feature layer. **DD-37 supersede provider** → thay Telegram-era bằng Google/email **đã spec nhưng chưa implement**.
++> **Cập nhật 2026-07-17:** Auth Onboarding v3 (Telegram-era) vẫn là functional auth baseline; migration `0014` adds only the identity/link/connector-secret DB security boundary and tests. **DD-37 provider replacement, Zalo/Messenger ingress, session join and account-link runtime remain unimplemented.**
+ 
+ ---
+ 
+diff -ruN base/packages/db/ERD.md cand/packages/db/ERD.md
+--- a/packages/db/ERD.md	2026-07-19 01:08:44.651006435 +0700
++++ b/packages/db/ERD.md	2026-07-19 01:08:44.653006435 +0700
+@@ -1,6 +1,7 @@
+ # Plexco — Sơ đồ quan hệ DB (ERD)
+ 
+-Sinh trực tiếp từ các FK trong `packages/db/migrations/*.sql` — **51 bảng, 75 quan hệ**.
++Sinh trực tiếp từ các FK trong `packages/db/migrations/*.sql` — **55 bảng, 78 FK vật lý**.
++Drizzle/DBML mirror có 53 bảng vì 2 bảng auth helper chỉ tồn tại trong SQL migration.
+ Ký hiệu: `A ||--o{ B` = một dòng A có nhiều dòng B (B tham chiếu A); nhãn là cột FK.
+ 
+ > Mẹo xem: file `.md` này render Mermaid ngay trong Cowork. Để xem tương tác (kéo/zoom),
+@@ -17,6 +18,7 @@
+   PERSONS ||--o{ CHANNEL_IDENTITIES : "person_id"
+   PERSONS ||--o{ LINK_CODES : "source_person"
+   CHANNEL_IDENTITIES ||--o{ LINK_CODES : "source_channel"
++  ACCOUNTS ||--o{ LINK_CODES : "source_account"
+   PERSONS ||--o{ MERGE_TOMBSTONES : "canonical_person"
+   MERGE_AUDIT ||--o{ MERGE_TOMBSTONES : "merge_audit_id"
+   PERSONS ||--o{ ACCOUNTS : "person_id"
+@@ -67,7 +69,9 @@
+   PERSONS ||--o{ ZALO_REPLY_CONTEXTS : "person_id"
+   TENANTS ||--o{ ZALO_REPLY_CONTEXTS : "tenant_id"
+   ZALO_BOTS ||--o{ ZALO_REPLY_CONTEXTS : "bot_id"
++  ZALO_BOTS ||--|| ZALO_BOT_SECRETS : "bot_id"
+   TENANTS ||--o{ MESSENGER_PAGES : "tenant_id"
++  MESSENGER_PAGES ||--|| MESSENGER_PAGE_SECRETS : "page_id"
+   TENANTS ||--o{ PROCESSED_COMMANDS : "tenant_id"
+   TENANTS ||--o{ OUTBOX_EVENTS : "tenant_id"
+   OUTBOX_EVENTS ||--o{ PROJECTOR_DELIVERIES : "event_id"
+@@ -104,6 +108,7 @@
+   PERSONS ||--o{ CHANNEL_IDENTITIES : "person_id"
+   PERSONS ||--o{ LINK_CODES : "source_person"
+   CHANNEL_IDENTITIES ||--o{ LINK_CODES : "source_channel"
++  ACCOUNTS ||--o{ LINK_CODES : "source_account"
+   PERSONS ||--o{ MERGE_TOMBSTONES : "canonical_person"
+   MERGE_AUDIT ||--o{ MERGE_TOMBSTONES : "merge_audit_id"
+   PERSONS ||--o{ ACCOUNTS : "person_id"
+@@ -112,8 +117,16 @@
+   ACCOUNTS ||--o{ ACCOUNT_IDENTITIES : "account_id"
+   PERSONS ||--o{ MAGIC_LINKS : "person_id"
+   WEB_SESSIONS ||--o{ MAGIC_LINKS : "session_id"
++  ZALO_BOTS ||--|| ZALO_BOT_SECRETS : "protected credentials"
++  MESSENGER_PAGES ||--|| MESSENGER_PAGE_SECRETS : "protected Page token"
+ ```
+ 
++`LINK_CODES` has exactly one issuer (`source_channel` XOR `source_account`). An
++issue-time trigger locks source Person then issuer and validates ownership; the immutable code
++then preserves original evidence without blocking merge re-parenting. Connector
++metadata remains tenant-routable; encrypted credentials are GLOBAL protected
++with no direct runtime-role grants.
++
+ ## 3. Nhóm Tenant Core: sessions / members / players / routing
+ 
+ ```mermaid
+diff -ruN base/packages/db/README.md cand/packages/db/README.md
+--- a/packages/db/README.md	2026-07-19 01:08:44.666006435 +0700
++++ b/packages/db/README.md	2026-07-19 01:08:44.668006435 +0700
+@@ -32,7 +32,10 @@
+     ├── 0008_notifications_onboarding.sql
+     ├── 0009_rls_policies_grants.sql   # RLS enable/force + policies + grants
+     ├── 0010_functions_triggers.sql    # worker fn, oauth fns, ledger immutability
+-    └── 0011_seeds.sql                 # sports + plan catalog v1
++    ├── 0011_seeds.sql                 # sports + plan catalog v1
++    ├── 0012_auth_functions.sql        # protected web-auth functions
++    ├── 0013_onboarding_steps_recency.sql
++    └── 0014_identity_channel_security.sql # scoped identity + link/secret guards
+ ```
+ 
+ The SQL migrations are **authoritative**. `schema.ts` mirrors the tables but
+@@ -55,7 +58,7 @@
+ 
+ | Plane | Tables | Access |
+ |---|---|---|
+-| **GLOBAL protected** | `persons`, `channel_identities`, `link_codes`, `merge_audit`, `merge_tombstones`, `accounts`, `web_sessions`, `account_identities`, `magic_links`, `player_chat_context`, `oauth_transactions`, `routing_audit` | No blanket grant to `app`. Reached via identity/auth service or SECURITY DEFINER fns. `sports`/`plans` are global lookups (SELECT allowed). |
++| **GLOBAL protected** | `persons`, `channel_identities`, `link_codes`, `merge_audit`, `merge_tombstones`, `accounts`, `web_sessions`, `account_identities`, `magic_links`, `player_chat_context`, `oauth_transactions`, `routing_audit`, `zalo_bot_secrets`, `messenger_page_secrets` | No blanket grant to `app`. Reached via identity/auth service or narrow SECURITY DEFINER fns. Connector secret tables also deny `app_worker` and `readonly`; Facebook App Secret remains in the deployment secret manager. `sports`/`plans` are global lookups (SELECT allowed). |
+ | **TENANT-private (RLS)** | `memberships`, `aliases`, `channel_reachability`, `settings`, `sessions` (+recurrence/occurrences/surface_refs), `players`, `telegram_links`, `tenant_admins`, `tenant_link_codes`, `bank_accounts`, `charges`, `bank_transactions`, `payment_allocations`, `provider_connections`, `zalo_bots`, `zalo_reply_contexts`, `messenger_pages`, `processed_commands`, `outbox_events`, `join_requests`, `subscriptions`, `subscription_invoices`, `notification_*`, `onboarding_*` | `ENABLE`+`FORCE` RLS, policy on `app.tenant_id` GUC, fail-closed. `app` = `NOBYPASSRLS`. Always via `tenantRepo` choke-point. |
+ | **PUBLIC read model** | `public_sessions` | No RLS. `readonly` role gets `SELECT` only; canonical tables get **zero** grant to `readonly`. Field whitelist — no money/PII/roster/exact venue. |
+ | **PLATFORM/WORKER** | `plans`, `billing_transactions`, `billing_allocations`, `billing_overrides`, `projector_deliveries`, `surface_refs` | Billing platform ledger (separate from player ledger, BL-BIL-1). Worker claims outbox via `claim_outbox_batch()`. |
+@@ -95,18 +98,20 @@
+ | INV-1 tenant isolation | `0009` RLS ENABLE+FORCE + policies; `NOBYPASSRLS` roles |
+ | INV-3 public is a projection | `public_sessions` whitelist table; `readonly` grant scope |
+ | INV-4 money append-only | ledger CHECKs (`0003`) + immutability triggers (`0010`) |
+-| INV-5 strong identity proof | `link_codes` (OTP), `persons_verified_phone_unique`, `merge_audit`/`merge_tombstones` |
++| INV-5 strong identity proof | provider-scoped `channel_identities`; single-issuer, bounded, terminal-immutable `link_codes`; `persons_verified_phone_unique`; `merge_audit`/`merge_tombstones` |
+ | INV-6 idempotency | `processed_commands` UNIQUE, `outbox_events(aggregate_id,sequence)`, `projector_deliveries` PK, `bank_transactions` UNIQUE |
+ | INV-7 one owner for derived data | `charges.amount_allocated`, `public_sessions.slots_open` (projector) |
+ | INV-8 narrow worker privilege | `claim_outbox_batch()` SECURITY DEFINER + `app_worker` EXECUTE-only |
+-| INV-9 secrets/PII never leak | `*_enc bytea` + `*_lookup_hash`; no grants on protected tables |
++| INV-9 secrets/PII never leak | `*_enc bytea` + keyed `*_lookup_hash`; routing metadata contains no raw connector secrets; no runtime grants on protected secret tables |
+ 
+ ## Migration order & deploy notes
+ 
+-Apply `0000`→`0011` in order (FK dependencies validated). For production changes
++Apply `0000`→`0014` in order (FK dependencies validated). For production changes
+ follow expand→backfill→validate→flip→contract (P12); avoid destructive
+-migrations in the same deploy as behavior changes. Legacy Bestminton import:
+-TDD §8.
++migrations in the same deploy as behavior changes. Migration `0014` deliberately
++halts if connector metadata already contains rows: operators must migrate real
++tokens through the configured KMS/HMAC boundary before retrying. Legacy
++Bestminton import: TDD §8.
+ 
+ ## Open items inherited from docs (not blockers)
+ 
+diff -ruN base/packages/db/db.dbml cand/packages/db/db.dbml
+--- a/packages/db/db.dbml	2026-07-19 01:08:44.682006435 +0700
++++ b/packages/db/db.dbml	2026-07-19 01:08:44.684006435 +0700
+@@ -24,6 +24,7 @@
+   person_id uuid [not null]
+   platform text [not null]
+   platform_user_id_enc bytea [not null]
++  provider_scope_lookup_hash text [not null, note: 'keyed Page/OA/bot scope hash']
+   platform_user_lookup_hash text [not null]
+   username_enc bytea
+   status text [not null]
+@@ -33,7 +34,8 @@
+ Table link_codes {
+   id uuid [pk]
+   source_person_id uuid [not null]
+-  source_channel_identity_id uuid [not null]
++  source_channel_identity_id uuid
++  source_account_id uuid
+   code_lookup_hash text [unique, not null]
+   code_hash bytea [not null]
+   salt bytea [not null]
+@@ -41,6 +43,9 @@
+   expires_at timestamptz [not null]
+   consumed_at timestamptz
+   failed_attempts integer [not null]
++  max_attempts integer [not null]
++  locked_until timestamptz
++  revoked_at timestamptz
+   created_at timestamptz [not null]
+ }
+ 
+@@ -344,9 +349,7 @@
+ Table zalo_bots {
+   id uuid [pk]
+   tenant_id uuid [unique, not null]
+-  bot_token_enc text [not null]
+-  webhook_token text [not null]
+-  secret text
++  webhook_token_lookup_hash text [unique, not null]
+   status text [not null]
+   auto_registered boolean [not null]
+   rotation_pending boolean [not null]
+@@ -355,6 +358,19 @@
+   created_at timestamptz [not null]
+ }
+ 
++Table zalo_bot_secrets {
++  bot_id uuid [pk]
++  bot_token_enc bytea [not null]
++  webhook_secret_enc bytea
++  kms_key_version text [not null]
++  pending_bot_token_enc bytea
++  pending_webhook_secret_enc bytea
++  pending_kms_key_version text
++  pending_created_at timestamptz
++  created_at timestamptz [not null]
++  rotated_at timestamptz
++}
++
+ Table zalo_reply_contexts {
+   id uuid [pk]
+   person_id uuid [not null]
+@@ -372,13 +388,19 @@
+   id uuid [pk]
+   tenant_id uuid [unique, not null]
+   page_id text [unique, not null]
+-  page_token_enc bytea [not null]
+-  app_secret_enc bytea
+   status text [not null]
+   verified_at timestamptz
+   created_at timestamptz [not null]
+ }
+ 
++Table messenger_page_secrets {
++  page_id uuid [pk]
++  page_token_enc bytea [not null]
++  kms_key_version text [not null]
++  created_at timestamptz [not null]
++  rotated_at timestamptz
++}
++
+ Table processed_commands {
+   id uuid [pk]
+   tenant_id uuid [not null]
+@@ -578,6 +600,7 @@
+ Ref: channel_identities.person_id > persons.id
+ Ref: link_codes.source_person_id > persons.id
+ Ref: link_codes.source_channel_identity_id > channel_identities.id
++Ref: link_codes.source_account_id > accounts.id
+ Ref: merge_tombstones.canonical_person_id > persons.id
+ Ref: merge_tombstones.merge_audit_id > merge_audit.id
+ Ref: accounts.person_id > persons.id
+@@ -624,10 +647,12 @@
+ Ref: provider_connections.tenant_id > tenants.id
+ Ref: oauth_transactions.tenant_id > tenants.id
+ Ref: zalo_bots.tenant_id > tenants.id
++Ref: zalo_bot_secrets.bot_id - zalo_bots.id
+ Ref: zalo_reply_contexts.person_id > persons.id
+ Ref: zalo_reply_contexts.tenant_id > tenants.id
+ Ref: zalo_reply_contexts.bot_id > zalo_bots.id
+ Ref: messenger_pages.tenant_id > tenants.id
++Ref: messenger_page_secrets.page_id - messenger_pages.id
+ Ref: bank_accounts.provider_connection_id > provider_connections.id
+ Ref: processed_commands.tenant_id > tenants.id
+ Ref: outbox_events.tenant_id > tenants.id
+@@ -648,4 +673,4 @@
+ Ref: notification_deliveries.intent_id > notification_intents.id
+ Ref: onboarding_runs.tenant_id > tenants.id
+ Ref: onboarding_steps.run_id > onboarding_runs.id
+-// public_sessions & surface_refs intentionally have no FK (read-model / aggregate key)
+\ No newline at end of file
++// public_sessions & surface_refs intentionally have no FK (read-model / aggregate key)
+diff -ruN base/packages/db/migrations/0014_identity_channel_security.sql cand/packages/db/migrations/0014_identity_channel_security.sql
+--- a/packages/db/migrations/0014_identity_channel_security.sql	2026-07-19 01:08:44.740006435 +0700
++++ b/packages/db/migrations/0014_identity_channel_security.sql	2026-07-19 01:08:44.754006435 +0700
+@@ -0,0 +1,257 @@
++-- ============================================================================
++-- 0014_identity_channel_security.sql
++-- Security boundary for cross-channel identity linking and channel credentials.
++--
++-- This migration is deliberately fail-closed for pre-runtime connector rows:
++-- raw routing tokens and ambiguously encoded secrets must not be silently
++-- reclassified as keyed hashes / KMS ciphertext. The Zalo/Messenger runtimes
++-- are not implemented on the baseline this migration follows, so a non-empty
++-- connector table means an operator must first perform an explicit secret
++-- migration with the real KMS key and token-HMAC key.
++-- ============================================================================
++
++-- ---- Provider-scoped channel identities -----------------------------------
++-- Messenger PSIDs are page-scoped. Zalo user ids must be treated as bot/OA-
++-- scoped until a provider spike proves a wider stable namespace. Keeping the
++-- scope as a separate keyed hash makes that boundary impossible to omit from
++-- the uniqueness contract.
++ALTER TABLE channel_identities
++  ADD COLUMN provider_scope_lookup_hash text;
++
++DO $$
++BEGIN
++  IF EXISTS (
++    SELECT 1 FROM channel_identities WHERE platform IN ('zalo', 'messenger')
++  ) THEN
++    RAISE EXCEPTION
++      '0014 requires an explicit Page/OA scope backfill for existing Zalo/Messenger identities';
++  END IF;
++END
++$$;
++
++-- Legacy Telegram-era rows used a global namespace. The backfill contains no
++-- provider/user PII; new adapters MUST write a keyed hash of the real scope.
++UPDATE channel_identities
++SET provider_scope_lookup_hash = encode(digest(platform || ':legacy-global', 'sha256'), 'hex')
++WHERE provider_scope_lookup_hash IS NULL AND platform = 'telegram';
++
++ALTER TABLE channel_identities
++  ALTER COLUMN provider_scope_lookup_hash SET NOT NULL,
++  ADD CONSTRAINT channel_identities_scope_hash_chk
++    CHECK (length(provider_scope_lookup_hash) >= 32),
++  ADD CONSTRAINT channel_identities_user_hash_chk
++    CHECK (length(platform_user_lookup_hash) >= 32);
++
++ALTER TABLE channel_identities
++  DROP CONSTRAINT IF EXISTS channel_identities_platform_platform_user_lookup_hash_key;
++DROP INDEX IF EXISTS channel_identities_platform_uid_uq;
++CREATE UNIQUE INDEX channel_identities_platform_scope_uid_uq
++  ON channel_identities(platform, provider_scope_lookup_hash, platform_user_lookup_hash);
++
++-- ---- Link-code issuer and one-way lifecycle --------------------------------
++ALTER TABLE link_codes
++  ALTER COLUMN source_channel_identity_id DROP NOT NULL,
++  ADD COLUMN source_account_id uuid REFERENCES accounts(id),
++  ADD COLUMN max_attempts integer NOT NULL DEFAULT 5,
++  ADD COLUMN locked_until timestamptz,
++  ADD COLUMN revoked_at timestamptz,
++  ADD CONSTRAINT link_codes_one_issuer_chk
++    CHECK (num_nonnulls(source_channel_identity_id, source_account_id) = 1),
++  ADD CONSTRAINT link_codes_action_chk
++    CHECK (action IN ('merge_identity')),
++  ADD CONSTRAINT link_codes_attempts_chk
++    CHECK (failed_attempts >= 0 AND max_attempts BETWEEN 1 AND 10
++           AND failed_attempts <= max_attempts),
++  ADD CONSTRAINT link_codes_hash_material_chk
++    CHECK (length(code_lookup_hash) >= 32
++           AND octet_length(code_hash) >= 32
++           AND octet_length(salt) >= 16),
++  ADD CONSTRAINT link_codes_time_chk
++    CHECK (expires_at > created_at
++           AND (consumed_at IS NULL
++                OR (consumed_at >= created_at AND consumed_at <= expires_at))
++           AND (revoked_at IS NULL OR revoked_at >= created_at)
++           AND (locked_until IS NULL OR locked_until >= created_at)
++           AND NOT (consumed_at IS NOT NULL AND revoked_at IS NOT NULL));
++
++CREATE INDEX idx_link_codes_active_expiry
++  ON link_codes(expires_at)
++  WHERE consumed_at IS NULL AND revoked_at IS NULL;
++
++-- Validate ownership at ISSUE time under a row lock. Do not use a persistent
++-- composite FK here: merge must be able to re-parent the channel/account while
++-- the immutable link-code retains the original issuer evidence.
++CREATE OR REPLACE FUNCTION link_code_issuer_guard()
++RETURNS trigger
++LANGUAGE plpgsql
++SET search_path = pg_catalog, public
++AS $$
++DECLARE
++  issuer_person_id uuid;
++BEGIN
++  -- Let the named CHECK constraint own the both/neither-issuer error.
++  IF num_nonnulls(NEW.source_channel_identity_id, NEW.source_account_id) <> 1 THEN
++    RETURN NEW;
++  END IF;
++
++  -- Identity merge takes person rows before re-parenting account/channel rows.
++  -- Issuance must use the same order or the two transactions can deadlock.
++  PERFORM 1
++  FROM public.persons
++  WHERE id = NEW.source_person_id
++  FOR UPDATE;
++
++  IF NOT FOUND THEN
++    RAISE EXCEPTION USING
++      ERRCODE = '23503',
++      MESSAGE = 'link-code issuer does not belong to source person';
++  END IF;
++
++  IF NEW.source_channel_identity_id IS NOT NULL THEN
++    SELECT person_id INTO issuer_person_id
++    FROM public.channel_identities
++    WHERE id = NEW.source_channel_identity_id
++    FOR UPDATE;
++  ELSE
++    SELECT person_id INTO issuer_person_id
++    FROM public.accounts
++    WHERE id = NEW.source_account_id
++    FOR UPDATE;
++  END IF;
++
++  IF issuer_person_id IS DISTINCT FROM NEW.source_person_id THEN
++    RAISE EXCEPTION USING
++      ERRCODE = '23503',
++      MESSAGE = 'link-code issuer does not belong to source person';
++  END IF;
++  RETURN NEW;
++END
++$$;
++
++CREATE TRIGGER link_code_issuer_guard_trigger
++BEFORE INSERT ON link_codes
++FOR EACH ROW EXECUTE FUNCTION link_code_issuer_guard();
++
++CREATE OR REPLACE FUNCTION link_code_state_guard()
++RETURNS trigger
++LANGUAGE plpgsql
++SET search_path = pg_catalog, public
++AS $$
++BEGIN
++  IF TG_OP = 'DELETE' THEN
++    IF OLD.consumed_at IS NOT NULL OR OLD.revoked_at IS NOT NULL THEN
++      RAISE EXCEPTION 'terminal link-code cannot be deleted';
++    END IF;
++    RETURN OLD;
++  END IF;
++
++  IF NEW.source_person_id IS DISTINCT FROM OLD.source_person_id
++     OR NEW.source_channel_identity_id IS DISTINCT FROM OLD.source_channel_identity_id
++     OR NEW.source_account_id IS DISTINCT FROM OLD.source_account_id
++     OR NEW.code_lookup_hash IS DISTINCT FROM OLD.code_lookup_hash
++     OR NEW.code_hash IS DISTINCT FROM OLD.code_hash
++     OR NEW.salt IS DISTINCT FROM OLD.salt
++     OR NEW.action IS DISTINCT FROM OLD.action
++     OR NEW.expires_at IS DISTINCT FROM OLD.expires_at
++     OR NEW.max_attempts IS DISTINCT FROM OLD.max_attempts
++     OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
++    RAISE EXCEPTION 'link-code immutable identity fields cannot change';
++  END IF;
++
++  IF (OLD.consumed_at IS NOT NULL OR OLD.revoked_at IS NOT NULL)
++     AND NEW IS DISTINCT FROM OLD THEN
++    RAISE EXCEPTION 'terminal link-code cannot change';
++  END IF;
++  IF NEW.failed_attempts < OLD.failed_attempts THEN
++    RAISE EXCEPTION 'link-code failed attempts cannot decrease';
++  END IF;
++  RETURN NEW;
++END
++$$;
++
++CREATE TRIGGER link_code_state_guard_trigger
++BEFORE UPDATE OR DELETE ON link_codes
++FOR EACH ROW EXECUTE FUNCTION link_code_state_guard();
++
++-- Web-auth identity namespaces are closed. Telegram remains accepted only for
++-- already-merged legacy auth until the provider-swap migration removes it.
++ALTER TABLE account_identities
++  ADD CONSTRAINT account_identities_platform_chk
++  CHECK (platform IN ('telegram','google','email','facebook','zalo'));
++
++-- ---- Connector secret separation ------------------------------------------
++DO $$
++BEGIN
++  IF EXISTS (SELECT 1 FROM zalo_bots) OR EXISTS (SELECT 1 FROM messenger_pages) THEN
++    RAISE EXCEPTION
++      '0014 refuses to reinterpret existing connector credentials; migrate them explicitly with KMS/HMAC first';
++  END IF;
++END
++$$;
++
++DROP INDEX IF EXISTS idx_zalo_bots_webhook_token;
++ALTER TABLE zalo_bots
++  DROP COLUMN bot_token_enc,
++  DROP COLUMN webhook_token,
++  DROP COLUMN secret,
++  ADD COLUMN webhook_token_lookup_hash text NOT NULL,
++  ADD CONSTRAINT zalo_bots_webhook_hash_chk
++    CHECK (length(webhook_token_lookup_hash) >= 32);
++CREATE UNIQUE INDEX idx_zalo_bots_webhook_token_lookup_hash
++  ON zalo_bots(webhook_token_lookup_hash);
++
++CREATE TABLE zalo_bot_secrets (
++  bot_id                     uuid PRIMARY KEY REFERENCES zalo_bots(id) ON DELETE CASCADE,
++  bot_token_enc              bytea NOT NULL,
++  webhook_secret_enc         bytea,
++  kms_key_version            text NOT NULL,
++  pending_bot_token_enc      bytea,
++  pending_webhook_secret_enc bytea,
++  pending_kms_key_version    text,
++  pending_created_at         timestamptz,
++  created_at                 timestamptz NOT NULL DEFAULT now(),
++  rotated_at                 timestamptz,
++  CONSTRAINT zalo_bot_secrets_current_chk
++    CHECK (octet_length(bot_token_enc) > 0
++      AND length(kms_key_version) > 0
++      AND (webhook_secret_enc IS NULL OR octet_length(webhook_secret_enc) > 0)),
++  CONSTRAINT zalo_bot_secrets_pending_chk
++    CHECK (
++      (pending_bot_token_enc IS NULL
++        AND pending_webhook_secret_enc IS NULL
++        AND pending_kms_key_version IS NULL
++        AND pending_created_at IS NULL)
++      OR
++      (pending_bot_token_enc IS NOT NULL
++        AND pending_kms_key_version IS NOT NULL
++        AND pending_created_at IS NOT NULL
++        AND octet_length(pending_bot_token_enc) > 0
++        AND length(pending_kms_key_version) > 0
++        AND (pending_webhook_secret_enc IS NULL
++          OR octet_length(pending_webhook_secret_enc) > 0))
++    )
++);
++
++ALTER TABLE messenger_pages
++  DROP COLUMN page_token_enc,
++  DROP COLUMN app_secret_enc;
++
++CREATE TABLE messenger_page_secrets (
++  page_id         uuid PRIMARY KEY REFERENCES messenger_pages(id) ON DELETE CASCADE,
++  page_token_enc  bytea NOT NULL,
++  kms_key_version text NOT NULL,
++  created_at      timestamptz NOT NULL DEFAULT now(),
++  rotated_at      timestamptz
++);
++
++-- These tables are GLOBAL protected, not tenant-RLS metadata. Runtime roles
++-- receive no table access; future ingress uses narrow audited functions. The
++-- Facebook App Secret is platform-global and remains outside Postgres in the
++-- deployment secret manager.
++REVOKE ALL ON zalo_bot_secrets, messenger_page_secrets
++  FROM PUBLIC, app, app_worker, readonly;
++
++COMMENT ON TABLE zalo_bot_secrets IS
++  'GLOBAL protected; current plus durable pending Zalo credentials. Optional webhook secret remains provider-contract gated. No runtime table grants.';
++COMMENT ON TABLE messenger_page_secrets IS
++  'GLOBAL protected; Page token only. Facebook App Secret belongs in the platform secret manager.';
+diff -ruN base/packages/db/schema.ts cand/packages/db/schema.ts
+--- a/packages/db/schema.ts	2026-07-19 01:08:44.704006435 +0700
++++ b/packages/db/schema.ts	2026-07-19 01:08:44.706006435 +0700
+@@ -57,23 +57,35 @@
+   personId: uuid("person_id").notNull().references(() => persons.id),
+   platform: text("platform").notNull(), // telegram|zalo|messenger
+   platformUserIdEnc: bytea("platform_user_id_enc").notNull(),
++  providerScopeLookupHash: text("provider_scope_lookup_hash").notNull(),
+   platformUserLookupHash: text("platform_user_lookup_hash").notNull(),
+   usernameEnc: bytea("username_enc"),
+   status: text("status").notNull().default("active"), // active|inactive
+   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+ }, (t) => ({
+-  platformUq: uniqueIndex("channel_identities_platform_uid_uq")
+-    .on(t.platform, t.platformUserLookupHash),
++  platformUq: uniqueIndex("channel_identities_platform_scope_uid_uq")
++    .on(t.platform, t.providerScopeLookupHash, t.platformUserLookupHash),
+   personIdx: index("idx_channel_identities_person").on(t.personId),
+   platformChk: check("channel_identities_platform_chk",
+     sql`${t.platform} IN ('telegram','zalo','messenger')`),
++  scopeHashChk: check("channel_identities_scope_hash_chk",
++    sql`length(${t.providerScopeLookupHash}) >= 32`),
++  userHashChk: check("channel_identities_user_hash_chk",
++    sql`length(${t.platformUserLookupHash}) >= 32`),
+ }));
+ 
++export const accounts = pgTable("accounts", {
++  id: uuid("id").primaryKey().defaultRandom(),
++  personId: uuid("person_id").references(() => persons.id),
++  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
++});
++
+ export const linkCodes = pgTable("link_codes", {
+   id: uuid("id").primaryKey().defaultRandom(),
+   sourcePersonId: uuid("source_person_id").notNull().references(() => persons.id),
+-  sourceChannelIdentityId: uuid("source_channel_identity_id").notNull()
++  sourceChannelIdentityId: uuid("source_channel_identity_id")
+     .references(() => channelIdentities.id),
++  sourceAccountId: uuid("source_account_id").references(() => accounts.id),
+   codeLookupHash: text("code_lookup_hash").notNull().unique(),
+   codeHash: bytea("code_hash").notNull(),
+   salt: bytea("salt").notNull(),
+@@ -81,8 +93,29 @@
+   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+   consumedAt: timestamp("consumed_at", { withTimezone: true }),
+   failedAttempts: integer("failed_attempts").notNull().default(0),
++  maxAttempts: integer("max_attempts").notNull().default(5),
++  lockedUntil: timestamp("locked_until", { withTimezone: true }),
++  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+-});
++}, (t) => ({
++  oneIssuerChk: check("link_codes_one_issuer_chk",
++    sql`num_nonnulls(${t.sourceChannelIdentityId}, ${t.sourceAccountId}) = 1`),
++  actionChk: check("link_codes_action_chk", sql`${t.action} IN ('merge_identity')`),
++  attemptsChk: check("link_codes_attempts_chk",
++    sql`${t.failedAttempts} >= 0 AND ${t.maxAttempts} BETWEEN 1 AND 10 AND ${t.failedAttempts} <= ${t.maxAttempts}`),
++  hashMaterialChk: check("link_codes_hash_material_chk",
++    sql`length(${t.codeLookupHash}) >= 32
++      AND octet_length(${t.codeHash}) >= 32
++      AND octet_length(${t.salt}) >= 16`),
++  timeChk: check("link_codes_time_chk",
++    sql`${t.expiresAt} > ${t.createdAt}
++      AND (${t.consumedAt} IS NULL OR (${t.consumedAt} >= ${t.createdAt} AND ${t.consumedAt} <= ${t.expiresAt}))
++      AND (${t.revokedAt} IS NULL OR ${t.revokedAt} >= ${t.createdAt})
++      AND (${t.lockedUntil} IS NULL OR ${t.lockedUntil} >= ${t.createdAt})
++      AND NOT (${t.consumedAt} IS NOT NULL AND ${t.revokedAt} IS NOT NULL)`),
++  activeExpiryIdx: index("idx_link_codes_active_expiry").on(t.expiresAt)
++    .where(sql`${t.consumedAt} IS NULL AND ${t.revokedAt} IS NULL`),
++}));
+ 
+ export const mergeAudit = pgTable("merge_audit", {
+   id: uuid("id").primaryKey().defaultRandom(),
+@@ -105,12 +138,6 @@
+   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+ });
+ 
+-export const accounts = pgTable("accounts", {
+-  id: uuid("id").primaryKey().defaultRandom(),
+-  personId: uuid("person_id").references(() => persons.id),
+-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+-});
+-
+ export const webSessions = pgTable("web_sessions", {
+   id: uuid("id").primaryKey().defaultRandom(),
+   accountId: uuid("account_id").notNull().references(() => accounts.id),
+@@ -130,6 +157,8 @@
+   verifiedAt: timestamp("verified_at", { withTimezone: true }).notNull(),
+ }, (t) => ({
+   uq: uniqueIndex("account_identities_platform_uq").on(t.platform, t.platformUserHash),
++  platformChk: check("account_identities_platform_chk",
++    sql`${t.platform} IN ('telegram','google','email','facebook','zalo')`),
+ }));
+ 
+ export const magicLinks = pgTable("magic_links", {
+@@ -483,9 +512,7 @@
+ export const zaloBots = pgTable("zalo_bots", {
+   id: uuid("id").primaryKey().defaultRandom(),
+   tenantId: uuid("tenant_id").notNull().references(() => tenants.id).unique(),
+-  botTokenEnc: text("bot_token_enc").notNull(),
+-  webhookToken: text("webhook_token").notNull(),
+-  secret: text("secret"),
++  webhookTokenLookupHash: text("webhook_token_lookup_hash").notNull(),
+   status: text("status").notNull().default("connecting"),
+   autoRegistered: boolean("auto_registered").notNull().default(false),
+   rotationPending: boolean("rotation_pending").notNull().default(false),
+@@ -493,7 +520,12 @@
+   verifiedAt: timestamp("verified_at", { withTimezone: true }),
+   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+ }, (t) => ({
+-  webhookTokenUq: uniqueIndex("idx_zalo_bots_webhook_token").on(t.webhookToken),
++  webhookTokenUq: uniqueIndex("idx_zalo_bots_webhook_token_lookup_hash")
++    .on(t.webhookTokenLookupHash),
++  webhookHashChk: check("zalo_bots_webhook_hash_chk",
++    sql`length(${t.webhookTokenLookupHash}) >= 32`),
++  statusChk: check("zalo_bots_status_check",
++    sql`${t.status} IN ('connecting','registered','active','drift','error','revoked')`),
+ }));
+ 
+ export const zaloReplyContexts = pgTable("zalo_reply_contexts", {
+@@ -513,11 +545,60 @@
+   id: uuid("id").primaryKey().defaultRandom(),
+   tenantId: uuid("tenant_id").notNull().references(() => tenants.id).unique(),
+   pageId: text("page_id").notNull().unique(),
+-  pageTokenEnc: bytea("page_token_enc").notNull(),
+-  appSecretEnc: bytea("app_secret_enc"),
+   status: text("status").notNull().default("connecting"),
+   verifiedAt: timestamp("verified_at", { withTimezone: true }),
+   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
++}, (t) => ({
++  statusChk: check("messenger_pages_status_check",
++    sql`${t.status} IN ('connecting','registered','active','drift','error','revoked')`),
++}));
++
++/** GLOBAL protected: no app/readonly table grants; channel-ingress functions only. */
++export const zaloBotSecrets = pgTable(
++  "zalo_bot_secrets",
++  {
++    botId: uuid("bot_id").primaryKey().references(() => zaloBots.id, { onDelete: "cascade" }),
++    botTokenEnc: bytea("bot_token_enc").notNull(),
++    webhookSecretEnc: bytea("webhook_secret_enc"),
++    kmsKeyVersion: text("kms_key_version").notNull(),
++    pendingBotTokenEnc: bytea("pending_bot_token_enc"),
++    pendingWebhookSecretEnc: bytea("pending_webhook_secret_enc"),
++    pendingKmsKeyVersion: text("pending_kms_key_version"),
++    pendingCreatedAt: timestamp("pending_created_at", { withTimezone: true }),
++    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
++    rotatedAt: timestamp("rotated_at", { withTimezone: true }),
++  },
++  (t) => ({
++    currentChk: check(
++      "zalo_bot_secrets_current_chk",
++      sql`octet_length(${t.botTokenEnc}) > 0
++        AND length(${t.kmsKeyVersion}) > 0
++        AND (${t.webhookSecretEnc} IS NULL OR octet_length(${t.webhookSecretEnc}) > 0)`,
++    ),
++    pendingChk: check(
++      "zalo_bot_secrets_pending_chk",
++      sql`(${t.pendingBotTokenEnc} IS NULL
++          AND ${t.pendingWebhookSecretEnc} IS NULL
++          AND ${t.pendingKmsKeyVersion} IS NULL
++          AND ${t.pendingCreatedAt} IS NULL)
++        OR (${t.pendingBotTokenEnc} IS NOT NULL
++          AND ${t.pendingKmsKeyVersion} IS NOT NULL
++          AND ${t.pendingCreatedAt} IS NOT NULL
++          AND octet_length(${t.pendingBotTokenEnc}) > 0
++          AND length(${t.pendingKmsKeyVersion}) > 0
++          AND (${t.pendingWebhookSecretEnc} IS NULL
++            OR octet_length(${t.pendingWebhookSecretEnc}) > 0))`,
++    ),
++  }),
++);
++
++/** GLOBAL protected: Page token only; Facebook App Secret lives in secret manager. */
++export const messengerPageSecrets = pgTable("messenger_page_secrets", {
++  pageId: uuid("page_id").primaryKey().references(() => messengerPages.id, { onDelete: "cascade" }),
++  pageTokenEnc: bytea("page_token_enc").notNull(),
++  kmsKeyVersion: text("kms_key_version").notNull(),
++  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
++  rotatedAt: timestamp("rotated_at", { withTimezone: true }),
+ });
+ 
+ /* ===========================================================================
+diff -ruN base/packages/db/src/rls-invariants.test.ts cand/packages/db/src/rls-invariants.test.ts
+--- a/packages/db/src/rls-invariants.test.ts	2026-07-19 01:08:44.720006435 +0700
++++ b/packages/db/src/rls-invariants.test.ts	2026-07-19 01:08:44.722006435 +0700
+@@ -51,10 +51,10 @@
+ 
+ describe("migrations", () => {
+   it("apply clean on a fresh database and are idempotent on re-run", async () => {
+-    expect(ctx.migrateResult.applied.length).toBe(14); // 0000..0013
++    expect(ctx.migrateResult.applied.length).toBe(15); // 0000..0014
+     const second = await ctx.remigrate();
+     expect(second.applied).toEqual([]);
+-    expect(second.skipped.length).toBe(14);
++    expect(second.skipped.length).toBe(15);
+   });
+ 
+   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
+@@ -201,7 +201,15 @@
+   });
+ 
+   it("app role has NO grant on protected global identity tables", async () => {
+-    for (const table of ["persons", "channel_identities", "link_codes", "merge_audit"]) {
++    for (const table of [
++      "persons",
++      "channel_identities",
++      "link_codes",
++      "merge_audit",
++      "account_identities",
++      "zalo_bot_secrets",
++      "messenger_page_secrets",
++    ]) {
+       await expect(
+         ctx.appPool.query(`SELECT * FROM ${table} LIMIT 1`),
+         `app must be denied on ${table}`,
+@@ -210,6 +218,349 @@
+   });
+ });
+ 
++describe("cross-channel identity security boundary (INV-5 / INV-9)", () => {
++  const codeMaterial = (seed: number) => [Buffer.alloc(32, seed), Buffer.alloc(16, seed)];
++
++  it("scopes the same provider user id independently per Page/OA", async () => {
++    const person = await ctx.owner.query(`INSERT INTO persons DEFAULT VALUES RETURNING id`);
++    const personId = (person.rows[0] as { id: string }).id;
++    const userHash = "u".repeat(64);
++
++    for (const scopeHash of ["a".repeat(64), "b".repeat(64)]) {
++      await ctx.owner.query(
++        `INSERT INTO channel_identities
++           (person_id, platform, platform_user_id_enc, provider_scope_lookup_hash,
++            platform_user_lookup_hash)
++         VALUES ($1, 'messenger', $2, $3, $4)`,
++        [personId, Buffer.from("encrypted-psid"), scopeHash, userHash],
++      );
++    }
++
++    await expect(
++      ctx.owner.query(
++        `INSERT INTO channel_identities
++           (person_id, platform, platform_user_id_enc, provider_scope_lookup_hash,
++            platform_user_lookup_hash)
++         VALUES ($1, 'messenger', $2, $3, $4)`,
++        [personId, Buffer.from("encrypted-psid"), "a".repeat(64), userHash],
++      ),
++    ).rejects.toThrow(/duplicate key/i);
++  });
++
++  it("requires exactly one issuer and proves that issuer owns source_person_id", async () => {
++    const people = await ctx.owner.query(
++      `INSERT INTO persons (display_name) VALUES ('issuer-a'), ('issuer-b') RETURNING id`,
++    );
++    const personA = (people.rows[0] as { id: string }).id;
++    const personB = (people.rows[1] as { id: string }).id;
++    const channel = await ctx.owner.query(
++      `INSERT INTO channel_identities
++         (person_id, platform, platform_user_id_enc, provider_scope_lookup_hash,
++          platform_user_lookup_hash)
++       VALUES ($1, 'zalo', $2, $3, $4) RETURNING id`,
++      [personA, Buffer.from("encrypted-zalo-id"), "c".repeat(64), "d".repeat(64)],
++    );
++    const account = await ctx.owner.query(
++      `INSERT INTO accounts (person_id) VALUES ($1) RETURNING id`,
++      [personA],
++    );
++    const channelId = (channel.rows[0] as { id: string }).id;
++    const accountId = (account.rows[0] as { id: string }).id;
++    const [codeHash, salt] = codeMaterial(1);
++
++    await expect(
++      ctx.owner.query(
++        `INSERT INTO link_codes
++           (source_person_id, source_channel_identity_id, code_lookup_hash,
++            code_hash, salt, expires_at)
++         VALUES ($1, $2, $3, $4, $5, now() + interval '10 minutes')`,
++        [personB, channelId, "mismatch".repeat(8), codeHash, salt],
++      ),
++    ).rejects.toThrow(/issuer does not belong/i);
++
++    await expect(
++      ctx.owner.query(
++        `INSERT INTO link_codes
++           (source_person_id, source_channel_identity_id, source_account_id,
++            code_lookup_hash, code_hash, salt, expires_at)
++         VALUES ($1, $2, $3, $4, $5, $6, now() + interval '10 minutes')`,
++        [personA, channelId, accountId, "two-issuers".repeat(4), codeHash, salt],
++      ),
++    ).rejects.toThrow(/link_codes_one_issuer_chk/i);
++
++    await expect(
++      ctx.owner.query(
++        `INSERT INTO link_codes
++           (source_person_id, code_lookup_hash, code_hash, salt, expires_at)
++         VALUES ($1, $2, $3, $4, now() + interval '10 minutes')`,
++        [personA, "no-issuer".repeat(4), codeHash, salt],
++      ),
++    ).rejects.toThrow(/link_codes_one_issuer_chk/i);
++
++    const accountCode = await ctx.owner.query(
++      `INSERT INTO link_codes
++           (source_person_id, source_account_id, code_lookup_hash, code_hash, salt, expires_at)
++         VALUES ($1, $2, $3, $4, $5, now() + interval '10 minutes')`,
++      [personA, accountId, "account-issuer".repeat(3), codeHash, salt],
++    );
++    const channelCode = await ctx.owner.query(
++      `INSERT INTO link_codes
++         (source_person_id, source_channel_identity_id, code_lookup_hash,
++          code_hash, salt, expires_at)
++       VALUES ($1, $2, $3, $4, $5, now() + interval '10 minutes')
++       RETURNING id`,
++      [personA, channelId, "channel-issuer".repeat(3), codeHash, salt],
++    );
++
++    await ctx.owner.query(
++      `UPDATE link_codes SET consumed_at = now()
++       WHERE id = $1 OR code_lookup_hash = $2`,
++      [(channelCode.rows[0] as { id: string }).id, "account-issuer".repeat(3)],
++    );
++    await ctx.owner.query(`UPDATE channel_identities SET person_id = $1 WHERE id = $2`, [
++      personB,
++      channelId,
++    ]);
++    await ctx.owner.query(`UPDATE accounts SET person_id = $1 WHERE id = $2`, [personB, accountId]);
++
++    const evidence = await ctx.owner.query(
++      `SELECT DISTINCT source_person_id FROM link_codes
++       WHERE id = $1 OR code_lookup_hash = $2`,
++      [(channelCode.rows[0] as { id: string }).id, "account-issuer".repeat(3)],
++    );
++    expect(accountCode.rowCount).toBe(1);
++    expect(evidence.rows).toEqual([{ source_person_id: personA }]);
++  });
++
++  it("locks source person before issuer so link issuance cannot deadlock identity merge", async () => {
++    const person = await ctx.owner.query(`INSERT INTO persons DEFAULT VALUES RETURNING id`);
++    const personId = (person.rows[0] as { id: string }).id;
++    const channel = await ctx.owner.query(
++      `INSERT INTO channel_identities
++         (person_id, platform, platform_user_id_enc, provider_scope_lookup_hash,
++          platform_user_lookup_hash)
++       VALUES ($1, 'zalo', $2, $3, $4) RETURNING id`,
++      [personId, Buffer.from("encrypted-zalo-id"), "e".repeat(64), "f".repeat(64)],
++    );
++    const channelId = (channel.rows[0] as { id: string }).id;
++    const [codeHash, salt] = codeMaterial(4);
++    const mergeClient = await ctx.superuserDb.pool.connect();
++    const issueClient = await ctx.superuserDb.pool.connect();
++
++    try {
++      await mergeClient.query("BEGIN");
++      await issueClient.query("BEGIN");
++      await mergeClient.query(`SET LOCAL deadlock_timeout = '100ms'`);
++      await mergeClient.query(`SET LOCAL statement_timeout = '2s'`);
++      await issueClient.query(`SET LOCAL deadlock_timeout = '100ms'`);
++
++      const pidResult = await issueClient.query(`SELECT pg_backend_pid() AS pid`);
++      const issuePid = (pidResult.rows[0] as { pid: number }).pid;
++
++      await mergeClient.query(`SELECT id FROM persons WHERE id = $1 FOR UPDATE`, [personId]);
++      const insertOutcome = issueClient
++        .query(
++          `INSERT INTO link_codes
++             (source_person_id, source_channel_identity_id, code_lookup_hash,
++              code_hash, salt, expires_at)
++           VALUES ($1, $2, $3, $4, $5, now() + interval '10 minutes')`,
++          [personId, channelId, "lock-order".repeat(7), codeHash, salt],
++        )
++        .then(
++          (value) => ({ ok: true as const, value }),
++          (error: unknown) => ({ ok: false as const, error }),
++        );
++
++      let issueIsWaitingOnPerson = false;
++      for (let attempt = 0; attempt < 100; attempt += 1) {
++        const activity = await ctx.owner.query(
++          `SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1`,
++          [issuePid],
++        );
++        if ((activity.rows[0] as { wait_event_type: string | null })?.wait_event_type === "Lock") {
++          issueIsWaitingOnPerson = true;
++          break;
++        }
++        await new Promise((resolve) => setTimeout(resolve, 10));
++      }
++      expect(issueIsWaitingOnPerson).toBe(true);
++
++      // With issuer-first locking, this creates person<->issuer deadlock. With
++      // the required person-first order, the identity row is still available.
++      await mergeClient.query(`SELECT id FROM channel_identities WHERE id = $1 FOR UPDATE`, [
++        channelId,
++      ]);
++      await mergeClient.query("ROLLBACK");
++
++      const outcome = await insertOutcome;
++      if (!outcome.ok) throw outcome.error;
++      expect(outcome.value.rowCount).toBe(1);
++      await issueClient.query("COMMIT");
++    } finally {
++      await mergeClient.query("ROLLBACK").catch(() => undefined);
++      await issueClient.query("ROLLBACK").catch(() => undefined);
++      mergeClient.release();
++      issueClient.release();
++    }
++  });
++
++  it("keeps terminal codes immutable, undeletable and failed-attempt counts monotonic", async () => {
++    const person = await ctx.owner.query(`INSERT INTO persons DEFAULT VALUES RETURNING id`);
++    const personId = (person.rows[0] as { id: string }).id;
++    const account = await ctx.owner.query(
++      `INSERT INTO accounts (person_id) VALUES ($1) RETURNING id`,
++      [personId],
++    );
++    const accountId = (account.rows[0] as { id: string }).id;
++    const [codeHash, salt] = codeMaterial(2);
++    const code = await ctx.owner.query(
++      `INSERT INTO link_codes
++         (source_person_id, source_account_id, code_lookup_hash, code_hash, salt,
++          expires_at, failed_attempts)
++       VALUES ($1, $2, $3, $4, $5, now() + interval '10 minutes', 1)
++       RETURNING id`,
++      [personId, accountId, "terminal-code".repeat(3), codeHash, salt],
++    );
++    const codeId = (code.rows[0] as { id: string }).id;
++
++    await expect(
++      ctx.owner.query(`UPDATE link_codes SET failed_attempts = 0 WHERE id = $1`, [codeId]),
++    ).rejects.toThrow(/failed attempts cannot decrease/i);
++    await ctx.owner.query(`UPDATE link_codes SET consumed_at = now() WHERE id = $1`, [codeId]);
++    await expect(
++      ctx.owner.query(`UPDATE link_codes SET failed_attempts = 2 WHERE id = $1`, [codeId]),
++    ).rejects.toThrow(/terminal link-code cannot change/i);
++    await expect(
++      ctx.owner.query(`UPDATE link_codes SET consumed_at = NULL WHERE id = $1`, [codeId]),
++    ).rejects.toThrow(/terminal link-code cannot change/i);
++    await expect(ctx.owner.query(`DELETE FROM link_codes WHERE id = $1`, [codeId])).rejects.toThrow(
++      /terminal link-code cannot be deleted/i,
++    );
++  });
++
++  it("treats untrusted platform text as data and rejects it without SQL injection", async () => {
++    const person = await ctx.owner.query(`INSERT INTO persons DEFAULT VALUES RETURNING id`);
++    const personId = (person.rows[0] as { id: string }).id;
++    const account = await ctx.owner.query(
++      `INSERT INTO accounts (person_id) VALUES ($1) RETURNING id`,
++      [personId],
++    );
++    const accountId = (account.rows[0] as { id: string }).id;
++
++    await expect(
++      ctx.owner.query(
++        `INSERT INTO account_identities
++           (account_id, platform, platform_user_hash, verified_at)
++         VALUES ($1, $2, $3, now())`,
++        [accountId, "facebook'); DROP TABLE persons; --", "e".repeat(64)],
++      ),
++    ).rejects.toThrow(/account_identities_platform_chk/i);
++    await expect(ctx.owner.query(`SELECT count(*) FROM persons`)).resolves.toBeTruthy();
++  });
++
++  it("keeps routing metadata secret-free and denies runtime roles secret-table reads", async () => {
++    const { rows: leakedColumns } = await ctx.owner.query(
++      `SELECT table_name, column_name
++       FROM information_schema.columns
++       WHERE table_schema = 'public'
++         AND table_name IN ('zalo_bots', 'messenger_pages')
++         AND column_name ~* '(token_enc|app_secret|webhook_token$|^secret$)'`,
++    );
++    expect(leakedColumns).toEqual([]);
++
++    for (const role of ["app", "app_worker", "readonly"]) {
++      for (const table of ["zalo_bot_secrets", "messenger_page_secrets"]) {
++        const { rows } = await ctx.owner.query(
++          `SELECT has_table_privilege($1, $2, 'SELECT') AS allowed`,
++          [role, table],
++        );
++        expect((rows[0] as { allowed: boolean }).allowed, `${role} must not read ${table}`).toBe(
++          false,
++        );
++      }
++    }
++
++    const bot = await ctx.owner.query(
++      `INSERT INTO zalo_bots (tenant_id, webhook_token_lookup_hash)
++       VALUES ($1, $2) RETURNING id`,
++      [ctx.tenantA, "z".repeat(64)],
++    );
++    const botId = (bot.rows[0] as { id: string }).id;
++
++    // CO-OQ-1 is still open: a distinct webhook secret must not be fabricated.
++    await expect(
++      ctx.owner.query(
++        `INSERT INTO zalo_bot_secrets (bot_id, bot_token_enc, kms_key_version)
++         VALUES ($1, $2, $3)`,
++        [botId, Buffer.from("current-token"), "kms-v1"],
++      ),
++    ).resolves.toBeTruthy();
++
++    // Partial pending state is forbidden: retries must see either the complete
++    // durable candidate or no candidate while current remains active.
++    await expect(
++      ctx.owner.query(
++        `UPDATE zalo_bot_secrets
++         SET pending_bot_token_enc = $1, pending_created_at = now()
++         WHERE bot_id = $2`,
++        [Buffer.from("partial-token"), botId],
++      ),
++    ).rejects.toThrow(/zalo_bot_secrets_pending_chk/i);
++
++    await ctx.owner.query(
++      `UPDATE zalo_bot_secrets
++       SET pending_bot_token_enc = $1,
++           pending_kms_key_version = $2,
++           pending_created_at = now()
++       WHERE bot_id = $3`,
++      [Buffer.from("new-token"), "kms-v2", botId],
++    );
++    const beforePromotion = await ctx.owner.query(
++      `SELECT encode(bot_token_enc, 'hex') AS current_token,
++              encode(pending_bot_token_enc, 'hex') AS pending_token,
++              webhook_secret_enc IS NULL AS no_fabricated_secret
++       FROM zalo_bot_secrets WHERE bot_id = $1`,
++      [botId],
++    );
++    expect(beforePromotion.rows).toEqual([
++      {
++        current_token: Buffer.from("current-token").toString("hex"),
++        pending_token: Buffer.from("new-token").toString("hex"),
++        no_fabricated_secret: true,
++      },
++    ]);
++
++    await ctx.owner.query(
++      `UPDATE zalo_bot_secrets
++       SET bot_token_enc = pending_bot_token_enc,
++           webhook_secret_enc = pending_webhook_secret_enc,
++           kms_key_version = pending_kms_key_version,
++           rotated_at = now(),
++           pending_bot_token_enc = NULL,
++           pending_webhook_secret_enc = NULL,
++           pending_kms_key_version = NULL,
++           pending_created_at = NULL
++       WHERE bot_id = $1`,
++      [botId],
++    );
++    const afterPromotion = await ctx.owner.query(
++      `SELECT encode(bot_token_enc, 'hex') AS current_token,
++              pending_bot_token_enc IS NULL
++                AND pending_webhook_secret_enc IS NULL
++                AND pending_kms_key_version IS NULL
++                AND pending_created_at IS NULL AS pending_cleared
++       FROM zalo_bot_secrets WHERE bot_id = $1`,
++      [botId],
++    );
++    expect(afterPromotion.rows).toEqual([
++      {
++        current_token: Buffer.from("new-token").toString("hex"),
++        pending_cleared: true,
++      },
++    ]);
++  });
++});
++
+ describe("dual-parent child rows (session_occurrences)", () => {
+   it("tenant A cannot attach its recurrence rule to tenant B's session", async () => {
+     const { sessionRecurrenceRules, sessionOccurrences } = await import("../schema.js");
+diff -ruN base/packages/db/src/test-harness.ts cand/packages/db/src/test-harness.ts
+--- a/packages/db/src/test-harness.ts	2026-07-19 01:08:44.735006435 +0700
++++ b/packages/db/src/test-harness.ts	2026-07-19 01:08:44.737006435 +0700
+@@ -8,7 +8,7 @@
+  * Needs DATABASE_URL_TEST = a SUPERUSER url on a THROWAWAY cluster (CI service
+  * container / local compose postgres). The harness:
+  *   1. drops + recreates a dedicated database (never touches the url's own db),
+- *   2. runs the real migration runner against it (current baseline 0000..0013),
++ *   2. runs the real migration runner against it (current baseline 0000..0014),
+  *   3. gives the cluster-global runtime roles passwords so tests can connect
+  *      AS app/readonly — proving RLS/grants from the runtime roles' seats,
+  *      never from superuser (FORCE RLS is meaningless to a superuser),

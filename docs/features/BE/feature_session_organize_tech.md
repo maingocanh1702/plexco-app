@@ -1,8 +1,9 @@
 # Feature: Session Organize (Match & Court Orchestration) — Backend Tech Spec
 
 > **Delivery target:** Sau Session CRUD + Sync; sớm nhất sau P4. Canonical phase **TBD**; DD-61..64 đã owner accept-in-principle.
-> **Version:** 0.5 · 2026-07-18
+> **Version:** 0.5a · 2026-07-19
 > **Status:** Accepted-in-principle design — implementation inactive; schema/migration/service chưa tồn tại
+> **Implementation:** Not started — build post-P4 · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_session_organize.md`
 > **References:** `feature_session_management_tech.md` · `feature_sync_engine_tech.md` · `../../standards/decisions.md` DD-07/DD-41/DD-42/DD-45/DD-56/DD-60/DD-61..64 · `../../standards/api-reference-convention.md` · `../../standards/business-rules.md` · `../../standards/core-db-architecture-principles.md`
 
@@ -145,7 +146,7 @@ erDiagram
 
 ### Migration strategy
 
-Tạo migration mới với **số monotonic kế tiếp còn trống tại lúc implement**; `0014_session_organize.sql` chỉ là tên minh hoạ và **không giữ chỗ**. Không sửa/append `0009_rls_policies_grants.sql`: DB đã apply `0009` sẽ không chạy lại, khiến bảng mới không có policy/grant. Migration mới phải atomically gồm:
+Tạo migration mới với **số monotonic kế tiếp còn trống tại lúc implement**; `00NN_session_organize.sql` chỉ là tên minh hoạ và **không giữ chỗ**. *(Ví dụ cũ dùng `0014` — số đó nay đã bị `0014_players_waitlist` chiếm, đúng minh hoạ cho lý do không giữ chỗ.)* Không sửa/append `0009_rls_policies_grants.sql`: DB đã apply `0009` sẽ không chạy lại, khiến bảng mới không có policy/grant. Migration mới phải atomically gồm:
 
 1. Composite parent keys cần cho same-tenant/session FKs và nullable `processed_commands.request_hash` cho payload-conflict detection.
 2. Năm bảng organize, constraints và indexes.
@@ -654,6 +655,7 @@ Canonical DB suite must run with repository test database contract; migration/RL
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-18 | v0.5 | DD-61..64 accepted-in-principle: remove stale owner-approval gates, retain explicit no-runtime/prerequisite boundary, make migration number illustrative, and adopt DD-60 auth convention. |
 | 2026-07-17 | v0.4 | **DD-62/DD-64 closure:** terminal winning-point reversal/correction guard + reopen/re-complete reducer, court/dependency fail-closed codes, and active SSE before-event/heartbeat re-auth ≤30s. Proposal/runtime status unchanged. |
 | 2026-07-17 | v0.3 | Sửa substitution thành participant stint + partial active uniqueness; khóa exact organize/score authz; dùng live API envelope; bắt buộc per-aggregate version token; thêm match-config PATCH, canonical request hash và replay re-authorization tests. |

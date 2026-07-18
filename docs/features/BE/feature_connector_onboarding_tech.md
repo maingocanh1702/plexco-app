@@ -1,8 +1,9 @@
 # Feature: Connector Onboarding (Zalo · SePay · ApiPay) — Backend Tech Spec
 
 > **Canonical phase:** P3 (payment ingest) · P4 (onboarding) · P4.7 (Zalo) — *cross-cutting*
-> **Version:** 0.6 · 2026-07-17
+> **Version:** 0.6a · 2026-07-19
 > **Status:** Draft · SePay inbound auth reconciled; ApiPay enterprise-primary internal contract pinned, provider gate open
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_connector_onboarding.md`
 > **References:** `../../product/TDD.md` §3.2/3.6 · `../../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `feature_payment_reconcile_tech.md` (ingest downstream) · `feature_zalo_channel_tech.md` (channel events downstream) · `feature_web_auth_onboarding_tech.md` (wizard) · `../../research/player-side-saas-AUDIT.md` §B2
 
@@ -139,7 +140,9 @@ WHERE provider_connection_id IS NULL
 -- LIVE từ migration 0004: lifecycle/rotation columns và status vocabulary
 -- connecting|registered|active|drift|error|revoked đã tồn tại; không add lại.
 
--- TARGET forward migration (>=0014): remove legacy plaintext verification secret.
+-- TARGET forward migration: choose next available monotonic number after
+-- syncing merged prerequisites (`0014_players_waitlist` is branch-only today);
+-- remove legacy plaintext verification secret.
 ALTER TABLE zalo_bots ADD COLUMN webhook_secret_enc bytea;
 
 -- Application migration MUST KMS/envelope-encrypt each legacy `secret` value.
@@ -475,6 +478,7 @@ Tỉ lệ connect không-chạm-webhook; `time_to_verify_ms` (registered→activ
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.6a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.6 | **Zalo secret/lifecycle closure:** mark lifecycle columns live; specify KMS backfill-or-disable/drop/no-dual-read; add one state+ciphertext decision table, CAS-safe early-event/finalization transitions and unit/E2E regressions. |
 | 2026-07-17 | v0.5 | **ApiPay enterprise-primary closure:** add full `/api/onboarding/apipay/provision` request/response, tenant-bound opaque bank selection, platform-secret boundary, durable/provider idempotency, typed errors and primary-vs-BYO regression tests. |
 | 2026-07-17 | v0.4 | **Credential-shape closure:** add explicit SePay outbound `api_token` fallback mode/column; keep it distinct from OAuth, ApiPay BYO `api_key`, enterprise mode and inbound webhook `Api_Key` auth. |

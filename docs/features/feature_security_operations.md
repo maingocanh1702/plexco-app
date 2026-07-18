@@ -2,8 +2,9 @@
 
 > **Canonical phase:** Cross-cutting · Completion gate P6  
 > **Track:** 🛡️ Security & Ops  
-> **Version:** 2.2 · 2026-07-17<br>
+> **Version:** 2.2a · 2026-07-19<br>
 > **Status:** Reviewed  
+> **Implementation:** In progress — RLS/HR1 guard đã thực thi; phần còn lại chưa · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** All production features  
 > **Tài liệu liên quan:** `../product/BRD.md` §8/§13 · `../product/TDD.md` §4/6/7/10 · `../research/player-side-saas-AUDIT.md` · `../standards/business-rules.md` · `BE/feature_security_operations_tech.md`
 
@@ -134,6 +135,7 @@
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.2a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
 | 2026-07-17 | v2.2 | **DD-65 secret ownership closure:** split per-Page Messenger access tokens from the single deployment/platform Meta App Secret across inventory, rotation, kill-switch and blast-radius evidence. |
 | 2026-07-15 | v2.1 | **DD-37 closure:** target secret rotation/kill-switch = Zalo + Messenger + Google/provider/web/KMS; Telegram chỉ legacy runtime tới provider swap. |
 | 2026-06-18 | v1.0 | Initial spec (English format) |

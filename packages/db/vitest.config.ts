@@ -4,8 +4,9 @@ export default defineConfig({
   test: {
     // Test files must run strictly sequentially, never as concurrent workers:
     // (1) each DB test file's setupRlsTestContext() DROPs/CREATEs its OWN
-    //     throwaway database (auth.test.ts / rls-invariants.test.ts each pass
-    //     a distinct dbName — see test-harness.ts), and
+    //     throwaway database (auth.test.ts / rls-invariants.test.ts /
+    //     waitlist-invariants.test.ts each pass a distinct dbName — see
+    //     test-harness.ts), and
     // (2) migration 0000's cluster-global role creation
     //     (`IF NOT EXISTS (SELECT ...) THEN CREATE ROLE ...`) is a
     //     check-then-act, non-atomic against a CONCURRENT migration run on a
