@@ -278,14 +278,31 @@ export const players = pgTable("players", {
   tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
   sessionId: uuid("session_id").notNull().references(() => sessions.id),
   membershipId: uuid("membership_id").notNull().references(() => memberships.id),
-  status: text("status").notNull().default("active"),
+  status: text("status").notNull().default("active"), // active|left|waitlisted (DD-45)
   joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
   lastRemindedAt: timestamp("last_reminded_at", { withTimezone: true }),
+  // DD-45 queue rank. Set ONLY while status='waitlisted'; promotion/leave must
+  // clear it in the same statement that changes status. Total order is
+  // (waitlist_position, joined_at, id); ranks are non-contiguous by contract
+  // (tail assignment is max(position)+1 under the session lock, and DD-42
+  // deprioritize reuses that rule). Declared LAST to match the physical column
+  // order 0014's ALTER TABLE ADD COLUMN produces.
+  waitlistPosition: integer("waitlist_position"),
 }, (t) => ({
   uq: uniqueIndex("players_tenant_session_member_uq")
     .on(t.tenantId, t.sessionId, t.membershipId),
   sessionIdx: index("idx_players_session").on(t.sessionId),
-  statusChk: check("players_status_chk", sql`${t.status} IN ('active','left')`),
+  statusChk: check("players_status_chk", sql`${t.status} IN ('active','left','waitlisted')`),
+  // Equivalence: waitlisted <=> has a position. Makes a half-written
+  // status/position pair unrepresentable (migration 0014).
+  waitlistShapeChk: check("players_waitlist_shape_chk",
+    sql`(${t.status} = 'waitlisted') = (${t.waitlistPosition} IS NOT NULL)`),
+  waitlistPositionPositiveChk: check("players_waitlist_position_positive_chk",
+    sql`${t.waitlistPosition} IS NULL OR ${t.waitlistPosition} > 0`),
+  // Mirrors the promotion query: WHERE session_id AND status='waitlisted'
+  // ORDER BY waitlist_position, joined_at, id FOR UPDATE.
+  waitlistOrderIdx: index("idx_players_waitlist_order")
+    .on(t.sessionId, t.status, t.waitlistPosition, t.joinedAt, t.id),
 }));
 
 export const telegramLinks = pgTable("telegram_links", {

@@ -1,7 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sessions } from "../schema.js";
 import { tenantRepo, withTenant } from "./tenant.js";
-import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
+import {
+  expectErrorChainToMatch,
+  setupRlsTestContext,
+  type RlsTestContext,
+} from "./test-harness.js";
 
 /**
  * KEYSTONE invariant suite (INV-1/INV-3, HR1/HR2, BL-TEN-1/2, DD-12).
@@ -10,26 +14,6 @@ import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
  */
 
 let ctx: RlsTestContext;
-
-async function expectErrorChainToMatch(promise: Promise<unknown>, pattern: RegExp) {
-  let caught: unknown;
-  try {
-    await promise;
-  } catch (error) {
-    caught = error;
-  }
-
-  expect(caught).toBeInstanceOf(Error);
-  const messages: string[] = [];
-  const seen = new Set<Error>();
-  let current = caught;
-  while (current instanceof Error && !seen.has(current)) {
-    seen.add(current);
-    messages.push(current.message);
-    current = current.cause;
-  }
-  expect(messages.join("\n")).toMatch(pattern);
-}
 
 beforeAll(async () => {
   ctx = await setupRlsTestContext("plexco_rls_check");
@@ -51,10 +35,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(14); // 0000..0013
+    expect(ctx.migrateResult.applied.length).toBe(15); // 0000..0014
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(14);
+    expect(second.skipped.length).toBe(15);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {

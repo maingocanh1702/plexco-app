@@ -1,6 +1,38 @@
 import pg from "pg";
+import { expect } from "vitest";
 import { migrate, type MigrateResult } from "./migrate.js";
 import { createDb, type DbHandle } from "./client.js";
+
+/**
+ * Assert a rejection whose message appears ANYWHERE in the error's cause chain.
+ *
+ * Required for anything routed through drizzle (withTenant/tenantRepo): drizzle
+ * re-throws as `Failed query: <sql>` and hangs the real pg error — the one
+ * carrying "new row violates row-level security policy" — off `.cause`. A plain
+ * `rejects.toThrow(/row-level security/)` therefore FAILS on a correctly
+ * rejecting query, which reads as a missing RLS policy and is the exact wrong
+ * conclusion to draw. Raw ctx.appPool queries need no chain walk, but using this
+ * everywhere keeps one habit instead of two.
+ */
+export async function expectErrorChainToMatch(promise: Promise<unknown>, pattern: RegExp) {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (error) {
+    caught = error;
+  }
+
+  expect(caught).toBeInstanceOf(Error);
+  const messages: string[] = [];
+  const seen = new Set<Error>();
+  let current = caught;
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    messages.push(current.message);
+    current = current.cause;
+  }
+  expect(messages.join("\n")).toMatch(pattern);
+}
 
 /**
  * RLS invariant-test harness.
@@ -8,7 +40,7 @@ import { createDb, type DbHandle } from "./client.js";
  * Needs DATABASE_URL_TEST = a SUPERUSER url on a THROWAWAY cluster (CI service
  * container / local compose postgres). The harness:
  *   1. drops + recreates a dedicated database (never touches the url's own db),
- *   2. runs the real migration runner against it (current baseline 0000..0013),
+ *   2. runs the real migration runner against it (current baseline 0000..0014),
  *   3. gives the cluster-global runtime roles passwords so tests can connect
  *      AS app/readonly — proving RLS/grants from the runtime roles' seats,
  *      never from superuser (FORCE RLS is meaningless to a superuser),
