@@ -98,14 +98,14 @@ NEXT_REVIEW_TRIGGER: DD-38/39 migration merge probe + dd41 autopilot artifacts c
 | Phạm vi | Trạng thái đúng |
 |---|---|
 | 6 product decision DD-73..78 | `DECISION_FINAL` ✅ (đạt 2026-07-19) |
-| Auth S4 slice đầu | `NOT_PLAN_READY` → chờ B0 |
+| Auth S4 slice đầu | ~~`NOT_PLAN_READY`~~ → **D0 `CODE_READY` · D1 `PLAN_READY`** (DD-80 ✅, Verdict 3/4) |
 | `dd41-public-session-projection-fields` | `NOT_CODE_READY` → chờ DD-38/39 merge + artifacts |
 | Toàn cluster DD-73..78 như một slice | `NOT_CODE_READY` (gate §9) |
 | DD-76/77 | chỉ xét PLAN/CODE sau product-evidence baseline + owner threshold |
 
 ## Chuỗi slice ưu tiên (đồng bộ gate §9 + reality auth-first)
 
-1. **`auth-s4-account-session-core`** — gate #1 thật sự; chặn ở **B0 approval**.
+1. **`auth-s4-account-session-core`** — ~~chặn ở B0 approval~~ → **B0 ✅ DD-80 (v1.77)**; D0 `CODE_READY` (Verdict 3), D1 `PLAN_READY` chờ D0 merge (Verdict 4).
 2. `dd41-public-session-projection-fields` — điểm vào chuỗi share; chặn ở DD-38/39 merge.
 3. `dd12-guarded-public-read` — projector + fence + guarded view + grants + projection version.
 4. `dd73-session-share-route` — `/s/<id>` + OG/image + join revalidation + telemetry.
@@ -114,9 +114,87 @@ NEXT_REVIEW_TRIGGER: DD-38/39 migration merge probe + dd41 autopilot artifacts c
 
 ---
 
+---
+
+## Verdict 3 — `auth-s4-d0-revoke-core` (re-review sau DD-80, 2026-07-19)
+
+> Authority mới: **DD-80 ✅ (decisions v1.77, commit `c1a3957`)** + slice artifacts (`352e6ec`) trên `feat/session-waitlist-expand`. Code-truth base vẫn `main@ca6c97e` (delta so với `22c23aa` là docs-only). Verdict 1/2 giữ nguyên làm lịch sử tại snapshot cũ.
+
+```text
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-19
+AUTHORITY_SHA: 352e6ec (feat/session-waitlist-expand; DD-80 tại c1a3957; code-truth main@ca6c97e)
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/b0-auth-credential-lifecycle-design-probe.md (✅ owner-approved)
+  - docs/standards/decisions.md (DD-80 · v1.77)
+  - docs/features/BE/feature_web_auth_onboarding_tech.md (v2.8 §3 + acceptance D0)
+  - docs/autopilot-manifests/auth-s4-d0-revoke-core.json
+SLICE: auth-s4-d0-revoke-core
+IN_SCOPE: internal revoke-by-account helper + public wrapper derive-from-current-session + POST /api/auth/logout-all + CSRF + tests + schema mirror B0 §9(a)
+OUT_OF_SCOPE: email lifecycle (D1 bundle, flag OFF); Google/Facebook adapter (D1); Telegram removal; mọi grant mới cho `app` ngoài exact wrapper
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: db-postgres-drizzle-rls + auth-onboarding-v3 = MERGED (main@ca6c97e; dep_checks: auth_revoke_web_session/auth_resolve_web_session/rate_limit_check trong 0012 — verified)
+PRIOR_SLICES: none (root của feature layer)
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS (0012 chỉ có single-token revoke; schema.ts chưa mirror auth_login_nonces/auth_login_state/rate_limit_hits — đúng drift §9(a) mà slice này đóng)
+CONTRACT_MATRIX: PASS
+ACCEPTANCE_MATRIX: PASS (D0-1..D0-10, expected result cụ thể, grant/RLS trên Postgres thật)
+SECURITY_AND_MIGRATION_GATE: PASS (0015 expand-only: helper KHÔNG grant app/app_worker, wrapper không nhận account_id; rollback = DROP function + revoke grant, không data migration)
+IMPLEMENTATION_ARTIFACTS: PASS (manifest + acceptance matrix + first step)
+FIRST_IMPLEMENTATION_STEP: mở worktree `feat/auth-s4-d0-revoke-core` từ main → viết `packages/db/migrations/0015_auth_revoke_account.sql` (internal `auth_revoke_account_sessions` + public wrapper theo B0 §6.1/§6.2) + mirror schema §9(a) → route `/api/auth/logout-all` → chạy D0-1..D0-10
+REMAINING_BLOCKERS: none
+```
+
+**RUN precondition (không phải review blocker):** trước khi mở worktree, merge docs authority (`c1a3957` + `352e6ec`, docs-only nội dung) lên `main` để worktree đọc đúng DD-80/manifest/acceptance từ base — theo flow docs-only của `phase1-fable5-7h-PR-RUN.md`.
+
+## Verdict 4 — `auth-s4-d1-google-adapter` (2026-07-19)
+
+```text
+REVIEW_VERDICT: PLAN_READY
+REVIEWED_AT: 2026-07-19
+AUTHORITY_SHA: 352e6ec (feat/session-waitlist-expand)
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/b0-auth-credential-lifecycle-design-probe.md §2/§4/§4.1/§8.2
+  - docs/features/BE/feature_web_auth_onboarding_tech.md (v2.8 §3/§4 + acceptance D1)
+  - docs/autopilot-manifests/auth-s4-d1-google-adapter.json
+SLICE: auth-s4-d1-google-adapter
+IN_SCOPE: auth_oauth_transactions + Lax binding cookie; state/nonce/PKCE + OIDC proof matrix; collision table §4 (8 cell); session issue
+OUT_OF_SCOPE: email bundle (flag OFF); Facebook (DD-33 external gate); email-change/rebind từ Google claim; auto-merge conflict (→DD-53); Telegram removal
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: FAIL (prior slice D0 chưa merge main — dep_check `auth_revoke_account_sessions` trong 0015 chưa tồn tại)
+G4_TEST: PASS (acceptance D1-1..D1-15)
+G5_SCOPE: PASS
+G6_EXTERNAL: ENABLEMENT_ONLY:google-oauth-client-config,A3-legal-PII
+HARD_DEPENDENCIES: auth-s4-d0-revoke-core = NOT MERGED
+PRIOR_SLICES: auth-s4-d0-revoke-core
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: google-oauth-client-config (config, không đổi dark contract); A3-legal-PII (go-live)
+LIVE_REPO_VERIFICATION: PASS
+CONTRACT_MATRIX: PASS
+ACCEPTANCE_MATRIX: PASS
+SECURITY_AND_MIGRATION_GATE: PASS (0016 expand-only; PKCE bytea + KMS key version; không reuse Strict/same-origin cho callback)
+IMPLEMENTATION_ARTIFACTS: PASS
+FIRST_IMPLEMENTATION_STEP: (blocked bởi G3)
+REMAINING_BLOCKERS:
+  - blocker: D0 chưa merge main
+    owner: auth-s4-d0-revoke-core
+    resolution: D0 merged (dep_check 0015::auth_revoke_account_sessions pass)
+NEXT_REVIEW_TRIGGER: D0 merge probe pass → re-run closure D1 (kỳ vọng CODE_READY không cần review mới nếu contract không đổi)
+```
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 19/07/2026 | v0.3 | **B0 → DD-80 ✅ (v1.77):** thêm Verdict 3 (`auth-s4-d0-revoke-core` = **CODE_READY**, authority `352e6ec`) + Verdict 4 (`auth-s4-d1-google-adapter` = PLAN_READY chờ D0 merge). Artifacts: 2 manifest + acceptance D0×10/D1×15 trong web_auth tech v2.8. RUN precondition: merge docs authority lên main trước khi mở worktree. |
 | 19/07/2026 | v0.2 | **Reframe theo canonical gate.** Bỏ framework G1–G6 tự chế (trùng `review-code-readiness-gate.md`); đổi tên `ready-to-code-gate.md` → `slice-readiness-verdicts.md`; thay bằng verdict §7 pinned SHA `main@22c23aa` cho auth-s4 (NOT_PLAN_READY, chờ B0) và dd41 (NOT_CODE_READY, chờ DD-38/39 merge). |
 | 19/07/2026 | v0.1 | (retired) 6-condition gate tự chế — superseded bởi canonical gate. |
