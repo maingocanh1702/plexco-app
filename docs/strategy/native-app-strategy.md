@@ -1,10 +1,10 @@
 # Phân tích — Thêm Native App (iOS / Android) sau Web MVP
 
-**Phiên bản:** 1.7
+**Phiên bản:** 1.8
 **Ngày tạo:** 18/06/2026 · **Cập nhật:** 19/07/2026
-**Tài liệu tham chiếu:** `../product/BRD.md` v3.9d · `../product/PRD.md` v2.8c · `../product/TDD.md` v3.1 · `../product/ROADMAP.md` v3.3b · `../features/feature_sync_engine.md` · `../features/feature_marketplace_discovery.md` · `../features/feature_identity.md` · `../standards/decisions.md` v1.67 · `../dd-69-app-native-analysis.md`
+**Tài liệu tham chiếu:** `../product/BRD.md` v3.9f · `../product/PRD.md` v2.8e · `../product/TDD.md` v3.1 · `../product/ROADMAP.md` v3.3e · `../features/feature_sync_engine.md` · `../features/feature_marketplace_discovery.md` · `../features/feature_identity.md` · `../standards/decisions.md` v1.74 · `../dd-69-app-native-analysis.md`
 
-> ⚠️ **Version note (19/07/2026):** companion strategy, không phải source of truth. Authority hiện hành: **BRD v3.9d · PRD v2.8c · TDD v3.1 · ROADMAP v3.3b · decisions v1.67/DD-78**. Native direction accepted nhưng build phase-2 TBD.
+> ⚠️ **Version note (19/07/2026):** companion strategy, không phải source of truth. Authority hiện hành: **BRD v3.9f · PRD v2.8e · TDD v3.1 · ROADMAP v3.3e · decisions v1.74/DD-78**. Native direction accepted nhưng build phase-2 TBD.
 
 > **TL;DR:** Canonical-store + server-owned rules là nền tốt cho native, nhưng native **không chỉ là thêm UI**. Trước GA phải bổ sung client-safe contracts, versioned API, bearer/refresh auth, Apple/equivalent iOS login, protected device push và old-client/store gates. Core domain/RLS/outbox được giữ; identity/channel schema không được mở rộng sai để chứa device token. Offline v1 read-only.
 
@@ -423,7 +423,7 @@ Canonical store, RLS, outbox pattern và server-owned business rules là phần 
 
 ---
 
-*Tài liệu này là companion cho `../product/TDD.md` v3.1, `../product/ROADMAP.md` v3.3b và DD-69 analysis. Khi conflict, ưu tiên `../standards/decisions.md` v1.67.*
+*Tài liệu này là companion cho `../product/TDD.md` v3.1, `../product/ROADMAP.md` v3.3e và DD-69 analysis. Khi conflict, ưu tiên `../standards/decisions.md` v1.74.*
 
 ---
 
@@ -431,6 +431,7 @@ Canonical store, RLS, outbox pattern và server-owned business rules là phần 
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 19/07/2026 | 1.8 | Pointer refresh: BRD v3.9f · PRD v2.8e · ROADMAP v3.3e · decisions v1.74. Không đổi nội dung strategy; native vẫn direction accepted, build phase-2 TBD + gates. |
 | 19/07/2026 | 1.7 | **Authority + notification mirror correction:** DD-72 remains Web Push proposal; native provider/shape defer DD-69 spike. Use canonical `payment.settled`, one logical route across device/bot families, and do not invent person mute/quiet-hours settings. Authority v1.63; no runtime. |
 | 18/07/2026 | 1.6 | DD-69 direction accepted; refresh PRD/ROADMAP refs, preserve native build phase-2 TBD and RN+Expo recommendation/gates as not-yet-accepted implementation choices. |
 | 18/07/2026 | 1.5 | **DD-69 review closure:** phase-2/TBD thay P7; RN+Expo recommendation sau spike; PWA/Capacitor không claim live/store-ready; tách client-safe contracts; target `/api/v1`; AccountIdentity auth + Apple/equivalent iOS gate; encrypted device push tách ChannelIdentity; privacy-safe lock-screen payload; offline read-only; checklist live-vs-target; billing chuyển thành external/legal/store gate, bỏ claim reader-app/fee chắc chắn. |
