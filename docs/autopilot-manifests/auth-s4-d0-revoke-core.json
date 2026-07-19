@@ -7,7 +7,7 @@
   "merge_policy": "manual_only",
   "auto_merge": false,
   "codex_review": "2x_clean",
-  "authority": "DD-80 (decisions v1.83) · b0-auth-credential-lifecycle-design-probe.md §6/§9(a) · feature_web_auth_onboarding_tech.md v2.9a §3/§5-acceptance-D0",
+  "authority": "DD-80 (decisions v1.86) · b0-auth-credential-lifecycle-design-probe.md §6 (amendments v1.83+v1.86)/§9(a) · feature_web_auth_onboarding_tech.md v2.9b §3/§5-acceptance-D0-1..13",
   "depends_on": ["db-postgres-drizzle-rls", "auth-onboarding-v3"],
   "dep_checks": [
     { "file": "packages/db/migrations/0012_auth_functions.sql", "symbol": "auth_revoke_web_session" },
@@ -21,7 +21,8 @@
     "NO Telegram route removal (expand->contract slice cuoi)",
     "NO new grant to role app beyond exact public wrapper",
     "CREATE OR REPLACE auth_rotate_web_session CHI doi lock order sang parent-first, giu nguyen signature/behavior (v1.83) — moi behavior change khac la scope breach",
-    "Internal revoke-by-account helper is NOT granted to app/app_worker; wrapper derives account from current session only, never accepts account_id from caller"
+    "Internal revoke-by-account helper is NOT granted to app/app_worker; wrapper derives account from current session only, never accepts account_id from caller",
+    "Issuance fence (v1.86) CHI doi hanh vi stale-cookie-rotate-null trong issueSession sang reject+clear-cookie; no-cookie mint path va moi caller/behavior khac giu nguyen"
   ],
   "scope": [
     "docs/autopilot-manifests/auth-s4-d0-revoke-core.json",
@@ -31,6 +32,7 @@
     "packages/db/src/index.ts",
     "packages/db/src/auth.test.ts",
     "packages/db/src/rls-invariants.test.ts",
+    "apps/web/lib/session-cookies.ts",
     "apps/web/app/api/auth/logout-all/route.ts",
     "apps/web/app/api/auth/logout-all/route.test.ts",
     "docs/features/BE/feature_web_auth_onboarding_tech.md"

@@ -131,7 +131,7 @@ TARGET_FILES:
   - docs/features/BE/feature_web_auth_onboarding_tech.md (v2.8 §3 + acceptance D0)
   - docs/autopilot-manifests/auth-s4-d0-revoke-core.json
 SLICE: auth-s4-d0-revoke-core
-IN_SCOPE: internal revoke-by-account helper + public wrapper derive-from-current-session + POST /api/auth/logout-all + CSRF + tests + schema mirror B0 §9(a) + CREATE OR REPLACE rotate parent-first + auth_audit_events append-only + export root index.ts (v1.83)
+IN_SCOPE: internal revoke-by-account helper + public wrapper derive-from-current-session + POST /api/auth/logout-all + CSRF + tests + schema mirror B0 §9(a) + CREATE OR REPLACE rotate parent-first + auth_audit_events append-only + export root index.ts (v1.83) + issuance fence session-cookies.ts (reject-and-reauth, không fallback-mint khi rotate null) + partial index web_sessions(account_id) WHERE revoked_at IS NULL trong 0015 (v1.86)
 OUT_OF_SCOPE: email lifecycle (D1 bundle, flag OFF); Google/Facebook adapter (D1); Telegram removal; mọi grant mới cho `app` ngoài exact wrapper
 G1_DECISION: PASS
 G2_SPEC: PASS
@@ -145,10 +145,10 @@ OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: none
 LIVE_REPO_VERIFICATION: PASS (0012 chỉ có single-token revoke; schema.ts chưa mirror auth_login_nonces/auth_login_state/rate_limit_hits — đúng drift §9(a) mà slice này đóng)
 CONTRACT_MATRIX: PASS
-ACCEPTANCE_MATRIX: PASS (D0-1..D0-10, expected result cụ thể, grant/RLS trên Postgres thật)
-SECURITY_AND_MIGRATION_GATE: PASS (migration D0 expand-only + đúng MỘT CREATE OR REPLACE rotate lock-order-only v1.83: helper KHÔNG grant app/app_worker, wrapper không nhận account_id; rollback = DROP function/table mới + revoke grant + restore định nghĩa rotate 0012, không data migration)
+ACCEPTANCE_MATRIX: PASS (D0-1..D0-13 — D0-11 v1.83, D0-12/D0-13 v1.86 — expected result cụ thể, grant/RLS trên Postgres thật)
+SECURITY_AND_MIGRATION_GATE: PASS (migration D0 expand-only + đúng MỘT CREATE OR REPLACE rotate lock-order-only v1.83: helper KHÔNG grant app/app_worker, wrapper không nhận account_id; rollback = DROP function/table/index mới + revoke grant + restore định nghĩa rotate 0012, không data migration; v1.86: partial index expand-only + issuance fence là app-layer change trong scope D0, zero grant mới)
 IMPLEMENTATION_ARTIFACTS: PASS (manifest + acceptance matrix + first step)
-FIRST_IMPLEMENTATION_STEP: mở worktree `feat/auth-s4-d0-revoke-core` từ main → viết `packages/db/migrations/0015_auth_revoke_account.sql` (internal `auth_revoke_account_sessions` + public wrapper theo B0 §6.1/§6.2) + mirror schema §9(a) → route `/api/auth/logout-all` → chạy D0-1..D0-10
+FIRST_IMPLEMENTATION_STEP: mở worktree `feat/auth-s4-d0-revoke-core` từ main → viết `packages/db/migrations/0015_auth_revoke_account.sql` (internal `auth_revoke_account_sessions` + public wrapper theo B0 §6.1/§6.2 + partial index v1.86) + mirror schema §9(a) → route `/api/auth/logout-all` + issuance fence `session-cookies.ts` (v1.86) → chạy D0-1..D0-13
 REMAINING_BLOCKERS: none
 ```
 
@@ -166,7 +166,7 @@ TARGET_FILES:
   - docs/features/BE/feature_web_auth_onboarding_tech.md (v2.8 §3/§4 + acceptance D1)
   - docs/autopilot-manifests/auth-s4-d1-google-adapter.json
 SLICE: auth-s4-d1-google-adapter
-IN_SCOPE: auth_oauth_transactions + Lax binding cookie; state/nonce/PKCE + OIDC proof matrix; collision table §4 (8 cell); session issue
+IN_SCOPE: auth_oauth_transactions + Lax binding cookie; state/nonce/PKCE + OIDC proof matrix; collision table §4 (8 cell); session issue; auth_login_google nhận preallocated account_emails.id cho cell-1 AAD (v1.86, B0 §3.3/§4)
 OUT_OF_SCOPE: email bundle (flag OFF); Facebook (DD-33 external gate); email-change/rebind từ Google claim; auto-merge conflict (→DD-53); Telegram removal
 G1_DECISION: PASS
 G2_SPEC: PASS
@@ -195,6 +195,7 @@ NEXT_REVIEW_TRIGGER: D0 merge probe pass → re-run closure D1 (kỳ vọng CODE
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 19/07/2026 | v0.6 | **v1.86 (AP-26 HALT MAX_ROUNDS/Codex round-03):** Verdict 3 amend — D0 thêm issuance fence `session-cookies.ts` (reject-and-reauth, không fallback-mint khi rotate null) + partial index `web_sessions(account_id) WHERE revoked_at IS NULL` trong 0015 (case D0-12/D0-13, tech v2.9b); giữ CODE_READY. Verdict 4 note — `auth_login_google` nhận preallocated `account_emails.id` cho cell 1 (AAD §3.3 giữ nguyên); giữ PLAN_READY. |
 | 19/07/2026 | v0.5 | **v1.83 (AP-26 HALT v2):** Verdict 3 amend — migration D0 thêm rotate parent-first replace (đóng deadlock), auth_audit_events tạo tại D0 (order-2 reuse), scope thêm packages/db/src/index.ts. Verdict giữ CODE_READY với wording rollback mới; số migration theo tail thực tế (tech v2.9). |
 | 19/07/2026 | v0.4 | **v1.78 corrections:** Verdict 4 thêm hard dependency order-2 `auth-s4-d1-email-token-core` (manifest mới, dark) + oauth migration dời 0017; D1-15 absence-check; PKCE lifecycle CHECK theo v1.78. Verdict 3 (D0) không đổi. |
 | 19/07/2026 | v0.3 | **B0 → DD-80 ✅ (v1.77):** thêm Verdict 3 (`auth-s4-d0-revoke-core` = **CODE_READY**, authority `352e6ec`) + Verdict 4 (`auth-s4-d1-google-adapter` = PLAN_READY chờ D0 merge). Artifacts: 2 manifest + acceptance D0×10/D1×15 trong web_auth tech v2.8. RUN precondition: merge docs authority lên main trước khi mở worktree. |

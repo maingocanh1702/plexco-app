@@ -1,7 +1,7 @@
 # Feature: Web Authentication & Tenant Onboarding — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.9a · 2026-07-19
+> **Version:** 2.9b · 2026-07-19
 > **Status:** Reviewed
 > **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google/email DD-37 chưa code · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_web_auth_onboarding.md`
@@ -394,6 +394,8 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | D0-9 | Schema mirror §9(a) | `schema.ts` mirror `auth_login_nonces`/`auth_login_state`/`rate_limit_hits` | Type-check + Drizzle mirror pass; zero runtime/DDL behavior change |
 | D0-10 | Lock order | Helper lock `accounts` parent trước `web_sessions` con (§5.2 B0) | Trace/regression: không path nào lock sessions trước accounts |
 | D0-11 | Rotate parent-first replace (v1.83) | 0015 CREATE OR REPLACE `auth_rotate_web_session` lock accounts→sessions, giữ nguyên signature/behavior | Toàn bộ test rotate 0012-era pass nguyên vẹn + regression: race logout-all×rotate không deadlock, không token nào sống sót |
+| D0-12 | Issuance fence (v1.86) | Login hoàn tất ngay sau logout-all, browser còn stale session cookie | `issueSession()` thấy rotate trả null → KHÔNG fallback mint; clear session cookie + login route trả 401 `AUTH_INVALID`; retry không cookie mint session mới bình thường (B0 §6 amendment v1.86) |
+| D0-13 | Revoke-all index (v1.86) | Catalog test sau migration 0015 | Partial index `web_sessions(account_id) WHERE revoked_at IS NULL` tồn tại; `schema.ts` mirror khớp; rollback = DROP INDEX |
 
 ### Acceptance matrix — slice D1 `auth-s4-d1-google-adapter` (DD-80 §2/§4/§4.1/§8.2)
 
@@ -512,6 +514,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.9b | **v1.86 (AP-26 HALT MAX_ROUNDS/Codex round-03):** (1) Issuance fence reject-and-reauth — `issueSession()` không fallback-mint khi có cookie mà rotate trả null (clear cookie + 401 `AUTH_INVALID`); `apps/web/lib/session-cookies.ts` vào scope D0; case D0-12 mới. (2) Partial index `web_sessions(account_id) WHERE revoked_at IS NULL` trong 0015 + `schema.ts` mirror; case D0-13 mới. (3) D1: `auth_login_google` nhận preallocated `account_emails.id` cho cell 1 — AAD contract B0 §3.3 giữ nguyên. No runtime. |
 | 2026-07-19 | v2.9a | **v1.83 (AP-26 HALT v2/Codex round-01):** D0 thêm CREATE OR REPLACE `auth_rotate_web_session` parent-first (đóng deadlock logout-all×rotate; case D0-11 mới) + `auth_audit_events` append-only tạo tại migration D0 (order-2 reuse/extend) + export root `packages/db/src/index.ts` vào scope D0. Số migration theo tail thực tế lúc merge (v2.9). No runtime. |
 | 2026-07-19 | v2.9 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (live `0001`/`0008`/`0012` = reuse baseline, DROP ❌ NEVER; `auth_oauth_transactions` + email tables = migration mới monotonic theo tail thực tế của main), §3 Request/Response Examples (DD-60) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.8a | **Defect fixes v1.78 (từ AP-26 HALT-AUTHORITY_AMBIGUOUS):** (1) `auth_oauth_transactions` thêm `terminal_at` + lifecycle CHECK đúng pattern `auth_email_deliveries` — ciphertext NOT NULL chỉ khi chưa terminal; thay CHECK NOT-NULL vĩnh viễn tự mâu thuẫn NULL-on-consume. (2) D1-15 đổi thành absence-check (route Facebook không tồn tại trong D1; UNAVAILABLE thuộc slice DD-33). (3) Slice order-2 `auth-s4-d1-email-token-core` có manifest riêng; oauth migration dời 0016→0017. No runtime. |

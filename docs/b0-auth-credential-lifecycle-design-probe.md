@@ -191,7 +191,7 @@ Phase-1 có đúng một primary email mỗi account (`UNIQUE(account_id)`) và 
 - Parse và reject invalid/ambiguous address; trim outer whitespace only.
 - Domain: IDNA A-label + lowercase. Local-part: Unicode NFC nhưng **preserve case**; không Gmail dot/plus rewriting, không provider-specific alias folding.
 - Một helper duy nhất `deriveEmailArtifacts(rawEmail)` trả `{canonicalEmail, emailLookupHash, emailEnc, kmsKeyVersion}`. HMAC input domain-separated (`plexco:account-email:v1:<canonical>`).
-- `email_enc` dùng authenticated encryption; AAD chứa `account_emails.id`, `email_lookup_hash` và version. Delivery boundary decrypts, normalize+rehash lại và constant-time compare với stored lookup hash; mismatch/decrypt failure → fail-closed, không gửi, audit redacted.
+- `email_enc` dùng authenticated encryption; AAD chứa `account_emails.id`, `email_lookup_hash` và version. Delivery boundary decrypts, normalize+rehash lại và constant-time compare với stored lookup hash; mismatch/decrypt failure → fail-closed, không gửi, audit redacted. **v1.86:** khi row `account_emails` được tạo BÊN TRONG một SECURITY DEFINER function (Google cell 1, §4), id trong AAD = id do app preallocate và truyền vào function; function INSERT đúng id đó — không tồn tại path encrypt với id chưa xác định.
 - Không log raw/canonical email, ciphertext, token, password hoặc lookup hash đầy đủ. Metrics chỉ giữ outcome class; support UI chỉ dùng masked email.
 
 Như vậy `account_emails` là source of truth cho lookup + delivery. `account_identities(platform='email')` luôn copy hash từ locked row trong DB function, không nhận một cặp hash/ciphertext rời từ controller.
@@ -208,7 +208,7 @@ Như vậy `account_emails` là source of truth cho lookup + delivery. `account_
 
 ## 4. Google OIDC account/email collision table
 
-Sau khi **toàn bộ** proof matrix ở §2 pass, app-side mới tính domain-separated HMAC cho `google.sub` và email artifacts. Một SECURITY DEFINER transaction xử lý:
+Sau khi **toàn bộ** proof matrix ở §2 pass, app-side mới tính domain-separated HMAC cho `google.sub` và email artifacts. **v1.86 (AAD handoff, owner 2026-07-19):** với cell tạo `account_emails` MỚI (cell 1 new/new), app **preallocate `account_emails.id`** (UUID) trước khi encrypt — AAD của `email_enc` chứa đúng id đó theo §3.3 — rồi truyền id vào function collision để INSERT với chính id này; các cell dùng row sẵn có (2/3/5/6) giữ nguyên ciphertext hiện hữu, không rebind và không nhận id từ caller. Một SECURITY DEFINER transaction xử lý:
 
 | Google subject | Verified email owner | Kết quả |
 |---|---|---|
@@ -366,6 +366,10 @@ Nếu reset lock/commit trước, login finalizer thấy PHC mismatch và không
 > **Amendment v1.83 (owner 2026-07-19, từ AP-26 HALT v2 / Codex round-01):**
 > (1) **Rotate lock-order:** live `auth_rotate_web_session` (0012) lock session→accounts (INSERT FK KEY SHARE) ngược parent-first §5.2 ⇒ deadlock thật với revoke-by-account. `0015` **CREATE OR REPLACE** rotate theo parent-first (lock `accounts` trước khi đụng `web_sessions`), **giữ nguyên signature/behavior**; mọi thay đổi behavior khác là scope breach. Rollback = DROP function mới + restore định nghĩa rotate từ 0012.
 > (2) **`auth_audit_events` tạo tại D0/0015** — append-only theo shape §8.3; `logout_all` audit cùng transaction ngay từ D0. Slice order-2 **reuse/extend** bảng này, không tạo bảng audit song song.
+
+> **Amendment v1.86 (owner 2026-07-19, từ AP-26 HALT MAX_ROUNDS / Codex round-03):**
+> (1) **Issuance fence — reject-and-reauth:** `issueSession()` (`apps/web/lib/session-cookies.ts`) khi request CÓ session cookie mà `auth_rotate_web_session` trả NULL (token cũ revoked/expired — ví dụ logout-all vừa thắng race) **KHÔNG được fallback mint session mới**: clear session cookie, trả typed error để login route map generic `AUTH_INVALID` 401; chỉ path không-có-cookie mới được `createWebSession`. Retry login sau đó (không còn cookie) mint bình thường như một authentication mới — giữ nghĩa đen D0-7 "không token nào của account còn resolve" cho mọi token và cửa sổ race hiện hữu tại thời điểm revoke. Scope D0 thêm đúng function này (manifest D0); acceptance mới **D0-12**.
+> (2) **Index revoke-all:** `0015` tạo thêm partial index `web_sessions(account_id) WHERE revoked_at IS NULL` (expand-only; rollback = DROP INDEX; mirror `schema.ts` cùng slice) — revoke-by-account không được full-table scan `web_sessions` trong khi giữ parent lock `accounts`; live `0001` chỉ có `UNIQUE(token_hash)`. Acceptance mới **D0-13** (catalog test).
 
 ### 6.1 Internal helper
 
