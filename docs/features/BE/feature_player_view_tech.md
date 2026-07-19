@@ -1,7 +1,7 @@
 # Feature: Player View (Person-self) — Backend Tech Spec
 
 > **Canonical phase:** P4.6  
-> **Version:** 2.2a · 2026-07-19
+> **Version:** 2.3 · 2026-07-19
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_player_view.md`  
@@ -45,6 +45,12 @@ CREATE INDEX idx_magic_links_hash ON magic_links(hash) WHERE used_at IS NULL;
 
 Uses existing tables: `persons`, `memberships`, `players`, `charges`, `payment_allocations`.
 
+### Migration & Rollback
+
+- **Live-schema truth (main, migrations `0000`–`0014`):** `magic_links` **đã tồn tại** trong `0001_global_directory.sql` với đúng shape DDL trên (kể cả partial index `idx_magic_links_hash`) — **reuse baseline, không recreate; `DROP` = ❌ NEVER**. Các bảng đọc (`persons`/`memberships`/`players`/`charges`/`payment_allocations`) cũng đã có ở `0001`–`0003`.
+- `magic_links.channel` live là `text NOT NULL` không CHECK — thay đổi channel values theo DD-37 (`zalo`/`messenger`, `telegram` legacy) là comment/runtime-validation, không cần DDL. Nếu build slice thêm CHECK/constraint/cleanup object mới → migration mới **monotonic theo next available number sau tail hiện tại của main** (tail hiện là `0014_players_waitlist.sql`); không sửa migration lịch sử.
+- **Rollback:** tắt routes `/api/me*` + `/api/magic-link/consume` (feature-level) → revert additive-only các object mới nếu có; không DROP `magic_links` baseline (chứa link/session lineage thật).
+
 ### Edge Cases (Backend)
 
 | # | Category | Case | Xử lý |
@@ -78,6 +84,35 @@ Uses existing tables: `persons`, `memberships`, `players`, `charges`, `payment_a
 | GET | /api/me/requests | Authenticated Person | Join request status |
 | POST | /api/magic-link/consume | Public (with hash) | Consume magic link |
 
+### Request/Response Examples
+
+> DTO minh hoạ theo DTO allowlist §4 (chỉ own-data); field name chốt ở build slice; envelope DD-60 (`../../standards/api-reference-convention.md`).
+
+**GET `/api/me/charges`** (own charges + allocation status):
+
+```json
+{ "data": { "charges": [ { "clubName": "…", "amount": 120000, "status": "partial", "allocated": 70000 } ] }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+- `401` — không có session hợp lệ:
+
+```json
+{ "data": null, "error": { "code": "AUTH_REQUIRED", "message": "Cần đăng nhập", "statusCode": 401 }, "meta": { "requestId": "req_…" } }
+```
+
+**POST `/api/magic-link/consume`** — invalid/expired/used/sai person/sai channel đều trả một error generic (edge cases #3–#5):
+
+```json
+{ "data": null, "error": { "code": "MAGIC_LINK_INVALID", "message": "Link không hợp lệ hoặc đã hết hạn", "statusCode": 400 }, "meta": { "requestId": "req_…" } }
+```
+
+### Idempotency
+
+| Endpoint | Idempotent? | Key |
+|----------|-------------|-----|
+| `GET /api/me*` | ✅ read-only | — (không mutation) |
+| `POST /api/magic-link/consume` | ✅ single-use fail-closed | `hash` UNIQUE + `used_at` set on consume (edge case #3); replay → `MAGIC_LINK_INVALID`, không mint session thứ hai |
+
 ### Error Codes
 
 | Code | Error Code | Message | Trigger |
@@ -107,6 +142,26 @@ Bot conversation (Zalo/Messenger) → Verify conversation → Issue magic link
     → Hash stored, expires in 5min, single-use, person+channel bound
     → Player clicks → Consume hash → Create web session → Redirect to /me
 ```
+
+### Caching Strategy
+
+| Data | Cache? | Lý do |
+|------|--------|-------|
+| Person-self DTO (memberships/sessions/charges) | ❌ | Tiền + PII cross-tenant — đọc live dưới person-self authz; cache có thể serve data cũ sau merge/session revocation (edge cases #6/#12) |
+| Magic link state | ❌ | Single-use + TTL 5 phút — check live trong consume transaction |
+| Realtime topic authz | ❌ | AuthZ per subscription (edge case #10), không cache verdict |
+| Chưa liệt kê | ❌ fail-closed | Mặc định không cache trên surface person-self |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | DD-48 boundary (chỉ self, không `:personId`); person authority chỉ từ verified session/magic link (§1); DTO allowlist §4; realtime topic authz per subscription (edge #10) |
+| Injection/validation | Edge #1: reject person_id từ URL/body — chỉ dùng verified session; cross-tenant error generic 403/empty, không leak club info (edge #7) |
+| Secret & log redaction | Magic link lưu hash-only, single-use (§2); edge #11: log/analytics opaque IDs only, không other-player PII |
+| Webhook signature + replay | N/A — doc không có webhook surface; magic-link replay đã chống bằng single-use `used_at` (edge #3) |
+| Idempotency | Bảng Idempotency §3 + edge #3 |
+| Data retention/xoá | ⬜ chưa pin — cleanup/expiry sweep cho `magic_links` rows hết hạn chốt ở build slice; retention policy chung theo `feature_security_operations_tech.md`. Merge → invalidate old links/sessions (edge #6/#12) đã pin |
 
 ---
 
@@ -168,6 +223,7 @@ Bot conversation (Zalo/Messenger) → Verify conversation → Issue magic link
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.3 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (`magic_links` đã có ở `0001` — reuse baseline, DROP ❌ NEVER; channel values không cần DDL), §3 Request/Response Examples (DD-60) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.2a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |
 | 2026-06-19 | v2.0 | Chuẩn hoá Vietnamese numbered (6 sections), DDL, 12 edge cases, DTO allowlist, 20 tests |

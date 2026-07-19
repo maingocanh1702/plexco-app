@@ -1,7 +1,7 @@
 # Feature: Host Billing & Tenant Lifecycle — Backend Tech Spec
 
 > **Canonical phase:** P5  
-> **Version:** 2.6a · 2026-07-19
+> **Version:** 2.7 · 2026-07-19
 > **Status:** Reviewed  
 > **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_billing_lifecycle.md`  
@@ -124,6 +124,23 @@ CREATE TABLE billing_overrides (
 );
 ```
 
+### Migration & Rollback
+
+> Grep live `packages/db/migrations/` (0000–0013 đã merge trên main; `0014_players_waitlist` branch-only): **cả 6 bảng** `plans` · `subscriptions` · `subscription_invoices` · `billing_transactions` · `billing_allocations` · `billing_overrides` **đã tồn tại từ `0007_billing.sql`** — DDL trên là baseline để đọc + target contract, **reuse, không recreate**.
+
+- **Migration (delta doc-DDL vs live `0007` → một migration mới monotonic sau tail hiện tại, KHÔNG sửa `0007`):**
+  - `plans.plan_key` CHECK `('free','host_pro')` + seed v1 DD-29 — live vẫn CHECK 4-tier (ghi chú PENDING MIGRATION trong DDL trên);
+  - `subscriptions`: bỏ `selected_extra_channel` (DD-29 — live còn cột này); `period_start`/`period_end` nullable cho free (DD-51 — live đang NOT NULL);
+  - `subscription_invoices.paid_at` (DD-51 — refund window đọc canonical `paid_at`; live chưa có cột);
+  - `billing_overrides.ticket_ref NOT NULL` (DD-51 — live chưa có cột).
+- **Rollback:**
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Disable billing routes (`/api/billing*`, `/internal/billing/*`) + daily lifecycle job + billing webhook worker | ✅ |
+| 2 | Migration revert mới: revert **CHỈ additive/alter objects của slice** (CHECK/seed DD-29 + các cột DD-51 ở trên) sau khi kiểm tra dependency/data | ✅ Có điều kiện |
+| 3 | Drop baseline 6 bảng billing của `0007` | ❌ NEVER — migration đã apply trên main, có thể chứa billing data thật |
+
 ### Edge Cases (Backend)
 
 | # | Category | Case | Xử lý |
@@ -162,6 +179,38 @@ CREATE TABLE billing_overrides (
 | POST | /api/billing/cancel | TenantOwner | Cancel subscription |
 | POST | /internal/billing/webhook | Platform (webhook) | Payment ingest |
 | POST | /internal/billing/override | PlatformAdmin | Manual override |
+
+### Request/Response Examples
+
+> DTO minh hoạ theo contract đã pin; field name cụ thể chốt ở build slice; envelope DD-60 (`../../standards/api-reference-convention.md`).
+
+**GET `/api/billing`** — billing overview (field derive từ `subscriptions` §2):
+
+```json
+{
+  "data": { "subscription": { "planKey": "host_pro", "status": "active", "periodEnd": "…" } },
+  "error": null,
+  "meta": { "requestId": "req_…" }
+}
+```
+
+**Capability bị chặn theo plan** (edge #13, §4b — HTTP mapping minh hoạ):
+
+```json
+{ "data": null, "error": { "code": "PLAN_UPGRADE_REQUIRED", "message": "…", "statusCode": 403 }, "meta": { "requestId": "req_…" } }
+```
+
+**POST `/internal/billing/webhook`** — duplicate `(provider, external_id)` (edge #2): idempotent, trả kết quả cũ, **không** tạo transaction/allocation thứ hai.
+
+### Idempotency
+
+| Endpoint | Idempotent? | Key |
+|----------|-------------|-----|
+| GET `/api/billing` · `/api/billing/invoices` | ✅ | Read-only |
+| POST `/api/billing/cancel` | ⬜ chưa pin — chốt ở build slice | — |
+| POST `/internal/billing/webhook` | ✅ | `UNIQUE (provider, external_id)` (§2, edge #2) — duplicate không tạo transaction/job thứ hai |
+| POST `/internal/billing/override` | ⬜ chưa pin — chốt ở build slice (auto-expire đã idempotent — edge #19) | — |
+| Daily lifecycle job (system) | ✅ | Row/version lock (edge #3) + `UNIQUE (tenant_id, period_key)` — exactly-once transition/invoice (edge #5) |
 
 ### Suspended Action Matrix
 
@@ -211,6 +260,25 @@ Webhook → Durable ingest: billing_transaction + job COMMIT before ACK
     → Ambiguous/partial/overpay → billing review queue
     → Matched → allocate + extend period (exactly once)
 ```
+
+### Caching Strategy
+
+| Data | Cache? | TTL | Invalidation |
+|------|--------|-----|-------------|
+| Subscription status / `authorizeTenantAction` input | ❌ | — | Đường authz — đọc live, fail-closed; matrix §3 áp thống nhất, adapter không tự nới |
+| Billing ledger (invoices/transactions/allocations) | ❌ | — | Tiền — mọi transition dưới row/version lock (§4, edge #3/#5) |
+| Capability flags (`plans.entitlements`) | ❌ | — | Gate đọc `hasCapability` live (§4b); caching nếu có là enablement riêng — fail-closed khi chưa pin |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §3: TenantOwner/PlatformAdmin per endpoint; `authorizeTenantAction` matrix trung tâm (§1/§3) + edge #8/#11/#19 (override chỉ PlatformAdmin, bắt buộc `ticket_ref`/expiry) |
+| Injection/validation | §4: webhook parser strict invoice code match; ambiguous/partial/overpay → billing review queue, không auto-guess (edge #4); CHECK/UNIQUE constraints §2 |
+| Secret & log redaction | §2: `billing_transactions.content_enc` at-rest; chi tiết log redaction theo `feature_security_operations_tech.md` |
+| Webhook signature + replay | §3/§4: `/internal/billing/webhook` durable ingest COMMIT trước ACK + dedup `UNIQUE (provider, external_id)`; signature scheme chưa pin trong doc này — chốt ở build slice (pattern tham chiếu: `feature_payment_reconcile_tech.md` §3) |
+| Idempotency | §3 bảng Idempotency (webhook UNIQUE, lifecycle row/version lock, `UNIQUE (tenant_id, period_key)`) |
+| Data retention/xoá | Chưa pin trong doc này — theo `feature_security_operations_tech.md` |
 
 ---
 
@@ -307,6 +375,7 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.7 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (reuse 6 bảng `0007`; delta DD-29/DD-51 → migration mới monotonic), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.6a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-16 | v2.6 | **DD-51 full propagation:** nullable free period fields, invoice `paid_at`, override `ticket_ref`, exact trial/grace/refund/override commands, suspended automation-off and boundary tests. |
 | 2026-07-10 | v2.5 | **Review fixes → canonical billing vocab.** Thêm ghi chú **PENDING MIGRATION** cho `plans` CHECK `('free','host_pro')` (live schema.ts vẫn 4-tier — không claim done). Overpay/partial = billing review queue qua `billing_allocations` (KHÔNG có bảng `billing_credits`); edge #4 + test #12 cập nhật. Schema đã dùng `subscription_invoices`/`billing_transactions`/`billing_allocations`/`billing_overrides` (canonical). |

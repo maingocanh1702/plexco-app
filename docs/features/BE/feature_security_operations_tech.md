@@ -1,7 +1,7 @@
 # Feature: Security, Reliability & Operations — Engineering/Ops Spec
 
 > **Canonical phase:** Cross-cutting / P6
-> **Version:** 2.2a · 2026-07-19
+> **Version:** 2.3 · 2026-07-19
 > **Status:** Reviewed
 > **Implementation:** In progress — RLS/HR1 guard đã thực thi; phần còn lại chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_security_operations.md`
@@ -45,6 +45,12 @@ No new business tables — cross-cutting controls applied to all existing tables
 | Incident | Severity, ownership, containment, postmortem | Runbook templates |
 | Assurance | Threat model, scans, pen/load tests | CI/CD gates |
 
+### Migration & Rollback
+
+- **Doc này không own business DDL** ("No new business tables"). Cross-cutting DB controls đã land trên main (migrations `0000`–`0014`): roles/extensions (`0000_roles_extensions.sql`), RLS policies + grants (`0009_rls_policies_grants.sql`), functions/triggers (`0010_functions_triggers.sql`) — **reuse baseline, không recreate; rewrite/`DROP` migration đã apply = ❌ NEVER**.
+- Control object mới (role, policy, grant, guard function) → migration mới **monotonic theo next available number sau tail hiện tại của main** (tail hiện là `0014_players_waitlist.sql`), kèm fresh/upgrade/rollback-forward tests theo CI gate #2 (§4).
+- **Rollback:** revert theo trình tự disable-trước — tắt release gate/feature flag/canary (§6) → revert migration additive-only (drop policy/grant/function mới). Nới lỏng một RLS policy/grant đã siết là **security regression**, phải qua manual security approval (CI gate #7), không được coi là rollback thường.
+
 ### Edge Cases (Backend)
 
 | # | Category | Case | Xử lý |
@@ -80,6 +86,18 @@ No new business tables — cross-cutting controls applied to all existing tables
 - Production runtime: NO superuser/BYPASSRLS/migration credentials.
 - Logs: request/job/tenant opaque IDs only — no secret, OTP, bank, phone, email, message body.
 - Alerts: actionable, deduplicated, linked to runbooks.
+
+### Request/Response Examples
+
+N/A — doc này không own HTTP endpoint/error-code table nào (cross-cutting ops spec; §3 chỉ có SLO + operational requirements). Envelope DD-60 (`../../standards/api-reference-convention.md`) và request/response examples per-endpoint pin ở từng feature BE spec. Yêu cầu cross-cutting duy nhất ở đây: mọi error/log body không chứa secret/OTP/bank/phone/email/message body (§3 Operational Requirements).
+
+### Idempotency
+
+| Endpoint | Idempotent? | Key |
+|----------|-------------|-----|
+| — (doc không own endpoint) | — | Per-endpoint key pin ở từng feature spec |
+| Webhook replay (cross-cutting requirement) | ✅ bắt buộc | Same event → idempotent (§5 Security test #10); key per-provider ở `feature_payment_reconcile_tech.md` §5 |
+| Migration job | Forward-only, controlled job (§6) — never rollback irreversible | Per-migration; fresh/upgrade/rollback-forward test ở CI gate #2 (§4) |
 
 ---
 
@@ -127,6 +145,25 @@ No new business tables — cross-cutting controls applied to all existing tables
 ```
 
 Required runbooks: cross-tenant leak, public PII, wrong allocation, identity compromise, token leak, DB restore, provider outage, queue backlog, admin session compromise, marketplace abuse.
+
+### Caching Strategy
+
+| Data | Cache? | Lý do |
+|------|--------|-------|
+| Auth/identity/session state | ❌ | Fail-closed cross-cutting — live checks; chi tiết per-surface ở từng feature spec |
+| Cached/public response bất kỳ | Chỉ khi không chứa private data | §5 Security tests #13 (cache privacy) + #14 (cursor opaque/signed) là invariant release-gate |
+| Mặc định khi chưa pin | ❌ fail-closed | — |
+
+### Security Checklist (template v2.33 — doc này là authority cross-cutting, trả lời trực tiếp)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §2 Control Areas (Access: least privilege/MFA/env separation); §3 Operational Requirements (runtime không superuser/BYPASSRLS/migration credential); §5 test #19 (least-privilege grant) |
+| Injection/validation | §5 tests #2 (search_path) / #3 (SQL injection) / #15 (SSRF); §4 CI gates #3–#4 (SAST/DAST) |
+| Secret & log redaction | §2 Secrets area + §4 Secret Rotation (per-Page token vs một Meta App Secret platform); §3: logs = opaque IDs only; §5 tests #17–#18 (log/analytics PII audit) |
+| Webhook signature + replay | §5 tests #9–#10 (forgery/replay) là release gate cross-cutting; per-provider contract pin ở feature specs (SePay/ApiPay: `feature_payment_reconcile_tech.md` §3) |
+| Idempotency | Bảng Idempotency §3; §5 tests #10–#11 |
+| Data retention/xoá | **Gap ghi nhận rõ:** doc này là retention authority mà các BE spec khác trỏ về, nhưng mới pin nguyên tắc (§2 Data area: PII consent/encryption/retention/deletion; §6 pre-launch: ToS/Privacy/retention + data-subject request process). Per-table retention/erasure matrix ⬜ chưa pin — chốt bằng decision/build slice riêng trước launch |
 
 ---
 
@@ -193,6 +230,7 @@ Required runbooks: cross-tenant leak, public PII, wrong allocation, identity com
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.3 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (không own DDL; controls baseline `0000`/`0009`/`0010` reuse, revert qua gate/flag + security approval), §3 Request/Response Examples (N/A có lý do) + Idempotency (cross-cutting), §4 Caching Strategy + Security Checklist (retention gap ghi rõ ⬜). Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.2a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
 | 2026-07-17 | v2.2 | **DD-65 secret ownership:** separate Page-token endpoint rotation from single Meta App Secret platform rollover; add isolation/blast-radius tests and forbid combined inventory rows. |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |

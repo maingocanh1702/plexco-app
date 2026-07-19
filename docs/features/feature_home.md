@@ -2,7 +2,7 @@
 
 > **Canonical phase:** S9 (cùng PWA shell; sau P4.6 player_view vì data từ đó) — DD-79 ✅  
 > **Track:** 🏠 Home Hub  
-> **Version:** 0.2 · 2026-07-19  
+> **Version:** 0.5a · 2026-07-19  
 > **Status:** ✅ **Reviewed contract theo DD-79 (✅ owner 2026-07-19, `../standards/decisions.md` v1.76)** — composition-only; implementation pending S9. Fork từ Sporta `feature_home.md` v2.5 + học từ design `app-design-opus-4.6.pen`.  
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web auth · P4.6 player_view (data backbone) · P4.3 marketplace (suggested) · 🔔 notifications §A  
@@ -38,7 +38,7 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 | HOME-UC-5 | Host | Tap CTA trên hero (kèo mình host) | → host board của session (mark-paid, roster) |
 | HOME-UC-6 | User | Tap "Tất cả →" | → danh sách session person-self đầy đủ |
 | HOME-UC-7 | User | Tap kèo gợi ý | → public session detail (marketplace) → join flow CCJ |
-| HOME-UC-8 | User | Tap 🔔 | → notification inbox (§A read model khả dụng phase-1) |
+| HOME-UC-8 | User | Tap 🔔 / 💬 trên header | 🔔 → notification inbox (§A) · 💬 → chat in-app (DD-38, club + DM) |
 | HOME-UC-9 | User mới | Chưa thuộc CLB nào | Onboarding checklist (từ `onboarding_steps`) + suggested sessions |
 | HOME-UC-10 | User | Pull-to-refresh | Refresh aggregate; SSE cập nhật realtime giữa các lần |
 
@@ -58,6 +58,7 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 | 10 | Security | Token/session hết hạn | Refresh; fail → về login, không giữ data cá nhân trên màn |
 | 11 | Data | CLB bị suspended (billing) | Kèo CLB đó vẫn hiện person-self; CTA theo rule billing (không mở đường mới) |
 | 12 | UX | Danh sách CLB dài (>5) | Chips/list vẫn tổng hợp; không bắt user chọn tenant trước khi thấy Home |
+| 13 | Cross-Feature | Tab Feed khi DD-76 chưa clear | Registry gate = OFF — slot không render; KHÔNG tab trống/coming-soon; bật = đổi config, không sửa layout code |
 
 ---
 
@@ -69,7 +70,7 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 
 ```
 ┌──────────────────────────────────────┐
-│ [Avatar] Xin chào 👋 {tên}      🔔● │  header
+│ [Avatar] Xin chào 👋 {tên}   💬 🔔● │  header
 │ ┌──────────────┐  ┌───────────────┐ │
 │ │ 💸 Còn nợ    │  │ 📅 Kèo tuần   │ │  chips (adaptive, xuyên CLB)
 │ │ 85.000₫ ·2CLB│  │ này: 3        │ │
@@ -87,6 +88,21 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 │ · 🏸 Cầu lông Q7 · T5 · 120k · 5/8 │  public whitelist only
 └──────────────────────────────────────┘
 ```
+
+**Bottom Nav (DD-79 amendment 19/07 — shell contract, config-driven):**
+
+| Slot | Tab | Route/đích | Phase-1 |
+|------|-----|-----------|---------|
+| 1 | 🏠 Home | Landing (màn này) — chứa hero + upcoming; **"Kèo của tôi" đầy đủ = sub-screen** mở từ "Tất cả →" và chip Còn nợ (person-self, player_view) | ✅ |
+| 2 | 📰 Feed | Activity feed (DD-76) | ⛔ **config-OFF tới DD-76 clear** — slot reserved, không tab chết |
+| 3 | **🔍 Khám phá** | Tìm & join kèo public mọi CLB — `/discover` marketplace, **center emphasized/FAB** | ✅ |
+| 4 | 🏸 **Club** | CLB của tôi — **cả 2 nhóm**: (a) CLB user tạo/sở hữu (role owner/admin) và (b) CLB user tham gia (member/guest) — cùng từ person-self memberships (`/me/clubs`, player_view), phân nhóm + role badge. Club context theo quyền: owner/admin → host board (mark-paid, roster, settings); member → member view (sessions CLB, chat club). CTA **+ Tạo CLB** → onboarding wizard sẵn có | ✅ |
+| 5 | ⚙️ Setting | Profile/user_settings | ✅ |
+
+**Header (mọi màn chính):** `[Avatar] Xin chào {tên} … 💬 🔔●` — **Chat entry ở header** (inapp_chat DD-38, badge unread), KHÔNG chiếm tab; 🔔 notification inbox §A.
+
+- **Registry config-driven:** 1 ordered list duy nhất trong `apps/web` — tab = `{key, route, icon, label t(vi,en), gate}`; đổi tab = sửa registry một chỗ. **User tự customize tab: KHÔNG phase-1** (defer).
+- Phase-1 render **4 tab** (Feed off): Home · [Khám phá FAB] · Club · Setting — FAB lệch vị trí 2/4, designer giải cân bằng ở taste pass; Feed bật → 5 tab, FAB về đúng giữa. Gộp Kèo của tôi vào Home = mô hình Sporta (đánh đổi thêm-1-chạm owner đã chấp nhận 19/07).
 
 | State | Nội dung |
 |-------|----------|
@@ -138,6 +154,8 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 - [ ] SSE cập nhật chips/rows khi settle/cancel; offline banner + chặn money action
 - [ ] Mọi string `t(vi,en)`; touch target ≥ 44px (PWA — needs-matrix §4)
 - [ ] Không request nào nhận person/tenant ID từ client cho dữ liệu cá nhân
+- [ ] Bottom nav render từ registry duy nhất; Feed gate OFF không để lại khoảng trống/tab chết; thêm/bớt tab không sửa component nav
+- [ ] Analytics `nav_tab_tapped` (`tab_key`) cho mọi tab
 
 ---
 
@@ -155,5 +173,10 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.5a | Làm rõ Club tab (owner): gồm cả CLB user **tạo/sở hữu** lẫn CLB **tham gia** (cùng contract memberships person-self, phân nhóm + role badge; context theo quyền) + CTA Tạo CLB → onboarding. Không đổi contract. |
+| 2026-07-19 | v0.5 | **Nav final v3 (owner):** 5 slot Home · Feed · [Khám phá FAB] · **Club** (mới — `/me/clubs` person-self → club context) · Setting; **Chat lên header 💬 cạnh 🔔** (không chiếm tab). Feed OFF tới DD-76 → phase-1 render 4. |
+| 2026-07-19 | v0.4 | **DD-79 amendment final (owner):** gộp Kèo của tôi vào Home (sub-screen "Tất cả →"/chip Còn nợ) — nav 4 slot, phase-1 render 3 tab (1-FAB-1). |
+| 2026-07-19 | v0.3a | Label fix (owner): tab 2 = **Kèo của tôi** · tab 3 = **Khám phá** — làm rõ 2 vai trò (của tôi vs tìm & join); cấu trúc không đổi. |
+| 2026-07-19 | v0.3 | **DD-79 amendment (owner) — bottom nav:** 5 slot Home · Session · [Discover center/FAB] · Feed · Setting; registry config-driven (user-customize defer); Feed config-OFF tới DD-76 clear, phase-1 render 4 tab. Thêm edge #13 + 2 AC nav. |
 | 2026-07-19 | v0.2 | **DD-79 ✅ chốt (owner) → promote Reviewed contract.** HOME-OQ-1..3 resolve theo defaults: chips phase-1 cố định [Còn nợ, Kèo tuần] (defer Chưa thu + streak), landing S9. Thêm BE companion `BE/feature_home_tech.md` v0.1. |
 | 2026-07-19 | v0.1 | 🟡 Khởi tạo Draft **proposal** — fork từ Sporta `feature_home.md` v2.5 (chips adaptive, hero next-session, onboarding checklist, 4 states, sort/dedupe logic) + adapt sang canonical Plexco: person-self contract (player_view), public whitelist (HR2), i18n (HR5), SSE, `onboarding_steps` sẵn có; hero theo theme-direction §7. Không bảng/API mới ngoài aggregate DTO thuộc player_view surface. Chờ DD chốt scope/phase; BE companion viết cùng build slice sau DD. |

@@ -1,7 +1,7 @@
 # Feature: Shared Host & Player Facebook Messenger Experience — Backend Tech Spec
 
 > **Canonical phase:** P2.5
-> **Version:** 0.6a · 2026-07-19
+> **Version:** 0.7 · 2026-07-19
 > **Status:** Reviewed contract · Implementation pending
 > **Implementation:** Not started — bot mới có queue shell · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_player_messenger.md`
@@ -55,6 +55,28 @@ Live schema hiện có chỉ biểu diễn one-tenant↔one-Page. Slice Messenge
 -- pending interaction/action storage: actor+Page-bound, TTL, target ref, version/snapshot,
 --   consumed/revoked state and idempotent command_id.
 ```
+
+### Migration & Rollback
+
+**Baseline đã live — reuse, không recreate:** `messenger_pages` đã tồn tại từ migration `0004_channels_connectors.sql` ở shape one-tenant↔one-Page (`tenant_id NOT NULL UNIQUE`, `page_id UNIQUE`, `page_token_enc`/`app_secret_enc` inline, status vocabulary `connecting|…|revoked`), RLS/grant tenant-private ở `0009_rls_policies_grants.sql`. DROP bảng baseline = ❌ NEVER.
+
+**Genuinely new theo DD-65..68 (chưa land trên main) → migration mới monotonic:**
+
+1. Hybrid registry: mở `messenger_pages` sang scope `central|tenant` (tenant_id nullable + CHECK + partial UNIQUE như comment DDL trên) — thay đổi shape live hiện tại.
+2. `messenger_page_secrets`: chuyển `page_token_enc` ra narrow protected store; per-Page `app_secret_enc` bị loại vì Meta App Secret là deployment/platform secret, không nằm trong Page/tenant row.
+3. Endpoint-scoped channel identity 3-phần — live `channel_identities` (`0001`) vẫn UNIQUE `(platform, platform_user_lookup_hash)` 2-phần.
+4. Endpoint reachability theo `channel_identity_id` — live `channel_reachability` (`0002`) vẫn PK `(person_id, tenant_id, platform)` (đã có `window_expires_at` cho 24h nhưng chưa endpoint-bound).
+5. Durable interaction/action store (wizard + opaque action).
+
+Exact names/DDL chốt ở migration design-probe (đã pin ở đầu §2); chọn **next available monotonic number** sau khi sync mọi prerequisite đã merge; không sửa migration lịch sử.
+
+**Rollback:**
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Disable Messenger webhook receiver/adapter + tắt route Messenger ở dispatcher trước khi revert schema | ✅ |
+| 2 | Migration revert mới: drop bảng/cột/constraint additive vừa thêm (registry columns, `messenger_page_secrets`, action store, endpoint-identity objects) | ✅ Additive-only revert |
+| 3 | DROP `messenger_pages` baseline (`0004`) hoặc identity/reachability rows đã tạo | ❌ NEVER — dữ liệu binding/identity thật |
 
 ### Edge Cases (Backend)
 
@@ -114,6 +136,27 @@ Live schema hiện có chỉ biểu diễn one-tenant↔one-Page. Slice Messenge
 |----------|-------|
 | `POST /webhook/messenger` | Edge per-page/IP burst cap + body-size cap (deployment-infra §6); verify trước xử |
 
+### Request/Response Examples
+
+> Doc này không có app-facing API route → envelope DD-60 (`../../standards/api-reference-convention.md` §1.1) **không áp dụng** ở đây. Webhook trả theo **Meta provider contract**; DM response theo bảng Join/Error Responses đã pin ở trên.
+
+- **`GET /webhook/messenger`** (verification handshake): echo challenge theo Meta contract khi `verify_token` đúng; sai → reject, không echo.
+- **`POST /webhook/messenger`** signature hợp lệ: parse bounded event → resolver/AuthZ/shared service → ACK theo provider contract. Replay cùng `mid` → dedup idempotent, vẫn ACK, không mutation mới (edge #3).
+- **Signature sai** (`X-Hub-Signature-256` không khớp): reject fail-closed, không xử lý event (edge #2); HTTP mapping chi tiết chốt ở build slice cùng receiver.
+- **DM flow minh hoạ:** quick-reply join stale/consumed → "Danh sách đã thay đổi, gõ menu để xem lại"; join thành công → "✅ Đã tham gia! [venue]" (bảng đã pin).
+
+### Idempotency
+
+> Tổng hợp cơ chế đã pin trong doc — không thêm cơ chế mới.
+
+| Interface | Idempotent? | Cơ chế |
+|-----------|-------------|--------|
+| Webhook event ingest | ✅ | Provider dedup theo `mid`/event — replay không mutation mới (edge #3, test 5) |
+| Opaque action / quick-reply consume | ✅ single-use | Token bound actor+Page+TTL+target+version/snapshot; consume under lock; stale/replayed → reject/re-render (edge #10, test 9) |
+| Host create-session confirm | ✅ | Đúng một `CreateSession` theo command id; duplicate webhook/confirm trả prior outcome (§4, test 17) |
+| Player join | ✅ | Shared domain service idempotent theo command id; already active/waitlisted render current state (§4 Join → sync) |
+| Outbound delivery | ✅ | One logical notification key dedup mọi candidate route (edge #16, test 19; ledger ở `feature_sync_engine_tech.md`) |
+
 ---
 
 ## 4. Chi tiết triển khai
@@ -158,6 +201,26 @@ Join qua quick-reply/persistent menu → domain join service chung → canonical
 ### Account link (DD-33 ✅ phase-1; App Review pending)
 
 FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSID** là hai subject khác nhau → gắn về cùng `person` qua verified account identity hoặc transactional one-time `link_code`, không auto-link chéo. Nếu App Review chậm, dùng `/link` fallback (DD-32). Không đụng core `Person`/`Membership`.
+
+### Caching Strategy
+
+| Data | Cache? | TTL | Invalidation |
+|------|--------|-----|-------------|
+| Page token / App Secret (plaintext) | ❌ NEVER | — | Page token chỉ ở narrow endpoint secret store, App Secret chỉ ở deployment secret manager; decrypt hẹp per-call |
+| Reachability / 24h window | ❌ | — | Đọc live theo exact candidate Page endpoint (§4 24h Window); fail-closed — ngoài window skip, không đoán từ cache |
+| Action token / wizard state | ❌ | — | Durable store, consume/invalidate under lock; single pre-dispatch interceptor (edge #15) |
+| Page registry (`messenger_pages` resolve) | ❌ (fail-closed) | — | Narrow resolver đọc DB; nếu build slice cần cache thì chốt riêng kèm invalidation theo status |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | Edge #1/#14: Page chỉ resolve endpoint/default, target tenant từ protected action/context resolver; exact AuthZ capability + re-check trong final command transaction; central không tự chế tenant (test 1) |
+| Injection/validation | §4: parse bounded event; payload là opaque server-side token — raw tenant/session/member IDs không mang authority; consume validate actor/Page/TTL/target/snapshot |
+| Secret & log redaction | Edge #7, test 11: Page token chỉ ở endpoint secret store, App Secret chỉ ở deployment secret manager, không copy vào Page/tenant row; log redaction |
+| Webhook signature + replay | Edge #2/#3: verify `X-Hub-Signature-256` (app secret, timing-safe) trước xử lý; provider dedup `mid` idempotent |
+| Idempotency | Bảng Idempotency §3 |
+| Data retention/xoá | Chưa pin per-table ở doc này — theo `feature_security_operations_tech.md`; account merge invalidate PSID context cũ (edge #11) |
 
 ---
 
@@ -226,6 +289,7 @@ FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSI
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.7 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `messenger_pages` `0004` reuse; new = hybrid registry/`messenger_page_secrets`/endpoint identity·reachability/action store), §3 Request/Response Examples + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v0.6a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v0.6 | **DD-49 timing mirror:** refunded rejoin active→append; full→waitlisted/defer until promotion. Messenger adapter remains thin and creates no financial state. |
 | 2026-07-19 | v0.5 | **DD-45×DD-49 mirror consistency:** final-slot no-charge test is explicitly first-entry; existing-left rejoin remains delegated to shared correction core and never creates a duplicate charge in the adapter. |

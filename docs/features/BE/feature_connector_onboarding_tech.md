@@ -1,7 +1,7 @@
 # Feature: Connector Onboarding (Zalo · SePay · ApiPay) — Backend Tech Spec
 
 > **Canonical phase:** P3 (payment ingest) · P4 (onboarding) · P4.7 (Zalo) — *cross-cutting*
-> **Version:** 0.6a · 2026-07-19
+> **Version:** 0.7 · 2026-07-19
 > **Status:** Draft · SePay inbound auth reconciled; ApiPay enterprise-primary internal contract pinned, provider gate open
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_connector_onboarding.md`
@@ -161,6 +161,27 @@ ALTER TABLE zalo_bots DROP COLUMN secret;
 
 > **Vocabulary status** (product §3.1): `connecting → registered`(Tier 1) `→ active`(Tier 2); `drift`/`error`/`revoked`. `provider_connections.status` chỉ do connector lifecycle service ghi: direct provider events (connect/retry/revoke/OAuth refresh) set provider-level state; sau mỗi child update, service recompute rollup từ `bank_accounts.webhook_status` theo product §3.1.1. Không update raw table từ webhook/job/UI ngoài service này.
 
+### Migration & Rollback
+
+**Baseline đã live — reuse, không recreate:** `provider_connections`, `oauth_transactions`, `zalo_bots` (+`zalo_reply_contexts`) đã tồn tại từ `0004_channels_connectors.sql`; các cột connector trên `bank_accounts` (`provider_connection_id`, `provider_webhook_id`, `provider_bank_ref`, `auto_registered`, `webhook_status`, `last_register_at`) đã có sẵn từ `0003_payments_ledger.sql` (FK wire ở `0004`); RLS/grant ở `0009` và SECURITY DEFINER cho `oauth_transactions` ở `0010`. Phần DDL `(NEW)`/`(ALTER)` ở trên với các object này mô tả contract, không phải lệnh chạy lại; DROP bảng baseline = ❌ NEVER.
+
+**Genuinely new (chưa land trên main) → migration mới monotonic:**
+
+1. `provider_connections`: mở CHECK `auth_mode` từ live `('oauth2','api_key')` sang `('oauth2','api_token','api_key','enterprise')` + cột `provider_api_token_enc` + full credential-shape CHECK theo `(provider, auth_mode)` (§2).
+2. `bank_accounts`: cột `webhook_auth_mode` + CHECK `bank_accounts_auto_auth_mode_chk` (live chưa có) + backfill `webhook_status` cho TK webhook thủ công.
+3. `zalo_bots`: `webhook_secret_enc` + ready CHECK + DROP legacy `secret` theo trình tự KMS backfill-or-disable đã pin ở TARGET block trên.
+
+Chọn **next available monotonic number** sau khi sync mọi prerequisite đã merge; không sửa migration lịch sử (`0003`/`0004`).
+
+**Rollback:**
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Disable endpoints connect/provision/register + jobs §4.4 và tắt receiver enablement mới trước khi revert schema | ✅ |
+| 2 | Migration revert mới: drop cột/CHECK vừa thêm, restore CHECK `auth_mode` cũ | ✅ Additive-only revert (row đã dùng mode mới phải revoke/reconnect trước) |
+| 3 | Khôi phục plaintext `zalo_bots.secret` sau khi đã DROP | ❌ KHÔNG THỂ — plaintext đã xóa theo BL-SEC-1; connector phải owner reconnect |
+| 4 | DROP `provider_connections`/`oauth_transactions`/`zalo_bots`/`bank_accounts` baseline | ❌ NEVER — chứa credential/lịch sử thật |
+
 ### Indexes
 
 - `provider_connections (status)` và `(token_expires_at) WHERE auth_mode='oauth2'` — cho job refresh token.
@@ -276,6 +297,27 @@ ALTER TABLE zalo_bots DROP COLUMN secret;
 | 401 | `INVALID_WEBHOOK_SECRET` | — (không trả nội dung) | verify webhook fail |
 | 429 | `RATE_LIMITED` | "Thao tác quá nhanh, thử lại sau" | vượt BL-SEC-5 |
 
+### Request/Response Examples
+
+> Minh hoạ theo contract đã pin; envelope chuẩn DD-60 (`../../standards/api-reference-convention.md` §1.1) áp cho **app-facing routes** (`/api/onboarding/*`). Payload request/response của `apipay/provision` đã pin nguyên khối ở trên — không lặp lại; field name DTO chưa pin sẽ chốt ở build slice.
+
+**GET `/api/onboarding/connectors/status`** — `200` (field name minh hoạ theo vocabulary §2):
+
+```json
+{ "data": { "connectors": [ { "provider": "apipay", "status": "active" }, { "provider": "sepay", "status": "connecting" } ] }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+**OAuth callback state sai/hết hạn** — `400`:
+
+```json
+{ "data": null, "error": { "code": "OAUTH_STATE_INVALID", "message": "Phiên kết nối hết hạn, thử lại", "statusCode": 400 }, "meta": { "requestId": "req_…" } }
+```
+
+**Webhook receiver** (`POST /webhook/{provider}/:token`) — trả theo **provider contract**, KHÔNG áp envelope DD-60:
+
+- `401 INVALID_WEBHOOK_SECRET` — verify fail (timing-safe, trước parse/persist); không trả nội dung (bảng Error Codes).
+- Replay event: flip Tier 2 idempotent; duplicate ingest dedup `(tenant, provider, external_id)` — HTTP mapping duplicate `200` theo ingest contract `feature_payment_reconcile_tech.md` §3.
+
 ### Idempotency
 
 | Endpoint | Idempotent? | Key |
@@ -380,6 +422,17 @@ function verifySepayHmac(req, secret: string): boolean {
 | Access/refresh token, secret | ❌ | — | luôn đọc enc từ DB |
 | `connectors/status` | ❌ | — | đọc trực tiếp (số connector nhỏ) |
 
+### 4.8 Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §3: mọi endpoint onboarding = TenantOwner (cookie+CSRF); callback OAuth = state-bound PKCE qua SECURITY DEFINER `consume_oauth_transaction` (§4.3); tenant từ `:token` opaque, không bao giờ từ payload (edge #1, BL-PAY-6) |
+| Injection/validation | §4.5: verify trên raw body trước parse/persist; `apipay/provision` schema `additionalProperties=false`, reject field credential/secret lạ (edge #2, tests 4–5, 28) |
+| Secret & log redaction | BL-SEC-1: mọi credential KMS at-rest (`*_enc`), log chỉ `last_error_code` (edge #5, tests 21/33); platform enterprise credential chỉ ở KMS, không vào tenant row/response/log |
+| Webhook signature + replay | §3 receiver + §4.5: HMAC-SHA256 raw-body timing-safe; SePay freshness ±300s + `sha256=` + no-downgrade; ApiPay header riêng; Zalo KMS ciphertext + state matrix (edge #2/#3/#17/#18, tests 25–26/36) |
+| Idempotency | Bảng Idempotency §3 (per-endpoint keys + CAS flip Tier 2) |
+| Data retention/xoá | Revoke connector giữ lịch sử `bank_transactions` (edge #14); retention/erasure per-table chưa pin ở doc này — theo `feature_security_operations_tech.md` |
+
 ---
 
 ## 5. Testing Plan
@@ -478,6 +531,7 @@ Tỉ lệ connect không-chạm-webhook; `time_to_verify_ms` (registered→activ
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.7 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `0003`/`0004` reuse; new = auth_mode mở rộng/`webhook_auth_mode`/`webhook_secret_enc`), §3 Request/Response Examples (DD-60 cho app routes; webhook theo provider contract), §4.8 Security Checklist. Idempotency (§3) và Caching (§4.7) đã có từ trước — giữ nguyên. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v0.6a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.6 | **Zalo secret/lifecycle closure:** mark lifecycle columns live; specify KMS backfill-or-disable/drop/no-dual-read; add one state+ciphertext decision table, CAS-safe early-event/finalization transitions and unit/E2E regressions. |
 | 2026-07-17 | v0.5 | **ApiPay enterprise-primary closure:** add full `/api/onboarding/apipay/provision` request/response, tenant-bound opaque bank selection, platform-secret boundary, durable/provider idempotency, typed errors and primary-vs-BYO regression tests. |

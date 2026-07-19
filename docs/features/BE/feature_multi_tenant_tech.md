@@ -1,7 +1,7 @@
 # Feature: Multi-tenant Foundation — Backend Tech Spec
 
 > **Canonical phase:** P0–P1
-> **Version:** 1.5a · 2026-07-19
+> **Version:** 1.6 · 2026-07-19
 > **Status:** Implementation contract reconciled to TDD v3.1 / decisions v1.45; P0–P1 live schema/migrations/tests remain the reality baseline, DD-15/DD-65..68 migration pending
 > **Implementation:** Implemented (foundation) — RLS + tenantRepo + migrations 0000–0013 trên `main` · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_multi_tenant.md`
@@ -81,6 +81,16 @@ CREATE TABLE sessions (
 
 `public_sessions` stores only: session ID, internal routing tenant ID, sport key, starts/ends, area, skill level, price, slots open, club/host display name and join policy. API serializers never expose routing `tenant_id`. No venue, roster, bank, debt, contact or raw event payload.
 
+### Migration & Rollback
+
+> Baseline P0–P1 (`tenants`/`memberships`/`sessions`/`players` + RLS/grants) **đã LIVE** trên canonical qua `0002_tenants_core.sql` (schema) + `0009_rls_policies_grants.sql` (RLS/grants) — doc này mô tả live baseline: **reuse, không recreate**. Delta còn pending (DD-15/DD-65..68 identity/reachability) đi bằng **migration mới số monotonic kế tiếp còn trống**, không sửa/chạy lại migration lịch sử (quy trình forward-fix ở §6).
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Rollback một delta migration mới: disable route/worker phụ thuộc trước, rồi revert phần additive (constraint/policy/function mới) | ✅ Additive-only revert; forward-fix ưu tiên (§6) |
+| 2 | Sửa/chạy lại `0002`/`0009` đã apply | ❌ Không có hiệu lực trên môi trường đã migrate — luôn dùng migration mới |
+| 3 | DROP bảng baseline (`tenants`/`memberships`/`sessions`/`players`/…) | ❌ NEVER — baseline đang mang dữ liệu thật; destructive rollback đòi backup/restore + PITR (§6) |
+
 ---
 
 ## 3. RLS and repository contract
@@ -147,6 +157,20 @@ Person ID comes from verified session/magic-link, not request params as authorit
 
 Discovery role/API can read `public_sessions` only. It cannot join tenant tables at request time. Rate-limit, pagination and stable public error shapes are mandatory.
 
+### Request/Response Examples
+
+> Doc này là foundation spec (RLS/`tenantRepo`/worker) — **không pin HTTP endpoint riêng**; API surface nằm ở các feature spec tiêu thụ. Mọi endpoint đọc/ghi tenant data dùng envelope chuẩn DD-60 (`../../standards/api-reference-convention.md`): thành công `{ "data": {...}, "error": null, "meta": { "requestId": "req_…" } }`; lỗi `{ "data": null, "error": { "code": "X", "message": "…", "statusCode": N }, "meta": { "requestId": "req_…" } }`. Ví dụ cụ thể xem spec từng feature (vd `feature_payment_reconcile_tech.md` §6).
+
+### Idempotency
+
+> Chỉ tổng hợp cơ chế đã pin trong doc này; key HTTP per-endpoint thuộc spec từng feature.
+
+| Đường | Idempotent? | Cơ chế |
+|-------|-------------|--------|
+| Worker claim (§4) | ✅ | `FOR UPDATE SKIP LOCKED`/pg-boss semantics — mỗi job claim đúng một lần dưới concurrency (test §7) |
+| Migration apply (§6) | ✅ | Versioned migrations + advisory lock — không chạy DDL đồng thời/lặp |
+| HTTP mutation của feature tiêu thụ | ⬜ chưa pin ở doc này | Chốt ở spec/build slice từng feature (`processed_commands`/command id) |
+
 ---
 
 ## 6. Migrations and rollout
@@ -199,6 +223,25 @@ Fail if any tenant table lacks `tenant_id`, ENABLE/FORCE RLS, policy USING/WITH 
 - Alert on privileged function anomaly and runtime connection using wrong DB role.
 - SQL connection startup assertion verifies current user and `rolbypassrls=false`.
 
+### Caching Strategy
+
+| Data | Cache? | TTL | Invalidation |
+|------|--------|-----|-------------|
+| Tenant context / RLS decision | ❌ | — | Fail-closed, live per-request: `SET LOCAL app.tenant_id` trong transaction (§3); không cache decision xuyên request |
+| Authz/role/grant checks | ❌ | — | Live per-request tại middleware/service (xem `feature_tenant_routing_authz_tech.md`) |
+| `public_sessions` read model | Projection (không phải cache authz) | — | Cập nhật qua projector; serializer whitelist §2 |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §3 RLS ENABLE+FORCE + `withTenant`; §4 worker narrow functions; §5 protected/person-self/public paths |
+| Injection/validation | §3 `assertUuid(tenantId)`; §4 SECURITY DEFINER fixed `search_path` + input validation |
+| Secret & log redaction | §8: logs có tenant/job ID nhưng không secrets/bank content/PII |
+| Webhook signature + replay | N/A — doc này không định nghĩa webhook ingress (xem payment/connector specs) |
+| Idempotency | §4 worker claim + bảng Idempotency §5 |
+| Data retention/xoá | Chưa pin per-table ở doc này — theo `feature_security_operations_tech.md` |
+
 ---
 
 ## 9. Definition of Done
@@ -218,6 +261,7 @@ Fail if any tenant table lacks `tenant_id`, ENABLE/FORCE RLS, policy USING/WITH 
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-19 | v1.6 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `0002`/`0009` LIVE — reuse, không recreate; DROP baseline = ❌ NEVER), §5 Request/Response Examples (DD-60 pointer — doc không pin endpoint riêng) + Idempotency, §8 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v1.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Implemented (foundation)). Không đổi contract. |
 | 2026-07-17 | v1.5 | **Live-schema closure:** replace the abridged `sessions` block with the exact `0002`/Drizzle contract, including nullable `area`, venue address, defaults, optimistic version and audit timestamps. |
 | 2026-07-17 | v1.4 | **DD-67 v1.45 generalization:** endpoint-scope identity/reachability for Messenger + Zalo, three-part uniqueness and `channel_identity_id` reachability; target tenant remains separately authorized. Live baseline unchanged; migration pending. |

@@ -1,7 +1,7 @@
 # Feature: Tenant Routing & Admin Authorization — Backend Tech Spec
 
 > **Canonical phase:** P2
-> **Version:** 2.5a · 2026-07-19
+> **Version:** 2.6 · 2026-07-19
 > **Status:** Reviewed · reconciled to TDD v3.1 / decisions v1.45
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_tenant_routing_authz.md`
@@ -106,6 +106,16 @@ CREATE INDEX idx_link_codes_hash ON tenant_link_codes(code_lookup_hash);
 CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consumed_at IS NULL AND revoked_at IS NULL;
 ```
 
+### Migration & Rollback
+
+> Baseline routing **đã LIVE** trên canonical: `telegram_links`/`tenant_admins`/`tenant_link_codes`/`player_chat_context`/`routing_audit` (`0002_tenants_core.sql`), `messenger_pages` (`0004_channels_connectors.sql`), RLS/grants (`0009`) — **reuse, không recreate**; DDL trên là reference baseline, không phải target. Target delta (DD-65..68: Zalo/Messenger endpoint-scoped identity/reachability, hybrid Page registry) đi bằng **migration mới số monotonic kế tiếp còn trống**; không sửa historical migration (đã pin ở Target delta).
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Rollback delta migration mới: disable resolver/middleware path mới trước, rồi revert phần additive (bảng/constraint/policy mới của DD-65..68) | ✅ Additive-only revert |
+| 2 | Sửa/chạy lại `0002`/`0004`/`0009` đã apply | ❌ Không có hiệu lực trên môi trường đã migrate — luôn dùng migration mới |
+| 3 | DROP bảng baseline routing ở trên | ❌ NEVER — thuộc migration đã apply, có thể mang binding/admin/audit thật |
+
 ### Edge Cases (Backend)
 
 | # | Category | Case | Xử lý |
@@ -167,6 +177,39 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 | Admin commands | 30/min | Per actor/tenant |
 | Callback processing | 60/min | Per chat_id |
 
+### Request/Response Examples
+
+> Minh hoạ; doc này pin middleware/resolution contract, không pin REST path/DTO — field name chốt ở build slice. Envelope chuẩn DD-60 (`../../standards/api-reference-convention.md`). Error code lấy từ bảng Internal Error Codes ở trên.
+
+**Consume link code (tenant-admin onboarding)** — thành công:
+
+```json
+{ "data": { "tenantId": "…", "role": "admin", "linked": true }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+- Link code sai/hết hạn/đã dùng:
+
+```json
+{ "data": null, "error": { "code": "LINK_CODE_INVALID", "message": "Mã liên kết không hợp lệ hoặc hết hạn", "statusCode": 400 }, "meta": { "requestId": "req_…" } }
+```
+
+**Group chat chưa bind club** (mọi admin command trong chat chưa liên kết):
+
+```json
+{ "data": null, "error": { "code": "TENANT_NOT_LINKED", "message": "Chat chưa liên kết club", "statusCode": 403 }, "meta": { "requestId": "req_…" } }
+```
+
+### Idempotency
+
+> Tổng hợp từ cơ chế đã pin (§2 Edge Cases #2/#5/#9, §5 tests) — không thêm cơ chế mới.
+
+| Đường | Idempotent? | Key/Cơ chế |
+|-------|-------------|------------|
+| Channel event (Zalo/Messenger mid/event; legacy TG `update_id`) | ✅ | Idempotency key theo event id — replay trả previous result (edge #5, test #15) |
+| Link code consume | ✅ single-use | Single transaction + row lock; đã consume → replay trả `LINK_CODE_INVALID` (edge #2, test #12) |
+| Callback/action snapshot | ✅ fail-closed | Stale snapshot invalidate/re-pick; capability + target re-check tại consume (edge #9, test #9) |
+| Admin command HTTP key | ⬜ chưa pin — chốt ở build slice | — |
+
 ---
 
 ## 4. Chi tiết triển khai
@@ -204,6 +247,25 @@ Logical grant record (physical DDL must be pinned by the authz build slice after
 | Player CK ingest | ✅ |
 | Read-only queries | ✅ |
 | System safety paths | ✅ |
+
+### Caching Strategy
+
+| Data | Cache? | TTL | Invalidation |
+|------|--------|-----|-------------|
+| Tenant resolution (endpoint→tenant) | ❌ | — | Live per-request qua resolver; không resolve được → fail closed/re-pick (403) |
+| Capability/authz decision (DD-56 registry) | ❌ | — | Evaluate mỗi request + re-check trong mutation transaction (edge #15); expired/revoked grant deny |
+| Membership/context/action snapshot | ❌ | — | Stale snapshot fail-closed — invalidate/re-pick, re-check tại consume (edge #9) |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §1 routing ≠ authorization (2 lớp middleware); §4 action matrix + one registry DD-56; tenant/resource không bao giờ từ client body (edge #1/#4) |
+| Injection/validation | §1/§3: tenant không suy từ free text; opaque action/protected ref; raw/spoofed callback ID reject (edge #4, test #31) |
+| Secret & log redaction | §2 edge #7: bot secret/webhook path KMS-managed, logs redact; link code hash-only storage (§1) |
+| Webhook signature + replay | Channel event id idempotency (edge #5); provider webhook signature verification thuộc connector/payment specs — N/A ở doc này |
+| Idempotency | Bảng Idempotency §3 |
+| Data retention/xoá | `routing_audit`/link-code retention chưa pin ở doc này — theo `feature_security_operations_tech.md` |
 
 ---
 
@@ -281,6 +343,7 @@ Logical grant record (physical DDL must be pinned by the authz build slice after
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.6 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `0002`/`0004`/`0009` LIVE — reuse, không recreate; DROP baseline = ❌ NEVER; delta DD-65..68 = migration mới), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.5 | **decisions v1.45:** generalized provider-endpoint identity/reachability cho Messenger + Zalo; reachability keyed by `channel_identity_id`, target tenant authorize separately. |
 | 2026-07-17 | v2.4 | **Legacy/target closure:** Telegram DDL labeled reference-only; target delta points to endpoint-scoped Zalo/Messenger model; `tenant_link_codes` naming/lifecycle aligned and separated from identity `link_codes`. |

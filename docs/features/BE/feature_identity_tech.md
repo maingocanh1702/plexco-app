@@ -1,7 +1,7 @@
 # Feature: Identity Directory & Merge — Backend Tech Spec
 
 > **Canonical phase:** P3.5
-> **Version:** 1.10a · 2026-07-19
+> **Version:** 1.11 · 2026-07-19
 > **Status:** Identity implementation contract; DD-50 parent-first consume + DD-70(a) global-notification ownership aligned with current decisions v1.73. Endpoint-scoped schema/code pending identity/channel build slices
 > **Implementation:** Not started — bảng `link_codes`/`merge_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_identity.md`
@@ -150,6 +150,26 @@ CREATE TABLE merge_tombstones (
 
 Phone columns are dormant phase-1. Platform IDs and link-code lookups use keyed hashes; never store/log plaintext code, email or raw IDs.
 
+### Migration & Rollback
+
+**Live-schema truth (main, migrations `0000`–`0014`):** mọi bảng trong DDL trên **đã tồn tại** — `persons`/`channel_identities`/`link_codes`/`merge_audit`/`merge_tombstones` trong `0001_global_directory.sql`; `memberships`/`channel_reachability` trong `0002_tenants_core.sql`; registry `messenger_pages`/`zalo_bots` trong `0004_channels_connectors.sql`. **Reuse baseline, không recreate; `DROP` bảng baseline = ❌ NEVER** (có thể chứa identity/tenant data thật và ledger đang trỏ vào).
+
+**Delta còn thiếu so với live schema** (đúng như header v1.5–v1.7 ghi "runtime migration pending"):
+
+- `channel_identities` (live `0001`): chưa có endpoint FKs `messenger_page_id`/`zalo_bot_id`, `provider_scope_lookup_hash`, platform/FK CHECK và 2 partial unique indexes theo endpoint.
+- `link_codes` (live `0001`): `source_channel_identity_id` đang `NOT NULL`; chưa có `source_account_id`, `max_attempts`, `locked_until`, `revoked_at` và XOR CHECK.
+- `channel_reachability` (live `0002`): đang tenant-scoped `PRIMARY KEY (person_id, tenant_id, platform)`; shape global-protected key theo `channel_identity_id` ở DDL trên là migration-pending.
+
+**Migration mới:** một expand migration **monotonic theo next available number sau tail hiện tại của main** (tail hiện là `0014_players_waitlist.sql`), theo đúng trình tự §10 bước 1–2 (add nullable columns/registry → backfill có kiểm chứng → mới siết NOT NULL/CHECK/unique). Không sửa migration lịch sử. Lưu ý: bản nháp `0014_identity_channel_security.sql` chỉ tồn tại trong worktree chưa merge và **đụng số** với `0014_players_waitlist.sql` trên main — khi land phải đánh số lại theo tail của main.
+
+**Rollback:**
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Disable protected identity write paths (`/link` issue/consume, merge commit, claim) | ✅ |
+| 2 | Migration revert mới: DROP các column/CHECK/index **additive** vừa thêm (endpoint FKs, scope hash, link-code lifecycle fields) | ✅ Constraint/column-only; data backfill giữ nguyên semantics cũ |
+| 3 | DROP bảng baseline `0001`/`0002`/`0004` (`persons`…`zalo_bots`) | ❌ NEVER |
+
 ---
 
 ## 3. Identity resolution
@@ -258,6 +278,63 @@ Cross-tenant merge capability is isolated from normal HTTP role and audited per 
 
 P4.6 `/myclubs` consumes `resolvePersonSelf`; it is not part of P3.5 rollout.
 
+### Request/Response Examples
+
+> Surface chat (`/link`) trả lời dạng text trong kênh; mọi HTTP surface của protected interface dùng envelope DD-60 (`../../standards/api-reference-convention.md`). DTO minh hoạ theo contract đã pin; field name chốt ở build slice; HTTP status mapping minh hoạ. Error luôn generic theo §4 — không tiết lộ person/email tồn tại hay không.
+
+**Consume `/link <code>`** (transactional consume §4):
+
+- Thành công — code hợp lệ, tạo merge plan (chưa commit; cần explicit confirmation riêng trước merge):
+
+```json
+{ "data": { "mergePlanId": "…", "requiresConfirmation": true }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+- Mọi nhánh fail (sai code / hết hạn / consumed / revoked / locked / issuer drift) — một error generic duy nhất:
+
+```json
+{ "data": null, "error": { "code": "LINK_CODE_INVALID", "message": "…", "statusCode": 400 }, "meta": { "requestId": "req_…" } }
+```
+
+- Vượt rate limit issue/verify (§4):
+
+```json
+{ "data": null, "error": { "code": "LINK_CODE_RATE_LIMITED", "message": "…", "statusCode": 429 }, "meta": { "requestId": "req_…" } }
+```
+
+### Idempotency
+
+> Tổng hợp từ cơ chế đã pin ở §4/§5/§6/§8 (canonical — bảng này chỉ tham chiếu); hàng chưa pin ghi rõ.
+
+| Interface | Idempotent? | Key |
+|-----------|-------------|-----|
+| `/link` (issue) | ⬜ chưa pin — chốt ở build slice (mỗi lần issue một code mới là hợp lệ; rate-limit theo §4) | — |
+| `/link <code>` (consume) | ✅ single-use fail-closed | `code_lookup_hash` UNIQUE + conditional `consumed_at` UPDATE (§4 bước 5); consume thứ hai → generic invalid, không tạo plan thứ hai |
+| Merge commit | ✅ | Idempotency key validate (§5 bước 1) + stale-plan reject (§5 bước 3) |
+| `claimMembership` | ✅ chống double-claim | Membership/person locks + active uniqueness constraint (§6) |
+| `supportRecoverMerge` | ✅ | Restricted support command với idempotency + audit (§8 bước 4) |
+
+### Caching Strategy
+
+| Data | Cache? | Lý do |
+|------|--------|-------|
+| Person/channel identity, membership resolve | ❌ | Fail-closed — resolve/claim luôn live qua protected function + RLS (§1–§3); cache có thể giữ binding stale sau merge |
+| Link-code state | ❌ | Single-use + terminal states (§4); mọi check trong một transaction |
+| Merge plan | ❌ | Plan reload + stale reject ngay trong commit (§5 bước 3) |
+| Reachability window/token | ❌ | Endpoint-scoped, đọc live (§5); không copy/OR xuyên Page/bot/OA |
+| Chưa liệt kê | ❌ fail-closed | Mặc định không cache trên surface identity |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §1–§2: global-protected, không blanket grant, chỉ narrow functions + purpose/audit; §7 bảng authorization per interface; §6 claim proof matrix (debt-bearing cần strong proof) |
+| Injection/validation | §3: registry FK + server-derived scope hash, mismatch fail-closed; §4: không tin `source_person_id`/issuer từ request, server re-derive mọi binding |
+| Secret & log redaction | §2: keyed hashes + `*_enc`, không store/log plaintext code/email/raw ID; §9 Security: logs/analytics không chứa raw platform ID/phone/email/code/display name |
+| Webhook signature + replay | N/A trong doc này — identity nhận input từ trusted channel adapter (§3); webhook auth pin ở connector/channel specs + `feature_payment_reconcile_tech.md` §3 |
+| Idempotency | §4 consume + §5 commit + bảng Idempotency ở trên |
+| Data retention/xoá | §8: PII deletion = anonymization/crypto-shredding, tôn trọng financial/legal retention; audit IDs/tombstones giữ lại. Retention schedule per-table chưa pin — theo `feature_security_operations_tech.md` |
+
 ---
 
 ## 8. Recovery and deletion
@@ -343,6 +420,7 @@ Metrics: person/channel creation, merge success/failure by method, claim rejecti
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-19 | v1.11 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (live `0001`/`0002`/`0004` = reuse baseline, DROP ❌ NEVER; delta endpoint-binding/link-code lifecycle/reachability re-key → migration mới monotonic, cảnh báo đụng số worktree `0014`), §7 Request/Response Examples (DD-60) + Idempotency + Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v1.10a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v1.10 | **DD-50 v1.73 lock-order closure:** read-only link-code candidate resolve → issuer/account+Person parent locks → code-row lock/revalidation → conditional accounting/consume. Removes reset/revoke-vs-consume inversion; no runtime/migration. |
 | 2026-07-19 | v1.9 | **DD-70(a) v1.70 propagation:** link-code consume emits nothing; merge commit inventories/fences/revalidates and appends `identity_merged` from locked audit in one transaction. Tenant outbox fallback is forbidden; unfit implementation halts. No runtime/migration. |

@@ -1,6 +1,6 @@
 # Theme Direction — Plexco Web (bright · modern · sporty)
 
-> **Status:** 🟡 Discussion / chờ chốt hue · **Version:** 0.4 · 2026-07-19
+> **Status:** 🟡 Discussion / chờ chốt hue+font (tool ✅ DD-81) · **Version:** 0.5 · 2026-07-19
 > **Scope surface (DD-69):** UI **phase-1 = PWA** trên `apps/web` (mobile-first 375px, cài đặt được) — "web" là tên surface, không phải desktop-only. Native phase-2 tái dùng nguyên bộ token qua export JSON (`../../standards/token-needs-matrix.md` §6), không làm lại theme.
 > **Mục đích:** doc trao đổi để chốt **màu chủ đạo + font** cho theme mới. Là input cho `../../standards/design-tokens-benchmark.md` (DD-59) → khi chốt sẽ ghi vào `../../standards/design-tokens.md`.
 > **Cách tiếp cận:** **Hybrid** — giữ nguyên *cấu trúc* token (tên semantic, thang bậc), chỉ đổi *giá trị* (brand/accent/semantic + neutrals). Code map không đổi.
@@ -57,7 +57,7 @@
 
 - **Đề xuất:** **A · Volt Green** (`#00C853`) — tươi-trẻ + sporty nhưng vẫn dễ dùng cho mảng lớn/nút tiền; hoặc **C · Orange** nếu muốn nhiệt/hype rõ. Font **Sora + Inter**.
 - **Lưu ý dùng:** primary sáng (Lime/Pink) cần **chữ tối** trên nút + hạn chế phủ mảng lớn (dễ chói) — kiểm tra tương phản WCAG AA khi chốt.
-- ⬜ **CẦN CHỐT:** (1) hue A/B/C/D (hoặc phối, vd Volt Green primary + Lime accent); (2) xác nhận font Sora+Inter; (3) tên/công cụ file design mới (`.pen` mới hay Figma).
+- **CẦN CHỐT:** (1) ⬜ hue A/B/C/D (hoặc phối, vd Volt Green primary + Lime accent); (2) ⬜ xác nhận font Sora+Inter; (3) ✅ **tool — chốt DD-81 (owner 19/07): Pencil, file `plexco-app-design.pen` tại root repo, git-tracked; variables khai khớp SoT ngay khi tạo.** (1)(2) chốt qua theme exploration trên chính file này (N variant frames màn Home + hero recipe §7).
 
 ## 6. Propagation path (sau khi chốt — thứ tự bắt buộc, theo playbook `../../templates/brd-to-pen-playbook.md` §1.2 + Bước 6D)
 
@@ -102,6 +102,7 @@
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 19/07/2026 | 0.5 | **DD-81 ✅ (owner):** tool = Pencil, file `plexco-app-design.pen` root repo — §5 điểm (3) resolved; còn ⬜ hue + font, chốt qua theme exploration trên chính file. SSOT giá trị vẫn theo DD-59 (§8 proposal giữ mở). |
 | 19/07/2026 | 0.4 | §8 **Governance bổ sung** (design-system-playbook v1.1): coverage matrix `state × role × device × theme` cho file design mới; handoff mapping theo target stack (PWA → tailwind/CSS mapping đúng stack Plexco); ⬜ proposal vị trí SSOT giá trị token (giữ DD-59 .md-SoT vs đảo sang design-file-SoT theo playbook — chờ DD tại đợt chốt theme, không tự đổi). |
 | 19/07/2026 | 0.3 | §7 **Benchmark Sporta Home** (internal, `app-design-opus-4.6.pen`): 5 recipe độc lập hue (subtle-alpha `-subtle`, elevation mềm shadow+hairline, hero gradient 135° + glow cùng hue, CTA pill trắng, sport icon container) + data points (Coral `#EA580C` ủng hộ candidate C; Plus Jakarta Sans trùng alternative §3; cảnh báo sport colors Sporta trùng semantic; workflow N-variant frames + đủ frame Loading/Empty/Dark). Sửa header version drift (0.1→0.3). Thêm header **Scope surface (DD-69)**: phase-1 = PWA `apps/web` mobile-first, native phase-2 tái dùng token qua export JSON. Vẫn 🟡 — giá trị chỉ vào SoT khi chốt theme theo §6. |
 | 19/07/2026 | 0.2 | §6 → **propagation path 7 bước** (decision → SoT → token-needs gaps → benchmark → file design → code → drift audit + WCAG) với định nghĩa xong; ghi nhận reconcile channels/web đã hoàn thành 19/07 (DD-59, design-tokens.md v1.1). Vẫn 🟡 chờ chốt hue/font/tool. |

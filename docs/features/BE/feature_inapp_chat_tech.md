@@ -1,7 +1,7 @@
 # Feature: In-app Chat (club-wide + 1-1) — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.14a · 2026-07-19
+> **Version:** 0.15 · 2026-07-19
 > **Status:** ✅ DD-38 chốt (2026-07-10) — Draft, pending migration (schema aligned với `packages/db/schema.ts`)
 > **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_inapp_chat.md` *(Draft)*
@@ -444,6 +444,17 @@ GRANT  SELECT ON chat_messages TO app;
 - `chat_channels(kind='dm')` + DM rows = **person-self**: chỉ 2 person ∈ `chat_members` đọc/ghi (policy (b) + DM 2-member guard ở trên). App phải set `app.person_id` cho đường person-self (giống `resolvePersonSelf`, identity §7).
 - **Public projection KHÔNG bao giờ chứa chat** (NFR-S2). Không có projector kênh ngoài (CO-7).
 
+### Migration & Rollback
+
+> `chat_channels`/`chat_members`/`chat_messages` + safety schema (`chat_blocks`/`chat_reports`/rate-audit state) **chưa tồn tại trong canonical migrations** (verified: không có `chat_*` trong `packages/db/migrations/`). DD-38 pending migration: toàn bộ DDL §2 land bằng **một migration mới số monotonic kế tiếp còn trống** — thứ tự bắt buộc + pre-provision `chat_definer` đã pin ở §6 Rollout bước 0–1; KHÔNG sửa `0009` đã apply. Candidate key `memberships_id_person_tenant_uq` là ALTER additive trên bảng baseline `memberships` (`0002` — LIVE).
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Disable chat routes/RPC + SSE topic trước mọi revert | ✅ |
+| 2 | Revert migration chat mới: DROP policy/trigger/function/grants + `memberships_id_person_tenant_uq` (constraint-only trên baseline) | ✅ khi chưa enable cho user thật |
+| 3 | DROP bảng `chat_*` sau khi đã có message/DM thật | ❌ Mất dữ liệu user — chỉ chấp nhận trước enable; sau enable dùng disable routes + forward-fix |
+| 4 | DROP/ALTER destructive bảng baseline (`memberships`/`persons`/`tenants`) | ❌ NEVER |
+
 ### Edge Cases (Backend)
 
 | # | Category | Case | Xử lý |
@@ -486,6 +497,36 @@ GRANT  SELECT ON chat_messages TO app;
 | DELETE | /api/chat/media/:id | Attachment owner or authorized moderator | Apply deletion policy; tombstone references; revoke future signed access |
 | GET | /api/chat/subscribe | Authenticated | SSE — topic `tenant:<id>:chat:<channel>` (club) / `person:<id>:chat` (dm) |
 
+### Request/Response Examples
+
+> Minh hoạ; field name DTO chốt ở build slice. Envelope chuẩn DD-60 (`../../standards/api-reference-convention.md`). Error code lấy từ bảng Error Codes dưới.
+
+**POST `/api/chat/channels/:id/messages`** (qua `send_chat_message`, idempotent theo `client_msg_id`):
+
+- Request:
+
+```json
+{ "clientMsgId": "cmsg_…", "body": "Tối nay 19h sân A nhé" }
+```
+
+- `200` — thành công (duplicate `client_msg_id` trả cùng message, không tạo mới):
+
+```json
+{ "data": { "message": { "id": "…", "channelId": "…", "authorType": "person", "createdAt": "…" } }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+- `403` — không phải member / sai tenant:
+
+```json
+{ "data": null, "error": { "code": "CHAT_FORBIDDEN", "message": "Không có quyền trong kênh này", "statusCode": 403 }, "meta": { "requestId": "req_…" } }
+```
+
+- `429` — anti-spam:
+
+```json
+{ "data": null, "error": { "code": "CHAT_RATE_LIMITED", "message": "Gửi quá nhanh — thử lại", "statusCode": 429 }, "meta": { "requestId": "req_…" } }
+```
+
 ### Realtime Authorization (reuse DD-07 / sync engine §3)
 
 ```text
@@ -519,6 +560,18 @@ SSE re-authorizes before every event and on a heartbeat no slower than 30 second
 | Media initiate/finalize | Product-tuned object + byte quota | Per person/day + concurrent pending objects + channel |
 | Report | Bounded burst + daily cap | Per reporter/target; preserve legitimate safety escalation path |
 
+### Idempotency
+
+> Tổng hợp từ cơ chế đã pin ở §2/§4 (canonical) — bảng này chỉ tham chiếu.
+
+| Đường | Idempotent? | Key/Cơ chế |
+|-------|-------------|------------|
+| Send message | ✅ | `UNIQUE(channel_id, client_msg_id)` + advisory lock trong `send_chat_message` — retry trả message cũ, không double-consume rate/audit (test #43) |
+| Tạo DM | ✅ | `dm_key` normalized UNIQUE — 1 kênh/cặp; `create_dm` reuse sau `assert_dm_allowed` (test #38) |
+| Assistant projector (P7) | ✅ | `client_msg_id='assistant:'+query_id` deterministic + unique `bot_query_id` (xem `feature_club_assistant_tech.md`) |
+| Media finalize/scan | ✅ | Enqueue scan idempotent (endpoint §3); một scan lifecycle + orphan cleanup (test #35) |
+| Block/report command key | ⬜ chưa pin — chốt ở build slice | — |
+
 ---
 
 ## 4. Chi tiết triển khai — proposal
@@ -540,6 +593,25 @@ Message body escape/sanitize. Media upload is private and separate from send: va
 ### Trợ lý tái dùng (DD-19 pha B, DD-20 — P7, ngoài phase-1)
 
 Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club')` với `author_type='assistant'`, `membership_id=NULL`, log ở `bot_queries` (Club Assistant). **Không** tạo model chat song song — cùng bộ bảng `chat_*`. Grounding trợ lý vẫn chỉ KB (DD-21). Đây là lý do dựng `chat_*` sớm ở P4 (DD-38) thay vì đợi P7.
+
+### Caching Strategy
+
+| Data | Cache? | TTL | Invalidation |
+|------|--------|-----|-------------|
+| Membership/DM safety decision (`chat_current_is_member`/`dm_current_read_allowed`/`assert_dm_allowed`) | ❌ | — | Fail-closed, live per-request/per-event; SSE re-authorize trước mỗi event + heartbeat ≤30s (§3) |
+| Message history/list | ❌ | — | Live read dưới RLS + cursor pagination |
+| Signed media access | Short-lived grant (không phải cache) | Ngắn (§2 DD-55) | Re-authorize mỗi request; delete/leave revoke future grants |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §2 RLS 2-policy + RPC choke-point (app không direct DML); §3 SSE re-auth per event; DM person-self, host/support không đọc DM (edge #16, test #31) |
+| Injection/validation | §4 body escape/sanitize; media content-derived MIME + malware scan; API/RPC không nhận author fields (test #16) |
+| Secret & log redaction | §4 NOTIFY payload chỉ message id, không body/object key/PII; error DM cố ý generic (`CHAT_SAFETY_BLOCKED`), không lộ block detail |
+| Webhook signature + replay | N/A — không có webhook ingress; realtime là SSE nội bộ (DD-07), không bridge kênh ngoài (CO-7) |
+| Idempotency | Bảng Idempotency §3 (`client_msg_id`/`dm_key`/advisory lock) |
+| Data retention/xoá | Media deletion/orphan lifecycle + tombstone đã pin (§2/§3); retention text message chưa pin — theo `feature_security_operations_tech.md` |
 
 ---
 
@@ -613,6 +685,7 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.15 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (`chat_*` chưa vào canonical — DD-38 pending, migration mới monotonic; DROP baseline = ❌ NEVER), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v0.14a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.14 | **Executable parent-key closure:** migration chat nay bắt buộc chạy `ALTER TABLE memberships ADD CONSTRAINT memberships_id_person_tenant_uq UNIQUE(id, person_id, tenant_id)` trước khi tạo `chat_members/messages`; thêm schema-parity và cross-person/cross-tenant FK regression để các composite FK không còn trỏ tới một candidate key chỉ tồn tại trong comment. |
 | 2026-07-17 | v0.13 | **DD-55 enforceability closure:** pure read predicate gates DM RLS/list/SSE; guarded `send_chat_message` and `mark_read` resolve current membership/peer and call canonical safety core; runtime `app` loses direct message INSERT; all definer ownership/grants and blocked-read/realtime/concurrent-idempotency tests pinned. Club `left` is denied at RLS/RPC boundaries. |

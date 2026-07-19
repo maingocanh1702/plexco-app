@@ -2,7 +2,7 @@
 ## Plexco — platform thể thao đa môn (host + player): Zalo · Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi)*
 
 **Sản phẩm:** **Plexco** — platform quản lý & khám phá hoạt động thể thao đa môn, 2 phía (host + player); bot-in-chat (Zalo/Messenger) + web app sync 2 chiều; **phase-1 không app native** (target = web app PWA installable/offline; S9/S20 chưa phải runtime evidence) — **native là hướng phase-2** (DD-69 direction ✅ accepted; build TBD)
-**Phiên bản:** 2.8e
+**Phiên bản:** 2.8f
 **Ngày cập nhật:** 19/07/2026
 **Tài liệu tham chiếu:** `BRD.md` v3.9f · `TDD.md` v3.1 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` **v1.74** (v1.68–v1.74 BE-contract closure no-runtime: join/invite idempotency · notification v1.69–71/74 · DD-45a test-truth · DD-50 lock-order; DD-70..72 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; DD-69 direction ✅; DD-59 ✅ reconcile) · `../dd-69-app-native-analysis.md`
 
@@ -10,6 +10,7 @@
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 19/07/2026 | v2.8f | **Mirror DD-79 ✅ Home hub (S9):** note dưới FLOW 10 — Home landing compose person-self + marketplace + §A; nav shell 5 slot + 💬 header; composition-only, không flow/contract mới. DD-81 Pencil ghi ở design docs. |
 | 19/07/2026 | v2.8e | Authority pointer refresh v1.67→v1.74 + BRD v3.9f: v1.68–v1.74 là BE-contract closure no-runtime (join/invite idempotency v1.68 · notification v1.69–71/74 · DD-45a v1.72 · DD-50 v1.73). Pointer-only, không thêm flow/runtime. |
 | 19/07/2026 | v2.8d | Current authority v1.65/BRD v3.9e; DD-73..78 sequencing correction ở v1.64. DD-74/75 tạo baseline; chỉ DD-76/77 evidence-gated; DD-78 đi cùng consumer. Pointer-only, không thêm flow/runtime. |
 | 19/07/2026 | v2.8c | **DD-05/06/45/49 integrity:** approval rejoin preflight nhưng không persist proof; approve re-derive live aggregate. Venue active-only; refunded rejoin waitlisted không new lifecycle. Waitlist retry one origin event + max 3/backoff/no recursion/exhausted review-DLQ. `0014` branch-only; behavior chưa build. Authority v1.58. |
@@ -187,6 +188,8 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 ---
 
 ## FLOW 10: PLAYER VIEW — `/myclubs` + Web *(P4.6)*
+
+> **DD-79 ✅ (19/07) — Home hub (S9):** phase-1 PWA lấy **Home** làm landing sau đăng nhập, compose chính data của FLOW này (person-self) + marketplace + notifications §A + onboarding_steps: chips Còn nợ/Kèo tuần · hero kèo kế tiếp (CTA theo role) · upcoming max 4 + "Tất cả →" (= danh sách person-self FLOW 10) · suggested. Shell: bottom nav 5 slot **Home · Feed (config-OFF tới DD-76) · [Khám phá — center/FAB] · Club (CLB sở hữu owner/admin + CLB tham gia, CTA Tạo CLB) · Setting**, 💬 chat (DD-38) + 🔔 ở header. Không flow tiền mới, không data contract mới. Spec: `../features/feature_home.md` v0.5a.
 
 1. `/myclubs` (bot Zalo/Messenger) hoặc web (auth = phiên Google/email verify) → liệt kê **các CLB của Person + nợ/trạng thái từng CLB**.
 2. **Chỉ dữ liệu của chính họ** — đường query person-authorized, KHÔNG qua tenant-RLS thường (AUDIT C6).

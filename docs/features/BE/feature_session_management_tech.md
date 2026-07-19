@@ -1,7 +1,7 @@
 # Feature: Session Management — Backend Tech Spec
 
 > **Canonical phase:** P2/P4  
-> **Version:** 2.12a · 2026-07-19
+> **Version:** 2.13 · 2026-07-19
 > **Status:** Reviewed  
 > **Implementation:** Not started — waitlist `0014` mới ở nhánh feature, chưa merge · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_session_management.md`  
@@ -127,6 +127,19 @@ CREATE INDEX idx_players_waitlist_order
   ON players(session_id, status, waitlist_position, joined_at, id);
 ```
 
+### Migration & Rollback
+
+> Grep live `packages/db/migrations/` (0000–0013 đã merge trên main): `sessions` · `session_recurrence_rules` · `session_occurrences` · `session_surface_refs` · `players` **đã tồn tại từ `0002_tenants_core.sql`** — DDL trên là baseline để đọc + target contract, **reuse, không recreate**. Waitlist objects (status domain `waitlisted`, `waitlist_position`, state-shape/positive CHECKs, `idx_players_waitlist_order`) nằm trong `0014_players_waitlist` **branch-only** (`feat/session-waitlist-expand`, chưa merge — rollout §6 bước 2).
+
+- **Migration (genuinely new → migration mới monotonic sau tail đã merge):** DD-68 same-tenant composite candidate keys/FKs (`(tenant_id, session_id)` → sessions, `(tenant_id, membership_id)` → memberships, `session_surface_refs` cùng tenant — ghi chú trong DDL trên, KHÔNG thuộc 0014/DD-45); DD-45a hardening `UNIQUE (session_id, waitlist_position) WHERE status='waitlisted'` nếu chốt (Open DD-45a §4); retry objects (`waitlist_entry_version`, root `promotion_retry_jobs` + candidate events — §4, rollout §6 bước 3).
+- **Rollback:**
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Disable session routes/commands + waitlist entry/promotion + retry worker + recurrence generation job | ✅ |
+| 2 | Migration revert mới: revert **CHỈ additive objects của slice** (composite FK/UNIQUE/retry objects); với `0014` chưa merge, "rollback" = không merge nhánh | ✅ Có điều kiện |
+| 3 | Drop baseline `sessions`/`players`/recurrence/surface refs của `0002` | ❌ NEVER — migration đã apply trên main, có thể chứa session/roster thật |
+
 ### Edge Cases (Backend)
 
 | # | Category | Case | Xử lý |
@@ -181,6 +194,36 @@ CREATE INDEX idx_players_waitlist_order
 | 400 | `CANCEL_REQUIRES_REVIEW` | Cần xác nhận huỷ — có người đã thanh toán | Cancel with paid roster |
 | 400 | `MISSING_DISCOVERY_FIELDS` | Thiếu thông tin bắt buộc cho buổi chơi public | Public visibility without required fields |
 | 409 | `REJOIN_REQUIRES_REVIEW` | Cần host kiểm tra trạng thái tiền trước | `left` nhưng correction core chưa có hoặc không chứng minh được carry-over/refunded disposition |
+
+### Request/Response Examples
+
+> DTO minh hoạ theo contract đã pin; field name cụ thể chốt ở build slice; envelope DD-60 (`../../standards/api-reference-convention.md`).
+
+**POST `/api/sessions`** — command mang `commandId` (§1); field derive từ DDL §2 (status default `draft`, version 1):
+
+- Request:
+
+```json
+{ "commandId": "cmd_…", "startsAt": "…", "endsAt": "…", "timezone": "Asia/Ho_Chi_Minh", "visibility": "private" }
+```
+
+- Success (HTTP mapping minh hoạ):
+
+```json
+{ "data": { "session": { "id": "…", "status": "draft", "version": 1 } }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+**PUT `/api/sessions/:id`** — `409` optimistic lock conflict (Error Codes trên):
+
+```json
+{ "data": null, "error": { "code": "STALE_VERSION", "message": "Dữ liệu đã thay đổi — tải lại", "statusCode": 409 }, "meta": { "requestId": "req_…" } }
+```
+
+**PUT `/api/sessions/:id`** — `409` giảm capacity dưới active roster:
+
+```json
+{ "data": null, "error": { "code": "CAPACITY_BELOW_ROSTER", "message": "Số chỗ không thể thấp hơn active roster", "statusCode": 409 }, "meta": { "requestId": "req_…" } }
+```
 
 ### Idempotency
 
@@ -253,6 +296,25 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 - DST ambiguity policy documented (prefer earlier).
 - Generate within bounded horizon (configurable).
 - Edit rule → create new version; past/generated occurrences NOT silently rewritten.
+
+### Caching Strategy
+
+| Data | Cache? | TTL | Invalidation |
+|------|--------|-----|-------------|
+| Capacity/roster/charge disposition trong join/promotion | ❌ | — | Đọc under session lock (edge #1/#14, §4) — fail-closed, không quyết định từ cache |
+| Session detail/list (tenant-scoped) | ❌ | — | Optimistic `version` + projectors re-render theo outbox; mutation luôn đọc canonical |
+| Public discovery projection | Thuộc `feature_marketplace_discovery_tech.md` | — | — |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §3: TenantAdmin per endpoint; AuthZ middleware reject trước service (edge #10); Messenger wizard final consume re-authorize `session.manage` + target tenant (§1, §3 create path, edge #20); RLS ENABLE+FORCE trên `sessions` (§2) + tenant isolation test #18 |
+| Injection/validation | §2: CHECK constraints (time range, slots, status/visibility/join_policy enums); §3 validation errors (`INVALID_TIME_RANGE`, `MISSING_DISCOVERY_FIELDS`); tenant/actor từ trusted context, không từ payload (§1) |
+| Secret & log redaction | N/A — feature không chạm secret; outbox chỉ mang identifiers + safe changed fields, projectors reload canonical cho sensitive rendering (§1) |
+| Webhook signature + replay | N/A — không có webhook ingest trong doc này; Messenger wizard anti-replay/stale/expired denied ở interceptor + final re-check (§3 create path, edge #20, test #36/#37) |
+| Idempotency | §3 bảng Idempotency (`commandId`, close/cancel no-op) + command dedup table (edge #3) |
+| Data retention/xoá | Chưa pin trong doc này — theo `feature_security_operations_tech.md` |
 
 ---
 
@@ -359,6 +421,7 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.13 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (reuse baseline `0002`; `0014` branch-only; DD-68/DD-45a/retry objects = migration mới monotonic), §3 Request/Response Examples (DD-60 envelope), §4 Caching Strategy + Security Checklist. Idempotency đã có sẵn (§3) — giữ nguyên. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.12a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v2.12 | **DD-45 lock/liveness/RLS closure:** every domain path locks session→root before candidate/player/finance; root is lazy on first failure; max 3 claimed attempts with expired-final resolve-or-terminal finalizer; initial opener also requires future/joinable session; tenant-private RLS/narrow scheduler claim; owner digest dedupes per root. Behavior remains unbuilt. |
 | 2026-07-19 | v2.11 | **DD-45 retry-owner/queue/restriction closure:** one root promotion job owns max-3 CAS/lease full sweeps; candidate failure events are sibling alert/audit dedupe refs, not independent budgets. Each sweep re-enters current order, tries each candidate once and re-checks DD-41/DD-42/DD-52. Add reorder/ban/N×N-budget regressions. Behavior remains unbuilt. |

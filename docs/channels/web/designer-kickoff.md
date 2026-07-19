@@ -1,8 +1,8 @@
 # Designer Kickoff — Plexco Web FE
 
-> **Status:** 🟡 Deferred reference · **Version:** 0.3 · 2026-07-18
+> **Status:** 🟡 Deferred reference · **Version:** 0.4 · 2026-07-19
 > **Reference kickoff:** dùng để định hướng khi owner reopen FE design system; chưa phải tài liệu gate bắt buộc hiện tại.
-> **Visual source:** chưa chọn/chưa có asset được track. `Plexco-DS-fable5.pen` không có trong repo và đã superseded; chốt `.pen` mới hoặc Figma file/node trong `theme-direction-2026-07.md` trước handoff/code.
+> **Visual source:** ✅ **chốt DD-81 (owner 19/07/2026): Pencil** — file `plexco-app-design.pen` tại root repo, git-tracked (tạo ở bước theme exploration; variables khai khớp SoT `../../standards/design-tokens.md` ngay khi tạo). `Plexco-DS-fable5.pen` superseded, không dùng.
 > **Authority:** DD-57/58/59 đã owner-defer (reference-only, không gate delivery). DD-60 API convention đã ✅ accepted và áp độc lập cho API docs mới/materially changed.
 
 ---
@@ -43,7 +43,7 @@
 2. **Primitives / Component Library** (theo `design-brief §5.4/§9`): Button, Input/Field, Card, Table/List, Badge/Tag, Toast, Skeleton, **Empty state**, **Slot indicator**, Modal, Tabs, Avatar.
    - Mỗi component đủ **states**: default · hover · focus · active · disabled · loading.
    - Có biến thể light + dark; text mẫu vi + en.
-3. **Patterns**: navigation (dashboard sidebar / player bottom-nav), form layout, money display (tabular-nums), status color mapping (paid/partial/unpaid).
+3. **Patterns**: navigation — dashboard sidebar (host) / **player bottom-nav 5 slot: Home · Feed · [Khám phá center/FAB] · Club · Setting** + **Chat 💬 ở header cạnh 🔔** (DD-79 amendment v3; Kèo của tôi = sub-screen từ Home; Feed config-OFF tới DD-76 → phase-1 render 4 tab, designer giải cân bằng FAB), form layout, money display (tabular-nums), status color mapping (paid/partial/unpaid).
 4. **Proposed gate lock** — chỉ activate khi DD-59 được reopen/chốt; hiện tại thay đổi token vẫn phải theo authority hiện hành của `design-tokens.md`.
 
 ### Giai đoạn B — Màn theo feature (thứ tự ưu tiên)
@@ -63,6 +63,7 @@
 | 10 | Player | `/me` clubs + nợ tổng, `/me/*` | `feature_player_view.md` |
 | 11 | Chat | Chat in-app (club + DM) | `feature_inapp_chat.md` (DD-38) |
 | 12 | Settings | Hồ sơ + **giá theo giới tính** | `feature_user_settings.md` (DD-39) |
+| 13 | Home | Landing sau đăng nhập — personal dashboard (chips Còn nợ/Kèo tuần · hero next-session · suggested) | `feature_home.md` (DD-79 ✅) — **màn này dựng ĐẦU TIÊN ở bước theme exploration (DD-81): N variant frames để owner chốt hue**, hoàn thiện đủ states sau khi chốt |
 
 ### Giai đoạn C — Handoff từng màn (pipeline DD-58)
 Với mỗi màn xong design: source path/URL + node/frame id → `handoff/<screen>-handoff.md` (template) → `handoff/<screen>-token-mapping.md` (template) → code → verify screenshot ×3 breakpoint.
@@ -90,6 +91,7 @@ Với mỗi màn xong design: source path/URL + node/frame id → `handoff/<scre
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 19/07/2026 | 0.4 | **Visual source resolved (DD-81 ✅):** tool = Pencil, file `plexco-app-design.pen` root repo; variables khớp SoT khi tạo. Thêm màn #13 Home (DD-79 ✅) — màn theme-exploration đầu tiên. |
 | 18/07/2026 | 0.3 | Owner defer DD-57..59; kickoff/pipeline/checklists chuyển thành reference-only. Tách rõ DD-60 vẫn accepted và áp độc lập. |
 | 17/07/2026 | 0.2 | Gỡ `.pen` SoT không tồn tại; tách token SoT và visual SoT; thêm hard gate chọn + track/link source mới trước handoff/code. |
 | 16/07/2026 | 0.1 | 🟡 Kickoff đầu tiên — gộp gói tài liệu + thứ tự design-system→screens + checklist nghiệm thu. Vá drift color (`design-brief §5.1`) + route (`§3`). Operationalize DD-57..60. |

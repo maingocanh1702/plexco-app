@@ -1,7 +1,7 @@
 # Feature: User Settings & Gender-based Pricing — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.13a · 2026-07-19
+> **Version:** 0.14 · 2026-07-19
 > **Status:** DD-39 ✅ · DD-47/48 ✅ framework — Draft, pending migration/build
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_user_settings.md` *(Draft)*
@@ -59,6 +59,19 @@ ALTER TABLE sessions
 ```
 
 > **Chọn hình thức giá:** phase-1 dùng **cột `price_male`/`price_female` trên `sessions`** (2 nhóm giá phổ biến CLB cầu lông/pickleball VN). Nếu tương lai cần >2 nhóm → mở quyết định/migration sang bảng `session_price_by_gender(session_id, gender, amount)`. **DD-39 đã ✅** — hình thức cột (2 nhóm) chốt ở migration có **số monotonic kế tiếp còn trống sau khi sync mọi prerequisite đã merge**; `0014_players_waitlist` hiện branch-only nên không giữ số cho slice này.
+
+### Migration & Rollback
+
+> Grep live `packages/db/migrations/` (0000–0013 đã merge trên main; `0014_players_waitlist` branch-only): `persons` **đã tồn tại từ `0001_global_directory.sql`**, `sessions` **từ `0002_tenants_core.sql`** — reuse/ALTER additive, **không recreate**, không tạo bảng `users` song song. **Chưa có** trong 0000–0013: `persons.{gender_enc, dob_enc, username, language, profile_visibility}`, `sessions.{price_male, price_female}`, bảng `person_follows` + narrow `SECURITY DEFINER` functions — toàn bộ là genuinely new.
+
+- **Migration:** migration mới monotonic sau tail đã merge (số chốt sau khi sync prerequisites — blockquote trên; `0014` branch-only không giữ số). DD-39 = ALTER additive trên `persons`/`sessions`; DD-47/48 = transaction §6.1 (backfill existing `private` → default `public` → NOT NULL/CHECK) + `person_follows` + REVOKE/GRANT narrow functions.
+- **Rollback:**
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Disable settings/username/pricing routes (§3) + follow/visibility/profile routes (§6.4) + charge-create wiring `deriveChargeAmount` | ✅ |
+| 2 | Migration revert mới: revert **CHỈ additive objects của slice** — DROP các cột mới trên `persons`/`sessions`, DROP `person_follows` + narrow functions/grants | ✅ Có điều kiện — mất data cột mới (gender/dob đã thu theo consent) |
+| 3 | Drop baseline `persons` (`0001`) / `sessions` (`0002`) | ❌ NEVER — anchor identity + session data thật, đã apply trên main |
 
 ### Charge derivation (đã pin — chạm `feature_payment_reconcile` FR-5.3 khi build)
 
@@ -124,6 +137,46 @@ deriveChargeAmount(session, person):
 | 400 | `INVALID_GENDER` | Giá trị giới tính không hợp lệ | Ngoài enum |
 | 403 | `GENDER_FORBIDDEN` | Không có quyền xem giới tính | Không phải chính chủ / host CLB liên quan |
 
+### Request/Response Examples
+
+> DTO minh hoạ theo contract đã pin; field name cụ thể chốt ở build slice; envelope DD-60 (`../../standards/api-reference-convention.md`).
+
+**PUT `/api/me/username`** — đổi username (check trùng qua UNIQUE `lower(username)` §2):
+
+- Request:
+
+```json
+{ "username": "…" }
+```
+
+- Success:
+
+```json
+{ "data": { "username": "…" }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+- `409` — trùng username (Error Codes trên):
+
+```json
+{ "data": null, "error": { "code": "USERNAME_TAKEN", "message": "Username đã tồn tại", "statusCode": 409 }, "meta": { "requestId": "req_…" } }
+```
+
+**PUT `/api/me/settings`** — `400` giá trị ngoài enum DD-39:
+
+```json
+{ "data": null, "error": { "code": "INVALID_GENDER", "message": "Giá trị giới tính không hợp lệ", "statusCode": 400 }, "meta": { "requestId": "req_…" } }
+```
+
+### Idempotency
+
+| Endpoint | Idempotent? | Key |
+|----------|-------------|-----|
+| PUT `/api/me/settings` | ⬜ chưa pin — chốt ở build slice | — |
+| PUT `/api/me/username` | ⬜ chưa pin — chốt ở build slice (UNIQUE `lower(username)` là constraint chống trùng, không phải retry key) | — |
+| PATCH `/api/sessions/:id/pricing` | ⬜ chưa pin — chốt ở build slice | — |
+| Follow/unfollow/approve/reject/remove (§6.4) | ✅ | State-idempotency theo canonical state (§6.2): UNIQUE edge, duplicate trả edge hiện tại, delete absent = no-op; **không** dùng tenant `processed_commands` |
+| PUT `/api/me/settings/visibility` | ⬜ chưa pin — chốt ở build slice (mutation serialize theo lock §6.2) | — |
+
 ---
 
 ## 4. Chi tiết triển khai — build contract
@@ -132,6 +185,26 @@ deriveChargeAmount(session, person):
 - **Suy giá:** `deriveChargeAmount` chạy trong ledger/charge-create path (`feature_payment_reconcile` FR-5.3); fallback default + nhắc set khi thiếu gender.
 - **Sync:** đổi hồ sơ = command → canonical → project (username/display_name/language hiện đúng mọi surface).
 - **Ngôn ngữ:** `persons.language` ưu tiên cho message tới person; tenant locale (`tenants.locale`) là mặc định CLB (NFR-L1).
+
+### Caching Strategy
+
+| Data | Cache? | TTL | Invalidation |
+|------|--------|-----|-------------|
+| `deriveChargeAmount` inputs (gender/giá session) | ❌ | — | Đường tiền HR2 — decrypt dưới authz trong charge-create transaction, fail-closed khi KMS lỗi (§2) |
+| PII plaintext (gender/dob) | ❌ | — | Không cache/log plaintext (§4, edge #2); chỉ decrypt on-demand dưới authz |
+| Social profile DTO / visibility gating (§6.3) | ❌ | — | Authz decision path fail-closed — đọc canonical `profile_visibility` + follow edge live |
+| Settings self-read (`/api/me/settings`) | ❌ | — | Fail-closed — đọc canonical trực tiếp; cache nếu có chốt ở build slice |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §3/§6.4: Authenticated Person / TenantAdmin / Followee per endpoint; actor từ verified session, URL/body chỉ mang target (§6.1 actor binding, edge F4); host chỉ thấy gender ở mức suy giá per-tenant (edge #8, `GENDER_FORBIDDEN`); `person_follows` GLOBAL PROTECTED, no table grant, chỉ narrow `SECURITY DEFINER` (§6.1, edge F10) |
+| Injection/validation | §2: CHECK enums (`language`, giá ≥ 0), UNIQUE `lower(username)`; §3 `INVALID_GENDER` ngoài enum; §6.1 CHECK no-self/decision-shape; §6.3 minimal card cố định, không dùng 403 body biến thiên làm oracle (§6.4) |
+| Secret & log redaction | §2/§4: `gender_enc`/`dob_enc` KMS at-rest như `phone_enc`, không plaintext trong DB/log (edge #2, test #5); decrypt không log (§2 charge derivation) |
+| Webhook signature + replay | N/A — không có webhook trong feature này |
+| Idempotency | §3 bảng Idempotency + §6.2 state-idempotency (không dùng tenant `processed_commands`) |
+| Data retention/xoá | §2 edge #9: consent chưa cấp → không thu gender/dob; retention/erasure per-field chưa pin trong doc này — theo `feature_security_operations_tech.md` |
 
 ---
 
@@ -344,6 +417,7 @@ getProfile(viewer V, target T):
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.14 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (reuse/ALTER `persons`/`sessions` baseline `0001`/`0002`; mọi object DD-39/DD-47/48 = migration mới monotonic), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v0.13a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v0.13 | **DD-70(a) v1.70 propagation:** private follow-request appends same-TX under bounded fences; `follow_accepted` remains analytics-only and visibility auto-accept has no notification fan-out; tenant outbox fallback forbidden. No runtime/migration. |
 | 2026-07-19 | v0.12 | **Intermediate doc revision; superseded by v0.13 for DD-70 ownership.** No runtime/migration. |

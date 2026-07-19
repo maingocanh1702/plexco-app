@@ -1,7 +1,7 @@
 # Feature: Club AI Assistant + Knowledge Base — Backend Tech Spec
 
 > **Canonical phase:** P7 (post-MVP, **đề xuất**)
-> **Version:** 0.9a · 2026-07-19
+> **Version:** 0.10 · 2026-07-19
 > **Status:** 🟡 Draft — contract đã harden và sẵn sàng cho review/promotion, nhưng **chưa build-ready cho tới khi được formally promote sang Reviewed**. **DD-18** (provider LLM + privacy/ToS/DPA) ⬜ là gate GO-LIVE sau khi scope implementation được duyệt, không phải lý do tự động promote/build (provider đặt sau interface `EmbeddingProvider`/`ChatProvider` swappable).
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_club_assistant.md`
@@ -249,6 +249,17 @@ CREATE UNIQUE INDEX chat_messages_bot_query_uq
 
 > **Ranh giới schema chat:** không có membership table P7 song song, `author_type` chỉ theo canonical set `person|assistant|system`, và không định nghĩa lại `chat_channels/chat_messages` trong migration P7. Assistant projector dùng canonical `chat_members` để authorize channel, ghi `chat_messages(author_type='assistant', client_msg_id='assistant:' || query_id, bot_query_id=query_id)` qua bot/definer writer hẹp. `client_msg_id` deterministic + unique index `bot_query_id` khiến retry projector trả lại cùng message thay vì nhân đôi.
 
+### Migration & Rollback
+
+> Toàn bộ schema §2 (`bot_configs`/`kb_sources`/`kb_documents`/`kb_chunks`/`embedding_cache`/`bot_queries`/`bot_provider_attempts`) **chưa tồn tại trong canonical migrations** (verified: không có `kb_*`/`bot_*` trong `packages/db/migrations/`; extension `vector` cũng chưa cài). Land bằng **migration mới self-contained, số monotonic kế tiếp** (tự cài/verify `vector` + schema + RLS/policy + explicit grants/revokes — contract đã pin ở blockquote trên); KHÔNG sửa `0000`/`0009` đã apply. Pha B (`chat_messages.bot_query_id`) là ALTER additive, chỉ chạy **sau** canonical In-app Chat migration (P4/DD-38).
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Disable assistant endpoints + ingest/answer workers + purge job trước mọi revert | ✅ |
+| 2 | Revert migration assistant mới (DROP bảng `kb_*`/`bot_*` + policy/grants) khi chưa có KB/query thật | ✅ trước enable; sau enable → disable + forward-fix (KB/audit là dữ liệu tenant) |
+| 3 | Revert pha B: DROP constraint/index `bot_query_*` trên `chat_messages` | ✅ Constraint-only; cột nullable có thể giữ |
+| 4 | DROP bảng canonical (`chat_*`/`memberships`/`persons`/`tenants`) hoặc gỡ extension `vector` khi còn bảng phụ thuộc | ❌ NEVER |
+
 ### Edge Cases (Backend)
 
 | # | Category | Case | Xử lý |
@@ -308,6 +319,30 @@ CREATE UNIQUE INDEX chat_messages_bot_query_uq
 
 **Ask-panel là bất đồng bộ (khớp `bot.ask` hai pha):** `POST /ask` chỉ tạo `bot_queries(received)` + enqueue job rồi trả `202 {query_id}`. Kết quả đẩy về **realtime qua SSE** (event `assistant.answer` theo `query_id`, cùng hạ tầng SSE DD-07 với native chat); client tier thấp/không SSE thì **poll** `GET /ask/:query_id` tới khi `status ∈ {answered,no_answer,blocked,error}`. Endpoint **không** chặn-đợi LLM. (Không chọn kiểu wait-with-timeout để tránh giữ HTTP connection trong lúc gọi provider — trái P9.)
 
+### Request/Response Examples
+
+> Minh hoạ; field name chốt ở build slice. Envelope chuẩn DD-60 (`../../standards/api-reference-convention.md`) — đã pin ở cuối §3.
+
+**POST `/api/assistant/ask`** (PHA 1 — async, không chặn-đợi LLM):
+
+- `202`:
+
+```json
+{ "data": { "queryId": "…", "status": "received" }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+**GET `/api/assistant/ask/:query_id`** — terminal `blocked` (vượt cap; `reason_code` theo enum §2):
+
+```json
+{ "data": { "status": "blocked", "reasonCode": "cap_exceeded" }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+**Non-host gọi endpoint Host** (authz matrix dưới; error `code` minh hoạ — bảng HTTP error code chưa pin ở doc này, chốt ở build slice):
+
+```json
+{ "data": null, "error": { "code": "FORBIDDEN", "message": "…", "statusCode": 403 }, "meta": { "requestId": "req_…" } }
+```
+
 ### Authz & routing matrix (P2-a)
 
 Tenant/person resolve **chỉ** từ nguồn tin cậy in-app (web session → account → person; tenant admin → `tenant_admins`; membership → `memberships`; channel → canonical `chat_members`). KHÔNG lấy từ body/nội dung message.
@@ -327,6 +362,17 @@ Tenant/person resolve **chỉ** từ nguồn tin cậy in-app (web session → a
 > `left`/`guest`/non-member/suspended/cap đều dừng **trước** khi gọi retrieve/LLM (PHA 1 gate) — không tốn token. Mỗi lần từ chối ghi `bot_queries(status='blocked', reason_code)` để audit + analytics.
 
 Mọi endpoint dùng canonical API envelope của repo: thành công `{ data, error: null, meta: { requestId } }`; lỗi `{ data: null, error: { code, message, statusCode }, meta: { requestId } }`. Không trả shape rút gọn `{ error: true, message, code }`.
+
+### Idempotency
+
+> Key per-command đã pin ở bảng Commands đầu §3 (canonical) — subsection này chỉ tổng hợp, không thêm cơ chế mới.
+
+| Đường | Idempotent? | Key/Cơ chế |
+|-------|-------------|------------|
+| `bot.ask` | ✅ một durable result | `UNIQUE(tenant, command_id)` + terminal status → SKIP provider (§4). **Provider call là at-least-once trước checkpoint** — không phải exactly-once billing; mọi attempt ghi `bot_provider_attempts` + budget/cap |
+| `kb.ingest` | ✅ | `(tenant, source_key, content_hash)` + generation compare-and-set (§4) |
+| `bot.config.upsert` / `kb.source.archive` | ✅ | `(tenant, command_id)` |
+| Assistant projector (`bot.answered`) | ✅ | `client_msg_id='assistant:'+query_id` deterministic + unique `bot_query_id` — retry trả cùng canonical message |
 
 ### Error / fallback (mọi surface)
 
@@ -484,6 +530,26 @@ Contract enforceable: `project_assistant_answer(query_id)` là `SECURITY DEFINER
 - `kb.ingest` atomically supersede generation cũ + bump current generation + ghi outbox; ingest worker gọi provider **ngoài** txn và activation bằng generation compare-and-set. Không gọi provider khi giữ lock (P9).
 - Reminder/analytics dùng hạ tầng notification/metrics sẵn có.
 
+### Caching Strategy
+
+| Data | Cache? | TTL | Invalidation |
+|------|--------|-----|-------------|
+| Embedding | ✅ `embedding_cache` (§2) | Không TTL pin — append theo key | Exact key `(embed_model, embed_dims, profile_version, SHA256(normalized input))` — đổi model/dims/profile luôn miss (test #42); access chỉ qua worker/service role hẹp, không app/readonly/PUBLIC |
+| Eligibility/authz/tenant context | ❌ | — | Fail-closed, gate live ở PHA 1 mỗi command (§3) — không cache decision |
+| Retrieval result / KB chunks | ❌ | — | Live query dưới RLS + current-generation/DLP-cleared fence (§4) — không cache xuyên generation |
+| LLM answer | ❌ (không phải cache) | — | `bot_queries` terminal status là durable result/idempotency cho cùng `command_id`, không phải answer cache cho câu hỏi mới |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §3 authz & routing matrix (tenant/person chỉ từ nguồn tin cậy in-app, không từ body); §2 RLS + composite same-tenant FK; assistant writer hẹp `project_assistant_answer` (§4) |
+| Injection/validation | §4 grounding: chunk là DATA, system prompt tối cao (edge #4, test #22); size/mime limit + malware scan + extract sandbox (edge #10) |
+| Secret & log redaction | §4 DLP trước mọi provider call + retrieval/output guard; alert chỉ detector class/count, không matched text; outbox/log/analytics không chứa question/answer thô (P11) |
+| Webhook signature + replay | N/A — không có webhook ingress; provider calls là outbound với attempt ledger `bot_provider_attempts` (§2) |
+| Idempotency | Bảng Commands §3 + subsection Idempotency §3 |
+| Data retention/xoá | §4 Retention & redaction (`query_retention_days`/`retention_expires_at`/purge job) — đã pin trong doc; platform-wide theo `feature_security_operations_tech.md` |
+
 ---
 
 ## 5. Testing Plan
@@ -587,6 +653,7 @@ Contract enforceable: `project_assistant_answer(query_id)` là `SECURITY DEFINER
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.10 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (schema chưa vào canonical — migration mới self-contained pgvector; DROP canonical = ❌ NEVER), §3 Request/Response Examples (DD-60 envelope) + Idempotency (tham chiếu bảng Commands), §4 Caching Strategy (map `embedding_cache`) + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v0.9a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.9 | **Readiness + migration/security closure:** giữ formal status Draft tới khi promote Reviewed; migration mới tự cài/verify `vector` và chứa RLS/policy/grant contract thay vì sửa `0000`/`0009` đã apply; chuẩn hoá API envelope; sửa numbering unit tests 43–46. |
 | 2026-07-17 | v0.8 | **External-call truth + cache isolation:** guarantee one durable result/message, not exactly-once provider billing before DB checkpoint; document attempt telemetry/caps. Embedding cache key now includes model, dimensions, profile version and normalized-input hash. |

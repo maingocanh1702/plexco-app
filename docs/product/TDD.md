@@ -1,7 +1,7 @@
 # Technical Design Document (TDD) — Plexco
 ## Platform thể thao đa môn (host + player) — multi-tenant, marketplace discovery, sync đa surface, Zalo + Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi — DD-37)*
 
-**Phiên bản:** 3.1 — **amendment history 18/07:** nội dung v3.1 được chốt trên authority v1.47; **current authority pointer là decisions v1.74 bên dưới**. Không đổi phase hoặc claim runtime/migration đã implement.
+**Phiên bản:** 3.1a — *19/07: mirror DD-79 Home hub (composition-only, §API note) — không đổi phase/runtime.* **amendment history 18/07:** nội dung v3.1 được chốt trên authority v1.47; **current authority pointer là decisions v1.74 bên dưới**. Không đổi phase hoặc claim runtime/migration đã implement.
 **Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 19/07/2026
 **Tài liệu tham chiếu:**
 - `BRD.md` v3.9f — yêu cầu nghiệp vụ
@@ -516,6 +516,8 @@ CREATE POLICY tenant_isolation ON sessions
 **Discovery (PUBLIC — không RLS, field whitelist):** `GET /discover?sport=&area=&date=&skill=&price_max=` → `public_sessions` · `GET /discover/sessions/:id` (public detail) · `POST /sessions/:id/join` (open → join; approval → `join_requests`).
 
 **Person-self:** `GET /me/clubs` · `GET /me/sessions` · `GET /me/debts` · `PATCH /me/profile` (gender/dob/name/username/language — DD-39 ✅, cột chờ migration) (person-authorized, field whitelist).
+
+**Home hub (DD-79 ✅, S9 — composition-only):** `GET /api/me/home` thuộc surface `/api/me*` person-self (§3.4) — aggregate DTO compose từ player_view allowlist + public read model + notification §A + `onboarding_steps`; per-section degradation (section lỗi → null + reason, không fail aggregate); **KHÔNG bảng/migration mới** — cần cột mới = vi phạm DD-79, quay lại DD. Nav shell PWA = client registry config-driven (5 slot; Feed gated DD-76; 💬 chat ở header dùng routes DD-38 bên dưới). Chi tiết: `../features/BE/feature_home_tech.md` v0.1.
 
 **Chat in-app (DD-38/55 ✅, scope-committed phase-1; schema chờ migration):** `GET/POST /tenants/:id/chat` (club-wide, tenant RLS) · `GET/POST /me/chat/:peerPersonId` (1-1, person-self); realtime qua SSE. DM request/create/send/read đều gọi cùng `assertDmAllowed`/DB equivalent; `create_dm` không được bootstrap quanh gate. User Settings/social tái dùng canonical `chat_blocks`, không tạo block store thứ hai.
 

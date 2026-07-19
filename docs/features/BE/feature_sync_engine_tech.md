@@ -1,7 +1,7 @@
 # Feature: Sync Engine & Re-projection — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.4a · 2026-07-19
+> **Version:** 2.5 · 2026-07-19
 > **Status:** Reviewed (v2.4: live-schema rollout truth + endpoint-exact channel delivery)
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_sync_engine.md`
@@ -95,6 +95,20 @@ CREATE INDEX idx_projector_pending ON projector_deliveries(next_attempt_at) WHER
 CREATE INDEX idx_surface_refs_aggregate ON surface_refs(aggregate_id);
 ```
 
+### Migration & Rollback
+
+**Baseline đã live — reuse, không recreate:** toàn bộ DDL §2 (`processed_commands`, `outbox_events` kèm `UNIQUE(aggregate_id, sequence)`, `projector_deliveries`, `surface_refs` + 3 indexes) đã tồn tại nguyên trạng từ migration `0005_sync_engine.sql`; `public_sessions` từ `0006_discovery.sql`; RLS/grant ở `0009`. Rollout step 1 đã pin: **không** tạo duplicate sync migration. DROP các bảng này = ❌ NEVER (outbox/delivery ledger thật).
+
+**Genuinely new (chưa land trên main) → migration riêng, monotonic:** endpoint-scoped identity/reachability theo DD-67 — live `channel_identities` (`0001`) vẫn key 2-phần và `channel_reachability` (`0002`) vẫn PK `(person_id, tenant_id, platform)`; migration này phải land trước khi bật endpoint-exact channel delivery (rollout step 2). Chọn **next available monotonic number** sau khi sync mọi prerequisite đã merge (header ⚠️); không sửa migration lịch sử.
+
+**Rollback:**
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Sync core: không có migration mới → không có schema rollback riêng cho slice này | ✅ (n/a) |
+| 2 | Revert endpoint-identity migration: tắt endpoint-exact dispatcher (quay lại shadow/flag off, fallback policy) trước, rồi migration revert additive-only | ✅ |
+| 3 | DROP bảng `0005`/`0006` baseline | ❌ NEVER — chứa event/delivery/projection thật |
+
 ### Edge Cases (Backend)
 
 | # | Category | Case | Xử lý |
@@ -143,6 +157,37 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 | 403 | `REPROJECT_UNAUTHORIZED` | Không có quyền reproject | Non-operator |
 | 429 | `REPROJECT_THROTTLED` | Đang xử lý reproject khác | Rate-limited |
 
+### Request/Response Examples
+
+> Minh hoạ theo contract đã pin; envelope chuẩn DD-60 (`../../standards/api-reference-convention.md` §1.1). Field name DTO chưa pin sẽ chốt ở build slice. `GET /api/realtime/subscribe` là SSE/WS stream — không áp envelope JSON DD-60; doc này không có webhook inbound.
+
+**POST `/api/reproject`** — `200` (data shape minh hoạ):
+
+```json
+{ "data": { "accepted": true }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+- Non-operator — `403`:
+
+```json
+{ "data": null, "error": { "code": "REPROJECT_UNAUTHORIZED", "message": "Không có quyền reproject", "statusCode": 403 }, "meta": { "requestId": "req_…" } }
+```
+
+- Đang chạy reproject khác — `429`: `error.code = "REPROJECT_THROTTLED"` cùng envelope.
+
+### Idempotency
+
+> Tổng hợp cơ chế đã pin trong doc — không thêm cơ chế mới.
+
+| Interface | Idempotent? | Cơ chế |
+|-----------|-------------|--------|
+| Command mutation | ✅ | `UNIQUE(tenant_id, command_id)` — duplicate trả stored result, không re-run mutation (edge #1, `STALE_COMMAND`) |
+| Outbox append | ✅ | `UNIQUE(aggregate_id, sequence)` monotonic; loser reload next sequence rồi retry (edge #14) |
+| Worker claim | ✅ | `FOR UPDATE SKIP LOCKED` — không duplicate claim (edge #3) |
+| Projector delivery | ✅ | PK `(event_id, projector)` tracking độc lập; crash-after-send hội tụ qua provider idempotency/convergent upsert (edge #6/#7) |
+| Channel delivery route | ✅ | Claim logical notification key trước provider call — đúng một route, không broadcast (edge #13, DD-67 §4) |
+| Reproject | ✅ bounded | Không re-send notification trừ projector có correction mode (edge #10); throttle `REPROJECT_THROTTLED`; audit entry (test 19) |
+
 ---
 
 ## 4. Chi tiết triển khai
@@ -168,6 +213,27 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 | Sync lag p99 | ≤ 10s |
 | Payment reconcile p99 | ≤ 5s |
 | DLQ size | Alert at > 100 |
+
+### Caching Strategy
+
+| Data | Cache? | TTL | Invalidation |
+|------|--------|-----|-------------|
+| Outbox / delivery / claim state | ❌ | — | Worker đọc + claim trực tiếp under lock (`FOR UPDATE SKIP LOCKED`); live, fail-closed |
+| Canonical data cho projector | ❌ | — | "Reload canonical" trước external call (§1) — không render từ event payload hay snapshot cache |
+| Reachability / endpoint identity khi dispatch | ❌ | — | Load live theo exact `channel_identity_id` (DD-67); không candidate/auth mơ hồ → fail closed sang policy fallback |
+| `public_sessions` projection | — (derived store có chủ đích) | — | Không phải cache tự do: upsert/delete qua projector theo strict whitelist (edge #9/#10) |
+| Realtime client state | — | — | Client reconnect cursor + fallback refetch (§3); server không cache authz — AuthZ per subscription |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §3: `/api/reproject` = PlatformAdmin, `/api/sync/status` = TenantAdmin; realtime topic authz per subscription (edge #11); channel delivery authorize `target_tenant_id` riêng, không suy từ reachability/default endpoint (DD-67 §4) |
+| Injection/validation | §1/§2: command validate trước mutation; event schema versioned, payload jsonb minimal; worker claim qua narrow function; realtime reject topic không được phép (edge #11) |
+| Secret & log redaction | §1 design decisions: event payload tránh secrets/PII; public projector strict whitelist, xoá private/closed/expired (edge #9) |
+| Webhook signature + replay | N/A — doc này không nhận webhook inbound (provider verify thuộc channel/connector docs); replay nội bộ chống bằng command dedup + monotonic sequence + delivery ledger (§2) |
+| Idempotency | Bảng Idempotency §3 |
+| Data retention/xoá | Public projection delete theo whitelist (edge #10); retention outbox/delivery ledger chưa pin ở doc này — theo `feature_security_operations_tech.md` |
 
 ---
 
@@ -238,6 +304,7 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.5 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (toàn bộ DDL §2 đã live ở `0005` — reuse; new chỉ là DD-67 endpoint identity migration riêng), §3 Request/Response Examples (DD-60) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.4a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.4 | **Live-schema rollout closure:** clarify that migration `0005` already owns the command/outbox schema and aggregate-sequence uniqueness; only the separate endpoint identity/reachability migration remains before endpoint-exact delivery. |
 | 2026-07-17 | v2.3 | Restore the already-live `UNIQUE(aggregate_id,sequence)` to this documentation and add its race regression; pin exact endpoint-bound identity, separate target-tenant authorization and one-route/no-broadcast for both Messenger Page and Zalo bot/OA; fix duplicate test IDs. |

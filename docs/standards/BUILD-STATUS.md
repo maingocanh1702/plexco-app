@@ -113,6 +113,7 @@ Chưa có: command handlers, services, projectors, API nghiệp vụ đầy đ�
 | Cross-club Join (P4.3) | ✅ Reviewed | ⬜ Chưa (join_requests có sẵn) |
 | Shared Host/Player Messenger (P2.5, DD-65..68) | ✅ Reviewed contract | ⬜ Chưa hybrid migration/adapter/handlers/actions/reachability/E2E; bot mới có queue shell |
 | Player View (P4.6) | ✅ Reviewed | ⬜ Chưa |
+| Home hub (S9, DD-79 ✅ 19/07 + amendments v1.79–84) | ✅ Reviewed contract (`feature_home.md` v0.5a + BE v0.1 — composition-only, không bảng mới; nav registry 5 slot, Feed gated DD-76) | ⬜ Chưa — chờ S9 PWA shell; data từ player_view/marketplace/§A |
 | Zalo Channel (P4.7) | ✅ Reviewed | ⬜ Chưa (`zalo_bots`/reply-context base tables có sẵn; endpoint identity/reachability + legacy-secret KMS migration/runtime còn pending) |
 | Billing Lifecycle (P5) | ✅ Reviewed | ⬜ Chưa (subscriptions/subscription_invoices/billing_* có sẵn) |
 | Security & Operations (P6) | ✅ Reviewed | 🟡 Một phần — RLS/HR1 guard đã thực thi; phần còn lại chưa |

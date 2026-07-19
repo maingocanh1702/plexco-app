@@ -1,7 +1,7 @@
 # Feature: Zalo Player Channel — Backend Tech Spec
 
 > **Canonical phase:** P4.7  
-> **Version:** 2.5a · 2026-07-19
+> **Version:** 2.6 · 2026-07-19
 > **Status:** Reviewed · reconciled to decisions v1.67/DD-15/DD-45/DD-49/DD-67
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_zalo_channel.md`
@@ -63,6 +63,26 @@ ALTER TABLE zalo_reply_contexts FORCE ROW LEVEL SECURITY;
 
 `webhook_token` chỉ là random opaque locator trong URL; nó không thay cho provider verification secret. Handler resolve row theo token dưới narrow endpoint resolver, decrypt `webhook_secret_enc` qua KMS, so sánh header bằng constant-time compare rồi xóa secret khỏi memory sớm nhất có thể. Migration forward thực hiện theo thứ tự: add nullable encrypted column → application/KMS backfill legacy `secret` → connector không backfill được chuyển `error` và bắt owner reconnect → add/validate CHECK buộc mọi row có thể nhận webhook (`registered|active|drift`) phải có ciphertext → drop legacy `secret`. `connecting` có thể giữ NULL trong khi setup nhưng chỉ được nhận traffic sau khi ciphertext tồn tại; verified early event CAS `connecting→active`, và register finalization phải preserve `active`. `error|revoked` không nhận traffic. Không có dual-read plaintext sau cutover.
 
+### Migration & Rollback
+
+**Baseline đã live — reuse, không recreate:** `zalo_bots` và `zalo_reply_contexts` đã tồn tại từ migration `0004_channels_connectors.sql` (lifecycle status `connecting|registered|active|drift|error|revoked`, `rotation_pending`, UNIQUE `webhook_token`), RLS/grant tenant-private ở `0009_rls_policies_grants.sql`. Slice Zalo dùng lại các bảng này; DROP bảng baseline = ❌ NEVER (có thể chứa connector/context thật).
+
+**Genuinely new (chưa land trên main) → migration mới monotonic:**
+
+1. `zalo_bots.webhook_secret_enc` thay legacy `secret text` — theo đúng trình tự đã pin ở trên (add nullable column → KMS backfill → row không chứng minh được → `error` → CHECK `NOT VALID`/VALIDATE → DROP `secret`); DDL executable pin ở `feature_connector_onboarding_tech.md` §2.
+2. Endpoint-scoped identity/reachability theo DD-67 — live `channel_identities` (`0001`) vẫn key 2-phần và `channel_reachability` (`0002`) vẫn PK `(person_id, tenant_id, platform)`; mô hình 3-phần + reachability theo `channel_identity_id` cần migration riêng land trước runtime Zalo (header ⚠️).
+
+Chọn **next available monotonic number** sau khi sync mọi prerequisite đã merge; không pin số cứng, không sửa migration lịch sử.
+
+**Rollback:**
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Disable Zalo adapter/webhook receiver (feature flag + kill switch §4) trước khi revert schema | ✅ |
+| 2 | Migration revert mới: drop cột/constraint additive vừa thêm (`webhook_secret_enc` + CHECK, endpoint-identity objects) | ✅ Constraint/column-only |
+| 3 | Khôi phục plaintext `secret` sau khi đã DROP | ❌ KHÔNG THỂ — plaintext đã xóa theo BL-SEC-1; muốn dùng lại connector phải owner reconnect |
+| 4 | DROP `zalo_bots`/`zalo_reply_contexts` baseline (`0004`) | ❌ NEVER |
+
 ### Edge Cases (Backend)
 
 | # | Category | Case | Xử lý |
@@ -107,6 +127,26 @@ ALTER TABLE zalo_reply_contexts FORCE ROW LEVEL SECURITY;
 | Rejoin after `left` | Render shared result: `active`/`waitlisted`/`current`; only `REJOIN_REQUIRES_REVIEW` shows host-review copy |
 | Unsupported | "Lệnh không được hỗ trợ" |
 
+### Request/Response Examples
+
+> Doc này không có app-facing API route → envelope DD-60 (`../../standards/api-reference-convention.md` §1.1) **không áp dụng** ở đây. Webhook trả theo **provider contract**; DM reply theo bảng copy đã pin ở trên.
+
+- **Webhook inbound hợp lệ** (opaque token đúng, header `X-Bot-Api-Secret-Token` verify pass): xử lý event → ACK theo provider contract. Replay cùng event ID → dedup idempotent, vẫn ACK, không side-effect mới (edge #5).
+- **Signature/secret sai hoặc row không đủ điều kiện** (thiếu ciphertext, `error|revoked`): reject fail-closed, không xử lý event — HTTP mapping của receiver pin ở `feature_connector_onboarding_tech.md` §3 (`401 INVALID_WEBHOOK_SECRET`, không trả nội dung).
+- **DM flow minh hoạ:** player gõ `/join` → numbered list; reply `"2"` với context hết hạn → "Danh sách đã thay đổi, gõ /join để xem lại" (bảng Join/Error Responses).
+
+### Idempotency
+
+> Tổng hợp cơ chế đã pin trong doc — không thêm cơ chế mới.
+
+| Interface | Idempotent? | Cơ chế |
+|-----------|-------------|--------|
+| Webhook event ingest | ✅ | Provider event ID dedup — replay update dedup, không side-effect mới (edge #5, test 11) |
+| Number-reply consume | ✅ single-use | Lock context → validate person/bot/tenant/version/TTL → consume (`consumed_at`); stale/replay reject (§4) |
+| Join qua shared service | ✅ | Existing active/waitlisted render current state idempotently; final-slot race cho đúng một active + exactly-one-charge (edge #6, DD-45/DD-49) |
+| `connecting→active` flip + analytics | ✅ | CAS đúng một lần; register finalization preserve `active`; analytics 1 lần (tests 25–26) |
+| Outbound delivery | — | Thuộc sync engine (`feature_sync_engine_tech.md`): logical notification key + delivery ledger |
+
 ---
 
 ## 4. Chi tiết triển khai
@@ -130,6 +170,26 @@ Before resolving Person, compute `provider_scope_lookup_hash=HMAC("channel-scope
 - Rotation: store pending credential version in KMS → verify → atomic promote → revoke old; `rotation_pending` is metadata, never a plaintext staging field.
 - Drift monitor: hourly `getWebhookInfo` compare expected URL.
 - Kill switch: privileged, owner-authenticated, audited.
+
+### Caching Strategy
+
+| Data | Cache? | TTL | Invalidation |
+|------|--------|-----|-------------|
+| Bot token / webhook secret (plaintext sau KMS decrypt) | ❌ NEVER | — | Narrow decrypt per-request, xóa khỏi memory sớm nhất (§2/§4) |
+| Reply context (`item_ids`/version/TTL) | ❌ | — | Đọc + lock + consume trực tiếp trong transaction; single-use |
+| Channel identity / reachability | ❌ | — | Live read, fail-closed — trạng thái quyết định gửi/nhận không đọc từ cache |
+| Webhook token → bot resolution | ❌ (fail-closed) | — | Đọc DB qua narrow endpoint resolver; nếu build slice cần cache thì chốt riêng kèm invalidation theo status |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §1/§2 edge #1: tenant chỉ từ webhook token/bot binding, không bao giờ từ nội dung message; DD-67: target tenant/action re-authorize riêng; kill switch owner-authenticated + audited (§4) |
+| Injection/validation | §4: number-reply validate person/bot/tenant/version/TTL trước khi consume; free numeric không context → không execute (edge #11); message không hỗ trợ → safe fallback (test 18) |
+| Secret & log redaction | §2/§4: bot token + webhook secret là KMS ciphertext, UI masked, log redaction (edge #7, test 24); không dual-read plaintext sau cutover |
+| Webhook signature + replay | §2 edge #4: KMS decrypt hẹp + constant-time compare `X-Bot-Api-Secret-Token`, no plaintext fallback; replay dedup idempotent (edge #5) |
+| Idempotency | Bảng Idempotency §3 |
+| Data retention/xoá | Chưa pin per-table ở doc này — theo `feature_security_operations_tech.md` |
 
 ---
 
@@ -202,6 +262,7 @@ Before resolving Person, compute `provider_scope_lookup_hash=HMAC("channel-scope
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.6 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `0004`/`0009` reuse; new = `webhook_secret_enc` + DD-67 endpoint identity), §3 Request/Response Examples + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v2.5 | **DD-49 timing mirror:** refunded rejoin active→append; full→waitlisted/defer until promotion. Adapter remains thin and creates no financial state. |
 | 2026-07-19 | v2.4 | **DD-45×DD-49 mirror consistency:** final-slot no-charge test is explicitly first-entry; existing-left rejoin remains delegated to shared correction core and never creates a duplicate charge in the adapter. |

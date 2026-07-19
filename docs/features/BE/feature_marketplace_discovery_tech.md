@@ -1,7 +1,7 @@
 # Feature: Marketplace Discovery & Public Projection — Backend Tech Spec
 
 > **Canonical phase:** P4.3  
-> **Version:** 2.1a · 2026-07-19
+> **Version:** 2.2 · 2026-07-19
 > **Status:** Reviewed  
 > **Implementation:** Not started — `public_sessions` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_marketplace_discovery.md`  
@@ -53,6 +53,19 @@ CREATE INDEX idx_public_area_time ON public_sessions(area, starts_at);
 CREATE INDEX idx_public_price ON public_sessions(price_amount);
 ```
 
+### Migration & Rollback
+
+> Grep live `packages/db/migrations/` (0000–0013 đã merge trên main): `public_sessions` + 4 index trên **đã tồn tại từ `0006_discovery.sql`**, khớp DDL này (kể cả plain btree thay partial-index `now()`) — baseline để đọc, **reuse, không recreate**.
+
+- **Migration (genuinely new → migration mới monotonic sau tail đã merge):** DD-41 expand→contract như đã pin ở đầu §2 — expand thêm public policy fields (`title`, `session_type`, `level_min_rank`, `level_max_rank`, `level_strict`, `gender_restriction`, `age_min`, `age_max`) → backfill/switch projector+API → contract drop `skill_level` + cập nhật exact-column invariant.
+- **Rollback:**
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Disable discovery API + session projector + expiry sweep | ✅ |
+| 2 | Migration revert mới: revert **CHỈ additive objects của slice** (cột DD-41 mới, trước bước contract); projection rebuild được bằng Reproject từ canonical `sessions` (integration test #3) | ✅ Có điều kiện |
+| 3 | Drop baseline `public_sessions` của `0006` | ❌ NEVER — migration đã apply trên main; slice rollback không đụng baseline objects |
+
 ### Edge Cases (Backend)
 
 | # | Category | Case | Xử lý |
@@ -103,6 +116,45 @@ CREATE INDEX idx_public_price ON public_sessions(price_amount);
 | 429 | `DISCOVERY_RATE_LIMITED` | Quá nhiều truy vấn | Rate limit exceeded |
 | 400 | `INVALID_FILTER` | Bộ lọc không hợp lệ | Unknown filter value |
 
+### Request/Response Examples
+
+> DTO minh hoạ theo contract đã pin; field name cụ thể chốt ở build slice; envelope DD-60 (`../../standards/api-reference-convention.md`). DTO chỉ chứa field trong whitelist §2 — không `tenant_id`/venue/roster.
+
+**GET `/api/discover`** — browse (field derive từ `public_sessions` whitelist §2; cursor opaque §3):
+
+```json
+{
+  "data": {
+    "items": [
+      { "publicId": "…", "sportKey": "badminton", "startsAt": "…", "area": "q7", "priceAmount": 50000, "slotsOpen": 2, "clubDisplayName": "…", "joinPolicy": "open" }
+    ],
+    "nextCursor": "…"
+  },
+  "error": null,
+  "meta": { "requestId": "req_…" }
+}
+```
+
+**`400`** — bộ lọc không hợp lệ (không lộ error details — edge #6):
+
+```json
+{ "data": null, "error": { "code": "INVALID_FILTER", "message": "Bộ lọc không hợp lệ", "statusCode": 400 }, "meta": { "requestId": "req_…" } }
+```
+
+**`429`** — rate limit (edge #11):
+
+```json
+{ "data": null, "error": { "code": "DISCOVERY_RATE_LIMITED", "message": "Quá nhiều truy vấn", "statusCode": 429 }, "meta": { "requestId": "req_…" } }
+```
+
+### Idempotency
+
+| Endpoint | Idempotent? | Key |
+|----------|-------------|-----|
+| GET `/api/discover` | ✅ | Read-only — không mutation |
+| GET `/api/discover/sessions/:publicId` | ✅ | Read-only |
+| Projector upsert/delete (system) | ✅ | Replay idempotent theo `public_sessions.id` (= session id, PK — §2; test #16) |
+
 ---
 
 ## 4. Chi tiết triển khai
@@ -126,6 +178,25 @@ Session event → Check: public? open? future? required fields present?
   → NO: Delete from public_sessions
 Periodic sweep: DELETE WHERE expires_at < now()
 ```
+
+### Caching Strategy
+
+| Data | Cache? | TTL | Invalidation |
+|------|--------|-----|-------------|
+| Public session DTO (browse/detail) | ✅ | Ngắn (short TTL — §1; số cụ thể chốt ở build slice) | Purge on privacy-critical unpublish (§1, edge #8, test #19); cache key/value = public DTO only (edge #7, test #18) |
+| `slots_open` | Advisory only (trong DTO cache) | Như DTO | Join re-checks transactionally (edge #10) — không phải nguồn quyết định capacity/tiền |
+| Tenant-private data (venue/roster/financial/identity) | ❌ | — | Không bao giờ vào projection/cache/CDN (edge #1/#2/#7; ranking không dùng financial/identity — §4) |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §1/§2: Discovery DB role SELECT-only trên approved public view (edge #12, test #20); endpoints Public nhưng chỉ chạm dedicated projection, không join tenant-private tables |
+| Injection/validation | Edge #6: parameterized queries; unknown filter → empty results/`INVALID_FILTER`, không lộ error details; cursor signed/opaque (edge #9, test #14) |
+| Secret & log redaction | N/A — feature không chạm secret; DTO/schema allowlist chặn `tenant_id`/venue/roster/PII (edge #1/#2, tests #8–#10) |
+| Webhook signature + replay | N/A — không có webhook; projector consume event nội bộ, replay idempotent (test #16) |
+| Idempotency | §3 bảng Idempotency (read-only endpoints + projector replay theo PK) |
+| Data retention/xoá | §4: periodic sweep `DELETE WHERE expires_at < now()`; unpublish → delete + CDN purge (edge #8); còn lại theo `feature_security_operations_tech.md` |
 
 ---
 
@@ -192,6 +263,7 @@ Periodic sweep: DELETE WHERE expires_at < now()
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.2 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (reuse `public_sessions` từ `0006`; DD-41 expand→contract = migration mới monotonic), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.1a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.1 | **Live schema/DD-46 closure:** replace invalid `now()` partial index with live plain btree; pin no-FK public reference, personal-tenant owner-membership alias fail-closed projection, and deterministic time ranking while MKT-OQ-3 stays open. |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |

@@ -121,7 +121,7 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 Tài liệu hoàn tất (bản mới nhất):
 - ✅ BRD v3.9e · PRD v2.8d · TDD v3.1 · ROADMAP v3.3d (current authority v1.67; runtime pending)
 - ✅ 4 phụ lục (saas-plan, reconciliation, AUDIT, messenger)
-- Feature docs: **22 Product/System / 21 BE = 21 cặp + 1 product-only Draft** (`channel_booking_funnel`). Cặp thứ 21 là Session Organize v0.5 (DD-61..64 ✅ accept-in-principle, build post-P4); coverage không có nghĩa runtime/build-ready — xem `features/README.md`.
+- Feature docs: **23 Product/System / 22 BE = 22 cặp + 1 product-only Draft** (`channel_booking_funnel`). Cặp mới nhất: **Home hub (DD-79 ✅ 19/07, S9, composition-only)** + nav shell 5 slot config-driven; design tool chốt **Pencil** (DD-81, `plexco-app-design.pen`). Cặp thứ 21 là Session Organize v0.5 (DD-61..64 ✅ accept-in-principle, build post-P4); coverage không có nghĩa runtime/build-ready — xem `features/README.md`.
 - ✅ Business rules, design tokens, dependency graph
 - ✅ README, CHANGELOG, PULL_REQUEST_TEMPLATE, HANDOFF, templates
 
@@ -184,6 +184,7 @@ Research/reconciliation/strategy là input định hướng, không được ove
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 19/07/2026 | v1.19 | **DD-79 ✅ Home hub (S9) + DD-81 ✅ Pencil:** cặp spec thứ 22 (Reviewed contract, composition-only trên player_view/marketplace/§A — không bảng mới); nav PWA 5 slot registry (Feed gated DD-76, 💬 chat header); design file mới `plexco-app-design.pen`. Mirror đã propagate BRD v3.9g/PRD v2.8f/TDD v3.1a/ROADMAP v3.3f/design-brief v1.9/BUILD-STATUS. Runtime không đổi. |
 | 19/07/2026 | v1.19 | Current authority → decisions v1.65 / BRD v3.9e / PRD v2.8d / ROADMAP v3.3d; DD-73..78 sequencing correction ở v1.64. DD-74/75 tạo baseline; chỉ DD-76/77 evidence-gated; DD-78 đi cùng consumer. Không đổi runtime baseline. |
 | 19/07/2026 | v1.18 | Authority → decisions **v1.60**. **DD-73..78 ✅ chốt (owner 19/07)**: 6 câu đều phương án (a); Q5 kèm re-scope đưa fence/guarded-view/grant migration về **DD-12**; **DD-64 amended** (self-aggregate). Sequencing wording của entry này được corrected ở v1.19; runtime baseline không đổi. |
 | 19/07/2026 | v1.17 | Current authority → decisions v1.59/PRD v2.8c. DD-05/06/45/49 integrity closure pins approval re-derive, venue active-only, activation-time refunded lifecycle và bounded waitlist retry. Không migration/runtime mới. |

@@ -1,7 +1,7 @@
 # Feature: Session Organize (Match & Court Orchestration) — Backend Tech Spec
 
 > **Delivery target:** Sau Session CRUD + Sync; sớm nhất sau P4. Canonical phase **TBD**; DD-61..64 đã owner accept-in-principle.
-> **Version:** 0.5a · 2026-07-19
+> **Version:** 0.6 · 2026-07-19
 > **Status:** Accepted-in-principle design — implementation inactive; schema/migration/service chưa tồn tại
 > **Implementation:** Not started — build post-P4 · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_session_organize.md`
@@ -153,6 +153,16 @@ Tạo migration mới với **số monotonic kế tiếp còn trống tại lúc
 3. `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`, policy và grants cho từng bảng.
 4. Immutable trigger cho `score_events`.
 5. Schema code/DBML/RLS invariant list cập nhật trong cùng slice.
+
+### Migration & Rollback
+
+> Forward path = **Migration strategy** ở trên (không lặp lại). Live-repo truth: 5 bảng organize (`session_courts`/`matches`/`match_participants`/`match_sets`/`score_events`) **chưa tồn tại trong canonical migrations** (verified: không có bảng nào trong cụm ở `packages/db/migrations/`) — toàn bộ land bằng một migration mới số monotonic kế tiếp còn trống. Parent keys (`sessions_id_tenant_uq`/`memberships_id_tenant_uq`/`players_id_tenant_session_uq`) và `processed_commands.request_hash` là ALTER additive trên bảng baseline LIVE (`0002`/`0005`).
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Disable organize routes/feature flag + SSE topic trước mọi revert | ✅ |
+| 2 | Revert migration organize mới: DROP 5 bảng + policy/trigger khi chưa có match/score thật; DROP parent key/`request_hash` (constraint/column-only trên baseline) | ✅ trước enable; sau enable → disable + forward-fix (score ledger là dữ liệu tenant) |
+| 3 | DROP bảng baseline (`sessions`/`players`/`memberships`/`processed_commands`) | ❌ NEVER — thuộc migration đã apply, mang dữ liệu thật |
 
 ### Parent keys
 
@@ -515,6 +525,17 @@ Preview response example:
 | 422 | `NOT_ENOUGH_PLAYERS` | Auto plan không tạo được match đầy đủ |
 | 429 | `RATE_LIMITED` | Rate registry vượt giới hạn |
 
+### Idempotency
+
+> Canonical contract ở §1 (Lock order/`processed_commands`/`request_hash`) — bảng này chỉ tham chiếu, không thêm cơ chế mới. Request/Response envelope + preview example đã pin ở Endpoint contract trên (DD-60).
+
+| Đường | Idempotent? | Key/Cơ chế |
+|-------|-------------|------------|
+| Mọi organize mutation | ✅ | `processed_commands (tenant_id, command_id)` + `request_hash` (JCS RFC 8785); duplicate cùng action/resource/hash trả `result_ref` **sau khi re-authorize actor hiện tại**, khác hash/action/resource → `IDEMPOTENCY_CONFLICT` (§1) |
+| Point/reversal | ✅ | Thêm fence `UNIQUE (tenant_id, match_id, command_id)` trên `score_events`; correction append replacement với suffix nội bộ `:replacement` (§2) |
+| Assignment preview | N/A | Pure read — không nhận `commandId` (Endpoint contract) |
+| SSE reconnect | ✅ replay-safe | Client reconnect theo last event/version + guarded reload, không tự replay mutation (SSE contract) |
+
 ### Accepted rate-limit contract (not implemented)
 
 Các rate sau là **inactive implementation target** cho tới khi BL-SEC-5 registry/buckets và organize feature flag được land:
@@ -579,6 +600,25 @@ Reducer must reject negative score and invalid reversal chains rather than clamp
 - Session leave choke-point (to be implemented with SessionService): under session lock, player becomes `left`, any assigned participant in live/ready match becomes `withdrawn`; score remains.
 - Session close/cancel choke-point: under session lock, ready/live matches become `cancelled`, open court occupancy clears by match status, ledger remains read-only.
 - Attendance is unchanged. Match participation must not silently mark attendance or reliability in v0.4.
+
+### Caching Strategy
+
+| Data | Cache? | TTL | Invalidation |
+|------|--------|-----|-------------|
+| Capability/relation/scorer grant | ❌ | — | Fail-closed: re-check mỗi command (kể cả duplicate replay) + SSE trước mỗi event/heartbeat ≤30s (§3) |
+| Score state cho quyết định | ❌ | — | Reduce từ `score_events` dưới lock trong transaction (§4); `match_sets.scores` là read model rebuild được, không phải input cho mutation |
+| Board read | ❌ | — | Guarded live read sau relation check (§2/§3) |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §3 exact capability per action + session-scoped grant (không map thành tenant-wide role); relation-based read; SSE re-auth ≤30s; replay re-authorize (§1) |
+| Injection/validation | §1 canonical request hash (JCS) + `result_ref` là DTO whitelist; §2 CHECK/enum/unique fences; substitute derive side/slot server-side, client không chọn (§2) |
+| Secret & log redaction | §3 SSE payload whitelist — không serialize `actor_membership_id`/person/tên/contact/payment/venue-private; outbox chỉ aggregate IDs + sequence (§1) |
+| Webhook signature + replay | N/A — không có webhook ingress; realtime là SSE nội bộ (DD-07), không có public projector (§1) |
+| Idempotency | §1 (canonical) + bảng Idempotency §3 |
+| Data retention/xoá | `score_events` append-only + immutable trigger (§2); retention/xoá chưa pin ở doc này — theo `feature_security_operations_tech.md` |
 
 ---
 
@@ -655,6 +695,7 @@ Canonical DB suite must run with repository test database contract; migration/RL
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v0.6 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (bổ sung rollback cho Migration strategy sẵn có; 5 bảng organize chưa vào canonical → migration mới; DROP baseline = ❌ NEVER), §3 Idempotency (tham chiếu §1), §4 Caching Strategy + Security Checklist. Request/Response Examples đã có sẵn theo DD-60 (Endpoint contract + preview example) — skip. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v0.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-18 | v0.5 | DD-61..64 accepted-in-principle: remove stale owner-approval gates, retain explicit no-runtime/prerequisite boundary, make migration number illustrative, and adopt DD-60 auth convention. |
 | 2026-07-17 | v0.4 | **DD-62/DD-64 closure:** terminal winning-point reversal/correction guard + reopen/re-complete reducer, court/dependency fail-closed codes, and active SSE before-event/heartbeat re-auth ≤30s. Proposal/runtime status unchanged. |

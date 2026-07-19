@@ -8,7 +8,7 @@
 | | |
 |---|---|
 | **Sản phẩm** | **Plexco** — platform quản lý hoạt động thể thao cho **host** và khám phá/tham gia kèo cho **player**, đa môn (cầu lông, pickleball, tennis, bóng đá…), hoạt động ngay trong Zalo/Facebook Messenger + web app đồng bộ |
-| **Phiên bản** | v3.9f — authority pointer refresh: decisions v1.74 (pointer-only); trước đó v3.9e — authority refresh DD-73..78: DD-73 acquisition trước; DD-74/75 tạo activity baseline sau dependency + reprioritization; chỉ DD-76/77 hard-gated bởi liquidity; DD-78 đi cùng consumer. Không đổi phase-1 committed scope. |
+| **Phiên bản** | v3.9g — mirror **DD-79 ✅ Home hub (S9)** + nav shell PWA + **DD-81 ✅ Pencil**; không đổi phase-1 committed scope; trước đó v3.9f — authority pointer refresh: decisions v1.74 (pointer-only); trước đó v3.9e — authority refresh DD-73..78: DD-73 acquisition trước; DD-74/75 tạo activity baseline sau dependency + reprioritization; chỉ DD-76/77 hard-gated bởi liquidity; DD-78 đi cùng consumer. Không đổi phase-1 committed scope. |
 | **Ngày** | 19/07/2026 |
 | **Người soạn** | Ngoc-Anh |
 | **Người duyệt (approvers)** | Ngoc-Anh (solo founder, self-approved) |
@@ -199,6 +199,7 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 
 ### MODULE 8 — Player View (person-self)
 - **FR-8.1** Web + bot: liệt kê **CLB, kèo sắp tới, nợ/trạng thái** của chính person; **chỉ dữ liệu của họ**.
+- **Home hub PWA (DD-79 ✅ 19/07, S9 — composition-only trên FR-8):** landing sau đăng nhập = personal dashboard (chips Còn nợ/Kèo tuần · hero kèo kế tiếp · suggested từ marketplace whitelist); bottom nav 5 slot **Home · Feed (config-OFF tới DD-76) · [Khám phá — center/FAB] · Club (CLB sở hữu owner/admin + CLB tham gia, CTA Tạo CLB) · Setting**, 💬 chat (DD-38) + 🔔 ở header; nav registry config-driven. KHÔNG data contract mới — mọi dữ liệu qua person-self FR-8 + public read model. Spec: `../features/feature_home.md` v0.5a + BE v0.1; amendments decisions v1.79–v1.84.
 
 ### MODULE 9 — Billing (host)
 - **FR-9.1** Subscription host (plan trả phí `host_pro`): trial → active → past_due → suspended. **`free` (0đ) vào thẳng `active` vô thời hạn — không trial/invoice, không past_due/suspended vì non-payment** (chỉ suspend vì ToS/abuse). Ref: DD-29 (thay DD-03), BL-BIL-1. **DD-51 (✅ 2026-07-16):** trial **14 ngày** (remind khi còn 2 ngày; hết trial → khoá ngay về `free`); trễ invoice → grace **7 ngày** rồi suspended; huỷ giữa kỳ hoàn toàn bộ nếu request trong **7 ngày kể từ khi thanh toán**, sau đó dùng nốt kỳ; override = PlatformAdmin (7d/ticket/audit).
@@ -425,6 +426,7 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 19/07/2026 | v3.9g | **Mirror DD-79 ✅ Home hub (S9) + DD-81 ✅ Pencil:** thêm mục Home hub dưới FR-8 (composition-only, nav shell 5 slot + chat header; registry config-driven; Feed gated DD-76). Không FR mới, không đổi committed scope/runtime. |
 | 19/07/2026 | v3.9f | Authority pointer refresh v1.67→v1.74: v1.68–v1.74 đều là BE-contract closure no-runtime (DD-05/44/52 idempotency v1.68 · notification v1.69–v1.71/v1.74 · DD-45a test-truth v1.72 · DD-50 lock-order v1.73). Pointer-only, không đổi product scope/phase/runtime. |
 | 19/07/2026 | v3.9e | Current authority v1.65; DD-73..78 sequencing correction ở v1.64. DD-74/75 tạo baseline nên không nằm sau gate dùng chính baseline; chỉ DD-76/77 hard-gated; DD-78 đi cùng consumer. Pointer-only, không đổi product scope/runtime. |
 | 18/07/2026 | v3.9d | **Founder batch (owner 18/07, decisions v1.47):** DD-69 **định hướng accepted** (§1/§5.2/§14/§16 OD-20 "proposal"→"direction accepted"; native build phase-2 TBD, gates mở). **§1 thêm đoạn "Lộ trình sản phẩm — app-first"** để mục định vị nhất quán với DD-69 (chat = phễu acquisition 0-install, native = retention; native ngoài phase-1 scope). DD-33 Facebook Login phase-1 ✅; DD-61..64 Session Organize accept-in-principle (post-P4). **§14 thêm go/no-go product-evidence gate cho phase-2 native** (PWA = bước validate thị trường; ngưỡng `TBD` chờ baseline; PWA đủ tốt = lý do hợp lệ hoãn native). Phase-1 committed scope không đổi. |
