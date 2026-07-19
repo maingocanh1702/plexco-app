@@ -7,7 +7,7 @@
   "merge_policy": "manual_only",
   "auto_merge": false,
   "codex_review": "2x_clean",
-  "authority": "DD-80 (decisions v1.77) · b0-auth-credential-lifecycle-design-probe.md §6/§9(a) · feature_web_auth_onboarding_tech.md v2.8 §3/§5-acceptance-D0",
+  "authority": "DD-80 (decisions v1.83) · b0-auth-credential-lifecycle-design-probe.md §6/§9(a) · feature_web_auth_onboarding_tech.md v2.9a §3/§5-acceptance-D0",
   "depends_on": ["db-postgres-drizzle-rls", "auth-onboarding-v3"],
   "dep_checks": [
     { "file": "packages/db/migrations/0012_auth_functions.sql", "symbol": "auth_revoke_web_session" },
@@ -20,6 +20,7 @@
     "NO Google/Facebook adapter or auth_oauth_transactions (D1 google-adapter)",
     "NO Telegram route removal (expand->contract slice cuoi)",
     "NO new grant to role app beyond exact public wrapper",
+    "CREATE OR REPLACE auth_rotate_web_session CHI doi lock order sang parent-first, giu nguyen signature/behavior (v1.83) — moi behavior change khac la scope breach",
     "Internal revoke-by-account helper is NOT granted to app/app_worker; wrapper derives account from current session only, never accepts account_id from caller"
   ],
   "scope": [
@@ -27,6 +28,7 @@
     "packages/db/schema.ts",
     "packages/db/migrations/0015_auth_revoke_account.sql",
     "packages/db/src/auth.ts",
+    "packages/db/src/index.ts",
     "packages/db/src/auth.test.ts",
     "packages/db/src/rls-invariants.test.ts",
     "apps/web/app/api/auth/logout-all/route.ts",
