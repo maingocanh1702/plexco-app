@@ -3,7 +3,7 @@
 > **Đây KHÔNG phải nguồn rule mới.** Rules ở `standards/review-code-readiness-gate.md` (owner-accepted 2026-07-19). File này chỉ **áp dụng** gate đó để ra verdict nhị phân cho các slice gần nhất, dùng đúng template §7 và closure matrix §8.
 > **Snapshot pin (bất biến):** `AUTHORITY_SHA = 22c23aab080183913d2852805a085bba1057a91a` (`main`) · verify 2026-07-19. Nhánh làm việc hiện tại `feat/session-waitlist-expand@aa8afae` **không** phải base; mọi verdict pin theo `main`.
 > **Live truth đã verify (`main@22c23aa`):** feature layer trống — không có projector source ghi `public_sessions`; không có auth Google/`account_emails` source; `0014_players_waitlist` **không** trên `main`; `0006_discovery.sql` vẫn có `skill_level` và **thiếu** toàn bộ field DD-41 (`session_type`/`level_*_rank`/`gender_restriction`/`age_*`).
-> **Current auth refresh (2026-07-20):** `main@9c6e5875cf66b153a7ec58b57c424a23e495c999`; Verdict 5a/5b are current for DD-80 v1.88 working-copy authority. Verdicts 1/3/4 remain historical snapshots only.
+> **Current auth refresh (2026-07-20):** `origin/main@033ccc8fd9c3f247abf8aa0cb5a0f48b96d006e2` — DD-80 v1.88 authority bundle immutable on main. **Verdict 5a (D0a) = CODE_READY** (re-pinned 033ccc8); Verdict 5b (D0b) `NOT_CODE_READY` pending D0a merge. Verdicts 1/3/4 remain historical snapshots only.
 
 ---
 
@@ -99,7 +99,7 @@ NEXT_REVIEW_TRIGGER: DD-38/39 migration merge probe + dd41 autopilot artifacts c
 | Phạm vi | Trạng thái đúng |
 |---|---|
 | 6 product decision DD-73..78 | `DECISION_FINAL` ✅ (đạt 2026-07-19) |
-| Auth S4 slice đầu | DD-80 G3 decision closed; **D0a `NOT_CODE_READY` pending immutable authority · D0b `NOT_CODE_READY` pending D0a merge** (Verdict 5a/5b) |
+| Auth S4 slice đầu | DD-80 G3 decision closed; **D0a `CODE_READY` @ origin/main@033ccc8 · D0b `NOT_CODE_READY` pending D0a merge** (Verdict 5a/5b) |
 | `dd41-public-session-projection-fields` | `NOT_CODE_READY` → chờ DD-38/39 merge + artifacts |
 | Toàn cluster DD-73..78 như một slice | `NOT_CODE_READY` (gate §9) |
 | DD-76/77 | chỉ xét PLAN/CODE sau product-evidence baseline + owner threshold |
@@ -202,12 +202,12 @@ NEXT_REVIEW_TRIGGER: D0 merge probe pass → re-run closure D1 (kỳ vọng CODE
 ## Verdict 5a — `auth-s4-d0-revoke-core` / D0a epoch DB core (2026-07-20)
 
 ```text
-REVIEW_VERDICT: NOT_CODE_READY
-REVIEWED_AT: 2026-07-20
-AUTHORITY_SHA: 9c6e5875cf66b153a7ec58b57c424a23e495c999 (live base; v1.88 authority is an uncommitted working-copy delta)
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-20 (re-pinned after authority push)
+AUTHORITY_SHA: 033ccc8fd9c3f247abf8aa0cb5a0f48b96d006e2 (v1.88 authority bundle immutable on origin/main)
 BASE_BRANCH: main
 TARGET_FILES:
-  - docs/standards/decisions.md (DD-80 v1.88 working-copy amendment)
+  - docs/standards/decisions.md (DD-80 v1.88, committed 033ccc8)
   - docs/g3-revoke-all-concurrency-probe-seed.md (v1.0 final contract)
   - docs/b0-auth-credential-lifecycle-design-probe.md (§6 v1.88)
   - docs/features/BE/feature_web_auth_onboarding_tech.md (v2.10 D0a)
@@ -230,13 +230,10 @@ LIVE_REPO_VERIFICATION: PASS (0001/0012/0014 live; 0015/epoch/revoke-all absent 
 CONTRACT_MATRIX: PASS
 ACCEPTANCE_MATRIX: PASS (D0-1/2/6-11/13 + D0-14..22; deterministic Postgres barriers and exact outcomes)
 SECURITY_AND_MIGRATION_GATE: PASS (P0 manual-only; one transactional 0015; equality fail-closed; zero direct grants; forward rollback preserves audit and cannot resurrect materialized revokes)
-IMPLEMENTATION_ARTIFACTS: FAIL (authority/manifest/backlog changes are local-only and not committed/pushed to main)
-FIRST_IMPLEMENTATION_STEP: blocked until the authority baseline is committed/pushed; then create a dedicated manual P0 worktree and register the D0a manifest
-REMAINING_BLOCKERS:
-  - blocker: Reviewed v1.88 authority and scoped artifacts are not yet immutable on default branch.
-    owner: founder/repo maintainer
-    resolution: commit and push the exact v1.88 doc/manifest/backlog set, then re-pin AUTHORITY_SHA and verify manifest from origin/main.
-NEXT_REVIEW_TRIGGER: origin/main commit containing DD-80 v1.88 + G3 v1.0 + B0 v1.88 + BE v2.10 + D0a manifest/backlog
+IMPLEMENTATION_ARTIFACTS: PASS (v1.88 authority + D0a manifest/backlog committed & pushed at origin/main@033ccc8)
+FIRST_IMPLEMENTATION_STEP: create a dedicated manual P0 worktree from origin/main@033ccc8, register the D0a manifest (scope-gate), then author one atomic 0015_auth_revoke_account.sql migration + Drizzle mirror + tests
+REMAINING_BLOCKERS: none — sole blocker (authority immutability) resolved at origin/main@033ccc8; all G1–G6, closure/contract/acceptance/security gates already PASS
+NEXT_REVIEW_TRIGGER: D0a implementation slice (0015 migration + tests) merged to main → re-run for build/test evidence; D0b (Verdict 5b) unblocks only after D0a merge
 ```
 
 ## Verdict 5b — `auth-s4-d0-session-web-boundary` / D0b (2026-07-20)
