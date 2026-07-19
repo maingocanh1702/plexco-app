@@ -7,12 +7,13 @@
   "merge_policy": "manual_only",
   "auto_merge": false,
   "codex_review": "1x_clean",
-  "authority": "DD-80 (decisions v1.86 — defect fix v4) · b0-auth-credential-lifecycle-design-probe.md (owner-approved; defect fixes v1.78 + v1.83 + v1.85 + v1.86) · feature_web_auth_onboarding_tech.md v2.9b acceptance D1-1..15 · slice-readiness-verdicts.md v0.6 Verdict 4",
-  "depends_on": ["docs-auth-d0-packet"],
+  "authority": "DD-80 (decisions v1.88; G3 concurrency closure) · b0-auth-credential-lifecycle-design-probe.md amendment v1.88 · feature_web_auth_onboarding_tech.md v2.10 acceptance D1-1..15 · slice-readiness-verdicts.md v0.7 Verdict 5a/5b dependency order",
+  "depends_on": ["auth-s4-d0-revoke-core", "auth-s4-d0-session-web-boundary"],
   "dep_checks": [
     { "file": "docs/autopilot-manifests/auth-s4-d1-google-adapter.json", "symbol": "auth-s4-d1-google-adapter" },
-    { "file": "docs/standards/decisions.md", "symbol": "DD-80 defect fix v4" },
-    { "file": "docs/auth-d0-implementation-packet.md", "symbol": "AUTH_D0_PACKET_COMPLETE" }
+    { "file": "docs/standards/decisions.md", "symbol": "DD-80" },
+    { "file": "packages/db/migrations/0015_auth_revoke_account.sql", "symbol": "auth_revoke_all_web_sessions" },
+    { "file": "apps/web/app/api/auth/logout-all/route.ts", "symbol": "revokeAllWebSessions" }
   ],
   "invariants": ["auth", "schema"],
   "negative_scope": [

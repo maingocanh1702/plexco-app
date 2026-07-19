@@ -7,10 +7,11 @@
   "merge_policy": "manual_only",
   "auto_merge": false,
   "codex_review": "2x_clean",
-  "authority": "DD-80 (decisions v1.78) · b0-auth-credential-lifecycle-design-probe.md §2/§4/§4.1/§8.2 · feature_web_auth_onboarding_tech.md v2.8a §3/§4/§5-acceptance-D1",
-  "depends_on": ["auth-s4-d0-revoke-core", "auth-s4-d1-email-token-core"],
+  "authority": "DD-80 decisions v1.88 · b0-auth-credential-lifecycle-design-probe.md §2/§4/§4.1/§8.2 · feature_web_auth_onboarding_tech.md v2.10 §3/§4/§5-acceptance-D1",
+  "depends_on": ["auth-s4-d0-revoke-core", "auth-s4-d0-session-web-boundary", "auth-s4-d1-email-token-core"],
   "dep_checks": [
     { "file": "packages/db/migrations/0015_auth_revoke_account.sql", "symbol": "auth_revoke_account_sessions" },
+    { "file": "apps/web/app/api/auth/logout-all/route.ts", "symbol": "revokeAllWebSessions" },
     { "file": "packages/db/migrations/0016_account_email_token_core.sql", "symbol": "account_emails" }
   ],
   "invariants": ["auth", "schema", "build-config"],

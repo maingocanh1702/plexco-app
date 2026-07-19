@@ -1,0 +1,42 @@
+{
+  "feature": "auth-s4-d0-session-web-boundary",
+  "branch": "feat/auth-s4-d0-session-web-boundary",
+  "base_ref": "main",
+  "risk": "P0",
+  "change_class": "manual-auth-boundary",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "authority": "DD-80 decisions v1.88 · g3-revoke-all-concurrency-probe-seed.md v1.0 §4.5-§4.6/§7-§8 · b0-auth-credential-lifecycle-design-probe.md §6 amendment v1.88 · feature_web_auth_onboarding_tech.md v2.10 D0b acceptance",
+  "depends_on": ["auth-s4-d0-revoke-core"],
+  "dep_checks": [
+    {
+      "file": "packages/db/migrations/0015_auth_revoke_account.sql",
+      "symbol": "auth_revoke_all_web_sessions"
+    },
+    {
+      "file": "packages/db/src/auth.ts",
+      "symbol": "revokeAllWebSessions"
+    }
+  ],
+  "invariants": ["auth", "api-contract"],
+  "negative_scope": [
+    "NO packages/db schema, migration, SQL function, grant or DB lifecycle changes; D0a owns them",
+    "NO fallback mint when a request cookie exists and rotate returns null",
+    "NO new auth provider, Telegram removal, general error framework, tenant API or UI",
+    "NO account_id accepted from request/body; logout-all derives identity only from the current session wrapper",
+    "NO raw token/hash/CSRF/cookie/PII in logs or response",
+    "Only the two live issueSession callers named in scope may receive the typed AUTH_INVALID mapping"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/auth-s4-d0-session-web-boundary.json",
+    "apps/web/lib/session-cookies.ts",
+    "apps/web/lib/session-cookies.test.ts",
+    "apps/web/app/api/auth/logout-all/route.ts",
+    "apps/web/app/api/auth/logout-all/route.test.ts",
+    "apps/web/app/api/auth/telegram/callback/route.ts",
+    "apps/web/app/api/auth/telegram/callback/route.test.ts",
+    "apps/web/app/api/onboarding/start/route.ts",
+    "apps/web/app/api/onboarding/start/route.test.ts"
+  ]
+}

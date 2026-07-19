@@ -1,8 +1,10 @@
 # AP-28 — Auth D1 implementation packet + DD-38/39 readiness (docs-only, split 2/2)
 
-Run ONLY after `docs-auth-d0-packet` (AP-27) is merged to main — the dep_check requires
-`docs/auth-d0-implementation-packet.md` with marker `AUTH_D0_PACKET_COMPLETE` on the base, and the shared
-`auth`/`schema` invariants make the scope gate rightly block while AP-27 is in-flight.
+HOLD. Run ONLY after both current D0 slices are merged to `origin/main`: the dep_checks require
+`packages/db/migrations/0015_auth_revoke_account.sql` with `auth_revoke_all_web_sessions` and
+`apps/web/app/api/auth/logout-all/route.ts` with `revokeAllWebSessions`. The historical
+`AUTH_D0_PACKET_COMPLETE` marker is not runtime dependency evidence. If either probe is absent, stop before
+creating a worktree or registering the scope gate.
 
 Read canonical `/Users/maingocanh/Projects/Claude template/autopilot/autopilot-prompt-GENERIC.md` and confirm
 v0.6.0 or newer. Execute `docs/autopilot-docs-auth-d1-packet.md` with manifest
@@ -13,10 +15,9 @@ Before any edit:
 1. Confirm `pwd` is the exact `.autopilot/worktrees/docs-auth-d1-packet` path and branch is
    `feat/docs-auth-d1-packet`. If not, HALT; do not checkout branches in another tree.
 2. Confirm this worktree's HEAD equals `main` and `origin/main`, and all authority artifacts exist at
-   that committed base: decisions.md row "DD-80 defect fix v4" (v1.86), B0 §3.3/§4 v1.86 AAD-handoff
-   notes + §8.3 v1.85 per-lane finalizer, tech v2.9b acceptance D1-1..15, verdicts v0.6 Verdict 4,
-   both `auth-s4-d*` manifests, and `docs/auth-d0-implementation-packet.md` with marker
-   `AUTH_D0_PACKET_COMPLETE`. Never use local-only authority docs — if any is missing on this HEAD,
+   that committed base: decisions.md DD-80 v1.88, B0 amendment v1.88 plus the v1.86 AAD-handoff notes,
+   tech v2.10 acceptance D1-1..15, verdicts v0.7 current D0a/D0b order, both D0 merged probes, and all
+   `auth-s4-d*` manifests. Never use local-only authority docs — if any is missing on this HEAD,
    HALT `AUTHORITY_NOT_ON_MAIN`.
 3. Re-register the manifest from this worktree, including on a re-run, then create FRESH
    `regions.log` and `fix-round-count.txt` under `.autopilot/state/docs-auth-d1-packet/` (new slice —

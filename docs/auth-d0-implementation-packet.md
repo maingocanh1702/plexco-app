@@ -1,5 +1,13 @@
 # 🔐 Auth D0 Implementation Packet — draft copy-paste-grade (docs-only)
 
+> **⚠️ SUPERSEDED FOR EXECUTION (2026-07-20, DD-80 v1.88).** This packet is a historical v1.86/AP-27
+> design record. Its Gate-3 open notes were resolved by
+> `g3-revoke-all-concurrency-probe-seed.md` v1.0, which changes the DDL/function contract and splits
+> D0 into DB epoch core (`auth-s4-d0-revoke-core`) plus dependent web boundary
+> (`auth-s4-d0-session-web-boundary`). Do **not** lift the draft DDL/TS below into a worktree and do not
+> treat `AUTH_D0_PACKET_COMPLETE` as current CODE_READY evidence. Current authority is decisions v1.88,
+> B0 amendment v1.88 and Web Auth BE v2.10.
+
 > **Mục đích:** packet chuẩn bị/traceability cho slice `auth-s4-d0-revoke-core` để session P0
 > founder-attended implement D0 với **zero design decision còn lại**. Mọi DDL/code dưới đây là
 > **DRAFT TEXT sống duy nhất trong file này** — chưa có file nào dưới `packages/`/`apps/` được

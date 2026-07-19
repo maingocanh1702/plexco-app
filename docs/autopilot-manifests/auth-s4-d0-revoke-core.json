@@ -3,11 +3,11 @@
   "branch": "feat/auth-s4-d0-revoke-core",
   "base_ref": "main",
   "risk": "P0",
-  "change_class": "identity-feature",
+  "change_class": "manual-auth-schema",
   "merge_policy": "manual_only",
   "auto_merge": false,
   "codex_review": "2x_clean",
-  "authority": "DD-80 (decisions v1.86) · b0-auth-credential-lifecycle-design-probe.md §6 (amendments v1.83+v1.86)/§9(a) · feature_web_auth_onboarding_tech.md v2.9b §3/§5-acceptance-D0-1..13",
+  "authority": "DD-80 decisions v1.88 · g3-revoke-all-concurrency-probe-seed.md v1.0 §3-§8 · b0-auth-credential-lifecycle-design-probe.md §6 amendment v1.88 · feature_web_auth_onboarding_tech.md v2.10 D0a acceptance",
   "depends_on": ["db-postgres-drizzle-rls", "auth-onboarding-v3"],
   "dep_checks": [
     { "file": "packages/db/migrations/0012_auth_functions.sql", "symbol": "auth_revoke_web_session" },
@@ -16,13 +16,14 @@
   ],
   "invariants": ["auth", "schema"],
   "negative_scope": [
+    "NO apps/web cookie, route, caller or UI changes; those belong to dependent D0b auth-s4-d0-session-web-boundary",
     "NO email/credential/token/delivery tables or routes (D1 email-token-core)",
-    "NO Google/Facebook adapter or auth_oauth_transactions (D1 google-adapter)",
-    "NO Telegram route removal (expand->contract slice cuoi)",
-    "NO new grant to role app beyond exact public wrapper",
-    "CREATE OR REPLACE auth_rotate_web_session CHI doi lock order sang parent-first, giu nguyen signature/behavior (v1.83) — moi behavior change khac la scope breach",
-    "Internal revoke-by-account helper is NOT granted to app/app_worker; wrapper derives account from current session only, never accepts account_id from caller",
-    "Issuance fence (v1.86) CHI doi hanh vi stale-cookie-rotate-null trong issueSession sang reject+clear-cookie; no-cookie mint path va moi caller/behavior khac giu nguyen"
+    "NO Google/Facebook adapter, auth_oauth_transactions or Telegram removal",
+    "NO cache or second session-validity source; exact minted_epoch = accounts.session_epoch is the sole bulk validity rule",
+    "NO direct DML grant on accounts, web_sessions or auth_audit_events to app/app_worker/readonly; only the exact public wrapper may be executable by app",
+    "CREATE OR REPLACE create/resolve/rotate keeps signatures and response shapes; only v1.88 parent locking, locked revalidation and exact epoch stamping/comparison may change behavior",
+    "Cross-account rotate MUST lock unique old+target account parents in ascending UUID order before the old session row; caller order is forbidden",
+    "One monotonic transactional 0015 only; do not rewrite 0001/0012 or create a second migration in this slice"
   ],
   "scope": [
     "docs/autopilot-manifests/auth-s4-d0-revoke-core.json",
@@ -32,9 +33,6 @@
     "packages/db/src/index.ts",
     "packages/db/src/auth.test.ts",
     "packages/db/src/rls-invariants.test.ts",
-    "apps/web/lib/session-cookies.ts",
-    "apps/web/app/api/auth/logout-all/route.ts",
-    "apps/web/app/api/auth/logout-all/route.test.ts",
-    "docs/features/BE/feature_web_auth_onboarding_tech.md"
+    "packages/db/README.md"
   ]
 }

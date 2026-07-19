@@ -1,11 +1,11 @@
 # Feature: Web Authentication & Tenant Onboarding — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.9b · 2026-07-19
+> **Version:** 2.10 · 2026-07-20
 > **Status:** Reviewed
 > **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google/email DD-37 chưa code · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_web_auth_onboarding.md`
-> **References:** `../../standards/business-rules.md` BL-SEC-1/BL-SEC-3/BL-MSG · `../../standards/decisions.md` DD-13 · DD-31 · **DD-33** · DD-50 · DD-60 · **DD-65..67** · **DD-80 (B0 ✅ v1.77)** · `../../b0-auth-credential-lifecycle-design-probe.md` · `../../standards/api-reference-convention.md` · `auth-security-invariant-table.md`
+> **References:** `../../standards/business-rules.md` BL-SEC-1/BL-SEC-3/BL-MSG · `../../standards/decisions.md` DD-13 · DD-31 · **DD-33** · DD-50 · DD-60 · **DD-65..67** · **DD-80 (B0 ✅; revoke-all G3 v1.88)** · `../../g3-revoke-all-concurrency-probe-seed.md` v1.0 · `../../b0-auth-credential-lifecycle-design-probe.md` · `../../standards/api-reference-convention.md` · `auth-security-invariant-table.md`
 
 ---
 
@@ -377,9 +377,12 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 
 ## 5. Testing Plan
 
-### Acceptance matrix — slice D0 `auth-s4-d0-revoke-core` (DD-80 §6/§9a)
+### Acceptance matrix — D0a DB epoch core + D0b web boundary (DD-80 §6/§9a, G3 v1.88)
 
-> Điều kiện PASS của slice: mọi row dưới có test executable với expected result đúng; grant/RLS chạy trên Postgres thật. Manifest: `../../autopilot-manifests/auth-s4-d0-revoke-core.json`.
+> D0a `auth-s4-d0-revoke-core` owns the account-session epoch migration/schema/DB functions and Postgres proofs.
+> D0b `auth-s4-d0-session-web-boundary` depends on D0a and owns cookie/route behavior. Every row below
+> needs an executable test with its exact expected result; grant/catalog/concurrency cases run on real
+> PostgreSQL with deterministic barriers, never timing sleeps.
 
 | # | Case | Setup | Expected |
 |---|---|---|---|
@@ -389,13 +392,22 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | D0-4 | Logout-all replay | Gọi lại với cookie đã revoked | 401 `AUTH_INVALID`, zero mutation (B0 §6.2) |
 | D0-5 | CSRF fail | Thiếu/sai CSRF secret | 403 `CSRF_INVALID`, không revoke gì |
 | D0-6 | Rotated chain | rotate session rồi logout-all | Cả token cũ (rotated_from chain) lẫn mới đều không resolve được |
-| D0-7 | Race logout-all × rotate | 2 connection concurrent | Không deadlock; trạng thái cuối: không token nào của account còn resolve; rotate-sau-revoke trả AUTH_INVALID |
-| D0-8 | Audit atomic | logout-all thành công | `logout_all` audit ghi cùng transaction; không log token/raw |
+| D0-7 | Race logout-all × rotate same-account | 2 connection, force both account-lock orders | Rotate first ⇒ replacement later revoked by epoch bump; logout first ⇒ rotate revalidation returns NULL; no deadlock/phantom |
+| D0-8 | Audit atomic | logout-all thành công | `logout_all` audit ghi cùng transaction với exact account, `session_epoch_before`, `session_epoch_after`, revoke count; không log token/raw |
 | D0-9 | Schema mirror §9(a) | `schema.ts` mirror `auth_login_nonces`/`auth_login_state`/`rate_limit_hits` | Type-check + Drizzle mirror pass; zero runtime/DDL behavior change |
-| D0-10 | Lock order | Helper lock `accounts` parent trước `web_sessions` con (§5.2 B0) | Trace/regression: không path nào lock sessions trước accounts |
-| D0-11 | Rotate parent-first replace (v1.83) | 0015 CREATE OR REPLACE `auth_rotate_web_session` lock accounts→sessions, giữ nguyên signature/behavior | Toàn bộ test rotate 0012-era pass nguyên vẹn + regression: race logout-all×rotate không deadlock, không token nào sống sót |
+| D0-10 | Lock order | Helper/create lock target account first; rotate A→B locks unique `{A,B}` by ascending UUID before session row | Trace/regression: no session-first path; same-account locks once; cross-account order is caller-independent |
+| D0-11 | Rotate parent-first + epoch replace (v1.83/v1.88) | 0015 CREATE OR REPLACE keeps signature/cross-account binding, adds parent-set lock + revalidation + target epoch stamp | 0012-era rotate and account-confusion tests pass; stale old token returns NULL and mints nothing |
 | D0-12 | Issuance fence (v1.86) | Login hoàn tất ngay sau logout-all, browser còn stale session cookie | `issueSession()` thấy rotate trả null → KHÔNG fallback mint; clear session cookie + login route trả 401 `AUTH_INVALID`; retry không cookie mint session mới bình thường (B0 §6 amendment v1.86) |
 | D0-13 | Revoke-all index (v1.86) | Catalog test sau migration 0015 | Partial index `web_sessions(account_id) WHERE revoked_at IS NULL` tồn tại; `schema.ts` mirror khớp; rollback = DROP INDEX |
+| D0-14 | Epoch migration/backfill (v1.88, D0a) | Apply 0015 to existing account/session fixtures | `session_epoch=0`, `minted_epoch=0`, non-negative CHECKs/defaults/catalog mirror present; existing live session still resolves |
+| D0-15 | Resolve equality fail-closed (v1.88, D0a) | Session epoch lower, equal, higher and NULL/corrupt fixture attempts | Only exact equality resolves; lower/higher/invalid state returns no row; query reuses existing `JOIN accounts`, no cache/subquery |
+| D0-16 | Create × logout-all (v1.88, D0a) | Two checked-out connections; force create-first and logout-first account lock order | Create-first row is revoked by later bump; logout-first then create stamps new epoch and survives as post-logout auth |
+| D0-17 | Rotate A→B × logout-all(A) (v1.88, D0a) | Force both canonical parent-lock orders | Rotate-first creates B session then A logout leaves B live; A-logout-first makes old-token revalidation fail and mints zero B session |
+| D0-18 | Rotate A→B × logout-all(B) (v1.88, D0a) | Force both canonical parent-lock orders | Rotate-first B session is revoked by B bump; B-logout-first then rotate stamps new B epoch and survives |
+| D0-19 | Concurrent logout-all replay (v1.88, D0a) | Both calls read same current token before parent lock | Exactly one bump/revoke/audit commits; second locked revalidation fails with zero mutation |
+| D0-20 | Atomic failure/overflow (v1.88, D0a) | Inject failure after bump before audit; separately hit bigint constraint/overflow | Entire transaction rolls back; no partial epoch/revoke/audit and no wrap/saturation |
+| D0-21 | Exact revoke materialization/count (v1.88, D0a) | A has 3 unrevoked sessions stamped at current epoch E, B has 1 | A bump + same-timestamp `revoked_at` on exactly 3 rows; return/audit count=3; B unchanged |
+| D0-22 | Forward rollback safety (v1.88, D0a) | Run logout-all, then deploy compatibility functions without epoch predicate | No invalidated session resurrects because every pre-bump active row was materialized as revoked; audit rows retained |
 
 ### Acceptance matrix — slice D1 `auth-s4-d1-google-adapter` (DD-80 §2/§4/§4.1/§8.2)
 

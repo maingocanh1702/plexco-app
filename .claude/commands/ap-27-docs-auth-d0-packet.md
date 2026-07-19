@@ -1,5 +1,7 @@
 # AP-27 — Auth D0 implementation packet (docs-only, split 1/2)
 
+> **DISABLED / SUPERSEDED — DO NOT EXECUTE OR REGISTER.** AP-27 already merged, and its v1.86 packet is historical. Current authority is DD-80 v1.88 plus `docs/g3-revoke-all-concurrency-probe-seed.md`; use the separately scoped P0 manual-only D0a/D0b contracts. Stop here without creating a worktree, counter, sentinel, branch, or scope-gate reservation.
+
 Read canonical `/Users/maingocanh/Projects/Claude template/autopilot/autopilot-prompt-GENERIC.md` and confirm
 v0.6.0 or newer. Execute `docs/autopilot-docs-auth-d0-packet.md` with manifest
 `docs/autopilot-manifests/docs-auth-d0-packet.json`.

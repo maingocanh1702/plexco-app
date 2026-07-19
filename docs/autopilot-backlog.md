@@ -171,7 +171,7 @@ notes: SUPERSEDED 2026-07-19 (owner, DD-80 defect fix v4 / decisions v1.86) — 
 
 ## task: docs-auth-d0-packet
 title: D0 revoke-core implementation packet (split 1/2 from AP-26 monolith)
-status: ready
+status: merged
 risk: P2
 change_class: docs-traceability
 depends_on: []
@@ -179,19 +179,43 @@ invariants: [auth, schema]
 scope: [docs/auth-d0-implementation-packet.md]
 manifest: docs/autopilot-manifests/docs-auth-d0-packet.json
 merged_probe: docs/auth-d0-implementation-packet.md :: AUTH_D0_PACKET_COMPLETE
-notes: Launcher-ready docs-only AP-27 slice (launcher /ap-27-docs-auth-d0-packet). Lift §A1/A2/A3 + §D(A) + floors from the read-only reference (git show cab0c2a:docs/auth-d0-d1-implementation-packet.md), then transcribe the v1.86 pins: issuance-fence TS draft for apps/web/lib/session-cookies.ts (reject-and-reauth, D0-12), partial index web_sessions(account_id) WHERE revoked_at IS NULL in the 0015 draft + schema mirror (D0-13), citation re-audit to v1.86/v2.9b/v0.6. Fresh round counters — AP-26 budget does not carry over. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-docs-auth-d0-packet.md`.
+notes: MERGED historical AP-27 packet; its marker is present on main. The generated packet is superseded for execution by DD-80 v1.88 + the final G3 contract, which split current D0 into P0 manual-only `auth-s4-d0-revoke-core` and `auth-s4-d0-session-web-boundary`. The old launcher is disabled and this task must not be re-run.
 
 ## task: docs-auth-d1-packet
 title: D1 google-adapter implementation packet + DD-38/39 readiness (split 2/2 from AP-26 monolith)
-status: ready
+status: planned
 risk: P2
 change_class: docs-traceability
-depends_on: [docs-auth-d0-packet]
+depends_on: [auth-s4-d0-revoke-core, auth-s4-d0-session-web-boundary]
 invariants: [auth, schema]
 scope: [docs/auth-d1-implementation-packet.md]
 manifest: docs/autopilot-manifests/docs-auth-d1-packet.json
 merged_probe: docs/auth-d1-implementation-packet.md :: AUTH_D1_PACKET_COMPLETE
-notes: Launcher-ready docs-only AP-28 slice (launcher /ap-28-docs-auth-d1-packet) — run AFTER docs-auth-d0-packet merges (dep_check on the D0 packet marker; shared auth/schema invariants serialize the gate). Lift §B1/B2/B3 (incl. v1.85 sweep-at-traffic + per-lane audit resolutions) + §C + §D(B/C) from the read-only reference (git show cab0c2a), then transcribe the v1.86 pin: auth_login_google takes preallocated account_emails.id for cell 1 (AAD per B0 §3.3/§4) + D1-2 assertion; §C3 base re-pin; citation re-audit to v1.86/v2.9b/v0.6. Fresh round counters. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-docs-auth-d1-packet.md`.
+notes: HOLD — not launcher-ready until both D0a and D0b merged probes exist on origin/main. AP-28 remains a P2 docs-only preparation slice, but its preflight and manifest now pin DD-80 v1.88, tech v2.10, verdicts v0.7 and the two live D0 dependencies. The D1-specific v1.86 AAD/audit obligations remain unchanged; re-audit citations against the then-current committed base before authoring the packet.
+
+## task: auth-s4-d0-revoke-core
+title: Account-session epoch DB core for linearizable revoke-all
+status: planned
+risk: P0
+change_class: manual-auth-schema
+depends_on: [db-postgres-drizzle-rls, auth-onboarding-v3]
+invariants: [auth, schema]
+scope: [docs/autopilot-manifests/auth-s4-d0-revoke-core.json, packages/db/schema.ts, packages/db/migrations/0015_auth_revoke_account.sql, packages/db/src/auth.ts, packages/db/src/index.ts, packages/db/src/auth.test.ts, packages/db/src/rls-invariants.test.ts, packages/db/README.md]
+manifest: docs/autopilot-manifests/auth-s4-d0-revoke-core.json
+merged_probe: packages/db/migrations/0015_auth_revoke_account.sql :: CREATE OR REPLACE FUNCTION auth_revoke_all_web_sessions
+notes: D0a root slice under DD-80 v1.88 and `g3-revoke-all-concurrency-probe-seed.md` v1.0. P0 manual workflow only; canonical GENERIC v0.6.0 forbids autopilot codegen, so there is no launcher. One atomic 0015 owns account/session epochs, create/resolve/rotate replacements, revoke helper/wrapper, audit materialization and real-Postgres barrier/catalog/grant proofs. Two consecutive FULL-base Codex clean rounds, scope-gate READY, STOP_AT_READY, manual merge.
+
+## task: auth-s4-d0-session-web-boundary
+title: Session reauth fence and logout-all web boundary
+status: planned
+risk: P0
+change_class: manual-auth-boundary
+depends_on: [auth-s4-d0-revoke-core]
+invariants: [auth, api-contract]
+scope: [docs/autopilot-manifests/auth-s4-d0-session-web-boundary.json, apps/web/lib/session-cookies.ts, apps/web/lib/session-cookies.test.ts, apps/web/app/api/auth/logout-all/route.ts, apps/web/app/api/auth/logout-all/route.test.ts, apps/web/app/api/auth/telegram/callback/route.ts, apps/web/app/api/auth/telegram/callback/route.test.ts, apps/web/app/api/onboarding/start/route.ts, apps/web/app/api/onboarding/start/route.test.ts]
+manifest: docs/autopilot-manifests/auth-s4-d0-session-web-boundary.json
+merged_probe: apps/web/app/api/auth/logout-all/route.ts :: revokeAllWebSessions
+notes: D0b under DD-80 v1.88; starts only after the D0a merged probe exists on origin/main. P0 manual workflow only, no autopilot launcher. Owns stale-cookie rotate-null reject-and-reauth, all live caller mappings, CSRF/logout-all route and tests; zero DB/schema changes. Two consecutive FULL-base Codex clean rounds, scope-gate READY, STOP_AT_READY, manual merge.
 
 ## task: core-matcher-grouped-amount-parsing
 title: splitNameAmount misparses grouped trailing amounts with a non-zero final group

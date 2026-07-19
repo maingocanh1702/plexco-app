@@ -1,5 +1,7 @@
 # Autopilot slice — Auth D0 implementation packet (docs-only, split 1/2)
 
+> **HISTORICAL / DO NOT RUN:** AP-27 already merged. Its generated packet is superseded for execution by DD-80 v1.88 and `g3-revoke-all-concurrency-probe-seed.md`, which split current D0 into the P0 manual-only D0a DB core and D0b web boundary. `/ap-27-docs-auth-d0-packet` is disabled; preserve the remaining text only as audit history.
+
 > **Slug:** `docs-auth-d0-packet` · **Launcher:** `/ap-27-docs-auth-d0-packet`
 > **Risk:** P2 docs-only · `manual_only` · STOP_AT_READY · 1 FULL-base Codex clean round
 > **Canonical framework:** `autopilot-prompt-GENERIC` v0.6.0 or newer

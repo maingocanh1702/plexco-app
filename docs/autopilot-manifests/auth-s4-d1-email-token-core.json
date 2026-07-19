@@ -7,10 +7,11 @@
   "merge_policy": "manual_only",
   "auto_merge": false,
   "codex_review": "2x_clean",
-  "authority": "DD-80 (decisions v1.78) · b0-auth-credential-lifecycle-design-probe.md §3/§3.2/§3.3/§3.4/§5/§5.2/§5.3/§5.4/§8.1/§9 · feature_web_auth_onboarding_tech.md v2.8a §2/§4",
-  "depends_on": ["auth-s4-d0-revoke-core"],
+  "authority": "DD-80 decisions v1.88 · b0-auth-credential-lifecycle-design-probe.md §3/§3.2/§3.3/§3.4/§5/§5.2/§5.3/§5.4/§8.1/§9 · feature_web_auth_onboarding_tech.md v2.10 §2/§4",
+  "depends_on": ["auth-s4-d0-revoke-core", "auth-s4-d0-session-web-boundary"],
   "dep_checks": [
-    { "file": "packages/db/migrations/0015_auth_revoke_account.sql", "symbol": "auth_revoke_account_sessions" }
+    { "file": "packages/db/migrations/0015_auth_revoke_account.sql", "symbol": "auth_revoke_account_sessions" },
+    { "file": "apps/web/app/api/auth/logout-all/route.ts", "symbol": "revokeAllWebSessions" }
   ],
   "invariants": ["auth", "schema"],
   "negative_scope": [
