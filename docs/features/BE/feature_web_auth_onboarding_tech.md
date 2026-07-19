@@ -1,7 +1,7 @@
 # Feature: Web Authentication & Tenant Onboarding — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.8a · 2026-07-19
+> **Version:** 2.9 · 2026-07-19
 > **Status:** Reviewed
 > **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google/email DD-37 chưa code · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_web_auth_onboarding.md`
@@ -147,6 +147,24 @@ The lifecycle below is normative; physical tables/indexes remain **provisional**
 
 **Note on `account_identities.platform_user_hash` (DD-31 SI-2, updated 2026-07-10):** the column type is unchanged (`text`), but its VALUE is a keyed HMAC over the provider subject — the Google `sub` (provider `google`) or the normalized email (provider `email`) — never a bare `sha256(...)`. It must use a secret sourced per §4 "Secret / KMS Source". Write path (login/register) and read path (lookup) must resolve the identical key, or existing users are silently locked out. *(The old `sha256("telegram:" + id)` value is dropped with Telegram Login — DD-37; keyed HMAC retained for consistency.)*
 
+### Migration & Rollback
+
+**Live-schema truth (main, migrations `0000`–`0014`):**
+
+- **Đã tồn tại — reuse baseline, không recreate; `DROP` = ❌ NEVER:** `accounts`/`web_sessions`/`account_identities` (`0001_global_directory.sql`), `onboarding_runs`/`onboarding_steps` (`0008_notifications_onboarding.sql`), `auth_login_state`/`auth_login_nonces`/`rate_limit_hits` (`0012_auth_functions.sql`).
+- **Chưa tồn tại trên main:** `auth_oauth_transactions` (OAuth transaction store §2) và toàn bộ email-credential/token/delivery tables (B0 — provisional tới khi probe được owner approve; cấm author DDL trước đó).
+- `account_identities.platform` live là unrestricted `text` (đã pin ở "Live-schema truth 2026-07-18" phía trên) — build DD-33 thêm validation trong một migration self-contained; không `DROP` constraint chưa tồn tại.
+
+**Migration mới:** mọi object mới (`auth_oauth_transactions`, email-token tables sau B0 approval, platform CHECK) đi trong migration **monotonic theo next available number sau tail hiện tại của main** (tail hiện là `0014_players_waitlist.sql`). Số `0016`/`0017` trong slice plan v2.8a là thứ tự tương đối giữa các slice — phải re-check tail thực tế tại thời điểm merge. Không sửa migration lịch sử.
+
+**Rollback:**
+
+| Bước | Hành động | An toàn? |
+|------|-----------|----------|
+| 1 | Tắt provider flag/routes (Google adapter; email provider vốn fail-closed OFF; Facebook gate OFF) — Google/email/Facebook độc lập nhau (§6) | ✅ |
+| 2 | Migration revert mới: DROP các object **additive** vừa thêm (`auth_oauth_transactions`, token tables, CHECK mới) sau khi routes đã tắt | ✅ Additive-only |
+| 3 | DROP bảng baseline `0001`/`0008`/`0012` (`accounts`…`rate_limit_hits`) | ❌ NEVER — chứa account/session/onboarding data thật |
+
 ### Edge Cases (Backend)
 
 | # | Category | Case | Xử lý |
@@ -201,6 +219,43 @@ The lifecycle below is normative; physical tables/indexes remain **provisional**
 | POST | /api/onboarding/messenger/connect | 🔑 Exact capability | Optional connect tenant Facebook Page; central fallback remains |
 | GET | /api/onboarding/messenger/status | 🔑 Exact capability | Return central availability + optional tenant Page status |
 | GET | /api/onboarding/readiness | 🔑 Exact capability | Readiness checklist |
+
+### Request/Response Examples
+
+> DTO minh hoạ theo contract đã pin; field name chốt ở build slice; envelope DD-60 (`../../standards/api-reference-convention.md`). OAuth `state`/`callback` là redirect transport (không phải JSON envelope); verify/reset GET là non-mutating landing (§4) — examples dưới chỉ cho JSON surfaces.
+
+**POST `/api/auth/email/login`** (email + password + login-state consume DD-31 SI-1):
+
+- `401` — credential sai / login-state cookie thiếu/lệch/hết hạn/đã consume (generic, không phân biệt nhánh):
+
+```json
+{ "data": null, "error": { "code": "AUTH_INVALID", "message": "Xác thực không hợp lệ", "statusCode": 401 }, "meta": { "requestId": "req_…" } }
+```
+
+- `429` — vượt một trong hai bucket độc lập (trusted-IP / normalized-email-HMAC):
+
+```json
+{ "data": null, "error": { "code": "LOGIN_RATE_LIMITED", "message": "Quá nhiều lần thử — đợi", "statusCode": 429 }, "meta": { "requestId": "req_…" } }
+```
+
+**GET `/api/onboarding/readiness`** (shared predicate §2 — handler không re-derive required steps):
+
+```json
+{ "data": { "ready": false, "steps": [ { "step": "club", "status": "verified" }, { "step": "bank", "status": "pending" }, { "step": "zalo", "status": "skipped" } ] }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+### Idempotency
+
+> Tổng hợp từ cơ chế đã pin ở §2/§4 (canonical — bảng này chỉ tham chiếu); hàng chưa pin ghi rõ.
+
+| Endpoint | Idempotent? | Key |
+|----------|-------------|-----|
+| `POST /api/onboarding/start` | ✅ | Idempotency key + UNIQUE constraint (edge case #4 — concurrent tenant creation tạo đúng 1) |
+| Onboarding step commands (club/bank/zalo/messenger) | ✅ | `UNIQUE(run_id, step, idempotency_key)` — refresh/back safe |
+| `POST /api/auth/email/verify` · `POST /api/auth/email/reset` | ✅ single-use fail-closed | Hash-only TTL/single-use token, một conditional consume transaction (DD-50); replay → generic `AUTH_TOKEN_INVALID` |
+| OAuth callback claim (Google/Facebook) | ✅ single-use fail-closed | `auth_oauth_transactions.state_hash` + conditional consume; replay → generic reject, zero mutation (D1-3) |
+| `POST /api/auth/logout-all` | ✅ | Replay với cookie đã revoked → 401 `AUTH_INVALID`, zero mutation (D0-4) |
+| `POST /api/auth/email/register` · `/forgot` | ⬜ chưa pin — multi-attempt/supersede semantics chốt theo B0 probe ở build slice | — |
 
 ### Error Codes
 
@@ -295,6 +350,28 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
     → Retry available (idempotent)
     → Failure stores redacted provider code
 ```
+
+### Caching Strategy
+
+| Data | Cache? | Lý do |
+|------|--------|-------|
+| Session/CSRF/account state | ❌ | Fail-closed — mọi request resolve session live qua `token_hash` + revoked/rotated check; cache phá revoke-all atomicity (DD-50) |
+| OAuth transaction / login-state | ❌ | Single-use row + TTL 10 phút; consume là conditional UPDATE trong transaction |
+| Verify/reset token | ❌ | Hash-only, single-use, atomic consume |
+| Onboarding readiness/steps | ❌ | Shared predicate đọc live (§2); step status persisted trong DB |
+| Rate-limit buckets | Storage riêng (`rate_limit_hits`), không phải cache | Limiter/storage failure fail-closed — không tạo row/cookie (§3) |
+| Chưa liệt kê | ❌ fail-closed | Mặc định không cache trên surface auth |
+
+### Security Checklist (template v2.33 — map về section đã pin)
+
+| Mục | Trả lời trong spec |
+|-----|---------------------|
+| Authorization/ownership | §3 Endpoints (auth legend + exact capability); §4 SI-3 explicit tenant filter + RLS; D0-3: wrapper tự derive account từ session, không nhận `account_id` param |
+| Injection/validation | §4 Google OIDC proof matrix (signature/iss/aud/nonce/PKCE/exp/`email_verified`); SI-1 state/binding consume trước mọi mutation; §2 edge cases #1–#2 |
+| Secret & log redaction | §4 Secret/KMS Source (SI-2 keyed HMAC); §2 edge cases #6/#11; §4: OAuth state/binding/code/nonce/verifier + email URL token excluded from logs/analytics; `Referrer-Policy: no-referrer` |
+| Webhook signature + replay | N/A trong doc này — bank/provider webhook auth pin ở `feature_payment_reconcile_tech.md` §3; surface này chỉ trigger async verify (§4 Integration Verification Flow) |
+| Idempotency | §2 UNIQUE constraints + bảng Idempotency (§3) |
+| Data retention/xoá | Token/transaction rows terminalize + cleanup theo pattern `terminal_at` (§2); retention schedule per-table chưa pin ở doc này — theo `feature_security_operations_tech.md` |
 
 ---
 
@@ -434,6 +511,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.9 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (live `0001`/`0008`/`0012` = reuse baseline, DROP ❌ NEVER; `auth_oauth_transactions` + email tables = migration mới monotonic theo tail thực tế của main), §3 Request/Response Examples (DD-60) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.8a | **Defect fixes v1.78 (từ AP-26 HALT-AUTHORITY_AMBIGUOUS):** (1) `auth_oauth_transactions` thêm `terminal_at` + lifecycle CHECK đúng pattern `auth_email_deliveries` — ciphertext NOT NULL chỉ khi chưa terminal; thay CHECK NOT-NULL vĩnh viễn tự mâu thuẫn NULL-on-consume. (2) D1-15 đổi thành absence-check (route Facebook không tồn tại trong D1; UNAVAILABLE thuộc slice DD-33). (3) Slice order-2 `auth-s4-d1-email-token-core` có manifest riêng; oauth migration dời 0016→0017. No runtime. |
 | 2026-07-19 | v2.8 | **DD-80 propagate + slice artifacts:** refs thêm DD-80/B0 probe (owner-approved v1.77); thêm acceptance matrix D0 revoke-core (10 case) + D1 Google adapter (15 case) bind manifests `auth-s4-d0-revoke-core.json`/`auth-s4-d1-google-adapter.json`. Contract §2–§4 không đổi; chưa claim runtime. |
 | 2026-07-19 | v2.7a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
