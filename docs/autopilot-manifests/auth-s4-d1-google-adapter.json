@@ -7,10 +7,11 @@
   "merge_policy": "manual_only",
   "auto_merge": false,
   "codex_review": "2x_clean",
-  "authority": "DD-80 (decisions v1.77) · b0-auth-credential-lifecycle-design-probe.md §2/§4/§4.1/§8.2 · feature_web_auth_onboarding_tech.md v2.8 §3/§4/§5-acceptance-D1",
-  "depends_on": ["auth-s4-d0-revoke-core"],
+  "authority": "DD-80 (decisions v1.78) · b0-auth-credential-lifecycle-design-probe.md §2/§4/§4.1/§8.2 · feature_web_auth_onboarding_tech.md v2.8a §3/§4/§5-acceptance-D1",
+  "depends_on": ["auth-s4-d0-revoke-core", "auth-s4-d1-email-token-core"],
   "dep_checks": [
-    { "file": "packages/db/migrations/0015_auth_revoke_account.sql", "symbol": "auth_revoke_account_sessions" }
+    { "file": "packages/db/migrations/0015_auth_revoke_account.sql", "symbol": "auth_revoke_account_sessions" },
+    { "file": "packages/db/migrations/0016_account_email_token_core.sql", "symbol": "account_emails" }
   ],
   "invariants": ["auth", "schema", "build-config"],
   "enablement_gates": [
@@ -28,7 +29,7 @@
   "scope": [
     "docs/autopilot-manifests/auth-s4-d1-google-adapter.json",
     "packages/db/schema.ts",
-    "packages/db/migrations/0016_oauth_transactions.sql",
+    "packages/db/migrations/0017_oauth_transactions.sql",
     "packages/db/src/auth.ts",
     "packages/db/src/auth.test.ts",
     "apps/web/lib/google-oidc.ts",

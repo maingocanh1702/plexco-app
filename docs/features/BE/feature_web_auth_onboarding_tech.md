@@ -1,7 +1,7 @@
 # Feature: Web Authentication & Tenant Onboarding — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.8 · 2026-07-19
+> **Version:** 2.8a · 2026-07-19
 > **Status:** Reviewed
 > **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google/email DD-37 chưa code · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_web_auth_onboarding.md`
@@ -122,9 +122,12 @@ CREATE TABLE auth_oauth_transactions (
   kms_key_version      text,             -- opaque KMS key/version reference metadata
   expires_at           timestamptz NOT NULL,
   consumed_at          timestamptz,
+  terminal_at          timestamptz,      -- consume hoặc expiry-cleanup terminalize (pattern auth_email_deliveries)
   created_at           timestamptz NOT NULL DEFAULT now(),
-  CHECK (provider <> 'google' OR
-         (nonce_hash IS NOT NULL AND pkce_verifier_enc IS NOT NULL AND kms_key_version IS NOT NULL))
+  CHECK (consumed_at IS NULL OR terminal_at IS NOT NULL),
+  CHECK (provider <> 'google'
+         OR (terminal_at IS NULL  AND nonce_hash IS NOT NULL AND pkce_verifier_enc IS NOT NULL AND kms_key_version IS NOT NULL)
+         OR (terminal_at IS NOT NULL AND pkce_verifier_enc IS NULL AND kms_key_version IS NULL))
 );
 CREATE INDEX auth_oauth_transactions_expiry_idx ON auth_oauth_transactions(expires_at);
 ```
@@ -334,7 +337,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | D1-12 | PKCE ciphertext | Kiểm tra storage | Canonical `bytea` + key version text riêng (v2.7 contract) |
 | D1-13 | Không same-origin gate | Cross-site GET callback với binding Lax | Hoạt động; KHÔNG gọi `sameOriginRequest()`; session cookie vẫn Strict |
 | D1-14 | Telegram regression | Chạy test suite Telegram hiện có | Pass nguyên vẹn (chưa remove route nào) |
-| D1-15 | Facebook negative scope | GET facebook state/callback | `AUTH_PROVIDER_UNAVAILABLE` như v2.6; zero mutation |
+| D1-15 | Facebook negative scope (absence) | GET `/api/auth/facebook/{state,callback}` | Route KHÔNG tồn tại trong D1 (404 mặc định framework; D1 không tạo file route Facebook nào). Contract `AUTH_PROVIDER_UNAVAILABLE` v2.6 thuộc slice DD-33 riêng khi route được author |
 
 ### Unit Tests
 
@@ -431,6 +434,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-19 | v2.8a | **Defect fixes v1.78 (từ AP-26 HALT-AUTHORITY_AMBIGUOUS):** (1) `auth_oauth_transactions` thêm `terminal_at` + lifecycle CHECK đúng pattern `auth_email_deliveries` — ciphertext NOT NULL chỉ khi chưa terminal; thay CHECK NOT-NULL vĩnh viễn tự mâu thuẫn NULL-on-consume. (2) D1-15 đổi thành absence-check (route Facebook không tồn tại trong D1; UNAVAILABLE thuộc slice DD-33). (3) Slice order-2 `auth-s4-d1-email-token-core` có manifest riêng; oauth migration dời 0016→0017. No runtime. |
 | 2026-07-19 | v2.8 | **DD-80 propagate + slice artifacts:** refs thêm DD-80/B0 probe (owner-approved v1.77); thêm acceptance matrix D0 revoke-core (10 case) + D1 Google adapter (15 case) bind manifests `auth-s4-d0-revoke-core.json`/`auth-s4-d1-google-adapter.json`. Contract §2–§4 không đổi; chưa claim runtime. |
 | 2026-07-19 | v2.7a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
 | 2026-07-18 | v2.7 | **Cross-site auth + final review correction:** live Strict/same-origin login-state remains only for same-origin form; Google/Facebook use protected OAuth transaction + provider-specific Lax binding; verify/reset links use non-mutating GET → explicit same-origin POST. OAuth state issue now has a pre-insert/cookie trusted-IP bucket distinct from callback; verify/reset pin IP→non-mutating target resolve→target/invalid-artifact bucket→consume ordering; Google PKCE KMS ciphertext uses canonical `bytea` while key version remains separate text metadata. Add transport/link-scanner/rate-order/Google-PKCE tests. |

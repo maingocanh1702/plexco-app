@@ -174,8 +174,8 @@ G3_DEPENDENCY: FAIL (prior slice D0 chưa merge main — dep_check `auth_revoke_
 G4_TEST: PASS (acceptance D1-1..D1-15)
 G5_SCOPE: PASS
 G6_EXTERNAL: ENABLEMENT_ONLY:google-oauth-client-config,A3-legal-PII
-HARD_DEPENDENCIES: auth-s4-d0-revoke-core = NOT MERGED
-PRIOR_SLICES: auth-s4-d0-revoke-core
+HARD_DEPENDENCIES: auth-s4-d0-revoke-core + auth-s4-d1-email-token-core = NOT MERGED (order DD-80 §10; oauth migration = 0017)
+PRIOR_SLICES: auth-s4-d0-revoke-core → auth-s4-d1-email-token-core
 OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: google-oauth-client-config (config, không đổi dark contract); A3-legal-PII (go-live)
 LIVE_REPO_VERIFICATION: PASS
@@ -195,6 +195,7 @@ NEXT_REVIEW_TRIGGER: D0 merge probe pass → re-run closure D1 (kỳ vọng CODE
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 19/07/2026 | v0.4 | **v1.78 corrections:** Verdict 4 thêm hard dependency order-2 `auth-s4-d1-email-token-core` (manifest mới, dark) + oauth migration dời 0017; D1-15 absence-check; PKCE lifecycle CHECK theo v1.78. Verdict 3 (D0) không đổi. |
 | 19/07/2026 | v0.3 | **B0 → DD-80 ✅ (v1.77):** thêm Verdict 3 (`auth-s4-d0-revoke-core` = **CODE_READY**, authority `352e6ec`) + Verdict 4 (`auth-s4-d1-google-adapter` = PLAN_READY chờ D0 merge). Artifacts: 2 manifest + acceptance D0×10/D1×15 trong web_auth tech v2.8. RUN precondition: merge docs authority lên main trước khi mở worktree. |
 | 19/07/2026 | v0.2 | **Reframe theo canonical gate.** Bỏ framework G1–G6 tự chế (trùng `review-code-readiness-gate.md`); đổi tên `ready-to-code-gate.md` → `slice-readiness-verdicts.md`; thay bằng verdict §7 pinned SHA `main@22c23aa` cho auth-s4 (NOT_PLAN_READY, chờ B0) và dd41 (NOT_CODE_READY, chờ DD-38/39 merge). |
 | 19/07/2026 | v0.1 | (retired) 6-condition gate tự chế — superseded bởi canonical gate. |

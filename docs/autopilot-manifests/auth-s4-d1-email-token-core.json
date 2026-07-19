@@ -1,0 +1,33 @@
+{
+  "feature": "auth-s4-d1-email-token-core",
+  "branch": "feat/auth-s4-d1-email-token-core",
+  "base_ref": "main",
+  "risk": "P0",
+  "change_class": "identity-feature",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "authority": "DD-80 (decisions v1.78) · b0-auth-credential-lifecycle-design-probe.md §3/§3.2/§3.3/§3.4/§5/§5.2/§5.3/§5.4/§8.1/§9 · feature_web_auth_onboarding_tech.md v2.8a §2/§4",
+  "depends_on": ["auth-s4-d0-revoke-core"],
+  "dep_checks": [
+    { "file": "packages/db/migrations/0015_auth_revoke_account.sql", "symbol": "auth_revoke_account_sessions" }
+  ],
+  "invariants": ["auth", "schema"],
+  "negative_scope": [
+    "CODE DARK (DD-80 §10 order 2): storage + validators + parent-first helpers + cleanup ONLY — no email UI, no routes, no provider send; email provider fail-closed OFF",
+    "NO email register/verify/login/forgot/reset endpoints (D1 email bundle rieng, mot release unit flag OFF)",
+    "NO Google adapter / auth_oauth_transactions (slice order 3, migration 0017)",
+    "NO pg-boss enqueue wiring beyond dark delivery storage + provider-key derivation",
+    "NOT READY truoc khi migration/runtime + reset-vs-consume/merge barrier tests land (DD-80 §10)",
+    "NO Telegram removal"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/auth-s4-d1-email-token-core.json",
+    "packages/db/schema.ts",
+    "packages/db/migrations/0016_account_email_token_core.sql",
+    "packages/db/src/auth.ts",
+    "packages/db/src/auth.test.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "docs/features/BE/feature_web_auth_onboarding_tech.md"
+  ]
+}
