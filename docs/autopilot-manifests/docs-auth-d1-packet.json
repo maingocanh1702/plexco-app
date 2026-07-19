@@ -1,0 +1,30 @@
+{
+  "feature": "docs-auth-d1-packet",
+  "branch": "feat/docs-auth-d1-packet",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "docs-traceability",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "1x_clean",
+  "authority": "DD-80 (decisions v1.86 — defect fix v4) · b0-auth-credential-lifecycle-design-probe.md (owner-approved; defect fixes v1.78 + v1.83 + v1.85 + v1.86) · feature_web_auth_onboarding_tech.md v2.9b acceptance D1-1..15 · slice-readiness-verdicts.md v0.6 Verdict 4",
+  "depends_on": ["docs-auth-d0-packet"],
+  "dep_checks": [
+    { "file": "docs/autopilot-manifests/auth-s4-d1-google-adapter.json", "symbol": "auth-s4-d1-google-adapter" },
+    { "file": "docs/standards/decisions.md", "symbol": "DD-80 defect fix v4" },
+    { "file": "docs/auth-d0-implementation-packet.md", "symbol": "AUTH_D0_PACKET_COMPLETE" }
+  ],
+  "invariants": ["auth", "schema"],
+  "negative_scope": [
+    "NO file under packages/ or apps/ may be created or modified — DDL/code exists ONLY as fenced draft text inside the packet doc",
+    "NO migration files, NO secret values, NO provider resources, NO App Specs/workflows",
+    "NO edit to Reviewed specs (feature_web_auth_onboarding*.md), decisions.md, or slice-readiness-verdicts.md",
+    "NO new business/security rule may be invented — any contract ambiguity is HALT-AUTHORITY_AMBIGUOUS, not a local decision",
+    "NO checkout/merge/rebase of the reference branch feat/docs-auth-d0-d1-implementation-packet — read it via git show cab0c2a:docs/auth-d0-d1-implementation-packet.md ONLY",
+    "This packet does NOT authorize D1 build; P0 auth code remains founder-attended manual workflow"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/docs-auth-d1-packet.json",
+    "docs/auth-d1-implementation-packet.md"
+  ]
+}

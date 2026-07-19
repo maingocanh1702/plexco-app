@@ -159,7 +159,7 @@ notes: Launcher-ready docs-only AP-25 slice. Convert acceptance criteria + DoD f
 
 ## task: docs-auth-d0-d1-implementation-packet
 title: Copy-paste-grade implementation packet for auth slices D0 revoke-core + D1 google-adapter
-status: ready
+status: superseded
 risk: P2
 change_class: docs-traceability
 depends_on: []
@@ -167,7 +167,31 @@ invariants: [auth, schema]
 scope: [docs/auth-d0-d1-implementation-packet.md]
 manifest: docs/autopilot-manifests/docs-auth-d0-d1-implementation-packet.json
 merged_probe: docs/auth-d0-d1-implementation-packet.md :: AUTH_D0_D1_PACKET_COMPLETE
-notes: Launcher-ready docs-only AP-26 slice. Transcribe DD-80/B0 (owner-approved v1.77) into draft DDL 0015/0016, schema-mirror plan, route/adapter outlines and test skeletons mapped 1-1 to acceptance D0-1..10/D1-1..15 (web_auth tech v2.8), plus DD-38/39 readiness listing src-traced from existing specs. All drafts live ONLY inside the packet doc — no packages/apps edits, no Reviewed-spec/decisions/verdicts edits, no new rules (ambiguity = HALT-AUTHORITY_AMBIGUOUS). Does NOT authorize P0 auth codegen; D0/D1 build stays founder-attended. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-docs-auth-d0-d1-implementation-packet.md`.
+notes: SUPERSEDED 2026-07-19 (owner, DD-80 defect fix v4 / decisions v1.86) — Codex round-03 returned 2xP1+1xP2 at fix-round cap 5 → MAX_ROUNDS halt; monolith split into `docs-auth-d0-packet` (AP-27) + `docs-auth-d1-packet` (AP-28) below. Branch `feat/docs-auth-d0-d1-implementation-packet` @ cab0c2a is kept as READ-ONLY reference (lift source via git show) until both split packets merge, then ap-finish it. Original scope: transcribe DD-80/B0 into draft DDL 0015/0016, schema-mirror plan, route/adapter outlines and test skeletons mapped 1-1 to acceptance D0/D1, plus DD-38/39 readiness listing.
+
+## task: docs-auth-d0-packet
+title: D0 revoke-core implementation packet (split 1/2 from AP-26 monolith)
+status: ready
+risk: P2
+change_class: docs-traceability
+depends_on: []
+invariants: [auth, schema]
+scope: [docs/auth-d0-implementation-packet.md]
+manifest: docs/autopilot-manifests/docs-auth-d0-packet.json
+merged_probe: docs/auth-d0-implementation-packet.md :: AUTH_D0_PACKET_COMPLETE
+notes: Launcher-ready docs-only AP-27 slice (launcher /ap-27-docs-auth-d0-packet). Lift §A1/A2/A3 + §D(A) + floors from the read-only reference (git show cab0c2a:docs/auth-d0-d1-implementation-packet.md), then transcribe the v1.86 pins: issuance-fence TS draft for apps/web/lib/session-cookies.ts (reject-and-reauth, D0-12), partial index web_sessions(account_id) WHERE revoked_at IS NULL in the 0015 draft + schema mirror (D0-13), citation re-audit to v1.86/v2.9b/v0.6. Fresh round counters — AP-26 budget does not carry over. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-docs-auth-d0-packet.md`.
+
+## task: docs-auth-d1-packet
+title: D1 google-adapter implementation packet + DD-38/39 readiness (split 2/2 from AP-26 monolith)
+status: ready
+risk: P2
+change_class: docs-traceability
+depends_on: [docs-auth-d0-packet]
+invariants: [auth, schema]
+scope: [docs/auth-d1-implementation-packet.md]
+manifest: docs/autopilot-manifests/docs-auth-d1-packet.json
+merged_probe: docs/auth-d1-implementation-packet.md :: AUTH_D1_PACKET_COMPLETE
+notes: Launcher-ready docs-only AP-28 slice (launcher /ap-28-docs-auth-d1-packet) — run AFTER docs-auth-d0-packet merges (dep_check on the D0 packet marker; shared auth/schema invariants serialize the gate). Lift §B1/B2/B3 (incl. v1.85 sweep-at-traffic + per-lane audit resolutions) + §C + §D(B/C) from the read-only reference (git show cab0c2a), then transcribe the v1.86 pin: auth_login_google takes preallocated account_emails.id for cell 1 (AAD per B0 §3.3/§4) + D1-2 assertion; §C3 base re-pin; citation re-audit to v1.86/v2.9b/v0.6. Fresh round counters. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-docs-auth-d1-packet.md`.
 
 ## task: core-matcher-grouped-amount-parsing
 title: splitNameAmount misparses grouped trailing amounts with a non-zero final group
