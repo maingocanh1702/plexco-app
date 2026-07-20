@@ -1,7 +1,7 @@
 # HANDOFF — Plexco
 
 > **Đọc file này ĐẦU TIÊN khi tiếp quản project.** Self-contained: không cần context phiên trước.
-> Cập nhật: 2026-07-19 (BRD v3.9e · PRD v2.8d · TDD v3.1 · ROADMAP v3.3d · decisions v1.67). DD-59 ✅ reconcile; DD-70..72 🟡; **DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated**. DD-45 retry/manual-ban closure không đổi runtime baseline.
+> Cập nhật: 2026-07-20 (BRD v3.9e · PRD v2.8d · TDD v3.1 · ROADMAP v3.3d · **decisions v1.88**; HEAD `main@172dfff`). **DD-80 ✅ auth G3 revoke-all + D0a/D0b decomposition**; slice code auth đầu tiên (D0a) đang in-flight — xem `../auth-s4-session-handoff.md`. DD-70..72 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated.
 >
 > **⚡ v3.4 Phase-1 pivot (DD-37 ✅, thay DD-09):** Kênh phase-1 = **web + Zalo + Facebook Messenger**;
 > **Telegram đã bị loại khỏi phạm vi** (không còn adapter/bot Telegram trong MVP). Auth phase-1 =
@@ -110,12 +110,14 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 4. **Review:** code review trước merge
 5. **Merge:** squash 1 commit/feature vào `main`
 
-## 6. Trạng thái hiện tại (2026-07-17)
+## 6. Trạng thái hiện tại (2026-07-20)
 
-**Planning & Docs — decision coverage cao** (current **v1.65/DD-78**; DD-70..72 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated). Waitlist contract đã khép approval/venue/lifecycle/retry ambiguity nhưng behavior vẫn chưa build. Implementation còn cần migrations/services/adapters/E2E; code-readiness vẫn bị B0/B1/B2/B3 và external/legal gates.
+**Planning & Docs — decision coverage cao** (current **decisions v1.88** — DD-80 G3 revoke-all concurrency contract + D0a/D0b decomposition; DD-70..72 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated). **B0 auth đã owner-duyệt → ghi thành DD-80**; auth provider swap đã bước vào code. Implementation phần còn lại vẫn cần migrations/services/adapters/E2E; code-readiness vẫn bị B1/B2/B3 và external/legal gates.
+
+> **⚙️ Đang nóng — Auth S4 (D0→D1):** slice DB core **D0a `auth-s4-d0-revoke-core`** (migration `0015`, epoch revoke-all) = **miếng code feature-layer đầu tiên**, đang in-flight trong autopilot worktree (vòng Codex review chưa đóng), **chưa merge `main`**. Chi tiết + việc tiếp theo mảng auth: **`../auth-s4-session-handoff.md`**.
 
 - ✅ **Foundation merged:** monorepo (`packages/core` + `packages/db` + `apps/bot` + `apps/web`) + core logic thuần (test xanh) + Postgres/RLS choke-point (`tenantRepo`/`withTenant`) + **migrations `0000–0013`** committed (roles/RLS/grants/functions/seeds/auth_functions/onboarding_steps) + bộ RLS invariant test chạy trên role runtime thật.
-- ✅ **Auth Onboarding v3 (Telegram-era) merged** (`5b1193b`) + web tests. **DD-37 supersede provider** → Google/email đã spec ở Product v2.10/BE v2.7, gồm OAuth transaction/Lax binding + email-link two-hop, nhưng **CHƯA implement** và B0 còn chờ owner duyệt.
+- 🟡 **Auth Onboarding v3 (Telegram-era) merged** (`5b1193b`) + web tests. **DD-37 supersede provider** → Google/email; **B0 đã owner-duyệt → DD-80 v1.88** (G3 epoch revoke-all). Provider swap re-slice thành D0a/D0b/D1: **D0a in-flight (chưa merge)**, D0b/D1 HOLD theo dependency. Telegram-era routes vẫn còn tới khi provider swap land.
 - ⬜ **Feature layer chưa build:** session/reconcile/sync/marketplace/billing/bot handlers/UI (bảng DB đã dựng sẵn; tầng command/service/projector/UI còn trắng).
 
 Tài liệu hoàn tất (bản mới nhất):
@@ -125,7 +127,7 @@ Tài liệu hoàn tất (bản mới nhất):
 - ✅ Business rules, design tokens, dependency graph
 - ✅ README, CHANGELOG, PULL_REQUEST_TEMPLATE, HANDOFF, templates
 
-**Việc tiếp theo:** owner duyệt B0 và ghi DD; sau đó author/review slice thay provider auth Telegram-era → **Google/email** (DD-13/DD-37, chưa có launcher-ready slice), rồi implement; tiếp theo mới vào feature layer (session → reconcile → sync). Xem `docs/standards/BUILD-STATUS.md` + `docs/product/ROADMAP.md` → Next Actions.
+**Việc tiếp theo:** (1) đóng vòng review **D0a** rồi manual merge (P0 không auto-merge; đang có nguy cơ MAX_ROUNDS — xem `../auth-s4-session-handoff.md §4`); (2) **D0b** web boundary → **D1** email-token → **D1** google-adapter (dependency-gated); (3) song song chạy được autoprompt docs-only P2 (AP-23/AP-24). Sau chuỗi auth mới vào feature layer (session → reconcile → sync). Xem `../auth-s4-session-handoff.md`, `docs/standards/BUILD-STATUS.md`, `docs/slice-readiness-verdicts.md`, `docs/product/ROADMAP.md` → Next Actions.
 
 **Reference:** Bot single-club (Bestminton) đang chạy production — logic tiền đã kiểm chứng, đã lift sang `packages/core`, migrate thành tenant #1.
 
@@ -134,6 +136,7 @@ Tài liệu hoàn tất (bản mới nhất):
 | Folder | Nội dung |
 |---|---|
 | `docs/00-start-here/` | HANDOFF (file này), identity-model — đọc trước tiên |
+| `docs/auth-s4-session-handoff.md` | **Handoff chi tiết mảng Auth S4 (D0→D1)** — bản đang nóng, resume độc lập slice auth |
 | `docs/product/` | BRD, PRD, TDD, ROADMAP, CRM_DASHBOARD_BRD — tài liệu cốt lõi |
 | `docs/standards/` | decisions, business-rules, design-tokens, feature-dependency-graph, deployment-infra · **DD-57..59 deferred reference** · **DD-60 accepted** · **DD-61..64 accepted-in-principle/no-runtime** |
 | `docs/features/` · `docs/features/BE/` | Feature specs FE (Product) · BE (Tech) |
@@ -184,6 +187,7 @@ Research/reconciliation/strategy là input định hướng, không được ove
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 20/07/2026 | v1.20 | **Auth swap bước vào code + current refresh.** Authority → decisions v1.88 (DD-80 G3 revoke-all epoch contract + D0a/D0b decomposition); HEAD `main@172dfff`. B0 owner-duyệt→DD-80; provider swap re-slice D0a/D0b/D1, **D0a `auth-s4-d0-revoke-core` in-flight** (migration `0015`, code feature-layer đầu tiên, chưa merge). Thêm pointer `docs/auth-s4-session-handoff.md`. Runtime baseline (migrations `0000–0013`) không đổi. |
 | 19/07/2026 | v1.19 | **DD-79 ✅ Home hub (S9) + DD-81 ✅ Pencil:** cặp spec thứ 22 (Reviewed contract, composition-only trên player_view/marketplace/§A — không bảng mới); nav PWA 5 slot registry (Feed gated DD-76, 💬 chat header); design file mới `plexco-app-design.pen`. Mirror đã propagate BRD v3.9g/PRD v2.8f/TDD v3.1a/ROADMAP v3.3f/design-brief v1.9/BUILD-STATUS. Runtime không đổi. |
 | 19/07/2026 | v1.19 | Current authority → decisions v1.65 / BRD v3.9e / PRD v2.8d / ROADMAP v3.3d; DD-73..78 sequencing correction ở v1.64. DD-74/75 tạo baseline; chỉ DD-76/77 evidence-gated; DD-78 đi cùng consumer. Không đổi runtime baseline. |
 | 19/07/2026 | v1.18 | Authority → decisions **v1.60**. **DD-73..78 ✅ chốt (owner 19/07)**: 6 câu đều phương án (a); Q5 kèm re-scope đưa fence/guarded-view/grant migration về **DD-12**; **DD-64 amended** (self-aggregate). Sequencing wording của entry này được corrected ở v1.19; runtime baseline không đổi. |
