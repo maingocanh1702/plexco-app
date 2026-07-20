@@ -1,9 +1,9 @@
 # Autopilot — onboarding cho người mới join Plexco
 
 Đọc file này 1 lần là đủ để chạy autopilot flow của repo đúng theo template mới nhất.
-Pinned version: **`autopilot-prompt-GENERIC` v0.6.0** + **`autopilot-invariants`** (đã sync từ canonical 2026-07-15).
-> ✅ **Đã sync với canonical `Claude template` (2026-07-15):** GENERIC v0.6.0, invariants (162 dòng), scope-gate **KIT_VERSION 4**, backlog-reconcile **KIT_VERSION 2**. (Plexco-specific token vẫn ở `docs/autopilot-invariant-catalog.md`, không đụng.)
-Bản canonical nằm trong repo tại `docs/autopilot-templates/` — luôn coi đó là source of truth.
+Pinned version: **`autopilot-prompt-GENERIC` v0.6.0** + **`autopilot-invariants`** (đã sync từ canonical 2026-07-19, FK-authority conditional rule).
+> ✅ **Đã sync với canonical `Claude template` (2026-07-19):** GENERIC v0.6.0, invariants (162 dòng), scope-gate **KIT_VERSION 4**, backlog-reconcile **KIT_VERSION 2**. (Plexco-specific token vẫn ở `docs/autopilot-invariant-catalog.md`, không đụng.)
+Nguồn canonical THẬT nằm ở Claude template repo, surface vào máy bạn qua symlink `~/.claude/shared/autopilot-invariants.md` (setup một lần/máy, ngoài phạm vi repo này). `docs/autopilot-templates/` trong repo Plexco chỉ là **bản fallback mirror** — dùng khi máy bạn chưa có shared canonical. `scripts/autopilot-onboard.sh` tự chọn đúng nguồn, ưu tiên canonical.
 
 ---
 
@@ -14,8 +14,9 @@ Autopilot = giao 1 feature-branch cho Claude Code chạy theo prompt tự-chứa
 (default `STOP_AT_READY`). Có 2 lớp luật:
 
 - **Lớp global (cross-project)** — các *invariant* và *circuit breaker* bất biến, sống ở
-  `~/.claude/CLAUDE.md` của MỖI máy dev (auto-load vào mọi session). Repo KHÔNG nhân bản lớp này;
-  bản gốc để bạn import nằm ở `docs/autopilot-templates/autopilot-invariants.md`.
+  `~/.claude/CLAUDE.md` của MỖI máy dev (auto-load vào mọi session). Ưu tiên import shared canonical
+  `~/.claude/shared/autopilot-invariants.md`; CHỈ khi máy chưa có/không đọc được, import fallback
+  `docs/autopilot-templates/autopilot-invariants.md` trong repo này. Không bao giờ cả hai cùng active.
 - **Lớp per-repo** — phần riêng của Plexco, đã commit sẵn trong repo (xem §2). Đây là cái bạn dùng
   hằng ngày: backlog, manifest, scope-gate script, invariant catalog, maturity ledger.
 
@@ -30,8 +31,11 @@ Quy ước thư mục: `docs/autopilot-*` = luật/kit; `.autopilot/` = runtime 
 > scripts/autopilot-onboard.sh --codex /abs/path/to/codex   # bỏ --codex nếu chưa có, script sẽ chỉ chỗ điền
 > source ~/.zshrc                                            # nạp biến vừa thêm
 > ```
-> Script idempotent: tự `@import` invariants vào `~/.claude/CLAUDE.md`, pin `AUTOPILOT_CODEX_BIN` vào
-> `~/.zshrc`, và verify toàn bộ per-repo kit. Chạy `--check` để chỉ kiểm tra, không ghi gì. Sau đó
+> Script idempotent: tự `@import` invariants vào `~/.claude/CLAUDE.md` (ưu tiên shared canonical, fallback
+> repo copy — không bao giờ để cả hai cùng active), pin `AUTOPILOT_CODEX_BIN` vào `~/.zshrc`, và verify
+> toàn bộ per-repo kit. Chạy `--check` để chỉ kiểm tra, không ghi gì; `--check` fail (non-zero) nếu thiếu
+> import, có ĐỒNG THỜI hai import active, managed block bị sửa tay sai hình dạng, hoặc active import
+> không khớp trạng thái shared-canonical hiện tại của máy — chạy lại KHÔNG kèm `--check` để tự sửa. Sau đó
 > **restart Claude Code** để CLAUDE.md nạp lại. Phần dưới là bản làm tay / để hiểu script làm gì.
 >
 > Không quen terminal? Mở repo trong Claude Code và paste prompt này:
@@ -42,8 +46,9 @@ Quy ước thư mục: `docs/autopilot-*` = luật/kit; `.autopilot/` = runtime 
 > ```
 
 
-1. **Import invariants vào CLAUDE.md global.** Mở (hoặc tạo) `~/.claude/CLAUDE.md` và `@import` file
-   `docs/autopilot-templates/autopilot-invariants.md` — hoặc copy nội dung vào. Đây là các luật
+1. **Import invariants vào CLAUDE.md global.** `scripts/autopilot-onboard.sh` làm việc này tự động (ưu
+   tiên `@~/.claude/shared/autopilot-invariants.md`, fallback về bản repo nếu shared chưa có). Làm tay:
+   chỉ `@import` MỘT trong hai nguồn — không bao giờ cả hai. Đây là các luật
    ALWAYS-APPLY (merge authority, loop control = file counter, design contract, scope, trust-nothing).
 2. **Trỏ `$CODEX` tới binary review-capable.** Trong `~/.zshrc`:
    `export AUTOPILOT_CODEX_BIN=/đường/dẫn/tới/codex-review-build`. Mở lại Claude Code trong shell đã
@@ -53,7 +58,8 @@ Quy ước thư mục: `docs/autopilot-*` = luật/kit; `.autopilot/` = runtime 
    không dùng. Đọc §A một lần để hiểu cách phân risk tier.
 
 > Vì sao global, không để trong repo: invariant là luật chung mọi project; ledger/credibility mới là
-> riêng repo. Repo chỉ giữ BẢN SAO template (`docs/autopilot-templates/`) để bạn có nguồn import.
+> riêng repo. Repo chỉ giữ BẢN SAO template (`docs/autopilot-templates/`) làm **fallback** khi máy bạn
+> chưa có shared canonical — không phải nguồn import mặc định.
 
 ---
 
