@@ -1,0 +1,24 @@
+{
+  "feature": "core-matcher-grouped-amount-parsing",
+  "branch": "feat/core-matcher-grouped-amount-parsing",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "bugfix",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "authority": "Codex core-lift-v3 round-05 finding · founder-approved 2026-07-05 to defer (class-aware review gate: NL-parsing P2, matcher output proposal-only) · DECISIONS.md S2/S2b/S2c decision tables",
+  "depends_on": [],
+  "invariants": ["money-model", "shared-core"],
+  "negative_scope": [
+    "NO change to classifyAmount / FIFO settle / any money-authoritative write path — matcher output stays proposal-only, never settles money directly",
+    "EXTEND the round-01 shortest-run split decision table (try LONGER trailing runs when a shorter one parses); do NOT patch splitNameAmount in isolation or invent a new table family",
+    "NO transport/DB/adapter/i18n changes — packages/core pure logic only",
+    "NOT a re-open of S7/S15 settle semantics or pay_code deterministic matching"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/core-matcher-grouped-amount-parsing.json",
+    "packages/core/src/payments-logic.ts",
+    "packages/core/src/payments-logic.test.ts"
+  ]
+}
