@@ -26,6 +26,12 @@ jobs:
       DATABASE_URL_TEST: postgres://plexco:plexco_test@localhost:5432/plexco_test
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (SHA verified vs tag 2026-07-17; Node 24 runtime)
+        with:
+          # Full history REQUIRED: the "Review-readiness policy" step below runs
+          # `git merge-base --is-ancestor <AUTHORITY_SHA> main` for every pinned
+          # verdict. The default shallow checkout (depth 1) has neither those
+          # commits nor main's history, so every pin fails AUTHORITY_NOT_MAIN.
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9 (peeled SHA verified vs tag 2026-07-17; Node 24 runtime)
         # version is taken from the "packageManager" field in package.json
