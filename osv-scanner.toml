@@ -1,0 +1,27 @@
+# OSV scanner configuration — Plexco
+#
+# Rule for this file: an entry here is a REACHABILITY argument, never a
+# convenience mute. Every ignore must state (a) who pulls the package,
+# (b) why the specific advisory cannot be triggered in this repo, and
+# (c) an ignoreUntil date that forces a re-review. Anything runtime-reachable,
+# or anything on the money/auth path, gets patched instead of ignored.
+
+[[IgnoredVulns]]
+id = "GHSA-67mh-4wv8-2f99"
+ignoreUntil = 2026-10-22
+reason = """
+esbuild 0.18.20, reached only via drizzle-kit -> @esbuild-kit/esm-loader ->
+@esbuild-kit/core-utils (a devDependency of packages/db; never shipped to
+production).
+
+The advisory is specific to esbuild's DEV SERVER (`esbuild serve`), where any
+website can send requests to the local server and read the responses. This repo
+never runs `esbuild serve` — esbuild is used only as a bundler inside the
+drizzle-kit CLI, so the vulnerable code path is not executed.
+
+Not patched because the @esbuild-kit/* wrapper chain is deprecated (merged into
+tsx) and pins the esbuild ~0.18 API; forcing esbuild >=0.25 breaks drizzle-kit's
+ESM loader. The real fix is upstream: drizzle-kit dropping @esbuild-kit/*.
+Re-review at ignoreUntil, or sooner if drizzle-kit releases a version without
+the @esbuild-kit/* chain, or if any esbuild dev-server usage is introduced.
+"""
