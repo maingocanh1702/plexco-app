@@ -35,10 +35,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(15); // 0000..0014
+    expect(ctx.migrateResult.applied.length).toBe(16); // 0000..0015
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(15);
+    expect(second.skipped.length).toBe(16);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -185,7 +185,13 @@ describe("public read model (INV-3 / HR2 / DD-12)", () => {
   });
 
   it("app role has NO grant on protected global identity tables", async () => {
-    for (const table of ["persons", "channel_identities", "link_codes", "merge_audit"]) {
+    for (const table of [
+      "persons",
+      "channel_identities",
+      "link_codes",
+      "merge_audit",
+      "auth_audit_events",
+    ]) {
       await expect(
         ctx.appPool.query(`SELECT * FROM ${table} LIMIT 1`),
         `app must be denied on ${table}`,

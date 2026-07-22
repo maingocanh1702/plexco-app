@@ -108,8 +108,14 @@ export const mergeTombstones = pgTable("merge_tombstones", {
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
   personId: uuid("person_id").references(() => persons.id),
+  // Revoke-all validity authority (DD-80 v1.88, migration 0015): bumped once
+  // per logout-all under the account's own row lock. A session only resolves
+  // when its minted_epoch equals this exact value — see webSessions below.
+  sessionEpoch: bigint("session_epoch", { mode: "number" }).notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+  sessionEpochChk: check("accounts_session_epoch_chk", sql`${t.sessionEpoch} >= 0`),
+}));
 
 export const webSessions = pgTable("web_sessions", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -119,8 +125,18 @@ export const webSessions = pgTable("web_sessions", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   rotatedFrom: uuid("rotated_from"),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  // Epoch stamped under the locked account row at create/rotate time (0015).
+  // Exact equality against accounts.session_epoch is the sole bulk validity
+  // rule — never `>=` (DD-80 v1.88, G3-I1).
+  mintedEpoch: bigint("minted_epoch", { mode: "number" }).notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+  mintedEpochChk: check("web_sessions_minted_epoch_chk", sql`${t.mintedEpoch} >= 0`),
+  // Partial index (0015/v1.86, D0-13): revoke-all walks only the LIVE rows
+  // of one account while holding the accounts parent lock.
+  accountActiveIdx: index("idx_web_sessions_account_active")
+    .on(t.accountId).where(sql`${t.revokedAt} IS NULL`),
+}));
 
 export const accountIdentities = pgTable("account_identities", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -130,6 +146,87 @@ export const accountIdentities = pgTable("account_identities", {
   verifiedAt: timestamp("verified_at", { withTimezone: true }).notNull(),
 }, (t) => ({
   uq: uniqueIndex("account_identities_platform_uq").on(t.platform, t.platformUserHash),
+}));
+
+/**
+ * Function-only auth tables (0012) — previously live-but-unmirrored drift;
+ * closed here per B0 §9 resolution "(a)": SQL migrations stay authoritative
+ * for grants/functions/search_path (see 0012's own header comment), but
+ * schema.ts mirrors every table, including ones only a SECURITY DEFINER
+ * function ever touches. `app` has zero grant on any of these three.
+ */
+export const authLoginNonces = pgTable("auth_login_nonces", {
+  loginHash: text("login_hash").primaryKey(),
+  seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  seenAtIdx: index("idx_auth_login_nonces_seen_at").on(t.seenAt),
+}));
+
+export const authLoginState = pgTable("auth_login_state", {
+  stateHash: text("state_hash").primaryKey(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  expiresAtIdx: index("idx_auth_login_state_expires_at").on(t.expiresAt),
+}));
+
+// UNLOGGED in 0012 (throughput over durability) — Drizzle has no storage-
+// parameter builder, so that attribute lives only in the SQL migration.
+export const rateLimitHits = pgTable("rate_limit_hits", {
+  bucket: text("bucket").notNull(),
+  at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  bucketAtIdx: index("idx_rate_limit_bucket_at").on(t.bucket, t.at),
+  atIdx: index("idx_rate_limit_at").on(t.at),
+}));
+
+/**
+ * Shared append-only auth audit — column-for-column per the pinned shape in
+ * B0 §3.1/§8.3, plus the v1.88 session_epoch_before/after amendment. This
+ * slice (D0a) only ever inserts `logout_all` rows (link_codes_revoked /
+ * merge_artifacts_cancelled stay NULL); later slices reuse/extend this same
+ * table rather than creating a parallel one. No grants: written only from
+ * inside SECURITY DEFINER functions. No FK on account_id/account_email_id —
+ * matches the pinned shape (an audit trail outlives normal referential
+ * concerns; account_emails does not exist yet at D0a).
+ */
+export const authAuditEvents = pgTable("auth_audit_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  eventType: text("event_type").notNull(),
+  accountId: uuid("account_id"),
+  accountEmailId: uuid("account_email_id"),
+  outcomeClass: text("outcome_class").notNull(),
+  actorClass: text("actor_class").notNull(),
+  requestRef: text("request_ref").notNull(),
+  sessionsRevoked: integer("sessions_revoked"),
+  // Nullable: an event that never touches session_epoch leaves both NULL
+  // rather than fabricating a before/after pair (DD-80 v1.88).
+  sessionEpochBefore: bigint("session_epoch_before", { mode: "number" }),
+  sessionEpochAfter: bigint("session_epoch_after", { mode: "number" }),
+  linkCodesRevoked: integer("link_codes_revoked"),
+  mergeArtifactsCancelled: integer("merge_artifacts_cancelled"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  // Retention/cleanup scan index (codex round-03) — same pattern as every
+  // other retention-swept table in this migration set.
+  createdAtIdx: index("auth_audit_events_created_at_idx").on(t.createdAt),
+  sessionsRevokedChk: check("auth_audit_events_sessions_revoked_chk",
+    sql`${t.sessionsRevoked} IS NULL OR ${t.sessionsRevoked} >= 0`),
+  epochBeforeChk: check("auth_audit_events_epoch_before_chk",
+    sql`${t.sessionEpochBefore} IS NULL OR ${t.sessionEpochBefore} >= 0`),
+  epochAfterChk: check("auth_audit_events_epoch_after_chk",
+    sql`${t.sessionEpochAfter} IS NULL OR ${t.sessionEpochAfter} >= 0`),
+  linkCodesRevokedChk: check("auth_audit_events_link_codes_revoked_chk",
+    sql`${t.linkCodesRevoked} IS NULL OR ${t.linkCodesRevoked} >= 0`),
+  mergeArtifactsCancelledChk: check("auth_audit_events_merge_artifacts_cancelled_chk",
+    sql`${t.mergeArtifactsCancelled} IS NULL OR ${t.mergeArtifactsCancelled} >= 0`),
+  epochShapeChk: check("auth_audit_events_epoch_shape_chk", sql`
+    (${t.sessionEpochBefore} IS NULL AND ${t.sessionEpochAfter} IS NULL)
+    OR (
+      ${t.sessionEpochBefore} IS NOT NULL AND ${t.sessionEpochAfter} IS NOT NULL
+      AND ${t.sessionEpochAfter} = ${t.sessionEpochBefore} + 1
+    )`),
 }));
 
 export const magicLinks = pgTable("magic_links", {

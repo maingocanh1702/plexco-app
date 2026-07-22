@@ -32,7 +32,11 @@ packages/db/
     ├── 0008_notifications_onboarding.sql
     ├── 0009_rls_policies_grants.sql   # RLS enable/force + policies + grants
     ├── 0010_functions_triggers.sql    # worker fn, oauth fns, ledger immutability
-    └── 0011_seeds.sql                 # sports + plan catalog v1
+    ├── 0011_seeds.sql                 # sports + plan catalog v1
+    ├── 0012_auth_functions.sql        # web auth fns, tenant_provision, rate limiting
+    ├── 0013_onboarding_steps_recency.sql
+    ├── 0014_players_waitlist.sql      # DD-45 waitlist model (expand-only, code dark)
+    └── 0015_auth_revoke_account.sql   # DD-80 v1.88 account-session epoch + revoke-all
 ```
 
 The SQL migrations are **authoritative**. `schema.ts` mirrors the tables but
@@ -55,7 +59,7 @@ Tức là trong sơ đồ, "club" chính là node `TENANTS` (hub trung tâm). Kh
 
 | Plane | Tables | Access |
 |---|---|---|
-| **GLOBAL protected** | `persons`, `channel_identities`, `link_codes`, `merge_audit`, `merge_tombstones`, `accounts`, `web_sessions`, `account_identities`, `magic_links`, `player_chat_context`, `oauth_transactions`, `routing_audit` | No blanket grant to `app`. Reached via identity/auth service or SECURITY DEFINER fns. `sports`/`plans` are global lookups (SELECT allowed). |
+| **GLOBAL protected** | `persons`, `channel_identities`, `link_codes`, `merge_audit`, `merge_tombstones`, `accounts`, `web_sessions`, `account_identities`, `magic_links`, `player_chat_context`, `oauth_transactions`, `routing_audit`, `auth_login_nonces`, `auth_login_state`, `rate_limit_hits`, `auth_audit_events` | No blanket grant to `app`. Reached via identity/auth service or SECURITY DEFINER fns. The last four are function-only (no table grant at all, not even to `app`) — see `0012`/`0015`. `sports`/`plans` are global lookups (SELECT allowed). |
 | **TENANT-private (RLS)** | `memberships`, `aliases`, `channel_reachability`, `settings`, `sessions` (+recurrence/occurrences/surface_refs), `players`, `telegram_links`, `tenant_admins`, `tenant_link_codes`, `bank_accounts`, `charges`, `bank_transactions`, `payment_allocations`, `provider_connections`, `zalo_bots`, `zalo_reply_contexts`, `messenger_pages`, `processed_commands`, `outbox_events`, `join_requests`, `subscriptions`, `subscription_invoices`, `notification_*`, `onboarding_*` | `ENABLE`+`FORCE` RLS, policy on `app.tenant_id` GUC, fail-closed. `app` = `NOBYPASSRLS`. Always via `tenantRepo` choke-point. |
 | **PUBLIC read model** | `public_sessions` | No RLS. `readonly` role gets `SELECT` only; canonical tables get **zero** grant to `readonly`. Field whitelist — no money/PII/roster/exact venue. |
 | **PLATFORM/WORKER** | `plans`, `billing_transactions`, `billing_allocations`, `billing_overrides`, `projector_deliveries`, `surface_refs` | Billing platform ledger (separate from player ledger, BL-BIL-1). Worker claims outbox via `claim_outbox_batch()`. |
@@ -101,9 +105,23 @@ the worker via narrow privileged functions, then re-enters tenant context.
 | INV-8 narrow worker privilege | `claim_outbox_batch()` SECURITY DEFINER + `app_worker` EXECUTE-only |
 | INV-9 secrets/PII never leak | `*_enc bytea` + `*_lookup_hash`; no grants on protected tables |
 
+## Auth session revocation (DD-80 v1.88)
+
+`accounts.session_epoch` / `web_sessions.minted_epoch` (bigint, `0015`) are the
+linearizable authority for "logout everywhere": a session resolves only when
+`minted_epoch = session_epoch` (exact equality — never `>=`). `create`/`rotate`
+lock the relevant `accounts` parent row(s) and stamp the session with the
+locked epoch; `auth_revoke_all_web_sessions` (public, derives the account from
+the current session — never accepts a caller-supplied account id) locks the
+account parent, bumps its epoch, and materializes `revoked_at` on every
+unrevoked row of that account plus one `auth_audit_events` row, all in one
+transaction. The internal `auth_revoke_account_sessions` helper is never
+granted to any runtime role. Full contract/proof:
+`../../docs/g3-revoke-all-concurrency-probe-seed.md`.
+
 ## Migration order & deploy notes
 
-Apply `0000`→`0011` in order (FK dependencies validated). For production changes
+Apply `0000`→`0015` in order (FK dependencies validated). For production changes
 follow expand→backfill→validate→flip→contract (P12); avoid destructive
 migrations in the same deploy as behavior changes. Legacy Bestminton import:
 TDD §8.

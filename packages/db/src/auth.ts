@@ -140,6 +140,22 @@ export async function revokeWebSession(pool: pg.Pool, tokenHash: string): Promis
   return Boolean((rows[0] as { ok: boolean | null }).ok);
 }
 
+/**
+ * Account-self "logout everywhere" (DD-80 v1.88). Derives the account from
+ * `currentTokenHash` server-side — never accepts an account id. Returns the
+ * exact number of sessions newly revoked, or null when the token is
+ * invalid/expired/already-revoked (zero mutation, zero audit row).
+ */
+export async function revokeAllWebSessions(
+  pool: pg.Pool,
+  currentTokenHash: string,
+): Promise<number | null> {
+  const { rows } = await pool.query(`SELECT auth_revoke_all_web_sessions($1) AS count`, [
+    currentTokenHash,
+  ]);
+  return (rows[0] as { count: number | null }).count;
+}
+
 export async function provisionTenant(
   pool: pg.Pool,
   input: { slug: string; name: string; timezone?: string; locale?: string; personId: string },

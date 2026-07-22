@@ -27,6 +27,7 @@ export {
   provisionTenant,
   rateLimitCheck,
   resolveWebSession,
+  revokeAllWebSessions,
   revokeWebSession,
   rotateWebSession,
   tenantsForPerson,
