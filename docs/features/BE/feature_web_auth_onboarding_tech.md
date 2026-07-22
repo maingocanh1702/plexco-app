@@ -479,16 +479,29 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 > cross-site, `cookies().get(plx_session)` trả `undefined` nên `issueSession` rơi vào `createWebSession`
 > (mint-fresh); đó là toàn bộ nguyên nhân của residual risk.
 >
-> **⚠️ Cơ chế hop CHƯA được pin — xem Verdict 11 (`NOT_CODE_READY`).** Một 302 thuần từ callback sang
-> route same-origin **KHÔNG phải bằng chứng đủ**: với chuỗi redirect khởi phát cross-site, việc cookie
-> `SameSite=Strict` có được gửi hay không là **phân kỳ giữa các trình duyệt**. Nếu chọn sai cơ chế, slice
-> này **âm thầm không sửa được gì** (vẫn không thấy cookie → vẫn mint-fresh) mà mọi test mock vẫn xanh.
-> D1B-2 vì vậy phải chứng minh bằng **hành vi trình duyệt thật**, không phải bằng unit test dựng sẵn cookie.
+> **✅ Cơ chế hop ĐÃ PIN — đo thật, không suy đoán.** `../probe-strict-cookie-completion-hop.md` (2026-07-22)
+> chạy harness hai site trên Chromium 149 · Firefox 151 · WebKit 26.5:
+> **M1 (302 trần từ callback) = KHÔNG mang cookie Strict trên CẢ BA engine.** Mọi cơ chế commit một
+> **first-party document trước** rồi mới điều hướng same-site (`location.replace`, auto-POST, meta-refresh,
+> link thủ công) đều mang được. Control: `SameSite=None` và `Lax` tới được mọi hop, `Strict` vắng **đúng**
+> tại `/callback` cross-site ⇒ harness tái hiện đúng bug production, không phải artefact.
+>
+> **Chốt: `M3` — landing first-party non-mutating → auto-submit POST same-origin, `<noscript>` nút
+> "Continue" làm fallback.** Lý do chọn M3 thay vì M2/M4/M5 (đo tương đương): tái dùng đúng pattern hai-hop
+> mà B0 §8 đã chọn cho email verify/reset (một pattern, không đẻ hai), và POST mang header `Origin` nên
+> `sameOriginRequest()` (đã có, `session-cookies.ts`) guard được đúng bước mutating — phòng thủ nhiều lớp,
+> độc lập với ngữ nghĩa cookie.
+>
+> ⚠️ **Khác biệt cố ý với §8.4:** email verify bắt buộc **user gesture** để link scanner/prefetch không
+> consume token. Hop này **auto-submit không cần gesture** — handoff đã bound vào oauth transaction và
+> single-use, lại nằm giữa luồng trên chính browser của user, không phải link gửi qua mail. **Đừng "hài hoà"
+> hai chỗ này thành một.**
 
 | # | Case | Setup | Expected |
 |---|---|---|---|
 | D1B-1 | Callback thôi tự mint | Callback nhận proof OIDC hợp lệ | Callback **KHÔNG** set session cookie và **KHÔNG** gọi `issueSession`; nó tạo một handoff **single-use, TTL ngắn**, bound vào đúng `auth_oauth_transactions` row, rồi chuyển sang completion hop |
-| D1B-2 | **Hop thật sự mang được cookie Strict** | Browser đã có `plx_session`; chạy hết luồng Google trên **trình duyệt thật** (ma trận browser mục tiêu) | Tại completion endpoint, `plx_session` **CÓ** trong request ⇒ `issueSession` đi nhánh **rotate**, không phải create. **Bằng chứng phải là browser thật**; một unit test tự set cookie KHÔNG chứng minh được điều này |
+| D1B-2 | **Hop thật sự mang được cookie Strict** | Browser đã có `plx_session`; chạy hết luồng trên trình duyệt thật | Tại completion endpoint, `plx_session` **CÓ** trong request ⇒ `issueSession` đi nhánh **rotate**, không phải create. **Đã đo cho Chromium/Firefox/WebKit** qua probe (M3 ✅). Safari macOS + iOS là **enablement evidence còn thiếu** — xem §7 probe doc; không chặn CODE_READY nhưng **chặn bật Google login** |
+| D1B-11 | **Anti-regression: cấm quay về 302 trần** | Gọi `/api/auth/google/callback` với proof hợp lệ, assert **response** | Callback trả **200 + document first-party** chứa form auto-submit same-origin và `<noscript>` fallback; **KHÔNG** phải `302`/`Location` trỏ thẳng completion. Đây là test **cấu trúc, không cần browser** — nó chính là lưới bắt failure-mode "M1 trần" mà probe đo được là hỏng trên cả 3 engine, thứ mà mọi test mock cookie sẽ bỏ lọt |
 | D1B-3 | **Residual risk đóng thật** | Có session cũ, hoàn tất login Google | Session cũ có `revoked_at`; token cũ **không** resolve nữa; account chỉ còn **đúng một** session live |
 | D1B-4 | Không có cookie cũ → không đổi hành vi | Browser chưa từng login | Đi `createWebSession` như cũ; cookie attrs **byte-for-byte** như trước; **`SameSite=Strict` không đổi** |
 | D1B-5 | Handoff single-use | Replay handoff lần hai | Reject generic, **zero mutation**, không mint session thứ hai |

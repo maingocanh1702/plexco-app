@@ -508,6 +508,10 @@ NEXT_REVIEW_TRIGGER: auth-s4-d1b-oauth-session-rotation must be authored, verdic
 
 ## Verdict 11 — `auth-s4-d1b-oauth-session-rotation` (2026-07-22)
 
+> **Superseded by Verdict 12 (same day):** the sole blocker — an unpinned hop mechanism — was closed by
+> measurement, not argument. Kept as the record of why the slice was held.
+
+<!-- review-verdict: historical -->
 ```text
 REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: NOT_CODE_READY
@@ -550,10 +554,54 @@ NEXT_REVIEW_TRIGGER: hop mechanism pinned with real-browser evidence -> re-run c
 
 ---
 
+## Verdict 12 — `auth-s4-d1b-oauth-session-rotation`, hop mechanism pinned (2026-07-22)
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-22
+AUTHORITY_SHA: fa94e3b072afe123ab64a2377e6be353ba1a5d34
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/probe-strict-cookie-completion-hop.md
+  - docs/features/BE/feature_web_auth_onboarding_tech.md
+  - docs/autopilot-manifests/auth-s4-d1b-oauth-session-rotation.json
+  - apps/web/lib/session-cookies.ts
+SLICE: auth-s4-d1b-oauth-session-rotation
+IN_SCOPE: M3 completion hop — callback returns a first-party non-mutating landing that auto-submits a same-origin POST to a completion endpoint (noscript Continue fallback); single-use short-TTL handoff bound to the oauth transaction; completion endpoint runs the EXISTING issueSession() so it takes its existing rotate branch
+OUT_OF_SCOPE: any new rotate primitive; re-litigating D1 mint-fresh; the rejected capture-at-/state workaround; weakening SameSite=Strict; harmonising this auto-submit with the §8.4 email two-hop, which deliberately requires a user gesture
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: ENABLEMENT_ONLY:safari-macos-and-ios-strict-hop-evidence
+HARD_DEPENDENCIES: auth-s4-d1-google-adapter MERGED (main@c6edbfa)
+PRIOR_SLICES: auth-s4-d0-revoke-core -> auth-s4-d0-session-web-boundary -> auth-s4-d1-email-token-core -> auth-s4-d1-google-adapter
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: safari-macos-and-ios-strict-hop-evidence — Safari and iOS Safari were NOT measured (Playwright ships a frozen WebKit build, not shipped Safari). This does not change what the code should be, so it does not block CODE_READY, but it DOES remain part of the gate on enabling Google login: if shipped Safari were to withhold the Strict cookie on M3, Safari users would silently keep the residual risk. Manual steps are in probe §7.
+LIVE_REPO_VERIFICATION: PASS (issueSession already branches rotate-vs-create and already throws SessionReauthRequiredError on rotate-null; auth_rotate_web_session in 0015 is the atomic parent-locked epoch-revalidated swap; no new primitive required)
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS (D1B-1..D1B-11; D1B-2 satisfied by measured 3-engine evidence, D1B-11 added as the structural anti-regression net)
+SECURITY_AND_MIGRATION_GATE: PASS (no migration, no new grant; POST hop carries Origin so the existing sameOriginRequest() guards the mutating step independently of cookie semantics; reuses the D0b reject-and-reauth fence)
+IMPLEMENTATION_ARTIFACTS: PASS (probe doc + manifest + acceptance matrix)
+FIRST_IMPLEMENTATION_STEP: open a manual P0 worktree from origin/main, register the d1b manifest, then replace the callback's direct issueSession() call with handoff + first-party landing (M3), add the completion route running issueSession(), then run D1B-1..D1B-11
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: d1b merged AND Safari/iOS cells measured -> only then may GOOGLE_OAUTH_CLIENT_ID/SECRET be set in any environment
+```
+
+**Đọc verdict — blocker được đóng bằng ĐO, không bằng lập luận.** Verdict 11 giữ slice lại vì cơ chế hop chưa pin. Probe (`../probe-strict-cookie-completion-hop.md`) chạy harness hai site thật trên Chromium 149 · Firefox 151 · WebKit 26.5 và cho kết quả **quan trọng**: **M1 — 302 trần — KHÔNG mang cookie `Strict` trên cả ba engine.** Đó chính xác là cơ chế mà một implementer sẽ mặc định chọn; nếu không probe, d1b đã ship một fix **vô dụng thầm lặng** (vẫn mint-fresh, residual risk nguyên vẹn) trong khi mọi unit test mock cookie vẫn xanh. Control của probe (`None`/`Lax` tới được mọi hop, `Strict` vắng **đúng** tại callback cross-site) chứng minh harness trung thực chứ không phải artefact.
+
+**Safari/iOS được phân loại là ENABLEMENT_ONLY, không phải open question.** Lý do: nó không đổi *code nên viết thế nào* — M3 là lựa chọn đúng bất kể Safari trả lời gì, vì 4/5 cơ chế thắng trên 3 engine và M1 thua ở mọi nơi. Nhưng nó **vẫn thuộc gate bật Google login**: nếu Safari bản ship giữ lại cookie ở M3 thì người dùng Safari âm thầm vẫn dính residual risk. Vì vậy điều kiện bật là **d1b merged VÀ Safari/iOS đã đo**, không phải chỉ merged.
+
+---
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 22/07/2026 | v1.6 | **Verdict 12 — d1b `CODE_READY`, blocker đóng bằng đo đạc.** Probe 3 engine: **M1 (302 trần) thất bại trên cả ba**; mọi cơ chế commit first-party document trước đều thắng. Chốt **M3** (landing → auto-POST same-origin, noscript fallback) vì tái dùng pattern hai-hop B0 §8 và POST mang `Origin` cho `sameOriginRequest()` guard bước mutating. Thêm **D1B-11** anti-regression (assert callback trả document, **không** 302) — lưới bắt đúng failure-mode đã đo. Safari/iOS chuyển thành **ENABLEMENT_ONLY**: không chặn CODE_READY nhưng **chặn bật Google login**. |
 | 22/07/2026 | v1.5 | **Acceptance `D1B-1..D1B-10` + Verdict 11 cho `auth-s4-d1b-oauth-session-rotation` = `NOT_CODE_READY`.** Live-repo verify cho thấy slice **không cần primitive mới** (`issueSession` đã có nhánh rotate; `auth_rotate_web_session` đã atomic từ D0a) — chỉ cần chạy nó ở ngữ cảnh same-site. **Blocker duy nhất:** cơ chế hop chưa pin; cookie `SameSite=Strict` có được gửi trên chuỗi redirect khởi phát cross-site hay không là browser-divergent, và chọn sai thì slice âm thầm vô dụng trong khi test mock vẫn xanh. D1B-2 vì thế bắt buộc bằng chứng **trình duyệt thật**. |
 | 22/07/2026 | v1.4 | **Verdict 10 — `auth-s4-d1-google-adapter` implemented (`75bfa58`), chờ merge tay.** 17 file, +2841/−9; suite real-PG db 144 · core 111 · bot 3 · web 131; semgrep 0; OSV sạch sau khi thêm `jose@5`. Codex 6 vòng: 1–3 hội tụ, 4–6 lộ một vấn đề **ngoài matrix** (rotate session Strict qua callback cross-site) → phần rotation invented-scope đã **revert** về mint-fresh đúng D1-2/D1-13. **Accepted residual risk** + **enablement blocker `auth-s4-d1b-oauth-session-rotation`** ghi vào verdict và pin bền 3 nơi. Tạo artifact d1b (manifest + backlog block, `NOT CODE_READY` — còn thiếu acceptance + verdict). |
 | 22/07/2026 | v1.3 | **Verdict 9 — `auth-s4-d1-google-adapter` = CODE_READY** tại `main@8f6a051`. Ba dependency đã merge + probe live; acceptance D1-1..15 có sẵn nên đây là **verdict-only gap**, nhưng vẫn re-verify từng precondition trên schema live (bài học D1E-18) thay vì tin matrix cũ. Verdict 4 (PLAN_READY, G3 FAIL) chính thức bị thay thế. |
