@@ -2,9 +2,9 @@
 
 > **Mục đích:** ảnh chụp tiến độ *thực thi* so với khối tài liệu đã spec (Reviewed và Draft/proposal được ghi riêng). Trả lời gọn:
 > "code đã có tới đâu, còn cách MVP bao xa". Đây là doc **living**, cập nhật mỗi khi một slice merge.
-> **Cập nhật:** 2026-07-20 (current authority **decisions v1.88** — DD-80 G3 revoke-all concurrency contract + D0a/D0b decomposition; BRD v3.9e/PRD v2.8d/TDD v3.1/ROADMAP v3.3d; DD-59 ✅; DD-70..72 🟡; **DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated**. Không thay functional implementation baseline).
+> **Cập nhật:** 2026-07-22 (current authority **decisions v1.98**; BRD v3.9g/PRD v2.8f/TDD v3.1a/ROADMAP v3.4). D0a · D0b · D1 email-token · D1 Google · d1b đã merge; DD-87 là authority core-only, chưa có runtime change. Không dùng version hoặc coverage làm bằng chứng implementation.
 > **Nguồn số liệu:** `git log`, cây `packages/`+`apps/`, `docs/features/*`, `docs/standards/decisions.md`,
-> `docs/autopilot-backlog.md`. **HEAD `main`** = docs bundle DD-80 v1.88 (`033ccc8`/`aa89b27`) + docs reconcile (`ad10194`) + **D0a squash merge**. Code baseline: migrations **`0000–0016`** đều trên `main` (gồm `0014` waitlist schema-only, `0015` D0a, `0016` D1 email-token).
+> `docs/autopilot-backlog.md`. **HEAD `main`** = `142e9fa`; code baseline: migrations **`0000–0018`** đều trên `main` (gồm `0014` waitlist schema-only, `0015` D0a, `0016` D1 email-token, `0017` Google OAuth transaction, `0018` completion handoff).
 > **✅ D0a merged (2026-07-20, `8f493f7`):** `auth-s4-d0-revoke-core` (migration `0015_auth_revoke_account.sql` — **miếng code feature-layer đầu tiên**) squash-merge sau 12 vòng Codex (10 finding fix) + review tay + real-PG 97/97. Gate "2 clean liên tiếp" **không đạt** → **owner override có ghi chép** (commit message + `HALT-MAX_ROUNDS.txt`), không phải false CODE_READY.
 > **✅ D0b merged (2026-07-22, `93c5404`):** `auth-s4-d0-session-web-boundary` — issuance fence `issueSession` (reject-and-reauth, không fallback-mint) + typed 401 `AUTH_INVALID` ở 2 caller + `POST /api/auth/logout-all` (CSRF trước mutation). **Zero DB change.** Gate P0 **ĐẠT** (2 clean round liên tiếp, 2 fix round) — **không override**. Web tests 65→78, real-PG green. Chi tiết: Verdict 6.
 > **✅ D1 email-token-core merged (2026-07-22, `64fb4d3`):** `auth-s4-d1-email-token-core` — migration **`0016`** atomic: 5 bảng function-only (`account_emails`, `email_password_credentials`, `auth_pending_email_registrations`, `auth_email_tokens`, `auth_email_deliveries`) + partial unique index độc lập `now()` + `_auth_assert_password_phc` (parse full Argon2id, floor==ceiling, guard overflow) + trigger 2 write-path + `_auth_consume_email_token` parent-first + 5 hàm cleanup deadlock-free; `auth_audit_events` **reuse** từ `0015`; **zero app grant**. **CODE DARK** — không route/UI/provider send. DB tests 97→**128**. Gate đóng bằng **1 clean round + independent directed review** (Codex phi tất định sau 9 vòng), **override thứ 2/3 slice**. Chi tiết: Verdict 8.
@@ -12,7 +12,7 @@
 > **✅ d1b session-rotation merged (2026-07-22, `ae8986e`):** migration **`0018`** expand-only (`resolved_account_id`/`handoff_hash`/`handoff_expires_at`/`handoff_consumed_at` + `auth_oauth_handoff_arm/_consume`) + **completion hop M3** — callback trả landing first-party auto-submit POST same-origin → `/complete` chạy `issueSession()` ở nơi cookie Strict CÓ mặt ⇒ đi đúng nhánh rotate. **Residual risk của D1 đã đóng trong code.** Handoff token đi trong body POST, chỉ lưu sha256, **không cookie**; single-use là fence server-side atomic. Suite db 144→**152** · web 131→**146**. **Gate ĐẠT ngay lần đầu: 2 vòng Codex sạch liên tiếp, 0 fix-round** — slice đầu tiên không thrash. Chi tiết: Verdict 13.
 > **⛔ VẪN CHẶN BẬT GOOGLE LOGIN — nhưng lý do đã đổi:** code đã sửa xong; thứ còn thiếu là **bằng chứng đo trên Safari macOS + iOS** cho cơ chế M3 (Playwright chỉ có WebKit đông cứng, không phải Safari bản ship). Nếu Safari giữ lại cookie Strict ở M3 thì người dùng Safari âm thầm vẫn dính rủi ro. **Giữ `GOOGLE_OAUTH_CLIENT_ID/SECRET` rỗng cho tới khi đo xong** — các bước thủ công ở `../probe-strict-cookie-completion-hop.md` §7.
 >
-> **Reconcile 2026-07-17:** target channel identity theo DD-15/DD-65..68 = endpoint-scoped Messenger + Zalo, reachability gắn `channel_identity_id`; Messenger = central+optional tenant Page, shared host/player. Live `messenger_pages` tenant-only, identity/reachability vẫn thiếu generalized endpoint contract và `apps/bot` queue shell **chưa đáp ứng**; chưa adapter/handler/shared Session/Join/AuthZ/projector/E2E. Google/email cũng chưa implement. Migrations vẫn `0000–0013`.
+> **Reconcile 2026-07-22:** target channel identity theo DD-15/DD-65..68 vẫn là endpoint-scoped Messenger + Zalo; adapter/handler/shared Session/Join/AuthZ/projector/E2E vẫn chưa build. **Google lane đã merge nhưng chưa enable**: thiếu đo Safari macOS+iOS cho M3 nên `GOOGLE_OAUTH_*` giữ rỗng; email/password bundle order-4 và Telegram removal vẫn pending. Migrations là `0000–0018`.
 
 ---
 
@@ -20,27 +20,24 @@
 
 | Trục | Trạng thái | Ước lượng |
 |---|---|---|
-| **Tài liệu / thiết kế** | **22 Product/System + 21 BE specs**, cộng DD-69 analysis. Waitlist mirrors pin one root CAS/lease max-3 sweep job per capacity opener; candidate events are alert/audit refs, not independent budgets. Notification v3.4c pins the same ownership boundary plus global read/write owners, durable quota/retry receipts, push idempotency/trust/key epochs và security context-start cutoff but remains Draft; DD-70..72 🟡. DD-73/74/75/78 dependency/consumer-sequenced; DD-76/77 evidence-gated. Decision log **v1.65**. | Contract coverage cao; không dùng count làm code-readiness |
-| **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations **`0000–0016`** đã merge trên `main`, có test (gồm `0014` waitlist — schema-only, behavior chưa build) | **✅ xong** |
-| **Code — lớp auth** | Auth v3 (Telegram-era) merged; **DD-80 D0a (`0015`) + D0b + D1 email-token (`0016`) + D1 Google (`0017`) + d1b session-rotation (`0018`) đã merged**; còn order-4 email bundle (flag OFF, gate C7) → gỡ Telegram. Bật Google chờ đo Safari/iOS | 🟢 Google lane xong phần code |
+| **Tài liệu / thiết kế** | **24 Product/System + 23 BE tech specs = 23 cặp + 1 product-only Draft**. DD-70..72 và DD-86 vẫn Draft/proposal; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; decision log **v1.98**. | Contract coverage cao; không dùng count làm code-readiness |
+| **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations **`0000–0014`** đã merge trên `main`; `0014` là schema-only waitlist | **✅ xong** |
+| **Code — lớp auth** | Auth v3 (Telegram-era) merged; **DD-80 D0a (`0015`) + D0b + D1 email-token (`0016`) + D1 Google (`0017`) + d1b session-rotation (`0018`) đã merged**; còn order-4 email bundle (flag OFF, gate C7) → gỡ Telegram. Bật Google chờ đo Safari/iOS | 🟢 Google lane xong phần code, ⛔ chưa enable |
 | **Code — lớp feature nghiệp vụ** | chưa bắt đầu (session/reconcile/sync/marketplace/billing/bot…) | ⬜ chưa build |
 | **Roadmap build** | **S1–S3 + S4 Auth v3** đã land + **toàn bộ lane Google: D0a · D0b · D1 email-token · D1 Google · d1b** (migrations `0000–0018`); kế tiếp order-4 email bundle | ~33% |
 
-**Một câu:** phần *khó và nền tảng nhất* (đường tiền thuần + DB có RLS fail-closed + migrations `0000–0013` trên `main`)
-đã dựng xong và được test; **Auth Onboarding v3 (Telegram-era) cũng đã merge** — nhưng **DD-37 supersede
-provider** nên phải thay bằng Google/email (đã spec, chưa code). Tầng feature nghiệp vụ còn nằm trên giấy.
-Project vừa qua **Phase 0→1**: foundation + auth-v3 đã land. **D0a revoke-core (migration `0015`) — code feature-layer đầu tiên — đã merge** vào `main` (owner override gate 2-clean; real-PG 97/97). Kế tiếp: D0b web boundary → D1 email-token → D1 google-adapter.
+**Một câu:** foundation + Google auth lane đã merge, nhưng Google chưa được enable và email/password bundle vẫn chưa build; tầng feature nghiệp vụ (session/reconcile/sync/marketplace/billing/bot) vẫn nằm trên giấy. `IMPLEMENTED` cho các migration/auth slice không chứng minh product E2E hoặc enablement.
 
 ---
 
 ## 1. Bức tranh tổng: docs đi trước code rất xa
 
-Repo docs-first: decision log tới **DD-78/v1.65**; DD-70..72 vẫn 🟡; **DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated**. Integrity closure giải drift contract nhưng không tăng code readiness; vẫn cần migration + services/adapters/projectors. B0/B1/B2/B3, mutation-path, external/legal/store gates vẫn phải đóng; thực thi ~20% roadmap.
+Repo docs-first: decision log tới **DD-87/v1.98**; DD-70..72 và DD-86 vẫn 🟡; **DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated**. Integrity closure giải drift contract nhưng không tăng code readiness; vẫn cần services/adapters/projectors. B1/B2/B3, mutation-path, external/legal/store gates vẫn phải đóng; thực thi roadmap khoảng ~33% theo slice đã merge, không phải product readiness.
 
 ```
 Contract ███████████████████░░  coverage cao (không phải readiness score; DD-70..72 đề xuất; DD-73/74/75/78 dependency/consumer-sequenced; DD-76/77 evidence-gated)
-Nền móng  ████████████████████░  ~90%   (core + db-RLS + migrations 0000–0013 trên `main`, có test)
-Auth      ███████████░░░░░░░░░░  ~55%   (Onboarding v3 Telegram-era merged + web tests; DD-37 provider→Google/email chưa code)
+Nền móng  ████████████████████░  ~90%   (core + db-RLS + migrations 0000–0014 trên `main`)
+Auth      ████████████████░░░░  ~80%   (Google lane merged; ⛔ chờ Safari/iOS trước enable; email bundle pending)
 Feature   █░░░░░░░░░░░░░░░░░░░░░  ~5%    (mới có logic thuần trong core, chưa wiring)
 ```
 
@@ -71,7 +68,7 @@ DTO/error/validator/format boundary riêng, không import money engine chỉ vì
 
 ### 2.2 `packages/db` — data layer Postgres + RLS ✅ (keystone)
 
-**Baseline `main` (2026-07-22): migrations `0000–0016` (17 file) đều trên `main`, có bộ RLS invariant test chạy trên role runtime thật. DB suite = 129 test.**
+**Baseline `main` (2026-07-22): migrations `0000–0018` (19 file) đều trên `main`, có bộ RLS invariant test chạy trên role runtime thật. DB suite = 152 test theo evidence D1b; full local rerun vẫn cần `DATABASE_URL_TEST`.**
 
 > ✅ **Correction 2026-07-22:** các bản trước của doc này khẳng định `0014_players_waitlist` "chỉ trên nhánh `feat/session-waitlist-expand`, chưa vào `main`" ở bốn chỗ. **Sai** — verify on-disk: `git ls-tree main` có file, và `1a6ac38 feat(session): expand players for DD-45 waitlist` nằm trong lịch sử `main`; `waitlist-invariants.test.ts` (21 test) chạy trong mọi lần `pnpm test`. Claim cũ là prose stale được chép lại qua nhiều lần cập nhật mà không verify — đúng bẫy mà CLAUDE.md cảnh báo.
 
@@ -93,16 +90,16 @@ DTO/error/validator/format boundary riêng, không import money engine chỉ vì
 
 ### 2.3 `apps/web` + `apps/bot` — shell + Auth Onboarding v3 (Telegram-era) 🟡
 
-- `apps/web`: khung Next.js (`layout.tsx`, `page.tsx`, `healthz/route.ts`, `next.config.mjs`) **+ Auth Onboarding v3 (Telegram-era) đã merge** (`5b1193b`) — login/onboarding routes + hash dùng `telegram`-era, **có web tests**. **DD-37 supersede provider** → cần thay bằng Google/email (đã spec, **chưa code**).
+- `apps/web`: khung Next.js (`layout.tsx`, `page.tsx`, `healthz/route.ts`, `next.config.mjs`) + Auth Onboarding v3 (Telegram-era) **và Google lane DD-80 đã merge**: D0b logout-all, Google OAuth state/callback/complete và M3 completion handoff. **Google chưa enable** tới khi có đo Safari macOS+iOS; email/password bundle vẫn chưa code.
 - `apps/bot`: `queue.ts`, `queues.ts`, `worker.ts`, `provision-queue.ts` + `queue.test.ts` — khung hàng đợi.
 
-Chưa có: command handlers, services, projectors, API nghiệp vụ đầy đủ, UI thật, tích hợp Zalo/Messenger, webhook reconcile; **provider auth Google/email (DD-37) chưa implement**.
+Chưa có: command handlers, services, projectors, API nghiệp vụ đầy đủ, UI thật, tích hợp Zalo/Messenger, webhook reconcile; **email/password bundle (DD-80 order-4) và Telegram removal** chưa implement.
 
 ---
 
 ## 3. Đối chiếu từng feature: **spec status** vs **code**
 
-**15 legacy** (13 active Reviewed + 1 Notifications 🟡 Draft từ 18/07 do gộp cụm 🔔 + Telegram archived), 2 cặp pre-existing khác (connector/assistant), 3 cặp phase-1 additions (**Messenger Reviewed contract; chat/settings Draft**), 1 cặp Session Organize (accept-in-principle, post-P4) và 1 product-only Draft (funnel). Cột "Code" cho biết thực thi tới đâu.
+**15 legacy** (13 active Reviewed + 1 Notifications 🟡 Draft từ 18/07 do gộp cụm 🔔 + Telegram archived), 2 cặp pre-existing khác (connector/assistant), 3 cặp phase-1 additions (**Messenger Reviewed contract; chat/settings Draft**), **Home** (Reviewed), Session Organize (accept-in-principle), Tournament (Draft) và 1 product-only Draft (funnel). Cột "Code" cho biết thực thi tới đâu.
 
 | Feature (Phase) | Spec | Code hiện tại |
 |---|---|---|
@@ -113,7 +110,7 @@ Chưa có: command handlers, services, projectors, API nghiệp vụ đầy đ�
 | Payment Reconciliation (P3) | ✅ Reviewed | 🟡 Một phần — **logic** đã có ở `core` (matching + payments-logic); **wiring** webhook→settle→notify chưa |
 | Identity & Merge (P3.5) | ✅ Reviewed | ⬜ Chưa (bảng link_codes/merge_audit/tombstones có sẵn) |
 | Notifications — Reminders · Inbox · Announcements · Web Push (P3/P4/P4.5) | 🟡 Draft — **§A nhắc/xác nhận/correction contract đã reviewed** (không đổi, không mở lại); §B/C/D inbox·announce·push chờ **DD-70/71/72**. Hạ Reviewed→Draft 18/07 do **gộp tài liệu** (cặp `feature_notification_center` nhập vào đây) | ⬜ Chưa (bảng notification_* có sẵn; `person_notifications`/`membership_tags`/`device_push_subscriptions` chưa có) |
-| Web Auth & Onboarding (P4) | ✅ Reviewed | 🟡 **Auth Onboarding v3 (Telegram-era) merged** (`5b1193b`) + web tests; DD-37 supersede provider → Google/email chưa implement |
+| Web Auth & Onboarding (P4) | ✅ Reviewed | 🟢 Telegram-era + Google lane DD-80 merged; Google ⛔ chưa enable (Safari/iOS M3), email/password bundle và Telegram removal pending |
 | Sync Engine (P4) | ✅ Reviewed | ⬜ Chưa projectors; Messenger one-route delivery chưa viết |
 | Marketplace Discovery (P4.3) | ✅ Reviewed | ⬜ Chưa (public_sessions có sẵn) |
 | Cross-club Join (P4.3) | ✅ Reviewed | ⬜ Chưa (join_requests có sẵn) |
@@ -143,7 +140,7 @@ Nguồn: `docs/autopilot-backlog.md` (Phase-1 full-launch, S1→S20; **DD-37: Me
 | **S1** monorepo-scaffold | pnpm workspace, toolchain, CI, runtime shells, infra | ✅ **merged** |
 | **S2** core-lift (+S2d foundations) | matching/dates/payments-logic + i18n/format/vietqr/sports | ✅ **merged** |
 | **S3** db-postgres-drizzle-rls | schema + 14 migration (`0000–0013`) + RLS choke-point + invariant suite | ✅ **merged** |
-| **S4** auth | web-auth/onboarding | 🟡 **Onboarding v3 (Telegram-era) merged** (`5b1193b`) + web tests; DD-37 provider→Google/email chưa code |
+| **S4** auth | web-auth/onboarding | 🟢 Telegram-era + Google lane DD-80 merged (`0015`–`0018`); Google ⛔ chưa enable, email/password bundle pending |
 | S5 session · S6 sync-engine · S7 reconcile · S8 identity-merge | | ⬜ chưa |
 | S9–S12 web PWA + marketplace · S13 cross-club · S14 billing | | ⬜ chưa |
 | S15 host-pro-auto · S16 reminders-auto · S17 Zalo · S18 Messenger | | ⬜ chưa |
@@ -151,7 +148,7 @@ Nguồn: `docs/autopilot-backlog.md` (Phase-1 full-launch, S1→S20; **DD-37: Me
 | Telegram | bỏ khỏi phạm vi (DD-37 thay DD-09) | ✂️ out |
 | App Native phase-2 (DD-69) | RN+Expo recommendation; client/API/auth/push/offline/store gates | ✅ direction accepted (18/07) · ⬜ build chưa schedule |
 
-**Tiến độ: S1–S3 + S4 Auth v3 (Telegram-era) đã land; current committed tree `main@22c23aa` ≈ 20% chặng đường code; provider replacement (DD-37 Google/email) chưa code.**
+**Tiến độ: S1–S3 + Google lane DD-80 đã land; current committed tree `main@142e9fa` ≈ 33% chặng đường code theo roadmap. Google chưa enable; email/password bundle order-4 và Telegram removal chưa code.**
 
 ---
 
@@ -167,35 +164,31 @@ Nguồn: `docs/autopilot-backlog.md` (Phase-1 full-launch, S1→S20; **DD-37: Me
 
 Nói cách khác: session này **khép lại Phase 1** (nền móng) và **mở màn thiết kế lớp Auth** (S4).
 
-> **Cập nhật 2026-07-19:** Auth Onboarding v3 (Telegram-era) đã merge tại commit lịch sử **`1eb6f60`** (`5b1193b Merge feat/auth-onboarding-v3`); current committed tree là **`main@22c23aa`**. Migrations `0000–0013` committed, có web tests; các commit sau tăng security/tests/docs/tooling nhưng chưa thêm feature layer notification. **DD-37 supersede provider** → thay Telegram-era bằng Google/email **đã spec nhưng chưa implement**.
+> **Historical update 2026-07-19:** đoạn này ghi trạng thái trước DD-80 slices; không dùng làm current baseline. Current baseline là `main@142e9fa`, migrations `0000–0018`, Google lane đã merge nhưng chưa enable; email/password bundle và Telegram removal vẫn pending.
 
 ---
 
 ## 6. Gap & bước tiếp theo hợp lý
 
-**Còn thiếu để có MVP chạy được:** residual S4 provider swap + tầng feature S5→S19. Ưu tiên theo dependency:
+**Còn thiếu để có MVP chạy được:** enable Google, email/password bundle + Telegram removal, rồi tầng feature S5→S19. Ưu tiên theo dependency:
 
-1. **S4 — Web Auth & Onboarding**: Onboarding v3 (Telegram-era) **đã merge** (`5b1193b`) + web tests.
-   **B0 design-probe đã author + review-fix**, gồm token storage/consume, account-wide revoke, OAuth cross-site transaction/Lax binding và email-link two-hop; hiện **chờ owner duyệt**. Sau approval mới author + review bộ slice mechanism-named thay provider Telegram-era → Google/email (DD-13/DD-37/DD-50) — chưa implement và chưa launcher-ready;
-   + port/verify đủ 8 bất biến SI-1..SI-8. Đây là ưu tiên gần nhất nhưng **chưa runnable** cho tới khi B0 được ghi thành DD + prescan + manifest/slice/launcher hoàn tất.
-2. **S5 Session** + **S7 Reconcile**: reconcile đã có sẵn `core` logic → chỉ cần wiring
-   webhook → tenantRepo → outbox → notify. Đòn bẩy cao nhất (đường tiền).
-3. **S6 Sync-engine**: viết projectors đọc `outbox_events` fan-out (Zalo/Messenger/SSE/public_sessions).
-4. **S8 Identity-merge**: bảng đã sẵn; cần luồng claim/merge bằng verified account email hoặc transactional one-time `link_code` (HR4/DD-50).
+1. **Enable Google (ENABLEMENT_ONLY):** đo Safari macOS+iOS cho M3; chỉ khi pass mới set `GOOGLE_OAUTH_*`. Đây không thay thế full product E2E.
+2. **S4 email/password bundle:** sau Google lane, build release unit order-4 flag OFF rồi mới gỡ provider Telegram-era, theo DD-80.
+3. **S5 Session** → **mark-paid thủ công** → **S7 Reconcile**: không coi core logic là wiring cơ học; mỗi mutation path cần contract/slice riêng.
+4. **S6 Sync-engine** và **S8 Identity-merge:** author sau hard dependencies và gates tương ứng; Identity cần verified account email hoặc transactional one-time `link_code` (HR4/DD-50).
 
 **Quyết định/gate còn treo có thể chặn hoặc định hình build:** **DD-04** provider ✅ **chốt (c) DO co-locate** (còn build-time gate: egress-IP verify + provision + restore/failover drill + RPO/RTO + KMS), **DD-14/15**
 (Zalo external spikes), **DD-33 đã chốt nhưng Meta App Review/Business Verification/permission evidence vẫn là external enablement gate**, và **DD-34/35/36**
 (Club Assistant P7 detail). **DD-18 chỉ chặn GO-LIVE Club Assistant và không phải build-time provider dependency; tuy nhiên Product + BE pair vẫn phải được formally promote từ Draft sang Reviewed trước implementation.**
-**Current decisions v1.67:** DD-05/06/45/49 integrity closure + DD-59 reconcile đã propagate; DD-70..72 vẫn 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated. Notification context-start closure và DD-73..78 sequencing correction vẫn chỉ là contract; waitlist schema-only branch không chứng minh SessionService/retry behavior; Google/email, notification center, share/activity và native runtime vẫn chưa có. B0/B1/B2/B3 + correction/external/legal gates vẫn áp dụng.
+**Current decisions v1.98:** DD-70..72 và DD-86 vẫn 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated. Notification context, share/activity và native runtime vẫn chưa có. Google lane đã merge nhưng chưa enable; B1/B2/B3 + correction/external/legal gates vẫn áp dụng.
 **DD-02/05/06/08/10/12/41–46 đã ✅ chốt; DD-47/48 đã chốt framework** nhưng schema/code vẫn pending.
-DD-13 (Google/email) ✅ nhưng provider chưa implement; auth đã land vẫn là Telegram-era. DD-37/38/39 ✅;
-chat/giá theo giới tính còn chờ migration.
+DD-13 (Google/email) ✅: Google lane đã merge nhưng chưa enable; email/password bundle còn pending. DD-37/38/39 ✅; chat/giá theo giới tính còn chờ migration.
 
 ---
 
-## 7. Live verification (2026-07-19)
+## 7. Historical verification (2026-07-16–19)
 
-Reality-check trên current feature checkout; giữ kết quả `main`/remote trước đó làm historical evidence riêng:
+Các kết quả dưới đây là historical evidence của checkout/CI nêu rõ từng dòng, không phải xác nhận current `main@142e9fa`:
 
 | Gate | Kết quả |
 |---|---|
@@ -214,8 +207,7 @@ Reality-check trên current feature checkout; giữ kết quả `main`/remote tr
 | Remote CI (`main@299338d`, 17/07) | ✅ [Run 29518494545](https://github.com/maingocanh1702/plexco-app/actions/runs/29518494545): install/typecheck/format/lint/build/full PostgreSQL suite pass |
 | Remote Security (`main@299338d`, 17/07) | ✅ [Run 29518495006](https://github.com/maingocanh1702/plexco-app/actions/runs/29518495006): Semgrep CE + OSV full dependency scan pass |
 
-Phạm vi xác nhận hiện tại: working tree tại `feat/session-waitlist-expand@aa8afae` local green **21/244** ngày 19/07; executable SQL của `0014` byte-identical với schema commit `1a6ac38`, chưa merge `main@22c23aa`. Runtime closure `299338d` giữ historical remote CI/Security **20/223**. Uncommitted docs/comment không đổi runtime behavior.
-Remote CI/Security đã có cho runtime closure nhưng không thay staging/restore/provider evidence và không có nghĩa feature layer đã implement; `0014` vẫn chưa có trên `main`.
+Phạm vi historical: working tree tại `feat/session-waitlist-expand@aa8afae` local green **21/244** ngày 19/07; runtime closure `299338d` giữ historical remote CI/Security **20/223**. Các con số này không thay staging/restore/provider evidence và không có nghĩa feature layer đã implement. `0014` hiện đã merge trên main; baseline hiện hành xem phần mở đầu.
 
 ---
 

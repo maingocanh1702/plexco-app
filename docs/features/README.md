@@ -1,7 +1,7 @@
 # Plexco Feature Specs — Coverage Index
 
-> **Version:** 2.42 · 2026-07-22
-> **Scope source:** `../product/BRD.md` v3.9g · `../product/PRD.md` v2.8f · `../product/TDD.md` v3.1a · `../product/ROADMAP.md` v3.3f · `../standards/decisions.md` **v1.96 (DD-01..86)**. DD-05/06/45/49 integrity closed; DD-59 ✅ reconcile; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; **DD-79 ✅ Home · DD-80 ✅ auth B0 · DD-81 ✅ Pencil · DD-82..85 ✅ owner directions · DD-86 🟡 multi-channel proposal**. Runtime gates unchanged.
+> **Version:** 2.43 · 2026-07-22
+> **Scope source:** `../product/BRD.md` v3.9g · `../product/PRD.md` v2.8f · `../product/TDD.md` v3.1a · `../product/ROADMAP.md` v3.4 · `../standards/decisions.md` **v1.98 (DD-01..87)**. DD-05/06/45/49 integrity closed; DD-59 ✅ reconcile; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; **DD-79 ✅ Home · DD-80 ✅ auth B0 · DD-81 ✅ Pencil · DD-82..85 ✅ owner directions · DD-86 🟡 multi-channel proposal · DD-87 ✅ fail-closed split-name/amount authority**. Runtime gates unchanged.
 
 > **Cập nhật DD-37 (2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (**Telegram loại khỏi phạm vi**). `feature_player_telegram` → **Archived (DD-37)**, thay bằng `feature_player_messenger`. Thêm phase-1: `feature_inapp_chat` (DD-38 ✅), `feature_user_settings` (DD-39 ✅), Google login (DD-13 ✅, trong `feature_web_auth_onboarding`), mark-paid thủ công (DD-40 ✅, trong `feature_payment_reconcile`).
 
@@ -33,7 +33,7 @@ Bốn nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**
 
 **Status lens (không cộng thêm vào inventory):** **15 Reviewed contracts** = 13 legacy active + Shared Host/Player Messenger + Home (DD-79 ✅, S9); Telegram Archived; **cặp Notifications xuống 🟡 Draft 18/07** (gộp cụm 🔔 — §A contract nhắc/xác nhận vẫn reviewed, chờ DD-70/71/72 cho §B/C/D); connector/assistant/chat/settings/session-organize giữ status riêng. Tất cả vẫn phải đọc cột code trong BUILD-STATUS.
 
-> ⚠️ **Reconcile với `../standards/BUILD-STATUS.md`:** trên disk có **23 Product/System specs + 22 BE specs = 22 cặp + 1 product-only Draft** (`feature_channel_booking_funnel` — BE deferred tới build slice). Cặp thứ 22 = Home (DD-79 ✅, S9). 21 cặp gồm **15 legacy** (13 active Reviewed + 1 Notifications Draft + 1 Telegram Archived), **2 cặp pre-existing** (connector + assistant), **3 cặp phase-1** pending migration/build và **1 cặp Session Organize (accept-in-principle, build post-P4)**. Coverage chỉ nghĩa là file tồn tại; không phải canonical phase hay implementation readiness.
+> ⚠️ **Reconcile với `../standards/BUILD-STATUS.md`:** trên disk có **24 Product/System specs + 23 BE tech specs = 23 cặp + 1 product-only Draft** (`feature_channel_booking_funnel` — BE deferred tới build slice). Inventory hiện gồm **15 legacy** (13 active Reviewed + 1 Notifications Draft + 1 Telegram Archived), **2 cặp pre-existing** (connector + assistant), **3 cặp phase-1** pending migration/build, **Home**, **Session Organize** (accept-in-principle) và **Tournament** (Draft). Coverage chỉ nghĩa là file tồn tại; không phải canonical phase hay implementation readiness.
 
 ### Legacy coverage — 15 cặp spec MVP (1 Archived)
 
@@ -87,7 +87,7 @@ Bốn nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**
 
 > **Vì sao cả cặp xuống Draft:** ba mảng trên chưa chốt, mà CLAUDE.md cấm viết proposal chưa chốt vào spec đã Reviewed. Gộp một doc ⇒ nhãn phải lấy mức bảo thủ hơn. **Các business invariant §A** (nhắc nợ/xác nhận/correction/one-route/quiet hours) vẫn đã reviewed; v3.1 sửa ranh giới Draft, v3.2 reconcile proposal authority để contract không tự mâu thuẫn — **không** mở lại luật tiền. Khuôn này giống `feature_connector_onboarding` ("🟡 Draft — provider-contract reviewed").
 >
-> ⚠️ **Hệ quả lên status lens:** Reviewed contracts **15 → 14**; on-disk giữ **22 Product/System + 21 BE** (không thêm cặp nào). Code-readiness không đổi.
+> ⚠️ **Historical (18/07):** khi notification cluster bị hạ Draft, status lens giảm **15 → 14** trong inventory lúc đó (**22 Product/System + 21 BE**). Đây không phải số đếm hiện tại; code-readiness không đổi.
 
 > Reviewed docs cập nhật theo DD ✅ (không đổi trạng thái Reviewed): `feature_web_auth_onboarding` (DD-13 Google+email), `feature_payment_reconcile` (DD-40 mark-paid thủ công), `feature_tenant_routing_authz` + `feature_identity` + `feature_multi_tenant` + `feature_billing_lifecycle` + `feature_session_management` (DD-37 channel pivot). Riêng `feature_notifications_reminders` hiện Draft nhưng §A vẫn giữ reviewed business invariants.
 
@@ -114,6 +114,7 @@ Với spec mới hoặc spec được promote sang **Reviewed**, review gate k�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-22 | v2.43 | Reconcile authority sang ROADMAP v3.4 / decisions v1.98 và inventory trên disk: 24 Product + 23 BE tech = 23 cặp + 1 product-only Draft. Tách `README.md` và `auth-security-invariant-table.md` khỏi phép đếm feature spec; không đổi contract/runtime. |
 | 2026-07-22 | v2.42 | Mirror DD-86 proposal xuyên In-app Chat v0.8/v0.16, Club Assistant v0.10/v0.11 và historical proposal v0.8. Pin migration HOLD, root final chat migration sequencing, exact-one default/atomic provisioning/DD-56 capability/idempotency/Assistant conjunction. DD-86 vẫn `NOT_PLAN_READY`; không runtime. |
 | 2026-07-21 | v2.41 | **Thêm cặp `feature_tournament` v0.1 (🟡 Draft, DD-82 chốt hướng owner 21/07).** Aggregate độc lập (`tournaments` + `tournament_registrations` tenant-scoped/RLS + `public_tournaments` whitelist); v1 info+đăng ký, không đụng tiền; bracket/standings/entry-fee slice sau. Đưa vào bảng Post-MVP (P4+). **Chưa readiness gate** — coverage file, không phải Reviewed contract/runtime. Hard dependency: coordinate DD-41 retire `session_type='tournament'` (live schema chưa có cột đó). On-disk → +1 cặp. |
 | 2026-07-19 | v2.40 | **DD-79 amendment — bottom nav PWA (decisions v1.80):** Home v0.3 pin nav **5 slot Home · Feed · [Khám phá center/FAB] · Club · Setting + Chat 💬 header** (final v0.5 — Kèo của tôi gộp vào Home; Club = `/me/clubs` person-self; phase-1 render 4 tab); registry config-driven; Feed config-OFF tới DD-76 clear (phase-1 render 4). Shell contract — không API/bảng mới, BE home tech không đổi. |
