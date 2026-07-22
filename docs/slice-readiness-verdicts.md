@@ -715,6 +715,15 @@ Việc implementer **dừng lại xin phê duyệt** thay vì tự nới contrac
 > = **không kiểm chứng lại được với evidence hiện có**, ghi nhận là vậy thay vì xoá hoặc khẳng định lại như
 > fact đã đóng. BR-7 (regression `fileParallelism:false`) chưa được re-run trong lượt này.
 
+> **Lỗ hổng cấu trúc lộ ra từ vụ `eba1c27`:** `scripts/autopilot-scope-gate` canh giữ feature worktree
+> (register/ready/cleanup theo manifest), **không canh giữ docs commit chạy thẳng ở root working copy**.
+> Nhiều session Cowork share một git identity (`Cowork <cowork@local>`) và một `.git/index` khi tất cả
+> đứng ở root repo thay vì mỗi session một worktree riêng — đủ để một session `git commit` vô tình bắt
+> đúng content mà session khác đang stage, dưới message của chính nó. `scripts/ap-merge.sh` (thêm ở
+> `8a58cc6`) đóng root cause **cơ chế** (chuỗi lệnh nhiều bước không nối `&&`; gate sai dùng
+> `git status --porcelain`, vốn luôn báo bẩn vì tính cả untracked file). Root cause **tổ chức** — docs
+> commit trực tiếp ở root working copy không có ranh giới cách ly nào giữa các session — vẫn còn mở.
+
 ---
 
 ## Verdict 15 — `core-matcher-grouped-amount-parsing`, DD-87 contract closed on disk (2026-07-22)
