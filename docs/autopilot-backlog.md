@@ -33,7 +33,7 @@ launch lại và lặp y nguyên kết luận cũ.
 ```
 ## task: <slug>
 title: <một dòng>
-status: idea | planned | ready | in-flight | merged
+status: idea | planned | ready | in-flight | merged | blocked
 risk: P0 | P1 | P2
 change_class: <class>
 depends_on: [<slug>, ...]
@@ -140,6 +140,16 @@ scope: [docs/standards/webhook-verification-matrix.md]
 manifest: docs/autopilot-manifests/infra-inbound-webhook-auth-evidence.json
 merged_probe: docs/standards/webhook-verification-matrix.md :: WEBHOOK_AUTH_EVIDENCE_CLOSED
 notes: Launcher-ready docs-only AP-23 slice (opposite direction from AP-22 egress). Document the INBOUND webhook verification contract per provider — signature header, algorithm, raw-body vs parsed, replay/timestamp window — from current official docs; never handle secret VALUES. Fail closed on any ambiguous row. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-infra-inbound-webhook-auth-evidence.md`.
+
+## task: apipay-signed-body-reconciliation
+title: Confirm ApiPay's signed representation with ApiPay and reconcile the raw-body specs to it
+status: blocked
+risk: P0
+change_class: docs-spec-reconciliation
+depends_on: []
+invariants: [api-contract, money-model]
+scope: []
+notes: **⛔ BLOCKED ON OWNER-ONLY EVIDENCE — KHÔNG launch (2026-07-23).** Phát hiện bởi AP-23 khi đọc docs chính thức, `webhook-verification-matrix.md` §3.2. **Hai hợp đồng loại trừ nhau:** docs ApiPay ký `JSON.stringify(req.body)` (parsed body re-serialize, **không** pin canonical form — key order/whitespace/unicode escaping đều thả nổi), trong khi spec nội bộ của Plexco bắt HMAC trên **raw bytes** và có unit test khẳng định re-serialize phải fail — `feature_connector_onboarding_tech.md:269` (§4.5 verifier + tests 3–5) và `feature_payment_reconcile_tech.md:322-326`. Chỉ một trong hai đúng; bên sai sẽ **reject 100% callback hợp lệ của ApiPay** — nằm thẳng trên đường tiền (payment reconcile), nên P0. **Không session nào đóng được:** docs đã được đọc hết và mâu thuẫn vẫn còn, nên đọc thêm docs không lật được gì; chỉ đóng bằng **capture sandbox thật của ApiPay** (giữ raw bytes + header `ApiPay-Signature`, tự tính lại HMAC theo cả hai cách để xem cách nào khớp) **hoặc** trả lời quy chiếu được từ ApiPay support/onboarding nói rõ representation được ký. **Chuyển lại `ready`/planned khi và chỉ khi** có một trong hai — khi đó slice là sửa spec nội bộ theo sự thật đo được, không phải nghiên cứu lại. **Chặn:** mọi code adapter inbound-webhook của ApiPay. Cùng lớp blocked với C7 (email provider) và phép đo Safari/iOS. Không sửa hai spec kia bằng suy luận — AP-23 cố ý chỉ flag, không tự resolve.
 
 ## task: infra-provider-limits-evidence
 title: Messaging limits and tier evidence for Zalo Bot, Meta Messenger, SePay and ApiPay
