@@ -54,10 +54,33 @@ export async function currentSession(): Promise<ResolvedSession | null> {
 }
 
 /**
+ * Thrown by issueSession when the request carries a session cookie but the DB
+ * refuses to rotate it — the old session is revoked/expired (e.g. a concurrent
+ * logout-all won the race). The cookie is already cleared before this throws;
+ * live callers map it to a generic AUTH_INVALID 401. It carries NO token, hash
+ * or account id — there is nothing sensitive to leak into a log or a response
+ * (G3-B1/B3, D0-12).
+ */
+export class SessionReauthRequiredError extends Error {
+  constructor() {
+    super("session reauth required");
+    this.name = "SessionReauthRequiredError";
+  }
+}
+
+/**
  * Issue a session for the JUST-AUTHENTICATED / JUST-PRIVILEGED account: rotates
  * the live cookie when present (revoking it), else mints fresh; sets the new
  * cookie. THE single path for session issuance — every privilege transition
  * (login, tenant provisioning, future owner-assignment/tenant-switch) uses it.
+ *
+ * Issuance fence (G3-B1, D0-12): when a cookie EXISTS but rotate returns null
+ * (the old session is revoked/expired — e.g. a concurrent logout-all won),
+ * NEVER fall back to minting a fresh session for that stale cookie. Clear the
+ * cookie and throw SessionReauthRequiredError so the caller answers 401; the
+ * cookie-less retry then mints normally as a brand-new authentication. Only a
+ * request with NO cookie takes the create path, whose calls and cookie
+ * attributes stay unchanged (G3-B2).
  */
 export async function issueSession(accountId: string): Promise<{ csrfToken: string }> {
   const { createWebSession, rotateWebSession } = await import("@plexco/db");
@@ -65,17 +88,19 @@ export async function issueSession(accountId: string): Promise<{ csrfToken: stri
   const { token, tokenHash } = newSessionToken();
   const csrfToken = rb(24).toString("base64url");
   const existing = (await cookies()).get(SESSION_COOKIE)?.value;
-  let rotated: string | null = null;
   if (existing) {
-    rotated = await rotateWebSession(appDb().pool, {
+    const rotated = await rotateWebSession(appDb().pool, {
       oldTokenHash: hashToken(existing),
       newTokenHash: tokenHash,
       newCsrfSecret: csrfToken,
       ttlSeconds: SESSION_TTL_SECONDS,
       accountId,
     });
-  }
-  if (!rotated) {
+    if (!rotated) {
+      await clearSessionCookie();
+      throw new SessionReauthRequiredError();
+    }
+  } else {
     await createWebSession(appDb().pool, {
       accountId,
       tokenHash,

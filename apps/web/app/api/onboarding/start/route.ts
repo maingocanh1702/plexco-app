@@ -7,6 +7,7 @@ import {
   currentSession,
   issueSession,
   rateLimited,
+  SessionReauthRequiredError,
 } from "../../../../lib/session-cookies";
 
 /**
@@ -72,6 +73,12 @@ export async function POST(request: Request): Promise<Response> {
     const { csrfToken } = await issueSession(session.accountId);
     return ok({ tenantId, plan: "free", status: "active", csrfToken });
   } catch (error) {
+    // Issuance fence (D0-12): the session was revoked mid-onboarding (a
+    // concurrent logout-all won the rotate race) — generic 401, no internal
+    // reason leaked.
+    if (error instanceof SessionReauthRequiredError) {
+      return err("AUTH_INVALID", t("Xác thực không hợp lệ.", "Invalid authentication."), 401);
+    }
     if (error instanceof SlugTakenError) {
       return err("SLUG_TAKEN", t("Slug đã được dùng bởi CLB khác.", "Slug is taken."), 409);
     }

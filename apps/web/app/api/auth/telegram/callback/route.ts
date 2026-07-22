@@ -8,6 +8,7 @@ import {
   issueSession,
   rateLimited,
   sameOriginRequest,
+  SessionReauthRequiredError,
 } from "../../../../../lib/session-cookies";
 import {
   normalizeTelegramPayload,
@@ -87,7 +88,9 @@ export async function POST(request: Request): Promise<Response> {
     const { csrfToken } = await issueSession(login.accountId);
     return ok({ personId: login.personId, created: login.created, csrfToken });
   } catch (error) {
-    if (error instanceof LoginReplayError) {
+    // Issuance fence (D0-12): the browser's stale cookie could not rotate (a
+    // concurrent logout-all won) — generic 401, no internal reason leaked.
+    if (error instanceof LoginReplayError || error instanceof SessionReauthRequiredError) {
       return err("AUTH_INVALID", t("Xác thực không hợp lệ.", "Invalid authentication."), 401);
     }
     throw error;
