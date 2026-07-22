@@ -16,7 +16,12 @@
 >
 > **✅ CẬP NHẬT 2026-07-22 — D1 Google adapter ĐÃ MERGE (`c6edbfa`):** migration `0017` `auth_oauth_transactions` (PKCE AEAD + key version riêng, single-use claim), proof matrix OIDC, Lax path-scoped binding cookie tách khỏi session Strict, `/api/auth/google/{state,callback}`, `auth_login_google` per-lane finalizer + collision table §4. Suite db 144 · web 131. Evidence: Verdict 10.
 >
-> **⛔ HOT AREA: `auth-s4-d1b-oauth-session-rotation` — BLOCKER BẬT GOOGLE LOGIN.** D1 mint-fresh (đúng matrix D1-2/D1-13) vì cookie `SameSite=Strict` không được gửi ở callback cross-site ⇒ **session có trước khi login Google vẫn sống sót**. Chưa live (route 503 khi thiếu config). Phải land **trước khi set `GOOGLE_OAUTH_CLIENT_ID/SECRET` ở bất kỳ env nào**. Slice này **chưa CODE_READY** — còn thiếu acceptance rows + verdict (xem `acceptance_obligation` trong manifest). Sau đó → order-4 email bundle (flag OFF, gate C7, kế thừa D1E-18b) → gỡ Telegram.
+> **✅ CẬP NHẬT 2026-07-22 — d1b ĐÃ MERGE (`ae8986e`), residual risk ĐÓNG trong code.** Migration `0018` expand-only + completion hop **M3** (landing first-party → auto-POST same-origin → `/complete` chạy `issueSession()` nơi cookie Strict CÓ mặt ⇒ đi nhánh rotate). Handoff trong body POST, chỉ lưu sha256, không cookie; single-use = fence server-side atomic. Suite db 152 · web 146. **Gate ĐẠT ngay lần đầu — 2 vòng sạch, 0 fix-round**, slice duy nhất không thrash. Evidence: Verdict 13.
+>
+> **⛔ Bật Google login: chỉ còn CHỜ ĐO Safari macOS + iOS** cho M3 (probe §7) — Playwright dùng WebKit đông cứng, không phải Safari bản ship. Giữ `GOOGLE_OAUTH_CLIENT_ID/SECRET` rỗng tới lúc đó. **Hot area kế: order-4 email bundle** (flag OFF, gate C7, kế thừa nghĩa vụ D1E-18b) → gỡ Telegram.
+>
+> *(lịch sử — nội dung dưới đây là trạng thái trước khi d1b merge)*
+> **⛔ HOT AREA CŨ: `auth-s4-d1b-oauth-session-rotation` — BLOCKER BẬT GOOGLE LOGIN.** D1 mint-fresh (đúng matrix D1-2/D1-13) vì cookie `SameSite=Strict` không được gửi ở callback cross-site ⇒ **session có trước khi login Google vẫn sống sót**. Chưa live (route 503 khi thiếu config). Phải land **trước khi set `GOOGLE_OAUTH_CLIENT_ID/SECRET` ở bất kỳ env nào**. Slice này **chưa CODE_READY** — còn thiếu acceptance rows + verdict (xem `acceptance_obligation` trong manifest). Sau đó → order-4 email bundle (flag OFF, gate C7, kế thừa D1E-18b) → gỡ Telegram.
 
 ---
 

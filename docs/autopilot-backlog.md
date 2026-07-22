@@ -243,7 +243,7 @@ notes: **CODE_READY 2026-07-22 (Verdict 9, pinned `main@8f6a051`).** All three d
 
 ## task: auth-s4-d1b-oauth-session-rotation
 title: Same-site completion hop so Google login can rotate the pre-existing Strict session
-status: planned
+status: merged
 risk: P0
 change_class: manual-auth-boundary
 depends_on: [auth-s4-d1-google-adapter]
