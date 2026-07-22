@@ -7,7 +7,7 @@
 > **Current auth refresh (2026-07-20):** `origin/main@033ccc8fd9c3f247abf8aa0cb5a0f48b96d006e2` — DD-80 v1.88 authority bundle immutable on main. **Verdict 5a (D0a) = CODE_READY** (re-pinned 033ccc8); Verdict 5b (D0b) `NOT_CODE_READY` pending D0a merge. Verdicts 1/3/4 remain historical snapshots only.
 > **D0a IMPLEMENTED & MERGED (2026-07-20):** slice `auth-s4-d0-revoke-core` squash-merged to `main` (migration `0015` live). The P0 "2 consecutive FULL-base Codex clean" gate was **NOT reached** after 12 rounds (10 real findings fixed incl. round-06 epoch-vs-`revoked_at` P1; round-11 self-caught + `git revert`ed) → merge is a **documented owner override** resting on manual review + acceptance coverage 22/22 + real-Postgres 97/97, **not** an automated clean-round pass. See `.autopilot/state/auth-s4-d0-revoke-core/HALT-MAX_ROUNDS.txt` + the squash commit. **Verdict 5b (D0b) unblocks** once the D0a squash lands on origin/main.
 > **D0b IMPLEMENTED & MERGED (2026-07-22):** slice `auth-s4-d0-session-web-boundary` squash-merged to `main@93c5404` (issuance fence + logout-all route; zero DB change). Unlike D0a, the P0 **"2 consecutive FULL-base Codex clean rounds" gate was MET** (round-03/04, only 2 fix rounds) — **no owner override**. Real-Postgres suite green (db 97/97 unchanged · core 111 · bot 3 · web 78). Recorded as **Verdict 6**. Next in chain: `auth-s4-d1-email-token-core`.
-> **Machine classification (2026-07-22):** Verdicts 1/3/4/5a/5b/6 are immutable historical evidence; Verdict 2 is the only active block in this tracker. D0b's dependency-state change is resolved — Verdict 6 records the merged outcome, so no fresh D0b verdict is pending.
+> **Machine classification (2026-07-22, updated):** Verdicts 1/3/4/5a/5b/6 are immutable historical evidence. **Active blocks: Verdict 2** (`dd41-public-session-projection-fields`, NOT_CODE_READY) **and Verdict 7** (`auth-s4-d1-email-token-core`, CODE_READY — authorizes the next auth worktree). D0b's dependency-state change is resolved by Verdict 6, so no fresh D0b verdict is pending.
 
 ---
 
@@ -326,10 +326,54 @@ REMAINING_BLOCKERS: none
 
 ---
 
+## Verdict 7 — `auth-s4-d1-email-token-core` / D1 order-2 (2026-07-22)
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-22
+AUTHORITY_SHA: fc7d0a41b50269a734a9cd74626469e2e9be385b
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/standards/decisions.md
+  - docs/b0-auth-credential-lifecycle-design-probe.md
+  - docs/features/BE/feature_web_auth_onboarding_tech.md
+  - docs/autopilot-manifests/auth-s4-d1-email-token-core.json
+  - packages/db/schema.ts
+  - packages/db/src/auth.ts
+SLICE: auth-s4-d1-email-token-core
+IN_SCOPE: account_emails + email_password_credentials + auth_pending_email_registrations + auth_email_tokens + auth_email_deliveries storage with exact constraints/partial indexes; email normalization/artifact derivation; _auth_assert_password_phc validator + constraint trigger; internal parent-first helper _auth_consume_email_token with the §5.2 lock hierarchy; cleanup/retention; schema.ts mirror + catalog tests; reuse of auth_audit_events created at D0
+OUT_OF_SCOPE: public auth_verify_email/auth_reset_password/auth_finalize_email_login (order-4); all email routes/UI; pg-boss enqueue wiring and provider send (order-4, C7 gated); auth_oauth_transactions and Google adapter (order-3); DD-70(a) inbox fence (no global-emitting path exists at order-2); Telegram removal
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: ENABLEMENT_ONLY:C7-email-provider,A3-legal-PII
+HARD_DEPENDENCIES: auth-s4-d0-revoke-core MERGED (main@8f493f7) + auth-s4-d0-session-web-boundary MERGED (main@93c5404); dep probes 0015::auth_revoke_account_sessions and logout-all/route.ts::revokeAllWebSessions present on origin/main
+PRIOR_SLICES: auth-s4-d0-revoke-core -> auth-s4-d0-session-web-boundary
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: C7 email-provider idempotency/DPA proof (blocks order-4 delivery + flag ON, not this dark core); A3 legal-PII (go-live)
+LIVE_REPO_VERIFICATION: PASS (migration tail on main is 0015 so 0016 is monotonic; auth_audit_events exists from 0015 and is reused not recreated; link_codes/merge_audit exist from 0001 so the merge-barrier case is testable; none of the five email tables exist yet)
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS (D1E-1..D1E-22 authored 2026-07-22 in feature_web_auth_onboarding_tech.md §5, each with an exact expected result; includes the two cases the manifest names as READY preconditions — D1E-17 reset-vs-consume and D1E-18 merge barrier — both on real PostgreSQL with deterministic barriers)
+SECURITY_AND_MIGRATION_GATE: PASS (single transactional expand-only 0016; zero direct app grant on PHC columns or internal helpers; PHC shape owned by one validator + constraint trigger on both write paths; parent-first lock hierarchy with no child-first path; fail-closed consume with no row-existence disclosure; no raw email/token/PHC/ciphertext in logs or returns; rollback = DROP the new tables/indexes/functions/trigger, auth_audit_events untouched because D0 owns it)
+IMPLEMENTATION_ARTIFACTS: PASS (manifest with binding negative_scope + acceptance matrix D1E-1..D1E-22 + first implementation step)
+FIRST_IMPLEMENTATION_STEP: open a manual P0 worktree from origin/main, register the D1 email-token manifest via scope-gate, then author one atomic 0016_account_email_token_core.sql (five tables + constraints + partial indexes + _auth_assert_password_phc + constraint trigger + _auth_consume_email_token + cleanup) with the matching schema.ts mirror, then run D1E-1..D1E-22
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: D1 email-token-core merged on origin/main -> re-run closure for auth-s4-d1-google-adapter (order-3), whose Verdict 4 currently fails G3 on this dependency
+```
+
+**Đọc verdict:** slice này trước đó **không có acceptance matrix và không có verdict** — đó là lý do nó bị chặn ở lượt review 2026-07-22. Cả hai artifact nay đã author từ authority owner-approved (DD-80 v1.88 + B0 §3/§5/§8.1/§9 + §10 order-2), nên G2/G4/IMPLEMENTATION_ARTIFACTS chuyển PASS. Hai ranh giới quan trọng được pin để tránh scope creep: (1) public verify/reset/login function và mọi route thuộc **order-4**, không phải slice này; (2) **DD-70(a) inbox fence không áp dụng** vì order-2 không có path phát global notification — fence chỉ xuất hiện ở producer `security_alert`/`identity_merged` của order-4.
+
+---
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 22/07/2026 | v1.1 | **D1 email-token-core: NOT_CODE_READY → CODE_READY.** Author acceptance matrix **D1E-1..D1E-22** (tech doc §5, gồm reset-vs-consume + merge barrier mà manifest nêu là điều kiện READY) và **Verdict 7** pin `main@fc7d0a4`. Pin hai ranh giới: public verify/reset/login = order-4; DD-70(a) fence ngoài scope order-2. Chưa có code/migration — đây là authorization để mở worktree. |
 | 22/07/2026 | v1.0 | **D0b implemented & merged — gate ĐẠT, không override.** `auth-s4-d0-session-web-boundary` squash-merged tại `main@93c5404` (issuance fence + logout-all route, zero DB change); 2 clean round liên tiếp (round-03/04), 2 fix round; real-PG green (db 97/97 · web 78). Thêm **Verdict 6** (historical evidence). Chuỗi auth: D0a ✅ → D0b ✅ → kế tiếp `auth-s4-d1-email-token-core`. |
 | 22/07/2026 | v0.9 | Thêm machine classification theo readiness gate v1.2: giữ nguyên nội dung verdict lịch sử nhưng exclude chúng khỏi current authorization; Verdict 2 là active block duy nhất, D0b phải re-review sau dependency-state change. |
 | 20/07/2026 | v0.8 | **D0a implemented & merged via owner override.** `auth-s4-d0-revoke-core` squash-merged (migration `0015`); 2-clean P0 gate not reached after 12 Codex rounds → closed on manual review + acceptance 22/22 + real-PG 97/97. Verdict 5a stands as CODE_READY authority; this row records the merge + override rationale. D0b unblocks on origin/main. |

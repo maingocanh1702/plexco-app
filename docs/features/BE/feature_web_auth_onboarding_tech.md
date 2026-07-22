@@ -409,6 +409,43 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | D0-21 | Exact revoke materialization/count (v1.88, D0a) | A has 3 unrevoked sessions stamped at current epoch E, B has 1 | A bump + same-timestamp `revoked_at` on exactly 3 rows; return/audit count=3; B unchanged |
 | D0-22 | Forward rollback safety (v1.88, D0a) | Run logout-all, then deploy compatibility functions without epoch predicate | No invalidated session resurrects because every pre-bump active row was materialized as revoked; audit rows retained |
 
+### Acceptance matrix — slice D1 `auth-s4-d1-email-token-core` (DD-80 §10 order-2; B0 §3/§3.2/§3.3/§3.4/§5/§5.2/§5.3/§5.4/§8.1/§9)
+
+> **CODE DARK, order-2.** Slice này chỉ sở hữu **storage + normalization/artifact + PHC validator/trigger +
+> parent-first helpers + cleanup** trong migration `0016_account_email_token_core.sql` (tail hiện tại trên
+> `main` là `0015`). **Ngoài scope (order-3/4):** public `auth_verify_email`/`auth_reset_password`/
+> `auth_finalize_email_login`, mọi route/UI email, pg-boss enqueue wiring, provider send, `auth_oauth_transactions`.
+> **DD-70(a) inbox fence KHÔNG thuộc slice này** — order-2 không có path phát global notification
+> (`security_alert`/`identity_merged` nằm ở order-4); helper chỉ cần lock hierarchy §5.2 không có bước fence.
+> `auth_audit_events` **reuse** bảng đã tạo ở D0/`0015` (v1.83), không tạo lại.
+> Mọi row chạy trên **PostgreSQL thật**; case đồng thời dùng barrier tất định, không `pg_sleep`. Manifest:
+> `../../autopilot-manifests/auth-s4-d1-email-token-core.json`.
+
+| # | Case | Setup | Expected |
+|---|---|---|---|
+| D1E-1 | Migration monotonic + inventory | Apply `0016` trên `main` (tail `0015`) | Apply transactional; `packages/db/README.md` migration inventory cập nhật; immutability guard của runner không báo drift |
+| D1E-2 | `account_emails` shape | Insert fixtures | `UNIQUE(account_id)` + `UNIQUE(email_lookup_hash)`; CHECK loại trừ lẫn nhau — cả `verified_at`+`pending_expires_at` cùng NULL lẫn cùng NOT NULL đều bị reject |
+| D1E-3 | Một owner cho mỗi normalized email | Hai account cùng `email_lookup_hash` | Insert thứ hai vi phạm UNIQUE; zero partial state |
+| D1E-4 | Credential chỉ cho email đã verified | Tạo `email_password_credentials` cho `account_emails` còn pending | Reject; credential không tồn tại |
+| D1E-5 | Lifecycle CHECK của pending attempt | (a) active: `consumed_at`/`superseded_at` NULL ⇒ `password_phc`+`registration_key_hash` NOT NULL; (b) terminal: đúng MỘT trong hai NOT NULL ⇒ hai candidate NULL | Mọi shape sai bị reject; XOR terminal được enforce |
+| D1E-6 | Attempt độc lập giữa browser | Hai lần register cùng email từ hai command | Hai attempt + hai verify token độc lập; không cái nào supersede cái kia; `registration_key_hash` UNIQUE; **không last-writer-wins trên email slot** |
+| D1E-7 | Purpose binding của token | `verify_email` thiếu `pending_registration_id`; `password_reset` lại có | Cả hai reject; composite FK `(pending_registration_id, account_email_id)` enforce |
+| D1E-8 | Một active verify token / attempt | Issue 2 active verify token cùng attempt | Partial unique index reject cái thứ hai; path supersede-rồi-insert thành công |
+| D1E-9 | Một active reset token / email | Issue 2 active reset token cùng `account_email` | Partial unique index reject; supersede-trước-insert thành công; index không phụ thuộc `now()` volatile (expired chưa sweep vẫn đúng) |
+| D1E-10 | consumed × superseded loại trừ | Set cả hai trên một token | CHECK reject |
+| D1E-11 | `_auth_assert_password_phc` accept/reject | Tuple benchmarked `argon2id, v=19, m=19456,t=2,p=1`, salt ≥16B, output ≥32B — so với: sai algorithm · sai version · thiếu/thừa tham số · base64 không canonical · salt/output ngắn · m/t/p dưới floor · vượt ceiling | Chỉ tuple đúng pass; **mọi cell còn lại raise và rollback toàn transaction**; caller không chọn được policy version |
+| D1E-12 | Trigger PHC trên cả hai write path | UPDATE trực tiếp `password_phc` của pending attempt và của credential bằng PHC malformed | Constraint trigger reject cả hai; NULL chỉ hợp lệ ở row terminal theo lifecycle CHECK |
+| D1E-13 | Grant matrix | Role `app`: INSERT/UPDATE cột `password_phc`; EXECUTE `_auth_assert_password_phc`, `_auth_consume_email_token` | `permission denied` từng cái; không internal helper nào lộ ra `app` |
+| D1E-14 | `_auth_consume_email_token` happy path | Token active, unexpired, unconsumed, unsuperseded, đúng purpose | `consumed_at = transaction_timestamp()`; trả `account_email_id` + `pending_registration_id` |
+| D1E-15 | Consume fail-closed matrix | Sai purpose · expired · đã consumed · đã superseded · hash không tồn tại | Zero mutation từng cell; kết quả generic; không tiết lộ row có tồn tại hay không |
+| D1E-16 | Parent-first lock hierarchy (§5.2) | Trace + regression trên helper | Thứ tự `accounts` → `account_emails` → attempt → tokens theo UUID; **không path child-first**; same-account lock đúng một lần; thứ tự độc lập với caller; hai connection không deadlock |
+| D1E-17 | **Reset-vs-consume barrier** | 2 connection: supersede-all của reset issue vs consume một reset token; ép cả hai thứ tự lock | Đúng một bên thắng; bên thua thấy superseded/consumed và **zero mutation**; không partial credential/token state; không deadlock |
+| D1E-18 | **Merge barrier** (link_code × merge artifact) | Consume `link_code` account-issued (tạo durable merge plan) chạy đồng thời với path consume email token | Cả hai theo §5.2 bước 5: credentials → `web_sessions` → active account-issued `link_codes` → actionable merge artifacts, mỗi tập UUID-order; không lock inversion; drift ⇒ rollback/retry, không bao giờ partial |
+| D1E-19 | Delivery command binding ≠ provider key (§3.4) | Insert `auth_email_deliveries` fixtures | `command_id` UNIQUE; `provider_idempotency_key` UNIQUE và **tách khỏi** command_id/owner_hash/target_fingerprint; CHECK `command_operation`↔`kind`; terminal ⇒ `terminal_at` NOT NULL; payload/key NOT NULL chỉ khi `queued|dead_letter`, NULL khi `delivered|noop|failed_terminal` |
+| D1E-20 | Cleanup + retention (§5.3) | Chạy cleanup trên attempt/token/delivery đã hết hạn | Attempt expired → `superseded_at` + **NULL password/key candidate ngay**; metadata giữ ≤30 ngày rồi delete bằng batch theo index `expires_at`; chỉ xoá pending `account_emails` khi không còn active attempt; **không cascade sang bảng nghiệp vụ** |
+| D1E-21 | schema.ts mirror + catalog test (§9) | Drizzle mirror mọi bảng mới trong cùng patch | `tsc --noEmit` pass; catalog test assert **trigger + grant + partial index** tồn tại (không chỉ column shape); comment trong `schema.ts` trỏ migration sở hữu privileged behavior |
+| D1E-22 | Không rò rỉ secret | Chạy toàn bộ helper với fixtures | Không có raw/canonical email, ciphertext, token, password, PHC hay full lookup hash trong RAISE/log/return; audit chỉ mang opaque ref + outcome class |
+
 ### Acceptance matrix — slice D1 `auth-s4-d1-google-adapter` (DD-80 §2/§4/§4.1/§8.2)
 
 > Google độc lập với email-password flag; Facebook giữ `AUTH_PROVIDER_UNAVAILABLE`. Manifest: `../../autopilot-manifests/auth-s4-d1-google-adapter.json`.
