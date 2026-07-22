@@ -802,6 +802,22 @@ thành `code-ready`, và nâng closure 9/12 → 12/12 nếu live diff vẫn đú
 
 ## Verdict 16 — `core-matcher-grouped-amount-parsing`, authority packet committed/pushed; CODE_READY (2026-07-22)
 
+> **✅ IMPLEMENTED 2026-07-23, squash-merged `d2a27e1`** (branch `dd31e41`, merge-base `494ad4e`). Verdict giữ
+> nguyên `CODE_READY` — đây là ghi nhận thực thi, không phải verdict mới. Slice ship đúng `FIRST_IMPLEMENTATION_STEP`:
+> design probe DD-87 trước, test fail trước vì đúng lý do contract, rồi mới implement. Kết quả **2 vòng Codex
+> FULL-base clean liên tiếp, 0 fix round** — cùng dấu hiệu với d1b, và ngược hẳn D0a (12 vòng, thrash tới mức
+> vòng 11 phá G3-I5 rồi vòng 12 hoàn tác). Bằng chứng tích luỹ: thrash tương quan với **thiết kế còn di chuyển
+> lúc implement**, không tương quan với kích thước diff — d1b (14 file + migration + concurrency barrier) và
+> slice này (đổi kiểu trả về, 18 decision row, 244 dòng test) đều lớn mà đều 0 fix round vì cơ chế đã pin trước.
+> Verify độc lập trước merge: diff đúng 2 file (+282/−42), 0 conflict marker, `main` không chạm `packages/core`
+> kể từ merge-base, core suite **132 pass** trên cây đã merge. `ACCEPTANCE_MATRIX` giữ PASS với 42 assertion
+> trong `payments-logic.test.ts` (18 row DD-87 + SNA-1..8). **Không rebase** dù `main` chạy trước 2 commit
+> docs-only: mình luôn squash-merge nên fast-forward vô nghĩa, còn rebase thì phải trả 2 vòng Codex mới —
+> reviewed diff byte-identical và merge-base không đổi nên các vòng vẫn hợp lệ.
+>
+> **Nghĩa vụ còn treo:** nhánh `ambiguous` hiện **chưa có consumer** — đúng thiết kế (compile-time fence land
+> trước caller đầu tiên), nhưng phải có slice wiring, xem task `core-matcher-ambiguous-consumer-wiring`.
+
 ```text
 REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: CODE_READY

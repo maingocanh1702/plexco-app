@@ -293,7 +293,7 @@ notes: **⛔ BLOCKED ON OWNER-ONLY DUE DILIGENCE — không session nào đóng 
 
 ## task: core-matcher-grouped-amount-parsing
 title: splitNameAmount misparses grouped trailing amounts with a non-zero final group
-status: ready
+status: merged
 risk: P2
 change_class: bugfix
 depends_on: []
@@ -301,7 +301,9 @@ invariants: [money-model, shared-core]
 scope: [docs/autopilot-manifests/core-matcher-grouped-amount-parsing.json, packages/core/src/payments-logic.ts, packages/core/src/payments-logic.test.ts]
 manifest: docs/autopilot-manifests/core-matcher-grouped-amount-parsing.json
 merged_probe: packages/core/src/payments-logic.test.ts :: Wang 110 500
-notes: **✅ CODE_READY (Verdict 16, `main@827d24d`) — DD-87 owner-ratified; authority packet committed/pushed
+notes: **✅ MERGED 2026-07-23 `d2a27e1`** (Verdict 16 → IMPLEMENTED). 2 vòng Codex FULL-base clean, **0 fix
+  round**; core suite 132 pass trên cây đã merge; diff đúng 2 file (+282/−42). Nhánh `ambiguous` **chưa có
+  consumer** — theo dõi ở `core-matcher-ambiguous-consumer-wiring`. Gốc: **CODE_READY (Verdict 16, `main@827d24d`) — DD-87 owner-ratified; authority packet committed/pushed
   2026-07-22.** Mechanism: exhaustive tagged union over every positive `parseMoney` trailing interpretation;
   dedupe by `(name,amount)`; ambiguous returns ordered candidates and no top-level name/amount.
   Equal-amount/different-name (`Player 0 110k`) is ambiguous. Grouped-number/longest/threshold/fuzzy
@@ -311,6 +313,26 @@ notes: **✅ CODE_READY (Verdict 16, `main@827d24d`) — DD-87 owner-ratified; a
   worktree from `origin/main`, register the manifest, run the AP-29 design probe. Still shares invariant
   `money-model`/`shared-core` with any other in-flight slice on that token. The ignored core-lift tables
   are not a dependency.
+
+## task: core-matcher-ambiguous-consumer-wiring
+title: Wire the splitNameAmount ambiguous branch to a caller — picker payload and host resolution
+status: idea
+risk: P1
+change_class: feature-slice
+depends_on: [core-matcher-grouped-amount-parsing]
+invariants: [money-model, shared-core]
+scope: []
+notes: **Nghĩa vụ mở ra bởi `d2a27e1`, cố ý để lại (DD-87 §5.4).** `splitNameAmount` giờ trả tagged union và
+  nhánh `ambiguous` **không có top-level name/amount** — compile-time fence, caller buộc phải narrow `kind`.
+  Hiện **chưa có runtime consumer nào**, nên fence land trước caller đầu tiên: đó là thứ tự đúng, nhưng nó
+  nghĩa là **hôm nay chưa ai xử lý ambiguity** — chỉ là chưa ai xử lý sai. Slice này quyết định điều gì xảy ra
+  khi matcher không chắc: payload deterministic cho host chọn, hay hàng đợi chờ, hay bỏ qua. **Ràng buộc cứng
+  kế thừa:** matcher là **proposal-only**, không bao giờ settle tiền trực tiếp; cấm auto-chọn candidate index 0
+  (chọn bừa có trật tự vẫn là chọn bừa, và là đúng lỗi mà `d2a27e1` vừa sửa); cấm thêm heuristic
+  threshold/known-name/fuzzy để "giảm ambiguity" — `parseMoney` vẫn là grammar tiền duy nhất. Phải author
+  decision table cho từng nhánh trước khi code (bài học D0a: thiết kế còn di chuyển lúc implement thì Codex
+  thrash). Chưa có manifest; scope trải qua core + transport + UI nên **cần re-slice theo mechanism trước**,
+  không launch như một slice.
 
 ## task: docs-core-classifier-decision-table-lift
 title: Preserve ignored core classifier decision tables as historical criteria
