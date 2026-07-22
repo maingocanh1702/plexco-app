@@ -4,7 +4,7 @@ Feature/task cần làm, ghi machine-scannable để bot quét ra **task nào ch
 `.autopilot/INFLIGHT.md` (runtime, task đang chạy ngay lúc này).
 
 ## Cách bot quét
-Đọc block `## task:` có `status: planned|ready` (bỏ `idea` chưa scope, bỏ `in-flight|merged`).
+Đọc block `## task:` có `status: planned|ready` (bỏ `idea` chưa scope, bỏ `in-flight|merged`, **bỏ `blocked`**).
 Hai task song song được ⟺ **cả ba**: `scope` (file) rời nhau · `invariants` (domain, từ
 `docs/autopilot-invariant-catalog.md`) rời nhau · không cái nào `depends_on` cái kia mà cái kia chưa merge.
 Đây đúng luật `scripts/autopilot-scope-gate`. ⚠️ `scope`/`invariants` của task `idea` là **ước lượng** —
@@ -12,6 +12,14 @@ refine (grep code thật) trước khi promote thành manifest.
 
 ## Lifecycle
 `idea` → `planned` (scope rõ + chọn invariants) → tạo manifest → `ready` → `register` → `in-flight` → merge → `merged`.
+
+**`blocked`** (thêm 2026-07-22) — artifact đã đủ (scope, manifest, thậm chí output đã merge), nhưng slice
+**không thể đạt READY bằng bất kỳ session nào** vì thiếu bằng chứng **chỉ con người lấy được ngoài repo**:
+câu trả lời support/hợp đồng của provider, phép đo trên thiết bị thật, due-diligence thương mại. Bot **không
+quét** `blocked`. Đây không phải "chưa làm" — chạy lại chỉ tái xác nhận cùng một HALT và đốt session.
+Ghi rõ trong `notes`: **ai** đóng được, **bằng gì**, và điều kiện chuyển lại `ready`.
+Lý do có trạng thái này: AP-22 từng mang `ready` dù đã HALT fail-closed đúng và output đã merge, nên nó bị
+launch lại và lặp y nguyên kết luận cũ.
 
 > **Phase-1 7h run (Fable 5) — SAFE SINGLE-SLICE:** owner handoff hiện hành là
 > `docs/autopilot-templates/phase1-fable5-7h-PR-RUN.md`. Mỗi session chỉ chạy **một** task `ready`, non-P0,
@@ -111,7 +119,7 @@ notes: P0 manual workflow only; canonical v0.6.0 classifies its migration orches
 
 ## task: infra-egress-compatibility-evidence
 title: Close DD-04 fixed-egress compatibility evidence for SePay, ApiPay, Zalo and Meta
-status: ready
+status: blocked
 risk: P2
 change_class: docs-provider-evidence
 depends_on: []
@@ -119,7 +127,7 @@ invariants: [build-config]
 scope: [docs/standards/environments-setup.md]
 manifest: docs/autopilot-manifests/infra-egress-compatibility-evidence.json
 merged_probe: docs/standards/environments-setup.md :: DD04_EGRESS_EVIDENCE_CLOSED
-notes: Launcher-ready docs-only AP-22 slice. Record current attributable evidence for each outbound API, distinguish outbound source-IP requirements from inbound webhook verification, and fail closed on any missing/ambiguous row. Scope explicitly excludes App Specs, workflows, code, config, migrations, secret handling and provider mutation. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-infra-egress-compatibility-evidence.md`.
+notes: **⛔ BLOCKED ON OWNER-ONLY EVIDENCE — ĐỪNG RE-LAUNCH (2026-07-22).** Công việc của slice này **đã xong và đã merge**: `docs/standards/environments-setup.md` §1.1 có bảng evidence 5 cột với **Gate status `HALT-EVIDENCE_INCOMPLETE`**, và marker `DD04_EGRESS_EVIDENCE_CLOSED` **cố ý vắng mặt** — đó là fail-closed **đúng**, không phải việc dở dang. Re-run ngày 2026-07-22 tái xác minh cả 4 nguồn chính thức: **không dòng nào lật**. 3/4 dòng (SePay · ApiPay · Zalo Bot) là `UNRESOLVED` **vì tài liệu im lặng về source-IP policy của caller outbound**, mà luật evidence cấm đóng `NO` từ im lặng và invariant no-fabrication cấm bịa hành vi provider; Meta đã là `NO` (server-IP allowlist chỉ opt-in cho app-secret, không áp cho page-token). **Không session nào đóng được** — chỉ đóng bằng: câu trả lời support SePay quy chiếu được về `my.sepay.vn` API callers · câu trả lời onboarding/hợp đồng ApiPay phủ **cả** bề mặt DD-30 enterprise lẫn BYO-key · câu trả lời support Zalo Bot về `bot-api.zaloplatforms.com`. **Chuyển lại `ready` khi và chỉ khi** owner có ít nhất một nguồn quy chiếu được (email/ticket/điều khoản) cho các dòng còn mở. Cùng lớp với gate C7 (email provider) và phép đo Safari/iOS. Forensics AP-22 round-01..03: `0a7ec15`. Chi tiết slice gốc: Record current attributable evidence for each outbound API, distinguish outbound source-IP requirements from inbound webhook verification, and fail closed on any missing/ambiguous row. Scope explicitly excludes App Specs, workflows, code, config, migrations, secret handling and provider mutation. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-infra-egress-compatibility-evidence.md`.
 
 ## task: infra-inbound-webhook-auth-evidence
 title: Inbound webhook verification contract evidence for SePay, ApiPay, Zalo and Meta
