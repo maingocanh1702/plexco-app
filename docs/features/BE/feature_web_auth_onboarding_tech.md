@@ -446,6 +446,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | D1E-20 | Cleanup + retention (§5.3) | Chạy cleanup trên attempt/token/delivery đã hết hạn | Attempt expired → `superseded_at` + **NULL password/key candidate ngay**; metadata giữ ≤30 ngày rồi delete bằng batch theo index `expires_at`; chỉ xoá pending `account_emails` khi không còn active attempt; **không cascade sang bảng nghiệp vụ** |
 | D1E-21 | schema.ts mirror + catalog test (§9) | Drizzle mirror mọi bảng mới trong cùng patch | `tsc --noEmit` pass; catalog test assert **trigger + grant + partial index** tồn tại (không chỉ column shape); comment trong `schema.ts` trỏ migration sở hữu privileged behavior |
 | D1E-22 | Không rò rỉ secret | Chạy toàn bộ helper với fixtures | Không có raw/canonical email, ciphertext, token, password, PHC hay full lookup hash trong RAISE/log/return; audit chỉ mang opaque ref + outcome class |
+| D1E-23 | **AEAD tag length pinned + blob gate** (thêm 2026-07-22 sau finding Semgrep hậu-merge) | `email_enc` bị cắt ngắn (20B, 28B, rỗng) và blob đủ dài nhưng tag bị thay | `createCipheriv`/`createDecipheriv` pin `authTagLength: 16`; **kiểm độ dài trước khi slice** (`Buffer.subarray` clamp chứ không throw, nên blob cụt sẽ sinh tag ngắn mà Node vẫn chấp nhận — 8B tag hạ cận giả mạo còn 2⁻⁶⁴). Mọi blob dưới `iv+tag+1` bị reject với **message generic** (không lộ độ dài/offset, theo D1E-22); tag bị thay vẫn fail GCM verification |
 
 ### Acceptance matrix — slice D1 `auth-s4-d1-google-adapter` (DD-80 §2/§4/§4.1/§8.2)
 

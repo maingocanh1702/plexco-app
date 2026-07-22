@@ -380,6 +380,25 @@ export interface EmailArtifacts {
 
 const EMAIL_LOOKUP_DOMAIN = "plexco:account-email:v1:";
 
+/**
+ * Exact `email_enc` layout — `iv(12) || authTag(16) || ciphertext`.
+ *
+ * Both halves MUST pin `authTagLength`. Without it Node accepts ANY GCM-legal
+ * tag length (4/8/12/13/14/15/16 bytes) at `setAuthTag`, and because
+ * `Buffer.subarray` CLAMPS instead of throwing, a truncated stored blob would
+ * silently yield a short tag: a 20-byte blob slices to an 8-byte tag and an
+ * empty ciphertext, dropping the forgery bound from 2^-128 to 2^-64 (2^-32 for
+ * a 4-byte tag). Anyone able to write `account_emails.email_enc` — SQL
+ * injection elsewhere, a tampered restore, a compromised operator — could then
+ * forge far more cheaply than the AEAD is supposed to allow. Pinning the length
+ * AND rejecting undersized blobs up front closes both halves of that.
+ * (semgrep javascript.node-crypto.security.gcm-no-tag-length)
+ */
+const EMAIL_ENC_IV_BYTES = 12;
+const EMAIL_ENC_TAG_BYTES = 16;
+/** iv + tag + at least one ciphertext byte; a canonical address is never empty. */
+const EMAIL_ENC_MIN_BYTES = EMAIL_ENC_IV_BYTES + EMAIL_ENC_TAG_BYTES + 1;
+
 /** HMAC-SHA256 of the domain-separated canonical email, lowercase hex (B0 §3.3). */
 function deriveEmailLookupHash(canonicalEmail: string, lookupHmacKey: Buffer): string {
   return createHmac("sha256", lookupHmacKey)
@@ -434,8 +453,10 @@ export function deriveEmailArtifacts(
   const canonicalEmail = normalizeEmail(rawEmail);
   const emailLookupHash = deriveEmailLookupHash(canonicalEmail, keys.lookupHmacKey);
 
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", keys.encKey, iv);
+  const iv = randomBytes(EMAIL_ENC_IV_BYTES);
+  const cipher = createCipheriv("aes-256-gcm", keys.encKey, iv, {
+    authTagLength: EMAIL_ENC_TAG_BYTES,
+  });
   cipher.setAAD(emailEncAad(accountEmailId, emailLookupHash, keys.kmsKeyVersion));
   const ciphertext = Buffer.concat([cipher.update(canonicalEmail, "utf8"), cipher.final()]);
   const emailEnc = Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
@@ -454,10 +475,18 @@ export function decryptEmailEnc(
   emailLookupHash: string,
   keys: Pick<EmailArtifactKeys, "encKey" | "kmsKeyVersion" | "lookupHmacKey">,
 ): string {
-  const iv = emailEnc.subarray(0, 12);
-  const authTag = emailEnc.subarray(12, 28);
-  const ciphertext = emailEnc.subarray(28);
-  const decipher = createDecipheriv("aes-256-gcm", keys.encKey, iv);
+  // Length gate BEFORE slicing: subarray clamps, so a truncated blob would
+  // otherwise produce a short IV/tag rather than an error. Generic message —
+  // never echo the observed length or offsets back to a caller (D1E-22).
+  if (emailEnc.length < EMAIL_ENC_MIN_BYTES) {
+    throw new Error("decryptEmailEnc: malformed ciphertext");
+  }
+  const iv = emailEnc.subarray(0, EMAIL_ENC_IV_BYTES);
+  const authTag = emailEnc.subarray(EMAIL_ENC_IV_BYTES, EMAIL_ENC_IV_BYTES + EMAIL_ENC_TAG_BYTES);
+  const ciphertext = emailEnc.subarray(EMAIL_ENC_IV_BYTES + EMAIL_ENC_TAG_BYTES);
+  const decipher = createDecipheriv("aes-256-gcm", keys.encKey, iv, {
+    authTagLength: EMAIL_ENC_TAG_BYTES,
+  });
   decipher.setAAD(emailEncAad(accountEmailId, emailLookupHash, keys.kmsKeyVersion));
   decipher.setAuthTag(authTag);
   const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");

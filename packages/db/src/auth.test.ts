@@ -3137,6 +3137,46 @@ describe("deriveEmailArtifacts + provider key (auth.ts, B0 §3.3/§3.4)", () => 
     expect(() => deriveEmailArtifacts("Person@example.com", "not-a-uuid", keys)).toThrow(/UUID/);
   });
 
+  it("D1E-23: GCM tag length is pinned and undersized email_enc fails closed (semgrep gcm-no-tag-length)", () => {
+    const id = "44444444-4444-4444-8444-444444444444";
+    const art = deriveEmailArtifacts("Person@example.com", id, keys);
+
+    // sanity: an honest blob is iv(12) || authTag(16) || ciphertext and round-trips
+    expect(art.emailEnc.length).toBeGreaterThan(28);
+    expect(decryptEmailEnc(art.emailEnc, id, art.emailLookupHash, keys)).toBe("Person@example.com");
+
+    // Buffer.subarray CLAMPS rather than throwing, so without the length gate a
+    // truncated blob would slice out a SHORT tag that Node accepts when
+    // authTagLength is not pinned (8-byte tag => 2^-64 forgery bound).
+    for (const truncated of [
+      art.emailEnc.subarray(0, 20), // would slice an 8-byte "tag" + empty ciphertext
+      art.emailEnc.subarray(0, 28), // full-length tag but zero ciphertext
+      Buffer.alloc(0),
+    ]) {
+      expect(() => decryptEmailEnc(truncated, id, art.emailLookupHash, keys)).toThrow(
+        /malformed ciphertext/,
+      );
+    }
+
+    // A blob long enough to pass the gate but whose tag bytes were replaced must
+    // still fail GCM verification — the tag is never trusted on length alone.
+    const forgedTag = Buffer.concat([
+      art.emailEnc.subarray(0, 12), // real iv
+      art.emailEnc.subarray(12, 20), // only 8 real tag bytes...
+      Buffer.alloc(8), // ...padded back to 16 so the blob stays long enough
+      art.emailEnc.subarray(28), // real ciphertext
+    ]);
+    expect(() => decryptEmailEnc(forgedTag, id, art.emailLookupHash, keys)).toThrow();
+
+    // D1E-22 no-leak: the rejection message is generic — no observed length/offset
+    try {
+      decryptEmailEnc(art.emailEnc.subarray(0, 20), id, art.emailLookupHash, keys);
+      throw new Error("decryptEmailEnc accepted a truncated blob");
+    } catch (err) {
+      expect((err as Error).message).toBe("decryptEmailEnc: malformed ciphertext");
+    }
+  });
+
   it("deriveProviderIdempotencyKey: derived from delivery id+kind, NOT the command receipt; domain-separated", () => {
     const key = {
       providerSendKey: Buffer.from("provider-send-key-fixture", "utf8"),
