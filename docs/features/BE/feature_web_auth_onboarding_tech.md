@@ -504,7 +504,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | D1B-11 | **Anti-regression: cấm quay về 302 trần** | Gọi `/api/auth/google/callback` với proof hợp lệ, assert **response** | Callback trả **200 + document first-party** chứa form auto-submit same-origin và `<noscript>` fallback; **KHÔNG** phải `302`/`Location` trỏ thẳng completion. Đây là test **cấu trúc, không cần browser** — nó chính là lưới bắt failure-mode "M1 trần" mà probe đo được là hỏng trên cả 3 engine, thứ mà mọi test mock cookie sẽ bỏ lọt |
 | D1B-3 | **Residual risk đóng thật** | Có session cũ, hoàn tất login Google | Session cũ có `revoked_at`; token cũ **không** resolve nữa; account chỉ còn **đúng một** session live |
 | D1B-4 | Không có cookie cũ → không đổi hành vi | Browser chưa từng login | Đi `createWebSession` như cũ; cookie attrs **byte-for-byte** như trước; **`SameSite=Strict` không đổi** |
-| D1B-5 | Handoff single-use | Replay handoff lần hai | Reject generic, **zero mutation**, không mint session thứ hai |
+| D1B-5 | Handoff single-use | Replay handoff lần hai | Reject generic, **zero mutation**, không mint session thứ hai. **Single-use phải do fence server-side bền vững cưỡng chế** — chữ ký cookie KHÔNG đủ, vì chữ ký hợp lệ vẫn hợp lệ khi replay |
 | D1B-6 | Handoff hết hạn | Dùng sau TTL | Reject, zero mutation |
 | D1B-7 | Handoff không dùng được cross-site | Gọi completion từ site khác | Reject — hop chỉ hợp lệ trong ngữ cảnh same-site; không cấp session |
 | D1B-8 | Race với logout-all | 2 connection, ép **cả hai** thứ tự lock | Tái dùng epoch semantics D0a: đúng một bên thắng; bên thua nhận `SessionReauthRequiredError`, zero mutation; **không deadlock** |

@@ -584,7 +584,7 @@ LIVE_REPO_VERIFICATION: PASS (issueSession already branches rotate-vs-create and
 CONTRACT_MATRIX: PASS
 CLOSURE_MATRIX: PASS (12/12)
 ACCEPTANCE_MATRIX: PASS (D1B-1..D1B-11; D1B-2 satisfied by measured 3-engine evidence, D1B-11 added as the structural anti-regression net)
-SECURITY_AND_MIGRATION_GATE: PASS (no migration, no new grant; POST hop carries Origin so the existing sameOriginRequest() guards the mutating step independently of cookie semantics; reuses the D0b reject-and-reauth fence)
+SECURITY_AND_MIGRATION_GATE: PASS (POST hop carries Origin so the existing sameOriginRequest() guards the mutating step independently of cookie semantics; reuses the D0b reject-and-reauth fence; no new grant. CORRECTED 2026-07-22 — an earlier revision of this block claimed "no migration", which was premature: with M3 the callback can no longer call issueSession(), so the account it resolved must reach the completion endpoint, and auth_oauth_transactions has no column for it. Either shape is acceptable and both are expand-only — see handoff_persistence in the manifest — but single-use MUST be enforced by a durable server-side fence, never by a cookie signature alone)
 IMPLEMENTATION_ARTIFACTS: PASS (probe doc + manifest + acceptance matrix)
 FIRST_IMPLEMENTATION_STEP: open a manual P0 worktree from origin/main, register the d1b manifest, then replace the callback's direct issueSession() call with handoff + first-party landing (M3), add the completion route running issueSession(), then run D1B-1..D1B-11
 REMAINING_BLOCKERS: none
