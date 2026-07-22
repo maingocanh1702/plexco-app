@@ -1,0 +1,44 @@
+{
+  "feature": "db-migration-0000-idempotent-role-create",
+  "branch": "feat/db-migration-0000-idempotent-role-create",
+  "base_ref": "main",
+  "risk": "P0",
+  "change_class": "manual-schema-design",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "authority": "Codex auth-onboarding-v3 round-08 finding · packages/db/vitest.config.ts reason (2) · packages/db/src/migrate.ts advisory-lock contract",
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": ["schema", "build-config"],
+  "problem_statement": "Migration 0000 creates the app / app_worker / readonly roles with a check-then-act DO block (IF NOT EXISTS (SELECT 1 FROM pg_roles ...) THEN CREATE ROLE ...). Roles are CLUSTER-global while databases are not, so two migrate() runs bootstrapping two DIFFERENT databases on the SAME cluster can both observe 'role missing' and both attempt CREATE ROLE; one fails with duplicate_object (SQLSTATE 42710).",
+  "key_finding": "migrate.ts ALREADY takes pg_advisory_lock(ADVISORY_LOCK_KEY) and its header comment claims it stops concurrent deploys interleaving DDL — but pg_advisory_lock is DATABASE-scoped, not cluster-scoped. Two runs against two different databases each acquire the same key in their own database and do NOT block each other. The existing lock therefore gives ZERO protection to cluster-global objects such as roles. That comment is actively misleading at exactly the dangerous spot and must be corrected as part of this slice.",
+  "why_previously_design_unfit": "The original framing was 'make 0000's role creation atomic', which is impossible as scoped: 0000 is already applied and immutable (migrate.ts hard-errors on a changed applied file), and canonical v0.6.0 classifies migration scope as P0 manual-only. The re-scope below never touches 0000.",
+  "pinned_mechanism": "Runner-level idempotent role-ensure in migrate.ts, executed BEFORE the migration loop, OUTSIDE the migration transaction (autocommit so the role is durable), one exception-handled statement per role: DO $$ BEGIN CREATE ROLE <r> LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE; EXCEPTION WHEN duplicate_object THEN NULL; END $$;  — this is the canonical race-safe idiom (Postgres has no CREATE ROLE IF NOT EXISTS). Once it has run, 0000's own IF NOT EXISTS block sees the roles and skips, so 0000 stays byte-identical and its checksum is unchanged. GATE IT on '0000 is not yet in schema_migrations' so an already-migrated database keeps exactly today's privilege profile and migrate() does not start requiring CREATEROLE on every run.",
+  "alternative_considered": "Harness-only fix (create the roles once in test-harness.ts before spawning throwaway databases). Narrower and simpler, but leaves any real cross-database bootstrap — e.g. provisioning a staging database on a cluster that already hosts another — unprotected. Rejected in favour of the runner-level fix; if the owner prefers the narrow scope, that is a deliberate decision to record, not a silent one.",
+  "unblocks": "packages/db/vitest.config.ts fileParallelism:false exists for TWO stated reasons, but the file itself says fileParallelism:false 'is what actually prevents (2)'. Reason (1) — each suite DROP/CREATEs its own database — is already satisfied because every caller passes a distinct dbName (enforced since codex round-02). So closing (2) is SUFFICIENT to flip fileParallelism to true, which in turn is the last thing blocking multiple autopilot worktrees from running their DB suites concurrently.",
+  "negative_scope": [
+    "NEVER edit packages/db/migrations/0000_roles_extensions.sql — it is applied and immutable; the runner guard must keep hard-erroring on a changed applied file",
+    "NO new migration file — this slice adds none, so the migration count assertion in rls-invariants.test.ts must NOT change",
+    "NO change to which roles exist, their attributes, or any grant",
+    "NO swallowing of errors other than duplicate_object — every other SQLSTATE must still propagate and fail the migration",
+    "NO removal of the existing pg_advisory_lock; it still serialises same-database concurrent deploys and stays",
+    "NO change to DATABASE_URL_MIGRATION semantics or to the DDL-owner role requirement"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/db-migration-0000-idempotent-role-create.json",
+    "packages/db/src/migrate.ts",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/vitest.config.ts",
+    "packages/db/README.md"
+  ],
+  "acceptance": [
+    "BR-1 concurrency: N concurrent migrate() calls bootstrapping N distinct FRESH databases on one cluster all succeed; no duplicate_object escapes; each role exists exactly once afterwards. Run repeatedly, not once.",
+    "BR-2 immutability: 0000 is byte-identical and its schema_migrations sha256 is unchanged; the runner still hard-errors if an applied migration file is modified.",
+    "BR-3 privilege profile: migrate() against an ALREADY-migrated database performs NO CREATE ROLE (the ensure step is gated on 0000 not yet applied), so no new privilege is required on routine runs.",
+    "BR-4 error discrimination: only duplicate_object is swallowed. Inject a different failure (e.g. insufficient_privilege) and assert it propagates and aborts the migration.",
+    "BR-5 comment correctness: migrate.ts states that pg_advisory_lock is DATABASE-scoped and does NOT serialise cluster-global objects across databases — the misleading claim is gone.",
+    "BR-6 parallelism unblocked: with fileParallelism flipped to true, the full packages/db suite runs green across at least 5 consecutive runs with zero role-creation errors and zero flakes; every suite still passes a distinct dbName.",
+    "BR-7 no regression sequentially: the suite is still green with fileParallelism:false, so nothing depends on parallel execution."
+  ]
+}

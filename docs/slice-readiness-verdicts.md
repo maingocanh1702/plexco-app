@@ -643,10 +643,58 @@ NEXT_REVIEW_TRIGGER: Safari/iOS cells measured -> only then may GOOGLE_OAUTH_CLI
 
 ---
 
+## Verdict 14 — `db-migration-0000-idempotent-role-create`, re-scoped (2026-07-22)
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-22
+AUTHORITY_SHA: e61d96c42a9ee5b0b12424bd052813b10712a7ee
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-manifests/db-migration-0000-idempotent-role-create.json
+  - packages/db/src/migrate.ts
+  - packages/db/vitest.config.ts
+  - packages/db/migrations/0000_roles_extensions.sql
+SLICE: db-migration-0000-idempotent-role-create
+IN_SCOPE: runner-level exception-handled role-ensure in migrate.ts gated on 0000-not-yet-applied; correct the misleading advisory-lock comment; flip fileParallelism to true; a migrate/bootstrap test covering the concurrency and error-discrimination cases
+OUT_OF_SCOPE: editing migration 0000 (applied + immutable); any new migration file; changing which roles exist, their attributes or any grant; removing the existing advisory lock; swallowing any SQLSTATE other than duplicate_object
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: none — this is infrastructure, independent of the auth chain
+PRIOR_SLICES: none
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS (0000 lines 20-32 are the check-then-act DO block over three roles with no exception handler; migrate.ts:40 takes pg_advisory_lock and its header at :18 claims it prevents concurrent deploys interleaving DDL; vitest.config.ts pins fileParallelism:false and itself records that this is what actually prevents reason (2); test-harness.ts requires every suite to pass a distinct dbName, so reason (1) is already satisfied and (2) is the sole remaining blocker to parallel execution)
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS (BR-1..BR-7 in the manifest; BR-1 concurrency and BR-6 parallelism must be run repeatedly, not once, since the defect is a race)
+SECURITY_AND_MIGRATION_GATE: PASS (no migration added or edited; 0000 stays byte-identical with an unchanged checksum and the immutability guard intact; no role, attribute or grant changes; only duplicate_object is swallowed; the advisory lock stays for same-database deploys)
+IMPLEMENTATION_ARTIFACTS: PASS (manifest with problem statement, pinned mechanism, rejected alternative and acceptance)
+FIRST_IMPLEMENTATION_STEP: open a manual P0 worktree, add the gated exception-handled role-ensure to migrate.ts before the migration loop and outside the migration transaction, correct the advisory-lock comment, then write the concurrency + error-discrimination tests BEFORE flipping fileParallelism
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: merged -> multiple autopilot worktrees may run their DB suites concurrently; revisit the sequential-only guidance in the parallelism notes
+```
+
+**Đọc verdict — vì sao task này từng là `DESIGN_UNFIT` và giờ thì không.** Khung cũ là *"làm cho việc tạo role trong 0000 trở nên atomic"*, và như thế thì **không giải được**: 0000 đã applied và immutable (runner hard-error nếu file applied bị sửa). Re-scope bỏ hẳn việc đụng 0000.
+
+**Phát hiện chính, và nó là một cái bẫy thật:** `migrate.ts` **đã** có `pg_advisory_lock`, với comment ở dòng 18 nói lock đó ngăn "concurrent deploys interleave DDL". Nhưng **advisory lock của Postgres là database-scoped**. Hai `migrate()` chạy trên hai database khác nhau cùng một cluster đều lấy được **cùng key** trong database của mình và **không chặn nhau** — nên lock hiện tại bảo vệ **số không** cho object cluster-global như role. Ai đọc file này sẽ tưởng đã được serialize. Sửa comment đó là một phần bắt buộc của slice, không phải việc phụ.
+
+**Cơ chế đã pin:** role-ensure có `EXCEPTION WHEN duplicate_object THEN NULL` (Postgres không có `CREATE ROLE IF NOT EXISTS`), chạy ở runner **trước** vòng lặp migration và **ngoài** transaction, **gated** trên "0000 chưa applied" để database đã migrate giữ nguyên profile quyền như hôm nay. Sau bước đó, chính block `IF NOT EXISTS` của 0000 thấy role tồn tại và bỏ qua — **0000 byte-identical, checksum không đổi**.
+
+**Giá trị thật:** `vitest.config.ts` tự ghi rằng `fileParallelism:false` *"is what actually prevents (2)"*, và lý do (1) đã được thoả sẵn vì mọi suite truyền `dbName` riêng. Nên đóng (2) là **đủ** để bật parallel — thứ cuối cùng đang chặn nhiều autopilot worktree chạy DB suite đồng thời.
+
+---
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 22/07/2026 | v1.8 | **Verdict 14 — `db-migration-0000-idempotent-role-create` re-scoped từ `DESIGN_UNFIT` → `CODE_READY`.** Khung cũ ("làm 0000 atomic") bất khả thi vì 0000 applied + immutable; khung mới không đụng 0000. Phát hiện: `pg_advisory_lock` trong `migrate.ts` là **database-scoped**, nên comment "ngăn concurrent deploys interleave DDL" **không đúng cho object cluster-global** — sửa comment nằm trong scope. Cơ chế pin: role-ensure exception-handled ở runner, gated trên "0000 chưa applied". Acceptance BR-1..BR-7. Mở khoá `fileParallelism:true` (lý do (1) đã thoả sẵn nhờ `dbName` riêng). |
 | 22/07/2026 | v1.7 | **Verdict 13 — d1b implemented (`04df464`), chờ merge tay.** 14 file, +984/−68; suite db 152 · web 146. Chọn handoff shape (a): migration `0018` expand-only + `auth_oauth_handoff_arm/_consume`; single-use bằng atomic UPDATE + partial UNIQUE giữ hash sau consume; `clock_timestamp()` (mang bài học D0a round-09). **Gate ĐẠT với 0 fix-round — slice đầu tiên sạch ngay lần đầu.** Ghi phát hiện quy trình: thrash tương quan với **thiết kế còn chuyển động lúc code**, không phải kích thước diff ⇒ **rút lại đề xuất nới luật 2×clean ở v1.2**. Safari/iOS vẫn ENABLEMENT_ONLY. |
 | 22/07/2026 | v1.6 | **Verdict 12 — d1b `CODE_READY`, blocker đóng bằng đo đạc.** Probe 3 engine: **M1 (302 trần) thất bại trên cả ba**; mọi cơ chế commit first-party document trước đều thắng. Chốt **M3** (landing → auto-POST same-origin, noscript fallback) vì tái dùng pattern hai-hop B0 §8 và POST mang `Origin` cho `sameOriginRequest()` guard bước mutating. Thêm **D1B-11** anti-regression (assert callback trả document, **không** 302) — lưới bắt đúng failure-mode đã đo. Safari/iOS chuyển thành **ENABLEMENT_ONLY**: không chặn CODE_READY nhưng **chặn bật Google login**. |
 | 22/07/2026 | v1.5 | **Acceptance `D1B-1..D1B-10` + Verdict 11 cho `auth-s4-d1b-oauth-session-rotation` = `NOT_CODE_READY`.** Live-repo verify cho thấy slice **không cần primitive mới** (`issueSession` đã có nhánh rotate; `auth_rotate_web_session` đã atomic từ D0a) — chỉ cần chạy nó ở ngữ cảnh same-site. **Blocker duy nhất:** cơ chế hop chưa pin; cookie `SameSite=Strict` có được gửi trên chuỗi redirect khởi phát cross-site hay không là browser-divergent, và chọn sai thì slice âm thầm vô dụng trong khi test mock vẫn xanh. D1B-2 vì thế bắt buộc bằng chứng **trình duyệt thật**. |

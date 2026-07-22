@@ -263,7 +263,7 @@ invariants: [money-model, shared-core]
 scope: [docs/autopilot-manifests/core-matcher-grouped-amount-parsing.json, packages/core/src/payments-logic.ts, packages/core/src/payments-logic.test.ts]
 manifest: docs/autopilot-manifests/core-matcher-grouped-amount-parsing.json
 merged_probe: packages/core/src/payments-logic.test.ts :: Wang 110 500
-notes: Codex core-lift-v3 round-05 — manual `/transfer`/`/cash` args using spaces
+notes: **⛔ NOT_CODE_READY — blocker xác định 2026-07-22, và nó giải thích luôn 3 lần bị park.** Ghi chú dưới đây yêu cầu "extend that decision table rather than patching in isolation" và "re-read DECISIONS.md S2/S2b/S2c", **nhưng decision table đó không nằm ở nơi nào có thẩm quyền**: bản `DECISIONS.md` duy nhất trong repo là `docs/archive/phase1-autopilot-run/DECISIONS.md`, mà HANDOFF §7 ghi rõ `docs/archive/` **"KHÔNG phải authority"** và ledger đó "không có bản nào khác trong repo"; grep trong file cũng không thấy nội dung shortest-run/`splitNameAmount`. Hệ quả: **mỗi lần sửa, người làm phải tự suy lại luật parsing từ đầu** — đúng cơ chế sinh ra 15 finding cộng dồn qua core-lift v1/v2/v3 và 3 lần park. **Resolution (binary):** lift luật parsing S2/S2b/S2c ra khỏi archive vào một chỗ có thẩm quyền (một mục trong spec của `packages/core`, hoặc một DD trong `decisions.md`) làm **decision table tường minh** — liệt kê từng input shape và output kỳ vọng, gồm cả ca "Wang 110 500". Sau đó mới author acceptance + verdict rồi launch. Sửa trước khi có bảng đó = gần như chắc chắn thrash lần 4. Bằng chứng gốc — Codex core-lift-v3 round-05 — manual `/transfer`/`/cash` args using spaces
   as thousands separators misparse when the final group is non-zero, e.g.
   "Wang 110 500" -> {name:"Wang 110", amount:500} instead of amount 110500.
   Founder-approved 2026-07-05 to merge core-lift-v3 without fixing this round
@@ -279,14 +279,16 @@ notes: Codex core-lift-v3 round-05 — manual `/transfer`/`/cash` args using spa
   REGION_THRASH pattern that parked this branch three times already.
 
 ## task: db-migration-0000-idempotent-role-create
-title: migration 0000 CREATE ROLE is non-atomic — real race, currently masked by serial test config
-status: idea
+title: Race-safe role bootstrap in the migration runner — unblocks parallel DB suites
+status: ready
 risk: P0
 change_class: manual-schema-design
 depends_on: []
-invariants: [schema]
-scope: []
-notes: DESIGN_UNFIT as previously scoped: `0000` is already applied and immutable, while canonical v0.6.0 also classifies migration scope as P0 manual-only. Re-scope manually around migration-runner/bootstrap serialization or another forward-safe mechanism; never edit `0000_roles_extensions.sql` in place. Original evidence from Codex auth-onboarding-v3 round-08: migration 0000's role creation for
+invariants: [schema, build-config]
+scope: [docs/autopilot-manifests/db-migration-0000-idempotent-role-create.json, packages/db/src/migrate.ts, packages/db/src/migrate.test.ts, packages/db/vitest.config.ts, packages/db/README.md]
+manifest: docs/autopilot-manifests/db-migration-0000-idempotent-role-create.json
+merged_probe: packages/db/src/migrate.ts :: duplicate_object
+notes: **RE-SCOPED 2026-07-22 → CODE_READY (Verdict 14, `main@e61d96c`).** Khung cũ "làm 0000 atomic" bất khả thi (0000 applied + immutable); khung mới **không đụng 0000**. **Phát hiện chính:** `migrate.ts` đã có `pg_advisory_lock` và comment nói nó ngăn concurrent deploys interleave DDL — nhưng advisory lock của Postgres là **database-scoped**, nên hai `migrate()` trên hai DB khác nhau cùng cluster **không chặn nhau** và lock đó bảo vệ **số không** cho role cluster-global; sửa comment sai lệch đó nằm trong scope. **Cơ chế pin:** role-ensure `EXCEPTION WHEN duplicate_object THEN NULL` chạy ở runner trước vòng lặp migration, ngoài transaction, **gated trên "0000 chưa applied"** để DB đã migrate giữ nguyên profile quyền; sau đó block `IF NOT EXISTS` của 0000 tự bỏ qua ⇒ 0000 byte-identical, checksum không đổi. **Giá trị:** `vitest.config.ts` tự ghi `fileParallelism:false` "is what actually prevents (2)", còn lý do (1) đã thoả sẵn vì mọi suite truyền `dbName` riêng ⇒ đóng (2) là **đủ** để bật `fileParallelism:true`, mở khoá nhiều worktree chạy DB suite song song. Acceptance **BR-1..BR-7** trong manifest (BR-1/BR-6 phải chạy lặp lại, vì đây là race). Bằng chứng gốc — Codex auth-onboarding-v3 round-08: migration 0000's role creation for
   app/app_worker/readonly is `IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE
   rolname = '<role>') THEN CREATE ROLE <role> ...; END IF;`, a check-then-act
   that is NOT atomic against a CONCURRENT migrate() run: two migrations
