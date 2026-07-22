@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -8,8 +8,13 @@ import {
   SlugTakenError,
   consumeLoginState,
   createWebSession,
+  decryptEmailEnc,
+  deriveEmailArtifacts,
+  deriveProviderIdempotencyKey,
+  InvalidEmailError,
   issueLoginState,
   loginTelegram,
+  normalizeEmail,
   provisionTenant,
   resolveWebSession,
   revokeAllWebSessions,
@@ -1880,5 +1885,1269 @@ describe("forward rollback safety (D0-22)", () => {
       [tokenHash],
     );
     expect(rows).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// D1 — account-email + credential + token core (migration 0016, CODE DARK).
+// Acceptance matrix D1E-1..D1E-22 (feature_web_auth_onboarding_tech.md §5);
+// every `it` is tagged with its ID. All run on REAL PostgreSQL. The `app` role
+// has ZERO grant on the 0016 tables, so every fixture/assertion here uses the
+// owner/superuser connection (that is the point of the code-dark design). The
+// concurrency rows (D1E-16/17/18) use the same deterministic two-connection
+// barrier as the D0a suite — never pg_sleep.
+// ===========================================================================
+
+/** Canonical, unpadded standard-base64 of n random bytes (a real argon2 salt/hash shape). */
+const b64 = (n: number) => randomBytes(n).toString("base64").replace(/=+$/, "");
+/** A structurally valid, policy-conformant Argon2id PHC (m=19456,t=2,p=1). */
+const validPhc = () => `$argon2id$v=19$m=19456,t=2,p=1$${b64(16)}$${b64(32)}`;
+
+async function seedAccount(): Promise<{ personId: string; accountId: string }> {
+  const { rows } = await ctx.owner.query(
+    `WITH p AS (INSERT INTO persons DEFAULT VALUES RETURNING id)
+     INSERT INTO accounts(person_id) SELECT id FROM p RETURNING id AS account_id, person_id`,
+  );
+  const r = rows[0] as { account_id: string; person_id: string };
+  return { accountId: r.account_id, personId: r.person_id };
+}
+
+async function seedEmail(
+  opts: { verified?: boolean; lookupHash?: string; pendingExpiresInSec?: number } = {},
+): Promise<{ accountId: string; personId: string; accountEmailId: string }> {
+  const { accountId, personId } = await seedAccount();
+  const lookup = opts.lookupHash ?? `lk-${randomBytes(8).toString("hex")}`;
+  const { rows } = await ctx.owner.query(
+    `INSERT INTO account_emails(account_id, email_lookup_hash, email_enc, kms_key_version, verified_at, pending_expires_at)
+     VALUES ($1, $2, '\\x00'::bytea, 'v1',
+             CASE WHEN $3 THEN now() ELSE NULL END,
+             CASE WHEN $3 THEN NULL ELSE now() + make_interval(secs => $4) END)
+     RETURNING id`,
+    [accountId, lookup, opts.verified ?? false, opts.pendingExpiresInSec ?? 86400],
+  );
+  return { accountId, personId, accountEmailId: (rows[0] as { id: string }).id };
+}
+
+async function seedAttempt(
+  accountEmailId: string,
+  opts: { regKeyHash?: string; expiresInSec?: number } = {},
+): Promise<string> {
+  const { rows } = await ctx.owner.query(
+    `INSERT INTO auth_pending_email_registrations(account_email_id, password_phc, registration_key_hash, expires_at)
+     VALUES ($1, $2, $3, now() + make_interval(secs => $4)) RETURNING id`,
+    [
+      accountEmailId,
+      validPhc(),
+      opts.regKeyHash ?? `rk-${randomBytes(8).toString("hex")}`,
+      opts.expiresInSec ?? 86400,
+    ],
+  );
+  return (rows[0] as { id: string }).id;
+}
+
+async function seedResetToken(
+  accountEmailId: string,
+  opts: { tokenHash?: string; expiresInSec?: number } = {},
+): Promise<string> {
+  const th = opts.tokenHash ?? `rst-${randomBytes(16).toString("hex")}`;
+  await ctx.owner.query(
+    `INSERT INTO auth_email_tokens(account_email_id, purpose, token_hash, expires_at)
+     VALUES ($1, 'password_reset', $2, now() + make_interval(secs => $3))`,
+    [accountEmailId, th, opts.expiresInSec ?? 900],
+  );
+  return th;
+}
+
+async function seedVerifyToken(
+  accountEmailId: string,
+  pendingId: string,
+  opts: { tokenHash?: string; expiresInSec?: number } = {},
+): Promise<string> {
+  const th = opts.tokenHash ?? `vfy-${randomBytes(16).toString("hex")}`;
+  await ctx.owner.query(
+    `INSERT INTO auth_email_tokens(account_email_id, pending_registration_id, purpose, token_hash, expires_at)
+     VALUES ($1, $2, 'verify_email', $3, now() + make_interval(secs => $4))`,
+    [accountEmailId, pendingId, th, opts.expiresInSec ?? 1800],
+  );
+  return th;
+}
+
+async function seedLinkCode(personId: string): Promise<string> {
+  const ci = await ctx.owner.query(
+    `INSERT INTO channel_identities(person_id, platform, platform_user_id_enc, platform_user_lookup_hash)
+     VALUES ($1, 'telegram', '\\x00'::bytea, $2) RETURNING id`,
+    [personId, `ci-${randomBytes(6).toString("hex")}`],
+  );
+  const lc = await ctx.owner.query(
+    `INSERT INTO link_codes(source_person_id, source_channel_identity_id, code_lookup_hash, code_hash, salt, expires_at)
+     VALUES ($1, $2, $3, '\\x00'::bytea, '\\x00'::bytea, now() + interval '1 hour') RETURNING id`,
+    [personId, (ci.rows[0] as { id: string }).id, `lc-${randomBytes(6).toString("hex")}`],
+  );
+  return (lc.rows[0] as { id: string }).id;
+}
+
+async function consumeAs(
+  client: pg.ClientBase,
+  tokenHash: string,
+  purpose: string,
+): Promise<{ account_email_id: string; pending_registration_id: string | null }[]> {
+  const { rows } = await client.query(
+    `SELECT account_email_id, pending_registration_id FROM _auth_consume_email_token($1, $2)`,
+    [tokenHash, purpose],
+  );
+  return rows as { account_email_id: string; pending_registration_id: string | null }[];
+}
+
+describe("D1 storage shape + constraints (D1E-1..D1E-10)", () => {
+  it("D1E-1: 0016 applied on top of 0015 — the five tables + owned objects exist", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = ANY($1)`,
+      [
+        [
+          "account_emails",
+          "email_password_credentials",
+          "auth_pending_email_registrations",
+          "auth_email_tokens",
+          "auth_email_deliveries",
+        ],
+      ],
+    );
+    expect((rows as { table_name: string }[]).map((r) => r.table_name).sort()).toEqual(
+      [
+        "account_emails",
+        "auth_email_deliveries",
+        "auth_email_tokens",
+        "auth_pending_email_registrations",
+        "email_password_credentials",
+      ].sort(),
+    );
+    // 0016 recorded in the immutable ledger (idempotency proven in rls-invariants).
+    const mig = await ctx.owner.query(
+      `SELECT 1 FROM schema_migrations WHERE name = '0016_account_email_token_core.sql'`,
+    );
+    expect(mig.rows).toHaveLength(1);
+  });
+
+  it("D1E-2: account_emails — mutually-exclusive verified/pending CHECK + UNIQUE(account_id)", async () => {
+    const { accountId } = await seedAccount();
+    // both NULL -> reject
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO account_emails(account_id, email_lookup_hash, email_enc, kms_key_version)
+         VALUES ($1, 'lk-a', '\\x00'::bytea, 'v1')`,
+        [accountId],
+      ),
+    ).rejects.toThrow(/account_emails_lifecycle_chk/);
+    // both NOT NULL -> reject
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO account_emails(account_id, email_lookup_hash, email_enc, kms_key_version, verified_at, pending_expires_at)
+         VALUES ($1, 'lk-b', '\\x00'::bytea, 'v1', now(), now() + interval '1h')`,
+        [accountId],
+      ),
+    ).rejects.toThrow(/account_emails_lifecycle_chk/);
+    // exactly-one-set (verified) inserts, and a SECOND email for the same account is rejected.
+    await ctx.owner.query(
+      `INSERT INTO account_emails(account_id, email_lookup_hash, email_enc, kms_key_version, verified_at)
+       VALUES ($1, 'lk-c', '\\x00'::bytea, 'v1', now())`,
+      [accountId],
+    );
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO account_emails(account_id, email_lookup_hash, email_enc, kms_key_version, pending_expires_at)
+         VALUES ($1, 'lk-d', '\\x00'::bytea, 'v1', now() + interval '1h')`,
+        [accountId],
+      ),
+    ).rejects.toThrow(/account_emails_account_uq/);
+  });
+
+  it("D1E-3: one owner per normalized email — duplicate email_lookup_hash is rejected", async () => {
+    const shared = `lk-shared-${randomBytes(6).toString("hex")}`;
+    await seedEmail({ verified: true, lookupHash: shared });
+    const second = await seedAccount();
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO account_emails(account_id, email_lookup_hash, email_enc, kms_key_version, verified_at)
+         VALUES ($1, $2, '\\x00'::bytea, 'v1', now())`,
+        [second.accountId, shared],
+      ),
+    ).rejects.toThrow(/account_emails_email_lookup_hash_key|unique/i);
+  });
+
+  it("D1E-4: a credential may exist ONLY for a verified email (verified-gate trigger)", async () => {
+    const pending = await seedEmail({ verified: false });
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO email_password_credentials(account_email_id, password_phc) VALUES ($1, $2)`,
+        [pending.accountEmailId, validPhc()],
+      ),
+    ).rejects.toThrow(/requires a verified account_email/);
+    const missing = await ctx.owner.query(
+      `SELECT 1 FROM email_password_credentials WHERE account_email_id = $1`,
+      [pending.accountEmailId],
+    );
+    expect(missing.rows).toHaveLength(0);
+
+    // ...and a credential for a VERIFIED email is accepted.
+    const verified = await seedEmail({ verified: true });
+    await ctx.owner.query(
+      `INSERT INTO email_password_credentials(account_email_id, password_phc) VALUES ($1, $2)`,
+      [verified.accountEmailId, validPhc()],
+    );
+  });
+
+  it("D1E-4: verified_at is MONOTONIC — un-verifying an email is unconditionally rejected (codex round-01 [P2] / round-02 [P1])", async () => {
+    // Un-verification is forbidden UNCONDITIONALLY (not merely when a credential
+    // exists), which is race-free: there is no valid verified->pending
+    // transition to serialize against a concurrent credential insert.
+    const verified = await seedEmail({ verified: true });
+    await ctx.owner.query(
+      `INSERT INTO email_password_credentials(account_email_id, password_phc) VALUES ($1, $2)`,
+      [verified.accountEmailId, validPhc()],
+    );
+    await expect(
+      ctx.owner.query(
+        `UPDATE account_emails SET verified_at = NULL, pending_expires_at = now() + interval '1h' WHERE id = $1`,
+        [verified.accountEmailId],
+      ),
+    ).rejects.toThrow(/verified_at is monotonic/);
+    // still verified, still owns its credential
+    const row = await ctx.owner.query(`SELECT verified_at FROM account_emails WHERE id = $1`, [
+      verified.accountEmailId,
+    ]);
+    expect((row.rows[0] as { verified_at: string | null }).verified_at).not.toBeNull();
+
+    // ...and un-verifying is rejected even with NO credential (unconditional).
+    const bare = await seedEmail({ verified: true });
+    await expect(
+      ctx.owner.query(
+        `UPDATE account_emails SET verified_at = NULL, pending_expires_at = now() + interval '1h' WHERE id = $1`,
+        [bare.accountEmailId],
+      ),
+    ).rejects.toThrow(/verified_at is monotonic/);
+  });
+
+  it("D1E-5: pending attempt lifecycle CHECK — active carries both candidates; terminal is XOR + candidates NULL", async () => {
+    const { accountEmailId } = await seedEmail({ verified: false });
+    // active but password_phc NULL -> reject
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO auth_pending_email_registrations(account_email_id, password_phc, registration_key_hash, expires_at)
+         VALUES ($1, NULL, 'rk-x', now() + interval '24h')`,
+        [accountEmailId],
+      ),
+    ).rejects.toThrow(/lifecycle_chk/);
+    // active with both candidates -> ok
+    const id = await seedAttempt(accountEmailId, { regKeyHash: "rk-active" });
+    // terminal (superseded) with candidates NULL -> ok
+    await ctx.owner.query(
+      `UPDATE auth_pending_email_registrations
+       SET superseded_at = now(), password_phc = NULL, registration_key_hash = NULL WHERE id = $1`,
+      [id],
+    );
+    // terminal but a candidate still set -> reject
+    await expect(
+      ctx.owner.query(
+        `UPDATE auth_pending_email_registrations SET registration_key_hash = 'rk-leak' WHERE id = $1`,
+        [id],
+      ),
+    ).rejects.toThrow(/lifecycle_chk/);
+    // both consumed AND superseded (not XOR) -> reject
+    const id2 = await seedAttempt(accountEmailId, { regKeyHash: "rk-active-2" });
+    await expect(
+      ctx.owner.query(
+        `UPDATE auth_pending_email_registrations
+         SET consumed_at = now(), superseded_at = now(), password_phc = NULL, registration_key_hash = NULL WHERE id = $1`,
+        [id2],
+      ),
+    ).rejects.toThrow(/lifecycle_chk/);
+  });
+
+  it("D1E-6: two register commands = two INDEPENDENT attempts + tokens; registration_key_hash is UNIQUE", async () => {
+    const { accountEmailId } = await seedEmail({ verified: false });
+    const a1 = await seedAttempt(accountEmailId, { regKeyHash: "rk-browser-1" });
+    const a2 = await seedAttempt(accountEmailId, { regKeyHash: "rk-browser-2" });
+    const t1 = await seedVerifyToken(accountEmailId, a1);
+    const t2 = await seedVerifyToken(accountEmailId, a2);
+    // neither supersedes the other — both attempts + both tokens are still active.
+    const active = await ctx.owner.query(
+      `SELECT count(*)::int AS n FROM auth_email_tokens
+       WHERE account_email_id = $1 AND consumed_at IS NULL AND superseded_at IS NULL`,
+      [accountEmailId],
+    );
+    expect((active.rows[0] as { n: number }).n).toBe(2);
+    expect(t1).not.toBe(t2);
+    // registration_key_hash is globally unique (no last-writer-wins on the slot).
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO auth_pending_email_registrations(account_email_id, password_phc, registration_key_hash, expires_at)
+         VALUES ($1, $2, 'rk-browser-1', now() + interval '24h')`,
+        [accountEmailId, validPhc()],
+      ),
+    ).rejects.toThrow(/registration_key_hash|unique/i);
+  });
+
+  it("D1E-7: token purpose binding + composite FK to the attempt's SAME account_email", async () => {
+    const emailA = await seedEmail({ verified: false });
+    const attemptA = await seedAttempt(emailA.accountEmailId);
+    // verify_email WITHOUT a pending attempt -> reject
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO auth_email_tokens(account_email_id, purpose, token_hash, expires_at)
+         VALUES ($1, 'verify_email', 'no-attempt', now() + interval '30m')`,
+        [emailA.accountEmailId],
+      ),
+    ).rejects.toThrow(/purpose_reg_chk/);
+    // password_reset WITH a pending attempt -> reject
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO auth_email_tokens(account_email_id, pending_registration_id, purpose, token_hash, expires_at)
+         VALUES ($1, $2, 'password_reset', 'reset-with-attempt', now() + interval '30m')`,
+        [emailA.accountEmailId, attemptA],
+      ),
+    ).rejects.toThrow(/purpose_reg_chk/);
+    // composite FK: a verify token whose attempt belongs to a DIFFERENT email -> reject
+    const emailB = await seedEmail({ verified: false });
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO auth_email_tokens(account_email_id, pending_registration_id, purpose, token_hash, expires_at)
+         VALUES ($1, $2, 'verify_email', 'cross-attempt', now() + interval '30m')`,
+        [emailB.accountEmailId, attemptA],
+      ),
+    ).rejects.toThrow(/auth_email_tokens_attempt_fk|foreign key/i);
+  });
+
+  it("D1E-8: one ACTIVE verify token per attempt; supersede-then-insert succeeds", async () => {
+    const { accountEmailId } = await seedEmail({ verified: false });
+    const attempt = await seedAttempt(accountEmailId);
+    await seedVerifyToken(accountEmailId, attempt, { tokenHash: "vfy-1" });
+    // second active verify token for the SAME attempt -> rejected by the partial unique index
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO auth_email_tokens(account_email_id, pending_registration_id, purpose, token_hash, expires_at)
+         VALUES ($1, $2, 'verify_email', 'vfy-2', now() + interval '30m')`,
+        [accountEmailId, attempt],
+      ),
+    ).rejects.toThrow(/one_active_verify_per_attempt_uq/);
+    // supersede the first, then insert -> ok
+    await ctx.owner.query(
+      `UPDATE auth_email_tokens SET superseded_at = now() WHERE token_hash = 'vfy-1'`,
+    );
+    await ctx.owner.query(
+      `INSERT INTO auth_email_tokens(account_email_id, pending_registration_id, purpose, token_hash, expires_at)
+       VALUES ($1, $2, 'verify_email', 'vfy-2', now() + interval '30m')`,
+      [accountEmailId, attempt],
+    );
+  });
+
+  it("D1E-9: one ACTIVE reset token per email; index is now()-INDEPENDENT (an EXPIRED-but-unswept token still holds the slot)", async () => {
+    const { accountEmailId } = await seedEmail({ verified: true });
+    // an already-EXPIRED but unsuperseded reset token still occupies the active slot.
+    await ctx.owner.query(
+      `INSERT INTO auth_email_tokens(account_email_id, purpose, token_hash, expires_at)
+       VALUES ($1, 'password_reset', 'reset-expired', now() - interval '1 min')`,
+      [accountEmailId],
+    );
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO auth_email_tokens(account_email_id, purpose, token_hash, expires_at)
+         VALUES ($1, 'password_reset', 'reset-new', now() + interval '15m')`,
+        [accountEmailId],
+      ),
+    ).rejects.toThrow(/one_active_reset_uq/);
+    // supersede-before-insert (the issue path) succeeds even though the old one was expired-unswept.
+    await ctx.owner.query(
+      `UPDATE auth_email_tokens SET superseded_at = now() WHERE token_hash = 'reset-expired'`,
+    );
+    await ctx.owner.query(
+      `INSERT INTO auth_email_tokens(account_email_id, purpose, token_hash, expires_at)
+       VALUES ($1, 'password_reset', 'reset-new', now() + interval '15m')`,
+      [accountEmailId],
+    );
+  });
+
+  it("D1E-10: a token cannot be both consumed AND superseded", async () => {
+    const { accountEmailId } = await seedEmail({ verified: true });
+    const th = await seedResetToken(accountEmailId);
+    await expect(
+      ctx.owner.query(
+        `UPDATE auth_email_tokens SET consumed_at = now(), superseded_at = now() WHERE token_hash = $1`,
+        [th],
+      ),
+    ).rejects.toThrow(/auth_email_tokens_terminal_chk/);
+  });
+});
+
+describe("D1 PHC validator + constraint triggers (D1E-11..D1E-12)", () => {
+  const assertPhc = (phc: string) => ctx.owner.query(`SELECT _auth_assert_password_phc($1)`, [phc]);
+
+  it("D1E-11: only the exact benchmarked tuple passes; every other cell raises and rolls back", async () => {
+    const salt = b64(16);
+    const hash = b64(32);
+    // accept
+    await expect(assertPhc(`$argon2id$v=19$m=19456,t=2,p=1$${salt}$${hash}`)).resolves.toBeTruthy();
+    // reject matrix
+    const reject: [string, RegExp][] = [
+      [`$argon2i$v=19$m=19456,t=2,p=1$${salt}$${hash}`, /malformed/], // wrong algorithm
+      [`$argon2id$v=18$m=19456,t=2,p=1$${salt}$${hash}`, /malformed/], // wrong version
+      [`$argon2id$v=19$m=19456,t=2$${salt}$${hash}`, /malformed/], // missing p
+      [`$argon2id$v=19$m=19456,t=2,p=1,x=1$${salt}$${hash}`, /malformed/], // extra param
+      [`$argon2id$v=19$m=19456,t=2,p=1$${"A".repeat(21)}B$${hash}`, /non-canonical/], // non-zero trailing bits
+      [`$argon2id$v=19$m=19456,t=2,p=1$${"A".repeat(21)}$${hash}`, /invalid base64/], // length % 4 = 1
+      [`$argon2id$v=19$m=19456,t=2,p=1$${b64(12)}$${hash}`, /salt too short/], // 12-byte salt
+      [`$argon2id$v=19$m=19456,t=2,p=1$${salt}$${b64(20)}`, /output too short/], // 20-byte output
+      [`$argon2id$v=19$m=19455,t=2,p=1$${salt}$${hash}`, /below policy floor/], // m below floor
+      [`$argon2id$v=19$m=19456,t=1,p=1$${salt}$${hash}`, /below policy floor/], // t below floor
+      [`$argon2id$v=19$m=19457,t=2,p=1$${salt}$${hash}`, /above policy ceiling/], // m above ceiling
+      [`$argon2id$v=19$m=19456,t=3,p=1$${salt}$${hash}`, /above policy ceiling/], // t above ceiling
+      // out-of-int-range m: generic "above ceiling", NOT a native 22003 that
+      // echoes the numeric text (codex round-09 [P2]).
+      [`$argon2id$v=19$m=99999999999999999999,t=2,p=1$${salt}$${hash}`, /above policy ceiling/],
+    ];
+    for (const [phc, pattern] of reject) {
+      await expect(assertPhc(phc), `must reject: ${phc.slice(0, 40)}...`).rejects.toThrow(pattern);
+    }
+    // the oversized numeric text never appears in the error (D1E-22 contract)
+    let overflowMsg = "";
+    try {
+      await assertPhc(`$argon2id$v=19$m=99999999999999999999,t=2,p=1$${salt}$${hash}`);
+    } catch (e) {
+      overflowMsg = String((e as Error).message) + String((e as { cause?: unknown }).cause ?? "");
+    }
+    expect(overflowMsg).not.toContain("99999999999999999999");
+    expect(overflowMsg).not.toMatch(/22003|out of range/i);
+  });
+
+  it("D1E-12: the PHC trigger fires on BOTH write paths; direct UPDATE with a malformed PHC is rejected", async () => {
+    const verified = await seedEmail({ verified: true });
+    await ctx.owner.query(
+      `INSERT INTO email_password_credentials(account_email_id, password_phc) VALUES ($1, $2)`,
+      [verified.accountEmailId, validPhc()],
+    );
+    // credential write path
+    await expect(
+      ctx.owner.query(
+        `UPDATE email_password_credentials SET password_phc = 'downgraded' WHERE account_email_id = $1`,
+        [verified.accountEmailId],
+      ),
+    ).rejects.toThrow(/password PHC: malformed/);
+    // pending-attempt write path
+    const pending = await seedEmail({ verified: false });
+    const attempt = await seedAttempt(pending.accountEmailId);
+    await expect(
+      ctx.owner.query(
+        `UPDATE auth_pending_email_registrations SET password_phc = 'downgraded' WHERE id = $1`,
+        [attempt],
+      ),
+    ).rejects.toThrow(/password PHC: malformed/);
+    // NULLing the candidate as part of a terminal transition is still allowed (lifecycle CHECK owns NULL).
+    await ctx.owner.query(
+      `UPDATE auth_pending_email_registrations
+       SET superseded_at = now(), password_phc = NULL, registration_key_hash = NULL WHERE id = $1`,
+      [attempt],
+    );
+  });
+});
+
+describe("D1 grant matrix (D1E-13)", () => {
+  it("D1E-13: app is denied direct DML on password_phc and EXECUTE on the internal helpers", async () => {
+    const verified = await seedEmail({ verified: true });
+    await ctx.owner.query(
+      `INSERT INTO email_password_credentials(account_email_id, password_phc) VALUES ($1, $2)`,
+      [verified.accountEmailId, validPhc()],
+    );
+    // INSERT / UPDATE password_phc via `app` -> permission denied (no table grant at all)
+    await expect(
+      ctx.appPool.query(
+        `INSERT INTO email_password_credentials(account_email_id, password_phc) VALUES ($1, $2)`,
+        [verified.accountEmailId, validPhc()],
+      ),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      ctx.appPool.query(`UPDATE email_password_credentials SET password_phc = $1`, [validPhc()]),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      ctx.appPool.query(`UPDATE auth_pending_email_registrations SET password_phc = $1`, [
+        validPhc(),
+      ]),
+    ).rejects.toThrow(/permission denied/i);
+    // EXECUTE the internal helpers via `app`/`readonly` -> permission denied
+    await expect(
+      ctx.appPool.query(`SELECT _auth_assert_password_phc($1)`, [validPhc()]),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      ctx.appPool.query(`SELECT * FROM _auth_consume_email_token('x', 'password_reset')`),
+    ).rejects.toThrow(/permission denied/i);
+    for (const fn of [
+      "_auth_email_delivery_cleanup",
+      "_auth_email_attempt_terminalize",
+      "_auth_email_token_retention",
+      "_auth_email_attempt_retention",
+      "_auth_email_orphan_cleanup",
+    ]) {
+      await expect(
+        ctx.appPool.query(`SELECT ${fn}()`),
+        `app must be denied EXECUTE on ${fn}`,
+      ).rejects.toThrow(/permission denied/i);
+    }
+  });
+});
+
+describe("D1 consume boundary (D1E-14..D1E-15)", () => {
+  it("D1E-14: happy path consumes exactly once with consumed_at = transaction_timestamp()", async () => {
+    // reset token -> returns (account_email_id, NULL)
+    const email = await seedEmail({ verified: true });
+    const th = await seedResetToken(email.accountEmailId);
+    await ctx.owner.query("BEGIN");
+    const consumed = await consumeAs(ctx.owner, th, "password_reset");
+    const txn = await ctx.owner.query(`SELECT transaction_timestamp() AS ts`);
+    await ctx.owner.query("COMMIT");
+    expect(consumed).toHaveLength(1);
+    expect(consumed[0]!.account_email_id).toBe(email.accountEmailId);
+    expect(consumed[0]!.pending_registration_id).toBeNull();
+    const row = await ctx.owner.query(
+      `SELECT consumed_at FROM auth_email_tokens WHERE token_hash = $1`,
+      [th],
+    );
+    expect(new Date((row.rows[0] as { consumed_at: string }).consumed_at).getTime()).toBe(
+      new Date((txn.rows[0] as { ts: string }).ts).getTime(),
+    );
+
+    // verify token -> returns (account_email_id, pending_registration_id)
+    const pemail = await seedEmail({ verified: false });
+    const attempt = await seedAttempt(pemail.accountEmailId);
+    const vth = await seedVerifyToken(pemail.accountEmailId, attempt);
+    const v = await consumeAs(ctx.owner, vth, "verify_email");
+    expect(v).toHaveLength(1);
+    expect(v[0]!.account_email_id).toBe(pemail.accountEmailId);
+    expect(v[0]!.pending_registration_id).toBe(attempt);
+  });
+
+  it("D1E-15: fail-closed matrix — wrong purpose, expired, consumed, superseded, unknown hash all return zero rows", async () => {
+    // A distinct email per cell: the now()-independent one-active-reset index means
+    // an expired-but-unswept token still occupies the slot (D1E-9), so two active
+    // reset tokens cannot share an email.
+    // wrong purpose (token is reset, ask for verify)
+    const e1 = await seedEmail({ verified: true });
+    const thPurpose = await seedResetToken(e1.accountEmailId);
+    expect(await consumeAs(ctx.owner, thPurpose, "verify_email")).toEqual([]);
+    // expired
+    const e2 = await seedEmail({ verified: true });
+    const thExpired = await seedResetToken(e2.accountEmailId, { expiresInSec: -60 });
+    expect(await consumeAs(ctx.owner, thExpired, "password_reset")).toEqual([]);
+    // already consumed
+    const e3 = await seedEmail({ verified: true });
+    const thConsumed = await seedResetToken(e3.accountEmailId);
+    expect(await consumeAs(ctx.owner, thConsumed, "password_reset")).toHaveLength(1);
+    expect(await consumeAs(ctx.owner, thConsumed, "password_reset")).toEqual([]);
+    // already superseded
+    const e4 = await seedEmail({ verified: true });
+    const thSup = await seedResetToken(e4.accountEmailId);
+    await ctx.owner.query(
+      `UPDATE auth_email_tokens SET superseded_at = now() WHERE token_hash = $1`,
+      [thSup],
+    );
+    expect(await consumeAs(ctx.owner, thSup, "password_reset")).toEqual([]);
+    // unknown hash
+    expect(await consumeAs(ctx.owner, "fc-never-existed", "password_reset")).toEqual([]);
+    // the wrong-purpose token was NOT mutated by any of the above
+    const stillActive = await ctx.owner.query(
+      `SELECT count(*)::int AS n FROM auth_email_tokens
+       WHERE token_hash = $1 AND consumed_at IS NULL AND superseded_at IS NULL`,
+      [thPurpose],
+    );
+    expect((stillActive.rows[0] as { n: number }).n).toBe(1);
+  });
+
+  it("D1E-15: a verify token whose ATTEMPT is no longer active is not consumable (codex round-01 [P1])", async () => {
+    // A token can outlive its attempt: supersede the attempt WITHOUT touching
+    // the token (a competing verify winner, or the cleanup sweep). The consume
+    // helper must revalidate the attempt under the lock and refuse.
+    const email = await seedEmail({ verified: false });
+    const attempt = await seedAttempt(email.accountEmailId);
+    const vth = await seedVerifyToken(email.accountEmailId, attempt);
+    await ctx.owner.query(
+      `UPDATE auth_pending_email_registrations
+       SET superseded_at = now(), password_phc = NULL, registration_key_hash = NULL WHERE id = $1`,
+      [attempt],
+    );
+    // token is still active, but its attempt is superseded -> zero rows, zero mutation
+    expect(await consumeAs(ctx.owner, vth, "verify_email")).toEqual([]);
+    const tok = await ctx.owner.query(
+      `SELECT consumed_at FROM auth_email_tokens WHERE token_hash = $1`,
+      [vth],
+    );
+    expect((tok.rows[0] as { consumed_at: string | null }).consumed_at).toBeNull();
+
+    // ...and an EXPIRED attempt is likewise refused even with an active token.
+    const email2 = await seedEmail({ verified: false });
+    const expiredAttempt = await seedAttempt(email2.accountEmailId, { expiresInSec: -60 });
+    const vth2 = await seedVerifyToken(email2.accountEmailId, expiredAttempt);
+    expect(await consumeAs(ctx.owner, vth2, "verify_email")).toEqual([]);
+  });
+});
+
+describe("D1 parent-first lock hierarchy + barriers (D1E-16..D1E-18)", () => {
+  it("D1E-16: the consume path blocks on the accounts PARENT lock (parent-first, not child-first)", async () => {
+    const email = await seedEmail({ verified: true });
+    const th = await seedResetToken(email.accountEmailId);
+    const holder = await ctx.superuserDb.pool.connect();
+    const waiter = await ctx.superuserDb.pool.connect();
+    let pending: Promise<pg.QueryResult> | undefined;
+    try {
+      // Holder takes the accounts parent row. If the consume were child-first it
+      // could reach and lock the token without waiting on accounts.
+      await holder.query("BEGIN");
+      await holder.query(`SELECT 1 FROM accounts WHERE id = $1 FOR UPDATE`, [email.accountId]);
+      const pidHolder = await backendPid(holder);
+      const pidWaiter = await backendPid(waiter);
+      pending = waiter.query(
+        `SELECT account_email_id FROM _auth_consume_email_token($1, 'password_reset')`,
+        [th],
+      );
+      // Proven blocked SPECIFICALLY by the accounts holder.
+      await waitUntilBlockedByHolder(ctx.owner, pidHolder, pidWaiter);
+      await holder.query("COMMIT");
+      const rows = (await pending).rows;
+      expect(rows).toHaveLength(1);
+      // token consumed exactly once after the parent was released
+      const t = await ctx.owner.query(
+        `SELECT consumed_at FROM auth_email_tokens WHERE token_hash = $1`,
+        [th],
+      );
+      expect((t.rows[0] as { consumed_at: string | null }).consumed_at).not.toBeNull();
+    } finally {
+      await holder.query("ROLLBACK").catch(() => {});
+      holder.release();
+      if (pending) await pending.catch(() => {});
+      waiter.release();
+    }
+  });
+
+  it("D1E-16: two concurrent consumes of the SAME token do not deadlock; exactly one consumes", async () => {
+    const email = await seedEmail({ verified: true });
+    const th = await seedResetToken(email.accountEmailId);
+    const [r1, r2] = await Promise.all([
+      consumeAs(ctx.owner, th, "password_reset"),
+      (async () => {
+        const c = await ctx.superuserDb.pool.connect();
+        try {
+          return await consumeAs(c, th, "password_reset");
+        } finally {
+          c.release();
+        }
+      })(),
+    ]);
+    // exactly one winner; no deadlock (both settled)
+    expect(r1.length + r2.length).toBe(1);
+  });
+
+  it("D1E-17: reset-issue supersede-all × consume barrier — exactly one wins, loser is zero-mutation, no partial state", async () => {
+    // (A) reset-issue (supersede-all) commits first -> consume sees superseded, zero mutation.
+    {
+      const email = await seedEmail({ verified: true });
+      const th = await seedResetToken(email.accountEmailId);
+      const issuer = await ctx.superuserDb.pool.connect();
+      const consumer = await ctx.superuserDb.pool.connect();
+      let pending: Promise<pg.QueryResult> | undefined;
+      try {
+        // issuer takes parent-first locks then supersedes the active reset token (the issue path's supersede-before-insert).
+        await issuer.query("BEGIN");
+        await issuer.query(`SELECT 1 FROM accounts WHERE id = $1 FOR UPDATE`, [email.accountId]);
+        await issuer.query(`SELECT 1 FROM account_emails WHERE id = $1 FOR UPDATE`, [
+          email.accountEmailId,
+        ]);
+        await issuer.query(
+          `UPDATE auth_email_tokens SET superseded_at = now()
+           WHERE account_email_id = $1 AND purpose = 'password_reset'
+             AND consumed_at IS NULL AND superseded_at IS NULL`,
+          [email.accountEmailId],
+        );
+        const pidIssuer = await backendPid(issuer);
+        const pidConsumer = await backendPid(consumer);
+        pending = consumer.query(
+          `SELECT account_email_id FROM _auth_consume_email_token($1, 'password_reset')`,
+          [th],
+        );
+        await waitUntilBlockedByHolder(ctx.owner, pidIssuer, pidConsumer);
+        await issuer.query("COMMIT");
+        expect((await pending).rows).toHaveLength(0); // consume lost
+      } finally {
+        await issuer.query("ROLLBACK").catch(() => {});
+        issuer.release();
+        if (pending) await pending.catch(() => {});
+        consumer.release();
+      }
+      const final = await ctx.owner.query(
+        `SELECT consumed_at, superseded_at FROM auth_email_tokens WHERE token_hash = $1`,
+        [th],
+      );
+      const row = final.rows[0] as { consumed_at: string | null; superseded_at: string | null };
+      expect(row.superseded_at).not.toBeNull();
+      expect(row.consumed_at).toBeNull(); // superseded XOR consumed — never both
+    }
+
+    // (B) consume commits first -> reset-issue's supersede finds nothing active, zero mutation on that token.
+    {
+      const email = await seedEmail({ verified: true });
+      const th = await seedResetToken(email.accountEmailId);
+      const consumer = await ctx.superuserDb.pool.connect();
+      const issuer = await ctx.superuserDb.pool.connect();
+      let pending: Promise<pg.QueryResult> | undefined;
+      try {
+        await consumer.query("BEGIN");
+        const consumed = await consumeAs(consumer, th, "password_reset"); // holds accounts + token lock
+        expect(consumed).toHaveLength(1);
+        const pidConsumer = await backendPid(consumer);
+        const pidIssuer = await backendPid(issuer);
+        // issuer follows the SAME parent-first order: it takes the accounts
+        // parent FIRST (an explicit statement, not an unreferenced locking CTE
+        // — Postgres would prune that), so it blocks on the consumer's lock.
+        await issuer.query("BEGIN");
+        pending = issuer.query(`SELECT 1 FROM accounts WHERE id = $1 FOR UPDATE`, [
+          email.accountId,
+        ]);
+        await waitUntilBlockedByHolder(ctx.owner, pidConsumer, pidIssuer);
+        await consumer.query("COMMIT");
+        await pending; // issuer now holds accounts
+        // ...then supersedes active reset tokens — the token is already consumed, so zero rows.
+        await issuer.query(`SELECT 1 FROM account_emails WHERE id = $1 FOR UPDATE`, [
+          email.accountEmailId,
+        ]);
+        const sup = await issuer.query(
+          `UPDATE auth_email_tokens SET superseded_at = now()
+           WHERE account_email_id = $1 AND purpose = 'password_reset'
+             AND consumed_at IS NULL AND superseded_at IS NULL`,
+          [email.accountEmailId],
+        );
+        expect(sup.rowCount).toBe(0); // nothing left active to supersede
+        await issuer.query("COMMIT");
+      } finally {
+        await consumer.query("ROLLBACK").catch(() => {});
+        consumer.release();
+        if (pending) await pending.catch(() => {});
+        await issuer.query("ROLLBACK").catch(() => {});
+        issuer.release();
+      }
+      const final = await ctx.owner.query(
+        `SELECT consumed_at, superseded_at FROM auth_email_tokens WHERE token_hash = $1`,
+        [th],
+      );
+      const row = final.rows[0] as { consumed_at: string | null; superseded_at: string | null };
+      expect(row.consumed_at).not.toBeNull();
+      expect(row.superseded_at).toBeNull();
+    }
+  });
+
+  it("D1E-18 (PARTIAL, order-4 deferred): the email-token consume (production) is parent-first and composes with a §5.2-step-5-ordered peer without inversion", async () => {
+    // SCOPE HONESTY (codex round-02 [P1]): the REAL account-issued link_code
+    // consume + durable merge-plan lifecycle is ORDER-4 and is EXPLICITLY out of
+    // this slice (manifest negative_scope; link_codes has no source_account_id
+    // yet). This test therefore exercises the PRODUCTION email-token consume
+    // (`_auth_consume_email_token`) on one side and SIMULATES the peer's
+    // §5.2-step-5 lock order on the other (a channel-issued link_codes row stood
+    // in as the peer's child tier). It proves the property THIS slice owns — the
+    // email-token consume takes `accounts` BEFORE any child, so it can never be
+    // the side that inverts. The full merge barrier (the real account-issued
+    // consume creating a merge plan, racing the email-token consume, both
+    // all-or-nothing) lands with the serialized identity companion slice; D1E-18
+    // stays OPEN until then (see the READY report's deferred-coverage note).
+    // (A) peer holds accounts+link_code; email consume blocks on accounts, then proceeds.
+    {
+      const email = await seedEmail({ verified: true });
+      const th = await seedResetToken(email.accountEmailId);
+      const linkCodeId = await seedLinkCode(email.personId);
+      const linkPath = await ctx.superuserDb.pool.connect();
+      const consumer = await ctx.superuserDb.pool.connect();
+      let pending: Promise<pg.QueryResult> | undefined;
+      try {
+        await linkPath.query("BEGIN");
+        await linkPath.query(`SELECT 1 FROM accounts WHERE id = $1 FOR UPDATE`, [email.accountId]);
+        await linkPath.query(`SELECT 1 FROM link_codes WHERE id = $1 FOR UPDATE`, [linkCodeId]);
+        const pidLink = await backendPid(linkPath);
+        const pidConsumer = await backendPid(consumer);
+        pending = consumer.query(
+          `SELECT account_email_id FROM _auth_consume_email_token($1, 'password_reset')`,
+          [th],
+        );
+        await waitUntilBlockedByHolder(ctx.owner, pidLink, pidConsumer);
+        await linkPath.query("COMMIT");
+        expect((await pending).rows).toHaveLength(1); // consume proceeds after accounts released
+      } finally {
+        await linkPath.query("ROLLBACK").catch(() => {});
+        linkPath.release();
+        if (pending) await pending.catch(() => {});
+        consumer.release();
+      }
+    }
+    // (B) reverse order: email consume holds accounts; link_code path blocks on accounts (no inversion).
+    {
+      const email = await seedEmail({ verified: true });
+      const th = await seedResetToken(email.accountEmailId);
+      const linkCodeId = await seedLinkCode(email.personId);
+      const consumer = await ctx.superuserDb.pool.connect();
+      const linkPath = await ctx.superuserDb.pool.connect();
+      let pending: Promise<pg.QueryResult> | undefined;
+      try {
+        await consumer.query("BEGIN");
+        expect(await consumeAs(consumer, th, "password_reset")).toHaveLength(1); // holds accounts
+        const pidConsumer = await backendPid(consumer);
+        const pidLink = await backendPid(linkPath);
+        // link_code path takes the accounts parent FIRST (explicit statement,
+        // not a prunable locking CTE), so it blocks on the consumer's lock —
+        // proving both descend from accounts before any child (no inversion).
+        await linkPath.query("BEGIN");
+        pending = linkPath.query(`SELECT 1 FROM accounts WHERE id = $1 FOR UPDATE`, [
+          email.accountId,
+        ]);
+        await waitUntilBlockedByHolder(ctx.owner, pidConsumer, pidLink);
+        await consumer.query("COMMIT");
+        await pending; // link path acquires accounts…
+        await linkPath.query(`SELECT 1 FROM link_codes WHERE id = $1 FOR UPDATE`, [linkCodeId]); // …then its child
+        await linkPath.query("COMMIT"); // no deadlock
+      } finally {
+        await consumer.query("ROLLBACK").catch(() => {});
+        consumer.release();
+        if (pending) await pending.catch(() => {});
+        await linkPath.query("ROLLBACK").catch(() => {});
+        linkPath.release();
+      }
+    }
+  });
+
+  it("D1E-16: the cleanup sweep is PARENT-FIRST — it takes the accounts parent before terminalizing an attempt (codex round-01 [P1])", async () => {
+    // an expired active attempt puts this email in the sweep's scope.
+    const email = await seedEmail({ verified: false });
+    const attempt = await seedAttempt(email.accountEmailId, { expiresInSec: -60 });
+    const holder = await ctx.superuserDb.pool.connect();
+    const cleaner = await ctx.superuserDb.pool.connect();
+    let pending: Promise<pg.QueryResult> | undefined;
+    try {
+      // Hold the accounts parent. On a child-first sweep the bulk attempt UPDATE
+      // would proceed WITHOUT this lock (never blocking); the parent-first sweep
+      // must block here.
+      await holder.query("BEGIN");
+      await holder.query(`SELECT 1 FROM accounts WHERE id = $1 FOR UPDATE`, [email.accountId]);
+      const pidHolder = await backendPid(holder);
+      const pidCleaner = await backendPid(cleaner);
+      pending = cleaner.query(`SELECT _auth_email_attempt_terminalize()`);
+      await waitUntilBlockedByHolder(ctx.owner, pidHolder, pidCleaner);
+      await holder.query("COMMIT");
+      await pending; // sweep completes once the parent is released
+    } finally {
+      await holder.query("ROLLBACK").catch(() => {});
+      holder.release();
+      if (pending) await pending.catch(() => {});
+      cleaner.release();
+    }
+    // the expired attempt is now terminalized with its candidates NULLed
+    const row = await ctx.owner.query(
+      `SELECT superseded_at, password_phc, registration_key_hash
+       FROM auth_pending_email_registrations WHERE id = $1`,
+      [attempt],
+    );
+    const r = row.rows[0] as {
+      superseded_at: string | null;
+      password_phc: string | null;
+      registration_key_hash: string | null;
+    };
+    expect(r.superseded_at).not.toBeNull();
+    expect(r.password_phc).toBeNull();
+    expect(r.registration_key_hash).toBeNull();
+  });
+});
+
+describe("D1 delivery binding + cleanup (D1E-19..D1E-20)", () => {
+  const insertDelivery = (cols: Record<string, unknown>) => {
+    const base: Record<string, unknown> = {
+      kind: "verify_email",
+      command_id: randomUUID(),
+      command_owner_hash: `owner-${randomBytes(4).toString("hex")}`,
+      command_operation: "register",
+      command_target_fingerprint: `fp-${randomBytes(4).toString("hex")}`,
+      provider_idempotency_key: `pik-${randomBytes(8).toString("hex")}`,
+      provider_key_version: "pk-v1",
+      outcome: "queued",
+      expires_at: new Date(Date.now() + 86400e3),
+      payload_enc: Buffer.from([0]),
+      kms_key_version: "kms-v1",
+      ...cols,
+    };
+    const keys = Object.keys(base);
+    const placeholders = keys.map((_, i) => `$${i + 1}`).join(", ");
+    return ctx.owner.query(
+      `INSERT INTO auth_email_deliveries(${keys.join(", ")}) VALUES (${placeholders})`,
+      keys.map((k) => base[k]),
+    );
+  };
+
+  it("D1E-19: command receipt ≠ provider key; operation↔kind and terminal/payload CHECKs", async () => {
+    const sharedCommandId = randomUUID();
+    const sharedPik = `pik-shared-${randomBytes(6).toString("hex")}`;
+    await insertDelivery({ command_id: sharedCommandId, provider_idempotency_key: sharedPik });
+    // command_id UNIQUE
+    await expect(insertDelivery({ command_id: sharedCommandId })).rejects.toThrow(
+      /command_id|unique/i,
+    );
+    // provider_idempotency_key UNIQUE and independent of command_id
+    await expect(insertDelivery({ provider_idempotency_key: sharedPik })).rejects.toThrow(
+      /provider_idempotency_key|unique/i,
+    );
+    // operation ↔ kind
+    await expect(
+      insertDelivery({ command_operation: "register", kind: "password_reset" }),
+    ).rejects.toThrow(/operation_kind_chk/);
+    await expect(
+      insertDelivery({ command_operation: "forgot", kind: "verify_email" }),
+    ).rejects.toThrow(/operation_kind_chk/);
+    // terminal ⇒ terminal_at (delivered without it -> reject; queued WITH it -> reject)
+    await expect(
+      insertDelivery({ outcome: "delivered", payload_enc: null, kms_key_version: null }),
+    ).rejects.toThrow(/terminal_chk/);
+    await expect(insertDelivery({ outcome: "queued", terminal_at: new Date() })).rejects.toThrow(
+      /terminal_chk/,
+    );
+    // payload/key present only for queued|dead_letter
+    await expect(
+      insertDelivery({ outcome: "queued", payload_enc: null, kms_key_version: null }),
+    ).rejects.toThrow(/payload_chk/);
+    await expect(
+      insertDelivery({
+        outcome: "delivered",
+        terminal_at: new Date(),
+        payload_enc: Buffer.from([0]),
+        kms_key_version: "kms-v1",
+      }),
+    ).rejects.toThrow(/payload_chk/);
+    // a valid terminal-delivered row (payload/key NULLed) is accepted.
+    await insertDelivery({
+      outcome: "delivered",
+      terminal_at: new Date(),
+      payload_enc: null,
+      kms_key_version: null,
+      command_operation: "forgot",
+      kind: "password_reset",
+    });
+  });
+
+  it("D1E-20: cleanup terminalizes expired candidates, batch-deletes past-retention rows, and guards pending-email deletion", async () => {
+    // expired ACTIVE attempt -> should be superseded + candidates NULLed immediately
+    const pending = await seedEmail({ verified: false });
+    const expiredAttempt = await seedAttempt(pending.accountEmailId, {
+      expiresInSec: -60,
+      regKeyHash: "rk-exp",
+    });
+    // expired QUEUED delivery -> should become failed_terminal + ciphertext NULLed
+    await insertDelivery({
+      command_operation: "register",
+      kind: "verify_email",
+      outcome: "queued",
+      expires_at: new Date(Date.now() - 60e3),
+    });
+    // past-retention terminal rows (31d) -> should be batch-deleted
+    const retEmail = await seedEmail({ verified: true });
+    await ctx.owner.query(
+      `INSERT INTO auth_email_tokens(account_email_id, purpose, token_hash, expires_at, superseded_at)
+       VALUES ($1, 'password_reset', 'ret-token', now() - interval '31 days', now() - interval '31 days')`,
+      [retEmail.accountEmailId],
+    );
+    await ctx.owner.query(
+      `INSERT INTO auth_email_deliveries(kind, command_id, command_owner_hash, command_operation,
+         command_target_fingerprint, provider_idempotency_key, provider_key_version, outcome, expires_at,
+         terminal_at, payload_enc, kms_key_version)
+       VALUES ('verify_email', $1, 'o', 'register', 'f', $2, 'pk', 'failed_terminal',
+               now() - interval '31 days', now() - interval '31 days', NULL, NULL)`,
+      [randomUUID(), `pik-ret-${randomBytes(4).toString("hex")}`],
+    );
+    // a pending email with NO active attempt (all superseded) + past pending_expires -> deletable
+    const orphan = await seedEmail({ verified: false, pendingExpiresInSec: -60 });
+    const orphanAttempt = await seedAttempt(orphan.accountEmailId, { regKeyHash: "rk-orphan" });
+    await ctx.owner.query(
+      `UPDATE auth_pending_email_registrations
+       SET superseded_at = now(), password_phc = NULL, registration_key_hash = NULL WHERE id = $1`,
+      [orphanAttempt],
+    );
+
+    // the sweep is now five single-concern, deadlock-free functions (codex
+    // round-03/04); the order-4 job calls them bottom-up so children drain
+    // before parents.
+    const scalar = async (fn: string) =>
+      Number((await ctx.owner.query(`SELECT ${fn}() AS n`)).rows[0].n);
+    const del = (await ctx.owner.query(`SELECT * FROM _auth_email_delivery_cleanup()`))
+      .rows[0] as Record<string, number>;
+    const terminalized = await scalar("_auth_email_attempt_terminalize");
+    const tokensDeleted = await scalar("_auth_email_token_retention");
+    const attemptsDeleted = await scalar("_auth_email_attempt_retention");
+    const emailsDeleted = await scalar("_auth_email_orphan_cleanup");
+    expect(terminalized).toBeGreaterThanOrEqual(1);
+    expect(del.deliveries_terminalized).toBeGreaterThanOrEqual(1);
+    expect(tokensDeleted).toBeGreaterThanOrEqual(1);
+    expect(attemptsDeleted).toBeGreaterThanOrEqual(0); // runs cleanly (no retention-terminal attempt seeded)
+    expect(del.deliveries_deleted).toBeGreaterThanOrEqual(1);
+    expect(emailsDeleted).toBeGreaterThanOrEqual(1);
+
+    // expired attempt is now terminal with candidates NULLed immediately
+    const term = await ctx.owner.query(
+      `SELECT superseded_at, password_phc, registration_key_hash FROM auth_pending_email_registrations WHERE id = $1`,
+      [expiredAttempt],
+    );
+    const tr = term.rows[0] as {
+      superseded_at: string | null;
+      password_phc: string | null;
+      registration_key_hash: string | null;
+    };
+    expect(tr.superseded_at).not.toBeNull();
+    expect(tr.password_phc).toBeNull();
+    expect(tr.registration_key_hash).toBeNull();
+    // past-retention token is gone
+    expect(
+      (await ctx.owner.query(`SELECT 1 FROM auth_email_tokens WHERE token_hash = 'ret-token'`))
+        .rows,
+    ).toHaveLength(0);
+    // orphan pending email deleted, but its ACCOUNT and PERSON are untouched (no cascade into business tables)
+    expect(
+      (await ctx.owner.query(`SELECT 1 FROM account_emails WHERE id = $1`, [orphan.accountEmailId]))
+        .rows,
+    ).toHaveLength(0);
+    expect(
+      (await ctx.owner.query(`SELECT 1 FROM accounts WHERE id = $1`, [orphan.accountId])).rows,
+    ).toHaveLength(1);
+    expect(
+      (await ctx.owner.query(`SELECT 1 FROM persons WHERE id = $1`, [orphan.personId])).rows,
+    ).toHaveLength(1);
+  });
+});
+
+describe("D1 schema mirror + catalog (D1E-21)", () => {
+  it("D1E-21: constraint triggers, partial indexes, and helper grant-denials exist in the catalog (not just column shape)", async () => {
+    // constraint triggers on BOTH write paths + the verified-email gate
+    const triggers = await ctx.owner.query(
+      `SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+       WHERE NOT t.tgisinternal AND c.relname IN ('auth_pending_email_registrations','email_password_credentials')`,
+    );
+    const tgnames = (triggers.rows as { tgname: string }[]).map((r) => r.tgname);
+    for (const tg of [
+      "auth_pending_email_registrations_phc_trg",
+      "email_password_credentials_phc_trg",
+      "email_password_credentials_verified_trg",
+    ]) {
+      expect(tgnames, `trigger ${tg} must exist`).toContain(tg);
+    }
+
+    // the two partial UNIQUE indexes, WITH their partial predicate (not a plain unique)
+    const idx = await ctx.owner.query(
+      `SELECT indexname, indexdef FROM pg_indexes
+       WHERE tablename = 'auth_email_tokens' AND indexname = ANY($1)`,
+      [
+        [
+          "auth_email_tokens_one_active_verify_per_attempt_uq",
+          "auth_email_tokens_one_active_reset_uq",
+        ],
+      ],
+    );
+    const defs = new Map(
+      (idx.rows as { indexname: string; indexdef: string }[]).map((r) => [r.indexname, r.indexdef]),
+    );
+    expect(defs.get("auth_email_tokens_one_active_verify_per_attempt_uq")).toMatch(/UNIQUE/);
+    expect(defs.get("auth_email_tokens_one_active_verify_per_attempt_uq")).toMatch(
+      /WHERE .*verify_email/,
+    );
+    expect(defs.get("auth_email_tokens_one_active_reset_uq")).toMatch(/WHERE .*password_reset/);
+
+    // grants: `app` has NO EXECUTE on ANY internal helper (validator, consume,
+    // and every cleanup function).
+    for (const sig of [
+      "_auth_assert_password_phc(text)",
+      "_auth_consume_email_token(text,text)",
+      "_auth_email_delivery_cleanup(integer)",
+      "_auth_email_attempt_terminalize(integer)",
+      "_auth_email_token_retention(integer)",
+      "_auth_email_attempt_retention(integer)",
+      "_auth_email_orphan_cleanup(integer)",
+    ]) {
+      const r = await ctx.owner.query(
+        `SELECT has_function_privilege('app', $1, 'EXECUTE') AS granted`,
+        [sig],
+      );
+      expect((r.rows[0] as { granted: boolean }).granted, `app must NOT execute ${sig}`).toBe(
+        false,
+      );
+    }
+  });
+});
+
+describe("D1 no secret leakage (D1E-22)", () => {
+  it("D1E-22: helpers never echo raw email/token/password/PHC/salt in errors or returns", async () => {
+    const marker = "SUPERSECRETdoNOTleak";
+    // PHC validator error must be generic — never the raw input
+    let phcMsg = "";
+    try {
+      await ctx.owner.query(`SELECT _auth_assert_password_phc($1)`, [`plaintext-${marker}`]);
+    } catch (e) {
+      phcMsg = String((e as Error).message);
+    }
+    expect(phcMsg).toMatch(/password PHC: malformed/);
+    expect(phcMsg).not.toContain(marker);
+
+    // consume of an unknown token reveals nothing (empty set, no error carrying the hash)
+    const res = await ctx.owner.query(
+      `SELECT * FROM _auth_consume_email_token($1, 'password_reset')`,
+      [`tok-${marker}`],
+    );
+    expect(res.rows).toEqual([]);
+
+    // this slice's helpers write NO auth_audit_events rows (auditing is order-4); prove none leaked
+    const audit = await ctx.owner.query(
+      `SELECT count(*)::int AS n FROM auth_audit_events WHERE request_ref LIKE '%' || $1 || '%'`,
+      [marker],
+    );
+    expect((audit.rows[0] as { n: number }).n).toBe(0);
+  });
+});
+
+describe("deriveEmailArtifacts + provider key (auth.ts, B0 §3.3/§3.4)", () => {
+  const keys = {
+    lookupHmacKey: Buffer.from("lookup-hmac-key-fixture-0000000000", "utf8"),
+    encKey: Buffer.alloc(32, 7),
+    kmsKeyVersion: "kms-v1",
+  };
+
+  it("normalizeEmail: lowercases the domain (IDNA), NFC-normalizes + preserves local-part case, rejects invalid", () => {
+    expect(normalizeEmail("  User.Name@Example.COM ")).toBe("User.Name@example.com");
+    // no Gmail dot/plus folding — local part is preserved verbatim (NFC only)
+    expect(normalizeEmail("a.b+tag@gmail.com")).toBe("a.b+tag@gmail.com");
+    // a valid IDN domain still converts to its A-label
+    expect(normalizeEmail("user@münchen.de")).toBe("user@xn--mnchen-3ya.de");
+    for (const bad of [
+      "",
+      "no-at",
+      "@nodomain.com",
+      "local@",
+      "two@@at.com",
+      "has space@x.com",
+      "local@nodot",
+      // domainToASCII would TRUNCATE these at the URL delimiter and bind mail to
+      // a different real address — they must be rejected, not silently accepted
+      // (codex round-01 [P1]).
+      "u@good.example#evil.com",
+      "u@good.example/evil.com",
+      "u@good.example?evil.com",
+      "u@good.example\\evil.com",
+      "u@good.example:25",
+      "u@[192.168.0.1]",
+      // invalid local parts that providers reject (codex round-02 [P2])
+      ".user@example.com",
+      "user.@example.com",
+      "user..name@example.com",
+      `${"x".repeat(65)}@example.com`, // local part > 64 octets
+      // unsupported mailbox syntax rejected by the allowlist grammar + the
+      // whole-mailbox 254-octet cap (codex round-03 [P2])
+      "a,b@example.com",
+      "a(b)@example.com",
+      "a<b>@example.com",
+      'a"b@example.com',
+      "a;b@example.com",
+      // domainToASCII percent-DECODES, so "%2E" would collapse onto a real
+      // address ("good.example.com") — reject percent escapes (codex round-04 [P2])
+      "user@good%2Eexample.com",
+      "user@good%2eexample.com",
+      // domainToASCII normalizes IPv4 shorthand/integer to a dotted IP that would
+      // otherwise pass the hostname regex — reject IP-address results (codex round-06 [P2])
+      "user@2130706433",
+      "user@127.1",
+      "user@0x7f.1",
+      "user@127.0.0.1",
+      // 64-octet local + a valid domain whose labels push the total past 254
+      `${"x".repeat(64)}@${`${"a".repeat(60)}.`.repeat(3)}aaa.example`,
+    ]) {
+      expect(() => normalizeEmail(bad), `must reject ${JSON.stringify(bad)}`).toThrow(
+        InvalidEmailError,
+      );
+    }
+    // the truncation attack must NOT resolve to the legitimate prefix
+    expect(() => normalizeEmail("u@good.example#evil.com")).toThrow();
+    // a normal address well within limits still passes
+    expect(normalizeEmail("first.last+tag@sub.example.co.uk")).toBe(
+      "first.last+tag@sub.example.co.uk",
+    );
+  });
+
+  it("deriveEmailArtifacts: deterministic lookup hash; ciphertext round-trips under the bound AAD", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const a = deriveEmailArtifacts("Alice@Example.com", id, keys);
+    const b = deriveEmailArtifacts("  alice@example.COM  ", id, keys);
+    // canonical + lookup hash are deterministic across equivalent raw inputs
+    // (domain case-folds; local-part case is preserved so these two differ on case).
+    expect(a.canonicalEmail).toBe("Alice@example.com");
+    expect(b.canonicalEmail).toBe("alice@example.com");
+    expect(a.emailLookupHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(a.emailLookupHash).not.toBe(b.emailLookupHash); // case-sensitive local part
+    // same input twice -> identical lookup hash (deterministic), different ciphertext (random iv)
+    const a2 = deriveEmailArtifacts("Alice@Example.com", id, keys);
+    expect(a2.emailLookupHash).toBe(a.emailLookupHash);
+    expect(a2.emailEnc.equals(a.emailEnc)).toBe(false);
+    // round-trip decrypt under the exact AAD
+    expect(decryptEmailEnc(a.emailEnc, id, a.emailLookupHash, keys)).toBe("Alice@example.com");
+    // AAD tamper (wrong id) fails the auth tag
+    expect(() =>
+      decryptEmailEnc(a.emailEnc, "22222222-2222-4222-8222-222222222222", a.emailLookupHash, keys),
+    ).toThrow();
+  });
+
+  it("decryptEmailEnc: rejects a row whose ciphertext decrypts to a DIFFERENT address than its lookup hash (§3.3, codex round-01 [P2])", () => {
+    const id = "44444444-4444-4444-8444-444444444444";
+    // reproduce the two derivations the §3.3 boundary relies on
+    const lookupHashOf = (canonical: string) =>
+      createHmac("sha256", keys.lookupHmacKey)
+        .update("plexco:account-email:v1:" + canonical, "utf8")
+        .digest("hex");
+    const aadOf = (lookupHash: string) =>
+      Buffer.from(`plexco:account-email-aad:v1:${id}:${lookupHash}:${keys.kmsKeyVersion}`, "utf8");
+
+    // craft a malicious row: ciphertext of attacker@evil.com, but AAD + stored
+    // lookup hash of victim@good.com — GCM still authenticates (the hash is part
+    // of the AAD) yet the decrypted identity does not match the stored hash.
+    const victimHash = lookupHashOf("victim@good.com");
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", keys.encKey, iv);
+    cipher.setAAD(aadOf(victimHash));
+    const ct = Buffer.concat([cipher.update("attacker@evil.com", "utf8"), cipher.final()]);
+    const crafted = Buffer.concat([iv, cipher.getAuthTag(), ct]);
+
+    expect(() => decryptEmailEnc(crafted, id, victimHash, keys)).toThrow(
+      /does not match its lookup hash/,
+    );
+
+    // a correctly-derived row still round-trips
+    const good = deriveEmailArtifacts("victim@good.com", id, keys);
+    expect(decryptEmailEnc(good.emailEnc, id, good.emailLookupHash, keys)).toBe("victim@good.com");
+  });
+
+  it("UUID id is canonicalized into the AAD — an uppercase spelling still decrypts under the Postgres-canonical lowercase (codex round-06 [P2])", () => {
+    const upper = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE";
+    const lower = upper.toLowerCase();
+    // encrypt with the uppercase spelling the caller might pass...
+    const art = deriveEmailArtifacts("Person@example.com", upper, keys);
+    // ...and decrypt under the lowercase form Postgres renders — same AAD, so it works.
+    expect(decryptEmailEnc(art.emailEnc, lower, art.emailLookupHash, keys)).toBe(
+      "Person@example.com",
+    );
+    // a non-UUID id is rejected outright (never silently bound into the AAD)
+    expect(() => deriveEmailArtifacts("Person@example.com", "not-a-uuid", keys)).toThrow(/UUID/);
+  });
+
+  it("deriveProviderIdempotencyKey: derived from delivery id+kind, NOT the command receipt; domain-separated", () => {
+    const key = {
+      providerSendKey: Buffer.from("provider-send-key-fixture", "utf8"),
+      keyVersion: "pk-v1",
+    };
+    const id = "33333333-3333-4333-8333-333333333333";
+    const k1 = deriveProviderIdempotencyKey({ deliveryId: id, kind: "verify_email" }, key);
+    const k2 = deriveProviderIdempotencyKey({ deliveryId: id, kind: "verify_email" }, key);
+    const k3 = deriveProviderIdempotencyKey({ deliveryId: id, kind: "password_reset" }, key);
+    expect(k1).toBe(k2); // deterministic per (delivery id, kind)
+    expect(k1).not.toBe(k3); // kind is part of the key
+    expect(k1).toMatch(/^[A-Za-z0-9_-]+$/); // base64url
   });
 });

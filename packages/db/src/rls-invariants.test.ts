@@ -35,10 +35,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(16); // 0000..0015
+    expect(ctx.migrateResult.applied.length).toBe(17); // 0000..0016
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(16);
+    expect(second.skipped.length).toBe(17);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -191,6 +191,12 @@ describe("public read model (INV-3 / HR2 / DD-12)", () => {
       "link_codes",
       "merge_audit",
       "auth_audit_events",
+      // 0016 email-token-core tables are function-only (code dark) — zero app grant.
+      "account_emails",
+      "email_password_credentials",
+      "auth_pending_email_registrations",
+      "auth_email_tokens",
+      "auth_email_deliveries",
     ]) {
       await expect(
         ctx.appPool.query(`SELECT * FROM ${table} LIMIT 1`),

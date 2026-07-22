@@ -36,7 +36,8 @@ packages/db/
     ├── 0012_auth_functions.sql        # web auth fns, tenant_provision, rate limiting
     ├── 0013_onboarding_steps_recency.sql
     ├── 0014_players_waitlist.sql      # DD-45 waitlist model (expand-only, code dark)
-    └── 0015_auth_revoke_account.sql   # DD-80 v1.88 account-session epoch + revoke-all
+    ├── 0015_auth_revoke_account.sql   # DD-80 v1.88 account-session epoch + revoke-all
+    └── 0016_account_email_token_core.sql # DD-80 §10 order-2 email/credential/token core (code dark)
 ```
 
 The SQL migrations are **authoritative**. `schema.ts` mirrors the tables but
@@ -59,7 +60,7 @@ Tức là trong sơ đồ, "club" chính là node `TENANTS` (hub trung tâm). Kh
 
 | Plane | Tables | Access |
 |---|---|---|
-| **GLOBAL protected** | `persons`, `channel_identities`, `link_codes`, `merge_audit`, `merge_tombstones`, `accounts`, `web_sessions`, `account_identities`, `magic_links`, `player_chat_context`, `oauth_transactions`, `routing_audit`, `auth_login_nonces`, `auth_login_state`, `rate_limit_hits`, `auth_audit_events` | No blanket grant to `app`. Reached via identity/auth service or SECURITY DEFINER fns. The last four are function-only (no table grant at all, not even to `app`) — see `0012`/`0015`. `sports`/`plans` are global lookups (SELECT allowed). |
+| **GLOBAL protected** | `persons`, `channel_identities`, `link_codes`, `merge_audit`, `merge_tombstones`, `accounts`, `web_sessions`, `account_identities`, `magic_links`, `player_chat_context`, `oauth_transactions`, `routing_audit`, `auth_login_nonces`, `auth_login_state`, `rate_limit_hits`, `auth_audit_events`, `account_emails`, `email_password_credentials`, `auth_pending_email_registrations`, `auth_email_tokens`, `auth_email_deliveries` | No blanket grant to `app`. Reached via identity/auth service or SECURITY DEFINER fns. `auth_login_nonces`/`auth_login_state`/`rate_limit_hits`/`auth_audit_events` and the five `0016` email tables are function-only (no table grant at all, not even to `app`) — see `0012`/`0015`/`0016`. `sports`/`plans` are global lookups (SELECT allowed). |
 | **TENANT-private (RLS)** | `memberships`, `aliases`, `channel_reachability`, `settings`, `sessions` (+recurrence/occurrences/surface_refs), `players`, `telegram_links`, `tenant_admins`, `tenant_link_codes`, `bank_accounts`, `charges`, `bank_transactions`, `payment_allocations`, `provider_connections`, `zalo_bots`, `zalo_reply_contexts`, `messenger_pages`, `processed_commands`, `outbox_events`, `join_requests`, `subscriptions`, `subscription_invoices`, `notification_*`, `onboarding_*` | `ENABLE`+`FORCE` RLS, policy on `app.tenant_id` GUC, fail-closed. `app` = `NOBYPASSRLS`. Always via `tenantRepo` choke-point. |
 | **PUBLIC read model** | `public_sessions` | No RLS. `readonly` role gets `SELECT` only; canonical tables get **zero** grant to `readonly`. Field whitelist — no money/PII/roster/exact venue. |
 | **PLATFORM/WORKER** | `plans`, `billing_transactions`, `billing_allocations`, `billing_overrides`, `projector_deliveries`, `surface_refs` | Billing platform ledger (separate from player ledger, BL-BIL-1). Worker claims outbox via `claim_outbox_batch()`. |
@@ -119,9 +120,34 @@ transaction. The internal `auth_revoke_account_sessions` helper is never
 granted to any runtime role. Full contract/proof:
 `../../docs/g3-revoke-all-concurrency-probe-seed.md`.
 
+## Auth email/credential/token core (DD-80 §10 order-2, `0016` — CODE DARK)
+
+`0016` adds the storage + primitives for email register/verify/reset, with **no
+routes, UI, provider send, or public functions** (those are order-3/4). Five
+function-only tables — `account_emails` (provider-neutral verified contact),
+`email_password_credentials`, `auth_pending_email_registrations` (independent
+per-command attempts, no last-writer-wins), `auth_email_tokens` (one 256-bit
+verifier, hash-at-rest; partial unique indexes give one active verify token per
+attempt and one active reset token per email, and are `now()`-independent), and
+`auth_email_deliveries` (enumeration-safe dark delivery ledger; the public
+`command_id` receipt is structurally distinct from the persisted
+`provider_idempotency_key`). Privileged behavior lives ONLY in the migration:
+`_auth_assert_password_phc` (full Argon2id PHC parse + policy floor/ceiling) is
+forced on BOTH write paths by constraint triggers; a verified-email gate blocks
+credentials for a pending email; `_auth_consume_email_token` is the single
+parent-first (`accounts`→`account_emails`→attempt→token) transactional consume
+boundary; retention is five single-concern, deadlock-free functions
+(`_auth_email_delivery_cleanup` for the ledger, then `_auth_email_attempt_terminalize`
+→ `_auth_email_token_retention` → `_auth_email_attempt_retention` →
+`_auth_email_orphan_cleanup`, each its own transaction, one ascending-account
+pass, child-row-bounded). None of the internal helpers is granted to `app`. `auth_audit_events` is REUSED from `0015`, not
+recreated. Contract: `../../docs/b0-auth-credential-lifecycle-design-probe.md`
+§3/§5/§8.1; acceptance D1E-1..22 in
+`../../docs/features/BE/feature_web_auth_onboarding_tech.md`.
+
 ## Migration order & deploy notes
 
-Apply `0000`→`0015` in order (FK dependencies validated). For production changes
+Apply `0000`→`0016` in order (FK dependencies validated). For production changes
 follow expand→backfill→validate→flip→contract (P12); avoid destructive
 migrations in the same deploy as behavior changes. Legacy Bestminton import:
 TDD §8.

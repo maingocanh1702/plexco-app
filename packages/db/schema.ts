@@ -17,7 +17,7 @@
  */
 import {
   pgTable, uuid, text, integer, bigint, bigserial, boolean, jsonb, timestamp,
-  time, customType, uniqueIndex, index, primaryKey, check, foreignKey,
+  time, customType, uniqueIndex, unique, index, primaryKey, check, foreignKey,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -227,6 +227,180 @@ export const authAuditEvents = pgTable("auth_audit_events", {
       ${t.sessionEpochBefore} IS NOT NULL AND ${t.sessionEpochAfter} IS NOT NULL
       AND ${t.sessionEpochAfter} = ${t.sessionEpochBefore} + 1
     )`),
+}));
+
+/**
+ * Email credential + token lifecycle (D1, migration 0016 — CODE DARK, order-2).
+ * Provider-neutral verified email, password credential, INDEPENDENT pending
+ * registration attempts, one-real-verifier email tokens, and the
+ * enumeration-safe dark delivery ledger. Every table here is FUNCTION-ONLY:
+ * `app` has ZERO grant, so direct DML on password_phc and EXECUTE on the
+ * internal helpers are denied by construction (D1E-13). All privileged
+ * behavior lives ONLY in the SQL migration (B0 §5.2/§8.1/§9):
+ *   - `_auth_assert_password_phc` + its constraint triggers on BOTH write
+ *     paths (auth_pending_email_registrations, email_password_credentials);
+ *   - the verified-email gate trigger on email_password_credentials;
+ *   - the parent-first `_auth_consume_email_token` consume helper;
+ *   - the `_auth_email_cleanup` retention sweep.
+ * auth_audit_events is REUSED from D0a/0015 (not redefined here).
+ */
+export const accountEmails = pgTable("account_emails", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  accountId: uuid("account_id").notNull().references(() => accounts.id),
+  emailLookupHash: text("email_lookup_hash").notNull().unique(),
+  emailEnc: bytea("email_enc").notNull(),
+  kmsKeyVersion: text("kms_key_version").notNull(),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  pendingExpiresAt: timestamp("pending_expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  // One email per account; one owner per normalized email (the inline .unique()
+  // on email_lookup_hash covers the latter).
+  accountUq: unique("account_emails_account_uq").on(t.accountId),
+  // Orphan-cleanup scan index — only pending rows (the retention sweep target).
+  pendingExpiresIdx: index("account_emails_pending_expires_idx")
+    .on(t.pendingExpiresAt)
+    .where(sql`${t.verifiedAt} IS NULL`),
+  // Exactly one of verified_at / pending_expires_at is set (D1E-2).
+  lifecycleChk: check("account_emails_lifecycle_chk", sql`
+    (${t.verifiedAt} IS NULL AND ${t.pendingExpiresAt} IS NOT NULL)
+    OR (${t.verifiedAt} IS NOT NULL AND ${t.pendingExpiresAt} IS NULL)`),
+}));
+
+// PK = account_email_id (one credential per verified email). A credential may
+// exist ONLY for a verified email (verified-gate trigger, D1E-4) and only with
+// a policy-valid Argon2id PHC (PHC trigger, 0016) — neither is expressible in
+// Drizzle, so both live in the migration.
+export const emailPasswordCredentials = pgTable("email_password_credentials", {
+  accountEmailId: uuid("account_email_id").primaryKey().references(() => accountEmails.id),
+  passwordPhc: text("password_phc").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const authPendingEmailRegistrations = pgTable("auth_pending_email_registrations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  accountEmailId: uuid("account_email_id").notNull()
+    .references(() => accountEmails.id, { onDelete: "cascade" }),
+  passwordPhc: text("password_phc"),
+  registrationKeyHash: text("registration_key_hash").unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  supersededAt: timestamp("superseded_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  // Referenced by the token composite FK below.
+  idEmailUq: unique("auth_pending_email_registrations_id_email_uq").on(t.id, t.accountEmailId),
+  // Active-attempt lookup — partial, now()-independent (expired-but-unswept
+  // rows stay visible for supersede-before-insert).
+  activeIdx: index("auth_pending_email_registrations_active_idx")
+    .on(t.accountEmailId, t.createdAt)
+    .where(sql`${t.consumedAt} IS NULL AND ${t.supersededAt} IS NULL`),
+  expiresIdx: index("auth_pending_email_registrations_expires_idx").on(t.expiresAt),
+  // Non-partial FK index for the account_email -> attempts ON DELETE CASCADE.
+  accountEmailIdx: index("auth_pending_email_registrations_account_email_idx").on(t.accountEmailId),
+  // Active ⇒ both candidates NOT NULL; terminal ⇒ exactly one of
+  // consumed/superseded (XOR) and both candidates NULL (D1E-5).
+  lifecycleChk: check("auth_pending_email_registrations_lifecycle_chk", sql`
+    (${t.consumedAt} IS NULL AND ${t.supersededAt} IS NULL
+      AND ${t.passwordPhc} IS NOT NULL AND ${t.registrationKeyHash} IS NOT NULL)
+    OR
+    ((${t.consumedAt} IS NOT NULL) <> (${t.supersededAt} IS NOT NULL)
+      AND ${t.passwordPhc} IS NULL AND ${t.registrationKeyHash} IS NULL)`),
+}));
+
+export const authEmailTokens = pgTable("auth_email_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  accountEmailId: uuid("account_email_id").notNull()
+    .references(() => accountEmails.id, { onDelete: "cascade" }),
+  pendingRegistrationId: uuid("pending_registration_id"),
+  purpose: text("purpose").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  supersededAt: timestamp("superseded_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  // Verify token's attempt must belong to the SAME account_email (D1E-7).
+  attemptFk: foreignKey({
+    columns: [t.pendingRegistrationId, t.accountEmailId],
+    foreignColumns: [authPendingEmailRegistrations.id, authPendingEmailRegistrations.accountEmailId],
+    name: "auth_email_tokens_attempt_fk",
+  }).onDelete("cascade"),
+  // One ACTIVE verify token per attempt (D1E-8) and one ACTIVE reset token per
+  // email (D1E-9) — partial on the lifecycle flags only, never on now().
+  oneActiveVerifyUq: uniqueIndex("auth_email_tokens_one_active_verify_per_attempt_uq")
+    .on(t.pendingRegistrationId)
+    .where(sql`${t.purpose} = 'verify_email' AND ${t.consumedAt} IS NULL AND ${t.supersededAt} IS NULL`),
+  oneActiveResetUq: uniqueIndex("auth_email_tokens_one_active_reset_uq")
+    .on(t.accountEmailId, t.purpose)
+    .where(sql`${t.purpose} = 'password_reset' AND ${t.consumedAt} IS NULL AND ${t.supersededAt} IS NULL`),
+  expiresIdx: index("auth_email_tokens_expires_at_idx").on(t.expiresAt),
+  // Non-partial index on the composite FK's referencing columns so a retention
+  // delete of a (terminal) pending attempt does not full-scan this child table.
+  pendingFkIdx: index("auth_email_tokens_pending_fk_idx").on(
+    t.pendingRegistrationId,
+    t.accountEmailId,
+  ),
+  // Non-partial FK index for the account_email -> tokens ON DELETE CASCADE.
+  accountEmailIdx: index("auth_email_tokens_account_email_idx").on(t.accountEmailId),
+  purposeChk: check("auth_email_tokens_purpose_chk",
+    sql`${t.purpose} IN ('verify_email','password_reset')`),
+  terminalChk: check("auth_email_tokens_terminal_chk",
+    sql`${t.consumedAt} IS NULL OR ${t.supersededAt} IS NULL`),
+  purposeRegChk: check("auth_email_tokens_purpose_reg_chk", sql`
+    (${t.purpose} = 'verify_email' AND ${t.pendingRegistrationId} IS NOT NULL)
+    OR (${t.purpose} = 'password_reset' AND ${t.pendingRegistrationId} IS NULL)`),
+}));
+
+// Dark delivery ledger. command_id is the public command-receipt fence;
+// provider_idempotency_key is a SEPARATE persisted upstream-send key (§3.4,
+// D1E-19). token_id → auth_email_tokens ON DELETE SET NULL (added after the
+// token table in the SQL; here it is a plain reference).
+export const authEmailDeliveries = pgTable("auth_email_deliveries", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  kind: text("kind").notNull(),
+  tokenId: uuid("token_id").references(() => authEmailTokens.id, { onDelete: "set null" }),
+  payloadEnc: bytea("payload_enc"),
+  kmsKeyVersion: text("kms_key_version"),
+  commandId: uuid("command_id").notNull().unique(),
+  commandOwnerHash: text("command_owner_hash").notNull(),
+  commandOperation: text("command_operation").notNull(),
+  commandTargetFingerprint: text("command_target_fingerprint").notNull(),
+  providerIdempotencyKey: text("provider_idempotency_key").notNull().unique(),
+  providerKeyVersion: text("provider_key_version").notNull(),
+  outcome: text("outcome").notNull(),
+  enqueuedAt: timestamp("enqueued_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  terminalAt: timestamp("terminal_at", { withTimezone: true }),
+  lastErrorClass: text("last_error_class"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  expiresIdx: index("auth_email_deliveries_expires_idx").on(t.expiresAt),
+  terminalIdx: index("auth_email_deliveries_terminal_idx")
+    .on(t.terminalAt).where(sql`${t.terminalAt} IS NOT NULL`),
+  dispatchIdx: index("auth_email_deliveries_dispatch_idx")
+    .on(t.createdAt).where(sql`${t.outcome} = 'queued' AND ${t.enqueuedAt} IS NULL`),
+  // FK index so a token delete can find the delivery rows to ON DELETE SET NULL.
+  tokenIdIdx: index("auth_email_deliveries_token_id_idx")
+    .on(t.tokenId).where(sql`${t.tokenId} IS NOT NULL`),
+  kindChk: check("auth_email_deliveries_kind_chk",
+    sql`${t.kind} IN ('verify_email','password_reset')`),
+  operationChk: check("auth_email_deliveries_operation_chk",
+    sql`${t.commandOperation} IN ('register','verify_resend','forgot')`),
+  outcomeChk: check("auth_email_deliveries_outcome_chk",
+    sql`${t.outcome} IN ('queued','delivered','noop','dead_letter','failed_terminal')`),
+  // queued is the only non-terminal outcome (D1E-19).
+  terminalChk: check("auth_email_deliveries_terminal_chk", sql`
+    (${t.outcome} = 'queued' AND ${t.terminalAt} IS NULL)
+    OR (${t.outcome} IN ('delivered','noop','dead_letter','failed_terminal') AND ${t.terminalAt} IS NOT NULL)`),
+  // ciphertext/key live only while replayable (queued|dead_letter) (D1E-19).
+  payloadChk: check("auth_email_deliveries_payload_chk", sql`
+    (${t.outcome} IN ('queued','dead_letter') AND ${t.payloadEnc} IS NOT NULL AND ${t.kmsKeyVersion} IS NOT NULL)
+    OR (${t.outcome} IN ('delivered','noop','failed_terminal') AND ${t.payloadEnc} IS NULL AND ${t.kmsKeyVersion} IS NULL)`),
+  operationKindChk: check("auth_email_deliveries_operation_kind_chk", sql`
+    (${t.commandOperation} IN ('register','verify_resend') AND ${t.kind} = 'verify_email')
+    OR (${t.commandOperation} = 'forgot' AND ${t.kind} = 'password_reset')`),
 }));
 
 export const magicLinks = pgTable("magic_links", {

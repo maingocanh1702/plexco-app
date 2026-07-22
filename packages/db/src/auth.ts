@@ -1,3 +1,12 @@
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
+import { isIP } from "node:net";
+import { domainToASCII } from "node:url";
 import type pg from "pg";
 
 /**
@@ -253,4 +262,235 @@ export async function rateLimitCheck(
     [bucket, limit, windowSeconds],
   );
   return Boolean((rows[0] as { allowed: boolean }).allowed);
+}
+
+/* ===========================================================================
+ * Email credential lifecycle — app-boundary derivation (D1, migration 0016).
+ *
+ * The ONLY app-boundary helpers this CODE-DARK slice adds. They are PURE: all
+ * key material is INJECTED by the caller, so the DB package takes on no live
+ * secret/KMS coupling here — the future order-4 email routes supply the
+ * HMAC/KMS keys from config. Contracts pinned by
+ * b0-auth-credential-lifecycle-design-probe.md §3.3 (email normalization +
+ * artifact derivation) and §3.4 (provider-send idempotency key, kept distinct
+ * from the public command receipt). No D1E acceptance row depends on these;
+ * they carry their own focused unit tests.
+ * ======================================================================== */
+
+export class InvalidEmailError extends Error {
+  constructor() {
+    super("email address is invalid or ambiguous");
+    this.name = "InvalidEmailError";
+  }
+}
+
+/**
+ * Canonicalize an email for lookup + storage (B0 §3.3). Deterministic so the
+ * same real address always derives the same lookup hash:
+ *   - trim OUTER whitespace only (never inner);
+ *   - domain -> IDNA A-label + lowercase (domainToASCII);
+ *   - local-part -> Unicode NFC, PRESERVE case, NO Gmail dot/plus folding and
+ *     NO provider-specific alias rewriting.
+ * Rejects a structurally invalid/ambiguous address. Routing-grade validation,
+ * not full RFC 5322 parsing.
+ */
+export function normalizeEmail(rawEmail: string): string {
+  const trimmed = rawEmail.trim();
+  const at = trimmed.lastIndexOf("@");
+  // exactly one @, non-empty local + domain, no internal whitespace.
+  if (
+    at <= 0 ||
+    at !== trimmed.indexOf("@") || // a second @ => ambiguous
+    at === trimmed.length - 1 ||
+    /\s/.test(trimmed)
+  ) {
+    throw new InvalidEmailError();
+  }
+  const local = trimmed.slice(0, at).normalize("NFC");
+  // Local-part is validated by an ALLOWLIST grammar, not a denylist of bad forms
+  // (codex round-02/03 [P2]): a dot-atom (RFC 5321) of atext, extended with
+  // Unicode letters/marks/numbers for internationalized addresses (EAI; NFC,
+  // case-preserved). One rule rejects commas, parentheses, angle/square
+  // brackets, colons, quotes, whitespace, and leading/trailing/consecutive dots,
+  // and the 64-octet cap enforces the RFC 5321 local-part limit. (Quoted local
+  // parts and comments are out of scope for phase-1.)
+  const localAtom = "[\\p{L}\\p{M}\\p{N}!#$%&'*+/=?^_`{|}~-]+";
+  if (
+    !new RegExp(`^${localAtom}(\\.${localAtom})*$`, "u").test(local) ||
+    Buffer.byteLength(local, "utf8") > 64
+  ) {
+    throw new InvalidEmailError();
+  }
+  const rawDomain = trimmed.slice(at + 1);
+  // domainToASCII treats its input as a URL host: it SILENTLY TRUNCATES at URL
+  // delimiters — e.g. "good.example#evil.com" -> "good.example" — and
+  // PERCENT-DECODES escapes — e.g. "good%2Eexample.com" -> "good.example.com"
+  // — either of which would bind verification/reset mail to a DIFFERENT real
+  // address. Reject any URL delimiter, percent escape, or IP-literal bracket
+  // before the IDNA conversion (codex round-01/04 [P1]/[P2]).
+  if (/[/\\?#@:[\]<>"'%]/.test(rawDomain)) {
+    throw new InvalidEmailError();
+  }
+  const asciiDomain = domainToASCII(rawDomain).toLowerCase();
+  // domainToASCII also NORMALIZES IPv4 shorthand/integer forms to a dotted IP
+  // ("2130706433" | "127.1" | "0x7f.1" -> "127.0.0.1"), which would pass the
+  // hostname regex and collapse distinct inputs onto one identity. Email domains
+  // are hostnames, not IP literals (bracketed IP-literals are already rejected
+  // above), so reject any result that is an IP address — this closes the whole
+  // IPv4/IPv6 family in one rule (codex round-06 [P2]).
+  if (isIP(asciiDomain) !== 0) {
+    throw new InvalidEmailError();
+  }
+  // Require a valid dotted A-label hostname: labels of alnum/hyphen (no leading
+  // or trailing hyphen), at least one interior dot, total length <= 253. This
+  // also rejects the "" that domainToASCII returns for an invalid domain.
+  if (
+    !/^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(
+      asciiDomain,
+    )
+  ) {
+    throw new InvalidEmailError();
+  }
+  const canonical = `${local}@${asciiDomain}`;
+  // RFC 5321 whole-mailbox limit: a 64-octet local part plus a 253-octet domain
+  // can still exceed the 254-octet path cap (codex round-03 [P2]).
+  if (Buffer.byteLength(canonical, "utf8") > 254) {
+    throw new InvalidEmailError();
+  }
+  return canonical;
+}
+
+export interface EmailArtifactKeys {
+  /** domain-separated HMAC key for the deterministic lookup hash */
+  lookupHmacKey: Buffer;
+  /** 32-byte AES-256-GCM key for the reversible email ciphertext */
+  encKey: Buffer;
+  /** opaque KMS key/version reference stored alongside the ciphertext */
+  kmsKeyVersion: string;
+}
+
+export interface EmailArtifacts {
+  canonicalEmail: string;
+  /** lowercase hex HMAC-SHA256 — the account_emails.email_lookup_hash value */
+  emailLookupHash: string;
+  /** iv(12) || authTag(16) || ciphertext — the account_emails.email_enc value */
+  emailEnc: Buffer;
+  kmsKeyVersion: string;
+}
+
+const EMAIL_LOOKUP_DOMAIN = "plexco:account-email:v1:";
+
+/** HMAC-SHA256 of the domain-separated canonical email, lowercase hex (B0 §3.3). */
+function deriveEmailLookupHash(canonicalEmail: string, lookupHmacKey: Buffer): string {
+  return createHmac("sha256", lookupHmacKey)
+    .update(EMAIL_LOOKUP_DOMAIN + canonicalEmail, "utf8")
+    .digest("hex");
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Canonicalize a UUID (validate shape + lowercase). The AAD is bound at encrypt
+ * time from the app-preallocated id, but the row-driven DECRYPT reads
+ * account_emails.id back through Postgres's `uuid` type, which always renders
+ * the canonical lowercase form. If encryption bound a noncanonical spelling
+ * (e.g. uppercase hex) the two AADs would differ and the ciphertext would be
+ * permanently undecryptable — so both paths canonicalize first (codex round-06 [P2]).
+ */
+function canonicalUuid(id: string): string {
+  if (!UUID_RE.test(id)) {
+    throw new Error("account_emails.id must be a UUID");
+  }
+  return id.toLowerCase();
+}
+
+/** AAD binds the ciphertext to its row id + lookup hash + key version (B0 §3.3). */
+function emailEncAad(
+  accountEmailId: string,
+  emailLookupHash: string,
+  kmsKeyVersion: string,
+): Buffer {
+  return Buffer.from(
+    `plexco:account-email-aad:v1:${canonicalUuid(accountEmailId)}:${emailLookupHash}:${kmsKeyVersion}`,
+    "utf8",
+  );
+}
+
+/**
+ * Derive all four account_emails artifacts for a raw address (B0 §3.3). The
+ * caller PREALLOCATES account_emails.id and passes it in (v1.86 AAD handoff):
+ * the ciphertext is bound to that id so it can never be silently re-bound to a
+ * different row. Returns the canonical email, the deterministic lookup hash,
+ * the authenticated ciphertext, and the KMS key version.
+ */
+export function deriveEmailArtifacts(
+  rawEmail: string,
+  accountEmailId: string,
+  keys: EmailArtifactKeys,
+): EmailArtifacts {
+  if (keys.encKey.length !== 32) {
+    throw new Error("deriveEmailArtifacts: encKey must be 32 bytes (AES-256-GCM)");
+  }
+  const canonicalEmail = normalizeEmail(rawEmail);
+  const emailLookupHash = deriveEmailLookupHash(canonicalEmail, keys.lookupHmacKey);
+
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", keys.encKey, iv);
+  cipher.setAAD(emailEncAad(accountEmailId, emailLookupHash, keys.kmsKeyVersion));
+  const ciphertext = Buffer.concat([cipher.update(canonicalEmail, "utf8"), cipher.final()]);
+  const emailEnc = Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
+
+  return { canonicalEmail, emailLookupHash, emailEnc, kmsKeyVersion: keys.kmsKeyVersion };
+}
+
+/**
+ * Decrypt an email_enc blob (B0 §3.3 delivery boundary). Verifies the SAME AAD
+ * the ciphertext was bound to; a tampered id / lookup-hash / key-version or a
+ * corrupted blob throws. Returns the canonical email.
+ */
+export function decryptEmailEnc(
+  emailEnc: Buffer,
+  accountEmailId: string,
+  emailLookupHash: string,
+  keys: Pick<EmailArtifactKeys, "encKey" | "kmsKeyVersion" | "lookupHmacKey">,
+): string {
+  const iv = emailEnc.subarray(0, 12);
+  const authTag = emailEnc.subarray(12, 28);
+  const ciphertext = emailEnc.subarray(28);
+  const decipher = createDecipheriv("aes-256-gcm", keys.encKey, iv);
+  decipher.setAAD(emailEncAad(accountEmailId, emailLookupHash, keys.kmsKeyVersion));
+  decipher.setAuthTag(authTag);
+  const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+
+  // §3.3: normalize + rehash the DECRYPTED address and constant-time compare it
+  // to the stored lookup hash. GCM's AAD binds the hash but NOT the plaintext
+  // identity, so a row crafted with ciphertext for address A yet lookup hash for
+  // address B still authenticates; re-deriving the hash from A and rejecting the
+  // mismatch fails such a row closed before the address is used for delivery.
+  // RETURN the normalized value (not the raw plaintext): a normalization-
+  // equivalent but noncanonical ciphertext (e.g. an NFD SMTPUTF8 local part)
+  // hashes equal yet differs byte-for-byte, and only the canonical form must
+  // ever reach the provider (codex round-05 [P2]).
+  const normalized = normalizeEmail(decrypted);
+  const rederived = Buffer.from(deriveEmailLookupHash(normalized, keys.lookupHmacKey), "utf8");
+  const stored = Buffer.from(emailLookupHash, "utf8");
+  if (rederived.length !== stored.length || !timingSafeEqual(rederived, stored)) {
+    throw new Error("decryptEmailEnc: decrypted address does not match its lookup hash");
+  }
+  return normalized;
+}
+
+/**
+ * Provider-send idempotency key (B0 §3.4) — derived from the IMMUTABLE delivery
+ * id + kind and KEPT SEPARATE from the public command receipt (command_id /
+ * owner hash / target fingerprint). Only this opaque value ever reaches the
+ * email provider. base64url; stable across key rotation because it is persisted
+ * once with its key version.
+ */
+export function deriveProviderIdempotencyKey(
+  input: { deliveryId: string; kind: "verify_email" | "password_reset" },
+  key: { providerSendKey: Buffer; keyVersion: string },
+): string {
+  const message = `auth-email-provider-send:v1:${JSON.stringify([input.deliveryId, input.kind])}`;
+  return createHmac("sha256", key.providerSendKey).update(message, "utf8").digest("base64url");
 }

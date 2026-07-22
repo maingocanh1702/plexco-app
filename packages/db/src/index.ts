@@ -34,4 +34,13 @@ export {
   type LoginResult,
   type OnboardingSnapshot,
   type ResolvedSession,
+  // Email credential-lifecycle app-boundary helpers (D1, migration 0016) — the
+  // order-3/4 email routes reach them through this entrypoint (B0 §3.3/§3.4).
+  InvalidEmailError,
+  decryptEmailEnc,
+  deriveEmailArtifacts,
+  deriveProviderIdempotencyKey,
+  normalizeEmail,
+  type EmailArtifactKeys,
+  type EmailArtifacts,
 } from "./auth.js";
