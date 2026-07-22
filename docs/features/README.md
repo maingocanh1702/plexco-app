@@ -1,7 +1,7 @@
 # Plexco Feature Specs — Coverage Index
 
-> **Version:** 2.43 · 2026-07-22
-> **Scope source:** `../product/BRD.md` v3.9g · `../product/PRD.md` v2.8f · `../product/TDD.md` v3.1a · `../product/ROADMAP.md` v3.4 · `../standards/decisions.md` **v1.98 (DD-01..87)**. DD-05/06/45/49 integrity closed; DD-59 ✅ reconcile; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; **DD-79 ✅ Home · DD-80 ✅ auth B0 · DD-81 ✅ Pencil · DD-82..85 ✅ owner directions · DD-86 🟡 multi-channel proposal · DD-87 ✅ fail-closed split-name/amount authority**. Runtime gates unchanged.
+> **Version:** 2.44 · 2026-07-22
+> **Scope source:** `../product/BRD.md` v3.9g · `../product/PRD.md` v2.8f · `../product/TDD.md` v3.1a · `../product/ROADMAP.md` v3.4b · `../standards/decisions.md` **v1.98 (DD-01..87)**. DD-05/06/45/49 integrity closed; DD-59 ✅ reconcile; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; **DD-79 ✅ Home · DD-80 ✅ auth B0 · DD-81 ✅ Pencil · DD-82..85 ✅ owner directions · DD-86 🟡 multi-channel proposal · DD-87 ✅ fail-closed split-name/amount authority**. Runtime gates unchanged.
 
 > **Cập nhật DD-37 (2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (**Telegram loại khỏi phạm vi**). `feature_player_telegram` → **Archived (DD-37)**, thay bằng `feature_player_messenger`. Thêm phase-1: `feature_inapp_chat` (DD-38 ✅), `feature_user_settings` (DD-39 ✅), Google login (DD-13 ✅, trong `feature_web_auth_onboarding`), mark-paid thủ công (DD-40 ✅, trong `feature_payment_reconcile`).
 
@@ -114,6 +114,7 @@ Với spec mới hoặc spec được promote sang **Reviewed**, review gate k�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-22 | v2.44 | Mirror ROADMAP **v3.4a→v3.4b**: pin current truth `main@f93873b` và canonical suite **29 files / 419 tests PASS**; v3.4b thêm kiểm kê generator (`410 + 9 = 419`) và danh sách invariant-class 3 file. Inventory vẫn 24 Product + 23 BE; không thay đổi contract, coverage hay implementation status. |
 | 2026-07-22 | v2.43 | Reconcile authority sang ROADMAP v3.4 / decisions v1.98 và inventory trên disk: 24 Product + 23 BE tech = 23 cặp + 1 product-only Draft. Tách `README.md` và `auth-security-invariant-table.md` khỏi phép đếm feature spec; không đổi contract/runtime. |
 | 2026-07-22 | v2.42 | Mirror DD-86 proposal xuyên In-app Chat v0.8/v0.16, Club Assistant v0.10/v0.11 và historical proposal v0.8. Pin migration HOLD, root final chat migration sequencing, exact-one default/atomic provisioning/DD-56 capability/idempotency/Assistant conjunction. DD-86 vẫn `NOT_PLAN_READY`; không runtime. |
 | 2026-07-21 | v2.41 | **Thêm cặp `feature_tournament` v0.1 (🟡 Draft, DD-82 chốt hướng owner 21/07).** Aggregate độc lập (`tournaments` + `tournament_registrations` tenant-scoped/RLS + `public_tournaments` whitelist); v1 info+đăng ký, không đụng tiền; bracket/standings/entry-fee slice sau. Đưa vào bảng Post-MVP (P4+). **Chưa readiness gate** — coverage file, không phải Reviewed contract/runtime. Hard dependency: coordinate DD-41 retire `session_type='tournament'` (live schema chưa có cột đó). On-disk → +1 cặp. |

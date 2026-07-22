@@ -1,12 +1,12 @@
 # 🗺️ ROADMAP — Plexco
 
-**Phiên bản:** v3.4
+**Phiên bản:** v3.4b
 **Ngày tạo:** 16/06/2026 · **Cập nhật:** 22/07/2026
 **Căn cứ:** `BRD.md` v3.9g · `PRD.md` v2.8f · `TDD.md` v3.1a · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` **v1.98** · `../standards/BUILD-STATUS.md` · `../dd-69-app-native-analysis.md`
 
 > ROADMAP là nguồn sự thật cho **delivery order + dev progress**. Product scope thuộc BRD; behavior thuộc PRD; implementation contract thuộc TDD.
 
-> **📌 Repo truth snapshot — `main@142e9fa` (22/07/2026).** Mọi số đếm trong file này lấy từ cây repo tại commit trên, không phải từ prose. Cách tái tạo: xem §Cách đọc tiến độ → "Lệnh tái tạo số đếm". Nếu số không tái tạo được ⇒ coi như **stale**, không dùng để ra verdict.
+> **📌 Repo truth snapshot — `main@f93873b08d73f7a11c2576196b09633b9197ad60` (22/07/2026).** Mọi số đếm trong file này lấy từ cây repo tại commit trên, không phải từ prose. Cách tái tạo: xem §Cách đọc tiến độ → "Lệnh tái tạo số đếm". Nếu số không tái tạo được ⇒ coi như **stale**, không dùng để ra verdict.
 
 > **v3.4 channel pivot (DD-37):** bỏ Telegram; kênh phase-1 = **web + Zalo + Facebook Messenger**. Messenger nâng từ post-MVP (P4.8) lên **phase-1 (P2.5, phụ thuộc App Review)**. Thêm **Google login** (P0–P1), **chat in-app** + **cài đặt hồ sơ/giá theo giới tính** (P4, DD-38/DD-39 ✅ scope-committed phase-1; schema chờ migration), **mark-paid thủ công tiền mặt/CK** (P2).
 
@@ -17,6 +17,8 @@
 > **Cập nhật 18/07/2026 (founder batch, decisions v1.47):** DD-69 **định hướng app-first accepted** — phase-1 target = PWA (S9/S20 chưa live); phase-2 native ngoài committed timeline (build TBD). RN+Expo chỉ là recommendation sau spike; trước khi schedule native phải qua client-contract, API/auth/push/offline/store gates (DD-69 analysis). **DD-61..64 Session Organize accept-in-principle** (build post-P4). DD-33 Facebook Login phase-1 ✅; DD-60 API-reference convention ✅.
 
 > **Cập nhật 22/07/2026 (v3.4 — reconcile số liệu + khung đo lường):** file này trước đây khai `migrations 0000–0013` và "Google/email chưa code". **Sai so với repo.** Truth tại `main@142e9fa`: migrations **`0000–0018`**; toàn bộ lane Google (D0a · D0b · D1 email-token · D1 google-adapter · d1b) **đã merge**, đang **chặn ENABLE** (chờ đo Safari macOS/iOS cho completion-hop M3; `GOOGLE_OAUTH_*` giữ rỗng). Đây là **reconcile bằng chứng**, không phải quyết định mới: **không phase nào được thêm/bớt, không DD nào đổi trạng thái, delivery order không đổi.**
+>
+> **Cập nhật 22/07/2026 (v3.4a — runner evidence reconcile):** canonical `DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test` **PASS** tại snapshot này: **29 test files / 419 tests** (core 111 · db 159 · web 146 · bot 3). Static grep hiện cho **410** và chỉ là cross-check nguồn; không được dùng làm số test hay điều kiện `✅ Tests`.
 
 > **Đánh số phase:** toàn bộ tài liệu dùng duy nhất **canonical P-number**. Các tên Foundation/Tenant Engine/... chỉ là delivery-group label, không tạo một hệ số thứ hai.
 
@@ -146,14 +148,27 @@ Plexco xây **repo riêng**; lift logic thuần (matching, payments-logic, dates
 | **BE** | Có service/route/function thật, không phải chỉ bảng | đường dẫn file + tên route |
 | **FE/UI** | Màn hình chạy trên app thật, nối API thật | route Next.js. **Màn hình trong `.pen` KHÔNG tính là FE** — chỉ tính vào trục Design |
 | **Tests** | Test chạy xanh trong CI | tên file test + số case |
-| **Invariant** | Test bất biến (RLS cô lập, public field-whitelist, no-money-leak) xanh | `packages/db/src/*-invariants.test.ts` |
+| **Invariant** | Test bất biến xanh — **tenant isolation/RLS · public field-whitelist · no-money-leak · concurrency/race-safety** | `packages/db/src/*-invariants.test.ts` **+ danh sách invariant-class đặt tên khác** (bảng ngay dưới). Không suy ra từ tên file: file chỉ tính khi có tên trong danh sách |
+
+**Danh sách invariant-class (`f93873b`)** — trục Invariant chỉ đếm các file dưới đây; thêm file mới phải thêm dòng ở đây, không dựa vào quy ước đặt tên:
+
+| File | Invariant bảo vệ | Khớp pattern `*-invariants` |
+|---|---|---|
+| `packages/db/src/rls-invariants.test.ts` | Tenant isolation fail-closed · public field-whitelist | ✅ |
+| `packages/db/src/waitlist-invariants.test.ts` | Waitlist ordering/capacity | ✅ |
+| `packages/db/src/migrate.test.ts` | **Race-safety của role bootstrap `0000`** (concurrency) | ❌ tên không theo pattern — vẫn tính vì đúng invariant-class |
+
+> Tồn đọng đã biết: `migrate.test.ts` đúng class nhưng lệch quy ước đặt tên. Có thể đóng bằng rename (`migrate-invariants.test.ts`) trong một code slice riêng; **chưa làm ở đây** vì ROADMAP là doc-only. Tới lúc đó danh sách trên là nguồn sự thật.
 
 **5 luật chống lạm phát con số** — vi phạm bất kỳ luật nào ⇒ số liệu bị coi là vô hiệu:
 
 1. **Docs ≠ runtime.** Spec Reviewed không cộng vào bất kỳ trục code nào. (Luật này đã có; nay áp cho cả bảng số.)
 2. **Merged ≠ enabled.** Code merge nhưng feature flag/env còn tắt ⇒ trạng thái là `🟢 merged · ⛔ chưa bật`, **không** phải ✅. Ví dụ sống: lane Google.
 3. **`.pen` screens ≠ FE.** Design xong không kéo FE lên %.
-4. **Đếm được thì phải tái tạo được.** Mọi số trong file này đi kèm lệnh tái tạo bên dưới. Với test case dùng **hai nguồn**: *static cross-check* (grep, ai cũng chạy được, không cần DB) và *canonical runner* (`pnpm test`, là authority). **Hai số lệch nhau = tín hiệu doc drift, phải điều tra — không được chọn số lớn hơn.**
+4. **Đếm được thì phải tái tạo được.** Mọi số trong file này đi kèm lệnh tái tạo bên dưới. Với test case: **canonical runner (`pnpm test`) là authority duy nhất**; *static grep* là cross-check chạy được không cần DB, dùng để **phát hiện drift**, không dùng để khai số.
+   **Công thức đối chiếu:** `static + Σ(test sinh trong loop) = runner`. Test sinh trong loop = table-driven test viết bằng `for…of`/`forEach` bọc ngoài `it()` — grep chỉ đếm 1 lần dù runner sinh N.
+   **Generator đã kiểm kê tại `f93873b` — đúng 1 chỗ:** `apps/web/lib/google-oidc.test.ts:133` (`for (const row of rows)`, `rows.length = 10` ⇒ `+9`). Đối chiếu: `410 + 9 = 419` ✅.
+   Nếu công thức không khớp ⇒ hoặc có generator mới chưa kiểm kê (thêm vào danh sách trên), hoặc doc đã drift. **Không được chọn số lớn hơn để cho khớp.**
 5. **Trục yếu nhất là trạng thái thật.** Một group có Spec ✅ / BE ✅ / FE ⬜ thì là **⬜ chưa dùng được**, không phải "gần xong".
 
 <details>
@@ -165,11 +180,14 @@ ls packages/db/migrations/*.sql | wc -l
 # test files (loại trừ dependency và worktree)
 find packages apps -type f \( -name "*.test.ts" -o -name "*.test.tsx" \) \
   -not -path "*/node_modules/*" -not -path "*/.autopilot/worktrees/*" | wc -l
-# test cases — nguồn 1: static cross-check (không cần DB, ai cũng chạy được)
+# test cases — canonical runner (AUTHORITY cho số test và trục Tests)
+DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test
+# static cross-check (không cần DB) — dùng để phát hiện drift, KHÔNG dùng để khai số
 grep -rhoE "^[[:space:]]*(it|test)\(" packages apps \
   --include="*.test.ts" --include="*.test.tsx" | wc -l
-# test cases — nguồn 2: canonical runner (AUTHORITY khi hai nguồn lệch)
-DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test
+# kiểm kê generator (loop bọc ngoài it()) — nguồn duy nhất gây lệch static vs runner
+grep -rnE "^[[:space:]]*(for[[:space:]]*\(|.*\.forEach\()" packages apps \
+  --include="*.test.ts" -A3 | grep -B1 -E "^\S+-[0-9]+-[[:space:]]*(it|test)\("
 # API routes đang có
 find apps/web/app/api -name "route.ts" | wc -l
 # feature specs: không đếm coverage index hoặc supporting invariant table
@@ -181,28 +199,27 @@ find docs/features/BE -maxdepth 1 -type f -name "feature_*_tech.md" | wc -l
 
 ## 📊 Dev Progress Overview
 
-**Số đếm kiểm chứng được — `main@142e9fa` (22/07/2026):**
+**Số đếm kiểm chứng được — `main@f93873b08d73f7a11c2576196b09633b9197ad60` (22/07/2026):**
 
 | Hạng mục | Số thực | Ghi chú |
 |---|---|---|
 | Migrations trên `main` | **19** (`0000`–`0018`) | `0015` D0a · `0016` D1 email-token · `0017` OAuth tx · `0018` handoff |
-| Test file | **28** | core 9 · db 3 · web 15 · bot 1 |
-| Test case | **403** *(static)* | core 111 · db 152 · web 137 · bot 3 — ⚠️ xem ghi chú drift bên dưới |
-| Invariant test | **2 file** | `rls-invariants.test.ts` · `waitlist-invariants.test.ts` |
+| Test file | **29** *(canonical runner)* | core 9 · db 4 · web 15 · bot 1 |
+| Test case | **419** *(canonical runner PASS)* | core 111 · db 159 · web 146 · bot 3 |
+| Invariant test | **3 file** | `rls-invariants` · `waitlist-invariants` · `migrate` (race-safety `0000`) — xem danh sách invariant-class ở §Cách đọc tiến độ |
 | API route đang có | **10** | 8 auth + 2 onboarding. **0 route nghiệp vụ** (session/payment/sync) |
 | Feature spec | **24 Product + 23 BE** | 23 cặp + 1 product-only Draft; coverage cao — *không* phải readiness |
 | Màn FE nối API thật | **0** | `.pen` có design; chưa màn nào chạy trên app |
 
-> ⚠️ **OPEN — test-count drift `apps/web` (chưa đóng, 22/07).** Static cross-check tại `142e9fa` cho **web = 137**; `BUILD-STATUS.md` khai **146** (từ dòng d1b `131→146`). Chênh **9** — đúng bằng số test của `app/api/auth/google/complete/route.test.ts`, route mới của d1b ⇒ nghi delta bị cộng hai lần.
-> Ba dữ kiện đã loại trừ: (a) `db = 152` khớp chính xác BUILD-STATUS ⇒ phương pháp static đúng với repo này; (b) `grep -rn "\.each\b"` trên toàn bộ test file = **0 hit** ⇒ không có `test.each`/matrix nào để static bỏ sót; (c) đã tính cả `it.skip/only/concurrent`.
-> **Số đang dùng trong file = static (403/137)** vì đó là số duy nhất tái tạo được. **Binary resolution:** chạy `pnpm -r run test`; runner in `137` ⇒ sửa `BUILD-STATUS.md`; in `146` ⇒ sửa lại bảng này **và** ghi cơ chế thật khiến static đếm thiếu. **Owner:** người chạy suite. **Next review trigger:** output runner, không phải doc update.
+> **Closed — static/canonical divergence (22/07), nguyên nhân đã xác định.** Static grep cho **410** (core 111 · db 159 · web 137 · bot 3); canonical runner PASS cho **419** (web 146). Chênh **9** đến từ **đúng một table-driven generator**: `apps/web/lib/google-oidc.test.ts:133` — `for (const row of rows) { it(…) }` với `rows.length = 10`, grep đếm 1 lần trong khi vitest sinh 10. Loop viết bằng `for…of` thuần nên **không** bị `it.each` bắt được (repo có 0 hit `.each`); hai loop còn lại ở `oauth-transaction.test.ts:71,96` nằm *trong* thân `it()` nên mỗi cái vẫn là 1 test.
+> Đối chiếu khớp: `410 + 9 = 419`. **Authority duy nhất cho số test và trục Tests vẫn là output canonical runner**; static giữ vai trò phát hiện drift qua công thức ở luật 4.
 
 **Ma trận theo delivery group** — ✅ done · 🟢 merged-chưa-bật · 🟡 một phần · ⬜ chưa bắt đầu · — không áp dụng:
 
 | Delivery group | Spec | Migration | BE | FE/UI | Tests | Invariant | Trạng thái thật (trục yếu nhất) |
 |---|---|---|---|---|---|---|---|
-| **P0–P1 Foundation** | ✅ | ✅ `0000`–`0014` | ✅ core+db | ⬜ | ✅ 263 case | ✅ RLS+waitlist | 🟡 **nền xong, chưa có surface** |
-| **P0–P1 · 3b Auth (Google lane)** | ✅ | ✅ `0015`–`0018` | ✅ 8 route | 🟡 callback/landing | ✅ 137 web case | ✅ auth 152 db case | 🟢 **merged · ⛔ chưa bật** (chờ đo Safari/iOS) |
+| **P0–P1 Foundation** | ✅ | ✅ `0000`–`0014` | ✅ core+db | ⬜ | ✅ runner: core 111 + db 159 | ✅ RLS + waitlist + migrate-race | 🟡 **nền xong, chưa có surface** |
+| **P0–P1 · 3b Auth (Google lane)** | ✅ | ✅ `0015`–`0018` | ✅ 8 route | 🟡 callback/landing | ✅ runner: web 146 | ✅ auth/RLS trong db 159 | 🟢 **merged · ⛔ chưa bật** (chờ đo Safari/iOS) |
 | **P2–P3 Tenant Engine** | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started |
 | **P2.5 Messenger** | ✅ Reviewed contract | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started · 🔗 chặn App Review |
 | **P3.5 Identity** | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started |
@@ -229,9 +246,9 @@ TỔNG (code, theo slice roadmap)  ██████░░░░░░░░░
 | # | Module | Track | Phase | Spec | Migration | BE | FE | Tests | Rev? | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1 | Monorepo + lift `core` (+ `sports`) | 🏢 | P0 | ✅ | — | ✅ | — | ✅ 111 | 🔴 | ✅ (S1/S2 merged) |
-| 2 | Postgres + Drizzle + RLS + **public read model skeleton** | 🏢 | P0 | ✅ | ✅ `0000`–`0013` | ✅ | — | ✅ 152 | 🔴 | ✅ (S3 merged) |
+| 2 | Postgres + Drizzle + RLS + **public read model skeleton** | 🏢 | P0 | ✅ | ✅ `0000`–`0013` | ✅ | — | ✅ runner: db 159 | 🔴 | ✅ (S3 merged) |
 | 3 | Tenant schema (đa môn, session.visibility/slot/join_policy) + repo choke-point | 🏢 | P0–P1 | ✅ | ✅ | ✅ | — | ✅ | 🔴 | ✅ (S3 merged) |
-| 3b | **Google login / tài khoản web (email)** (DD-13/DD-80) | 🏢 | P0–P1 | ✅ | ✅ `0015`–`0018` | ✅ 8 route | 🟡 | ✅ 137 | 🔴 | 🟢 **merged · ⛔ chưa bật** — chờ đo Safari/iOS |
+| 3b | **Google login / tài khoản web (email)** (DD-13/DD-80) | 🏢 | P0–P1 | ✅ | ✅ `0015`–`0018` | ✅ 8 route | 🟡 | ✅ runner: web 146 | 🔴 | 🟢 **merged · ⛔ chưa bật** — chờ đo Safari/iOS |
 | 3c | Email/password bundle (order-4, flag OFF) + gỡ Telegram | 🏢 | P0–P1 | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 | ⬜ kế tiếp trong lane DD-80 |
 | 4 | **Chat-channel tenant middleware** (Zalo P2 → Messenger P2.5) | 🏢 | P2/P2.5 | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 | ⬜ |
 | 4b | **Mark-paid thủ công (tiền mặt/CK, tap/multi-select)** (DD-40) | 💰 | P2 | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 | ⬜ |
@@ -255,7 +272,7 @@ TỔNG (code, theo slice roadmap)  ██████░░░░░░░░░
 
 > Module 17 (Messenger) **phase-1** nhưng chặn bởi **App Review Meta** — nộp sớm; degrade sang web + Zalo nếu App Review chậm (BRD OD-9/DD-37 · `../channels/messenger/messenger-channel-design.md`).
 >
-> **Module 3b (auth) — reconcile 22/07:** toàn bộ lane Google **đã merge** trên `main@142e9fa` (D0a `0015` → D0b → D1 email-token `0016` → D1 google-adapter `0017` → d1b session-rotation `0018`), có test (db 152 · web 137 static — xem ghi chú drift §Dev Progress). **Nhưng chưa bật:** completion-hop M3 cần bằng chứng đo trên **Safari macOS + iOS thật** (Playwright chỉ có WebKit đóng băng); `GOOGLE_OAUTH_CLIENT_ID/SECRET` giữ rỗng tới khi đo xong — thủ tục ở `../probe-strict-cookie-completion-hop.md` §7. Đây là ví dụ chuẩn của luật **merged ≠ enabled**: trạng thái là 🟢, **không** phải ✅.
+> **Module 3b (auth) — reconcile 22/07:** toàn bộ lane Google **đã merge** trên `main@f93873b08d73f7a11c2576196b09633b9197ad60` (D0a `0015` → D0b → D1 email-token `0016` → D1 google-adapter `0017` → d1b session-rotation `0018`); canonical suite PASS (db 159 · web 146 — xem §Dev Progress). **Nhưng chưa bật:** completion-hop M3 cần bằng chứng đo trên **Safari macOS + iOS thật** (Playwright chỉ có WebKit đóng băng); `GOOGLE_OAUTH_CLIENT_ID/SECRET` giữ rỗng tới khi đo xong — thủ tục ở `../probe-strict-cookie-completion-hop.md` §7. Đây là ví dụ chuẩn của luật **merged ≠ enabled**: trạng thái là 🟢, **không** phải ✅.
 
 ---
 
@@ -510,7 +527,7 @@ Foundation(RLS+sports+3-tier+Google) → Zalo-tenant → CK-reconcile → migrat
    → ⬜          ⬜                          ⬜            ⬜         ⬜
 ```
 
-**Bottleneck hiện tại (reconcile 22/07, `main@142e9fa`):** nền + **toàn bộ lane Google đã merge** (migrations `0000–0018`, db 152 + web 137 test case — xem ghi chú drift ở §Dev Progress). Node enable Google kế tiếp là:
+**Bottleneck hiện tại (reconcile 22/07, `main@f93873b08d73f7a11c2576196b09633b9197ad60`):** nền + **toàn bộ lane Google đã merge** (migrations `0000–0018`, canonical suite PASS: db 159 + web 146 — xem §Dev Progress). Node enable Google kế tiếp là:
 
 1. ⛔ **Đo Safari macOS + iOS thật** cho completion-hop M3 → mới được set `GOOGLE_OAUTH_*` và bật login (`../probe-strict-cookie-completion-hop.md` §7). Đây là blocker **duy nhất để enable Google**, không phải điều kiện duy nhất để đóng P0–P1.
 2. ⬜ Email/password bundle order-4 (flag OFF) → gỡ Telegram provider.
@@ -652,6 +669,8 @@ Foundation(RLS+sports+3-tier+Google) → Zalo-tenant → CK-reconcile → migrat
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 22/07/2026 | **v3.4b** | **Đóng nốt 3 tồn đọng đo lường — không đổi scope, không đổi số test.** (1) **Static grep phục hồi thành cross-check dùng được:** luật 4 pin công thức `static + Σ(test sinh trong loop) = runner`, kèm **kiểm kê generator** (đúng 1 chỗ tại `f93873b`: `apps/web/lib/google-oidc.test.ts:133`, `rows.length = 10` ⇒ `+9`; đối chiếu `410 + 9 = 419` ✅) và lệnh kiểm kê generator trong block tái tạo ⇒ phát hiện drift được **không cần Postgres**. Ghi chú divergence chuyển từ "không suy diễn nguyên nhân" sang **nguyên nhân đã xác định**; runner vẫn là authority duy nhất. (2) **Trục Invariant nới theo class, không theo tên file:** thêm concurrency/race-safety vào định nghĩa + **danh sách invariant-class tường minh** (3 file: `rls-invariants` · `waitlist-invariants` · `migrate` — race-safety role bootstrap `0000`); bảng số đếm `2 file` → **3 file**; ghi tồn đọng rename `migrate.test.ts` là **code slice riêng, chưa làm ở đây**. (3) Footer dùng **full 40-char SHA** cho khớp header. |
+| 22/07/2026 | **v3.4a** | Re-pin repo truth tại `main@f93873b`; canonical `pnpm test` PASS: **29 files / 419 tests** (111 core · 159 db · 146 web · 3 bot). Static grep = 410 chỉ còn source cross-check; tất cả bảng Tests dùng canonical runner. Không đổi scope, DD, delivery order hay trạng thái enablement. |
 | 22/07/2026 | **v3.4** | **Khung đo lường + reconcile bằng chứng — KHÔNG đổi scope.** (1) Thêm §**Cách đọc tiến độ**: 6 trục Spec/Migration/BE/FE/Tests/Invariant + định nghĩa Done từng trục + **5 luật chống lạm phát** (docs≠runtime · merged≠enabled · `.pen`≠FE · đếm phải tái tạo được · trục yếu nhất là trạng thái thật) + lệnh tái tạo số đếm. (2) Thay thanh % đơn bằng **ma trận theo delivery group** + bảng **số đếm kiểm chứng được** tại `main@142e9fa` (19 migration · 28 test file · **403 test case (static)** · 10 route · 24+23 feature spec · **0 màn FE**). (3) Thêm cột **Duration (`TBD`, owner điền)** + **Traction signal** cho mọi delivery group và phase header; signal không phải technical/code-readiness gate. (4) Thêm §**Critical Path to Revenue** + bảng "không chặn revenue" + cảnh báo revenue nằm ở P5. (5) Thêm §**GTM theo phase**. (6) Module Progress tách cột Spec/Migration/BE/FE/Tests + cột **Rev?**; các R-section P0–P3 chuyển sang **item có ID + Prio + Status**. (7) Thêm **Phụ lục A — bảng tra DD**. (8) Thêm **module 3c** = email/password bundle order-4 + gỡ Telegram — **decomposition của DD-80 §10 slice order đã chốt**, không phải scope mới. (9) **Reconcile số liệu sai:** migrations `0000–0013`→**`0000–0018`**; "Google/email chưa code"→**lane Google đã merge, ⛔ chưa bật** (chờ đo Safari/iOS); authority `decisions v1.74`→**v1.98**, BRD v3.9f→v3.9g, PRD v2.8e→v2.8f, TDD v3.1→v3.1a; `~20%`→`~33%`. **Không phase nào thêm/bớt; không DD nào đổi trạng thái; delivery order + dependency map giữ nguyên.** (10) **Test-count verify pass:** luật 4 tách **static cross-check** (không cần DB) vs **canonical runner** (authority), khôi phục lệnh grep bên cạnh `pnpm test`; số dùng trong file = static **403** (web **137**) vì đó là số duy nhất tái tạo được tại `142e9fa`. Ghi **OPEN drift** với `BUILD-STATUS.md` (khai web 146, chênh 9 = đúng số test của route `/complete` d1b) kèm binary resolution + owner + next-review-trigger; đã loại trừ giả thuyết `test.each` (0 hit toàn repo) và `it.skip/only/concurrent`. |
 | 19/07/2026 | v3.3f | **Mirror DD-79 ✅ Home hub vào S9** (landing + nav registry, composition-only, spec Reviewed) + **DD-81 ✅ Pencil** (`plexco-app-design.pen`, theme exploration trên màn Home). Không đổi slice order/dependency/runtime. |
 | 19/07/2026 | v3.3e | Authority pointer refresh v1.67→v1.74 (+BRD v3.9f/PRD v2.8e): v1.68–v1.74 BE-contract closure no-runtime; không đổi delivery order/canonical phase. Đồng bộ footer. |
@@ -678,4 +697,4 @@ Foundation(RLS+sports+3-tier+Google) → Zalo-tenant → CK-reconcile → migrat
 
 ---
 
-*ROADMAP v3.4 — canonical phase duy nhất; authority qua decisions **v1.98**; số đếm pin tại `main@6a28072`; implementation pending; PostgreSQL/domain model là nguồn sự thật.*
+*ROADMAP v3.4b — canonical phase duy nhất; authority qua decisions **v1.98**; số đếm pin tại `main@f93873b08d73f7a11c2576196b09633b9197ad60`; implementation pending; PostgreSQL/domain model là nguồn sự thật.*

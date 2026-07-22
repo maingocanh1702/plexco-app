@@ -2,11 +2,12 @@
 
 > **Mục đích:** ảnh chụp tiến độ *thực thi* so với khối tài liệu đã spec (Reviewed và Draft/proposal được ghi riêng). Trả lời gọn:
 > "code đã có tới đâu, còn cách MVP bao xa". Đây là doc **living**, cập nhật mỗi khi một slice merge.
-> **Cập nhật:** 2026-07-22 (current authority **decisions v1.98**; BRD v3.9g/PRD v2.8f/TDD v3.1a/ROADMAP v3.4). D0a · D0b · D1 email-token · D1 Google · d1b đã merge; DD-87 là authority core-only, chưa có runtime change. Không dùng version hoặc coverage làm bằng chứng implementation.
+> **Cập nhật:** 2026-07-22 (current authority **decisions v1.98**; BRD v3.9g/PRD v2.8f/TDD v3.1a/ROADMAP v3.4a). D0a · D0b · D1 email-token · D1 Google · d1b đã merge; DD-87 là authority core-only, chưa có runtime change. Không dùng version hoặc coverage làm bằng chứng implementation.
 > **Nguồn số liệu:** `git log`, cây `packages/`+`apps/`, `docs/features/*`, `docs/standards/decisions.md`,
-> `docs/autopilot-backlog.md`. **HEAD `main`** = `8d8f3bc`; code baseline: migrations **`0000–0018`** đều trên `main` (gồm `0014` waitlist schema-only, `0015` D0a, `0016` D1 email-token, `0017` Google OAuth transaction, `0018` completion handoff). Slice `db-migration-0000-idempotent-role-create` **không thêm migration nào** — nó sửa migration runner.
+> `docs/autopilot-backlog.md`. **HEAD `main`** = `f93873b08d73f7a11c2576196b09633b9197ad60`; code baseline: migrations **`0000–0018`** đều trên `main` (gồm `0014` waitlist schema-only, `0015` D0a, `0016` D1 email-token, `0017` Google OAuth transaction, `0018` completion handoff). Slice `db-migration-0000-idempotent-role-create` **không thêm migration nào** — nó sửa migration runner.
 > **✅ Parallel DB suite đã mở khoá (2026-07-22, `8d8f3bc`):** `migrate.ts` nay ensure role bằng pre-check + exception handler (nuốt `42710` **hoặc** `23505`, gated trên "0000 chưa applied"), nên `vitest.config.ts` đã bật **`fileParallelism: true`**. Migration `0000` **không bị sửa** (applied + immutable, checksum nguyên vẹn). Điểm bẫy đã ghi vào code: `pg_advisory_lock` là **database-scoped**, không bảo vệ object cluster-global như role. DB suite **159 test**. Chi tiết: Verdict 14. **Nhiều autopilot worktree giờ chạy DB suite đồng thời được.**
 > ⚠️ **Đính chính:** commit `eba1c27` mang subject `fix(db): make migration-runner role creation race-safe...` nhưng **chỉ chứa hai file docs** (`auth-s4-session-handoff.md`, `ROADMAP.md`) do một merge abort giữa chừng. Nội dung của nó hợp lệ và được giữ; commit **thật** của slice này là **`8d8f3bc`**.
+> **✅ Current canonical suite (22/07, `main@f93873b`):** `DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test` PASS — **29 files / 419 tests** (core 111 · db 159 · web 146 · bot 3). Static grep = 410 chỉ là source cross-check, không dùng làm số test hoặc trạng thái xanh.
 > **✅ D0a merged (2026-07-20, `8f493f7`):** `auth-s4-d0-revoke-core` (migration `0015_auth_revoke_account.sql` — **miếng code feature-layer đầu tiên**) squash-merge sau 12 vòng Codex (10 finding fix) + review tay + real-PG 97/97. Gate "2 clean liên tiếp" **không đạt** → **owner override có ghi chép** (commit message + `HALT-MAX_ROUNDS.txt`), không phải false CODE_READY.
 > **✅ D0b merged (2026-07-22, `93c5404`):** `auth-s4-d0-session-web-boundary` — issuance fence `issueSession` (reject-and-reauth, không fallback-mint) + typed 401 `AUTH_INVALID` ở 2 caller + `POST /api/auth/logout-all` (CSRF trước mutation). **Zero DB change.** Gate P0 **ĐẠT** (2 clean round liên tiếp, 2 fix round) — **không override**. Web tests 65→78, real-PG green. Chi tiết: Verdict 6.
 > **✅ D1 email-token-core merged (2026-07-22, `64fb4d3`):** `auth-s4-d1-email-token-core` — migration **`0016`** atomic: 5 bảng function-only (`account_emails`, `email_password_credentials`, `auth_pending_email_registrations`, `auth_email_tokens`, `auth_email_deliveries`) + partial unique index độc lập `now()` + `_auth_assert_password_phc` (parse full Argon2id, floor==ceiling, guard overflow) + trigger 2 write-path + `_auth_consume_email_token` parent-first + 5 hàm cleanup deadlock-free; `auth_audit_events` **reuse** từ `0015`; **zero app grant**. **CODE DARK** — không route/UI/provider send. DB tests 97→**128**. Gate đóng bằng **1 clean round + independent directed review** (Codex phi tất định sau 9 vòng), **override thứ 2/3 slice**. Chi tiết: Verdict 8.
@@ -70,7 +71,7 @@ DTO/error/validator/format boundary riêng, không import money engine chỉ vì
 
 ### 2.2 `packages/db` — data layer Postgres + RLS ✅ (keystone)
 
-**Baseline `main` (2026-07-22): migrations `0000–0018` (19 file) đều trên `main`, có bộ RLS invariant test chạy trên role runtime thật. DB suite = 152 test theo evidence D1b; full local rerun vẫn cần `DATABASE_URL_TEST`.**
+**Baseline `main` (2026-07-22): migrations `0000–0018` (19 file) đều trên `main`, có bộ RLS invariant test chạy trên role runtime thật. Current canonical runner = **db 159** (full suite 419); mốc db 152 ở D1b là evidence lịch sử của slice đó.**
 
 > ✅ **Correction 2026-07-22:** các bản trước của doc này khẳng định `0014_players_waitlist` "chỉ trên nhánh `feat/session-waitlist-expand`, chưa vào `main`" ở bốn chỗ. **Sai** — verify on-disk: `git ls-tree main` có file, và `1a6ac38 feat(session): expand players for DD-45 waitlist` nằm trong lịch sử `main`; `waitlist-invariants.test.ts` (21 test) chạy trong mọi lần `pnpm test`. Claim cũ là prose stale được chép lại qua nhiều lần cập nhật mà không verify — đúng bẫy mà CLAUDE.md cảnh báo.
 
@@ -150,7 +151,7 @@ Nguồn: `docs/autopilot-backlog.md` (Phase-1 full-launch, S1→S20; **DD-37: Me
 | Telegram | bỏ khỏi phạm vi (DD-37 thay DD-09) | ✂️ out |
 | App Native phase-2 (DD-69) | RN+Expo recommendation; client/API/auth/push/offline/store gates | ✅ direction accepted (18/07) · ⬜ build chưa schedule |
 
-**Tiến độ: S1–S3 + Google lane DD-80 đã land; current committed tree `main@142e9fa` ≈ 33% chặng đường code theo roadmap. Google chưa enable; email/password bundle order-4 và Telegram removal chưa code.**
+**Tiến độ: S1–S3 + Google lane DD-80 đã land; current committed tree `main@f93873b` ≈ 33% chặng đường code theo roadmap. Google chưa enable; email/password bundle order-4 và Telegram removal chưa code.**
 
 ---
 
@@ -166,7 +167,7 @@ Nguồn: `docs/autopilot-backlog.md` (Phase-1 full-launch, S1→S20; **DD-37: Me
 
 Nói cách khác: session này **khép lại Phase 1** (nền móng) và **mở màn thiết kế lớp Auth** (S4).
 
-> **Historical update 2026-07-19:** đoạn này ghi trạng thái trước DD-80 slices; không dùng làm current baseline. Current baseline là `main@142e9fa`, migrations `0000–0018`, Google lane đã merge nhưng chưa enable; email/password bundle và Telegram removal vẫn pending.
+> **Historical update 2026-07-19:** đoạn này ghi trạng thái trước DD-80 slices; không dùng làm current baseline. Current baseline là `main@f93873b`, migrations `0000–0018`, Google lane đã merge nhưng chưa enable; email/password bundle và Telegram removal vẫn pending.
 
 ---
 
@@ -190,7 +191,7 @@ DD-13 (Google/email) ✅: Google lane đã merge nhưng chưa enable; email/pass
 
 ## 7. Historical verification (2026-07-16–19)
 
-Các kết quả dưới đây là historical evidence của checkout/CI nêu rõ từng dòng, không phải xác nhận current `main@142e9fa`:
+Các kết quả dưới đây là historical evidence của checkout/CI nêu rõ từng dòng, không phải xác nhận current `main@f93873b`:
 
 | Gate | Kết quả |
 |---|---|
