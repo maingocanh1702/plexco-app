@@ -241,6 +241,18 @@ manifest: docs/autopilot-manifests/auth-s4-d1-google-adapter.json
 merged_probe: packages/db/migrations/0017_oauth_transactions.sql :: auth_oauth_transactions
 notes: **CODE_READY 2026-07-22 (Verdict 9, pinned `main@8f6a051`).** All three deps merged and probed live: D0a `8f493f7` · D0b `93c5404` · email-token-core `64fb4d3`. Acceptance matrix D1-1..D1-15 already existed and was **re-verified against the live schema** at this SHA (not assumed) — every collision cell D1-6..D1-10 is now constructible because `account_emails`/`auth_pending_email_registrations`/`email_password_credentials` landed with `0016`, and `deriveEmailArtifacts(raw, accountEmailId, keys)` already provides the v1.86 cell-1 AAD handoff. D1 order-3, P0 manual (no launcher), migration `0017_oauth_transactions.sql` (tail is `0016`, so monotonic). Enablement: google-oauth-client-config (config only), A3-legal-PII (go-live). P0 manual workflow only. Owns auth_oauth_transactions + Lax binding cookie, state/nonce/PKCE, OIDC proof + §4 collision matrix, session issue; preallocated account_emails.id AAD for cell-1. Enablement gates: google-oauth-client-config (KMS/env, no hard-code), A3-legal-PII (go-live). Two consecutive FULL-base Codex clean rounds, manual merge. Manifest already authored.
 
+## task: auth-s4-d1b-oauth-session-rotation
+title: Same-site completion hop so Google login can rotate the pre-existing Strict session
+status: planned
+risk: P0
+change_class: manual-auth-boundary
+depends_on: [auth-s4-d1-google-adapter]
+invariants: [auth, api-contract]
+scope: [docs/autopilot-manifests/auth-s4-d1b-oauth-session-rotation.json, apps/web/lib/session-cookies.ts, apps/web/lib/session-cookies.test.ts, apps/web/app/api/auth/google/callback/route.ts, apps/web/app/api/auth/google/callback/route.test.ts, docs/features/BE/feature_web_auth_onboarding_tech.md]
+manifest: docs/autopilot-manifests/auth-s4-d1b-oauth-session-rotation.json
+merged_probe: apps/web/lib/session-cookies.ts :: completion hop
+notes: **BLOCKER ON ENABLING GOOGLE LOGIN** — must land before `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET` are set in ANY environment, not merely "the next slice". Until then Google login stays fail-closed (503) so the residual risk is not live. **Residual risk it closes:** a `SameSite=Strict` session cookie is not sent on the cross-site OAuth callback, so D1 mints fresh (per matrix D1-2/D1-13) and a **pre-login session survives Google login un-invalidated**; an attacker holding that older token keeps it. The capture-at-`/state` + revoke-at-callback workaround was tried and **rejected in D1**: non-atomic, races logout-all (new P1 at round-06), and still misses when `/state` itself is entered cross-site. **Shape:** add a SAME-SITE completion hop after the callback lands — a first-party navigation does carry the Strict cookie, so the existing atomic rotate primitive at the D0/session layer can do the rotation in one transaction. Solve it where the primitive lives instead of fighting a browser invariant inside the OAuth adapter. **NOT CODE_READY:** acceptance rows still to be authored + a policy-1.3 verdict required (see `acceptance_obligation` in the manifest). P0 manual, no launcher.
+
 ## task: core-matcher-grouped-amount-parsing
 title: splitNameAmount misparses grouped trailing amounts with a non-zero final group
 status: planned

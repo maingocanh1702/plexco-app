@@ -460,10 +460,57 @@ NEXT_REVIEW_TRIGGER: google-adapter merged -> order-4 email-credential-lifecycle
 
 ---
 
+## Verdict 10 — `auth-s4-d1-google-adapter` implemented, awaiting manual merge (2026-07-22)
+
+<!-- review-verdict: historical -->
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-22
+AUTHORITY_SHA: 23a37abc32c4277a0b2370db7f3ddf7d80f488bc
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/features/BE/feature_web_auth_onboarding_tech.md
+  - docs/autopilot-manifests/auth-s4-d1-google-adapter.json
+  - packages/db/schema.ts
+  - apps/web/lib/session-cookies.ts
+SLICE: auth-s4-d1-google-adapter
+IN_SCOPE: migration 0017 auth_oauth_transactions (PKCE ciphertext bytea + own key version, google lifecycle CHECK, issue/claim single-use); google-oidc proof matrix (sig/iss/aud/azp/exp/iat/nonce/email_verified + maxTokenAge + timeout); oauth-transaction lib (PKCE S256, AES-256-GCM verifier AEAD, HKDF key, Lax path-scoped cookie); /api/auth/google/{state,callback}; auth_login_google per-lane finalizer with the §4 collision table
+OUT_OF_SCOPE: session rotation of a pre-existing Strict cookie (see accepted residual risk); email bundle order-4; Facebook; Telegram removal; email-change/rebind from Google claims; auto-merge on identity conflict
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: ENABLEMENT_ONLY:google-oauth-client-config,A3-legal-PII,auth-s4-d1b-oauth-session-rotation
+HARD_DEPENDENCIES: D0a 8f493f7 + D0b 93c5404 + D1 email-token-core 64fb4d3, all merged and probed live
+PRIOR_SLICES: auth-s4-d0-revoke-core -> auth-s4-d0-session-web-boundary -> auth-s4-d1-email-token-core
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: google-oauth-client-config (config only); A3-legal-PII (go-live); auth-s4-d1b-oauth-session-rotation (HARD blocker on setting GOOGLE_OAUTH_CLIENT_ID/SECRET in ANY environment)
+LIVE_REPO_VERIFICATION: PASS (17 files, +2841/-9; migration tail was 0016 so 0017 is monotonic; /api/auth/google/state returns 503 with config absent and .env.example ships the keys EMPTY, so Google login is not enabled anywhere and the residual risk below is not live; manifest scope reconciled at READY with a _scope_note for rls-invariants.test.ts, coupled by the migration-count assertion)
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS (D1-1..D1-15; full real-PG suite db 144 · core 111 · bot 3 · web 131, 0 skipped; semgrep 0 findings; OSV clean after adding jose@5)
+SECURITY_AND_MIGRATION_GATE: PASS (0017 expand-only; PKCE verifier held as AES-256-GCM ciphertext with a separate key version; Lax path-scoped binding cookie kept distinct from the Strict session cookie and sameOriginRequest() deliberately NOT reused; independent oauth-state / oauth-callback buckets, limiter fail-closed; identity conflict fails closed to AUTH_IDENTITY_CONFLICT with no session minted; cell-8 proof failure rejects before touching the DB and writes no audit row)
+IMPLEMENTATION_ARTIFACTS: PASS (manifest reconciled + acceptance matrix + residual risk pinned in three durable places)
+FIRST_IMPLEMENTATION_STEP: n/a — implemented on feat/auth-s4-d1-google-adapter@75bfa58, STOP_AT_READY, awaiting owner squash-merge
+REMAINING_BLOCKERS: none for merge
+NEXT_REVIEW_TRIGGER: auth-s4-d1b-oauth-session-rotation must be authored, verdicted and merged BEFORE Google login is enabled in any environment; separately, order-4 email bundle inherits the D1E-18b merge-barrier obligation and the C7 provider gate
+```
+
+**ACCEPTED RESIDUAL RISK — đọc kỹ, đây không phải "matrix xanh nên không còn gap":** cookie session `SameSite=Strict` **không được gửi** trên callback OAuth cross-site, nên callback không đọc/rotate/revoke được session cũ. D1 vì thế **mint-fresh** (đúng matrix D1-2 + D1-13), và hệ quả là **một session có trước khi login Google vẫn sống sót, không bị vô hiệu hoá** — kẻ tấn công nắm token cũ đó vẫn giữ được nó.
+
+**Vì sao chấp nhận thay vì sửa trong slice này:** phần rotation từng được thử và là **invented scope** ngoài matrix; nó **non-atomic**, **đua với logout-all** (đẻ ra P1 mới ở round-06) và vẫn hụt khi `/state` bị vào cross-site. Findings nở 1→3→4 qua các vòng là tín hiệu **sai tầng**, không phải code ẩu: primitive rotate atomic nằm ở tầng D0/session, nên lời giải đúng là **same-site completion hop** ở đó — chống lại một bất biến của trình duyệt ngay trong OAuth adapter thì không thể atomic.
+
+**Rủi ro này KHÔNG live** vì Google login fail-closed 503 khi thiếu config và `.env.example` để trống key. Điều kiện đóng được pin **cưỡng chế được, không phải "slice kế tiếp"**: `auth-s4-d1b-oauth-session-rotation` **phải land TRƯỚC khi set `GOOGLE_OAUTH_CLIENT_ID/SECRET` ở bất kỳ môi trường nào** — ghi bền ở ba nơi (manifest `enablement_gates`, `.env.example` ngay trên hai biến đó, tech doc §4 Session Security).
+
+---
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 22/07/2026 | v1.4 | **Verdict 10 — `auth-s4-d1-google-adapter` implemented (`75bfa58`), chờ merge tay.** 17 file, +2841/−9; suite real-PG db 144 · core 111 · bot 3 · web 131; semgrep 0; OSV sạch sau khi thêm `jose@5`. Codex 6 vòng: 1–3 hội tụ, 4–6 lộ một vấn đề **ngoài matrix** (rotate session Strict qua callback cross-site) → phần rotation invented-scope đã **revert** về mint-fresh đúng D1-2/D1-13. **Accepted residual risk** + **enablement blocker `auth-s4-d1b-oauth-session-rotation`** ghi vào verdict và pin bền 3 nơi. Tạo artifact d1b (manifest + backlog block, `NOT CODE_READY` — còn thiếu acceptance + verdict). |
 | 22/07/2026 | v1.3 | **Verdict 9 — `auth-s4-d1-google-adapter` = CODE_READY** tại `main@8f6a051`. Ba dependency đã merge + probe live; acceptance D1-1..15 có sẵn nên đây là **verdict-only gap**, nhưng vẫn re-verify từng precondition trên schema live (bài học D1E-18) thay vì tin matrix cũ. Verdict 4 (PLAN_READY, G3 FAIL) chính thức bị thay thế. |
 | 22/07/2026 | v1.2 | **D1 email-token-core implemented → Verdict 8.** 7 file, +2555/−7, 128 test real-PG xanh. Gate đóng bằng **1 vòng sạch + independent directed review** (Codex phi tất định sau 9 vòng), không phải 2×clean — override thứ 2/3 slice. **D1E-18 tách 18a/18b**: 18a proven, 18b deferred-by-construction vì `link_codes` live là person/channel-scoped, account-issued link_code + merge plan thuộc order-4 (đã pin NEXT_REVIEW_TRIGGER). Manifest hợp thức hoá 2 scope-addition (`index.ts`, `README.md`). **Đề xuất hiệu chỉnh gate:** `review-code-readiness-gate.md` nên cho phép *"2 vòng sạch liên tiếp HOẶC 1 vòng sạch + independent directed review"* khi diff vượt ngưỡng file/LOC, để không phải override từng ca. |
 | 22/07/2026 | v1.1 | **D1 email-token-core: NOT_CODE_READY → CODE_READY.** Author acceptance matrix **D1E-1..D1E-22** (tech doc §5, gồm reset-vs-consume + merge barrier mà manifest nêu là điều kiện READY) và **Verdict 7** pin `main@fc7d0a4`. Pin hai ranh giới: public verify/reset/login = order-4; DD-70(a) fence ngoài scope order-2. Chưa có code/migration — đây là authorization để mở worktree. |

@@ -1,0 +1,44 @@
+{
+  "feature": "auth-s4-d1b-oauth-session-rotation",
+  "branch": "feat/auth-s4-d1b-oauth-session-rotation",
+  "base_ref": "main",
+  "risk": "P0",
+  "change_class": "manual-auth-boundary",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "authority": "DD-80 decisions v1.88 · b0-auth-credential-lifecycle-design-probe.md §6 (session issuance/rotation) · feature_web_auth_onboarding_tech.md §4 Session Security (ENABLEMENT GATE callout, v2.11) · Verdict 10 accepted-residual-risk",
+  "depends_on": ["auth-s4-d1-google-adapter"],
+  "dep_checks": [
+    {
+      "file": "apps/web/app/api/auth/google/callback/route.ts",
+      "symbol": "issueSession"
+    },
+    {
+      "file": "packages/db/migrations/0017_oauth_transactions.sql",
+      "symbol": "auth_oauth_transactions"
+    }
+  ],
+  "invariants": ["auth", "api-contract"],
+  "blocks_enablement": [
+    "GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET must NOT be set in ANY environment until this slice is merged. Until then Google login stays fail-closed (503) and the residual risk below is not live."
+  ],
+  "problem_statement": "A SameSite=Strict session cookie is NOT sent on the cross-site OAuth callback, so the callback cannot read, rotate or revoke a pre-existing session. D1 therefore mints fresh (matrix D1-2 + D1-13) and a pre-login session SURVIVES Google login without being invalidated — if an attacker knows that older token it stays valid. Capturing at /state and revoking at callback was tried and rejected in D1: it is non-atomic, races logout-all (a new P1 at round 06) and still misses when /state itself is entered cross-site.",
+  "intended_shape": "Add a SAME-SITE completion hop after the cross-site callback lands. The hop is a first-party navigation, so the Strict cookie IS sent, and the existing atomic rotate primitive at the D0/session layer can rotate/revoke the old session in one transaction. Solve it at the layer that owns the primitive rather than working around a browser invariant inside the OAuth adapter.",
+  "negative_scope": [
+    "NO re-litigating the D1 mint-fresh contract (D1-2 session mint, D1-13 Strict) — this slice ADDS the hop, it does not change what D1 shipped",
+    "NO capture-at-state / revoke-at-callback workaround — already rejected in D1 as non-atomic and racing logout-all",
+    "NO new OAuth provider, no Facebook, no Telegram removal",
+    "NO email bundle (order-4) work",
+    "NO weakening the Strict attribute on the session cookie to make rotation easier"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/auth-s4-d1b-oauth-session-rotation.json",
+    "apps/web/lib/session-cookies.ts",
+    "apps/web/lib/session-cookies.test.ts",
+    "apps/web/app/api/auth/google/callback/route.ts",
+    "apps/web/app/api/auth/google/callback/route.test.ts",
+    "docs/features/BE/feature_web_auth_onboarding_tech.md"
+  ],
+  "acceptance_obligation": "Acceptance rows must be authored before this slice is CODE_READY (Verdict required). At minimum: (1) a pre-login session is revoked after a completed Google login via the same-site hop; (2) the rotation is atomic and does not race logout-all in either lock order; (3) an interrupted hop leaves NO half-state — either the old session survives intact or it is revoked and the new one is live, never both-dead; (4) the Strict attribute on the session cookie is unchanged; (5) Google login still fails closed when config is absent."
+}
