@@ -1,0 +1,55 @@
+{
+  "feature": "db-session-tenant-integrity-fks",
+  "branch": "feat/db-session-tenant-integrity-fks",
+  "base_ref": "main",
+  "risk": "P0",
+  "change_class": "manual-schema-design",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "authority": "feature_session_management_tech.md §2 Schema note (same-tenant composite candidate keys/FKs are a DD-68 prerequisite, explicitly NOT in 0014) · HANDOFF HR1 RLS fail-closed · docs/session-service-reslice-analysis.md L0a",
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": ["schema"],
+  "problem_statement": "Child rows on the money path reference their parents by single-column FK only: players.session_id -> sessions.id, players.membership_id -> memberships.id, charges.session_id, charges.membership_id, join_requests.session_id, session_surface_refs.session_id, aliases.membership_id. A single-column FK proves the parent EXISTS; it does not prove the parent belongs to the same tenant as the child's own tenant_id. RLS filters reads, so a service-layer bug that writes players(tenant_id=A, session_id=<B's session>) produces a row that is invisible to BOTH tenants while charges references both the player and the session. Silent cross-tenant corruption, on the money path.",
+  "key_finding": "The gap is already documented and already assigned: feature_session_management_tech.md §2 states the implementing migration must add same-tenant composite candidate keys/FKs for (tenant_id, session_id) and (tenant_id, membership_id) and force session_surface_refs(tenant_id, session_id) to the same tenant, and records that this is DD-68 scope and 'CHƯA có trong 0014'. Live verification at main: grep across packages/db/migrations/*.sql finds no composite (tenant_id, session_id) or (tenant_id, membership_id) UNIQUE or FOREIGN KEY anywhere. So this is an open prerequisite, not a design question.",
+  "pinned_mechanism": "One expand-only migration 0019. (1) Add UNIQUE (tenant_id, id) candidate keys to sessions and memberships — required because a composite FK must target a unique constraint. (2) Add the 7 composite FKs listed in scope_fks. (3) Add them NOT VALID first, run a backfill/verification probe that proves zero existing violating rows, then VALIDATE CONSTRAINT — so a pre-existing violation surfaces as a named failure instead of aborting the migration mid-way. Keep every existing single-column FK: the composite one is additive, and dropping the id FK would change ON DELETE behaviour. Default MATCH SIMPLE is correct and intended for the one nullable child column (charges.membership_id): when membership_id is NULL the composite constraint is not enforced, which preserves today's 'charge without membership' shape while the session-side composite FK still binds the tenant.",
+  "alternative_considered": "Enforce same-tenant parentage in the service layer only (assert in tenantRepo before insert). Rejected: the whole point of HR1 is that the database is the fail-closed choke-point, and this class of bug is exactly a service-layer mistake. A CHECK-style trigger was also considered and rejected as heavier than a declarative FK with no better guarantee.",
+  "negative_scope": [
+    "NEVER edit an applied migration file; 0000-0018 stay byte-identical and the runner's immutability guard must keep hard-erroring",
+    "NO drop of any existing single-column FK — the composite key is ADDITIVE; dropping the id FK would silently change ON DELETE/ON UPDATE behaviour",
+    "session_occurrences is OUT OF SCOPE and must not be given a composite FK: it has NO tenant_id column, so there is nothing to bind. Its dual-parent tenant integrity is already proven by the existing rls-invariants test 'dual-parent child rows (session_occurrences)'. Do not add a tenant_id column to it in this slice",
+    "public_sessions is OUT OF SCOPE: it is the cross-tenant public read model with no FK into tenant tables by design (HR2). Do not add one",
+    "magic_links.session_id is OUT OF SCOPE: despite the column name it references web_sessions, not sessions",
+    "NO new table, NO column added or dropped on any table other than the two UNIQUE candidate keys, NO RLS policy change, NO grant change",
+    "NO service/repo/adapter code in this slice — schema only. addMemberToSession and friends do not exist yet and must not be started here",
+    "NO data migration or row rewrite: if the verification probe finds a violating row, HALT and surface it for owner decision rather than deleting or re-parenting it"
+  ],
+  "scope_fks": [
+    "session_surface_refs (tenant_id, session_id) -> sessions (tenant_id, id)",
+    "players (tenant_id, session_id) -> sessions (tenant_id, id)",
+    "players (tenant_id, membership_id) -> memberships (tenant_id, id)",
+    "charges (tenant_id, session_id) -> sessions (tenant_id, id)",
+    "charges (tenant_id, membership_id) -> memberships (tenant_id, id)  [membership_id NULLABLE -> MATCH SIMPLE, unenforced when NULL]",
+    "join_requests (tenant_id, session_id) -> sessions (tenant_id, id)",
+    "aliases (tenant_id, membership_id) -> memberships (tenant_id, id)"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/db-session-tenant-integrity-fks.json",
+    "packages/db/migrations/0019_tenant_integrity_fks.sql",
+    "packages/db/schema.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "packages/db/README.md"
+  ],
+  "acceptance": [
+    "TI-1 cross-tenant insert is rejected: for EACH of the 7 FKs in scope_fks, an insert whose child tenant_id differs from the parent's tenant_id fails with a foreign-key violation. Run under the real app role through withTenant, not as superuser — the point is the constraint holds on the runtime path.",
+    "TI-2 same-tenant insert still succeeds: the existing happy-path fixtures and the full packages/db suite stay green; no legitimate write is newly rejected.",
+    "TI-3 nullable column semantics: inserting a charges row with membership_id NULL still succeeds (MATCH SIMPLE leaves the composite unenforced), while the same row with a foreign-tenant membership_id is rejected.",
+    "TI-4 candidate keys exist and are unique: sessions and memberships each have a UNIQUE (tenant_id, id); assert from the catalog (pg_constraint), not from the DDL text.",
+    "TI-5 existing FKs survive: assert from pg_constraint that every pre-0019 single-column FK named in scope_fks' child tables is still present, so ON DELETE behaviour is unchanged.",
+    "TI-6 validation is provable: the migration adds constraints NOT VALID, runs the violation probe, then VALIDATEs. Assert that a seeded violating row causes a NAMED halt with the offending table/row identified — not a bare constraint error mid-migration.",
+    "TI-7 immutability: 0000-0018 byte-identical, recorded sha256 unchanged, and the runner still rejects a modified applied file.",
+    "TI-8 migration count: rls-invariants.test.ts asserts applied.length and skipped.length are 19 today (0000..0018). BOTH must move to 20 in the same slice, and the second-run skip path must still be proven.",
+    "TI-9 session_occurrences untouched: assert no composite FK was added to it and that the existing dual-parent invariant test still passes unchanged."
+  ]
+}
