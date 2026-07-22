@@ -2,22 +2,22 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    // Test files must run strictly sequentially, never as concurrent workers:
+    // Test FILES may run in parallel workers. The two hazards that once forced
+    // serial execution are both closed:
     // (1) each DB test file's setupRlsTestContext() DROPs/CREATEs its OWN
     //     throwaway database (auth.test.ts / rls-invariants.test.ts /
-    //     waitlist-invariants.test.ts each pass a distinct dbName — see
-    //     test-harness.ts), and
-    // (2) migration 0000's cluster-global role creation
-    //     (`IF NOT EXISTS (SELECT ...) THEN CREATE ROLE ...`) is a
-    //     check-then-act, non-atomic against a CONCURRENT migration run on a
-    //     different database — two files' migrate() calls racing would let
-    //     both see "role missing" and both attempt CREATE ROLE, one failing.
-    // fileParallelism:false serializes file execution end-to-end (not just
-    // per-test), which is what actually prevents (2) — do NOT flip this to
-    // true without first making migration 0000's role creation atomic
-    // (verified: 8 consecutive local runs of the full DB suite with this
-    // setting, zero role-creation errors).
-    fileParallelism: false,
+    //     waitlist-invariants.test.ts / migrate.test.ts each pass a distinct
+    //     dbName — see test-harness.ts), so no two files touch one database; and
+    // (2) the cluster-global runtime roles are now created race-safely by the
+    //     migration runner (packages/db/src/migrate.ts ensureRoleExists), which
+    //     CREATE ROLEs and swallows the "already exists" collision — so two
+    //     files' migrate() calls racing on one cluster no longer abort. (0000's
+    //     own check-then-act role block, which caused the race, is skipped once
+    //     the runner has ensured the roles.) Proven: migrate.test.ts BR-1 plus
+    //     ≥5 consecutive green full-suite runs under fileParallelism:true.
+    fileParallelism: true,
+    // Tests WITHIN a file still run sequentially: the RLS suites share one ctx
+    // and assert on ordered inserts, so intra-file concurrency stays off.
     sequence: { concurrent: false },
     testTimeout: 30_000,
     hookTimeout: 120_000,

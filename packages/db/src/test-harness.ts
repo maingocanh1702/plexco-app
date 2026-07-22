@@ -82,6 +82,38 @@ function testUrl(base: string, opts: { db?: string; user?: string; password?: st
 }
 
 /**
+ * Set a cluster-global role's password, race-tolerant so the DB suites can run
+ * as parallel vitest workers (fileParallelism:true). Two independent races:
+ *   - on a cold cluster the role may not exist yet when the PRE-migrate call
+ *     runs (migrate() creates it moments later) — tolerated when allowMissing;
+ *   - several suites ALTER the SAME cluster-global role at the same instant,
+ *     which Postgres reports as "tuple concurrently updated" (a transient
+ *     catalog-write conflict on the shared pg_authid row). Every suite sets the
+ *     identical static password, so retrying always converges on that value.
+ */
+async function setRolePasswordRaceSafe(
+  client: pg.Client,
+  role: string,
+  password: string,
+  allowMissing: boolean,
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await client.query(`ALTER ROLE ${role} WITH LOGIN PASSWORD '${password}'`);
+      return;
+    } catch (e) {
+      const msg = String(e);
+      if (allowMissing && msg.includes("does not exist")) return;
+      if (msg.includes("tuple concurrently updated") && attempt < 10) {
+        await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+/**
  * @param dbName Dedicated throwaway database for THIS test file. Vitest runs
  *   test files in parallel by default; every caller MUST pass a name unique
  *   to its own suite (codex round-02) — two suites sharing one name would
@@ -103,12 +135,10 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
   await admin.connect();
   await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
   await admin.query(`CREATE DATABASE ${dbName}`);
-  // 3. runtime roles get passwords (cluster-global, idempotent)
+  // 3. runtime roles get passwords (cluster-global, idempotent, race-tolerant).
+  //    role missing = migrations never ran on this cluster; migrate() creates it below.
   for (const [role, pw] of Object.entries(ROLE_PW)) {
-    await admin.query(`ALTER ROLE ${role} WITH LOGIN PASSWORD '${pw}'`).catch(async (e) => {
-      // role missing = migrations never ran on this cluster; 0000 creates it below
-      if (!String(e).includes("does not exist")) throw e;
-    });
+    await setRolePasswordRaceSafe(admin, role, pw, /* allowMissing */ true);
   }
   await admin.end();
 
@@ -116,11 +146,11 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
   const migrationUrl = testUrl(base, { db: dbName });
   const migrateResult = await migrate(migrationUrl);
 
-  // roles now certainly exist (0000) — ensure passwords
+  // roles now certainly exist (ensured by the runner + 0000) — set passwords
   const owner = new pg.Client({ connectionString: migrationUrl });
   await owner.connect();
   for (const [role, pw] of Object.entries(ROLE_PW)) {
-    await owner.query(`ALTER ROLE ${role} WITH LOGIN PASSWORD '${pw}'`);
+    await setRolePasswordRaceSafe(owner, role, pw, /* allowMissing */ false);
   }
 
   // 4. two tenants + resolve a seeded sport

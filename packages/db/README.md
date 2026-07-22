@@ -145,6 +145,40 @@ recreated. Contract: `../../docs/b0-auth-credential-lifecycle-design-probe.md`
 §3/§5/§8.1; acceptance D1E-1..22 in
 `../../docs/features/BE/feature_web_auth_onboarding_tech.md`.
 
+## Runner-level role bootstrap (cluster-global race safety)
+
+Roles are **cluster-global**; databases are not. `0000`'s check-then-act role
+block (`IF NOT EXISTS (SELECT …) THEN CREATE ROLE …`) is therefore not safe when
+two `migrate()` runs bootstrap **different** databases on the **same** cluster:
+both can see "role missing" and both `CREATE ROLE`, and the loser aborts with
+"role already exists". The runner's `pg_advisory_lock` does **not** help — advisory
+locks are **DATABASE-scoped** (the lock tag includes the database), so two runs in
+two databases take the same key without blocking, and it gives zero protection to
+cluster-global objects.
+
+`migrate()` closes this in `src/migrate.ts`: **before** `0000` is applied it
+ensures `app`/`app_worker`/`readonly` with the race-safe idiom
+
+```sql
+DO $$ BEGIN CREATE ROLE <r> LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+```
+
+swallowing **only** the two SQLSTATEs that both mean "role already exists"
+(`duplicate_object` 42710 from the pre-check, `unique_violation` 23505 from
+`pg_authid`'s unique index when two backends pass the pre-check at once — the
+common one under real concurrency). Any other error (e.g. `insufficient_privilege`)
+still propagates and aborts. The step is **gated on `0000` not yet being in
+`schema_migrations`**, and within that gate a `pg_roles` check issues `CREATE
+ROLE` **only for roles that are genuinely absent** — a cluster may have them
+pre-provisioned while `DATABASE_URL_MIGRATION` is `NOCREATEROLE`, and Postgres
+checks the `CREATEROLE` privilege before the duplicate, so creating an
+already-present role would abort. So an already-migrated **or** a pre-provisioned
+database never needs `CREATEROLE`. `0000` stays byte-identical (its own `IF NOT
+EXISTS` block finds the roles and skips), so its `schema_migrations` sha256 is
+unchanged. This is what lets the DB test suites run as parallel vitest workers
+(`vitest.config.ts` `fileParallelism: true`).
+
 ## Migration order & deploy notes
 
 Apply `0000`→`0016` in order (FK dependencies validated). For production changes
