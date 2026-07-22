@@ -701,6 +701,20 @@ Việc implementer **dừng lại xin phê duyệt** thay vì tự nới contrac
 
 > ⚠️ **Đính chính cho người audit sau — `eba1c27` mang subject của slice này nhưng KHÔNG chứa nó.** Lần merge đó abort vì working tree bẩn, và lệnh `git commit` chạy ngay sau lại bắt được hai file docs không liên quan (`auth-s4-session-handoff.md`, `ROADMAP.md`). **Nội dung của `eba1c27` là docs hợp lệ và được giữ nguyên; chỉ subject là sai.** Commit thật của slice này là **`8d8f3bc`**. Nguyên nhân gốc là command block nhiều bước không nối `&&` nên một bước git fail mà bước sau vẫn chạy — đã đổi khuôn: gate bằng `git diff --quiet` (không dùng `git status --porcelain`, vì nó tính cả file untracked nên luôn báo bẩn) và nối `&&` toàn chuỗi.
 
+> **✅ Re-verify độc lập 2026-07-22 sau khi land — tách rõ hai loại bằng chứng, không gộp làm một.** Claim
+> "2 vòng Codex sạch liên tiếp (round-03/04)" ở trên **không có bằng chứng sống sót**:
+> `.autopilot/state/db-migration-0000-idempotent-role-create/` đã mất cùng worktree khi `ap-finish` dọn
+> xong, nên `round-NN.txt`/`regions.log` không còn để đọc lại — lặp lại claim đó ở một commit message sau
+> không tái tạo bằng chứng, chỉ tái khẳng định. Không dùng làm căn cứ cho tới khi có ai đó thực sự re-run
+> Codex trên diff này. Ngược lại, gate **chức năng** (BR-1/4/6) đã **chạy lại thật** trên Postgres thật
+> (`plexco_test`, `fileParallelism: true`), độc lập với mọi claim cũ, không suy ra từ đếm số hay grep
+> string: **5/5 lần chạy toàn bộ suite `packages/db` xanh, 159/159 test, 0 fail, 0 flake**; riêng
+> `BR-4 > insufficient_privilege from CREATE ROLE propagates and does not create the role` xác nhận bằng
+> `vitest --reporter=verbose` — 42501 vẫn propagate và abort đúng thiết kế, không bị nuốt nhầm cùng
+> 42710/23505. Kết luận: gate chức năng BR-1/2/3/4/6 = **ĐẠT, có bằng chứng sống**; claim Codex-review-rounds
+> = **không kiểm chứng lại được với evidence hiện có**, ghi nhận là vậy thay vì xoá hoặc khẳng định lại như
+> fact đã đóng. BR-7 (regression `fileParallelism:false`) chưa được re-run trong lượt này.
+
 ---
 
 ## Verdict 15 — `core-matcher-grouped-amount-parsing`, DD-87 contract closed on disk (2026-07-22)
