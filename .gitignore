@@ -57,6 +57,11 @@ docker-compose.override.yml
 !.autopilot/maturity-ledger.md
 .gitnexus
 
+# Agent scratch state written inside worktrees (subagent memory). Ephemeral tooling
+# state, never project content — left untracked it blocks `scripts/ap-finish.sh`,
+# which refuses to remove a worktree that still has uncommitted changes.
+.claude/agent-memory/
+
 .DS_Store
 
 .DS_Store

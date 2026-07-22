@@ -12,7 +12,9 @@
 >
 > **✅ CẬP NHẬT 2026-07-22 — D0b ĐÃ MERGE (`93c5404`):** issuance fence `issueSession` (reject-and-reauth, không fallback-mint) + typed 401 `AUTH_INVALID` ở 2 caller + `POST /api/auth/logout-all` (CSRF trước mutation). Zero DB change, 8 file `apps/web`, web tests 65→78. **Gate P0 ĐẠT** (2 clean round liên tiếp, chỉ 2 fix round) — **không override**, khác D0a. Evidence: Verdict 6.
 >
-> **Hot area giờ là D1 `auth-s4-d1-email-token-core`** (order-2, code dark, migration `0016`) → `auth-s4-d1-google-adapter` (`0017`) → email bundle (flag OFF) → gỡ Telegram.
+> **✅ CẬP NHẬT 2026-07-22 — D1 email-token-core ĐÃ MERGE (`64fb4d3`):** migration `0016` atomic (5 bảng dark + PHC validator/trigger + consume helper parent-first + 5 cleanup deadlock-free), `auth_audit_events` reuse từ `0015`, zero app grant. DB tests 97→128. Gate đóng bằng **1 clean round + independent directed review** sau 9 vòng Codex phi tất định — **override thứ 2/3 slice**. Evidence: Verdict 8. `D1E-18b` (merge barrier nửa account-issued link_code) **deferred-by-construction** → nghĩa vụ chuyển sang slice identity companion order-4.
+>
+> **Hot area giờ là order-3 `auth-s4-d1-google-adapter`** (migration `0017`, OAuth transactions + Lax binding + collision matrix). Deps đã đủ; **chỉ còn thiếu một verdict policy-1.3 mới** (Verdict 4 đã superseded) — acceptance matrix D1-1..15 đã có sẵn. Rồi → email bundle (flag OFF) → gỡ Telegram.
 
 ---
 
