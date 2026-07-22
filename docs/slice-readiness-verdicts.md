@@ -697,7 +697,7 @@ NEXT_REVIEW_TRIGGER: merged -> multiple autopilot worktrees may run their DB sui
 
 Việc implementer **dừng lại xin phê duyệt** thay vì tự nới contract P0 là đúng gate — ghi nhận.
 
-**✅ IMPLEMENTED & MERGED 2026-07-22 tại `main@8d8f3bc`.** Gate P0 **ĐẠT** — 2 vòng Codex sạch liên tiếp (round-03/04) trên `6f8f628`, không override. Verify trên remote: `duplicate_object` ×2 + `unique_violation` ×2 trong `migrate.ts`, `fileParallelism: true`, `migrate.test.ts` có mặt. Suite: core 111 · db **159** · bot 3 · web 146. **`NEXT_REVIEW_TRIGGER` đã thoả: nhiều autopilot worktree giờ chạy DB suite song song được.**
+**✅ IMPLEMENTED & MERGED 2026-07-22 tại `main@8d8f3bc`.** Gate P0 **theo claim lúc merge**: 2 vòng Codex sạch liên tiếp (round-03/04) trên `6f8f628`, không override — ⚠️ **claim này không có bằng chứng sống sót; đọc block re-verify bên dưới trước khi trích dẫn.** Verify trên remote: `duplicate_object` ×2 + `unique_violation` ×2 trong `migrate.ts`, `fileParallelism: true`, `migrate.test.ts` có mặt. Suite: core 111 · db **159** · bot 3 · web 146. **`NEXT_REVIEW_TRIGGER` đã thoả: nhiều autopilot worktree giờ chạy DB suite song song được.**
 
 > ⚠️ **Đính chính cho người audit sau — `eba1c27` mang subject của slice này nhưng KHÔNG chứa nó.** Lần merge đó abort vì working tree bẩn, và lệnh `git commit` chạy ngay sau lại bắt được hai file docs không liên quan (`auth-s4-session-handoff.md`, `ROADMAP.md`). **Nội dung của `eba1c27` là docs hợp lệ và được giữ nguyên; chỉ subject là sai.** Commit thật của slice này là **`8d8f3bc`**. Nguyên nhân gốc là command block nhiều bước không nối `&&` nên một bước git fail mà bước sau vẫn chạy — đã đổi khuôn: gate bằng `git diff --quiet` (không dùng `git status --porcelain`, vì nó tính cả file untracked nên luôn báo bẩn) và nối `&&` toàn chuỗi.
 
@@ -713,7 +713,26 @@ Việc implementer **dừng lại xin phê duyệt** thay vì tự nới contrac
 > `vitest --reporter=verbose` — 42501 vẫn propagate và abort đúng thiết kế, không bị nuốt nhầm cùng
 > 42710/23505. Kết luận: gate chức năng BR-1/2/3/4/6 = **ĐẠT, có bằng chứng sống**; claim Codex-review-rounds
 > = **không kiểm chứng lại được với evidence hiện có**, ghi nhận là vậy thay vì xoá hoặc khẳng định lại như
-> fact đã đóng. BR-7 (regression `fileParallelism:false`) chưa được re-run trong lượt này.
+> fact đã đóng.
+>
+> **✅ BR-7 đóng bằng đo (lượt bổ sung 2026-07-22, `main@28404cb`):** toàn bộ suite `packages/db` chạy với
+> `--no-file-parallelism` — 4 file / **159/159** test, 0 fail ⇒ đường tuần tự **không** regress sau khi lật
+> `fileParallelism: true`. Cùng lượt, đọc lại `migrate.test.ts` xác nhận **BR-1..BR-4 tồn tại dưới dạng 7
+> test có tên**: BR-1 hai ca concurrency · BR-2 immutability · BR-3 hai ca gating · BR-4
+> `insufficient_privilege from CREATE ROLE propagates and does not create the role` **cộng một guard ngoài
+> acceptance gốc** (`refuses an unsafe role identifier before issuing any DDL`). **BR-5** là hạng mục sửa
+> comment, đóng bằng đọc code chứ không phải test. ⇒ **Ma trận chức năng BR-1..BR-7 nay đã đo đủ.**
+>
+> ⚠️ **Message của `8d8f3bc` nói quá, và không amend được.** Nó khẳng định
+> `"P0 gate MET: two consecutive FULL-base Codex clean rounds on 6f8f628. BR-1..BR-7 green."` — lúc viết
+> thì **cả hai vế đều chưa có căn cứ**: ledger Codex đã mất cùng worktree, còn BR-7 thì chưa chạy.
+> `8d8f3bc` đã push và có descendant nên đính chính phải nằm ở đây. Vế BR nay đã đúng; vế Codex-rounds thì
+> vẫn không. Người audit đọc block này, đừng trích message đó.
+>
+> **Vật chứng đã neo:** sau khi `ap-finish` xoá branch, `6f8f628` không còn ref nào giữ (dangling, có thể bị
+> `git gc` dọn). Đã neo bằng tag **`forensic/eba1c27-incident`**. Tree của nó giống hệt `8d8f3bc` trên
+> `packages/db` (`git diff 6f8f628 8d8f3bc -- packages/db` rỗng), nên nếu sau này ai muốn thực sự re-run
+> Codex để đóng claim còn treo thì chạy trên diff này là hợp lệ.
 
 > **Lỗ hổng cấu trúc lộ ra từ vụ `eba1c27`:** `scripts/autopilot-scope-gate` canh giữ feature worktree
 > (register/ready/cleanup theo manifest), **không canh giữ docs commit chạy thẳng ở root working copy**.
