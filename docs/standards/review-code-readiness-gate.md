@@ -381,6 +381,37 @@ Enforcement bắt buộc:
 
 Không dùng `historical` để né lỗi mới. Chỉ artifact thực sự superseded/pre-policy mới được exempt; mọi current tracker phải giữ ít nhất một active verdict hợp lệ.
 
+### 11.2 Cái gì là "review/readiness artifact" — phép thử
+
+§11 mở đầu bằng "mọi persisted review/readiness artifact" mà trước 2026-07-23 **không định nghĩa phép thử**.
+Khoảng trống đó đã tạo ra một xung đột authority thật (AP-28, `HALT-AUTHORITY_AMBIGUOUS`). Chốt như sau.
+
+**Phép thử: artifact kích hoạt §11 khi nó KHẲNG ĐỊNH MỘT TRẠNG THÁI readiness.** Liệt kê bằng chứng thì không.
+
+- **Khẳng định trạng thái** = bất kỳ dạng nào của: `MET`/`PARTIAL`/`NOT-MET` per-gate · `READY`/`NOT_READY` ·
+  điểm số hay tỷ lệ (`8/12`) · tính từ hàm ý khoảng cách tới ready ("gần đủ", "chỉ còn"). Một người đọc lướt
+  rút ra được kết luận về mức sẵn sàng ⇒ đã là khẳng định trạng thái.
+- **Kiểm kê bằng chứng** = mỗi tiêu chí ghi bằng chứng **có** gì (`file:line`) và **thiếu** gì, không quy ra
+  trạng thái, không tổng hợp. Không kích hoạt §11.
+
+Lý do §11 tồn tại là chặn đúng một kiểu hỏng: một doc **đọc như** đánh giá readiness bị hiểu thành
+authorization, rồi code được viết dựa trên prose. Kiểm kê bằng chứng không tạo ra được hiểu lầm đó.
+
+**Tên file là heuristic phát hiện, KHÔNG phải định nghĩa.** `CANDIDATE_NAME_RE` (`review|readiness|plan`) và
+dòng `REVIEW_VERDICT:` chỉ là cách validator *nhìn thấy* artifact. Một khẳng định readiness nằm trong file đặt
+tên khác là **vi phạm §11 dù validator xanh** — validator xanh ở đây nghĩa là "không nhìn thấy", không phải
+"đã duyệt". Ngược lại, artifact non-candidate không tự động được miễn: cứ áp phép thử trên.
+
+**Cấm verdict một slice chưa được author.** Nếu không có manifest và không có target code thì `TARGET_FILES`
+phải trỏ vào spec, `AUTHORITY_SHA` không pin cái gì có thật, và `CLOSURE_MATRIX` đánh giá một thứ chưa tồn tại.
+Điền các field đó cho hợp lệ với validator là **bịa bằng chứng có vỏ machine-checked** — tệ hơn không verdict,
+vì validator sẽ báo xanh trên một khẳng định không ai đo. Trong tình huống này việc đúng là: giữ doc ở dạng
+kiểm kê bằng chứng, và mở verdict khi slice đã được author. **Không mở slice placeholder chỉ để có chỗ verdict.**
+
+Điều khoản này **không** thêm/bớt field nào validator kiểm, nên **không bump `REVIEW_POLICY_VERSION`** — nó
+định nghĩa phạm vi áp dụng, không đổi hợp đồng máy. Tiền lệ: AP-28 §C3 (`docs/auth-d1-implementation-packet.md`)
+chuyển từ ma trận per-gate sang kiểm kê tiêu chí→bằng chứng; DD-38/39 không nhận verdict vì chưa là slice.
+
 ---
 
 ## Changelog
