@@ -3191,3 +3191,661 @@ describe("deriveEmailArtifacts + provider key (auth.ts, B0 §3.3/§3.4)", () => 
     expect(k1).toMatch(/^[A-Za-z0-9_-]+$/); // base64url
   });
 });
+
+// ===========================================================================
+// D1 (order-3) — Google OIDC adapter: auth_oauth_transactions issue/claim +
+// auth_login_google §4 collision table. Migration 0017. Real PostgreSQL, run
+// as the `app` role (the granted 0017 functions) with ctx.owner for seeding +
+// assertions. Acceptance IDs D1-2/-3/-6..-10/-12 (the DB-touching cells; the
+// HTTP-layer cells D1-1/-4/-5/-11/-13..-15 live in the apps/web route/lib tests).
+// ===========================================================================
+
+/** A keyed-HMAC-shape subject hash (auth_login_google requires length >= 16). */
+const freshSubject = () => `gsub-${randomBytes(16).toString("hex")}`;
+const freshLookup = () => `glk-${randomBytes(10).toString("hex")}`;
+/** Any non-empty bytea — the app's real email_enc ciphertext at the boundary. */
+const encBytes = () => Buffer.from(randomBytes(24));
+
+async function seedGoogleIdentity(accountId: string, subjectHash: string): Promise<void> {
+  await ctx.owner.query(
+    `INSERT INTO account_identities(account_id, platform, platform_user_hash, verified_at)
+     VALUES ($1, 'google', $2, now())`,
+    [accountId, subjectHash],
+  );
+}
+
+async function callLoginGoogle(
+  client: pg.Pool,
+  input: {
+    subjectHash: string;
+    emailLookupHash: string;
+    emailEnc?: Buffer;
+    kmsKeyVersion?: string;
+    accountEmailId?: string;
+    displayName?: string | null;
+    requestRef: string;
+  },
+): Promise<{ account_id: string; person_id: string; outcome: string }> {
+  const { rows } = await client.query(
+    `SELECT account_id, person_id, outcome FROM auth_login_google($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      input.subjectHash,
+      input.emailLookupHash,
+      input.emailEnc ?? encBytes(),
+      input.kmsKeyVersion ?? "kv1",
+      input.accountEmailId ?? randomUUID(),
+      input.displayName ?? null,
+      input.requestRef,
+    ],
+  );
+  return rows[0] as { account_id: string; person_id: string; outcome: string };
+}
+
+async function auditFor(requestRef: string) {
+  const { rows } = await ctx.owner.query(
+    `SELECT event_type, outcome_class, actor_class, account_id,
+            session_epoch_before, link_codes_revoked, merge_artifacts_cancelled
+     FROM auth_audit_events WHERE request_ref = $1`,
+    [requestRef],
+  );
+  return rows as {
+    event_type: string;
+    outcome_class: string;
+    actor_class: string;
+    account_id: string | null;
+    session_epoch_before: string | null;
+    link_codes_revoked: number | null;
+    merge_artifacts_cancelled: number | null;
+  }[];
+}
+
+describe("D1 auth_login_google — §4 collision table (D1-2, D1-6..D1-10)", () => {
+  it("D1-2: cell new/new — creates Person+Account+verified account_emails+Google identity, login_success", async () => {
+    const subject = freshSubject();
+    const lookup = freshLookup();
+    const preId = randomUUID();
+    const enc = encBytes();
+    const ref = `req-d1-2-${randomBytes(4).toString("hex")}`;
+
+    const res = await callLoginGoogle(ctx.appPool, {
+      subjectHash: subject,
+      emailLookupHash: lookup,
+      emailEnc: enc,
+      kmsKeyVersion: "kv-cell1",
+      accountEmailId: preId,
+      displayName: "Neo",
+      requestRef: ref,
+    });
+    expect(res.outcome).toBe("login_success");
+    expect(res.account_id).toBeTruthy();
+    expect(res.person_id).toBeTruthy();
+
+    // account_emails: the app-PREALLOCATED id is used verbatim (AAD stays valid),
+    // verified, with the exact ciphertext + key-version the app passed in.
+    const email = await ctx.owner.query(
+      `SELECT id, account_id, verified_at, pending_expires_at, email_enc, kms_key_version
+       FROM account_emails WHERE email_lookup_hash = $1`,
+      [lookup],
+    );
+    expect(email.rows).toHaveLength(1);
+    const er = email.rows[0] as {
+      id: string;
+      account_id: string;
+      verified_at: Date | null;
+      pending_expires_at: Date | null;
+      email_enc: Buffer;
+      kms_key_version: string;
+    };
+    expect(er.id).toBe(preId);
+    expect(er.account_id).toBe(res.account_id);
+    expect(er.verified_at).not.toBeNull();
+    expect(er.pending_expires_at).toBeNull();
+    expect(er.email_enc.equals(enc)).toBe(true);
+    expect(er.kms_key_version).toBe("kv-cell1");
+
+    // exactly one Google identity, bound to the new account.
+    const ident = await ctx.owner.query(
+      `SELECT account_id FROM account_identities WHERE platform = 'google' AND platform_user_hash = $1`,
+      [subject],
+    );
+    expect(ident.rows).toHaveLength(1);
+    expect((ident.rows[0] as { account_id: string }).account_id).toBe(res.account_id);
+
+    // per-lane audit: login_success, actor google, no session/link/merge counts.
+    const audit = await auditFor(ref);
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({
+      event_type: "login_success",
+      outcome_class: "success",
+      actor_class: "google",
+      account_id: res.account_id,
+    });
+    expect(audit[0]!.session_epoch_before).toBeNull();
+    expect(audit[0]!.link_codes_revoked).toBeNull();
+    expect(audit[0]!.merge_artifacts_cancelled).toBeNull();
+  });
+
+  it("D1-6: cell verified email @A — attaches the Google identity to A, no second account", async () => {
+    const lookup = freshLookup();
+    const { accountId, accountEmailId } = await seedEmail({ verified: true, lookupHash: lookup });
+    const subject = freshSubject();
+    const ref = `req-d1-6-${randomBytes(4).toString("hex")}`;
+
+    const res = await callLoginGoogle(ctx.appPool, {
+      subjectHash: subject,
+      emailLookupHash: lookup,
+      requestRef: ref,
+    });
+    expect(res.outcome).toBe("login_success");
+    expect(res.account_id).toBe(accountId); // A — DD-50 strong proof, no 2nd account
+
+    // identity attached to A; the email row is unchanged (same id, still verified).
+    const ident = await ctx.owner.query(
+      `SELECT account_id FROM account_identities WHERE platform = 'google' AND platform_user_hash = $1`,
+      [subject],
+    );
+    expect((ident.rows[0] as { account_id: string }).account_id).toBe(accountId);
+    const email = await ctx.owner.query(
+      `SELECT id, verified_at FROM account_emails WHERE email_lookup_hash = $1`,
+      [lookup],
+    );
+    expect((email.rows[0] as { id: string; verified_at: Date }).id).toBe(accountEmailId);
+    expect((email.rows[0] as { verified_at: Date }).verified_at).not.toBeNull();
+    expect((await auditFor(ref))[0]!.event_type).toBe("login_success");
+  });
+
+  it("D1-7: cell pending @A — promotes email, supersedes ALL attempts+tokens, NULLs candidates, copies none, attaches identity", async () => {
+    const lookup = freshLookup();
+    const { accountId, accountEmailId } = await seedEmail({ verified: false, lookupHash: lookup });
+    const a1 = await seedAttempt(accountEmailId);
+    const a2 = await seedAttempt(accountEmailId);
+    const tok1 = await seedVerifyToken(accountEmailId, a1);
+    const tok2 = await seedVerifyToken(accountEmailId, a2);
+    const subject = freshSubject();
+    const ref = `req-d1-7-${randomBytes(4).toString("hex")}`;
+
+    const res = await callLoginGoogle(ctx.appPool, {
+      subjectHash: subject,
+      emailLookupHash: lookup,
+      requestRef: ref,
+    });
+    expect(res.outcome).toBe("login_success");
+    expect(res.account_id).toBe(accountId);
+
+    // email promoted verified.
+    const email = await ctx.owner.query(
+      `SELECT verified_at, pending_expires_at FROM account_emails WHERE id = $1`,
+      [accountEmailId],
+    );
+    expect((email.rows[0] as { verified_at: Date | null }).verified_at).not.toBeNull();
+    expect((email.rows[0] as { pending_expires_at: Date | null }).pending_expires_at).toBeNull();
+
+    // BOTH attempts superseded with NULLed candidates (no last-writer-wins hijack).
+    const attempts = await ctx.owner.query(
+      `SELECT superseded_at, password_phc, registration_key_hash
+       FROM auth_pending_email_registrations WHERE id = ANY($1) ORDER BY id`,
+      [[a1, a2]],
+    );
+    expect(attempts.rows).toHaveLength(2);
+    for (const r of attempts.rows as {
+      superseded_at: Date | null;
+      password_phc: string | null;
+      registration_key_hash: string | null;
+    }[]) {
+      expect(r.superseded_at).not.toBeNull();
+      expect(r.password_phc).toBeNull();
+      expect(r.registration_key_hash).toBeNull();
+    }
+    // BOTH verify tokens superseded.
+    const tokens = await ctx.owner.query(
+      `SELECT superseded_at FROM auth_email_tokens WHERE token_hash = ANY($1)`,
+      [[tok1, tok2]],
+    );
+    expect(tokens.rows).toHaveLength(2);
+    for (const r of tokens.rows as { superseded_at: Date | null }[]) {
+      expect(r.superseded_at).not.toBeNull();
+    }
+    // NO credential was copied/installed (a hijack password must never land).
+    const cred = await ctx.owner.query(
+      `SELECT 1 FROM email_password_credentials WHERE account_email_id = $1`,
+      [accountEmailId],
+    );
+    expect(cred.rows).toHaveLength(0);
+    // identity attached.
+    const ident = await ctx.owner.query(
+      `SELECT 1 FROM account_identities WHERE platform = 'google' AND platform_user_hash = $1`,
+      [subject],
+    );
+    expect(ident.rows).toHaveLength(1);
+  });
+
+  it("D1-8: cell sub@A + verified email@B — AUTH_IDENTITY_CONFLICT, zero mutation, no session", async () => {
+    const { accountId: accA } = await seedAccount();
+    const subject = freshSubject();
+    await seedGoogleIdentity(accA, subject);
+    const lookupB = freshLookup();
+    const { accountId: accB, accountEmailId: emB } = await seedEmail({
+      verified: true,
+      lookupHash: lookupB,
+    });
+    const ref = `req-d1-8-${randomBytes(4).toString("hex")}`;
+
+    const res = await callLoginGoogle(ctx.appPool, {
+      subjectHash: subject,
+      emailLookupHash: lookupB,
+      requestRef: ref,
+    });
+    expect(res.outcome).toBe("identity_conflict");
+    expect(res.account_id).toBe(accA); // resolves the subject's own account, not B
+
+    // no auto-merge: B's email still belongs to B, no NEW identity, exactly one
+    // Google identity for the subject (still on A).
+    const email = await ctx.owner.query(`SELECT account_id FROM account_emails WHERE id = $1`, [
+      emB,
+    ]);
+    expect((email.rows[0] as { account_id: string }).account_id).toBe(accB);
+    const ident = await ctx.owner.query(
+      `SELECT account_id FROM account_identities WHERE platform = 'google' AND platform_user_hash = $1`,
+      [subject],
+    );
+    expect(ident.rows).toHaveLength(1);
+    expect((ident.rows[0] as { account_id: string }).account_id).toBe(accA);
+
+    // audit: identity_conflict on the subject's account.
+    const audit = await auditFor(ref);
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({
+      event_type: "identity_conflict",
+      outcome_class: "conflict",
+      actor_class: "google",
+      account_id: accA,
+    });
+  });
+
+  it("D1-9: cell sub@A + pending email@B — logs in A by subject, does NOT mutate B's attempt/token", async () => {
+    const { accountId: accA } = await seedAccount();
+    const subject = freshSubject();
+    await seedGoogleIdentity(accA, subject);
+    const lookupB = freshLookup();
+    const { accountEmailId: emB } = await seedEmail({ verified: false, lookupHash: lookupB });
+    const attemptB = await seedAttempt(emB);
+    const tokenB = await seedVerifyToken(emB, attemptB);
+    const ref = `req-d1-9-${randomBytes(4).toString("hex")}`;
+
+    const res = await callLoginGoogle(ctx.appPool, {
+      subjectHash: subject,
+      emailLookupHash: lookupB,
+      requestRef: ref,
+    });
+    expect(res.outcome).toBe("login_success");
+    expect(res.account_id).toBe(accA);
+
+    // B untouched: still pending, attempt+token still active (a pending
+    // registration must not DoS a subject login it does not own).
+    const email = await ctx.owner.query(`SELECT verified_at FROM account_emails WHERE id = $1`, [
+      emB,
+    ]);
+    expect((email.rows[0] as { verified_at: Date | null }).verified_at).toBeNull();
+    const attempt = await ctx.owner.query(
+      `SELECT superseded_at, password_phc FROM auth_pending_email_registrations WHERE id = $1`,
+      [attemptB],
+    );
+    expect((attempt.rows[0] as { superseded_at: Date | null }).superseded_at).toBeNull();
+    expect((attempt.rows[0] as { password_phc: string | null }).password_phc).not.toBeNull();
+    const token = await ctx.owner.query(
+      `SELECT superseded_at FROM auth_email_tokens WHERE token_hash = $1`,
+      [tokenB],
+    );
+    expect((token.rows[0] as { superseded_at: Date | null }).superseded_at).toBeNull();
+  });
+
+  it("D1-10: cell sub@A + new email from Google — logs in A, does NOT create/promote account_emails", async () => {
+    const { accountId: accA } = await seedAccount();
+    const subject = freshSubject();
+    await seedGoogleIdentity(accA, subject);
+    const newLookup = freshLookup(); // owned by nobody
+    const ref = `req-d1-10-${randomBytes(4).toString("hex")}`;
+
+    const res = await callLoginGoogle(ctx.appPool, {
+      subjectHash: subject,
+      emailLookupHash: newLookup,
+      requestRef: ref,
+    });
+    expect(res.outcome).toBe("login_success");
+    expect(res.account_id).toBe(accA);
+
+    // no account_emails row was created for the returned email (email-change is a
+    // separate re-auth+verify workflow, out of scope).
+    const email = await ctx.owner.query(
+      `SELECT 1 FROM account_emails WHERE email_lookup_hash = $1`,
+      [newLookup],
+    );
+    expect(email.rows).toHaveLength(0);
+  });
+
+  it("cell idempotent re-login (sub@A + email@A) leaves exactly one identity and one account", async () => {
+    const subject = freshSubject();
+    const lookup = freshLookup();
+    const first = await callLoginGoogle(ctx.appPool, {
+      subjectHash: subject,
+      emailLookupHash: lookup,
+      requestRef: `req-idem-a-${randomBytes(3).toString("hex")}`,
+    });
+    const second = await callLoginGoogle(ctx.appPool, {
+      subjectHash: subject,
+      emailLookupHash: lookup,
+      requestRef: `req-idem-b-${randomBytes(3).toString("hex")}`,
+    });
+    expect(second.outcome).toBe("login_success");
+    expect(second.account_id).toBe(first.account_id);
+    const idents = await ctx.owner.query(
+      `SELECT count(*)::int AS n FROM account_identities WHERE platform_user_hash = $1`,
+      [subject],
+    );
+    expect((idents.rows[0] as { n: number }).n).toBe(1);
+  });
+
+  it("P1 race regression (codex round-01): two concurrent logins for the SAME subject with DIFFERENT verified emails serialize on the subject lock — the loser gets identity_conflict, never a wrong-account login_success", async () => {
+    const lookupA = freshLookup();
+    const lookupB = freshLookup();
+    const { accountId: accA } = await seedEmail({ verified: true, lookupHash: lookupA });
+    await seedEmail({ verified: true, lookupHash: lookupB });
+    const subject = freshSubject();
+
+    const holder = await ctx.appPool.connect();
+    const waiter = await ctx.appPool.connect();
+    try {
+      const holderPid = await backendPid(holder);
+      const waiterPid = await backendPid(waiter);
+
+      // Holder logs in (subject, eA) and keeps the txn OPEN, holding the subject
+      // advisory lock; it attaches the subject to A.
+      await holder.query("BEGIN");
+      const holderRes = await holder.query(
+        `SELECT account_id, outcome FROM auth_login_google($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          subject,
+          lookupA,
+          encBytes(),
+          "kv",
+          randomUUID(),
+          null,
+          `race-h-${randomBytes(3).toString("hex")}`,
+        ],
+      );
+      expect((holderRes.rows[0] as { outcome: string }).outcome).toBe("login_success");
+      expect((holderRes.rows[0] as { account_id: string }).account_id).toBe(accA);
+
+      // Waiter logs in (SAME subject, eB) — must BLOCK on the subject advisory
+      // lock (without the fix it would take a different email lock, see the
+      // subject as absent, and wrongly log in as B).
+      const waiterPromise = waiter.query(
+        `SELECT account_id, outcome FROM auth_login_google($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          subject,
+          lookupB,
+          encBytes(),
+          "kv",
+          randomUUID(),
+          null,
+          `race-w-${randomBytes(3).toString("hex")}`,
+        ],
+      );
+      await waitUntilBlockedByHolder(ctx.owner, holderPid, waiterPid);
+
+      await holder.query("COMMIT"); // release the subject lock
+      const waiterRes = await waiterPromise;
+      // Subject now belongs to A; eB (verified) belongs to B (!= A) → cell 7.
+      expect((waiterRes.rows[0] as { outcome: string }).outcome).toBe("identity_conflict");
+    } finally {
+      holder.release();
+      waiter.release();
+    }
+  });
+});
+
+describe("D1 auth_oauth_transactions issue/claim (D1-3) + storage shape (D1-12)", () => {
+  async function issueTxn(input: {
+    stateHash: string;
+    provider?: string;
+    binding: string;
+    nonce?: string | null;
+    verifier?: Buffer | null;
+    kver?: string | null;
+    ttlSecs?: number;
+  }): Promise<void> {
+    await ctx.appPool.query(
+      `SELECT auth_oauth_transaction_issue($1, $2, $3, $4, $5, $6, make_interval(secs => $7))`,
+      [
+        input.stateHash,
+        input.provider ?? "google",
+        input.binding,
+        input.nonce ?? "noncehash-xyz",
+        input.verifier ?? encBytes(),
+        input.kver ?? "kv1",
+        input.ttlSecs ?? 600,
+      ],
+    );
+  }
+
+  it("sweep-at-traffic (codex round-01 [P2]): the issue path terminalizes an expired-but-nonterminal row and NULLs its PKCE ciphertext/key", async () => {
+    const stale = `st-stale-${randomBytes(8).toString("hex")}`;
+    await issueTxn({
+      stateHash: stale,
+      binding: `b-${randomBytes(6).toString("hex")}`,
+      verifier: encBytes(),
+      kver: "kv",
+    });
+    // Age it: expired an hour ago (still well within the 30-day metadata window).
+    await ctx.owner.query(
+      `UPDATE auth_oauth_transactions SET expires_at = now() - interval '1 hour' WHERE state_hash = $1`,
+      [stale],
+    );
+    // Any subsequent issue runs the sweep.
+    await issueTxn({
+      stateHash: `st-fresh-${randomBytes(8).toString("hex")}`,
+      binding: `b-${randomBytes(6).toString("hex")}`,
+    });
+
+    const row = await ctx.owner.query(
+      `SELECT consumed_at, terminal_at, pkce_verifier_enc, kms_key_version
+       FROM auth_oauth_transactions WHERE state_hash = $1`,
+      [stale],
+    );
+    const r = row.rows[0] as {
+      consumed_at: Date | null;
+      terminal_at: Date | null;
+      pkce_verifier_enc: Buffer | null;
+      kms_key_version: string | null;
+    };
+    expect(r.terminal_at).not.toBeNull(); // terminalized by the expiry sweep
+    expect(r.pkce_verifier_enc).toBeNull(); // ciphertext NULLed immediately
+    expect(r.kms_key_version).toBeNull();
+    expect(r.consumed_at).toBeNull(); // terminalized by EXPIRY, not by a consume
+  });
+
+  it("sweep-at-traffic on the CLAIM path too (codex round-03 [P2]): a callback terminalizes an expired flow whose only post-expiry traffic is that callback", async () => {
+    const stale = `st-cstale-${randomBytes(8).toString("hex")}`;
+    await issueTxn({
+      stateHash: stale,
+      binding: `b-${randomBytes(6).toString("hex")}`,
+      verifier: encBytes(),
+      kver: "kv",
+    });
+    await ctx.owner.query(
+      `UPDATE auth_oauth_transactions SET expires_at = now() - interval '1 hour' WHERE state_hash = $1`,
+      [stale],
+    );
+    // A claim (even one that resolves to nothing) runs the shared sweep.
+    await ctx.appPool.query(`SELECT 1 FROM auth_oauth_transaction_claim($1, 'google', $2)`, [
+      `st-none-${randomBytes(6).toString("hex")}`,
+      `b-${randomBytes(6).toString("hex")}`,
+    ]);
+    const row = await ctx.owner.query(
+      `SELECT terminal_at, pkce_verifier_enc, consumed_at FROM auth_oauth_transactions WHERE state_hash = $1`,
+      [stale],
+    );
+    const r = row.rows[0] as {
+      terminal_at: Date | null;
+      pkce_verifier_enc: Buffer | null;
+      consumed_at: Date | null;
+    };
+    expect(r.terminal_at).not.toBeNull(); // terminalized on the callback path
+    expect(r.pkce_verifier_enc).toBeNull();
+    expect(r.consumed_at).toBeNull(); // by EXPIRY sweep, not a consume
+  });
+
+  it("claim terminalizes ITS OWN expired row directly (codex round-05 [P2]): the target row is cleaned even if a backlog pushes it outside the bounded global sweep", async () => {
+    const st = `st-own-${randomBytes(8).toString("hex")}`;
+    const bind = `b-${randomBytes(6).toString("hex")}`;
+    await issueTxn({ stateHash: st, binding: bind, verifier: encBytes(), kver: "kv" });
+    await ctx.owner.query(
+      `UPDATE auth_oauth_transactions SET expires_at = now() - interval '1 hour' WHERE state_hash = $1`,
+      [st],
+    );
+    // Claim the EXACT expired row: the targeted UPDATE terminalizes it, then the
+    // claim SELECT finds nothing (expired) and returns zero.
+    const claim = await ctx.appPool.query(
+      `SELECT 1 FROM auth_oauth_transaction_claim($1, 'google', $2)`,
+      [st, bind],
+    );
+    expect(claim.rows).toHaveLength(0);
+    const row = await ctx.owner.query(
+      `SELECT terminal_at, pkce_verifier_enc FROM auth_oauth_transactions WHERE state_hash = $1`,
+      [st],
+    );
+    const r = row.rows[0] as { terminal_at: Date | null; pkce_verifier_enc: Buffer | null };
+    expect(r.terminal_at).not.toBeNull();
+    expect(r.pkce_verifier_enc).toBeNull();
+  });
+
+  it("D1-3: claim is single-use — first claim returns the verifier, replay returns zero rows and terminalizes", async () => {
+    const st = `st-${randomBytes(12).toString("hex")}`;
+    const bind = `bind-${randomBytes(12).toString("hex")}`;
+    const verifier = encBytes();
+    await issueTxn({ stateHash: st, binding: bind, nonce: "nh-1", verifier, kver: "kv-claim" });
+
+    const first = await ctx.appPool.query(
+      `SELECT nonce_hash, pkce_verifier_enc, kms_key_version FROM auth_oauth_transaction_claim($1, 'google', $2)`,
+      [st, bind],
+    );
+    expect(first.rows).toHaveLength(1);
+    const fr = first.rows[0] as {
+      nonce_hash: string;
+      pkce_verifier_enc: Buffer;
+      kms_key_version: string;
+    };
+    expect(fr.nonce_hash).toBe("nh-1");
+    expect(fr.pkce_verifier_enc.equals(verifier)).toBe(true); // OLD ciphertext returned for the exchange
+    expect(fr.kms_key_version).toBe("kv-claim");
+
+    // replay: zero rows.
+    const replay = await ctx.appPool.query(
+      `SELECT 1 FROM auth_oauth_transaction_claim($1, 'google', $2)`,
+      [st, bind],
+    );
+    expect(replay.rows).toHaveLength(0);
+
+    // row terminalized + ciphertext/key NULLed.
+    const row = await ctx.owner.query(
+      `SELECT consumed_at, terminal_at, pkce_verifier_enc, kms_key_version
+       FROM auth_oauth_transactions WHERE state_hash = $1`,
+      [st],
+    );
+    const rr = row.rows[0] as {
+      consumed_at: Date | null;
+      terminal_at: Date | null;
+      pkce_verifier_enc: Buffer | null;
+      kms_key_version: string | null;
+    };
+    expect(rr.consumed_at).not.toBeNull();
+    expect(rr.terminal_at).not.toBeNull();
+    expect(rr.pkce_verifier_enc).toBeNull();
+    expect(rr.kms_key_version).toBeNull();
+  });
+
+  it("D1-4 (DB side): a claim with the WRONG browser binding returns zero rows, does not consume", async () => {
+    const st = `st-${randomBytes(12).toString("hex")}`;
+    const bind = `bind-${randomBytes(12).toString("hex")}`;
+    await issueTxn({ stateHash: st, binding: bind });
+
+    const wrong = await ctx.appPool.query(
+      `SELECT 1 FROM auth_oauth_transaction_claim($1, 'google', $2)`,
+      [st, `wrong-${randomBytes(6).toString("hex")}`],
+    );
+    expect(wrong.rows).toHaveLength(0);
+    // still claimable with the RIGHT binding (the wrong attempt did not consume it).
+    const right = await ctx.appPool.query(
+      `SELECT 1 FROM auth_oauth_transaction_claim($1, 'google', $2)`,
+      [st, bind],
+    );
+    expect(right.rows).toHaveLength(1);
+  });
+
+  it("D1-12: pkce_verifier_enc is bytea + kms_key_version is text (canonical *_enc storage, catalog)", async () => {
+    const cols = await ctx.owner.query(
+      `SELECT column_name, udt_name FROM information_schema.columns
+       WHERE table_name = 'auth_oauth_transactions'
+         AND column_name IN ('pkce_verifier_enc','kms_key_version','state_hash','browser_binding_hash')`,
+    );
+    const byName = new Map(
+      (cols.rows as { column_name: string; udt_name: string }[]).map((r) => [
+        r.column_name,
+        r.udt_name,
+      ]),
+    );
+    expect(byName.get("pkce_verifier_enc")).toBe("bytea");
+    expect(byName.get("kms_key_version")).toBe("text");
+    expect(byName.get("state_hash")).toBe("text");
+
+    // the Google lifecycle CHECK exists and rejects a live Google row missing the verifier.
+    const chk = await ctx.owner.query(
+      `SELECT 1 FROM pg_constraint WHERE conrelid = 'auth_oauth_transactions'::regclass
+         AND conname = 'auth_oauth_transactions_google_lifecycle_chk'`,
+    );
+    expect(chk.rows).toHaveLength(1);
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO auth_oauth_transactions(state_hash, provider, browser_binding_hash, expires_at)
+         VALUES ($1, 'google', 'b', now() + interval '10 min')`,
+        [`st-nochk-${randomBytes(6).toString("hex")}`],
+      ),
+    ).rejects.toThrow(/google_lifecycle_chk/);
+
+    // The two sweep indexes are PARTIAL, matching their sweep predicates so the
+    // traffic-path terminalize/retention never full-scans (codex round-02 [P2]).
+    const idx = await ctx.owner.query(
+      `SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'auth_oauth_transactions'`,
+    );
+    const defs = new Map(
+      (idx.rows as { indexname: string; indexdef: string }[]).map((r) => [r.indexname, r.indexdef]),
+    );
+    expect(defs.get("auth_oauth_transactions_expiry_idx")).toMatch(/WHERE .*terminal_at IS NULL/);
+    expect(defs.get("auth_oauth_transactions_terminal_idx")).toMatch(
+      /WHERE .*terminal_at IS NOT NULL/,
+    );
+  });
+
+  it("D1-12: app has EXECUTE on the three 0017 functions but ZERO grant on the table", async () => {
+    for (const sig of [
+      "auth_oauth_transaction_issue(text,text,text,text,bytea,text,interval)",
+      "auth_oauth_transaction_claim(text,text,text)",
+      "auth_login_google(text,text,bytea,text,uuid,text,text)",
+    ]) {
+      const r = await ctx.owner.query(
+        `SELECT has_function_privilege('app', $1, 'EXECUTE') AS granted`,
+        [sig],
+      );
+      expect((r.rows[0] as { granted: boolean }).granted, `app must execute ${sig}`).toBe(true);
+    }
+    // the internal sweep helper is NOT granted (reached only from issue/claim).
+    const sweep = await ctx.owner.query(
+      `SELECT has_function_privilege('app', '_auth_oauth_transaction_sweep()', 'EXECUTE') AS granted`,
+    );
+    expect((sweep.rows[0] as { granted: boolean }).granted).toBe(false);
+    // the table itself is function-only: app cannot read or write it directly.
+    await expect(
+      ctx.appPool.query(`SELECT 1 FROM auth_oauth_transactions LIMIT 1`),
+    ).rejects.toThrow(/permission denied/i);
+  });
+});

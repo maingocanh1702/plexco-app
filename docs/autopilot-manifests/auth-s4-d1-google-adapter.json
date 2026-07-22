@@ -17,7 +17,8 @@
   "invariants": ["auth", "schema", "build-config"],
   "enablement_gates": [
     "google-oauth-client-config (Google console client-id/secret via KMS/env; khong hard-code)",
-    "A3-legal-PII (go-live gate, khong chan code)"
+    "A3-legal-PII (go-live gate, khong chan code)",
+    "auth-s4-d1b-oauth-session-rotation MUST LAND FIRST — BLOCKER on enabling Google login (i.e. before GOOGLE_OAUTH_CLIENT_ID/SECRET are set in ANY environment), NOT merely the next slice. Residual risk in D1 as-shipped (owner-accepted, Option A 2026-07-22): a pre-login (pre-existing) Strict session SURVIVES a Google login and is NOT invalidated, because the SameSite=Strict plx_session cookie is absent on the cross-site OAuth callback so it cannot be read/rotated there. D1 mints a fresh Strict session (matrix D1-2/D1-13); rotating/revoking the prior session needs a same-site completion hop in the D0/session-web-boundary layer. Owner creates the d1b follow-up artifacts on main (OUT of this slice's scope)."
   ],
   "negative_scope": [
     "NO email/password/token/delivery lifecycle (D1 email bundle rieng, flag OFF)",
@@ -27,12 +28,14 @@
     "NO reuse of sameOriginRequest()/Strict callback cookie tu Telegram flow cho OAuth callback",
     "NO Telegram route removal"
   ],
+  "_scope_note": "Reconciled at READY: (a) packages/db/src/auth.ts was left UNCHANGED — deriveEmailArtifacts (already exported from @plexco/db) is reused; the app<->0017 typed wrappers live in apps/web/lib/oauth-transaction.ts because packages/db/src/index.ts is OUT of order-3 scope and the web app cannot import a non-index @plexco/db symbol. (b) packages/db/src/rls-invariants.test.ts was added to scope for the unavoidable migration-count assertion bump (17->18) that EVERY migration-adding slice must make.",
   "scope": [
     "docs/autopilot-manifests/auth-s4-d1-google-adapter.json",
     "packages/db/schema.ts",
     "packages/db/migrations/0017_oauth_transactions.sql",
     "packages/db/src/auth.ts",
     "packages/db/src/auth.test.ts",
+    "packages/db/src/rls-invariants.test.ts",
     "apps/web/lib/google-oidc.ts",
     "apps/web/lib/google-oidc.test.ts",
     "apps/web/lib/oauth-transaction.ts",

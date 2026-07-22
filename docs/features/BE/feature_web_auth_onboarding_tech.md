@@ -197,8 +197,8 @@ The lifecycle below is normative; physical tables/indexes remain **provisional**
 
 | Method | Path | Auth | Mô tả |
 |--------|------|------|-------|
-| GET | /api/auth/google/state | ⬜ Public | Trusted-IP issue bucket trước row/cookie; issue OAuth transaction + provider-specific Lax binding; redirect với state+nonce+PKCE S256 |
-| GET | /api/auth/google/callback | ⬜ Public | Separate trusted-IP callback bucket; cross-site GET claims exact state+binding, exchanges code+PKCE, verifies OIDC proof; **no `sameOriginRequest()`** |
+| GET | /api/auth/google/state | ✅ Public (D1 order-3, migration 0017) | Trusted-IP issue bucket trước row/cookie; issue OAuth transaction + provider-specific Lax binding; redirect với state+nonce+PKCE S256 |
+| GET | /api/auth/google/callback | ✅ Public (D1 order-3, migration 0017) | Separate trusted-IP callback bucket; cross-site GET claims exact state+binding, exchanges code+PKCE, verifies OIDC proof; **no `sameOriginRequest()`** |
 | GET | /api/auth/facebook/state | ⬜ Public | Shared trusted-IP issue bucket trước row/cookie; issue OAuth transaction + Lax binding only when external gate/config active |
 | GET | /api/auth/facebook/callback | ⬜ Public | Separate trusted-IP callback bucket; claim state+binding; server-side code exchange + configured-App subject proof; **no same-origin header gate** |
 | POST | /api/auth/email/register | ⬜ Public | Email + password self-register (email verification) |
@@ -295,6 +295,8 @@ Verify/reset ordering is normative: trusted-IP limit runs before token lookup; a
 - CSP, X-Frame-Options, clickjacking protections.
 - Session rotation on: login, owner assignment, tenant switch.
 - Password reset uses an account-wide revoke primitive, not the current one-token revoke helper. Credential update + revoke-all are atomic and audited.
+
+> **⚠️ ENABLEMENT GATE — Google login session rotation (D1 order-3, owner-accepted Option A 2026-07-22).** The D1 Google callback mints a **fresh** Strict session (matrix D1-2/D1-13) but does **NOT** rotate/revoke a **pre-existing** session in the same browser, because `SameSite=Strict plx_session` is **not sent on the cross-site OAuth callback** and therefore cannot be read/rotated there. **Residual risk:** a pre-login session **survives** a Google login and stays valid in the DB. **This is a BLOCKER on ENABLING Google login** — the follow-up slice **`auth-s4-d1b-oauth-session-rotation`** (a same-site completion hop in the D0/session-web-boundary layer that reads the Strict cookie and runs the atomic rotate/reject fence) **MUST land BEFORE `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET` are set in ANY environment.** It is not merely the next slice.
 
 ### Google OIDC proof matrix (DD-50)
 
@@ -565,6 +567,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-22 | v2.11 | **D1 order-3 Google-OIDC-adapter IMPLEMENTED (migration 0017).** `auth_oauth_transactions` (bytea PKCE ciphertext + own key-version, google lifecycle CHECK) + `auth_oauth_transaction_issue`/`_claim` (single-use, terminalize+NULL ciphertext) + `auth_login_google` (§4 collision cells 1-6 `login_success` / cell 7 `identity_conflict`, per-lane audit, parent-first lock). App boundary: `apps/web/lib/google-oidc.ts` (jose proof matrix — signature/iss/aud/azp/exp/iat/nonce/email_verified + maxTokenAge + token-exchange timeout), `apps/web/lib/oauth-transaction.ts` (PKCE S256 + AES-256-GCM verifier AEAD mirroring `email_enc` w/ HKDF 32-byte key, Lax path-scoped binding cookie, 0017 wrappers), routes `/api/auth/google/{state,callback}` (no `sameOriginRequest()`, session Strict, no-referrer fence, limiter fail-closed). Acceptance D1-1..D1-15 green (real PG). `jose@5` added. Facebook routes still absent (DD-33). No email lifecycle (order-4, flag OFF). Endpoints §3 flipped ⬜→✅. **DEFERRED (owner-accepted Option A):** cross-site pre-session rotation is NOT done in the adapter (Strict cookie absent cross-site) — D1 mints fresh; residual risk + **enablement blocker** `auth-s4-d1b-oauth-session-rotation` pinned in §4 Session Security + manifest `enablement_gates`. |
 | 2026-07-19 | v2.9b | **v1.86 (AP-26 HALT MAX_ROUNDS/Codex round-03):** (1) Issuance fence reject-and-reauth — `issueSession()` không fallback-mint khi có cookie mà rotate trả null (clear cookie + 401 `AUTH_INVALID`); `apps/web/lib/session-cookies.ts` vào scope D0; case D0-12 mới. (2) Partial index `web_sessions(account_id) WHERE revoked_at IS NULL` trong 0015 + `schema.ts` mirror; case D0-13 mới. (3) D1: `auth_login_google` nhận preallocated `account_emails.id` cho cell 1 — AAD contract B0 §3.3 giữ nguyên. No runtime. |
 | 2026-07-19 | v2.9a | **v1.83 (AP-26 HALT v2/Codex round-01):** D0 thêm CREATE OR REPLACE `auth_rotate_web_session` parent-first (đóng deadlock logout-all×rotate; case D0-11 mới) + `auth_audit_events` append-only tạo tại migration D0 (order-2 reuse/extend) + export root `packages/db/src/index.ts` vào scope D0. Số migration theo tail thực tế lúc merge (v2.9). No runtime. |
 | 2026-07-19 | v2.9 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (live `0001`/`0008`/`0012` = reuse baseline, DROP ❌ NEVER; `auth_oauth_transactions` + email tables = migration mới monotonic theo tail thực tế của main), §3 Request/Response Examples (DD-60) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |

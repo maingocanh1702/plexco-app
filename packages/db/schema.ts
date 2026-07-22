@@ -403,6 +403,50 @@ export const authEmailDeliveries = pgTable("auth_email_deliveries", {
     OR (${t.commandOperation} = 'forgot' AND ${t.kind} = 'password_reset')`),
 }));
 
+/**
+ * Cross-site OAuth transaction store (D1, migration 0017 — order-3). One
+ * protected row per started Google (later Facebook) redirect flow: `state_hash`
+ * travels in the authorization URL, `browser_binding_hash` lives only in the
+ * path-scoped Lax cookie, and a Google row also carries `nonce_hash` + the S256
+ * PKCE verifier CIPHERTEXT (`pkce_verifier_enc` bytea, NEVER plaintext) with its
+ * own `kms_key_version`. FUNCTION-ONLY: `app` has ZERO grant — issue/claim run
+ * only inside the SECURITY DEFINER functions in 0017. Distinct from the live
+ * `oauth_transactions` channel-bootstrap table. Lifecycle CHECKs mirror
+ * auth_email_deliveries (consume ⇒ terminal; verifier/key NULLed at terminal).
+ */
+export const authOauthTransactions = pgTable("auth_oauth_transactions", {
+  stateHash: text("state_hash").primaryKey(),
+  provider: text("provider").notNull(),
+  browserBindingHash: text("browser_binding_hash").notNull(),
+  nonceHash: text("nonce_hash"),
+  pkceVerifierEnc: bytea("pkce_verifier_enc"),
+  kmsKeyVersion: text("kms_key_version"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  terminalAt: timestamp("terminal_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  // PARTIAL sweep indexes matching the two traffic-path sweep predicates
+  // (terminalize expired-nonterminal / retention-delete terminal) — codex round-02.
+  expiryIdx: index("auth_oauth_transactions_expiry_idx")
+    .on(t.expiresAt).where(sql`${t.terminalAt} IS NULL`),
+  terminalIdx: index("auth_oauth_transactions_terminal_idx")
+    .on(t.terminalAt).where(sql`${t.terminalAt} IS NOT NULL`),
+  providerChk: check("auth_oauth_transactions_provider_check",
+    sql`${t.provider} IN ('google','facebook')`),
+  // consume always terminalizes (D1-3).
+  consumedTerminalChk: check("auth_oauth_transactions_consumed_terminal_chk",
+    sql`${t.consumedAt} IS NULL OR ${t.terminalAt} IS NOT NULL`),
+  // Google carries nonce+verifier+key while live, NULLs verifier+key at terminal
+  // (D1-12); Facebook (future) is unconstrained by this CHECK.
+  googleLifecycleChk: check("auth_oauth_transactions_google_lifecycle_chk", sql`
+    ${t.provider} <> 'google'
+    OR (${t.terminalAt} IS NULL
+        AND ${t.nonceHash} IS NOT NULL AND ${t.pkceVerifierEnc} IS NOT NULL AND ${t.kmsKeyVersion} IS NOT NULL)
+    OR (${t.terminalAt} IS NOT NULL
+        AND ${t.pkceVerifierEnc} IS NULL AND ${t.kmsKeyVersion} IS NULL)`),
+}));
+
 export const magicLinks = pgTable("magic_links", {
   id: uuid("id").primaryKey().defaultRandom(),
   hash: text("hash").notNull().unique(),
