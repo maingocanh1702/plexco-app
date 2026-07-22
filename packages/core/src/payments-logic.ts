@@ -23,31 +23,83 @@ export interface OpenDebt {
   paid_amount?: number | null;
 }
 
-/** Split "Wang 220k" / "Wang 110 000" / "Wang 110k vnd" into name + amount.
- * The trailing amount is validated by parseMoney ITSELF (single source of the
- * money grammar — no second regex to drift). The SHORTEST parseable trailing
- * run wins: a numeric tail of the NAME ("Player 2 110k") must never be pulled
- * into the money ("2 110k" would inflate the amount 19×). Multi-token amounts
- * still work because their partial tails don't parse alone ("000" -> 0,
- * "k vnd" -> not digit-led), so the scan naturally widens until valid. */
+/** One `(payer-name, amount)` interpretation of a "<name> <trailing amount>" string. */
+export interface SplitNameAmountCandidate {
+  name: string;
+  amount: number;
+  /** the exact trailing token run this reading consumed (unparsed, for display) */
+  rawAmount: string;
+}
+
+/**
+ * Exhaustive fail-closed result of splitting "<name> <amount>" input (DD-87).
+ * A string with two or more distinct positive parseMoney-valid trailing
+ * interpretations is `ambiguous` and carries NO settleable top-level `amount`
+ * — a compile-time fence so a caller can't destructure an amount and settle
+ * without narrowing `kind`. `Wang 110 500` reads as `Wang 110`+500 OR
+ * `Wang`+110500; `Player 0 110k` gives the SAME 110000 to two DIFFERENT payers.
+ * The caller must render a candidate picker, never silently pick one reading.
+ */
+export type SplitNameAmountResult =
+  | { kind: "none"; name: string }
+  | { kind: "resolved"; name: string; amount: number }
+  | {
+      kind: "ambiguous";
+      candidates: readonly [
+        SplitNameAmountCandidate,
+        SplitNameAmountCandidate,
+        ...SplitNameAmountCandidate[],
+      ];
+    };
+
+/**
+ * Split "Wang 220k" / "Wang 110 000" / "Wang 110k vnd" into payer-name + amount.
+ *
+ * `parseMoney` ITSELF validates every trailing run — the single source of the
+ * money grammar, no second regex to drift (DD-87 §5). `AMOUNT_TOKEN_RE` only
+ * bounds the trailing-token scan envelope; it never picks a winner.
+ *
+ * Instead of eagerly returning the SHORTEST parseable run, every positive
+ * parseMoney-valid trailing run is surfaced: `Wang 110 500` reads as both
+ * `Wang 110`+500 and `Wang`+110500, and a numeric name tail (`Player 2 110k`
+ * = `Player 2`+110000 vs `Player`+2110000) is exactly this ambiguity — so the
+ * core refuses to guess and returns `ambiguous`. Zero valid runs → `none`;
+ * exactly one → `resolved`.
+ */
 // Every token shape a parseMoney-valid amount can decompose into when split
 // on whitespace: digit groups, digit+k, digit(+k)+unit, standalone k(+unit),
 // standalone unit. Keep in lockstep with parseMoney's stripped grammar.
 const AMOUNT_TOKEN_RE = /^(?:[\d.,]+k?(?:vnd|d|đ)?|k(?:vnd|d|đ)?|vnd|d|đ)$/i;
 
-export function splitNameAmount(raw: string): { name: string; amount: number | null } {
+export function splitNameAmount(raw: string): SplitNameAmountResult {
   const tokens = raw.trim().split(/\s+/);
   // leftmost token that could still belong to a trailing amount run
   let start = tokens.length;
   while (start > 1 && AMOUNT_TOKEN_RE.test(tokens[start - 1]!)) start--;
-  // shortest valid trailing run first (scan right-to-left)
+
+  // Collect EVERY positive parseMoney-valid trailing run, shortest run first
+  // (scan right-to-left yields shortest→longest order). Dedupe by exact
+  // (name, amount), keeping the first (shortest) occurrence — so identical
+  // interpretations never double-count.
+  const candidates: SplitNameAmountCandidate[] = [];
   for (let i = tokens.length - 1; i >= start; i--) {
-    const candidate = tokens.slice(i).join(" ");
-    if (!/^\d/.test(candidate)) continue; // an amount starts with a digit
-    const amount = parseMoney(candidate);
-    if (amount) return { name: tokens.slice(0, i).join(" "), amount };
+    const rawAmount = tokens.slice(i).join(" ");
+    if (!/^\d/.test(rawAmount)) continue; // an amount starts with a digit
+    const amount = parseMoney(rawAmount);
+    if (amount === null || amount <= 0) continue; // reject non-money and zero
+    const name = tokens.slice(0, i).join(" ");
+    if (candidates.some((c) => c.name === name && c.amount === amount)) continue;
+    candidates.push({ name, amount, rawAmount });
   }
-  return { name: raw.trim(), amount: null };
+
+  if (candidates.length === 0) return { kind: "none", name: raw.trim() };
+  if (candidates.length === 1) {
+    const only = candidates[0]!;
+    return { kind: "resolved", name: only.name, amount: only.amount };
+  }
+  // >=2 distinct interpretations → fail closed; expose ordered candidates only.
+  const [first, second, ...rest] = candidates;
+  return { kind: "ambiguous", candidates: [first!, second!, ...rest] };
 }
 
 /**

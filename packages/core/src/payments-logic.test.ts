@@ -230,44 +230,232 @@ describe("classifyAmount (decision table)", () => {
   });
 });
 
-describe("splitNameAmount", () => {
-  it("splits trailing amounts, keeps plain names", () => {
-    expect(splitNameAmount("Wang 220k")).toEqual({ name: "Wang", amount: 220000 });
-    expect(splitNameAmount("Ngoc-Anh Mai 110.000")).toEqual({
-      name: "Ngoc-Anh Mai",
+describe("splitNameAmount (DD-87 fail-closed ambiguity contract)", () => {
+  // DD-87 §4 decision table — 18 exact rows (9 none/resolved, 9 ambiguous).
+  // Every row is an exact unit assertion; ambiguous rows list ordered
+  // shortest→longest candidates and carry NO top-level name/amount.
+  it("row 1 — empty input → none", () => {
+    expect(splitNameAmount("")).toEqual({ kind: "none", name: "" });
+  });
+  it("row 2 — name only → none", () => {
+    expect(splitNameAmount("Wang")).toEqual({ kind: "none", name: "Wang" });
+  });
+  it("row 3 — a trailing 0 is not a positive amount → none", () => {
+    expect(splitNameAmount("Wang 0")).toEqual({ kind: "none", name: "Wang 0" });
+  });
+  it("row 4 — degenerate '<name> <digit>' → resolved (downstream rejects the underpay)", () => {
+    // the lone digit is the only parseMoney-valid run, so it resolves; no
+    // second reading exists, so it is NOT ambiguous. Money can't move on it
+    // because classifyAmount treats it as too-few-money.
+    expect(splitNameAmount("Player 2")).toEqual({ kind: "resolved", name: "Player", amount: 2 });
+  });
+  it("row 5 — k suffix → resolved", () => {
+    expect(splitNameAmount("Wang 220k")).toEqual({
+      kind: "resolved",
+      name: "Wang",
+      amount: 220000,
+    });
+  });
+  it("row 6 — grouped zero tail parses as one amount → resolved", () => {
+    // '000' alone parses to 0 (rejected), so only 'Wang'+110000 survives.
+    expect(splitNameAmount("Wang 110 000")).toEqual({
+      kind: "resolved",
+      name: "Wang",
       amount: 110000,
     });
-    expect(splitNameAmount("Wang")).toEqual({ name: "Wang", amount: null });
   });
-
-  it("accepts every amount shape parseMoney accepts (single grammar source)", () => {
-    expect(splitNameAmount("Wang 110k vnd")).toEqual({ name: "Wang", amount: 110000 });
-    expect(splitNameAmount("Wang 110000đ")).toEqual({ name: "Wang", amount: 110000 });
-    expect(splitNameAmount("Wang 110000 d")).toEqual({ name: "Wang", amount: 110000 });
-    expect(splitNameAmount("Wang 220K VND")).toEqual({ name: "Wang", amount: 220000 });
-    expect(splitNameAmount("Wang 110 000")).toEqual({ name: "Wang", amount: 110000 });
+  it("row 7 — k + unit suffix → resolved", () => {
+    expect(splitNameAmount("Wang 110k vnd")).toEqual({
+      kind: "resolved",
+      name: "Wang",
+      amount: 110000,
+    });
+  });
+  it("row 8 — spaced k → resolved", () => {
+    expect(splitNameAmount("Wang 110 k")).toEqual({
+      kind: "resolved",
+      name: "Wang",
+      amount: 110000,
+    });
+  });
+  it("row 9 — multi-word name + grouped amount + unit → resolved", () => {
     expect(splitNameAmount("Ngoc-Anh Mai 110 000 vnd")).toEqual({
+      kind: "resolved",
       name: "Ngoc-Anh Mai",
       amount: 110000,
     });
-    // separated k / unit tokens (parseMoney strips whitespace, so must we)
-    expect(splitNameAmount("Wang 110 k")).toEqual({ name: "Wang", amount: 110000 });
-    expect(splitNameAmount("Wang 110 k vnd")).toEqual({ name: "Wang", amount: 110000 });
-    expect(splitNameAmount("Wang 110 kvnd")).toEqual({ name: "Wang", amount: 110000 });
-    // a bare unit word never eats the name
-    expect(splitNameAmount("Wang d")).toEqual({ name: "Wang d", amount: null });
-    expect(splitNameAmount("Wang k")).toEqual({ name: "Wang k", amount: null });
+  });
+  it("row 10 — 'Wang 110 500' → ambiguous (the DD-87 money-loss bug: 500 must not win)", () => {
+    expect(splitNameAmount("Wang 110 500")).toEqual({
+      kind: "ambiguous",
+      candidates: [
+        { name: "Wang 110", amount: 500, rawAmount: "500" },
+        { name: "Wang", amount: 110500, rawAmount: "110 500" },
+      ],
+    });
+  });
+  it("row 11 — 'Wang 110 050' → ambiguous", () => {
+    expect(splitNameAmount("Wang 110 050")).toEqual({
+      kind: "ambiguous",
+      candidates: [
+        { name: "Wang 110", amount: 50, rawAmount: "050" },
+        { name: "Wang", amount: 110050, rawAmount: "110 050" },
+      ],
+    });
+  });
+  it("row 12 — 'Wang 1 500 000' → ambiguous (longest-run would silently inflate)", () => {
+    expect(splitNameAmount("Wang 1 500 000")).toEqual({
+      kind: "ambiguous",
+      candidates: [
+        { name: "Wang 1", amount: 500000, rawAmount: "500 000" },
+        { name: "Wang", amount: 1500000, rawAmount: "1 500 000" },
+      ],
+    });
+  });
+  it("row 13 — 'Wang 110 500k' → ambiguous", () => {
+    expect(splitNameAmount("Wang 110 500k")).toEqual({
+      kind: "ambiguous",
+      candidates: [
+        { name: "Wang 110", amount: 500000, rawAmount: "500k" },
+        { name: "Wang", amount: 110500000, rawAmount: "110 500k" },
+      ],
+    });
+  });
+  it("row 14 — 'Player 2 110k' → ambiguous (numeric name tail)", () => {
+    expect(splitNameAmount("Player 2 110k")).toEqual({
+      kind: "ambiguous",
+      candidates: [
+        { name: "Player 2", amount: 110000, rawAmount: "110k" },
+        { name: "Player", amount: 2110000, rawAmount: "2 110k" },
+      ],
+    });
+  });
+  it("row 15 — 'Player 2 110 000' → ambiguous", () => {
+    expect(splitNameAmount("Player 2 110 000")).toEqual({
+      kind: "ambiguous",
+      candidates: [
+        { name: "Player 2", amount: 110000, rawAmount: "110 000" },
+        { name: "Player", amount: 2110000, rawAmount: "2 110 000" },
+      ],
+    });
+  });
+  it("row 16 — 'Court 7 110 000' → ambiguous", () => {
+    expect(splitNameAmount("Court 7 110 000")).toEqual({
+      kind: "ambiguous",
+      candidates: [
+        { name: "Court 7", amount: 110000, rawAmount: "110 000" },
+        { name: "Court", amount: 7110000, rawAmount: "7 110 000" },
+      ],
+    });
+  });
+  it("row 17 — 'San 2 220000' → ambiguous", () => {
+    expect(splitNameAmount("San 2 220000")).toEqual({
+      kind: "ambiguous",
+      candidates: [
+        { name: "San 2", amount: 220000, rawAmount: "220000" },
+        { name: "San", amount: 2220000, rawAmount: "2 220000" },
+      ],
+    });
+  });
+  it("row 18 — 'Player 0 110k' → ambiguous with EQUAL amount, DIFFERENT payer-name", () => {
+    // both readings settle 110000 but to a different person — ambiguity is
+    // distinct (name,amount), not amount-only; dedupe must NOT collapse these.
+    expect(splitNameAmount("Player 0 110k")).toEqual({
+      kind: "ambiguous",
+      candidates: [
+        { name: "Player 0", amount: 110000, rawAmount: "110k" },
+        { name: "Player", amount: 110000, rawAmount: "0 110k" },
+      ],
+    });
   });
 
-  it("numeric name tails never inflate the amount (shortest trailing run wins)", () => {
-    expect(splitNameAmount("Player 2 110k")).toEqual({ name: "Player 2", amount: 110000 });
-    expect(splitNameAmount("Court 7 110 000")).toEqual({ name: "Court 7", amount: 110000 });
-    expect(splitNameAmount("San 2 220000")).toEqual({ name: "San 2", amount: 220000 });
-    expect(splitNameAmount("Player 2 110 k vnd")).toEqual({ name: "Player 2", amount: 110000 });
-    // degenerate "<name> <digit>" has no better parse — the digit reads as a
-    // (tiny) amount, exactly like the production splitter; downstream
-    // classification rejects it as under-payment, so no money can move on it
-    expect(splitNameAmount("Player 2")).toEqual({ name: "Player", amount: 2 });
+  // SNA-6 — every parseMoney grammar variant still resolves (single grammar source).
+  it("SNA-6 — dotted thousands, unit suffixes and separated k/unit tokens resolve", () => {
+    expect(splitNameAmount("Ngoc-Anh Mai 110.000")).toEqual({
+      kind: "resolved",
+      name: "Ngoc-Anh Mai",
+      amount: 110000,
+    });
+    expect(splitNameAmount("Wang 110000đ")).toEqual({
+      kind: "resolved",
+      name: "Wang",
+      amount: 110000,
+    });
+    expect(splitNameAmount("Wang 110000 d")).toEqual({
+      kind: "resolved",
+      name: "Wang",
+      amount: 110000,
+    });
+    expect(splitNameAmount("Wang 220K VND")).toEqual({
+      kind: "resolved",
+      name: "Wang",
+      amount: 220000,
+    });
+    // parseMoney strips whitespace, so split k / unit tokens still parse as one amount
+    expect(splitNameAmount("Wang 110 k vnd")).toEqual({
+      kind: "resolved",
+      name: "Wang",
+      amount: 110000,
+    });
+    expect(splitNameAmount("Wang 110 kvnd")).toEqual({
+      kind: "resolved",
+      name: "Wang",
+      amount: 110000,
+    });
+  });
+
+  // SNA-2 — a bare unit word never eats the name (no digit-led run) → none.
+  it("SNA-2 — a bare unit word is not an amount → none", () => {
+    expect(splitNameAmount("Wang d")).toEqual({ kind: "none", name: "Wang d" });
+    expect(splitNameAmount("Wang k")).toEqual({ kind: "none", name: "Wang k" });
+  });
+
+  // SNA-3 — the multi-token analog of row 14 (existing 'Player 2 110 k vnd' assertion,
+  // converted from a silently-resolved reading to the exhaustive ambiguous union).
+  it("SNA-3 — 'Player 2 110 k vnd' → ambiguous (existing case, not weakened)", () => {
+    expect(splitNameAmount("Player 2 110 k vnd")).toEqual({
+      kind: "ambiguous",
+      candidates: [
+        { name: "Player 2", amount: 110000, rawAmount: "110 k vnd" },
+        { name: "Player", amount: 2110000, rawAmount: "2 110 k vnd" },
+      ],
+    });
+  });
+
+  // SNA-3 — ambiguous exposes ordered candidates and NO settleable top-level fields at runtime.
+  it("SNA-3 — ambiguous carries no top-level name/amount property", () => {
+    const r = splitNameAmount("Wang 110 500");
+    expect(r.kind).toBe("ambiguous");
+    expect(r).not.toHaveProperty("amount");
+    expect(r).not.toHaveProperty("name");
+    if (r.kind === "ambiguous") {
+      expect(r.candidates).toHaveLength(2);
+      expect(r.candidates[0]).toEqual({ name: "Wang 110", amount: 500, rawAmount: "500" });
+    }
+  });
+
+  // SNA-5 — pure/deterministic: repeated calls are deep-equal, fresh objects, no shared state.
+  it("SNA-5 — repeated calls are deep-equal with no shared mutable state", () => {
+    const a = splitNameAmount("Wang 110 500");
+    const b = splitNameAmount("Wang 110 500");
+    expect(a).toEqual(b);
+    expect(a).not.toBe(b);
+    // an interleaved different call must not mutate the earlier result
+    expect(splitNameAmount("Wang 220k")).toEqual({
+      kind: "resolved",
+      name: "Wang",
+      amount: 220000,
+    });
+    expect(splitNameAmount("Wang 110 500")).toEqual(a);
+  });
+
+  // SNA-7 — compile-time fence: the top-level amount is unreachable without narrowing `kind`.
+  it("SNA-7 — TypeScript rejects reading a settleable amount before narrowing kind", () => {
+    const r = splitNameAmount("Wang 110 500");
+    // @ts-expect-error — top-level `amount` does not exist until `kind` is narrowed to "resolved"
+    const leaked: number | undefined = r.amount;
+    expect(leaked).toBeUndefined(); // ambiguous carries no top-level amount at runtime either
+    expect(r.kind).toBe("ambiguous");
   });
 });
 
