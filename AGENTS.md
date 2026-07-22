@@ -12,6 +12,7 @@ For every session that reviews, reconciles, fixes, or finalizes docs, decisions,
 7. If not ready, return `NOT_PLAN_READY` or `NOT_CODE_READY` with the exact blocker, owner, binary resolution condition, and `NEXT_REVIEW_TRIGGER`; do not end with vague wording such as "almost final" or repeat an unbounded polish loop.
 8. A later-phase or enablement-only question may remain open only when current behavior and negative scope are pinned and it cannot affect the slice being authorized.
 9. Never call docs/contracts runtime proof. Code, migration, tests, deployment, and production E2E require separate evidence.
+10. Every persisted review/readiness artifact must declare its machine classification, include `REVIEW_POLICY_VERSION` and `CLOSURE_MATRIX`, and pass `pnpm review:check:changed` before verdict/commit. A final implementation plan/coding handoff MUST use `<!-- review-readiness: code-ready -->`; the validator must reject it unless every active verdict is strict `CODE_READY`. `enforce` may preserve a draft/blocker audit but can never authorize coding. A failing validator is a hard stop; historical exemptions cannot authorize current work.
 
 These rules are repo policy and apply even when the user only says "review", "check", "updated", "fix", "final", or asks whether a plan can start coding.
 <!-- review-code-readiness:end -->

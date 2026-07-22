@@ -1,3 +1,4 @@
+<!-- review-readiness: historical -->
 # Plan — Security-design pass cho `auth-onboarding` (re-slice v3)
 
 > **Trạng thái:** 🟡 Plan đề xuất — chờ founder duyệt · 2026-07-06

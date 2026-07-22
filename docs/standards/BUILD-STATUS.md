@@ -5,7 +5,8 @@
 > **Cập nhật:** 2026-07-20 (current authority **decisions v1.88** — DD-80 G3 revoke-all concurrency contract + D0a/D0b decomposition; BRD v3.9e/PRD v2.8d/TDD v3.1/ROADMAP v3.3d; DD-59 ✅; DD-70..72 🟡; **DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated**. Không thay functional implementation baseline).
 > **Nguồn số liệu:** `git log`, cây `packages/`+`apps/`, `docs/features/*`, `docs/standards/decisions.md`,
 > `docs/autopilot-backlog.md`. **HEAD `main`** = docs bundle DD-80 v1.88 (`033ccc8`/`aa89b27`) + docs reconcile (`ad10194`) + **D0a squash merge**. Code baseline: migrations `0000–0013` + **`0015` (D0a)**; `0014` waitlist vẫn ở nhánh riêng chưa merge.
-> **✅ D0a merged (2026-07-20):** `auth-s4-d0-revoke-core` (migration `0015_auth_revoke_account.sql` — **miếng code feature-layer đầu tiên**) đã squash-merge vào `main` sau 12 vòng Codex (10 finding fix) + review tay + real-Postgres 97/97. Gate "2 clean liên tiếp" **không đạt** → merge là **owner override có ghi chép** (commit message + `HALT-MAX_ROUNDS.txt`), không phải false CODE_READY. **D0b `auth-s4-d0-session-web-boundary` giờ unblock.**
+> **✅ D0a merged (2026-07-20, `8f493f7`):** `auth-s4-d0-revoke-core` (migration `0015_auth_revoke_account.sql` — **miếng code feature-layer đầu tiên**) squash-merge sau 12 vòng Codex (10 finding fix) + review tay + real-PG 97/97. Gate "2 clean liên tiếp" **không đạt** → **owner override có ghi chép** (commit message + `HALT-MAX_ROUNDS.txt`), không phải false CODE_READY.
+> **✅ D0b merged (2026-07-22, `93c5404`):** `auth-s4-d0-session-web-boundary` — issuance fence `issueSession` (reject-and-reauth, không fallback-mint) + typed 401 `AUTH_INVALID` ở 2 caller + `POST /api/auth/logout-all` (CSRF trước mutation). **Zero DB change.** Gate P0 **ĐẠT** (2 clean round liên tiếp, 2 fix round) — **không override**. Web tests 65→78, real-PG green. Chi tiết: Verdict 6. **→ D1 `auth-s4-d1-email-token-core` unblock.**
 >
 > **Reconcile 2026-07-17:** target channel identity theo DD-15/DD-65..68 = endpoint-scoped Messenger + Zalo, reachability gắn `channel_identity_id`; Messenger = central+optional tenant Page, shared host/player. Live `messenger_pages` tenant-only, identity/reachability vẫn thiếu generalized endpoint contract và `apps/bot` queue shell **chưa đáp ứng**; chưa adapter/handler/shared Session/Join/AuthZ/projector/E2E. Google/email cũng chưa implement. Migrations vẫn `0000–0013`.
 
@@ -17,9 +18,9 @@
 |---|---|---|
 | **Tài liệu / thiết kế** | **22 Product/System + 21 BE specs**, cộng DD-69 analysis. Waitlist mirrors pin one root CAS/lease max-3 sweep job per capacity opener; candidate events are alert/audit refs, not independent budgets. Notification v3.4c pins the same ownership boundary plus global read/write owners, durable quota/retry receipts, push idempotency/trust/key epochs và security context-start cutoff but remains Draft; DD-70..72 🟡. DD-73/74/75/78 dependency/consumer-sequenced; DD-76/77 evidence-gated. Decision log **v1.65**. | Contract coverage cao; không dùng count làm code-readiness |
 | **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations `0000–0013` đã merge trên `main`, có test *(0014 waitlist đang ở nhánh `feat/session-waitlist-expand`, **chưa merge**)* | **✅ xong** |
-| **Code — lớp auth** | Auth v3 (Telegram-era) merged; **DD-80 D0a epoch revoke-all core merged** (migration `0015`); D0b (session boundary) + D1 (Google/email) chưa | 🟡 provider swap in progress |
+| **Code — lớp auth** | Auth v3 (Telegram-era) merged; **DD-80 D0a epoch core (`0015`) + D0b session/logout-all boundary đã merged**; còn D1 (email-token dark → Google adapter → email bundle) rồi gỡ Telegram | 🟡 provider swap in progress |
 | **Code — lớp feature nghiệp vụ** | chưa bắt đầu (session/reconcile/sync/marketplace/billing/bot…) | ⬜ chưa build |
-| **Roadmap build** | **S1–S3 + S4 Auth v3** đã land + **D0a revoke-core merged** (đầu chuỗi provider swap); D0b/D1 tiếp theo | ~22% |
+| **Roadmap build** | **S1–S3 + S4 Auth v3** đã land + **D0a + D0b merged** (xong nửa đầu chuỗi provider swap); D1 tiếp theo | ~24% |
 
 **Một câu:** phần *khó và nền tảng nhất* (đường tiền thuần + DB có RLS fail-closed + migrations `0000–0013` trên `main`)
 đã dựng xong và được test; **Auth Onboarding v3 (Telegram-era) cũng đã merge** — nhưng **DD-37 supersede

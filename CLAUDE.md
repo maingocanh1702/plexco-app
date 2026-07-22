@@ -28,6 +28,7 @@ Mọi session review, reconcile, fix hoặc final docs/decisions/specs/plans/rea
 7. Nếu chưa ready, ghi `NOT_PLAN_READY` hoặc `NOT_CODE_READY` kèm exact blocker, owner, binary resolution và `NEXT_REVIEW_TRIGGER`; cấm kết luận mơ hồ “gần final” hoặc tiếp tục polish vòng lặp không giới hạn.
 8. Open question phase sau/enablement-only chỉ được giữ mở khi current behavior + negative scope đã pin và không ảnh hưởng slice đang authorize.
 9. Docs/contract không phải runtime proof; code, migration, tests, deployment và production E2E cần bằng chứng riêng.
+10. Mọi persisted review/readiness artifact phải khai báo machine classification, có `REVIEW_POLICY_VERSION` + `CLOSURE_MATRIX`, và pass `pnpm review:check:changed` trước verdict/commit. Final implementation plan/coding handoff BẮT BUỘC dùng `<!-- review-readiness: code-ready -->`; validator phải reject nếu bất kỳ active verdict nào chưa strict `CODE_READY`. `enforce` chỉ được lưu draft/blocker audit, không được authorize coding. Validator đỏ là hard stop; historical exemption không được authorize current work.
 
 Policy này áp dụng kể cả khi user chỉ nói “review”, “check”, “updated”, “fix”, “final” hoặc hỏi plan đã bắt đầu code được chưa.
 

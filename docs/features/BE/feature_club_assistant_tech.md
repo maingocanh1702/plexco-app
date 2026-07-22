@@ -1,11 +1,13 @@
 # Feature: Club AI Assistant + Knowledge Base — Backend Tech Spec
 
 > **Canonical phase:** P7 (post-MVP, **đề xuất**)
-> **Version:** 0.10 · 2026-07-19
+> **Version:** 0.11 · 2026-07-22
 > **Status:** 🟡 Draft — contract đã harden và sẵn sàng cho review/promotion, nhưng **chưa build-ready cho tới khi được formally promote sang Reviewed**. **DD-18** (provider LLM + privacy/ToS/DPA) ⬜ là gate GO-LIVE sau khi scope implementation được duyệt, không phải lý do tự động promote/build (provider đặt sau interface `EmbeddingProvider`/`ChatProvider` swappable).
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_club_assistant.md`
 > **Nguồn:** proposal `../../proposals/club-ai-bot-knowledge-base.md` · `../../standards/core-db-architecture-principles.md` (INV-1..10, P1–P16) · migrations `0004`/`0005`/`0009` **chỉ là historical schema/RLS baselines, không phải edit targets**
+
+> 🟡 **DD-86 proposal boundary (2026-07-22):** pha B multi-channel chỉ được wire sau owner decision và root chat migration. Nếu Option B được chốt, `assistant_enabled` của channel là một gate bổ sung bắt buộc, kết hợp **AND** với tenant config/entitlement/provider/privacy gates; false/unknown ở bất kỳ gate nào → không enqueue/project. Spec vẫn Draft/not implemented.
 
 ---
 
@@ -38,7 +40,8 @@ INGEST (write path = host nạp KB)
 ANSWER (read/answer path = member hỏi — CHỈ trong app Plexco) — HAI PHA (P9: một durable result; provider pre-checkpoint có thể retry)
   chat_messages(@bot) trong kênh in-app · panel "Hỏi trợ lý"
     → resolve tenant + person (phiên app + kênh chat in-app)
-    → GATE eligibility: member? enabled? entitlement/cap còn?  -- fail → refuse
+    → GATE eligibility: member? tenant enabled? entitlement/cap/provider/privacy pass?
+         [DD-86 conditional pha B: channel.assistant_enabled=true?]  -- false/unknown → refuse
     → PHA 1 — COMMAND bot.ask(command_id)  (đồng bộ, KHÔNG gọi LLM):
          txn: INSERT bot_queries(status='received', command_id)   -- UNIQUE(tenant,command_id) = dedupe
               + enqueue answer job (pg-boss) / OUTBOX 'bot.ask.requested'  -- CÙNG txn
@@ -516,6 +519,8 @@ bot_query_id=query_id
 
 Writer không nhận author fields từ client, không phát assistant vào DM, và trả existing message khi `client_msg_id`/`bot_query_id` trùng. SSE đọc lại canonical `chat_messages`; assistant feature không tự tạo topic/store realtime thứ hai.
 
+Nếu DD-86 được chốt, cả command ingress và projector consume boundary phải re-read `chat_channels.assistant_enabled`, tenant `bot_configs.enabled`, entitlement/cap và provider/privacy enablement. Đây là phép **AND**, không phải fallback/override: channel flag không tự cấp entitlement, tenant flag không tự bật một channel, và unknown/unavailable fail-closed. Projector không được dựa vào state đã cache từ lúc enqueue.
+
 Contract enforceable: `project_assistant_answer(query_id)` là `SECURITY DEFINER` với pinned `search_path`, chỉ nhận `query_id` và tự derive channel/body/author shape từ canonical rows. `REVOKE ALL ... FROM PUBLIC, app`; chỉ existing projector-worker role được `EXECUTE`. Role `app` không có direct assistant/system INSERT; definer owner chỉ có SELECT `bot_queries/chat_channels` + INSERT/SELECT `chat_messages` cần cho idempotency, không broad table mutation.
 
 ### Retention & redaction (P2-b — contract, không chỉ lời hứa)
@@ -604,6 +609,7 @@ Contract enforceable: `project_assistant_answer(query_id)` là `SECURITY DEFINER
 | 44 | Assistant writer privilege | Role `app` gọi writer/direct insert hoặc worker cố spoof channel/body/author | `app` permission denied; worker API chỉ nhận query id và derive canonical assistant shape |
 | 45 | Quarantine object access | DLP-blocked raw upload + app/host signed-read request | Không có app read URL; object ở restricted quarantine; move failure vẫn giữ source blocked + alert |
 | 46 | DLP alert idempotency | Retry/cạnh tranh cùng source generation + detector class | Đúng 1 opaque owner alert theo dedupe key; không matched text |
+| 47 | DD-86 per-channel Assistant conjunction | Pha B với channel flag × tenant enabled × entitlement/cap × provider/privacy, gồm unknown | Chỉ all-true mới enqueue/project; mọi false/unknown không gọi provider và không ghi `chat_messages` |
 
 ### Integration Tests
 
@@ -620,6 +626,7 @@ Contract enforceable: `project_assistant_answer(query_id)` là `SECURITY DEFINER
 | 9 | Sensitive replacement E2E | Source gen N active → re-ingest gen N+1 có test secret/PII | N bị superseded; source blocked/quarantine; no vector/retrieval/fallback; UI không echo match |
 | 10 | Redact/re-ingest E2E | Từ blocked gen N+1 nạp clean gen N+2 | Giữ source_key; N/N+1 không retrieve; N+2 active + citations đúng |
 | 11 | Assistant chat reuse E2E | Native club @mention → answer worker/projector retry | 1 message trong canonical `chat_messages` + SSE; `chat_members` authorize; không có store/schema chat thứ hai |
+| 12 | DD-86 multi-channel isolation | Hai club channels cùng tenant, chỉ một channel bật Assistant | @mention ở channel bật tạo đúng 1 answer/message tại channel đó; channel tắt không query/provider/message; tenant/provider gate tắt chặn cả hai |
 
 ---
 
@@ -630,7 +637,7 @@ Contract enforceable: `project_assistant_answer(query_id)` là `SECURITY DEFINER
 0. **Gate trước implementation** — Product + BE pair phải được formally promote từ Draft sang Reviewed; việc DD-18 chỉ chặn GO-LIVE không thay thế gate này.
 1. **Pha A** — migration mới monotonic tự cài/verify `vector`, tạo schema + RLS/policy + explicit grants/revokes và vượt role-matrix test ở staging → KB manager (gồm quarantine + redact/re-ingest) + panel "Hỏi trợ lý" trong app cho tenant #1. Không sửa/chạy lại `0000` hoặc `0009`.
 2. Mở rộng KB (nhiều nguồn) + tinh chỉnh hybrid/threshold.
-3. **Pha B** — sau khi canonical In-app Chat P4 đã migrate, chỉ ALTER `bot_query_id` + bot writer/projector; tái dùng `chat_channels/chat_members/chat_messages` + SSE, không tạo schema chat song song.
+3. **Pha B** — sau khi canonical In-app Chat P4 đã migrate; nếu DD-86 được owner chốt thì migration đó phải là root `dd38-dd86-chat-schema-core` final multi-channel model và tests #47/integration #12 phải xanh. Assistant chỉ ALTER `bot_query_id` + bot writer/projector; tái dùng `chat_channels/chat_members/chat_messages` + SSE, không tạo schema chat song song.
 4. Nâng cao (pha C): summary 2-vector, LLM rerank, gợi ý lấp gap KB, thêm nguồn URL/Docs.
 5. Beta clubs → GA sau khi chốt DD-18 (provider + privacy/ToS) và pen-test.
 
@@ -645,6 +652,7 @@ Contract enforceable: `project_assistant_answer(query_id)` là `SECURITY DEFINER
 - [ ] DD-16/17/19/20/21/23 ✅ (thiết kế) · DD-18 ✅ (provider + duyệt privacy/ToS) · DD-22 ✅ (pricing).
 - [ ] Test bất biến cô lập tenant + current-generation-only + atomic supersession + blocked-replacement-no-fallback + DLP-before-provider + no-PII/secret-in-prompt xanh trong CI.
 - [ ] Canonical In-app Chat migration đã chạy trước pha B; assistant migration chỉ thêm `bot_query_id` relation/writer và test không tạo membership/chat schema song song.
+- [ ] Nếu DD-86 accepted: owner-ratified + immutable authority snapshot; per-channel flag AND tenant/provider/privacy gates pass ở ingress và consume/project boundary, fail-closed khi unknown.
 - [ ] Test cross-tenant FK reject + stale-worker fence + assistant-projector idempotency + two-phase no-double-LLM + retention purge xanh.
 - [ ] Object storage + retention job + malware scan cấu hình.
 - [ ] Migration mới self-contained đã cài/verify `vector`; ENABLE + FORCE RLS, policy và grant matrix cho toàn bộ bảng/hàm mới đã được kiểm thử trên database từng chạy qua migration lịch sử.
@@ -653,6 +661,7 @@ Contract enforceable: `project_assistant_answer(query_id)` là `SECURITY DEFINER
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-22 | v0.11 | Mirror DD-86 proposal có điều kiện: per-channel Assistant flag AND tenant config/entitlement/provider/privacy, revalidation ở ingress+projector, unit #47/integration #12 và rollout dependency vào root final chat migration. Giữ Draft/not implemented. |
 | 2026-07-19 | v0.10 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (schema chưa vào canonical — migration mới self-contained pgvector; DROP canonical = ❌ NEVER), §3 Request/Response Examples (DD-60 envelope) + Idempotency (tham chiếu bảng Commands), §4 Caching Strategy (map `embedding_cache`) + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v0.9a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.9 | **Readiness + migration/security closure:** giữ formal status Draft tới khi promote Reviewed; migration mới tự cài/verify `vector` và chứa RLS/policy/grant contract thay vì sửa `0000`/`0009` đã apply; chuẩn hoá API envelope; sửa numbering unit tests 43–46. |

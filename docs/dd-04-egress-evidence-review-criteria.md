@@ -1,3 +1,4 @@
+<!-- review-readiness: criteria -->
 # ✅ Review criteria — DD-04 §7.1 fixed outbound-IP gate
 
 > **Mục đích:** tiêu chí để **chấp nhận hay bác** kết quả của slice `infra-egress-compatibility-evidence` khi nó dừng ở `STOP_AT_READY`.

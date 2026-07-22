@@ -1,13 +1,15 @@
 # Feature: In-app Chat (club-wide + 1-1) — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.15 · 2026-07-19
+> **Version:** 0.16 · 2026-07-22
 > **Status:** ✅ DD-38 chốt (2026-07-10) — Draft, pending migration (schema aligned với `packages/db/schema.ts`)
 > **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_inapp_chat.md` *(Draft)*
-> **References:** `../../standards/decisions.md` DD-38 (chat cơ bản phase-1) · DD-55 (open-DM safety + media) · DD-19/DD-20 (trợ lý tái dùng hạ tầng chat) · DD-07 (SSE + LISTEN/NOTIFY) · `../BE/feature_multi_tenant_tech.md` (RLS template) · `../BE/feature_sync_engine_tech.md` (realtime authz)
+> **References:** `../../standards/decisions.md` DD-38 (chat cơ bản phase-1) · DD-55 (open-DM safety + media) · DD-56 (capability registry) · DD-86 (multi-channel proposal) · DD-19/DD-20 (trợ lý tái dùng hạ tầng chat) · DD-07 (SSE + LISTEN/NOTIFY) · `../BE/feature_multi_tenant_tech.md` (RLS template) · `../BE/feature_sync_engine_tech.md` (realtime authz)
 
-> ✅ **DD-38 chốt (2026-07-10).** Schema dưới đây là **thiết kế đã pin** (ràng buộc trong DD-38: 2 loại channel, DM guard, dedupe theo `client_msg_id`); nguồn authoritative khi thực thi vẫn là `packages/db/schema.ts` + `packages/db/migrations/*.sql` (**thêm `chat_*` + RLS qua migration mới sau `0013`**) + `decisions.md` DD-38. **KHÔNG** tạo bảng song song với `persons/memberships/tenants`.
+> ✅ **DD-38 chốt (2026-07-10).** Schema dưới đây là **thiết kế đã pin** (ràng buộc trong DD-38: 2 loại channel, DM guard, dedupe theo `client_msg_id`); nguồn authoritative khi thực thi vẫn là `packages/db/schema.ts` + `packages/db/migrations/*.sql` (**thêm `chat_*` + RLS bằng migration monotonic mới sau migration canonical mới nhất tại lúc build**) + `decisions.md` DD-38. **KHÔNG** tạo bảng song song với `persons/memberships/tenants`.
+
+> 🟡 **DD-86 proposal boundary (2026-07-22):** DDL DD-38 bên dưới mô tả baseline một club channel/tenant, nhưng migration chat đang **HOLD**. Nếu owner chốt Option B, root slice `dd38-dd86-chat-schema-core` phải author **final multi-channel schema trực tiếp**; không land one-channel index rồi sửa lịch sử. DD-86 chưa phải authority, `PLAN_READY`, `CODE_READY` hay runtime proof.
 
 ---
 
@@ -40,6 +42,15 @@ Report: submitted -> triaged -> actioned | closed  (audit append-only; no tenant
 ```
 
 One canonical DM safety decision owns enablement, pair block state, per-sender/per-target limits and abuse audit, and is called at request/create/**SECURITY DEFINER bootstrap**/send/read boundaries. The pre-send core additionally checks membership and attachment readiness/ownership before writing. No endpoint or RPC may implement or bypass its own block formula.
+
+### Conditional DD-86 delta (chỉ áp dụng sau owner ratification)
+
+- Giữ `kind IN ('club','dm')`; bỏ one-channel-per-tenant index. Club thêm `title`, `sort_order`, `post_policy`, `is_default`, `assistant_enabled`, `created_by_membership_id`, `created_by_person_id`; DM CHECK bắt `tenant_id` và mọi club-only/creator field là `NULL`.
+- Creator dùng composite FK `(created_by_membership_id, created_by_person_id, tenant_id) → memberships(id, person_id, tenant_id)`; không dùng một membership id cho FK ba cột.
+- Partial unique `(tenant_id) WHERE kind='club' AND is_default AND archived_at IS NULL` chỉ chặn **at-most-one**. Create/set-default/archive chạy dưới tenant parent lock và deferred assertion để bảo đảm **exactly-one active default**; archive default bắt buộc replacement cùng transaction.
+- Tạo club channel và activation membership đều upsert đủ membership × active-channel trong cùng transaction, retry-safe; lỗi giữa chừng rollback. `UNIQUE(channel_id, membership_id)`/equivalent là replay fence.
+- Channel mutations dùng guarded commands với action→capability registry DD-56 (`chat.channel.manage`, `chat.channel.post_restricted`), không dựa vào `chat_members.role` làm tenant authority. Capability registry unavailable/unknown → deny.
+- Mỗi create/rename/set-default/archive nhận actor-scoped UUID idempotency key + request fingerprint; exact replay trả receipt cũ, cùng key khác payload → `CHAT_IDEMPOTENCY_MISMATCH`.
 
 ---
 
@@ -184,7 +195,7 @@ CREATE TRIGGER trg_chat_dm_no_delete BEFORE DELETE ON chat_members
   FOR EACH ROW EXECUTE FUNCTION chat_dm_no_member_delete();
 ```
 
-**Cô lập — RLS policy khả thi đã pin (thêm `chat_*` vào RLS list qua migration mới sau `0013`):**
+**Cô lập — RLS policy khả thi đã pin (thêm `chat_*` vào RLS list qua migration monotonic mới, không sửa lịch sử):**
 
 Vì một bảng chứa **cả** club-row (`tenant_id NOT NULL`) lẫn dm-row (`tenant_id NULL`), một policy **tenant-only** sẽ **khoá mất** dm-row (fail-closed → không ai đọc được DM). Giải: **2 policy permissive** (Postgres OR chúng lại) trên mỗi bảng `chat_*`, dùng cả `app.tenant_id` lẫn `app.person_id` GUC:
 
@@ -446,7 +457,7 @@ GRANT  SELECT ON chat_messages TO app;
 
 ### Migration & Rollback
 
-> `chat_channels`/`chat_members`/`chat_messages` + safety schema (`chat_blocks`/`chat_reports`/rate-audit state) **chưa tồn tại trong canonical migrations** (verified: không có `chat_*` trong `packages/db/migrations/`). DD-38 pending migration: toàn bộ DDL §2 land bằng **một migration mới số monotonic kế tiếp còn trống** — thứ tự bắt buộc + pre-provision `chat_definer` đã pin ở §6 Rollout bước 0–1; KHÔNG sửa `0009` đã apply. Candidate key `memberships_id_person_tenant_uq` là ALTER additive trên bảng baseline `memberships` (`0002` — LIVE).
+> `chat_channels`/`chat_members`/`chat_messages` + safety schema (`chat_blocks`/`chat_reports`/rate-audit state) **chưa tồn tại trong canonical migrations** (verified: không có `chat_*` trong `packages/db/migrations/`). Migration đang **HOLD tới DD-86 owner decision**. Sau decision, toàn bộ final DDL land bằng **một migration mới số monotonic kế tiếp còn trống** trong root slice `dd38-dd86-chat-schema-core`; KHÔNG sửa migration đã apply và KHÔNG land baseline one-channel rồi fold. Candidate key `memberships_id_person_tenant_uq` là ALTER additive trên bảng baseline `memberships` (`0002` — LIVE).
 
 | Bước | Hành động | An toàn? |
 |------|-----------|----------|
@@ -496,6 +507,10 @@ GRANT  SELECT ON chat_messages TO app;
 | GET | /api/chat/media/:id/access | Authorized channel member | Re-authorize current membership/state; issue short-lived signed read only for `ready` object |
 | DELETE | /api/chat/media/:id | Attachment owner or authorized moderator | Apply deletion policy; tombstone references; revoke future signed access |
 | GET | /api/chat/subscribe | Authenticated | SSE — topic `tenant:<id>:chat:<channel>` (club) / `person:<id>:chat` (dm) |
+| POST | /api/chat/channels | `chat.channel.manage` | **DD-86 conditional:** create club channel + atomic auto-provision; actor-scoped idempotency key |
+| PATCH | /api/chat/channels/:id | `chat.channel.manage` | **DD-86 conditional:** update `title`/club-only metadata through guarded command |
+| POST | /api/chat/channels/:id/default | `chat.channel.manage` | **DD-86 conditional:** serialized default swap; exactly-one invariant |
+| POST | /api/chat/channels/:id/archive | `chat.channel.manage` | **DD-86 conditional:** archive; default requires replacement channel in same command |
 
 ### Request/Response Examples
 
@@ -549,6 +564,9 @@ SSE re-authorizes before every event and on a heartbeat no slower than 30 second
 | 409 | `CHAT_MEDIA_NOT_READY` | Tệp chưa sẵn sàng | Pending/rejected/quarantined/deleted/wrong-owner attachment |
 | 415 | `CHAT_MEDIA_TYPE_REJECTED` | Loại tệp không được hỗ trợ | Content-derived MIME not allow-listed |
 | 422 | `CHAT_MEDIA_REJECTED` | Tệp không thể sử dụng | Malware/moderation rejection; no signed access |
+| 403 | `CHAT_CAPABILITY_REQUIRED` | Không có quyền thực hiện thao tác | DD-86 channel command capability missing/unknown; fail-closed |
+| 409 | `CHAT_DEFAULT_REQUIRED` | CLB phải có một kênh mặc định | Archive/default transition would leave zero active defaults |
+| 409 | `CHAT_IDEMPOTENCY_MISMATCH` | Yêu cầu không khớp lần gửi trước | Same command idempotency key reused with a different request fingerprint |
 
 ### Rate Limits
 
@@ -571,6 +589,7 @@ SSE re-authorizes before every event and on a heartbeat no slower than 30 second
 | Assistant projector (P7) | ✅ | `client_msg_id='assistant:'+query_id` deterministic + unique `bot_query_id` (xem `feature_club_assistant_tech.md`) |
 | Media finalize/scan | ✅ | Enqueue scan idempotent (endpoint §3); một scan lifecycle + orphan cleanup (test #35) |
 | Block/report command key | ⬜ chưa pin — chốt ở build slice | — |
+| DD-86 channel commands | ✅ contract proposal | Actor-scoped UUID key + command/request fingerprint + durable receipt; exact replay returns prior result, mismatch fails closed |
 
 ---
 
@@ -592,7 +611,7 @@ Message body escape/sanitize. Media upload is private and separate from send: va
 
 ### Trợ lý tái dùng (DD-19 pha B, DD-20 — P7, ngoài phase-1)
 
-Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club')` với `author_type='assistant'`, `membership_id=NULL`, log ở `bot_queries` (Club Assistant). **Không** tạo model chat song song — cùng bộ bảng `chat_*`. Grounding trợ lý vẫn chỉ KB (DD-21). Đây là lý do dựng `chat_*` sớm ở P4 (DD-38) thay vì đợi P7.
+Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club')` với `author_type='assistant'`, `membership_id=NULL`, log ở `bot_queries` (Club Assistant). **Không** tạo model chat song song — cùng bộ bảng `chat_*`. Grounding trợ lý vẫn chỉ KB (DD-21). Nếu DD-86 được chốt, projector còn phải chứng minh `channel.assistant_enabled=true` **AND** tenant config/entitlement/provider/privacy gates đều pass; thiếu/không resolve được bất kỳ gate nào thì không ghi assistant message.
 
 ### Caching Strategy
 
@@ -665,17 +684,26 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 | 42 | **Club membership lifecycle** | Club member chuyển `active → left` trong lúc list/SSE/send | RLS read về zero, send/mark-read deny, SSE đóng; quay lại active thì quyền được tính từ membership hiện hành |
 | 43 | **Concurrent send retry** | Hai transaction cùng `(channel_id, client_msg_id)` | Idempotency advisory lock serialize; đúng 1 message và rate/audit side effect không bị double-consume |
 | 44 | **Transactional realtime signal** | First send commits, duplicate retries, and injected rollback after INSERT | Successful first commit emits exactly one `chat_<channel>` notification containing message ID only; duplicate retry emits none; rollback delivers none |
-| 45 | **Composite parent key tồn tại thật** | Chạy migration chat trên schema hiện tại sau `0013`; query `pg_constraint`, rồi thử club member/message đúng và sai `(membership_id, person_id, tenant_id)` | Có `memberships_id_person_tenant_uq` trước khi tạo FK; tuple đúng insert được, đổi person hoặc tenant bị FK reject; migration không lỗi “there is no unique constraint matching given keys” |
+| 45 | **Composite parent key tồn tại thật** | Chạy migration chat trên toàn bộ canonical migrations mới nhất; query `pg_constraint`, rồi thử club member/message đúng và sai `(membership_id, person_id, tenant_id)` | Có `memberships_id_person_tenant_uq` trước khi tạo FK; tuple đúng insert được, đổi person hoặc tenant bị FK reject; migration không lỗi “there is no unique constraint matching given keys” |
+| 46 | **DD-86 DM metadata shape** | Thử ghi title/sort-order/post-policy/default/assistant/creator/tenant vào DM | Constraint reject; DM hợp lệ giữ toàn bộ club-only/creator fields NULL |
+| 47 | **DD-86 exactly-one default** | Create tenant + first/subsequent channel, rồi swap default | Mọi commit có đúng một active default; partial unique không được dùng như proof duy nhất |
+| 48 | **DD-86 concurrent default swap** | Hai transaction set hai channel khác nhau làm default | Tenant lock serialize; một final default, không zero/two default |
+| 49 | **DD-86 archive default** | Archive default thiếu replacement / có replacement | Thiếu replacement → `CHAT_DEFAULT_REQUIRED`; có replacement → swap+archive atomic |
+| 50 | **DD-86 create-channel provisioning rollback** | Inject failure giữa batch membership provision | Không channel/member partial rows; retry tạo đúng một channel và đủ members |
+| 51 | **DD-86 membership activation replay** | Activate cùng membership lặp/concurrent khi N channels active | Đủ đúng một member row/channel, không duplicate/thiếu |
+| 52 | **DD-86 capability fail-closed** | Role label admin nhưng capability thiếu; registry unavailable/unknown | Channel mutation/restricted post đều deny; role label không bypass |
+| 53 | **DD-86 command idempotency** | Replay exact request và reuse key với payload khác | Exact replay trả receipt cũ/no second mutation; mismatch → `CHAT_IDEMPOTENCY_MISMATCH` |
+| 54 | **DD-86 Assistant conjunction** | Toggle channel flag và từng tenant/provider/privacy gate | Chỉ tổ hợp tất cả true mới project; mọi false/unknown không ghi assistant message |
 
 ---
 
 ## 6. Rollout Plan + Changelog
 
-### Rollout (khi DD-38 ✅)
+### Rollout (DD-38 ✅; migration HOLD tới DD-86 decision)
 
 0. **PRE-PROVISION (tier superuser, production-equivalent, TRƯỚC migration):** idempotent DO-block `CREATE ROLE chat_definer NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION` + **kiểm exact attributes** (login/super/bypassrls/createdb/createrole/inherit/replication) → fail-closed nếu role đã tồn tại sai (BYPASSRLS: **superuser** hoặc role đã có BYPASSRLS + CREATEROLE — PG16) + `GRANT chat_definer TO <migration_owner_role>` (SET ROLE) + `GRANT USAGE ON SCHEMA public TO chat_definer` (runtime). **KHÔNG** đặt trong migration DDL-owner.
-1. Sau khi sync mọi prerequisite đã merge, chọn **migration number monotonic kế tiếp còn trống tại lúc implement** (`0014_players_waitlist` hiện branch-only, nên không pin `0014+`). Migration trước hết tạo candidate key thực thi `memberships_id_person_tenant_uq UNIQUE(id, person_id, tenant_id)`, sau đó mới tạo `chat_*` và các FK ba cột; tiếp theo tạo **safety schema trước** (`chat_blocks`, `chat_reports`, rate/audit state), rồi canonical `assert_dm_allowed`; chỉ sau đó mới tạo functions phụ thuộc (`chat_current_is_member`/`dm_current_read_allowed`/`create_dm`/`send_chat_message`/`mark_read`). **`GRANT CREATE ON SCHEMA public TO chat_definer`** (PG16: owner mới cần CREATE trên schema; fresh PG15+ không cấp mặc định) → `ALTER … OWNER TO chat_definer` cho toàn bộ definer functions → **`REVOKE CREATE ON SCHEMA public FROM chat_definer`** (giữ USAGE); + least-privilege GRANT tables (chat_definer + app) + thêm tenant tables vào RLS list (KHÔNG sửa `0009`). **Chạy/kiểm bằng migration role thật (không superuser)** để bắt gap provision. Migration fail nếu candidate key/safety primitive thiếu; no DM function lands before dependencies. Test bất biến cô lập xanh.
-2. Club channel (1 kênh/tenant) — send/read + SSE.
+1. Owner ratify/reject DD-86; commit one immutable snapshot; promote Product+BE specs. Chỉ sau đó tạo root slice `dd38-dd86-chat-schema-core` và chọn **migration number monotonic kế tiếp còn trống tại lúc implement**. Migration tạo candidate key `memberships_id_person_tenant_uq`, final `chat_*` shape (one-channel DD-38 nếu reject, multi-channel DD-86 nếu accept), safety schema + canonical guards, definer ownership/grants và RLS; chạy bằng migration role thật. Không migration nào được land trước decision.
+2. Club channel send/read + SSE; nếu DD-86 accepted, enable N-channel lifecycle/default/provisioning only after tests #46–53 pass.
 3. Wire mọi request/create/send/read path vào safety core đã land ở migration, verify sender/pair throttles + audit + host/support DM denial; DM vẫn OFF nếu một capability chưa xanh.
 4. Land private media lifecycle (storage grants, scan/moderation worker, ready-only attach, signed read, delete/orphan cleanup).
 5. Enable DM 1-1 only after the complete DD-55 safety gate passes; otherwise keep DM OFF.
@@ -685,6 +713,7 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-22 | v0.16 | Mirror DD-86 proposal có điều kiện: final multi-channel schema delta, exact-one default lifecycle, atomic provisioning, DD-56 capability commands, actor-scoped command idempotency, Assistant conjunction, tests #46–54 và root-migration sequencing. Migration HOLD tới owner decision; spec Draft/not implemented. |
 | 2026-07-19 | v0.15 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (`chat_*` chưa vào canonical — DD-38 pending, migration mới monotonic; DROP baseline = ❌ NEVER), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v0.14a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.14 | **Executable parent-key closure:** migration chat nay bắt buộc chạy `ALTER TABLE memberships ADD CONSTRAINT memberships_id_person_tenant_uq UNIQUE(id, person_id, tenant_id)` trước khi tạo `chat_members/messages`; thêm schema-parity và cross-person/cross-tenant FK regression để các composite FK không còn trỏ tới một candidate key chỉ tồn tại trong comment. |

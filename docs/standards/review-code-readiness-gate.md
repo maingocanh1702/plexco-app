@@ -1,6 +1,7 @@
+<!-- review-readiness: policy -->
 # Review → Plan → Code Readiness Gate
 
-> **Status:** ✅ Accepted (owner 2026-07-19) · **Version:** 1.1 · 2026-07-19
+> **Status:** ✅ Accepted (owner 2026-07-19) · **Version:** 1.3 · 2026-07-22
 > **Phạm vi:** Mọi review decision, analysis, feature spec, technical plan và doc pack có mục tiêu dẫn tới implementation trong Plexco.
 > **Authority pin:** verdict phải pin **commit SHA + exact file paths** đã review; không dùng một nhãn `current decisions vX` thay cho snapshot bất biến.
 > **Nguyên tắc tối cao:** review chỉ được chốt `CODE_READY` khi người implement không cần tự phát minh thêm business rule, security rule, data contract, failure behavior hoặc dependency order.
@@ -232,6 +233,7 @@ Không có artifact hoặc không chạy autopilot thì vẫn phải có một e
 ## 7. Verdict template bắt buộc
 
 ```text
+REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: PLAN_READY | CODE_READY | NOT_PLAN_READY | NOT_CODE_READY
 REVIEWED_AT: YYYY-MM-DD
 AUTHORITY_SHA: <full commit SHA>
@@ -253,6 +255,7 @@ OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: <list | none>
 LIVE_REPO_VERIFICATION: PASS
 CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS | PARTIAL | FAIL
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
 IMPLEMENTATION_ARTIFACTS: PASS | NOT_REQUIRED_FOR_PLAN_READY
@@ -340,9 +343,51 @@ Review chỉ hoàn tất khi:
 
 ---
 
+## 11. Machine enforcement
+
+Mọi persisted review/readiness artifact phải khai báo một directive trong 30 dòng đầu:
+
+```text
+<!-- review-readiness: code-ready -->
+<!-- review-readiness: enforce -->
+<!-- review-readiness: historical -->
+<!-- review-readiness: criteria -->
+<!-- review-readiness: policy -->
+<!-- review-readiness: template -->
+```
+
+- `code-ready`: final implementation plan/coding handoff. Mọi active verdict trong artifact bắt buộc là strict `CODE_READY`; validator/CI phải fail nếu còn `PLAN_READY`, `NOT_*_READY`, gate `PARTIAL/FAIL`, closure dưới 12/12 hoặc blocker.
+- `enforce`: có ít nhất một fenced canonical verdict block đang active; dùng cho draft/read-only blocker audit hoặc readiness tracker chưa authorize code. Artifact này không được dùng để mở coding worktree. Block lịch sử nằm trong tracker hỗn hợp phải đặt `<!-- review-verdict: historical -->` ngay trước fence.
+- `historical`: bằng chứng lịch sử, không được dùng làm current authority hoặc authorization.
+- `criteria`: tiêu chí đánh giá, không phải verdict artifact.
+- `policy` / `template`: source rule hoặc placeholder, không phải verdict thực.
+
+Mỗi active verdict phải ghi `REVIEW_POLICY_VERSION: 1.3`, full 40-character `AUTHORITY_SHA`, exact `TARGET_FILES` không dùng glob, và `CLOSURE_MATRIX`. `CODE_READY` chỉ qua validator khi mọi strict gate cùng closure 12/12 đều `PASS`, open question trong scope bằng 0, không còn blocker và first step không bị chặn.
+
+### 11.1 Outcome contract cho docs plan
+
+- Review/finalize một implementation plan mặc định nhắm tới `CODE_READY`, không dừng ở việc format đúng hoặc chỉ liệt kê finding.
+- Khi user chỉ authorize read-only review, session được trả `NOT_PLAN_READY`/`NOT_CODE_READY` với blocker chính xác, nhưng artifact phải ở mode `enforce` và **không được coi là review-complete coding handoff**.
+- Khi user authorize fix/finalization, agent phải reconcile các mirror behavior-critical, chạy lại live-truth + 12/12 closure và chỉ đổi sang `code-ready` khi strict `CODE_READY` đã đạt.
+- Nếu còn owner/external/hard-dependency blocker không thể tự đóng, dừng fail-closed với owner + binary resolution + `NEXT_REVIEW_TRIGGER`; không tự phát minh decision và không mở worktree.
+- Launcher, scope-gate handoff hoặc người implement chỉ được nhận plan có directive `code-ready` và validator xanh.
+
+Enforcement bắt buộc:
+
+1. Agent chạy `pnpm review:check:changed` trước verdict/commit sau khi chạm docs review/readiness.
+2. Claude project hook tự chạy check sau Edit/Write và chặn `Stop` khi check fail.
+3. CI chạy `pnpm review:check` trên toàn repo; failure chặn merge khi CI là required check.
+4. `pnpm test` luôn chạy regression suite của validator trước workspace tests.
+
+Không dùng `historical` để né lỗi mới. Chỉ artifact thực sự superseded/pre-policy mới được exempt; mọi current tracker phải giữ ít nhất một active verdict hợp lệ.
+
+---
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 22/07/2026 | 1.3 | Thêm fail-closed `code-ready` mode: final implementation plan/coding handoff chỉ pass validator khi mọi active verdict strict `CODE_READY`; `enforce` chỉ lưu draft/blocker evidence và không authorize worktree. |
+| 22/07/2026 | 1.2 | Thêm machine enforcement: classification directive, `REVIEW_POLICY_VERSION`, `CLOSURE_MATRIX`, full-SHA/exact-path validation, semantic `CODE_READY` checks, Claude Stop hook, CI/PR/package wiring và regression tests. |
 | 19/07/2026 | 1.1 | Hợp nhất compact G1–G6 từ `slice-readiness-verdicts.md` (tên ban đầu `ready-to-code-gate.md`): bắt buộc spec pair/equivalent authority, dependency thật trên default branch, invariant tests pre-code, budget slice, external-gate classification và bottom-up scheduling. Thêm G1–G6 vào verdict; sửa typo/step lặp; làm rõ chuỗi DD-41→12→73 chỉ là nội bộ cụm share. |
 | 19/07/2026 | 1.0 | Owner chốt gate Review → Plan → Code: tách 5 trạng thái, pin SHA thay global moving version, closure matrix 12/12, verdict nhị phân và DD-73..78 example. |

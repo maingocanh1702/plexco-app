@@ -1,9 +1,9 @@
 # Proposal: Club AI Assistant + Knowledge Base (bot tư vấn RAG per-CLB)
 
-> **Trạng thái:** 🗂️ Proposal lịch sử đã reconcile · **v0.7 · 2026-07-17**. Giữ lại rationale ban đầu; **không còn là implementation authority**.
+> **Trạng thái:** 🗂️ Proposal lịch sử đã reconcile · **v0.8 · 2026-07-22**. Giữ lại rationale ban đầu; **không còn là implementation authority**.
 > **Scope:** Feature mới, **post-MVP**, **CHỈ trong app Plexco** (không Telegram/Zalo/Messenger). Phụ thuộc: web/app surface + sync engine (P4), identity (P3.5), billing entitlement (P5).
 > **Implementation authority:** Product/BE pair `../features/feature_club_assistant.md` + `../features/BE/feature_club_assistant_tech.md`; chat canonical `../features/feature_inapp_chat.md` + `../features/BE/feature_inapp_chat_tech.md`; quyết định `../standards/decisions.md`. Nếu proposal này khác các tài liệu đó, **authority hiện hành thắng**.
-> **Readiness:** Club Assistant Product/BE vẫn **Draft**, phải được formally promote sang Reviewed trước implementation; In-app Chat cũng **Draft, pending migration**. DD-18 còn mở và chặn **GO-LIVE**, không chặn việc thiết kế sau interface swappable. Proposal này không tự cấp quyền sửa `schema.ts`/migrations.
+> **Readiness:** Club Assistant Product/BE vẫn **Draft**, phải được formally promote sang Reviewed trước implementation; In-app Chat cũng **Draft, pending migration**. DD-86 multi-channel là 🟡 proposal và migration chat đang HOLD tới owner decision. DD-18 còn mở và chặn **GO-LIVE**, không chặn việc thiết kế sau interface swappable. Proposal này không tự cấp quyền sửa `schema.ts`/migrations.
 > **Nguồn tham chiếu:** `../standards/core-db-architecture-principles.md` (INV-1..10, P1–P16) · `../00-start-here/HANDOFF.md §3` (5 HARD RULES) · các authority ở trên.
 
 ---
@@ -114,6 +114,8 @@ Proposal **không còn định nghĩa lại chat DDL**. DD-38/In-app Chat P4 là
 - guarded human send + transactional `NOTIFY`, SSE refetch dưới authz; không có message projector/writer thứ hai.
 
 P7 Assistant chỉ thêm nullable same-tenant `bot_query_id` relation + bot/definer writer/projector hẹp. Projector authorize bằng canonical `chat_members`, chỉ phát vào `kind='club'`, derive `author_type='assistant'`, `author_person_id=NULL`, `membership_id=NULL`, `client_msg_id='assistant:' || query_id`; retry trả existing message nhờ `client_msg_id`/`bot_query_id`, không nhân đôi.
+
+Nếu owner chốt DD-86 Option B, Assistant còn phải revalidate `chat_channels.assistant_enabled=true` **AND** tenant `bot_configs.enabled`/entitlement/cap/provider/privacy gates tại command ingress và projector consume. Channel flag không thay thế tenant entitlement; tenant flag không tự bật mọi channel; false/unknown ở bất kỳ gate nào → không enqueue/provider/project.
 
 ### 4.5 Entitlement / billing (không thêm bảng)
 
@@ -247,7 +249,7 @@ Câu hỏi tới trong app Plexco (chat_messages @mention bot · hoặc panel "H
 | Pha | Nội dung | Phụ thuộc | Ghi chú scope |
 |---|---|---|---|
 | **A — Ask panel (Plexco app)** (MVP feature) | KB ingest (FAQ + upload PDF) ở dashboard · panel "Hỏi trợ lý" Q&A trực tiếp trong app | Web/app surface + sync engine (P4) | **Slice nhỏ nhất** — không cần hệ nhắn tin đầy đủ. Ưu tiên làm trước. |
-| **B — Native in-app chat (Plexco app)** | Tái dùng `chat_channels` + `chat_members` + `chat_messages` canonical, realtime SSE + Assistant trả lời khi @mention | Canonical In-app Chat P4 đã migrate + SSE (DD-07) | P7 chỉ thêm bot adapter/relation/projector; **không** tạo hệ nhắn tin/schema song song. |
+| **B — Native in-app chat (Plexco app)** | Tái dùng `chat_channels` + `chat_members` + `chat_messages` canonical, realtime SSE + Assistant trả lời khi @mention | Canonical In-app Chat P4 đã migrate + SSE (DD-07); nếu DD-86 accepted thì root final multi-channel migration đã land | P7 chỉ thêm bot adapter/relation/projector; conditional DD-86: channel flag AND tenant/provider gates; **không** tạo hệ nhắn tin/schema song song. |
 | **C — Nâng cao** | multi-turn, feedback 👍/👎 cải thiện KB, gợi ý lấp gap KB từ no_answer, thêm nguồn (URL/Google Docs), analytics | A+B | Sau khi A/B ổn định. |
 
 **Vị trí roadmap hiện hành:** **P7 — Club Assistant**, sau P4 web/app + sync; pha B còn phụ thuộc canonical In-app Chat P4 đã migrate. Không chèn vào MVP đường tiền.
@@ -259,6 +261,7 @@ Câu hỏi tới trong app Plexco (chat_messages @mention bot · hoặc panel "H
 - Product + BE Club Assistant hiện ở **v0.9, Draft**: contract đã harden nhưng chưa build-ready cho tới khi pair được formally promote sang Reviewed.
 - DD-16/17/19/20/21/22/23/28 đã chốt. DD-18 còn mở; đây là gate GO-LIVE về provider/privacy/ToS/DPA, không thay thế formal promotion gate.
 - Canonical In-app Chat P4 hiện **Draft, pending migration**. Pha B chỉ được làm sau migration chat; Assistant không được tự dựng schema chat để đi trước dependency này.
+- DD-86 hiện là 🟡 proposal, `NOT_PLAN_READY`, còn 9 blocker in-scope. Chat migration HOLD; nếu accepted phải land một root `dd38-dd86-chat-schema-core` final model trước Assistant, không land one-channel rồi fold.
 - Chưa có migration/runtime Assistant được chứng minh bởi proposal. Build slice sau promotion phải tạo migration monotonic mới, self-contained (`vector`, schema, ENABLE+FORCE RLS, policy, explicit grants/revokes), không sửa/chạy lại `0000`/`0009` lịch sử.
 - Exact authz matrix, API envelope, edge cases, test matrix, rollback và rollout thuộc Product/BE specs canonical. Checklist lịch sử trong proposal không phải readiness pass.
 
@@ -275,6 +278,7 @@ Câu hỏi tới trong app Plexco (chat_messages @mention bot · hoặc panel "H
 7. Prompt không bao giờ chứa ledger/PII/secret; context chỉ dùng current-generation/DLP-cleared chunks của đúng tenant.
 8. Cùng `command_id`/projector retry → một durable query/answer/message. Crash sau provider response trước DB checkpoint có thể retry provider, nhưng mọi attempt/possible usage được ghi và cap; không claim exactly-once billing.
 9. Assistant projection chỉ ghi canonical club `chat_messages` qua bot writer, authorize bằng `chat_members`, với `author_type='assistant'` và deterministic `client_msg_id`; không có chat schema/store/writer thứ hai.
+10. Nếu DD-86 accepted: channel flag × tenant config/entitlement/cap × provider/privacy là phép AND; chỉ all-true mới gọi provider/project, false/unknown không ghi query/message.
 
 ---
 
@@ -328,6 +332,7 @@ Pipeline mẫu là một RAG production tốt. Đối chiếu từng kỹ thuậ
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 22/07/2026 | v0.8 | Mirror DD-86 proposal vào historical rationale: migration chat HOLD tới owner decision; pha B phụ thuộc root final chat migration và revalidate per-channel `assistant_enabled` AND tenant config/entitlement/provider/privacy. Không đổi authority; proposal vẫn không authorize implementation. |
 | 17/07/2026 | v0.7 | Reconcile proposal thành historical/supporting rationale: implementation authority chuyển sang Club Assistant + In-app Chat Product/BE specs; bỏ parallel chat DDL; pin stable `source_key` + generation/DLP fail-closed, cache composite model+dims+profile+hash, provider-attempt audit/retry truth; đồng bộ trạng thái DD và formal Draft/promotion boundary. |
 | 05/07/2026 | v0.1 | Khởi tạo proposal Club AI Assistant + Knowledge Base (RAG per-CLB); thêm DD-16..DD-22. |
 | 05/07/2026 | v0.2 | Đối chiếu pipeline mẫu (§12): adopt hybrid BM25+semantic+RRF (DD-23), fts_vector GENERATED, embedding_cache, summary 2-vector (optional), parse-heading; adapt Path A→tool tổng quát theo tenant, Path B orchestrator làm mặc định; thêm `tone` (điểm 3) + upload PDF (`mime_type`/`storage_ref`, điểm 2). |

@@ -1,3 +1,29 @@
 {
-  "fallbackModel": ["claude-sonnet-5"]
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "fallbackModel": ["claude-sonnet-5"],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pnpm --dir \"$CLAUDE_PROJECT_DIR\" review:check:changed --hook",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pnpm --dir \"$CLAUDE_PROJECT_DIR\" review:check:changed --hook",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
 }

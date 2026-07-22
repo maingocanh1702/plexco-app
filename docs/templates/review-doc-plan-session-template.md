@@ -1,6 +1,7 @@
+<!-- review-readiness: template -->
 # Template — Review Docs / Plans → Readiness Verdict
 
-> **Status:** ✅ Required · **Version:** 1.0 · 2026-07-19
+> **Status:** ✅ Required · **Version:** 1.2 · 2026-07-22
 > **Canonical policy:** `../standards/review-code-readiness-gate.md`
 > **Dùng cho:** mọi session review, reconcile, fix, re-check hoặc final decisions, analysis, feature specs, technical plans, implementation plans và doc packs.
 > **Kết quả bắt buộc:** một verdict nhị phân có bằng chứng; không kết thúc bằng “gần final”.
@@ -15,7 +16,7 @@
 REQUEST: <review | fix-and-recheck | final-readiness>
 TARGET_FILES:
   - <exact path>
-EXPECTED_OUTCOME: <decision final | plan ready | code ready | consistency only>
+EXPECTED_OUTCOME: <DECISION_FINAL | PLAN_READY | CODE_READY | CONSISTENCY_ONLY>
 BASE_BRANCH: <actual default branch>
 SCOPE_REPO: <absolute repo path>
 USER_AUTHORIZED_EDITS: yes | no
@@ -25,8 +26,10 @@ Nếu user chỉ nói “review/check/updated/final”:
 
 - `review/check`: read-only findings + verdict, không tự patch.
 - `updated`: mở lại file mới nhất trên disk, re-run exact checks; không tin verdict cũ.
-- `fix/fix luôn`: patch trong scope, re-check, sau đó verdict.
-- `final`: chỉ tuyên bố trạng thái qua canonical gate; không hiểu là user tự động authorize code/commit/deploy.
+- `fix/fix luôn`: patch trong scope, re-check; với implementation plan, target mặc định là strict `CODE_READY`.
+- `final`: implementation plan chỉ final khi strict `CODE_READY`; không hiểu là user tự động authorize code/commit/deploy.
+
+Read-only review có thể kết thúc `NOT_*_READY` để ghi blocker, nhưng đó là `enforce` evidence, **không phải completed coding handoff**. Khi user authorize fix/finalization, review phải hướng tới `CODE_READY`; không mở worktree nếu chưa đạt.
 
 ---
 
@@ -126,6 +129,8 @@ Mỗi finding phải có file/section, impact và exact resolution. Không polis
 - Chạy Markdown/structure/link checks phù hợp.
 - Chạy closure matrix 12/12 trong canonical gate.
 - Chọn node thấp nhất chưa build trong dependency graph là first implementation candidate; không mặc định feature vừa review được code trước.
+- Với persisted review/readiness artifact: khai báo classification directive, ghi `REVIEW_POLICY_VERSION` + `CLOSURE_MATRIX`, rồi chạy `pnpm review:check:changed`; check đỏ chặn verdict/commit.
+- Final implementation plan/coding handoff phải dùng `<!-- review-readiness: code-ready -->`; `enforce` chỉ dành cho draft/blocker audit và không được launch code.
 
 ---
 
@@ -145,6 +150,7 @@ Mỗi finding phải có file/section, impact và exact resolution. Không polis
 Sao chép và điền đủ; không xoá field:
 
 ```text
+REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: PLAN_READY | CODE_READY | NOT_PLAN_READY | NOT_CODE_READY
 REVIEWED_AT: YYYY-MM-DD
 AUTHORITY_SHA: <full 40-char commit SHA>
@@ -166,6 +172,7 @@ OPEN_QUESTIONS_IN_SCOPE: <0 for ready verdict>
 ENABLEMENT_ONLY_GATES: <named list | none>
 LIVE_REPO_VERIFICATION: PASS | FAIL
 CONTRACT_MATRIX: PASS | PARTIAL | FAIL
+CLOSURE_MATRIX: PASS | PARTIAL | FAIL
 ACCEPTANCE_MATRIX: PASS | FAIL
 SECURITY_AND_MIGRATION_GATE: PASS | PARTIAL | FAIL
 IMPLEMENTATION_ARTIFACTS: PASS | FAIL | NOT_REQUIRED_FOR_PLAN_READY
@@ -184,6 +191,18 @@ NEXT_REVIEW_TRIGGER: <commit/decision/merged probe; never "updated docs">
 ```
 
 `CODE_READY` chỉ hợp lệ khi G1–G5 `PASS`, G6 `PASS` hoặc named `ENABLEMENT_ONLY`, closure 12/12 `PASS`, in-scope OQ = 0 và first implementation step có thể thực thi.
+
+Persisted artifact phải có một directive trong 30 dòng đầu:
+
+- `<!-- review-readiness: code-ready -->` cho final implementation plan/coding handoff; mọi active verdict phải strict `CODE_READY`;
+- `<!-- review-readiness: enforce -->` cho current verdict;
+- `<!-- review-readiness: historical -->` cho immutable superseded evidence;
+- `<!-- review-readiness: criteria -->` cho review criteria không phải verdict;
+- `<!-- review-readiness: policy -->` / `template` cho source rule và placeholder.
+
+Block superseded nằm trong tracker `enforce` phải có `<!-- review-verdict: historical -->` ngay trước fence. Không được dùng exemption cho current authority.
+
+`enforce` + `NOT_*_READY` là kết quả hợp lệ của một read-only/blocker audit, nhưng không phải trạng thái hoàn tất của docs plan. Chỉ `code-ready` + validator xanh mới được handoff sang implementation.
 
 ---
 
@@ -235,4 +254,6 @@ Cấm:
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 22/07/2026 | 1.2 | Final implementation plan mặc định target strict `CODE_READY`; thêm directive `code-ready` fail-closed và cấm coding handoff từ `enforce`/`NOT_*_READY`. |
+| 22/07/2026 | 1.1 | Thêm machine-readable classification, `REVIEW_POLICY_VERSION`, `CLOSURE_MATRIX` và mandatory `pnpm review:check:changed` gate. |
 | 19/07/2026 | 1.0 | Tạo reusable template bắt buộc cho review docs/plans: live-truth workflow, G1–G6, closure 12/12, canonical verdict và code-ready handoff. |

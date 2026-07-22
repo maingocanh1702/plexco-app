@@ -1,3 +1,4 @@
+<!-- review-readiness: enforce -->
 # Slice Readiness Verdicts — Plexco
 
 > **Đây KHÔNG phải nguồn rule mới.** Rules ở `standards/review-code-readiness-gate.md` (owner-accepted 2026-07-19). File này chỉ **áp dụng** gate đó để ra verdict nhị phân cho các slice gần nhất, dùng đúng template §7 và closure matrix §8.
@@ -5,11 +6,14 @@
 > **Live truth đã verify (`main@22c23aa`):** feature layer trống — không có projector source ghi `public_sessions`; không có auth Google/`account_emails` source; `0014_players_waitlist` **không** trên `main`; `0006_discovery.sql` vẫn có `skill_level` và **thiếu** toàn bộ field DD-41 (`session_type`/`level_*_rank`/`gender_restriction`/`age_*`).
 > **Current auth refresh (2026-07-20):** `origin/main@033ccc8fd9c3f247abf8aa0cb5a0f48b96d006e2` — DD-80 v1.88 authority bundle immutable on main. **Verdict 5a (D0a) = CODE_READY** (re-pinned 033ccc8); Verdict 5b (D0b) `NOT_CODE_READY` pending D0a merge. Verdicts 1/3/4 remain historical snapshots only.
 > **D0a IMPLEMENTED & MERGED (2026-07-20):** slice `auth-s4-d0-revoke-core` squash-merged to `main` (migration `0015` live). The P0 "2 consecutive FULL-base Codex clean" gate was **NOT reached** after 12 rounds (10 real findings fixed incl. round-06 epoch-vs-`revoked_at` P1; round-11 self-caught + `git revert`ed) → merge is a **documented owner override** resting on manual review + acceptance coverage 22/22 + real-Postgres 97/97, **not** an automated clean-round pass. See `.autopilot/state/auth-s4-d0-revoke-core/HALT-MAX_ROUNDS.txt` + the squash commit. **Verdict 5b (D0b) unblocks** once the D0a squash lands on origin/main.
+> **D0b IMPLEMENTED & MERGED (2026-07-22):** slice `auth-s4-d0-session-web-boundary` squash-merged to `main@93c5404` (issuance fence + logout-all route; zero DB change). Unlike D0a, the P0 **"2 consecutive FULL-base Codex clean rounds" gate was MET** (round-03/04, only 2 fix rounds) — **no owner override**. Real-Postgres suite green (db 97/97 unchanged · core 111 · bot 3 · web 78). Recorded as **Verdict 6**. Next in chain: `auth-s4-d1-email-token-core`.
+> **Machine classification (2026-07-22):** Verdicts 1/3/4/5a/5b/6 are immutable historical evidence; Verdict 2 is the only active block in this tracker. D0b's dependency-state change is resolved — Verdict 6 records the merged outcome, so no fresh D0b verdict is pending.
 
 ---
 
 ## Verdict 1 — Auth provider swap, slice đầu (D0 revoke-core + Google adapter)
 
+<!-- review-verdict: historical -->
 ```text
 REVIEW_VERDICT: NOT_PLAN_READY
 REVIEWED_AT: 2026-07-19
@@ -53,6 +57,7 @@ NEXT_REVIEW_TRIGGER: DD auth-credential-lifecycle committed + D0/D1 autopilot ar
 ## Verdict 2 — `dd41-public-session-projection-fields` (slice #1 của chuỗi share, gate §9)
 
 ```text
+REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: NOT_CODE_READY
 REVIEWED_AT: 2026-07-19
 AUTHORITY_SHA: 22c23aab080183913d2852805a085bba1057a91a
@@ -77,6 +82,7 @@ OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: none
 LIVE_REPO_VERIFICATION: PASS
 CONTRACT_MATRIX: PASS (behavior contract complete; repository closure currently 10/12)
+CLOSURE_MATRIX: FAIL (10/12)
 ACCEPTANCE_MATRIX: FAIL
 SECURITY_AND_MIGRATION_GATE: PARTIAL
 IMPLEMENTATION_ARTIFACTS: FAIL
@@ -100,14 +106,14 @@ NEXT_REVIEW_TRIGGER: DD-38/39 migration merge probe + dd41 autopilot artifacts c
 | Phạm vi | Trạng thái đúng |
 |---|---|
 | 6 product decision DD-73..78 | `DECISION_FINAL` ✅ (đạt 2026-07-19) |
-| Auth S4 slice đầu | DD-80 G3 decision closed; **D0a `CODE_READY` @ origin/main@033ccc8 · D0b `NOT_CODE_READY` pending D0a merge** (Verdict 5a/5b) |
+| Auth S4 slice đầu | DD-80 G3 decision closed; **D0a MERGED @ `main@8f493f7` (owner override) · D0b MERGED @ `main@93c5404` (gate ĐẠT)** — Verdict 5a/5b lịch sử, **Verdict 6** ghi kết quả D0b. Kế tiếp: `auth-s4-d1-email-token-core` |
 | `dd41-public-session-projection-fields` | `NOT_CODE_READY` → chờ DD-38/39 merge + artifacts |
 | Toàn cluster DD-73..78 như một slice | `NOT_CODE_READY` (gate §9) |
 | DD-76/77 | chỉ xét PLAN/CODE sau product-evidence baseline + owner threshold |
 
 ## Chuỗi slice ưu tiên (đồng bộ gate §9 + reality auth-first)
 
-1. **`auth-s4-d0-revoke-core` (D0a)** — DD-80 v1.88 contract closed; commit/push authority first, then manual P0 worktree. **`auth-s4-d0-session-web-boundary` (D0b)** follows only after D0a merged probe.
+1. ~~`auth-s4-d0-revoke-core` (D0a)~~ ✅ merged `8f493f7` · ~~`auth-s4-d0-session-web-boundary` (D0b)~~ ✅ merged `93c5404` (gate ĐẠT). **Kế tiếp: `auth-s4-d1-email-token-core`** (order-2, code dark) → `auth-s4-d1-google-adapter`.
 2. `dd41-public-session-projection-fields` — điểm vào chuỗi share; chặn ở DD-38/39 merge.
 3. `dd12-guarded-public-read` — projector + fence + guarded view + grants + projection version.
 4. `dd73-session-share-route` — `/s/<id>` + OG/image + join revalidation + telemetry.
@@ -125,6 +131,7 @@ NEXT_REVIEW_TRIGGER: DD-38/39 migration merge probe + dd41 autopilot artifacts c
 >
 > Authority mới: **DD-80 ✅ (decisions v1.77, commit `c1a3957`)** + slice artifacts (`352e6ec`) trên `feat/session-waitlist-expand`. Code-truth base vẫn `main@ca6c97e` (delta so với `22c23aa` là docs-only). Verdict 1/2 giữ nguyên làm lịch sử tại snapshot cũ.
 
+<!-- review-verdict: historical -->
 ```text
 REVIEW_VERDICT: CODE_READY
 REVIEWED_AT: 2026-07-19
@@ -165,6 +172,7 @@ REMAINING_BLOCKERS: none
 > `auth-s4-d0-revoke-core` and D0b `auth-s4-d0-session-web-boundary` merged; the historical block below
 > remains snapshot evidence only.
 
+<!-- review-verdict: historical -->
 ```text
 REVIEW_VERDICT: PLAN_READY
 REVIEWED_AT: 2026-07-19
@@ -202,6 +210,7 @@ NEXT_REVIEW_TRIGGER: D0 merge probe pass → re-run closure D1 (kỳ vọng CODE
 
 ## Verdict 5a — `auth-s4-d0-revoke-core` / D0a epoch DB core (2026-07-20)
 
+<!-- review-verdict: historical -->
 ```text
 REVIEW_VERDICT: CODE_READY
 REVIEWED_AT: 2026-07-20 (re-pinned after authority push)
@@ -239,6 +248,7 @@ NEXT_REVIEW_TRIGGER: D0a implementation slice (0015 migration + tests) merged to
 
 ## Verdict 5b — `auth-s4-d0-session-web-boundary` / D0b (2026-07-20)
 
+<!-- review-verdict: historical -->
 ```text
 REVIEW_VERDICT: NOT_CODE_READY
 REVIEWED_AT: 2026-07-20
@@ -275,10 +285,53 @@ REMAINING_BLOCKERS:
 NEXT_REVIEW_TRIGGER: origin/main contains D0a merged probes; then re-run D0b closure against current callers
 ```
 
+## Verdict 6 — `auth-s4-d0-session-web-boundary` / D0b implemented & merged (2026-07-22)
+
+<!-- review-verdict: historical -->
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-22
+AUTHORITY_SHA: 93c5404c0f59db4ce744568b642b55f52bfa19cf
+BASE_BRANCH: main
+TARGET_FILES:
+  - apps/web/lib/session-cookies.ts
+  - apps/web/app/api/auth/logout-all/route.ts
+  - apps/web/app/api/auth/telegram/callback/route.ts
+  - apps/web/app/api/onboarding/start/route.ts
+SLICE: auth-s4-d0-session-web-boundary
+IN_SCOPE: issueSession stale-cookie reject-and-reauth fence (SessionReauthRequiredError); typed 401 AUTH_INVALID mapping at the two live callers; POST /api/auth/logout-all with CSRF-before-mutation, server-side account derivation and cookie clear; tests
+OUT_OF_SCOPE: DB schema/migrations/functions/grants (D0a owns them); providers; general error framework; tenant APIs; UI; Telegram removal
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: auth-s4-d0-revoke-core D0a MERGED (main@8f493f7c18627e6730ba9f1f4090ecfe4e389b0f; probes 0015::auth_revoke_all_web_sessions and auth.ts::revokeAllWebSessions present)
+PRIOR_SLICES: auth-s4-d0-revoke-core
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS (8 files changed, all apps/web; zero packages/db delta)
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS (D0-3/4/5/12 + G3-B1..B5; +13 web tests 65->78, each tagged 1:1; logout-all exercised against a real throwaway Postgres)
+SECURITY_AND_MIGRATION_GATE: PASS (no migration; CSRF validated before any mutation; account derived server-side, never from body; no raw token/hash/CSRF/PII in logs or responses; revoked-null branch returns 401 without clearing a possibly freshly rotated cookie)
+IMPLEMENTATION_ARTIFACTS: PASS (manifest + acceptance mapping + STOP_AT_READY sentinel)
+FIRST_IMPLEMENTATION_STEP: n/a — implemented and squash-merged at main@93c5404
+REMAINING_BLOCKERS: none
+```
+
+**Đọc verdict:** khác D0a, **gate P0 "2 FULL-base Codex clean rounds liên tiếp" ĐÃ ĐẠT** (round-03/04, chỉ 2 fix round) → merge **không phải owner override**. Hai finding đã fix đều là P2 thật: round-01 (clear cookie ở nhánh `revoked===null` có thể xoá cookie vừa rotate → spurious logout; sửa thành 401-không-clear) và round-02 (test env `??=` với `TELEGRAM_BOT_TOKEN` rỗng làm route trả 503 sớm). Residual đã chấp nhận: nhánh `revoked===null` là race thuần cần 2 connection — semantics đã được test deterministic ở **tầng DB trong D0a** (barrier D0-7/17/18 + regression round-06), web layer chỉ map kết quả.
+
+---
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 22/07/2026 | v1.0 | **D0b implemented & merged — gate ĐẠT, không override.** `auth-s4-d0-session-web-boundary` squash-merged tại `main@93c5404` (issuance fence + logout-all route, zero DB change); 2 clean round liên tiếp (round-03/04), 2 fix round; real-PG green (db 97/97 · web 78). Thêm **Verdict 6** (historical evidence). Chuỗi auth: D0a ✅ → D0b ✅ → kế tiếp `auth-s4-d1-email-token-core`. |
+| 22/07/2026 | v0.9 | Thêm machine classification theo readiness gate v1.2: giữ nguyên nội dung verdict lịch sử nhưng exclude chúng khỏi current authorization; Verdict 2 là active block duy nhất, D0b phải re-review sau dependency-state change. |
 | 20/07/2026 | v0.8 | **D0a implemented & merged via owner override.** `auth-s4-d0-revoke-core` squash-merged (migration `0015`); 2-clean P0 gate not reached after 12 Codex rounds → closed on manual review + acceptance 22/22 + real-PG 97/97. Verdict 5a stands as CODE_READY authority; this row records the merge + override rationale. D0b unblocks on origin/main. |
 | 20/07/2026 | v0.7 | DD-80 v1.88 closes Gate 3 with exact epoch equality, cross-account parent ordering/revalidation and atomic row materialization/count/audit; historical Verdict 3 superseded. Added fail-closed Verdict 5a/5b for D0a DB core and D0b web boundary; both await immutable authority, and D0b also awaits D0a merge. |
 | 19/07/2026 | v0.6 | **v1.86 (AP-26 HALT MAX_ROUNDS/Codex round-03):** Verdict 3 amend — D0 thêm issuance fence `session-cookies.ts` (reject-and-reauth, không fallback-mint khi rotate null) + partial index `web_sessions(account_id) WHERE revoked_at IS NULL` trong 0015 (case D0-12/D0-13, tech v2.9b); giữ CODE_READY. Verdict 4 note — `auth_login_google` nhận preallocated `account_emails.id` cho cell 1 (AAD §3.3 giữ nguyên); giữ PLAN_READY. |

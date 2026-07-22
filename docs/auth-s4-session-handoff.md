@@ -8,7 +8,11 @@
 > **Snapshot pin:** `main@172dfff` · D0a branch `feat/auth-s4-d0-revoke-core@413b33e` · ghi 2026-07-20.
 > **Ngôn ngữ:** giải thích = tiếng Việt; block để paste terminal / prompt cho Claude Code = tiếng Anh.
 >
-> **✅ CẬP NHẬT 2026-07-20 — D0a ĐÃ MERGE:** review loop dừng ở round-12 (owner quyết); slice squash-merge vào `main` bằng **owner override** gate 2-clean (manual review + acceptance 22/22 + real-PG 97/97). §4 dưới giữ làm hồ sơ lịch sử vòng review. **Hot area giờ chuyển sang D0b `auth-s4-d0-session-web-boundary`.**
+> **✅ CẬP NHẬT 2026-07-20 — D0a ĐÃ MERGE (`8f493f7`):** review loop dừng ở round-12 (owner quyết); squash-merge bằng **owner override** gate 2-clean (manual review + acceptance 22/22 + real-PG 97/97). §4 dưới giữ làm hồ sơ lịch sử vòng review.
+>
+> **✅ CẬP NHẬT 2026-07-22 — D0b ĐÃ MERGE (`93c5404`):** issuance fence `issueSession` (reject-and-reauth, không fallback-mint) + typed 401 `AUTH_INVALID` ở 2 caller + `POST /api/auth/logout-all` (CSRF trước mutation). Zero DB change, 8 file `apps/web`, web tests 65→78. **Gate P0 ĐẠT** (2 clean round liên tiếp, chỉ 2 fix round) — **không override**, khác D0a. Evidence: Verdict 6.
+>
+> **Hot area giờ là D1 `auth-s4-d1-email-token-core`** (order-2, code dark, migration `0016`) → `auth-s4-d1-google-adapter` (`0017`) → email bundle (flag OFF) → gỡ Telegram.
 
 ---
 
@@ -139,7 +143,7 @@ Kiểm tra loop còn sống không: xem timestamp round mới nhất trong state
 Thứ tự bắt buộc (auth-first, đồng bộ Verdict 5a/5b + DD-80 §10):
 
 1. ~~Đóng D0a → manual merge~~ **✅ DONE (2026-07-20)** — merged via owner override (real-PG 97/97).
-2. **D0b** `auth-s4-d0-session-web-boundary` — unblock **chỉ sau** D0a merged probe trên `origin/main`
+2. ~~**D0b** `auth-s4-d0-session-web-boundary`~~ **✅ DONE (2026-07-22, `93c5404`, gate ĐẠT)** — unblock **chỉ sau** D0a merged probe trên `origin/main`
    (`0015::auth_revoke_all_web_sessions` + `route.ts::revokeAllWebSessions`). Owns: issueSession stale-cookie
    reject-and-reauth + 2 live caller mappings + `/api/auth/logout-all` route + CSRF + tests. **Zero DB change.**
    Manifest + backlog block đã có.

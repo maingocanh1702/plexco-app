@@ -23,6 +23,8 @@ Before reviewing or editing, read completely:
 5. If the user authorized fixes, patch only in scope and re-open/re-check the newest exact files.
 6. Select the lowest unbuilt dependency node as the first implementation candidate; do not assume the reviewed feature is next to code.
 7. End with the complete canonical verdict block. Do not omit fields.
+8. For persisted artifacts, add the machine classification plus `REVIEW_POLICY_VERSION` and `CLOSURE_MATRIX`, then run `pnpm review:check:changed`. A non-zero result blocks the verdict/commit.
+9. The target outcome for a finalized implementation plan is strict `CODE_READY`. Mark its artifact `<!-- review-readiness: code-ready -->`; `enforce` is only for draft/read-only blocker evidence and must never be handed to coding.
 
 ## Hard constraints
 
@@ -32,5 +34,7 @@ Before reviewing or editing, read completely:
 - Never end with “almost final”, “seems ready”, or an unbounded list of polish work.
 - Never treat docs/contracts/test counts as runtime or production E2E proof.
 - Do not implement feature code in a review-only request.
+- Never use a historical exemption for current authority or skip the machine validator.
+- Never call a plan review complete or launch a coding worktree from an `enforce`/`NOT_*_READY` artifact; close the blockers or stop with the exact next trigger.
 
 Follow the detailed workflow and output contract in `docs/templates/review-doc-plan-session-template.md` exactly.

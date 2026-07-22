@@ -207,7 +207,7 @@ notes: D0a root slice under DD-80 v1.88 and `g3-revoke-all-concurrency-probe-see
 
 ## task: auth-s4-d0-session-web-boundary
 title: Session reauth fence and logout-all web boundary
-status: ready
+status: merged
 risk: P0
 change_class: manual-auth-boundary
 depends_on: [auth-s4-d0-revoke-core]
@@ -215,11 +215,11 @@ invariants: [auth, api-contract]
 scope: [docs/autopilot-manifests/auth-s4-d0-session-web-boundary.json, apps/web/lib/session-cookies.ts, apps/web/lib/session-cookies.test.ts, apps/web/app/api/auth/logout-all/route.ts, apps/web/app/api/auth/logout-all/route.test.ts, apps/web/app/api/auth/telegram/callback/route.ts, apps/web/app/api/auth/telegram/callback/route.test.ts, apps/web/app/api/onboarding/start/route.ts, apps/web/app/api/onboarding/start/route.test.ts]
 manifest: docs/autopilot-manifests/auth-s4-d0-session-web-boundary.json
 merged_probe: apps/web/app/api/auth/logout-all/route.ts :: revokeAllWebSessions
-notes: D0b under DD-80 v1.88. **D0a merged 2026-07-20 → UNBLOCKED** once the D0a squash lands on origin/main (dep probes `0015::auth_revoke_all_web_sessions` + `auth.ts::revokeAllWebSessions`). P0 manual workflow only, no autopilot launcher. Owns stale-cookie rotate-null reject-and-reauth, all live caller mappings, CSRF/logout-all route and tests; zero DB/schema changes. Two consecutive FULL-base Codex clean rounds, scope-gate READY, STOP_AT_READY, manual merge.
+notes: D0b under DD-80 v1.88. **MERGED 2026-07-22 at `main@93c5404`** — P0 gate **ĐẠT** (2 consecutive FULL-base Codex clean rounds, only 2 fix rounds; NO owner override, unlike D0a). 8 files all `apps/web`, zero DB delta; web tests 65→78; real-PG green. Evidence: Verdict 6 in `slice-readiness-verdicts.md`. P0 manual workflow only, no autopilot launcher. Owns stale-cookie rotate-null reject-and-reauth, all live caller mappings, CSRF/logout-all route and tests; zero DB/schema changes. Two consecutive FULL-base Codex clean rounds, scope-gate READY, STOP_AT_READY, manual merge.
 
 ## task: auth-s4-d1-email-token-core
 title: Account email + token credential core (storage/validators/parent-first helpers, dark)
-status: planned
+status: ready
 risk: P0
 change_class: identity-feature
 depends_on: [auth-s4-d0-revoke-core, auth-s4-d0-session-web-boundary]
@@ -227,7 +227,7 @@ invariants: [auth, schema]
 scope: [docs/autopilot-manifests/auth-s4-d1-email-token-core.json, packages/db/schema.ts, packages/db/migrations/0016_account_email_token_core.sql, packages/db/src/auth.ts, packages/db/src/auth.test.ts, packages/db/src/rls-invariants.test.ts, docs/features/BE/feature_web_auth_onboarding_tech.md]
 manifest: docs/autopilot-manifests/auth-s4-d1-email-token-core.json
 merged_probe: packages/db/migrations/0016_account_email_token_core.sql :: account_emails
-notes: HOLD — D1 order-2 slice under DD-80 v1.88 (B0 §3/§5/§8.1/§9, tech v2.10 §2/§4). Not launcher-ready until BOTH D0a `auth-s4-d0-revoke-core` and D0b `auth-s4-d0-session-web-boundary` merged probes exist on origin/main. P0 manual workflow only. CODE DARK: storage + validators + parent-first helpers + cleanup ONLY — no email UI/routes/provider-send; provider fail-closed OFF. Two consecutive FULL-base Codex clean rounds, scope-gate READY, STOP_AT_READY, manual merge. Manifest already authored.
+notes: **UNBLOCKED 2026-07-22** — D1 order-2 slice under DD-80 v1.88 (B0 §3/§5/§8.1/§9, tech v2.10 §2/§4). Both hard deps merged on origin/main: D0a `8f493f7` + D0b `93c5404` (dep probes `0015::auth_revoke_account_sessions` and `logout-all/route.ts::revokeAllWebSessions` present). Next slice in the auth chain. P0 manual workflow only. CODE DARK: storage + validators + parent-first helpers + cleanup ONLY — no email UI/routes/provider-send; provider fail-closed OFF. Two consecutive FULL-base Codex clean rounds, scope-gate READY, STOP_AT_READY, manual merge. Manifest already authored.
 
 ## task: auth-s4-d1-google-adapter
 title: Google OIDC provider adapter + oauth transaction/Lax binding

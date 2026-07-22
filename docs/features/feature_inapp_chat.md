@@ -4,11 +4,13 @@
 
 > **Canonical phase:** P4 (đề xuất — dựng sớm hạ tầng `chat_*`)
 > **Track:** 💬 In-app Chat
-> **Version:** 0.7a · 2026-07-19
+> **Version:** 0.8 · 2026-07-22
 > **Status:** ✅ DD chốt — Draft (pending migration)
 > **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web/app surface + sync engine · **DD-07** (SSE + `LISTEN/NOTIFY`) · P3.5 identity (Person/Membership)
-> **Tài liệu liên quan:** `../product/BRD.md` MODULE 10 / BR-15 / AC-10 / FR-10 · `../standards/decisions.md` **DD-38/DD-55** · DD-07 · DD-19/DD-20 (trợ lý tái dùng `chat_*` ở P7) · `feature_club_assistant.md` · `feature_identity.md` · `packages/db/schema.ts` (**AUTHORITATIVE** khi triển khai)
+> **Tài liệu liên quan:** `../product/BRD.md` MODULE 10 / BR-15 / AC-10 / FR-10 · `../standards/decisions.md` **DD-38/DD-55/DD-56/DD-86** · DD-07 · DD-19/DD-20 (trợ lý tái dùng `chat_*` ở P7) · `feature_club_assistant.md` · `feature_identity.md` · `packages/db/schema.ts` (**AUTHORITATIVE** khi triển khai)
+
+> 🟡 **DD-86 proposal boundary (2026-07-22):** DD-38 một club channel/tenant vẫn là authority hiện hành. Nếu owner chốt DD-86 Option B, Product/BE spec này sẽ nhận final multi-channel contract **trước** khi author migration. Vì vậy migration chat đang **HOLD**: không triển khai one-channel schema rồi fold multi-channel sau. Proposal không phải runtime proof hay build authorization.
 
 ---
 
@@ -99,7 +101,7 @@ Chat **chỉ sống trong Plexco** (web + surface app của Plexco), **KHÔNG br
 
 | Entity (proposal) | Plane | Vai trò | Key constraints (dự kiến) |
 |--------|-------|---------|-----------------|
-| `chat_channels` | `club`: Tenant-private · `dm`: **Person-self (global)** | Kênh chat | `kind ∈ {club, dm}`; **club** → `tenant_id` NOT NULL, `dm_key` NULL, 1 kênh chính/CLB; **dm** → `tenant_id` **NULL**, `dm_key='least:greatest'` 2 person UNIQUE (CHECK XOR) |
+| `chat_channels` | `club`: Tenant-private · `dm`: **Person-self (global)** | Kênh chat | **Current DD-38:** `kind ∈ {club, dm}`, 1 club channel/tenant. **Conditional DD-86:** N active club channel/tenant, club-only metadata + creator identity, đúng một active default; **dm** → `tenant_id` và toàn bộ club-only metadata/creator fields **NULL**, `dm_key='least:greatest'` 2 person UNIQUE |
 | `chat_members` | theo channel (`club` tenant-private / `dm` person-self) | Thành viên kênh | **club**: `tenant_id`+`membership_id` NOT NULL, `UNIQUE(tenant, channel, membership)`; **dm**: `tenant_id`/`membership_id` NULL, đúng 2 person theo `dm_key` |
 | `chat_messages` | theo channel (`club` tenant-private / `dm` person-self) | Tin nhắn | `author_type ∈ {person, assistant, system}`; assistant/system ⇒ `membership_id` NULL; **dm** ⇒ `tenant_id`/`membership_id` NULL; `client_msg_id` idempotent per channel |
 | `chat_attachments` (proposal) | Private, channel-authorized | Metadata + storage/scan/deletion state | Owner + object key; `pending_scan → ready | rejected | quarantined | deleted`; message chỉ attach `ready`; no raw signed URL persisted |
@@ -144,6 +146,16 @@ Chat **chỉ sống trong Plexco** (web + surface app của Plexco), **KHÔNG br
 - [ ] Host/support/tenant admin cannot read DM, including after a report.
 - [ ] Media E2E passes private upload, MIME sniff, size/quota, malware scan, moderation, ready-only attach, signed read authz, delete/tombstone and orphan cleanup.
 
+**Conditional acceptance nếu owner chốt DD-86 Option B:**
+
+- [ ] Một tenant có N active club channels nhưng **đúng một active default**; create/set-default/archive serialize dưới tenant lock.
+- [ ] Không archive default nếu không có replacement trong cùng transaction; partial unique index chỉ chứng minh at-most-one, lifecycle chứng minh exactly-one.
+- [ ] Tạo channel hoặc activate membership auto-provision đủ membership × active-channel atomically, retry-safe; lỗi giữa chừng rollback toàn bộ.
+- [ ] `admins_only` và channel management resolve qua DD-56 capability registry (`chat.channel.post_restricted`, `chat.channel.manage`) và fail-closed; không dùng `chat_members.role` làm tenant authority.
+- [ ] DM rejects/non-persists `title`/`sort_order`/`post_policy`, creator membership/person/tenant và default/assistant flags.
+- [ ] Assistant chỉ project vào channel khi `assistant_enabled=true` **AND** tenant config/entitlement/provider/privacy gates đều pass.
+- [ ] Create/rename/set-default/archive dùng actor-scoped UUID idempotency key + request fingerprint: exact replay trả receipt cũ, payload mismatch fail-closed.
+
 ---
 
 ## 7. Open Questions / Changelog
@@ -156,11 +168,13 @@ Chat **chỉ sống trong Plexco** (web + surface app của Plexco), **KHÔNG br
 | CHT-OQ-1 | Chính sách cho phép DM | ✅ **Chốt DD-55 (2026-07-16)** — **phase-1: open DM** nhưng hard-gated bởi block + report + per-sender/per-target rate-limit + abuse audit; thiếu một gate thì DM OFF. **Phase-2:** chỉ follower accepted (DD-47) DM direct, còn lại vào request box. Host/support/tenant admin KHÔNG đọc DM (person-scoped, tenant NULL) |
 | CHT-OQ-2 | Quyền kiểm duyệt host trong club channel: xoá/ẩn/mute — granularity | ⬜ Chưa chốt — chốt lúc build chat slice (DD-55 note) |
 | CHT-OQ-3 | Media/emoji phase-1 | ✅ **Chốt DD-55 (2026-07-16)** — **media in-scope phase-1** (core value): build đủ object storage, signed access, malware scan, quota/type/size limits, moderation, deletion lifecycle — không ship half-built |
+| DD-86 | Multi-channel per CLB | 🟡 **Proposal, chưa owner-ratified.** Q1–Q4 + Q6–Q10 là 9 blocker in-scope; Q5 shareable URL/slug deferred out-of-scope với current behavior/negative scope đã pin. Migration chat HOLD tới khi owner chốt và Product+BE specs được promote khỏi Draft. |
 
 ### Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-22 | v0.8 | Mirror proposal DD-86 có điều kiện: N club channel, exact-one active default, atomic auto-provision, DD-56 capability authz, DM-null shape, per-channel Assistant gate và command idempotency. Giữ DD-38 là authority; HOLD migration tới owner decision; spec vẫn Draft/not implemented. |
 | 2026-07-19 | v0.7a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.7 | **Canonical chat-model closure:** rename duplicate `chat_channel_members` reference to `chat_members`; message dedupe is `client_msg_id` per channel; user sends only through guarded server-authored RPC; DM read/list/mark/SSE re-authorize safety and concurrent retry consumes rate/audit once. |
 | 2026-07-17 | v0.6 | **DD-55 bootstrap closure:** one canonical DM safety decision now explicitly owns request/create/bootstrap/send/read; `create_dm` cannot bypass block/rate/enablement gates. |

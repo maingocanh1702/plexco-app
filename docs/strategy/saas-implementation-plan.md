@@ -1,3 +1,4 @@
+<!-- review-readiness: historical -->
 # Implementation Plan — Plexco (platform thể thao đa môn, host + player)
 
 > Xây **Plexco** như **một sản phẩm riêng** (repo riêng), tái dùng phần logic đã kiểm chứng của bot single-club hiện tại — KHÔNG refactor tại chỗ trên bot đang chạy live. Plexco là **platform 2 phía, đa môn**: **host** tự đăng ký, nối bank/SePay, link kênh, quản & publish kèo; **player** khám phá kèo xuyên CLB/môn (marketplace) & join. **PostgreSQL + domain model = canonical store**; web/Zalo/Messenger là surface đồng bộ 2 chiều (Telegram archived theo DD-37). Tài liệu làm **ngược từ end goal** về kiến trúc, rồi chia phase.

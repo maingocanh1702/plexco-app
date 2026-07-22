@@ -2,13 +2,15 @@
 
 > **Canonical phase:** P7 (post-MVP, **đề xuất**)
 > **Track:** 🤖 Club Assistant
-> **Version:** 0.9a · 2026-07-19
+> **Version:** 0.10 · 2026-07-22
 > **Status:** 🟡 Draft — DD-16/17/19–28 liên quan đã chốt và contract đã harden; sẵn sàng cho review/promotion, nhưng **chưa build-ready cho tới khi được formally promote sang Reviewed**. **DD-18** (provider LLM + privacy/ToS) ⬜ là gate **GO-LIVE** sau khi scope implementation được duyệt, không phải lý do tự động promote/build (interface swappable).
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web/app surface + sync engine · P3.5 identity · P5 billing entitlement · (KHÔNG cần channel adapters — trợ lý chỉ chạy trong app Plexco)
-> **Tài liệu liên quan:** proposal `../proposals/club-ai-bot-knowledge-base.md` · BE `BE/feature_club_assistant_tech.md` · `feature_inapp_chat.md` (chat cơ bản, DD-38) · `../standards/decisions.md` DD-16..DD-23 · DD-37/DD-38 · `../standards/core-db-architecture-principles.md`
+> **Tài liệu liên quan:** proposal `../proposals/club-ai-bot-knowledge-base.md` · BE `BE/feature_club_assistant_tech.md` · `feature_inapp_chat.md` (chat cơ bản, DD-38; multi-channel proposal DD-86) · `../standards/decisions.md` DD-16..DD-23 · DD-37/DD-38/DD-86 · `../standards/core-db-architecture-principles.md`
 
 > **Cập nhật v3.4 (DD-37 + DD-38, 2026-07-10):** hạ tầng `chat_*` (native chat in-app) nay **được dựng sớm ở P4** bởi **DD-38** (chat cơ bản phase-1, người↔người) — trợ lý (pha B, DD-19) **tái dùng** cùng bộ bảng ở P7, không tạo model song song. Kênh phase-1 = **Zalo + Messenger** (Telegram loại — DD-37); trợ lý vẫn **chỉ trong app Plexco**, không trả lời ở kênh ngoài.
+
+> 🟡 **DD-86 proposal boundary (2026-07-22):** nếu Option B được owner chốt, pha B chỉ hoạt động trong từng club channel khi `assistant_enabled=true` **AND** tenant bot config/entitlement/provider/privacy gates đều pass. DD-86 chưa là authority; Product/BE Assistant vẫn Draft/not implemented và không được dùng để authorize chat migration.
 
 ---
 
@@ -104,7 +106,7 @@ Hai pha surface, đều trong app Plexco (DD-19): **Pha A** = panel "Hỏi trợ
 | `embedding_cache` | Global (profile+hash→vec) | Cache embed theo model/profile + SHA256 content | Composite key `(embed_model, embed_dims, profile_version, content_sha256)`; không dùng vector model A cho model B; không chứa ngữ cảnh tenant |
 | `bot_queries` | Tenant-private | Log 1 lượt hỏi→đáp (append-only, async 2 pha) | `UNIQUE(tenant,command_id)`, `status`, `reason_code`, `retention_expires_at`/`redacted_at`, `retrieved_chunk_ids` |
 | `bot_provider_attempts` | Tenant-private | Durable evidence cho external embed/chat attempt | Per-query monotonic attempt; status/opaque provider request ID/usage/cost; dùng để cap và audit pre-checkpoint retry, không tuyên bố exactly-once provider |
-| `chat_channels` | Tenant-private cho club | Kênh chat in-app canonical (pha B) | Assistant chỉ phát trong `kind='club'`; không phát trong DM |
+| `chat_channels` | Tenant-private cho club | Kênh chat in-app canonical (pha B) | Assistant chỉ phát trong `kind='club'`, không phát trong DM; **conditional DD-86:** thêm `assistant_enabled=true` và vẫn bắt buộc toàn bộ tenant config/entitlement/provider/privacy gates |
 | `chat_members` | Theo canonical In-app Chat | Membership/read-state của channel | Tái dùng nguyên `feature_inapp_chat.md`; không tạo membership table song song |
 | `chat_messages` | Theo canonical In-app Chat | Tin nhắn person/assistant/system | `author_type ∈ {person,assistant,system}`, `client_msg_id`; assistant/system ⇒ `membership_id` NULL; assistant adapter gắn `bot_query_id` |
 
@@ -144,6 +146,7 @@ Hai pha surface, đều trong app Plexco (DD-19): **Pha A** = panel "Hỏi trợ
 - [ ] Re-ingest cùng source + cùng hash không tăng generation/không tạo chunk lặp; re-ingest khác hash an toàn.
 - [ ] Panel "Hỏi trợ lý" (pha A) + native chat @mention (pha B) trả lời đúng KB, có trích dẫn — chỉ trong app Plexco.
 - [ ] Native chat bot trả lời khi được @mention, realtime SSE.
+- [ ] Nếu DD-86 được chốt: per-channel `assistant_enabled` là gate bổ sung, không thay tenant bot config/entitlement/provider/privacy; mọi false/unknown đều không tạo assistant query/message.
 - [ ] Tone host chọn phản ánh trong giọng câu trả lời; nội dung KB không đổi.
 - [ ] Dưới ngưỡng similarity → no-answer lịch sự, không bịa.
 - [ ] Rate-limit + cap câu hỏi/tháng hoạt động; vượt cap thông báo nâng gói.
@@ -162,11 +165,13 @@ Hai pha surface, đều trong app Plexco (DD-19): **Pha A** = panel "Hỏi trợ
 - Object storage cho file thô (bucket/retention) — chốt khi hiện thực.
 - Trong kênh chat in-app: ai được hỏi trợ lý — mọi member vs role-restricted (chỉ áp dụng nội bộ app, không có "group công khai").
 - Ask-panel async: xác nhận UX chờ kết quả (typing/loading + SSE) so với poll fallback.
+- **DD-86** — 🟡 proposal multi-channel, 9 blocker in-scope; không đổi pha A. Pha B/migration chat HOLD tới owner decision + Product/BE chat promotion.
 
 ### Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-22 | v0.10 | Mirror DD-86 proposal có điều kiện: pha B yêu cầu per-channel `assistant_enabled` AND tenant config/entitlement/provider/privacy; giữ Assistant Draft/not implemented và không coi proposal là migration authorization. |
 | 2026-07-19 | v0.9a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.9 | **Readiness closure:** giữ formal status 🟡 Draft cho tới khi Product + BE pair được promote Reviewed; DD-18 tiếp tục là gate GO-LIVE, không tự biến spec thành build-ready. BE companion đồng thời chuyển migration/RLS sang migration mới self-contained và canonical API envelope. |
 | 2026-07-17 | v0.8 | **Provider-truth/cache closure:** narrow idempotency claim to one durable result/message while acknowledging pre-checkpoint provider retries; key embedding cache by model+dims+profile+content hash to prevent cross-model vector reuse. |

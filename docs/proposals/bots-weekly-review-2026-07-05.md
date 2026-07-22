@@ -1,3 +1,4 @@
+<!-- review-readiness: historical -->
 # Đề xuất kế thừa từ 2 bot (chatbot + payment bot) — delta tuần 28/06–04/07
 
 > **Trạng thái:** 🟡 Draft đề xuất — chờ review · 2026-07-05

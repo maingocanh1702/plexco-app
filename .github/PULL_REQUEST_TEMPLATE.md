@@ -37,6 +37,8 @@ pnpm test
 - [ ] Build OK (`pnpm build`)
 - [ ] TypeScript clean (`pnpm typecheck`)
 - [ ] Docs updated (nếu đổi behavior/API)
+- [ ] Review-readiness validator xanh (`pnpm review:check`) cho mọi review/docs/readiness artifact
+- [ ] Final implementation plan/coding handoff dùng `review-readiness: code-ready` và đạt strict `CODE_READY`
 - [ ] RLS/isolation test xanh (nếu đụng data layer)
 - [ ] Public invariant test xanh (nếu đụng discovery/public)
 - [ ] Không hardcode tiền/PII vào log/URL

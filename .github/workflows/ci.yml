@@ -46,6 +46,9 @@ jobs:
       - name: Format
         run: pnpm -w format:check
 
+      - name: Review-readiness policy
+        run: pnpm -w review:check
+
       - name: Lint
         run: pnpm -w lint
 

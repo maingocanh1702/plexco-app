@@ -1,3 +1,4 @@
+<!-- review-readiness: historical -->
 # Review findings — Founder decision brief 2026-07-15
 
 > **Target:** `docs/founder-decision-brief-2026-07-15.md`

@@ -1,3 +1,4 @@
+<!-- review-readiness: historical -->
 # Plexco — Review Fix Closure
 
 > **Date:** 2026-07-16  
