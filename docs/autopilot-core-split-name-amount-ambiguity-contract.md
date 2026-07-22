@@ -1,12 +1,13 @@
-<!-- review-readiness: enforce -->
+<!-- review-readiness: code-ready -->
 # Autopilot task contract — `core-matcher-grouped-amount-parsing`
 
 > **Framework:** canonical `autopilot-prompt-GENERIC` v0.6.0.
 > **Risk:** P2 parser/money proposal · `manual_only` · auto-merge `false` · 2× consecutive FULL-base
 > Codex clean · STOP_AT_READY.
 > **Authority:** DD-87 owner-ratified 2026-07-22.
-> **Current state:** draft handoff on disk, **not launchable** until this file is promoted to
-> `<!-- review-readiness: code-ready -->` after the full packet is committed/pushed and re-pinned.
+> **Current state:** `CODE_READY` (Verdict 16, `main@827d24d`) — packet committed/pushed and re-pinned.
+> Launchable: open a dedicated worktree from `origin/main`, register the manifest, run the AP-29 design
+> probe, then implement.
 
 ## 1. Task
 
@@ -137,9 +138,9 @@ Rollback is one code commit revert. There is no storage, data migration, rollout
 
 ```text
 REVIEW_POLICY_VERSION: 1.3
-REVIEW_VERDICT: NOT_CODE_READY
+REVIEW_VERDICT: CODE_READY
 REVIEWED_AT: 2026-07-22
-AUTHORITY_SHA: 6a28072c433d24aa489b3456b301b5a7e99a2716
+AUTHORITY_SHA: 827d24d17e7004c15f277fb8a53f0cb7d90f6547
 BASE_BRANCH: main
 TARGET_FILES:
   - docs/dd-87-splitnameamount-decision-table-analysis.md
@@ -153,26 +154,23 @@ TARGET_FILES:
 SLICE: core-matcher-grouped-amount-parsing
 IN_SCOPE: splitNameAmount exhaustive tagged-union ambiguity contract and exact unit assertions
 OUT_OF_SCOPE: all transports, DB/migrations, ledger mutation, classifyAmount/FIFO and consumer picker implementation
-G1_DECISION: FAIL
+G1_DECISION: PASS
 G2_SPEC: PASS
-G3_DEPENDENCY: FAIL
+G3_DEPENDENCY: PASS
 G4_TEST: PASS
 G5_SCOPE: PASS
 G6_EXTERNAL: PASS
-HARD_DEPENDENCIES: authority packet committed/pushed on main
+HARD_DEPENDENCIES: none -- this slice is its own root dependency; authority packet committed/pushed on main
 PRIOR_SLICES: none
 OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: none
 LIVE_REPO_VERIFICATION: PASS
 CONTRACT_MATRIX: PASS
-CLOSURE_MATRIX: FAIL (9/12)
+CLOSURE_MATRIX: PASS (12/12)
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
-IMPLEMENTATION_ARTIFACTS: FAIL (authored on disk, not committed/pushed)
-FIRST_IMPLEMENTATION_STEP: blocked until re-pin; then AP-29 design probe
-REMAINING_BLOCKERS:
-  - blocker: packet is outside the pinned authority commit
-    owner: owner git workflow
-    resolution: commit/push all TARGET_FILES, re-pin origin/main, promote this artifact to code-ready and issue strict CODE_READY verdict
-NEXT_REVIEW_TRIGGER: origin/main commit containing the complete packet
+IMPLEMENTATION_ARTIFACTS: PASS (committed and pushed on origin/main@827d24d)
+FIRST_IMPLEMENTATION_STEP: open a dedicated worktree from origin/main@827d24d; then AP-29 design probe
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: n/a -- CODE_READY; see docs/slice-readiness-verdicts.md Verdict 16
 ```

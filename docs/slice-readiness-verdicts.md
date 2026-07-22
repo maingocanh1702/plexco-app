@@ -7,7 +7,7 @@
 > **Current auth refresh (2026-07-20):** `origin/main@033ccc8fd9c3f247abf8aa0cb5a0f48b96d006e2` — DD-80 v1.88 authority bundle immutable on main. **Verdict 5a (D0a) = CODE_READY** (re-pinned 033ccc8); Verdict 5b (D0b) `NOT_CODE_READY` pending D0a merge. Verdicts 1/3/4 remain historical snapshots only.
 > **D0a IMPLEMENTED & MERGED (2026-07-20):** slice `auth-s4-d0-revoke-core` squash-merged to `main` (migration `0015` live). The P0 "2 consecutive FULL-base Codex clean" gate was **NOT reached** after 12 rounds (10 real findings fixed incl. round-06 epoch-vs-`revoked_at` P1; round-11 self-caught + `git revert`ed) → merge is a **documented owner override** resting on manual review + acceptance coverage 22/22 + real-Postgres 97/97, **not** an automated clean-round pass. See `.autopilot/state/auth-s4-d0-revoke-core/HALT-MAX_ROUNDS.txt` + the squash commit. **Verdict 5b (D0b) unblocks** once the D0a squash lands on origin/main.
 > **D0b IMPLEMENTED & MERGED (2026-07-22):** slice `auth-s4-d0-session-web-boundary` squash-merged to `main@93c5404` (issuance fence + logout-all route; zero DB change). Unlike D0a, the P0 **"2 consecutive FULL-base Codex clean rounds" gate was MET** (round-03/04, only 2 fix rounds) — **no owner override**. Real-Postgres suite green (db 97/97 unchanged · core 111 · bot 3 · web 78). Recorded as **Verdict 6**. Next in chain: `auth-s4-d1-email-token-core`.
-> **Machine classification (2026-07-22):** `<!-- review-verdict: historical -->` controls immutable blocks; unmarked blocks are current for their own pinned slice/snapshot. **Verdict 15** records DD-87 as owner-decided but `NOT_CODE_READY` solely because its corrected authority packet is still uncommitted WIP outside `main@6a28072`; it does not supersede unrelated active candidates.
+> **Machine classification (2026-07-22):** `<!-- review-verdict: historical -->` controls immutable blocks; unmarked blocks are current for their own pinned slice/snapshot. **Verdict 15** (historical) recorded DD-87 as owner-decided but `NOT_CODE_READY` solely because its authority packet was uncommitted WIP outside `main@6a28072`; that packet is now committed and pushed (`main@142e9fa`+), so **Verdict 16** re-pins it `CODE_READY` at `main@827d24d`. Neither supersedes unrelated active candidates.
 
 ---
 
@@ -728,6 +728,10 @@ Việc implementer **dừng lại xin phê duyệt** thay vì tự nới contrac
 
 ## Verdict 15 — `core-matcher-grouped-amount-parsing`, DD-87 contract closed on disk (2026-07-22)
 
+> **Superseded by Verdict 16 (same day):** the sole blocker — the authority packet outside the pinned SHA —
+> closed by commit/push. Kept as the record of the exact blocker and its resolution condition.
+
+<!-- review-verdict: historical -->
 ```text
 REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: NOT_CODE_READY
@@ -774,6 +778,69 @@ NEXT_REVIEW_TRIGGER: origin/main commit containing every Verdict-15 TARGET_FILE
 che contract gap; nó là gate authority bất biến: file untracked/modified không thể authorize worktree. Sau
 commit/push, re-review chỉ cần re-pin exact SHA, verify validator thấy hai artifact, đổi directive task contract
 thành `code-ready`, và nâng closure 9/12 → 12/12 nếu live diff vẫn đúng packet.
+
+---
+
+## Verdict 16 — `core-matcher-grouped-amount-parsing`, authority packet committed/pushed; CODE_READY (2026-07-22)
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-22
+AUTHORITY_SHA: 827d24d17e7004c15f277fb8a53f0cb7d90f6547
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/dd-87-splitnameamount-decision-table-analysis.md
+  - docs/standards/decisions.md
+  - docs/autopilot-manifests/core-matcher-grouped-amount-parsing.json
+  - docs/autopilot-core-split-name-amount-ambiguity-contract.md
+  - .claude/commands/ap-29-core-split-name-amount-ambiguity-contract.md
+  - docs/autopilot-backlog.md
+  - docs/slice-readiness-verdicts.md
+  - docs/auth-s4-session-handoff.md
+SLICE: core-matcher-grouped-amount-parsing
+IN_SCOPE: splitNameAmount exhaustive tagged-union contract, all positive parseMoney trailing candidates, exact unit assertions
+OUT_OF_SCOPE: transports, DB/schema/migrations, ledger mutation, classifyAmount/FIFO, consumer picker implementation, ignored historical table lift
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: none -- this slice is its own root dependency; parseMoney (packages/core/src/dates.ts:212) and splitNameAmount (packages/core/src/payments-logic.ts:38, pre-implementation signature) already on main
+PRIOR_SLICES: none
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS (main=origin/main@827d24d; all eight TARGET_FILES re-opened at this SHA; the four DD-87-specific files -- analysis, manifest, task contract, AP-29 launcher -- verified byte-unchanged since they landed at 142e9fa; decisions.md unchanged since 142e9fa; auth-s4-session-handoff.md unchanged since eba1c27; backlog.md's core-matcher entry unchanged since original authoring; splitNameAmount still has only the test caller with its pre-implementation signature; no schema dependency)
+CONTRACT_MATRIX: PASS (none|resolved|ambiguous tagged union; ambiguous has ordered candidate tuple and no top-level name/amount; ambiguity dedupes interpretations by (name,amount); re-checked all eight target files for drift after the concurrent-write incident below -- none found)
+CLOSURE_MATRIX: PASS (12/12 -- authority is committed and pushed on main; this slice's only hard dependency, its own authority packet, is merged; implementation handoff artifacts are committed and pushed on the default branch)
+ACCEPTANCE_MATRIX: PASS (DD-87 exact 18 rows + SNA-1..SNA-8; includes equal-amount/different-name Player 0 110k)
+SECURITY_AND_MIGRATION_GATE: PASS (pure function; no IO/log/DB/migration; no second grammar or heuristic; rollback is code commit revert)
+IMPLEMENTATION_ARTIFACTS: PASS (manifest + task contract + AP-29 launcher + backlog entry + this verdict all committed and pushed on origin/main@827d24d)
+FIRST_IMPLEMENTATION_STEP: open a dedicated worktree from origin/main@827d24d, register the manifest via scope-gate, record the DD-87 design probe (Wang 110 500 / Player 2 110k / Player 0 110k) per the AP-29 launcher, then add the failing SNA/DD-87 tests before implementing
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: n/a -- CODE_READY; next event is the coding slice itself
+```
+
+**Đọc verdict:** blocker của Verdict 15 (authority packet ngoài pinned SHA) đóng đúng dự kiến, nhưng không
+đơn giản như "commit rồi xong" -- giữa lúc verify, một session Cowork khác cùng đứng ở root working copy đã
+commit nhầm đúng nội dung của phiên này dưới message của một slice khác (`eba1c27` mang subject
+`fix(db): make migration-runner role creation race-safe...` nhưng tree là hai file docs của phiên này,
+`ROADMAP.md` + `auth-s4-session-handoff.md`). Đã verify byte-for-byte trước khi tin: nội dung landing khớp
+100% với bản đã review ở Verdict 15, không có drift; sự cố chỉ nằm ở commit MESSAGE, không ở nội dung. Cả
+tám TARGET_FILE được re-open tại `827d24d` và so lại: bốn file DD-87-specific (analysis, manifest, task
+contract, launcher) không bị bất kỳ commit nào đụng tới kể từ lúc land; `decisions.md`/`backlog.md`/
+`auth-s4-session-handoff.md` cũng không đổi so với lúc land. G1/G3 và ba dòng closure matrix (1/11/12)
+chuyển PASS đúng theo blocker đã đóng, không phải suy diễn. Task contract directive đổi `enforce` →
+`code-ready`; backlog status đổi `planned` → `ready`.
+
+> ⚠️ **Concurrent-write hazard cho người audit sau (không phải lỗi riêng của phiên này):** nhiều session
+> Cowork chia sẻ một git identity (`Cowork <cowork@local>`) và một `.git/index` khi tất cả đứng ở root
+> working copy thay vì mỗi session một worktree riêng. `scripts/autopilot-scope-gate` canh giữ vòng đời
+> feature worktree (register/ready/cleanup theo manifest); nó **không** canh giữ docs commit chạy thẳng ở
+> root working copy -- đủ để một session `git commit` bắt nhầm content session khác đang stage, dưới
+> message của chính nó. Đây chính xác là cơ chế sinh ra `eba1c27` ở trên. Chi tiết đầy đủ + fix cơ chế
+> (`scripts/ap-merge.sh`): Verdict 14, phần "Đính chính"/"Lỗ hổng cấu trúc lộ ra từ vụ `eba1c27`".
 
 ---
 

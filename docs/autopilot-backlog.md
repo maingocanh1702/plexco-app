@@ -255,7 +255,7 @@ notes: **BLOCKER ON ENABLING GOOGLE LOGIN** — must land before `GOOGLE_OAUTH_C
 
 ## task: core-matcher-grouped-amount-parsing
 title: splitNameAmount misparses grouped trailing amounts with a non-zero final group
-status: planned
+status: ready
 risk: P2
 change_class: bugfix
 depends_on: []
@@ -263,16 +263,16 @@ invariants: [money-model, shared-core]
 scope: [docs/autopilot-manifests/core-matcher-grouped-amount-parsing.json, packages/core/src/payments-logic.ts, packages/core/src/payments-logic.test.ts]
 manifest: docs/autopilot-manifests/core-matcher-grouped-amount-parsing.json
 merged_probe: packages/core/src/payments-logic.test.ts :: Wang 110 500
-notes: **⛔ NOT_CODE_READY — DD-87 owner-ratified; contract/acceptance/artifacts authored on disk 2026-07-22.**
-  Mechanism: exhaustive tagged union over every positive `parseMoney` trailing interpretation; dedupe by
-  `(name,amount)`; ambiguous returns ordered candidates and no top-level name/amount. Equal-amount/different-name
-  (`Player 0 110k`) is ambiguous. Grouped-number/longest/threshold/fuzzy heuristics are forbidden. Exact 18-row
-  matrix: `docs/dd-87-splitnameamount-decision-table-analysis.md`; task contract:
-  `docs/autopilot-core-split-name-amount-ambiguity-contract.md`; launcher:
-  `.claude/commands/ap-29-core-split-name-amount-ambiguity-contract.md`.
-  **Still NOT_CODE_READY:** the packet is uncommitted WIP outside `main@6a28072`; commit/push every Verdict-15
-  target, re-pin `origin/main`, promote the task contract from `enforce` to `code-ready`, and issue strict
-  `CODE_READY` before creating the worktree. The ignored core-lift tables are not a dependency.
+notes: **✅ CODE_READY (Verdict 16, `main@827d24d`) — DD-87 owner-ratified; authority packet committed/pushed
+  2026-07-22.** Mechanism: exhaustive tagged union over every positive `parseMoney` trailing interpretation;
+  dedupe by `(name,amount)`; ambiguous returns ordered candidates and no top-level name/amount.
+  Equal-amount/different-name (`Player 0 110k`) is ambiguous. Grouped-number/longest/threshold/fuzzy
+  heuristics are forbidden. Exact 18-row matrix: `docs/dd-87-splitnameamount-decision-table-analysis.md`;
+  task contract (now `code-ready`): `docs/autopilot-core-split-name-amount-ambiguity-contract.md`; launcher:
+  `.claude/commands/ap-29-core-split-name-amount-ambiguity-contract.md`. Launchable: open a dedicated
+  worktree from `origin/main`, register the manifest, run the AP-29 design probe. Still shares invariant
+  `money-model`/`shared-core` with any other in-flight slice on that token. The ignored core-lift tables
+  are not a dependency.
 
 ## task: docs-core-classifier-decision-table-lift
 title: Preserve ignored core classifier decision tables as historical criteria
