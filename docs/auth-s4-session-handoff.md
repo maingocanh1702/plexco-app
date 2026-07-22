@@ -5,8 +5,10 @@
 > `docs/slice-readiness-verdicts.md`. File này là **ảnh chụp trạng thái thực thi** để senior dev khác
 > resume độc lập.
 >
-> **Snapshot pin:** `main@172dfff` · D0a worktree `feat/auth-s4-d0-revoke-core@f5b0d6d` · ghi 2026-07-20.
+> **Snapshot pin:** `main@172dfff` · D0a branch `feat/auth-s4-d0-revoke-core@413b33e` · ghi 2026-07-20.
 > **Ngôn ngữ:** giải thích = tiếng Việt; block để paste terminal / prompt cho Claude Code = tiếng Anh.
+>
+> **✅ CẬP NHẬT 2026-07-20 — D0a ĐÃ MERGE:** review loop dừng ở round-12 (owner quyết); slice squash-merge vào `main` bằng **owner override** gate 2-clean (manual review + acceptance 22/22 + real-PG 97/97). §4 dưới giữ làm hồ sơ lịch sử vòng review. **Hot area giờ chuyển sang D0b `auth-s4-d0-session-web-boundary`.**
 
 ---
 
@@ -16,8 +18,9 @@ Plexco vừa qua Phase 0→1 (foundation + auth v3 Telegram-era đã land). Vi�
 Telegram-era → Google/email**, khởi động bằng slice DB core **D0a** (`auth-s4-d0-revoke-core`) —
 **miếng code feature-layer đầu tiên** sau foundation.
 
-- **D0a đang in-flight** trong autopilot worktree, ở **vòng Codex review lặp** (đã 8 round, chưa đạt
-  "2 clean liên tiếp"). Verdict giấy = CODE_READY, nhưng **chưa merge `main`**.
+- **D0a ĐÃ MERGE** (2026-07-20, owner override) — migration `0015` live trên `main`. Review loop chạy 12 round
+  (10 finding fix); gate 2-clean không đạt nên đóng bằng manual review + acceptance 22/22 + real-PG 97/97.
+  Việc nóng giờ là **D0b**.
 - Sau D0a merge → mở D0b (web boundary) → D1 email-token → D1 google-adapter. Dependency chain cứng.
 - Song song, có 2–3 autoprompt docs-only P2 launcher-ready có thể chạy ngay mà không đụng D0a.
 
@@ -135,7 +138,7 @@ Kiểm tra loop còn sống không: xem timestamp round mới nhất trong state
 
 Thứ tự bắt buộc (auth-first, đồng bộ Verdict 5a/5b + DD-80 §10):
 
-1. **Đóng D0a** (`auth-s4-d0-revoke-core`) → manual merge lên `main`. *(đang ở §4)*
+1. ~~Đóng D0a → manual merge~~ **✅ DONE (2026-07-20)** — merged via owner override (real-PG 97/97).
 2. **D0b** `auth-s4-d0-session-web-boundary` — unblock **chỉ sau** D0a merged probe trên `origin/main`
    (`0015::auth_revoke_all_web_sessions` + `route.ts::revokeAllWebSessions`). Owns: issueSession stale-cookie
    reject-and-reauth + 2 live caller mappings + `/api/auth/logout-all` route + CSRF + tests. **Zero DB change.**

@@ -4,6 +4,7 @@
 > **Snapshot pin (bất biến):** `AUTHORITY_SHA = 22c23aab080183913d2852805a085bba1057a91a` (`main`) · verify 2026-07-19. Nhánh làm việc hiện tại `feat/session-waitlist-expand@aa8afae` **không** phải base; mọi verdict pin theo `main`.
 > **Live truth đã verify (`main@22c23aa`):** feature layer trống — không có projector source ghi `public_sessions`; không có auth Google/`account_emails` source; `0014_players_waitlist` **không** trên `main`; `0006_discovery.sql` vẫn có `skill_level` và **thiếu** toàn bộ field DD-41 (`session_type`/`level_*_rank`/`gender_restriction`/`age_*`).
 > **Current auth refresh (2026-07-20):** `origin/main@033ccc8fd9c3f247abf8aa0cb5a0f48b96d006e2` — DD-80 v1.88 authority bundle immutable on main. **Verdict 5a (D0a) = CODE_READY** (re-pinned 033ccc8); Verdict 5b (D0b) `NOT_CODE_READY` pending D0a merge. Verdicts 1/3/4 remain historical snapshots only.
+> **D0a IMPLEMENTED & MERGED (2026-07-20):** slice `auth-s4-d0-revoke-core` squash-merged to `main` (migration `0015` live). The P0 "2 consecutive FULL-base Codex clean" gate was **NOT reached** after 12 rounds (10 real findings fixed incl. round-06 epoch-vs-`revoked_at` P1; round-11 self-caught + `git revert`ed) → merge is a **documented owner override** resting on manual review + acceptance coverage 22/22 + real-Postgres 97/97, **not** an automated clean-round pass. See `.autopilot/state/auth-s4-d0-revoke-core/HALT-MAX_ROUNDS.txt` + the squash commit. **Verdict 5b (D0b) unblocks** once the D0a squash lands on origin/main.
 
 ---
 
@@ -278,6 +279,7 @@ NEXT_REVIEW_TRIGGER: origin/main contains D0a merged probes; then re-run D0b clo
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 20/07/2026 | v0.8 | **D0a implemented & merged via owner override.** `auth-s4-d0-revoke-core` squash-merged (migration `0015`); 2-clean P0 gate not reached after 12 Codex rounds → closed on manual review + acceptance 22/22 + real-PG 97/97. Verdict 5a stands as CODE_READY authority; this row records the merge + override rationale. D0b unblocks on origin/main. |
 | 20/07/2026 | v0.7 | DD-80 v1.88 closes Gate 3 with exact epoch equality, cross-account parent ordering/revalidation and atomic row materialization/count/audit; historical Verdict 3 superseded. Added fail-closed Verdict 5a/5b for D0a DB core and D0b web boundary; both await immutable authority, and D0b also awaits D0a merge. |
 | 19/07/2026 | v0.6 | **v1.86 (AP-26 HALT MAX_ROUNDS/Codex round-03):** Verdict 3 amend — D0 thêm issuance fence `session-cookies.ts` (reject-and-reauth, không fallback-mint khi rotate null) + partial index `web_sessions(account_id) WHERE revoked_at IS NULL` trong 0015 (case D0-12/D0-13, tech v2.9b); giữ CODE_READY. Verdict 4 note — `auth_login_google` nhận preallocated `account_emails.id` cho cell 1 (AAD §3.3 giữ nguyên); giữ PLAN_READY. |
 | 19/07/2026 | v0.5 | **v1.83 (AP-26 HALT v2):** Verdict 3 amend — migration D0 thêm rotate parent-first replace (đóng deadlock), auth_audit_events tạo tại D0 (order-2 reuse), scope thêm packages/db/src/index.ts. Verdict giữ CODE_READY với wording rollback mới; số migration theo tail thực tế (tech v2.9). |

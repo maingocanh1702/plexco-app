@@ -195,7 +195,7 @@ notes: HOLD — not launcher-ready until both D0a and D0b merged probes exist on
 
 ## task: auth-s4-d0-revoke-core
 title: Account-session epoch DB core for linearizable revoke-all
-status: planned
+status: merged
 risk: P0
 change_class: manual-auth-schema
 depends_on: [db-postgres-drizzle-rls, auth-onboarding-v3]
@@ -203,11 +203,11 @@ invariants: [auth, schema]
 scope: [docs/autopilot-manifests/auth-s4-d0-revoke-core.json, packages/db/schema.ts, packages/db/migrations/0015_auth_revoke_account.sql, packages/db/src/auth.ts, packages/db/src/index.ts, packages/db/src/auth.test.ts, packages/db/src/rls-invariants.test.ts, packages/db/README.md]
 manifest: docs/autopilot-manifests/auth-s4-d0-revoke-core.json
 merged_probe: packages/db/migrations/0015_auth_revoke_account.sql :: CREATE OR REPLACE FUNCTION auth_revoke_all_web_sessions
-notes: D0a root slice under DD-80 v1.88 and `g3-revoke-all-concurrency-probe-seed.md` v1.0. P0 manual workflow only; canonical GENERIC v0.6.0 forbids autopilot codegen, so there is no launcher. One atomic 0015 owns account/session epochs, create/resolve/rotate replacements, revoke helper/wrapper, audit materialization and real-Postgres barrier/catalog/grant proofs. Two consecutive FULL-base Codex clean rounds, scope-gate READY, STOP_AT_READY, manual merge.
+notes: D0a root slice under DD-80 v1.88 and `g3-revoke-all-concurrency-probe-seed.md` v1.0. P0 manual workflow only; canonical GENERIC v0.6.0 forbids autopilot codegen, so there is no launcher. One atomic 0015 owns account/session epochs, create/resolve/rotate replacements, revoke helper/wrapper, audit materialization and real-Postgres barrier/catalog/grant proofs. MERGED 2026-07-20 via **owner override** — 2-clean gate NOT reached after 12 Codex rounds (10 findings fixed incl. round-06 epoch-vs-revoked_at P1; round-11 self-caught/reverted); closed on manual review + acceptance 22/22 + real-PG 97/97 (see `.autopilot/state/auth-s4-d0-revoke-core/HALT-MAX_ROUNDS.txt` + merge commit).
 
 ## task: auth-s4-d0-session-web-boundary
 title: Session reauth fence and logout-all web boundary
-status: planned
+status: ready
 risk: P0
 change_class: manual-auth-boundary
 depends_on: [auth-s4-d0-revoke-core]
@@ -215,7 +215,7 @@ invariants: [auth, api-contract]
 scope: [docs/autopilot-manifests/auth-s4-d0-session-web-boundary.json, apps/web/lib/session-cookies.ts, apps/web/lib/session-cookies.test.ts, apps/web/app/api/auth/logout-all/route.ts, apps/web/app/api/auth/logout-all/route.test.ts, apps/web/app/api/auth/telegram/callback/route.ts, apps/web/app/api/auth/telegram/callback/route.test.ts, apps/web/app/api/onboarding/start/route.ts, apps/web/app/api/onboarding/start/route.test.ts]
 manifest: docs/autopilot-manifests/auth-s4-d0-session-web-boundary.json
 merged_probe: apps/web/app/api/auth/logout-all/route.ts :: revokeAllWebSessions
-notes: D0b under DD-80 v1.88; starts only after the D0a merged probe exists on origin/main. P0 manual workflow only, no autopilot launcher. Owns stale-cookie rotate-null reject-and-reauth, all live caller mappings, CSRF/logout-all route and tests; zero DB/schema changes. Two consecutive FULL-base Codex clean rounds, scope-gate READY, STOP_AT_READY, manual merge.
+notes: D0b under DD-80 v1.88. **D0a merged 2026-07-20 → UNBLOCKED** once the D0a squash lands on origin/main (dep probes `0015::auth_revoke_all_web_sessions` + `auth.ts::revokeAllWebSessions`). P0 manual workflow only, no autopilot launcher. Owns stale-cookie rotate-null reject-and-reauth, all live caller mappings, CSRF/logout-all route and tests; zero DB/schema changes. Two consecutive FULL-base Codex clean rounds, scope-gate READY, STOP_AT_READY, manual merge.
 
 ## task: auth-s4-d1-email-token-core
 title: Account email + token credential core (storage/validators/parent-first helpers, dark)

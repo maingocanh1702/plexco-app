@@ -4,8 +4,8 @@
 > "code đã có tới đâu, còn cách MVP bao xa". Đây là doc **living**, cập nhật mỗi khi một slice merge.
 > **Cập nhật:** 2026-07-20 (current authority **decisions v1.88** — DD-80 G3 revoke-all concurrency contract + D0a/D0b decomposition; BRD v3.9e/PRD v2.8d/TDD v3.1/ROADMAP v3.3d; DD-59 ✅; DD-70..72 🟡; **DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated**. Không thay functional implementation baseline).
 > **Nguồn số liệu:** `git log`, cây `packages/`+`apps/`, `docs/features/*`, `docs/standards/decisions.md`,
-> `docs/autopilot-backlog.md`. **HEAD hiện tại = `main@aa89b27`** (được `033ccc8` DD-80 v1.88 authority bundle + `aa89b27` re-pin Verdict 5a→CODE_READY). Delta `22c23aa`→`aa89b27` là **docs-only** (DD-80/Home-hub/AP-27 packet) — code baseline (migrations `0000–0013`, chưa có `0014`/`0015` trên `main`) **không đổi**. Mốc `1eb6f60`/`22c23aa` là snapshot lịch sử, không còn là HEAD.
-> **⚙️ In-flight (chưa merge):** D0a `auth-s4-d0-revoke-core` (migration `0015_auth_revoke_account.sql` — **miếng code feature-layer đầu tiên**) đang chạy vòng Codex review trên `feat/auth-s4-d0-revoke-core`; Verdict 5a = CODE_READY nhưng slice chưa merge `main`, nên baseline "đã build" vẫn dừng ở foundation.
+> `docs/autopilot-backlog.md`. **HEAD `main`** = docs bundle DD-80 v1.88 (`033ccc8`/`aa89b27`) + docs reconcile (`ad10194`) + **D0a squash merge**. Code baseline: migrations `0000–0013` + **`0015` (D0a)**; `0014` waitlist vẫn ở nhánh riêng chưa merge.
+> **✅ D0a merged (2026-07-20):** `auth-s4-d0-revoke-core` (migration `0015_auth_revoke_account.sql` — **miếng code feature-layer đầu tiên**) đã squash-merge vào `main` sau 12 vòng Codex (10 finding fix) + review tay + real-Postgres 97/97. Gate "2 clean liên tiếp" **không đạt** → merge là **owner override có ghi chép** (commit message + `HALT-MAX_ROUNDS.txt`), không phải false CODE_READY. **D0b `auth-s4-d0-session-web-boundary` giờ unblock.**
 >
 > **Reconcile 2026-07-17:** target channel identity theo DD-15/DD-65..68 = endpoint-scoped Messenger + Zalo, reachability gắn `channel_identity_id`; Messenger = central+optional tenant Page, shared host/player. Live `messenger_pages` tenant-only, identity/reachability vẫn thiếu generalized endpoint contract và `apps/bot` queue shell **chưa đáp ứng**; chưa adapter/handler/shared Session/Join/AuthZ/projector/E2E. Google/email cũng chưa implement. Migrations vẫn `0000–0013`.
 
@@ -17,14 +17,14 @@
 |---|---|---|
 | **Tài liệu / thiết kế** | **22 Product/System + 21 BE specs**, cộng DD-69 analysis. Waitlist mirrors pin one root CAS/lease max-3 sweep job per capacity opener; candidate events are alert/audit refs, not independent budgets. Notification v3.4c pins the same ownership boundary plus global read/write owners, durable quota/retry receipts, push idempotency/trust/key epochs và security context-start cutoff but remains Draft; DD-70..72 🟡. DD-73/74/75/78 dependency/consumer-sequenced; DD-76/77 evidence-gated. Decision log **v1.65**. | Contract coverage cao; không dùng count làm code-readiness |
 | **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations `0000–0013` đã merge trên `main`, có test *(0014 waitlist đang ở nhánh `feat/session-waitlist-expand`, **chưa merge**)* | **✅ xong** |
-| **Code — lớp auth** | **Auth Onboarding v3 (Telegram-era) đã merge** (`5b1193b`) + web tests; **DD-37 supersede provider** → Google/email replacement đã spec, **chưa implement** | 🟡 provider replacement pending |
+| **Code — lớp auth** | Auth v3 (Telegram-era) merged; **DD-80 D0a epoch revoke-all core merged** (migration `0015`); D0b (session boundary) + D1 (Google/email) chưa | 🟡 provider swap in progress |
 | **Code — lớp feature nghiệp vụ** | chưa bắt đầu (session/reconcile/sync/marketplace/billing/bot…) | ⬜ chưa build |
-| **Roadmap build** | **S1–S3 + S4 Auth v3 (Telegram-era)** đã land; HEAD `main@aa89b27` (delta docs-only), provider replacement (DD-37) chưa code; D0a revoke-core in-flight chưa merge | ~20% |
+| **Roadmap build** | **S1–S3 + S4 Auth v3** đã land + **D0a revoke-core merged** (đầu chuỗi provider swap); D0b/D1 tiếp theo | ~22% |
 
 **Một câu:** phần *khó và nền tảng nhất* (đường tiền thuần + DB có RLS fail-closed + migrations `0000–0013` trên `main`)
 đã dựng xong và được test; **Auth Onboarding v3 (Telegram-era) cũng đã merge** — nhưng **DD-37 supersede
 provider** nên phải thay bằng Google/email (đã spec, chưa code). Tầng feature nghiệp vụ còn nằm trên giấy.
-Project vừa qua **Phase 0→1**: foundation + auth-v3 đã land; HEAD hiện tại là **`main@aa89b27`** (delta so với `22c23aa` là docs-only DD-80/Home-hub/AP-27). D0a revoke-core (migration `0015`) — code feature-layer đầu tiên — đang in-flight, chưa merge.
+Project vừa qua **Phase 0→1**: foundation + auth-v3 đã land. **D0a revoke-core (migration `0015`) — code feature-layer đầu tiên — đã merge** vào `main` (owner override gate 2-clean; real-PG 97/97). Kế tiếp: D0b web boundary → D1 email-token → D1 google-adapter.
 
 ---
 

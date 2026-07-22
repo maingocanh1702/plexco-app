@@ -1,0 +1,41 @@
+HALT-MAX_ROUNDS (FINAL): auth-s4-d0-revoke-core (D0a)
+
+Owner decision (final check-in): STOP. Owner will review manually rather
+than authorize further Codex rounds.
+
+STATUS: NOT_CODE_READY per the P0 gate in this slice's own instructions
+("2 FULL-base Codex clean rounds liên tiếp"). 12 rounds ran; never reached
+2 consecutive clean (round-04 and round-07 were each immediately followed
+by a round with a real finding). Full history in regions.log.
+
+What IS true of the current state (HEAD 413b33e, 11 commits over base
+aa89b27fb1e71fd317331ea4a3f82dc91ada7965):
+  - Diff matches manifest scope exactly (7 files, no unscoped touches).
+  - typecheck / lint / format:check / full-workspace-build (apps/web +
+    apps/bot + packages/core + packages/db) all pass on current HEAD.
+  - packages/db test suite: 97/97 passing, run repeatedly (5-6x across
+    the session) for determinism, ~20s total (two tests each deliberately
+    hold an 8s lock — not flaky, just slow).
+  - Every fix in this session was verified via a stash-based before/after
+    (revert the fix, confirm the associated test fails; restore, confirm
+    it passes) before committing — not just "tests are green."
+  - 10 real, distinct Codex findings fixed across rounds 01,02,03,05,06,
+    08,09,10,11(reverted in 12). Round-11 was a genuine mistake on my
+    part (added an audit row that directly contradicts pinned invariant
+    G3-I5); round-12 caught it; cleanly reverted via `git revert`,
+    re-verified green.
+
+What is NOT true / not verified:
+  - No 2-consecutive-clean Codex verdict on any single HEAD.
+  - The last reviewed-and-then-reverted state (413b33e) has NOT itself
+    been re-submitted to Codex after the round-12 revert — i.e., HEAD's
+    exact diff has never been shown to Codex.
+  - No merge has occurred. Branch is feat/auth-s4-d0-revoke-core,
+    untouched relative to origin/main except for this slice's commits.
+
+Recommended next step for whoever reviews: read packages/db/migrations/
+0015_auth_revoke_account.sql end-to-end against docs/g3-revoke-all-
+concurrency-probe-seed.md §3-§8 (the acceptance matrix + decision table),
+and packages/db/src/auth.test.ts's D0-* prefixed test names map 1:1 to
+that acceptance matrix. Every codex-round fix has an inline comment
+citing "codex round-NN" for traceability.
