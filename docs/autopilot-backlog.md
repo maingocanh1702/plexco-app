@@ -290,7 +290,7 @@ notes: The 89/92/99-line tables remain ignored under the registered `phase1-fabl
 
 ## task: db-migration-0000-idempotent-role-create
 title: Race-safe role bootstrap in the migration runner — unblocks parallel DB suites
-status: ready
+status: merged
 risk: P0
 change_class: manual-schema-design
 depends_on: []

@@ -697,6 +697,10 @@ NEXT_REVIEW_TRIGGER: merged -> multiple autopilot worktrees may run their DB sui
 
 Việc implementer **dừng lại xin phê duyệt** thay vì tự nới contract P0 là đúng gate — ghi nhận.
 
+**✅ IMPLEMENTED & MERGED 2026-07-22 tại `main@8d8f3bc`.** Gate P0 **ĐẠT** — 2 vòng Codex sạch liên tiếp (round-03/04) trên `6f8f628`, không override. Verify trên remote: `duplicate_object` ×2 + `unique_violation` ×2 trong `migrate.ts`, `fileParallelism: true`, `migrate.test.ts` có mặt. Suite: core 111 · db **159** · bot 3 · web 146. **`NEXT_REVIEW_TRIGGER` đã thoả: nhiều autopilot worktree giờ chạy DB suite song song được.**
+
+> ⚠️ **Đính chính cho người audit sau — `eba1c27` mang subject của slice này nhưng KHÔNG chứa nó.** Lần merge đó abort vì working tree bẩn, và lệnh `git commit` chạy ngay sau lại bắt được hai file docs không liên quan (`auth-s4-session-handoff.md`, `ROADMAP.md`). **Nội dung của `eba1c27` là docs hợp lệ và được giữ nguyên; chỉ subject là sai.** Commit thật của slice này là **`8d8f3bc`**. Nguyên nhân gốc là command block nhiều bước không nối `&&` nên một bước git fail mà bước sau vẫn chạy — đã đổi khuôn: gate bằng `git diff --quiet` (không dùng `git status --porcelain`, vì nó tính cả file untracked nên luôn báo bẩn) và nối `&&` toàn chuỗi.
+
 ---
 
 ## Verdict 15 — `core-matcher-grouped-amount-parsing`, DD-87 contract closed on disk (2026-07-22)
