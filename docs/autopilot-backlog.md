@@ -231,7 +231,7 @@ notes: **CODE_READY 2026-07-22 (Verdict 7, pinned `main@fc7d0a4`).** Deps merged
 
 ## task: auth-s4-d1-google-adapter
 title: Google OIDC provider adapter + oauth transaction/Lax binding
-status: planned
+status: ready
 risk: P0
 change_class: identity-feature
 depends_on: [auth-s4-d0-revoke-core, auth-s4-d0-session-web-boundary, auth-s4-d1-email-token-core]
@@ -239,7 +239,7 @@ invariants: [auth, schema, build-config]
 scope: [docs/autopilot-manifests/auth-s4-d1-google-adapter.json, packages/db/schema.ts, packages/db/migrations/0017_oauth_transactions.sql, packages/db/src/auth.ts, packages/db/src/auth.test.ts, apps/web/lib/google-oidc.ts, apps/web/lib/google-oidc.test.ts, apps/web/lib/oauth-transaction.ts, apps/web/lib/oauth-transaction.test.ts, apps/web/app/api/auth/google/state/route.ts, apps/web/app/api/auth/google/state/route.test.ts, apps/web/app/api/auth/google/callback/route.ts, apps/web/app/api/auth/google/callback/route.test.ts, apps/web/package.json, pnpm-lock.yaml, .env.example, docs/features/BE/feature_web_auth_onboarding_tech.md]
 manifest: docs/autopilot-manifests/auth-s4-d1-google-adapter.json
 merged_probe: packages/db/migrations/0017_oauth_transactions.sql :: auth_oauth_transactions
-notes: **Dependencies ALL MERGED 2026-07-22** — D0a `8f493f7` + D0b `93c5404` + email-token-core `64fb4d3` (probe `0016::_auth_consume_email_token` live). **Still needs ONE artifact before launch: a fresh policy-1.3 verdict.** Verdict 4 is superseded (DD-80 v1.88 changed the dependency order) and failed G3 at the time. Unlike email-token-core, the **acceptance matrix already exists** (D1-1..D1-15 in `feature_web_auth_onboarding_tech.md` §5), so this is a verdict-only gap, not a spec gap. D1 order-3, P0 manual, migration `0017_oauth_transactions.sql`. P0 manual workflow only. Owns auth_oauth_transactions + Lax binding cookie, state/nonce/PKCE, OIDC proof + §4 collision matrix, session issue; preallocated account_emails.id AAD for cell-1. Enablement gates: google-oauth-client-config (KMS/env, no hard-code), A3-legal-PII (go-live). Two consecutive FULL-base Codex clean rounds, manual merge. Manifest already authored.
+notes: **CODE_READY 2026-07-22 (Verdict 9, pinned `main@8f6a051`).** All three deps merged and probed live: D0a `8f493f7` · D0b `93c5404` · email-token-core `64fb4d3`. Acceptance matrix D1-1..D1-15 already existed and was **re-verified against the live schema** at this SHA (not assumed) — every collision cell D1-6..D1-10 is now constructible because `account_emails`/`auth_pending_email_registrations`/`email_password_credentials` landed with `0016`, and `deriveEmailArtifacts(raw, accountEmailId, keys)` already provides the v1.86 cell-1 AAD handoff. D1 order-3, P0 manual (no launcher), migration `0017_oauth_transactions.sql` (tail is `0016`, so monotonic). Enablement: google-oauth-client-config (config only), A3-legal-PII (go-live). P0 manual workflow only. Owns auth_oauth_transactions + Lax binding cookie, state/nonce/PKCE, OIDC proof + §4 collision matrix, session issue; preallocated account_emails.id AAD for cell-1. Enablement gates: google-oauth-client-config (KMS/env, no hard-code), A3-legal-PII (go-live). Two consecutive FULL-base Codex clean rounds, manual merge. Manifest already authored.
 
 ## task: core-matcher-grouped-amount-parsing
 title: splitNameAmount misparses grouped trailing amounts with a non-zero final group

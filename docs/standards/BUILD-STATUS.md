@@ -4,7 +4,7 @@
 > "code đã có tới đâu, còn cách MVP bao xa". Đây là doc **living**, cập nhật mỗi khi một slice merge.
 > **Cập nhật:** 2026-07-20 (current authority **decisions v1.88** — DD-80 G3 revoke-all concurrency contract + D0a/D0b decomposition; BRD v3.9e/PRD v2.8d/TDD v3.1/ROADMAP v3.3d; DD-59 ✅; DD-70..72 🟡; **DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated**. Không thay functional implementation baseline).
 > **Nguồn số liệu:** `git log`, cây `packages/`+`apps/`, `docs/features/*`, `docs/standards/decisions.md`,
-> `docs/autopilot-backlog.md`. **HEAD `main`** = docs bundle DD-80 v1.88 (`033ccc8`/`aa89b27`) + docs reconcile (`ad10194`) + **D0a squash merge**. Code baseline: migrations `0000–0013` + **`0015` (D0a)**; `0014` waitlist vẫn ở nhánh riêng chưa merge.
+> `docs/autopilot-backlog.md`. **HEAD `main`** = docs bundle DD-80 v1.88 (`033ccc8`/`aa89b27`) + docs reconcile (`ad10194`) + **D0a squash merge**. Code baseline: migrations **`0000–0016`** đều trên `main` (gồm `0014` waitlist schema-only, `0015` D0a, `0016` D1 email-token).
 > **✅ D0a merged (2026-07-20, `8f493f7`):** `auth-s4-d0-revoke-core` (migration `0015_auth_revoke_account.sql` — **miếng code feature-layer đầu tiên**) squash-merge sau 12 vòng Codex (10 finding fix) + review tay + real-PG 97/97. Gate "2 clean liên tiếp" **không đạt** → **owner override có ghi chép** (commit message + `HALT-MAX_ROUNDS.txt`), không phải false CODE_READY.
 > **✅ D0b merged (2026-07-22, `93c5404`):** `auth-s4-d0-session-web-boundary` — issuance fence `issueSession` (reject-and-reauth, không fallback-mint) + typed 401 `AUTH_INVALID` ở 2 caller + `POST /api/auth/logout-all` (CSRF trước mutation). **Zero DB change.** Gate P0 **ĐẠT** (2 clean round liên tiếp, 2 fix round) — **không override**. Web tests 65→78, real-PG green. Chi tiết: Verdict 6.
 > **✅ D1 email-token-core merged (2026-07-22, `64fb4d3`):** `auth-s4-d1-email-token-core` — migration **`0016`** atomic: 5 bảng function-only (`account_emails`, `email_password_credentials`, `auth_pending_email_registrations`, `auth_email_tokens`, `auth_email_deliveries`) + partial unique index độc lập `now()` + `_auth_assert_password_phc` (parse full Argon2id, floor==ceiling, guard overflow) + trigger 2 write-path + `_auth_consume_email_token` parent-first + 5 hàm cleanup deadlock-free; `auth_audit_events` **reuse** từ `0015`; **zero app grant**. **CODE DARK** — không route/UI/provider send. DB tests 97→**128**. Gate đóng bằng **1 clean round + independent directed review** (Codex phi tất định sau 9 vòng), **override thứ 2/3 slice**. Chi tiết: Verdict 8. **→ order-3 `auth-s4-d1-google-adapter` là slice kế.**
@@ -18,7 +18,7 @@
 | Trục | Trạng thái | Ước lượng |
 |---|---|---|
 | **Tài liệu / thiết kế** | **22 Product/System + 21 BE specs**, cộng DD-69 analysis. Waitlist mirrors pin one root CAS/lease max-3 sweep job per capacity opener; candidate events are alert/audit refs, not independent budgets. Notification v3.4c pins the same ownership boundary plus global read/write owners, durable quota/retry receipts, push idempotency/trust/key epochs và security context-start cutoff but remains Draft; DD-70..72 🟡. DD-73/74/75/78 dependency/consumer-sequenced; DD-76/77 evidence-gated. Decision log **v1.65**. | Contract coverage cao; không dùng count làm code-readiness |
-| **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations `0000–0013` đã merge trên `main`, có test *(0014 waitlist đang ở nhánh `feat/session-waitlist-expand`, **chưa merge**)* | **✅ xong** |
+| **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations **`0000–0016`** đã merge trên `main`, có test (gồm `0014` waitlist — schema-only, behavior chưa build) | **✅ xong** |
 | **Code — lớp auth** | Auth v3 (Telegram-era) merged; **DD-80 D0a (`0015`) + D0b + D1 email-token-core (`0016`, dark) đã merged**; còn order-3 Google adapter → order-4 email bundle (flag OFF) → gỡ Telegram | 🟡 provider swap ~nửa chặng |
 | **Code — lớp feature nghiệp vụ** | chưa bắt đầu (session/reconcile/sync/marketplace/billing/bot…) | ⬜ chưa build |
 | **Roadmap build** | **S1–S3 + S4 Auth v3** đã land + **D0a + D0b + D1 email-token-core merged** (migrations `0000–0016`); order-3 Google adapter tiếp theo | ~27% |
@@ -68,14 +68,14 @@ DTO/error/validator/format boundary riêng, không import money engine chỉ vì
 
 ### 2.2 `packages/db` — data layer Postgres + RLS ✅ (keystone)
 
-**Baseline `main`: 798 dòng, 51 bảng trong `schema.ts`, 14 migration (`0000–0013`), có bộ RLS invariant test chạy trên role runtime thật. Current feature checkout: 815 dòng trong `schema.ts` + migration `0014` (chưa merge `main`).**
+**Baseline `main` (2026-07-22): migrations `0000–0016` (17 file) đều trên `main`, có bộ RLS invariant test chạy trên role runtime thật. DB suite = 129 test.**
 
-> ⚠️ **Nhánh chưa merge:** `feat/session-waitlist-expand` (HEAD hiện tại) thêm `0014_players_waitlist.sql` + `players.status='waitlisted'`/`waitlist_position` + `waitlist-invariants.test.ts` cho DD-45. **Chưa có trên `main`** (`git ls-tree main` = 14 file migration; `main:schema.ts` không có `waitlistPosition`) → không tính vào baseline "đã build".
+> ✅ **Correction 2026-07-22:** các bản trước của doc này khẳng định `0014_players_waitlist` "chỉ trên nhánh `feat/session-waitlist-expand`, chưa vào `main`" ở bốn chỗ. **Sai** — verify on-disk: `git ls-tree main` có file, và `1a6ac38 feat(session): expand players for DD-45 waitlist` nằm trong lịch sử `main`; `waitlist-invariants.test.ts` (21 test) chạy trong mọi lần `pnpm test`. Claim cũ là prose stale được chép lại qua nhiều lần cập nhật mà không verify — đúng bẫy mà CLAUDE.md cảnh báo.
 
 - **Migrations 0000→0013 (trên `main`):** roles/extensions → global directory → tenants → payments-ledger →
   channels/connectors → sync-engine → discovery → billing → notifications/onboarding → RLS
   policies/grants → functions/triggers → seeds → auth_functions → onboarding_steps recency.
-- **`0014_players_waitlist` (2026-07-19, CHỈ trên nhánh `feat/session-waitlist-expand` — chưa vào `main`)** — bảng đầu tiên được mở rộng cho feature layer:
+- **`0014_players_waitlist` (2026-07-19, ✅ trên `main` tại `1a6ac38`)** — bảng đầu tiên được mở rộng cho feature layer:
   `players.status` thêm `waitlisted`, cột `waitlist_position`, hai CHECK state-shape/positive và
   `idx_players_waitlist_order`. **Chỉ schema** — auto-promote là money-write: first-activation chờ DD-39/41/42 + shared DD-52 restriction core; proven rejoin còn chờ DD-49 correction core. Retry còn thiếu `waitlist_entry_version`, candidate failure-event/owner-alert consumers, root promotion-retry store, CAS/lease sweep worker và domain DLQ/review sink. Không có behavior/runtime path nào được tính là đã build.
   21 DDL invariant test (`waitlist-invariants.test.ts`) gồm cả app-role grant/RLS trên cột mới.

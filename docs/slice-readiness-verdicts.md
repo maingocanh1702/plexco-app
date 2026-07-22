@@ -417,10 +417,54 @@ NEXT_REVIEW_TRIGGER: order-4 identity companion landing account-issued link_code
 
 ---
 
+## Verdict 9 — `auth-s4-d1-google-adapter` / D1 order-3 (2026-07-22)
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-22
+AUTHORITY_SHA: 8f6a0515e95e69ee4f911281d6c5e5d218eb4d9b
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/standards/decisions.md
+  - docs/b0-auth-credential-lifecycle-design-probe.md
+  - docs/features/BE/feature_web_auth_onboarding_tech.md
+  - docs/autopilot-manifests/auth-s4-d1-google-adapter.json
+  - packages/db/src/auth.ts
+  - apps/web/lib/session-cookies.ts
+SLICE: auth-s4-d1-google-adapter
+IN_SCOPE: auth_oauth_transactions (migration 0017) + path-scoped Lax binding cookie; state/nonce/PKCE issue and claim; OIDC proof matrix; the §4 identity/email collision table; session issue via the per-lane Google finalizer; auth_login_google taking the app-preallocated account_emails.id for the cell-1 AAD (v1.86)
+OUT_OF_SCOPE: email register/verify/login/forgot/reset endpoints (order-4 bundle, flag OFF); Facebook adapter (DD-33 external gate; routes keep AUTH_PROVIDER_UNAVAILABLE); email-change/rebind from Google claims; auto-merge on identity conflict (-> DD-53); reuse of sameOriginRequest()/Strict callback cookie from the Telegram flow; Telegram route removal
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: ENABLEMENT_ONLY:google-oauth-client-config,A3-legal-PII
+HARD_DEPENDENCIES: all three merged on origin/main and probed live at 8f6a051 — auth-s4-d0-revoke-core (0015::auth_revoke_account_sessions), auth-s4-d0-session-web-boundary (logout-all/route.ts::revokeAllWebSessions), auth-s4-d1-email-token-core (0016::account_emails)
+PRIOR_SLICES: auth-s4-d0-revoke-core -> auth-s4-d0-session-web-boundary -> auth-s4-d1-email-token-core
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: google-oauth-client-config (client id/secret via KMS/env — config only, does not change the dark contract); A3-legal-PII (go-live)
+LIVE_REPO_VERIFICATION: PASS (migration tail is 0016 so 0017 is monotonic; auth_oauth_transactions absent as expected — its only mention in 0016 is a negative-scope comment; account_emails / auth_pending_email_registrations / email_password_credentials all live from 0016, so every collision cell in D1-6..D1-10 is now constructible; deriveEmailArtifacts already takes the preallocated accountEmailId, so the v1.86 cell-1 AAD handoff needs no new contract)
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS (D1-1..D1-15, authored earlier and RE-VERIFIED at this SHA against the now-live schema rather than assumed — the D1E-18 miss on the previous slice came from trusting a matrix row whose precondition did not exist)
+SECURITY_AND_MIGRATION_GATE: PASS (0017 expand-only; PKCE stored as bytea with a separate key-version column; Lax path-scoped binding cookie is distinct from the Strict session cookie and must not reuse sameOriginRequest(); independent oauth-state and oauth-callback rate buckets; identity conflict fails closed to AUTH_IDENTITY_CONFLICT with no session minted)
+IMPLEMENTATION_ARTIFACTS: PASS (manifest + acceptance matrix + first step)
+FIRST_IMPLEMENTATION_STEP: open a manual P0 worktree from origin/main@8f6a051, register the google-adapter manifest via scope-gate, then author 0017_oauth_transactions.sql + the Drizzle mirror, then the OIDC verify/state/callback layer, then run D1-1..D1-15
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: google-adapter merged -> order-4 email-credential-lifecycle bundle, which additionally inherits the D1E-18b both-sides merge-barrier obligation and the C7 provider gate
+```
+
+**Đọc verdict:** Verdict 4 (19/07) cho slice này là `PLAN_READY` và **fail G3** vì D0 chưa merge; nó cũng bị DD-80 v1.88 supersede về dependency order. Nay cả ba dependency đã merge và **probe live tại `8f6a051`**, nên G3 chuyển PASS. Khác với slice trước, acceptance matrix **không phải author mới** — D1-1..D1-15 đã có sẵn; công việc review ở đây là **kiểm lại từng precondition có tồn tại thật trên schema live hay không**, đúng bài học từ lỗi D1E-18 (một hàng matrix giả định `account-issued link_code` vốn chưa tồn tại). Kết quả: mọi cell collision D1-6..D1-10 nay dựng được, và AAD handoff v1.86 đã có sẵn API (`deriveEmailArtifacts(raw, accountEmailId, keys)`).
+
+---
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 22/07/2026 | v1.3 | **Verdict 9 — `auth-s4-d1-google-adapter` = CODE_READY** tại `main@8f6a051`. Ba dependency đã merge + probe live; acceptance D1-1..15 có sẵn nên đây là **verdict-only gap**, nhưng vẫn re-verify từng precondition trên schema live (bài học D1E-18) thay vì tin matrix cũ. Verdict 4 (PLAN_READY, G3 FAIL) chính thức bị thay thế. |
 | 22/07/2026 | v1.2 | **D1 email-token-core implemented → Verdict 8.** 7 file, +2555/−7, 128 test real-PG xanh. Gate đóng bằng **1 vòng sạch + independent directed review** (Codex phi tất định sau 9 vòng), không phải 2×clean — override thứ 2/3 slice. **D1E-18 tách 18a/18b**: 18a proven, 18b deferred-by-construction vì `link_codes` live là person/channel-scoped, account-issued link_code + merge plan thuộc order-4 (đã pin NEXT_REVIEW_TRIGGER). Manifest hợp thức hoá 2 scope-addition (`index.ts`, `README.md`). **Đề xuất hiệu chỉnh gate:** `review-code-readiness-gate.md` nên cho phép *"2 vòng sạch liên tiếp HOẶC 1 vòng sạch + independent directed review"* khi diff vượt ngưỡng file/LOC, để không phải override từng ca. |
 | 22/07/2026 | v1.1 | **D1 email-token-core: NOT_CODE_READY → CODE_READY.** Author acceptance matrix **D1E-1..D1E-22** (tech doc §5, gồm reset-vs-consume + merge barrier mà manifest nêu là điều kiện READY) và **Verdict 7** pin `main@fc7d0a4`. Pin hai ranh giới: public verify/reset/login = order-4; DD-70(a) fence ngoài scope order-2. Chưa có code/migration — đây là authorization để mở worktree. |
 | 22/07/2026 | v1.0 | **D0b implemented & merged — gate ĐẠT, không override.** `auth-s4-d0-session-web-boundary` squash-merged tại `main@93c5404` (issuance fence + logout-all route, zero DB change); 2 clean round liên tiếp (round-03/04), 2 fix round; real-PG green (db 97/97 · web 78). Thêm **Verdict 6** (historical evidence). Chuỗi auth: D0a ✅ → D0b ✅ → kế tiếp `auth-s4-d1-email-token-core`. |
