@@ -27,8 +27,14 @@
     "packages/db/schema.ts",
     "packages/db/migrations/0016_account_email_token_core.sql",
     "packages/db/src/auth.ts",
+    "packages/db/src/index.ts",
     "packages/db/src/auth.test.ts",
     "packages/db/src/rls-invariants.test.ts",
+    "packages/db/README.md",
     "docs/features/BE/feature_web_auth_onboarding_tech.md"
+  ],
+  "scope_amendments": [
+    "packages/db/src/index.ts — added 2026-07-22 (codex round-06). Same precedent as D0a v1.83: order-3/4 routes must reach the new helpers through the @plexco/db root barrel, so the export line belongs to the slice that creates them. Same package, export-only, zero behavior change.",
+    "packages/db/README.md — added 2026-07-22. B0 §9 item 4 requires the migration inventory to be updated when a slice lands; the original manifest omitted the file even though the authority mandates touching it."
   ]
 }
