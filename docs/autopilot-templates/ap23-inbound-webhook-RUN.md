@@ -104,7 +104,8 @@ cd "/Users/maingocanh/Projects/Plexco app"
 
 git fetch origin
 test "$(git branch --show-current)" = "main"
-test -z "$(git status --porcelain)"
+git diff --quiet                       # tracked-only; xem ghi chú ngay dưới
+git diff --cached --quiet
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
 
 # artifacts phải có mặt trên origin/main, không chỉ trên đĩa
@@ -129,6 +130,13 @@ git worktree add .autopilot/worktrees/infra-inbound-webhook-auth-evidence \
 test "$(git -C .autopilot/worktrees/infra-inbound-webhook-auth-evidence rev-parse HEAD)" = \
      "$(git rev-parse main)"
 ```
+
+> **⚠️ Đừng thay bằng `test -z "$(git status --porcelain)"`** (bản đầu của file này dùng nó, đã sửa
+> 2026-07-23). `status --porcelain` **tính cả file untracked**, mà repo luôn có vài file untracked
+> (`design.pen`, worktree tạm…) ⇒ gate **luôn** báo bẩn. Chính lỗi đó khiến một runbook merge bỏ qua
+> hẳn bước merge rồi vẫn push và xoá branch — xem `scripts/ap-merge.sh` header và Verdict 14. Gate
+> đúng là `git diff --quiet` (tracked, chưa stage) **cộng** `git diff --cached --quiet` (đã stage);
+> hai lệnh này không bị untracked file đánh lừa.
 
 Bất kỳ dòng nào fail ⇒ **dừng**. Không xoá branch/worktree, không stash, không dọn repo, không
 release reservation kiểu đoán mò, và **không thay bằng slice khác** — soạn handoff mới.

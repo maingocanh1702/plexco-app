@@ -16,8 +16,14 @@
 #      source is no longer the right one (never leaves two imports active).
 #   2. If --codex given: append a guarded `export AUTOPILOT_CODEX_BIN=...` to ~/.zshrc.
 #      (Without --codex it only CHECKS + prints instructions — never guesses the path.)
-#   3. Verify the per-repo kit files + a JSON tool (python3/node/jq) + scope-gate syntax.
-# It does NOT codegen, touch git, or run a review. Read docs/autopilot-ONBOARDING.md after.
+#   3. Point this clone's core.hooksPath at .githooks so the root-commit guard is live.
+#      `.git/hooks` is not version-controlled, so without this step .githooks/pre-commit is inert
+#      and concurrent sessions can again commit each other's staged files to main (eba1c27).
+#      Never overwrites an existing non-default hooksPath — it warns instead.
+#   4. Verify the per-repo kit files + a JSON tool (python3/node/jq) + scope-gate syntax.
+# It does NOT codegen or run a review. The only git state it touches is this clone's local
+# core.hooksPath (step 3) — never history, refs, index or working tree.
+# Read docs/autopilot-ONBOARDING.md after.
 #
 # Written for the owner's macOS runtime: real /bin/bash 3.2 + BSD userland. No mapfile,
 # no associative arrays, no ${var^^}. HOME is read from the environment (tests override it).
@@ -29,7 +35,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --codex) CODEX_PATH="${2:-}"; shift 2 ;;
     --check) CHECK_ONLY=1; shift ;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -50,9 +56,9 @@ echo
 EXIT_CODE=0
 
 # =====================================================================================
-# [1/3] Global invariants import state-machine → ~/.claude/CLAUDE.md
+# [1/4] Global invariants import state-machine → ~/.claude/CLAUDE.md
 # =====================================================================================
-echo "[1/3] Global invariants → \$HOME/.claude/CLAUDE.md"
+echo "[1/4] Global invariants → \$HOME/.claude/CLAUDE.md"
 if [ ! -f "$FALLBACK_TARGET" ]; then
   bad "invariants template missing: $FALLBACK_TARGET (is this the Plexco repo?)"; exit 1
 fi
@@ -165,9 +171,9 @@ else
 fi
 
 # =====================================================================================
-# [2/3] AUTOPILOT_CODEX_BIN (per-machine)
+# [2/4] AUTOPILOT_CODEX_BIN (per-machine)
 # =====================================================================================
-echo "[2/3] Cross-model review binary → AUTOPILOT_CODEX_BIN"
+echo "[2/4] Cross-model review binary → AUTOPILOT_CODEX_BIN"
 ZSHRC="${HOME}/.zshrc"
 if [ -n "$CODEX_PATH" ]; then
   if [ ! -x "$CODEX_PATH" ]; then bad "--codex '$CODEX_PATH' is not an executable file"; exit 1; fi
@@ -188,12 +194,39 @@ else
 fi
 
 # =====================================================================================
-# [3/3] verify per-repo kit + tooling
+# [3/4] root-commit hook path (per-CLONE — cannot live in the repo)
 # =====================================================================================
-echo "[3/3] Verify per-repo kit"
+# `.git/hooks` is not version-controlled, so the guard lives in `.githooks/` and each clone must
+# be pointed at it. Without this, `.githooks/pre-commit` is inert and concurrent sessions can
+# again commit each other's staged files to main (incident 2026-07-22, eba1c27).
+echo "[3/4] Root-commit guard → core.hooksPath"
+HOOKS_CURRENT="$(git -C "$REPO_ROOT" config --local --get core.hooksPath 2>/dev/null || true)"
+if [ ! -e "$REPO_ROOT/.githooks/pre-commit" ]; then
+  bad ".githooks/pre-commit missing — pull latest main"
+  EXIT_CODE=1
+elif [ "$HOOKS_CURRENT" = ".githooks" ]; then
+  ok "core.hooksPath = .githooks"
+elif [ "$CHECK_ONLY" -eq 1 ]; then
+  warn "core.hooksPath is '${HOOKS_CURRENT:-<unset>}' — run without --check, or: git config core.hooksPath .githooks"
+elif [ -n "$HOOKS_CURRENT" ]; then
+  # Someone pointed this clone somewhere else on purpose; overwriting silently would be the same
+  # class of surprise this guard exists to prevent.
+  warn "core.hooksPath is already '$HOOKS_CURRENT' — leaving it alone. Set it yourself if intended:"
+  warn "  git config core.hooksPath .githooks"
+else
+  git -C "$REPO_ROOT" config core.hooksPath .githooks
+  ok "core.hooksPath set to .githooks (commits to main from the root copy now require the lock)"
+fi
+
+# =====================================================================================
+# [4/4] verify per-repo kit + tooling
+# =====================================================================================
+echo "[4/4] Verify per-repo kit"
 miss=0
 for f in \
   "scripts/autopilot-scope-gate" \
+  "scripts/autopilot-root-lock" \
+  ".githooks/pre-commit" \
   "docs/autopilot-ONBOARDING.md" \
   "docs/autopilot-invariant-catalog.md" \
   "docs/autopilot-backlog.md" \

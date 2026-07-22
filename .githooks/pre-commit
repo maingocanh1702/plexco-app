@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# pre-commit — refuse concurrent commits to `main` from the ROOT working copy.
+#
+# Enable once per clone (hooks in .git/hooks are not version-controlled, this dir is):
+#     git config core.hooksPath .githooks
+#
+# Blocks ONLY the narrow case that caused the 2026-07-22 incident (eba1c27):
+#   root working copy  AND  branch == main  AND  caller does not hold the root-commit lock.
+# Commits inside a linked worktree pass untouched — scope-gate already serialises those by file
+# scope and invariant token. Commits on a feature branch in the root copy also pass.
+#
+# Rationale: several sessions share one git identity and, in the repo root, one `.git/index`.
+# A `git commit` from session B can therefore capture whatever session A has staged and land it
+# under B's message. Requiring a held lock makes that collision impossible instead of unlikely.
+set -euo pipefail
+
+# A linked worktree has git-dir != git-common-dir; the root copy has them equal.
+git_dir="$(git rev-parse --absolute-git-dir)"
+common_dir="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
+[ "$git_dir" = "$common_dir" ] || exit 0   # linked worktree → not our concern
+
+branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo '')"
+[ "$branch" = "main" ] || exit 0            # feature branch in root copy → allowed
+
+root="$(cd "$common_dir" && cd .. && pwd)"
+lock="$root/.autopilot/ROOT-COMMIT.lock"
+
+if [ ! -d "$lock" ]; then
+  cat >&2 <<'EOF'
+⛔ HALT ROOT_COMMIT_UNLOCKED — refusing to commit to main from the root working copy.
+
+Several sessions share this working copy and its .git/index. Committing without the lock is how
+eba1c27 landed one session's files under another session's commit message.
+
+  scripts/autopilot-root-lock acquire --owner '<who-you-are>'
+  export PLEXCO_COMMIT_OWNER='<who-you-are>'
+  git commit -- <explicit paths>        # never `git commit -a`, never a bare `git commit`
+  scripts/autopilot-root-lock release --owner '<who-you-are>'
+
+Working in a feature worktree instead? Then this hook would not have fired — check where you are.
+EOF
+  exit 1
+fi
+
+held="$(head -1 "$lock/owner" 2>/dev/null || echo '<unknown>')"
+mine="${PLEXCO_COMMIT_OWNER:-}"
+
+if [ -z "$mine" ]; then
+  echo "⛔ HALT ROOT_COMMIT_NO_OWNER — lock is held by '$held' but PLEXCO_COMMIT_OWNER is unset." >&2
+  echo "   Set it in this shell so the hook can tell you apart from the lock holder:" >&2
+  echo "     export PLEXCO_COMMIT_OWNER='$held'" >&2
+  exit 1
+fi
+
+if [ "$mine" != "$held" ]; then
+  echo "⛔ HALT ROOT_COMMIT_WRONG_OWNER — lock is held by '$held', you are '$mine'." >&2
+  echo "   Wait for '$held' to release. Do not force-release a lock that may still be in use." >&2
+  exit 1
+fi
+
+exit 0

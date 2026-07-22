@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# autopilot-root-lock — mutual exclusion for commits made in the ROOT working copy.
+#
+#   scripts/autopilot-root-lock acquire --owner <label>
+#   scripts/autopilot-root-lock release --owner <label> [--force]
+#   scripts/autopilot-root-lock status
+#
+# WHY THIS EXISTS (incident 2026-07-22, commits eba1c27 / 142e9fa):
+# `autopilot-scope-gate` serialises FEATURE WORKTREES by file scope + invariant token. It does not
+# guard the root working copy at all. Several Cowork/Claude-Code sessions run with the same git
+# identity (`Cowork <cowork@local>`) and, when they all sit in the repo root, they share ONE
+# `.git/index`. One session ran `git commit` while another session's files were staged; the commit
+# swept up the other session's content under its own message and pushed it. A later merge repeated
+# the shape: the merge step aborted on a dirty tree, but the un-chained `git commit` after it still
+# ran, so `eba1c27` landed carrying a db-migration subject over two unrelated docs files, while the
+# real slice commit (6f8f628) never reached main and its branch was then deleted by ap-finish.
+#
+# `ap-merge.sh` closed the MECHANICAL cause (multi-step command blocks not joined with `&&`, and a
+# dirtiness gate that used `git status --porcelain`, which always reports dirty because it counts
+# untracked files). This script closes the ORGANISATIONAL cause: two writers, one index.
+#
+# The lock is advisory-but-enforced: `.githooks/pre-commit` refuses any commit made on `main` from
+# the root working copy unless the caller holds this lock. Commits inside a linked worktree are
+# never blocked — that is what scope-gate already covers.
+#
+# Deliberately NOT auto-stealing stale locks: an automatic steal is exactly the check-then-act race
+# this is meant to remove. `status` prints the age so a human can decide, and `release --force`
+# makes that decision explicit and auditable.
+set -euo pipefail
+
+cmd="${1:-}"; shift || true
+owner=""; force=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --owner) owner="${2:-}"; shift 2 ;;
+    --force) force=1; shift ;;
+    *) echo "unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+ROOT="$(cd "$(git rev-parse --git-common-dir)" && cd .. && pwd)"
+DIR="$ROOT/.autopilot"
+LOCK="$DIR/ROOT-COMMIT.lock"
+OWNER_FILE="$LOCK/owner"
+mkdir -p "$DIR"
+
+lock_age_seconds() {
+  [ -d "$LOCK" ] || { echo 0; return; }
+  local now mtime
+  now="$(date +%s)"
+  # GNU stat is -c %Y, BSD/macOS stat is -f %m. Neither reliably FAILS on the other's flags —
+  # GNU `stat -f` is --file-system and happily prints a non-numeric mount point — so validate the
+  # result is digits instead of trusting the exit status, or the value lands in $(( )) and bash
+  # tries to resolve it as a variable name under `set -u`.
+  mtime="$(stat -c %Y "$LOCK" 2>/dev/null || true)"
+  case "$mtime" in ''|*[!0-9]*) mtime="$(stat -f %m "$LOCK" 2>/dev/null || true)" ;; esac
+  case "$mtime" in ''|*[!0-9]*) mtime="$now" ;; esac
+  echo $((now - mtime))
+}
+
+human_age() {
+  local s="$1"
+  if [ "$s" -lt 60 ]; then echo "${s}s"
+  elif [ "$s" -lt 3600 ]; then echo "$((s / 60))m"
+  else echo "$((s / 3600))h $(((s % 3600) / 60))m"
+  fi
+}
+
+case "$cmd" in
+  acquire)
+    [ -n "$owner" ] || { echo "HALT: acquire needs --owner <label>" >&2; exit 2; }
+    if mkdir "$LOCK" 2>/dev/null; then
+      printf '%s\n' "$owner" > "$OWNER_FILE"
+      printf 'pid=%s\nacquired=%s\n' "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$OWNER_FILE"
+      echo "✅ root-commit lock acquired by '$owner'"
+      echo
+      echo "   Export this in the SAME shell you will commit from:"
+      echo "     export PLEXCO_COMMIT_OWNER='$owner'"
+      echo
+      echo "   Release when done:"
+      echo "     scripts/autopilot-root-lock release --owner '$owner'"
+      exit 0
+    fi
+    held="$(head -1 "$OWNER_FILE" 2>/dev/null || echo '<unknown>')"
+    age="$(lock_age_seconds)"
+    echo "⛔ HALT ROOT_COMMIT_LOCKED — held by '$held' for $(human_age "$age")." >&2
+    echo "   Another session owns commits to main in the root working copy right now." >&2
+    echo "   Wait for it, or if you are certain it is dead:" >&2
+    echo "     scripts/autopilot-root-lock release --owner '$held' --force" >&2
+    exit 1
+    ;;
+
+  release)
+    [ -d "$LOCK" ] || { echo "• root-commit lock already free"; exit 0; }
+    held="$(head -1 "$OWNER_FILE" 2>/dev/null || echo '<unknown>')"
+    if [ "$force" -eq 0 ]; then
+      [ -n "$owner" ] || { echo "HALT: release needs --owner <label> (or --force)" >&2; exit 2; }
+      if [ "$owner" != "$held" ]; then
+        echo "⛔ HALT NOT_LOCK_OWNER — lock is held by '$held', you passed '$owner'." >&2
+        echo "   Releasing someone else's lock needs --force, so it shows up in your shell history." >&2
+        exit 1
+      fi
+    fi
+    rm -f "$OWNER_FILE"; rmdir "$LOCK"
+    if [ "$force" -eq 1 ] && [ "$owner" != "$held" ]; then
+      echo "⚠️  root-commit lock FORCE-released (was held by '$held')"
+    else
+      echo "✅ root-commit lock released ('$held')"
+    fi
+    exit 0
+    ;;
+
+  status)
+    if [ -d "$LOCK" ]; then
+      held="$(head -1 "$OWNER_FILE" 2>/dev/null || echo '<unknown>')"
+      age="$(lock_age_seconds)"
+      echo "HELD by '$held' for $(human_age "$age")"
+      sed -n '2,3p' "$OWNER_FILE" 2>/dev/null || true
+      exit 0
+    fi
+    echo "FREE"
+    exit 0
+    ;;
+
+  *)
+    echo "usage: autopilot-root-lock <acquire|release|status> [--owner <label>] [--force]" >&2
+    exit 2
+    ;;
+esac
