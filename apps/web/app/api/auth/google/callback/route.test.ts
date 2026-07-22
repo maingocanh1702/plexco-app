@@ -1,12 +1,11 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { rateLimitCheck } from "@plexco/db";
+import { armOauthCompletionHandoff, rateLimitCheck } from "@plexco/db";
 import { cookies } from "next/headers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as db from "@plexco/db";
 import * as oidc from "../../../../../lib/google-oidc";
 import * as oauthTxn from "../../../../../lib/oauth-transaction";
-import * as session from "../../../../../lib/session-cookies";
 import { GET } from "./route";
 import { GET as stateGET } from "../state/route";
 
@@ -14,6 +13,7 @@ vi.mock("@plexco/db", () => ({
   createDb: vi.fn(() => ({ pool: {} })),
   rateLimitCheck: vi.fn(),
   deriveEmailArtifacts: vi.fn(),
+  armOauthCompletionHandoff: vi.fn(),
   InvalidEmailError: class InvalidEmailError extends Error {},
 }));
 
@@ -37,12 +37,10 @@ vi.mock("../../../../../lib/google-oidc", async (importOriginal) => {
   return { ...actual, exchangeGoogleCode: vi.fn(), verifyGoogleIdToken: vi.fn() };
 });
 
-// Keep the real clientIp/rateLimited/appDb (drive the limiter via rateLimitCheck);
-// stub only issueSession. SessionReauthRequiredError stays the real class.
-vi.mock("../../../../../lib/session-cookies", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../../../../lib/session-cookies")>();
-  return { ...actual, issueSession: vi.fn() };
-});
+// session-cookies stays REAL: post-d1b the callback no longer mints — it uses the
+// real newHandoffToken + buildCompletionLanding (M3 landing) and the real
+// clientIp/rateLimited/appDb (armOauthCompletionHandoff is mocked at @plexco/db,
+// so appDb().pool is never actually queried).
 
 process.env.DATABASE_URL ??= "postgres://test:test@localhost:5432/test";
 process.env.TRUSTED_INGRESS_PROVIDER = "digitalocean";
@@ -89,7 +87,7 @@ function happyPath(outcome: "login_success" | "identity_conflict" = "login_succe
     personId: "p-1",
     outcome,
   });
-  vi.mocked(session.issueSession).mockResolvedValue({ csrfToken: "csrf" });
+  vi.mocked(armOauthCompletionHandoff).mockResolvedValue(true);
 }
 
 /** Cross-site GET back from Google — NO Origin/Referer header on purpose. */
@@ -114,33 +112,88 @@ beforeEach(() => {
   vi.mocked(oidc.exchangeGoogleCode).mockReset();
   vi.mocked(oidc.verifyGoogleIdToken).mockReset();
   vi.mocked(db.deriveEmailArtifacts).mockReset();
-  vi.mocked(session.issueSession).mockReset();
+  vi.mocked(armOauthCompletionHandoff).mockReset();
 });
 
 describe("GET /api/auth/google/callback", () => {
-  it("D1-13: a cross-site GET succeeds regardless of Origin — NO same-origin gate; mints a Strict session, redirects home", async () => {
+  it("D1B-1: a valid callback ARMS a single-use handoff and does NOT mint — it returns the M3 landing, no session cookie set", async () => {
     const store = mockCookieStore("st.bd");
     happyPath("login_success");
 
-    // (a) the real provider redirect carries NO Origin/Referer at all.
     const res = await GET(callbackReq("1.2.3.4"));
-    expect(session.issueSession).toHaveBeenCalledWith("acc-1"); // THE Strict session issuer
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("https://plexco.app/");
-    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
-    // on a state MATCH the binding cookie is consumed (single-use).
+
+    // The callback binds a single-use handoff to THIS oauth transaction for the
+    // resolved account — it does not (cannot) mint a session here.
+    expect(armOauthCompletionHandoff).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        resolvedAccountId: "acc-1",
+        handoffHash: expect.any(String),
+        stateHash: expect.any(String),
+        ttlSeconds: expect.any(Number),
+      }),
+    );
+    // No session cookie is set at the callback (that happens same-site at /complete).
+    expect(store.set).not.toHaveBeenCalled();
+    // The binding cookie is consumed single-use on a state match.
     expect(store.delete).toHaveBeenCalled();
+    expect(res.status).toBe(200);
+  });
+
+  it("D1B-11: the callback returns a 200 first-party DOCUMENT (auto-submit + <noscript>), NOT a bare 302 to /complete", async () => {
+    mockCookieStore("st.bd");
+    happyPath("login_success");
+
+    const res = await GET(callbackReq("1.2.3.4"));
+    const body = await res.text();
+
+    // Structural anti-regression for the measured M1 trap: a 302 would NOT carry
+    // the Strict cookie, so the callback must commit a first-party document.
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(body).toContain('method="POST"');
+    expect(body).toContain('action="/api/auth/google/complete"');
+    expect(body).toMatch(/<script nonce="[^"]+">[^<]*\.submit\(\)<\/script>/); // auto-submit
+    expect(body).toContain("<noscript>"); // no-JS fallback
+    // The landing is locked down (nonce CSP + DENY framing).
+    expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+  });
+
+  it("succeeds regardless of Origin — NO same-origin gate at the cross-site callback (D1-13)", async () => {
+    mockCookieStore("st.bd");
+    happyPath("login_success");
+
+    // (a) the real provider redirect carries NO Origin/Referer at all → 200 landing.
+    const res = await GET(callbackReq("1.2.3.4"));
+    expect(res.status).toBe(200);
 
     // (b) even a HOSTILE cross-site Origin passes — a `sameOriginRequest()` gate
     // (which the Telegram callback DOES use) would reject this; this route must
     // not, because browser continuity is proven by the binding cookie + claim.
-    vi.mocked(session.issueSession).mockClear();
+    // (The same-origin gate lives on the MUTATING /complete hop instead — D1B-7.)
+    vi.mocked(armOauthCompletionHandoff).mockClear();
     const hostile = new Request("https://plexco.app/api/auth/google/callback?state=st&code=abc", {
       headers: { "do-connecting-ip": "1.2.3.4", origin: "https://evil.example.com" },
     });
     const res2 = await GET(hostile);
-    expect(session.issueSession).toHaveBeenCalledWith("acc-1");
-    expect(res2.status).toBe(302);
+    expect(armOauthCompletionHandoff).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ resolvedAccountId: "acc-1" }),
+    );
+    expect(res2.status).toBe(200);
+  });
+
+  it("fails closed to AUTH_INVALID (302) if the handoff cannot be armed", async () => {
+    mockCookieStore("st.bd");
+    happyPath("login_success");
+    vi.mocked(armOauthCompletionHandoff).mockResolvedValue(false); // arm returned 0 rows
+
+    const res = await GET(callbackReq("1.2.3.4"));
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("/?auth_error=AUTH_INVALID");
   });
 
   it("D1-4: a MISSING binding cookie rejects and never claims the transaction", async () => {
@@ -150,6 +203,7 @@ describe("GET /api/auth/google/callback", () => {
     const res = await GET(callbackReq("1.2.3.4"));
 
     expect(oauthTxn.claimOauthTransaction).not.toHaveBeenCalled();
+    expect(armOauthCompletionHandoff).not.toHaveBeenCalled();
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toContain("/?auth_error=AUTH_INVALID");
   });
@@ -166,7 +220,7 @@ describe("GET /api/auth/google/callback", () => {
     expect(store.delete).not.toHaveBeenCalled();
   });
 
-  it("D1-3: a replayed/expired claim (zero rows → null) rejects and never runs the finalizer", async () => {
+  it("D1-3: a replayed/expired claim (zero rows → null) rejects and never runs the finalizer or arms a handoff", async () => {
     mockCookieStore("st.bd");
     happyPath();
     vi.mocked(oauthTxn.claimOauthTransaction).mockResolvedValue(null); // single-use already spent
@@ -174,11 +228,11 @@ describe("GET /api/auth/google/callback", () => {
     const res = await GET(callbackReq("1.2.3.4"));
 
     expect(oauthTxn.loginGoogle).not.toHaveBeenCalled();
-    expect(session.issueSession).not.toHaveBeenCalled();
+    expect(armOauthCompletionHandoff).not.toHaveBeenCalled();
     expect(res.headers.get("location")).toContain("/?auth_error=AUTH_INVALID");
   });
 
-  it("D1-5: a proof-matrix failure rejects BEFORE the DB — the finalizer never runs (cell 8, no audit)", async () => {
+  it("D1-5: a proof-matrix failure rejects BEFORE the DB — the finalizer never runs (cell 8, no audit), no handoff", async () => {
     mockCookieStore("st.bd");
     happyPath();
     vi.mocked(oidc.verifyGoogleIdToken).mockResolvedValue({ ok: false, reason: "AUTH_INVALID" });
@@ -186,18 +240,18 @@ describe("GET /api/auth/google/callback", () => {
     const res = await GET(callbackReq("1.2.3.4"));
 
     expect(oauthTxn.loginGoogle).not.toHaveBeenCalled();
-    expect(session.issueSession).not.toHaveBeenCalled();
+    expect(armOauthCompletionHandoff).not.toHaveBeenCalled();
     expect(res.headers.get("location")).toContain("/?auth_error=AUTH_INVALID");
   });
 
-  it("D1-8: an identity_conflict fails closed to AUTH_IDENTITY_CONFLICT and mints NO session", async () => {
+  it("D1-8: an identity_conflict fails closed to AUTH_IDENTITY_CONFLICT and arms NO handoff", async () => {
     mockCookieStore("st.bd");
     happyPath("identity_conflict");
 
     const res = await GET(callbackReq("1.2.3.4"));
 
     expect(oauthTxn.loginGoogle).toHaveBeenCalledOnce();
-    expect(session.issueSession).not.toHaveBeenCalled();
+    expect(armOauthCompletionHandoff).not.toHaveBeenCalled();
     expect(res.headers.get("location")).toContain("/?auth_error=AUTH_IDENTITY_CONFLICT");
   });
 
@@ -223,22 +277,10 @@ describe("GET /api/auth/google/callback", () => {
       10,
       60,
     );
-    expect(cbRes.status).toBe(302); // callback's own bucket is untouched — flow completes
+    expect(cbRes.status).toBe(200); // callback's own bucket is untouched — flow completes
   });
 
-  it("maps the issuance fence (SessionReauthRequiredError) to a generic reject, no reason leaked", async () => {
-    mockCookieStore("st.bd");
-    happyPath("login_success");
-    vi.mocked(session.issueSession).mockRejectedValue(new session.SessionReauthRequiredError());
-
-    const res = await GET(callbackReq("1.2.3.4"));
-
-    const loc = res.headers.get("location") ?? "";
-    expect(loc).toContain("/?auth_error=AUTH_INVALID");
-    expect(loc.toLowerCase()).not.toContain("reauth");
-  });
-
-  it("returns 503 when Google is not configured (no client secret)", async () => {
+  it("D1B-10: returns 503 when Google is not configured (no client secret) — never arms a handoff", async () => {
     mockCookieStore("st.bd");
     happyPath();
     const prev = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
@@ -248,6 +290,7 @@ describe("GET /api/auth/google/callback", () => {
 
     expect(res.status).toBe(503);
     expect(oauthTxn.claimOauthTransaction).not.toHaveBeenCalled();
+    expect(armOauthCompletionHandoff).not.toHaveBeenCalled();
     process.env.GOOGLE_OAUTH_CLIENT_SECRET = prev;
   });
 
@@ -275,7 +318,7 @@ describe("negative scope (absence checks)", () => {
     ).toBe(true);
   });
 
-  it("D1-15: NO Facebook adapter routes exist in D1 (order-3 negative scope)", () => {
+  it("D1-15: NO Facebook adapter routes exist (order-3 negative scope)", () => {
     expect(existsSync(fileURLToPath(new URL("../../facebook", import.meta.url)))).toBe(false);
   });
 });

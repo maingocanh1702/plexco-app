@@ -112,6 +112,78 @@ export async function issueSession(accountId: string): Promise<{ csrfToken: stri
   return { csrfToken };
 }
 
+/* ---------------------------------------------------------------------------
+ * OAuth completion hop (M3) — auth-s4-d1b.
+ *
+ * A SameSite=Strict session cookie is NOT sent on the cross-site OAuth callback,
+ * so the callback cannot read/rotate a pre-existing session. The measured fix
+ * (docs/probe-strict-cookie-completion-hop.md) is a same-site completion hop:
+ * the callback commits a FIRST-PARTY landing document that auto-submits a
+ * same-origin POST to /complete, where the Strict cookie IS present, so the
+ * EXISTING issueSession() above runs its EXISTING rotate branch. A bare 302
+ * (M1) does NOT carry the cookie on any engine — hence a committed document, not
+ * a redirect. The raw handoff token rides the POST body (hidden field); only its
+ * sha256 is stored server-side and single-use enforced there (migration 0018).
+ * ------------------------------------------------------------------------- */
+
+/** Same-site completion endpoint the M3 landing POSTs to. */
+export const COMPLETION_PATH = "/api/auth/google/complete";
+/** POST body field carrying the raw one-time handoff token. */
+export const HANDOFF_FIELD = "handoff";
+/** Short handoff TTL — the hop happens immediately in the user's own browser. */
+export const HANDOFF_TTL_SECONDS = 120;
+
+/** A fresh one-time handoff token (raw for the form body) + its at-rest sha256. */
+export function newHandoffToken(): { token: string; tokenHash: string } {
+  const token = randomBytes(32).toString("base64url");
+  return { token, tokenHash: hashToken(token) };
+}
+
+/** Escape the few HTML-significant chars (base64url has none, but be defensive). */
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
+  );
+}
+
+/**
+ * Build the M3 completion landing: a first-party document that auto-submits a
+ * same-origin POST carrying the raw handoff, with a <noscript> "Continue" button
+ * as the no-JS fallback. Returns the body AND the locked-down headers together so
+ * the CSP nonce always matches the one inline script (default-src 'none' blocks
+ * everything else; form-action 'self' scopes the POST; frame-ancestors 'none' +
+ * X-Frame-Options DENY stop clickjacking; no-store never caches the one-time
+ * handoff; no-referrer keeps the callback URL's code/state out of the referrer).
+ */
+export function buildCompletionLanding(handoffToken: string): {
+  body: string;
+  headers: Record<string, string>;
+} {
+  const nonce = randomBytes(16).toString("base64");
+  const token = escapeHtml(handoffToken);
+  const body =
+    `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+    `<title>Signing you in…</title></head><body>` +
+    `<form id="plx-complete" method="POST" action="${COMPLETION_PATH}">` +
+    `<input type="hidden" name="${HANDOFF_FIELD}" value="${token}">` +
+    `<noscript><button type="submit">Continue</button></noscript>` +
+    `</form>` +
+    `<script nonce="${nonce}">document.getElementById("plx-complete").submit()</script>` +
+    `</body></html>`;
+  const headers = {
+    "content-type": "text/html; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "cache-control": "no-store",
+    "x-frame-options": "DENY",
+    "content-security-policy":
+      `default-src 'none'; script-src 'nonce-${nonce}'; form-action 'self'; ` +
+      `base-uri 'none'; frame-ancestors 'none'`,
+  };
+  return { body, headers };
+}
+
 /** CSRF double-submit: mutation requests must echo the session secret. */
 export function csrfOk(request: Request, session: ResolvedSession): boolean {
   const header = request.headers.get("x-csrf-token");

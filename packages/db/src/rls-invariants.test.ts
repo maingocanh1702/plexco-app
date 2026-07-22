@@ -35,10 +35,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(18); // 0000..0017 (0017 = OAuth txn adapter)
+    expect(ctx.migrateResult.applied.length).toBe(19); // 0000..0018 (0018 = OAuth completion-hop handoff)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(18);
+    expect(second.skipped.length).toBe(19);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {

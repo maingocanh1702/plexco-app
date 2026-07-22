@@ -425,6 +425,15 @@ export const authOauthTransactions = pgTable("auth_oauth_transactions", {
   consumedAt: timestamp("consumed_at", { withTimezone: true }),
   terminalAt: timestamp("terminal_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // auth-s4-d1b completion hop (migration 0018): the callback resolves the
+  // account under full OIDC proof but cannot mint (Strict cookie absent
+  // cross-site), so it ARMS a one-time handoff on this row; the same-site
+  // /complete POST consumes it and runs issueSession(). Single-use is the
+  // durable server-side fence (handoff_consumed_at), never a cookie signature.
+  resolvedAccountId: uuid("resolved_account_id").references(() => accounts.id),
+  handoffHash: text("handoff_hash"),
+  handoffExpiresAt: timestamp("handoff_expires_at", { withTimezone: true }),
+  handoffConsumedAt: timestamp("handoff_consumed_at", { withTimezone: true }),
 }, (t) => ({
   // PARTIAL sweep indexes matching the two traffic-path sweep predicates
   // (terminalize expired-nonterminal / retention-delete terminal) — codex round-02.
@@ -445,6 +454,16 @@ export const authOauthTransactions = pgTable("auth_oauth_transactions", {
         AND ${t.nonceHash} IS NOT NULL AND ${t.pkceVerifierEnc} IS NOT NULL AND ${t.kmsKeyVersion} IS NOT NULL)
     OR (${t.terminalAt} IS NOT NULL
         AND ${t.pkceVerifierEnc} IS NULL AND ${t.kmsKeyVersion} IS NULL)`),
+  // Completion-handoff lifecycle (0018): arming sets account+hash+expiry
+  // together; a consumed handoff must have been armed first.
+  handoffArmedChk: check("auth_oauth_transactions_handoff_armed_chk",
+    sql`${t.handoffHash} IS NULL
+        OR (${t.resolvedAccountId} IS NOT NULL AND ${t.handoffExpiresAt} IS NOT NULL)`),
+  handoffConsumedChk: check("auth_oauth_transactions_handoff_consumed_chk",
+    sql`${t.handoffConsumedAt} IS NULL OR ${t.handoffHash} IS NOT NULL`),
+  // Consume lookup by handoff_hash; UNIQUE (partial) forbids hash reuse.
+  handoffIdx: uniqueIndex("auth_oauth_transactions_handoff_idx")
+    .on(t.handoffHash).where(sql`${t.handoffHash} IS NOT NULL`),
 }));
 
 export const magicLinks = pgTable("magic_links", {

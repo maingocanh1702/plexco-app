@@ -2,8 +2,13 @@ import { createWebSession, rotateWebSession } from "@plexco/db";
 import { cookies } from "next/headers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  buildCompletionLanding,
   clientIp,
+  COMPLETION_PATH,
+  HANDOFF_FIELD,
+  hashToken,
   issueSession,
+  newHandoffToken,
   sameOriginRequest,
   SESSION_COOKIE,
   SessionReauthRequiredError,
@@ -229,7 +234,7 @@ describe("issueSession — issuance fence (G3-B1/B2, D0-12)", () => {
     expect(store.delete).not.toHaveBeenCalled();
   });
 
-  it("G3-B2: NO cookie → unchanged create path + cookie attributes, rotate never called", async () => {
+  it("G3-B2/D1B-4: NO cookie → unchanged create path + cookie attributes, rotate never called", async () => {
     const store = mockCookieStore(undefined);
     vi.mocked(createWebSession).mockResolvedValue("session-id");
 
@@ -241,7 +246,8 @@ describe("issueSession — issuance fence (G3-B1/B2, D0-12)", () => {
       expect.anything(),
       expect.objectContaining({ accountId: "acc-1", ttlSeconds: expect.any(Number) }),
     );
-    // Cookie attributes unchanged: httpOnly/strict/path + maxAge + a secure flag.
+    // D1B-4: the Strict session cookie attributes are UNCHANGED by this slice —
+    // httpOnly/SameSite=Strict/path + maxAge + a secure flag, exactly as before.
     expect(store.set).toHaveBeenCalledWith(
       SESSION_COOKIE,
       expect.any(String),
@@ -254,5 +260,65 @@ describe("issueSession — issuance fence (G3-B1/B2, D0-12)", () => {
       }),
     );
     expect(store.delete).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * OAuth completion hop (auth-s4-d1b, M3). newHandoffToken mints the one-time
+ * secret whose sha256 is the durable single-use fence; buildCompletionLanding is
+ * the FIRST-PARTY document that carries the raw token in a same-origin POST — a
+ * committed document (probe M2..M5), never a bare 302 (probe M1, which withheld
+ * the Strict cookie on all three engines).
+ */
+describe("newHandoffToken", () => {
+  it("mints a base64url token whose sha256 is its stored hash, and is unique per call", () => {
+    const a = newHandoffToken();
+    const b = newHandoffToken();
+    expect(a.token).toMatch(/^[A-Za-z0-9_-]+$/); // base64url, no HTML-significant chars
+    expect(a.tokenHash).toBe(hashToken(a.token)); // stored hash == sha256(raw)
+    expect(a.token).not.toBe(b.token); // fresh entropy each call
+    expect(a.tokenHash).not.toBe(b.tokenHash);
+  });
+});
+
+describe("buildCompletionLanding (M3 first-party landing)", () => {
+  it("is a first-party document that auto-submits a same-origin POST carrying the handoff, with a no-JS fallback", () => {
+    const { body, headers } = buildCompletionLanding("HANDOFF-TOKEN-123");
+
+    // Same-origin POST form to the completion endpoint, carrying the raw token.
+    expect(body).toContain(`method="POST"`);
+    expect(body).toContain(`action="${COMPLETION_PATH}"`);
+    expect(body).toContain(`name="${HANDOFF_FIELD}"`);
+    expect(body).toContain(`value="HANDOFF-TOKEN-123"`);
+    // Auto-submit (M3) AND a <noscript> "Continue" fallback (M5, measured to
+    // carry Strict) so a no-JS browser can still complete.
+    expect(body).toMatch(/<script nonce="[^"]+">[^<]*\.submit\(\)<\/script>/);
+    expect(body).toContain("<noscript>");
+    expect(body).toMatch(/<button[^>]*type="submit"/);
+    expect(headers["content-type"]).toBe("text/html; charset=utf-8");
+  });
+
+  it("locks the document down: nonce-only CSP (matching the one script), DENY framing, no-referrer, no-store", () => {
+    const { body, headers } = buildCompletionLanding("tok");
+
+    expect(headers["x-frame-options"]).toBe("DENY");
+    expect(headers["referrer-policy"]).toBe("no-referrer");
+    expect(headers["cache-control"]).toBe("no-store");
+    const csp = headers["content-security-policy"];
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("form-action 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    // The CSP nonce MUST equal the one on the inline auto-submit script, else the
+    // browser blocks it and the hop silently dies.
+    const cspNonce = csp.match(/script-src 'nonce-([^']+)'/)?.[1];
+    const scriptNonce = body.match(/<script nonce="([^"]+)"/)?.[1];
+    expect(cspNonce).toBeTruthy();
+    expect(scriptNonce).toBe(cspNonce);
+  });
+
+  it("HTML-escapes the token so it cannot break out of the value attribute", () => {
+    const { body } = buildCompletionLanding(`a<b>"&'`);
+    expect(body).toContain(`value="a&lt;b&gt;&quot;&amp;&#39;"`);
+    expect(body).not.toContain(`value="a<b>`);
   });
 });

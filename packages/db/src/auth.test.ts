@@ -3,6 +3,8 @@ import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   LoginReplayError,
+  armOauthCompletionHandoff,
+  consumeOauthCompletionHandoff,
   onboardingSnapshot,
   rateLimitCheck,
   SlugTakenError,
@@ -3847,5 +3849,256 @@ describe("D1 auth_oauth_transactions issue/claim (D1-3) + storage shape (D1-12)"
     await expect(
       ctx.appPool.query(`SELECT 1 FROM auth_oauth_transactions LIMIT 1`),
     ).rejects.toThrow(/permission denied/i);
+  });
+});
+
+// ===========================================================================
+// auth-s4-d1b — OAuth session-rotation completion hop (migration 0018).
+// The callback ARMS a single-use, short-TTL handoff on the just-claimed oauth
+// transaction; the same-site /complete POST CONSUMES it (durable server-side
+// fence) and runs the EXISTING issueSession() rotate branch. Real PostgreSQL,
+// `app` role. DB-touching cells D1B-5 (replay), D1B-6 (expiry) and the D1B-8
+// completion×logout-all barrier; the HTTP-layer cells (D1B-1/2/4/7/10/11) live
+// in the apps/web route/lib tests.
+// ===========================================================================
+
+/** Issue + claim a Google oauth transaction so its row is consumed/terminal —
+ *  the exact state auth_oauth_handoff_arm requires (consumed_at IS NOT NULL). */
+async function seedClaimedGoogleTxn(): Promise<{ stateHash: string }> {
+  const stateHash = sha(`d1b-state:${randomBytes(16).toString("hex")}`);
+  const bindingHash = sha(`d1b-binding:${randomBytes(16).toString("hex")}`);
+  await ctx.appPool.query(
+    `SELECT auth_oauth_transaction_issue($1, 'google', $2, $3, $4, $5, make_interval(secs => $6))`,
+    [stateHash, bindingHash, sha("d1b-nonce"), Buffer.from(randomBytes(24)), "kv", 600],
+  );
+  await ctx.appPool.query(`SELECT auth_oauth_transaction_claim($1, 'google', $2)`, [
+    stateHash,
+    bindingHash,
+  ]);
+  return { stateHash };
+}
+
+describe("auth-s4-d1b completion handoff — arm/consume (0018)", () => {
+  it("arms only a CLAIMED transaction; a still-live (unclaimed) row cannot be armed", async () => {
+    // A row that was issued but NEVER claimed has consumed_at IS NULL.
+    const stateHash = sha(`d1b-unclaimed:${randomBytes(16).toString("hex")}`);
+    const bindingHash = sha(`d1b-unclaimed-bind:${randomBytes(16).toString("hex")}`);
+    await ctx.appPool.query(
+      `SELECT auth_oauth_transaction_issue($1, 'google', $2, $3, $4, $5, make_interval(secs => $6))`,
+      [stateHash, bindingHash, sha("nonce"), Buffer.from(randomBytes(24)), "kv", 600],
+    );
+    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("d1b-arm-unclaimed"));
+
+    const armed = await armOauthCompletionHandoff(ctx.appPool, {
+      stateHash,
+      handoffHash: sha(randomBytes(32).toString("hex")),
+      resolvedAccountId: accountId,
+      ttlSeconds: 120,
+    });
+    expect(armed).toBe(false); // not consumed → no handoff
+  });
+
+  it("arm is single-use: a second arm on the same claimed row returns false", async () => {
+    const { stateHash } = await seedClaimedGoogleTxn();
+    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("d1b-arm-twice"));
+
+    const first = await armOauthCompletionHandoff(ctx.appPool, {
+      stateHash,
+      handoffHash: sha(randomBytes(32).toString("hex")),
+      resolvedAccountId: accountId,
+      ttlSeconds: 120,
+    });
+    const second = await armOauthCompletionHandoff(ctx.appPool, {
+      stateHash,
+      handoffHash: sha(randomBytes(32).toString("hex")),
+      resolvedAccountId: accountId,
+      ttlSeconds: 120,
+    });
+    expect(first).toBe(true);
+    expect(second).toBe(false); // already armed
+  });
+
+  it("D1B-5: a handoff consumes exactly once — replay returns null, zero second resolution", async () => {
+    const { stateHash } = await seedClaimedGoogleTxn();
+    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("d1b-replay"));
+    const rawHash = sha(randomBytes(32).toString("hex"));
+    await armOauthCompletionHandoff(ctx.appPool, {
+      stateHash,
+      handoffHash: rawHash,
+      resolvedAccountId: accountId,
+      ttlSeconds: 120,
+    });
+
+    expect(await consumeOauthCompletionHandoff(ctx.appPool, rawHash)).toBe(accountId);
+    // second consume of the SAME handoff hash → null (durable single-use fence).
+    expect(await consumeOauthCompletionHandoff(ctx.appPool, rawHash)).toBeNull();
+
+    // handoff_consumed_at is durably stamped (not re-armable / re-consumable).
+    const { rows } = await ctx.owner.query(
+      `SELECT handoff_consumed_at FROM auth_oauth_transactions WHERE state_hash = $1`,
+      [stateHash],
+    );
+    expect((rows[0] as { handoff_consumed_at: Date | null }).handoff_consumed_at).not.toBeNull();
+  });
+
+  it("D1B-6: an EXPIRED handoff never resolves — consume returns null, zero mutation", async () => {
+    const { stateHash } = await seedClaimedGoogleTxn();
+    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("d1b-expired"));
+    const rawHash = sha(randomBytes(32).toString("hex"));
+    // Negative TTL → handoff_expires_at is in the past the instant it is armed
+    // (deterministic; no timing sleep).
+    await armOauthCompletionHandoff(ctx.appPool, {
+      stateHash,
+      handoffHash: rawHash,
+      resolvedAccountId: accountId,
+      ttlSeconds: -1,
+    });
+
+    expect(await consumeOauthCompletionHandoff(ctx.appPool, rawHash)).toBeNull();
+    // never consumed (expiry rejected it before the fence stamped anything).
+    const { rows } = await ctx.owner.query(
+      `SELECT handoff_consumed_at FROM auth_oauth_transactions WHERE state_hash = $1`,
+      [stateHash],
+    );
+    expect((rows[0] as { handoff_consumed_at: Date | null }).handoff_consumed_at).toBeNull();
+  });
+
+  it("an unknown handoff hash resolves to null (no row, no session)", async () => {
+    expect(await consumeOauthCompletionHandoff(ctx.appPool, sha("never-armed"))).toBeNull();
+  });
+
+  it("the two handoff functions run only via SECURITY DEFINER — no direct grant leaks", async () => {
+    for (const fn of [
+      "auth_oauth_handoff_arm(text,text,uuid,interval)",
+      "auth_oauth_handoff_consume(text)",
+    ]) {
+      const granted = await ctx.owner.query(
+        `SELECT has_function_privilege('app', $1, 'EXECUTE') AS granted`,
+        [fn],
+      );
+      expect((granted.rows[0] as { granted: boolean }).granted).toBe(true);
+    }
+    // the new columns carry NO direct table grant — the table stays function-only.
+    await expect(
+      ctx.appPool.query(`SELECT resolved_account_id FROM auth_oauth_transactions LIMIT 1`),
+    ).rejects.toThrow(/permission denied/i);
+  });
+});
+
+// The completion sequence is consume-commit THEN issueSession(rotate). The rotate
+// races a concurrent logout-all exactly as D0-7 proved for the pre-existing
+// session; these barriers drive that rotate from a REAL consumed handoff, in both
+// lock orders, on real PostgreSQL — one side wins, the loser's rotate returns
+// null (→ the app maps it to SessionReauthRequiredError, D1B-8), no deadlock.
+describe("auth-s4-d1b completion rotate × logout-all barrier (D1B-8)", () => {
+  async function consumeHandoffForAccount(accountId: string): Promise<string> {
+    const { stateHash } = await seedClaimedGoogleTxn();
+    const rawHash = sha(randomBytes(32).toString("hex"));
+    await armOauthCompletionHandoff(ctx.appPool, {
+      stateHash,
+      handoffHash: rawHash,
+      resolvedAccountId: accountId,
+      ttlSeconds: 120,
+    });
+    const resolved = await consumeOauthCompletionHandoff(ctx.appPool, rawHash);
+    expect(resolved).toBe(accountId); // the completion consume step (committed)
+    return resolved!;
+  }
+
+  it("rotate-first: the completion's new session is minted then revoked by logout-all", async () => {
+    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("d1b-8a"));
+    const resolved = await consumeHandoffForAccount(accountId);
+    const oldHash = sha(randomBytes(32).toString("hex"));
+    const otherHash = sha(randomBytes(32).toString("hex"));
+    await createWebSession(ctx.appPool, {
+      accountId,
+      tokenHash: oldHash,
+      csrfSecret: "old",
+      ttlSeconds: 900,
+    });
+    await createWebSession(ctx.appPool, {
+      accountId,
+      tokenHash: otherHash,
+      csrfSecret: "other",
+      ttlSeconds: 900,
+    });
+
+    const connA = await ctx.appPool.connect();
+    const connB = await ctx.appPool.connect();
+    let pendingB: Promise<pg.QueryResult> | undefined;
+    try {
+      const newHash = sha(randomBytes(32).toString("hex"));
+      await connA.query("BEGIN");
+      await connA.query(
+        `SELECT auth_rotate_web_session($1, $2, $3, make_interval(secs => $4), $5) AS id`,
+        [oldHash, newHash, "new-csrf", 900, resolved],
+      );
+
+      const pidA = await backendPid(connA);
+      const pidB = await backendPid(connB);
+      pendingB = connB.query(`SELECT auth_revoke_all_web_sessions($1) AS count`, [otherHash]);
+      await waitUntilBlockedByHolder(ctx.owner, pidA, pidB);
+
+      await connA.query("COMMIT");
+      await pendingB;
+
+      // logout-all wins the account epoch: BOTH the rotated-in session and the
+      // old one are gone — never two live sessions (D1B-9).
+      expect(await resolveWebSession(ctx.appPool, newHash)).toBeNull();
+      expect(await resolveWebSession(ctx.appPool, oldHash)).toBeNull();
+    } finally {
+      await connA.query("ROLLBACK").catch(() => {});
+      connA.release();
+      if (pendingB) await pendingB.catch(() => {});
+      connB.release();
+    }
+  });
+
+  it("logout-first: the stale cookie fails revalidation and the completion rotate mints nothing", async () => {
+    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("d1b-8b"));
+    const resolved = await consumeHandoffForAccount(accountId);
+    const oldHash = sha(randomBytes(32).toString("hex"));
+    const otherHash = sha(randomBytes(32).toString("hex"));
+    await createWebSession(ctx.appPool, {
+      accountId,
+      tokenHash: oldHash,
+      csrfSecret: "old",
+      ttlSeconds: 900,
+    });
+    await createWebSession(ctx.appPool, {
+      accountId,
+      tokenHash: otherHash,
+      csrfSecret: "other",
+      ttlSeconds: 900,
+    });
+
+    const connA = await ctx.appPool.connect();
+    const connB = await ctx.appPool.connect();
+    let pendingB: Promise<pg.QueryResult> | undefined;
+    try {
+      await connA.query("BEGIN");
+      await connA.query(`SELECT auth_revoke_all_web_sessions($1) AS count`, [otherHash]);
+
+      const newHash = sha(randomBytes(32).toString("hex"));
+      const pidA = await backendPid(connA);
+      const pidB = await backendPid(connB);
+      pendingB = connB.query(
+        `SELECT auth_rotate_web_session($1, $2, $3, make_interval(secs => $4), $5) AS id`,
+        [oldHash, newHash, "new-csrf", 900, resolved],
+      );
+      await waitUntilBlockedByHolder(ctx.owner, pidA, pidB);
+
+      await connA.query("COMMIT");
+      const { rows } = await pendingB;
+      // rotate returns null (the old session was revoked under it) → the app maps
+      // this to SessionReauthRequiredError and mints nothing (zero mutation).
+      expect((rows[0] as { id: string | null }).id).toBeNull();
+      expect(await resolveWebSession(ctx.appPool, newHash)).toBeNull();
+    } finally {
+      await connA.query("ROLLBACK").catch(() => {});
+      connA.release();
+      if (pendingB) await pendingB.catch(() => {});
+      connB.release();
+    }
   });
 });

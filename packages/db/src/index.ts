@@ -19,7 +19,9 @@ export { migrate, type MigrateResult } from "./migrate.js";
 export {
   LoginReplayError,
   SlugTakenError,
+  armOauthCompletionHandoff,
   consumeLoginState,
+  consumeOauthCompletionHandoff,
   createWebSession,
   issueLoginState,
   loginTelegram,

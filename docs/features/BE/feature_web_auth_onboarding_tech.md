@@ -496,6 +496,22 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 > consume token. Hop này **auto-submit không cần gesture** — handoff đã bound vào oauth transaction và
 > single-use, lại nằm giữa luồng trên chính browser của user, không phải link gửi qua mail. **Đừng "hài hoà"
 > hai chỗ này thành một.**
+>
+> **📌 Handoff persistence — ĐÃ CHỐT (manifest option (a), quyết TRƯỚC khi code).** Với M3, callback sau khi
+> `loginGoogle` resolve `account_id` KHÔNG còn đọc/gọi `issueSession` được (Strict cookie vắng ở callback
+> cross-site), nên account đã resolve phải tới được `/complete`. `auth_oauth_transactions` (0017) chưa có cột
+> cho nó. **Chốt option (a) — migration expand-only `0018`** thêm 4 cột lên chính row đó: `resolved_account_id`
+> + `handoff_hash` + `handoff_expires_at` + `handoff_consumed_at`, cùng hai hàm `SECURITY DEFINER`
+> `auth_oauth_handoff_arm` / `auth_oauth_handoff_consume` (grant `app`). **Vì sao (a) hơn (b) signed-Lax-cookie:**
+> (b) VẪN cần một fence server-side bền vững (một chữ ký hợp lệ vẫn hợp lệ khi replay — D1B-5), nên (a) tái dùng
+> đúng row + sweep/retention/grant đã có (DRY, không đẻ store song song) và enforce single-use bằng đúng pattern
+> atomic `UPDATE … WHERE handoff_consumed_at IS NULL` của `auth_oauth_transaction_claim`. **Token đi trong body
+> POST của landing M3 (hidden field), chỉ `sha256(token)` lưu at-rest — KHÔNG cookie.** Thứ tự fail-closed ở
+> `/complete`: **consume (commit) TRƯỚC → rồi `issueSession`** — replay sau consume trả null (D1B-5); crash giữa
+> callback↔complete để session cũ nguyên vẹn, handoff spent nên không mint đôi (D1B-9); logout-all thắng → rotate
+> trả null → `SessionReauthRequiredError`, zero mutation (D1B-8). `issueSession` + attrs cookie Strict GIỮ NGUYÊN
+> (D1B-4). Landing (200) mang `Content-Security-Policy: default-src 'none'; script-src 'nonce-…'; form-action
+> 'self'; frame-ancestors 'none'` + `X-Frame-Options: DENY` + `Referrer-Policy: no-referrer` + `Cache-Control: no-store`.
 
 | # | Case | Setup | Expected |
 |---|---|---|---|

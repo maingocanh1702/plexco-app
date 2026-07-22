@@ -165,6 +165,45 @@ export async function revokeAllWebSessions(
   return (rows[0] as { count: number | null }).count;
 }
 
+/**
+ * auth-s4-d1b completion hop — arm a one-time handoff on the just-claimed OAuth
+ * transaction so the same-site /complete POST can run issueSession() where the
+ * Strict cookie is present. `handoffHash` = sha256 of the raw token that rides
+ * the M3 landing's POST body. Returns true when the row was armed (the caller
+ * fails closed on false); see migration 0018 (auth_oauth_handoff_arm).
+ */
+export async function armOauthCompletionHandoff(
+  pool: pg.Pool,
+  input: {
+    stateHash: string;
+    handoffHash: string;
+    resolvedAccountId: string;
+    ttlSeconds: number;
+  },
+): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT auth_oauth_handoff_arm($1, $2, $3, make_interval(secs => $4)) AS armed`,
+    [input.stateHash, input.handoffHash, input.resolvedAccountId, input.ttlSeconds],
+  );
+  return Boolean((rows[0] as { armed: boolean | null }).armed);
+}
+
+/**
+ * Single-use consume of a completion handoff (migration 0018,
+ * auth_oauth_handoff_consume). Returns the resolved account id, or null when the
+ * hash is missing / already consumed (replay — D1B-5) / expired (D1B-6). The
+ * durable server-side fence, never a cookie signature.
+ */
+export async function consumeOauthCompletionHandoff(
+  pool: pg.Pool,
+  handoffHash: string,
+): Promise<string | null> {
+  const { rows } = await pool.query(`SELECT auth_oauth_handoff_consume($1) AS account_id`, [
+    handoffHash,
+  ]);
+  return (rows[0] as { account_id: string | null }).account_id;
+}
+
 export async function provisionTenant(
   pool: pg.Pool,
   input: { slug: string; name: string; timezone?: string; locale?: string; personId: string },

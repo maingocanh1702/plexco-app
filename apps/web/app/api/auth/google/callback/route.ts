@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { t } from "@plexco/core/i18n";
-import { deriveEmailArtifacts, InvalidEmailError } from "@plexco/db";
+import { armOauthCompletionHandoff, deriveEmailArtifacts, InvalidEmailError } from "@plexco/db";
 import { err } from "../../../../../lib/api-envelope";
 import { resolveAuthSecretKey, keyedHash } from "../../../../../lib/auth-secrets";
 import { exchangeGoogleCode, verifyGoogleIdToken } from "../../../../../lib/google-oidc";
@@ -18,10 +18,11 @@ import {
 } from "../../../../../lib/oauth-transaction";
 import {
   appDb,
+  buildCompletionLanding,
   clientIp,
-  issueSession,
+  HANDOFF_TTL_SECONDS,
+  newHandoffToken,
   rateLimited,
-  SessionReauthRequiredError,
 } from "../../../../../lib/session-cookies";
 
 /**
@@ -37,10 +38,13 @@ import {
  * mismatched binding → D1-4) → decrypt the PKCE verifier → exchange the code →
  * verify the FULL OIDC proof matrix (cell 8 rejects here, BEFORE any DB write,
  * no audit — D1-5) → derive the keyed subject + email artifacts (app-preallocated
- * id) → run the §4 collision finalizer. A session (Strict) is minted only on
- * `login_success`; `identity_conflict` fails closed to AUTH_IDENTITY_CONFLICT
+ * id) → run the §4 collision finalizer. On `login_success` the callback does NOT
+ * mint here (the Strict cookie is absent cross-site so it could not rotate a
+ * pre-existing session — auth-s4-d1b): it ARMS a single-use handoff and returns
+ * the M3 completion landing that hops same-site to /complete, where issueSession()
+ * runs its rotate branch. `identity_conflict` fails closed to AUTH_IDENTITY_CONFLICT
  * (→ DD-53 — D1-8). Every response is `Referrer-Policy: no-referrer` and loads
- * nothing third-party; the code/state/nonce/verifier are never logged.
+ * nothing third-party; the code/state/nonce/verifier/handoff are never logged.
  */
 export async function GET(request: Request): Promise<Response> {
   try {
@@ -188,24 +192,28 @@ async function handleGoogleCallback(request: Request): Promise<Response> {
   });
 
   if (login.outcome === "identity_conflict") {
-    return fail("AUTH_IDENTITY_CONFLICT"); // → DD-53, no session (D1-8)
+    return fail("AUTH_IDENTITY_CONFLICT"); // → DD-53, no session, no handoff (D1-8)
   }
 
-  try {
-    // THE single session issuer — mints a fresh Strict, host-only session cookie.
-    // NOTE: rotating a PRE-EXISTING Strict session across this cross-site redirect
-    // is intentionally out of scope — the Strict cookie is not sent on the
-    // cross-site callback, so it cannot be read/rotated here. A robust rotation
-    // needs a same-site completion hop (D0/session-web-boundary follow-up); D1
-    // mints a fresh session (the pinned D1-2/D1-13 contract). See docs.
-    await issueSession(login.accountId);
-  } catch (error) {
-    // Issuance fence (D0-12): a stale cookie could not rotate (concurrent
-    // logout-all won) — generic reject, no internal reason leaked.
-    if (error instanceof SessionReauthRequiredError) return fail("AUTH_INVALID");
-    throw error;
-  }
-  return redirect(`${baseUrl}/`);
+  // M3 completion hop (auth-s4-d1b, D1B-1): the Strict plx_session is NOT sent on
+  // this cross-site callback, so we CANNOT read/rotate a pre-existing session
+  // here — the callback does not mint. Arm a single-use, short-TTL handoff bound
+  // to THIS oauth transaction (durable server-side fence, 0018), then return a
+  // first-party landing that auto-submits a same-origin POST to /complete, where
+  // the Strict cookie IS present and issueSession() takes its existing rotate
+  // branch. A bare 302 would NOT carry the cookie (probe M1) — return a document.
+  const handoff = newHandoffToken();
+  const armed = await armOauthCompletionHandoff(appDb().pool, {
+    stateHash,
+    handoffHash: handoff.tokenHash,
+    resolvedAccountId: login.accountId,
+    ttlSeconds: HANDOFF_TTL_SECONDS,
+  });
+  // Should never fail — we just single-use claimed this exact row above — but
+  // fail closed rather than emit a landing with no live handoff behind it.
+  if (!armed) return fail("AUTH_INVALID");
+  const landing = buildCompletionLanding(handoff.token);
+  return new Response(landing.body, { status: 200, headers: landing.headers });
 }
 
 /** 302 redirect that leaks no referrer (the callback URL carries code/state). */
