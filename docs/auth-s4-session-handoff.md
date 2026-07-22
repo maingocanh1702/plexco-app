@@ -191,8 +191,10 @@ DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm t
 - Backlog: thêm block `auth-s4-d1-email-token-core` + `auth-s4-d1-google-adapter` (khớp manifest đã có,
   trước đó manifest mồ côi không có task block).
 - `infra-egress-compatibility-evidence`: `planned` → `ready`.
-- Tạo manifest `core-matcher-grouped-amount-parsing.json` (P2 bugfix, `money-model`/`shared-core`,
-  proposal-only) + wire vào backlog. **Launcher-ready** nhưng đụng `money-model` → để owner quyết có launch.
+- `core-matcher-grouped-amount-parsing`: DD-87 đã owner-ratify 2026-07-22 thành exhaustive tagged-union
+  fail-closed contract; manifest/task/AP-29/backlog/verdict đã author trên disk. **Vẫn NOT_CODE_READY** tới khi
+  packet commit/push lên `origin/main`, re-pin strict 12/12 và task contract đổi sang `code-ready`; cấm launch
+  từ WIP. Invariant `money-model`/`shared-core` vẫn rời slice DB đang chạy.
 
 **Cách launch một autoprompt** (theo `docs/autopilot-templates/phase1-fable5-7h-PR-RUN.md`): mở worktree
 riêng base `main`, `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<slug>.json`

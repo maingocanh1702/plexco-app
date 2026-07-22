@@ -1,10 +1,12 @@
 # 🗺️ ROADMAP — Plexco
 
-**Phiên bản:** v3.3f
-**Ngày tạo:** 16/06/2026 · **Cập nhật:** 19/07/2026
-**Căn cứ:** `BRD.md` v3.9f · `PRD.md` v2.8e · `TDD.md` v3.1 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` **v1.74** · `../dd-69-app-native-analysis.md`
+**Phiên bản:** v3.4
+**Ngày tạo:** 16/06/2026 · **Cập nhật:** 22/07/2026
+**Căn cứ:** `BRD.md` v3.9g · `PRD.md` v2.8f · `TDD.md` v3.1a · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` **v1.98** · `../standards/BUILD-STATUS.md` · `../dd-69-app-native-analysis.md`
 
 > ROADMAP là nguồn sự thật cho **delivery order + dev progress**. Product scope thuộc BRD; behavior thuộc PRD; implementation contract thuộc TDD.
+
+> **📌 Repo truth snapshot — `main@6a28072` (22/07/2026).** Mọi số đếm trong file này lấy từ cây repo tại commit trên, không phải từ prose. Cách tái tạo: xem §Cách đọc tiến độ → "Lệnh tái tạo số đếm". Nếu số không tái tạo được ⇒ coi như **stale**, không dùng để ra verdict.
 
 > **v3.4 channel pivot (DD-37):** bỏ Telegram; kênh phase-1 = **web + Zalo + Facebook Messenger**. Messenger nâng từ post-MVP (P4.8) lên **phase-1 (P2.5, phụ thuộc App Review)**. Thêm **Google login** (P0–P1), **chat in-app** + **cài đặt hồ sơ/giá theo giới tính** (P4, DD-38/DD-39 ✅ scope-committed phase-1; schema chờ migration), **mark-paid thủ công tiền mặt/CK** (P2).
 
@@ -14,21 +16,28 @@
 >
 > **Cập nhật 18/07/2026 (founder batch, decisions v1.47):** DD-69 **định hướng app-first accepted** — phase-1 target = PWA (S9/S20 chưa live); phase-2 native ngoài committed timeline (build TBD). RN+Expo chỉ là recommendation sau spike; trước khi schedule native phải qua client-contract, API/auth/push/offline/store gates (DD-69 analysis). **DD-61..64 Session Organize accept-in-principle** (build post-P4). DD-33 Facebook Login phase-1 ✅; DD-60 API-reference convention ✅.
 
+> **Cập nhật 22/07/2026 (v3.4 — reconcile số liệu + khung đo lường):** file này trước đây khai `migrations 0000–0013` và "Google/email chưa code". **Sai so với repo.** Truth tại `main@6a28072`: migrations **`0000–0018`**; toàn bộ lane Google (D0a · D0b · D1 email-token · D1 google-adapter · d1b) **đã merge**, đang **chặn ENABLE** (chờ đo Safari macOS/iOS cho completion-hop M3; `GOOGLE_OAUTH_*` giữ rỗng). Đây là **reconcile bằng chứng**, không phải quyết định mới: **không phase nào được thêm/bớt, không DD nào đổi trạng thái, delivery order không đổi.**
+
 > **Đánh số phase:** toàn bộ tài liệu dùng duy nhất **canonical P-number**. Các tên Foundation/Tenant Engine/... chỉ là delivery-group label, không tạo một hệ số thứ hai.
 
 ## Canonical Delivery Groups
 
-| Delivery group | Canonical | Nội dung |
-|---|---|---|
-| **Foundation** | **P0–P1** | Repo + core + Postgres/RLS + schema đa môn + 3 tầng hiển thị + test cô lập + **Google login / tài khoản web** |
-| **Tenant Engine** | **P2–P3** | Zalo tenant + **Messenger hybrid shared surface (P2.5)** + mark-paid + durable webhook/ledger + dogfood |
-| **Identity** | **P3.5** | Person/ChannelIdentity/Reachability/Membership + **link Facebook/Zalo** + merge an toàn |
-| **Web + Sync + Marketplace** | **P4–P4.3** | Web surface + canonical backend + sync engine + onboarding + **chat in-app + cài đặt hồ sơ/giá theo giới tính** + discovery/join |
-| **Player-side channels** | **P4.5–P4.7** | Join Zalo/Messenger + nhắc/xác nhận + player view |
-| **Billing** | **P5** | Subscription host + vòng đời tenant |
-| **Harden & Scale** | **P6** | Pen-test, load test, observability, ToS/Privacy |
-| **Session Organize** *(accept-in-principle)* | **Post-P4 · TBD** | ✅ DD-61–64 (owner 18/07) — sân + trận 2 phía + assign 4-mode + live score; tenant-private, không public; build sau Session CRUD+Sync. DD-63 `balanced` degrade tới khi có level source |
-| **App Native** *(direction ✅ · build TBD)* | **Phase-2 · TBD** | ✅ DD-69 direction accepted (owner 18/07); RN+Expo recommendation sau spike; reuse chỉ client-safe TS contracts/format + canonical API, không import server i18n/money core. Native build chưa lên lịch/chưa chốt nền tảng |
+> Cột **Duration** = ước lượng thời lượng thực thi. **Chưa owner điền** → `TBD` ở mọi dòng: file này **không** phát sinh cam kết ngày từ suy đoán.
+> Cột **Traction gate** = điều kiện *thực tế* để mở phase, tách khỏi dependency kỹ thuật. Dependency nói "làm được chưa"; traction gate nói "**nên** làm chưa".
+
+| Delivery group | Canonical | Nội dung | Duration | Traction gate (mở phase khi…) |
+|---|---|---|---|---|
+| **Foundation** | **P0–P1** | Repo + core + Postgres/RLS + schema đa môn + 3 tầng hiển thị + test cô lập + **Google login / tài khoản web** | `TBD` | — (root, không gate) |
+| **Tenant Engine** | **P2–P3** | Zalo tenant + **Messenger hybrid shared surface (P2.5)** + mark-paid + durable webhook/ledger + dogfood | `TBD` | Google login **ENABLED** thật (không chỉ merged) + 1 host đăng nhập được |
+| **Identity** | **P3.5** | Person/ChannelIdentity/Reachability/Membership + **link Facebook/Zalo** + merge an toàn | `TBD` | Tenant #1 chạy ≥ **4 buổi thật** trên Zalo/Messenger, có ≥ 1 ca 1-người-2-kênh quan sát được |
+| **Web + Sync + Marketplace** | **P4–P4.3** | Web surface + canonical backend + sync engine + onboarding + **chat in-app + cài đặt hồ sơ/giá theo giới tính** + discovery/join | `TBD` | ≥ **2 tenant** vận hành thật (1 có Page riêng, 1 dùng central) + ledger khớp sổ tay 2 kỳ liên tiếp |
+| **Player-side channels** | **P4.5–P4.7** | Join Zalo/Messenger + nhắc/xác nhận + player view | `TBD` | ≥ **20 kèo public/tuần** trên marketplace (đủ cầu để player-side có việc để làm) |
+| **Billing** | **P5** | Subscription host + vòng đời tenant | `TBD` | ≥ **3 host ngoài** dùng ≥ 4 tuần liên tục **và** ≥ 1 host hỏi/chấp nhận trả phí |
+| **Harden & Scale** | **P6** | Pen-test, load test, observability, ToS/Privacy | `TBD` | Có doanh thu thật hoặc ≥ **10 tenant** — bất kỳ điều kiện nào đến trước |
+| **Session Organize** *(accept-in-principle)* | **Post-P4 · TBD** | ✅ DD-61–64 (owner 18/07) — sân + trận 2 phía + assign 4-mode + live score; tenant-private, không public; build sau Session CRUD+Sync. DD-63 `balanced` degrade tới khi có level source | `TBD` | Ngoài committed timeline — không gate, không lên hàng đợi |
+| **App Native** *(direction ✅ · build TBD)* | **Phase-2 · TBD** | ✅ DD-69 direction accepted (owner 18/07); RN+Expo recommendation sau spike; reuse chỉ client-safe TS contracts/format + canonical API, không import server i18n/money core. Native build chưa lên lịch/chưa chốt nền tảng | `TBD` | PWA (S9/S20) live + retention đo được trên PWA trước khi bàn native |
+
+> **Traction gate không phải lời hứa mềm.** Chưa đạt gate mà vẫn muốn build ⇒ ghi override có chữ ký owner vào `decisions.md`, đúng như cơ chế override đang dùng cho slice gate. Không im lặng bỏ qua.
 
 ---
 
@@ -124,95 +133,196 @@ Plexco xây **repo riêng**; lift logic thuần (matching, payments-logic, dates
 
 ---
 
-## 📊 Dev Progress Overview
+## 📐 Cách đọc tiến độ (measurement contract)
 
-```text
-Core Planning & Docs       ████████████████████ 100%  ✅ BRD, PRD, TDD, ROADMAP + appendices
-Feature Specs              ███████████████████░  coverage cao  21 cặp hiện có + 1 product-only Draft (22 Product/System + 21 BE); Session Organize accept-in-principle (post-P4), không phải delivery readiness
-P0–P1: Foundation         ███████████████░░░░░  75%  🚧 core+DB/RLS+migrations 0000–0013 merged; Auth v3 (Telegram-era) merged; Google/email provider (DD-37) chưa code
-P2–P3: Tenant Engine      ░░░░░░░░░░░░░░░░░░░░   0%  ⬜ Not Started
-P3.5: Identity            ░░░░░░░░░░░░░░░░░░░░   0%  ⬜ Not Started
-P4–P4.3: Web+Sync+Market  ░░░░░░░░░░░░░░░░░░░░   0%  ⬜ Not Started
-P4.5–P4.7: Player channels░░░░░░░░░░░░░░░░░░░░   0%  ⬜ Not Started
-P5: Billing               ░░░░░░░░░░░░░░░░░░░░   0%  ⬜ Not Started
-P6: Harden                ░░░░░░░░░░░░░░░░░░░░   0%  ⬜ Not Started
-────────────────────────────────────────────────────────────
-TỔNG (code)                ████░░░░░░░░░░░░░░░░  ~20%  🚧 foundation + Auth v3 (Telegram-era) land trên main@1eb6f60; feature layer chưa build
+> Mục này tồn tại vì **một thanh % duy nhất luôn nói dối**. Nó gộp "đã spec" với "đã chạy được", và luôn lệch về phía lạc quan. Từ v3.4, mỗi delivery group được đo theo **6 trục độc lập** và trục yếu nhất là trục quyết định.
+
+**Định nghĩa Done cho từng trục — không có nghĩa nào khác được dùng:**
+
+| Trục | ✅ chỉ khi | Bằng chứng phải trỏ tới |
+|---|---|---|
+| **Spec** | Có cặp Product + BE, trạng thái Reviewed (không phải Draft) | file trong `docs/features/` + `docs/features/BE/` |
+| **Migration** | File `.sql` đã merge lên `main` **và** áp được lên PG sạch | số hiệu migration trong `packages/db/migrations/` |
+| **BE** | Có service/route/function thật, không phải chỉ bảng | đường dẫn file + tên route |
+| **FE/UI** | Màn hình chạy trên app thật, nối API thật | route Next.js. **Màn hình trong `.pen` KHÔNG tính là FE** — chỉ tính vào trục Design |
+| **Tests** | Test chạy xanh trong CI | tên file test + số case |
+| **Invariant** | Test bất biến (RLS cô lập, public field-whitelist, no-money-leak) xanh | `packages/db/src/*-invariants.test.ts` |
+
+**5 luật chống lạm phát con số** — vi phạm bất kỳ luật nào ⇒ số liệu bị coi là vô hiệu:
+
+1. **Docs ≠ runtime.** Spec Reviewed không cộng vào bất kỳ trục code nào. (Luật này đã có; nay áp cho cả bảng số.)
+2. **Merged ≠ enabled.** Code merge nhưng feature flag/env còn tắt ⇒ trạng thái là `🟢 merged · ⛔ chưa bật`, **không** phải ✅. Ví dụ sống: lane Google.
+3. **`.pen` screens ≠ FE.** Design xong không kéo FE lên %.
+4. **Đếm được thì phải tái tạo được.** Mọi số trong file này đi kèm lệnh tái tạo bên dưới.
+5. **Trục yếu nhất là trạng thái thật.** Một group có Spec ✅ / BE ✅ / FE ⬜ thì là **⬜ chưa dùng được**, không phải "gần xong".
+
+<details>
+<summary><b>Lệnh tái tạo số đếm</b> (chạy ở repo root)</summary>
+
+```bash
+# migrations
+ls packages/db/migrations/*.sql | wc -l
+# test files + test cases (loại trừ .autopilot/worktrees)
+find packages apps -name "*.test.ts" -o -name "*.test.tsx" | grep -v node_modules | wc -l
+grep -rhoE "^\s*(it|test)\(" packages apps --include="*.test.ts" --include="*.test.tsx" | wc -l
+# API routes đang có
+find apps/web/app/api -name "route.ts" | wc -l
+# feature spec pairs
+ls docs/features/*.md | wc -l ; ls docs/features/BE/*.md | wc -l
 ```
 
-> **Trạng thái:** Core docs sync theo v3.4 channel pivot; on-disk feature coverage = **21 cặp + 1 product-only Draft**. Session Organize là cặp Draft thứ 21, DD-61..64 ✅ accept-in-principle (owner 18/07, build post-P4), chưa nằm trong committed delivery timeline. **Foundation + Auth Onboarding v3 (Telegram-era) đã land trên `main@1eb6f60`** (migrations `0000–0013`, có web tests); DD-37 supersede provider → Google/email chưa implement; feature layer nghiệp vụ chưa build.
+</details>
+
+## 📊 Dev Progress Overview
+
+**Số đếm kiểm chứng được — `main@6a28072` (22/07/2026):**
+
+| Hạng mục | Số thực | Ghi chú |
+|---|---|---|
+| Migrations trên `main` | **19** (`0000`–`0018`) | `0015` D0a · `0016` D1 email-token · `0017` OAuth tx · `0018` handoff |
+| Test file | **28** | core 9 · db 3 · web 15 · bot 1 |
+| Test case | **403** | core 111 · db 152 · web 137 · bot 3 |
+| Invariant test | **2 file** | `rls-invariants.test.ts` · `waitlist-invariants.test.ts` |
+| API route đang có | **10** | 8 auth + 2 onboarding. **0 route nghiệp vụ** (session/payment/sync) |
+| Feature spec | **25 Product + 24 BE** | coverage cao — *không* phải readiness |
+| Màn FE nối API thật | **0** | `.pen` có design; chưa màn nào chạy trên app |
+
+**Ma trận theo delivery group** — ✅ done · 🟢 merged-chưa-bật · 🟡 một phần · ⬜ chưa bắt đầu · — không áp dụng:
+
+| Delivery group | Spec | Migration | BE | FE/UI | Tests | Invariant | Trạng thái thật (trục yếu nhất) |
+|---|---|---|---|---|---|---|---|
+| **P0–P1 Foundation** | ✅ | ✅ `0000`–`0014` | ✅ core+db | ⬜ | ✅ 263 case | ✅ RLS+waitlist | 🟡 **nền xong, chưa có surface** |
+| **P0–P1 · 3b Auth (Google lane)** | ✅ | ✅ `0015`–`0018` | ✅ 8 route | 🟡 callback/landing | ✅ 137 web case | ✅ auth 152 db case | 🟢 **merged · ⛔ chưa bật** (chờ đo Safari/iOS) |
+| **P2–P3 Tenant Engine** | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started |
+| **P2.5 Messenger** | ✅ Reviewed contract | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started · 🔗 chặn App Review |
+| **P3.5 Identity** | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started |
+| **P4–P4.3 Web+Sync+Market** | ✅ drafted | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started |
+| **P4.5–P4.7 Player channels** | 🟡 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started |
+| **P5 Billing** | ✅ drafted | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started |
+| **P6 Harden** | ✅ drafted | — | ⬜ | — | ⬜ | ⬜ | ⬜ Not Started |
+
+```text
+TỔNG (code, theo slice roadmap)  ██████░░░░░░░░░░░░░░  ~33%
+   ├─ nền móng (core + db/RLS)   ███████████████████░  ~90%  ✅ có test, có invariant
+   ├─ auth (lane Google)         ████████████████░░░░  ~80%  🟢 code xong · ⛔ chưa bật được
+   └─ feature nghiệp vụ          █░░░░░░░░░░░░░░░░░░░   ~5%  ⬜ session/reconcile/sync/marketplace chưa wiring
+```
+
+> **Đọc con số ~33% cho đúng:** nó đo *slice roadmap đã merge*, không đo "sản phẩm dùng được". Theo luật 5, sản phẩm hiện ở mức **⬜ chưa host nào dùng được** — vì FE/UI = 0 màn và route nghiệp vụ = 0. Đây là chỗ trước đây file khai 75% cho Foundation và gây hiểu nhầm.
+
+> **Nợ nhìn thấy được từ ma trận:** cột **FE/UI trống toàn bộ**. Đây là rủi ro lặp lại đúng vết của các project tham chiếu (BE 100% / FE 0% rồi kẹt). Trước khi mở P2–P3, cân nhắc kéo **1 màn FE mỏng** (login → home) đi cùng để chứng minh đường đi end-to-end sống.
 
 ### Module Progress
 
-| # | Module | Track | Phase | Docs | Code | Status |
-|---|---|---|---|---|---|---|
-| 1 | Monorepo + lift `core` (+ `sports`) | 🏢 | P0 | ✅ | ✅ | ✅ (S1/S2 merged) |
-| 2 | Postgres + Drizzle + RLS + **public read model skeleton** | 🏢 | P0 | ✅ | ✅ | ✅ (S3 merged, migrations 0000–0013) |
-| 3 | Tenant schema (đa môn, session.visibility/slot/join_policy) + repo choke-point | 🏢 | P0–P1 | ✅ | ✅ | ✅ (S3 merged) |
-| 3b | **Google login / tài khoản web (email)** (DD-13) | 🏢 | P0–P1 | 🟡 | 🟡 | 🟡 (Auth v3 Telegram-era merged; provider→Google/email DD-37 chưa code) |
-| 4 | **Chat-channel tenant middleware** (Zalo P2 → Messenger P2.5) | 🏢 | P2/P2.5 | ✅ | ⬜ | ⬜ |
-| 4b | **Mark-paid thủ công (tiền mặt/CK, tap/multi-select)** (DD-40) | 💰 | P2 | ✅ | ⬜ | ⬜ |
-| 5 | Durable webhook + ledger/allocation + /unmatched (auto = `host_pro`) | 💰 | P3 | ✅ | ⬜ | ⬜ |
-| 17 | **Messenger central+optional Page; host/player shared core; 24h/App Review** | 🏢🎯 | **P2.5** | ✅ Reviewed contract | ⬜ | ⬜ |
-| 6 | Migrate data bot cũ → tenant #1 | 🏢 | P3 | ✅ covered | ⬜ | ⬜ |
-| 7 | Identity directory + merge (**link Facebook/Zalo**) | 🆔 | P3.5 | ✅ | ⬜ | ⬜ |
-| 8 | **Web app surface + canonical backend** | 🌐 | P4 | ✅ drafted | ⬜ | ⬜ |
-| 9 | **Sync engine** (command/outbox/projection + realtime) | 🌐 | P4 | ✅ drafted | ⬜ | ⬜ |
-| 10 | Onboarding self-serve; Messenger central default + optional Page riêng | 🌐 | P4 | ✅ drafted | ⬜ | ⬜ |
-| 10b | **Chat in-app** (club-wide + 1-1) (DD-38 ✅) | 🌐 | P4 | 🟡 draft | ⬜ | ⬜ |
-| 10c | **Cài đặt hồ sơ + giá theo giới tính** (DD-39 ✅) | 🌐 | P4 | 🟡 draft | ⬜ | ⬜ |
-| 11 | **Publish kèo → public_sessions projection** | 🔎 | P4.3 | ✅ drafted | ⬜ | ⬜ |
-| 12 | **Discovery / tìm kèo** | 🔎 | P4.3 | ✅ drafted | ⬜ | ⬜ |
-| 13 | **Join cross-club** | 🔎 | P4.3 | ✅ drafted | ⬜ | ⬜ |
-| 14 | Player join Messenger (quick-reply; base enablement P2.5) | 🎯 | P4.5 | 🟡 draft | ⬜ | ⬜ |
-| 15 | Player join Zalo (number-reply) | 🎯 | P4.7 | ✅ drafted | ⬜ | ⬜ |
-| 16 | Reminder + notifyPlayersPaid (+ sync) — web + Zalo chính, Messenger 24h | 🎯 | P4.5–P4.7 | ✅ drafted | ⬜ | ⬜ |
-| 18 | Billing + lifecycle | 💰 | P5 | ✅ drafted | ⬜ | ⬜ |
-| 19 | Hardening (pen/load/obs + **public pen-test**) | 🔒 | P6 | ✅ drafted | ⬜ | ⬜ |
+> Cột **Rev?** = module này có nằm trên đường tới đồng doanh thu đầu tiên không (xem §Critical Path to Revenue). 🔴 = chặn revenue · 🟡 = tăng giá trị gói trả phí · ⬜ = không chặn revenue.
+
+| # | Module | Track | Phase | Spec | Migration | BE | FE | Tests | Rev? | Status |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | Monorepo + lift `core` (+ `sports`) | 🏢 | P0 | ✅ | — | ✅ | — | ✅ 111 | 🔴 | ✅ (S1/S2 merged) |
+| 2 | Postgres + Drizzle + RLS + **public read model skeleton** | 🏢 | P0 | ✅ | ✅ `0000`–`0013` | ✅ | — | ✅ 152 | 🔴 | ✅ (S3 merged) |
+| 3 | Tenant schema (đa môn, session.visibility/slot/join_policy) + repo choke-point | 🏢 | P0–P1 | ✅ | ✅ | ✅ | — | ✅ | 🔴 | ✅ (S3 merged) |
+| 3b | **Google login / tài khoản web (email)** (DD-13/DD-80) | 🏢 | P0–P1 | ✅ | ✅ `0015`–`0018` | ✅ 8 route | 🟡 | ✅ 137 | 🔴 | 🟢 **merged · ⛔ chưa bật** — chờ đo Safari/iOS |
+| 3c | Email/password bundle (order-4, flag OFF) + gỡ Telegram | 🏢 | P0–P1 | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 | ⬜ kế tiếp trong lane DD-80 |
+| 4 | **Chat-channel tenant middleware** (Zalo P2 → Messenger P2.5) | 🏢 | P2/P2.5 | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 | ⬜ |
+| 4b | **Mark-paid thủ công (tiền mặt/CK, tap/multi-select)** (DD-40) | 💰 | P2 | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 | ⬜ |
+| 5 | Durable webhook + ledger/allocation + /unmatched (auto = `host_pro`) | 💰 | P3 | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 | ⬜ |
+| 17 | **Messenger central+optional Page; host/player shared core; 24h/App Review** | 🏢🎯 | **P2.5** | ✅ Reviewed contract | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ · 🔗 App Review |
+| 6 | Migrate data bot cũ → tenant #1 | 🏢 | P3 | ✅ covered | ⬜ | ⬜ | — | ⬜ | ⬜ | ⬜ |
+| 7 | Identity directory + merge (**link Facebook/Zalo**) | 🆔 | P3.5 | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 8 | **Web app surface + canonical backend** | 🌐 | P4 | ✅ drafted | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 | ⬜ |
+| 9 | **Sync engine** (command/outbox/projection + realtime) | 🌐 | P4 | ✅ drafted | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 10 | Onboarding self-serve; Messenger central default + optional Page riêng | 🌐 | P4 | ✅ drafted | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 | ⬜ |
+| 10b | **Chat in-app** (club-wide + 1-1) (DD-38 ✅) | 🌐 | P4 | 🟡 draft | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 10c | **Cài đặt hồ sơ + giá theo giới tính** (DD-39 ✅) | 🌐 | P4 | 🟡 draft | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 11 | **Publish kèo → public_sessions projection** | 🔎 | P4.3 | ✅ drafted | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 12 | **Discovery / tìm kèo** | 🔎 | P4.3 | ✅ drafted | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 13 | **Join cross-club** | 🔎 | P4.3 | ✅ drafted | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 14 | Player join Messenger (quick-reply; base enablement P2.5) | 🎯 | P4.5 | 🟡 draft | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 15 | Player join Zalo (number-reply) | 🎯 | P4.7 | ✅ drafted | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 16 | Reminder + notifyPlayersPaid (+ sync) — web + Zalo chính, Messenger 24h | 🎯 | P4.5–P4.7 | ✅ drafted | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 | ⬜ |
+| 18 | Billing + lifecycle | 💰 | P5 | ✅ drafted | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 | ⬜ |
+| 19 | Hardening (pen/load/obs + **public pen-test**) | 🔒 | P6 | ✅ drafted | — | ⬜ | — | ⬜ | ⬜ | ⬜ |
 
 > Module 17 (Messenger) **phase-1** nhưng chặn bởi **App Review Meta** — nộp sớm; degrade sang web + Zalo nếu App Review chậm (BRD OD-9/DD-37 · `../channels/messenger/messenger-channel-design.md`).
 >
-> **Module 3b (auth):** bản **Auth Onboarding v3 (Telegram-era) đã merge** (`5b1193b`, `main@1eb6f60`) + web tests, nhưng **DD-37 supersede provider** → phải thay bằng **Google/email** — đã spec, **chưa implement**. Vì vậy 3b để **🟡** (một phần) cho tới khi provider replacement land.
+> **Module 3b (auth) — reconcile 22/07:** toàn bộ lane Google **đã merge** trên `main@6a28072` (D0a `0015` → D0b → D1 email-token `0016` → D1 google-adapter `0017` → d1b session-rotation `0018`), có test (db 152 · web 137). **Nhưng chưa bật:** completion-hop M3 cần bằng chứng đo trên **Safari macOS + iOS thật** (Playwright chỉ có WebKit đóng băng); `GOOGLE_OAUTH_CLIENT_ID/SECRET` giữ rỗng tới khi đo xong — thủ tục ở `../probe-strict-cookie-completion-hop.md` §7. Đây là ví dụ chuẩn của luật **merged ≠ enabled**: trạng thái là 🟢, **không** phải ✅.
 
 ---
 
 ## P0–P1: FOUNDATION — Repo, Core, RLS, đa môn, 3 tầng, Google login
 
 > **Mục tiêu:** nền multi-tenant an toàn + chiều đa môn + khung 3 tầng hiển thị + **auth web (Google + email)**, trước khi có feature.
-> **Status:** 🟡 Partially complete — monorepo/core/Postgres/RLS/schema + Auth v3 Telegram-era đã merge; Google/email provider replacement còn pending.
+> **Duration:** `TBD` · **Traction gate:** — (root)
+> **Status:** 🟡 Partially complete — nền + toàn bộ lane Google đã merge (`0000`–`0018`); **Google chưa bật được** (đo Safari/iOS) và email bundle order-4 chưa code.
 
-| Item | Mô tả | Prio |
-|---|---|---|
-| Monorepo pnpm | `packages/core` + `apps/bot` + `apps/web` | P0 |
-| Lift `core` | matching, payments-logic, dates, format, i18n, **sports** + test xanh | P0 |
-| Postgres + Drizzle | thay `node:sqlite` | P0 |
-| Schema tenant đa môn | mọi bảng `tenant_id`; `sports`; `sessions.{sport_id,visibility,slots_max,area,venue,skill_level,join_policy}` | P0 |
-| **RLS** | ENABLE+FORCE, role `app NOBYPASSRLS`, fail-closed | P0 |
-| **Public read model skeleton** | bảng `public_sessions` + field whitelist (chưa cần projector đầy đủ) | P0 |
-| Repo choke-point | `tenantRepo(tenantId)` + `withTenant` (`SET LOCAL`) | P0 |
-| **Google login / tài khoản web** | Google OAuth + email/password; `account_identities.platform ∈ {google,email,facebook,zalo}` (DD-13); SI-2 keyed-hash áp cho `google.sub`/email | P1 |
-| **Test bất biến** | cô lập tenant A/B + **public chỉ field whitelist** | P0 |
+| ID | Item | Mô tả | Prio | Status |
+|---|---|---|---|---|
+| 1.1 | Monorepo pnpm | `packages/core` + `apps/bot` + `apps/web` | P0 | ✅ |
+| 1.2 | Lift `core` | matching, payments-logic, dates, format, i18n, **sports** + test xanh | P0 | ✅ 111 case |
+| 2.1 | Postgres + Drizzle | thay `node:sqlite` | P0 | ✅ |
+| 3.1 | Schema tenant đa môn | mọi bảng `tenant_id`; `sports`; `sessions.{sport_id,visibility,slots_max,area,venue,skill_level,join_policy}` | P0 | ✅ |
+| 2.2 | **RLS** | ENABLE+FORCE, role `app NOBYPASSRLS`, fail-closed | P0 | ✅ `0009` |
+| 2.3 | **Public read model skeleton** | bảng `public_sessions` + field whitelist (chưa cần projector đầy đủ) | P0 | ✅ `0006` |
+| 3.2 | Repo choke-point | `tenantRepo(tenantId)` + `withTenant` (`SET LOCAL`) | P0 | ✅ |
+| 3b.1 | **Google OAuth adapter** | PKCE tx `0017` + `/api/auth/google/{state,callback,complete}` + finalizer per-lane | P1 | 🟢 merged |
+| 3b.2 | **Session rotation completion hop (M3)** | `0018` handoff arm/consume; issuance fence reject-and-reauth | P1 | 🟢 merged |
+| 3b.3 | **Bật Google login** | đo Safari macOS + iOS thật rồi mới set `GOOGLE_OAUTH_*` | P1 | ⛔ **blocker hiện tại** |
+| 3c.1 | **Email/password bundle** | order-4, một release unit, flag OFF (gate C7) | P1 | ⬜ |
+| 3c.2 | Gỡ provider Telegram-era | sau khi 3c.1 land | P1 | ⬜ |
+| 2.4 | **Test bất biến** | cô lập tenant A/B + **public chỉ field whitelist** | P0 | ✅ 2 file |
 
-**DoD:** `drizzle push` lên Postgres sạch, RLS bật, đăng nhập Google/email tạo được tenant, test cô lập + test bất biến public xanh trong CI.
+**DoD:** `drizzle push` lên Postgres sạch, RLS bật, **đăng nhập Google thật trên Safari/iOS tạo được tenant** (không chỉ merge code), test cô lập + test bất biến public xanh trong CI.
 
 ---
 
 ## P2–P3: TENANT ENGINE — Owner-side đa tenant + mark-paid + đối soát CK
 
 > **Mục tiêu:** Zalo bot-per-club + Messenger hybrid phục vụ host/player; club không Page vẫn vận hành qua central; mark-paid/CK đúng tenant. Dogfood tenant #1.
+> **Duration:** `TBD` · **Traction gate:** Google login **ENABLED** thật + 1 host đăng nhập được
 > **Status:** ⬜ Not Started
 
 ### R1 — Zalo biết tenant
-Webhook `/webhook/zalo/:token` (bot-per-club) · tenant middleware (`webhook_token→tenant`, `ctx.repo`) · authz 2 lớp (`TenantAdmin` theo `from.id`) · lệnh host đa-tenant (`/newsession` đa môn, `/announce`, `/config`, `/cash`) · **mark-paid thủ công (tiền mặt/CK, tap/multi-select — DD-40)** · cron đa-tenant + throttler.
+
+| ID | Item | Prio | Rev? | Status |
+|---|---|---|---|---|
+| 4.1 | Webhook `/webhook/zalo/:token` (bot-per-club) | P0 | 🔴 | ⬜ |
+| 4.2 | Tenant middleware (`webhook_token→tenant`, `ctx.repo`) | P0 | 🔴 | ⬜ |
+| 4.3 | Authz 2 lớp (`TenantAdmin` theo `from.id`) | P0 | 🔴 | ⬜ |
+| 4.4 | Lệnh host đa-tenant (`/newsession` đa môn, `/announce`, `/config`, `/cash`) | P0 | 🔴 | ⬜ |
+| 4b.1 | **Mark-paid thủ công** (tiền mặt/CK, tap/multi-select — DD-40) | P0 | 🔴 | ⬜ |
+| 4.5 | Cron đa-tenant + throttler | P1 | ⬜ | ⬜ |
 
 ### R1.5 — Kênh Facebook Messenger (P2.5, App Review)
-Một Meta App + central Page + optional tenant Page · migration global-protected registry/Page identity/reachability/action state · endpoint/default resolver · role-aware host `/newsession` wizard + player local/global discover/join qua shared Session/Join/AuthZ core · opaque paginated actions · one-route delivery · App Review/24h fail-closed.
+
+| ID | Item | Prio | Rev? | Status |
+|---|---|---|---|---|
+| 17.1 | Một Meta App + central Page + optional tenant Page | P0 | ⬜ | ⬜ · 🔗 App Review |
+| 17.2 | Migration global-protected registry/Page identity/reachability/action state | P0 | ⬜ | ⬜ |
+| 17.3 | Endpoint/default resolver | P0 | ⬜ | ⬜ |
+| 17.4 | Role-aware host `/newsession` wizard + player discover/join qua shared Session/Join/AuthZ core | P0 | ⬜ | ⬜ |
+| 17.5 | Opaque paginated actions · one-route delivery | P0 | ⬜ | ⬜ |
+| 17.6 | App Review / 24h fail-closed | P0 | ⬜ | ⬜ · 🔗 ngoài tầm kiểm soát |
 
 ### R2 — Webhook CK biết tenant + payment ledger (`host_pro`)
-`/webhook/sepay/:token` (route token + verify TK + timing-safe) · transaction lưu `bank_transactions` + enqueue trước ACK · matching đa-tenant · `charges` + `payment_allocations` hỗ trợ partial/multi-person/overpay/reversal · FIFO + BL-2 · `/unmatched` + retry cron. **Auto-reconcile là tier `host_pro`; free dùng mark-paid thủ công.**
+
+| ID | Item | Prio | Rev? | Status |
+|---|---|---|---|---|
+| 5.1 | `/webhook/sepay/:token` (route token + verify TK + timing-safe) | P0 | 🟡 | ⬜ |
+| 5.2 | Transaction lưu `bank_transactions` + enqueue trước ACK | P0 | 🟡 | ⬜ |
+| 5.3 | Matching đa-tenant | P0 | 🟡 | ⬜ |
+| 5.4 | `charges` + `payment_allocations` (partial/multi-person/overpay/reversal) · FIFO + BL-2 | P0 | 🟡 | ⬜ |
+| 5.5 | `/unmatched` + retry cron | P1 | 🟡 | ⬜ |
+
+**Auto-reconcile là tier `host_pro`; free dùng mark-paid thủ công (4b.1).** → 5.x là *giá trị gói trả phí* (🟡), không chặn đường tới revenue; 4b.1 mới chặn.
 
 ### R3 — Migrate tenant #1
-Script SQLite→Postgres (tenant "Bestminton" + BankAccount + copy data, gắn **sport=cầu lông**) · cutover (đối chiếu số dòng → link Zalo/Messenger → go-forward vận hành trên Zalo/Messenger/web). *(Bot Telegram cũ đóng băng làm reference lịch sử.)*
+
+| ID | Item | Prio | Rev? | Status |
+|---|---|---|---|---|
+| 6.1 | Script SQLite→Postgres (tenant "Bestminton" + BankAccount + copy data, `sport=cầu lông`) | P0 | ⬜ | ⬜ |
+| 6.2 | Cutover: đối chiếu số dòng → link Zalo/Messenger → go-forward | P0 | ⬜ | ⬜ |
+
+*(Bot Telegram cũ đóng băng làm reference lịch sử.)*
 
 **🎯 Milestone:** 2 tenant (một có Page riêng, một không) dùng central; host tạo và player join đúng tenant trên central/tenant Page; no cross-tenant/double-send; Zalo/payment dogfood vẫn đúng.
 
@@ -224,6 +334,7 @@ Script SQLite→Postgres (tenant "Bestminton" + BankAccount + copy data, gắn *
 ## P3.5: IDENTITY — Gộp đúng 1 người xuyên kênh
 
 > **Mục tiêu:** Person toàn cục + **link Facebook/Zalo vào Person đăng nhập Google** + merge an toàn (nền cho player-side & player view & discovery join).
+> **Duration:** `TBD` · **Traction gate:** tenant #1 chạy ≥ 4 buổi thật trên Zalo/Messenger + có ≥ 1 ca 1-người-2-kênh quan sát được
 > **Status:** ⬜ Not Started
 
 Person/ChannelIdentity/Reachability (C1) · Membership (refactor members, UNIQUE per tenant) · **link Facebook + Zalo** vào cùng Person · claim-có-tiền cần verified account email hoặc transactional one-time `link_code` (**DD-50: không thu SĐT phase-1, phone dormant**) · conflict-safe merge plan, không rewrite ledger (DD-53).
@@ -236,6 +347,7 @@ Person/ChannelIdentity/Reachability (C1) · Membership (refactor members, UNIQUE
 
 > **Mục tiêu:** PostgreSQL/domain model làm canonical store; web và chat là surfaces đồng bộ; host onboard self-serve; **chat in-app + cài đặt hồ sơ/giá theo giới tính**; player **khám phá & join kèo cross-club**.
 > **Prerequisite:** P2–P3.5 stable.
+> **Duration:** `TBD` · **Traction gate:** ≥ 2 tenant vận hành thật (1 có Page riêng, 1 dùng central) + ledger khớp sổ tay 2 kỳ liên tiếp
 > **Status:** ⬜ Not Started
 
 ### R4 — Web app + Sync engine
@@ -269,6 +381,7 @@ Web signup → tenant/config/bank/Zalo. Messenger central sẵn; Page riêng opt
 ## P4.5–P4.7: PLAYER-SIDE CHANNELS — Join & nhắc/xác nhận đa kênh
 
 > **Mục tiêu:** player join mượt từ chính kênh chat (Messenger → Zalo) + được nhắc/xác nhận tự động.
+> **Duration:** `TBD` · **Traction gate:** ≥ 20 kèo public/tuần trên marketplace
 > **Status:** ⬜ Not Started
 
 Messenger base P2.5 + player action UX P4.5 · player view P4.6 · Zalo P4.7. Messenger reachability theo Page endpoint; reminder/notify one-route tenant Page→central, web+Zalo primary fallback.
@@ -283,6 +396,7 @@ Messenger base P2.5 + player action UX P4.5 · player view P4.6 · Zalo P4.7. Me
 ## P5: BILLING
 
 > **Mục tiêu:** thu phí thuê bao host bền vững.
+> **Duration:** `TBD` · **Traction gate:** ≥ 3 host ngoài dùng ≥ 4 tuần liên tục **và** ≥ 1 host hỏi/chấp nhận trả phí
 > **Status:** ⬜ Not Started
 
 `subscription_invoices` (tách khỏi ledger player) · thu qua CK match `invoiceCode` → gia hạn · vòng đời **plan trả phí** trial→active→past_due→suspended · **`free` (0đ) vào thẳng `active` vô thời hạn — không trial/invoice, không past_due/suspended vì non-payment** (DD-29, BL-BIL-1) · suspended: chặn lệnh quản trị, **vẫn lưu CK player; kèo public hiện có chỉ sống tới khi đóng/hết giờ** · fair-use LLM/STT.
@@ -296,6 +410,7 @@ Trial → trả phí ≥ ngưỡng · MRR tăng, churn thấp.
 
 ## P6: HARDENING & SCALE
 
+> **Duration:** `TBD` · **Traction gate:** có doanh thu thật **hoặc** ≥ 10 tenant — điều kiện nào đến trước
 > **Status:** ⬜ Not Started
 
 Pen-test cô lập **+ pen-test public layer** (thử rò tiền/PII/giới tính qua discovery) · load test >1k tenant + burst webhook + discovery + sync-lag (≤ vài giây p95) · observability (log `tenant_id`, metrics sync-lag, error tracking) · token-drift detection · secret KMS + scrub log · ToS/Privacy (tài chính + vị trí + hồ sơ cá nhân) · backup/restore drill.
@@ -385,7 +500,67 @@ Foundation(RLS+sports+3-tier+Google) → Zalo-tenant → CK-reconcile → migrat
    → ⬜          ⬜                          ⬜            ⬜         ⬜
 ```
 
-**Bottleneck hiện tại:** Foundation + Auth v3 (Telegram-era) đã land trên **`main@1eb6f60`** (migrations `0000–0013`); node kế tiếp = **author/review launcher-ready slice rồi thay provider auth Telegram-era → Google/email (DD-13/DD-37)**; sau đó mở feature layer (session → reconcile → sync).
+**Bottleneck hiện tại (reconcile 22/07, `main@6a28072`):** nền + **toàn bộ lane Google đã merge** (migrations `0000–0018`, db 152 + web 137 test case). Node kế tiếp **không phải viết code auth nữa** mà là:
+
+1. ⛔ **Đo Safari macOS + iOS thật** cho completion-hop M3 → mới được set `GOOGLE_OAUTH_*` và bật login (`../probe-strict-cookie-completion-hop.md` §7). Đây là blocker **duy nhất** đang chặn P0–P1 đóng.
+2. ⬜ Email/password bundle order-4 (flag OFF) → gỡ Telegram provider.
+3. ⬜ Mở feature layer: session → mark-paid → reconcile → sync.
+
+---
+
+## 💰 Critical Path to Revenue
+
+> Tách khỏi critical path kỹ thuật ở trên. Câu hỏi khác nhau: critical path hỏi *"thứ tự nào không vỡ dependency"*; mục này hỏi **"chuỗi ngắn nhất tới đồng đầu tiên"** — và cái gì đang nằm trên chuỗi đó mà không cần thiết.
+
+```text
+[✅] Foundation + RLS
+        │
+[🟢⛔] Google login MERGED ──▶ ⛔ ĐO SAFARI/iOS ──▶ [⬜] login bật được
+        │
+[⬜] Session CRUD (host tạo kèo)
+        │
+[⬜] 4b.1 Mark-paid thủ công  ◀── free tier đã đủ vận hành từ đây
+        │
+[⬜] Dogfood tenant #1 trên kênh thật ──▶ traction gate P5
+        │
+[⬜] 18 Billing + lifecycle (`subscription_invoices`, CK match `invoiceCode`)
+        │
+        ▼
+    💰 ĐỒNG DOANH THU ĐẦU TIÊN
+```
+
+**Không nằm trên chuỗi (có thể trượt mà không mất doanh thu):**
+
+| Hạng mục | Vì sao không chặn revenue |
+|---|---|
+| **17 Messenger / App Review** | Zalo + web đã đủ vận hành; Messenger là kênh mở rộng. Degrade path đã pin ở DD-37 |
+| **11–13 Marketplace discovery** | Là động cơ tăng trưởng phía cầu, không phải điều kiện để host trả tiền |
+| **10b Chat in-app · 10c gender pricing** | Tăng độ dính, không phải lý do mua |
+| **7 Identity merge** | Cần cho đúng-nợ-xuyên-kênh; 1 kênh thì chưa bức thiết |
+| **DD-73..78 share/activity/feed** | Đã tự gate bằng evidence, đúng chỗ |
+
+**Nằm trên chuỗi nhưng có thể làm mỏng hơn:**
+
+- **5.x auto-reconcile** là *giá trị* của `host_pro`, nhưng host vẫn trả tiền được khi có mark-paid + nhắc thủ công. Nếu cần rút ngắn đường tới revenue: ship 4b.1 trước, 5.x sau.
+- **9 Sync engine** cần cho đa-surface. Nếu phase-1 chấp nhận **web-first, kênh chat read-mostly**, sync có thể mỏng đi đáng kể ở vòng đầu.
+
+> ⚠️ **Quan sát thẳng:** đường tới doanh thu hiện đi qua **P5**, tức gần cuối roadmap. Đây là rủi ro cấu trúc, không phải rủi ro thực thi — validate willingness-to-pay bị đẩy về sau cùng. Cân nhắc một **soft-launch thu phí sớm** (thủ công, không cần module 18: chuyển khoản + bật cờ tay) ngay khi có 3 host ngoài, để đo giá trước khi build lifecycle tự động.
+
+---
+
+## 📣 GTM theo phase
+
+| Phase | Kênh acquisition | Đối tượng | Chỉ dấu thành công |
+|---|---|---|---|
+| **P0–P1** | Không acquire — dogfood nội bộ | CLB của founder | Host (founder) đăng nhập + tạo kèo được |
+| **P2–P3** | Tenant #1 migrate; giới thiệu 1-1 trong nhóm Zalo sẵn có | 1–2 CLB cầu lông quen | 2 tenant vận hành thật, 0 sự cố cross-tenant |
+| **P3.5–P4** | Word-of-mouth từ host #1 sang host cùng sân/cùng giờ | Host cầu lông cùng khu vực | ≥ 5 host onboard self-serve không cần hỗ trợ tay |
+| **P4.3** | Seed marketplace bằng chính kèo của tenant hiện có; group Facebook/Zalo cầu lông theo khu vực | Player discovery (persona P4 "Lan") | ≥ 20 kèo public/tuần; player lạ join được |
+| **P4.5–P4.7** | Player kéo player trong chính kèo (nhắc/xác nhận tạo thói quen) | Player member | ≥ 60% player tự join |
+| **P5** | Chuyển host free đang active nhất sang `host_pro`; giá thấp, trích quỹ nhóm | Host đã dùng ≥ 4 tuần | ≥ 1 host trả phí thật |
+| **P6** | Mở rộng môn (pickleball/tennis) khi cầu lông đã bão hoà 1 khu vực | Host đa môn | Không rò rỉ khi scale |
+
+> **Beachhead giữ nguyên:** cầu lông, 1 khu vực, host có sẵn cộng đồng. Mở môn/mở vùng chỉ sau khi vòng lặp host→player→host chạy được ở khu vực đầu tiên (risk #6 marketplace cold-start).
 
 ---
 
@@ -408,12 +583,66 @@ Foundation(RLS+sports+3-tier+Google) → Zalo-tenant → CK-reconcile → migrat
 
 > **Số kèo "hoàn tất vòng" mỗi tuần** = kèo được tạo → có player join (gồm **join qua discovery**) → đối soát/xác nhận. Đo cả 2 phía: host vận hành thật + player (kể cả mới) join thật, đa môn, đa kênh (Zalo/Messenger/web).
 
+**Metric hiện tại = 0** — chưa có surface nào chạy. Metric phụ để theo dõi tới khi North Star khởi động được:
+
+| Giai đoạn | Metric tạm | Ngưỡng |
+|---|---|---|
+| P0–P1 | Đăng nhập Google thành công trên thiết bị thật | ≥ 1 (Safari + iOS) |
+| P2–P3 | Kèo tạo trên Zalo đúng tenant / tuần | ≥ 2 |
+| P4 | Kèo tạo trên web hiện đúng ở kênh ≤ vài giây | p95 ≤ 3s |
+
+---
+
+## Phụ lục A — Bảng tra DD (chỉ các DD được ROADMAP tham chiếu)
+
+> Đây là **bản tra nhanh**, không phải authority. Nguồn sự thật vẫn là `../standards/decisions.md` (**v1.98**, DD-01..DD-87). Khi hai bên lệch ⇒ decisions.md thắng, và bảng này phải được sửa.
+
+| ID | Một dòng | Trạng thái |
+|---|---|---|
+| DD-03 | Pricing 4-tier theo kênh | 🔄 thay bằng DD-29 |
+| DD-04 | Hosting PostgreSQL → DigitalOcean co-locate | ✅ (còn gate egress-IP) |
+| DD-06 | Độ chi tiết vị trí public = area-only | ✅ |
+| DD-10 | Web stack = Next.js | ✅ |
+| DD-12 | Public read model `public_sessions` + projector | ✅ |
+| DD-13 | Auth phase-1 = Google + email/password | ✅ |
+| DD-14 | Zalo Login có bị chặn bởi cửa đăng ký OA? | ⬜ **mở — SPIKE** |
+| DD-18 | Provider embedding/LLM + privacy/ToS | ⬜ mở — **chặn go-live Assistant** |
+| DD-29 | Pricing pivot: `free` 0đ + `host_pro` 250k | ✅ |
+| DD-30 | APIpay enterprise auto-provision per-host | ✅ |
+| DD-32 | Channel-first booking funnel (Option A) | ✅ |
+| DD-33 | Facebook Login / Messenger account-link | ✅ (Meta evidence còn pending) |
+| DD-34 | Plexco Global KB plane | 🟡 approve-in-principle P7 |
+| DD-37 | Channel pivot: bỏ Telegram; Messenger + Zalo + web | ✅ |
+| DD-38 | Chat in-app phase-1 (club-wide + 1-1, chỉ Plexco) | ✅ |
+| DD-39 | Giá theo giới tính | ✅ |
+| DD-40 | Mark-paid thủ công mặc định mọi tier | ✅ |
+| DD-41 | Field mô tả + gating cho `sessions` | ✅ |
+| DD-45 | Model hoá waitlist | ✅ |
+| DD-47 | Social follow graph | ✅ framework, build P4+ |
+| DD-49 | Money correction lifecycle | ✅ |
+| DD-50 | Không thu SĐT phase-1; khoá mạnh = verified email + `link_code` | ✅ |
+| DD-51 | Host Pro lifecycle trial/grace/refund | ✅ |
+| DD-53 | Identity recovery + merge-split authority | ✅ |
+| DD-57 | FE architecture principles (adopt từ Sporta) | 🟡 đề xuất |
+| DD-60 | API reference convention | ✅ |
+| DD-61..64 | Session Organize (court/match/assign/live score) | ✅ accept-in-principle · build post-P4 |
+| DD-65..68 | Messenger hybrid: topology · shared surface · page-scoped identity · durable interaction | ✅ |
+| DD-69 | App-native: phase-1 PWA → phase-2 native | ✅ định hướng · build TBD |
+| DD-73 | Share link + preview card | ✅ · tách 2 slice |
+| DD-74/75 | Activity read model + publish lifecycle | ✅ · tạo baseline |
+| DD-76/77 | Feed + kudos | ✅ contract · **build gated bởi evidence** |
+| DD-78 | Ảnh share do Plexco render (template-only) | ✅ |
+| DD-79 | Home personal dashboard (S9, composition-only) | ✅ |
+| DD-80 | Auth credential lifecycle (B0) + slice order D0a→D1→email→gỡ Telegram | ✅ · **D0a..d1b đã merge** |
+| DD-81 | Design tool = Pencil (`.pen`) | ✅ |
+
 ---
 
 ## Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 22/07/2026 | **v3.4** | **Khung đo lường + reconcile bằng chứng — KHÔNG đổi scope.** (1) Thêm §**Cách đọc tiến độ**: 6 trục Spec/Migration/BE/FE/Tests/Invariant + định nghĩa Done từng trục + **5 luật chống lạm phát** (docs≠runtime · merged≠enabled · `.pen`≠FE · đếm phải tái tạo được · trục yếu nhất là trạng thái thật) + lệnh tái tạo số đếm. (2) Thay thanh % đơn bằng **ma trận theo delivery group** + bảng **số đếm kiểm chứng được** tại `main@6a28072` (19 migration · 28 test file · 403 test case · 10 route · 25+24 spec · **0 màn FE**). (3) Thêm cột **Duration (`TBD`, owner điền)** + **Traction gate** cho mọi delivery group và phase header. (4) Thêm §**Critical Path to Revenue** + bảng "không chặn revenue" + cảnh báo revenue nằm ở P5. (5) Thêm §**GTM theo phase**. (6) Module Progress tách cột Spec/Migration/BE/FE/Tests + cột **Rev?**; các R-section P0–P3 chuyển sang **item có ID + Prio + Status**. (7) Thêm **Phụ lục A — bảng tra DD**. (8) Thêm **module 3c** = email/password bundle order-4 + gỡ Telegram — **decomposition của DD-80 §10 slice order đã chốt**, không phải scope mới. (9) **Reconcile số liệu sai:** migrations `0000–0013`→**`0000–0018`**; "Google/email chưa code"→**lane Google đã merge, ⛔ chưa bật** (chờ đo Safari/iOS); authority `decisions v1.74`→**v1.98**, BRD v3.9f→v3.9g, PRD v2.8e→v2.8f, TDD v3.1→v3.1a; `~20%`→`~33%`. **Không phase nào thêm/bớt; không DD nào đổi trạng thái; delivery order + dependency map giữ nguyên.** |
 | 19/07/2026 | v3.3f | **Mirror DD-79 ✅ Home hub vào S9** (landing + nav registry, composition-only, spec Reviewed) + **DD-81 ✅ Pencil** (`plexco-app-design.pen`, theme exploration trên màn Home). Không đổi slice order/dependency/runtime. |
 | 19/07/2026 | v3.3e | Authority pointer refresh v1.67→v1.74 (+BRD v3.9f/PRD v2.8e): v1.68–v1.74 BE-contract closure no-runtime; không đổi delivery order/canonical phase. Đồng bộ footer. |
 | 19/07/2026 | v3.3d | **Correct DD-73..78 sequencing theo decisions v1.64; current authority v1.65:** DD-74/75 tạo baseline nên không thể nằm sau gate dùng chính baseline đó; chỉ DD-76/77 hard-gated. DD-78 đi cùng consumer. Đồng bộ authority/footer version; không đổi canonical phase hay runtime readiness. |
@@ -439,4 +668,4 @@ Foundation(RLS+sports+3-tier+Google) → Zalo-tenant → CK-reconcile → migrat
 
 ---
 
-*ROADMAP v3.3e — canonical phase duy nhất; authority qua decisions v1.74; implementation pending; PostgreSQL/domain model là nguồn sự thật.*
+*ROADMAP v3.4 — canonical phase duy nhất; authority qua decisions **v1.98**; số đếm pin tại `main@6a28072`; implementation pending; PostgreSQL/domain model là nguồn sự thật.*
