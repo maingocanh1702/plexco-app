@@ -231,7 +231,7 @@ notes: **CODE_READY 2026-07-22 (Verdict 7, pinned `main@fc7d0a4`).** Deps merged
 
 ## task: auth-s4-d1-google-adapter
 title: Google OIDC provider adapter + oauth transaction/Lax binding
-status: ready
+status: merged
 risk: P0
 change_class: identity-feature
 depends_on: [auth-s4-d0-revoke-core, auth-s4-d0-session-web-boundary, auth-s4-d1-email-token-core]

@@ -14,7 +14,9 @@
 >
 > **✅ CẬP NHẬT 2026-07-22 — D1 email-token-core ĐÃ MERGE (`64fb4d3`):** migration `0016` atomic (5 bảng dark + PHC validator/trigger + consume helper parent-first + 5 cleanup deadlock-free), `auth_audit_events` reuse từ `0015`, zero app grant. DB tests 97→128. Gate đóng bằng **1 clean round + independent directed review** sau 9 vòng Codex phi tất định — **override thứ 2/3 slice**. Evidence: Verdict 8. `D1E-18b` (merge barrier nửa account-issued link_code) **deferred-by-construction** → nghĩa vụ chuyển sang slice identity companion order-4.
 >
-> **Hot area giờ là order-3 `auth-s4-d1-google-adapter`** (migration `0017`, OAuth transactions + Lax binding + collision matrix). Deps đã đủ; **chỉ còn thiếu một verdict policy-1.3 mới** (Verdict 4 đã superseded) — acceptance matrix D1-1..15 đã có sẵn. Rồi → email bundle (flag OFF) → gỡ Telegram.
+> **✅ CẬP NHẬT 2026-07-22 — D1 Google adapter ĐÃ MERGE (`c6edbfa`):** migration `0017` `auth_oauth_transactions` (PKCE AEAD + key version riêng, single-use claim), proof matrix OIDC, Lax path-scoped binding cookie tách khỏi session Strict, `/api/auth/google/{state,callback}`, `auth_login_google` per-lane finalizer + collision table §4. Suite db 144 · web 131. Evidence: Verdict 10.
+>
+> **⛔ HOT AREA: `auth-s4-d1b-oauth-session-rotation` — BLOCKER BẬT GOOGLE LOGIN.** D1 mint-fresh (đúng matrix D1-2/D1-13) vì cookie `SameSite=Strict` không được gửi ở callback cross-site ⇒ **session có trước khi login Google vẫn sống sót**. Chưa live (route 503 khi thiếu config). Phải land **trước khi set `GOOGLE_OAUTH_CLIENT_ID/SECRET` ở bất kỳ env nào**. Slice này **chưa CODE_READY** — còn thiếu acceptance rows + verdict (xem `acceptance_obligation` trong manifest). Sau đó → order-4 email bundle (flag OFF, gate C7, kế thừa D1E-18b) → gỡ Telegram.
 
 ---
 
