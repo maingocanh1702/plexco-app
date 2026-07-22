@@ -183,7 +183,7 @@ notes: MERGED historical AP-27 packet; its marker is present on main. The genera
 
 ## task: docs-auth-d1-packet
 title: D1 google-adapter implementation packet + DD-38/39 readiness (split 2/2 from AP-26 monolith)
-status: planned
+status: ready
 risk: P2
 change_class: docs-traceability
 depends_on: [auth-s4-d0-revoke-core, auth-s4-d0-session-web-boundary]
@@ -191,7 +191,7 @@ invariants: [auth, schema]
 scope: [docs/auth-d1-implementation-packet.md]
 manifest: docs/autopilot-manifests/docs-auth-d1-packet.json
 merged_probe: docs/auth-d1-implementation-packet.md :: AUTH_D1_PACKET_COMPLETE
-notes: HOLD — not launcher-ready until both D0a and D0b merged probes exist on origin/main. AP-28 remains a P2 docs-only preparation slice, but its preflight and manifest now pin DD-80 v1.88, tech v2.10, verdicts v0.7 and the two live D0 dependencies. The D1-specific v1.86 AAD/audit obligations remain unchanged; re-audit citations against the then-current committed base before authoring the packet.
+notes: **UNBLOCKED 2026-07-22 — HOLD đã gỡ.** Điều kiện cũ (D0a + D0b merged probes trên origin/main) **đã thoả**: `0015::auth_revoke_account_sessions` và `apps/web/app/api/auth/logout-all/route.ts` đều live; thực tế cả `auth-s4-d1-google-adapter` (`0017`) và `d1b` (`0018`) cũng đã merge, nên packet này giờ mô tả code **đã tồn tại** chứ không phải code dự kiến — author phải verify-on-disk từng citation thay vì chép lại kế hoạch cũ. Cảnh báo lịch sử vẫn giữ: AP-28 remains a P2 docs-only preparation slice, but its preflight and manifest now pin DD-80 v1.88, tech v2.10, verdicts v0.7 and the two live D0 dependencies. The D1-specific v1.86 AAD/audit obligations remain unchanged; re-audit citations against the then-current committed base before authoring the packet.
 
 ## task: auth-s4-d0-revoke-core
 title: Account-session epoch DB core for linearizable revoke-all
