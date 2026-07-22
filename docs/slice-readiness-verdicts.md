@@ -7,7 +7,7 @@
 > **Current auth refresh (2026-07-20):** `origin/main@033ccc8fd9c3f247abf8aa0cb5a0f48b96d006e2` — DD-80 v1.88 authority bundle immutable on main. **Verdict 5a (D0a) = CODE_READY** (re-pinned 033ccc8); Verdict 5b (D0b) `NOT_CODE_READY` pending D0a merge. Verdicts 1/3/4 remain historical snapshots only.
 > **D0a IMPLEMENTED & MERGED (2026-07-20):** slice `auth-s4-d0-revoke-core` squash-merged to `main` (migration `0015` live). The P0 "2 consecutive FULL-base Codex clean" gate was **NOT reached** after 12 rounds (10 real findings fixed incl. round-06 epoch-vs-`revoked_at` P1; round-11 self-caught + `git revert`ed) → merge is a **documented owner override** resting on manual review + acceptance coverage 22/22 + real-Postgres 97/97, **not** an automated clean-round pass. See `.autopilot/state/auth-s4-d0-revoke-core/HALT-MAX_ROUNDS.txt` + the squash commit. **Verdict 5b (D0b) unblocks** once the D0a squash lands on origin/main.
 > **D0b IMPLEMENTED & MERGED (2026-07-22):** slice `auth-s4-d0-session-web-boundary` squash-merged to `main@93c5404` (issuance fence + logout-all route; zero DB change). Unlike D0a, the P0 **"2 consecutive FULL-base Codex clean rounds" gate was MET** (round-03/04, only 2 fix rounds) — **no owner override**. Real-Postgres suite green (db 97/97 unchanged · core 111 · bot 3 · web 78). Recorded as **Verdict 6**. Next in chain: `auth-s4-d1-email-token-core`.
-> **Machine classification (2026-07-22, final for the D0/D1 core run):** Verdicts 1/3/4/5a/5b/6/7/8 are immutable historical evidence. **Verdict 2** (`dd41-public-session-projection-fields`, NOT_CODE_READY) is the only active block in this tracker. Verdict 7's authorization was consumed by the implementation recorded in Verdict 8; no fresh D1 verdict is pending. The next auth authorization required is the order-4 identity companion, which inherits the D1E-18b barrier obligation.
+> **Machine classification (2026-07-22):** `<!-- review-verdict: historical -->` controls immutable blocks; unmarked blocks are current for their own pinned slice/snapshot. **Verdict 15** records DD-87 as owner-decided but `NOT_CODE_READY` solely because its corrected authority packet is still uncommitted WIP outside `main@6a28072`; it does not supersede unrelated active candidates.
 
 ---
 
@@ -654,11 +654,12 @@ BASE_BRANCH: main
 TARGET_FILES:
   - docs/autopilot-manifests/db-migration-0000-idempotent-role-create.json
   - packages/db/src/migrate.ts
+  - packages/db/src/test-harness.ts
   - packages/db/vitest.config.ts
   - packages/db/migrations/0000_roles_extensions.sql
 SLICE: db-migration-0000-idempotent-role-create
 IN_SCOPE: runner-level exception-handled role-ensure in migrate.ts gated on 0000-not-yet-applied; correct the misleading advisory-lock comment; flip fileParallelism to true; a migrate/bootstrap test covering the concurrency and error-discrimination cases
-OUT_OF_SCOPE: editing migration 0000 (applied + immutable); any new migration file; changing which roles exist, their attributes or any grant; removing the existing advisory lock; swallowing any SQLSTATE other than duplicate_object
+OUT_OF_SCOPE: editing migration 0000 (applied + immutable); any new migration file; changing which roles exist, their attributes or any grant; removing the existing advisory lock; swallowing any SQLSTATE other than the two role-already-exists codes named in the amendment below
 G1_DECISION: PASS
 G2_SPEC: PASS
 G3_DEPENDENCY: PASS
@@ -673,7 +674,7 @@ LIVE_REPO_VERIFICATION: PASS (0000 lines 20-32 are the check-then-act DO block o
 CONTRACT_MATRIX: PASS
 CLOSURE_MATRIX: PASS (12/12)
 ACCEPTANCE_MATRIX: PASS (BR-1..BR-7 in the manifest; BR-1 concurrency and BR-6 parallelism must be run repeatedly, not once, since the defect is a race)
-SECURITY_AND_MIGRATION_GATE: PASS (no migration added or edited; 0000 stays byte-identical with an unchanged checksum and the immutability guard intact; no role, attribute or grant changes; only duplicate_object is swallowed; the advisory lock stays for same-database deploys)
+SECURITY_AND_MIGRATION_GATE: PASS (no migration added or edited; 0000 stays byte-identical with an unchanged checksum and the immutability guard intact; no role, attribute or grant changes; the advisory lock stays for same-database deploys. AMENDED 2026-07-22, owner-ratified: the ensure step swallows duplicate_object 42710 OR unique_violation 23505, not 42710 alone. Measured, not assumed — CREATE ROLE's internal existence check is NOT atomic with the insert into pg_authid, so two backends that both pass the pre-check collide on pg_authid_rolname_index and the loser raises 23505; empirically that is the dominant loser code by roughly 50:1. Swallowing only 42710 would leave the very race this slice exists to close. Blast radius stays tight because the DO block contains exactly one CREATE ROLE for one named role, so 23505 there can only mean that rolname already exists; insufficient_privilege 42501 and every other SQLSTATE still propagate and abort)
 IMPLEMENTATION_ARTIFACTS: PASS (manifest with problem statement, pinned mechanism, rejected alternative and acceptance)
 FIRST_IMPLEMENTATION_STEP: open a manual P0 worktree, add the gated exception-handled role-ensure to migrate.ts before the migration loop and outside the migration transaction, correct the advisory-lock comment, then write the concurrency + error-discrimination tests BEFORE flipping fileParallelism
 REMAINING_BLOCKERS: none
@@ -688,12 +689,73 @@ NEXT_REVIEW_TRIGGER: merged -> multiple autopilot worktrees may run their DB sui
 
 **Giá trị thật:** `vitest.config.ts` tự ghi rằng `fileParallelism:false` *"is what actually prevents (2)"*, và lý do (1) đã được thoả sẵn vì mọi suite truyền `dbName` riêng. Nên đóng (2) là **đủ** để bật parallel — thứ cuối cùng đang chặn nhiều autopilot worktree chạy DB suite đồng thời.
 
+**AMENDED 2026-07-22 (owner-ratified A1–A3) — ba sai lệch so với bản viết ban đầu, đều có bằng chứng:**
+
+- **A2 — sai sót trong chính verdict này.** Bản đầu viết "chỉ nuốt `duplicate_object`", chép theo gợi ý trong backlog **mà không đo**. Thực tế: check tồn tại nội bộ của `CREATE ROLE` **không atomic** với insert vào `pg_authid`, nên hai backend cùng qua pre-check sẽ đụng `pg_authid_rolname_index` và bên thua raise **`unique_violation` 23505**, áp đảo `42710` khoảng **50:1**. Nuốt mỗi 42710 ⇒ **race vẫn abort** — tức slice không sửa được đúng thứ nó sinh ra để sửa. Nay nuốt **42710 hoặc 23505**; `42501` và mọi mã khác vẫn propagate. Blast radius chặt vì DO block chứa đúng một `CREATE ROLE` cho một role có tên.
+- **A1 — bug thật, Codex round-01 bắt đúng.** Tạo role vô điều kiện làm abort trên cluster đã có sẵn role + DDL owner `NOCREATEROLE`, vì Postgres kiểm quyền `CREATEROLE` **trước** khi phát hiện trùng — vi phạm đúng negative-scope #6 của chính verdict này. Đã thêm existence pre-check; pre-check lo phần quyền, exception handler lo cửa sổ race mà pre-check vốn không đóng được.
+- **A3 — chỉ test.** Bật parallel làm lộ race thứ hai: `ALTER ROLE … PASSWORD` đồng thời trên role dùng chung trong `test-harness.ts` ("tuple concurrently updated"). Đã làm retry-tolerant; `test-harness.ts` thêm vào TARGET_FILES và scope.
+
+Việc implementer **dừng lại xin phê duyệt** thay vì tự nới contract P0 là đúng gate — ghi nhận.
+
+---
+
+## Verdict 15 — `core-matcher-grouped-amount-parsing`, DD-87 contract closed on disk (2026-07-22)
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: NOT_CODE_READY
+REVIEWED_AT: 2026-07-22
+AUTHORITY_SHA: 6a28072c433d24aa489b3456b301b5a7e99a2716
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/dd-87-splitnameamount-decision-table-analysis.md
+  - docs/standards/decisions.md
+  - docs/autopilot-manifests/core-matcher-grouped-amount-parsing.json
+  - docs/autopilot-core-split-name-amount-ambiguity-contract.md
+  - .claude/commands/ap-29-core-split-name-amount-ambiguity-contract.md
+  - docs/autopilot-backlog.md
+  - docs/slice-readiness-verdicts.md
+  - docs/auth-s4-session-handoff.md
+SLICE: core-matcher-grouped-amount-parsing
+IN_SCOPE: splitNameAmount exhaustive tagged-union contract, all positive parseMoney trailing candidates, exact unit assertions
+OUT_OF_SCOPE: transports, DB/schema/migrations, ledger mutation, classifyAmount/FIFO, consumer picker implementation, ignored historical table lift
+G1_DECISION: FAIL
+G2_SPEC: PASS
+G3_DEPENDENCY: FAIL
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: corrected DD-87 authority packet must be committed/pushed on main
+PRIOR_SLICES: none
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS (main=origin/main@6a28072; splitNameAmount only has the test caller; GitNexus upstream risk LOW, 0 runtime process; parseMoney/source/tests exist; no schema dependency; phase1-fable5 is registered and worktree prune dry-run reports nothing)
+CONTRACT_MATRIX: PASS (none|resolved|ambiguous tagged union; ambiguous has ordered candidate tuple and no top-level amount; ambiguity dedupes interpretations by name+amount)
+CLOSURE_MATRIX: FAIL (9/12 — authority snapshot, merged first-step authority, and committed/pushed handoff are not closed)
+ACCEPTANCE_MATRIX: PASS (DD-87 exact 18 rows + SNA-1..SNA-8; includes equal-amount/different-name Player 0 110k)
+SECURITY_AND_MIGRATION_GATE: PASS (pure function; no IO/log/DB/migration; no second grammar or heuristic; rollback is code commit revert)
+IMPLEMENTATION_ARTIFACTS: FAIL (manifest + task contract + AP-29 launcher + backlog authored on disk, not committed/pushed default branch)
+FIRST_IMPLEMENTATION_STEP: blocked until origin/main re-pin; then create dedicated worktree, register manifest, record DD-87 design probe and add failing SNA tests
+REMAINING_BLOCKERS:
+  - blocker: corrected DD-87 decision and implementation packet are outside the pinned authority SHA
+    owner: owner git workflow
+    resolution: commit and push every TARGET_FILE on main; re-open live files at the new origin/main SHA; promote task contract from enforce to code-ready and issue strict CODE_READY with 12/12 closure
+NEXT_REVIEW_TRIGGER: origin/main commit containing every Verdict-15 TARGET_FILE
+```
+
+**Đọc verdict:** product/technical choice đã đóng và không còn open question. `NOT_CODE_READY` ở đây không
+che contract gap; nó là gate authority bất biến: file untracked/modified không thể authorize worktree. Sau
+commit/push, re-review chỉ cần re-pin exact SHA, verify validator thấy hai artifact, đổi directive task contract
+thành `code-ready`, và nâng closure 9/12 → 12/12 nếu live diff vẫn đúng packet.
+
 ---
 
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 22/07/2026 | v2.0 | **Verdict 14 AMENDED (owner-ratified A1–A3), patch tại chỗ — slice/authority không đổi, chỉ sửa một dòng gate sai sự thật.** **A2:** bản đầu viết "chỉ nuốt `duplicate_object`" — chép từ backlog **không đo**; thực tế check tồn tại của `CREATE ROLE` không atomic với insert `pg_authid`, bên thua race raise **23505** áp đảo 42710 ~50:1, nên nuốt mỗi 42710 sẽ để nguyên chính cái race cần đóng. Nay **42710 hoặc 23505**; 42501 và mọi mã khác vẫn abort. **A1:** tạo role vô điều kiện abort khi DDL owner `NOCREATEROLE` (Postgres kiểm quyền trước khi thấy trùng) — vi phạm negative-scope #6; thêm existence pre-check. **A3:** test-only, `ALTER ROLE … PASSWORD` đồng thời → retry-tolerant; `test-harness.ts` vào TARGET_FILES + scope. Implementer dừng xin phê duyệt thay vì tự nới contract P0 — đúng gate. |
+| 22/07/2026 | v1.9 | **Verdict 15 — DD-87 contract closed on disk, `NOT_CODE_READY` pending immutable authority.** Owner chốt exhaustive tagged union: ambiguity theo `(name,amount)`, equal-amount/different-name vẫn ambiguous, no top-level amount, no second grammar. Exact 18-row + SNA-1..8, manifest/task/AP-29/backlog authored. Closure 9/12 vì packet chưa commit/push; next trigger là origin/main commit chứa toàn bộ target rồi strict re-pin. |
 | 22/07/2026 | v1.8 | **Verdict 14 — `db-migration-0000-idempotent-role-create` re-scoped từ `DESIGN_UNFIT` → `CODE_READY`.** Khung cũ ("làm 0000 atomic") bất khả thi vì 0000 applied + immutable; khung mới không đụng 0000. Phát hiện: `pg_advisory_lock` trong `migrate.ts` là **database-scoped**, nên comment "ngăn concurrent deploys interleave DDL" **không đúng cho object cluster-global** — sửa comment nằm trong scope. Cơ chế pin: role-ensure exception-handled ở runner, gated trên "0000 chưa applied". Acceptance BR-1..BR-7. Mở khoá `fileParallelism:true` (lý do (1) đã thoả sẵn nhờ `dbName` riêng). |
 | 22/07/2026 | v1.7 | **Verdict 13 — d1b implemented (`04df464`), chờ merge tay.** 14 file, +984/−68; suite db 152 · web 146. Chọn handoff shape (a): migration `0018` expand-only + `auth_oauth_handoff_arm/_consume`; single-use bằng atomic UPDATE + partial UNIQUE giữ hash sau consume; `clock_timestamp()` (mang bài học D0a round-09). **Gate ĐẠT với 0 fix-round — slice đầu tiên sạch ngay lần đầu.** Ghi phát hiện quy trình: thrash tương quan với **thiết kế còn chuyển động lúc code**, không phải kích thước diff ⇒ **rút lại đề xuất nới luật 2×clean ở v1.2**. Safari/iOS vẫn ENABLEMENT_ONLY. |
 | 22/07/2026 | v1.6 | **Verdict 12 — d1b `CODE_READY`, blocker đóng bằng đo đạc.** Probe 3 engine: **M1 (302 trần) thất bại trên cả ba**; mọi cơ chế commit first-party document trước đều thắng. Chốt **M3** (landing → auto-POST same-origin, noscript fallback) vì tái dùng pattern hai-hop B0 §8 và POST mang `Origin` cho `sameOriginRequest()` guard bước mutating. Thêm **D1B-11** anti-regression (assert callback trả document, **không** 302) — lưới bắt đúng failure-mode đã đo. Safari/iOS chuyển thành **ENABLEMENT_ONLY**: không chặn CODE_READY nhưng **chặn bật Google login**. |

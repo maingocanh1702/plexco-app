@@ -263,20 +263,30 @@ invariants: [money-model, shared-core]
 scope: [docs/autopilot-manifests/core-matcher-grouped-amount-parsing.json, packages/core/src/payments-logic.ts, packages/core/src/payments-logic.test.ts]
 manifest: docs/autopilot-manifests/core-matcher-grouped-amount-parsing.json
 merged_probe: packages/core/src/payments-logic.test.ts :: Wang 110 500
-notes: **⛔ NOT_CODE_READY — blocker xác định 2026-07-22, và nó giải thích luôn 3 lần bị park.** Ghi chú dưới đây yêu cầu "extend that decision table rather than patching in isolation" và "re-read DECISIONS.md S2/S2b/S2c", **nhưng decision table đó không nằm ở nơi nào có thẩm quyền**: bản `DECISIONS.md` duy nhất trong repo là `docs/archive/phase1-autopilot-run/DECISIONS.md`, mà HANDOFF §7 ghi rõ `docs/archive/` **"KHÔNG phải authority"** và ledger đó "không có bản nào khác trong repo"; grep trong file cũng không thấy nội dung shortest-run/`splitNameAmount`. Hệ quả: **mỗi lần sửa, người làm phải tự suy lại luật parsing từ đầu** — đúng cơ chế sinh ra 15 finding cộng dồn qua core-lift v1/v2/v3 và 3 lần park. **Resolution (binary):** lift luật parsing S2/S2b/S2c ra khỏi archive vào một chỗ có thẩm quyền (một mục trong spec của `packages/core`, hoặc một DD trong `decisions.md`) làm **decision table tường minh** — liệt kê từng input shape và output kỳ vọng, gồm cả ca "Wang 110 500". Sau đó mới author acceptance + verdict rồi launch. Sửa trước khi có bảng đó = gần như chắc chắn thrash lần 4. Bằng chứng gốc — Codex core-lift-v3 round-05 — manual `/transfer`/`/cash` args using spaces
-  as thousands separators misparse when the final group is non-zero, e.g.
-  "Wang 110 500" -> {name:"Wang 110", amount:500} instead of amount 110500.
-  Founder-approved 2026-07-05 to merge core-lift-v3 without fixing this round
-  (per the class-aware review gate: NL-parsing P2, not auth/money-authoritative
-  — matcher output is proposal-only, S7/S15 settle money via manual-allocate or
-  exact pay_code, never this function directly). Fix shape: the shortest-run
-  scan in splitNameAmount needs to also try LONGER trailing runs when a
-  shorter one parses, not just accept the first (shortest) match — same
-  family as round-01's "shortest-run amount split" fix, so extend that
-  decision table rather than patching in isolation. This is the 15th
-  cumulative NL-parsing finding across core-lift v1/v2/v3 — before starting,
-  re-read DECISIONS.md S2/S2b/S2c entries; a 16th quick patch risks the same
-  REGION_THRASH pattern that parked this branch three times already.
+notes: **⛔ NOT_CODE_READY — DD-87 owner-ratified; contract/acceptance/artifacts authored on disk 2026-07-22.**
+  Mechanism: exhaustive tagged union over every positive `parseMoney` trailing interpretation; dedupe by
+  `(name,amount)`; ambiguous returns ordered candidates and no top-level name/amount. Equal-amount/different-name
+  (`Player 0 110k`) is ambiguous. Grouped-number/longest/threshold/fuzzy heuristics are forbidden. Exact 18-row
+  matrix: `docs/dd-87-splitnameamount-decision-table-analysis.md`; task contract:
+  `docs/autopilot-core-split-name-amount-ambiguity-contract.md`; launcher:
+  `.claude/commands/ap-29-core-split-name-amount-ambiguity-contract.md`.
+  **Still NOT_CODE_READY:** the packet is uncommitted WIP outside `main@6a28072`; commit/push every Verdict-15
+  target, re-pin `origin/main`, promote the task contract from `enforce` to `code-ready`, and issue strict
+  `CODE_READY` before creating the worktree. The ignored core-lift tables are not a dependency.
+
+## task: docs-core-classifier-decision-table-lift
+title: Preserve ignored core classifier decision tables as historical criteria
+status: deferred
+risk: P2
+change_class: docs-only
+depends_on: []
+invariants: [money-model, shared-core]
+scope: [docs/standards/core-payment-classifier-decision-tables.md]
+manifest: none — author only when promoted from deferred
+merged_probe: docs/standards/core-payment-classifier-decision-tables.md :: core-lift-v3 provenance
+notes: The 89/92/99-line tables remain ignored under the registered `phase1-fable5` worktree. Live dry-run says
+  the worktree is not prunable. Lift only the final non-duplicated classifier criteria with source-SHA provenance;
+  do not make this a dependency of DD-87, do not copy runtime claims, and do not launch speculatively.
 
 ## task: db-migration-0000-idempotent-role-create
 title: Race-safe role bootstrap in the migration runner — unblocks parallel DB suites
@@ -285,7 +295,7 @@ risk: P0
 change_class: manual-schema-design
 depends_on: []
 invariants: [schema, build-config]
-scope: [docs/autopilot-manifests/db-migration-0000-idempotent-role-create.json, packages/db/src/migrate.ts, packages/db/src/migrate.test.ts, packages/db/vitest.config.ts, packages/db/README.md]
+scope: [docs/autopilot-manifests/db-migration-0000-idempotent-role-create.json, packages/db/src/migrate.ts, packages/db/src/migrate.test.ts, packages/db/src/test-harness.ts, packages/db/vitest.config.ts, packages/db/README.md]
 manifest: docs/autopilot-manifests/db-migration-0000-idempotent-role-create.json
 merged_probe: packages/db/src/migrate.ts :: duplicate_object
 notes: **RE-SCOPED 2026-07-22 → CODE_READY (Verdict 14, `main@e61d96c`).** Khung cũ "làm 0000 atomic" bất khả thi (0000 applied + immutable); khung mới **không đụng 0000**. **Phát hiện chính:** `migrate.ts` đã có `pg_advisory_lock` và comment nói nó ngăn concurrent deploys interleave DDL — nhưng advisory lock của Postgres là **database-scoped**, nên hai `migrate()` trên hai DB khác nhau cùng cluster **không chặn nhau** và lock đó bảo vệ **số không** cho role cluster-global; sửa comment sai lệch đó nằm trong scope. **Cơ chế pin:** role-ensure `EXCEPTION WHEN duplicate_object THEN NULL` chạy ở runner trước vòng lặp migration, ngoài transaction, **gated trên "0000 chưa applied"** để DB đã migrate giữ nguyên profile quyền; sau đó block `IF NOT EXISTS` của 0000 tự bỏ qua ⇒ 0000 byte-identical, checksum không đổi. **Giá trị:** `vitest.config.ts` tự ghi `fileParallelism:false` "is what actually prevents (2)", còn lý do (1) đã thoả sẵn vì mọi suite truyền `dbName` riêng ⇒ đóng (2) là **đủ** để bật `fileParallelism:true`, mở khoá nhiều worktree chạy DB suite song song. Acceptance **BR-1..BR-7** trong manifest (BR-1/BR-6 phải chạy lặp lại, vì đây là race). Bằng chứng gốc — Codex auth-onboarding-v3 round-08: migration 0000's role creation for

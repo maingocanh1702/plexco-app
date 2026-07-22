@@ -21,7 +21,7 @@
     "NEVER edit packages/db/migrations/0000_roles_extensions.sql — it is applied and immutable; the runner guard must keep hard-erroring on a changed applied file",
     "NO new migration file — this slice adds none, so the migration count assertion in rls-invariants.test.ts must NOT change",
     "NO change to which roles exist, their attributes, or any grant",
-    "NO swallowing of errors other than duplicate_object — every other SQLSTATE must still propagate and fail the migration",
+    "NO swallowing of any SQLSTATE beyond the two role-already-exists codes 42710 duplicate_object and 23505 unique_violation (see amendments A2) — 42501 insufficient_privilege and every other code must still propagate and fail the migration",
     "NO removal of the existing pg_advisory_lock; it still serialises same-database concurrent deploys and stays",
     "NO change to DATABASE_URL_MIGRATION semantics or to the DDL-owner role requirement"
   ],
@@ -29,14 +29,20 @@
     "docs/autopilot-manifests/db-migration-0000-idempotent-role-create.json",
     "packages/db/src/migrate.ts",
     "packages/db/src/migrate.test.ts",
+    "packages/db/src/test-harness.ts",
     "packages/db/vitest.config.ts",
     "packages/db/README.md"
+  ],
+  "amendments": [
+    "A2 (owner-ratified 2026-07-22, P0 boundary) — the ensure step swallows 42710 OR 23505, not 42710 alone. CREATE ROLE's internal existence check is not atomic with the pg_authid insert, so two backends that both pass the pre-check collide on pg_authid_rolname_index and the loser raises unique_violation 23505 — measured as the dominant loser code by roughly 50:1. Swallowing only 42710 would leave the exact race this slice closes. Tight blast radius: the DO block holds one CREATE ROLE for one named role, so 23505 there can only mean that rolname exists. 42501 and all other codes still propagate.",
+    "A1 (owner-ratified 2026-07-22, bug fix) — the first implementation created roles unconditionally, which aborts on a cluster with pre-provisioned roles when the DDL owner is NOCREATEROLE, because Postgres checks the CREATEROLE privilege before detecting the duplicate. That violated negative_scope item 6. Restored an existence pre-check so only missing roles are created; the pre-check handles privilege, the exception handler handles the race window the pre-check cannot close.",
+    "A3 (owner-ratified 2026-07-22, test-only) — enabling parallelism exposed a second race: concurrent ALTER ROLE ... PASSWORD on the shared role in test-harness.ts ('tuple concurrently updated'). Made retry-tolerant; test-harness.ts added to scope."
   ],
   "acceptance": [
     "BR-1 concurrency: N concurrent migrate() calls bootstrapping N distinct FRESH databases on one cluster all succeed; no duplicate_object escapes; each role exists exactly once afterwards. Run repeatedly, not once.",
     "BR-2 immutability: 0000 is byte-identical and its schema_migrations sha256 is unchanged; the runner still hard-errors if an applied migration file is modified.",
     "BR-3 privilege profile: migrate() against an ALREADY-migrated database performs NO CREATE ROLE (the ensure step is gated on 0000 not yet applied), so no new privilege is required on routine runs.",
-    "BR-4 error discrimination: only duplicate_object is swallowed. Inject a different failure (e.g. insufficient_privilege) and assert it propagates and aborts the migration.",
+    "BR-4 error discrimination: only the two role-already-exists codes (42710, 23505) are swallowed. Inject a different failure (e.g. 42501 insufficient_privilege) and assert it propagates and aborts the migration.",
     "BR-5 comment correctness: migrate.ts states that pg_advisory_lock is DATABASE-scoped and does NOT serialise cluster-global objects across databases — the misleading claim is gone.",
     "BR-6 parallelism unblocked: with fileParallelism flipped to true, the full packages/db suite runs green across at least 5 consecutive runs with zero role-creation errors and zero flakes; every suite still passes a distinct dbName.",
     "BR-7 no regression sequentially: the suite is still green with fileParallelism:false, so nothing depends on parallel execution."
