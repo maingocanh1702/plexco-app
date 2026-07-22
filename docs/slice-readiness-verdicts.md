@@ -506,10 +506,55 @@ NEXT_REVIEW_TRIGGER: auth-s4-d1b-oauth-session-rotation must be authored, verdic
 
 ---
 
+## Verdict 11 — `auth-s4-d1b-oauth-session-rotation` (2026-07-22)
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: NOT_CODE_READY
+REVIEWED_AT: 2026-07-22
+AUTHORITY_SHA: 79430d32751853923b02caddf44f5d4504e6b872
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/features/BE/feature_web_auth_onboarding_tech.md
+  - docs/autopilot-manifests/auth-s4-d1b-oauth-session-rotation.json
+  - apps/web/lib/session-cookies.ts
+  - apps/web/app/api/auth/google/callback/route.ts
+SLICE: auth-s4-d1b-oauth-session-rotation
+IN_SCOPE: same-site completion hop so issueSession() runs where the Strict cookie is present and takes its EXISTING rotate branch; single-use short-TTL handoff bound to the oauth transaction; callback stops minting directly
+OUT_OF_SCOPE: any new rotate primitive (D0a's auth_rotate_web_session is reused as-is); re-litigating the D1 mint-fresh contract; the rejected capture-at-/state + revoke-at-callback workaround; weakening SameSite=Strict; email bundle order-4; Facebook; Telegram removal
+G1_DECISION: PASS
+G2_SPEC: PARTIAL
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: auth-s4-d1-google-adapter MERGED (main@c6edbfa; 0017::auth_oauth_transactions and google/callback/route.ts::issueSession both live)
+PRIOR_SLICES: auth-s4-d0-revoke-core -> auth-s4-d0-session-web-boundary -> auth-s4-d1-email-token-core -> auth-s4-d1-google-adapter
+OPEN_QUESTIONS_IN_SCOPE: 1
+ENABLEMENT_ONLY_GATES: none — this slice IS itself the blocker on enabling Google login
+LIVE_REPO_VERIFICATION: PASS (issueSession already branches rotate-vs-create on cookie presence and already throws SessionReauthRequiredError when rotate returns null, so NO new primitive is needed; the cross-site callback simply never sees the cookie. auth_rotate_web_session in 0015 takes old/new token hash + csrf + ttl + account and does the parent-locked epoch-revalidated swap in one transaction)
+CONTRACT_MATRIX: PARTIAL
+CLOSURE_MATRIX: FAIL (11/12 — mechanism unpinned)
+ACCEPTANCE_MATRIX: PASS (D1B-1..D1B-10 authored 2026-07-22, but D1B-2 cannot be satisfied until the blocker below is resolved)
+SECURITY_AND_MIGRATION_GATE: PASS (no migration; no new grant; reuses the proven D0a primitive and the D0b reject-and-reauth fence)
+IMPLEMENTATION_ARTIFACTS: PASS (manifest + acceptance matrix)
+FIRST_IMPLEMENTATION_STEP: (blocked)
+REMAINING_BLOCKERS:
+  - blocker: the completion-hop MECHANISM is not pinned. A plain 302 from the cross-site callback to a same-origin route is NOT sufficient evidence — whether a SameSite=Strict cookie is sent on a redirect chain that STARTED cross-site is browser-divergent. Pick the wrong mechanism and the slice silently fixes nothing (cookie still absent, still mint-fresh) while every mocked unit test stays green.
+    owner: owner (design decision) -> mình (write it up as a DD/probe note)
+    resolution: a design probe that pins ONE mechanism and shows, on the target browser matrix, that plx_session is actually present at the completion endpoint after a real Google round-trip. Candidate to evaluate first: the callback returns a first-party document that performs a document-initiated same-site navigation, rather than relying on a server redirect chain.
+NEXT_REVIEW_TRIGGER: hop mechanism pinned with real-browser evidence -> re-run closure; expected CODE_READY without further contract changes since D1B-1..D1B-10 already cover the behavior
+```
+
+**Đọc verdict — vì sao KHÔNG rubber-stamp CODE_READY:** slice này về mặt code là nhỏ và không cần primitive mới — `issueSession()` **đã** có nhánh rotate đúng, `auth_rotate_web_session` **đã** atomic và đã qua barrier test ở D0a. Nhưng toàn bộ giá trị của slice nằm ở **một giả định chưa ai chứng minh**: rằng cơ chế hop được chọn thực sự khiến trình duyệt gửi cookie `SameSite=Strict`. Đây là hành vi **phân kỳ giữa các trình duyệt** với chuỗi redirect khởi phát cross-site. Nếu sai, slice **âm thầm vô dụng** — vẫn không thấy cookie, vẫn mint-fresh, residual risk vẫn nguyên — mà **mọi unit test mock vẫn xanh** và ta sẽ tưởng đã đóng gate rồi bật Google login. Đó là kịch bản tệ nhất có thể, nên `OPEN_QUESTIONS_IN_SCOPE: 1` và verdict là `NOT_CODE_READY`. Blocker rẻ: một probe pin đúng một cơ chế + bằng chứng trên trình duyệt thật.
+
+---
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 22/07/2026 | v1.5 | **Acceptance `D1B-1..D1B-10` + Verdict 11 cho `auth-s4-d1b-oauth-session-rotation` = `NOT_CODE_READY`.** Live-repo verify cho thấy slice **không cần primitive mới** (`issueSession` đã có nhánh rotate; `auth_rotate_web_session` đã atomic từ D0a) — chỉ cần chạy nó ở ngữ cảnh same-site. **Blocker duy nhất:** cơ chế hop chưa pin; cookie `SameSite=Strict` có được gửi trên chuỗi redirect khởi phát cross-site hay không là browser-divergent, và chọn sai thì slice âm thầm vô dụng trong khi test mock vẫn xanh. D1B-2 vì thế bắt buộc bằng chứng **trình duyệt thật**. |
 | 22/07/2026 | v1.4 | **Verdict 10 — `auth-s4-d1-google-adapter` implemented (`75bfa58`), chờ merge tay.** 17 file, +2841/−9; suite real-PG db 144 · core 111 · bot 3 · web 131; semgrep 0; OSV sạch sau khi thêm `jose@5`. Codex 6 vòng: 1–3 hội tụ, 4–6 lộ một vấn đề **ngoài matrix** (rotate session Strict qua callback cross-site) → phần rotation invented-scope đã **revert** về mint-fresh đúng D1-2/D1-13. **Accepted residual risk** + **enablement blocker `auth-s4-d1b-oauth-session-rotation`** ghi vào verdict và pin bền 3 nơi. Tạo artifact d1b (manifest + backlog block, `NOT CODE_READY` — còn thiếu acceptance + verdict). |
 | 22/07/2026 | v1.3 | **Verdict 9 — `auth-s4-d1-google-adapter` = CODE_READY** tại `main@8f6a051`. Ba dependency đã merge + probe live; acceptance D1-1..15 có sẵn nên đây là **verdict-only gap**, nhưng vẫn re-verify từng precondition trên schema live (bài học D1E-18) thay vì tin matrix cũ. Verdict 4 (PLAN_READY, G3 FAIL) chính thức bị thay thế. |
 | 22/07/2026 | v1.2 | **D1 email-token-core implemented → Verdict 8.** 7 file, +2555/−7, 128 test real-PG xanh. Gate đóng bằng **1 vòng sạch + independent directed review** (Codex phi tất định sau 9 vòng), không phải 2×clean — override thứ 2/3 slice. **D1E-18 tách 18a/18b**: 18a proven, 18b deferred-by-construction vì `link_codes` live là person/channel-scoped, account-issued link_code + merge plan thuộc order-4 (đã pin NEXT_REVIEW_TRIGGER). Manifest hợp thức hoá 2 scope-addition (`index.ts`, `README.md`). **Đề xuất hiệu chỉnh gate:** `review-code-readiness-gate.md` nên cho phép *"2 vòng sạch liên tiếp HOẶC 1 vòng sạch + independent directed review"* khi diff vượt ngưỡng file/LOC, để không phải override từng ca. |

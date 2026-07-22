@@ -470,7 +470,33 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | D1-12 | PKCE ciphertext | Kiểm tra storage | Canonical `bytea` + key version text riêng (v2.7 contract) |
 | D1-13 | Không same-origin gate | Cross-site GET callback với binding Lax | Hoạt động; KHÔNG gọi `sameOriginRequest()`; session cookie vẫn Strict |
 | D1-14 | Telegram regression | Chạy test suite Telegram hiện có | Pass nguyên vẹn (chưa remove route nào) |
-| D1-15 | Facebook negative scope (absence) | GET `/api/auth/facebook/{state,callback}` | Route KHÔNG tồn tại trong D1 (404 mặc định framework; D1 không tạo file route Facebook nào). Contract `AUTH_PROVIDER_UNAVAILABLE` v2.6 thuộc slice DD-33 riêng khi route được author |
+| D1-15 | Facebook negative scope (absence) | GET `/api/auth/facebook/{state,callback}` | Route KHÔNG tồn tại trong D1 (404 mặc định framework; D1 không tạo file route Facebook nào).
+
+### Acceptance matrix — slice `auth-s4-d1b-oauth-session-rotation` (đóng residual risk của D1 order-3)
+
+> **Mục tiêu duy nhất:** làm cho `issueSession()` chạy trong ngữ cảnh **same-site**, để nó đi đúng nhánh
+> `rotateWebSession` vốn ĐÃ tồn tại và đã được chứng minh ở D0a/D0b — **không tạo primitive mới**. Ở callback
+> cross-site, `cookies().get(plx_session)` trả `undefined` nên `issueSession` rơi vào `createWebSession`
+> (mint-fresh); đó là toàn bộ nguyên nhân của residual risk.
+>
+> **⚠️ Cơ chế hop CHƯA được pin — xem Verdict 11 (`NOT_CODE_READY`).** Một 302 thuần từ callback sang
+> route same-origin **KHÔNG phải bằng chứng đủ**: với chuỗi redirect khởi phát cross-site, việc cookie
+> `SameSite=Strict` có được gửi hay không là **phân kỳ giữa các trình duyệt**. Nếu chọn sai cơ chế, slice
+> này **âm thầm không sửa được gì** (vẫn không thấy cookie → vẫn mint-fresh) mà mọi test mock vẫn xanh.
+> D1B-2 vì vậy phải chứng minh bằng **hành vi trình duyệt thật**, không phải bằng unit test dựng sẵn cookie.
+
+| # | Case | Setup | Expected |
+|---|---|---|---|
+| D1B-1 | Callback thôi tự mint | Callback nhận proof OIDC hợp lệ | Callback **KHÔNG** set session cookie và **KHÔNG** gọi `issueSession`; nó tạo một handoff **single-use, TTL ngắn**, bound vào đúng `auth_oauth_transactions` row, rồi chuyển sang completion hop |
+| D1B-2 | **Hop thật sự mang được cookie Strict** | Browser đã có `plx_session`; chạy hết luồng Google trên **trình duyệt thật** (ma trận browser mục tiêu) | Tại completion endpoint, `plx_session` **CÓ** trong request ⇒ `issueSession` đi nhánh **rotate**, không phải create. **Bằng chứng phải là browser thật**; một unit test tự set cookie KHÔNG chứng minh được điều này |
+| D1B-3 | **Residual risk đóng thật** | Có session cũ, hoàn tất login Google | Session cũ có `revoked_at`; token cũ **không** resolve nữa; account chỉ còn **đúng một** session live |
+| D1B-4 | Không có cookie cũ → không đổi hành vi | Browser chưa từng login | Đi `createWebSession` như cũ; cookie attrs **byte-for-byte** như trước; **`SameSite=Strict` không đổi** |
+| D1B-5 | Handoff single-use | Replay handoff lần hai | Reject generic, **zero mutation**, không mint session thứ hai |
+| D1B-6 | Handoff hết hạn | Dùng sau TTL | Reject, zero mutation |
+| D1B-7 | Handoff không dùng được cross-site | Gọi completion từ site khác | Reject — hop chỉ hợp lệ trong ngữ cảnh same-site; không cấp session |
+| D1B-8 | Race với logout-all | 2 connection, ép **cả hai** thứ tự lock | Tái dùng epoch semantics D0a: đúng một bên thắng; bên thua nhận `SessionReauthRequiredError`, zero mutation; **không deadlock** |
+| D1B-9 | Hop bị ngắt giữa chừng | Crash/abort giữa callback và completion | **Không half-state**: hoặc session cũ còn nguyên vẹn, hoặc cũ revoked + mới live. **Không bao giờ** cả hai chết, **không bao giờ** hai session live cùng lúc |
+| D1B-10 | Fail-closed khi thiếu config | `GOOGLE_OAUTH_CLIENT_ID/SECRET` rỗng | Cả `/state` lẫn completion đều 503; không path nào bypass được gate | Contract `AUTH_PROVIDER_UNAVAILABLE` v2.6 thuộc slice DD-33 riêng khi route được author |
 
 ### Unit Tests
 
