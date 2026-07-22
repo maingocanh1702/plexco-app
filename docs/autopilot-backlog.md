@@ -131,7 +131,7 @@ notes: **⛔ BLOCKED ON OWNER-ONLY EVIDENCE — ĐỪNG RE-LAUNCH (2026-07-22).*
 
 ## task: infra-inbound-webhook-auth-evidence
 title: Inbound webhook verification contract evidence for SePay, ApiPay, Zalo and Meta
-status: ready
+status: merged
 risk: P2
 change_class: docs-provider-evidence
 depends_on: []
@@ -139,7 +139,7 @@ invariants: [api-contract]
 scope: [docs/standards/webhook-verification-matrix.md]
 manifest: docs/autopilot-manifests/infra-inbound-webhook-auth-evidence.json
 merged_probe: docs/standards/webhook-verification-matrix.md :: WEBHOOK_AUTH_EVIDENCE_CLOSED
-notes: Launcher-ready docs-only AP-23 slice (opposite direction from AP-22 egress). Document the INBOUND webhook verification contract per provider — signature header, algorithm, raw-body vs parsed, replay/timestamp window — from current official docs; never handle secret VALUES. Fail closed on any ambiguous row. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-infra-inbound-webhook-auth-evidence.md`.
+notes: **✅ MERGED 2026-07-23.** Kết quả `WEBHOOK_AUTH_CONTRACT_PARTIAL` — cả 4 dòng quy chiếu được về docs chính thức hiện hành, **không dòng nào `UNRESOLVED`**, nên marker đóng là hợp lệ (khác AP-22: có `UNRESOLVED` ⇒ đúng khi từ chối đóng). Chỉ SePay `SPECIFIED` (headers + `{timestamp}.{raw_body}` + ±300s + constant-time); ApiPay/Zalo Bot/Meta `PARTIAL` vì docs **im lặng** về replay window và timing-safe. Hai thứ cần nhớ về sau: (1) representation ApiPay ký mâu thuẫn với spec raw-body của mình → tách thành `apipay-signed-body-reconciliation` (blocked, P0, đường tiền); (2) Meta ký bản **escaped-unicode** của payload, verify trên decoded bytes sẽ fail âm thầm. Doc tự ghi trong header vì sao nó cố ý nằm ngoài `check-review-readiness.mjs` — provider evidence, không phải review/plan; đừng tranh luận lại. Chi tiết slice gốc: Launcher-ready docs-only AP-23 slice (opposite direction from AP-22 egress). Document the INBOUND webhook verification contract per provider — signature header, algorithm, raw-body vs parsed, replay/timestamp window — from current official docs; never handle secret VALUES. Fail closed on any ambiguous row. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-infra-inbound-webhook-auth-evidence.md`.
 
 ## task: apipay-signed-body-reconciliation
 title: Confirm ApiPay's signed representation with ApiPay and reconcile the raw-body specs to it
