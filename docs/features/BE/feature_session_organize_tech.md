@@ -1,13 +1,13 @@
 # Feature: Session Organize (Match & Court Orchestration) — Backend Tech Spec
 
 > **Delivery target:** Sau Session CRUD + Sync; sớm nhất sau P4. Canonical phase **TBD**; DD-61..64 đã owner accept-in-principle.
-> **Version:** 0.6a · 2026-07-23
+> **Version:** 0.6b · 2026-07-24
 > **Status:** Accepted-in-principle design — implementation inactive; schema/migration/service chưa tồn tại
 > **Implementation:** Not started — build post-P4 · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_session_organize.md`
 > **References:** `feature_session_management_tech.md` · `feature_sync_engine_tech.md` · `../../standards/decisions.md` DD-07/DD-41/DD-42/DD-45/DD-56/DD-60/DD-61..64 · `../../standards/api-reference-convention.md` · `../../standards/business-rules.md` · `../../standards/core-db-architecture-principles.md`
 
-> **⚠️ Live-repo reality:** Migration tail hiện tại là `0018` (0000–0018 đã merge trên main; `0014_players_waitlist` đã merge tại `1a6ac38`); `packages/db/schema.ts` mới có `sessions`/`players`, còn `packages/db/src/tenant.ts` chỉ có session list/get/create tối thiểu. Chưa có OrganizeService, assign/scoring core, relation-based board read, SSE organize topic hoặc session-scoped scorer grant. Các hook SessionService được nêu dưới đây là contract phải build cùng prerequisite, không phải symbol đang có.
+> **⚠️ Live-repo reality:** Migration tail — verify hiện hành tại `packages/db/migrations/`, không hard-pin số (`0014_players_waitlist` đã merge tại `1a6ac38`); `packages/db/schema.ts` mới có `sessions`/`players`, còn `packages/db/src/tenant.ts` chỉ có session list/get/create tối thiểu. Chưa có OrganizeService, assign/scoring core, relation-based board read, SSE organize topic hoặc session-scoped scorer grant. Các hook SessionService được nêu dưới đây là contract phải build cùng prerequisite, không phải symbol đang có.
 
 ---
 
@@ -695,6 +695,7 @@ Canonical DB suite must run with repository test database contract; migration/RL
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-24 | v0.6b | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): Live-repo reality note hard-pinned `Migration tail hiện tại là 0018 (0000–0018 đã merge)` → non-pinned "verify hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v0.6a | **Reconcile 0014 merge-state:** current-state Live-repo reality sửa → migration tail = `0018` (0000–0018 đã merge; `0014_players_waitlist` merged `1a6ac38`), trước ghi "Migration hiện dừng ở 0013". §3 migration-strategy note ("0014 nay đã bị `0014_players_waitlist` chiếm") đã đúng — giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v0.6 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (bổ sung rollback cho Migration strategy sẵn có; 5 bảng organize chưa vào canonical → migration mới; DROP baseline = ❌ NEVER), §3 Idempotency (tham chiếu §1), §4 Caching Strategy + Security Checklist. Request/Response Examples đã có sẵn theo DD-60 (Endpoint contract + preview example) — skip. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v0.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |

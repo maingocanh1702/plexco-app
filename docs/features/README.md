@@ -1,7 +1,7 @@
 # Plexco Feature Specs — Coverage Index
 
-> **Version:** 2.44 · 2026-07-22
-> **Scope source:** `../product/BRD.md` v3.9g · `../product/PRD.md` v2.8f · `../product/TDD.md` v3.1a · `../product/ROADMAP.md` v3.4b · `../standards/decisions.md` **v1.98 (DD-01..87)**. DD-05/06/45/49 integrity closed; DD-59 ✅ reconcile; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; **DD-79 ✅ Home · DD-80 ✅ auth B0 · DD-81 ✅ Pencil · DD-82..85 ✅ owner directions · DD-86 🟡 multi-channel proposal · DD-87 ✅ fail-closed split-name/amount authority**. Runtime gates unchanged.
+> **Version:** 2.46 · 2026-07-24
+> **Scope source:** `../product/BRD.md` v3.9g · `../product/PRD.md` v2.8f · `../product/TDD.md` v3.1a · `../product/ROADMAP.md` v3.4c · `../standards/decisions.md` **v1.98 (DD-01..87)**. DD-05/06/45/49 integrity closed; DD-59 ✅ reconcile; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; **DD-79 ✅ Home · DD-80 ✅ auth B0 · DD-81 ✅ Pencil · DD-82..85 ✅ owner directions · DD-86 🟡 multi-channel proposal · DD-87 ✅ fail-closed split-name/amount authority**. Runtime gates unchanged.
 
 > **Cập nhật DD-37 (2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (**Telegram loại khỏi phạm vi**). `feature_player_telegram` → **Archived (DD-37)**, thay bằng `feature_player_messenger`. Thêm phase-1: `feature_inapp_chat` (DD-38 ✅), `feature_user_settings` (DD-39 ✅), Google login (DD-13 ✅, trong `feature_web_auth_onboarding`), mark-paid thủ công (DD-40 ✅, trong `feature_payment_reconcile`).
 
@@ -41,25 +41,25 @@ Bốn nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**
 |---|---|---|---|---|
 | P0–P1 | Multi-tenant Foundation | `feature_multi_tenant.md` v1.7a | `BE/feature_multi_tenant_tech.md` v1.6 | ✅ Reviewed |
 | P2 | Tenant Routing & Authz | `feature_tenant_routing_authz.md` v2.6a | `BE/feature_tenant_routing_authz_tech.md` v2.6 | ✅ Reviewed |
-| P2/P4 | Session Management | `feature_session_management.md` v2.13 | `BE/feature_session_management_tech.md` v2.14 | ✅ Reviewed |
+| P2/P4 | Session Management | `feature_session_management.md` v2.13a | `BE/feature_session_management_tech.md` v2.14a | ✅ Reviewed |
 | P3 | Payment Reconciliation | `feature_payment_reconcile.md` v1.7a | `BE/feature_payment_reconcile_tech.md` v1.10 | ✅ Reviewed |
-| P3.5 | Identity Directory & Merge | `feature_identity.md` v1.10a | `BE/feature_identity_tech.md` v1.12 | ✅ Reviewed |
+| P3.5 | Identity Directory & Merge | `feature_identity.md` v1.10a | `BE/feature_identity_tech.md` v1.12a | ✅ Reviewed |
 | P3 · P4 · P4.5–P4.7 · P4+ | Notifications — Reminders · Inbox · Announcements · Web Push | `feature_notifications_reminders.md` v3.4h | `BE/feature_notifications_reminders_tech.md` v3.4i | 🟡 **Draft** — §A reminder/confirm/correction **business invariants đã reviewed** (reconciled decisions v1.45/DD-15/DD-67); §B/C/D inbox·announce·push chờ **DD-70/71/72**. Hạ Reviewed→Draft 18/07 do **gộp tài liệu**, không phải luật tiền bị mở lại |
 | P4 | Web Auth & Onboarding | `feature_web_auth_onboarding.md` v2.10b | `BE/feature_web_auth_onboarding_tech.md` v2.12 | ✅ Reviewed; cross-site OAuth/email-link boundary corrected; DD-33 external enablement gate/runtime pending |
-| P4 | Sync Engine | `feature_sync_engine.md` v2.3a | `BE/feature_sync_engine_tech.md` v2.5a | ✅ Reviewed |
+| P4 | Sync Engine | `feature_sync_engine.md` v2.3a | `BE/feature_sync_engine_tech.md` v2.5b | ✅ Reviewed |
 | P4.3 | Marketplace Discovery | `feature_marketplace_discovery.md` v2.2a | `BE/feature_marketplace_discovery_tech.md` v2.2 | ✅ Reviewed |
-| P4.3 | Cross-club Join | `feature_cross_club_join.md` v2.10a | `BE/feature_cross_club_join_tech.md` v2.11b | ✅ Reviewed |
+| P4.3 | Cross-club Join | `feature_cross_club_join.md` v2.10a | `BE/feature_cross_club_join_tech.md` v2.11c | ✅ Reviewed |
 | ~~P4.5~~ | ~~Player Telegram~~ | `feature_player_telegram.md` v2.1 | `BE/feature_player_telegram_tech.md` v2.1 | ⚠️ **Archived (DD-37)** → `feature_player_messenger.md` |
-| P4.6 | Player View | `feature_player_view.md` v2.2a | `BE/feature_player_view_tech.md` v2.4 | ✅ Reviewed |
-| P4.7 | Zalo Channel | `feature_zalo_channel.md` v2.5a | `BE/feature_zalo_channel_tech.md` v2.6a | ✅ Reviewed |
-| P5 | Billing Lifecycle | `feature_billing_lifecycle.md` v2.7a | `BE/feature_billing_lifecycle_tech.md` v2.7a | ✅ Reviewed |
-| P6 | Security & Operations | `feature_security_operations.md` v2.2a | `BE/feature_security_operations_tech.md` v2.4 | ✅ Reviewed |
+| P4.6 | Player View | `feature_player_view.md` v2.2a | `BE/feature_player_view_tech.md` v2.4a | ✅ Reviewed |
+| P4.7 | Zalo Channel | `feature_zalo_channel.md` v2.5a | `BE/feature_zalo_channel_tech.md` v2.6b | ✅ Reviewed |
+| P5 | Billing Lifecycle | `feature_billing_lifecycle.md` v2.7a | `BE/feature_billing_lifecycle_tech.md` v2.7b | ✅ Reviewed |
+| P6 | Security & Operations | `feature_security_operations.md` v2.2a | `BE/feature_security_operations_tech.md` v2.4a | ✅ Reviewed |
 
 ### Cross-cutting tracked pair (pre-existing)
 
 | Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
 |---|---|---|---|---|
-| P3/P4/P4.7 | Connector Onboarding (Zalo · SePay · ApiPay) | `feature_connector_onboarding.md` v0.9b | `BE/feature_connector_onboarding_tech.md` v0.7a | 🟡 Draft — provider-contract reviewed; Zalo auto-register còn blocked bởi sandbox confirmation |
+| P3/P4/P4.7 | Connector Onboarding (Zalo · SePay · ApiPay) | `feature_connector_onboarding.md` v0.9c | `BE/feature_connector_onboarding_tech.md` v0.7b | 🟡 Draft — provider-contract reviewed; Zalo auto-register còn blocked bởi sandbox confirmation |
 
 ### Phase-1 additions — DD ✅, tracked; pending migration/build (DD-37/38/39/65..68)
 
@@ -99,8 +99,8 @@ Bốn nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**
 | P7 (đề xuất) | Club AI Assistant + Knowledge Base | `feature_club_assistant.md` v0.10 + `BE/feature_club_assistant_tech.md` v0.11 (🟡 Draft) · proposal `../proposals/club-ai-bot-knowledge-base.md` v0.8 | **Formally promote Product + BE pair sang Reviewed trước implementation.** DD-16/17/19–23/28 đã chốt; **DD-18 provider + privacy/ToS chặn GO-LIVE**. Pha B phụ thuộc final chat migration; nếu DD-86 accepted thì per-channel flag AND tenant/provider gates. Migration mới monotonic tự cài/verify `vector`, ENABLE + FORCE RLS/policy/grants; không sửa lịch sử. |
 | P4.3/P4.7 + Messenger P2.5 | Channel-first Booking Funnel | `feature_channel_booking_funnel.md` v0.8a (DD-32 ✅ A, Draft) | Build BE companion; giữ CCJ guest free/paid: first-entry active→charge/full→waitlisted-no-charge; DD-49 rejoin active→carry-or-append, full→carry-history-or-defer-refunded. Không linked gate/đường book song song |
 | S9 (**DD-79 ✅ owner 2026-07-19**) | Home — Personal Dashboard (PWA) | `feature_home.md` v0.5a + `BE/feature_home_tech.md` v0.1 (✅ Reviewed contract — fork từ Sporta feature_home v2.5 + hero recipe theme-direction §7) | Implementation pending S9. Composition-only: aggregate `GET /api/me/home` thuộc surface `/api/me*`, **không bảng/migration mới**; HOME-OQ-1 (c) defer chip Chưa thu · OQ-3 defer streak; landing = Home (OQ-2 ✅). DTO tiền/PII theo allowlist player_view |
-| Post-P4 (accept-in-principle, owner 18/07) — sau Session CRUD + Sync | Session Organize (court + match + live score) | `feature_session_organize.md` v0.5a + `BE/feature_session_organize_tech.md` v0.6a (accepted design, DD-61..64 ✅ accept-in-principle; no runtime) | Build post-P4: extend DD-56 registry/grant storage và triển khai SessionService prerequisites. V0.4 two-side; participant stint + partial assigned uniqueness; migration mới + tenant-safe FKs/RLS; point/reversal ledger idempotent; independent organize/score grants; relation-based read/SSE; balanced phụ thuộc level source. **Đã tính vào file coverage 22/21, chưa tính là runtime/build-ready.** |
-| P4+ (sau session core) — **DD-82 ✅ chốt hướng owner 21/07** | Tournament (Giải đấu) | `feature_tournament.md` v0.1 + `BE/feature_tournament_tech.md` v0.2 (🟡 **Draft** — DD-82 chốt hướng, **chưa readiness gate**) | Aggregate độc lập (không tái dùng `sessions`/`players`): canonical `tournaments` + `tournament_registrations` tenant-scoped/RLS + `public_tournaments` read model (field-whitelist, không tiền/PII, không serialize `tenant_id`) cho URL share DD-83 (opaque slug). v1 gọn: info + đăng ký, **v1 không đụng tiền**; bracket/standings/entry-fee = slice sau. **Hard dependency:** coordinate DD-41 retire `session_type='tournament'` (live schema chưa có cột `session_type`); analysis doc + readiness gate + owner ratify trước build. Migration mới monotonic (số next-available), không sửa lịch sử. |
+| Post-P4 (accept-in-principle, owner 18/07) — sau Session CRUD + Sync | Session Organize (court + match + live score) | `feature_session_organize.md` v0.5a + `BE/feature_session_organize_tech.md` v0.6b (accepted design, DD-61..64 ✅ accept-in-principle; no runtime) | Build post-P4: extend DD-56 registry/grant storage và triển khai SessionService prerequisites. V0.4 two-side; participant stint + partial assigned uniqueness; migration mới + tenant-safe FKs/RLS; point/reversal ledger idempotent; independent organize/score grants; relation-based read/SSE; balanced phụ thuộc level source. **Đã tính vào file coverage 22/21, chưa tính là runtime/build-ready.** |
+| P4+ (sau session core) — **DD-82 ✅ chốt hướng owner 21/07** | Tournament (Giải đấu) | `feature_tournament.md` v0.1 + `BE/feature_tournament_tech.md` v0.2a (🟡 **Draft** — DD-82 chốt hướng, **chưa readiness gate**) | Aggregate độc lập (không tái dùng `sessions`/`players`): canonical `tournaments` + `tournament_registrations` tenant-scoped/RLS + `public_tournaments` read model (field-whitelist, không tiền/PII, không serialize `tenant_id`) cho URL share DD-83 (opaque slug). v1 gọn: info + đăng ký, **v1 không đụng tiền**; bracket/standings/entry-fee = slice sau. **Hard dependency:** coordinate DD-41 retire `session_type='tournament'` (live schema chưa có cột `session_type`); analysis doc + readiness gate + owner ratify trước build. Migration mới monotonic (số next-available), không sửa lịch sử. |
 
 ## Review gates
 
@@ -114,6 +114,8 @@ Với spec mới hoặc spec được promote sang **Reviewed**, review gate k�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-24 | v2.46 | **Migration-tail sweep round-01 expansion (docs-migration-tail-0018-to-0020-sweep):** codex flagged the sweep omitted Connector Onboarding — added `feature_connector_onboarding.md` (v0.9b→v0.9c) + `BE/feature_connector_onboarding_tech.md` (v0.7a→v0.7b) index cells, same de-pin fix as the other 10 specs (TARGET-migration comment hard-pinned `tail = 0018` → non-pinned guidance). Also fixes a self-inflicted stale `HEAD main` SHA pin in BUILD-STATUS.md (fabe29f→1e503d1, now explicitly dated) that codex caught in the same round. Không đổi contract, coverage hay implementation status. |
+| 2026-07-24 | v2.45 | **Migration-tail index sync (docs-migration-tail-0018-to-0020-sweep):** BE cell version bump cho 10 spec (session_management_tech v2.14a · identity_tech v1.12a · sync_engine_tech v2.5b · cross_club_join_tech v2.11c · player_view_tech v2.4a · zalo_channel_tech v2.6b · billing_lifecycle_tech v2.7b · security_operations_tech v2.4a · session_organize_tech v0.6b · tournament_tech v0.2a) + product cell `feature_session_management.md` v2.13a — mỗi spec de-pin current-state migration-tail/range claim sang non-pinned guidance (verify `packages/db/migrations/` tại thời điểm author, live tail nay `0020`). Mirror ROADMAP **v3.4b→v3.4c**. Không đổi contract, coverage hay implementation status. |
 | 2026-07-22 | v2.44 | Mirror ROADMAP **v3.4a→v3.4b**: pin current truth `main@f93873b` và canonical suite **29 files / 419 tests PASS**; v3.4b thêm kiểm kê generator (`410 + 9 = 419`) và danh sách invariant-class 3 file. Inventory vẫn 24 Product + 23 BE; không thay đổi contract, coverage hay implementation status. |
 | 2026-07-22 | v2.43 | Reconcile authority sang ROADMAP v3.4 / decisions v1.98 và inventory trên disk: 24 Product + 23 BE tech = 23 cặp + 1 product-only Draft. Tách `README.md` và `auth-security-invariant-table.md` khỏi phép đếm feature spec; không đổi contract/runtime. |
 | 2026-07-22 | v2.42 | Mirror DD-86 proposal xuyên In-app Chat v0.8/v0.16, Club Assistant v0.10/v0.11 và historical proposal v0.8. Pin migration HOLD, root final chat migration sequencing, exact-one default/atomic provisioning/DD-56 capability/idempotency/Assistant conjunction. DD-86 vẫn `NOT_PLAN_READY`; không runtime. |

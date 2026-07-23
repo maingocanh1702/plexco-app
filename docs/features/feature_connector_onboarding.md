@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P3 (payment ingest) · P4 (web onboarding) · P4.7 (Zalo) — *cross-cutting upgrade*
 > **Track:** 🔌 Connector / Onboarding
-> **Version:** 0.9b · 2026-07-23
+> **Version:** 0.9c · 2026-07-24
 > **Status:** Draft (standard provider contracts reviewed; ApiPay enterprise provider gate open)
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3 webhook ingest stable · P4 onboarding wizard scaffold
@@ -227,7 +227,7 @@ WHERE provider_connection_id IS NULL
 -- rotation_pending và last_setwebhook_at. Không deploy lại phần schema đó.
 
 -- TARGET forward migration: chọn next available monotonic number sau khi sync
--- merged prerequisites (`0014_players_waitlist` đã merge trên main tại 1a6ac38, tail = 0018); legacy
+-- merged prerequisites (`0014_players_waitlist` đã merge trên main tại 1a6ac38; verify tail hiện hành tại packages/db/migrations/, không hard-pin số); legacy
 -- `secret text` không đạt BL-SEC-1.
 -- Add nullable first; application migration KMS-encrypts every usable legacy value.
 ALTER TABLE zalo_bots ADD COLUMN webhook_secret_enc bytea;
@@ -639,6 +639,7 @@ Tỉ lệ kết nối không-chạm-webhook, `time_to_verify_ms` trung vị, t�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-24 | v0.9c | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep, round-01 codex expansion): TARGET-migration comment (`zalo_bots` `webhook_secret_enc`, L230) hard-pinned `tail = 0018` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Numbering guidance giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v0.9b | **Reconcile 0014 merge-state:** current-state TARGET-migration comment (`zalo_bots` `webhook_secret_enc`) sửa → `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`, tail = 0018), trước ghi "hiện branch-only". Numbering guidance giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v0.9a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.9 | **Zalo secret/lifecycle closure:** distinguish live `0004` from the pending KMS migration; replace plaintext `secret` with `webhook_secret_enc`, backfill-or-disable/drop/no-dual-read; pin ciphertext+state receiver matrix and CAS transitions so an early event cannot be downgraded from `active` to `registered`. |
