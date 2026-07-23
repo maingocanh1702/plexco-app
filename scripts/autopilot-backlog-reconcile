@@ -1,34 +1,66 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 2
+# KIT_VERSION: 3
 # autopilot-backlog-reconcile — derive backlog merged-status from CODE (ground truth), not the hand-typed field.
 #
 # WHY: backlog `status:` is hand-maintained; merges update INFLIGHT + code but the markdown field rots
 #   ("ready/planned" while already merged → wasted re-run, L24). This makes the field self-correcting.
 #
-# HOW: each task block carries a `merged_probe:` line = a symbol that exists on the default branch ONLY if
-#   the feature is merged. Probe format (safe, no eval):
+# HOW: each task block carries a `merged_probe:` line = a symbol that exists on origin/<default> ONLY if
+#   THIS feature merged. Probe format (safe, no eval):
 #     merged_probe: <file> :: <grep -E regex>
 #   e.g.  merged_probe: src/gendered-fee-core.ts :: sessionFeeTotals
-#   The script greps the WORKING TREE (assumes you're on/synced with the default branch). Probe passes ⇒ merged.
+#
+#   ⚠️ DISCRIMINATOR RULE (KIT_VERSION 3 — added after the ap-93 false-flip, 2026-07-24):
+#   the probe regex MUST be a SLICE-UNIQUE CODE SYMBOL (an identifier, optionally alternated
+#   `foo|Bar_baz`), NEVER a shared literal like a date "26/7", a number, or a path fragment. A literal
+#   collides with unrelated pre-existing content already on origin/main (ap-93's `:: 26/7` matched
+#   A-era test pins from the already-merged ap-90 slice) → a FALSE "merged" flip → an in-flight slice
+#   gets torn down. This script now REFUSES to auto-flip a probe that is not identifier-shaped;
+#   `--check` reports it loudly as WEAK-PROBE (warn-only — it cannot cause a flip) so it gets fixed
+#   at authoring time without breaking CI.
+#   AUTHOR-TIME GUARD: right after you write a task's merged_probe, run `--audit`; a freshly-authored
+#   planned/ready task whose probe ALREADY matches origin/main means the probe is non-discriminating
+#   (or the slice is truly merged — you'd know). Fix it before it can auto-flip.
 #
 # Usage:
 #   scripts/autopilot-backlog-reconcile            # REPORT: which planned/ready/blocked tasks are actually merged
-#   scripts/autopilot-backlog-reconcile --fix      # FLIP those tasks' status -> merged (+ note_merged) in place
-#   scripts/autopilot-backlog-reconcile --check    # exit 1 if any stale (CI / watchdog / pre-commit gate)
+#   scripts/autopilot-backlog-reconcile --audit    # same report, framed for author-time probe verification
+#   scripts/autopilot-backlog-reconcile --fix      # FLIP genuinely-merged tasks' status -> merged (never weak probes)
+#   scripts/autopilot-backlog-reconcile --check    # exit 1 if any stale OR any weak (non-discriminating) probe
 #
-# A task with NO merged_probe is reported as "no-probe" (can't auto-verify) — add one when you author it.
+# A task with NO merged_probe is reported as "no-probe" (can't auto-verify) — add a symbol when you author it.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BL="$REPO/docs/autopilot-backlog.md"
 [ -f "$BL" ] || { echo "HALT: backlog not found at $BL" >&2; exit 2; }
 MODE="${1:-report}"
-TODAY="$(date +%F)"
+DEFAULT_BRANCH="main"
+# Probe the MERGED state on origin/<default>, NOT the working tree. A feature worktree carries the
+# slice's OWN not-yet-merged symbol, which would false-positive as "already merged" (and make --check
+# exit 1 spuriously). Refresh the ref first so the probe reflects what actually landed on origin.
+git -C "$REPO" fetch origin --quiet 2>/dev/null || true
+
+# is_symbol_probe <regex> → 0 iff EVERY alternation token is a bare code identifier
+# ([A-Za-z_][A-Za-z0-9_]*). Rejects literals with '/', digits-led, or punctuation (dates, numbers,
+# path fragments) — the non-discriminating shapes that collide with shared origin/main content.
+is_symbol_probe() {
+  local re="$1" tok
+  re="${re//[()]/}"                     # allow grouping parens around a symbol set
+  local IFS='|'; local toks=($re)       # split on alternation
+  [ "${#toks[@]}" -eq 0 ] && return 1
+  for tok in "${toks[@]}"; do
+    tok="${tok#"${tok%%[![:space:]]*}"}"; tok="${tok%"${tok##*[![:space:]]}"}"   # trim ws
+    [ -z "$tok" ] && return 1
+    [[ "$tok" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+  done
+  return 0
+}
 
 # Parse blocks → emit "slug<TAB>status<TAB>probe_file<TAB>probe_regex" for status in planned|ready|blocked.
-# NOTE: macOS default /bin/bash is 3.2 — no `mapfile`. Use a portable read loop instead.
+# bash 3.2 (macOS default) has no `mapfile` → read into array with a portable loop.
 ROWS=()
-while IFS= read -r __row; do ROWS+=("$__row"); done < <(awk '
+while IFS= read -r line; do ROWS+=("$line"); done < <(awk '
   function flush(){ if (slug!="" && (st=="planned"||st=="ready"||st=="blocked")) printf "%s\t%s\t%s\t%s\n", slug, st, pf, pr; slug="" }
   /^## task:/ { flush(); slug=$3; gsub(/[()]/,"",slug); st=""; pf=""; pr="" }
   /^status:/  { st=$2 }
@@ -39,43 +71,59 @@ while IFS= read -r __row; do ROWS+=("$__row"); done < <(awk '
   END { flush() }
 ' "$BL")
 
-stale=()
-# ${ROWS[@]+...} guards empty-array expansion under `set -u` on bash 3.2.
+stale=(); weak=()
+# ${ROWS[@]+...} guard: under `set -u`, expanding an empty array errors on bash 3.2.
 for row in ${ROWS[@]+"${ROWS[@]}"}; do
   IFS=$'\t' read -r slug st pf pr <<< "$row"
   if [ -z "$pf" ] || [ -z "$pr" ]; then
-    echo "  ?  $slug ($st) — no merged_probe (can't auto-verify; add: merged_probe: <file> :: <regex>)"
+    echo "  ?  $slug ($st) — no merged_probe (can't auto-verify; add: merged_probe: <file> :: <symbol>)"
     continue
   fi
-  if [ -f "$REPO/$pf" ] && grep -qE "$pr" "$REPO/$pf" 2>/dev/null; then
-    echo "  ⚠ STALE: $slug ($st) — probe MATCHED on disk → already MERGED"
-    stale+=("$slug")
+  if git -C "$REPO" grep -qE "$pr" "origin/$DEFAULT_BRANCH" -- "$pf" 2>/dev/null; then
+    if is_symbol_probe "$pr"; then
+      echo "  ⚠ STALE: $slug ($st) — probe on origin/$DEFAULT_BRANCH → already MERGED"
+      stale+=("$slug")
+    else
+      echo "  ✗ WEAK-PROBE: $slug ($st) — probe '$pr' matched but is NOT a slice-unique symbol"
+      echo "       (shared literal → collides with unrelated origin/main content). REFUSING to auto-flip;"
+      echo "       replace merged_probe with a code symbol this slice introduces."
+      weak+=("$slug")
+    fi
   else
-    echo "  ✓  $slug ($st) — genuinely pending (probe absent)"
+    echo "  ✓  $slug ($st) — genuinely pending (not on origin/$DEFAULT_BRANCH)"
   fi
 done
 
-[ "${#stale[@]}" -eq 0 ] && { echo "No stale entries."; [ "$MODE" = "--check" ] && exit 0 || exit 0; }
+if [ "${#stale[@]}" -eq 0 ] && [ "${#weak[@]}" -eq 0 ]; then
+  echo "No stale entries."; exit 0
+fi
 
 if [ "$MODE" = "--check" ]; then
-  echo "STALE entries exist (${#stale[@]}). Run with --fix." >&2; exit 1
+  # Weak probes are reported loudly but do NOT fail --check (they can't cause an auto-flip — --fix
+  # refuses them — so they are an authoring nit, not a CI-blocking staleness). Only a genuine STALE
+  # (a slice-unique symbol present on origin while the field still says planned/ready) fails.
+  [ "${#weak[@]}" -gt 0 ]  && echo "NOTE: ${#weak[@]} weak-probe task(s) — non-discriminating merged_probe; won't auto-flip, please improve (see above)." >&2
+  if [ "${#stale[@]}" -gt 0 ]; then echo "STALE (${#stale[@]}): run with --fix." >&2; exit 1; fi
+  exit 0
 fi
+
 if [ "$MODE" = "--fix" ]; then
-  for slug in "${stale[@]}"; do
-    if awk -v s="$slug" -v today="$TODAY" '
+  [ "${#weak[@]}" -gt 0 ] && echo "NOTE: ${#weak[@]} weak-probe task(s) NOT flipped (non-discriminating) — fix their merged_probe by hand." >&2
+  if [ "${#stale[@]}" -eq 0 ]; then echo "Nothing to flip (only weak-probe entries)."; exit 0; fi
+  today="$(date +%Y-%m-%d)"   # BSD awk (macOS) has no strftime() → pass the date in.
+  for slug in ${stale[@]+"${stale[@]}"}; do
+    if awk -v s="$slug" -v today="$today" '
       $0 ~ "^## task: "s"([ (]|$)" { inblk=1 }
-      inblk && /^status:/ && !done { print "status: merged"; print "note_merged: auto-reconciled — merged_probe matched on disk (" today "). Was: " $2; done=1; next }
+      inblk && /^status:/ && !done { print "status: merged"; print "note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (" today "). Was: " $2; done=1; next }
       /^## task:/ && inblk && $3!~s { inblk=0 }
       { print }
     ' "$BL" > "$BL.tmp"; then
       mv "$BL.tmp" "$BL"
+      echo "  → flipped $slug → merged"
     else
-      rm -f "$BL.tmp"
-      echo "HALT: failed to update $slug" >&2
-      exit 1
+      rm -f "$BL.tmp"   # never leave a partial tmp behind (it gets committed by git add -A)
+      echo "  ✗ FAILED to flip $slug (awk error) — backlog unchanged" >&2
     fi
-    echo "  → flipped $slug → merged"
-    # reset done flag handled per-invocation (one awk per slug keeps it simple/correct)
   done
   echo "Done. Review: git diff docs/autopilot-backlog.md"
 fi
