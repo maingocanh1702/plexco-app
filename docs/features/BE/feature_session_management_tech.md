@@ -1,7 +1,7 @@
 # Feature: Session Management — Backend Tech Spec
 
 > **Canonical phase:** P2/P4  
-> **Version:** 2.13b · 2026-07-23
+> **Version:** 2.14 · 2026-07-23
 > **Status:** Reviewed  
 > **Implementation:** Not started — schema `0014` đã merge trên main (`1a6ac38`, migrations 0000–0018); auto-promote behavior vẫn chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_session_management.md`  
@@ -14,13 +14,13 @@
 ## 1. Tổng quan triển khai
 
 ```text
-Surface (Zalo/Messenger/Web) → Command (CreateSession/Update/Close/Cancel)
+Surface (Zalo/Messenger/Web) → Command (CreateSession/Update/Publish/Close/Cancel)
     → SessionService → [State + Deduped Command + Outbox] COMMIT
                             ↓
                 Projectors: Zalo/Messenger message, Web SSE, Public search
 ```
 
-Commands: `CreateSession`, `UpdateSession`, `AnnounceSession`, `CloseSession`, `CancelSession`, `GenerateOccurrences`. Mỗi command mang `commandId`, tenant/actor từ trusted context, `expected_version` cho conflicting edits.
+Commands: `CreateSession`, `UpdateSession`, `PublishSession`, `AnnounceSession`, `CloseSession`, `CancelSession`, `GenerateOccurrences`. Mỗi command mang `commandId`, tenant/actor từ trusted context, `expected_version` cho conflicting edits. `PublishSession` là transition status-only `draft` → `open` (algorithm §4) — không đổi `visibility`.
 
 **Design decisions:**
 - Single domain service shared by chat + web — no duplicate logic.
@@ -166,6 +166,10 @@ CREATE INDEX idx_players_waitlist_order
 | 18 | Financial | Waitlisted candidate có existing charge | Re-derive DD-49 live disposition; missing/malformed → không promote/mutate, audit `WAITLIST_CHARGE_CONFLICT`, owner-review, continue next |
 | 19 | Financial/Resilience | `deriveChargeAmount` failure lúc first-activation promote | Candidate unchanged; opener audit + candidate event referencing lazy root and commits. Root worker runs max 3 claimed attempts; completed sweeps use current order, siblings share budget/root digest; expired final claim resolves-or-terminalizes without attempt 4; no fallback |
 | 20 | Security/State | Messenger wizard wrong Page/actor/tenant, stale, expired or replayed | Single interceptor denies/clears; final command re-checks capability/snapshot; no partial/double create |
+| 21 | State | Publish `draft` → `open` | Lock session row; `draft` → set `status='open'` + bump `version` + `session.published` outbox trong một tx. Status-only — `visibility` unchanged. Re-publish session đã `open` = no-op success (`commandId` dedup + state no-op như close/cancel) |
+| 22 | Data Integrity | Publish session `visibility='public'` thiếu discovery fields | Re-validate E#7 (sport, area, starts_at, `slots_max IS NOT NULL`) tại publish — transition bật public projection → `MISSING_DISCOVERY_FIELDS`; zero mutation |
+| 23 | State | Publish session non-draft closed/cancelled/past | Reject `SESSION_NOT_OPEN` — chỉ `draft` với `starts_at > now()` mới publish được; zero mutation. `session.manage` (Host) only, AuthZ trước service (edge #10) |
+| 24 | Security/Billing | Publish khi tenant billing-`suspended` | **Fail-closed block `TENANT_SUSPENDED`** (403, canonical tenant-routing code) per billing Suspended Action Matrix (owned bởi `feature_billing_lifecycle`); zero mutation, không emit event. **Named dependency:** status-authority (`tenants.status`/`subscriptions.status` mismatch/missing/other-status) do billing định nghĩa — không resolve ở đây (hard dep `docs-billing-publish-suspension-authority`) |
 
 ---
 
@@ -177,6 +181,7 @@ CREATE INDEX idx_players_waitlist_order
 |--------|------|------|-------|
 | POST | /api/sessions | TenantAdmin | Tạo session |
 | PUT | /api/sessions/:id | TenantAdmin | Sửa session |
+| POST | /api/sessions/:id/publish | TenantAdmin | Publish `draft` → `open` (status-only; `commandId` + `expectedVersion`) |
 | POST | /api/sessions/:id/announce | TenantAdmin | Announce lên group |
 | POST | /api/sessions/:id/close | TenantAdmin | Đóng session |
 | POST | /api/sessions/:id/cancel | TenantAdmin | Huỷ session |
@@ -190,11 +195,12 @@ CREATE INDEX idx_players_waitlist_order
 | 400 | `INVALID_TIME_RANGE` | Giờ kết thúc phải sau giờ bắt đầu | `ends_at <= starts_at` |
 | 400 | `SPORT_INACTIVE` | Môn thể thao không hoạt động | Sport not in active taxonomy |
 | 409 | `CAPACITY_BELOW_ROSTER` | Số chỗ không thể thấp hơn active roster | Reduce `slots_max` below `active_count` |
-| 409 | `SESSION_NOT_OPEN` | Buổi chơi không ở trạng thái mở | Mutation on closed/cancelled |
+| 409 | `SESSION_NOT_OPEN` | Buổi chơi không ở trạng thái mở | Mutation on closed/cancelled; publish của session non-draft (closed/cancelled) hoặc draft đã past `starts_at <= now()` (§4 publish) |
+| 403 | `TENANT_SUSPENDED` | Club đang tạm ngưng | Publish (hoặc mutation) khi tenant billing-suspended — **canonical code owned by tenant-routing** (`feature_tenant_routing_authz_tech.md` / TDD); referenced, không định nghĩa lại ở đây |
 | 409 | `STALE_VERSION` | Dữ liệu đã thay đổi — tải lại | Optimistic lock conflict |
 | 400 | `PRICE_CHANGE_REQUIRES_POLICY` | Cần chọn chính sách cho charges hiện tại | Price change with existing charges |
 | 400 | `CANCEL_REQUIRES_REVIEW` | Cần xác nhận huỷ — có người đã thanh toán | Cancel with paid roster |
-| 400 | `MISSING_DISCOVERY_FIELDS` | Thiếu thông tin bắt buộc cho buổi chơi public | Public visibility without required fields (incl. finite `slots_max` — E#7, note §2) |
+| 400 | `MISSING_DISCOVERY_FIELDS` | Thiếu thông tin bắt buộc cho buổi chơi public | Public visibility without required fields (incl. finite `slots_max` — E#7, note §2); re-validated at create/update **and publish** (§4 publish) |
 | 409 | `REJOIN_REQUIRES_REVIEW` | Cần host kiểm tra trạng thái tiền trước | `left` nhưng correction core chưa có hoặc không chứng minh được carry-over/refunded disposition |
 
 ### Request/Response Examples
@@ -227,6 +233,29 @@ CREATE INDEX idx_players_waitlist_order
 { "data": null, "error": { "code": "CAPACITY_BELOW_ROSTER", "message": "Số chỗ không thể thấp hơn active roster", "statusCode": 409 }, "meta": { "requestId": "req_…" } }
 ```
 
+**POST `/api/sessions/:id/publish`** — command mang `commandId` + `expected_version` (§1); status-only `draft` → `open`:
+
+- Request:
+
+```json
+{ "commandId": "cmd_…", "expectedVersion": 1 }
+```
+
+- Success — mutation `draft` → `open` (`version` bump, `visibility` unchanged):
+
+```json
+{ "data": { "session": { "id": "…", "status": "open", "version": 2 } }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+- Success — idempotent no-op khi session đã `open` (hoặc `commandId` replay): cùng envelope, `status: "open"`, `version` **không** đổi, không emit `session.published` trùng.
+- Error — stale `expectedVersion` (`409`, optimistic lock):
+
+```json
+{ "data": null, "error": { "code": "STALE_VERSION", "message": "Dữ liệu đã thay đổi — tải lại", "statusCode": 409 }, "meta": { "requestId": "req_…" } }
+```
+
+- Error khác: non-draft/past → `SESSION_NOT_OPEN` (`409`); public thiếu discovery → `MISSING_DISCOVERY_FIELDS` (`400`); tenant billing-`suspended` → **`TENANT_SUSPENDED`** (`403`, canonical tenant-routing code; fail-closed per billing matrix — §4 publish billing note). `commandId` dedup theo canonical `processed_commands` (edge #3).
+
 ### Idempotency
 
 | Endpoint | Idempotent? | Key |
@@ -234,6 +263,7 @@ CREATE INDEX idx_players_waitlist_order
 | POST /sessions | ✅ | `commandId` |
 | PUT /sessions/:id | ✅ | `commandId` |
 | POST /sessions/:id/announce | ✅ | `commandId` |
+| POST /sessions/:id/publish | ✅ | canonical `processed_commands` command-dedup (edge #3, inherit — same as all session commands); publish already-open = no-op |
 | POST /sessions/:id/close | ✅ | Close already-closed = no-op |
 | POST /sessions/:id/cancel | ✅ | Cancel already-cancelled = no-op |
 
@@ -253,6 +283,7 @@ CREATE INDEX idx_players_waitlist_order
 | Event | Trigger | Payload |
 |-------|---------|---------|
 | `session.created` | Create command | `session_id`, `tenant_id`, `visibility` |
+| `session.published` | Publish command (`draft` → `open`) | `session_id`, `tenant_id`, `visibility` |
 | `session.updated` | Update command | `session_id`, `changed_fields[]` |
 | `session.visibility_changed` | Public ↔ private | `session_id`, `new_visibility` |
 | `session.closed` | Close command / auto | `session_id`, `close_reason` |
@@ -261,6 +292,26 @@ CREATE INDEX idx_players_waitlist_order
 | `player.waitlisted` | Join khi full | `session_id`, `player_id`, `waitlist_position` |
 | `player.promoted` | Leave/capacity+ mở slot | `session_id`, `player_id`, `charge_id` |
 | `waitlist.charge_derivation_failed` | First-activation derivation fail trong capacity opener/retry sweep | `failure_event_id`, `promotion_retry_id`, `session_id`, `player_id`, `waitlist_entry_version`, root `origin_command_id`, `reason_code`; unique candidate key `(session_id,player_id,waitlist_entry_version,origin_command_id,reason_code)`. Sibling events reference one root job; retry command ID không thay origin |
+
+### Publish transition (`draft` → `open`)
+
+`PublishSession` (distinct command, `commandId`) là transition **status-only** `draft` → `open` để session bắt đầu nhận join. Cùng `SessionService` shared bởi chat + web — không duplicate logic. Publish **không** đổi `visibility` (visibility set ở create/edit, E#7-validated độc lập); nó chỉ mở trạng thái.
+
+> **⛔ CODE-READINESS — publish contract AUTHORED, NOT yet code-ready (2 HARD DEPENDENCIES):** contract này được author ahead of hai reconcile bắt buộc; publish **KHÔNG được build/enable** cho tới khi cả hai merge — **(1)** `docs-billing-publish-suspension-authority` (billing status-authority cho suspension gate — owned by `feature_billing_lifecycle`; billing note dưới); **(2)** `docs-prd-flow2-publish-projection-reconcile` (public-projection timing conflict: PRD FLOW 2 + marketplace integration contract nói project-on-create, lệch project-on-publish step 7). Đây là **hard blockers** cho publish BUILD slice, KHÔNG phải soft backlog. (Draft-cleanup `docs-session-draft-lifecycle` là follow-up mềm hơn.) Slice này chỉ AUTHOR docs contract (STOP_AT_READY) — **không authorize code**.
+
+1. Resolve trusted actor/tenant từ context (không từ payload). **AuthZ re-checked trên MỌI publish call (kể cả replay/no-op — authz đứng TRƯỚC dedup + state lookup):** (a) `session.manage` (Host) — actor thiếu quyền → 403 kể cả khi retry một session đã `open` (**authz thắng no-op**); non-admin 403 (edge #10). (b) **Billing suspension (fail-closed, dependency on `feature_billing_lifecycle`):** publish là action "publish new sessions" → block **`TENANT_SUSPENDED`** (403, canonical tenant-routing code) khi tenant billing-suspended per billing **Suspended Action Matrix** (`suspended` ❌; `active`/`past_due` ✅). **Named dependency — KHÔNG resolve ở đây:** authoritative status source + mismatch/missing/other-status do billing (matrix owner) định nghĩa (xem note §4 + backlog `docs-billing-publish-suspension-authority`). Sau khi authz+billing pass → command dedup theo **canonical `processed_commands` command-dedup** (edge #3) — publish dùng chung cơ chế dedup như MỌI session command, KHÔNG special-case. Collision-safety (cùng `commandId`, khác resource/payload) là property của canonical dedup contract đó (nó mạnh lên thành `IDEMPOTENCY_CONFLICT` khi `processed_commands.request_hash` additive migration land — owned by Session Organize plan); publish **inherit** whatever canonical dedup cung cấp, KHÔNG re-specify hay tự gate trên `request_hash`.
+2. Lock session row `FOR UPDATE` trong tenant context (RLS choke-point). Đọc `status`, `visibility`, `starts_at`, `version` under lock — không quyết định từ cache.
+3. **Idempotent no-op (thắng `expectedVersion`):** đã pass authz+billing (step 1); nếu `status='open'` sẵn → return success no-op, zero mutation, **không** emit `session.published` trùng (mirror close-already-closed / cancel-already-cancelled). `expectedVersion` **KHÔNG** kiểm ở nhánh này: publish không mutation ở đây nên không có lost-update để guard — một `commandId` mới với `expectedVersion` stale trên session đã `open` vẫn trả **no-op success** (idempotency thắng `STALE_VERSION`; goal state `open` đã đạt). *Ordering:* nếu actor đã mất `session.manage` hoặc tenant billing-suspended, **step 1 trả 403 TRƯỚC** khi tới no-op (authz/billing thắng no-op) — no-op chỉ dành cho actor còn quyền.
+4. **Transition guard:** `status ∈ {closed, cancelled}`, hoặc `status='draft'` nhưng `starts_at <= now()` (past) → `SESSION_NOT_OPEN` (409), zero mutation. Chỉ `draft` với `starts_at > now()` mới publish được (past-guard cùng ngưỡng `starts_at <= now()` như promotion §4 và auto-close).
+5. **Public precondition:** nếu `visibility='public'` → re-validate E#7 discovery completeness (sport, area, starts_at, `slots_max IS NOT NULL`) — đây là transition **bật public projection** nên discovery phải đủ. Thiếu → `MISSING_DISCOVERY_FIELDS` (400), zero mutation. Private → bỏ qua (visibility không đổi ở publish).
+6. **Commit — CHỈ cho mutation `draft`→`open` (một transaction):** `expectedVersion` (nếu client gửi) chỉ được kiểm ở nhánh mutation này (status vẫn `draft`) — mismatch → `STALE_VERSION` (§1); rồi set `status='open'`, bump `version`, ghi đúng một `session.published` outbox event. `FOR UPDATE` + draft-guard là an toàn concurrency chính; `expectedVersion` là guard phụ cho stale draft edit. Status-only — `visibility` giữ nguyên.
+7. **Public marketplace projection (timing = OPEN cross-authority reconcile):** publish emit canonical outbox event + status change; **owner projector là `feature_marketplace_discovery`** — algorithm này KHÔNG author projector. Session-side intent: public projection bật TẠI publish (`draft`→`open`), khớp marketplace projector open-only. **⚠️ OPEN reconcile — KHÔNG resolve ở đây:** PRD FLOW 2 + marketplace integration contract hiện mô tả public projection tại **CREATE** (project-on-create), lệch với draft-first project-on-publish. Đây là **cross-authority conflict owned by PRD + `feature_marketplace_discovery`** (cross-ref only; session slice KHÔNG claim PRD/marketplace resolved) → **HARD DEPENDENCY** `docs-prd-flow2-publish-projection-reconcile` (codex round-03/05/06): public-projection behavior của publish **KHÔNG code-ready** cho tới khi reconcile merge (implementation không thể thoả cả hai reviewed contracts). (Announce lên group là command riêng `AnnounceSession`/SES-UC-3, **KHÔNG** coupled với publish.)
+
+> Idempotency là hai lớp: (a) `commandId` dedup theo **canonical `processed_commands` command-dedup** (edge #3) — publish inherit như mọi command, không re-specify; collision-safety per canonical contract (mạnh lên khi `request_hash` migration land) và (b) state no-op (session đã `open`) — cả hai đều không double-emit `session.published` hay double-flip status. Cùng contract với close/cancel no-op (§3 Idempotency).
+
+> **Billing suspension gate (fail-closed — dependency on `feature_billing_lifecycle`):** publish là action **"publish new sessions"** trong billing **Suspended Action Matrix** (`active`/`past_due` ✅, **`suspended` ❌**). Publish **fail-closed block `TENANT_SUSPENDED`** (403, canonical tenant-routing code) khi tenant billing-suspended, zero mutation, không emit event. **Named dependency — session slice KHÔNG resolve status-authority:** billing (matrix owner) định nghĩa **authoritative status source** (`suspended` sống trong `tenants.status`/`subscriptions.status`, cả hai `CHECK 'suspended'` từ 0002/0007) + hành vi khi hai cột **mismatch** / **missing** subscription row / **other-status** — session publish contract chỉ **cross-ref** matrix và fail-close khi billing resolves tenant là `suspended`. Status-resolution semantics + matrix cases (mismatch, missing subscription row, `trialing`/`cancelled`) → **HARD DEPENDENCY** `docs-billing-publish-suspension-authority` (billing owns; codex round-05/06 P1): publish gate **KHÔNG code-ready** cho tới khi dep này merge (không thể implement gate đúng nếu chưa biết cột nào authoritative). `authorizeTenantAction('publish_new_sessions')` là gate helper billing cung cấp. **Không** thêm session error code (denial là billing-owned 403); matrix single source of truth — adapters không tự nới.
+
+> **Ngoài scope — dọn draft chưa publish (pre-existing draft-lifecycle gap):** publish reject past draft (`starts_at <= now()`) → `SESSION_NOT_OPEN` là **founder-ratified** (step 4). Nhưng việc **DỌN** một draft chưa bao giờ publish và đã quá giờ là gap có sẵn từ mô hình `create=draft` (v2.12c), **KHÔNG** do publish contract tạo ra và **KHÔNG** thuộc scope slice này: state machine hiện chỉ có `draft→open`, `open→closed`, `open→cancelled` — không có draft-terminal; E#11/edge #11 reject mutation trên past session. **Current behavior pinned:** một unpublished past draft ở nguyên `draft` (không publish được, không auto-cleanup). Transition dọn (host-cancel/discard draft, hoặc auto-expiry past draft) là **product decision riêng** → backlog `docs-session-draft-lifecycle`; publish slice **KHÔNG** tự invent transition này (giữ đúng scope ratified — "resolve no other open question"). Tương tự, reconcile prose PRD FLOW 2 ("public → marketplace") cho khớp project-on-publish (step 7) là follow-up ngoài scope (PRD authority) → backlog `docs-prd-flow2-publish-projection-reconcile`.
 
 ### Waitlist entry + rejoin disposition (DD-45/DD-49)
 
@@ -385,6 +436,15 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 | 37 | Messenger duplicate confirm | Same opaque action/webhook/commandId replay | Exactly one session/outbox sequence; previous result returned |
 | 38 | Negative base price | Create/update `price_amount < 0` through API or direct migration fixture | DB CHECK rejects; no session/outbox mutation |
 | 39 | Live skill-level upgrade | Upgrade fixture with non-null `sessions.skill_level` | Value preserved and public projection/filter remains valid until DD-41 ranked-field contract completes |
+| 40 | Publish draft→open | `draft` session, `starts_at > now()`, Host | `status='open'`, `version` bumped, exactly one `session.published` outbox event; `visibility` unchanged (status-only) |
+| 41 | Re-publish already-open (idempotent) | Session đã `open`; `commandId` replay hoặc new `commandId` | No-op success; no duplicate `session.published`; `status`/`version`/`visibility` unchanged |
+| 42 | Publish public without discovery fields | `visibility='public'` `draft` thiếu area / `slots_max` NULL / sport / starts_at | `MISSING_DISCOVERY_FIELDS`; zero mutation; no event |
+| 43 | Publish closed/cancelled/past | Session `closed`/`cancelled`, hoặc `draft` với `starts_at <= now()` | `SESSION_NOT_OPEN`; zero mutation; no event |
+| 44 | Non-admin publish | Player actor calls publish | 403 — AuthZ rejects before service; zero mutation |
+| 45 | Publish `draft` with stale expectedVersion | `draft` session; `expectedVersion` != live `version` (concurrent edit bumped it) | `STALE_VERSION` (409) on the mutation path; zero mutation; no event |
+| 46 | Publish while tenant billing-suspended | Host publish; billing resolves tenant `suspended` (per billing matrix) | Fail-closed `TENANT_SUSPENDED` (403); `status` stays `draft`; zero mutation; no `session.published`. Status-authority owned by `feature_billing_lifecycle` (hard dep) |
+| 47 | Re-publish already-open with stale expectedVersion | Session `open`; new `commandId` + `expectedVersion` < live `version` | No-op success (idempotency precedence over `STALE_VERSION`); zero mutation; no event |
+| 48 | Publish `commandId` collision | Same `commandId` reused for a different resource/payload | Handled by the canonical `processed_commands` command-dedup (edge #3) — publish inherits it, does not special-case; collision-safety strengthens to `IDEMPOTENCY_CONFLICT` when the canonical `request_hash` migration lands (Session Organize plan) |
 
 ### Integration Tests
 
@@ -425,6 +485,7 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v2.14 | **PUBLISH transition contract (founder-ratified, `docs-session-publish-contract`; re-sliced after codex rounds 01–05):** distinct command `PublishSession` (§1 command list + flow), endpoint `POST /api/sessions/:id/publish` (§3, `commandId` + `expectedVersion`) → Endpoints + Idempotency (`publish already-open = no-op`) + Request/Response Examples (DTO/envelope DD-60, incl. stale-`expectedVersion` → `STALE_VERSION`), §4 algorithm **Publish transition (`draft`→`open`)** (AuthZ `session.manage` re-checked mọi call incl. replay — **authz thắng no-op**; lock row; **idempotent no-op thắng `expectedVersion`** trên session đã open; guard non-draft/past → `SESSION_NOT_OPEN`; public → E#7 → `MISSING_DISCOVERY_FIELDS`; mutation `draft`→`open` mới kiểm `expectedVersion` → `STALE_VERSION`, set `status='open'` + bump `version` + đúng một `session.published` outbox), event `session.published`, BE edge #21–#24, tests #40–#47. **Status-only** — publish KHÔNG đổi `visibility`. Reuse error codes `SESSION_NOT_OPEN` + `MISSING_DISCOVERY_FIELDS` (không invent code mới). **Billing suspension = fail-closed block 403** per billing Suspended Action Matrix — **named dependency on `feature_billing_lifecycle`** (matrix owner định nghĩa authoritative status source/mismatch/missing/other-status; session slice cross-ref only, KHÔNG resolve status-authority) → **HARD DEPENDENCY** `docs-billing-publish-suspension-authority`. **Projection-timing = OPEN cross-authority reconcile** (§4 step 7): session-side intent project-on-publish, nhưng PRD FLOW 2 + marketplace integration contract mô tả project-on-create — cross-ref only, KHÔNG claim PRD/marketplace resolved → **HARD DEPENDENCY** `docs-prd-flow2-publish-projection-reconcile`. **Publish contract AUTHORED nhưng NOT code-ready cho tới khi 2 hard deps merge** (§4 code-readiness note; codex round-06). Idempotency **inherit canonical `processed_commands` dedup** (Session Organize contract: `request_hash` JCS; collision → `IDEMPOTENCY_CONFLICT`; `request_hash` = pending additive migration — cross-ref, không re-specify; codex round-06/07). Reference canonical **`TENANT_SUSPENDED`** (403, tenant-routing) cho suspended-publish (§3 error codes; codex round-07). Checklist re-trace → follow-up `docs-session-acceptance-checklist-publish-retrace` (codex round-07). Negative-scope: dọn **draft chưa publish** (draft-terminal cleanup) là pre-existing gap từ `create=draft` → backlog `docs-session-draft-lifecycle`. No schema change (status enum `draft/open/closed/cancelled` đã tồn tại `0002`). Re-slice giảm scope về 2 session specs + README + backlog (billing/projection/draft-lifecycle deferred to owning specs; acceptance-checklist tách khỏi scope). Dated changelog giữ verbatim. |
 | 2026-07-23 | v2.13b | **Reconcile 2 inconsistencies (AP-25 round-06, founder-ratified):** (1) public-capacity — pin PRD E#7 authority: `visibility='public'` requires `slots_max IS NOT NULL` (public không unlimited; `NULL` = unlimited chỉ non-public) — note Capacity × visibility §2 (validation choke-point; row public+NULL ngoài choke-point = invalid fail-closed, không được project — mechanism/test thuộc `feature_marketplace_discovery_tech.md`, follow-up ngoài scope), DDL comment, edge #12/#15 qualifier, `MISSING_DISCOVERY_FIELDS` trigger, §4 consume-time re-check tại MỘT choke-point entry step-3 (mọi branch first-entry/left-rejoin/approval) + promotion step-3 (KHÔNG treat public+NULL as unbounded — fail-closed theo not-joinable path), test #24 pin non-public + #24a public+unlimited reject + #24b bypass-row consume-time fail-closed mọi branch. Cột DB giữ nullable như live `0002`; DB CHECK = hardening candidate migration mới (chưa scope). (2) create-status — TDD vốn đã đúng (DDL default `draft`, POST example `draft`), không đổi; reword nằm ở PRD SES-UC-1. Prose only; dated changelog giữ verbatim; publish-transition mechanics là pre-existing gap, không resolve ở đây. |
 | 2026-07-23 | v2.13a | **Reconcile 0014 merge-state + projection direction (TDD→PRD):** current-state 0014 mirrors → **merged on `main` (`1a6ac38`, migrations 0000–0018)** (header, §2 migration note + range 0000→0018, DDL `waitlist_position` comment, rollback row = forward-migration mới, §6 rollout step-2; provenance `origin/main`@`22c23aa` reframed thành historical marker). Edge test #10 → "Public → private removes projection" khớp feature spec edge 8 + SES-UC-5/SES-UC-10 (PRD FLOW 2/13). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.13 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (reuse baseline `0002`; `0014` branch-only; DD-68/DD-45a/retry objects = migration mới monotonic), §3 Request/Response Examples (DD-60 envelope), §4 Caching Strategy + Security Checklist. Idempotency đã có sẵn (§3) — giữ nguyên. Derivative/editorial — không đổi contract. |

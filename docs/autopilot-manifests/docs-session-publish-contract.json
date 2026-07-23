@@ -1,0 +1,21 @@
+{
+  "feature": "docs-session-publish-contract",
+  "branch": "feat/docs-session-publish-contract",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "docs-spec-authoring",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "1x_clean",
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": [],
+  "_note": "Author the PUBLISH transition contract (draft->open) into the two Session Management specs. Founder-ratified contract: publish is a STATUS-ONLY transition (draft->open); it does NOT change visibility (visibility is an independent field set at create/edit, already E#7-validated). It is a DISTINCT command PublishSession carrying commandId (idempotent — re-publishing an already-open session is a no-op success, like close/cancel dedup). Precondition: if the session is public, re-validate discovery completeness (E#7: finite slots_max + sport/area/starts_at) and reject MISSING_DISCOVERY_FIELDS if incomplete. Publishing a closed/cancelled/past session is rejected (SESSION_NOT_OPEN). Effects: canonical status change + an outbox event; if public, the public marketplace projection materialises (positive materialisation owned by feature_marketplace_discovery). Host (session.manage) only, through the same shared domain service (chat+web). This is spec AUTHORING on two Reviewed specs (adds a command + algorithm + acceptance) — NOT a reconcile; no schema change (uses the existing status enum draft/open/closed/cancelled); reuse existing error codes SESSION_NOT_OPEN + MISSING_DISCOVERY_FIELDS. Founder confirms the Reviewed-status impact at READY. RE-SLICE (codex rounds 01-06, founder-ratified Option 1): scope reduced to these 5 files (acceptance-checklist removed); billing-status-authority + public-projection-timing are HARD DEPENDENCIES (backlog docs-billing-publish-suspension-authority + docs-prd-flow2-publish-projection-reconcile) - publish contract AUTHORED but NOT code-ready until they merge; draft-cleanup deferred (docs-session-draft-lifecycle). This docs slice authors the contract only (STOP_AT_READY); does not authorize code. depends_on stays [] because this docs-authoring slice has no blocking predecessor - the hard deps gate the future BUILD slice, declared in BE spec §4.",
+  "scope": [
+    "docs/autopilot-manifests/docs-session-publish-contract.json",
+    "docs/features/feature_session_management.md",
+    "docs/features/BE/feature_session_management_tech.md",
+    "docs/features/README.md",
+    "docs/autopilot-backlog.md"
+  ]
+}

@@ -41,7 +41,7 @@ Bốn nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**
 |---|---|---|---|---|
 | P0–P1 | Multi-tenant Foundation | `feature_multi_tenant.md` v1.7a | `BE/feature_multi_tenant_tech.md` v1.6 | ✅ Reviewed |
 | P2 | Tenant Routing & Authz | `feature_tenant_routing_authz.md` v2.6a | `BE/feature_tenant_routing_authz_tech.md` v2.6 | ✅ Reviewed |
-| P2/P4 | Session Management | `feature_session_management.md` v2.12b | `BE/feature_session_management_tech.md` v2.13a | ✅ Reviewed |
+| P2/P4 | Session Management | `feature_session_management.md` v2.13 | `BE/feature_session_management_tech.md` v2.14 | ✅ Reviewed |
 | P3 | Payment Reconciliation | `feature_payment_reconcile.md` v1.7a | `BE/feature_payment_reconcile_tech.md` v1.10 | ✅ Reviewed |
 | P3.5 | Identity Directory & Merge | `feature_identity.md` v1.10a | `BE/feature_identity_tech.md` v1.12 | ✅ Reviewed |
 | P3 · P4 · P4.5–P4.7 · P4+ | Notifications — Reminders · Inbox · Announcements · Web Push | `feature_notifications_reminders.md` v3.4h | `BE/feature_notifications_reminders_tech.md` v3.4i | 🟡 **Draft** — §A reminder/confirm/correction **business invariants đã reviewed** (reconciled decisions v1.45/DD-15/DD-67); §B/C/D inbox·announce·push chờ **DD-70/71/72**. Hạ Reviewed→Draft 18/07 do **gộp tài liệu**, không phải luật tiền bị mở lại |

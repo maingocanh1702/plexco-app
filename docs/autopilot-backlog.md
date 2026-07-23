@@ -514,6 +514,42 @@ notes: Split out of docs-0014 (which flips to merged via its own probe) so this 
 
 ## task: docs-session-publish-contract
 title: Define the draft→open publish command contract (validation, idempotency, transition guard)
+status: in-flight
+risk: P2
+change_class: docs-spec
+depends_on: []
+invariants: []
+scope: [docs/features/feature_session_management.md, docs/features/BE/feature_session_management_tech.md, docs/features/README.md, docs/autopilot-backlog.md]
+manifest: docs/autopilot-manifests/docs-session-publish-contract.json
+merged_probe: docs/features/BE/feature_session_management_tech.md :: PublishSession
+notes: Opened by AP-25 round-06 create-status reconcile (0dec63b). **Founder-ratified 2026-07-23 → authored under this slice (STOP_AT_READY, pending manual merge).** Contract: publish is a STATUS-ONLY transition draft→open (does NOT change visibility — visibility is set at create/edit, E#7-validated independently); distinct `PublishSession` command carrying `commandId` (idempotent — re-publish already-open = no-op success, mirrors close/cancel dedup); same shared domain service (chat+web); `expected_version` for conflicting edits. Precondition: if public at publish time, re-validate E#7 discovery completeness (sport/area/starts_at/finite slots_max) → `MISSING_DISCOVERY_FIELDS` if incomplete. Reject publish of closed/cancelled/past → `SESSION_NOT_OPEN` (reuse existing 409). Host (`session.manage`). Stale-version precedence: idempotent no-op (already-open) beats `STALE_VERSION`; `expectedVersion` guards only the `draft`→`open` mutation. Billing suspension is a FAIL-CLOSED block (403) per the billing Suspended Action Matrix, framed as a NAMED DEPENDENCY on feature_billing_lifecycle (matrix owner) — the authoritative status source (tenants.status vs subscriptions.status, both CHECK 'suspended' since 0002/0007) + mismatch/missing/other-status semantics are NOT resolved here → backlog docs-billing-publish-suspension-authority. Codex trail: r01 added the gate; r02 wrongly reframed it enablement-no-op (fail-open); r04 tried fail-closed-read-existing; r05 P1 flagged which-column-authority undefined; r06 re-slice → dependency cross-ref (founder-ratified). Round-04 added §3 publish invocation surface (bot lệnh/callback + web nút Publish + confirm/error) + AC. **Round-06 RE-SLICE (founder-ratified Option 1 after codex rounds 01–05 spread findings across billing/PRD/marketplace/checklist authority contracts = under-specified slice):** scope reduced to 5 files (2 session specs + README + backlog + manifest); acceptance-checklist REMOVED from scope entirely (reverted the §9-B edit — it re-traces itself via its own slice). Billing suspension → named dependency cross-ref (not resolved here). Projection-timing → OPEN cross-authority reconcile (§4 step 7; PRD FLOW 2 + marketplace own it, cross-ref only). Retry-ordering pinned: authz precedes no-op (403 beats no-op). Deferred items spun as founder-flagged backlog blocks: `docs-billing-publish-suspension-authority`, `docs-prd-flow2-publish-projection-reconcile`, `docs-session-draft-lifecycle`. **Round-06 (re-slice review-1):** codex offered hard-dependency modeling as acceptable → billing-authority + projection-reconcile upgraded to **HARD DEPENDENCIES** (publish contract AUTHORED but NOT code-ready until both merge; BE §4 code-readiness note); draft-lifecycle stays a softer follow-up. Idempotency dedup bound `command_type='PublishSession'`+`session_id` + fail-closed on collision (align `processed_commands` type+result_hash, TDD; test #48). manifest depends_on stays [] (docs-authoring slice has no blocking predecessor; hard deps gate the future BUILD, declared in spec). **Round-07 (review-2):** billing+projection hard-dep framing ACCEPTED by codex (converged, P1s gone). 3 cleanup fixes: idempotency now INHERITS the canonical processed_commands dedup (collision → IDEMPOTENCY_CONFLICT; request_hash = pending additive migration owned by Session Organize plan) instead of re-specifying a comparison the schema can't do; reference canonical TENANT_SUSPENDED (403, tenant-routing :169 / TDD :637) for suspended-publish; add checklist re-trace follow-up docs-session-acceptance-checklist-publish-retrace. Effects: `status='open'` + one `session.published` outbox event; if public, positive marketplace projection materialises (owned by feature_marketplace_discovery — cross-ref, NOT authored here). Authored into feature_session_management.md v2.13 (SES-UC-12, edges #16–#19, §3 publish invocation surface bot+web, `session_published` analytics, 6 AC bullets) + BE/feature_session_management_tech.md v2.14 (§1 command, §3 endpoint+idempotency+DTO, §4 algorithm+event, BE edges #21–#24, tests #40–#47); README cells synced v2.13/v2.14. No schema change (status enum draft/open/closed/cancelled exists since 0002); no new error codes. NEGATIVE SCOPE respected: draft-first create NOT regressed (create stays draft; publish is the open transition); no projector authored here; no other OQ resolved. ADDS contract to two Reviewed specs — founder confirms Reviewed-status impact at merge.
+
+## task: docs-session-acceptance-checklist-publish-retrace
+title: Re-trace acceptance checklist §9-B/§8 to the merged publish contract (publish mechanics no longer deferred)
+status: idea
+risk: P2
+change_class: docs-spec
+depends_on: [docs-session-publish-contract]
+invariants: []
+scope: [docs/issues/session-management-acceptance-checklist.md]
+manifest: null
+merged_probe: null
+notes: Opened by docs-session-publish-contract codex round-07 [P2]. After the publish contract merges, session-management-acceptance-checklist.md §9-B still says publish mechanics are deferred + need a product decision while its closing marker claims complete traceability — contradictory. Re-trace: §9-B publish row → mechanics AUTHORED (PublishSession command/idempotency/status-only/invocation surface) with billing-authority + projection-timing as declared HARD DEPENDENCIES; update Sources pin (P v2.13 / T v2.14) + §8 totals (UC/edges/events/AC now include publish). Per founder the checklist re-traces itself (NOT the publish slice's job — publish slice removed it from scope). Depends on docs-session-publish-contract merged.
+
+## task: docs-billing-publish-suspension-authority
+title: Define authoritative billing status source + mismatch/missing semantics for the publish suspension gate
+status: idea
+risk: P2
+change_class: docs-spec
+depends_on: []
+invariants: []
+scope: [docs/features/BE/feature_billing_lifecycle_tech.md, docs/features/feature_billing_lifecycle.md]
+manifest: null
+merged_probe: null
+notes: Opened by docs-session-publish-contract codex round-05 [P1]. The publish gate fail-closes when a tenant is billing-suspended (Suspended Action Matrix "publish new sessions" ❌), but the AUTHORITATIVE status source is undefined: both tenants.status (0002) and subscriptions.status (0007) carry the same enum (trialing/active/past_due/suspended/cancelled). Define in feature_billing_lifecycle (matrix owner): which column is authoritative for authorizeTenantAction, behavior when the two mismatch, when a tenant has no subscription row (free plan), and other-status handling; add matrix cases + tests. The session publish contract only cross-refs the matrix + fail-closes on suspended (docs-session-publish-contract BE §4 billing note). Owned by billing — NOT the session slice. **HARD DEPENDENCY of docs-session-publish-contract:** publish is not code-ready until this merges (codex round-06).
+
+## task: docs-session-draft-lifecycle
+title: Define draft cleanup terminal path (host-cancel/discard draft + auto-expiry of past unpublished drafts)
 status: idea
 risk: P2
 change_class: docs-spec
@@ -521,7 +557,20 @@ depends_on: []
 invariants: []
 scope: []
 manifest: null
-notes: Opened by AP-25 round-06 create-status reconcile (0dec63b). Create now lands status=draft; Host publish→open (SES-UC-1 v2.12c + state machine §4). The PUBLISH TRANSITION mechanics are undefined: command name/shape, idempotency key, which validations run at publish (discovery fields incl. public finite slots_max E#7? re-check eligibility?), draft→open guard. BLOCKED on founder product input — product-contract decision, not a docs reconcile. NEGATIVE SCOPE: must NOT regress the landed draft-first create (create stays draft; publish is the open transition). Founder confirm contract before scoping.
+merged_probe: null
+notes: Opened by docs-session-publish-contract codex round-03 [P2]. Pre-existing draft-lifecycle gap from create=draft (v2.12c): state machine has draft→open, open→closed, open→cancelled but NO draft-terminal, so an unpublished draft whose starts_at passes is stuck (publish rejects past → SESSION_NOT_OPEN; E#11 rejects mutation on past session). PRODUCT DECISION needed: allow host-cancel/discard draft (draft→cancelled), and/or auto-expiry of abandoned past drafts (draft→closed/cancelled/deleted); then add the state-machine transition + algorithm + test. Out of publish-contract scope (publish only authors draft→open). BLOCKED on founder product input.
+
+## task: docs-prd-flow2-publish-projection-reconcile
+title: Reconcile PRD FLOW 2 prose to draft-first (public projection at publish/open, not create)
+status: idea
+risk: P2
+change_class: docs-spec
+depends_on: []
+invariants: []
+scope: [docs/product/PRD.md]
+manifest: null
+merged_probe: null
+notes: Opened by docs-session-publish-contract codex round-03 [P1]. PRD FLOW 2 ("TẠO & ĐĂNG KÈO") step 3 says "if visibility=public → pushed to marketplace" without distinguishing draft vs open. With draft-first (create=draft) + marketplace projector upserting public/open/future/complete only (feature_marketplace_discovery_tech.md §2 edge "Private session in projection"), a public DRAFT is NOT projected until published (draft→open). The session publish contract (BE §4 step 7) now pins project-on-publish; PRD FLOW 2 prose should be clarified to match (projection at the publish/open step, not at draft create). PRD is authority + out of publish-slice scope → separate reconcile. **HARD DEPENDENCY of docs-session-publish-contract:** publish public-projection behavior is not code-ready until this merges (codex round-06); marketplace integration test also expects project-on-create today.
 
 ## task: docs-marketplace-public-capacity-guard
 title: Pin public+NULL-slots_max invalid-state projection handling + regression test in marketplace spec

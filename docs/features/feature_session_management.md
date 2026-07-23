@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P2 (chat CRUD) · P4 (web parity)  
 > **Track:** 📋 Session CRUD  
-> **Version:** 2.12c · 2026-07-23
+> **Version:** 2.13 · 2026-07-23
 > **Status:** Reviewed  
 > **Implementation:** Not started — schema `0014` đã merge trên main (`1a6ac38`, migrations 0000–0018); auto-promote behavior vẫn chưa build · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P0–P1 foundation stable · P2 tenant routing/authz  
@@ -16,7 +16,7 @@
 
 Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **session thể thao đa môn** — với time, venue, price, capacity, visibility và join policy nhất quán. P2 deliver qua **Zalo + Messenger admin commands**; trên Messenger host dùng được **central Plexco Page hoặc optional Page riêng của club** với chức năng cơ bản tương đương. P4 bổ sung web parity và event projections.
 
-**Ngoài phạm vi:** Đặt sân (court booking), chấm điểm theo môn (sport-specific scoring) — **được theo dõi riêng ở `feature_session_organize.md` + `BE/feature_session_organize_tech.md` (DD-61..64 ✅ accept-in-principle, build post-P4)**; pointer only, không thêm scope organize vào body Reviewed này.
+**Ngoài phạm vi:** Đặt sân (court booking), chấm điểm theo môn (sport-specific scoring) — **được theo dõi riêng ở `feature_session_organize.md` + `BE/feature_session_organize_tech.md` (DD-61..64 ✅ accept-in-principle, build post-P4)**; pointer only, không thêm scope organize vào body Reviewed này. **Dọn draft chưa publish** (host-cancel/discard draft hoặc auto-expiry một draft quá giờ chưa `open`) là draft-lifecycle gap có sẵn từ `create=draft` (v2.12c) — publish contract chỉ author `draft`→`open` và reject past draft (`SESSION_NOT_OPEN`), KHÔNG author draft-terminal cleanup; pointer follow-up `docs-session-draft-lifecycle` (product decision).
 
 ### Bất biến
 
@@ -46,6 +46,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 | SES-UC-9 | Player | Leave session trước giờ chơi | Player → `left`, opener atomically xét queue. First-activation derive giá rồi tạo đúng một charge; DD-49 rejoin re-derive live disposition, carry-over hoặc append refunded lifecycle chỉ khi activation, không duplicate charge row. First derivation failure lazy-creates one root promotion-retry job + candidate event. Job CAS/lease tối đa 3 claimed attempts/backoff; mỗi completed sweep re-enter current order, thử mỗi candidate một lần và re-check DD-41/DD-42/DD-52. Expired final claim hoặc completed attempt 3→resolve-or-owner-review/DLQ. |
 | SES-UC-10 | System | Auto-close session hết giờ | Status → closed, projection removed |
 | SES-UC-11 | Host (Messenger central/tenant Page) | Chạy `/newsession` | Role-aware tenant picker nếu cần → wizard → preview → confirm → đúng một shared `CreateSession` command |
+| SES-UC-12 | Host | Publish session `draft` → `open` | Distinct `PublishSession` command (chat+web cùng service) flip status `draft` → `open` để nhận join (state machine §4). **Status-only** — không đổi `visibility`. Idempotent: re-publish session đã `open` = no-op success. Nếu `visibility='public'`: re-validate discovery completeness (E#7) trước khi mở. Chỉ Host (`session.manage`) |
 
 ### Edge Cases
 
@@ -66,6 +67,10 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 | 13 | Financial | Player đã `left` tự join lại cùng session | Re-derive DD-49 dưới lock. Active: chưa-refund carry-over, refunded append lifecycle idempotent. Full: waitlisted; chưa-refund giữ aggregate lịch sử, refunded không new lifecycle tới promotion. Unknown→`REJOIN_REQUIRES_REVIEW`, không mutation |
 | 14 | Financial/Resilience | First active join hoặc first-activation promotion không suy được amount | Direct active join aborts. Promotion giữ waitlisted/no-charge/venue; first failure lazy-creates one root retry job + candidate event and commits. Retry one-owner CAS/lease, max 3 claimed attempts/backoff; completed sweep dùng current-order selector, mỗi candidate tối đa một lần; sibling events không fork budget. Closed/started/full resolves; expired final claim hoặc completed attempt 3→resolve-or-review/DLQ; không fallback |
 | 15 | Security/State | Messenger wizard stale/expired/context-switch/non-admin | Clear/deny fail-closed; final confirm không tạo partial/duplicate session |
+| 16 | State | Publish `draft` → `open` (idempotent) | `draft` → `open` flip status + một outbox event; re-publish session đã `open` = no-op success (dedup theo `commandId`, cùng pattern close/cancel). Status-only — `visibility` không đổi |
+| 17 | Data Integrity | Publish session public thiếu discovery fields | Reject `MISSING_DISCOVERY_FIELDS` — E#7 (sport, area, starts_at, finite `slots_max`) re-validate tại publish vì đây là transition bật public projection; zero mutation |
+| 18 | State | Publish session closed/cancelled/past | Reject `SESSION_NOT_OPEN` — chỉ `draft` (chưa qua giờ) → `open` hợp lệ; không mutation. Chỉ Host (`session.manage`) |
+| 19 | Security/Billing | Publish khi tenant billing-`suspended` | **Fail-closed block `TENANT_SUSPENDED`** (403, canonical tenant-routing code) — publish là action "publish new sessions" trong billing Suspended Action Matrix (`suspended` ❌; `active`/`past_due` ✅), **owned bởi `feature_billing_lifecycle`** (named dependency — status-authority định nghĩa ở billing, không ở đây). Existing sessions expire naturally |
 
 ---
 
@@ -76,6 +81,8 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 | Bot (Zalo/Messenger) | `/newsession` wizard | Typing indicator | Step-by-step input (sport → time → venue → price → capacity → visibility) | Inline error per field ("Giờ kết thúc phải sau giờ bắt đầu") | N/A (wizard luôn có content) |
 | Bot (Zalo/Messenger) | Session detail (`/status`) | "Đang tải..." message | Roster + payment status + session info | "Không tìm thấy session" | N/A |
 | Bot (Zalo/Messenger) | Session cancel confirm | — | Preview: roster count, paid amount, refund responsibility | — | N/A |
+| Bot (Zalo/Messenger) | Publish draft (lệnh/callback "Đăng kèo") | — | Nút/lệnh "Đăng kèo" trên draft → confirm "Đăng kèo này?" → `draft`→`open` (single-action, KHÔNG wizard; cùng `PublishSession`) | "Buổi chơi không mở được" (`SESSION_NOT_OPEN` — quá giờ/không draft) · "Thiếu thông tin công khai" (`MISSING_DISCOVERY_FIELDS`) · "Gói bị tạm ngưng" (`TENANT_SUSPENDED` 403) | N/A |
+| Web P4 | Session detail — Publish control | Button spinner | Draft: nút "Đăng kèo" + confirm dialog → `open` (nút ẩn khi đã `open`; status badge `draft`/`open`) | Inline: `SESSION_NOT_OPEN` / `MISSING_DISCOVERY_FIELDS` / `STALE_VERSION` / `TENANT_SUSPENDED` (403) — map BE §3 Error Codes | N/A |
 | Web P4 | Session list | Skeleton rows | Table/card list sortable by date | Error banner + retry | "Chưa có buổi chơi nào" + CTA "Tạo buổi mới" |
 | Web P4 | Session create/edit form | Skeleton form | Full form with validation | Inline errors per field | N/A |
 | Web P4 | Session detail | Skeleton cards | Roster + QR + payments + timeline | Error banner | N/A |
@@ -113,6 +120,7 @@ stateDiagram-v2
 | Event | Khi nào | Payload tối thiểu |
 |-------|---------|-------------------|
 | `session_created` | Host tạo session thành công | `tenant_id`, `session_id`, `sport_id`, `visibility`, `source` (chat/web) |
+| `session_published` | Host publish `draft` → `open` (không tính re-publish no-op) | `tenant_id`, `session_id`, `visibility`, `source` (chat/web) |
 | `session_updated` | Host sửa bất kỳ field | `tenant_id`, `session_id`, `fields_changed[]`, `source` |
 | `session_announced` | Announcement gửi thành công | `tenant_id`, `session_id`, `channel` |
 | `session_closed` | Session đóng (manual/auto) | `tenant_id`, `session_id`, `close_reason` (manual/auto) |
@@ -139,6 +147,12 @@ stateDiagram-v2
 - [ ] Recurring generation idempotent và timezone-safe (DST test)
 - [ ] Announcement reproject works sau provider failure
 - [ ] Chỉ TenantAdmin mutate sessions — non-admin nhận 403
+- [ ] Publish `draft` → `open`: status flip, session nhận join, đúng một outbox event; `visibility` không đổi (status-only)
+- [ ] Re-publish session đã `open` = idempotent no-op success (dedup `commandId`); không outbox event trùng
+- [ ] Publish session public re-validate discovery completeness (E#7); thiếu → `MISSING_DISCOVERY_FIELDS`
+- [ ] Publish session closed/cancelled/past → `SESSION_NOT_OPEN`; chỉ Host (`session.manage`)
+- [ ] Publish khi tenant billing-`suspended` → fail-closed block `TENANT_SUSPENDED` (403, canonical tenant-routing code; billing Suspended Action Matrix, owned bởi `feature_billing_lifecycle`; status-authority là hard dependency, không resolve ở đây)
+- [ ] Publish có surface rõ trên **bot** (lệnh/callback "Đăng kèo" trên draft, single-action không wizard) và **web** (nút Publish trên draft detail + confirm); cùng `PublishSession` command; error states (`SESSION_NOT_OPEN`/`MISSING_DISCOVERY_FIELDS`/`STALE_VERSION`/suspended) hiển thị đúng (map BE §3)
 
 ---
 
@@ -160,6 +174,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v2.13 | **PUBLISH transition contract (founder-ratified, `docs-session-publish-contract`):** author draft→open publish vào use-case/AC surface. Thêm **SES-UC-12** (Host publish `draft`→`open`, distinct `PublishSession` command, chat+web cùng service), edge #16 (idempotent re-publish no-op, status-only — không đổi visibility), #17 (publish public re-validate E#7 → `MISSING_DISCOVERY_FIELDS`), #18 (publish closed/cancelled/past → `SESSION_NOT_OPEN`, Host-only), #19 (publish khi tenant billing-`suspended` → **fail-closed block 403**, billing Suspended Action Matrix — **named dependency on `feature_billing_lifecycle`**, status-authority không resolve ở đây → **HARD DEPENDENCY** `docs-billing-publish-suspension-authority`), analytics event `session_published`, **§3 Screens & States publish surface (bot lệnh/callback "Đăng kèo" + web nút Publish + confirm/error)**, và 6 AC bullets. State machine §4 `draft --> open: Host publish` giữ nguyên. **Status-only**: publish KHÔNG đổi `visibility` (visibility set ở create/edit, E#7-validated độc lập). Reuse error codes `SESSION_NOT_OPEN` + `MISSING_DISCOVERY_FIELDS` (không invent). Projection-timing = **OPEN cross-authority reconcile** (session intent project-on-publish; PRD FLOW 2 + `feature_marketplace_discovery` own it, cross-ref only) → **HARD DEPENDENCY** `docs-prd-flow2-publish-projection-reconcile`. **Publish contract AUTHORED nhưng NOT code-ready cho tới khi 2 hard deps (billing-authority + projection-reconcile) merge** (BE §4 code-readiness note). No schema change (status enum draft/open/closed/cancelled đã tồn tại). §1 Ngoài phạm vi thêm pointer: **dọn draft chưa publish** (draft-terminal cleanup) là gap có sẵn từ `create=draft`, out of scope → follow-up `docs-session-draft-lifecycle` (codex round-03). Re-sliced sau codex rounds 01–06 (founder-ratified): scope giảm về 2 session specs + README + backlog. Dated changelog giữ verbatim; không resolve OQ nào khác. |
 | 2026-07-23 | v2.12c | **Reconcile 2 inconsistencies (AP-25 round-06, founder-ratified):** (1) create-status — SES-UC-1 kết quả reword: create = `draft`, Host publish → `open`, khớp state machine §4 + TDD (DDL default `draft`, POST example `draft` — vốn đã đúng, không đổi); (2) public-capacity — pin E#7 authority: public bắt buộc **finite `slots_max`** (`NULL` = unlimited chỉ hợp lệ non-public) vào E#7, domain model §4 và AC finite→unlimited qualifier. Prose only; dated changelog giữ verbatim; không resolve OQ nào khác. |
 | 2026-07-23 | v2.12b | **Reconcile 0014 merge-state (TDD→PRD):** current-state claim sửa → **0014 đã merge trên `main` (`1a6ac38`, migrations 0000–0018)** ở header Implementation + row SES-OQ-3 (giữ open "behavior chưa build"; provenance `origin/main`@`22c23aa` reframed thành historical marker). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.12a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
