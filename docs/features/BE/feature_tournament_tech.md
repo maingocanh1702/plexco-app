@@ -1,7 +1,7 @@
 # Feature: Tournament (Giải đấu) — Backend Tech Spec
 
 > **Canonical phase:** P4+ (sau session core)
-> **Version:** 0.1 · 2026-07-21
+> **Version:** 0.2 · 2026-07-23
 > **Status:** Draft *(chưa qua readiness gate — KHÔNG phải Reviewed contract)*
 > **Implementation:** Not started
 > **Product spec:** `../feature_tournament.md`
@@ -13,6 +13,7 @@
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v0.2 | **Reconcile migration-tail 0018:** current-state §2 migration baseline sửa `baseline main = 0000–0014; 0015 in-flight chưa merge` → `0000–0018` (0014 waitlist schema-only; lane auth DD-80 `0015`–`0018` đã merge nhưng ⛔ chưa enable). Numbering guidance giữ nguyên (số next-available monotonic sau synced tail, verify live `packages/db/migrations/` trước khi tạo, không hardcode). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-21 | v0.1 | Khởi tạo từ DD-82. Data model aggregate độc lập (`tournaments` + `tournament_registrations` tenant-scoped/RLS + `public_tournaments` read model whitelist). v1 không đụng tiền; bracket/standings/entry-fee = slice sau. Draft, chưa readiness gate — DDL là **contract cần build**, chưa migrate. |
 
 ---
@@ -131,7 +132,7 @@ CREATE UNIQUE INDEX idx_public_tournaments_slug ON public_tournaments (slug);
 
 ### Migration & Rollback
 
-- **Migration:** `packages/db/migrations/{NNNN}_tournament.sql` — **monotonic, file mới, số next-available tại build time** (baseline committed trên `main` = `0000–0014`, gồm `0014_players_waitlist`; `0015` auth D0a đang in-flight ở worktree riêng, **chưa merge** — **không** hardcode số, chọn số kế tiếp chưa dùng tại build sau khi sync `main`). **Verify với live `packages/db/migrations/` ngay trước khi tạo file** (source-of-truth khi conflict = migrations trên `main`, không phải prose HANDOFF). Chứa CREATE TABLE + ENABLE/FORCE RLS + policies + grants (role `app` NOBYPASSRLS) + projector function/trigger cho `public_tournaments`.
+- **Migration:** `packages/db/migrations/{NNNN}_tournament.sql` — **monotonic, file mới, số next-available tại build time** (baseline committed trên `main` = `0000–0018`, gồm `0014_players_waitlist` waitlist schema-only và lane auth DD-80 `0015`–`0018` **đã merge** nhưng ⛔ **chưa enable** — **không** hardcode số, chọn số kế tiếp chưa dùng tại build sau khi sync `main`). **Verify với live `packages/db/migrations/` ngay trước khi tạo file** (source-of-truth khi conflict = migrations trên `main`, không phải prose HANDOFF). Chứa CREATE TABLE + ENABLE/FORCE RLS + policies + grants (role `app` NOBYPASSRLS) + projector function/trigger cho `public_tournaments`.
 - **Retire `session_type='tournament'` (coordinate DD-41):** DD-41 định nghĩa `session_type` (chưa migrate). Hai nhánh:
   - **(a) DD-41 chưa ship `session_type`** (hiện trạng — không có cột trong `packages/db`): chỉ cần **loại giá trị `'tournament'`** khỏi enum/CHECK của DD-41 khi nó được migrate. Không có dữ liệu để backfill.
   - **(b) DD-41 đã ship `session_type` gồm `'tournament'`:** migration backfill chuyển các session `session_type='tournament'` sang aggregate `tournaments` (hoặc mark, tuỳ policy owner), rồi thắt CHECK bỏ `'tournament'`. **KHÔNG** gọi là "no breakage".

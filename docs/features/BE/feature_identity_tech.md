@@ -1,7 +1,7 @@
 # Feature: Identity Directory & Merge — Backend Tech Spec
 
 > **Canonical phase:** P3.5
-> **Version:** 1.11 · 2026-07-19
+> **Version:** 1.12 · 2026-07-23
 > **Status:** Identity implementation contract; DD-50 parent-first consume + DD-70(a) global-notification ownership aligned with current decisions v1.73. Endpoint-scoped schema/code pending identity/channel build slices
 > **Implementation:** Not started — bảng `link_codes`/`merge_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_identity.md`
@@ -152,7 +152,7 @@ Phone columns are dormant phase-1. Platform IDs and link-code lookups use keyed 
 
 ### Migration & Rollback
 
-**Live-schema truth (main, migrations `0000`–`0014`):** mọi bảng trong DDL trên **đã tồn tại** — `persons`/`channel_identities`/`link_codes`/`merge_audit`/`merge_tombstones` trong `0001_global_directory.sql`; `memberships`/`channel_reachability` trong `0002_tenants_core.sql`; registry `messenger_pages`/`zalo_bots` trong `0004_channels_connectors.sql`. **Reuse baseline, không recreate; `DROP` bảng baseline = ❌ NEVER** (có thể chứa identity/tenant data thật và ledger đang trỏ vào).
+**Live-schema truth (main, migrations `0000`–`0018`):** mọi bảng trong DDL trên **đã tồn tại** — `persons`/`channel_identities`/`link_codes`/`merge_audit`/`merge_tombstones` trong `0001_global_directory.sql`; `memberships`/`channel_reachability` trong `0002_tenants_core.sql`; registry `messenger_pages`/`zalo_bots` trong `0004_channels_connectors.sql`. **Reuse baseline, không recreate; `DROP` bảng baseline = ❌ NEVER** (có thể chứa identity/tenant data thật và ledger đang trỏ vào).
 
 **Delta còn thiếu so với live schema** (đúng như header v1.5–v1.7 ghi "runtime migration pending"):
 
@@ -160,7 +160,7 @@ Phone columns are dormant phase-1. Platform IDs and link-code lookups use keyed 
 - `link_codes` (live `0001`): `source_channel_identity_id` đang `NOT NULL`; chưa có `source_account_id`, `max_attempts`, `locked_until`, `revoked_at` và XOR CHECK.
 - `channel_reachability` (live `0002`): đang tenant-scoped `PRIMARY KEY (person_id, tenant_id, platform)`; shape global-protected key theo `channel_identity_id` ở DDL trên là migration-pending.
 
-**Migration mới:** một expand migration **monotonic theo next available number sau tail hiện tại của main** (tail hiện là `0014_players_waitlist.sql`), theo đúng trình tự §10 bước 1–2 (add nullable columns/registry → backfill có kiểm chứng → mới siết NOT NULL/CHECK/unique). Không sửa migration lịch sử. Lưu ý: bản nháp `0014_identity_channel_security.sql` chỉ tồn tại trong worktree chưa merge và **đụng số** với `0014_players_waitlist.sql` trên main — khi land phải đánh số lại theo tail của main.
+**Migration mới:** một expand migration **monotonic theo next available number sau tail hiện tại của main** (tail hiện là `0018_oauth_completion_handoff.sql`; migrations 0000–0018 đã merge trên `main`), theo đúng trình tự §10 bước 1–2 (add nullable columns/registry → backfill có kiểm chứng → mới siết NOT NULL/CHECK/unique). Không sửa migration lịch sử. Lưu ý: bản nháp `0014_identity_channel_security.sql` chỉ tồn tại trong worktree chưa merge và **đụng số** với `0014_players_waitlist.sql` trên main — khi land phải đánh số lại theo tail của main.
 
 **Rollback:**
 
@@ -420,6 +420,7 @@ Metrics: person/channel creation, merge success/failure by method, claim rejecti
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-23 | v1.12 | **Reconcile migration-tail 0018:** current-state §2 migration facts sửa: (a) `tail = 0014_players_waitlist` → **tail = 0018** (`0018_oauth_completion_handoff.sql`; migrations 0000–0018 đã merge trên `main` — 0014 waitlist schema-only, lane auth DD-80 0015–0018 ⛔ chưa enable); (b) "Live-schema truth (main, migrations `0000`–`0014`)" range → `0000`–`0018` (nhất quán, tránh mâu thuẫn với tail). Numbering guidance giữ nguyên (expand migration monotonic next-available sau synced tail, verify live `packages/db/migrations/` trước khi tạo, không hardcode/sửa lịch sử; draft `0014_identity_channel_security.sql` đụng số → renumber theo tail thực tế). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v1.11 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (live `0001`/`0002`/`0004` = reuse baseline, DROP ❌ NEVER; delta endpoint-binding/link-code lifecycle/reachability re-key → migration mới monotonic, cảnh báo đụng số worktree `0014`), §7 Request/Response Examples (DD-60) + Idempotency + Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v1.10a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v1.10 | **DD-50 v1.73 lock-order closure:** read-only link-code candidate resolve → issuer/account+Person parent locks → code-row lock/revalidation → conditional accounting/consume. Removes reset/revoke-vs-consume inversion; no runtime/migration. |

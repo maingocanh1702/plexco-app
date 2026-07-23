@@ -1,7 +1,7 @@
 # Feature: Security, Reliability & Operations — Engineering/Ops Spec
 
 > **Canonical phase:** Cross-cutting / P6
-> **Version:** 2.3 · 2026-07-19
+> **Version:** 2.4 · 2026-07-23
 > **Status:** Reviewed
 > **Implementation:** In progress — RLS/HR1 guard đã thực thi; phần còn lại chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_security_operations.md`
@@ -47,8 +47,8 @@ No new business tables — cross-cutting controls applied to all existing tables
 
 ### Migration & Rollback
 
-- **Doc này không own business DDL** ("No new business tables"). Cross-cutting DB controls đã land trên main (migrations `0000`–`0014`): roles/extensions (`0000_roles_extensions.sql`), RLS policies + grants (`0009_rls_policies_grants.sql`), functions/triggers (`0010_functions_triggers.sql`) — **reuse baseline, không recreate; rewrite/`DROP` migration đã apply = ❌ NEVER**.
-- Control object mới (role, policy, grant, guard function) → migration mới **monotonic theo next available number sau tail hiện tại của main** (tail hiện là `0014_players_waitlist.sql`), kèm fresh/upgrade/rollback-forward tests theo CI gate #2 (§4).
+- **Doc này không own business DDL** ("No new business tables"). Cross-cutting DB controls đã land trên main (migrations `0000`–`0018`): roles/extensions (`0000_roles_extensions.sql`), RLS policies + grants (`0009_rls_policies_grants.sql`), functions/triggers (`0010_functions_triggers.sql`) — **reuse baseline, không recreate; rewrite/`DROP` migration đã apply = ❌ NEVER**.
+- Control object mới (role, policy, grant, guard function) → migration mới **monotonic theo next available number sau tail hiện tại của main** (tail hiện là `0018_oauth_completion_handoff.sql`; migrations 0000–0018 đã merge trên `main`), kèm fresh/upgrade/rollback-forward tests theo CI gate #2 (§4).
 - **Rollback:** revert theo trình tự disable-trước — tắt release gate/feature flag/canary (§6) → revert migration additive-only (drop policy/grant/function mới). Nới lỏng một RLS policy/grant đã siết là **security regression**, phải qua manual security approval (CI gate #7), không được coi là rollback thường.
 
 ### Edge Cases (Backend)
@@ -230,6 +230,7 @@ Required runbooks: cross-tenant leak, public PII, wrong allocation, identity com
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v2.4 | **Reconcile migration-tail 0018:** current-state §2 migration facts sửa: (a) `tail = 0014_players_waitlist` → **tail = 0018** (`0018_oauth_completion_handoff.sql`; migrations 0000–0018 đã merge trên `main` — 0014 waitlist schema-only, lane auth DD-80 0015–0018 ⛔ chưa enable); (b) cross-cutting DB controls "main (migrations `0000`–`0014`)" range → `0000`–`0018` (nhất quán, tránh mâu thuẫn với tail). Numbering guidance giữ nguyên (control object mới → migration monotonic next-available sau synced tail, verify live `packages/db/migrations/` trước khi tạo, không hardcode/sửa lịch sử). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.3 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (không own DDL; controls baseline `0000`/`0009`/`0010` reuse, revert qua gate/flag + security approval), §3 Request/Response Examples (N/A có lý do) + Idempotency (cross-cutting), §4 Caching Strategy + Security Checklist (retention gap ghi rõ ⬜). Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.2a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
 | 2026-07-17 | v2.2 | **DD-65 secret ownership:** separate Page-token endpoint rotation from single Meta App Secret platform rollover; add isolation/blast-radius tests and forbid combined inventory rows. |

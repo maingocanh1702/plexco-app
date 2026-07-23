@@ -1,0 +1,24 @@
+{
+  "feature": "docs-tail-0018-number-reconcile",
+  "branch": "feat/docs-tail-0018-number-reconcile",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "docs-reconcile",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "1x_clean",
+  "depends_on": ["docs-0014-merge-status-repo-wide-reconcile"],
+  "dep_checks": [],
+  "invariants": [],
+  "_note": "Docs-only current-state reconcile of the migration-TAIL fact: 5 BE tech specs + BUILD-STATUS still say 'tail = 0014_players_waitlist' / 'main = 0000-0014' / '0015 in-flight chưa merge'. Live main = migrations 0000-0018 (0014 waitlist schema-only; 0015-0018 Google auth lane DD-80 MERGED but ⛔ not enabled). EXECUTED: this slice fixes 4 BE specs (feature_identity/player_view/security_operations/tournament) + BUILD-STATUS; feature_web_auth_onboarding_tech DEFERRED (reverted to main untouched — its migration section frames merged 0016/0017/0018 as pending, a pre-existing self-contradiction needing a dedicated web_auth-migration-merge-state reconcile; see backlog). Fix CURRENT-STATE tail fact (+ adjacent live-schema-range line folded per codex round-01 to avoid contradiction) only; PRESERVE the valid 'monotonic next-available after synced tail / verify live before creating / do not hardcode' numbering guidance; keep merged≠enabled nuance for 0015-0018; preserve dated changelog + reframe (never delete) provenance. Folds README index-cell sync + this backlog block up front (F3 lesson). README = cells-only, no version bump (founder convention).",
+  "scope": [
+    "docs/autopilot-manifests/docs-tail-0018-number-reconcile.json",
+    "docs/features/BE/feature_identity_tech.md",
+    "docs/features/BE/feature_player_view_tech.md",
+    "docs/features/BE/feature_security_operations_tech.md",
+    "docs/features/BE/feature_tournament_tech.md",
+    "docs/standards/BUILD-STATUS.md",
+    "docs/features/README.md",
+    "docs/autopilot-backlog.md"
+  ]
+}

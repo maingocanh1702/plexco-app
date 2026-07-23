@@ -2,7 +2,7 @@
 
 > **Mục đích:** ảnh chụp tiến độ *thực thi* so với khối tài liệu đã spec (Reviewed và Draft/proposal được ghi riêng). Trả lời gọn:
 > "code đã có tới đâu, còn cách MVP bao xa". Đây là doc **living**, cập nhật mỗi khi một slice merge.
-> **Cập nhật:** 2026-07-22 (current authority **decisions v1.98**; BRD v3.9g/PRD v2.8f/TDD v3.1a/ROADMAP v3.4a). D0a · D0b · D1 email-token · D1 Google · d1b đã merge; DD-87 là authority core-only, chưa có runtime change. Không dùng version hoặc coverage làm bằng chứng implementation.
+> **Cập nhật:** 2026-07-22 (current authority **decisions v1.98**; BRD v3.9g/PRD v2.8f/TDD v3.1a/ROADMAP v3.4a). D0a · D0b · D1 email-token · D1 Google · d1b đã merge; DD-87 là authority core-only, chưa có runtime change. Không dùng version hoặc coverage làm bằng chứng implementation. **2026-07-23 reconcile:** Foundation coverage row + progress-bar caption giữ range **nền** `0000–0014` (0014 waitlist schema-only) và thêm chú thích **tail toàn cục `0018`** (lane auth DD-80 `0015`–`0018` = hàng S4, ⛔ chưa enable) — tránh double-classify auth thành foundation; nhất quán với baseline line 7 + hàng S4. Chỉ current-state; không đổi trạng thái slice.
 > **Nguồn số liệu:** `git log`, cây `packages/`+`apps/`, `docs/features/*`, `docs/standards/decisions.md`,
 > `docs/autopilot-backlog.md`. **HEAD `main`** = `f93873b08d73f7a11c2576196b09633b9197ad60`; code baseline: migrations **`0000–0018`** đều trên `main` (gồm `0014` waitlist schema-only, `0015` D0a, `0016` D1 email-token, `0017` Google OAuth transaction, `0018` completion handoff). Slice `db-migration-0000-idempotent-role-create` **không thêm migration nào** — nó sửa migration runner.
 > **✅ Parallel DB suite đã mở khoá (2026-07-22, `8d8f3bc`):** `migrate.ts` nay ensure role bằng pre-check + exception handler (nuốt `42710` **hoặc** `23505`, gated trên "0000 chưa applied"), nên `vitest.config.ts` đã bật **`fileParallelism: true`**. Migration `0000` **không bị sửa** (applied + immutable, checksum nguyên vẹn). Điểm bẫy đã ghi vào code: `pg_advisory_lock` là **database-scoped**, không bảo vệ object cluster-global như role. DB suite **159 test**. Chi tiết: Verdict 14. **Nhiều autopilot worktree giờ chạy DB suite đồng thời được.**
@@ -24,7 +24,7 @@
 | Trục | Trạng thái | Ước lượng |
 |---|---|---|
 | **Tài liệu / thiết kế** | **24 Product/System + 23 BE tech specs = 23 cặp + 1 product-only Draft**. DD-70..72 và DD-86 vẫn Draft/proposal; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; decision log **v1.98**. | Contract coverage cao; không dùng count làm code-readiness |
-| **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations **`0000–0014`** đã merge trên `main`; `0014` là schema-only waitlist | **✅ xong** |
+| **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations nền **`0000–0014`** đã merge trên `main` (`0014` waitlist schema-only); tail migration toàn cục hiện **`0018`** — lane auth DD-80 `0015`–`0018` (hàng S4) đã merge, ⛔ chưa enable | **✅ xong** |
 | **Code — lớp auth** | Auth v3 (Telegram-era) merged; **DD-80 D0a (`0015`) + D0b + D1 email-token (`0016`) + D1 Google (`0017`) + d1b session-rotation (`0018`) đã merged**; còn order-4 email bundle (flag OFF, gate C7) → gỡ Telegram. Bật Google chờ đo Safari/iOS | 🟢 Google lane xong phần code, ⛔ chưa enable |
 | **Code — lớp feature nghiệp vụ** | chưa bắt đầu (session/reconcile/sync/marketplace/billing/bot…) | ⬜ chưa build |
 | **Roadmap build** | **S1–S3 + S4 Auth v3** đã land + **toàn bộ lane Google: D0a · D0b · D1 email-token · D1 Google · d1b** (migrations `0000–0018`); kế tiếp order-4 email bundle | ~33% |
@@ -39,7 +39,7 @@ Repo docs-first: decision log tới **DD-87/v1.98**; DD-70..72 và DD-86 vẫn �
 
 ```
 Contract ███████████████████░░  coverage cao (không phải readiness score; DD-70..72 đề xuất; DD-73/74/75/78 dependency/consumer-sequenced; DD-76/77 evidence-gated)
-Nền móng  ████████████████████░  ~90%   (core + db-RLS + migrations 0000–0014 trên `main`)
+Nền móng  ████████████████████░  ~90%   (core + db-RLS + migrations nền 0000–0014 trên `main`; tail toàn cục 0018)
 Auth      ████████████████░░░░  ~80%   (Google lane merged; ⛔ chờ Safari/iOS trước enable; email bundle pending)
 Feature   █░░░░░░░░░░░░░░░░░░░░░  ~5%    (mới có logic thuần trong core, chưa wiring)
 ```

@@ -1,7 +1,7 @@
 # Feature: Player View (Person-self) — Backend Tech Spec
 
 > **Canonical phase:** P4.6  
-> **Version:** 2.3 · 2026-07-19
+> **Version:** 2.4 · 2026-07-23
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_player_view.md`  
@@ -47,8 +47,8 @@ Uses existing tables: `persons`, `memberships`, `players`, `charges`, `payment_a
 
 ### Migration & Rollback
 
-- **Live-schema truth (main, migrations `0000`–`0014`):** `magic_links` **đã tồn tại** trong `0001_global_directory.sql` với đúng shape DDL trên (kể cả partial index `idx_magic_links_hash`) — **reuse baseline, không recreate; `DROP` = ❌ NEVER**. Các bảng đọc (`persons`/`memberships`/`players`/`charges`/`payment_allocations`) cũng đã có ở `0001`–`0003`.
-- `magic_links.channel` live là `text NOT NULL` không CHECK — thay đổi channel values theo DD-37 (`zalo`/`messenger`, `telegram` legacy) là comment/runtime-validation, không cần DDL. Nếu build slice thêm CHECK/constraint/cleanup object mới → migration mới **monotonic theo next available number sau tail hiện tại của main** (tail hiện là `0014_players_waitlist.sql`); không sửa migration lịch sử.
+- **Live-schema truth (main, migrations `0000`–`0018`):** `magic_links` **đã tồn tại** trong `0001_global_directory.sql` với đúng shape DDL trên (kể cả partial index `idx_magic_links_hash`) — **reuse baseline, không recreate; `DROP` = ❌ NEVER**. Các bảng đọc (`persons`/`memberships`/`players`/`charges`/`payment_allocations`) cũng đã có ở `0001`–`0003`.
+- `magic_links.channel` live là `text NOT NULL` không CHECK — thay đổi channel values theo DD-37 (`zalo`/`messenger`, `telegram` legacy) là comment/runtime-validation, không cần DDL. Nếu build slice thêm CHECK/constraint/cleanup object mới → migration mới **monotonic theo next available number sau tail hiện tại của main** (tail hiện là `0018_oauth_completion_handoff.sql`; migrations 0000–0018 đã merge trên `main`); không sửa migration lịch sử.
 - **Rollback:** tắt routes `/api/me*` + `/api/magic-link/consume` (feature-level) → revert additive-only các object mới nếu có; không DROP `magic_links` baseline (chứa link/session lineage thật).
 
 ### Edge Cases (Backend)
@@ -223,6 +223,7 @@ Bot conversation (Zalo/Messenger) → Verify conversation → Issue magic link
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v2.4 | **Reconcile migration-tail 0018:** current-state §2 migration facts sửa: (a) `tail = 0014_players_waitlist` → **tail = 0018** (`0018_oauth_completion_handoff.sql`; migrations 0000–0018 đã merge trên `main` — 0014 waitlist schema-only, lane auth DD-80 0015–0018 ⛔ chưa enable); (b) "Live-schema truth (main, migrations `0000`–`0014`)" range → `0000`–`0018` (nhất quán, tránh mâu thuẫn với tail). Numbering guidance giữ nguyên (next-available monotonic sau synced tail, verify live `packages/db/migrations/` trước khi tạo, không hardcode/sửa lịch sử). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.3 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (`magic_links` đã có ở `0001` — reuse baseline, DROP ❌ NEVER; channel values không cần DDL), §3 Request/Response Examples (DD-60) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.2a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-06-18 | v1.0 | Initial BE tech spec (English format) |

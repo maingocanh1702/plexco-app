@@ -453,7 +453,8 @@ notes: Reconcile lower-authority TDD -> PRD. Defect 1 = tech edge row 10 project
 
 ## task: docs-0014-merge-status-repo-wide-reconcile
 title: Reconcile stale "0014 branch-only/unmerged" claims across remaining BE tech specs to merged-on-main
-status: ready
+status: merged
+note_merged: reconciled 2026-07-23 — merged_probe matched on main (dc7a0cd) during the docs-tail-0018 slice (which declares this as depends_on); hand-flipped because autopilot-backlog-reconcile greps the WORKING TREE and is unsafe in a feature worktree. Was: ready.
 risk: P2
 change_class: docs-reconcile
 depends_on: [docs-session-management-spec-reconcile]
@@ -465,15 +466,39 @@ notes: Opened by codex review of docs-session-management-spec-reconcile. 0014 (1
 
 ## task: docs-tail-0018-number-reconcile
 title: Reconcile stale migration-tail claims (tail=0014 / 0015-unmerged) to tail=0018 across remaining specs
-status: idea
+status: ready
 risk: P2
 change_class: docs-reconcile
 depends_on: [docs-0014-merge-status-repo-wide-reconcile]
 invariants: []
+scope: [docs/autopilot-manifests/docs-tail-0018-number-reconcile.json, docs/features/BE/feature_identity_tech.md, docs/features/BE/feature_player_view_tech.md, docs/features/BE/feature_security_operations_tech.md, docs/features/BE/feature_tournament_tech.md, docs/standards/BUILD-STATUS.md, docs/features/README.md, docs/autopilot-backlog.md]
+manifest: docs/autopilot-manifests/docs-tail-0018-number-reconcile.json
+merged_probe: docs/features/BE/feature_identity_tech.md :: Reconcile migration-tail 0018
+notes: Opened by codex round-01 of docs-0014-merge-status-repo-wide-reconcile + its repo-wide grep. DISTINCT class from the 0014-merge-state slice: these specs ALREADY treat 0014_players_waitlist as merged but assert a stale CURRENT migration tail. Candidates (backtick-tolerant repo-wide grep at execution time is AUTHORITATIVE; codex round-04 showed the bare grep missed backticked forms: grep -rnE "tail hiện là .?0014_players_waitlist|baseline.*0000.?0014|0015.*chưa merge" docs -- the list below is ILLUSTRATIVE, NOT exhaustive): feature_identity_tech.md:163 ("tail hiện là 0014_players_waitlist.sql"; founder named "identity tail"), feature_tournament_tech.md:134 ("baseline committed tren main = 0000-0014 ... 0015 auth D0a chua merge"), feature_web_auth_onboarding_tech.md:158 (also references 0016/0017), feature_player_view_tech.md:51, feature_security_operations_tech.md:51 -- all identify 0014_players_waitlist.sql as the current tail; expect more per the grep above. Correct current-state tail 0014->0018 (0000-0018 on main incl 0015_auth_revoke_account..0018_oauth_completion_handoff); PRESERVE dated rows; reframe never delete provenance; resolve NO design questions; keep numbering guidance (next monotonic after merged tail). EXCLUDE (history/pinned, not current-state): decisions.md log entries, dd-45/dd-73-78 + dd-remaining-cluster analysis snapshots (@22c23aa point-in-time), slice-readiness-verdicts.md pinned AUTHORITY_SHA verdict, autopilot-templates/*, feature_user_settings_tech.md (separate consent edit). Founder-opt-in: flip status idea->ready to authorize. EXECUTED 2026-07-23 (branch feat/docs-tail-0018-number-reconcile, STOP_AT_READY, NOT merged; reconciled across codex review rounds (durable counters in .autopilot/state regions.log + fix-round-count.txt)): reconciled current-state migration facts across 4 BE specs + BUILD-STATUS — feature_identity_tech (tail:163 + live-schema-range:155) · feature_player_view_tech (:51 + :50) · feature_security_operations_tech (:51 + :50) · feature_tournament_tech:134 (baseline -> 0000-0018; 0015-0018 auth merged-but-NOT-enabled) · BUILD-STATUS:27+:42+Cap-nhat (foundation range kept `0000`-`0014`, global tail `0018`/auth-S4 noted SEPARATELY — anti-double-classify). Plus 4 version bumps + changelog rows (identity v1.12 · player_view v2.4 · security_ops v2.4 · tournament v0.2) + README index cells + manifest scope + this block. DEFERRED: feature_web_auth_onboarding_tech reverted to main UNTOUCHED (its section frames the merged auth lane as pending, a pre-existing self-contradiction vs its own changelog; a tail-only fix contradicts it) -> task block below. Two follow-ups captured as task blocks below: (a) web_auth all-mirrors reconcile; (b) residual live-inventory 0013 + dd-82 sweep. NOTE (anti-double-classify, codex round-03/04): feature_multi_tenant.md:7 / _tech.md:6 + HANDOFF:119 + BUILD-STATUS:145 S3 "migrations 0000-0013" are CORRECT foundation-layer attribution, NOT stale current-state; the sweep excludes them. Pinned/dated/@SHA snapshots + decisions.md log + autopilot-templates + feature_user_settings_tech excluded verbatim.
+
+## task: docs-web-auth-migration-section-merge-state-reconcile
+title: Reconcile feature_web_auth_onboarding_tech ALL current-state mirrors (Status/Impl header + intro + migration section) — merged auth lane 0016/0017/0018 still framed as pending
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
 scope: []
 manifest: null
 merged_probe: null
-notes: Opened by codex round-01 of docs-0014-merge-status-repo-wide-reconcile + its repo-wide grep. DISTINCT class from the 0014-merge-state slice: these specs ALREADY treat 0014_players_waitlist as merged but assert a stale CURRENT migration tail. Candidates (backtick-tolerant repo-wide grep at execution time is AUTHORITATIVE; codex round-04 showed the bare grep missed backticked forms: grep -rnE "tail hiện là .?0014_players_waitlist|baseline.*0000.?0014|0015.*chưa merge" docs -- the list below is ILLUSTRATIVE, NOT exhaustive): feature_identity_tech.md:163 ("tail hiện là 0014_players_waitlist.sql"; founder named "identity tail"), feature_tournament_tech.md:134 ("baseline committed tren main = 0000-0014 ... 0015 auth D0a chua merge"), feature_web_auth_onboarding_tech.md:158 (also references 0016/0017), feature_player_view_tech.md:51, feature_security_operations_tech.md:51 -- all identify 0014_players_waitlist.sql as the current tail; expect more per the grep above. Correct current-state tail 0014->0018 (0000-0018 on main incl 0015_auth_revoke_account..0018_oauth_completion_handoff); PRESERVE dated rows; reframe never delete provenance; resolve NO design questions; keep numbering guidance (next monotonic after merged tail). EXCLUDE (history/pinned, not current-state): decisions.md log entries, dd-45/dd-73-78 + dd-remaining-cluster analysis snapshots (@22c23aa point-in-time), slice-readiness-verdicts.md pinned AUTHORITY_SHA verdict, autopilot-templates/*, feature_user_settings_tech.md (separate consent edit). Founder-opt-in: flip status idea->ready to authorize.
+notes: Discovered by codex rounds 01/03/04 of docs-tail-0018-number-reconcile (2026-07-23). feature_web_auth_onboarding_tech.md is INTERNALLY self-contradictory: its own changelog v2.11 records the Google adapter (0017) + session-rotation (0018) + email STORAGE CORE (0016) as merged, yet the Status/Impl header, intro, and Migration & Rollback section still frame the whole Google/email lane as unbuilt, assert live main=0000-0014, and list the merged objects as 'chua ton tai' / 'Migration moi pending'. tail-0018 slice DEFERRED this (reverted web_auth to main untouched) to avoid half-fixing a Reviewed security-critical auth spec into a contradiction. SCOPE = ALL current-state mirrors in the file; backtick-tolerant repo-wide grep at execution is AUTHORITATIVE (re-derive exact lines then). Key caveats: (1) merged = Google adapter (0017) + rotation (0018), STILL not enabled (GOOGLE_OAUTH_* empty pending Safari/iOS proof), AND email STORAGE CORE only (0016 = tables, zero grants/routes/UI/provider-send) — the email ORDER-4 bundle (routes/UI/send) is UNBUILT (flag OFF); mark ONLY what is actually merged, keep order-4 pending. (2) Anti-double-classify: state global tail 0018 where auth objects belong; do NOT relabel non-auth foundation ranges. PRESERVE dated changelog verbatim; do NOT change DDL/contract; resolve NO design questions; bump version + changelog row. Founder-opt-in: flip idea->ready to authorize.
+
+## task: docs-migration-range-0013-and-dd82-current-state-sweep
+title: Reconcile remaining stale current-state live-migration-INVENTORY claims (marketplace_discovery live=0013; dd-82-analysis baseline 0014) to 0000-0018 — EXCLUDE foundation-attribution
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+notes: Discovered by codex round-01/03 of docs-tail-0018-number-reconcile (2026-07-23), out of that slice's tail=0014 pattern. Backtick-tolerant repo-wide grep at execution is AUTHORITATIVE; lines below ILLUSTRATIVE, NOT exhaustive. Reconcile ONLY genuinely-stale CURRENT-STATE live-migration-INVENTORY claims (a doc asserting the live/grepped migration set stops at 0013) -> 0000-0018, e.g. feature_marketplace_discovery_tech.md:58 "Grep live packages/db/migrations/ (0000-0013 da merge tren main)". Also dd-82-tournament-analysis.md:144 "baseline hien 0000-0014" -> 0000-0018 (or classify as pinned analysis). CRITICAL anti-double-classification (codex round-03, same rule this slice applied to BUILD-STATUS:27): feature_multi_tenant.md:7 + feature_multi_tenant_tech.md:6 "Implemented (foundation) - migrations 0000-0013", HANDOFF:119 "Foundation merged ... 0000-0013", BUILD-STATUS:145 S3 "14 migration (0000-0013)" are FOUNDATION-LAYER ATTRIBUTION (what the multi-tenant/S3 foundation delivered); migrations 0015-0018 are auth S4, NOT foundation -> do NOT bump these to 0000-0018 (that misclassifies auth as multi-tenant foundation). Leave them 0000-0013 OR add a SEPARATE global-tail note. Do NOT touch dated/@SHA-pinned snapshots. PRESERVE dated rows; reframe never delete provenance; resolve NO design questions. Founder-opt-in: flip idea->ready to authorize.
 
 ## task: docs-user-settings-0014-merge-state-reconcile
 title: Reconcile stale "0014 branch-only / 0000-0013" claims in feature_user_settings_tech.md to merged (post consent-edit)

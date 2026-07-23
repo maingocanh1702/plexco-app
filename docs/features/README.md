@@ -43,17 +43,17 @@ Bốn nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**
 | P2 | Tenant Routing & Authz | `feature_tenant_routing_authz.md` v2.6a | `BE/feature_tenant_routing_authz_tech.md` v2.6 | ✅ Reviewed |
 | P2/P4 | Session Management | `feature_session_management.md` v2.12b | `BE/feature_session_management_tech.md` v2.13a | ✅ Reviewed |
 | P3 | Payment Reconciliation | `feature_payment_reconcile.md` v1.7a | `BE/feature_payment_reconcile_tech.md` v1.10 | ✅ Reviewed |
-| P3.5 | Identity Directory & Merge | `feature_identity.md` v1.10a | `BE/feature_identity_tech.md` v1.11 | ✅ Reviewed |
+| P3.5 | Identity Directory & Merge | `feature_identity.md` v1.10a | `BE/feature_identity_tech.md` v1.12 | ✅ Reviewed |
 | P3 · P4 · P4.5–P4.7 · P4+ | Notifications — Reminders · Inbox · Announcements · Web Push | `feature_notifications_reminders.md` v3.4h | `BE/feature_notifications_reminders_tech.md` v3.4i | 🟡 **Draft** — §A reminder/confirm/correction **business invariants đã reviewed** (reconciled decisions v1.45/DD-15/DD-67); §B/C/D inbox·announce·push chờ **DD-70/71/72**. Hạ Reviewed→Draft 18/07 do **gộp tài liệu**, không phải luật tiền bị mở lại |
 | P4 | Web Auth & Onboarding | `feature_web_auth_onboarding.md` v2.10a | `BE/feature_web_auth_onboarding_tech.md` v2.9 | ✅ Reviewed; cross-site OAuth/email-link boundary corrected; DD-33 external enablement gate/runtime pending |
 | P4 | Sync Engine | `feature_sync_engine.md` v2.3a | `BE/feature_sync_engine_tech.md` v2.5a | ✅ Reviewed |
 | P4.3 | Marketplace Discovery | `feature_marketplace_discovery.md` v2.2a | `BE/feature_marketplace_discovery_tech.md` v2.2 | ✅ Reviewed |
 | P4.3 | Cross-club Join | `feature_cross_club_join.md` v2.10a | `BE/feature_cross_club_join_tech.md` v2.11b | ✅ Reviewed |
 | ~~P4.5~~ | ~~Player Telegram~~ | `feature_player_telegram.md` v2.1 | `BE/feature_player_telegram_tech.md` v2.1 | ⚠️ **Archived (DD-37)** → `feature_player_messenger.md` |
-| P4.6 | Player View | `feature_player_view.md` v2.2a | `BE/feature_player_view_tech.md` v2.3 | ✅ Reviewed |
+| P4.6 | Player View | `feature_player_view.md` v2.2a | `BE/feature_player_view_tech.md` v2.4 | ✅ Reviewed |
 | P4.7 | Zalo Channel | `feature_zalo_channel.md` v2.5a | `BE/feature_zalo_channel_tech.md` v2.6a | ✅ Reviewed |
 | P5 | Billing Lifecycle | `feature_billing_lifecycle.md` v2.7a | `BE/feature_billing_lifecycle_tech.md` v2.7a | ✅ Reviewed |
-| P6 | Security & Operations | `feature_security_operations.md` v2.2a | `BE/feature_security_operations_tech.md` v2.3 | ✅ Reviewed |
+| P6 | Security & Operations | `feature_security_operations.md` v2.2a | `BE/feature_security_operations_tech.md` v2.4 | ✅ Reviewed |
 
 ### Cross-cutting tracked pair (pre-existing)
 
@@ -100,7 +100,7 @@ Bốn nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**
 | P4.3/P4.7 + Messenger P2.5 | Channel-first Booking Funnel | `feature_channel_booking_funnel.md` v0.8a (DD-32 ✅ A, Draft) | Build BE companion; giữ CCJ guest free/paid: first-entry active→charge/full→waitlisted-no-charge; DD-49 rejoin active→carry-or-append, full→carry-history-or-defer-refunded. Không linked gate/đường book song song |
 | S9 (**DD-79 ✅ owner 2026-07-19**) | Home — Personal Dashboard (PWA) | `feature_home.md` v0.5a + `BE/feature_home_tech.md` v0.1 (✅ Reviewed contract — fork từ Sporta feature_home v2.5 + hero recipe theme-direction §7) | Implementation pending S9. Composition-only: aggregate `GET /api/me/home` thuộc surface `/api/me*`, **không bảng/migration mới**; HOME-OQ-1 (c) defer chip Chưa thu · OQ-3 defer streak; landing = Home (OQ-2 ✅). DTO tiền/PII theo allowlist player_view |
 | Post-P4 (accept-in-principle, owner 18/07) — sau Session CRUD + Sync | Session Organize (court + match + live score) | `feature_session_organize.md` v0.5a + `BE/feature_session_organize_tech.md` v0.6a (accepted design, DD-61..64 ✅ accept-in-principle; no runtime) | Build post-P4: extend DD-56 registry/grant storage và triển khai SessionService prerequisites. V0.4 two-side; participant stint + partial assigned uniqueness; migration mới + tenant-safe FKs/RLS; point/reversal ledger idempotent; independent organize/score grants; relation-based read/SSE; balanced phụ thuộc level source. **Đã tính vào file coverage 22/21, chưa tính là runtime/build-ready.** |
-| P4+ (sau session core) — **DD-82 ✅ chốt hướng owner 21/07** | Tournament (Giải đấu) | `feature_tournament.md` v0.1 + `BE/feature_tournament_tech.md` v0.1 (🟡 **Draft** — DD-82 chốt hướng, **chưa readiness gate**) | Aggregate độc lập (không tái dùng `sessions`/`players`): canonical `tournaments` + `tournament_registrations` tenant-scoped/RLS + `public_tournaments` read model (field-whitelist, không tiền/PII, không serialize `tenant_id`) cho URL share DD-83 (opaque slug). v1 gọn: info + đăng ký, **v1 không đụng tiền**; bracket/standings/entry-fee = slice sau. **Hard dependency:** coordinate DD-41 retire `session_type='tournament'` (live schema chưa có cột `session_type`); analysis doc + readiness gate + owner ratify trước build. Migration mới monotonic (số next-available), không sửa lịch sử. |
+| P4+ (sau session core) — **DD-82 ✅ chốt hướng owner 21/07** | Tournament (Giải đấu) | `feature_tournament.md` v0.1 + `BE/feature_tournament_tech.md` v0.2 (🟡 **Draft** — DD-82 chốt hướng, **chưa readiness gate**) | Aggregate độc lập (không tái dùng `sessions`/`players`): canonical `tournaments` + `tournament_registrations` tenant-scoped/RLS + `public_tournaments` read model (field-whitelist, không tiền/PII, không serialize `tenant_id`) cho URL share DD-83 (opaque slug). v1 gọn: info + đăng ký, **v1 không đụng tiền**; bracket/standings/entry-fee = slice sau. **Hard dependency:** coordinate DD-41 retire `session_type='tournament'` (live schema chưa có cột `session_type`); analysis doc + readiness gate + owner ratify trước build. Migration mới monotonic (số next-available), không sửa lịch sử. |
 
 ## Review gates
 
