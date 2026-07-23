@@ -923,6 +923,49 @@ NEXT_REVIEW_TRIGGER: n/a -- CODE_READY; next event is the coding slice itself, o
 
 ---
 
+## Verdict 18 — `db-ledger-tenant-integrity-fks`, payment-ledger tenant-integrity (sibling to 0019); IMPLEMENTED & MERGED `f6ccd79` (2026-07-23)
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-23
+AUTHORITY_SHA: b0c29a6e0c4da012752b3dd3422c81dd93480f9e
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-manifests/db-ledger-tenant-integrity-fks.json
+  - packages/db/migrations/0020_ledger_tenant_integrity_fks.sql
+  - packages/db/schema.ts
+  - packages/db/src/rls-invariants.test.ts
+  - packages/db/src/migrate.test.ts
+  - packages/db/README.md
+SLICE: db-ledger-tenant-integrity-fks
+IN_SCOPE: composite candidate keys UNIQUE(tenant_id,id) on bank_accounts, bank_transactions, charges, payment_allocations, provider_connections; 5 composite tenant FKs binding every EXISTING single-column money-path FK by tenant (bank_transactions->bank_accounts; payment_allocations->charges; payment_allocations->bank_transactions MATCH SIMPLE; payment_allocations->payment_allocations reversal self-ref MATCH SIMPLE, existing FK from 0003; bank_accounts->provider_connections MATCH SIMPLE, existing FK from 0004); expand-only migration 0020 NOT VALID -> VALIDATE named-halt; schema.ts mirror incl. reverses_allocation_id drift fix; LTI-1..LTI-6 + TI-7 upgrade; migration-count 20->21
+OUT_OF_SCOPE: billing_transactions/billing_allocations (no tenant_id -- platform ledger BL-BIL-1, no cross-tenant leg); non-money same-class gaps (zalo_reply_contexts->zalo_bots, notification_deliveries->notification_intents) flagged for a separate follow-up; service/repo/adapter code; RLS policy or grant change; data migration
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: none -- sibling of merged 0019; all 5 parent + child ledger tables + tenant_id columns on main at 0000-0019; the two exhaustive-scan binds target EXISTING single-column FKs verified on disk (0003:86 reverses_allocation_id, 0004:31 provider_connection_id), not assumed
+PRIOR_SLICES: db-session-tenant-integrity-fks (0019, merged b0c29a6)
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS (main@f6ccd79; FK inventory produced by scanning schema.ts + migrations, not assumed -- 5 child->parent composite FKs and 5 UNIQUE(tenant_id,id) candidate keys; the two exhaustive-scan binds target EXISTING single-column FKs confirmed on disk at 0003_payments_ledger.sql:86 (reverses_allocation_id) and 0004_channels_connectors.sql:31 (provider_connection_id); billing_transactions/billing_allocations carry no tenant_id so there is no same-class cross-tenant leg; migration-count assertion is 20 (applied) before and 21 after; 0020 is the live tail)
+CONTRACT_MATRIX: PASS (5 composite FKs enumerated with exact parent/child columns; single-column FKs are additive-kept, not replaced, so ON DELETE behaviour is unchanged; the three nullable children -- bank_transaction_id, reverses_allocation_id, provider_connection_id -- are MATCH SIMPLE unenforced-on-NULL by intent; the two NOT-NULL children bind unconditionally)
+CLOSURE_MATRIX: PASS (12/12 -- authority pinned at b0c29a6 (0019 header ledger-deferral) with exact target files; DD-68 + HR1 the closed decision; scope IN/OUT + exclusions pinned; sibling with no unmerged dependency; live schema + existing FKs verified on disk; FK contract complete incl. the two exhaustive-scan finds that a hand-list would miss; fail-closed via NOT VALID->VALIDATE + MATCH-SIMPLE nullable; zero open questions; LTI-1..LTI-6 have expected results; expand-only with named rollback; manifest handoff done)
+ACCEPTANCE_MATRIX: PASS (LTI-1 cross-tenant reject per FK under the real app role via withTenant; LTI-2 same-tenant valid ledger chain; LTI-3 MATCH-SIMPLE NULL legs; LTI-4/5 candidate-key + kept single-column FK catalog; LTI-6 named-halt probe on a seeded cross-tenant row; TI-7 0000..0019 byte-identical after 0020 + count 21)
+SECURITY_AND_MIGRATION_GATE: PASS (expand-only; 0000-0019 byte-identical, immutability guard intact; no role/grant/RLS change; rollback = DROP the 5 FKs + 5 candidate keys, no data migration; a pre-existing violating row -> named HALT, never delete/re-parent; migration 0020 = next monotonic tail verified live)
+IMPLEMENTATION_ARTIFACTS: PASS (migration 0020 + schema mirror + LTI tests merged at f6ccd79; 2x codex FULL-base clean on 52a71f5; real-PG 173/173 on merged main; this verdict)
+FIRST_IMPLEMENTATION_STEP: n/a -- IMPLEMENTED & MERGED at f6ccd79
+REMAINING_BLOCKERS: none -- merged. Money-integrity now covers the session domain (0019) and the payment ledger (0020)
+NEXT_REVIEW_TRIGGER: n/a -- merged; non-money same-class FK gaps (zalo, notifications) are a separate optional follow-up
+```
+
+**Đọc verdict:** sibling của Verdict 17 (0019) — đóng nốt lỗ tenant-integrity trên **payment ledger**. Hai điểm mở rộng so với manifest gốc đều là **bind FK CÓ SẴN** (không net-new): `reverses_allocation_id` có FK single-column từ `0003` (chỉ `schema.ts` drift, slice fix mirror), và `bank_accounts.provider_connection_id` có FK từ `0004` (đúng shape `charges->players` mà 0019 round-01 từng sót — exhaustive scan bắt được). Billing không có `tenant_id` nên không cùng lớp. Money-integrity giờ **kín cả hai lớp tiền** (session domain + payment ledger).
+
+---
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
