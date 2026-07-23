@@ -76,9 +76,10 @@ _Principles from `P §1·INV`; each is verified concretely by the referenced are
 
 ## 1. Create / edit / close / cancel (session lifecycle)
 
-- [ ] Host creates a one-off session (private/public) with all fields validated — src: `P UC-1`; `T U#1`.
-      ⚠️ The **create result status** is a spec inconsistency (`P UC-1` "open" vs DDL/POST-example `draft` +
-      `P §4` `draft → open` publish) — quarantined in [§9](#9-unresolved--needs-spec-fail-closed).
+- [ ] Host creates a one-off session (private/public) with all fields validated → status `draft`; the Host
+      then **publishes** (`draft → open`, `P §4`) to accept joins — src: `P UC-1` (create=`draft`/publish→`open`,
+      reconciled v2.12c), `T §2` (DDL default `draft`), `T §3` (POST example `draft`), `T U#1`. The publish
+      transition's command/idempotency mechanics are a deferred scope boundary — see §9-B.
 - [ ] Create/update is rejected when `ends_at <= starts_at` — src: `P E#1` (Ref: BL-DATA-1); `T §2`
       (`CHECK (ends_at > starts_at)`), `T ERR:INVALID_TIME_RANGE`, `T U#2`
 - [ ] Create is rejected when the sport key is not in the **active** sport taxonomy — src: `P E#2`;
@@ -173,9 +174,10 @@ _Principles from `P §1·INV`; each is verified concretely by the referenced are
       (`waitlist_position, joined_at, id`); finite→unlimited fills every eligible candidate; a decrease
       below the active roster is rejected (`CAPACITY_BELOW_ROSTER`) with no evict / no mutation — src:
       `P AC#7`, `P E#3`; `T BE#15`/`#16`, `T ERR:CAPACITY_BELOW_ROSTER`, `T U#23`, `T U#24`, `T U#25`.
-      ⚠️ Whether **finite→unlimited is allowed for a _public_ session** (`slots_max→NULL` vs `P E#7`
-      requiring public `slots_max`) is unresolved — quarantined in
-      [§9](#9-unresolved--needs-spec-fail-closed).
+      **finite→unlimited (`slots_max→NULL`) is allowed only for _non-public_ sessions**: a public session
+      must carry a finite `slots_max` (`P E#7`, reconciled v2.12c/v2.13b), so `finite→NULL` on a public
+      session is rejected (`MISSING_DISCOVERY_FIELDS`) and the consume-time entry choke-point + promotion
+      path never treat a public+`NULL` row as unbounded — src: `P E#7`, `T §2` / `T BE#12`, `T U#24a` / `U#24b`.
 - [ ] Promotion re-checks `evaluateSessionEligibility()` (DD-41), DD-42 reliability and shared
       `evaluateJoinRestriction()` (DD-52) before resolving financial disposition — src: `T §4·WP`
       (steps 5, 8)
@@ -434,12 +436,11 @@ above. "Mapped in" points to the section(s) that carry it._
 | `T §5` unit tests `U#1..#39` (incl. `#31a`, `#33a–q`) | 57 | §7 (all) + cited in §1–§6 | 0 |
 | `T §5` integration tests `I#1..#7` | 7 | §7 (all) + cited in §1–§6 | 0 |
 
-Most acceptance criteria and DoD lines trace cleanly (the 2026-07-23 spec reconcile fixed the earlier
-`T §5 U#10` projection direction + the `0014` status). **Two source-spec inconsistencies remain and block a
-clean completion** — the **create result status** (`P UC-1` "open" vs `draft` default + `draft → open`
-publish) and **public-session finite→unlimited capacity** (`P E#7` vs `T` unlimited) — both quarantined in
-§9-A. `P AC#4`'s malformed-timezone-**input** case is likewise a §9-A gap. Items the specs themselves leave
-open or defer are **not** counted as acceptance criteria here; they are recorded in §9.
+Most acceptance criteria and DoD lines trace cleanly. The four source-spec inconsistencies raised during
+traceability (`T §5 U#10` projection direction, `0014` status, create-result-status, and public ×
+unlimited-capacity) are all reconciled on `main` (see Result). `P AC#4`'s malformed-timezone-**input** case,
+recurrence-edit granularity and `waitlist_position` uniqueness remain spec-acknowledged §9-A open questions
+(recorded, non-blocking). Items the specs leave open or defer are recorded in §9, never guessed.
 
 ---
 
@@ -466,21 +467,15 @@ and does not pick any storage/API/mutation shape for them._
       malformed timezone string as a discrete test. That input-validation case is **not** concretely
       specified, so it is recorded here rather than asserted as covered under `P AC#4`. — src: `P AC#4` vs
       `T §4·REC` / `T U#14`/`U#15`
-- [ ] **Create result status — spec inconsistency (blocks completion).** `P UC-1` states create → "Session
-      **open**", but the Tech DDL defaults `status='draft'` (`T §2`), the `T §3` POST example returns
-      `"status": "draft"`, and `P §4`'s state machine defines a separate `draft → open` "Host publish"
-      transition. Whether creating a session yields `open` directly or `draft` (needing a separate publish)
-      is **not** consistently defined, so it cannot be certified without guessing. **Needs the specs to
-      reconcile `P UC-1` against the `draft` default + `draft → open` publish step.** — src: `P UC-1` vs
-      `T §2` / `T §3` (POST example) / `P §4`
-- [ ] **Public session finite→unlimited capacity — unresolved interaction.** `T` supports a `finite→NULL`
-      (unlimited) capacity change (`T BE#15`, `T U#24`), but `P E#7` requires a **public** session to carry
-      `slots_max`. The specs do **not** say whether `finite→NULL` is rejected for public sessions (allowed
-      only for private) or whether `P E#7` binds only at creation. **Needs the specs to pin the
-      public-visibility × unlimited-capacity interaction.** — src: `T BE#15` / `T U#24` vs `P E#7`
 
 ### B. Decided-but-deferred — scope boundaries this checklist must not cross
 
+- [ ] **Publish transition mechanics (`draft → open`) — decided-to-exist, mechanics deferred.** The
+      create-status inconsistency is resolved (create = `draft`, Host publish → `open`; `P UC-1` / `P §4`,
+      reconciled v2.12c) so the transition **exists** and this is not an open acceptance gap. Its command /
+      idempotency shape and any visibility coupling are deferred to follow-up `docs-session-publish-contract`
+      (needs a product decision on what publish mutates). Behaviour boundary, not a blocker. — src: `P UC-1`,
+      `P §4` (state machine `draft → open`)
 - [ ] **DD-49 obligation storage/API shape** — `P §7 SES-OQ-1` is ✅ decided at behaviour level (carry-over /
       refunded / unknown), but "storage/API chờ design-probe". Behaviour is covered (§1/§2/§3); the storage
       and API shapes remain open and are **not** chosen here. — src: `P §7 SES-OQ-1`
@@ -524,31 +519,32 @@ and does not pick any storage/API/mutation shape for them._
 
 ---
 
-## Result — fail-closed
+## Result — complete
 
-The 2026-07-23 spec reconcile fixed the two originally-cited defects, and both are re-verified on-disk
-(base `main@1304cf7`):
+Every acceptance criterion and DoD line in both specs maps to a traceable checklist item; genuinely-open
+spec questions are recorded in §9 (never guessed). Re-verified on-disk against `main@0dec63b`.
 
-- **Projection direction (was blocking):** `T §5` test #10 now reads "Public → private removes projection",
-  matching `P E#8` / `P AC#11` / `P UC-5` / `P UC-10`. Traced directly in §6 / §7 `U#10`.
-- **Migration `0014` status (was stale):** both spec headers, `P §7 SES-OQ-3`, `T §2` and `T §6` (Rollout
-  step 2) state `0014_players_waitlist` (schema only) is merged on `main` at `1a6ac38` (migrations
-  `0000–0018`); behaviour unbuilt. Reflected in the header and §9-B.
+The four source-spec inconsistencies raised during traceability are all reconciled on `main`:
 
-However, deeper traceability surfaced **two further source-spec inconsistencies** — not among the two fixed
-defects — that a checklist must not paper over, so this document **fails closed** (completion marker withheld):
+- **Projection direction:** `T §5` test #10 reads "Public → private removes projection", matching `P E#8` /
+  `P AC#11` / `P UC-5` / `P UC-10` (reconciled v2.13a). Traced in §6 / §7 `U#10`.
+- **Migration `0014` status:** both spec headers, `P §7 SES-OQ-3`, `T §2` and `T §6` (Rollout step 2) state
+  `0014_players_waitlist` (schema only) is merged on `main` at `1a6ac38` (migrations `0000–0018`, tail 0018);
+  behaviour unbuilt (reconciled v2.13a). Recorded in §9-B.
+- **Create result status:** `P UC-1` now states create → `draft`, then Host publish → `open`, consistent
+  with the `T §2` DDL default `draft`, the `T §3` POST example and the `P §4` state machine (reconciled
+  v2.12c). See §1.
+- **Public × unlimited capacity:** `P E#7` binds — a public session must carry a finite `slots_max`; `NULL`
+  (unlimited) is valid only for non-public sessions, and a public+`NULL` row is rejected / never treated as
+  unbounded at the consume-time entry choke-point (reconciled v2.12c/v2.13b). See §3.
 
-- **Blocking #1 — create result status.** `P UC-1` says create → "Session **open**", but the DDL defaults
-  `status='draft'` (`T §2`), the `T §3` POST example returns `"status":"draft"`, and `P §4` has a separate
-  `draft → open` "Host publish" transition. Quarantined in §9-A.
-- **Blocking #2 — public session finite→unlimited capacity.** `T` supports `finite→NULL` (`T BE#15`,
-  `T U#24`), but `P E#7` requires a **public** session to carry `slots_max`; the specs never resolve the
-  interaction. Quarantined in §9-A.
+The remaining §9-A items (recurrence-edit granularity `P §7 SES-OQ-2` = ⬜, `waitlist_position` uniqueness
+Open DD-45a, malformed-timezone-input) are spec-acknowledged **open questions**, not untraceable criteria —
+recorded, not guessed, and do not block completion. §9-B records decided-but-deferred scope boundaries,
+including the publish-transition mechanics (→ follow-up `docs-session-publish-contract`).
 
-Everything else in §0–§8 is cleanly source-traced and usable as-is (an evidence / coverage inventory — each
-row → a `src:` pointer). Items the specs leave open or defer are recorded in §9 (never guessed).
+**Overall result: SESSION_MGMT_CHECKLIST_COMPLETE** — every stated acceptance criterion is source-traced and
+open spec questions are quarantined in §9. This marker proves traceability coverage only, **not** build
+authorization: session runtime remains a separate, risk-classified slice.
 
-**Overall result: HALT-SPEC_INCOMPLETE** — the completion marker is deliberately **not** emitted, so this
-document is not detectable as complete. To reach completion, the specs must reconcile the create-result-status
-(`P UC-1` vs `draft`/publish) and the public × unlimited-capacity interaction (`P E#7` vs `T`), then re-run
-this checklist — the same reconcile→re-run cycle that fixed `U#10` / `0014`.
+<!-- SESSION_MGMT_CHECKLIST_CLOSED -->
