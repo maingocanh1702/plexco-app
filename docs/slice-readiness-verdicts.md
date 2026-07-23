@@ -879,10 +879,53 @@ chuyển PASS đúng theo blocker đã đóng, không phải suy diễn. Task co
 
 ---
 
+## Verdict 17 — `db-session-tenant-integrity-fks`, first SessionService prerequisite; CODE_READY (2026-07-23)
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-23
+AUTHORITY_SHA: 29635be1c06df8be87a6dce94cbd667caa73f64a
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-manifests/db-session-tenant-integrity-fks.json
+  - packages/db/schema.ts
+  - packages/db/src/rls-invariants.test.ts
+  - packages/db/README.md
+NEW_FILE_TO_CREATE: packages/db/migrations/0019_tenant_integrity_fks.sql -- created by this slice, listed in manifest scope + FIRST_IMPLEMENTATION_STEP; not a verify target because it does not exist yet
+SLICE: db-session-tenant-integrity-fks
+IN_SCOPE: composite candidate keys UNIQUE(tenant_id,id) on sessions and memberships; 7 composite tenant FKs (session_surface_refs, players x2, charges x2, join_requests, aliases); expand-only migration 0019 with NOT VALID -> violation probe -> VALIDATE; schema.ts mirror; TI-1..TI-9 tests; migration-count assertion 19->20
+OUT_OF_SCOPE: session_occurrences (no tenant_id column; covered by existing dual-parent invariant test), public_sessions (cross-tenant read model, HR2), magic_links.session_id (references web_sessions not sessions); any service/repo/adapter code; any new table/column beyond the two candidate keys; RLS policy or grant change; data migration or row rewrite
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: none -- root slice. All 8 parent/child tables (sessions, memberships, players, charges, join_requests, session_surface_refs, aliases) plus their tenant_id columns are on main at 0000-0018; verified by scanning schema.ts, not assumed
+PRIOR_SLICES: none
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS (main=origin/main@29635be; FK inventory produced by scanning schema.ts: 7 child->parent composite FKs needed, 2 candidate keys, 3 exclusions each with a proven reason; charges.membership_id is the one nullable child column -> MATCH SIMPLE unenforced-on-NULL is intended; no composite (tenant_id,session_id)/(tenant_id,membership_id) UNIQUE or FK exists in migrations/*.sql today; migration count assertion is 19 at rls-invariants.test.ts:38 (applied) and :41 (skipped); 0019 is free)
+CONTRACT_MATRIX: PASS (7 FKs enumerated with exact parent/child columns in manifest scope_fks; single-column FKs are additive-kept, not replaced, so ON DELETE behaviour is unchanged)
+CLOSURE_MATRIX: PASS (12/12 -- authority pinned at 29635be with exact target files; DD-68 prerequisite + HR1 are the closed decision; scope IN/OUT and exclusions pinned; root slice with no unmerged dependency; live schema verified on disk; FK contract complete; fail-closed via NOT VALID->probe->VALIDATE and MATCH-SIMPLE nullable semantics; zero open questions; TI-1..TI-9 have expected results; migration expand-only with named rollback; no hard dependency to wait on; manifest handoff ready)
+ACCEPTANCE_MATRIX: PASS (TI-1..TI-9 in the manifest; TI-1 cross-tenant reject per FK under the real app role via withTenant, TI-3 nullable MATCH-SIMPLE semantics, TI-6 named-halt violation probe, TI-8 migration count 19->20 in BOTH assertions, TI-9 session_occurrences untouched)
+SECURITY_AND_MIGRATION_GATE: PASS (expand-only; 0000-0018 byte-identical, immutability guard intact; no role/attribute/grant/RLS-policy change; rollback = DROP the 7 FKs + 2 candidate keys, no data migration; if any pre-existing violating row is found by the probe, HALT with the offending table/row named rather than delete or re-parent it. Migration number is 0019 assuming no other schema-token slice lands first; if one does, renumber to the next-available monotonic tail at author time -- do not hard-assume 0019 is free at merge)
+IMPLEMENTATION_ARTIFACTS: PASS (manifest committed with problem statement, key finding, pinned mechanism, rejected alternative, negative scope, scope_fks inventory and TI-1..TI-9; this verdict; analysis at docs/session-service-reslice-analysis.md L0a)
+FIRST_IMPLEMENTATION_STEP: after AP-25 (docs-session-management-acceptance-checklist, holds `schema`) merges so scope-gate register does not HALT SCOPE_COLLISION, open a manual P0 worktree from origin/main; write 0019 as candidate keys + 7 FKs NOT VALID, then the violation probe, then VALIDATE; mirror schema.ts; write TI-1..TI-9 with a seeded violating-row fixture for TI-6 BEFORE flipping the migration-count assertion 19->20 in both places
+REMAINING_BLOCKERS: none for CODE_READY. Register-time (not readiness) gate: `schema` token is held by in-flight AP-25; scope-gate will HALT until it merges. This is a scheduling wait, not a contract gap
+NEXT_REVIEW_TRIGGER: n/a -- CODE_READY; next event is the coding slice itself, once `schema` is free
+```
+
+**Đọc verdict:** đây là slice **P0 đầu tiên của lớp feature** (SessionService prerequisite), và nó CODE_READY vì là *root* — không đợi decision nào chưa chốt, không external gate, không dependency chưa merge. Khác các slice L0 sau nó (person-attributes, dd41-fields…) vốn đụng DD-39/DD-41 field contract; slice này chỉ đóng một lỗ tenant-integrity thuần cơ học mà chính BE spec đã ghi là DD-68 prerequisite và ghi rõ "CHƯA có trong 0014". Ba điểm dễ làm sai đã pin thành OUT_OF_SCOPE với lý do đo được: `session_occurrences` không có `tenant_id` để bind (đã có dual-parent test lo), `public_sessions` cấm FK vào tenant table theo HR2, `magic_links.session_id` trỏ `web_sessions` chứ không phải `sessions` — bẫy tên cột. `REMAINING_BLOCKERS: none` cho CODE_READY là đúng: cái duy nhất còn lại (`schema` bị AP-25 giữ) là hàng đợi register, không phải lỗ hổng hợp đồng — CODE_READY khẳng định slice *đã sẵn để code*, không khẳng định *register được ngay lúc này*.
+
+---
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 23/07/2026 | v2.1 | **Verdict 17 — `db-session-tenant-integrity-fks` = CODE_READY** tại `main@29635be`. Slice P0 đầu tiên của lớp feature (SessionService prerequisite). Root slice, không dependency chưa merge, không external gate. Đóng lỗ tenant-integrity: 7 composite FK `(tenant_id, session_id)`/`(tenant_id, membership_id)` + 2 candidate key `UNIQUE(tenant_id,id)`, migration `0019` expand-only NOT VALID→probe→VALIDATE. FK inventory quét từ `schema.ts` (không đoán); 3 exclusion có lý do đo được (`session_occurrences` không tenant_id, `public_sessions` HR2, `magic_links.session_id`→web_sessions). `charges.membership_id` nullable → MATCH SIMPLE unenforced-on-NULL là chủ ý. Acceptance TI-1..TI-9; migration count 19→20 ở cả 2 assertion. `REMAINING_BLOCKERS: none` — `schema` bị AP-25 giữ chỉ là hàng đợi register, không phải lỗ hợp đồng. |
 | 22/07/2026 | v2.0 | **Verdict 14 AMENDED (owner-ratified A1–A3), patch tại chỗ — slice/authority không đổi, chỉ sửa một dòng gate sai sự thật.** **A2:** bản đầu viết "chỉ nuốt `duplicate_object`" — chép từ backlog **không đo**; thực tế check tồn tại của `CREATE ROLE` không atomic với insert `pg_authid`, bên thua race raise **23505** áp đảo 42710 ~50:1, nên nuốt mỗi 42710 sẽ để nguyên chính cái race cần đóng. Nay **42710 hoặc 23505**; 42501 và mọi mã khác vẫn abort. **A1:** tạo role vô điều kiện abort khi DDL owner `NOCREATEROLE` (Postgres kiểm quyền trước khi thấy trùng) — vi phạm negative-scope #6; thêm existence pre-check. **A3:** test-only, `ALTER ROLE … PASSWORD` đồng thời → retry-tolerant; `test-harness.ts` vào TARGET_FILES + scope. Implementer dừng xin phê duyệt thay vì tự nới contract P0 — đúng gate. |
 | 22/07/2026 | v1.9 | **Verdict 15 — DD-87 contract closed on disk, `NOT_CODE_READY` pending immutable authority.** Owner chốt exhaustive tagged union: ambiguity theo `(name,amount)`, equal-amount/different-name vẫn ambiguous, no top-level amount, no second grammar. Exact 18-row + SNA-1..8, manifest/task/AP-29/backlog authored. Closure 9/12 vì packet chưa commit/push; next trigger là origin/main commit chứa toàn bộ target rồi strict re-pin. |
 | 22/07/2026 | v1.8 | **Verdict 14 — `db-migration-0000-idempotent-role-create` re-scoped từ `DESIGN_UNFIT` → `CODE_READY`.** Khung cũ ("làm 0000 atomic") bất khả thi vì 0000 applied + immutable; khung mới không đụng 0000. Phát hiện: `pg_advisory_lock` trong `migrate.ts` là **database-scoped**, nên comment "ngăn concurrent deploys interleave DDL" **không đúng cho object cluster-global** — sửa comment nằm trong scope. Cơ chế pin: role-ensure exception-handled ở runner, gated trên "0000 chưa applied". Acceptance BR-1..BR-7. Mở khoá `fileParallelism:true` (lý do (1) đã thoả sẵn nhờ `dbName` riêng). |

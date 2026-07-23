@@ -383,6 +383,34 @@ notes: **RE-SCOPED 2026-07-22 → CODE_READY (Verdict 14, `main@e61d96c`).** Khu
   `fileParallelism: false` until this lands — see the comment already added
   to vitest.config.ts.
 
+## task: db-session-tenant-integrity-fks
+title: Composite tenant FKs so a child row cannot reference another tenant's session/membership
+status: ready
+risk: P0
+change_class: manual-schema-design
+depends_on: []
+invariants: [schema]
+scope: [docs/autopilot-manifests/db-session-tenant-integrity-fks.json, packages/db/migrations/0019_tenant_integrity_fks.sql, packages/db/schema.ts, packages/db/src/rls-invariants.test.ts, packages/db/README.md]
+manifest: docs/autopilot-manifests/db-session-tenant-integrity-fks.json
+merged_probe: packages/db/migrations/0019_tenant_integrity_fks.sql :: session_surface_refs
+notes: |
+  **CODE_READY (Verdict 17, `main@29635be`).** First P0 slice of the feature layer — SessionService L0a
+  prerequisite (docs/session-service-reslice-analysis.md). Root slice: no unmerged dependency, no external
+  gate. Closes a real tenant-integrity hole the BE spec flags as a DD-68 prerequisite and records as absent
+  from 0014: single-column FKs prove a parent exists but not that it shares the child's tenant, so a
+  service bug can write players(tenant_id=A, session_id=<B's>), a row invisible to both tenants while
+  charges references both. Migration 0019 expand-only: add UNIQUE(tenant_id,id) candidate keys on
+  sessions/memberships, add 7 composite FKs NOT VALID -> violation probe -> VALIDATE, keep every existing
+  single-column FK (additive). FK inventory scanned from schema.ts, not guessed; 3 exclusions each with a
+  reason (session_occurrences has no tenant_id + is covered by the dual-parent invariant test;
+  public_sessions must not FK into tenant tables per HR2; magic_links.session_id references web_sessions).
+  charges.membership_id is the one nullable child -> MATCH SIMPLE unenforced-on-NULL is intended. Acceptance
+  TI-1..TI-9; migration count assertion 19->20 in BOTH places. **P0 manual, no launcher.**
+  ⚠️ REGISTER WAIT (not a contract gap): `schema` token is held by in-flight AP-25
+  (docs-session-management-acceptance-checklist); scope-gate register will HALT SCOPE_COLLISION until AP-25
+  merges. Open the worktree only after AP-25 is on origin/main. Migration number 0019 assumes no other
+  schema slice lands first — renumber to the next-available monotonic tail at author time if one does.
+
 ## task: dd38-dd86-chat-schema-core
 title: Root chat-schema migration slice (DD-38 in-app chat) — final chat model + authz/safety + RLS/RPCs
 status: idea
