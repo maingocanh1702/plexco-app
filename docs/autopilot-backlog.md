@@ -153,15 +153,15 @@ notes: **⛔ BLOCKED ON OWNER-ONLY EVIDENCE — KHÔNG launch (2026-07-23).** Ph
 
 ## task: infra-provider-limits-evidence
 title: Messaging limits and tier evidence for Zalo Bot, Meta Messenger, SePay and ApiPay
-status: ready
+status: merged
 risk: P2
 change_class: docs-provider-evidence
 depends_on: []
 invariants: [build-config]
 scope: [docs/standards/provider-limits-evidence.md]
 manifest: docs/autopilot-manifests/infra-provider-limits-evidence.json
-merged_probe: docs/standards/provider-limits-evidence.md :: PROVIDER_LIMITS_EVIDENCE_CLOSED
-notes: Launcher-ready docs-only AP-24 slice. Record current attributable messaging limits/tier gates (Zalo free-tier caps, Messenger 24h window + App Review, SePay/ApiPay tiers), re-verifying any figure currently in gtm-doi-soat-decision.md. Evidence only — no pricing/GTM/capacity decision, no invention. Fail closed on ambiguity. Shares `build-config` with the egress slice → run them sequentially, not in parallel. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-infra-provider-limits-evidence.md`.
+merged_probe: docs/standards/provider-limits-evidence.md :: HALT-EVIDENCE_INCOMPLETE
+notes: **MERGED 2026-07-22 as a fail-closed PARTIAL at `main@a57b8ee` — the DD-04 provider-limits evidence gate is NOT closed.** The doc deliberately ends at `HALT-EVIDENCE_INCOMPLETE` (merged_probe updated to that marker, NOT `PROVIDER_LIMITS_EVIDENCE_CLOSED`, which would be a false closure). Codex hit REGION_THRASH (4 rounds, findings 4→3→1→3, precision-only, verdict stable "appropriately fail-closed overall"); round-04 edits were human-reviewed (no fabricated values; contested rows moved to `UNRESOLVED`), so no round-05. **Residual rows keep the gate open — most need an owner DECISION or a non-web action, NOT more review:** U3 Zalo surface (see `dd-zalo-surface-reconcile-brief.md` — likely a stale-header doc-fix, not a real fork), U4 ApiPay enterprise DD-30 contract, U5 Messenger HUMAN_AGENT/OTN eligibility (P2.5 policy spike + DD-33 App Review), U6/U6b SePay STARTUP cap + VPBank referral gating, U7 Send API rate limit, U1/U1b/U2 Messenger marketing/utility/tags in VN (Meta does not publish VN availability). **Value delivered:** superseded the stale SePay per-tx framing in gtm-doi-soat-decision.md with the current FREE/STARTUP/SHOP/eShop structure. Original scope — launcher-ready docs-only AP-24 slice. Record current attributable messaging limits/tier gates (Zalo free-tier caps, Messenger 24h window + App Review, SePay/ApiPay tiers), re-verifying any figure currently in gtm-doi-soat-decision.md. Evidence only — no pricing/GTM/capacity decision, no invention. Fail closed on ambiguity. Shares `build-config` with the egress slice → run them sequentially, not in parallel. One P2 FULL-base Codex clean round, manual merge, STOP_AT_READY. Contract: `docs/autopilot-infra-provider-limits-evidence.md`.
 
 ## task: docs-session-management-acceptance-checklist
 title: Issue-ready acceptance checklist derived from Session Management specs
