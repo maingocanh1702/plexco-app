@@ -1,9 +1,9 @@
 # Feature: Web Authentication & Tenant Onboarding — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.10 · 2026-07-20
+> **Version:** 2.12 · 2026-07-23
 > **Status:** Reviewed
-> **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google/email DD-37 chưa code · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google auth lane DD-80 (migrations `0015`–`0018`: D0a revoke, `0016` email-token storage, `0017` Google-OIDC adapter, `0018` d1b completion-hop) đã merge nhưng ⛔ **CHƯA enable** (thiếu đo Safari macOS+iOS cho M3 → `GOOGLE_OAUTH_*` giữ rỗng, §4); email/password order-4 bundle (route/UI/provider send) chưa build, flag OFF · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../feature_web_auth_onboarding.md`
 > **References:** `../../standards/business-rules.md` BL-SEC-1/BL-SEC-3/BL-MSG · `../../standards/decisions.md` DD-13 · DD-31 · **DD-33** · DD-50 · DD-60 · **DD-65..67** · **DD-80 (B0 ✅; revoke-all G3 v1.88)** · `../../g3-revoke-all-concurrency-probe-seed.md` v1.0 · `../../b0-auth-credential-lifecycle-design-probe.md` · `../../standards/api-reference-convention.md` · `auth-security-invariant-table.md`
 
@@ -136,9 +136,9 @@ No table grant to runtime roles. Narrow issue/claim functions hash state+binding
 
 ### DD-50 email-auth storage design gate (required before DDL)
 
-The lifecycle below is normative; physical tables/indexes remain **provisional** until B0 maps every register/verify/login/forgot/reset/revoke path and proves one transactional consume boundary. The probe must produce a decision table and exact uniqueness/expiry/cleanup constraints. It must not assume that the current single-token `revokeWebSession` helper already provides account-wide revocation.
+The lifecycle below is normative. **Current-state (2026-07-23): the storage layer has since been built & merged — `0016_account_email_token_core` on `main` (§2 Migration & Rollback); tables/indexes are live and reusable, NO longer provisional** (B0 ✅ per DD-80 references above: it mapped every register/verify/login/forgot/reset/revoke path and proved one transactional consume boundary, produced the decision table and exact uniqueness/expiry/cleanup constraints, and did not assume the single-token `revokeWebSession` helper already provides account-wide revocation). The design-gate wording below is retained as the original (pre-merge) rationale.
 
-> **(2026-07-18) Probe draft:** `../../b0-auth-credential-lifecycle-design-probe.md` — maps every register/verify/login/forgot/reset/revoke path, pins the single transactional consume boundary, the account-wide revoke primitive (ungranted internal helper + current-session-derived public wrapper), multi-attempt verify-first registration, the protected outbox → pg-boss delivery boundary and the login finalizer that closes the stale-password/reset race. **Still awaiting owner approval**, so the tables/indexes below stay provisional: no migration/DDL may be authored from it yet and the email provider stays fail-closed OFF (external gate `C7` in `../../pre-code-open-items-2026-07-16.md` §C).
+> **(2026-07-18) Probe draft:** `../../b0-auth-credential-lifecycle-design-probe.md` — maps every register/verify/login/forgot/reset/revoke path, pins the single transactional consume boundary, the account-wide revoke primitive (ungranted internal helper + current-session-derived public wrapper), multi-attempt verify-first registration, the protected outbox → pg-boss delivery boundary and the login finalizer that closes the stale-password/reset race. **(Trạng thái tại 2026-07-18: còn awaiting owner approval.)** **Cập nhật current-state 2026-07-23:** B0 ✅ và storage layer đã được author + merge (`0016_account_email_token_core`, §2) — tables/indexes/consume-helper live, KHÔNG còn provisional, có thể reuse. Chỉ còn OPEN: email **PROVIDER order-4** (public functions `auth_verify_email`/`auth_reset_password`/`auth_finalize_email_login` + route/UI + provider send) chưa build; email provider vẫn fail-closed OFF (external gate `C7` in `../../pre-code-open-items-2026-07-16.md` §C).
 
 - Credential record: one active password hash per email identity; unverified identity cannot login.
 - Verify/reset artifact: purpose-bound, random high-entropy raw token returned only to the delivery boundary; database stores only its hash, `expires_at`, `consumed_at`, and audit metadata.
@@ -149,21 +149,22 @@ The lifecycle below is normative; physical tables/indexes remain **provisional**
 
 ### Migration & Rollback
 
-**Live-schema truth (main, migrations `0000`–`0014`):**
+**Live-schema truth (main; số migration verify live tại `packages/db/migrations/` — đừng hard-pin range):**
 
 - **Đã tồn tại — reuse baseline, không recreate; `DROP` = ❌ NEVER:** `accounts`/`web_sessions`/`account_identities` (`0001_global_directory.sql`), `onboarding_runs`/`onboarding_steps` (`0008_notifications_onboarding.sql`), `auth_login_state`/`auth_login_nonces`/`rate_limit_hits` (`0012_auth_functions.sql`).
-- **Chưa tồn tại trên main:** `auth_oauth_transactions` (OAuth transaction store §2) và toàn bộ email-credential/token/delivery tables (B0 — provisional tới khi probe được owner approve; cấm author DDL trước đó).
+- **Đã merge trên main (auth DD-80 lane `0015`–`0018`, ⛔ chưa enable):** `auth_oauth_transactions` (`0017_oauth_transactions.sql`, OAuth transaction store §2) và email-credential/token/delivery tables (`0016_account_email_token_core.sql` — order-2 CODE DARK storage: bảng + PHC validator/trigger + parent-first consume helper + cleanup, **zero grant/route/UI/provider-send**). Google login vẫn ⛔ chưa bật (chờ đo Safari/iOS M3, §4 Session Security); email **order-4 bundle** (route/UI/provider send) chưa build, flag OFF (external gate `C7`).
 - `account_identities.platform` live là unrestricted `text` (đã pin ở "Live-schema truth 2026-07-18" phía trên) — build DD-33 thêm validation trong một migration self-contained; không `DROP` constraint chưa tồn tại.
 
-**Migration mới:** mọi object mới (`auth_oauth_transactions`, email-token tables sau B0 approval, platform CHECK) đi trong migration **monotonic theo next available number sau tail hiện tại của main** (tail hiện là `0014_players_waitlist.sql`). Số `0016`/`0017` trong slice plan v2.8a là thứ tự tương đối giữa các slice — phải re-check tail thực tế tại thời điểm merge. Không sửa migration lịch sử.
+**Migration mới:** `auth_oauth_transactions` (`0017`) và email-token tables (`0016`) **đã merge trên main** — không còn pending (số `0016`/`0017` từng ghi trong slice plan v2.8a là "thứ tự tương đối giữa các slice"; nay đã cố định theo tail thực tế lúc land: `0016` order-2, `0017` order-3, `0018` completion). Object mới **còn lại (chưa build)** của surface này: (i) platform CHECK gồm `facebook` (DD-33); (ii) order-4 email bundle — public functions `auth_verify_email`/`auth_reset_password`/`auth_finalize_email_login` + route/UI email + pg-boss enqueue wiring + provider send (`0016` chỉ chứa storage + consume-helper nội bộ, **KHÔNG** có các public function này — xem D1 note §5 "Ngoài scope order-3/4"; flag OFF, gate `C7`). Chúng đi trong migration **monotonic theo next available number sau tail hiện tại của main** — **verify tail thực tế tại `packages/db/migrations/` tại thời điểm author, KHÔNG hard-pin số** (auth DD-80 lane `0015`–`0018` đã merge và các migration tenant-integrity FK sau đó cũng đã land; luôn đọc thư mục để lấy tail hiện hành, đừng chép số cứng). Không sửa migration lịch sử.
 
 **Rollback:**
 
 | Bước | Hành động | An toàn? |
 |------|-----------|----------|
 | 1 | Tắt provider flag/routes (Google adapter; email provider vốn fail-closed OFF; Facebook gate OFF) — Google/email/Facebook độc lập nhau (§6) | ✅ |
-| 2 | Migration revert mới: DROP các object **additive** vừa thêm (`auth_oauth_transactions`, token tables, CHECK mới) sau khi routes đã tắt | ✅ Additive-only |
-| 3 | DROP bảng baseline `0001`/`0008`/`0012` (`accounts`…`rate_limit_hits`) | ❌ NEVER — chứa account/session/onboarding data thật |
+| 2 | Migration revert: DROP các object **additive CHƯA merge** (platform CHECK DD-33 — constraint, chưa có data) sau khi routes đã tắt | ✅ Additive-only |
+| 3 | **`0016` email-credential/token/delivery tables + `0017` `auth_oauth_transactions` (+ `0018` handoff cột) — ĐÃ merge trên `main`** | ⚠️ Rollback = **tắt flag (Bước 1) + GIỮ bảng/data**; **KHÔNG blind-DROP** — một khi Google enabled thì `auth_login_google` populate `account_emails`/OAuth, order-4 populate credential/token, nên DROP = mất credential/OAuth thật. Chỉ DROP sau khi đã chứng minh trống (forward-compatible như baseline) |
+| 4 | DROP bảng baseline `0001`/`0008`/`0012` (`accounts`…`rate_limit_hits`) | ❌ NEVER — chứa account/session/onboarding data thật |
 
 ### Edge Cases (Backend)
 
@@ -414,8 +415,8 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 ### Acceptance matrix — slice D1 `auth-s4-d1-email-token-core` (DD-80 §10 order-2; B0 §3/§3.2/§3.3/§3.4/§5/§5.2/§5.3/§5.4/§8.1/§9)
 
 > **CODE DARK, order-2.** Slice này chỉ sở hữu **storage + normalization/artifact + PHC validator/trigger +
-> parent-first helpers + cleanup** trong migration `0016_account_email_token_core.sql` (tail hiện tại trên
-> `main` là `0015`). **Ngoài scope (order-3/4):** public `auth_verify_email`/`auth_reset_password`/
+> parent-first helpers + cleanup** trong migration `0016_account_email_token_core.sql` (**đã merge trên
+> `main`**; khi land tail liền trước nó là `0015` — verify live cho tail hiện hành). **Ngoài scope (order-3/4):** public `auth_verify_email`/`auth_reset_password`/
 > `auth_finalize_email_login`, mọi route/UI email, pg-boss enqueue wiring, provider send, `auth_oauth_transactions`.
 > **DD-70(a) inbox fence KHÔNG thuộc slice này** — order-2 không có path phát global notification
 > (`security_alert`/`identity_merged` nằm ở order-4); helper chỉ cần lock hierarchy §5.2 không có bước fence.
@@ -425,7 +426,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 
 | # | Case | Setup | Expected |
 |---|---|---|---|
-| D1E-1 | Migration monotonic + inventory | Apply `0016` trên `main` (tail `0015`) | Apply transactional; `packages/db/README.md` migration inventory cập nhật; immutability guard của runner không báo drift |
+| D1E-1 | Migration monotonic + inventory | `0016` **đã merge trên `main`** (khi land tail liền trước nó là `0015`; tail hiện hành verify live) | Apply transactional; `packages/db/README.md` migration inventory cập nhật; immutability guard của runner không báo drift |
 | D1E-2 | `account_emails` shape | Insert fixtures | `UNIQUE(account_id)` + `UNIQUE(email_lookup_hash)`; CHECK loại trừ lẫn nhau — cả `verified_at`+`pending_expires_at` cùng NULL lẫn cùng NOT NULL đều bị reject |
 | D1E-3 | Một owner cho mỗi normalized email | Hai account cùng `email_lookup_hash` | Insert thứ hai vi phạm UNIQUE; zero partial state |
 | D1E-4 | Credential chỉ cho email đã verified | Tạo `email_password_credentials` cho `account_emails` còn pending | Reject; credential không tồn tại |
@@ -622,6 +623,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v2.12 | **Reconcile migration-section merge-state (auth DD-80 lane 0015–0018 merged, ⛔ chưa enable):** sửa CURRENT-STATE tự mâu thuẫn với changelog v2.11 — (a) Implementation header "Google/email DD-37 chưa code" → Google auth lane DD-80 `0015`–`0018` (D0a revoke · `0016` email-token storage · `0017` Google-OIDC adapter · `0018` d1b completion-hop) **đã merge nhưng ⛔ CHƯA enable** (chờ đo Safari/iOS M3, `GOOGLE_OAUTH_*` rỗng), email order-4 bundle (route/UI/send) chưa build (flag OFF); (b) §2 "Live-schema truth (main, migrations `0000`–`0014`)" → **non-pinned "verify live"** (bỏ hard-pin range), "Chưa tồn tại trên main: `auth_oauth_transactions`/email tables" → **đã merge** (`0016`/`0017`, storage CODE DARK zero grant/route); (c) stale tail `0014` (§2 Migration mới) / `0015` (D1 matrix note + D1E-1) → **non-pinned guidance** ("verify live tail tại `packages/db/migrations/`, KHÔNG hard-pin số" — tránh re-stale trên `0021` và tránh đua số với `BUILD-STATUS`); tail thực tế 2026-07-23 = `0020` (`0020_ledger_tenant_integrity_fks`; auth-lane `0015`–`0018` + tenant-FK `0019`/`0020`) chỉ ghi dạng dated ở changelog, không hard-pin trong body. **OUT-OF-SCOPE residual (founder-ratified defer):** `BUILD-STATUS.md`/ROADMAP/~21 BE spec vẫn ghi global-tail `0018` (pre-existing; `0019`/`0020` land sau sweep tail-0018) → backlog `docs-migration-tail-0018-to-0020-sweep`. Companion: product spec `feature_web_auth_onboarding.md` v2.10b (header + WAO-OQ-5 mirror). (d) §2 DD-50 storage design-gate (L139/L141) reconciled: B0 ✅ + storage `0016` merged → bỏ "provisional / awaiting owner / no DDL may be authored" (giữ dated 2026-07-18 provenance); Migration-mới liệt kê order-4 email public functions còn phải build (`auth_verify_email`/`auth_reset_password`/`auth_finalize_email_login`), không chỉ platform CHECK. (e) §2 Rollback table phân tầng: merged `0016`/`0017`/`0018` credential/OAuth tables **KHÔNG blind-DROP** (data-loss khi Google enabled) — chỉ new-additive (platform CHECK) mới safe-DROP; baseline `0001`/`0008`/`0012` = ❌ NEVER. Header version bù `2.10`→`2.12` (v2.11 đã ghi adapter nhưng header chưa bump). Numbering guidance giữ nguyên (monotonic next-available sau synced tail, verify live trước khi tạo, không sửa lịch sử); DDL/contract §2–§4 KHÔNG đổi; §3 endpoint ✅ `0017` + dated changelog rows (v2.11/v2.8a/v2.7a…) giữ verbatim. |
 | 2026-07-22 | v2.11 | **D1 order-3 Google-OIDC-adapter IMPLEMENTED (migration 0017).** `auth_oauth_transactions` (bytea PKCE ciphertext + own key-version, google lifecycle CHECK) + `auth_oauth_transaction_issue`/`_claim` (single-use, terminalize+NULL ciphertext) + `auth_login_google` (§4 collision cells 1-6 `login_success` / cell 7 `identity_conflict`, per-lane audit, parent-first lock). App boundary: `apps/web/lib/google-oidc.ts` (jose proof matrix — signature/iss/aud/azp/exp/iat/nonce/email_verified + maxTokenAge + token-exchange timeout), `apps/web/lib/oauth-transaction.ts` (PKCE S256 + AES-256-GCM verifier AEAD mirroring `email_enc` w/ HKDF 32-byte key, Lax path-scoped binding cookie, 0017 wrappers), routes `/api/auth/google/{state,callback}` (no `sameOriginRequest()`, session Strict, no-referrer fence, limiter fail-closed). Acceptance D1-1..D1-15 green (real PG). `jose@5` added. Facebook routes still absent (DD-33). No email lifecycle (order-4, flag OFF). Endpoints §3 flipped ⬜→✅. **DEFERRED (owner-accepted Option A):** cross-site pre-session rotation is NOT done in the adapter (Strict cookie absent cross-site) — D1 mints fresh; residual risk + **enablement blocker** `auth-s4-d1b-oauth-session-rotation` pinned in §4 Session Security + manifest `enablement_gates`. |
 | 2026-07-19 | v2.9b | **v1.86 (AP-26 HALT MAX_ROUNDS/Codex round-03):** (1) Issuance fence reject-and-reauth — `issueSession()` không fallback-mint khi có cookie mà rotate trả null (clear cookie + 401 `AUTH_INVALID`); `apps/web/lib/session-cookies.ts` vào scope D0; case D0-12 mới. (2) Partial index `web_sessions(account_id) WHERE revoked_at IS NULL` trong 0015 + `schema.ts` mirror; case D0-13 mới. (3) D1: `auth_login_google` nhận preallocated `account_emails.id` cho cell 1 — AAD contract B0 §3.3 giữ nguyên. No runtime. |
 | 2026-07-19 | v2.9a | **v1.83 (AP-26 HALT v2/Codex round-01):** D0 thêm CREATE OR REPLACE `auth_rotate_web_session` parent-first (đóng deadlock logout-all×rotate; case D0-11 mới) + `auth_audit_events` append-only tạo tại migration D0 (order-2 reuse/extend) + export root `packages/db/src/index.ts` vào scope D0. Số migration theo tail thực tế lúc merge (v2.9). No runtime. |

@@ -1,0 +1,21 @@
+{
+  "feature": "docs-web-auth-migration-section-merge-state-reconcile",
+  "branch": "feat/docs-web-auth-migration-section-merge-state-reconcile",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "docs-reconcile",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "1x_clean",
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": [],
+  "_note": "Docs-only current-state reconcile of feature_web_auth_onboarding_tech (Reviewed auth spec) internal contradiction: the Implementation header says 'Google/email DD-37 chưa code' but the changelog v2.11 records Google D1 adapter IMPLEMENTED (migration 0017, D1-1..15 green); migration-tail claims say tail=0014 (L158) and tail=0015 (L428), both stale (main tail=0020 now) and mutually inconsistent. Fix CURRENT-STATE only: header -> Google D1 lane merged (0015-0018) but ⛔ NOT enabled (Safari/iOS M3 gate), email order-4 still pending (flag OFF); migration tail -> 0020; keep the merged≠enabled nuance; PRESERVE dated changelog (v2.11/v2.8a/v2.7a) verbatim; keep numbering guidance; NO contract change. Sync README index cell (currently drifted v2.9 vs spec v2.10). SCOPE EXTENSION (codex round-01 [P2], founder-approved 2026-07-23): the PRODUCT spec docs/features/feature_web_auth_onboarding.md:7 mirrors the same stale 'Google/email DD-37 chưa code' header -> reconciled together (identical merged≠enabled fix, v2.10a->v2.10b + 1 changelog row + README product cell) to keep the Product/BE pair non-contradictory and satisfy the repo-wide-mirror ready criteria.",
+  "scope": [
+    "docs/autopilot-manifests/docs-web-auth-migration-section-merge-state-reconcile.json",
+    "docs/features/BE/feature_web_auth_onboarding_tech.md",
+    "docs/features/feature_web_auth_onboarding.md",
+    "docs/features/README.md",
+    "docs/autopilot-backlog.md"
+  ]
+}

@@ -2,9 +2,9 @@
 
 > **Canonical phase:** P4  
 > **Track:** 🌐 Web Auth & Onboarding  
-> **Version:** 2.10a · 2026-07-19
+> **Version:** 2.10b · 2026-07-23
 > **Status:** Reviewed  
-> **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google/email DD-37 chưa code · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google auth lane DD-80 (migrations `0015`–`0018`) đã merge nhưng ⛔ **CHƯA enable** (thiếu đo Safari macOS+iOS cho M3 → `GOOGLE_OAUTH_*` giữ rỗng); email/password order-4 bundle (route/UI/provider send) chưa build, flag OFF · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P0–P1 foundation · P2 routing/authz · P3 ledger/provider model  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-1 · `../product/PRD.md` FLOW 1 · `../standards/decisions.md` DD-13/DD-30/DD-33/DD-50/**DD-65** · `BE/feature_web_auth_onboarding_tech.md` · `feature_connector_onboarding.md`
 
@@ -188,12 +188,13 @@ stateDiagram-v2
 | WAO-OQ-2 | Minimum required steps trước khi mark onboarding complete | ✅ **Chốt contract:** club config hoặc DD-46 personal provision + bank `verified` + first session. Zalo + tenant Messenger Page optional/non-blocking; central Messenger availability is a platform release gate, not tenant state. |
 | WAO-OQ-3 | DD-33 Facebook Login/Messenger link | ✅ Design phase-1 đã chốt; App Review/Business Verification/permission evidence là external enablement gate. Chưa pass → capability OFF + transactional one-time `link_code` fallback. |
 | WAO-OQ-4 | Skip Club / personal meet: đường tạo không-gian-cá-nhân | ✅ **Chốt DD-46** — auto-provision personal tenant (tái dùng `provisionTenant` core, wrapper `getOrCreatePersonalTenant`, free plan, bỏ bước "đặt tên club", owner=self); propagate lúc build → `../dd-46-skip-club-analysis.md` |
-| WAO-OQ-5 | Email credential lifecycle + phase-1 không thu SĐT | ✅ **Chốt DD-50 (2026-07-16)** — contract đầy đủ đã pin: verify email, forgot/reset enumeration-safe, token hash-only/TTL/single-use, reset revoke-all sessions; khoá mạnh claim = verified email + `link_code` (phone dormant). B0 (`../pre-code-open-items-2026-07-16.md`) **đã có design-probe: `../b0-auth-credential-lifecycle-design-probe.md` (2026-07-18)** — mutation paths + storage/DDL đã map, gồm account-wide revoke primitive, multi-attempt verify-first registration, cross-site OAuth transaction/Lax binding, non-mutating email-link landing, outbox→pg-boss delivery và login finalizer. Còn **chờ owner duyệt** rồi ghi DD; chưa author slice S4, email provider OFF (gate `C7`) |
+| WAO-OQ-5 | Email credential lifecycle + phase-1 không thu SĐT | ✅ **Chốt DD-50 (2026-07-16)** — contract đầy đủ đã pin: verify email, forgot/reset enumeration-safe, token hash-only/TTL/single-use, reset revoke-all sessions; khoá mạnh claim = verified email + `link_code` (phone dormant). B0 (`../pre-code-open-items-2026-07-16.md`) **đã có design-probe: `../b0-auth-credential-lifecycle-design-probe.md` (2026-07-18)** — mutation paths + storage/DDL đã map, gồm account-wide revoke primitive, multi-attempt verify-first registration, cross-site OAuth transaction/Lax binding, non-mutating email-link landing, outbox→pg-boss delivery và login finalizer. **Current-state (cập nhật 2026-07-23):** storage/adapter đã build & merge — auth DD-80 lane `0015`–`0018` trên `main` (`0015` revoke-core · `0016` email-token storage CODE DARK · `0017` Google OIDC adapter · `0018` d1b completion-hop); Google ⛔ chưa enable (chờ đo Safari/iOS M3). **Còn mở:** email **order-4 bundle** (route/UI/provider send) chưa build, provider fail-closed OFF (gate `C7`) |
 
 ### Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v2.10b | **Reconcile Implementation current-state (mirror của BE tech spec):** header "Google/email DD-37 chưa code" → Google auth lane DD-80 `0015`–`0018` **đã merge nhưng ⛔ CHƯA enable** (chờ đo Safari/iOS M3, `GOOGLE_OAUTH_*` rỗng); email order-4 bundle (route/UI/send) chưa build, flag OFF. WAO-OQ-5 (§7 Open Questions) reframe: "chưa author slice S4 / chờ owner duyệt" → D0/D1 storage+adapter (`0015`–`0018`) đã merge, chỉ còn email order-4/gate `C7` mở. Đồng bộ với `BE/feature_web_auth_onboarding_tech.md` v2.12. Không đổi contract/UX. |
 | 2026-07-19 | v2.10a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
 | 2026-07-18 | v2.10 | **Cross-site auth correction:** tách OAuth redirect khỏi live Telegram same-origin primitive bằng one-time transaction + path-scoped Lax binding cookie; email verify/reset dùng non-mutating landing GET → explicit same-origin POST; thêm link-scanner/wrong-browser tests; session cookie giữ Strict. |
 | 2026-07-18 | v2.9 | **DD-33 propagation:** pin Facebook Login server-side exchange + app-scoped subject, external enablement gate, fail-closed CTA/capability, PSID separation và one-time `link_code` fallback; ghi đúng live schema chưa có platform CHECK. |

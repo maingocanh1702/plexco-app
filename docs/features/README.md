@@ -45,7 +45,7 @@ Bốn nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**
 | P3 | Payment Reconciliation | `feature_payment_reconcile.md` v1.7a | `BE/feature_payment_reconcile_tech.md` v1.10 | ✅ Reviewed |
 | P3.5 | Identity Directory & Merge | `feature_identity.md` v1.10a | `BE/feature_identity_tech.md` v1.12 | ✅ Reviewed |
 | P3 · P4 · P4.5–P4.7 · P4+ | Notifications — Reminders · Inbox · Announcements · Web Push | `feature_notifications_reminders.md` v3.4h | `BE/feature_notifications_reminders_tech.md` v3.4i | 🟡 **Draft** — §A reminder/confirm/correction **business invariants đã reviewed** (reconciled decisions v1.45/DD-15/DD-67); §B/C/D inbox·announce·push chờ **DD-70/71/72**. Hạ Reviewed→Draft 18/07 do **gộp tài liệu**, không phải luật tiền bị mở lại |
-| P4 | Web Auth & Onboarding | `feature_web_auth_onboarding.md` v2.10a | `BE/feature_web_auth_onboarding_tech.md` v2.9 | ✅ Reviewed; cross-site OAuth/email-link boundary corrected; DD-33 external enablement gate/runtime pending |
+| P4 | Web Auth & Onboarding | `feature_web_auth_onboarding.md` v2.10b | `BE/feature_web_auth_onboarding_tech.md` v2.12 | ✅ Reviewed; cross-site OAuth/email-link boundary corrected; DD-33 external enablement gate/runtime pending |
 | P4 | Sync Engine | `feature_sync_engine.md` v2.3a | `BE/feature_sync_engine_tech.md` v2.5a | ✅ Reviewed |
 | P4.3 | Marketplace Discovery | `feature_marketplace_discovery.md` v2.2a | `BE/feature_marketplace_discovery_tech.md` v2.2 | ✅ Reviewed |
 | P4.3 | Cross-club Join | `feature_cross_club_join.md` v2.10a | `BE/feature_cross_club_join_tech.md` v2.11b | ✅ Reviewed |
