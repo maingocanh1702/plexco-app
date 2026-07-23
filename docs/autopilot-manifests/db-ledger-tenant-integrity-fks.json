@@ -1,0 +1,22 @@
+{
+  "feature": "db-ledger-tenant-integrity-fks",
+  "branch": "feat/db-ledger-tenant-integrity-fks",
+  "base_ref": "main",
+  "risk": "P0",
+  "change_class": "schema-migration",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": ["money-model", "schema"],
+  "_note": "Sibling to db-session-tenant-integrity-fks (0019), deferred payment-ledger leg. Same-tenant composite candidate keys + composite FKs on the payment ledger. DERIVE the FK inventory by scanning schema.ts EXHAUSTIVELY (0019 round-01 lesson: a hand-listed inventory missed charges->players). Known clear set (bind EXISTING single-column FKs by tenant): bank_transactions(tenant_id,bank_account_id)->bank_accounts; payment_allocations(tenant_id,charge_id)->charges; payment_allocations(tenant_id,bank_transaction_id)->bank_transactions (NULLABLE -> MATCH SIMPLE); + UNIQUE(tenant_id,id) candidate keys on bank_accounts, bank_transactions, charges. Same mechanism as 0019: expand-only migration, NOT VALID->VALIDATE-in-subtransaction named-halt (RLS-independent, never delete/re-parent), keep single-column FKs additive, code dark, empty tables. DECISION (session+codex+founder): payment_allocations.reverses_allocation_id is an UNCONSTRAINED uuid self-ref (no existing FK) — binding (tenant_id,reverses_allocation_id)->payment_allocations is NET-NEW integrity; recommend INCLUDE (a reversal must reference a real same-tenant allocation) but confirm at review. Also scan the BILLING tables (billing_transactions/billing_allocations/subscription_invoices, 0007) and FLAG if any carry the same cross-tenant money-path FK gap (separate follow-up unless trivial). NO service/repo/adapter code; no RLS/grant change; migration number = next monotonic after synced tail (0019 -> 0020), verify live before creating.",
+  "scope": [
+    "docs/autopilot-manifests/db-ledger-tenant-integrity-fks.json",
+    "packages/db/migrations/0020_ledger_tenant_integrity_fks.sql",
+    "packages/db/schema.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/README.md"
+  ]
+}

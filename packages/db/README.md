@@ -40,7 +40,8 @@ packages/db/
     ├── 0016_account_email_token_core.sql # DD-80 §10 order-2 email/credential/token core (code dark)
     ├── 0017_oauth_transactions.sql    # DD-80 order-3 cross-site OAuth transaction store (code dark)
     ├── 0018_oauth_completion_handoff.sql # auth-s4-d1b OAuth completion-hop handoff (code dark)
-    └── 0019_tenant_integrity_fks.sql  # DD-68 same-tenant composite candidate keys + FKs (expand-only)
+    ├── 0019_tenant_integrity_fks.sql  # DD-68 same-tenant composite candidate keys + FKs (expand-only)
+    └── 0020_ledger_tenant_integrity_fks.sql # DD-68 ledger leg: bank/allocation same-tenant FKs (expand-only)
 ```
 
 The SQL migrations are **authoritative**. `schema.ts` mirrors the tables but
@@ -100,7 +101,7 @@ the worker via narrow privileged functions, then re-enters tenant context.
 
 | Invariant | Enforced by |
 |---|---|
-| INV-1 tenant isolation | `0009` RLS ENABLE+FORCE + policies; `NOBYPASSRLS` roles; `0019` same-tenant composite FKs (DD-68) |
+| INV-1 tenant isolation | `0009` RLS ENABLE+FORCE + policies; `NOBYPASSRLS` roles; `0019`+`0020` same-tenant composite FKs (DD-68) |
 | INV-3 public is a projection | `public_sessions` whitelist table; `readonly` grant scope |
 | INV-4 money append-only | ledger CHECKs (`0003`) + immutability triggers (`0010`) |
 | INV-5 strong identity proof | `link_codes` (OTP), `persons_verified_phone_unique`, `merge_audit`/`merge_tombstones` |
@@ -175,23 +176,58 @@ and player legs still bind the tenant. `charges` references THREE tenant-scoped
 parents (session, player, membership), so all three are bound — binding only two
 would let a B-tenant charge point at an A-tenant player.
 
-Deferred (documented follow-up, not this slice): the deeper ledger references of
-the same class — `payment_allocations → charges / bank_transactions /
-payment_allocations`, and `bank_transactions → bank_accounts`. Those tables are
-otherwise untouched here; binding them is a sibling "ledger tenant-integrity"
-slice.
+The deeper ledger references of the same class were deferred from `0019` and
+are closed by `0020` (next section).
 
-The FKs are added `NOT VALID`, then a probe scans all seven relationships and
-RAISEs a **named halt** (offending table + row id) before any `VALIDATE` — a
-stray cross-tenant row surfaces as an owner-actionable halt, never a bare
-constraint-scan abort, and is never auto-deleted or re-parented. On clean data
-(the money-path feature layer is unbuilt, so these tables are empty today) the
-probe finds nothing and the VALIDATEs are instantaneous. Like `0014`, this
-single-transaction `NOT VALID` + `VALIDATE` shape is additive-and-reversible but
-NOT online-safe — acceptable ONLY because the tables are empty; a future slice
-against populated tables must split `NOT VALID` and `VALIDATE` across files.
-`session_occurrences` (no `tenant_id`), `public_sessions` (public read model,
-HR2), and `magic_links.session_id` (references `web_sessions`) are out of scope.
+The FKs are added `NOT VALID`, then each is `VALIDATE`d inside its own
+subtransaction; a `foreign_key_violation` is re-raised as a **named halt**
+(offending table + relationship + key) — a stray cross-tenant row surfaces as an
+owner-actionable halt, never a bare constraint-scan abort, and is never
+auto-deleted or re-parented. On clean data (the money-path feature layer is
+unbuilt, so these tables are empty today) the VALIDATEs are instantaneous. Like
+`0014`, this single-transaction `NOT VALID` + `VALIDATE` shape is
+additive-and-reversible but NOT online-safe — acceptable ONLY because the tables
+are empty; a future slice against populated tables must split `NOT VALID` and
+`VALIDATE` across files. `session_occurrences` (no `tenant_id`),
+`public_sessions` (public read model, HR2), and `magic_links.session_id`
+(references `web_sessions`) are out of scope.
+
+## Ledger tenant-integrity composite FKs (DD-68, `0020` — EXPAND ONLY)
+
+`0020` closes the payment-ledger leg `0019` deferred, with the identical
+mechanism. The FK inventory was derived by an exhaustive scan of `schema.ts`
+plus migrations `0003`/`0004` (the `0019` round-01 lesson: hand-listed
+inventories miss relationships):
+
+- `bank_transactions (tenant_id, bank_account_id) → bank_accounts` — both
+  columns NOT NULL, always enforced;
+- `payment_allocations (tenant_id, charge_id) → charges` — NOT NULL;
+- `payment_allocations (tenant_id, bank_transaction_id) → bank_transactions` —
+  nullable (cash/waiver allocations carry no bank transaction) → `MATCH SIMPLE`;
+- `payment_allocations (tenant_id, reverses_allocation_id) →
+  payment_allocations` — nullable, self-referencing (a reversal must reverse a
+  same-tenant allocation). Not net-new integrity: `0003` already carries the
+  single-column self-FK; `schema.ts` had drifted (no `.references`) and the
+  mirror is fixed in this slice;
+- `bank_accounts (tenant_id, provider_connection_id) → provider_connections` —
+  nullable (set during connector onboarding; single-column FK from `0004`).
+  Surfaced by the exhaustive scan beyond the manifest's known clear set.
+
+Five UNIQUE `(tenant_id, id)` candidate keys are added (`bank_accounts`,
+`bank_transactions`, `charges`, `payment_allocations`, `provider_connections`) —
+strict supersets of each PK, additive. Every single-column FK is KEPT and still
+governs `ON DELETE`. Same `NOT VALID` → `VALIDATE`-in-subtransaction → named
+halt (`tenant-integrity halt (0020)`) contract — never deletes or re-parents —
+and the same locking caveat: the single-transaction shape is acceptable ONLY
+because the ledger tables are empty (code dark); split `NOT VALID`/`VALIDATE`
+across files for populated tables.
+
+Scanned and excluded: `bank_accounts.pending_change_by` and
+`payment_allocations.created_by` (actor uuids with no FK by design, like
+`join_requests.decided_by`); the BILLING domain has no same-shape gap —
+`billing_transactions` is platform-global (no `tenant_id`, BL-BIL-1) and
+`billing_allocations` carries no `tenant_id` column to bind (allocating platform
+revenue to a tenant's `subscription_invoices` row is cross-tenant by design).
 
 ## Runner-level role bootstrap (cluster-global race safety)
 
@@ -229,7 +265,7 @@ unchanged. This is what lets the DB test suites run as parallel vitest workers
 
 ## Migration order & deploy notes
 
-Apply `0000`→`0019` in order (FK dependencies validated). For production changes
+Apply `0000`→`0020` in order (FK dependencies validated). For production changes
 follow expand→backfill→validate→flip→contract (P12); avoid destructive
 migrations in the same deploy as behavior changes. Legacy Bestminton import:
 TDD §8.

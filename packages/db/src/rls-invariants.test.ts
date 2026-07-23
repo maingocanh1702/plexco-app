@@ -6,8 +6,11 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   aliases,
+  bankAccounts,
+  bankTransactions,
   charges,
   joinRequests,
+  paymentAllocations,
   players,
   sessions,
   sessionSurfaceRefs,
@@ -50,10 +53,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(20); // 0000..0019 (0019 = DD-68 tenant-integrity FKs)
+    expect(ctx.migrateResult.applied.length).toBe(21); // 0000..0020 (0020 = DD-68 ledger tenant-integrity FKs)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(20);
+    expect(second.skipped.length).toBe(21);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -304,6 +307,40 @@ const makePlayer = (tenantId: string, sessionId: string, membershipId: string) =
     `INSERT INTO players (tenant_id, session_id, membership_id) VALUES ($1, $2, $3) RETURNING id`,
     [tenantId, sessionId, membershipId],
   );
+/* Ledger fixtures (0020). Parents are seeded via the owner connection like the
+ * session-domain makers above; the write UNDER TEST always runs as `app`. */
+const makeProviderConnection = (tenantId: string) =>
+  ownerInsertId(
+    `INSERT INTO provider_connections (tenant_id, provider, auth_mode)
+     VALUES ($1, 'sepay', 'api_key') RETURNING id`,
+    [tenantId],
+  );
+const makeBankAccount = (tenantId: string, fingerprint: string) =>
+  ownerInsertId(
+    `INSERT INTO bank_accounts
+       (tenant_id, provider, account_number_enc, account_fingerprint, webhook_token, webhook_secret_enc)
+     VALUES ($1, 'sepay', $2, $3, $4, $2) RETURNING id`,
+    [tenantId, Buffer.from("ti-enc"), fingerprint, `wh-${fingerprint}`],
+  );
+const makeBankTxn = (tenantId: string, bankAccountId: string, externalId: string) =>
+  ownerInsertId(
+    `INSERT INTO bank_transactions
+       (tenant_id, bank_account_id, provider, external_id, amount, unallocated_amount, occurred_at, raw_payload_enc)
+     VALUES ($1, $2, 'sepay', $3, 100000, 100000, now(), $4) RETURNING id`,
+    [tenantId, bankAccountId, externalId, Buffer.from("ti-raw")],
+  );
+const makeCharge = (tenantId: string, sessionId: string, playerId: string) =>
+  ownerInsertId(
+    `INSERT INTO charges (tenant_id, session_id, player_id, amount_due)
+     VALUES ($1, $2, $3, 100000) RETURNING id`,
+    [tenantId, sessionId, playerId],
+  );
+const makeCashAllocation = (tenantId: string, chargeId: string, createdBy: string) =>
+  ownerInsertId(
+    `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source, created_by)
+     VALUES ($1, $2, 50000, 'cash', $3) RETURNING id`,
+    [tenantId, chargeId, createdBy],
+  );
 
 describe("tenant-integrity composite FKs (DD-68 / TI-1..TI-5, TI-9)", () => {
   // Same-tenant fixtures in A and B; the cross-tenant writes below reference them.
@@ -548,18 +585,279 @@ describe("tenant-integrity composite FKs (DD-68 / TI-1..TI-5, TI-9)", () => {
 });
 
 /**
- * TI-6 (probe named-halt) + TI-7 (immutability) exercise migration 0019
- * DIRECTLY against throwaway databases, using the REAL migration file bytes:
+ * DD-68 ledger tenant-integrity composite FKs (migration 0020) — the deferred
+ * payment-ledger leg 0019's header documents. Same mechanism, one level deeper:
+ * bank_transactions -> bank_accounts, payment_allocations -> charges /
+ * bank_transactions / payment_allocations (reversal self-reference), and
+ * bank_accounts -> provider_connections. Fixtures seed same-tenant parents via
+ * the owner connection; the write UNDER TEST always runs as the `app` role
+ * through withTenant (TI-1's "real runtime path" requirement).
+ */
+describe("ledger tenant-integrity composite FKs (0020 / LTI-1..LTI-5)", () => {
+  let provConnA: string;
+  let bankAccountA: string;
+  let bankTxnA: string;
+  let chargeA: string;
+  let allocA: string; // a real allocation in A, referenced cross-tenant from a B reversal
+  let chargeB: string; // a real charge in B, so allocations can isolate a single cross leg
+  let actorPerson: string;
+
+  beforeAll(async () => {
+    actorPerson = await makePerson();
+    provConnA = await makeProviderConnection(ctx.tenantA);
+    bankAccountA = await makeBankAccount(ctx.tenantA, "lti-fp-a");
+    bankTxnA = await makeBankTxn(ctx.tenantA, bankAccountA, "lti-ext-a");
+    const sessA = await makeSession(ctx.tenantA);
+    const membA = await makeMembership(ctx.tenantA);
+    const playA = await makePlayer(ctx.tenantA, sessA, membA);
+    chargeA = await makeCharge(ctx.tenantA, sessA, playA);
+    allocA = await makeCashAllocation(ctx.tenantA, chargeA, actorPerson);
+    const sessB = await makeSession(ctx.tenantB);
+    const membB = await makeMembership(ctx.tenantB);
+    const playB = await makePlayer(ctx.tenantB, sessB, membB);
+    chargeB = await makeCharge(ctx.tenantB, sessB, playB);
+  }, 60_000);
+
+  it("LTI-1: every 0020 composite FK rejects a cross-tenant child insert via the app role (withTenant)", async () => {
+    // 1. bank_transactions (tenant_id, bank_account_id) — account belongs to A
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantB, (tx) =>
+        tx.insert(bankTransactions).values({
+          tenantId: ctx.tenantB,
+          bankAccountId: bankAccountA,
+          provider: "sepay",
+          externalId: "lti1-ext-b",
+          amount: 100000,
+          unallocatedAmount: 100000,
+          occurredAt: new Date(),
+          rawPayloadEnc: Buffer.from("lti1"),
+        }),
+      ),
+      /bank_transactions_tenant_bank_account_fk/,
+    );
+    // 2. payment_allocations (tenant_id, charge_id) — cash keeps the bank and
+    //    reverses legs NULL so only the charge leg can fire
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantB, (tx) =>
+        tx.insert(paymentAllocations).values({
+          tenantId: ctx.tenantB,
+          chargeId: chargeA,
+          amount: 50000,
+          source: "cash",
+          createdBy: actorPerson,
+        }),
+      ),
+      /payment_allocations_tenant_charge_fk/,
+    );
+    // 3. payment_allocations (tenant_id, bank_transaction_id) — charge leg
+    //    same-tenant (B) isolates the bank-transaction leg (A)
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantB, (tx) =>
+        tx.insert(paymentAllocations).values({
+          tenantId: ctx.tenantB,
+          chargeId: chargeB,
+          bankTransactionId: bankTxnA,
+          amount: 50000,
+          source: "auto",
+        }),
+      ),
+      /payment_allocations_tenant_bank_transaction_fk/,
+    );
+    // 4. payment_allocations (tenant_id, reverses_allocation_id) — charge leg
+    //    same-tenant (B), reversal points at A's allocation
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantB, (tx) =>
+        tx.insert(paymentAllocations).values({
+          tenantId: ctx.tenantB,
+          chargeId: chargeB,
+          amount: -50000,
+          source: "reversal",
+          reversesAllocationId: allocA,
+        }),
+      ),
+      /payment_allocations_tenant_reverses_allocation_fk/,
+    );
+    // 5. bank_accounts (tenant_id, provider_connection_id) — connection is A's
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantB, (tx) =>
+        tx.insert(bankAccounts).values({
+          tenantId: ctx.tenantB,
+          provider: "sepay",
+          accountNumberEnc: Buffer.from("lti1-num"),
+          accountFingerprint: "lti1-fp-b",
+          webhookToken: "lti1-wh-b",
+          webhookSecretEnc: Buffer.from("lti1-sec"),
+          providerConnectionId: provConnA,
+        }),
+      ),
+      /bank_accounts_tenant_provider_connection_fk/,
+    );
+  });
+
+  it("LTI-2: a legitimate same-tenant ledger chain succeeds via the app role", async () => {
+    const provConnB = await makeProviderConnection(ctx.tenantB);
+    // bank account WITH its own tenant's provider connection (enforced leg, match)
+    const bankAccountB = await withTenant(ctx.appDb.db, ctx.tenantB, async (tx) => {
+      const rows = await tx
+        .insert(bankAccounts)
+        .values({
+          tenantId: ctx.tenantB,
+          provider: "sepay",
+          accountNumberEnc: Buffer.from("lti2-num"),
+          accountFingerprint: "lti2-fp-b",
+          webhookToken: "lti2-wh-b",
+          webhookSecretEnc: Buffer.from("lti2-sec"),
+          providerConnectionId: provConnB,
+        })
+        .returning();
+      return rows[0]!.id;
+    });
+    const bankTxnB = await withTenant(ctx.appDb.db, ctx.tenantB, async (tx) => {
+      const rows = await tx
+        .insert(bankTransactions)
+        .values({
+          tenantId: ctx.tenantB,
+          bankAccountId: bankAccountB,
+          provider: "sepay",
+          externalId: "lti2-ext-b",
+          amount: 100000,
+          unallocatedAmount: 100000,
+          occurredAt: new Date(),
+          rawPayloadEnc: Buffer.from("lti2"),
+        })
+        .returning();
+      return rows[0]!.id;
+    });
+    // auto allocation binds an all-same-tenant charge + bank transaction
+    await withTenant(ctx.appDb.db, ctx.tenantB, (tx) =>
+      tx.insert(paymentAllocations).values({
+        tenantId: ctx.tenantB,
+        chargeId: chargeB,
+        bankTransactionId: bankTxnB,
+        amount: 50000,
+        source: "auto",
+      }),
+    );
+    // cash allocation, then a same-tenant reversal referencing it
+    const cashAllocB = await withTenant(ctx.appDb.db, ctx.tenantB, async (tx) => {
+      const rows = await tx
+        .insert(paymentAllocations)
+        .values({
+          tenantId: ctx.tenantB,
+          chargeId: chargeB,
+          amount: 25000,
+          source: "cash",
+          createdBy: actorPerson,
+        })
+        .returning();
+      return rows[0]!.id;
+    });
+    await withTenant(ctx.appDb.db, ctx.tenantB, (tx) =>
+      tx.insert(paymentAllocations).values({
+        tenantId: ctx.tenantB,
+        chargeId: chargeB,
+        amount: -25000,
+        source: "reversal",
+        reversesAllocationId: cashAllocB,
+      }),
+    );
+  });
+
+  it("LTI-3: NULL fk legs stay accepted (MATCH SIMPLE) — pre-onboarding bank account, cash allocation", async () => {
+    // bank account BEFORE connector onboarding: provider_connection_id NULL
+    await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      tx.insert(bankAccounts).values({
+        tenantId: ctx.tenantA,
+        provider: "sepay",
+        accountNumberEnc: Buffer.from("lti3-num"),
+        accountFingerprint: "lti3-fp-a",
+        webhookToken: "lti3-wh-a",
+        webhookSecretEnc: Buffer.from("lti3-sec"),
+      }),
+    );
+    // cash allocation: bank_transaction_id NULL and reverses_allocation_id NULL
+    await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      tx.insert(paymentAllocations).values({
+        tenantId: ctx.tenantA,
+        chargeId: chargeA,
+        amount: 10000,
+        source: "cash",
+        createdBy: actorPerson,
+      }),
+    );
+  });
+
+  it("LTI-4: each ledger parent carries a UNIQUE (tenant_id, id) candidate key (pg_constraint)", async () => {
+    for (const [table, conname] of [
+      ["bank_accounts", "bank_accounts_tenant_id_candidate_key"],
+      ["bank_transactions", "bank_transactions_tenant_id_candidate_key"],
+      ["charges", "charges_tenant_id_candidate_key"],
+      ["payment_allocations", "payment_allocations_tenant_id_candidate_key"],
+      ["provider_connections", "provider_connections_tenant_id_candidate_key"],
+    ] as const) {
+      const { rows } = await ctx.owner.query(
+        // attname is of type `name`; cast to text so array_agg returns text[]
+        // (which node-pg parses to a JS array) rather than an unparsed name[].
+        `SELECT (SELECT array_agg(a.attname::text ORDER BY k.ord)
+                   FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+                   JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) AS cols
+           FROM pg_constraint c
+          WHERE c.conrelid = $1::regclass AND c.contype = 'u' AND c.conname = $2`,
+        [table, conname],
+      );
+      expect(rows.length, `${conname} must exist as a UNIQUE constraint`).toBe(1);
+      expect((rows[0] as { cols: string[] }).cols).toEqual(["tenant_id", "id"]);
+    }
+  });
+
+  it("LTI-5: every pre-0020 single-column ledger FK still exists (ON DELETE unchanged)", async () => {
+    const singleColFkCount = async (
+      child: string,
+      col: string,
+      parent: string,
+    ): Promise<number> => {
+      const { rows } = await ctx.owner.query(
+        `SELECT 1 FROM pg_constraint c
+          WHERE c.conrelid = $1::regclass AND c.contype = 'f'
+            AND c.confrelid = $3::regclass
+            AND array_length(c.conkey, 1) = 1
+            AND (SELECT a.attname FROM pg_attribute a
+                  WHERE a.attrelid = c.conrelid AND a.attnum = c.conkey[1]) = $2`,
+        [child, col, parent],
+      );
+      return rows.length;
+    };
+    for (const [child, col, parent] of [
+      ["bank_transactions", "bank_account_id", "bank_accounts"],
+      ["payment_allocations", "charge_id", "charges"],
+      ["payment_allocations", "bank_transaction_id", "bank_transactions"],
+      ["payment_allocations", "reverses_allocation_id", "payment_allocations"],
+      ["bank_accounts", "provider_connection_id", "provider_connections"],
+    ] as const) {
+      expect(
+        await singleColFkCount(child, col, parent),
+        `${child}.${col} single-column FK -> ${parent} must survive 0020`,
+      ).toBe(1);
+    }
+  });
+});
+
+/**
+ * TI-6/LTI-6 (probe named-halt) + TI-7 (immutability) exercise migrations 0019
+ * and 0020 DIRECTLY against throwaway databases, using the REAL migration bytes:
  *   - TI-6 applies 0000..0018, seeds a cross-tenant players row, then applies
  *     0019 and asserts the wrapped VALIDATE RAISEs a NAMED halt (table +
  *     relationship + offending key) and rolls back cleanly — proving 0019 halts
  *     an owner rather than aborting mid-way or silently deleting/re-parenting.
- *   - TI-7 applies 0000..0019 through the real runner, proves every recorded
- *     sha256 equals the on-disk file (0000..0018 byte-identical after 0019), and
+ *   - LTI-6 does the same for 0020: applies 0000..0019, seeds a cross-tenant
+ *     bank_transactions row, then applies 0020 and asserts the same named-halt
+ *     contract on the ledger leg.
+ *   - TI-7 applies 0000..0020 through the real runner, proves every recorded
+ *     sha256 equals the on-disk file (0000..0019 byte-identical after 0020), and
  *     that a tampered applied file is still hard-rejected.
  * Own superuser connection + uniquely-named databases (vitest fileParallelism).
  */
-describe("tenant-integrity migration 0019 direct behaviour (TI-6 probe halt · TI-7 immutability)", () => {
+describe("tenant-integrity migrations 0019/0020 direct behaviour (TI-6/LTI-6 probe halts · TI-7 immutability)", () => {
   const BASE = process.env.DATABASE_URL_TEST;
   let admin: pg.Client;
 
@@ -656,18 +954,86 @@ describe("tenant-integrity migration 0019 direct behaviour (TI-6 probe halt · T
     }
   }, 120_000);
 
-  it("TI-7: 0000..0018 stay byte-identical after 0019 applies, and a tampered applied file is rejected", async () => {
+  it("LTI-6: applying 0020 over a pre-existing cross-tenant bank_transactions row raises a NAMED halt (table + row id)", async () => {
+    const dbName = "plexco_lti6_probe_check";
+    await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${dbName}`);
+    const c = await connect(url(dbName));
+    try {
+      // apply every migration BEFORE 0020 (numeric prefix < 20), in filename order
+      const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+      for (const f of files) {
+        if (Number.parseInt(f.slice(0, 4), 10) >= 20) continue;
+        await c.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+      }
+      // seed a cross-tenant ledger row: tenant B's transaction on tenant A's
+      // bank account. The 0003 single-column FK is satisfied (the account
+      // exists); no composite FK yet.
+      const t = await c.query(
+        `INSERT INTO tenants (name, slug, status)
+         VALUES ('LTI6 A', 'lti6-a', 'active'), ('LTI6 B', 'lti6-b', 'active') RETURNING id`,
+      );
+      const tA = (t.rows[0] as { id: string }).id;
+      const tB = (t.rows[1] as { id: string }).id;
+      const acc = await c.query(
+        `INSERT INTO bank_accounts
+           (tenant_id, provider, account_number_enc, account_fingerprint, webhook_token, webhook_secret_enc)
+         VALUES ($1, 'sepay', $2, 'lti6-fp', 'lti6-wh', $2) RETURNING id`,
+        [tA, Buffer.from("lti6")],
+      );
+      const accId = (acc.rows[0] as { id: string }).id;
+      await c.query(
+        `INSERT INTO bank_transactions
+           (tenant_id, bank_account_id, provider, external_id, amount, unallocated_amount, occurred_at, raw_payload_enc)
+         VALUES ($1, $2, 'sepay', 'lti6-ext', 100000, 100000, now(), $3)`,
+        [tB, accId, Buffer.from("lti6")],
+      );
+
+      // apply 0020 — the wrapped VALIDATE must halt with a NAMED error
+      const sql0020 = await readFile(
+        path.join(MIGRATIONS_DIR, "0020_ledger_tenant_integrity_fks.sql"),
+        "utf8",
+      );
+      let err: unknown;
+      await c.query("BEGIN");
+      try {
+        await c.query(sql0020);
+      } catch (e) {
+        err = e;
+      }
+      await c.query("ROLLBACK");
+
+      const msg = String((err as Error | undefined)?.message ?? err);
+      expect(msg).toMatch(/tenant-integrity halt \(0020\)/);
+      expect(msg).toMatch(/\bbank_transactions\b/);
+      expect(msg).toContain("(tenant_id, bank_account_id)");
+      // the offending cross-tenant key — tenant B pointing at tenant A's account — is surfaced
+      expect(msg).toContain(accId);
+      expect(msg).toContain(tB);
+
+      // rolled back cleanly — the composite constraint was NOT left behind
+      const left = await c.query(
+        `SELECT 1 FROM pg_constraint WHERE conname = 'bank_transactions_tenant_bank_account_fk'`,
+      );
+      expect(left.rows.length).toBe(0);
+    } finally {
+      await c.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    }
+  }, 120_000);
+
+  it("TI-7: 0000..0019 stay byte-identical after 0020 applies, and a tampered applied file is rejected", async () => {
     const dbName = "plexco_ti7_immut_check";
     await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
     await admin.query(`CREATE DATABASE ${dbName}`);
     try {
       const res = await migrate(url(dbName));
-      expect(res.applied.length).toBe(20); // 0000..0019
+      expect(res.applied.length).toBe(21); // 0000..0020
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(20);
+        expect(rows.length).toBe(21);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))

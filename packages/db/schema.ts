@@ -18,6 +18,7 @@
 import {
   pgTable, uuid, text, integer, bigint, bigserial, boolean, jsonb, timestamp,
   time, customType, uniqueIndex, unique, index, primaryKey, check, foreignKey,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -768,6 +769,19 @@ export const bankAccounts = pgTable("bank_accounts", {
     .on(t.tenantId, t.provider, t.accountFingerprint),
   tenantIdx: index("idx_bank_accounts_tenant").on(t.tenantId),
   providerChk: check("bank_accounts_provider_chk", sql`${t.provider} IN ('sepay','apipay')`),
+  // DD-68 (migration 0020): candidate key targeted by the same-tenant composite
+  // FK bank_transactions -> bank_accounts. id is already the PK, so this
+  // strict-superset UNIQUE is additive.
+  tenantIdCandidateKey: unique("bank_accounts_tenant_id_candidate_key").on(t.tenantId, t.id),
+  // DD-68 (migration 0020): same-tenant composite FK, additive over the single-
+  // column FK added in 0004. provider_connection_id is NULLABLE (set during
+  // connector onboarding) — MATCH SIMPLE leaves the composite unenforced while
+  // NULL, enforced when set; the SQL migration spells MATCH SIMPLE out.
+  tenantProviderConnectionFk: foreignKey({
+    columns: [t.tenantId, t.providerConnectionId],
+    foreignColumns: [providerConnections.tenantId, providerConnections.id],
+    name: "bank_accounts_tenant_provider_connection_fk",
+  }),
 }));
 
 export const charges = pgTable("charges", {
@@ -812,6 +826,9 @@ export const charges = pgTable("charges", {
     foreignColumns: [players.tenantId, players.id],
     name: "charges_tenant_player_fk",
   }),
+  // DD-68 (migration 0020): candidate key targeted by the same-tenant composite
+  // FK payment_allocations.charge_id -> charges. Additive (id is the PK).
+  tenantIdCandidateKey: unique("charges_tenant_id_candidate_key").on(t.tenantId, t.id),
 }));
 
 export const bankTransactions = pgTable("bank_transactions", {
@@ -835,6 +852,17 @@ export const bankTransactions = pgTable("bank_transactions", {
   unallocLeChk: check("bank_txn_unalloc_le_chk", sql`${t.unallocatedAmount} <= ${t.amount}`),
   reconcileChk: check("bank_txn_reconcile_chk",
     sql`${t.reconcileStatus} IN ('pending','matched','partial','unmatched','ignored')`),
+  // DD-68 (migration 0020): candidate key targeted by the same-tenant composite
+  // FK payment_allocations.bank_transaction_id -> bank_transactions. Additive.
+  tenantIdCandidateKey: unique("bank_transactions_tenant_id_candidate_key").on(t.tenantId, t.id),
+  // DD-68 (migration 0020): same-tenant composite FK, additive over the single-
+  // column bank_transactions_bank_account_id_fkey (0003). Both referencing
+  // columns are NOT NULL, so the tenant match is always enforced.
+  tenantBankAccountFk: foreignKey({
+    columns: [t.tenantId, t.bankAccountId],
+    foreignColumns: [bankAccounts.tenantId, bankAccounts.id],
+    name: "bank_transactions_tenant_bank_account_fk",
+  }),
 }));
 
 export const paymentAllocations = pgTable("payment_allocations", {
@@ -844,7 +872,11 @@ export const paymentAllocations = pgTable("payment_allocations", {
   chargeId: uuid("charge_id").notNull().references(() => charges.id),
   amount: integer("amount").notNull(), // signed; reversal negative
   source: text("source").notNull(),
-  reversesAllocationId: uuid("reverses_allocation_id"),
+  // Self-referencing single-column FK exists in SQL since 0003
+  // (payment_allocations_reverses_allocation_id_fkey); the mirror had drifted
+  // (no .references) and is fixed as part of 0020's ledger tenant binding.
+  reversesAllocationId: uuid("reverses_allocation_id")
+    .references((): AnyPgColumn => paymentAllocations.id),
   createdBy: uuid("created_by"),
   reasonCode: text("reason_code"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -857,6 +889,31 @@ export const paymentAllocations = pgTable("payment_allocations", {
     (${t.source} IN ('auto','manual') AND ${t.amount} > 0 AND ${t.bankTransactionId} IS NOT NULL)
     OR (${t.source} IN ('cash','waiver') AND ${t.amount} > 0 AND ${t.bankTransactionId} IS NULL AND ${t.createdBy} IS NOT NULL)
     OR (${t.source} = 'reversal' AND ${t.amount} < 0 AND ${t.reversesAllocationId} IS NOT NULL)`),
+  // DD-68 (migration 0020): payment_allocations is BOTH child and parent (the
+  // reversal self-reference), so it carries its own candidate key. Additive.
+  tenantIdCandidateKey: unique("payment_allocations_tenant_id_candidate_key").on(t.tenantId, t.id),
+  // DD-68 (migration 0020): same-tenant composite FKs, additive over the
+  // single-column FKs from 0003. charge_id is NOT NULL (always enforced);
+  // bank_transaction_id and reverses_allocation_id are NULLABLE — MATCH SIMPLE
+  // (the PostgreSQL default; spelled out in the SQL migration) leaves each
+  // composite unenforced while its fk column is NULL (cash/waiver allocation
+  // without a bank transaction; non-reversal without a reversed allocation),
+  // enforced the moment it is set.
+  tenantChargeFk: foreignKey({
+    columns: [t.tenantId, t.chargeId],
+    foreignColumns: [charges.tenantId, charges.id],
+    name: "payment_allocations_tenant_charge_fk",
+  }),
+  tenantBankTransactionFk: foreignKey({
+    columns: [t.tenantId, t.bankTransactionId],
+    foreignColumns: [bankTransactions.tenantId, bankTransactions.id],
+    name: "payment_allocations_tenant_bank_transaction_fk",
+  }),
+  tenantReversesAllocationFk: foreignKey({
+    columns: [t.tenantId, t.reversesAllocationId],
+    foreignColumns: [t.tenantId, t.id],
+    name: "payment_allocations_tenant_reverses_allocation_fk",
+  }),
 }));
 
 /* ===========================================================================
@@ -881,6 +938,9 @@ export const providerConnections = pgTable("provider_connections", {
   uq: uniqueIndex("provider_connections_tenant_provider_uq").on(t.tenantId, t.provider),
   providerChk: check("provider_connections_provider_chk", sql`${t.provider} IN ('sepay','apipay')`),
   authChk: check("provider_connections_auth_chk", sql`${t.authMode} IN ('oauth2','api_key')`),
+  // DD-68 (migration 0020): candidate key targeted by the same-tenant composite
+  // FK bank_accounts.provider_connection_id -> provider_connections. Additive.
+  tenantIdCandidateKey: unique("provider_connections_tenant_id_candidate_key").on(t.tenantId, t.id),
 }));
 
 export const oauthTransactions = pgTable("oauth_transactions", {
