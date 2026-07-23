@@ -512,6 +512,11 @@ export const memberships = pgTable("memberships", {
     .on(t.tenantId, t.payCode).where(sql`${t.payCode} IS NOT NULL`),
   statusChk: check("memberships_status_chk",
     sql`${t.status} IN ('active','guest','left','merged')`),
+  // DD-68 (migration 0019): candidate key that the same-tenant composite FKs
+  // (players/charges/aliases → memberships) target. id is already the PK, so
+  // UNIQUE (tenant_id, id) is a strict-superset uniqueness — additive, cannot
+  // reject any existing row.
+  tenantIdCandidateKey: unique("memberships_tenant_id_candidate_key").on(t.tenantId, t.id),
 }));
 
 export const aliases = pgTable("aliases", {
@@ -522,6 +527,13 @@ export const aliases = pgTable("aliases", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uq: uniqueIndex("aliases_tenant_norm_uq").on(t.tenantId, t.aliasNorm),
+  // DD-68 (migration 0019): same-tenant composite FK. Additive — the single-
+  // column aliases_membership_id_fkey (0002) stays and still governs ON DELETE.
+  tenantMembershipFk: foreignKey({
+    columns: [t.tenantId, t.membershipId],
+    foreignColumns: [memberships.tenantId, memberships.id],
+    name: "aliases_tenant_membership_fk",
+  }),
 }));
 
 export const channelReachability = pgTable("channel_reachability", {
@@ -574,6 +586,10 @@ export const sessions = pgTable("sessions", {
   joinChk: check("sessions_join_chk", sql`${t.joinPolicy} IN ('open','approval')`),
   statusChk: check("sessions_status_chk",
     sql`${t.status} IN ('draft','open','closed','cancelled')`),
+  // DD-68 (migration 0019): candidate key that the same-tenant composite FKs
+  // (session_surface_refs/players/charges/join_requests → sessions) target.
+  // id is already the PK, so this strict-superset UNIQUE is additive.
+  tenantIdCandidateKey: unique("sessions_tenant_id_candidate_key").on(t.tenantId, t.id),
 }));
 
 export const sessionRecurrenceRules = pgTable("session_recurrence_rules", {
@@ -605,6 +621,13 @@ export const sessionSurfaceRefs = pgTable("session_surface_refs", {
 }, (t) => ({
   uq: uniqueIndex("session_surface_refs_uq").on(t.sessionId, t.platform, t.target),
   sessionIdx: index("idx_session_surface_refs_session").on(t.sessionId),
+  // DD-68 (migration 0019): same-tenant composite FK, additive over the single-
+  // column session_surface_refs_session_id_fkey (0002).
+  tenantSessionFk: foreignKey({
+    columns: [t.tenantId, t.sessionId],
+    foreignColumns: [sessions.tenantId, sessions.id],
+    name: "session_surface_refs_tenant_session_fk",
+  }),
 }));
 
 export const players = pgTable("players", {
@@ -637,6 +660,22 @@ export const players = pgTable("players", {
   // ORDER BY waitlist_position, joined_at, id FOR UPDATE.
   waitlistOrderIdx: index("idx_players_waitlist_order")
     .on(t.sessionId, t.status, t.waitlistPosition, t.joinedAt, t.id),
+  // DD-68 (migration 0019): candidate key targeted by the same-tenant composite
+  // FK charges.player_id -> players. id is already the PK, so this is additive.
+  tenantIdCandidateKey: unique("players_tenant_id_candidate_key").on(t.tenantId, t.id),
+  // DD-68 (migration 0019): same-tenant composite FKs, additive over the single-
+  // column players_session_id_fkey / players_membership_id_fkey (0002). Both
+  // referencing columns are NOT NULL, so the tenant match is always enforced.
+  tenantSessionFk: foreignKey({
+    columns: [t.tenantId, t.sessionId],
+    foreignColumns: [sessions.tenantId, sessions.id],
+    name: "players_tenant_session_fk",
+  }),
+  tenantMembershipFk: foreignKey({
+    columns: [t.tenantId, t.membershipId],
+    foreignColumns: [memberships.tenantId, memberships.id],
+    name: "players_tenant_membership_fk",
+  }),
 }));
 
 export const telegramLinks = pgTable("telegram_links", {
@@ -749,6 +788,30 @@ export const charges = pgTable("charges", {
   allocChk: check("charges_alloc_chk", sql`${t.amountAllocated} >= 0`),
   allocLeChk: check("charges_alloc_le_due_chk", sql`${t.amountAllocated} <= ${t.amountDue}`),
   statusChk: check("charges_status_chk", sql`${t.status} IN ('open','partial','paid','void')`),
+  // DD-68 (migration 0019): same-tenant composite FKs, additive over the single-
+  // column charges_session_id_fkey / charges_membership_id_fkey (0003). The
+  // session leg is always enforced (tenant_id, session_id NOT NULL). The
+  // membership leg is MATCH SIMPLE in the SQL — unenforced when membership_id is
+  // NULL (charge without a membership), enforced when it is set. Drizzle emits
+  // MATCH SIMPLE (the PostgreSQL default); the SQL migration spells it out.
+  tenantSessionFk: foreignKey({
+    columns: [t.tenantId, t.sessionId],
+    foreignColumns: [sessions.tenantId, sessions.id],
+    name: "charges_tenant_session_fk",
+  }),
+  tenantMembershipFk: foreignKey({
+    columns: [t.tenantId, t.membershipId],
+    foreignColumns: [memberships.tenantId, memberships.id],
+    name: "charges_tenant_membership_fk",
+  }),
+  // charges.player_id (NOT NULL) -> players, same tenant. Without this a
+  // B-tenant charge with a NULL membership could reference an A-tenant player
+  // (codex round-01 [P1]).
+  tenantPlayerFk: foreignKey({
+    columns: [t.tenantId, t.playerId],
+    foreignColumns: [players.tenantId, players.id],
+    name: "charges_tenant_player_fk",
+  }),
 }));
 
 export const bankTransactions = pgTable("bank_transactions", {
@@ -975,6 +1038,13 @@ export const joinRequests = pgTable("join_requests", {
     .on(t.sessionId, t.personId).where(sql`${t.status} = 'pending'`),
   statusChk: check("join_requests_status_chk",
     sql`${t.status} IN ('pending','approved','rejected','expired','cancelled')`),
+  // DD-68 (migration 0019): same-tenant composite FK, additive over the single-
+  // column join_requests_session_id_fkey (0006).
+  tenantSessionFk: foreignKey({
+    columns: [t.tenantId, t.sessionId],
+    foreignColumns: [sessions.tenantId, sessions.id],
+    name: "join_requests_tenant_session_fk",
+  }),
 }));
 
 /* ===========================================================================

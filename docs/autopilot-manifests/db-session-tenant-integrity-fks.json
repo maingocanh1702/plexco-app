@@ -31,6 +31,7 @@
     "players (tenant_id, membership_id) -> memberships (tenant_id, id)",
     "charges (tenant_id, session_id) -> sessions (tenant_id, id)",
     "charges (tenant_id, membership_id) -> memberships (tenant_id, id)  [membership_id NULLABLE -> MATCH SIMPLE, unenforced when NULL]",
+    "charges (tenant_id, player_id) -> players (tenant_id, id)  [ADDED at codex round-01 [P1]: charges' third tenant-scoped parent; requires a players (tenant_id, id) candidate key]",
     "join_requests (tenant_id, session_id) -> sessions (tenant_id, id)",
     "aliases (tenant_id, membership_id) -> memberships (tenant_id, id)"
   ],
@@ -39,8 +40,11 @@
     "packages/db/migrations/0019_tenant_integrity_fks.sql",
     "packages/db/schema.ts",
     "packages/db/src/rls-invariants.test.ts",
+    "packages/db/src/migrate.test.ts",
     "packages/db/README.md"
   ],
+  "scope_reconciliation": "packages/db/src/migrate.test.ts was NOT in the original 5-file scope but is added here to match the actual diff. It hardcodes MIGRATION_COUNT = 19 (its own comment: 'must match rls-invariants.test.ts') and asserts it in 4 places; adding migration 0019 makes a fresh migrate apply 20 files, so those assertions go red. The runner has no per-version target, so this is a mechanically forced, minimal (19 -> 20) lockstep bump — the same TI-8 count move already required in the in-scope rls-invariants.test.ts. No new behaviour; keeps the full packages/db suite green (TI-2). Flagged for owner ratification at merge.",
+  "scope_expansion_codex_p1": "codex round-01 [P1] found the original 7-FK list was an INCOMPLETE closure of the slice's own goal: charges references three tenant-scoped parents (session, player, membership) but only session+membership were bound, so a tenant-B charge with a NULL membership could point at a tenant-A player (a B-visible money row referencing an A-only player). Added the 8th composite FK charges(tenant_id, player_id) -> players(tenant_id, id) plus a players(tenant_id, id) candidate key (a 3rd candidate key beyond the original two) + probe entry + schema mirror + app-role TI-1 case. Same mechanism, same files, empty tables. This exceeds the manifest's original 'two candidate keys / 7 FKs' fence — flagged for owner ratification at merge. DEFERRED (documented, sibling slice, NOT here): the same-class deeper-ledger references payment_allocations -> charges/bank_transactions/payment_allocations and bank_transactions -> bank_accounts (their tables are otherwise untouched by this slice).",
   "acceptance": [
     "TI-1 cross-tenant insert is rejected: for EACH of the 7 FKs in scope_fks, an insert whose child tenant_id differs from the parent's tenant_id fails with a foreign-key violation. Run under the real app role through withTenant, not as superuser — the point is the constraint holds on the runtime path.",
     "TI-2 same-tenant insert still succeeds: the existing happy-path fixtures and the full packages/db suite stay green; no legitimate write is newly rejected.",

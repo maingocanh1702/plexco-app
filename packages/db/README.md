@@ -37,7 +37,10 @@ packages/db/
     ├── 0013_onboarding_steps_recency.sql
     ├── 0014_players_waitlist.sql      # DD-45 waitlist model (expand-only, code dark)
     ├── 0015_auth_revoke_account.sql   # DD-80 v1.88 account-session epoch + revoke-all
-    └── 0016_account_email_token_core.sql # DD-80 §10 order-2 email/credential/token core (code dark)
+    ├── 0016_account_email_token_core.sql # DD-80 §10 order-2 email/credential/token core (code dark)
+    ├── 0017_oauth_transactions.sql    # DD-80 order-3 cross-site OAuth transaction store (code dark)
+    ├── 0018_oauth_completion_handoff.sql # auth-s4-d1b OAuth completion-hop handoff (code dark)
+    └── 0019_tenant_integrity_fks.sql  # DD-68 same-tenant composite candidate keys + FKs (expand-only)
 ```
 
 The SQL migrations are **authoritative**. `schema.ts` mirrors the tables but
@@ -97,7 +100,7 @@ the worker via narrow privileged functions, then re-enters tenant context.
 
 | Invariant | Enforced by |
 |---|---|
-| INV-1 tenant isolation | `0009` RLS ENABLE+FORCE + policies; `NOBYPASSRLS` roles |
+| INV-1 tenant isolation | `0009` RLS ENABLE+FORCE + policies; `NOBYPASSRLS` roles; `0019` same-tenant composite FKs (DD-68) |
 | INV-3 public is a projection | `public_sessions` whitelist table; `readonly` grant scope |
 | INV-4 money append-only | ledger CHECKs (`0003`) + immutability triggers (`0010`) |
 | INV-5 strong identity proof | `link_codes` (OTP), `persons_verified_phone_unique`, `merge_audit`/`merge_tombstones` |
@@ -145,6 +148,51 @@ recreated. Contract: `../../docs/b0-auth-credential-lifecycle-design-probe.md`
 §3/§5/§8.1; acceptance D1E-1..22 in
 `../../docs/features/BE/feature_web_auth_onboarding_tech.md`.
 
+## Tenant-integrity composite FKs (DD-68, `0019` — EXPAND ONLY)
+
+The money-path children reference their parents by **single-column** FK only —
+`players.session_id → sessions.id`, `players.membership_id → memberships.id`,
+`charges.session_id`, `charges.player_id`, `charges.membership_id`,
+`join_requests.session_id`, `session_surface_refs.session_id`,
+`aliases.membership_id`. A single-column FK proves the parent EXISTS but not that
+it belongs to the SAME tenant as the child's own `tenant_id`. RLS filters reads,
+so a service-layer bug writing `players(tenant_id = A, session_id = <B's session>)`
+yields a row invisible to BOTH tenants while charges still references it — silent
+cross-tenant corruption on the money path.
+
+`0019` closes this at the DB (HR1: the DB is the fail-closed choke-point). It
+adds UNIQUE `(tenant_id, id)` candidate keys on `sessions`, `memberships`, and
+`players` (a composite FK must target a unique constraint on the referenced
+columns; `id` is already the PK so this is additive), then eight composite FKs
+`(tenant_id, fk_id) → parent(tenant_id, id)` — one per relationship above. Every
+existing single-column FK is KEPT (additive; the `id` FK still governs
+`ON DELETE`). PostgreSQL referential-integrity checks are **not** subject to RLS,
+so the constraint rejects a cross-tenant write on the real `app`-role
+(`NOBYPASSRLS`) runtime path, not only for a superuser. `charges.membership_id`
+is nullable → `MATCH SIMPLE` leaves that composite unenforced when it is NULL
+(preserving "charge without a membership"), enforced when it is set; the session
+and player legs still bind the tenant. `charges` references THREE tenant-scoped
+parents (session, player, membership), so all three are bound — binding only two
+would let a B-tenant charge point at an A-tenant player.
+
+Deferred (documented follow-up, not this slice): the deeper ledger references of
+the same class — `payment_allocations → charges / bank_transactions /
+payment_allocations`, and `bank_transactions → bank_accounts`. Those tables are
+otherwise untouched here; binding them is a sibling "ledger tenant-integrity"
+slice.
+
+The FKs are added `NOT VALID`, then a probe scans all seven relationships and
+RAISEs a **named halt** (offending table + row id) before any `VALIDATE` — a
+stray cross-tenant row surfaces as an owner-actionable halt, never a bare
+constraint-scan abort, and is never auto-deleted or re-parented. On clean data
+(the money-path feature layer is unbuilt, so these tables are empty today) the
+probe finds nothing and the VALIDATEs are instantaneous. Like `0014`, this
+single-transaction `NOT VALID` + `VALIDATE` shape is additive-and-reversible but
+NOT online-safe — acceptable ONLY because the tables are empty; a future slice
+against populated tables must split `NOT VALID` and `VALIDATE` across files.
+`session_occurrences` (no `tenant_id`), `public_sessions` (public read model,
+HR2), and `magic_links.session_id` (references `web_sessions`) are out of scope.
+
 ## Runner-level role bootstrap (cluster-global race safety)
 
 Roles are **cluster-global**; databases are not. `0000`'s check-then-act role
@@ -181,7 +229,7 @@ unchanged. This is what lets the DB test suites run as parallel vitest workers
 
 ## Migration order & deploy notes
 
-Apply `0000`→`0016` in order (FK dependencies validated). For production changes
+Apply `0000`→`0019` in order (FK dependencies validated). For production changes
 follow expand→backfill→validate→flip→contract (P12); avoid destructive
 migrations in the same deploy as behavior changes. Legacy Bestminton import:
 TDD §8.
