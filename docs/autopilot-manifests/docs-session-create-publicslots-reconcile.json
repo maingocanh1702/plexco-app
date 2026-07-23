@@ -1,0 +1,19 @@
+{
+  "feature": "docs-session-create-publicslots-reconcile",
+  "branch": "feat/docs-session-create-publicslots-reconcile",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "docs-reconcile",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "1x_clean",
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": [],
+  "_note": "Founder-ratified reconcile of 2 inconsistencies from AP-25 round-06 fail-closed. (1) Create status: PRD UC-1 'Session open' contradicts PRD state-diagram (draft->open via publish) + TDD (DDL default draft, POST returns draft) -> reword UC-1 to draft+publish end-state (TDD already correct). (2) Public capacity: PRD E#7 requires slots_max for public (authority) vs TDD NULL=unlimited -> add TDD constraint public->slots_max NOT NULL, unlimited only for non-public. CURRENT-STATE prose only; preserve dated changelog + reframe provenance. Scope = 2 session spec files ONLY; README index-cell + backlog DEFERRED to avoid collision with in-flight docs-tail-0018-number-reconcile. Version bumps in each spec header/changelog. Enables AP-25 re-run to lift 2 section-9A quarantines.",
+  "scope": [
+    "docs/autopilot-manifests/docs-session-create-publicslots-reconcile.json",
+    "docs/features/feature_session_management.md",
+    "docs/features/BE/feature_session_management_tech.md"
+  ]
+}

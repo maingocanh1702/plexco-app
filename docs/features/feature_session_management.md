@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P2 (chat CRUD) · P4 (web parity)  
 > **Track:** 📋 Session CRUD  
-> **Version:** 2.12b · 2026-07-23
+> **Version:** 2.12c · 2026-07-23
 > **Status:** Reviewed  
 > **Implementation:** Not started — schema `0014` đã merge trên main (`1a6ac38`, migrations 0000–0018); auto-promote behavior vẫn chưa build · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P0–P1 foundation stable · P2 tenant routing/authz  
@@ -35,7 +35,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|
-| SES-UC-1 | Host | Tạo session one-off | Session open (private/public) với validated fields |
+| SES-UC-1 | Host | Tạo session one-off | Session tạo ở status `draft` (private/public) với validated fields; Host publish → `open` (state machine §4) |
 | SES-UC-2 | Host | Tạo recurring template | Instances tương lai generated idempotently theo tenant timezone |
 | SES-UC-3 | Host | Announce lên linked group | Một canonical announcement reference lưu DB |
 | SES-UC-4 | Host | Sửa time/price/capacity/visibility | Command writes canonical state + outbox event |
@@ -57,7 +57,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 | 4 | Concurrency | 2 first-entry players join đồng thời, chỉ còn 1 slot | Transaction lock — first-commit-wins; second vào `waitlisted` với position dương, không tạo charge/venue |
 | 5 | Financial | Price change sau khi đã có charges | Preview bắt buộc: existing charges giữ nguyên HOẶC adjustment entries — KHÔNG silent mutation |
 | 6 | Security | Venue details leak trước active outcome | Chỉ hiện area/queue position. Chi tiết chỉ sau khi `players.status='active'`; approved-but-waitlisted vẫn ẩn |
-| 7 | Data Integrity | Visibility public thiếu discovery fields | Reject — required fields: sport, area, starts_at, slots_max |
+| 7 | Data Integrity | Visibility public thiếu discovery fields | Reject — required fields: sport, area, starts_at, slots_max (finite — public không được unlimited/`NULL`) |
 | 8 | Data Integrity | Visibility private → remove projection | Immediate remove từ public search |
 | 9 | Data Integrity | Recurrence qua DST boundary | Handle deterministically — dùng IANA timezone + occurrence idempotency key |
 | 10 | Resilience | Announcement gửi group fail | KHÔNG rollback canonical write — projector retries/reprojects |
@@ -86,7 +86,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 
 | Entity | Vai trò | Key constraints |
 |--------|---------|-----------------|
-| `sessions` | Buổi chơi chính | `tenant_id` FK, `sport_id` FK, `starts_at/ends_at` timestamptz, `slots_max` nullable/positive, `visibility` enum (private/public), `status` enum |
+| `sessions` | Buổi chơi chính | `tenant_id` FK, `sport_id` FK, `starts_at/ends_at` timestamptz, `slots_max` nullable/positive (`NULL` = unlimited chỉ cho non-public; public bắt buộc finite — E#7), `visibility` enum (private/public), `status` enum |
 | `players` | Player tham gia/waitlist | `UNIQUE(tenant_id, session_id, membership_id)`, `status ∈ active\|left\|waitlisted`; waitlisted có position dương |
 | `session_surface_refs` | Reference message/session trên từng surface | `tenant_id`, `session_id`, `platform`, `target`, `external_ref`; unique `(session_id, platform, target)` |
 | `session_recurrence_rules` + `session_occurrences` | Template lặp + occurrence idempotent | `rrule`, IANA `timezone`, `last_generated_at`; unique `(recurrence_rule_id, local_occurrence_key)` |
@@ -131,7 +131,7 @@ stateDiagram-v2
 - [ ] Timezone, sport, price, capacity, visibility và join-policy validations pass
 - [ ] Concurrent capacity/join operations không thể over-fill (lock test)
 - [ ] Waitlisted không chiếm capacity, không lộ venue và không tạo charge/new-obligation. Promotion first-activation tạo đúng một charge; DD-49 rejoin re-derive rồi carry-over hoặc append refunded lifecycle tại activation, không duplicate charge row
-- [ ] Active leave/capacity increase fill toàn bộ slot available; finite→unlimited fill mọi eligible; decrease dưới active roster reject
+- [ ] Active leave/capacity increase fill toàn bộ slot available; finite→unlimited (chỉ non-public — public bắt buộc finite slots_max, E#7) fill mọi eligible; decrease dưới active roster reject
 - [ ] Existing `active|waitlisted` trả current outcome; existing `left` re-derive live DD-49 disposition. Refunded+full không append lifecycle tới activation; unknown/unimplemented → fail-closed
 - [ ] Derivation failure: first failure lazy-creates one root `promotion_retry_id` per failing capacity opener + exactly-one candidate event bound entry/root origin. Retry job one-owner CAS/lease with atomic max-3 claimed-attempt count; each completed current-order sweep tries each candidate at most once and re-checks DD-41/DD-42/`evaluateJoinRestriction()` DD-52. Sibling/duplicate events cannot fork job/budget. Expired `claimed` at count 3 is finalized under `session→job`: resolve if retry no longer applies, else terminal+review/DLQ; no stuck job/fourth attempt/fallback
 - [ ] Price/cancel changes khi đã có charge → bắt buộc explicit impact handling
@@ -160,6 +160,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v2.12c | **Reconcile 2 inconsistencies (AP-25 round-06, founder-ratified):** (1) create-status — SES-UC-1 kết quả reword: create = `draft`, Host publish → `open`, khớp state machine §4 + TDD (DDL default `draft`, POST example `draft` — vốn đã đúng, không đổi); (2) public-capacity — pin E#7 authority: public bắt buộc **finite `slots_max`** (`NULL` = unlimited chỉ hợp lệ non-public) vào E#7, domain model §4 và AC finite→unlimited qualifier. Prose only; dated changelog giữ verbatim; không resolve OQ nào khác. |
 | 2026-07-23 | v2.12b | **Reconcile 0014 merge-state (TDD→PRD):** current-state claim sửa → **0014 đã merge trên `main` (`1a6ac38`, migrations 0000–0018)** ở header Implementation + row SES-OQ-3 (giữ open "behavior chưa build"; provenance `origin/main`@`22c23aa` reframed thành historical marker). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.12a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v2.12 | **DD-44/45 restriction + claimed-attempt closure:** invite current/replay no-extra-use; waitlist root lazy on first failure, max 3 claimed attempts, expired-final resolve-or-terminal, tenant-private narrow claim and one owner digest/root. Behavior remains unbuilt. |

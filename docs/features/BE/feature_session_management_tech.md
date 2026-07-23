@@ -1,7 +1,7 @@
 # Feature: Session Management — Backend Tech Spec
 
 > **Canonical phase:** P2/P4  
-> **Version:** 2.13a · 2026-07-23
+> **Version:** 2.13b · 2026-07-23
 > **Status:** Reviewed  
 > **Implementation:** Not started — schema `0014` đã merge trên main (`1a6ac38`, migrations 0000–0018); auto-promote behavior vẫn chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_session_management.md`  
@@ -47,7 +47,7 @@ CREATE TABLE sessions (
   area text,  -- public whitelist (quận/khu vực)
   skill_level text, -- current live field; DD-41 expand→contract retires only after ranked source/backfill lands
   price_amount integer NOT NULL DEFAULT 0 CHECK (price_amount >= 0),
-  slots_max integer,  -- NULL = unlimited
+  slots_max integer,  -- NULL = unlimited (chỉ non-public — xem note Capacity × visibility dưới DDL)
   visibility text NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'public')),
   join_policy text NOT NULL DEFAULT 'open' CHECK (join_policy IN ('open', 'approval')),
   status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'open', 'closed', 'cancelled')),
@@ -117,6 +117,8 @@ CREATE TABLE players (
 -- CHƯA có trong 0014 — đó là DD-68 scope, không phải DD-45.
 ```
 
+> **Capacity × visibility (PRD E#7 authority):** `visibility='public'` bắt buộc `slots_max IS NOT NULL` — public session không được unlimited; `NULL` = unlimited chỉ hợp lệ cho non-public. Enforce ở SessionService validation choke-point trên create **và mọi update dẫn tới trạng thái public** (gồm private-unlimited→public và public finite→`NULL`) — reject `MISSING_DISCOVERY_FIELDS` (edge #12). Cột DB giữ nullable như live `0002` (unlimited vẫn valid cho private); DB-level CHECK (`NOT (visibility='public' AND slots_max IS NULL)`) là hardening candidate qua migration mới monotonic nếu chốt — cùng pattern DD-45a §4, chưa thuộc scope slice nào. Row public + `slots_max IS NULL` tồn tại ngoài choke-point (legacy/fixture/writer bypass — DB chưa có CHECK) là **invalid state, fail-closed: không được xuất hiện trong public discovery projection**; cách xử lý cụ thể (skip/reject + audit) và regression test pin ở `feature_marketplace_discovery_tech.md` (owner public projection — xem §4 Caching) — follow-up ngoài scope slice này, chưa resolve ở đây.
+
 ### Indexes
 
 ```sql
@@ -155,10 +157,10 @@ CREATE INDEX idx_players_waitlist_order
 | 9 | Resilience | Projector (Zalo/Messenger/web) fails | Outbox retry — canonical state already committed |
 | 10 | Security | Non-admin sends session command | AuthZ middleware rejects before service — 403 |
 | 11 | Cross-Feature | Session mutation after status=closed | Service rejects — `SESSION_NOT_OPEN` |
-| 12 | Data Integrity | Visibility=public without required fields | Validation rejects — `MISSING_DISCOVERY_FIELDS` |
+| 12 | Data Integrity | Visibility=public without required fields | Validation rejects — `MISSING_DISCOVERY_FIELDS`. Required (PRD E#7): sport, area, starts_at, `slots_max` finite (`IS NOT NULL`) — public + unlimited reject, cả create lẫn update (private-unlimited→public, public finite→`NULL`) |
 | 13 | Data Integrity | `waitlisted` thiếu/position ≤0 hoặc active/left còn position | DB state-shape/positive CHECK reject |
 | 14 | Concurrency | Leave/capacity+ chạy đồng thời join | Lock session trước; re-count active; không over-fill/double-charge |
-| 15 | Boundary | Capacity tăng hoặc finite→unlimited | Re-count active; fill `new_slots_max-active_count` hoặc mọi candidate eligible trong cùng locked transition |
+| 15 | Boundary | Capacity tăng hoặc finite→unlimited (finite→`NULL` chỉ cho non-public; public → edge #12 reject) | Re-count active; fill `new_slots_max-active_count` hoặc mọi candidate eligible trong cùng locked transition |
 | 16 | Boundary | Capacity giảm dưới active roster | Reject `CAPACITY_BELOW_ROSTER`; không evict/không mutation |
 | 17 | Financial | Existing player `status='left'` join lại | Re-derive under lock. Active: carry-over hoặc append refunded lifecycle; full: waitlisted, refunded không new lifecycle tới activation. Không duplicate charge row; unknown→review/zero mutation |
 | 18 | Financial | Waitlisted candidate có existing charge | Re-derive DD-49 live disposition; missing/malformed → không promote/mutate, audit `WAITLIST_CHARGE_CONFLICT`, owner-review, continue next |
@@ -192,7 +194,7 @@ CREATE INDEX idx_players_waitlist_order
 | 409 | `STALE_VERSION` | Dữ liệu đã thay đổi — tải lại | Optimistic lock conflict |
 | 400 | `PRICE_CHANGE_REQUIRES_POLICY` | Cần chọn chính sách cho charges hiện tại | Price change with existing charges |
 | 400 | `CANCEL_REQUIRES_REVIEW` | Cần xác nhận huỷ — có người đã thanh toán | Cancel with paid roster |
-| 400 | `MISSING_DISCOVERY_FIELDS` | Thiếu thông tin bắt buộc cho buổi chơi public | Public visibility without required fields |
+| 400 | `MISSING_DISCOVERY_FIELDS` | Thiếu thông tin bắt buộc cho buổi chơi public | Public visibility without required fields (incl. finite `slots_max` — E#7, note §2) |
 | 409 | `REJOIN_REQUIRES_REVIEW` | Cần host kiểm tra trạng thái tiền trước | `left` nhưng correction core chưa có hoặc không chứng minh được carry-over/refunded disposition |
 
 ### Request/Response Examples
@@ -264,9 +266,9 @@ CREATE INDEX idx_players_waitlist_order
 
 1. Lock session row `FOR UPDATE`; resolve trusted identity, then lookup existing membership/player read-only theo UNIQUE `(tenant_id,session_id,membership_id)` mà chưa create/lock player/finance.
 2. Existing `active` hoặc `waitlisted`: return current outcome idempotently; không đổi position/charge và ban áp về sau không biến replay này thành join error.
-3. Không có player hoặc existing `left`: re-check session joinability + DD-41, DD-42 và shared `evaluateJoinRestriction()` DD-52. Failure xảy ra trước mọi membership/player/charge mutation.
+3. Không có player hoặc existing `left`: re-check session joinability — gồm invalid-state check §2 Capacity × visibility: row `visibility='public'` + `slots_max IS NULL` (legacy/fixture/bypass) → fail-closed reject, zero mutation, audit + owner-review; đây là **một choke-point cho MỌI branch phía dưới** (first-entry step 5, left-rejoin step 6, approval path) — không branch nào được treat NULL as unlimited khi state invalid — cùng DD-41, DD-42 và shared `evaluateJoinRestriction()` DD-52. Failure xảy ra trước mọi membership/player/charge mutation.
 4. Lock every nonterminal DD-45 root immediately after session/current-state resolution and **before** membership/player/financial locks. Sau đó mới create/reuse membership. Existing `left` lock aggregate và re-derive DD-49 disposition; partial/ambiguous/core-missing → `REJOIN_REQUIRES_REVIEW`, zero mutation.
-5. Không có player row: còn slot/unlimited → derive amount trước mutation; success thì insert `active` + đúng một charge atomically; DD-39 derivation failure aborts join fail-closed (không membership/player/charge/venue, không fallback). Full → insert `waitlisted` + tail position + `waitlist_entry_version=1`, không charge/venue.
+5. Không có player row: còn slot/unlimited (unlimited chỉ non-public — public+NULL đã fail-closed tại choke-point step 3) → derive amount trước mutation; success thì insert `active` + đúng một charge atomically; DD-39 derivation failure aborts join fail-closed (không membership/player/charge/venue, không fallback). Full → insert `waitlisted` + tail position + `waitlist_entry_version=1`, không charge/venue.
 6. Existing `left`: còn slot → chưa-refund carry-over; refunded append lifecycle idempotent, atomic với `active`. Full → set `waitlisted`, increment durable `waitlist_entry_version`; chưa-refund giữ aggregate lịch sử, refunded **không append lifecycle/nợ mới**. Promotion re-derives later. Không INSERT duplicate `charges` row.
 7. Nếu outcome observes/causes full capacity, resolve every nonterminal root in the same transaction; active outcome writes player/finance/outbox only after root lock.
 
@@ -274,7 +276,7 @@ CREATE INDEX idx_players_waitlist_order
 
 1. Lock session row `FOR UPDATE`. If session is closed/cancelled/not joinable or `starts_at <= now()`, lock nonterminal roots next, resolve them as no longer applicable, and return without candidate/finance mutation. Capacity decrease below active count still rejects with zero mutation.
 2. Establish root epoch **before any candidate/player/finance lock**. A synchronous new capacity opener locks and resolves/supersedes older nonterminal roots (increment generation, clear token), but creates no new row yet. A retry worker instead locks the exact claimed root after session and validates state/token/generation/live lease. Both paths now hold the required root order.
-3. Compute free slots from `status='active'` only. `slots_max IS NULL` means unbounded fill.
+3. Compute free slots from `status='active'` only. `slots_max IS NULL` means unbounded fill for **non-public** sessions only. Consume-time re-check (§2 Capacity × visibility): row `visibility='public'` AND `slots_max IS NULL` (legacy/fixture/writer-bypass) là invalid state — KHÔNG treat NULL as unbounded; fail-closed theo step-1 not-joinable path: resolve nonterminal roots, zero candidate/finance mutation, audit + owner-review. Không mass-promote/charge từ invalid state.
 4. Only now select candidates `status='waitlisted' ORDER BY waitlist_position, joined_at, id FOR UPDATE`.
 5. Re-check `evaluateSessionEligibility()` DD-41, DD-42 reliability restriction và shared `evaluateJoinRestriction()` DD-52 rồi resolve financial disposition. First-activation phải không có charge và gọi `deriveChargeAmount`; DD-49 rejoin phải re-derive live aggregate. Missing/malformed disposition → stay waitlisted, audit+owner-review, continue next.
 6. Retry-job history is UNIQUE `(tenant_id,session_id,origin_command_id)` and a partial UNIQUE `(tenant_id,session_id) WHERE state IN ('due','claimed')` permits one nonterminal root/session. The synchronous opener lazy-creates its stable root only on first DD-39 failure while session remains locked. Each failure writes one candidate event keyed `(session_id,player_id,waitlist_entry_version,origin_command_id,reason_code)` referencing that root; siblings/duplicates never create another job. At opener end, capacity full/no retryable failure→`resolved`; only open capacity+remaining failure→`due`. Any join/approve/promotion/capacity path filling capacity, plus close/start/cancel, resolves all nonterminal roots. Owner alerts remain durable.
@@ -347,7 +349,9 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 | 21 | First-entry join full | Session full | `waitlisted`, position dương, no charge/venue/capacity |
 | 22 | Leave opens slot | One eligible first-activation candidate | Promote + clear position + one charge atomically |
 | 23 | Capacity tăng lên 12, active=7 | Sáu eligible candidates | Promote exactly 5 in total order (`12-7`) |
-| 24 | Capacity finite→NULL | Eligible + banned candidates | Promote all eligible; banned stay waitlisted |
+| 24 | Capacity finite→NULL (non-public session) | Eligible + banned candidates | Promote all eligible; banned stay waitlisted |
+| 24a | Public + unlimited rejected | `visibility='public'` với `slots_max` NULL — create, private-unlimited→public, hoặc public finite→NULL | `MISSING_DISCOVERY_FIELDS`; không mutation |
+| 24b | Public+NULL bypass row (consume-time) | Row `visibility='public'`, `slots_max` NULL có sẵn (legacy/fixture/bypass); entry MỌI branch (first-entry, left-rejoin, approval — choke-point step 3) + capacity opener/promotion sweep | KHÔNG treat as unbounded ở bất kỳ capacity decision nào: entry reject fail-closed zero mutation (kể cả reactivate `left`/append lifecycle); promotion theo not-joinable path (resolve roots, zero candidate/finance mutation); audit + owner-review; không mass-promote/charge |
 | 25 | Capacity below active | `slots_max < active_count` | `CAPACITY_BELOW_ROSTER`, no mutation |
 | 26 | Candidate ineligible | First in queue fails DD-41 | Skip first, promote next, first keeps position |
 | 27 | Promotion retry | Same commandId twice | Same result; no double charge/promotion |
@@ -421,6 +425,7 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v2.13b | **Reconcile 2 inconsistencies (AP-25 round-06, founder-ratified):** (1) public-capacity — pin PRD E#7 authority: `visibility='public'` requires `slots_max IS NOT NULL` (public không unlimited; `NULL` = unlimited chỉ non-public) — note Capacity × visibility §2 (validation choke-point; row public+NULL ngoài choke-point = invalid fail-closed, không được project — mechanism/test thuộc `feature_marketplace_discovery_tech.md`, follow-up ngoài scope), DDL comment, edge #12/#15 qualifier, `MISSING_DISCOVERY_FIELDS` trigger, §4 consume-time re-check tại MỘT choke-point entry step-3 (mọi branch first-entry/left-rejoin/approval) + promotion step-3 (KHÔNG treat public+NULL as unbounded — fail-closed theo not-joinable path), test #24 pin non-public + #24a public+unlimited reject + #24b bypass-row consume-time fail-closed mọi branch. Cột DB giữ nullable như live `0002`; DB CHECK = hardening candidate migration mới (chưa scope). (2) create-status — TDD vốn đã đúng (DDL default `draft`, POST example `draft`), không đổi; reword nằm ở PRD SES-UC-1. Prose only; dated changelog giữ verbatim; publish-transition mechanics là pre-existing gap, không resolve ở đây. |
 | 2026-07-23 | v2.13a | **Reconcile 0014 merge-state + projection direction (TDD→PRD):** current-state 0014 mirrors → **merged on `main` (`1a6ac38`, migrations 0000–0018)** (header, §2 migration note + range 0000→0018, DDL `waitlist_position` comment, rollback row = forward-migration mới, §6 rollout step-2; provenance `origin/main`@`22c23aa` reframed thành historical marker). Edge test #10 → "Public → private removes projection" khớp feature spec edge 8 + SES-UC-5/SES-UC-10 (PRD FLOW 2/13). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.13 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (reuse baseline `0002`; `0014` branch-only; DD-68/DD-45a/retry objects = migration mới monotonic), §3 Request/Response Examples (DD-60 envelope), §4 Caching Strategy + Security Checklist. Idempotency đã có sẵn (§3) — giữ nguyên. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.12a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
