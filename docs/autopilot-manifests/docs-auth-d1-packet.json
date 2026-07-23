@@ -7,7 +7,7 @@
   "merge_policy": "manual_only",
   "auto_merge": false,
   "codex_review": "1x_clean",
-  "authority": "DD-80 (decisions v1.88; G3 concurrency closure) · b0-auth-credential-lifecycle-design-probe.md amendment v1.88 · feature_web_auth_onboarding_tech.md v2.10 acceptance D1-1..15 · slice-readiness-verdicts.md v0.7 Verdict 5a/5b dependency order",
+  "authority": "base main@399c5eb. DD-80 (decisions v1.88; G3 concurrency closure) · b0-auth-credential-lifecycle-design-probe.md amendment v1.88 + v1.86 AAD-handoff · feature_web_auth_onboarding_tech.md header v2.10 / changelog v2.11 (D1 order-3 IMPLEMENTED, acceptance D1-1..15) · slice-readiness-verdicts.md v2.0 (D0a/D0b merged = Verdict 6; D1/d1b = Verdicts 10-13; Verdict 2 for dd41 dep) · review-code-readiness-gate.md §11.2 evidence-inventory test",
   "depends_on": ["auth-s4-d0-revoke-core", "auth-s4-d0-session-web-boundary"],
   "dep_checks": [
     { "file": "docs/autopilot-manifests/auth-s4-d1-google-adapter.json", "symbol": "auth-s4-d1-google-adapter" },
@@ -26,6 +26,10 @@
   ],
   "scope": [
     "docs/autopilot-manifests/docs-auth-d1-packet.json",
-    "docs/auth-d1-implementation-packet.md"
-  ]
+    "docs/auth-d1-implementation-packet.md",
+    "docs/autopilot-backlog.md",
+    ".claude/commands/ap-28-docs-auth-d1-packet.md",
+    "docs/autopilot-docs-auth-d1-packet.md"
+  ],
+  "_note": "Scope 2026-07-23 (owner Option 2 = split): §C DD-38 chat readiness removed from the packet; DD-38 chat becomes root slice dd38-dd86-chat-schema-core, anchored as a ## task: block (with merged_probe) in docs/autopilot-backlog.md (status idea, blocked by DD-55 probe + DD-86 ratify + CHT-OQ-2). §C keeps only the DD-39 gender/pricing surface (evidence inventory, no readiness state, gate §11.2). Under the same owner authorization the slice's own contract files — launcher .claude/commands/ap-28-docs-auth-d1-packet.md + task doc docs/autopilot-docs-auth-d1-packet.md — were reconciled to the split (title, scope count, no-marker, DD-39-only §C, current authority pins) and are ADDED to scope so the declared scope equals the 5 modified files (the launcher's stated file count = this scope count = 5). All authority/version pins across the artifacts are synced to base main@399c5eb / verdicts v2.0 / tech header-v2.10-changelog-v2.11 / D1+d1b merged."
 }

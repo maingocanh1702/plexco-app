@@ -1,4 +1,4 @@
-# AP-28 — Auth D1 implementation packet + DD-38/39 readiness (docs-only, split 2/2)
+# AP-28 — Auth D1 implementation packet + DD-39 readiness (docs-only; DD-38 chat split out)
 
 HOLD. Run ONLY after both current D0 slices are merged to `origin/main`: the dep_checks require
 `packages/db/migrations/0015_auth_revoke_account.sql` with `auth_revoke_all_web_sessions` and
@@ -16,13 +16,17 @@ Before any edit:
    `feat/docs-auth-d1-packet`. If not, HALT; do not checkout branches in another tree.
 2. Confirm this worktree's HEAD equals `main` and `origin/main`, and all authority artifacts exist at
    that committed base: decisions.md DD-80 v1.88, B0 amendment v1.88 plus the v1.86 AAD-handoff notes,
-   tech v2.10 acceptance D1-1..15, verdicts v0.7 current D0a/D0b order, both D0 merged probes, and all
+   tech header v2.10 / changelog v2.11 (D1 order-3 IMPLEMENTED) acceptance D1-1..15, verdicts v2.0 (D0a/D0b
+   merged = Verdict 6; D1/d1b = Verdicts 10-13), the D0 + D1 (`0017`) + d1b (`0018`) merged probes, and all
    `auth-s4-d*` manifests. Never use local-only authority docs — if any is missing on this HEAD,
    HALT `AUTHORITY_NOT_ON_MAIN`.
 3. Re-register the manifest from this worktree, including on a re-run, then create FRESH
    `regions.log` and `fix-round-count.txt` under `.autopilot/state/docs-auth-d1-packet/` (new slice —
    the AP-26 round budget does not carry over).
-4. Confirm the manifest scope is exactly the manifest itself plus `docs/auth-d1-implementation-packet.md`.
+4. Confirm the manifest scope is exactly five files: the manifest itself,
+   `docs/auth-d1-implementation-packet.md`, `docs/autopilot-backlog.md` (DD-38 chat split anchor), and the
+   two reconciled contract files `.claude/commands/ap-28-docs-auth-d1-packet.md` +
+   `docs/autopilot-docs-auth-d1-packet.md` (owner decision 2026-07-23).
 
 Reference monolith: read ONLY via `git show cab0c2a:docs/auth-d0-d1-implementation-packet.md`. NEVER
 checkout/merge/rebase `feat/docs-auth-d0-d1-implementation-packet` anywhere.

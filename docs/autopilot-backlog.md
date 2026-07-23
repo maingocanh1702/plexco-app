@@ -200,16 +200,16 @@ merged_probe: docs/auth-d0-implementation-packet.md :: AUTH_D0_PACKET_COMPLETE
 notes: MERGED historical AP-27 packet; its marker is present on main. The generated packet is superseded for execution by DD-80 v1.88 + the final G3 contract, which split current D0 into P0 manual-only `auth-s4-d0-revoke-core` and `auth-s4-d0-session-web-boundary`. The old launcher is disabled and this task must not be re-run.
 
 ## task: docs-auth-d1-packet
-title: D1 google-adapter implementation packet + DD-38/39 readiness (split 2/2 from AP-26 monolith)
+title: D1 google-adapter implementation packet + DD-39 readiness (split 2/2 from AP-26; DD-38 chat split to dd38-dd86-chat-schema-core)
 status: ready
 risk: P2
 change_class: docs-traceability
 depends_on: [auth-s4-d0-revoke-core, auth-s4-d0-session-web-boundary]
 invariants: [auth, schema]
-scope: [docs/auth-d1-implementation-packet.md]
+scope: [docs/auth-d1-implementation-packet.md, docs/autopilot-manifests/docs-auth-d1-packet.json, docs/autopilot-backlog.md, .claude/commands/ap-28-docs-auth-d1-packet.md, docs/autopilot-docs-auth-d1-packet.md]
 manifest: docs/autopilot-manifests/docs-auth-d1-packet.json
-merged_probe: docs/auth-d1-implementation-packet.md :: AUTH_D1_PACKET_COMPLETE
-notes: **UNBLOCKED 2026-07-22 — HOLD đã gỡ.** Điều kiện cũ (D0a + D0b merged probes trên origin/main) **đã thoả**: `0015::auth_revoke_account_sessions` và `apps/web/app/api/auth/logout-all/route.ts` đều live; thực tế cả `auth-s4-d1-google-adapter` (`0017`) và `d1b` (`0018`) cũng đã merge, nên packet này giờ mô tả code **đã tồn tại** chứ không phải code dự kiến — author phải verify-on-disk từng citation thay vì chép lại kế hoạch cũ. Cảnh báo lịch sử vẫn giữ: AP-28 remains a P2 docs-only preparation slice, but its preflight and manifest now pin DD-80 v1.88, tech v2.10, verdicts v0.7 and the two live D0 dependencies. The D1-specific v1.86 AAD/audit obligations remain unchanged; re-audit citations against the then-current committed base before authoring the packet.
+merged_probe: docs/auth-d1-implementation-packet.md :: Auth D1 Implementation Packet
+notes: **UNBLOCKED 2026-07-22 — HOLD đã gỡ.** Điều kiện cũ (D0a + D0b merged probes trên origin/main) **đã thoả**: `0015::auth_revoke_account_sessions` và `apps/web/app/api/auth/logout-all/route.ts` đều live; thực tế cả `auth-s4-d1-google-adapter` (`0017`) và `d1b` (`0018`) cũng đã merge, nên packet này giờ mô tả code **đã tồn tại** chứ không phải code dự kiến — author phải verify-on-disk từng citation thay vì chép lại kế hoạch cũ. Cảnh báo lịch sử vẫn giữ: AP-28 remains a P2 docs-only preparation slice, but its preflight and manifest now pin DD-80 v1.88, tech header-v2.10/changelog-v2.11 (D1 implemented), verdicts v2.0 (D1/d1b merged) and the D0 dependencies at base main@399c5eb. The D1-specific v1.86 AAD/audit obligations remain unchanged; re-audit citations against the then-current committed base before authoring the packet. **Split 2026-07-23 (owner Option 2):** DD-38 chat readiness split OUT to root slice dd38-dd86-chat-schema-core; §C is DD-39 gender/pricing only; packet ships WITHOUT AUTH_D1_PACKET_COMPLETE (§C source GAP under gate §11.2), so the merged_probe matches the packet H1 rather than a completion marker. Scope now 5 files (packet + manifest + backlog + launcher + task doc reconciled to the split).
 
 ## task: auth-s4-d0-revoke-core
 title: Account-session epoch DB core for linearizable revoke-all
@@ -382,3 +382,31 @@ notes: **RE-SCOPED 2026-07-22 → CODE_READY (Verdict 14, `main@e61d96c`).** Khu
   current serialized-by-config test harness. Do not remove
   `fileParallelism: false` until this lands — see the comment already added
   to vitest.config.ts.
+
+## task: dd38-dd86-chat-schema-core
+title: Root chat-schema migration slice (DD-38 in-app chat) — final chat model + authz/safety + RLS/RPCs
+status: idea
+risk: P0
+change_class: schema-migration
+depends_on: []
+invariants: [schema]
+scope: []
+manifest: null
+merged_probe: packages/db/schema.ts :: chat_channels
+notes: |
+  Recording existence only — NOT authorized to author. Blocked behind THREE gates, all must close first:
+    - DD-55 design-probe (DM request/media/report FSM + storage constraints) — NOT run.
+    - DD-86 (in-app multi-channel per CLB) — 🟡 proposal, 9 open questions in-scope, NOT_PLAN_READY
+      (decisions.md:103 / :1075; sequence pinned decisions.md:1085 = "tạo một root migration slice
+      dd38-dd86-chat-schema-core chứa final chat model → authz/channel-command consumer → Assistant").
+    - CHT-OQ-2 (club channel moderation granularity: host delete/hide/mute) — OPEN (decisions.md:672).
+  Surface (all pending, no executable DDL yet): chat_channels/chat_members/chat_messages base tables +
+  triggers; RLS + chat_definer role (pre-migration superuser provisioning) + SECURITY DEFINER RPCs
+  (DM create_dm/send_chat_message/mark_read defined in feature_inapp_chat_tech.md; club create_club_channel
+  + add/remove-club-member undefined); DM-safety schema chat_blocks/chat_reports/rate-audit (no CREATE TABLE
+  anywhere); phase-1 media chat_attachments (attachment/scan/quota/deletion states, schema-pending
+  feature_inapp_chat.md:107); memberships composite-FK target.
+  Split out of AP-28 auth-d1-packet by owner decision 2026-07-23 (DD-38 chat and auth-D1 are unrelated
+  domains). depends_on stays [] because DD-55/DD-86/CHT-OQ-2 are decision gates, not merged slugs — do not
+  spin a worktree until all three close. This block AUTHORIZES nothing; it only keeps DD-86's prose name as
+  an executable anchor so the chat work does not fall off the radar after leaving the packet.
