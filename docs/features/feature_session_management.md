@@ -2,9 +2,9 @@
 
 > **Canonical phase:** P2 (chat CRUD) · P4 (web parity)  
 > **Track:** 📋 Session CRUD  
-> **Version:** 2.12a · 2026-07-19
+> **Version:** 2.12b · 2026-07-23
 > **Status:** Reviewed  
-> **Implementation:** Not started — waitlist `0014` mới ở nhánh feature, chưa merge · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started — schema `0014` đã merge trên main (`1a6ac38`, migrations 0000–0018); auto-promote behavior vẫn chưa build · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P0–P1 foundation stable · P2 tenant routing/authz  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-2 · `../product/PRD.md` FLOW 2/13 · `../product/TDD.md` §3.2/3.8 · `../standards/decisions.md` **DD-39/DD-45/DD-49** · DD-37/DD-65..68 · `../standards/business-rules.md` BL-SES-9/10 · `BE/feature_session_management_tech.md`
 
@@ -150,7 +150,7 @@ stateDiagram-v2
 |---|---|---|
 | SES-OQ-1 | Behavior khi host change price mà đã có charges | ✅ **Chốt DD-49; timing closure v1.58, current authority v1.69** — chưa refund carry-over; refunded chỉ append lifecycle khi outcome active. Full→waitlisted defer lifecycle/nợ mới tới promotion. Không mặc định row `charges` thứ hai; storage/API chờ design-probe. |
 | SES-OQ-2 | Recurrence editing: sửa 1 occurrence hay this-and-future? | ⬜ Chưa chốt |
-| SES-OQ-3 | Waitlist + auto-promote | ✅ **Chốt DD-45/DD-49; lifecycle v1.58 + retry/lock/liveness closure v1.62/v1.65/v1.67/v1.68 (current authority v1.69)** — schema land tại `1a6ac38` trên `feat/session-waitlist-expand` (current HEAD `aa8afae`; latest commit comment/format-only), chưa merge `main`/`origin/main`@`22c23aa`. Behavior chưa build; chờ DD-39/41/42/52, DD-49 correction core, SessionService, queue-entry-version, tenant-private root store + narrow scheduler/CAS worker + expired-final finalizer, candidate audit consumer, root-keyed owner digest và DLQ |
+| SES-OQ-3 | Waitlist + auto-promote | ✅ **Chốt DD-45/DD-49; lifecycle v1.58 + retry/lock/liveness closure v1.62/v1.65/v1.67/v1.68 (current authority v1.69)** — schema đã merge vào `main` tại `1a6ac38` (migrations 0000–0018; tính đến `origin/main`@`22c23aa` ngày 2026-07-19, main còn dừng ở `0013`). Behavior chưa build; chờ DD-39/41/42/52, DD-49 correction core, SessionService, queue-entry-version, tenant-private root store + narrow scheduler/CAS worker + expired-final finalizer, candidate audit consumer, root-keyed owner digest và DLQ |
 | SES-OQ-4 | Field mô tả session + gating (title/notes/`session_type`/byoe/cost_shared + gating level-rank/gender/age) | ✅ **Chốt DD-41** — enforce ở shared `evaluateSessionEligibility`←`addMemberToSession`, self-attested, 9 exact codes; body/schema propagate lúc build → `../dd-41-session-fields-gating-analysis.md` |
 | SES-OQ-5 | No-show/attendance/reliability + policy deprioritize/ban | ✅ **Chốt DD-42** — per-tenant (attendance trên `players`, reliability trên `memberships`, RLS, không public); build P4+ → `../dd-42-reliability-analysis.md` |
 | SES-OQ-6 | Nhãn thành viên + audience targeting khi announce | ✅ **Chốt DD-43** — `membership_tags` per-tenant chỉ cho notification audience; join eligibility vẫn DD-41; public không lộ tag; build P4+ → `../dd-43-membership-tags-analysis.md` |
@@ -160,6 +160,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v2.12b | **Reconcile 0014 merge-state (TDD→PRD):** current-state claim sửa → **0014 đã merge trên `main` (`1a6ac38`, migrations 0000–0018)** ở header Implementation + row SES-OQ-3 (giữ open "behavior chưa build"; provenance `origin/main`@`22c23aa` reframed thành historical marker). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.12a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v2.12 | **DD-44/45 restriction + claimed-attempt closure:** invite current/replay no-extra-use; waitlist root lazy on first failure, max 3 claimed attempts, expired-final resolve-or-terminal, tenant-private narrow claim and one owner digest/root. Behavior remains unbuilt. |
 | 2026-07-19 | v2.11 | **DD-45 retry-owner/queue/restriction closure:** one root promotion job owns max-3 full sweeps; candidate events are sibling alert/audit refs, not budgets. Each sweep re-enters current order, tries each candidate once and re-checks DD-41/DD-42/DD-52; pin reorder/ban/N×N-budget regressions. Behavior remains unbuilt. |

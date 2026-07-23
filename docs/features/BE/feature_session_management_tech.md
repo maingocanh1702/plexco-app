@@ -1,9 +1,9 @@
 # Feature: Session Management — Backend Tech Spec
 
 > **Canonical phase:** P2/P4  
-> **Version:** 2.13 · 2026-07-19
+> **Version:** 2.13a · 2026-07-23
 > **Status:** Reviewed  
-> **Implementation:** Not started — waitlist `0014` mới ở nhánh feature, chưa merge · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started — schema `0014` đã merge trên main (`1a6ac38`, migrations 0000–0018); auto-promote behavior vẫn chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_session_management.md`  
 > **References:** `../../product/TDD.md` §3.2/3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-39/DD-45/DD-49/**DD-52**/**DD-65..68** · `../../dd-45-waitlist-analysis.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`)
 
@@ -94,7 +94,7 @@ CREATE TABLE players (
   membership_id uuid NOT NULL REFERENCES memberships(id),
   status text NOT NULL DEFAULT 'active'
     CONSTRAINT players_status_chk CHECK (status IN ('active', 'left', 'waitlisted')),
-  waitlist_position integer,            -- feature branch only: 0014 ALTER TABLE; not on main yet
+  waitlist_position integer,            -- 0014 ALTER TABLE, merged on main (1a6ac38)
   joined_at timestamptz NOT NULL DEFAULT now(),
   last_reminded_at timestamptz,
   CONSTRAINT players_waitlist_shape_chk
@@ -129,7 +129,7 @@ CREATE INDEX idx_players_waitlist_order
 
 ### Migration & Rollback
 
-> Grep live `packages/db/migrations/` (0000–0013 đã merge trên main): `sessions` · `session_recurrence_rules` · `session_occurrences` · `session_surface_refs` · `players` **đã tồn tại từ `0002_tenants_core.sql`** — DDL trên là baseline để đọc + target contract, **reuse, không recreate**. Waitlist objects (status domain `waitlisted`, `waitlist_position`, state-shape/positive CHECKs, `idx_players_waitlist_order`) nằm trong `0014_players_waitlist` **branch-only** (`feat/session-waitlist-expand`, chưa merge — rollout §6 bước 2).
+> Grep live `packages/db/migrations/` (0000–0018 đã merge trên main): `sessions` · `session_recurrence_rules` · `session_occurrences` · `session_surface_refs` · `players` **đã tồn tại từ `0002_tenants_core.sql`** — DDL trên là baseline để đọc + target contract, **reuse, không recreate**. Waitlist objects (status domain `waitlisted`, `waitlist_position`, state-shape/positive CHECKs, `idx_players_waitlist_order`) **đã merge trên main trong `0014_players_waitlist`** (`1a6ac38`) — reuse, không recreate.
 
 - **Migration (genuinely new → migration mới monotonic sau tail đã merge):** DD-68 same-tenant composite candidate keys/FKs (`(tenant_id, session_id)` → sessions, `(tenant_id, membership_id)` → memberships, `session_surface_refs` cùng tenant — ghi chú trong DDL trên, KHÔNG thuộc 0014/DD-45); DD-45a hardening `UNIQUE (session_id, waitlist_position) WHERE status='waitlisted'` nếu chốt (Open DD-45a §4); retry objects (`waitlist_entry_version`, root `promotion_retry_jobs` + candidate events — §4, rollout §6 bước 3).
 - **Rollback:**
@@ -137,7 +137,7 @@ CREATE INDEX idx_players_waitlist_order
 | Bước | Hành động | An toàn? |
 |------|-----------|----------|
 | 1 | Disable session routes/commands + waitlist entry/promotion + retry worker + recurrence generation job | ✅ |
-| 2 | Migration revert mới: revert **CHỈ additive objects của slice** (composite FK/UNIQUE/retry objects); với `0014` chưa merge, "rollback" = không merge nhánh | ✅ Có điều kiện |
+| 2 | Migration revert mới: revert **CHỈ additive objects của slice** (composite FK/UNIQUE/retry objects); `0014` đã apply trên main → "rollback" = **forward migration mới** revert đúng các object đó, KHÔNG phải "không merge nhánh" | ✅ Có điều kiện |
 | 3 | Drop baseline `sessions`/`players`/recurrence/surface refs của `0002` | ❌ NEVER — migration đã apply trên main, có thể chứa session/roster thật |
 
 ### Edge Cases (Backend)
@@ -333,7 +333,7 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 | 7 | Cancel with paid roster no review | Paid players exist | `CANCEL_REQUIRES_REVIEW` |
 | 8 | Close already-closed | Status=closed | No-op, success |
 | 9 | Public without discovery fields | Missing required fields | `MISSING_DISCOVERY_FIELDS` |
-| 10 | Private → public removes projection | Visibility change | Event emitted correctly |
+| 10 | Public → private removes projection | Visibility change | Event emitted correctly |
 | 11 | Concurrent first-entry join last slot | 2 concurrent transactions | One active+exactly-one-charge; one `waitlisted` with positive position and no charge |
 | 12 | Concurrent web/chat edit | Same session, different version | One success, one `STALE_VERSION` |
 | 13 | Command dedup (same commandId) | Duplicate command | Return previous result |
@@ -401,7 +401,7 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 ### Rollout
 
 1. Migrate session fields/backfill timezone
-2. ✅ **Done 2026-07-19 trên nhánh `feat/session-waitlist-expand` (chưa merge vào `main` — `origin/main`@22c23aa vẫn dừng ở `0013`)** — `0014_players_waitlist`: status domain opened to `waitlisted`, `waitlist_position`, state-shape + positive CHECKs, `idx_players_waitlist_order`. Code stays dark. Covered by 21 DDL invariant tests in `packages/db/src/waitlist-invariants.test.ts`, including app-role grant/RLS on the new column. **Not** online-safe (validated CHECKs + non-concurrent index in one runner transaction) — fine on today's empty `players`, must be split per file if ever re-run against a populated table.
+2. ✅ **Done 2026-07-19 trên nhánh `feat/session-waitlist-expand` (tính đến `origin/main`@`22c23aa` ngày đó, main còn dừng ở `0013`); đã merge vào `main` (`1a6ac38`, migrations 0000–0018)** — `0014_players_waitlist`: status domain opened to `waitlisted`, `waitlist_position`, state-shape + positive CHECKs, `idx_players_waitlist_order`. Code stays dark. Covered by 21 DDL invariant tests in `packages/db/src/waitlist-invariants.test.ts`, including app-role grant/RLS on the new column. **Not** online-safe (validated CHECKs + non-concurrent index in one runner transaction) — fine on today's empty `players`, must be split per file if ever re-run against a populated table.
 3. Enable atomic waitlist entry/promotion + charge/notify path — **blocked**: first-activation promotion needs `deriveChargeAmount` (DD-39), `evaluateSessionEligibility` (DD-41), DD-42 restriction source and shared `evaluateJoinRestriction()` (DD-52); rejoin promotion needs the DD-49 correction core. Retry additionally needs `waitlist_entry_version` migration, candidate failure-event consumer, root promotion-retry store, CAS/lease sweep worker and domain DLQ/owner-review sink. None exist in code yet, nên không wire một nhánh partial.
 4. Enable chat CRUD
 5. Recurrence shadow generation
@@ -421,6 +421,7 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v2.13a | **Reconcile 0014 merge-state + projection direction (TDD→PRD):** current-state 0014 mirrors → **merged on `main` (`1a6ac38`, migrations 0000–0018)** (header, §2 migration note + range 0000→0018, DDL `waitlist_position` comment, rollback row = forward-migration mới, §6 rollout step-2; provenance `origin/main`@`22c23aa` reframed thành historical marker). Edge test #10 → "Public → private removes projection" khớp PRD E#8/UC-5/UC-10. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.13 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (reuse baseline `0002`; `0014` branch-only; DD-68/DD-45a/retry objects = migration mới monotonic), §3 Request/Response Examples (DD-60 envelope), §4 Caching Strategy + Security Checklist. Idempotency đã có sẵn (§3) — giữ nguyên. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.12a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v2.12 | **DD-45 lock/liveness/RLS closure:** every domain path locks session→root before candidate/player/finance; root is lazy on first failure; max 3 claimed attempts with expired-final resolve-or-terminal finalizer; initial opener also requires future/joinable session; tenant-private RLS/narrow scheduler claim; owner digest dedupes per root. Behavior remains unbuilt. |
