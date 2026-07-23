@@ -130,7 +130,7 @@ Pre-flight gate (HARD GATE)
   [if Codex review required:]
     CODEX="${AUTOPILOT_CODEX_BIN:?HALT: set AUTOPILOT_CODEX_BIN to review-capable codex}"
     [ -x "$CODEX" ] || { echo "HALT CODEX_UNAVAILABLE: non-executable AUTOPILOT_CODEX_BIN"; exit 1; }
-    smoke="$("$CODEX" review -c model="gpt-5.6-sol" -c model_reasoning_effort="xhigh" --base <DEFAULT_BRANCH> 2>&1)"
+    smoke="$("$CODEX" review -c model="gpt-5.6-terra" -c model_reasoning_effort="xhigh" --base <DEFAULT_BRANCH> 2>&1)"
     [ "$(printf '%s' "$smoke" | wc -c)" -gt 0 ] || { echo "HALT CODEX_UNAVAILABLE: 0 bytes/wrong binary"; exit 1; }
     # VERDICT-FIRST gate (mirror the review-loop, L18): an auth-string in the output is only fatal when there is
     # NO real model verdict. rmcp/MCP connector noise (TokenRefreshFailed / invalid_grant / Invalid refresh token
@@ -196,7 +196,7 @@ Review loop (include when Codex review is 1x_clean or 2x_consecutive_clean)
     git diff --stat <DEFAULT_BRANCH>...HEAD
     # Every file must be in declared scope; unexpected file -> SCOPE_DRIFT HALT.
   Round 1 FULL:
-    "$CODEX" review -c model="gpt-5.6-sol" -c model_reasoning_effort="xhigh" --base <DEFAULT_BRANCH> 2>&1 | tee .autopilot/state/<TASK_SLUG>/codex/round-01.txt
+    "$CODEX" review -c model="gpt-5.6-terra" -c model_reasoning_effort="xhigh" --base <DEFAULT_BRANCH> 2>&1 | tee .autopilot/state/<TASK_SLUG>/codex/round-01.txt
     LAST_REVIEWED_SHA="$(git rev-parse HEAD)"
   Round validity:
     - Counts only if round-NN.txt exists, has no model-auth fatal, and ends with a real model verdict.
@@ -237,7 +237,7 @@ Review loop (include when Codex review is 1x_clean or 2x_consecutive_clean)
     - If counter >5 -> MAX_ROUNDS HALT.
     - If same file is flagged in >=3 consecutive rounds with distinct findings -> REGION_THRASH HALT.
     - Run <VERIFY_CMD>, commit fix, then review incrementally:
-      "$CODEX" review -c model="gpt-5.6-sol" -c model_reasoning_effort="xhigh" --base $LAST_REVIEWED_SHA 2>&1 | tee .autopilot/state/<TASK_SLUG>/codex/round-NN.txt
+      "$CODEX" review -c model="gpt-5.6-terra" -c model_reasoning_effort="xhigh" --base $LAST_REVIEWED_SHA 2>&1 | tee .autopilot/state/<TASK_SLUG>/codex/round-NN.txt
       LAST_REVIEWED_SHA="$(git rev-parse HEAD)"
   Confirmation:
     - When incremental is clean, run FULL `--base <DEFAULT_BRANCH>` again.
