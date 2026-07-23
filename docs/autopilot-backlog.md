@@ -511,3 +511,26 @@ scope: []
 manifest: null
 merged_probe: null
 notes: Split out of docs-0014 (which flips to merged via its own probe) so this correction is not orphaned. feature_user_settings_tech.md:61/65/67 still assert 0014 branch-only / "0000-0013 đã merge" as CURRENT state, but the file is dirty in the working tree (a separate uncommitted consent-state edit, likely db-session-tenant-integrity-fks, owns it). SERIALIZE against whatever owns that file: either (a) that consent-edit slice folds these 3 current-state corrections (0014 -> merged 1a6ac38; tail 0018; keep numbering guidance "next monotonic after synced tail"; preserve dated rows; reframe never delete provenance), or (b) run this after the file is free. Do NOT open concurrently on the file. Founder-opt-in: flip idea->ready once the file is free.
+
+## task: docs-session-publish-contract
+title: Define the draft→open publish command contract (validation, idempotency, transition guard)
+status: idea
+risk: P2
+change_class: docs-spec
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+notes: Opened by AP-25 round-06 create-status reconcile (0dec63b). Create now lands status=draft; Host publish→open (SES-UC-1 v2.12c + state machine §4). The PUBLISH TRANSITION mechanics are undefined: command name/shape, idempotency key, which validations run at publish (discovery fields incl. public finite slots_max E#7? re-check eligibility?), draft→open guard. BLOCKED on founder product input — product-contract decision, not a docs reconcile. NEGATIVE SCOPE: must NOT regress the landed draft-first create (create stays draft; publish is the open transition). Founder confirm contract before scoping.
+
+## task: docs-marketplace-public-capacity-guard
+title: Pin public+NULL-slots_max invalid-state projection handling + regression test in marketplace spec
+status: idea
+risk: P2
+change_class: docs-spec
+depends_on: []
+invariants: []
+scope: [docs/features/BE/feature_marketplace_discovery_tech.md]
+manifest: null
+merged_probe: docs/features/BE/feature_marketplace_discovery_tech.md :: slots_max
+notes: Opened by AP-25 round-06 public-capacity reconcile (0dec63b). feature_session_management_tech §2 Capacity×visibility pins public→slots_max NOT NULL (E#7) + fail-closes public+NULL at entry/promotion choke-points, but the PUBLIC PROJECTION of a public+NULL row (legacy/fixture/writer-bypass; DB has no CHECK yet) is deferred to the discovery owner: projector must NOT surface such an invalid row. Add (1) a qualifier: public+NULL skipped/rejected from public projection with audit; (2) a regression test row. Coordinates with the DB CHECK hardening candidate NOT(visibility='public' AND slots_max IS NULL) if that migration is scoped.
