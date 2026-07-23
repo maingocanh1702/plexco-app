@@ -438,3 +438,27 @@ notes: |
   domains). depends_on stays [] because DD-55/DD-86/CHT-OQ-2 are decision gates, not merged slugs — do not
   spin a worktree until all three close. This block AUTHORIZES nothing; it only keeps DD-86's prose name as
   an executable anchor so the chat work does not fall off the radar after leaving the packet.
+
+## task: docs-session-management-spec-reconcile
+title: Reconcile 2 pinned Session Management spec defects (projection direction + stale 0014 merge-state) to PRD
+status: merged
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/autopilot-manifests/docs-session-management-spec-reconcile.json, docs/features/feature_session_management.md, docs/features/BE/feature_session_management_tech.md, docs/features/README.md, docs/autopilot-backlog.md]
+manifest: docs/autopilot-manifests/docs-session-management-spec-reconcile.json
+merged_probe: docs/features/BE/feature_session_management_tech.md :: merged on main .1a6ac38.
+notes: Reconcile lower-authority TDD -> PRD. Defect 1 = tech edge row 10 projection direction inverted -> "Public -> private removes projection" (matches PRD E#8/UC-5/UC-10). Defect 2 = current-state "0014 branch-only/unmerged" claims corrected to merged-on-main (1a6ac38, migrations 0000-0018) across both headers, migration note+range, rollback row (forward-migration + zero-waitlisted gate), DDL waitlist_position comment, SES-OQ-3 row, rollout step-2; dated changelog history preserved; provenance @22c23aa reframed historical (not deleted). Founder F1/F2/F3 applied: invariants [] + manifest _note (rejected ["schema"] as false-coupling); version bump feature v2.12b / tech v2.13a + 1 new dated changelog row each + README index cell synced; F3 repo-wide reconcile deferred (see block below). STOP_AT_READY, manual merge under founder root-commit lock. Enables AP-25 re-trace once merged. Flip status ready/merged per the merge decision.
+
+## task: docs-0014-merge-status-repo-wide-reconcile
+title: Reconcile stale "0014 branch-only/unmerged" claims across remaining BE tech specs to merged-on-main
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: [docs-session-management-spec-reconcile]
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+notes: Opened by codex review of docs-session-management-spec-reconcile. 0014 (1a6ac38) is merged on main (migrations 0000-0018) but multiple BE tech specs still assert branch-only/unmerged as CURRENT state: feature_user_settings_tech.md:61/65/67 · feature_cross_club_join_tech.md:9 · feature_sync_engine_tech.md:9 (repo-wide grep "0014.*branch-only|dừng ở .0013|chưa merge" before scoping — likely more; README.md:133 is a DATED changelog row = leave as history). Same pattern as the session slice: correct current-state mirrors to merged-on-main; PRESERVE dated changelog/rollout-completion history + reframe (never delete) provenance anchors like origin/main@22c23aa; resolve NO open design questions. COORDINATION: feature_user_settings_tech.md is already dirty in the working tree (another in-flight slice, likely db-session-tenant-integrity-fks) -> this follow-up MUST serialize against whatever owns that file; do not open concurrently on it. Scope EXACTLY the mirror lines per file; fill scope[] after the repo-wide grep. Founder confirm before scoping. Deliberately EXCLUDED from the session slice (F3 defer).

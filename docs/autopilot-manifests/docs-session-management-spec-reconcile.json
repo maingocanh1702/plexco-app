@@ -13,7 +13,9 @@
   "scope": [
     "docs/autopilot-manifests/docs-session-management-spec-reconcile.json",
     "docs/features/feature_session_management.md",
-    "docs/features/BE/feature_session_management_tech.md"
+    "docs/features/BE/feature_session_management_tech.md",
+    "docs/features/README.md",
+    "docs/autopilot-backlog.md"
   ],
   "_note": "invariants [] intentional: docs-only prose reconcile; mutates no schema object; serializes on file-scope overlap only. ['schema'] would falsely couple this to live migration slices (e.g. db-session-tenant-integrity-fks near merge) with no correctness benefit."
 }

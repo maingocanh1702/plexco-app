@@ -137,7 +137,7 @@ CREATE INDEX idx_players_waitlist_order
 | Bước | Hành động | An toàn? |
 |------|-----------|----------|
 | 1 | Disable session routes/commands + waitlist entry/promotion + retry worker + recurrence generation job | ✅ |
-| 2 | Migration revert mới: revert **CHỈ additive objects của slice** (composite FK/UNIQUE/retry objects); `0014` đã apply trên main → "rollback" = **forward migration mới** revert đúng các object đó, KHÔNG phải "không merge nhánh" | ✅ Có điều kiện |
+| 2 | Rollback = **forward migration mới** (KHÔNG phải "không merge nhánh"). Additive objects **CHƯA applied** của slice (composite FK/UNIQUE/retry) → drop trong migration mới. `0014` **đã apply trên main** (status domain `waitlisted`, `waitlist_position`, CHECKs, `idx_players_waitlist_order`) → revert chỉ qua forward migration **gated zero `waitlisted` rows** (hoặc explicit data disposition); drop `waitlist_position`/revert status CHECK khi đã có waitlisted rows sẽ fail hoặc mất queue state | ✅ Có điều kiện |
 | 3 | Drop baseline `sessions`/`players`/recurrence/surface refs của `0002` | ❌ NEVER — migration đã apply trên main, có thể chứa session/roster thật |
 
 ### Edge Cases (Backend)
