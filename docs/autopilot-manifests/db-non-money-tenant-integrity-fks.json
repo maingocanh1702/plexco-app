@@ -1,0 +1,22 @@
+{
+  "feature": "db-non-money-tenant-integrity-fks",
+  "branch": "feat/db-non-money-tenant-integrity-fks",
+  "base_ref": "main",
+  "risk": "P1",
+  "change_class": "schema-migration",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": ["schema"],
+  "_note": "Third tenant-integrity FK slice (non-money), same pattern as 0019/0020 but P1 (integrity, not money). Flagged by the 0020 exhaustive scan: zalo_reply_contexts->zalo_bots, notification_deliveries->notification_intents. DERIVE the FK inventory by scanning schema.ts EXHAUSTIVELY (do not trust the hand-list — 0019 round-01 lesson): bind EVERY tenant-scoped child with a single-column FK to a tenant-scoped parent among the non-money channel/notification tables by (tenant_id, fk)->parent(tenant_id, id); add UNIQUE(tenant_id,id) candidate keys on the referenced parents. Same mechanism as 0019/0020: expand-only migration NOT VALID->VALIDATE-in-subtransaction named-halt (RLS-independent), MATCH SIMPLE for nullable children, keep single-column FKs additive, code dark. Exclude any table without tenant_id (platform-scoped) with a stated reason. NO service/repo/adapter code; no RLS/grant change; migration = next monotonic after synced tail (verify live: 0020 -> 0021). BACKLOG block update deferred to a batch (out of this scope).",
+  "scope": [
+    "docs/autopilot-manifests/db-non-money-tenant-integrity-fks.json",
+    "packages/db/migrations/0021_non_money_tenant_integrity_fks.sql",
+    "packages/db/schema.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/README.md"
+  ]
+}

@@ -26,7 +26,7 @@ import { ensureRoleExists, migrate } from "./migrate.js";
  */
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 21; // 0000..0020 — must match rls-invariants.test.ts
+const MIGRATION_COUNT = 22; // 0000..0021 — must match rls-invariants.test.ts
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {

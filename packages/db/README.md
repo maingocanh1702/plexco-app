@@ -41,7 +41,8 @@ packages/db/
     ├── 0017_oauth_transactions.sql    # DD-80 order-3 cross-site OAuth transaction store (code dark)
     ├── 0018_oauth_completion_handoff.sql # auth-s4-d1b OAuth completion-hop handoff (code dark)
     ├── 0019_tenant_integrity_fks.sql  # DD-68 same-tenant composite candidate keys + FKs (expand-only)
-    └── 0020_ledger_tenant_integrity_fks.sql # DD-68 ledger leg: bank/allocation same-tenant FKs (expand-only)
+    ├── 0020_ledger_tenant_integrity_fks.sql # DD-68 ledger leg: bank/allocation same-tenant FKs (expand-only)
+    └── 0021_non_money_tenant_integrity_fks.sql # non-money leg: zalo/notification same-tenant FKs (expand-only)
 ```
 
 The SQL migrations are **authoritative**. `schema.ts` mirrors the tables but
@@ -101,7 +102,7 @@ the worker via narrow privileged functions, then re-enters tenant context.
 
 | Invariant | Enforced by |
 |---|---|
-| INV-1 tenant isolation | `0009` RLS ENABLE+FORCE + policies; `NOBYPASSRLS` roles; `0019`+`0020` same-tenant composite FKs (DD-68) |
+| INV-1 tenant isolation | `0009` RLS ENABLE+FORCE + policies; `NOBYPASSRLS` roles; `0019`+`0020` (DD-68) + `0021` same-tenant composite FKs |
 | INV-3 public is a projection | `public_sessions` whitelist table; `readonly` grant scope |
 | INV-4 money append-only | ledger CHECKs (`0003`) + immutability triggers (`0010`) |
 | INV-5 strong identity proof | `link_codes` (OTP), `persons_verified_phone_unique`, `merge_audit`/`merge_tombstones` |
@@ -229,6 +230,64 @@ Scanned and excluded: `bank_accounts.pending_change_by` and
 `billing_allocations` carries no `tenant_id` column to bind (allocating platform
 revenue to a tenant's `subscription_invoices` row is cross-tenant by design).
 
+## Non-money tenant-integrity composite FKs (`0021` — EXPAND ONLY)
+
+`0021` closes the remaining non-money leg with the identical mechanism as
+`0019`/`0020`. Unlike those two, it does not cite "DD-68" — the current
+`decisions.md` DD-68 entry covers an unrelated Messenger interaction contract,
+not tenant-integrity FKs; authority here is `0019`/`0020` themselves plus the
+manifest and HANDOFF HR1. The FK inventory was derived by an exhaustive scan
+of every `tenantId`/`.references(` pair in `schema.ts`, THEN cross-checked
+against every literal `REFERENCES` clause in the live SQL across `0000`-`0020`
+— the SQL-level pass matters: a schema.ts-only grep missed
+`memberships.merged_into_membership_id` (SQL `0002` carries the FK; the
+Drizzle mirror never had `.references()` on it, the same class of drift `0020`
+fixed on `payment_allocations.reverses_allocation_id`). Codex round-02 caught
+this gap; the mirror is fixed in this migration:
+
+- `zalo_reply_contexts (tenant_id, bot_id) → zalo_bots` — both columns NOT
+  NULL, always enforced. Surfaced by this slice's scan (no prior spec doc
+  called this leg out explicitly);
+- `notification_deliveries (tenant_id, intent_id) → notification_intents` —
+  both columns NOT NULL, always enforced. Independently documented as a
+  pending contract item in `feature_notifications_reminders_tech.md` v2.5
+  ("Tenant/endpoint integrity closure... enforce same-tenant delivery→intent
+  ... Runtime migration pending"); this migration implements only that
+  tenant_id-scoped composite-FK layer, not the broader v2.5 contract
+  (person-bound composite FKs, identity/platform binding, SECURITY DEFINER
+  capability functions — a separate, larger notification-security slice);
+- `memberships (tenant_id, merged_into_membership_id) → memberships` (self) —
+  nullable (set only when `status='merged'`) → `MATCH SIMPLE` leaves the
+  composite unenforced while NULL (every non-merged membership), enforced the
+  moment a merge sets it, binding the merge target to the SAME tenant as the
+  merged-away row.
+
+Relationships 1-2 are always enforced (both legs NOT NULL); the membership
+merge pointer is the one `MATCH SIMPLE` case in this migration.
+
+Two UNIQUE `(tenant_id, id)` candidate keys are added (`zalo_bots`,
+`notification_intents`) — strict supersets of each PK, additive
+(`zalo_bots.tenant_id` already carries its own single-column UNIQUE from
+`0004`, but a composite FK still requires a unique constraint matching its
+exact column list). `memberships` needs no new candidate key — `0019` already
+added `memberships_tenant_id_candidate_key`; the merge-self composite FK
+targets that existing key. Every single-column FK is KEPT and still governs
+`ON DELETE`. Same `NOT VALID` → `VALIDATE`-in-subtransaction → named halt
+(`tenant-integrity halt (0021)`) contract — never deletes or re-parents — and
+the same locking caveat: the single-transaction shape is acceptable ONLY
+because the Zalo/notification tables are empty (or not yet driving traffic)
+and membership merges are unbuilt (code dark); split `NOT VALID`/`VALIDATE`
+across files for populated tables.
+
+Scanned and excluded (every tenant-scoped table walked): `session_occurrences`,
+`projector_deliveries`, `surface_refs`, `billing_allocations`,
+`onboarding_steps` (each has a bindable-looking FK but the CHILD carries no
+`tenant_id` column — same treatment `0019` gave `session_occurrences` and
+`0020` gave `billing_allocations`); `routing_audit` (nullable `tenant_id`, no
+FK to `tenants` at all — platform-level audit trail); `public_sessions`
+(no FK by design, HR2); `messenger_pages` (shaped like `zalo_bots` but nothing
+currently references it by FK, so there is no child-side gap to close).
+
 ## Runner-level role bootstrap (cluster-global race safety)
 
 Roles are **cluster-global**; databases are not. `0000`'s check-then-act role
@@ -265,7 +324,7 @@ unchanged. This is what lets the DB test suites run as parallel vitest workers
 
 ## Migration order & deploy notes
 
-Apply `0000`→`0020` in order (FK dependencies validated). For production changes
+Apply `0000`→`0021` in order (FK dependencies validated). For production changes
 follow expand→backfill→validate→flip→contract (P12); avoid destructive
 migrations in the same deploy as behavior changes. Legacy Bestminton import:
 TDD §8.

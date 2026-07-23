@@ -10,10 +10,13 @@ import {
   bankTransactions,
   charges,
   joinRequests,
+  memberships,
+  notificationDeliveries,
   paymentAllocations,
   players,
   sessions,
   sessionSurfaceRefs,
+  zaloReplyContexts,
 } from "../schema.js";
 import { migrate } from "./migrate.js";
 import { tenantRepo, withTenant } from "./tenant.js";
@@ -53,10 +56,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(21); // 0000..0020 (0020 = DD-68 ledger tenant-integrity FKs)
+    expect(ctx.migrateResult.applied.length).toBe(22); // 0000..0021 (0021 = non-money tenant-integrity FKs)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(21);
+    expect(second.skipped.length).toBe(22);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -340,6 +343,21 @@ const makeCashAllocation = (tenantId: string, chargeId: string, createdBy: strin
     `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source, created_by)
      VALUES ($1, $2, 50000, 'cash', $3) RETURNING id`,
     [tenantId, chargeId, createdBy],
+  );
+/* Non-money (Zalo/notification) fixtures (0021). Parents are seeded via the
+ * owner connection like the session-domain/ledger makers above; the write
+ * UNDER TEST always runs as `app`. zalo_bots.tenant_id is UNIQUE (one bot per
+ * tenant), so each tenant gets exactly one bot fixture. */
+const makeZaloBot = (tenantId: string, webhookToken: string) =>
+  ownerInsertId(
+    `INSERT INTO zalo_bots (tenant_id, bot_token_enc, webhook_token) VALUES ($1, 'nmti-token', $2) RETURNING id`,
+    [tenantId, webhookToken],
+  );
+const makeNotificationIntent = (tenantId: string, personId: string, intentKey: string) =>
+  ownerInsertId(
+    `INSERT INTO notification_intents (tenant_id, type, aggregate_id, state_version, person_id, intent_key)
+     VALUES ($1, 'reminder', gen_random_uuid(), 1, $2, $3) RETURNING id`,
+    [tenantId, personId, intentKey],
   );
 
 describe("tenant-integrity composite FKs (DD-68 / TI-1..TI-5, TI-9)", () => {
@@ -843,8 +861,179 @@ describe("ledger tenant-integrity composite FKs (0020 / LTI-1..LTI-5)", () => {
 });
 
 /**
- * TI-6/LTI-6 (probe named-halt) + TI-7 (immutability) exercise migrations 0019
- * and 0020 DIRECTLY against throwaway databases, using the REAL migration bytes:
+ * Non-money tenant-integrity composite FKs (migration 0021) — the remaining
+ * non-money leg 0019/0020 did not enumerate, surfaced by this slice's own
+ * exhaustive scan (schema.ts AND live SQL `REFERENCES` clauses — the SQL-level
+ * pass caught a schema.ts mirror drift on `memberships.merged_into_membership_id`,
+ * codex round-02 [P1]): zalo_reply_contexts -> zalo_bots,
+ * notification_deliveries -> notification_intents, and memberships'
+ * self-referencing merge pointer -> memberships. The first two relationships
+ * are NOT NULL on both legs (always enforced); the membership merge pointer is
+ * nullable, so — like TI-3/LTI-3 — NMTI-3 below covers that MATCH SIMPLE case
+ * on its own.
+ */
+describe("non-money tenant-integrity composite FKs (0021 / NMTI-1..NMTI-5)", () => {
+  let zaloBotA: string;
+  let notifIntentA: string;
+  let personY: string;
+  let membershipA: string; // a real membership in A, merge-target for the same-tenant/cross-tenant cases
+
+  beforeAll(async () => {
+    personY = await makePerson();
+    zaloBotA = await makeZaloBot(ctx.tenantA, "nmti-wh-a");
+    await makeZaloBot(ctx.tenantB, "nmti-wh-b"); // tenant B's own bot (unused directly, proves the fixture is tenant-scoped)
+    notifIntentA = await makeNotificationIntent(ctx.tenantA, personY, "nmti-intent-a");
+    membershipA = await makeMembership(ctx.tenantA);
+  }, 60_000);
+
+  it("NMTI-1: every 0021 composite FK rejects a cross-tenant child insert via the app role (withTenant)", async () => {
+    // 1. zalo_reply_contexts (tenant_id, bot_id) — bot belongs to A
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantB, (tx) =>
+        tx.insert(zaloReplyContexts).values({
+          personId: personY,
+          tenantId: ctx.tenantB,
+          botId: zaloBotA,
+          itemIds: [],
+          expiresAt: new Date(Date.now() + 3_600_000),
+        }),
+      ),
+      /zalo_reply_contexts_tenant_bot_fk/,
+    );
+    // 2. notification_deliveries (tenant_id, intent_id) — intent belongs to A
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantB, (tx) =>
+        tx.insert(notificationDeliveries).values({
+          tenantId: ctx.tenantB,
+          intentId: notifIntentA,
+          platform: "zalo",
+          deliveryKey: "nmti1-delivery-b",
+        }),
+      ),
+      /notification_deliveries_tenant_intent_fk/,
+    );
+    // 3. memberships (tenant_id, merged_into_membership_id) — a tenant-B
+    //    membership cannot merge into tenant A's membership
+    const personZ = await makePerson();
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantB, (tx) =>
+        tx.insert(memberships).values({
+          tenantId: ctx.tenantB,
+          personId: personZ,
+          status: "merged",
+          mergedIntoMembershipId: membershipA,
+        }),
+      ),
+      /memberships_tenant_merged_into_fk/,
+    );
+  });
+
+  it("NMTI-2: legitimate same-tenant writes still succeed via the app role", async () => {
+    await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      tx.insert(zaloReplyContexts).values({
+        personId: personY,
+        tenantId: ctx.tenantA,
+        botId: zaloBotA,
+        itemIds: [],
+        expiresAt: new Date(Date.now() + 3_600_000),
+      }),
+    );
+    await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      tx.insert(notificationDeliveries).values({
+        tenantId: ctx.tenantA,
+        intentId: notifIntentA,
+        platform: "zalo",
+        deliveryKey: "nmti2-delivery-a",
+      }),
+    );
+    // a same-tenant membership merge (both composite legs same tenant) also succeeds
+    const personW = await makePerson();
+    await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      tx.insert(memberships).values({
+        tenantId: ctx.tenantA,
+        personId: personW,
+        status: "merged",
+        mergedIntoMembershipId: membershipA,
+      }),
+    );
+  });
+
+  it("NMTI-3: memberships.merged_into_membership_id NULL is accepted (MATCH SIMPLE); a foreign-tenant merge target is rejected", async () => {
+    // NULL merged_into_membership_id -> composite unenforced -> succeeds (an ordinary non-merged membership)
+    const personV = await makePerson();
+    await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      tx.insert(memberships).values({ tenantId: ctx.tenantA, personId: personV, status: "active" }),
+    );
+    // a distinct membership merging into a FOREIGN tenant's membership -> rejected
+    const foreignTargetB = await makeMembership(ctx.tenantB);
+    const personU = await makePerson();
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+        tx.insert(memberships).values({
+          tenantId: ctx.tenantA,
+          personId: personU,
+          status: "merged",
+          mergedIntoMembershipId: foreignTargetB,
+        }),
+      ),
+      /memberships_tenant_merged_into_fk/,
+    );
+  });
+
+  it("NMTI-4: zalo_bots and notification_intents each carry a UNIQUE (tenant_id, id) candidate key (pg_constraint)", async () => {
+    for (const [table, conname] of [
+      ["zalo_bots", "zalo_bots_tenant_id_candidate_key"],
+      ["notification_intents", "notification_intents_tenant_id_candidate_key"],
+    ] as const) {
+      const { rows } = await ctx.owner.query(
+        // attname is of type `name`; cast to text so array_agg returns text[]
+        // (which node-pg parses to a JS array) rather than an unparsed name[].
+        `SELECT (SELECT array_agg(a.attname::text ORDER BY k.ord)
+                   FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+                   JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) AS cols
+           FROM pg_constraint c
+          WHERE c.conrelid = $1::regclass AND c.contype = 'u' AND c.conname = $2`,
+        [table, conname],
+      );
+      expect(rows.length, `${conname} must exist as a UNIQUE constraint`).toBe(1);
+      expect((rows[0] as { cols: string[] }).cols).toEqual(["tenant_id", "id"]);
+    }
+  });
+
+  it("NMTI-5: every pre-0021 single-column FK still exists (ON DELETE unchanged)", async () => {
+    const singleColFkCount = async (
+      child: string,
+      col: string,
+      parent: string,
+    ): Promise<number> => {
+      const { rows } = await ctx.owner.query(
+        `SELECT 1 FROM pg_constraint c
+          WHERE c.conrelid = $1::regclass AND c.contype = 'f'
+            AND c.confrelid = $3::regclass
+            AND array_length(c.conkey, 1) = 1
+            AND (SELECT a.attname FROM pg_attribute a
+                  WHERE a.attrelid = c.conrelid AND a.attnum = c.conkey[1]) = $2`,
+        [child, col, parent],
+      );
+      return rows.length;
+    };
+    for (const [child, col, parent] of [
+      ["zalo_reply_contexts", "bot_id", "zalo_bots"],
+      ["notification_deliveries", "intent_id", "notification_intents"],
+      ["memberships", "merged_into_membership_id", "memberships"],
+    ] as const) {
+      expect(
+        await singleColFkCount(child, col, parent),
+        `${child}.${col} single-column FK -> ${parent} must survive 0021`,
+      ).toBe(1);
+    }
+  });
+});
+
+/**
+ * TI-6/LTI-6/NMTI-6 (probe named-halt) + TI-7 (immutability) exercise
+ * migrations 0019, 0020, and 0021 DIRECTLY against throwaway databases, using
+ * the REAL migration bytes:
  *   - TI-6 applies 0000..0018, seeds a cross-tenant players row, then applies
  *     0019 and asserts the wrapped VALIDATE RAISEs a NAMED halt (table +
  *     relationship + offending key) and rolls back cleanly — proving 0019 halts
@@ -852,12 +1041,15 @@ describe("ledger tenant-integrity composite FKs (0020 / LTI-1..LTI-5)", () => {
  *   - LTI-6 does the same for 0020: applies 0000..0019, seeds a cross-tenant
  *     bank_transactions row, then applies 0020 and asserts the same named-halt
  *     contract on the ledger leg.
- *   - TI-7 applies 0000..0020 through the real runner, proves every recorded
- *     sha256 equals the on-disk file (0000..0019 byte-identical after 0020), and
+ *   - NMTI-6 does the same for 0021: applies 0000..0020, seeds a cross-tenant
+ *     zalo_reply_contexts row, then applies 0021 and asserts the same
+ *     named-halt contract on the non-money leg.
+ *   - TI-7 applies 0000..0021 through the real runner, proves every recorded
+ *     sha256 equals the on-disk file (0000..0020 byte-identical after 0021), and
  *     that a tampered applied file is still hard-rejected.
  * Own superuser connection + uniquely-named databases (vitest fileParallelism).
  */
-describe("tenant-integrity migrations 0019/0020 direct behaviour (TI-6/LTI-6 probe halts · TI-7 immutability)", () => {
+describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-6/NMTI-6 probe halts · TI-7 immutability)", () => {
   const BASE = process.env.DATABASE_URL_TEST;
   let admin: pg.Client;
 
@@ -1022,18 +1214,86 @@ describe("tenant-integrity migrations 0019/0020 direct behaviour (TI-6/LTI-6 pro
     }
   }, 120_000);
 
-  it("TI-7: 0000..0019 stay byte-identical after 0020 applies, and a tampered applied file is rejected", async () => {
+  it("NMTI-6: applying 0021 over a pre-existing cross-tenant zalo_reply_contexts row raises a NAMED halt (table + row id)", async () => {
+    const dbName = "plexco_nmti5_probe_check";
+    await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${dbName}`);
+    const c = await connect(url(dbName));
+    try {
+      // apply every migration BEFORE 0021 (numeric prefix < 21), in filename order
+      const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+      for (const f of files) {
+        if (Number.parseInt(f.slice(0, 4), 10) >= 21) continue;
+        await c.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+      }
+      // seed a cross-tenant zalo_reply_contexts row: tenant B's context on
+      // tenant A's bot. The 0004 single-column FK is satisfied (the bot
+      // exists); no composite FK yet.
+      const t = await c.query(
+        `INSERT INTO tenants (name, slug, status)
+         VALUES ('NMTI5 A', 'nmti5-a', 'active'), ('NMTI5 B', 'nmti5-b', 'active') RETURNING id`,
+      );
+      const tA = (t.rows[0] as { id: string }).id;
+      const tB = (t.rows[1] as { id: string }).id;
+      const person = await c.query(
+        `INSERT INTO persons (display_name) VALUES ('nmti5') RETURNING id`,
+      );
+      const bot = await c.query(
+        `INSERT INTO zalo_bots (tenant_id, bot_token_enc, webhook_token) VALUES ($1, 'nmti5-token', 'nmti5-wh') RETURNING id`,
+        [tA],
+      );
+      const botId = (bot.rows[0] as { id: string }).id;
+      await c.query(
+        `INSERT INTO zalo_reply_contexts (person_id, tenant_id, bot_id, item_ids, expires_at)
+         VALUES ($1, $2, $3, '[]', now() + interval '1 hour')`,
+        [(person.rows[0] as { id: string }).id, tB, botId],
+      );
+
+      // apply 0021 — the wrapped VALIDATE must halt with a NAMED error
+      const sql0021 = await readFile(
+        path.join(MIGRATIONS_DIR, "0021_non_money_tenant_integrity_fks.sql"),
+        "utf8",
+      );
+      let err: unknown;
+      await c.query("BEGIN");
+      try {
+        await c.query(sql0021);
+      } catch (e) {
+        err = e;
+      }
+      await c.query("ROLLBACK");
+
+      const msg = String((err as Error | undefined)?.message ?? err);
+      expect(msg).toMatch(/tenant-integrity halt \(0021\)/);
+      expect(msg).toMatch(/\bzalo_reply_contexts\b/);
+      expect(msg).toContain("(tenant_id, bot_id)");
+      // the offending cross-tenant key — tenant B pointing at tenant A's bot — is surfaced
+      expect(msg).toContain(botId);
+      expect(msg).toContain(tB);
+
+      // rolled back cleanly — the composite constraint was NOT left behind
+      const left = await c.query(
+        `SELECT 1 FROM pg_constraint WHERE conname = 'zalo_reply_contexts_tenant_bot_fk'`,
+      );
+      expect(left.rows.length).toBe(0);
+    } finally {
+      await c.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    }
+  }, 120_000);
+
+  it("TI-7: 0000..0020 stay byte-identical after 0021 applies, and a tampered applied file is rejected", async () => {
     const dbName = "plexco_ti7_immut_check";
     await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
     await admin.query(`CREATE DATABASE ${dbName}`);
     try {
       const res = await migrate(url(dbName));
-      expect(res.applied.length).toBe(21); // 0000..0020
+      expect(res.applied.length).toBe(22); // 0000..0021
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(21);
+        expect(rows.length).toBe(22);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))

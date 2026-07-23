@@ -504,7 +504,13 @@ export const memberships = pgTable("memberships", {
   displayName: text("display_name"),
   payCode: text("pay_code"),
   status: text("status").notNull().default("active"), // active|guest|left|merged
-  mergedIntoMembershipId: uuid("merged_into_membership_id"),
+  // Self-referencing single-column FK exists in SQL since 0002
+  // (memberships_merged_into_membership_id_fkey); the Drizzle mirror had
+  // drifted (no .references) and is fixed as part of 0021's non-money tenant
+  // binding — the same class of drift 0020 fixed on
+  // payment_allocations.reversesAllocationId.
+  mergedIntoMembershipId: uuid("merged_into_membership_id")
+    .references((): AnyPgColumn => memberships.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   activePersonUq: uniqueIndex("memberships_active_person_unique")
@@ -518,6 +524,16 @@ export const memberships = pgTable("memberships", {
   // UNIQUE (tenant_id, id) is a strict-superset uniqueness — additive, cannot
   // reject any existing row.
   tenantIdCandidateKey: unique("memberships_tenant_id_candidate_key").on(t.tenantId, t.id),
+  // Non-money tenant-integrity (migration 0021): same-tenant self-referencing
+  // composite FK, additive over the single-column FK above. Nullable (set
+  // only when status='merged') — MATCH SIMPLE (the PostgreSQL default) leaves
+  // the composite unenforced while NULL, enforced the moment a merge sets it,
+  // binding the merge target to the SAME tenant.
+  tenantMergedIntoFk: foreignKey({
+    columns: [t.tenantId, t.mergedIntoMembershipId],
+    foreignColumns: [t.tenantId, t.id],
+    name: "memberships_tenant_merged_into_fk",
+  }),
 }));
 
 export const aliases = pgTable("aliases", {
@@ -968,6 +984,12 @@ export const zaloBots = pgTable("zalo_bots", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   webhookTokenUq: uniqueIndex("idx_zalo_bots_webhook_token").on(t.webhookToken),
+  // Non-money tenant-integrity (migration 0021): candidate key targeted by the
+  // same-tenant composite FK zalo_reply_contexts.bot_id -> zalo_bots. id is
+  // already the PK, so this strict-superset UNIQUE is additive (tenant_id
+  // alone is already unique from the column-level constraint above, but a
+  // composite FK still requires a unique constraint on its exact column list).
+  tenantIdCandidateKey: unique("zalo_bots_tenant_id_candidate_key").on(t.tenantId, t.id),
 }));
 
 export const zaloReplyContexts = pgTable("zalo_reply_contexts", {
@@ -981,7 +1003,17 @@ export const zaloReplyContexts = pgTable("zalo_reply_contexts", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   consumedAt: timestamp("consumed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+  // Non-money tenant-integrity (migration 0021): same-tenant composite FK,
+  // additive over the single-column zalo_reply_contexts_bot_id_fkey (0004).
+  // Both referencing columns are NOT NULL, so the tenant match is always
+  // enforced.
+  tenantBotFk: foreignKey({
+    columns: [t.tenantId, t.botId],
+    foreignColumns: [zaloBots.tenantId, zaloBots.id],
+    name: "zalo_reply_contexts_tenant_bot_fk",
+  }),
+}));
 
 export const messengerPages = pgTable("messenger_pages", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -1227,6 +1259,11 @@ export const notificationIntents = pgTable("notification_intents", {
   tenantIdx: index("idx_notif_intents_tenant").on(t.tenantId, t.status),
   statusChk: check("notif_intents_status_chk",
     sql`${t.status} IN ('pending','dispatched','skipped','expired')`),
+  // Non-money tenant-integrity (migration 0021): candidate key targeted by the
+  // same-tenant composite FK notification_deliveries.intent_id ->
+  // notification_intents. id is already the PK, so this strict-superset
+  // UNIQUE is additive.
+  tenantIdCandidateKey: unique("notification_intents_tenant_id_candidate_key").on(t.tenantId, t.id),
 }));
 
 export const notificationDeliveries = pgTable("notification_deliveries", {
@@ -1246,6 +1283,15 @@ export const notificationDeliveries = pgTable("notification_deliveries", {
     .on(t.nextAttemptAt).where(sql`${t.status} = 'pending'`),
   statusChk: check("notif_deliveries_status_chk",
     sql`${t.status} IN ('pending','sent','failed','skipped')`),
+  // Non-money tenant-integrity (migration 0021): same-tenant composite FK,
+  // additive over the single-column notification_deliveries_intent_id_fkey
+  // (0008). Both referencing columns are NOT NULL, so the tenant match is
+  // always enforced.
+  tenantIntentFk: foreignKey({
+    columns: [t.tenantId, t.intentId],
+    foreignColumns: [notificationIntents.tenantId, notificationIntents.id],
+    name: "notification_deliveries_tenant_intent_fk",
+  }),
 }));
 
 export const onboardingRuns = pgTable("onboarding_runs", {
