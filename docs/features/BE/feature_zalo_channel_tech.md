@@ -1,12 +1,12 @@
 # Feature: Zalo Player Channel — Backend Tech Spec
 
 > **Canonical phase:** P4.7  
-> **Version:** 2.6 · 2026-07-19
+> **Version:** 2.6a · 2026-07-23
 > **Status:** Reviewed · reconciled to decisions v1.67/DD-15/DD-45/DD-49/DD-67
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_zalo_channel.md`
 > **References:** `../../standards/decisions.md` DD-15/DD-45/DD-49/DD-67 · `../feature_connector_onboarding.md` BL-SEC-1 secret lifecycle · `feature_cross_club_join_tech.md` shared join outcomes
-> **⚠️ Live-schema boundary:** live `channel_identities` vẫn là key **2-phần** `(platform, platform_user_lookup_hash)` và `channel_reachability` PK `(person_id, tenant_id, platform)`. Mô hình endpoint-scoped DD-67 (3-phần `provider_scope_lookup_hash`, reachability theo `channel_identity_id`) là **target**, cần migration mới land trước runtime. `0014_players_waitlist` hiện chỉ ở nhánh `feat/session-waitlist-expand`, chưa merge; slice Zalo phải sync mọi prerequisite đã merge rồi chọn **next available monotonic number**, không pin `≥0014` và không sửa migration lịch sử. Live `zalo_bots` đã có lifecycle mới ở `0004` và RLS tenant-private ở `0009`, nhưng vẫn còn legacy `secret text`; cột này **không đạt BL-SEC-1**. Target DDL dưới thay nó bằng `webhook_secret_enc`; forward migration phải KMS-encrypt/backfill hoặc vô hiệu hóa connector chưa backfill được trước khi runtime Zalo được bật.
+> **⚠️ Live-schema boundary:** live `channel_identities` vẫn là key **2-phần** `(platform, platform_user_lookup_hash)` và `channel_reachability` PK `(person_id, tenant_id, platform)`. Mô hình endpoint-scoped DD-67 (3-phần `provider_scope_lookup_hash`, reachability theo `channel_identity_id`) là **target**, cần migration mới land trước runtime. `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`; tail = 0018, migrations 0000–0018), nên slice Zalo vẫn phải sync mọi prerequisite đã merge rồi chọn **next available monotonic number** sau tail đã merge (0018), không hardcode/pin một số cố định và không sửa migration lịch sử. Live `zalo_bots` đã có lifecycle mới ở `0004` và RLS tenant-private ở `0009`, nhưng vẫn còn legacy `secret text`; cột này **không đạt BL-SEC-1**. Target DDL dưới thay nó bằng `webhook_secret_enc`; forward migration phải KMS-encrypt/backfill hoặc vô hiệu hóa connector chưa backfill được trước khi runtime Zalo được bật.
 
 ---
 
@@ -262,6 +262,7 @@ Before resolving Person, compute `provider_scope_lookup_hash=HMAC("channel-scope
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v2.6a | **Reconcile 0014 merge-state:** current-state Live-schema boundary sửa → `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`, migrations 0000–0018, tail = 0018), trước ghi "hiện chỉ ở nhánh feat/session-waitlist-expand, chưa merge". Migration-numbering guidance giữ nguyên (sync merged prerequisites → next available monotonic number sau tail đã merge, không hardcode/sửa lịch sử), chỉ đổi justification. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.6 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `0004`/`0009` reuse; new = `webhook_secret_enc` + DD-67 endpoint identity), §3 Request/Response Examples + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v2.5 | **DD-49 timing mirror:** refunded rejoin active→append; full→waitlisted/defer until promotion. Adapter remains thin and creates no financial state. |

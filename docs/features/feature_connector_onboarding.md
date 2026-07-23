@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P3 (payment ingest) · P4 (web onboarding) · P4.7 (Zalo) — *cross-cutting upgrade*
 > **Track:** 🔌 Connector / Onboarding
-> **Version:** 0.9a · 2026-07-19
+> **Version:** 0.9b · 2026-07-23
 > **Status:** Draft (standard provider contracts reviewed; ApiPay enterprise provider gate open)
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3 webhook ingest stable · P4 onboarding wizard scaffold
@@ -227,7 +227,7 @@ WHERE provider_connection_id IS NULL
 -- rotation_pending và last_setwebhook_at. Không deploy lại phần schema đó.
 
 -- TARGET forward migration: chọn next available monotonic number sau khi sync
--- merged prerequisites (`0014_players_waitlist` hiện branch-only); legacy
+-- merged prerequisites (`0014_players_waitlist` đã merge trên main tại 1a6ac38, tail = 0018); legacy
 -- `secret text` không đạt BL-SEC-1.
 -- Add nullable first; application migration KMS-encrypts every usable legacy value.
 ALTER TABLE zalo_bots ADD COLUMN webhook_secret_enc bytea;
@@ -639,6 +639,7 @@ Tỉ lệ kết nối không-chạm-webhook, `time_to_verify_ms` trung vị, t�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v0.9b | **Reconcile 0014 merge-state:** current-state TARGET-migration comment (`zalo_bots` `webhook_secret_enc`) sửa → `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`, tail = 0018), trước ghi "hiện branch-only". Numbering guidance giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v0.9a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.9 | **Zalo secret/lifecycle closure:** distinguish live `0004` from the pending KMS migration; replace plaintext `secret` with `webhook_secret_enc`, backfill-or-disable/drop/no-dual-read; pin ciphertext+state receiver matrix and CAS transitions so an early event cannot be downgraded from `active` to `registered`. |
 | 2026-07-17 | v0.8 | **ApiPay enterprise-first closure:** make DD-30 provisioning the primary Product/UI/API path; move BYO API key to explicit owner-selected fallback; pin `/apipay/provision` input, secret-free response boundary, durable idempotency and enterprise-specific errors/tests mirror. |

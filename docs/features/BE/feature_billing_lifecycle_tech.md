@@ -1,7 +1,7 @@
 # Feature: Host Billing & Tenant Lifecycle — Backend Tech Spec
 
 > **Canonical phase:** P5  
-> **Version:** 2.7 · 2026-07-19
+> **Version:** 2.7a · 2026-07-23
 > **Status:** Reviewed  
 > **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_billing_lifecycle.md`  
@@ -126,7 +126,7 @@ CREATE TABLE billing_overrides (
 
 ### Migration & Rollback
 
-> Grep live `packages/db/migrations/` (0000–0013 đã merge trên main; `0014_players_waitlist` branch-only): **cả 6 bảng** `plans` · `subscriptions` · `subscription_invoices` · `billing_transactions` · `billing_allocations` · `billing_overrides` **đã tồn tại từ `0007_billing.sql`** — DDL trên là baseline để đọc + target contract, **reuse, không recreate**.
+> Grep live `packages/db/migrations/` (0000–0018 đã merge trên main; `0014_players_waitlist` đã merge tại `1a6ac38`, tail = 0018): **cả 6 bảng** `plans` · `subscriptions` · `subscription_invoices` · `billing_transactions` · `billing_allocations` · `billing_overrides` **đã tồn tại từ `0007_billing.sql`** — DDL trên là baseline để đọc + target contract, **reuse, không recreate**.
 
 - **Migration (delta doc-DDL vs live `0007` → một migration mới monotonic sau tail hiện tại, KHÔNG sửa `0007`):**
   - `plans.plan_key` CHECK `('free','host_pro')` + seed v1 DD-29 — live vẫn CHECK 4-tier (ghi chú PENDING MIGRATION trong DDL trên);
@@ -375,6 +375,7 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v2.7a | **Reconcile 0014 merge-state:** current-state §2 grep-note sửa → migrations `0000–0018` đã merge trên `main`, `0014_players_waitlist` **đã merge** (`1a6ac38`), tail = 0018 (trước ghi "0000–0013 merged; 0014 branch-only"). 6 bảng billing vẫn từ `0007` — reuse, không recreate. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.7 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (reuse 6 bảng `0007`; delta DD-29/DD-51 → migration mới monotonic), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.6a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-16 | v2.6 | **DD-51 full propagation:** nullable free period fields, invoice `paid_at`, override `ticket_ref`, exact trial/grace/refund/override commands, suspended automation-off and boundary tests. |

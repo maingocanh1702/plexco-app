@@ -1,12 +1,12 @@
 # Feature: Cross-club Join & Approval — Backend Tech Spec
 
 > **Canonical phase:** P4.3  
-> **Version:** 2.11a · 2026-07-19
+> **Version:** 2.11b · 2026-07-23
 > **Status:** Reviewed  
 > **Implementation:** Not started — `join_requests` có sẵn từ `0006` · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_cross_club_join.md`  
 > **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-39/DD-45/DD-49/**DD-52**/**DD-65..68** · `../../dd-45-waitlist-analysis.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`) · `feature_session_management_tech.md`
-> **⚠️ Live-schema boundary:** `main`/`origin/main`@`22c23aa` vẫn dừng ở `0000–0013`. Waitlist schema `0014_players_waitlist` land tại `1a6ac38` trên `feat/session-waitlist-expand` (current HEAD `aa8afae`; latest commit comment/format-only) nhưng chưa merge. DD-39/DD-49/SessionService/queue-entry-version/retry behavior chưa có runtime. Live `join_requests` chỉ có `command_id`, **không có financial-proof/version field**.
+> **⚠️ Live-schema boundary:** Waitlist schema `0014_players_waitlist` **đã merge trên `main`** tại `1a6ac38` (migrations 0000–0018, tail = 0018); tính đến `origin/main`@`22c23aa` (2026-07-19) main còn dừng ở `0000–0013`, đã merge kể từ đó. DD-39/DD-49/SessionService/queue-entry-version/retry behavior chưa có runtime. Live `join_requests` chỉ có `command_id`, **không có financial-proof/version field**.
 
 ---
 
@@ -311,6 +311,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v2.11b | **Reconcile 0014 merge-state:** current-state Live-schema boundary sửa → `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`, migrations 0000–0018, tail = 0018); provenance `origin/main`@`22c23aa` reframed thành historical marker (không xoá). Behavior claims (DD-39/DD-49/SessionService/retry chưa build) giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.11a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v2.11 | **Live-schema/API correction:** reuse baseline `join_requests` from 0006/0009 and forbid rollback drop; one `/api/sessions/:id/join` server-branches canonical policy; examples use live envelope; universal session→root→request/player/finance order. Runtime remains unbuilt. |
 | 2026-07-19 | v2.10 | **DD-05/DD-52 idempotency + capacity-epoch closure:** existing active/waitlisted/pending is resolved before restriction preflight; only absent/left can create membership/request and must pass DD-41/DD-42/DD-52. Direct active open/approve fill resolves all nonterminal promotion roots under session→job order. Runtime remains unbuilt. |

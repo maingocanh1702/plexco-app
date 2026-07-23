@@ -1,12 +1,12 @@
 # Feature: Sync Engine & Re-projection — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.5 · 2026-07-19
+> **Version:** 2.5a · 2026-07-23
 > **Status:** Reviewed (v2.4: live-schema rollout truth + endpoint-exact channel delivery)
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_sync_engine.md`
 > **References:** `../../product/TDD.md` §3.8 · `../../standards/decisions.md` DD-37 · **DD-65..68**
-> **⚠️ Live-schema boundary:** endpoint-exact delivery ở đây dựa trên `channel_identity_id` và reachability theo `channel_identity_id` — đó là **target** DD-67; live `channel_reachability` vẫn PK `(person_id, tenant_id, platform)` và `channel_identities` là key 2-phần. Cần migration mới land trước runtime; `0014_players_waitlist` hiện branch-only/chưa merge, nên slice Sync phải sync mọi prerequisite đã merge rồi chọn **next available monotonic number**, không pin `≥0014`. Live tables sync (`processed_commands`/`outbox_events`/`projector_deliveries`/`surface_refs`/`public_sessions`) không đổi.
+> **⚠️ Live-schema boundary:** endpoint-exact delivery ở đây dựa trên `channel_identity_id` và reachability theo `channel_identity_id` — đó là **target** DD-67; live `channel_reachability` vẫn PK `(person_id, tenant_id, platform)` và `channel_identities` là key 2-phần. Cần migration mới land trước runtime; `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`; tail = 0018, migrations 0000–0018), nên slice Sync vẫn phải sync mọi prerequisite đã merge rồi chọn **next available monotonic number** sau tail đã merge (0018), không hardcode/pin một số cố định. Live tables sync (`processed_commands`/`outbox_events`/`projector_deliveries`/`surface_refs`/`public_sessions`) không đổi.
 
 > **Cập nhật v2.1 (DD-37 ✅, 2026-07-10):** projectors fan-out phase-1 = **Zalo DM · Facebook Messenger (cửa sổ 24h) · web realtime · public projection**. **Bỏ Telegram** edit-message projectors (`tg_announcement`/`tg_roster`) — Zalo không có inline button (DM number-reply), Messenger gửi message mới trong 24h. Idempotent/re-projection contract không đổi.
 
@@ -304,6 +304,7 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v2.5a | **Reconcile 0014 merge-state:** current-state Live-schema boundary sửa → `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`, migrations 0000–0018, tail = 0018). Migration-numbering guidance giữ nguyên (sync merged prerequisites → next available monotonic number sau tail đã merge, không hardcode), chỉ đổi justification. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.5 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (toàn bộ DDL §2 đã live ở `0005` — reuse; new chỉ là DD-67 endpoint identity migration riêng), §3 Request/Response Examples (DD-60) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.4a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.4 | **Live-schema rollout closure:** clarify that migration `0005` already owns the command/outbox schema and aggregate-sequence uniqueness; only the separate endpoint identity/reachability migration remains before endpoint-exact delivery. |

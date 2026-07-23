@@ -453,12 +453,36 @@ notes: Reconcile lower-authority TDD -> PRD. Defect 1 = tech edge row 10 project
 
 ## task: docs-0014-merge-status-repo-wide-reconcile
 title: Reconcile stale "0014 branch-only/unmerged" claims across remaining BE tech specs to merged-on-main
-status: idea
+status: ready
 risk: P2
 change_class: docs-reconcile
 depends_on: [docs-session-management-spec-reconcile]
 invariants: []
+scope: [docs/autopilot-manifests/docs-0014-merge-status-repo-wide-reconcile.json, docs/features/BE/feature_cross_club_join_tech.md, docs/features/BE/feature_sync_engine_tech.md, docs/features/BE/feature_billing_lifecycle_tech.md, docs/features/BE/feature_connector_onboarding_tech.md, docs/features/feature_connector_onboarding.md, docs/features/BE/feature_session_organize_tech.md, docs/features/BE/feature_zalo_channel_tech.md, docs/features/README.md, docs/autopilot-backlog.md]
+manifest: docs/autopilot-manifests/docs-0014-merge-status-repo-wide-reconcile.json
+merged_probe: docs/features/BE/feature_zalo_channel_tech.md :: Reconcile 0014 merge-state
+notes: Opened by codex review of docs-session-management-spec-reconcile. 0014 (1a6ac38) is merged on main (migrations 0000-0018) but multiple BE tech specs still assert branch-only/unmerged as CURRENT state: feature_user_settings_tech.md:61/65/67 · feature_cross_club_join_tech.md:9 · feature_sync_engine_tech.md:9 (repo-wide grep "0014.*branch-only|dừng ở .0013|chưa merge" before scoping — likely more; README.md:133 is a DATED changelog row = leave as history). Same pattern as the session slice: correct current-state mirrors to merged-on-main; PRESERVE dated changelog/rollout-completion history + reframe (never delete) provenance anchors like origin/main@22c23aa; resolve NO open design questions. COORDINATION: feature_user_settings_tech.md is already dirty in the working tree (another in-flight slice, likely db-session-tenant-integrity-fks) -> this follow-up MUST serialize against whatever owns that file; do not open concurrently on it. Scope EXACTLY the mirror lines per file; fill scope[] after the repo-wide grep. Founder confirm before scoping. Deliberately EXCLUDED from the session slice (F3 defer). EXECUTED 2026-07-23 (branch feat/docs-0014-merge-status-repo-wide-reconcile): folded the 6 BE specs + feature_zalo_channel_tech.md (7th spec, current-state 0014 branch-only -> merged 1a6ac38/tail 0018) + README coverage-index cells + this block; codex round-01 surfaced zalo/README/backlog and founder authorized the fold (Option 1). Tail-only staleness (specs that already treat 0014 as merged but assert a stale tail=0014 / 0015-unmerged) deferred to the block below per founder opt-in.
+
+## task: docs-tail-0018-number-reconcile
+title: Reconcile stale migration-tail claims (tail=0014 / 0015-unmerged) to tail=0018 across remaining specs
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: [docs-0014-merge-status-repo-wide-reconcile]
+invariants: []
 scope: []
 manifest: null
 merged_probe: null
-notes: Opened by codex review of docs-session-management-spec-reconcile. 0014 (1a6ac38) is merged on main (migrations 0000-0018) but multiple BE tech specs still assert branch-only/unmerged as CURRENT state: feature_user_settings_tech.md:61/65/67 · feature_cross_club_join_tech.md:9 · feature_sync_engine_tech.md:9 (repo-wide grep "0014.*branch-only|dừng ở .0013|chưa merge" before scoping — likely more; README.md:133 is a DATED changelog row = leave as history). Same pattern as the session slice: correct current-state mirrors to merged-on-main; PRESERVE dated changelog/rollout-completion history + reframe (never delete) provenance anchors like origin/main@22c23aa; resolve NO open design questions. COORDINATION: feature_user_settings_tech.md is already dirty in the working tree (another in-flight slice, likely db-session-tenant-integrity-fks) -> this follow-up MUST serialize against whatever owns that file; do not open concurrently on it. Scope EXACTLY the mirror lines per file; fill scope[] after the repo-wide grep. Founder confirm before scoping. Deliberately EXCLUDED from the session slice (F3 defer).
+notes: Opened by codex round-01 of docs-0014-merge-status-repo-wide-reconcile + its repo-wide grep. DISTINCT class from the 0014-merge-state slice: these specs ALREADY treat 0014_players_waitlist as merged but assert a stale CURRENT migration tail. Candidates (backtick-tolerant repo-wide grep at execution time is AUTHORITATIVE; codex round-04 showed the bare grep missed backticked forms: grep -rnE "tail hiện là .?0014_players_waitlist|baseline.*0000.?0014|0015.*chưa merge" docs -- the list below is ILLUSTRATIVE, NOT exhaustive): feature_identity_tech.md:163 ("tail hiện là 0014_players_waitlist.sql"; founder named "identity tail"), feature_tournament_tech.md:134 ("baseline committed tren main = 0000-0014 ... 0015 auth D0a chua merge"), feature_web_auth_onboarding_tech.md:158 (also references 0016/0017), feature_player_view_tech.md:51, feature_security_operations_tech.md:51 -- all identify 0014_players_waitlist.sql as the current tail; expect more per the grep above. Correct current-state tail 0014->0018 (0000-0018 on main incl 0015_auth_revoke_account..0018_oauth_completion_handoff); PRESERVE dated rows; reframe never delete provenance; resolve NO design questions; keep numbering guidance (next monotonic after merged tail). EXCLUDE (history/pinned, not current-state): decisions.md log entries, dd-45/dd-73-78 + dd-remaining-cluster analysis snapshots (@22c23aa point-in-time), slice-readiness-verdicts.md pinned AUTHORITY_SHA verdict, autopilot-templates/*, feature_user_settings_tech.md (separate consent edit). Founder-opt-in: flip status idea->ready to authorize.
+
+## task: docs-user-settings-0014-merge-state-reconcile
+title: Reconcile stale "0014 branch-only / 0000-0013" claims in feature_user_settings_tech.md to merged (post consent-edit)
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: [docs-0014-merge-status-repo-wide-reconcile]
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+notes: Split out of docs-0014 (which flips to merged via its own probe) so this correction is not orphaned. feature_user_settings_tech.md:61/65/67 still assert 0014 branch-only / "0000-0013 đã merge" as CURRENT state, but the file is dirty in the working tree (a separate uncommitted consent-state edit, likely db-session-tenant-integrity-fks, owns it). SERIALIZE against whatever owns that file: either (a) that consent-edit slice folds these 3 current-state corrections (0014 -> merged 1a6ac38; tail 0018; keep numbering guidance "next monotonic after synced tail"; preserve dated rows; reframe never delete provenance), or (b) run this after the file is free. Do NOT open concurrently on the file. Founder-opt-in: flip idea->ready once the file is free.

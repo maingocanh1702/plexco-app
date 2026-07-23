@@ -1,7 +1,7 @@
 # Feature: Connector Onboarding (Zalo · SePay · ApiPay) — Backend Tech Spec
 
 > **Canonical phase:** P3 (payment ingest) · P4 (onboarding) · P4.7 (Zalo) — *cross-cutting*
-> **Version:** 0.7 · 2026-07-19
+> **Version:** 0.7a · 2026-07-23
 > **Status:** Draft · SePay inbound auth reconciled; ApiPay enterprise-primary internal contract pinned, provider gate open
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_connector_onboarding.md`
@@ -141,7 +141,7 @@ WHERE provider_connection_id IS NULL
 -- connecting|registered|active|drift|error|revoked đã tồn tại; không add lại.
 
 -- TARGET forward migration: choose next available monotonic number after
--- syncing merged prerequisites (`0014_players_waitlist` is branch-only today);
+-- syncing merged prerequisites (`0014_players_waitlist` merged on main at 1a6ac38, tail = 0018);
 -- remove legacy plaintext verification secret.
 ALTER TABLE zalo_bots ADD COLUMN webhook_secret_enc bytea;
 
@@ -531,6 +531,7 @@ Tỉ lệ connect không-chạm-webhook; `time_to_verify_ms` (registered→activ
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-23 | v0.7a | **Reconcile 0014 merge-state:** current-state TARGET-migration comment (§2 `zalo_bots`) sửa → `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`, tail = 0018), trước ghi "branch-only today". Numbering guidance (next available monotonic number sau merged prerequisites) giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v0.7 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `0003`/`0004` reuse; new = auth_mode mở rộng/`webhook_auth_mode`/`webhook_secret_enc`), §3 Request/Response Examples (DD-60 cho app routes; webhook theo provider contract), §4.8 Security Checklist. Idempotency (§3) và Caching (§4.7) đã có từ trước — giữ nguyên. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v0.6a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v0.6 | **Zalo secret/lifecycle closure:** mark lifecycle columns live; specify KMS backfill-or-disable/drop/no-dual-read; add one state+ciphertext decision table, CAS-safe early-event/finalization transitions and unit/E2E regressions. |

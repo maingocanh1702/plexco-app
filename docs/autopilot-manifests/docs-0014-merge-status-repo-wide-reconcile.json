@@ -1,0 +1,26 @@
+{
+  "feature": "docs-0014-merge-status-repo-wide-reconcile",
+  "branch": "feat/docs-0014-merge-status-repo-wide-reconcile",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "docs-reconcile",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "1x_clean",
+  "depends_on": ["docs-session-management-spec-reconcile"],
+  "dep_checks": [],
+  "invariants": [],
+  "_note": "Docs-only current-state reconcile: correct stale '0014 branch-only/unmerged' + 'main dừng ở 0013' live-schema claims to '0014 merged (1a6ac38); migrations 0000-0018 on main'. Mirrors session spec-reconcile discipline: fix CURRENT-STATE only; preserve dated changelog/decision-log/analysis snapshots; reframe (never delete) @22c23aa provenance; resolve NO design questions; keep the valid 'next monotonic after synced tail' numbering guidance (justification shifts unmerged->tail=0018). feature_user_settings_tech.md EXCLUDED pending its uncommitted consent edit. EXPANDED per founder after codex round-01 out-of-scope findings: folded feature_zalo_channel_tech.md (7th spec, identical stale claim, linked from connector), README.md (coverage-index version cells for the bumped specs), and docs/autopilot-backlog.md (this slice's own status/scope/manifest/merged_probe). Still EXCLUDED as founder opt-in follow-up: gray-zone tail-only claims feature_identity_tech.md + feature_tournament_tech.md + feature_web_auth_onboarding_tech.md + feature_player_view_tech.md + feature_security_operations_tech.md (already treat 0014 as merged; staleness is tail=0018/0015-unmerged; list illustrative, authoritative = backlog docs-tail-0018 execution-time grep), decisions.md, dd-45/dd-73-78 + dd-remaining-cluster analysis snapshots, slice-readiness-verdicts.md pinned-SHA verdict.",
+  "scope": [
+    "docs/autopilot-manifests/docs-0014-merge-status-repo-wide-reconcile.json",
+    "docs/features/BE/feature_cross_club_join_tech.md",
+    "docs/features/BE/feature_sync_engine_tech.md",
+    "docs/features/BE/feature_billing_lifecycle_tech.md",
+    "docs/features/BE/feature_connector_onboarding_tech.md",
+    "docs/features/feature_connector_onboarding.md",
+    "docs/features/BE/feature_session_organize_tech.md",
+    "docs/features/BE/feature_zalo_channel_tech.md",
+    "docs/features/README.md",
+    "docs/autopilot-backlog.md"
+  ]
+}
