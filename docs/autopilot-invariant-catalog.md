@@ -36,4 +36,6 @@ build-config — package manifest / lockfile / tsconfig / bundler
 reliability — attendance / no-show / reliability score + deprioritize policy per-tenant (DD-42)
 member-safety — manual safety ban: reason/evidence/expiry/actor/capability `member.ban` (DD-52)
 retry-liveness — CAS/lease worker ownership, claimed-attempt budget, DLQ / owner-review sink (DD-45)
+publish-suspend-gate — session `PublishSession` billing-suspension authorization gate (`authorizeTenantAction('publish_new_sessions')` × billing Status Authority, feature_session_management §4 × feature_billing_lifecycle §3)
+session-lock-ordering — session command transaction/row-lock ordering discipline (`FOR UPDATE` + re-check-under-lock, feature_session_management §4)
 <!-- catalog:end -->

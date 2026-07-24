@@ -1,6 +1,6 @@
 # Plexco Feature Specs — Coverage Index
 
-> **Version:** 2.46 · 2026-07-24
+> **Version:** 2.49 · 2026-07-24
 > **Scope source:** `../product/BRD.md` v3.9g · `../product/PRD.md` v2.8f · `../product/TDD.md` v3.1a · `../product/ROADMAP.md` v3.4c · `../standards/decisions.md` **v1.98 (DD-01..87)**. DD-05/06/45/49 integrity closed; DD-59 ✅ reconcile; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; **DD-79 ✅ Home · DD-80 ✅ auth B0 · DD-81 ✅ Pencil · DD-82..85 ✅ owner directions · DD-86 🟡 multi-channel proposal · DD-87 ✅ fail-closed split-name/amount authority**. Runtime gates unchanged.
 
 > **Cập nhật DD-37 (2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (**Telegram loại khỏi phạm vi**). `feature_player_telegram` → **Archived (DD-37)**, thay bằng `feature_player_messenger`. Thêm phase-1: `feature_inapp_chat` (DD-38 ✅), `feature_user_settings` (DD-39 ✅), Google login (DD-13 ✅, trong `feature_web_auth_onboarding`), mark-paid thủ công (DD-40 ✅, trong `feature_payment_reconcile`).
@@ -41,7 +41,7 @@ Bốn nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**
 |---|---|---|---|---|
 | P0–P1 | Multi-tenant Foundation | `feature_multi_tenant.md` v1.7a | `BE/feature_multi_tenant_tech.md` v1.6 | ✅ Reviewed |
 | P2 | Tenant Routing & Authz | `feature_tenant_routing_authz.md` v2.6a | `BE/feature_tenant_routing_authz_tech.md` v2.6 | ✅ Reviewed |
-| P2/P4 | Session Management | `feature_session_management.md` v2.13a | `BE/feature_session_management_tech.md` v2.14a | ✅ Reviewed |
+| P2/P4 | Session Management | `feature_session_management.md` v2.13a | `BE/feature_session_management_tech.md` v2.14c | ✅ Reviewed |
 | P3 | Payment Reconciliation | `feature_payment_reconcile.md` v1.7a | `BE/feature_payment_reconcile_tech.md` v1.10 | ✅ Reviewed |
 | P3.5 | Identity Directory & Merge | `feature_identity.md` v1.10a | `BE/feature_identity_tech.md` v1.12a | ✅ Reviewed |
 | P3 · P4 · P4.5–P4.7 · P4+ | Notifications — Reminders · Inbox · Announcements · Web Push | `feature_notifications_reminders.md` v3.4h | `BE/feature_notifications_reminders_tech.md` v3.4i | 🟡 **Draft** — §A reminder/confirm/correction **business invariants đã reviewed** (reconciled decisions v1.45/DD-15/DD-67); §B/C/D inbox·announce·push chờ **DD-70/71/72**. Hạ Reviewed→Draft 18/07 do **gộp tài liệu**, không phải luật tiền bị mở lại |
@@ -52,7 +52,7 @@ Bốn nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**
 | ~~P4.5~~ | ~~Player Telegram~~ | `feature_player_telegram.md` v2.1 | `BE/feature_player_telegram_tech.md` v2.1 | ⚠️ **Archived (DD-37)** → `feature_player_messenger.md` |
 | P4.6 | Player View | `feature_player_view.md` v2.2a | `BE/feature_player_view_tech.md` v2.4a | ✅ Reviewed |
 | P4.7 | Zalo Channel | `feature_zalo_channel.md` v2.5a | `BE/feature_zalo_channel_tech.md` v2.6b | ✅ Reviewed |
-| P5 | Billing Lifecycle | `feature_billing_lifecycle.md` v2.7a | `BE/feature_billing_lifecycle_tech.md` v2.7b | ✅ Reviewed |
+| P5 | Billing Lifecycle | `feature_billing_lifecycle.md` v2.8a | `BE/feature_billing_lifecycle_tech.md` v2.8d | ✅ Reviewed |
 | P6 | Security & Operations | `feature_security_operations.md` v2.2a | `BE/feature_security_operations_tech.md` v2.4a | ✅ Reviewed |
 
 ### Cross-cutting tracked pair (pre-existing)
@@ -114,6 +114,9 @@ Với spec mới hoặc spec được promote sang **Reviewed**, review gate k�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-24 | v2.49 | **Round-06 fix (`docs-session-publish-concurrency-recheck`, codex [P2]; terminal round — see slice notes):** round-05's further bump of `BE/feature_billing_lifecycle_tech.md` to v2.8d went unsynced (v2.48 only caught up to v2.8c). Synced the cell to v2.8d. Version-cell sync only, no Status/contract change. |
+| 2026-07-24 | v2.48 | **Round-03 fix (`docs-session-publish-concurrency-recheck`, codex [P2]):** v2.47 only synced the Billing Lifecycle cell's tech-spec version at that moment (v2.8b); subsequent codex fix rounds bumped `BE/feature_billing_lifecycle_tech.md` again to **v2.8c** and `BE/feature_session_management_tech.md` (Session Management row, not previously touched by this slice) to **v2.14c** — both index cells were stale again. Synced both. Version-cell sync only, no Status/contract change. |
+| 2026-07-24 | v2.47 | **P5 Billing Lifecycle index sync (docs-session-publish-concurrency-recheck):** cell còn ghi `feature_billing_lifecycle.md` v2.7a / `BE/feature_billing_lifecycle_tech.md` v2.7b — disk đã lên **v2.8a / v2.8b** (billing ratification `9ce42c4` bump lên v2.8a chưa sync; slice này tự bump tech spec v2.8a→v2.8b). Chỉ sync version cell, không đổi Status/Reviewed hay contract. |
 | 2026-07-24 | v2.46 | **Migration-tail sweep round-01 expansion (docs-migration-tail-0018-to-0020-sweep):** codex flagged the sweep omitted Connector Onboarding — added `feature_connector_onboarding.md` (v0.9b→v0.9c) + `BE/feature_connector_onboarding_tech.md` (v0.7a→v0.7b) index cells, same de-pin fix as the other 10 specs (TARGET-migration comment hard-pinned `tail = 0018` → non-pinned guidance). Also fixes a self-inflicted stale `HEAD main` SHA pin in BUILD-STATUS.md (fabe29f→1e503d1, now explicitly dated) that codex caught in the same round. Không đổi contract, coverage hay implementation status. |
 | 2026-07-24 | v2.45 | **Migration-tail index sync (docs-migration-tail-0018-to-0020-sweep):** BE cell version bump cho 10 spec (session_management_tech v2.14a · identity_tech v1.12a · sync_engine_tech v2.5b · cross_club_join_tech v2.11c · player_view_tech v2.4a · zalo_channel_tech v2.6b · billing_lifecycle_tech v2.7b · security_operations_tech v2.4a · session_organize_tech v0.6b · tournament_tech v0.2a) + product cell `feature_session_management.md` v2.13a — mỗi spec de-pin current-state migration-tail/range claim sang non-pinned guidance (verify `packages/db/migrations/` tại thời điểm author, live tail nay `0020`). Mirror ROADMAP **v3.4b→v3.4c**. Không đổi contract, coverage hay implementation status. |
 | 2026-07-22 | v2.44 | Mirror ROADMAP **v3.4a→v3.4b**: pin current truth `main@f93873b` và canonical suite **29 files / 419 tests PASS**; v3.4b thêm kiểm kê generator (`410 + 9 = 419`) và danh sách invariant-class 3 file. Inventory vẫn 24 Product + 23 BE; không thay đổi contract, coverage hay implementation status. |
