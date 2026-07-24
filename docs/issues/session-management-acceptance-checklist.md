@@ -1,5 +1,7 @@
 # Session Management — Acceptance Checklist (issue-ready, source-traced)
 
+> **Version:** 1.1 · 2026-07-24
+
 > **Purpose.** Convert the acceptance criteria + Definition-of-Done already written in the two Session
 > Management specs into a source-traced, issue-ready checklist a host/founder can paste into a tracker
 > **before** the (manual, separately risk-classified) Session Management build slice.
@@ -14,17 +16,25 @@
 
 | Key | File | Version / status |
 | --- | --- | --- |
-| **P** | `docs/features/feature_session_management.md` (Product / UX) | v2.12b · 2026-07-23 · **Reviewed** |
-| **T** | `docs/features/BE/feature_session_management_tech.md` (Backend Tech) | v2.13a · 2026-07-23 · **Reviewed** |
+| **P** | `docs/features/feature_session_management.md` (Product / UX) | v2.13a · 2026-07-24 · **Reviewed** |
+| **T** | `docs/features/BE/feature_session_management_tech.md` (Backend Tech) | v2.14c · 2026-07-24 · **Reviewed** |
 
 - **Origin:** `docs/product/ROADMAP.md` → Next Actions **#3** ("Review/sign-off feature specs của phase sắp
   build; **chuyển acceptance criteria thành issue checklist**").
 - **Feature status (both specs):** `Implementation: Not started` — migration `0014_players_waitlist`
-  (waitlist **schema only**) is **merged on `main`** at `1a6ac38` (migrations `0000–0018`); the waitlist
-  **behaviour** (auto-promote, retry) is still **unbuilt**. Both spec headers and `P §7 SES-OQ-3` state this
-  (reconciled `P` v2.12b / `T` v2.13a, 2026-07-23; verified on-disk this slice), designating
+  (waitlist **schema only**) is **merged on `main`** at `1a6ac38` (verify tail hiện hành tại
+  `packages/db/migrations/`, không hard-pin số — tail was `0000–0018` at the 2026-07-23 reconciliation below;
+  current tail also carries `0019`/`0020` tenant-integrity composite FKs, DD-68, unrelated to waitlist); the
+  waitlist **behaviour** (auto-promote, retry) is still **unbuilt**. Both spec headers and `P §7 SES-OQ-3`
+  state this (reconciled `P` v2.12b / `T` v2.13a, 2026-07-23; verified on-disk this slice), designating
   `docs/standards/BUILD-STATUS.md` as the implementation-status authority. This is a **pre-build** acceptance
   checklist. See [§9](#9-unresolved--needs-spec-fail-closed).
+- **Cross-feature references (publish rows only):** the publish billing-suspend row (§1) additionally cites
+  `docs/features/BE/feature_billing_lifecycle_tech.md` §3 (status-authority) and §5 (`U#36`/`U#36a`
+  competing-writer tests, v2.8d); the Result section's publish-retrace note also cites `docs/product/PRD.md`
+  v2.8g FLOW 2 (public-projection timing). Both are owned/authoritative in their own specs and are cited here
+  only for that cross-reference — **P/T above remain the sole primary source for this checklist's acceptance
+  criteria**; no other feature is traced end-to-end in this document.
 
 ## How to read a row
 
@@ -36,7 +46,7 @@
 - `P §1·INV` — Product §1 "Bất biến" (invariants).
 - `P UC-n` — Product §2 use case `SES-UC-n`.
 - `P E#n` — Product §2 edge case #_n_.
-- `P AC#n` — Product §6 acceptance criterion #_n_ (numbered 1–14, top→bottom).
+- `P AC#n` — Product §6 acceptance criterion #_n_ (numbered 1–20, top→bottom).
 - `P §5·EV` — Product §5 analytics event.
 - `T BE#n` — Tech §2 Backend edge case #_n_.
 - `T U#n` / `T I#n` — Tech §5 unit / integration test #_n_.
@@ -79,7 +89,8 @@ _Principles from `P §1·INV`; each is verified concretely by the referenced are
 - [ ] Host creates a one-off session (private/public) with all fields validated → status `draft`; the Host
       then **publishes** (`draft → open`, `P §4`) to accept joins — src: `P UC-1` (create=`draft`/publish→`open`,
       reconciled v2.12c), `T §2` (DDL default `draft`), `T §3` (POST example `draft`), `T U#1`. The publish
-      transition's command/idempotency mechanics are a deferred scope boundary — see §9-B.
+      transition's own command/idempotency/gating mechanics are traced separately below (this bullet covers
+      create-status only).
 - [ ] Create/update is rejected when `ends_at <= starts_at` — src: `P E#1` (Ref: BL-DATA-1); `T §2`
       (`CHECK (ends_at > starts_at)`), `T ERR:INVALID_TIME_RANGE`, `T U#2`
 - [ ] Create is rejected when the sport key is not in the **active** sport taxonomy — src: `P E#2`;
@@ -127,6 +138,41 @@ _Principles from `P §1·INV`; each is verified concretely by the referenced are
       `T BE#20`, `T §3` (Messenger create path), `T U#36`, `T U#37`
 - [ ] Full CRUD lifecycle (create → update → close) drives correct state transitions — src: `P §4` (state
       machine); `T I#1`
+- [ ] Host publishes a `draft` session to `open` via a **distinct `PublishSession` command** (chat + web, same
+      shared service) — status-only, does **not** change `visibility`; only Host (`session.manage`) may call
+      it — src: `P SES-UC-12`, `P AC#15`; `T §4` (Publish transition), `T BE#21`, `T §3`
+      (`POST /api/sessions/:id/publish`), `T U#40`
+- [ ] Publish surfaces on **bot** (single-action lệnh/callback "Đăng kèo" on a draft, no wizard) and on **web**
+      (Publish button on draft detail + confirm dialog); both invoke the same `PublishSession` command and map
+      the same error states — src: `P AC#20`, `P §3` (Screens & States); `T §3`
+- [ ] Re-publishing a session already `open` is an **idempotent no-op**: `commandId` replay or a new
+      `commandId` both return success with **no** duplicate `session.published` event, and idempotency wins
+      even over a stale `expectedVersion` (goal state already reached) — **but authz/billing win over the
+      no-op**: AuthZ + the billing-suspension check re-run on **every** publish call including a replay,
+      **before** dedup/state lookup, so an actor who has since lost `session.manage`, or a tenant that has
+      since gone billing-`suspended`, still gets 403 on replay even though the session is already `open` (the
+      no-op is only for an actor who still holds authority) — src: `P E#16`, `P AC#16`; `T BE#21`, `T §4`
+      (step 1 ordering, step 3), `T U#41`, `T U#47` (cf. `T U#44`, `T U#46`). A `commandId` reused for a
+      **different** resource/payload is handled by the canonical `processed_commands` dedup (edge #3), not
+      special-cased by publish — `T U#48`
+- [ ] Publishing a `public` session re-validates discovery completeness (`P E#7`); missing fields reject
+      `MISSING_DISCOVERY_FIELDS` with zero mutation — src: `P E#17`, `P AC#17`; `T BE#22`, `T §4` (step 5),
+      `T U#42`
+- [ ] Publishing a session that is `closed`/`cancelled`, or a `draft` whose `starts_at` has already passed, is
+      rejected `SESSION_NOT_OPEN` with zero mutation — src: `P E#18`, `P AC#18`; `T BE#23`, `T §4` (step 4),
+      `T U#43`
+- [ ] A stale `expectedVersion` on the actual `draft → open` mutation (not the idempotent-no-op branch) is
+      rejected `STALE_VERSION` (409) — src: `T §4` (step 6), `T U#45`
+- [ ] Publish is blocked fail-closed with `TENANT_SUSPENDED` (403) when the tenant is billing-`suspended`, per
+      the billing **Suspended Action Matrix** — status-authority is owned/resolved by `feature_billing_lifecycle`
+      (`feature_billing_lifecycle_tech.md` §3, founder-ratified) and re-checked, inside the same transaction as
+      the mutation, via a **locking read on both status rows in order** — `SELECT ... FOR SHARE` on `tenants`
+      **then** `subscriptions` (same order as status-authority's own step 1→step 2) — so the re-check either
+      blocks on the Daily Lifecycle Job's `subscriptions` `FOR UPDATE SKIP LOCKED` suspend transition until it
+      resolves, or that job's `SKIP LOCKED` defers to its next run; a lock on `tenants` alone would not
+      serialize with the job (it locks `subscriptions`) and would not actually close the race — src: `P E#19`,
+      `P AC#19`; `T BE#24`, `T §4` (step 6 + "Billing suspension" blockquotes), `T U#46`; competing-writer race
+      closed by billing test #36 / test #36a (`feature_billing_lifecycle_tech.md` §5, cross-feature)
 
 ---
 
@@ -246,7 +292,7 @@ _Principles from `P §1·INV`; each is verified concretely by the referenced are
 ## 5. RLS / tenant isolation / authz
 
 - [ ] Only **TenantAdmin** can mutate sessions; a non-admin receives **403** — routing is not authorization
-      — src: `P AC#14`, `P E#12`; `T BE#10`, `T §3` (endpoints = TenantAdmin), `T U#17`
+      — src: `P AC#14`, `P E#12`; `T BE#10`, `T §3` (endpoints = TenantAdmin), `T U#17`, `T U#44` (publish)
 - [ ] AuthZ middleware rejects a non-admin session command **before** the service — src: `T BE#10`, `T §4`
       (Security Checklist)
 - [ ] `sessions` has RLS `ENABLE` + `FORCE`; a session from tenant A is not visible to tenant B — src:
@@ -285,7 +331,7 @@ _Principles from `P §1·INV`; each is verified concretely by the referenced are
 - [ ] Projector failure is recovered via **outbox retry** — canonical state is already committed (no data
       loss) — src: `T BE#9`, `T §1`/`§4` (outbox), `T I#4`
 - [ ] Each lifecycle transition emits its analytics event with the minimal payload — `session_created`,
-      `session_updated`, `session_announced`, `session_closed`, `session_cancelled`,
+      `session_published`, `session_updated`, `session_announced`, `session_closed`, `session_cancelled`,
       `session_projection_failed` — src: `P §5·EV`
 - [ ] Analytics **never** logs roster names, venue details, or contact info — src: `P §5` (note)
 - [ ] Outbox events carry identifiers + safe changed fields only; projectors reload canonical data for
@@ -403,6 +449,27 @@ stated bar._
 - [ ] `U#38` Negative base price (API or migration fixture) → DB CHECK rejects; no session/outbox mutation
 - [ ] `U#39` Live skill-level upgrade (non-null `sessions.skill_level`) → value preserved; public
       projection/filter valid until DD-41 ranked-field contract completes
+- [ ] `U#40` Publish `draft`→`open` (Host, `starts_at > now()`) → `status='open'`, `version` bumped, exactly
+      one `session.published` event; `visibility` unchanged
+- [ ] `U#41` Re-publish already-`open` (`commandId` replay or new `commandId`, actor still holds
+      `session.manage` and tenant not billing-suspended) → no-op success; no duplicate `session.published`;
+      `status`/`version`/`visibility` unchanged. Authz/billing win over the no-op — same replay from an actor
+      who lost `session.manage`, or a now-`suspended` tenant, still gets 403 (`U#44`/`U#46`), not a no-op
+- [ ] `U#42` Publish `public` `draft` missing discovery fields → `MISSING_DISCOVERY_FIELDS`; zero mutation
+- [ ] `U#43` Publish `closed`/`cancelled`, or `draft` with `starts_at <= now()` → `SESSION_NOT_OPEN`; zero
+      mutation
+- [ ] `U#44` Non-admin calls publish → 403; AuthZ rejects before service; zero mutation
+- [ ] `U#45` Publish `draft` with stale `expectedVersion` (concurrent edit bumped it) → `STALE_VERSION` (409)
+      on the mutation path; zero mutation
+- [ ] `U#46` Publish while tenant billing-`suspended` (static case) → fail-closed `TENANT_SUSPENDED` (403);
+      `status` stays `draft`; zero mutation. Competing-writer race is billing test #36 / #36a
+      (`feature_billing_lifecycle_tech.md` §5)
+- [ ] `U#47` Re-publish already-`open` with a stale `expectedVersion` → no-op success (idempotency wins over
+      `STALE_VERSION`); zero mutation
+- [ ] `U#48` Publish `commandId` reused for a different resource/payload → handled by the canonical
+      `processed_commands` dedup (edge #3), not special-cased; collision-safety strengthens to
+      `IDEMPOTENCY_CONFLICT` once the canonical `request_hash` migration lands (Session Organize plan,
+      cross-feature — not asserted here)
 
 ### Integration tests (`T §5`)
 
@@ -427,13 +494,13 @@ above. "Mapped in" points to the section(s) that carry it._
 | Spec inventory | Count | Mapped in | Uncovered |
 | --- | --- | --- | --- |
 | `P §1·INV` invariants | 6 | §0 (verified across §1–§6) | 0 |
-| `P §2` use cases `SES-UC-1..11` | 11 | §1 (1,4,5,6,7,10,11), §2 (8,9), §4 (2), §6 (3) | 0 |
-| `P §2` edge cases `#1..#15` | 15 | §1 (1,2,5,7,11,15), §2 (4,6,13,14), §3 (3,4), §4 (9), §5 (12), §6 (8,10) | 0 |
-| `P §5·EV` analytics events | 6 | §6 | 0 |
-| `P §6` acceptance criteria `AC#1..#14` | 14 | §0 (1), §1 (2,3,4,10), §3 (5,6,7,9), §2 (8), §4 (12), §6 (11,13), §5 (14) | `AC#4` timezone-**input** branch → §9-A (spec-unpinned); `AC#11` public-**materialise** branch → §9-B (cross-feature, `feature_marketplace_discovery`); rest 0 |
-| `T §2` backend edge cases `BE#1..#20` | 20 | §1 (2,3,4,5,11,12,20), §2 (8,17), §3 (1,13,14,15,16,18,19), §4 (6,7), §5 (10), §6 (9) | 0 |
-| `T §3` error codes | 9 | §1, §3, §5 (each code cited at its row) | 0 |
-| `T §5` unit tests `U#1..#39` (incl. `#31a`, `#33a–q`) | 57 | §7 (all) + cited in §1–§6 | 0 |
+| `P §2` use cases `SES-UC-1..12` | 12 | §1 (1,4,5,6,7,10,11,12), §2 (8,9), §4 (2), §6 (3) | 0 |
+| `P §2` edge cases `#1..#19` | 19 | §1 (1,2,5,7,11,15,16,17,18,19), §2 (4,6,13,14), §3 (3,4), §4 (9), §5 (12), §6 (8,10) | 0 |
+| `P §5·EV` analytics events | 7 | §6 | 0 |
+| `P §6` acceptance criteria `AC#1..#20` | 20 | §0 (1), §1 (2,3,4,10,15,16,17,18,19,20), §3 (5,6,7,9), §2 (8), §4 (12), §6 (11,13), §5 (14) | `AC#4` timezone-**input** branch → §9-A (spec-unpinned); `AC#11` public-**materialise** branch → §9-B (cross-feature, `feature_marketplace_discovery`); rest 0 |
+| `T §2` backend edge cases `BE#1..#24` | 24 | §1 (2,3,4,5,11,12,20,21,22,23,24), §2 (8,17), §3 (1,13,14,15,16,18,19), §4 (6,7), §5 (10), §6 (9) | 0 |
+| `T §3` error codes | 10 | §1, §3, §5 (each code cited at its row) | 0 |
+| `T §5` unit tests `U#1..#48` (incl. `#31a`, `#33a–q`, `#40–#48`) | 66 | §7 (all) + cited in §1–§6 | 0 |
 | `T §5` integration tests `I#1..#7` | 7 | §7 (all) + cited in §1–§6 | 0 |
 
 Most acceptance criteria and DoD lines trace cleanly. The four source-spec inconsistencies raised during
@@ -470,17 +537,13 @@ and does not pick any storage/API/mutation shape for them._
 
 ### B. Decided-but-deferred — scope boundaries this checklist must not cross
 
-- [ ] **Publish transition mechanics (`draft → open`) — decided-to-exist, mechanics deferred.** The
-      create-status inconsistency is resolved (create = `draft`, Host publish → `open`; `P UC-1` / `P §4`,
-      reconciled v2.12c) so the transition **exists** and this is not an open acceptance gap. Its command /
-      idempotency shape and any visibility coupling are deferred to follow-up `docs-session-publish-contract`
-      (needs a product decision on what publish mutates). Behaviour boundary, not a blocker. — src: `P UC-1`,
-      `P §4` (state machine `draft → open`)
 - [ ] **DD-49 obligation storage/API shape** — `P §7 SES-OQ-1` is ✅ decided at behaviour level (carry-over /
       refunded / unknown), but "storage/API chờ design-probe". Behaviour is covered (§1/§2/§3); the storage
       and API shapes remain open and are **not** chosen here. — src: `P §7 SES-OQ-1`
 - [ ] **Waitlist auto-promote — schema merged, behaviour unbuilt.** `0014_players_waitlist` (waitlist
-      **schema only**) is merged on `main` at `1a6ac38` (migrations `0000–0018`); only the **behaviour**
+      **schema only**) is merged on `main` at `1a6ac38` (verify tail hiện hành tại `packages/db/migrations/`,
+      không hard-pin số — tail was `0000–0018` at the 2026-07-23 reconciliation, current tail also carries
+      `0019`/`0020` tenant-integrity FKs, DD-68, unrelated to waitlist); only the **behaviour**
       (auto-promote, retry) is unbuilt, so the §3 rows are pre-build targets. Both spec headers,
       `P §7 SES-OQ-3` and `T §6` (Rollout step 2) now state this consistently (reconciled 2026-07-23),
       designating `docs/standards/BUILD-STATUS.md` as the implementation-status authority. — src:
@@ -529,8 +592,10 @@ The four source-spec inconsistencies raised during traceability are all reconcil
 - **Projection direction:** `T §5` test #10 reads "Public → private removes projection", matching `P E#8` /
   `P AC#11` / `P UC-5` / `P UC-10` (reconciled v2.13a). Traced in §6 / §7 `U#10`.
 - **Migration `0014` status:** both spec headers, `P §7 SES-OQ-3`, `T §2` and `T §6` (Rollout step 2) state
-  `0014_players_waitlist` (schema only) is merged on `main` at `1a6ac38` (migrations `0000–0018`, tail 0018);
-  behaviour unbuilt (reconciled v2.13a). Recorded in §9-B.
+  `0014_players_waitlist` (schema only) is merged on `main` at `1a6ac38` (reconciled v2.13a; tail was
+  `0000–0018` at that reconciliation — both headers now non-pin the tail per the later de-pin sweep, "verify
+  `packages/db/migrations/` at read time"; current tail also carries `0019`/`0020` tenant-integrity composite
+  FKs, DD-68, unrelated to waitlist); behaviour unbuilt. Recorded in §9-B.
 - **Create result status:** `P UC-1` now states create → `draft`, then Host publish → `open`, consistent
   with the `T §2` DDL default `draft`, the `T §3` POST example and the `P §4` state machine (reconciled
   v2.12c). See §1.
@@ -540,11 +605,32 @@ The four source-spec inconsistencies raised during traceability are all reconcil
 
 The remaining §9-A items (recurrence-edit granularity `P §7 SES-OQ-2` = ⬜, `waitlist_position` uniqueness
 Open DD-45a, malformed-timezone-input) are spec-acknowledged **open questions**, not untraceable criteria —
-recorded, not guessed, and do not block completion. §9-B records decided-but-deferred scope boundaries,
-including the publish-transition mechanics (→ follow-up `docs-session-publish-contract`).
+recorded, not guessed, and do not block completion. §9-B records the remaining decided-but-deferred scope
+boundaries (DD-49 storage/API shape, waitlist auto-promote behaviour, DD-41/42/43/44 field-level detail,
+DD-68 composite FK, data retention, and the marketplace positive-materialisation cross-feature owner).
+
+**Publish transition — folded in this pass (2026-07-24, `docs-session-acceptance-checklist-publish-retrace`,
+re-verified on-disk against `main@58788e6`):** the founder-ratified publish contract (`P SES-UC-12`, edges
+`#16–19`, `AC#15–20`, `session_published` event, `T` tests `#40–48`) is now traced in §1/§5/§6 and folded into
+the §7/§8 ledgers above — it is **no longer** a §9-B deferred boundary. Its three former hard dependencies are
+all RESOLVED at spec level: billing status-authority (`feature_billing_lifecycle_tech.md` §3, founder-ratified
+`v2.8a`), PRD public-projection timing (`PRD.md` `v2.8g` FLOW 2 — project-on-publish, no longer
+project-on-create), and the publish concurrency re-check-under-lock (`feature_session_management_tech.md` §4
+step 6, closed by `v2.14c`, proof obligation = billing test #36/#36a). This is a **spec-level** closure only —
+per `T` §4's own code-readiness note, no `CODE_READY` certification (closure/acceptance-matrix, implementation
+artifacts) has run; publish remains a **build/enablement gate**, not a checklist acceptance gap. Session
+runtime (including publish) stays unbuilt — see Feature status above.
 
 **Overall result: SESSION_MGMT_CHECKLIST_COMPLETE** — every stated acceptance criterion is source-traced and
 open spec questions are quarantined in §9. This marker proves traceability coverage only, **not** build
 authorization: session runtime remains a separate, risk-classified slice.
+
+---
+
+## Changelog
+
+| Date | Version | Thay đổi |
+| --- | --- | --- |
+| 2026-07-24 | v1.1 | **Publish-mechanics retrace** (`docs-session-acceptance-checklist-publish-retrace`): Sources pin bumped `P` v2.12b→v2.13a, `T` v2.13a→v2.14c. §9-B's "publish transition — decided-to-exist, mechanics deferred" bullet removed (no longer accurate — mechanics are authored and its 3 former hard dependencies are resolved at spec level) and replaced with traced coverage: 7 new §1 bullets (`SES-UC-12`, edges `#16–19`, `AC#15–20`), `T U#44` folded into the existing §5 non-admin bullet, `session_published` added to the §6 analytics-event bullet, 9 new §7 DoD rows (`U#40–48`). §8 ledger totals updated (use cases 11→12, edge cases 15→19, analytics events 6→7, AC 14→20, BE edge cases 20→24, error codes 9→10, unit tests 57→66); AC-numbering legend `1–14`→`1–20`. Feature-status migration-tail wording de-pinned to match `P`/`T`'s own de-pin sweep (tail no longer hard-pinned to `0018`). Result section's stale `0014`-status/§9-B cross-refs corrected; prior "Re-verified on-disk against `main@0dec63b`" (2026-07-23) marker preserved verbatim, this pass adds its own re-verification against `main@58788e6`. Pre-existing dated provenance preserved verbatim throughout; no new design question resolved; `AC#11` public-materialise cross-ref to `feature_marketplace_discovery` unchanged. |
 
 <!-- SESSION_MGMT_CHECKLIST_CLOSED -->

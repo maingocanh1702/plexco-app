@@ -538,15 +538,15 @@ notes: Opened by AP-25 round-06 create-status reconcile (0dec63b). **Founder-rat
 
 ## task: docs-session-acceptance-checklist-publish-retrace
 title: Re-trace acceptance checklist §9-B/§8 to the merged publish contract (publish mechanics no longer deferred)
-status: idea
+status: ready
 risk: P2
 change_class: docs-spec
 depends_on: [docs-session-publish-contract]
 invariants: []
 scope: [docs/issues/session-management-acceptance-checklist.md]
-manifest: null
-merged_probe: null
-notes: Opened by docs-session-publish-contract codex round-07 [P2]. After the publish contract merges, session-management-acceptance-checklist.md §9-B still says publish mechanics are deferred + need a product decision while its closing marker claims complete traceability — contradictory. Re-trace: §9-B publish row → mechanics AUTHORED (PublishSession command/idempotency/status-only/invocation surface) with billing-authority + projection-timing as declared HARD DEPENDENCIES; update Sources pin (P v2.13 / T v2.14) + §8 totals (UC/edges/events/AC now include publish). Per founder the checklist re-traces itself (NOT the publish slice's job — publish slice removed it from scope). Depends on docs-session-publish-contract merged.
+manifest: docs/autopilot-manifests/docs-session-acceptance-checklist-publish-retrace.json
+merged_probe: docs/issues/session-management-acceptance-checklist.md :: PublishSession
+notes: Opened by docs-session-publish-contract codex round-07 [P2]. After the publish contract merges, session-management-acceptance-checklist.md §9-B still says publish mechanics are deferred + need a product decision while its closing marker claims complete traceability — contradictory. Re-trace: §9-B publish row → mechanics AUTHORED (PublishSession command/idempotency/status-only/invocation surface) with billing-authority + projection-timing as declared HARD DEPENDENCIES; update Sources pin (P v2.13 / T v2.14) + §8 totals (UC/edges/events/AC now include publish). Per founder the checklist re-traces itself (NOT the publish slice's job — publish slice removed it from scope). Depends on docs-session-publish-contract merged. Slice doc `docs/autopilot-docs-session-acceptance-checklist-publish-retrace.md` + launcher `.claude/commands/ap-30-docs-session-acceptance-checklist-publish-retrace.md` added codex round-03 [P2] (this slice was previously scaffolded manifest-only, no slice doc/launcher, discovered mid-execution). Codex rounds 01-05 fixes: r01 pinned the billing-suspend re-check to both `tenants`+`subscriptions` rows in lock order (not just "a locking read"); r02 fixed manifest `invariants` false schema-collision + declared cross-feature billing/PRD sources explicitly; r03 added slice doc/launcher + this reconcile; r04 fixed launcher's scope-check text to match the manifest's actual 5-file scope; r05 qualified the re-publish idempotent-no-op row (§1 + `U#41`) with "authz/billing win over the no-op" (a replay from an actor who lost `session.manage`, or a now-suspended tenant, still gets 403) and flips `status` to `ready` here (matching r05's own finding: `in-flight` is invisible to `autopilot-backlog-reconcile`, which only checks `planned`/`ready`/`blocked`).
 
 ## task: docs-billing-publish-suspension-authority
 title: Define authoritative billing status source + mismatch/missing semantics for the publish suspension gate

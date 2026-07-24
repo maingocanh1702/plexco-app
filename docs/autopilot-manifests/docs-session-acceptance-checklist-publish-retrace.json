@@ -1,0 +1,21 @@
+{
+  "feature": "docs-session-acceptance-checklist-publish-retrace",
+  "branch": "feat/docs-session-acceptance-checklist-publish-retrace",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "docs-traceability",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "1x_clean",
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": [],
+  "_note": "Re-trace docs/issues/session-management-acceptance-checklist.md now that the publish contract + billing status-authority + concurrency-recheck have all merged (feature_session_management.md v2.13a, feature_session_management_tech.md v2.14c, feature_billing_lifecycle_tech.md v2.8d, PRD.md v2.8g). Sources pin bumped to match. The checklist's own §9-B previously recorded publish-transition mechanics as decided-to-exist-but-deferred; that is stale now that PublishSession/idempotency/status-only draft->open/bot+web surfaces are fully authored and its 3 former hard dependencies (billing status-authority, PRD FLOW 2 projection-timing, publish concurrency re-check-under-lock) are RESOLVED at spec level. This slice folds SES-UC-12/edges #16-19/AC#15-20/session_published/T tests #40-48 into checklist §1/§5/§6 + §7/§8 ledgers, removes the now-inaccurate §9-B bullet, and updates the Result section + adds a version/changelog to the checklist (it had neither before). Docs-only re-trace; no schema/code change; resolves no new design question; every file:line/section reference re-derived from on-disk specs at author time, not copied from stale citations. depends_on stays [] - the three dependencies this slice cross-references are already merged on main, not blocking predecessors of this slice itself.",
+  "scope": [
+    "docs/autopilot-manifests/docs-session-acceptance-checklist-publish-retrace.json",
+    "docs/issues/session-management-acceptance-checklist.md",
+    "docs/autopilot-docs-session-acceptance-checklist-publish-retrace.md",
+    ".claude/commands/ap-30-docs-session-acceptance-checklist-publish-retrace.md",
+    "docs/autopilot-backlog.md"
+  ]
+}
