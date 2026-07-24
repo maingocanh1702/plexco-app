@@ -385,7 +385,7 @@ notes: **RE-SCOPED 2026-07-22 → CODE_READY (Verdict 14, `main@e61d96c`).** Khu
 
 ## task: db-session-tenant-integrity-fks
 title: Composite tenant FKs so a child row cannot reference another tenant's session/membership
-status: ready
+status: merged
 risk: P0
 change_class: manual-schema-design
 depends_on: []
@@ -490,7 +490,7 @@ notes: Discovered by codex rounds 01/03/04 of docs-tail-0018-number-reconcile (2
 
 ## task: docs-migration-tail-0018-to-0020-sweep
 title: Reconcile stale global migration-tail 0018 → 0020 across ~22 docs (BUILD-STATUS/ROADMAP/HANDOFF + ~15 BE specs) — successor to merged docs-tail-0018-number-reconcile
-status: in-flight
+status: merged
 risk: P2
 change_class: docs-reconcile
 depends_on: []
@@ -526,7 +526,7 @@ notes: Split out of docs-0014 (which flips to merged via its own probe) so this 
 
 ## task: docs-session-publish-contract
 title: Define the draft→open publish command contract (validation, idempotency, transition guard)
-status: in-flight
+status: merged
 risk: P2
 change_class: docs-spec
 depends_on: []
@@ -550,7 +550,7 @@ notes: Opened by docs-session-publish-contract codex round-07 [P2]. After the pu
 
 ## task: docs-billing-publish-suspension-authority
 title: Define authoritative billing status source + mismatch/missing semantics for the publish suspension gate
-status: idea
+status: merged
 risk: P2
 change_class: docs-spec
 depends_on: []
@@ -574,7 +574,7 @@ notes: Opened by docs-session-publish-contract codex round-03 [P2]. Pre-existing
 
 ## task: docs-prd-flow2-publish-projection-reconcile
 title: Reconcile PRD FLOW 2 prose to draft-first (public projection at publish/open, not create)
-status: idea
+status: merged
 risk: P2
 change_class: docs-spec
 depends_on: []
