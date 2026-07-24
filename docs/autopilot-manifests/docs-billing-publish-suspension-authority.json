@@ -1,0 +1,19 @@
+{
+  "feature": "docs-billing-publish-suspension-authority",
+  "branch": "feat/docs-billing-publish-suspension-authority",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "docs-reconcile",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "1x_clean",
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": [],
+  "_note": "Publish build hard-dep #1: the merged publish contract (feature_session_management_tech §4 billing note) fail-closes publish on tenant billing-suspended per the billing Suspended Action Matrix (owned by feature_billing_lifecycle), but DEFERS to billing the STATUS-AUTHORITY question: 'suspended' lives in BOTH tenants.status (0002, abuse/ToS suspend) AND subscriptions.status (0007, non-payment lifecycle) — both CHECK 'suspended'. This slice, in feature_billing_lifecycle_tech.md (+ its product mirror feature_billing_lifecycle.md), makes the authoritative status source + edge cases explicit for authorizeTenantAction('publish_new_sessions'). RECOMMENDED resolution (founder confirms at READY): FAIL-CLOSED UNION — a tenant is blocked from publish if EITHER subscriptions.status='suspended' (billing non-payment; the Suspended Action Matrix source) OR tenants.status='suspended' (abuse/ToS hard override). Missing subscription row (free/no-sub) = not billing-suspended (matrix N/A) but tenants.status abuse-suspend still gates; other subscription statuses (trialing/active/past_due/cancelled) per the existing matrix (only 'suspended' blocks publish). Define the matrix cases (mismatch, missing subscription, other-status) explicitly so publish becomes code-ready. Docs-only, no schema/algorithm change (both status columns already exist); reuse TENANT_SUSPENDED (403). Preserve dated rows; touch NO other spec (the session-side note stays as cross-ref). Backlog block deferred to batch. RESOLVED (round-02, agent-authored per this recommended direction — pending founder ratification, STOP_AT_READY; codex round-01 [P1x2] forced this correction): subscriptions.status='cancelled' and a missing subscriptions row do NOT follow the 'other-status allow'/'not billing-suspended' framing above as originally recommended — both fold into the suspended/blocking bucket instead (fail-closed), because (a) the existing suspended->cancelled transition would otherwise let a non-paying suspended tenant escape the publish block by cancelling without paying or reactivating, and (b) tenant_provision (0012:256) atomically creates both tenants+subscriptions rows for every tenant, so a missing subscriptions row on an existing tenant is a provisioning anomaly, not a legitimate no-sub case, and must fail closed rather than allow-by-default (same principle as this spec's own DD-51 paid_at-unprovable fail-closed rule). trialing/active/past_due are unaffected (still allow, matching the original recommendation). See feature_billing_lifecycle_tech.md §3 Status Authority for the full 5-case decision table + unit tests #29-33.",
+  "scope": [
+    "docs/autopilot-manifests/docs-billing-publish-suspension-authority.json",
+    "docs/features/BE/feature_billing_lifecycle_tech.md",
+    "docs/features/feature_billing_lifecycle.md"
+  ]
+}

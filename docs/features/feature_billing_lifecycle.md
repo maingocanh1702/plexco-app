@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P5  
 > **Track:** 💳 Host Billing  
-> **Version:** 2.7a · 2026-07-19
+> **Version:** 2.8a · 2026-07-24
 > **Status:** Reviewed  
 > **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 tenant/authz · P3 durable payment ingestion · P3 notifications  
@@ -23,6 +23,7 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 - Grace days/price/tier versioned — KHÔNG retroactive mutation.
 - Suspension gating centralized by action class — safety/ingestion/read-only paths remain.
 - Entitlement gate theo **capability flags** (config-driven), không hard-code theo tenant/plan_key.
+- `suspended` (gate publish/mutation) = fail-closed **union** hai cột `tenants.status` ⊕ `subscriptions.status`, gồm cả `subscriptions.status='cancelled'` và thiếu row `subscriptions` (unprovable → khoá, không allow-by-default) — không suy ra chỉ từ một cột. Chi tiết cột nào/case nào ở `BE/feature_billing_lifecycle_tech.md` §3 Status Authority. *(✅ Founder-ratified 2026-07-24.)*
 
 ### Pricing tiers (DD-29 — thay DD-03)
 
@@ -64,7 +65,7 @@ Kênh phase-1 = **Zalo + Facebook Messenger** (Telegram loại — DD-37; Messen
 | 3 | Financial | Partial/overpayment | Billing review queue / manual review (KHÔNG có bảng `billing_credits`) — KHÔNG allocate to player charges |
 | 4 | Data Integrity | Retroactive price/tier mutation | ❌ NEVER — versioned, immutable |
 | 5 | Data Integrity | Clock/timezone billing date | UTC billing dates — no timezone ambiguity |
-| 6 | Security | Suspended tenant push new public sessions | ❌ Block — existing sessions expire naturally only |
+| 6 | Security | Suspended tenant push new public sessions | ❌ Block — existing sessions expire naturally only. "Suspended" = billing non-payment (`subscriptions`) **HOẶC** tenant-level abuse/ToS override (`tenants`) — fail-closed union, không phải một cột riêng lẻ; chi tiết case ở BE §3 Status Authority |
 | 7 | Security | Suspended tenant player CK arrives | ✅ Still ingest — safety/ingestion paths remain |
 | 8 | Cross-Feature | Owner lost access | Support/audit policy required |
 | 9 | Financial | Refund request | Dùng invoice `paid_at`; ≤7 ngày → full refund + audit, >7 ngày → no refund + dùng hết kỳ. Missing/unprovable `paid_at` → fail-closed manual review |
@@ -87,7 +88,7 @@ Kênh phase-1 = **Zalo + Facebook Messenger** (Telegram loại — DD-37; Messen
 | Web | Invoice list | Skeleton table | Invoice rows: code, amount, status, date | Error banner | "Chưa có hoá đơn" |
 | Web | Payment instructions | — | QR + bank info + invoice code | — | N/A |
 | Web | Subscription status badges | — | ✅ Active / ⚠️ Expiring / 🔴 Past Due / ⛔ Suspended | — | N/A |
-| Web | Reactivation | — | "Thanh toán để kích hoạt lại" + payment CTA | "Lỗi — liên hệ support" | N/A |
+| Web | Reactivation | — | "Thanh toán để kích hoạt lại" + payment CTA **và** "Liên hệ hỗ trợ nếu bạn cho rằng đây là nhầm lẫn" — luôn hiển thị CẢ HAI, không rẽ nhánh theo nguyên nhân suspend (billing overview API không có nguồn dữ liệu nào để phân biệt; `TENANT_SUSPENDED` cố tình cause-agnostic — xem `BE/feature_billing_lifecycle_tech.md` §3 Status Authority) | "Lỗi — liên hệ support" | N/A |
 | Bot (Zalo/Messenger) | Owner notice | — | "⚠️ [Club] sắp hết hạn / đã bị tạm ngưng" | — | N/A |
 
 ---
@@ -125,6 +126,8 @@ stateDiagram-v2
 
 > **Host Pro DD-51:** trial đúng 14 ngày, reminder khi còn 2 ngày; trial hết chưa trả → downgrade `free` ngay, không vào invoice grace. Grace 7 ngày chỉ áp invoice của kỳ trả phí đã active. Refund window tính duy nhất từ invoice `paid_at`; override không thay đổi refund window.
 
+> **⚠️ Diagram trên gộp hai trục vào một:** `suspended` thực chất sống trên **hai cột vật lý khác nhau** — `subscriptions.status` (non-payment, diagram này) và `tenants.status` (tenant-root hard override, abuse/ToS — chưa build write path, xem `BE/feature_billing_lifecycle_tech.md` §3 Status Authority). `suspended --> active: Payment received / manual override` mô tả **chỉ recovery của trục `subscriptions`** — trả nợ hoặc `ApplyOverride` (cả hai đều billing-axis). Nó **KHÔNG** clear một tenant-root hard-suspend (ToS/abuse): trục đó cần một trust-safety un-suspend riêng (chưa xây) sở hữu cả set lẫn clear. Implementer đọc diagram này không được suy ra rằng trả tiền tự động gỡ suspend vì lạm dụng.
+
 ---
 
 ## 5. Analytics Events
@@ -148,6 +151,7 @@ stateDiagram-v2
 - [ ] Billing ledger isolated from player ledger
 - [ ] Duplicate payment KHÔNG extend twice
 - [ ] Suspended action matrix matches BRD — preserves player CK ingest
+- [ ] Publish-suspend gate reads fail-closed union of `tenants.status`/`subscriptions.status` — không quyết định từ một cột đơn lẻ
 - [ ] Public sessions expire naturally — KHÔNG newly published while suspended
 - [ ] Reactivation resumes operations/jobs without replay duplication
 - [ ] Owner notices/corrections best-effort and audited
@@ -174,6 +178,8 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-24 | v2.8a | **FOUNDER-RATIFIED + Round-06 fix (`docs-billing-publish-suspension-authority`):** Owner ratified the status-authority fail-closed union as authored — inline "⏳ pending" note removed (this review/merge is the ratification). Reactivation screen copy reverted to cause-agnostic always-show-both (payment CTA **and** contact-support line) — the round-05 conditional had no data source to pick a branch (billing overview API only exposes `subscription.status`; `TENANT_SUSPENDED` is intentionally cause-agnostic). Full rationale at BE `feature_billing_lifecycle_tech.md` v2.8a. Docs-only. |
+| 2026-07-24 | v2.8 | **Status-authority cross-ref (`docs-billing-publish-suspension-authority`):** §1 bất biến +1 bullet + edge #6 nói rõ "suspended" cho publish-suspend gate = fail-closed hai trục `tenants.status`/`subscriptions.status` (không suy ra từ một cột); +1 AC bullet. §4 Lifecycle State Machine +1 cảnh báo: diagram gộp 2 trục vào 1, "suspended → active: Payment received / manual override" chỉ là recovery trục `subscriptions` — **không** clear tenant-root hard-suspend (ToS/abuse), trục đó cần cơ chế riêng chưa xây (codex round-03 [P1] flagged nguy cơ đọc nhầm). §3 Reactivation screen copy sửa (round-05 [P2]): không còn tuyên bố tuyệt đối "trả tiền là xong" — suspended vì lý do khác billing thì payment CTA ẩn, hướng dẫn liên hệ hỗ trợ; owner-facing cause-differentiation là UX decision chưa chốt. Chi tiết decision table 6-case + concurrency contract + tests ở BE `feature_billing_lifecycle_tech.md` §3 Status Authority (mirror kỹ thuật — không lặp lại ở đây). **⏳ Founder ratification pending** cho shape cụ thể (STOP_AT_READY). Docs-only, không đổi UC/domain model/state machine (chỉ thêm chú thích diagram + sửa 1 screen copy, không sửa mermaid). Pre-existing dated changelog giữ verbatim. |
 | 2026-07-19 | v2.7a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-16 | v2.7 | **DD-51 full propagation:** use cases, edge table, domain fields, state machine and AC now pin trial/reminder/downgrade, invoice grace, refund `paid_at` window, override and suspended automation behavior. Authority: decisions v1.37. |
 | 2026-07-10 | v2.5 | **Review fixes → canonical billing vocab.** Domain model: `invoices`→**`subscription_invoices`**; `billing_credits`/credit concept → **`billing_allocations`** (+ `billing_overrides`); `webhook_transactions`→player `bank_transactions`. Note `plans` CHECK `('free','host_pro')` = migration còn chờ (live schema 4-tier — không claim done). Overpay/partial = billing review queue (không có bảng `billing_credits`). BIL-OQ-1 → DD-29 2 tier. |

@@ -1,7 +1,7 @@
 # Feature: Host Billing & Tenant Lifecycle — Backend Tech Spec
 
 > **Canonical phase:** P5  
-> **Version:** 2.7b · 2026-07-24
+> **Version:** 2.8a · 2026-07-24
 > **Status:** Reviewed  
 > **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_billing_lifecycle.md`  
@@ -17,10 +17,10 @@
 Tenant creation → free active immediately OR paid plan trial → Daily lifecycle job
     → Issue invoice → Platform billing webhook → Match → Extend period
     → Due transitions: active → past_due → suspended → cancelled
-    → Central authorizeTenantAction(status, actionClass)
+    → Central authorizeTenantAction(tenantId, actionClass)
 ```
 
-Billing ledger **separate schema/table set** from player ledger. Central `authorizeTenantAction` defines allowed matrix — adapters cannot implement inconsistent suspension rules.
+Billing ledger **separate schema/table set** from player ledger. Central `authorizeTenantAction` defines allowed matrix — adapters cannot implement inconsistent suspension rules. It takes **tenant context, not a pre-resolved status** — callers never read `tenants.status`/`subscriptions.status` themselves and pass a scalar in; the function owns reading both columns and resolving the fail-closed union itself (§3 Status Authority). This keeps the "adapters cannot implement inconsistent suspension rules" guarantee real: a caller that pre-resolves only one column would silently miss the other axis.
 
 ---
 
@@ -152,7 +152,7 @@ CREATE TABLE billing_overrides (
 | 5 | Data Integrity | Double period extension | `UNIQUE(tenant_id, period_key)` — exactly once |
 | 6 | Data Integrity | Retroactive price change | ❌ NEVER — plan version immutable |
 | 7 | Data Integrity | Clock/timezone billing date | UTC billing dates only |
-| 8 | Security | Suspended tenant publish new sessions | ❌ Block — `authorizeTenantAction` check |
+| 8 | Security | Suspended tenant publish new sessions | ❌ Block `TENANT_SUSPENDED` — `authorizeTenantAction(tenantId, 'publish_new_sessions')`; status = fail-closed union `tenants.status`/`subscriptions.status` (§3 Status Authority) |
 | 9 | Security | Suspended tenant CK ingest | ✅ Allow — safety path |
 | 10 | Data Integrity | Reactivation replay jobs | Version check — no duplicate reminders/projectors |
 | 11 | Security | Override without expiry | ❌ Must have expiry — auto-expire enforced |
@@ -223,6 +223,59 @@ CREATE TABLE billing_overrides (
 | Read-only queries | ✅ | ✅ | ✅ |
 | System safety | ✅ | ✅ | ✅ |
 
+### Status Authority (`authorizeTenantAction`)
+
+> Resolves the status-authority gap `feature_session_management_tech.md` §4 publish billing note named as a **hard dependency** (billing owns; session slice only cross-refs — that file is not edited here).
+
+> **✅ Founder-ratified (2026-07-24):** the union direction below (fail-closed 2-step; tenant axis wins including anomaly values; subscription axis blocks on `suspended`/`cancelled`/missing row, allows `trialing`/`active`/`past_due`) is confirmed as the authoritative contract — this review/merge is the ratification. `feature_session_management_tech.md` §4's named hard dependency `docs-billing-publish-suspension-authority` is content-resolved by this contract; that file is not edited here (per scope) — its own dependency-status wording is a follow-up for whoever merges next.
+
+`suspended` sống trên **hai cột vật lý**, cùng CHECK `('trialing','active','past_due','suspended','cancelled')` nhưng là **hai trục khác nhau** — không phải một khái niệm lặp lại hai lần:
+
+| Cột | Trục | Write path hiện tại (live) |
+|---|---|---|
+| `subscriptions.status` (`0007`) | **Non-payment billing lifecycle** (trial/grace/quá hạn) — nguồn của Suspended Action Matrix trên. | Daily Lifecycle Job (§4) + billing webhook match — đây đúng là cột matrix mô tả. |
+| `tenants.status` (`0002`) | **Tenant-root hard override** (abuse/ToS) — độc lập thanh toán. | **Chưa có write path nào ngoài** `tenant_provision` (`0012:256`) — hard-set `'active'` lúc tạo tenant, cùng transaction với `subscriptions` (free plan); mọi seed/test fixture khác cũng chỉ từng insert `'active'` explicit. **Cột có `DEFAULT 'trialing'`** (`0002_tenants_core.sql:15`) mà KHÔNG write path nào hiện dùng — `tenant_provision` luôn set `status` tường minh, không rơi vào default. Chưa tồn tại PlatformAdmin/trust-safety mutation nào ghi (hay xoá) cột này; contract dưới đây pin hành vi TRƯỚC khi mechanism đó build, để gate publish không phải sửa lại lúc nó land. **Set ⊥ clear là một cặp chưa xây** — khi trust-safety mechanism đó land, nó phải sở hữu CẢ set lẫn clear; một sự kiện trục billing (payment nhận được, `ApplyOverride`) **không được** ngầm định clear cột này (xem cảnh báo ở `feature_billing_lifecycle.md` §4 Lifecycle State Machine). |
+
+**`authorizeTenantAction(tenantId, actionClass)` resolve đúng MỘT `status` hiệu lực trước khi tra Suspended Action Matrix — FAIL-CLOSED, hai bước, trục tenant xét TRƯỚC:**
+
+```text
+step 1 (trục tenant-root — hard override, xét trước, thắng vô điều kiện):
+  nếu tenants.status NOT IN ('active', 'trialing'):  effective_status = 'suspended'
+    → fail-closed trên cả cột, nhưng CHẤP NHẬN 'trialing' vì đó là DEFAULT của chính cột này
+      (`0002_tenants_core.sql:15`) — một insert path TƯƠNG LAI dựa vào default (không set status
+      tường minh như tenant_provision hiện làm) không được tự khoá publish của một tenant hoàn
+      toàn bình thường chỉ vì nó rơi vào default. 'active'/'trialing' là hai giá trị PLAUSIBLE cho
+      một tenant mới/bình thường; `past_due`/`cancelled` thì KHÔNG (không path/default nào sinh ra
+      chúng ở trục này) → vẫn khoá như anomaly, xem case 1b.
+  ngược lại (tenants.status IN ('active','trialing')) → sang step 2
+
+step 2 (trục billing/subscriptions — chỉ xét khi trục tenant đã rõ 'active' HOẶC 'trialing', tức step 1 không khoá):
+  thiếu row `subscriptions`               → effective_status = 'suspended'  (unprovable ⇒ fail-closed)
+  subscriptions.status IN ('suspended','cancelled') → effective_status = 'suspended'  (billing terminal)
+  subscriptions.status IN ('trialing','active','past_due') → effective_status = subscriptions.status  (allow)
+```
+
+Decision table dưới đây không còn case chưa định nghĩa (TBD) **về mặt cơ chế** cho `publish_new_sessions` (và mọi action class khác gọi qua cùng choke-point) — **founder-ratified 2026-07-24, G1 Decision cho contract này giờ `PASS`** (xem ghi chú ✅ trên). Không tự claim `CODE_READY` cho toàn bộ publish BUILD slice: dependency thứ hai `docs-prd-flow2-publish-projection-reconcile` + implementation artifacts (task list, tests thật, migration) vẫn ngoài scope của slice docs-only này:
+
+| # | `tenants.status` | `subscriptions.status` | `effective_status` | Publish new sessions |
+|---|---|---|---|---|
+| 1 | `suspended` (giá trị thiết kế) | bất kỳ (kể cả thiếu row) | `suspended` | ❌ `TENANT_SUSPENDED` — trục tenant thắng ở step 1, không cần xét step 2 |
+| 1b | `past_due` / `cancelled` (KHÔNG write path/default nào tạo ra ở trục này, thuần anomaly) | bất kỳ | `suspended` | ❌ `TENANT_SUSPENDED` — fail-closed đồng nhất với case 1: step 1 chỉ coi `'active'`/`'trialing'` (giá trị thật sự có thể xuất hiện — set tường minh hoặc rơi vào `DEFAULT`) là rõ ràng ổn; `past_due`/`cancelled` không có cách nào hợp lệ xuất hiện ở trục tenant-root nên vẫn khoá như anomaly |
+| 2 | `active` hoặc `trialing` | `suspended` | `suspended` | ❌ `TENANT_SUSPENDED` — trục billing tự đủ để khoá ở step 2 |
+| 2b | `active` hoặc `trialing` | `cancelled` | `suspended` | ❌ `TENANT_SUSPENDED` — **không** treat như active/past_due: state machine có `suspended → cancelled` (owner/admin cancel một tenant ĐANG suspended, §4); cho `cancelled` publish sẽ mở lối tắt né suspend mà không cần trả nợ/reactivate. `cancelled` luôn terminal — khác nhánh "cancel >7d" vẫn giữ `status='active'` suốt kỳ còn lại (§4 Refund/cancel), nên nhánh đó KHÔNG đi qua case này |
+| 3 | `active` hoặc `trialing` | `trialing` / `active` / `past_due` | = giá trị đó | ✅ Allow — matrix trên chỉ liệt kê cột `active`/`past_due` vì hai cột đó **giống hệt nhau ở mọi hàng**; `trialing` theo cùng pattern (đứng trước `active`, còn tốt hơn `past_due`) |
+| 4 | `active` hoặc `trialing` | thiếu row (tenant chưa có `subscriptions`) | `suspended` (fail-closed) | ❌ `TENANT_SUSPENDED` — **không** phải "chưa vào billing nên bỏ qua": `tenant_provision` tạo `subscriptions` cùng transaction với MỌI tenant (kể cả personal tenant tương lai DD-46 — "tái dùng core… + free sub"), nên thiếu row trên tenant đã tồn tại = provisioning dở dang/data anomaly, không phải trạng thái hợp lệ. Không đủ bằng chứng tenant đang tốt → khoá (cùng nguyên tắc DD-51 fail-closed cho `paid_at` không chứng minh được, không phải coi-như-0/an-toàn) |
+
+Hai cột **"mismatch"** (vd `tenants.status='suspended'` nhưng `subscriptions.status='active'`, hoặc ngược lại) không phải trạng thái mơ hồ cần xử lý riêng — cấu trúc 2-step đã resolve theo thứ tự cố định: step 1 (trục tenant) luôn xét trước và thắng vô điều kiện nếu nó khoá; step 2 (trục billing) chỉ chạy khi step 1 đã rõ `'active'`/`'trialing'`. Không có nhánh "ambiguous" cần đoán.
+
+Case 1b (`tenants.status ∈ {past_due, cancelled}`) và case 4 (thiếu `subscriptions` row) hiện **không reachable** qua write path sống hôm nay (`tenant_provision` luôn set `tenants.status='active'` tường minh + tạo `subscriptions` cùng transaction — default `'trialing'` của cột `tenants.status` không bị rơi vào, nhưng NẾU một path tương lai rơi vào đó thì case 3 vẫn allow, không phải case 1b). Giữ case 1b/4 là **fail-closed** (không phải TBD chưa nghĩ tới, và không phải allow-by-default) cho code path/dữ liệu tương lai bất thường; cùng bucket `suspended`, không cần error code riêng.
+
+`authorizeTenantAction` là **choke-point duy nhất** đọc cả hai cột; adapter/session slice không tự đọc `tenants.status`/`subscriptions.status`, không tự resolve step 1/2, và không tự truyền `status` đã resolve sẵn vào (xem `feature_session_management_tech.md` §4 cross-ref) — matrix + status authority ở đây là single source of truth, adapters không tự nới.
+
+**Concurrency (bắt buộc cho mọi mutating action class — `publish_new_sessions`, admin mutation, integration changes; KHÔNG áp cho CK ingest/read-only/system safety vì các nhánh đó luôn ✅ bất kể status):** `authorizeTenantAction` KHÔNG phải một advisory point-in-time mà caller check-một-lần-sớm-rồi-quên. Daily Lifecycle Job (§4) claim `subscriptions` bằng `FOR UPDATE SKIP LOCKED` khi transition `past_due → suspended` — nếu caller check billing xong rồi mutate session ở một transaction/thời điểm sau đó KHÔNG re-validate, tồn tại race: lifecycle job suspend commit **giữa** lúc check và lúc mutation commit → session vẫn publish được cho tenant vừa suspend. Với mutating action class: check phải nằm **trong cùng transaction** với mutation, đủ gần commit để một suspend-transition concurrent trên `subscriptions`/`tenants` hoặc serialize trước nó (caller thấy `suspended` mới) hoặc bị block bởi lock cho tới khi caller's transaction resolve. Một check sớm-rồi-mutate-muộn-không-re-validate **không đủ** cho mutating class. **Không resolve ở đây:** liệu thứ tự hiện tại của `feature_session_management_tech.md` §4 publish algorithm (check billing tại step 1, TRƯỚC khi lock session row ở step 2, mutation ở step 6) đã thoả contract này hay cần thêm một re-check/lock — đó là chi tiết transaction của session slice, KHÔNG sửa ở đây (file đó không edit); pin làm **follow-up cần xác nhận riêng** (`docs-session-publish-concurrency-recheck`) trước khi publish thực sự code-ready, cạnh 2 hard dependency đã có ở đó (billing-authority — chính slice này; projection-timing). Test #36 pin acceptance criterion cho contract này (billing owns; session slice phải tự chứng minh nó thoả khi build).
+
+**`TENANT_SUSPENDED` giờ có hai root cause khác nhau — reuse cùng code, KHÔNG tự tách code mới (theo đúng discipline slice này):** case 1/1b (`tenants.status`) là abuse/ToS hard override; case 2/2b/4 (`subscriptions.status`/missing row) là non-payment billing. Canonical error code/message ("Club đang tạm ngưng" — owned bởi `feature_tenant_routing_authz_tech.md`) không phân biệt hai nguyên nhân, và **trả tiền không sửa được case 1/1b** (xem cảnh báo cross-axis ở `feature_billing_lifecycle.md` §4). Owner-facing copy ("Reactivation" — §3 Screens & States) **không rẽ nhánh theo nguyên nhân** — billing overview API chỉ trả `subscription.status`, không có nguồn dữ liệu nào để UI phân biệt case nào đang áp; copy luôn hiển thị cả payment CTA lẫn "liên hệ hỗ trợ nếu nhầm lẫn", không tuyên bố tuyệt đối "trả tiền là xong". **Phân biệt rõ nguyên nhân cho owner** (server-side disposition field riêng cho hai root cause) là **scope expansion chưa chốt** — không resolve ở đây (không invent field/code mới, không sửa `feature_tenant_routing_authz_tech.md`); flag làm follow-up sản phẩm khi trust-safety mechanism thật sự được build (hiện chưa có write path nào tạo case 1, xem bảng cột trên).
+
 ---
 
 ## 4. Chi tiết triển khai
@@ -265,7 +318,7 @@ Webhook → Durable ingest: billing_transaction + job COMMIT before ACK
 
 | Data | Cache? | TTL | Invalidation |
 |------|--------|-----|-------------|
-| Subscription status / `authorizeTenantAction` input | ❌ | — | Đường authz — đọc live, fail-closed; matrix §3 áp thống nhất, adapter không tự nới |
+| Tenant/subscription status / `authorizeTenantAction` input | ❌ | — | Đường authz — đọc live cả `tenants.status` và `subscriptions.status`, fail-closed; matrix + Status Authority §3 áp thống nhất, adapter không tự nới |
 | Billing ledger (invoices/transactions/allocations) | ❌ | — | Tiền — mọi transition dưới row/version lock (§4, edge #3/#5) |
 | Capability flags (`plans.entitlements`) | ❌ | — | Gate đọc `hasCapability` live (§4b); caching nếu có là enablement riêng — fail-closed khi chưa pin |
 
@@ -341,6 +394,14 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 | 26 | Refund paid_at NULL | Missing proof | Manual review fail-closed |
 | 27 | Override authorization/expiry | Co-admin or expiry>7d or missing ticket | Rejected; PlatformAdmin valid override auto-expires |
 | 28 | Suspended automation | Player bank transaction arrives | Durable ingest succeeds; no auto allocation/notification |
+| 29 | Publish blocked — tenant hard-suspend (abuse), subscription active | `tenants.status='suspended'`, `subscriptions.status='active'` | `authorizeTenantAction(tenantId, 'publish_new_sessions')` → `TENANT_SUSPENDED` (union: tenant axis alone blocks) |
+| 30 | Publish blocked — subscription suspended (non-payment), tenant active | `tenants.status='active'`, `subscriptions.status='suspended'` | `authorizeTenantAction(tenantId, 'publish_new_sessions')` → `TENANT_SUSPENDED` (union: subscription axis alone blocks) |
+| 31 | Publish blocked — no subscription row | Tenant exists, no `subscriptions` row, `tenants.status='active'` | `TENANT_SUSPENDED` — fail-closed (unprovable state), not allow-by-default |
+| 32 | Publish allowed — trialing subscription, tenant active | `subscriptions.status='trialing'`, `tenants.status='active'` | Allow — same non-suspended treatment as `active`/`past_due` |
+| 33 | Publish blocked — cancelled subscription, tenant active | `subscriptions.status='cancelled'`, `tenants.status='active'` | `TENANT_SUSPENDED` — `cancelled` is terminal, folded into the `suspended` bucket (closes the `suspended → cancelled` escape-without-paying path) |
+| 34 | Publish blocked — anomalous `tenants.status` value | `tenants.status='past_due'` (no live write path/default produces this; set directly for the test), `subscriptions.status='active'` | `TENANT_SUSPENDED` — step 1 fails closed on any value other than `active`/`trialing`, not just literal `suspended`; never reached at step 2 |
+| 35 | Publish allowed — tenant row created via schema `DEFAULT`, no explicit status set | `tenants.status='trialing'` (column default, `0002_tenants_core.sql:15` — not set explicitly by any current path but must not self-lockout a future one), `subscriptions.status='active'` | Allow — step 1 treats `trialing` same as `active`; a normal insert relying on the default must not be classified as hard-suspended |
+| 36 | Publish vs. concurrent lifecycle-job suspend (competing writer) | `authorizeTenantAction('publish_new_sessions')` check passes (`subscriptions.status='active'`); Daily Lifecycle Job's `past_due→suspended` transition (`FOR UPDATE SKIP LOCKED`) commits before the publish mutation commits | Publish must NOT succeed for the now-suspended tenant — the check+mutation must serialize against the lifecycle job's row lock or re-validate immediately before commit; a check-then-forget-then-mutate-later ordering fails this test |
 
 ### Integration Tests
 
@@ -375,6 +436,8 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-24 | v2.8a | **FOUNDER-RATIFIED + Round-06 fixes (`docs-billing-publish-suspension-authority`):** Owner ratified the v2.8 §3 Status Authority fail-closed 2-step resolution as authored (tenant axis wins incl. anomaly; subscription axis blocks `suspended`/`cancelled`/missing row, allows `trialing`/`active`/`past_due`) — decision table **unchanged**. Removed the "⏳ founder ratification pending" markers (§3 blockquote + G1-status line + product-mirror inline note) — this review/merge IS the ratification; `feature_session_management_tech.md` §4's named hard dependency is content-resolved by this contract (that file itself not edited, per scope). **Codex round-06 [P1] fix:** the round-05 Reactivation screen copy branched payment-CTA-vs-support-contact on suspension cause, but nothing in the contract (billing overview API only exposes `subscription.status`; `TENANT_SUSPENDED` is intentionally cause-agnostic) gives the UI a way to pick the branch — reverted to cause-agnostic copy that always shows both the payment CTA and a support-contact line, regardless of cause (see `feature_billing_lifecycle.md` §3). Round-06's other P1 (process concern re: authoring into a `Status: Reviewed` spec) is resolved by this ratification. Did not touch `feature_session_management_tech.md` or `docs/autopilot-backlog.md`. |
+| 2026-07-24 | v2.8 | **Status authority for publish suspend gate (`docs-billing-publish-suspension-authority`):** §3 mới **Status Authority** — `authorizeTenantAction(tenantId, actionClass)` (takes tenant context, resolves both columns itself — never a pre-resolved scalar) fail-closed **two-step**: step 1 trục `tenants.status` (chỉ `'active'` rõ ràng ổn, MỌI giá trị khác kể cả anomaly đều khoá — không riêng literal `'suspended'`); step 2 (chỉ khi step 1 clear) trục `subscriptions.status` — `suspended`/`cancelled`/missing row → block, `trialing`/`active`/`past_due` → allow. 2 cột share CHECK enum nhưng 2 trục độc lập (non-payment billing lifecycle vs tenant-root abuse/ToS hard override — trục sau **chưa có write path** ngoài `tenant_provision` set cứng `'active'` lúc tạo tenant, `0012:256`, và **chưa có clearing mechanism** — một sự kiện billing-axis không được ngầm clear nó). Decision table 6-case (1/1b/2/2b/3/4) + 6 unit test (#29–34). §1 overview + edge #8 + Caching Strategy trỏ về §3. **Codex round-01 (2×P1):** draft đầu treat `cancelled`/thiếu-row = allow; sửa fail-closed (lối tắt `suspended→cancelled` né nợ; thiếu row = anomaly không phải "chưa vào billing"). **Round-02 (P1+P2):** "code-ready" mâu thuẫn với ghi chú ratification-pending; sửa wording tách "mechanism đủ" khỏi verdict `CODE_READY` thật; manifest `_note` cũ mâu thuẫn bảng đã sửa → thêm addendum RESOLVED. **Round-03 (3×P1):** (a) signature 1-scalar `(status, actionClass)` mơ hồ ai resolve — đổi `(tenantId, actionClass)`, hàm tự đọc cả 2 cột; (b) `feature_billing_lifecycle.md` state machine gộp 2 trục vào 1 diagram, "Payment received/manual override" có thể đọc nhầm thành clear luôn tenant-root hard-suspend — thêm cảnh báo ở §4 diagram đó; (c) `tenants.status` fail-open cho giá trị khác `suspended`/`active` — đổi step 1 thành fail-closed trên toàn cột (chỉ `'active'` allow), test #34. **Round-04 (P2):** `tenants.status` có `DEFAULT 'trialing'` (`0002_tenants_core.sql:15`) mà step 1 (post round-03) chỉ allow `'active'` — một insert path TƯƠNG LAI dựa default sẽ tự khoá publish của tenant hoàn toàn bình thường; broaden step 1 allow-set thành `{'active','trialing'}` (`past_due`/`cancelled` vẫn anomaly, vẫn khoá — case 1b), test #35. **P2 backlog registration (round-02 + round-04, cùng finding lặp lại) — DISMISSED có bằng chứng, không sửa:** task instruction tường minh "Do NOT touch docs/autopilot-backlog.md"; manifest `_note` gốc đã ghi "Backlog block deferred to batch" — đây là scope exclusion chủ ý, không phải thiếu sót; backlog reconciliation cho slice này để lại cho batch riêng (founder xử lý). **Round-05 (P1+2×P2):** thêm §3 clause **Concurrency** — `authorizeTenantAction` cho mutating action class không phải check-sớm-rồi-quên; race thật với Daily Lifecycle Job's `FOR UPDATE SKIP LOCKED` suspend-transition nếu caller không re-validate/serialize tới lúc mutation commit; pin follow-up `docs-session-publish-concurrency-recheck` (session spec's step-ordering exact fit — không sửa file đó ở đây), test #36. Sửa wording "step 2... trục tenant đã rõ 'active'" thiếu `trialing` (gap sót từ round-04). Thêm ghi chú `TENANT_SUSPENDED` giờ 2 root cause (abuse vs non-payment) share 1 code/message — không invent code mới (giữ discipline); sửa copy "Reactivation" ở `feature_billing_lifecycle.md` §3 để không tuyên bố trả tiền luôn sửa được; owner-facing cause-differentiation là UX decision chưa chốt, không resolve ở đây. **⏳ Founder ratification pending** cho SHAPE cụ thể (per manifest, STOP_AT_READY) — agent-authored theo hướng recommend; dependency mà `feature_session_management_tech.md` §4 publish billing note cross-ref chỉ thật sự resolved sau khi confirm (file đó **không sửa** — cross-ref giữ nguyên). Docs-only, không đổi schema/algorithm (2 cột đã tồn tại từ `0002`/`0007`); reuse `TENANT_SUSPENDED` (403), không session error code mới. **Không đổi** Suspended Action Matrix hiện có (3 cột/6 hàng nguyên vẹn). Pre-existing dated changelog giữ verbatim. |
 | 2026-07-24 | v2.7b | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): §Migration&Rollback grep-note hard-pinned `migrations 0000–0018` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). 6 bảng billing vẫn từ `0007` — reuse, không đổi. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v2.7a | **Reconcile 0014 merge-state:** current-state §2 grep-note sửa → migrations `0000–0018` đã merge trên `main`, `0014_players_waitlist` **đã merge** (`1a6ac38`), tail = 0018 (trước ghi "0000–0013 merged; 0014 branch-only"). 6 bảng billing vẫn từ `0007` — reuse, không recreate. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.7 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (reuse 6 bảng `0007`; delta DD-29/DD-51 → migration mới monotonic), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
