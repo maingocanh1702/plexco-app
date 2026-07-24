@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.3  
 > **Track:** 🔍 Discovery & Marketplace  
-> **Version:** 2.2a · 2026-07-19
+> **Version:** 2.2b · 2026-07-24
 > **Status:** Reviewed  
 > **Implementation:** Not started — `public_sessions` có sẵn · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 session management · P4 sync/public projector  
@@ -17,7 +17,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 ### Bất biến
 
 - Public serializer **chỉ** emit whitelist fields — không bao giờ expose internal routing/tenant ID.
-- Private/incomplete/closed/cancelled/past sessions **KHÔNG BAO GIỜ** xuất hiện.
+- Private/**draft** (chưa publish)/incomplete/closed/cancelled/past sessions **KHÔNG BAO GIỜ** xuất hiện.
 - Exact venue chỉ reveal khi canonical player outcome là `active`; approved-but-waitlisted vẫn ẩn.
 - `slots_open` trong browse là advisory — join recheck capacity transactionally.
 - Messenger central mặc định global discovery; tenant Page mặc định local + “Khám phá tất cả”. Mỗi trang tối đa 8 business choices; Join CTA là opaque action, không raw routing ID.
@@ -30,7 +30,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|
-| MKT-UC-1 | Host | Set session public | Projection appears sau sync projector |
+| MKT-UC-1 | Host | Set session public (chỉ tại create hoặc edit — `PublishSession` status-only, không đổi `visibility`) | Projection appears sau sync projector — chỉ khi session đồng thời `status='open'`; còn `draft` (chưa Host publish) thì chưa xuất hiện dù đã set public |
 | MKT-UC-2 | Player (anon) | Browse sessions — filter sport/area/time | Results list + no-result fallback |
 | MKT-UC-3 | Player (auth) | Filter thêm skill/price/available slot | Filtered results |
 | MKT-UC-4 | Player | Mở public detail | Session info (whitelist) + Join CTA |
@@ -45,7 +45,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 
 | # | Category | Case | Hành vi bắt buộc |
 |---|----------|------|-------------------|
-| 1 | Security | Private session leak vào public | ❌ NEVER — projector chỉ emit visibility=public + required fields present |
+| 1 | Security | Private session leak vào public | ❌ NEVER — projector chỉ emit khi `visibility=public` **và** `status='open'` + required fields present; `draft` không bao giờ project dù đã set public |
 | 2 | Security | Tenant routing ID serialized | ❌ NEVER — internal routing ID stripped from public response |
 | 3 | Security | Exact venue/address trong browse | ❌ NEVER — chỉ area (quận/khu vực). Ref: OD-6 |
 | 4 | Security | Roster/membership/bank/charge/payment/PII leak | ❌ NEVER — strict whitelist |
@@ -145,6 +145,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-24 | v2.2b | **Public-projection timing, explicit (`docs-prd-flow2-publish-projection-reconcile`, hard dependency of `docs-session-publish-contract`):** MKT-UC-1 + edge #1 + Bất biến bullet reworded to require `status='open'` in addition to `visibility='public'` — a `draft` session is never projected regardless of visibility. Closes the same cross-authority conflict already fixed in `BE/feature_marketplace_discovery_tech.md` §4 and PRD FLOW 2/12/14; this Product-spec mirror was the codex round-01 P1 gap (Reviewed spec still permitted project-on-visibility-alone). Codex round-02 [P2]: MKT-UC-1 wording corrected — `visibility` is set only at create/edit, never at publish (`PublishSession` is status-only per `feature_session_management_tech.md` §4; publish only flips `draft`→`open`, which is what actually triggers the already-public row to project). No schema/algorithm change. |
 | 2026-07-19 | v2.2a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.2 | **Live/DD-46 projection closure:** document intentional no-FK public session reference; personal tenants source public club alias only from owner membership and fail closed when blank; ranking remains deterministic time-order until MKT-OQ-3 is resolved. |
 | 2026-07-17 | v2.1 | **DD-65/66/68:** Messenger central global vs tenant Page local-default discovery; max 8 business choices/page và opaque Join actions. |

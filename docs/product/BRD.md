@@ -8,12 +8,12 @@
 | | |
 |---|---|
 | **Sản phẩm** | **Plexco** — platform quản lý hoạt động thể thao cho **host** và khám phá/tham gia kèo cho **player**, đa môn (cầu lông, pickleball, tennis, bóng đá…), hoạt động ngay trong Zalo/Facebook Messenger + web app đồng bộ |
-| **Phiên bản** | v3.9g — mirror **DD-79 ✅ Home hub (S9)** + nav shell PWA + **DD-81 ✅ Pencil**; không đổi phase-1 committed scope; trước đó v3.9f — authority pointer refresh: decisions v1.74 (pointer-only); trước đó v3.9e — authority refresh DD-73..78: DD-73 acquisition trước; DD-74/75 tạo activity baseline sau dependency + reprioritization; chỉ DD-76/77 hard-gated bởi liquidity; DD-78 đi cùng consumer. Không đổi phase-1 committed scope. |
+| **Phiên bản** | v3.9h — reconcile AC-5 public-projection timing (`docs-prd-flow2-publish-projection-reconcile`): host tạo kèo → hiện group khi announce, marketplace chỉ sau khi publish (`open`); không đổi phase-1 committed scope; trước đó v3.9g — mirror **DD-79 ✅ Home hub (S9)** + nav shell PWA + **DD-81 ✅ Pencil**; trước đó v3.9f — authority pointer refresh: decisions v1.74 (pointer-only); trước đó v3.9e — authority refresh DD-73..78: DD-73 acquisition trước; DD-74/75 tạo activity baseline sau dependency + reprioritization; chỉ DD-76/77 hard-gated bởi liquidity; DD-78 đi cùng consumer. Không đổi phase-1 committed scope. |
 | **Ngày** | 19/07/2026 |
 | **Người soạn** | Ngoc-Anh |
 | **Người duyệt (approvers)** | Ngoc-Anh (solo founder, self-approved) |
 | **Trạng thái** | Draft để review |
-| **Tài liệu liên quan** | `../strategy/saas-implementation-plan.md` (kiến trúc) · `PRD.md` v2.8e · `TDD.md` v3.1 · `../standards/decisions.md` **v1.74** (canonical; DD-45 retry/lock-order + DD-45a test-truth closure; notification closure v1.69–v1.71/v1.74, DD-70..72 vẫn 🟡; DD-50 lock-order v1.73; DD-59 ✅ reconcile; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated) · `../dd-69-app-native-analysis.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` |
+| **Tài liệu liên quan** | `../strategy/saas-implementation-plan.md` (kiến trúc) · `PRD.md` v2.8g · `TDD.md` v3.1b · `../standards/decisions.md` **v1.74** (canonical; DD-45 retry/lock-order + DD-45a test-truth closure; notification closure v1.69–v1.71/v1.74, DD-70..72 vẫn 🟡; DD-50 lock-order v1.73; DD-59 ✅ reconcile; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated) · `../dd-69-app-native-analysis.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` |
 
 > BRD là nguồn sự thật cho **product scope & business rules**; PRD cho hành vi/user flow; TDD cho implementation contract; ROADMAP cho thứ tự và tiến độ. Security constraints đã chốt trong AUDIT là bắt buộc. Khi có conflict cùng một chủ đề: **BRD → PRD → TDD → ROADMAP**; riêng security: quy tắc nghiêm ngặt hơn giữa BRD và AUDIT thắng.
 >
@@ -357,7 +357,7 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 - **AC-2** Hai CLB cùng hệ thống: tiền/nhắc/CK/roster/**chat** **không lẫn nhau**; test cô lập xanh.
 - **AC-3** **Public marketplace** hiển thị kèo của nhiều CLB/môn; field public không lộ tiền/PII/giới tính (test bất biến public xanh).
 - **AC-4** Player **chưa thuộc CLB** tìm thấy kèo qua bộ lọc và **join được** (open) / gửi request (approval).
-- **AC-5** **Sync 2 chiều:** host tạo kèo trên web → hiện trong group **Zalo/Messenger** & marketplace; player join qua **Zalo bot / Messenger bot** → web + roster cập nhật đúng session; mọi nơi nhất quán ≤ vài giây.
+- **AC-5** **Sync 2 chiều:** host tạo kèo trên web (`draft`) → hiện trong group **Zalo/Messenger** khi announce; sau khi **Đăng** (`open`) thì kèo public mới vào **marketplace**; player join qua **Zalo bot / Messenger bot** → web + roster cập nhật đúng session; mọi nơi nhất quán ≤ vài giây.
 - **AC-6** CK/tiền mặt được đánh dấu đúng CLB; **host multi-select mark paid** → **xác nhận tự động tới player**; chưa trả → **được nhắc** (web + Zalo; Messenger best-effort trong 24h).
 - **AC-7** Một người qua **Facebook + Zalo** cùng CLB gộp về **1 nợ**.
 - **AC-8** (plan trả phí) Hết trial bị **chặn lệnh quản trị** nhưng CK player **vẫn lưu**; kèo public hiện có chỉ sống tới lúc đóng/hết giờ; CK đúng mã **tự kích hoạt lại**. `free` **không** bị chặn vì non-payment.
@@ -426,6 +426,7 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 24/07/2026 | v3.9h | **Reconcile AC-5 public-projection timing (`docs-prd-flow2-publish-projection-reconcile`, hard dependency of the ratified publish contract; codex round-04 P1):** AC-5 said "host tạo kèo trên web → hiện ... marketplace" without distinguishing draft vs open, contradicting the ratified publish contract (project-on-publish, open-only). Reworded: create (`draft`) → hiện group khi announce; marketplace chỉ sau khi Host **Đăng** (`open`). Khớp PRD FLOW 2/12, `feature_marketplace_discovery(.md/_tech.md)`, TDD.md §3.8/§3.9, `business-rules.md` BL-DSC-2. Prose only; dated changelog giữ verbatim; không resolve OQ nào khác. |
 | 19/07/2026 | v3.9g | **Mirror DD-79 ✅ Home hub (S9) + DD-81 ✅ Pencil:** thêm mục Home hub dưới FR-8 (composition-only, nav shell 5 slot + chat header; registry config-driven; Feed gated DD-76). Không FR mới, không đổi committed scope/runtime. |
 | 19/07/2026 | v3.9f | Authority pointer refresh v1.67→v1.74: v1.68–v1.74 đều là BE-contract closure no-runtime (DD-05/44/52 idempotency v1.68 · notification v1.69–v1.71/v1.74 · DD-45a test-truth v1.72 · DD-50 lock-order v1.73). Pointer-only, không đổi product scope/phase/runtime. |
 | 19/07/2026 | v3.9e | Current authority v1.65; DD-73..78 sequencing correction ở v1.64. DD-74/75 tạo baseline nên không nằm sau gate dùng chính baseline; chỉ DD-76/77 hard-gated; DD-78 đi cùng consumer. Pointer-only, không đổi product scope/runtime. |

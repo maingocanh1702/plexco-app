@@ -1,7 +1,7 @@
 # Feature: Marketplace Discovery & Public Projection — Backend Tech Spec
 
 > **Canonical phase:** P4.3  
-> **Version:** 2.2 · 2026-07-19
+> **Version:** 2.3 · 2026-07-24
 > **Status:** Reviewed  
 > **Implementation:** Not started — `public_sessions` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_marketplace_discovery.md`  
@@ -83,6 +83,7 @@ CREATE INDEX idx_public_price ON public_sessions(price_amount);
 | 11 | Security | Scrape/bot abuse | Layered IP/account/device rate limits |
 | 12 | Data Integrity | Discovery role reads tenant tables | ❌ IMPOSSIBLE — SELECT-only on public view |
 | 13 | Privacy | Personal-tenant owner alias blank | Do not upsert projection; never fall back to internal tenant/person/account name |
+| 14 | Data Integrity | Public session chưa publish (`draft`) | Projector KHÔNG upsert — chỉ `status='open'` (đã publish) mới chiếu; `visibility='public'` một mình không đủ. Timing authority: `feature_session_management_tech.md` §4 bước 7 (`PublishSession` `draft`→`open`) |
 
 ---
 
@@ -179,6 +180,8 @@ Session event → Check: public? open? future? required fields present?
 Periodic sweep: DELETE WHERE expires_at < now()
 ```
 
+> **Timing = PUBLISH, open-only (cross-ref `feature_session_management_tech.md` §4 bước 7):** `open?` ở trên nghĩa là `sessions.status='open'` — trạng thái chỉ đạt được sau khi Host **publish** (`PublishSession`, `draft`→`open`). Một session `visibility='public'` còn `draft` **chưa** qua được check này → **NO projection**; `session.created` khi vẫn `draft` không upsert dù đã chọn public. Publish emit `session.published` cùng transaction (session_management §4 bước 6-7) — projector consume event đó (hoặc reproject) rồi mới upsert khi `open`. Đóng/huỷ/quá giờ hạ khỏi projection như cũ (edge #3/#4); PRD FLOW 2 bước 2 + FLOW 12 mô tả cùng timing này ở tầng product.
+
 ### Caching Strategy
 
 | Data | Cache? | TTL | Invalidation |
@@ -230,12 +233,13 @@ Periodic sweep: DELETE WHERE expires_at < now()
 | 22 | Personal-tenant alias | Owner membership alias nonblank vs blank | Nonblank projects as club_display_name; blank deletes/skips projection; no internal-name fallback |
 | 23 | Ranking unresolved gate | No experimental ranking flag | Stable `(starts_at,id)` order only; area/distance weight absent |
 | 24 | DD-41 projection cutover | Expand/backfill/switch/contract fixture | Target policy fields are public; legacy `skill_level` absent after contract; private notes/instructions/byoe/cost_shared absent throughout |
+| 25 | Draft public session excluded | `visibility='public'`, `status='draft'` (not yet published) | Not projected; only appears after `PublishSession` flips `status='open'` (edge #14) |
 
 ### Integration Tests
 
 | # | Test | Setup | Expected |
 |---|------|-------|----------|
-| 1 | Publish → search → find | Create public session → search | Found in results |
+| 1 | Publish → search → find | Create session (`draft`, public) → `PublishSession` (`draft`→`open`) → search | Absent while `draft`; found in results only after publish |
 | 2 | Unpublish → search → gone | Set private → search | Not in results |
 | 3 | Reproject → verify | Reproject command | Projection matches canonical |
 | 4 | Load test | 1k sessions, concurrent queries | Latency target met |
@@ -263,6 +267,7 @@ Periodic sweep: DELETE WHERE expires_at < now()
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-24 | v2.3 | **Public-projection timing, explicit (`docs-prd-flow2-publish-projection-reconcile`, hard dependency of `docs-session-publish-contract`):** §4 Projector Logic gets an explicit timing note — `open?` = `sessions.status='open'`, reached only after Host publish (`PublishSession`, `draft`→`open`; `feature_session_management_tech.md` §4 bước 7); a public `draft` is NOT projected. Added edge case #14 + unit test #25 pinning draft-exclusion; integration test #1 setup reworded from "Create public session → search" to explicit create(`draft`)→publish(`open`)→search so it no longer implies project-on-create. No schema/algorithm change — the `public? open?` gate already existed (edge #3); this closure only makes the authority explicit and closes the PRD/session cross-authority conflict. |
 | 2026-07-19 | v2.2 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (reuse `public_sessions` từ `0006`; DD-41 expand→contract = migration mới monotonic), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.1a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.1 | **Live schema/DD-46 closure:** replace invalid `now()` partial index with live plain btree; pin no-FK public reference, personal-tenant owner-membership alias fail-closed projection, and deterministic time ranking while MKT-OQ-3 stays open. |

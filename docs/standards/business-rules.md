@@ -4,7 +4,7 @@
 >
 > **Reconcile 18/07/2026:** đã đồng bộ full DD-49–56 và accepted-in-principle DD-61–64. DD-69 direction ✅ accepted; chưa tạo active business rule mới; decision log vẫn là authority khi một DD thay đổi, registry này là mirror để review/build.
 > Khi conflict, authority theo topic trong BRD §0; security dùng rule nghiêm ngặt hơn.
-> v1.23 · 2026-07-19 (current authority v1.69/TDD v3.1; DD-70..72 vẫn 🟡 và các rate row bên dưới là **PROPOSAL/INACTIVE**; share/activity sequencing corrected nhưng BL mới vẫn chờ downstream propagation; không claim runtime)
+> v1.24 · 2026-07-24 (BL-DSC-2 reconciled tới project-on-publish timing — xem Changelog; current authority v1.69/TDD v3.1; DD-70..72 vẫn 🟡 và các rate row bên dưới là **PROPOSAL/INACTIVE**; share/activity sequencing corrected nhưng BL mới vẫn chờ downstream propagation; không claim runtime)
 
 ---
 
@@ -45,7 +45,7 @@
 | ID | Luật | Chi tiết | Source |
 |---|---|---|---|
 | **BL-DSC-1** | **Field whitelist cho public** | `public_sessions`: sport_key, starts_at, ends_at, area, price, slots_open, host/club display name, join_policy; session policy fields an toàn gồm `title`, `session_type`, `level_min_rank`, `level_max_rank`, `level_strict`, `gender_restriction`, `age_min`, `age_max`. Retire public `skill_level`. Routing tenant ID không serialize. Không roster, debt/payment, contact, venue chi tiết, STK, `notes`, `instructions`, `byoe` hay `cost_shared`. | BRD BR-4, DD-41, NFR-S2, AUDIT §public |
-| **BL-DSC-2** | **Publish theo từng kèo** | Host chọn `visibility=public` per-session → projector đẩy vào `public_sessions`. Đóng kèo → hạ khỏi marketplace. | BRD FR-3.1, PRD FLOW 12 |
+| **BL-DSC-2** | **Publish theo từng kèo** | Host chọn `visibility=public` per-session (tại create/edit) **và** kèo đã **`open`** (Host publish `draft`→`open`) → projector đẩy vào `public_sessions`; `draft` dù public chưa vào. Đóng kèo → hạ khỏi marketplace. | BRD FR-3.1, PRD FLOW 2/12 |
 | **BL-DSC-3** | **Join cross-club** | Resolve current player/request trước: `active|waitlisted|pending` trả current outcome idempotently, không write/alert mới. Chỉ absent/`left` mới pass DD-41/DD-42/shared DD-52 trước membership/request/player mutation. `open`: còn chỗ → active + exactly-one charge + venue, full → waitlisted không charge/venue. `approval`: pending không membership/player/charge/capacity/venue; existing `left` request-create chỉ preflight live DD-49, không persist proof. Approve lock session→root-job→request, re-check restrictions + re-derive aggregate; drift/unknown giữ pending/zero mutation. Active fill resolves old promotion roots. | BRD FR-3.2, DD-05/06/41/42/45/49/52 |
 | **BL-DSC-4** | **Rate-limit + anti-scraping** | Discovery API: rate-limit per IP, phân trang, không expose danh sách toàn bộ tenant. | NFR-S2 |
 
@@ -220,6 +220,7 @@ Business rules file này là **mirror**, không tự tạo authority. Khi phát 
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 24/07/2026 | v1.24 | **Reconcile BL-DSC-2 public-projection timing (`docs-prd-flow2-publish-projection-reconcile`, hard dependency of the ratified publish contract; codex round-04 P1):** rule said `visibility=public` per-session alone triggers projection, without distinguishing draft vs open, contradicting the ratified publish contract (project-on-publish, open-only). Reworded: requires `visibility=public` (create/edit) **và** `status='open'` (Host publish `draft`→`open`); `draft` dù public chưa vào `public_sessions`. Khớp BRD AC-5, PRD FLOW 2/12, TDD.md §3.8/§3.9, `feature_marketplace_discovery(.md/_tech.md)`. Prose only; dated changelog giữ verbatim; không resolve OQ nào khác. |
 | 19/07/2026 | v1.23 | Authority v1.69. BL-DSC-3/SES-8 pin current-state-before-restriction and no-extra token use. BL-SES-10 pins lazy root, max 3 claimed attempts, expired-final resolve-or-terminal, tenant-private narrow claim and one owner digest/root. No runtime. |
 | 19/07/2026 | v1.22 | Authority v1.65. BL-SES-9/10 pin one root max-3 sweep job/opener; candidate events are sibling audit/alert refs, not budgets. Sweeps re-enter current order + DD-41/DD-42/DD-52; final-slot/no-failure resolves old root so it cannot sweep a later opening. No runtime. |
 | 19/07/2026 | v1.21 | Authority v1.64. DD-74/75 là baseline producer sau dependency + reprioritization; chỉ DD-76/77 hard-gated bởi product evidence; DD-78 đi cùng consumer. Chưa thêm BL share/activity vì downstream spec/schema vẫn chưa author; không runtime. |

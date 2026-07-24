@@ -1,11 +1,11 @@
 # Technical Design Document (TDD) — Plexco
 ## Platform thể thao đa môn (host + player) — multi-tenant, marketplace discovery, sync đa surface, Zalo + Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi — DD-37)*
 
-**Phiên bản:** 3.1a — *19/07: mirror DD-79 Home hub (composition-only, §API note) — không đổi phase/runtime.* **amendment history 18/07:** nội dung v3.1 được chốt trên authority v1.47; **current authority pointer là decisions v1.74 bên dưới**. Không đổi phase hoặc claim runtime/migration đã implement.
-**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 19/07/2026
+**Phiên bản:** 3.1b — *24/07: reconcile public-projection timing §3.8/§3.9 (project-on-publish, open-only) — không đổi phase/runtime.* **amendment history 18/07:** nội dung v3.1 được chốt trên authority v1.47; **current authority pointer là decisions v1.74 bên dưới**. Không đổi phase hoặc claim runtime/migration đã implement.
+**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 24/07/2026
 **Tài liệu tham chiếu:**
-- `BRD.md` v3.9f — yêu cầu nghiệp vụ
-- `PRD.md` v2.8e — user flows + edge cases
+- `BRD.md` v3.9h — yêu cầu nghiệp vụ
+- `PRD.md` v2.8g — user flows + edge cases
 - `../strategy/saas-implementation-plan.md` — kiến trúc multi-tenant
 - `../research/player-side-saas-reconciliation.md` — identity/kênh/matching
 - `../research/player-side-saas-AUDIT.md` — threat model & must-fix (C1–C7, B1–B6, §B2, + threat model public discovery)
@@ -67,7 +67,7 @@ Trong **canonical phase-1 delivery scope**, matchmaking/xếp sân/scoring/trậ
 | FR-13 | Billing | System | subscription_invoices, trial→active→past_due→suspended (plan trả phí `host_pro`); `free` 0đ vào thẳng `active`, không invoice/past_due; entitlement = capability flags config-driven (DD-29 thay DD-03, BL-BIL-1) | P5 | P0 |
 | **FR-14** | **Sync engine** | System | canonical store + command/event + **outbox** → projection ra Zalo/Messenger/web/public; idempotent; re-project khi lệch | P4 | P0 |
 | **FR-15** | **Web app (surface)** | P1/P3/P4 | host dashboard (kèo/roster/doanh thu), player view, discovery UI, chat in-app (DD-38 ✅), cài đặt hồ sơ (DD-39 ✅); mọi ghi đi qua canonical backend | P4 | P0 |
-| **FR-16** | **Publish kèo → public projection** | P1 | host set `visibility=public` → đẩy field-whitelist vào `public_sessions` (read model) | P4.3 | P0 |
+| **FR-16** | **Publish kèo → public projection** | P1 | host publish kèo đã set `visibility=public` (`draft`→`open`) → đẩy field-whitelist vào `public_sessions` (read model); `draft` chưa chiếu dù đã set public | P4.3 | P0 |
 | **FR-17** | **Discovery / tìm kèo** | P3/P4 | API/UI lọc môn/khu vực/ngày/giờ/trình độ/giá/slot; cross-tenant read model, KHÔNG RLS, KHÔNG tiền/PII/giới tính | P4.3 | P0 |
 | **FR-18** | **Join cross-club** | P3/P4 | join kèo của CLB chưa là member → tạo membership guest; `join_policy=approval` → `join_requests` host duyệt | P4.3 | P0 |
 | **FR-19** | **Chat in-app (DD-38 ✅, scope-committed phase-1)** | P3/P4 | chat toàn CLB (tenant, RLS) + 1-1 (person-self); chỉ Plexco, **không bridge** kênh ngoài; SSE; schema `chat_*` **chờ migration** (chưa vào canonical `schema.ts`; xem `../standards/decisions.md` DD-38 + doc Draft) | P4 | P1 |
@@ -241,7 +241,7 @@ erDiagram
         varchar skill_level "nullable"
         enum visibility "private|public"
         enum join_policy "open|approval"
-        enum status "open|closed|cancelled"
+        enum status "draft|open|closed|cancelled"
         varchar tg_announce_chat_id
         bigint tg_announce_message_id
     }
@@ -589,7 +589,7 @@ ACK chỉ xảy ra sau khi raw transaction và durable job đã commit. Duplicat
      • Zalo     : sendMessage DM theo exact bot/OA-scoped channel identity/reachability; authorize target tenant riêng
      • Messenger: chọn đúng một reachable endpoint (tenant Page → central), ngoài window dồn web + Zalo
      • Web      : push SSE theo kênh (tenant:<id> / person:<id>) — gồm chat in-app
-     • Public   : upsert/delete public_sessions (nếu kèo public)
+     • Public   : upsert/delete public_sessions (nếu kèo public VÀ open — draft chưa chiếu dù đã set public, xem §3.9)
 ```
 
 - **Idempotency:** `commandId` có UNIQUE/dedup record (chống double-apply lệnh) + projector inbox/delivery record UNIQUE `(projector,event_id)`. `dispatched_at` chỉ biểu thị dispatcher đã claim/gửi, **không đủ một mình** để chống double-project. Zalo/Messenger không có inline button → roster hiển thị chính ở web + message số/quick-reply, re-project từ canonical thay vì spam message mới.
@@ -602,7 +602,7 @@ ACK chỉ xảy ra sau khi raw transaction và durable job đã commit. Duplicat
 
 **Tách hẳn khỏi RLS** — đây là đường đọc cross-tenant **có chủ đích**, nên rủi ro nằm ở *rò rỉ field*, không ở isolation.
 
-- **Publish:** host set `sessions.visibility='public'` → projector upsert `public_sessions` **chỉ field whitelist**: `sport_key, starts_at, area, skill_level, price, slots_open, host_display_name, club_display_name, join_policy`. **KHÔNG** roster, **KHÔNG** STK/PII, **KHÔNG** danh sách người trả/chưa trả. Đóng/huỷ/quá giờ → xoá khỏi `public_sessions`.
+- **Publish:** session đồng thời `sessions.visibility='public'` **VÀ** `sessions.status='open'` (Host publish `draft`→`open` — `feature_session_management` §4) → projector upsert `public_sessions` **chỉ field whitelist**: `sport_key, starts_at, area, skill_level, price, slots_open, host_display_name, club_display_name, join_policy`. **KHÔNG** roster, **KHÔNG** STK/PII, **KHÔNG** danh sách người trả/chưa trả. Kèo `draft` **chưa** được chiếu dù đã set `visibility=public` — đây là điều kiện cần, không đủ. Đóng/huỷ/quá giờ → xoá khỏi `public_sessions`.
 - **Đọc (Discovery API):** `GET /discover?sport=&area=&date=&skill=&price_max=` → query **`public_sessions`** (read model), **không** `SET LOCAL app.tenant_id`, **không** đụng bảng tiền. Rate-limit + phân trang chống enumeration/scrape (NFR-S2).
 - **Vị trí (privacy, OD-6):** public chỉ hiện **`area`**; **`venue`** chi tiết chỉ lộ khi canonical player outcome là `active`; approved-but-waitlisted vẫn ẩn.
 - **Join từ marketplace:** `POST /sessions/:id/join` → route `session_id → tenant` → resolve trusted Person rồi **lookup-only** processed command + existing membership/player/pending request. Current `active|waitlisted|pending` trả current outcome, không write/alert mới. Chỉ absent/`left` mới re-check DD-41/DD-42/DD-52 dưới session lock; sau guard, `open` mới create/reuse guest membership + `addMemberToSession`, còn `approval` mới create `join_requests(pending)`. Còn slot→`active` (+ canonical financial path, venue visible); full→`waitlisted` (no new charge/obligation/venue), kể cả approval.
@@ -792,6 +792,7 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 24/07/2026 | v3.1b | **Reconcile public-projection timing (`docs-prd-flow2-publish-projection-reconcile`, hard dependency of the ratified publish contract):** §3.8 sync-fan-out pseudocode + §3.9 "Publish" bullet reworded to require `visibility='public'` **VÀ** `status='open'` (Host publish `draft`→`open`) before the projector upserts `public_sessions`; a `draft` session is never projected. Khớp `feature_session_management_tech.md` §4 bước 7 + `feature_marketplace_discovery(.md/_tech.md)` cùng timing. Codex round-02 [P2]: §3.2 ER diagram `SESSION.status` enum thiếu `draft` (chỉ `open|closed|cancelled`) trong khi §3.8/3.9 vừa dùng `draft` làm trạng thái thật — pin lại đúng 4 giá trị `draft|open|closed|cancelled` khớp live schema/`feature_session_management_tech.md` §2 DDL. Codex round-04 [P1]: FR-16 (§2 Functional Requirements) vẫn nói "host set visibility=public → đẩy field-whitelist", cùng mirror-authority gap như §3.9 trước khi sửa — reworded để yêu cầu publish (`draft`→`open`) trước khi chiếu. Prose only; dated changelog giữ verbatim; không resolve OQ nào khác. |
 | 19/07/2026 | v3.1 (authority refresh v1.74) | Pointer refresh decisions v1.67→v1.74 + BRD v3.9f/PRD v2.8e: v1.68–v1.74 BE-contract closure no-runtime. Không đổi implementation body/phase/runtime. |
 | 19/07/2026 | v3.1 (authority refresh) | Current decisions v1.65/BRD v3.9e/PRD v2.8d; DD-73..78 sequencing correction ở v1.64. DD-74/75 tạo baseline; chỉ DD-76/77 evidence-gated; DD-78 đi cùng consumer. Không đổi implementation body/runtime. |
 | 18/07/2026 | v3.1 | Amendment authority v1.47: DD-33/DD-60 accepted; DD-57..59 deferred; DD-61..64 accepted-in-principle post-P4; DD-69 accepted direction. Preserve prior feature closure and explicit runtime/migration-pending boundary. |

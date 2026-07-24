@@ -2,14 +2,15 @@
 ## Plexco — platform thể thao đa môn (host + player): Zalo · Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi)*
 
 **Sản phẩm:** **Plexco** — platform quản lý & khám phá hoạt động thể thao đa môn, 2 phía (host + player); bot-in-chat (Zalo/Messenger) + web app sync 2 chiều; **phase-1 không app native** (target = web app PWA installable/offline; S9/S20 chưa phải runtime evidence) — **native là hướng phase-2** (DD-69 direction ✅ accepted; build TBD)
-**Phiên bản:** 2.8f
-**Ngày cập nhật:** 19/07/2026
-**Tài liệu tham chiếu:** `BRD.md` v3.9f · `TDD.md` v3.1 · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` **v1.74** (v1.68–v1.74 BE-contract closure no-runtime: join/invite idempotency · notification v1.69–71/74 · DD-45a test-truth · DD-50 lock-order; DD-70..72 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; DD-69 direction ✅; DD-59 ✅ reconcile) · `../dd-69-app-native-analysis.md`
+**Phiên bản:** 2.8g
+**Ngày cập nhật:** 24/07/2026
+**Tài liệu tham chiếu:** `BRD.md` v3.9h · `TDD.md` v3.1b · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` **v1.74** (v1.68–v1.74 BE-contract closure no-runtime: join/invite idempotency · notification v1.69–71/74 · DD-45a test-truth · DD-50 lock-order; DD-70..72 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; DD-69 direction ✅; DD-59 ✅ reconcile) · `../dd-69-app-native-analysis.md`
 
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 24/07/2026 | v2.8g | **Reconcile FLOW 2 public-projection timing (`docs-prd-flow2-publish-projection-reconcile`, hard dependency of the ratified publish contract; 4 codex rounds to close all mirrors):** step 1 thêm rõ create = trạng thái `draft`, chưa nhận join/chưa lên marketplace dù đã chọn `visibility=public`; step 2 làm rõ Host **Đăng kèo** (`PublishSession` `draft`→`open`) là lúc marketplace push xảy ra (không phải tại create); step 3 (auto-announce, trước là step 2) **dời sau publish** (round-01 P2). FLOW 12 invariant note + FLOW 14 marketplace bullet thêm cùng điều kiện `open`; FLOW 12/BE cross-ref step-number sửa lại "bước 2" sau reorder (round-03 P2). Khớp `feature_session_management_tech.md` §4 bước 7, `feature_marketplace_discovery(.md/_tech.md)` §4, TDD.md §3.2/§3.8/§3.9 FR-16, `BRD.md` AC-5 và `business-rules.md` BL-DSC-2 (round-04 P1 — cùng round reconcile để đóng hết mirror còn lại trong authority chain BRD→PRD→TDD). `ROADMAP.md` (2 mirror khác) và `docs/strategy/saas-implementation-plan.md` (directional input, không phải authority) được xác nhận nhưng KHÔNG sửa — ROADMAP.md scope-gate collision với in-flight `docs-migration-tail-0018-to-0020-sweep` (deferred follow-up, xem manifest `_note`); strategy doc deliberately out of scope. Prose only; dated changelog giữ verbatim; không resolve OQ nào khác. |
 | 19/07/2026 | v2.8f | **Mirror DD-79 ✅ Home hub (S9):** note dưới FLOW 10 — Home landing compose person-self + marketplace + §A; nav shell 5 slot + 💬 header; composition-only, không flow/contract mới. DD-81 Pencil ghi ở design docs. |
 | 19/07/2026 | v2.8e | Authority pointer refresh v1.67→v1.74 + BRD v3.9f: v1.68–v1.74 là BE-contract closure no-runtime (join/invite idempotency v1.68 · notification v1.69–71/74 · DD-45a v1.72 · DD-50 v1.73). Pointer-only, không thêm flow/runtime. |
 | 19/07/2026 | v2.8d | Current authority v1.65/BRD v3.9e; DD-73..78 sequencing correction ở v1.64. DD-74/75 tạo baseline; chỉ DD-76/77 evidence-gated; DD-78 đi cùng consumer. Pointer-only, không thêm flow/runtime. |
@@ -92,9 +93,9 @@ Bề mặt tương tác phase-1 = **web app + Zalo + Facebook Messenger**. **Tel
 
 ## FLOW 2: TẠO & ĐĂNG KÈO — Host (chat **hoặc** web) *(P2 / P4)*
 
-1. Host `/newsession` (Zalo/Messenger central hoặc club Page) **hoặc** tạo trên web. Messenger central auto-select một eligible club hoặc hiện server-side picker; wizard → preview → confirm, mỗi consume re-check `session.manage`/context/snapshot và phát đúng một shared `CreateSession` command.
-2. Nếu `auto-announce=on` + có kênh → bot **tự đăng** message join vào Zalo/Messenger; hoặc `/announce <id>` đăng tay.
-3. Nếu `visibility=public` → kèo được **đẩy lên marketplace** (public projection field-whitelist — FLOW 12).
+1. Host `/newsession` (Zalo/Messenger central hoặc club Page) **hoặc** tạo trên web. Messenger central auto-select một eligible club hoặc hiện server-side picker; wizard → preview → confirm, mỗi consume re-check `session.manage`/context/snapshot và phát đúng một shared `CreateSession` command. Kèo tạo ở trạng thái **`draft`** (`private` hoặc `public`) — **chưa nhận join và chưa lên marketplace** dù đã chọn `visibility=public`.
+2. Host **Đăng kèo** (lệnh/callback bot hoặc nút web "Đăng kèo" + confirm riêng) → `PublishSession` chuyển `draft` → **`open`**, kèo bắt đầu nhận join. Nếu `visibility=public` — **đúng lúc publish này** — kèo mới được **đẩy lên marketplace** (public projection field-whitelist — FLOW 12); còn `draft` thì chưa xuất hiện dù đã chọn public.
+3. Sau khi đăng (session đã `open`), nếu `auto-announce=on` + có kênh → bot **tự đăng** message join vào Zalo/Messenger; hoặc `/announce <id>` đăng tay.
 4. Message hiển thị roster; lưu `announce` ref (Zalo/Messenger) để cập nhật live. **Mọi thay đổi sync sang web + marketplace + kênh** (FLOW 14).
 5. Host `/close` (hoặc trên web), xem danh sách + trạng thái trả; kèo đóng → **hạ khỏi marketplace**.
 
@@ -216,7 +217,7 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 4. Xem chi tiết kèo công khai — **KHÔNG** roster người khác, **KHÔNG** STK/PII/giới tính, **KHÔNG** ai trả/chưa.
 5. Bấm **Join** → FLOW 13.
 
-> ⚠️ **Bất biến public (AUDIT §C8):** marketplace chỉ chứa field whitelist; tiền/PII/giới tính/roster không bao giờ lộ. `venue` chi tiết chỉ hiện khi canonical player outcome là `active`; approved-but-waitlisted vẫn ẩn (OD-6). Rate-limit + phân trang chống scrape.
+> ⚠️ **Bất biến public (AUDIT §C8):** marketplace chỉ chứa field whitelist; tiền/PII/giới tính/roster không bao giờ lộ. `venue` chi tiết chỉ hiện khi canonical player outcome là `active`; approved-but-waitlisted vẫn ẩn (OD-6). Rate-limit + phân trang chống scrape. Chỉ kèo đã **Đăng** (`status=open`, FLOW 2 bước 2) mới vào đây — `draft` dù `visibility=public` chưa xuất hiện trong marketplace.
 
 ---
 
@@ -243,7 +244,7 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
    - Zalo: DM/message theo exact bot/OA-scoped channel identity/reachability; target-tenant eligibility kiểm tra riêng.
    - Messenger: one-route delivery tới tenant Page reachable, fallback central Page reachable; ngoài policy window dồn web + Zalo.
    - Web: **push SSE** (`tenant:<id>` cho host, `person:<id>` cho player).
-   - Marketplace: upsert/xoá `public_sessions` nếu kèo public.
+   - Marketplace: upsert/xoá `public_sessions` nếu kèo **public và `open`** (FLOW 2 bước 2) — `draft` dù public chưa chiếu.
 4. **Idempotent** (`commandId` + `event.id`); surface lệch (msg cũ/SSE rớt) → **re-project** dựng lại từ canonical.
 
 > Surface **không bao giờ** giữ sự thật → không có conflict multi-master. Độ trễ mục tiêu p95 ≤ 3 giây, p99 ≤ 10 giây. Xác nhận đã trả (FLOW 8) là projection của event `payment.settled`.
