@@ -1,8 +1,8 @@
 # Designer Kickoff — Plexco Web FE
 
-> **Status:** 🟡 Deferred reference · **Version:** 0.4 · 2026-07-19
+> **Status:** 🟡 Deferred reference · **Version:** 0.5 · 2026-07-25
 > **Reference kickoff:** dùng để định hướng khi owner reopen FE design system; chưa phải tài liệu gate bắt buộc hiện tại.
-> **Visual source:** ✅ **chốt DD-81 (owner 19/07/2026): Pencil** — file `plexco-app-design.pen` tại root repo, git-tracked (tạo ở bước theme exploration; variables khai khớp SoT `../../standards/design-tokens.md` ngay khi tạo). `Plexco-DS-fable5.pen` superseded, không dùng.
+> **Visual source:** ✅ **DD-81: Pencil; canonical path amended 25/07/2026** — root file `design.pen`. FE/design handoff vẫn HOLD tới khi file được persist/track + owner nghiệm thu; variables phải khớp SoT `../../standards/design-tokens.md` tại gate đó. `Plexco-DS-fable5.pen` superseded, không dùng.
 > **Authority:** DD-57/58/59 đã owner-defer (reference-only, không gate delivery). DD-60 API convention đã ✅ accepted và áp độc lập cho API docs mới/materially changed.
 
 ---
@@ -91,6 +91,7 @@ Với mỗi màn xong design: source path/URL + node/frame id → `handoff/<scre
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 25/07/2026 | 0.5 | **DD-81 path reconcile:** canonical root file = `design.pen`; giữ deferred/HOLD tới khi persist/track + owner nghiệm thu. |
 | 19/07/2026 | 0.4 | **Visual source resolved (DD-81 ✅):** tool = Pencil, file `plexco-app-design.pen` root repo; variables khớp SoT khi tạo. Thêm màn #13 Home (DD-79 ✅) — màn theme-exploration đầu tiên. |
 | 18/07/2026 | 0.3 | Owner defer DD-57..59; kickoff/pipeline/checklists chuyển thành reference-only. Tách rõ DD-60 vẫn accepted và áp độc lập. |
 | 17/07/2026 | 0.2 | Gỡ `.pen` SoT không tồn tại; tách token SoT và visual SoT; thêm hard gate chọn + track/link source mới trước handoff/code. |

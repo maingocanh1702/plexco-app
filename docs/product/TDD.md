@@ -1,16 +1,16 @@
 # Technical Design Document (TDD) — Plexco
 ## Platform thể thao đa môn (host + player) — multi-tenant, marketplace discovery, sync đa surface, Zalo + Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi — DD-37)*
 
-**Phiên bản:** 3.1b — *24/07: reconcile public-projection timing §3.8/§3.9 (project-on-publish, open-only) — không đổi phase/runtime.* **amendment history 18/07:** nội dung v3.1 được chốt trên authority v1.47; **current authority pointer là decisions v1.74 bên dưới**. Không đổi phase hoặc claim runtime/migration đã implement.
-**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 24/07/2026
+**Phiên bản:** 3.1c — *25/07: current authority pointer refresh tới decisions v2.04 WIP; pointer-only, không đổi phase/runtime.* Trước đó v3.1b reconcile public-projection timing §3.8/§3.9 (project-on-publish, open-only).
+**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 25/07/2026
 **Tài liệu tham chiếu:**
-- `BRD.md` v3.9h — yêu cầu nghiệp vụ
-- `PRD.md` v2.8g — user flows + edge cases
+- `BRD.md` v3.9i — yêu cầu nghiệp vụ
+- `PRD.md` v2.8h — user flows + edge cases
 - `../strategy/saas-implementation-plan.md` — kiến trúc multi-tenant
 - `../research/player-side-saas-reconciliation.md` — identity/kênh/matching
 - `../research/player-side-saas-AUDIT.md` — threat model & must-fix (C1–C7, B1–B6, §B2, + threat model public discovery)
 - `../channels/messenger/messenger-channel-design.md` — kênh Messenger (**phase-1, P2.5**): hybrid endpoint + protected routing/action contract
-- `../standards/decisions.md` **v1.74** — current authority qua DD-78; v1.68–v1.74 BE-contract closure no-runtime (join/invite idempotency · notification v1.69–71/74 · DD-45a test-truth · DD-50 lock-order); DD-59 ✅ reconcile; DD-70..72 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated.
+- `../standards/decisions.md` **v2.04 WIP** — canonical current decision log; status đọc theo từng DD; `DECISION_FINAL` không phải runtime/readiness.
 
 > [!IMPORTANT]
 > **Scope:** TDD cover tới **P6** ở mức thiết kế. BRD là nguồn sự thật cho product scope; PRD cho behavior; TDD là implementation contract; ROADMAP cho thứ tự/progress. Security constraints nghiêm ngặt hơn giữa BRD và AUDIT luôn thắng.
@@ -749,7 +749,7 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 
 ## 11. Open Questions
 
-> ⭐ **Nguồn canonical:** xem `../standards/decisions.md` v1.74 tới DD-78. DD-45 retry/manual-ban closure; DD-70..72 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; DD-59 reconcile ✅. Bảng dưới giữ để tra nhanh.
+> ⭐ **Nguồn canonical:** xem current `../standards/decisions.md` v2.04 WIP; đọc status theo từng DD và không suy runtime/readiness từ decision. Bảng dưới giữ để tra nhanh.
 
 | # | Question | Status |
 |---|---|---|
@@ -780,11 +780,11 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 | 4 | `../research/player-side-saas-reconciliation.md` | Identity/kênh/matching |
 | 5 | `../research/player-side-saas-AUDIT.md` | Threat model & must-fix (+ public discovery) |
 | 6 | `../channels/messenger/messenger-channel-design.md` | Kênh Messenger (phase-1, P2.5) |
-| 7 | `../standards/decisions.md` | Decision log v1.74/current authority tới DD-78; accepted-in-principle không đồng nghĩa runtime đã land |
+| 7 | `../standards/decisions.md` | Decision log v2.04 WIP/current authority; status theo từng DD, accepted/final không đồng nghĩa runtime đã land |
 
 ---
 
-*TDD v3.1 (current authority refresh 19/07) — implementation contract cho platform đa môn + marketplace + sync engine; current authority decisions v1.74, runtime/migration còn pending.*
+*TDD v3.1c (current authority refresh 25/07) — implementation contract cho platform đa môn + marketplace + sync engine; current authority decisions v2.04 WIP, runtime/migration còn pending.*
 
 ---
 
@@ -792,6 +792,7 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 25/07/2026 | v3.1c | **Authority pointer reconcile:** BRD/PRD/TDD cùng trỏ current decisions v2.04 WIP và nhắc đọc status theo từng DD; pointer-only, không đổi implementation body/phase/runtime. |
 | 24/07/2026 | v3.1b | **Reconcile public-projection timing (`docs-prd-flow2-publish-projection-reconcile`, hard dependency of the ratified publish contract):** §3.8 sync-fan-out pseudocode + §3.9 "Publish" bullet reworded to require `visibility='public'` **VÀ** `status='open'` (Host publish `draft`→`open`) before the projector upserts `public_sessions`; a `draft` session is never projected. Khớp `feature_session_management_tech.md` §4 bước 7 + `feature_marketplace_discovery(.md/_tech.md)` cùng timing. Codex round-02 [P2]: §3.2 ER diagram `SESSION.status` enum thiếu `draft` (chỉ `open|closed|cancelled`) trong khi §3.8/3.9 vừa dùng `draft` làm trạng thái thật — pin lại đúng 4 giá trị `draft|open|closed|cancelled` khớp live schema/`feature_session_management_tech.md` §2 DDL. Codex round-04 [P1]: FR-16 (§2 Functional Requirements) vẫn nói "host set visibility=public → đẩy field-whitelist", cùng mirror-authority gap như §3.9 trước khi sửa — reworded để yêu cầu publish (`draft`→`open`) trước khi chiếu. Prose only; dated changelog giữ verbatim; không resolve OQ nào khác. |
 | 19/07/2026 | v3.1 (authority refresh v1.74) | Pointer refresh decisions v1.67→v1.74 + BRD v3.9f/PRD v2.8e: v1.68–v1.74 BE-contract closure no-runtime. Không đổi implementation body/phase/runtime. |
 | 19/07/2026 | v3.1 (authority refresh) | Current decisions v1.65/BRD v3.9e/PRD v2.8d; DD-73..78 sequencing correction ở v1.64. DD-74/75 tạo baseline; chỉ DD-76/77 evidence-gated; DD-78 đi cùng consumer. Không đổi implementation body/runtime. |

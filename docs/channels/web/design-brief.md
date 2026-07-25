@@ -1,12 +1,12 @@
 # Plexco Web App — Design Brief cho Designer
 
-> **Version:** 1.9 · 2026-07-19
+> **Version:** 2.0 · 2026-07-25
 > **Tài liệu tham chiếu:** `../../product/BRD.md` v3.9d · `../../product/PRD.md` v2.8c · `../../product/TDD.md` v3.1 · `../../product/ROADMAP.md` v3.3b · `../../features/README.md` v2.29 · `../../standards/decisions.md` v1.67
 > **Target audience:** Designer (UI/UX)
 >
 > **Cập nhật v3.4 (DD-37 ✅):** Đăng nhập = **Google + email** (bỏ Telegram Login). Kênh phase-1 = **web + Zalo + Facebook Messenger** (Telegram loại). Onboarding link **Zalo + Facebook Messenger** (không còn bước Telegram). Thêm màn **chat in-app** (DD-38 ✅), **cài đặt hồ sơ + giá theo giới tính** (DD-39 ✅), **mark-paid thủ công tap/multi-select** (DD-40 ✅).
 >
-> **Cập nhật DD-79/DD-81 (19/07/2026):** phase-1 PWA có màn **Home hub** làm landing sau đăng nhập (`../../features/feature_home.md` v0.5a — chips Còn nợ/Kèo tuần · hero kèo kế tiếp gradient+glow theo theme-direction §7 · upcoming + suggested). **Bottom nav 5 slot: Home · Feed (config-OFF tới DD-76) · [Khám phá — center/FAB] · Club (CLB sở hữu + tham gia, CTA Tạo CLB) · Setting**; **💬 chat + 🔔 trên header** mọi màn chính. Visual tool = **Pencil**, file `plexco-app-design.pen` (DD-81); màn Home là theme-exploration đầu tiên.
+> **Cập nhật DD-79/DD-81 (19/07/2026; path amended 25/07):** phase-1 PWA có màn **Home hub** làm landing sau đăng nhập (`../../features/feature_home.md` v0.5a — chips Còn nợ/Kèo tuần · hero kèo kế tiếp gradient+glow theo theme-direction §7 · upcoming + suggested). **Bottom nav 5 slot: Home · Feed (config-OFF tới DD-76) · [Khám phá — center/FAB] · Club (CLB sở hữu + tham gia, CTA Tạo CLB) · Setting**; **💬 chat + 🔔 trên header** mọi màn chính. Visual tool = **Pencil**, canonical root file `design.pen` (DD-81); màn Home là theme-exploration đầu tiên. FE mapping chỉ bắt đầu sau khi file được persist/track + owner nghiệm thu.
 >
 > **Cập nhật DD-65..68:** central Plexco Page luôn có; Page riêng là optional. UI onboarding phải hiển thị central readiness trước, không block completion vì thiếu club Page; host/player dùng shared surface và protected actions, runtime vẫn pending.
 
@@ -587,6 +587,7 @@ Step 4: Facebook Messenger + Readiness
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 25/07/2026 | v2.0 | **DD-81 path reconcile:** canonical root file = `design.pen`; chưa mở FE gate trước persist/track + owner nghiệm thu. |
 | 19/07/2026 | v1.9 | **DD-79/81 mirror:** Home hub landing + bottom nav 5 slot + chat header; tool Pencil `plexco-app-design.pen`; Home = màn theme-exploration đầu tiên. |
 | 2026-07-19 | v1.8 | Ref-only sync tới BRD v3.9d · PRD v2.8c · TDD v3.1 · ROADMAP v3.3b · feature index v2.29 · decisions v1.67; no UI scope/runtime change. |
 | 2026-07-18 | v1.7 | Refresh authority v1.47/feature index v2.23; DD-59 benchmark is deferred reference, not an active gate. |

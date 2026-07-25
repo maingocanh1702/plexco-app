@@ -8,12 +8,12 @@
 | | |
 |---|---|
 | **Sản phẩm** | **Plexco** — platform quản lý hoạt động thể thao cho **host** và khám phá/tham gia kèo cho **player**, đa môn (cầu lông, pickleball, tennis, bóng đá…), hoạt động ngay trong Zalo/Facebook Messenger + web app đồng bộ |
-| **Phiên bản** | v3.9h — reconcile AC-5 public-projection timing (`docs-prd-flow2-publish-projection-reconcile`): host tạo kèo → hiện group khi announce, marketplace chỉ sau khi publish (`open`); không đổi phase-1 committed scope; trước đó v3.9g — mirror **DD-79 ✅ Home hub (S9)** + nav shell PWA + **DD-81 ✅ Pencil**; trước đó v3.9f — authority pointer refresh: decisions v1.74 (pointer-only); trước đó v3.9e — authority refresh DD-73..78: DD-73 acquisition trước; DD-74/75 tạo activity baseline sau dependency + reprioritization; chỉ DD-76/77 hard-gated bởi liquidity; DD-78 đi cùng consumer. Không đổi phase-1 committed scope. |
-| **Ngày** | 19/07/2026 |
+| **Phiên bản** | v3.9i — current authority pointer refresh: decisions v2.04 WIP; dùng status riêng của từng DD, không suy runtime từ decision. Trước đó v3.9h reconcile AC-5 public-projection timing (`docs-prd-flow2-publish-projection-reconcile`): host tạo kèo → hiện group khi announce, marketplace chỉ sau khi publish (`open`); không đổi phase-1 committed scope. |
+| **Ngày** | 25/07/2026 |
 | **Người soạn** | Ngoc-Anh |
 | **Người duyệt (approvers)** | Ngoc-Anh (solo founder, self-approved) |
 | **Trạng thái** | Draft để review |
-| **Tài liệu liên quan** | `../strategy/saas-implementation-plan.md` (kiến trúc) · `PRD.md` v2.8g · `TDD.md` v3.1b · `../standards/decisions.md` **v1.74** (canonical; DD-45 retry/lock-order + DD-45a test-truth closure; notification closure v1.69–v1.71/v1.74, DD-70..72 vẫn 🟡; DD-50 lock-order v1.73; DD-59 ✅ reconcile; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated) · `../dd-69-app-native-analysis.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` |
+| **Tài liệu liên quan** | `../strategy/saas-implementation-plan.md` (kiến trúc) · `PRD.md` v2.8h · `TDD.md` v3.1c · `../standards/decisions.md` **v2.04 WIP** (canonical current decision log; status đọc theo từng DD; `DECISION_FINAL` không phải runtime/readiness) · `../dd-69-app-native-analysis.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` |
 
 > BRD là nguồn sự thật cho **product scope & business rules**; PRD cho hành vi/user flow; TDD cho implementation contract; ROADMAP cho thứ tự và tiến độ. Security constraints đã chốt trong AUDIT là bắt buộc. Khi có conflict cùng một chủ đề: **BRD → PRD → TDD → ROADMAP**; riêng security: quy tắc nghiêm ngặt hơn giữa BRD và AUDIT thắng.
 >
@@ -426,6 +426,7 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 25/07/2026 | v3.9i | **Authority pointer reconcile:** BRD/PRD/TDD cùng trỏ current decisions v2.04 WIP và nhắc đọc status theo từng DD; pointer-only, không đổi scope/flow/runtime. |
 | 24/07/2026 | v3.9h | **Reconcile AC-5 public-projection timing (`docs-prd-flow2-publish-projection-reconcile`, hard dependency of the ratified publish contract; codex round-04 P1):** AC-5 said "host tạo kèo trên web → hiện ... marketplace" without distinguishing draft vs open, contradicting the ratified publish contract (project-on-publish, open-only). Reworded: create (`draft`) → hiện group khi announce; marketplace chỉ sau khi Host **Đăng** (`open`). Khớp PRD FLOW 2/12, `feature_marketplace_discovery(.md/_tech.md)`, TDD.md §3.8/§3.9, `business-rules.md` BL-DSC-2. Prose only; dated changelog giữ verbatim; không resolve OQ nào khác. |
 | 19/07/2026 | v3.9g | **Mirror DD-79 ✅ Home hub (S9) + DD-81 ✅ Pencil:** thêm mục Home hub dưới FR-8 (composition-only, nav shell 5 slot + chat header; registry config-driven; Feed gated DD-76). Không FR mới, không đổi committed scope/runtime. |
 | 19/07/2026 | v3.9f | Authority pointer refresh v1.67→v1.74: v1.68–v1.74 đều là BE-contract closure no-runtime (DD-05/44/52 idempotency v1.68 · notification v1.69–v1.71/v1.74 · DD-45a test-truth v1.72 · DD-50 lock-order v1.73). Pointer-only, không đổi product scope/phase/runtime. |

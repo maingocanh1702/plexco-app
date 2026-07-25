@@ -1,12 +1,12 @@
 # Feature: Notifications — Reminders · Inbox · Announcements · Web Push — Backend Tech Spec
 
 > **Canonical phase:** P3 / P4 (inbox · push S9/S20) / P4.5–P4.7 (channel delivery) / P4+ (global plane · announcements)
-> **Version:** 3.4i · 2026-07-19
-> **Status:** 🟡 **Draft** — §A reviewed; target runtime migration pending. **Current decision log + notification closure: v1.69. §B/C/D vẫn chờ DD-70/71/72; DDL chưa có trong `packages/db/schema.ts`.**
+> **Version:** 3.5 · 2026-07-25
+> **Status:** ✅ **Reviewed contract** — §A giữ nguyên; §B/C/D theo DD-70/71/72 owner-final. DDL vẫn chưa có trong `packages/db/schema.ts`; từng implementation slice vẫn cần strict `CODE_READY`.
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
-> ⚠️ Hạ Reviewed → Draft ngày 2026-07-18 do **gộp tài liệu**, không phải mở lại luật tiền §A. v3.1/v3.2 giữ các business invariants đã reviewed nhưng sửa và đánh dấu rõ target DDL/delta Draft; không còn claim toàn bộ §A giống từng chữ v2.5.
+> ⚠️ Historical: hạ Reviewed → Draft ngày 2026-07-18 do **gộp tài liệu**, không phải mở lại luật tiền §A. DD-70/71/72 được owner chốt 2026-07-21 nên v3.5 promote lại Reviewed. 🟡 trong body nay chỉ target chưa implement/OQ theo slice, không phải ba DD còn mở.
 > **Product spec:** `../feature_notifications_reminders.md`  
-> **References:** `../../standards/business-rules.md` BL-MSG-3/5, **BL-NTF-1..4**, BL-SEC-5 · `../../standards/decisions.md` **DD-37/DD-40/DD-43/DD-45/DD-47/DD-48/DD-49/DD-50/DD-67/DD-69/DD-70..72** · `../../standards/core-db-architecture-principles.md` §P6 · `../../dd-43-membership-tags-analysis.md` · `../../dd-45-waitlist-analysis.md` · `../../dd-69-app-native-analysis.md` · `feature_identity_tech.md` · `feature_sync_engine_tech.md` · `feature_multi_tenant_tech.md`
+> **References:** `../../standards/business-rules.md` BL-MSG-3/5, **BL-NTF-1..4**, BL-SEC-5 · `../../standards/decisions.md` **DD-37/DD-40/DD-43/DD-45/DD-47/DD-48/DD-49/DD-50/DD-67/DD-69/DD-70..72 ✅ · DD-88 🟡 proposal** · `../../proposals/notification-grouping.md` (🟡 DD-88: group taxonomy · session/activity/`message_request` types · per-group opt-out map DD-70 preferences · unread bulk/scoped mark-all) — **pointer-only, chưa đổi target schema** · `../../standards/core-db-architecture-principles.md` §P6 · `../../dd-43-membership-tags-analysis.md` · `../../dd-45-waitlist-analysis.md` · `../../dd-69-app-native-analysis.md` · `feature_identity_tech.md` · `feature_sync_engine_tech.md` · `feature_multi_tenant_tech.md`
 
 > **Cập nhật v2.1 (DD-40 ✅ + DD-37 ✅, 2026-07-10):** kênh nhắc chính = **web push + Zalo DM**; **Messenger best-effort trong cửa sổ standard 24h**, ngoài cửa sổ chỉ khi có cơ chế Meta đủ điều kiện/được phê duyệt; **bỏ group-mention Telegram**. Ngưỡng nhắc mặc định **2h → 24h → …** (DD-40). Sau **mọi** điểm markPaid (thủ công tiền mặt/CK **và** auto CK) → **xác nhận tự động tới player** (FR-6.2). Nhắc thủ công (`reminders_manual`) = mọi tier; **nhắc tự động (`reminders_auto`) = `host_pro`**.
 >
@@ -29,6 +29,8 @@
 > **Cập nhật v3.4e (DD-45 mirror v1.68; current authority v1.69):** candidate events remain per-entry audit; deterministic owner intent moves to root `promotion_retry_id`. SessionService scheduler/worker independently claims the lazy max-3-claimed-attempt root; this projector never drives/settles retry. Vẫn Draft/no runtime.
 > **Cập nhật v3.4f (DD-70/72 correction v1.70 — realign với FE):** global producer biết trước không được fallback tenant outbox; link-code consume emits nothing, merge commit append từ locked audit theo fence-first hierarchy, không theo được ⇒ build HALT (đã pin tại §Producer boundary + Cross-feature blocking order từ v3.4c/v3.4d). Cross-Person push rebind chỉ nhận verified prior-owner reauth/approval hoặc audited manual recovery; Person merge là re-parent/reset path riêng, invalidate pending rebind challenges. Vẫn Draft/no runtime.
 > **Cập nhật v3.4g (post-fence snapshot v1.71; current authority v1.74):** mark-all/announcement fan-out dùng read-only discovery ngoài mutation transaction → bounded READ COMMITTED lock toàn bộ Person fences trước first authoritative snapshot/revalidation, giữ visibility/audience/tag/membership/preference/route owners tới commit (sửa isolation wording tại §Order/read boundary). v1.74 final implementability closure (exact planned-attempt receipt set · tag-retirement lock/recheck trước fan-out · push trust exactly-once guard · rebind prune chỉ NULL live pointers · delivered/opened latency DB-required/server-derived) recorded in decisions v1.74; §body absorption verify ở pass kế. Vẫn Draft/no runtime.
+>
+> **Cập nhật v3.5 (decisions v1.90/v1.91; current working-tree authority v2.04):** DD-70 chọn global protected plane + service-layer merge/preferences; DD-71 chốt manual basic free + proof-bound confirm; DD-72 chốt web-only subscriptions + direct VAPID + generic OS payload. Contract Reviewed; không migration/service/worker/UI. NTF-OQ retention/evidence và DD-88 vẫn tách riêng.
 >
 > **Review-fix v3.1:** security alert tách durable item khỏi trusted out-of-band route; announcement preview có opaque consume-once proof và layered actor/fan-out quota; DD-72 chỉ freeze direct Web Push/VAPID phase-1 (`kind='web'`), native shape chờ DD-69 spike. `unknown` luôn chặn alternate-route fallback nhưng same-route recovery được pin theo notification class.
 
@@ -96,7 +98,7 @@
 - **Authorization tại read/dispatch/send time, không snapshot.** Ngay trước provider write, type-specific predicate phải pass: reminder open/partial + current policy (kể cả explicit final notice); settled/correction exact unsuperseded event version + original bound Person; owner alert current admin; announcement active/allowed-guest + no opt-out + current capability. Fail → terminal pre-send skip, không HTTP.
 - **Projector/adapter không nằm trên đường tiền.** Fail/DLQ theo `projector_deliveries`; không rollback ledger (**BL-NTF-2**).
 - **Secret resolution là worker-only.** Generic web `app` role không được EXECUTE hàm giải mã endpoint/keys; dedicated worker consume send-claim TTL ngắn, derive person/subscriptions từ logical delivery và ghi audit per physical attempt.
-- **Unknown recovery theo class.** Alternate-route fallback luôn cấm. Tenant path chỉ `settled|correction` được tối đa 2 same-Web-Push retry bằng cùng logical ref + stable Topic/client tag; `security_alert` thuộc global attempt ledger DD-70 chưa chốt. `reminder|announcement` mặc định manual reconcile.
+- **Unknown recovery theo class.** Alternate-route fallback luôn cấm. Tenant path chỉ `settled|correction` được tối đa 2 same-Web-Push retry bằng cùng logical ref + stable Topic/client tag; `security_alert` thuộc global attempt ledger phải được auth-security slice pin trước enablement theo DD-70. `reminder|announcement` mặc định manual reconcile.
 - **Direct Web Push + VAPID, không “tự host provider”.** VAPID xác thực application server; browser-selected push service vẫn ở data flow. Phase-1 không thêm app-level vendor notification platform/SDK. Native provider/schema không được suy từ Web-Push columns trước DD-69 phase-2 spike.
 - **Host-authored body là untrusted plain text.** API/DB write luôn parameterized; canonicalize valid UTF-8/newlines, reject control characters và `octet_length(body)>16384`; preview check provider limit. Không đưa body vào global store/OS push/log/metric. DLP warn/block là NTF-OQ-11, không claim semantic scanner bắt hết PII.
 
@@ -124,7 +126,7 @@ CREATE TABLE notification_intents (
   tenant_id uuid NOT NULL REFERENCES tenants(id),
   type text NOT NULL
        CHECK (type IN ('reminder','settled','correction','owner_alert','announcement')),
-       -- 'announcement' là extension Draft của §C/DD-71, không phải body v2.5.
+       -- 'announcement' là target extension đã owner-final ở §C/DD-71, chưa có migration.
   aggregate_id uuid NOT NULL,
   state_version integer NOT NULL,
   source_event_id uuid NOT NULL, -- canonical event/command/send-slot; server-derived
@@ -404,7 +406,7 @@ Do **not** edit historical migration `0008_notifications_onboarding.sql`. A new 
 8. Validate all FKs/CHECKs; set `route_class NOT NULL`. `unknown` forbids alternate fallback. Only evidence-bound reconcile may move unknown; tenant automatic recovery joins intent type and only `settled|correction` may consume bounded same-route retries. `security_alert` remains in DD-70 global attempt owner. Remove any staged `messenger_page_id` only after exact evidence; mismatch halts.
 9. Cut over dispatcher+adapter together. Immediately before conditional `send_started_at`, re-read type-specific predicate: reminder `open|partial` + current policy; settled/correction exact unsuperseded source; owner alert current admin; announcement current capability/membership/opt-out; every route active/reachable/same-Person. Failure atomically sets attempt `cancelled/pre_send_invalidated`, intent/delivery `skipped` (or `expired` for TTL), cancels remaining planned work, writes no HTTP and never falls back; it does not fabricate provider output. Add cutover, concurrent-writer, target-generation, Retry-After, mixed-target and kill-after-start regressions.
 
-### 2.2 Inbox + global plane 🟡 (ĐỀ XUẤT, chờ DD-70)
+### 2.2 Inbox + global plane 🟡 (DD-70 owner-final; target chưa implement)
 
 ```sql
 -- GLOBAL PROTECTED. Không tenant_id. Không RLS (giống persons/person_follows)
@@ -535,11 +537,11 @@ CREATE TABLE notification_read_all_plane_steps (
 
 Không connection nào vừa nhận raw global access vừa bypass tenant RLS. `processing` chỉ tồn tại trong transaction và không phải async/pending lifecycle; crash/early return rollback receipt/steps/reads, retry có thể chụp boundary mới. Exact replay chỉ chấp nhận row `completed`. Insert bắt đầu trước nhưng commit sau phải đợi fence, nhận sequence mới và vẫn unread; item hidden lúc mark-all không có read row nên khi re-authorize vẫn unread. `created_at` chỉ để hiển thị/audit, không phải order/read authority.
 
-**Phương án thay thế (NTF-OQ-6 phương án b):** nếu owner chọn **không lưu bền global plane** — bỏ `person_notifications`, chỉ đẩy SSE person-self. Hệ quả phải chấp nhận và ghi rõ: **follow request khi followee offline sẽ mất**; người dùng chỉ thấy nếu màn hình settings list riêng `person_follows.status='pending'`. `notification_reads` vẫn cần cho tenant plane. Đề xuất kỹ thuật nghiêng về (a); quyết định là của owner.
+**Phương án (b) đã bị DD-70 loại:** không lưu bền global plane sẽ làm follow request mất khi followee offline. Giữ đoạn này chỉ làm rationale; implementation phải theo phương án (a), không được re-open trong build slice.
 
-**Security-alert route nếu chọn (a):** narrow server/DB function capture immutable `event_at` **trước** triggering mutation và derive opaque `trigger_context_ref + trigger_context_started_at` từ locked web-session/recovery context, tạo `person_notifications(type='security_alert')` + global alert command trong cùng protected workflow; request/outbox không được khai các boundary này. UPDATE provenance/person/event fields sau insert bị immutable trigger reject. Dispatcher chỉ resolve email identity có `verified_at < trigger_context_started_at` hoặc Web Push subscription có `trusted_at < trigger_context_started_at`, với `trigger_context_started_at <= event_at`; factor được verify/trust sau khi triggering session/context bắt đầu bị loại dù xảy ra trước event. Forged/future/post-mutation/same-session provenance fail closed. Không tái dùng tenant `notification_deliveries`. Không trusted route vẫn giữ item + audit; auth-security slice phải pin exact global attempt owner/table + pre-change email lifecycle **trước migration/runtime enablement**.
+**Security-alert route theo DD-70(a):** narrow server/DB function capture immutable `event_at` **trước** triggering mutation và derive opaque `trigger_context_ref + trigger_context_started_at` từ locked web-session/recovery context, tạo `person_notifications(type='security_alert')` + global alert command trong cùng protected workflow; request/outbox không được khai các boundary này. UPDATE provenance/person/event fields sau insert bị immutable trigger reject. Dispatcher chỉ resolve email identity có `verified_at < trigger_context_started_at` hoặc Web Push subscription có `trusted_at < trigger_context_started_at`, với `trigger_context_started_at <= event_at`; factor được verify/trust sau khi triggering session/context bắt đầu bị loại dù xảy ra trước event. Forged/future/post-mutation/same-session provenance fail closed. Không tái dùng tenant `notification_deliveries`. Không trusted route vẫn giữ item + audit; auth-security slice phải pin exact global attempt owner/table + pre-change email lifecycle **trước migration/runtime enablement**.
 
-### 2.3 Announcements + membership tags 🟡 (DD-43 ✅ contract, chưa migration)
+### 2.3 Announcements + membership tags 🟡 (DD-43/DD-71 owner-final; chưa migration)
 
 ```sql
 CREATE TABLE membership_tags (
@@ -837,7 +839,7 @@ Tất cả bảng §2.3: `ENABLE` + `FORCE ROW LEVEL SECURITY`, policy theo `app
 
 Retry request không nhận caller-selected recipient set. `request_fingerprint = HMAC(domain='announcement-retry-request', canonical_json([tenant_id,actor_id,announcement_id,'retry_failed',contract_version]))` + key version; `command_scope_key` domain-separate tenant+actor+client command UUID. Same command trên announcement/action/version khác trả `IDEMPOTENCY_KEY_REUSED`; rotation dual-read by stored version rồi backfill, không tạo receipt thứ hai.
 
-### 2.4 Push subscriptions + telemetry 🟡 (ĐỀ XUẤT, chờ DD-72)
+### 2.4 Push subscriptions + telemetry 🟡 (DD-72 owner-final; target chưa implement)
 
 ```sql
 -- Singleton serialization owner cho endpoint-HMAC cutover. Registration giữ
@@ -1467,10 +1469,10 @@ TO app_worker;
 | `notification_policies` · `notification_intents` · `notification_deliveries` | `0008_notifications_onboarding.sql` | ✅ live — shape cũ: intents chưa có `source_event_id`/`intent_key_version`/`inbox_sequence`/`skip_reason`; deliveries `platform text` **không** CHECK, chưa có `route_class`/`person_id`, còn `attempts`/`provider_code` | **Reuse + expand additive theo §2.1, không recreate; DROP = ❌ NEVER.** Không sửa file `0008` lịch sử |
 | `outbox_events` · `projector_deliveries` · `processed_commands` | `0005_sync_engine.sql` | ✅ live (`tenant_id NOT NULL`) | Reuse; tenant outbox **không bao giờ** là fallback/source cho global event (§2.2 Producer boundary — vi phạm = build HALT) |
 | `channel_identities` + delta `UNIQUE (id,platform,person_id)` | bảng gốc `0001`; delta thuộc migration DD-65..68 **chưa land** | 🟡 prerequisite §A-target | `type`/`platform` CHECK, `route_class`, person-bound FKs và physical-attempt ledger chỉ land **sau** DD-67 identity/registry migration; web push/one-route hardening phụ thuộc delta này (đã pin ở Live baseline đầu doc) |
-| `memberships`/`sessions` delta `UNIQUE (id, tenant_id)` | bảng gốc `0002`; delta chưa có | 🟡 prerequisite §C | Chỉ land cùng slice §C sau DD-71 |
-| §B: `person_notifications` · `notification_inbox_fences` + `notification_inbox_sequence_seq` · `notification_reads` · `notification_read_all_commands`/`_plane_steps` | **chưa có trong bất kỳ migration nào** | 🟡 ĐỀ XUẤT | Migration mới monotonic, **gated DD-70 — KHÔNG được land trước khi DD chốt** |
-| §C: `membership_tags` · `membership_tag_links` · `announcements` · `announcement_audiences`/`_audience_tags` · `announcement_quota_reservations` · `announcement_retry_commands`/`_items` · `membership_notification_preferences` | **chưa có trong bất kỳ migration nào** | 🟡 ĐỀ XUẤT (DD-43 ✅ contract nhưng chưa migration) | Migration mới monotonic, **gated DD-71 — KHÔNG được land trước khi DD chốt** |
-| §D: `push_subscription_lookup_key_epoch` · `push_subscription_limits` · `device_push_subscriptions` · `push_subscription_rebind_challenges` · `push_subscription_registration_receipts` · `push_subscription_trust_proof_issuances` · `push_subscription_trust_events` · `push_delivery_telemetry` | **chưa có trong bất kỳ migration nào** | 🟡 ĐỀ XUẤT | Migration mới monotonic, **gated DD-72 — KHÔNG được land trước khi DD chốt** |
+| `memberships`/`sessions` delta `UNIQUE (id, tenant_id)` | bảng gốc `0002`; delta chưa có | 🟡 prerequisite §C | Chỉ land cùng dedicated §C code-ready slice |
+| §B: `person_notifications` · `notification_inbox_fences` + `notification_inbox_sequence_seq` · `notification_reads` · `notification_read_all_commands`/`_plane_steps` | **chưa có trong bất kỳ migration nào** | ✅ contract / ⬜ runtime | Migration mới monotonic; DD-70 đã chốt nhưng vẫn cần strict slice readiness, schema/grant/acceptance closure |
+| §C: `membership_tags` · `membership_tag_links` · `announcements` · `announcement_audiences`/`_audience_tags` · `announcement_quota_reservations` · `announcement_retry_commands`/`_items` · `membership_notification_preferences` | **chưa có trong bất kỳ migration nào** | ✅ contract / ⬜ runtime | Migration mới monotonic; DD-43/DD-71 đã chốt nhưng OQ chi tiết theo slice phải đóng trước `CODE_READY` |
+| §D: `push_subscription_lookup_key_epoch` · `push_subscription_limits` · `device_push_subscriptions` · `push_subscription_rebind_challenges` · `push_subscription_registration_receipts` · `push_subscription_trust_proof_issuances` · `push_subscription_trust_events` · `push_delivery_telemetry` | **chưa có trong bất kỳ migration nào** | ✅ contract / ⬜ runtime | Migration mới monotonic; DD-72 đã chốt nhưng telemetry/evidence/retention gates vẫn áp dụng |
 
 **Numbering:** header ghi committed `main` tới `0013`, nhưng repo hiện đã có `0014_players_waitlist.sql` → xác nhận đúng quy tắc đã pin ở Live baseline: lấy **next available monotonic number tại build time** sau khi sync prerequisite branches; không giả định số còn trống, không sửa/tái dùng migration lịch sử.
 
@@ -1480,7 +1482,7 @@ TO app_worker;
 |---|---|---|
 | §A delta (sau khi `0008`-upgrade/DD-67 migration land) | Disable scheduler/dispatcher/adapter workers + §A routes **trước**, rồi revert bằng migration mới additive-only: DROP các constraint/cột/bảng attempt mới thêm, restore shape `0008` | ✅ Constraint/column-only; dữ liệu backfill giữ nguyên; quarantine/legacy-archive rows giữ lại cho audit |
 | Bảng live `0005`/`0008` | DROP | ❌ NEVER — chứa intent/delivery/outbox thật đã apply |
-| §B/C/D objects | — | **Không có rollback path vì chưa tồn tại migration/runtime nào** (DD-70/71/72 chưa chốt); "rollback" duy nhất hiện tại là không land migration |
+| §B/C/D objects | — | **Không có rollback path vì chưa tồn tại migration/runtime nào**; mỗi concrete slice phải author rollback trước strict `CODE_READY`. Hiện tại không land migration |
 
 ### Edge Cases (Backend)
 
@@ -1555,7 +1557,7 @@ TO app_worker;
 
 ## 3. API Contract
 
-> **DD-60 compatibility:** mọi JSON response dùng canonical `{data,error,meta.requestId}` envelope và auth legend `⬜ Public · ✅ Person-self · 🔑 exact tenant/ops capability · 🔒 signed provider/report capability`. Bảng dưới là inventory Draft; trước khi promote DD-70/71/72, từng endpoint mới phải được mở thành request/response/error block theo `../../standards/api-reference-convention.md`.
+> **DD-60 compatibility:** mọi JSON response dùng canonical `{data,error,meta.requestId}` envelope và auth legend `⬜ Public · ✅ Person-self · 🔑 exact tenant/ops capability · 🔒 signed provider/report capability`. Bảng dưới là target inventory, chưa phải runtime API. Trước strict `CODE_READY`, từng concrete endpoint phải được mở thành request/response/error block theo `../../standards/api-reference-convention.md`.
 
 ### Endpoints
 
@@ -1658,7 +1660,7 @@ TO app_worker;
 
 **GET `/api/notifications/preview`** — `400` khi không có ai đủ điều kiện: `error.code = "NO_ELIGIBLE_RECIPIENTS"`, cùng envelope. Phần còn lại của §A (settled/correction/owner-alert pipeline) là worker/outbox-driven, không có HTTP surface để minh hoạ.
 
-§B/C/D API examples: 🟡 chờ DD-70/71/72 chốt — không minh hoạ để tránh proposal đọc nhầm thành contract.
+§B/C/D API examples: chưa author ở mức concrete slice — phải bổ sung trước strict `CODE_READY`; không dùng inventory target này làm runtime/API proof.
 
 ### Idempotency
 
@@ -1789,7 +1791,7 @@ RLS đã fence `tenant_id`; điều kiện `tenant_id` tường minh trong join 
 | Physical send-attempt lease | 60s, > provider timeout | Unstarted expiry reclaim được; expiry sau `send_started_at` ⇒ `unknown` |
 | Push request timeout | 10s | Không giữ worker; nếu timeout xảy ra sau write thì outcome=`unknown`, không giả định no-send/fallback |
 | Unknown reconciliation window | initial 5 phút, cấu hình | Chờ telemetry/receipt; hết cửa sổ mới áp class-aware same-route policy, alternate-route vẫn cấm |
-| Tenant high-value same-route retries | tối đa 2 | `settled\|correction`; global `security_alert` chờ DD-70 attempt owner |
+| Tenant high-value same-route retries | tối đa 2 | `settled\|correction`; global `security_alert` chờ exact attempt owner/lifecycle ở auth-security enablement slice |
 | Subscription stale sau | 3 fail liên tiếp **hoặc** 1 lần `410` | `410` là bằng chứng chắc; fail mềm cần lặp lại |
 | Prune subscription secret row | Chỉ `stale\|revoked`; latest lifecycle transition/`last_success_at`/`created_at` ≥180 ngày; no live attempt/report cap | Xoá secret trước, SET NULL live audit pointers; receipts/trust events theo retention riêng NTF-OQ-15 |
 | Telemetry latency window | 24h sau `send_started_at` | Có anchor kể cả ambiguous; sau đó expired, không tính latency |
@@ -1815,12 +1817,12 @@ RLS đã fence `tenant_id`; điều kiện `tenant_id` tường minh trong join 
 
 | Mục | Trả lời trong spec |
 |-----|---------------------|
-| Authorization/ownership | §A: person-bound composite FKs `(intent_id,tenant_id,person_id)` + `(channel_identity_id,platform,person_id)` (§2.1) và type-specific pre-send predicate ngay trước `send_started_at` (§2.1; §4.1 bước 6). API: auth legend DD-60/DD-47 (§3) — endpoint person-self không nhận `person_id` từ request. §B/C/D: no-blanket-grant + narrow `SECURITY DEFINER`/capability functions (§2.5) *(đề xuất DD-70/72, chưa chốt)* |
-| Injection/validation | §A: server-derived versioned `intent_key`/`delivery_key`, API/DB write luôn parameterized (§1, §2.1). §C: host body là untrusted plain text — canonicalize UTF-8/newline, reject control chars + `octet_length(body)>16384` ở cả API và DB CHECK; tag `name_norm` do versioned trigger derive, không nhận từ caller (§2.3; edge #63) *(đề xuất DD-71, chưa chốt)* |
-| Secret & log redaction | Raw provider body/header/endpoint/error string không được persist/log (§2.1 finalizer); `target_ref` chỉ là ciphertext audit, không phải routing authority (§2.1). §D: endpoint/keys KMS-encrypted (`*_enc`), secret chỉ resolve qua worker-only `push_sub_resolve_for_started_attempt`; registration boundary redact raw subscription khỏi log/error (§2.4; §2.5 Registration crypto boundary) *(đề xuất DD-72, chưa chốt)*. Push payload không tiền/PII — CI invariant trên `buildPushPayload()` (§2.6) |
-| Webhook signature + replay | Doc này **không có inbound provider webhook** (provider outcome đọc từ synchronous HTTP response; bank webhook thuộc `feature_payment_reconcile_tech.md`). Tương đương chức năng: signed proof/capability — preview proof + `preview_jti` consume-once (§2.3; §4.5), registration envelope + JTI (§2.4; §2.5), `report_cap` write-only hết hạn `send_started_at+24h` + structural `UNIQUE(attempt_ref,event)` replay fence (§2.4; §2.6) *(phần 🟡 theo đề xuất DD-71/72, chưa chốt)* |
+| Authorization/ownership | §A: person-bound composite FKs `(intent_id,tenant_id,person_id)` + `(channel_identity_id,platform,person_id)` (§2.1) và type-specific pre-send predicate ngay trước `send_started_at` (§2.1; §4.1 bước 6). API: auth legend DD-60/DD-47 (§3) — endpoint person-self không nhận `person_id` từ request. §B/C/D: DD-70/72 owner-final no-blanket-grant + narrow `SECURITY DEFINER`/capability functions (§2.5); runtime pending |
+| Injection/validation | §A: server-derived versioned `intent_key`/`delivery_key`, API/DB write luôn parameterized (§1, §2.1). §C: DD-71 owner-final target giữ host body untrusted plain text — canonicalize UTF-8/newline, reject control chars + `octet_length(body)>16384` ở cả API và DB CHECK; tag `name_norm` do versioned trigger derive, không nhận từ caller (§2.3; edge #63); runtime pending |
+| Secret & log redaction | Raw provider body/header/endpoint/error string không được persist/log (§2.1 finalizer); `target_ref` chỉ là ciphertext audit, không phải routing authority (§2.1). §D: DD-72 owner-final endpoint/keys KMS-encrypted (`*_enc`), secret chỉ resolve qua worker-only `push_sub_resolve_for_started_attempt`; registration boundary redact raw subscription khỏi log/error (§2.4; §2.5 Registration crypto boundary). Push payload không tiền/PII — CI invariant trên `buildPushPayload()` (§2.6); runtime pending |
+| Webhook signature + replay | Doc này **không có inbound provider webhook** (provider outcome đọc từ synchronous HTTP response; bank webhook thuộc `feature_payment_reconcile_tech.md`). Tương đương chức năng theo DD-71/72 owner-final: signed proof/capability — preview proof + `preview_jti` consume-once (§2.3; §4.5), registration envelope + JTI (§2.4; §2.5), `report_cap` write-only hết hạn `send_started_at+24h` + structural `UNIQUE(attempt_ref,event)` replay fence (§2.4; §2.6); runtime pending |
 | Idempotency | Bảng Idempotency ở §3 (tổng hợp canonical) + structural UNIQUEs §2.1: `intent_key`, `delivery_key`, history-safe `(intent_id,route_class)`, one-active-route partial, one-live-attempt partial |
-| Data retention/xoá | §D: Retention/prune block §2.4 — secret-row prune 180 ngày fail-closed, replay/audit ledgers giữ theo cửa sổ riêng; hard purge/exact retention là gate NTF-OQ-15/NTF-OQ-16 *(đề xuất DD-72, chưa chốt)*. §A/tenant plane: per-table retention chưa pin ở doc này — theo `feature_security_operations_tech.md` |
+| Data retention/xoá | §D: Retention/prune block §2.4 — secret-row prune 180 ngày fail-closed, replay/audit ledgers giữ theo cửa sổ riêng; hard purge/exact retention vẫn là gate NTF-OQ-15/NTF-OQ-16 sau DD-72. §A/tenant plane: per-table retention chưa pin ở doc này — theo `feature_security_operations_tech.md` |
 
 ---
 
@@ -1973,7 +1975,7 @@ RLS đã fence `tenant_id`; điều kiện `tenant_id` tường minh trong join 
 6. Messenger DM best-effort trong cửa sổ 24h (P2.5) only after DD-65..68 Page registry/identity/reachability migration; enable one-route shadow metrics before send
 7. Enable waitlist failure owner-alert projector after DD-45 session retry worker is wired
 
-**§B/C/D 🟡 — gate quyết định bắt buộc trước mọi migration:** DD-70 (NTF-OQ-6 global plane) · DD-71 (NTF-OQ-9 tier/preview) · DD-72 (NTF-OQ-13 schema push). Không tự chọn thay owner.
+**§B/C/D — quyết định owner đã đóng, nhưng migration vẫn gated:** DD-70/71/72 là `DECISION_FINAL`; mỗi phần phải có dedicated strict `CODE_READY` packet đóng OQ/acceptance/rollback của chính slice. Không land theo broad feature doc này.
 
 8. Sau khi sync prerequisites, lấy next monotonic migration number; rollout độc lập: (a) inbox fences/global sequence + source-event owner/read-state/read-all grants; (b) tags + immutable announcements/audiences/preferences + durable quota/retry item receipts; (c) Web Push-only key epoch, subscriptions, registration/trust receipts, exact worker attempt functions và grant-fenced telemetry. Core DD-67 prerequisite includes person-bound deliveries + physical attempts. Không sửa history/native pre-design.
 9. Land planned CI invariant tests **trước** enablement: no global money/PII/arbitrary params, no blanket raw telemetry grant, same-Person delivery FKs, physical kill-after-write, visible/hidden/late mark-all + cross-plane rollback + exact receipt replay + signed cursor, tag isolation+normalization, atomic announcement vector/idempotency, plain-text fence, payload/topic/cap/display order.
@@ -1994,6 +1996,7 @@ RLS đã fence `tenant_id`; điều kiện `tenant_id` tường minh trong join 
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-25 | v3.5 | **Owner-decision reconcile:** DD-70(a), DD-71 và DD-72 đã chốt từ 21/07; promote cặp về **Reviewed contract**. Chuyển §B/C/D từ “proposal/chờ DD” thành owner-final target, nhưng giữ DDL/API/service/worker/UI = chưa implement; API examples/rollback/OQ phải đóng trong từng strict code-ready slice. NTF-OQ-14..16, exact global security-attempt owner và DD-88 vẫn gate riêng. |
 | 2026-07-19 | v3.4i | **Template v2.30/v2.33 uplift (đợt cuối của sweep):** thêm §2 `Migration & Rollback` (tổng hợp derivative: live `0005`/`0008` reuse-không-recreate vs §B/C/D chưa có migration + rollback matrix), §3 `Request/Response Examples` (chỉ §A theo envelope DD-60; §B/C/D không minh hoạ — chờ DD chốt), §4.10 `Security Checklist`. `Idempotency` (§3) và `Caching Strategy` (§4.9) đã có sẵn — không thêm trùng. Additive/derivative — không đổi contract §A, không chốt thêm gì cho §B/C/D (vẫn chờ DD-70/71/72). |
 | 2026-07-19 | v3.4h | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v3.4g | **Post-fence snapshot closure v1.71 + authority pointer v1.74:** mark-all/announcement fan-out read-only pre-discovery rồi bounded READ COMMITTED fence-first trước snapshot (sửa wording REPEATABLE READ cũ tại §Order/read boundary). v1.74 closure items recorded in decisions, §body absorption verify ở pass kế. Version realign với FE v3.4g. No runtime/migration. |
