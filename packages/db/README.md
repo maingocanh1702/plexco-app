@@ -341,8 +341,16 @@ race-safe SQL file applied to a **running** cluster via `pnpm db:bootstrap` (req
 postgres service container starts before checkout; an already-populated local `pgdata` volume skips
 init scripts entirely — see the file's own header). The compose init mount
 (`infra/docker-compose.yml`) is a convenience for genuinely fresh local volumes only. CI runs
-`pnpm db:bootstrap` as a workflow step after checkout and before the test step. The bootstrap file
-creates/verifies exactly:
+`pnpm db:bootstrap` as a workflow step after checkout and before the test step, with an explicit
+"Ensure psql client" step first (codex round-03 [P1]: never assume the runner image already has it
+— install it if `command -v psql` fails, a no-op otherwise). `pnpm db:bootstrap` itself shells out
+to `psql`, which is **not** guaranteed on a Docker-only host: if it is missing locally, run the
+SAME file through the postgres container's own client instead —
+`docker compose -f infra/docker-compose.yml exec -T postgres psql -U plexco -d plexco -v
+ON_ERROR_STOP=1 -f - < infra/postgres-init/01-job-definer.sql` (see `infra/docker-compose.yml`'s
+worker-prep comment). Production's admin/deploy tooling for this step must likewise run somewhere
+`psql` is available — the application's own runtime image is not required to have it, since this
+step never runs from inside it. The bootstrap file creates/verifies exactly:
 
 ```sql
 CREATE ROLE job_definer NOLOGIN NOSUPERUSER BYPASSRLS

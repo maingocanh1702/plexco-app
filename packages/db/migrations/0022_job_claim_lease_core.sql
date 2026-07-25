@@ -444,3 +444,12 @@ GRANT EXECUTE ON FUNCTION complete_projector_delivery(uuid, text, uuid, text, ti
 -- grants on those two (design-probe.md finding).
 GRANT SELECT, UPDATE ON outbox_events TO job_definer;
 GRANT SELECT, INSERT, UPDATE ON projector_deliveries TO job_definer;
+
+-- codex round-03 [P1]: 0009's blanket tenant-table grant gave `app` SELECT/INSERT/UPDATE/DELETE
+-- on outbox_events. INSERT (+ SELECT) stays — a future producer slice writes new events here in
+-- the same transaction as its business mutation — but UPDATE/DELETE let ANY app-role connection
+-- rewrite claimed_at/lease_expires_at or delete rows directly, bypassing the new narrow, audited
+-- definer-function boundary entirely. Revoke exactly those two; app never had any grant on
+-- projector_deliveries or job_audit_events (0005 carries no GRANT at all; job_audit_events is new
+-- and owned solely by job_definer), so nothing to revoke there.
+REVOKE UPDATE, DELETE ON outbox_events FROM app;

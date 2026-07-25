@@ -53,8 +53,12 @@ services:
   # ⚠️ Worker trên DB SẠCH cần bước chuẩn-bị-DB trước (theo THỨ TỰ):
   #   0) job_definer bootstrap (idempotent, cluster-global — chỉ cần chạy 1 lần/cluster;
   #      trên volume MỚI TINH, mount ./postgres-init ở service postgres đã lo việc này;
-  #      trên volume ĐÃ CÓ DỮ LIỆU, chạy thủ công trước bước 1):
+  #      trên volume ĐÃ CÓ DỮ LIỆU, chạy thủ công trước bước 1). `pnpm db:bootstrap` cần
+  #      `psql` trên HOST (không có sẵn trên máy chỉ cài Docker, codex round-03 [P1]):
   #      DATABASE_URL_MIGRATION=postgres://plexco:plexco_dev@localhost:5432/plexco pnpm db:bootstrap
+  #      Không có `psql` host? Dùng psql của CHÍNH container postgres, feed file qua stdin:
+  #      docker compose -f infra/docker-compose.yml exec -T postgres \
+  #        psql -U plexco -d plexco -v ON_ERROR_STOP=1 -f - < infra/postgres-init/01-job-definer.sql
   #   1) migrations current baseline 0000→0022 (roles + schema + RLS — runner ở slice db-RLS),
   #   2) pgboss provisioning (truyền URL migration AD-HOC, không qua .env —
   #      .env bị nạp vào runtime services):

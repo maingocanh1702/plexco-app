@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { eq } from "drizzle-orm";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -12,6 +13,7 @@ import {
   joinRequests,
   memberships,
   notificationDeliveries,
+  outboxEvents,
   paymentAllocations,
   players,
   sessions,
@@ -1567,6 +1569,50 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
     const ev = await seedOutboxEvent(ctx.tenantA);
     await ctx.workerPool.query(`SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`, [
       ev,
+    ]);
+  });
+
+  it("JCL-9b: app keeps INSERT/SELECT on outbox_events for the producer side, but UPDATE/DELETE are revoked (codex round-03 [P1])", async () => {
+    const created = await withTenant(ctx.appDb.db, ctx.tenantA, async (tx) => {
+      const rows = await tx
+        .insert(outboxEvents)
+        .values({
+          tenantId: ctx.tenantA,
+          aggregateType: "jcl_app_seat",
+          aggregateId: randomUUID(),
+          sequence: 1,
+          type: "jcl.app.seat",
+          payload: {},
+        })
+        .returning();
+      return rows[0]!;
+    });
+    expect(created.tenantId).toBe(ctx.tenantA);
+
+    const seen = await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      tx.select().from(outboxEvents).where(eq(outboxEvents.id, created.id)),
+    );
+    expect(seen.length).toBe(1);
+
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+        tx
+          .update(outboxEvents)
+          .set({ claimedAt: new Date() })
+          .where(eq(outboxEvents.id, created.id)),
+      ),
+      /permission denied/i,
+    );
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+        tx.delete(outboxEvents).where(eq(outboxEvents.id, created.id)),
+      ),
+      /permission denied/i,
+    );
+
+    // cleanup: claim it via the real function so it doesn't linger unclaimed for later tests
+    await ctx.workerPool.query(`SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`, [
+      created.id,
     ]);
   });
 

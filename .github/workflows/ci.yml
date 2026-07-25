@@ -61,6 +61,12 @@ jobs:
       - name: Build
         run: pnpm -w build
 
+      - name: Ensure psql client
+        # codex round-03 [P1]: `pnpm db:bootstrap` shells out to `psql` — do not assume the
+        # runner image has it; install explicitly (a no-op if it's already present) so this
+        # never depends on an unverified assumption about the runner's software manifest.
+        run: command -v psql >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client)
+
       - name: Bootstrap job_definer role
         # The postgres service container starts BEFORE checkout (see the `services:`
         # block above vs `actions/checkout` at :27), so infra/postgres-init can never
