@@ -66,7 +66,7 @@ Tức là trong sơ đồ, "club" chính là node `TENANTS` (hub trung tâm). Kh
 | Plane | Tables | Access |
 |---|---|---|
 | **GLOBAL protected** | `persons`, `channel_identities`, `link_codes`, `merge_audit`, `merge_tombstones`, `accounts`, `web_sessions`, `account_identities`, `magic_links`, `player_chat_context`, `oauth_transactions`, `routing_audit`, `auth_login_nonces`, `auth_login_state`, `rate_limit_hits`, `auth_audit_events`, `account_emails`, `email_password_credentials`, `auth_pending_email_registrations`, `auth_email_tokens`, `auth_email_deliveries` | No blanket grant to `app`. Reached via identity/auth service or SECURITY DEFINER fns. `auth_login_nonces`/`auth_login_state`/`rate_limit_hits`/`auth_audit_events` and the five `0016` email tables are function-only (no table grant at all, not even to `app`) — see `0012`/`0015`/`0016`. `sports`/`plans` are global lookups (SELECT allowed). |
-| **TENANT-private (RLS)** | `memberships`, `aliases`, `channel_reachability`, `settings`, `sessions` (+recurrence/occurrences/surface_refs), `players`, `telegram_links`, `tenant_admins`, `tenant_link_codes`, `bank_accounts`, `charges`, `bank_transactions`, `payment_allocations`, `provider_connections`, `zalo_bots`, `zalo_reply_contexts`, `messenger_pages`, `processed_commands`, `outbox_events`, `join_requests`, `subscriptions`, `subscription_invoices`, `notification_*`, `onboarding_*` | `ENABLE`+`FORCE` RLS, policy on `app.tenant_id` GUC, fail-closed. `app` = `NOBYPASSRLS`. Always via `tenantRepo` choke-point. |
+| **TENANT-private (RLS)** | `memberships`, `aliases`, `channel_reachability`, `settings`, `sessions` (+recurrence/occurrences/`session_surface_refs`), `players`, `telegram_links`, `tenant_admins`, `tenant_link_codes`, `bank_accounts`, `charges`, `bank_transactions`, `payment_allocations`, `provider_connections`, `zalo_bots`, `zalo_reply_contexts`, `messenger_pages`, `processed_commands`, `outbox_events`, `join_requests`, `subscriptions`, `subscription_invoices`, `notification_*`, `onboarding_*` | `ENABLE`+`FORCE` RLS, policy on `app.tenant_id` GUC, fail-closed. `app` = `NOBYPASSRLS`. Always via `tenantRepo` choke-point. |
 | **PUBLIC read model** | `public_sessions` | No RLS. `readonly` role gets `SELECT` only; canonical tables get **zero** grant to `readonly`. Field whitelist — no money/PII/roster/exact venue. |
 | **PLATFORM/WORKER** | `plans`, `billing_transactions`, `billing_allocations`, `billing_overrides`, `projector_deliveries`, `surface_refs` | Billing platform ledger (separate from player ledger, BL-BIL-1). Worker claims outbox via `claim_outbox_batch()`. |
 
@@ -108,7 +108,7 @@ the worker via narrow privileged functions, then re-enters tenant context.
 | INV-5 strong identity proof | `link_codes` (OTP), `persons_verified_phone_unique`, `merge_audit`/`merge_tombstones` |
 | INV-6 idempotency | `processed_commands` UNIQUE, `outbox_events(aggregate_id,sequence)`, `projector_deliveries` PK, `bank_transactions` UNIQUE |
 | INV-7 one owner for derived data | `charges.amount_allocated`, `public_sessions.slots_open` (projector) |
-| INV-8 narrow worker privilege | `claim_outbox_batch()` SECURITY DEFINER + `app_worker` EXECUTE-only |
+| INV-8 narrow worker privilege | Current: `claim_outbox_batch()` SECURITY DEFINER + `app_worker` EXECUTE-only. Target DD-89/DD-90: the named job functions are owned by pre-provisioned `job_definer NOLOGIN BYPASSRLS`; no direct worker DML. |
 | INV-9 secrets/PII never leak | `*_enc bytea` + `*_lookup_hash`; no grants on protected tables |
 
 ## Auth session revocation (DD-80 v1.88)
@@ -328,6 +328,28 @@ Apply `0000`→`0021` in order (FK dependencies validated). For production chang
 follow expand→backfill→validate→flip→contract (P12); avoid destructive
 migrations in the same deploy as behavior changes. Legacy Bestminton import:
 TDD §8.
+
+## Privileged job-definer bootstrap (DD-90 target; lands with the next job-core migration)
+
+`job_definer` is deliberately **not** a `RUNTIME_ROLES` entry and must never be created by
+`migrate()`: that helper creates `LOGIN NOBYPASSRLS` runtime roles and is therefore unsafe for a
+definer that must cross `FORCE RLS`. Before the job-core migration, a cluster administrator must
+create or attribute-check exactly:
+
+```sql
+CREATE ROLE job_definer NOLOGIN NOSUPERUSER BYPASSRLS
+  NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
+GRANT job_definer TO <migration_role>;
+GRANT USAGE ON SCHEMA public TO job_definer;
+```
+
+The privileged bootstrap must fail closed if an existing role has any other attribute; its SQL is
+the future `infra/postgres-init/01-job-definer.sql` for a fresh local cluster and is run as a CI
+step before DB tests. Production executes the same attribute-checking bootstrap from a privileged
+admin connection with the real migration-role identifier. The migration only asserts the role and
+membership, temporarily brackets `CREATE ON public` while transferring owner, then revokes it.
+It must never silently fall back to the migration role, `app_worker`, or superuser. Full state/test
+contract: `../../docs/autopilot-db-job-claim-lease-core.md`.
 
 ## Open items inherited from docs (not blockers)
 

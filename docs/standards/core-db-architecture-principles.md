@@ -3,8 +3,8 @@
 > Principles dùng khi thiết kế core domain, database schema, service boundary và architecture slice cho Plexco.
 > Tài liệu này không thay thế `product/TDD.md`, `standards/business-rules.md` hoặc `standards/decisions.md`; khi conflict, cập nhật decision/source document trước rồi sync lại file này.
 
-**Version:** 1.5
-**Date:** 2026-06-21 (cập nhật 2026-07-19)
+**Version:** 1.6
+**Date:** 2026-06-21 (cập nhật 2026-07-25)
 **Scope:** multi-tenant core, PostgreSQL/RLS, sync engine, identity, payment ledger, marketplace discovery, web/chat/native surfaces.
 
 > **Cập nhật v1.2 — 16/07/2026 (DD-50):** phase-1 không thu SĐT. Strong proof cho claim membership có tiền chỉ là verified account email hoặc transactional one-time `link_code`; owner/name/CK chỉ là review evidence. Phone schema giữ dormant.
@@ -14,6 +14,8 @@
 > **Cập nhật v1.4 — 19/07/2026:** initial DD-70 lock-order propagation; superseded by v1.5.
 >
 > **Cập nhật v1.5 — 19/07/2026 (DD-70(a) proposal, decisions v1.70):** known global-notification producers use bounded read-only Person discovery → inbox fences UUID-order → canonical Person/source/audit → same-transaction item. `link_code` consume emits nothing; merge commit owns `identity_merged`. Tenant outbox is never a global fallback; an unfit path is a build halt pending an explicit GLOBAL PROTECTED source-event contract.
+>
+> **Cập nhật v1.6 — 25/07/2026 (DD-89/DD-90):** một cross-tenant job function trên bảng `FORCE RLS` phải do lane-specific, `NOLOGIN BYPASSRLS` definer sở hữu, được bootstrap ở privileged cluster tier trước migration và chỉ có exact table grants. Runtime `app_worker` vẫn `NOBYPASSRLS`/EXECUTE-only; direct DML không thay stored-operation boundary. Mọi claim/reclaim có audit per-event, và function-owner allowlist là invariant.
 
 ---
 
@@ -46,7 +48,7 @@ Những bất biến này phải pass trước khi một thiết kế được c
 | INV-5 | Identity merge needs strong proof | Tên, username, bank display name chỉ là hint. Membership có tiền/nợ không được auto-claim bằng fuzzy match. |
 | INV-6 | Every mutation is idempotent | Command, webhook, job, projector delivery đều có dedupe key và retry an toàn. |
 | INV-7 | Derived aggregate has one owner | Tiền còn nợ, slots open, paid state, public visibility, reachability phải có canonical helper/projection. Không re-derive khác công thức ở nhiều call site. |
-| INV-8 | Cross-tenant jobs use narrow privilege | Worker/scheduler có thể scan nhiều tenant, nhưng từng mutation phải quay lại tenant context hoặc audited narrow function. |
+| INV-8 | Cross-tenant jobs use narrow privilege | Worker/scheduler có thể scan nhiều tenant, nhưng từng mutation phải quay lại tenant context hoặc gọi function audited hẹp do lane-specific `NOLOGIN BYPASSRLS` definer sở hữu; runtime `app_worker` không có broad BYPASSRLS/direct DML. |
 | INV-9 | Secrets/PII never leak through logs/events/URLs | Token, phone, platform ID, webhook secret, account number phải hash/encrypt/redact theo purpose. |
 | INV-10 | Data corrections are explicit events | Sửa sai tiền/identity/session dùng reversal/correction/audit, không silent update. |
 

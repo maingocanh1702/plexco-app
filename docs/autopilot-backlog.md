@@ -21,6 +21,22 @@ Ghi rõ trong `notes`: **ai** đóng được, **bằng gì**, và điều kiệ
 Lý do có trạng thái này: AP-22 từng mang `ready` dù đã HALT fail-closed đúng và output đã merge, nên nó bị
 launch lại và lặp y nguyên kết luận cũ.
 
+> **📌 Queue state — reconcile 2026-07-25 tại `origin/main@2937ed9a0732bea27db75403682befcb348e315b`.**
+> **7 slice mang status stale** (`ready`×6 + `in-flight`×1) trong khi `merged_probe` của chúng **đã hit trên `origin/main`** ⇒ flip sang `merged`:
+> `docs-session-management-acceptance-checklist` · `docs-auth-d1-packet` · `docs-tail-0018-number-reconcile` ·
+> `docs-session-acceptance-checklist-publish-retrace` · `docs-session-draft-lifecycle` ·
+> `docs-session-publish-concurrency-recheck` · `docs-web-auth-migration-section-merge-state-reconcile`.
+> Đây là đúng lỗi mà trạng thái `blocked` sinh ra để chặn: **status stale làm bot launch lại việc đã xong**.
+> **Hệ quả cần biết trước khi launch session tiếp theo: có 0 task `ready`.**
+> Hàng đợi rỗng vì đã làm hết chứ không phải vì thiếu việc — phần còn lại là `idea` (chưa scope),
+> `blocked` (chờ bằng chứng ngoài repo: Safari/iOS đo tay, provider answer, egress verify) hoặc `deferred`.
+> **`planned` duy nhất (25/07): `db-job-claim-lease-core`** — slice 1/4 của job-infra chung. DD-89/90,
+> delivery-transition/audit contract, acceptance matrix, slice doc, launcher và bootstrap/test procedure đã được
+> authored trong working tree; vẫn **không promote lên `ready`** cho tới khi packet được commit/push trên `main`
+> và strict `CODE_READY` được re-pin. Không có code/runtime proof nào trong trạng thái này.
+> Ghi chú "hiện chỉ `infra-egress-compatibility-evidence` đủ điều kiện launch" ở khối dưới **đã stale** —
+> slice đó nay là `blocked`.
+
 > **Phase-1 7h run (Fable 5) — SAFE SINGLE-SLICE:** owner handoff hiện hành là
 > `docs/autopilot-templates/phase1-fable5-7h-PR-RUN.md`. Mỗi session chỉ chạy **một** task `ready`, non-P0,
 > trong worktree riêng rồi `scope-gate ready` + STOP_AT_READY; không stacked PR, integration branch, degraded
@@ -165,7 +181,7 @@ notes: **MERGED 2026-07-22 as a fail-closed PARTIAL at `main@a57b8ee` — the DD
 
 ## task: docs-session-management-acceptance-checklist
 title: Issue-ready acceptance checklist derived from Session Management specs
-status: ready
+status: merged
 risk: P2
 change_class: docs-traceability
 depends_on: []
@@ -201,7 +217,7 @@ notes: MERGED historical AP-27 packet; its marker is present on main. The genera
 
 ## task: docs-auth-d1-packet
 title: D1 google-adapter implementation packet + DD-39 readiness (split 2/2 from AP-26; DD-38 chat split to dd38-dd86-chat-schema-core)
-status: ready
+status: merged
 risk: P2
 change_class: docs-traceability
 depends_on: [auth-s4-d0-revoke-core, auth-s4-d0-session-web-boundary]
@@ -411,6 +427,48 @@ notes: |
   merges. Open the worktree only after AP-25 is on origin/main. Migration number 0019 assumes no other
   schema slice lands first — renumber to the next-available monotonic tail at author time if one does.
 
+## task: db-job-claim-lease-core
+title: Shared job-infra slice 1/4 — outbox lease/reclaim + projector_deliveries access path + app_worker test seat
+status: planned
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [schema, retry-liveness]
+scope: [docs/autopilot-manifests/db-job-claim-lease-core.json, packages/db/migrations/0022_job_claim_lease_core.sql, packages/db/schema.ts, packages/db/src/rls-invariants.test.ts, packages/db/src/migrate.test.ts, packages/db/src/test-harness.ts, packages/db/README.md, .github/workflows/ci.yml, infra/docker-compose.yml, infra/postgres-init/01-job-definer.sql, package.json]
+manifest: docs/autopilot-manifests/db-job-claim-lease-core.json
+merged_probe: packages/db/migrations/0022_job_claim_lease_core.sql :: job_audit_events
+notes: DD-89/DD-90 are the only actionable authority. `job_definer` is cluster-pre-provisioned, exact-attribute and BYPASSRLS; the job-core migration asserts it and re-owns only the named job functions. `app_worker` gets EXECUTE-only narrow operations, never direct DML on outbox/projector/audit/surface tables. The contract, decision table, bootstrap procedure, real-role test plan and negative scope are in `docs/autopilot-db-job-claim-lease-core.md`. Q6 worker preflight remains slice 2 before `boss.start()`. Scope is exact at authoring tail `0021`; before worktree/register, re-check synced main. Tail drift requires updating this scope + merged_probe, manifest and all verdict mirrors, then committing/pushing the correction and re-pinning strict `CODE_READY` — never renumber ad hoc inside the feature worktree.
+
+## task: job-runtime-dispatcher
+title: Shared job-infra slice 2/4 — queue registration + first outbox consumer (one handler, no cron)
+status: idea
+risk: P1
+change_class: manual-runtime-feature
+depends_on: [db-job-claim-lease-core]
+invariants: [retry-liveness, core-api]
+scope: []
+notes: Chưa scope. Sau khi slice 1 có lease/reclaim + delivery-recording, slice này mới có hợp đồng để build: đăng ký queue thật (`apps/bot/src/queues.ts` hiện là `[]`), một `boss.work()` handler gọi `claim_outbox_batch` rồi **re-enter `SET LOCAL app.tenant_id`** trước khi chạm dữ liệu nghiệp vụ (TDD §3.4), ghi `projector_deliveries` qua đường DD-89 Q1 chốt, retry/backoff/DLQ theo cột đã có. **Vẫn chưa cron** — chạy bằng enqueue thủ công/test để chứng minh vòng claim→deliver→retry sống. Hiện `worker.ts` start pg-boss rồi idle (`:20`, không `boss.work`), `claim_outbox_batch` có **0 call site** trong TS, và **không gì insert vào `outbox_events`** ⇒ cần quyết định producer đi cùng slice nào (sync-engine hay từng feature).
+
+## task: job-scheduler-cron-registration
+title: Shared job-infra slice 3/4 — scheduler/cron registration + audited cross-tenant envelope
+status: idea
+risk: P1
+change_class: manual-runtime-feature
+depends_on: [job-runtime-dispatcher]
+invariants: [retry-liveness, schema]
+scope: []
+notes: Chưa scope. Hiện **không có cron ở bất kỳ đâu**: không `boss.schedule()`, không `pg_cron` (0000 chỉ có `pgcrypto`), không `setInterval` — chỉ 2 comment aspirational (`worker.ts:6`, `infra/entrypoint.sh:23`). Slice này dựng chỗ đăng ký lịch dùng chung + **envelope audit cho mọi privileged cross-tenant call** (`job_id`, `tenant_id`, actor=`system`, reason) mà TDD:494 / deployment-infra:186 bắt buộc nhưng **không feature spec nào định nghĩa** — `feature_cross_club_join_tech.md:289` đã viết test kỳ vọng ranh giới đó. Cân nhắc `list_due_tenant_jobs` (TDD:494 đặt tên nhưng chưa tồn tại trên đĩa). Cadence/batch size là operational config (`feature_session_management_tech.md:379`), không phải spec.
+
+## task: job-consumers-per-feature
+title: Shared job-infra slice 4/4 — chuyển từng job feature sang hạ tầng chung
+status: idea
+risk: P1
+change_class: manual-runtime-feature
+depends_on: [job-scheduler-cron-registration]
+invariants: [retry-liveness]
+scope: []
+notes: Chưa scope; nhiều slice nhỏ chứ không phải một. Danh sách job đang chờ (mỗi cái defer đúng khối hạ tầng trên): session draft auto-expiry (`feature_session_management_tech.md:365`), billing Daily Lifecycle Job (`feature_billing_lifecycle_tech.md:287-297` — **không có câu defer nào, chỉ đơn giản bỏ trống hạ tầng**, dù chính nó bị viện dẫn làm tiền lệ để defer), `ExpireJoinRequests` hourly (`feature_cross_club_join_tech.md:224`), notification scheduler/dispatcher (`feature_notifications_reminders_tech.md:47,50` — spec này **giả định `app_worker` có sẵn** và tự viết grant, `:1368`), 4 connector job pg-boss (`feature_connector_onboarding_tech.md:372-379`), reconcile sweeper (`feature_payment_reconcile_tech.md:506` — khẳng định có sweeper mà không nêu lịch/role/claim). Ngoài ra: 2 auth sweep đã tồn tại nhưng **không grant cho role nào** (`0016:608`, `0017:122`) — wiring chúng là quyết định của lane auth, không phải mặc định của slice này.
+
 ## task: dd38-dd86-chat-schema-core
 title: Root chat-schema migration slice (DD-38 in-app chat) — final chat model + authz/safety + RLS/RPCs
 status: idea
@@ -466,7 +524,7 @@ notes: Opened by codex review of docs-session-management-spec-reconcile. 0014 (1
 
 ## task: docs-tail-0018-number-reconcile
 title: Reconcile stale migration-tail claims (tail=0014 / 0015-unmerged) to tail=0018 across remaining specs
-status: ready
+status: merged
 risk: P2
 change_class: docs-reconcile
 depends_on: [docs-0014-merge-status-repo-wide-reconcile]
@@ -478,7 +536,7 @@ notes: Opened by codex round-01 of docs-0014-merge-status-repo-wide-reconcile + 
 
 ## task: docs-web-auth-migration-section-merge-state-reconcile
 title: Reconcile feature_web_auth_onboarding_tech ALL current-state mirrors (Status/Impl header + intro + migration section) — merged auth lane 0016/0017/0018 still framed as pending
-status: in-flight
+status: merged
 risk: P2
 change_class: docs-reconcile
 depends_on: []
@@ -538,7 +596,7 @@ notes: Opened by AP-25 round-06 create-status reconcile (0dec63b). **Founder-rat
 
 ## task: docs-session-acceptance-checklist-publish-retrace
 title: Re-trace acceptance checklist §9-B/§8 to the merged publish contract (publish mechanics no longer deferred)
-status: ready
+status: merged
 risk: P2
 change_class: docs-spec
 depends_on: [docs-session-publish-contract]
@@ -562,7 +620,7 @@ notes: Opened by docs-session-publish-contract codex round-05 [P1]. The publish 
 
 ## task: docs-session-draft-lifecycle
 title: Define draft cleanup terminal path (host-cancel/discard draft + auto-expiry of past unpublished drafts)
-status: ready
+status: merged
 risk: P2
 change_class: docs-spec-authoring
 depends_on: []
@@ -598,7 +656,7 @@ notes: Opened by AP-25 round-06 public-capacity reconcile (0dec63b). feature_ses
 
 ## task: docs-session-publish-concurrency-recheck
 title: Close the publish billing-suspension check-then-lock TOCTOU race at the spec level
-status: ready
+status: merged
 risk: P2
 change_class: docs-reconcile
 depends_on: []

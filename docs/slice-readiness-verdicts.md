@@ -2,12 +2,70 @@
 # Slice Readiness Verdicts — Plexco
 
 > **Đây KHÔNG phải nguồn rule mới.** Rules ở `standards/review-code-readiness-gate.md` (owner-accepted 2026-07-19). File này chỉ **áp dụng** gate đó để ra verdict nhị phân cho các slice gần nhất, dùng đúng template §7 và closure matrix §8.
-> **Snapshot pin (bất biến):** `AUTHORITY_SHA = 22c23aab080183913d2852805a085bba1057a91a` (`main`) · verify 2026-07-19. Nhánh làm việc hiện tại `feat/session-waitlist-expand@aa8afae` **không** phải base; mọi verdict pin theo `main`.
-> **Live truth đã verify (`main@22c23aa`):** feature layer trống — không có projector source ghi `public_sessions`; không có auth Google/`account_emails` source; `0014_players_waitlist` **không** trên `main`; `0006_discovery.sql` vẫn có `skill_level` và **thiếu** toàn bộ field DD-41 (`session_type`/`level_*_rank`/`gender_restriction`/`age_*`).
+> **Current snapshot pin:** `AUTHORITY_SHA = 2937ed9a0732bea27db75403682befcb348e315b` (`main` = `origin/main`) · verify 2026-07-25. Mỗi historical verdict vẫn giữ SHA riêng trong block của nó; không dùng header hiện hành để re-interpret snapshot cũ.
+> **Live truth đã verify (`main@2937ed9`):** migrations `0000`–`0021`; Google lane merged/not enabled; 10 auth/onboarding API routes, 0 business route, 0 product FE screen, bot queue registry `[]`. Feature runtime session/reconcile/sync/marketplace vẫn chưa bắt đầu; docs/decision/migration code-dark không phải runtime proof.
 > **Current auth refresh (2026-07-20):** `origin/main@033ccc8fd9c3f247abf8aa0cb5a0f48b96d006e2` — DD-80 v1.88 authority bundle immutable on main. **Verdict 5a (D0a) = CODE_READY** (re-pinned 033ccc8); Verdict 5b (D0b) `NOT_CODE_READY` pending D0a merge. Verdicts 1/3/4 remain historical snapshots only.
 > **D0a IMPLEMENTED & MERGED (2026-07-20):** slice `auth-s4-d0-revoke-core` squash-merged to `main` (migration `0015` live). The P0 "2 consecutive FULL-base Codex clean" gate was **NOT reached** after 12 rounds (10 real findings fixed incl. round-06 epoch-vs-`revoked_at` P1; round-11 self-caught + `git revert`ed) → merge is a **documented owner override** resting on manual review + acceptance coverage 22/22 + real-Postgres 97/97, **not** an automated clean-round pass. See `.autopilot/state/auth-s4-d0-revoke-core/HALT-MAX_ROUNDS.txt` + the squash commit. **Verdict 5b (D0b) unblocks** once the D0a squash lands on origin/main.
 > **D0b IMPLEMENTED & MERGED (2026-07-22):** slice `auth-s4-d0-session-web-boundary` squash-merged to `main@93c5404` (issuance fence + logout-all route; zero DB change). Unlike D0a, the P0 **"2 consecutive FULL-base Codex clean rounds" gate was MET** (round-03/04, only 2 fix rounds) — **no owner override**. Real-Postgres suite green (db 97/97 unchanged · core 111 · bot 3 · web 78). Recorded as **Verdict 6**. Next in chain: `auth-s4-d1-email-token-core`.
 > **Machine classification (2026-07-22):** `<!-- review-verdict: historical -->` controls immutable blocks; unmarked blocks are current for their own pinned slice/snapshot. **Verdict 15** (historical) recorded DD-87 as owner-decided but `NOT_CODE_READY` solely because its authority packet was uncommitted WIP outside `main@6a28072`; that packet is now committed and pushed (`main@142e9fa`+), so **Verdict 16** re-pins it `CODE_READY` at `main@827d24d`. Neither supersedes unrelated active candidates.
+> **Current candidate (2026-07-25):** Verdict 19 is the active BE-only root slice. G1–G6 and contract/acceptance/security matrices pass; it remains `NOT_CODE_READY` only because the 11-file packet has no immutable main SHA and the implementation handoff is not committed/pushed (closure 10/12).
+
+---
+
+## Verdict 19 — `db-job-claim-lease-core`, job lease/audit/definer root; `NOT_CODE_READY` pending immutable authority (2026-07-25)
+
+> **Tracker of record cho slice này.** Hai mirror phải giữ đồng nhất từng field với block dưới đây:
+> `docs/autopilot-db-job-claim-lease-core.md` §Verdict và `docs/project-progress-review-2026-07-25.md` §7.
+> Nếu lệch, block này thắng. Mọi lần re-pin `AUTHORITY_SHA` phải cập nhật cả ba.
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: NOT_CODE_READY
+REVIEWED_AT: 2026-07-25
+AUTHORITY_SHA: 2937ed9a0732bea27db75403682befcb348e315b
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/standards/decisions.md
+  - docs/autopilot-manifests/db-job-claim-lease-core.json
+  - docs/autopilot-db-job-claim-lease-core.md
+  - .claude/commands/ap-31-db-job-claim-lease-core.md
+  - docs/autopilot-backlog.md
+  - docs/slice-readiness-verdicts.md
+  - docs/standards/BUILD-STATUS.md
+  - docs/project-progress-review-2026-07-25.md
+  - docs/standards/core-db-architecture-principles.md
+  - docs/standards/deployment-infra.md
+  - packages/db/README.md
+SLICE: db-job-claim-lease-core
+IN_SCOPE: outbox/projector lease primitives, per-event job audit, job_definer bootstrap/ownership, schema mirror, real-role tests and CI/local bootstrap
+OUT_OF_SCOPE: worker preflight/startup, pg-boss queues, runtime handler/cron, producers/projectors, frontend/UI/design mapping, surface_refs and tenant-RLS policy changes
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS — documented budget exception (P1 root migration spans DB code, real-role tests, CI and local bootstrap); exact scope is pinned at live tail 0021, with 0022_job_claim_lease_core.sql as the next monotonic path and package.json reserved solely for db:bootstrap. Pre-register tail recheck is mandatory; any drift requires updating manifest, backlog and all verdict mirrors, committing/pushing the correction, then re-pinning
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: none — root slice; 0000 role model, 0005 worker tables and 0010 claim function are merged and re-verified
+PRIOR_SLICES: none
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: FAIL (10/12 — working-tree authority is not an immutable SHA and the handoff is not committed/pushed)
+ACCEPTANCE_MATRIX: PASS
+SECURITY_AND_MIGRATION_GATE: PASS
+IMPLEMENTATION_ARTIFACTS: FAIL (manifest, task contract, launcher and mirrored authority are local WIP)
+FIRST_IMPLEMENTATION_STEP: after current-state reconcile Commit A lands, commit/push the exact 11 TARGET_FILES on main as authority packet B, then re-verify the migration tail and re-pin this verdict to that commit before opening a worktree and performing the mandatory design probe
+REMAINING_BLOCKERS:
+  - blocker: no immutable main SHA contains the full authority packet
+    owner: repository maintainer
+    resolution: commit and push every TARGET_FILE, then re-run 12/12 closure against that SHA
+NEXT_REVIEW_TRIGGER: main commit containing all 11 TARGET_FILES
+```
+
+**Đọc verdict:** DD-89/DD-90 đã đóng mọi owner choice. Handoff bây giờ pin lease, audit, role bootstrap,
+function-owner allowlist và real-role acceptance; không có runtime proof hay quyền mở worktree cho tới khi
+packet trở thành authority bất biến trên `main`.
 
 ---
 
@@ -970,6 +1028,7 @@ NEXT_REVIEW_TRIGGER: n/a -- merged; non-money same-class FK gaps (zalo, notifica
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 25/07/2026 | v2.4 | **Verdict 19 packet correction:** current header re-pin `main@2937ed9`; active target set 10→11 bằng cách thêm chính project-progress report; G5 PARTIAL false blocker bị gỡ — scope exact tại tail 0021, tail drift là publication preflight phải commit/push/re-pin, không phải open contract. Verdict giữ `NOT_CODE_READY` chỉ do authority/handoff chưa commit/push (10/12). |
 | 23/07/2026 | v2.3 | **Verdict 17 IMPLEMENTED & MERGED** at `main@b0c29a6` (migration `0019` live). The 8-FK / 3-candidate-key scope (per v2.2 amendment) landed as owner-ratified; single-column FKs kept additive; `charges` bound on all 3 legs (session · membership MATCH-SIMPLE-nullable · player). P0 gate **MET — 2 consecutive FULL-base codex clean rounds** (`ffcae28`, no owner override). **Triple-verified** real-Postgres **167/167**: session run (ffcae28) + independent run on merged `main`, incl. **TI-6** named-halt on a seeded cross-tenant `players` row + **TI-7** `0000–0018` byte-identical after 0019. Expand-only DDL on empty tables; diff = 6 files (added `migrate.test.ts` count 19→20). Deeper ledger FKs (`payment_allocations`, `bank_transactions`) deferred to sibling `db-ledger-tenant-integrity-fks`. Design `AUTHORITY_SHA` block below stays pinned at `29635be` (unchanged). |
 | 23/07/2026 | v2.2 | **Verdict 17 AMENDED (implementation codex round-01, owner-ratified).** The CODE_READY FK inventory was **incomplete**: `scope_fks` omitted `charges(tenant_id,player_id)->players(tenant_id,id)` despite the block's own problem-statement naming the player and `charges.player_id` being `NOT NULL`. A tenant-B charge with a tenant-A `player_id` (membership NULL) would pass all 7 FKs → cross-tenant money corruption. Corrected in-slice → **8 composite FKs + 3 candidate keys** (players candidate key added). Meta: a design `CODE_READY` verdict ≠ scope-complete — the codex code-review gate caught what `G5_SCOPE: PASS`/`OPEN_QUESTIONS: 0` missed; the gate is load-bearing on CODE_READY P0 money-path slices. |
 | 23/07/2026 | v2.1 | **Verdict 17 — `db-session-tenant-integrity-fks` = CODE_READY** tại `main@29635be`. Slice P0 đầu tiên của lớp feature (SessionService prerequisite). Root slice, không dependency chưa merge, không external gate. Đóng lỗ tenant-integrity: 7 composite FK `(tenant_id, session_id)`/`(tenant_id, membership_id)` + 2 candidate key `UNIQUE(tenant_id,id)`, migration `0019` expand-only NOT VALID→probe→VALIDATE. FK inventory quét từ `schema.ts` (không đoán); 3 exclusion có lý do đo được (`session_occurrences` không tenant_id, `public_sessions` HR2, `magic_links.session_id`→web_sessions). `charges.membership_id` nullable → MATCH SIMPLE unenforced-on-NULL là chủ ý. Acceptance TI-1..TI-9; migration count 19→20 ở cả 2 assertion. `REMAINING_BLOCKERS: none` — `schema` bị AP-25 giữ chỉ là hàng đợi register, không phải lỗ hợp đồng. |

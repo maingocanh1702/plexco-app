@@ -1,6 +1,6 @@
 # Deployment & Infrastructure — Plexco
 
-> **Version:** v1.8 · 2026-07-16 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; Day-1 `$120–135` với read isolation trên primary; read-only node là upgrade theo telemetry; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../dd-04-hosting-final-decision.md`)
+> **Version:** v1.9 · 2026-07-25 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; DD-89/DD-90 add the privileged `job_definer` bootstrap boundary; Day-1 `$120–135` với read isolation trên primary; read-only node là upgrade theo telemetry; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../dd-04-hosting-final-decision.md`)
 > **Status:** Draft (chờ review)
 > **Scope:** Cách deploy Plexco tối ưu/hiệu quả/dễ maintain, kèm scalability & security ở tầng hạ tầng.
 > **References:** `../product/TDD.md` §3.4/§7/§8 · `../strategy/saas-implementation-plan.md` §4/§5/§7 · `../research/player-side-saas-AUDIT.md` (C1–C8b · B1–B6 · G1–G6) · `../features/BE/feature_security_operations_tech.md`
@@ -178,7 +178,7 @@ RLS, repo choke-point, field-whitelist nằm ở **code**. Deploy phải thêm l
 
 | Threat (doc) | Deploy control (hạ tầng) |
 |---|---|
-| **C7 / edge#11** blast-radius secret · migration cred lọt prod | **4 DB role tách ở connection level**: `migration` (chỉ CI job, *KHÔNG BAO GIỜ* trong runtime) · `app` (NOSUPERUSER NOBYPASSRLS) · `app_worker` (narrow functions) · `readonly`. Runtime prod **không mang** superuser/migration cred. |
+| **C7 / edge#11** blast-radius secret · migration cred lọt prod | **5 DB role tách ở connection level**: `migration` (chỉ CI/migration job, *KHÔNG BAO GIỜ* trong runtime) · `app` (NOSUPERUSER NOBYPASSRLS) · `app_worker` (narrow-function EXECUTE only) · `readonly` · `job_definer` (**NOLOGIN NOSUPERUSER BYPASSRLS**, no runtime connection). `job_definer` được privileged bootstrap tạo/attribute-check trước migration, membership chỉ cho migration role để transfer owner; exact table grants + function-owner allowlist là hàng rào. Runtime prod không mang superuser/migration credential hay job_definer login. |
 | **C7 / B2** token lộ | Secret manager + **KMS envelope** (`bot_token_enc`/`webhook_secret_enc`); không bake vào image/log; **rotation + kill-switch runbook**; job `getWebhookInfo`-drift. Token Zalo lộ = 1 club messaging, không chạm tiền/DB. |
 | **C8 / G6** rò public · scrape · DDoS discovery | Role `readonly` **chỉ SELECT trên `public_sessions`/public view, zero grant bảng canonical tiền/PII**; Day-1 có bounded pool + timeout + circuit-breaker + CDN/rate-limit/WAF; read-only node bật theo trigger; per-IP/per-token throttle; phân trang; `venue` ẩn tới khi join; không lộ `tenant_id`. |
 | **G3 / G1** admin mutation chưa rate-limit · đổi STK | WAF rule + rate-limit riêng cho mutation/auth; STK-change confirmation delay (service) + **audit** (infra). |

@@ -2,12 +2,16 @@
 
 > **Mục đích:** ảnh chụp tiến độ *thực thi* so với khối tài liệu đã spec (Reviewed và Draft/proposal được ghi riêng). Trả lời gọn:
 > "code đã có tới đâu, còn cách MVP bao xa". Đây là doc **living**, cập nhật mỗi khi một slice merge.
-> **Cập nhật:** 2026-07-22 (current authority **decisions v1.98**; BRD v3.9g/PRD v2.8f/TDD v3.1a/ROADMAP v3.4a). D0a · D0b · D1 email-token · D1 Google · d1b đã merge; DD-87 là authority core-only, chưa có runtime change. Không dùng version hoặc coverage làm bằng chứng implementation. **2026-07-23 reconcile:** Foundation coverage row + progress-bar caption giữ range **nền** `0000–0014` (0014 waitlist schema-only) và thêm chú thích **tail toàn cục `0018`** (lane auth DD-80 `0015`–`0018` = hàng S4, ⛔ chưa enable) — tránh double-classify auth thành foundation; nhất quán với baseline line 7 + hàng S4. Chỉ current-state; không đổi trạng thái slice. **2026-07-24 reconcile:** tail toàn cục bump `0018`→**`0020`** — `0019`/`0020` (2026-07-23, `b0c29a6`/`f6ccd79`) thêm tenant-integrity composite FKs (DD-68), tầng **riêng** (không phải foundation `0000–0014`, không phải auth lane `0015`–`0018`); xem `docs/autopilot-manifests/docs-migration-tail-0018-to-0020-sweep.json`.
+> **Cập nhật:** 2026-07-25 (current authority **decisions v1.98** committed; working-tree v2.04; BRD v3.9g/PRD v2.8f/TDD v3.1a/**ROADMAP v3.4e**). D0a · D0b · D1 email-token · D1 Google · d1b đã merge; DD-87 `splitNameAmount` runtime fix đã merge. Không dùng version hoặc coverage làm bằng chứng implementation. Tail toàn cục hiện **`0021`**: foundation `0000`–`0014`, auth lane `0015`–`0018`, tenant-integrity DD-68 `0019`–`0021` là ba lớp tách biệt. **DD-70/71/72 owner-final; Notification pair Reviewed nhưng runtime/migration vẫn chưa build.** Full-suite canonical đã re-aggregate PASS **460 workspace tests** + 13 readiness-validator tests.
 > **Nguồn số liệu:** `git log`, cây `packages/`+`apps/`, `docs/features/*`, `docs/standards/decisions.md`,
-> `docs/autopilot-backlog.md`. **HEAD `main`** (tại thời điểm reconcile 2026-07-24) = `1e503d1c64005ae5d86ad0202a67b6d13c8cbbf5`; code baseline: migrations **`0000–0020`** đều trên `main` (gồm `0014` waitlist schema-only, `0015` D0a, `0016` D1 email-token, `0017` Google OAuth transaction, `0018` completion handoff, `0019`/`0020` tenant-integrity composite FKs DD-68). Slice `db-migration-0000-idempotent-role-create` **không thêm migration nào** — nó sửa migration runner.
+> `docs/autopilot-backlog.md`. **HEAD `main`** (tại thời điểm reconcile 2026-07-25) = `2937ed9a0732bea27db75403682befcb348e315b` (= `origin/main`, verify bằng `git rev-parse origin/main`); code baseline: migrations **`0000–0021`** (22 file) đều trên `main` (gồm `0014` waitlist schema-only, `0015` D0a, `0016` D1 email-token, `0017` Google OAuth transaction, `0018` completion handoff, `0019`/`0020`/`0021` tenant-integrity composite FKs DD-68). Slice `db-migration-0000-idempotent-role-create` **không thêm migration nào** — nó sửa migration runner.
+> **✅ `0021` merged (2026-07-24, `15e10b7`):** `db-non-money-tenant-integrity-fks` — sibling P1 (non-money) của `0019`/`0020`, expand-only, **code dark**. 2 candidate key (`zalo_bots`, `notification_intents`) + 3 composite FK bind FK single-column **đã có sẵn** theo tenant (`zalo_reply_contexts`→`zalo_bots`, `notification_deliveries`→`notification_intents`, `memberships`→`memberships` self-ref `merged_into` MATCH SIMPLE nullable — FK `0002` mà Drizzle mirror từng drop, codex round-02 P1). `NOT VALID`→`VALIDATE` named-halt; 2x codex clean; real-PG **179/179**; migrate count 21→22. ⚠️ Slice này **chưa có verdict entry** trong `../slice-readiness-verdicts.md` (mục cuối vẫn là Verdict 18/`0020`) — bằng chứng hiện chỉ nằm ở commit message + test; không suy ra trạng thái gate từ khoảng trống này.
+> **✅ Core DD-87 merged (2026-07-23, `d2a27e1`):** `core-matcher-grouped-amount-parsing` — `splitNameAmount` trả **exhaustive fail-closed ambiguity union**, đóng lỗi mất tiền im lặng ("Wang 110 500" settle 500, rơi 110.000đ) mà suite vẫn xanh. Đây là **code merge**, không phải docs: `packages/core` static test count 111→**132**.
 > **✅ Parallel DB suite đã mở khoá (2026-07-22, `8d8f3bc`):** `migrate.ts` nay ensure role bằng pre-check + exception handler (nuốt `42710` **hoặc** `23505`, gated trên "0000 chưa applied"), nên `vitest.config.ts` đã bật **`fileParallelism: true`**. Migration `0000` **không bị sửa** (applied + immutable, checksum nguyên vẹn). Điểm bẫy đã ghi vào code: `pg_advisory_lock` là **database-scoped**, không bảo vệ object cluster-global như role. DB suite **159 test**. Chi tiết: Verdict 14. **Nhiều autopilot worktree giờ chạy DB suite đồng thời được.**
 > ⚠️ **Đính chính:** commit `eba1c27` mang subject `fix(db): make migration-runner role creation race-safe...` nhưng **chỉ chứa hai file docs** (`auth-s4-session-handoff.md`, `ROADMAP.md`) do một merge abort giữa chừng. Nội dung của nó hợp lệ và được giữ; commit **thật** của slice này là **`8d8f3bc`**.
-> **✅ Current canonical suite (22/07, `main@f93873b`):** `DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test` PASS — **29 files / 419 tests** (core 111 · db 159 · web 146 · bot 3). Static grep = 410 chỉ là source cross-check, không dùng làm số test hoặc trạng thái xanh.
+> **✅ Bằng chứng test — full-suite canonical current (reconcile 25/07).** `DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test` PASS tại `main@2937ed9`: **29 files / 460 workspace tests** (core 132 · db 179 · web 146 · bot 3). Readiness validator PASS **13 tests** trước workspace suite.
+> - **Bằng chứng per-slice (real-PG, authority của chính slice đó):** db **167/167** (`0019`, Verdict 17, `b0c29a6`) → **173/173** (`0020`, Verdict 18, `f6ccd79`) → **179/179** (`0021`, `15e10b7`).
+> - **Static cross-check tại `2937ed9` = 451** (core 132 · db 179 · web 137 · bot 3). Chênh 9 với runner đến từ table-driven loop đã kiểm kê; static chỉ để phát hiện drift, không thay runner.
 > **✅ D0a merged (2026-07-20, `8f493f7`):** `auth-s4-d0-revoke-core` (migration `0015_auth_revoke_account.sql` — **miếng code feature-layer đầu tiên**) squash-merge sau 12 vòng Codex (10 finding fix) + review tay + real-PG 97/97. Gate "2 clean liên tiếp" **không đạt** → **owner override có ghi chép** (commit message + `HALT-MAX_ROUNDS.txt`), không phải false CODE_READY.
 > **✅ D0b merged (2026-07-22, `93c5404`):** `auth-s4-d0-session-web-boundary` — issuance fence `issueSession` (reject-and-reauth, không fallback-mint) + typed 401 `AUTH_INVALID` ở 2 caller + `POST /api/auth/logout-all` (CSRF trước mutation). **Zero DB change.** Gate P0 **ĐẠT** (2 clean round liên tiếp, 2 fix round) — **không override**. Web tests 65→78, real-PG green. Chi tiết: Verdict 6.
 > **✅ D1 email-token-core merged (2026-07-22, `64fb4d3`):** `auth-s4-d1-email-token-core` — migration **`0016`** atomic: 5 bảng function-only (`account_emails`, `email_password_credentials`, `auth_pending_email_registrations`, `auth_email_tokens`, `auth_email_deliveries`) + partial unique index độc lập `now()` + `_auth_assert_password_phc` (parse full Argon2id, floor==ceiling, guard overflow) + trigger 2 write-path + `_auth_consume_email_token` parent-first + 5 hàm cleanup deadlock-free; `auth_audit_events` **reuse** từ `0015`; **zero app grant**. **CODE DARK** — không route/UI/provider send. DB tests 97→**128**. Gate đóng bằng **1 clean round + independent directed review** (Codex phi tất định sau 9 vòng), **override thứ 2/3 slice**. Chi tiết: Verdict 8.
@@ -15,7 +19,10 @@
 > **✅ d1b session-rotation merged (2026-07-22, `ae8986e`):** migration **`0018`** expand-only (`resolved_account_id`/`handoff_hash`/`handoff_expires_at`/`handoff_consumed_at` + `auth_oauth_handoff_arm/_consume`) + **completion hop M3** — callback trả landing first-party auto-submit POST same-origin → `/complete` chạy `issueSession()` ở nơi cookie Strict CÓ mặt ⇒ đi đúng nhánh rotate. **Residual risk của D1 đã đóng trong code.** Handoff token đi trong body POST, chỉ lưu sha256, **không cookie**; single-use là fence server-side atomic. Suite db 144→**152** · web 131→**146**. **Gate ĐẠT ngay lần đầu: 2 vòng Codex sạch liên tiếp, 0 fix-round** — slice đầu tiên không thrash. Chi tiết: Verdict 13.
 > **⛔ VẪN CHẶN BẬT GOOGLE LOGIN — nhưng lý do đã đổi:** code đã sửa xong; thứ còn thiếu là **bằng chứng đo trên Safari macOS + iOS** cho cơ chế M3 (Playwright chỉ có WebKit đông cứng, không phải Safari bản ship). Nếu Safari giữ lại cookie Strict ở M3 thì người dùng Safari âm thầm vẫn dính rủi ro. **Giữ `GOOGLE_OAUTH_CLIENT_ID/SECRET` rỗng cho tới khi đo xong** — các bước thủ công ở `../probe-strict-cookie-completion-hop.md` §7.
 >
-> **Reconcile 2026-07-22:** target channel identity theo DD-15/DD-65..68 vẫn là endpoint-scoped Messenger + Zalo; adapter/handler/shared Session/Join/AuthZ/projector/E2E vẫn chưa build. **Google lane đã merge nhưng chưa enable**: thiếu đo Safari macOS+iOS cho M3 nên `GOOGLE_OAUTH_*` giữ rỗng; email/password bundle order-4 và Telegram removal vẫn pending. Migrations là `0000–0018` (dated 22/07; tail hiện hành = `0020`, xem chú thích 24/07 ở đầu file).
+> **Reconcile 2026-07-22:** target channel identity theo DD-15/DD-65..68 vẫn là endpoint-scoped Messenger + Zalo; adapter/handler/shared Session/Join/AuthZ/projector/E2E vẫn chưa build. **Google lane đã merge nhưng chưa enable**: thiếu đo Safari macOS+iOS cho M3 nên `GOOGLE_OAUTH_*` giữ rỗng; email/password bundle order-4 và Telegram removal vẫn pending. Migrations là `0000–0018` (dated 22/07; tail hiện hành = `0021`, xem chú thích 25/07 ở đầu file).
+>
+> **Reconcile 2026-07-25 — epoch tenant-integrity/publish đã đóng, không mở runtime mới.** Từ `f93873b` (22/07) tới `2937ed9` (24/07) `main` nhận: (a) **1 core fix** `d2a27e1` (DD-87); (b) **3 migration** `0019`/`0020`/`0021` (tenant-integrity composite FKs DD-68 — money-path, payment ledger, non-money; tất cả expand-only + code dark); (c) **8 docs/spec slice** — publish contract (`PublishSession`), billing status-authority + founder ratification (`9ce42c4`), PRD flow-2 publish projection (`6c15606`), publish billing-suspension TOCTOU spec-level (`58788e6`), acceptance-checklist publish retrace (`dfabe1a`), draft-lifecycle discard + auto-expiry (`2937ed9`), session-management spec reconcile, web-auth migration-section reconcile (`4433969`). **Không slice feature-runtime nào mở** ⇒ hàng "Code — lớp feature nghiệp vụ" và thanh ~33% **không đổi**. Publish/draft-lifecycle giờ là **hợp đồng spec đã đóng**, `NOT CODE_READY` — build vẫn chờ job-infra (role/grants/outbox-seq/queue/cron) được defer có chủ đích.
+> **🟡 Working tree tại thời điểm reconcile (chưa commit, KHÔNG tính vào baseline):** `decisions.md` đã lên **v2.04** trong working tree — +DD-88 (🟡 proposal notification taxonomy, v1.99–v2.01), +DD-89 ✅ (worker access/pg-boss authority, v2.02) và **+DD-90 ✅** (per-event job audit, lane-specific pre-provisioned `job_definer BYPASSRLS`, preflight trước `boss.start()`, v2.04). Packet `db-job-claim-lease-core` hiện gồm manifest, slice contract và launcher WIP; nó **chưa phải** bằng chứng code/migration/test đã merge. `packages/db/README.md` cũng sửa `surface_refs`→`session_surface_refs` ở hàng tenant-private (hai bảng khác nhau, `0002:122` vs `0005:54`). `decisions` version committed vẫn là **v1.98**.
 
 ---
 
@@ -23,23 +30,23 @@
 
 | Trục | Trạng thái | Ước lượng |
 |---|---|---|
-| **Tài liệu / thiết kế** | **24 Product/System + 23 BE tech specs = 23 cặp + 1 product-only Draft**. DD-70..72 và DD-86 vẫn Draft/proposal; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; decision log **v1.98**. | Contract coverage cao; không dùng count làm code-readiness |
-| **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations nền **`0000–0014`** đã merge trên `main` (`0014` waitlist schema-only); tail migration toàn cục hiện **`0020`** — lane auth DD-80 `0015`–`0018` (hàng S4) đã merge, ⛔ chưa enable; `0019`–`0020` tenant-integrity composite FKs (DD-68) là tầng riêng, không phải foundation | **✅ xong** |
+| **Tài liệu / thiết kế** | **24 Product/System + 23 BE tech specs = 23 cặp + 1 product-only Draft** (đếm lại tại `2937ed9`). **DD-70/71/72 owner-final; Notification pair Reviewed/no-runtime**. DD-86 và DD-88 vẫn proposal; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; decision log committed **v1.98**, working-tree v2.04. | Contract coverage cao; không dùng count làm code-readiness |
+| **Code — lớp nền (foundation)** | monorepo + core logic + DB/RLS + migrations nền **`0000–0014`** đã merge trên `main` (`0014` waitlist schema-only); tail migration toàn cục hiện **`0021`** (22 file) — lane auth DD-80 `0015`–`0018` (hàng S4) đã merge, ⛔ chưa enable; `0019`–`0021` tenant-integrity composite FKs (DD-68) là tầng riêng, không phải foundation. Core nhận fix money-path DD-87 (`d2a27e1`) | **✅ xong** |
 | **Code — lớp auth** | Auth v3 (Telegram-era) merged; **DD-80 D0a (`0015`) + D0b + D1 email-token (`0016`) + D1 Google (`0017`) + d1b session-rotation (`0018`) đã merged**; còn order-4 email bundle (flag OFF, gate C7) → gỡ Telegram. Bật Google chờ đo Safari/iOS | 🟢 Google lane xong phần code, ⛔ chưa enable |
-| **Code — lớp feature nghiệp vụ** | chưa bắt đầu (session/reconcile/sync/marketplace/billing/bot…) | ⬜ chưa build |
-| **Roadmap build** | **S1–S3 + S4 Auth v3** đã land + **toàn bộ lane Google: D0a · D0b · D1 email-token · D1 Google · d1b** (`0015`–`0018`) + tenant-integrity composite FKs DD-68 (`0019`–`0020`); tail toàn cục hiện `0020`; kế tiếp order-4 email bundle | ~33% |
+| **Code — lớp feature nghiệp vụ** | chưa bắt đầu (session/reconcile/sync/marketplace/billing/bot…). Session publish + draft-lifecycle nay có **hợp đồng spec đóng** nhưng 0 dòng runtime | ⬜ chưa build |
+| **Roadmap build** | **S1–S3 + S4 Auth v3** đã land + **toàn bộ lane Google: D0a · D0b · D1 email-token · D1 Google · d1b** (`0015`–`0018`) + tenant-integrity composite FKs DD-68 (`0019`–`0021`, đủ bộ ba); tail toàn cục hiện `0021`; kế tiếp order-4 email bundle | ~33% *(không đổi từ 22/07 — 3 migration mới là integrity expand-only, không phải slice feature)* |
 
-**Một câu:** foundation + Google auth lane đã merge, nhưng Google chưa được enable và email/password bundle vẫn chưa build; tầng feature nghiệp vụ (session/reconcile/sync/marketplace/billing/bot) vẫn nằm trên giấy. `IMPLEMENTED` cho các migration/auth slice không chứng minh product E2E hoặc enablement.
+**Một câu:** foundation + Google auth lane đã merge, nhưng Google chưa được enable và email/password bundle vẫn chưa build; tầng feature nghiệp vụ (session/reconcile/sync/marketplace/billing/bot) vẫn nằm trên giấy. `IMPLEMENTED` cho các migration/auth slice không chứng minh product E2E hoặc enablement; **spec đóng cho publish/draft-lifecycle càng không** — nó chỉ nói hợp đồng hết mơ hồ.
 
 ---
 
 ## 1. Bức tranh tổng: docs đi trước code rất xa
 
-Repo docs-first: decision log tới **DD-87/v1.98**; DD-70..72 và DD-86 vẫn 🟡; **DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated**. Integrity closure giải drift contract nhưng không tăng code readiness; vẫn cần services/adapters/projectors. B1/B2/B3, mutation-path, external/legal/store gates vẫn phải đóng; thực thi roadmap khoảng ~33% theo slice đã merge, không phải product readiness.
+Repo docs-first: committed decision log tới **DD-87/v1.98**, working-tree tới DD-90/v2.04; **DD-70/71/72 owner-final**, DD-86/DD-88 vẫn 🟡; **DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated**. Integrity/contract closure không tăng code readiness; vẫn cần services/adapters/projectors. B1/B2/B3, mutation-path, external/legal/store gates vẫn phải đóng; thực thi roadmap khoảng ~33% theo slice đã merge, không phải product readiness.
 
 ```
-Contract ███████████████████░░  coverage cao (không phải readiness score; DD-70..72 đề xuất; DD-73/74/75/78 dependency/consumer-sequenced; DD-76/77 evidence-gated)
-Nền móng  ████████████████████░  ~90%   (core + db-RLS + migrations nền 0000–0014 trên `main`; tail toàn cục 0020 — auth 0015–0018 + tenant-integrity FK 0019–0020)
+Contract ███████████████████░░  coverage cao (không phải readiness score; DD-70/71/72 final/no-runtime; DD-73/74/75/78 dependency/consumer-sequenced; DD-76/77 evidence-gated)
+Nền móng  ████████████████████░  ~90%   (core + db-RLS + migrations nền 0000–0014 trên `main`; tail toàn cục 0021 — auth 0015–0018 + tenant-integrity FK 0019–0021)
 Auth      ████████████████░░░░  ~80%   (Google lane merged; ⛔ chờ Safari/iOS trước enable; email bundle pending)
 Feature   █░░░░░░░░░░░░░░░░░░░░░  ~5%    (mới có logic thuần trong core, chưa wiring)
 ```
@@ -57,7 +64,7 @@ decision helpers mà client không được dùng làm authority. **~2.870 dòng
 
 | Module | Vai trò | Test |
 |---|---|---|
-| `matching.ts` | Dò `pay_code` (tier) + matcher theo tên | `matching.test.ts` |
+| `matching.ts` | Dò `pay_code` (tier) + matcher theo tên; **`splitNameAmount` = exhaustive fail-closed ambiguity union (DD-87, `d2a27e1` 23/07)** — ambiguity không còn được resolve im lặng thành số nhỏ nhất | `matching.test.ts` |
 | `payments-logic.ts` | `classifyAmount`, FIFO settle (đề xuất, không ghi DB) | `payments-logic.test.ts` |
 | `dates.ts` / `time.ts` | `inferYear` (cutoff theo calendar-date, không lệch theo giờ đồng hồ) | `dates.test.ts`, `time.test.ts` |
 | `format.ts` | Format tiền/ngày vi/en | `format.test.ts` |
@@ -71,7 +78,7 @@ DTO/error/validator/format boundary riêng, không import money engine chỉ vì
 
 ### 2.2 `packages/db` — data layer Postgres + RLS ✅ (keystone)
 
-**Baseline `main` (2026-07-24): migrations `0000–0020` (21 file) đều trên `main`, có bộ RLS invariant test chạy trên role runtime thật. Current canonical runner (evidence tại mốc `0018`/d1b) = **db 159** (full suite 419); db suite riêng đã tăng qua `0019`/`0020` — **167** (Verdict 17, `b0c29a6`, triple-verified real-PG) → **173** (Verdict 18, `f6ccd79`, real-PG 173/173) — nhưng **full suite 419 CHƯA re-aggregate** (core/web/bot không chạy lại cùng db suite mới này); mốc db 152 ở D1b là evidence lịch sử của slice đó.**
+**Baseline `main` (2026-07-25, `2937ed9`): migrations `0000–0021` (22 file) đều trên `main`, có bộ RLS invariant test chạy trên role runtime thật. Current canonical runner = **DB 179 / full workspace 460 PASS**; per-slice progression vẫn là **167** (`0019`) → **173** (`0020`) → **179** (`0021`). Mốc db 152 ở D1b và full-suite 419 ngày 22/07 là historical evidence.**
 
 > ✅ **Correction 2026-07-22:** các bản trước của doc này khẳng định `0014_players_waitlist` "chỉ trên nhánh `feat/session-waitlist-expand`, chưa vào `main`" ở bốn chỗ. **Sai** — verify on-disk: `git ls-tree main` có file, và `1a6ac38 feat(session): expand players for DD-45 waitlist` nằm trong lịch sử `main`; `waitlist-invariants.test.ts` (21 test) chạy trong mọi lần `pnpm test`. Claim cũ là prose stale được chép lại qua nhiều lần cập nhật mà không verify — đúng bẫy mà CLAUDE.md cảnh báo.
 
@@ -82,11 +89,12 @@ DTO/error/validator/format boundary riêng, không import money engine chỉ vì
   `players.status` thêm `waitlisted`, cột `waitlist_position`, hai CHECK state-shape/positive và
   `idx_players_waitlist_order`. **Chỉ schema** — auto-promote là money-write: first-activation chờ DD-39/41/42 + shared DD-52 restriction core; proven rejoin còn chờ DD-49 correction core. Retry còn thiếu `waitlist_entry_version`, candidate failure-event/owner-alert consumers, root promotion-retry store, CAS/lease sweep worker và domain DLQ/review sink. Không có behavior/runtime path nào được tính là đã build.
   21 DDL invariant test (`waitlist-invariants.test.ts`) gồm cả app-role grant/RLS trên cột mới.
+- **`0019`/`0020`/`0021` tenant-integrity composite FKs (DD-68) — bộ ba đã đủ (23–24/07):** `0019` money-path/session domain (8 FK, `b0c29a6`, Verdict 17) → `0020` payment ledger (5 FK, `f6ccd79`, Verdict 18) → `0021` non-money (3 FK + 2 candidate key, `15e10b7`). Cả ba **expand-only, code dark**, không đổi role/grant/RLS, `NOT VALID`→`VALIDATE` named-halt, `0000`–tail trước byte-identical. Chúng đóng lớp *integrity* (không thể tạo hàng cross-tenant qua FK single-column), **không** mở hành vi nào — không service, không route, không projector.
 - **Choke-point:** `tenant.ts` (`tenantRepo`/`withTenant`) — mọi query tenant-scoped bắt buộc qua đây,
   `SET LOCAL app.tenant_id`, client theo role. `migrate.ts` = runner transactional, immutability + RLS guard.
 - **Bất biến đã test (`rls-invariants.test.ts`):** RLS fail-closed trên role thật; occurrence chứng minh
   **cả hai** parent thuộc đúng tenant; app **không** import `@plexco/db/schema` trực tiếp (HR1 lint guard).
-- 51 bảng đã dựng đủ cho hầu hết feature phía sau (persons/accounts/channel_identities/memberships,
+- 61 khai báo `pgTable` đã dựng data model rộng cho hầu hết feature phía sau (persons/accounts/channel_identities/memberships,
   charges/payment_allocations/bank_transactions, public_sessions, outbox_events/projector_deliveries,
   subscriptions/billing_*, link_codes/merge_audit/merge_tombstones, magic_links/web_sessions/oauth_transactions…).
   → **Schema đi trước; code feature dùng chúng thì chưa có.**
@@ -102,17 +110,17 @@ Chưa có: command handlers, services, projectors, API nghiệp vụ đầy đ�
 
 ## 3. Đối chiếu từng feature: **spec status** vs **code**
 
-**15 legacy** (13 active Reviewed + 1 Notifications 🟡 Draft từ 18/07 do gộp cụm 🔔 + Telegram archived), 2 cặp pre-existing khác (connector/assistant), 3 cặp phase-1 additions (**Messenger Reviewed contract; chat/settings Draft**), **Home** (Reviewed), Session Organize (accept-in-principle), Tournament (Draft) và 1 product-only Draft (funnel). Cột "Code" cho biết thực thi tới đâu.
+**15 legacy** (14 active Reviewed, gồm Notifications sau DD-70/71/72 + 1 Telegram archived), 2 cặp pre-existing khác (connector/assistant), 3 cặp phase-1 additions (**Messenger Reviewed contract; chat/settings Draft**), **Home** (Reviewed), Session Organize (accept-in-principle), Tournament (Draft) và 1 product-only Draft (funnel). Cột "Code" cho biết thực thi tới đâu.
 
 | Feature (Phase) | Spec | Code hiện tại |
 |---|---|---|
-| Multi-tenant Foundation (P0–P1) | ✅ Reviewed | **✅ Có** — RLS + tenantRepo + 51 bảng |
+| Multi-tenant Foundation (P0–P1) | ✅ Reviewed | **✅ Có** — RLS + tenantRepo + 61 `pgTable` declarations |
 | Tenant Routing & Authz (P2) | ✅ Reviewed (DD-65..68 hybrid target) | ⬜ Chưa protected Messenger endpoint/action resolver |
-| Session Management (P2/P4) | ✅ Reviewed | ⬜ Chưa SessionService/wizard; live players/surface refs còn thiếu hybrid prerequisite constraints |
+| Session Management (P2/P4) | ✅ Reviewed — **contract dày thêm 23–24/07**: create=draft + public finite-capacity, `PublishSession` (draft→open, idempotency, status-only, billing suspend-gate), publish billing re-check = locking read (TOCTOU), draft terminal path (host discard + auto-expiry draft→cancelled), acceptance checklist re-traced | ⬜ Chưa SessionService/wizard; live players/surface refs còn thiếu hybrid prerequisite constraints. Publish/draft-lifecycle **chỉ mới đóng ở spec** — `0` migration, `0` route; job-infra (role/grants/outbox-seq/queue/cron) cố ý defer sang build |
 | Session Organize (post-P4) | ✅ accept-in-principle DD-61..64 (owner 18/07) | ⬜ Chưa — không có organize tables/migration/service/assign/scoring/SSE; SessionService prerequisites cũng pending |
-| Payment Reconciliation (P3) | ✅ Reviewed | 🟡 Một phần — **logic** đã có ở `core` (matching + payments-logic); **wiring** webhook→settle→notify chưa |
+| Payment Reconciliation (P3) | ✅ Reviewed | 🟡 Một phần — **logic** đã có ở `core` (matching + payments-logic, gồm fix ambiguity DD-87 `d2a27e1`); **wiring** webhook→settle→notify chưa. Consumer của union ambiguity mới (`core-matcher-ambiguous-consumer-wiring`) vẫn là `idea` |
 | Identity & Merge (P3.5) | ✅ Reviewed | ⬜ Chưa (bảng link_codes/merge_audit/tombstones có sẵn) |
-| Notifications — Reminders · Inbox · Announcements · Web Push (P3/P4/P4.5) | 🟡 Draft — **§A nhắc/xác nhận/correction contract đã reviewed** (không đổi, không mở lại); §B/C/D inbox·announce·push chờ **DD-70/71/72**. Hạ Reviewed→Draft 18/07 do **gộp tài liệu** (cặp `feature_notification_center` nhập vào đây) | ⬜ Chưa (bảng notification_* có sẵn; `person_notifications`/`membership_tags`/`device_push_subscriptions` chưa có) |
+| Notifications — Reminders · Inbox · Announcements · Web Push (P3/P4/P4.5) | ✅ Reviewed contract — §A giữ nguyên; §B/C/D theo **DD-70/71/72 owner-final**. OQ retention/evidence và DD-88 proposal vẫn là gate riêng | ⬜ Chưa (bảng notification_* tenant baseline có sẵn; `person_notifications`/`membership_tags`/`device_push_subscriptions` chưa có; không service/inbox/push runtime) |
 | Web Auth & Onboarding (P4) | ✅ Reviewed | 🟢 Telegram-era + Google lane DD-80 merged; Google ⛔ chưa enable (Safari/iOS M3), email/password bundle và Telegram removal pending |
 | Sync Engine (P4) | ✅ Reviewed | ⬜ Chưa projectors; Messenger one-route delivery chưa viết |
 | Marketplace Discovery (P4.3) | ✅ Reviewed | ⬜ Chưa (public_sessions có sẵn) |
@@ -144,14 +152,17 @@ Nguồn: `docs/autopilot-backlog.md` (Phase-1 full-launch, S1→S20; **DD-37: Me
 | **S2** core-lift (+S2d foundations) | matching/dates/payments-logic + i18n/format/vietqr/sports | ✅ **merged** |
 | **S3** db-postgres-drizzle-rls | schema + 14 migration (`0000–0013`) + RLS choke-point + invariant suite | ✅ **merged** |
 | **S4** auth | web-auth/onboarding | 🟢 Telegram-era + Google lane DD-80 merged (`0015`–`0018`); Google ⛔ chưa enable, email/password bundle pending |
-| S5 session · S6 sync-engine · S7 reconcile · S8 identity-merge | | ⬜ chưa |
+| **Tầng integrity (ngoài đánh số S)** | `0019`/`0020`/`0021` tenant-integrity composite FKs (DD-68) | ✅ **merged** (23–24/07) — expand-only, code dark |
+| S5 session · S6 sync-engine · S7 reconcile · S8 identity-merge | S5 đã có hợp đồng spec publish/draft-lifecycle đóng (23–24/07) | ⬜ chưa code |
 | S9–S12 web PWA + marketplace · S13 cross-club · S14 billing | | ⬜ chưa |
 | S15 host-pro-auto · S16 reminders-auto · S17 Zalo · S18 Messenger | | ⬜ chưa |
 | S19 club-assistant (DD-gate ✅) · S20 polish | | ⬜ chưa |
 | Telegram | bỏ khỏi phạm vi (DD-37 thay DD-09) | ✂️ out |
 | App Native phase-2 (DD-69) | RN+Expo recommendation; client/API/auth/push/offline/store gates | ✅ direction accepted (18/07) · ⬜ build chưa schedule |
 
-**Tiến độ: S1–S3 + Google lane DD-80 đã land; current committed tree `main@f93873b` ≈ 33% chặng đường code theo roadmap. Google chưa enable; email/password bundle order-4 và Telegram removal chưa code.**
+**Tiến độ: S1–S3 + Google lane DD-80 + bộ ba tenant-integrity FK đã land; current committed tree `main@2937ed9` ≈ 33% chặng đường code theo roadmap (không đổi so với `f93873b`: `0019`–`0021` là integrity expand-only, không phải slice feature). Google chưa enable; email/password bundle order-4 và Telegram removal chưa code.**
+
+> **Trạng thái backlog đã reconcile 25/07:** 7 slice mang status stale (`ready`×6 + `in-flight`×1) trong khi `merged_probe` của chúng **đã hit trên `origin/main@2937ed9`** — nay flip sang `merged`: `docs-session-management-acceptance-checklist`, `docs-session-acceptance-checklist-publish-retrace`, `docs-session-publish-concurrency-recheck`, `docs-session-draft-lifecycle`, `docs-auth-d1-packet`, `docs-tail-0018-number-reconcile`, `docs-web-auth-migration-section-merge-state-reconcile`. Đây là sửa **book-keeping**, không phải slice mới merge; hệ quả thực tế: bot autopilot sẽ thôi quét lại 6 slice đã xong.
 
 ---
 
@@ -167,7 +178,7 @@ Nguồn: `docs/autopilot-backlog.md` (Phase-1 full-launch, S1→S20; **DD-37: Me
 
 Nói cách khác: session này **khép lại Phase 1** (nền móng) và **mở màn thiết kế lớp Auth** (S4).
 
-> **Historical update 2026-07-19:** đoạn này ghi trạng thái trước DD-80 slices; không dùng làm current baseline. Current baseline (tại thời điểm reconcile 2026-07-24) là `main@1e503d1`, migrations `0000–0020` (`0019`/`0020` tenant-integrity FKs DD-68, 2026-07-23), Google lane đã merge nhưng chưa enable; email/password bundle và Telegram removal vẫn pending.
+> **Historical update 2026-07-19:** đoạn này ghi trạng thái trước DD-80 slices; không dùng làm current baseline. Current baseline (tại thời điểm reconcile 2026-07-25) là `main@2937ed9`, migrations `0000–0021` (`0019`/`0020`/`0021` tenant-integrity FKs DD-68, 23–24/07), Google lane đã merge nhưng chưa enable; email/password bundle và Telegram removal vẫn pending.
 
 ---
 
@@ -177,13 +188,15 @@ Nói cách khác: session này **khép lại Phase 1** (nền móng) và **mở 
 
 1. **Enable Google (ENABLEMENT_ONLY):** đo Safari macOS+iOS cho M3; chỉ khi pass mới set `GOOGLE_OAUTH_*`. Đây không thay thế full product E2E.
 2. **S4 email/password bundle:** sau Google lane, build release unit order-4 flag OFF rồi mới gỡ provider Telegram-era, theo DD-80.
-3. **S5 Session** → **mark-paid thủ công** → **S7 Reconcile**: không coi core logic là wiring cơ học; mỗi mutation path cần contract/slice riêng.
+3. **S5 Session** → **mark-paid thủ công** → **S7 Reconcile**: không coi core logic là wiring cơ học; mỗi mutation path cần contract/slice riêng. *(Cập nhật 25/07: hợp đồng spec của S5 — create=draft, publish, suspend-gate locking read, draft terminal path — đã đóng. Blocker kế tiếp không còn là "thiếu contract" mà là **job-infra chung** (role/grants/outbox-seq/queue/cron) bị defer có chủ đích ở mọi slice publish/expiry; nên author nó **một lần, up front**, thay vì để mỗi slice tự grind lại — bài học đã ghi từ vòng docs scheduled-job.)*
 4. **S6 Sync-engine** và **S8 Identity-merge:** author sau hard dependencies và gates tương ứng; Identity cần verified account email hoặc transactional one-time `link_code` (HR4/DD-50).
+
+**Execution boundary 25/07:** next code path là BE-only `db-job-claim-lease-core` → dispatcher → scheduler → vertical Session BE. Packet root hiện `NOT_CODE_READY` tới khi commit/push + re-pin 12/12. **FE HOLD**: không mở page/component hoặc map token trước khi canonical `design.pen` được persist/track + owner nghiệm thu làm authority.
 
 **Quyết định/gate còn treo có thể chặn hoặc định hình build:** **DD-04** provider ✅ **chốt (c) DO co-locate** (còn build-time gate: egress-IP verify + provision + restore/failover drill + RPO/RTO + KMS), **DD-14/15**
 (Zalo external spikes), **DD-33 đã chốt nhưng Meta App Review/Business Verification/permission evidence vẫn là external enablement gate**, và **DD-34/35/36**
 (Club Assistant P7 detail). **DD-18 chỉ chặn GO-LIVE Club Assistant và không phải build-time provider dependency; tuy nhiên Product + BE pair vẫn phải được formally promote từ Draft sang Reviewed trước implementation.**
-**Current decisions v1.98:** DD-70..72 và DD-86 vẫn 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated. Notification context, share/activity và native runtime vẫn chưa có. Google lane đã merge nhưng chưa enable; B1/B2/B3 + correction/external/legal gates vẫn áp dụng.
+**Current decisions v1.98 committed / v2.04 working tree:** DD-70/71/72 owner-final; DD-86/DD-88 vẫn 🟡; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated. Notification runtime, share/activity và native runtime vẫn chưa có. Google lane đã merge nhưng chưa enable; B1/B2/B3 + correction/external/legal gates vẫn áp dụng.
 **DD-02/05/06/08/10/12/41–46 đã ✅ chốt; DD-47/48 đã chốt framework** nhưng schema/code vẫn pending.
 DD-13 (Google/email) ✅: Google lane đã merge nhưng chưa enable; email/password bundle còn pending. DD-37/38/39 ✅; chat/giá theo giới tính còn chờ migration.
 
@@ -191,7 +204,7 @@ DD-13 (Google/email) ✅: Google lane đã merge nhưng chưa enable; email/pass
 
 ## 7. Historical verification (2026-07-16–19)
 
-Các kết quả dưới đây là historical evidence của checkout/CI nêu rõ từng dòng, không phải xác nhận current `main@f93873b`:
+Các kết quả dưới đây là historical evidence của checkout/CI nêu rõ từng dòng, không phải xác nhận current `main@2937ed9`:
 
 | Gate | Kết quả |
 |---|---|
