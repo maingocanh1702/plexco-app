@@ -61,7 +61,7 @@ CLOSURE_MATRIX: PASS (12/12)
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
 IMPLEMENTATION_ARTIFACTS: PASS (manifest, task contract, launcher, backlog entry and all three verdict mirrors committed and pushed on origin/main@948636f)
-FIRST_IMPLEMENTATION_STEP: open a manual P1 worktree from origin/main@948636f, register the db-job-claim-lease-core manifest via scope-gate, perform the mandatory design probe, then author one monotonic 0022 migration (outbox/projector lease + job_audit_events + job_definer ownership) with the schema.ts mirror and real-role tests
+FIRST_IMPLEMENTATION_STEP: open a manual P1 worktree from the CURRENT origin/main tip (must be 6262524 or later — the tree has to contain this CODE_READY verdict and the code-ready directive; AUTHORITY_SHA 948636f pins the reviewed contract, which the re-pin commit did not alter), register the manifest with `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/db-job-claim-lease-core.json`, perform the mandatory design probe, then author one monotonic 0022 migration (outbox/projector lease + job_audit_events + job_definer ownership) with the schema.ts mirror and real-role tests
 REMAINING_BLOCKERS: none
 NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the coding slice itself
 ```

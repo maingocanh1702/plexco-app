@@ -6,8 +6,10 @@
 > **Authority:** DD-89/DD-90 owner-final 2026-07-25.
 > **Current state:** `CODE_READY`. The full authority packet is committed and pushed on
 > `origin/main@948636f4bd3c1bc0feaaf8b91b3ad2730b097e72` (docs reconcile landed first at `42a1fb0`), closure is
-> 12/12 and there are no remaining blockers. Launchable: open a worktree from that exact SHA, register the
-> manifest via scope-gate, then run the §3 design probe before any production edit.
+> 12/12 and there are no remaining blockers. Launchable: open a worktree from the **current `origin/main`
+> tip** (`6262524` or later — the tree must contain this `code-ready` directive; `948636f` pins the reviewed
+> contract, which the re-pin commit did not alter), register the manifest via scope-gate, then run the §3
+> design probe before any production edit.
 
 ## 1. Task
 
@@ -264,7 +266,7 @@ CLOSURE_MATRIX: PASS (12/12)
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
 IMPLEMENTATION_ARTIFACTS: PASS (manifest, task contract, launcher, backlog entry and all three verdict mirrors committed and pushed on origin/main@948636f)
-FIRST_IMPLEMENTATION_STEP: open a manual P1 worktree from origin/main@948636f, register the db-job-claim-lease-core manifest via scope-gate, perform the mandatory design probe, then author one monotonic 0022 migration (outbox/projector lease + job_audit_events + job_definer ownership) with the schema.ts mirror and real-role tests
+FIRST_IMPLEMENTATION_STEP: open a manual P1 worktree from the CURRENT origin/main tip (must be 6262524 or later — the tree has to contain this CODE_READY verdict and the code-ready directive; AUTHORITY_SHA 948636f pins the reviewed contract, which the re-pin commit did not alter), register the manifest with `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/db-job-claim-lease-core.json`, perform the mandatory design probe, then author one monotonic 0022 migration (outbox/projector lease + job_audit_events + job_definer ownership) with the schema.ts mirror and real-role tests
 REMAINING_BLOCKERS: none
 NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the coding slice itself
 ```
