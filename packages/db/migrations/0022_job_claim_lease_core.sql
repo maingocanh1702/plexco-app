@@ -50,6 +50,19 @@ $$;
 -- created_at); adds an expired-lease index for the reclaim scan.
 -- ---------------------------------------------------------------------------
 ALTER TABLE outbox_events ADD COLUMN lease_expires_at timestamptz;
+
+-- Backfill pre-existing claims (codex round-01 [P1]): on an already-migrated database, any row
+-- the OLD one-way claim_outbox_batch already claimed has claimed_at NOT NULL and this brand-new
+-- column NULL, which the shape CHECK below would reject on ADD CONSTRAINT (validated synchronously
+-- against current data), aborting the migration. Backfilling lease_expires_at to five minutes past
+-- the original claim routes every legacy claim through the SAME reclaim path five-minute leases
+-- already use — almost certainly already expired for anything claimed before this migration ran,
+-- so the very next claim_outbox_batch call reclaims it. No row is silently reset or double-counted;
+-- this is the intended recovery mechanism, not a special case for it.
+UPDATE outbox_events
+SET lease_expires_at = claimed_at + interval '5 minutes'
+WHERE claimed_at IS NOT NULL AND lease_expires_at IS NULL;
+
 ALTER TABLE outbox_events ADD CONSTRAINT outbox_events_lease_shape_chk
   CHECK (
     (claimed_at IS NULL AND lease_expires_at IS NULL)

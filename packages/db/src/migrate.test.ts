@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
@@ -281,6 +281,80 @@ describe("BR-4 only the role-already-exists race codes are swallowed", () => {
       await c.end();
     }
   });
+});
+
+describe("BR-5 0022 upgrade path: pre-existing claims survive the new lease-shape CHECK", () => {
+  // codex round-01 [P1]: on an already-migrated database, any row the OLD one-way
+  // claim_outbox_batch already claimed has claimed_at NOT NULL and the brand-new
+  // lease_expires_at column NULL — the shape CHECK 0022 adds validates synchronously against
+  // EXISTING data on ADD CONSTRAINT, so without a backfill this would abort the migration on any
+  // database that ever claimed an outbox event before upgrading.
+  it("backfills lease_expires_at for a legacy claimed_at-only row before the CHECK is added, and the backfilled lease is immediately reclaimable", async () => {
+    const db = "plexco_migrate_br5_legacy_claim";
+    await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${db}`);
+    const c = await connect(url(db));
+    try {
+      // apply every migration BEFORE 0022 (numeric prefix < 22) — simulates an already-migrated
+      // database on the PRE-0022 schema, where lease_expires_at does not exist yet.
+      const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+      for (const f of files) {
+        if (Number.parseInt(f.slice(0, 4), 10) >= 22) continue;
+        await c.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+      }
+
+      // seed a pre-existing claim under the OLD one-way claim_outbox_batch — backdated well past
+      // five minutes so the backfilled lease is already expired (deterministically reclaimable).
+      const t = await c.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('BR5', 'br5-legacy', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      const claimedAt = new Date(Date.now() - 3_600_000);
+      const ev = await c.query(
+        `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload, claimed_at)
+         VALUES ($1, 'br5_test', gen_random_uuid(), 1, 'br5.legacy', '{}'::jsonb, $2) RETURNING id`,
+        [tenantId, claimedAt],
+      );
+      const eventId = (ev.rows[0] as { id: string }).id;
+
+      // job_definer must exist before 0022 asserts it — lock-protected like every other first
+      // reach of 0022 in this suite (see withJobDefinerLock). Applying 0022 raw (not via migrate())
+      // is the regression proof itself: it must NOT throw on the pre-existing claimed row.
+      await withJobDefinerLock(BASE!, async () => {
+        await bootstrapJobDefiner(admin);
+        const sql0022 = await readFile(
+          path.join(MIGRATIONS_DIR, "0022_job_claim_lease_core.sql"),
+          "utf8",
+        );
+        await c.query(sql0022);
+      });
+
+      const row = await c.query(
+        `SELECT claimed_at, lease_expires_at FROM outbox_events WHERE id = $1`,
+        [eventId],
+      );
+      const r = row.rows[0] as { claimed_at: Date; lease_expires_at: Date };
+      expect(r.lease_expires_at.getTime()).toBe(r.claimed_at.getTime() + 5 * 60_000);
+
+      // app_worker is CLUSTER-global — reuse the SAME canonical password every other suite
+      // expects (test-harness.ts ROLE_PW.app_worker) instead of a novel value; a distinct
+      // password here would leak into whichever file's workerPool authenticates next.
+      await c.query(`ALTER ROLE app_worker LOGIN PASSWORD 'plexco_test_worker'`);
+      const worker = await connect(url(db, "app_worker", "plexco_test_worker"));
+      try {
+        const claimed = await worker.query(
+          `SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`,
+          [eventId],
+        );
+        expect(claimed.rows.length).toBe(1);
+      } finally {
+        await worker.end();
+      }
+    } finally {
+      await c.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+    }
+  }, 60_000);
 });
 
 /**
