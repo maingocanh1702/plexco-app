@@ -1084,6 +1084,12 @@ export const projectorDeliveries = pgTable("projector_deliveries", {
 }, (t) => ({
   pk: primaryKey({ columns: [t.eventId, t.projector] }),
   pendingIdx: index("idx_projector_pending").on(t.nextAttemptAt).where(sql`${t.status} = 'pending'`),
+  // 0022: claim_projector_delivery_batch scopes both scans by `projector` first — neither
+  // pre-existing index carried that column.
+  claimableIdx: index("idx_projector_deliveries_claimable")
+    .on(t.projector, t.eventId).where(sql`${t.status} IN ('pending', 'failed')`),
+  claimedLeaseIdx: index("idx_projector_deliveries_claimed_lease")
+    .on(t.projector, t.leaseExpiresAt).where(sql`${t.status} = 'claimed'`),
   // 0022: 'claimed' added between pending and delivered/failed/dlq (token-and-lease held).
   statusChk: check("projector_status_chk", sql`${t.status} IN ('pending','claimed','delivered','failed','dlq')`),
 }));

@@ -8,6 +8,15 @@
 -- bootstrap — infra/postgres-init/01-job-definer.sql, applied via `pnpm
 -- db:bootstrap`). This migration only ASSERTS it; it never creates or alters
 -- the role itself, and it is not added to migrate.ts's RUNTIME_ROLES.
+--
+-- Every worker-callable SECURITY DEFINER function below sets
+-- `search_path = public, pg_temp` (codex round-02 [P1]): Postgres implicitly
+-- searches pg_temp FIRST regardless of search_path unless it is listed
+-- explicitly, so `SET search_path = public` alone still lets any role with
+-- ordinary (default-granted) TEMP privilege — app_worker included — shadow an
+-- unqualified name with a same-named temp relation/trigger that then executes
+-- while job_definer (BYPASSRLS) is the current role. Listing pg_temp last
+-- moves it out of the implicit-first position.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -119,7 +128,7 @@ CREATE OR REPLACE FUNCTION claim_outbox_batch(p_limit integer DEFAULT 100)
 RETURNS TABLE (event_id uuid, tenant_id uuid, aggregate_id uuid, sequence integer, type text)
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_operation_id uuid := gen_random_uuid();
@@ -195,13 +204,25 @@ ALTER TABLE projector_deliveries DROP CONSTRAINT projector_deliveries_status_che
 ALTER TABLE projector_deliveries ADD CONSTRAINT projector_deliveries_status_check
   CHECK (status IN ('pending','claimed','delivered','failed','dlq'));
 
+-- codex round-02 [P2]: claim_projector_delivery_batch's two scans (claimable rows; expired
+-- claimed leases) both filter by `projector` first, but the only pre-existing index
+-- (idx_projector_pending) has no `projector` column — once multiple projectors share this table,
+-- each worker batch would scan/sort the WHOLE pending+failed or claimed set instead of just its
+-- own projector's rows.
+CREATE INDEX idx_projector_deliveries_claimable
+  ON projector_deliveries (projector, event_id)
+  WHERE status IN ('pending', 'failed');
+CREATE INDEX idx_projector_deliveries_claimed_lease
+  ON projector_deliveries (projector, lease_expires_at)
+  WHERE status = 'claimed';
+
 -- job_prepare_projector_delivery: idempotent insert. duplicate is a no-op (no
 -- audit row — nothing state-changed).
 CREATE OR REPLACE FUNCTION job_prepare_projector_delivery(p_event_id uuid, p_projector text)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_tenant_id uuid;
@@ -241,7 +262,7 @@ CREATE OR REPLACE FUNCTION claim_projector_delivery_batch(p_projector text, p_li
 RETURNS TABLE (event_id uuid, tenant_id uuid, projector text, claim_token uuid, attempts integer)
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_operation_id uuid := gen_random_uuid();
@@ -326,7 +347,7 @@ CREATE OR REPLACE FUNCTION complete_projector_delivery(
 ) RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_tenant_id uuid;
