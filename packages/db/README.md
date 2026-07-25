@@ -392,6 +392,18 @@ outbox producer lands here) gives `job_definer` sole ownership of five named fun
 Full contract, exact function signatures, acceptance matrix (JCL-1..JCL-14) and the empirical
 design-probe proof of the pre-fix defect: `../../docs/autopilot-db-job-claim-lease-core.md`.
 
+**⚠️ Blocking requirement for `job-runtime-dispatcher` (slice 2/4), codex round-05 [P1]:**
+`claim_outbox_batch`'s five-minute lease is ONLY a crash-recovery mechanism — this slice's exact
+2-state `outbox_events` contract (available ↔ leased) has deliberately no third "done" state.
+Once a real dispatcher calls this function in a loop, every successfully-processed row's lease
+still naturally expires and becomes indistinguishable from a crashed claim, so it gets reclaimed
+repeatedly forever; since reclaim runs before claiming new rows and `ORDER BY created_at` always
+prefers the oldest, a growing set of already-done events will eventually starve every newer event
+from ever being claimed. Re-preparing an already-delivered `projector_deliveries` row is a safe
+no-op, so this cannot cause incorrect re-delivery — but it is an unbounded throughput bug. The
+dispatcher slice MUST add a completion/ack mechanism before being enabled against production
+traffic.
+
 ## Open items inherited from docs (not blockers)
 
 - `messenger_*` is post-MVP (P4.8, DD-09) — included for forward compatibility.

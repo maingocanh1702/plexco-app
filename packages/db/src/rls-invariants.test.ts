@@ -1537,6 +1537,39 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
     ]);
   });
 
+  it("JCL-8b: a NULL projector/result is rejected explicitly, not silently accepted (codex round-05 [P2])", async () => {
+    const ev = await seedOutboxEvent(ctx.tenantA);
+
+    // NULL !~ pattern is SQL NULL, not TRUE — each function must check IS NULL explicitly.
+    await expect(
+      ctx.workerPool.query(`SELECT job_prepare_projector_delivery($1, NULL)`, [ev]),
+    ).rejects.toThrow(/lower snake_case identifier/);
+    await expect(
+      ctx.workerPool.query(`SELECT * FROM claim_projector_delivery_batch(NULL, 100)`),
+    ).rejects.toThrow(/lower snake_case identifier/);
+
+    await ctx.workerPool.query(`SELECT job_prepare_projector_delivery($1, 'jcl8b_projector')`, [
+      ev,
+    ]);
+    const claimed = await ctx.workerPool.query(
+      `SELECT claim_token FROM claim_projector_delivery_batch('jcl8b_projector', 100) WHERE event_id = $1`,
+      [ev],
+    );
+    const token = (claimed.rows[0] as { claim_token: string }).claim_token;
+    // NULL NOT IN (...) is SQL NULL, not TRUE — would otherwise fall through to the dlq branch.
+    await expect(
+      ctx.workerPool.query(
+        `SELECT complete_projector_delivery($1, 'jcl8b_projector', $2, NULL, NULL, NULL, NULL)`,
+        [ev, token],
+      ),
+    ).rejects.toThrow(/result must be delivered, retry or dlq/);
+
+    // cleanup: claim the outbox event so it doesn't linger unclaimed for later tests
+    await ctx.workerPool.query(`SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`, [
+      ev,
+    ]);
+  });
+
   it("JCL-9: app_worker has zero direct DML on outbox/projector/audit tables — only EXECUTE succeeds", async () => {
     const denied: readonly (readonly [string, unknown[]])[] = [
       ["SELECT * FROM outbox_events LIMIT 1", []],

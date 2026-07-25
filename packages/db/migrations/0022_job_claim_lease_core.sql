@@ -123,6 +123,23 @@ CREATE TRIGGER trg_job_audit_events_immutable
 -- semantics exactly. Never accepts or sets app.tenant_id — its narrow, audited
 -- cross-tenant access is why it needs the definer owner (FORCE RLS on
 -- outbox_events, no tenant GUC).
+--
+-- codex round-05 [P1] — HARD BLOCKING REQUIREMENT FOR job-runtime-dispatcher (slice 2/4), not
+-- fixed here: the five-minute lease this function grants is ONLY a crash-recovery mechanism — a
+-- successfully-processed event has NO terminal/ack path back to outbox_events (this slice's exact
+-- 2-state contract, task contract §4.2, is available <-> leased; there is deliberately no third
+-- state, and inventing one is a schema/contract decision beyond this reviewed root slice's scope,
+-- which explicitly excludes "queue, handler, scheduler, producer, projector" wiring). Once a real
+-- dispatcher calls this function in a loop, EVERY successfully-processed row's lease still
+-- naturally expires 5 minutes after its claim, so it becomes indistinguishable from a crashed
+-- claim and gets reclaimed — repeatedly, forever — and because reclaim runs before claiming new
+-- rows and ORDER BY created_at always prefers the oldest, a growing set of already-done events
+-- will starve every newer event from ever being claimed. Re-preparing an already-delivered
+-- projector_deliveries row is a safe no-op (job_prepare_projector_delivery's ON CONFLICT DO
+-- NOTHING never resets status), so this does not cause incorrect re-delivery — but it is still an
+-- unbounded, worsening throughput bug. The job-runtime-dispatcher slice MUST add a completion/ack
+-- mechanism (e.g. a terminal state or a dispatched-at marker, extending this contract deliberately)
+-- and MUST NOT be enabled against production traffic without one.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION claim_outbox_batch(p_limit integer DEFAULT 100)
 RETURNS TABLE (event_id uuid, tenant_id uuid, aggregate_id uuid, sequence integer, type text)
@@ -228,7 +245,9 @@ DECLARE
   v_tenant_id uuid;
   v_row_count integer;
 BEGIN
-  IF p_projector !~ '^[a-z][a-z0-9_]{0,63}$' THEN
+  -- codex round-05 [P2]: `NULL !~ pattern` is SQL NULL, not TRUE, so this IF must reject NULL
+  -- explicitly — otherwise a NULL projector silently passes validation.
+  IF p_projector IS NULL OR p_projector !~ '^[a-z][a-z0-9_]{0,63}$' THEN
     RAISE EXCEPTION
       'job_prepare_projector_delivery: projector must be a lower snake_case identifier, 1..64 chars'
       USING ERRCODE = 'invalid_parameter_value';
@@ -271,7 +290,9 @@ BEGIN
     RAISE EXCEPTION 'claim_projector_delivery_batch: p_limit must be between 1 and 100'
       USING ERRCODE = 'invalid_parameter_value';
   END IF;
-  IF p_projector !~ '^[a-z][a-z0-9_]{0,63}$' THEN
+  -- codex round-05 [P2]: reject NULL explicitly — `NULL !~ pattern` is NULL, not TRUE, so an
+  -- unchecked NULL silently passes, then matches zero rows (indistinguishable from no pending work).
+  IF p_projector IS NULL OR p_projector !~ '^[a-z][a-z0-9_]{0,63}$' THEN
     RAISE EXCEPTION
       'claim_projector_delivery_batch: projector must be a lower snake_case identifier, 1..64 chars'
       USING ERRCODE = 'invalid_parameter_value';
@@ -353,7 +374,9 @@ DECLARE
   v_tenant_id uuid;
   v_row_count integer;
 BEGIN
-  IF p_result NOT IN ('delivered', 'retry', 'dlq') THEN
+  -- codex round-05 [P2] class fix: `NULL NOT IN (...)` is NULL, not TRUE — an unchecked NULL
+  -- result would silently fall through to the ELSE (dlq) branch below.
+  IF p_result IS NULL OR p_result NOT IN ('delivered', 'retry', 'dlq') THEN
     RAISE EXCEPTION 'complete_projector_delivery: result must be delivered, retry or dlq'
       USING ERRCODE = 'invalid_parameter_value';
   END IF;
