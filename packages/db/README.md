@@ -42,7 +42,8 @@ packages/db/
     ├── 0018_oauth_completion_handoff.sql # auth-s4-d1b OAuth completion-hop handoff (code dark)
     ├── 0019_tenant_integrity_fks.sql  # DD-68 same-tenant composite candidate keys + FKs (expand-only)
     ├── 0020_ledger_tenant_integrity_fks.sql # DD-68 ledger leg: bank/allocation same-tenant FKs (expand-only)
-    └── 0021_non_money_tenant_integrity_fks.sql # non-money leg: zalo/notification same-tenant FKs (expand-only)
+    ├── 0021_non_money_tenant_integrity_fks.sql # non-money leg: zalo/notification same-tenant FKs (expand-only)
+    └── 0022_job_claim_lease_core.sql   # DD-89/DD-90 job-infra root: job_definer, outbox lease/reclaim, job_audit_events, projector-delivery state machine
 ```
 
 The SQL migrations are **authoritative**. `schema.ts` mirrors the tables but
@@ -68,7 +69,7 @@ Tức là trong sơ đồ, "club" chính là node `TENANTS` (hub trung tâm). Kh
 | **GLOBAL protected** | `persons`, `channel_identities`, `link_codes`, `merge_audit`, `merge_tombstones`, `accounts`, `web_sessions`, `account_identities`, `magic_links`, `player_chat_context`, `oauth_transactions`, `routing_audit`, `auth_login_nonces`, `auth_login_state`, `rate_limit_hits`, `auth_audit_events`, `account_emails`, `email_password_credentials`, `auth_pending_email_registrations`, `auth_email_tokens`, `auth_email_deliveries` | No blanket grant to `app`. Reached via identity/auth service or SECURITY DEFINER fns. `auth_login_nonces`/`auth_login_state`/`rate_limit_hits`/`auth_audit_events` and the five `0016` email tables are function-only (no table grant at all, not even to `app`) — see `0012`/`0015`/`0016`. `sports`/`plans` are global lookups (SELECT allowed). |
 | **TENANT-private (RLS)** | `memberships`, `aliases`, `channel_reachability`, `settings`, `sessions` (+recurrence/occurrences/`session_surface_refs`), `players`, `telegram_links`, `tenant_admins`, `tenant_link_codes`, `bank_accounts`, `charges`, `bank_transactions`, `payment_allocations`, `provider_connections`, `zalo_bots`, `zalo_reply_contexts`, `messenger_pages`, `processed_commands`, `outbox_events`, `join_requests`, `subscriptions`, `subscription_invoices`, `notification_*`, `onboarding_*` | `ENABLE`+`FORCE` RLS, policy on `app.tenant_id` GUC, fail-closed. `app` = `NOBYPASSRLS`. Always via `tenantRepo` choke-point. |
 | **PUBLIC read model** | `public_sessions` | No RLS. `readonly` role gets `SELECT` only; canonical tables get **zero** grant to `readonly`. Field whitelist — no money/PII/roster/exact venue. |
-| **PLATFORM/WORKER** | `plans`, `billing_transactions`, `billing_allocations`, `billing_overrides`, `projector_deliveries`, `surface_refs` | Billing platform ledger (separate from player ledger, BL-BIL-1). Worker claims outbox via `claim_outbox_batch()`. |
+| **PLATFORM/WORKER** | `plans`, `billing_transactions`, `billing_allocations`, `billing_overrides`, `projector_deliveries`, `surface_refs`, `job_audit_events` | Billing platform ledger (separate from player ledger, BL-BIL-1). Worker claims outbox via `claim_outbox_batch()`; `job_audit_events` is the append-only per-event audit sink for every job-infra function (`0022`) — no runtime role gets a table grant on it, `app`/`readonly` included. |
 
 ## How tenant isolation works (INV-1)
 
@@ -108,7 +109,7 @@ the worker via narrow privileged functions, then re-enters tenant context.
 | INV-5 strong identity proof | `link_codes` (OTP), `persons_verified_phone_unique`, `merge_audit`/`merge_tombstones` |
 | INV-6 idempotency | `processed_commands` UNIQUE, `outbox_events(aggregate_id,sequence)`, `projector_deliveries` PK, `bank_transactions` UNIQUE |
 | INV-7 one owner for derived data | `charges.amount_allocated`, `public_sessions.slots_open` (projector) |
-| INV-8 narrow worker privilege | Current: `claim_outbox_batch()` SECURITY DEFINER + `app_worker` EXECUTE-only. Target DD-89/DD-90: the named job functions are owned by pre-provisioned `job_definer NOLOGIN BYPASSRLS`; no direct worker DML. |
+| INV-8 narrow worker privilege | `0022` (DD-89/DD-90): `claim_outbox_batch`, `job_prepare_projector_delivery`, `claim_projector_delivery_batch`, `complete_projector_delivery` and the `job_audit_events` trigger are owned by pre-provisioned `job_definer NOLOGIN BYPASSRLS`; `app_worker` gets EXECUTE-only on the four worker-callable functions, never the trigger, never direct DML on `outbox_events`/`projector_deliveries`/`job_audit_events`. |
 | INV-9 secrets/PII never leak | `*_enc bytea` + `*_lookup_hash`; no grants on protected tables |
 
 ## Auth session revocation (DD-80 v1.88)
@@ -324,32 +325,64 @@ unchanged. This is what lets the DB test suites run as parallel vitest workers
 
 ## Migration order & deploy notes
 
-Apply `0000`→`0021` in order (FK dependencies validated). For production changes
+Apply `0000`→`0022` in order (FK dependencies validated; `0022` also requires
+`pnpm db:bootstrap` to have run first — see below). For production changes
 follow expand→backfill→validate→flip→contract (P12); avoid destructive
 migrations in the same deploy as behavior changes. Legacy Bestminton import:
 TDD §8.
 
-## Privileged job-definer bootstrap (DD-90 target; lands with the next job-core migration)
+## Privileged job-definer bootstrap + job-infra lease/reclaim/audit (DD-89/DD-90, `0022`)
 
-`job_definer` is deliberately **not** a `RUNTIME_ROLES` entry and must never be created by
-`migrate()`: that helper creates `LOGIN NOBYPASSRLS` runtime roles and is therefore unsafe for a
-definer that must cross `FORCE RLS`. Before the job-core migration, a cluster administrator must
-create or attribute-check exactly:
+`job_definer` is deliberately **not** a `RUNTIME_ROLES` entry and is never created by `migrate()`:
+that helper creates `LOGIN NOBYPASSRLS` runtime roles, which is unsafe for a definer that must
+cross `FORCE RLS`. It is pre-provisioned by `infra/postgres-init/01-job-definer.sql` — an idempotent,
+race-safe SQL file applied to a **running** cluster via `pnpm db:bootstrap` (requires
+`DATABASE_URL_MIGRATION`), never relied upon as a docker-entrypoint-initdb.d mount on its own (CI's
+postgres service container starts before checkout; an already-populated local `pgdata` volume skips
+init scripts entirely — see the file's own header). The compose init mount
+(`infra/docker-compose.yml`) is a convenience for genuinely fresh local volumes only. CI runs
+`pnpm db:bootstrap` as a workflow step after checkout and before the test step. The bootstrap file
+creates/verifies exactly:
 
 ```sql
 CREATE ROLE job_definer NOLOGIN NOSUPERUSER BYPASSRLS
   NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
-GRANT job_definer TO <migration_role>;
+GRANT job_definer TO <migration_role>;   -- CURRENT_USER at bootstrap time, in every environment
 GRANT USAGE ON SCHEMA public TO job_definer;
 ```
 
-The privileged bootstrap must fail closed if an existing role has any other attribute; its SQL is
-the future `infra/postgres-init/01-job-definer.sql` for a fresh local cluster and is run as a CI
-step before DB tests. Production executes the same attribute-checking bootstrap from a privileged
-admin connection with the real migration-role identifier. The migration only asserts the role and
-membership, temporarily brackets `CREATE ON public` while transferring owner, then revokes it.
-It must never silently fall back to the migration role, `app_worker`, or superuser. Full state/test
-contract: `../../docs/autopilot-db-job-claim-lease-core.md`.
+It fails closed if an existing role has any other attribute (never silently "fixes" drift) and is
+safe to run repeatedly (fresh cluster, pre-existing cluster, or concurrently across parallel DB test
+files — the DB suite's own `bootstrapJobDefiner`/`withJobDefinerLock` helpers, `src/test-harness.ts`,
+reuse this exact file). The `0022` migration only **asserts** the role/attributes/membership before
+any grant — it never creates or alters `job_definer` itself, and a missing/wrong/unmembered role
+fails the whole migration before any partial change (JCL-2/JCL-3). It then temporarily brackets
+`GRANT CREATE ON SCHEMA public` while transferring owner (PG16 requires the new owner to hold schema
+CREATE for the transfer), then revokes it in the same transaction. Never falls back to the migration
+role, `app_worker`, or superuser.
+
+`0022` itself (root slice 1/4 of the shared job-infra layer — no queue, worker handler, cron or
+outbox producer lands here) gives `job_definer` sole ownership of five named functions plus the new
+`job_audit_events` table:
+
+- **Outbox lease/reclaim**: `outbox_events` gains `lease_expires_at` (both-null/both-non-null shape
+  CHECK with `claimed_at`); `claim_outbox_batch` keeps its exact `ORDER BY created_at` semantics but
+  first reclaims expired (five-minute) leases under `SKIP LOCKED`, then claims available rows,
+  auditing both steps;
+- **Per-event job audit**: `job_audit_events` is append-only (`forbid_job_audit_mutation` trigger
+  rejects UPDATE/DELETE), `job_id` is always the originating `outbox_events.id`, deliberately no
+  `UNIQUE(job_id)` — a reclaimed event is legitimately audited more than once. No runtime role gets
+  a table grant, `app`/`readonly` included;
+- **Projector-delivery state machine**: `projector_deliveries` gains `claim_token` +
+  `lease_expires_at`; `job_prepare_projector_delivery` (idempotent), `claim_projector_delivery_batch`
+  (reclaim-then-claim, same pattern as outbox) and `complete_projector_delivery`
+  (delivered/retry/dlq, exact-unexpired-token required, silent no-op otherwise — never a stale or
+  duplicate completion) implement `pending → claimed → delivered/failed/dlq`, with `dlq` terminal.
+  `app_worker` receives EXECUTE on all four worker-callable functions, never direct DML on any of
+  the three tables, never EXECUTE on the audit trigger.
+
+Full contract, exact function signatures, acceptance matrix (JCL-1..JCL-14) and the empirical
+design-probe proof of the pre-fix defect: `../../docs/autopilot-db-job-claim-lease-core.md`.
 
 ## Open items inherited from docs (not blockers)
 

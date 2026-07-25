@@ -61,5 +61,14 @@ jobs:
       - name: Build
         run: pnpm -w build
 
+      - name: Bootstrap job_definer role
+        # The postgres service container starts BEFORE checkout (see the `services:`
+        # block above vs `actions/checkout` at :27), so infra/postgres-init can never
+        # run as a docker-entrypoint-initdb.d mount here — this step is the only path
+        # that provisions job_definer before the DB suite runs (task contract §4.1).
+        env:
+          DATABASE_URL_MIGRATION: postgres://plexco:plexco_test@localhost:5432/plexco_test
+        run: pnpm db:bootstrap
+
       - name: Test
         run: pnpm -w test

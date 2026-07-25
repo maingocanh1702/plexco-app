@@ -1053,10 +1053,20 @@ export const outboxEvents = pgTable("outbox_events", {
   payload: jsonb("payload").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   claimedAt: timestamp("claimed_at", { withTimezone: true }),
+  // 0022: five-minute reclaimable lease — both-null (available) or both-non-null (leased).
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
 }, (t) => ({
   aggSeqUq: uniqueIndex("outbox_agg_seq_uq").on(t.aggregateId, t.sequence),
+  // 0022 replaced this index's definition (aggregate_id, sequence) -> (created_at); the claim
+  // ordering itself is unchanged (ORDER BY created_at, preserved from 0010).
   unclaimedIdx: index("idx_outbox_unclaimed")
-    .on(t.aggregateId, t.sequence).where(sql`${t.claimedAt} IS NULL`),
+    .on(t.createdAt).where(sql`${t.claimedAt} IS NULL`),
+  expiredLeaseIdx: index("idx_outbox_expired_lease")
+    .on(t.leaseExpiresAt).where(sql`${t.claimedAt} IS NOT NULL`),
+  leaseShapeChk: check(
+    "outbox_events_lease_shape_chk",
+    sql`(${t.claimedAt} IS NULL AND ${t.leaseExpiresAt} IS NULL) OR (${t.claimedAt} IS NOT NULL AND ${t.leaseExpiresAt} IS NOT NULL)`,
+  ),
 }));
 
 export const projectorDeliveries = pgTable("projector_deliveries", {
@@ -1068,10 +1078,32 @@ export const projectorDeliveries = pgTable("projector_deliveries", {
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   providerRef: text("provider_ref"),
   errorCode: text("error_code"),
+  // 0022: token-bound five-minute reclaimable lease, mirrors outbox_events above.
+  claimToken: uuid("claim_token"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
 }, (t) => ({
   pk: primaryKey({ columns: [t.eventId, t.projector] }),
   pendingIdx: index("idx_projector_pending").on(t.nextAttemptAt).where(sql`${t.status} = 'pending'`),
-  statusChk: check("projector_status_chk", sql`${t.status} IN ('pending','delivered','failed','dlq')`),
+  // 0022: 'claimed' added between pending and delivered/failed/dlq (token-and-lease held).
+  statusChk: check("projector_status_chk", sql`${t.status} IN ('pending','claimed','delivered','failed','dlq')`),
+}));
+
+// 0022: platform-plane, append-only job audit. job_id is always the authoritative outbox event
+// id (canonical job identity at core), even for projector-delivery rows — no UNIQUE(job_id), a
+// reclaimed event is legitimately audited more than once. Owned by job_definer; no runtime role
+// gets a table grant; UPDATE/DELETE are trigger-rejected (forbid_job_audit_mutation, 0022).
+export const jobAuditEvents = pgTable("job_audit_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  jobId: uuid("job_id").notNull().references(() => outboxEvents.id),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  actor: text("actor").notNull().default("system"),
+  reason: text("reason").notNull(),
+  fnName: text("fn_name").notNull(),
+  operationId: uuid("operation_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  jobIdx: index("idx_job_audit_events_job_id").on(t.jobId),
+  operationIdx: index("idx_job_audit_events_operation_id").on(t.operationId),
 }));
 
 export const surfaceRefs = pgTable("surface_refs", {
