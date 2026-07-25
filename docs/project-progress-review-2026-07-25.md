@@ -3,9 +3,15 @@
 
 > **Ngày review:** 2026-07-25  
 > **Repo:** `/Users/maingocanh/Projects/Plexco app`  
-> **Authority baseline:** `main@2937ed9a0732bea27db75403682befcb348e315b` = `origin/main`  
-> **Working-tree truth:** có WIP chưa commit; mọi mục WIP được tách khỏi baseline đã merge.  
+> **Review baseline:** `main@2937ed9a0732bea27db75403682befcb348e315b` — snapshot mà §2/§3/§4 mô tả.  
+> **Published at:** `main@948636f4bd3c1bc0feaaf8b91b3ad2730b097e72` — verdict §7 pin SHA này.  
 > **Status boundary:** tài liệu/decision/spec không phải runtime; merged không đồng nghĩa enabled; `.pen` không phải FE.
+
+> **Publication record.** Toàn bộ WIP mô tả ở §2.1 đã publish thành hai commit như §5.2 quy định:
+> **A = `42a1fb0`** (docs current-state reconcile, 12 file) → **B = `948636f`** (authority packet, đúng 11
+> `TARGET_FILES`). §2.1–§4.2 giữ nguyên là **snapshot tại `2937ed9`** — chúng mô tả tình trạng đã dẫn tới
+> hai commit đó, không phải trạng thái hiện tại. Mọi câu "chưa commit / còn WIP" trong các mục đó đọc theo
+> baseline review, không đọc như live truth. §5.2 trở đi, §6 và §7 đã cập nhật theo `948636f`.
 
 ## 1. Kết luận ngắn
 
@@ -217,7 +223,8 @@ Song song, thu email-provider C7 evidence để chuẩn bị order-4 email/passw
 3. Làm một root slice chung tránh mỗi feature tự tạo grant/job semantics riêng và drift.
 4. Session contract đã đủ dày; blocker thấp nhất không còn là product wording mà là shared job foundation.
 
-**Nhưng chưa code ngay.** Packet hiện `NOT_CODE_READY` vì chưa nằm trong một commit authority bất biến.
+**Packet hiện `CODE_READY`** tại `main@948636f` — closure 12/12, không còn blocker. Hai commit publication
+dưới đây **đã thực hiện xong**; giữ lại làm bản ghi thứ tự đã dùng và làm khuôn cho các packet sau.
 
 #### Hai commit riêng biệt — bắt buộc serialize A → B
 
@@ -300,8 +307,8 @@ kéo scope của các BE slice phía trên.
 
 | # | Gate | Kết quả | Evidence |
 |---:|---|---|---|
-| 1 | Authority snapshot pin theo SHA | **FAIL** | Packet còn local WIP ngoài `2937ed9` |
-| 2 | Decision trong scope đã chốt | PASS | DD-89/DD-90 owner-final trong working tree |
+| 1 | Authority snapshot pin theo SHA | **PASS** | Cả 11 `TARGET_FILES` tồn tại trong tree `948636f` |
+| 2 | Decision trong scope đã chốt | PASS | DD-89/DD-90 owner-final, đã publish tại `948636f` |
 | 3 | Scope IN/OUT và owner rõ | PASS | Manifest + negative scope đã có |
 | 4 | Dependency phân loại đủ | PASS | Root slice; `0000`, `0005`, `0010` đã merge |
 | 5 | Live schema/code khớp doc | PASS | `outbox_events`, `projector_deliveries`, worker shell đã verify |
@@ -311,13 +318,14 @@ kéo scope của các BE slice phía trên.
 | 9 | Acceptance matrix có expected result | PASS | Real-role/privilege/concurrency/rollback cases đã pin |
 | 10 | Migration/security/rollback pin | PASS | Một monotonic migration + bootstrap contract |
 | 11 | First slice có hard dependency merged | PASS | Root dependency |
-| 12 | Implementation handoff sẵn sàng | **FAIL** | Manifest/task/launcher/mirrors chưa commit/push |
+| 12 | Implementation handoff sẵn sàng | **PASS** | Manifest/task/launcher/backlog/mirrors đã push tại `948636f` |
 
-**CLOSURE_MATRIX: FAIL (10/12).**
+**CLOSURE_MATRIX: PASS (12/12).**
 
-`G5_SCOPE` hiện PASS: scope exception có lý do đo được, migration path là next monotonic path tại live tail
-`0021`, còn `package.json` bị giới hạn đúng một script. Verdict vẫn `NOT_CODE_READY` chỉ vì closure #1/#12:
-packet chưa có immutable main SHA và implementation handoff chưa commit/push.
+`G5_SCOPE` PASS: scope exception có lý do đo được, và tại `948636f` migration tail vẫn là `0021` nên
+`0022_job_claim_lease_core.sql` là next monotonic path **đã verify**, không còn là dự đoán; `package.json`
+bị giới hạn đúng một script `db:bootstrap`. Closure #1/#12 đóng bằng commit A `42a1fb0` → B `948636f`.
+Tail recheck trước `scope-gate register` vẫn bắt buộc — nó chống drift *sau* thời điểm pin này.
 
 ---
 
@@ -329,16 +337,17 @@ Verdict này áp dụng cho **next recommended coding slice**, không gộp toà
 > giữ đồng nhất từng field** với Verdict 19 và với verdict trong `docs/autopilot-db-job-claim-lease-core.md`.
 > Ba block cùng một slice tại cùng một SHA; nếu lệch, Verdict 19 thắng và hai block kia phải sync lại.
 >
-> **`AUTHORITY_SHA` là review base, KHÔNG phải commit mang packet.** Cả **11/11 `TARGET_FILES`** khác baseline
-> đã review (7 path modified, 4 path chưa tồn tại tại `2937ed9`) — đó chính là blocker 1 và là lý do closure
-> #1/#12 FAIL. Sau khi commit nhóm B (§5.2),
-> field này phải được re-pin sang SHA mới trước mọi lần đọc lại.
+> **`AUTHORITY_SHA` đã re-pin sang `948636f`** — commit mang trọn packet. Block này được author tại `2937ed9`
+> với verdict `NOT_CODE_READY`; blocker duy nhất là "chưa có immutable SHA chứa toàn packet", và commit A
+> `42a1fb0` → B `948636f` đã đóng nó. **Contract không đổi một dòng** giữa hai lần pin: chỉ `AUTHORITY_SHA`,
+> closure #1/#12, `IMPLEMENTATION_ARTIFACTS` và `FIRST_IMPLEMENTATION_STEP` thay đổi. Commit re-pin là
+> pin-only — nội dung đã review nằm bất biến tại `948636f`.
 
 ```text
 REVIEW_POLICY_VERSION: 1.3
-REVIEW_VERDICT: NOT_CODE_READY
+REVIEW_VERDICT: CODE_READY
 REVIEWED_AT: 2026-07-25
-AUTHORITY_SHA: 2937ed9a0732bea27db75403682befcb348e315b
+AUTHORITY_SHA: 948636f4bd3c1bc0feaaf8b91b3ad2730b097e72
 BASE_BRANCH: main
 TARGET_FILES:
   - docs/standards/decisions.md
@@ -359,24 +368,21 @@ G1_DECISION: PASS
 G2_SPEC: PASS
 G3_DEPENDENCY: PASS
 G4_TEST: PASS
-G5_SCOPE: PASS — documented budget exception (P1 root migration spans DB code, real-role tests, CI and local bootstrap); exact scope is pinned at live tail 0021, with 0022_job_claim_lease_core.sql as the next monotonic path and package.json reserved solely for db:bootstrap. Pre-register tail recheck is mandatory; any drift requires updating manifest, backlog and all verdict mirrors, committing/pushing the correction, then re-pinning
+G5_SCOPE: PASS — documented budget exception (P1 root migration spans DB code, real-role tests, CI and local bootstrap); at this SHA the live migration tail is 0021, so 0022_job_claim_lease_core.sql is the verified next monotonic path and package.json is reserved solely for db:bootstrap. A pre-register tail recheck stays mandatory; any drift requires updating manifest, backlog and all verdict mirrors, committing/pushing the correction, then re-pinning
 G6_EXTERNAL: PASS
-HARD_DEPENDENCIES: none — root slice; 0000 role model, 0005 worker tables and 0010 claim function are merged and re-verified
+HARD_DEPENDENCIES: none — root slice; 0000 role model, 0005 worker tables and 0010 claim function are merged and re-verified at this SHA
 PRIOR_SLICES: none
 OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: none
-LIVE_REPO_VERIFICATION: PASS
+LIVE_REPO_VERIFICATION: PASS (all 11 TARGET_FILES exist in the 948636f tree; migration tail 0021; outbox_events, projector_deliveries and the worker shell re-probed)
 CONTRACT_MATRIX: PASS
-CLOSURE_MATRIX: FAIL (10/12 — working-tree authority is not an immutable SHA and the handoff is not committed/pushed)
+CLOSURE_MATRIX: PASS (12/12)
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
-IMPLEMENTATION_ARTIFACTS: FAIL (manifest, task contract, launcher and mirrored authority are local WIP)
-FIRST_IMPLEMENTATION_STEP: after current-state reconcile Commit A lands, commit/push the exact 11 TARGET_FILES on main as authority packet B, then re-verify the migration tail and re-pin this verdict to that commit before opening a worktree and performing the mandatory design probe
-REMAINING_BLOCKERS:
-  - blocker: no immutable main SHA contains the full authority packet
-    owner: repository maintainer
-    resolution: commit and push every TARGET_FILE, then re-run 12/12 closure against that SHA
-NEXT_REVIEW_TRIGGER: main commit containing all 11 TARGET_FILES
+IMPLEMENTATION_ARTIFACTS: PASS (manifest, task contract, launcher, backlog entry and all three verdict mirrors committed and pushed on origin/main@948636f)
+FIRST_IMPLEMENTATION_STEP: open a manual P1 worktree from origin/main@948636f, register the db-job-claim-lease-core manifest via scope-gate, perform the mandatory design probe, then author one monotonic 0022 migration (outbox/projector lease + job_audit_events + job_definer ownership) with the schema.ts mirror and real-role tests
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the coding slice itself
 ```
 
 ---
@@ -424,7 +430,8 @@ pnpm lint
 **PROJECT_PROGRESS:** foundation tốt, auth core đã merge, product feature runtime chưa bắt đầu.  
 **PRODUCT_USABLE:** **NO** — chưa có business API + FE + projector path end-to-end.  
 **NEXT_ENABLEMENT:** Safari macOS/iOS M3 measurement cho Google.  
-**NEXT_CODE:** BE-only `db-job-claim-lease-core`, nhưng hiện **NOT_CODE_READY** cho tới khi packet được
-commit/push và re-pin strict 12/12; sau đó đi tiếp dispatcher/scheduler rồi vertical Session BE.  
+**NEXT_CODE:** BE-only `db-job-claim-lease-core` — **`CODE_READY`** tại `main@948636f`, closure 12/12. Mở
+worktree từ đúng SHA đó, register scope-gate, chạy design probe; sau slice này đi tiếp dispatcher/scheduler
+rồi vertical Session BE.  
 **NEXT_FE:** **HOLD** — chờ canonical `design.pen` được persist/track + owner nghiệm thu làm authority;
 sau đó mới map screen/component/token/state vào BE contract đã ổn định.

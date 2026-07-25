@@ -12,17 +12,23 @@
 
 ---
 
-## Verdict 19 — `db-job-claim-lease-core`, job lease/audit/definer root; `NOT_CODE_READY` pending immutable authority (2026-07-25)
+## Verdict 19 — `db-job-claim-lease-core`, job lease/audit/definer root; `CODE_READY` (2026-07-25, re-pinned to `948636f`)
 
 > **Tracker of record cho slice này.** Hai mirror phải giữ đồng nhất từng field với block dưới đây:
 > `docs/autopilot-db-job-claim-lease-core.md` §Verdict và `docs/project-progress-review-2026-07-25.md` §7.
 > Nếu lệch, block này thắng. Mọi lần re-pin `AUTHORITY_SHA` phải cập nhật cả ba.
+>
+> **Provenance của lần re-pin này.** Block được author tại `2937ed9` với verdict `NOT_CODE_READY`; blocker duy
+> nhất là "chưa có immutable SHA chứa toàn packet". Commit A `42a1fb0` (docs current-state reconcile, 12 file)
+> rồi commit B `948636f` (authority packet, đúng 11 `TARGET_FILES`) đã đóng blocker đó. **Contract không đổi
+> một dòng nào** giữa hai lần pin — chỉ `AUTHORITY_SHA`, closure #1/#12, `IMPLEMENTATION_ARTIFACTS` và
+> `FIRST_IMPLEMENTATION_STEP` đổi. Commit re-pin này là pin-only: nội dung đã review nằm bất biến tại `948636f`.
 
 ```text
 REVIEW_POLICY_VERSION: 1.3
-REVIEW_VERDICT: NOT_CODE_READY
+REVIEW_VERDICT: CODE_READY
 REVIEWED_AT: 2026-07-25
-AUTHORITY_SHA: 2937ed9a0732bea27db75403682befcb348e315b
+AUTHORITY_SHA: 948636f4bd3c1bc0feaaf8b91b3ad2730b097e72
 BASE_BRANCH: main
 TARGET_FILES:
   - docs/standards/decisions.md
@@ -43,24 +49,21 @@ G1_DECISION: PASS
 G2_SPEC: PASS
 G3_DEPENDENCY: PASS
 G4_TEST: PASS
-G5_SCOPE: PASS — documented budget exception (P1 root migration spans DB code, real-role tests, CI and local bootstrap); exact scope is pinned at live tail 0021, with 0022_job_claim_lease_core.sql as the next monotonic path and package.json reserved solely for db:bootstrap. Pre-register tail recheck is mandatory; any drift requires updating manifest, backlog and all verdict mirrors, committing/pushing the correction, then re-pinning
+G5_SCOPE: PASS — documented budget exception (P1 root migration spans DB code, real-role tests, CI and local bootstrap); at this SHA the live migration tail is 0021, so 0022_job_claim_lease_core.sql is the verified next monotonic path and package.json is reserved solely for db:bootstrap. A pre-register tail recheck stays mandatory; any drift requires updating manifest, backlog and all verdict mirrors, committing/pushing the correction, then re-pinning
 G6_EXTERNAL: PASS
-HARD_DEPENDENCIES: none — root slice; 0000 role model, 0005 worker tables and 0010 claim function are merged and re-verified
+HARD_DEPENDENCIES: none — root slice; 0000 role model, 0005 worker tables and 0010 claim function are merged and re-verified at this SHA
 PRIOR_SLICES: none
 OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: none
-LIVE_REPO_VERIFICATION: PASS
+LIVE_REPO_VERIFICATION: PASS (all 11 TARGET_FILES exist in the 948636f tree; migration tail 0021; outbox_events, projector_deliveries and the worker shell re-probed)
 CONTRACT_MATRIX: PASS
-CLOSURE_MATRIX: FAIL (10/12 — working-tree authority is not an immutable SHA and the handoff is not committed/pushed)
+CLOSURE_MATRIX: PASS (12/12)
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
-IMPLEMENTATION_ARTIFACTS: FAIL (manifest, task contract, launcher and mirrored authority are local WIP)
-FIRST_IMPLEMENTATION_STEP: after current-state reconcile Commit A lands, commit/push the exact 11 TARGET_FILES on main as authority packet B, then re-verify the migration tail and re-pin this verdict to that commit before opening a worktree and performing the mandatory design probe
-REMAINING_BLOCKERS:
-  - blocker: no immutable main SHA contains the full authority packet
-    owner: repository maintainer
-    resolution: commit and push every TARGET_FILE, then re-run 12/12 closure against that SHA
-NEXT_REVIEW_TRIGGER: main commit containing all 11 TARGET_FILES
+IMPLEMENTATION_ARTIFACTS: PASS (manifest, task contract, launcher, backlog entry and all three verdict mirrors committed and pushed on origin/main@948636f)
+FIRST_IMPLEMENTATION_STEP: open a manual P1 worktree from origin/main@948636f, register the db-job-claim-lease-core manifest via scope-gate, perform the mandatory design probe, then author one monotonic 0022 migration (outbox/projector lease + job_audit_events + job_definer ownership) with the schema.ts mirror and real-role tests
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the coding slice itself
 ```
 
 **Đọc verdict:** DD-89/DD-90 đã đóng mọi owner choice. Handoff bây giờ pin lease, audit, role bootstrap,
