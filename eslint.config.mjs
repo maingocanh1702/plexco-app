@@ -16,6 +16,11 @@ export default tseslint.config(
       "!eslint.config.mjs",
       ".autopilot/**",
       ".gitnexus/**",
+      // Local throwaway probe harness: git-ignored via .probe/.gitignore, but ESLint does not read
+      // nested .gitignore files, and the "*.mjs" entry above only matches the repo root. Without
+      // this, `pnpm lint` fails on 7 no-undef in .probe/*.mjs and every autopilot preflight halts
+      // with PREFLIGHT_REGRESSION on a file that is not tracked source.
+      ".probe/**",
       "*.cjs",
       "plexco-dashboard.html",
     ],
