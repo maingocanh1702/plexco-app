@@ -325,9 +325,15 @@ export async function setupNonSuperuserOwnerContext(
     // has CREATEROLE but not BYPASSRLS, so it can never self-bootstrap job_definer from scratch
     // ("permission denied to create role"). The privileged `admin` (superuser) connection stands
     // in for the real "privileged cluster-tier bootstrap" (task contract §4.1): it creates/
-    // verifies job_definer, then grants membership directly to ownerRole.
-    await bootstrapJobDefiner(admin);
-    await admin.query(`GRANT job_definer TO ${ownerRole}`);
+    // verifies job_definer, then grants membership to ownerRole via the SAME session-GUC
+    // mechanism `pnpm db:bootstrap`/CI use for a distinct migration-role identity (codex
+    // round-06 [P1] — this is also this exact mechanism's own regression coverage).
+    await admin.query(`SET job_definer_bootstrap.migration_role = '${ownerRole}'`);
+    try {
+      await bootstrapJobDefiner(admin);
+    } finally {
+      await admin.query(`RESET job_definer_bootstrap.migration_role`);
+    }
   };
 
   const connectAsWorker = async (): Promise<pg.Pool> => {

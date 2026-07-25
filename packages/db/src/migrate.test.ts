@@ -234,10 +234,15 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
       // job_definer is ALSO cluster-global and pre-provisioned out of band — 0022 asserts
       // membership but never creates it, so a NOCREATEROLE owner (this test's whole point)
       // could never self-bootstrap it. The privileged `admin` connection stands in for the
-      // "privileged cluster-tier bootstrap" (task contract §4.1) and grants membership directly;
-      // `owner` needs no CREATEROLE to RECEIVE a grant, only to CREATE ROLE.
-      await bootstrapJobDefiner(admin);
-      await admin.query(`GRANT job_definer TO ${owner}`);
+      // "privileged cluster-tier bootstrap" (task contract §4.1) and grants membership via the
+      // session-GUC mechanism `pnpm db:bootstrap`/CI use for a distinct migration-role identity
+      // (codex round-06 [P1]); `owner` needs no CREATEROLE to RECEIVE a grant, only to CREATE ROLE.
+      await admin.query(`SET job_definer_bootstrap.migration_role = '${owner}'`);
+      try {
+        await bootstrapJobDefiner(admin);
+      } finally {
+        await admin.query(`RESET job_definer_bootstrap.migration_role`);
+      }
       const res = await migrate(url(db, owner, "x"));
       expect(res.applied.length).toBe(MIGRATION_COUNT);
     } finally {
@@ -289,70 +294,90 @@ describe("BR-5 0022 upgrade path: pre-existing claims survive the new lease-shap
   // lease_expires_at column NULL — the shape CHECK 0022 adds validates synchronously against
   // EXISTING data on ADD CONSTRAINT, so without a backfill this would abort the migration on any
   // database that ever claimed an outbox event before upgrading.
-  it("backfills lease_expires_at for a legacy claimed_at-only row before the CHECK is added, and the backfilled lease is immediately reclaimable", async () => {
-    const db = "plexco_migrate_br5_legacy_claim";
-    await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
-    await admin.query(`CREATE DATABASE ${db}`);
-    const c = await connect(url(db));
+  //
+  // codex round-06 [P1]: the FIRST version of this test ran the whole upgrade path as the
+  // superuser `admin` connection, matching this file's OTHER BR-* tests' convention — but that
+  // convention is exactly what masks the real defect for THIS specific statement: outbox_events
+  // has FORCE RLS and the backfill UPDATE sets no tenant GUC, so under the task contract's own
+  // stated production posture (a genuinely non-superuser, NOBYPASSRLS migration role —
+  // setupNonSuperuserOwnerContext's whole reason to exist), that UPDATE would silently match zero
+  // rows. Rebuilt on the non-superuser harness with a genuine CROSS-TENANT seed, so the assertion
+  // actually proves the backfill sees every tenant's legacy rows despite FORCE RLS, not just
+  // whichever one happens to match an absent GUC.
+  it("backfills lease_expires_at across tenants for legacy claimed_at-only rows under a non-superuser migration owner, and the backfilled leases are immediately reclaimable", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_br5_legacy_claim");
+    // ctx.superuser stays connected to the harness's OWN base database throughout (it exists for
+    // cluster-level admin — CREATE ROLE/DATABASE/GRANT — not for querying data inside dbName); a
+    // separate superuser connection INTO dbName is needed to seed/verify fixtures while
+    // outbox_events' FORCE RLS is bypassed, matching this suite's own admin/`c` convention.
+    const superuserInDb = await connect(url(ctx.dbName));
     try {
-      // apply every migration BEFORE 0022 (numeric prefix < 22) — simulates an already-migrated
-      // database on the PRE-0022 schema, where lease_expires_at does not exist yet.
+      // apply every migration BEFORE 0022 (numeric prefix < 22) as the NON-SUPERUSER owner —
+      // simulates an already-migrated database on the PRE-0022 schema, run by the task contract's
+      // own stated production migration-role posture.
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
       for (const f of files) {
         if (Number.parseInt(f.slice(0, 4), 10) >= 22) continue;
-        await c.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
       }
 
-      // seed a pre-existing claim under the OLD one-way claim_outbox_batch — backdated well past
-      // five minutes so the backfilled lease is already expired (deterministically reclaimable).
-      const t = await c.query(
-        `INSERT INTO tenants (name, slug, status) VALUES ('BR5', 'br5-legacy', 'active') RETURNING id`,
-      );
-      const tenantId = (t.rows[0] as { id: string }).id;
+      // Seed a pre-existing claim under the OLD one-way claim_outbox_batch in TWO tenants —
+      // backdated well past five minutes so the backfilled lease is already expired
+      // (deterministically reclaimable), and cross-tenant so the backfill's RLS-safety is
+      // actually exercised, not just its idempotency.
       const claimedAt = new Date(Date.now() - 3_600_000);
-      const ev = await c.query(
-        `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload, claimed_at)
-         VALUES ($1, 'br5_test', gen_random_uuid(), 1, 'br5.legacy', '{}'::jsonb, $2) RETURNING id`,
-        [tenantId, claimedAt],
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES
+           ('BR5 A', 'br5-legacy-a', 'active'), ('BR5 B', 'br5-legacy-b', 'active') RETURNING id`,
       );
-      const eventId = (ev.rows[0] as { id: string }).id;
+      const tenantA = (t.rows[0] as { id: string }).id;
+      const tenantB = (t.rows[1] as { id: string }).id;
+      const seedEvent = (tenantId: string) =>
+        superuserInDb
+          .query(
+            `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload, claimed_at)
+             VALUES ($1, 'br5_test', gen_random_uuid(), 1, 'br5.legacy', '{}'::jsonb, $2) RETURNING id`,
+            [tenantId, claimedAt],
+          )
+          .then((r) => (r.rows[0] as { id: string }).id);
+      const eventIdA = await seedEvent(tenantA);
+      const eventIdB = await seedEvent(tenantB);
 
-      // job_definer must exist before 0022 asserts it — lock-protected like every other first
-      // reach of 0022 in this suite (see withJobDefinerLock). Applying 0022 raw (not via migrate())
-      // is the regression proof itself: it must NOT throw on the pre-existing claimed row.
+      // job_definer must exist + be granted to THIS owner before 0022 asserts it — lock-protected
+      // like every other first reach of 0022 in this suite (see withJobDefinerLock). Applying
+      // 0022 raw (not via migrate()) as the non-superuser owner is the regression proof itself:
+      // it must NOT throw on either tenant's pre-existing claimed row.
       await withJobDefinerLock(BASE!, async () => {
-        await bootstrapJobDefiner(admin);
+        await ctx.bootstrapJobDefinerForOwner();
         const sql0022 = await readFile(
           path.join(MIGRATIONS_DIR, "0022_job_claim_lease_core.sql"),
           "utf8",
         );
-        await c.query(sql0022);
+        await ctx.ownerPool.query(sql0022);
       });
 
-      const row = await c.query(
-        `SELECT claimed_at, lease_expires_at FROM outbox_events WHERE id = $1`,
-        [eventId],
+      // Verify via the superuser connection too: outbox_events has FORCE RLS and ctx.ownerPool
+      // (the plain migration owner, not job_definer) sets no tenant GUC, so it would see zero rows
+      // here regardless of whether the backfill itself worked — that would be a false negative in
+      // this ASSERTION, not evidence about the migration under test.
+      const rows = await superuserInDb.query(
+        `SELECT id, claimed_at, lease_expires_at FROM outbox_events WHERE id = ANY($1) ORDER BY id`,
+        [[eventIdA, eventIdB]],
       );
-      const r = row.rows[0] as { claimed_at: Date; lease_expires_at: Date };
-      expect(r.lease_expires_at.getTime()).toBe(r.claimed_at.getTime() + 5 * 60_000);
-
-      // app_worker is CLUSTER-global — reuse the SAME canonical password every other suite
-      // expects (test-harness.ts ROLE_PW.app_worker) instead of a novel value; a distinct
-      // password here would leak into whichever file's workerPool authenticates next.
-      await c.query(`ALTER ROLE app_worker LOGIN PASSWORD 'plexco_test_worker'`);
-      const worker = await connect(url(db, "app_worker", "plexco_test_worker"));
-      try {
-        const claimed = await worker.query(
-          `SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`,
-          [eventId],
-        );
-        expect(claimed.rows.length).toBe(1);
-      } finally {
-        await worker.end();
+      expect(rows.rows.length).toBe(2);
+      for (const row of rows.rows as { claimed_at: Date; lease_expires_at: Date }[]) {
+        expect(row.lease_expires_at.getTime()).toBe(row.claimed_at.getTime() + 5 * 60_000);
       }
+
+      const worker = await ctx.connectAsWorker();
+      const claimed = await worker.query(
+        `SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = ANY($1)`,
+        [[eventIdA, eventIdB]],
+      );
+      expect(claimed.rows.length).toBe(2);
     } finally {
-      await c.end();
-      await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+      await superuserInDb.end();
+      await ctx.teardown();
     }
   }, 60_000);
 });

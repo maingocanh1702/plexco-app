@@ -54,12 +54,28 @@ END
 $$;
 
 -- 3. Membership + schema usage. GRANT is idempotent (re-granting an already-held
---    privilege is a silent no-op, never an error). CURRENT_USER is always the
---    connecting migration-role identity: locally/CI that is `plexco`; production runs
---    this file "from a privileged admin connection with the production migration-role
---    identifier" (task contract §4.1) — so CURRENT_USER resolves correctly there too,
---    with no environment-specific name hardcoded in this file.
-GRANT job_definer TO CURRENT_USER;
+--    privilege is a silent no-op, never an error).
+--
+--    codex round-06 [P1]: CURRENT_USER is only correct when the connection running this
+--    file IS the migration role — true locally/CI (both bootstrap and migrate as
+--    `plexco`), but NOT guaranteed in every deployment: a privileged admin connection can
+--    bootstrap this role while a SEPARATE, lesser-privileged identity later runs
+--    `pnpm --filter @plexco/db migrate`, which then fails 0022's membership assertion
+--    with no grant ever issued to it. The caller may `SET job_definer_bootstrap.migration_role
+--    = '<role>'` (a plain custom GUC — works identically whether this file is applied via
+--    psql or any other client, unlike a psql-only `:variable`) before running this file to
+--    grant to that role explicitly instead; unset (the common case) falls back to CURRENT_USER.
+DO $$
+DECLARE
+  v_target text := NULLIF(current_setting('job_definer_bootstrap.migration_role', true), '');
+BEGIN
+  IF v_target IS NULL THEN
+    EXECUTE format('GRANT job_definer TO %I', current_user);
+  ELSE
+    EXECUTE format('GRANT job_definer TO %I', v_target);
+  END IF;
+END
+$$;
 GRANT USAGE ON SCHEMA public TO job_definer;
 
 COMMIT;

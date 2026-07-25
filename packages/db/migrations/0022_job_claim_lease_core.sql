@@ -51,6 +51,14 @@ BEGIN
 END
 $$;
 
+-- Grant job_definer SELECT/UPDATE on outbox_events NOW, ahead of Step 4's full grants list
+-- (codex round-06 [P1] fix, corrected): Step 2a's own backfill needs this via SET ROLE
+-- job_definer before job_definer owns or is otherwise granted anything on this table —
+-- BYPASSRLS bypasses the RLS POLICY, not the base table ACL a SET ROLE session still needs.
+-- The migration role owns outbox_events (created it via 0005), so it may GRANT on it freely.
+-- Restated (idempotently) in Step 4 below for one complete, authoritative grants reference.
+GRANT SELECT, UPDATE ON outbox_events TO job_definer;
+
 -- ---------------------------------------------------------------------------
 -- Step 2a: outbox lease shape. A five-minute fixed lease is represented by
 -- claimed_at + lease_expires_at, both-null (available) or both-non-null
@@ -68,9 +76,21 @@ ALTER TABLE outbox_events ADD COLUMN lease_expires_at timestamptz;
 -- already use — almost certainly already expired for anything claimed before this migration ran,
 -- so the very next claim_outbox_batch call reclaims it. No row is silently reset or double-counted;
 -- this is the intended recovery mechanism, not a special case for it.
+--
+-- codex round-06 [P1]: the migration role may be NOBYPASSRLS (this slice's own stated production
+-- posture — JCL-1/JCL-4 exist specifically to prove behavior under that role), and outbox_events
+-- has FORCE RLS with no tenant GUC set here, so an unprivileged migration role would see this
+-- UPDATE silently match zero rows across every tenant it does not happen to have a GUC for — the
+-- exact class of defect this whole slice fixes, reproduced by its own backfill step. job_definer
+-- (BYPASSRLS) is already asserted correct and granted to this role by Step 1 above, so SET ROLE to
+-- it is always available here. RESET ROLE immediately after: the very next statement (ADD
+-- CONSTRAINT) needs outbox_events TABLE-OWNER privilege, which the migration role has and
+-- job_definer does not.
+SET ROLE job_definer;
 UPDATE outbox_events
 SET lease_expires_at = claimed_at + interval '5 minutes'
 WHERE claimed_at IS NOT NULL AND lease_expires_at IS NULL;
+RESET ROLE;
 
 ALTER TABLE outbox_events ADD CONSTRAINT outbox_events_lease_shape_chk
   CHECK (
