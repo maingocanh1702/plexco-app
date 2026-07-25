@@ -453,3 +453,23 @@ GRANT SELECT, INSERT, UPDATE ON projector_deliveries TO job_definer;
 -- projector_deliveries or job_audit_events (0005 carries no GRANT at all; job_audit_events is new
 -- and owned solely by job_definer), so nothing to revoke there.
 REVOKE UPDATE, DELETE ON outbox_events FROM app;
+
+-- codex round-04 [P1]: table-level INSERT alone still lets `app` set claimed_at/lease_expires_at
+-- on its OWN inserted row (satisfying the both-non-null shape CHECK), suppressing that event from
+-- claim_outbox_batch until an arbitrary self-chosen expiry with no outbox_claimed audit row — the
+-- same boundary-bypass as round-03's UPDATE/DELETE finding, one layer deeper. Column-level GRANT
+-- was tried and REJECTED: Drizzle's generated INSERT always lists every column, using the literal
+-- keyword DEFAULT for ones the caller omits, and Postgres requires INSERT privilege on a column
+-- the moment it is NAMED in the column list regardless of whether the value is DEFAULT — so a
+-- column-level grant would reject every ordinary producer insert going through Drizzle/tenantRepo
+-- (this codebase's actual write path), not just a malicious one.
+--
+-- A CHECK on `current_user = 'job_definer'` was ALSO tried and rejected: CHECK constraints bind
+-- every writer, superusers included (unlike GRANT/RLS, which superusers bypass), so it broke the
+-- migration-role/superuser direct manipulation this suite's OWN test setup legitimately needs
+-- (forcing an expired lease, backfilling a legacy claimed row). The real boundary is narrower:
+-- only the untrusted `app` role must be prevented from setting these columns; job_definer (via
+-- SECURITY DEFINER — current_user becomes job_definer for the call's duration, session_user does
+-- not) and any other non-`app` writer (migration/superuser ops) are already trusted paths.
+ALTER TABLE outbox_events ADD CONSTRAINT outbox_events_producer_lease_boundary_chk
+  CHECK (current_user != 'app' OR (claimed_at IS NULL AND lease_expires_at IS NULL));

@@ -1572,7 +1572,7 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
     ]);
   });
 
-  it("JCL-9b: app keeps INSERT/SELECT on outbox_events for the producer side, but UPDATE/DELETE are revoked (codex round-03 [P1])", async () => {
+  it("JCL-9b: app keeps INSERT/SELECT on outbox_events for the producer side, but UPDATE/DELETE are revoked and lease fields cannot be set on insert (codex round-03/round-04 [P1])", async () => {
     const created = await withTenant(ctx.appDb.db, ctx.tenantA, async (tx) => {
       const rows = await tx
         .insert(outboxEvents)
@@ -1593,6 +1593,27 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
       tx.select().from(outboxEvents).where(eq(outboxEvents.id, created.id)),
     );
     expect(seen.length).toBe(1);
+
+    // codex round-04 [P1]: app must not be able to set claimed_at/lease_expires_at on ITS OWN
+    // insert — that would satisfy the shape CHECK while suppressing the event from
+    // claim_outbox_batch with no outbox_claimed audit row. Enforced by
+    // outbox_events_producer_lease_boundary_chk (current_user = 'app' -> both must be NULL),
+    // not a column-level grant (rejected — see the migration's own comment on this constraint).
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+        tx.insert(outboxEvents).values({
+          tenantId: ctx.tenantA,
+          aggregateType: "jcl_app_seat_bad",
+          aggregateId: randomUUID(),
+          sequence: 1,
+          type: "jcl.app.seat.bad",
+          payload: {},
+          claimedAt: new Date(),
+          leaseExpiresAt: new Date(Date.now() + 5 * 60_000),
+        }),
+      ),
+      /outbox_events_producer_lease_boundary_chk/,
+    );
 
     await expectErrorChainToMatch(
       withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>

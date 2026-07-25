@@ -1067,6 +1067,14 @@ export const outboxEvents = pgTable("outbox_events", {
     "outbox_events_lease_shape_chk",
     sql`(${t.claimedAt} IS NULL AND ${t.leaseExpiresAt} IS NULL) OR (${t.claimedAt} IS NOT NULL AND ${t.leaseExpiresAt} IS NOT NULL)`,
   ),
+  // 0022: the untrusted `app` role must leave both lease columns NULL on its own inserts/updates.
+  // Scoped to current_user != 'app' (not "= job_definer") so migration-role/superuser direct ops
+  // stay unrestricted — CHECK constraints bind every writer, unlike GRANT/RLS which superusers
+  // bypass.
+  producerLeaseBoundaryChk: check(
+    "outbox_events_producer_lease_boundary_chk",
+    sql`current_user != 'app' OR (${t.claimedAt} IS NULL AND ${t.leaseExpiresAt} IS NULL)`,
+  ),
 }));
 
 export const projectorDeliveries = pgTable("projector_deliveries", {
