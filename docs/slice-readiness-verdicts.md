@@ -102,7 +102,7 @@ IMPLEMENTATION_ARTIFACTS: PASS (manifest at 72cdd56; implementation squash-merge
 CODEX_ROUNDS: 4, stopped at round-04 with a documented residual rather than a clean round — a deliberate deviation from the manifest's codex_review "1x_clean", owner-authorised, following the docs-prd-flow2-publish-projection-reconcile precedent. Round-01 found a real gap the authoring manifest had MISSED (cached public DTO/CDN entry must also be purged, otherwise an invalid row keeps being served until TTL — skipping the projection alone does not satisfy "must never appear"). Round-02 repeat and round-04 "the named backlog task does not exist" were both verified STALE against git: the latter because the branch had rebased before the task landed at 3b12e43; a post-rebase grep resolved it with no content change
 FIRST_IMPLEMENTATION_STEP: n/a — IMPLEMENTED & MERGED at origin/main@5b1c221
 REMAINING_BLOCKERS: none — merged. The eventless-invalidation residual is NOT a blocker of this slice; it is the named ENABLEMENT_ONLY gate above, tracked as backlog task job-infra-public-projection-reconciliation
-NEXT_REVIEW_TRIGGER: n/a — merged. Deferred follow-up (no new decision needed): docs/features/README.md coverage-index cell for this spec still reads v2.3 and should sync to v2.4
+NEXT_REVIEW_TRIGGER: n/a — merged. Deferred follow-up RESOLVED at main@f6e1c72: the docs/features/README.md coverage-index cell actually read **v2.2**, not v2.3 as first recorded here — the drift predated this slice (docs-prd-flow2 deferred the same cell when it shipped v2.3), so this record understated it. Synced v2.2 → v2.4; 19 of 20 BE index cells were verified in sync
 ```
 
 ---
