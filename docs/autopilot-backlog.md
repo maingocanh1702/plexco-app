@@ -443,12 +443,17 @@ notes: DD-89/DD-90 are the only actionable authority. `job_definer` is cluster-p
 
 ## task: job-runtime-dispatcher
 title: Shared job-infra slice 2/4 — worker preflight + queue registration + first outbox consumer (one handler, no cron, no producer)
-status: planned
+status: ready
 risk: P1
 change_class: manual-runtime-feature
-depends_on: []
+depends_on: [db-job-claim-lease-core]
 invariants: [retry-liveness, core-api]
-scope: []
+scope: [docs/autopilot-manifests/job-runtime-dispatcher.json, apps/bot/src/preflight.ts, apps/bot/src/preflight.test.ts, apps/bot/src/dispatcher.ts, apps/bot/src/dispatcher.test.ts, apps/bot/src/queues.ts, apps/bot/src/worker.ts]
+manifest: docs/autopilot-manifests/job-runtime-dispatcher.json
+launcher: .claude/commands/ap-33-job-runtime-dispatcher.md
+verdict: Verdict 22 — CODE_READY at main@eeb69ce (2026-07-26)
+merged_probe: apps/bot/src/preflight.ts :: app_worker
+scope_depth: **CHỐT owner 2026-07-26 — trọn vòng đời**, không dừng ở `prepare`: `claim_outbox_batch` → `job_prepare_projector_delivery` → `claim_projector_delivery_batch` → `complete_projector_delivery` với cả ba kết quả `delivered|retry|dlq`. Lý do: lease, reclaim, token guard và retry chính là thứ `0022` dựng ra và là nơi codex round-11 tìm ra lỗ hổng BYPASSRLS; để chúng không được kiểm chứng tới slice 4 là bỏ ngỏ đúng vùng rủi ro nhất. Bước projection thật nằm sau interface được inject, slice này KHÔNG ship implementation production của nó.
 producer_decision: **CHỐT owner 2026-07-26 — producer = `DEFERRED_OUT_OF_SCOPE`.** Câu hỏi mở "outbox event do ai sinh — sync-engine hay từng feature" KHÔNG được trả lời trong slice này; nó được đóng bằng **negative scope**, không phải bằng một lựa chọn kiến trúc vội. Slice 2 chứng minh vòng đời `claim → deliver → retry/dlq` bằng **enqueue thủ công/test**, không bằng dữ liệu sinh từ đường nghiệp vụ. Lý do: chọn producer bây giờ là quyết định kiến trúc ràng buộc mọi feature về sau, trong khi chưa có feature runtime nào tồn tại để kiểm chứng lựa chọn đó — chốt sớm là chốt mù. Slice 4 `job-consumers-per-feature` (hoặc một DD riêng) mới là chỗ trả lời. Hệ quả bắt buộc ghi vào contract: slice 2 KHÔNG được thêm bất kỳ INSERT nào vào `outbox_events` ngoài fixture/test, và KHÔNG được coi "loop chạy được với test enqueue" là bằng chứng loop chạy được với dữ liệu thật.
 design_probe_required: **true** — theo canonical `autopilot-prompt-GENERIC` v0.6.1 §0.1. Slice này chạm ít nhất ba trigger: (2) choke-point mutating `projector_deliveries` state, (6) amends merged core (`claim_outbox_batch` + `boss.start()` path đã merge ở `0022`/`34429fc`), (8) new mechanism choice (preflight kiểm chính xác cái gì và fail thế nào; retry/backoff/DLQ policy cho consumer đầu tiên; hình dạng test-only enqueue). Phép thử một dòng của §0.1 — "có quyết định nào mà một mirror máy móc sẽ làm SAI không?" — trả lời CÓ. Bài học `docs-marketplace-public-capacity-guard` (2026-07-26): bỏ gate này tốn 4 codex round cho một slice 4-edit; slice P1 bỏ gate sẽ tốn hơn nhiều.
 notes: Producer đã chốt (xem trên) — câu hỏi mở duy nhất của task này đã đóng, nhưng packet CHƯA author. Sau khi slice 1 có lease/reclaim + delivery-recording, slice này mới có hợp đồng để build: đăng ký queue thật (`apps/bot/src/queues.ts` hiện là `[]`), một `boss.work()` handler gọi `claim_outbox_batch` rồi **re-enter `SET LOCAL app.tenant_id`** trước khi chạm dữ liệu nghiệp vụ (TDD §3.4), ghi `projector_deliveries` qua đường DD-89 Q1 chốt, retry/backoff/DLQ theo cột đã có. **Vẫn chưa cron** — chạy bằng enqueue thủ công/test để chứng minh vòng claim→deliver→retry sống. Hiện `worker.ts` start pg-boss rồi idle (`:20`, không `boss.work`), `claim_outbox_batch` có **0 call site** trong TS, và **không gì insert vào `outbox_events`** ⇒ cần quyết định producer đi cùng slice nào (sync-engine hay từng feature).

@@ -12,6 +12,56 @@
 
 ---
 
+## Verdict 22 — `job-runtime-dispatcher`, job-infra slice 2/4: worker preflight + first outbox consumer; `CODE_READY` (2026-07-26)
+
+> **Điều CODE_READY này cho phép, nói chính xác:** mở worktree, register scope-gate, và **chạy design probe**.
+> `design_probe_required: true` — bốn lựa chọn cơ chế (danh sách assertion của preflight và cách truy vấn từ seat
+> `app_worker`; tên queue + projector; retry/DLQ policy; interface delivery được inject) phải được pin vào
+> `design-probe.md` và **owner xác nhận TRƯỚC bất kỳ production edit nào**. Theo canonical
+> `autopilot-prompt-GENERIC` v0.6.1 §0.1, gate đó **là** cơ chế đóng cho lớp câu hỏi này, không phải một kiểu
+> defer. Viết code trước khi probe được confirm là vi phạm verdict này, không phải diễn giải rộng nó.
+>
+> **Hai quyết định owner đã đóng, không mở lại trong slice:** producer = `DEFERRED_OUT_OF_SCOPE` (2026-07-26) —
+> câu hỏi "sync-engine hay từng feature" KHÔNG trả lời ở đây; và độ sâu = **trọn vòng đời** `claim → prepare →
+> claim delivery → complete` với cả ba kết quả, thay vì dừng ở `prepare`. Chọn trọn vòng vì lease, reclaim,
+> token guard và retry là chính những thứ `0022` dựng ra và là nơi codex round-11 vừa tìm ra lỗ hổng
+> BYPASSRLS — để chúng không được kiểm chứng tới slice 4 là bỏ ngỏ đúng vùng rủi ro nhất.
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-26
+AUTHORITY_SHA: eeb69ce8665a816db6cda40adcc691cb51d25129
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-manifests/job-runtime-dispatcher.json
+  - .claude/commands/ap-33-job-runtime-dispatcher.md
+SLICE: job-runtime-dispatcher
+IN_SCOPE: one module (apps/bot) — DD-90 Q6 fail-closed preflight run before boss.start() from an app_worker connection; first real queue registration; one boss.work() handler driving the full 0022 lifecycle claim_outbox_batch -> job_prepare_projector_delivery -> claim_projector_delivery_batch -> complete_projector_delivery for delivered/retry/dlq, with the real projection step behind an injected interface that ships no production implementation; tests for both against real PostgreSQL with a real app_worker seat
+OUT_OF_SCOPE: any producer — zero INSERT into outbox_events in shipped code, owner-decided DEFERRED_OUT_OF_SCOPE; cron/schedule registration (slice 3); real projector or surface_refs access (slice 4); edits to provision-queue.ts, queue.ts options or migrations 0000-0022; any new migration; RLS or GRANT changes; claim ordering (ORDER BY created_at is the sync-engine contract, DD-89 Q3); direct DML on outbox_events, projector_deliveries or job_audit_events from app_worker
+G1_DECISION: PASS — DD-89 (Q1 narrow definer functions, Q2 provisioning exception, Q3 ordering) and DD-90 Q6 (preflight before boss.start(), not boss.work()) are owner-final; the two remaining product/scope choices were owner-decided 2026-07-26 and recorded in the backlog before authoring
+G2_SPEC: PASS — infra slice with equivalent reviewed technical authority rather than a fabricated Product spec: the DB contract is merged code (0022) plus docs/autopilot-db-job-claim-lease-core.md §4.2/§4.3, and the runtime contract is DD-90 Q6 + TDD §3.4. Deliberately NO separate task-contract doc — re-authoring the state machine would create a second authority free to drift
+G3_DEPENDENCY: PASS — db-job-claim-lease-core MERGED at 34429fc, verified by probe not by backlog: 0022 contains job_audit_events, the four functions carry GRANT EXECUTE to app_worker at 0022:527-530, and dep_checks resolve on disk for claim_projector_delivery_batch, complete_projector_delivery, provisionQueue and QUEUE_SCHEMA
+G4_TEST: PASS — JRD-1..JRD-14 authored before code with exact expected results. Two are anti-regression rather than coverage: JRD-4 requires proving NO pg-boss startup or maintenance work occurred when preflight fails (not merely that the process exited — that is the boss.start() vs boss.work() distinction DD-90 Q6 turns on), and JRD-12 greps the shipped diff for INSERT into outbox_events so the producer deferral cannot silently become "already proven". JRD-3, JRD-5 and JRD-11 are explicitly not satisfiable by a mocked pool
+G5_SCOPE: PASS with a named budget exception — one module (apps/bot) but 7 files including two new sources and two new test files, above the nominal comfort. Splitting preflight from the handler was considered and rejected on DD-90 Q6's own logic: the preflight exists to fence the FIRST real queue registration, so a preflight slice with QUEUES still empty would assert nothing. No migration is added, so the one-monotonic-migration budget is untouched. If implementation materially overruns ~300 LOC, that is a re-slice trigger to be raised at the design probe, not a silent overrun
+G6_EXTERNAL: PASS — no PII, money, provider, legal or evidence gate; job infrastructure only, and it stays code-dark because no producer feeds it
+HARD_DEPENDENCIES: db-job-claim-lease-core = MERGED (main@34429fc; merged probe 0022_job_claim_lease_core.sql::job_audit_events verified on origin/main)
+PRIOR_SLICES: db-job-claim-lease-core (slice 1/4, merged 2026-07-26)
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS (measured at eeb69ce, not taken from prose: claim_outbox_batch returns (event_id, tenant_id, aggregate_id, sequence, type); claim_projector_delivery_batch returns (event_id, tenant_id, projector, claim_token, attempts); complete_projector_delivery takes seven parameters and returns boolean; all four GRANT EXECUTE to app_worker at 0022:527-530; QUEUES is still []; worker.ts calls boss.start() with no boss.work(); queue.ts pins migrate:false and requires a direct connection; provision-queue.ts holds the pg-boss DDL/grant authority per DD-89 Q2)
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS (JRD-1..JRD-14)
+SECURITY_AND_MIGRATION_GATE: PASS — no migration, no grant change, no RLS change. The security-relevant properties are strengthened, not relaxed: DD-90 Q6's provision-ordering fence becomes a runtime check instead of a runbook convention, and DD-89 Q1's zero-direct-DML boundary plus TDD §3.4's tenant re-entry are each pinned by a test (JRD-11, JRD-5)
+IMPLEMENTATION_ARTIFACTS: PASS (manifest and AP-33 launcher committed and pushed at eeb69ce). The manifest's _problem/_decision_contract/_scope_in/_scope_out/_design_probe/_acceptance/_scope_exception/_evidence_rules is the executable plan required by gate §B4
+FIRST_IMPLEMENTATION_STEP: open a worktree at .autopilot/worktrees/job-runtime-dispatcher from the current origin/main tip (eeb69ce or later), register the manifest via scope-gate, run the full CI command list as the green baseline, then write design-probe.md and STOP for founder confirmation before any production edit
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the design probe, then the coding slice
+```
+
+---
+
 ## Verdict 21 — `docs-user-settings-0014-merge-state-reconcile`, correct stale 0000-0013/0014-branch-only claims to tail 0022; `CODE_READY` → IMPLEMENTED & MERGED `eba7ff4` (2026-07-26)
 
 > **Bản chất:** reconcile current-state thuần. `0014_players_waitlist` đã merge tại `1a6ac38` và tail toàn cục nay là
