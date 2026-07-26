@@ -12,6 +12,52 @@
 
 ---
 
+## Verdict 21 — `docs-user-settings-0014-merge-state-reconcile`, correct stale 0000-0013/0014-branch-only claims to tail 0022; `CODE_READY` (2026-07-26)
+
+> **Bản chất:** reconcile current-state thuần. `0014_players_waitlist` đã merge tại `1a6ac38` và tail toàn cục nay là
+> `0022`, nhưng `feature_user_settings_tech.md` vẫn khẳng định `0000–0013` là tập đã merge và `0014` còn branch-only.
+> Slice chị em `docs-0014-merge-status-repo-wide-reconcile` đã sửa bảy BE spec khác và **cố ý defer** file này vì lúc đó
+> nó đang dirty do một edit consent chưa commit. File nay đã sạch nên điều kiện defer hết hiệu lực.
+>
+> **Hai sai lệch trong backlog note đã được sửa khi author, không chép verbatim:** note ghi "tail 0018" — đúng lúc viết,
+> nay stale, target thật là `0022`; và note kể ba dòng (61/65/67) trong khi grep ra **năm** — dòng 10 và 14 cũng khẳng
+> định "Migration mới sau `0013`". Sửa đúng ba dòng là đóng thiếu.
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-26
+AUTHORITY_SHA: cc77610e9fe14b7590e0694ffa84684d249401c1
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-manifests/docs-user-settings-0014-merge-state-reconcile.json
+  - docs/features/BE/feature_user_settings_tech.md
+SLICE: docs-user-settings-0014-merge-state-reconcile
+IN_SCOPE: five current-state corrections in feature_user_settings_tech.md (lines 10, 14, 61, 65, 67) re-anchoring "migration mới sau 0013" and "0014 branch-only" to the live merged tail 0022 with 0014 merged at 1a6ac38; header Version 0.14 -> 0.15; one new changelog row at the TOP of the descending table
+OUT_OF_SCOPE: the numbering GUIDANCE itself ("next monotonic after the synced tail" is correct policy and stays, no hard-coded 0023); the genuinely-new object list, whose content was re-verified accurate at 0022 and only has its range anchor moved; schema, migration, code, tests; DD-39/DD-47/DD-48 or any open question — Status stays Draft and Implementation stays Not started; the seven sibling specs already corrected by docs-0014-merge-status-repo-wide-reconcile; README, BUILD-STATUS and ROADMAP, already reconciled to 0022 at 80bea53
+G1_DECISION: PASS — no product decision involved; this corrects a factual merge-state claim against git history
+G2_SPEC: PASS — target is a Reviewed-process BE tech spec; the corrective authority is git itself (0014 merged at 1a6ac38, tail 0022 on main), not another document's opinion
+G3_DEPENDENCY: PASS — docs-0014-merge-status-repo-wide-reconcile is merged (probe matched on main at dc7a0cd) and its explicit defer condition, "file is dirty, serialize against whoever owns it", has lapsed: feature_user_settings_tech.md is clean in the working tree, verified at author time
+G4_TEST: PASS — US14-1..US14-9 authored before execution; US14-4 exists specifically because the backlog note under-counted the stale lines, and US14-6 guards the still-accurate genuinely-new list from being "corrected" into wrongness
+G5_SCOPE: PASS — exactly 2 files, invariants [], no collision: scope intersection with the concurrently in-flight docs-marketplace-public-capacity-guard is empty
+G6_EXTERNAL: PASS — docs-only, no PII/money/provider/legal gate
+HARD_DEPENDENCIES: none — its one prerequisite slice is merged
+PRIOR_SLICES: docs-0014-merge-status-repo-wide-reconcile (merged) — this slice is the deliberately split-out remainder, not a duplicate
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS (verified at cc77610: tail is 0022 with 23 migrations; grep found five stale lines not three; every object the doc calls genuinely-new — persons.{gender_enc,dob_enc,username,language,profile_visibility}, sessions.{price_male,price_female}, person_follows — is still absent from migrations and schema.ts, so that paragraph must survive; channel_identities.username_enc from 0001 is a DIFFERENT column and must not be conflated with the proposed persons.username; the changelog table is descending so the new row goes on top; merged probe token 0022 currently appears 0 times in the file)
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS (US14-1..US14-9)
+SECURITY_AND_MIGRATION_GATE: PASS — no migration, no grant, no RLS; correcting a stale tail claim reduces the risk of a future slice reserving a taken migration number
+IMPLEMENTATION_ARTIFACTS: PASS (manifest committed and pushed at cc77610). No separate task-contract doc or launcher: for a P2 single-target-file docs slice the manifest _problem/_live_verification/_scope_in/_scope_out/_acceptance IS the executable plan required by gate §B4, matching the docs-prd-flow2-publish-projection-reconcile precedent
+FIRST_IMPLEMENTATION_STEP: open a worktree from the current origin/main tip (cc77610 or later), register with `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/docs-user-settings-0014-merge-state-reconcile.json`, re-check the live migration tail and the genuinely-new object list before editing (HALT if either moved), then correct the five lines and bump version + changelog
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the coding slice itself
+```
+
+---
+
 ## Verdict 20 — `docs-marketplace-public-capacity-guard`, execute the delegated public+NULL projection guard; `CODE_READY` (2026-07-26)
 
 > **Bản chất slice:** thi hành một **uỷ quyền đã ghi sẵn**, không mở quyết định mới. `feature_session_management_tech.md`
@@ -46,7 +92,7 @@ G6_EXTERNAL: PASS — no PII, money, provider, legal or evidence gate touched; d
 HARD_DEPENDENCIES: none — root docs slice; its only authority prerequisite (the session_management capacity contract) is merged
 PRIOR_SLICES: none — but note the lineage: docs-session-create-publicslots-reconcile authored the §2 note that created this delegation, and docs-prd-flow2-publish-projection-reconcile is the immediate precedent for editing this same target file
 OPEN_QUESTIONS_IN_SCOPE: 0
-ENABLEMENT_ONLY_GATES: none
+ENABLEMENT_ONLY_GATES: job-infra-public-projection-reconciliation — AMENDED 2026-07-26 after codex round-02/03. The edge #15 handling only fires when the projector EVALUATES the session; a writer that bypasses the SessionService choke-point and flips an already-projected public session from finite slots_max to NULL emits no event, so the stale projection stays publicly visible and unit test #26 (which places the row into a batch by hand) cannot detect that path. Codex correctly refused prose-only deferral, so the residual is now a NAMED tracked backlog task. Classified ENABLEMENT_ONLY, not HARD_DEPENDENCY: this docs slice is strictly better than the status quo and must not be blocked on unbuilt runtime, but the future public-projection projector must not be ENABLED while the gap is open. Exposure today = 0 (no projector in TypeScript; Implementation: Not started). Cheapest candidate fix is the DB CHECK already recorded in feature_session_management_tech.md §2, which removes the invalid state at source
 LIVE_REPO_VERIFICATION: PASS (verified at 72cdd56: slots_max appears 0 times in the target file so the merged probe is meaningful and not pre-satisfied; feature_session_management_tech.md:120 delegation read verbatim; public_sessions present in 0006; no projector in TypeScript; target spec header is Reviewed v2.3 with Implementation "Not started")
 CONTRACT_MATRIX: PASS
 CLOSURE_MATRIX: PASS (12/12)

@@ -471,6 +471,18 @@ invariants: [retry-liveness]
 scope: []
 notes: Chưa scope; nhiều slice nhỏ chứ không phải một. Danh sách job đang chờ (mỗi cái defer đúng khối hạ tầng trên): session draft auto-expiry (`feature_session_management_tech.md:365`), billing Daily Lifecycle Job (`feature_billing_lifecycle_tech.md:287-297` — **không có câu defer nào, chỉ đơn giản bỏ trống hạ tầng**, dù chính nó bị viện dẫn làm tiền lệ để defer), `ExpireJoinRequests` hourly (`feature_cross_club_join_tech.md:224`), notification scheduler/dispatcher (`feature_notifications_reminders_tech.md:47,50` — spec này **giả định `app_worker` có sẵn** và tự viết grant, `:1368`), 4 connector job pg-boss (`feature_connector_onboarding_tech.md:372-379`), reconcile sweeper (`feature_payment_reconcile_tech.md:506` — khẳng định có sweeper mà không nêu lịch/role/claim). Ngoài ra: 2 auth sweep đã tồn tại nhưng **không grant cho role nào** (`0016:608`, `0017:122`) — wiring chúng là quyết định của lane auth, không phải mặc định của slice này.
 
+## task: job-infra-public-projection-reconciliation
+title: Close eventless invalidation of public_sessions — durable event for bypass writers, or periodic canonical reconciliation
+status: idea
+risk: P1
+change_class: feature-slice
+depends_on: [job-runtime-dispatcher]
+invariants: [retry-liveness, marketplace]
+scope: []
+manifest: null
+merged_probe: null
+notes: **Opened by codex round-02/03 of `docs-marketplace-public-capacity-guard` (2026-07-26); this task is the NAMED tracking mechanism that codex required instead of prose-only deferral.** Gap: `feature_marketplace_discovery_tech.md` edge #15 pins that a public + `slots_max IS NULL` row must be skipped, its stale projection purged, and an audit emitted — but that handling only runs **when the projector evaluates the session**. A legacy/fixture/direct writer that flips an ALREADY-PROJECTED public session from finite `slots_max` to `NULL` emits no session event, so the projector never revisits it and the stale-but-now-invalid projection **remains publicly visible**. The periodic sweep today only does time-based expiry and does not detect this. Unit test #26 places the row into a batch by hand, so it proves behaviour-when-reached, NOT that every invalid row is reached. **Fix candidates (choose at scope time, do not pre-pick):** (a) durable event contract obliging any writer that bypasses the SessionService choke-point to emit an invalidation event; (b) periodic canonical reconciliation comparing `public_sessions` against `sessions` — needs `job-scheduler-cron-registration` in addition to the dispatcher; (c) the DB CHECK `NOT (visibility='public' AND slots_max IS NULL)` hardening candidate already recorded in `feature_session_management_tech.md` §2, which removes the invalid state at the source and may make (a)/(b) unnecessary — evaluate (c) FIRST, it is the cheapest and most fail-closed. **Classification: `ENABLEMENT_ONLY` gate on the future public-projection projector, NOT a hard dependency of the docs slice** — the spec correction is strictly better than the status quo and must not be blocked on unbuilt runtime; but the projector must not be ENABLED while this gap is open. Recorded on Verdict 20. Exposure today = 0: no projector exists in TypeScript, `Implementation: Not started`.
+
 ## task: dd38-dd86-chat-schema-core
 title: Root chat-schema migration slice (DD-38 in-app chat) — final chat model + authz/safety + RLS/RPCs
 status: idea
@@ -574,14 +586,15 @@ notes: Discovered by codex round-01/03 of docs-tail-0018-number-reconcile (2026-
 
 ## task: docs-user-settings-0014-merge-state-reconcile
 title: Reconcile stale "0014 branch-only / 0000-0013" claims in feature_user_settings_tech.md to merged (post consent-edit)
-status: idea
+status: ready
 risk: P2
 change_class: docs-reconcile
 depends_on: [docs-0014-merge-status-repo-wide-reconcile]
 invariants: []
-scope: []
-manifest: null
-merged_probe: null
+scope: [docs/autopilot-manifests/docs-user-settings-0014-merge-state-reconcile.json, docs/features/BE/feature_user_settings_tech.md]
+manifest: docs/autopilot-manifests/docs-user-settings-0014-merge-state-reconcile.json
+verdict: Verdict 21 — CODE_READY at main@cc77610 (2026-07-26)
+merged_probe: docs/features/BE/feature_user_settings_tech.md :: 0022
 notes: Split out of docs-0014 (which flips to merged via its own probe) so this correction is not orphaned. feature_user_settings_tech.md:61/65/67 still assert 0014 branch-only / "0000-0013 đã merge" as CURRENT state, but the file is dirty in the working tree (a separate uncommitted consent-state edit, likely db-session-tenant-integrity-fks, owns it). SERIALIZE against whatever owns that file: either (a) that consent-edit slice folds these 3 current-state corrections (0014 -> merged 1a6ac38; tail 0018; keep numbering guidance "next monotonic after synced tail"; preserve dated rows; reframe never delete provenance), or (b) run this after the file is free. Do NOT open concurrently on the file. Founder-opt-in: flip idea->ready once the file is free.
 
 ## task: docs-session-publish-contract
