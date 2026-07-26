@@ -441,6 +441,19 @@ manifest: docs/autopilot-manifests/db-job-claim-lease-core.json
 merged_probe: packages/db/migrations/0022_job_claim_lease_core.sql :: job_audit_events
 notes: DD-89/DD-90 are the only actionable authority. `job_definer` is cluster-pre-provisioned, exact-attribute and BYPASSRLS; the job-core migration asserts it and re-owns only the named job functions. `app_worker` gets EXECUTE-only narrow operations, never direct DML on outbox/projector/audit/surface tables. The contract, decision table, bootstrap procedure, real-role test plan and negative scope are in `docs/autopilot-db-job-claim-lease-core.md`. Q6 worker preflight remains slice 2 before `boss.start()`. Scope is exact at authoring tail `0021`; before worktree/register, re-check synced main. Tail drift requires updating this scope + merged_probe, manifest and all verdict mirrors, then committing/pushing the correction and re-pinning strict `CODE_READY` — never renumber ad hoc inside the feature worktree.
 
+## task: deps-security-bump
+title: Raise next / postcss / brace-expansion floors to clear 11 OSV advisories — without weakening the supply-chain controls
+status: planned
+not_before: 2026-07-30
+risk: P1
+change_class: dependency-security
+depends_on: []
+invariants: [build-config]
+scope: [docs/autopilot-manifests/deps-security-bump.json, package.json, pnpm-workspace.yaml, pnpm-lock.yaml]
+manifest: docs/autopilot-manifests/deps-security-bump.json
+merged_probe: pnpm-lock.yaml :: 15.5.21
+notes: **Mở bởi CI audit 2026-07-26** — `Security / OSV full dependency scan` đỏ trên main với 11 advisory, tất cả từ `pnpm-lock.yaml`, **không phải regression của việc gần đây** (không dependency nào đổi; advisory publish upstream). `next` 15.5.20 gánh **7 advisory tới CVSS 8.3** → 15.5.21; `postcss` 8.5.16 → 8.5.18; `brace-expansion` 1.1.16 và 5.0.7 → 5.0.8. **Exposure hiện = 0**: chưa deploy, chưa có route nghiệp vụ, Google login fail-closed với `GOOGLE_OAUTH_*` rỗng. **Timing gate 30/07** — `minimumReleaseAge: 10080` (7 ngày) là control có chủ đích; đo 26/07: postcss đủ tuổi, next đủ từ 28/07, brace-expansion đủ từ 30/07. **Owner chốt 26/07: KHÔNG override** — cửa sổ 7 ngày tồn tại để chặn đúng vector publish-bị-chiếm-quyền mà một bản "security fix" giả là carrier kinh điển; đổi lớp phòng thủ đó lấy 4 ngày vá sớm trên bề mặt exposure-0 là trao đổi tồi. Ngoại lệ tương lai nếu có phải là override per-package có lý do và hạn dùng, không hạ `minimumReleaseAge` toàn cục. `design_probe_required: true` — hai bẫy: (1) **override nằm ở HAI chỗ**, `package.json` `pnpm.overrides` và `pnpm-workspace.yaml` `overrides`, `postcss` có mặt ở cả hai; sửa một bỏ một là cách bản vá không có hiệu lực mà vẫn tưởng xong; (2) OSV ghi FIXED 5.0.8 cho cả dòng `brace-expansion` 1.1.16 — nếu nhánh v1 không có bản vá in-range thì ép transitive v1 lên v5 là **major bump = quyết định**, phải hỏi chứ không tự chốt trong lockfile.
+
 ## task: job-runtime-dispatcher
 title: Shared job-infra slice 2/4 — worker preflight + queue registration + first outbox consumer (one handler, no cron, no producer)
 status: ready

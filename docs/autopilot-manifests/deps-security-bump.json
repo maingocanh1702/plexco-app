@@ -1,0 +1,40 @@
+{
+  "feature": "deps-security-bump",
+  "branch": "feat/deps-security-bump",
+  "base_ref": "main",
+  "risk": "P1",
+  "change_class": "dependency-security",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "design_probe_required": true,
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": ["build-config"],
+  "merged_probe": "pnpm-lock.yaml :: 15.5.21",
+  "not_before": "2026-07-30",
+  "_problem": "The Security / OSV full dependency scan has been failing on main with 11 vulnerabilities, all npm, all sourced from pnpm-lock.yaml. Measured 2026-07-26: next 15.5.20 carries SEVEN advisories up to CVSS 8.3 and is fixed in 15.5.21; postcss 8.5.16 is fixed in 8.5.18 (CVSS 7.5); brace-expansion appears on two lines, 1.1.16 and 5.0.7, both listed against GHSA-mh99-v99m-4gvg (CVSS 7.5). None of this was introduced by recent work — no dependency changed; the advisories were published upstream. Exposure today is ZERO: the app is not deployed, there is no business route, and Google login is fail-closed with GOOGLE_OAUTH_* empty. This is debt to clear before go-live, not a live incident.",
+  "_timing_gate": "MUST NOT run before 2026-07-30. pnpm-workspace.yaml sets minimumReleaseAge: 10080 (7 days) as a deliberate supply-chain control. Measured publish dates: postcss 8.5.18 on 2026-07-12 (already eligible), next 15.5.21 on 2026-07-21 (eligible 2026-07-28), brace-expansion 5.0.8 on 2026-07-23 (eligible 2026-07-30). The gating date is therefore 2026-07-30, when all three clear the window. OWNER DECISION 2026-07-26: do NOT override minimumReleaseAge — the 7-day window exists to blunt exactly the compromised-publish vector that a fake 'security fix' release is the classic carrier for, and trading that protection for four days of earlier patching on a zero-exposure surface is a bad trade. If a future advisory ever does justify an exception, it must be a named per-package override with a reason and an expiry, never a global lowering of minimumReleaseAge.",
+  "_decision_contract": "Bump to the fixed versions and let the existing supply-chain policy stand: minimumReleaseAge, trustPolicy no-downgrade and blockExoticSubdeps are unchanged. The slice raises floors; it does not weaken controls, add ignore-scripts style workarounds, or pin around a resolution failure.",
+  "_scope_in": "Raise the dependency floors so OSV reports zero findings for these three packages, then regenerate the lockfile and prove the workspace still builds and passes. Exact edit sites are determined at the design probe (see _design_probe) because the repo keeps overrides in TWO locations; the slice must leave BOTH consistent.",
+  "_scope_out": "NO lowering or per-run bypass of minimumReleaseAge, trustPolicy or blockExoticSubdeps. NO --ignore-scripts, --no-frozen-lockfile in CI, or any flag that makes the install succeed by relaxing a control. NO unrelated dependency upgrades riding along — the diff must contain only the three named packages plus whatever their resolution mechanically drags. NO source-code changes: if a bumped package requires a code change to compile or pass, that is a separate slice and this one HALTs with the exact failure. NO change to .github/workflows/security.yml to silence the scanner. NO edit to osv-scanner.toml to ignore a finding.",
+  "_design_probe": "Required per canonical autopilot-prompt-GENERIC v0.6.1 §0.1 — trigger (8) new mechanism choice, and the repo has two live traps a mechanical mirror gets wrong. Before any edit, write .autopilot/state/deps-security-bump/design-probe.md pinning THREE things and STOP for founder confirm: (a) OVERRIDES LIVE IN TWO PLACES — package.json pnpm.overrides holds brace-expansion@1, sharp and postcss, while pnpm-workspace.yaml overrides holds esbuild@<0.25.0 and postcss@<8.5.10. postcss is in BOTH. Determine which location actually wins for this pnpm version, then state the exact edit for each so the two cannot disagree; fixing one and leaving the other is the failure mode this gate exists to catch. (b) BRACE-EXPANSION v1 — OSV lists FIXED VERSION 5.0.8 against the 1.1.16 row, which may mean the v1 range has no in-range fix at all. Verify against the advisory whether a 1.x patch exists. If it does not, forcing the transitive v1 line to v5 is a MAJOR bump of a transitive dependency and is a decision, not a bump — bring it back for confirmation rather than deciding it in the lockfile. (c) NEXT — apps/web already declares ^15.1.4, which permits 15.5.21, so this may need no override at all, only a lockfile refresh. Confirm whether an override is genuinely required before adding one; an unnecessary pin is future maintenance debt.",
+  "_acceptance": [
+    "DSB-1: `osv-scanner` (the same invocation .github/workflows/security.yml uses) reports ZERO findings for next, postcss and brace-expansion.",
+    "DSB-2: resolved versions in pnpm-lock.yaml are next >= 15.5.21, postcss >= 8.5.18, brace-expansion >= 5.0.8 on every line where those packages appear — not merely on the top-level entry.",
+    "DSB-3: pnpm-workspace.yaml still reads minimumReleaseAge: 10080, trustPolicy: no-downgrade, blockExoticSubdeps: true, byte-unchanged.",
+    "DSB-4: postcss resolves consistently regardless of which override location is consulted — the two locations do not disagree after the edit.",
+    "DSB-5: `pnpm install --frozen-lockfile` succeeds from a clean node_modules with no flag relaxing a supply-chain control.",
+    "DSB-6: full CI command list green — typecheck, format:check, review:check, lint, build, and the DB suite with its canonical env.",
+    "DSB-7: workspace test count is unchanged from the pre-bump baseline; a changed count means a dependency altered behaviour and needs investigation, not acceptance.",
+    "DSB-8: `git diff --stat main...HEAD` touches only package.json, pnpm-workspace.yaml, pnpm-lock.yaml and this manifest — zero source files.",
+    "DSB-9: no new advisory is introduced — the OSV full scan total drops and does not merely shift."
+  ],
+  "_evidence_rules": "Re-measure publish dates at execution time with `npm view <pkg> time --json` and read the version key directly; `time.created` is the package's FIRST-EVER publish and is the wrong field (it returned 2011 for next when queried that way on 2026-07-26). If any target version is still inside the 7-day window on the day of execution, HALT and report the remaining wait rather than proceeding on the other two — a partial bump leaves the scanner red and wastes the review rounds. Re-read the advisories rather than trusting this manifest's CVSS figures.",
+  "scope": [
+    "docs/autopilot-manifests/deps-security-bump.json",
+    "package.json",
+    "pnpm-workspace.yaml",
+    "pnpm-lock.yaml"
+  ]
+}
