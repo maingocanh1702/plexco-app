@@ -58,7 +58,7 @@ NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the coding slice itself
 
 ---
 
-## Verdict 20 — `docs-marketplace-public-capacity-guard`, execute the delegated public+NULL projection guard; `CODE_READY` (2026-07-26)
+## Verdict 20 — `docs-marketplace-public-capacity-guard`, execute the delegated public+NULL projection guard; `CODE_READY` → IMPLEMENTED & MERGED `5b1c221` (2026-07-26)
 
 > **Bản chất slice:** thi hành một **uỷ quyền đã ghi sẵn**, không mở quyết định mới. `feature_session_management_tech.md`
 > §2 (Capacity × visibility, authority PRD E#7) đã chốt `visibility='public'` ⇒ `slots_max IS NOT NULL`, đã chốt hàng
@@ -93,15 +93,16 @@ HARD_DEPENDENCIES: none — root docs slice; its only authority prerequisite (th
 PRIOR_SLICES: none — but note the lineage: docs-session-create-publicslots-reconcile authored the §2 note that created this delegation, and docs-prd-flow2-publish-projection-reconcile is the immediate precedent for editing this same target file
 OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: job-infra-public-projection-reconciliation — AMENDED 2026-07-26 after codex round-02/03. The edge #15 handling only fires when the projector EVALUATES the session; a writer that bypasses the SessionService choke-point and flips an already-projected public session from finite slots_max to NULL emits no event, so the stale projection stays publicly visible and unit test #26 (which places the row into a batch by hand) cannot detect that path. Codex correctly refused prose-only deferral, so the residual is now a NAMED tracked backlog task. Classified ENABLEMENT_ONLY, not HARD_DEPENDENCY: this docs slice is strictly better than the status quo and must not be blocked on unbuilt runtime, but the future public-projection projector must not be ENABLED while the gap is open. Exposure today = 0 (no projector in TypeScript; Implementation: Not started). Cheapest candidate fix is the DB CHECK already recorded in feature_session_management_tech.md §2, which removes the invalid state at source
-LIVE_REPO_VERIFICATION: PASS (verified at 72cdd56: slots_max appears 0 times in the target file so the merged probe is meaningful and not pre-satisfied; feature_session_management_tech.md:120 delegation read verbatim; public_sessions present in 0006; no projector in TypeScript; target spec header is Reviewed v2.3 with Implementation "Not started")
+LIVE_REPO_VERIFICATION: PASS (IMPLEMENTED — squash-merged at origin/main@5b1c221 on 2026-07-26 from feat/docs-marketplace-public-capacity-guard@ff6024e; exactly the one target spec file, +8/-3; merged probe slots_max verified present on main; spec now Reviewed v2.4, Implementation still "Not started". Authored at 72cdd56 where slots_max appeared 0 times, so the probe was meaningful and not pre-satisfied)
 CONTRACT_MATRIX: PASS
 CLOSURE_MATRIX: PASS (12/12)
 ACCEPTANCE_MATRIX: PASS (MPC-1..MPC-9)
 SECURITY_AND_MIGRATION_GATE: PASS — no migration, no grant, no RLS change. The security-relevant property (an invalid row must never reach the cross-tenant no-RLS public_sessions surface) is strengthened, not relaxed
-IMPLEMENTATION_ARTIFACTS: PASS (manifest committed and pushed at 72cdd56). No separate task-contract doc or launcher: for a P2 single-target-file docs slice the manifest _problem/_decision_contract/_scope_in/_scope_out/_acceptance IS the executable plan required by gate §B4, matching the docs-prd-flow2-publish-projection-reconcile and docs-session-create-publicslots-reconcile precedents
-FIRST_IMPLEMENTATION_STEP: open a worktree from the current origin/main tip (72cdd56 or later), register with `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/docs-marketplace-public-capacity-guard.json`, re-read feature_session_management_tech.md §2 to confirm the delegation is unchanged on synced main (HALT if it moved), then apply the four edits in the order §2 -> §4 -> §5 -> §6
-REMAINING_BLOCKERS: none
-NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the coding slice itself
+IMPLEMENTATION_ARTIFACTS: PASS (manifest at 72cdd56; implementation squash-merged at 5b1c221). Authored WITHOUT a launcher — a documented shortcut, not a precedent to copy: canonical autopilot-prompt-GENERIC v0.6.1 §0.1 classifies "new mechanism choice" as design_probe_required=true, and this slice DID make one (skip-and-continue vs halt-on-fault). The probe gate was omitted and the cost was measurable — 4 codex rounds on a 4-edit slice, where a single STOP-and-confirm would have surfaced the same questions up front. Later docs slices (AP-32) carry a launcher and an explicit design_probe_required declaration
+CODEX_ROUNDS: 4, stopped at round-04 with a documented residual rather than a clean round — a deliberate deviation from the manifest's codex_review "1x_clean", owner-authorised, following the docs-prd-flow2-publish-projection-reconcile precedent. Round-01 found a real gap the authoring manifest had MISSED (cached public DTO/CDN entry must also be purged, otherwise an invalid row keeps being served until TTL — skipping the projection alone does not satisfy "must never appear"). Round-02 repeat and round-04 "the named backlog task does not exist" were both verified STALE against git: the latter because the branch had rebased before the task landed at 3b12e43; a post-rebase grep resolved it with no content change
+FIRST_IMPLEMENTATION_STEP: n/a — IMPLEMENTED & MERGED at origin/main@5b1c221
+REMAINING_BLOCKERS: none — merged. The eventless-invalidation residual is NOT a blocker of this slice; it is the named ENABLEMENT_ONLY gate above, tracked as backlog task job-infra-public-projection-reconciliation
+NEXT_REVIEW_TRIGGER: n/a — merged. Deferred follow-up (no new decision needed): docs/features/README.md coverage-index cell for this spec still reads v2.3 and should sync to v2.4
 ```
 
 ---

@@ -659,7 +659,9 @@ notes: Opened by docs-session-publish-contract codex round-03 [P1]. PRD FLOW 2 (
 
 ## task: docs-marketplace-public-capacity-guard
 title: Pin public+NULL-slots_max invalid-state projection handling + regression test in marketplace spec
-status: ready
+status: merged
+merged: 2026-07-26 · main@5b1c221 (squash of feat/docs-marketplace-public-capacity-guard@ff6024e) · 1 file +8/-3 · spec v2.3→v2.4 · merged_probe verified on main · 4 codex rounds, stopped at round-04 with documented residual (deviation from 1x_clean, owner-authorised, docs-prd-flow2 precedent)
+deferred_followup: docs/features/README.md coverage-index cell for this spec still reads v2.3 → sync to v2.4; no new decision needed
 risk: P2
 change_class: docs-spec
 depends_on: []
