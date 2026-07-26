@@ -55,7 +55,7 @@ CREATE INDEX idx_public_price ON public_sessions(price_amount);
 
 ### Migration & Rollback
 
-> Grep live `packages/db/migrations/` (0000–0013 đã merge trên main): `public_sessions` + 4 index trên **đã tồn tại từ `0006_discovery.sql`**, khớp DDL này (kể cả plain btree thay partial-index `now()`) — baseline để đọc, **reuse, không recreate**.
+> Grep live `packages/db/migrations/` (`0000`–`0022` đã merge trên main, 23 migrations): `public_sessions` + 4 index trên **đã tồn tại từ `0006_discovery.sql`**, khớp DDL này (kể cả plain btree thay partial-index `now()`) — baseline để đọc, **reuse, không recreate**.
 
 - **Migration (genuinely new → migration mới monotonic sau tail đã merge):** DD-41 expand→contract như đã pin ở đầu §2 — expand thêm public policy fields (`title`, `session_type`, `level_min_rank`, `level_max_rank`, `level_strict`, `gender_restriction`, `age_min`, `age_max`) → backfill/switch projector+API → contract drop `skill_level` + cập nhật exact-column invariant.
 - **Rollback:**

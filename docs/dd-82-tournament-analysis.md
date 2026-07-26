@@ -141,7 +141,7 @@ Chi tiết DDL/API/tests ở `feature_tournament_tech.md`; tóm tắt các quy�
 
 - **DD-82 = authority KIẾN TRÚC** (aggregate độc lập; không reuse sessions/players; v1 gọn; retire session_type). **Chi tiết implementation** (DDL đầy đủ, projector, tests, money-slice, bracket) → slice riêng khi build, không edge-patch vào DD.
 - **Điểm chạm khi build:** `feature_tournament(.md/_tech)` (đã Draft) · DD-41 (retire `session_type`) · DD-83 (slug registry) · DD-12 (guarded view) · DD-06 (venue) · DD-84 (minor safety) · DD-85 (roster disambiguator) · features `README.md` index.
-- **Readiness gate (bắt buộc trước code):** đọc `standards/review-code-readiness-gate.md`; verify live schema/migrations; chốt TRN-OQ-1/2/5 (ít nhất eligibility + retire sequencing); pin migration number tại build time (next-available sau khi sync `main`; baseline hiện `0000–0014`). Specs giữ **Draft** tới khi qua gate.
+- **Readiness gate (bắt buộc trước code):** đọc `standards/review-code-readiness-gate.md`; verify live schema/migrations; chốt TRN-OQ-1/2/5 (ít nhất eligibility + retire sequencing); pin migration number tại build time (next-available sau khi sync `main`; baseline hiện `0000`–`0022`). Specs giữ **Draft** tới khi qua gate.
 - **Không** migration/runtime tại thời điểm này.
 
 ---
