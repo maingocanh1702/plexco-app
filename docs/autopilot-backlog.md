@@ -586,7 +586,8 @@ notes: Discovered by codex round-01/03 of docs-tail-0018-number-reconcile (2026-
 
 ## task: docs-user-settings-0014-merge-state-reconcile
 title: Reconcile stale "0014 branch-only / 0000-0013" claims in feature_user_settings_tech.md to merged (post consent-edit)
-status: ready
+status: merged
+merged: 2026-07-26 · main@eba7ff4 (squash of feat/docs-user-settings-0014-merge-state-reconcile@5b9b8a3) · 1 file +7/-6 · spec v0.14→v0.15 · merged_probe 0022 verified on main · 1 codex round, CLEAN for scope (2 findings were out-of-scope, handed to main, fixed at 949f5c4)
 risk: P2
 change_class: docs-reconcile
 depends_on: [docs-0014-merge-status-repo-wide-reconcile]

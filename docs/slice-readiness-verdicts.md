@@ -12,7 +12,7 @@
 
 ---
 
-## Verdict 21 — `docs-user-settings-0014-merge-state-reconcile`, correct stale 0000-0013/0014-branch-only claims to tail 0022; `CODE_READY` (2026-07-26)
+## Verdict 21 — `docs-user-settings-0014-merge-state-reconcile`, correct stale 0000-0013/0014-branch-only claims to tail 0022; `CODE_READY` → IMPLEMENTED & MERGED `eba7ff4` (2026-07-26)
 
 > **Bản chất:** reconcile current-state thuần. `0014_players_waitlist` đã merge tại `1a6ac38` và tail toàn cục nay là
 > `0022`, nhưng `feature_user_settings_tech.md` vẫn khẳng định `0000–0013` là tập đã merge và `0014` còn branch-only.
@@ -51,9 +51,10 @@ CLOSURE_MATRIX: PASS (12/12)
 ACCEPTANCE_MATRIX: PASS (US14-1..US14-9)
 SECURITY_AND_MIGRATION_GATE: PASS — no migration, no grant, no RLS; correcting a stale tail claim reduces the risk of a future slice reserving a taken migration number
 IMPLEMENTATION_ARTIFACTS: PASS (manifest committed and pushed at cc77610). No separate task-contract doc or launcher: for a P2 single-target-file docs slice the manifest _problem/_live_verification/_scope_in/_scope_out/_acceptance IS the executable plan required by gate §B4, matching the docs-prd-flow2-publish-projection-reconcile precedent
-FIRST_IMPLEMENTATION_STEP: open a worktree from the current origin/main tip (cc77610 or later), register with `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/docs-user-settings-0014-merge-state-reconcile.json`, re-check the live migration tail and the genuinely-new object list before editing (HALT if either moved), then correct the five lines and bump version + changelog
-REMAINING_BLOCKERS: none
-NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the coding slice itself
+CODEX_ROUNDS: 1, CLEAN for this slice's scope — the first slice this session to satisfy `1x_clean` with no residual and no deviation. The round's verdict opened "the migration-tail reconciliation is accurate"; its two findings ([P2] the marketplace projector enablement gate excluded its own DB-CHECK exit, [P3] a merge record cited README v2.3 when the live cell read v2.2) both pointed at artifacts owned by docs-marketplace-public-capacity-guard, outside this slice's declared scope. The slice logged them to regions.log as handed-to-main and refused to fold them in; both were fixed separately on main at 949f5c4
+FIRST_IMPLEMENTATION_STEP: n/a — IMPLEMENTED & MERGED at origin/main@eba7ff4 (squash of feat/docs-user-settings-0014-merge-state-reconcile@5b9b8a3; 1 file, +7/-6; merged probe 0022 verified on main)
+REMAINING_BLOCKERS: none — merged
+NEXT_REVIEW_TRIGGER: n/a — merged. Unblocks docs-migration-range-0013-and-dd82-current-state-sweep, which was collision-blocked on this same file
 ```
 
 ---
