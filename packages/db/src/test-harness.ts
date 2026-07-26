@@ -75,7 +75,16 @@ const JOB_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
 
 export async function bootstrapJobDefiner(client: pg.Client): Promise<void> {
   const sql = await readFile(JOB_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
-  await client.query(sql);
+  try {
+    await client.query(sql);
+  } catch (error) {
+    // The file wraps itself in an explicit BEGIN/COMMIT (infra/postgres-init/01-job-definer.sql),
+    // so a rejection (e.g. codex round-08's runtime-role denylist) leaves that transaction open
+    // and aborted on `client` — every later query on the same connection would fail with "current
+    // transaction is aborted" otherwise. Mirrors migrate.ts's own catch-and-ROLLBACK idiom.
+    await client.query("ROLLBACK");
+    throw error;
+  }
 }
 
 /**
