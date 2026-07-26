@@ -1,0 +1,34 @@
+{
+  "feature": "docs-marketplace-public-capacity-guard",
+  "branch": "feat/docs-marketplace-public-capacity-guard",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "docs-spec",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "1x_clean",
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": [],
+  "merged_probe": "docs/features/BE/feature_marketplace_discovery_tech.md :: slots_max",
+  "_problem": "feature_session_management_tech.md:120 (Capacity × visibility, PRD E#7 authority) pins that visibility='public' requires slots_max IS NOT NULL and fail-closes at the SessionService choke-point on create and on every update reaching public. It then states that a row which is public + slots_max IS NULL existing OUTSIDE that choke-point (legacy, fixture, or writer bypass — the DB column stays nullable, there is no CHECK) is an invalid state that MUST NOT appear in the public discovery projection, and it explicitly DELEGATES the concrete handling (skip/reject + audit) and the regression test to feature_marketplace_discovery_tech.md as the owner of public projection. That delegation has never been executed: grep shows slots_max appears ZERO times in the marketplace BE spec today. So the invariant is asserted in one document and owned by another that does not mention it — a projector built from the marketplace spec alone would not know to guard it.",
+  "_decision_contract": "This slice does NOT re-open the product decision (that a public + NULL row must never surface publicly) — that is already owner-pinned via PRD E#7 and feature_session_management_tech §2. It executes the delegated TECHNICAL choice, which session_management explicitly assigned to the discovery owner: the projector SKIPS the offending row (does not upsert; deletes any pre-existing projection of it), emits an integrity audit signal identifying the session, and CONTINUES the batch. Rationale for skip-and-continue over reject-and-halt: the invariant to protect is 'this row never surfaces', which skipping already satisfies; halting the projector on one legacy row would convert a single-row data-integrity fault into a full marketplace discovery outage, i.e. fail-closed on the row is correct, fail-closed on the whole surface is a self-inflicted availability incident. The audit signal is what prevents silent tolerance.",
+  "_scope_in": "ONE target file, docs/features/BE/feature_marketplace_discovery_tech.md, four additive edits: (1) §2 Edge Cases (Backend) — new row #15 pinning public + slots_max IS NULL as an invalid state the projector skips + audits, never upserts, with a cross-ref to feature_session_management_tech.md §2 as the authority; (2) §4 Projector Logic — make the existing 'required fields present?' gate explicit that for visibility='public' this includes slots_max IS NOT NULL, plus a short note recording the skip-and-continue semantics and the audit obligation; (3) §5 Testing Plan / Unit Tests — new regression row #26 with input (public + status='open' + slots_max NULL fixture) and expected (not projected; any pre-existing projection row removed; audit emitted; sibling valid rows in the same batch still project); (4) §6 Changelog — new v2.4 entry + header Version bump 2.3 -> 2.4, following the shape of the existing v2.3 entry.",
+  "_scope_out": "NO schema change, NO migration, NO DB CHECK — the hardening candidate NOT (visibility='public' AND slots_max IS NULL) stays an unscoped future migration exactly as feature_session_management_tech.md §2 already records it, and this slice must NOT claim it is scoped or done. NO code: there is no projector in TypeScript yet (grep: public_sessions appears only in schema.ts, migrate.ts comments and rls-invariants tests), so the regression row is a SPEC test-plan row, not an executable test — do not create a test file. NO edit to feature_session_management_tech.md (it already delegates correctly; touching it would rewrite a merged publish/capacity contract). NO edit to the Product spec feature_marketplace_discovery.md, PRD, BRD, TDD or business-rules — this slice adds no new rule, it executes a delegation. NO docs/features/README.md index-cell version bump (v2.3 -> v2.4): deliberately DEFERRED as a follow-up, matching the precedent of docs-prd-flow2-publish-projection-reconcile, to keep this slice to a single target file. NO resolution of MKT-OQ-3 or any other open question. Preserve every dated changelog row; reframe, never delete provenance.",
+  "_acceptance": [
+    "MPC-1: grep slots_max in the target file returns matches in ALL FOUR places (edge case table, §4 projector prose, unit test table, changelog) — the merged_probe is a single token so it must not be satisfied by only one of them.",
+    "MPC-2: edge row #15 states the projector does not upsert AND removes any pre-existing projection row for that session, not merely 'skips the upsert'.",
+    "MPC-3: the §4 note pins CONTINUE-the-batch explicitly, so a future implementer cannot read 'fail-closed' as 'halt the projector'.",
+    "MPC-4: the §4 note pins that an audit/integrity signal is emitted; a silent skip is NOT acceptable.",
+    "MPC-5: unit test row #26 expects sibling valid rows in the same batch still project — this is the row that would catch a halt-on-fault implementation.",
+    "MPC-6: cross-reference to feature_session_management_tech.md §2 present, so the authority chain is traceable from the marketplace spec.",
+    "MPC-7: header Version = 2.4, Status stays Reviewed, Implementation stays 'Not started' — this slice adds contract, not runtime.",
+    "MPC-8: existing rows #1-#14 (edge cases) and #1-#25 (unit tests) are byte-unchanged; the new rows are appended, numbering not reflowed.",
+    "MPC-9: no DB CHECK, migration, schema or .ts file appears in the diff; git diff --stat shows exactly the manifest + the one spec file."
+  ],
+  "_evidence_rules": "Re-read feature_session_management_tech.md §2 (the Capacity × visibility note) at execution time and quote its delegation faithfully — if that note has changed on synced main, HALT rather than authoring against a stale authority. Do not invent an audit event name that collides with an existing one; if no audit vocabulary exists for the projector yet, describe the obligation without minting a fake canonical event id.",
+  "scope": [
+    "docs/autopilot-manifests/docs-marketplace-public-capacity-guard.json",
+    "docs/features/BE/feature_marketplace_discovery_tech.md"
+  ]
+}
