@@ -76,15 +76,24 @@ DO $$
 DECLARE
   v_target text := NULLIF(current_setting('job_definer_bootstrap.migration_role', true), '');
   v_grant_to text := COALESCE(v_target, current_user);
+  v_existing_runtime_member text;
 BEGIN
   IF v_grant_to IN ('app', 'app_worker', 'readonly') THEN
     RAISE EXCEPTION
       'job_definer bootstrap: refusing to grant job_definer to runtime role % — this would let it bypass the narrow function/audit boundary',
       v_grant_to;
   END IF;
-  IF pg_has_role('app', 'job_definer', 'MEMBER')
-     OR pg_has_role('app_worker', 'job_definer', 'MEMBER')
-     OR pg_has_role('readonly', 'job_definer', 'MEMBER') THEN
+  -- codex round-09 [P1]: pg_has_role raises "role ... does not exist" for an absent role name,
+  -- it does NOT return false — so an unconditional pg_has_role('app', ...) aborts this bootstrap
+  -- on the documented fresh-cluster path (this file runs BEFORE migration 0000 creates app/
+  -- app_worker/readonly). Filter through pg_roles first: pg_has_role is then only evaluated for
+  -- rolname values that already exist, so an absent runtime role is simply not a member yet.
+  SELECT rolname INTO v_existing_runtime_member
+    FROM pg_roles
+   WHERE rolname IN ('app', 'app_worker', 'readonly')
+     AND pg_has_role(rolname, 'job_definer', 'MEMBER')
+   LIMIT 1;
+  IF v_existing_runtime_member IS NOT NULL THEN
     RAISE EXCEPTION
       'job_definer bootstrap: job_definer is already granted to a runtime role (app/app_worker/readonly) — revoke it before proceeding';
   END IF;

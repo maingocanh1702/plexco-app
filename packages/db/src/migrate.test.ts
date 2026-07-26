@@ -598,4 +598,34 @@ describe("job_definer bootstrap script itself fails closed on runtime-role targe
       }
     });
   }, 30_000);
+
+  // codex round-09 [P1]: the denylist above must never call pg_has_role directly on a runtime
+  // role name, because on the documented fresh-cluster order (this bootstrap runs BEFORE
+  // migration 0000 creates app/app_worker/readonly) that role name does not exist yet, and
+  // pg_has_role RAISES for an absent role rather than returning false. This project's own shared
+  // dev/CI cluster always has app/app_worker/readonly already created by an earlier migrate()
+  // run (they are cluster-global and never dropped), so a full bootstrapJobDefiner() run can
+  // never reproduce a genuinely fresh cluster without unsafely dropping roles a concurrent test
+  // file may depend on. Instead this proves the underlying hazard AND the guard pattern
+  // (01-job-definer.sql now filters through pg_roles before calling pg_has_role) directly,
+  // against a role name that is guaranteed never to exist.
+  it("pg_has_role on an absent role name raises rather than returning false — the exact hazard the fresh-cluster bootstrap must guard against (codex round-09 [P1])", async () => {
+    const admin = await connect(BASE!);
+    try {
+      const fakeRole = "zz_never_created_probe_role";
+      await expect(
+        admin.query(`SELECT pg_has_role('${fakeRole}', 'job_definer', 'MEMBER')`),
+      ).rejects.toThrow(/does not exist/i);
+
+      const guarded = await admin.query(
+        `SELECT EXISTS (
+           SELECT 1 FROM pg_roles WHERE rolname = $1 AND pg_has_role(rolname, 'job_definer', 'MEMBER')
+         ) AS is_member`,
+        [fakeRole],
+      );
+      expect((guarded.rows[0] as { is_member: boolean }).is_member).toBe(false);
+    } finally {
+      await admin.end();
+    }
+  }, 30_000);
 });
