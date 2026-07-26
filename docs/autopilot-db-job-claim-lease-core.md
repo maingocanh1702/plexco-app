@@ -4,12 +4,13 @@
 > **Framework:** canonical `autopilot-prompt-GENERIC` v0.6.1.
 > **Risk:** P1 schema migration · `manual_only` · auto-merge `false` · two consecutive FULL-base Codex-clean rounds.
 > **Authority:** DD-89/DD-90 owner-final 2026-07-25.
-> **Current state:** `CODE_READY`. The full authority packet is committed and pushed on
-> `origin/main@948636f4bd3c1bc0feaaf8b91b3ad2730b097e72` (docs reconcile landed first at `42a1fb0`), closure is
-> 12/12 and there are no remaining blockers. Launchable: open a worktree from the **current `origin/main`
-> tip** (`6262524` or later — the tree must contain this `code-ready` directive; `948636f` pins the reviewed
-> contract, which the re-pin commit did not alter), register the manifest via scope-gate, then run the §3
-> design probe before any production edit.
+> **Current state:** ✅ **IMPLEMENTED & MERGED** at `origin/main@34429fceac2349d3362bdd0be4aee60d9af71c5d`
+> (2026-07-26), squash-merged from `feat/db-job-claim-lease-core@19091dc` via `scripts/ap-merge.sh`. Exactly
+> the 10 manifest-scope files, +1930/-33; migration tail advanced `0021` → `0022`; merged probe
+> `0022_job_claim_lease_core.sql::job_audit_events` verified on `main`; db suite **201/201** on merged main.
+> Authority packet remains pinned at `948636f` (`CODE_READY`, closure 12/12) — this authorization has been
+> **consumed**. This document is now the implementation record, not a launch instruction: do not open a new
+> worktree from it. Slice 2 `job-runtime-dispatcher` needs its own manifest and verdict.
 
 ## 1. Task
 
@@ -260,13 +261,13 @@ HARD_DEPENDENCIES: none — root slice; 0000 role model, 0005 worker tables and 
 PRIOR_SLICES: none
 OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: none
-LIVE_REPO_VERIFICATION: PASS (all 11 TARGET_FILES exist in the 948636f tree; migration tail 0021; outbox_events, projector_deliveries and the worker shell re-probed)
+LIVE_REPO_VERIFICATION: PASS (IMPLEMENTED — squash-merged at origin/main@34429fceac2349d3362bdd0be4aee60d9af71c5d on 2026-07-26; exactly the 10 manifest-scope files, +1930/-33; migration tail advanced 0021 -> 0022; merged probe 0022_job_claim_lease_core.sql::job_audit_events verified on main; db suite 201/201 on merged main)
 CONTRACT_MATRIX: PASS
 CLOSURE_MATRIX: PASS (12/12)
-ACCEPTANCE_MATRIX: PASS
-SECURITY_AND_MIGRATION_GATE: PASS
-IMPLEMENTATION_ARTIFACTS: PASS (manifest, task contract, launcher, backlog entry and all three verdict mirrors committed and pushed on origin/main@948636f)
-FIRST_IMPLEMENTATION_STEP: open a manual P1 worktree from the CURRENT origin/main tip (must be 6262524 or later — the tree has to contain this CODE_READY verdict and the code-ready directive; AUTHORITY_SHA 948636f pins the reviewed contract, which the re-pin commit did not alter), register the manifest with `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/db-job-claim-lease-core.json`, perform the mandatory design probe, then author one monotonic 0022 migration (outbox/projector lease + job_audit_events + job_definer ownership) with the schema.ts mirror and real-role tests
-REMAINING_BLOCKERS: none
-NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the coding slice itself
+ACCEPTANCE_MATRIX: PASS (JCL-1..JCL-14; real-PostgreSQL db suite 179 -> 201 on merged main)
+SECURITY_AND_MIGRATION_GATE: PASS (codex round-11 closed an indirect runtime-role -> group-role -> job_definer BYPASSRLS path by rechecking the denylist AFTER the grant in the same transaction with atomic rollback)
+IMPLEMENTATION_ARTIFACTS: PASS (authority packet merged at 948636f; implementation squash-merged at 34429fc)
+FIRST_IMPLEMENTATION_STEP: n/a — IMPLEMENTED & MERGED at origin/main@34429fc (13 codex rounds; rounds 12 and 13 clean on the same HEAD 19091dc). The five-round fix breaker fired at round 11 and was owner-authorised to continue — that round is what surfaced the BYPASSRLS escalation path above; the override is recorded here rather than left implicit
+REMAINING_BLOCKERS: none — merged
+NEXT_REVIEW_TRIGGER: n/a — merged. Next event is slice 2 `job-runtime-dispatcher` (worker preflight fail-closed before `boss.start()`), which is a new slice needing its own manifest and verdict; it does not inherit this authorization
 ```

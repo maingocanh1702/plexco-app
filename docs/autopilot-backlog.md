@@ -429,7 +429,8 @@ notes: |
 
 ## task: db-job-claim-lease-core
 title: Shared job-infra slice 1/4 — outbox lease/reclaim + projector_deliveries access path + app_worker test seat
-status: planned
+status: merged
+merged: 2026-07-26 · main@34429fceac2349d3362bdd0be4aee60d9af71c5d (squash of feat/db-job-claim-lease-core@19091dc) · 10 files +1930/-33 · migration tail 0021→0022 · db suite 179→201 · merged_probe verified on main
 risk: P1
 change_class: schema-migration
 depends_on: []

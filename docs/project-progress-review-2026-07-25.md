@@ -374,15 +374,15 @@ HARD_DEPENDENCIES: none — root slice; 0000 role model, 0005 worker tables and 
 PRIOR_SLICES: none
 OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: none
-LIVE_REPO_VERIFICATION: PASS (all 11 TARGET_FILES exist in the 948636f tree; migration tail 0021; outbox_events, projector_deliveries and the worker shell re-probed)
+LIVE_REPO_VERIFICATION: PASS (IMPLEMENTED — squash-merged at origin/main@34429fceac2349d3362bdd0be4aee60d9af71c5d on 2026-07-26; exactly the 10 manifest-scope files, +1930/-33; migration tail advanced 0021 -> 0022; merged probe 0022_job_claim_lease_core.sql::job_audit_events verified on main; db suite 201/201 on merged main)
 CONTRACT_MATRIX: PASS
 CLOSURE_MATRIX: PASS (12/12)
-ACCEPTANCE_MATRIX: PASS
-SECURITY_AND_MIGRATION_GATE: PASS
-IMPLEMENTATION_ARTIFACTS: PASS (manifest, task contract, launcher, backlog entry and all three verdict mirrors committed and pushed on origin/main@948636f)
-FIRST_IMPLEMENTATION_STEP: open a manual P1 worktree from the CURRENT origin/main tip (must be 6262524 or later — the tree has to contain this CODE_READY verdict and the code-ready directive; AUTHORITY_SHA 948636f pins the reviewed contract, which the re-pin commit did not alter), register the manifest with `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/db-job-claim-lease-core.json`, perform the mandatory design probe, then author one monotonic 0022 migration (outbox/projector lease + job_audit_events + job_definer ownership) with the schema.ts mirror and real-role tests
-REMAINING_BLOCKERS: none
-NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the coding slice itself
+ACCEPTANCE_MATRIX: PASS (JCL-1..JCL-14; real-PostgreSQL db suite 179 -> 201 on merged main)
+SECURITY_AND_MIGRATION_GATE: PASS (codex round-11 closed an indirect runtime-role -> group-role -> job_definer BYPASSRLS path by rechecking the denylist AFTER the grant in the same transaction with atomic rollback)
+IMPLEMENTATION_ARTIFACTS: PASS (authority packet merged at 948636f; implementation squash-merged at 34429fc)
+FIRST_IMPLEMENTATION_STEP: n/a — IMPLEMENTED & MERGED at origin/main@34429fc (13 codex rounds; rounds 12 and 13 clean on the same HEAD 19091dc). The five-round fix breaker fired at round 11 and was owner-authorised to continue — that round is what surfaced the BYPASSRLS escalation path above; the override is recorded here rather than left implicit
+REMAINING_BLOCKERS: none — merged
+NEXT_REVIEW_TRIGGER: n/a — merged. Next event is slice 2 `job-runtime-dispatcher` (worker preflight fail-closed before `boss.start()`), which is a new slice needing its own manifest and verdict; it does not inherit this authorization
 ```
 
 ---
@@ -430,8 +430,8 @@ pnpm lint
 **PROJECT_PROGRESS:** foundation tốt, auth core đã merge, product feature runtime chưa bắt đầu.  
 **PRODUCT_USABLE:** **NO** — chưa có business API + FE + projector path end-to-end.  
 **NEXT_ENABLEMENT:** Safari macOS/iOS M3 measurement cho Google.  
-**NEXT_CODE:** BE-only `db-job-claim-lease-core` — **`CODE_READY`** tại `main@948636f`, closure 12/12. Mở
-worktree từ đúng SHA đó, register scope-gate, chạy design probe; sau slice này đi tiếp dispatcher/scheduler
-rồi vertical Session BE.  
+**NEXT_CODE:** `db-job-claim-lease-core` đã **IMPLEMENTED & MERGED** tại `main@34429fc` (26/07) — tail
+`0022`, db suite 179→201, code dark. Kế tiếp là slice 2 `job-runtime-dispatcher`, **chưa author**: cần
+manifest + verdict riêng trước khi code. Sau chuỗi job mới tới vertical Session BE.  
 **NEXT_FE:** **HOLD** — chờ canonical `design.pen` được persist/track + owner nghiệm thu làm authority;
 sau đó mới map screen/component/token/state vào BE contract đã ổn định.

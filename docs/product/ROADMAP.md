@@ -1,6 +1,6 @@
 # 🗺️ ROADMAP — Plexco
 
-**Phiên bản:** v3.4e
+**Phiên bản:** v3.4f
 **Ngày tạo:** 16/06/2026 · **Cập nhật:** 25/07/2026
 **Căn cứ:** `BRD.md` v3.9g · `PRD.md` v2.8f · `TDD.md` v3.1a · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` **v1.98** · `../standards/BUILD-STATUS.md` · `../dd-69-app-native-analysis.md`
 
@@ -26,6 +26,8 @@
 > **Cập nhật 25/07/2026 (v3.4d — current-state reconcile tại `2937ed9`):** (1) migration tail `0020`→**`0021`** — `0021` (`15e10b7`, 24/07) đóng nốt bộ ba tenant-integrity composite FK DD-68 ở nhánh **non-money**; (2) **core đã đổi**: `d2a27e1` (23/07) chốt `splitNameAmount` fail-closed ambiguity union (DD-87) — đây là **runtime change**, không phải doc; (3) **8 docs/spec slice** publish · billing · draft-lifecycle đã merge ⇒ hợp đồng S5 Session dày lên nhưng **0 dòng runtime**; (4) số đếm không cần DB đã re-verify; **canonical runner chưa chạy lại** nên trục `Tests` giữ số 22/07 kèm nhãn STALE; (5) 7 slice backlog stale status đã flip sang `merged` sau khi verify `merged_probe` trên `origin/main`. **Không phase nào thêm/bớt, không DD nào đổi trạng thái, delivery order không đổi, thanh ~33% không đổi.**
 >
 > **Cập nhật 25/07/2026 (v3.4e — evidence + authority reconcile):** canonical runner đã re-aggregate tại `2937ed9`: **460 workspace tests PASS** + 13 readiness-validator tests. DD-70/71/72 owner-final được propagate vào Notification pair/index/status; contract trở lại Reviewed nhưng runtime/migration vẫn zero. Next coding initiative là BE-only `db-job-claim-lease-core`; DD-81 canonical path = root `design.pen`, còn FE giữ HOLD tới khi file được persist/track + owner nghiệm thu làm authority. Không phase/delivery order/% runtime nào đổi.
+
+> **Cập nhật 26/07/2026 (v3.4f — job-infra `0022` merged):** slice 1/4 `db-job-claim-lease-core` squash-merged tại **`34429fc`** (Verdict 19, authority `948636f`). Migration tail `0021`→**`0022`**; outbox/projector có lease 5 phút reclaim được + `job_audit_events` append-only + `job_definer` sở hữu đúng 5 function allowlist, `app_worker` chỉ EXECUTE. Canonical runner re-aggregate tại `34429fc`: **482 workspace tests** (db 179→**201**, +22 từ JCL-1..JCL-14) + 13 validator tests. **Code dark** — không queue/preflight/cron/producer/projector nào bật, nên **% runtime và delivery order không đổi**. Kế tiếp: slice 2 `job-runtime-dispatcher`, cần manifest + verdict riêng, không kế thừa authorization của slice 1.
 
 > **Đánh số phase:** toàn bộ tài liệu dùng duy nhất **canonical P-number**. Các tên Foundation/Tenant Engine/... chỉ là delivery-group label, không tạo một hệ số thứ hai.
 
@@ -210,11 +212,11 @@ find docs/features/BE -maxdepth 1 -type f -name "feature_*_tech.md" | wc -l
 
 | Hạng mục | Số thực | Ghi chú |
 |---|---|---|
-| Migrations trên `main` | **22** (`0000`–`0021`) | ✅ re-verify tại `2937ed9`. `0015` D0a · `0016` D1 email-token · `0017` OAuth tx · `0018` handoff · `0019`/`0020`/`0021` tenant-integrity composite FK DD-68 (money-path · payment ledger · non-money) |
+| Migrations trên `main` | **23** (`0000`–`0022`) | ✅ re-verify tại `2937ed9`. `0015` D0a · `0016` D1 email-token · `0017` OAuth tx · `0018` handoff · `0019`/`0020`/`0021` tenant-integrity composite FK DD-68 (money-path · payment ledger · non-money) |
 | Test file | **29** *(re-verify tại `2937ed9`)* | core 9 · db 4 · web 15 · bot 1 — không đổi từ 22/07 (test mới nằm trong file đã có) |
-| Test case — **canonical runner** | **460 PASS** *(re-run 25/07 tại `2937ed9`)* | core 132 · db 179 · web 146 · bot 3; thêm **13 readiness-validator tests PASS** trước workspace suite |
+| Test case — **canonical runner** | **482 PASS** *(re-run 26/07 tại `34429fc`, sau job-infra `0022`)* | core 132 · db **201** · web 146 · bot 3; thêm **13 readiness-validator tests PASS** trước workspace suite. Số 460 tại `2937ed9` nay là historical evidence |
 | Test case — **static cross-check** | **451** *(re-verify tại `2937ed9`)* | core 132 · db 179 · web 137 · bot 3. Chênh 9 so với runner vẫn đến từ table-driven loop đã kiểm kê; static không thay runner |
-| Bằng chứng test per-slice (real-PG) | db **167** → **173** → **179** | `0019` (Verdict 17, `b0c29a6`) → `0020` (Verdict 18, `f6ccd79`) → `0021` (`15e10b7`). Là authority của **chính slice đó**, không phải aggregate toàn repo |
+| Bằng chứng test per-slice (real-PG) | db **167** → **173** → **179** → **201** | `0019` (Verdict 17, `b0c29a6`) → `0020` (Verdict 18, `f6ccd79`) → `0021` (`15e10b7`) → `0022` job-infra (Verdict 19, `34429fc`; JCL-1..JCL-14). Là authority của **chính slice đó**, không phải aggregate toàn repo |
 | Invariant test | **3 file** | `rls-invariants` · `waitlist-invariants` · `migrate` (race-safety `0000`) — xem danh sách invariant-class ở §Cách đọc tiến độ |
 | API route đang có | **10** | ✅ re-verify tại `2937ed9`. 8 auth + 2 onboarding. **0 route nghiệp vụ** (session/payment/sync) |
 | Feature spec | **24 Product + 23 BE** | ✅ re-verify tại `2937ed9`. 23 cặp + 1 product-only Draft; coverage cao — *không* phải readiness |
