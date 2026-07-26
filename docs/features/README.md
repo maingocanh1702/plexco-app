@@ -47,7 +47,7 @@ Bốn nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**
 | P3 · P4 · P4.5–P4.7 · P4+ | Notifications — Reminders · Inbox · Announcements · Web Push | `feature_notifications_reminders.md` v3.5 | `BE/feature_notifications_reminders_tech.md` v3.5 | ✅ **Reviewed contract** — §A invariants giữ nguyên; §B/C/D theo **DD-70/71/72 owner-final**. Implementation/migration chưa bắt đầu; OQ retention/evidence và DD-88 proposal không thuộc quyết định core đã đóng |
 | P4 | Web Auth & Onboarding | `feature_web_auth_onboarding.md` v2.10b | `BE/feature_web_auth_onboarding_tech.md` v2.12 | ✅ Reviewed; cross-site OAuth/email-link boundary corrected; DD-33 external enablement gate/runtime pending |
 | P4 | Sync Engine | `feature_sync_engine.md` v2.3a | `BE/feature_sync_engine_tech.md` v2.5b | ✅ Reviewed |
-| P4.3 | Marketplace Discovery | `feature_marketplace_discovery.md` v2.2a | `BE/feature_marketplace_discovery_tech.md` v2.2 | ✅ Reviewed |
+| P4.3 | Marketplace Discovery | `feature_marketplace_discovery.md` v2.2a | `BE/feature_marketplace_discovery_tech.md` v2.4 | ✅ Reviewed |
 | P4.3 | Cross-club Join | `feature_cross_club_join.md` v2.10a | `BE/feature_cross_club_join_tech.md` v2.11c | ✅ Reviewed |
 | ~~P4.5~~ | ~~Player Telegram~~ | `feature_player_telegram.md` v2.1 | `BE/feature_player_telegram_tech.md` v2.1 | ⚠️ **Archived (DD-37)** → `feature_player_messenger.md` |
 | P4.6 | Player View | `feature_player_view.md` v2.2a | `BE/feature_player_view_tech.md` v2.4a | ✅ Reviewed |
