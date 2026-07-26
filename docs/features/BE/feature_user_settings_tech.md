@@ -1,17 +1,17 @@
 # Feature: User Settings & Gender-based Pricing — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.14 · 2026-07-19
+> **Version:** 0.15 · 2026-07-26
 > **Status:** DD-39 ✅ · DD-47/48 ✅ framework — Draft, pending migration/build
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_user_settings.md` *(Draft)*
 > **References:** `../../standards/decisions.md` DD-39 (giá theo giới tính) · **DD-45 (first-activation waitlist promotion) · DD-49 (rejoin/correction)** · **DD-47 (follow graph) · DD-48 (profile visibility)** · DD-13 (Google/email — nguồn hồ sơ web) · `../BE/feature_payment_reconcile_tech.md` (suy charge) · `../BE/feature_session_management_tech.md` (đặt giá) · `feature_identity.md` (merge re-parent) · `feature_player_view.md` (profile path) · BRD MODULE 11 / FR-11 / NFR-P1
 
-> ✅ **Follow + private/public (DD-47/48 — framework chốt, §6):** `person_follows` là global protected, không table grant cho `app`; chỉ narrow `SECURITY DEFINER`. Existing users backfill private, new users default public. Social DTO chỉ chứa field có canonical source; self và host operational paths tách riêng. Migration mới sau `0013`; code chưa build.
+> ✅ **Follow + private/public (DD-47/48 — framework chốt, §6):** `person_follows` là global protected, không table grant cho `app`; chỉ narrow `SECURITY DEFINER`. Existing users backfill private, new users default public. Social DTO chỉ chứa field có canonical source; self và host operational paths tách riêng. Migration mới — số monotonic kế tiếp sau tail đã sync (hiện `0022`); code chưa build.
 >
 > **DD-70(a) proposal v1.70:** only a newly-created private follow request appends a global item, in the same fence-first transaction. `follow_accepted` is analytics-only; visibility bulk auto-accept emits no notification. Tenant outbox is not a global fallback.
 
-> ✅ **DD-39 chốt (2026-07-10).** Schema dưới đây là **thiết kế đã pin** (fail-closed khi decrypt lỗi); authoritative khi thực thi là `packages/db/schema.ts` + `migrations/*.sql` (**migration mới sau `0013`**) + `decisions.md` DD-39. **KHÔNG** tạo bảng song song với `persons/sessions/charges`; `persons` vẫn là anchor người thật (§P6). Propagation vào `feature_session_management`/`feature_payment_reconcile` (FR-5.3) khi build.
+> ✅ **DD-39 chốt (2026-07-10).** Schema dưới đây là **thiết kế đã pin** (fail-closed khi decrypt lỗi); authoritative khi thực thi là `packages/db/schema.ts` + `migrations/*.sql` (**migration mới — số monotonic kế tiếp sau tail đã sync, hiện `0022`**) + `decisions.md` DD-39. **KHÔNG** tạo bảng song song với `persons/sessions/charges`; `persons` vẫn là anchor người thật (§P6). Propagation vào `feature_session_management`/`feature_payment_reconcile` (FR-5.3) khi build.
 
 ---
 
@@ -58,13 +58,13 @@ ALTER TABLE sessions
 -- (bên thiếu fallback về price_amount). Phase-1 storage is these columns; no parallel price table.
 ```
 
-> **Chọn hình thức giá:** phase-1 dùng **cột `price_male`/`price_female` trên `sessions`** (2 nhóm giá phổ biến CLB cầu lông/pickleball VN). Nếu tương lai cần >2 nhóm → mở quyết định/migration sang bảng `session_price_by_gender(session_id, gender, amount)`. **DD-39 đã ✅** — hình thức cột (2 nhóm) chốt ở migration có **số monotonic kế tiếp còn trống sau khi sync mọi prerequisite đã merge**; `0014_players_waitlist` hiện branch-only nên không giữ số cho slice này.
+> **Chọn hình thức giá:** phase-1 dùng **cột `price_male`/`price_female` trên `sessions`** (2 nhóm giá phổ biến CLB cầu lông/pickleball VN). Nếu tương lai cần >2 nhóm → mở quyết định/migration sang bảng `session_price_by_gender(session_id, gender, amount)`. **DD-39 đã ✅** — hình thức cột (2 nhóm) chốt ở migration có **số monotonic kế tiếp còn trống sau khi sync mọi prerequisite đã merge**; `0014_players_waitlist` đã merge (`1a6ac38`) và giữ số của nó — không ảnh hưởng số slice này sẽ nhận (tail hiện tại: `0022`).
 
 ### Migration & Rollback
 
-> Grep live `packages/db/migrations/` (0000–0013 đã merge trên main; `0014_players_waitlist` branch-only): `persons` **đã tồn tại từ `0001_global_directory.sql`**, `sessions` **từ `0002_tenants_core.sql`** — reuse/ALTER additive, **không recreate**, không tạo bảng `users` song song. **Chưa có** trong 0000–0013: `persons.{gender_enc, dob_enc, username, language, profile_visibility}`, `sessions.{price_male, price_female}`, bảng `person_follows` + narrow `SECURITY DEFINER` functions — toàn bộ là genuinely new.
+> Grep live `packages/db/migrations/` (`0000`–`0022` đã merge trên main, 23 migrations — gồm `0014_players_waitlist`): `persons` **đã tồn tại từ `0001_global_directory.sql`**, `sessions` **từ `0002_tenants_core.sql`** — reuse/ALTER additive, **không recreate**, không tạo bảng `users` song song. **Chưa có** trong `0000`–`0022`: `persons.{gender_enc, dob_enc, username, language, profile_visibility}`, `sessions.{price_male, price_female}`, bảng `person_follows` + narrow `SECURITY DEFINER` functions — toàn bộ là genuinely new.
 
-- **Migration:** migration mới monotonic sau tail đã merge (số chốt sau khi sync prerequisites — blockquote trên; `0014` branch-only không giữ số). DD-39 = ALTER additive trên `persons`/`sessions`; DD-47/48 = transaction §6.1 (backfill existing `private` → default `public` → NOT NULL/CHECK) + `person_follows` + REVOKE/GRANT narrow functions.
+- **Migration:** migration mới monotonic sau tail đã merge (số chốt sau khi sync prerequisites — blockquote trên; `0014` đã merge và giữ số của nó, không ảnh hưởng số slice này sẽ nhận). DD-39 = ALTER additive trên `persons`/`sessions`; DD-47/48 = transaction §6.1 (backfill existing `private` → default `public` → NOT NULL/CHECK) + `person_follows` + REVOKE/GRANT narrow functions.
 - **Rollback:**
 
 | Bước | Hành động | An toàn? |
@@ -417,6 +417,7 @@ getProfile(viewer V, target T):
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-26 | v0.15 | **Merge-state reconcile:** `0014_players_waitlist` đã merge (`1a6ac38`); tail sync hiện `0000`–`0022` (23 migrations). Sửa 5 dòng current-state stale (dòng 10, 14, 61, 65, 67) từng nói `0000`–`0013` là merged set / `0014` branch-only. Giữ nguyên GUIDANCE đánh số (monotonic kế tiếp sau tail đã sync) và danh sách genuinely-new không đổi. Không đổi schema/code/DD; Status/Implementation không đổi. |
 | 2026-07-19 | v0.14 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (reuse/ALTER `persons`/`sessions` baseline `0001`/`0002`; mọi object DD-39/DD-47/48 = migration mới monotonic), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v0.13a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v0.13 | **DD-70(a) v1.70 propagation:** private follow-request appends same-TX under bounded fences; `follow_accepted` remains analytics-only and visibility auto-accept has no notification fan-out; tenant outbox fallback forbidden. No runtime/migration. |
