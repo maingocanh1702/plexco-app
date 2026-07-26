@@ -1,0 +1,52 @@
+{
+  "feature": "job-runtime-dispatcher",
+  "branch": "feat/job-runtime-dispatcher",
+  "base_ref": "main",
+  "risk": "P1",
+  "change_class": "manual-runtime-feature",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "design_probe_required": true,
+  "depends_on": ["db-job-claim-lease-core"],
+  "dep_checks": [
+    { "file": "packages/db/migrations/0022_job_claim_lease_core.sql", "symbol": "claim_projector_delivery_batch" },
+    { "file": "packages/db/migrations/0022_job_claim_lease_core.sql", "symbol": "complete_projector_delivery" },
+    { "file": "apps/bot/src/provision-queue.ts", "symbol": "provisionQueue" },
+    { "file": "apps/bot/src/queue.ts", "symbol": "QUEUE_SCHEMA" }
+  ],
+  "invariants": ["retry-liveness", "core-api"],
+  "merged_probe": "apps/bot/src/preflight.ts :: app_worker",
+  "_problem": "0022 (merged at 34429fc) shipped a complete, granted, audited job lifecycle that NOTHING calls. Verified on main: apps/bot/src/queues.ts is `[]`, worker.ts calls boss.start() then idles with no boss.work(), and claim_outbox_batch has zero TypeScript call sites. Four functions are GRANT EXECUTEd to app_worker at 0022:527-530 and have never been exercised from the runtime seat. Separately, DD-90 Q6 recorded that the provision-before-worker ordering has no runtime fence at all: ALTER DEFAULT PRIVILEGES in provision-queue.ts:39-45 only applies to objects created by the role that ran it, so any queue added without re-provisioning leaves app_worker without grants — and because QUEUES has always been empty, that path has never run with a real queue.",
+  "_decision_contract": "DD-90 Q6 (owner-final 2026-07-25) is the hard contract of THIS slice and is not re-opened: a preflight runs BEFORE boss.start() — not before boss.work(), because startup itself already touches the pgboss schema — connecting as app_worker, asserting the pgboss schema and base objects, every queue in the registry, and the exact catalog grants plus sequence usage; any missing item exits non-zero before scheduler or maintenance runs. Tests must prove both directions: provision-first passes, and a missing queue or missing grant fails. DD-89 Q1 also binds: app_worker gets zero direct DML on projector_deliveries — every state transition goes through the four granted SECURITY DEFINER functions. TDD §3.4 binds the handler: claim_outbox_batch is a privileged cross-tenant call returning rows for many tenants, so before touching ANY tenant-scoped business data the handler must re-enter tenant context per row via the withTenant `SET LOCAL app.tenant_id` choke-point — never a raw query.",
+  "_scope_in": "One module, apps/bot. (1) NEW apps/bot/src/preflight.ts implementing the DD-90 Q6 assertions against an app_worker connection, exported as a pure function returning a structured result plus a fail-closed wrapper. (2) worker.ts calls it and exits non-zero BEFORE createQueue/boss.start() on any failure. (3) queues.ts registers the first real queue name. (4) NEW apps/bot/src/dispatcher.ts: one boss.work() handler running the full lifecycle already shipped in 0022 — claim_outbox_batch(limit) -> per event job_prepare_projector_delivery(event_id, projector) -> claim_projector_delivery_batch(projector, limit) -> complete_projector_delivery(event_id, projector, claim_token, result, next_attempt_at, provider_ref, error_code) for all three results delivered | retry | dlq. The step that would perform real projection work is behind an INJECTED interface; this slice ships no production implementation of it. (5) Tests for both files, including a real app_worker seat.",
+  "_scope_out": "NO PRODUCER — owner-decided 2026-07-26, DEFERRED_OUT_OF_SCOPE. This slice must not add any INSERT into outbox_events outside test fixtures, and must not treat 'the loop runs with a test enqueue' as evidence that it runs with real business data. Choosing whether producers live in sync-engine or per-feature is explicitly NOT answered here. NO cron/schedule registration (slice 3). NO real projector implementation or surface_refs access (slice 4 and the first concrete projector own those; the delivery step stays injected with no production impl). NO edit to provision-queue.ts, queue.ts options, or any 0000-0022 migration — the DDL/grant authority boundary from DD-89 Q2 stays exactly where it is. NO new migration. NO RLS policy or GRANT change. NO change to claim ordering (ORDER BY created_at is the sync-engine contract per DD-89 Q3). NO direct DML on outbox_events, projector_deliveries or job_audit_events from app_worker.",
+  "_design_probe": "Required per canonical autopilot-prompt-GENERIC v0.6.1 §0.1 — this slice hits trigger (2) choke-point mutating projector_deliveries state, (6) amends merged core (the 0022 functions and the boss.start() path), and (8) new mechanism choice. Before any production edit, write .autopilot/state/job-runtime-dispatcher/design-probe.md pinning FOUR things and STOP for founder confirm: (a) the exact preflight assertion list and how each is queried from the app_worker seat — schema presence, per-queue presence, and the exact catalog privilege rows, since 'assert grants' is not self-executing; (b) the queue name and the projector identifier, both code-owned constants; (c) the retry policy — what next_attempt_at the handler supplies on 'retry', what turns a retry into 'dlq', and where that bound lives, given 0022 stores attempts but deliberately leaves policy to the consumer; (d) the shape of the injected delivery interface and how tests exercise delivered/retry/dlq without a real projector. A mechanical mirror of slice 1 would get (c) and (d) wrong.",
+  "_acceptance": [
+    "JRD-1: preflight passes on a cluster where provision-queue ran AFTER the queue was registered; process proceeds to boss.start().",
+    "JRD-2: preflight FAILS non-zero when a queue in the registry has no pgboss partition — the exact DD-90 Q6 provision-ordering fence.",
+    "JRD-3: preflight FAILS non-zero when app_worker is missing any asserted grant or sequence usage on the pgboss schema, even though the queue exists.",
+    "JRD-4: preflight runs BEFORE boss.start() — a test proves no pg-boss startup or maintenance work happened when preflight fails (not merely that the process exited).",
+    "JRD-5: handler claims outbox events under the real app_worker seat across MORE THAN ONE tenant in a single batch, and every subsequent tenant-scoped read/write goes through withTenant SET LOCAL app.tenant_id — a raw cross-tenant query in the handler path is a failure.",
+    "JRD-6: prepare is idempotent — the same (event_id, projector) prepared twice yields one delivery row.",
+    "JRD-7: delivered path — claim returns a token, complete with the exact token transitions to delivered, attempts increments once, token/lease cleared.",
+    "JRD-8: retry path — complete with 'retry' and a strictly future next_attempt_at moves to failed; the row is re-claimable only once due; the stale token cannot complete after re-claim.",
+    "JRD-9: dlq path — terminal; no further claim or completion succeeds.",
+    "JRD-10: expired lease is reclaimed on the next claim, and job_audit_events shows more than one row for that job_id (0022 deliberately has no UNIQUE(job_id)).",
+    "JRD-11: app_worker still has ZERO direct DML on outbox_events, projector_deliveries and job_audit_events — the handler path uses only the four granted functions.",
+    "JRD-12: no INSERT into outbox_events exists in shipped code — grep the diff; only test fixtures may seed events.",
+    "JRD-13: worker still starts with migrate:false and DATABASE_URL_DIRECT required; no DDL is attempted from the runtime seat.",
+    "JRD-14: full workspace suite green and the migration tail is unchanged — this slice adds no migration."
+  ],
+  "_scope_exception": "Budget: this P1 runtime slice spans one module (apps/bot) but ~5 files including two new source files and two new test files, above the nominal 3-file comfort. Splitting preflight from the handler was considered and rejected: DD-90 Q6 says the preflight exists to fence the first real queue registration, so a preflight slice with QUEUES still empty would assert nothing and prove nothing — the two land together or neither is verifiable. No migration is added, so the single-monotonic-migration budget is untouched.",
+  "_evidence_rules": "Re-verify on synced main before coding: the four function signatures and their GRANT EXECUTE lines in 0022 (they are the contract, not this manifest's prose), QUEUES still empty, worker.ts still lacking boss.work(), and provision-queue.ts unchanged. If any differ, HALT DESIGN_UNFIT rather than adapting silently. Do not invent a retry/backoff policy in code before it is pinned in the design probe and confirmed.",
+  "scope": [
+    "docs/autopilot-manifests/job-runtime-dispatcher.json",
+    "apps/bot/src/preflight.ts",
+    "apps/bot/src/preflight.test.ts",
+    "apps/bot/src/dispatcher.ts",
+    "apps/bot/src/dispatcher.test.ts",
+    "apps/bot/src/queues.ts",
+    "apps/bot/src/worker.ts"
+  ]
+}
