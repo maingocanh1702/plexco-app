@@ -19,6 +19,12 @@ scripts/
 !.prettierrc.json
 !packages/**/*.json
 !apps/**/*.json
+# Local throwaway probe harness (.probe/.gitignore keeps it out of git entirely).
+# Prettier does not read nested .gitignore files, so `prettier --check .` in CI was
+# failing on .probe/*.mjs — the same root cause that broke root eslint until
+# .probe/** was added to eslint.config.mjs ignores. Both linters need it separately.
+.probe/
+
 # Pre-existing root utility scripts + the authoritative schema (formatting them
 # is out-of-scope churn; schema.ts style is owned by packages/db conventions).
 /compare-linear.mjs
