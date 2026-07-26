@@ -454,12 +454,25 @@ manifest: docs/autopilot-manifests/deps-security-bump.json
 merged_probe: pnpm-lock.yaml :: 15.5.21
 notes: **Mở bởi CI audit 2026-07-26** — `Security / OSV full dependency scan` đỏ trên main với 11 advisory, tất cả từ `pnpm-lock.yaml`, **không phải regression của việc gần đây** (không dependency nào đổi; advisory publish upstream). `next` 15.5.20 gánh **7 advisory tới CVSS 8.3** → 15.5.21; `postcss` 8.5.16 → 8.5.18; `brace-expansion` 1.1.16 và 5.0.7 → 5.0.8. **Exposure hiện = 0**: chưa deploy, chưa có route nghiệp vụ, Google login fail-closed với `GOOGLE_OAUTH_*` rỗng. **Timing gate 30/07** — `minimumReleaseAge: 10080` (7 ngày) là control có chủ đích; đo 26/07: postcss đủ tuổi, next đủ từ 28/07, brace-expansion đủ từ 30/07. **Owner chốt 26/07: KHÔNG override** — cửa sổ 7 ngày tồn tại để chặn đúng vector publish-bị-chiếm-quyền mà một bản "security fix" giả là carrier kinh điển; đổi lớp phòng thủ đó lấy 4 ngày vá sớm trên bề mặt exposure-0 là trao đổi tồi. Ngoại lệ tương lai nếu có phải là override per-package có lý do và hạn dùng, không hạ `minimumReleaseAge` toàn cục. `design_probe_required: true` — hai bẫy: (1) **override nằm ở HAI chỗ**, `package.json` `pnpm.overrides` và `pnpm-workspace.yaml` `overrides`, `postcss` có mặt ở cả hai; sửa một bỏ một là cách bản vá không có hiệu lực mà vẫn tưởng xong; (2) OSV ghi FIXED 5.0.8 cho cả dòng `brace-expansion` 1.1.16 — nếu nhánh v1 không có bản vá in-range thì ép transitive v1 lên v5 là **major bump = quyết định**, phải hỏi chứ không tự chốt trong lockfile.
 
-## task: job-runtime-dispatcher
-title: Shared job-infra slice 2/4 — worker preflight + queue registration + first outbox consumer (one handler, no cron, no producer)
+## task: db-outbox-ack-marker
+title: Job-infra slice 2a — completion/ack cho outbox_events, đóng starvation loop mà 0022 tự flag
 status: ready
 risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [schema]
+scope: [docs/autopilot-manifests/db-outbox-ack-marker.json, packages/db/migrations/0023_outbox_ack_marker.sql, packages/db/schema.ts, packages/db/src/rls-invariants.test.ts, packages/db/src/migrate.test.ts, packages/db/README.md]
+manifest: docs/autopilot-manifests/db-outbox-ack-marker.json
+merged_probe: packages/db/migrations/0023_outbox_ack_marker.sql :: outbox_events
+notes: **Mở bởi design probe của AP-33 (2026-07-26), tách ra từ `job-runtime-dispatcher` theo quyết định owner.** `0022:166-181` tự ghi `HARD BLOCKING REQUIREMENT FOR job-runtime-dispatcher (slice 2/4)`: lease 5 phút **chỉ là crash-recovery**, event xử lý xong vẫn hết lease nên không phân biệt được với claim crash và bị reclaim mãi mãi; vì reclaim chạy TRƯỚC claim mới và `ORDER BY created_at` ưu tiên cũ nhất, tập event đã xong **bỏ đói mọi event mới**. Không sai kết quả (prepare idempotent, `ON CONFLICT DO NOTHING`) nhưng là bug throughput tăng dần, và `job_audit_events` phình không giới hạn vì `0022` cố ý không có `UNIQUE(job_id)`. **Vì sao tách khỏi 2b:** thêm migration kéo slice chạm hai module (~11 file), vượt budget thật; tách xong mỗi nửa nằm trong budget và tự kiểm chứng được. **`design_probe_required: true`** — câu hỏi slice này sinh ra để trả lời: một outbox event fan-out được cho NHIỀU projector, mà `job_prepare_projector_delivery` là per-(event, projector); vậy event acked khi projector ĐẦU TIÊN prepare, hay khi MỌI projector đã prepare? Ack ở lần đầu **đúng hôm nay** vì chỉ có một projector placeholder, và **sai âm thầm** ngay khi đăng ký projector thứ hai. Đừng chọn đáp án tiện vì hình dạng hiện tại che mất khác biệt. **OAM-2 là acceptance quan trọng nhất** — starvation regression: event cũ đã ack không được chiếm batch của event mới.
+
+## task: job-runtime-dispatcher
+title: Shared job-infra slice 2/4 — worker preflight + queue registration + first outbox consumer (one handler, no cron, no producer)
+status: blocked
+blocked_by: db-outbox-ack-marker (2a) — 0022:166-181 yêu cầu slice dispatcher PHẢI thêm ack; manifest 2b ghi `NO new migration` nên mâu thuẫn, đã tách. Design probe AP-33 phát hiện, owner chốt tách 2026-07-26. Manifest 2b + Verdict 22 cần sửa `_scope_out` + JRD-5 (vacuous — handler không đọc dữ liệu tenant-scoped) rồi re-pin sau khi 2a merge.
+risk: P1
 change_class: manual-runtime-feature
-depends_on: [db-job-claim-lease-core]
+depends_on: [db-job-claim-lease-core, db-outbox-ack-marker]
 invariants: [retry-liveness, core-api]
 scope: [docs/autopilot-manifests/job-runtime-dispatcher.json, apps/bot/src/preflight.ts, apps/bot/src/preflight.test.ts, apps/bot/src/dispatcher.ts, apps/bot/src/dispatcher.test.ts, apps/bot/src/queues.ts, apps/bot/src/worker.ts]
 manifest: docs/autopilot-manifests/job-runtime-dispatcher.json

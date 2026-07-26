@@ -1,0 +1,45 @@
+{
+  "feature": "db-outbox-ack-marker",
+  "branch": "feat/db-outbox-ack-marker",
+  "base_ref": "main",
+  "risk": "P1",
+  "change_class": "schema-migration",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "design_probe_required": true,
+  "depends_on": [],
+  "dep_checks": [
+    { "file": "packages/db/migrations/0022_job_claim_lease_core.sql", "symbol": "claim_outbox_batch" },
+    { "file": "packages/db/migrations/0022_job_claim_lease_core.sql", "symbol": "outbox_events_lease_shape_chk" },
+    { "file": "packages/db/migrations/0022_job_claim_lease_core.sql", "symbol": "idx_outbox_expired_lease" }
+  ],
+  "invariants": ["schema"],
+  "merged_probe": "packages/db/migrations/0023_outbox_ack_marker.sql :: outbox_events",
+  "_problem": "0022 shipped the outbox lease deliberately as a TWO-state contract — available (claimed_at and lease_expires_at both NULL) or leased (both NOT NULL) — with no terminal state, and its own comment at 0022:166-181 flags this as a HARD BLOCKING REQUIREMENT addressed by name to the dispatcher slice. The five-minute lease is only crash recovery: a successfully-processed event's lease still expires, so it becomes indistinguishable from a crashed claim and is reclaimed forever. Because reclaim runs BEFORE claiming new rows and claim_outbox_batch orders by created_at (oldest first), a growing set of already-done events starves every newer event from ever being claimed. Re-preparing an already-delivered row is a safe no-op — job_prepare_projector_delivery uses ON CONFLICT DO NOTHING and never resets status — so this is not incorrect re-delivery, but it is an unbounded, worsening throughput bug and it also grows job_audit_events without limit, since 0022 deliberately has no UNIQUE(job_id).",
+  "_decision_contract": "0022's comment names the acceptable shapes — 'a terminal state or a dispatched-at marker, extending this contract deliberately'. This slice picks ONE of those and implements it; it does not invent a third shape, and it does not weaken either existing CHECK. The existing two-state shape constraint outbox_events_lease_shape_chk and the producer-boundary constraint outbox_events_producer_lease_boundary_chk (which forbids role `app` from setting lease fields) both survive; if the new column needs the same producer boundary, that constraint is extended rather than replaced.",
+  "_scope_in": "One module, packages/db. Exactly ONE monotonic migration after the live tail (0023 at authoring baseline 0022) adding the ack mechanism to outbox_events, updating claim_outbox_batch so that BOTH its reclaim pass and its claim pass skip acked rows, keeping the partial indexes selective so acked rows do not accumulate in idx_outbox_expired_lease, and adding a narrow SECURITY DEFINER ack function owned by job_definer with EXECUTE granted to app_worker only — matching the 0022 pattern exactly, no direct DML grant. Plus the schema.ts mirror, the migration-count assertions, and real-role tests.",
+  "_scope_out": "NO worker, handler, queue, cron, producer or projector wiring — that is slice 2b job-runtime-dispatcher, which depends on this. NO change to claim ordering (ORDER BY created_at is the sync-engine contract, DD-89 Q3). NO weakening or removal of outbox_events_lease_shape_chk or outbox_events_producer_lease_boundary_chk. NO edit to applied migrations 0000-0022. NO new role, no RUNTIME_ROLES change, no change to job_definer's attributes or to any existing definer's ownership beyond re-owning claim_outbox_batch if CREATE OR REPLACE requires it (0022 already pinned that trap: CREATE OR REPLACE does NOT change owner). NO retention or cleanup job for job_audit_events. NO surface_refs access. NO direct DML grant on outbox_events to any runtime role.",
+  "_design_probe": "Required per canonical autopilot-prompt-GENERIC v0.6.1 §0.1 — trigger (7) schema/migration and (6) amends a merged core. Before any production edit, write .autopilot/state/db-outbox-ack-marker/design-probe.md pinning FOUR things and STOP for founder confirm. (a) SHAPE: terminal state versus a dispatched_at marker, with the reason. A marker keeps the existing two-state CHECK intact and is expand-only; a terminal state may read more naturally but must not break that CHECK. (b) GRANULARITY — the question this slice exists to answer and the one a mechanical mirror will get wrong: an outbox event can fan out to MANY projectors, and job_prepare_projector_delivery is per (event, projector). Is an event acked when the dispatcher has prepared delivery for ONE projector, or only when EVERY registered projector has one? Acking on the first prepare is correct today because exactly one placeholder projector exists, and silently wrong the moment a second projector is registered. If the answer is fan-out completion, state where the registry of required projectors lives, because it does not exist yet. Do not pick the convenient answer because today's shape hides the difference. (c) QUERY AND INDEX IMPACT: exactly which predicates in claim_outbox_batch's reclaim pass and claim pass gain the acked filter, and whether idx_outbox_unclaimed and idx_outbox_expired_lease need their WHERE clauses narrowed so acked rows stop accumulating in them. (d) PRODUCER BOUNDARY: whether outbox_events_producer_lease_boundary_chk must extend to the new column so role `app` cannot ack its own events, and confirm the migration remains expand-only with a named rollback.",
+  "_acceptance": [
+    "OAM-1: an acked event is NOT reclaimed after its lease expires — seed a claim, ack it, advance past the lease, call claim_outbox_batch, assert the event is absent from the result.",
+    "OAM-2: STARVATION REGRESSION — the row this slice exists for. Seed N acked-and-expired events with older created_at plus one newer unacked event; call claim_outbox_batch; the newer event IS returned. Without the fix the older done events consume the batch and the newer one never appears.",
+    "OAM-3: an unacked event whose lease expired IS still reclaimed — crash recovery must survive unchanged.",
+    "OAM-4: job_audit_events does not grow on repeated claims once events are acked — count audit rows after N claim cycles over an acked set and assert it stops increasing.",
+    "OAM-5: the ack function is callable by app_worker via EXECUTE only; app_worker still has ZERO direct DML on outbox_events, and role `app` cannot ack (per the producer-boundary decision in the design probe).",
+    "OAM-6: outbox_events_lease_shape_chk and outbox_events_producer_lease_boundary_chk still exist and still reject their original violation cases — assert by attempting the violations, not by reading the catalog alone.",
+    "OAM-7: acking a non-existent event, or acking twice, fails closed or is an idempotent no-op as pinned in the design probe — never a silent partial write.",
+    "OAM-8: migrations 0000-0022 are byte-identical after 0023 applies, and the migration-count assertions advance 23 -> 24 in BOTH places that assert them.",
+    "OAM-9: schema.ts mirrors the new column and any constraint change; the catalog test still shows job_definer owning exactly its allowlist with no additional function.",
+    "OAM-10: full workspace suite green; the DB suite count increases only by the tests this slice adds."
+  ],
+  "_evidence_rules": "Re-verify on synced main before coding: the live migration tail (0023 assumes 0022 — if it moved, renumber the file AND this manifest's merged_probe and the backlog entry BEFORE scope-gate register), the exact text of both CHECK constraints, both partial index definitions, and claim_outbox_batch's reclaim-then-claim ordering. Read 0022:166-181 verbatim — that comment is the requirement this slice discharges, and if it has changed the premise has changed. Do not modify an applied migration to make the numbering tidy.",
+  "scope": [
+    "docs/autopilot-manifests/db-outbox-ack-marker.json",
+    "packages/db/migrations/0023_outbox_ack_marker.sql",
+    "packages/db/schema.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/README.md"
+  ]
+}
