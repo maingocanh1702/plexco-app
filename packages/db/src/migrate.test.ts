@@ -382,6 +382,56 @@ describe("BR-5 0022 upgrade path: pre-existing claims survive the new lease-shap
   }, 60_000);
 });
 
+describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", () => {
+  // codex round-08 [P2]: membership in job_definer (asserted in 0022 Step 1) only guarantees
+  // SET ROLE job_definer is AVAILABLE — it does not automatically confer job_definer's privileges
+  // unless the migration role is also INHERIT. INHERIT is the default and what every OTHER test
+  // in this file uses via setupNonSuperuserOwnerContext, which is exactly why this bug (Step 4's
+  // post-transfer REVOKE/GRANT on job_definer-owned functions failing "must be owner of function"
+  // under NOINHERIT) was never caught before. NOINHERIT is a valid, more cautious production
+  // posture. This proves Step 4's SET ROLE job_definer bracket actually runs as job_definer
+  // regardless, by asserting app_worker can call a function whose EXECUTE grant that bracket set.
+  it("app_worker can call claim_outbox_batch after the whole migration applies", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_br6_noinherit", {
+      inherit: false,
+    });
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const res = await ctx.runMigration();
+        expect(res.applied[res.applied.length - 1]).toBe("0022_job_claim_lease_core.sql");
+      });
+
+      const worker = await ctx.connectAsWorker();
+      const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
+      expect(claimed.rows).toEqual([]);
+    } finally {
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
+describe("setupNonSuperuserOwnerContext teardown (codex round-07 [P1])", () => {
+  // Closing connections alone left the scratch database, the cluster-global owner role, and its
+  // job_definer membership behind — a LOGIN role with a fixed, known password and BYPASSRLS-via-
+  // membership persisting on shared local clusters. Proves teardown now actually drops both.
+  it("drops the scratch database and its privileged owner role", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_teardown_check");
+    const { dbName, ownerRole } = ctx;
+    await ctx.teardown();
+
+    const admin = await connect(BASE!);
+    try {
+      const db = await admin.query(`SELECT 1 FROM pg_database WHERE datname = $1`, [dbName]);
+      expect(db.rows.length).toBe(0);
+      const role = await admin.query(`SELECT 1 FROM pg_roles WHERE rolname = $1`, [ownerRole]);
+      expect(role.rows.length).toBe(0);
+    } finally {
+      await admin.end();
+    }
+  }, 30_000);
+});
+
 /**
  * JCL-2/JCL-3 — the 0022 job-core migration's own fail-closed assertions (task contract §4.1
  * step 1). Every migrate() call above runs as `plexco`, a real Postgres SUPERUSER — superusers
@@ -480,4 +530,72 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
       await ctx.teardown();
     }
   }, 60_000);
+
+  it("JCL-3b: job_definer already granted to a runtime role — migration fails closed even though the migration role's own membership is correct (codex round-07 [P1])", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_jcl3b_runtimemember");
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        // Simulate a misconfiguration/unrelated process granting job_definer to a runtime role —
+        // bypassing infra/postgres-init/01-job-definer.sql's OWN equivalent check entirely (round-08
+        // [P1]), so this proves 0022's Step 1 check independently, not just the bootstrap's.
+        await ctx.superuser.query(`GRANT job_definer TO app_worker`);
+        try {
+          await expect(ctx.runMigration()).rejects.toThrow(/app_worker|app\/app_worker\/readonly/i);
+          await expectNoPartialJobCoreRow(ctx);
+        } finally {
+          await ctx.superuser.query(`REVOKE job_definer FROM app_worker`);
+        }
+      });
+    } finally {
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
+describe("job_definer bootstrap script itself fails closed on runtime-role targets (codex round-08 [P1])", () => {
+  // infra/postgres-init/01-job-definer.sql is advertised safe to re-run at ANY time, including
+  // long after 0022 has already applied — when 0022's own Step 1 denylist (JCL-3b above) can never
+  // run again to catch a bad grant. These prove the bootstrap script rejects the same class of
+  // misuse independently, so a later `MIGRATION_ROLE=app_worker` re-run can never slip through.
+  it("refuses to grant job_definer to a runtime role passed as the migration_role target", async () => {
+    await withJobDefinerLock(BASE!, async () => {
+      const admin = await connect(BASE!);
+      try {
+        await bootstrapJobDefiner(admin); // idempotent baseline: job_definer exists + correct
+        await admin.query(`SET job_definer_bootstrap.migration_role = 'readonly'`);
+        try {
+          await expect(bootstrapJobDefiner(admin)).rejects.toThrow(/runtime role/i);
+        } finally {
+          await admin.query(`RESET job_definer_bootstrap.migration_role`);
+        }
+        const granted = await admin.query(
+          `SELECT 1 FROM pg_auth_members am
+             JOIN pg_roles m ON m.oid = am.member
+             JOIN pg_roles r ON r.oid = am.roleid
+            WHERE r.rolname = 'job_definer' AND m.rolname = 'readonly'`,
+        );
+        expect(granted.rows.length).toBe(0);
+      } finally {
+        await admin.end();
+      }
+    });
+  }, 30_000);
+
+  it("refuses to proceed at all when job_definer is already granted to a runtime role beforehand", async () => {
+    await withJobDefinerLock(BASE!, async () => {
+      const admin = await connect(BASE!);
+      try {
+        await bootstrapJobDefiner(admin); // idempotent baseline: job_definer exists + correct
+        await admin.query(`GRANT job_definer TO app_worker`);
+        try {
+          await expect(bootstrapJobDefiner(admin)).rejects.toThrow(/already granted/i);
+        } finally {
+          await admin.query(`REVOKE job_definer FROM app_worker`);
+        }
+      } finally {
+        await admin.end();
+      }
+    });
+  }, 30_000);
 });

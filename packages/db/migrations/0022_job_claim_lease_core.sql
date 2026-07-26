@@ -507,7 +507,17 @@ REVOKE CREATE ON SCHEMA public FROM job_definer;
 -- Step 4: exact grants. EXECUTE to app_worker on the four worker-callable
 -- operations only — never the audit trigger implementation, never direct DML
 -- on outbox_events/projector_deliveries/job_audit_events.
+--
+-- codex round-08 [P2]: REVOKE/GRANT on these 5 functions requires the CURRENT role to own them
+-- (or exercise an owning role's privilege) — Step 3 above just transferred ownership AWAY from
+-- the migration role, to job_definer. Membership alone (asserted in Step 1) only guarantees
+-- SET ROLE job_definer is available; it does NOT automatically confer job_definer's privileges
+-- unless the migration role also happens to be INHERIT (the common default, but not guaranteed —
+-- a NOINHERIT migration role is a valid, more cautious production posture, task contract's own
+-- stated non-superuser test posture just doesn't happen to exercise this specific combination).
+-- SET ROLE around exactly these statements so they run as job_definer regardless of inherit.
 -- ---------------------------------------------------------------------------
+SET ROLE job_definer;
 REVOKE ALL ON FUNCTION claim_outbox_batch(integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION job_prepare_projector_delivery(uuid, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION claim_projector_delivery_batch(text, integer) FROM PUBLIC;
@@ -519,6 +529,7 @@ GRANT EXECUTE ON FUNCTION job_prepare_projector_delivery(uuid, text) TO app_work
 GRANT EXECUTE ON FUNCTION claim_projector_delivery_batch(text, integer) TO app_worker;
 GRANT EXECUTE ON FUNCTION complete_projector_delivery(uuid, text, uuid, text, timestamptz, text, text) TO app_worker;
 -- forbid_job_audit_mutation: no EXECUTE grant to app_worker/app/readonly/PUBLIC — trigger-only.
+RESET ROLE;
 
 -- job_definer owns job_audit_events (full implicit rights) but not the
 -- pre-existing outbox_events/projector_deliveries tables — BYPASSRLS bypasses

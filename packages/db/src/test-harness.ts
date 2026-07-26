@@ -292,6 +292,7 @@ export interface NonSuperuserOwnerContext {
  */
 export async function setupNonSuperuserOwnerContext(
   dbName: string,
+  opts: { inherit?: boolean } = {},
 ): Promise<NonSuperuserOwnerContext> {
   const base = process.env.DATABASE_URL_TEST;
   if (!base) {
@@ -300,6 +301,12 @@ export async function setupNonSuperuserOwnerContext(
     );
   }
 
+  // codex round-08 [P2]: INHERIT (the default) makes a role automatically exercise privileges
+  // of roles it's a member of; NOINHERIT requires an explicit SET ROLE for each such operation
+  // instead. Both are valid, real production postures — the default here matches ordinary roles,
+  // but callers proving NOINHERIT-specific behavior (job_definer's post-transfer ACL statements,
+  // 0022's own SET ROLE bracket) must opt in explicitly.
+  const inheritClause = opts.inherit === false ? "NOINHERIT" : "INHERIT";
   const ownerRole = `${dbName}_owner`;
   const admin = new pg.Client({ connectionString: base });
   await admin.connect();
@@ -308,9 +315,9 @@ export async function setupNonSuperuserOwnerContext(
   // unique per dbName (per test), so the only realistic race is this exact test re-running.
   await admin.query(
     `DO $$ BEGIN
-       CREATE ROLE ${ownerRole} LOGIN NOSUPERUSER NOBYPASSRLS CREATEROLE PASSWORD '${NONSUPER_OWNER_PW}';
+       CREATE ROLE ${ownerRole} LOGIN NOSUPERUSER NOBYPASSRLS CREATEROLE ${inheritClause} PASSWORD '${NONSUPER_OWNER_PW}';
      EXCEPTION WHEN duplicate_object OR unique_violation THEN
-       ALTER ROLE ${ownerRole} WITH LOGIN NOSUPERUSER NOBYPASSRLS CREATEROLE PASSWORD '${NONSUPER_OWNER_PW}';
+       ALTER ROLE ${ownerRole} WITH LOGIN NOSUPERUSER NOBYPASSRLS CREATEROLE ${inheritClause} PASSWORD '${NONSUPER_OWNER_PW}';
      END $$;`,
   );
   await admin.query(`CREATE DATABASE ${dbName} OWNER ${ownerRole}`);

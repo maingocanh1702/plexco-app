@@ -65,15 +65,30 @@ $$;
 --    = '<role>'` (a plain custom GUC — works identically whether this file is applied via
 --    psql or any other client, unlike a psql-only `:variable`) before running this file to
 --    grant to that role explicitly instead; unset (the common case) falls back to CURRENT_USER.
+--    codex round-08 [P1]: this bootstrap is advertised idempotent and safe to re-run at any
+--    time — including AFTER 0022 has already applied, when its own runtime-role denylist
+--    (packages/db/migrations/0022_job_claim_lease_core.sql) can never run again to catch a bad
+--    grant. A later `MIGRATION_ROLE=app_worker` (or app/readonly) re-run would otherwise succeed
+--    silently, handing that LOGIN role a permanent SET ROLE job_definer path with NOTHING left
+--    to reject it. Fail closed here too: refuse a runtime role as the grant TARGET, and refuse
+--    to proceed if job_definer is somehow ALREADY granted to one (independent of this run).
 DO $$
 DECLARE
   v_target text := NULLIF(current_setting('job_definer_bootstrap.migration_role', true), '');
+  v_grant_to text := COALESCE(v_target, current_user);
 BEGIN
-  IF v_target IS NULL THEN
-    EXECUTE format('GRANT job_definer TO %I', current_user);
-  ELSE
-    EXECUTE format('GRANT job_definer TO %I', v_target);
+  IF v_grant_to IN ('app', 'app_worker', 'readonly') THEN
+    RAISE EXCEPTION
+      'job_definer bootstrap: refusing to grant job_definer to runtime role % — this would let it bypass the narrow function/audit boundary',
+      v_grant_to;
   END IF;
+  IF pg_has_role('app', 'job_definer', 'MEMBER')
+     OR pg_has_role('app_worker', 'job_definer', 'MEMBER')
+     OR pg_has_role('readonly', 'job_definer', 'MEMBER') THEN
+    RAISE EXCEPTION
+      'job_definer bootstrap: job_definer is already granted to a runtime role (app/app_worker/readonly) — revoke it before proceeding';
+  END IF;
+  EXECUTE format('GRANT job_definer TO %I', v_grant_to);
 END
 $$;
 GRANT USAGE ON SCHEMA public TO job_definer;

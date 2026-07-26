@@ -15,7 +15,7 @@
     "build": "pnpm -r run typecheck && pnpm -r run build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "db:bootstrap": "psql \"${DATABASE_URL_MIGRATION:?DATABASE_URL_MIGRATION is required}\" -v ON_ERROR_STOP=1 -c \"SET job_definer_bootstrap.migration_role = '${MIGRATION_ROLE:-}'\" -f infra/postgres-init/01-job-definer.sql"
+    "db:bootstrap": "mr=\"${MIGRATION_ROLE:-}\"; case \"$mr\" in \"\") ;; *[!a-zA-Z0-9_]*) echo \"MIGRATION_ROLE must be a plain identifier: letters, digits, underscore only\" >&2; exit 1 ;; esac; psql \"${DATABASE_URL_MIGRATION:?DATABASE_URL_MIGRATION is required}\" -v ON_ERROR_STOP=1 -c \"SET job_definer_bootstrap.migration_role = '$mr'\" -f infra/postgres-init/01-job-definer.sql"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
