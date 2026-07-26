@@ -48,6 +48,25 @@ BEGIN
       current_user
       USING ERRCODE = 'insufficient_privilege';
   END IF;
+  -- codex round-07 [P1]: a correctly-attributed job_definer, correctly granted to the migration
+  -- role, is still a security hole if it has ALSO been granted (by misconfiguration, accident, or
+  -- an unrelated process) to app/app_worker/readonly — any of those runtime seats could then SET
+  -- ROLE job_definer and get its BYPASSRLS + narrow-function ownership directly, bypassing the
+  -- whole audited boundary this migration exists to build. Scoped to exactly these three named
+  -- runtime roles, NOT "any member other than the migration role": job_definer legitimately
+  -- accumulates membership from many DIFFERENT non-superuser DDL-owner roles across this
+  -- package's own test suite (setupNonSuperuserOwnerContext, one per test file/context) — that is
+  -- the intended test pattern proving this migration under a genuinely non-superuser owner, not a
+  -- misconfiguration, and a blanket check incorrectly rejected it (caught by the full suite, not
+  -- just this file). All three named roles are created by 0000 earlier in this same migration
+  -- sequence, so pg_has_role never sees them as missing here.
+  IF pg_has_role('app', 'job_definer', 'MEMBER')
+     OR pg_has_role('app_worker', 'job_definer', 'MEMBER')
+     OR pg_has_role('readonly', 'job_definer', 'MEMBER') THEN
+    RAISE EXCEPTION
+      'job_claim_lease_core: job_definer must not be granted to app/app_worker/readonly — review and revoke it before proceeding'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
 END
 $$;
 
@@ -176,9 +195,12 @@ BEGIN
   END IF;
 
   -- 1. reclaim up to p_limit expired leases (SKIP LOCKED), one audit row each.
+  -- codex round-07 [P2]: clock_timestamp(), not now() — now() is frozen at transaction start,
+  -- so a call that waits on a lock before reaching this predicate would judge liveness against a
+  -- stale instant (the SAME class of bug already fixed for auth session expiry, codex round-09).
   WITH expired AS (
     SELECT id FROM outbox_events
-    WHERE claimed_at IS NOT NULL AND lease_expires_at < now()
+    WHERE claimed_at IS NOT NULL AND lease_expires_at < clock_timestamp()
     ORDER BY created_at
     FOR UPDATE SKIP LOCKED
     LIMIT p_limit
@@ -319,10 +341,11 @@ BEGIN
   END IF;
 
   -- 1. reclaim expired claimed rows for this projector (SKIP LOCKED), one audit row each.
+  -- codex round-07 [P2]: clock_timestamp(), not now() — see claim_outbox_batch's identical note.
   WITH expired AS (
     SELECT pd.event_id, pd.projector
     FROM projector_deliveries pd
-    WHERE pd.projector = p_projector AND pd.status = 'claimed' AND pd.lease_expires_at < now()
+    WHERE pd.projector = p_projector AND pd.status = 'claimed' AND pd.lease_expires_at < clock_timestamp()
     ORDER BY pd.event_id
     FOR UPDATE SKIP LOCKED
     LIMIT p_limit
@@ -340,12 +363,14 @@ BEGIN
   FROM reclaimed r JOIN outbox_events o ON o.id = r.event_id;
 
   -- 2. claim up to p_limit due rows: pending, or failed with next_attempt_at due.
+  -- codex round-07 [P2]: clock_timestamp(), not now() — same rationale, this is a liveness/due
+  -- check, not a value being stamped.
   RETURN QUERY
   WITH claimable AS (
     SELECT pd.event_id, pd.projector
     FROM projector_deliveries pd
     WHERE pd.projector = p_projector
-      AND (pd.status = 'pending' OR (pd.status = 'failed' AND pd.next_attempt_at <= now()))
+      AND (pd.status = 'pending' OR (pd.status = 'failed' AND pd.next_attempt_at <= clock_timestamp()))
     ORDER BY pd.event_id
     FOR UPDATE SKIP LOCKED
     LIMIT p_limit
@@ -400,7 +425,9 @@ BEGIN
     RAISE EXCEPTION 'complete_projector_delivery: result must be delivered, retry or dlq'
       USING ERRCODE = 'invalid_parameter_value';
   END IF;
-  IF p_result = 'retry' AND (p_next_attempt_at IS NULL OR p_next_attempt_at <= now()) THEN
+  -- codex round-07 [P2]: clock_timestamp(), not now() — validates the caller-supplied instant
+  -- against the LIVE moment this check runs, not one frozen at transaction start.
+  IF p_result = 'retry' AND (p_next_attempt_at IS NULL OR p_next_attempt_at <= clock_timestamp()) THEN
     RAISE EXCEPTION 'complete_projector_delivery: retry requires a strictly-future next_attempt_at'
       USING ERRCODE = 'invalid_parameter_value';
   END IF;
@@ -417,19 +444,31 @@ BEGIN
     SET status = 'delivered', attempts = attempts + 1, claim_token = NULL, lease_expires_at = NULL,
         delivered_at = now(), provider_ref = p_provider_ref, error_code = NULL
     WHERE event_id = p_event_id AND projector = p_projector AND status = 'claimed'
-      AND claim_token = p_claim_token AND lease_expires_at >= now();
+      -- codex round-07 [P1, the named finding]: clock_timestamp(), not now() — a completion
+      -- transaction that starts before expiry but waits on a lock (or runs later in an explicit
+      -- transaction) would otherwise judge liveness against a stale, frozen instant, letting a
+      -- stale worker finalize delivery state after the lease has actually expired.
+      AND claim_token = p_claim_token AND lease_expires_at >= clock_timestamp();
   ELSIF p_result = 'retry' THEN
     UPDATE projector_deliveries
     SET status = 'failed', attempts = attempts + 1, claim_token = NULL, lease_expires_at = NULL,
         next_attempt_at = p_next_attempt_at, error_code = p_error_code
     WHERE event_id = p_event_id AND projector = p_projector AND status = 'claimed'
-      AND claim_token = p_claim_token AND lease_expires_at >= now();
+      -- codex round-07 [P1, the named finding]: clock_timestamp(), not now() — a completion
+      -- transaction that starts before expiry but waits on a lock (or runs later in an explicit
+      -- transaction) would otherwise judge liveness against a stale, frozen instant, letting a
+      -- stale worker finalize delivery state after the lease has actually expired.
+      AND claim_token = p_claim_token AND lease_expires_at >= clock_timestamp();
   ELSE -- dlq
     UPDATE projector_deliveries
     SET status = 'dlq', attempts = attempts + 1, claim_token = NULL, lease_expires_at = NULL,
         error_code = p_error_code
     WHERE event_id = p_event_id AND projector = p_projector AND status = 'claimed'
-      AND claim_token = p_claim_token AND lease_expires_at >= now();
+      -- codex round-07 [P1, the named finding]: clock_timestamp(), not now() — a completion
+      -- transaction that starts before expiry but waits on a lock (or runs later in an explicit
+      -- transaction) would otherwise judge liveness against a stale, frozen instant, letting a
+      -- stale worker finalize delivery state after the lease has actually expired.
+      AND claim_token = p_claim_token AND lease_expires_at >= clock_timestamp();
   END IF;
 
   GET DIAGNOSTICS v_row_count = ROW_COUNT;

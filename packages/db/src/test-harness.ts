@@ -366,6 +366,13 @@ export async function setupNonSuperuserOwnerContext(
     teardown: async () => {
       await ownerPool.end();
       for (const p of workerPools) await p.end();
+      // codex round-07 [P1]: closing connections alone leaves the database, the cluster-global
+      // ownerRole, and its job_definer membership behind — a LOGIN role with a known, fixed
+      // password and BYPASSRLS-via-membership on a shared local cluster. Drop the database
+      // (ownerRole owns it, so it must go first) then the role itself, before closing the admin
+      // connection that is the one privileged enough to do both.
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.query(`DROP ROLE IF EXISTS ${ownerRole}`);
       await admin.end();
     },
   };
