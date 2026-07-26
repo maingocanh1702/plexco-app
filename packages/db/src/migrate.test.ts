@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ensureRoleExists, migrate } from "./migrate.js";
+import {
+  bootstrapJobDefiner,
+  setupNonSuperuserOwnerContext,
+  withJobDefinerLock,
+} from "./test-harness.js";
 
 /**
  * Migration-runner invariant suite for the CLUSTER-GLOBAL role race.
@@ -26,7 +31,7 @@ import { ensureRoleExists, migrate } from "./migrate.js";
  */
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 22; // 0000..0021 — must match rls-invariants.test.ts
+const MIGRATION_COUNT = 23; // 0000..0022 — must match rls-invariants.test.ts
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -66,6 +71,11 @@ let admin: pg.Client;
 
 beforeAll(async () => {
   admin = await connect(BASE!);
+  // job_definer is cluster-global and must exist (correctly) before ANY migrate() call in this
+  // file reaches 0022, which only asserts it. Safe unlocked here: this runs once, before every
+  // JCL-2/3 test below (the only tests in this suite that put it into a broken state, and they
+  // all hold withJobDefinerLock for that window) — see withJobDefinerLock's doc comment.
+  await bootstrapJobDefiner(admin);
 }, 120_000);
 
 afterAll(async () => {
@@ -221,6 +231,18 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
     await admin.query(`CREATE ROLE ${owner} LOGIN NOSUPERUSER NOCREATEROLE PASSWORD 'x'`);
     await admin.query(`CREATE DATABASE ${db} OWNER ${owner}`);
     try {
+      // job_definer is ALSO cluster-global and pre-provisioned out of band — 0022 asserts
+      // membership but never creates it, so a NOCREATEROLE owner (this test's whole point)
+      // could never self-bootstrap it. The privileged `admin` connection stands in for the
+      // "privileged cluster-tier bootstrap" (task contract §4.1) and grants membership via the
+      // session-GUC mechanism `pnpm db:bootstrap`/CI use for a distinct migration-role identity
+      // (codex round-06 [P1]); `owner` needs no CREATEROLE to RECEIVE a grant, only to CREATE ROLE.
+      await admin.query(`SET job_definer_bootstrap.migration_role = '${owner}'`);
+      try {
+        await bootstrapJobDefiner(admin);
+      } finally {
+        await admin.query(`RESET job_definer_bootstrap.migration_role`);
+      }
       const res = await migrate(url(db, owner, "x"));
       expect(res.applied.length).toBe(MIGRATION_COUNT);
     } finally {
@@ -264,4 +286,346 @@ describe("BR-4 only the role-already-exists race codes are swallowed", () => {
       await c.end();
     }
   });
+});
+
+describe("BR-5 0022 upgrade path: pre-existing claims survive the new lease-shape CHECK", () => {
+  // codex round-01 [P1]: on an already-migrated database, any row the OLD one-way
+  // claim_outbox_batch already claimed has claimed_at NOT NULL and the brand-new
+  // lease_expires_at column NULL — the shape CHECK 0022 adds validates synchronously against
+  // EXISTING data on ADD CONSTRAINT, so without a backfill this would abort the migration on any
+  // database that ever claimed an outbox event before upgrading.
+  //
+  // codex round-06 [P1]: the FIRST version of this test ran the whole upgrade path as the
+  // superuser `admin` connection, matching this file's OTHER BR-* tests' convention — but that
+  // convention is exactly what masks the real defect for THIS specific statement: outbox_events
+  // has FORCE RLS and the backfill UPDATE sets no tenant GUC, so under the task contract's own
+  // stated production posture (a genuinely non-superuser, NOBYPASSRLS migration role —
+  // setupNonSuperuserOwnerContext's whole reason to exist), that UPDATE would silently match zero
+  // rows. Rebuilt on the non-superuser harness with a genuine CROSS-TENANT seed, so the assertion
+  // actually proves the backfill sees every tenant's legacy rows despite FORCE RLS, not just
+  // whichever one happens to match an absent GUC.
+  it("backfills lease_expires_at across tenants for legacy claimed_at-only rows under a non-superuser migration owner, and the backfilled leases are immediately reclaimable", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_br5_legacy_claim");
+    // ctx.superuser stays connected to the harness's OWN base database throughout (it exists for
+    // cluster-level admin — CREATE ROLE/DATABASE/GRANT — not for querying data inside dbName); a
+    // separate superuser connection INTO dbName is needed to seed/verify fixtures while
+    // outbox_events' FORCE RLS is bypassed, matching this suite's own admin/`c` convention.
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      // apply every migration BEFORE 0022 (numeric prefix < 22) as the NON-SUPERUSER owner —
+      // simulates an already-migrated database on the PRE-0022 schema, run by the task contract's
+      // own stated production migration-role posture.
+      const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+      for (const f of files) {
+        if (Number.parseInt(f.slice(0, 4), 10) >= 22) continue;
+        await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+      }
+
+      // Seed a pre-existing claim under the OLD one-way claim_outbox_batch in TWO tenants —
+      // backdated well past five minutes so the backfilled lease is already expired
+      // (deterministically reclaimable), and cross-tenant so the backfill's RLS-safety is
+      // actually exercised, not just its idempotency.
+      const claimedAt = new Date(Date.now() - 3_600_000);
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES
+           ('BR5 A', 'br5-legacy-a', 'active'), ('BR5 B', 'br5-legacy-b', 'active') RETURNING id`,
+      );
+      const tenantA = (t.rows[0] as { id: string }).id;
+      const tenantB = (t.rows[1] as { id: string }).id;
+      const seedEvent = (tenantId: string) =>
+        superuserInDb
+          .query(
+            `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload, claimed_at)
+             VALUES ($1, 'br5_test', gen_random_uuid(), 1, 'br5.legacy', '{}'::jsonb, $2) RETURNING id`,
+            [tenantId, claimedAt],
+          )
+          .then((r) => (r.rows[0] as { id: string }).id);
+      const eventIdA = await seedEvent(tenantA);
+      const eventIdB = await seedEvent(tenantB);
+
+      // job_definer must exist + be granted to THIS owner before 0022 asserts it — lock-protected
+      // like every other first reach of 0022 in this suite (see withJobDefinerLock). Applying
+      // 0022 raw (not via migrate()) as the non-superuser owner is the regression proof itself:
+      // it must NOT throw on either tenant's pre-existing claimed row.
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const sql0022 = await readFile(
+          path.join(MIGRATIONS_DIR, "0022_job_claim_lease_core.sql"),
+          "utf8",
+        );
+        await ctx.ownerPool.query(sql0022);
+      });
+
+      // Verify via the superuser connection too: outbox_events has FORCE RLS and ctx.ownerPool
+      // (the plain migration owner, not job_definer) sets no tenant GUC, so it would see zero rows
+      // here regardless of whether the backfill itself worked — that would be a false negative in
+      // this ASSERTION, not evidence about the migration under test.
+      const rows = await superuserInDb.query(
+        `SELECT id, claimed_at, lease_expires_at FROM outbox_events WHERE id = ANY($1) ORDER BY id`,
+        [[eventIdA, eventIdB]],
+      );
+      expect(rows.rows.length).toBe(2);
+      for (const row of rows.rows as { claimed_at: Date; lease_expires_at: Date }[]) {
+        expect(row.lease_expires_at.getTime()).toBe(row.claimed_at.getTime() + 5 * 60_000);
+      }
+
+      const worker = await ctx.connectAsWorker();
+      const claimed = await worker.query(
+        `SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = ANY($1)`,
+        [[eventIdA, eventIdB]],
+      );
+      expect(claimed.rows.length).toBe(2);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
+describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", () => {
+  // codex round-08 [P2]: membership in job_definer (asserted in 0022 Step 1) only guarantees
+  // SET ROLE job_definer is AVAILABLE — it does not automatically confer job_definer's privileges
+  // unless the migration role is also INHERIT. INHERIT is the default and what every OTHER test
+  // in this file uses via setupNonSuperuserOwnerContext, which is exactly why this bug (Step 4's
+  // post-transfer REVOKE/GRANT on job_definer-owned functions failing "must be owner of function"
+  // under NOINHERIT) was never caught before. NOINHERIT is a valid, more cautious production
+  // posture. This proves Step 4's SET ROLE job_definer bracket actually runs as job_definer
+  // regardless, by asserting app_worker can call a function whose EXECUTE grant that bracket set.
+  it("app_worker can call claim_outbox_batch after the whole migration applies", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_br6_noinherit", {
+      inherit: false,
+    });
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const res = await ctx.runMigration();
+        expect(res.applied[res.applied.length - 1]).toBe("0022_job_claim_lease_core.sql");
+      });
+
+      const worker = await ctx.connectAsWorker();
+      const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
+      expect(claimed.rows).toEqual([]);
+    } finally {
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
+describe("setupNonSuperuserOwnerContext teardown (codex round-07 [P1])", () => {
+  // Closing connections alone left the scratch database, the cluster-global owner role, and its
+  // job_definer membership behind — a LOGIN role with a fixed, known password and BYPASSRLS-via-
+  // membership persisting on shared local clusters. Proves teardown now actually drops both.
+  it("drops the scratch database and its privileged owner role", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_teardown_check");
+    const { dbName, ownerRole } = ctx;
+    await ctx.teardown();
+
+    const admin = await connect(BASE!);
+    try {
+      const db = await admin.query(`SELECT 1 FROM pg_database WHERE datname = $1`, [dbName]);
+      expect(db.rows.length).toBe(0);
+      const role = await admin.query(`SELECT 1 FROM pg_roles WHERE rolname = $1`, [ownerRole]);
+      expect(role.rows.length).toBe(0);
+    } finally {
+      await admin.end();
+    }
+  }, 30_000);
+});
+
+/**
+ * JCL-2/JCL-3 — the 0022 job-core migration's own fail-closed assertions (task contract §4.1
+ * step 1). Every migrate() call above runs as `plexco`, a real Postgres SUPERUSER — superusers
+ * bypass RLS *and* every ACL/membership check unconditionally, so a migration run this way can
+ * never observe "job_definer is missing", "job_definer has the wrong attributes", or "the
+ * migration role lacks job_definer membership" as failures (see design-probe.md). These tests use
+ * setupNonSuperuserOwnerContext for a genuinely NOSUPERUSER NOBYPASSRLS DDL owner instead.
+ *
+ * job_definer is CLUSTER-global, so the "absent" / "wrong attribute" sub-cases deliberately put
+ * it into a broken state — that MUST run under withJobDefinerLock (see its doc comment) so it can
+ * never overlap a sibling test file's own bootstrap+migrate. JCL-3 (missing membership) does not
+ * touch job_definer's own state at all — it bootstraps via a DIFFERENT role (`ctx.superuser`, not
+ * the owner under test), which is a normal idempotent/correct bootstrap and needs no lock.
+ */
+describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditions", () => {
+  async function expectNoPartialJobCoreRow(ctx: { ownerPool: pg.Pool }): Promise<void> {
+    const rec = await ctx.ownerPool.query(
+      `SELECT 1 FROM schema_migrations WHERE name = '0022_job_claim_lease_core.sql'`,
+    );
+    expect(rec.rows.length).toBe(0);
+  }
+
+  /**
+   * A real job_definer accumulates GRANT dependents (schema USAGE, function ownership) in every
+   * database any test has bootstrapped it into — Postgres tracks role dependencies CLUSTER-wide
+   * (pg_shdepend), so `DROP ROLE job_definer` fails with "cannot be dropped because some objects
+   * depend on it" the moment ANY other suite has ever bootstrapped it, which is the common case.
+   * Renaming instead of dropping sidesteps this entirely: dependencies are tracked by OID, so a
+   * rename-away/rename-back round trip preserves every one of them, in every database, with zero
+   * cross-database cleanup. Must run inside withJobDefinerLock (the caller's job).
+   */
+  async function hideRealJobDefiner(superuser: pg.Client, fn: () => Promise<void>): Promise<void> {
+    const existing = await superuser.query(`SELECT 1 FROM pg_roles WHERE rolname = 'job_definer'`);
+    const hadRealRole = existing.rows.length > 0;
+    if (hadRealRole) {
+      await superuser.query(`ALTER ROLE job_definer RENAME TO job_definer_hidden_for_test`);
+    }
+    try {
+      await fn();
+    } finally {
+      if (hadRealRole) {
+        await superuser.query(`ALTER ROLE job_definer_hidden_for_test RENAME TO job_definer`);
+      }
+    }
+  }
+
+  it("JCL-2a: job_definer absent — migration fails, 0022 is not recorded", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_jcl2_absent");
+    try {
+      await withJobDefinerLock(BASE!, () =>
+        hideRealJobDefiner(ctx.superuser, async () => {
+          await expect(ctx.runMigration()).rejects.toThrow(/job_definer/i);
+        }),
+      );
+      await expectNoPartialJobCoreRow(ctx);
+    } finally {
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("JCL-2b: job_definer with a wrong attribute — migration fails, 0022 is not recorded", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_jcl2_wrongattr");
+    try {
+      await withJobDefinerLock(BASE!, () =>
+        hideRealJobDefiner(ctx.superuser, async () => {
+          // LOGIN instead of NOLOGIN — the exact drift the bootstrap's own attribute check
+          // rejects (infra/postgres-init/01-job-definer.sql); the migration's assertion must too.
+          await ctx.superuser.query(
+            `CREATE ROLE job_definer LOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`,
+          );
+          try {
+            await expect(ctx.runMigration()).rejects.toThrow(/job_definer/i);
+          } finally {
+            // Freshly created for this test, zero dependents (the migration failed before any
+            // grant) — safe to drop outright, restoring "absent" for hideRealJobDefiner's restore.
+            await ctx.superuser.query(`DROP ROLE job_definer`);
+          }
+        }),
+      );
+      await expectNoPartialJobCoreRow(ctx);
+    } finally {
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("JCL-3: job_definer correct but not granted to the migration owner — ownership transfer fails closed", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_jcl3_nomembership");
+    try {
+      // Bootstrap via the SUPERUSER connection, not ctx.bootstrapJobDefinerForOwner(): job_definer
+      // ends up correct and granted to `plexco` (CURRENT_USER for ctx.superuser), never to
+      // ctx.ownerRole. Idempotent/correct — no lock needed (see describe-block doc comment).
+      await bootstrapJobDefiner(ctx.superuser);
+      await expect(ctx.runMigration()).rejects.toThrow(/job_definer/i);
+      await expectNoPartialJobCoreRow(ctx);
+    } finally {
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("JCL-3b: job_definer already granted to a runtime role — migration fails closed even though the migration role's own membership is correct (codex round-07 [P1])", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_jcl3b_runtimemember");
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        // Simulate a misconfiguration/unrelated process granting job_definer to a runtime role —
+        // bypassing infra/postgres-init/01-job-definer.sql's OWN equivalent check entirely (round-08
+        // [P1]), so this proves 0022's Step 1 check independently, not just the bootstrap's.
+        await ctx.superuser.query(`GRANT job_definer TO app_worker`);
+        try {
+          await expect(ctx.runMigration()).rejects.toThrow(/app_worker|app\/app_worker\/readonly/i);
+          await expectNoPartialJobCoreRow(ctx);
+        } finally {
+          await ctx.superuser.query(`REVOKE job_definer FROM app_worker`);
+        }
+      });
+    } finally {
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
+describe("job_definer bootstrap script itself fails closed on runtime-role targets (codex round-08 [P1])", () => {
+  // infra/postgres-init/01-job-definer.sql is advertised safe to re-run at ANY time, including
+  // long after 0022 has already applied — when 0022's own Step 1 denylist (JCL-3b above) can never
+  // run again to catch a bad grant. These prove the bootstrap script rejects the same class of
+  // misuse independently, so a later `MIGRATION_ROLE=app_worker` re-run can never slip through.
+  it("refuses to grant job_definer to a runtime role passed as the migration_role target", async () => {
+    await withJobDefinerLock(BASE!, async () => {
+      const admin = await connect(BASE!);
+      try {
+        await bootstrapJobDefiner(admin); // idempotent baseline: job_definer exists + correct
+        await admin.query(`SET job_definer_bootstrap.migration_role = 'readonly'`);
+        try {
+          await expect(bootstrapJobDefiner(admin)).rejects.toThrow(/runtime role/i);
+        } finally {
+          await admin.query(`RESET job_definer_bootstrap.migration_role`);
+        }
+        const granted = await admin.query(
+          `SELECT 1 FROM pg_auth_members am
+             JOIN pg_roles m ON m.oid = am.member
+             JOIN pg_roles r ON r.oid = am.roleid
+            WHERE r.rolname = 'job_definer' AND m.rolname = 'readonly'`,
+        );
+        expect(granted.rows.length).toBe(0);
+      } finally {
+        await admin.end();
+      }
+    });
+  }, 30_000);
+
+  it("refuses to proceed at all when job_definer is already granted to a runtime role beforehand", async () => {
+    await withJobDefinerLock(BASE!, async () => {
+      const admin = await connect(BASE!);
+      try {
+        await bootstrapJobDefiner(admin); // idempotent baseline: job_definer exists + correct
+        await admin.query(`GRANT job_definer TO app_worker`);
+        try {
+          await expect(bootstrapJobDefiner(admin)).rejects.toThrow(/already granted/i);
+        } finally {
+          await admin.query(`REVOKE job_definer FROM app_worker`);
+        }
+      } finally {
+        await admin.end();
+      }
+    });
+  }, 30_000);
+
+  // codex round-09 [P1]: the denylist above must never call pg_has_role directly on a runtime
+  // role name, because on the documented fresh-cluster order (this bootstrap runs BEFORE
+  // migration 0000 creates app/app_worker/readonly) that role name does not exist yet, and
+  // pg_has_role RAISES for an absent role rather than returning false. This project's own shared
+  // dev/CI cluster always has app/app_worker/readonly already created by an earlier migrate()
+  // run (they are cluster-global and never dropped), so a full bootstrapJobDefiner() run can
+  // never reproduce a genuinely fresh cluster without unsafely dropping roles a concurrent test
+  // file may depend on. Instead this proves the underlying hazard AND the guard pattern
+  // (01-job-definer.sql now filters through pg_roles before calling pg_has_role) directly,
+  // against a role name that is guaranteed never to exist.
+  it("pg_has_role on an absent role name raises rather than returning false — the exact hazard the fresh-cluster bootstrap must guard against (codex round-09 [P1])", async () => {
+    const admin = await connect(BASE!);
+    try {
+      const fakeRole = "zz_never_created_probe_role";
+      await expect(
+        admin.query(`SELECT pg_has_role('${fakeRole}', 'job_definer', 'MEMBER')`),
+      ).rejects.toThrow(/does not exist/i);
+
+      const guarded = await admin.query(
+        `SELECT EXISTS (
+           SELECT 1 FROM pg_roles WHERE rolname = $1 AND pg_has_role(rolname, 'job_definer', 'MEMBER')
+         ) AS is_member`,
+        [fakeRole],
+      );
+      expect((guarded.rows[0] as { is_member: boolean }).is_member).toBe(false);
+    } finally {
+      await admin.end();
+    }
+  }, 30_000);
 });

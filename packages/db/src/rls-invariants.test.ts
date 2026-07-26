@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { eq } from "drizzle-orm";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -12,6 +13,7 @@ import {
   joinRequests,
   memberships,
   notificationDeliveries,
+  outboxEvents,
   paymentAllocations,
   players,
   sessions,
@@ -21,8 +23,11 @@ import {
 import { migrate } from "./migrate.js";
 import { tenantRepo, withTenant } from "./tenant.js";
 import {
+  bootstrapJobDefiner,
   expectErrorChainToMatch,
+  setupNonSuperuserOwnerContext,
   setupRlsTestContext,
+  withJobDefinerLock,
   type RlsTestContext,
 } from "./test-harness.js";
 
@@ -56,10 +61,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(22); // 0000..0021 (0021 = non-money tenant-integrity FKs)
+    expect(ctx.migrateResult.applied.length).toBe(23); // 0000..0022 (0022 = job-claim-lease-core)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(22);
+    expect(second.skipped.length).toBe(23);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1287,13 +1292,19 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
     await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
     await admin.query(`CREATE DATABASE ${dbName}`);
     try {
-      const res = await migrate(url(dbName));
-      expect(res.applied.length).toBe(22); // 0000..0021
+      // job_definer must exist (correctly) before this reaches 0022 — this describe block uses
+      // its own local `admin` connection (not setupRlsTestContext), so bootstrap+migrate need the
+      // same lock protection as everywhere else 0022 is reached for the first time.
+      const res = await withJobDefinerLock(BASE!, async () => {
+        await bootstrapJobDefiner(admin);
+        return migrate(url(dbName));
+      });
+      expect(res.applied.length).toBe(23); // 0000..0022
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(22);
+        expect(rows.length).toBe(23);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -1312,4 +1323,502 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
     }
   }, 120_000);
+});
+
+/**
+ * JCL-1, JCL-4..JCL-12 — job-infra lease/reclaim/audit/delivery acceptance matrix (0022,
+ * docs/autopilot-db-job-claim-lease-core.md §5). JCL-2/JCL-3 (migration fail-closed on
+ * job_definer preconditions) live in migrate.test.ts, which already uses a genuinely
+ * non-superuser context; JCL-13/JCL-13b (bootstrap) are covered by the design-probe.md
+ * empirical proof plus the fresh-volume/idempotent-rerun checks run during implementation.
+ *
+ * Every test here calls claim_outbox_batch/claim_projector_delivery_batch with p_limit=100
+ * and filters results to its OWN seeded ids (WHERE event_id = ANY($1)) — this file's tests run
+ * sequentially within one describe tree but share ONE database (`ctx`), so a test must never
+ * assume it is the only source of unclaimed rows and must not leave any of its own rows
+ * unclaimed at the end (a stray unclaimed row would compete for a later test's LIMIT window).
+ */
+describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", () => {
+  async function seedOutboxEvent(tenantId: string, type = "jcl.test.event"): Promise<string> {
+    const { rows } = await ctx.owner.query(
+      `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload)
+       VALUES ($1, 'jcl_test', gen_random_uuid(), 1, $2, '{}'::jsonb) RETURNING id`,
+      [tenantId, type],
+    );
+    return (rows[0] as { id: string }).id;
+  }
+
+  it("JCL-1: a non-superuser migration run leaves all five named functions job_definer-owned", async () => {
+    const nsCtx = await setupNonSuperuserOwnerContext("plexco_rls_jcl1_nonsuper");
+    try {
+      // bootstrap + migrate + the ownership verification below all reference job_definer BY NAME
+      // (grant; the 0022 assertion and ownership transfers; pg_get_userbyid comparison) — one
+      // continuous lock hold, matching setupRlsTestContext / JCL-4 / JCL-12.
+      await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
+        await nsCtx.bootstrapJobDefinerForOwner();
+        const res = await nsCtx.runMigration();
+        expect(res.applied[res.applied.length - 1]).toBe("0022_job_claim_lease_core.sql");
+
+        const { rows } = await nsCtx.ownerPool.query(
+          `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
+        );
+        expect((rows as { proname: string }[]).map((r) => r.proname).sort()).toEqual(
+          [
+            "claim_outbox_batch",
+            "claim_projector_delivery_batch",
+            "complete_projector_delivery",
+            "forbid_job_audit_mutation",
+            "job_prepare_projector_delivery",
+          ].sort(),
+        );
+      });
+    } finally {
+      await nsCtx.teardown();
+    }
+  }, 60_000);
+
+  it("JCL-4: job_definer ownership is what fixes the latent cross-tenant RLS defect", async () => {
+    const evA = await seedOutboxEvent(ctx.tenantA);
+    const evB = await seedOutboxEvent(ctx.tenantB);
+
+    // Reassign ownership to a plain NOSUPERUSER/NOBYPASSRLS role — reproducing the ORIGINAL
+    // defect this slice fixes (design-probe.md). Restored in `finally`: every other test in this
+    // describe block depends on claim_outbox_batch staying job_definer-owned. Both the steal and
+    // the restore reference "job_definer" BY NAME (ALTER FUNCTION ... OWNER TO job_definer) — the
+    // whole steal/test/restore sequence holds ONE lock so a concurrent migrate.test.ts JCL-2 rename
+    // can never land in the gap and make the restore silently fail (see withJobDefinerLock).
+    await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
+      await ctx.owner.query(`DROP ROLE IF EXISTS jcl4_plain_owner`);
+      await ctx.owner.query(`CREATE ROLE jcl4_plain_owner NOSUPERUSER NOBYPASSRLS NOLOGIN`);
+      await ctx.owner.query(`GRANT SELECT, UPDATE ON outbox_events TO jcl4_plain_owner`);
+      // the function's OWN audit insert also runs as its owner — without SELECT+INSERT here it
+      // fails closed on job_audit_events before ever reaching the RLS check this test is proving.
+      // SELECT is required even though the statement only INSERTs: the primary query JOINs against
+      // the INSERT CTE's RETURNING output (`JOIN audited a ON a.job_id = u.id`), and Postgres checks
+      // table-level SELECT for that reference in addition to INSERT for the write itself.
+      // job_definer never needs this grant explicitly — it OWNS job_audit_events, implying both.
+      await ctx.owner.query(`GRANT SELECT, INSERT ON job_audit_events TO jcl4_plain_owner`);
+      await ctx.owner.query(`ALTER FUNCTION claim_outbox_batch(integer) OWNER TO jcl4_plain_owner`);
+      try {
+        const zero = await ctx.workerPool.query(
+          `SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = ANY($1)`,
+          [[evA, evB]],
+        );
+        expect(zero.rows.length).toBe(0);
+      } finally {
+        await ctx.owner.query(`ALTER FUNCTION claim_outbox_batch(integer) OWNER TO job_definer`);
+        await ctx.owner.query(`REVOKE SELECT, UPDATE ON outbox_events FROM jcl4_plain_owner`);
+        await ctx.owner.query(`REVOKE SELECT, INSERT ON job_audit_events FROM jcl4_plain_owner`);
+        await ctx.owner.query(`DROP ROLE jcl4_plain_owner`);
+      }
+    });
+
+    // job_definer-owned again: the SAME rows are now claimable (and consumed, so they don't
+    // linger unclaimed for a later test).
+    const restored = await ctx.workerPool.query(
+      `SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = ANY($1)`,
+      [[evA, evB]],
+    );
+    const restoredIds = new Set((restored.rows as { event_id: string }[]).map((r) => r.event_id));
+    expect(restoredIds.has(evA)).toBe(true);
+    expect(restoredIds.has(evB)).toBe(true);
+  });
+
+  it("JCL-5: app_worker claims one row per eligible event across tenants; audit rows match", async () => {
+    const evA = await seedOutboxEvent(ctx.tenantA);
+    const evB = await seedOutboxEvent(ctx.tenantB);
+    const { rows } = await ctx.workerPool.query(
+      `SELECT event_id, tenant_id FROM claim_outbox_batch(100) WHERE event_id = ANY($1)`,
+      [[evA, evB]],
+    );
+    expect(rows.length).toBe(2);
+    const byId = new Map(
+      (rows as { event_id: string; tenant_id: string }[]).map((r) => [r.event_id, r.tenant_id]),
+    );
+    expect(byId.get(evA)).toBe(ctx.tenantA);
+    expect(byId.get(evB)).toBe(ctx.tenantB);
+
+    const audit = await ctx.owner.query(
+      `SELECT job_id, tenant_id, actor, reason, fn_name FROM job_audit_events
+       WHERE job_id = ANY($1) ORDER BY job_id`,
+      [[evA, evB]],
+    );
+    expect(audit.rows.length).toBe(2);
+    for (const row of audit.rows as {
+      job_id: string;
+      tenant_id: string;
+      actor: string;
+      reason: string;
+      fn_name: string;
+    }[]) {
+      expect(row.actor).toBe("system");
+      expect(row.reason).toBe("outbox_claimed");
+      expect(row.fn_name).toBe("claim_outbox_batch");
+      expect(row.tenant_id).toBe(row.job_id === evA ? ctx.tenantA : ctx.tenantB);
+    }
+  });
+
+  it("JCL-6: an expired lease is reclaimed and re-claimable; two audit rows for the same job_id are accepted", async () => {
+    const ev = await seedOutboxEvent(ctx.tenantA);
+    const first = await ctx.workerPool.query(
+      `SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`,
+      [ev],
+    );
+    expect(first.rows.length).toBe(1);
+
+    // force the lease into the past — simulates a crashed worker past its 5-minute lease
+    await ctx.owner.query(
+      `UPDATE outbox_events SET lease_expires_at = now() - interval '1 second' WHERE id = $1`,
+      [ev],
+    );
+
+    const second = await ctx.workerPool.query(
+      `SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`,
+      [ev],
+    );
+    expect(second.rows.length).toBe(1); // reclaimed AND re-claimed in the same call
+
+    const audit = await ctx.owner.query(
+      `SELECT reason FROM job_audit_events WHERE job_id = $1 ORDER BY created_at`,
+      [ev],
+    );
+    const reasons = (audit.rows as { reason: string }[]).map((r) => r.reason);
+    // codex round-11 [P2]: the reclaim + new-claim rows from the SECOND claim_outbox_batch call
+    // are inserted in the same transaction, so created_at DEFAULT now() ties them — ORDER BY
+    // created_at has no defined order between ties. Only the first call's row is genuinely,
+    // temporally first; assert the tied pair as a set instead of assuming a fixed order.
+    expect(reasons[0]).toBe("outbox_claimed");
+    expect(reasons.slice(1).sort()).toEqual(["outbox_claimed", "outbox_lease_reclaimed"]);
+  });
+
+  it("JCL-7: two concurrent claimers never both receive the same event", async () => {
+    const ev = await seedOutboxEvent(ctx.tenantA);
+    const [a, b] = await Promise.all([
+      ctx.workerPool.query(`SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`, [
+        ev,
+      ]),
+      ctx.workerPool.query(`SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`, [
+        ev,
+      ]),
+    ]);
+    expect(a.rows.length + b.rows.length).toBe(1);
+  });
+
+  it("JCL-8: p_limit outside 1..100 is a deterministic error with no mutation, for both claim functions", async () => {
+    const ev = await seedOutboxEvent(ctx.tenantA);
+    await expect(ctx.workerPool.query(`SELECT * FROM claim_outbox_batch(0)`)).rejects.toThrow(
+      /p_limit/,
+    );
+    await expect(ctx.workerPool.query(`SELECT * FROM claim_outbox_batch(101)`)).rejects.toThrow(
+      /p_limit/,
+    );
+
+    await ctx.workerPool.query(`SELECT job_prepare_projector_delivery($1, 'jcl8_projector')`, [ev]);
+    await expect(
+      ctx.workerPool.query(`SELECT * FROM claim_projector_delivery_batch('jcl8_projector', 0)`),
+    ).rejects.toThrow(/p_limit/);
+    await expect(
+      ctx.workerPool.query(`SELECT * FROM claim_projector_delivery_batch('jcl8_projector', 101)`),
+    ).rejects.toThrow(/p_limit/);
+
+    // no mutation: the outbox event is still unclaimed, the delivery row still pending
+    const outboxState = await ctx.owner.query(
+      `SELECT claimed_at FROM outbox_events WHERE id = $1`,
+      [ev],
+    );
+    expect((outboxState.rows[0] as { claimed_at: Date | null }).claimed_at).toBeNull();
+    const deliveryState = await ctx.owner.query(
+      `SELECT status FROM projector_deliveries WHERE event_id = $1 AND projector = 'jcl8_projector'`,
+      [ev],
+    );
+    expect((deliveryState.rows[0] as { status: string }).status).toBe("pending");
+
+    // cleanup: claim it so it doesn't linger unclaimed for later tests
+    await ctx.workerPool.query(`SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`, [
+      ev,
+    ]);
+  });
+
+  it("JCL-8b: a NULL projector/result is rejected explicitly, not silently accepted (codex round-05 [P2])", async () => {
+    const ev = await seedOutboxEvent(ctx.tenantA);
+
+    // NULL !~ pattern is SQL NULL, not TRUE — each function must check IS NULL explicitly.
+    await expect(
+      ctx.workerPool.query(`SELECT job_prepare_projector_delivery($1, NULL)`, [ev]),
+    ).rejects.toThrow(/lower snake_case identifier/);
+    await expect(
+      ctx.workerPool.query(`SELECT * FROM claim_projector_delivery_batch(NULL, 100)`),
+    ).rejects.toThrow(/lower snake_case identifier/);
+
+    await ctx.workerPool.query(`SELECT job_prepare_projector_delivery($1, 'jcl8b_projector')`, [
+      ev,
+    ]);
+    const claimed = await ctx.workerPool.query(
+      `SELECT claim_token FROM claim_projector_delivery_batch('jcl8b_projector', 100) WHERE event_id = $1`,
+      [ev],
+    );
+    const token = (claimed.rows[0] as { claim_token: string }).claim_token;
+    // NULL NOT IN (...) is SQL NULL, not TRUE — would otherwise fall through to the dlq branch.
+    await expect(
+      ctx.workerPool.query(
+        `SELECT complete_projector_delivery($1, 'jcl8b_projector', $2, NULL, NULL, NULL, NULL)`,
+        [ev, token],
+      ),
+    ).rejects.toThrow(/result must be delivered, retry or dlq/);
+
+    // cleanup: claim the outbox event so it doesn't linger unclaimed for later tests
+    await ctx.workerPool.query(`SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`, [
+      ev,
+    ]);
+  });
+
+  it("JCL-9: app_worker has zero direct DML on outbox/projector/audit tables — only EXECUTE succeeds", async () => {
+    const denied: readonly (readonly [string, unknown[]])[] = [
+      ["SELECT * FROM outbox_events LIMIT 1", []],
+      [
+        `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload)
+         VALUES ($1, 'x', gen_random_uuid(), 1, 'x', '{}')`,
+        [ctx.tenantA],
+      ],
+      ["UPDATE outbox_events SET claimed_at = now() WHERE false", []],
+      ["DELETE FROM outbox_events WHERE false", []],
+      ["SELECT * FROM projector_deliveries LIMIT 1", []],
+      [
+        "INSERT INTO projector_deliveries (event_id, projector) VALUES (gen_random_uuid(), 'x')",
+        [],
+      ],
+      ["UPDATE projector_deliveries SET status = 'pending' WHERE false", []],
+      ["DELETE FROM projector_deliveries WHERE false", []],
+      ["SELECT * FROM job_audit_events LIMIT 1", []],
+      [
+        `INSERT INTO job_audit_events (job_id, tenant_id, reason, fn_name, operation_id)
+         VALUES (gen_random_uuid(), $1, 'x', 'x', gen_random_uuid())`,
+        [ctx.tenantA],
+      ],
+    ];
+    for (const [sql, params] of denied) {
+      await expect(ctx.workerPool.query(sql, params), sql).rejects.toThrow(/permission denied/i);
+    }
+
+    // only EXECUTE succeeds
+    const ev = await seedOutboxEvent(ctx.tenantA);
+    await ctx.workerPool.query(`SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`, [
+      ev,
+    ]);
+  });
+
+  it("JCL-9b: app keeps INSERT/SELECT on outbox_events for the producer side, but UPDATE/DELETE are revoked and lease fields cannot be set on insert (codex round-03/round-04 [P1])", async () => {
+    const created = await withTenant(ctx.appDb.db, ctx.tenantA, async (tx) => {
+      const rows = await tx
+        .insert(outboxEvents)
+        .values({
+          tenantId: ctx.tenantA,
+          aggregateType: "jcl_app_seat",
+          aggregateId: randomUUID(),
+          sequence: 1,
+          type: "jcl.app.seat",
+          payload: {},
+        })
+        .returning();
+      return rows[0]!;
+    });
+    expect(created.tenantId).toBe(ctx.tenantA);
+
+    const seen = await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      tx.select().from(outboxEvents).where(eq(outboxEvents.id, created.id)),
+    );
+    expect(seen.length).toBe(1);
+
+    // codex round-04 [P1]: app must not be able to set claimed_at/lease_expires_at on ITS OWN
+    // insert — that would satisfy the shape CHECK while suppressing the event from
+    // claim_outbox_batch with no outbox_claimed audit row. Enforced by
+    // outbox_events_producer_lease_boundary_chk (current_user = 'app' -> both must be NULL),
+    // not a column-level grant (rejected — see the migration's own comment on this constraint).
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+        tx.insert(outboxEvents).values({
+          tenantId: ctx.tenantA,
+          aggregateType: "jcl_app_seat_bad",
+          aggregateId: randomUUID(),
+          sequence: 1,
+          type: "jcl.app.seat.bad",
+          payload: {},
+          claimedAt: new Date(),
+          leaseExpiresAt: new Date(Date.now() + 5 * 60_000),
+        }),
+      ),
+      /outbox_events_producer_lease_boundary_chk/,
+    );
+
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+        tx
+          .update(outboxEvents)
+          .set({ claimedAt: new Date() })
+          .where(eq(outboxEvents.id, created.id)),
+      ),
+      /permission denied/i,
+    );
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+        tx.delete(outboxEvents).where(eq(outboxEvents.id, created.id)),
+      ),
+      /permission denied/i,
+    );
+
+    // cleanup: claim it via the real function so it doesn't linger unclaimed for later tests
+    await ctx.workerPool.query(`SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`, [
+      created.id,
+    ]);
+  });
+
+  it("JCL-10: prepare is idempotent; claim once; complete delivered with the exact token succeeds once", async () => {
+    const ev = await seedOutboxEvent(ctx.tenantA);
+    await ctx.workerPool.query(`SELECT job_prepare_projector_delivery($1, 'jcl10_projector')`, [
+      ev,
+    ]);
+    await ctx.workerPool.query(`SELECT job_prepare_projector_delivery($1, 'jcl10_projector')`, [
+      ev,
+    ]); // duplicate, no-op
+
+    const count = await ctx.owner.query(
+      `SELECT count(*)::int AS n FROM projector_deliveries WHERE event_id = $1 AND projector = 'jcl10_projector'`,
+      [ev],
+    );
+    expect((count.rows[0] as { n: number }).n).toBe(1); // exactly one delivery row despite two prepares
+
+    const claimed = await ctx.workerPool.query(
+      `SELECT claim_token FROM claim_projector_delivery_batch('jcl10_projector', 100) WHERE event_id = $1`,
+      [ev],
+    );
+    expect(claimed.rows.length).toBe(1);
+    const token = (claimed.rows[0] as { claim_token: string }).claim_token;
+
+    const completed = await ctx.workerPool.query(
+      `SELECT complete_projector_delivery($1, 'jcl10_projector', $2, 'delivered', NULL, 'prov-ref-1', NULL) AS ok`,
+      [ev, token],
+    );
+    expect((completed.rows[0] as { ok: boolean }).ok).toBe(true);
+
+    // a late/duplicate completion with the SAME (now-stale) token is a no-op — no state overwrite
+    const dup = await ctx.workerPool.query(
+      `SELECT complete_projector_delivery($1, 'jcl10_projector', $2, 'delivered', NULL, 'prov-ref-2', NULL) AS ok`,
+      [ev, token],
+    );
+    expect((dup.rows[0] as { ok: boolean }).ok).toBe(false);
+
+    const final = await ctx.owner.query(
+      `SELECT status, provider_ref, attempts FROM projector_deliveries WHERE event_id = $1 AND projector = 'jcl10_projector'`,
+      [ev],
+    );
+    const f = final.rows[0] as { status: string; provider_ref: string; attempts: number };
+    expect(f.status).toBe("delivered");
+    expect(f.provider_ref).toBe("prov-ref-1"); // NOT overwritten by the duplicate completion
+    expect(f.attempts).toBe(1); // incremented exactly once
+  });
+
+  it("JCL-11: retry-then-reclaim increments attempts once per completion; stale token rejected after re-claim; dlq is terminal", async () => {
+    const ev = await seedOutboxEvent(ctx.tenantA);
+    await ctx.workerPool.query(`SELECT job_prepare_projector_delivery($1, 'jcl11_projector')`, [
+      ev,
+    ]);
+
+    const claim1 = await ctx.workerPool.query(
+      `SELECT claim_token FROM claim_projector_delivery_batch('jcl11_projector', 100) WHERE event_id = $1`,
+      [ev],
+    );
+    const token1 = (claim1.rows[0] as { claim_token: string }).claim_token;
+
+    const future = new Date(Date.now() + 60_000);
+    const retryOk = await ctx.workerPool.query(
+      `SELECT complete_projector_delivery($1, 'jcl11_projector', $2, 'retry', $3, NULL, 'jcl11_transient') AS ok`,
+      [ev, token1, future],
+    );
+    expect((retryOk.rows[0] as { ok: boolean }).ok).toBe(true);
+
+    // stale token cannot complete after this point, even before re-claim
+    const staleBeforeReclaim = await ctx.workerPool.query(
+      `SELECT complete_projector_delivery($1, 'jcl11_projector', $2, 'delivered', NULL, 'x', NULL) AS ok`,
+      [ev, token1],
+    );
+    expect((staleBeforeReclaim.rows[0] as { ok: boolean }).ok).toBe(false);
+
+    // make the retry due, then re-claim -> fresh token
+    await ctx.owner.query(
+      `UPDATE projector_deliveries SET next_attempt_at = now() - interval '1 second'
+       WHERE event_id = $1 AND projector = 'jcl11_projector'`,
+      [ev],
+    );
+    const claim2 = await ctx.workerPool.query(
+      `SELECT claim_token, attempts FROM claim_projector_delivery_batch('jcl11_projector', 100) WHERE event_id = $1`,
+      [ev],
+    );
+    expect(claim2.rows.length).toBe(1);
+    const { claim_token: token2, attempts: attemptsAtClaim2 } = claim2.rows[0] as {
+      claim_token: string;
+      attempts: number;
+    };
+    expect(token2).not.toBe(token1);
+    expect(attemptsAtClaim2).toBe(1); // incremented once by the retry completion, not by claiming
+
+    // the OLD token still cannot complete after re-claim
+    const staleAfterReclaim = await ctx.workerPool.query(
+      `SELECT complete_projector_delivery($1, 'jcl11_projector', $2, 'delivered', NULL, 'x', NULL) AS ok`,
+      [ev, token1],
+    );
+    expect((staleAfterReclaim.rows[0] as { ok: boolean }).ok).toBe(false);
+
+    // dlq with the CURRENT token is terminal
+    const dlqOk = await ctx.workerPool.query(
+      `SELECT complete_projector_delivery($1, 'jcl11_projector', $2, 'dlq', NULL, NULL, 'jcl11_permanent') AS ok`,
+      [ev, token2],
+    );
+    expect((dlqOk.rows[0] as { ok: boolean }).ok).toBe(true);
+
+    // dlq never becomes claimable again
+    const afterDlq = await ctx.workerPool.query(
+      `SELECT event_id FROM claim_projector_delivery_batch('jcl11_projector', 100) WHERE event_id = $1`,
+      [ev],
+    );
+    expect(afterDlq.rows.length).toBe(0);
+
+    const final = await ctx.owner.query(
+      `SELECT status, attempts FROM projector_deliveries WHERE event_id = $1 AND projector = 'jcl11_projector'`,
+      [ev],
+    );
+    const f = final.rows[0] as { status: string; attempts: number };
+    expect(f.status).toBe("dlq");
+    expect(f.attempts).toBe(2); // one increment per completion (retry, then dlq)
+  });
+
+  it("JCL-12: job_definer's function-owner allowlist is exact; no LOGIN; no lingering schema CREATE", async () => {
+    // Every assertion below resolves "job_definer" BY NAME (pg_get_userbyid comparison, pg_roles
+    // lookup, has_schema_privilege) — a concurrent migrate.test.ts JCL-2 rename would make the
+    // name transiently resolve to nothing (functions keep their OID/owner; only pg_catalog's
+    // NAME-based lookups go blank), so the whole read runs under the same lock as the writers.
+    await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
+      const { rows } = await ctx.owner.query(
+        `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
+      );
+      expect((rows as { proname: string }[]).map((r) => r.proname).sort()).toEqual(
+        [
+          "claim_outbox_batch",
+          "claim_projector_delivery_batch",
+          "complete_projector_delivery",
+          "forbid_job_audit_mutation",
+          "job_prepare_projector_delivery",
+        ].sort(),
+      );
+
+      const role = await ctx.owner.query(
+        `SELECT rolcanlogin FROM pg_roles WHERE rolname = 'job_definer'`,
+      );
+      expect((role.rows[0] as { rolcanlogin: boolean }).rolcanlogin).toBe(false);
+
+      const schemaCreate = await ctx.owner.query(
+        `SELECT has_schema_privilege('job_definer', 'public', 'CREATE') AS has_create`,
+      );
+      expect((schemaCreate.rows[0] as { has_create: boolean }).has_create).toBe(false);
+    });
+  });
 });

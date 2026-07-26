@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { expect } from "vitest";
 import { migrate, type MigrateResult } from "./migrate.js";
@@ -54,12 +57,71 @@ const ROLE_PW: Record<string, string> = {
   readonly: "plexco_test_readonly",
 };
 
+/**
+ * Canonical job_definer bootstrap (DD-89/DD-90 Q5) — the SAME file `pnpm db:bootstrap` and the
+ * compose init mount apply, read once and executed here so tests never duplicate its idempotent/
+ * race-safe role-creation logic. The 0022 migration only ASSERTS job_definer; it never creates it,
+ * so every test path that reaches 0022 must bootstrap first, exactly like production/CI must.
+ */
+const JOB_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "..",
+  "infra",
+  "postgres-init",
+  "01-job-definer.sql",
+);
+
+export async function bootstrapJobDefiner(client: pg.Client): Promise<void> {
+  const sql = await readFile(JOB_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
+  try {
+    await client.query(sql);
+  } catch (error) {
+    // The file wraps itself in an explicit BEGIN/COMMIT (infra/postgres-init/01-job-definer.sql),
+    // so a rejection (e.g. codex round-08's runtime-role denylist) leaves that transaction open
+    // and aborted on `client` — every later query on the same connection would fail with "current
+    // transaction is aborted" otherwise. Mirrors migrate.ts's own catch-and-ROLLBACK idiom.
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+/**
+ * job_definer is CLUSTER-global, so a test that deliberately puts it into a BROKEN state (JCL-2:
+ * absent / wrong attributes) races every OTHER parallel test FILE's own bootstrap+migrate — the
+ * same class of hazard BR-1 documents for app/app_worker/readonly, except those tests dodge it by
+ * never touching the shared roles at all (migrate.test.ts:24-25). job_definer's negative-path
+ * proofs have no such option (they must actually break it), so this advisory lock makes "must be
+ * correct" (every bootstrap+migrate call) and "deliberately broken for one assertion" (the JCL-2/3
+ * negative tests) mutually exclusive: whichever side holds the lock, the other blocks until it's
+ * released, so the two windows can never overlap. A leftover ABSENT role self-heals (the next
+ * lock-holder's bootstrap recreates it) — a leftover WRONG-ATTRIBUTE role does NOT (bootstrap
+ * fails closed on drift instead of silently fixing it), so every caller that intentionally
+ * corrupts the attributes MUST drop the role again before releasing the lock.
+ */
+const JOB_DEFINER_LOCK_KEY = 0x6a6f6264; // "jobd"
+
+export async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
+  const lockClient = new pg.Client({ connectionString: base });
+  await lockClient.connect();
+  await lockClient.query("SELECT pg_advisory_lock($1)", [JOB_DEFINER_LOCK_KEY]);
+  try {
+    return await fn();
+  } finally {
+    await lockClient.query("SELECT pg_advisory_unlock($1)", [JOB_DEFINER_LOCK_KEY]).catch(() => {});
+    await lockClient.end();
+  }
+}
+
 export interface RlsTestContext {
   /** superuser/owner connection INTO the test db (setup + assertions only) */
   owner: pg.Client;
   appDb: DbHandle;
   appPool: pg.Pool;
   readonlyPool: pg.Pool;
+  /** narrow app_worker seat — the real caller identity for every job_definer function (JCL-5..12) */
+  workerPool: pg.Pool;
   /** superuser-backed drizzle handle — for proving a query fails closed even when RLS is bypassed */
   superuserDb: DbHandle;
   tenantA: string;
@@ -140,11 +202,17 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
   for (const [role, pw] of Object.entries(ROLE_PW)) {
     await setRolePasswordRaceSafe(admin, role, pw, /* allowMissing */ true);
   }
-  await admin.end();
 
-  // 2. real runner against the fresh db
+  // 2. real runner against the fresh db. job_definer is cluster-global and must exist (correctly)
+  // before migrate() reaches 0022 (which only asserts it, never creates it) — bootstrap+migrate
+  // run under the lock so this can never overlap a sibling file's own bootstrap+migrate with the
+  // JCL-2/3 negative tests' deliberately-broken window (see withJobDefinerLock).
   const migrationUrl = testUrl(base, { db: dbName });
-  const migrateResult = await migrate(migrationUrl);
+  const migrateResult = await withJobDefinerLock(base, async () => {
+    await bootstrapJobDefiner(admin);
+    return migrate(migrationUrl);
+  });
+  await admin.end();
 
   // roles now certainly exist (ensured by the runner + 0000) — set passwords
   const owner = new pg.Client({ connectionString: migrationUrl });
@@ -164,8 +232,10 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
 
   const appUrl = testUrl(base, { db: dbName, user: "app", password: ROLE_PW.app });
   const readonlyUrl = testUrl(base, { db: dbName, user: "readonly", password: ROLE_PW.readonly });
+  const workerUrl = testUrl(base, { db: dbName, user: "app_worker", password: ROLE_PW.app_worker });
   const appDb = createDb(appUrl, { max: 4 });
   const readonlyPool = new pg.Pool({ connectionString: readonlyUrl, max: 2 });
+  const workerPool = new pg.Pool({ connectionString: workerUrl, max: 4 });
   const superuserDb = createDb(migrationUrl, { max: 2 });
 
   return {
@@ -173,6 +243,7 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
     appDb,
     appPool: appDb.pool,
     readonlyPool,
+    workerPool,
     superuserDb,
     tenantA: (tenants.rows[0] as { id: string }).id,
     tenantB: (tenants.rows[1] as { id: string }).id,
@@ -182,8 +253,143 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
     teardown: async () => {
       await appDb.close();
       await readonlyPool.end();
+      await workerPool.end();
       await superuserDb.close();
       await owner.end();
+    },
+  };
+}
+
+const NONSUPER_OWNER_PW = "plexco_test_nonsuper_owner";
+
+export interface NonSuperuserOwnerContext {
+  dbName: string;
+  ownerRole: string;
+  /** superuser connection — for constructing job_definer preconditions (bootstrap via a role
+   *  OTHER than ownerRole for JCL-3, or a deliberately wrong-attribute role for JCL-2) before
+   *  calling runMigration(). Never used to run the migration itself — that must be `ownerPool`/
+   *  `runMigration`, or the whole point (a genuinely non-superuser DDL owner) is lost. */
+  superuser: pg.Client;
+  /** non-superuser DDL-owner connection — owns every 0000..0022 object created via runMigration() */
+  ownerPool: pg.Pool;
+  /** idempotent job_definer bootstrap (grants membership to ownerRole) — call before runMigration()
+   *  for the happy path; withhold for JCL-2 (role absent). NOT internally lock-protected: both this
+   *  AND the runMigration() call that follows it reference job_definer BY NAME (bootstrap/grant here;
+   *  the 0022 assertion + ownership transfers there), so the CALLER must wrap the whole
+   *  "bootstrapJobDefinerForOwner() then runMigration()" sequence in ONE withJobDefinerLock — wrapping
+   *  each call separately leaves a gap between them, and locking inside both would deadlock a caller
+   *  that already holds the lock. */
+  bootstrapJobDefinerForOwner: () => Promise<void>;
+  /** run the real migration runner AS the non-superuser owner (never superuser) */
+  runMigration: () => Promise<MigrateResult>;
+  /** call AFTER a successful runMigration(): ensures app_worker's test password (superuser-backed,
+   *  since the role may have just been created by migrate()) and returns a pool connected as it */
+  connectAsWorker: () => Promise<pg.Pool>;
+  teardown: () => Promise<void>;
+}
+
+/**
+ * Non-superuser DDL-owner context (JCL-2..JCL-4). `plexco` (DATABASE_URL_TEST) is a real
+ * Postgres superuser — it bypasses RLS *and* every ACL check unconditionally, which is exactly
+ * why the production defect this slice fixes was invisible to every existing test (design-probe,
+ * .autopilot/state/db-job-claim-lease-core/design-probe.md). These tests need a genuinely
+ * NOSUPERUSER NOBYPASSRLS owner so FORCE RLS and role-membership checks are not silently skipped.
+ * The owner gets CREATEROLE (mirrors migrate.ts's ensureRoleExists dependency: a fresh cluster's
+ * very first migration run must be able to create app/app_worker/readonly itself) and becomes the
+ * fresh database's OWNER, so it implicitly holds full rights on every object it creates via
+ * migrate() with no separate schema-level GRANT required.
+ */
+export async function setupNonSuperuserOwnerContext(
+  dbName: string,
+  opts: { inherit?: boolean } = {},
+): Promise<NonSuperuserOwnerContext> {
+  const base = process.env.DATABASE_URL_TEST;
+  if (!base) {
+    throw new Error(
+      "DATABASE_URL_TEST is required for the non-superuser owner suite (see setupRlsTestContext)",
+    );
+  }
+
+  // codex round-08 [P2]: INHERIT (the default) makes a role automatically exercise privileges
+  // of roles it's a member of; NOINHERIT requires an explicit SET ROLE for each such operation
+  // instead. Both are valid, real production postures — the default here matches ordinary roles,
+  // but callers proving NOINHERIT-specific behavior (job_definer's post-transfer ACL statements,
+  // 0022's own SET ROLE bracket) must opt in explicitly.
+  const inheritClause = opts.inherit === false ? "NOINHERIT" : "INHERIT";
+  const ownerRole = `${dbName}_owner`;
+  const admin = new pg.Client({ connectionString: base });
+  await admin.connect();
+  await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+  // race-safe create/reset, mirrors migrate.ts's ensureRoleExists swallow idiom. ownerRole is
+  // unique per dbName (per test), so the only realistic race is this exact test re-running.
+  await admin.query(
+    `DO $$ BEGIN
+       CREATE ROLE ${ownerRole} LOGIN NOSUPERUSER NOBYPASSRLS CREATEROLE ${inheritClause} PASSWORD '${NONSUPER_OWNER_PW}';
+     EXCEPTION WHEN duplicate_object OR unique_violation THEN
+       ALTER ROLE ${ownerRole} WITH LOGIN NOSUPERUSER NOBYPASSRLS CREATEROLE ${inheritClause} PASSWORD '${NONSUPER_OWNER_PW}';
+     END $$;`,
+  );
+  await admin.query(`CREATE DATABASE ${dbName} OWNER ${ownerRole}`);
+
+  const ownerUrl = testUrl(base, { db: dbName, user: ownerRole, password: NONSUPER_OWNER_PW });
+  const ownerPool = new pg.Pool({ connectionString: ownerUrl, max: 2 });
+  const workerPools: pg.Pool[] = [];
+
+  const bootstrapJobDefinerForOwner = async () => {
+    // job_definer needs BYPASSRLS, and PG16 forbids a role from creating (or being granted) a
+    // BYPASSRLS role unless the GRANTOR/CREATOR itself has BYPASSRLS (or is superuser) — ownerRole
+    // has CREATEROLE but not BYPASSRLS, so it can never self-bootstrap job_definer from scratch
+    // ("permission denied to create role"). The privileged `admin` (superuser) connection stands
+    // in for the real "privileged cluster-tier bootstrap" (task contract §4.1): it creates/
+    // verifies job_definer, then grants membership to ownerRole via the SAME session-GUC
+    // mechanism `pnpm db:bootstrap`/CI use for a distinct migration-role identity (codex
+    // round-06 [P1] — this is also this exact mechanism's own regression coverage).
+    await admin.query(`SET job_definer_bootstrap.migration_role = '${ownerRole}'`);
+    try {
+      await bootstrapJobDefiner(admin);
+    } finally {
+      await admin.query(`RESET job_definer_bootstrap.migration_role`);
+    }
+  };
+
+  const connectAsWorker = async (): Promise<pg.Pool> => {
+    await setRolePasswordRaceSafe(
+      admin,
+      "app_worker",
+      ROLE_PW.app_worker!,
+      /* allowMissing */ false,
+    );
+    const pool = new pg.Pool({
+      connectionString: testUrl(base, {
+        db: dbName,
+        user: "app_worker",
+        password: ROLE_PW.app_worker,
+      }),
+      max: 2,
+    });
+    workerPools.push(pool);
+    return pool;
+  };
+
+  return {
+    dbName,
+    ownerRole,
+    superuser: admin,
+    ownerPool,
+    bootstrapJobDefinerForOwner,
+    runMigration: () => migrate(ownerUrl),
+    connectAsWorker,
+    teardown: async () => {
+      await ownerPool.end();
+      for (const p of workerPools) await p.end();
+      // codex round-07 [P1]: closing connections alone leaves the database, the cluster-global
+      // ownerRole, and its job_definer membership behind — a LOGIN role with a known, fixed
+      // password and BYPASSRLS-via-membership on a shared local cluster. Drop the database
+      // (ownerRole owns it, so it must go first) then the role itself, before closing the admin
+      // connection that is the one privileged enough to do both.
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.query(`DROP ROLE IF EXISTS ${ownerRole}`);
+      await admin.end();
     },
   };
 }
