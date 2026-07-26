@@ -646,13 +646,14 @@ notes: Opened by docs-session-publish-contract codex round-03 [P1]. PRD FLOW 2 (
 
 ## task: docs-marketplace-public-capacity-guard
 title: Pin public+NULL-slots_max invalid-state projection handling + regression test in marketplace spec
-status: idea
+status: ready
 risk: P2
 change_class: docs-spec
 depends_on: []
 invariants: []
-scope: [docs/features/BE/feature_marketplace_discovery_tech.md]
-manifest: null
+scope: [docs/autopilot-manifests/docs-marketplace-public-capacity-guard.json, docs/features/BE/feature_marketplace_discovery_tech.md]
+manifest: docs/autopilot-manifests/docs-marketplace-public-capacity-guard.json
+verdict: Verdict 20 — CODE_READY at main@72cdd56 (2026-07-26)
 merged_probe: docs/features/BE/feature_marketplace_discovery_tech.md :: slots_max
 notes: Opened by AP-25 round-06 public-capacity reconcile (0dec63b). feature_session_management_tech §2 Capacity×visibility pins public→slots_max NOT NULL (E#7) + fail-closes public+NULL at entry/promotion choke-points, but the PUBLIC PROJECTION of a public+NULL row (legacy/fixture/writer-bypass; DB has no CHECK yet) is deferred to the discovery owner: projector must NOT surface such an invalid row. Add (1) a qualifier: public+NULL skipped/rejected from public projection with audit; (2) a regression test row. Coordinates with the DB CHECK hardening candidate NOT(visibility='public' AND slots_max IS NULL) if that migration is scoped.
 

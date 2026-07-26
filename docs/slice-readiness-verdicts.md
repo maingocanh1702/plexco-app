@@ -12,6 +12,54 @@
 
 ---
 
+## Verdict 20 — `docs-marketplace-public-capacity-guard`, execute the delegated public+NULL projection guard; `CODE_READY` (2026-07-26)
+
+> **Bản chất slice:** thi hành một **uỷ quyền đã ghi sẵn**, không mở quyết định mới. `feature_session_management_tech.md`
+> §2 (Capacity × visibility, authority PRD E#7) đã chốt `visibility='public'` ⇒ `slots_max IS NOT NULL`, đã chốt hàng
+> public + NULL nằm ngoài choke-point là **invalid state không được xuất hiện trong public projection**, và **giao
+> tường minh** phần "skip/reject + audit" cùng regression test cho `feature_marketplace_discovery_tech.md`. Uỷ quyền đó
+> tới nay chưa ai thi hành: `slots_max` xuất hiện **0 lần** trong spec marketplace. Invariant đang được khẳng định ở một
+> doc và thuộc sở hữu của một doc không hề nhắc tới nó.
+>
+> **Lựa chọn kỹ thuật được pin ở đây** (không phải product decision): projector **skip** hàng lỗi, xoá projection cũ nếu
+> có, phát audit, **chạy tiếp batch**. Không halt. Fail-closed đúng ở phạm vi **hàng**; halt cả projector vì một hàng
+> legacy sẽ biến lỗi dữ liệu một dòng thành sự cố ngừng discovery toàn sàn.
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-26
+AUTHORITY_SHA: 72cdd56da55683cd17f0dd4d6ed179a2919603e6
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-manifests/docs-marketplace-public-capacity-guard.json
+  - docs/features/BE/feature_marketplace_discovery_tech.md
+SLICE: docs-marketplace-public-capacity-guard
+IN_SCOPE: four additive edits to the marketplace BE spec — edge case #15 (public + slots_max IS NULL is skipped, never upserted, pre-existing projection removed, audit emitted), §4 Projector Logic gate made explicit for the public capacity requirement plus skip-and-continue semantics, unit-test row #26 as the regression pin, §6 changelog v2.4 + header version bump
+OUT_OF_SCOPE: schema, migration and the DB CHECK hardening candidate NOT(visibility='public' AND slots_max IS NULL) — still unscoped, must not be claimed as done; any .ts code (no projector exists yet, so the test row is a spec test-plan row and no test file is created); feature_session_management_tech.md (it already delegates correctly); Product spec, PRD, BRD, TDD, business-rules (no new rule is introduced); docs/features/README.md index cell (deferred by precedent); MKT-OQ-3 and every other open question
+G1_DECISION: PASS — the product decision is already owner-pinned (PRD E#7 + feature_session_management_tech §2); this slice only executes the technical handling that §2 explicitly delegated to the discovery owner, and the manifest pins that handling rather than leaving it to the implementer
+G2_SPEC: PASS — target spec is Reviewed v2.3; the delegating authority note is live at feature_session_management_tech.md:120. Infra/docs slice with equivalent reviewed technical authority, no fabricated Product spec
+G3_DEPENDENCY: PASS — public_sessions exists on main since migration 0006; no unmerged dependency. There is deliberately NO code dependency: grep shows public_sessions appears only in schema.ts, migrate.ts comments and rls-invariants tests, i.e. no projector exists, and that absence is pinned as negative scope rather than assumed away
+G4_TEST: PASS — MPC-1..MPC-9 authored before execution with exact expected results; MPC-5 (sibling valid rows in the same batch still project) is the row that would catch a halt-on-fault reading, and MPC-8 pins that existing rows stay byte-unchanged
+G5_SCOPE: PASS — exactly 2 files, invariants [], far inside budget; scope-gate registry currently has 0 active features so no collision is possible
+G6_EXTERNAL: PASS — no PII, money, provider, legal or evidence gate touched; docs-only, no runtime behaviour changes
+HARD_DEPENDENCIES: none — root docs slice; its only authority prerequisite (the session_management capacity contract) is merged
+PRIOR_SLICES: none — but note the lineage: docs-session-create-publicslots-reconcile authored the §2 note that created this delegation, and docs-prd-flow2-publish-projection-reconcile is the immediate precedent for editing this same target file
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS (verified at 72cdd56: slots_max appears 0 times in the target file so the merged probe is meaningful and not pre-satisfied; feature_session_management_tech.md:120 delegation read verbatim; public_sessions present in 0006; no projector in TypeScript; target spec header is Reviewed v2.3 with Implementation "Not started")
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS (MPC-1..MPC-9)
+SECURITY_AND_MIGRATION_GATE: PASS — no migration, no grant, no RLS change. The security-relevant property (an invalid row must never reach the cross-tenant no-RLS public_sessions surface) is strengthened, not relaxed
+IMPLEMENTATION_ARTIFACTS: PASS (manifest committed and pushed at 72cdd56). No separate task-contract doc or launcher: for a P2 single-target-file docs slice the manifest _problem/_decision_contract/_scope_in/_scope_out/_acceptance IS the executable plan required by gate §B4, matching the docs-prd-flow2-publish-projection-reconcile and docs-session-create-publicslots-reconcile precedents
+FIRST_IMPLEMENTATION_STEP: open a worktree from the current origin/main tip (72cdd56 or later), register with `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/docs-marketplace-public-capacity-guard.json`, re-read feature_session_management_tech.md §2 to confirm the delegation is unchanged on synced main (HALT if it moved), then apply the four edits in the order §2 -> §4 -> §5 -> §6
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the coding slice itself
+```
+
+---
+
 ## Verdict 19 — `db-job-claim-lease-core`, job lease/audit/definer root; `CODE_READY` (2026-07-25, re-pinned to `948636f`)
 
 > **Tracker of record cho slice này.** Hai mirror phải giữ đồng nhất từng field với block dưới đây:
