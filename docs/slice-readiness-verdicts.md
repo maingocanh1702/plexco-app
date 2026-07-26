@@ -660,6 +660,19 @@ NEXT_REVIEW_TRIGGER: d1b merged AND Safari/iOS cells measured -> only then may G
 
 ## Verdict 13 — `auth-s4-d1b-oauth-session-rotation` implemented, awaiting manual merge (2026-07-22)
 
+> **Enablement-gate closure (2026-07-26) — áp cho cả Verdict 12 và 13.** Hai block dưới đây ghi
+> `ENABLEMENT_ONLY:safari-macos-and-ios-strict-hop-evidence` là **đúng tại ngày pin của chúng**; giữ nguyên,
+> không sửa. Nghĩa vụ đo đó nay **đã hoàn thành**: Safari macOS (macOS 14.5, "Prevent cross-site tracking"
+> mặc định ON) và iOS Safari **18.3 (22D8075)** đều đã đo tay ngày 2026-07-26 theo probe §7. Kết quả khớp
+> hoàn toàn Chromium 149 / Firefox 151 / WebKit 26.5: `M1` giữ lại `Strict`, còn `M2`/`M3`/`M4`/`M5` đều
+> mang được — **`M3`, cơ chế đã ship, PASS trên cả hai**. Control toàn vẹn ở cả hai nền: mọi dòng
+> `stage=callback` của M1–M5 đều `strict=false`, chứng minh chặng quay về thật sự cross-site.
+> Bằng chứng: `../probe-strict-cookie-completion-hop.md` §3.1 · §7 · §8.
+>
+> Hệ quả: gate này **không còn nghĩa vụ đo nào**. Việc set `GOOGLE_OAUTH_CLIENT_ID/SECRET` từ đây là một
+> **quyết định go-live của owner**, không phải một blocker kỹ thuật. Các gate khác gắn vào go-live (vd A3
+> legal/PII) đứng độc lập và **không** được coi là đã đóng theo mục này.
+
 <!-- review-verdict: historical -->
 ```text
 REVIEW_POLICY_VERSION: 1.3

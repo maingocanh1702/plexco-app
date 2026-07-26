@@ -117,6 +117,8 @@ Driven by Playwright **1.61.1**, three real engine builds, headless, Apple Silic
 | Chromium | **149.0.7827.55** | chromium v1228 | new-headless (full build, not headless-shell) |
 | Firefox | **151.0** | firefox v1532 | |
 | WebKit | **26.5** | webkit v2251 | ⚠️ **frozen** `mac14-arm64` build — installer warns it no longer updates on macOS 14; it is Safari's engine but **not** the shipping Safari/iOS browser |
+| **Safari (macOS)** | shipping build on macOS 14.5 | — (manual, §7.1) | ✅ measured 2026-07-26; "Prevent cross-site tracking" left at its **default ON** |
+| **iOS Safari** | **iOS 18.3 (22D8075)** — iPhone 16 Pro Simulator | — (manual, §7.2) | ✅ measured 2026-07-26 |
 
 Host: **macOS 14.5 (23F79)**, arm64. Each `(engine × mechanism)` runs in a fresh browser context.
 
@@ -136,11 +138,11 @@ Host: **macOS 14.5 (23F79)**, arm64. Each `(engine × mechanism)` runs in a fres
 
 | Mechanism at `/callback` | Chromium 149.0.7827.55 | Firefox 151.0 | WebKit 26.5 (engine) | Safari macOS | iOS Safari |
 |---|:--:|:--:|:--:|:--:|:--:|
-| **`M1`** server `302` → `/complete` | ❌ **NO** | ❌ **NO** | ❌ **NO** | NOT MEASURED | NOT MEASURED |
-| **`M2`** first-party HTML → `location.replace('/complete')` | ✅ YES | ✅ YES | ✅ YES | NOT MEASURED | NOT MEASURED |
-| **`M3`** first-party HTML → auto-submit same-origin **POST** `/complete` | ✅ YES | ✅ YES | ✅ YES | NOT MEASURED | NOT MEASURED |
-| **`M4`** first-party HTML → `<meta http-equiv=refresh>` `/complete` | ✅ YES | ✅ YES | ✅ YES | NOT MEASURED | NOT MEASURED |
-| **`M5`** first-party HTML → manual `<a>` click (no JS) | ✅ YES | ✅ YES | ✅ YES | NOT MEASURED | NOT MEASURED |
+| **`M1`** server `302` → `/complete` | ❌ **NO** | ❌ **NO** | ❌ **NO** | ❌ **NO** | ❌ **NO** |
+| **`M2`** first-party HTML → `location.replace('/complete')` | ✅ YES | ✅ YES | ✅ YES | ✅ YES | ✅ YES |
+| **`M3`** first-party HTML → auto-submit same-origin **POST** `/complete` | ✅ YES | ✅ YES | ✅ YES | ✅ **YES** | ✅ **YES** |
+| **`M4`** first-party HTML → `<meta http-equiv=refresh>` `/complete` | ✅ YES | ✅ YES | ✅ YES | ✅ YES | ✅ YES |
+| **`M5`** first-party HTML → manual `<a>` click (no JS) | ✅ YES | ✅ YES | ✅ YES | ✅ YES | ✅ YES |
 | `BASE` control — same-site direct (no cross-site hop) | ✅ YES | ✅ YES | ✅ YES | n/a | n/a |
 
 Every `YES`/`NO` above is an observed server-side request in this harness (raw JSON: Appendix A).
@@ -226,7 +228,21 @@ measured to carry `Strict`), and it requires the completion endpoint to accept P
 
 ---
 
-## 7. NOT MEASURED — exact manual steps for Safari (macOS) and iOS Safari (item 4)
+## 7. ✅ MEASURED (2026-07-26) — Safari (macOS) and iOS Safari (item 4)
+
+> **Result: both cells filled, no disagreement with any engine.** Safari macOS and iOS Safari 18.3
+> (22D8075, iPhone 16 Pro Simulator) both reproduce the exact pattern of Chromium/Firefox/WebKit-engine:
+> `M1` withholds `Strict`, and `M2`/`M3`/`M4`/`M5` all carry it. Integrity control held on both: **every**
+> `stage=callback` row for M1–M5 recorded `strict=false`, proving the return leg was genuinely cross-site
+> in shipping Safari, so the `complete` values are real measurements and not a "cookie always sent" artefact.
+>
+> One log-reading note for future readers: the `PING` rows are **not** a measurement. `PING` is not a
+> mechanism — it exists only to trigger the cert-trust prompt on host B, and A answers `unknown mechanism`.
+> A second `PING` callback row can show `strict=true`; that is a same-site reload/history navigation of the
+> already-loaded `A/callback/PING` page, not a cross-site arrival. It affects no measured cell.
+>
+> The steps below are kept verbatim as the reproduction procedure.
+
 
 The automated run cannot cover shipping Safari or iOS Safari. Fill these cells manually. The harness server
 needs **only Node** (no Playwright); if `.probe/` was cleaned, recreate it from Appendix B + Appendix C.
@@ -262,11 +278,15 @@ node server.mjs      # prints: A up https://127.0.0.1:8443  /  B up https://loca
   or the app deployed to two real cross-site domains. That is a larger setup than a quick check; prefer the
   simulator, or run the check against a real staging deployment of the actual app.
 
-### 7.3 If Safari/iOS disagrees
-If any Safari/iOS cell shows `strict=false` for M2/M3/M4/M5 (i.e. even a first-party-document hop does not carry
-`Strict` there), **say so and stop** — that is a valid, important outcome (§8): d1b would then need a different
-design (e.g. an accepted bounded non-atomic revoke, or revisiting `Strict` for the session cookie), and the
-owner decides. Do not paper over it.
+### 7.3 If Safari/iOS disagrees — did not occur
+The contingency below was **not** triggered: no Safari or iOS cell showed `strict=false` for M2/M3/M4/M5.
+Kept for the record, and because a future OS release could change the answer — re-run §7.1/§7.2 rather than
+assuming this result carries forward to a new major Safari/iOS version.
+
+> If any Safari/iOS cell shows `strict=false` for M2/M3/M4/M5 (i.e. even a first-party-document hop does not
+> carry `Strict` there), **say so and stop** — that is a valid, important outcome (§8): d1b would then need a
+> different design (e.g. an accepted bounded non-atomic revoke, or revisiting `Strict` for the session
+> cookie), and the owner decides. Do not paper over it.
 
 ---
 
@@ -282,15 +302,21 @@ Chromium 149, Firefox 151 and WebKit 26.5-engine with no disagreement. The d1b `
 server `302` (`M1` measured-broken). The slice spec/acceptance must require a committed first-party landing and
 must include a test that would catch an accidental `302`-only implementation — a mocked-cookie unit test will not.
 
-**What is NOT proven / residual.** Shipping **Safari (macOS)** and **iOS Safari** are unmeasured (§7). Given all
-three engines agree and the mechanism is fundamental SameSite semantics (document-commit resets the initiator)
-rather than an ITP heuristic, Safari is *expected* to agree — but "expected" is not "measured."
+**What was the residual, and how it closed.** Shipping **Safari (macOS)** and **iOS Safari** were the last
+unmeasured cells. Both were measured on **2026-07-26** (§7) — Safari on macOS 14.5 with "Prevent cross-site
+tracking" at its default ON, and iOS Safari **18.3 (22D8075)** on an iPhone 16 Pro Simulator. Both agree with
+all three engines on all five mechanisms, with the cross-site integrity control holding in each. The
+"expected but not measured" caveat is **retired**: it is now measured. The only forward-looking caveat left is
+version drift — a future major Safari/iOS release is not covered by this run.
 
-**Recommendation to the owner (decision is yours):** treat the *engineering blocker* on the hop mechanism as
-**answered** (use a committed first-party landing; recommended M3; never a bare `302`), and gate final closure of
-the enablement item on filling the Safari/iOS cells in §3.1 via §7. Per the d1b `blocks_enablement`, keep
-`GOOGLE_OAUTH_CLIENT_ID/SECRET` unset until the slice merges regardless. This probe does **not** by itself close
-Verdict 11; it supplies the measured evidence that the chosen mechanism works and pins the M1 trap.
+**Status for the owner.** The *engineering blocker* on the hop mechanism is **answered** (committed
+first-party landing; shipped M3; never a bare `302`), and the Safari/iOS cells that gated final closure are now
+**filled with measured evidence**. d1b itself is merged (`0018`). On the evidence in this document the
+`safari-macos-and-ios-strict-hop-evidence` enablement gate has **no remaining measurement obligation**.
+
+Setting `GOOGLE_OAUTH_CLIENT_ID/SECRET` is now an **owner go-live decision**, not a blocked one — but it is a
+separate decision from this measurement, and any other gate attached to it (e.g. A3 legal/PII for go-live)
+stands on its own and is untouched by this probe.
 
 ---
 
