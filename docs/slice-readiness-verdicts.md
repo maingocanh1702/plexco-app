@@ -12,6 +12,54 @@
 
 ---
 
+## Verdict 23 — `db-outbox-ack-marker`, job-infra slice 2a: close the outbox starvation loop 0022 flagged against itself; `CODE_READY` (2026-07-26)
+
+> **Điều CODE_READY này cho phép:** mở worktree, register scope-gate, chạy design probe. `design_probe_required:
+> true`, và item (b) của probe là **lý do slice tồn tại**, không phải thủ tục: một outbox event fan-out được cho
+> nhiều projector, `job_prepare_projector_delivery` là per-`(event, projector)` — vậy event acked khi projector
+> **đầu tiên** prepare, hay khi **mọi** projector đã prepare? Ack ở lần đầu **đúng hôm nay** vì chỉ tồn tại một
+> projector placeholder, và **sai âm thầm** ngay khi có projector thứ hai. Hình dạng hiện tại che mất khác biệt,
+> nên đáp án tiện là bẫy. Viết production code trước khi probe được owner confirm là vi phạm verdict này.
+>
+> **Xuất xứ:** tách khỏi `job-runtime-dispatcher` sau design probe của AP-33 (2026-07-26). `0022:166-181` tự ghi
+> `HARD BLOCKING REQUIREMENT FOR job-runtime-dispatcher (slice 2/4)` yêu cầu cơ chế ack, trong khi manifest 2b
+> ghi `NO new migration` — mâu thuẫn do người author 2b đọc chữ ký hàm và dòng GRANT của `0022` mà không đọc
+> comment. Verdict 22 đã hạ xuống `NOT_CODE_READY` và ghi lại đúng nguyên nhân đó.
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-26
+AUTHORITY_SHA: 28d0c3a8be7fe8e3a57558e02ef24a237a14e8e8
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-manifests/db-outbox-ack-marker.json
+SLICE: db-outbox-ack-marker
+IN_SCOPE: one module (packages/db) — exactly ONE monotonic migration after the live tail adding a completion/ack mechanism to outbox_events, updating claim_outbox_batch so BOTH its reclaim pass and its claim pass skip acked rows, keeping the partial indexes selective so acked rows stop accumulating in idx_outbox_expired_lease, and a narrow SECURITY DEFINER ack function owned by job_definer with EXECUTE granted to app_worker only; plus the schema.ts mirror, migration-count assertions and real-role tests
+OUT_OF_SCOPE: worker, handler, queue, cron, producer or projector wiring (slice 2b); any change to claim ordering (ORDER BY created_at is the sync-engine contract, DD-89 Q3); weakening or removing outbox_events_lease_shape_chk or outbox_events_producer_lease_boundary_chk; edits to applied migrations 0000-0022; new roles or RUNTIME_ROLES changes; job_audit_events retention or cleanup; surface_refs; any direct DML grant on outbox_events to a runtime role
+G1_DECISION: PASS — the requirement is merged reviewed code, not an opinion: 0022:166-181 states it by name, and DD-89/DD-90 bind the surrounding privilege and audit contract. The one genuinely open mechanism question (ack granularity) is routed to the mandatory design-probe STOP gate, which v0.6.1 §0.1 establishes as the closure mechanism for this class
+G2_SPEC: PASS — infra slice with equivalent reviewed technical authority rather than a fabricated Product spec: 0022 itself plus docs/autopilot-db-job-claim-lease-core.md §4.2/§4.3
+G3_DEPENDENCY: PASS — db-job-claim-lease-core merged at 34429fc; no unmerged dependency. dep_checks verified on disk at 28d0c3a: claim_outbox_batch, outbox_events_lease_shape_chk and idx_outbox_expired_lease all present in 0022
+G4_TEST: PASS — OAM-1..OAM-10 authored before code with exact expected results. OAM-2 is the row this slice exists for and the one a passing-but-useless implementation would fail: older acked-and-expired events must not consume the batch ahead of a newer unacked event. OAM-4 pins that job_audit_events stops growing, OAM-6 requires proving both CHECKs still reject their original violations by attempting them rather than reading the catalog
+G5_SCOPE: PASS — 6 files, one module, exactly one monotonic migration; inside budget. Same shape as the 0019/0020/0021 integrity migrations this repo has run cleanly
+G6_EXTERNAL: PASS — no PII, money, provider, legal or evidence gate; expand-only schema change, code-dark because no producer or scheduler feeds the path
+HARD_DEPENDENCIES: db-job-claim-lease-core = MERGED (main@34429fc; probe 0022_job_claim_lease_core.sql::job_audit_events verified on origin/main)
+PRIOR_SLICES: db-job-claim-lease-core
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS (measured at 28d0c3a: migration tail is 0022 so 0023 is free; outbox_events carries claimed_at from 0005 and lease_expires_at from 0022; outbox_events_lease_shape_chk enforces both-NULL-or-both-NOT-NULL; outbox_events_producer_lease_boundary_chk forbids role `app` from setting the lease fields; idx_outbox_unclaimed is ON (created_at) WHERE claimed_at IS NULL and idx_outbox_expired_lease is ON (lease_expires_at) WHERE claimed_at IS NOT NULL; claim_outbox_batch reclaims expired leases before claiming new rows)
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS (OAM-1..OAM-10)
+SECURITY_AND_MIGRATION_GATE: PASS — expand-only, one monotonic migration, 0000-0022 byte-identical, no role/attribute change, no RLS change, named rollback. Both existing CHECKs are extended rather than replaced, and the ack function follows the 0022 privilege pattern exactly: job_definer owner, fixed search_path, REVOKE ALL FROM PUBLIC, EXECUTE to app_worker only. 0022's own trap is carried forward — CREATE OR REPLACE does not change a function's owner, so re-owning claim_outbox_batch must be explicit
+IMPLEMENTATION_ARTIFACTS: PASS (manifest committed and pushed at 28d0c3a; AP-34 launcher lands with this verdict as an execution aid derived from the manifest, not independent authority). The manifest's _problem/_decision_contract/_scope_in/_scope_out/_design_probe/_acceptance/_evidence_rules is the executable plan required by gate §B4
+FIRST_IMPLEMENTATION_STEP: open a worktree at .autopilot/worktrees/db-outbox-ack-marker from the current origin/main tip, register the manifest via scope-gate, run the full CI list as the green baseline, re-verify the live migration tail, then write design-probe.md and STOP for founder confirmation before any production edit
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the design probe, then the coding slice. On merge this unblocks Verdict 22 / job-runtime-dispatcher, which must then have its _scope_out and JRD-5 amended and be re-pinned
+```
+
+---
+
 ## Verdict 22 — `job-runtime-dispatcher`, job-infra slice 2/4; `CODE_READY` → **SUPERSEDED / NOT_CODE_READY** sau design probe (2026-07-26)
 
 > **Điều CODE_READY này cho phép, nói chính xác:** mở worktree, register scope-gate, và **chạy design probe**.
