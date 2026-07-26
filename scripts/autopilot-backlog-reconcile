@@ -47,6 +47,10 @@ git -C "$REPO" fetch origin --quiet 2>/dev/null || true
 is_symbol_probe() {
   local re="$1" tok
   re="${re//[()]/}"                     # allow grouping parens around a symbol set
+  # nosemgrep: bash.lang.security.ifs-tampering.ifs-tampering
+  # The rule's own guidance is "don't set IFS globally; set it locally" — which is exactly what this is.
+  # `local IFS` is scoped to this function and restored on return, so word-splitting elsewhere is unaffected.
+  # Semgrep's pattern matches any IFS assignment without distinguishing scope, so this is a false positive.
   local IFS='|'; local toks=($re)       # split on alternation
   [ "${#toks[@]}" -eq 0 ] && return 1
   for tok in "${toks[@]}"; do
