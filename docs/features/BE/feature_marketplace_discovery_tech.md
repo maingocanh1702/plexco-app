@@ -1,7 +1,7 @@
 # Feature: Marketplace Discovery & Public Projection — Backend Tech Spec
 
 > **Canonical phase:** P4.3  
-> **Version:** 2.3 · 2026-07-24
+> **Version:** 2.4 · 2026-07-26
 > **Status:** Reviewed  
 > **Implementation:** Not started — `public_sessions` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_marketplace_discovery.md`  
@@ -84,6 +84,7 @@ CREATE INDEX idx_public_price ON public_sessions(price_amount);
 | 12 | Data Integrity | Discovery role reads tenant tables | ❌ IMPOSSIBLE — SELECT-only on public view |
 | 13 | Privacy | Personal-tenant owner alias blank | Do not upsert projection; never fall back to internal tenant/person/account name |
 | 14 | Data Integrity | Public session chưa publish (`draft`) | Projector KHÔNG upsert — chỉ `status='open'` (đã publish) mới chiếu; `visibility='public'` một mình không đủ. Timing authority: `feature_session_management_tech.md` §4 bước 7 (`PublishSession` `draft`→`open`) |
+| 15 | Data Integrity | Public session với `slots_max IS NULL` tồn tại ngoài SessionService validation choke-point (legacy/fixture/writer bypass — cột DB vẫn nullable, chưa có DB CHECK) | Projector KHÔNG upsert; XOÁ projection row đã tồn tại cho session đó (nếu có) VÀ purge cached public DTO/CDN entry cho session đó (cùng cơ chế edge #8 unpublish, §4 Caching Strategy) — không giữ lại state cũ ở bất kỳ tầng nào (DB projection lẫn cache/CDN); ghi audit/integrity signal xác định `session_id`, không silent skip. Authority: `feature_session_management_tech.md` §2 (Capacity × visibility, PRD E#7) — `visibility='public'` bắt buộc `slots_max IS NOT NULL`, enforced ở SessionService validation choke-point trên create và mọi update dẫn tới public; row vi phạm tồn tại ngoài choke-point là invalid state, fail-closed: không được xuất hiện trong public discovery projection (concrete handling delegated tới doc này). Áp dụng khi projector chạm session đó (event hoặc reproject) — không phải guarantee độc lập việc có bao giờ chạm hay không. Gap đã biết: bypass-write biến một row đang project hợp lệ thành invalid (out-of-band `slots_max` → `NULL`) không tự phát session event; bản chiếu + cache cũ không bị đụng, tiếp tục lộ công khai — periodic sweep hiện tại chỉ bắt time-based expiry (`expires_at < now()`), không bắt anomaly này. Đóng gap này cần durable-event contract cho bypass writer hoặc periodic canonical reconciliation — phụ thuộc job-infra slice riêng, ngoài scope slice này (hardening candidate kiểu DB CHECK đã ghi ở `feature_session_management_tech.md` §2, chưa chốt thời điểm). Residual này track bằng backlog task `job-infra-public-projection-reconciliation` (`docs/autopilot-backlog.md`) — ENABLEMENT_ONLY gate cho PROJECTOR chứ không phải cho spec này: projector không được enable trước khi có durable-event contract cho bypass writer hoặc periodic canonical reconciliation định kỳ, gate có tên và tra được, không phải lời hứa |
 
 ---
 
@@ -170,7 +171,7 @@ CREATE INDEX idx_public_price ON public_sessions(price_amount);
 ### Projector Logic
 
 ```text
-Session event → Check: public? open? future? required fields present?
+Session event → Check: public? open? future? required fields present? (visibility='public' ⇒ includes slots_max IS NOT NULL)
   → YES: resolve public aliases
       club tenant     → moderated tenants.display_name
       personal tenant → nonblank moderated owner membership.display_name (DD-46 target)
@@ -182,11 +183,13 @@ Periodic sweep: DELETE WHERE expires_at < now()
 
 > **Timing = PUBLISH, open-only (cross-ref `feature_session_management_tech.md` §4 bước 7):** `open?` ở trên nghĩa là `sessions.status='open'` — trạng thái chỉ đạt được sau khi Host **publish** (`PublishSession`, `draft`→`open`). Một session `visibility='public'` còn `draft` **chưa** qua được check này → **NO projection**; `session.created` khi vẫn `draft` không upsert dù đã chọn public. Publish emit `session.published` cùng transaction (session_management §4 bước 6-7) — projector consume event đó (hoặc reproject) rồi mới upsert khi `open`. Đóng/huỷ/quá giờ hạ khỏi projection như cũ (edge #3/#4); PRD FLOW 2 bước 2 + FLOW 12 mô tả cùng timing này ở tầng product.
 
+> **Capacity × visibility gate (cross-ref `feature_session_management_tech.md` §2, PRD E#7 authority):** `required fields present?` cho `visibility='public'` bao gồm `slots_max IS NOT NULL`. Row public + `slots_max IS NULL` tồn tại ngoài SessionService choke-point (edge #15) fail vào nhánh `NO`: projector KHÔNG upsert, XOÁ projection row đã tồn tại cho session đó (nếu có), purge cached public DTO/CDN entry cho session đó (cùng trigger class edge #8 unpublish — Caching Strategy Invalidation bên dưới; cache không được phép giữ DTO invalid tới hết TTL), và ghi audit/integrity signal xác định `session_id` — không silent skip. Fail-closed chỉ áp dụng cho ĐÚNG row vi phạm đó; batch projection CONTINUE bình thường với các row hợp lệ khác trong cùng batch, KHÔNG halt toàn bộ projector (một row lỗi data-integrity không được biến thành discovery outage).
+
 ### Caching Strategy
 
 | Data | Cache? | TTL | Invalidation |
 |------|--------|-----|-------------|
-| Public session DTO (browse/detail) | ✅ | Ngắn (short TTL — §1; số cụ thể chốt ở build slice) | Purge on privacy-critical unpublish (§1, edge #8, test #19); cache key/value = public DTO only (edge #7, test #18) |
+| Public session DTO (browse/detail) | ✅ | Ngắn (short TTL — §1; số cụ thể chốt ở build slice) | Purge on privacy-critical unpublish (§1, edge #8, test #19); same purge on projector fail-closed skip of an invalid public + `slots_max IS NULL` row (edge #15, §4 Capacity × visibility gate — test #26); cache key/value = public DTO only (edge #7, test #18) |
 | `slots_open` | Advisory only (trong DTO cache) | Như DTO | Join re-checks transactionally (edge #10) — không phải nguồn quyết định capacity/tiền |
 | Tenant-private data (venue/roster/financial/identity) | ❌ | — | Không bao giờ vào projection/cache/CDN (edge #1/#2/#7; ranking không dùng financial/identity — §4) |
 
@@ -234,6 +237,7 @@ Periodic sweep: DELETE WHERE expires_at < now()
 | 23 | Ranking unresolved gate | No experimental ranking flag | Stable `(starts_at,id)` order only; area/distance weight absent |
 | 24 | DD-41 projection cutover | Expand/backfill/switch/contract fixture | Target policy fields are public; legacy `skill_level` absent after contract; private notes/instructions/byoe/cost_shared absent throughout |
 | 25 | Draft public session excluded | `visibility='public'`, `status='draft'` (not yet published) | Not projected; only appears after `PublishSession` flips `status='open'` (edge #14) |
+| 26 | Public capacity-guard fail-closed, skip-and-continue | Batch: session A = `visibility='public'`, `status='open'`, `slots_max IS NULL` (invalid fixture, outside SessionService choke-point — edge #15), already projected + cached from a prior valid state before the out-of-band change, alongside sibling session B valid + public in the same batch. Scope note: A is manually placed into the projector's batch here — this proves handling once the projector reaches the row, not that every out-of-band-invalidated row is guaranteed to be reached in production (edge #15 residual: a bypass-write may not emit a session event) | Session A: not projected; any pre-existing `public_sessions` row for A is removed; cached public DTO/CDN entry for A is also purged, not left to expire by TTL; audit/integrity signal emitted for A. Session B: still projects normally in the same batch, its cache untouched — projector does not halt on A's fault |
 
 ### Integration Tests
 
@@ -267,6 +271,7 @@ Periodic sweep: DELETE WHERE expires_at < now()
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-26 | v2.4 | **Public capacity-guard delegation, executed (`docs-marketplace-public-capacity-guard`):** §2 Edge Cases gets new row #15 pinning `visibility='public'` + `slots_max IS NULL` existing outside the SessionService validation choke-point (legacy/fixture/writer bypass — DB column stays nullable, no CHECK) as an invalid state, cross-ref `feature_session_management_tech.md` §2 (Capacity × visibility, PRD E#7 authority). §4 Projector Logic gate made explicit — `required fields present?` for `visibility='public'` now spells out `slots_max IS NOT NULL` — plus a new note pinning the concrete handling: projector does not upsert, deletes any pre-existing projection row for that session, purges the cached public DTO/CDN entry for that session (same trigger class as unpublish — §4 Caching Strategy), emits an audit/integrity signal, and CONTINUEs the batch (does not halt the projector on one bad row). §4 Caching Strategy Invalidation cell for Public session DTO extended to name this fail-closed skip as a purge trigger alongside unpublish. Added unit test #26 (invalid-but-previously-cached fixture + sibling-still-projects regression, asserting both the projection row and the cache/CDN entry are purged — catches a halt-on-fault implementation and a stale-cache-serves-invalid-row implementation). This slice executes the technical delegation `feature_session_management_tech.md` §2 already assigned to this doc as owner of public projection — it does not re-open that decision. No schema/migration/DB CHECK change: the hardening candidate `NOT (visibility='public' AND slots_max IS NULL)` stays an unscoped future migration exactly as `feature_session_management_tech.md` §2 already records it. |
 | 2026-07-24 | v2.3 | **Public-projection timing, explicit (`docs-prd-flow2-publish-projection-reconcile`, hard dependency of `docs-session-publish-contract`):** §4 Projector Logic gets an explicit timing note — `open?` = `sessions.status='open'`, reached only after Host publish (`PublishSession`, `draft`→`open`; `feature_session_management_tech.md` §4 bước 7); a public `draft` is NOT projected. Added edge case #14 + unit test #25 pinning draft-exclusion; integration test #1 setup reworded from "Create public session → search" to explicit create(`draft`)→publish(`open`)→search so it no longer implies project-on-create. No schema/algorithm change — the `public? open?` gate already existed (edge #3); this closure only makes the authority explicit and closes the PRD/session cross-authority conflict. |
 | 2026-07-19 | v2.2 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (reuse `public_sessions` từ `0006`; DD-41 expand→contract = migration mới monotonic), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.1a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
