@@ -1,0 +1,34 @@
+{
+  "feature": "docs-user-settings-0014-merge-state-reconcile",
+  "branch": "feat/docs-user-settings-0014-merge-state-reconcile",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "docs-reconcile",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "1x_clean",
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": [],
+  "merged_probe": "docs/features/BE/feature_user_settings_tech.md :: 0022",
+  "_problem": "feature_user_settings_tech.md still asserts, as CURRENT state, that migrations 0000-0013 are what is merged on main and that 0014_players_waitlist is branch-only. Both are false: 0014 merged at 1a6ac38, and the global tail has since advanced to 0022 (23 migrations: foundation 0000-0014, auth lane 0015-0018, tenant-integrity DD-68 0019-0021, job-infra 0022). The sibling repo-wide slice docs-0014-merge-status-repo-wide-reconcile fixed seven other BE specs but deliberately deferred this file because it was dirty in the working tree at the time (a separate uncommitted consent-state edit owned it). That file is now clean, so the deferral condition has lapsed and the correction can land.",
+  "_live_verification_2026_07_26": "Re-verified on main before authoring, NOT copied from the backlog note. (a) The backlog note says 'tail 0018' — that was true when the note was written and is now STALE; the correct target is 0022, and copying the note verbatim would inject a fresh stale claim. (b) The note names three stale lines (61/65/67); a grep found FIVE — lines 10 and 14 also assert 'Migration mới sau 0013'. Scope is five lines, not three. (c) The objects this doc lists as genuinely-new were re-checked against tail 0022 and are ALL still absent: persons.{gender_enc, dob_enc, username, language, profile_visibility}, sessions.{price_male, price_female}, person_follows — zero hits in migrations/*.sql and schema.ts. That paragraph is therefore CORRECT and must survive the edit; only its stale range label changes. (d) channel_identities.username_enc exists since 0001 but is a DIFFERENT column from the persons.username this doc proposes — do not conflate them and do not 'fix' the genuinely-new claim on the strength of that hit. (e) The changelog table in this file is DESCENDING (newest first, v0.14 at the top) — unlike feature_marketplace_discovery_tech.md — so the new row goes at the TOP of the table.",
+  "_scope_in": "ONE target file, docs/features/BE/feature_user_settings_tech.md. Correct the five current-state claims so they read against the live merged tail: line 10 and line 14 ('Migration mới sau 0013' -> a new monotonic migration after the synced tail, currently 0022); line 61 ('0014_players_waitlist hiện branch-only nên không giữ số' -> 0014 is merged at 1a6ac38 and holds its number; the slice still takes the next free monotonic number after the synced tail); line 65 ('0000-0013 đã merge trên main; 0014_players_waitlist branch-only' -> 0000-0022 merged, and the 'Chưa có trong 0000-0013' list keeps its content but is re-anchored to 0000-0022); line 67 ('0014 branch-only không giữ số' -> same correction as line 61). Then bump the header Version 0.14 -> 0.15 and add ONE new changelog row at the TOP of the descending table recording this reconcile and citing 1a6ac38 + tail 0022.",
+  "_scope_out": "NO change to the numbering GUIDANCE itself — 'next monotonic number after the synced tail' is the correct and deliberate instruction and must be preserved, not replaced by a hard-coded number; this slice fixes which tail is current, not the policy. NO change to the genuinely-new object list (verified still accurate at 0022) beyond re-anchoring its range label. NO schema, migration, code or test. NO resolution of DD-39, DD-47, DD-48 or any open question; Status stays 'Draft, pending migration/build' and Implementation stays 'Not started'. NO edit to any other spec — the seven siblings were already corrected by docs-0014-merge-status-repo-wide-reconcile. NO edit to docs/features/README.md, BUILD-STATUS.md or ROADMAP.md (already reconciled to 0022 at 80bea53). PRESERVE every dated changelog and rollout row; reframe provenance anchors such as origin/main@22c23aa, never delete them.",
+  "_acceptance": [
+    "US14-1: grep '0013' in the target file returns hits ONLY where 0013 is genuine history or an unrelated reference — no remaining line asserts 0000-0013 as the current merged set.",
+    "US14-2: no line still calls 0014_players_waitlist branch-only or says it does not hold its number.",
+    "US14-3: the merged probe token 0022 appears in the file (it appears 0 times today), and the tail is described as 0000-0022 / 23 migrations.",
+    "US14-4: all five originally-stale lines (10, 14, 61, 65, 67) are corrected — a fix of only the three named in the backlog note is incomplete and fails this slice.",
+    "US14-5: the numbering guidance still reads as 'next monotonic after the synced tail' — no hard-coded 0023 anywhere.",
+    "US14-6: the genuinely-new object list (gender_enc, dob_enc, username, language, profile_visibility, price_male, price_female, person_follows) is unchanged in content; only its range anchor moves.",
+    "US14-7: header Version = 0.15; Status and Implementation lines unchanged.",
+    "US14-8: exactly one new changelog row, inserted at the TOP of the descending table, citing 1a6ac38 and tail 0022; every pre-existing dated row byte-unchanged.",
+    "US14-9: git diff --name-only shows exactly the manifest + this one spec file; no .sql, .ts or other doc appears."
+  ],
+  "_evidence_rules": "Re-run the tail check on synced main before editing (`ls packages/db/migrations/*.sql | tail -1`) and use whatever it actually reports — if a slice merges before this one and the tail is no longer 0022, correct to the real tail and update the merged_probe accordingly rather than writing 0022 from this manifest. Re-verify the genuinely-new list against migrations + schema.ts before touching that paragraph; if any object has since landed, HALT and report rather than silently editing a claim that is now wrong in a different way.",
+  "scope": [
+    "docs/autopilot-manifests/docs-user-settings-0014-merge-state-reconcile.json",
+    "docs/features/BE/feature_user_settings_tech.md"
+  ]
+}
