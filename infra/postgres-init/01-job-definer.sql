@@ -98,6 +98,23 @@ BEGIN
       'job_definer bootstrap: job_definer is already granted to a runtime role (app/app_worker/readonly) — revoke it before proceeding';
   END IF;
   EXECUTE format('GRANT job_definer TO %I', v_grant_to);
+  -- codex round-11 [P1]: the check above runs BEFORE this GRANT, so it only sees membership that
+  -- predates this run. If v_grant_to is a non-runtime GROUP role a runtime role already belongs
+  -- to, the pre-grant check correctly finds nothing, then this GRANT itself creates a NEW indirect
+  -- path (runtime role -> v_grant_to -> job_definer, BYPASSRLS) that nothing re-verifies. Re-run
+  -- the identical, transitive pg_has_role check AFTER the grant: since this whole file is one
+  -- explicit transaction (BEGIN at the top), raising here rolls back the GRANT — and everything
+  -- else in this run — atomically, so the vulnerable state never persists.
+  SELECT rolname INTO v_existing_runtime_member
+    FROM pg_roles
+   WHERE rolname IN ('app', 'app_worker', 'readonly')
+     AND pg_has_role(rolname, 'job_definer', 'MEMBER')
+   LIMIT 1;
+  IF v_existing_runtime_member IS NOT NULL THEN
+    RAISE EXCEPTION
+      'job_definer bootstrap: granting job_definer to % would give runtime role % an indirect path to it — aborting',
+      v_grant_to, v_existing_runtime_member;
+  END IF;
 END
 $$;
 GRANT USAGE ON SCHEMA public TO job_definer;

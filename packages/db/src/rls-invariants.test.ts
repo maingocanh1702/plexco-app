@@ -1482,11 +1482,13 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
       `SELECT reason FROM job_audit_events WHERE job_id = $1 ORDER BY created_at`,
       [ev],
     );
-    expect((audit.rows as { reason: string }[]).map((r) => r.reason)).toEqual([
-      "outbox_claimed",
-      "outbox_lease_reclaimed",
-      "outbox_claimed",
-    ]);
+    const reasons = (audit.rows as { reason: string }[]).map((r) => r.reason);
+    // codex round-11 [P2]: the reclaim + new-claim rows from the SECOND claim_outbox_batch call
+    // are inserted in the same transaction, so created_at DEFAULT now() ties them — ORDER BY
+    // created_at has no defined order between ties. Only the first call's row is genuinely,
+    // temporally first; assert the tied pair as a set instead of assuming a fixed order.
+    expect(reasons[0]).toBe("outbox_claimed");
+    expect(reasons.slice(1).sort()).toEqual(["outbox_claimed", "outbox_lease_reclaimed"]);
   });
 
   it("JCL-7: two concurrent claimers never both receive the same event", async () => {
