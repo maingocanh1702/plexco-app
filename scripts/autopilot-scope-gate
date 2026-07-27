@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 4
+# KIT_VERSION: 6
 # autopilot-scope-gate — parallel autopilot coordination (SCOPE_COLLISION gate).
 # REPO-AGNOSTIC template. Copy to <repo>/scripts/autopilot-scope-gate, chmod +x, commit.
 #
@@ -19,7 +19,7 @@
 #   - DEP_MISSING       : a depends_on feature is still ACTIVE (in-flight|ready) = not merged on base.
 #   - SCOPE_COLLISION   : my scope files OR invariants intersect another ACTIVE feature.
 # On PASS it replaces any existing block for my feature (e.g. queued) with a fresh in-flight block.
-# ready  : flip my block status → ready (keeps the reservation).
+# ready  : run the repo review-readiness gate, then flip status → ready (keeps the reservation).
 # cleanup: remove my block (after merge/close).
 #
 # NOTE (dependency semantics): the registry check treats "prerequisite merged" == "not active in
@@ -49,6 +49,7 @@ fi
 
 # --- shared registry at MAIN repo root (works from any worktree) ---
 ROOT="$(cd "$(git rev-parse --git-common-dir)" && cd .. && pwd)"
+WORKTREE_ROOT="$(git rev-parse --show-toplevel)"
 DIR="$ROOT/.autopilot"; INFLIGHT="$DIR/INFLIGHT.md"; LOCK="$DIR/INFLIGHT.lock"
 mkdir -p "$DIR"
 # INFLIGHT initialisation happens inside the lock (register/ready/cleanup) to avoid
@@ -99,6 +100,7 @@ if [ -n "$manifest" ]; then
   FEATURE="$(json_get "$MANABS" feature)"; BRANCH="$(json_get "$MANABS" branch)"; RISK="$(json_get "$MANABS" risk)"
   DEPS="$(json_get "$MANABS" depends_on)"; INVARIANTS="$(json_get "$MANABS" invariants)"; SCOPE="$(json_get "$MANABS" scope)"
   BASE_REF="$(json_get "$MANABS" base_ref)"; [ -n "$BASE_REF" ] || BASE_REF="main"
+  REVIEW_GATE_VERSION="$(json_get "$MANABS" review_gate_version)"
   DEP_CHECKS="$(json_get_dep_checks "$MANABS")"
   [ -n "$FEATURE" ] || { echo "HALT: manifest missing 'feature'" >&2; exit 1; }
   if command -v python3 >/dev/null 2>&1; then
@@ -107,16 +109,28 @@ import os,sys;print(os.path.relpath(sys.argv[2],sys.argv[1]))
 PY
 )"
   else MANREL="${MANABS#"$ROOT"/}"; fi
-  # invariant catalog lives at docs/autopilot-invariant-catalog.md (sibling of the manifests dir)
-  CATALOG="$(cd "$(dirname "$manifest")/.." 2>/dev/null && pwd)/autopilot-invariant-catalog.md"
+  # invariant catalog: normally docs/autopilot-invariant-catalog.md (sibling of the manifests dir).
+  # v6 FIX: a RUNTIME/TEMP manifest may live OUTSIDE docs/ (e.g. .autopilot/state/<feature>/manifest.json
+  # so no untracked file lands in docs/). The sibling derivation then resolves to the wrong dir and
+  # `register` HALTs INVARIANT_UNKNOWN even though the catalog exists. Resolve in order:
+  #   explicit $AUTOPILOT_INVARIANT_CATALOG > sibling-of-manifest > worktree docs/ > MAIN repo docs/.
+  _cat_dir="$(cd "$(dirname "$manifest")/.." 2>/dev/null && pwd)" || _cat_dir=""
+  CATALOG=""
+  for _c in "${AUTOPILOT_INVARIANT_CATALOG:-}" \
+            "${_cat_dir:+$_cat_dir/autopilot-invariant-catalog.md}" \
+            "$WORKTREE_ROOT/docs/autopilot-invariant-catalog.md" \
+            "$ROOT/docs/autopilot-invariant-catalog.md"; do
+    if [ -n "$_c" ] && [ -f "$_c" ]; then CATALOG="$_c"; break; fi
+  done
+  [ -n "$CATALOG" ] || CATALOG="${_cat_dir:+$_cat_dir/}autopilot-invariant-catalog.md"
 else
   FEATURE="$feature_arg"
 fi
 
-# canonical invariant tokens between the catalog markers (token = text before the FIRST whitespace-
-# wrapped dash " — " or " - "; tokens may contain hyphens like `transport-a`, so the dash must have
-# surrounding whitespace to count as the separator).
-catalog_tokens(){ [ -f "$CATALOG" ] || return 1; awk '/<!-- catalog:start -->/{c=1;next} /<!-- catalog:end -->/{c=0} c' "$CATALOG" | sed -E 's/[[:space:]]+[—-][[:space:]].*$//; s/^[[:space:]]+//; s/[[:space:]]+$//' | grep -E '^[a-z][a-z0-9_-]*$' | sort -u; }
+# canonical invariant tokens between the catalog markers. The catalog contract is one token as the
+# first whitespace-delimited field per line. Avoid a sed character class containing an em dash: BSD
+# sed can parse `[—-]` as an invalid/locale-sensitive range and silently return an empty catalog.
+catalog_tokens(){ [ -f "$CATALOG" ] || return 1; awk '/<!-- catalog:start -->/{c=1;next} /<!-- catalog:end -->/{c=0} c && $1 ~ /^[a-z][a-z0-9_-]*$/ {print $1}' "$CATALOG" | sort -u; }
 
 # --- portable atomic lock (mkdir) ---
 acquire(){ local t=0; until mkdir "$LOCK" 2>/dev/null; do sleep 0.2; t=$((t+1)); [ $t -gt 150 ] && { echo "HALT: lock timeout ($LOCK) — another gate stuck? rmdir it if stale" >&2; exit 1; }; done; trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT; }
@@ -151,7 +165,7 @@ case "$cmd" in
     acquire
     [ -f "$INFLIGHT" ] || printf '# Autopilot in-flight registry\n\n---\n' > "$INFLIGHT"
     # (0) invariant catalog check (#22): every manifest invariant MUST be a canonical token.
-    cat_tokens="$(catalog_tokens)" || { echo "HALT INVARIANT_UNKNOWN: catalog not found at $CATALOG (cannot validate invariants)." >&2; exit 1; }
+    cat_tokens="$(catalog_tokens)" || { echo "HALT INVARIANT_UNKNOWN: invariant catalog not found (cannot validate invariants). Tried: \$AUTOPILOT_INVARIANT_CATALOG, sibling-of-manifest, \$WORKTREE_ROOT/docs/, \$ROOT/docs/ — last: $CATALOG" >&2; exit 1; }
     if [ -n "$INVARIANTS" ]; then
       unknown="$(comm -23 <(printf '%s\n' "$INVARIANTS" | sort -u) <(printf '%s\n' "$cat_tokens"))"
       if [ -n "$unknown" ]; then
@@ -193,9 +207,28 @@ case "$cmd" in
       exit 1
     fi
     drop_my_block; append_block in-flight
+    # Step-1 state is mechanical, not prompt discipline. Preserve existing counters on resume,
+    # but guarantee both breaker files exist before implementation or review begins.
+    TASK_STATE="$WORKTREE_ROOT/.autopilot/state/$FEATURE"
+    mkdir -p "$TASK_STATE"
+    [ -f "$TASK_STATE/fix-round-count.txt" ] || printf '0\n' > "$TASK_STATE/fix-round-count.txt"
+    [ -f "$TASK_STATE/regions.log" ] || : > "$TASK_STATE/regions.log"
     echo "registered: $FEATURE (in-flight)"
     ;;
   ready)
+    # Run the potentially long verify + Codex gate BEFORE taking the shared registry lock. The gate binds
+    # its attestation to HEAD + current base SHA + diff hash; ap-land verifies the same attestation again.
+    REVIEW_GATE="$WORKTREE_ROOT/scripts/autopilot-review-readiness.mjs"
+    REVIEW_REQUIRED=0
+    [ -n "$REVIEW_GATE_VERSION" ] && REVIEW_REQUIRED=1
+    git cat-file -e "$BASE_REF:scripts/autopilot-review-readiness.mjs" 2>/dev/null && REVIEW_REQUIRED=1 || true
+    if [ -f "$REVIEW_GATE" ]; then
+      node "$REVIEW_GATE" ready --manifest "$MANABS"
+    elif [ "$REVIEW_REQUIRED" = 1 ]; then
+      echo "HALT REVIEW_GATE_MISSING: $REVIEW_GATE" >&2; exit 1
+    else
+      echo "WARN: this repo has not installed automatic review-readiness yet; applying legacy registry-only READY" >&2
+    fi
     acquire
     [ -f "$INFLIGHT" ] || printf '# Autopilot in-flight registry\n\n---\n' > "$INFLIGHT"
     # Require a prior active block: ready must follow a successful register.
