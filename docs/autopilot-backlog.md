@@ -793,10 +793,13 @@ manifest: null
 merged_probe: null
 notes: **Mở bởi design-probe item (c) của `db-public-visibility-capacity-check` (2026-07-27); dependency đã thoả — `0024` merged tại `c100937`.** Slice đó KHÔNG thể tự land reconcile này vì `feature_session_management_tech.md` không nằm trong scope list của nó; từ chối sửa file ngoài scope là đúng kỷ luật, nên việc còn lại nằm đây. `:120` hiện ghi CHECK capacity×visibility là *"hardening candidate qua migration mới monotonic nếu chốt — … chưa thuộc scope slice nào"* — nay stale, phải đọc là **đã land**, trích `0024`/`sessions_public_capacity_chk`. Thêm ghi chú tại `:386` và `:396` (choke-point join/promotion của SessionService, vốn fail-closed trên cùng predicate) rằng DB **nay cũng** enforce qua `0024` và choke-point **VẪN GIỮ** làm defense-in-depth — môi trường nào chưa apply `0024` thì chỉ còn nó. Mục đích của câu đó là chặn một người đọc tương lai xoá choke-point như dead code. **KHÔNG** được kết luận `job-infra-public-projection-reconciliation` đã đóng: candidate (a) và (b) vẫn mở. Đây là reconcile status-line + một ghi chú làm rõ, cùng hình dạng với `docs-tail-0018-number-reconcile`.
 
-## task: db-sessions-check-constraint-naming-drift
-title: sessions_vis_chk/sessions_slots_chk và 4 anh em chưa bao giờ được áp dụng — DB thật dùng tên Postgres tự sinh
-status: idea
-risk: P2
+## task: db-check-constraint-naming-drift
+title: 27 CHECK inline không tên trên 23 bảng (0002-0008) — schema.ts và pg_constraint không khớp
+status: ready
+manifest: docs/autopilot-manifests/db-check-constraint-naming-drift.json
+merged_probe: packages/db/migrations/0025_check_constraint_naming_drift.sql :: CONSTRAINT
+rescoped: 2026-07-27 · Backlog entry gốc (do agent AP-36 soạn) ghi phạm vi là "sessions và 4 anh em" — con số đó lấy từ chỗ PVC-3 tình cờ chạm tới, KHÔNG phải từ phép đo. Đo static trên đĩa tại 03a134e: **27 CHECK inline không tên trên 23 bảng, trong 7 file 0002-0008** (0002:9 · 0003:6 · 0004:3 · 0005:1 · 0006:1 · 0007:3 · 0008:4). Auth lane 0015-0018 đặt tên đúng nên drift chỉ nằm ở tầng foundation. **Nâng P2→P1** vì 13/27 nằm trên bảng money-path: charges(4), bank_transactions(4), payment_allocations(3), bank_accounts(2)
+risk: P1
 change_class: schema-migration
 depends_on: []
 invariants: [schema]
