@@ -12,6 +12,124 @@
 
 ---
 
+## Verdict 25 — `db-public-visibility-capacity-check`: bỏ invalid state public+unlimited tại nguồn; `CODE_READY` (2026-07-27)
+
+> **Điều CODE_READY này cho phép:** mở worktree, register scope-gate, chạy design probe. `design_probe_required:
+> true` và **item (a) là lý do slice tồn tại**, không phải thủ tục. Viết production code trước khi probe được
+> owner confirm là vi phạm verdict này.
+>
+> **Bẫy của item (a), nói thẳng vì nó trông giống sự cẩn thận:** phản xạ là `ADD CONSTRAINT ... NOT VALID` rồi
+> `VALIDATE CONSTRAINT` ngay sau, vì cặp đó đọc như idiom expand-only chuẩn. **Ở đây thì không.** `NOT VALID` bỏ
+> qua row cũ; `VALIDATE` sau đó quét chúng và **FAIL** nếu có row vi phạm. Hai câu lệnh trong một migration vì
+> vậy có **đúng cùng failure mode** với việc thêm thẳng constraint — mà lại *trông* cẩn thận hơn. Probe phải ĐO
+> số row vi phạm trước, rồi chốt một hình dạng và **phát biểu được failure mode của nó bằng một câu**.
+>
+> **Vì sao slice này đáng P1 chứ không phải dọn dẹp:** invalid state `public` + `slots_max IS NULL` **vô hình
+> với sửa chữa theo sự kiện**. Marketplace edge #15 bỏ qua row đó và xoá projection — nhưng chỉ khi projector
+> **đánh giá** session. Một writer bypass lật session public đã-projected từ `slots_max` hữu hạn sang NULL
+> **không phát event nào**, projector không bao giờ quay lại, và projection cũ-nhưng-nay-invalid **vẫn hiển thị
+> công khai**. Unit test #26 đặt row vào batch bằng tay nên chỉ chứng minh hành-vi-khi-tới-được. Verdict 20 ghi
+> đây là gate `ENABLEMENT_ONLY` chặn projector public.
+>
+> **Xuất xứ:** đây là fix-candidate (c) của `job-infra-public-projection-reconciliation`, mà chính task cha yêu
+> cầu **đánh giá TRƯỚC** vì rẻ nhất và fail-closed nhất — nó bỏ invalid state tại nguồn, có thể khiến candidate
+> (a) và (b) thành không cần thiết chứ không phải chỉ hoãn. Slice này KHÔNG được kết luận thay cho task cha;
+> probe item (d) buộc nêu rõ cái gì SỐNG SÓT qua CHECK.
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-27
+AUTHORITY_SHA: 1ffb6a52760f2c8e75a1446468ad612ef0afd018
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-manifests/db-public-visibility-capacity-check.json
+  - .claude/commands/ap-36-db-public-visibility-capacity-check.md
+SLICE: db-public-visibility-capacity-check
+IN_SCOPE: one module (packages/db) — exactly ONE monotonic migration after the live tail adding a CHECK forbidding visibility='public' with slots_max IS NULL, in whatever add-then-validate shape the design probe pins for existing data; the schema.ts mirror alongside the other sessions_*_chk constraints; real-role tests proving the constraint rejects the invalid state and accepts every valid combination
+OUT_OF_SCOPE: any projector, TypeScript runtime or apps/bot file — this slice runs in PARALLEL with job-schedule-outbox-dispatch and any shared file collides; public_sessions shape changes, specifically the eight missing DD-41 discovery fields and the stale skillLevel column (real drift, separate slice); narrowing slots_max (stays nullable — unlimited remains valid for non-public); weakening or replacing sessions_vis_chk or sessions_slots_chk; edits to applied migrations 0000-0023; RLS, role or grant changes; deciding candidate (a) durable invalidation event or (b) periodic reconciliation
+G1_DECISION: PASS — the predicate is not invented here. feature_session_management_tech.md:120 already names it verbatim and records its status as a hardening candidate awaiting a slice; PRD E#7 is the product authority behind it. The one genuinely open mechanism question (what to do about existing violating rows) is routed to the mandatory design-probe STOP gate, which v0.6.1 §0.1 establishes as the closure mechanism for this class
+G2_SPEC: PASS — reviewed spec authority rather than a fabricated one: feature_session_management_tech.md §2 (the predicate + its candidate status) and :386 (the choke-point that fail-closes on the same state today), plus feature_marketplace_discovery_tech.md edge #15 for why event-driven repair does not reach it
+G3_DEPENDENCY: PASS — no unmerged dependency; depends_on is empty. dep_checks verified on disk at 1ffb6a5: sessions_vis_chk and sessions_slots_chk both present in packages/db/schema.ts. An earlier draft also listed ack_outbox_event from 0023; that entry was REMOVED before authorization because this slice consumes nothing from 0023 — dep_checks exist to catch upstream interface drift, so an entry on an unused symbol fires on unrelated edits, and a check that cries wolf is ignored exactly when it is right
+G4_TEST: PASS — PVC-1..PVC-8 authored before code with exact expected results. Two are anti-regression rather than coverage: PVC-2 requires private-with-NULL to still succeed, which is what a too-broad constraint breaks and what a careless predicate would silently forbid; PVC-6 requires the probe's chosen validation shape to be exercised with its stated failure mode, so a migration that would fail on real data cannot pass its own suite on an empty table
+G5_SCOPE: PASS — 5 files, one module, exactly one monotonic migration; inside budget. Same shape as the 0019/0020/0021 integrity migrations this repo has run cleanly
+G6_EXTERNAL: PASS — no PII, money, provider or legal gate. It TIGHTENS a public-exposure invariant rather than relaxing one, and adds no new surface
+HARD_DEPENDENCIES: none
+PRIOR_SLICES: none — depends_on is empty by design; the parent backlog item job-infra-public-projection-reconciliation is a tracking item, not a code dependency
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none for this slice. Note it is itself the evaluation of an ENABLEMENT_ONLY gate recorded on Verdict 20 against the future public projector; landing this CHECK does NOT by itself clear that gate, and probe item (d) exists to make the residue explicit
+LIVE_REPO_VERIFICATION: PASS (measured at 1ffb6a5: migration tail is 0023 so 0024 is free; sessions.slots_max is nullable at schema.ts:589 and sessions.visibility is text NOT NULL DEFAULT 'private' at :590; sessions_slots_chk enforces slots_max IS NULL OR slots_max > 0 at :601 and sessions_vis_chk enforces visibility IN ('private','public') at :602, so the naming convention and the surrounding constraints are as this manifest states; feature_session_management_tech.md:120 still records the predicate as a hardening candidate belonging to no slice)
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS (PVC-1..PVC-8)
+SECURITY_AND_MIGRATION_GATE: PASS — expand-only, one monotonic migration, 0000-0023 byte-identical, no role/attribute change, no RLS change, no column narrowed. The security-relevant property is strengthened: a state that can leak a stale public projection becomes unrepresentable rather than merely rejected by one service path. The one risk the gate does NOT wave through is operational, and it is why the probe is mandatory: an ADD+VALIDATE pair that fails on populated data is a failed migration, not a rejected write
+IMPLEMENTATION_ARTIFACTS: PASS (manifest committed and pushed at 1ffb6a5; the AP-36 launcher lands with this verdict as an execution aid derived from the manifest, not independent authority). The manifest's _problem/_decision_contract/_scope_in/_scope_out/_design_probe/_acceptance/_scope_exception/_evidence_rules is the executable plan required by gate §B4
+FIRST_IMPLEMENTATION_STEP: open a worktree at .autopilot/worktrees/db-public-visibility-capacity-check from the current origin/main tip, register the manifest via scope-gate, run the full CI list as the green baseline, re-verify the live migration tail, then write design-probe.md covering all four items — measuring violating rows BEFORE choosing a validation shape — and STOP for founder confirmation before any production edit
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the design probe, then the coding slice. Re-review is required if another slice claims the 0024 number first, or if feature_session_management_tech.md:120 changes status
+```
+
+---
+
+## Verdict 24 — `job-schedule-outbox-dispatch`, job-infra slice 3a: cho vòng dispatch thực sự chạy + đóng lỗ fence `__pgboss__send-it`; `CODE_READY` (2026-07-27)
+
+> **Điều CODE_READY này cho phép:** mở worktree, register scope-gate, chạy design probe. `design_probe_required:
+> true`, năm item, và **item (b) là cái bản sao máy móc sẽ làm sai**. Viết production code trước khi probe được
+> owner confirm là vi phạm verdict này.
+>
+> **Slice 2b để lại một handler đăng ký nhưng không bao giờ được gọi.** `boss.work(OUTBOX_DISPATCH_QUEUE)` có,
+> mà zero `boss.schedule()`, zero `pg_cron` (`0000` chỉ cài `pgcrypto`), zero `setInterval` — đo tại `750ca0d`,
+> chỉ còn hai comment ước vọng. Đó là phần dễ.
+>
+> **Phần khó, và lý do P1: đường cron của pg-boss CHẾT CÂM dưới seat `app_worker`.** Đọc source pg-boss 10.4.2
+> chứ không đọc README: `timekeeper.js:44-69` — `start()` gọi `manager.createQueue('__pgboss__send-it')` bọc
+> trong **try/catch RỖNG** ở `:54-56`; `app_worker` không có `CREATE` nên lỗi bị nuốt. Và `cron()` ở `:141-151`
+> **không** insert vào queue đích mà insert vào `__pgboss__send-it`, worker của queue đó mới fan ra. Mà
+> `queues.ts:18` không liệt kê tên đó, nên `preflight.ts:147-195` không assert partition của nó. Hôm nay nó tồn
+> tại **do tình cờ**: `provision-queue.ts:24` gọi `boss.start()` dưới migration role với default `schedule:true`
+> (`attorney.js:159`). Không gì pin chuỗi đó. Provisioning chạy với `schedule:false` một lần là cron chết mà
+> không có lỗi ở đâu cả.
+>
+> **Bẫy item (b):** nước đi hiển nhiên là thêm `'__pgboss__send-it'` vào `QUEUES` để `assertQueuesProvisioned`
+> sẵn có bọc nó. Nhưng `QUEUES` **cũng** điều khiển thứ provisioning **TẠO RA**, trong khi pg-boss tự tạo queue
+> đó. Hai vai trò có thể xung đột. Probe phải đo, và nếu xung đột thì đề xuất tách danh sách chứ không nạp
+> chồng vai trò cho một mảng vì đổi một dòng trông gọn hơn.
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-27
+AUTHORITY_SHA: 1ffb6a52760f2c8e75a1446468ad612ef0afd018
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-manifests/job-schedule-outbox-dispatch.json
+  - .claude/commands/ap-35-job-schedule-outbox-dispatch.md
+SLICE: job-schedule-outbox-dispatch
+IN_SCOPE: one module (apps/bot), TypeScript only — register a schedule for OUTBOX_DISPATCH_QUEUE with a code-owned cadence pinned at the design probe; close the __pgboss__send-it fence hole so a broken cron path fails LOUDLY at preflight instead of silently at runtime; whatever preflight assertion the probe pins for the scheduler's own dependencies including the leader-election write on pgboss.version; tests for both against real PostgreSQL with a real app_worker seat
+OUT_OF_SCOPE: ANY new migration — a hard boundary, not a preference, for two independent reasons: everything needed already exists in 0022/0023, and a migration pulls in the `schema` token and collides with the parallel db-public-visibility-capacity-check slice; list_due_tenant_jobs (named at TDD:494, absent from disk) deferred to its own slice; any real projector, and any edit to dispatcher.ts including REQUIRED_PROJECTORS and productionStubDeliver (slice 4); provision-queue.ts grant block; ANY least-privilege, excess-privilege, ownership or role-attribute assertion in preflight (cut by Verdict 22 — re-adding is an immediate HALT); enabling this schedule in an environment carrying real traffic before slice 4 lands
+G1_DECISION: PASS — DD-90 Q6 (preflight fail-closed before boss.start(), asserting PRESENCE of required grants) and DD-89 Q2 (pg-boss DDL authority stays in provision-queue.ts under the migration role) are owner-final and bind unchanged. No DD covers cron registration itself, which is why the cadence, the fence mechanism and the enablement posture are all routed to the design-probe STOP gate rather than decided here
+G2_SPEC: PASS — infra slice with equivalent reviewed technical authority rather than a fabricated Product spec: the DB contract is merged code (0022 + 0023), the runtime contract is slice 2b (fca314e) plus DD-90 Q6, and the pg-boss behaviour is READ FROM pg-boss's own source at a pinned version rather than from its documentation
+G3_DEPENDENCY: PASS — job-runtime-dispatcher merged at fca314e; no unmerged dependency. dep_checks verified on disk at 1ffb6a5: runDispatchCycle in dispatcher.ts, OUTBOX_DISPATCH_QUEUE in queues.ts, assertQueuesProvisioned in preflight.ts, ack_outbox_event in 0023 — all four resolve on main
+G4_TEST: PASS — JSO-1..JSO-9 authored before code with exact expected results. Three are anti-regression rather than coverage: JSO-2 requires preflight to FAIL and NAME the missing __pgboss__send-it partition, which is the entire point of the slice since pg-boss swallows its own error; JSO-4 greps the shipped preflight for the least-privilege class Verdict 22 cut, so six rounds of thrash cannot creep back; JSO-6 requires a scheduled send to drive runDispatchCycle end to end, so a test that only proves a schedule row exists does not satisfy it
+G5_SCOPE: PASS — 6 files, one module, no migration; inside budget. Deliberately narrower than the parent backlog item job-scheduler-cron-registration, which bundled list_due_tenant_jobs and a cron audit envelope; that bundle would have pulled packages/db in and made parallel execution impossible
+G6_EXTERNAL: PASS — no PII, money, provider, legal or evidence gate. It stays code-dark in effect: with no producer inserting outbox_events, a running schedule claims nothing
+HARD_DEPENDENCIES: job-runtime-dispatcher = MERGED (main@fca314e; probe apps/bot/src/worker.ts::boss.work verified on origin/main)
+PRIOR_SLICES: db-job-claim-lease-core (0022) · db-outbox-ack-marker (0023) · job-runtime-dispatcher (2b)
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: enabling the schedule against real traffic is gated on slice 4's real projector — 2b's productionStubDeliver DLQs every delivery, so a producer plus this schedule without slice 4 means every event DLQs. Probe item (e) pins whether the schedule ships enabled or behind a flag defaulting off. This gate does NOT block coding or merging this slice
+LIVE_REPO_VERIFICATION: PASS (measured at 1ffb6a5, and pg-boss facts read from node_modules source rather than documentation: worker.ts calls boss.work(OUTBOX_DISPATCH_QUEUE) with no boss.schedule() anywhere in the repo; QUEUES is [OUTBOX_DISPATCH_QUEUE]; preflight's assertQueuesProvisioned iterates only QUEUES so __pgboss__send-it has no partition assertion; dispatcher.ts REQUIRED_PROJECTORS has exactly one entry; pg-boss resolves to 10.4.2 where timekeeper.js:54-56 wraps createQueue in an empty try/catch, cron() at :141-151 routes through __pgboss__send-it, and attorney.js:159 defaults schedule to true)
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS (JSO-1..JSO-9)
+SECURITY_AND_MIGRATION_GATE: PASS — no migration, no grant change, no RLS change, no new role. app_worker gains no privilege: the fence this slice adds asserts an object EXISTS, and if it does not the remedy is to provision it under the migration role per DD-89 Q2, never to grant CREATE. The DD-90 Q6 boundary is extended, not weakened, and JSO-4 pins that the least-privilege class stays out
+IMPLEMENTATION_ARTIFACTS: PASS (manifest committed and pushed at 1ffb6a5; the AP-35 launcher lands with this verdict as an execution aid derived from the manifest, not independent authority). The manifest's _problem/_decision_contract/_scope_in/_scope_out/_design_probe/_acceptance/_scope_exception/_evidence_rules is the executable plan required by gate §B4
+FIRST_IMPLEMENTATION_STEP: open a worktree at .autopilot/worktrees/job-schedule-outbox-dispatch from the current origin/main tip, register the manifest via scope-gate, run the full CI list as the green baseline, re-verify pg-boss's resolved version and the two source facts this slice turns on, then write design-probe.md covering all five items and STOP for founder confirmation before any production edit
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the design probe, then the coding slice. Re-review is required if pg-boss's resolved version moves off 10.4.2, since both source facts in LIVE_REPO_VERIFICATION could change with it
+```
+
+---
+
 ## Verdict 23 — `db-outbox-ack-marker`, job-infra slice 2a: close the outbox starvation loop 0022 flagged against itself; `CODE_READY` (2026-07-26) → **IMPLEMENTED & MERGED `76e1f7b`** (2026-07-27)
 
 > **✅ IMPLEMENTED & MERGED 2026-07-27 — `main@76e1f7b`** (squash của `feat/db-outbox-ack-marker@0aaf984`).
