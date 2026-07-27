@@ -95,7 +95,45 @@ NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the design probe, then th
 
 ---
 
-## Verdict 22 — `job-runtime-dispatcher`, job-infra slice 2b/4; `CODE_READY` → `NOT_CODE_READY` (2026-07-26) → **RE-PINNED `CODE_READY`** tại `7ac0b20` (2026-07-27)
+## Verdict 22 — `job-runtime-dispatcher`, job-infra slice 2b/4; `CODE_READY` → `NOT_CODE_READY` (2026-07-26) → **RE-PINNED `CODE_READY`** tại `7ac0b20` → **IMPLEMENTED & MERGED `fca314e`** (2026-07-27)
+
+> **✅ IMPLEMENTED & MERGED 2026-07-27 — `main@fca314e`** (squash của `feat/job-runtime-dispatcher@3186dbc`,
+> 11 file, +1735/−8). Verdict `CODE_READY` bên dưới giữ nguyên làm bằng chứng lịch sử; không còn là authority.
+>
+> **⚠️ CỔNG `2x_clean` Ở SLICE NÀY LÀ CLEAN TĨNH — ghi rõ để không bị đọc nhầm sau này.** Round 10 và 11 đều
+> kết bằng verdict model thật trên cùng HEAD `3186dbc` (không commit xen giữa — đã đối chiếu timestamp), nhưng
+> **cả hai đều chạy không có `DATABASE_URL_TEST`** và tự khai *"DB-backed tests could not run"*. Nghĩa là
+> reviewer **chưa từng thực thi** các đường concurrency của dispatch loop — đúng vùng đã sinh ba finding ở vòng
+> 7–9, trong đó một cái là lỗi nằm trong chính bản fix của vòng trước. Văn bản gate không đòi codex chạy DB
+> test nên gate **không bị vi phạm**; giảm nhẹ có thật là slice tự chạy lại suite `apps/bot` 6+ lần. Nhưng
+> **KHÔNG được đọc "2x clean" ở slice này thành "concurrency đã kiểm độc lập"**.
+>
+> **11 vòng codex, và HALT mới là phần có giá trị.** Vòng 1–5 tìm năm defect thật. Vòng 6 chạm trần
+> `MAX_ROUNDS` với ba finding nữa và slice **HALT thay vì sửa** — đúng, vì mọi finding từ vòng 1 đều rơi vào
+> cùng hai hàm, mỗi vòng thêm một chiều của *"app_worker có đúng tập quyền dự định không"*. Một allowlist ACL
+> mọc dần không có chứng minh vét cạn, nên reviewer đối kháng luôn tìm được cạnh mới.
+>
+> **Cách gỡ là CẮT, không phải liệt kê kỹ hơn.** DD-90 Q6 (`decisions.md:106`) đòi preflight kiểm grant cần
+> thiết **CÓ MẶT**, không đòi chứng minh quyền thừa **VẮNG MẶT**. Least-privilege attestation là control khác,
+> unbounded theo cấu trúc, và **ngồi sai chỗ**: một preflight chạy *với tư cách* `app_worker` không thể chứng
+> thực đáng tin rằng `app_worker` không bị nâng quyền, còn fail-closed vì một quyền lạ sẽ để một thay đổi lành
+> tính của nền tảng giết worker lúc boot. Control đó đã có nhà: catalog test của `packages/db` chạy ở migration
+> authority. **Cả ba finding vòng 6 tự tan** dưới bản cắt — đó là bằng chứng cắt đúng, không phải cắt tiện.
+>
+> **Một lỗi của reviewer (tôi) đã góp phần gây ra vòng 6.** `_decision_contract` của manifest diễn giải DD-90
+> Q6 thành *"the pgboss schema and **base objects**"*; canonical chỉ nói *"kiểm schema/queues/catalog grants"*.
+> Cụm "base objects" là tôi tự thêm, và chính nó sinh ra finding P1 của vòng 6. Đã sửa trong manifest cùng lượt
+> reconcile này. Preflight ship ra uỷ việc kiểm tồn tại/phiên bản schema cho `contractor.check()` của chính
+> pg-boss — hợp lệ, và **JRD-18 pin việc uỷ đó** để một bản pg-boss tương lai làm hỏng test thay vì âm thầm mất
+> coverage.
+>
+> **Quyết định 26/07 của tôi về retry policy cũng sai và đã bị đảo có ý thức.** Tôi duyệt một backoff cụ thể
+> (30s ×2, cap 1h, DLQ lần 5) nằm trong slice này; probe đọc `§4.3:173-174` đúng nguyên văn — policy thuộc
+> *first concrete projector slice* — nên `dispatcher.ts` tính **zero** backoff. Bản duyệt của tôi đặt
+> choke-point sớm một slice: đúng cái bẫy mechanical-mirror mà breaker 26 sinh ra để bắt.
+>
+> **Hệ quả cho slice 3:** stub production trả `dlq` ngay với `no_projector_implemented`. Khi slice 3 đăng ký
+> cron, **mọi event sẽ DLQ** cho tới khi slice 4 land. Đó là tín hiệu ồn có chủ đích, không phải defect.
 
 > **Lịch sử ba trạng thái, giữ nguyên có chủ đích.** Verdict này `CODE_READY` ngày 26/07, bị hạ
 > `NOT_CODE_READY` cùng ngày khi design probe của AP-33 phát hiện `0022:166-181` là
