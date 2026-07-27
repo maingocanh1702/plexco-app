@@ -754,3 +754,29 @@ invariants: []
 scope: []
 notes: **Có sẵn TRƯỚC slice 2b; slice 2b chỉ làm nó lộ ra.** `app_worker` là role cluster-global. Mọi suite chạm DB — `packages/db`'s suite sẵn có VÀ hai file test mới của `apps/bot` — tự `ALTER ROLE app_worker` sang password riêng khi chạy, và **không suite nào khôi phục** khi xong. Trước 2b không ai để ý vì không có gì local dùng `app_worker`. Từ `fca314e`, `worker.ts` chạy preflight fail-closed đòi kết nối bằng `app_worker`, nên sau MỖI lần `pnpm -w test` developer phải chạy lại `ALTER ROLE app_worker WITH PASSWORD 'plexco_dev_worker'` trước khi start worker local. Đã tài liệu hoá trong `.env.example`. **Một cách sửa đã thử và bị REVERT trong slice 2b:** `afterAll` tự khôi phục — nó đua sống với connection pool của file test anh em đang chạy song song, gây auth failure thật, tệ hơn vấn đề định sửa. Nên lời giải KHÔNG phải per-file restore; cần một cơ chế ở tầng khác (per-test-database role thay vì cluster-global, hoặc global teardown chạy sau toàn bộ suite).
 
+## task: job-schedule-outbox-dispatch
+title: Job-infra slice 3a — đăng ký schedule cho outbox dispatch + đóng lỗ fence __pgboss__send-it
+status: ready
+risk: P1
+change_class: manual-runtime-feature
+depends_on: [job-runtime-dispatcher]
+invariants: [retry-liveness]
+scope: [docs/autopilot-manifests/job-schedule-outbox-dispatch.json, apps/bot/src/worker.ts, apps/bot/src/queues.ts, apps/bot/src/preflight.ts, apps/bot/src/preflight.test.ts, apps/bot/src/schedule.test.ts]
+manifest: docs/autopilot-manifests/job-schedule-outbox-dispatch.json
+launcher: .claude/commands/ap-35-job-schedule-outbox-dispatch.md
+merged_probe: apps/bot/src/worker.ts :: schedule
+notes: **Tách hẹp từ `job-scheduler-cron-registration` (owner chốt 27/07) để chạy SONG SONG với `db-public-visibility-capacity-check`.** Slice 2b (`fca314e`) để lại một handler đăng ký nhưng **không bao giờ được gọi**: `boss.work(OUTBOX_DISPATCH_QUEUE)` có, mà zero `boss.schedule()`, zero `pg_cron` (`0000` chỉ có `pgcrypto`), zero `setInterval` — kiểm tại `750ca0d`, chỉ còn hai comment ước vọng ở `worker.ts:9` và `infra/entrypoint.sh:23`. **Vấn đề lớn hơn, và là lý do P1:** đường cron của pg-boss **chết câm** dưới seat `app_worker`. Đọc source pg-boss 10.4.2 chứ không đoán — `timekeeper.js:44-69`: `start()` gọi `manager.createQueue('__pgboss__send-it')` bọc trong **try/catch RỖNG** ở `:54-56`; `app_worker` không có CREATE nên lỗi bị nuốt. Và `cron()` ở `:141-151` **không** insert vào queue đích mà insert vào `__pgboss__send-it`, worker của queue đó mới fan ra. Mà `queues.ts:18` không liệt kê tên đó nên `preflight.ts:147-195` không assert partition của nó. Hôm nay nó tồn tại **do tình cờ**: `provision-queue.ts:24` gọi `boss.start()` dưới migration role với default `schedule:true` (`attorney.js:159`). Không gì pin điều đó. **KHÔNG migration** — ràng buộc cứng, vì một migration sẽ kéo token `schema` vào và va ngay với slice chạy song song. `list_due_tenant_jobs` (TDD:494 đặt tên, chưa tồn tại) DEFER sang slice riêng.
+
+## task: db-public-visibility-capacity-check
+title: DB CHECK NOT(visibility='public' AND slots_max IS NULL) — bỏ invalid state tại nguồn
+status: ready
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [schema, marketplace]
+scope: [docs/autopilot-manifests/db-public-visibility-capacity-check.json, packages/db/migrations/0024_public_visibility_capacity_check.sql, packages/db/schema.ts, packages/db/src/rls-invariants.test.ts, packages/db/src/migrate.test.ts]
+manifest: docs/autopilot-manifests/db-public-visibility-capacity-check.json
+launcher: .claude/commands/ap-36-db-public-visibility-capacity-check.md
+merged_probe: packages/db/migrations/0024_public_visibility_capacity_check.sql :: sessions
+notes: **Thực thi fix-candidate (c) của `job-infra-public-projection-reconciliation`, cái mà chính task cha yêu cầu ĐÁNH GIÁ TRƯỚC vì rẻ nhất và fail-closed nhất.** Row `visibility='public'` + `slots_max IS NULL` là **invalid state mà DB hiện cho phép** — PRD E#7 (trích tại `feature_session_management_tech.md:120`) bắt public phải có capacity hữu hạn; NULL = unlimited chỉ hợp lệ cho non-public. Hiện chỉ enforce ở choke-point `SessionService`, nên fixture/legacy/direct-write tạo được row mà không gì từ chối. **Vì sao nghiêm trọng hơn là gọn gàng:** Verdict 20 ghi đây là gate `ENABLEMENT_ONLY` chặn projector public, lý do là invalid state **vô hình với sửa chữa theo sự kiện** — edge #15 chỉ chạy khi projector ĐÁNH GIÁ session; một writer bypass lật session public đã-projected từ `slots_max` hữu hạn sang NULL **không phát event nào**, projector không bao giờ quay lại, và projection cũ-nhưng-nay-invalid **vẫn hiển thị công khai**. Unit test #26 đặt row vào batch bằng tay nên chỉ chứng minh hành-vi-khi-tới-được, không chứng minh mọi row invalid đều tới được. **`design_probe_required`, item (a) là bẫy:** bản sao máy móc sẽ viết `ADD CONSTRAINT ... NOT VALID` rồi `VALIDATE CONSTRAINT` ngay sau và tưởng đó là idiom expand-only an toàn — **không phải**: `NOT VALID` bỏ qua row cũ, `VALIDATE` quét chúng và FAIL nếu có row vi phạm, cùng failure mode với thêm thẳng nhưng TRÔNG cẩn thận. Phải ĐO số row vi phạm trước. **Chạy song song với `job-schedule-outbox-dispatch`** — kiểm bằng máy: giao file ∅, giao invariant ∅. Cố ý bỏ token `retry-liveness` mà task cha khai, vì candidate (c) không có lease/claim/DLQ nào; giữ nó lại sẽ chế ra một va chạm vô cớ.
+
