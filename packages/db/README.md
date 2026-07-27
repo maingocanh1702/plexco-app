@@ -43,7 +43,8 @@ packages/db/
     ├── 0019_tenant_integrity_fks.sql  # DD-68 same-tenant composite candidate keys + FKs (expand-only)
     ├── 0020_ledger_tenant_integrity_fks.sql # DD-68 ledger leg: bank/allocation same-tenant FKs (expand-only)
     ├── 0021_non_money_tenant_integrity_fks.sql # non-money leg: zalo/notification same-tenant FKs (expand-only)
-    └── 0022_job_claim_lease_core.sql   # DD-89/DD-90 job-infra root: job_definer, outbox lease/reclaim, job_audit_events, projector-delivery state machine
+    ├── 0022_job_claim_lease_core.sql   # DD-89/DD-90 job-infra root: job_definer, outbox lease/reclaim, job_audit_events, projector-delivery state machine
+    └── 0023_outbox_ack_marker.sql      # completion/ack marker closing 0022's hard blocking requirement — outbox_events gains claim_token + acked_at, ack_outbox_event
 ```
 
 The SQL migrations are **authoritative**. `schema.ts` mirrors the tables but
@@ -69,7 +70,7 @@ Tức là trong sơ đồ, "club" chính là node `TENANTS` (hub trung tâm). Kh
 | **GLOBAL protected** | `persons`, `channel_identities`, `link_codes`, `merge_audit`, `merge_tombstones`, `accounts`, `web_sessions`, `account_identities`, `magic_links`, `player_chat_context`, `oauth_transactions`, `routing_audit`, `auth_login_nonces`, `auth_login_state`, `rate_limit_hits`, `auth_audit_events`, `account_emails`, `email_password_credentials`, `auth_pending_email_registrations`, `auth_email_tokens`, `auth_email_deliveries` | No blanket grant to `app`. Reached via identity/auth service or SECURITY DEFINER fns. `auth_login_nonces`/`auth_login_state`/`rate_limit_hits`/`auth_audit_events` and the five `0016` email tables are function-only (no table grant at all, not even to `app`) — see `0012`/`0015`/`0016`. `sports`/`plans` are global lookups (SELECT allowed). |
 | **TENANT-private (RLS)** | `memberships`, `aliases`, `channel_reachability`, `settings`, `sessions` (+recurrence/occurrences/`session_surface_refs`), `players`, `telegram_links`, `tenant_admins`, `tenant_link_codes`, `bank_accounts`, `charges`, `bank_transactions`, `payment_allocations`, `provider_connections`, `zalo_bots`, `zalo_reply_contexts`, `messenger_pages`, `processed_commands`, `outbox_events`, `join_requests`, `subscriptions`, `subscription_invoices`, `notification_*`, `onboarding_*` | `ENABLE`+`FORCE` RLS, policy on `app.tenant_id` GUC, fail-closed. `app` = `NOBYPASSRLS`. Always via `tenantRepo` choke-point. |
 | **PUBLIC read model** | `public_sessions` | No RLS. `readonly` role gets `SELECT` only; canonical tables get **zero** grant to `readonly`. Field whitelist — no money/PII/roster/exact venue. |
-| **PLATFORM/WORKER** | `plans`, `billing_transactions`, `billing_allocations`, `billing_overrides`, `projector_deliveries`, `surface_refs`, `job_audit_events` | Billing platform ledger (separate from player ledger, BL-BIL-1). Worker claims outbox via `claim_outbox_batch()`; `job_audit_events` is the append-only per-event audit sink for every job-infra function (`0022`) — no runtime role gets a table grant on it, `app`/`readonly` included. |
+| **PLATFORM/WORKER** | `plans`, `billing_transactions`, `billing_allocations`, `billing_overrides`, `projector_deliveries`, `surface_refs`, `job_audit_events` | Billing platform ledger (separate from player ledger, BL-BIL-1). Worker claims outbox via `claim_outbox_batch()` and completes it via `ack_outbox_event()` (`0023`); `job_audit_events` is the append-only per-event audit sink for every job-infra function (`0022`/`0023`) — no runtime role gets a table grant on it, `app`/`readonly` included. |
 
 ## How tenant isolation works (INV-1)
 
@@ -109,7 +110,7 @@ the worker via narrow privileged functions, then re-enters tenant context.
 | INV-5 strong identity proof | `link_codes` (OTP), `persons_verified_phone_unique`, `merge_audit`/`merge_tombstones` |
 | INV-6 idempotency | `processed_commands` UNIQUE, `outbox_events(aggregate_id,sequence)`, `projector_deliveries` PK, `bank_transactions` UNIQUE |
 | INV-7 one owner for derived data | `charges.amount_allocated`, `public_sessions.slots_open` (projector) |
-| INV-8 narrow worker privilege | `0022` (DD-89/DD-90): `claim_outbox_batch`, `job_prepare_projector_delivery`, `claim_projector_delivery_batch`, `complete_projector_delivery` and the `job_audit_events` trigger are owned by pre-provisioned `job_definer NOLOGIN BYPASSRLS`; `app_worker` gets EXECUTE-only on the four worker-callable functions, never the trigger, never direct DML on `outbox_events`/`projector_deliveries`/`job_audit_events`. |
+| INV-8 narrow worker privilege | `0022`/`0023` (DD-89/DD-90): `claim_outbox_batch`, `job_prepare_projector_delivery`, `claim_projector_delivery_batch`, `complete_projector_delivery`, `ack_outbox_event` and the `job_audit_events` trigger are owned by pre-provisioned `job_definer NOLOGIN BYPASSRLS`; `app_worker` gets EXECUTE-only on the five worker-callable functions, never the trigger, never direct DML on `outbox_events`/`projector_deliveries`/`job_audit_events`. |
 | INV-9 secrets/PII never leak | `*_enc bytea` + `*_lookup_hash`; no grants on protected tables |
 
 ## Auth session revocation (DD-80 v1.88)
@@ -325,11 +326,11 @@ unchanged. This is what lets the DB test suites run as parallel vitest workers
 
 ## Migration order & deploy notes
 
-Apply `0000`→`0022` in order (FK dependencies validated; `0022` also requires
-`pnpm db:bootstrap` to have run first — see below). For production changes
-follow expand→backfill→validate→flip→contract (P12); avoid destructive
-migrations in the same deploy as behavior changes. Legacy Bestminton import:
-TDD §8.
+Apply `0000`→`0023` in order (FK dependencies validated; `0022`/`0023` also
+require `pnpm db:bootstrap` to have run first — see below). For production
+changes follow expand→backfill→validate→flip→contract (P12); avoid
+destructive migrations in the same deploy as behavior changes. Legacy
+Bestminton import: TDD §8.
 
 ## Privileged job-definer bootstrap + job-infra lease/reclaim/audit (DD-89/DD-90, `0022`)
 
@@ -392,17 +393,44 @@ outbox producer lands here) gives `job_definer` sole ownership of five named fun
 Full contract, exact function signatures, acceptance matrix (JCL-1..JCL-14) and the empirical
 design-probe proof of the pre-fix defect: `../../docs/autopilot-db-job-claim-lease-core.md`.
 
-**⚠️ Blocking requirement for `job-runtime-dispatcher` (slice 2/4), codex round-05 [P1]:**
-`claim_outbox_batch`'s five-minute lease is ONLY a crash-recovery mechanism — this slice's exact
-2-state `outbox_events` contract (available ↔ leased) has deliberately no third "done" state.
-Once a real dispatcher calls this function in a loop, every successfully-processed row's lease
-still naturally expires and becomes indistinguishable from a crashed claim, so it gets reclaimed
-repeatedly forever; since reclaim runs before claiming new rows and `ORDER BY created_at` always
-prefers the oldest, a growing set of already-done events will eventually starve every newer event
-from ever being claimed. Re-preparing an already-delivered `projector_deliveries` row is a safe
-no-op, so this cannot cause incorrect re-delivery — but it is an unbounded throughput bug. The
-dispatcher slice MUST add a completion/ack mechanism before being enabled against production
-traffic.
+### Completion/ack marker (`0023`, closes the `job-runtime-dispatcher` blocking requirement)
+
+`0022`'s five-minute lease was ONLY a crash-recovery mechanism — its exact 2-state `outbox_events`
+contract (available ↔ leased) deliberately had no third "done" state, so a real dispatcher calling
+`claim_outbox_batch` in a loop would see every successfully-processed row's lease naturally expire
+and become indistinguishable from a crashed claim, reclaimed repeatedly forever; since reclaim runs
+before claiming new rows and `ORDER BY created_at` always prefers the oldest, a growing set of
+already-done events would eventually starve every newer event from ever being claimed.
+
+`0023` closes this with a **marker, not a terminal state** (extends, never replaces, the existing
+CHECKs): `outbox_events` gains `claim_token uuid` (exact-match guard, mirrors
+`projector_deliveries`) and `acked_at timestamptz` (the completion marker). Both `claim_outbox_batch`
+passes (reclaim and claim) now skip acked rows, and `idx_outbox_expired_lease` narrows to match so
+acked rows stop accumulating in it — this is the actual fix for the starvation bug above.
+`ack_outbox_event(p_event_id uuid, p_required_projectors text[], p_claim_token uuid)` is the new
+`job_definer`-owned, `app_worker`-EXECUTE-only function:
+
+- **Structural fan-out completeness, not just a comment.** The caller must pass the exact set of
+  projectors it asserts are required; the function verifies every one has a `projector_deliveries`
+  row before it will ack, `RAISE`ing otherwise. This does **not** verify the set itself is correct
+  for the event's type — that stays the caller's responsibility (a registry of
+  required-projectors-per-event-type does not exist yet and is not built here; a code-owned constant
+  analogous to `apps/bot/src/queues.ts`'s `QUEUES` is the expected shape). An explicit empty array is
+  a valid "this event type requires zero projectors" assertion — never a default, so every call site
+  must decide.
+- **Token+lease double guard**, mirroring `complete_projector_delivery`'s exactly: an exact
+  `claim_token` match proves the caller was not superseded by a reclaim-and-reclaim cycle (identity
+  comparison, no race window that a lease-expiry-only check would leave open for a delayed/zombie
+  worker); a live `lease_expires_at` proves the caller is still within its granted window even if
+  nobody has run the reclaim scan yet.
+- Non-existent event or an incomplete required-projector set both `RAISE` (fail loud — caller bugs,
+  not legitimate races); a stale/wrong token or an already-acked event is a silent idempotent no-op
+  (`RETURN false`, no audit row) — never a partial write.
+
+**⚠️ Blocking requirement for `job-runtime-dispatcher` (slice 2/4) carries forward:** do not call
+`ack_outbox_event` until you have prepared delivery (`job_prepare_projector_delivery`) for every
+projector actually required for the event's type, and pass that exact set as
+`p_required_projectors`. Full design reasoning: `docs/autopilot-manifests/db-outbox-ack-marker.json`.
 
 ## Open items inherited from docs (not blockers)
 

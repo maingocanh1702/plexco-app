@@ -61,10 +61,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(23); // 0000..0022 (0022 = job-claim-lease-core)
+    expect(ctx.migrateResult.applied.length).toBe(24); // 0000..0023 (0023 = outbox-ack-marker)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(23);
+    expect(second.skipped.length).toBe(24);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1299,12 +1299,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
         await bootstrapJobDefiner(admin);
         return migrate(url(dbName));
       });
-      expect(res.applied.length).toBe(23); // 0000..0022
+      expect(res.applied.length).toBe(24); // 0000..0023
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(23);
+        expect(rows.length).toBe(24);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -1357,13 +1357,14 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
       await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
         await nsCtx.bootstrapJobDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0022_job_claim_lease_core.sql");
+        expect(res.applied[res.applied.length - 1]).toBe("0023_outbox_ack_marker.sql");
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
         );
         expect((rows as { proname: string }[]).map((r) => r.proname).sort()).toEqual(
           [
+            "ack_outbox_event",
             "claim_outbox_batch",
             "claim_projector_delivery_batch",
             "complete_projector_delivery",
@@ -1581,6 +1582,8 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         [ctx.tenantA],
       ],
       ["UPDATE outbox_events SET claimed_at = now() WHERE false", []],
+      ["UPDATE outbox_events SET claim_token = gen_random_uuid() WHERE false", []],
+      ["UPDATE outbox_events SET acked_at = now() WHERE false", []],
       ["DELETE FROM outbox_events WHERE false", []],
       ["SELECT * FROM projector_deliveries LIMIT 1", []],
       [
@@ -1632,8 +1635,12 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
     // codex round-04 [P1]: app must not be able to set claimed_at/lease_expires_at on ITS OWN
     // insert — that would satisfy the shape CHECK while suppressing the event from
     // claim_outbox_batch with no outbox_claimed audit row. Enforced by
-    // outbox_events_producer_lease_boundary_chk (current_user = 'app' -> both must be NULL),
-    // not a column-level grant (rejected — see the migration's own comment on this constraint).
+    // outbox_events_producer_lease_boundary_chk (current_user = 'app' -> all lease/ack columns
+    // must be NULL), not a column-level grant (rejected — see the migration's own comment on this
+    // constraint). claimToken is set too (0023): the shape CHECK is now a strict triple, so a
+    // claimed_at/lease_expires_at-only insert would trip THAT check instead of isolating the
+    // producer-boundary violation this test targets — satisfying the triple keeps the row
+    // shape-valid so only the boundary CHECK fires.
     await expectErrorChainToMatch(
       withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
         tx.insert(outboxEvents).values({
@@ -1645,6 +1652,7 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
           payload: {},
           claimedAt: new Date(),
           leaseExpiresAt: new Date(Date.now() + 5 * 60_000),
+          claimToken: randomUUID(),
         }),
       ),
       /outbox_events_producer_lease_boundary_chk/,
@@ -1802,6 +1810,7 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
       );
       expect((rows as { proname: string }[]).map((r) => r.proname).sort()).toEqual(
         [
+          "ack_outbox_event",
           "claim_outbox_batch",
           "claim_projector_delivery_batch",
           "complete_projector_delivery",
@@ -1820,5 +1829,388 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
       );
       expect((schemaCreate.rows[0] as { has_create: boolean }).has_create).toBe(false);
     });
+  });
+});
+
+/**
+ * OAM-1..OAM-11 — outbox_events completion/ack marker (0023,
+ * docs/autopilot-manifests/db-outbox-ack-marker.json,
+ * .autopilot/state/db-outbox-ack-marker/design-probe.md). Closes 0022:166-181's hard blocking
+ * requirement: an acked event must stop being reclaimed, so a growing set of done-but-still-leased
+ * events can no longer starve newer ones from ever being claimed.
+ *
+ * Same conventions as the JCL block above: real app_worker seat via ctx.workerPool for every
+ * functional call, ctx.owner (superuser) only for setup/direct verification, and every test filters
+ * to its own seeded ids since this file's tests share ONE database.
+ */
+describe("OAM-1..OAM-11 outbox ack marker (0023)", () => {
+  async function seedOutboxEvent(tenantId: string, type = "oam.test.event"): Promise<string> {
+    const { rows } = await ctx.owner.query(
+      `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload)
+       VALUES ($1, 'oam_test', gen_random_uuid(), 1, $2, '{}'::jsonb) RETURNING id`,
+      [tenantId, type],
+    );
+    return (rows[0] as { id: string }).id;
+  }
+
+  /** claims a freshly-seeded event via the real app_worker seat and returns its claim_token. */
+  async function claimOne(eventId: string): Promise<string> {
+    const { rows } = await ctx.workerPool.query(
+      `SELECT claim_token FROM claim_outbox_batch(100) WHERE event_id = $1`,
+      [eventId],
+    );
+    expect(rows.length).toBe(1);
+    return (rows[0] as { claim_token: string }).claim_token;
+  }
+
+  async function expireLease(eventId: string): Promise<void> {
+    await ctx.owner.query(
+      `UPDATE outbox_events SET lease_expires_at = now() - interval '1 second' WHERE id = $1`,
+      [eventId],
+    );
+  }
+
+  it("OAM-1: an acked event is NOT reclaimed after its lease expires", async () => {
+    const ev = await seedOutboxEvent(ctx.tenantA);
+    const token = await claimOne(ev);
+    const acked = await ctx.workerPool.query(
+      `SELECT ack_outbox_event($1, ARRAY[]::text[], $2) AS ok`,
+      [ev, token],
+    );
+    expect((acked.rows[0] as { ok: boolean }).ok).toBe(true);
+
+    await expireLease(ev);
+
+    const reclaim = await ctx.workerPool.query(
+      `SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`,
+      [ev],
+    );
+    expect(reclaim.rows.length).toBe(0); // acked -> never comes back, this is the fix
+  });
+
+  it("OAM-2: STARVATION REGRESSION — acked-and-expired older events do not starve a newer unacked one", async () => {
+    // Older rows are backdated far into the past so they are provably the oldest rows in the
+    // whole shared test database, making the assertion deterministic regardless of any other
+    // test's residual state: with a p_limit exactly matching the older count, the pre-fix
+    // behavior (reclaim resets these to available, ORDER BY created_at re-claims them ahead of
+    // anything else) would leave zero room in that SAME limit for the newer row.
+    const farPast = new Date("2020-01-01T00:00:00Z");
+    const olderIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { rows } = await ctx.owner.query(
+        `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload, created_at)
+         VALUES ($1, 'oam_test', gen_random_uuid(), 1, 'oam2.older', '{}'::jsonb, $2) RETURNING id`,
+        [ctx.tenantA, new Date(farPast.getTime() + i * 1000)],
+      );
+      const ev = (rows[0] as { id: string }).id;
+      const token = await claimOne(ev);
+      await ctx.workerPool.query(`SELECT ack_outbox_event($1, ARRAY[]::text[], $2)`, [ev, token]);
+      await expireLease(ev);
+      olderIds.push(ev);
+    }
+    const newer = await seedOutboxEvent(ctx.tenantA, "oam2.newer");
+
+    const claimed = await ctx.workerPool.query(`SELECT event_id FROM claim_outbox_batch($1)`, [
+      olderIds.length,
+    ]);
+    const claimedIds = (claimed.rows as { event_id: string }[]).map((r) => r.event_id);
+    expect(claimedIds).toContain(newer);
+    for (const older of olderIds) {
+      expect(claimedIds).not.toContain(older); // acked — never reclaimed, never re-appears
+    }
+  });
+
+  it("OAM-3: an unacked event whose lease expired IS still reclaimed (crash recovery unchanged)", async () => {
+    const ev = await seedOutboxEvent(ctx.tenantA);
+    await claimOne(ev); // claimed, never acked
+    await expireLease(ev);
+
+    const reclaimed = await ctx.workerPool.query(
+      `SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`,
+      [ev],
+    );
+    expect(reclaimed.rows.length).toBe(1);
+  });
+
+  it("OAM-4: job_audit_events stops growing for an event once it is acked", async () => {
+    const ev = await seedOutboxEvent(ctx.tenantA);
+    const token = await claimOne(ev);
+    await ctx.workerPool.query(`SELECT ack_outbox_event($1, ARRAY[]::text[], $2)`, [ev, token]);
+    await expireLease(ev);
+
+    const countFor = async () => {
+      const r = await ctx.owner.query(
+        `SELECT count(*)::int AS n FROM job_audit_events WHERE job_id = $1`,
+        [ev],
+      );
+      return (r.rows[0] as { n: number }).n;
+    };
+    const before = await countFor();
+    // several more claim cycles — pre-fix, each would reclaim this row (2 audit rows/cycle)
+    for (let i = 0; i < 3; i++) {
+      await ctx.workerPool.query(
+        `SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`,
+        [ev],
+      );
+    }
+    expect(await countFor()).toBe(before); // acked -> excluded from reclaim, no new audit rows
+  });
+
+  it("OAM-5: ack_outbox_event is EXECUTE-only for app_worker; role app cannot call it at all", async () => {
+    const ev = await seedOutboxEvent(ctx.tenantA);
+    const token = await claimOne(ev);
+
+    const ok = await ctx.workerPool.query(
+      `SELECT ack_outbox_event($1, ARRAY[]::text[], $2) AS ok`,
+      [ev, token],
+    );
+    expect((ok.rows[0] as { ok: boolean }).ok).toBe(true);
+
+    // role `app` has no EXECUTE grant at all — denied regardless of tenant context
+    await expect(
+      ctx.appPool.query(`SELECT ack_outbox_event($1, ARRAY[]::text[], gen_random_uuid())`, [ev]),
+    ).rejects.toThrow(/permission denied/i);
+  });
+
+  it("OAM-6: extended shape/ack/producer-boundary CHECKs still exist and reject their violations", async () => {
+    const tenantId = ctx.tenantA;
+
+    // triple shape: claimed_at/lease_expires_at set but claim_token NULL violates the extended
+    // outbox_events_lease_shape_chk (still rejects the ORIGINAL pair-only violation too, by
+    // construction — a partial pair is a subset of a partial triple).
+    await expectErrorChainToMatch(
+      ctx.owner.query(
+        `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload, claimed_at, lease_expires_at, claim_token)
+         VALUES ($1, 'oam_test', gen_random_uuid(), 1, 'oam6.partial_triple', '{}'::jsonb, now(), now() + interval '5 minutes', NULL)`,
+        [tenantId],
+      ),
+      /outbox_events_lease_shape_chk/,
+    );
+
+    // ack-shape: acked_at set without claimed_at violates the new outbox_events_ack_shape_chk
+    await expectErrorChainToMatch(
+      ctx.owner.query(
+        `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload, acked_at)
+         VALUES ($1, 'oam_test', gen_random_uuid(), 1, 'oam6.ack_without_claim', '{}'::jsonb, now())`,
+        [tenantId],
+      ),
+      /outbox_events_ack_shape_chk/,
+    );
+
+    // producer boundary: `app` still cannot set claimed_at/lease_expires_at (original violation,
+    // still rejected) and now also cannot set claim_token or acked_at on its own insert. Each row
+    // below is otherwise shape-valid (satisfies the triple, and acked_at implies claimed_at) so
+    // the ONLY violated CHECK is the producer boundary being isolated — a partial-shape row would
+    // trip outbox_events_lease_shape_chk / outbox_events_ack_shape_chk first instead.
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, tenantId, (tx) =>
+        tx.insert(outboxEvents).values({
+          tenantId,
+          aggregateType: "oam_test",
+          aggregateId: randomUUID(),
+          sequence: 1,
+          type: "oam6.app.claim_token",
+          payload: {},
+          claimedAt: new Date(),
+          leaseExpiresAt: new Date(Date.now() + 5 * 60_000),
+          claimToken: randomUUID(),
+        }),
+      ),
+      /outbox_events_producer_lease_boundary_chk/,
+    );
+
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, tenantId, (tx) =>
+        tx.insert(outboxEvents).values({
+          tenantId,
+          aggregateType: "oam_test",
+          aggregateId: randomUUID(),
+          sequence: 1,
+          type: "oam6.app.acked_at",
+          payload: {},
+          claimedAt: new Date(),
+          leaseExpiresAt: new Date(Date.now() + 5 * 60_000),
+          claimToken: randomUUID(),
+          ackedAt: new Date(),
+        }),
+      ),
+      /outbox_events_producer_lease_boundary_chk/,
+    );
+  });
+
+  it("OAM-7: ack idempotency and failure semantics — never a silent partial write", async () => {
+    // non-existent event -> RAISE
+    await expectErrorChainToMatch(
+      ctx.workerPool.query(`SELECT ack_outbox_event($1, ARRAY[]::text[], gen_random_uuid())`, [
+        randomUUID(),
+      ]),
+      /ack_outbox_event: outbox event .* does not exist/,
+    );
+
+    const ev = await seedOutboxEvent(ctx.tenantA);
+    const token = await claimOne(ev);
+
+    // NULL p_required_projectors -> RAISE (never silently treated as "zero required")
+    await expectErrorChainToMatch(
+      ctx.workerPool.query(`SELECT ack_outbox_event($1, NULL, $2)`, [ev, token]),
+      /p_required_projectors must not be NULL/,
+    );
+
+    // missing required projector delivery -> RAISE, fails closed
+    await expectErrorChainToMatch(
+      ctx.workerPool.query(`SELECT ack_outbox_event($1, ARRAY['oam7_missing'], $2)`, [ev, token]),
+      /missing prepared delivery/,
+    );
+
+    // explicit empty array (zero required projectors) is a valid assertion -> succeeds
+    const first = await ctx.workerPool.query(
+      `SELECT ack_outbox_event($1, ARRAY[]::text[], $2) AS ok`,
+      [ev, token],
+    );
+    expect((first.rows[0] as { ok: boolean }).ok).toBe(true);
+
+    const countAudits = async () => {
+      const r = await ctx.owner.query(
+        `SELECT count(*)::int AS n FROM job_audit_events WHERE job_id = $1 AND reason = 'outbox_acked'`,
+        [ev],
+      );
+      return (r.rows[0] as { n: number }).n;
+    };
+    expect(await countAudits()).toBe(1);
+
+    // double-ack with the SAME token is an idempotent no-op — false, no new audit row
+    const second = await ctx.workerPool.query(
+      `SELECT ack_outbox_event($1, ARRAY[]::text[], $2) AS ok`,
+      [ev, token],
+    );
+    expect((second.rows[0] as { ok: boolean }).ok).toBe(false);
+    expect(await countAudits()).toBe(1); // unchanged
+  });
+
+  it("OAM-11: STALE-TOKEN REGRESSION — a token superseded by reclaim-and-reclaim cannot ack", async () => {
+    const ev = await seedOutboxEvent(ctx.tenantA);
+    const staleToken = await claimOne(ev);
+
+    // force the lease into the past so the NEXT claim_outbox_batch call reclaims-then-reclaims it
+    await expireLease(ev);
+    const reclaim = await ctx.workerPool.query(
+      `SELECT claim_token FROM claim_outbox_batch(100) WHERE event_id = $1`,
+      [ev],
+    );
+    expect(reclaim.rows.length).toBe(1);
+    const freshToken = (reclaim.rows[0] as { claim_token: string }).claim_token;
+    expect(freshToken).not.toBe(staleToken);
+
+    // the FIRST (now-stale) token must be a no-op, never acking over the current claimant
+    const staleAck = await ctx.workerPool.query(
+      `SELECT ack_outbox_event($1, ARRAY[]::text[], $2) AS ok`,
+      [ev, staleToken],
+    );
+    expect((staleAck.rows[0] as { ok: boolean }).ok).toBe(false);
+
+    const stillUnacked = await ctx.owner.query(`SELECT acked_at FROM outbox_events WHERE id = $1`, [
+      ev,
+    ]);
+    expect((stillUnacked.rows[0] as { acked_at: Date | null }).acked_at).toBeNull();
+
+    // the CURRENT (fresh) token acks successfully
+    const freshAck = await ctx.workerPool.query(
+      `SELECT ack_outbox_event($1, ARRAY[]::text[], $2) AS ok`,
+      [ev, freshToken],
+    );
+    expect((freshAck.rows[0] as { ok: boolean }).ok).toBe(true);
+  });
+
+  it("OAM-12: claim_outbox_batch stamps the lease from a live clock, not a frozen transaction-start now() (codex round-01 [P2])", async () => {
+    // 0022's original claim stamp used now(), frozen at transaction start — harmless for 0022
+    // alone, but a caller running claim_outbox_batch inside an explicit transaction open more than
+    // five minutes would receive an already-expired lease, and ack_outbox_event's live
+    // clock_timestamp() guard would then reject a correctly-processed event forever. A real aged
+    // transaction is 5+ minutes old; a short pg_sleep is enough to prove which clock the function
+    // actually reads without slowing the suite down.
+    const ev = await seedOutboxEvent(ctx.tenantA, "oam12.aged_txn");
+
+    const client = await ctx.workerPool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows: nowRows } = await client.query("SELECT now() AS t0");
+      const t0 = (nowRows[0] as { t0: string }).t0;
+
+      await client.query("SELECT pg_sleep(1.5)"); // now() stays frozen at t0; clock_timestamp() moves on
+
+      const claimed = await client.query(
+        `SELECT event_id FROM claim_outbox_batch(100) WHERE event_id = $1`,
+        [ev],
+      );
+      expect(claimed.rows.length).toBe(1);
+      await client.query("COMMIT");
+
+      // claim_outbox_batch's RETURNS TABLE doesn't expose lease_expires_at, and app_worker has no
+      // direct SELECT on outbox_events (JCL-9) — read the committed stamp via ctx.owner instead.
+      const stamped = await ctx.owner.query(
+        `SELECT lease_expires_at FROM outbox_events WHERE id = $1`,
+        [ev],
+      );
+      const leaseExpiresAt = (stamped.rows[0] as { lease_expires_at: Date }).lease_expires_at;
+
+      // now()-based stamp would be EXACTLY t0 + 5min; clock_timestamp()-based must be measurably
+      // later (by ~1.5s), proving the live clock was read.
+      const t0Plus5Min = new Date(t0).getTime() + 5 * 60_000;
+      expect(leaseExpiresAt.getTime()).toBeGreaterThan(t0Plus5Min);
+    } finally {
+      client.release();
+    }
+  });
+
+  it("OAM-13: ack_outbox_event and its audit row use a live clock too — never causally before claimed_at, even in the same aged transaction (codex round-02 [P2])", async () => {
+    // round-01 fixed claimed_at/lease_expires_at to read a live clock; this proves the dependent
+    // stamps (acked_at, and both audit rows' created_at) stay consistent with it — claim and ack
+    // called back-to-back inside ONE aged transaction, the exact scenario round-01's fix targets.
+    const ev = await seedOutboxEvent(ctx.tenantA, "oam13.aged_txn_ack");
+
+    const client = await ctx.workerPool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_sleep(1.5)"); // age the transaction before claim+ack both run
+
+      const claimed = await client.query(
+        `SELECT claim_token FROM claim_outbox_batch(100) WHERE event_id = $1`,
+        [ev],
+      );
+      expect(claimed.rows.length).toBe(1);
+      const claimToken = (claimed.rows[0] as { claim_token: string }).claim_token;
+
+      const acked = await client.query(`SELECT ack_outbox_event($1, ARRAY[]::text[], $2) AS ok`, [
+        ev,
+        claimToken,
+      ]);
+      expect((acked.rows[0] as { ok: boolean }).ok).toBe(true);
+
+      await client.query("COMMIT");
+    } finally {
+      client.release();
+    }
+
+    const row = await ctx.owner.query(
+      `SELECT claimed_at, acked_at FROM outbox_events WHERE id = $1`,
+      [ev],
+    );
+    const { claimed_at: claimedAt, acked_at: ackedAt } = row.rows[0] as {
+      claimed_at: Date;
+      acked_at: Date;
+    };
+    expect(ackedAt.getTime()).toBeGreaterThanOrEqual(claimedAt.getTime());
+
+    const audits = await ctx.owner.query(
+      `SELECT reason, created_at FROM job_audit_events WHERE job_id = $1 ORDER BY created_at`,
+      [ev],
+    );
+    const rows = audits.rows as { reason: string; created_at: Date }[];
+    const claimedAudit = rows.find((r) => r.reason === "outbox_claimed")!;
+    const ackedAudit = rows.find((r) => r.reason === "outbox_acked")!;
+    expect(claimedAudit.created_at.getTime()).toBeGreaterThanOrEqual(claimedAt.getTime());
+    expect(ackedAudit.created_at.getTime()).toBeGreaterThanOrEqual(
+      claimedAudit.created_at.getTime(),
+    );
   });
 });

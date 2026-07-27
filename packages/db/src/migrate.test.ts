@@ -31,7 +31,7 @@ import {
  */
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 23; // 0000..0022 — must match rls-invariants.test.ts
+const MIGRATION_COUNT = 24; // 0000..0023 — must match rls-invariants.test.ts
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -399,13 +399,101 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
       await withJobDefinerLock(BASE!, async () => {
         await ctx.bootstrapJobDefinerForOwner();
         const res = await ctx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0022_job_claim_lease_core.sql");
+        expect(res.applied[res.applied.length - 1]).toBe("0023_outbox_ack_marker.sql");
       });
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
       expect(claimed.rows).toEqual([]);
     } finally {
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
+describe("BR-7 0023 upgrade path: pre-existing claims survive the new triple-shape CHECK", () => {
+  // Same risk class BR-5 proved for 0022's lease_expires_at backfill: outbox_events has FORCE RLS
+  // and 0023's claim_token backfill UPDATE sets no tenant GUC, so under a genuinely non-superuser
+  // NOBYPASSRLS migration owner it would silently match zero rows across every tenant it lacks a
+  // GUC for unless run via SET ROLE job_definer (exactly what 0023 does, mirroring 0022's own
+  // backfill). Reproduced here with a real cross-tenant seed so the assertion proves the backfill
+  // itself, not an absent-GUC false pass.
+  it("backfills claim_token across tenants for legacy claimed_at-only rows under a non-superuser migration owner, and the backfilled token is immediately usable to ack", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_br7_legacy_claim");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      let eventIdA = "";
+      let eventIdB = "";
+
+      // Unlike BR-5 (which applies 0000-0021 OUTSIDE the lock, since none of them touch
+      // job_definer), this loop applies 0000-0022 and 0022 itself asserts job_definer — so
+      // bootstrap must run FIRST, and the whole sequence (bootstrap, 0000-0022, seed, 0023) shares
+      // ONE lock hold like every other first reach of job_definer in this suite (see
+      // withJobDefinerLock). Applying 0023 raw (not via migrate()) as the non-superuser owner is
+      // the regression proof itself: it must NOT throw on either tenant's pre-existing row.
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+
+        // apply every migration BEFORE 0023 (numeric prefix < 23) — simulates an already-migrated
+        // database on the PRE-0023 schema (right after 0022).
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 23) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+
+        // Seed a pre-existing claim under the pre-0023 claim_outbox_batch in TWO tenants — no
+        // claim_token yet (the column does not exist before 0023 applies). Lease is still valid
+        // (unlike BR-5's intentionally-expired backdating) because this test proves the backfilled
+        // token is immediately usable for ack, not that the row is reclaimable.
+        const t = await superuserInDb.query(
+          `INSERT INTO tenants (name, slug, status) VALUES
+             ('BR7 A', 'br7-legacy-a', 'active'), ('BR7 B', 'br7-legacy-b', 'active') RETURNING id`,
+        );
+        const tenantA = (t.rows[0] as { id: string }).id;
+        const tenantB = (t.rows[1] as { id: string }).id;
+        const claimedAt = new Date();
+        const leaseExpiresAt = new Date(Date.now() + 5 * 60_000);
+        const seedEvent = (tenantId: string) =>
+          superuserInDb
+            .query(
+              `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload, claimed_at, lease_expires_at)
+               VALUES ($1, 'br7_test', gen_random_uuid(), 1, 'br7.legacy', '{}'::jsonb, $2, $3) RETURNING id`,
+              [tenantId, claimedAt, leaseExpiresAt],
+            )
+            .then((r) => (r.rows[0] as { id: string }).id);
+        eventIdA = await seedEvent(tenantA);
+        eventIdB = await seedEvent(tenantB);
+
+        const sql0023 = await readFile(
+          path.join(MIGRATIONS_DIR, "0023_outbox_ack_marker.sql"),
+          "utf8",
+        );
+        await ctx.ownerPool.query(sql0023);
+      });
+
+      const rows = await superuserInDb.query(
+        `SELECT id, claim_token FROM outbox_events WHERE id = ANY($1) ORDER BY id`,
+        [[eventIdA, eventIdB]],
+      );
+      expect(rows.rows.length).toBe(2);
+      for (const row of rows.rows as { claim_token: string | null }[]) {
+        expect(row.claim_token).not.toBeNull(); // backfilled across BOTH tenants despite FORCE RLS
+      }
+
+      // the backfilled token, together with the still-valid lease, is immediately usable to ack —
+      // proving the backfill produced a real, functioning token, not just a CHECK-satisfying value.
+      const rowA = (rows.rows as { id: string; claim_token: string }[]).find(
+        (r) => r.id === eventIdA,
+      )!;
+      const worker = await ctx.connectAsWorker();
+      const ackA = await worker.query(`SELECT ack_outbox_event($1, ARRAY[]::text[], $2) AS ok`, [
+        eventIdA,
+        rowA.claim_token,
+      ]);
+      expect((ackA.rows[0] as { ok: boolean }).ok).toBe(true);
+    } finally {
+      await superuserInDb.end();
       await ctx.teardown();
     }
   }, 60_000);

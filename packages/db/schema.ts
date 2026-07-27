@@ -1055,25 +1055,42 @@ export const outboxEvents = pgTable("outbox_events", {
   claimedAt: timestamp("claimed_at", { withTimezone: true }),
   // 0022: five-minute reclaimable lease — both-null (available) or both-non-null (leased).
   leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  // 0023: exact-match guard ack_outbox_event requires so a stale (already-superseded) claimant
+  // cannot ack over the current one — mirrors projectorDeliveries.claimToken below. Part of the
+  // same all-or-nothing triple as claimedAt/leaseExpiresAt (see leaseShapeChk).
+  claimToken: uuid("claim_token"),
+  // 0023: completion marker closing 0022:166-181's hard blocking requirement — set once by
+  // ack_outbox_event, never cleared; claim_outbox_batch's reclaim/claim passes both skip acked rows.
+  ackedAt: timestamp("acked_at", { withTimezone: true }),
 }, (t) => ({
   aggSeqUq: uniqueIndex("outbox_agg_seq_uq").on(t.aggregateId, t.sequence),
   // 0022 replaced this index's definition (aggregate_id, sequence) -> (created_at); the claim
   // ordering itself is unchanged (ORDER BY created_at, preserved from 0010).
   unclaimedIdx: index("idx_outbox_unclaimed")
     .on(t.createdAt).where(sql`${t.claimedAt} IS NULL`),
+  // 0023: narrowed to exclude acked rows so they stop accumulating here — the actual fix the
+  // OAM-2 starvation regression proves (0022's original predicate had no acked_at to filter on).
   expiredLeaseIdx: index("idx_outbox_expired_lease")
-    .on(t.leaseExpiresAt).where(sql`${t.claimedAt} IS NOT NULL`),
+    .on(t.leaseExpiresAt).where(sql`${t.claimedAt} IS NOT NULL AND ${t.ackedAt} IS NULL`),
+  // 0023: extended from a pair to a strict triple (claimedAt/leaseExpiresAt/claimToken) — always
+  // all-null (available) or all-non-null (leased) together, never partially set.
   leaseShapeChk: check(
     "outbox_events_lease_shape_chk",
-    sql`(${t.claimedAt} IS NULL AND ${t.leaseExpiresAt} IS NULL) OR (${t.claimedAt} IS NOT NULL AND ${t.leaseExpiresAt} IS NOT NULL)`,
+    sql`(${t.claimedAt} IS NULL AND ${t.leaseExpiresAt} IS NULL AND ${t.claimToken} IS NULL) OR (${t.claimedAt} IS NOT NULL AND ${t.leaseExpiresAt} IS NOT NULL AND ${t.claimToken} IS NOT NULL)`,
   ),
-  // 0022: the untrusted `app` role must leave both lease columns NULL on its own inserts/updates.
-  // Scoped to current_user != 'app' (not "= job_definer") so migration-role/superuser direct ops
-  // stay unrestricted — CHECK constraints bind every writer, unlike GRANT/RLS which superusers
-  // bypass.
+  // 0023: acked implies claimed — the only writer of ackedAt is ack_outbox_event, which already
+  // enforces this procedurally; this CHECK is cheap defense-in-depth, same philosophy as leaseShapeChk.
+  ackShapeChk: check(
+    "outbox_events_ack_shape_chk",
+    sql`${t.ackedAt} IS NULL OR ${t.claimedAt} IS NOT NULL`,
+  ),
+  // 0022/0023: the untrusted `app` role must leave every lease/ack column NULL on its own
+  // inserts/updates. Scoped to current_user != 'app' (not "= job_definer") so migration-role/
+  // superuser direct ops stay unrestricted — CHECK constraints bind every writer, unlike
+  // GRANT/RLS which superusers bypass.
   producerLeaseBoundaryChk: check(
     "outbox_events_producer_lease_boundary_chk",
-    sql`current_user != 'app' OR (${t.claimedAt} IS NULL AND ${t.leaseExpiresAt} IS NULL)`,
+    sql`current_user != 'app' OR (${t.claimedAt} IS NULL AND ${t.leaseExpiresAt} IS NULL AND ${t.claimToken} IS NULL AND ${t.ackedAt} IS NULL)`,
   ),
 }));
 
