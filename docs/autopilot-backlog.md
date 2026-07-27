@@ -756,7 +756,8 @@ notes: **Có sẵn TRƯỚC slice 2b; slice 2b chỉ làm nó lộ ra.** `app_wo
 
 ## task: job-schedule-outbox-dispatch
 title: Job-infra slice 3a — đăng ký schedule cho outbox dispatch + đóng lỗ fence __pgboss__send-it
-status: ready
+status: merged
+merged: 2026-07-27 · main@a03d2d6 (squash của feat/job-schedule-outbox-dispatch@31bc8fa) · không migration, tail giữ 0024 · bot suite 29→40 · 5 vòng codex, 2x_clean trên HEAD 31bc8fa · ⚠️ cổng --test bị vô hiệu bởi khối lệnh của reviewer (git push để dòng riêng sau ap-merge.sh, script exit non-zero nhưng dòng sau vẫn chạy) — suite lúc push ĐANG ĐỎ do node_modules chưa link @plexco/db; xanh 40/40 sau `pnpm install`, tức xác nhận SAU push, không phải gate. Xem Verdict 24
 risk: P1
 change_class: manual-runtime-feature
 depends_on: [job-runtime-dispatcher]
@@ -815,4 +816,14 @@ depends_on: []
 invariants: [retry-liveness]
 scope: []
 notes: **Phát hiện 2026-07-27 khi review design probe item (e) của `job-schedule-outbox-dispatch`.** `0022:264` định nghĩa `status IN ('pending','claimed','delivered','failed','dlq')` và `dlq` là **terminal**; grep toàn repo không ra function, route hay script nào đưa một hàng từ `dlq` trở lại. Tệ hơn ở chỗ nó **chết cả hai đầu**: `ack_outbox_event` được gọi sau bước prepare, **độc lập với kết quả delivery**, nên `outbox_events` row bị ack và không bao giờ được `claim_outbox_batch` trả lại nữa, trong khi hàng `projector_deliveries` tương ứng nằm `dlq` vĩnh viễn. Hệ quả: một event vào DLQ là **mất projection không phục hồi được**, kể cả sau khi slice 4 ship projector thật. Đây chính là lý do owner chốt (2026-07-27) rằng schedule của `job-schedule-outbox-dispatch` phải nằm sau env flag **mặc định OFF**: với stub `productionStubDeliver` trả `dlq` ngay, bật cron sau khi có producer sẽ đẩy mọi event vào trạng thái cuối không cứu được. Flag là biện pháp tạm; lối thoát thật là một đường replay có kiểm soát. **Chưa scope** — cần quyết: replay là SECURITY DEFINER function riêng (`app_worker` EXECUTE, theo pattern DD-89 Q1) hay là thao tác owner-only ngoài runtime; và replay reset `attempts` hay giữ để tránh vòng lặp vô hạn.
+
+## task: job-outbox-dispatch-sync-lag-slo
+title: Đạt NFR-1c sync-lag (p95 ≤ 3s) — NOTIFY trigger từ producer + drain policy phía consumer
+status: idea
+risk: P1
+change_class: manual-runtime-feature
+depends_on: []
+invariants: [retry-liveness]
+scope: []
+notes: **Mở bởi hai P1 của codex vòng 3 trên `job-schedule-outbox-dispatch` (2026-07-27), owner phân xử là ĐÚNG-nhưng-ngoài-scope-slice-đó.** Cả hai đều có căn cứ, không phải nhiễu. (1) `TDD.md:82` NFR-1c yêu cầu **sync-lag p95 ≤ 3s, p99 ≤ 10s** cho "canonical store + outbox + projection", và `feature_sync_engine.md:129` mang nó như acceptance checkbox. Cron của pg-boss có **sàn một phút**, nên p95 rơi vào khoảng 57s — không đạt được bằng cron, đây là số học chứ không phải tinh chỉnh. (2) `runDispatchCycle` mặc định `DEFAULT_BATCH_LIMIT = 25` và mỗi job schedule gọi nó **đúng một lần**, nên mọi tốc độ trên 25 event/phút tạo backlog tăng không giới hạn dù worker rảnh. **Vì sao không sửa ở slice 3a:** `DD-07` đã chốt `LISTEN/NOTIFY` làm cơ chế realtime, nên trigger sub-minute muốn là NOTIFY phát **từ transaction INSERT outbox event** — tức từ PRODUCER, mà producer là `DEFERRED_OUT_OF_SCOPE` (owner 26/07); slice 3a không có seam nào để gắn vào. Và batch size + drain policy thuộc consumer theo `docs/autopilot-db-job-claim-lease-core.md §4.3`, cùng lý do đã giữ retry/backoff ra khỏi `dispatcher.ts`. **Ràng buộc đã thành cấu trúc:** cờ `OUTBOX_DISPATCH_SCHEDULE_ENABLED` nay ghi điều kiện lật gồm CẢ HAI — off cho tới khi có projector thật VÀ cho tới khi có sub-minute trigger + drain. **depends_on cần điền tên slice producer khi slice đó được author** — NOTIFY phải phát ra từ đó. Giữ cron một phút làm recovery sweep là hợp lý, không phải bỏ.
 

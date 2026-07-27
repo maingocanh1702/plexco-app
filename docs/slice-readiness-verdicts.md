@@ -113,7 +113,51 @@ NEXT_REVIEW_TRIGGER: n/a — CODE_READY; next event is the design probe, then th
 
 ---
 
-## Verdict 24 — `job-schedule-outbox-dispatch`, job-infra slice 3a: cho vòng dispatch thực sự chạy + đóng lỗ fence `__pgboss__send-it`; `CODE_READY` (2026-07-27)
+## Verdict 24 — `job-schedule-outbox-dispatch`, job-infra slice 3a; `CODE_READY` (2026-07-27) → **IMPLEMENTED & MERGED `a03d2d6`** (2026-07-27)
+
+> **✅ IMPLEMENTED & MERGED 2026-07-27 — `main@a03d2d6`** (squash của `feat/job-schedule-outbox-dispatch@31bc8fa`).
+> Cron `* * * * *` cho `OUTBOX_DISPATCH_QUEUE` sau cờ `OUTBOX_DISPATCH_SCHEDULE_ENABLED` mặc định OFF, cộng
+> fence preflight cho `__pgboss__send-it`. Không migration; `dispatcher.ts` và `packages/db` zero diff.
+>
+> **⚠️ CỔNG `--test` ĐÃ BỊ VÔ HIỆU HOÁ BỞI KHỐI LỆNH CỦA REVIEWER — ghi lại vì đây là quy trình hỏng, không
+> phải chi tiết vụn.** `ap-merge.sh --test` chạy suite sau commit và trước push, có `set -euo pipefail`, nên
+> test đỏ phải chặn push. Nhưng reviewer đặt `git push origin main` trên **dòng riêng** sau lệnh script trong
+> khối paste; script exit non-zero ở bước test, dòng kế tiếp vẫn chạy. Suite lúc đó **đỏ** (`apps/bot` không
+> resolve được `@plexco/db`). Đây **đúng là sự cố `eba1c27`** mà `ap-merge.sh` được viết ra để chặn — header của
+> script ghi nguyên văn *"Các bước để trên dòng RIÊNG → merge abort nhưng `git commit` ngay sau vẫn chạy"* — và
+> reviewer tái tạo nó ngay trong lệnh gọi chính script đó.
+>
+> **Kết cục lành, nhưng lành do may.** Sau `pnpm install` suite xanh: `apps/bot` **40/40**, 4 test file. Nguyên
+> nhân là `node_modules` chưa link lại workspace sau khi devDependency `@plexco/db` land ở `fca314e`, không phải
+> lỗi code. **Nhưng xác nhận sau khi đã push không phải là gate.** Luật rút ra: mọi bước sau `ap-merge.sh` phải
+> nối bằng `&&`, hoặc dùng `--push` để bước push nằm TRONG `set -e` của script.
+>
+> **Branch đi sau `main` 4 commit khi merge.** Con số `543` trong READY report đo trên base chưa có `0024` — vì
+> thế db ghi 212 thay vì 219. Không xung đột file thật (`apps/bot/*` vs `packages/db/*`), và không test
+> `apps/bot` nào chạm cột `visibility` nên CHECK mới không thể phá chúng — nhưng trạng thái hợp nhất chỉ được đo
+> SAU khi push.
+>
+> **Hai P1 vòng 3 bị dismiss, và lý do là THỨ TỰ, không phải tiện.** Codex đúng: cron một phút không đạt NFR-1c
+> (`TDD.md:82` — sync-lag p95 ≤ 3s), và 25 row/batch × 1 lần/phút để backlog tăng không giới hạn trên 25
+> event/phút. Không cái nào sửa được ở đây: DD-07 đã chốt `LISTEN/NOTIFY`, nên trigger sub-minute phải là NOTIFY
+> phát từ transaction của **producer** — mà producer là `DEFERRED_OUT_OF_SCOPE` theo quyết định owner 26/07, nên
+> slice này **không có chỗ nào để gắn nó vào**. Batch size và drain policy thuộc consumer theo `§4.3`, cùng lý
+> do đã giữ retry/backoff ra khỏi `dispatcher.ts`.
+>
+> **Hoãn được làm thành CẤU TRÚC, không phải tài liệu.** Cờ đã gate việc bật; điều kiện lật của nó nay nêu cả
+> hai lý do — off cho tới khi có projector thật **VÀ** cho tới khi có sub-minute trigger + drain policy, vì
+> NFR-1c không thể đạt nếu thiếu. Một slice ship đường dẫn không đạt nổi NFR đã tuyên bố thì phải nói điều đó
+> trong **cổng bật nó**, không phải trong comment cạnh nó.
+>
+> **Reviewer phải sửa chính chỉ thị của mình giữa chừng.** Câu "đừng chạy round 4 chỉ để xác nhận lại việc
+> dismiss" bị đọc thành cấm round 4 nói chung — nhưng HEAD đã đổi hai lần từ round 3 (fix P2, docs
+> flip-condition), nên round 4 review **commit chưa ai xem**, không phải xử lại việc đã phân xử. Owner override
+> bị từ chối: tiền lệ cho nó là sau **12 vòng** không hội tụ, dùng ở vòng 3 để bỏ qua việc thường sẽ làm hỏng
+> chính cơ chế ngoại lệ đó.
+>
+> **JSO-1 và JSO-6 không pass rỗng** — điều kiện reviewer đặt khi duyệt cờ. JSO-1 gọi helper trực tiếp, độc lập
+> `process.env`; JSO-6 enqueue qua đúng `__pgboss__send-it` mà `timekeeper.cron()` dùng, không phải lối tắt vào
+> queue thật, và chạy trọn `claimed → prepared → acked`.
 
 > **Điều CODE_READY này cho phép:** mở worktree, register scope-gate, chạy design probe. `design_probe_required:
 > true`, năm item, và **item (b) là cái bản sao máy móc sẽ làm sai**. Viết production code trước khi probe được
