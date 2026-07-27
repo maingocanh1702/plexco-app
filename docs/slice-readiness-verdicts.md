@@ -12,6 +12,71 @@
 
 ---
 
+## Verdict 26 — `db-check-constraint-naming-drift`: 47/72 CHECK constraint không tồn tại dưới tên `schema.ts` khai; `CODE_READY` (2026-07-27)
+
+> **Điều CODE_READY này cho phép:** mở worktree, register scope-gate, chạy design probe. Viết production code
+> trước khi probe được owner confirm là vi phạm verdict này.
+>
+> **Phạm vi trong verdict này ĐO TỪ `pg_constraint`, và đó không phải hình thức — con số đầu tiên của reviewer
+> sai 20.** Bản manifest đầu ghi *"27 CHECK trên 23 bảng, giới hạn ở tầng foundation"*, đếm bằng `awk` trên dòng
+> `CHECK (` trong các `CREATE TABLE` của `0002`–`0008`. Catalog trên DB đã migrate tới `0024` nói: **47 tên
+> tự-sinh trên 27 bảng, so với 25 đặt tên đúng — tức 47 trên tổng 72, khoảng hai phần ba mọi CHECK trong
+> schema.** Và khẳng định *"auth lane `0015`–`0018` đặt tên đúng"* là **sai**:
+> `auth_email_deliveries_kind_check`, `auth_email_tokens_purpose_check`,
+> `auth_oauth_transactions_provider_check`, `channel_identities_platform_check`, `persons_status_check` đều
+> tự-sinh. Drift là **toàn repo**, không giới hạn tầng nào.
+>
+> **Ghi lại thay vì lặng lẽ thay số, vì đó đúng là lỗi slice này sinh ra để sửa:** một con số đọc như dữ kiện
+> vì nó cụ thể, tạo ra bằng cách đếm **khai báo** thay vì **trạng thái đã áp dụng**. Cùng cơ chế với lỗi
+> `LIVE_REPO_VERIFICATION` của Verdict 25, lặp lại bởi cùng một người trong verdict cấp phép cho slice sửa nó.
+> Validator chặn `CODE_READY` khi `LIVE_REPO_VERIFICATION` không `PASS` chính là thứ buộc phép đo phải xảy ra.
+>
+> **Phép đo còn lộ một chênh lệch chưa giải:** `schema.ts` khai **63** `check()`, catalog có **72**, và chỉ **25**
+> tên khai báo tồn tại. Không phép đổi tên nào hoà giải được — 63 khai báo không phủ nổi 72 constraint. Nghĩa là
+> có CHECK sống không có đối ứng trong `schema.ts`, **hoặc** có khai báo chưa từng được áp dụng, hoặc cả hai. Vế
+> thứ hai nặng hơn drift tên: một guard mà người ta tin là đang enforce nhưng **không tồn tại**. Probe item (e)
+> và CND-11 buộc liệt kê từng cái theo tên.
+>
+> **Hai bẫy còn lại.** Item (b): Postgres đặt `<table>_<column>_check` và `<table>_check`, **có hậu tố số khi
+> trùng** — `sessions` có sáu tên tự-sinh gồm cả `sessions_check` trần, cái nào ứng với predicate nào phụ thuộc
+> thứ tự khai báo gốc; phải khớp theo **predicate**, không viết tên theo pattern. Item (d): `0014` đã sửa đúng
+> lớp lỗi này cho `players` rồi lớp lỗi quay lại — nên `CND-7` bắt chứng minh guard **đã từng fail**.
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-27
+AUTHORITY_SHA: 6ae2de6470573eadc9ef151306002a7b869dcd8b
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-manifests/db-check-constraint-naming-drift.json
+  - .claude/commands/ap-37-db-check-constraint-naming-drift.md
+SLICE: db-check-constraint-naming-drift
+IN_SCOPE: one module (packages/db) — exactly ONE monotonic migration renaming auto-generated CHECK constraint names to the names schema.ts declares, for whatever set the design probe pins; plus a regression guard that makes this class of drift impossible to reintroduce silently; plus a quantified report of the 63-versus-72 declaration gap
+OUT_OF_SCOPE: any predicate change — a rename that also alters what a constraint accepts is a different slice and a money-path risk; ADDING a missing constraint that schema.ts declares but the database lacks (report it, do not create it); column, nullability, default or type changes; RLS, role or grant changes; edits to applied migrations 0000-0024; sessions_public_capacity_chk from 0024, already correctly named; anything outside packages/db; regenerating schema.ts from the database — its declared names are the TARGET
+G1_DECISION: PASS — no owner decision is made or re-opened. 0014 settled the shape (DROP IF EXISTS + ADD CONSTRAINT under the declared name) and documented the class; this applies that settled fix where it was never applied. The open question — how far the sweep goes, now that the extent is 47 rather than the 27 first claimed — is routed to the mandatory design-probe STOP gate
+G2_SPEC: PASS — authority is merged code and the live catalog, not prose: 0014:44-50 and :78-80 for the precedent, schema.ts's check() declarations for target names, pg_constraint for ground truth
+G3_DEPENDENCY: PASS — depends_on empty. dep_checks verified on disk at 6ae2de6: players_status_chk in 0014, sessions_public_capacity_chk in 0024. Both name things this slice actually consumes — the precedent it mirrors, and the constraint it must not touch
+G4_TEST: PASS — CND-1..CND-11 authored before code. Four are anti-regression rather than coverage: CND-1 asserts against pg_constraint and never against schema.ts, because grepping the declaration is exactly what hid this; CND-4 attempts each constraint's real violation, so a predicate mangled in transcription cannot pass a catalog-only check; CND-7 requires the guard to have been SEEN to fail; CND-11 forces the declared-but-absent constraints to be named individually rather than absorbed into a rename count
+G5_SCOPE: PASS — 4 files, one module, one monotonic migration. Wide in rows touched (up to 27 tables) but narrow in semantics (zero predicate change), and CND-3 pins that distinction by comparing pg_get_constraintdef before and after
+G6_EXTERNAL: PASS with a named money-path note — 13 of the 47 sit on charges, bank_transactions, payment_allocations and bank_accounts. No predicate changes, and DROP+ADD is atomic inside migrate.ts's per-file transaction, which probe item (c) requires be VERIFIED rather than assumed. Any money-path predicate mismatch between live and schema.ts is a HALT
+HARD_DEPENDENCIES: none
+PRIOR_SLICES: db-public-visibility-capacity-check (0024) — surfaced the defect; not a code dependency
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS (measured from pg_constraint at 81b4fe8 against a database migrated to 0024, not from source text: 47 auto-named CHECK constraints across 27 tables, 25 declared-style, 72 total in schema public. Money-path subset confirmed by name — bank_accounts 2, bank_transactions 4, charges 4, payment_allocations 3. sessions carries six auto-named including a bare sessions_check, while sessions_public_capacity_chk from 0024 is correctly named and appears in the declared 25. schema.ts declares 63 check() constraints against 72 live, a gap this verdict does NOT resolve and routes to probe item (e). An earlier revision of this verdict claimed 27-across-23 from static file analysis; that count was wrong by twenty and its 'confined to the foundation layer' framing was false — recorded here because the method, not just the number, is what this slice exists to correct)
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS (CND-1..CND-11)
+SECURITY_AND_MIGRATION_GATE: PASS — expand-only in effect, one monotonic migration, 0000-0024 byte-identical, no role, grant, RLS, column or type change. Every rename is an identity change with the predicate preserved, verified in both directions by CND-3 (catalog) and CND-4 (behaviour). The declared-but-absent constraints found by CND-11 are REPORTED, never created here — adding a guard someone believed already existed is a behaviour change wearing a cleanup's clothes
+IMPLEMENTATION_ARTIFACTS: PASS (manifest committed and pushed at 6ae2de6, amended with the catalog measurement in the commit carrying this verdict; the AP-37 launcher lands with this verdict as an execution aid derived from the manifest, not independent authority)
+FIRST_IMPLEMENTATION_STEP: open a worktree at .autopilot/worktrees/db-check-constraint-naming-drift from the current origin/main tip, register via scope-gate, run the full CI list as the green baseline, re-verify the migration tail is 0024, then write design-probe.md — re-running the catalog query and reporting your own number before choosing a boundary — and STOP for founder confirmation
+REMAINING_BLOCKERS: none
+NEXT_REVIEW_TRIGGER: n/a — CODE_READY. Re-review required if another slice claims 0025 first, or if the probe's catalog query returns a materially different extent from the 47 measured here
+```
+
+---
+
 ## Verdict 25 — `db-public-visibility-capacity-check`: bỏ invalid state public+unlimited tại nguồn; `CODE_READY` (2026-07-27) → **IMPLEMENTED & MERGED `c100937`** (2026-07-27)
 
 > **✅ IMPLEMENTED & MERGED 2026-07-27 — `main@c100937`** (squash của

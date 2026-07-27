@@ -799,7 +799,7 @@ title: 27 CHECK inline không tên trên 23 bảng (0002-0008) — schema.ts và
 status: ready
 manifest: docs/autopilot-manifests/db-check-constraint-naming-drift.json
 merged_probe: packages/db/migrations/0025_check_constraint_naming_drift.sql :: CONSTRAINT
-rescoped: 2026-07-27 · Backlog entry gốc (do agent AP-36 soạn) ghi phạm vi là "sessions và 4 anh em" — con số đó lấy từ chỗ PVC-3 tình cờ chạm tới, KHÔNG phải từ phép đo. Đo static trên đĩa tại 03a134e: **27 CHECK inline không tên trên 23 bảng, trong 7 file 0002-0008** (0002:9 · 0003:6 · 0004:3 · 0005:1 · 0006:1 · 0007:3 · 0008:4). Auth lane 0015-0018 đặt tên đúng nên drift chỉ nằm ở tầng foundation. **Nâng P2→P1** vì 13/27 nằm trên bảng money-path: charges(4), bank_transactions(4), payment_allocations(3), bank_accounts(2)
+rescoped: 2026-07-27 · Backlog entry gốc (do agent AP-36 soạn) ghi phạm vi là "sessions và 4 anh em" — con số đó lấy từ chỗ PVC-3 tình cờ chạm tới, KHÔNG phải từ phép đo. **ĐO TỪ `pg_constraint`** tại 81b4fe8 trên DB đã migrate tới 0024: **47 CHECK tự-sinh trên 27 bảng**, so với 25 đặt tên đúng — tức **47/72, hai phần ba số CHECK trong schema** không tồn tại dưới tên `schema.ts` khai. Con số này thay cho phép đếm tĩnh 27-trên-23 mà chính reviewer đưa ra trước đó và **sai 20**, kèm một khẳng định sai rằng auth lane 0015-0018 đặt tên đúng — `auth_email_deliveries_kind_check`, `auth_email_tokens_purpose_check`, `auth_oauth_transactions_provider_check`, `channel_identities_platform_check`, `persons_status_check` đều tự-sinh. Drift là **toàn repo**, không giới hạn ở tầng foundation. **Nâng P2→P1** vì 13/27 nằm trên bảng money-path: charges(4), bank_transactions(4), payment_allocations(3), bank_accounts(2)
 risk: P1
 change_class: schema-migration
 depends_on: []
