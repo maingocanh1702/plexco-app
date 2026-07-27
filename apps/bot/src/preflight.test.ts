@@ -8,7 +8,7 @@ import { migrate } from "@plexco/db";
 import { afterEach, describe, expect, it } from "vitest";
 import { runPreflightChecks } from "./preflight.js";
 import { provisionQueue } from "./provision-queue.js";
-import { QUEUES } from "./queues.js";
+import { PGBOSS_INTERNAL_SEND_IT_QUEUE, QUEUES } from "./queues.js";
 
 const execFileAsync = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -198,6 +198,24 @@ describe("runPreflightChecks", () => {
     expect(result.failures.some((f) => f.includes(QUEUES[0]!) && f.includes("no"))).toBe(true);
   });
 
+  it("JSO-2: THE FENCE — FAILS when __pgboss__send-it's partition is absent, and NAMES it, instead of pg-boss silently swallowing its own createQueue error (timekeeper.js's empty try/catch)", async () => {
+    const ctx = await setupWorkerContext("plexco_jso_preflight_fence");
+    teardown = ctx.teardown;
+    await provisionQueue(ctx.migrationUrl);
+
+    const migration = new pg.Client({ connectionString: ctx.migrationUrl });
+    await migration.connect();
+    await migration.query("SELECT pgboss.delete_queue($1)", [PGBOSS_INTERNAL_SEND_IT_QUEUE]);
+    await migration.end();
+
+    const result = await runPreflightChecks(ctx.directUrl);
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.failures.some((f) => f.includes(PGBOSS_INTERNAL_SEND_IT_QUEUE) && f.includes("no")),
+    ).toBe(true);
+  });
+
   it("JRD-3: FAILS when app_worker is missing an asserted grant, even though the queue exists", async () => {
     const ctx = await setupWorkerContext("plexco_jrd_preflight_3");
     teardown = ctx.teardown;
@@ -359,5 +377,32 @@ describe("runPreflightChecks", () => {
     expect(stderr).not.toContain("[preflight] FAILED");
     expect(stderr).toContain("[worker] fatal");
     expect(stdout).not.toContain("[worker] pg-boss started");
+  });
+});
+
+describe("preflight.ts — shipped source (static)", () => {
+  it("JSO-4: contains ZERO role-attribute, ownership, excess-privilege or membership assertions — asserted structurally, not by observing that tests pass", async () => {
+    // Verdict 22 cut this class after it consumed six codex rounds
+    // (round-06 MAX_ROUNDS HALT: every finding added one more dimension of
+    // "does app_worker have exactly the intended privilege set"). DD-90 Q6
+    // asks this preflight to assert PRESENCE of required grants, never
+    // ABSENCE of excess ones — that boundary must not creep back while this
+    // slice extends the same file with a new fence assertion.
+    const raw = await readFile(path.join(HERE, "preflight.ts"), "utf8");
+    // Strip comments first: this file's own header/inline comments legitimately
+    // NAME this cut class in prose (documenting why it's absent) — checking
+    // against CODE only, not documentation, avoids flagging the very comments
+    // that record the boundary this test exists to guard.
+    const code = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    const forbiddenPatterns = [
+      /pg_roles/, // role-attribute catalog (rolsuper/rolcreaterole/rolcreatedb/rolbypassrls/rolinherit)
+      /rolsuper|rolcreaterole|rolcreatedb|rolbypassrls|rolcanlogin/,
+      /pg_has_role/, // membership check
+      /relowner|pg_get_userbyid/, // ownership check
+      /job_definer/, // job_definer membership/ownership belongs to packages/db's own allowlist test, not this preflight
+    ];
+    for (const pattern of forbiddenPatterns) {
+      expect(code).not.toMatch(pattern);
+    }
   });
 });

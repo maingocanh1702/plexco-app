@@ -41,6 +41,8 @@
     "apps/bot/src/queues.ts",
     "apps/bot/src/preflight.ts",
     "apps/bot/src/preflight.test.ts",
-    "apps/bot/src/schedule.test.ts"
-  ]
+    "apps/bot/src/schedule.test.ts",
+    ".env.example"
+  ],
+  "_scope_reconcile": "Added .env.example post-design-probe: item (e) (founder-confirmed 2026-07-27) pins a new OUTBOX_DISPATCH_SCHEDULE_ENABLED env flag defaulting off, and every other env var in this repo is documented in .env.example — leaving this one undocumented would be a real discoverability gap, not a scope-creep risk (root-level config doc, no file/invariant overlap with the parallel db-public-visibility-capacity-check slice)."
 }
