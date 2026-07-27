@@ -600,6 +600,11 @@ export const sessions = pgTable("sessions", {
   priceChk: check("sessions_price_chk", sql`${t.priceAmount} >= 0`),
   slotsChk: check("sessions_slots_chk", sql`${t.slotsMax} IS NULL OR ${t.slotsMax} > 0`),
   visChk: check("sessions_vis_chk", sql`${t.visibility} IN ('private','public')`),
+  // 0024: a public session must have finite capacity — NULL (unlimited) stays valid for non-public only.
+  publicCapacityChk: check(
+    "sessions_public_capacity_chk",
+    sql`NOT (${t.visibility} = 'public' AND ${t.slotsMax} IS NULL)`,
+  ),
   joinChk: check("sessions_join_chk", sql`${t.joinPolicy} IN ('open','approval')`),
   statusChk: check("sessions_status_chk",
     sql`${t.status} IN ('draft','open','closed','cancelled')`),

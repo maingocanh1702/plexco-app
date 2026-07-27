@@ -61,10 +61,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(24); // 0000..0023 (0023 = outbox-ack-marker)
+    expect(ctx.migrateResult.applied.length).toBe(25); // 0000..0024 (0024 = public-visibility-capacity-check)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(24);
+    expect(second.skipped.length).toBe(25);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1299,12 +1299,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
         await bootstrapJobDefiner(admin);
         return migrate(url(dbName));
       });
-      expect(res.applied.length).toBe(24); // 0000..0023
+      expect(res.applied.length).toBe(25); // 0000..0024
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(24);
+        expect(rows.length).toBe(25);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -1323,6 +1323,221 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
     }
   }, 120_000);
+});
+
+/**
+ * PVC-1..PVC-8 — public visibility x capacity CHECK (0024,
+ * docs/autopilot-manifests/db-public-visibility-capacity-check.json). PVC-4
+ * (migration-count advance) lives in migrate.test.ts + the "migrations"
+ * describe block above (both places that assert the count). PVC-6 (probe
+ * halt on pre-existing violating data) mirrors the TI-6/LTI-6/NMTI-6
+ * throwaway-database pattern above with its own local admin/connect/url,
+ * since that pattern is local to each describe block in this file. Every
+ * other PVC runs against the already-migrated `ctx` database; PVC-1/PVC-2 go
+ * through the real `app` role via tenantRepo/withTenant (this file's stated
+ * "real runtime path" convention — a CHECK constraint fires identically for
+ * every role, so this is strictly better evidence than a superuser probe).
+ * PVC-3/PVC-5/PVC-7 probe the constraint/catalog/column directly via the
+ * owner connection, mirroring how sessions_vis_chk-adjacent tests elsewhere
+ * in this file use `ctx.owner.query` for structural checks.
+ */
+describe("PVC-1..PVC-8 public visibility x capacity CHECK (0024)", () => {
+  const createSession = (
+    tenantId: string,
+    opts: { visibility?: "private" | "public"; slotsMax?: number | null } = {},
+  ) =>
+    tenantRepo(ctx.appDb.db, tenantId).sessions.create({
+      sportId: ctx.badmintonSportId,
+      startsAt: new Date("2026-08-01T10:00:00Z"),
+      endsAt: new Date("2026-08-01T12:00:00Z"),
+      timezone: "Asia/Ho_Chi_Minh",
+      ...opts,
+    });
+
+  it("PVC-1: creating a public session with slots_max NULL is rejected", async () => {
+    await expectErrorChainToMatch(
+      createSession(ctx.tenantA, { visibility: "public", slotsMax: null }),
+      /sessions_public_capacity_chk/,
+    );
+  });
+
+  it("PVC-1: updating an existing private-unlimited session to public is rejected", async () => {
+    const row = await createSession(ctx.tenantA, { visibility: "private", slotsMax: null });
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+        tx.update(sessions).set({ visibility: "public" }).where(eq(sessions.id, row.id)),
+      ),
+      /sessions_public_capacity_chk/,
+    );
+    // rejected atomically — the row is unchanged
+    const after = await tenantRepo(ctx.appDb.db, ctx.tenantA).sessions.getById(row.id);
+    expect(after?.visibility).toBe("private");
+    expect(after?.slotsMax).toBeNull();
+  });
+
+  it("PVC-2: every valid visibility x capacity combination still succeeds", async () => {
+    const publicFinite = await createSession(ctx.tenantA, { visibility: "public", slotsMax: 8 });
+    expect(publicFinite.visibility).toBe("public");
+    expect(publicFinite.slotsMax).toBe(8);
+
+    const privateFinite = await createSession(ctx.tenantA, {
+      visibility: "private",
+      slotsMax: 4,
+    });
+    expect(privateFinite.visibility).toBe("private");
+    expect(privateFinite.slotsMax).toBe(4);
+
+    // the combination a too-broad constraint would break: private + unlimited stays valid
+    const privateUnlimited = await createSession(ctx.tenantA, {
+      visibility: "private",
+      slotsMax: null,
+    });
+    expect(privateUnlimited.visibility).toBe("private");
+    expect(privateUnlimited.slotsMax).toBeNull();
+  });
+
+  it("PVC-3: the visibility and slots_max CHECK constraints still reject their own original violations", async () => {
+    // raw SQL at the owner connection: CreateSessionInput's TS type does not admit an invalid
+    // visibility literal or a non-positive slots_max, so the DB constraints are probed directly —
+    // they fire identically regardless of role, so a superuser probe is representative here.
+    //
+    // Matched by BEHAVIOUR (the violation is rejected), not by schema.ts's declared names
+    // sessions_vis_chk/sessions_slots_chk — live pg_constraint shows the ORIGINAL 0002 inline
+    // column CHECKs never got those names; Postgres auto-named them sessions_visibility_check and
+    // sessions_slots_max_check (same class of drift schema.ts:107-111 already documents as fixed
+    // for players in 0014 — it was never fixed for sessions). Pre-existing, out of this slice's
+    // scope (which only adds sessions_public_capacity_chk and must not touch these two);
+    // discovered while writing this test and flagged in the READY report, not silently corrected
+    // here.
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, visibility)
+         VALUES ($1, $2, now(), now() + interval '1 hour', 'Asia/Ho_Chi_Minh', 'secret')`,
+        [ctx.tenantA, ctx.badmintonSportId],
+      ),
+    ).rejects.toThrow(/violates check constraint "sessions_visibility_check"/);
+
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, slots_max)
+         VALUES ($1, $2, now(), now() + interval '1 hour', 'Asia/Ho_Chi_Minh', 0)`,
+        [ctx.tenantA, ctx.badmintonSportId],
+      ),
+    ).rejects.toThrow(/violates check constraint "sessions_slots_max_check"/);
+  });
+
+  it("PVC-5: sessions_public_capacity_chk is live, named per convention, and shaped as expected", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'sessions_public_capacity_chk'`,
+    );
+    expect(rows.length).toBe(1);
+    const def = (rows[0] as { def: string }).def;
+    expect(def).toContain("visibility");
+    expect(def).toContain("slots_max");
+    expect(def).toContain("IS NULL");
+  });
+
+  it("PVC-6: applying 0024 over a pre-existing public+unlimited row raises a NAMED halt naming a remediation query, and mutates nothing", async () => {
+    const BASE = process.env.DATABASE_URL_TEST;
+    if (!BASE) throw new Error("DATABASE_URL_TEST is required for the PVC-6 probe");
+    const admin = new pg.Client({ connectionString: BASE });
+    await admin.connect();
+    const urlFor = (db: string): string => {
+      const u = new URL(BASE);
+      u.pathname = `/${db}`;
+      return u.toString();
+    };
+    const dbName = "plexco_pvc6_probe_check";
+    await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${dbName}`);
+    const c = new pg.Client({ connectionString: urlFor(dbName) });
+    await c.connect();
+    try {
+      // migrations 0022/0023 ASSERT (never create) the cluster-global job_definer role, so this
+      // replay must bootstrap it first and hold the same advisory lock every other path that
+      // reaches 0022 holds (codex round-02 [P1]) — job_definer is CLUSTER-global, so a concurrent
+      // vitest file (migrate.test.ts's JCL-2/JCL-3) that deliberately renames/breaks it for its
+      // own negative-path assertion would otherwise race this replay and fail it for the wrong
+      // reason. Bootstraps via `admin` (the stable BASE connection), not `c` (the throwaway
+      // per-test database) — the role is cluster-global, so either connection creates it
+      // identically, and every other caller in this file bootstraps via the stable connection too.
+      await withJobDefinerLock(BASE, async () => {
+        await bootstrapJobDefiner(admin);
+        // apply every migration BEFORE 0024 (numeric prefix < 24), in filename order
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 24) continue;
+          await c.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+      // seed a pre-existing invalid row: public + unlimited. sessions_vis_chk/sessions_slots_chk
+      // (already applied via 0002) do not reject it — only the new 0024 constraint does.
+      const t = await c.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('PVC6', 'pvc6', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      const sport = await c.query(`SELECT id FROM sports WHERE key = 'badminton'`);
+      await c.query(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, visibility, slots_max)
+         VALUES ($1, $2, now(), now() + interval '2 hours', 'Asia/Ho_Chi_Minh', 'public', NULL)`,
+        [tenantId, (sport.rows[0] as { id: string }).id],
+      );
+
+      // apply 0024 — the wrapped VALIDATE must halt with a NAMED error
+      const sql0024 = await readFile(
+        path.join(MIGRATIONS_DIR, "0024_public_visibility_capacity_check.sql"),
+        "utf8",
+      );
+      let err: unknown;
+      await c.query("BEGIN");
+      try {
+        await c.query(sql0024);
+      } catch (e) {
+        err = e;
+      }
+      await c.query("ROLLBACK");
+
+      const msg = String((err as Error | undefined)?.message ?? err);
+      expect(msg).toMatch(/capacity-visibility halt \(0024\)/);
+      expect(msg).toMatch(/\bsessions\b/);
+      expect(msg).toContain("SELECT id, tenant_id, visibility, slots_max FROM sessions");
+
+      // rolled back cleanly — the constraint was NOT left behind
+      const left = await c.query(
+        `SELECT 1 FROM pg_constraint WHERE conname = 'sessions_public_capacity_chk'`,
+      );
+      expect(left.rows.length).toBe(0);
+      // and the seeded row is untouched — this migration never mutates/deletes on halt
+      const stillThere = await c.query(
+        `SELECT visibility, slots_max FROM sessions WHERE tenant_id = $1`,
+        [tenantId],
+      );
+      expect(stillThere.rows).toEqual([{ visibility: "public", slots_max: null }]);
+    } finally {
+      await c.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.end();
+    }
+  }, 120_000);
+
+  it("PVC-7: no RLS/role/grant change and slots_max stays nullable", async () => {
+    // structural check against the migration file itself — 0024 must not introduce any
+    // RLS/role/grant statement (it is a CHECK-only expand migration).
+    const sqlText = await readFile(
+      path.join(MIGRATIONS_DIR, "0024_public_visibility_capacity_check.sql"),
+      "utf8",
+    );
+    const ddl = sqlText.replace(/--.*$/gm, ""); // strip comment lines before scanning for DDL keywords
+    expect(ddl).not.toMatch(
+      /\b(GRANT|REVOKE|CREATE POLICY|ALTER POLICY|DROP POLICY|OWNER TO|ALTER ROLE)\b/i,
+    );
+
+    const { rows } = await ctx.owner.query(
+      `SELECT is_nullable FROM information_schema.columns
+       WHERE table_name = 'sessions' AND column_name = 'slots_max'`,
+    );
+    expect((rows[0] as { is_nullable: string }).is_nullable).toBe("YES");
+  });
 });
 
 /**
@@ -1357,7 +1572,9 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
       await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
         await nsCtx.bootstrapJobDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0023_outbox_ack_marker.sql");
+        expect(res.applied[res.applied.length - 1]).toBe(
+          "0024_public_visibility_capacity_check.sql",
+        );
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
