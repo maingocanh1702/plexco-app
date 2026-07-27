@@ -12,7 +12,42 @@
 
 ---
 
-## Verdict 23 — `db-outbox-ack-marker`, job-infra slice 2a: close the outbox starvation loop 0022 flagged against itself; `CODE_READY` (2026-07-26)
+## Verdict 23 — `db-outbox-ack-marker`, job-infra slice 2a: close the outbox starvation loop 0022 flagged against itself; `CODE_READY` (2026-07-26) → **IMPLEMENTED & MERGED `76e1f7b`** (2026-07-27)
+
+> **✅ IMPLEMENTED & MERGED 2026-07-27 — `main@76e1f7b`** (squash của `feat/db-outbox-ack-marker@0aaf984`).
+> Verdict `CODE_READY` bên dưới giữ nguyên làm bằng chứng lịch sử của lần authorize; nó **không** còn là
+> authority cho công việc mới.
+>
+> **Hai quyết định owner lấy tại design probe, trước khi có dòng code nào — và cả hai đều lệch khỏi đáp án tiện:**
+>
+> 1. **Fan-out completeness là cấu trúc, không phải comment.** `ack_outbox_event` nhận
+>    `p_required_projectors text[]` và kiểm tra tồn tại một hàng `projector_deliveries` cho **mọi** tên trước khi
+>    chịu ack, raise nếu thiếu. Chọn cách này thay vì ghi yêu cầu vào comment chính vì hình dạng comment **đã hỏng
+>    một lần trong tuần này**: comment của `0022` bị bỏ sót khi author manifest 2b. Caller quên fan-out giờ nhận
+>    exception, không phải một ack sớm âm thầm. Mảng NULL raise chứ không coi là rỗng; tên trùng được xử lý.
+> 2. **Chặn stale-ack bằng danh tính, không bằng thời gian.** `outbox_events` thêm `claim_token uuid`, và
+>    `claim_outbox_batch` RETURNS TABLE mọc thêm cột đó để ack đòi khớp chính xác. So sánh lease-expiry sẽ để hở
+>    cửa sổ một worker zombie ack đúng event mà claimant thứ hai đang xử lý dở — vô hại khi ack còn per-event và
+>    idempotent, nhưng là mất đúng đắn thật sự khi ack bắt đầu khẳng định fan-out completeness. Đổi chữ ký lấy
+>    **ngay bây giờ** là có chủ đích: `claim_outbox_batch` hiện có **zero call site TypeScript**, và caller tương
+>    lai duy nhất — slice 2b — chưa tồn tại; đây là thời điểm rẻ nhất trong đời dự án để đổi.
+>
+> Hợp đồng shape hai trạng thái thành bộ ba: `claimed_at`, `lease_expires_at`, `claim_token` **cùng NULL**
+> (available) hoặc **cùng NOT NULL** (leased), với `acked_at` là marker terminal. Cả hai CHECK cũ được **mở rộng
+> chứ không thay thế**. Expand-only; `0000`–`0022` byte-identical.
+>
+> **Review:** 5 vòng codex; vòng 4 và 5 đều FULL-base clean trên cùng HEAD, thoả gate P1 `2x_clean`. Hai vòng fix
+> đều là **cùng một lớp lỗi đã biết** chứ không phải defect mới: vòng 1 bắt `claim_outbox_batch` đóng dấu lease từ
+> `now()` bị đóng băng theo transaction (bug có sẵn từ `0022`, chỉ lộ ra khi liveness check mới soi vào); vòng 2
+> bắt bản fix bỏ sót `acked_at` và cả hai audit insert. Cùng pattern `clock_timestamp()`-vs-`now()` mà `0022`
+> round-07 đã ghi lại — đủ hai lần để coi là **lớp lỗi lặp của module này**, không phải tai nạn.
+>
+> **Bằng chứng:** real-PostgreSQL 493/493 (db 201→212, +11 từ OAM-1..OAM-13); `typecheck`, `format:check`,
+> `review:check`, `lint`, `build` xanh; migration-count assertion tăng ở **cả hai** chỗ.
+>
+> **Hệ quả downstream:** slice 2b `job-runtime-dispatcher` được gỡ blocker cùng ngày. Nhưng chữ ký
+> `claim_outbox_batch` đã đổi (thêm cột `claim_token`), nên `LIVE_REPO_VERIFICATION` của Verdict 22 trở nên stale
+> ngay khi `0023` merge — Verdict 22 phải re-pin, không được đọc nguyên trạng.
 
 > **Điều CODE_READY này cho phép:** mở worktree, register scope-gate, chạy design probe. `design_probe_required:
 > true`, và item (b) của probe là **lý do slice tồn tại**, không phải thủ tục: một outbox event fan-out được cho

@@ -456,7 +456,8 @@ notes: **Mở bởi CI audit 2026-07-26** — `Security / OSV full dependency sc
 
 ## task: db-outbox-ack-marker
 title: Job-infra slice 2a — completion/ack cho outbox_events, đóng starvation loop mà 0022 tự flag
-status: ready
+status: merged
+merged: 2026-07-27 · main@76e1f7b (squash của feat/db-outbox-ack-marker@0aaf984) · migration tail 0022→0023 (24 file) · db suite 201→212, canonical runner 482→493 · 5 vòng codex, vòng 4+5 FULL-base clean cùng HEAD (gate 2x_clean) · merged_probe verified trên main
 risk: P1
 change_class: schema-migration
 depends_on: []
@@ -468,8 +469,8 @@ notes: **Mở bởi design probe của AP-33 (2026-07-26), tách ra từ `job-ru
 
 ## task: job-runtime-dispatcher
 title: Shared job-infra slice 2/4 — worker preflight + queue registration + first outbox consumer (one handler, no cron, no producer)
-status: blocked
-blocked_by: db-outbox-ack-marker (2a) — 0022:166-181 yêu cầu slice dispatcher PHẢI thêm ack; manifest 2b ghi `NO new migration` nên mâu thuẫn, đã tách. Design probe AP-33 phát hiện, owner chốt tách 2026-07-26. Manifest 2b + Verdict 22 cần sửa `_scope_out` + JRD-5 (vacuous — handler không đọc dữ liệu tenant-scoped) rồi re-pin sau khi 2a merge.
+status: ready
+unblocked: 2026-07-27 · 2a merged tại main@76e1f7b. `0023` cung cấp `ack_outbox_event(p_event_id, p_required_projectors text[], p_claim_token uuid)` nên `NO new migration` trong `_scope_out` của 2b giờ **đúng và bắt buộc** — 2b là TypeScript-only. Manifest đã amend cùng ngày: `depends_on` thêm 2a, `dep_checks` trỏ `0023`, `_scope_in` thêm bước ack sau fan-out, JRD-5 viết lại thành khẳng định phủ định (probe chứng minh handler không đọc bảng tenant-scoped nào — `job_prepare_projector_delivery` tự dẫn `tenant_id` tại 0022:298 — nên phiên bản cũ pass rỗng), thêm JRD-11..13 cho ack. Verdict 22 re-pin `CODE_READY` tại `76e1f7b`.
 risk: P1
 change_class: manual-runtime-feature
 depends_on: [db-job-claim-lease-core, db-outbox-ack-marker]

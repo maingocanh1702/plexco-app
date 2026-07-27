@@ -1,7 +1,7 @@
 # 🗺️ ROADMAP — Plexco
 
-**Phiên bản:** v3.4f
-**Ngày tạo:** 16/06/2026 · **Cập nhật:** 25/07/2026
+**Phiên bản:** v3.4g
+**Ngày tạo:** 16/06/2026 · **Cập nhật:** 27/07/2026
 **Căn cứ:** `BRD.md` v3.9g · `PRD.md` v2.8f · `TDD.md` v3.1a · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` **v1.98** · `../standards/BUILD-STATUS.md` · `../dd-69-app-native-analysis.md`
 
 > ROADMAP là nguồn sự thật cho **delivery order + dev progress**. Product scope thuộc BRD; behavior thuộc PRD; implementation contract thuộc TDD.
@@ -28,6 +28,21 @@
 > **Cập nhật 25/07/2026 (v3.4e — evidence + authority reconcile):** canonical runner đã re-aggregate tại `2937ed9`: **460 workspace tests PASS** + 13 readiness-validator tests. DD-70/71/72 owner-final được propagate vào Notification pair/index/status; contract trở lại Reviewed nhưng runtime/migration vẫn zero. Next coding initiative là BE-only `db-job-claim-lease-core`; DD-81 canonical path = root `design.pen`, còn FE giữ HOLD tới khi file được persist/track + owner nghiệm thu làm authority. Không phase/delivery order/% runtime nào đổi.
 
 > **Cập nhật 26/07/2026 (v3.4f — job-infra `0022` merged):** slice 1/4 `db-job-claim-lease-core` squash-merged tại **`34429fc`** (Verdict 19, authority `948636f`). Migration tail `0021`→**`0022`**; outbox/projector có lease 5 phút reclaim được + `job_audit_events` append-only + `job_definer` sở hữu đúng 5 function allowlist, `app_worker` chỉ EXECUTE. Canonical runner re-aggregate tại `34429fc`: **482 workspace tests** (db 179→**201**, +22 từ JCL-1..JCL-14) + 13 validator tests. **Code dark** — không queue/preflight/cron/producer/projector nào bật, nên **% runtime và delivery order không đổi**. Kế tiếp: slice 2 `job-runtime-dispatcher`, cần manifest + verdict riêng, không kế thừa authorization của slice 1.
+
+> **Cập nhật 27/07/2026 (v3.4g — job-infra `0023` ack marker merged):** slice 2a `db-outbox-ack-marker` squash-merged
+> tại **`76e1f7b`** (Verdict 23, authority `28d0c3a`). Migration tail `0022`→**`0023`** (24 file). Slice này đóng
+> starvation loop mà `0022:166-181` **tự ghi chống lại chính nó** dưới nhãn `HARD BLOCKING REQUIREMENT`: lease 5 phút
+> chỉ là crash-recovery, event xử lý xong không có đường ack nên vẫn hết lease, không phân biệt được với claim crash,
+> bị reclaim mãi mãi — và vì reclaim chạy trước claim mới với `ORDER BY created_at`, tập event đã xong bỏ đói mọi event
+> mới. Không sai kết quả (`prepare` idempotent), nhưng là bug throughput tăng dần. **Hai quyết định owner lấy tại design
+> probe, trước khi có code:** (1) fan-out completeness là **cấu trúc chứ không phải comment** — `ack_outbox_event` nhận
+> `p_required_projectors text[]` và raise nếu thiếu bất kỳ delivery row nào, vì chính hình dạng "ghi yêu cầu vào comment"
+> đã hỏng một lần trong tuần này khi comment của `0022` bị bỏ sót lúc author manifest 2b; (2) chặn stale-ack bằng
+> **danh tính** (`claim_token`) chứ không bằng thời gian, và đổi chữ ký `claim_outbox_batch` **ngay bây giờ** khi nó còn
+> zero call site TypeScript. Canonical runner tại `76e1f7b`: **493 workspace tests** (db 201→**212**, +11 từ
+> OAM-1..OAM-13) + 13 validator tests. **Vẫn code dark** — không producer/queue/cron/projector nào bật, nên **% runtime
+> và delivery order không đổi**. Kế tiếp: slice 2b `job-runtime-dispatcher` (TypeScript-only, đã gỡ blocker; manifest
+> amend + Verdict 22 re-pin cùng ngày).
 
 > **Đánh số phase:** toàn bộ tài liệu dùng duy nhất **canonical P-number**. Các tên Foundation/Tenant Engine/... chỉ là delivery-group label, không tạo một hệ số thứ hai.
 
@@ -212,11 +227,11 @@ find docs/features/BE -maxdepth 1 -type f -name "feature_*_tech.md" | wc -l
 
 | Hạng mục | Số thực | Ghi chú |
 |---|---|---|
-| Migrations trên `main` | **23** (`0000`–`0022`) | ✅ re-verify tại `2937ed9`. `0015` D0a · `0016` D1 email-token · `0017` OAuth tx · `0018` handoff · `0019`/`0020`/`0021` tenant-integrity composite FK DD-68 (money-path · payment ledger · non-money) |
+| Migrations trên `main` | **24** (`0000`–`0023`) | ✅ re-verify tại `76e1f7b`. `0015` D0a · `0016` D1 email-token · `0017` OAuth tx · `0018` handoff · `0019`/`0020`/`0021` tenant-integrity composite FK DD-68 (money-path · payment ledger · non-money) · `0022` job-infra lease/reclaim · `0023` outbox ack marker |
 | Test file | **29** *(re-verify tại `2937ed9`)* | core 9 · db 4 · web 15 · bot 1 — không đổi từ 22/07 (test mới nằm trong file đã có) |
-| Test case — **canonical runner** | **482 PASS** *(re-run 26/07 tại `34429fc`, sau job-infra `0022`)* | core 132 · db **201** · web 146 · bot 3; thêm **13 readiness-validator tests PASS** trước workspace suite. Số 460 tại `2937ed9` nay là historical evidence |
+| Test case — **canonical runner** | **493 PASS** *(re-run 27/07 tại `76e1f7b`, sau ack marker `0023`)* | core 132 · db **212** · web 146 · bot 3; thêm **13 readiness-validator tests PASS** trước workspace suite. Số 482 tại `34429fc` và 460 tại `2937ed9` nay là historical evidence |
 | Test case — **static cross-check** | **451** *(re-verify tại `2937ed9`)* | core 132 · db 179 · web 137 · bot 3. Chênh 9 so với runner vẫn đến từ table-driven loop đã kiểm kê; static không thay runner |
-| Bằng chứng test per-slice (real-PG) | db **167** → **173** → **179** → **201** | `0019` (Verdict 17, `b0c29a6`) → `0020` (Verdict 18, `f6ccd79`) → `0021` (`15e10b7`) → `0022` job-infra (Verdict 19, `34429fc`; JCL-1..JCL-14). Là authority của **chính slice đó**, không phải aggregate toàn repo |
+| Bằng chứng test per-slice (real-PG) | db **167** → **173** → **179** → **201** → **212** | `0019` (Verdict 17, `b0c29a6`) → `0020` (Verdict 18, `f6ccd79`) → `0021` (`15e10b7`) → `0022` job-infra (Verdict 19, `34429fc`; JCL-1..JCL-14) → `0023` ack marker (Verdict 23, `76e1f7b`; OAM-1..OAM-13). Là authority của **chính slice đó**, không phải aggregate toàn repo |
 | Invariant test | **3 file** | `rls-invariants` · `waitlist-invariants` · `migrate` (race-safety `0000`) — xem danh sách invariant-class ở §Cách đọc tiến độ |
 | API route đang có | **10** | ✅ re-verify tại `2937ed9`. 8 auth + 2 onboarding. **0 route nghiệp vụ** (session/payment/sync) |
 | Feature spec | **24 Product + 23 BE** | ✅ re-verify tại `2937ed9`. 23 cặp + 1 product-only Draft; coverage cao — *không* phải readiness |
