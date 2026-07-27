@@ -769,7 +769,8 @@ notes: **Tách hẹp từ `job-scheduler-cron-registration` (owner chốt 27/07)
 
 ## task: db-public-visibility-capacity-check
 title: DB CHECK NOT(visibility='public' AND slots_max IS NULL) — bỏ invalid state tại nguồn
-status: ready
+status: merged
+merged: 2026-07-27 · main@c100937 (squash của feat/db-public-visibility-capacity-check@acc5094) · 4 file +359/−7 · tail 0023→0024 (25 file) · db 212→219 (+7 PVC), workspace 519→526 · 4 vòng codex, 2 P1 thật đã sửa, vòng 3+4 clean cùng HEAD · design probe trả lời item (a) bằng NGUYÊN NHÂN (không tồn tại write path) chứ không bằng phép đếm — quan trọng vì 0019:78-85 ghi sẵn rằng SELECT probe bị RLS lọc về zero giả
 risk: P1
 change_class: schema-migration
 depends_on: []
@@ -779,4 +780,36 @@ manifest: docs/autopilot-manifests/db-public-visibility-capacity-check.json
 launcher: .claude/commands/ap-36-db-public-visibility-capacity-check.md
 merged_probe: packages/db/migrations/0024_public_visibility_capacity_check.sql :: sessions
 notes: **Thực thi fix-candidate (c) của `job-infra-public-projection-reconciliation`, cái mà chính task cha yêu cầu ĐÁNH GIÁ TRƯỚC vì rẻ nhất và fail-closed nhất.** Row `visibility='public'` + `slots_max IS NULL` là **invalid state mà DB hiện cho phép** — PRD E#7 (trích tại `feature_session_management_tech.md:120`) bắt public phải có capacity hữu hạn; NULL = unlimited chỉ hợp lệ cho non-public. Hiện chỉ enforce ở choke-point `SessionService`, nên fixture/legacy/direct-write tạo được row mà không gì từ chối. **Vì sao nghiêm trọng hơn là gọn gàng:** Verdict 20 ghi đây là gate `ENABLEMENT_ONLY` chặn projector public, lý do là invalid state **vô hình với sửa chữa theo sự kiện** — edge #15 chỉ chạy khi projector ĐÁNH GIÁ session; một writer bypass lật session public đã-projected từ `slots_max` hữu hạn sang NULL **không phát event nào**, projector không bao giờ quay lại, và projection cũ-nhưng-nay-invalid **vẫn hiển thị công khai**. Unit test #26 đặt row vào batch bằng tay nên chỉ chứng minh hành-vi-khi-tới-được, không chứng minh mọi row invalid đều tới được. **`design_probe_required`, item (a) là bẫy:** bản sao máy móc sẽ viết `ADD CONSTRAINT ... NOT VALID` rồi `VALIDATE CONSTRAINT` ngay sau và tưởng đó là idiom expand-only an toàn — **không phải**: `NOT VALID` bỏ qua row cũ, `VALIDATE` quét chúng và FAIL nếu có row vi phạm, cùng failure mode với thêm thẳng nhưng TRÔNG cẩn thận. Phải ĐO số row vi phạm trước. **Chạy song song với `job-schedule-outbox-dispatch`** — kiểm bằng máy: giao file ∅, giao invariant ∅. Cố ý bỏ token `retry-liveness` mà task cha khai, vì candidate (c) không có lease/claim/DLQ nào; giữ nó lại sẽ chế ra một va chạm vô cớ.
+
+## task: docs-session-capacity-chk-landed-reconcile
+title: Reconcile feature_session_management_tech.md:120 sang trạng thái CHECK-đã-land; pin choke-point là defense-in-depth
+status: planned
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: [schema]
+scope: [docs/features/BE/feature_session_management_tech.md]
+manifest: null
+merged_probe: null
+notes: **Mở bởi design-probe item (c) của `db-public-visibility-capacity-check` (2026-07-27); dependency đã thoả — `0024` merged tại `c100937`.** Slice đó KHÔNG thể tự land reconcile này vì `feature_session_management_tech.md` không nằm trong scope list của nó; từ chối sửa file ngoài scope là đúng kỷ luật, nên việc còn lại nằm đây. `:120` hiện ghi CHECK capacity×visibility là *"hardening candidate qua migration mới monotonic nếu chốt — … chưa thuộc scope slice nào"* — nay stale, phải đọc là **đã land**, trích `0024`/`sessions_public_capacity_chk`. Thêm ghi chú tại `:386` và `:396` (choke-point join/promotion của SessionService, vốn fail-closed trên cùng predicate) rằng DB **nay cũng** enforce qua `0024` và choke-point **VẪN GIỮ** làm defense-in-depth — môi trường nào chưa apply `0024` thì chỉ còn nó. Mục đích của câu đó là chặn một người đọc tương lai xoá choke-point như dead code. **KHÔNG** được kết luận `job-infra-public-projection-reconciliation` đã đóng: candidate (a) và (b) vẫn mở. Đây là reconcile status-line + một ghi chú làm rõ, cùng hình dạng với `docs-tail-0018-number-reconcile`.
+
+## task: db-sessions-check-constraint-naming-drift
+title: sessions_vis_chk/sessions_slots_chk và 4 anh em chưa bao giờ được áp dụng — DB thật dùng tên Postgres tự sinh
+status: idea
+risk: P2
+change_class: schema-migration
+depends_on: []
+invariants: [schema]
+scope: []
+notes: **Phát hiện 2026-07-27 khi viết PVC-3 của `db-public-visibility-capacity-check`.** `schema.ts:~599-605` khai `sessions_time_chk` · `sessions_price_chk` · `sessions_slots_chk` · `sessions_vis_chk` · `sessions_join_chk` · `sessions_status_chk`, nhưng `pg_constraint` trên DB đã migrate đầy đủ (verify trên `plexco_test`, tail `0024`) cho thấy **KHÔNG tên nào tồn tại** — `0002:87-99` khai CHECK inline/không tên nên Postgres tự đặt `sessions_check` (time), `sessions_price_amount_check`, `sessions_slots_max_check`, `sessions_visibility_check`, `sessions_join_policy_check`, `sessions_status_check`. **Cùng lớp bug mà comment `schema.ts:107-111` tự ghi là đã tìm-và-sửa cho `players` ở `0014`** (`players_status_check`→`players_status_chk`) — chưa bao giờ sửa cho `sessions`. **Không phải bug đúng đắn hôm nay** (constraint vẫn fire và enforce đúng dưới tên thật; PVC-3 nay assert theo tên THẬT), thuần là drift mirror giữa `schema.ts` và DB sống — nhưng **mọi migration hoặc test tương lai giả định các tên đó tồn tại sẽ sai**, và `dep_checks` của chính manifest slice kia đã dính đúng bẫy đó: `scope-gate` giải bằng `git show main:<file>` + grep nên chỉ đọc được KHAI BÁO, không phân biệt được với ĐÃ ÁP DỤNG. Cách sửa mirror theo đúng `0014` cho `players`: một migration monotonic DROP từng constraint tự-sinh rồi ADD lại dưới tên `schema.ts` khai (cùng predicate, không đổi hành vi). Quyết định khi scope: có gộp luôn `sessions_public_capacity_chk` (đã đặt tên đúng) hay giữ hẹp trong năm cái cũ.
+
+## task: db-projector-dlq-no-replay-path
+title: projector_deliveries.dlq là trạng thái cuối không có lối ra — không function/route nào replay
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [retry-liveness]
+scope: []
+notes: **Phát hiện 2026-07-27 khi review design probe item (e) của `job-schedule-outbox-dispatch`.** `0022:264` định nghĩa `status IN ('pending','claimed','delivered','failed','dlq')` và `dlq` là **terminal**; grep toàn repo không ra function, route hay script nào đưa một hàng từ `dlq` trở lại. Tệ hơn ở chỗ nó **chết cả hai đầu**: `ack_outbox_event` được gọi sau bước prepare, **độc lập với kết quả delivery**, nên `outbox_events` row bị ack và không bao giờ được `claim_outbox_batch` trả lại nữa, trong khi hàng `projector_deliveries` tương ứng nằm `dlq` vĩnh viễn. Hệ quả: một event vào DLQ là **mất projection không phục hồi được**, kể cả sau khi slice 4 ship projector thật. Đây chính là lý do owner chốt (2026-07-27) rằng schedule của `job-schedule-outbox-dispatch` phải nằm sau env flag **mặc định OFF**: với stub `productionStubDeliver` trả `dlq` ngay, bật cron sau khi có producer sẽ đẩy mọi event vào trạng thái cuối không cứu được. Flag là biện pháp tạm; lối thoát thật là một đường replay có kiểm soát. **Chưa scope** — cần quyết: replay là SECURITY DEFINER function riêng (`app_worker` EXECUTE, theo pattern DD-89 Q1) hay là thao tác owner-only ngoài runtime; và replay reset `attempts` hay giữ để tránh vòng lặp vô hạn.
 

@@ -12,7 +12,49 @@
 
 ---
 
-## Verdict 25 — `db-public-visibility-capacity-check`: bỏ invalid state public+unlimited tại nguồn; `CODE_READY` (2026-07-27)
+## Verdict 25 — `db-public-visibility-capacity-check`: bỏ invalid state public+unlimited tại nguồn; `CODE_READY` (2026-07-27) → **IMPLEMENTED & MERGED `c100937`** (2026-07-27)
+
+> **✅ IMPLEMENTED & MERGED 2026-07-27 — `main@c100937`** (squash của
+> `feat/db-public-visibility-capacity-check@acc5094`, 4 file +359/−7). `0024` thêm
+> `sessions_public_capacity_chk`. Tail `0023`→`0024` (25 file). db suite 212→219 (+7 PVC).
+>
+> **❌ ĐÍNH CHÍNH LỖI CỦA REVIEWER TRONG CHÍNH VERDICT NÀY — đọc trước khi tin bất kỳ dòng nào bên dưới.**
+> `LIVE_REPO_VERIFICATION` khẳng định `sessions_slots_chk` và `sessions_vis_chk` là sự thật *"measured at
+> 1ffb6a5"*. **Sai.** Thứ được đo là **văn bản nguồn `schema.ts`**, không phải `pg_constraint`. Hai tên đó
+> **không tồn tại trong DB đã migrate**: `0002:87-99` khai CHECK **inline không tên**, nên Postgres tự đặt
+> `sessions_visibility_check`, `sessions_slots_max_check`, `sessions_price_amount_check`,
+> `sessions_join_policy_check`, `sessions_status_check`, `sessions_check`. Cùng lớp bug mà `0014:44,78-80` ghi
+> là *đã tìm và đã sửa cho `players`* — chưa bao giờ sửa cho `sessions`. Phát hiện bởi PVC-3 khi slice viết test;
+> test ship ra assert theo **tên thật**, không theo tên aspirational của `schema.ts`.
+>
+> **`dep_checks` không cứu được, và đây là giới hạn cấu trúc chứ không phải sơ suất:** `scope-gate` giải
+> `dep_checks` bằng `git show main:<file>` + grep — tức đọc **khai báo**. Với một đối tượng DB, cơ chế đó
+> **về nguyên tắc không phân biệt được ĐÃ KHAI BÁO với ĐÃ ÁP DỤNG**. Manifest `_decision_contract` vì thế cũng
+> hứa "hai CHECK sẵn có không bị thay thế" về những đối tượng không tồn tại dưới tên ấy.
+>
+> **Vì sao đáng ghi thay vì chỉ sửa:** hai tin nhắn trước khi verdict này được viết, tôi dặn probe của chính
+> slice này rằng *"nếu đếm bằng SELECT thì có thể là zero giả"* — rồi phạm đúng phiên bản tương đương trong
+> verdict cấp phép cho probe đó. Đọc một khai báo rồi gọi đó là phép đo. Luật rút ra, đã ghi vào memory: với
+> đối tượng DB, `schema.ts` là **khai báo**, chỉ `pg_constraint`/`pg_proc` mới là **bằng chứng**.
+>
+> **Probe trả lời item (a) bằng nguyên nhân, không bằng phép đếm** — và đó là lý do kết luận đứng vững. Nó không
+> chỉ đếm 0 row vi phạm mà chứng minh **vì sao** phải là 0: `SessionService`, `evaluateJoinRestriction` và
+> projector đều còn là stub, nên **chưa từng tồn tại write path** tạo được vi phạm. Quan trọng vì `0019:78-85`
+> đã ghi sẵn (từ codex round-02 của chính nó) rằng một `SELECT` probe bị RLS lọc về 0 dưới migration role
+> `NOBYPASSRLS` — tức phép đếm đơn thuần có thể là zero giả.
+>
+> **Hai P1 của codex là cùng một cái bẫy ở hai chỗ: khẳng định đúng-nhìn-từ-vị-trí-sai.** Vòng 1 — chính câu
+> `SELECT` khắc phục *bên trong* halt cũng trả 0 row dưới role `NOBYPASSRLS` (`sessions` có FORCE RLS), tức
+> thông điệp sửa lỗi tự nó gây hiểu nhầm; sửa thành yêu cầu requery bằng role bypass RLS. Vòng 2 — replay
+> migration của PVC-6 chạm `0022`/`0023` (đụng `job_definer`) mà không giữ `withJobDefinerLock`, đua với
+> `JCL-2`/`JCL-3` vốn **cố ý phá** role cluster-global đó dưới cùng cái khoá. Vòng 3 và 4 clean cùng HEAD.
+>
+> **Một khác biệt thực nghiệm so với `0019` đã được xử lý:** `VALIDATE` của một CHECK **không** cho row detail
+> như FK violation, nên named halt trao cho owner một **câu truy vấn khắc phục** thay vì khoá vi phạm.
+>
+> **Bằng chứng:** 539/539 (validator 13 · core 132 · db 219 · web 146 · bot 29). Con số này cũng **chốt luôn
+> tranh cãi 519 vs 623**: 519 là workspace đúng tại `fca314e`, 532 là 519 + validator, và "623" của report slice
+> 2b đơn giản là sai.
 
 > **Điều CODE_READY này cho phép:** mở worktree, register scope-gate, chạy design probe. `design_probe_required:
 > true` và **item (a) là lý do slice tồn tại**, không phải thủ tục. Viết production code trước khi probe được
