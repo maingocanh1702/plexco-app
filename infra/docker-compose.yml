@@ -68,6 +68,23 @@ services:
   # Chưa chạy 2 bước đó → worker fail-fast có chủ đích (migrate:false, không DDL
   # bằng role runtime). Wiring tự động vào compose/production thuộc slice db-RLS +
   # infra-do-app-vpc-deployment.
+  #
+  # ⚠️ job-runtime-dispatcher (AP-33): worker.ts giờ chạy preflight fail-closed
+  #   trước boss.start(), ĐÒI session_user VÀ current_user đều = app_worker
+  #   (không chấp nhận role switch từ credential khác). KHÔNG kiểm role
+  #   attributes/CREATE trên pgboss/job_definer membership — least-privilege
+  #   attestation đó ngoài scope preflight này (founder decision 2026-07-27,
+  #   chi tiết ở đầu apps/bot/src/preflight.ts). Role app_worker (tạo ở
+  #   migration 0000) có LOGIN nhưng chưa có password —
+  #   set MỘT LẦN/cluster (sau bước 1 migrations, trước khi start worker):
+  #     docker compose -f infra/docker-compose.yml exec -T postgres \
+  #       psql -U plexco -d plexco -c "ALTER ROLE app_worker WITH PASSWORD 'plexco_dev_worker'"
+  #   Giá trị 'plexco_dev_worker' khớp DATABASE_URL_DIRECT dưới đây và .env.example —
+  #   KHÔNG dùng password cố định này ở ngoài local dev.
+  #   ⚠️ Chạy test sau đó (`pnpm -w test`, hay apps/bot/packages/db riêng lẻ)?
+  #      password app_worker (cluster-global) bị đổi bởi MỌI suite chạm DB —
+  #      không suite nào khôi phục lại. Chạy lại lệnh ALTER ROLE ở trên trước
+  #      khi start worker lần nữa. Chi tiết: .env.example.
   worker:
     build:
       context: ..
@@ -75,8 +92,10 @@ services:
     environment:
       PROCESS_ROLE: worker
       NODE_ENV: development
-      # worker cần DIRECT connection (pg-boss LISTEN/NOTIFY + advisory lock)
-      DATABASE_URL_DIRECT: postgres://plexco:plexco_dev@postgres:5432/plexco
+      # worker cần DIRECT connection (pg-boss LISTEN/NOTIFY + advisory lock) VÀ
+      # phải là role app_worker đúng nghĩa (preflight fail-closed đòi hỏi, xem
+      # comment phía trên) — không dùng credential migration/superuser ở đây.
+      DATABASE_URL_DIRECT: postgres://app_worker:plexco_dev_worker@postgres:5432/plexco
     env_file:
       - path: ../.env
         required: false
