@@ -1,16 +1,67 @@
 {
-  "feature": "my-feature-slug",
-  "branch": "feat/my-feature-slug",
-  "base_ref": "main",
+  "manifest_schema_version": "level3-operational-v2",
+  "review_gate_version": "level3-readiness-v2",
+  "task_id": "repo-id:task-slug",
+  "feature": "task-slug--slice-slug",
+  "branch": "feat/task-slug--slice-slug",
+  "base_ref": "origin/main",
+  "base_sha": "0000000000000000000000000000000000000000",
   "risk": "P2",
-  "change_class": "some-change-class",
-  "merge_policy": "manual_only",
-  "auto_merge": false,
-  "codex_review": "1x_clean",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
   "depends_on": [],
-  "invariants": ["<pick tokens from docs/autopilot-invariant-catalog.md>"],
+  "dep_checks": [],
+  "invariants": [
+    "test-chain"
+  ],
   "scope": [
-    "src/path/to/file-i-will-edit.ext",
-    "src/path/to/another.ext"
-  ]
+    "src/path/to/file.ext"
+  ],
+  "negative_scope": [
+    "no adjacent subsystem or undeclared file"
+  ],
+  "context_sources": [
+    "README.md"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "restricted",
+    "secrets": "none",
+    "external_side_effects": "approval_required"
+  },
+  "verification": {
+    "focused": [],
+    "canonical": [],
+    "e2e": []
+  },
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 1
+  },
+  "security_review": {
+    "required": false,
+    "reason": "not_applicable",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 120,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE"
+  ],
+  "readiness_evidence_path": ".autopilot/state/task-slug--slice-slug/readiness.json"
 }

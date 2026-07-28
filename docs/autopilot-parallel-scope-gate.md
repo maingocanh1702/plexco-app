@@ -1,64 +1,123 @@
-# Autopilot — parallel scope gate (SCOPE_COLLISION)
+# Parallel scope gate
 
-Repo-agnostic spec. Lets **multiple autopilot / Claude Code terminals run in parallel** (one git
-worktree each) while keeping quality: **parallel when scope is disjoint, sequential when it overlaps.**
-Ported into `autopilot-prompt-GENERIC` §A.3.1. Production mechanism = the repo-owned script
-`scripts/autopilot-scope-gate` (this doc explains the WHY; the script is the source of truth).
+The scope gate coordinates Level 3 writing slices. It does not create a worktree, launch a writer,
+derive risk, review code or merge.
 
-## Why worktrees alone are not enough
-
-A git worktree gives each session its own index + working dir, so concurrent commits are mechanically
-safe. But 4 things still break quality:
-
-1. **Same file edited by two features** (`schema`/migrations, i18n, package manifest) → merge conflict.
-   → Gate catches AUTOMATICALLY (compares file paths in `scope`).
-2. **Same SQLite/DB file in tests** → give each worktree its own `DB_PATH` (e.g. `/tmp/ap-<feature>.db`).
-3. **Same *domain concept* in different files** (e.g. feature A changes `paidAmount`, feature B changes
-   `refundAmount`, same money model) → git can't see it. → Gate catches ONLY IF both features declare a
-   shared `invariants:` token (e.g. `money-model`). Undeclared domain still slips → needs human review.
-   The **invariant catalog** (`docs/autopilot-invariant-catalog.md`) is the canonical token list; the
-   gate HALTs on a token not in it (INVARIANT_UNKNOWN) to stop synonym drift.
-4. **Race to merge into main** → serialize the merge step (one branch at a time; gate doesn't do this).
-
-→ Rule: two autopilots run in parallel only when their **positive-scope file sets are disjoint** AND
-they **share no domain invariant**.
-
-## The gate (run in Pre-flight, BEFORE branch/worktree mutation)
+## Register
 
 ```bash
-scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<feature>.json
+scripts/autopilot-scope-gate register \
+  --manifest .autopilot/state/<FEATURE_ID>/manifest.json
 ```
 
-The script: resolves the shared registry at MAIN `.autopilot/INFLIGHT.md` via `git rev-parse
---git-common-dir`; takes an atomic mkdir-lock around check+append (so two sessions starting at once
-can't both pass against the stale registry); validates invariants against the catalog; checks
-`depends_on` is merged (not still active); checks scope/invariant collision; on PASS replaces any old
-block for this feature with a fresh `in-flight` block. At READY run `... ready`; after merge `...
-cleanup` (or `cleanup --feature <slug>` if the manifest is gone).
+The Level 3 task contract requires:
 
-## Manifest (tracked, one per feature)
+```text
+feature
+branch
+risk
+base_ref
+base_sha
+depends_on[]
+dep_checks[]  # one same-order unique-symbol landing proof per dependency
+invariants[]
+scope[]
+negative_scope[]
+writer_processes_max=1
+```
 
-`docs/autopilot-manifests/<feature>.json` — `feature`, `branch`, `base_ref`, `risk`, `change_class`,
-`depends_on`, `invariants` (catalog tokens), `scope` (positive-scope files). It is the single source of
-truth; the prompt's Scope section and the manifest must mirror each other.
+For `level3-operational-v2`, the installed readiness validator checks the resolved manifest,
+task-scoped identity, branch, pinned base SHA/ref, worktree HEAD, exact scope, negative scope,
+one-writer ceiling, review policy, permissions and verification commands before registration.
+Process liveness still requires primary-agent/worktree inspection.
 
-## Breakers (added to GENERIC's set)
-- **SCOPE_COLLISION** — scope file OR invariant intersects another active (`in-flight|ready`) feature.
-- **DEP_MISSING** — a `depends_on` prerequisite is still active (not merged on base ref). Also covers
-  interface-drift: re-derive dependent's symbol refs from the REAL merged code on base_ref.
-- **INVARIANT_UNKNOWN** — manifest uses a token absent from the catalog. Add the canonical token first.
+`scope` entries must be exact file paths for this script's equality-based collision check. If a
+slice cannot enumerate files safely, serialize it with a shared invariant token; directory/glob
+overlap is not machine-detected by this helper.
 
-## Operating in parallel
-- One git worktree per feature: `git worktree add .autopilot/worktrees/<slug> -b feat/<slug>`.
-- Separate `DB_PATH` (or other shared mutable test state) per worktree.
-- Stagger cross-model review (codex) to avoid auth/quota contention.
-- Serialize merges into main: one branch at a time; rebase the rest. Batch via merge-train (GENERIC §C3).
-- Natural partitioning that's usually safe to parallelize: distinct transports/adapters, docs-only,
-  isolated modules. Usually-sequential (shared "pot"): schema/migrations, the money/settlement core,
-  auth, i18n, package manifest/lockfile.
+Final diff enumeration disables rename detection, so a rename/delete requires both the source and
+destination in scope; declaring only the destination cannot hide an undeclared source removal.
 
-## Lesson (why a script, not pasteable shell)
-The first version was pasteable awk in a prompt. Two workflow bugs: (a) shell self-exclusion was easy to
-copy wrong; (b) check-then-append was non-atomic, so two autopilots starting together could both PASS
-against the old registry. Once a gate coordinates multiple agents it must be executable state with
-locking, not prose. Hence the repo-owned script + atomic lock + tracked manifests.
+For each dependency, `dep_checks` must bind:
+
+```text
+feature
+base_sha
+landed_sha
+file
+symbol
+```
+
+The identifier symbol must be absent on the dependency base, present at the landed SHA and still
+present on the downstream pinned base. Both SHAs must have the required ancestry. This makes
+registry absence insufficient as landing proof.
+
+Registration fails when:
+
+- a dependency is still active;
+- a scope path intersects another active slice;
+- an invariant token intersects another active slice;
+- an invariant is unknown to the catalog;
+- a dependency is active or its mandatory unique landing proof is invalid;
+- the base/worktree/contract fails the Level 3 validator.
+
+Use the task-scoped `FEATURE_ID`. An active duplicate is rejected instead of silently replacing its
+row.
+
+Create and verify the explicit-base worktree first, then register from inside that worktree before
+implementation. Registration alone grants no permission to write outside the task contract.
+
+## Ready
+
+```bash
+scripts/autopilot-scope-gate ready \
+  --manifest .autopilot/state/<FEATURE_ID>/manifest.json
+```
+
+The script requires an active registration, rechecks collisions and invokes
+`scripts/autopilot-review-readiness.mjs`. A Level 3 manifest fails closed when the validator is
+missing. READY requires a real commit/non-empty in-scope diff, clean worktree, matching minimal
+`readiness.json`, an unchanged registered-manifest hash and clear breakers. The validator directly
+executes every declared verification command and required pinned-Codex/security round, binds the
+generated logs to HEAD/base/diff, and writes `gate-result.json`. Only then does the scope gate write
+`READY.txt` and move the registry row.
+
+Every new `ready` attempt invalidates any older `READY.txt` and `gate-result.json` before work
+begins. Landing requires the gate-result attempt to equal the latest attempt counter and rejects a
+pending review finding, so a later failed rerun cannot fall back to stale PASS evidence.
+
+The final reviewer uses a sanitized system-home environment; per-invocation
+`AUTOPILOT_CODEX_*`/`BASH_ENV`/`NODE_OPTIONS` overrides cannot replace it. A normal feature also
+cannot certify a diff that changes its own scope gate, readiness validator or Codex wrapper; update
+that trust pack through the separately reviewed/versioned kit-maintenance path.
+
+Non-Level-3 legacy manifests may still receive a clearly labelled registry-only warning; that path
+cannot claim this operational profile.
+
+## Cleanup
+
+Cleanup happens only after authorized merge/disposition is verified and no writer/review is active:
+
+```bash
+scripts/ap-finish.sh <FEATURE_ID>
+```
+
+Directly deleting a worktree without releasing the shared reservation leaves stale state.
+Normal merge ancestry is verified against origin before cleanup; an exact squash needs matching
+READY patch evidence, while unmerged closure needs an explicit reason and durable disposition
+record as described in `parallel/README.md`.
+
+`scope-gate cleanup` is an internal final step of `ap-finish`: it rejects a raw call unless a
+valid task-matching landing/disposition record already exists. Watchers and housekeeping tools
+never release reservations themselves.
+
+## Parallel safety
+
+File-disjoint work can still collide on a shared domain invariant. Broad tokens such as schema,
+money model, auth policy or generated API contract intentionally serialize work. Re-scope and
+register the final manifest before a writer starts; after writing begins, material
+scope/base/design drift requires HALT and a fresh successor slice.
+
+This gate is sufficient for the supervised operational workflow when combined with explicit-base
+worktrees and review evidence. Formal global receipt/activation/certification enforcement is an
+optional extension.
