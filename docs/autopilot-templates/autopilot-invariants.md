@@ -5,26 +5,64 @@
 > full rationale/archive: `reference/autopilot-prompt-GENERIC.full.md`.
 > When running ANY autopilot/feature task, apply these even if the per-task prompt doesn't repeat them.
 
+## Level 3 supervised autonomy — forward-only
+- Normative operational authority:
+  `$HOME/Projects/Claude template/autopilot/level3-workflow.md`. MUST read it at the start of every
+  new task/session/feature opened after the template is installed or refreshed. Never retrofit a
+  session already running.
+- The primary agent owns the outcome: load code/docs/decisions, derive risk, build the compact task
+  contract, split bounded independent slices, delegate agents, monitor them, integrate the result
+  and drive to `READY|AWAIT|HALT`. Do not ask the human to route routine implementation steps.
+- Human role = manager of managers: outcome, priority, policy, budget, material decisions,
+  exceptions, merge/deploy. Auto-merge is separate and OFF.
+- Pull required context before acting. Missing material code/wiki/discussion/decision context is
+  `AWAIT_CONTEXT`, never permission to fabricate. Load applicable Skills lazily and capture durable
+  learning in docs/tests/Skills/routines.
+- One writing slice = one explicit-base worktree + at most one live writer. Parallelize only
+  genuinely independent slices; serialize shared state/invariants/migrations/external mutation.
+- Every writing slice self-verifies with real build/tests/lint/typecheck/e2e as applicable, then
+  receives independent code review and relevant security review. Missing required tooling is HALT,
+  not a silent downgrade.
+- `supervised` is the default. `proactive_routine` is only for a narrow repeatable P2 class with
+  encoded scope/tests/review/stop rules and recent successful evidence. P0 live actions remain
+  preparation-only; P1 stays supervised; P3/read-only does not mutate.
+- Formal global control-plane, activation, release-epoch and certification documents are optional
+  Level-3+ machine-enforcement hardening. Their status cannot block this operational workflow and
+  must not produce `LEVEL3_NOT_ACTIVATED` for an ordinary future task.
+
 ## Merge / authority
 - Default **STOP_AT_READY**. **P0** → don't codegen with autopilot. **P1** → manual_only, NEVER auto-merge.
-  P2 auto-merge only if ALL hold: class `mature` (≥3 in ledger) AND prompt opts in explicitly AND
-  2 consecutive FULL-base Codex clean rounds on current HEAD AND verify green AND clean tree (mature+opt-in are NECESSARY, not sufficient).
+  P2 auto-merge stays OFF unless a separate current owner authority explicitly enables a narrow
+  mature class with run opt-in + 2 FULL clean + green verify + clean tree.
 - NEVER `git push --force`. NEVER touch out-of-scope files/modules/branches. NEVER `git add -A` (stage per-file).
 
 ## Review gate
 - Cross-model review = **`$CODEX` (AUTOPILOT_CODEX_BIN) ONLY**. NEVER substitute a Claude/Task sub-agent.
-- **EVERY autopilot slice gets a codex round — including companion/secondary repos that lack their OWN pin.** `codex review` is repo-agnostic (reviews the cwd's `git diff --base <ref>`), so a repo without `scripts/codex-review-pin.sh` still gets the gate: `export AUTOPILOT_CODEX_BIN` to ANY existing repo-agnostic pin (e.g. the primary project's) and run it from that repo. NEVER downgrade a slice to "branch + tests + PR only" because the pin isn't wired locally — that drops the adversarial gate exactly where cross-repo bridge/money code lands. Tier rounds by risk (money/logic = 2× consecutive FULL clean; prompt/doc = 1×), never to zero.
-- A round counts only if it wrote `round-NN.txt` AND ends with a real model verdict (no auth-fatal). P1 = **2 consecutive FULL-base clean rounds on the current HEAD**.
-- **A "clean" verdict on an EMPTY diff is meaningless — verify the diff is non-empty BEFORE trusting any clean.** Before/at each round run `git diff --stat <base>...HEAD`; if it shows 0 files (you're on the wrong branch, base==HEAD, or a failed checkout left you on a stale `main`), the review reviewed NOTHING — codex will emit "no tracked changes relative to the merge base… no issues to flag", which is NOT a pass. Stand on the correct branch/base and re-review. Clean-on-0-diff ⊄ clean.
-- **`$CODEX` resolve via `${AUTOPILOT_CODEX_BIN:?...}`** — unset / wrong binary / auth-fatal (token refresh / session ended) → **CODEX_UNAVAILABLE HALT, NEVER fall back to PATH `codex` or manual review**.
+- **EVERY slice and companion repo gets a Codex round.** Use a repo-agnostic pinned
+  `AUTOPILOT_CODEX_BIN` from that repo; missing local wiring never reduces the gate to zero. Tier by
+  risk (money/logic = 2× consecutive FULL clean; prompt/docs = 1×).
+- A final round counts only when the readiness gate wrote its
+  `gate-attempt-*-code-review-round-NN.txt`, bound it to current HEAD/base/diff and received the
+  exact clean tail marker. Legacy/manual pre-gate `round-NN.txt` is diagnostic only. P1 =
+  **2 consecutive FULL-base clean rounds on the current HEAD**.
+- **Clean on an empty diff is not a pass.** Verify `git diff --stat <BASE_SHA>...HEAD` is non-empty and
+  branch/base are correct before every trusted verdict.
+- Final review resolves only through the executable repo-local `scripts/codex-review-pin.sh`;
+  legacy/manual calls resolve via `${AUTOPILOT_CODEX_BIN:?...}`. Missing/wrong pin or auth-fatal
+  means **CODEX_UNAVAILABLE HALT, NEVER fall back to PATH `codex` or manual review**.
+- The final gate sanitizes reviewer HOME/PATH and ignores per-invocation `AUTOPILOT_CODEX_*`,
+  `BASH_ENV`, `ENV` and `NODE_OPTIONS` overrides. A normal feature cannot certify changes to the
+  scope gate, readiness validator or reviewer wrapper that is certifying it; use the separately
+  reviewed/versioned kit-maintenance path.
 
-## Loop control — counters are FILES, not prose (incident: a run hit 12 rounds)
-- **Step 1 MUST create** `.autopilot/state/<task>/regions.log` and `.autopilot/state/<task>/fix-round-count.txt`
-  (BOTH under `.autopilot/state/<task>/` — a counter at repo root won't be found and the breaker won't fire).
-- Each fix round: append finding `file:function` to regions.log, increment the counter, echo it.
+## Loop control — counters are FILES, not prose
+- **Step 1 MUST create** `.autopilot/state/<FEATURE_ID>/regions.log` and
+  `.autopilot/state/<FEATURE_ID>/fix-round-count.txt` in the writing worktree. One task with
+  multiple slices uses `<task-slug>--<slice-slug>` consistently.
+- Each fix round: append exact `round-NN file:region` to regions.log, increment the counter, echo it.
 - `fix-round-count > 5` → **MAX_ROUNDS HALT** — a HARD stop, not advisory. The round loop MUST exit at >5 even
-  if findings are still "real" and distinct; do NOT "just one more round" (incident: credit-autoapply ran to 8).
-- Same file flagged ≥3 consecutive rounds → **REGION_THRASH HALT**.
+  if findings are still "real" and distinct; do NOT "just one more round".
+- Same exact `file:region` flagged in ≥3 consecutive rounds → **REGION_THRASH HALT**.
 - Thrash = a DESIGN smell → **converge to a clean design, do NOT keep patching edges**.
 - **Distinct findings that keep SPREADING across many files/regions round after round** (not the same region) =
   the SLICE is too big / under-specified, not thrash → still HALT at MAX_ROUNDS and **split the feature**, don't grind on.
@@ -34,15 +72,18 @@
   one helper; every consumer reads it. NEVER re-derive per call site with its own formula (that's the #1 thrash source).
 - **Self-generated data → deterministic key** (id/code), exact lookup — fuzzy only for arbitrary human input.
 - **Mirrored logic across ≥2 transports/adapters → extract one shared core**; adapters stay thin.
-- **A non-mutating "show/display" verb should ROUTE to the existing deterministic handler — do NOT duplicate its state into a new contract field/endpoint.** When a new conversational/gate layer handles a read-only intent (show balance/QR/status) and the existing path already computes + renders that state, emit the existing payload/command instead of adding a new field to a read endpoint to re-derive it. Reserve the heavier validate-and-confirm gate for MUTATING verbs (charge, refund, delete). A redundant field through a contract = needless cross-repo coupling + a second source of truth for the same number. (e.g. a `pay` gate routes to the existing self-pay handler showing debt+QR+no-debt, not adding `debtAmount` to a read-only context response.)
-- **A gate that RESOLVES intent → an existing handler should EMIT that handler's payload, not re-render its confirm/disposition UI — even for a MUTATING verb.** If the existing path already shows the correct confirm (entity label + refund/credit disposition), the gate's only job is NL→entity resolution + a liveness validate; route to the existing per-entity payload (e.g. `PAYMENT:leave:<id>`) to reuse its labels AND its downstream mutation guard. Building the gate's OWN confirm by COPYING a sibling verb's scaffolding (leave copied from join) without specializing every surface (label, reask note, the `handled` flag suppressing the sibling's chips) makes review flag the same region every round (REGION_THRASH) — symptom: a *leaving* user sees the *joining* verb's chips. Route to the existing payload, don't patch each leaked surface. (Extends the non-mutating-verb rule above to mutating verbs already gated by their handler's UI.)
+- **A new gate routes to the existing deterministic handler/payload; it does not duplicate display
+  state or re-render confirm UI.** Resolution + liveness belong in the gate; labels, derived values
+  and downstream mutation guards stay with their canonical handler.
 - Touching a matcher/parser/router/choke-point primitive: **reuse-scan** first, then a **decision-table** with no
   silent fall-through; if reusing a primitive, **design-probe** the hardest cases against it first (unfit → HALT).
 - Money/data: **fail-closed** — "can't prove it's 0/safe" → block, never silently treat as 0.
 - **State (money/credit/identity) mutated across MANY code paths** (markPaid + deposit + merge + refund +
   host-exempt + transports…) → pin a decision-table per interaction AND **split into core + edge slices UP FRONT**.
   A monolith touching one state across N flows makes review surface a new distinct edge every round (credit-autoapply: 8 rounds, 12 files).
-- **A NEW stateful lifecycle (pending-confirm / pending-pick / arm-then-consume) added to a UNIVERSAL handler choke-point belongs at ONE pre-dispatch interceptor, NOT scattered across the handler's branches.** Check/consume/clear at multiple sites and every early-return branch (bot-off, mute, admin, language, CTA, FAQ…) becomes a path bypassing your checks → review surfaces a new distinct edge every round in the SAME file (spreading-findings/REGION_THRASH). Converge with a SINGLE interceptor at the dispatch boundary, early (right after identity/user resolve): if armed and the message resolves it → consume-once + revalidate snapshot + act, with cross-cutting guards re-checked INSIDE that branch; else clear-and-fall-through. Pin a decision-table {armed?} × {resolve | other-intent | expired | cross-cutting-block} up front. (arch: concierge-s2-verbal-confirm; refines [[L44]] clear-at-dispatch-boundary.)
+- **A new arm→consume lifecycle on a universal handler belongs at one pre-dispatch interceptor,**
+  not scattered branches. Pin `{armed?}×{resolve|other|expired|blocked}`, consume once, revalidate,
+  then act or clear/fall through. (arch: concierge-s2-verbal-confirm)
 
 ## Maintenance cost control — keep large projects cheap to debug
 - **Do not debug by reading the whole repo.** First load the project handoff/README, then use code intelligence
@@ -60,24 +101,18 @@
 
 ## Scope & parallelism
 - Scope is a **ceiling** (~≤3 modules / ~300 LOC), not a target; don't over-split cohesive low-risk work.
-- **EVERY feature/session = its OWN git worktree** — even a single (non-parallel) one. ALWAYS
-  `git worktree add .autopilot/worktrees/<slug> -b feat/<slug> <DEFAULT_BRANCH>` and **launch `claude`
-  INSIDE that worktree** (cwd = worktree). **NEVER `git checkout feat/<slug>` in the repo ROOT** — the
-  main working tree MUST stay on `<DEFAULT_BRANCH>`. Why: out-of-band monitors (ap-watch + hooks) attribute
-  a session by its worktree/cwd; a feature checked out in the repo root is invisible (or mis-attributed —
-  shared `.autopilot/state` + volatile branch → false HALT/DONE). After merge, REMOVE the worktree
-  (`scripts/ap-finish.sh <slug>` — or `git worktree remove`) so the DONE signal fires and the repo stays clean.
-- Parallel sessions = **one git worktree per feature** (never two writers in one tree) + Pre-flight
-  `scripts/autopilot-scope-gate register --manifest …` (HALT on scope/invariant/dep collision). DB/test-data path per worktree when applicable.
-  - **`git worktree add … -b feat/<slug> <DEFAULT_BRANCH>` MUST name the base** (`<DEFAULT_BRANCH>` = the repo's
-    actual default, e.g. `main`/`master`) — without it, the branch forks from the repo's CURRENT HEAD (often a
-    stale/forensic feature branch), not the default. After creating, verify the SHAs match:
-    `git rev-parse HEAD` == `git rev-parse <DEFAULT_BRANCH>` (compare commit SHAs, not `git log -1` text).
-  - A stopped/HALTed feature stays `in-flight` in the registry → its replacement collides. `cleanup --feature <slug>`
-    (or `--manifest`) the dead one first; the gate is right to block until you do.
-- **Commit infra/docs to `<DEFAULT_BRANCH>`, not onto a feature branch** (else it rides the feature = SCOPE_DRIFT and `<DEFAULT_BRANCH>` lacks it).
-- **Commit new artifacts immediately to the DEFAULT branch + push BEFORE `git worktree add`** — untracked files get wiped by another session's `git clean`, AND a worktree branched from `origin/<default>` cannot see a file that's only untracked in the main tree: an autopilot slice doc/manifest left uncommitted makes `cat docs/<slug>.md` return empty and `scope-gate register --manifest …` fail ("file not found / spec empty"). So commit+push the prompt + manifest to the default branch FIRST, then create the worktree. (incident: pay-context-roster-fields worktree opened with an empty spec.)
-- **Shared KIT scripts are copied per-repo and DRIFT — propagate a fix found in one copy back to the canonical template + bump KIT_VERSION + re-sync every project copy.** The autopilot kit (`scope-gate`, `codex-review-pin.sh`, watchers, manifests) lives canonically in the template, COPIED into each repo's `scripts/`. A bug fixed in one repo's copy is invisible to others until propagated: (1) copy the fix to the canonical `<template>/autopilot/.../<script>` and **bump its `# KIT_VERSION:` header**; (2) commit/push the template; (3) re-sync each project's copy (`cp` + commit). `KIT_VERSION` is the staleness marker. Never leave divergent copies or hand-edit only the local copy.
+- **EVERY repo-writing slice has exactly one worktree and at most one live writer; the repo root
+  stays on the default branch.** P0 live actions and read-only/report outcomes have no code writer.
+- Parallel slices require disjoint files + invariant tokens and isolated mutable test state.
+  - Worktree creation must name and verify the actual default-base SHA; never fork from current HEAD.
+  - HALT is terminal. Preserve forensics until explicit disposition; a replacement gets a new
+    task/run and must not reuse a stale active reservation.
+- **A writing agent never mutates repo-root/default directly.** It writes in its exact worktree;
+  landing revalidates the base, diff, scope, verification and reviews.
+- Persist the task contract/manifest/backlog before implementation when the project uses them.
+  They bind the pinned base and scope; they do not self-authorize broader changes.
+- **Shared KIT fixes land canonical-first and sync consumers direction-aware.** Never hand-fix only
+  a copy or downgrade a newer consumer.
 
 ## Trust nothing un-verified
 - Founder **verify-on-disk** before believing READY: right branch, ≥1 real commit, `git diff --stat` = declared
@@ -101,27 +136,51 @@
 - **A fail-closed guard must be scoped to the EXACT triggering predicate.** An unconditional `value===null` check also fires for an adjacent class that legitimately resolves null (regressing it); if a precise upstream block already handles the real case, DELETE the broad guard — don't narrow it further.
 - **State cleared/checked at MANY entry-points = spreading-findings smell → ONE owner:** clear at a single pre-routing choke-point, OR validate-at-CONSUME (re-check freshness + refuse stale); table the lifecycle up front. **Validate-at-consume alone is INSUFFICIENT** — it guards STALENESS (armed entity gone) but NOT OWNER-CONTEXT-SWITCH (armed entity still valid but owner has since acted on a *different* one → consuming the armed one does the wrong thing, e.g. refunds the wrong player). So state armed at a CALLBACK also needs a clear at the callback choke-point (many sibling callbacks → ONE pre-callback middleware; enumerate callback-tap clears, not just text-consumer clears). Money: re-read disposal at consume AND clear on context-switch.
 - **A slice whose correct end-state needs an OUT-OF-SCOPE file is a SCOPE-DESIGN error — re-slice to include it, don't ship a deferred money-gap.** Core logic + the surface that RENDERS it are one feature (a DEFER suppressing a total must also stop the adapters printing the fee, else overpay). Split: ship the display-independent cells now, re-slice the rest with those files in scope.
+- **Boundary-context rules over raw free-text (URL/delimiter/preceder) = an UNBOUNDED edge family; closed-set token membership stays clean.** REGION_THRASH → redesign to membership/exactness; new boundary classes STILL appearing → re-slice: ship the stable vocabulary layers as v1 now, isolate the scanner into its own slice seeded with the accumulated corpus as a PINNED decision table. (arch: nl-join-day-core)
 - **A multi-transport user-facing feature = estimate ×3 (one per transport); make the decision-CORE extraction the FIRST slice, adapters as thin ports after.** Building one transport fully then "cleaning it up" into a core later spawns TRANSPORT_DRIFT + repeat port rounds. First design question: "which part of the decision moves to core so each transport just calls + renders?" (the planning corollary of the shared transport-agnostic core rule). (arch: multitransport-core-first)
 
 ### Codex review / liveness
-- **Codex auth-death vs TRANSIENT corpse — CLASSIFY, don't reflexively HALT (a tiny no-verdict round ≠ auth-death).** Triage a no-verdict `round-NN.txt` IN ORDER: **(1) QUOTA** (`usage limit`/`Review was interrupted`/`try again at`) → CODEX_QUOTA, wait. **(2) AUTH-DEATH** — STRIP connector lines (`rmcp|mcp|transport::worker|TokenRefreshFailed`) FIRST, then grep survivors for a model-auth sentinel (401 / `token_invalidated` / `invalid_grant` NOT on an rmcp line / "log in again"); survives → `"$CODEX" logout && login`, resume SAME branch. **(3) TRANSIENT** (only connector noise, no sentinel, no quota) → re-run the SAME round ONCE; recurs → PERSISTENT CONNECTOR problem (disable connectors `-c mcp_servers='{}'`), NOT relogin. **Verdict-first:** a tail verdict = review completed → connector noise never fatal; never fall back to PATH `codex`/manual. (arch: codex-corpse-triage)
+- **Codex auth-death vs TRANSIENT corpse — CLASSIFY, don't reflexively HALT (a tiny no-verdict gate review log ≠ auth-death).** Triage the generated `gate-attempt-*-review-round-NN.txt` IN ORDER: **(1) QUOTA** (`usage limit`/`Review was interrupted`/`try again at`) → CODEX_QUOTA, wait. **(2) AUTH-DEATH** — STRIP connector lines (`rmcp|mcp|transport::worker|TokenRefreshFailed`) FIRST, then grep survivors for a model-auth sentinel (401 / `token_invalidated` / `invalid_grant` NOT on an rmcp line / "log in again"); survives → `"$CODEX" logout && login`, resume SAME branch. **(3) TRANSIENT** (only connector noise, no sentinel, no quota) → re-run the SAME gate once; recurs → PERSISTENT CONNECTOR problem, NOT relogin. **Verdict-first:** an exact gate tail marker means review completed; never fall back to PATH `codex`/manual. (arch: codex-corpse-triage)
 - **codex "can't serve model gpt-X" / "global config issue" = you are NOT going through the pin.** `codex-review-pin.sh` ($AUTOPILOT_CODEX_BIN) forces `-m <model>` + `mcp_servers='{}'` via CLI flag — precedence BEATS `~/.codex/config.toml` (which the ChatGPT/Codex app rewrites). Route EVERY review THROUGH the wrapper, NEVER a raw codex binary (raw = no mcp-off hang-guard + reviewer-model drift across slices); pinned binary can't serve the model -> bump `CRAWBOT_REAL_BIN`/`PIN_FLAGS` AT the wrapper; every launcher must `export AUTOPILOT_CODEX_BIN`. (arch: codex-pin-model-override)
 - **Stall ≠ crash.** A frozen fingerprint (HEAD+mtime unchanged over the window) is often long reasoning/compaction. Before acting: confirm the process is gone OR the round file is a tiny corpse; a terminal glance ("Thinking…") resolves it. A watchdog STALL alert means "look at the terminal," not "it's dead."
 - **ONE-TURN FINISH:** once the last clean round + verify starts, drive through `scope-gate ready` + READY report in the SAME turn; never yield at "tests passed — next is scope-gate ready" (turn-boundary artifact, not a designed gate — GENERIC §B.5 v0.5.6). If a session is parked there, just Enter.
-- **Cross-model base hygiene:** before each round `git fetch && git rebase <base>` + sync the ref the reviewer reads; verify `git diff <base>...HEAD` == declared scope; DISCOUNT findings about code not in that diff. Non-deterministic reviewer on an advanced base → certify INDEPENDENTLY (typecheck + tests + read diff + 2nd-agent), NEVER `gc --prune` a shared repo. Scale verification to risk.
-- **A round with ANY finding is NOT "clean"** — "2 consecutive clean" = ZERO findings; a money/data P2, or one the reviewer says "fix before merging", is NOT deferrable. Verify by READING `round-NN.txt` verdict lines, never the agent's "clean/READY" summary.
-- **Non-converging rounds = a DESIGN signal, NOT more rounds; NL/fuzzy needs a DESIGN-PROBE GATE up front.** Two tells, act on the FIRST (~round 3, never 16): (a) SAME file:region edited >=3 rounds (REGION_THRASH — wire the breaker, do not self-authorize past it), or (b) findings do not shrink and are the SAME CLASS ("another NL phrase mis-routes") = unbounded edge-family; also an abnormal fix:feat ratio (>~2:1 same-shape "guard the new case"). Either => wrong boundary/layer (scope EXCLUDED the module the fix belongs in) → STOP, **re-slice to the correct module** (intent → classifier + its FAQ-guard, not regex in handler), **DISCARD the patches**, redo minimal — at round 1. DESIGN-PROBE = a GATE (probe-file + STOP before Step 1; breaker DESIGN_PROBE_REQUIRED); mechanism a FINITE membership set, NEVER a blocklist/enumeration (membership "term ∉ corpus vocab", not word-classes). Intent/routing: bias-to-fetch on domain-vocab membership, TEST the fetch BOOLEAN not the topic. MONEY-path (free-text→entity→join/leave/charge): deterministic TAP (payload carries id) + fail-CLOSED on ambiguity (0/>1 → re-show taps, never guess; confident-wrong = wrong-money); TEST the fail-closed contract, not phrase coverage. (arch: s3d-waitlist, advisor-topic-tfidf, fuzzy-fix-ratio, clawbot-intent-broaden-fetch, clawbot-pending-clarification)
-- **Codex reviews the DIFF, not the merged BASE — a "not wired / dead code / X never set" finding can be a FALSE POSITIVE when the producer already lives on base (a sibling slice merged).** Slice B's `git diff <base>...HEAD` makes slice A's already-merged producer INVISIBLE → codex claims "consumer reads X but nothing produces X." Before treating it as real, VERIFY against base (`git show <base>:<file>` / grep the producer + confirm an end-to-end test). If wired on base, dismiss WITH EVIDENCE in the PR (producer + consumer file:line + passing test); don't burn rounds on a non-bug. (Genuine findings still block.)
+- **Cross-model base hygiene:** sync the authority branch **before intake**, then bind its immutable
+  `<BASE_SHA>`. After admission, fetch/compare read-only before each round but NEVER rebase or move
+  the run's base in place; remote/base-policy drift → stale/HALT and successor intake. Verify/review
+  `git diff <BASE_SHA>...HEAD` only. DISCOUNT findings about code outside that diff. NEVER `gc
+  --prune` a shared repo. Scale verification to risk.
+- **A round with ANY finding is NOT "clean"** — "2 consecutive clean" = ZERO findings; a money/data P2, or one the reviewer says "fix before merging", is NOT deferrable. Final truth is the generated gate log + exact tail marker + `gate-result.json`, never the agent's "clean/READY" summary.
+- **Non-converging rounds = a DESIGN signal, NOT more rounds.** Act on the FIRST tell (~round 3, never 16): (a) SAME file:region ≥3 rounds (REGION_THRASH); (b) findings don't shrink + SAME CLASS = unbounded edge-family; (c) each round surfaces the NEXT infra layer of a scheduled JOB = altitude too fine; (d) each round adds one more DIMENSION of an open-ended PROPERTY of one subject (attributes→ownership→excess-privs→…) — first check the SPEC still asks for it: a PARAPHRASE in the manifest/verdict may have widened it, and an invented requirement thrashes exactly like a real one. → STOP, re-slice, DISCARD patches, redo at round 1. Fix BY LAYER: NL/fuzzy → DESIGN-PROBE GATE up front (FINITE membership set, NEVER a blocklist); docs-spec JOB → defer the whole job-infra class, spec ONLY behavior; open-ended property → REDUCE to the spec's literal text, don't enumerate harder — the cut is RIGHT when pending findings DISSOLVE instead of needing one more layer. (arch: s3d-waitlist, fuzzy-fix-ratio, clawbot-intent-broaden-fetch, clawbot-pending-clarification, docs-spec-scheduled-job-altitude, preflight-acl-unbounded)
+- **Codex reviews the DIFF, not the merged BASE — a "not wired / dead code / X never set" finding can be a FALSE POSITIVE when the producer already lives on base (a sibling slice merged).** Slice B's `git diff <BASE_SHA>...HEAD` hides slice A's already-merged producer → "consumer reads X but nothing produces X". VERIFY against the pinned base (`git show <BASE_SHA>:<file>` / grep the producer + an e2e test) before treating as real; if wired, dismiss WITH EVIDENCE (producer+consumer file:line+passing test), don't burn rounds. (Genuine findings still block.)
 - **The verdict is at the TAIL — codex echoes the review RUBRIC near the top (`Risk: LOW/…/CRITICAL`, `### Findings`, `### Recommendation …`), that is NOT the result.** The real findings + recommendation come at the END after a long exploration. Read the tail (grep the real `[P1]/[P2]`/recommendation lines); don't mistake the echoed template for a verdict, nor conclude "no verdict" from a mid-file glance (mid-file connector noise is strippable — judge by the tail verdict).
 
 ### Backlog / registry / parallel gate
-- **Backlog status is DERIVED, not hand-maintained.** Each task carries `merged_probe: <file> :: <grep -E regex>` (a symbol present only once merged); `autopilot-backlog-reconcile --fix` (merge-checklist) / `--check` (watchdog gate) flips/gates it. Verify any "ready" against `git log <DEFAULT_BRANCH>` before authoring a launcher or spinning a worktree. Capture every DEFERRED follow-up as a backlog `## task:` block the MOMENT it's deferred (prose-only in a READY report = lost).
-- **"Scaffolded" ≠ "cleared to run" — a slice with a full manifest+prompt+launcher can still be founder-HELD.** Before listing/recommending/spinning ANY slice as runnable, read its GATES, not just file presence: (1) slice-doc header HOLD marker (`HOLD`, `do NOT run until…`, `gated on…`); (2) backlog `status:` (`idea`/`deferred` = NOT runnable; only `ready`/`planned`) + any `deferred:` line; (3) `depends_on:` all merged. A `deferred: <date> — founder decision` = deliberate "don't build speculatively" (build only once telemetry/reports confirm the gap) → spinning wastes a whole session (it hits the HOLD and stops). Counting scaffolding is the classic false-positive. (arch: scaffolded-not-cleared)
+- **Backlog status is DERIVED, not hand-maintained.** Each task uses exactly the probe for its
+  `task_kind`: implementation=`merged_probe`, rollout=`rollout_probe`, evidence=`evidence_probe`,
+  operation=`operation_probe`, decision=`decision_probe`. Reconcile against exact origin evidence;
+  never let a merged code symbol authorize a live operation/rollout/evidence row. Verify any
+  “ready” against the current authority branch before launch and capture deferred work as a durable
+  `## task:` block.
+- **Dependency absence from INFLIGHT is not landing proof.** Every Level-3 `depends_on` row carries
+  a same-order proof with dependency `base_sha`, `landed_sha`, exact file and slice-unique identifier
+  absent on the dependency base and present on both landed/downstream trees. A downstream worktree
+  starts from that freshly pinned landed base.
+- **`merged_probe` = a SLICE-UNIQUE code symbol, verified ABSENT on origin at AUTHOR time** — a shared literal ("26/7") matches already-merged content → `--fix` false-flips "merged" → the in-flight worktree gets torn down. KIT_VERSION 3 `is_symbol_probe` refuses non-identifier probes; manifest+backlog carry the SAME probe — sweep both in one pass. (arch: backlog-reconcile-probe)
+- **"Scaffolded" ≠ "cleared to run."** A prompt+manifest+backlog authority pack can still be
+  founder-HELD; there is no per-task executable launcher. Before admitting anything, read its gates:
+  HOLD markers, typed backlog status/deferral and exact dependencies. Founder-held work must not be
+  dispatched speculatively. (arch: scaffolded-not-cleared)
 - **Sync before authoring a new slice:** `ls` manifests + read INFLIGHT + backlog + grep the feature across `docs/`; re-derive callers/rules from the CURRENT base, not memory or a stale sub-agent report. "Root cause = a separate slice" doesn't mean that slice doesn't already exist — check; extend it, never author a parallel duplicate.
-- **The parallel gate serializes on shared INVARIANT tokens, not just shared files** — file-disjoint slices still collide on a shared domain token (money-model, schema); check invariants FIRST, expect broad tokens to queue. A Step-0 re-scope MUST rewrite the manifest `scope`/`invariants` + re-`register` BEFORE coding, else the gate protects the wrong files; reconcile the manifest to the actual diff at READY.
+- **The parallel gate serializes on shared INVARIANT tokens, not just shared files** — file-disjoint
+  slices still collide on a shared domain token (money-model, schema); check invariants FIRST,
+  expect broad tokens to queue. Before a writer starts, reconcile the contract/manifest and register
+  the final scope. After writing starts, material scope/invariant/base/design drift is terminal:
+  HALT, preserve evidence and create a fresh successor task; never rewrite the active reservation
+  to legitimize drift.
 
 ### Cross-repo / data integrity / notices
 - **"Companion repo needs no change" is UNVERIFIED until you read its router/whitelist/classifier on-disk** — a feature/payment bot adding owner commands or postback payloads is half-shipped until the gateway bot whitelists the EXACT tokens + payload regex; unwhitelisted = silently dropped, and no in-repo test catches it (whitelist lives in the other repo). Applies to STRUCTURAL refactors that re-emit an existing payload (notification-port / entry-point split), not just NEW commands — don't trust "no companion change needed". Add a unit test there. (arch: clawbot-bridge-whitelist)
+- **A companion forwarding GATE stays a SUBSET of the authoritative parser (gate ⊆ parser)** — over-forward on an ACK-only bridge = user SILENCE; every parser-NARROWING change syncs the mirror IN THE SAME DECISION. The window opens between DEPLOYS, not merges (**deploy-gate ≠ merge-gate**): merge freely, HOLD the stricter side's deploy until the mirror lands, deploy both together. (arch: nl-join-gate-subset)
 - **FK enforcement is PER-REPO — probe `PRAGMA foreign_keys` at runtime, never hardcode a global mode.** OFF → `ON DELETE SET NULL/CASCADE` do NOT fire: hand-repoint EVERY referencing column (grep schema `REFERENCES <table>(id)` for all, not just the obvious one) before the delete. ON → cascades fire, but still keep explicit repoint/cleanup where domain ordering, money conservation or audit immutability requires it (don't rely on cascade). Add a no-dangling regression test either way.
 - **Surfacing user-supplied text → PLAIN reply** (no parse_mode; `_ * [ ]` break/reject it). Gate a "changed" notice on `old !== new`, not on the setter being called (idempotent no-ops fire false notices).
 - **Additive extension of a shared contract union → the consumer test asserts on the OPAQUE/shared shape, not on fields only the OLD variant carries.** When a producer adds a new variant (e.g. `expectNextText` kind `joinpick` with NO `sessionId`, beside `name` which has one), the consumer reads presence + shared fields only, treats the discriminator as opaque (`if (resp.x)` not `=== "name"`), and does NOT bump the contract version unless it actually validates the discriminator enum. Spec the consumer test on the NEW shape exactly (`{kind:"joinpick", ttlSec}`, no sessionId). General rule: additive contract change ⇒ assert on the INTERSECTION, never on a removed/optional field.
@@ -134,29 +193,50 @@
 - **Hard test on a notify/fail-closed path = harness problem, fix at the framework layer, don't weaken the assertion** — when a "message sent" spy sees nothing, a framework middleware short-circuited the send before your hook; install a CAPTURING transformer AFTER it to record the payload, keeping the end-to-end assertion.
 
 ### Git / shell / process hazards (owner's machine + sandbox)
-- **Sandbox git is read-only-but-locky:** a plain `git status`/`diff` on the owner's mounted live repo can leave a stale `.git/index.lock` that blocks the owner's next commit → always `git --no-optional-locks`, prefer index-free plumbing that never locks (`git show <ref>:<path>`, `git grep <rev>`, `git cat-file`, `git log`, `git rev-parse`, `git diff <base>..<branch>`) over `git status`/`git add`/`git stash`/`git merge`. If a stale lock blocks the owner it's often the SANDBOX's own (owned by the sandbox uid, dated to your last index op) — the sandbox usually CANNOT remove it (`rm: Operation not permitted` on the mount), so the OWNER must `rm -f .git/index.lock` on the Mac. NEVER run git WRITES (merge/commit/push/clean/branch -D) from the sandbox on the live shared repo — hand mechanical multi-step git to the owner's terminal.
+- **Sandbox git is read-only-but-locky:** `git status`/`diff` on the mounted repo can leave a stale `.git/index.lock` blocking the owner's next commit → use `git --no-optional-locks` + index-free plumbing (`git show <ref>:<path>`, `git grep <rev>`, `git diff <base>..<branch>`), not `status`/`add`/`stash`/`merge`. A stale lock is usually the SANDBOX's own (sandbox uid, EPERM to remove) → the OWNER `rm -f .git/index.lock` on the Mac. NEVER git-WRITE (merge/commit/push/clean/branch -D) from the sandbox — hand multi-step git to the owner. NEVER hand-edit a file a LIVE autopilot session's worktree owns (two-writer race; a premature merge lands whichever tip is current; one writer/slice). `release` the lock UNCONDITIONALLY, never `&&`-behind a gate — a false probe skips it → orphaned lock blocks next commit. (arch: plexco-ap25-race-and-orphaned-lock)
 - **`--no-ff` merge pre-flight gates on the STAGED INDEX** (`git diff --cached` empty), not whole-tree porcelain (untracked/WIP false-blocks it). Confirm `git diff <base>..<branch>` == scope and `git show --stat HEAD` post-merge shows only those files. Only `--squash` stages unrelated dirty files — that's the real dirty-index hazard.
 - **Autopilot worktrees:** guard every `git clean -fdx` with an INFLIGHT check (it wipes in-repo gitignored worktrees INCLUDING the branch); commit/push checkpoints early; recover a wiped branch via reflog/`git fsck`. From a detached worktree push `git push origin HEAD:main`.
-- **A branch checked out in a worktree can ONLY be operated from that worktree — `cd` into `.autopilot/worktrees/<slug>`, don't re-checkout it in the main clone.** `git checkout <branch>` in the main clone fails (`fatal: '<branch>' is already used by worktree at …`); if you keep going you're still on the OLD (often stale) branch and every command (rebase/test/codex) runs against the WRONG tree → false "clean". A failed checkout is a HARD STOP: fix WHERE you are before running anything downstream. (Don't commit `.autopilot/state/**` either — gitignore `.autopilot/`; runtime counters/heartbeat must never ride a feature diff.)
-- **Write for the owner's macOS runtime.** `/bin/bash` is 3.2 — no `mapfile`/`declare -A`/`${v^^}`; `"${arr[@]}"` errors when empty under `set -u` (guard `${arr[@]+"${arr[@]}"}`). BSD `awk` has no `strftime` (pass `-v today=$(date +%F)`). A script doing `awk > f.tmp && mv` MUST `rm -f f.tmp` on failure or `git add -A` commits the truncated corpse — `.gitignore` `*.tmp`, prefer explicit `git add <paths>` over `-A`. Confirm where `npm run build` lives (root vs subdir) before a merge block. Test scripts with the REAL `/bin/bash`.
+- **A branch checked out in a worktree can ONLY be operated from that worktree — `cd` into
+  `.autopilot/worktrees/<FEATURE_ID>`, don't re-checkout it in the main clone.** A failed checkout
+  is a HARD STOP: verify cwd/branch/base before anything downstream. Never commit
+  `.autopilot/state/**`; runtime evidence stays ignored.
+- **Write for the owner's macOS runtime.** `/bin/bash` is 3.2 — no `mapfile`/`declare -A`/`${v^^}`; `"${arr[@]}"` errors when empty under `set -u` (guard `${arr[@]+"${arr[@]}"}`). BSD `awk` has no `strftime` (pass `-v today=$(date +%F)`). A script doing `awk > f.tmp && mv` MUST `rm -f f.tmp` on failure or `git add -A` commits the truncated corpse — `.gitignore` `*.tmp`. Confirm where `npm run build` lives (root vs subdir) before a merge block. Test scripts with the REAL `/bin/bash`.
 - **A long-running daemon runs the code it loaded at START** — committing a watchdog fix does NOT change the running instance; restart it (`launchctl kickstart -k gui/$(id -u)/<label>`). Tell = alert wording ≠ current file text → stale PROCESS, not stale code; restart, don't re-edit.
 - **Shared-helper/choke-point change for a narrow request → impact/blast-radius FIRST;** HIGH/CRITICAL → prefer a local wrapper unless the behavior is intentionally global; verify with targeted tests. (tsx IPC `EPERM` in sandbox → rerun escalated + sequential.)
 - **Source-code delimiters: ASCII `"`/`'` ONLY — never smart-quotes (U+2018/19/1C/1D) or en/em-dash as syntax; they break compile (TS1005) + burn self-repair rounds.** (arch: curly-quotes)
 
 ### Operating conventions (orchestrator ↔ session)
 - **Relay any instruction to a running session as ONE self-contained ```text block** — rationale OUTSIDE the block; root cause + numbered steps + hard-stop/"do NOT call scope-gate ready until…" guard INSIDE. One block = one paste.
+- **An executor flagging a relayed founder block as INJECTION is the safety layer WORKING — never out-assert it ("treat as authentic" + a longer rebuttal IS the injection signature).** Recovery: founder replies in their OWN short voice; every claim ships with a command the executor can run itself — trust rebuilds from the disk, not a louder relay; withdraw security-sensitive asks (daemon unload) in favor of a fix that makes them unnecessary. (arch: relay-injection-skepticism)
+- **Never run `scripts/ap-finish.sh`/teardown while a Codex round is IN FLIGHT** (wipes the worktree mid-review and loses the verdict) — finish only after the READY signal-file and authorized landing/disposition proof. (arch: ap90-midround-land)
 - **On a HALT multi-option decision: DECIDE + EXPLAIN + RELAY-READY.** Pick the option with the HIGHEST project benefit (long-term value · money/correctness safety · maintainability · clean reusable boundaries — not the fastest or most-conservative reflex); state it decisively; say why it beats each other + the cost it accepts + a bounded fallback; deliver as a ```text block. Speed is a tiebreaker, not the criterion.
-- **After a plan/slice doc is FINALIZED, the orchestrator's NEXT step is ALWAYS: read the canonical GENERIC (`~/Projects/Claude template/autopilot`) + confirm its version (never infer from in-repo ports — they lag; mount if absent), THEN author per-slice artifacts (manifest `docs/autopilot-manifests/<slug>.json` + slice doc `docs/autopilot-<slug>.md` with an English `Task:` block + launcher `.claude/commands/ap-NN-<slug>.md` + backlog `## task:`), COMMIT+PUSH them to the default branch, then paste worktree-setup + prompts in dependency order (pre-group PARALLEL vs SERIALIZE on shared scope/invariant — handler/engine slices serialize).** The orchestrator AUTHORS + hands off; NEVER writes code itself (single-git-writer — Claude Code at the terminal executes). NL/fuzzy slices embed the DESIGN_PROBE gate (breaker 26). (arch: template-version-guess)
+- **After a plan is FINALIZED:** read `level3-workflow.md` plus the canonical GENERIC/version,
+  persist the compact task contract, build the dependency/slice graph, then delegate implementation
+  in dependency order. The primary orchestrator coordinates and integrates; each writing slice
+  owns only its declared worktree and scope. (arch: template-version-guess)
 - **Cost (tokens, fix rounds, redone work) is NOT a constraint and must NEVER bias the recommendation downward.** The founder pre-authorizes more tokens/rounds/a full re-architecture whenever that's the highest-benefit path. Don't hedge to the cheaper option or frame the correct redesign as "expensive" to avoid it. When a HALT reveals a wrong boundary (spreading-findings/REGION_THRASH = design problem), fix the DESIGN (re-slice, discard scattered work) over patching to green — even if it throws away effort. Mention cost only as a factual note, never as the reason to prefer a lesser option.
-- **Stop-for-founder MUST leave a FILE, not just a TUI report.** ANY stop-and-wait (circuit-breaker HALT, MAX_ROUNDS incl. re-halts, or a yes/no decision-pause) → FIRST, before printing the report, write a sentinel under `.autopilot/state/<TASK_SLUG>/`: `HALT-<REASON>.txt` (breaker) or `AWAIT-FOUNDER-<short-reason>.txt` (decision/question; first line = the reason). A TUI-only report is INVISIBLE to out-of-band monitors → the founder gets pinged late or never. `rm` the sentinel on resume. Applies on every re-halt.
+- **Every stop writes a durable file before reporting:** breaker=`HALT-<REASON>.txt`,
+  decision=`AWAIT-FOUNDER-<reason>.txt`, success=`READY.txt`. TUI prose is invisible to monitors.
+  P1/P2 use the writing-worktree state; P0/P3 allow only ignored repo-root task telemetry and no
+  tracked/product/external mutation. Use the repository's scope/lifecycle gate when installed.
+  Never reuse stale READY or resume HALT.
+  (arch: stop-at-ready-signal, clawbot-advisor-guard-decouple)
 - **Don't model an arbitrary AMOUNT as a free-text reply-STATE on a bot that can't route input per-flow — use a slash-command-with-argument; when a state keeps generating findings, question whether it should EXIST.** The arm→type-bare-number→consume lifecycle collides with every other text/selection flow; a slash command rides the value as an arg (slash escapes pending-state), DELETING arm/consume/clear/validate. Check how the codebase already takes that KIND of value — eliminate the state, don't guard it. (arch: partial-forfeit-ui)
-- **Codex "usage limit"/"Review was interrupted" = QUOTA (distinct from CODEX_UNAVAILABLE)** → HALT CODEX_QUOTA (wait/credits/switch account), don't loop. ALWAYS run `"$AUTOPILOT_CODEX_BIN" review --base <ref> > .autopilot/state/<slug>/round-NN.txt 2>&1` — the pin runs `codex review` only when arg1 is `review`; without it, or via tee/PTY, it breaks ("not a terminal"); a bare run leaks stdout to `~/.claude/tool-results/`. Tiny no-verdict file → read its last lines (auth-death vs quota) first. (arch: pay-context-roster-fields, credit-exempt-defer)
-- **SYNC THE BASE before diagnosing (`git fetch` + confirm not behind origin/<default>).** A stale checkout makes merged code look ABSENT → NO-FABRICATE: never recreate a "missing" file from a guess (dangerous on money/routing). Behind → re-base and re-read; absent on a not-behind base → HALT DESIGN_UNFIT, never create from scratch. A 0-match grep can be a WRONG COMMAND (grep on a nonexistent dir; `.` rescans node_modules), not a stale base — use `rg`/`git grep` on dirs that EXIST. wrong-command ≠ stale-base ≠ absent; only the last is DESIGN_UNFIT. (arch: clawbot-gioithieu)
-- **Tear down a worktree with `ap-finish.sh <slug>` (or `scope-gate cleanup --feature <slug>` → `git worktree remove .autopilot/worktrees/<slug>` → `git branch -d feat/<slug>` (-D if unmerged-on-purpose) → `git worktree prune`), NEVER a bare `git worktree remove`.** A lone remove leaves a stale INFLIGHT reservation (→ `⚠️ RESERVATION STALE`) + an orphan `feat/<slug>` branch that makes a later `worktree add -b feat/<slug>` FAIL "branch already exists". When advising removal of an "orphan" worktree, include the scope-gate cleanup + branch delete, not just the dir. (Watchdog self-heals a bare-remove next poll; manual ap-finish still preferred — it also deletes the branch.) (arch: concierge-s3d1-waitlist-intent-order)
-- **Cleanup (`ap-finish`/`git branch -D`) is GATED on an origin-verified merge — a "READY" is NOT a merge, and `ap-finish` does NOT merge.** Squash-merge always leaves the branch looking "unmerged" to git, so `git branch -d`'s safety net never fires and `-D` silently nukes un-merged work into a dangling commit. Fixed order: squash-merge → `npm test`/tsc on the merged base → commit → `git push` → **PROVE it landed** `git grep -l <symbol-the-slice-added> origin/<DEFAULT_BRANCH> -- <file>` (a merged-only probe on ORIGIN, never a local READY/`ap-finish`) → ONLY THEN `ap-finish`/`branch -D`. Recover a prematurely-deleted branch from its tip SHA (READY report / `git reflog` / `git fsck`): `git branch feat/<slug> <sha>` (commit object survives GC for weeks). Origin-verify is an owner-terminal step (sandbox has no git creds). (arch: join-session-order)
-- **STOP_AT_READY MUST leave a watchdog-visible signal — a TUI "READY" is invisible (`idle_prompt` is filtered as noise).** Manifest exists (`docs/autopilot-manifests/<slug>.json`) → it's a scope-gate slice → MUST `scope-gate register` (start) + `scope-gate ready` (stop); a RE-RUN of an existing worktree MUST re-`register` FIRST (it resets a stale `ready`, else a FALSE READY on a 0-commit session). No manifest (pure PR-flow) → write `AWAIT-FOUNDER-merge.txt` under the worktree's `.autopilot/state/<slug>/` (first line = "PR #N ready"). Never stop at a PR with neither. (arch: stop-at-ready-signal)
+- **Final review ALWAYS runs through `scope-gate ready`, which invokes repo-local
+  `scripts/codex-review-pin.sh review --base <BASE_SHA> <marker-prompt>` and captures the process
+  itself.** Do not manufacture, tee or edit the gate artifact. A manual pre-gate review is
+  diagnostic only. Triage a tiny no-verdict gate log per the corpse-triage rule.
+  (arch: pay-context-roster-fields, credit-exempt-defer)
+- **SYNC THE BASE before intake/diagnosis (`git fetch` + confirm the candidate default root is not
+  behind origin).** Pre-intake, advance the candidate root and re-read before binding `BASE_SHA`.
+  Inside an admitted run, never rebase: read-only compare drift → `INTAKE_STALE`/successor. A target
+  absent on a current pinned base → HALT DESIGN_UNFIT, never fabricate it. A 0-match can also be a
+  wrong path/command; use `rg`/`git grep` on dirs that exist. (arch: clawbot-gioithieu)
+- **Teardown is GATED on an ORIGIN-verified merge and goes through `ap-finish.sh <slug>` — never a bare `git worktree remove`.** READY ≠ merge. Normal cleanup requires the READY-bound branch tip on origin; squash cleanup requires the supplied origin commit to have the exact READY file set + binary-diff SHA-256. Unmerged closure requires `--authorized-close --reason <text>` and a durable disposition. Bulk `ap-housekeep --apply/--force` is retired; the helper is read-only. A bare remove leaves a stale reservation/orphan branch; squash only a stopped, unchanged READY tip. (arch: concierge-s3d1-waitlist-intent-order, join-session-order, plexco-merged-mid-review-snapshot)
 
-- **Watchdog (ap-watch) internals live in `parallel/WATCHDOG-NOTES.md`** (maintenance-only). Count REAL watchers with `ps …|grep '[a]p-watch.sh'|awk '$2==1'` (launchd=PPID=1), NOT `pgrep -f` (over-counts transient `$(...)` subshells). Dup '🚀 START' for one session = >1 watcher outside launchd → one LaunchAgent/plist per repo; single-instance guard = a PIDFILE (macOS has no `flock`), `old != $$` so SELF-RE-EXEC won't self-kill. (arch: ap-watch-guard)
-- **A stop-for-founder sentinel MUST be written into the WORKTREE's `.autopilot/state/<slug>/`, not the main clone's.** A pre-flight check running BEFORE `cd`-ing into the worktree writes to `$REPO/.autopilot/state/<slug>/`, which the per-worktree scan misses → no alert despite "Sentinel written". Write it worktree-relative (after cd). (arch: clawbot-advisor-guard-decouple)
+- **Watchdog (ap-watch) internals live in `parallel/WATCHDOG-NOTES.md`** (maintenance-only). Count REAL watchers with `ps …|grep '[a]p-watch.sh'|awk '$2==1'` (launchd=PPID=1), NOT `pgrep -f` (over-counts transient `$(...)` subshells). Dup '🚀 START' for one session = >1 watcher outside launchd → one plist per repo + a PIDFILE single-instance guard. (arch: ap-watch-guard)
 - **Money confirm buttons keyed by a per-flow/per-entry seq that RESETS per flow-type can confirm the WRONG session/flow when an old seq collides with a new flow.** Use a GLOBAL per-uid monotonic seq; a confirm is valid only if `seq === current`; never reset per flow. (arch: refund-stk-seq-global)
 - Squash-merge → local main DIVERGES from origin (`branch -d` refuses, `--ff-only` fails); resync `git fetch && git reset --hard origin/main`, delete merged branches with `-D`. (arch: squash-merge-sync)
+
+- **Multi-step runbooks with side effects must be a SCRIPT, not text to paste — a failed step will not stop the next one.** Gate clean-tree with `git diff --quiet && git diff --cached --quiet` (TRACKED only); `git status --porcelain` counts UNTRACKED so it always reads dirty and silently skips the guarded step. Use `ap-merge.sh`. (arch: paste-runbook-half-executed)
+- Watchdog spam lặp START↔CẦN-FOUNDER/RESERVATION-STALE cho 1 slug = feature xong-chưa-merge còn `planned` (chưa lên origin/main) → orchestrator spin lại; dọn state từ sandbox vô ích. Fix: land với owner authority rồi chạy verified `scripts/ap-finish.sh <slug>` trên Mac. (arch: watchdog-planned-unmerged-respin)  _(2026-07-23)_

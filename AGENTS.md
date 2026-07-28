@@ -17,6 +17,54 @@ For every session that reviews, reconciles, fixes, or finalizes docs, decisions,
 These rules are repo policy and apply even when the user only says "review", "check", "updated", "fix", "final", or asks whether a plan can start coding.
 <!-- review-code-readiness:end -->
 
+<!-- level3-workflow:start -->
+# Default workflow — Level 3 supervised autonomy
+
+```text
+WORKFLOW_LEVEL: 3
+WORKFLOW_MODE: supervised_autonomy
+HUMAN_ROLE: manager_of_managers
+DEFAULT_STOP_MODE: STOP_AT_READY
+AUTO_MERGE: off
+```
+
+Every task/session/feature opened **after** this kit was installed runs on
+`docs/autopilot-templates/level3-workflow.md` (canonical contract, mirrored from `Claude template`).
+An already-running session keeps its existing contract — forward-only, never migrated in place.
+Operational entry point: `docs/autopilot-ONBOARDING.md`.
+
+1. Before implementing, the primary agent resolves the **task contract** (`level3-workflow.md` §3):
+   outcome, repository and base, context sources, applicable skills, scope and negative scope, risk
+   P0–P3, autonomy mode, model policy, sandbox and permissions, human decisions, slice graph,
+   worktree plan, verification, code and security review, budgets, stop conditions, deliverables.
+2. The primary agent pulls its own context (code + `docs/features/*` + `docs/standards/decisions.md`),
+   decomposes the outcome, delegates and monitors child agents, then integrates and verifies the
+   whole result. It does not ask the owner to route every step.
+3. **One writing slice = one branch + one worktree + at most one live writer.** Register before
+   writing: `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<slug>.json`
+   (KIT_VERSION 10, fail-closed). The root worktree stays on `main`. Slices sharing a migration,
+   stateful invariant, or generated artifact are serialized, never parallelized.
+4. Verify with the repo's real commands (`pnpm test` with `DATABASE_URL_TEST`, build, lint,
+   typecheck, e2e when a real boundary is crossed), then the mandatory independent review through
+   `scripts/codex-review-pin.sh`; a slice touching auth, secrets, permissions, money, external
+   input, or deployment gets an extra security round. If the reviewer cannot run, emit
+   `HALT TOOL_UNAVAILABLE` — never silently downgrade the gate. Prose is not evidence.
+5. Finish at **`READY | AWAIT | HALT`**. `READY` means the exact diff, gate executed directly, and a
+   clean review. `AWAIT` means exactly one missing external decision, context, or authority, with a
+   recommended option and a binary resume condition. `HALT` means a hard breaker (`MAX_ROUNDS` past
+   five rounds, `REGION_THRASH` on the same region three rounds running).
+6. The owner keeps outcome, priority, policy, budget, material product decisions, exceptions, and
+   merge/deploy authority.
+
+**Level 3 does not imply auto-merge.** P0 stays prepare-only until the owner grants execution
+authority, P1 stays supervised, and `proactive_routine` is earned by a narrow class after repeated
+clean runs — never enabled by default. Agent counts in the source model illustrate scale; they are
+not acceptance criteria, and a small task needs no artificial fan-out.
+
+The review/readiness gate above applies in parallel and the **stricter rule wins**: docs, plans, and
+specs still go through `docs/standards/review-code-readiness-gate.md` and `pnpm review:check:changed`.
+<!-- level3-workflow:end -->
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 

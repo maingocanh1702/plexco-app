@@ -34,6 +34,50 @@ Policy này áp dụng kể cả khi user chỉ nói “review”, “check”, 
 
 ---
 
+<!-- level3-workflow:start -->
+## Workflow mặc định — Level 3 supervised autonomy
+
+```text
+WORKFLOW_LEVEL: 3
+WORKFLOW_MODE: supervised_autonomy
+HUMAN_ROLE: manager_of_managers
+DEFAULT_STOP_MODE: STOP_AT_READY
+AUTO_MERGE: off
+```
+
+Mọi task/session/feature **mở mới** chạy theo `docs/autopilot-templates/level3-workflow.md`
+(canonical contract, mirror từ `Claude template`). Session đang chạy giữ nguyên contract cũ —
+forward-only, không migrate giữa chừng. Entry point vận hành: `docs/autopilot-ONBOARDING.md`.
+
+1. Trước khi code, primary agent resolve **task contract** (`level3-workflow.md` §3): outcome, base,
+   context sources, skills, scope/negative scope, risk P0–P3, autonomy mode, model policy, sandbox,
+   human decisions, slice graph, worktree plan, verification, code/security review, budget, stop
+   conditions, deliverables.
+2. Primary agent tự kéo context (code + `docs/features/*` + `docs/standards/decisions.md`), tự chia
+   slice, giao và giám sát child agent, tích hợp rồi verify cả outcome. Không hỏi owner từng bước.
+3. **1 writing slice = 1 branch + 1 worktree + tối đa 1 writer.** Register trước khi ghi:
+   `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<slug>.json`
+   (KIT_VERSION 10, fail-closed). Root worktree luôn ở `main`. Slice dùng chung migration/state/
+   generated artifact → chạy tuần tự, không song song.
+4. Verify bằng lệnh thật của repo (`pnpm test` với `DATABASE_URL_TEST`, build, lint, typecheck, e2e
+   khi vượt boundary thật), rồi review độc lập bắt buộc qua `scripts/codex-review-pin.sh`; slice chạm
+   auth/secret/permission/tiền/external input/deployment chạy thêm 1 security round. Reviewer không
+   gọi được → `HALT TOOL_UNAVAILABLE`, cấm tự hạ gate. Prose không thay được bằng chứng chạy thật.
+5. Kết thúc ở **`READY | AWAIT | HALT`**. `READY` = diff chính xác + gate chạy trực tiếp + review sạch;
+   `AWAIT` = thiếu đúng 1 quyết định/context/authority bên ngoài, kèm 1 đề xuất và điều kiện resume nhị
+   phân; `HALT` = breaker cứng (`MAX_ROUNDS` >5 vòng, `REGION_THRASH` cùng vùng 3 vòng liên tiếp).
+6. Owner giữ: outcome, priority, policy, budget, quyết định sản phẩm material, ngoại lệ, merge/deploy.
+
+**Level 3 KHÔNG có nghĩa auto-merge.** P0 vẫn prepare-only tới khi owner cấp quyền thực thi; P1 luôn
+supervised; `proactive_routine` chỉ mở cho class hẹp đã chạy sạch nhiều lần, không bật mặc định.
+Số agent trong model gốc là minh hoạ scale, không phải acceptance criterion — task nhỏ không fan-out.
+
+Gate review/readiness ở trên vẫn áp song song và **chặt hơn** thì thắng: docs/plan/spec vẫn phải qua
+`docs/standards/review-code-readiness-gate.md` và `pnpm review:check:changed`.
+<!-- level3-workflow:end -->
+
+---
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
