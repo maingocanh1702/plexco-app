@@ -2,12 +2,13 @@
 # Plan — In-app Chat trở thành surface chính cho player/user
 
 > **Ngày:** 2026-07-28
-> **Version:** 1.7
+> **Version:** 1.8
 > **Phạm vi:** chat người↔người trong Plexco, Club Assistant được gọi bằng `@mention`, private Club Bot thread, slash self-service như `/pay` (kể cả human DM 1-1) và vòng đời thông báo thanh toán trong app.
 > **Mục tiêu sản phẩm:** player có thể dùng Plexco cho phần lớn trao đổi và thao tác hằng ngày thay vì phải quay lại Zalo/Messenger. Zalo/Messenger vẫn có thể là acquisition/fallback surface; chúng không còn là dependency cho daily club use khi initiative này đạt exit gate.
-> **Trạng thái:** owner-final product direction · **không phải coding authorization**. DD-86/DD-91..95 đã đóng đủ **13/13** lựa chọn sản phẩm trong scope (`OPEN_QUESTIONS_IN_SCOPE: 0`); Chat, Assistant, Notification và Tenant Authz companion specs đều `Reviewed`. G1–G5 đã PASS và G6 chỉ còn enablement-only. Plan vẫn `NOT_PLAN_READY` vì **duy nhất** exact authority pack còn dirty/uncommitted, chưa có immutable commit SHA để pin và kiểm lại.
-> **Authority live-repo đã đối chiếu:** `main@2dc9b8c760c3b437af08ca1fc5fcbaea1492ad39` = `origin/main` (re-pin 2026-07-27); migration tail quan sát được là `0024`; `chat_*`, `/api/chat/*`, `/api/me*`, Assistant/KB runtime và product chat UI chưa tồn tại.
-> **Drift từ snapshot review trước:** `6ae2de6..81b4fe8` đã land scheduler/outbox (`a03d2d6`) và docs reconciliation; `81b4fe8..2dc9b8c` chỉ đổi readiness artifacts cho slice DB constraint-naming. Các delta này **không chạm** chat, Player View, Assistant, Notification contracts, payment helper hay migration tail; vì vậy không invalidate blast radius. Migration mới vẫn phải lấy **next available monotonic number sau khi sync main tại lúc author**, không hard-code `0025`.
+> **Trạng thái:** `PLAN_READY` · **KHÔNG phải coding authorization**. DD-86/DD-91..95 đã đóng đủ **13/13** lựa chọn sản phẩm trong scope (`OPEN_QUESTIONS_IN_SCOPE: 0`); Chat, Assistant, Player View, Notification và Tenant Authz companion specs đều `Reviewed`. G1–G5 PASS, G6 chỉ còn enablement-only, closure **12/12**. Blocker cuối — authority pack chưa có immutable commit — đã đóng bằng `90d292d`. `PLAN_READY` chỉ chứng minh **đủ contract để tách slice và viết execution plan**; nó **không** chứng minh slice nào code được. Mỗi slice 1–47 / A1–A21 / F0–F15 vẫn phải tự đạt strict `CODE_READY` trước khi mở worktree.
+> **Authority live-repo đã đối chiếu:** `main@90d292d85fbe92db7a5afcd118a99e28f3d3b3b7` = `origin/main` (re-pin 2026-07-28); migration tail quan sát được là `0024`; `chat_*`, `/api/chat/*`, `/api/me*`, Assistant/KB runtime và product chat UI chưa tồn tại.
+> **Provenance snapshot:** `90d292d` = commit `docs(chat): commit the in-app-chat primary-surface authority pack`, chứa **đúng 27 file** `TARGET_FILES` và không file nào khác; 73 file WIP không liên quan trong worktree được cố ý loại khỏi baseline. Toàn bộ nội dung review ở bản này (trừ chính metadata pin của v1.8) nằm tại `90d292d`.
+> **Drift từ snapshot review trước:** `6ae2de6..81b4fe8` đã land scheduler/outbox (`a03d2d6`) và docs reconciliation; `81b4fe8..2dc9b8c` chỉ đổi readiness artifacts cho slice DB constraint-naming; `2dc9b8c..90d292d` là chính authority pack này. Các delta trước `90d292d` **không chạm** chat, Player View, Assistant, Notification contracts, payment helper hay migration tail; vì vậy không invalidate blast radius. Migration mới vẫn phải lấy **next available monotonic number sau khi sync main tại lúc author**, không hard-code `0025`.
 > **Canonical liên quan:** `../dd-86-in-app-multi-channel-analysis.md` · `../features/README.md` · `../features/feature_inapp_chat.md` · `../features/BE/feature_inapp_chat_tech.md` · `../features/feature_club_assistant.md` · `../features/BE/feature_club_assistant_tech.md` · `../features/feature_player_view.md` · `../features/BE/feature_player_view_tech.md` · `../features/feature_notifications_reminders.md` · `../features/BE/feature_notifications_reminders_tech.md` · `../features/feature_tenant_routing_authz.md` · `../features/BE/feature_tenant_routing_authz_tech.md` · `../standards/decisions.md` · `../standards/core-db-architecture-principles.md`.
 
 ---
@@ -335,7 +336,7 @@ Every command-like input outside exact catalog ở §6.1 là private reject tron
 
 ## 8. Live-repo truth và dependency graph
 
-### 8.1 Đã có thật trên `main@2dc9b8c`
+### 8.1 Đã có thật trên `main@90d292d`
 
 - Ledger tables `charges`/`payment_allocations`, tenant RLS baseline và same-tenant integrity FKs.
 - `charges.amount_due`, `amount_allocated`, status constraints.
@@ -667,13 +668,13 @@ Test production-shaped có hai member A/B cùng một club channel:
 
 ```text
 REVIEW_POLICY_VERSION: 1.3
-REVIEW_VERDICT: NOT_PLAN_READY
+REVIEW_VERDICT: PLAN_READY
 REVIEWED_AT: 2026-07-28
-AUTHORITY_SHA: 2dc9b8c760c3b437af08ca1fc5fcbaea1492ad39
+AUTHORITY_SHA: 90d292d85fbe92db7a5afcd118a99e28f3d3b3b7
 BASE_BRANCH: main
 BASE_REMOTE_RELATION: MAIN_EQUALS_ORIGIN_MAIN
-PRIOR_SNAPSHOT: 81b4fe8b258854dbb6dd4732367f3c3f09be9a57 (v1.2); delta to current = readiness-artifact-only, outside chat/payment/Assistant/Notification/migration blast radius
-WORKTREE_STATE: DIRTY_UNRELATED_WIP_PLUS_UNCOMMITTED_OWNER_FINAL_AUTHORITY_PACK
+PRIOR_SNAPSHOT: 2dc9b8c760c3b437af08ca1fc5fcbaea1492ad39 (v1.7); delta to current = this authority pack only, 27 files, no unrelated WIP
+WORKTREE_STATE: AUTHORITY_PACK_COMMITTED_AND_PUSHED; 73 unrelated WIP files remain dirty and are outside this baseline
 TARGET_FILES:
   - docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md
   - docs/dd-86-in-app-multi-channel-analysis.md
@@ -717,19 +718,34 @@ OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: DD-18 provider/privacy/ToS for Assistant; Web Push permission/device evidence; DD-94 measured timing/coalescing config; private object-storage region/credentials; malware/moderation scanner; bounded DM/media/report numeric config; current Session producer packets and data E2E for /sessions|/waitlist; real payment/reconciliation producer E2E for payment Inbox/push; cohort telemetry thresholds
 LIVE_REPO_VERIFICATION: PASS
 CONTRACT_MATRIX: PASS
-CLOSURE_MATRIX: PARTIAL — 11/12; immutable-authority row remains open
+CLOSURE_MATRIX: PASS — 12/12; row 1 closed by immutable commit 90d292d
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
-IMPLEMENTATION_ARTIFACTS: PASS — executable first-slice file/budget/acceptance/negative-scope packet pinned in §9.2; every runtime mechanism has a bounded 1-47 owner, every HTTP boundary an A1-A21 owner and every tracked-design product state an F0-F15 owner; no worktree authorized until immutable re-pin
-FIRST_IMPLEMENTATION_STEP: chat-definer-role-provisioning after exact authority commit/push/re-pin and slice-local strict CODE_READY
-REMAINING_BLOCKERS:
-  - blocker: owner-final exact target pack is still working-tree WIP, so AUTHORITY_SHA does not contain it
-    owner: docs authority/orchestrator
-    resolution: commit exact TARGET_FILES without unrelated WIP, push default branch, re-pin the full SHA and rerun pnpm review:check:changed plus the canonical 12/12 review on that immutable snapshot
-NEXT_REVIEW_TRIGGER: immutable commit SHA containing all TARGET_FILES
+IMPLEMENTATION_ARTIFACTS: NOT_REQUIRED_FOR_PLAN_READY — §9.2 pins an executable first-slice file/budget/acceptance/negative-scope packet equivalent to gate B1-B3; gate B4 items 4-7 (autopilot slice doc, manifest, launcher, worktree, scope gate) are deliberately not authored and are owed by the slice-local CODE_READY packet
+FIRST_IMPLEMENTATION_STEP: author the chat-definer-role-provisioning readiness packet per §9.2 and take it through its own strict CODE_READY; no worktree before that verdict
+REMAINING_BLOCKERS: none
 ```
 
-**Kết luận:** 13/13 product choices đã đóng, companion contracts + dependency/scope/acceptance/security gates đã PASS và chỉ còn immutable-authority row. Initiative vẫn **`NOT_PLAN_READY`** cho tới khi exact pack được commit/push/re-pin; docs hiện tại chưa authorize runtime worktree.
+### 13.1 Closure matrix 12/12
+
+| # | Gate | Evidence | PASS/FAIL |
+|---|---|---|---|
+| 1 | Authority snapshot pin theo SHA | `90d292d85fbe92db7a5afcd118a99e28f3d3b3b7` trên `origin/main`; commit chứa đúng 27 `TARGET_FILES`, 0 file lạ | PASS |
+| 2 | Decision trong scope đã chốt | DD-86 `DECISION_FINAL` (Q1..Q10 ratified) + DD-91..95 ✅ trong `../standards/decisions.md`; §12 = 13/13 | PASS |
+| 3 | Scope IN/OUT và owner rõ | §13 `IN_SCOPE`/`OUT_OF_SCOPE`; mọi mechanism có owner slice 1–47 / A1–A21 / F0–F15 | PASS |
+| 4 | Dependency phân loại đủ | §8.3 DAG; baseline substrate `MERGED`, phần còn lại `PRIOR_SLICE` có owner + thứ tự, gate ngoài là `ENABLEMENT_ONLY` | PASS |
+| 5 | Live schema/code khớp doc | §8.1/§8.2 đối chiếu `90d292d`: migration tail `0024`, `chat_*` và `/api/me*` chưa tồn tại, `payments-logic.ts` 4 caller | PASS |
+| 6 | Data/API/state/auth contract đủ | Năm cặp Product+BE `Reviewed` (Chat, Assistant, Player View, Notification, Tenant Routing/Authz) | PASS |
+| 7 | Fail-closed/idempotency/order đủ | §4.1 decision table; §5.3 `unknown` không coerce về zero; receipt/fingerprint theo DD-92/93/95 | PASS |
+| 8 | Open question trong scope = 0 | §12 register; `OPEN_QUESTIONS_IN_SCOPE: 0` | PASS |
+| 9 | Acceptance matrix có expected result | §10 + §10.1 privacy invariant 7 bước production-shaped | PASS |
+| 10 | Migration/security/rollback pin | §9 budget exception có ceiling + hard stop; §11.3 kill switch/rollback; next monotonic number, không hard-code `0025` | PASS |
+| 11 | First slice có hard dependency merged | Slice 1 `chat-definer-role-provisioning` chỉ dựa `infra/postgres-init/` + `packages/db/src/migrate.test.ts`, cả hai đã có trên default branch | PASS |
+| 12 | Implementation handoff sẵn sàng | §9.2 packet: exact files, budget, acceptance, negative scope, verification commands | PASS |
+
+**Kết luận:** 13/13 product choices đã đóng, companion contracts + dependency/scope/acceptance/security gates PASS, và immutable-authority row đóng bằng `90d292d`. Initiative đạt **`PLAN_READY`**.
+
+`PLAN_READY` nghĩa là **đủ contract để tách slice và viết execution plan** — không hơn. Nó **không** chứng minh dependency đã merge, **không** chứng minh slice nào code được, và **không** authorize mở worktree. Bước kế tiếp là author readiness packet cho slice 1 `chat-definer-role-provisioning` và đưa nó qua strict `CODE_READY` của riêng nó. Directive của file này giữ `enforce`, không phải `code-ready`: đây không phải coding handoff.
 
 ---
 
@@ -737,6 +753,7 @@ NEXT_REVIEW_TRIGGER: immutable commit SHA containing all TARGET_FILES
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 28/07/2026 | v1.8 | **`NOT_PLAN_READY` → `PLAN_READY`.** Blocker cuối cùng và duy nhất — authority pack chưa nằm trong commit bất biến — đã đóng: `90d292d` chứa **đúng 27 `TARGET_FILES`**, 0 file lạ, 73 file WIP không liên quan cố ý loại khỏi baseline; đã push lên `origin/main`. Re-pin `AUTHORITY_SHA` `2dc9b8c` → `90d292d`, `PRIOR_SNAPSHOT` → `2dc9b8c`, `WORKTREE_STATE` → committed/pushed, `CLOSURE_MATRIX` `PARTIAL 11/12` → `PASS 12/12`, `REMAINING_BLOCKERS` → `none`, bỏ `NEXT_REVIEW_TRIGGER` (field của nhánh fail). Thêm §13.1 bảng closure 12/12 có evidence từng dòng thay vì chỉ khẳng định con số. Hạ `IMPLEMENTATION_ARTIFACTS` `PASS` → `NOT_REQUIRED_FOR_PLAN_READY` cho đúng: §9.2 tương đương B1–B3, còn B4 mục 4–7 (autopilot doc/manifest/launcher/worktree/scope gate) cố ý chưa author và do slice-local `CODE_READY` nợ. Directive giữ `enforce`. Không thêm feature, không đổi decision, không authorize code. |
 | 28/07/2026 | v1.7 | **13/13 owner-final closure + full readiness reconciliation.** Mirror DD-86 defaults true `all_members`/false `admins_only`; DD-92 exact emoji reaction, bounded edit/author tombstone/search; DD-93 ASCII case-insensitive eight-command surface matrix; DD-94 generic coalesced digest; DD-95 exact club moderation. Promote Assistant/Notification/Authz companion authority to Reviewed; expand the bounded delivery graph to mechanism slices 0–47, thin HTTP adapters A1–A21 and tracked-design FE slices F0–F15; pin the executable first slice. Final semantic freeze adds DD-56 authority + append-only grant audit, safe current-channel member targeting, KB generation/CAS activation, DD-67→DD-72 full Web Push client chain, payment reminder/settled/correction producers and explicit Session/payment/media/provider enablement gates; serializes colliding DB worktrees and canonicalizes mechanism IDs across plan/graph/BE. G1–G5, contract, acceptance and security/migration gates PASS; `NOT_PLAN_READY` remains solely because exact authority pack has no immutable commit SHA. No runtime/code authorization. |
 | 28/07/2026 | v1.6 | **Historical snapshot superseded by v1.7.** It temporarily treated the broader interaction/command/digest contract as unratified and listed four readiness blockers; owner-final DD-92..95 and reconciled companion specs close those content blockers. |
 | 28/07/2026 | v1.5 | **Re-review fix pass; verdict giữ `NOT_PLAN_READY`.** Live-truth re-verify tại `2dc9b8c` xác nhận DD-91 đóng Q11/Q12 hợp lệ, `remainingAmount` giữ `Math.max(0,…)` nên bốn caller bất biến, `assistant_ai_kb` là owner-final contract key còn `job_definer` là live runtime entity. Hai finding còn lại được đóng: (1) **`G5_SCOPE` PASS → PARTIAL** — slice 3/4 lặp lại budget `≤300 LOC` mà chưa đo; §9 nay ghi precedent đo được trên repo (`0022` = 568, `0016` = 824, `0017` = 478) và pin điều kiện nhị phân tại author time: đo `≤300`, hoặc explicit §B3 exception + compatibility proof, hoặc tách — cấm ép budget bằng cách cắt invariant tests/grants. Blocker tương ứng thêm vào §13. (2) `feature_player_view_tech.md` snippet thu hẹp signature `effectiveFee` thành object literal `paid_amount: number \| null`, bỏ optional của live `OpenDebt` — implement đúng chữ sẽ vỡ typecheck bốn caller, mâu thuẫn chính ràng buộc DD-91; đã trả về `(d: OpenDebt)` + guard `undefined` (spec v2.6). Không thêm feature, không tự chốt decision. |

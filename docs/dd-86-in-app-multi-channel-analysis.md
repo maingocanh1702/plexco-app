@@ -282,12 +282,13 @@ Open in scope: 0. Trạng thái: ✅ DECISION_FINAL · không migration · khôn
 
 ```text
 REVIEW_POLICY_VERSION: 1.3
-REVIEW_VERDICT: NOT_PLAN_READY
+REVIEW_VERDICT: PLAN_READY
 REVIEWED_AT: 2026-07-28
-AUTHORITY_SHA: 2dc9b8c760c3b437af08ca1fc5fcbaea1492ad39
+AUTHORITY_SHA: 90d292d85fbe92db7a5afcd118a99e28f3d3b3b7
 BASE_BRANCH: main
 BASE_REMOTE_RELATION: MAIN_EQUALS_ORIGIN_MAIN
-WORKTREE_STATE: DIRTY_UNCOMMITTED  # verdict is not an immutable authority snapshot until commit
+PRIOR_SNAPSHOT: 2dc9b8c760c3b437af08ca1fc5fcbaea1492ad39; delta = this 27-file authority pack only
+WORKTREE_STATE: AUTHORITY_PACK_COMMITTED_AND_PUSHED  # 90d292d contains exactly the 27 TARGET_FILES; 73 unrelated WIP files stay outside the baseline
 TARGET_FILES:
   - docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md
   - docs/dd-86-in-app-multi-channel-analysis.md
@@ -329,21 +330,19 @@ HARD_DEPENDENCIES: exact 27-file authority pack contains DD-86 + DD-91..95 ratif
 PRIOR_SLICES: immutable authority commit/re-pin -> serialized DB lane chat-definer-role-provisioning -> chat-dm-safety-authority-core -> dd38-dd86-chat-schema-core -> tenant-capability-authority-core -> chat-club-channel-lifecycle-core -> chat-authorized-member-target-read-core -> chat-club-moderation-core -> chat-shared-message-command-core; catalog IDs remain stable but actual worktree order follows explicit dependencies; every later BE/worker/client/FE slice requires its own strict CODE_READY
 OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: DD-18 provider/privacy/ToS for Assistant; Web Push permission/device evidence; DD-94 measured timing/coalescing config; private object-storage region/credentials; malware/moderation scanner; bounded DM/media/report numeric config; current Session producer packets and data E2E for /sessions|/waitlist; real payment/reconciliation producer E2E for payment Inbox/push
-LIVE_REPO_VERIFICATION: PASS # working-tree verified; chat_* and DD-56 registry/grant/authorize runtime absent
+LIVE_REPO_VERIFICATION: PASS # verified at 90d292d; chat_* and DD-56 registry/grant/authorize runtime absent
 CONTRACT_MATRIX: PASS
-CLOSURE_MATRIX: PARTIAL — 11/12; immutable-authority row remains open
+CLOSURE_MATRIX: PASS — 12/12; row 1 closed by immutable commit 90d292d (see plan §13.1 for per-row evidence)
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS  # full fail-closed contracts/negative scope pinned; runtime proof remains separate
-IMPLEMENTATION_ARTIFACTS: PASS — primary plan §9.2 pins exact executable first-slice files/budget/acceptance/negative scope; mechanism slices 1-47, API A1-A21 and FE F0-F15 each have one bounded owner
-FIRST_IMPLEMENTATION_STEP: chat-definer-role-provisioning after exact authority commit/push/re-pin and slice-local strict CODE_READY
-REMAINING_BLOCKERS:
-  - blocker: owner-final exact 27-file target pack is still working-tree WIP, so AUTHORITY_SHA does not contain it
-    owner: docs authority/orchestrator
-    resolution: commit exact TARGET_FILES without unrelated WIP, push default branch, re-pin the full SHA and rerun pnpm review:check:changed plus canonical 12/12 review
-NEXT_REVIEW_TRIGGER: immutable commit SHA containing all TARGET_FILES
+IMPLEMENTATION_ARTIFACTS: NOT_REQUIRED_FOR_PLAN_READY — primary plan §9.2 pins a B1-B3-equivalent first-slice packet; gate B4 autopilot doc/manifest/launcher/worktree/scope-gate are owed by the slice-local CODE_READY verdict
+FIRST_IMPLEMENTATION_STEP: author the chat-definer-role-provisioning readiness packet and take it through its own strict CODE_READY; no worktree before that verdict
+REMAINING_BLOCKERS: none
 ```
 
-**Diễn giải:** DD-86 và DD-91..95 đã **DECISION_FINAL**, `OPEN_QUESTIONS_IN_SCOPE=0`, Chat/Assistant/Notification/Tenant-Authz contracts đã Reviewed và execution DAG/acceptance/scope đã đóng nội dung. Execution vẫn **NOT_PLAN_READY** chỉ vì exact 27-file target pack chưa nằm trong immutable commit SHA. `chat_*` và DD-56 capability runtime chưa có trên `main`; docs không phải runtime proof.
+**Diễn giải:** DD-86 và DD-91..95 đã **DECISION_FINAL**, `OPEN_QUESTIONS_IN_SCOPE=0`, Chat/Assistant/Player View/Notification/Tenant-Authz contracts đã Reviewed và execution DAG/acceptance/scope đã đóng nội dung. Exact 27-file target pack nay nằm trong immutable commit `90d292d` trên `origin/main`, đóng nốt closure row 1 → execution đạt **`PLAN_READY`**.
+
+`PLAN_READY` **không** đồng nghĩa `CODE_READY`. `chat_*` và DD-56 capability runtime vẫn chưa có trên `main`; docs không phải runtime proof. Mỗi slice phải tự đạt strict `CODE_READY` trước khi mở worktree, bắt đầu từ `chat-definer-role-provisioning`.
 
 ---
 
@@ -351,6 +350,7 @@ NEXT_REVIEW_TRIGGER: immutable commit SHA containing all TARGET_FILES
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v1.2 | **`NOT_PLAN_READY` → `PLAN_READY`.** Blocker duy nhất còn lại — 27-file authority pack chưa nằm trong commit bất biến — đã đóng bằng `90d292d` (đúng 27 file, 0 file lạ, đã push `origin/main`). Re-pin `AUTHORITY_SHA` `2dc9b8c` → `90d292d`, thêm `PRIOR_SNAPSHOT`, `CLOSURE_MATRIX` `PARTIAL 11/12` → `PASS 12/12`, `REMAINING_BLOCKERS` → `none`, bỏ `NEXT_REVIEW_TRIGGER`. Hạ `IMPLEMENTATION_ARTIFACTS` → `NOT_REQUIRED_FOR_PLAN_READY` (§9.2 chỉ tương đương B1–B3; B4 do slice-local `CODE_READY` nợ). Không đổi decision, không runtime/migration, không authorize code. |
 | 2026-07-28 | v1.1 | Reconcile DD-91..95 owner-final: Assistant defaults true `all_members`/false `admins_only`, interaction/edit/search, exact slash catalog, generic digest và club moderation. Semantic freeze orders DD-95 storage/writers before shared send and keeps reply/mention solely in shared writer; mechanism IDs match plan/graph/BE. DD-88 là broader proposal. Content gates G1–G5/acceptance/security PASS; execution còn `NOT_PLAN_READY` chỉ vì immutable-authority commit/re-pin gate. Không runtime/migration. |
 | 2026-07-28 | v1.0 | Reconcile owner-final authority v2.10: Q6 Assistant storage default OFF, explicit admin opt-in/all gates và Announcements always-OFF; Q7 pin đủ bốn exact capabilities. Chat v1 giữ reply/structured mention/closed reactions, exact lowercase `/help|/sessions|/pay`, tombstone/timed mute và no edit/search/offline digest. Preserve Chat Reviewed + `OPEN_QUESTIONS_IN_SCOPE=0`; add Assistant Draft blocker; không runtime/migration. |
 | 2026-07-28 | v0.9 | Owner ratify Option B và DD-86-Q1..Q10; close CHT-OQ-2, message floor, exact lowercase slash v1 và no-digest/no-per-message-notification defaults. Pin four exact Chat capabilities, Assistant default OFF/admin opt-in/Announcements OFF. Promote Chat Product/BE contract to Reviewed, set G1/G2/G4 + contract/acceptance PASS and open count 0; execution remains `NOT_PLAN_READY` for safety/provisioning artifacts, immutable SHA and measured scope. No runtime/migration. |
