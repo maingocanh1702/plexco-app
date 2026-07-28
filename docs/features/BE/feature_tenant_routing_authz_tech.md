@@ -1,8 +1,8 @@
 # Feature: Tenant Routing & Admin Authorization — Backend Tech Spec
 
 > **Canonical phase:** P2
-> **Version:** 2.6 · 2026-07-19
-> **Status:** Reviewed · reconciled to TDD v3.1 / decisions v1.45
+> **Version:** 2.7 · 2026-07-28
+> **Status:** Reviewed · reconciled to TDD v3.1 / decisions DD-56/DD-86
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_tenant_routing_authz.md`
 > **References:** `../../product/TDD.md` §3.3–3.5 · `../../standards/business-rules.md` BL-SEC-2/BL-SEC-5 · `../../standards/decisions.md` DD-27 · DD-51 · DD-53 · DD-56 · **DD-65..68**
@@ -28,7 +28,8 @@ Channel event → endpointResolver (Zalo tenant | Messenger central/tenant | web
 - Link codes: hash-only storage (no plaintext), TTL, single-use.
 - Global context/link lookup via narrow service access — not open queries.
 - **Channel identity/reachability là provider-endpoint scoped** → 3-part key `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`; Messenger scope Page, Zalo scope bot/OA; explicit endpoint binding, không reuse window/token hoặc auto-merge xuyên endpoint.
-- **DD-56:** one canonical action→capability registry owns authorization. Unknown action/capability, missing grant, expired grant, or registry failure all deny. Adapters/API/UI may render registry output but may not infer privileges from role labels.
+- **DD-56:** one canonical action→capability registry owns authorization. Live role labels `admin` and `co_admin` resolve to the same least-privilege co-admin preset, never owner rights. Unknown action/capability, missing grant, expired grant, or registry failure all deny. Adapters/API/UI may render registry output but may not infer privileges from role labels.
+- **DD-86 Chat registry:** exact keys are `chat.channel.manage`, `chat.channel.post_restricted`, `chat.message.moderate`, `chat.member.mute`. All four require `kind='club'` target derivation + current tenant/channel/membership re-check at consume; none grants host/admin/support access to human DM.
 
 ---
 
@@ -108,13 +109,14 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 
 ### Migration & Rollback
 
-> Baseline routing **đã LIVE** trên canonical: `telegram_links`/`tenant_admins`/`tenant_link_codes`/`player_chat_context`/`routing_audit` (`0002_tenants_core.sql`), `messenger_pages` (`0004_channels_connectors.sql`), RLS/grants (`0009`) — **reuse, không recreate**; DDL trên là reference baseline, không phải target. Target delta (DD-65..68: Zalo/Messenger endpoint-scoped identity/reachability, hybrid Page registry) đi bằng **migration mới số monotonic kế tiếp còn trống**; không sửa historical migration (đã pin ở Target delta).
+> Baseline routing **đã LIVE** trên canonical: `telegram_links`/`tenant_admins`/`tenant_link_codes`/`player_chat_context`/`routing_audit` (`0002_tenants_core.sql`), `messenger_pages` (`0004_channels_connectors.sql`), RLS/grants (`0009`) — **reuse, không recreate**; DDL trên là reference baseline, không phải target. Target delta DD-65..68 và DD-56 `tenant-capability-authority-core` đi bằng các **migration mới số monotonic kế tiếp còn trống**; không sửa historical migration. Capability semantics độc lập với Chat schema, nhưng actual DB worktree là slice 4 và execution hard-dep slice 3: worktrees 1→2→3→4 serialize vì cùng chạm migration tail, `packages/db/schema.ts`, DB catalog/schema/authz tests. Capability core phải có trước mọi Chat capability consumer.
 
 | Bước | Hành động | An toàn? |
 |------|-----------|----------|
 | 1 | Rollback delta migration mới: disable resolver/middleware path mới trước, rồi revert phần additive (bảng/constraint/policy mới của DD-65..68) | ✅ Additive-only revert |
 | 2 | Sửa/chạy lại `0002`/`0004`/`0009` đã apply | ❌ Không có hiệu lực trên môi trường đã migrate — luôn dùng migration mới |
 | 3 | DROP bảng baseline routing ở trên | ❌ NEVER — thuộc migration đã apply, có thể mang binding/admin/audit thật |
+| 4 | Rollback capability authority sau khi có grant/action consumer | Disable consumer surfaces; forward-fix schema/policy/function, không drop registry/grant/audit history | ❌ Không destructive rollback |
 
 ### Edge Cases (Backend)
 
@@ -216,7 +218,7 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 
 ### AuthZ Action Matrix
 
-Every route declares one exact action key. `authorize(action, actor, tenant, now)` resolves the key through one registry and returns a capability decision; no handler repeats formulas or role checks.
+Every route declares one exact action key. `authorize(action, actor, tenant, now)` resolves the key through one registry and returns a capability decision; no handler repeats formulas or role checks. `owner` gets tenant-owner actions; both legacy `admin` and `co_admin` get exactly the co-admin preset plus a current explicit delegable grant.
 
 | Action key / class | Co-admin preset | Delegable by owner? | Authority rule |
 |---|:---:|:---:|---|
@@ -232,11 +234,26 @@ Every route declares one exact action key. `authorize(action, actor, tenant, now
 | `bank_account.manage` | ❌ | ✅ | Same; secret handling rules still apply |
 | `connector.secret_manage` | ❌ | ✅ | Same; never expose secret value |
 | `billing.manage` | ❌ | ✅ | Tenant billing only; not DD-51 global override |
+| `chat.channel.manage` | ✅ | N/A | Create/rename/default/archive club channels; exact-one-default + idempotency remain Chat-owned |
+| `chat.channel.post_restricted` | ✅ | N/A | Post to `admins_only` club channel; active channel membership also required |
+| `chat.message.moderate` | ✅ | N/A | Club-message soft-hide/tombstone + reason + append-only audit only; no hard delete/edit |
+| `chat.member.mute` | ✅ | N/A | Timed club-channel mute with DB-owned expiry; no DM/read grant |
 | `role.manage` | ❌ | ❌ | TenantOwner-only; co-admin cannot remove/demote owner/admin |
 | DD-51 global billing override | ❌ | ❌ | PlatformAdmin-only dedicated service |
 | DD-53 freeze/split/relink | ❌ | ❌ | PlatformAdmin + DD-53 two-approval/break-glass contract |
 
-Logical grant record (physical DDL must be pinned by the authz build slice after mutation-path probe): `tenant_id`, `grantee_person_id`, exact `capability`, `reason`, `granted_by`, `granted_at`, `expires_at`, `revoked_at`. Unique active semantics, grant/revoke, capability re-check and target mutation share a transaction boundary where required. `role.manage` and PlatformAdmin-only keys are rejected before persistence.
+#### Canonical implementation split
+
+`tenant-capability-authority-core` owns the only physical authorization source:
+
+- migration-owned `tenant_capability_actions(action_key PK, co_admin_default, delegable, authority_class)` closed registry; runtime roles have no DML and seed includes the exact DD-56 matrix plus four Chat keys;
+- tenant-private `tenant_capability_grants(tenant_id, grantee_person_id, action_key, reason, granted_by_person_id, granted_at, expires_at, revoked_at)` with exact tenant/person/action FKs, `expires_at > granted_at`, one non-revoked grant per tuple and no direct app DML;
+- append-only restricted grant event/audit rows and a fail-closed `authorize` primitive that resolves current Person→tenant role, treats `admin|co_admin` identically, reads only current non-revoked/non-expired delegable grants, and denies unknown/unavailable/wrong-tenant state;
+- no cache; consumer mutations re-check inside their transaction. Chat's thin adapter additionally re-checks current `kind='club'` channel/membership and never converts capability into human-DM authority.
+
+The core lands only after the serialized DB lane `chat-definer-role-provisioning → chat-dm-safety-authority-core → dd38-dd86-chat-schema-core → tenant-capability-authority-core`, then precedes `chat-club-channel-lifecycle-core → chat-authorized-member-target-read-core → chat-club-moderation-core → chat-shared-message-command-core`. Stable catalog ID 9 runs before 6/7/8 because the explicit dependency graph, not the ID, controls execution. The execution dependency on slice 3 is collision control, not a semantic dependency on Chat schema. It does not own any feature mutation. `tenant-sensitive-capability-grant-lifecycle` later owns actor-scoped grant/revoke commands + management UI if that work exceeds the core slice; the four Chat keys are default preset actions and do not depend on that lifecycle.
+
+Before authoring the capability migration, design-probe legacy `tenant_admins` web-person resolution and every grant/revoke path. If the target cannot fit the pinned slice ceiling without cutting RLS/grants/audit tests, halt and split; do not create a Chat-local registry. `role.manage` and PlatformAdmin-only keys are rejected before persistence.
 
 ### Suspended Tenant Gating
 
@@ -295,17 +312,27 @@ Logical grant record (physical DDL must be pinned by the authz build slice after
 | 18 | Co-admin exceeds scope | Unauthorized action | 403 |
 | 19 | Suspended tenant mutation | Admin mutate | 403 `TENANT_SUSPENDED` |
 | 20 | Tenant A/B isolation | Tenant A query | No tenant B data |
-| 21 | Default co-admin preset | Iterate six preset capabilities | Allowed; mark-paid still invokes preview+confirm+audit |
-| 22 | Sensitive deny table | Iterate correct/refund/waive-void/bank/secret/billing without grant | 403 before mutation for every action |
-| 23 | Sensitive valid grant | Each delegable sensitive action with current audited grant | Allowed only for exact capability/tenant/grantee |
+| 21 | Default least-privilege preset | Iterate core `authorize` for every preset action as `admin` and `co_admin` | Identical allow set; neither inherits owner-only actions; feature consumers separately retain their own preview/confirm/audit contract |
+| 22 | Sensitive deny table | Evaluate correct/refund/waive-void/bank/secret/billing without grant | Deny for every action before any feature consumer is called |
+| 23 | Sensitive valid grant | Evaluate each delegable sensitive action with current audited grant | Core allows only the exact capability/tenant/grantee; feature mutation remains consumer-owned |
 | 24 | Expired/revoked/wrong-tenant grant | Time or tenant mismatch | 403 fail-closed |
-| 25 | Role management non-delegable | Owner attempts grant; co-admin attempts remove/demote | Grant rejected; mutation 403 |
-| 26 | Global action non-delegable | Co-admin/owner invokes DD-51 override or DD-53 split | 403; only PlatformAdmin dedicated path can proceed |
+| 25 | Role management non-delegable | Core attempts to register/persist a `role.manage` delegation; later role-management consumer tries remove/demote as co-admin | Core rejects non-delegable registry/grant state; consumer mutation is separately 403 |
+| 26 | Global action non-delegable | Core evaluates DD-51 override or DD-53 split for tenant owner/co-admin | Deny; only the separate PlatformAdmin dedicated path can proceed |
 | 27 | Unknown registry action | Route declares unknown key or registry unavailable | Startup/build validation fails or runtime deny; never fallback to role |
-| 28 | Mid-request expiry/revoke | Grant valid at request entry, invalid at mutation | Transactional re-check denies; no partial mutation |
+| 28 | Mid-request expiry/revoke | Core evaluator passes, grant expires/revokes, same transaction/harness evaluates again | Second authorization denies; downstream consumer tests separately prove no partial mutation |
 | 29 | Messenger central context | actor has 0/1/N eligible tenants | Discovery / auto-select / bounded picker; never guess |
 | 30 | Messenger cross-club action | tenant Page A, protected session B ref | Target B resolves; source A grants no capability; B authz/join rules apply |
 | 31 | Messenger raw callback ID | raw tenant/session/member id | Rejected even if ID exists |
+| 32 | Exact Chat registry keys | Iterate four accepted keys plus typo/unknown aliases | Accepted keys resolve; aliases/unknown deny, never fall back to role |
+| 33 | Chat target re-check | Capability passes at entry, then membership/channel/tenant changes before mutation | Consume-time decision denies; no partial channel/post/moderation/mute mutation |
+| 34 | Chat moderation boundary | `chat.message.moderate` against club message, then human-DM message | Club soft-tombstone/audit allowed; DM denied with zero transcript disclosure |
+| 35 | Timed mute authority | `chat.member.mute` with valid/expired/revoked actor authority and target expiry | Only valid actor writes bounded club-channel mute; DB time expiry restores post; DM unaffected |
+
+**Test ownership / dependency fence:**
+
+- `tenant-capability-authority-core` must pass the core portions of #21–#28 and #32 before any capability consumer: closed registry/preset, grant-read constraints/RLS/audit, non-delegable persistence rejection, exact four Chat keys, unknown/unavailable/wrong-tenant/expired/revoked deny and repeated evaluator re-check. In #25 it owns only registry/storage rejection; in #28 it owns only the second fail-closed authorization decision.
+- #33 belongs to each lifecycle/moderation/shared-message consumer's mutation tests; #34–#35 belong to `chat-club-moderation-core` plus `chat-shared-message-command-core` security/E2E. These tests run **after** the core and prove target re-check/no-partial-mutation/DM denial without making the core depend on consumers.
+- Integration #7 runs only after the relevant Chat consumers exist. Integration #5 belongs to DD-65–68 web/Zalo/Messenger adapter rollout and is not a precondition for the Chat capability core or the primary Chat plan.
 
 ### Integration Tests
 
@@ -315,8 +342,9 @@ Logical grant record (physical DDL must be pinned by the authz build slice after
 | 2 | Multi-club DM → picker → select | Player in 3 clubs | Picker shown, selection routes correctly |
 | 3 | Rebind group | Chat bound A → rebind B | A removed, B active, audit logged |
 | 4 | Suspended flow | Suspend tenant → test mutation + CK ingest | Mutation blocked, CK ingest works |
-| 5 | Registry used by every surface | Same action via web/Zalo/Messenger | Same allow/deny result and audit class; adapters contain no role formula |
+| 5 | Registry used by every external surface | Same action via web/Zalo/Messenger after DD-65–68 adapters land | Same allow/deny result and audit class; adapters contain no role formula |
 | 6 | Hybrid endpoint matrix | central + tenant Page; host/player/dual-role in 2 tenants | Correct context, isolation and capability across all combinations |
+| 7 | Chat capability parity | Same club-channel action via web/app command surfaces after consumer slices land | Same exact capability, target re-check and audit class; adapters contain no role formula |
 
 ---
 
@@ -343,6 +371,7 @@ Logical grant record (physical DDL must be pinned by the authz build slice after
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v2.7 | Mirror DD-86 final into the canonical action registry: add four exact Chat capability keys, map `admin|co_admin` to one least-privilege preset, pin `tenant-capability-authority-core` as the shared runtime owner before Chat consumers, and retain club-only target/consume-time guards plus human-DM denial tests. Reviewed/not implemented unchanged. |
 | 2026-07-19 | v2.6 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `0002`/`0004`/`0009` LIVE — reuse, không recreate; DROP baseline = ❌ NEVER; delta DD-65..68 = migration mới), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.5 | **decisions v1.45:** generalized provider-endpoint identity/reachability cho Messenger + Zalo; reachability keyed by `channel_identity_id`, target tenant authorize separately. |

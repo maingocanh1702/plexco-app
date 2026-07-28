@@ -1,10 +1,12 @@
-# Đề xuất: Notification grouping (chia nhóm thông báo cho inbox)
+# DD-88 broader proposal — Notification grouping extensions + DD-94 offline chat digest carve-out
 
-> **Trạng thái:** 🟡 Draft design packet · 2026-07-24 · **KHÔNG phải spec `Reviewed`, coding handoff hay runtime đã implement.** Đây là tài liệu thiết kế để đưa phần "nhóm mới" (session/activity) qua review gate; các phần đụng `type` enum phải chuyển thành DD-proposal trong `decisions.md` trước khi code.
-> **Authority repo đã đối chiếu:** `main@dfabe1a84b28d481f1c9c32984c2074b7a428ffb` (`dfabe1a`) · target là file on-disk chưa commit. *(Re-pin 2026-07-24 từ `58788e6` — HEAD đã tiến; `58788e6` vẫn ancestor.)*
+> **Trạng thái DD-88:** 🟡 **`DEFERRED_PROPOSAL` rộng hơn** · grouping/session/activity/`message_request`/scoped-bulk extensions bên dưới vẫn là proposal và chưa có runtime; DD-88 không còn sở hữu hoặc gate exact chat digest.
+> **Trạng thái DD-94:** ✅ **`DECISION_FINAL`** cho generic coalesced offline chat digest.
+> **Authority repo đã đối chiếu:** `main@2dc9b8c760c3b437af08ca1fc5fcbaea1492ad39` (`2dc9b8c`) · owner-final authority pack là `docs/standards/decisions.md` v2.10 working tree 2026-07-28, chưa commit/push/re-pin thành immutable SHA.
 > **Live-truth verify (2026-07-24 @ `dfabe1a`):** `notification_intents.type` = `text` **không CHECK** (chỉ status CHECK) — mọi enum type ở §1 là target, chưa live · **không** có `announcement`/session/`message_request` type, `person_notifications`, `notification_preferences` hay `membership_notification_preferences` trong `packages/db/schema.ts` · migration cao nhất trên đĩa = `0021` · DD-70/71/72 chốt hướng + DD-88 (🟡) đều có trong `decisions.md`. Mọi claim "chưa live / cần contract" trong doc khớp repo.
-> **Canonical đã đọc:** `docs/features/feature_notifications_reminders.md` (v3.4h) · `docs/features/BE/feature_notifications_reminders_tech.md` (v3.4i) · `packages/db/migrations/0008_notifications_onboarding.sql` · `docs/features/feature_session_management.md` §5 · `docs/features/feature_inapp_chat.md` (v0.8) · `docs/standards/decisions.md` (DD-38/43/45/47/48/50/55/67/69/70/71/76/77/**88**) · `docs/standards/business-rules.md` BL-NTF-1..4. **Authority status:** DD-70/71/72 đã được owner chốt 2026-07-21; DD-88 là proposal chưa owner-ratified. Product/BE docs vẫn Draft và schema/runtime vẫn chưa land, nên decision-final không được gọi là implemented.
-> **Mục tiêu:** định nghĩa taxonomy "nhóm" thông báo cho inbox (tab kiểu screenshot đối thủ), map vào notification type đã pin, và tách rõ phần đã có contract vs phần cần contract mới.
+> **Canonical đã đọc tại snapshot 2026-07-24:** `docs/features/feature_notifications_reminders.md` (v3.4h) · `docs/features/BE/feature_notifications_reminders_tech.md` (v3.4i) · `packages/db/migrations/0008_notifications_onboarding.sql` · `docs/features/feature_session_management.md` §5 · `docs/features/feature_inapp_chat.md` (v0.8) · `docs/standards/decisions.md` (DD-38/43/45/47/48/50/55/67/69/70/71/76/77/**88**) · `docs/standards/business-rules.md` BL-NTF-1..4.
+> **Supersession 2026-07-28 @ `main@2dc9b8c`:** canonical Notifications hiện là **Reviewed contract** nhưng chưa có runtime. DD-70/71/72 và exact chat digest DD-94 đã owner-final; DD-88 chỉ còn proposal kiến trúc/grouping rộng hơn. Live `0008` vẫn chỉ là tenant notification schema/contract baseline; chưa có producer/service/inbox/delivery/digest runtime, `person_notifications` hay preference runtime. Các version/status 24/07 trong body là snapshot lịch sử.
+> **Mục tiêu:** lưu design input DD-88 cho các extension rộng hơn, đồng thời mirror ranh giới DD-94 để không vô tình defer hoặc thiết kế lại exact offline chat digest đã chốt. Tài liệu này không authorize migration, API, UI hay runtime.
 > **Cập nhật 2026-07-24 (v0.2):** thêm nhóm **Tin nhắn** (chat) + phân tích **message request** (DM từ người chưa follow) — §5.
 > **Cập nhật 2026-07-24 (v0.3):** taxonomy đầy đủ mọi noti hiện có + model **config nhận/không nhận theo group** (§6). Ràng buộc pin: Thanh toán + Bảo mật không opt-out được.
 > **Cập nhật 2026-07-24 (v0.4 — review correction):** sửa status DD-70/71, pin security-alert no-route fail-closed, tách `message_request` global khỏi tenant enum, và đặt `notification_preferences` per-Person của DD-70 làm authority; per-membership announcement opt-out chỉ là tenant-audience exception, không phải preference model tổng quát.
@@ -12,17 +14,20 @@
 > **Cập nhật 2026-07-24 (v0.7 — contract correction):** §7 tách rõ `mark all read` toàn inbox đã pin khỏi **scoped mark-all** và **bulk theo lựa chọn** là hai extension mới cần receipt/authz contract + migration riêng. `chat_members.last_read_at` chỉ là target chat contract, chưa phải runtime.
 > **Cập nhật 2026-07-24 (v0.8 — review-gate pass):** live-truth verify @ `dfabe1a` (header) + §9 review-provenance theo `review-code-readiness-gate.md` §11.2 — doc là evidence inventory cho DD-88 (chưa author slice), **KHÔNG** phát canonical verdict giả.
 > **Cập nhật 2026-07-24 (v0.9):** thêm §10 propagation checklist (gate trên DD-88 ratification) cho BRD/PRD/feature docs; hiện các Reviewed/product doc mới chỉ nhận pointer.
+> **Cập nhật 2026-07-28 (v1.0 — historical, superseded by v1.1):** snapshot khi DD-88 còn được mô tả guardrails-only và offline digest bị defer; không dùng làm current authority.
+> **Cập nhật 2026-07-28 (v1.1 — supersession):** DD-88 được giữ ở mức broader `DEFERRED_PROPOSAL`; DD-94 owner-final exact offline chat digest: source chat unread, generic opaque push, không durable item/message snapshot, coalesce cursor, preference defaults, mark-read cancellation và dispatch-time re-authorization. Không runtime; current Chat readiness chỉ lấy từ primary plan §13.
 
 ---
 
 ## 0. Kết luận ngắn
 
-1. **"Nhóm" là view derive từ enum `type`, không phải cột lưu mới.** System copy đã pin derive từ fixed `type` (HR5). Chia tab = một hàm mapping `type → group` ở read-model / FE, không thêm cột `group` (denormalize thừa, rủi ro drift).
+1. 🟡 **DD-88 design direction (`DEFERRED_PROPOSAL`):** "nhóm" nên là view derive từ closed-set `type`, không phải cột lưu mới. System copy đã pin derive từ fixed `type` (HR5). Chia tab = một hàm mapping `type → group` ở read-model / FE, không thêm cột `group` (denormalize thừa, rủi ro drift). Taxonomy/label cụ thể chỉ được mở cùng source type tương ứng.
 2. **Notification chạy trên 2 plane tách biệt** (tenant vs global). Tab "lọc theo CLB" chỉ áp cho tenant plane; follow/security là global (không `tenant_id`, cấm tiền/PII) → phải nằm ở nhóm riêng, không lọc theo club.
-3. **Nhóm "Kèo" (session lifecycle) và "Hoạt động" (player join/leave/waitlist) CHƯA tồn tại dưới dạng notification.** Hiện chúng chỉ là *analytics events* (`feature_session_management` §5), không phải `notification_intents.type`. Thêm chúng = **thay đổi contract** trên `type` CHECK → phải qua `decisions.md` (DD mới) + review gate. Không viết thẳng vào spec đã Reviewed.
-4. **Payment đã có runtime type; follow/announcement/security là type trong target contract đã được decision chốt nhưng chưa có schema/runtime.** Nhóm hoá chỉ là read-model sau khi source type tương ứng tồn tại; không được gọi chúng là live.
-5. **Config nhận/không nhận theo group** (§6): DD-70 chốt preference per-Person theo type + channel; `membership_notification_preferences(type='announcement')` chỉ là target contract cho tenant-audience opt-out. Bất kỳ extension nào cần contract mới. **Thanh toán + Bảo mật vĩnh viễn không tắt được** (enforce ở schema). Mặc định opt-out chỉ tắt kênh gửi và không xoá item; chỉ owner contract của một type mới được chọn audience suppression (hiện chỉ Announcement target contract).
-6. **Unread + mark-read** (§7): chỉ `mark all read` **toàn bộ item đang visible/authorize trên hai plane** đã là contract pin (NTF-UC-15 / `notification_read_all_commands`) — server-boundary, hidden/late giữ unread, client không truyền mốc. Highlight unread là read-model derived. "Chọn tất cả unread" theo group/CLB và bulk theo lựa chọn là **contract mới**, không được route vào endpoint/receipt hiện có. Chat unread chỉ là target read-model của chat, không phải `notification_reads` hay runtime hiện hữu.
+3. **Nhóm "Kèo" (session lifecycle) và "Hoạt động" (player join/leave/waitlist) CHƯA tồn tại dưới dạng notification.** Hiện chúng chỉ là *analytics events* (`feature_session_management` §5), không phải `notification_intents.type`. Extension này **deferred** tới sau khi Session producers tồn tại; lúc đó cần DD/slice riêng cho type/recipient/anti-spam, không được suy từ guardrail DD-88.
+4. **Payment mới có schema/contract baseline từ `0008`, chưa có producer/service/inbox/delivery runtime; follow/announcement/security là type trong target contract đã được decision chốt nhưng chưa có schema/runtime.** Nhóm hoá chỉ là read-model sau khi source type tương ứng tồn tại; không được gọi chúng là live.
+5. 🟡 **DD-88 preference direction (`DEFERRED_PROPOSAL`)** (§6): một authority `notification_preferences` per-Person, per closed `type + channel`, áp cả hai plane; `membership_notification_preferences(type='announcement')` chỉ là exact tenant-audience exclusion của DD-71, không phải generic preference store thứ hai. **Thanh toán + Bảo mật không opt-out được** vẫn là hard safety requirement của core notification contract.
+6. 🟡 **DD-88 read/grouping extensions (`DEFERRED_PROPOSAL`)** (§7): chat read state độc lập notification read state. Scoped/bulk chỉ được mở sau core inbox/read model và cần canonical fingerprint, server-owned boundary, re-authorize toàn bộ, all-or-nothing, hard cap **100** refs.
+7. ✅ **DD-94 exact offline chat digest:** không durable item cho mỗi chat message và không snapshot body/title/amount. Digest lấy từ chat unread, coalesce theo highest unread cursor, gửi generic opaque push; preference và dispatch-time re-authorization được pin ở §5.4. Realtime unread/SSE vẫn do chat read-model sở hữu.
 
 ---
 
@@ -30,7 +35,7 @@
 
 ### 1.1 Tenant plane — `notification_intents` (RLS, per-CLB)
 
-Enum `type` hiện tại (target v3.4, migration pending sau `0008`):
+Target enum trong contract Reviewed v3.7 (khởi nguồn từ proposal v3.4, migration vẫn pending sau `0008`):
 
 | `type` | Ý nghĩa | Trạng thái |
 |---|---|---|
@@ -61,7 +66,7 @@ Không `tenant_id`, không RLS, **cấm tiền/PII/JSON tuỳ ý** (HR2); copy d
 
 ---
 
-## 2. Taxonomy nhóm đề xuất (UI)
+## 2. Taxonomy nhóm đề xuất (UI, deferred theo source)
 
 Với **durable inbox item**, nhóm = mapping từ fixed `type` (+ subtype đã chốt nếu cần). Chat unread/badge là read-model của chat, không được giả làm một `notification type`; UI contract của nó phải do chat slice sở hữu. Đề xuất 7 nhóm hiển thị + "Tất cả":
 
@@ -71,7 +76,7 @@ Với **durable inbox item**, nhóm = mapping từ fixed `type` (+ subtype đã 
 | **Kèo** / Sessions | `session_*` (type MỚI) | tenant | 🟡 channel-only (đề xuất) | ❌ cần contract mới |
 | **Hoạt động** / Activity | join/leave/waitlist-promoted (type MỚI hoặc `owner_alert` subtype) | tenant | 🟡 tùy (owner_alert host có thể bắt buộc) | ❌ cần contract mới |
 | **Thanh toán** / Payments | `reminder` · `settled` · `correction` | tenant | ❌ **KHÔNG** (money integrity) | ✅ có sẵn |
-| **Tin nhắn** / Messages | durable: **`message_request`** (type MỚI, global); non-durable: chat unread/badge | global item; chat source theo channel plane | 🟡 channel-only push/digest | ❌ cần contract mới (§5) |
+| **Tin nhắn** / Messages | future durable: **`message_request`** (type MỚI, global); current non-durable: chat unread/badge + DD-94 delivery-only digest | global item; chat source theo channel plane | Generic coalesced digest; không item/message snapshot | 🟡 grouping/request proposal; digest ✅ DD-94 |
 | **CLB** / Announcements | `announcement` | tenant | ✅ tenant-audience opt-out (target contract) | ✅ DD-71 direction final; DDL/runtime Draft |
 | **Xã hội** / Social | `follow_request` · `identity_link` · `identity_merged` | global | 🟡 exact policy chưa pin | ✅ DD-70 direction final; DDL/runtime Draft |
 | **Bảo mật** / Security | `security_alert` | global | ❌ **KHÔNG** (account safety) | ✅ DD-70 direction final; DDL/runtime Draft |
@@ -89,7 +94,7 @@ Badge chưa đọc: theo spec có trần "99+"; badge theo nhóm cũng phải fa
 
 ---
 
-## 3. Gap → cần contract mới (KHÔNG tự quyết ở doc này)
+## 3. Deferred extension — Session lifecycle/activity
 
 Để có nhóm **Kèo** + **Hoạt động**, cần một DD-proposal trả lời:
 
@@ -102,16 +107,16 @@ Badge chưa đọc: theo spec có trần "99+"; badge theo nhóm cũng phải fa
 5. **Nội dung:** cấm lộ tiền/PII ra kênh công khai; OS push generic; chi tiết chỉ sau authenticated fetch (HR2, giống NTF-UC-7/8).
 6. **Effective-state render:** item "player joined" khi player đã `left` sau đó → render theo effective state (giống Edge #22 charge void).
 
-**DD-88 là proposal hiện hành cho những câu này; chỉ owner ratification + review gate mới đóng chúng. Không phần nào ở đây tự authorize migration/code.**
+**Reopen trigger chính xác:** Session lifecycle/activity chỉ được mở sau khi Session producers tương ứng đã land. Khi đó author DD + mechanism-named slice riêng để chốt type/subtype, recipient, anti-spam và acceptance matrix. DD-88 proposal không tự trả lời các câu này và không authorize migration/code.
 
 ---
 
-## 4. Open questions
+## 4. Deferred questions cho Session extension
 
 - **OQ-1:** `owner_alert` nằm ở nhóm "Hoạt động" hay tách "Quản trị"?
 - **OQ-2:** Nhóm hiển thị theo vai (host thấy "Kèo/Hoạt động"; player thấy "Thanh toán/Xã hội") hay chung một danh sách có filter?
 - **OQ-3:** Session lifecycle notify cho player (kèo bị huỷ/đổi giờ) — mức độ ưu tiên P? (khác với owner_alert cho host).
-- **OQ-4:** ✅ Đã phân tích ở §5 — có nhóm **Tin nhắn**, nhưng chat unread/SSE và digest push là chat-owned delivery/read models, không phải durable inbox item; chỉ `message_request` là durable type **đề xuất**.
+- **OQ-4:** ✅ Phần offline chat digest đã đóng riêng bằng DD-94 ở §5.4; chat unread/SSE vẫn là chat-owned read-model và digest không phải durable inbox item. `message_request` vẫn chỉ reopen sau DD-55 phase-2 request box.
 
 ---
 
@@ -119,7 +124,7 @@ Badge chưa đọc: theo spec có trần "99+"; badge theo nhóm cũng phải fa
 
 ### 5.1 Bối cảnh canonical (đã pin)
 
-Chat contract (`feature_inapp_chat` DD-38, Draft/not runtime) định nghĩa **2 loại channel = 2 plane**, khớp đúng kiến trúc notification:
+Chat contract (`feature_inapp_chat`, DD-38/DD-86/DD-91/DD-92..95, Reviewed/not runtime) định nghĩa **2 durable channel kind = 2 plane**, khớp đúng kiến trúc notification:
 
 - **`club`** — tenant-private, RLS. Tin nhắn chat toàn CLB.
 - **`dm`** — **person-self / global** (`tenant_id` NULL, `dm_key` = cặp person). Chỉ 2 người đọc; host/support/admin **KHÔNG** đọc DM.
@@ -137,10 +142,10 @@ Nếu mỗi tin nhắn sinh một `notification_intents`/`person_notifications` 
 | Tín hiệu | Cơ chế | Có phải notification không? |
 |---|---|---|
 | Có tin mới khi đang online | SSE + badge chưa đọc (read-model chat) | ❌ không — thuộc chat, không phải inbox |
-| Có tin mới khi offline (opt-in push) | **Digest/coalesced push** per channel, rate-limited; payload opaque (không nội dung/PII) | 🟡 notification, nhưng derive từ chat unread — không lưu item mỗi tin |
-| **Message request** (DM từ người chưa follow — phase-2) | Durable notification item, person-global | 🟡 proposed durable type; DD + schema cần trước build |
+| Có tin mới khi offline | **DD-94:** coalesced delivery từ chat unread, generic opaque push, không lưu item/message snapshot mỗi tin | ✅ delivery-only; không phải durable Inbox item |
+| **Message request** (DM từ người chưa follow — phase-2) | Durable notification item, person-global | ⏸ deferred tới sau khi DD-55 phase-2 request box land |
 
-Nói cách khác: nhóm **Tin nhắn** trong inbox, nếu được build, chủ yếu là *view* của chat unread + SSE, **cộng** đúng một loại item bền đề xuất là **message request**.
+Nói cách khác: nhóm **Tin nhắn** trong inbox, nếu được build, chủ yếu là *view* của chat unread + SSE. DD-94 digest là delivery-only trên chính read-model đó, không thêm item bền. Đúng một loại item bền còn đang đề xuất là **message request**.
 
 ### 5.3 Message request = request box của DD-55 phase-2
 
@@ -152,22 +157,19 @@ Nói cách khác: nhóm **Tin nhắn** trong inbox, nếu được build, chủ 
 - **Idempotency:** phải bind exact canonical request/source ID với event key; re-send khi request còn pending trả cùng request/item, không tạo source request hoặc inbox item thứ hai. Không dùng caller-chosen key hoặc chỉ so `(sender,target)` mơ hồ.
 - Block/rate-limit/abuse audit vẫn enforce tại boundary (Edge #13/#17 chat) trước khi tạo request.
 
-### 5.4 Gap → cần contract mới (KHÔNG tự quyết ở doc này)
+### 5.4 DD-94 exact digest + deferred request contract
 
-DD-88 phải được owner ratify như proposal mở rộng DD-55 + chỉ thêm global `person_notifications.type`; tenant-plane CHECK không đổi trừ club-mention là decision riêng. DD-88 cần trả lời:
-
-1. **`message_request`**: giá trị `type` mới trên `person_notifications` (global) — xác nhận item/push/log chỉ chứa fixed type + opaque source reference; bất kỳ social field nào chỉ resolve sau authorized read, không persist vào global item.
-2. **Request lifecycle:** canonical request aggregate/source, states `pending|accepted|rejected|ignored|expired|invalidated_by_block`, ownership, retention, exact state transition and whether one request may be recreated after a terminal outcome.
-3. **Push tin nhắn offline**: digest per channel hay per tin? Ngưỡng coalesce/cooldown (tái dùng cơ chế anti-spam §A)? Đây là notify **opt-in**, và giống DD-76/77 có thể là *optional notify only* sau product-evidence gate.
-4. **DM message trong inbox**: có hiện DM unread như một dòng inbox (deep-link tới channel) hay chỉ ở màn hình Chat? Đề xuất: chỉ badge + màn Chat, **không** đổ từng DM vào inbox list.
-5. **Club-chat mention**: `@mention` trong chat CLB có tạo notification (tenant plane) không? (khác tin thường — có chủ đích.) → OQ riêng, không kéo `message_request` vào tenant enum.
-6. **Phase gating:** message_request phụ thuộc DD-55 **phase-2** (follow-gated). Phase-1 chưa có request box nên chưa có type này.
+- **`message_request`:** chỉ reopen sau khi **DD-55 phase-2 request box** và canonical request lifecycle/source đã land. Khi đó một DD/slice riêng mới được chốt global `person_notifications.type`, exact lifecycle, content-opaque source ref, idempotency và authorized read. Không thêm type trước dependency này.
+- **Offline chat digest đã owner-final (DD-94), không còn là reopen item:** source duy nhất là chat unread; không durable item hoặc snapshot message/body/title/amount. OS push luôn generic opaque. DM/direct mention/reply default ON; club channel có preference `all\|mentions\|off`, default `mentions`. Coalesce idempotent theo `(person, channel, highest_unread_cursor)`; mark-read làm pending cursor cũ obsolete. Ngay trước provider write phải re-check current membership hoặc DM read authority, pair block+safety, preference, device active/trust epoch và cursor vẫn unread; false/unknown thì skip + audit. Retry/unknown outcome không được duplicate. Delay/coalescing timing là `ENABLEMENT_ONLY`; thiếu hoặc chưa test config thì route OFF.
+- **DM unread trong Inbox:** dùng chat read-model/badge/deep-link; không đổ mỗi DM vào Inbox. Direct mention/reply là trigger DD-94 mặc định ON nhưng vẫn không trở thành durable notification type hay mở rộng DD-88.
 
 ### 5.5 Ràng buộc riêng cho nhóm Tin nhắn
 
 - ❌ Global DM notification/message_request **không** persist hoặc gửi nội dung tin, tên thật/social field, tiền; render field (nếu được owner cho phép) luôn là authorized source lookup tại read time (HR2, Edge chat #9).
 - ❌ Không cho host/support/tenant admin suy ra nội dung/đối tác DM qua notification (DD-55 acceptance).
 - ❌ Không tạo item notification cho mỗi tin nhắn (HR3) — reuse `chat_*` read-model.
+- ❌ DD-94 digest không được chứa body/title/amount, durable source snapshot hoặc tạo item per-message; generic push không được biến thành content preview.
+- ✅ Pending digest phải bị vô hiệu khi cursor đã đọc và phải re-authorize mọi boundary ngay trước provider write.
 - ✅ Accept message request phải đi qua **canonical safety decision** DD-55 (block/rate/enablement) trước khi tạo/reuse channel.
 
 ---
@@ -191,7 +193,7 @@ Config của người nhận tác động **kênh gửi**, KHÔNG xoá bản ghi
 | **CLB / Announcement** | ✅ Full opt-out khỏi tenant audience | `membership_notification_preferences (membership_id, type='announcement')` là target contract DD-71; còn interaction với Person preference DD-70 phải được pin | Per CLB (per membership) |
 | **Xã hội** — `follow_request`/`message_request` | 🟡 policy cần chốt | `notification_preferences` per-Person (target DD-70) | Per person |
 | **Xã hội** — `identity_link`/`identity_merged` | 🟡 policy cần chốt | `notification_preferences` per-Person (target DD-70) | Per person |
-| **Tin nhắn** (chat push) | 🟡 policy cần chốt | Future chat-owned push/digest contract; inbox + badge chat vẫn là separate read models | Per person (+ per channel?) |
+| **Tin nhắn** (chat push, DD-94) | ✅ Channel preference | DM/direct mention/reply default ON; club channel `all\|mentions\|off`, default `mentions`; digest vẫn không tạo Inbox item | Per person + per channel |
 | **Kèo / Hoạt động** | 🟡 channel-only đề xuất | `owner_alert` cho host có thể bắt buộc (điều hành CLB) | Per CLB |
 
 ### 6.3 Ràng buộc kiến trúc cho config
@@ -201,16 +203,16 @@ Config của người nhận tác động **kênh gửi**, KHÔNG xoá bản ghi
 - **Re-check fresh tại dispatch, không cache/snapshot** (đã pin cho announcement, §1806/§1897) — áp cho mọi group cho tắt được.
 - **Money/security enforce ở schema:** cách an toàn nhất là **không tồn tại** giá trị `type` hợp lệ để opt-out chúng (giống announcement-only hiện tại), chứ không phải chặn ở tầng UI/service.
 
-### 6.4 Gap → cần contract mới
+### 6.4 DD-94 exact contract final; DD-88 broader preferences remain deferred proposal
 
-Mở rộng config ngoài announcement = hoàn thiện `notification_preferences` per-Person mà DD-70 đã chốt, rồi pin interaction hẹp với tenant-audience exclusion của Announcement. Cần DD-proposal trả lời:
+DD-94 đã pin exact default cho chat digest như §5.4. DD-88 chỉ đề xuất mô hình preference rộng hơn per-Person/per-type/channel cho hai plane và không tự authorize migration. Mỗi extension khác vẫn phải pin allowed type/channel pairs, absence/default semantics và interaction hẹp với tenant-audience exclusion của Announcement. Extension đó còn phải trả lời:
 
 1. Danh sách chính xác group nào cho **full opt-out** vs **channel-only** vs **bắt buộc**.
 2. Giữ **bất biến money+security không opt-out** (schema-enforced) khi thêm type mới.
 3. `notification_preferences` per-Person: schema/grants, allowed type+channel pairs, default rows/absence semantics, immutable mandatory types, and dispatch-time recheck.
 4. Precedence between Person preference and DD-71 per-membership announcement exclusion, including a Person with multiple memberships; no generic per-club mute unless a DD explicitly adds one.
 5. UI: nhóm "Kèo/Hoạt động/CLB" có cần setting per-CLB hay chỉ read filter? Đây là product choice riêng, không được suy ra từ tenant plane.
-6. Mặc định (default on/off) từng group — vd Announcement mặc định ON, chat push mặc định ON, request-box digest mặc định?
+6. Mặc định (default on/off) từng group khác — không được mở lại default chat digest đã chốt trong DD-94; `message_request` vẫn cần DD riêng sau request-box dependency.
 
 ---
 
@@ -229,14 +231,14 @@ Chỉ `mark all read` **toàn bộ item hiện visible/authorize trên tenant + 
 
 Thuần read-model: item không có read row ⇒ unread ⇒ FE highlight (dot/nền). Áp **cả 2 plane** (tenant + global) qua merge ở service layer. Badge tổng + badge per-group đều derive từ cùng unread set; badge per-group phải fail-soft như badge tổng.
 
-### 7.3 "Chọn tất cả unread" + mark-read theo lựa chọn = extension mới
+### 7.3 "Chọn tất cả unread" + mark-read theo lựa chọn = extension deferred
 
-Hai thao tác này **không** map vào endpoint/receipt mark-all hiện có và không được ship như FE-only. Đề xuất contract fail-closed để owner ratify:
+Hai thao tác này **không** map vào endpoint/receipt mark-all hiện có và không được ship như FE-only. DD-88 chốt guardrails fail-closed dưới đây, nhưng delivery chỉ được reopen sau khi core Inbox/read model đã land:
 
 | Thao tác | Request và receipt | Authorization + atomicity | Replay/failure |
 |---|---|---|---|
 | **Scoped mark-all** (group X / CLB Y) | Endpoint/command mới nhận `command_id` + closed-set filter. Server canonicalize filter rồi lưu `person_id + command_id + filter_hash + boundary_sequence + command_kind`; không nhận cursor/timestamp/tenant-count do client khai. | Sau per-Person fence, server re-authorize và enumerate **chỉ** exact visible set khớp filter tại boundary; insert tất cả read rows + receipt trong một transaction. Filter không hợp lệ, capability/authorization đổi, hoặc vượt cap ⇒ rollback toàn bộ. Hidden/late item vẫn unread. | Same command + same canonical filter trả receipt cũ; same command + filter khác = `409`, zero mutation. Cần migration receipt/constraint mới hoặc extension rõ ràng của receipt hiện có trước build. |
-| **Bulk theo lựa chọn item** | Endpoint/command mới nhận `command_id` + tập opaque visible refs, canonicalize/dedupe rồi lưu request fingerprint; hard cap phải là server constant được DD pin (candidate: `100` refs). | Server re-authorize **mọi** ref sau fence trước khi ghi. Nếu một ref missing/unauthorized/stale, trả cùng opaque `404` như single-item mark-read và rollback **cả batch**; không "bỏ qua, không lỗi" vì điều đó tạo partial state không có receipt semantics. | Exact replay chỉ khi fingerprint giống nhau; command reused với tập khác = `409`, zero mutation. Duplicate ref chỉ tạo một read row. |
+| **Bulk theo lựa chọn item** | Endpoint/command mới nhận `command_id` + tập opaque visible refs, canonicalize/dedupe rồi lưu canonical request fingerprint; server hard cap **100 refs**. | Server re-authorize **mọi** ref sau fence trước khi ghi. Nếu một ref missing/unauthorized/stale, trả cùng opaque `404` như single-item mark-read và rollback **cả batch**; không "bỏ qua, không lỗi" vì điều đó tạo partial state không có receipt semantics. | Exact replay chỉ khi fingerprint giống nhau; command reused với tập khác = `409`, zero mutation. Duplicate ref chỉ tạo một read row. |
 
 - **Không client watermark:** client không gửi "đọc tới thời điểm T"; server tự chốt boundary. Chống race 2 tab (Edge #21).
 - Contract mới phải có acceptance tests cho empty result, duplicate ref, unauthorized/stale ref, replay mismatch, concurrent mark-all, over-cap, hidden/late item và cross-plane filter. NTF-UC-14 chỉ chứng minh single-item idempotency, không tự chứng minh batch semantics.
@@ -245,7 +247,7 @@ Hai thao tác này **không** map vào endpoint/receipt mark-all hiện có và 
 
 **Target chat contract** định nghĩa read-model riêng (last-read theo `chat_members`/channel), KHÔNG phải `notification_reads`; chưa có `chat_*` runtime trên `main`. Khi chat slice đã land, thì:
 - "Mark all read" trên **inbox notification** KHÔNG tự đánh dấu đã đọc hội thoại chat, và ngược lại — trừ khi có DD nối hai read-model.
-- Nhóm **Tin nhắn** trong inbox (§5) hiển thị unread chủ yếu từ chat read-model + digest, không đổ từng tin thành notification item.
+- Nhóm **Tin nhắn** trong inbox (§5), nếu được build, chỉ đọc chat read-model/badge/deep-link; không đổ từng tin thành notification item. DD-94 digest đọc cursor unread nhưng không mutate notification read-model.
 
 ### 7.5 Ràng buộc riêng
 
@@ -256,8 +258,8 @@ Hai thao tác này **không** map vào endpoint/receipt mark-all hiện có và 
 
 ### 7.6 Owner decisions / delivery prerequisites
 
-1. **Ratify scoped/bulk contract:** chọn candidate contract ở §7.3 hoặc sửa nó; phải pin command/receipt schema, closed-set filter vocabulary, cap, `404`/`409` behavior và all-or-nothing rule. Đây là data/API change, không phải UI flag.
-2. **Chat ↔ inbox read-model:** có đồng bộ "mark read" giữa hai không, hay độc lập. Proposal phase-1 = độc lập; chỉ áp dụng sau chat read model target đã land.
+1. **Scoped/bulk DD-88 proposal:** canonical request/filter fingerprint, server-owned boundary, re-authorize toàn bộ, all-or-nothing, cap 100, replay mismatch fail-closed. Exact command/receipt schema vẫn thuộc future decision/slice.
+2. **Chat ↔ inbox read-model boundary:** độc lập; mark-read bên này không mutate bên kia. DD-94 chỉ làm pending digest cursor obsolete khi chat được mark-read, không ghi notification read state.
 3. **Ordering:** core DD-70 notification read model phải merge trước; scoped/bulk là migration + API + invariant-test slice riêng. Không gộp nó vào migration type enum của session/message request.
 
 ---
@@ -270,43 +272,43 @@ Hai thao tác này **không** map vào endpoint/receipt mark-all hiện có và 
 - ❌ Không dựng store/pipeline notification thứ hai cho session/activity (HR3) — tái dùng `notification_intents`.
 - ❌ Không viết type mới vào spec `feature_notifications_reminders.md` đã Reviewed trước khi có DD chốt.
 - ❌ Không route scoped mark-all vào `/inbox/read-all` hiện có, không silent-skip ref mất quyền trong bulk, và không dùng client timestamp/cursor làm read authority.
+- ❌ Không tạo durable notification item cho từng chat message; DD-94 digest không được snapshot message/body/title/amount hoặc phát non-generic push.
 - ❌ **Không cho opt-out Thanh toán (`reminder`/`settled`/`correction`) và Bảo mật (`security_alert`)** — enforce ở schema (không có `type` hợp lệ để tắt), không chỉ UI (money integrity + account safety).
 - ❌ Không có "global mute" một nút tắt hết — preference scoped theo fixed type + channel và mandatory type bị schema loại khỏi tập cho tắt; nếu không sẽ lỡ tắt nhắc tiền (BE tech §1754).
 - ❌ Opt-out không xoá inbox item đã tạo. Audience suppression phải do type owner contract cho phép (hiện chỉ Announcement target contract = không tạo intent); không được suy ra cho type khác.
 
 ---
 
-## 9. Review provenance & §11.2 determination
+## 9. Review provenance & evidence inventory
 
-> Theo `review-code-readiness-gate.md` §11.2: doc này là **design packet / evidence inventory** cho proposal **DD-88**, **chưa phải slice đã author** (không manifest, không target code). Vì vậy **KHÔNG phát canonical verdict block** — điền `CODE_READY/PLAN_READY` + closure matrix cho một thứ chưa tồn tại là "bịa bằng chứng có vỏ machine-checked". Directive machine cố ý vắng (non-candidate); verdict chỉ mở khi một slice cụ thể được author. Đây là kiểm kê bằng chứng, không phải khẳng định trạng thái readiness.
+> Doc này lưu **DD-88 `DEFERRED_PROPOSAL` inventory + DD-94 boundary mirror**, không phải implementation slice và không phát readiness verdict. DD-94 là decision authority; runtime authorization nằm ở canonical plan/slice riêng.
 
-- **Snapshot pin:** `main@dfabe1a84b28d481f1c9c32984c2074b7a428ffb`; target files = doc này + `docs/standards/decisions.md` DD-88.
-- **Live-truth:** đã verify (xem header) — mọi claim "chưa live / cần contract" khớp repo tại `dfabe1a`.
-- **Bằng chứng còn THIẾU trước khi một slice bất kỳ có thể mở verdict** (inventory, không phải điểm số):
-  - *Decision:* DD-88 **chưa owner-ratify**; còn open product choice (type mới vs `owner_alert` subtype; recipient/anti-spam policy; default on/off; phase gating message_request).
-  - *Spec:* `feature_notifications_reminders(.md/_tech)` vẫn **Draft** ở §B/C/D; chưa có cặp Product/BE `Reviewed` cho session/activity/message notify.
-  - *Dependency (chưa trên default branch):* schema DD-70 (`person_notifications`, `notification_preferences`), DD-71 (`announcements`/tags/quota), DD-72 (`device_push_subscriptions`), DD-55 **phase-2** request box, và session notification types — tất cả chưa merge.
-  - *Open questions in scope:* còn nhiều (§3–§7), chưa đóng.
-- **NEXT_REVIEW_TRIGGER:** owner ratify DD-88 **và** merge core schema DD-70/71/72 lên `main`; sau đó author **một** slice mechanism-named (vd `notif-session-lifecycle-type` hoặc `notif-message-request-global`) rồi mới mở review verdict cho slice đó — không mở slice placeholder chỉ để có chỗ verdict.
+- **Current pin:** live base `main@2dc9b8c760c3b437af08ca1fc5fcbaea1492ad39`; target authority = `docs/standards/decisions.md` DD-88/DD-94 working tree + exact mirror doc này. Base SHA chưa chứa target pack, nên không được dùng làm immutable authority pin. Pin `dfabe1a…` ở header chỉ là snapshot 24/07.
+- **Live-truth:** đã re-verify 28/07 (xem supersession ở header) — canonical Notification Product/BE pair là Reviewed contract; notification/digest runtime và mọi DD-88 extension vẫn chưa land.
+- **Evidence inventory cho một extension tương lai** (không quy ra trạng thái):
+  - *Authority:* exact v2.10 pack chứa DD-94 + reconciled Chat/Assistant/Notification/Player mirrors hiện là working-tree evidence; current Chat verdict chỉ lấy từ primary plan §13.
+  - *Decision:* DD-94 digest đã owner-final; type/subtype, recipient/anti-spam và request lifecycle của session/activity/`message_request`/scoped-bulk DD-88 extensions **cố ý deferred**, không được suy từ proposal này.
+  - *Spec:* `feature_notifications_reminders(.md/_tech)` là Reviewed contract cho core + DD-94; session/activity, `message_request` và scoped-bulk chưa nằm trong implementation slice đã author.
+  - *Dependency (chưa trên default branch):* schema DD-70 (`person_notifications`, `notification_preferences`), DD-71 (`announcements`/tags/quota), DD-72 (`device_push_subscriptions`), DD-55 **phase-2** request box, Session producers và delivery telemetry — tất cả chưa merge/đủ bằng chứng.
+  - *Decision boundary:* exact DD-94 digest đã owner-final; các câu hỏi DD-88 còn lại chỉ reopen theo trigger §10.
+- **Future review inputs:** với Chat initiative, xem primary plan §13; với một DD-88 extension, owner chỉ author mechanism-named slice sau trigger tương ứng ở §10 và pin authority/dependencies/acceptance matrix của chính slice đó.
 
 ---
 
-## 10. Propagation checklist (chạy SAU khi owner ratify DD-88)
+## 10. Delivery gate DD-94 + exact reopen triggers DD-88
 
-> ⛔ **Gate:** KHÔNG chạy bất kỳ dòng nào dưới đây trước khi owner đổi DD-88 `🟡 → ✅` trong `decisions.md`. Hiện tại các doc Reviewed/product chỉ nhận **pointer** (đã làm ở v3.4h). Đây là checklist chờ, không phải authorization.
+| Extension | Gate / reopen trigger | Việc phải author |
+|---|---|---|
+| Offline chat digest (DD-94 final) | Exact v2.10 authority pack đã commit/push/re-pin; trước code phải có Chat realtime/unread + DD-67 route integrity → protected subscription → provider attempts → PWA shell → registration → display/telemetry chain đã merge | `chat-unread-notification-core` dùng `(person,channel,highest_unread_cursor)`, generic push, preference + mark-read cancellation + send-time reauth acceptance; không item/message snapshot |
+| Session lifecycle/activity | Session producers tương ứng đã land | DD/slice riêng cho closed type/subtype, recipient, anti-spam, source-event idempotency và acceptance matrix |
+| `message_request` | DD-55 phase-2 canonical request box đã land | Global type + request lifecycle/source + content-opaque authorized-read contract |
+| Scoped mark-all / bulk read | Core Inbox/read model đã land | Receipt/API migration với canonical fingerprint, server boundary, all-or-nothing, re-authorization và cap 100 |
 
-Khi DD-88 ✅ (ghi ngày + decision version vào từng doc như tiền lệ DD-29/DD-33):
+**Dependency order:** immutable DD-94 authority → Chat unread/safety → DD-67 route integrity → protected subscription → provider attempts → PWA shell → registration → display/telemetry → `chat-unread-notification-core`. Payment plane tách riêng: lifecycle intent → reminder + settled/correction producers → Inbox/detail → thin payment-push adapter. Riêng DD-88 proposals: core DD-70 inbox/read + preference authority trước → từng producer/source dependency → từng extension slice. Không mega-migration, provider thứ hai hoặc tự nâng BRD/PRD/Home/Chat/Session contract từ DD-88.
 
-- [ ] **`decisions.md` DD-88** — đổi header `🟡 Đề xuất` → `✅ Chốt hướng (owner <ngày>)`; registry row status; thêm changelog entry.
-- [ ] **`product/BRD.md`** — FR-6 (notifications): thêm group taxonomy + per-group opt-out + bất biến "Thanh toán/Bảo mật không tắt được"; bảng trạng thái header vẫn "Draft để review" nên chỉ cần khớp wording, không nâng cấp giả.
-- [ ] **`product/PRD.md`** — FLOW 7/8 (notify): mô tả nhóm inbox, session/activity notify, message request (gated DD-55 phase-2), unread bulk/scoped mark-all; changelog row.
-- [ ] **`features/feature_notifications_reminders.md`** — chuyển NTF-OQ-17..20 từ `🟡 Đề xuất` → resolved refs; nhấc group taxonomy + session/activity + message_request + per-group config + unread UX vào body §Domain/§UC/§Screens (giữ §A money rules bất biến); đổi status các mảng liên quan.
-- [ ] **`features/BE/feature_notifications_reminders_tech.md`** — thêm target DDL: mở rộng tenant `type` CHECK (session types) + global `type` CHECK (`message_request`) + preference values; migration monotonic mới (không sửa lịch sử), enforce money/security không có opt-out row.
-- [ ] **`features/feature_home.md`** (Reviewed DD-79) — 🔔 header: mô tả tab/group + badge per-group; cần re-review vì đang Reviewed.
-- [ ] **`features/feature_user_settings.md`** — surface config `notification_preferences` per-Person (DD-70) theo group; per-CLB cho nhóm tenant.
-- [ ] **`features/feature_inapp_chat.md`** — nối `message_request` (phase-2 request box) + chat unread read-model vs inbox; xác nhận không double-store.
-- [ ] **`features/feature_session_management.md`** — ghi rõ session events nào lên notification (lifecycle/activity) + recipient; §5 analytics vs notification tách bạch.
-- [ ] **`standards/business-rules.md`** — nếu cần, thêm BL-NTF cho group opt-out invariant (money/security mandatory).
-- [ ] Chạy `pnpm review:check:changed` + tách **slice mechanism-named** riêng cho từng phần (không mega-slice) rồi mới tới CODE_READY per gate.
+## 11. Changelog
 
-**Thứ tự dependency:** DD-70/71/72 core schema merge trước → session/activity type slice + message_request slice (gated DD-55 phase-2) → per-group config UI → unread bulk/scoped mark-all. Mỗi phần một slice, theo budget gate (§B3).
+| Date | Version | Thay đổi |
+|---|---|---|
+| 2026-07-28 | v1.1 | Supersede v1.0 boundary: DD-88 trở lại broader `DEFERRED_PROPOSAL`; carve exact offline chat digest sang owner-final DD-94. Pin chat-unread source, no durable item/message/body/title/amount snapshot, generic opaque push, DM/mention/reply default ON, club `all\|mentions\|off` default `mentions`, cursor coalescing, mark-read cancellation, dispatch-time auth/safety/preference/device recheck và fail-closed timing config. Current Chat readiness chỉ lấy từ primary plan §13; no runtime/code. |
+| 2026-07-28 | v1.0 | **Historical snapshot, superseded by v1.1.** Khi DD-88 còn được mô tả guardrails-only, packet đã defer offline digest; current authority chuyển exact digest sang DD-94 và giữ DD-88 ở mức broader `DEFERRED_PROPOSAL`. |

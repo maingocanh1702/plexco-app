@@ -1,13 +1,17 @@
 # Feature: Player View (Person-self) — Backend Tech Spec
 
 > **Canonical phase:** P4.6  
-> **Version:** 2.4a · 2026-07-24
+> **Version:** 2.7 · 2026-07-28
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_player_view.md`  
-> **References:** `../../product/TDD.md` §3.4/§4 (person-self contract) · `../../standards/decisions.md` DD-37
+> **References:** `../../product/TDD.md` §3.4/§4 (person-self contract) · `../../standards/decisions.md` DD-37/DD-91 · `../../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md`
 
 > **DD-48 boundary:** endpoints `/api/me*` chỉ self. Cross-user social profile dùng service/DTO trong `feature_user_settings_tech` §6; host operational reads tiếp tục qua tenant-scoped membership/roster authz. Không thêm `:personId` vào player-view API và không share serializer có tiền/PII.
+
+> **DD-91 primary-surface boundary:** `getSelfPaymentStatus` là person-self authority duy nhất cho `/api/me/charges`, exact chat `/pay` và authenticated notification detail. Human DM không có tenant authority (`tenant_id=NULL`), nên phải resolve CLB từ own memberships và dùng opaque actor-bound picker khi mơ hồ. Primitive số học dùng chung là `remainingAmount(amountDue, amountAllocated)`; service giữ fail-closed `unknown` cho authz/integrity/dependency failure và không đổi null/unproven thành 0.
+
+> **Execution ownership:** mechanism slices 17 `player-self-charge-read-core`, 18 `player-self-profile-clubs-read-core`, 19 `player-self-sessions-waitlist-read-core`; thin chat composition là 24 `chat-pay-command-adapter`, 25 `chat-profile-navigation-command-adapters`, 26 `chat-session-command-adapters`. Slice 19 đọc trực tiếp baseline `players/memberships/sessions` đã merge, không hard-depend full SessionService và không sở hữu mutation/business rules. Enable `/sessions|/waitlist` beta vẫn bắt buộc strict current-authority packets `svc-session-crud`, `svc-session-join-leave`, `svc-waitlist-promotion-core` + production-shaped data E2E. Pair vẫn Not started; primary initiative `NOT_PLAN_READY` tới immutable authority re-pin.
 
 > **Cập nhật v2.1 (DD-37 ✅, 2026-07-10):** magic-link/bot surfaces phase-1 = **Zalo + Facebook Messenger** (bỏ Telegram); đăng nhập web = Google/email (DD-13). Person-self contract không đổi.
 
@@ -17,7 +21,10 @@
 
 ```text
 Authenticated session / Magic link → Person resolver
-    → Cross-tenant read (person-self scope) → DTO allowlist
+    → getSelfPaymentStatus (person-self scope) → DTO allowlist
+        → /api/me/charges · exact chat /pay · authenticated notification detail
+    → own profile/clubs read (slice 18)
+    → own sessions/waitlist read over players/memberships/sessions (slice 19)
     → Realtime topic: person:<id> (authorized)
 ```
 
@@ -67,6 +74,11 @@ Uses existing tables: `persons`, `memberships`, `players`, `charges`, `payment_a
 | 10 | Security | Realtime topic guessing | AuthZ per subscription — reject |
 | 11 | Security | Log/analytics contains other-player PII | ❌ NEVER — opaque IDs only |
 | 12 | Cross-Feature | Session revocation after merge | Invalidate old sessions/topics |
+| 13 | Security | Human DM `/pay` có `tenant_id=NULL` | Không derive từ peer/channel; resolve own eligible clubs, auto-select đúng một hoặc trả opaque actor-bound picker |
+| 14 | Privacy | Human-DM peer nhận slash/picker/result | ❌ NEVER — authenticated response requester-only; không shared message/event/history/notification |
+| 15 | Data Integrity | Charge/allocation/authz/dependency không chứng minh được | `SelfPaymentStatus.kind='unknown'`; không null/error→0 |
+| 16 | Security | Client truyền arbitrary `person_id`/raw `tenant_id` | Reject/ignore fail-closed; person từ auth context, club từ trusted channel/notification subject hoặc opaque bound ref |
+| 17 | Enablement | Slice 19 read tests pass nhưng một current Session packet hoặc production-shaped E2E còn thiếu | Deploy/read core dark nếu cần; `/sessions|/waitlist` beta route vẫn OFF |
 
 ---
 
@@ -80,7 +92,7 @@ Uses existing tables: `persons`, `memberships`, `players`, `charges`, `payment_a
 | GET | /api/me/clubs | Authenticated Person | Own memberships |
 | GET | /api/me/clubs/:id | Authenticated Person | Club detail (own data) |
 | GET | /api/me/sessions | Authenticated Person | Upcoming sessions |
-| GET | /api/me/charges | Authenticated Person | Charge/payment status |
+| GET | /api/me/charges | Authenticated Person | Own charge/payment projections grouped by authorized club ref; không nhận raw tenant/person authority |
 | GET | /api/me/requests | Authenticated Person | Join request status |
 | POST | /api/magic-link/consume | Public (with hash) | Consume magic link |
 
@@ -91,7 +103,35 @@ Uses existing tables: `persons`, `memberships`, `players`, `charges`, `payment_a
 **GET `/api/me/charges`** (own charges + allocation status):
 
 ```json
-{ "data": { "charges": [ { "clubName": "…", "amount": 120000, "status": "partial", "allocated": 70000 } ] }, "error": null, "meta": { "requestId": "req_…" } }
+{
+  "data": {
+    "clubs": [
+      {
+        "clubRef": "club_opaque",
+        "clubLabel": "Bestminton",
+        "status": {
+          "kind": "known_amount",
+          "currency": "VND",
+          "totalOutstanding": 50000,
+          "chargeCount": 1,
+          "items": [
+            {
+              "sessionRef": "session_opaque",
+              "startsAt": "2026-07-30T12:00:00Z",
+              "amountDue": 120000,
+              "amountAllocated": 70000,
+              "remaining": 50000,
+              "status": "partial"
+            }
+          ],
+          "asOf": "2026-07-27T12:00:00Z"
+        }
+      }
+    ]
+  },
+  "error": null,
+  "meta": { "requestId": "req_…" }
+}
 ```
 
 - `401` — không có session hợp lệ:
@@ -124,6 +164,59 @@ Uses existing tables: `persons`, `memberships`, `players`, `charges`, `payment_a
 ---
 
 ## 4. Chi tiết triển khai
+
+### Canonical self-payment service (DD-91)
+
+```ts
+type SelfPaymentStatus =
+  | { kind: "known_zero"; currency: "VND"; asOf: string }
+  | {
+      kind: "known_amount";
+      currency: "VND";
+      totalOutstanding: number;
+      chargeCount: number;
+      items: readonly {
+        sessionRef: string;
+        startsAt: string;
+        amountDue: number;
+        amountAllocated: number;
+        remaining: number;
+        status: "open" | "partial";
+      }[];
+      payAction?: { kind: "open_protected_pay"; href: string };
+      asOf: string;
+    }
+  | { kind: "unknown"; reasonCode: string; retryable: boolean };
+
+function remainingAmount(amountDue: number, amountAllocated: number): number {
+  return Math.max(0, amountDue - amountAllocated);
+}
+
+// Signature KHÔNG đổi so với live `packages/core/src/payments-logic.ts:258`:
+// tham số vẫn là `OpenDebt` (`paid_amount?: number | null` — OPTIONAL), guard vẫn
+// kiểm cả `null` lẫn `undefined`. Thu hẹp thành object literal có
+// `paid_amount: number | null` sẽ làm bốn caller hiện có vỡ typecheck, mâu thuẫn
+// với ràng buộc "bốn caller giữ nguyên" của DD-91.
+function effectiveFee(d: OpenDebt): number | null {
+  if (d.fee === null || d.fee === undefined) return null;
+  return remainingAmount(d.fee, d.paid_amount ?? 0);
+}
+```
+
+- `getSelfPaymentStatus(authenticatedPerson, resolvedOwnClub)` nhận person từ verified auth context; không nhận `person_id` từ URL/body/message. `resolvedOwnClub` chỉ đến từ trusted club channel, authenticated notification subject hoặc opaque requester-bound club ref.
+- Chỉ số `amountDue`/`amountAllocated` đã được service chứng minh hợp lệ mới đi vào `remainingAmount`. Missing row/field, allocation không toàn vẹn, authz hoặc dependency failure trả `{kind:"unknown"}`; **không** coerce thành `0`. `effectiveFee` giữ semantics hiện hành: `fee=NULL → NULL`; với fee đã biết, `paid_amount=NULL` mang nghĩa canonical “chưa allocate” rồi mới delegate primitive.
+- `/api/me/charges` enumerate own authorized clubs rồi bọc mỗi kết quả thành `{clubRef, clubLabel, status: SelfPaymentStatus}`; wrapper không chứa raw tenant ID. Exact chat `/pay` và authenticated notification detail gọi cùng service một lần cho trusted/opaque selected club. Ba consumer không có formula/serializer money riêng. `known_zero` chỉ được tạo sau query ledger đầy đủ chứng minh không còn open/partial remaining.
+
+**Human-DM `/pay` tenant resolution (`chat_channels.tenant_id=NULL`):**
+
+| Own eligible clubs | Hành vi |
+|---|---|
+| `0` | Requester-only generic “không có CLB phù hợp”; không tiết lộ tenant |
+| `1` | Server auto-select CLB đó rồi gọi `getSelfPaymentStatus` |
+| `>1` | Trả picker gồm opaque, actor-bound, short-lived club refs; chọn ref mới gọi service |
+| Ref sai actor/hết hạn/replay | Generic invalid/reload picker; không fallback sang raw tenant id |
+
+Slash được intercept trước human-message writer. Peer không nhận slash, picker, result, event hay notification; authenticated response không được persist vào shared chat history.
 
 ### Person-self DTO Allowlist
 
@@ -191,6 +284,14 @@ Bot conversation (Zalo/Messenger) → Verify conversation → Issue magic link
 | 18 | Merge invalidates links | Account merged | Old links invalid |
 | 19 | Merge converges view | 2 persons merged | Combined data |
 | 20 | Log PII check | Request logs | No other-player PII |
+| 21 | Remaining primitive | amountDue=120000, amountAllocated=70000 | `remainingAmount(...) = 50000` |
+| 22 | Effective fee delegation | fee null vs known fee + null paid | null fee → null; known fee delegates với allocated=0 |
+| 23 | Canonical consumer parity | Cùng person/club snapshot qua web, `/pay`, notification detail | Cùng `SelfPaymentStatus`/remaining/status |
+| 24 | Unknown fail-closed | Authz/integrity/dependency error hoặc unproven field | `kind='unknown'`, không amount 0/no-debt |
+| 25 | Human-DM picker isolation | Requester có 2 clubs, peer đang mở DM | Chỉ requester nhận opaque actor-bound picker/result; peer/shared history nhận 0 artifact |
+| 26 | Arbitrary ID rejection | Body/message có other `person_id` hoặc raw `tenant_id` | Không ảnh hưởng resolver; reject generic, không leak |
+| 27 | Sessions/waitlist baseline read | Own active/left memberships + upcoming players/waitlist rows | Chỉ own DTO; không đọc roster người khác hoặc gọi mutation rule |
+| 28 | Session adapter boundary | `/sessions|/waitlist` qua slice 26 | Adapter delegate slice 19; không duplicate join/leave/promotion logic |
 
 ### Integration Tests
 
@@ -200,6 +301,10 @@ Bot conversation (Zalo/Messenger) → Verify conversation → Issue magic link
 | 2 | Magic link E2E | Zalo/Messenger → magic link → /me | Works |
 | 3 | Merge → view update | Merge 2 persons → /me | Combined |
 | 4 | Realtime update | Join session → /me update | SSE received |
+| 5 | Self-payment parity E2E | Seed one own partial charge → web + club `/pay` + notification detail | Ba surface cùng status/remaining từ canonical service |
+| 6 | Human-DM `/pay` privacy E2E | Requester có 2 clubs, peer khác person | Requester picker→result; peer và shared history không có command/result |
+| 7 | Dependency failure E2E | Ledger read unavailable | Mọi surface trả generic `unknown`/retry; không surface hiển thị 0 |
+| 8 | Sessions/waitlist production-shaped data E2E | Current `svc-session-crud` + `svc-session-join-leave` + `svc-waitlist-promotion-core` packets, active/left/waitlisted fixtures | Own DTO đúng authority; route beta chỉ enable khi cả ba packets và E2E pass |
 
 ---
 
@@ -207,10 +312,12 @@ Bot conversation (Zalo/Messenger) → Verify conversation → Issue magic link
 
 ### Rollout
 
-1. Web-authenticated /me only (Google/email — DD-13)
-2. Magic link support (Zalo/Messenger)
-3. Realtime topic
-4. Cross-club summary
+1. Slice 16 `core-payment-remaining-primitive` land trước; slice 17 thêm canonical `getSelfPaymentStatus`/own charges và parity tests.
+2. Slice 18 `player-self-profile-clubs-read-core` cho `/api/me` + `/api/me/clubs`; không gộp charge/session logic.
+3. Slice 19 `player-self-sessions-waitlist-read-core` author read-only từ baseline `players JOIN memberships JOIN sessions`; không chờ full SessionService và không thêm join/leave/promotion mutation.
+4. Giữ web auth/magic link/realtime person-self boundary hiện hành; mỗi route/adapter vẫn cần packet riêng và không được suy implementation từ spec.
+5. Sau slash registry/requester-only mechanism slices 22/23, slices 24/25/26 lần lượt delegate `/pay`, `/me|/myclubs|/discover|/name`, `/sessions|/waitlist`; adapter không re-derive domain state.
+6. Enable `/sessions|/waitlist` beta chỉ sau strict current-authority packets `svc-session-crud`, `svc-session-join-leave`, `svc-waitlist-promotion-core` và integration #8 trên production-shaped data đều xanh. Trước gate này route giữ OFF dù slice 19 compile/test read-only.
 
 ### Metrics
 
@@ -223,6 +330,9 @@ Bot conversation (Zalo/Messenger) → Verify conversation → Issue magic link
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v2.7 | Mirror exact read owners 17–19 và thin chat adapters 24–26; pin slice 19 authorable từ merged baseline nhưng `/sessions|/waitlist` beta giữ OFF tới ba strict current Session packets + production-shaped data E2E. Add unit #27–28/integration #8; pair remains Not started/no runtime authorization. |
+| 2026-07-27 | v2.6 | Sửa signature `effectiveFee` trong §snippet: v2.5 viết tham số thành object literal `{ fee: number \| null; paid_amount: number \| null }`, thu hẹp so với live `OpenDebt` (`paid_amount?` OPTIONAL, `payments-logic.ts:258`) và bỏ guard `undefined`. Implement đúng chữ sẽ làm bốn caller hiện có (`coverRemaining`, `classifyDeposit`, `classifyIncoming`, `classifyCoverage`) vỡ typecheck — trái ràng buộc "bốn caller giữ nguyên" của DD-91. Chỉ sửa contract snippet; không đổi semantics, không đổi status. |
+| 2026-07-27 | v2.5 | Mirror DD-91: pin `remainingAmount`/`effectiveFee` delegation, canonical `getSelfPaymentStatus` cho web/chat/notification, human-DM opaque requester-only picker và fail-closed `unknown`; thêm parity/privacy/ID-rejection tests. Giữ Reviewed/not implemented. |
 | 2026-07-24 | v2.4a | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): Live-schema truth header + numbering guidance hard-pinned `migrations 0000–0018` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v2.4 | **Reconcile migration-tail 0018:** current-state §2 migration facts sửa: (a) `tail = 0014_players_waitlist` → **tail = 0018** (`0018_oauth_completion_handoff.sql`; migrations 0000–0018 đã merge trên `main` — 0014 waitlist schema-only, lane auth DD-80 0015–0018 ⛔ chưa enable); (b) "Live-schema truth (main, migrations `0000`–`0014`)" range → `0000`–`0018` (nhất quán, tránh mâu thuẫn với tail). Numbering guidance giữ nguyên (next-available monotonic sau synced tail, verify live `packages/db/migrations/` trước khi tạo, không hardcode/sửa lịch sử). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.3 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (`magic_links` đã có ở `0001` — reuse baseline, DROP ❌ NEVER; channel values không cần DDL), §3 Request/Response Examples (DD-60) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |

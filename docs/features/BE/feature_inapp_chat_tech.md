@@ -1,15 +1,19 @@
 # Feature: In-app Chat (club-wide + 1-1) — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.16 · 2026-07-22
-> **Status:** ✅ DD-38 chốt (2026-07-10) — Draft, pending migration (schema aligned với `packages/db/schema.ts`)
+> **Version:** 0.22 · 2026-07-28
+> **Status:** ✅ Reviewed contract — DD-38/DD-55/DD-86/DD-91/DD-92/DD-93/DD-94/DD-95 ratified; pending migration
 > **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
-> **Product spec:** `../feature_inapp_chat.md` *(Draft)*
-> **References:** `../../standards/decisions.md` DD-38 (chat cơ bản phase-1) · DD-55 (open-DM safety + media) · DD-56 (capability registry) · DD-86 (multi-channel proposal) · DD-19/DD-20 (trợ lý tái dùng hạ tầng chat) · DD-07 (SSE + LISTEN/NOTIFY) · `../BE/feature_multi_tenant_tech.md` (RLS template) · `../BE/feature_sync_engine_tech.md` (realtime authz)
+> **Product spec:** `../feature_inapp_chat.md` *(Reviewed)*
+> **References:** `../../standards/decisions.md` DD-38 (chat cơ bản phase-1) · DD-55 (open-DM safety + media) · DD-56 (capability registry) · DD-86 (multi-channel final) · DD-91 (requester-only `/pay`) · DD-92 (conversation interactions/search) · DD-93 (slash registry) · DD-94 (unread-derived notification/digest) · DD-95 (club moderation) · DD-19/DD-20 (trợ lý tái dùng hạ tầng chat) · DD-07 (SSE + LISTEN/NOTIFY) · `../BE/feature_multi_tenant_tech.md` (RLS template) · `../BE/feature_sync_engine_tech.md` (realtime authz)
 
 > ✅ **DD-38 chốt (2026-07-10).** Schema dưới đây là **thiết kế đã pin** (ràng buộc trong DD-38: 2 loại channel, DM guard, dedupe theo `client_msg_id`); nguồn authoritative khi thực thi vẫn là `packages/db/schema.ts` + `packages/db/migrations/*.sql` (**thêm `chat_*` + RLS bằng migration monotonic mới sau migration canonical mới nhất tại lúc build**) + `decisions.md` DD-38. **KHÔNG** tạo bảng song song với `persons/memberships/tenants`.
 
-> 🟡 **DD-86 proposal boundary (2026-07-22):** DDL DD-38 bên dưới mô tả baseline một club channel/tenant, nhưng migration chat đang **HOLD**. Nếu owner chốt Option B, root slice `dd38-dd86-chat-schema-core` phải author **final multi-channel schema trực tiếp**; không land one-channel index rồi sửa lịch sử. DD-86 chưa phải authority, `PLAN_READY`, `CODE_READY` hay runtime proof.
+> ✅ **DD-86 final boundary (2026-07-28):** root `dd38-dd86-chat-schema-core` phải author **final Option-B multi-channel schema trực tiếp**; không land one-channel index rồi sửa lịch sử. DD-86 is `DECISION_FINAL`, but root remains **HOLD** until pre-root DM safety authority, exact `chat_definer` provisioning and their readiness packets land. Reviewed docs are not `PLAN_READY`, `CODE_READY` or runtime proof.
+
+> ✅ **DD-91 mirror (2026-07-27):** registered requester-only slash như `/pay` chạy qua authenticated synchronous command endpoint với `Cache-Control: private, no-store`, không qua Assistant/bot writer và không ghi command/result vào `chat_messages`, result row/ref, SSE, outbox, push hoặc shared history. Human-DM peer quan sát zero message/event/unread. Normal message endpoint phải classifier-reject registered requester-only slash **trước** mọi INSERT/NOTIFY.
+
+> ✅ **Owner-final Chat v1 floor (2026-07-28):** DD-92 chốt reply/mention, exact Unicode reactions, own-edit/soft-delete và search bắt buộc trước beta; DD-93 chốt registry ASCII case-insensitive gồm tám command theo surface; DD-94 chốt unread-derived generic push/digest không snapshot; DD-95 chốt club-only hide/restore + timed mute với receipt/audit. Các quyết định đã final nhưng chưa tạo runtime trên `main`.
 
 ---
 
@@ -17,7 +21,8 @@
 
 ```text
 Surface (web/app Plexco) → SendMessageCommand(client_msg_id, channel, actor)
-    → AuthZ (member of channel) → Insert chat_messages (idempotent) → NOTIFY topic
+    → AuthZ (active member; admins_only additionally exact capability)
+        → Insert chat_messages (idempotent) → NOTIFY topic
         → SSE fan-out (web_realtime) → subscribers of that channel
 ```
 
@@ -30,10 +35,14 @@ Chat **chỉ sống trong Plexco** (web + app surface). **KHÔNG bridge** ra gro
 - Anti-spam: rate-limit per (person, channel) + cap kích thước message.
 - **DD-55 hard gate:** open DM remains disabled until block, report, per-sender/per-target throttles, and abuse audit all pass. Host/support/tenant-admin roles never gain DM read access.
 - **DD-55 media:** private object storage + short-lived signed access + content-derived MIME/type/size/quota checks + malware scan + moderation + deletion/orphan lifecycle. A message can attach only an actor-owned object in `ready` state.
+- **DD-92 conversation floor:** same-channel authorized reply; immutable structured mentions; one active Unicode reaction/person/message from exact `👍|❤️|😂|😮|😢|🙏`; own human body edit `<15m` and at most five revisions; author soft-delete anytime to an irreversible shared tombstone; current-visible authorized search is a required pre-beta slice.
+- **DD-93 slash registry:** ASCII case-insensitive exact whole-input command, zero arguments and no aliases. `/help|/pay|/me|/myclubs|/discover|/name` work on every eligible Chat surface; `/sessions|/waitlist` additionally work in club channel/private Club Bot only. Every unsupported/unknown/arg command is requester-only and rejected before insertion; `/help` is derived from the post-authz registry.
+- **DD-94 unread/notification boundary:** Chat read cursors are the only unread source. Push/digest is generic and opaque, coalesces by person+channel+highest unread cursor, and never stores message body/title/amount snapshot. Timing config is enablement-only and absent/untested means OFF; DD-88 remains a broader deferred proposal.
+- **DD-95 moderation floor:** club-only human-message hide/restore and exact `1h|24h|7d` channel mute through exact capabilities and actor-scoped receipts. Reason code/note and actor are immutable append-only audit. No DM moderation/read, assistant/system target, moderator content edit, hard delete, permanent ban or system-message side effect.
 
-### DD-55 design-probe gates before migration
+### DD-55 design-probe gates before root chat schema
 
-The existing `chat_*` DDL below covers text/DM invariants. Before authoring its migration, the chat slice must also map these finite state machines and pin exact storage constraints; do not bolt media or abuse checks onto scattered endpoints.
+The existing `chat_*` DDL below covers text/DM invariants, but its dependency order is strict. Actual DB worktrees serialize `chat-definer-role-provisioning → chat-dm-safety-authority-core → dd38-dd86-chat-schema-core → tenant-capability-authority-core`: the four slices share the migration tail, schema mirror, DB catalog tests and schema/authz invariants. Capability core owns the canonical DD-56 registry/preset, expiring/revocable grant-read authority, **append-only grant audit** and fail-closed `authorize`; Chat never creates a local registry. After `chat-club-channel-lifecycle-core`, stable catalog slice 9 `chat-authorized-member-target-read-core` must land its opaque current-channel DTO + consume-time resolver **before** slice 6 moderation, slice 7 shared send and slice 8 DM lifecycle. DD-95 moderation then lands mute storage/writers/audit **dark**, shared core owns the single send/history/mark-read path, and DM lifecycle alone owns create/reuse/block/report. Catalog IDs are not execution order. Bounded mechanism slices `1–47` own no HTTP route; every route belongs to one `A1–A21` thin adapter. Do not place a policy/function reference to storage that is created later, or bolt media/abuse checks onto scattered endpoints.
 
 ```text
 DM request: blocked? -> deny | safety gates unavailable? -> deny | limits pass -> create/reuse DM
@@ -43,20 +52,74 @@ Report: submitted -> triaged -> actioned | closed  (audit append-only; no tenant
 
 One canonical DM safety decision owns enablement, pair block state, per-sender/per-target limits and abuse audit, and is called at request/create/**SECURITY DEFINER bootstrap**/send/read boundaries. The pre-send core additionally checks membership and attachment readiness/ownership before writing. No endpoint or RPC may implement or bypass its own block formula.
 
-### Conditional DD-86 delta (chỉ áp dụng sau owner ratification)
+### DD-91 requester-only slash overlay
+
+- A registered requester-only slash is control input, not chat content. `/api/chat/channels/:id/messages` runs the exact command-registry classifier before `send_chat_message`; a match returns `CHAT_COMMAND_ROUTE_REQUIRED` with zero insert/rate-consume/NOTIFY/unread mutation.
+- `POST /api/chat/commands/execute` resolves actor from the verified session and authorizes the referenced surface. It never invokes the Assistant/bot writer. The direct response is a typed ephemeral UI outcome with `Cache-Control: private, no-store`; no result identifier or replay/read endpoint exists.
+- Human DM rows have `tenant_id=NULL`. `/pay` therefore asks the canonical person-self service for requester-owned eligible clubs: one → select server-side; many → return requester-only choices carrying short-lived opaque selectors; none → generic `no_eligible_club`. A selector binds actor + DM channel + eligible tenant + command (+ expiry); the API does not accept a raw tenant ID as authority.
+- Result data comes from the canonical Player View/self-payment adapter at request time. The chat module does not derive money, copy debt formulae or persist the returned status. Peer-visible history, SSE, unread and notifications remain byte-for-byte unchanged.
+
+### DD-86 final multi-channel contract
 
 - Giữ `kind IN ('club','dm')`; bỏ one-channel-per-tenant index. Club thêm `title`, `sort_order`, `post_policy`, `is_default`, `assistant_enabled`, `created_by_membership_id`, `created_by_person_id`; DM CHECK bắt `tenant_id` và mọi club-only/creator field là `NULL`.
-- Creator dùng composite FK `(created_by_membership_id, created_by_person_id, tenant_id) → memberships(id, person_id, tenant_id)`; không dùng một membership id cho FK ba cột.
+- Creator dùng composite FK `(created_by_membership_id, created_by_person_id, tenant_id) → memberships(id, person_id, tenant_id)`; không dùng một membership id cho FK ba cột. Cặp `NULL/NULL` chỉ hợp lệ trong exact system-bootstrap command, không phải client/admin escape hatch.
 - Partial unique `(tenant_id) WHERE kind='club' AND is_default AND archived_at IS NULL` chỉ chặn **at-most-one**. Create/set-default/archive chạy dưới tenant parent lock và deferred assertion để bảo đảm **exactly-one active default**; archive default bắt buộc replacement cùng transaction.
 - Tạo club channel và activation membership đều upsert đủ membership × active-channel trong cùng transaction, retry-safe; lỗi giữa chừng rollback. `UNIQUE(channel_id, membership_id)`/equivalent là replay fence.
-- Channel mutations dùng guarded commands với action→capability registry DD-56 (`chat.channel.manage`, `chat.channel.post_restricted`), không dựa vào `chat_members.role` làm tenant authority. Capability registry unavailable/unknown → deny.
+- Channel lifecycle create/rename/set-default/archive dùng duy nhất `chat.channel.manage`; shared-message core dùng `chat.channel.post_restricted` chỉ khi `post_policy='admins_only'`. `all_members` vẫn bắt active channel membership. Không dựa vào `chat_members.role`; registry unavailable/unknown → deny.
 - Mỗi create/rename/set-default/archive nhận actor-scoped UUID idempotency key + request fingerprint; exact replay trả receipt cũ, cùng key khác payload → `CHAT_IDEMPOTENCY_MISMATCH`.
+- Chat moderation owns `chat.message.moderate`/`chat.member.mute`; DD-86 lifecycle không tự cấp hoặc suy hai capability này.
+- `create_club_channel` derives `assistant_enabled=true` for `post_policy='all_members'` and `false` for `post_policy='admins_only'`. Exact `chat.channel.manage` may mutate the setting on either kind; accepting `true` and every ingress/projector consume additionally require tenant config, exact `assistant_ai_kb` entitlement, provider and privacy gates. Any false/unknown yields zero bot effect. “Announcements” has no hidden special case beyond being an `admins_only` channel with default `false`.
+
+### DD-92 conversation interaction/search contract
+
+- `send_chat_message` nhận optional reply ref + immutable mention targets. Reply ref phải ở cùng channel, requester đang authorized và target chưa moderation-hide/author-delete tại send time; ngược lại reject toàn transaction. Nếu target bị tombstone sau đó, reply renderer chỉ trả tombstone metadata, không body/attachment cũ.
+- Mention input là typed target, không parse authority từ body. Core resolve target trong current channel, persist immutable target ref + sanitized render snapshot atomically với message; không có update path.
+- `target_assistant_key='club_assistant'` chỉ là immutable addressed target trong club channel, không phải provider authorization. Projector phải re-check sender membership, current message/channel visibility, DD-86 channel setting và toàn bộ DD-20/DD-21 tenant/entitlement/provider/privacy gates; false/unknown yields zero `bot_query`/provider/message.
+- Reaction endpoint expresses desired state: one of exact Unicode `👍|❤️|😂|😮|😢|🙏` or remove. Under message lock it upserts exactly one row per `(message,person)`, atomically replaces another value, and treats same-value/remove-absent retry as success.
+- Edit chỉ cho chính tác giả của human message, khi `statement_timestamp() < created_at + interval '15 minutes'` và `edit_count < 5`. Chỉ `body` được đổi; author/channel/reply/attachments/mentions bất biến. Mỗi accepted edit khóa message, append old body vào restricted `chat_message_revisions`, rồi update body/search vector atomically. Assistant/system message không có edit path.
+- Author có thể soft-delete own human message bất kỳ lúc nào. Lệnh này một chiều/idempotent, giữ row/refs/audit nhưng mọi shared renderer trả tombstone; author không restore. Moderator restore không được phục hồi author-deleted message.
+- Search là slice riêng nhưng **bắt buộc trước beta**: optional current-readable channel filter; query only current visible body in channels requester can read at execution; generated PostgreSQL `to_tsvector('simple', body)` plus `plainto_tsquery('simple', q)` is the sole canonical index/query pair. Exclude moderator/author tombstones, revision bodies, requester-only slash inputs/results and private Club Bot results. Authz/RLS is live at query time, never from cached channel IDs.
+
+### DD-93 slash grammar and surface matrix
+
+The classifier runs before every normal send and treats any leading slash as command control input. It applies ASCII case-folding only, accepts one exact whole-input canonical command with zero arguments and no aliases; non-ASCII lookalikes do not normalize into commands.
+
+| Canonical command | Club channel | Private Club Bot | Human DM overlay |
+|---|:---:|:---:|:---:|
+| `/help`, `/pay`, `/me`, `/myclubs`, `/discover`, `/name` | ✅ | ✅ | ✅ |
+| `/sessions`, `/waitlist` | ✅ | ✅ | ❌ private `CHAT_COMMAND_UNSUPPORTED_SURFACE` |
+
+ASCII case variants route to the same canonical command. Alias, unknown command, any argument/tail token or unsupported human-DM surface returns a requester-only error/help response and creates zero message/rate/NOTIFY/unread mutation. `/help` enumerates only commands authorized for that requester+surface from this same registry after authz; there is no second handwritten command list.
+
+### DD-94 unread and Notification boundary
+
+Chat history ordering/keyset is the immutable pair `(created_at,id)` and Chat keeps the canonical per-person/channel read cursor. Reconnect, history catch-up, unread, badge and notification eligibility derive from this state; Notification never owns a parallel unread counter or durable message/body/title/amount snapshot.
+
+- DM notifications default ON. Club channel preference is exact `all|mentions|off`, default `mentions`: `all` makes every unread message eligible, `mentions` only a direct structured mention or direct reply, and `off` none. Thus direct mention/reply is ON by default without creating a second preference source.
+- Pending delivery/digest work coalesces by `(person_id,channel_id,highest_unread_cursor)`. Advancing read state cancels any pending work whose cursor is now obsolete.
+- Payload is generic/opaque (“Bạn có tin nhắn mới”), contains only an opaque deep-link/ref and never chat content, club title, sender name, debt/amount or attachment metadata.
+- Immediately before provider write, the worker re-checks current club membership or DM block+safety, effective preference, device validity and current session/trust epoch. Any false/unknown cancels; no send.
+- Retry/ambiguous provider outcome is sticky under one attempt identity and must not duplicate delivery. Digest timing/config is enablement-only; missing or untested config keeps that route OFF. DD-88 remains a broader proposal and neither owns nor blocks this exact DD-94 slice.
+
+### DD-95 club moderation contract
+
+- Target must be a human-authored message in `kind='club'`. Hide/restore requires exact `chat.message.moderate`; timed mute requires exact `chat.member.mute`. Both re-check current tenant/channel target and active capability inside the mutation transaction; unknown/unavailable denies.
+- Hide/restore affects only moderation visibility state and renders/removes the moderation tombstone; it never edits or hard-deletes body and cannot restore an author-deleted message. Timed mute accepts only exact `1h|24h|7d`; expiry is computed from DB time and send checks DB time. Mute blocks write, never read.
+- Every action requires reason code from exact `spam|harassment|unsafe|off_topic|other`; `other` requires a bounded note while every non-`other` action rejects a note. It also requires actor-scoped UUID command id + canonical fingerprint over action/target/reason/duration. Exact replay returns fixed receipt; same key/different fingerprint rejects before mutation. Each newly accepted action writes exactly one append-only immutable actor/reason/note/duration audit event.
+- Every DM, assistant/system target, hard-delete, moderator content-edit, permanent-ban or system-message side effect is structurally unsupported and returns generic deny without content disclosure.
+
+### Current-channel safe member-target contract
+
+- `chat-authorized-member-target-read-core` is the only target lookup/resolution owner. It lists **active human members in the already-authorized current club channel** as `{targetRef, safeLabel}`; the ref is opaque, short-lived and bound to requester + channel + intended target class.
+- The DTO never exposes raw `person_id`/membership UUID, phone/email, gender, debt, `pay_code`, contact handles or a global people-search oracle. There is no free-text/fuzzy target lookup endpoint.
+- Structured mention, timed mute and start-DM accept only the opaque current-channel ref and call the same consume-time resolver. Each consumer re-checks current tenant/channel membership, target activity and the action-specific block/capability/safety guard inside its transaction.
+- A stale, wrong-actor, wrong-channel, cross-tenant or replayed ref fails generically before message, moderation, DM, audit or notification mutation. Safe display labels are presentation snapshots, never authority.
 
 ---
 
-## 2. Database Schema + Edge Cases (BE) — proposal
+## 2. Database Schema + Edge Cases (BE) — target contract
 
-### Schema (đề xuất, trỏ schema.ts/migrations khi thực thi)
+### Schema (Reviewed target; trỏ schema.ts/migrations khi thực thi)
 
 ```sql
 -- FK target phụ (BẮT BUỘC tạo TRƯỚC chat_members/chat_messages): PK(id) không đủ
@@ -69,14 +132,45 @@ CREATE TABLE chat_channels (
   tenant_id uuid REFERENCES tenants(id),           -- NOT NULL cho 'club'; NULL cho 'dm'
   kind text NOT NULL CHECK (kind IN ('club','dm')),
   dm_key text,                                     -- 'least(a,b):greatest(a,b)' của 2 person cho 'dm'
+  title text,
+  is_default boolean,
+  sort_order integer,
+  created_by_membership_id uuid,
+  created_by_person_id uuid,
+  creation_origin text,
+  post_policy text,
+  assistant_enabled boolean,
   archived_at timestamptz,                          -- soft-close DM (thay cho xoá member)
   created_at timestamptz NOT NULL DEFAULT now(),
-  CHECK ((kind = 'club' AND tenant_id IS NOT NULL AND dm_key IS NULL)
-      OR (kind = 'dm'   AND tenant_id IS NULL     AND dm_key IS NOT NULL)),
+  CHECK (
+    (kind = 'club'
+      AND tenant_id IS NOT NULL AND dm_key IS NULL
+      AND title IS NOT NULL AND is_default IS NOT NULL AND sort_order IS NOT NULL
+      AND creation_origin IN ('actor','system_bootstrap')
+      AND post_policy IN ('all_members','admins_only')
+      AND assistant_enabled IS NOT NULL)
+    OR
+    (kind = 'dm'
+      AND tenant_id IS NULL AND dm_key IS NOT NULL
+      AND title IS NULL AND is_default IS NULL AND sort_order IS NULL
+      AND created_by_membership_id IS NULL AND created_by_person_id IS NULL
+      AND creation_origin IS NULL
+      AND post_policy IS NULL AND assistant_enabled IS NULL)
+  ),
+  CHECK ((created_by_membership_id IS NULL) = (created_by_person_id IS NULL)),
+  CHECK (
+    kind <> 'club'
+    OR (creation_origin='actor' AND created_by_membership_id IS NOT NULL)
+    OR (creation_origin='system_bootstrap' AND created_by_membership_id IS NULL)
+  ),
+  FOREIGN KEY (created_by_membership_id, created_by_person_id, tenant_id)
+    REFERENCES memberships(id, person_id, tenant_id),
   UNIQUE (dm_key),                                 -- idempotent tạo DM (1 kênh/cặp)
   UNIQUE (id, tenant_id)                           -- FK target cho child (bind message/member ↔ tenant channel)
 );
-CREATE UNIQUE INDEX chat_channels_club_uq ON chat_channels(tenant_id) WHERE kind = 'club';
+CREATE UNIQUE INDEX chat_channels_default_uq
+  ON chat_channels(tenant_id)
+  WHERE kind='club' AND is_default IS TRUE AND archived_at IS NULL;
 
 CREATE TABLE chat_members (
   channel_id uuid NOT NULL REFERENCES chat_channels(id),
@@ -84,7 +178,8 @@ CREATE TABLE chat_members (
   person_id  uuid NOT NULL REFERENCES persons(id),
   membership_id uuid,                              -- club: NOT NULL; dm: NULL
   role text NOT NULL DEFAULT 'member' CHECK (role IN ('member','admin')),
-  last_read_at timestamptz,
+  last_read_created_at timestamptz,
+  last_read_message_id uuid,
   joined_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (channel_id, person_id),
   -- (a) bind member.tenant_id = channel.tenant_id (club enforce; dm tenant_id NULL → FK MATCH SIMPLE bỏ qua)
@@ -93,7 +188,8 @@ CREATE TABLE chat_members (
   FOREIGN KEY (membership_id, person_id, tenant_id) REFERENCES memberships(id, person_id, tenant_id),
   -- (c) shape: club ⇒ (tenant_id, membership_id) NOT NULL; dm ⇒ cả hai NULL
   CHECK ((tenant_id IS NOT NULL AND membership_id IS NOT NULL)
-      OR (tenant_id IS NULL     AND membership_id IS NULL))
+      OR (tenant_id IS NULL     AND membership_id IS NULL)),
+  CHECK ((last_read_created_at IS NULL) = (last_read_message_id IS NULL))
 );
 
 CREATE TABLE chat_messages (
@@ -104,21 +200,200 @@ CREATE TABLE chat_messages (
   author_person_id uuid REFERENCES persons(id),
   membership_id uuid,                              -- club person: NOT NULL & khớp author; assistant/system: NULL
   body text NOT NULL,
+  reply_to_message_id uuid,
+  edited_at timestamptz,
+  edit_count smallint NOT NULL DEFAULT 0 CHECK (edit_count BETWEEN 0 AND 5),
+  author_deleted_at timestamptz,
+  moderation_state text NOT NULL DEFAULT 'visible'
+    CHECK (moderation_state IN ('visible','hidden')),
+  moderation_updated_at timestamptz,
+  moderation_actor_person_id uuid REFERENCES persons(id),
+  moderation_reason_code text
+    CHECK (
+      moderation_reason_code IS NULL
+      OR moderation_reason_code IN ('spam','harassment','unsafe','off_topic','other')
+    ),
   client_msg_id text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
+  search_document tsvector GENERATED ALWAYS AS (
+    to_tsvector('simple'::regconfig, coalesce(body, ''))
+  ) STORED,
   -- Dedupe ĐỘC LẬP author (assistant/system author_person_id NULL vẫn dedupe):
   UNIQUE (channel_id, client_msg_id),
+  UNIQUE (channel_id, id),
+  UNIQUE (channel_id, created_at, id),
   -- (a) bind message.tenant_id = channel.tenant_id (club enforce; dm NULL → bỏ qua)
   FOREIGN KEY (channel_id, tenant_id) REFERENCES chat_channels(id, tenant_id),
   -- (b) author membership khớp ĐÚNG (author_person_id, tenant_id) khi là club person; assistant/system NULL → bỏ qua
   FOREIGN KEY (membership_id, author_person_id, tenant_id) REFERENCES memberships(id, person_id, tenant_id),
+  FOREIGN KEY (channel_id, reply_to_message_id) REFERENCES chat_messages(channel_id, id),
+  CHECK (reply_to_message_id IS NULL OR reply_to_message_id IS DISTINCT FROM id),
+  CHECK (
+    (moderation_state='visible' AND moderation_updated_at IS NULL
+      AND moderation_actor_person_id IS NULL AND moderation_reason_code IS NULL)
+    OR
+    (moderation_state='hidden' AND moderation_updated_at IS NOT NULL
+      AND moderation_actor_person_id IS NOT NULL AND moderation_reason_code IS NOT NULL)
+  ),
   CHECK (author_type <> 'person' OR author_person_id IS NOT NULL),  -- person ⇒ author_person_id NOT NULL
   CHECK (author_type =  'person' OR author_person_id IS NULL),      -- assistant/system ⇒ author_person_id NULL
   CHECK (author_type = 'person' OR membership_id IS NULL),          -- assistant/system: membership NULL (DD-20)
   CHECK (author_type <> 'person' OR tenant_id IS NULL OR membership_id IS NOT NULL) -- club person phải có membership
 );
-CREATE INDEX idx_chat_messages_channel_time ON chat_messages(channel_id, created_at);
+CREATE INDEX idx_chat_messages_channel_time ON chat_messages(channel_id, created_at, id);
+CREATE INDEX idx_chat_messages_search_simple
+  ON chat_messages USING gin(search_document)
+  WHERE moderation_state='visible' AND author_deleted_at IS NULL;
+ALTER TABLE chat_members
+  ADD FOREIGN KEY (channel_id, last_read_created_at, last_read_message_id)
+  REFERENCES chat_messages(channel_id, created_at, id);
+
+CREATE TABLE chat_message_mentions (
+  channel_id uuid NOT NULL,
+  message_id uuid NOT NULL,
+  mention_ordinal integer NOT NULL CHECK (mention_ordinal >= 0),
+  target_kind text NOT NULL CHECK (target_kind IN ('person','assistant')),
+  target_person_id uuid REFERENCES persons(id),
+  target_assistant_key text,
+  render_label_snapshot text NOT NULL,
+  PRIMARY KEY (message_id, mention_ordinal),
+  FOREIGN KEY (channel_id, message_id) REFERENCES chat_messages(channel_id, id),
+  CHECK (octet_length(render_label_snapshot) BETWEEN 1 AND 256),
+  CHECK ((target_kind='person' AND target_person_id IS NOT NULL
+          AND target_assistant_key IS NULL)
+      OR (target_kind='assistant' AND target_person_id IS NULL
+          AND target_assistant_key='club_assistant'))
+);
+
+CREATE TABLE chat_message_reactions (
+  channel_id uuid NOT NULL,
+  message_id uuid NOT NULL,
+  person_id uuid NOT NULL REFERENCES persons(id),
+  reaction text NOT NULL CHECK (reaction IN ('👍','❤️','😂','😮','😢','🙏')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (message_id, person_id),
+  FOREIGN KEY (channel_id, message_id) REFERENCES chat_messages(channel_id, id)
+);
+
+CREATE TABLE chat_message_revisions (
+  message_id uuid NOT NULL REFERENCES chat_messages(id),
+  revision_no smallint NOT NULL CHECK (revision_no BETWEEN 1 AND 5),
+  previous_body text NOT NULL,
+  edited_by_person_id uuid NOT NULL REFERENCES persons(id),
+  edited_at timestamptz NOT NULL DEFAULT statement_timestamp(),
+  PRIMARY KEY (message_id, revision_no)
+);
+
+-- DD-94 SLICE ONLY: neither root schema nor shared-message slice creates/uses these tables.
+CREATE TABLE chat_notification_preferences (
+  channel_id uuid NOT NULL,
+  tenant_id uuid NOT NULL,
+  person_id uuid NOT NULL REFERENCES persons(id),
+  club_mode text NOT NULL DEFAULT 'mentions' CHECK (club_mode IN ('all','mentions','off')),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (channel_id, person_id),
+  FOREIGN KEY (channel_id, tenant_id) REFERENCES chat_channels(id, tenant_id)
+);
+
+-- Opaque delivery coordination only: no message body/title/sender/amount/object snapshot.
+CREATE TABLE chat_notification_dispatches (
+  person_id uuid NOT NULL REFERENCES persons(id),
+  channel_id uuid NOT NULL REFERENCES chat_channels(id),
+  highest_unread_created_at timestamptz NOT NULL,
+  highest_unread_message_id uuid NOT NULL,
+  delivery_kind text NOT NULL CHECK (delivery_kind IN ('push','digest')),
+  state text NOT NULL CHECK (state IN ('pending','in_flight','delivered','unknown','cancelled')),
+  attempt_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (
+    person_id, channel_id, highest_unread_created_at, highest_unread_message_id
+  ),
+  FOREIGN KEY (channel_id, highest_unread_created_at, highest_unread_message_id)
+    REFERENCES chat_messages(channel_id, created_at, id),
+  CHECK (
+    (state='pending' AND attempt_id IS NULL)
+    OR (state IN ('in_flight','delivered','unknown') AND attempt_id IS NOT NULL)
+    OR state='cancelled'
+  )
+);
+
+-- Owned by post-root `chat-club-moderation-core`, which lands dark before
+-- `chat-shared-message-command-core`; shown here only as part of the final-target view.
+CREATE TABLE chat_channel_mutes (
+  channel_id uuid NOT NULL,
+  tenant_id uuid NOT NULL,
+  target_person_id uuid NOT NULL REFERENCES persons(id),
+  muted_by_person_id uuid NOT NULL REFERENCES persons(id),
+  duration_code text NOT NULL CHECK (duration_code IN ('1h','24h','7d')),
+  reason_code text NOT NULL
+    CHECK (reason_code IN ('spam','harassment','unsafe','off_topic','other')),
+  reason_note text,
+  starts_at timestamptz NOT NULL DEFAULT statement_timestamp(),
+  expires_at timestamptz NOT NULL,
+  PRIMARY KEY (channel_id, target_person_id),
+  FOREIGN KEY (channel_id, tenant_id) REFERENCES chat_channels(id, tenant_id),
+  CHECK (expires_at > starts_at),
+  CHECK (
+    expires_at = starts_at + CASE duration_code
+      WHEN '1h' THEN interval '1 hour'
+      WHEN '24h' THEN interval '24 hours'
+      WHEN '7d' THEN interval '7 days'
+    END
+  ),
+  CHECK (
+    (reason_code='other' AND reason_note IS NOT NULL
+      AND octet_length(reason_note) BETWEEN 1 AND 500)
+    OR (reason_code<>'other' AND reason_note IS NULL)
+  )
+);
+
+CREATE TABLE chat_moderation_audit (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL REFERENCES tenants(id),
+  channel_id uuid NOT NULL,
+  message_id uuid,
+  target_person_id uuid REFERENCES persons(id),
+  actor_person_id uuid NOT NULL REFERENCES persons(id),
+  action text NOT NULL CHECK (action IN ('hide','restore','mute')),
+  reason_code text NOT NULL
+    CHECK (reason_code IN ('spam','harassment','unsafe','off_topic','other')),
+  reason_note text,
+  duration_code text CHECK (duration_code IN ('1h','24h','7d')),
+  expires_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (channel_id, tenant_id) REFERENCES chat_channels(id, tenant_id),
+  FOREIGN KEY (channel_id, message_id) REFERENCES chat_messages(channel_id, id),
+  CHECK (
+    (reason_code='other' AND reason_note IS NOT NULL
+      AND octet_length(reason_note) BETWEEN 1 AND 500)
+    OR (reason_code<>'other' AND reason_note IS NULL)
+  ),
+  CHECK ((action IN ('hide','restore') AND message_id IS NOT NULL
+          AND target_person_id IS NULL AND duration_code IS NULL AND expires_at IS NULL)
+      OR (action = 'mute' AND message_id IS NULL AND target_person_id IS NOT NULL
+          AND duration_code IS NOT NULL AND expires_at IS NOT NULL))
+);
+
+CREATE TABLE chat_command_receipts (
+  tenant_id uuid NOT NULL REFERENCES tenants(id),
+  actor_person_id uuid NOT NULL REFERENCES persons(id),
+  command_id uuid NOT NULL,
+  action text NOT NULL CHECK (action IN (
+    'channel.create','channel.rename','channel.set_default','channel.archive',
+    'message.hide','message.restore','member.mute'
+  )),
+  canonical_fingerprint text NOT NULL,
+  result_json jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, actor_person_id, command_id)
+);
 ```
+
+`chat_channels_default_uq` proves only at-most-one. Tenant-locked create/set-default/archive commands plus a deferred exact-one assertion prove exactly one active default. `create_club_channel` derives `assistant_enabled=true` for `all_members` and `false` for `admins_only`; client input never supplies the creation value. A later setting mutation on either policy requires `chat.channel.manage`; accepting `true` and every Assistant consume re-check every tenant-config/entitlement/provider/privacy gate. “Announcements” is not a special case beyond its `admins_only` default. Mention/reaction/revision/search/read-preference/delivery/moderation/mute/receipt tables receive explicit RLS/grant policy in their owning slices; no runtime role gets direct mutation DML.
+
+Moderation actor/reason evidence and message revisions are restricted immutable audit data: normal history/SSE/search cannot select them. Mention rows are append-only after parent-message creation. Only the author-edit command may update current `body`, within the DD-92 window/count while atomically appending the prior body; author, channel, reply, attachments and mention targets have no update path. Author-delete is one-way and all shared reads/search return a tombstone. Moderator hide/restore moves only moderation visibility and cannot restore author deletion. Search uses only the generated PostgreSQL `simple` vector on current visible bodies. Notification-dispatch rows are unread-cursor coordination only and contain no message/content snapshot; there is no hard-delete function or per-message durable notification item.
 
 > **Bind cứng:** composite FK ở trên là **defense-in-depth**, NHƯNG **không đủ một mình** — FK mặc định `MATCH SIMPLE` **bỏ qua** khi bất kỳ cột nào NULL, nên một club-child cố tình đặt `tenant_id=NULL` sẽ **lọt FK + rơi vào shape "DM"**. Vì vậy `tenant_id` của child được **bind cứng bằng trigger** (dưới): trigger **set** `NEW.tenant_id := channel.tenant_id` và assert `IS NOT DISTINCT FROM` → club-child KHÔNG thể NULL tenant, DM-child luôn NULL. FK memberships `(membership_id, person_id, tenant_id)` khoá author/member là membership của đúng person+tenant (club).
 
@@ -195,6 +470,10 @@ CREATE TRIGGER trg_chat_dm_no_delete BEFORE DELETE ON chat_members
   FOR EACH ROW EXECUTE FUNCTION chat_dm_no_member_delete();
 ```
 
+#### Root-owned schema/read boundary
+
+Core `chat_channels/chat_members/chat_messages` shape, DD-86 channel constraints, `dm_current_read_allowed`, RLS policies, read-helper ownership/grants và direct-DML revokes thuộc `dd38-dd86-chat-schema-core`. `tenant-capability-authority-core` then owns registry/grants/append-only grant audit/`authorize`; lifecycle lands next. `chat-authorized-member-target-read-core` lands its safe DTO + consume-time resolver after lifecycle and before every target consumer. Reply/mention additions belong shared-message core; reaction/revision/author-delete belong bounded DD-92 interaction slices; generated `simple` search vector/index is its own required pre-beta core; notification preference/opaque dispatch coordination belongs DD-94. DD-95 `chat-club-moderation-core` alone owns mute/moderation storage, writers, receipts and audit, and must land dark before shared send consumes current mute state. Root **không** tạo `create_dm`, `send_chat_message`, `mark_read`, edit/delete/search/reaction/moderation RPC, notification worker hoặc HTTP route. SQL blocks are a combined final-target view, not one migration.
+
 **Cô lập — RLS policy khả thi đã pin (thêm `chat_*` vào RLS list qua migration monotonic mới, không sửa lịch sử):**
 
 Vì một bảng chứa **cả** club-row (`tenant_id NOT NULL`) lẫn dm-row (`tenant_id NULL`), một policy **tenant-only** sẽ **khoá mất** dm-row (fail-closed → không ai đọc được DM). Giải: **2 policy permissive** (Postgres OR chúng lại) trên mỗi bảng `chat_*`, dùng cả `app.tenant_id` lẫn `app.person_id` GUC:
@@ -258,7 +537,9 @@ REVOKE ALL ON FUNCTION chat_current_is_member(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION chat_current_is_member(uuid) TO app;   -- chỉ role runtime app
 
 -- Predicate đọc THUẦN, không consume rate bucket/ghi audit: membership + safety-enabled + no block pair.
--- Schema/function safety phải được tạo TRƯỚC policy và create_dm; missing capability/error => FALSE.
+-- Safety authority/functions were created by pre-root chat-dm-safety-authority-core.
+-- Root migration creates only this chat-specific adapter after those dependencies exist;
+-- missing capability/error => FALSE.
 CREATE FUNCTION dm_current_read_allowed(p_channel uuid) RETURNS boolean
   LANGUAGE sql SECURITY DEFINER STABLE SET search_path = pg_catalog, public AS $$
   SELECT dm_safety_enabled()
@@ -272,6 +553,16 @@ CREATE FUNCTION dm_current_read_allowed(p_channel uuid) RETURNS boolean
 $$;
 REVOKE ALL ON FUNCTION dm_current_read_allowed(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION dm_current_read_allowed(uuid) TO app;
+
+-- ROOT OWNER/GRANT BLOCK: chỉ hai read helpers + quyền đọc tối thiểu.
+-- Pre-root safety-authority core đã own/grant `dm_safety_enabled`, `chat_pair_blocked`
+-- và `assert_dm_allowed`; root không CREATE OR REPLACE/re-own các function đó.
+GRANT USAGE, CREATE ON SCHEMA public TO chat_definer;
+ALTER FUNCTION chat_current_is_member(uuid) OWNER TO chat_definer;
+ALTER FUNCTION dm_current_read_allowed(uuid) OWNER TO chat_definer;
+REVOKE CREATE ON SCHEMA public FROM chat_definer;
+GRANT SELECT (id, person_id, tenant_id, status) ON memberships TO chat_definer;
+GRANT SELECT ON chat_channels, chat_members TO chat_definer;
 
 -- chat_channels
 ALTER TABLE chat_channels ENABLE ROW LEVEL SECURITY;  ALTER TABLE chat_channels FORCE ROW LEVEL SECURITY;
@@ -305,7 +596,15 @@ CREATE POLICY chat_messages_dm ON chat_messages
   USING      (tenant_id IS NULL AND dm_current_read_allowed(channel_id))
   WITH CHECK (tenant_id IS NULL AND dm_current_read_allowed(channel_id)
               AND author_type = 'person' AND author_person_id = current_setting('app.person_id', true)::uuid);
+
+-- ROOT pins the runtime DML boundary before any route is enabled.
+REVOKE INSERT, UPDATE, DELETE ON chat_channels, chat_members, chat_messages FROM app;
+GRANT SELECT ON chat_channels, chat_members, chat_messages TO app;
 ```
+
+#### Post-root command boundaries
+
+After channel lifecycle, `chat-authorized-member-target-read-core` lands first and owns the only opaque current-channel target DTO/resolver. `chat-club-moderation-core` then lands dark and owns mute/moderation storage, hide/restore/mute writers, receipts and immutable audit. `chat-shared-message-command-core` lands after both, owns only `send_chat_message`, `mark_read` and history/list core logic for club+DM; its mention path consumes the target resolver and its club branch only **reads** current mute state. `chat-dm-lifecycle-command-core` lands after shared + target core, owns only `create_dm`/reuse + block/report/request lifecycle and consumes the same resolver for start-DM. Each mechanism slice has zero HTTP ownership; `A1–A21` adapters expose it. No slice redefines another slice's storage/function and no command is hidden in the root migration.
 
 **Mọi DM boundary phải enforce được ở DB/service choke-point.** `dm_current_read_allowed` là predicate thuần cho RLS GET/list/SSE filtering: membership + safety enabled + no block; unavailable/error state yields false or aborts the request, never grants access. Mutations đi qua SECURITY DEFINER RPC **OWNER = `chat_definer` (BYPASSRLS)**. `create_dm`, DM send và DM mark-read đều resolve peer rồi gọi canonical side-effecting `assert_dm_allowed(actor, peer, action)` trước read/reuse/write; primitive fail-closed nếu capability block/report/sender-target-limit/abuse-audit chưa enabled, consume đúng rate bucket và ghi bounded audit. Club send/read vẫn dùng tenant membership rules nhưng cũng qua shared send RPC. Runtime `app` không có direct INSERT vào `chat_messages`, nên không thể bypass block/rate/audit bằng DML.
 
@@ -326,20 +625,36 @@ END; $$;
 -- (OWNER TO chat_definer làm ở BLOCK CHUYỂN OWNER cuối)
 REVOKE ALL ON FUNCTION create_dm(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION create_dm(uuid) TO app;
--- Tương tự: create_club_channel(tenant) + add_club_member/remove_club_member là SECURITY DEFINER OWNER chat_definer
--- (authz owner/admin trong code).
+-- Club lifecycle commands derive actor+tenant from trusted context and call the canonical DD-56
+-- adapter with exact `chat.channel.manage`. Restricted post is checked only inside the shared
+-- message core with `chat.channel.post_restricted`. Club moderation owns its two separate keys.
+-- Unknown/registry failure denies; no role-label fallback.
 
--- ⚠️ chat_definer PHẢI được cấp TABLE PRIVILEGES: BYPASSRLS chỉ bỏ qua RLS policy, KHÔNG thay grant bảng.
---    Role tạo mới không có privilege mặc định (0000_roles_extensions.sql) → thiếu grant thì helper SELECT /
---    create_dm INSERT sẽ 'permission denied'. Owner bảng (migration role) cấp:
-GRANT SELECT, INSERT, UPDATE, DELETE ON chat_channels, chat_members TO chat_definer;
-GRANT SELECT, INSERT                 ON chat_messages              TO chat_definer;
+-- DM-LIFECYCLE OWNER/GRANT BLOCK: create/reuse cần INSERT channel+member, không DELETE/UPDATE.
+GRANT INSERT ON chat_channels, chat_members TO chat_definer;
+GRANT USAGE, CREATE ON SCHEMA public TO chat_definer;
+ALTER FUNCTION create_dm(uuid) OWNER TO chat_definer;
+REVOKE CREATE ON SCHEMA public FROM chat_definer;
+
+-- SHARED-MESSAGE grant block: send cần SELECT/INSERT message; mark-read chỉ UPDATE member cursor.
+-- Channel/member SELECT đã do root cấp. BYPASSRLS không thay table grant; thiếu quyền phải fail.
+GRANT SELECT, INSERT ON chat_messages TO chat_definer;
+GRANT UPDATE ON chat_members TO chat_definer;
+-- Không grant/đụng chat_notification_dispatches tại shared slice. DD-94 slice tự tạo table,
+-- cancellation function + AFTER UPDATE cursor trigger và exact grants của chúng.
 -- Migration DD-55 phải GRANT tường minh các quyền tối thiểu mà `assert_dm_allowed` dùng trên
 -- canonical chat_blocks + rate/audit state; không dựa vào ownership ngầm hay PUBLIC.
 
--- Gửi message qua MỘT choke-point. Khoá idempotency key trước safety side effects để hai retry đồng thời
--- không double-consume rate bucket/audit. API không nhận author_type/author_person_id/membership_id.
-CREATE FUNCTION send_chat_message(p_channel uuid, p_client_msg_id text, p_body text)
+-- Gửi message qua MỘT choke-point. Route + RPC reuse one ASCII-trim/leading-slash classifier primitive;
+-- EVERY leading-slash control input rejects before mutation. Khoá idempotency key trước safety side effects để hai retry
+-- đồng thời không double-consume rate bucket/audit. API không nhận author_type/author_person_id/membership_id.
+CREATE FUNCTION send_chat_message(
+  p_channel uuid,
+  p_client_msg_id text,
+  p_body text,
+  p_reply_to_message_id uuid DEFAULT NULL,
+  p_mentions jsonb DEFAULT '[]'::jsonb
+)
 RETURNS chat_messages
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 DECLARE
@@ -351,6 +666,9 @@ DECLARE
 BEGIN
   IF me IS NULL OR p_channel IS NULL OR p_client_msg_id IS NULL OR p_client_msg_id = '' THEN
     RAISE EXCEPTION 'invalid chat send';
+  END IF;
+  IF chat_starts_with_slash_after_ascii_trim(p_body) THEN
+    RAISE EXCEPTION 'chat command route required';
   END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended(p_channel::text || ':' || p_client_msg_id, 0));
   SELECT * INTO ch FROM chat_channels WHERE id = p_channel FOR SHARE;
@@ -387,26 +705,61 @@ BEGIN
       FROM chat_members cm JOIN memberships m ON m.id = cm.membership_id
      WHERE cm.channel_id = p_channel AND cm.person_id = me AND m.status = 'active';
     IF member_id IS NULL THEN RAISE EXCEPTION 'chat forbidden'; END IF;
+    IF EXISTS (
+      SELECT 1 FROM chat_channel_mutes mute
+       WHERE mute.channel_id = p_channel AND mute.target_person_id = me
+         AND statement_timestamp() < mute.expires_at
+    ) THEN RAISE EXCEPTION 'chat muted'; END IF;
+    IF ch.post_policy = 'admins_only' THEN
+      -- Exact DD-56 adapter; re-checks current actor/tenant/action inside this transaction.
+      PERFORM chat_require_capability('chat.channel.post_restricted', ch.tenant_id, me);
+    ELSIF ch.post_policy <> 'all_members' THEN
+      RAISE EXCEPTION 'chat forbidden'; -- unknown policy fails closed
+    END IF;
   END IF;
 
-  -- validate_chat_body/attachment ownership+ready-state chạy trong cùng command trước INSERT.
+  -- validate_chat_body/attachment ownership+ready-state runs in this command before INSERT.
+  -- Reply must be same-channel + currently visible; already-tombstoned target rejects.
+  IF p_reply_to_message_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM chat_messages target
+     WHERE target.id = p_reply_to_message_id
+       AND target.channel_id = p_channel
+       AND target.moderation_state = 'visible'
+       AND target.author_deleted_at IS NULL
+  ) THEN RAISE EXCEPTION 'chat reply target unavailable'; END IF;
   INSERT INTO chat_messages(channel_id, tenant_id, author_type, author_person_id,
-                            membership_id, body, client_msg_id)
-  VALUES (p_channel, ch.tenant_id, 'person', me, member_id, p_body, p_client_msg_id)
+                            membership_id, body, reply_to_message_id, client_msg_id)
+  VALUES (p_channel, ch.tenant_id, 'person', me, member_id, p_body,
+          p_reply_to_message_id, p_client_msg_id)
   RETURNING * INTO out_msg;
+  -- Helper validates a closed JSON shape, resolves current-channel targets and derives safe snapshots.
+  -- Any invalid target raises and rolls this INSERT back; caller-supplied labels/refs are not authority.
+  INSERT INTO chat_message_mentions(
+    channel_id, message_id, mention_ordinal, target_kind,
+    target_person_id, target_assistant_key, render_label_snapshot
+  )
+  SELECT p_channel, out_msg.id, mention_ordinal, target_kind,
+         target_person_id, target_assistant_key, render_label_snapshot
+    FROM resolve_chat_mentions(p_channel, me, p_mentions);
   -- Transactional NOTIFY is delivered only after COMMIT; payload is opaque message id, never body/object/PII.
   PERFORM pg_notify('chat_' || p_channel::text, out_msg.id::text);
   RETURN out_msg;
 END; $$;
-REVOKE ALL ON FUNCTION send_chat_message(uuid, text, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION send_chat_message(uuid, text, text) TO app;
+REVOKE ALL ON FUNCTION send_chat_message(uuid, text, text, uuid, jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION send_chat_message(uuid, text, text, uuid, jsonb) TO app;
 
--- Cập nhật read-state: KHÔNG dùng GRANT UPDATE(last_read_at) trực tiếp — policy hiện tại cho member sửa
--- last_read_at của NGƯỜI KHÁC trong cùng DM/tenant. Dùng RPC khoá theo current person; DM phải re-check
--- canonical safety ngay tại consume boundary, club phải còn membership active.
-CREATE FUNCTION mark_read(p_channel uuid) RETURNS void
+-- Cập nhật canonical read cursor: KHÔNG dùng direct UPDATE — policy có thể cho member sửa cursor
+-- của NGƯỜI KHÁC trong cùng DM/tenant. Dùng RPC khoá theo current person; DM phải re-check
+-- canonical safety ngay tại consume boundary, club phải còn membership active. Cursor không lùi.
+CREATE FUNCTION mark_read(p_channel uuid, p_through_message uuid) RETURNS void
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
-DECLARE me uuid := current_setting('app.person_id', true)::uuid; k text; peer uuid; changed int; BEGIN
+DECLARE
+  me uuid := current_setting('app.person_id', true)::uuid;
+  k text;
+  peer uuid;
+  through_created_at timestamptz;
+  changed int;
+BEGIN
   SELECT kind INTO k FROM chat_channels WHERE id = p_channel;
   IF me IS NULL OR k IS NULL THEN RAISE EXCEPTION 'chat forbidden'; END IF;
   IF k = 'dm' THEN
@@ -421,35 +774,72 @@ DECLARE me uuid := current_setting('app.person_id', true)::uuid; k text; peer uu
   ELSIF NOT chat_current_is_member(p_channel) THEN
     RAISE EXCEPTION 'chat forbidden';
   END IF;
-  UPDATE chat_members SET last_read_at = now()
-   WHERE channel_id = p_channel AND person_id = me;
+  SELECT created_at INTO through_created_at
+    FROM chat_messages
+   WHERE channel_id = p_channel AND id = p_through_message;
+  IF through_created_at IS NULL THEN RAISE EXCEPTION 'chat read cursor invalid'; END IF;
+  UPDATE chat_members
+     SET last_read_created_at = through_created_at,
+         last_read_message_id = p_through_message
+   WHERE channel_id = p_channel AND person_id = me
+     AND (
+       last_read_created_at IS NULL
+       OR (last_read_created_at, last_read_message_id) < (through_created_at, p_through_message)
+     );
   GET DIAGNOSTICS changed = ROW_COUNT;
-  IF changed <> 1 THEN RAISE EXCEPTION 'chat forbidden'; END IF;
+  IF changed NOT IN (0,1) THEN RAISE EXCEPTION 'chat forbidden'; END IF;
+  -- Shared owner stops here: canonical cursor mutation only.
+  -- When DD-94 lands, its own AFTER UPDATE OF last_read_* trigger observes this row and
+  -- cancels covered pending dispatches. That trigger/function/table are all DD-94-owned,
+  -- so mark_read has zero compile-time/runtime dependency on notification storage.
 END; $$;
-REVOKE ALL ON FUNCTION mark_read(uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION mark_read(uuid) TO app;
+REVOKE ALL ON FUNCTION mark_read(uuid, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION mark_read(uuid, uuid) TO app;
 
--- BLOCK CHUYỂN OWNER (câu lệnh THẬT, đúng thứ tự): GRANT CREATE trước toàn bộ ALTER → REVOKE sau ALTER cuối.
+-- SHARED-MESSAGE OWNER BLOCK (câu lệnh THẬT, đúng thứ tự): GRANT CREATE trước ALTER → REVOKE sau ALTER cuối.
 -- (Chạy bởi migration owner; owner phải sở hữu schema public để GRANT/REVOKE trên nó — nếu không, làm ở pre-provision superuser.)
 GRANT USAGE, CREATE ON SCHEMA public TO chat_definer;   -- PG16: owner mới cần CREATE trên schema mới nhận được ownership
-ALTER FUNCTION chat_current_is_member(uuid) OWNER TO chat_definer;
-ALTER FUNCTION dm_current_read_allowed(uuid) OWNER TO chat_definer;
-ALTER FUNCTION assert_dm_allowed(uuid, uuid, text) OWNER TO chat_definer;
-ALTER FUNCTION create_dm(uuid)              OWNER TO chat_definer;
-ALTER FUNCTION send_chat_message(uuid, text, text) OWNER TO chat_definer;
-ALTER FUNCTION mark_read(uuid)              OWNER TO chat_definer;
+ALTER FUNCTION send_chat_message(uuid, text, text, uuid, jsonb) OWNER TO chat_definer;
+ALTER FUNCTION mark_read(uuid, uuid)        OWNER TO chat_definer;
 REVOKE CREATE ON SCHEMA public FROM chat_definer;       -- giữ USAGE (runtime); bỏ CREATE (least-privilege)
-
--- PIN QUYỀN BẢNG cho `app` (nếu không revoke, "mọi mutation qua RPC" chỉ là prose — app vẫn DML thẳng được):
--- Cấu trúc channel/member + read-state CHỈ đổi qua RPC (definer). App KHÔNG có UPDATE/DELETE trên chat_members.
-REVOKE INSERT, UPDATE, DELETE ON chat_channels, chat_members FROM app;
-GRANT  SELECT ON chat_channels, chat_members TO app;                  -- đọc; ghi/last_read qua RPC
--- Tin nhắn: app chỉ SELECT; mọi send qua send_chat_message, KHÔNG direct INSERT/UPDATE/DELETE.
-REVOKE INSERT, UPDATE, DELETE ON chat_messages FROM app;
-GRANT  SELECT ON chat_messages TO app;
 ```
 
 > **Đóng các đường fail-open (review):** (1) `chat_bind_tenant` set/assert `tenant_id` = channel → club-child không thể NULL "giả DM" (FK MATCH SIMPLE không đủ); (2) deferred check trên **cả** `chat_channels` → DM 0-member vẫn bị bắt ở COMMIT; (3) `FOR UPDATE` khoá channel row → hai insert đồng thời không cùng thấy count=1; (4) helper chỉ đọc **current person** + `REVOKE PUBLIC`/`GRANT app` → không phải membership oracle và club member `left` mất read/send; (5) `WITH CHECK author_type='person' AND author_person_id = app.person_id` (**cả club lẫn dm**) → defense-in-depth chống mạo danh; (6) DB CHECK `assistant/system ⇒ author_person_id IS NULL`; (7) constraint trigger tách 2 function theo bảng (không tham chiếu cột chéo → không lỗi runtime); (8) `create_dm()` SECURITY DEFINER bootstrap DM nhưng gọi `assert_dm_allowed` trước create/reuse, nên BYPASSRLS không thành safety bypass; (9) **toàn bộ definer functions OWNER = `chat_definer` (BYPASSRLS)**; (10) **`chat_definer` được GRANT đúng table privileges**, gồm canonical block/rate/audit rows; (11) **pin quyền `app`**: no direct DML, send qua `send_chat_message`, read-state qua guarded `mark_read()`.
+
+`chat_require_capability(action, tenant, actor)` ở snippet là narrow adapter tới canonical DD-56 registry, không phải registry thứ hai. Allowlist gồm bốn exact keys nhưng ownership tách rõ: DD-86 lifecycle dùng `chat.channel.manage`, shared-message restricted post dùng `chat.channel.post_restricted`, club moderation dùng `chat.message.moderate`/`chat.member.mute`. Nó re-check current target/grant trong mutation transaction và raises khi unknown/unavailable/missing. Channel lifecycle và moderation action dùng actor-scoped UUID receipts; exact replay trả prior safe result, cùng key/khác canonical fingerprint reject trước mutation. Không có RPC hard delete, moderator edit, permanent ban, system-message moderation effect hoặc human-DM moderation.
+
+**Post-root one-owner split:**
+
+| Slice owner | Owns | Must not own |
+|---|---|---|
+| `tenant-capability-authority-core` | Canonical DD-56 action registry, `admin|co_admin` preset, expiring/revocable grant-read authority, append-only grant audit and fail-closed `authorize` | Chat-local registry, feature mutation, owner/global privilege invention, sensitive grant UI/workflow |
+| `chat-club-channel-lifecycle-core` | DD-86 create/rename/set-default/archive, exact-one default, auto-provision, lifecycle receipts | Message post auth, moderation, DM lifecycle |
+| `chat-authorized-member-target-read-core` | Current-channel active-human `{targetRef,safeLabel}` DTO with short-lived requester+channel binding + consume-time resolver for mention/mute/start-DM | Global/fuzzy people search, raw UUID authority, persistent target directory, contact/gender/debt/PII, cached authorization |
+| `chat-club-moderation-core` | DD-95 mute/moderation storage, hide/restore/mute writers, exact receipts and immutable actor/reason audit | Shared send/read, DM reads/actions, content edit, hard delete, permanent ban, system message |
+| `chat-shared-message-command-core` | Send/history/mark-read, reply+mention atomic insert, `post_policy` + read-only active-mute enforcement | Channel lifecycle, mute/moderation storage or writer, DM create/block/report, reaction |
+| `chat-dm-lifecycle-command-core` | Create/reuse/block/report/request with canonical DD-55 safety and safe target resolver | Shared send/read writer, club lifecycle or target lookup |
+| `chat-realtime-unread-core` | Authorized topics, monotonic cursor, reconnect/history catch-up, unread/badge | Provider/subscription/client delivery or DD-88 grouping |
+| `chat-media-upload-scan-core` | Private upload grant, type/size/quota checks, scan worker and `pending|ready|quarantined` state | Message attach, signed read, delete/orphan lifecycle |
+| `chat-media-attachment-read-lifecycle` | Ready-only attach, live-authorized signed read, delete/tombstone and bounded orphan cleanup | Upload/scan implementation |
+| `chat-message-reaction-core` | Exact Unicode reaction desired-state | Normal send, edit/search/hard delete/moderation |
+| `chat-author-edit-delete-revision-core` | Own-human body edit `<15m`/max 5 + revisions; irreversible author tombstone | Author/channel/reply/attachment/mention mutation, assistant/system edit, restore, hard delete |
+| `chat-authorized-search-core` | Generated PostgreSQL `simple` vector/index + current authz query | Revision/tombstone/requester-only result indexing, cached ACL |
+| `core-payment-remaining-primitive → player-self-charge-read-core` | One remaining formula and canonical person-self payment status | Chat-owned formula/store, other-person debt or unknown→zero |
+| `player-self-profile-clubs-read-core` | Canonical `/me` + `/me/clubs` person-self DTO | Charges, Session mutation or Chat-local profile state |
+| `player-self-sessions-waitlist-read-core` | Read-only self sessions/waitlist DTO over merged baseline tables | Full SessionService, join/leave/promotion or roster-other-person |
+| `marketplace-discovery-navigation-read` / `identity-self-name-navigation-flow` | Canonical discovery and self-name/settings destinations | Chat ranking, join/name mutation or other-person lookup |
+| `chat-slash-command-registry-core` | DD-93 ASCII-folded exact zero-arg descriptors + surface matrix | Private response transport, picker, domain handler, normal persistence or LLM routing |
+| `chat-requester-only-sync-response` | Authenticated typed `private, no-store` outcome + opaque picker; no row/ref/SSE/outbox | Command grammar or domain formula |
+| `chat-pay-command-adapter` | Thin `/pay` route to canonical person-self payment owner | Debt formula/store, LLM or persisted result |
+| `chat-profile-navigation-command-adapters` | Thin `/me|/myclubs|/discover|/name` delegation | Profile/discovery/identity business logic |
+| `chat-session-command-adapters` | Thin club/bot-only `/sessions|/waitlist` delegation | Session mutation/business rules or human-DM support |
+| `assistant-kb-storage-authority-core → assistant-kb-text-ingest-core → assistant-kb-url-ingest-adapter / assistant-kb-file-ingest-adapter → assistant-kb-index-activation-worker → assistant-kb-retrieval-core → assistant-bot-ask-worker` | Storage/config, DLP ingest, bounded URL/file sources, generation-CAS activation, tenant retrieval and answer attempts/results | Alternate indexes, mixed-generation activation, ledger/PII prompt context or Chat projection |
+| `assistant-chat-mention-adapter` / `assistant-private-thread-surface` | Structured channel projection / requester-only ask-panel composition after canonical `bot.ask` | Money/session tool selection, human-DM participant or duplicate transcript store |
+| `notification-route-integrity-core → notification-web-push-subscription-authority-core → notification-web-push-provider-attempt-core → pwa-installable-shell-core → web-push-registration-client → web-push-display-telemetry-client` | One DD-67→DD-72 route/subscription/provider/PWA/client chain | Generic “Web Push substrate” mega-owner or business content |
+| `chat-unread-notification-core` | DD-94 preference/dispatch signal, cursor cancellation, coalescing and send-time reauth through the landed chain | Provider attempt/subscription/client state, parallel unread counter, content/title/amount snapshot |
+| `notification-payment-lifecycle-intent-core → notification-payment-reminder-producer / notification-payment-settled-correction-projector → notification-inbox-payment-detail → notification-web-push-payment-adapter` | Source-version lifecycle, real producers, durable authenticated detail and thin generic push | Push-before-Inbox, amount snapshot or second delivery implementation |
+
+Stable mechanism IDs `1–47` are catalog identifiers, not execution order; the catalog spans DB/core/worker/client mechanisms. In particular, execution after lifecycle is `5→9→6→7→8`. Every mechanism row above explicitly owns **zero HTTP**; route ownership is pinned by `A1–A21` below.
 
 - `chat_channels(kind='club')`, club `chat_members`/`chat_messages(tenant_id NOT NULL)` = **tenant-private** (template `feature_multi_tenant_tech.md §3`), cô lập cross-tenant (NFR-S1).
 - `chat_channels(kind='dm')` + DM rows = **person-self**: chỉ 2 person ∈ `chat_members` đọc/ghi (policy (b) + DM 2-member guard ở trên). App phải set `app.person_id` cho đường person-self (giống `resolvePersonSelf`, identity §7).
@@ -457,14 +847,15 @@ GRANT  SELECT ON chat_messages TO app;
 
 ### Migration & Rollback
 
-> `chat_channels`/`chat_members`/`chat_messages` + safety schema (`chat_blocks`/`chat_reports`/rate-audit state) **chưa tồn tại trong canonical migrations** (verified: không có `chat_*` trong `packages/db/migrations/`). Migration đang **HOLD tới DD-86 owner decision**. Sau decision, toàn bộ final DDL land bằng **một migration mới số monotonic kế tiếp còn trống** trong root slice `dd38-dd86-chat-schema-core`; KHÔNG sửa migration đã apply và KHÔNG land baseline one-channel rồi fold. Candidate key `memberships_id_person_tenant_uq` là ALTER additive trên bảng baseline `memberships` (`0002` — LIVE).
+> Toàn bộ `chat_*` và safety storage (`chat_blocks`/`chat_reports`/rate-audit state) đều **chưa tồn tại trong canonical migrations** (verified: no `chat_*` in `packages/db/migrations/`, tail hiện là `0024_public_visibility_capacity_check.sql`). Các SQL block trong doc mô tả **combined target**, không cho phép gộp sai dependency: (1) `chat-dm-safety-authority-core` land safety storage/primitives độc lập với `chat_*`; (2) `dd38-dd86-chat-schema-core` dùng số monotonic kế tiếp tại build để land final tables/constraints/RLS/read adapters; (3) post-root command slices land đúng one-owner split ở trên. KHÔNG sửa migration đã apply, không để root tham chiếu helper chưa land và không land baseline one-channel rồi fold. Candidate key `memberships_id_person_tenant_uq` là ALTER additive trên bảng baseline `memberships` (`0002` — LIVE).
 
 | Bước | Hành động | An toàn? |
 |------|-----------|----------|
 | 1 | Disable chat routes/RPC + SSE topic trước mọi revert | ✅ |
-| 2 | Revert migration chat mới: DROP policy/trigger/function/grants + `memberships_id_person_tenant_uq` (constraint-only trên baseline) | ✅ khi chưa enable cho user thật |
-| 3 | DROP bảng `chat_*` sau khi đã có message/DM thật | ❌ Mất dữ liệu user — chỉ chấp nhận trước enable; sau enable dùng disable routes + forward-fix |
-| 4 | DROP/ALTER destructive bảng baseline (`memberships`/`persons`/`tenants`) | ❌ NEVER |
+| 2 | Revert post-root routes/slices theo reverse dependency; rồi root chat migration | ✅ khi chưa enable cho user thật; không drop safety authority như side effect |
+| 3 | Revert pre-root safety storage sau khi đã có block/report/audit hoặc DM thật | ❌ Mất safety/audit — sau enable chỉ disable routes + forward-fix |
+| 4 | DROP bảng `chat_*` sau khi đã có message/DM thật | ❌ Mất dữ liệu user — chỉ chấp nhận trước enable; sau enable dùng disable routes + forward-fix |
+| 5 | DROP/ALTER destructive bảng baseline (`memberships`/`persons`/`tenants`) | ❌ NEVER |
 
 ### Edge Cases (Backend)
 
@@ -487,41 +878,95 @@ GRANT  SELECT ON chat_messages TO app;
 | 14 | Abuse | Sender targets many users or repeatedly targets one user | Enforce both per-sender and per-target/pair windows; audit limit outcome |
 | 15 | Security | Media pending, quarantined, rejected, deleted, wrong owner, or wrong channel | Never attach/serve; signed-read endpoint re-checks current channel authz |
 | 16 | Security | Host/support tries to inspect a reported DM | Deny by person-self RLS; report stores bounded abuse artifact/reference only, not a host-readable transcript |
+| 17 | Security | Muted member or non-capable actor posts to `admins_only` | Reject before message/rate/NOTIFY mutation; DB-time expiry controls mute |
+| 18 | Privacy | Case variant/alias/unknown/arg/unsupported slash reaches send | ASCII case variant canonicalizes; every alias/unknown/arg/unsupported surface gets private registry-derived error/help. DB defense rejects every leading slash before message/rate/NOTIFY/unread mutation |
+| 19 | Data Integrity | Reply/mention/reaction violates channel/target/set | Reject atomically; target must be current/visible; immutable refs and one of exact `👍|❤️|😂|😮|😢|🙏` only |
+| 20 | Security | Moderator targets DM/assistant/system or asks hard delete/edit/permanent ban | Generic deny; no RPC/path and no transcript/content disclosure |
+| 21 | Concurrency | Reaction/moderation retry or race | Row/advisory lock + desired state/receipt produces one committed state and one required audit; retry returns current/prior result, never partial |
+| 22 | Data Integrity | Edit at/after 15m, sixth edit, concurrent edit, or immutable-field mutation | DB-time/row-lock/count/expected-version guards reject outside contract; one accepted transaction appends exactly one prior-body revision and changes only current body |
+| 23 | Privacy | Author soft-deletes then tries restore; reply/search/history reads target | Delete is idempotent and irreversible; all shared reads show tombstone metadata only; moderator restore cannot resurrect it |
+| 24 | Security | Search across guessed/left/blocked channel or hidden/deleted/revision/requester-only content | Live authz + current-visible filter returns zero unauthorized content and no channel-existence oracle; only canonical generated `simple` vector is queried |
+| 25 | Privacy | Notification/digest worker sees unread message | Durable row/payload stays generic and opaque; no body/title/sender/amount/object snapshot |
+| 26 | Security | Access/preference/device/trust changes before provider write | Immediate re-auth cancels on any false/unknown; read advancement cancels obsolete pending work; sticky `unknown` never creates a second send |
 
 ---
 
-## 3. API Contract — proposal
+## 3. API Contract — target
+
+### A1–A21 thin HTTP adapter ownership
+
+Mechanism slices `1–47` own no HTTP route. Every `A*` adapter is bounded to session/app-role authentication, exact action authorization, validation, cache/privacy headers, DTO/error mapping and production-shaped route/security tests; it delegates business state to the named mechanism owner and never re-derives money, membership, moderation, unread, KB or notification state.
+
+| API slice | Hard dependency | Boundary |
+|---|---|---|
+| `A1 chat-channel-list-create-update-api` | 5 | Authorized list/create/rename; no default/archive/send |
+| `A2 chat-channel-default-archive-api` | 5 | Atomic default/archive receipts |
+| `A3 chat-history-send-read-api` | 7/9/10 | History/send/mark-read; no DM creation or slash persistence |
+| `A4 chat-dm-list-create-api` | 8 | DM list/create/reuse; no target discovery |
+| `A5 chat-dm-block-report-api` | 8 | Actor-scoped block/unblock/report; no club moderation or DM-read grant |
+| `A6 chat-current-member-target-api` | 8/9/A4 | Opaque current-channel targets + start-DM delegation; no global/raw-ID/PII lookup |
+| `A7 chat-reaction-api` | 13 | Exact desired-state reaction |
+| `A8 chat-author-edit-delete-api` | 14 | Own edit/delete only |
+| `A9 chat-authorized-search-api` | 15 | Live-readable current-visible search |
+| `A10 chat-media-upload-status-api` | 11 | Upload intent/status |
+| `A11 chat-media-attachment-read-delete-api` | 12 | Ready attach/signed read/delete |
+| `A12 chat-club-moderation-api` | 6/9 | Club hide/restore/timed mute |
+| `A13 chat-slash-execute-private-picker-api` | 22–26 | Exact command + private picker; no result ref |
+| `A14 assistant-private-thread-ask-api` | 33–35 | Private bot list/ask and mention status |
+| `A15 assistant-kb-text-url-config-api` | 27–29/33 | FAQ/paste/URL/config/aggregate analytics |
+| `A16 assistant-kb-file-status-api` | 27/30/31 | Private file/status/quarantine |
+| `A17 chat-notification-preference-api` | 42 | Chat preference only |
+| `A18 notification-inbox-payment-detail-api` | 46 | Authenticated payment Inbox/detail |
+| `A19 web-push-subscription-device-telemetry-api` | 37/41 | Protected device/telemetry boundary |
+| `A20 marketplace-discovery-navigation-api` | 20 | Guarded public discovery navigation |
+| `A21 identity-self-name-navigation-api` | 21 | Authenticated self-name/settings navigation |
+
+### Route contract
 
 | Method | Path | Auth | Mô tả |
 |--------|------|------|-------|
 | GET | /api/chat/channels | Authenticated Person | Kênh của tôi (club của các tenant tôi là member + DM) |
-| GET | /api/chat/channels/:id/messages | Member of channel | Lịch sử (phân trang, cursor) |
-| POST | /api/chat/channels/:id/messages | Member of channel | Gọi `send_chat_message(channel, client_msg_id, body)`; API không nhận author fields, không INSERT trực tiếp |
-| POST | /api/chat/dm | Authenticated Person | Mở/lấy DM với `personId` (idempotent theo `dm_key`) |
-| POST | /api/chat/channels/:id/read | Member of channel | Cập nhật `last_read_at` |
-| POST | /api/chat/block | Authenticated Person | Block target deterministically; close future create/send in either direction per policy |
-| DELETE | /api/chat/block/:targetPersonId | Authenticated Person | Unblock target; audited |
-| POST | /api/chat/report | Authenticated Person | Report person/message with bounded reason code; no host DM-read grant |
+| GET | /api/chat/channels/:id/member-targets | Current club-channel readability | A6 lists active human `{targetRef,safeLabel}` only; opaque ref is requester+channel-bound and short-lived; no global/fuzzy search, raw UUID or PII |
+| GET | /api/chat/channels/:id/messages | Current channel readability | Lịch sử keyset `(createdAt,id)`; shared tombstone-safe renderer; không lộ revision/moderation detail |
+| GET | /api/chat/search | Authenticated Person | Required pre-beta search; `q` + optional opaque `channelRef`; current-readable/current-visible body only via canonical generated PostgreSQL `simple` vector and live authz |
+| POST | /api/chat/channels/:id/messages | Active channel member | Classifier chạy trước RPC. Shared core alone decides `all_members` vs `admins_only` (`chat.channel.post_restricted`, unknown deny). Normal text may include same-channel `replyToMessageId` + structured mentions; API never accepts author fields/direct INSERT |
+| PATCH | /api/chat/channels/:id/messages/:messageId | Own current human message | Body-only edit while DB time is `<15m` and edit count `<5`; atomic restricted revision append; author/channel/reply/attachments/mentions immutable |
+| DELETE | /api/chat/channels/:id/messages/:messageId | Own human message | Anytime irreversible author soft-delete; idempotent shared tombstone; no restore/hard delete |
+| POST | /api/chat/commands/execute | Authenticated Person + current surface access | ASCII case-insensitive exact zero-arg/no-alias registry. All surfaces: `/help|/pay|/me|/myclubs|/discover|/name`; club/bot additionally `/sessions|/waitlist`; unsupported human-DM command and every invalid form reject privately before insert. `/help` is registry-derived post-authz. Sync `private, no-store`; no raw tenant authority/result ref/shared persistence |
+| POST | /api/chat/dm | Current club-channel member | A6/A4 accept only opaque current-channel `targetRef`; slice 9 re-authorizes actor+target then slice 8 opens/reuses DM by internal deterministic pair key |
+| POST | /api/chat/channels/:id/read | Member of channel | Advance canonical `(createdAt,id)` read cursor monotonically and cancel obsolete pending notification work |
+| PUT | /api/chat/channels/:id/notification-preference | Active club member | Exact `all|mentions|off`, default `mentions`; DM/direct-mention/reply default ON |
+| POST | /api/chat/block | Authorized current DM peer | Resolve target from an authorized DM context/opaque ref, then block deterministically; no raw person ID authority |
+| DELETE | /api/chat/block | Authorized current DM peer | Resolve the same bounded target context, unblock and audit; no global target lookup |
+| POST | /api/chat/report | Authorized current DM peer/message | Report bounded target/evidence with actor-scoped receipt; no raw target authority or host DM-read grant |
 | POST | /api/chat/media/initiate | Authenticated Person | Validate declared size/type/quota; return private short-lived upload grant |
 | POST | /api/chat/media/:id/finalize | Attachment owner | Verify object metadata; enqueue malware/moderation scan idempotently |
 | GET | /api/chat/media/:id/access | Authorized channel member | Re-authorize current membership/state; issue short-lived signed read only for `ready` object |
 | DELETE | /api/chat/media/:id | Attachment owner or authorized moderator | Apply deletion policy; tombstone references; revoke future signed access |
 | GET | /api/chat/subscribe | Authenticated | SSE — topic `tenant:<id>:chat:<channel>` (club) / `person:<id>:chat` (dm) |
-| POST | /api/chat/channels | `chat.channel.manage` | **DD-86 conditional:** create club channel + atomic auto-provision; actor-scoped idempotency key |
-| PATCH | /api/chat/channels/:id | `chat.channel.manage` | **DD-86 conditional:** update `title`/club-only metadata through guarded command |
-| POST | /api/chat/channels/:id/default | `chat.channel.manage` | **DD-86 conditional:** serialized default swap; exactly-one invariant |
-| POST | /api/chat/channels/:id/archive | `chat.channel.manage` | **DD-86 conditional:** archive; default requires replacement channel in same command |
+| POST | /api/chat/channels | `chat.channel.manage` | Create club channel + atomic auto-provision; server derives Assistant `true` for `all_members`, `false` for `admins_only`; actor-scoped idempotency key |
+| PATCH | /api/chat/channels/:id | `chat.channel.manage` | Update title/club-only metadata or Assistant setting on either post policy; accepting true requires current tenant-config/`assistant_ai_kb` entitlement/provider/privacy gates and consume re-checks them; no Announcements special case |
+| POST | /api/chat/channels/:id/default | `chat.channel.manage` | Serialized default swap; exactly-one invariant |
+| POST | /api/chat/channels/:id/archive | `chat.channel.manage` | Archive; default requires replacement channel in same command |
+| PUT | /api/chat/channels/:id/messages/:messageId/reaction | Current message readability | Desired own state `{reaction: 👍|❤️|😂|😮|😢|🙏|null}`; one active row, atomic replace/remove/idempotent |
+| POST | /api/chat/channels/:id/messages/:messageId/moderation | `chat.message.moderate` | `{action: hide|restore, reasonCode, reasonNote?, commandId}` on human club message; exact reason contract + actor-scoped receipt/immutable audit |
+| POST | /api/chat/channels/:id/mutes | `chat.member.mute` | `{targetRef,duration: 1h|24h|7d,reasonCode,reasonNote?,commandId}`; DB-computed expiry + receipt/audit; write blocked/read unchanged; no permanent/DM target |
 
 ### Request/Response Examples
 
-> Minh hoạ; field name DTO chốt ở build slice. Envelope chuẩn DD-60 (`../../standards/api-reference-convention.md`). Error code lấy từ bảng Error Codes dưới.
+> Field names dưới là canonical DTO whitelist; build slice không được thêm actor/tenant/author authority fields. Envelope chuẩn DD-60 (`../../standards/api-reference-convention.md`); additive `meta.requestId` không đổi fingerprint nghiệp vụ.
 
 **POST `/api/chat/channels/:id/messages`** (qua `send_chat_message`, idempotent theo `client_msg_id`):
 
 - Request:
 
 ```json
-{ "clientMsgId": "cmsg_…", "body": "Tối nay 19h sân A nhé" }
+{
+  "clientMsgId": "cmsg_…",
+  "body": "Tối nay 19h sân A nhé",
+  "replyToMessageId": null,
+  "mentions": [{ "targetKind": "person", "targetRef": "opaque_person_ref" }]
+}
 ```
 
 - `200` — thành công (duplicate `client_msg_id` trả cùng message, không tạo mới):
@@ -541,6 +986,38 @@ GRANT  SELECT ON chat_messages TO app;
 ```json
 { "data": null, "error": { "code": "CHAT_RATE_LIMITED", "message": "Gửi quá nhanh — thử lại", "statusCode": 429 }, "meta": { "requestId": "req_…" } }
 ```
+
+**POST `/api/chat/commands/execute`** (requester-only):
+
+- Request: `{ "surface": "club|club_bot|human_dm", "channelRef": "opaque", "input": "/PAY" }`. Server ASCII-case-folds the exact whole input to canonical `/pay`; it does not accept a client-supplied canonical command or tenant authority.
+- All three surfaces expose `/help`, `/pay`, `/me`, `/myclubs`, `/discover`, `/name`; club and private Club Bot additionally expose `/sessions`, `/waitlist`. There are no aliases or arguments. Unknown/arg/non-ASCII-lookalike/unsupported human-DM input returns private error/help and never falls through to message send. `/help` comes from this same registry after requester+surface authz.
+- Response luôn có `Cache-Control: private, no-store`; actor derive từ session. Mỗi canonical command có typed requester-only outcome do domain owner tương ứng sở hữu. Riêng `/pay`, `data.outcome ∈ {self_payment_status, club_choice_required, no_eligible_club}` và exact self-payment payload thuộc Player View contract.
+- `club_choice_required` chỉ trả display label + opaque short-lived selector; không trả raw tenant authority. Request chọn lại chỉ gửi selector cùng surface+command, không gửi tenant ID.
+- Response **không có** `messageId`, `resultRef`, `eventId` hoặc URL đọc lại. Server tạo zero `chat_messages`, result row, SSE, outbox, push hoặc unread entry; human-DM peer không có observable delta.
+
+**PATCH own message / DELETE own message / GET search:**
+
+- Edit request contains only `{ "body": "…", "expectedEditCount": 2 }`; server derives actor, locks the current row and uses DB time. It accepts only own human message before 15 minutes and while fewer than five edits exist, appends the previous body to restricted revisions, then returns the current message with incremented count. Any attempt to change author/channel/reply/attachments/mentions is rejected.
+- Delete is an idempotent irreversible soft-delete. Shared history/replies/search return only tombstone metadata afterward; no author restore or hard-delete route exists.
+- Search accepts `q` and optional opaque `channelRef`, re-authorizes live, and returns only current visible message hits. Response never includes revisions, author-deleted/moderation-hidden bodies, requester-only slash/private Club Bot results or unauthorized-channel existence.
+
+**PUT reaction / POST moderation or mute:**
+
+```json
+{ "reaction": "❤️" }
+```
+
+```json
+{
+  "action": "hide",
+  "reasonCode": "off_topic",
+  "commandId": "uuid"
+}
+```
+
+- Reaction `reaction:null` removes own reaction; same desired state is 200-safe. Exact `👍|❤️|😂|😮|😢|🙏` are the only accepted values.
+- Moderation reason is exact `spam|harassment|unsafe|off_topic|other`; `other` requires a bounded `reasonNote`, and every other reason rejects one. Mute additionally accepts only `duration: 1h|24h|7d`; server computes expiry from DB time.
+- Moderation response is a receipt, never message content/transcript. Actor, target, action, reason/note, duration and timestamp are immutable restricted audit fields.
 
 ### Realtime Authorization (reuse DD-07 / sync engine §3)
 
@@ -567,6 +1044,21 @@ SSE re-authorizes before every event and on a heartbeat no slower than 30 second
 | 403 | `CHAT_CAPABILITY_REQUIRED` | Không có quyền thực hiện thao tác | DD-86 channel command capability missing/unknown; fail-closed |
 | 409 | `CHAT_DEFAULT_REQUIRED` | CLB phải có một kênh mặc định | Archive/default transition would leave zero active defaults |
 | 409 | `CHAT_IDEMPOTENCY_MISMATCH` | Yêu cầu không khớp lần gửi trước | Same command idempotency key reused with a different request fingerprint |
+| 409 | `CHAT_COMMAND_ROUTE_REQUIRED` | Hãy dùng thao tác riêng tư này trong ứng dụng | Registered requester-only slash reached normal message endpoint; zero mutation |
+| 400 | `CHAT_COMMAND_SELECTOR_INVALID` | Lựa chọn không còn hợp lệ | Selector expired, wrong actor/DM/command, or tenant no longer eligible; intentionally generic |
+| 400 | `CHAT_COMMAND_UNKNOWN` | Lệnh chưa hỗ trợ — xem `/help` | Alias, unknown or non-ASCII-lookalike leading slash; ASCII case variants are canonicalized |
+| 400 | `CHAT_COMMAND_ARGUMENTS_NOT_ALLOWED` | Lệnh này không nhận tham số | Any token after a canonical command; private/pre-insert |
+| 400 | `CHAT_COMMAND_UNSUPPORTED_SURFACE` | Lệnh chưa dùng được tại đây | `/sessions` or `/waitlist` in human DM; private/pre-insert |
+| 403 | `CHAT_MUTED` | Bạn đang tạm bị giới hạn gửi trong kênh này | Active DB-time channel mute; read access unchanged |
+| 409 | `CHAT_REPLY_INVALID` | Tin nhắn trả lời không còn hợp lệ | Reply target missing/cross-channel/already tombstoned; no partial insert |
+| 422 | `CHAT_MENTION_INVALID` | Mention không hợp lệ | Forged/non-member/invalid structured target |
+| 422 | `CHAT_REACTION_INVALID` | Cảm xúc không hợp lệ | Value outside exact `👍|❤️|😂|😮|😢|🙏` |
+| 409 | `CHAT_MESSAGE_TOMBSTONED` | Tin nhắn đã được ẩn | Reply/reaction target is moderation-hidden or author-deleted where visible content is required |
+| 409 | `CHAT_EDIT_WINDOW_CLOSED` | Không thể sửa tin nhắn này nữa | DB time is not `<15m`, five edits already used, wrong author, or assistant/system message |
+| 409 | `CHAT_EDIT_CONFLICT` | Tin nhắn đã thay đổi | `expectedEditCount` is stale; no revision/body mutation |
+| 422 | `CHAT_REASON_INVALID` | Lý do không hợp lệ | Not exact `spam|harassment|unsafe|off_topic|other`, or `other` note rule fails |
+| 422 | `CHAT_MUTE_DURATION_INVALID` | Thời hạn tạm ẩn không hợp lệ | Value outside exact `1h|24h|7d` |
+| 403 | `CHAT_MODERATION_FORBIDDEN` | Không thể kiểm duyệt nội dung này | Missing exact capability; non-human/non-club/DM target; generic no-disclosure |
 
 ### Rate Limits
 
@@ -575,8 +1067,15 @@ SSE re-authorizes before every event and on a heartbeat no slower than 30 second
 | POST message | 20/10s (burst), 300/min | Per (person, channel) |
 | POST /chat/dm | 30/min | Per person |
 | POST /chat/dm + DM sends | Product-tuned bounded windows | Both per sender and per sender-target pair; no open-DM launch without verified thresholds |
+| POST /chat/commands/execute | 60/min + command-specific policy | Per authenticated person; picker retry does not consume chat send quota |
+| PATCH/DELETE own message | 30/min | Per (person, channel); edit additionally capped at five accepted revisions/message |
+| GET /chat/search | 30/min | Per person; bounded query length/result page and live authz |
+| PUT reaction | 60/min | Per (person, channel); same desired-state replay is no-op |
+| Moderation/mute commands | 30/min | Per (actor, tenant) + per target; receipts prevent retry duplication |
 | Media initiate/finalize | Product-tuned object + byte quota | Per person/day + concurrent pending objects + channel |
 | Report | Bounded burst + daily cap | Per reporter/target; preserve legitimate safety escalation path |
+
+Numeric DM/media/report thresholds are **enablement values**, not guessed code defaults. Corresponding routes remain OFF/fail-closed until configured values pass boundary tests; this does not authorize an unbounded fallback.
 
 ### Idempotency
 
@@ -588,30 +1087,84 @@ SSE re-authorizes before every event and on a heartbeat no slower than 30 second
 | Tạo DM | ✅ | `dm_key` normalized UNIQUE — 1 kênh/cặp; `create_dm` reuse sau `assert_dm_allowed` (test #38) |
 | Assistant projector (P7) | ✅ | `client_msg_id='assistant:'+query_id` deterministic + unique `bot_query_id` (xem `feature_club_assistant_tech.md`) |
 | Media finalize/scan | ✅ | Enqueue scan idempotent (endpoint §3); một scan lifecycle + orphan cleanup (test #35) |
-| Block/report command key | ⬜ chưa pin — chốt ở build slice | — |
-| DD-86 channel commands | ✅ contract proposal | Actor-scoped UUID key + command/request fingerprint + durable receipt; exact replay returns prior result, mismatch fails closed |
+| Block/unblock/report | ✅ v1 contract | Actor-scoped UUID command receipt + canonical `(action,target,reason/evidence fingerprint)`; exact replay returns prior safe result, same key/different fingerprint rejects before mutation. Block state is deterministic per actor-target pair; report writes exactly one append-only report/audit effect under retry/concurrency |
+| DD-86 channel lifecycle commands | ✅ final contract | Tenant+actor-scoped UUID key + command/request fingerprint in `chat_command_receipts`; exact replay returns prior result, mismatch fails closed |
+| Moderation/mute commands | ✅ final contract | Tenant+actor-scoped UUID key + canonical action/target/reason fingerprint in `chat_command_receipts`; exact replay returns prior result and creates no second audit, mismatch fails closed |
+| Reaction desired state | ✅ | Primary key `(message_id,person_id)` + message row lock; same desired token and remove-absent return current state, another accepted token atomically replaces the one row |
+| Own edit/delete | Edit: optimistic concurrency; delete: idempotent | Edit locks row and requires expected current edit count before one revision/body mutation. Delete sets author tombstone once; retry returns tombstoned state and never restores |
+| Push/digest provider write | ✅ sticky attempt | One attempt identity per coalesced `(person,channel,highest_unread_cursor)` row (which records its selected delivery kind); `unknown` is not retried as a new send, and read advancement cancels obsolete pending work |
+| Requester-only read command | Read-only/retriable; no durable result receipt | Re-authorize surface + selector + eligible club and recompute canonical self view on every call; selector is short-lived/bound, not result authority |
 
 ---
 
-## 4. Chi tiết triển khai — proposal
+## 4. Chi tiết triển khai — target
 
 ### Send pipeline
 
 ```text
-API → send_chat_message(channel, client_msg_id, body) SECURITY DEFINER
+API → send_chat_message(channel, client_msg_id, body, reply_ref?, mentions[]) SECURITY DEFINER
     → deterministic idempotency lock + existing-owned-message check
-    → resolve actor/channel → shared safety core (active membership OR DM block + sender + target/pair limits)
+    → resolve actor/channel
+        → club: active membership + active mute check
+            → admins_only: exact chat.channel.post_restricted; unknown/unavailable deny
+        → DM: block + sender + target/pair safety core
+    → resolve visible same-channel reply
+    → consume each opaque mention target through slice 9; re-authorize current actor+target+channel
+      and persist only immutable resolved target ref + sanitized safe-label snapshot
     → validate every attachment is actor-owned + channel-bound + ready
-    → INSERT chat_messages (ON CONFLICT client_msg_id → return existing)
+    → INSERT message + mention rows atomically (ON CONFLICT client_msg_id → return existing)
     → pg NOTIFY 'chat_<channel>' (payload = message id, không PII)
     → SSE dispatcher đọc canonical message, re-authorize current channel access, rồi mới đẩy
 ```
 
 Message body escape/sanitize. Media upload is private and separate from send: validate declared metadata → direct private upload → verify object metadata/content-derived MIME → scan/moderate → mark `ready`; pending/rejected/quarantined/deleted objects are never attached or served. Read access is short-lived and re-authorized on each request; deletion revokes future grants and leaves a message tombstone. Orphan pending objects expire through a cleanup job. NOTIFY payload **không** chứa body/object key/PII — subscriber refetch canonical dưới authz.
 
+Requester-only command pipeline đứng trước pipeline trên:
+
+```text
+POST message → whole-input leading-slash classifier
+  ├─ normal text → send_chat_message
+  └─ leading slash control input
+       ├─ ASCII-casefold exact /help|/pay|/me|/myclubs|/discover|/name on all surfaces
+       ├─ ASCII-casefold exact /sessions|/waitlist on club|club_bot only
+       └─ alias|arg|unknown|non-ASCII lookalike|unsupported surface → private typed error + /help
+     Every command/control branch creates zero message/rate/NOTIFY/unread mutation
+
+POST command/execute → verify session + current surface
+  → dispatch exact ASCII-casefolded zero-arg/no-alias catalog entry
+  → /help derives current allowed entries from that same registry after authz
+  → when club context is needed in human DM: derive requester eligible clubs
+      (1 auto | many opaque picker | 0 generic) and verify bound selector when present
+  → each command calls its canonical domain owner; /pay uses Player View/self-payment adapter
+  → synchronous `Cache-Control: private, no-store` typed response; no bot writer/result persistence/event
+```
+
+Interaction, search, moderation and notification stay out of the normal-send writer:
+
+```text
+PUT reaction → current-readable visible message → lock
+  → upsert one of 👍|❤️|😂|😮|😢|🙏 or remove own row
+
+PATCH own message → own human row lock + DB time <15m + edit_count<5 + expected count
+  → append prior body revision + update only body/edit metadata/search vector atomically
+DELETE own message → own human row lock → one-way author tombstone
+GET search → live-readable channels + current visible body + generated PostgreSQL simple vector
+
+POST moderation/mute → club target + exact capability + receipt fingerprint
+  → validate exact reason/note and exact 1h|24h|7d mute duration
+  → hide/restore visibility or apply DB-timed write mute under lock + append one immutable audit
+  → no DM transcript read, content edit, hard delete, permanent ban or system message
+
+Unread transition → evaluate DM/direct-mention/reply default ON or club all|mentions|off
+  → coalesce generic opaque work by person+channel+highest unread cursor
+  → mark-read cancels obsolete pending work
+  → immediately before provider write re-check access+safety+preference+device+trust epoch
+  → sticky attempt: delivered/unknown never spawns a duplicate send
+```
+
 ### Trợ lý tái dùng (DD-19 pha B, DD-20 — P7, ngoài phase-1)
 
-Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club')` với `author_type='assistant'`, `membership_id=NULL`, log ở `bot_queries` (Club Assistant). **Không** tạo model chat song song — cùng bộ bảng `chat_*`. Grounding trợ lý vẫn chỉ KB (DD-21). Nếu DD-86 được chốt, projector còn phải chứng minh `channel.assistant_enabled=true` **AND** tenant config/entitlement/provider/privacy gates đều pass; thiếu/không resolve được bất kỳ gate nào thì không ghi assistant message.
+Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club')` với `author_type='assistant'`, `membership_id=NULL`, log ở `bot_queries` (Club Assistant). **Không** tạo model chat song song — cùng bộ bảng `chat_*`. Grounding trợ lý vẫn chỉ KB (DD-21). DD-86 final derives `assistant_enabled=true` for new `all_members` channels and `false` for new `admins_only` channels; exact `chat.channel.manage` may mutate either kind, while accepting true requires tenant config, exact `assistant_ai_kb` entitlement, provider and privacy gates. “Announcements” has no hidden special case beyond its `admins_only` default. Ingress lẫn projector consume đều re-check the full conjunction; bất kỳ false/unknown nào tạo zero query/provider/message.
 
 ### Caching Strategy
 
@@ -619,7 +1172,10 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 |------|--------|-----|-------------|
 | Membership/DM safety decision (`chat_current_is_member`/`dm_current_read_allowed`/`assert_dm_allowed`) | ❌ | — | Fail-closed, live per-request/per-event; SSE re-authorize trước mỗi event + heartbeat ≤30s (§3) |
 | Message history/list | ❌ | — | Live read dưới RLS + cursor pagination |
+| Search result/ACL | ❌ | — | Generated `simple` vector is DB index only; current channel readability + visibility re-evaluated per query |
+| Notification/digest payload | ❌ content cache | Configured enablement window only | Opaque cursor coordination; pre-provider live re-auth and mark-read cancellation |
 | Signed media access | Short-lived grant (không phải cache) | Ngắn (§2 DD-55) | Re-authorize mỗi request; delete/leave revoke future grants |
+| Channel mute | ❌ | DB-owned `expires_at` | Compare `statement_timestamp()` at every send; no client timer authority |
 
 ### Security Checklist (template v2.33 — map về section đã pin)
 
@@ -629,12 +1185,12 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 | Injection/validation | §4 body escape/sanitize; media content-derived MIME + malware scan; API/RPC không nhận author fields (test #16) |
 | Secret & log redaction | §4 NOTIFY payload chỉ message id, không body/object key/PII; error DM cố ý generic (`CHAT_SAFETY_BLOCKED`), không lộ block detail |
 | Webhook signature + replay | N/A — không có webhook ingress; realtime là SSE nội bộ (DD-07), không bridge kênh ngoài (CO-7) |
-| Idempotency | Bảng Idempotency §3 (`client_msg_id`/`dm_key`/advisory lock) |
-| Data retention/xoá | Media deletion/orphan lifecycle + tombstone đã pin (§2/§3); retention text message chưa pin — theo `feature_security_operations_tech.md` |
+| Idempotency | Bảng Idempotency §3: send/DM deterministic keys; lifecycle/moderation receipts; reaction desired-state |
+| Data retention/xoá | Không TTL/auto-delete/hard purge. Own edit giữ tối đa năm restricted prior-body revisions; author soft-delete là tombstone một chiều; moderator hide/restore chỉ đổi visibility và giữ immutable actor/reason audit. Search chỉ current-visible body. Push/digest giữ opaque unread cursor/attempt, không durable item/body/title/amount snapshot |
 
 ---
 
-## 5. Testing Plan — proposal
+## 5. Testing Plan — acceptance authority
 
 ### Unit / Integration (test bất biến DD-38)
 
@@ -663,7 +1219,7 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 | 21 | **Helper không đệ quy (role `app`)** | SELECT DM dưới RLS (policy gọi `chat_current_is_member`) → trả kết quả, **không** stack-overflow/recursion (helper OWNER BYPASSRLS đọc `chat_members` ngoài RLS) |
 | 22 | **Bot writer tách biệt** | User role không EXECUTE bot writer; bot writer chỉ chấp nhận `bot_query_id` đã authorized và cố định `author_type='assistant'`, không cho caller chọn system/person |
 | 23 | **chat_definer thiếu grant** | Nếu quên `GRANT … TO chat_definer` → `create_dm`/helper báo **permission denied** (regression: BYPASSRLS không thay table privilege) |
-| 24 | **Read-state isolation + safety** | `app` gọi `mark_read(channel)` → chỉ current person được update; DM blocked/safety-off và club membership `left` bị deny trước UPDATE; không có direct UPDATE grant |
+| 24 | **Read-state isolation + safety** | `app` gọi `mark_read(channel,throughMessage)` → chỉ current person advance cursor monotonically; DM blocked/safety-off và club membership `left` bị deny trước UPDATE; không có direct UPDATE grant; shared slice chạy được khi notification tables hoàn toàn chưa tồn tại |
 | 25 | **Provision bằng MIGRATION ROLE thật (không superuser)** | Chạy migration DDL dưới `DATABASE_URL_MIGRATION` (DDL-owner, NOSUPERUSER): (a) `CREATE ROLE … BYPASSRLS` do migration role → **FAIL** (PG16: cần superuser hoặc role có BYPASSRLS+CREATEROLE); (b) khi `chat_definer` đã pre-provision + `GRANT chat_definer TO migration_owner` → `CREATE FUNCTION` + `ALTER … OWNER TO chat_definer` + GRANT table **chạy OK**; (c) thiếu pre-provision → migration FAIL sớm. Test harness **không** được dùng superuser để "che" |
 | 26 | **ALTER OWNER thiếu CREATE ON SCHEMA (PG16)** | Fresh PG16 (public không cấp CREATE mặc định): `ALTER FUNCTION … OWNER TO chat_definer` khi chat_definer **chưa** có `CREATE ON SCHEMA public` → **FAIL**; sau `GRANT CREATE … TO chat_definer` → OK; `REVOKE CREATE` sau đó không phá runtime (chỉ cần USAGE) |
 | 27 | **Pre-provision idempotent + attribute check ĐỦ BỘ** | Re-run với chat_definer đúng exact attributes → **no-op**; `CREATE ROLE` thuần (không guard) → FAIL "already exists". **chat_definer tồn tại với BẤT KỲ attribute thừa** — `LOGIN`, `NOBYPASSRLS`, `SUPERUSER`, `CREATEDB`, `CREATEROLE`, **`INHERIT`**, hoặc **`REPLICATION`** → DO-block **RAISE fail-closed**, KHÔNG cấp table grants. Từng attribute phải có case riêng (regression: thiếu kiểm `rolinherit`/`rolreplication` → role privilege thừa vẫn lọt validation) |
@@ -679,7 +1235,7 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 | 37 | **DM bootstrap safety parity** | Block A↔B, disable từng safety capability, hoặc vượt create target-rate rồi gọi `create_dm` trực tiếp dưới real `app` role | Generic denial before INSERT/reuse; no channel/member mutation; bounded audit, no block-detail leak |
 | 38 | **Existing DM reuse safety** | DM đã tồn tại rồi A blocks B; B gọi `create_dm(A)` | `assert_dm_allowed` denies before returning existing channel; reuse cannot bypass block |
 | 39 | **Direct-send bypass closure** | `SET ROLE app; INSERT INTO chat_messages ...` cho club/DM | Permission denied; block/rate/audit không thể bị né bằng raw DML |
-| 40 | **Blocked DM read/mark-read** | A/B đã có DM, sau đó một bên block; GET list/history và `mark_read` | Zero rows/generic denial; `last_read_at` không đổi |
+| 40 | **Blocked DM read/mark-read** | A/B đã có DM, sau đó một bên block; GET list/history và `mark_read` | Zero rows/generic denial; canonical `(created_at,id)` read cursor không đổi |
 | 41 | **Blocked DM realtime** | Block xảy ra khi SSE đang mở | Re-auth ở event/heartbeat kế tiếp đóng stream; không phát message mới hoặc body qua stale subscription |
 | 42 | **Club membership lifecycle** | Club member chuyển `active → left` trong lúc list/SSE/send | RLS read về zero, send/mark-read deny, SSE đóng; quay lại active thì quyền được tính từ membership hiện hành |
 | 43 | **Concurrent send retry** | Hai transaction cùng `(channel_id, client_msg_id)` | Idempotency advisory lock serialize; đúng 1 message và rate/audit side effect không bị double-consume |
@@ -693,26 +1249,96 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 | 51 | **DD-86 membership activation replay** | Activate cùng membership lặp/concurrent khi N channels active | Đủ đúng một member row/channel, không duplicate/thiếu |
 | 52 | **DD-86 capability fail-closed** | Role label admin nhưng capability thiếu; registry unavailable/unknown | Channel mutation/restricted post đều deny; role label không bypass |
 | 53 | **DD-86 command idempotency** | Replay exact request và reuse key với payload khác | Exact replay trả receipt cũ/no second mutation; mismatch → `CHAT_IDEMPOTENCY_MISMATCH` |
-| 54 | **DD-86 Assistant conjunction** | Toggle channel flag và từng tenant/provider/privacy gate | Chỉ tổ hợp tất cả true mới project; mọi false/unknown không ghi assistant message |
+| 54 | **DD-86 Assistant derived default + conjunction** | Create `all_members`, `admins_only` and Announcements-labelled channels; try client-supplied setting and unauthorized mutation; then enable/toggle each tenant/`assistant_ai_kb`/provider/privacy gate | Server derives true for `all_members`, false for `admins_only`; exact `chat.channel.manage` mutates either policy and accepting true requires all gates. Announcements has no special rule beyond `admins_only`; every false/unknown ingress/consume gate creates zero query/provider/message |
+| 55 | **DD-93 exact slash × surface matrix** | Run all eight canonical commands in ASCII lower/upper/mixed case on `club`, `club_bot`, `human_dm`; repeat aliases, arguments, unknown and non-ASCII lookalikes; inspect `/help` per actor/surface | Six common commands route privately on all surfaces; `/sessions|/waitlist` route only club/bot. Case variants canonicalize; every other leading slash returns registry-derived private error/help with zero message/rate/NOTIFY/unread mutation |
+| 56 | **DD-91 `/pay` in club channel** | Requester executes `/pay` while another member watches history/SSE/unread | Requester receives canonical self-payment result synchronously; observers and all shared state remain byte-identical; no Assistant/bot writer |
+| 57 | **DD-91 `/pay` in private Club Bot** | Requester executes `/pay` in bot surface and changes debt before retry | Each call re-authorizes and recomputes current Player View; zero result row/ref/message/SSE/outbox/push |
+| 58 | **DD-91 `/pay` in human DM one/many/none** | Requester has 1, 2, 0 eligible clubs while peer watches DM state | One auto-selects; two returns requester-only picker; zero returns generic empty. Peer sees zero message/event/unread delta and cannot infer tenant/status |
+| 59 | **Opaque selector authority** | Valid selector; raw tenant ID; expired/wrong actor/wrong DM/wrong command; membership changes after issue | Only a still-eligible bound selector passes; all others generic `CHAT_COMMAND_SELECTOR_INVALID`, zero status disclosure |
+| 60 | **No-store/no-ref command contract** | Inspect success/picker/error across all three surfaces and DB/outbox | `Cache-Control: private, no-store`; no `messageId/resultRef/eventId`, result row, replay endpoint, SSE, outbox or push entry |
+| 61 | **Safety dependency migration order** | Apply root chat migration without pre-root safety migration; then apply pre-root→root→post-root sequence | Wrong order fails before partial chat schema/policy; correct order succeeds and post-root DM commands call the landed canonical safety primitive |
+| 62 | **Block/report command replay** | Exact retry, concurrent retry, then same key with changed target/reason/evidence | Exact retry returns prior safe result; concurrency yields one block transition or one append-only report/audit effect; fingerprint mismatch rejects before mutation |
+| 63 | **Text retention boundary** | Advance time; edit up to five times, author soft-delete, moderator hide/restore, then probe hard delete | No TTL/auto-delete/hard purge; current body + restricted revision trail obey DD-92; author tombstone is irreversible; immutable moderation audit remains restricted |
+| 64 | **Slice ownership catalog** | Inspect DB/routes after root and after each post-root slice | Root has no command writers; shared send, reaction, own edit/delete, search, moderation, slash, unread-notification and DM lifecycle each appear exactly once in their named owner; no duplicate derivation |
+| 65 | **Same-channel reply lifecycle** | Reply to current-visible target; try missing/cross-channel/already-tombstoned target; then tombstone a valid target after reply exists | Only current-visible same-channel target inserts atomically; already tombstoned target rejects. Later tombstone renders target metadata only and never resurrects body/media |
+| 66 | **Structured mention immutability** | Mention current channel person/Assistant; forge cross-channel/non-member/unsafe label; probe update path | Server persists immutable resolved target ref + sanitized snapshot atomically; invalid target rejects; no update path exists |
+| 67 | **DD-92 exact Unicode reaction desired state** | Set/replace/remove each of `👍|❤️|😂|😮|😢|🙏`; retry/concurrently race; send aliases/arbitrary token | Exactly one row per `(message,person)`; accepted replacement is atomic, same-state/remove-absent is 200-safe, every non-exact value rejects |
+| 68 | **DD-95 hide/restore + immutable reason audit** | Capable/non-capable actor targets human club message; try each exact reason, `other` with/without bounded note, non-other with note, replay/mismatch | Exact `chat.message.moderate` required; valid accepted action writes one receipt + one immutable actor/reason/note audit and only changes moderation visibility |
+| 69 | **DD-95 exact timed mute** | Apply `1h|24h|7d`; try permanent/arbitrary/client expiry; retry; wait for expiry and skew client clock | Exact `chat.member.mute` + one receipt/audit; DB time denies write until expiry then allows; read unchanged; every other/client-authoritative duration rejects |
+| 70 | **Moderation negative surface** | Owner/admin/support/capability holder targets DM, assistant/system message, or requests hard delete/content edit/permanent ban/system message | Generic deny; zero transcript/content disclosure and zero mutation; role label alone confers nothing |
+| 71 | **DD-92 own edit boundary** | Edit own human message before/at/after 15m; race edits; attempt sixth edit; edit assistant/system or immutable fields | Only body edits strictly before 15m and at counts 0–4 pass; one prior-body revision per accepted update; author/channel/reply/attachments/mentions unchanged |
+| 72 | **DD-86 post policy shared-core enforcement** | Active member sends to `all_members`; role-labeled admin without capability sends to `admins_only`; capability registry is unknown/unavailable | `all_members` succeeds on active membership; `admins_only` requires exact `chat.channel.post_restricted` inside shared writer; every unknown/missing case denies before mutation |
+| 73 | **DD-86 creator composite FK/bootstrap** | Create channel with mismatched membership/person/tenant tuples, a correct tuple, client/admin `NULL/NULL`, and exact system bootstrap | Only one active membership tuple persists for actor-created channels; no single-ID/cross-tenant/null creator spoof. `NULL/NULL` passes only the dedicated system-bootstrap path |
+| 74 | **Structured Club Assistant mention** | Active member mentions exact `club_assistant` in derived-enabled `all_members`, derived-disabled `admins_only`, and either after a capable toggle; repeat with each tenant/`assistant_ai_kb`/provider/privacy gate false or unknown; ask KB-known, KB-unknown and debt-status questions | Any current channel setting + all-gates-true case may create one idempotent bot query/message; answer is KB-grounded with citation or `no_answer`. Every false/unknown case creates zero query/provider/message; debt-status mention never returns actual ledger amount |
+| 75 | **DD-92 author soft-delete** | Author deletes own human message immediately/late/retry; tries restore; moderator restores moderation state; read existing replies/history/search | One irreversible tombstone, no hard delete or body leak; retries safe; neither author nor moderator resurrects content; reply structure remains with tombstone metadata |
+| 76 | **DD-92 search scope/vector** | Search with/without channel filter across active/left/blocked/guessed channels; include current, edited, hidden, deleted and revision-only terms | Only current visible authorized bodies match canonical generated PostgreSQL `simple` vector; live authz prevents existence oracle; old revisions/tombstones never match |
+| 77 | **Requester-only exclusion from search** | Execute every slash/private Club Bot result then search exact sensitive terms | Zero command/result rows or hits; no requester-only/private bot content enters message/revision/vector index |
+| 78 | **DD-94 defaults/preferences** | New DM, direct mention, reply and club channel with no preference; then set `all|mentions|off` | DM/direct mention/reply eligible by default; club defaults `mentions`; each exact mode controls eligibility and arbitrary value rejects |
+| 79 | **DD-94 coalesce/read cancellation** | Sau khi DD-94 cài cancellation trigger/function riêng, generate multiple unread messages, update highest cursor, then mark through each cursor before send | One pending unit per `(person,channel,highest_unread_cursor)` carrying its selected delivery kind; DD-94-owned trigger coalesces/cancels read-covered pending rows; shared `mark_read` không có grant hoặc direct DML trên dispatch table; no parallel unread counter |
+| 80 | **DD-94 opaque payload/storage** | Inspect DB row, queue, logs, push and digest for text/title/sender/amount/attachment metadata | Only opaque refs/cursors/attempt state + generic copy exist; zero durable content/title/amount snapshot |
+| 81 | **DD-94 immediate re-auth** | Revoke club membership, block DM, change preference, invalidate device or advance trust epoch after enqueue and just before provider write | Every false/unknown state cancels with zero provider write; current valid state alone may send |
+| 82 | **DD-94 sticky provider outcome** | Provider succeeds, fails retriably, or times out/returns unknown; worker crashes between write and persistence | Same attempt identity is reused where safe; delivered/unknown never creates a second provider send; no duplicate |
+| 83 | **DD-94 digest timing enablement** | Timing/config absent, malformed, untested, then verified | Digest remains OFF for absent/malformed/untested configuration; verified enablement uses the same unread/coalesce/re-auth/sticky rules |
+| 84 | **DD-95 negative surface + reason/duration contract** | Capability holder targets DM/assistant/system, asks content edit/hard delete/permanent ban/system message, or submits invalid reason/note/duration | Generic deny, zero transcript/content disclosure and zero mutation; mute never changes read access |
+| 85 | **Current-channel safe-target disclosure** | Authorized member lists targets; outsider/cross-tenant actor guesses channel; inspect every DTO/cache/log | Only active human members of the already-authorized current club channel return as opaque short-lived `{targetRef,safeLabel}`; zero raw UUID, contact, gender, debt, `pay_code`, PII, global/fuzzy result or membership oracle |
+| 86 | **Safe-target consume-time re-authorization** | Issue valid target ref, then change actor/target membership, tenant/channel binding, block/safety or action capability before mention/mute/start-DM; replay from another actor/channel | Every consumer invokes the same resolver and generically denies before message/moderation/DM/audit/notification mutation when any live guard is false or unknown |
+| 87 | **Mechanism/API ownership fence** | Inspect slices `1–47` and routes `A1–A21`; call each adapter with invalid session/action/DTO/cache case | Mechanism owners expose zero HTTP; each route has exactly one thin adapter, delegates to one canonical owner, and does not re-derive protected state |
 
 ---
 
 ## 6. Rollout Plan + Changelog
 
-### Rollout (DD-38 ✅; migration HOLD tới DD-86 decision)
+### Rollout (DD-38/DD-86/DD-91–DD-95 ✅ decision-final; execution still HOLD on readiness dependencies)
 
-0. **PRE-PROVISION (tier superuser, production-equivalent, TRƯỚC migration):** idempotent DO-block `CREATE ROLE chat_definer NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION` + **kiểm exact attributes** (login/super/bypassrls/createdb/createrole/inherit/replication) → fail-closed nếu role đã tồn tại sai (BYPASSRLS: **superuser** hoặc role đã có BYPASSRLS + CREATEROLE — PG16) + `GRANT chat_definer TO <migration_owner_role>` (SET ROLE) + `GRANT USAGE ON SCHEMA public TO chat_definer` (runtime). **KHÔNG** đặt trong migration DDL-owner.
-1. Owner ratify/reject DD-86; commit one immutable snapshot; promote Product+BE specs. Chỉ sau đó tạo root slice `dd38-dd86-chat-schema-core` và chọn **migration number monotonic kế tiếp còn trống tại lúc implement**. Migration tạo candidate key `memberships_id_person_tenant_uq`, final `chat_*` shape (one-channel DD-38 nếu reject, multi-channel DD-86 nếu accept), safety schema + canonical guards, definer ownership/grants và RLS; chạy bằng migration role thật. Không migration nào được land trước decision.
-2. Club channel send/read + SSE; nếu DD-86 accepted, enable N-channel lifecycle/default/provisioning only after tests #46–53 pass.
-3. Wire mọi request/create/send/read path vào safety core đã land ở migration, verify sender/pair throttles + audit + host/support DM denial; DM vẫn OFF nếu một capability chưa xanh.
-4. Land private media lifecycle (storage grants, scan/moderation worker, ready-only attach, signed read, delete/orphan cleanup).
-5. Enable DM 1-1 only after the complete DD-55 safety gate passes; otherwise keep DM OFF.
-6. (P7) Trợ lý bot-participant tái dùng `chat_*` (DD-19/20).
+Catalog IDs are stable identifiers, not execution order. Runtime work follows explicit hard dependencies:
+
+0. Commit/push/re-pin the exact owner-final authority pack. Reviewed documents still authorize no worktree until that immutable SHA passes the canonical readiness gate.
+1. Serialize the colliding DB worktrees exactly: `1 chat-definer-role-provisioning → 2 chat-dm-safety-authority-core → 3 dd38-dd86-chat-schema-core → 4 tenant-capability-authority-core`. Slice 4 includes closed DD-56 registry/preset, expiring/revocable grant-read authority, append-only grant audit and fail-closed authorization. Do not run these four in parallel.
+2. Land `5 chat-club-channel-lifecycle-core`, then `9 chat-authorized-member-target-read-core`. Slice 9 establishes the only current-channel active-human `{targetRef,safeLabel}` DTO and consume-time resolver before any mention, mute or start-DM consumer.
+3. Land `6 chat-club-moderation-core` **dark**, then `7 chat-shared-message-command-core`, then `8 chat-dm-lifecycle-command-core`: exact execution `5→9→6→7→8`. Shared send consumes the target resolver for mentions; moderation consumes it for mute; DM consumes it for start-DM. No consumer invents a lookup or accepts raw UUID authority.
+4. Land `10 chat-realtime-unread-core`; then split media as `11 chat-media-upload-scan-core → 12 chat-media-attachment-read-lifecycle`. Land reactions `13`, edit/delete/revisions `14`, then required pre-beta search `15` after its 3/6/7/14 dependencies.
+5. Land self/domain mechanisms: `16→17`; independently 18, 20 and 21. Slice 19 may be **authored** as a read-only query over merged `players/memberships/sessions`, but `/sessions|/waitlist` stays OFF until strict current-authority `svc-session-crud`, `svc-session-join-leave`, `svc-waitlist-promotion-core` producer packets and production-shaped data E2E pass.
+6. Land slash mechanisms exactly `22 registry → 23 requester-only response → 24/25/26 domain adapters`. Registry owns no private transport/domain formula; response owns no grammar/domain logic; adapters stay thin.
+7. Land Assistant/KB `27 storage+config → 28 text ingest → 29 URL and 30 file adapters → 31 generation-CAS index activation → 32 retrieval → 33 bot.ask worker → 34 mention and 35 private thread`. URL/file are source adapters, not alternate indexes. Mention/private surfaces project only canonical worker outcomes.
+8. Land notification delivery `36 route integrity → 37 protected subscription → 38 provider attempt`; after accepted F0 design authority, continue `39 PWA shell → 40 registration → 41 display/telemetry → 42 chat unread notification`. Slice 42 owns Chat preference/coalescing/cancellation/reauth, not provider/subscription/client state. DD-88 is not a dependency.
+9. Land payment notification `43 lifecycle intent → 44 reminder producer and 45 settled/correction projector → 46 authenticated Inbox/detail → 47 thin payment push`. Push never precedes durable Inbox/detail and never snapshots amount.
+10. Land thin HTTP adapters `A1–A21` only after each row's dependency in §3. Mechanism slices `1–47` own zero HTTP.
+11. Complete tracked design `F0`, then ship FE `F1–F15` by the dependency table below; no production FE may substitute mock business logic for an absent `A*` route.
+12. Enable club-chat beta only after shared send, safe targeting, reactions, edit/delete, search, moderation, slash, realtime/unread/push and observability suites are green. Enable DM only after complete DD-55 safety E2E. Enable Assistant, media, Session commands, Web Push/digest and payment notification only after their explicit provider/producer/config/consent/data gates pass; otherwise keep the affected route OFF.
+
+#### Tracked-design FE rollout
+
+`F0 chat-design-authority-handoff` must persist tracked `design.pen`, receive owner approval and pin token/component/API-state mapping for Chat, Assistant and Notification. All production slices cover `loading|ready|empty|error`, auth loss, keyboard/focus/screen-reader/WCAG contrast and responsive PWA states.
+
+| FE slice | Hard dependency |
+|---|---|
+| `F0 chat-design-authority-handoff` | Immutable authority pack; no production FE |
+| `F1 chat-fe-channel-list-shell` | F0 + A1/A2/A4/A14 |
+| `F2 chat-fe-safe-member-target-picker` | F0/F1 + 9/A6 |
+| `F3 chat-fe-thread-history-realtime` | F0/F1 + 7/10/A3 |
+| `F4 chat-fe-text-composer-send` | F0/F2/F3 + 7/9/22/A3/A6 |
+| `F5 chat-fe-requester-command-overlay` | F0/F4 + 22–26/A13 |
+| `F6 chat-fe-private-bot-mention` | F0/F3/F5 + 33–35/A14 |
+| `F7 chat-fe-message-interactions` | F0/F3 + 13/14/A7/A8 |
+| `F8 chat-fe-authorized-search` | F0/F3 + 15/A9 |
+| `F9 chat-fe-media-lifecycle` | F0/F3/F4 + 11/12/A10/A11 |
+| `F10 chat-fe-safety-moderation` | F0/F2/F3 + 6/8/9/A5/A6/A12 |
+| `F11 notification-fe-inbox-payment-detail` | F0 + 17/41/43–47/A18/A19 |
+| `F12 assistant-fe-kb-source-manager` | F0 + 27–31/A15/A16 |
+| `F13 assistant-fe-config-tone-analytics` | F0 + 27/33/A15 |
+| `F14 chat-fe-notification-preferences` | F0 + 42/A17 |
+| `F15 web-push-fe-contextual-onboarding-devices` | F0 + 37/39/40/41/A19 |
 
 ### Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v0.22 | Reconcile primary-surface execution topology: bounded mechanism catalog `1–47`, separate thin API `A1–A21` and tracked-design FE `F0–F15`; serialize DB worktrees `1→2→3→4`, then lifecycle→safe current-channel target `5→9`→moderation dark `6`→shared send `7`→DM `8`. Add opaque target/ref privacy + consume-time re-authorization tests, split media/registry/KB/Web Push/payment chains, and distinguish Session read authoring from producer/E2E enablement. Retire active bundled media/slash/notification substrate ownership; Reviewed/not implemented unchanged. |
+| 2026-07-28 | v0.21 | Owner-final DD-56/DD-86/DD-92–DD-95: Assistant defaults ON for `all_members`/OFF for `admins_only`, mutable on both behind the full gate; same-channel reply + immutable mentions; exact Unicode reactions; own body edit `<15m`/max five + restricted revisions; irreversible author tombstone; required pre-beta current-visible PostgreSQL `simple` search; ASCII case-insensitive exact eight-command registry; unread-derived generic push/digest with exact preferences/coalescing/cancel/re-auth/sticky attempt and enablement-only timing; club-only exact moderation reasons + `1h|24h|7d` mutes. Semantic freeze adds the missing cross-feature capability-authority branch, makes DD-95 storage/writers a dark prerequisite of shared send, keeps reply/mention atomic in that shared writer, and canonicalizes every slice ID across plan/graph/BE. Requester-only responses use `private, no-store`; Reviewed/not implemented unchanged. |
+| 2026-07-28 | v0.20 | Intermediate working-tree snapshot, superseded in full by the exact owner-final v0.21 contract. |
+| 2026-07-28 | v0.19 | Historical DD-86/CHT-OQ-2 floor; superseded by owner-final v0.21 for Assistant defaults, interactions, slash, search and notification/digest. |
+| 2026-07-27 | v0.18 | Make slice ownership executable: root owns final tables/constraints + pure DM read adapter/RLS/read grants/direct-DML revokes only; pre-root retains safety primitives; shared post-root core owns the single send/history/mark-read path for club+DM, while DM lifecycle core alone owns create/reuse/block/report. Pin exact block/report command idempotency, phase-1 no-purge text retention and ownership tests #62–64. Combined SQL remains a final-target view, not one migration. |
+| 2026-07-27 | v0.17 | Mirror DD-91 requester-only `/pay`: exact classifier fence before normal message insert; authenticated sync `private,no-store` command endpoint; human-DM tenant-null one/many/none club resolution with actor+DM+tenant+command-bound opaque selector; zero bot/result ref/row/SSE/outbox/push/history/unread; canonical Player View source. Correct dependency graph to safety pre-root → final chat schema → DM command core; add tests #55–61. Draft/not implemented remains. |
 | 2026-07-22 | v0.16 | Mirror DD-86 proposal có điều kiện: final multi-channel schema delta, exact-one default lifecycle, atomic provisioning, DD-56 capability commands, actor-scoped command idempotency, Assistant conjunction, tests #46–54 và root-migration sequencing. Migration HOLD tới owner decision; spec Draft/not implemented. |
 | 2026-07-19 | v0.15 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (`chat_*` chưa vào canonical — DD-38 pending, migration mới monotonic; DROP baseline = ❌ NEVER), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v0.14a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |

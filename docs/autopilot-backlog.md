@@ -520,8 +520,38 @@ manifest: null
 merged_probe: null
 notes: **Opened by codex round-02/03 of `docs-marketplace-public-capacity-guard` (2026-07-26); this task is the NAMED tracking mechanism that codex required instead of prose-only deferral.** Gap: `feature_marketplace_discovery_tech.md` edge #15 pins that a public + `slots_max IS NULL` row must be skipped, its stale projection purged, and an audit emitted — but that handling only runs **when the projector evaluates the session**. A legacy/fixture/direct writer that flips an ALREADY-PROJECTED public session from finite `slots_max` to `NULL` emits no session event, so the projector never revisits it and the stale-but-now-invalid projection **remains publicly visible**. The periodic sweep today only does time-based expiry and does not detect this. Unit test #26 places the row into a batch by hand, so it proves behaviour-when-reached, NOT that every invalid row is reached. **Fix candidates (choose at scope time, do not pre-pick):** (a) durable event contract obliging any writer that bypasses the SessionService choke-point to emit an invalidation event; (b) periodic canonical reconciliation comparing `public_sessions` against `sessions` — needs `job-scheduler-cron-registration` in addition to the dispatcher; (c) the DB CHECK `NOT (visibility='public' AND slots_max IS NULL)` hardening candidate already recorded in `feature_session_management_tech.md` §2, which removes the invalid state at the source and may make (a)/(b) unnecessary — evaluate (c) FIRST, it is the cheapest and most fail-closed. **Classification: `ENABLEMENT_ONLY` gate on the future public-projection projector, NOT a hard dependency of the docs slice** — the spec correction is strictly better than the status quo and must not be blocked on unbuilt runtime; but the projector must not be ENABLED while this gap is open. Recorded on Verdict 20. Exposure today = 0: no projector exists in TypeScript, `Implementation: Not started`.
 
+## task: tenant-capability-authority-core
+title: Shared DD-56 capability authority — closed registry, least-privilege preset, tenant-private grants, append-only audit, fail-closed authorize
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: [dd38-dd86-chat-schema-core]
+invariants: [schema, tenant-isolation, authorization]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Evidence registry anchor only; this block does not issue a readiness verdict or authorize a
+  worktree. Live main@2dc9b8c has only `tenant_admins.role` plus `tenantsForPerson` role labels:
+  there is no DD-56 action registry, grant-read storage or canonical `authorize` primitive.
+  The future strict packet must make this slice the sole cross-feature owner of the closed
+  action registry, the identical least-privilege preset for legacy `admin|co_admin` (never
+  owner), tenant/person authority resolution, tenant-private expiring/revocable grant-read
+  constraints, append-only grant audit and fail-closed consume-time authorization. It includes
+  the exact Chat keys `chat.channel.manage`, `chat.channel.post_restricted`,
+  `chat.message.moderate` and `chat.member.mute`; unknown/unavailable/missing/expired/wrong-tenant
+  authority denies. It owns no Chat mutation or human-DM read/moderation right. Sensitive
+  grant/revoke command/UI is a separate follow-up if it cannot fit the bounded core.
+  Capability semantics are independent from Chat schema, but the actual capability worktree is
+  slice 4 and execution hard-dep slice 3: worktrees 1→2→3→4 serialize because they share the
+  migration tail, packages/db/schema.ts, DB catalog/schema/authz tests. Every lifecycle,
+  restricted-post, moderation and mute consumer remains HOLD until this core has its own immutable
+  strict CODE_READY packet and merged runtime. Current initiative readiness, blocker, full graph
+  (mechanism slices 1–47, API A1–A21, FE F0–F15) and next trigger remain owned exclusively by primary-surface
+  plan v1.7 §13.
+
 ## task: dd38-dd86-chat-schema-core
-title: Root chat-schema migration slice (DD-38 in-app chat) — final chat model + authz/safety + RLS/RPCs
+title: Root chat-schema migration slice (DD-38 in-app chat) — three core tables + constraints + RLS/pure-read helpers
 status: idea
 risk: P0
 change_class: schema-migration
@@ -531,22 +561,26 @@ scope: []
 manifest: null
 merged_probe: packages/db/schema.ts :: chat_channels
 notes: |
-  Recording existence only — NOT authorized to author. Blocked behind THREE gates, all must close first:
-    - DD-55 design-probe (DM request/media/report FSM + storage constraints) — NOT run.
-    - DD-86 (in-app multi-channel per CLB) — 🟡 proposal, 9 open questions in-scope, NOT_PLAN_READY
-      (decisions.md:103 / :1075; sequence pinned decisions.md:1085 = "tạo một root migration slice
-      dd38-dd86-chat-schema-core chứa final chat model → authz/channel-command consumer → Assistant").
-    - CHT-OQ-2 (club channel moderation granularity: host delete/hide/mute) — OPEN (decisions.md:672).
-  Surface (all pending, no executable DDL yet): chat_channels/chat_members/chat_messages base tables +
-  triggers; RLS + chat_definer role (pre-migration superuser provisioning) + SECURITY DEFINER RPCs
-  (DM create_dm/send_chat_message/mark_read defined in feature_inapp_chat_tech.md; club create_club_channel
-  + add/remove-club-member undefined); DM-safety schema chat_blocks/chat_reports/rate-audit (no CREATE TABLE
-  anywhere); phase-1 media chat_attachments (attachment/scan/quota/deletion states, schema-pending
-  feature_inapp_chat.md:107); memberships composite-FK target.
-  Split out of AP-28 auth-d1-packet by owner decision 2026-07-23 (DD-38 chat and auth-D1 are unrelated
-  domains). depends_on stays [] because DD-55/DD-86/CHT-OQ-2 are decision gates, not merged slugs — do not
-  spin a worktree until all three close. This block AUTHORIZES nothing; it only keeps DD-86's prose name as
-  an executable anchor so the chat work does not fall off the radar after leaving the packet.
+  Evidence registry anchor only; this block does not issue a readiness verdict or authorize a worktree.
+  Working-tree decisions v2.10 make DD-86/DD-91–95 owner-final; DD-88 is a broader
+  DEFERRED_PROPOSAL and does not own or block DD-94. Club Assistant Product/BE v0.17, Chat Product
+  v0.14/BE v0.22 and Notifications Product/BE v3.10 are Reviewed target contracts. No chat_* schema,
+  service, route, UI runtime or new migration exists at main@2dc9b8c. Current initiative readiness,
+  blocker and next trigger are owned exclusively by primary-surface plan v1.7 §13; any future slice packet
+  must re-evaluate its own readiness against the immutable authority it pins.
+  This root slice is deliberately bounded to final `chat_channels`/`chat_members`/`chat_messages`
+  shape + DM read adapter + RLS/policies + read-helper owner/grants + invariant tests. It must NOT
+  own create_dm/send/mark-read HTTP/RPC, capability registry/grants, media, Assistant, slash
+  execution, notification delivery or moderation endpoints. The cross-feature
+  `tenant-capability-authority-core` is semantically independent but executes only as slice 4
+  after this root slice because worktrees 1→2→3→4 share migration/schema/catalog-test scope;
+  it must land before every lifecycle/restricted-post/moderation/mute consumer. DD-92 requires own edit, author soft-delete
+  and search before beta; DD-93/94/95 require the full registry, unread-derived generic opaque
+  offline signal/digest and exact moderation contract, all dependency-ordered by plan v1.7.
+  depends_on remains [] because this is an evidence registry anchor, not evidence that the executable
+  slice graph has no dependencies. Replace it with the immutable plan's exact prerequisites
+  when authoring the real packet. This block only preserves the root anchor originally split out of AP-28;
+  it AUTHORIZES nothing.
 
 ## task: docs-session-management-spec-reconcile
 title: Reconcile 2 pinned Session Management spec defects (projection direction + stale 0014 merge-state) to PRD
@@ -826,4 +860,3 @@ depends_on: []
 invariants: [retry-liveness]
 scope: []
 notes: **Mở bởi hai P1 của codex vòng 3 trên `job-schedule-outbox-dispatch` (2026-07-27), owner phân xử là ĐÚNG-nhưng-ngoài-scope-slice-đó.** Cả hai đều có căn cứ, không phải nhiễu. (1) `TDD.md:82` NFR-1c yêu cầu **sync-lag p95 ≤ 3s, p99 ≤ 10s** cho "canonical store + outbox + projection", và `feature_sync_engine.md:129` mang nó như acceptance checkbox. Cron của pg-boss có **sàn một phút**, nên p95 rơi vào khoảng 57s — không đạt được bằng cron, đây là số học chứ không phải tinh chỉnh. (2) `runDispatchCycle` mặc định `DEFAULT_BATCH_LIMIT = 25` và mỗi job schedule gọi nó **đúng một lần**, nên mọi tốc độ trên 25 event/phút tạo backlog tăng không giới hạn dù worker rảnh. **Vì sao không sửa ở slice 3a:** `DD-07` đã chốt `LISTEN/NOTIFY` làm cơ chế realtime, nên trigger sub-minute muốn là NOTIFY phát **từ transaction INSERT outbox event** — tức từ PRODUCER, mà producer là `DEFERRED_OUT_OF_SCOPE` (owner 26/07); slice 3a không có seam nào để gắn vào. Và batch size + drain policy thuộc consumer theo `docs/autopilot-db-job-claim-lease-core.md §4.3`, cùng lý do đã giữ retry/backoff ra khỏi `dispatcher.ts`. **Ràng buộc đã thành cấu trúc:** cờ `OUTBOX_DISPATCH_SCHEDULE_ENABLED` nay ghi điều kiện lật gồm CẢ HAI — off cho tới khi có projector thật VÀ cho tới khi có sub-minute trigger + drain. **depends_on cần điền tên slice producer khi slice đó được author** — NOTIFY phải phát ra từ đó. Giữ cron một phút làm recovery sweep là hợp lý, không phải bỏ.
-

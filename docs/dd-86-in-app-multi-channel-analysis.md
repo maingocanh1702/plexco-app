@@ -2,21 +2,21 @@
 # 💬 DD-86 Analysis — In-app **multi-channel per CLB** (kênh theo chủ đề kiểu Messenger community)
 
 > **Mục đích:** chốt hướng data model cho việc mỗi CLB có **nhiều kênh chat theo chủ đề** (Main / Feedback / Announcements / host tự tạo thêm), thay vì đúng **1 kênh club/CLB** như mô hình DD-38 hiện tại. Mỗi kênh vẫn @mention được **Club Assistant** (bot đã feed KB) để trả lời câu hỏi.
-> **Ngày:** 2026-07-22 · **Trạng thái:** 🟡 **Analysis / proposal** — CHƯA phải spec Reviewed hay implementation authority. DD-86 được mirror vào `decisions.md` ở trạng thái **🟡 proposal**; các spec Draft chỉ ghi **conditional delta**, KHÔNG coi là contract active trước owner ratification. §13 ghi verdict review của chính doc pack, không cấp phép code.
-> **Canonical đối chiếu:** `docs/features/BE/feature_inapp_chat_tech.md` (DDL đề xuất chat `chat_*`, RLS 2-policy) · `docs/features/feature_inapp_chat.md` (DD-38) · `docs/features/feature_club_assistant.md` + `docs/proposals/club-ai-bot-knowledge-base.md` (bot+KB) · `decisions.md` DD-38/DD-55/DD-16..28/DD-71/DD-79/DD-83 · `packages/db/schema.ts` (**AUTHORITATIVE** khi build; `chat_*` HIỆN CHƯA có trong đây) · HANDOFF §3 (5 HARD RULES).
+> **Ngày:** 2026-07-28 · **Version:** 1.1 · **Trạng thái:** ✅ **DECISION_FINAL** — owner ratify **Option B** và toàn bộ DD-86-Q1..Q10. Đây là product/architecture authority để hoàn thiện spec; **không** phải `PLAN_READY`, `CODE_READY`, migration hay runtime proof. §13 ghi verdict review của execution pack, không cấp phép code.
+> **Canonical đối chiếu:** `docs/features/BE/feature_inapp_chat_tech.md` (DDL đề xuất chat `chat_*`, RLS 2-policy) · `docs/features/feature_inapp_chat.md` (DD-38) · `docs/features/feature_club_assistant.md` + `docs/proposals/club-ai-bot-knowledge-base.md` (bot+KB) · `decisions.md` DD-38/DD-55/DD-16..29/DD-71/DD-79/DD-83/DD-86/DD-91..95; DD-88 chỉ là broader proposal · `packages/db/schema.ts` (**AUTHORITATIVE** khi build; `chat_*` HIỆN CHƯA có trong đây) · HANDOFF §3 (5 HARD RULES).
 > **Lưu ý tên:** "channel" ở doc này = **kênh chat trong app Plexco theo chủ đề** (in-app topic channel). KHÁC hoàn toàn `docs/channels/` (= adapter nền tảng ngoài: Zalo/Messenger/web). Đừng trộn hai khái niệm.
 
 ---
 
-## 0. TL;DR — đề xuất hướng (chưa chốt, chờ owner)
+## 0. TL;DR — quyết định cuối
 
 **Bối cảnh:** hướng sản phẩm anh mô tả gần như đã có spec:
 - *Bot tag được + feed KB để trả lời* = **Club Assistant + KB** (DD-16/17/19–23/28 ✅; DD-18 provider ⬜ = gate go-live). Không phải làm lại.
-- *Kênh chat trong CLB* = **In-app Chat** (DD-38 ✅, Draft, pending migration).
+- *Kênh chat trong CLB* = **In-app Chat** (DD-38/DD-86 ✅, Product/BE Reviewed, pending migration).
 
-**Điểm net-new duy nhất cần chốt:** mô hình chat hiện tại khoá **đúng 1 kênh `club`/CLB** (unique index `chat_channels_club_uq`). "Nhiều kênh theo chủ đề" là **mở rộng data model** → cần DD mới.
+**Điểm net-new đã chốt tại DD-86:** mô hình chat trước đó khoá **đúng 1 kênh `club`/CLB** (`chat_channels_club_uq`). "Nhiều kênh theo chủ đề" là mở rộng data model có chủ đích theo Option B.
 
-**Đề xuất (Option B — thêm cột phân loại, giữ nguyên trục `kind`):**
+**Đã chốt (Option B — thêm cột phân loại, giữ nguyên trục `kind`):**
 - Giữ `chat_channels.kind ∈ {club, dm}` **không đổi** (không phá RLS/composite-FK/assistant projection đã thiết kế). Một kênh chủ đề của CLB **vẫn là `kind='club'`** (tenant-private).
 - **Bỏ** unique index `chat_channels_club_uq` (ràng buộc 1-kênh/CLB) → cho **N kênh `club`/tenant**.
 - Thêm metadata club-only: `title`, `sort_order`, `is_default` (Main pinned), `created_by_membership_id` + `created_by_person_id`, `post_policy` (`all_members` | `admins_only` cho Announcements), `assistant_enabled`; `archived_at` tiếp tục là lifecycle soft-close.
@@ -25,7 +25,7 @@
 
 **Vì sao Option B, không phải "thêm `kind` mới":** thêm `kind='topic'` sẽ buộc viết lại toàn bộ CHECK XOR (`club⇔tenant NOT NULL`/`dm⇔dm_key`), RLS 2-policy, và assistant projector (`kind='club'`). Giữ `kind='club'` + thêm cột phân loại **giữ nguyên mọi bất biến bảo mật đã harden**, blast radius nhỏ nhất.
 
-**Sequencing (quan trọng):** `chat_*` **chưa vào migration**. Nên **chốt DD-86 TRƯỚC khi author migration chat DD-38**, để schema ship sẵn N-channel-ready — tránh phải migration lần 2 để drop unique index + thêm cột (giống cách DD-82 phải chốt trước DD-41 migrate).
+**Sequencing (quan trọng):** `chat_*` **chưa vào migration**. DD-86 và cặp Chat đã đóng nhánh decision/spec, nhưng root migration DD-38/DD-86 vẫn đợi nhánh độc lập gồm docs-only DM-safety contract, exact `chat_definer` provisioning và safety storage/primitives. Root chỉ được tạo final N-channel chat tables + pure DM read adapter/RLS sau khi **cả hai nhánh** đã đóng; không land baseline one-channel rồi fold.
 
 ---
 
@@ -41,10 +41,10 @@
 | RLS = **2 permissive policy** mỗi bảng `chat_*` (club dùng `app.tenant_id` + `chat_current_is_member`; dm dùng `app.person_id` + `dm_current_read_allowed`) | `feature_inapp_chat_tech.md` §2 — RLS policies `chat_*` |
 | **Assistant chỉ phát vào `kind='club'`**, `author_type='assistant'`, `client_msg_id='assistant:'||query_id` | `feature_club_assistant.md` §4 — `chat_channels` row · `club-ai-bot-knowledge-base.md §4.4` |
 | Bot = **config cấp tenant** (`bot_configs`, UNIQUE tenant_id), KHÔNG phải Person/ChannelIdentity mới (DD-20) | `feature_club_assistant.md` §4 — `bot_configs` · §1 bất biến DD-20 |
-| `chat_*` (channels/members/messages + safety) **CHƯA tồn tại trong `packages/db/migrations/`** — DD-38 Draft, pending migration | `feature_inapp_chat_tech.md` §2 — Migration & Rollback note |
+| `chat_*` (channels/members/messages + safety) **CHƯA tồn tại trong `packages/db/migrations/`** — contract Reviewed, pending migration | `feature_inapp_chat_tech.md` §2 — Migration & Rollback note |
 | DD-71 Announcement = host→member **broadcast/fan-out** (proof-bound preview/confirm, quota, free + host_pro), **không phải** một chat channel | `decisions.md` DD-71 |
 | Nav app có header 💬 chat (DD-79 Home hub, S9) | `decisions.md` DD-79 · `feature_home.md` |
-| Số DD kế tiếp còn trống = **DD-86** (83/84/85 đã dùng) | `decisions.md` grep DD-8x |
+| DD-86 và DD-91..95 đã owner-ratify; DD-92 sở hữu message/search, DD-93 slash, DD-94 digest, DD-95 moderation. DD-88 chỉ là broader proposal | `decisions.md` DD-55/DD-86/DD-88/DD-91..95 |
 
 > **Hệ quả:** (1) đúng 1 club-channel/tenant là **ràng buộc tường minh** (`chat_channels_club_uq`), không phải giả định — bỏ nó là hành động có chủ đích, cần DD; (2) vì `chat_*` chưa migrate nên đây là **thời điểm rẻ nhất** để đưa N-channel vào ngay từ migration đầu; (3) giữ `kind='club'` cho kênh chủ đề = tái dùng nguyên RLS/FK/assistant, không tạo trục phân loại thứ hai.
 
@@ -69,14 +69,14 @@ chat_channels.kind ∈ {club, dm}
 | # | Hướng | Ưu | Nhược | Verdict |
 |---|---|---|---|---|
 | **A** | Thêm `kind='topic'` (kênh chủ đề là kind thứ 3) | "kind" mô tả đủ loại | Phải viết lại CHECK XOR (`kind` giờ 3 nhánh: club-1-shared/topic-N/dm), RLS 2-policy phải xử topic riêng, assistant projector `kind IN ('club','topic')`. Blast radius rộng trên đúng phần đã harden bảo mật. | ⚪ Không chọn |
-| **B** | **Giữ `kind='club'`; kênh chủ đề = nhiều row `club`/tenant + cột phân loại** | Tái dùng nguyên RLS/FK/assistant (`kind='club'` không đổi). Chỉ **bỏ 1 unique index** + **thêm cột**. Blast radius nhỏ nhất. | "club" giờ nghĩa là "kênh trong CLB" thay vì "kênh CLB duy nhất" — cần rename khái niệm trong prose (không đụng enum) | ✅ **Đề xuất** |
+| **B** | **Giữ `kind='club'`; kênh chủ đề = nhiều row `club`/tenant + cột phân loại** | Tái dùng nguyên RLS/FK/assistant (`kind='club'` không đổi). Chỉ **bỏ 1 unique index** + **thêm cột**. Blast radius nhỏ nhất. | "club" giờ nghĩa là "kênh trong CLB" thay vì "kênh CLB duy nhất" — cần rename khái niệm trong prose (không đụng enum) | ✅ **Chốt** |
 | **C** | Bảng riêng `chat_topics` tham chiếu 1 `chat_channels` club | Tách rõ | Thừa: một `club` channel giờ 1-1 với 1 topic → chỉ là cột đội lốt bảng. Thêm join, thêm FK. | ⚪ Không chọn |
 
-**Đề xuất B; chưa phải owner decision.** Kênh chủ đề vẫn là `kind='club'` (tenant-private), chỉ khác: **cho phép N row**/tenant + metadata mô tả kênh.
+**Owner đã ratify Option B.** Kênh chủ đề vẫn là `kind='club'` (tenant-private), chỉ khác: **cho phép N row**/tenant + metadata mô tả kênh.
 
 ---
 
-## 4. Schema delta đề xuất (KHÔNG phải DDL authority — chỉ hướng)
+## 4. Schema contract đã chốt (DDL authority vẫn thuộc BE spec + migration)
 
 > DDL/RLS/migration thật thuộc `feature_inapp_chat_tech.md` + `packages/db/schema.ts` + migration khi build. Dưới đây là **delta so với DDL đề xuất hiện có**, để review model — không copy chạy.
 
@@ -127,14 +127,14 @@ CREATE UNIQUE INDEX chat_channels_default_uq
 
 **Exact-one active default không thể chỉ dựa partial unique index.** Mọi `create/set-default/archive` phải đi qua một lifecycle owner, khoá tenant row rồi đổi trạng thái trong một transaction:
 
-- `create_club_channel`: RPC tự set giá trị club-only (`is_default=false`, `sort_order`, `post_policy`, `assistant_enabled`) và tự promote thành default nếu đây là active club-channel đầu tiên.
+- `create_club_channel`: RPC tự set giá trị club-only (`is_default=false`, `sort_order`, `post_policy`) và derive `assistant_enabled=true` cho `all_members`, `false` cho `admins_only`; tự promote thành default nếu đây là active club-channel đầu tiên. Sau create, chỉ actor có exact `chat.channel.manage` được đổi flag trên cả hai policy; mọi execution vẫn qua toàn bộ tenant/entitlement/provider/privacy gates.
 - `set_default_club_channel`: lock tenant + old/new channel, set old `false` và new `true` atomically; retry cùng command trả cùng kết quả.
 - `archive_club_channel`: nếu target là default thì caller phải truyền replacement active channel trong cùng command; không có replacement hợp lệ → fail-closed, không archive.
 - Deferred invariant/commit assertion phải chứng minh mỗi tenant đã provision chat có **exactly one** `kind='club' AND archived_at IS NULL AND is_default=true`; unique index chỉ là fence chống hai default đồng thời.
 
 **`chat_members` — không đổi cấu trúc** (PK `(channel_id, person_id)` đã hỗ trợ N kênh; `role` đã có `admin`; `last_read_at` per kênh đã sẵn). Chỉ thay đổi **hành vi provisioning** (§5).
 
-**`chat_messages` — không đổi cấu trúc.** Post permission enforce ở **send RPC** (§7), không phải cột mới trên message.
+**Adjacent floor — DD-91..95:** DD-91 sở hữu requester-only `/pay`; DD-92 sở hữu reply/immutable structured mention, exact emoji reaction set, bounded own edit, author tombstone và beta-required authorized search; DD-93 sở hữu exact zero-arg slash catalog theo surface; DD-94 sở hữu generic coalesced offline digest không durable item/body; DD-95 sở hữu club-only hide/restore + timed mute. DD-86 không sao chép hoặc thu hẹp các contract này.
 
 ---
 
@@ -146,14 +146,14 @@ CREATE UNIQUE INDEX chat_channels_default_uq
 | `chat_channels_club_uq` (1/CLB) | **Bỏ** — partial unique mới chỉ chặn hai active default; lifecycle command + deferred assertion giữ **exactly one** active default/CLB | 🟡 có chủ đích |
 | Composite FK `(channel_id, tenant_id)` + `UNIQUE(id, tenant_id)` (`tech §2 — composite FK`) | **Không đổi** — `id` vẫn unique, bind tenant vẫn đúng với N kênh | 🟢 none |
 | `chat_bind_tenant` trigger (đóng lỗ FK MATCH SIMPLE NULL) | **Không đổi** — logic set `tenant_id=channel.tenant_id` độc lập số kênh | 🟢 none |
-| RLS club policy `chat_current_is_member(id)` (`tech §2 — helper + RLS club policy`) | **Cần quyết**: hiện yêu cầu **row `chat_members`**. Với auto-join-all, hoặc (a) auto-provision row mỗi kênh, hoặc (b) đổi helper sang "active membership của tenant". Đề xuất **(a)** — vì `last_read_at` phải per kênh dù sao | 🟡 quyết ở §5.1 |
+| RLS club policy `chat_current_is_member(id)` (`tech §2 — helper + RLS club policy`) | **Đã chốt:** giữ row `chat_members` per channel và auto-provision mọi active membership vào mọi active club channel; `last_read_at` vẫn per channel | ✅ DD-86-Q2 |
 | Assistant projector `kind='club'` (`club_assistant §4`) | **Không đổi trục** — nhưng cần thêm điều kiện `assistant_enabled` để bot không trả lời ở kênh tắt bot | 🟡 thêm 1 predicate |
 | DM path (dm_key, 2-member guard, safety DD-55) | **Không đổi** — multi-channel chỉ đụng nhánh `club` | 🟢 none |
 | Public plane | **Không đổi** — chat không bao giờ vào `public_sessions` (NFR-S2) | 🟢 none |
 
-### 5.1 Sub-decision: membership per-channel
+### 5.1 Sub-decision đã chốt: membership per-channel
 
-`last_read_at`/badge chưa đọc **bắt buộc** per (kênh, person). Vậy dù mô hình "ai cũng thấy mọi kênh", vẫn cần row `chat_members`/kênh để giữ read-state. Đề xuất:
+`last_read_at`/badge chưa đọc **bắt buộc** per (kênh, person). Vậy dù mô hình "ai cũng thấy mọi kênh", vẫn cần row `chat_members`/kênh để giữ read-state. Đã chốt:
 
 - **Phase-1:** mọi membership `status='active'` của CLB được **auto-provision** `chat_members` row cho mọi active `kind='club'` channel (`archived_at IS NULL`). Không tham chiếu `private` vì enum phase-1 chưa có giá trị đó. Tạo kênh mới → channel + toàn bộ row member commit cùng transaction; một row lỗi thì rollback cả channel, không để kênh partial-visible. Membership chuyển sang `active` → canonical membership lifecycle chèn idempotent (`ON CONFLICT DO NOTHING`) vào mọi active club-channel; chuyển `left` vẫn mất quyền tức thì nhờ helper re-check `memberships.status`.
 - **Phase sau:** kênh riêng/subset (chỉ một số member) — lúc đó `chat_members` đã là nguồn membership per-channel sẵn sàng, không phải đổi model.
@@ -171,7 +171,7 @@ CREATE UNIQUE INDEX chat_channels_default_uq
 | Đọc | Trong tab chat của CLB | Inbox thông báo hợp nhất (DD-70) + kênh ngoài |
 | Ràng buộc | Chỉ admin post; member đọc | Proof-bound preview→confirm (không undo), quota, free + host_pro |
 
-**Đề xuất phân định:** kênh "Announcements" = nơi **hiển thị/lưu** thông báo dạng chat trong app; nếu host muốn **fan-out ra ngoài** (push/Zalo) thì đó là DD-71. Có thể (phase sau) nối: một announcement DD-71 **cũng** project một `chat_messages` vào kênh Announcements. **Phase-1 giữ tách** — kênh Announcements chỉ là club channel admins-only, không tự fan-out. → **Open question DD-86-Q3.**
+**Đã chốt:** kênh "Announcements" = nơi **hiển thị/lưu** thông báo dạng chat trong app; nếu host muốn **fan-out ra ngoài** (push/Zalo) thì đó là DD-71. Có thể (phase sau) nối một announcement DD-71 vào kênh Announcements. **Phase-1 giữ tách** — kênh Announcements chỉ là club channel admins-only, không tự fan-out, không tạo durable notification item theo từng message.
 
 ---
 
@@ -180,7 +180,8 @@ CREATE UNIQUE INDEX chat_channels_default_uq
 - **Không dùng `chat_members.role='admin'` làm tenant-admin authority.** DD-56 bắt buộc một registry action→capability canonical; `chat_members.role` chỉ là channel-local metadata/read-state và không tự cấp quyền quản trị tenant.
 - **Post permission** enforce ở `send_chat_message` RPC (choke-point proposal tại `tech §2 — send_chat_message`): `all_members` cần active channel membership; `admins_only` cần exact capability `chat.channel.post_restricted`. Resolver unavailable/unknown action/missing-or-expired grant → fail-closed. Announcements vẫn readable cho member nhưng chỉ actor có capability mới post.
 - **Tạo/sửa/archive/set-default** đi qua RPC `SECURITY DEFINER` hẹp và exact action `chat.channel.manage`; actor/person lấy từ web session, tenant derive từ canonical channel, không nhận role/tenant authority từ body. Các câu `REVOKE` ở tech spec hiện là **contract proposal**, chưa phải runtime vì migration chat chưa tồn tại.
-- **Ai được tạo kênh:** host/admin mặc định; "member tạo chat" (như nút Create chat trong ảnh) = **open question DD-86-Q4** (có thể mở cho member nhưng cần rate-limit + moderation).
+- **Tạo kênh phase-1:** chỉ actor có `chat.channel.manage`; member-create không có capability này và được defer.
+- **Adjacent moderation v1 theo DD-95/CHT-OQ-2:** `chat.message.moderate` chỉ cho soft-hide/restore human-authored club message bằng tombstone, reason bắt buộc + immutable audit; `chat.member.mute` chỉ cho timed mute theo channel. Hai capability này thuộc DD-95, không thuộc lifecycle owner DD-86; chúng không bao giờ cấp quyền đọc/moderate human DM và không mở hard delete, content edit, permanent ban hay system-message moderation.
 
 ---
 
@@ -200,7 +201,7 @@ CREATE UNIQUE INDEX chat_channels_default_uq
 
 Vì bot là **config tenant** (`bot_configs` 1/tenant) và projector authorize bằng `chat_members` rồi phát vào `kind='club'`, việc có **N kênh club** **không** đụng model bot/KB:
 - @mention bot ở bất kỳ kênh `kind='club'` nào của CLB → cùng một KB tenant trả lời.
-- Thêm cột `chat_channels.assistant_enabled` để host **tắt bot ở kênh cụ thể** (vd tắt ở Announcements). Projector phải yêu cầu đồng thời `bot_configs.enabled`, entitlement/provider/privacy gates hiện hành **và** `channel.assistant_enabled=true`; flag per-channel không được bật vòng qua tenant-level OFF.
+- `chat_channels.assistant_enabled` được server derive mặc định **`true` cho `post_policy='all_members'`** và **`false` cho `post_policy='admins_only'`**. Chỉ actor có `chat.channel.manage` mới được đổi flag trên cả hai policy. Dù flag là `true`, persist/project/consume chỉ được chạy khi đồng thời tenant config enabled + exact entitlement `assistant_ai_kb` + provider/privacy/cap gates đều PASS; unknown/unavailable ở bất kỳ gate nào = không gọi provider, không phát câu trả lời.
 - KHÔNG cần bot/KB per-channel (một KB/CLB vẫn đúng DD-16).
 
 ⇒ Phần "mỗi channel tag được bot" trong hướng của anh **không tốn thiết kế mới** ngoài 1 cột flag.
@@ -209,119 +210,140 @@ Vì bot là **config tenant** (`bot_configs` 1/tenant) và projector authorize b
 
 ## 10. Sequencing
 
-1. Owner ratify DD-86; authority baseline + analysis/spec mirrors phải commit để có immutable SHA.
-2. Promote cặp In-app Chat Product/BE sang Reviewed sau khi đóng contract + acceptance matrix của DD-86.
-3. **Root slice đầu tiên** là `dd38-dd86-chat-schema-core`: migration chat đầu tiên tạo thẳng model N-channel + exact-one-default invariant. Đây là root dependency, **không** đợi một migration DD-38 one-channel merge trước rồi mới fold DD-86 vào migration đó.
-4. Channel management/restricted-post RPC là consumer slice sau root schema và phụ thuộc canonical DD-56 action registry; nếu registry chưa live, route/RPC user-facing phải negative-scope/OFF, không fallback sang raw `role='admin'`.
-5. Club Assistant pha B chỉ land sau canonical chat root migration; DD-18 vẫn là enablement-only gate cho provider/go-live.
+1. Commit/re-pin authority baseline + analysis/spec mirrors để có immutable SHA.
+2. DD-55 DM-safety contract trong exact Chat Product/BE authority pack đã Reviewed: finite block/report/rate/audit FSM, exact storage/idempotency/retention, pure `dm_safety_enabled`/`chat_pair_blocked` và side-effect `assert_dm_allowed`; không còn docs-only packet riêng phải author.
+3. First runtime slice sau immutable re-pin: `chat-definer-role-provisioning` với exact NOLOGIN/BYPASSRLS attributes, grants/membership và production-role verification; không tạo chat tables.
+4. Land `chat-dm-safety-authority-core`: một migration monotonic độc lập với `chat_*` tạo safety storage + pair/rate/audit primitives và exact grants/tests; không tạo chat tables/API/UI.
+5. ✅ **Đã đóng:** owner ratify DD-86/DD-91..95; cặp In-app Chat, Club Assistant, Notifications và Tenant Routing/Authz Product/BE đã được promote sang Reviewed với contract + acceptance matrix cuối. DD-88 giữ đúng trạng thái broader `DEFERRED_PROPOSAL`.
+6. **Root migration slice** `dd38-dd86-chat-schema-core` chỉ sở hữu final N-channel `chat_channels/chat_members/chat_messages` DDL/constraints/triggers → pure chat-specific membership/DM read adapters → RLS/policies → read-helper owner/grants; moderation/mute/notification/capability storage đều ngoài root. Root tiêu thụ safety primitives đã land nhưng không alter/re-own chúng; **không được tạo/grant** `create_dm`, `send_chat_message`, `mark_read`, command HTTP/RPC hay route.
+7. Land `tenant-capability-authority-core`: owner cross-feature duy nhất của closed DD-56 registry, cùng least-privilege preset cho `admin|co_admin`, tenant/person resolver, tenant-private expiring/revocable grant-read storage, append-only grant audit và fail-closed `authorize`. Capability semantics độc lập với Chat schema, nhưng **actual DB worktrees 1→2→3→4 phải serialize** vì cùng chạm migration tail, `packages/db/schema.ts`, DB catalog/schema/authz tests. Bốn exact Chat keys nằm trong preset; Chat không tạo registry riêng. Sensitive grant/revoke command/UI có thể là follow-up, nhưng không được trì hoãn core read/authorize.
+8. Sau serialized DB lane, actual dependency là `chat-club-channel-lifecycle-core → chat-authorized-member-target-read-core → chat-club-moderation-core → chat-shared-message-command-core → chat-dm-lifecycle-command-core`: target core sở hữu short-lived requester+channel-bound opaque DTO + consume-time resolver cho mention/mute/start-DM; moderation land dark và sở hữu duy nhất mute/moderation storage + writers/audit; shared chỉ đọc current mute state và sở hữu send/history/mark-read + atomic reply/mention; DM lifecycle sở hữu duy nhất `create_dm`/reuse/block/report. Catalog ID 9 vẫn ổn định nhưng phải chạy trước 6/7/8; root **không** đợi migration DD-38 one-channel rồi fold DD-86 và không để consumer chạy trước guard.
+9. Channel management/restricted-post/moderation/mute RPC là consumer sau root+capability join; nếu canonical DD-56 core chưa live, route/RPC user-facing phải negative-scope/OFF, không fallback sang raw `role='admin'`.
+10. Club Assistant pha B chỉ land sau canonical chat root migration; DD-18 vẫn là enablement-only gate cho provider/go-live. Assistant/Notification/DD-88 không chặn root migration.
 
 DD-86 mở rộng mô hình DD-38 và tham chiếu DD-71/DD-16..28/DD-79; không đụng đường tiền.
 
 ---
 
-## 11. Open questions → DD-86 (đưa vào `decisions.md` khi mở proposal)
+## 11. Ratified answers — DD-86-Q1..Q10
 
-| ID | Câu hỏi | Đề xuất mặc định | Phân loại readiness |
+| ID | Câu hỏi | Quyết định cuối | Trạng thái |
 |---|---|---|---|
-| DD-86-Q1 | Kênh chủ đề = `kind='club'` + cột (Option B) hay `kind='topic'` mới (A)? | **B** (blast radius nhỏ) | `IN_SCOPE_BLOCKER` — owner |
-| DD-86-Q2 | Membership: auto-join mọi kênh (phase-1) hay per-channel join? | Auto-join-all phase-1; per-channel/private phase sau | `IN_SCOPE_BLOCKER` — owner |
-| DD-86-Q3 | "Announcements" là chat channel (admins_only) hay chỉ luồng DD-71? | Chat channel admins_only, **tách** DD-71 phase-1; nối fan-out phase sau | `IN_SCOPE_BLOCKER` — owner |
-| DD-86-Q4 | Ai được tạo kênh phase-1? | Chỉ actor có `chat.channel.manage`; member-create deferred | `IN_SCOPE_BLOCKER` — owner |
-| DD-86-Q5 | Kênh có shareable URL (vào slug registry DD-83) không? | Không phase-1; không route/public slug | `DEFERRED_OUT_OF_SCOPE` — không chặn phase-1 |
-| DD-86-Q6 | Bot bật/tắt per kênh (`assistant_enabled`) mặc định? | Mặc định bật, nhưng vẫn AND tenant config/entitlement/provider/privacy gates | `IN_SCOPE_BLOCKER` — owner |
-| DD-86-Q7 | Authority cho create/manage/restricted-post là gì? | DD-56 registry: `chat.channel.manage` + `chat.channel.post_restricted`; không dùng `chat_members.role` | `IN_SCOPE_BLOCKER` — AuthZ/Chat spec owner |
-| DD-86-Q8 | Exact-one default tồn tại qua create/set/archive/concurrency thế nào? | Tenant lock + atomic replacement + deferred commit assertion; archived default không được tính | `IN_SCOPE_BLOCKER` — Chat spec owner |
-| DD-86-Q9 | Idempotency create/rename/archive/set-default? | Actor-scoped UUID command receipt + canonical fingerprint | `IN_SCOPE_BLOCKER` — Chat spec owner |
-| DD-86-Q10 | Audit creator shape? | `(created_by_membership_id, created_by_person_id, tenant_id)` composite FK; NULL/NULL chỉ system bootstrap | `IN_SCOPE_BLOCKER` — Chat spec owner |
+| DD-86-Q1 | Kênh chủ đề = `kind='club'` + cột (Option B) hay `kind='topic'` mới (A)? | **Option B** | ✅ `DECISION_FINAL` |
+| DD-86-Q2 | Membership: auto-join mọi kênh (phase-1) hay per-channel join? | Auto-join mọi active member vào mọi active club channel; private/subset defer | ✅ `DECISION_FINAL` |
+| DD-86-Q3 | "Announcements" là chat channel (admins_only) hay chỉ luồng DD-71? | Chat channel `admins_only`, tách DD-71; không materialize DD-71 fan-out hoặc durable item/message source. Offline digest là delivery-only theo DD-94 | ✅ `DECISION_FINAL` |
+| DD-86-Q4 | Ai được tạo kênh phase-1? | Chỉ actor có `chat.channel.manage`; member-create defer | ✅ `DECISION_FINAL` |
+| DD-86-Q5 | Kênh có shareable URL (vào slug registry DD-83) không? | Không phase-1; không public/shareable slug/URL | ✅ `DECISION_FINAL_NEGATIVE_SCOPE` |
+| DD-86-Q6 | Bot bật/tắt per kênh (`assistant_enabled`) mặc định? | Server derive true cho `all_members`, false cho `admins_only`; exact `chat.channel.manage` được đổi trên cả hai; luôn AND tenant config/entitlement/provider/privacy/cap gates, unknown deny | ✅ `DECISION_FINAL` |
+| DD-86-Q7 | Authority cho lifecycle kênh và restricted post là gì? | DD-86 sở hữu exact `chat.channel.manage` + `chat.channel.post_restricted`; unknown/unavailable/missing/expired deny. Moderation/mute thuộc duy nhất DD-95 | ✅ `DECISION_FINAL` |
+| DD-86-Q8 | Exact-one default tồn tại qua create/set/archive/concurrency thế nào? | Tenant lock + atomic replacement + deferred commit assertion; archived default không được tính | ✅ `DECISION_FINAL` |
+| DD-86-Q9 | Idempotency create/rename/archive/set-default? | Actor-scoped UUID command receipt + canonical fingerprint | ✅ `DECISION_FINAL` |
+| DD-86-Q10 | Audit creator shape? | `(created_by_membership_id, created_by_person_id, tenant_id)` composite FK; NULL/NULL chỉ system bootstrap | ✅ `DECISION_FINAL` |
 
 ---
 
-## 12. Đề xuất block DD-86 để dán vào `decisions.md` (🟡 proposal)
+## 12. Decision mirror cuối cho `decisions.md`
 
-> Chỉ dán khi anh đồng ý mở proposal. Giữ 🟡 (chưa chốt) tới khi owner duyệt — theo rule dự án, không viết vào spec đã Reviewed.
+> `decisions.md` là canonical registry; block dưới đây là mirror của quyết định đã ratify, không phải proposal mới.
 
 ```
-## DD-86 — In-app multi-channel per CLB (kênh theo chủ đề) · 🟡 Đề xuất (chờ owner)
+## DD-86 — In-app multi-channel per CLB (kênh theo chủ đề) · ✅ Chốt
 
 Bối cảnh: mô hình In-app Chat (DD-38) khoá đúng 1 kênh club/CLB (chat_channels_club_uq).
 Hướng sản phẩm: mỗi CLB có N kênh theo chủ đề (Main/Feedback/Announcements/host tạo thêm),
 mỗi kênh @mention được Club Assistant (DD-16..28).
 
-Đề xuất: Option B — giữ kind='club', bỏ chat_channels_club_uq, cho N kênh club/tenant;
+Quyết định: Option B — giữ kind='club', bỏ chat_channels_club_uq, cho N kênh club/tenant;
 metadata club-only/DM-NULL; exact-one active default do tenant-locked lifecycle command +
 deferred assertion; creator bind composite membership+person+tenant; auto-provision active
 member per channel. Post/manage dùng DD-56 capability registry (`chat.channel.manage`,
 `chat.channel.post_restricted`), không dùng `chat_members.role` làm tenant authority.
+Moderation/mute là adjacent contract do DD-95 sở hữu, không phải lifecycle contract của DD-86.
+Unknown/unavailable/missing/expired capability luôn deny.
 
 Bất biến giữ nguyên: RLS tenant fail-closed, DM person-self, chat không ra public,
 bot chỉ ground KB đã DLP (DD-21), không multi-master, i18n.
 
 Quan hệ: phụ thuộc DD-38; tách với DD-71 (announcement broadcast) phase-1; bot = config
-tenant (DD-20), 1 KB/CLB (DD-16) — multi-channel không đụng model bot/KB, chỉ thêm cột
-assistant_enabled. Sequencing: chốt TRƯỚC khi author migration chat DD-38.
+tenant (DD-20), 1 KB/CLB (DD-16) — multi-channel không đụng model bot/KB. assistant_enabled
+mặc định true cho all_members, false cho admins_only; exact chat.channel.manage được đổi trên
+cả hai policy và consume-time luôn AND mọi gate. DD-91 sở hữu requester-only /pay; DD-92
+sở hữu reply/mention/reaction/edit/delete/search; DD-93 slash catalog; DD-94 digest delivery-only;
+DD-95 club-only moderation. Không durable notification item per chat message.
 
-Open: DD-86-Q1..Q10; Q5 là `DEFERRED_OUT_OF_SCOPE`, 9 câu còn lại chặn readiness (§11).
-Trạng thái: 🟡 chưa chốt · không migration · không đổi code-readiness.
+Open in scope: 0. Trạng thái: ✅ DECISION_FINAL · không migration · không đổi code-readiness.
 ```
 
 ---
 
 ## 13. Snapshot pin + readiness verdict (theo `review-code-readiness-gate` v1.3)
 
-> Doc này là **analysis tier** (giống `dd-82-tournament-analysis.md`); readiness verdict của slice thực thi sẽ nằm ở file riêng `dd-86-*-readiness.md` **chỉ sau khi DD-86 được owner chốt** (giống cặp `dd-82-tournament-slice1-readiness.md`). Verdict dưới đây là kết quả áp gate lên **chính artifact analysis + hướng đề xuất**, không phải cấp phép code.
+> Doc này là **decision-analysis tier**. DD-86 đã `DECISION_FINAL`; verdict dưới đây áp gate lên **execution pack**, không phải phủ nhận quyết định và không cấp phép code.
 
 ```text
 REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: NOT_PLAN_READY
-REVIEWED_AT: 2026-07-22
-AUTHORITY_SHA: 360c70c1d402437f2d3b91dd411f6d69938e9959
+REVIEWED_AT: 2026-07-28
+AUTHORITY_SHA: 2dc9b8c760c3b437af08ca1fc5fcbaea1492ad39
 BASE_BRANCH: main
-BASE_REMOTE_RELATION: LOCAL_MAIN_AHEAD_ORIGIN_MAIN_BY_1
+BASE_REMOTE_RELATION: MAIN_EQUALS_ORIGIN_MAIN
 WORKTREE_STATE: DIRTY_UNCOMMITTED  # verdict is not an immutable authority snapshot until commit
 TARGET_FILES:
+  - docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md
   - docs/dd-86-in-app-multi-channel-analysis.md
-  - docs/standards/decisions.md
-  - docs/features/BE/feature_inapp_chat_tech.md
   - docs/features/feature_inapp_chat.md
-  - docs/features/feature_club_assistant.md
+  - docs/features/BE/feature_inapp_chat_tech.md
   - docs/features/BE/feature_club_assistant_tech.md
-  - docs/proposals/club-ai-bot-knowledge-base.md
+  - docs/features/feature_club_assistant.md
+  - docs/features/feature_player_view.md
+  - docs/features/BE/feature_player_view_tech.md
+  - docs/features/feature_notifications_reminders.md
+  - docs/features/BE/feature_notifications_reminders_tech.md
+  - docs/features/feature_tenant_routing_authz.md
+  - docs/features/BE/feature_tenant_routing_authz_tech.md
   - docs/features/README.md
-SLICE: dd86-in-app-multi-channel (analysis, pre-decision)
-IN_SCOPE: hướng data model cho N kênh kind='club'/tenant + metadata kênh + per-channel post policy
-OUT_OF_SCOPE: author migration chat DD-38; thay đổi model bot/KB (DD-16..28); fan-out DD-71;
-              kênh riêng/subset; slug/URL DD-83; native push
-G1_DECISION: FAIL            # owner chưa ratify Q1-Q4/Q6; Q7-Q10 cần spec-owner closure
-G2_SPEC: PARTIAL             # mirrors đã cập nhật conditional; Product/BE vẫn Draft, chưa promote Reviewed
-G3_DEPENDENCY: FAIL          # executable root/consumer slices chưa author; không còn misclassify chat migration là prior dependency
-G4_TEST: PARTIAL             # exact conditional invariants đã mirror vào BE; acceptance matrix chưa full 9 nhóm
-G5_SCOPE: PARTIAL            # root schema candidate đã pin nhưng chưa có plan/manifest/worktree boundary
-G6_EXTERNAL: ENABLEMENT_ONLY:DD-18-provider-privacy-ToS
-HARD_DEPENDENCIES: memberships/persons/tenants baseline MERGED; DD-56 capability registry required only by management/post consumer
-PRIOR_SLICES: none for dd38-dd86-chat-schema-core (root dependency); authz consumer follows capability-registry implementation
-OPEN_QUESTIONS_IN_SCOPE: 9   # Q1-Q4,Q6-Q10; Q5 DEFERRED_OUT_OF_SCOPE
-ENABLEMENT_ONLY_GATES: DD-18 provider/privacy/ToS for Assistant go-live
-LIVE_REPO_VERIFICATION: PASS # working-tree verified; chat_* runtime absent; GitNexus has docs only, no execution flow
-CONTRACT_MATRIX: PARTIAL     # contradictions fixed; owner/spec-owner ratification still missing
-CLOSURE_MATRIX: FAIL         # G1/G2/G3/G4/G5 and immutable-authority closure remain open
-ACCEPTANCE_MATRIX: FAIL      # conditional tests added, full happy/boundary/auth/failure/concurrency/migration/security/regression/observability matrix not approved
-SECURITY_AND_MIGRATION_GATE: PARTIAL  # authz/default/FK/idempotency direction pinned but not approved/implemented
-IMPLEMENTATION_ARTIFACTS: NOT_REQUIRED_FOR_PLAN_READY
-FIRST_IMPLEMENTATION_STEP: blocked — after ratification/spec promotion, author dd38-dd86-chat-schema-core as the root migration slice
+  - docs/proposals/club-ai-bot-knowledge-base.md
+  - docs/proposals/plexco-global-kb-and-kb-autosync.md
+  - docs/proposals/notification-grouping.md
+  - docs/product/BRD.md
+  - docs/product/PRD.md
+  - docs/product/TDD.md
+  - docs/product/ROADMAP.md
+  - docs/README.md
+  - docs/00-start-here/HANDOFF.md
+  - docs/autopilot-backlog.md
+  - docs/standards/decisions.md
+  - docs/standards/feature-dependency-graph.md
+  - docs/standards/business-rules.md
+  - docs/standards/BUILD-STATUS.md
+SLICE: inapp-chat-primary-player-surface-plan (DD-86 decision-final authority)
+IN_SCOPE: DD-86 multi-channel model plus DD-91..95 player-primary Chat/Assistant/slash/notification/authz execution contract and dependency-ordered slices
+OUT_OF_SCOPE: runtime implementation; external chat bridge; E2EE/voice/video; public/subset channels; LLM-selected money/session tools; unowned host-money commands
+G1_DECISION: PASS            # DD-86-Q1..Q10 + DD-91..95 đã owner-ratify; không còn product choice trong scope
+G2_SPEC: PASS                # In-app Chat Product/BE pair Reviewed với exact storage/authz/acceptance
+G3_DEPENDENCY: PASS          # actual DB worktrees serialize 1→2→3→4; capability semantics remain independent; one-owner consumers follow
+G4_TEST: PASS                # full happy/boundary/auth/failure/concurrency/migration/security/regression/observability matrix pinned
+G5_SCOPE: PASS               # bounded slice catalog + explicit root/safety §B3 ceilings/compatibility proof đã pin
+G6_EXTERNAL: ENABLEMENT_ONLY:DD-18-provider-privacy-ToS;DD-72-Web-Push-user-consent;DD-94-digest-timing-config;MEDIA-private-object-storage-region-credentials;MEDIA-malware-moderation-scanner;DD-55-DM-media-report-bounded-config
+HARD_DEPENDENCIES: exact 27-file authority pack contains DD-86 + DD-91..95 ratification and Reviewed Chat/Assistant/Notification/Tenant-Authz contracts; memberships/persons/tenants/tenant_admins/outbox/job substrate MERGED; missing DD-56, Chat/Assistant/Player/Notification/Web-Push runtime and product delivery are fully ordered and owned by bounded mechanism slices 1-47, thin API slices A1-A21 and tracked-design FE slices F0-F15; /sessions|/waitlist beta additionally requires strict current-authority svc-session-crud, svc-session-join-leave and svc-waitlist-promotion-core packets plus production-shaped data E2E
+PRIOR_SLICES: immutable authority commit/re-pin -> serialized DB lane chat-definer-role-provisioning -> chat-dm-safety-authority-core -> dd38-dd86-chat-schema-core -> tenant-capability-authority-core -> chat-club-channel-lifecycle-core -> chat-authorized-member-target-read-core -> chat-club-moderation-core -> chat-shared-message-command-core; catalog IDs remain stable but actual worktree order follows explicit dependencies; every later BE/worker/client/FE slice requires its own strict CODE_READY
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: DD-18 provider/privacy/ToS for Assistant; Web Push permission/device evidence; DD-94 measured timing/coalescing config; private object-storage region/credentials; malware/moderation scanner; bounded DM/media/report numeric config; current Session producer packets and data E2E for /sessions|/waitlist; real payment/reconciliation producer E2E for payment Inbox/push
+LIVE_REPO_VERIFICATION: PASS # working-tree verified; chat_* and DD-56 registry/grant/authorize runtime absent
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PARTIAL — 11/12; immutable-authority row remains open
+ACCEPTANCE_MATRIX: PASS
+SECURITY_AND_MIGRATION_GATE: PASS  # full fail-closed contracts/negative scope pinned; runtime proof remains separate
+IMPLEMENTATION_ARTIFACTS: PASS — primary plan §9.2 pins exact executable first-slice files/budget/acceptance/negative scope; mechanism slices 1-47, API A1-A21 and FE F0-F15 each have one bounded owner
+FIRST_IMPLEMENTATION_STEP: chat-definer-role-provisioning after exact authority commit/push/re-pin and slice-local strict CODE_READY
 REMAINING_BLOCKERS:
-  - blocker: DD-86 product direction chưa owner-duyệt (Q1-Q4,Q6)
-    owner: product owner
-    resolution: owner ratify exact defaults and promote DD-86 proposal → accepted authority
-  - blocker: Q7-Q10 + full acceptance matrix chưa được Chat/AuthZ spec owners approve
-    owner: In-app Chat + Tenant AuthZ spec owners
-    resolution: Product/BE pair Reviewed with exact capability/default/idempotency/FK contracts and 9-group acceptance matrix
-  - blocker: authority snapshot chưa immutable vì DD-86 + mirrors còn uncommitted
-    owner: docs authority owner
-    resolution: commit exact authority/spec pack and repin verdict to that full SHA
-NEXT_REVIEW_TRIGGER: committed SHA containing owner-ratified DD-86 + Reviewed Chat Product/BE pair + authored dd38-dd86-chat-schema-core readiness artifact
+  - blocker: owner-final exact 27-file target pack is still working-tree WIP, so AUTHORITY_SHA does not contain it
+    owner: docs authority/orchestrator
+    resolution: commit exact TARGET_FILES without unrelated WIP, push default branch, re-pin the full SHA and rerun pnpm review:check:changed plus canonical 12/12 review
+NEXT_REVIEW_TRIGGER: immutable commit SHA containing all TARGET_FILES
 ```
 
-**Diễn giải:** **NOT_PLAN_READY** vì G1 còn mở, spec pair chưa Reviewed và snapshot chưa commit. Việc `chat_*` chưa có trên `main` **không còn bị coi là prior-dependency blocker sai**: root slice sau ratification sẽ tự sở hữu migration schema cuối cùng; các consumer authz/assistant đi sau.
+**Diễn giải:** DD-86 và DD-91..95 đã **DECISION_FINAL**, `OPEN_QUESTIONS_IN_SCOPE=0`, Chat/Assistant/Notification/Tenant-Authz contracts đã Reviewed và execution DAG/acceptance/scope đã đóng nội dung. Execution vẫn **NOT_PLAN_READY** chỉ vì exact 27-file target pack chưa nằm trong immutable commit SHA. `chat_*` và DD-56 capability runtime chưa có trên `main`; docs không phải runtime proof.
 
 ---
 
@@ -329,6 +351,12 @@ NEXT_REVIEW_TRIGGER: committed SHA containing owner-ratified DD-86 + Reviewed Ch
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v1.1 | Reconcile DD-91..95 owner-final: Assistant defaults true `all_members`/false `admins_only`, interaction/edit/search, exact slash catalog, generic digest và club moderation. Semantic freeze orders DD-95 storage/writers before shared send and keeps reply/mention solely in shared writer; mechanism IDs match plan/graph/BE. DD-88 là broader proposal. Content gates G1–G5/acceptance/security PASS; execution còn `NOT_PLAN_READY` chỉ vì immutable-authority commit/re-pin gate. Không runtime/migration. |
+| 2026-07-28 | v1.0 | Reconcile owner-final authority v2.10: Q6 Assistant storage default OFF, explicit admin opt-in/all gates và Announcements always-OFF; Q7 pin đủ bốn exact capabilities. Chat v1 giữ reply/structured mention/closed reactions, exact lowercase `/help|/sessions|/pay`, tombstone/timed mute và no edit/search/offline digest. Preserve Chat Reviewed + `OPEN_QUESTIONS_IN_SCOPE=0`; add Assistant Draft blocker; không runtime/migration. |
+| 2026-07-28 | v0.9 | Owner ratify Option B và DD-86-Q1..Q10; close CHT-OQ-2, message floor, exact lowercase slash v1 và no-digest/no-per-message-notification defaults. Pin four exact Chat capabilities, Assistant default OFF/admin opt-in/Announcements OFF. Promote Chat Product/BE contract to Reviewed, set G1/G2/G4 + contract/acceptance PASS and open count 0; execution remains `NOT_PLAN_READY` for safety/provisioning artifacts, immutable SHA and measured scope. No runtime/migration. |
+| 2026-07-27 | v0.8 | Resolve sequencing/ownership contradiction: standalone safety contract → definer provisioning → safety authority can proceed before/in parallel with DD-86 closure; root waits for both branches. Root owns only final N-channel tables + pure DM read adapter/RLS/read grants; create/reuse/send/mark-read remain post-root owners. Verdict remains `NOT_PLAN_READY` with 9 DD-86 questions. |
+| 2026-07-27 | v0.7 | Re-pin live `main==origin/main@2dc9b8c`. Delta `81b4fe8..2dc9b8c` chỉ cập nhật readiness artifacts cho slice DB constraint-naming, không chạm Chat/Assistant/payment contracts hay runtime nên không đổi blast radius, 9 open questions hoặc verdict `NOT_PLAN_READY`. |
+| 2026-07-27 | v0.6 | **Historical dependency-order draft (superseded by v0.8):** introduced the independent DM-safety contract, exact `chat_definer` provisioning and standalone safety-authority migration before the root join. v0.8 replaces its broad root/adapters wording with the current two-branch join and one-owner root/post-root split. Assistant/Notification/DD-88 do not block root; verdict remained `NOT_PLAN_READY`. |
 | 2026-07-22 | v0.5 | **Ref-durability fix:** đổi mọi line-number citation (`§1`/§5/§7 trỏ `feature_inapp_chat_tech.md:NN`, `feature_club_assistant.md:NN`) sang **symbol/section anchor** vì tech spec bị chèn dòng (line-ref cũ đã drift ~+11). Claim không đổi, chỉ con trỏ; tránh drift tiếp khi spec thay đổi. Không đổi product direction/readiness state/verdict. |
 | 2026-07-22 | v0.4 | Nâng persisted verdict lên machine contract v1.3: classification `enforce`, `REVIEW_POLICY_VERSION`, `CLOSURE_MATRIX`; không đổi product direction hay readiness state. |
 | 2026-07-22 | v0.3 | **Review-fix closure:** sửa schema club-only vs DM-NULL; creator composite FK; exact-one active default lifecycle; auto-provision atomic; DD-56 capability authority; mutation idempotency; DD-71 storage owner; Assistant flag AND tenant gates; phân loại Q1..Q10 (Q5 deferred); sửa dependency graph thành root `dd38-dd86-chat-schema-core`; verdict pin đúng dirty-worktree boundary và giữ **NOT_PLAN_READY**. Mirror proposal-safe vào decisions/Chat/Assistant/index; không runtime/migration. |

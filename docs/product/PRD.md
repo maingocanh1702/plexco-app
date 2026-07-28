@@ -2,14 +2,20 @@
 ## Plexco — platform thể thao đa môn (host + player): Zalo · Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi)*
 
 **Sản phẩm:** **Plexco** — platform quản lý & khám phá hoạt động thể thao đa môn, 2 phía (host + player); bot-in-chat (Zalo/Messenger) + web app sync 2 chiều; **phase-1 không app native** (target = web app PWA installable/offline; S9/S20 chưa phải runtime evidence) — **native là hướng phase-2** (DD-69 direction ✅ accepted; build TBD)
-**Phiên bản:** 2.8h
-**Ngày cập nhật:** 25/07/2026
-**Tài liệu tham chiếu:** `BRD.md` v3.9i · `TDD.md` v3.1c · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md` · `../standards/decisions.md` **v2.04 WIP** (canonical current decision log; status đọc theo từng DD; `DECISION_FINAL` không phải runtime/readiness) · `../dd-69-app-native-analysis.md`
+**Phiên bản:** 2.8l
+**Ngày cập nhật:** 28/07/2026
+**Tài liệu tham chiếu:** `BRD.md` v3.9m · `TDD.md` v3.1g · `../standards/decisions.md` **v2.10 working tree** (DD-32/DD-86/DD-91–95 `DECISION_FINAL`; DD-88 broader `DEFERRED_PROPOSAL`) · `../features/feature_channel_booking_funnel.md` · `../features/BE/feature_channel_booking_funnel_tech.md` · `../channels/messenger/messenger-channel-design.md` · `../research/player-side-saas-AUDIT.md`
+
+> **Current boundary — `main@2dc9b8c` (28/07 docs snapshot):** decisions v2.10 owner-final đã chốt DD-86/DD-91–95; DD-88 chỉ còn broader `DEFERRED_PROPOSAL`. Assistant Product/BE v0.17, Chat Product/BE v0.14/v0.22 và Notifications Product/BE v3.10 đều Reviewed; current readiness, blocker và next trigger chỉ lấy từ primary plan v1.7 §13. Plan đã gán đầy đủ bounded mechanisms `1–47`, thin API `A1–A21` và tracked-design FE `F0–F15`; đây là ownership plan, không phải runtime. Chat/payment migration, API và UI chưa tồn tại. Shared dispatcher/scheduler vẫn OFF và chưa có producer/projector nghiệp vụ; `0024` chỉ là DB invariant. Không dùng flow dưới đây để suy `IMPLEMENTED`/`ENABLE_READY`.
 
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 28/07/2026 | v2.8l | **Owner-final Chat authority + delivery map + DD-32 mirror:** FLOW 15 follows decisions v2.10 DD-86/DD-91–95 and the safe current-channel opaque target boundary. Primary plan owns bounded mechanisms `1–47`, API `A1–A21`, design/FE `F0–F15`; DD-88 remains broader `DEFERRED_PROPOSAL`, current readiness remains only at plan §13, runtime remains 0. DD-32 Option D flows remain unchanged. |
+| 28/07/2026 | v2.8k | **SUPERSEDED by v2.8l:** former Chat correction used universal default-OFF, three commands and no-digest floor; no longer current authority. |
+| 28/07/2026 | v2.8j | **SUPERSEDED by v2.8l:** former DD-86/DD-88 propagation is retained only as history; DD-86/DD-91–95 now govern. |
+| 27/07/2026 | v2.8i | **DD-91 + regional reconciliation + live-runtime boundary:** thêm requester-only `/pay` overlay ở club/private bot/human DM, deterministic `remainingAmount`, no-store/zero-peer-bytes, durable payment Inbox + generic push; Chat là primary target nhưng plan còn `NOT_PLAN_READY`, no runtime. Auto-reconcile cần entitlement + market/provider/bank/currency/consent; manual vẫn global. Ghi rõ dispatcher/scheduler merged nhưng OFF/placeholder, `0024` invariant-only, Safari measurement closed nhưng Google chưa enable. |
 | 25/07/2026 | v2.8h | **Authority pointer reconcile:** BRD/PRD/TDD cùng trỏ current decisions v2.04 WIP và nhắc đọc status theo từng DD; pointer-only, không đổi flow/runtime. |
 | 24/07/2026 | v2.8g | **Reconcile FLOW 2 public-projection timing (`docs-prd-flow2-publish-projection-reconcile`, hard dependency of the ratified publish contract; 4 codex rounds to close all mirrors):** step 1 thêm rõ create = trạng thái `draft`, chưa nhận join/chưa lên marketplace dù đã chọn `visibility=public`; step 2 làm rõ Host **Đăng kèo** (`PublishSession` `draft`→`open`) là lúc marketplace push xảy ra (không phải tại create); step 3 (auto-announce, trước là step 2) **dời sau publish** (round-01 P2). FLOW 12 invariant note + FLOW 14 marketplace bullet thêm cùng điều kiện `open`; FLOW 12/BE cross-ref step-number sửa lại "bước 2" sau reorder (round-03 P2). Khớp `feature_session_management_tech.md` §4 bước 7, `feature_marketplace_discovery(.md/_tech.md)` §4, TDD.md §3.2/§3.8/§3.9 FR-16, `BRD.md` AC-5 và `business-rules.md` BL-DSC-2 (round-04 P1 — cùng round reconcile để đóng hết mirror còn lại trong authority chain BRD→PRD→TDD). `ROADMAP.md` (2 mirror khác) và `docs/strategy/saas-implementation-plan.md` (directional input, không phải authority) được xác nhận nhưng KHÔNG sửa — ROADMAP.md scope-gate collision với in-flight `docs-migration-tail-0018-to-0020-sweep` (deferred follow-up, xem manifest `_note`); strategy doc deliberately out of scope. Prose only; dated changelog giữ verbatim; không resolve OQ nào khác. |
 | 19/07/2026 | v2.8f | **Mirror DD-79 ✅ Home hub (S9):** note dưới FLOW 10 — Home landing compose person-self + marketplace + §A; nav shell 5 slot + 💬 header; composition-only, không flow/contract mới. DD-81 Pencil ghi ở design docs. |
@@ -52,7 +58,7 @@ Bề mặt tương tác phase-1 = **web app + Zalo + Facebook Messenger**. **Tel
 
 | Surface | Dùng cho | Ai |
 |---|---|---|
-| **Web app** (surface) | onboarding; host dashboard (kèo/roster/doanh thu); **discovery/tìm kèo**; player view; billing; **chat in-app** (DD-38 ✅); cài đặt hồ sơ (DD-39 ✅) | P1, P3, P4 |
+| **Web app / in-app Chat** (surface) | onboarding; host dashboard (kèo/roster/doanh thu); **discovery/tìm kèo**; player view; billing; **Chat primary daily player target** (DD-38 + DD-91); cài đặt hồ sơ (DD-39 ✅) | P1, P3, P4 |
 | **Zalo bot DM** (bot-per-club) | join number-reply, `/me`,`/pay`,`/name`, nhắc/xác nhận (kênh chính cùng web) | P3 |
 | **Facebook Messenger** (central Page + optional club Page, **phase-1**) | role-aware host create/manage + player local/global discover/join; nhắc best-effort 24h | P1/P2/P3/P4 |
 
@@ -62,7 +68,8 @@ Bề mặt tương tác phase-1 = **web app + Zalo + Facebook Messenger**. **Tel
 |---|---|---|
 | `/newsession`, `/announce`, `/config`, `/cash`, **mark-paid (tap/multi-select tiền mặt/CK)**, `/unmatched`, publish/approve | web + Zalo/Messenger DM | P1/P2 (admin) |
 | **Join** (Messenger quick-reply / Zalo number-reply / web 1-click) | Messenger, Zalo, web | P3 |
-| `/me`, `/leave`, `/pay`, `/who`, `/myclubs` | Zalo/Messenger DM, web | P3 |
+| `/me`, `/leave`, `/who`, `/myclubs` | Zalo/Messenger DM, web | P3 |
+| exact `/pay` (requester-only overlay) | in-app club channel · private Club Bot thread · human DM; external bot adapter giữ route hiện có | P3; tenant authority theo channel/route hoặc requester-owned picker |
 | **`/discover` / tìm kèo** (lọc môn/khu vực/giờ) + **join cross-club** | web + Zalo/Messenger DM | P3, P4 |
 | `/name` | Zalo/Messenger DM | P3 |
 | `/link` (sinh mã merge) | Zalo/Messenger DM | P3 |
@@ -81,7 +88,7 @@ Bề mặt tương tác phase-1 = **web app + Zalo + Facebook Messenger**. **Tel
 
 **Mục tiêu:** chủ CLB tự đăng ký → vận hành được, không cần platform can thiệp.
 
-1. **Đăng nhập** web bằng **Google OAuth**, **tài khoản web (email + mật khẩu)** (DD-13), hoặc **Facebook Login** khi DD-33 external enablement evidence đã active. Facebook chưa active → ẩn/OFF CTA và dùng transactional one-time `link_code` cho account-link; không auto-link Messenger PSID. Sau auth hợp lệ → tạo `Account` + `Tenant` (CLB). *(Telegram Login: đã loại.)*
+1. **Đăng nhập** web bằng **Google OAuth**, **tài khoản web (email + mật khẩu)** (DD-13), hoặc **Facebook Login** khi DD-33 external enablement evidence đã active. Facebook chưa active → ẩn/OFF CTA và dùng transactional one-time `link_code` cho account-link; không auto-link Messenger PSID. Google M3 đã pass measurement trên Safari macOS/iOS, nhưng CTA/env vẫn OFF tới enablement decision riêng. Sau auth hợp lệ → tạo `Account` + `Tenant` (CLB). *(Telegram Login: đã loại.)*
 2. **Nối ngân hàng (SePay/ApiPay):** nhập số TK + bank; hệ thống sinh `webhookToken`, đăng ký SePay webhook với `authen_type=HMAC_SHA256` + secret protected, hiện hướng dẫn/trạng thái ở dashboard. Không downgrade production webhook sang `Api_Key`.
 3. **Nối Zalo:** owner **tự tạo bot** trong Zalo Bot Manager (tài khoản của họ, free ≤3 bot) → **dán Bot Token** → hệ thống set webhook `/webhook/zalo/<token>` (bot-per-club).
 4. **Messenger sẵn qua central Page.** Tuỳ chọn: FB Login + chọn Page riêng của CLB → hệ thống tạo tenant Page binding; không nối Page vẫn dùng đủ create/join cơ bản qua central (DD-65). Kênh chạy dưới App Review của platform.
@@ -105,9 +112,9 @@ Bề mặt tương tác phase-1 = **web app + Zalo + Facebook Messenger**. **Tel
 ## FLOW 3: PLAYER JOIN — Facebook Messenger *(base P2.5 · player workflow P4.5)*
 
 1. Player nhắn **central hoặc club Page** / dùng persistent menu. Central mặc định global discovery; club Page mặc định local và có “Khám phá tất cả”. Mỗi trang tối đa 8 business choices + navigation.
-2. Player chọn opaque action; server validate actor+Page binding, TTL, target session, snapshot/version. Protected resolver lấy target `session→tenant`; source club Page có thể khác target khi cross-club và không grant authority.
-3. Resolve identity (FLOW 5) → tạo/`addMemberToSession` (idempotent theo membership).
-4. Trả **xác nhận qua Messenger** (trong **cửa sổ 24h**) + **nội dung CK name-based / pay_code+QR**; **roster sync lên web** (FLOW 14).
+2. Player chọn opaque action; server validate actor+Page binding, TTL, target session, snapshot/version rồi hiện safe detail: time, public area, fee, `confirmed_count`, `slots_available`. Browse không yêu cầu Account link.
+3. Final confirm gọi shared DD-32 decision: free→active; full→waitlist; approval→pending; paid+qualified Account link→active+charge/pay-later; paid+unlinked→link hoặc verified-pay-now hold 15 phút khi capability proven.
+4. Chỉ canonical finalizer outcome mới trả xác nhận/venue và sync roster web. QR hoặc “đã trả” không phải proof; provider unavailable không tạo hold/QR.
 5. Rời: quick-reply **[Rời]** → bỏ nếu chưa trả; đã trả → chặn + báo.
 
 > Messenger dùng standard messaging trong cửa sổ 24h. Identity lookup dùng hai HMAC domain-separated — provider scope từ `page_id`, provider user từ PSID — rồi unique theo ba phần `(platform, scope_hash, user_hash)`; không auto-merge xuyên Page. Tenant/resource không route từ free text/raw callback ID.
@@ -116,9 +123,9 @@ Bề mặt tương tác phase-1 = **web app + Zalo + Facebook Messenger**. **Tel
 
 ## FLOW 4: PLAYER JOIN — Zalo (DM number-reply) *(P4.7)*
 
-1. Player DM bot Zalo của club `/join` → bot liệt kê buổi đang mở, đánh số.
-2. Player **trả lời số** (vd `1`).
-3. Resolve identity (FLOW 5) → `addMemberToSession` → trả xác nhận + **nội dung CK name-based** (P1–P3) / pay_code+QR (P4).
+1. Player DM bot Zalo của club `/join` → bot liệt kê buổi đang mở, đánh số; không cần Account link.
+2. Player trả lời số → bot hiện safe detail (time, public area, fee, confirmed count, available slots) và một context final-confirm riêng.
+3. Final confirm gọi cùng DD-32 decision/finalizer như Messenger. Zalo chỉ render `active|waitlisted|approval_pending|awaiting_link|awaiting_payment|reconfirm|manual_review`; không tự tạo player/charge/payment.
 4. Lệnh phụ: `/me`, `/name <tên>`, `/leave`, `/pay`, `/who`.
 
 > Zalo **không inline button** → number-reply; bot-per-club nên DM tự ghim tenant (không cần picker). GROUP Zalo còn Beta → player-flow bám **DM number-reply**.
@@ -154,13 +161,14 @@ Bề mặt tương tác phase-1 = **web app + Zalo + Facebook Messenger**. **Tel
 2. Áp **preview + confirm** (DD-25, human-initiated money mutation) → INSERT `payment_allocations` (tiền mặt → `source='cash'`; CK đã ingest → `source='manual'` + exact `bank_transaction_id`) + cập nhật `charges`, có audit, **idempotent** → trigger FLOW 8. CK host-attested chưa ingest chỉ được ghi qua dedicated allocation source sau migration (`bank_transaction_id=NULL`, actor + opaque evidence); trước migration reject. Cấm synthetic `bank_transaction` hoặc map sang `cash|manual`. (DD-40 v1.39)
 
 **Đối soát CK tự động (`host_pro` — P3):**
-3. CK về → **webhook SePay** `/webhook/sepay/:token` → token route đúng account/tenant; verify `X-SePay-Timestamp` ±300s và timing-safe `X-SePay-Signature: sha256=<hex>` trên `{timestamp}.{raw_body}`, rồi verify số TK. Thiếu/sai signature hoặc stale timestamp → reject trước ingest.
-4. Trong **một DB transaction**: insert `bank_transactions` idempotent + enqueue reconcile job/outbox; commit thành công rồi mới ACK provider.
-5. Matching engine (tenant-scoped): ưu tiên `pay_code` (nếu có) → fallback **tên + số tiền + ngày**.
-6. Phân bổ CK vào `charges` qua `payment_allocations`; 2 buổi đồng giá cùng ngày → **FIFO**; tổng allocation không vượt CK và chỉ mark paid khi charge được phủ đủ.
-7. Match được → cập nhật charge/debt → trigger FLOW 8 (xác nhận). Còn dư/không khớp → `/unmatched` (FLOW 9); worker retry an toàn sau crash.
+3. Trước ingest, kiểm tra **hai lớp gate**: subscription có `payment_reconcile_auto` **và** exact market/provider/bank/currency/consent capability đang active. Thiếu một lớp → không mở auto path, giữ mark-paid thủ công.
+4. CK về → adapter provider đã enable (Vietnam launch path: SePay/ApiPay) route đúng account/tenant. Với **SePay**, webhook `/webhook/sepay/:token` verify `X-SePay-Timestamp` ±300s và timing-safe `X-SePay-Signature: sha256=<hex>` trên `{timestamp}.{raw_body}`, rồi verify số TK. Thiếu/sai signature hoặc stale timestamp → reject trước ingest.
+5. Trong **một DB transaction**: insert `bank_transactions` idempotent + enqueue reconcile job/outbox; commit thành công rồi mới ACK provider.
+6. Matching engine (tenant-scoped): ưu tiên `pay_code` (nếu có) → fallback **tên + số tiền + ngày**.
+7. Phân bổ CK vào `charges` qua `payment_allocations`; 2 buổi đồng giá cùng ngày → **FIFO**; tổng allocation không vượt CK và chỉ mark paid khi charge được phủ đủ.
+8. Match được → cập nhật charge/debt → trigger FLOW 8 (xác nhận). Còn dư/không khớp → `/unmatched` (FLOW 9); worker retry an toàn sau crash.
 
-> `charge` mỗi lượt chơi suy giá theo **giới tính member** nếu kèo đặt giá nam/nữ (DD-39 ✅, cột `person.gender` chờ migration). Auto-reconcile CK là tính năng **`host_pro`**; free tier dùng **mark-paid thủ công**.
+> `charge` mỗi lượt chơi suy giá theo **giới tính member** nếu kèo đặt giá nam/nữ (DD-39 ✅, cột `person.gender` chờ migration). Manual mark-paid dùng được ở mọi plan/market. `host_pro` chỉ cấp entitlement; capability auto-reconcile còn phụ thuộc provider/bank/market/currency/consent. SePay/ApiPay là Vietnam launch path **chưa enable**, không phải lời hứa coverage toàn cầu.
 
 ---
 
@@ -191,7 +199,7 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 
 ## FLOW 10: PLAYER VIEW — `/myclubs` + Web *(P4.6)*
 
-> **DD-79 ✅ (19/07) — Home hub (S9):** phase-1 PWA lấy **Home** làm landing sau đăng nhập, compose chính data của FLOW này (person-self) + marketplace + notifications §A + onboarding_steps: chips Còn nợ/Kèo tuần · hero kèo kế tiếp (CTA theo role) · upcoming max 4 + "Tất cả →" (= danh sách person-self FLOW 10) · suggested. Shell: bottom nav 5 slot **Home · Feed (config-OFF tới DD-76) · [Khám phá — center/FAB] · Club (CLB sở hữu owner/admin + CLB tham gia, CTA Tạo CLB) · Setting**, 💬 chat (DD-38) + 🔔 ở header. Không flow tiền mới, không data contract mới. Spec: `../features/feature_home.md` v0.5a.
+> **DD-79 ✅ (19/07) — Home hub (S9):** phase-1 PWA lấy **Home** làm landing sau đăng nhập, compose chính data của FLOW này (person-self) + marketplace + notifications §A + onboarding_steps: chips Còn nợ/Kèo tuần · hero kèo kế tiếp (CTA theo role) · upcoming max 4 + "Tất cả →" (= danh sách person-self FLOW 10) · suggested. Shell: bottom nav 5 slot **Home · Feed (config-OFF tới DD-76) · [Khám phá — center/FAB] · Club (CLB sở hữu owner/admin + CLB tham gia, CTA Tạo CLB) · Setting**, 💬 chat (DD-38) + 🔔 ở header. Không flow tiền mới, không data contract mới. Spec: `../features/feature_home.md` v0.6.
 
 1. `/myclubs` (bot Zalo/Messenger) hoặc web (auth = phiên Google/email verify) → liệt kê **các CLB của Person + nợ/trạng thái từng CLB**.
 2. **Chỉ dữ liệu của chính họ** — đường query person-authorized, KHÔNG qua tenant-RLS thường (AUDIT C6).
@@ -199,10 +207,23 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 
 ---
 
+## FLOW 10A: EXACT `/pay` — requester-only command overlay *(DD-91 `DECISION_FINAL`; readiness: primary plan §13)*
+
+1. Exact `/pay` chạy ở ba context mục tiêu: **club channel**, **private Club Bot thread**, hoặc **human DM 1-1 command overlay**. Club channel lấy tenant từ authorized channel; bot thread lấy tenant từ route.
+2. Human DM có `tenant_id=NULL`: **cấm suy tenant từ peer/thread/CLB chung**. Server enumerate club/obligation mà requester có quyền: một club → auto-select; nhiều club → requester-only picker opaque, TTL ngắn, bind requester + DM + command + tenant; không có → generic empty.
+3. Service re-authorize, validate charge integrity rồi tính qua **một canonical `remainingAmount(amountDue, amountAllocated)` primitive**. Unknown/fail không bao giờ bị coi là zero.
+4. Response là synchronous authenticated `private, no-store`, chỉ requester nhận; **peer nhận zero bytes**. Không tạo message/result row, reference, SSE, outbox, push hoặc history.
+5. `/pay` deterministic, **không LLM** và không phụ thuộc Assistant. Assistant vẫn là Host Pro entitlement `assistant_ai_kb`, không trả actual debt.
+6. Nhắc/đã trả/điều chỉnh đi qua durable payment Inbox `reminder|settled|correction`; Web Push chỉ generic, detail đọc sau auth.
+
+> Đây là behavior contract đã chốt ở DD-91, **không phải runtime**. Root chat + self-payment + command registry + Inbox/downstream slices vẫn phải đóng readiness riêng trước code.
+
+---
+
 ## FLOW 11: BILLING — host subscription tiers *(P5)*
 
 1. Tạo tenant: `free` → `active` ngay, không invoice; plan trả phí `host_pro` → `trialing` (**✅ DD-51: 14 ngày**, remind khi còn 2 ngày; hết trial không thanh toán → khoá ngay về `free`; trễ invoice khi đang active → grace 7 ngày; huỷ giữa kỳ: hoàn toàn bộ nếu request trong 7 ngày từ khi thanh toán).
-2. Owner chọn plan: `free` (0đ — web + **kết nối Zalo + Messenger** + **mark-paid thủ công (tiền mặt/CK)** + nhắc thủ công + **chat cơ bản in-app**) hoặc `host_pro` (250k — thêm **đối soát CK tự động** + báo thu + **nhắc nợ tự động** + Trợ lý AI + CRM). Tính năng do capability flags quyết định (DD-29, DD-40 giải nuance).
+2. Owner chọn plan: `free` (0đ — web + **kết nối Zalo + Messenger** + **mark-paid thủ công (tiền mặt/CK)** + nhắc thủ công + in-app Chat) hoặc `host_pro` (250k — thêm entitlement **`payment_reconcile_auto`** + **nhắc nợ tự động** + Trợ lý AI + CRM). Entitlement auto-reconcile chỉ active khi exact market/provider/bank/currency/consent gate pass; không pass thì vẫn manual.
 3. Với paid plan, owner CK đúng số tiền vào **tài khoản platform**, nội dung mang `invoiceCode` → webhook match → đẩy `currentPeriodEnd +1 tháng`, `status=active`.
 4. Invoice active trễ hạn → `past_due` + grace **7 ngày** (nhắc web/email) → `suspended`; riêng trial hết mà chưa trả → khoá ngay về `free`, không đi qua grace (DD-51).
 5. **Suspended:** chặn lệnh nhưng **vẫn nhận & lưu CK player** (không mất giao dịch khi quay lại).
@@ -214,9 +235,9 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 
 1. Player mở **web** (`/discover`) hoặc bot (`/discover` Zalo/Messenger DM) — **không cần là member CLB nào**.
 2. Lọc: **môn** (cầu lông/pickleball/…), **khu vực**, **ngày/giờ**, **trình độ**, **giá tối đa**, **còn slot**.
-3. Hệ thống đọc **`public_sessions`** (read model cross-tenant, KHÔNG RLS, **field whitelist**) → trả danh sách: môn, giờ, **khu vực** (không địa chỉ chi tiết), giá, slot trống, tên host/CLB.
+3. Hệ thống đọc **`public_sessions`** (read model cross-tenant, KHÔNG RLS, **field whitelist**) → trả danh sách: môn, giờ, **khu vực** (không địa chỉ chi tiết), giá, số active đã xác nhận, slot khả dụng (đã trừ live payment holds), tên host/CLB.
 4. Xem chi tiết kèo công khai — **KHÔNG** roster người khác, **KHÔNG** STK/PII/giới tính, **KHÔNG** ai trả/chưa.
-5. Bấm **Join** → FLOW 13.
+5. Bấm **Join** → web đi FLOW 13; Zalo/Messenger mở shared DD-32 safe detail/final gate. Không surface nào yêu cầu Account chỉ để browse.
 
 > ⚠️ **Bất biến public (AUDIT §C8):** marketplace chỉ chứa field whitelist; tiền/PII/giới tính/roster không bao giờ lộ. `venue` chi tiết chỉ hiện khi canonical player outcome là `active`; approved-but-waitlisted vẫn ẩn (OD-6). Rate-limit + phân trang chống scrape. Chỉ kèo đã **Đăng** (`status=open`, FLOW 2 bước 2) mới vào đây — `draft` dù `visibility=public` chưa xuất hiện trong marketplace.
 
@@ -226,7 +247,8 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 
 1. Player bấm Join bằng opaque action/public session ref → protected resolver route `session→tenant`; raw ID/client tenant không có authority.
 2. Resolve identity (FLOW 5): `(platform/web-session) → Person`, rồi lookup processed command + membership/player + pending request hiện có. **Không eager-create guest membership** ở bước này. Existing `active|waitlisted|pending` trả current outcome idempotently; DD-52 ban áp sau đó không auto-evict và không tạo alert/write mới.
-3. Theo `join_policy` của kèo:
+3. Theo `join_policy` của kèo và source authorization:
+   - Channel final confirm phải qua DD-32 first: free hoặc qualified-linked/verified-payment branch mới được gọi common join mutation; approval tạo pending trước và chỉ áp gate khi approved/có slot.
    - **`open`** → absent/`left` final join dưới session lock chỉ sau DD-41/DD-42/shared DD-52. First-entry còn slot → active+exactly-one charge+venue; full → waitlisted, không charge/venue/QR. Existing `left` re-derive DD-49: active carry-over/append refunded lifecycle; full waitlisted, refunded không new lifecycle; unknown→review.
    - **`approval`** → absent/`left` request-create preflight DD-41/DD-42/DD-52; first-entry pending only. Existing `left` chỉ preflight live DD-49 disposition; `join_requests` không lưu/bind financial proof. Host approve lock session→root-job→request→player/aggregate, re-check restrictions và re-derive; drift/unknown giữ pending + zero mutation. Active carry-over/append lifecycle; full approved+waitlisted/no-new-lifecycle/no-venue. Active fill resolves all nonterminal promotion roots.
 4. Chỉ active outcome hiện venue + canonical obligation mới. Waitlisted chỉ queue position: chưa-refund rejoin có thể giữ historical aggregate, refunded không new lifecycle. Promotion re-derive rồi carry-over/append lifecycle khi activation. Mọi surface sync (FLOW 14).
@@ -249,14 +271,16 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 4. **Idempotent** (`commandId` + `event.id`); surface lệch (msg cũ/SSE rớt) → **re-project** dựng lại từ canonical.
 
 > Surface **không bao giờ** giữ sự thật → không có conflict multi-master. Độ trễ mục tiêu p95 ≤ 3 giây, p99 ≤ 10 giây. Xác nhận đã trả (FLOW 8) là projection của event `payment.settled`.
+>
+> **As-built tại `main@2dc9b8c`:** shared claim/ack DB core (`0022`/`0023`), TypeScript dispatcher, queue provisioning/preflight và lịch recovery 1 phút đã merge. Lịch bị gate bởi `OUTBOX_DISPATCH_SCHEDULE_ENABLED` và mặc định OFF; chưa có producer/projector nghiệp vụ thật, nên flow fan-out ở trên vẫn là target contract, chưa chạy end-to-end.
 
 ---
 
-## FLOW 15: CHAT IN-APP + CÀI ĐẶT HỒ SƠ — *(P4, DD-38 ✅ / DD-39 ✅ scope-committed phase-1)*
+## FLOW 15: IN-APP CHAT PRIMARY TARGET + CÀI ĐẶT HỒ SƠ — *(P4, DD-38/DD-86/DD-91–95 · DD-39)*
 
-> **DD-38/DD-39 scope-committed phase-1** (đã chốt hướng). **Schema chưa vào canonical** `packages/db/schema.ts` — `chat_*` + cột `person.gender/dob/username/language` là **migration còn chờ** (nguồn authoritative vẫn là schema.ts + migrations). Nguồn: `../standards/decisions.md` (DD-38 chat, DD-39 giá theo giới tính) + doc Draft `../features/feature_inapp_chat.md`, `../features/feature_user_settings.md`.
+> **DD-38/DD-86/DD-91–95 decision-final; DD-88 broader `DEFERRED_PROPOSAL`; DD-39 scope-committed phase-1.** **Schema chưa vào canonical** `packages/db/schema.ts` — `chat_*` + cột `person.gender/dob/username/language` là migrations còn chờ. Assistant Product/BE v0.17, In-app Chat Product/BE v0.14/v0.22 và Notifications Product/BE v3.10 là Reviewed. Primary plan gán mechanisms `1–47` → API `A1–A21` → tracked-design FE `F0–F15`; current readiness chỉ lấy từ §13, chưa có runtime/migration/API/UI.
 
-- **Chat in-app (DD-38/55 ✅):** chat **toàn CLB** (member trong tenant, RLS) + chat **riêng 1-1** (person ↔ person, person-self); **chỉ sống trong Plexco**, **không bridge** ra group Zalo/Messenger. DM request/create/send/read đều qua một safety core fail-closed (block/report/rate-limit/audit); User Settings/social tái dùng canonical `chat_blocks`. Realtime SSE (DD-07).
+- **In-app Chat (DD-38/55/86/91–95):** primary daily player surface với **N club channel/tenant** + human DM. Mọi active membership auto-join mọi active club channel; đúng một default. Create/manage dùng `chat.channel.manage`, restricted post dùng `chat.channel.post_restricted`; unknown capability deny. Assistant mặc định ON ở `all_members`, OFF ở `admins_only`, mutable trên cả hai bằng `chat.channel.manage` nhưng effective use luôn qua tenant config/`assistant_ai_kb`/provider/privacy; Announcements là `admins_only` default OFF, không bị cấm bật. DM request/create/send/read qua một safety core; host/admin không đọc/moderate human DM. Mention/mute/start-DM chỉ dùng active current-channel target DTO gồm short-lived requester+channel-bound opaque ref + safe label, không global people search/raw UUID/persistent directory/PII, và re-authorize khi consume. DD-92 pin reply, immutable structured mentions, one reaction/person/message trong `👍|❤️|😂|😮|😢|🙏`, own-body edit `<15m` tối đa 5, author soft-delete, và search bắt buộc trước beta trên current-readable/current-visible content. DD-93 registry ASCII case-insensitive, zero-arg: mọi club/Club Bot/human-DM overlay có `/help|/pay|/me|/myclubs|/discover|/name`, club + Club Bot thêm `/sessions|/waitlist`; command-like invalid bị private-reject trước persist. DD-94 dùng Chat unread làm source cho generic opaque offline signal/digest, không durable content snapshot/item; DM/mention/reply default ON, club pref mặc định `mentions`. DD-95 chỉ cho club hide/restore + mute `1h|24h|7d`, exact reasons `spam|harassment|unsafe|off_topic|other`, append-only audit; không hard-delete/permanent ban/DM moderation-read.
 - **Cài đặt hồ sơ + giá theo giới tính (DD-39 ✅):** người dùng đặt **giới tính / ngày sinh / tên / username / ngôn ngữ**; host đặt **giá nam/nữ** cho kèo, hệ suy `charge` theo `person.gender`. Giới tính/ngày sinh là **PII có consent, không lộ public**.
 
 ---
@@ -310,7 +334,7 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 | # | Edge case | Hành vi | Canonical phase |
 |---|---|---|---|
 | 22 | **Kèo public bị sửa/đóng/huỷ** | Projector upsert/xoá `public_sessions`; đóng/quá giờ → tự hạ khỏi marketplace | P4.3 |
-| 23 | **Join khi vừa hết slot (race)** | Session lock → một first-entry active+charge, người còn lại first-entry waitlisted/positive-position/no-charge; proven DD-49 rejoin giữ aggregate nhưng không tạo charge mới; không over-fill | P4.3 |
+| 23 | **Join/hold khi vừa hết slot (race)** | Session lock + shared occupancy (active + live holds) → đúng một active/hold chiếm slot; người còn lại waitlisted/no-charge/no-venue; không over-fill | P4.3 |
 | 24 | **Approval-mode: host không duyệt** | `join_requests` hết hạn → tự huỷ + báo player; player có thể tìm kèo khác | P4.3 |
 | 25 | **Scrape/enumerate marketplace** | Rate-limit + phân trang + chỉ field whitelist; không trả tiền/PII/giới tính dù lặp request | P4.3 |
 | 26 | **Vị trí riêng tư** | Public chỉ `area`; `venue` chỉ cho `players.status='active'`, không cho approved-waitlisted (OD-6) | P4.3 |
@@ -318,6 +342,11 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 | 28 | **Surface state cũ** (msg roster lỗi thời / SSE rớt) | Re-project từ canonical (edit lại msg / refresh SSE); surface không giữ sự thật | P4 |
 | 29 | **Command lặp** (retry kênh) | Idempotent theo `commandId` → `STALE_COMMAND` bỏ qua, không double | P4 |
 | 30 | **Kèo môn lạ / chưa có trong `sports`** | Chỉ chọn môn từ danh sách `sports` active; không tự do nhập | P1 |
+| 31 | **Paid channel booking trả thiếu** | Không active, không temporary player/charge; hold tới TTL rồi manual review, v1 không cộng top-up tự động | P2.5/P4.7 |
+| 32 | **Paid channel booking trả muộn/sai reference/currency/account** | Không revive booking; retain bank evidence + manual review/refund-or-credit | P2.5/P4.7 |
+| 33 | **Payment provider unavailable/unknown** | Không phát QR/hold; offer Account link/web; free và linked pay-later vẫn hoạt động | P2.5/P4.7 |
+| 34 | **Promotion hold hết hạn** | Release capacity, audited requeue candidate về cuối hàng đúng một lần, tiếp tục selector | P4.3/P4.7 |
+| 35 | **Link callback race payment callback** | Một intent/finalizer terminal; retry trả current outcome, không duplicate player/charge/allocation | P3.5/P4.7 |
 
 ---
 

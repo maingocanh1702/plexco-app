@@ -2,8 +2,8 @@
 
 > **Canonical phase:** P2
 > **Track:** 🔐 Routing & AuthZ
-> **Version:** 2.6a · 2026-07-19
-> **Status:** Reviewed · reconciled to TDD v3.1 / decisions v1.45
+> **Version:** 2.7 · 2026-07-28
+> **Status:** Reviewed · reconciled to TDD v3.1 / decisions DD-56/DD-86
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P0–P1 foundation stable
 > **Tài liệu liên quan:** `../product/BRD.md` BR-1/BR-3/BR-12 · `../product/PRD.md` §2 + §4.2/4.3 · `../product/TDD.md` §3.3–3.5 · `../standards/decisions.md` DD-27/DD-56/**DD-65..68** · `BE/feature_tenant_routing_authz_tech.md`
@@ -22,7 +22,8 @@ Route mọi Zalo/Messenger/admin interaction tới **đúng tenant/resource** r�
 - Routing **KHÔNG BAO GIỜ** grant authorization — đây là 2 bước tách biệt (**DD-27 channel-aware authz**: quyền theo person, tách khỏi kênh).
 - Link code phải high-entropy, short-lived, single-use, bound to tenant/role.
 - Fail-closed: nếu không resolve được tenant → reject, không guess.
-- Authorization dùng **một registry action→capability canonical**, không rải `role === ...` trong adapter/API/UI. Co-admin preset least-privilege và sensitive grants tuân exact DD-56 matrix; grant thiếu/hết hạn → deny.
+- Authorization dùng **một registry action→capability canonical**, không rải `role === ...` trong adapter/API/UI. Live role `admin|co_admin` cùng map least-privilege co-admin preset, không map owner; sensitive grants là tenant-private, expiring/revocable, có append-only grant audit; grant thiếu/hết hạn/đã revoke → deny.
+- Chat phase-1 dùng đúng bốn capability key: `chat.channel.manage`, `chat.channel.post_restricted`, `chat.message.moderate`, `chat.member.mute`. Đây là tenant/club-channel authority; không capability nào cấp host/admin/support quyền đọc hoặc moderation human DM.
 
 ---
 
@@ -46,6 +47,7 @@ Route mọi Zalo/Messenger/admin interaction tới **đúng tenant/resource** r�
 | RTE-UC-12 | Co-admin | Manual ban hoặc mark-paid | Chỉ qua `member.ban` / `money.mark_paid`; mark-paid vẫn preview+confirm+audit DD-25 |
 | RTE-UC-13 | Host/player | Dùng central hoặc tenant Page | Role-aware menu; một eligible tenant auto-select, nhiều tenant hiện bounded picker |
 | RTE-UC-14 | Player | Join cross-club từ tenant Page | Opaque session action resolve target tenant; source Page tenant chỉ audit metadata, không grant quyền |
+| RTE-UC-15 | Owner/Co-admin | Quản lý hoặc kiểm duyệt club channel | Registry resolve một trong bốn exact Chat capability; mutation re-check tại consume, soft-hide/timed-mute only |
 
 ### Edge Cases
 
@@ -66,6 +68,7 @@ Route mọi Zalo/Messenger/admin interaction tới **đúng tenant/resource** r�
 | 13 | Security | Co-admin gọi correction/refund/waiver/void/bank/secret/billing không có grant | Deny từ registry; không được suy quyền từ nhãn admin/co-admin |
 | 14 | Security | Sensitive grant hết hạn/thiếu reason/audit hoặc actor cố grant `role.manage` | Deny fail-closed; owner-only role management không delegable |
 | 15 | Security | Co-admin cố remove/demote owner/admin hoặc gọi DD-51/DD-53 global action | Deny; global override/split/relink chỉ PlatformAdmin theo dedicated path |
+| 16 | Privacy | Host/admin có Chat capability cố đọc hoặc moderation human DM | ❌ NEVER — capability chỉ có hiệu lực trên target `kind='club'`; person-self DM denial giữ nguyên |
 
 ---
 
@@ -91,8 +94,9 @@ Route mọi Zalo/Messenger/admin interaction tới **đúng tenant/resource** r�
 | Messenger server context/action | Target tenant/resource authority (DD-66/68) | Opaque actor+Page-bound token, TTL, target, snapshot/version; raw IDs have no authority |
 | `tenant_link_codes` | One-time tenant-admin onboarding codes | hash-only lookup, `expires_at`, `consumed_at`, `revoked_at`, attempts, `tenant_id` FK, `intended_role`; distinct from identity `link_codes` DD-50 |
 | `memberships` | Person ↔ Tenant relationship | `UNIQUE(person_id, tenant_id)`, `role` enum |
-| Capability registry (canonical contract) | Exact action → capability mapping | Một source dùng chung cho API/UI/adapters; unknown action/capability deny |
-| Sensitive capability grant (proposal) | Delegation owner → co-admin | Tenant+actor+capability+reason+expiry+granted_by+audit; không hỗ trợ `role.manage`; expired/revoked deny |
+| `tenant_capability_actions` (target) | Exact action → capability/preset mapping | Migration-owned closed registry dùng chung cho API/UI/adapters; no app DML; unknown action/capability deny |
+| `tenant_capability_grants` (target) | Delegation owner → co-admin | Tenant+actor+capability+reason+expiry+granted_by+revocation; không hỗ trợ `role.manage`; expired/revoked deny |
+| Grant audit rows (target) | Immutable history của grant/revoke | Append-only, tenant-private/restricted; actor + reason + before/after + timestamp; không update/delete |
 
 ### DD-56 capability matrix
 
@@ -103,8 +107,20 @@ Route mọi Zalo/Messenger/admin interaction tới **đúng tenant/resource** r�
 | Money read + manual mark-paid | ✅ | N/A | `money.mark_paid` vẫn DD-25 preview+confirm+audit |
 | Money correction/refund/waiver/void | ❌ | ✅ có expiry/audit | Owner default ✅ |
 | Bank account / connector secret / tenant billing | ❌ | ✅ có expiry/audit | Owner default ✅ |
+| Chat channel create/rename/default/archive | ✅ | N/A | Exact `chat.channel.manage`; current tenant/channel re-check |
+| Restricted-channel post | ✅ | N/A | Exact `chat.channel.post_restricted`; active channel membership vẫn bắt buộc |
+| Club-message soft moderation | ✅ | N/A | Exact `chat.message.moderate`; tombstone + reason + append-only audit, không hard delete/edit |
+| Timed club-channel mute | ✅ | N/A | Exact `chat.member.mute`; DB-owned expiry, không cấp transcript/DM access |
 | Role management | ❌ | ❌ không delegable | Owner-only; co-admin không remove/demote owner/admin |
 | DD-51 billing override / DD-53 split-relink | ❌ | ❌ | PlatformAdmin-only |
+
+### Implementation ownership
+
+- `tenant-capability-authority-core` là owner duy nhất của closed action registry, least-privilege preset (`admin|co_admin` giống nhau), tenant/person authority resolver, tenant-private expiring/revocable grant-read storage, append-only grant audit và fail-closed `authorize`.
+- Capability semantics độc lập với Chat schema, nhưng actual DB worktree là slice 4 và **execution hard-dep slice 3**: worktrees `chat-definer-role-provisioning → chat-dm-safety-authority-core → dd38-dd86-chat-schema-core → tenant-capability-authority-core` phải serialize vì cùng chạm migration tail, `packages/db/schema.ts`, DB catalog/schema/authz tests. Mọi channel lifecycle/restricted-post/moderation/mute consumer vẫn đợi slice 4.
+- Chat chỉ có thin target adapter để re-check current tenant/channel/membership rồi gọi core; không tạo bảng/registry/role formula riêng.
+- Sensitive grant/revoke mutation command + management UI tách thành `tenant-sensitive-capability-grant-lifecycle` nếu vượt scope. Bốn Chat action đều thuộc preset nên Chat không phụ thuộc follow-up này.
+- Live repo mới có `tenant_admins` role labels + `tenantsForPerson`; chưa có hai target table hay `authorize` primitive.
 
 ### Link State Machine
 
@@ -163,8 +179,12 @@ stateDiagram-v2
 - [ ] Suspended behavior khớp billing contract
 - [ ] Tenant A/B routing/authz isolation tests pass
 - [ ] One canonical action→capability registry drives API/UI/adapters; unknown action and missing/expired grants deny
+- [ ] `admin` và `co_admin` cho cùng least-privilege preset; không label nào nhận owner-only action
 - [ ] Every DD-56 sensitive action has allow-with-valid-grant and deny-without/expired-grant tests
+- [ ] Grant/revoke writes are tenant-private and append exactly one immutable audit event; revoked grants deny and audit rows cannot update/delete
 - [ ] `role.manage`, DD-51 override and DD-53 split/relink cannot be delegated to co-admin
+- [ ] Core registry chứa đúng bốn Chat key `chat.channel.manage`, `chat.channel.post_restricted`, `chat.message.moderate`, `chat.member.mute`; unknown/typo key deny, không fallback sang role label
+- [ ] Mỗi Chat consumer sau core re-check tenant/channel/membership tại consume time; lifecycle/moderation/shared-message suites chứng minh no-partial-mutation và không capability nào cấp host/admin/support quyền đọc hay moderation human DM
 
 ---
 
@@ -181,6 +201,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v2.7 | Mirror DD-86 final: add exact Chat capability keys for channel lifecycle, restricted post, soft moderation and timed mute; pin `admin|co_admin` to one least-privilege preset, cross-feature `tenant-capability-authority-core`, consume-time re-check, fail-closed unknown key and explicit human-DM denial. Reviewed/not implemented unchanged. |
 | 2026-07-19 | v2.6a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.6 | **decisions v1.45:** generalized provider-endpoint identity/reachability cho Messenger + Zalo; endpoint/default context tách khỏi target-tenant eligibility. |
 | 2026-07-17 | v2.5 | **Model naming closure:** Product now uses canonical `tenant_link_codes` + `consumed_at`/revoke/attempt lifecycle; explicitly distinct from identity merge `link_codes`. BE legacy DDL marked reference-only. |

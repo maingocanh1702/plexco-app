@@ -2,15 +2,15 @@
 
 > **Trạng thái:** 🟡 Draft đề xuất — chờ review · 2026-07-06
 > **Loại:** Proposal (chưa Reviewed). **KHÔNG** sửa `schema.ts`/`migrations`/spec đã Reviewed cho tới khi DD-34/35/36 ✅.
-> **Quan hệ:** mở rộng pair **Club Assistant** v0.9 (`../features/feature_club_assistant.md` + `../features/BE/feature_club_assistant_tech.md`). DD-16..28 liên quan đã chốt nhưng pair vẫn 🟡 Draft tới formal promotion; proposal DD-34/35/36 này không tự promote hoặc viết lại contract hiện hành.
+> **Quan hệ:** mở rộng pair **Club Assistant** v0.17 (`../features/feature_club_assistant.md` + `../features/BE/feature_club_assistant_tech.md`). Pair nền đã là ✅ Reviewed contract; proposal DD-34/35/36 này vẫn là track Draft riêng và không hạ status, tự authorize runtime hoặc viết lại contract nền.
 > **Quyết định mở:** `../standards/decisions.md` **DD-34** (Plexco global KB plane), **DD-35** (auto-derive KB-club từ canonical), **DD-36** (freshness / scheduled re-ingest).
-> **Nguồn tham chiếu:** `../standards/core-db-architecture-principles.md` (INV-1..10, P1–P16) · `../00-start-here/HANDOFF.md §3` (5 HARD RULES) · Club Assistant pair v0.9 · DD-12 (public read-model + readonly grant) · DD-28 (live-context tool). Migration mới phải self-contained; không sửa `0009` đã apply.
+> **Nguồn tham chiếu:** `../standards/core-db-architecture-principles.md` (INV-1..10, P1–P16) · `../00-start-here/HANDOFF.md §3` (5 HARD RULES) · Club Assistant pair v0.17 · DD-12 (public read-model + readonly grant) · DD-28 (live-context tool). Migration mới phải self-contained; không sửa `0009` đã apply.
 
 ---
 
 ## 0. TL;DR
 
-Feature Club Assistant v0.9 hiện tại (core DD đã chốt nhưng pair vẫn Draft) mới bao **KB per-CLB, host nạp thủ công**. Yêu cầu owner (06/07) thêm **2 chiều mới**:
+Feature Club Assistant v0.17 hiện tại đã là **Reviewed contract** và mới bao **KB per-CLB, host nạp thủ công**. Yêu cầu owner (06/07) thêm **2 chiều mới**:
 
 1. **Hỏi về chính Plexco** — trợ lý trả lời được câu hỏi về **nền tảng Plexco** (tính năng, cách dùng, chính sách chung), không chỉ về club. ⇒ thêm **tầng KB toàn nền tảng** (`platform_kb_*`) — **global, read-only cho mọi tenant, non-PII** — và **retrieval hợp nhất** KB-club (RLS) ∪ KB-Plexco (global). **DD-34.**
 2. **Auto-update KB** theo update của **Plexco** và **từng club** — không bắt host nạp lại tay:
@@ -209,19 +209,28 @@ Kế thừa 8 test proposal gốc, **thêm**:
 
 ---
 
-## 8. Definition of Ready — còn thiếu gì để thành spec thực thi
+## 8. Inventory bằng chứng và decision gap — không phải readiness verdict
 
-- [x] Plane & isolation KB-Plexco (§3.1) — global, grant-isolated (mô hình DD-12) + guard 3 lớp nội dung
-- [x] Union retrieval + precedence + citation scope (§3.2)
-- [ ] **Patch DD-21 + Club Assistant specs** (bất biến "KB prompt = chỉ `kb_chunks`" → nguồn union) — bắt buộc KHI DD-34 ✅, trước khi build
-- [x] Field-whitelist derive + ranh giới DD-28/DD-21 (§4.2)
-- [x] Freshness fields + scheduled job (§5)
-- [~] **Nguồn KB-Plexco** (docs/ vs CMS) — chốt khi tech spec
-- [~] **Danh sách field-whitelist canonical** đủ để derive — enumerate ở BE tech
-- [~] Precedence host-manual vs derived — chốt quy tắc + UX tắt từng mảng
-- [x] Idempotency/P9/P12 (§4,§5) · Entitlement (§6) · Tests (§7)
+Tài liệu Draft này chưa có implementation slice/manifest, nên phần dưới chỉ kiểm kê nội dung đã mô tả và khoảng trống cần owner/spec xử lý; không tổng hợp trạng thái, không quy đổi tỷ lệ và không authorize worktree.
 
-⇒ Sau khi DD-34/35/36 ✅: patch rồi review/promote delta cho Club Assistant Product/BE pair (thêm plane platform + kind `derived` + freshness), sau đó mới tạo migration mới `00xx_platform_kb.sql` với explicit global grant/revoke + `schema.ts`. `platform_kb_*` không dùng tenant RLS vì global, nhưng migration mới vẫn phải tự chứa security grants; không sửa `0009` đã apply.
+**Bằng chứng thiết kế đã có trong proposal:**
+
+- Plane + isolation KB-Plexco (§3.1): global, grant-isolated theo mô hình DD-12, với ba lớp content guard.
+- Union retrieval, precedence và citation scope (§3.2).
+- Field-whitelist derive và ranh giới DD-28/DD-21 (§4.2).
+- Freshness fields + scheduled-job proposal (§5).
+- Idempotency/P9/P12 (§4–§5), entitlement (§6) và invariant-test inventory (§7).
+
+**Decision/spec gap phải đóng trước khi author slice:**
+
+- Owner ratify DD-34/35/36.
+- Sau DD-34 final, patch DD-21 + Club Assistant Product/BE để mở nguồn prompt từ tenant `kb_chunks` sang union được phép; không sửa trước decision.
+- Chọn nguồn KB-Plexco canonical (`docs` hay CMS).
+- Enumerate exact canonical field whitelist cho derived KB trong BE spec.
+- Chốt precedence host-manual vs derived và UX bật/tắt từng mảng.
+- Author exact slice/manifest rồi mới áp review-readiness gate trên immutable authority SHA.
+
+⇒ Sau khi DD-34/35/36 ✅: patch rồi review/promote delta cho Club Assistant Product/BE pair (thêm plane platform + kind `derived` + freshness), sau đó mới tạo migration mới `00xx_platform_kb.sql` với explicit global grant/revoke + `schema.ts`. Extension phải tái dùng canonical generation/CAS index-activation và active-generation retrieval owners của base Assistant plan, không dựng ingest/index/provider pipeline song song. `platform_kb_*` không dùng tenant RLS vì global, nhưng migration mới vẫn phải tự chứa security grants; không sửa `0009` đã apply.
 
 ---
 
@@ -241,6 +250,7 @@ Chi tiết ở `standards/decisions.md`.
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 28/07/2026 | v0.4 | Reconcile dependency status: Club Assistant Product/BE pair v0.17 đã Reviewed; DD-34/35/36 vẫn là extension Draft riêng, không hạ base pair và không authorize runtime. Chuyển scored DoR cũ thành evidence/decision-gap inventory vì chưa có slice/manifest để chấm trạng thái tổng hợp. |
 | 17/07/2026 | v0.3 | Reconcile dependency về Club Assistant v0.9 Draft; DD-34/35/36 không tự promote base pair; mọi global-KB grants nằm trong migration mới self-contained, không sửa `0009` lịch sử. |
 | 06/07/2026 | v0.1 | Khởi tạo: mở rộng Club Assistant với KB-Plexco toàn nền tảng (DD-34), auto-derive KB-club từ canonical (DD-35), freshness/scheduled re-ingest (DD-36). Giữ nguyên DD-21/DD-28/HR2. |
 | 06/07/2026 | v0.2 | Review fixes: **DD-34 = extension của DD-21** (không "nguyên vẹn") — mở allowed KB sources sang `platform_kb`, patch DD-21 + Club Assistant specs khi ✅ (§0/§3.2/§3.3); soften "không thể chứa" → "**không được chứa**" + thêm **guard 3 lớp** platform-KB (source allowlist/platform-docs-only, admin review, scanner+test PII) ở §2/§3.1/§3.3. |

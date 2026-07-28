@@ -1,13 +1,20 @@
 # Feature: Notifications — Reminders · Inbox · Announcements · Web Push — Product/UX Spec
 
-> **Canonical phase:** P3 (nhắc/xác nhận baseline) · P4 (inbox web · web push slice **S9/S20**) · P4.5–P4.7 (channel delivery) · P4+ (global plane · announcements) — *cross-cutting cụm 🔔*
+> **Canonical phase:** P3 (nhắc/xác nhận baseline) · P4 (Inbox + Web Push mechanisms 36–47) · P4.5–P4.7 (channel delivery) · P4+ (global plane · announcements) — *cross-cutting cụm 🔔*
 > **Track:** 🔔 Notifications
-> **Version:** 3.5 · 2026-07-25
-> **Status:** ✅ **Reviewed contract** — §A giữ nguyên; §B/C/D theo DD-70/71/72 owner-final. Target runtime/migrations vẫn pending; `Reviewed` không đồng nghĩa `CODE_READY` hay `Implemented`.
+> **Version:** 3.10 · 2026-07-28
+> **Status:** ✅ **Reviewed contract** — §A giữ nguyên; §B/C/D theo DD-70/71/72 owner-final; §E offline Chat digest theo DD-94 owner-final. DD-88 chỉ còn proposal cho grouping/`message_request`/scoped-bulk rộng hơn. Target runtime/migrations vẫn pending; `Reviewed` không đồng nghĩa `CODE_READY` hay `Implemented`.
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
-> ⚠️ **Historical:** doc hạ Reviewed → Draft ngày 2026-07-18 do gộp tài liệu, KHÔNG phải mở lại luật tiền §A. DD-70/71/72 được owner chốt 2026-07-21 nên v3.5 promote lại Reviewed; runtime/migration vẫn chưa tồn tại. NTF-OQ-14..16 và các OQ chi tiết theo slice vẫn là build/enablement gates; DD-88 vẫn proposal ngoài core contract.
-> **Prerequisites:** P3 ledger stable · P3.5 identity/reachability · P4 sync/projectors · (inbox global plane) DD-47/48 · (announce) DD-43 migration · (push) slice S9 PWA shell
-> **Tài liệu liên quan:** `../product/BRD.md` FR-6 · `../product/PRD.md` FLOW 7/8 · `../standards/decisions.md` **DD-37/DD-40/DD-43/DD-45/DD-47/DD-48/DD-49/DD-50/DD-67/DD-69/DD-70..72 ✅ · DD-88 🟡 proposal** · `../standards/business-rules.md` BL-MSG-3/5, **BL-NTF-1..4**, BL-SEC-5 · `../proposals/notification-grouping.md` (🟡 DD-88 design packet: group taxonomy · session/activity/message types · per-group opt-out · unread UX) · `../dd-43-membership-tags-analysis.md` · `../dd-45-waitlist-analysis.md` · `../dd-47-follow-graph-analysis.md` · `../dd-69-app-native-analysis.md` · `feature_identity.md` · `feature_user_settings.md` · `feature_session_management.md` (SES-UC-3) · `BE/feature_notifications_reminders_tech.md`
+> ⚠️ **Historical:** doc hạ Reviewed → Draft ngày 2026-07-18 do gộp tài liệu, KHÔNG phải mở lại luật tiền §A. DD-70/71/72 được owner chốt 2026-07-21 nên v3.5 promote lại Reviewed; runtime/migration vẫn chưa tồn tại. NTF-OQ-14..16 và các OQ chi tiết theo slice vẫn là build/enablement gates. Nhận định v3.8 rằng digest còn phải trì hoãn đã được DD-94 thay thế; session/activity, `message_request` và scoped/bulk vẫn thuộc proposal DD-88.
+> **Prerequisites:** P3 ledger stable · P3.5 identity/reachability · P4 sync/projectors · (inbox global plane) DD-47/48 · (announce) DD-43 migration · (push) mechanisms 36→41 + A19/F15
+> **Tài liệu liên quan:** `../product/BRD.md` FR-6 · `../product/PRD.md` FLOW 7/8 · `../standards/decisions.md` **DD-37/DD-40/DD-43/DD-45/DD-47/DD-48/DD-49/DD-50/DD-67/DD-69/DD-70..72/DD-91/DD-94 ✅ · DD-88 🟡 proposal** · `../standards/business-rules.md` BL-MSG-3/5, **BL-NTF-1..6**, BL-SEC-5 · `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` §7.2 (DD-94) · `../proposals/notification-grouping.md` (DD-88 chỉ còn session/activity/`message_request`/scoped-bulk rộng hơn) · `../dd-43-membership-tags-analysis.md` · `../dd-45-waitlist-analysis.md` · `../dd-47-follow-graph-analysis.md` · `../dd-69-app-native-analysis.md` · `feature_identity.md` · `feature_user_settings.md` · `feature_session_management.md` (SES-UC-3) · `feature_inapp_chat.md` · `BE/feature_notifications_reminders_tech.md`
+>
+> **Current infrastructure boundary (2026-07-27):** shared job lease/ack + preflight/dispatcher/flagged
+> scheduler đã merge nhưng đang OFF/placeholder. Chưa có notification producer/projector, Inbox/Web Push
+> runtime, payment lifecycle delivery hay connected UI; đây vẫn là Reviewed contract, không phải
+> `IMPLEMENTED`/`ENABLE_READY`.
+
+> **Execution ownership theo primary-surface plan v1.7:** DD-67/DD-72 Web Push đi đúng chain 36 `notification-route-integrity-core` → 37 subscription authority → 38 provider-attempt core → 39 installable PWA shell → 40 registration client → 41 display/telemetry client; DD-94 Chat digest là 42 `chat-unread-notification-core`, hard-depend Chat read mechanism 10 + chain Web Push. Payment đi 43 lifecycle intent → 44 reminder producer và 45 settled/correction projector → 46 Inbox/authenticated detail → 47 generic payment-push adapter. HTTP owners là A17 preferences, A18 payment Inbox/detail, A19 subscription/device/telemetry; product UI owners là F11 payment Inbox/detail, F14 Chat preferences và F15 contextual push onboarding/devices sau F0. Mechanism slices không ngầm sở hữu HTTP/UI và adapter không re-derive notification/payment state. Primary initiative vẫn `NOT_PLAN_READY`, runtime = 0 tới immutable authority re-pin + strict per-slice `CODE_READY`.
 
 > **Cập nhật DD-40 + DD-37 (2026-07-10):** kênh nhắc chính = **web push + Zalo DM**; **Messenger best-effort trong cửa sổ standard 24h**, ngoài cửa sổ chỉ khi có cơ chế Meta đủ điều kiện/được phê duyệt. **Telegram loại khỏi phạm vi (DD-37).** Sau **mọi** markPaid (thủ công tiền mặt/CK & auto CK) → **xác nhận tự động tới player** (FR-6.2). **Nhắc tự động nâng cao = `host_pro`; free = nhắc thủ công** (DD-40).
 >
@@ -21,7 +28,13 @@
 >
 > **Cập nhật v3.4b (notification closure v1.67; current authority v1.67):** ngoài DD-45 event vocabulary, closure pin immutable context-start cutoff; exact read-all/registration/trust replay; fence-first cross-feature lock order; same-Person historical refs; every-reparent trust reset; secret-prune-safe retention; stable physical targets and telemetry. DD-70/71/72 vẫn 🟡; Draft, không phải runtime.
 >
-> **Cập nhật v3.5 (decisions v1.90/v1.91; current working-tree authority v2.04):** DD-70 chọn global protected plane + inbox hợp nhất hai plane + Person preferences; DD-71 chốt manual basic free và proof-bound confirm; DD-72 chốt web-only subscriptions + direct VAPID + generic OS payload. Cặp trở lại Reviewed contract. Không có migration/service/UI; OQ retention/evidence và DD-88 không được đóng suy diễn.
+> **Cập nhật v3.5 (historical snapshot: decisions v1.90/v1.91; authority tại thời điểm đó v2.04; current authority v2.10):** DD-70 chọn global protected plane + inbox hợp nhất hai plane + Person preferences; DD-71 chốt manual basic free và proof-bound confirm; DD-72 chốt web-only subscriptions + direct VAPID + generic OS payload. Cặp trở lại Reviewed contract. Không có migration/service/UI; OQ retention/evidence và DD-88 không được đóng suy diễn.
+
+> **Cập nhật v3.6 / DD-91 (2026-07-27):** để in-app chat trở thành primary player surface, reminder · settled confirmation · correction vẫn đi qua durable tenant inbox `notification_intents` + Web Push generic của contract hiện tại; **không** biến thành chat/Assistant message và **không phụ thuộc DD-88**. Mở item mới fetch chi tiết từ canonical person-self self-payment projection dưới session/authz; notification/chat UI không tự tính hoặc cache số nợ.
+>
+> **Cập nhật v3.8 / DD-88 (2026-07-28, superseded một phần bởi DD-94):** group derive từ closed-set `type`, không cột `group`; một preference authority per-Person/per-type/channel cho hai plane Inbox; money/security schema-nonoptout; chat read tách Inbox read; không durable item mỗi message. Session/activity, `message_request` và scoped/bulk vẫn deferred. Nhận định offline digest còn mở đã được DD-94 thay thế.
+>
+> **Cập nhật v3.9 / DD-94 (2026-07-28):** offline Chat digest là **generic delivery signal**, không phải Inbox item hay snapshot message. Source truth duy nhất là Chat unread; DM/direct mention/reply mặc định ON; club channel có preference `all|mentions|off`, mặc định `mentions`; coalesce theo `(person,channel,highest_unread_cursor)`. Mark-read làm pending cũ obsolete. Ngay trước provider write phải re-authorize membership/DM block+safety/preference/device/trust epoch và chứng minh cursor vẫn unread; false/unknown đều skip. Delay/coalesce là enablement config, thiếu hoặc chưa test thì route OFF.
 >
 > **Cập nhật v3.4d (notification closure v1.69):** delivery identity chuyển sang closed `route_class`; physical attempts có planned/due lifecycle, whole-intent vs target-invalid vs quiet-hour defer decision table, possible-write precedence và sticky evidence-bound `unknown`. Core direct DML bị thu hồi; exact-target start authorization mới được resolve secret. Announcement exact preview/quota/retry receipt, tag soft-retire và push device/proof/rebind boundaries được pin. Vẫn Draft/no runtime.
 >
@@ -45,15 +58,32 @@ Cụm 🔔 trả lời hai câu hỏi: **thông báo có đến được ngườ
 | **B. Inbox & Global plane** | ✅ DD-70 owner-final; runtime pending | Inbox bền cho follow/link/security; security alert chỉ đi email/device đã verified/trusted trước immutable `trigger_context_started_at` — item bền không tự đủ |
 | **C. Announcements** | ✅ DD-71 owner-final; runtime pending | Host broadcast có proof-bound preview/confirm; manual basic free, `host_pro` thêm automation/analytics/quota; quota vẫn tính actor/tenant/fan-out |
 | **D. Web Push** | ✅ DD-72 owner-final; runtime pending | Phase-1 direct standards-based Web Push + VAPID; chỉ freeze web shape, native để phase-2 spike quyết |
+| **E. Offline Chat digest** | ✅ DD-94 owner-final; runtime pending | Generic coalesced Web Push từ Chat unread; không Inbox item, per-message item hoặc content snapshot; live reauth trước provider write |
 
 Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ rollback money state**.
 
-> **Tier (DD-40):** **free** = nhắc **thủ công** (host bấm gửi) + xác nhận tự động sau markPaid. **`host_pro`** = **nhắc nợ tự động** nâng cao (cron theo ngưỡng, mặc định 2h → 24h → …). Tier của announcement chưa chốt — xem NTF-OQ-9.
+> **Tier (DD-40/DD-71):** **free** = nhắc **thủ công** (host bấm gửi) + xác nhận tự động sau markPaid + manual basic announcement. **`host_pro`** = nhắc nợ tự động nâng cao và announcement automation/analytics/quota. Exact announcement preview/proof/quota semantics do DD-71 sở hữu; không còn tier decision mở.
 
-> **Ba gap của B/C/D là có thật trong authority docs, không phải scope mới:**
-> - **DD-47** ghi tường minh *impl-gap*: notify follow-request là **person-directed GLOBAL** nhưng `notification_intents`/`outbox_events` đều **`tenant_id NOT NULL`** (verify ở `packages/db/schema.ts` + `migrations/0008`, `0005`) → **KHÔNG cover trực tiếp**. DD-47 để mở 2 phương án: (a) đường notify global mới, (b) SSE person-self / in-app inbox (DD-38).
-> - **DD-43 ✅** chốt `membership_tags` **chỉ** cho notification audience; `BL-NTF-4` đã pin. Nhưng `membership_tags` **chưa có migration** và trước v3.0 **không doc nào sở hữu luồng announce tới thành viên** — `SES-OQ-6`/`MT-OQ-3` chỉ trỏ DD-43 rồi dừng; `SES-UC-3` chỉ là announce **một session lên group đã link**.
-> - **Web push** được PRD §164, TDD FR-10, `deployment-infra` §162 và `BL-NTF-1` gọi là **kênh nhắc chính**, nhưng không có bảng subscription, không manifest/service worker trong `apps/web`, không VAPID contract. **NTF-OQ-5** và **DD-69 gate #4** yêu cầu telemetry `delivered/opened/latency` per platform cài **ngay trong slice S9/S20, không được defer** — thiếu baseline thì quyết định phase-2 native "thành cảm tính" (nguyên văn `decisions.md`).
+> **Historical baseline từng tạo ba gap B/C/D; decisions đã chọn hướng, runtime vẫn chưa land:**
+> - **DD-47 historical choice:** notify follow-request là **person-directed GLOBAL** nhưng live `notification_intents`/`outbox_events` đều `tenant_id NOT NULL`. DD-70(a) nay đã chốt global protected plane + unified inbox/person-self read; lựa chọn (a)/(b) không còn mở. Gap hiện tại chỉ là schema/service runtime chưa được triển khai.
+> - **DD-43/DD-71:** `membership_tags` chỉ phục vụ notification audience; DD-71 nay sở hữu full announcement flow, manual basic free và proof-bound preview/confirm/quota. `membership_tags` migration + announcement service/UI vẫn chưa tồn tại.
+> - **DD-72:** phase-1 Web Push đã chốt direct standards-based Web Push + VAPID + generic payload; không còn câu hỏi chọn VAPID. Live app vẫn chưa có subscription tables, manifest/service worker/provider path. Telemetry `delivered/opened/latency` per platform phải land trong mechanisms 39–41 cùng A19/F15 để giữ evidence cho phase-2 native.
+
+### DD-91 — money lifecycle parity trên primary chat surface
+
+- Chat surface chỉ expose badge/inbox/deep-link của pipeline notification canonical. Reminder, `payment.settled` và correction vẫn là durable tenant `notification_intents`; không insert `chat_messages`, không dùng bot/Assistant để project lifecycle tiền.
+- Web Push luôn generic; mở app mới authenticated-fetch chi tiết. Item detail gọi canonical self-payment/person-self projection tại read time, không lưu/copy amount hoặc dựng công thức tiền riêng trong notification/chat.
+- Delivery proven-fail hoặc `unknown` không xoá inbox item và không đổi ledger. User vẫn tìm lại được lifecycle state trong app.
+- DD-88 broader grouping/`message_request`/scoped unread UX **không** là dependency của durable payment inbox, generic payment Web Push hay primary-surface exit gate này.
+
+### DD-94 — offline Chat digest delivery signal
+
+- **Chat unread là source of truth duy nhất.** Notification chỉ nhận person, channel và opaque `highest_unread_cursor`; không copy message body/title/amount/mention text/author/attachment vào Inbox, job payload hoặc Web Push.
+- DM mặc định **ON**. Trong club channel, direct mention/reply mặc định ON qua preference per-Person `all|mentions|off` có default `mentions`; `off` tắt cả mention/reply, còn `all` mở rộng tới mọi activity đủ điều kiện. Absent row dùng canonical default, lookup unavailable/unknown fail closed và không gửi.
+- Một logical signal coalesce theo `(person_id, channel_id, highest_unread_cursor)`: cursor cùng/thấp hơn là no-op, cursor cao hơn chỉ advance pending signal. Retry hoặc provider outcome `unknown` giữ nguyên logical key, không phát bản sao.
+- Mark-read làm mọi pending cursor không còn unread trở thành obsolete. Ngay trước provider write, worker phải chứng minh lại current channel/DM read authority, membership, pair block+safety, preference, active device + current `trust_epoch`, và cursor vẫn unread; false/unknown đều skip với reason code, không gửi.
+- Push chỉ dùng copy generic + opaque deep-link. Delay/coalesce duration là named enablement config; thiếu config hoặc chưa pass boundary tests thì Chat digest route **OFF**, trong khi realtime/history/unread/badge vẫn hoạt động độc lập.
+- DD-88 không còn sở hữu hay chặn exact digest này. DD-88 chỉ giữ proposal cho taxonomy/grouping rộng hơn, `message_request`, session/activity và scoped/bulk Inbox.
 
 ### Bất biến
 
@@ -65,7 +95,7 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 - Quiet hours tính theo **tenant timezone**.
 - Deduplicate intent bằng server-derived structural source event + recipient + type; delivery history/key bind `(intent, closed route_class)`, không Page id. Delivery phải structurally bind đúng Person của intent với channel identity, giữ **tối đa một active logical route xuyên platform** (`pending|sent|unknown`) và **một live physical claim per exact target** với sequence do server cấp. Claim fence dùng canonical target binding server-derived, rotation-stable; versioned HMAC chỉ để lookup/audit, không làm uniqueness authority. Ngay trước first send/fallback/retry, dispatcher re-read canonical type-specific state + authorization/preference/reachability; crash-after-write thành sticky `unknown`, không resend/fallback mù.
 
-**Áp cho cả cụm (A–D)**
+**Áp cho cả cụm (A–E)**
 
 - **KHÔNG tạo tenant store/pipeline song song.** Tenant notification vẫn chỉ là `notification_intents`; announcement là một `type` của nó; web push là một `platform` của `notification_deliveries` (HR3). Global `person_notifications` là plane riêng vì tenant pipeline không thể chứa event không thuộc CLB.
 - **Tiền/PII không rời vùng được phép:**
@@ -81,6 +111,7 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 - **Announcement quota reserve fail-closed và idempotency exact.** Confirm atomically check+reserve tenant bucket + actor bucket + fan-out recipient budget. Cùng `command_id` + cùng request fingerprint replay đúng kết quả; cùng command + fingerprint khác trả `IDEMPOTENCY_KEY_REUSED` trước reservation mới. Quota service lỗi thì không queue; audience giảm không refund tự động v1. Retry-failed là actor-scoped idempotent command, lock intent, revalidate recipient/preference/reachability và chỉ claim đúng một terminal failed route khi không có `pending|sent|unknown`; không consume fan-out lần hai.
 - **One active logical route per notification** — tenant Page → central Page → web/Zalo (BL-MSG-5, DD-67). Fallback terminalize proven-no-send route rồi activate đúng một route kế dưới intent lock; nhiều thiết bị web push **không** thành nhiều logical send.
 - **Delivery fail không mất thông báo** — item vẫn ở inbox.
+- **Chat digest không phải durable notification item.** Delivery state tối thiểu có thể bền để retry/dedupe, nhưng không insert `notification_intents`/`person_notifications`, không tạo một row per message và không mang body/title/amount/author/attachment. Chat luôn là owner duy nhất của history/read cursor.
 - **Global protected plane:** `person_notifications`, `device_push_subscriptions`, registration receipts và trust events không blanket table grant cho role `app`. Global item chỉ được append atomically từ canonical protected follow/link/merge/auth mutator qua owner-only source-derived helper; push register/rebind/trust chỉ qua narrow `SECURITY DEFINER` (khuôn `person_follows` DD-47 / `channel_identities` DD-67).
 - **Global emit không đi qua tenant outbox.** Phase-1 global type chỉ `follow_request|identity_link|identity_merged|security_alert`; `follow_accepted` là analytics-only, private→public bulk auto-accept không fan-out notification. Known producer phải inventory bounded recipients read-only → lock inbox fences → re-lock canonical source/audit → append item cùng transaction. `link_code` consume không emit; merge commit append từ locked `merge_audit`. Path không reorder được là build HALT tới khi có GLOBAL PROTECTED source-event owner/grants/replay/retention riêng — không gán tenant giả hay reuse tenant `outbox_events`.
 - **Security alert cần hai lớp:** item global bền để đọc lại **và** dispatch chỉ tới email/device đã verified/trusted trước `trigger_context_started_at`; factor thiết lập trong chính triggering session/context luôn bị loại dù timestamp vẫn trước event.
@@ -139,6 +170,11 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 | NTF-UC-35 🟡 | Push | Player | Nhiều thiết bị · đăng xuất · tắt trong settings | Một logical delivery atomically pin closed generation của mọi active target trong snapshot trước send; subscription đăng ký sau chỉ nhận notification tương lai. Logout/tắt terminalize đúng target chưa gửi, không huỷ whole intent/thiết bị khác |
 | NTF-UC-36 🟡 | Push | System | Push trả `410 Gone`/`404` | Mark đúng subscription đó chết và **không** retry target đó. Chỉ fallback khi đủ target count của closed generation đều terminal/proven no-send; một target success ⇒ delivery `sent`, nhưng initial generation rows đã `planned|claimed` còn lại vẫn được finish sau fresh check |
 | NTF-UC-37 🟡 | Push | Ops | Xem dashboard độ tin cậy push theo nền tảng | iOS PWA vs Android vs desktop — **input cho DD-69 gate #4** |
+| NTF-UC-38 | Inbox/Chat primary | Player | Nhận reminder, settled hoặc correction khi dùng Plexco thay chat ngoài | Durable tenant inbox + badge/deep-link vẫn tồn tại dù delivery fail; OS push generic. Mở item fetch canonical self-payment status dưới auth, không tạo chat/bot message |
+| NTF-UC-39 🟡 | Chat digest | Person | Có DM chưa đọc hoặc được direct mention/reply khi app background | Nếu route đã enable và live gates pass, nhận một Web Push generic; source message vẫn chỉ ở Chat |
+| NTF-UC-40 🟡 | Chat digest | Club member | Chọn `all`, `mentions` hoặc `off` cho một club channel | `mentions` là default; `all` nhận mọi activity đủ điều kiện, `mentions` chỉ direct mention/reply, `off` không tạo provider send |
+| NTF-UC-41 🟡 | Chat digest | System | Nhiều message tới cùng person/channel trong coalesce window | Một pending logical signal giữ opaque cursor cao nhất; không per-message Inbox item/push |
+| NTF-UC-42 🟡 | Chat digest | Person/System | Person mark-read, leave club, block DM peer hoặc device trust đổi trước send | Pending signal cũ bị cancel/skip sau live reauth; không provider write, không shared Chat/system message |
 
 ### Edge Cases
 
@@ -203,6 +239,14 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 | 57 🟡 | Push | Security | Web `app` role gọi resolver với `person_id` bất kỳ để lấy endpoint/keys | ❌ Không có signature/grant đó; chỉ dedicated worker consume send-claim TTL ngắn, derive recipient/subscriptions và audit physical attempts |
 | 58 🟡 | Push | Data Integrity | `unknown` sau đó có telemetry; cap hết 24h; OS display fail | Chỉ report trong 24h, delivered ghi sau `showNotification` success; valid evidence reconcile logical delivery, display fail không inflate metric; không mở alternate route |
 | 59 🟡 | Announce | Concurrency/Abuse | Hai confirm/retry-failed đồng thời hoặc reuse proof/command cố vượt quota | Atomic actor-scoped command fingerprint + reservation chỉ charge/queue một lần; mismatch reject. Retry command lock intent/CAS đúng một failed route, revalidate fresh và không chạy khi còn pending/sent/unknown |
+| 60 | Inbox/Reminder | Financial/Privacy | Primary chat surface tự tính/copy số nợ vào item hoặc chat message; DD-88 chưa land | ❌ CẤM — item detail route tới canonical self-payment projection dưới person-self auth; zero local money formula/chat message. Durable payment inbox + generic Web Push không phụ thuộc DD-88 |
+| 61 🟡 | Chat digest | Privacy | Producer/job/push copy body/title/amount/mention text/author/attachment | ❌ CẤM — signal chỉ có person, channel, opaque highest-unread cursor và delivery metadata; no durable item per message |
+| 62 🟡 | Chat digest | Data Integrity | Cùng/thấp/cao hơn cursor tới đồng thời | Same/lower no-op; higher atomically advances một pending signal; không duplicate logical delivery |
+| 63 🟡 | Chat digest | Data Integrity | Person mark-read trước provider write | Chat proof trả not-unread; pending cursor obsolete và send bị cancel, không HTTP |
+| 64 🟡 | Chat digest | Authorization | Member leave/mất quyền; DM peer bị block hoặc safety deny | Live membership hoặc DM block+safety false/unknown → skip generic, không leak channel/peer existence |
+| 65 🟡 | Chat digest | Preference | Club preference absent, `all`, `mentions`, `off` hoặc lookup unavailable | Absent row dùng canonical default `mentions`; exact value enforce; unavailable/unknown dependency → route OFF cho attempt |
+| 66 🟡 | Chat digest | Concurrency/Resilience | Retry hoặc timeout-after-write trong khi message mới tới | Claimed logical key không đổi; possible-write/`unknown` không resend mù. Cursor mới chỉ coalesce vào một pending successor theo cùng person+channel |
+| 67 🟡 | Chat digest | Enablement | Delay/coalesce config thiếu hoặc chưa qua tests | Digest route OFF; realtime/history/reconnect/unread/badge không bị ảnh hưởng |
 
 ---
 
@@ -218,7 +262,7 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 | Web P4 | Delivery report | Skeleton table | Sent/failed/skipped/**unknown** per notification; unknown có cảnh báo manual review/no fallback | Error banner | "Chưa có notification nào" |
 | Web P4 🟡 | Inbox list | Skeleton rows | Item list (icon loại · tiêu đề · thời gian · dot chưa đọc) + filter CLB/loại + mark-all-read | "Không tải được thông báo" + Retry | "Chưa có thông báo nào" |
 | Web P4 🟡 | Badge (header) | — | Số chưa đọc, trần "99+" | Ẩn badge (fail-soft) | Ẩn khi = 0 |
-| Web P4 🟡 | Item detail / deep-link | Skeleton | Nội dung render từ nguồn + CTA (Trả nợ / Xem session / Approve follow) | "Nội dung không còn khả dụng" | N/A |
+| Web P4 🟡 | Item detail / deep-link | Skeleton | Nội dung render từ nguồn + CTA (Trả nợ / Xem session / Approve follow); payment detail dùng canonical person-self self-payment projection tại read time | "Nội dung không còn khả dụng" | N/A |
 | Web P4 🟡 | Follow-request item (inline) | — | `display_name` + Approve/Reject | "Không xử lý được yêu cầu" | N/A |
 | Web P4 🟡 | Soạn announcement | Skeleton | Editor + audience (tất cả / theo tag) + đếm recipient realtime + Preview | "Không tải được danh sách thành viên" | "CLB chưa có thành viên nào" |
 | Web P4 🟡 | Preview + confirm | "Đang tính..." | Số người theo kênh (web/Zalo/Messenger/không reachable) + cảnh báo DLP + Gửi/Huỷ | "Không tính được audience" | "Không có ai trong nhóm này" |
@@ -226,7 +270,9 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 | Web P4 🟡 | Prompt bật thông báo (có ngữ cảnh) | — | "Bật thông báo để không bỏ lỡ nhắc đóng tiền?" + Bật/Để sau | "Trình duyệt chặn — xem hướng dẫn" | N/A |
 | Web P4 (iOS) 🟡 | Hướng dẫn add-to-home-screen | — | Các bước cài PWA + lý do (iOS yêu cầu) | "Thiết bị không hỗ trợ" | N/A |
 | Web P4 🟡 | Settings → Thiết bị nhận thông báo | Skeleton | List thiết bị (tên/nền tảng/lần cuối) + thu hồi toàn thiết bị; preference announcement nằm ở settings CLB, không có toggle per-type chưa có BE owner | Error banner | "Chưa có thiết bị nào bật thông báo" |
+| Web P4 🟡 | Chat channel → Notification preference | Skeleton | Club: `Tất cả` / `Chỉ mention & reply` / `Tắt`; default `Chỉ mention & reply`. DM default ON | Không ghi được → giữ server value cũ; dependency unknown không tự bật send | Canonical default theo DD-94 |
 | OS notification 🟡 | Push nhận được | — | Tiêu đề generic + CTA; chi tiết sau khi mở | — | N/A |
+| OS notification 🟡 | Offline Chat digest | — | Copy generic "Bạn có tin nhắn mới" + opaque deep-link; không tên CLB/người gửi/body/amount | — | Route OFF nếu timing config chưa enable |
 | Web P4 (PWA) 🟡 | Inbox/push khi offline | Cached shell | Shell + "Đang offline"; **không** tiền/PII | Retry | N/A |
 | Ops/Admin 🟡 | Dashboard độ tin cậy push | Skeleton | delivered/opened/latency theo platform + installed rate — **DD-69 gate #4** | Error banner | "Chưa đủ dữ liệu" |
 | Bot (Zalo) 🟡 | Announce nhanh | "Đang tính..." | Preview rút gọn + xác nhận (số reply — Zalo không inline button) | "Gửi thất bại — xem web" | "Không có ai cần nhận" |
@@ -239,7 +285,7 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 | Entity | Vai trò | Key constraints |
 |--------|---------|-----------------|
 | `notification_policies` | Tenant-level thresholds, quiet hours, cooldown, max count | Per tenant; RLS |
-| `notification_intents` | Semantic notification record (type + aggregate + state version); dùng chung cho reminder/settled/correction/owner_alert **và** `type='announcement'` | Structural `UNIQUE(tenant,type,source_event_id,person)` + versioned server key; target Draft thêm server-owned `inbox_sequence`; RLS |
+| `notification_intents` | Semantic notification record (type + aggregate + state version); dùng chung cho reminder/settled/correction/owner_alert **và** `type='announcement'` | Structural `UNIQUE(tenant,type,source_event_id,person)` + versioned server key; owner-final target thêm server-owned `inbox_sequence`, chưa có migration; RLS |
 | `notification_deliveries` | Một logical route per intent, gồm `platform='web'` | Bind `(intent,tenant,person)` và `(identity,platform,person)`; `UNIQUE(intent_id,route_class)` + partial unique tối đa một `pending\|sent\|unknown` xuyên platform; delivery key derive intent+route class, never Page id. ⚠️ Live mới chỉ caller `UNIQUE(delivery_key)` — chờ migration DD-67/72 |
 | `notification_delivery_attempts` 🟡 | Durable physical provider-call target/claim/fence | Một row per canonical physical target+attempt; `planned→claimed→sent/retriable/terminal/cancelled/unknown`, per-target `available_at`/Retry-After, one live planned/claimed. Start returns exact-target authorization; historical unreconciled unknown stays sticky. ⚠️ Table chưa có trên `main` |
 | `notification_unknown_reconciliations` 🟡 | Evidence-bound receipt cho ambiguous attempt | Provider delivery/nonacceptance hoặc device-display evidence phải bind exact attempt; server derives outcome, operator không tự chọn; no evidence ⇒ permanently unknown/no alternate route |
@@ -263,6 +309,7 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 | `push_subscription_registration_receipts` 🟡 | Durable external-idempotency/JTI receipt cho register/rebind | **GLOBAL PROTECTED**; `UNIQUE(actor_person_id, command_id)`, `UNIQUE(envelope_jti)` và one-time rebind-proof JTI; versioned canonical fingerprint + fixed safe result, no raw endpoint/key/JSON. New command increments `trust_epoch`, reset trust; same command/fingerprint replay receipt, mismatch zero mutation |
 | `push_subscription_trust_events` 🟡 | One-time proof consume/audit cho nâng trust | **GLOBAL PROTECTED**; proof/evidence unique, bind actor+target+exact current `trust_epoch`+trust source. Pre-existing-device approval bắt buộc source active/trusted khác target; stale-epoch/replay sau reset không nâng trust lại |
 | `push_delivery_telemetry` 🟡 | sent/delivered/opened/failed/**unknown/expired**/latency per physical attempt | GLOBAL PROTECTED raw table; `event_key` UNIQUE; **không tiền/PII/endpoint**. Server ghi `sent\|failed\|unknown\|expired`; client capability chỉ ghi `delivered\|opened`, write-only và hết hạn `send_started_at+24h`; ops chỉ đọc aggregate |
+| Chat digest delivery signal 🟡 *(physical owner `chat-unread-notification-core`)* | Notification-owned retry/coalesce state; **không phải Inbox item** | Per person+channel, opaque highest-unread cursor + generic delivery/idempotency metadata only; zero body/title/amount/author/attachment and zero row per source message. Chat owns unread proof; Notification owns provider attempt |
 
 > ⚠️ **Mọi entity đánh dấu 🟡 CHƯA có trong `packages/db/schema.ts`** (kể cả `membership_tags` — DD-43 mới chốt *contract*, chưa có migration). 🟡 ở đây nghĩa là **target chưa implement**, không phải DD-70/71/72 còn mở. Full schema: [BE/feature_notifications_reminders_tech.md](./BE/feature_notifications_reminders_tech.md).
 
@@ -341,6 +388,9 @@ stateDiagram-v2
 | `push_sent` / `push_delivered` / `push_opened` 🟡 | Push | Vòng đời gửi | `intent_ref` (opaque), `platform`, `installed`, `latency_bucket` |
 | `push_failed` 🟡 | Push | Lỗi | `platform`, `error_class` — **không** endpoint |
 | `pwa_install_state` 🟡 | Push | Định kỳ/khi đổi | `platform`, `installed`, `standalone` |
+| `chat_digest_coalesced` 🟡 | Chat digest | Pending signal nhận cursor cao hơn | `channel_ref` opaque, `cursor_advance_bucket`; không message/user/content |
+| `chat_digest_skipped` 🟡 | Chat digest | Live proof/preference/device gate không pass | `reason_code` (`READ\|AUTH_REVOKED\|BLOCKED\|PREFERENCE_OFF\|DEVICE_UNAVAILABLE\|TRUST_EPOCH_CHANGED\|CONFIG_OFF`) |
+| `chat_digest_delivery_result` 🟡 | Chat digest | Generic provider attempt hoàn tất | `platform`, `outcome`, `latency_bucket`; không channel/body/author/amount |
 
 > Chỉ dùng opaque IDs + enum + bucket. Không log tên, số tiền, tên CLB, tên tag, nội dung message, endpoint (HR2). **Bộ `push_*` + `pwa_install_state` chính là số liệu NTF-OQ-5 yêu cầu và DD-69 gate #4 phụ thuộc.**
 
@@ -363,12 +413,14 @@ stateDiagram-v2
 - [ ] Manual preview/exclusions và owner digest fallback work
 - [ ] Rate-limit burst test pass cho 1k tenants concurrent
 - [ ] `waitlist.charge_derivation_failed` mang `failure_event_id`, `promotion_retry_id`, `waitlist_entry_version`, root `origin_command_id`; candidate event dedupes per entry/reason for audit, while owner alert/digest is unique per root `promotion_retry_id` and aggregates server-side candidate count/reason classes. Notification không sở hữu/claim/settle root promotion job/attempt budget; recipient unresolved → skipped/DLQ có reason, không lộ PII/amount/venue
+- [ ] Reminder, settled và correction tạo/reuse durable tenant `notification_intents` theo source/version; primary chat surface không insert lifecycle event thành `chat_messages` hay Assistant response
 
 **B. Inbox & Global plane** 🟡
 
 - [ ] Gộp tenant-plane + global-plane một danh sách; item tenant render qua `tenantRepo`/RLS tại read time; không authorize được thì **loại khỏi kết quả**
 - [ ] Bảng global không có cột tiền/PII/JSON params tuỳ ý; system copy derive từ fixed `type` — **test bất biến CI** chặn bypass insert
 - [ ] Push fail (ngoài 24h / web push blocked) vẫn có item trong inbox — test end-to-end
+- [ ] Payment item/deep-link re-authorize actor rồi đọc canonical self-payment projection tại request time; notification/chat không có local remaining/debt formula, amount snapshot hoặc cache nhạy cảm
 - [ ] Insert tenant/global + mark-all serialize trên per-Person fence. Mark-all discovery ở ngoài mutation TX; bounded `READ COMMITTED` locks fence before its first authoritative snapshot/boundary, then locks/re-authorizes visibility owners and enumerates planes while held to commit. Signed complete-plane manifest + zero-item plane steps + DEFERRABLE completion trigger làm receipt+server boundary+exact reads all-or-nothing; finish thiếu/sai tx/early-return không commit được. Hidden/late item unread; concurrent tab/replay/crash không âm badge hoặc partial plane
 - [ ] Cursor opaque signed bind actor+filter+`before_sequence`, total-order hai plane; reuse dưới actor/filter khác reject. Mark-read missing/unauthorized trả cùng opaque 404, không tạo orphan read row
 - [ ] Follow-request approve/reject inline, **không** lộ field ngoài DD-48 approved set
@@ -378,6 +430,8 @@ stateDiagram-v2
 - [ ] Signal projector fail KHÔNG rollback ledger/không chặn delivery; tenant item vẫn đọc được trực tiếp từ `notification_intents`, chỉ SSE/badge cache trễ
 - [ ] Security alert tạo item global bền; server derive immutable triggering context + pre-mutation event boundary. Dispatch chỉ tới email/device có verified/trusted time trước context start; same-session factor, forged/future/post-mutation boundary đều fail closed
 - [ ] DD-70(a) đã owner-final; trước migration/runtime enablement, auth-security slice vẫn phải pin exact owner/table cho global security-alert delivery attempts và lifecycle giữ được email/device verified/trusted **trước `trigger_context_started_at`**; không ép event global vào tenant `notification_deliveries`
+- [ ] Durable payment inbox, badge/deep-link và generic payment Web Push pass độc lập với DD-88 broader extensions và DD-94 Chat digest. Chat digest bật/tắt không tạo hoặc xoá payment item; session/activity, `message_request` và scoped/bulk có thể chưa enable mà lifecycle money parity vẫn usable
+- [ ] Chat read/unread/badge độc lập `notification_reads`; DD-94 delivery signal tạo zero durable notification item per chat message
 
 **C. Announcements** 🟡
 
@@ -410,12 +464,25 @@ stateDiagram-v2
 - [ ] `410/404` → mark đúng subscription dead, không retry target đó. Chỉ fallback sau khi đủ pinned target count đều terminal/proven no-send và không historical unknown chưa reconcile; bất kỳ target nào success thì logical `sent`. First success không huỷ initial generation `planned|claimed` rows còn lại; chúng finish sau fresh checks
 - [ ] Timeout-after-write/attempt lease hết sau `send_started` → `unknown`, không alternate-channel fallback; tenant `settled|correction` tối đa 2 same-route retry. Global `security_alert` chờ exact attempt owner/lifecycle ở auth-security enablement slice; reminder/announcement manual reconcile
 - [ ] Prompt quyền có ngữ cảnh, không hỏi lặp khi đã denied; iOS có hướng dẫn add-to-home-screen
-- [ ] **Telemetry `delivered/opened/latency` + `installed` cài NGAY trong slice S9/S20** — không defer (yêu cầu cứng DD-69)
+- [ ] **Telemetry `delivered/opened/latency` + `installed` land cùng mechanisms 39–41, A19 và F15** — không defer (yêu cầu cứng DD-69)
 - [ ] Physical timeout ghi telemetry `unknown`; valid later `delivered/opened` reconcile logical outcome mà không mở route khác
 - [ ] Raw telemetry table không grant `app`; `event_key` dedupe; report capability write-only hết hạn `send_started_at+24h` (kể cả ambiguous), event ngoài set/hết hạn reject; `delivered` chỉ ghi sau `showNotification` success. Dashboard **tách được iOS PWA vs Android vs desktop**
 - [ ] Cross-Person rebind needs one-time `verified_prior_owner_reauth|manual_recovery` proof; normal conflict is zero mutation. It deletes the old secret row, inserts a new UUID, nulls old live pointers and preserves immutable refs in one guarded transaction; any live attempt/report cap blocks. Canonical Person merge does **not** mint/consume this proof: it invalidates pending challenges, resets every re-parented subscription epoch/trust, and never re-points historical audit refs
 - [ ] Rebind challenge→canonical verified prior-owner approval or audited manual-recovery evidence→consume binds both owners, exact old target/aliases/epoch/external command/issuer/evidence/expiry/JTI; no device/self-signature shortcut and no arbitrary live-attempt limit. New owner cap is initial 10 active Web devices (configurable, hard max 20); register/rebind over-limit rejects before command/proof consumption, merge over-limit HALT/manual, never auto-evicts trusted device
 - [ ] Lifecycle clocks are DB-owned from one transaction timestamp; stale/revoked reactivation clears stale/revoked/failure state and resets trust. Ordinary secret prune uses the null-safe latest of created/stale/revoked/last-success at least 180d plus no-live-capability; replay/audit rows outlive it. Advisory key mapping is deployment-stable/version-pinned and rotates only with serialized dual-lock old+new until old workers drain
+
+**E. Offline Chat digest** 🟡
+
+- [ ] Producer đọc canonical Chat unread cursor và emit tối đa một generic logical signal per person+channel; không insert `notification_intents`, `person_notifications`, Chat/system message hoặc per-message durable row
+- [ ] Persisted/job/provider payload allowlist không có body/title/amount/mention text/author/attachment/tenant name; Web Push chỉ generic copy + opaque deep-link
+- [ ] DM/direct mention/reply default ON; club preference exact `all|mentions|off`, default `mentions`. Missing row dùng default; invalid value reject; preference dependency unavailable/unknown skip attempt
+- [ ] Coalesce cùng/thấp/higher cursor pass concurrency tests: same/lower no-op, higher atomically advance pending state; claimed retry/`unknown` giữ nguyên logical key và possible-write không gửi trùng
+- [ ] Mark-read làm pending cursor cũ obsolete. Ngay trước provider write phải re-check Chat unread proof + current club membership/DM read authority + pair block/safety + preference + active device/current trust epoch; false/unknown nào cũng skip và không HTTP
+- [ ] Delay/coalesce/cooldown là named enablement config; thiếu hoặc chưa qua tests thì Chat digest route OFF. Core Chat history/reconnect/unread/badge và payment Inbox/Web Push vẫn hoạt động
+- [ ] DD-88 grouping/`message_request`/scoped-bulk có thể hoàn toàn absent; DD-94 signal vẫn pass độc lập và không mở rộng Inbox taxonomy/read state
+- [ ] Chat read mechanism 10 và Web Push mechanisms 36→37→38→39→40→41 phải hoàn tất trước khi bật 42; Chat digest không tự dựng subscription/provider/SW/telemetry thứ hai.
+- [ ] Payment lifecycle cần đủ 43 + 44/45 → 46 → 47, real payment/reconciliation source producer, exactly-once/correction E2E và authenticated-detail parity; compile của read/adapter không đủ để enable.
+- [ ] A17–A19 chỉ sở hữu HTTP boundary; F11/F14/F15 chỉ mở sau F0 và dùng API thật. Preferences tách khỏi push consent, generic lock-screen payload không chứa amount, UI không có local money formula.
 
 **Chung**
 
@@ -433,31 +500,36 @@ stateDiagram-v2
 
 | ID | Area | Quyết định | Trạng thái |
 |---|---|---|---|
-| NTF-OQ-1 | Reminder | Default reminder thresholds/max count/copy text (mặc định 2h → 24h → …) | ⬜ Chưa chốt |
-| NTF-OQ-2 | Reminder | Nội dung nhắc DM có bao gồm remaining amount hay chỉ generic reminder? | ⬜ Chưa chốt |
+| NTF-OQ-1 | Reminder | Default reminder thresholds/max count/copy text (mặc định 2h → 24h → …) | ⬜ **Enablement-only cho automatic reminder** — settled/correction + durable Inbox có thể land độc lập; auto-reminder route giữ OFF tới khi threshold/copy được owner chốt |
+| NTF-OQ-2 | Reminder | Nội dung nhắc DM có bao gồm remaining amount hay chỉ generic reminder? | `DEFERRED_OUT_OF_SCOPE` cho primary-surface initiative — không đổi copy Zalo/Messenger. OS push luôn generic; in-app detail authenticated dùng `SelfPaymentStatus` |
 | NTF-OQ-3 | Announce | Audience targeting khi announce theo nhãn thành viên | ✅ **Chốt DD-43 + DD-71** — filter theo `membership_tags` per-tenant chỉ giới hạn ai được mời/thấy announcement (không phải eligibility); build P4+ → `../dd-43-membership-tags-analysis.md`. Luồng announce đặc tả ở mảng C; runtime pending |
 | NTF-OQ-4 | Reminder | Notify khi promote waitlist → active / khi derivation fail | ✅ **Chốt DD-45×DD-49** — active mới notify/reveal venue. Candidate events reference one lazy root job and remain audit-only; one owner digest per `promotion_retry_id`, plus separate terminal root-state alert. SessionService independently owns max-3 claimed attempts; sibling events do not fork job/alert budget. Rejoin không phát charge-create failure event → `../dd-45-waitlist-analysis.md` |
-| NTF-OQ-5 | Push | **Delivery telemetry theo surface** — đo `delivered/opened/latency` per platform (web push: installed vs không · Zalo · Messenger trong/ngoài 24h) | ✅ **Instrumentation bắt buộc bởi DD-69**, cài ngay trong slice PWA S9/S20 và không chứa tiền/PII. Chỉ ngưỡng go/no-go còn mở ở NTF-OQ-14; Web Push schema/provider đã chốt ở DD-72, runtime pending |
-| NTF-OQ-6 | Inbox | **Chọn phương án notify global (DD-47 để mở):** (a) bảng global mới `person_notifications`, hay (b) chỉ SSE person-self + inbox không lưu bền (DD-38). DD-70 chỉ gate **optional durable notification** của activity/kudos; DD-76 feed core và DD-77 kudos add/remove/list có blocker riêng và được ship không-notify | ✅ **Chốt DD-70(a):** global protected `person_notifications`, giữ tenant plane riêng và merge ở service layer; Person preferences áp cả hai plane. Không serialize DD-76/77 core sau DD-70 |
-| NTF-OQ-7 🟡 | Inbox | Có snapshot tiêu đề để tránh N+1 khi render 50 item? | ⬜ Chưa chốt — v1 đề xuất **không snapshot params tuỳ ý**; fixed `type` derive i18n key, còn subject detail resolve từ authorized source theo batch. Nếu cần variant mới phải thêm enum/schema migration |
-| NTF-OQ-8 🟡 | Inbox | Retention item · mark-unread/archive/xoá | ⬜ Chưa chốt — retention ảnh hưởng audit trail của correction (UC-4); v1 đề xuất không mark-unread. *(Badge đã pin ở BE §4.9: counter là **cache** 30s + reconcile job, không phải nguồn sự thật — không còn là open question.)* |
+| NTF-OQ-5 | Push | **Delivery telemetry theo surface** — đo `delivered/opened/latency` per platform (web push: installed vs không · Zalo · Messenger trong/ngoài 24h) | ✅ **Instrumentation bắt buộc bởi DD-69**, land cùng mechanisms 39–41 + A19/F15 và không chứa tiền/PII. Chỉ ngưỡng go/no-go còn mở ở NTF-OQ-14; Web Push schema/provider đã chốt ở DD-72, runtime pending |
+| NTF-OQ-6 | Inbox | **Historical DD-47 choice, reconciled by DD-70:** (a) bảng global mới `person_notifications`, hay (b) chỉ SSE person-self + inbox không lưu bền (DD-38). DD-70 chỉ gate **optional durable notification** của activity/kudos; DD-76 feed core và DD-77 kudos add/remove/list có blocker riêng và được ship không-notify | ✅ **Chốt DD-70(a):** global protected `person_notifications`, giữ tenant plane riêng và merge ở service layer; Person preferences áp cả hai plane. Không serialize DD-76/77 core sau DD-70 |
+| NTF-OQ-7 | Inbox | Có snapshot tiêu đề để tránh N+1 khi render 50 item? | ✅ **V1 không snapshot title/amount/arbitrary params.** Fixed `type` derive i18n key + opaque source ref; subject detail batch-resolve dưới current authz. Variant mới cần closed enum/schema migration |
+| NTF-OQ-8 🟡 | Inbox | Retention item · mark-unread/archive/xoá | `CLEANUP_ONLY / DEFERRED_OUT_OF_SCOPE` cho v1 — không mark-unread/archive/user-delete/hard purge; correction/read audit được giữ. Cleanup giữ OFF tới khi Legal/Security pin retention; badge vẫn là cache 30s + reconcile |
 | NTF-OQ-9 | Announce | **Tier** announcement: manual cơ bản free hay `host_pro`? **Kèm:** proof-bound preview/confirm vì broadcast không thu hồi được (**DD-25 không phủ broadcast**) | ✅ **Chốt DD-71:** manual basic free; `host_pro` thêm scheduling/recurring/template/analytics/quota. Preview→confirm proof-bound consume-once bắt buộc; quota reserve atomic/fail-closed |
 | NTF-OQ-10 🟡 | Announce | Guest (`memberships.status='guest'`) có nhận announcement không · nhiều tag là AND hay OR · trần số tag | ⬜ Chưa chốt — đề xuất guest **không** nhận, mặc định OR, có trần chống abuse |
 | NTF-OQ-11 🟡 | Announce | DLP tiền/PII: **chặn cứng** hay chỉ **cảnh báo**? | ⬜ Chưa chốt — cảnh báo dễ dùng hơn nhưng yếu hơn HR2; tham chiếu cách `feature_club_assistant` xử lý DLP |
-| NTF-OQ-12 | Push | Push hiện **nội dung generic** hay chi tiết ("Bạn còn nợ 150k")? | ✅ **Chốt bởi HR2:** OS push luôn generic, không có opt-in đưa tiền/PII ra payload/lock screen; chi tiết chỉ sau authenticated fetch. DD-72 proposal bắt buộc giữ invariant này với mọi provider nên mục này không chờ owner |
+| NTF-OQ-12 | Push | Push hiện **nội dung generic** hay chi tiết ("Bạn còn nợ 150k")? | ✅ **Chốt bởi HR2:** OS push luôn generic, không có opt-in đưa tiền/PII ra payload/lock screen; chi tiết chỉ sau authenticated fetch. DD-72 owner-final bắt buộc giữ invariant này với Web Push; native provider/shape vẫn chờ DD-69 phase-2 spike |
 | NTF-OQ-13 | Push | **Web Push phase-1 shape + provider:** protected web subscription columns (gồm server-owned `trusted_at/trust_source/trust_epoch`) + direct standards-based Web Push/VAPID hay app-level vendor platform/SDK | ✅ **Chốt DD-72:** chỉ freeze `kind='web'`; endpoint+keys encrypted, HMAC lookup, server-owned trust epoch và replay fences; direct VAPID, không app-level vendor SDK. Native shape/provider chờ DD-69 phase-2 spike |
 | NTF-OQ-14 🟡 | Push | **Ngưỡng cụ thể cho DD-69 gate #4** (delivered rate iOS bao nhiêu là "không đạt") | ⬜ **Chưa chốt — `decisions.md` ghi `TBD` chờ baseline.** Không đặt ngưỡng trước khi có số |
-| NTF-OQ-15 🟡 | Push | VAPID key rotation policy · retention telemetry/subscription replay ledgers | ⬜ Chưa chốt — secret row prune floor đã pin; exact audit/telemetry deletion window vẫn cần legal/ops |
+| NTF-OQ-15 🟡 | Push | VAPID key rotation policy · retention telemetry/subscription replay ledgers | ⬜ **Enablement/cleanup-only khi deletion giữ OFF** — secret-row prune floor đã pin; không xoá replay/audit/telemetry trước khi legal/ops chốt exact window |
 | NTF-OQ-16 🟡 | Announce | Retention/erasure cho announcement body, audience/tag history, quota/retry receipts | ⬜ Chưa chốt — soft-retired tag và canonical receipts giữ audit/replay; cần legal/owner pin scrub/archive/hard-purge windows trước cleanup |
-| NTF-OQ-17 🟡 | Inbox | **Group taxonomy** cho inbox (Tất cả·Kèo·Hoạt động·Thanh toán·Tin nhắn·CLB·Xã hội·Bảo mật) — nhóm là view derive từ `type`, không thêm cột `group` | 🟡 **Đề xuất DD-88 (chưa owner-ratify)** → `../proposals/notification-grouping.md` §2 |
-| NTF-OQ-18 🟡 | Session | **Notify session lifecycle** (player: kèo huỷ/đổi giờ) + **session activity** (host: join/leave/waitlist) — hiện chỉ là analytics events; type mới vs `owner_alert` subtype | 🟡 **Đề xuất DD-88** → proposal §3. Tenant plane, tái dùng `notification_intents` (HR3) |
-| NTF-OQ-19 🟡 | Message | **`message_request`** (DM từ người chưa follow = request box DD-55 phase-2, global/content-opaque/social-fields-only) + **chat message digest push** (delivery-only, không tạo item mỗi tin) | 🟡 **Đề xuất DD-88** → proposal §5. Gated **DD-55 phase-2** |
-| NTF-OQ-20 🟡 | Inbox | **Per-group opt-out** map vào `notification_preferences` per-Person của DD-70 (không bảng song song) + **scoped mark-all / bulk-select unread** (mở rộng read-all NTF-UC-15). **Thanh toán + Bảo mật enforce-schema không tắt được** | 🟡 **Đề xuất DD-88** → proposal §6–§7 |
+| NTF-OQ-17 | Inbox | **Group taxonomy** cho inbox (Tất cả·Kèo·Hoạt động·Thanh toán·Tin nhắn·CLB·Xã hội·Bảo mật) | 🟡 **`DEFERRED_OUT_OF_SCOPE` theo DD-88 proposal:** nếu reopen, group chỉ được derive từ closed-set `type`, không thêm cột `group`; exact label/mapping chỉ mở cùng source type tương ứng. Không chặn core Notification hoặc DD-94 → proposal §2 |
+| NTF-OQ-18 🟡 | Session | **Notify session lifecycle** (player: kèo huỷ/đổi giờ) + **session activity** (host: join/leave/waitlist) — hiện chỉ là analytics events; type mới vs `owner_alert` subtype | ⏸ **Deferred:** chỉ reopen sau khi Session producers tương ứng đã land; khi đó cần DD/slice riêng cho type/recipient/anti-spam. Tenant plane tái dùng `notification_intents`; DD-88 không authorize type/migration → proposal §3 |
+| NTF-OQ-19 | Message | **`message_request`** + offline Chat digest | ✅ **Split/closed:** DD-94 chốt exact digest là generic coalesced delivery signal, zero durable item/body snapshot, với preference/live-reauth/timing-config fail-closed. `message_request` vẫn `DEFERRED_OUT_OF_SCOPE` dưới DD-88/DD-55 phase-2 và không chặn DD-94 |
+| NTF-OQ-20 | Inbox | **Preference authority + scoped/bulk read guardrails** | 🟡 **`DEFERRED_OUT_OF_SCOPE` theo DD-88 proposal:** broader preference/scoped-bulk model chưa final và không chặn DD-94. Nếu reopen, money/security vẫn nonoptout theo core authority, chat read độc lập Notification read, và bulk cần canonical fingerprint + server boundary + all-or-nothing + cap 100 → proposal §6–§7 |
 
 ### Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v3.10 | Replace stale S9/S20 ownership bằng exact mechanism graph 36→41, Chat unread 42 và payment lifecycle 43→44/45→46→47; pin HTTP A17–A19 và FE F11/F14/F15 sau F0. Payment enablement requires real producer + exactly-once/correction E2E + authenticated-detail parity. `NOT_PLAN_READY`/runtime = 0 giữ nguyên tới immutable re-pin. |
+| 2026-07-28 | v3.9 | Mirror DD-94 owner-final and close NTF-OQ-19 by split: Chat unread remains source truth; generic signal coalesces by person+channel+highest cursor; DM/direct mention/reply default ON; club `all\|mentions\|off` default `mentions`; mark-read/authorization/block/preference/device/trust epoch rechecked immediately before provider write; timing config absent/untested keeps route OFF. Zero Inbox item/per-message row/content snapshot; DD-88 remains only broader proposal. No runtime/migration authorization. |
+| 2026-07-28 | v3.8 | **Historical; offline-digest clause superseded by DD-94/v3.9.** Mirror DD-88 guardrails-only final for derived grouping, preference authority, independent read models and deferred session/activity/`message_request`/scoped-bulk extensions. No migration/runtime authorization. |
+| 2026-07-27 | v3.7 | Classify hidden payment/inbox questions: auto-reminder threshold/copy is enablement-only; external DM copy out of primary-surface scope; v1 stores no title/amount/arbitrary snapshot; no mark-unread/archive/user-delete/hard purge, cleanup OFF until retention approval; VAPID/replay deletion remains enablement/cleanup-only. No runtime or DD-88 promotion. |
+| 2026-07-27 | v3.6 | Mirror DD-91 primary-surface parity: reminder/settled/correction giữ canonical durable tenant inbox + generic Web Push/authenticated detail; chat chỉ expose badge/deep-link, không tạo money chat/Assistant message. Detail dùng canonical person-self self-payment projection, không local formula/snapshot; delivery failure vẫn giữ item; DD-88 không là dependency. Reviewed contract/runtime-pending truth unchanged. |
 | 2026-07-25 | v3.5 | **Owner-decision reconcile:** DD-70(a), DD-71 và DD-72 đã chốt từ 21/07; promote cặp về **Reviewed contract**. Đóng NTF-OQ-6/9/13, đồng bộ overview/AC; giữ Implementation = Not started. OQ theo slice, NTF-OQ-14..16, exact global security-attempt owner và DD-88 proposal vẫn là gate riêng; không migration/runtime/UI. |
 | 2026-07-24 | v3.4h (pointer) | **Pointer-only propagation DD-88 (🟡 proposal, chưa owner-ratify)** — neo group taxonomy + session/activity notify types + `message_request` + per-group opt-out + unread bulk/scoped mark-all vào NTF-OQ-17..20 và related-docs, trỏ `../proposals/notification-grouping.md`. **KHÔNG đổi Reviewed body/schema/§A money rules**; money/security vẫn enforce-schema không opt-out. Không runtime/migration. |
 | 2026-07-19 | v3.4h | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
