@@ -2,13 +2,19 @@
 
 > **Canonical phase:** P4
 > **Track:** 🔄 Sync Engine
-> **Version:** 2.3a · 2026-07-19
+> **Version:** 2.5 · 2026-07-28
 > **Status:** Reviewed (v2.3: canonical command/outbox keys + endpoint-exact channel delivery)
-> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Infrastructure in progress — lease/ack + preflight/dispatcher/flagged scheduler đã merge, nhưng schedule OFF/placeholder và chưa có producer/real projector/replay/sub-minute drain; business sync E2E chưa bắt đầu · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P2 canonical domain services · P3 pg-boss/outbox · P4 channel adapters
 > **Tài liệu liên quan:** `../product/BRD.md` FR-4 · `../product/PRD.md` FLOW 14 · `../product/TDD.md` §3.8 · BRD OD-7 · `BE/feature_sync_engine_tech.md`
 
 > **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (bỏ Telegram). Projector fan-out ra **Zalo DM / Messenger (cửa sổ 24h) / web realtime / public projection** — **không còn TG projector**; "Messenger P4.8" cũ nay là **phase-1 P2.5**. Các đề cập "TG" dưới đây là projector Zalo/Messenger tương ứng.
+>
+> **As-built 2026-07-28 (`main@784bc8d`):** migrations `0022`/`0023` và bot worker đã tạo
+> shared claim/lease/audit/ack mechanics, fail-closed preflight, dispatcher và schedule một phút sau cờ
+> exact-string. Cờ mặc định OFF; projector registry/delivery vẫn placeholder fail-closed. Không có
+> business producer, real projector, controlled replay hay sub-minute `NOTIFY` drain, nên các use case
+> bên dưới vẫn là contract target chứ chưa phải delivered product behavior.
 
 ---
 
@@ -143,6 +149,8 @@ Surface → Command → Domain Service → [State + Deduped Command + Outbox] CO
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v2.5 | Re-pin as-built overlay to `main@784bc8d`; docs-only Chat authority commits do not add Sync producers/projectors/E2E, and schedule remains OFF/placeholder. |
+| 2026-07-27 | v2.4 | Current-state mirror: shared job lease/ack + preflight/dispatcher/scheduler đã merge nhưng disabled/placeholder; business producer/projectors/replay/sub-minute drain và E2E vẫn chưa có. |
 | 2026-07-19 | v2.3a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.3 | Reconcile canonical stores/keys: `processed_commands UNIQUE(tenant_id,command_id)`, ordered outbox key và `surface_refs(aggregate_id,platform,target)`; pin exact endpoint-bound identity + separate target-tenant authorization + one-route/no-broadcast cho cả Messenger và Zalo; sửa duplicate use-case IDs. |
 | 2026-07-17 | v2.2 | **DD-65..68:** hybrid Messenger endpoint selection, Page-scoped reachability and one-route logical dedup. |

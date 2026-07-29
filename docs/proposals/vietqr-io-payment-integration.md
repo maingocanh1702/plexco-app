@@ -3,6 +3,9 @@
 
 > **Trạng thái:** 🟡 Draft decision packet · review-fix 2026-07-22 · **KHÔNG phải spec `Reviewed`, `PLAN_READY`, `CODE_READY` hay runtime đã implement**  
 > **Authority repo đã đối chiếu:** `main@ad10194129a2c46512301a584ca9cec572c11244` · target hiện là file on-disk chưa commit  
+> **Current-state check 2026-07-28:** trên `main@784bc8d`, ledger same-tenant FK đã merge qua `0020`;
+> payment service/writer/webhook→settle→notify, protected QR route và UI vẫn chưa tồn tại. Proposal và
+> verdict giữ nguyên `NOT_PLAN_READY`; provider snapshot phải probe lại trước pilot.
 > **Nguồn ngoài đã probe lại 2026-07-22:** `GET https://api.vietqr.io/v2/banks` · Android/iOS deeplink APIs · VietQR changelog · Quick Link · lookup notice  
 > **Canonical repo:** `packages/db/schema.ts` · `packages/core/src/vietqr.ts` · `docs/features/feature_payment_reconcile.md` · `docs/features/BE/feature_payment_reconcile_tech.md` · `docs/standards/decisions.md` (DD-02/24/25/30/40/49) · `docs/standards/business-rules.md` · `docs/00-start-here/HANDOFF.md` §3  
 > **Mục tiêu:** đánh giá và đề xuất contract cho (1) danh mục ngân hàng/BIN, (2) sinh QR chuyển khoản, (3) deeplink app ngân hàng và (4) xác minh tài khoản nhận tiền.
@@ -75,7 +78,7 @@ RLS chỉ bảo vệ việc đọc DB. Nó **không** cho phép tự động g�
 | `buildVietQrUrl({bin,account,holder,amount?,addInfo?})` | Có trong `packages/core/src/vietqr.ts`; pure string builder | Không validate bank/account/amount/memo; không chứng minh provider/privacy/route đã sẵn sàng |
 | `canBuildDynamicVietQr` | Chỉ kiểm tra `bankBin` và `bankAccount` truthy | Không kiểm tra holder, destination version, active bank, amount hay auth |
 | `bank_accounts` | Có encrypted current account number; có pending account number + pending holder | Không có current holder, current/pending BIN hoặc atomic destination tuple hoàn chỉnh |
-| Ledger tables | `charges`, `bank_transactions`, `payment_allocations` tồn tại + RLS/trigger baseline | Feature service/writer/wiring chưa build; composite same-tenant FK upgrade trong BE spec vẫn pending |
+| Ledger tables | `charges`, `bank_transactions`, `payment_allocations` tồn tại + RLS/trigger baseline; same-tenant FK đã merge tại `0020` | Feature service/writer/wiring vẫn chưa build; migration integrity không phải payment runtime |
 | `memberships.pay_code` | Nullable column + unique tenant index tồn tại | DD-02 runtime/parser/resolver/rollout chưa build; phase authority hiện là P4 |
 | Bank/deeplink directory | Chưa có | Không được gọi live API trong request/payment hot path |
 | Web/payment feature layer | Apps mới có shell/auth-era routes; không có `/pay`/reconcile UI/service | Docs/spec và schema không phải runtime/E2E |

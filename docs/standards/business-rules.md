@@ -1,10 +1,10 @@
 # Business Rules — Plexco
 
-> Registry quy tắc nghiệp vụ, tổng hợp từ `docs/product/BRD.md` v3.9m · `docs/product/PRD.md` v2.8l · `docs/product/TDD.md` v3.1g · `docs/standards/decisions.md` v2.10 working tree 2026-07-28 · `docs/research/player-side-saas-AUDIT.md`.
+> Registry quy tắc nghiệp vụ, tổng hợp từ `docs/product/BRD.md` v3.9n · `docs/product/PRD.md` v2.8m · `docs/product/TDD.md` v3.1h · `docs/standards/decisions.md` v2.11 current mirror 2026-07-28 · `docs/research/player-side-saas-AUDIT.md`.
 >
 > **Reconcile 28/07/2026:** DD-32 đã reopen thành Option D: channel browse mở, paid final confirm dùng Account-link/pay-later hoặc unlinked verified pay-now; contract chưa có runtime. DD-86/DD-91/DD-92..95 là `DECISION_FINAL`; Chat/Assistant/Notification contracts đã Reviewed nhưng chưa có runtime. Current readiness, blocker và next trigger của primary-surface initiative chỉ lấy từ canonical plan §13. DD-94 sở hữu exact generic coalesced offline chat digest; DD-88 chỉ còn broader `DEFERRED_PROPOSAL`. Chat mention/mute/start-DM dùng một current-channel opaque safe-target authority và re-authorize tại consume time; không có global/fuzzy people search hoặc raw UUID/PII target authority. Retention/legal cleanup và digest timing là enablement gate. Regional auto-reconcile research vẫn là decision input, không tự chốt provider/market expansion.
 > Khi conflict, authority theo topic trong BRD §0; security dùng rule nghiêm ngặt hơn.
-> v1.30 · 2026-07-28 (sync current-channel safe-target authority + consume-time re-authorization; không có runtime; xem Changelog)
+> v1.31 · 2026-07-28 (sync immutable Chat authority/readiness and current core pointers; không có runtime; xem Changelog)
 
 ---
 
@@ -256,6 +256,7 @@ Business rules file này là **mirror**, không tự tạo authority. Khi phát 
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 28/07/2026 | v1.31 | Refresh current BRD/PRD/TDD/decisions pointers and mirror immutable Chat authority `90d292d` + primary plan v1.8 `PLAN_READY`; retain per-slice `CODE_READY` and no-runtime boundaries. |
 | 28/07/2026 | v1.30 | Add BL-CHT-7 current-channel opaque safe-target authority for mention/mute/start-DM: active-human safe DTO only, no global/fuzzy search/raw UUID/contact/gender/debt/PII, and mandatory consume-time membership/tenant/channel/block/safety/capability re-authorization before mutation. Contract mirror only; no runtime. |
 | 28/07/2026 | v1.29 | Mirror owner-final Chat authority DD-86/DD-91/DD-92..95: exact slash catalog/surfaces, requester-only `/pay`, reply/mention/reaction/edit/soft-delete/search và capability-scoped moderation/timed mute. Carve exact generic coalesced offline chat digest ra khỏi broader DD-88 proposal sang DD-94, gồm preference defaults, cursor idempotency, mark-read cancellation, dispatch-time re-authorization và fail-closed enablement config. Chat/Assistant/Notification specs Reviewed; current readiness chỉ lấy từ primary plan §13. Không runtime/migration/code. |
 | 28/07/2026 | v1.28 | Refresh DD-32 authority pointers to BRD 3.9m/PRD 2.8l/TDD 3.1g after full Session acceptance retrace; sync BL-DSC-1 public whitelist with additive `confirmed_count` and active+live-hold `slots_open`, while keeping hold count/identity private. No runtime. |

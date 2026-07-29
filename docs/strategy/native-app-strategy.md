@@ -1,10 +1,12 @@
 # Phân tích — Thêm Native App (iOS / Android) sau Web MVP
 
-**Phiên bản:** 1.8
-**Ngày tạo:** 18/06/2026 · **Cập nhật:** 19/07/2026
-**Tài liệu tham chiếu:** `../product/BRD.md` v3.9f · `../product/PRD.md` v2.8e · `../product/TDD.md` v3.1 · `../product/ROADMAP.md` v3.3e · `../features/feature_sync_engine.md` · `../features/feature_marketplace_discovery.md` · `../features/feature_identity.md` · `../standards/decisions.md` v1.74 · `../dd-69-app-native-analysis.md`
+**Phiên bản:** 2.0
+**Ngày tạo:** 18/06/2026 · **Cập nhật:** 28/07/2026
+**Tài liệu tham chiếu:** `../product/BRD.md` v3.9n · `../product/PRD.md` v2.8m · `../product/TDD.md` v3.1h · `../product/ROADMAP.md` v3.4l · `../features/feature_sync_engine.md` · `../features/feature_marketplace_discovery.md` · `../features/feature_identity.md` · `../standards/decisions.md` v2.11 current mirror · `../dd-69-app-native-analysis.md`
 
 > ⚠️ **Version note (19/07/2026):** companion strategy, không phải source of truth. Authority hiện hành: **BRD v3.9f · PRD v2.8e · TDD v3.1 · ROADMAP v3.3e · decisions v1.74/DD-78**. Native direction accepted nhưng build phase-2 TBD.
+>
+> **Current supersession (28/07/2026):** source-of-truth pointers ở header thắng version note lịch sử trên. DD-91 đặt In-app Chat làm primary daily player surface mục tiêu; primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY`. Native vẫn phase-2/TBD, không có runtime hay lịch build. Shared job substrate `0022`/`0023` và DB CHECK `0024` không thay đổi native gates bên dưới.
 
 > **TL;DR:** Canonical-store + server-owned rules là nền tốt cho native, nhưng native **không chỉ là thêm UI**. Trước GA phải bổ sung client-safe contracts, versioned API, bearer/refresh auth, Apple/equivalent iOS login, protected device push và old-client/store gates. Core domain/RLS/outbox được giữ; identity/channel schema không được mở rộng sai để chứa device token. Offline v1 read-only.
 
@@ -115,7 +117,7 @@ Work packages đề xuất, **không phải canonical P-number**:
 - Native push qua provider port được spike chọn = OS-level delivery, hoạt động khi app đóng
 - Web giữ SSE (browser support tốt, không cần push permission)
 
-**Boundary authority, không phải native schema authority:** DD-72 hiện chỉ đề xuất Web Push `kind='web'`; exact native row shape/provider/status key phải chờ DD-69 phase-2 spike. Điều đã pin: native device push tách ChannelIdentity, token/endpoint không plaintext, không dùng tenant id trong token làm authority, và dispatcher re-check target eligibility trước send.
+**Boundary authority, không phải native schema authority:** DD-72 đã owner-final cho Web Push phase-1 với `kind='web'`; exact native row shape/provider/status key vẫn phải chờ DD-69 phase-2 spike. Điều đã pin: native device push tách ChannelIdentity, token/endpoint không plaintext, không dùng tenant id trong token làm authority, và dispatcher re-check target eligibility trước send.
 
 **Projector logic:**
 
@@ -198,7 +200,7 @@ User đăng nhập web bằng Google, native bằng Apple → 2 Account khác nh
 
 ### 3.3 Native push tách khỏi ChannelIdentity reachability
 
-Không có concrete native DDL authority ở phase-1. DD-72 proposal sở hữu riêng Web Push shape; native chỉ được thêm bằng migration monotonic **sau** spike chốt provider/protocol, app/bundle identity, environment, token rotation và lifecycle. Spike được quyền chọn additive variant, protocol-specific child table hoặc adapter/store khác — doc này không được suy native columns từ `endpoint_enc/p256dh/auth` của Web Push.
+Không có concrete native DDL authority ở phase-1. DD-72 owner-final sở hữu riêng Web Push shape; native chỉ được thêm bằng migration monotonic **sau** spike chốt provider/protocol, app/bundle identity, environment, token rotation và lifecycle. Spike được quyền chọn additive variant, protocol-specific child table hoặc adapter/store khác — doc này không được suy native columns từ `endpoint_enc/p256dh/auth` của Web Push.
 
 Các ranh giới bắt buộc dù chọn shape nào:
 
@@ -212,13 +214,13 @@ Notification dispatcher combines the two sources without turning them into one p
 ```
 notifyPlayer(person, tenant, event):
   assert target person is eligible for tenant/event       -- separate tenant auth
-  web_push = load accepted DD-72 web subscriptions(person)     # phase-1 proposal
+  web_push = load accepted DD-72 web subscriptions(person)     # phase-1 owner-final; runtime pending
   native_push = nativeAdapter.resolve(person)                   # phase-2, shape TBD
   bot_candidates = identityDeliveryService.resolveExactReachability(person)
     # each candidate carries one channel_identity_id bound to a Page/bot/OA
 
   candidates = rank all eligible route families by one canonical policy:
-    web push       → direct Web Push/VAPID nếu DD-72 được accept
+    web push       → direct Web Push/VAPID theo DD-72 owner-final (runtime pending)
     native push    → provider port/schema accepted by phase-2 spike
     Zalo           → one exact eligible bot/OA route
     Messenger      → tenant Page else central Page within allowed mechanism
@@ -423,7 +425,7 @@ Canonical store, RLS, outbox pattern và server-owned business rules là phần 
 
 ---
 
-*Tài liệu này là companion cho `../product/TDD.md` v3.1, `../product/ROADMAP.md` v3.3e và DD-69 analysis. Khi conflict, ưu tiên `../standards/decisions.md` v1.74.*
+*Tài liệu này là companion cho `../product/TDD.md` v3.1h, `../product/ROADMAP.md` v3.4l và DD-69 analysis. Khi conflict, ưu tiên `../standards/decisions.md` current.*
 
 ---
 
@@ -431,6 +433,8 @@ Canonical store, RLS, outbox pattern và server-owned business rules là phần 
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 28/07/2026 | 2.0 | Refresh current authority refs; mirror primary plan v1.8 `PLAN_READY` at `90d292d` while retaining per-slice `CODE_READY`, native phase-2/TBD and all API/auth/push/store gates. |
+| 27/07/2026 | 1.9 | Refresh current source-of-truth pointers; mirror DD-91 primary-surface target nhưng giữ execution plan `NOT_PLAN_READY`, native phase-2/TBD và toàn bộ API/auth/push/store gates. Không claim runtime hay schedule. |
 | 19/07/2026 | 1.8 | Pointer refresh: BRD v3.9f · PRD v2.8e · ROADMAP v3.3e · decisions v1.74. Không đổi nội dung strategy; native vẫn direction accepted, build phase-2 TBD + gates. |
 | 19/07/2026 | 1.7 | **Authority + notification mirror correction:** DD-72 remains Web Push proposal; native provider/shape defer DD-69 spike. Use canonical `payment.settled`, one logical route across device/bot families, and do not invent person mute/quiet-hours settings. Authority v1.63; no runtime. |
 | 18/07/2026 | 1.6 | DD-69 direction accepted; refresh PRD/ROADMAP refs, preserve native build phase-2 TBD and RN+Expo recommendation/gates as not-yet-accepted implementation choices. |

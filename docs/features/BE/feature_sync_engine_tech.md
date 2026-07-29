@@ -1,12 +1,19 @@
 # Feature: Sync Engine & Re-projection — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.5b · 2026-07-24
+> **Version:** 2.7 · 2026-07-28
 > **Status:** Reviewed (v2.4: live-schema rollout truth + endpoint-exact channel delivery)
-> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Infrastructure in progress — `0022`/`0023` + fail-closed preflight/dispatcher/flagged scheduler merged; schedule OFF, dispatcher placeholder, no producer/real projector/replay/sub-minute drain · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../feature_sync_engine.md`
 > **References:** `../../product/TDD.md` §3.8 · `../../standards/decisions.md` DD-37 · **DD-65..68**
 > **⚠️ Live-schema boundary:** endpoint-exact delivery ở đây dựa trên `channel_identity_id` và reachability theo `channel_identity_id` — đó là **target** DD-67; live `channel_reachability` vẫn PK `(person_id, tenant_id, platform)` và `channel_identities` là key 2-phần. Cần migration mới land trước runtime; `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`; verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số), nên slice Sync vẫn phải sync mọi prerequisite đã merge rồi chọn **next available monotonic number** sau tail đã merge, không hardcode/pin một số cố định. Live tables sync (`processed_commands`/`outbox_events`/`projector_deliveries`/`surface_refs`/`public_sessions`) không đổi.
+>
+> **As-built overlay (`main@784bc8d`, tail `0024`):** `0022` thêm lease/reclaim, audit và narrow
+> `job_definer`; `0023` thêm `claim_token`, `acked_at` và ack function. `apps/bot` có preflight,
+> dispatcher và scheduler exact-string opt-in, mặc định OFF. `REQUIRED_PROJECTORS`/delivery vẫn
+> placeholder fail-closed; chưa có outbox producer TypeScript, real projector, controlled DLQ replay,
+> `LISTEN/NOTIFY` sub-minute trigger hay drain policy. DDL sample bên dưới là contract shape gốc; migration
+> live `0005` + `0022` + `0023` mới là schema authority và không được recreate.
 
 > **Cập nhật v2.1 (DD-37 ✅, 2026-07-10):** projectors fan-out phase-1 = **Zalo DM · Facebook Messenger (cửa sổ 24h) · web realtime · public projection**. **Bỏ Telegram** edit-message projectors (`tg_announcement`/`tg_roster`) — Zalo không có inline button (DM number-reply), Messenger gửi message mới trong 24h. Idempotent/re-projection contract không đổi.
 
@@ -286,11 +293,13 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 
 1. Verify the existing live command/outbox tables and `UNIQUE(aggregate_id,sequence)` from migration `0005`; do **not** create a duplicate sync migration.
 2. Land the separate forward migration for endpoint-scoped identity/reachability before enabling endpoint-exact channel delivery.
-3. Shadow dispatcher (log events, no delivery).
-4. Enable Zalo DM projector (P2) + Messenger projector (P2.5, 24h window).
-5. Enable web realtime.
-6. Enable public projector.
-7. Monitor SLO targets.
+3. Giữ schedule OFF; land controlled DLQ replay, real projector registry/delivery và business producer
+   + sub-minute `NOTIFY` drain policy trước.
+4. Shadow real dispatcher với production-shaped events; chứng minh ack chỉ sau full required-projector
+   completion.
+5. Enable Zalo DM projector (P2) + Messenger projector (P2.5, 24h window) theo external gates.
+6. Enable web realtime rồi public projector theo từng rollout gate riêng.
+7. Monitor SLO targets và rollback về OFF nếu replay/drain/delivery invariant fail.
 
 ### Metrics
 
@@ -304,6 +313,8 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v2.7 | Re-pin as-built overlay to `main@784bc8d`; docs-only Chat authority commits do not add Sync producers/projectors/E2E, and schedule remains OFF/placeholder. |
+| 2026-07-27 | v2.6 | Reconcile `0022`/`0023` + bot preflight/dispatcher/flagged scheduler as implemented infrastructure. Pin schedule OFF/placeholder boundary and missing producer, real projector, replay, sub-minute drain; update rollout order without claiming Sync E2E. |
 | 2026-07-24 | v2.5b | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): Live-schema boundary note hard-pinned `tail = 0018, migrations 0000–0018` + numbering guidance `(0018)` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v2.5a | **Reconcile 0014 merge-state:** current-state Live-schema boundary sửa → `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`, migrations 0000–0018, tail = 0018). Migration-numbering guidance giữ nguyên (sync merged prerequisites → next available monotonic number sau tail đã merge, không hardcode), chỉ đổi justification. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.5 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (toàn bộ DDL §2 đã live ở `0005` — reuse; new chỉ là DD-67 endpoint identity migration riêng), §3 Request/Response Examples (DD-60) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |

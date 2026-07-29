@@ -1,16 +1,16 @@
 # 🗺️ ROADMAP — Plexco
 
-**Phiên bản:** v3.4k
+**Phiên bản:** v3.4l
 **Ngày tạo:** 16/06/2026 · **Cập nhật:** 28/07/2026
-**Căn cứ:** `BRD.md` v3.9m · `PRD.md` v2.8l · `TDD.md` v3.1g · `../standards/decisions.md` **v2.10 working tree** (DD-86/DD-91–95 owner-final; DD-88 broader `DEFERRED_PROPOSAL`) · `../features/feature_channel_booking_funnel.md` + BE companion · `../standards/BUILD-STATUS.md`
+**Căn cứ:** `BRD.md` v3.9n · `PRD.md` v2.8m · `TDD.md` v3.1h · `../standards/decisions.md` **v2.11 current mirror** (DD-86/DD-91–95 owner-final; DD-88 broader `DEFERRED_PROPOSAL`) · `../features/feature_channel_booking_funnel.md` + BE companion · `../standards/BUILD-STATUS.md`
 
 > ROADMAP là nguồn sự thật cho **delivery order + dev progress**. Product scope thuộc BRD; behavior thuộc PRD; implementation contract thuộc TDD.
 
-> **📌 Repo truth snapshot — `main@2dc9b8c760c3b437af08ca1fc5fcbaea1492ad39` (27/07/2026, = `origin/main`).** Mọi số đếm hiện hành trong file này lấy từ cây repo/runner tại commit trên hoặc exact code-identical test snapshot được pin rõ, không phải từ prose. Cách tái tạo: xem §Cách đọc tiến độ → "Lệnh tái tạo số đếm". Nếu số không tái tạo được ⇒ coi như **stale**, không dùng để ra verdict.
+> **📌 Repo truth snapshot — `main@784bc8dd297163a5ec5415f33beabbbf34bbc8d7` (28/07/2026, = `origin/main`).** Mọi số đếm hiện hành trong file này lấy từ cây repo/runner tại commit trên hoặc exact code-identical test snapshot được pin rõ, không phải từ prose. Hai commit sau `2dc9b8c` chỉ thay authority/readiness docs, nên runtime inventory/test source không đổi. Cách tái tạo: xem §Cách đọc tiến độ → "Lệnh tái tạo số đếm". Nếu số không tái tạo được ⇒ coi như **stale**, không dùng để ra verdict.
 >
-> ✅ **Hai lớp bằng chứng hiện hành.** Static/source inventory tại `2dc9b8c`: **25 migrations, 32 test files, 528 static test declarations, 10 API routes, 24 Product + 23 BE feature specs**. Canonical runner gần nhất trên source test-identical product tree PASS **537 workspace tests** (core 132 · DB 219 · web 146 · bot 40) + **13 readiness-validator tests**; đúng một generator thêm 9 cases (`528 + 9 = 537`).
+> ✅ **Hai lớp bằng chứng hiện hành.** Static/source inventory tại `784bc8d`: **25 migrations, 32 test files, 528 static test declarations, 10 API routes, 24 Product + 23 BE feature specs**. Canonical runner gần nhất trên source test-identical product tree PASS **537 workspace tests** (core 132 · DB 219 · web 146 · bot 40) + **13 readiness-validator tests**; đúng một generator thêm 9 cases (`528 + 9 = 537`).
 >
-> **Working-tree docs overlay 28/07:** DD-32 BE companion đã được author nhưng chưa commit, nên inventory hiện tại là **24 Product + 24 BE = 24 pairs**. Không dùng overlay này để sửa số snapshot của `main@2dc9b8c` hoặc claim runtime.
+> **Working-tree docs overlay 28/07:** DD-32 BE companion đã được author nhưng chưa commit, nên inventory hiện tại là **24 Product + 24 BE = 24 pairs**. Không dùng overlay này để sửa số snapshot của `main@784bc8d` hoặc claim runtime.
 
 > **v3.4 channel pivot (DD-37):** bỏ Telegram; kênh phase-1 = **web + Zalo + Facebook Messenger**. Messenger nâng từ post-MVP (P4.8) lên **phase-1 (P2.5, phụ thuộc App Review)**. Thêm **Google login** (P0–P1), **chat in-app** + **cài đặt hồ sơ/giá theo giới tính** (P4, DD-38/DD-39 ✅ scope-committed phase-1; schema chờ migration), **mark-paid thủ công tiền mặt/CK** (P2).
 
@@ -48,7 +48,7 @@
 
 > **Cập nhật 27/07/2026 (v3.4h — evidence snapshot, superseded về Chat bởi v3.4k):** `main@2dc9b8c` có đủ **25 migrations (`0000`–`0024`)**. Sau `0022`/`0023`, TypeScript dispatcher, queue registry/provision/preflight và worker lifecycle đã merge (`fca314e`); recovery scheduler 1 phút đã merge (`a03d2d6`) nhưng `OUTBOX_DISPATCH_SCHEDULE_ENABLED` mặc định **OFF** và chưa có domain producer/real projector, nên Sync/Session vẫn không runnable. `0024` chỉ cấm public session thiếu `slots_max`. Evidence hiện hành = **32 files / 537 workspace PASS + 13 validator**, static **528 + 9 generated**. Safari macOS/iOS M3 measurement đã đóng, nhưng Google login vẫn chưa enable. DD-91 chốt in-app Chat là **primary daily player surface mục tiêu** + requester-only `/pay`; migration/code/runtime Chat chưa tồn tại. Auto-reconcile giữ manual global và chỉ mở khi `payment_reconcile_auto` + exact market/provider/bank/currency/consent pass; SePay/ApiPay là Vietnam launch path chưa enable.
 >
-> **Cập nhật 28/07/2026 (v3.4k — owner-final Chat authority + DD-32):** decisions v2.10 đã chốt DD-86/DD-91–95; DD-88 chỉ còn broader `DEFERRED_PROPOSAL`. Assistant mặc định ON cho `all_members`, OFF cho `admins_only`, mutable trên cả hai dưới toàn bộ gates; DD-92 thêm exact emoji reactions, own-edit/soft-delete và pre-beta search; DD-93 pin full surface-aware command registry; DD-94 pin unread-derived generic opaque offline signal/digest; DD-95 pin exact moderation reasons/durations. Assistant Product/BE v0.17, Chat Product/BE v0.14/v0.22, Notifications Product/BE v3.10 đều Reviewed. Primary plan sở hữu bounded mechanism slices 1–47, API A1–A21, FE F0–F15; actual DB worktrees 1→2→3→4 serialize vì migration/schema/test collisions dù capability semantics độc lập, và executable first slice nằm ở §9.2. G6 còn gate private object-storage region/credentials, malware/moderation scanner và bounded DM/media/report config. Migration/code/runtime Chat vẫn chưa tồn tại; initiative vẫn `NOT_PLAN_READY` tới khi exact 27-file pack được commit/push/re-pin thành immutable authority. Current readiness, blocker và next trigger chỉ lấy từ primary plan v1.7 §13. DD-32 Option D vẫn giữ nguyên; decision/spec không đổi delivery order.
+> **Cập nhật 28/07/2026 (v3.4l — Chat authority immutable/re-pin):** exact 27-file authority pack đã land tại `90d292d`; primary plan v1.8 và DD-86 analysis đã re-pin, closure 12/12, verdict `PLAN_READY`. Đây chỉ là quyền tách/author slice: B4 artifacts/worktree chưa có và mỗi mechanism/API/FE slice vẫn phải đạt strict `CODE_READY`. Owner-final DD-86/DD-91–95, DD-88 broader `DEFERRED_PROPOSAL`, mechanisms `1–47`, API `A1–A21`, FE `F0–F15`, G6 enablement gates và serialized DB lane `1→2→3→4` không đổi. Migration/code/runtime Chat vẫn chưa tồn tại; DD-32 Option D và delivery order không đổi.
 
 > **Đánh số phase:** toàn bộ tài liệu dùng duy nhất **canonical P-number**. Các tên Foundation/Tenant Engine/... chỉ là delivery-group label, không tạo một hệ số thứ hai.
 
@@ -79,7 +79,7 @@
 
 Ba giá trị cốt lõi: **Quản lý kèo & tiền (host)** + **Khám phá & join kèo (player, đa môn, cross-club)** + **Đồng bộ liền mạch đa kênh ⇄ Plexco**. Plexco không xoá nhóm chat sẵn có và vẫn giữ acquisition 0-install, nhưng DD-91 chủ đích chuyển hành vi hằng ngày của player về in-app Chat. Direction này chưa phải runtime.
 
-> **DD-79/DD-81 ✅ direction (19/07; current mirror 27/07):** S9 PWA shell target gồm **Home hub landing** (composition-only trên player_view/marketplace/§A — spec Reviewed v0.6 + BE v0.2) + **bottom-nav registry** config-driven (5 slot; Feed gated DD-76; 💬 chat header) — không đổi thứ tự slice/dependency. Design tool là **Pencil**, canonical root path = `design.pen`, nhưng file chưa được persist/track + owner nghiệm thu làm authority. FE HOLD và theme exploration/handoff chỉ bắt đầu sau gate này.
+> **DD-79/DD-81 ✅ direction (19/07; current mirror 28/07):** S9 PWA shell target gồm **Home hub landing** (composition-only trên player_view/marketplace/§A — spec Reviewed v0.7 + BE v0.3) + **bottom-nav registry** config-driven (5 slot; Feed gated DD-76; 💬 chat header) — không đổi thứ tự slice/dependency. Design tool là **Pencil**, canonical root path = `design.pen`, nhưng file chưa được persist/track + owner nghiệm thu làm authority. FE HOLD và theme exploration/handoff chỉ bắt đầu sau gate này.
 >
 > **Định hướng app-native (DD-69 ✅ accepted):** Plexco là app-first — **phase-1 target = web app PWA** (installable/offline; S9/S20 planned, chưa live), **phase-2 = app native**. Zalo/Messenger vẫn là acquisition 0-install; in-app Chat là daily target; native cho retention. Owner đã accept **định hướng**; native **build** chưa vào timeline committed — chờ các gate client-contract, `/api/v1`, bearer/iOS login, dedicated device push, privacy-safe payload, offline read-only và store review.
 >
@@ -182,7 +182,7 @@ Plexco xây **repo riêng**; lift logic thuần (matching, payments-logic, dates
 | **Tests** | Test chạy xanh trong CI | tên file test + số case |
 | **Invariant** | Test bất biến xanh — **tenant isolation/RLS · public field-whitelist · no-money-leak · concurrency/race-safety** | `packages/db/src/*-invariants.test.ts` **+ danh sách invariant-class đặt tên khác** (bảng ngay dưới). Không suy ra từ tên file: file chỉ tính khi có tên trong danh sách |
 
-**Danh sách invariant-class (re-verify tại `2dc9b8c`)** — trục Invariant chỉ đếm các file dưới đây; thêm file mới phải thêm dòng ở đây, không dựa vào quy ước đặt tên:
+**Danh sách invariant-class (re-verify tại `784bc8d`)** — trục Invariant chỉ đếm các file dưới đây; thêm file mới phải thêm dòng ở đây, không dựa vào quy ước đặt tên:
 
 | File | Invariant bảo vệ | Khớp pattern `*-invariants` |
 |---|---|---|
@@ -199,7 +199,7 @@ Plexco xây **repo riêng**; lift logic thuần (matching, payments-logic, dates
 3. **`.pen` screens ≠ FE.** Design xong không kéo FE lên %.
 4. **Đếm được thì phải tái tạo được.** Mọi số trong file này đi kèm lệnh tái tạo bên dưới. Với test case: **canonical runner (`pnpm test`) là authority duy nhất**; *static grep* là cross-check chạy được không cần DB, dùng để **phát hiện drift**, không dùng để khai số.
    **Công thức đối chiếu:** `static + Σ(test sinh trong loop) = runner`. Test sinh trong loop = table-driven test viết bằng `for…of`/`forEach` bọc ngoài `it()` — grep chỉ đếm 1 lần dù runner sinh N.
-   **Generator hiện hành tại `2dc9b8c` — vẫn đúng 1 chỗ:** `apps/web/lib/google-oidc.test.ts` (`for (const row of rows)`, `rows.length = 10` ⇒ `+9`). Đối chiếu: `528 + 9 = 537` ✅.
+   **Generator hiện hành tại `784bc8d` — vẫn đúng 1 chỗ:** `apps/web/lib/google-oidc.test.ts` (`for (const row of rows)`, `rows.length = 10` ⇒ `+9`). Đối chiếu: `528 + 9 = 537` ✅.
    Nếu công thức không khớp ⇒ hoặc có generator mới chưa kiểm kê (thêm vào danh sách trên), hoặc doc đã drift. **Không được chọn số lớn hơn để cho khớp.**
 5. **Trục yếu nhất là trạng thái thật.** Một group có Spec ✅ / BE ✅ / FE ⬜ thì là **⬜ chưa dùng được**, không phải "gần xong".
 
@@ -231,18 +231,18 @@ find docs/features/BE -maxdepth 1 -type f -name "feature_*_tech.md" | wc -l
 
 ## 📊 Dev Progress Overview
 
-**Số đếm kiểm chứng được — `main@2dc9b8c760c3b437af08ca1fc5fcbaea1492ad39` (27/07/2026):**
+**Số đếm kiểm chứng được — `main@784bc8dd297163a5ec5415f33beabbbf34bbc8d7` (28/07/2026):**
 
 | Hạng mục | Số thực | Ghi chú |
 |---|---|---|
-| Migrations trên `main` | **25** (`0000`–`0024`) | ✅ re-verify tại `2dc9b8c`. `0015` D0a · `0016` D1 email-token · `0017` OAuth tx · `0018` handoff · `0019`/`0020`/`0021` tenant-integrity composite FK DD-68 · `0022` job-infra lease/reclaim · `0023` outbox ack marker · `0024` `sessions_public_capacity_chk` |
+| Migrations trên `main` | **25** (`0000`–`0024`) | ✅ re-verify tại `784bc8d`; two commits after runtime snapshot `2dc9b8c` are docs-only. `0015` D0a · `0016` D1 email-token · `0017` OAuth tx · `0018` handoff · `0019`/`0020`/`0021` tenant-integrity composite FK DD-68 · `0022` job-infra lease/reclaim · `0023` outbox ack marker · `0024` `sessions_public_capacity_chk` |
 | Test file | **32** | core 9 · db 4 · web 15 · bot 4 |
-| Test case — **canonical runner** | **537 workspace PASS** *(đo tại `a03d2d6`; product/test source không đổi tới `2dc9b8c`)* · **550 gồm validator** | core 132 · db **219** · web 146 · bot **40**; thêm **13 readiness-validator tests PASS**. Chuỗi historical: 460 (`2937ed9`) → 482 (`34429fc`) → 493 (`76e1f7b`) → 519 (`fca314e`) → 526 (`c100937`) → **537** (`a03d2d6`). "Workspace" không gồm validator |
+| Test case — **canonical runner** | **537 workspace PASS** *(đo tại `a03d2d6`; product/test source không đổi tới `784bc8d`)* · **550 gồm validator** | core 132 · db **219** · web 146 · bot **40**; thêm **13 readiness-validator tests PASS**. Chuỗi historical: 460 (`2937ed9`) → 482 (`34429fc`) → 493 (`76e1f7b`) → 519 (`fca314e`) → 526 (`c100937`) → **537** (`a03d2d6`). "Workspace" không gồm validator |
 | Test case — **static cross-check** | **528** | core 132 · db 219 · web 137 · bot 40. Đúng một table-driven loop sinh thêm 9 cases ⇒ `528 + 9 = 537`; static không thay runner |
 | Bằng chứng test per-slice (real-PG) | db **167** → **173** → **179** → **201** → **212** → **219** | `0019` → `0020` → `0021` → `0022` job-infra → `0023` ack marker → `0024` capacity CHECK (PVC-1..PVC-8). Là authority của **chính slice đó**, không phải aggregate toàn repo |
 | Invariant test | **3 file** | `rls-invariants` · `waitlist-invariants` · `migrate` (race-safety `0000`) — xem danh sách invariant-class ở §Cách đọc tiến độ |
-| API route đang có | **10** | ✅ re-verify tại `2dc9b8c`. 8 auth + 2 onboarding. **0 route nghiệp vụ** (session/payment/sync) |
-| Feature spec | **24 Product + 23 BE** | ✅ re-verify tại `2dc9b8c`. 23 cặp + 1 product-only Draft; coverage cao — *không* phải readiness |
+| API route đang có | **10** | ✅ re-verify tại `784bc8d`. 8 auth + 2 onboarding. **0 route nghiệp vụ** (session/payment/sync) |
+| Feature spec | **24 Product + 23 BE** | ✅ re-verify committed `main@784bc8d`. Working tree has 24/24 because the DD-32 BE companion is uncommitted; coverage cao — *không* phải readiness |
 | Màn FE nối API thật | **0** | FE HOLD: canonical `design.pen` chưa được persist/track + owner nghiệm thu làm authority; chưa map screen/component/token |
 
 > **Lịch sử (22/07) — static/canonical divergence, nguyên nhân đã xác định.** *(Giữ nguyên làm tiền lệ đối chiếu; con số dưới đây thuộc `f93873b`, không phải `2937ed9`.)* Static grep cho **410** (core 111 · db 159 · web 137 · bot 3); canonical runner PASS cho **419** (web 146). Chênh **9** đến từ **đúng một table-driven generator**: `apps/web/lib/google-oidc.test.ts:133` — `for (const row of rows) { it(…) }` với `rows.length = 10`, grep đếm 1 lần trong khi vitest sinh 10. Loop viết bằng `for…of` thuần nên **không** bị `it.each` bắt được (repo có 0 hit `.each`); hai loop còn lại ở `oauth-transaction.test.ts:71,96` nằm *trong* thân `it()` nên mỗi cái vẫn là 1 test.
@@ -297,7 +297,7 @@ TỔNG (code, theo slice roadmap)  ██████░░░░░░░░░
 | 8 | **Web app surface + canonical backend** | 🌐 | P4 | ✅ Reviewed | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 | ⬜ |
 | 9 | **Sync engine** (command/outbox/projection + realtime) | 🌐 | P4 | ✅ Reviewed | 🟡 shared `0022`/`0023` | 🟡 dispatcher/queue/scheduler | ⬜ | ✅ infra tests only | ⬜ | 🟡 **infra-only** — schedule OFF; no producer/real projector |
 | 10 | Onboarding self-serve; Messenger central default + optional Page riêng | 🌐 | P4 | 🟡 Draft | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 | ⬜ |
-| 10b | **In-app Chat primary player target** (DD-38/DD-86/DD-91–95) | 🌐 | P4 | Reviewed; plan owns mechanism slices 1–47 + API A1–A21 + FE F0–F15; first packet §9.2; current readiness only at primary plan §13 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ `NOT_PLAN_READY`; no runtime/migration/API/UI |
+| 10b | **In-app Chat primary player target** (DD-38/DD-86/DD-91–95) | 🌐 | P4 | Reviewed; primary plan v1.8 = `PLAN_READY` at `90d292d`; owns mechanism slices 1–47 + API A1–A21 + FE F0–F15; first handoff §9.2, each slice still strict `CODE_READY` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ no runtime/migration/API/UI |
 | 10c | **Cài đặt hồ sơ + giá theo giới tính** (DD-39 ✅) | 🌐 | P4 | 🟡 draft | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 11 | **Publish kèo → public_sessions projection** | 🔎 | P4.3 | ✅ Reviewed — contract publish/draft lifecycle đóng | ✅ `0024` capacity invariant only | ⬜ producer/projector/service/route | ⬜ | ✅ PVC invariant only | ⬜ | ⬜ **chưa runnable** — shared job infra đã merge nhưng schedule OFF/placeholder |
 | 12 | **Discovery / tìm kèo** | 🔎 | P4.3 | ✅ Reviewed | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -575,7 +575,7 @@ Foundation(RLS+sports+3-tier+Google) → Zalo-tenant → CK-reconcile → migrat
    → ⬜          ⬜                          ⬜            ⬜         ⬜
 ```
 
-**Bottleneck hiện tại (`main@2dc9b8c`):** shared DB/job plumbing đã tiến tới claim/ack + dispatcher + queue/preflight + scheduler, nhưng product vẫn có **0 business route, 0 connected FE screen, 0 domain producer và 0 real projector**. Schedule mặc định OFF; `0024` chỉ là invariant. Safari measurement không còn là blocker; Google vẫn OFF tới owner go-live/env decision. Chuỗi kế tiếp:
+**Bottleneck hiện tại (`main@784bc8d`):** shared DB/job plumbing đã tiến tới claim/ack + dispatcher + queue/preflight + scheduler, nhưng product vẫn có **0 business route, 0 connected FE screen, 0 domain producer và 0 real projector**. Schedule mặc định OFF; `0024` chỉ là invariant. Safari measurement không còn là blocker; Google vẫn OFF tới owner go-live/env decision. Chat initiative mới chỉ `PLAN_READY`; chưa slice nào được strict `CODE_READY`. Chuỗi kế tiếp:
 
 1. ⛔ **Enablement-only:** owner quyết định bật Google, set `GOOGLE_OAUTH_*`/CTA và verify production gates; measurement M3 đã đóng, không cần đo lại.
 2. ⬜ Email/password bundle order-4 (flag OFF) → gỡ Telegram provider.
@@ -674,7 +674,7 @@ Foundation(RLS+sports+3-tier+Google) → Zalo-tenant → CK-reconcile → migrat
 
 ## Phụ lục A — Bảng tra DD (chỉ các DD được ROADMAP tham chiếu)
 
-> Đây là **bản tra nhanh**, không phải authority. Nguồn sự thật hiện hành là `../standards/decisions.md` **v2.10 working tree**; status đọc theo từng DD và decision không đồng nghĩa runtime. Khi hai bên lệch ⇒ decisions.md thắng, và bảng này phải được sửa.
+> Đây là **bản tra nhanh**, không phải authority. Nguồn sự thật hiện hành là `../standards/decisions.md` **v2.11 current mirror**; status đọc theo từng DD và decision không đồng nghĩa runtime. Khi hai bên lệch ⇒ decisions.md thắng, và bảng này phải được sửa.
 
 | ID | Một dòng | Trạng thái |
 |---|---|---|
@@ -728,6 +728,7 @@ Foundation(RLS+sports+3-tier+Google) → Zalo-tenant → CK-reconcile → migrat
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 28/07/2026 | **v3.4l** | **Chat readiness re-pin + current HEAD:** exact 27-file authority pack land tại `90d292d`; plan v1.8/analysis đạt `PLAN_READY` closure 12/12. Re-pin live summary tới `main@784bc8d`; code/test inventory không đổi vì hai commit mới chỉ docs. Giữ B4/per-slice `CODE_READY`, no runtime/migration/API/UI, DD-32 WIP overlay và ~33% delivery boundary. |
 | 28/07/2026 | **v3.4k** | **Owner-final Chat authority + DD-32 reconcile:** mirror DD-86/DD-91–95 and demote DD-88 to broader `DEFERRED_PROPOSAL`; Assistant/Chat/Notifications pairs Reviewed. Current readiness remains owned only by primary plan §13. Preserve committed `main@2dc9b8c` 24/23 snapshot while recording uncommitted 24/24 docs overlay and DD-32 Option D target. Runtime/delivery percentage unchanged. |
 | 28/07/2026 | **v3.4j** | **SUPERSEDED by v3.4k:** former Chat correction used universal default-OFF, three commands and no-digest floor; no longer current authority. |
 | 28/07/2026 | **v3.4i** | **SUPERSEDED by v3.4k for Chat:** former v2.08 Chat propagation retained as history; unrelated FE sequencing notes remain historical. |
@@ -765,4 +766,4 @@ Foundation(RLS+sports+3-tier+Google) → Zalo-tenant → CK-reconcile → migrat
 
 ---
 
-*ROADMAP v3.4k — canonical phase duy nhất; DD-32 Option D + owner-final Chat DD-86/DD-91–95 are working-tree targets only; exact authority pack still awaits immutable commit/push/re-pin; live truth remains pinned at `main@2dc9b8c760c3b437af08ca1fc5fcbaea1492ad39`; shared job infra OFF/placeholder and product implementation pending.*
+*ROADMAP v3.4l — canonical phase duy nhất; Chat authority is immutable at `90d292d` and the initiative is `PLAN_READY`, not `CODE_READY` or implemented. Live truth is pinned at `main@784bc8dd297163a5ec5415f33beabbbf34bbc8d7`; DD-32 companion overlay remains working-tree-only, shared job infra remains OFF/placeholder, and product implementation is pending.*

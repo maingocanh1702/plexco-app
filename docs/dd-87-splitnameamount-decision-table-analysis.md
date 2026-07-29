@@ -2,11 +2,11 @@
 # DD-87 — Fail-closed ambiguity contract cho `splitNameAmount`
 
 > **Decision:** ✅ `DECISION_FINAL` — owner phê duyệt 2026-07-22 qua yêu cầu “update hết”.
-> **Live base đã verify:** `main@6a28072c433d24aa489b3456b301b5a7e99a2716` = `origin/main`.
-> **Runtime boundary:** quyết định này chưa phải implementation. `splitNameAmount` hiện chỉ được gọi bởi
-> test; không có runtime execution flow/caller trong Plexco.
-> **Current readiness:** `NOT_CODE_READY` cho tới khi packet authority + manifest + launcher + verdict
-> được commit/push trên `main` rồi re-pin bằng full SHA mới.
+> **Current-state update (2026-07-28):** core contract đã **IMPLEMENTED & MERGED** tại `d2a27e1` và có
+> regression tests; scan trên `main@784bc8d` vẫn không thấy production caller ngoài test. Vì vậy trạng thái
+> đúng là `IMPLEMENTED_CORE_NOT_WIRED`, không phải payment runtime/E2E.
+> **Historical boundary:** base `main@6a28072c` và verdict `NOT_CODE_READY` bên dưới là snapshot trước khi
+> slice được author/merge; giữ lại làm evidence, không dùng làm readiness hiện hành.
 
 ---
 
@@ -232,5 +232,7 @@ NEXT_REVIEW_TRIGGER: origin/main commit containing all TARGET_FILES above
 
 | Ngày | Thay đổi |
 |---|---|
+| 28/07/2026 | Re-pin current-state scan to `main@784bc8d`; production caller remains absent and status stays `IMPLEMENTED_CORE_NOT_WIRED`. |
+| 27/07/2026 | Current-state reconciliation: `splitNameAmount` core đã merge tại `d2a27e1`; production caller vẫn không tồn tại trên `main@2dc9b8c`. Đánh dấu readiness block cũ là historical, không đổi contract DD-87. |
 | 22/07/2026 | Owner-ratified correction: replace boolean ambiguity with exhaustive tagged union; ambiguity is distinct `(name,amount)` interpretations, including equal-amount/different-name; ambiguous branch carries ordered candidates and no settleable top-level amount. Remove grouped-grammar variant and unsafe longest-run option. Reconcile live worktree state, exact 18-row matrix, acceptance, artifacts and readiness verdict. |
 | 22/07/2026 | Initial proposal and live behavior measurement. Superseded by the owner-ratified contract above. |

@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P3 (nhắc/xác nhận baseline) · P4 (Inbox + Web Push mechanisms 36–47) · P4.5–P4.7 (channel delivery) · P4+ (global plane · announcements) — *cross-cutting cụm 🔔*
 > **Track:** 🔔 Notifications
-> **Version:** 3.10 · 2026-07-28
+> **Version:** 3.11 · 2026-07-28
 > **Status:** ✅ **Reviewed contract** — §A giữ nguyên; §B/C/D theo DD-70/71/72 owner-final; §E offline Chat digest theo DD-94 owner-final. DD-88 chỉ còn proposal cho grouping/`message_request`/scoped-bulk rộng hơn. Target runtime/migrations vẫn pending; `Reviewed` không đồng nghĩa `CODE_READY` hay `Implemented`.
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > ⚠️ **Historical:** doc hạ Reviewed → Draft ngày 2026-07-18 do gộp tài liệu, KHÔNG phải mở lại luật tiền §A. DD-70/71/72 được owner chốt 2026-07-21 nên v3.5 promote lại Reviewed; runtime/migration vẫn chưa tồn tại. NTF-OQ-14..16 và các OQ chi tiết theo slice vẫn là build/enablement gates. Nhận định v3.8 rằng digest còn phải trì hoãn đã được DD-94 thay thế; session/activity, `message_request` và scoped/bulk vẫn thuộc proposal DD-88.
@@ -14,7 +14,7 @@
 > runtime, payment lifecycle delivery hay connected UI; đây vẫn là Reviewed contract, không phải
 > `IMPLEMENTED`/`ENABLE_READY`.
 
-> **Execution ownership theo primary-surface plan v1.7:** DD-67/DD-72 Web Push đi đúng chain 36 `notification-route-integrity-core` → 37 subscription authority → 38 provider-attempt core → 39 installable PWA shell → 40 registration client → 41 display/telemetry client; DD-94 Chat digest là 42 `chat-unread-notification-core`, hard-depend Chat read mechanism 10 + chain Web Push. Payment đi 43 lifecycle intent → 44 reminder producer và 45 settled/correction projector → 46 Inbox/authenticated detail → 47 generic payment-push adapter. HTTP owners là A17 preferences, A18 payment Inbox/detail, A19 subscription/device/telemetry; product UI owners là F11 payment Inbox/detail, F14 Chat preferences và F15 contextual push onboarding/devices sau F0. Mechanism slices không ngầm sở hữu HTTP/UI và adapter không re-derive notification/payment state. Primary initiative vẫn `NOT_PLAN_READY`, runtime = 0 tới immutable authority re-pin + strict per-slice `CODE_READY`.
+> **Execution ownership theo primary-surface plan v1.8:** DD-67/DD-72 Web Push đi đúng chain 36 `notification-route-integrity-core` → 37 subscription authority → 38 provider-attempt core → 39 installable PWA shell → 40 registration client → 41 display/telemetry client; DD-94 Chat digest là 42 `chat-unread-notification-core`, hard-depend Chat read mechanism 10 + chain Web Push. Payment đi 43 lifecycle intent → 44 reminder producer và 45 settled/correction projector → 46 Inbox/authenticated detail → 47 generic payment-push adapter. HTTP owners là A17 preferences, A18 payment Inbox/detail, A19 subscription/device/telemetry; product UI owners là F11 payment Inbox/detail, F14 Chat preferences và F15 contextual push onboarding/devices sau F0. Mechanism slices không ngầm sở hữu HTTP/UI và adapter không re-derive notification/payment state. Primary initiative `PLAN_READY` tại `90d292d`, runtime = 0 và từng slice vẫn strict `CODE_READY`.
 
 > **Cập nhật DD-40 + DD-37 (2026-07-10):** kênh nhắc chính = **web push + Zalo DM**; **Messenger best-effort trong cửa sổ standard 24h**, ngoài cửa sổ chỉ khi có cơ chế Meta đủ điều kiện/được phê duyệt. **Telegram loại khỏi phạm vi (DD-37).** Sau **mọi** markPaid (thủ công tiền mặt/CK & auto CK) → **xác nhận tự động tới player** (FR-6.2). **Nhắc tự động nâng cao = `host_pro`; free = nhắc thủ công** (DD-40).
 >
@@ -525,6 +525,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v3.11 | Re-pin primary-surface plan v1.8 `PLAN_READY` tại `90d292d`; closure 12/12. Giữ notification/chat/payment runtime = 0, enablement gates và strict per-slice `CODE_READY`; không đổi delivery contract. |
 | 2026-07-28 | v3.10 | Replace stale S9/S20 ownership bằng exact mechanism graph 36→41, Chat unread 42 và payment lifecycle 43→44/45→46→47; pin HTTP A17–A19 và FE F11/F14/F15 sau F0. Payment enablement requires real producer + exactly-once/correction E2E + authenticated-detail parity. `NOT_PLAN_READY`/runtime = 0 giữ nguyên tới immutable re-pin. |
 | 2026-07-28 | v3.9 | Mirror DD-94 owner-final and close NTF-OQ-19 by split: Chat unread remains source truth; generic signal coalesces by person+channel+highest cursor; DM/direct mention/reply default ON; club `all\|mentions\|off` default `mentions`; mark-read/authorization/block/preference/device/trust epoch rechecked immediately before provider write; timing config absent/untested keeps route OFF. Zero Inbox item/per-message row/content snapshot; DD-88 remains only broader proposal. No runtime/migration authorization. |
 | 2026-07-28 | v3.8 | **Historical; offline-digest clause superseded by DD-94/v3.9.** Mirror DD-88 guardrails-only final for derived grouping, preference authority, independent read models and deferred session/activity/`message_request`/scoped-bulk extensions. No migration/runtime authorization. |

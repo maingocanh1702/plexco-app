@@ -7,6 +7,8 @@
 > **Rev 10/07/2026 (DD-37 / BRD v3.4):** **bỏ Telegram** khỏi phạm vi; kênh phase-1 = **Zalo + Facebook Messenger + web**; Messenger **lên phase-1 (P2.5)**, không còn post-MVP. Auth phase-1 = Google/email (DD-13). Các bảng/nhãn "Telegram (MVP)" và "Messenger (post-MVP)" bên dưới đã cập nhật theo DD-37.
 >
 > **Rev 19/07/2026:** Messenger hybrid giữ nguyên. Authority hiện hành: `../standards/decisions.md` **v1.67** · BRD v3.9d · PRD v2.8c · TDD v3.1. Đây là tài liệu GTM lịch sử; khi lệch, ưu tiên authority hiện hành.
+>
+> **Current supersession 28/07/2026:** authority hiện hành là BRD v3.9n · PRD v2.8m · TDD v3.1h · ROADMAP v3.4l · decisions v2.11 current mirror; Chat authority pack đã immutable tại `90d292d` và primary plan v1.8 là `PLAN_READY`, không phải runtime. Mark-paid thủ công vẫn là global baseline; auto-reconcile chỉ khả dụng khi entitlement + market/provider/bank/currency/consent/runtime cùng pass. Current provider authority mới là `sepay|apipay` cho rail Việt Nam; xem `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`. Các giá/provider claim lịch sử bên dưới phải được re-verify trước quyết định thương mại.
 
 ---
 

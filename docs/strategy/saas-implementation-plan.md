@@ -5,9 +5,18 @@
 >
 > **Reposition (v2 doc, 18/06/2026):** từ "SaaS thu phí cầu lông" → **platform đa môn + marketplace discovery + web sync 2 chiều**. Module đối soát CK (killer cũ) giữ nguyên thiết kế, thành 1 module. Thêm **3 tầng hiển thị** (public discovery / tenant-private RLS / person-self), **sync engine**, **chiều `sport`**.
 >
-> **Tài liệu liên quan hiện hành:** `../product/BRD.md` v3.9d · `../product/PRD.md` v2.8c · `../product/TDD.md` v3.1 · `../product/ROADMAP.md` v3.3c · `../standards/decisions.md` v1.67 · `../dd-69-app-native-analysis.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md`.
+> **Tài liệu liên quan hiện hành:** `../product/BRD.md` v3.9n · `../product/PRD.md` v2.8m · `../product/TDD.md` v3.1h · `../product/ROADMAP.md` v3.4l · `../standards/decisions.md` v2.11 current mirror · `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` v1.8 · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md` · `../dd-69-app-native-analysis.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md`.
 >
 > ⚠️ **Version note (19/07/2026):** body gốc là historical implementation analysis. Authority hiện hành = BRD 3.9d/PRD 2.8c/TDD 3.1/ROADMAP 3.3c/decisions v1.67. DD-57..59 deferred; DD-60 accepted; DD-61..64 accepted-in-principle/no-runtime; DD-69 direction accepted; DD-70..72 🟡, DD-73..78 ✅ chốt (build gated). PWA vẫn là target chưa có runtime evidence, native phase 2 chưa có lịch, và mọi implementation phải qua technical/store/legal gates trong DD-69.
+>
+> ⚠️ **Current supersession (28/07/2026):** DD-91 định hướng In-app Chat thành primary daily player
+> surface; Zalo/Messenger chuyển thành acquisition/external/fallback target. Primary plan v1.8 đã
+> `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY` và chưa có chat/payment
+> runtime. Mark-paid thủ công là global baseline; Host Pro
+> `payment_reconcile_auto` chỉ được advertise/enable khi entitlement + market/provider/bank/currency/
+> consent cùng pass — current provider authority mới là `sepay|apipay` cho Việt Nam và runtime
+> webhook→settle→notify chưa có. Shared job mechanics `0022`/`0023` và Session CHECK `0024` đã merge,
+> nhưng schedule OFF/placeholder; body lịch sử dưới đây không được dùng để claim product E2E.
 >
 > ⚠️ **SUPERSEDED PARTIALLY:** Telegram historical sections remain reference only. Messenger target was updated again by DD-65..68: one App, central Page always + optional tenant Page; host/player parity, Page-scoped identity/reachability, protected target routing and one-route delivery. Any body text saying Page-per-club-only or `page_id→tenant` is superseded.
 
@@ -643,6 +652,8 @@ Cutover: chạy migrate trên copy → verify đối chiếu số dòng & vài s
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 28/07/2026 | v2.0 | Refresh current-authority pointers; mirror primary plan v1.8 `PLAN_READY` at `90d292d` while retaining per-slice `CODE_READY`, regional auto-reconcile gates and historical-body boundary. |
+| 27/07/2026 | v1.9 | Refresh current-authority pointers; add DD-91 surface direction, regional auto-reconcile gates and `0022`–`0024` implemented-but-not-product-runtime boundary. Historical body remains preserved. |
 | 18/07/2026 | v1.8 | Current authority → BRD v3.9d/PRD v2.8b/TDD v3.1/ROADMAP v3.3b/decisions v1.47; reconcile DD-57..64 statuses and DD-69 accepted direction without changing historical body/runtime claims. |
 | 18/07/2026 | v1.7 | Current authority → BRD v3.9c/PRD v2.8a/TDD v3.1/ROADMAP v3.3a/decisions v1.46; link DD-69 proposal và ghi rõ không đổi phase-1 scope/timeline. Historical body unchanged. |
 | 17/07/2026 | v1.6 | Current authority → BRD v3.9b/PRD v2.8/TDD v3.1/ROADMAP v3.3/decisions v1.45; feature-doc closure only, historical body/scope unchanged. |

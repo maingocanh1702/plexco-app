@@ -1,13 +1,13 @@
 # Feature: Home — Personal Dashboard (PWA) — Backend Tech Spec
 
 > **Canonical phase:** S9 (cùng PWA shell) — DD-79 ✅  
-> **Version:** 0.1 · 2026-07-19  
-> **Status:** ✅ Reviewed contract theo DD-79 (owner 2026-07-19); implementation pending S9  
+> **Version:** 0.3 · 2026-07-28
+> **Status:** ✅ Reviewed contract theo DD-79; implementation pending S9. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY`
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_home.md`  
-> **References:** `../../standards/decisions.md` **DD-79** · `feature_player_view_tech.md` (person-self resolver + DTO allowlist — canonical) · `feature_marketplace_discovery_tech.md` (public read model) · `feature_notifications_reminders_tech.md` §A (unread) · `../../standards/api-reference-convention.md` (DD-60 envelope)
+> **References:** `../../standards/decisions.md` **DD-79/DD-91** · `feature_player_view_tech.md` (person-self resolver + canonical `getSelfPaymentStatus`) · `feature_payment_reconcile_tech.md` · `feature_marketplace_discovery_tech.md` (public read model) · `feature_notifications_reminders_tech.md` §A (unread) · `../../standards/api-reference-convention.md` (DD-60 envelope)
 
-> **Ranh giới quan trọng (DD-79):** Home là **composition read** — KHÔNG bảng mới, KHÔNG migration, KHÔNG write path, KHÔNG mở đường đọc vượt person-self/public boundary. Endpoint thuộc surface `/api/me*` của player_view; DTO allowlist của player_view là **canonical**, doc này không định nghĩa lại field tiền/PII nào.
+> **Ranh giới quan trọng (DD-79 + DD-91):** Home là **composition read** — KHÔNG bảng mới, KHÔNG migration, KHÔNG write path, KHÔNG mở đường đọc vượt person-self/public boundary. Endpoint thuộc surface `/api/me*` của player_view; `getSelfPaymentStatus` + `remainingAmount` là payment truth duy nhất. Home không query/sum ledger và không tạo formula/serializer tiền riêng. Exact requester-only `/pay` là target deterministic/no-store/no-LLM ở chat surfaces; chưa có runtime.
 
 ---
 
@@ -15,12 +15,12 @@
 
 ```text
 Authenticated session → Person resolver (player_view canonical)
-    → parallel person-self reads: debt summary · upcoming sessions (host-first) · unread count
+    → parallel person-self reads: canonical payment summary · upcoming sessions (host-first) · unread count
     → parallel public read: suggested sessions (public_sessions whitelist, limit 3)
     → compose HomeDTO (per-section degradable) → SSE topic person:<id> cho cập nhật
 ```
 
-Không service/worker mới: reuse person-self query layer (player_view), public read model (marketplace), notification read model §A. Composition chạy trong 1 request handler; mỗi section độc lập — section lỗi trả `null` + reason, KHÔNG fail cả aggregate (trừ auth).
+Không service/worker mới: reuse person-self query layer (player_view), public read model (marketplace), notification read model §A. Composition chạy trong 1 request handler; mỗi section độc lập — section lỗi trả `null` + reason, KHÔNG fail cả aggregate (trừ auth). Các service/route trên hiện chưa được build; đây là target contract, không phải runtime proof.
 
 > **Gate 3 chiều:** doc này không chứa claim kỹ thuật độc lập — mọi invariant tiền/PII/authz trỏ về spec canonical tương ứng; khi build, đối chiếu handler ↔ doc này ↔ contract nguồn (player_view/marketplace/§A).
 
@@ -34,7 +34,7 @@ Không service/worker mới: reuse person-self query layer (player_view), public
 
 | Nguồn | Qua contract | Ghi chú |
 |-------|--------------|---------|
-| `memberships`/`players`/`sessions`/`charges`/`payment_allocations` | player_view person-self (`feature_player_view_tech.md` §4 DTO allowlist) | Cross-tenant own-data; KHÔNG qua tenantRepo đơn lẻ mà qua person-self path đã định nghĩa |
+| `memberships`/`players`/`sessions`/`charges`/`payment_allocations` | player_view person-self (`getSelfPaymentStatus`, target `/api/me/charges`) | Player View sở hữu query + integrity validation + aggregate; Home chỉ consume typed status, không đọc/sum các bảng này |
 | `public_sessions` | marketplace public read model | Field whitelist HR2 — KHÔNG RLS, KHÔNG tiền/PII |
 | Notification read model §A | `feature_notifications_reminders_tech.md` | Chỉ unread count |
 | `onboarding_steps` | migration `0008` (đã có trên `main`) | Checklist trạng thái person-self |
@@ -65,6 +65,7 @@ Không service/worker mới: reuse person-self query layer (player_view), public
 | 11 | Cross-Feature | CLB suspended (billing) | Kèo person-self vẫn hiện; CTA theo billing rule — Home không thêm logic riêng |
 | 12 | Infra | Một nguồn (marketplace/notification) timeout | Per-section timeout ngắn (đề xuất 2s) → section `null` + reason; không kéo sập aggregate |
 | 13 | Infra | SSE drop | Client tự re-subscribe; Home vẫn đúng qua refetch — SSE là enhancement, không phải nguồn đúng đắn |
+| 14 | Money/Data | Player View trả `SelfPaymentStatus.kind='unknown'` | Debt section `null`/unavailable + retry metadata; không coerce thành `totalDue: 0`, không fallback sang direct ledger query/cached amount |
 
 ---
 
@@ -87,7 +88,7 @@ Không service/worker mới: reuse person-self query layer (player_view), public
 ```json
 {
   "data": {
-    "debt": { "totalDue": 85000, "clubCount": 2 },
+    "debt": { "kind": "known_amount", "totalOutstanding": 85000, "clubCount": 2, "asOf": "…" },
     "weekSessions": { "count": 3 },
     "upcoming": [
       { "sessionRef": "…", "title": "Cầu lông T3", "club": "CLB Rồng Xanh", "startAt": "…", "role": "host", "paymentStatus": "unpaid" }
@@ -138,7 +139,7 @@ Không service/worker mới: reuse person-self query layer (player_view), public
 | 401 | `AUTH_REQUIRED` | Cần đăng nhập | No valid session (reuse player_view catalog) |
 | 429 | `RATE_LIMITED` | Quá nhiều yêu cầu — thử lại sau | Vượt rate limit |
 
-> Section-level failure là `reason` trong DTO, không phải HTTP error code — một catalog với product spec §3 (toast "Không tải được trang chủ" chỉ khi toàn aggregate fail).
+> Section-level failure là `reason` trong DTO, không phải HTTP error code — một catalog với product spec §3 (toast "Không tải được trang chủ" chỉ khi toàn aggregate fail). `debt.kind='known_zero'` chỉ đến từ authoritative query hoàn tất; `unknown` map thành section unavailable, không map thành zero.
 
 ---
 
@@ -149,7 +150,8 @@ Không service/worker mới: reuse person-self query layer (player_view), public
 ```text
 1. resolvePerson(session)                    # player_view canonical — fail → 401
 2. parallel (per-section timeout ~2s):
-   a. debtSummary   = personSelf.charges → sum open per club     # DTO allowlist
+   a. debtSummary   = playerView canonical payment projection    # wraps
+                      getSelfPaymentStatus; Player View owns cross-club aggregate
    b. upcoming      = personSelf.sessions → dedupe(role=host ưu tiên)
                       → sort(host-first, startAt ASC) → take 4
    c. suggested     = publicReadModel.upcoming → take 3           # whitelist fields only
@@ -160,6 +162,8 @@ Không service/worker mới: reuse person-self query layer (player_view), public
 ```
 
 Hero = phần tử đầu của `upcoming` — client không tự chọn; server sort là nguồn đúng đắn (product spec §3).
+
+Home composer **không** được triển khai `SUM(amount_due-amount_allocated)`, gọi ledger repository, hay suy `unknown → 0`. Nếu Player View chưa expose canonical cross-club summary cần thiết, build Home phải dừng ở dependency đó và mở rộng Player View owner; không tạo helper thứ hai trong Home. Payment CTA chỉ dùng `payAction`/protected route từ canonical projection. Exact `/pay` chat gọi cùng service nhưng không phải endpoint/handler do Home sở hữu.
 
 ### Caching Strategy
 
@@ -191,8 +195,8 @@ Hero = phần tử đầu của `upcoming` — client không tự chọn; server
 | 1 | Aggregate happy path | Person có nợ + 3 kèo | Đủ sections, đúng số |
 | 2 | No session | Unauthenticated | 401 `AUTH_REQUIRED` |
 | 3 | Person ID trong query | `?personId=other` | Ignored — data của self |
-| 4 | Debt sum per club | 2 CLB có nợ | `totalDue` + `clubCount=2` khớp ledger DTO |
-| 5 | Debt = 0 | Không nợ | `totalDue: 0` (chip vẫn render) |
+| 4 | Canonical debt summary | Player View trả 2 CLB có `known_amount` | Home giữ đúng `totalOutstanding` + `clubCount=2`; không gọi ledger/sum lần hai |
+| 5 | Proven debt = 0 | Player View trả `known_zero` sau authoritative query | Chip render 0 |
 | 6 | Dedupe host+player cùng session | 1 session 2 vai | 1 entry, role=host |
 | 7 | Sort host-first | Host kèo xa + player kèo gần | Host lên đầu |
 | 8 | Upcoming limit | 6 kèo | 4 entries |
@@ -208,6 +212,7 @@ Hero = phần tử đầu của `upcoming` — client không tự chọn; server
 | 18 | Week count | 3 kèo completed tuần này | `weekSessions.count=3` |
 | 19 | Log redaction | Request logs | Không PII/person khác |
 | 20 | Rate limit | 61 req/min | 429 `RATE_LIMITED` |
+| 21 | Unknown payment truth | Player View trả `unknown` vì authz/integrity/dependency | Debt section unavailable/retry; không `0`, không direct ledger fallback |
 
 ### Integration Tests
 
@@ -217,6 +222,7 @@ Hero = phần tử đầu của `upcoming` — client không tự chọn; server
 | 2 | HR2 invariant | Seed public + private sessions | Suggested không chứa field ngoài whitelist; private không xuất hiện |
 | 3 | Settle → SSE → Home | Mark-paid charge → SSE event → refetch | Debt giảm đúng |
 | 4 | Cross-person isolation | 2 persons, seed chéo | Home của A không chứa bất kỳ ref nào của B |
+| 5 | Cross-surface payment parity | Cùng snapshot qua `/api/me/charges`, Home và exact `/pay` | Cùng known status/remaining amount; Home không có formula riêng. `/pay` response requester-only/no-store và không qua LLM |
 
 ---
 
@@ -224,10 +230,11 @@ Hero = phần tử đầu của `upcoming` — client không tự chọn; server
 
 ### Rollout
 
-1. Route sau feature flag, landing giữ `/me` cũ
-2. Internal: verify HR2/person-self fixtures trên staging
-3. Bật landing = Home (HOME-OQ-2 ✅) cho tenant #1
-4. Public cùng PWA shell S9
+1. Land Player View canonical `remainingAmount` + `getSelfPaymentStatus` + cross-club summary trước; nếu dependency chưa có thì Home route vẫn OFF
+2. Route sau feature flag, landing giữ `/me` cũ
+3. Internal: verify HR2/person-self/payment-parity fixtures trên staging
+4. Bật landing = Home (HOME-OQ-2 ✅) cho tenant #1
+5. Public cùng PWA shell S9
 
 ### Metrics
 
@@ -237,4 +244,6 @@ Hero = phần tử đầu của `upcoming` — client không tự chọn; server
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v0.3 | Reconcile primary plan v1.8 `PLAN_READY` at `90d292d`; preserve composition-only, per-slice `CODE_READY` and no-runtime boundaries. |
+| 2026-07-27 | v0.2 | Đồng bộ DD-91: Home chỉ consume Player View payment truth (`remainingAmount`/`getSelfPaymentStatus`), không query/sum ledger hay tạo serializer thứ hai; `known_zero` khác `unknown`, payment CTA dùng protected route. Thêm parity/unknown tests và hard dependency Player View trước Home. Contract only; route/service/chat runtime chưa build. |
 | 2026-07-19 | v0.1 | Khởi tạo theo DD-79 ✅ (composition-only): aggregate `GET /api/me/home` thuộc surface `/api/me*`, không bảng/migration mới; per-section degradation; DTO tiền/PII theo allowlist player_view (canonical); suggested qua public read model HR2; chips phase-1 = [Còn nợ, Kèo tuần] (defer host-receivable OQ-1(c) + streak OQ-3). Template v2.30/v2.33 đầy đủ. |

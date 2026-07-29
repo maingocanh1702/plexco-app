@@ -2,11 +2,13 @@
 
 > **Canonical phase:** S9 (cùng PWA shell; sau P4.6 player_view vì data từ đó) — DD-79 ✅  
 > **Track:** 🏠 Home Hub  
-> **Version:** 0.5a · 2026-07-19  
-> **Status:** ✅ **Reviewed contract theo DD-79 (✅ owner 2026-07-19, `../standards/decisions.md` v1.76)** — composition-only; implementation pending S9. Fork từ Sporta `feature_home.md` v2.5 + học từ design `app-design-opus-4.6.pen`.  
+> **Version:** 0.7 · 2026-07-28
+> **Status:** ✅ **Reviewed contract theo DD-79** — composition-only; implementation pending S9. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY`; không có Home/payment/chat runtime. Fork từ Sporta `feature_home.md` v2.5 + học từ design `app-design-opus-4.6.pen`.
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web auth · P4.6 player_view (data backbone) · P4.3 marketplace (suggested) · 🔔 notifications §A  
-> **Tài liệu liên quan:** `../standards/decisions.md` **DD-79** · `feature_player_view.md` FR-8 (person-self contract) · `feature_marketplace_discovery.md` · `feature_notifications_reminders.md` §A · `../channels/web/theme-direction-2026-07.md` §7 (hero recipe) · `BE/feature_home_tech.md` · Sporta ref: `Sporta/docs/Phase 1/FE/feature_home.md`
+> **Tài liệu liên quan:** `../standards/decisions.md` **DD-79/DD-91** · `feature_player_view.md` FR-8 (person-self contract) · `feature_payment_reconcile.md` · `feature_marketplace_discovery.md` · `feature_notifications_reminders.md` §A · `../channels/web/theme-direction-2026-07.md` §7 (hero recipe) · `BE/feature_home_tech.md` · Sporta ref: `Sporta/docs/Phase 1/FE/feature_home.md`
+
+> **Ranh giới DD-91:** Home chỉ **consume** canonical self-payment projection (`remainingAmount`, phân biệt `known_zero`/`unknown`) do Player View/payment core sở hữu. Home không query ledger, không tự cộng lại tiền, không tạo result/history riêng. Exact requester-only `/pay` là target deterministic ở club bot/private bot/human DM; không gọi LLM, không ghi chat transcript và hiện chưa có runtime.
 
 ---
 
@@ -21,7 +23,7 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 - Dữ liệu cá nhân trên Home đi qua **person-self contract của player_view** (verified session; KHÔNG nhận person ID từ client) — Home không nới rộng nó.
 - Suggested sessions chỉ từ `public_sessions` field-whitelist (HR2 — không tiền/PII/roster).
 - Mọi chuỗi hiển thị `t(vi, en)` (HR5).
-- Số tiền hiển thị lấy từ ledger-derived DTO của player_view — Home KHÔNG tự tính tiền phía client.
+- Số tiền hiển thị lấy từ **một payment truth** của player_view (`remainingAmount`, cùng canonical helper/service `getSelfPaymentStatus`) — Home KHÔNG tự tính tiền phía client/server. Chỉ `known_zero` mới hiển thị 0; `unknown` phải hiện unavailable/retry, không fail-open thành 0.
 
 ---
 
@@ -34,7 +36,7 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 | HOME-UC-1 | User | Mở app/đăng nhập xong | Thấy chips tài chính + hero kèo kế tiếp + list kèo sắp tới xuyên CLB |
 | HOME-UC-2 | Player | Tap chip "💸 Còn nợ" | → màn debt person-self (player_view) — tổng hợp xuyên CLB |
 | HOME-UC-3 | User | Tap hero card | → session detail (đúng tenant context) |
-| HOME-UC-4 | Player | Tap CTA "Thanh toán" trên hero | → payment QR/hướng dẫn CK của charge tương ứng |
+| HOME-UC-4 | Player | Tap CTA "Thanh toán" trên hero | → route tới protected person-self payment detail/renderer dùng cùng canonical payment truth; Home không tự dựng QR/số nợ |
 | HOME-UC-5 | Host | Tap CTA trên hero (kèo mình host) | → host board của session (mark-paid, roster) |
 | HOME-UC-6 | User | Tap "Tất cả →" | → danh sách session person-self đầy đủ |
 | HOME-UC-7 | User | Tap kèo gợi ý | → public session detail (marketplace) → join flow CCJ |
@@ -50,7 +52,7 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 | 2 | Security | Suggested card chứa field ngoài whitelist | ❌ NEVER — test bất biến HR2 |
 | 3 | Data | User vừa host vừa player cùng session | 1 entry, role badge `Host` ưu tiên |
 | 4 | Data | Không có kèo sắp tới, có nợ | Chips vẫn hiện nợ; list → suggested sessions |
-| 5 | Data | Nợ = 0 và không kèo | Empty state + CTA "Khám phá kèo" → marketplace |
+| 5 | Data | Payment core chứng minh `known_zero` và không kèo | Empty state + chip nợ = 0 + CTA "Khám phá kèo" → marketplace |
 | 6 | Data | Nhiều CLB, nhiều kèo cùng giờ | Sort: host trước, rồi start time ASC; hiển thị max 4 + "Tất cả →" |
 | 7 | Cross-Feature | Session bị hủy/đổi giờ khi đang xem | SSE cập nhật card + toast; recalc chips |
 | 8 | Cross-Feature | Charge được settle (webhook/mark-paid) khi đang xem | SSE cập nhật chip Còn nợ + payment dot |
@@ -59,6 +61,7 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 | 11 | Data | CLB bị suspended (billing) | Kèo CLB đó vẫn hiện person-self; CTA theo rule billing (không mở đường mới) |
 | 12 | UX | Danh sách CLB dài (>5) | Chips/list vẫn tổng hợp; không bắt user chọn tenant trước khi thấy Home |
 | 13 | Cross-Feature | Tab Feed khi DD-76 chưa clear | Registry gate = OFF — slot không render; KHÔNG tab trống/coming-soon; bật = đổi config, không sửa layout code |
+| 14 | Money/Data | Payment truth `unknown`/unavailable | Chip/CTA tiền hiện trạng thái unavailable + retry; không hiển thị 0, không tự sum ledger và không dùng cached amount như authority |
 
 ---
 
@@ -122,7 +125,7 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 
 | Nguồn | Dữ liệu trên Home | Contract sẵn có |
 |-------|--------------------|-----------------|
-| player_view person-self | Còn nợ (tổng + per-club), upcoming sessions + role + payment status | `feature_player_view.md` FR-8, BE `/me` |
+| player_view person-self | Canonical `remainingAmount` + `known_zero/unknown`, per-club payment status; upcoming sessions + role | `feature_player_view.md` FR-8, canonical `getSelfPaymentStatus`/target `/api/me/charges` (chưa build) |
 | marketplace public read model | Suggested sessions (whitelist fields) | `feature_marketplace_discovery.md` |
 | notifications §A | Unread count | `feature_notifications_reminders.md` |
 | onboarding_steps | Checklist trạng thái | migration `0008` (đã có bảng) |
@@ -147,8 +150,8 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 ## 6. Acceptance Criteria
 
 - [ ] Home render đủ theo coverage matrix (Loading/Ready/Error/Empty/Onboarding + dark)
-- [ ] Chips adaptive đúng priority; số tiền từ DTO server, không client-derive
-- [ ] Hero = kèo kế tiếp (host ưu tiên), CTA route đúng theo role; áp hero recipe theme-direction §7
+- [ ] Chips adaptive đúng priority; số tiền chỉ từ canonical `remainingAmount`, không client/server re-derive; `unknown` không hiển thị 0
+- [ ] Hero = kèo kế tiếp (host ưu tiên), CTA route đúng theo role tới payment renderer sẵn có; Home không duplicate QR/confirm UI; áp hero recipe theme-direction §7
 - [ ] Upcoming: dedupe host/player, sort host-first + time ASC, max 4 + "Tất cả →"
 - [ ] Suggested chỉ hiện field whitelist; test bất biến HR2 pass
 - [ ] SSE cập nhật chips/rows khi settle/cancel; offline banner + chặn money action
@@ -173,6 +176,8 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v0.7 | Reconcile primary plan v1.8 `PLAN_READY` at `90d292d`; preserve composition-only, per-slice `CODE_READY` and no-runtime boundaries. |
+| 2026-07-27 | v0.6 | Đồng bộ DD-91: Home consume duy nhất canonical self-payment projection (`remainingAmount`/`getSelfPaymentStatus`), pin `known_zero` khác `unknown`, không query/sum ledger hay tạo payment state riêng. CTA route tới protected payment renderer; exact requester-only `/pay` là target deterministic/no-store/no-LLM và chưa có runtime. |
 | 2026-07-19 | v0.5a | Làm rõ Club tab (owner): gồm cả CLB user **tạo/sở hữu** lẫn CLB **tham gia** (cùng contract memberships person-self, phân nhóm + role badge; context theo quyền) + CTA Tạo CLB → onboarding. Không đổi contract. |
 | 2026-07-19 | v0.5 | **Nav final v3 (owner):** 5 slot Home · Feed · [Khám phá FAB] · **Club** (mới — `/me/clubs` person-self → club context) · Setting; **Chat lên header 💬 cạnh 🔔** (không chiếm tab). Feed OFF tới DD-76 → phase-1 render 4. |
 | 2026-07-19 | v0.4 | **DD-79 amendment final (owner):** gộp Kèo của tôi vào Home (sub-screen "Tất cả →"/chip Còn nợ) — nav 4 slot, phase-1 render 3 tab (1-FAB-1). |

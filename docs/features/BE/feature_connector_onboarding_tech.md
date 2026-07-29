@@ -1,11 +1,17 @@
 # Feature: Connector Onboarding (Zalo · SePay · ApiPay) — Backend Tech Spec
 
 > **Canonical phase:** P3 (payment ingest) · P4 (onboarding) · P4.7 (Zalo) — *cross-cutting*
-> **Version:** 0.7b · 2026-07-24
+> **Version:** 0.9 · 2026-07-28
 > **Status:** Draft · SePay inbound auth reconciled; ApiPay enterprise-primary internal contract pinned, provider gate open
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_connector_onboarding.md`
-> **References:** `../../product/TDD.md` §3.2/3.6 · `../../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `feature_payment_reconcile_tech.md` (ingest downstream) · `feature_zalo_channel_tech.md` (channel events downstream) · `feature_web_auth_onboarding_tech.md` (wizard) · `../../research/player-side-saas-AUDIT.md` §B2
+> **References:** `../../product/TDD.md` §3.2/3.6 · `../../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `feature_payment_reconcile_tech.md` (ingest downstream) · `feature_zalo_channel_tech.md` (channel events downstream) · `feature_web_auth_onboarding_tech.md` (wizard) · `../../research/player-side-saas-AUDIT.md` §B2 · `../../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
+
+> **Current availability/runtime boundary (`main@784bc8d`):** provider enum vẫn chỉ
+> `sepay|apipay` (Việt Nam); không provider/market abstraction nào từ research được coi là authority.
+> Shared job scheduler đã merge nhưng OFF/placeholder và chưa đăng ký OAuth refresh, bank recheck,
+> orphan cleanup, payment producer hay connector projector trong spec này. `payment_reconcile_auto`
+> entitlement không bypass market/provider/bank/currency/consent gates.
 
 ---
 
@@ -531,6 +537,8 @@ Tỉ lệ connect không-chạm-webhook; `time_to_verify_ms` (registered→activ
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v0.9 | Re-pin current availability/runtime boundary to `main@784bc8d`; provider enum and unregistered/disabled connector-job status remain unchanged. |
+| 2026-07-27 | v0.8 | Mirror regional provider boundary and implemented-but-unwired shared scheduler: no connector/payment jobs are registered or enabled; entitlement remains separate from capability availability. |
 | 2026-07-24 | v0.7b | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep, round-01 codex expansion): TARGET-migration comment (§2 `zalo_bots`, L144) hard-pinned `tail = 0018` -> non-pinned "verify current tail at `packages/db/migrations/` at author time, do not hard-pin" (live tail now `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Numbering guidance unchanged. Pre-existing dated changelog preserved verbatim. No contract change. |
 | 2026-07-23 | v0.7a | **Reconcile 0014 merge-state:** current-state TARGET-migration comment (§2 `zalo_bots`) sửa → `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`, tail = 0018), trước ghi "branch-only today". Numbering guidance (next available monotonic number sau merged prerequisites) giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v0.7 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `0003`/`0004` reuse; new = auth_mode mở rộng/`webhook_auth_mode`/`webhook_secret_enc`), §3 Request/Response Examples (DD-60 cho app routes; webhook theo provider contract), §4.8 Security Checklist. Idempotency (§3) và Caching (§4.7) đã có từ trước — giữ nguyên. Derivative/editorial — không đổi contract. |

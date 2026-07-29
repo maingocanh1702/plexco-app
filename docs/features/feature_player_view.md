@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.6  
 > **Track:** 👤 Player View  
-> **Version:** 2.4 · 2026-07-28
+> **Version:** 2.5 · 2026-07-28
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3.5 identity · P3 ledger · P4 web auth/magic link · P4 sync realtime  
@@ -12,7 +12,7 @@
 
 > **DD-91 primary-surface boundary:** một canonical person-self service `getSelfPaymentStatus` cấp cùng payment truth cho `/api/me/charges`, chat `/pay` và authenticated notification detail. Human DM có `tenant_id=NULL`, nên `/pay` không được đoán CLB từ peer/channel: server auto-select khi requester chỉ có một CLB đủ điều kiện, còn nhiều CLB thì trả picker opaque chỉ requester thấy. Không surface nào nhận arbitrary `person_id`; lỗi authz/integrity/dependency trả trạng thái `unknown`, không biến null/unproven thành 0.
 
-> **Execution ownership:** mechanism slices 17 `player-self-charge-read-core`, 18 `player-self-profile-clubs-read-core` và 19 `player-self-sessions-waitlist-read-core` là ba read owner tách biệt; chat adapters 24–26 chỉ compose các owner này qua requester-only transport. Slice 19 được author read-only trực tiếp trên baseline `players JOIN memberships JOIN sessions` đã merge và **không** hard-depend full SessionService. Tuy nhiên `/sessions|/waitlist` beta giữ OFF cho tới khi strict current-authority packets `svc-session-crud`, `svc-session-join-leave`, `svc-waitlist-promotion-core` cùng production-shaped data E2E đều xanh. Reviewed doc không biến các packet hay runtime đó thành implemented; primary initiative vẫn `NOT_PLAN_READY` tới immutable authority re-pin.
+> **Execution ownership:** mechanism slices 17 `player-self-charge-read-core`, 18 `player-self-profile-clubs-read-core` và 19 `player-self-sessions-waitlist-read-core` là ba read owner tách biệt; chat adapters 24–26 chỉ compose các owner này qua requester-only transport. Slice 19 được author read-only trực tiếp trên baseline `players JOIN memberships JOIN sessions` đã merge và **không** hard-depend full SessionService. Tuy nhiên `/sessions|/waitlist` beta giữ OFF cho tới khi strict current-authority packets `svc-session-crud`, `svc-session-join-leave`, `svc-waitlist-promotion-core` cùng production-shaped data E2E đều xanh. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`; pair vẫn Not started và từng mechanism slice vẫn phải có strict `CODE_READY`.
 
 ---
 
@@ -144,6 +144,7 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v2.5 | Reconcile immutable authority `90d292d` and primary plan v1.8 `PLAN_READY`; retain per-mechanism `CODE_READY`, beta OFF and no-runtime boundaries. |
 | 2026-07-28 | v2.4 | Mirror mechanism slices 17–19 và chat adapters 24–26. Pin slice 19 là read-only trên baseline đã merge, không hard-depend full SessionService; `/sessions|/waitlist` beta vẫn OFF tới strict current packets `svc-session-crud`/`svc-session-join-leave`/`svc-waitlist-promotion-core` + production-shaped data E2E. No runtime authorization. |
 | 2026-07-27 | v2.3 | Mirror DD-91: canonical `getSelfPaymentStatus` cho web `/me/charges`, chat `/pay` và authenticated notification detail; human-DM picker requester-only vì `tenant_id=NULL`; fail-closed `unknown`, không arbitrary IDs/null→zero. Giữ Reviewed/not implemented. |
 | 2026-07-19 | v2.2a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |

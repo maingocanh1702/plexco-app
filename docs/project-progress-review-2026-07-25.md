@@ -12,6 +12,16 @@
 > `TARGET_FILES`). §2.1–§4.2 giữ nguyên là **snapshot tại `2937ed9`** — chúng mô tả tình trạng đã dẫn tới
 > hai commit đó, không phải trạng thái hiện tại. Mọi câu "chưa commit / còn WIP" trong các mục đó đọc theo
 > baseline review, không đọc như live truth. §5.2 trở đi, §6 và §7 đã cập nhật theo `948636f`.
+>
+> **Current supersession (2026-07-28):** live authority hiện là `main@784bc8d`, migration tail `0024`.
+> Canonical suite hiện PASS 537 workspace tests + 13 readiness-validator tests (32 files; 528 static
+> declarations + 9 generated cases). Safari macOS/iOS completion-hop measurement đã PASS nhưng Google
+> login chưa được chứng minh enabled. Job lease/ack, fail-closed preflight, dispatcher và flagged
+> scheduler đã merge; schedule mặc định OFF, delivery còn placeholder và chưa có producer, real
+> projector, replay hay sub-minute drain. Exact Chat authority pack đã land tại `90d292d`; primary plan
+> v1.8 đạt `PLAN_READY`, nhưng per-slice `CODE_READY` và runtime vẫn chưa có. Tài liệu này là progress
+> report có niên đại; live status/next
+> order thuộc `HANDOFF.md`, `BUILD-STATUS.md` và `ROADMAP.md`.
 
 ## 1. Kết luận ngắn
 
@@ -26,19 +36,22 @@ PRODUCT_E2E_NOT_AVAILABLE
 
 - **Nền tảng kỹ thuật đã mạnh:** monorepo, core logic, PostgreSQL/Drizzle, RLS fail-closed, schema đa tenant,
   auth/session core, migration và invariant tests đã có thật.
-- **Auth Google đã merge nhưng chưa được bật:** còn thiếu phép đo completion-hop M3 trên Safari macOS và iOS
-  thật. Email/password order-4, provider send, route/UI và bước gỡ Telegram-era vẫn chưa hoàn tất.
+- **Auth Google đã merge nhưng chưa được chứng minh đã bật/go-live:** completion-hop M3 trên Safari macOS
+  và iOS đã đo **PASS 26/07**, nên measurement blocker đã đóng. Credentials vẫn rỗng trong template;
+  owner go-live và các gate độc lập A3 legal/PII/config còn áp dụng. Email/password order-4, provider send,
+  route/UI và bước gỡ Telegram-era vẫn chưa hoàn tất.
 - **Tầng sản phẩm nghiệp vụ chưa thành runtime:** không có route nghiệp vụ session/payment/sync/marketplace,
   không có bot handler nghiệp vụ, không có projector đang chạy, không có màn FE nối API.
 - **Docs đi trước code rất xa:** 24 Product/System spec + 23 BE spec, nhưng coverage không phải implementation.
 - Roadmap tự ước lượng khoảng **33% theo số slice kỹ thuật đã merge**. Con số này không đại diện cho mức
   sản phẩm dùng được; hiện chưa có một host flow end-to-end để dogfood.
 
-**Next enablement step:** founder chạy phép đo Safari macOS + iOS cho Google completion-hop M3.  
-**Next coding initiative:** hoàn tất authority rồi implement `db-job-claim-lease-core`, sau đó làm
-dispatcher/scheduler và vertical Session publish **theo đường BE-only**. FE đang **HOLD** và không nằm
-trong critical path; chỉ map screen/component/token sau khi canonical `design.pen` được persist/track +
-owner nghiệm thu làm authority.
+**Next enablement step:** owner review các gate A3 legal/PII/config và quyết định Google credentials/go-live;
+không lặp lại phép đo Safari trừ khi browser/auth mechanism thay đổi.
+**Next coding initiative:** job lease/ack + dispatcher/preflight + gated scheduler đã merge; author/review
+vertical Session BE đầu tiên theo dependency hiện hành. Giữ schedule OFF tới khi có real producer/projector,
+replay/recovery và sub-minute drain. FE đang **HOLD**; chỉ map screen/component/token sau khi canonical
+`design.pen` được persist/track + owner nghiệm thu làm authority.
 
 ---
 
@@ -105,7 +118,7 @@ ignore hoặc đặt probe ngoài repo). Không nên trộn việc này vào job
 | Layer | Decision/spec | Runtime | Enablement | Kết luận |
 |---|---|---|---|---|
 | Foundation P0–P1 | Cao | Core + DB/RLS + migrations đã có | N/A | **IMPLEMENTED** ở tầng nền |
-| Auth core | Reviewed/ratified | Google lane + session security đã merge | Safari M3 chưa đo; email bundle chưa có | **MERGED, NOT_ENABLE_READY** |
+| Auth core | Reviewed/ratified | Google lane + session security đã merge | Historical snapshot: Safari M3 chưa đo; đã PASS 26/07. Email bundle vẫn chưa có | **MERGED, NOT_ENABLE_READY** |
 | Tenant Engine P2–P3 | Spec cao | Không route/service/handler | Chưa dogfood | **NOT_STARTED** |
 | Payment reconcile | Spec Reviewed | Matching/payment logic thuần có; không webhook→settle→notify | Provider evidence còn gate | **PARTIAL_CORE_ONLY** |
 | Messenger/Zalo runtime | Contract có | Chưa adapter/handler/projector | App Review/Zalo evidence | **NOT_STARTED** |
@@ -201,21 +214,21 @@ checkout/tooling hygiene, không phải product regression, nhưng nếu bỏ qu
 
 ---
 
-## 5. Next step nên làm gì
+## 5. Next step — historical selection và current supersession
 
-### 5.1 Việc nên làm ngay, không cần chờ coding
+### 5.1 Enablement follow-up hiện tại
 
-**Đo Google completion-hop M3 trên Safari macOS + iOS thật.**
+**Safari macOS + iOS completion-hop M3 đã đo PASS 26/07; không còn measurement obligation.**
 
-Đây là human-only enablement gate. Nếu pass, mới set `GOOGLE_OAUTH_*` và có thể dogfood auth; nếu fail, auth
-chưa enable dù code/test đều xanh. Không nên cho bot/autopilot chạy lại gate này vì thiếu bằng chứng thiết bị.
+Việc còn lại là owner review các gate độc lập A3 legal/PII/config rồi quyết định Google credentials/go-live.
+Repo hiện vẫn để `GOOGLE_OAUTH_*` rỗng; measurement PASS không tự bật provider và không phải production E2E.
 
-Song song, thu email-provider C7 evidence để chuẩn bị order-4 email/password bundle; đây không thay thế phép
-đo Safari.
+Song song, thu email-provider C7 evidence để chuẩn bị order-4 email/password bundle. Đây là lane riêng,
+không phải điều kiện để công nhận measurement Safari đã đóng.
 
-### 5.2 Next coding initiative — chọn `db-job-claim-lease-core`
+### 5.2 Historical initiative 25/07 — `db-job-claim-lease-core` (nay đã implemented)
 
-Đây là lựa chọn có leverage cao nhất vì:
+Đây là lựa chọn có leverage cao nhất tại snapshot 25/07 vì:
 
 1. `claim_outbox_batch` đã tồn tại nhưng worker cross-tenant chạy dưới FORCE RLS cần privilege boundary đúng.
 2. Session publish/auto-expiry, sync, join retry, notifications và billing jobs đều đang defer cùng một lớp
@@ -225,6 +238,11 @@ Song song, thu email-provider C7 evidence để chuẩn bị order-4 email/passw
 
 **Packet hiện `CODE_READY`** tại `main@948636f` — closure 12/12, không còn blocker. Hai commit publication
 dưới đây **đã thực hiện xong**; giữ lại làm bản ghi thứ tự đã dùng và làm khuôn cho các packet sau.
+
+> **Supersession 27/07:** chuỗi job core → ack → dispatcher/preflight → exact-string scheduler đã merge.
+> Không chạy lại runbook dưới đây. Scheduler vẫn mặc định OFF và delivery là placeholder fail-closed; current
+> path là author/review vertical Session BE đầu tiên, đồng thời giữ enablement blocked tới khi có producer,
+> real projector, replay/recovery và sub-minute drain.
 
 #### Hai commit riêng biệt — bắt buộc serialize A → B
 
@@ -303,7 +321,7 @@ kéo scope của các BE slice phía trên.
 
 ---
 
-## 6. Closure matrix cho next coding slice
+## 6. Historical closure matrix cho job-core packet
 
 | # | Gate | Kết quả | Evidence |
 |---:|---|---|---|
@@ -331,7 +349,8 @@ Tail recheck trước `scope-gate register` vẫn bắt buộc — nó chống d
 
 ## 7. Canonical readiness verdict
 
-Verdict này áp dụng cho **next recommended coding slice**, không gộp toàn project thành một mega-slice.
+Verdict này ghi lại **job-core slice đã được review rồi implement**, không phải authorization cho current next
+slice và không gộp toàn project thành một mega-slice.
 
 > **Tracker of record:** `docs/slice-readiness-verdicts.md` → **Verdict 19**. Block dưới đây là **mirror phải
 > giữ đồng nhất từng field** với Verdict 19 và với verdict trong `docs/autopilot-db-job-claim-lease-core.md`.
@@ -387,7 +406,7 @@ NEXT_REVIEW_TRIGGER: n/a — merged. Next event is slice 2 `job-runtime-dispatch
 
 ---
 
-## 8. Verification record
+## 8. Verification record tại snapshot đã publish
 
 Đã chạy trên checkout hiện hành:
 
@@ -427,11 +446,11 @@ pnpm lint
 > trong file này là fenced block ở §7, và nó chỉ áp cho slice `db-job-claim-lease-core`. Các nhãn dưới đây là
 > mô tả trạng thái quan sát được, không phải readiness classification theo gate §2.
 
-**PROJECT_PROGRESS:** foundation tốt, auth core đã merge, product feature runtime chưa bắt đầu.  
+**PROJECT_PROGRESS (reconciled 27/07):** foundation + shared job mechanics + Session DB invariant đã merge; product business E2E chưa bắt đầu.
 **PRODUCT_USABLE:** **NO** — chưa có business API + FE + projector path end-to-end.  
-**NEXT_ENABLEMENT:** Safari macOS/iOS M3 measurement cho Google.  
-**NEXT_CODE:** `db-job-claim-lease-core` đã **IMPLEMENTED & MERGED** tại `main@34429fc` (26/07) — tail
-`0022`, db suite 179→201, code dark. Kế tiếp là slice 2 `job-runtime-dispatcher`, **chưa author**: cần
-manifest + verdict riêng trước khi code. Sau chuỗi job mới tới vertical Session BE.  
+**NEXT_ENABLEMENT:** Google owner config/secrets/staging/product E2E; scheduler chỉ enable sau real projector + producer/sub-minute trigger + controlled replay/drain gates.
+**NEXT_CODE:** `0022`/`0023`, dispatcher/preflight/scheduler và `0024` đã merge. Immediate maintenance
+candidate là `db-check-constraint-naming-drift`; sau đó mới vertical Session BE. Mỗi slice vẫn cần
+authority/readiness riêng; report này không authorize code.
 **NEXT_FE:** **HOLD** — chờ canonical `design.pen` được persist/track + owner nghiệm thu làm authority;
 sau đó mới map screen/component/token/state vào BE contract đã ổn định.

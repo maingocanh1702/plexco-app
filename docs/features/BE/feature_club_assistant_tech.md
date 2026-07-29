@@ -1,7 +1,7 @@
 # Feature: Club AI Assistant + Knowledge Base — Backend Tech Spec
 
 > **Canonical phase:** P7 (post-MVP)
-> **Version:** 0.17 · 2026-07-28
+> **Version:** 0.18 · 2026-07-28
 > **Status:** ✅ **Reviewed contract** — async ask, DLP/generation, retention, private-thread, canonical-chat reuse, DD-86/DD-93 mirrors và provider-attempt semantics đã qua companion closure. **DD-18** (provider LLM + privacy/ToS/DPA) chỉ là `ENABLEMENT_ONLY` cho GO-LIVE vì provider đặt sau interface `EmbeddingProvider`/`ChatProvider` swappable; Reviewed không tự authorize implementation trước strict slice `CODE_READY`.
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_club_assistant.md`
@@ -656,7 +656,7 @@ Contract enforceable: `project_assistant_answer(query_id)` là `SECURITY DEFINER
 
 ### Rollout (theo pha DD-19)
 
-0. **Gate trước implementation** — Product + BE pair đã `Reviewed`, nhưng exact authority pack phải được commit/push/re-pin immutable; sau đó từng bounded slice mới author packet/manifest/launcher và đạt strict `CODE_READY`. DD-18 chỉ chặn GO-LIVE, không được dùng để bypass readiness gate.
+0. **Gate trước implementation** — Product + BE pair đã `Reviewed`, exact authority pack đã commit/push tại `90d292d`, primary plan v1.8 = `PLAN_READY`. Từng bounded slice vẫn phải author packet/manifest/launcher và đạt strict `CODE_READY`; DD-18 chỉ chặn GO-LIVE, không được dùng để bypass readiness gate.
 1. **Slice 27 — `assistant-kb-storage-authority-core`:** migration monotonic cho tenant-private source/document/chunk/job state + bounded tone/config, RLS/grants, deterministic source key và DLP-state fence. Không fetch/extract/embed/retrieve/provider; không sửa/chạy lại migration lịch sử.
 2. **Slice 28 — `assistant-kb-text-ingest-core`:** FAQ/paste normalization, DLP-before-outbox và deterministic generation input trên storage authority của slice 27.
 3. **Slices 29/30 — URL/file adapters:** URL allowlist/SSRF/redirect/size/extract và private PDF/DOCX/MD/TXT object lifecycle/extract đều feed slice 28; object route giữ OFF khi storage region/credential hoặc malware scanner chưa chứng minh được.
@@ -687,6 +687,7 @@ Contract enforceable: `project_assistant_answer(query_id)` là `SECURITY DEFINER
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v0.18 | Re-pin primary plan v1.8 `PLAN_READY` tại `90d292d`; immutable-pack blocker đã đóng. Giữ exact next gate là per-slice packet/manifest/launcher + strict `CODE_READY`; DD-18 remains enablement-only, runtime/migration = 0. |
 | 2026-07-28 | v0.17 | Replace broad phase rollout bằng exact bounded chain 27→35: storage/config → text → URL/file → generation-CAS index → retrieval → `bot.ask` → mention/private thread; pin thin HTTP owners A14–A16 và FE owners F12/F13 sau F0. Giữ immutable authority + strict per-slice `CODE_READY` gate; no runtime/migration authorization. |
 | 2026-07-28 | v0.16 | Owner-final companion closure: promote BE spec to Reviewed; DD-86 defaults true `all_members`/false `admins_only`, mutable on both under exact capability + all gates; Announcements is not a special-case; DD-93 eight-command private-thread registry is canonicalized ASCII case-insensitively before `bot.ask`. No runtime/migration. |
 | 2026-07-28 | v0.15 | Historical snapshot superseded by v0.16; it temporarily restored Draft/universal-default-OFF after an overlapping stale-authority reconciliation. |

@@ -8,15 +8,22 @@
 | | |
 |---|---|
 | **Sản phẩm** | **Plexco CRM & Operations Dashboard** — dashboard nội bộ cho Platform Owner/CS/Ops theo dõi user, host, player, session, marketplace, payment, billing, trust, security và vận hành hệ thống |
-| **Phiên bản** | v1.14 — pointer refresh decisions v1.74 + product-doc refs (BRD v3.9f · PRD v2.8e · ROADMAP v3.3e · feature index v2.34); v1.13 — ref-only sync notification/business-rules/current decisions; v1.11 refresh authority refs theo founder batch 18/07; v1.10 final feature-index integrity closure; v1.4 thêm CRM-OQ-7 PII collection config (DD-54); trước đó v1.3 **v3.4 channel pivot** |
-| **Ngày** | 19/07/2026 |
+| **Phiên bản** | v1.16 — reconcile immutable Chat authority/`PLAN_READY`, regional auto-reconcile denominator và current product/status pointers; không claim CRM runtime |
+| **Ngày** | 28/07/2026 |
 | **Người soạn** | Codex |
 | **Người duyệt** | Ngoc-Anh |
 | **Trạng thái** | Draft để review |
-| **Tài liệu liên quan** | `BRD.md` v3.9f · `PRD.md` v2.8e · `TDD.md` v3.1 · `ROADMAP.md` v3.3e · `../features/README.md` v2.34 · `../strategy/gtm-strategy.md` · `../standards/business-rules.md` v1.20 · `../standards/decisions.md` v1.74 |
+| **Tài liệu liên quan** | `BRD.md` v3.9n · `PRD.md` v2.8m · `TDD.md` v3.1h · `ROADMAP.md` v3.4l · `../features/README.md` current · `../strategy/gtm-strategy.md` · `../standards/business-rules.md` current · `../standards/decisions.md` v2.11 current mirror · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md` |
 | **Nguồn tham khảo bên ngoài** | Mixpanel — "25+ ecommerce product metrics to track today" (Jun 2, 2026): https://mixpanel.com/blog/ecommerce-product-metrics/ |
 
 > Tài liệu này mô tả dashboard **nội bộ** để quản lý Plexco như một business/platform. Nó không thay thế host dashboard (`/dashboard`) của tenant, player view (`/me`) hoặc marketplace (`/discover`). Khi conflict: core BRD/PRD/business-rules thắng về scope, quyền dữ liệu và security.
+>
+> **Current boundary (28/07/2026):** DD-91 đặt In-app Chat làm primary daily player surface mục tiêu;
+> primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY` và
+> Chat/CRM runtime chưa có. Auto-reconcile metrics
+> chỉ có nghĩa trên cohort đủ `payment_reconcile_auto` **và** market/provider/bank/currency/consent;
+> current provider authority mới là `sepay|apipay` tại Việt Nam, còn mark-paid thủ công là global
+> baseline. Shared job infrastructure/`0024` không chứng minh dashboard hay analytics pipeline đã build.
 
 ---
 
@@ -411,7 +418,7 @@ Data rules:
 - Amounts can be bucketed in aggregate analytics; exact amounts only in privileged detail view.
 - Never classify unmatched as paid or safe.
 - Payment and billing ledgers remain separate.
-- **Manual mark-paid (tiền mặt / CK, tap/multi-select) is available on all tiers (DD-40); auto-reconcile CK is `host_pro`.** Allocation `source ∈ auto|manual|cash|waiver|reversal` (canonical enum — **no `bank_transfer`**): tiền mặt → `source='cash'` (no bank_transaction); CK host-confirmed → `source='manual'` (linked to a `bank_transaction`); auto-reconcile → `source='auto'`. Free-tier tenants show high manual/cash-allocation share by design (not a risk signal).
+- **Manual mark-paid (tiền mặt / CK, tap/multi-select) is available globally on all tiers (DD-40).** Auto-reconcile requires both `host_pro` entitlement and an eligible market/provider/bank/currency/consent/runtime path. Allocation `source ∈ auto|manual|cash|waiver|reversal` (canonical enum — **no `bank_transfer`**): tiền mặt → `source='cash'` (no bank_transaction); CK host-confirmed → `source='manual'` (linked to a `bank_transaction`); auto-reconcile → `source='auto'`. Segment/rate denominators must exclude capability-ineligible tenants rather than treating them as failures.
 
 ### MODULE 8 — Billing & Revenue Dashboard
 
@@ -447,8 +454,8 @@ Required metrics:
 |---|---|
 | **Zalo** | bot connected/active/drift/error, command volume, number reply success, DM reachability, provider failures |
 | **Facebook Messenger** | Page connected/active/drift/error, App Review status, quick-reply join success, 24h-window reachability, provider failures |
-| **Web** | active sessions (Google/email), SSE reconnects, onboarding step drop-off, chat in-app volume (DD-38 ✅) |
-| **SePay/ApiPay** | connection status, webhook active, ingest success/failure, token drift |
+| **Web / In-app Chat target** | active sessions (Google/email), SSE reconnects, onboarding step drop-off; khi DD-91 runtime land mới đo chat command/DM/club-channel adoption và external→in-app migration |
+| **SePay/ApiPay (VN)** | connection status, webhook active, ingest success/failure, token drift; split entitlement-eligible vs capability-available vs runtime-enabled |
 | **Sync engine** | command volume, projector success/failure, lag p50/p95/p99, DLQ count, reproject count |
 | **Notification** | reminder/confirmation/correction sent; waitlist derivation owner-alerts; sent/skipped/failed/**unknown** theo route (web + Zalo chính; Messenger best-effort 24h); quiet-hour skips; proven-failure rate; unknown reconciliation age/outcome — không gộp ambiguous vào failed hoặc kích hoạt fallback |
 
@@ -525,7 +532,7 @@ Recommended default segments:
 - **Host activation:** signed up, no first session in 24h.
 - **Host retention:** first session done, no second session in 7d.
 - **High-potential host:** >=2 sessions/week and unpaid/free.
-- **Upgrade candidate:** `free` with active usage needing auto-reconcile / auto-reminders / AI (host_pro features — DD-29).
+- **Upgrade candidate:** `free` with active usage needing auto-reminders/AI, hoặc auto-reconcile chỉ khi exact market/provider/bank/currency capability is available (host_pro features — DD-29).
 - **At-risk host:** active before, no session in 14d or connector broken.
 - **Liquidity champion:** host with repeated sessions and good attendance close rate.
 - **Reliable player:** high attendance, no recent negative events.
@@ -825,7 +832,7 @@ Audit is required for:
 ### 17.1 Assumptions
 
 - Canonical store là PostgreSQL/domain model; mọi aggregate phải tái tạo được từ canonical events/tables (NFR-CRM-S2), dashboard không tự sinh state.
-- Sync engine (command → projector) đã hoạt động và phát event lifecycle như §9.1 mô tả.
+- Sync engine (command → projector) là dependency mục tiêu của dashboard, **chưa hoạt động end-to-end**: shared job lease/ack, preflight, dispatcher và scheduler đã merge nhưng schedule mặc định OFF, delivery còn placeholder và chưa có domain producer/real projector/replay. CRM không được giả định lifecycle events tồn tại trước khi dependency này được implement + enable riêng.
 - Giai đoạn beta onboard thủ công từng cell; quy mô thực tế ≪ ngưỡng `>1,000 tenants` ở NFR-CRM-S5 (ngưỡng đó là target chịu tải tương lai, không phải quy mô hiện tại).
 - Có sẵn nhân sự ops/founder tiêu thụ dashboard; dashboard không thay người ra quyết định.
 
@@ -835,7 +842,7 @@ Audit is required for:
 |---|---|---|
 | **Event instrumentation còn thiếu** — attendance, fill-slot, CRM notes (§9.2) chưa tồn tại | Chưa có | Module 4/6/10/12; là khối việc lớn của Phase CRM-0, **rủi ro chính của cả dự án** |
 | Billing lifecycle events (`billing_*`) phát đầy đủ | Cần xác nhận | Module 8, MRR/churn |
-| Sync SLO events (`sync_slo_breach`, lag) | Cần xác nhận | Module 9, alert §12 |
+| Sync SLO events (`sync_slo_breach`, lag) | Chưa có — blocked bởi domain producer/real projector/replay + enablement của shared job path | Module 9, alert §12 |
 | Identity/merge events | Một phần | Module 4 trust/merge |
 | Timezone/calendar rule cho "local day close" | Đã chốt ở §9.4 | Mọi daily KPI/cohort |
 
@@ -870,6 +877,8 @@ Audit is required for:
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-28 | v1.16 | Refresh current refs and mirror primary plan v1.8 `PLAN_READY` at `90d292d`; retain per-slice `CODE_READY`, regional auto-reconcile denominator and no-CRM-runtime boundary. |
+| 2026-07-27 | v1.15 | Refresh current refs; add DD-91 target/no-runtime boundary and capability-eligible denominator for regional auto-reconcile. Manual mark-paid stays global; no CRM runtime claim. |
 | 2026-07-19 | v1.14 | Pointer refresh: decisions v1.67→v1.74 · BRD v3.9f · PRD v2.8e · ROADMAP v3.3e · feature index v2.34. No CRM scope/runtime change. |
 | 2026-07-19 | v1.13 | Ref-only sync tới feature index v2.29 · business rules v1.20 · decisions v1.67 · PRD v2.8c. No CRM scope/runtime change. |
 | 2026-07-18 | v1.12 | Ref-only sync sau notification review: feature index v2.26 · business rules v1.17 · current decisions v1.51 (DD-70..72 notification + DD-73..78 share/activity đều còn proposal theo authority). No CRM scope/runtime change. |

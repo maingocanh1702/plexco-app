@@ -4,7 +4,7 @@
 
 > **Canonical phase:** P4 (đề xuất — dựng sớm hạ tầng `chat_*`)
 > **Track:** 💬 In-app Chat
-> **Version:** 0.14 · 2026-07-28
+> **Version:** 0.15 · 2026-07-28
 > **Status:** ✅ Reviewed — final Product contract, pending migration
 > **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web/app surface + sync engine · **DD-07** (SSE + `LISTEN/NOTIFY`) · P3.5 identity (Person/Membership)
@@ -29,9 +29,9 @@ Chat **chỉ sống trong Plexco** (web + surface app của Plexco), **KHÔNG br
 
 **Tái dùng hạ tầng:** dùng **chung bộ bảng `chat_*`** mà trợ lý AI (DD-19 pha B, DD-20) sẽ tái dùng ở **P7** (bot-participant `author_type='assistant'`). DD-38 chỉ **đảo thứ tự** — dựng hạ tầng chat người↔người sớm ở P4 thay vì P7. **Không tạo model song song.**
 
-**Execution ownership theo primary-surface plan v1.7:** colliding DB worktrees serialize `chat-definer-role-provisioning` (1) → `chat-dm-safety-authority-core` (2) → `dd38-dd86-chat-schema-core` (3) → `tenant-capability-authority-core` (4). Sau đó explicit dependency là club lifecycle (5) → safe target core (9) → club moderation (6) → shared-message core (7) → DM lifecycle (8); stable catalog ID không phải execution order. Slice 4 sở hữu closed DD-56 registry, least-privilege preset, grant expiry/revocation và **append-only grant audit**. Slice 9 sở hữu short-lived requester+channel-bound opaque target ref + safe label và consume-time resolver cho mention/mute/start-DM; không global/fuzzy people search, raw UUID, persistent directory hoặc PII.
+**Execution ownership theo primary-surface plan v1.8:** colliding DB worktrees serialize `chat-definer-role-provisioning` (1) → `chat-dm-safety-authority-core` (2) → `dd38-dd86-chat-schema-core` (3) → `tenant-capability-authority-core` (4). Sau đó explicit dependency là club lifecycle (5) → safe target core (9) → club moderation (6) → shared-message core (7) → DM lifecycle (8); stable catalog ID không phải execution order. Slice 4 sở hữu closed DD-56 registry, least-privilege preset, grant expiry/revocation và **append-only grant audit**. Slice 9 sở hữu short-lived requester+channel-bound opaque target ref + safe label và consume-time resolver cho mention/mute/start-DM; không global/fuzzy people search, raw UUID, persistent directory hoặc PII.
 
-Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt sở hữu channel list/create/update, default/archive, history/send/read, DM list/create, block/report, safe current-member target, reaction, own edit/delete, authorized search, upload/status, attachment read/delete, club moderation và slash/private picker. Sau F0 tracked design authority, F1–F10 sở hữu channel shell, safe target picker, history/realtime, text composer, requester command overlay, private bot/mention, message interactions, search, media và safety/moderation. Adapter/UI chỉ gọi canonical mechanism owner, không tái dựng authz, membership, moderation, unread hay command state. Initiative vẫn `NOT_PLAN_READY`, runtime = 0 cho tới immutable authority re-pin và strict per-slice `CODE_READY`.
+Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt sở hữu channel list/create/update, default/archive, history/send/read, DM list/create, block/report, safe current-member target, reaction, own edit/delete, authorized search, upload/status, attachment read/delete, club moderation và slash/private picker. Sau F0 tracked design authority, F1–F10 sở hữu channel shell, safe target picker, history/realtime, text composer, requester command overlay, private bot/mention, message interactions, search, media và safety/moderation. Adapter/UI chỉ gọi canonical mechanism owner, không tái dựng authz, membership, moderation, unread hay command state. Initiative `PLAN_READY` tại authority `90d292d`, nhưng runtime = 0, B4/worktree chưa author và từng slice vẫn phải strict `CODE_READY`.
 
 ### Bất biến
 
@@ -239,6 +239,7 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v0.15 | Re-pin primary-surface plan v1.8 `PLAN_READY` tại immutable authority `90d292d`, closure 12/12. Giữ runtime = 0, B4/worktree chưa author và strict per-slice `CODE_READY`; không đổi Product contract. |
 | 2026-07-28 | v0.14 | Mirror executable ownership từ primary-surface plan v1.7: serialize actual DB lane `1→2→3→4`, rồi Chat chain `5→9→6→7→8`; pin slice 4 DD-56 closed registry + append-only grant audit, slice 9 safe current-channel member target trước các consumer, A1–A13 HTTP owners và F1–F10 FE owners sau F0. Giữ `NOT_PLAN_READY`, runtime = 0 tới immutable re-pin + strict per-slice `CODE_READY`. |
 | 2026-07-28 | v0.13 | Owner-final DD-86/DD-91..95: Assistant defaults true `all_members`/false `admins_only`; exact emoji reactions, bounded own edit/soft-delete/authorized search; zero-arg slash catalog × surface; generic coalesced digest; club-only moderation. DD-88 remains broader proposal. Migration/runtime remain not started. |
 | 2026-07-28 | v0.12 | Restore owner-final v1 floor after removing an unratified expansion; superseded editorially by v0.13 without semantic change. |

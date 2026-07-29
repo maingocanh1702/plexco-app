@@ -9,6 +9,10 @@
 > **Mục đích:** chốt các DD còn lại ở **decision level** (contract + enforce point + money/PII-safety + dependency), ground vào canonical. Chi tiết SQL/tests → slice riêng khi build (pattern DD-46/41).
 > **Ngày:** 2026-07-13 · **Re-check:** 2026-07-19 · **Owner decisions:** DD-32=**A (phễu mềm)**, DD-42=**per-tenant**, DD-47/48=**framework, build P4+**. Còn lại (05/06/43/44/45) = duyệt đề xuất; DD-49 supersedes DD-45 default rejoin reject.
 > **Canonical:** `packages/db/schema.ts` + migrations · `feature_session_management` · `feature_cross_club_join` · `feature_marketplace_discovery` (whitelist) · DD-08/39/41/46/**49**. Ghi → `decisions.md`.
+>
+> **Supersession note (2026-07-28):** đây là quick-ref theo snapshot 13–19/07, không phải living
+> implementation status. Dùng `decisions.md` cho authority và `HANDOFF.md`/`BUILD-STATUS.md`/`ROADMAP.md`
+> cho live repo truth tại `main@784bc8d`.
 
 ---
 

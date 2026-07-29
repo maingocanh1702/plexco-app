@@ -1,3 +1,5 @@
+<!-- review-readiness: historical -->
+
 # Docs & Feature Docs Update Ledger — Sessions 2026-07-17
 
 > **Generated:** 2026-07-17  
@@ -6,6 +8,10 @@
 > **Baseline:** local `HEAD = main = local origin/main = 21e42ea` before these uncommitted docs changes; no fetch was performed while producing this ledger.
 >
 > **Postscript 2026-07-18:** đây là historical ledger. Current authority đã lên decisions v1.47: DD-33/DD-60 accepted; DD-57..59 deferred; DD-61..64 accepted-in-principle (Session Organize v0.5, no runtime); DD-69 accepted direction. Khi body bên dưới nói “proposal/pending owner”, dòng đó chỉ mô tả snapshot 17/07 và đã superseded.
+>
+> **Postscript 2026-07-28:** ledger tiếp tục chỉ là historical evidence. Live authority/status nay ở
+> `decisions.md`, `HANDOFF.md`, `BUILD-STATUS.md` và `ROADMAP.md` tại `main@784bc8d`; không dùng baseline,
+> WIP state hoặc task chronology bên dưới để suy ra runtime/readiness hiện hành.
 
 ## 1. Scope and status semantics
 
@@ -14,9 +20,9 @@ This file records every documentation artifact updated in the requested task his
 | Status | Meaning |
 |---|---|
 | **Audit-only** | The task reviewed files and produced findings but did not edit them. |
-| **Candidate / HALT** | The change exists only in a feature worktree that has not been committed or merged. It is not current `main` truth. |
-| **Current local docs** | The change exists in the Plexco root working tree on `main`, but is not staged, committed or pushed. |
-| **Merged external repo** | The documentation change was committed and pushed in another repository. |
+| **Candidate / HALT** | At the recorded snapshot, the change existed only in a feature worktree and was never current `main` truth. The identity-link worktree below no longer exists; its verified recovery patch is archived separately and remains non-authoritative. |
+| **Current local docs** | At the recorded snapshot, the change existed in the Plexco root working tree on `main`, but was not staged, committed or pushed. |
+| **Merged external repo** | At the recorded snapshot, the documentation change had been committed and pushed in another repository. |
 
 Important identity note: **“session này” is not a third task UUID**. The active task is still `019f6efb-0a40-7170-bb27-81fb68a4e2cf`; the current continuation only creates this ledger after the feature-doc closure turn. It is listed separately below to preserve the requested chronology without double-counting the same task.
 
@@ -41,43 +47,52 @@ The follow-up attempted a manual P0 security slice in:
 
 `/Users/maingocanh/Projects/Plexco app/.autopilot/worktrees/identity-link-security-core`
 
-> ⚠️ **Cập nhật 2026-07-19 — candidate này giờ là bản duy nhất và không được git bảo vệ.**
+> ⚠️ **Cập nhật 2026-07-19 — tại thời điểm đó candidate là bản duy nhất và không được git bảo vệ.**
 >
 > - **Không còn là git worktree.** `.git/worktrees/identity-link-security-core` đã biến mất → `git -C <dir> status` trả `fatal: not a git repository`. `git worktree list` báo *prunable* chính vì lý do này.
 > - **Không recover được từ branch.** Branch `feat/identity-link-security-core` vẫn ở `21e42ea` và **chỉ có `0000–0013`**; toàn bộ 27 file candidate chưa từng được commit.
 > - **Git không nhìn thấy thư mục.** `.gitignore:56` có `.autopilot/*`, nên nội dung không nằm trong bất kỳ commit/stash/reflog nào.
-> - ⇒ 292 file trong thư mục đó là **bản sao duy nhất**. Một lệnh `rm -rf` là mất vĩnh viễn, và `git worktree prune` **không** dọn nó (prune chỉ xoá metadata đã mất sẵn). Muốn giữ thì phải commit vào một branch thật hoặc archive ra ngoài `.autopilot/`.
-> - Mọi link `../.autopilot/worktrees/...` trong file này (20 link) hiện **vẫn mở được**, nhưng chỉ nhờ thư mục còn trên đĩa — không phải nhờ git.
+> - ⇒ Tại snapshot 19/07, delta 27 file candidate chưa nằm trong branch/stash/reflog và worktree là bản làm việc duy nhất.
+>
+> ⚠️ **Supersession 2026-07-27:** thư mục candidate không còn trên đĩa và chưa từng merge, nhưng recovery
+> artifact đã được track trên `main`: [`docs/archive/identity-link-security-core-candidate-2026-07-19.patch`](archive/identity-link-security-core-candidate-2026-07-19.patch).
+> `docs/archive/README.md` xác nhận patch apply lên `21e42ea` tái tạo byte-for-byte đúng 27 file candidate.
+> Patch chỉ là bằng chứng phục hồi, **không phải authority/readiness/runtime**; muốn revive phải đi từ
+> default branch hiện tại, đánh số migration monotonic mới và review lại toàn bộ slice. Các path trong
+> hai bảng dưới đây chỉ là historical path, không phải link còn mở được.
 
-The worktree still points at base commit `21e42ea`, has no feature commit, and contains staged candidate changes. The slice stopped at `HALT MAX_ROUNDS`; therefore every item in this subsection is **candidate-only**.
+Tại snapshot 2026-07-19, candidate từng dựa trên commit `21e42ea`, không có feature commit và có staged
+changes. Slice dừng ở `HALT MAX_ROUNDS`; đến 2026-07-27 worktree gốc đã mất khỏi disk nhưng delta còn
+được bảo toàn trong patch archive nêu trên. Mọi item trong subsection này vẫn chỉ là
+**historical candidate record**, không phải current source.
 
 #### Feature-doc candidates
 
 | Feature | Product candidate | BE candidate | Candidate update |
 |---|---|---|---|
-| Feature index | [README candidate](../.autopilot/worktrees/identity-link-security-core/docs/features/README.md) `v2.13` content update, no bump | — | Marked the proposed identity/channel security baseline and migration dependency. |
-| Channel Booking Funnel | [Product candidate](../.autopilot/worktrees/identity-link-security-core/docs/features/feature_channel_booking_funnel.md) `0.4 → 0.5` | No BE companion | Mirrored provider-scoped channel keys and protected connector-secret ownership. |
-| Connector Onboarding | [Product candidate](../.autopilot/worktrees/identity-link-security-core/docs/features/feature_connector_onboarding.md) `0.5 → 0.6` | [BE candidate](../.autopilot/worktrees/identity-link-security-core/docs/features/BE/feature_connector_onboarding_tech.md) `0.2 → 0.3` | Replaced raw Zalo routing token/inline secrets with HMAC lookup, secret-free metadata and narrow KMS-backed accessors. |
-| Identity | [Product candidate](../.autopilot/worktrees/identity-link-security-core/docs/features/feature_identity.md) `1.4 → 1.5` | [BE candidate](../.autopilot/worktrees/identity-link-security-core/docs/features/BE/feature_identity_tech.md) `1.3 → 1.4` | Added provider-endpoint-scoped identity, row-locked issuer/person proof, terminal link-code lifecycle and protected secret boundary. |
-| Notifications | Product unchanged | [BE candidate](../.autopilot/worktrees/identity-link-security-core/docs/features/BE/feature_notifications_reminders_tech.md) `2.2 → 2.3` | Required exact provider-scope plus user hash for owner-alert recipient lookup; removed ambiguous two-part lookup. |
-| Player Messenger | [Product candidate](../.autopilot/worktrees/identity-link-security-core/docs/features/feature_player_messenger.md) `0.3 → 0.4` | [BE candidate](../.autopilot/worktrees/identity-link-security-core/docs/features/BE/feature_player_messenger_tech.md) `0.2 → 0.3` | Split Page-scope and user HMAC, moved Page token/App Secret to their intended boundaries, and pinned one-way account linking. |
-| Tenant Routing/AuthZ | [Product candidate](../.autopilot/worktrees/identity-link-security-core/docs/features/feature_tenant_routing_authz.md) `2.3 → 2.4` | [BE candidate](../.autopilot/worktrees/identity-link-security-core/docs/features/BE/feature_tenant_routing_authz_tech.md) `2.2 → 2.3` | Added token-HMAC routing, endpoint scope and protected secret accessor rules. |
-| Web Auth/Onboarding | [Product candidate](../.autopilot/worktrees/identity-link-security-core/docs/features/feature_web_auth_onboarding.md) `2.5 → 2.6` | BE unchanged | Made onboarding write HMAC metadata and protected credentials through a narrow service. |
-| Zalo Channel | Product unchanged | [BE candidate](../.autopilot/worktrees/identity-link-security-core/docs/features/BE/feature_zalo_channel_tech.md) `2.1 → 2.2` | Added secret-free routing metadata, provider-scoped identity, KMS rotation and verify-before-dispatch rules. |
+| Feature index | Historical path: `.autopilot/worktrees/identity-link-security-core/docs/features/README.md`; `v2.13` content update, no bump | — | Marked the proposed identity/channel security baseline and migration dependency. |
+| Channel Booking Funnel | Historical path: `.autopilot/worktrees/identity-link-security-core/docs/features/feature_channel_booking_funnel.md`; `0.4 → 0.5` | No BE companion | Mirrored provider-scoped channel keys and protected connector-secret ownership. |
+| Connector Onboarding | Historical path: `.autopilot/worktrees/identity-link-security-core/docs/features/feature_connector_onboarding.md`; `0.5 → 0.6` | Historical path: `.autopilot/worktrees/identity-link-security-core/docs/features/BE/feature_connector_onboarding_tech.md`; `0.2 → 0.3` | Replaced raw Zalo routing token/inline secrets with HMAC lookup, secret-free metadata and narrow KMS-backed accessors. |
+| Identity | Historical path: `.autopilot/worktrees/identity-link-security-core/docs/features/feature_identity.md`; `1.4 → 1.5` | Historical path: `.autopilot/worktrees/identity-link-security-core/docs/features/BE/feature_identity_tech.md`; `1.3 → 1.4` | Added provider-endpoint-scoped identity, row-locked issuer/person proof, terminal link-code lifecycle and protected secret boundary. |
+| Notifications | Product unchanged | Historical path: `.autopilot/worktrees/identity-link-security-core/docs/features/BE/feature_notifications_reminders_tech.md`; `2.2 → 2.3` | Required exact provider-scope plus user hash for owner-alert recipient lookup; removed ambiguous two-part lookup. |
+| Player Messenger | Historical path: `.autopilot/worktrees/identity-link-security-core/docs/features/feature_player_messenger.md`; `0.3 → 0.4` | Historical path: `.autopilot/worktrees/identity-link-security-core/docs/features/BE/feature_player_messenger_tech.md`; `0.2 → 0.3` | Split Page-scope and user HMAC, moved Page token/App Secret to their intended boundaries, and pinned one-way account linking. |
+| Tenant Routing/AuthZ | Historical path: `.autopilot/worktrees/identity-link-security-core/docs/features/feature_tenant_routing_authz.md`; `2.3 → 2.4` | Historical path: `.autopilot/worktrees/identity-link-security-core/docs/features/BE/feature_tenant_routing_authz_tech.md`; `2.2 → 2.3` | Added token-HMAC routing, endpoint scope and protected secret accessor rules. |
+| Web Auth/Onboarding | Historical path: `.autopilot/worktrees/identity-link-security-core/docs/features/feature_web_auth_onboarding.md`; `2.5 → 2.6` | BE unchanged | Made onboarding write HMAC metadata and protected credentials through a narrow service. |
+| Zalo Channel | Product unchanged | Historical path: `.autopilot/worktrees/identity-link-security-core/docs/features/BE/feature_zalo_channel_tech.md`; `2.1 → 2.2` | Added secret-free routing metadata, provider-scoped identity, KMS rotation and verify-before-dispatch rules. |
 
 #### Other documentation candidates
 
 | File | Candidate update |
 |---|---|
-| [Identity model candidate](../.autopilot/worktrees/identity-link-security-core/docs/00-start-here/identity-model.md) | Added the “v3.5 security boundary”: endpoint-scoped identity, link-code issuer/lifecycle and connector-secret ownership. |
-| [Messenger channel design candidate](../.autopilot/worktrees/identity-link-security-core/docs/channels/messenger/messenger-channel-design.md) | `v2.1 → v2.2`; mirrored Page-scoped identity, raw-body webhook verification and App-vs-Page secret ownership. |
-| [Zalo README candidate](../.autopilot/worktrees/identity-link-security-core/docs/channels/zalo/README.md) | `v0.4 → v0.5`; mirrored HMAC route lookup, encrypted current/pending credentials and fail-closed rotation. |
-| [PRD candidate](../.autopilot/worktrees/identity-link-security-core/docs/product/PRD.md) | `v2.5 → v2.6`; propagated the proposed secure link and channel behavior into user flows. |
-| [TDD candidate](../.autopilot/worktrees/identity-link-security-core/docs/product/TDD.md) | `v2.6 → v2.7`; propagated three-part identity keys, link-code invariants and secret-table architecture. |
-| [BUILD-STATUS candidate](../.autopilot/worktrees/identity-link-security-core/docs/standards/BUILD-STATUS.md) | Recorded candidate migration `0014`, 55 migrated tables, 15 migrations and the 53-table mirror while keeping channel/link runtime pending. ⚠️ **Số `0014` nay đã bị chiếm** bởi `0014_players_waitlist.sql` (DD-45, commit `1a6ac38` trên `feat/session-waitlist-expand`). File candidate `0014_identity_channel_security.sql` phải **đánh số lại** theo số monotonic còn trống tại lúc revive — hai file `0014_*` khác tên sẽ **cùng apply** chứ không báo lỗi, nên collision này im lặng. |
-| [DB ERD candidate](../.autopilot/worktrees/identity-link-security-core/packages/db/ERD.md) | Mirrored 55 SQL tables, 78 physical FKs, 53 diagrammed tables and link-code lock ordering. |
-| [DB README candidate](../.autopilot/worktrees/identity-link-security-core/packages/db/README.md) | Documented candidate global-protected identity/link/secret tables and grants. |
-| [DBML candidate](../.autopilot/worktrees/identity-link-security-core/packages/db/db.dbml) | Mirrored the proposed physical schema for diagramming. |
+| Historical path: `.autopilot/worktrees/identity-link-security-core/docs/00-start-here/identity-model.md` | Added the “v3.5 security boundary”: endpoint-scoped identity, link-code issuer/lifecycle and connector-secret ownership. |
+| Historical path: `.autopilot/worktrees/identity-link-security-core/docs/channels/messenger/messenger-channel-design.md` | `v2.1 → v2.2`; mirrored Page-scoped identity, raw-body webhook verification and App-vs-Page secret ownership. |
+| Historical path: `.autopilot/worktrees/identity-link-security-core/docs/channels/zalo/README.md` | `v0.4 → v0.5`; mirrored HMAC route lookup, encrypted current/pending credentials and fail-closed rotation. |
+| Historical path: `.autopilot/worktrees/identity-link-security-core/docs/product/PRD.md` | `v2.5 → v2.6`; propagated the proposed secure link and channel behavior into user flows. |
+| Historical path: `.autopilot/worktrees/identity-link-security-core/docs/product/TDD.md` | `v2.6 → v2.7`; propagated three-part identity keys, link-code invariants and secret-table architecture. |
+| Historical path: `.autopilot/worktrees/identity-link-security-core/docs/standards/BUILD-STATUS.md` | Recorded candidate migration `0014`, 55 migrated tables, 15 migrations and the 53-table mirror while keeping channel/link runtime pending. Migration authority has since advanced through `0024`; if the candidate is revived from the verified archive patch, it must use the next monotonic migration number then available rather than reuse `0014`. |
+| Historical path: `.autopilot/worktrees/identity-link-security-core/packages/db/ERD.md` | Mirrored 55 SQL tables, 78 physical FKs, 53 diagrammed tables and link-code lock ordering. |
+| Historical path: `.autopilot/worktrees/identity-link-security-core/packages/db/README.md` | Documented candidate global-protected identity/link/secret tables and grants. |
+| Historical path: `.autopilot/worktrees/identity-link-security-core/packages/db/db.dbml` | Mirrored the proposed physical schema for diagramming. |
 
 #### Why the candidate did not become authority
 
@@ -100,7 +115,7 @@ The first pass reviewed all **22 Product/System specs + 21 BE specs** against de
 
 The verification baseline was green (`lint`, `typecheck`, `format`, production build and 223 tests), but that only proved the implemented foundation/auth baseline—not the unimplemented feature contracts.
 
-### 3.2 Fix turns — current local Plexco docs
+### 3.2 Fix turns — local Plexco docs at the 2026-07-17 snapshot
 
 The follow-up closure updated **75 Markdown files before this ledger was added**:
 
@@ -233,7 +248,7 @@ The subsequent review-fix closure reconciled the four detected drifts across the
 | Live schema truth | `features/BE/feature_multi_tenant_tech.md` `1.4 → 1.5`; `features/BE/feature_sync_engine_tech.md` `2.3 → 2.4` | Mirrors the live `sessions` table exactly and records command/outbox uniqueness as existing migration `0005` truth rather than a new rollout migration. |
 | Canonical mirrors/status | `product/TDD.md` v3.1; `standards/BUILD-STATUS.md`; `features/README.md` v2.22 | Propagates the Zalo security/live-vs-target and CAS lifecycle boundary, preserves implementation-pending status and refreshes every affected version reference within the still-uncommitted v2.22 closure batch. |
 
-The current Plexco root working tree contains **73 tracked modified docs (`+2,565 / -1,338`) + 3 untracked docs** (the two Session Organize specs plus this ledger). It still contains no code/schema/migration/config/test changes from task `019f6efb…`; the SQL/pseudocode/tests in these specs are target implementation contracts, not an implemented migration/runtime.
+At the closure snapshot, the Plexco root working tree contained **73 tracked modified docs (`+2,565 / -1,338`) + 3 untracked docs** (the two Session Organize specs plus this ledger). It contained no code/schema/migration/config/test changes from task `019f6efb…`; the SQL/pseudocode/tests in these specs were target implementation contracts, not an implemented migration/runtime.
 
 Post-review verification for this closure passed: `git diff --check`, full-repo Prettier, lint and typecheck; 140 Markdown files/141 local links had zero missing targets, unbalanced fences or affected feature-version mismatches; the stale connector-contract sweep found zero legacy `secret` writes, broad `status <> active` flips, connecting-state blanket rejects or single-secret rotation promotion wording.
 
@@ -247,11 +262,14 @@ The user also supplied a successful `ap-land` log for `/Users/maingocanh/Project
 
 Context only: the associated code refactor landed at `84f5f88`; worktree, feature branch and scope reservation were removed. Railway deployment was triggered if the repo auto-deploys from `main`, but actual deployment health was not verified in these Plexco tasks.
 
-## 6. Consolidated current truth
+## 6. Consolidated truth at the 2026-07-18 closure snapshot
+
+Current truth is the 27/07 supersession at the top of this ledger plus `HANDOFF.md`, `BUILD-STATUS.md` and
+`ROADMAP.md`; the numbered list below is retained only as the closure snapshot.
 
 1. **Current authority (postscript 18/07):** decisions `v1.47/DD-69`, BRD `v3.9d`, PRD `v2.8b`, TDD `v3.1`, ROADMAP `v3.3b`, business rules `v1.16`, feature index `v2.23`.
 2. **Plexco implementation truth did not advance in these docs turns.** The root change is documentation-only; migrations/services/adapters/projectors described by the specs remain pending unless they already existed before this review.
 3. **Session Organize is accepted-in-principle, not implemented.** Its `v0.5` Product/BE files do not prove runtime; build remains post-P4 after Session CRUD/Sync and DD-56 registry/grant prerequisites.
-4. **The `identity-link-security-core` worktree is still HALTed and unmerged.** Its migration/schema/test candidates must not be cited as current `main` behavior.
-5. **No Plexco file in this ledger has been staged, committed or pushed by the docs-closure task.**
+4. **The original `identity-link-security-core` slice HALTed and never merged; its worktree is now gone.** A byte-for-byte verified recovery patch is tracked under `docs/archive/`, but remains non-authoritative; its migration/schema/test candidates must not be cited as current `main` behavior.
+5. **At this closure snapshot, no Plexco file in this ledger had been staged, committed or pushed by the docs-closure task.**
 6. **The Clawbot backlog reconciliation is different:** it was committed and pushed at `da08073`.

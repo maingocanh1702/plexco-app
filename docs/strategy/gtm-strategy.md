@@ -1,11 +1,20 @@
 # Plexco - GTM Strategy (Internal)
 
-**Ngày cập nhật:** 21/06/2026  
+**Ngày cập nhật:** 28/07/2026
 **Đối tượng:** Internal team  
 **Niche khởi đầu:** Kèo thể thao cộng đồng, ưu tiên cầu lông và pickleball  
 **Trạng thái:** Strategy + beta operating plan
 
 > **Cập nhật 10/07/2026 (DD-37 / BRD v3.4):** kênh Plexco phase-1 = **Zalo + Facebook Messenger + web** (bỏ Telegram; Messenger nay là phase-1, không còn post-MVP). Các đoạn nhắc Telegram như **nơi cộng đồng đang sinh hoạt** (market reality) giữ nguyên; các đoạn **fallback/kênh Plexco tự xây** đã đổi Telegram→Messenger.
+>
+> **Cập nhật 28/07/2026 (DD-91 + regional reconciliation):** luận điểm acquisition vẫn là
+> host-first và gặp cộng đồng ở external chat; target dài hạn nay là chuyển daily use sang **In-app
+> Chat** sau khi safety/runtime/exit gates đóng. Primary plan v1.8 đã `PLAN_READY` tại immutable authority
+> `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY` và chưa có runtime, nên không đổi beta promise
+> hay launch flow. Host Pro không được quảng bá
+> auto-reconcile như capability toàn cầu: mark-paid thủ công là global baseline; auto-reconcile chỉ
+> `Available` khi entitlement + market/provider/bank/currency/consent/runtime cùng pass. Current
+> provider authority mới là `sepay|apipay` cho Việt Nam.
 
 ---
 

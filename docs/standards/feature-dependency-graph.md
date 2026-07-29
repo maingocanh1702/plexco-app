@@ -1,17 +1,17 @@
 # Feature Dependency Graph — Plexco
 
-> Thứ tự phát triển features cho Plexco platform. Căn cứ `../product/ROADMAP.md` v3.4k + `../product/TDD.md` v3.1g + `decisions.md` v2.10 local WIP.
-> v1.14 · 2026-07-28. Dependency graph vẫn là product order; DD-32 adds one shared booking core before both channel adapters. Node Session Organize v0.5 remains dependency-only.
+> Thứ tự phát triển features cho Plexco platform. Căn cứ `../product/ROADMAP.md` v3.4l + `../product/TDD.md` v3.1h + `decisions.md` v2.11 current mirror.
+> v1.15 · 2026-07-28. Dependency graph vẫn là product order; DD-32 adds one shared booking core before both channel adapters. Node Session Organize v0.5 remains dependency-only.
 
 ## Current delivery overlay — không thay graph authority
 
-| Mechanism | Trạng thái tại `main@2dc9b8c` | Ranh giới |
+| Mechanism | Trạng thái tại `main@784bc8d` | Ranh giới |
 |---|---|---|
 | DB/foundation | `0000`–`0024` merged; `0019`–`0021` tenant-integrity, `0024` Session public-capacity CHECK | `0024` không tạo SessionService/route/projector |
 | Shared job mechanics | `0022` lease/audit + `0023` ack, worker preflight, dispatcher và flagged scheduler đã merge | Schedule mặc định OFF; dispatcher placeholder fail-closed; chưa producer, real projector, controlled replay hay sub-minute drain |
 | F11 Sync engine | Outbox/job substrate có một phần | Chưa có business producer→projector→surface E2E, nên F11 vẫn chưa `IMPLEMENTED` |
 | F22 Channel booking core | Product + BE companion Reviewed in working tree | No intent/hold/occupancy/finalizer runtime; readiness is owned by its implementation plan |
-| In-app Chat target | DD-86/DD-91..95 `DECISION_FINAL`; DD-88 broader proposal; Chat là primary daily player surface, Zalo/Messenger acquisition/fallback | Chat/Assistant/Notification contracts Reviewed; `chat_*` runtime absent; current readiness is owned only by primary plan §13 |
+| In-app Chat target | DD-86/DD-91..95 `DECISION_FINAL`; DD-88 broader proposal; Chat là primary daily player surface, Zalo/Messenger acquisition/fallback | Chat/Assistant/Notification contracts Reviewed; primary plan v1.8 `PLAN_READY` at `90d292d`; `chat_*` runtime absent and every slice still requires strict `CODE_READY` |
 
 Mọi slice tiếp theo vẫn phải re-pin live base và qua readiness gate riêng; bảng này chỉ reconcile trạng thái
 triển khai gần đây.
@@ -425,6 +425,7 @@ F19 → F20
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 28/07/2026 | v1.15 | Re-pin current overlay to `main@784bc8d`, decisions v2.11 and primary plan v1.8 `PLAN_READY` at `90d292d`; retain per-slice `CODE_READY` and no-runtime boundaries. |
 | 28/07/2026 | v1.14 | Reconcile canonical primary-surface mechanism graph `1–47` plus separate API `A1–A21` and tracked-design FE `F0–F15`. Pin actual serialized DB worktrees `1→2→3→4`, then execution `5→9→6→7→8`; add current-channel opaque safe-target/consume-time resolver, split media, registry→private-response→domain adapters, KB generation-CAS chain, full DD-67→DD-72 Web Push chain, and payment intent→producers→Inbox/detail→push. Catalog IDs are not execution order; no runtime/code authorization. |
 | 28/07/2026 | v1.13 | Reconcile DD-56/DD-86/DD-91..95 owner-final: add the missing cross-feature `tenant-capability-authority-core` branch before every Chat capability consumer; DD-95 storage/writers land dark before shared send; reply/mention stay atomic in shared while reaction/edit/search use separate canonical mechanism IDs; DD-93/DD-94/Assistant nodes now use the same IDs as plan and BE. DD-88 leaves critical path. Current readiness is referenced only from primary plan §13. No runtime/code authorization. |
 | 28/07/2026 | v1.12 | Append F22 DD-32 shared channel-booking core and make Messenger/Zalo thin ports depend on it; pin F7/F9/F11/F15 prerequisites and no-runtime boundary. No existing node renumbered. |

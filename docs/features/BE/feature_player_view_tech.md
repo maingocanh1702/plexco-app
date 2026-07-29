@@ -1,7 +1,7 @@
 # Feature: Player View (Person-self) — Backend Tech Spec
 
 > **Canonical phase:** P4.6  
-> **Version:** 2.7 · 2026-07-28
+> **Version:** 2.8 · 2026-07-28
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_player_view.md`  
@@ -11,7 +11,7 @@
 
 > **DD-91 primary-surface boundary:** `getSelfPaymentStatus` là person-self authority duy nhất cho `/api/me/charges`, exact chat `/pay` và authenticated notification detail. Human DM không có tenant authority (`tenant_id=NULL`), nên phải resolve CLB từ own memberships và dùng opaque actor-bound picker khi mơ hồ. Primitive số học dùng chung là `remainingAmount(amountDue, amountAllocated)`; service giữ fail-closed `unknown` cho authz/integrity/dependency failure và không đổi null/unproven thành 0.
 
-> **Execution ownership:** mechanism slices 17 `player-self-charge-read-core`, 18 `player-self-profile-clubs-read-core`, 19 `player-self-sessions-waitlist-read-core`; thin chat composition là 24 `chat-pay-command-adapter`, 25 `chat-profile-navigation-command-adapters`, 26 `chat-session-command-adapters`. Slice 19 đọc trực tiếp baseline `players/memberships/sessions` đã merge, không hard-depend full SessionService và không sở hữu mutation/business rules. Enable `/sessions|/waitlist` beta vẫn bắt buộc strict current-authority packets `svc-session-crud`, `svc-session-join-leave`, `svc-waitlist-promotion-core` + production-shaped data E2E. Pair vẫn Not started; primary initiative `NOT_PLAN_READY` tới immutable authority re-pin.
+> **Execution ownership:** mechanism slices 17 `player-self-charge-read-core`, 18 `player-self-profile-clubs-read-core`, 19 `player-self-sessions-waitlist-read-core`; thin chat composition là 24 `chat-pay-command-adapter`, 25 `chat-profile-navigation-command-adapters`, 26 `chat-session-command-adapters`. Slice 19 đọc trực tiếp baseline `players/memberships/sessions` đã merge, không hard-depend full SessionService và không sở hữu mutation/business rules. Enable `/sessions|/waitlist` beta vẫn bắt buộc strict current-authority packets `svc-session-crud`, `svc-session-join-leave`, `svc-waitlist-promotion-core` + production-shaped data E2E. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`; pair vẫn Not started và từng mechanism slice vẫn phải strict `CODE_READY`.
 
 > **Cập nhật v2.1 (DD-37 ✅, 2026-07-10):** magic-link/bot surfaces phase-1 = **Zalo + Facebook Messenger** (bỏ Telegram); đăng nhập web = Google/email (DD-13). Person-self contract không đổi.
 
@@ -330,6 +330,7 @@ Bot conversation (Zalo/Messenger) → Verify conversation → Issue magic link
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v2.8 | Reconcile immutable authority `90d292d` and primary plan v1.8 `PLAN_READY`; retain per-mechanism `CODE_READY`, beta OFF and no-runtime boundaries. |
 | 2026-07-28 | v2.7 | Mirror exact read owners 17–19 và thin chat adapters 24–26; pin slice 19 authorable từ merged baseline nhưng `/sessions|/waitlist` beta giữ OFF tới ba strict current Session packets + production-shaped data E2E. Add unit #27–28/integration #8; pair remains Not started/no runtime authorization. |
 | 2026-07-27 | v2.6 | Sửa signature `effectiveFee` trong §snippet: v2.5 viết tham số thành object literal `{ fee: number \| null; paid_amount: number \| null }`, thu hẹp so với live `OpenDebt` (`paid_amount?` OPTIONAL, `payments-logic.ts:258`) và bỏ guard `undefined`. Implement đúng chữ sẽ làm bốn caller hiện có (`coverRemaining`, `classifyDeposit`, `classifyIncoming`, `classifyCoverage`) vỡ typecheck — trái ràng buộc "bốn caller giữ nguyên" của DD-91. Chỉ sửa contract snippet; không đổi semantics, không đổi status. |
 | 2026-07-27 | v2.5 | Mirror DD-91: pin `remainingAmount`/`effectiveFee` delegation, canonical `getSelfPaymentStatus` cho web/chat/notification, human-DM opaque requester-only picker và fail-closed `unknown`; thêm parity/privacy/ID-rejection tests. Giữ Reviewed/not implemented. |

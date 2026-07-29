@@ -1,7 +1,7 @@
 # Feature: In-app Chat (club-wide + 1-1) — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.22 · 2026-07-28
+> **Version:** 0.23 · 2026-07-28
 > **Status:** ✅ Reviewed contract — DD-38/DD-55/DD-86/DD-91/DD-92/DD-93/DD-94/DD-95 ratified; pending migration
 > **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_inapp_chat.md` *(Reviewed)*
@@ -1292,7 +1292,7 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 
 Catalog IDs are stable identifiers, not execution order. Runtime work follows explicit hard dependencies:
 
-0. Commit/push/re-pin the exact owner-final authority pack. Reviewed documents still authorize no worktree until that immutable SHA passes the canonical readiness gate.
+0. Exact owner-final authority pack đã commit/push tại `90d292d`; primary plan v1.8 đạt `PLAN_READY` closure 12/12. Trước implementation, author packet/manifest/launcher cho slice 1 và đạt strict slice-local `CODE_READY`; không mở worktree từ verdict cấp initiative.
 1. Serialize the colliding DB worktrees exactly: `1 chat-definer-role-provisioning → 2 chat-dm-safety-authority-core → 3 dd38-dd86-chat-schema-core → 4 tenant-capability-authority-core`. Slice 4 includes closed DD-56 registry/preset, expiring/revocable grant-read authority, append-only grant audit and fail-closed authorization. Do not run these four in parallel.
 2. Land `5 chat-club-channel-lifecycle-core`, then `9 chat-authorized-member-target-read-core`. Slice 9 establishes the only current-channel active-human `{targetRef,safeLabel}` DTO and consume-time resolver before any mention, mute or start-DM consumer.
 3. Land `6 chat-club-moderation-core` **dark**, then `7 chat-shared-message-command-core`, then `8 chat-dm-lifecycle-command-core`: exact execution `5→9→6→7→8`. Shared send consumes the target resolver for mentions; moderation consumes it for mute; DM consumes it for start-DM. No consumer invents a lookup or accepts raw UUID authority.
@@ -1333,6 +1333,7 @@ Catalog IDs are stable identifiers, not execution order. Runtime work follows ex
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v0.23 | Re-pin primary plan v1.8 `PLAN_READY` tại immutable authority `90d292d`; thay gate “commit pack” đã đóng bằng exact next gate: author slice-1 artifacts + strict `CODE_READY` trước worktree. No runtime/migration change. |
 | 2026-07-28 | v0.22 | Reconcile primary-surface execution topology: bounded mechanism catalog `1–47`, separate thin API `A1–A21` and tracked-design FE `F0–F15`; serialize DB worktrees `1→2→3→4`, then lifecycle→safe current-channel target `5→9`→moderation dark `6`→shared send `7`→DM `8`. Add opaque target/ref privacy + consume-time re-authorization tests, split media/registry/KB/Web Push/payment chains, and distinguish Session read authoring from producer/E2E enablement. Retire active bundled media/slash/notification substrate ownership; Reviewed/not implemented unchanged. |
 | 2026-07-28 | v0.21 | Owner-final DD-56/DD-86/DD-92–DD-95: Assistant defaults ON for `all_members`/OFF for `admins_only`, mutable on both behind the full gate; same-channel reply + immutable mentions; exact Unicode reactions; own body edit `<15m`/max five + restricted revisions; irreversible author tombstone; required pre-beta current-visible PostgreSQL `simple` search; ASCII case-insensitive exact eight-command registry; unread-derived generic push/digest with exact preferences/coalescing/cancel/re-auth/sticky attempt and enablement-only timing; club-only exact moderation reasons + `1h|24h|7d` mutes. Semantic freeze adds the missing cross-feature capability-authority branch, makes DD-95 storage/writers a dark prerequisite of shared send, keeps reply/mention atomic in that shared writer, and canonicalizes every slice ID across plan/graph/BE. Requester-only responses use `private, no-store`; Reviewed/not implemented unchanged. |
 | 2026-07-28 | v0.20 | Intermediate working-tree snapshot, superseded in full by the exact owner-final v0.21 contract. |

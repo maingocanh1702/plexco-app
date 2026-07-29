@@ -5,8 +5,15 @@
 > `docs/slice-readiness-verdicts.md`. File này là **ảnh chụp trạng thái thực thi** để senior dev khác
 > resume độc lập.
 >
-> **Snapshot pin:** `main@172dfff` · D0a branch `feat/auth-s4-d0-revoke-core@413b33e` · ghi 2026-07-20.
+> **Original snapshot pin (historical body):** `main@172dfff` · D0a branch
+> `feat/auth-s4-d0-revoke-core@413b33e` · ghi 2026-07-20.
 > **Ngôn ngữ:** giải thích = tiếng Việt; block để paste terminal / prompt cho Claude Code = tiếng Anh.
+>
+> **Live refresh 2026-07-28:** `main@784bc8d` (`main = origin/main`), migrations `0000`–`0024`;
+> suite 32 files / 537 workspace tests + 13 readiness-validator tests. D0a/D0b/D1 Google/d1b đều đã
+> merge. Safari macOS + iOS Safari M3 measured PASS ngày 2026-07-26; engineering/measurement blocker
+> đã đóng, nhưng Google login vẫn chưa có bằng chứng credentials được owner enable/go-live và các gate
+> độc lập (A3 legal/PII/config) vẫn áp dụng. Email provider order 4 còn OFF/chưa build.
 >
 > **✅ CẬP NHẬT 2026-07-20 — D0a ĐÃ MERGE (`8f493f7`):** review loop dừng ở round-12 (owner quyết); squash-merge bằng **owner override** gate 2-clean (manual review + acceptance 22/22 + real-PG 97/97). §4 dưới giữ làm hồ sơ lịch sử vòng review.
 >
@@ -18,9 +25,13 @@
 >
 > **✅ CẬP NHẬT 2026-07-22 — d1b ĐÃ MERGE (`ae8986e`), residual risk ĐÓNG trong code.** Migration `0018` expand-only + completion hop **M3** (landing first-party → auto-POST same-origin → `/complete` chạy `issueSession()` nơi cookie Strict CÓ mặt ⇒ đi nhánh rotate). Handoff trong body POST, chỉ lưu sha256, không cookie; single-use = fence server-side atomic. Suite db 152 · web 146. **Gate ĐẠT ngay lần đầu — 2 vòng sạch, 0 fix-round**, slice duy nhất không thrash. Evidence: Verdict 13.
 >
-> **⛔ Bật Google login: chỉ còn CHỜ ĐO Safari macOS + iOS** cho M3 (probe §7) — Playwright dùng WebKit đông cứng, không phải Safari bản ship. Giữ `GOOGLE_OAUTH_CLIENT_ID/SECRET` rỗng tới lúc đó. **Hot area kế: order-4 email bundle** (flag OFF, gate C7, kế thừa nghĩa vụ D1E-18b) → gỡ Telegram.
+> **Google login enablement:** Safari macOS + iOS Safari M3 đã measured PASS 2026-07-26, nên gate đo
+> browser thật đã đóng. Tuy nhiên repo không chứng minh credentials đã được owner bật/go-live; giữ
+> `GOOGLE_OAUTH_CLIENT_ID/SECRET` rỗng trong template cho tới owner go-live và hoàn tất các gate độc lập
+> (gồm A3 legal/PII/config). **Hot area kế: order-4 email bundle** (flag OFF, gate C7, kế thừa nghĩa vụ
+> D1E-18b) → gỡ Telegram.
 >
-> *(lịch sử — nội dung dưới đây là trạng thái trước khi d1b merge)*
+> *(lịch sử — nội dung dưới đây là trạng thái trước khi d1b merge; không dùng làm current repo truth)*
 > **⛔ HOT AREA CŨ: `auth-s4-d1b-oauth-session-rotation` — BLOCKER BẬT GOOGLE LOGIN.** D1 mint-fresh (đúng matrix D1-2/D1-13) vì cookie `SameSite=Strict` không được gửi ở callback cross-site ⇒ **session có trước khi login Google vẫn sống sót**. Chưa live (route 503 khi thiếu config). Phải land **trước khi set `GOOGLE_OAUTH_CLIENT_ID/SECRET` ở bất kỳ env nào**. Slice này **chưa CODE_READY** — còn thiếu acceptance rows + verdict (xem `acceptance_obligation` trong manifest). Sau đó → order-4 email bundle (flag OFF, gate C7, kế thừa D1E-18b) → gỡ Telegram.
 
 ---
@@ -226,7 +237,7 @@ manual merge. P0 (auth/identity/billing/migration) = **manual only, không launc
 | Hợp đồng G3 revoke-all | `docs/g3-revoke-all-concurrency-probe-seed.md` |
 | B0 auth credential lifecycle | `docs/b0-auth-credential-lifecycle-design-probe.md` |
 | Verdict slice (5a/5b) | `docs/slice-readiness-verdicts.md` |
-| Spec auth Product/BE | `docs/features/feature_web_auth_onboarding.md` + `BE/feature_web_auth_onboarding_tech.md` (v2.10) |
+| Spec auth Product/BE | `docs/features/feature_web_auth_onboarding.md` v2.10c + `BE/feature_web_auth_onboarding_tech.md` v2.13 |
 | SI-1..SI-8 invariant table | `docs/features/BE/auth-security-invariant-table.md` |
 | Backlog + manifests | `docs/autopilot-backlog.md` · `docs/autopilot-manifests/` |
 | Gate review readiness | `docs/standards/review-code-readiness-gate.md` + `docs/templates/review-doc-plan-session-template.md` |
@@ -237,4 +248,6 @@ manual merge. P0 (auth/identity/billing/migration) = **manual only, không launc
 
 | Ngày | Thay đổi |
 |---|---|
+| 2026-07-28 | Re-pin live HEAD to `main@784bc8d`; commits after `2dc9b8c` are Chat authority/readiness docs only, so Auth code/test/enablement status is unchanged. |
+| 2026-07-27 | Reconcile live truth tại `main@2dc9b8c`: 25 migrations, 32 files / 537 workspace + 13 validator tests; Safari macOS+iOS M3 measured PASS nên engineering/measurement blocker đã đóng. Google credentials/go-live vẫn chưa được chứng minh và email provider order 4 vẫn OFF/chưa build. Phần body cũ giữ nguyên như historical snapshot. |
 | 2026-07-20 | Tạo handoff. Snapshot: `main@172dfff`, D0a `f5b0d6d` review round-08 (P2 open, streak đứt), fix-round-count=6. Ghi chuỗi D0→D1, autoprompt queue, MAX_ROUNDS risk, việc thủ công (push/PG test). |

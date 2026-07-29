@@ -1,18 +1,18 @@
 # Technical Design Document (TDD) — Plexco
 ## Platform thể thao đa môn (host + player) — multi-tenant, marketplace discovery, sync đa surface, Zalo + Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi — DD-37)*
 
-**Phiên bản:** 3.1g — *28/07: owner-final Chat authority DD-86/DD-91–95 + DD-32 Option D; target vẫn tách khỏi runtime.*
+**Phiên bản:** 3.1h — *28/07: Chat plan v1.8 `PLAN_READY` re-pin + DD-32 Option D; target vẫn tách khỏi runtime.*
 **Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 28/07/2026
 **Tài liệu tham chiếu:**
-- `BRD.md` v3.9m — yêu cầu nghiệp vụ
-- `PRD.md` v2.8l — user flows + edge cases
+- `BRD.md` v3.9n — yêu cầu nghiệp vụ
+- `PRD.md` v2.8m — user flows + edge cases
 - `../features/BE/feature_channel_booking_funnel_tech.md` — exact DD-32 intent/hold/finalizer contract
 - `../strategy/saas-implementation-plan.md` — kiến trúc multi-tenant
 - `../research/player-side-saas-reconciliation.md` — identity/kênh/matching
 - `../research/player-side-saas-AUDIT.md` — threat model & must-fix (C1–C7, B1–B6, §B2, + threat model public discovery)
 - `../channels/messenger/messenger-channel-design.md` — kênh Messenger (**phase-1, P2.5**): hybrid endpoint + protected routing/action contract
-- `../standards/decisions.md` **v2.10 working tree** — DD-86/DD-91–95 `DECISION_FINAL`; DD-88 broader `DEFERRED_PROPOSAL`; decision không phải plan/runtime.
-- `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` — canonical current readiness/verdict, blocker và next trigger tại §13.
+- `../standards/decisions.md` **v2.11 current mirror** — DD-86/DD-91–95 `DECISION_FINAL`; DD-88 broader `DEFERRED_PROPOSAL`; decision không phải plan/runtime.
+- `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` v1.8 — canonical current readiness/verdict tại §13.
 - `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md` — market/provider research input, không phải rollout authority.
 
 > [!IMPORTANT]
@@ -20,7 +20,7 @@
 > **Khác bot single-club hiện tại:** Plexco là **repo riêng**, lift logic thuần (matching, payments-logic, dates, format) sang `packages/core`; viết lại tầng data trên Postgres + RLS.
 > **Bốn bất biến lõi:** (1) tiền/roster không rò cross-tenant; (2) tiền/PII không lọt public discovery; (3) allocation không làm mất/đếm quá tiền; (4) PostgreSQL/domain model là nguồn sự thật, surface chỉ là projection.
 >
-> **As-built boundary — `main@2dc9b8c` (27/07):** 25 migrations (`0000`–`0024`); `0022`/`0023` + `apps/bot` đã có narrow worker claim/ack, dispatcher, queue provision/preflight và recovery schedule, nhưng `OUTBOX_DISPATCH_SCHEDULE_ENABLED` mặc định OFF và chưa có producer/projector nghiệp vụ thật. `0024` chỉ enforce `sessions_public_capacity_chk`. Last canonical aggregate: **32 test files / 537 workspace PASS** (core 132 · db 219 · web 146 · bot 40) + **13 validator PASS**; static cross-check **528 + 9 generated = 537**. Safari macOS/iOS M3 measurement đã pass, Google login vẫn OFF. Assistant Product/BE v0.17, Chat Product/BE v0.14/v0.22 và Notifications Product/BE v3.10 đều Reviewed; current Chat readiness chỉ lấy từ primary plan §13. Không có chat/payment product runtime, migration, API hoặc UI.
+> **As-built boundary — `main@784bc8d` (28/07):** 25 migrations (`0000`–`0024`); `0022`/`0023` + `apps/bot` đã có narrow worker claim/ack, dispatcher, queue provision/preflight và recovery schedule, nhưng `OUTBOX_DISPATCH_SCHEDULE_ENABLED` mặc định OFF và chưa có producer/projector nghiệp vụ thật. `0024` chỉ enforce `sessions_public_capacity_chk`. Last canonical aggregate: **32 test files / 537 workspace PASS** (core 132 · db 219 · web 146 · bot 40) + **13 validator PASS**; static cross-check **528 + 9 generated = 537**. Safari macOS/iOS M3 measurement đã pass, Google login vẫn OFF. Assistant Product/BE v0.18, Chat Product/BE v0.15/v0.23 và Notifications Product/BE v3.11 đều Reviewed; primary Chat plan v1.8 = `PLAN_READY` tại authority `90d292d`, nhưng từng slice còn strict `CODE_READY`. Không có chat/payment product runtime, migration, API hoặc UI.
 
 ---
 
@@ -539,7 +539,7 @@ CREATE POLICY tenant_isolation ON sessions
 
 **Person-self:** `GET /me/clubs` · `GET /me/sessions` · `GET /me/debts` · `PATCH /me/profile` (gender/dob/name/username/language — DD-39 ✅, cột chờ migration) (person-authorized, field whitelist).
 
-**Home hub (DD-79 ✅, S9 — composition-only):** `GET /api/me/home` thuộc surface `/api/me*` person-self (§3.4) — aggregate DTO compose từ player_view allowlist + public read model + notification §A + `onboarding_steps`; per-section degradation (section lỗi → null + reason, không fail aggregate); **KHÔNG bảng/migration mới** — cần cột mới = vi phạm DD-79, quay lại DD. Nav shell PWA = client registry config-driven (5 slot; Feed gated DD-76; 💬 chat ở header dùng routes DD-38 bên dưới). Chi tiết: `../features/BE/feature_home_tech.md` v0.2.
+**Home hub (DD-79 ✅, S9 — composition-only):** `GET /api/me/home` thuộc surface `/api/me*` person-self (§3.4) — aggregate DTO compose từ player_view allowlist + public read model + notification §A + `onboarding_steps`; per-section degradation (section lỗi → null + reason, không fail aggregate); **KHÔNG bảng/migration mới** — cần cột mới = vi phạm DD-79, quay lại DD. Nav shell PWA = client registry config-driven (5 slot; Feed gated DD-76; 💬 chat ở header dùng routes DD-38 bên dưới). Chi tiết: `../features/BE/feature_home_tech.md` v0.3.
 
 **In-app Chat (DD-38/55/86/91–95; schema chờ migration; readiness tại primary plan §13):** target channel collection/lifecycle + message/history/mark-read APIs cho N club channel/tenant, human DM person-self và requester-only Club Bot thread. Channel create/manage qua `chat.channel.manage`; restricted post qua `chat.channel.post_restricted`; unknown/unavailable capability deny. Assistant mặc định ON cho `all_members`, OFF cho `admins_only`; `chat.channel.manage` được đổi trên cả hai, nhưng effective use luôn AND tenant config + entitlement `assistant_ai_kb` + provider + privacy. Announcements là `admins_only` default OFF, không bị cấm bật. DM request/create/send/read đều gọi canonical safety core; host/admin không đọc/moderate human DM.
 
@@ -547,7 +547,7 @@ DD-92 pin same-channel reply, immutable structured mention refs, exactly-one act
 
 DD-94 lấy Chat unread làm source cho generic opaque offline signal/digest; không lưu durable content snapshot/item/body/title/amount. DM/direct mention/reply default ON; club preference `all|mentions|off`, default `mentions`; coalesce `(person, channel, highest_unread_cursor)`, mark-read cancel obsolete pending, re-authz membership/DM block+safety/preference/device/trust epoch ngay trước provider write, retry/unknown không duplicate. Timing/config là enablement-only; absent/untested route OFF. DD-88 chỉ là broader `DEFERRED_PROPOSAL`, không sở hữu exact digest. DD-95 chỉ cho club hide/restore + mute `1h|24h|7d`, reasons `spam|harassment|unsafe|off_topic|other` (`other` cần bounded note), actor-scoped UUID receipt/fingerprint + append-only audit; mute block write, không block read, DB-owned expiry tại send. Không hard-delete/permanent ban/system-message moderation hoặc DM moderation/read. Current readiness chỉ lấy từ primary plan §13; runtime/migration/API/UI vẫn 0.
 
-**Delivery authority, không phải runtime proof:** primary plan sở hữu bounded mechanism slices **1–47**, thin API **A1–A21** và tracked-design FE **F0–F15**. Actual DB worktrees `chat-definer-role-provisioning → chat-dm-safety-authority-core → dd38-dd86-chat-schema-core → tenant-capability-authority-core` phải serialize 1→2→3→4 vì cùng migration tail/schema/catalog tests, dù capability semantics độc lập. Exact first-slice packet nằm ở §9.2 của primary plan. G6 còn gate private object-storage region/credentials, malware/moderation scanner và bounded DM/media/report config ngoài provider/Web Push/digest timing. Exact 27-file pack vẫn chưa immutable nên initiative là `NOT_PLAN_READY`; `chat_*`, capability, API và FE runtime đều absent.
+**Delivery authority, không phải runtime proof:** primary plan v1.8 sở hữu bounded mechanism slices **1–47**, thin API **A1–A21** và tracked-design FE **F0–F15**. Actual DB worktrees `chat-definer-role-provisioning → chat-dm-safety-authority-core → dd38-dd86-chat-schema-core → tenant-capability-authority-core` phải serialize 1→2→3→4 vì cùng migration tail/schema/catalog tests, dù capability semantics độc lập. Exact first-slice handoff tương đương B1–B3 nằm ở §9.2; immutable authority `90d292d` đã nâng initiative lên `PLAN_READY` với closure 12/12. B4 artifacts/worktree chưa được author, nên mỗi slice vẫn phải đạt strict `CODE_READY` trước execution. G6 còn gate private object-storage region/credentials, malware/moderation scanner và bounded DM/media/report config ngoài provider/Web Push/digest timing. `chat_*`, capability, API và FE runtime đều absent.
 
 **Exact `/pay` overlay (DD-91 decision contract):** club channel lấy tenant từ authorized channel; private Club Bot thread lấy tenant từ route; human DM giữ `tenant_id=NULL` và chỉ enumerate requester-owned eligible clubs/obligations. One-club auto-select, many-club opaque short-lived requester-bound picker, none generic empty; raw tenant/person không có authority. Service validate charge integrity rồi dùng canonical `remainingAmount(amountDue, amountAllocated)`; response synchronous authenticated `private, no-store`, peer zero bytes, không result row/ref/SSE/outbox/push/history. `/pay` không LLM/Assistant. Payment lifecycle dùng durable Inbox `reminder|settled|correction` + generic push/authenticated detail.
 
@@ -707,7 +707,7 @@ webhook burst (≤5s P99), cron 1k tenant (throttler), join đồng thời (race
 
 ### 6.4 Live verification snapshot (không thay acceptance plan)
 
-Tại `main@2dc9b8c`, canonical aggregate gần nhất PASS **537 workspace tests / 32 files** (core 132 · db 219 · web 146 · bot 40) và **13 readiness-validator tests**; static source count **528** cộng đúng **9** cases sinh từ table-driven loop = 537. Green baseline chứng minh hạ tầng hiện có, không chứng minh các test target ở §6.2 đã được implement.
+Tại `main@784bc8d`, canonical aggregate gần nhất PASS **537 workspace tests / 32 files** (core 132 · db 219 · web 146 · bot 40) và **13 readiness-validator tests**; static source count **528** cộng đúng **9** cases sinh từ table-driven loop = 537. Hai commit sau runtime snapshot `2dc9b8c` chỉ là authority/readiness docs; green baseline chứng minh hạ tầng hiện có, không chứng minh các test target ở §6.2 đã được implement.
 
 ---
 
@@ -788,7 +788,7 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 
 ## 11. Open Questions
 
-> ⭐ **Nguồn canonical:** xem current `../standards/decisions.md` v2.10 working tree; đọc status theo từng DD và không suy runtime/readiness từ decision. Bảng dưới giữ để tra nhanh.
+> ⭐ **Nguồn canonical:** xem current `../standards/decisions.md` v2.11 mirror; đọc status theo từng DD và không suy runtime/readiness từ decision. Bảng dưới giữ để tra nhanh.
 
 | # | Question | Status |
 |---|---|---|
@@ -820,11 +820,11 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 | 4 | `../research/player-side-saas-reconciliation.md` | Identity/kênh/matching |
 | 5 | `../research/player-side-saas-AUDIT.md` | Threat model & must-fix (+ public discovery) |
 | 6 | `../channels/messenger/messenger-channel-design.md` | Kênh Messenger (phase-1, P2.5) |
-| 7 | `../standards/decisions.md` | Decision log v2.10 working tree; status theo từng DD, accepted/final không đồng nghĩa runtime đã land |
+| 7 | `../standards/decisions.md` | Decision log v2.11 current mirror; status theo từng DD, accepted/final không đồng nghĩa runtime đã land |
 
 ---
 
-*TDD v3.1g (owner-final authority 28/07) — DD-86/DD-91–95 final, DD-88 broader `DEFERRED_PROPOSAL`; current readiness chỉ lấy từ primary plan §13; shared job runtime OFF/placeholder và product runtime còn pending.*
+*TDD v3.1h (authority/readiness reconcile 28/07) — DD-86/DD-91–95 final, DD-88 broader `DEFERRED_PROPOSAL`; primary plan v1.8 `PLAN_READY`, per-slice `CODE_READY` pending; shared job runtime OFF/placeholder và product runtime còn pending.*
 
 ---
 
@@ -832,6 +832,7 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 28/07/2026 | v3.1h | **Readiness mirror re-pin:** primary Chat plan v1.8 = `PLAN_READY` tại immutable authority `90d292d` (closure 12/12), live pointer `main@784bc8d`. B4/slice-local artifacts chưa author nên không có worktree/code authorization; Chat/payment runtime/migration/API/UI vẫn absent. DD-32 technical contract không đổi. |
 | 28/07/2026 | v3.1g | **Owner-final Chat authority + DD-32 mirror:** align technical target to decisions v2.10 DD-86/DD-91–95, including per-policy Assistant defaults, edit/delete/search/reactions, full surface-aware command registry, unread-derived opaque offline signal/digest and exact moderation. DD-88 is broader `DEFERRED_PROPOSAL`; current readiness remains owned only by primary plan §13. Runtime/migration/API/UI remain 0. DD-32 Option D target remains unchanged. |
 | 28/07/2026 | v3.1f | **SUPERSEDED by v3.1g:** former correction used universal default-OFF, three commands and no-digest floor; no longer current authority. |
 | 28/07/2026 | v3.1e | **SUPERSEDED by v3.1g:** former v2.08 propagation is retained only as history; DD-86/DD-91–95 now govern. |
