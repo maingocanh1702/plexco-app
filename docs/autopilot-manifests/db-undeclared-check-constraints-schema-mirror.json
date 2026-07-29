@@ -1,0 +1,44 @@
+{
+  "feature": "db-undeclared-check-constraints-schema-mirror",
+  "branch": "feat/db-undeclared-check-constraints-schema-mirror",
+  "base_ref": "main",
+  "risk": "P2",
+  "change_class": "schema-migration",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "design_probe_required": true,
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": [
+    "schema"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/db-undeclared-check-constraints-schema-mirror.json",
+    "packages/db/migrations/0026_undeclared_check_constraint_names.sql",
+    "packages/db/schema.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "packages/db/src/migrate.test.ts"
+  ],
+  "merged_probe": "packages/db/schema.ts :: zalo_bots_status_chk",
+  "_problem": "Six live CHECK constraints have no `check()` declaration in schema.ts at all: bank_accounts_webhook_status_check, channel_identities_status_check, messenger_pages_status_check, oauth_transactions_provider_check, provider_connections_status_check, zalo_bots_status_check. All six enforce correctly in the live database -- they were applied inline/unnamed by 0001, 0003 and 0004 -- so nothing is broken today; the gap is in Drizzle's type-level model, which does not represent them. Found by item (e) of the db-check-constraint-naming-drift design probe (2026-07-28), which measured 67 declared / 73 live / 27 already correct / 40 renamed by 0025 / 0 declared-but-absent / 6 live-but-undeclared.",
+  "_direction_note": "This is the OPPOSITE direction from 0025 and the two must not be confused. 0025 renamed live constraints to match the names schema.ts already declared. This slice ADDS declarations for live constraints schema.ts never described. The probe also closed the third, scarier direction by measurement: ZERO constraints are declared but absent -- there is no guard anyone believes is enforced that is actually missing.",
+  "_owner_decision": "2026-07-29, owner-ratified: declare them under the repo's `_chk` convention and RENAME the live constraints to match, in one monotonic migration. The cheaper alternative -- declaring the existing auto-generated `_check` names so no migration is needed -- was considered and REJECTED: it inverts the principle 0025 spent an entire slice establishing, that schema.ts's declared name is the TARGET and the database follows. Taking the cheap path would leave a permanent asymmetry (67 constraints named by intent, 6 named by Postgres's default) and a future reader could not tell whether those 6 were deliberate or unfixed drift. Cost accepted: this is no longer a schema.ts-only change; it carries one migration.",
+  "_scope_in": "Add six `check()` declarations to schema.ts using the repo's `<table>_<column>_chk` convention, plus ONE monotonic migration (0026, next after the 0025 tail of 26 files) that RENAMEs the six live constraints to those names, plus a regression test that closes BOTH directions of the schema.ts-versus-pg_constraint relationship permanently.",
+  "_scope_out": "NO predicate change of any kind -- every rename must preserve pg_get_constraintdef byte-for-byte. NO DROP+ADD: use ALTER TABLE ... RENAME CONSTRAINT, for the reason 0025's codex round-01 established -- ADD CONSTRAINT re-validates the predicate against every row while holding ACCESS EXCLUSIVE, and it forces hand-transcription of the predicate, which RENAME removes entirely. NO new constraint: all six already exist; creating one would be a behaviour change wearing a cleanup's clothes. NO touching the 40 constraints 0025 already renamed or the 27 that were always correct. NO column, nullability, default, type, RLS, role or grant change. NO edits to applied migrations 0000-0025.",
+  "_design_probe": "Required. Write .autopilot/state/db-undeclared-check-constraints-schema-mirror/design-probe.md and STOP for founder confirmation before any edit. Pin FOUR things by live measurement: (1) re-run the catalog query against a database migrated to the CURRENT tail and confirm the count is still exactly 6 and the table/constraint names still match the list in `_problem` -- the 2026-07-28 measurement predates 0025 landing, and although 0025 was scoped to exclude these six, that exclusion must be verified rather than assumed. (2) the EXACT predicate of each of the six, copied from pg_get_constraintdef -- never from memory and never from a sibling. Four of the six share one 6-value enum (connecting|registered|active|drift|error|revoked) but two do NOT: channel_identities_status is (active|inactive) and oauth_transactions_provider is a single value ('sepay'). Assuming they are alike is how two of the six get written wrong. (3) that `oauth_transactions` (the legacy Sepay-only table, schema.ts around line 967) is a DIFFERENT table from `auth_oauth_transactions` (the Google/Facebook login table, which IS fully declared and correctly named). Read both definitions; do not match on name. (4) the migration tail at execution time. It was 0025 (26 files) on 2026-07-29, so this is 0026 -- but re-read packages/db/migrations/ rather than trusting that number, and update MIGRATION_COUNT in migrate.test.ts (declared at line 34, must stay in sync with rls-invariants.test.ts) to match.",
+  "_acceptance": [
+    "UCC-1: all six constraints exist in pg_constraint under their new `_chk` names after migration, asserted against the CATALOG and never against schema.ts source text -- grepping the declaration is exactly what hid this class of defect in the first place.",
+    "UCC-2: pg_get_constraintdef for each of the six is BYTE-IDENTICAL before and after, captured from a throwaway database migrated only through the previous tail and compared against the post-migration definition under the new name.",
+    "UCC-3: each constraint's real violating value is still rejected after the rename -- a behavioural check, not a catalog-only one, so a predicate mangled in transit cannot pass.",
+    "UCC-4: the two non-uniform predicates are asserted individually -- channel_identities accepts 'active'/'inactive' and rejects 'connecting'; oauth_transactions accepts only 'sepay'. A test that treats all six as the same enum would pass while being wrong about two of them.",
+    "UCC-5: BOTH directions are now closed and enforced by one test -- every `check()` declared in schema.ts has a live constraint with the same predicate, AND every live CHECK constraint in schema public has a schema.ts declaration. Counts must balance: declared == live == 73 (re-derive; do not hard-code if the probe measures otherwise).",
+    "UCC-6: the guard in UCC-5 has been SEEN to fail -- demonstrate it by temporarily removing one declaration and observing a red test, the same discipline CND-7 required, because a guard never observed failing is a guard nobody has tested.",
+    "UCC-7: migrations 0000-0025 are byte-identical after 0026 and the runner's immutability guard reports no drift.",
+    "UCC-8: MIGRATION_COUNT is updated in both migrate.test.ts and rls-invariants.test.ts and the two agree.",
+    "UCC-9: the migration contains ZERO occurrences of `DROP CONSTRAINT` and `ADD CONSTRAINT` -- only `RENAME CONSTRAINT`. This is mechanically greppable and is the cheapest way to prove the predicate was never re-transcribed.",
+    "UCC-10: full CI list green -- typecheck, format:check, review:check, lint, build, db:bootstrap, test; workspace test count rises by exactly the number of new UCC tests and nothing else moves."
+  ],
+  "_evidence_rules": "Measure from pg_constraint / pg_get_constraintdef against a real migrated database. Do not trust the counts in `_problem`: they were measured on 2026-07-28 before 0025 merged, and this repo has already produced three successive wrong constraint counts (27, then 47, then the correct 40) each of which read as fact because it was specific. If your measurement disagrees with anything written here, your measurement wins and you say so in the probe.",
+  "_stop_conditions": "HALT if: the live count is not 6, or any name in `_problem` no longer matches; any pg_get_constraintdef differs before/after a rename; UCC-5's two counts do not balance; or a pre-existing row violates a constraint being touched -- name the halt, never delete or re-parent data."
+}

@@ -928,22 +928,25 @@ notes: |
   cả đội sang v2 là quyết định riêng, không nên lén đưa vào qua một slice.
 
 ## task: db-undeclared-check-constraints-schema-mirror
-title: 6 CHECK sống trong DB mà `schema.ts` không khai — mirror ngược, không migration
-status: planned
+title: 6 CHECK sống trong DB mà `schema.ts` không khai — khai theo `_chk` + một migration RENAME
+status: ready
 risk: P2
-change_class: schema-mirror
+change_class: schema-migration
 depends_on: []
 invariants: [schema]
-scope: [packages/db/schema.ts, packages/db/src/rls-invariants.test.ts]
-manifest: null
-merged_probe: null
+scope: [docs/autopilot-manifests/db-undeclared-check-constraints-schema-mirror.json, packages/db/migrations/0026_undeclared_check_constraint_names.sql, packages/db/schema.ts, packages/db/src/rls-invariants.test.ts, packages/db/src/migrate.test.ts]
+manifest: docs/autopilot-manifests/db-undeclared-check-constraints-schema-mirror.json
+merged_probe: packages/db/schema.ts :: zalo_bots_status_chk
+owner_decision: 2026-07-29 · **Chốt `_chk` + migration RENAME, BÁC lối "không migration".** Block này ban đầu viết *"giữ nguyên tên tự-sinh là lựa chọn hợp lệ và rẻ nhất — không cần đổi tên thì không cần migration"*. Đúng về chi phí, sai về hướng: repo dùng hậu tố `_chk` (`check("persons_status_chk", …)`), còn 6 constraint sống mang tên Postgres tự đặt `_check`. Khai `_check` là bắt `schema.ts` chạy theo DB — **đảo ngược đúng nguyên tắc mà `0025` tốn cả một slice để thiết lập** (tên khai là ĐÍCH, DB theo sau) — và để lại bất đối xứng vĩnh viễn: 67 constraint đặt tên có chủ đích, 6 cái đặt tên do mặc định, người đọc sau không phân biệt được **cố ý** với **drift chưa sửa**. Chi phí chấp nhận: không còn là slice `schema.ts`-only, mang một migration. Cơ chế đã được `0025` chứng minh an toàn: `RENAME CONSTRAINT` thuần catalog, không quét bảng, không re-validate, **không mệnh đề predicate nào phải chép tay** — `UCC-9` bắt migration có **zero** `DROP CONSTRAINT`/`ADD CONSTRAINT`, greppable.
 notes: **Mở 2026-07-29 từ item (e) của design-probe `db-check-constraint-naming-drift`. Block này đáng lẽ đã tồn tại từ 28/07** — AWAIT report của slice đó ghi *"the item-(e) follow-up backlog block text is in the chat transcript for this session (not duplicated to a file per manifest scope)"*. Manifest scope chặn đúng (`docs/autopilot-manifests/*.json` + `0025` + 2 file test; `autopilot-backlog.md` ngoài scope, từ chối ghi là đúng kỷ luật), nhưng hệ quả là **một finding đã đo chỉ sống trong transcript** — transcript không phải hàng đợi, không ai quét nó. Cùng hình dạng với `docs-session-capacity-chk-landed-reconcile`, và là lý do cả hai cần một bước "ghi follow-up ra backlog" nằm NGOÀI worktree slice.
   **Nội dung:** 6 constraint sống mà `schema.ts` khai cột là `text(...)` trần, không có `check()` builder — `bank_accounts_webhook_status_check` · `channel_identities_status_check` · `messenger_pages_status_check` · `oauth_transactions_provider_check` · `provider_connections_status_check` · `zalo_bots_status_check`. Cả 6 **enforce đúng trong DB sống** (inline/unnamed từ `0001`/`0003`/`0004`); thiếu sót nằm ở model Drizzle, không ở database.
   **Đây là chiều NGƯỢC LẠI của `0025` và phải không được lẫn:** `0025` đổi tên constraint sống cho khớp tên `schema.ts` khai. Task này thêm khai báo `schema.ts` cho constraint sống chưa được mô tả. Đo cũng đã bác bỏ chiều nguy hiểm thứ ba: **0** constraint được khai mà không tồn tại — không có guard nào người ta tin là đang chạy mà thực ra vắng.
   **Bẫy 1 — đây KHÔNG phải slice migration.** Constraint đã tồn tại và đã đúng; thêm `check()` vào `schema.ts` là làm model khớp thực tế. Nếu ai đó sinh migration từ diff Drizzle rồi `ADD CONSTRAINT`, đó là **thêm constraint trùng** trên bảng đang có dữ liệu — negative scope tuyệt đối. Verdict 26 đã pin nguyên tắc này cho `0025` (*"ADDING a missing constraint that schema.ts declares but the database lacks: report it, do not create it"*); ở đây nó áp theo chiều ngược.
   **Bẫy 2 — tên bảng dễ lẫn.** `oauth_transactions` (bảng Sepay-only cũ, `schema.ts:967`) **khác** `auth_oauth_transactions` (bảng login Google/Facebook, đã khai đủ và đã đúng tên). Đọc cả hai định nghĩa, đừng khớp theo tên.
   **Bẫy 3 — predicate phải chép từ `pg_get_constraintdef`, không từ trí nhớ.** Bốn trong 6 dùng cùng một enum 6 giá trị `connecting|registered|active|drift|error|revoked`; hai cái còn lại khác hẳn (`active|inactive`, và `provider='sepay'` một giá trị). Giả định chúng giống nhau là cách viết sai hai cái.
-  **Điều kiện promote lên `ready`:** chọn tên khai báo cho từng constraint (giữ nguyên tên tự-sinh hiện tại là lựa chọn hợp lệ và rẻ nhất — không cần rename thì không cần migration), viết manifest, và pin một test khẳng định mọi `check()` khai trong `schema.ts` có constraint sống cùng predicate VÀ mọi constraint sống có khai báo — tức đóng vĩnh viễn cả hai chiều mà `0025` chỉ đóng được một.
+  **✅ Điều kiện promote đã thoả (29/07):** tên khai báo đã chốt (`_chk`, xem `owner_decision`); manifest đã viết với `UCC-1..UCC-10`; và **`UCC-5` chính là test đóng cả hai chiều** — mọi `check()` khai có constraint sống cùng predicate **VÀ** mọi constraint sống có khai báo, hai con số phải cân (declared == live == 73, re-derive chứ không hard-code). `0025` chỉ đóng được một chiều; đây là chiều còn lại, và sau slice này lớp lỗi đóng vĩnh viễn.
+  **`UCC-6` bắt guard phải ĐÃ TỪNG THẤY fail** — gỡ tạm một khai báo, quan sát test đỏ. Cùng kỷ luật `CND-7`, vì một guard chưa ai thấy fail là guard chưa ai kiểm.
+  **Bẫy nguy nhất khi viết test, pin thành `UCC-4`:** 4/6 dùng chung enum 6 giá trị `connecting|registered|active|drift|error|revoked`, nhưng **hai cái còn lại khác hẳn** — `channel_identities_status` là `(active|inactive)`, `oauth_transactions_provider` chỉ một giá trị `'sepay'`. Một test coi cả 6 như nhau sẽ **xanh trong khi sai về hai cái**.
 
 ## task: db-projector-dlq-no-replay-path
 title: projector_deliveries.dlq là trạng thái cuối không có lối ra — không function/route nào replay
