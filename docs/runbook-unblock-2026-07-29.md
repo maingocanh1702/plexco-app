@@ -446,57 +446,105 @@ follow-up hợp lệ mà không nới scope của chính slice. Chưa có; ghi l
 
 ## §6. Prompt cho các phiên tiếp theo
 
-### 6.1 `deps-security-bump` — chỉ chạy từ 2026-07-30, và chỉ sau khi owner chốt
+> **Cập nhật 2026-07-29 cuối ngày — §6 cũ đã stale và được viết lại toàn bộ.** Bản v0.1 soạn khi hàng
+> đợi có 0 `ready` và một quyết định owner chưa chốt; nay **cả ba slice đều `ready`**, quyết định đã
+> chốt, và hai mục cũ (`promote db-undeclared…`, `đóng docs-session-capacity-chk…`) **đã làm xong**.
+> Giữ prompt cũ sẽ dụ phiên sau đi hỏi lại thứ đã trả lời.
 
-> Đọc `docs/autopilot-deps-security-bump.md` (task contract Level 3 §3) và
-> `docs/autopilot-manifests/deps-security-bump.json` (authority) trước khi làm gì.
->
-> Owner đã chốt lối: **\_\_\_** (lối 1 nâng eslint / lối 2 ignore-entry có hạn dùng). Nếu ô này còn
-> trống thì **HALT `AWAIT_DECISION`**, đừng suy ra.
->
-> Item (b) đã đo xong tại `3d75c90`, chép sẵn trong contract: nhánh `brace-expansion@1` **không có bản
-> vá in-range**, và ép lên v5 **làm vỡ `minimatch@3`** vì export shape đổi từ hàm sang object —
-> `pnpm install` sẽ không bắt được, lint chết lúc chạy. Lối "thêm override `brace-expansion@1: ^5.0.8`"
-> đã bị loại có chủ đích; nếu bạn thấy nó hấp dẫn thì đọc lại §Bằng chứng item (b2).
->
-> Vẫn phải tự đo lại tại thời điểm chạy theo `_evidence_rules`: `npm view <pkg> time --json`, đọc đúng
-> key version, **không** dùng `time.created`. Item (c) (`next` có cần override không) **chưa ai đo** —
-> đo thật, đừng chép phỏng đoán của manifest.
->
-> Mở worktree từ tip `origin/main` thật, register scope-gate (`build-config`), viết
-> `.autopilot/state/deps-security-bump/design-probe.md` rồi **STOP** chờ founder confirm trước khi sửa
-> file nào. Kết ở `READY | AWAIT | HALT`. P1 ⇒ 2 vòng codex clean + 1 vòng security. Owner merge.
+### 6.1 `deps-security-bump` — từ 2026-07-30
 
-### 6.2 `db-undeclared-check-constraints-schema-mirror` — promote lên `ready`
-
-> Đọc block `## task: db-undeclared-check-constraints-schema-mirror` trong `docs/autopilot-backlog.md`
-> và Verdict 27 trong `docs/slice-readiness-verdicts.md`.
+> Authority: `docs/autopilot-manifests/deps-security-bump.json` (đọc `_owner_decision` TRƯỚC TIÊN) +
+> `docs/autopilot-deps-security-bump.md` (task contract Level 3 §3 — lưu ý §"Quyết định owner (chẩn
+> đoán gốc)" là bản CŨ, đã bị chính phép đo bác; phần đúng nằm ở khối ✅ phía trên nó).
 >
-> Việc: chọn tên khai báo cho 6 constraint sống-mà-`schema.ts`-không-mô-tả, viết manifest, promote
-> `planned → ready`. Giữ nguyên tên tự-sinh hiện tại là lựa chọn hợp lệ và rẻ nhất — **không cần đổi
-> tên thì không cần migration**.
+> **Scope đã thu hẹp: chỉ `next` + `postcss`.** `brace-expansion` **ra khỏi slice** — nó đóng qua
+> `eslint-10-migration`. `DSB-2b` bắt hai dòng `brace-expansion` trong `pnpm-lock.yaml` phải
+> **byte-unchanged**; lệch một ký tự nghĩa là bạn đã trôi vào package bị loại ⇒ HALT, đừng nghiệm thu.
 >
-> Ba bẫy đã ghi trong block, đọc trước khi thiết kế: (1) đây **không** phải slice migration, constraint
-> đã tồn tại và đã đúng — sinh migration từ diff Drizzle sẽ `ADD CONSTRAINT` trùng trên bảng có dữ
-> liệu; (2) `oauth_transactions` **khác** `auth_oauth_transactions`, đọc cả hai định nghĩa; (3) chép
-> predicate từ `pg_get_constraintdef`, không từ trí nhớ — 4/6 dùng chung enum 6 giá trị, 2 cái còn lại
-> khác hẳn.
+> **Đừng thử ép `brace-expansion@1` lên v5.** Nó không chỉ là major bump — v1 export một hàm
+> (`module.exports = expandTop`), v5 CJS export một object (`exports.expand`), mà consumer duy nhất
+> `minimatch@3.1.5` gọi nó như hàm. `pnpm install` resolve sạch, lint chết lúc gọi. Đã đo 29/07.
 >
-> Test phải đóng **cả hai chiều** mà `0025` chỉ đóng được một: mọi `check()` khai có constraint sống
-> cùng predicate, **và** mọi constraint sống có khai báo.
+> **Còn đúng một thứ CHƯA ai đo — item (c):** `next` có cần override không, hay `apps/web` đã khai
+> range chứa `15.5.21` nên chỉ cần refresh lock. Đo thật, đừng chép phỏng đoán của manifest.
+>
+> **Bẫy đã đo, đừng đo lại nhưng phải kiểm chứng:** override `postcss` nằm ở **HAI** chỗ —
+> `package.json` `pnpm.overrides` (`^8.5.10`) và `pnpm-workspace.yaml` `overrides`
+> (`postcss@<8.5.10: 8.5.16`). Nâng một chỗ bỏ chỗ kia thì transitive `postcss` vẫn hạ cánh xuống
+> `8.5.16` — đúng bản đang bị advisory — trong khi `package.json` trông đã vá. `DSB-4` tồn tại vì thế.
+>
+> Publish date: `npm view <pkg> time --json`, đọc **đúng key version**, KHÔNG `time.created`
+> (nó trả 2011 cho `next`). Mở worktree từ tip `origin/main` thật, register scope-gate
+> (`build-config`), viết `.autopilot/state/deps-security-bump/design-probe.md` rồi **STOP** chờ
+> founder confirm trước khi sửa file nào. Kết ở `READY | AWAIT | HALT`. P1 ⇒ 2 vòng codex clean +
+> 1 vòng security. Owner merge.
 
-### 6.3 Đóng `docs-session-capacity-chk-landed-reconcile`
+### 6.2 `eslint-10-migration` — từ 2026-07-31, TRƯỚC 2026-08-06
 
-> Sau khi commit 2+3 lên `origin/main`: đổi `status: planned` → `merged` trong block
-> `## task: docs-session-capacity-chk-landed-reconcile`, thêm `merged:` với SHA thật, gỡ dòng
-> `authored_uncommitted:`. **Không mở worktree** — deliverable đã land trong commit đó.
+> Authority: `docs/autopilot-manifests/eslint-10-migration.json`. Đọc `_design_probe_findings` —
+> ba câu hỏi compat **đã đo và đã đóng**, không cần hỏi lại, nhưng `_evidence_rules` vẫn bắt đo lại.
+>
+> **Deadline cứng từ bên ngoài: ESLint v9.x EOL 2026-08-06.** Đây là lý do chính của slice; việc nó
+> đồng thời gỡ `brace-expansion@1` chỉ là hệ quả miễn phí. Không được hoãn qua ngày đó.
+> `minimumReleaseAge` 7 ngày ⇒ v10.8.0 (publish 24/07) đủ tuổi từ **31/07**. Chọn bản **eligible mới
+> nhất**, không phải bản mới nhất.
+>
+> **Rủi ro số một, và nó trông như thành công:** v10 đổi thuật toán tìm config sang bắt từ thư mục của
+> từng file thay vì cwd. Repo là pnpm workspace (`apps/*`, `packages/*`), nên tập file được lint có thể
+> **hẹp đi âm thầm** — `pnpm lint` vẫn xanh trong khi kiểm ít hơn, một cổng xanh đã thôi gác. `E10-2`
+> vì thế so **hash danh sách file** chứ không so exit code. Baseline 29/07: **81 file**
+> (apps 46 · packages 31 · scripts 3 · `eslint.config.mjs` 1), sha256 prefix `3c99372c73e87ab4`.
+> Re-derive con số này ở probe; nếu nó đã đổi thì nói rõ và dùng số mới.
+>
+> **Điều khoản dễ vi phạm do thiện chí:** v10 cập nhật `eslint:recommended`. Nếu bộ rule mới sinh lỗi,
+> **báo cáo và HALT** — không sửa code, không tắt rule. Sửa lint là slice khác; làm ở đây thì diff lẫn
+> "upgrade" với "sửa lỗi mới lộ" và không ai tách lại được.
+>
+> **Không nâng `typescript-eslint`** — `8.62.1` đã khai `peer eslint: ... || ^10.0.0`. Nâng nó là lén
+> đưa một thay đổi chưa đo vào slice. **Giữ nguyên block `scripts/**/*.{mjs,js}`** trong
+> `eslint.config.mjs`: nó vá `no-undef` cho kit script, không liên quan v10.
+>
+> **Một lỗ thật phải đóng:** `package.json` khai `engines: {node: ">=22"}` — dải đó nhận 22.0–22.12 mà
+> eslint 10 từ chối (`^20.19.0 || ^22.13.0 || >=24`). `E10-5`.
 
----
+### 6.3 `db-undeclared-check-constraints-schema-mirror` — P2, chạy lúc nào cũng được
+
+> Authority: `docs/autopilot-manifests/db-undeclared-check-constraints-schema-mirror.json`.
+> Owner đã chốt: khai theo `_chk` + **một migration `RENAME CONSTRAINT`**, không phải lối
+> "không migration" mà backlog ban đầu đề xuất — lý do ở `_owner_decision`.
+>
+> **Đây là chiều NGƯỢC LẠI của `0025`, đừng lẫn.** `0025` đổi tên constraint sống cho khớp tên
+> `schema.ts` khai. Slice này thêm khai báo cho constraint sống chưa được mô tả. Đo cũng đã bác chiều
+> thứ ba: **0** constraint được khai mà không tồn tại.
+>
+> **Bẫy nguy nhất khi viết test (`UCC-4`):** 4/6 dùng chung enum 6 giá trị
+> `connecting|registered|active|drift|error|revoked`, nhưng **hai cái còn lại khác hẳn** —
+> `channel_identities_status` là `(active|inactive)`, `oauth_transactions_provider` chỉ `'sepay'`.
+> Một test coi cả 6 như nhau sẽ **xanh trong khi sai về hai cái**.
+>
+> **`oauth_transactions` KHÁC `auth_oauth_transactions`** — bảng Sepay-only cũ vs bảng login
+> Google/Facebook (vốn đã khai đủ và đúng tên). Đọc cả hai định nghĩa, đừng khớp theo tên.
+>
+> Chép predicate từ `pg_get_constraintdef`, không từ trí nhớ. `UCC-9` bắt migration có **zero**
+> `DROP CONSTRAINT`/`ADD CONSTRAINT` — chỉ `RENAME`. Đừng tin ba con số trong `_problem`: chúng đo
+> 28/07 trước khi `0025` merge, và repo này đã sinh ba phép đếm constraint sai liên tiếp (27 → 47 → 40
+> mới đúng), mỗi cái đọc như dữ kiện vì nó cụ thể.
+
+### 6.4 Việc owner tự chạy, không cần session
+
+> - **Ba repo khác lên kit v12** — `Trum-Bia-Hoi`, `bestminton-club-chatbot`,
+>   `Bestminton-Club-Payment-check-bot`. Trong mỗi repo:
+>   `bash "$HOME/Projects/Claude template/autopilot/parallel/autopilot-update.sh"`.
+>   Chúng đang ở v11 và mang đúng lỗi lint `process` mà Plexco vừa vấp.
+> - **Dọn:** 2 stash cũ (`templates model terra->sol`, `park pre-ap25-merge`), orphan container
+>   `plexco-queue-provision-1` (`docker compose -f infra/docker-compose.yml up -d --remove-orphans`).
+> - **`design.pen`** — quyết khi thực sự bắt đầu FE; xem ghi chú trong `docs/channels/web/README.md`.
 
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 29/07/2026 | v1.0 | **Đóng runbook: §6 viết lại toàn bộ, hàng đợi 0 → 3 `ready`.** §6 bản v0.1 soạn khi còn 0 `ready` và một quyết định owner chưa chốt — giữ nguyên sẽ dụ phiên sau đi hỏi lại thứ đã trả lời, và hai mục cũ (`promote db-undeclared…`, `đóng docs-session-capacity-chk…`) **đã làm xong ngay trong phiên**. Bản mới có 4 mục khớp thực tế: `deps-security-bump` (30/07, scope thu về `next`+`postcss`) · `eslint-10-migration` (31/07, trước EOL 06/08) · `db-undeclared-check-constraints-schema-mirror` (P2, `_chk` + migration RENAME) · việc owner tự chạy. Mỗi prompt mang theo **bẫy đã đo** thay vì mô tả chung: `DSB-2b` byte-unchanged, `E10-2` so hash danh sách file (81, `3c99372c73e87ab4`), `UCC-4` hai predicate lệch khỏi enum chung. |
 | 29/07/2026 | v0.9 | **§5 thực thi: `ap-merge.sh` bước 8b.** `autopilot-backlog-reconcile --fix` nay chạy tự động sau `git push` trong `ap-merge.sh`, commit riêng, và khi commit hỏng thì phân biệt rõ *merge+push đã xong, chỉ thiếu bookkeeping* với *merge hỏng* — không có câu đó thì `exit 1` sẽ dụ người ta chạy lại `ap-merge` và tạo commit trùng trên `main`. Điểm thiết kế bắt buộc: **sau** push chứ không trước, vì probe giải theo `origin/main`. Kèm kit v12 (`autopilot-backlog-reconcile` nay nằm trong sync pack nên mọi repo consumer đều có `--fix`) và de-pin `KIT_VERSION` khỏi prose ở 4 doc. |
 | 29/07/2026 | v0.8 | **Commit 0–7 land; §3 verify phát hiện `pnpm lint` ĐỎ — có sẵn trên main, không do docs.** 11 × `no-undef` trên `process` trong `scripts/autopilot-review-readiness.mjs`; nguyên nhân là `ignores: ["*.mjs"]` **chỉ khớp root**, đúng bẫy mà comment `.probe/**` trong cùng file đã ghi. Land cùng kit v11 `ed38106` ⇒ CI job `lint` đỏ trên main từ lúc đó. Sửa ở `eslint.config.mjs` (repo-owned, sống sót `autopilot-update.sh`) chứ không sửa file kit (byte-identical template, sẽ bị ghi đè im lặng) → commit 8. `eslint .` exit 0. Bài học: ba gate hẹp xanh ≠ CI xanh. |
 | 29/07/2026 | v0.7 | **Commit 0 LAND `66c8d02`** (3 file, 3+/3−, hook pass). Sửa một khẳng định sai của v0.6: dùng **owner của `.git/index.lock`** làm dấu hiệu phân biệt lock-của-sandbox là vô dụng — mount map UID hai chiều, cùng file đó sandbox thấy `compassionate-friendly-brown` còn terminal máy thấy `maingocanh staff`, nên từ phía owner nó LUÔN là chính họ. Thay bằng hai dấu hiệu dùng được thật (**size 0** + **mtime cũ**) cộng `ps aux \| grep "[g]it " \| grep -v fsmonitor` trống. |
