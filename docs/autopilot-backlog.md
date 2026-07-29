@@ -21,6 +21,28 @@ Ghi rõ trong `notes`: **ai** đóng được, **bằng gì**, và điều kiệ
 Lý do có trạng thái này: AP-22 từng mang `ready` dù đã HALT fail-closed đúng và output đã merge, nên nó bị
 launch lại và lặp y nguyên kết luận cũ.
 
+> **📌 Queue state — reconcile 2026-07-29, đo tại `3d75c90d32bd52b8704794216fdcad63d54261e8`** (khi đó `main` = `origin/main`). Verify bằng `scripts/autopilot-backlog-reconcile --check` → `No stale entries`.
+> **Lưu ý đọc:** sau phép đo đó, 7 commit docs-only đã land lên `main` trong cùng phiên (`66c8d02` … `1ca97b1`) để gỡ khối 88-file uncommitted — xem `docs/runbook-unblock-2026-07-29.md` §2. Chúng **không đổi** kết luận nào ở đây: không migration, không code, không test. Cái chúng đổi là `docs-session-capacity-chk-landed-reconcile` (deliverable land tại `adf5eff`, xem block của nó).
+>
+> **`ready` = 0. `planned` = 3, không cái nào launch được hôm nay.**
+>
+> | slug | vì sao chưa launch được |
+> |---|---|
+> | `deps-security-bump` | `not_before: 2026-07-30` **và** một quyết định owner đang chặn (xem `blocked_on_owner` trong block) |
+> | ~~`docs-session-capacity-chk-landed-reconcile`~~ | **✅ đóng cùng ngày** — deliverable land tại `adf5eff` |
+> | `db-undeclared-check-constraints-schema-mirror` | mới mở 29/07, chưa có manifest; cần chọn tên khai báo trước |
+>
+> **Ba slice đã flip khỏi hàng đợi trong lượt này:**
+> `db-check-constraint-naming-drift` `ready`→`merged` (`0025` đã trên main tại `3d75c90`; `--check` bắt `⚠ STALE`) ·
+> `enable-google-login-safari-measurement` `ready`→`merged` (nghĩa vụ đo đóng từ 26/07; phần còn lại là go-live của owner, không phải task) ·
+> `docs-session-capacity-chk-landed-reconcile` giữ `planned` nhưng gắn `authored_uncommitted`.
+>
+> **Cùng một lỗi, lần thứ hai.** Lần 25/07 là 7 slice, lần này là 1 — nhưng nguyên nhân không đổi: **merge cập nhật code và INFLIGHT, không ai chạy `--fix`**. Ghi thêm một dòng nhắc sẽ không sửa được; cái sửa được là gắn `autopilot-backlog-reconcile --fix` vào bước merge (`scripts/ap-merge.sh`). Và lưu ý một biến thể mà `--check` **không bắt được**: slice loại `owner-evidence-gate` đóng bằng bằng chứng chứ không bằng commit, nên không có `merged_probe` để hit — nó chỉ hiện ra dạng `? no merged_probe`. Với loại đó, `ready` phải đọc là *"còn phép đo phải chạy"*, không phải *"sẵn sàng launch"*.
+>
+> **Chặn cứng trước mọi worktree mới:** working tree hiện có **88 file uncommitted** (86 docs + `.env.example` + `README.md`, cùng 4 untracked). Trong đó có `decisions.md` v2.11, mirror của Chat plan v1.8, và deliverable của một task backlog. Worktree mở từ tip `origin/main` **không thấy khối này**, nên slice mở bây giờ sẽ pin một authority đã lỗi thời. Ngoài ra chuỗi `784bc8d` đang được mô tả là *"current HEAD"* trong ~30 file của khối đó — sai kể từ `3d75c90`. Commit (hoặc đổi cách diễn đạt sang *"authority snapshot"*) trước, launch sau.
+>
+> *(Lịch sử, giữ để đối chiếu:)*
+>
 > **📌 Queue state — reconcile 2026-07-25 tại `origin/main@2937ed9a0732bea27db75403682befcb348e315b`.**
 > **7 slice mang status stale** (`ready`×6 + `in-flight`×1) trong khi `merged_probe` của chúng **đã hit trên `origin/main`** ⇒ flip sang `merged`:
 > `docs-session-management-acceptance-checklist` · `docs-auth-d1-packet` · `docs-tail-0018-number-reconcile` ·
@@ -289,8 +311,9 @@ notes: **BLOCKER ON ENABLING GOOGLE LOGIN** — must land before `GOOGLE_OAUTH_C
 
 ## task: enable-google-login-safari-measurement
 title: Measure the M3 completion hop on shipping Safari (macOS) and iOS Safari before enabling Google login
-status: ready
+status: merged
 measured: 2026-07-26 · Safari macOS (macOS 14.5, ITP default ON) + iOS Safari 18.3 (22D8075, iPhone 16 Pro Simulator) · M1 false (control) · M2/M3/M4/M5 true · mọi callback row strict=false · probe §3.1/§7/§8
+stale_note: 2026-07-29 · Giữ `status: ready` sau khi nghĩa vụ đo đã đóng (26/07) là **stale theo một kiểu khác với `db-check-constraint-naming-drift`**: không có gì merge nên `merged_probe` không bắt được, `autopilot-backlog-reconcile` chỉ báo `? no merged_probe`. Bot quét `ready` sẽ chọn block này rồi phát hiện không có gì để code — đốt một session. Slice loại `owner-evidence-gate` đóng bằng **bằng chứng**, không bằng commit, nên `ready` phải hiểu là "còn phép đo phải chạy", không phải "sẵn sàng launch". Phần còn lại (bật cờ Google) là quyết định go-live của owner phụ thuộc A3 legal/PII, **không phải task trong hàng đợi này** — mở slice riêng khi owner chốt bật.
 risk: P0
 change_class: owner-evidence-gate
 depends_on: [auth-s4-d1b-oauth-session-rotation]
@@ -445,6 +468,7 @@ notes: DD-89/DD-90 are the only actionable authority. `job_definer` is cluster-p
 title: Raise next / postcss / brace-expansion floors to clear 11 OSV advisories — without weakening the supply-chain controls
 status: planned
 not_before: 2026-07-30
+blocked_on_owner: 2026-07-29 · **Design-probe item (b) đã đo trước, và bẫy ĐÃ KÍCH HOẠT theo hướng nặng hơn manifest phỏng đoán.** GHSA-mh99-v99m-4gvg affected `<= 5.0.7`, patched **chỉ** `5.0.8` — không có `1.1.17`, nhánh v1 không có bản vá in-range. Nhưng ép v1→v5 **không chỉ là major bump, nó vỡ runtime**: v1 `module.exports = expandTop` (hàm), v5 CJS `exports.expand` (object), mà consumer duy nhất `minimatch@3.1.5` gọi `require('brace-expansion')(...)` như hàm ⇒ `expand is not a function`, và `pnpm install` KHÔNG bắt được. Nhánh v1 chỉ do eslint toolchain kéo (`@eslint/config-array` · `@eslint/eslintrc` · `eslint@9.39.4`) ⇒ **dev-only, không có đường runtime, input là glob trong config tự viết**. Hai lối còn lại đều đòi nới `_scope_out` nên **owner phải chốt trước khi mở worktree**: (1) nâng eslint để nhánh v1 tự biến mất — vi phạm "no unrelated upgrades", **khuyến nghị**; (2) `osv-scanner.toml` ignore có lý do + hạn dùng — vi phạm "no ignore entry". `next`/`postcss` không dính nút này, bump độc lập được. Chi tiết + bằng chứng: `docs/autopilot-deps-security-bump.md`
 risk: P1
 change_class: dependency-security
 depends_on: []
@@ -532,7 +556,7 @@ manifest: null
 merged_probe: null
 notes: |
   Evidence registry anchor only; this block does not issue a readiness verdict or authorize a
-  worktree. Live main@2dc9b8c has only `tenant_admins.role` plus `tenantsForPerson` role labels:
+  worktree. Live main@784bc8d has only `tenant_admins.role` plus `tenantsForPerson` role labels:
   there is no DD-56 action registry, grant-read storage or canonical `authorize` primitive.
   The future strict packet must make this slice the sole cross-feature owner of the closed
   action registry, the identical least-privilege preset for legacy `admin|co_admin` (never
@@ -548,7 +572,8 @@ notes: |
   restricted-post, moderation and mute consumer remains HOLD until this core has its own immutable
   strict CODE_READY packet and merged runtime. Current initiative readiness, blocker, full graph
   (mechanism slices 1–47, API A1–A21, FE F0–F15) and next trigger remain owned exclusively by primary-surface
-  plan v1.7 §13.
+  plan v1.8 §13. The plan is `PLAN_READY` at immutable authority `90d292d`; this block still does
+  not supply the slice-local strict `CODE_READY` verdict.
 
 ## task: dd38-dd86-chat-schema-core
 title: Root chat-schema migration slice (DD-38 in-app chat) — three core tables + constraints + RLS/pure-read helpers
@@ -562,11 +587,12 @@ manifest: null
 merged_probe: packages/db/schema.ts :: chat_channels
 notes: |
   Evidence registry anchor only; this block does not issue a readiness verdict or authorize a worktree.
-  Working-tree decisions v2.10 make DD-86/DD-91–95 owner-final; DD-88 is a broader
-  DEFERRED_PROPOSAL and does not own or block DD-94. Club Assistant Product/BE v0.17, Chat Product
-  v0.14/BE v0.22 and Notifications Product/BE v3.10 are Reviewed target contracts. No chat_* schema,
-  service, route, UI runtime or new migration exists at main@2dc9b8c. Current initiative readiness,
-  blocker and next trigger are owned exclusively by primary-surface plan v1.7 §13; any future slice packet
+  Immutable authority `90d292d` makes DD-86/DD-91–95 owner-final; current decisions v2.11 mirrors it.
+  DD-88 is a broader DEFERRED_PROPOSAL and does not own or block DD-94. Club Assistant Product/BE
+  v0.18, Chat Product v0.15/BE v0.23 and Notifications Product/BE v3.11 are Reviewed target
+  contracts. No chat_* schema, service, route, UI runtime or new migration exists at main@784bc8d.
+  Current initiative readiness, blocker and next trigger are owned exclusively by primary-surface
+  plan v1.8 §13 (`PLAN_READY` at `90d292d`); any future slice packet
   must re-evaluate its own readiness against the immutable authority it pins.
   This root slice is deliberately bounded to final `chat_channels`/`chat_members`/`chat_messages`
   shape + DM read adapter + RLS/policies + read-helper owner/grants + invariant tests. It must NOT
@@ -576,7 +602,7 @@ notes: |
   after this root slice because worktrees 1→2→3→4 share migration/schema/catalog-test scope;
   it must land before every lifecycle/restricted-post/moderation/mute consumer. DD-92 requires own edit, author soft-delete
   and search before beta; DD-93/94/95 require the full registry, unread-derived generic opaque
-  offline signal/digest and exact moderation contract, all dependency-ordered by plan v1.7.
+  offline signal/digest and exact moderation contract, all dependency-ordered by plan v1.8.
   depends_on remains [] because this is an evidence registry anchor, not evidence that the executable
   slice graph has no dependencies. Replace it with the immutable plan's exact prerequisites
   when authoring the real packet. This block only preserves the root anchor originally split out of AP-28;
@@ -818,7 +844,8 @@ notes: **Thực thi fix-candidate (c) của `job-infra-public-projection-reconci
 
 ## task: docs-session-capacity-chk-landed-reconcile
 title: Reconcile feature_session_management_tech.md:120 sang trạng thái CHECK-đã-land; pin choke-point là defense-in-depth
-status: planned
+status: merged
+merged: 2026-07-29 · main@adf5eff (đi cùng commit DD-32 Option D, 27 file) · **KHÔNG có slice/worktree nào được mở cho task này** — deliverable đã được author sẵn trong working tree bởi phiên trước, việc còn lại chỉ là commit. `feature_session_management_tech.md:123` (drift +3 vì file dài ra) nay đọc *"Validated DB constraint `sessions_public_capacity_chk` đã land trong `0024_public_visibility_capacity_check.sql`"*, thay đúng câu "hardening candidate" đã stale; `:390` và `:400` có ghi chú defense-in-depth với khung "pre-`0024`/fixture/constraint-bypass" mà task yêu cầu. `merged_probe` giữ `null` vì đây là reconcile prose, không có symbol nào discriminating — probe theo câu văn sẽ vi phạm DISCRIMINATOR RULE. **Hệ quả: task loại này `--check` không tự xác minh được**, cùng lớp với `owner-evidence-gate`; phải đóng bằng tay và ghi SHA.
 risk: P2
 change_class: docs-reconcile
 depends_on: []
@@ -829,17 +856,38 @@ merged_probe: null
 notes: **Mở bởi design-probe item (c) của `db-public-visibility-capacity-check` (2026-07-27); dependency đã thoả — `0024` merged tại `c100937`.** Slice đó KHÔNG thể tự land reconcile này vì `feature_session_management_tech.md` không nằm trong scope list của nó; từ chối sửa file ngoài scope là đúng kỷ luật, nên việc còn lại nằm đây. `:120` hiện ghi CHECK capacity×visibility là *"hardening candidate qua migration mới monotonic nếu chốt — … chưa thuộc scope slice nào"* — nay stale, phải đọc là **đã land**, trích `0024`/`sessions_public_capacity_chk`. Thêm ghi chú tại `:386` và `:396` (choke-point join/promotion của SessionService, vốn fail-closed trên cùng predicate) rằng DB **nay cũng** enforce qua `0024` và choke-point **VẪN GIỮ** làm defense-in-depth — môi trường nào chưa apply `0024` thì chỉ còn nó. Mục đích của câu đó là chặn một người đọc tương lai xoá choke-point như dead code. **KHÔNG** được kết luận `job-infra-public-projection-reconciliation` đã đóng: candidate (a) và (b) vẫn mở. Đây là reconcile status-line + một ghi chú làm rõ, cùng hình dạng với `docs-tail-0018-number-reconcile`.
 
 ## task: db-check-constraint-naming-drift
-title: 27 CHECK inline không tên trên 23 bảng (0002-0008) — schema.ts và pg_constraint không khớp
-status: ready
+title: 40 CHECK tự-sinh trên 23 bảng — schema.ts và pg_constraint không khớp (đo lại từ catalog)
+status: merged
+merged: 2026-07-29 · main@3d75c90 (squash của feat/db-check-constraint-naming-drift@59f5f19) · migration `0025_check_constraint_naming_drift.sql`, tail 0024→0025 · db 219→243 (+24 CND), workspace 537→561 · 4 vòng codex, 2 fix-round, vòng 03+04 clean FULL-base cùng HEAD (không owner override) · **RENAME CONSTRAINT thay DROP+ADD** — codex round-01 chỉ ra ADD CONSTRAINT re-validate predicate trên mọi row đang giữ ACCESS EXCLUSIVE, và cả 40 rename nằm trong MỘT transaction nên lock giữ tới commit cuối: rủi ro thật trên charges/bank_transactions/payment_allocations/bank_accounts. RENAME là catalog-only, không quét bảng, và **không có mệnh đề predicate nào phải chép tay** — xoá luôn một lớp rủi ro transcription. Verdict 27
+stale_note: 2026-07-29 · Block này mang `status: ready` trong khi `0025` đã trên `origin/main` — `scripts/autopilot-backlog-reconcile` bắt `⚠ STALE`. **Lặp đúng lỗi 2026-07-25** (7 slice stale) ở quy mô 1 slice. Nguyên nhân cùng một chỗ: merge cập nhật code + INFLIGHT nhưng không ai chạy `--fix`. Không phải lỗi phán đoán — lỗi thiếu một bước máy chạy được. Probe cũ `:: CONSTRAINT` là **weak probe** đúng nghĩa DISCRIMINATOR RULE (literal dùng chung, không phải identifier), nay đổi sang `sessions_time_chk`. Xem `NEXT_REVIEW_TRIGGER` của Verdict 27
 manifest: docs/autopilot-manifests/db-check-constraint-naming-drift.json
-merged_probe: packages/db/migrations/0025_check_constraint_naming_drift.sql :: CONSTRAINT
+launcher: .claude/commands/ap-37-db-check-constraint-naming-drift.md
+merged_probe: packages/db/migrations/0025_check_constraint_naming_drift.sql :: sessions_time_chk
 rescoped: 2026-07-27 · Backlog entry gốc (do agent AP-36 soạn) ghi phạm vi là "sessions và 4 anh em" — con số đó lấy từ chỗ PVC-3 tình cờ chạm tới, KHÔNG phải từ phép đo. **ĐO TỪ `pg_constraint`** tại 81b4fe8 trên DB đã migrate tới 0024: **47 CHECK tự-sinh trên 27 bảng**, so với 25 đặt tên đúng — tức **47/72, hai phần ba số CHECK trong schema** không tồn tại dưới tên `schema.ts` khai. Con số này thay cho phép đếm tĩnh 27-trên-23 mà chính reviewer đưa ra trước đó và **sai 20**, kèm một khẳng định sai rằng auth lane 0015-0018 đặt tên đúng — `auth_email_deliveries_kind_check`, `auth_email_tokens_purpose_check`, `auth_oauth_transactions_provider_check`, `channel_identities_platform_check`, `persons_status_check` đều tự-sinh. Drift là **toàn repo**, không giới hạn ở tầng foundation. **Nâng P2→P1** vì 13/27 nằm trên bảng money-path: charges(4), bank_transactions(4), payment_allocations(3), bank_accounts(2)
 risk: P1
 change_class: schema-migration
 depends_on: []
 invariants: [schema]
 scope: []
-notes: **Phát hiện 2026-07-27 khi viết PVC-3 của `db-public-visibility-capacity-check`.** `schema.ts:~599-605` khai `sessions_time_chk` · `sessions_price_chk` · `sessions_slots_chk` · `sessions_vis_chk` · `sessions_join_chk` · `sessions_status_chk`, nhưng `pg_constraint` trên DB đã migrate đầy đủ (verify trên `plexco_test`, tail `0024`) cho thấy **KHÔNG tên nào tồn tại** — `0002:87-99` khai CHECK inline/không tên nên Postgres tự đặt `sessions_check` (time), `sessions_price_amount_check`, `sessions_slots_max_check`, `sessions_visibility_check`, `sessions_join_policy_check`, `sessions_status_check`. **Cùng lớp bug mà comment `schema.ts:107-111` tự ghi là đã tìm-và-sửa cho `players` ở `0014`** (`players_status_check`→`players_status_chk`) — chưa bao giờ sửa cho `sessions`. **Không phải bug đúng đắn hôm nay** (constraint vẫn fire và enforce đúng dưới tên thật; PVC-3 nay assert theo tên THẬT), thuần là drift mirror giữa `schema.ts` và DB sống — nhưng **mọi migration hoặc test tương lai giả định các tên đó tồn tại sẽ sai**, và `dep_checks` của chính manifest slice kia đã dính đúng bẫy đó: `scope-gate` giải bằng `git show main:<file>` + grep nên chỉ đọc được KHAI BÁO, không phân biệt được với ĐÃ ÁP DỤNG. Cách sửa mirror theo đúng `0014` cho `players`: một migration monotonic DROP từng constraint tự-sinh rồi ADD lại dưới tên `schema.ts` khai (cùng predicate, không đổi hành vi). Quyết định khi scope: có gộp luôn `sessions_public_capacity_chk` (đã đặt tên đúng) hay giữ hẹp trong năm cái cũ.
+notes: **Phát hiện 2026-07-27 khi viết PVC-3 của `db-public-visibility-capacity-check`.** `schema.ts:~599-605` khai `sessions_time_chk` · `sessions_price_chk` · `sessions_slots_chk` · `sessions_vis_chk` · `sessions_join_chk` · `sessions_status_chk`, nhưng `pg_constraint` trên DB đã migrate đầy đủ (verify trên `plexco_test`, tail `0024`) cho thấy **KHÔNG tên nào tồn tại** — `0002:87-99` khai CHECK inline/không tên nên Postgres tự đặt `sessions_check` (time), `sessions_price_amount_check`, `sessions_slots_max_check`, `sessions_visibility_check`, `sessions_join_policy_check`, `sessions_status_check`. **Cùng lớp bug mà comment `schema.ts:107-111` tự ghi là đã tìm-và-sửa cho `players` ở `0014`** (`players_status_check`→`players_status_chk`) — chưa bao giờ sửa cho `sessions`. **Không phải bug đúng đắn hôm nay** (constraint vẫn fire và enforce đúng dưới tên thật; PVC-3 nay assert theo tên THẬT), thuần là drift mirror giữa `schema.ts` và DB sống — nhưng **mọi migration hoặc test tương lai giả định các tên đó tồn tại sẽ sai**, và `dep_checks` của chính manifest slice kia đã dính đúng bẫy đó: `scope-gate` giải bằng `git show main:<file>` + grep nên chỉ đọc được KHAI BÁO, không phân biệt được với ĐÃ ÁP DỤNG. Cách sửa mirror theo đúng `0014` cho `players`: một migration monotonic DROP từng constraint tự-sinh rồi ADD lại dưới tên `schema.ts` khai (cùng predicate, không đổi hành vi). Quyết định khi scope: có gộp luôn `sessions_public_capacity_chk` (đã đặt tên đúng) hay giữ hẹp trong năm cái cũ. **KẾT QUẢ ĐO CUỐI (design-probe, 2026-07-28) — con số 47/72 trong `rescoped:` ở trên cũng SAI, và sai theo cách có ý nghĩa:** catalog thật cho **67 khai báo `check()` · 73 constraint sống · 27 đã đúng tên · 40 cần rename · 0 khai-mà-không-có · 6 sống-mà-không-khai**. `27+40+0=67` và `27+40+6=73`. Bản 47 gộp "cần rename" với "sống nhưng chưa bao giờ khai" vào một rổ — hai vấn đề khác nhau, cách sửa khác nhau. **Nửa đáng sợ của khoảng cách 63-vs-72 đã bị bác bỏ bằng đo:** không có guard nào người ta tin là đang enforce mà thực ra vắng mặt (0 cái). Phần dư là chiều ngược lại — 6 constraint sống mà `schema.ts` không mô tả, tách thành `db-undeclared-check-constraints-schema-mirror`.
+
+## task: db-undeclared-check-constraints-schema-mirror
+title: 6 CHECK sống trong DB mà `schema.ts` không khai — mirror ngược, không migration
+status: planned
+risk: P2
+change_class: schema-mirror
+depends_on: []
+invariants: [schema]
+scope: [packages/db/schema.ts, packages/db/src/rls-invariants.test.ts]
+manifest: null
+merged_probe: null
+notes: **Mở 2026-07-29 từ item (e) của design-probe `db-check-constraint-naming-drift`. Block này đáng lẽ đã tồn tại từ 28/07** — AWAIT report của slice đó ghi *"the item-(e) follow-up backlog block text is in the chat transcript for this session (not duplicated to a file per manifest scope)"*. Manifest scope chặn đúng (`docs/autopilot-manifests/*.json` + `0025` + 2 file test; `autopilot-backlog.md` ngoài scope, từ chối ghi là đúng kỷ luật), nhưng hệ quả là **một finding đã đo chỉ sống trong transcript** — transcript không phải hàng đợi, không ai quét nó. Cùng hình dạng với `docs-session-capacity-chk-landed-reconcile`, và là lý do cả hai cần một bước "ghi follow-up ra backlog" nằm NGOÀI worktree slice.
+  **Nội dung:** 6 constraint sống mà `schema.ts` khai cột là `text(...)` trần, không có `check()` builder — `bank_accounts_webhook_status_check` · `channel_identities_status_check` · `messenger_pages_status_check` · `oauth_transactions_provider_check` · `provider_connections_status_check` · `zalo_bots_status_check`. Cả 6 **enforce đúng trong DB sống** (inline/unnamed từ `0001`/`0003`/`0004`); thiếu sót nằm ở model Drizzle, không ở database.
+  **Đây là chiều NGƯỢC LẠI của `0025` và phải không được lẫn:** `0025` đổi tên constraint sống cho khớp tên `schema.ts` khai. Task này thêm khai báo `schema.ts` cho constraint sống chưa được mô tả. Đo cũng đã bác bỏ chiều nguy hiểm thứ ba: **0** constraint được khai mà không tồn tại — không có guard nào người ta tin là đang chạy mà thực ra vắng.
+  **Bẫy 1 — đây KHÔNG phải slice migration.** Constraint đã tồn tại và đã đúng; thêm `check()` vào `schema.ts` là làm model khớp thực tế. Nếu ai đó sinh migration từ diff Drizzle rồi `ADD CONSTRAINT`, đó là **thêm constraint trùng** trên bảng đang có dữ liệu — negative scope tuyệt đối. Verdict 26 đã pin nguyên tắc này cho `0025` (*"ADDING a missing constraint that schema.ts declares but the database lacks: report it, do not create it"*); ở đây nó áp theo chiều ngược.
+  **Bẫy 2 — tên bảng dễ lẫn.** `oauth_transactions` (bảng Sepay-only cũ, `schema.ts:967`) **khác** `auth_oauth_transactions` (bảng login Google/Facebook, đã khai đủ và đã đúng tên). Đọc cả hai định nghĩa, đừng khớp theo tên.
+  **Bẫy 3 — predicate phải chép từ `pg_get_constraintdef`, không từ trí nhớ.** Bốn trong 6 dùng cùng một enum 6 giá trị `connecting|registered|active|drift|error|revoked`; hai cái còn lại khác hẳn (`active|inactive`, và `provider='sepay'` một giá trị). Giả định chúng giống nhau là cách viết sai hai cái.
+  **Điều kiện promote lên `ready`:** chọn tên khai báo cho từng constraint (giữ nguyên tên tự-sinh hiện tại là lựa chọn hợp lệ và rẻ nhất — không cần rename thì không cần migration), viết manifest, và pin một test khẳng định mọi `check()` khai trong `schema.ts` có constraint sống cùng predicate VÀ mọi constraint sống có khai báo — tức đóng vĩnh viễn cả hai chiều mà `0025` chỉ đóng được một.
 
 ## task: db-projector-dlq-no-replay-path
 title: projector_deliveries.dlq là trạng thái cuối không có lối ra — không function/route nào replay

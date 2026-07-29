@@ -2,13 +2,86 @@
 # Slice Readiness Verdicts — Plexco
 
 > **Đây KHÔNG phải nguồn rule mới.** Rules ở `standards/review-code-readiness-gate.md` (owner-accepted 2026-07-19). File này chỉ **áp dụng** gate đó để ra verdict nhị phân cho các slice gần nhất, dùng đúng template §7 và closure matrix §8.
-> **Current snapshot pin:** `AUTHORITY_SHA = 2937ed9a0732bea27db75403682befcb348e315b` (`main` = `origin/main`) · verify 2026-07-25. Mỗi historical verdict vẫn giữ SHA riêng trong block của nó; không dùng header hiện hành để re-interpret snapshot cũ.
-> **Live truth đã verify (`main@2937ed9`):** migrations `0000`–`0021`; Google lane merged/not enabled; 10 auth/onboarding API routes, 0 business route, 0 product FE screen, bot queue registry `[]`. Feature runtime session/reconcile/sync/marketplace vẫn chưa bắt đầu; docs/decision/migration code-dark không phải runtime proof.
+> **Current snapshot pin:** `AUTHORITY_SHA = 784bc8dd297163a5ec5415f33beabbbf34bbc8d7` (`main` = `origin/main`) · verify 2026-07-28. Mỗi historical verdict vẫn giữ SHA riêng trong block của nó; không dùng header hiện hành để re-interpret snapshot cũ.
+> **Live truth đã verify (`main@784bc8d`):** 25 migrations `0000`–`0024`; suite 32 files / 537 workspace tests + 13 readiness-validator tests; Safari macOS+iOS M3 measured PASS nhưng Google login chưa có bằng chứng enabled/go-live. Job core/ack/dispatcher/preflight/schedule đã implemented, nhưng schedule exact-string mặc định OFF, delivery còn placeholder terminal-DLQ và chưa có producer/real projector/replay. `0014` đã có waitlist schema nhưng chưa SessionService/promotion behavior; DD-87 core đã merge nhưng chưa production caller. Exact Chat authority landed at `90d292d` and primary plan v1.8 is `PLAN_READY`; no Chat slice has inherited `CODE_READY`, and no Chat runtime exists. Docs/decision/code-dark không phải runtime proof.
 > **Current auth refresh (2026-07-20):** `origin/main@033ccc8fd9c3f247abf8aa0cb5a0f48b96d006e2` — DD-80 v1.88 authority bundle immutable on main. **Verdict 5a (D0a) = CODE_READY** (re-pinned 033ccc8); Verdict 5b (D0b) `NOT_CODE_READY` pending D0a merge. Verdicts 1/3/4 remain historical snapshots only.
 > **D0a IMPLEMENTED & MERGED (2026-07-20):** slice `auth-s4-d0-revoke-core` squash-merged to `main` (migration `0015` live). The P0 "2 consecutive FULL-base Codex clean" gate was **NOT reached** after 12 rounds (10 real findings fixed incl. round-06 epoch-vs-`revoked_at` P1; round-11 self-caught + `git revert`ed) → merge is a **documented owner override** resting on manual review + acceptance coverage 22/22 + real-Postgres 97/97, **not** an automated clean-round pass. See `.autopilot/state/auth-s4-d0-revoke-core/HALT-MAX_ROUNDS.txt` + the squash commit. **Verdict 5b (D0b) unblocks** once the D0a squash lands on origin/main.
 > **D0b IMPLEMENTED & MERGED (2026-07-22):** slice `auth-s4-d0-session-web-boundary` squash-merged to `main@93c5404` (issuance fence + logout-all route; zero DB change). Unlike D0a, the P0 **"2 consecutive FULL-base Codex clean rounds" gate was MET** (round-03/04, only 2 fix rounds) — **no owner override**. Real-Postgres suite green (db 97/97 unchanged · core 111 · bot 3 · web 78). Recorded as **Verdict 6**. Next in chain: `auth-s4-d1-email-token-core`.
 > **Machine classification (2026-07-22):** `<!-- review-verdict: historical -->` controls immutable blocks; unmarked blocks are current for their own pinned slice/snapshot. **Verdict 15** (historical) recorded DD-87 as owner-decided but `NOT_CODE_READY` solely because its authority packet was uncommitted WIP outside `main@6a28072`; that packet is now committed and pushed (`main@142e9fa`+), so **Verdict 16** re-pins it `CODE_READY` at `main@827d24d`. Neither supersedes unrelated active candidates.
-> **Current candidate (2026-07-25):** Verdict 19 is the active BE-only root slice. G1–G6 and contract/acceptance/security matrices pass; it remains `NOT_CODE_READY` only because the 11-file packet has no immutable main SHA and the implementation handoff is not committed/pushed (closure 10/12).
+> **Current candidate (2026-07-27):** Verdict 26 là active `CODE_READY` authority cho probe `db-check-constraint-naming-drift`; tuân theo gate riêng trong block. Verdict 19 và mọi verdict cũ giữ nguyên historical pin/status của thời điểm phát hành, không được dùng header này để hồi tố authorize.
+> **Live-truth refresh (2026-07-29), đo tại `3d75c90d32bd52b8704794216fdcad63d54261e8`** (khi đó `main` = `origin/main`; sau đó 8 commit docs-only `66c8d02` … land trong cùng phiên để gỡ khối uncommitted — không migration, không code, không test, nên mọi con số dưới đây giữ nguyên). Header snapshot `784bc8d` ở trên là snapshot **của 2026-07-28** và giữ nguyên như bằng chứng thời điểm; nó **không còn là HEAD**. Năm commit xen giữa (`49fd155`, `1747b8c`, `ed38106`, `ae9bc37`, `3d75c90`) gồm autopilot kit v10→v11, HANDOFF v1.28 Level 3, và squash `0025`. Live truth đổi hai chỗ: **26 migrations `0000`–`0025`, tail nay là `0025`** (không còn `0024`), và **suite 561 workspace tests** (core 132 · db 243 · web 146 · bot 40; db 219→243) + 13 readiness-validator tests. Mọi khẳng định khác của snapshot `784bc8d` vẫn đúng. **Cảnh báo drift:** chuỗi `784bc8dd297163a5ec5415f33beabbbf34bbc8d7` được mô tả là "current HEAD" trong ~30 file docs khác của working tree hiện hành; câu đó nay sai ở mọi chỗ nó xuất hiện, và phải sửa hoặc đổi cách diễn đạt thành "authority snapshot" trước khi commit khối đó.
+> **Current candidate (2026-07-29):** Verdict 27 ghi nhận `db-check-constraint-naming-drift` **IMPLEMENTED & MERGED** tại `main@3d75c90`. Verdict 26 chuyển thành authority lịch sử của chính slice đó (giữ nguyên nội dung, gồm cả con số 47/72 mà phép đo sau đó bác bỏ — xem Verdict 27). **Không còn active `CODE_READY` candidate nào**: hàng đợi backlog có 0 task `ready`, và slice runnable gần nhất là `deps-security-bump` với `not_before: 2026-07-30`.
+
+---
+
+## Verdict 27 — `db-check-constraint-naming-drift`: 40 rename, đo lại bác bỏ con số của chính verdict cấp phép; IMPLEMENTED & MERGED `3d75c90` (2026-07-29)
+
+> **Verdict này ghi nhận thực thi, không cấp phép mới.** Authority thiết kế vẫn là Verdict 26 tại `6ae2de6`.
+>
+> **Điều đáng ghi nhất không phải migration — mà là design probe đã bác bỏ con số của verdict cấp phép cho nó,
+> lần thứ ba trong cùng một chuỗi.** Ba phép đếm nối nhau, mỗi cái sửa cái trước: manifest gốc **27 trên 23
+> bảng** (đếm `awk` dòng `CHECK (` trong `0002`–`0008`); Verdict 26 sửa thành **47/72** (query `pg_constraint`
+> tại `81b4fe8`) và tự ghi rằng bản trước *"sai 20"*; rồi design probe đo lại tại `2dc9b8c` bằng **hai đường độc
+> lập** — regex quét `pgTable(`/`check(` và Drizzle `getTableConfig(table).checks` chạy thật qua `tsx` — và ra
+> **67 khai · 73 sống · 27 đúng tên · 40 cần rename · 0 khai-mà-vắng · 6 sống-mà-không-khai**, khớp hai chiều
+> (`27+40+0=67`, `27+40+6=73`).
+>
+> **47 sai không phải vì đếm nhầm, mà vì gộp hai thứ khác nhau vào một rổ**: "cần rename" và "sống nhưng chưa
+> bao giờ được khai" có cách sửa khác hẳn — cái đầu là migration đổi tên, cái sau là sửa `schema.ts` và **không
+> cần migration nào**. Một con số gộp sẽ dẫn tới một slice làm sai việc cho 7 constraint. Đây đúng là lớp lỗi
+> slice này sinh ra để sửa, và nó tái diễn **bên trong chính verdict cấp phép** — đo `pg_constraint` đã đúng
+> hơn đếm khai báo, nhưng vẫn chưa phân loại cái mình đo.
+>
+> **Phần bác bỏ đáng mừng: `0` guard vắng mặt.** Verdict 26 nêu khoảng cách 63-vs-72 và gọi thẳng vế nặng của
+> nó — *"một guard mà người ta tin là đang enforce nhưng **không tồn tại**"*. Đo cho thấy vế đó bằng **0**: cả
+> 67 khai báo đều có constraint sống cùng predicate. Toàn bộ khoảng cách nằm ở chiều ngược lại (6 constraint
+> sống không được mô tả). Ghi rõ vì **sự vắng mặt của một finding cũng là finding** — và CND-11 yêu cầu nó được
+> kiểm chứng chứ không được giả định.
+>
+> **Codex round-01 đổi cơ chế, và đó là finding P1 thật.** Bản đầu theo đúng idiom `0014`: `DROP CONSTRAINT` +
+> `ADD CONSTRAINT` dưới tên khai. Trên bảng có dữ liệu, `ADD CONSTRAINT` **re-validate predicate trên mọi row**
+> trong khi giữ `ACCESS EXCLUSIVE`, và vì cả 40 rename nằm trong một transaction, lock giữ tới commit cuối —
+> rủi ro thật trên `charges` · `bank_transactions` · `payment_allocations` · `bank_accounts`. `RENAME CONSTRAINT`
+> là cập nhật catalog thuần: không quét bảng, không re-validate, và **không có mệnh đề predicate nào phải chép
+> tay** — xoá luôn một lớp rủi ro transcription mà CND-4 được dựng để bắt. Cơ chế tốt hơn cả cái mà verdict cấp
+> phép hình dung.
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-29
+AUTHORITY_SHA: 6ae2de6470573eadc9ef151306002a7b869dcd8b
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-manifests/db-check-constraint-naming-drift.json
+  - packages/db/migrations/0025_check_constraint_naming_drift.sql
+  - packages/db/src/rls-invariants.test.ts
+  - packages/db/src/migrate.test.ts
+SLICE: db-check-constraint-naming-drift
+IN_SCOPE: exactly ONE monotonic migration 0025 renaming 40 auto-generated CHECK constraint names across 23 tables to the names schema.ts already declares, via RENAME CONSTRAINT (catalog-only, zero predicate text restated); CND-1..CND-11 regression guards incl. the pre-0025 predicate-snapshot replay; the quantified declaration-gap report (67 declared / 73 live / 27 correct / 40 renamed / 0 declared-but-absent / 6 live-but-undeclared)
+OUT_OF_SCOPE: any predicate change; creating the 6 live-but-undeclared constraints' schema.ts declarations (reported only -- split to db-undeclared-check-constraints-schema-mirror); column, nullability, default or type changes; RLS, role or grant changes; edits to applied migrations 0000-0024; sessions_public_capacity_chk from 0024, already correctly named; anything outside packages/db
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: none
+PRIOR_SLICES: db-public-visibility-capacity-check (0024, merged c100937) -- surfaced the defect; not a code dependency
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS (design probe measured against a purpose-built database plexco_check_probe migrated to tail 0024, applied=25 skipped=0, queried through pg_constraint/pg_get_constraintdef -- never from schema.ts source text -- and cross-checked by two independent methods: a regex scan of pgTable(/check( sites and Drizzle getTableConfig(table).checks executed against the real schema.ts module via tsx. Both converge on 67 declared. Result: 67 declared, 73 live, 27 already correctly named, 40 needing rename across 23 tables, 0 declared-but-absent, 6 live-but-undeclared. Both identities balance: 27+40+0=67 and 27+40+6=73. This REFUTES Verdict 26's own 47/72 figure, which conflated "needs rename" with "live but never declared"; it also refutes the launcher's stale 27-across-23. Money-path subset re-confirmed by name: charges 4, bank_transactions 4, payment_allocations 3, bank_accounts 1 -- note bank_accounts is 1, not the 2 the rescoped backlog line claimed, because bank_accounts_webhook_status_check falls in the undeclared bucket. Merged state re-verified 2026-07-29 on main@3d75c90: 0025 present as live tail, 26 migrations 0000-0025)
+CONTRACT_MATRIX: PASS (all 40 renames enumerated table-by-table in the design probe appendix with the live pg_get_constraintdef paired against the schema.ts check() declaration; RENAME CONSTRAINT cannot alter a predicate by construction, and CND-1/2/3 prove it empirically by capturing the pre-0025 definition from a throwaway database migrated only through 0024 and comparing byte-for-byte against the post-0025 definition under the declared name)
+CLOSURE_MATRIX: PASS (12/12 -- authority pinned at 6ae2de6 with exact target files; the naming-identity fix is the settled 0014 decision applied where it was never applied; scope IN/OUT pinned with the 6 undeclared explicitly reported-not-fixed; no unmerged dependency; live catalog verified by two independent methods rather than assumed; rename inventory complete and balanced by two arithmetic identities; fail-closed via catalog-only RENAME inside migrate.ts's per-file transaction; zero open questions; CND-1..CND-11 have expected results; monotonic tail with 0000-0024 byte-identical; manifest handoff done and the item-(e) follow-up now recorded in the backlog rather than left in a transcript)
+ACCEPTANCE_MATRIX: PASS (CND-1..CND-11; CND-1 asserts against pg_constraint and never against schema.ts because grepping the declaration is exactly what hid the defect; CND-3 compares pg_get_constraintdef before and after; CND-4 attempts each constraint's real violation so a mangled predicate cannot pass a catalog-only check; CND-7 required the guard to have been SEEN to fail; CND-11 forced the declared-but-absent set to be named individually, which is how the 0 was established rather than assumed)
+SECURITY_AND_MIGRATION_GATE: PASS (RENAME CONSTRAINT only -- no table scan, no predicate re-validation, no DDL that rewrites rows; 0000-0024 byte-identical and the immutability guard intact; no role, grant, RLS, column, nullability, default or type change; rollback = a forward migration renaming back, no data migration; 0025 is the next monotonic tail. The switch away from DROP+ADD came from codex round-01 as a P1 on money-path tables and is the security-relevant substance of this verdict)
+IMPLEMENTATION_ARTIFACTS: PASS (migration 0025 + CND tests merged at 3d75c90, squash of feat/db-check-constraint-naming-drift@59f5f19; 2x consecutive FULL-base codex clean rounds 03/04 on unmoved base 2dc9b8c with NO owner override; 2 fix rounds, 4 real findings, no region flagged 3x so no thrash; full CI list green on final HEAD -- typecheck, format:check, review:check, lint, build, db:bootstrap, test 561/561 with db 219->243; .autopilot/state/db-check-constraint-naming-drift/{design-probe.md,codex/round-0[1-4].txt,AWAIT-FOUNDER-ready-for-manual-merge.txt}; this verdict)
+FIRST_IMPLEMENTATION_STEP: n/a -- IMPLEMENTED & MERGED at 3d75c90
+REMAINING_BLOCKERS: none -- merged. schema.ts and pg_constraint now agree in the schema.ts->live direction for all 67 declared constraints; the live->schema.ts direction still has 6 gaps, tracked as db-undeclared-check-constraints-schema-mirror
+NEXT_REVIEW_TRIGGER: n/a -- merged. Two process defects this slice exposed are NOT closed by it and need a mechanism, not a note: (1) the backlog block stayed `ready` after merge until autopilot-backlog-reconcile flagged it on 2026-07-29, repeating the 2026-07-25 stale-status incident -- the fix is running `--fix` as part of merge, not remembering to; (2) the item-(e) follow-up existed only in a session transcript for a day because autopilot-backlog.md was correctly outside the worktree's scope -- a slice needs a sanctioned way to emit a follow-up without widening its own scope
+```
+
+**Đọc verdict:** slice hoàn thành sạch — 2 vòng clean liên tiếp, không override, 24 test mới. Nhưng ba điều đáng giữ lại hơn bản thân migration. **Một:** chuỗi 27 → 47 → 40 cho thấy một con số cụ thể vẫn có thể sai theo cách mới ngay cả sau khi đã sửa phương pháp một lần; cái sửa được nó là bắt phép đo phải **phân loại**, không chỉ **đếm**. **Hai:** vế đáng sợ của khoảng cách khai-báo (guard vắng mặt) đo ra `0` — và điều đó chỉ biết được vì CND-11 bắt liệt kê từng cái thay vì hấp thụ vào một con số tổng. **Ba:** `RENAME CONSTRAINT` thay `DROP+ADD` là cải tiến do code-review gate tìm ra, không phải do design review — lần thứ hai (sau Verdict 17) gate codex bắt được thứ mà một verdict `CODE_READY` với `G5_SCOPE: PASS` đã bỏ qua trên money-path.
 
 ---
 
@@ -1606,6 +1679,8 @@ NEXT_REVIEW_TRIGGER: n/a -- merged; non-money same-class FK gaps (zalo, notifica
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 29/07/2026 | v2.6 | **Verdict 27 — `db-check-constraint-naming-drift` IMPLEMENTED & MERGED tại `main@3d75c90`** (squash của `59f5f19`). Migration `0025` đổi tên 40 CHECK tự-sinh trên 23 bảng; tail `0024`→`0025`, 26 migrations; db 219→243, workspace 537→561. **2 vòng codex clean liên tiếp (03/04), không owner override**, 2 fix-round, 4 finding thật. Codex round-01 đổi cơ chế `DROP+ADD` → **`RENAME CONSTRAINT`** (P1: `ADD CONSTRAINT` re-validate mọi row dưới `ACCESS EXCLUSIVE`, 40 rename trong một transaction giữ lock tới commit cuối — rủi ro thật trên 4 bảng money-path; RENAME là catalog-only và không phải chép tay predicate nào). **Design probe bác bỏ con số của chính Verdict 26:** không phải 47/72 mà **67 khai · 73 sống · 27 đúng tên · 40 rename · 0 khai-mà-vắng · 6 sống-mà-không-khai** (khớp `27+40+0=67`, `27+40+6=73`); 47 sai vì gộp "cần rename" với "chưa bao giờ khai". Vế nặng của khoảng cách 63-vs-72 (guard vắng mặt) đo ra **0**. 6 constraint sống-không-khai tách thành `db-undeclared-check-constraints-schema-mirror`. Header thêm live-truth refresh `3d75c90` + cảnh báo pin `784bc8d` stale ở ~30 file. |
+| 27/07/2026 | v2.5 | **Header live-truth reconcile tại `main@2dc9b8c`.** Pin 25 migrations (`0000`–`0024`), 32 files / 537 workspace + 13 validator tests; Safari M3 measured PASS nhưng Google chưa có enablement proof; job foundation đã implemented nhưng schedule OFF/placeholder/no producer/real projector/replay; `0014` waitlist schema chưa có behavior và DD-87 core chưa có production caller. Đặt Verdict 26 là active candidate; không sửa/hồi tố các block verdict lịch sử. |
 | 25/07/2026 | v2.4 | **Verdict 19 packet correction:** current header re-pin `main@2937ed9`; active target set 10→11 bằng cách thêm chính project-progress report; G5 PARTIAL false blocker bị gỡ — scope exact tại tail 0021, tail drift là publication preflight phải commit/push/re-pin, không phải open contract. Verdict giữ `NOT_CODE_READY` chỉ do authority/handoff chưa commit/push (10/12). |
 | 23/07/2026 | v2.3 | **Verdict 17 IMPLEMENTED & MERGED** at `main@b0c29a6` (migration `0019` live). The 8-FK / 3-candidate-key scope (per v2.2 amendment) landed as owner-ratified; single-column FKs kept additive; `charges` bound on all 3 legs (session · membership MATCH-SIMPLE-nullable · player). P0 gate **MET — 2 consecutive FULL-base codex clean rounds** (`ffcae28`, no owner override). **Triple-verified** real-Postgres **167/167**: session run (ffcae28) + independent run on merged `main`, incl. **TI-6** named-halt on a seeded cross-tenant `players` row + **TI-7** `0000–0018` byte-identical after 0019. Expand-only DDL on empty tables; diff = 6 files (added `migrate.test.ts` count 19→20). Deeper ledger FKs (`payment_allocations`, `bank_transactions`) deferred to sibling `db-ledger-tenant-integrity-fks`. Design `AUTHORITY_SHA` block below stays pinned at `29635be` (unchanged). |
 | 23/07/2026 | v2.2 | **Verdict 17 AMENDED (implementation codex round-01, owner-ratified).** The CODE_READY FK inventory was **incomplete**: `scope_fks` omitted `charges(tenant_id,player_id)->players(tenant_id,id)` despite the block's own problem-statement naming the player and `charges.player_id` being `NOT NULL`. A tenant-B charge with a tenant-A `player_id` (membership NULL) would pass all 7 FKs → cross-tenant money corruption. Corrected in-slice → **8 composite FKs + 3 candidate keys** (players candidate key added). Meta: a design `CODE_READY` verdict ≠ scope-complete — the codex code-review gate caught what `G5_SCOPE: PASS`/`OPEN_QUESTIONS: 0` missed; the gate is load-bearing on CODE_READY P0 money-path slices. |
