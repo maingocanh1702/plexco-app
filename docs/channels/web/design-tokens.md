@@ -2,9 +2,9 @@
 
 > ⚠️ **File này không còn chứa giá trị token.** Đã merge về SoT ngày 19/07/2026 (DD-59 reconcile, owner approve).
 >
-> **SoT duy nhất:** [`../../standards/design-tokens.md`](../../standards/design-tokens.md) (v1.1+)
+> **SoT duy nhất:** [`../../standards/design-tokens.md`](../../standards/design-tokens.md) (v1.2+, DD-59 ✅); `design.pen` variables phải match `.md`, authority flip cần DD mới + exporter/drift proof.
 > **Nhu cầu token từ BRD:** [`../../standards/token-needs-matrix.md`](../../standards/token-needs-matrix.md)
-> **Theme mới (chờ chốt hue/font):** [`theme-direction-2026-07.md`](./theme-direction-2026-07.md)
+> **Target DD-81:** Candidate C Energetic Orange + Sora/Inter; current Indigo/Outfit giữ active tới tracked owner-approved `design.pen` + visual/WCAG gate. Xem [`theme-direction-2026-07.md`](./theme-direction-2026-07.md).
 
 ## Chuyện gì đã xảy ra
 
@@ -18,6 +18,7 @@ File này (v0.1, 19/06/2026) từng khai báo bộ token song song với `standa
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 28/07/2026 | v1.1 | DD-59 `.md` value SoT final; mirror DD-81 target C + Sora/Inter và activation HOLD; file tiếp tục là pointer, zero token value. |
 | 19/07/2026 | v1.0 | Merge về SoT (DD-59 reconcile); file thành pointer. |
 | 19/06/2026 | — | Thêm Changelog table |
 | 18/06/2026 | v0.1 | Initial design tokens draft |

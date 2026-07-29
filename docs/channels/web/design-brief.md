@@ -1,14 +1,23 @@
 # Plexco Web App — Design Brief cho Designer
 
-> **Version:** 2.0 · 2026-07-25
-> **Tài liệu tham chiếu:** `../../product/BRD.md` v3.9d · `../../product/PRD.md` v2.8c · `../../product/TDD.md` v3.1 · `../../product/ROADMAP.md` v3.3b · `../../features/README.md` v2.29 · `../../standards/decisions.md` v1.67
+> **Version:** 2.3 · 2026-07-28
+> **Tài liệu tham chiếu:** `../../product/BRD.md` v3.9n · `../../product/PRD.md` v2.8m · `../../product/TDD.md` v3.1h · `../../product/ROADMAP.md` v3.4l · `../../features/README.md` current · `../../standards/decisions.md` v2.11 current mirror · `../../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` v1.8
 > **Target audience:** Designer (UI/UX)
 >
 > **Cập nhật v3.4 (DD-37 ✅):** Đăng nhập = **Google + email** (bỏ Telegram Login). Kênh phase-1 = **web + Zalo + Facebook Messenger** (Telegram loại). Onboarding link **Zalo + Facebook Messenger** (không còn bước Telegram). Thêm màn **chat in-app** (DD-38 ✅), **cài đặt hồ sơ + giá theo giới tính** (DD-39 ✅), **mark-paid thủ công tap/multi-select** (DD-40 ✅).
 >
-> **Cập nhật DD-79/DD-81 (19/07/2026; path amended 25/07):** phase-1 PWA có màn **Home hub** làm landing sau đăng nhập (`../../features/feature_home.md` v0.5a — chips Còn nợ/Kèo tuần · hero kèo kế tiếp gradient+glow theo theme-direction §7 · upcoming + suggested). **Bottom nav 5 slot: Home · Feed (config-OFF tới DD-76) · [Khám phá — center/FAB] · Club (CLB sở hữu + tham gia, CTA Tạo CLB) · Setting**; **💬 chat + 🔔 trên header** mọi màn chính. Visual tool = **Pencil**, canonical root file `design.pen` (DD-81); màn Home là theme-exploration đầu tiên. FE mapping chỉ bắt đầu sau khi file được persist/track + owner nghiệm thu.
+> **Cập nhật DD-79/DD-81 (19/07/2026; current mirror 28/07):** phase-1 PWA có màn **Home hub** làm landing sau đăng nhập (`../../features/feature_home.md` v0.7 — chips Còn nợ/Kèo tuần · hero kèo kế tiếp gradient+glow theo theme-direction §7 · upcoming + suggested). **Bottom nav 5 slot: Home · Feed (config-OFF tới DD-76) · [Khám phá — center/FAB] · Club (CLB sở hữu + tham gia, CTA Tạo CLB) · Setting**; **💬 chat + 🔔 trên header** mọi màn chính. Visual tool = **Pencil**, canonical root file `design.pen`; target theme = Candidate C Energetic Orange `#FF5A1F` + Sora/Inter. Current Indigo/Outfit giữ active; FE mapping chỉ bắt đầu sau tracked owner-approved `design.pen` + visual/WCAG gate.
+>
+> **Cập nhật DD-57/58/59 (28/07):** FE governance đã ✅ chốt: server-first/feature-first/4-state; Pencil-only `design.pen → handoff → token-mapping → code → screenshot verify`; `standards/design-tokens.md` là value SoT và benchmark chỉ tư vấn. Đây là contract, không phải runtime/FE evidence.
 >
 > **Cập nhật DD-65..68:** central Plexco Page luôn có; Page riêng là optional. UI onboarding phải hiển thị central readiness trước, không block completion vì thiếu club Page; host/player dùng shared surface và protected actions, runtime vẫn pending.
+>
+> **Cập nhật DD-91 (28/07):** target direction là In-app Chat thành primary daily player surface;
+> Zalo/Messenger là acquisition/external/fallback. Designer cần dự trù club channel, private Club Bot và
+> requester-only `/pay`. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`, Chat/Assistant contracts đã
+> Reviewed, nhưng chưa slice-local `CODE_READY` và không có runtime/connected FE. Đây là conditional
+> direction, không được dùng để mở mapping hoặc tự chốt visual questions. `design.pen` vẫn
+> untracked/unapproved trong working tree hiện tại.
 
 ---
 
@@ -470,11 +479,11 @@ Step 4: Facebook Messenger + Readiness
 
 ### 5.1 Color Palette
 
-> ⚠️ **Giá trị màu canonical ở [`../../standards/design-tokens.md`](../../standards/design-tokens.md)**. DD-59 benchmark đã defer/reference-only, nên không phải active change gate; mọi thay đổi token phải theo authority hiện hành của token SoT.
+> ⚠️ **Giá trị màu canonical ở [`../../standards/design-tokens.md`](../../standards/design-tokens.md)** (DD-59 ✅ `.md` value SoT). Benchmark là advisory evidence, không tự đổi value. Target C chưa active tới khi visual/WCAG gate pass.
 
 | Token | Sử dụng | Ghi chú |
 |-------|---------|---------|
-| `--primary` | CTA buttons, links, active states | **Canonical = Indigo → Deep Blue** (`design-tokens.md §1`) |
+| `--primary` | CTA buttons, links, active states | **Current canonical = Indigo → Deep Blue**; target DD-81 = Energetic Orange `#FF5A1F` sau gate |
 | `--primary-hover` | Button hover | Slightly darker/brighter |
 | `--secondary` | Secondary actions, tags | Complementary color |
 | `--bg-page` | Page background | Light mode: off-white, Dark mode: deep navy |
@@ -491,7 +500,9 @@ Step 4: Facebook Messenger + Readiness
 
 ### 5.2 Typography
 
-- **Font family:** Inter (primary), system-ui fallback
+- **Current font family:** Inter (body), Outfit (heading), system-ui fallback
+- **Target DD-81:** Sora headings + Inter body, chỉ activate sau tracked owner-approved `design.pen` + visual/WCAG gate
+- **Target primary contrast:** nếu activate `#FF5A1F`, normal text dùng dark `#22100A` (5.874:1); white chỉ 3.118:1 nên không đạt AA
 - **Heading:** Bold, letter-spacing tight
 - **Body:** Regular, 16px base, 1.5 line-height
 - **Numbers/money:** Tabular-nums, monospace for alignment
@@ -556,7 +567,7 @@ Step 4: Facebook Messenger + Readiness
 
 ## 9. Deliverables mong đợi từ Designer
 
-1. **Design Tokens file** (Figma variables / design-tokens.md)
+1. **Design token authority** — `standards/design-tokens.md` value SoT + matching variables trong tracked owner-approved `design.pen`
 2. **Component Library** (Button, Card, Input, Table, Badge, Toast, Skeleton, Empty state, Slot indicator)
 3. **Screen designs** theo sitemap Section 3 — cover 4 states mỗi screen:
    - Loading (skeleton)
@@ -587,6 +598,9 @@ Step 4: Facebook Messenger + Readiness
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 28/07/2026 | v2.3 | Refresh current authority refs and mirror plan v1.8 `PLAN_READY` at `90d292d`; retain slice-local `CODE_READY`, no-runtime and design-authority HOLD boundaries. |
+| 28/07/2026 | v2.2 | Mirror DD-57/58/59 active governance and DD-81 target C + Sora/Inter; distinguish current Indigo/Outfit from gated target and pin dark on-primary contrast. |
+| 27/07/2026 | v2.1 | Refresh authority refs and add DD-91 conditional Chat-primary/`/pay` direction while preserving `NOT_PLAN_READY`, no-runtime and design-authority HOLD boundaries. |
 | 25/07/2026 | v2.0 | **DD-81 path reconcile:** canonical root file = `design.pen`; chưa mở FE gate trước persist/track + owner nghiệm thu. |
 | 19/07/2026 | v1.9 | **DD-79/81 mirror:** Home hub landing + bottom nav 5 slot + chat header; tool Pencil `plexco-app-design.pen`; Home = màn theme-exploration đầu tiên. |
 | 2026-07-19 | v1.8 | Ref-only sync tới BRD v3.9d · PRD v2.8c · TDD v3.1 · ROADMAP v3.3b · feature index v2.29 · decisions v1.67; no UI scope/runtime change. |

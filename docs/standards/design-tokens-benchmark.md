@@ -1,12 +1,12 @@
 # Design Tokens — Benchmark Method & System Upgrade
 
-> **Status:** 🟡 Deferred proposal (owner 2026-07-18) · **Version:** 0.2 · 2026-07-18
+> **Status:** ✅ Active advisory method (owner 2026-07-28) · **Version:** 0.3 · 2026-07-28
 > **Nguồn:** ported từ Sporta `docs/design/sporta-design-tokens-recommendation.md`.
-> **Decision:** `decisions.md` DD-59 (🟡).
+> **Decision:** `decisions.md` DD-59 (✅).
 > **Quan hệ:** đây là **method doc** — feed vào `design-tokens.md` (canonical tokens). KHÔNG thay `design-tokens.md`.
-> **Đang trao đổi (live):** hướng theme bright/modern/sporty + 4 palette candidate + font → [`../channels/web/theme-direction-2026-07.md`](../channels/web/theme-direction-2026-07.md).
+> **Theme direction:** DD-81 chọn Candidate C Energetic Orange + Sora/Inter; giá trị hiện hành chỉ đổi sau visual/WCAG gate tại [`../channels/web/theme-direction-2026-07.md`](../channels/web/theme-direction-2026-07.md).
 >
-> **Reference-only:** DD-59 đã defer. Benchmark, usage-token layer và reconcile duplicate token file chưa active và **không gate build**; `design-tokens.md` hiện vẫn là token SoT, không thay đổi từ tài liệu này.
+> **Authority boundary:** benchmark chỉ là evidence tư vấn, không tự đặt/đổi giá trị và không gate build. `design-tokens.md` là value SoT; `design.pen` phải mirror value đó. Đảo authority cần DD mới + exporter + drift proof.
 
 Hai mục tiêu:
 1. **Method** — cách luận/điều chỉnh token từ benchmark app đối thủ (thay vì "tự chế").
@@ -16,13 +16,13 @@ Hai mục tiêu:
 
 ---
 
-## 0. Reconcile trước (dọn trùng lặp)
-Hiện có **2 file token**: `standards/design-tokens.md` (canonical, đầy đủ) và `channels/web/design-tokens.md` (v0.1, trùng một phần). Đề xuất: **`standards/design-tokens.md` là SoT**; `channels/web/design-tokens.md` chỉ trỏ về SoT (surface note), không giữ giá trị song song → tránh drift. (DD-59)
+## 0. Reconcile đã hoàn tất (dọn trùng lặp)
+`standards/design-tokens.md` là value SoT duy nhất; `channels/web/design-tokens.md` đã thành pointer và không giữ giá trị song song. Đây là nhánh reconcile DD-59 đã hoàn tất ngày 19/07/2026.
 
 ---
 
 ## 1. Benchmark — apps tham khảo
-> Chọn 5–7 app cùng ngành (thể thao/booking/social). Điền khi chạy.
+> Chọn 5–7 app cùng ngành (thể thao/booking/social). Điền từ evidence kiểm chứng được; bảng chỉ tư vấn, không tự override product requirements, accessibility hay value SoT.
 
 | App | Loại | Primary | Background | Font chính | Dark mode | Đặc trưng |
 |---|---|---|---|---|---|---|
@@ -63,8 +63,8 @@ Hiện có **2 file token**: `standards/design-tokens.md` (canonical, đầy đ�
 |---|---|---|
 | {--success} | {…} | {đã thanh toán / check-in OK} |
 
-## 4. System upgrade — component/usage tokens (gap chính)
-> Foundation token (màu/spacing) đã có. Thiếu **usage token** (semantic theo component) — nguồn gây hardcode. Đề xuất thêm lớp usage:
+## 4. System upgrade — component/usage tokens
+> Chỉ thêm usage/component alias khi một screen đã được owner duyệt cần state đó và semantic được tái sử dụng giữa screen/component. Không bulk-generate từ inventory hoặc benchmark. Mọi usage token map về foundation token trong value SoT:
 
 | Component | Usage token | Map về foundation |
 |---|---|---|
@@ -74,7 +74,11 @@ Hiện có **2 file token**: `standards/design-tokens.md` (canonical, đầy đ�
 | Badge/paid | `--badge-paid-bg` / `--badge-paid-fg` | `var(--success-bg)` / `var(--success)` |
 | Input | `--input-bg` / `--input-border-focus` | `var(--surface)` / `var(--primary)` |
 
-Quy tắc: component CSS đọc **usage token**, usage token map về **foundation token** — đổi brand chỉ sửa foundation. (bổ trợ FE-INV-2)
+Quy tắc:
+
+1. Owner-approved screen/state là demand evidence; benchmark không phải demand.
+2. Reused semantic dùng usage token chung; one-off visual detail ở component owner chỉ alias token hiện có, không tạo foundation value mới.
+3. Usage token luôn map về **foundation token** trong `design-tokens.md`; không chứa value song song.
 
 ## 5. So sánh Plexco vs competitors (positioning)
 | Tiêu chí | {App A} | {App B} | Plexco (đề xuất) |
@@ -89,5 +93,6 @@ Quy tắc: component CSS đọc **usage token**, usage token map về **foundati
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 28/07/2026 | 0.3 | **DD-59 ✅:** activate advisory benchmark method; `.md` giữ value SoT; usage aliases chỉ sinh từ owner-approved accepted/reused states; authority flip cần DD/exporter/drift proof. |
 | 18/07/2026 | 0.2 | Owner defer DD-59; method/usage-token/reconcile là reference-only và không thay token SoT hiện tại. |
 | 16/07/2026 | 0.1 | 🟡 Proposal — method benchmark + usage-token layer; reconcile duplicate token file. DD-59. |

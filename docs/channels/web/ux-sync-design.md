@@ -1,14 +1,23 @@
 # Web/App-first UX + Multi-surface Sync Design
 
-> Version: v0.3 · 2026-07-17
+> Version: v0.5 · 2026-07-28
 > Scope: UX architecture cho web/app khi Plexco có các bot surfaces phase-1: **Zalo + Facebook Messenger** (Telegram đã loại — DD-37).
 > Related docs: `README.md`, `design-brief.md`, `../../features/feature_sync_engine.md`, `../../features/feature_session_management.md`, `../../features/feature_payment_reconcile.md`, `../../features/feature_marketplace_discovery.md`, `../../features/feature_player_view.md`, `../../standards/business-rules.md`
 >
 > **Cập nhật DD-65..68:** Messenger là shared host/player surface trên central Plexco Page hoặc optional per-club Page. Host tạo session cơ bản bằng durable `/newsession` wizard; player discover/join bằng opaque action. Cả hai gọi cùng canonical services với web; web vẫn là control plane/fallback cho tác vụ nâng cao. Nhắc nợ chính = web + Zalo DM, Messenger best-effort trong 24h.
+>
+> **Cập nhật DD-91:** target direction nay là In-app Chat trở thành primary daily player surface;
+> Zalo/Messenger là acquisition/external/fallback. Exact `/pay` phải requester-only, synchronous
+> authenticated `no-store` và consume cùng payment truth; không LLM/persist peer-visible result. Primary
+> plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng chưa exact-slice `CODE_READY` và chưa có runtime, nên
+> đoạn dưới giữ là UX architecture input, không coding gate.
 
 ## 1. Tóm tắt
 
-Web/app là main product của Plexco. Bot vẫn tồn tại vì người dùng đã ở trong Zalo/Facebook Messenger, nhưng vai trò dài hạn của bot là **kênh thông tin, thông báo, nhắc việc và deep-link router** về web/app. Các tương tác nghiệp vụ chính của user nên được điều hướng sang web/app để có UX đầy đủ, kiểm soát quyền tốt hơn, audit rõ hơn và tránh phân mảnh flow theo từng nền tảng chat.
+Web/PWA — gồm In-app Chat mục tiêu — là main product của Plexco. External bots vẫn tồn tại vì người dùng
+đã ở trong Zalo/Facebook Messenger, nhưng vai trò dài hạn là **acquisition, thông tin, thông báo, nhắc
+việc và deep-link/fallback router** về Plexco. Các tương tác nghiệp vụ chính nên hội tụ về cùng app
+surface để có UX đầy đủ, kiểm soát quyền tốt hơn, audit rõ hơn và tránh phân mảnh flow.
 
 Web/app không nên được thiết kế như "bot có giao diện". Web/app là workspace chính để host và player nhìn tổng thể, xử lý ngoại lệ, cấu hình, audit, khám phá kèo và thực hiện hành động. Bot chỉ nên giữ các action cực ngắn hoặc các fallback cần thiết trong chat.
 
@@ -395,3 +404,9 @@ Do not build deep payment UI before ledger invariants and allocation services ar
 ## 12. Design principle
 
 Web/app should be the main product, control plane and marketplace. Bots should be information, notification and routing channels that bring users back to the right web/app screen. Data consistency must come from canonical commands, outbox delivery and projector repair, not from making each surface store or reconcile its own state.
+
+## 13. Changelog
+
+| Date | Version | Change |
+|---|---|---|
+| 2026-07-28 | v0.5 | Reconcile primary plan v1.8 `PLAN_READY` at `90d292d`; retain per-slice `CODE_READY`, no-runtime and UX-input-only boundaries. |

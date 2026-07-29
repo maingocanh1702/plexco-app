@@ -2,6 +2,7 @@
 
 > Copy file này mỗi khi bắt đầu dev feature mới, điền tên feature và tick dần.
 > Áp dụng cho mọi feature Plexco — điều chỉnh từng section phù hợp.
+> **Template v1.1 · 2026-07-28:** FE governance DD-57/58/59 ✅; dùng không có nghĩa feature đã `CODE_READY`.
 
 **Project:** Plexco
 **Feature:** {FEATURE_NAME}
@@ -50,7 +51,7 @@
 - [ ] Outbox events (sync engine integration)
 
 ### 2.3 Quality
-- [ ] Error responses luôn JSON: `{ error, message, code }`
+- [ ] Response theo canonical envelope `{ data, error, meta.requestId }`; error dùng `error.{code,message,statusCode}` (DD-60)
 - [ ] Idempotency cho payment / critical operations
 - [ ] Rate limiting cho sensitive endpoints
 - [ ] Unit tests pass (≥20 per feature)
@@ -66,8 +67,14 @@
 ## Phase 3: Frontend (Web)
 
 ### 3.1 Design → Code
-- [ ] Design tokens áp dụng (từ `docs/design-tokens.md`)
+- [ ] Product spec §Screens & States đã Reviewed
+- [ ] Exact node trong canonical `design.pen` đã được track + owner duyệt
+- [ ] Pixel-perfect handoff hoàn tất (`docs/channels/web/handoff/<screen>-handoff.md`)
+- [ ] Token mapping hoàn tất (`docs/channels/web/handoff/<screen>-token-mapping.md`)
+- [ ] Design tokens áp dụng từ value SoT `docs/standards/design-tokens.md`
+- [ ] Usage/component alias chỉ sinh từ owner-approved accepted/reused state (DD-59)
 - [ ] Component structure tạo xong
+- [ ] Screen/feature visual owner hoặc shared primitive có `// Source:`; presentational atom không lặp comment
 
 ### 3.2 UI Quality
 - [ ] 4 states trên mọi view: **loading / ready / empty / error**
@@ -80,6 +87,9 @@
 
 ### 3.3 Integration
 - [ ] API kết nối thành công
+- [ ] Client Component không import/gọi `@plexco/db`/`tenantRepo`; chỉ dùng authenticated web boundary
+- [ ] Server Component/Route Handler gọi canonical authenticated application service trực tiếp, không self-HTTP; service sở hữu authz/DTO/RLS/repo
+- [ ] Client parse `{ data, error, meta.requestId }` và `error.{code,message,statusCode}`
 - [ ] SSE realtime hoạt động (sync engine)
 - [ ] Error handling match API error codes
 - [ ] i18n: mọi chuỗi có vi + en
@@ -122,3 +132,9 @@
 | Date | Note |
 |------|------|
 | | |
+
+## Template changelog
+
+| Date | Version | Thay đổi |
+|---|---|---|
+| 28/07/2026 | v1.1 | Activate DD-57/58/59 FE gates; add canonical `design.pen` handoff/token mapping, client/server service boundary, value SoT, scoped source comments and canonical API envelope. |

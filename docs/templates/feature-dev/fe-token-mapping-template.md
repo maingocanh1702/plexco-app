@@ -1,13 +1,13 @@
 # Token Mapping — {Screen Name}
 
 > **Template** — copy sang `docs/channels/web/handoff/<screen>-token-mapping.md`.
-> **Authority:** DD-58 đã owner-defer 2026-07-18; template này là optional reference, chưa phải delivery gate.
+> **Authority:** DD-58 ✅ (owner 2026-07-28). Dùng sau Reviewed Product spec + exact node trong tracked owner-approved `design.pen`.
 > Nguồn: ported từ Sporta `docs/handoff/*-tailwind-mapping.md` — adapt **CSS variables (không Tailwind)**.
 > Pipeline: `../../channels/web/frontend-pipeline.md` · Handoff: `<screen>-handoff.md` · Tokens: `../../standards/design-tokens.md`.
 >
 > **Status:** Draft | Reviewed · **Version:** 0.1 · {YYYY-MM-DD}
 >
-> Mục tiêu: map mỗi giá trị `.pen`/handoff → **CSS variable**. Giá trị chưa có token → **thêm token vào `design-tokens.md`**, KHÔNG dùng literal.
+> Mục tiêu: map mỗi giá trị canonical `design.pen`/handoff → **CSS variable**. Giá trị chưa có token → đề xuất vào `design-tokens.md`, KHÔNG dùng literal; usage alias chỉ thêm cho owner-approved accepted/reused state (DD-59).
 
 ---
 
@@ -24,6 +24,8 @@
 | text color | {#111827} | `color: var(--text)` | handoff §3 |
 
 ### Token còn thiếu (cần thêm vào `design-tokens.md`)
+> Chỉ materialize token nếu screen được owner duyệt cần nó và semantic được tái sử dụng; benchmark/inventory không tự tạo token.
+
 - [ ] `--{token}`: `{value}` — dùng cho `{block}` (handoff §{x})
 
 ## 2. Icons
@@ -44,7 +46,7 @@
 - [ ] Icon đúng library/size
 - [ ] Radius/shadow đúng token
 - [ ] Không đổi font/scale theo breakpoint nếu design không có variant
-- [ ] Component có `// Source: <screen>-token-mapping.md §X · handoff §Y`
+- [ ] Screen/feature visual owner hoặc shared primitive có `// Source: <screen>-token-mapping.md §X · handoff §Y`; atom con không lặp comment
 
 ---
-_Template v0.2 · DD-58 (🟡 deferred/reference-only)_
+_Template v0.3 · 2026-07-28 · DD-58/DD-59 ✅_

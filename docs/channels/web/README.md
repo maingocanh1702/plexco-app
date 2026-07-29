@@ -3,10 +3,30 @@
 > **Surface:** plexco.app (web dashboard + marketplace + player view + chat in-app)
 > **Deployable unit:** `apps/web`
 > **Tech stack:** Next.js App Router baseline · Route Handlers/API · SSE · vanilla CSS · Google Fonts
-> **Version:** v0.4 · 2026-07-18
-> **Refs:** `../../product/TDD.md` §3.9 · `../../features/feature_web_auth_onboarding.md` · `../../features/feature_sync_engine.md` · `../../features/feature_marketplace_discovery.md` · `../../features/feature_player_view.md`
+> **Version:** v0.7 · 2026-07-28
+> **Refs:** `../../product/TDD.md` v3.1h §3.9 · `../../features/feature_web_auth_onboarding.md` · `../../features/feature_sync_engine.md` · `../../features/feature_marketplace_discovery.md` · `../../features/feature_player_view.md` · `../../features/feature_inapp_chat.md`
 
 > **Cập nhật 18/07:** Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅) + link **Facebook** (DD-33 ✅; external approval evidence là enablement gate, capability chưa pass phải OFF + one-time `link_code` fallback) / **Zalo** (DD-14 ⬜). Kênh phase-1 = **web + Zalo + Facebook Messenger** (Telegram loại). Web còn là surface của chat in-app, settings/giá theo giới tính và mark-paid thủ công.
+>
+> **Cập nhật 28/07:** DD-91 đặt In-app Chat làm primary daily player surface mục tiêu,
+> với exact requester-only `/pay`; Zalo/Messenger giữ acquisition/external/fallback. Primary plan v1.8
+> đã `PLAN_READY` tại immutable authority `90d292d` (closure 12/12), nhưng từng slice vẫn phải đạt
+> strict `CODE_READY`; `chat_*`/`/api/chat/*`/`/api/me/charges` và connected product FE chưa tồn tại.
+> Safari M3 đã đo PASS nhưng Google login chưa được chứng minh enabled. Không map UI từ `design.pen`
+> trước khi file được persist/track + owner nghiệm thu.
+>
+> **Cập nhật 28/07:** DD-57/58/59 đã ✅ chốt FE architecture, Pencil-only handoff pipeline và
+> `.md` token-value SoT. DD-81 chọn target Candidate C Energetic Orange + Sora/Inter, nhưng current
+> Indigo/Outfit giữ active và FE HOLD tới tracked owner-approved `design.pen` + visual/WCAG gate.
+>
+> **📌 `design.pen` CỐ Ý CHƯA TRACK (owner quyết 2026-07-29) — đây không phải thiếu sót.** File tồn
+> tại trên máy owner (552 KB, mtime 22/07) và **21 doc** trỏ tới nó, nhưng nó **untracked**, nên điều
+> kiện *"tracked owner-approved"* của DD-57/58/81 **chưa đóng** và **FE giữ HOLD**. Ghi ra để người đọc
+> sau không đi tìm file trong repo rồi tưởng nó thất lạc, và không tự ý `git add` để "sửa" một gate
+> đang mở đúng chủ đích. **Điều kiện track:** khi FE thực sự bắt đầu, và cùng lúc chốt cách lưu — vào
+> thẳng git (552 KB binary, không diff/review được, mỗi lần sửa thêm một bản đầy) hay Git LFS (repo
+> hiện **chưa** dùng LFS; đây sẽ là file đầu tiên ⇒ là quyết định hạ tầng riêng, không quyết kèm một
+> commit docs). Chừng nào chưa track thì mọi handoff per-screen của DD-58 vẫn đóng.
 
 ---
 
@@ -127,16 +147,16 @@ Example:
 
 ## 5. Design System
 
-→ **Designer kickoff:** [`./designer-kickoff.md`](./designer-kickoff.md) — DD-57..59 deferred/reference-only, không gate delivery hiện tại.
-→ Tokens (SoT): [`../../standards/design-tokens.md`](../../standards/design-tokens.md). Bản `./design-tokens.md` giữ nguyên surface note; reconcile proposal DD-59 chưa active.
-→ Kiến trúc FE: [`../../standards/frontend-architecture.md`](../../standards/frontend-architecture.md) (🟡 DD-57 deferred/reference-only).
-→ Pipeline visual-source→code: [`./frontend-pipeline.md`](./frontend-pipeline.md) (🟡 DD-58 deferred/reference-only; visual SoT mới chưa chốt).
-→ Benchmark method: [`../../standards/design-tokens-benchmark.md`](../../standards/design-tokens-benchmark.md) (🟡 DD-59 deferred/reference-only).
+→ **Designer kickoff:** [`./designer-kickoff.md`](./designer-kickoff.md) — DD-57..59 active governance; execution vẫn HOLD theo gate bên dưới.
+→ Tokens (value SoT): [`../../standards/design-tokens.md`](../../standards/design-tokens.md). Bản `./design-tokens.md` chỉ là pointer; `design.pen` variables phải match `.md`.
+→ Kiến trúc FE: [`../../standards/frontend-architecture.md`](../../standards/frontend-architecture.md) (✅ DD-57).
+→ Pipeline visual-source→code: [`./frontend-pipeline.md`](./frontend-pipeline.md) (✅ DD-58; exact node trong tracked owner-approved `design.pen` mới mở per-screen handoff).
+→ Benchmark method: [`../../standards/design-tokens-benchmark.md`](../../standards/design-tokens-benchmark.md) (✅ DD-59 advisory evidence; không tự đặt value/gate build).
 → API convention: [`../../standards/api-reference-convention.md`](../../standards/api-reference-convention.md) (✅ DD-60; áp cho API blocks mới/materially changed).
 
 Quy tắc:
 - **Mọi color/spacing/typography = CSS variable** — không hardcode hex/rgba
-- **Google Fonts:** Inter (body), Outfit (headings)
+- **Google Fonts current:** Inter (body), Outfit (headings). **Target DD-81:** Sora headings + Inter body, chưa activate trước visual/WCAG gate.
 - **Dark mode:** support via `prefers-color-scheme` + manual toggle
 - **Responsive:** 375px / 768px / 1440px breakpoints
 - **Touch targets:** min 44x44px
@@ -265,9 +285,12 @@ Duplicate `commandId` returns previous semantic result. UI must not retry with a
 
 | Date | Version | Thay đổi |
 |------|---------|----------|
+| 2026-07-28 | v0.7 | Reconcile primary plan v1.8 `PLAN_READY` at `90d292d`; retain per-slice `CODE_READY`, no-runtime, visual-authority and FE HOLD boundaries. |
+| 2026-07-28 | v0.6 | Mirror DD-57/58/59 active governance and DD-81 target C + Sora/Inter; preserve current tokens, Pencil authority gate, FE HOLD and no-runtime boundary. |
+| 2026-07-27 | v0.5 | Mirror DD-91 target/no-runtime boundary, exact `/pay` direction, Safari measurement closure and unchanged design-authority HOLD. |
 | 2026-07-18 | v0.4 | Reconcile DD-33 external enablement gate; DD-57..59 deferred/reference-only; DD-60 accepted forward-looking convention. |
 | 2026-07-10 | v0.3 | **v3.4 pivot (DD-37 ✅):** auth = Google + email (DD-13 ✅, bỏ TG Login) + link Facebook (DD-33 🟡)/Zalo (DD-14 ⬜); surfaces phase-1 = web + Zalo + Messenger (Telegram loại); web thêm surface chat in-app (DD-38 🟡), settings/giá theo giới tính (DD-39 🟡), mark-paid thủ công (DD-40 ✅). Cập nhật §1/§2/§3/§6. |
 | 2026-06-20 | v0.2 | Chốt Next.js App Router baseline, thêm permission matrix, SSE topics, DTO/API contract, readiness |
 | 2026-06-19 | v0.1 | Initial surface docs |
 
-*Web app surface docs v0.4. Screen handoffs chỉ theo pipeline DD-58 nếu proposal được reopen/chốt.*
+*Web app surface docs v0.7. Screen handoffs chỉ theo approved design-authority pipeline; `PLAN_READY` không authorize FE hoặc runtime.*

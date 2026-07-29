@@ -1,10 +1,10 @@
 # Pixel-Perfect Handoff — {Screen Name}
 
 > **Template** — copy sang `docs/channels/web/handoff/<screen>-handoff.md` khi làm 1 màn mới.
-> **Authority:** DD-58 đã owner-defer 2026-07-18; template này là optional reference, chưa phải delivery gate.
+> **Authority:** DD-58 ✅ (owner 2026-07-28). Template bắt buộc cho screen FE sau khi Product spec Reviewed và exact node trong tracked owner-approved `design.pen` đã pass gate.
 > Nguồn: ported từ Sporta `docs/handoff/*-pixel-perfect-handoff.md`. Pipeline: `../../channels/web/frontend-pipeline.md`.
 >
-> **Screen:** {tên} · **Node/frame:** `{node_or_frame_id}` · **Source:** `{tracked_pen_path_or_figma_url}`
+> **Screen:** {tên} · **Node/frame:** `{node_or_frame_id}` · **Source:** `design.pen`
 > **Status:** Draft | Reviewed · **Version:** 0.1 · {YYYY-MM-DD}
 >
 > ⚠️ **Chỉ ghi giá trị ĐỌC ĐƯỢC từ visual source đã chốt — KHÔNG suy đoán.** Thiếu → đo lại.
@@ -66,7 +66,7 @@
 ## 7. Gợi ý implementation (FE)
 - Component tree đề xuất: `{…}`
 - Tách `constants.ts` cho copy/mock data
-- Data: fetch `/api/{resource}` → envelope `{ data | error,message,code }` (FE-INV-6)
+- Data: Client dùng authenticated web boundary; Server Component/Route Handler gọi canonical application service trực tiếp. Client envelope `{ data, error, meta.requestId }` (FE-INV-3/6).
 
 ---
-_Template v0.2 · pipeline `../../channels/web/frontend-pipeline.md` · DD-58 (🟡 deferred/reference-only)_
+_Template v0.3 · 2026-07-28 · pipeline `../../channels/web/frontend-pipeline.md` · DD-58 ✅_

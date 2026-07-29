@@ -2,14 +2,14 @@
 
 > Foundation-level design tokens cho web app. Khai báo CSS custom properties trong `:root`.
 > **Khi cần color/spacing/font mới → thêm vào đây kèm ghi chú.**
-> v1.1 · 2026-07-19 · **SoT duy nhất cho giá trị token** — `channels/web/design-tokens.md` đã merge về đây (DD-59 reconcile, owner 19/07) và chỉ còn là pointer.
-> ⚠️ Giá trị brand/semantic hiện tại sẽ thay khi chốt theme mới (`../channels/web/theme-direction-2026-07.md` 🟡). Nhu cầu token còn thiếu: `token-needs-matrix.md`.
+> v1.2 · 2026-07-28 · **SoT duy nhất cho giá trị token** — `channels/web/design-tokens.md` chỉ còn là pointer (DD-59 ✅).
+> **Authority boundary:** current active values bên dưới vẫn là Indigo + Outfit/Inter. DD-81 đã chọn target Candidate C Energetic Orange + Sora/Inter, nhưng chưa activate trước tracked owner-approved `design.pen` + visual/WCAG/drift gate. `design.pen` variables phải match file này; authority flip cần DD mới + exporter + drift proof. Nhu cầu token: `token-needs-matrix.md`.
 
 ---
 
 ## 1. Color Palette
 
-### Primary (Indigo → Deep Blue)
+### Primary (current active: Indigo → Deep Blue)
 
 ```css
 :root {
@@ -291,7 +291,7 @@
 
 ```css
 :root {
-  --font-heading: 'Outfit', var(--font-sans);  /* ⚠️ theme-direction 0.1 đề xuất 'Sora' — chờ chốt */
+  --font-heading: 'Outfit', var(--font-sans);  /* current active; DD-81 target Sora chỉ activate sau visual/WCAG gate */
   --bg-page: var(--bg-secondary);              /* alias — nền page */
   --bg-input: var(--gray-100);                 /* alias — input, search */
   --bg-sidebar: hsl(230, 25%, 18%);            /* sidebar dark-trong-light (giữ từ channels/web); ⚠️ hue 230 lệch thang neutral 220 — re-check khi chốt theme */
@@ -341,6 +341,7 @@
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 28/07/2026 | v1.2 | **Authority/status only; zero value change.** DD-59 chốt `.md` value SoT; DD-81 chọn target C + Sora/Inter nhưng current Indigo/Outfit giữ active tới tracked owner-approved `design.pen` + visual/WCAG/drift gate. |
 | 19/07/2026 | v1.1 | **DD-59 reconcile (owner 19/07):** merge `channels/web/design-tokens.md` v0.1 về đây — file đó thành pointer. Thêm §10 (font-heading/bg-page/bg-input/bg-sidebar/text-inverse/text-link, alias-first) + Conflict Resolution Log. Sửa `--sport-tennis` → hsl(48,96%,53%) (SoT cũ trùng `--warning`). Header khai báo SoT duy nhất; link `token-needs-matrix.md`. |
 | 19/06/2026 | — | Thêm Changelog table |
 | 18/06/2026 | v1.0 | Design tokens foundation |

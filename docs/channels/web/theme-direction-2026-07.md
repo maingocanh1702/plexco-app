@@ -1,9 +1,14 @@
 # Theme Direction — Plexco Web (bright · modern · sporty)
 
-> **Status:** 🟡 Discussion / chờ chốt hue+font (tool ✅ DD-81) · **Version:** 0.6 · 2026-07-25
+> **Status:** ✅ Target direction selected; activation HOLD (DD-81) · **Version:** 0.9 · 2026-07-28
 > **Scope surface (DD-69):** UI **phase-1 = PWA** trên `apps/web` (mobile-first 375px, cài đặt được) — "web" là tên surface, không phải desktop-only. Native phase-2 tái dùng nguyên bộ token qua export JSON (`../../standards/token-needs-matrix.md` §6), không làm lại theme.
-> **Mục đích:** doc trao đổi để chốt **màu chủ đạo + font** cho theme mới. Là input cho `../../standards/design-tokens-benchmark.md` (DD-59) → khi chốt sẽ ghi vào `../../standards/design-tokens.md`.
+> **Mục đích:** ghi target **Candidate C Energetic Orange + Sora/Inter** và các gate phải đóng trước khi activate trong `../../standards/design-tokens.md`.
 > **Cách tiếp cận:** **Hybrid** — giữ nguyên *cấu trúc* token (tên semantic, thang bậc), chỉ đổi *giá trị* (brand/accent/semantic + neutrals). Code map không đổi.
+> **Authority gate 28/07:** `design.pen` là path DD-81 đã chọn nhưng hiện untracked/unapproved; DD-91
+> Chat-primary plan v1.8 đã `PLAN_READY` tại `90d292d` nhưng chưa có exact-slice `CODE_READY`. Theme
+> discussion không tự mở FE mapping hoặc thêm Chat screen trước khi cả visual authority và slice gate
+> đóng. Current active value set vẫn là
+> Indigo + Outfit/Inter trong `design-tokens.md`; target dưới đây chưa phải runtime/CSS authority.
 
 ---
 
@@ -32,7 +37,7 @@
 - **Body:** `Inter` (đã kiểm chứng qua Strava — số/tiền dễ đọc). Dùng `tabular-nums` cho tiền/slot.
 - **Heading:** `Sora` (Google — hình học, khỏe, sporty, vẫn dễ đọc). *(Thay `Outfit` cũ trong `design-tokens.md`.)*
 - **Alternatives cân nhắc:** `Plus Jakarta Sans` (1 font cho cả hai — mềm, đồng bộ, rất dễ đọc) · `Space Grotesk` (heading, tech-sporty hơn).
-- **Đề xuất:** **Sora (heading) + Inter (body)**.
+- **Đã chọn (DD-81, owner 2026-07-28):** **Sora (heading) + Inter (body)**. Activation vẫn chờ visual/WCAG gate.
 
 ## 4. Palette candidates (bright · trẻ · sporty — no blue)
 
@@ -42,7 +47,7 @@
 |---|---|---|---|---|
 | `--primary` | `#00C853` | `#9AE600` | `#FF5A1F` | `#FF2E93` |
 | `--primary-hover` | `#00B24A` | `#8AD400` | `#E8480F` | `#EA1E82` |
-| `--on-primary` (chữ trên nút) | `#062A18` (tối) | `#1A2E05` (tối) | `#FFFFFF` | `#FFFFFF` |
+| `--on-primary` (chữ trên nút) | `#062A18` (tối) | `#1A2E05` (tối) | `#22100A` (tối; AA normal text) | `#FFFFFF` |
 | `--accent` | `#B8FF00` (volt) | `#12D8A0` (mint) | `#FFB020` (amber) | `#C6FF00` (lime) |
 | `--bg-page` (light) | `#F3FFF8` | `#FBFFEF` | `#FFF7F2` | `#FFF5FA` |
 | `--bg-card` (light) | `#FFFFFF` | `#FFFFFF` | `#FFFFFF` | `#FFFFFF` |
@@ -53,25 +58,26 @@
 
 > **Đã loại (không tươi-trẻ):** bright-modern blue/cyan — Azure `#0B84FF`, Cyan `#00BCE0` (giữ lại đây để tra cứu lịch sử quyết định).
 
-## 5. Đề xuất & câu hỏi mở
+## 5. Target đã chọn & activation gates
 
-- **Đề xuất:** **A · Volt Green** (`#00C853`) — tươi-trẻ + sporty nhưng vẫn dễ dùng cho mảng lớn/nút tiền; hoặc **C · Orange** nếu muốn nhiệt/hype rõ. Font **Sora + Inter**.
-- **Lưu ý dùng:** primary sáng (Lime/Pink) cần **chữ tối** trên nút + hạn chế phủ mảng lớn (dễ chói) — kiểm tra tương phản WCAG AA khi chốt.
-- **CẦN CHỐT:** (1) ⬜ hue A/B/C/D (hoặc phối, vd Volt Green primary + Lime accent); (2) ⬜ xác nhận font Sora+Inter; (3) ✅ **tool/path — DD-81: Pencil, canonical root file `design.pen` (path owner-amended 25/07).** File chỉ thành design authority sau khi persist/track + owner nghiệm thu; variables phải khớp SoT tại gate đó. (1)(2) chốt qua theme exploration trên chính file này (N variant frames màn Home + hero recipe §7).
+- **Target direction (✅ DD-81, owner 2026-07-28):** **C · Energetic Orange** (`--primary` candidate `#FF5A1F`) + **Sora headings / Inter body**.
+- **Contrast correction:** chữ trắng `#FFFFFF` trên `#FF5A1F` đo **3.118:1**, không đạt WCAG AA cho normal text; target `--on-primary` là dark `#22100A` (**5.874:1**) nếu palette được activate. Large/decorative text không được dùng để né gate normal-text.
+- **Gates còn mở:** canonical `design.pen` phải được track + owner duyệt exact Home comparison; variables phải match `.md` SoT; contrast WCAG AA phải pass light/dark và representative components. Chỉ sau đó mới tune/activate value set trong `design-tokens.md`.
+- **Tool/path (✅):** Pencil, canonical root file `design.pen` (path owner-amended 25/07). Visual comparison nay để xác nhận/tune target C, không phải tự chọn lại A/B/C/D. Material hue hoặc font-family change phải mở DD mới.
 
 ## 6. Propagation path (sau khi chốt — thứ tự bắt buộc, theo playbook `../../templates/brd-to-pen-playbook.md` §1.2 + Bước 6D)
 
 > ✅ Bước cũ "reconcile `channels/web/design-tokens.md`" đã làm xong 19/07 (DD-59 reconcile): file đó giờ là pointer, SoT duy nhất = `standards/design-tokens.md` v1.1. Mọi thay đổi giá trị từ đây chỉ đi 1 đường:
 
-1. **Chốt quyết định** (hue A/B/C/D + font + tool file design) → ghi vào `decisions.md` (DD) trước.
-2. **Ghi giá trị vào SoT** `../../standards/design-tokens.md` (hybrid — đổi giá trị, giữ cấu trúc; bump version + changelog + Conflict Resolution Log nếu đảo giá trị cũ).
+1. **Chốt quyết định** (✅ target C + Sora/Inter + Pencil `design.pen`, DD-81).
+2. **Sau visual/WCAG approval, ghi giá trị vào SoT** `../../standards/design-tokens.md` (hybrid — đổi giá trị, giữ cấu trúc; bump version + changelog + Conflict Resolution Log nếu đảo giá trị cũ).
 3. **Cùng đợt, đóng gap từ BRD:** đối chiếu `../../standards/token-needs-matrix.md` — bổ sung tối thiểu: `--reconcile-unmatched`, usage-token layer (debt/sub/join/session), sports đủ 7 môn không trùng semantic, `--level-1..5`, `--touch-target`, Financial/tabular-nums, `--locked`/`--upgrade-accent`.
 4. **Điền benchmark verdict** vào `../../standards/design-tokens-benchmark.md` (DD-59 — không bịa số liệu).
-5. **File design mới:** khai báo variables trong `.pen` mới (hoặc Figma variables) **khớp SoT ngay khi tạo file** — không vẽ bằng literal rồi tokenize sau. Đánh dấu `Plexco-DS-fable5.pen` **superseded** trong `frontend-pipeline.md` + `designer-kickoff.md`.
+5. **Canonical `design.pen`:** khai báo variables **khớp SoT ngay khi file được nghiệm thu** — không vẽ bằng literal rồi tokenize sau. `Plexco-DS-fable5.pen` giữ trạng thái **superseded**.
 6. **Code:** generate/`:root` CSS trong `apps/web` từ SoT (pipeline 1 chiều — code không tự thêm giá trị; hiện `apps/web` chưa có CSS token nên đây là cơ hội setup sạch từ đầu).
 7. **Drift audit + WCAG gate trước khi dùng:** so SoT ↔ file design ↔ CSS ↔ representative components (playbook template §5.5); contrast WCAG AA cả light/dark — đặc biệt primary sáng (Lime/Pink cần chữ tối, đã note §5).
 
-**Định nghĩa xong:** cả 7 bước hoàn thành trong cùng đợt chốt theme; không có trạng thái "đã đổi SoT nhưng chưa propagate".
+**Định nghĩa activated:** cả 7 bước hoàn thành trong cùng đợt activation; không có trạng thái "đã đổi SoT nhưng chưa propagate". Hiện mới hoàn tất bước 1 nên target đã chốt nhưng current value set chưa đổi.
 
 ## 7. Benchmark bổ sung — Sporta Home (internal, 19/07/2026)
 
@@ -87,7 +93,7 @@
 
 **Data points cho các quyết định đang mở (§5):**
 
-- **Hue:** Sporta chốt Emerald `#059669` làm final; variant **Coral Orange `#EA580C`** (được đánh giá đẹp) rất gần **candidate C · Energetic Orange `#FF5A1F`** — thêm một điểm tham khảo cho C nếu muốn hype/ấm. Lưu ý Strava `#FC5200` cùng vùng cam (benchmark §2 đã nêu).
+- **Hue:** Sporta chốt Emerald `#059669` làm final; variant **Coral Orange `#EA580C`** (được đánh giá đẹp) rất gần **target C · Energetic Orange `#FF5A1F`**. Lưu ý Strava `#FC5200` cùng vùng cam (benchmark §2 đã nêu).
 - **Font:** Sporta body = **Plus Jakarta Sans** — trùng alternative đã list ở §3; heading Archivo Black là display nặng, không hợp hướng legibility-first (giữ đề xuất Sora + Inter).
 - **⚠️ KHÔNG copy dải sport colors của Sporta:** `--sport-football #00E676` ≈ success-green, `--sport-tennis #CCFF00` ≈ accent lime — đúng lỗi trùng semantic mà needs-matrix §2 bắt tránh.
 - **Workflow cho §6 bước 5 (file design mới):** như Sporta — layout làm component ref, nhân N frame variant chỉ override màu để so A/B/C/D cạnh nhau trong cùng file; và file design phải có đủ frame **Loading/Empty/Dark** như kỷ luật 4-states của feature spec, không chỉ happy path.
@@ -95,13 +101,16 @@
 ## 8. Governance bổ sung (từ `../../templates/design-system-playbook.md` v1.1)
 
 - **Coverage matrix cho screens:** khi vẽ file design mới, lập matrix `state × role × device × theme` cho tổ hợp hợp lệ — screen dữ liệu động đủ Loading/Ready/Error/Empty + dark; static/confirmation/permission gate được `N/A + lý do` per ô. Không blanket, không tích Descartes.
-- **Handoff mapping theo target stack:** Plexco phase-1 = PWA (`apps/web`) → `*-tailwind-mapping.md`/CSS mapping là **đúng stack** (khác Sporta — Flutter cần dart-mapping); `*-pixel-perfect-handoff.md` dùng chung. Native phase-2 (DD-69) → thêm platform mapping riêng từ token export JSON, không viết lại theme.
-- **⬜ PROPOSAL — vị trí SSOT giá trị token khi có file design mới:** hiện DD-59 chốt SoT giá trị = `../../standards/design-tokens.md` (.md), file design phải khai variables khớp SoT ngay khi tạo + drift audit (§6 bước 5/7). Playbook chung khuyến nghị ngược lại: **giá trị sống trong file design**, `.md` chỉ giữ decision log + exports (generator + source revision). Nếu muốn theo playbook → cần **DD mới đảo DD-59** tại đợt chốt theme; chưa chốt thì giữ nguyên DD-59, không tự đổi. Ghi đây làm input cho founder-decision đợt theme.
+- **Handoff mapping theo target stack:** Plexco phase-1 = PWA (`apps/web`) → `*-token-mapping.md` dùng CSS variables; `*-pixel-perfect-handoff.md` dùng chung. Native phase-2 (DD-69) → thêm platform mapping riêng từ token export JSON, không viết lại theme.
+- **Value SoT đã chốt (DD-59):** `../../standards/design-tokens.md` (.md) giữ authority; `design.pen` variables phải match SoT + qua drift audit (§6 bước 5/7). Đảo authority sang design file cần DD mới, exporter versioned và drift proof; không suy ra từ DD-81.
 
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 28/07/2026 | 0.9 | Mirror primary plan v1.8 `PLAN_READY`; retain exact-slice `CODE_READY`, unapproved `design.pen`, visual/WCAG/drift and no-runtime activation gates. |
+| 28/07/2026 | 0.8 | **DD-81 theme direction ✅:** chọn Candidate C `#FF5A1F` + Sora/Inter; sửa target `--on-primary` sang `#22100A` vì white chỉ 3.118:1 còn dark đạt 5.874:1. Giữ current Indigo/Outfit và FE HOLD tới tracked owner-approved `design.pen` + visual/WCAG/drift gate. DD-59 `.md` SoT final; sửa mapping về CSS-variable token mapping. |
+| 27/07/2026 | 0.7 | Add DD-91 no-screen-before-readiness boundary; retain `design.pen` untracked/unapproved HOLD and unchanged hue/font/token decisions. |
 | 25/07/2026 | 0.6 | **DD-81 path reconcile:** canonical root path = `design.pen`; file local/untracked chưa phải design authority. FE giữ HOLD tới khi persist/track + owner nghiệm thu; không đổi hue/font/token SoT. |
 | 19/07/2026 | 0.5 | **DD-81 ✅ (owner):** tool = Pencil, file `plexco-app-design.pen` root repo — §5 điểm (3) resolved; còn ⬜ hue + font, chốt qua theme exploration trên chính file. SSOT giá trị vẫn theo DD-59 (§8 proposal giữ mở). |
 | 19/07/2026 | 0.4 | §8 **Governance bổ sung** (design-system-playbook v1.1): coverage matrix `state × role × device × theme` cho file design mới; handoff mapping theo target stack (PWA → tailwind/CSS mapping đúng stack Plexco); ⬜ proposal vị trí SSOT giá trị token (giữ DD-59 .md-SoT vs đảo sang design-file-SoT theo playbook — chờ DD tại đợt chốt theme, không tự đổi). |

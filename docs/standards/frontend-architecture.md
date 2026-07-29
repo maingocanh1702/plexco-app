@@ -1,12 +1,12 @@
 # Frontend Architecture Principles — Plexco Web
 
-> **Status:** 🟡 Deferred proposal (owner 2026-07-18) · **Version:** 0.4 · 2026-07-18
+> **Status:** ✅ Active FE governance (owner 2026-07-28) · **Version:** 0.5 · 2026-07-28
 > **Nguồn:** ported từ Sporta `architecture/frontend_architecture_flutter.md` — adapt sang stack Plexco (Next.js App Router + React, CSS-variable tokens, **không Tailwind**).
-> **Decision:** `decisions.md` DD-57 (🟡).
+> **Decision:** `decisions.md` DD-57 (✅).
 > **Áp dụng cho:** `apps/web` (Next.js 15 App Router · React 19 · SSE).
 > **Đây là counterpart FE của** `core-db-architecture-principles.md` (BE). Không override HARD RULES ở `00-start-here/HANDOFF.md §3`.
 >
-> **Inactive contract:** DD-57 đã được owner defer. Mọi `PHẢI`/checklist bên dưới mô tả hướng đề xuất để tham khảo; **không gate build hoặc review hiện tại** cho tới khi DD-57 được reopen và chốt. HARD RULES đã accepted ở HANDOFF vẫn áp dụng độc lập.
+> **Status boundary:** DD-57 là governance cho FE mới hoặc materially changed, không phải bằng chứng FE đã implement. FE vẫn HOLD tới khi canonical `design.pen` được track + owner duyệt và gate per-screen của DD-58 đóng.
 
 Tài liệu này định nghĩa **cách cấu trúc code FE** — không phải design tokens (xem `design-tokens.md`) và không phải screen spec (xem `../features/feature_*.md` §Screens & States + `../channels/web/design-brief.md`).
 
@@ -18,7 +18,7 @@ Tài liệu này định nghĩa **cách cấu trúc code FE** — không phải 
 |---|---|---|
 | **FE-INV-1** | **4-state rule** — mọi screen data-driven PHẢI xử lý đủ `loading / ready / empty / error`. Không có "happy-path only". | Tránh UI trắng/treo khi mạng lỗi hoặc list rỗng. |
 | **FE-INV-2** | **Tokens-only** — không hardcode hex/rgba/px. Luôn `var(--token)` (xem `design-tokens.md`). | 1 nguồn design; đổi theme không sửa component. |
-| **FE-INV-3** | **UI không tự gọi DB/tenantRepo** — client component gọi API route (`app/api/*`); mọi mutation tiền/roster đi qua service → `tenantRepo` (RLS choke-point, HARD RULE 1). | Không rò rỉ cross-tenant từ FE. |
+| **FE-INV-3** | **Client không chạm DB** — Client Component không import/gọi `@plexco/db`, `tenantRepo` hoặc DB; chỉ đi qua web boundary đã auth. Server Component/Route Handler được gọi canonical authenticated application service trực tiếp, không self-HTTP. Service sở hữu authz, DTO whitelist, tenant/RLS context và repository. | Không rò rỉ cross-tenant, không tạo hai đường nghiệp vụ. |
 | **FE-INV-4** | **i18n bắt buộc** — mọi chuỗi user-facing = `t(vi, en)` (HARD RULE 5). Không hardcode 1 thứ tiếng trong JSX. | Song ngữ vi/en. |
 | **FE-INV-5** | **Không tiền/PII vào client bundle hoặc public route** — discovery UI đọc `public_sessions` (field-whitelist, HARD RULE 2). Roster/nợ/SĐT/email chỉ trong route đã auth + RLS. | Bất biến rò rỉ. |
 | **FE-INV-6** | **API envelope chuẩn** — client parse `{ data, error, meta.requestId }`; khi lỗi đọc `error.{code,message,statusCode}` (xem `apps/web/lib/api-envelope.ts`), không đọc raw exception. | Error model thống nhất FE↔BE. |
@@ -31,7 +31,7 @@ Tài liệu này định nghĩa **cách cấu trúc code FE** — không phải 
 
 - **Server-first**: mặc định React **Server Component**; chỉ `"use client"` khi cần state/effect/handler.
 - **Feature-first**, không layer-first: gom theo màn/feature, không gom theo "tất cả component / tất cả hook".
-- **Data qua choke-point**: FE → API route → service → `tenantRepo`. Không bao giờ import `@plexco/db` trực tiếp vào client component.
+- **Data qua choke-point**: Client Component → web boundary → canonical application service; Server Component/Route Handler → cùng service trực tiếp, **không self-fetch HTTP**. Service → repository/`tenantRepo`. Client không bao giờ import `@plexco/db`.
 - **Token-driven**: UI đọc CSS variables; đổi brand/dark-mode = đổi token.
 - **Realtime qua SSE** (DD-07): subscribe 1 chiều server→client, không multi-master (HARD RULE 3).
 
@@ -43,7 +43,7 @@ Tài liệu này định nghĩa **cách cấu trúc code FE** — không phải 
 | UI runtime | React 19 (Server + Client Components) | server-first |
 | Styling | CSS variables + component CSS (`styles/index.css` + `styles/components/`) | **không Tailwind** — dùng `var(--token)` (FE-INV-2) |
 | Realtime | SSE (`app/api/sse`) + `LISTEN/NOTIFY` | DD-07 |
-| Data access | fetch → `app/api/*` route → service → `tenantRepo` | RLS choke-point |
+| Data access | Client: fetch web boundary; Server Component/Route Handler: gọi canonical service trực tiếp; service → repository/`tenantRepo` | Không self-HTTP ở server; RLS choke-point thuộc service/repo |
 | i18n | `t(vi, en)` từ `@plexco/core` | HARD RULE 5 |
 | Test | Vitest | `apps/web` đã cấu hình |
 
@@ -66,25 +66,31 @@ apps/web/
     └── components/          ← CSS theo component
 ```
 
-> **Quy ước import:** Client component **KHÔNG** import từ `@plexco/db`. Chỉ gọi `fetch('/api/...')`. Server component/route handler mới được gọi service/`tenantRepo`.
+> **Quy ước import:** Client Component **KHÔNG** import từ `@plexco/db` hoặc gọi `tenantRepo`; chỉ dùng web boundary đã auth. Server Component/Route Handler gọi canonical authenticated application service trực tiếp; chỉ service/repository owner mới chạm `tenantRepo`.
 
 ## 4. Data flow (bắt buộc)
 
-```
+```text
 Client Component
-  → fetch('/api/<resource>')            (envelope { data,error,meta.requestId })
-    → Route Handler (app/api/*)          validate input + auth + SET LOCAL tenant
-      → Service (packages/core / apps/web service)
-        → tenantRepo(tenantId)           RLS choke-point (HARD RULE 1)
-          → Postgres
-  ← DTO (whitelist field) → UI state
+  → authenticated web boundary
+    → Route Handler / Server Action
+      ┐
+Server Component / Route Handler
+  → canonical authenticated application service directly  (no self-HTTP)
+      ┘
+        → authz + DTO whitelist + tenant/RLS context
+          → repository / tenantRepo(tenantId)               (HARD RULE 1)
+            → Postgres
+
+Client response ← envelope { data,error,meta.requestId } ← whitelisted DTO
+Server render   ← whitelisted DTO
 ```
 
-Quy tắc: **UI chỉ nhận DTO đã whitelist**, không nhận nguyên row DB. Mapping DTO↔domain nằm ở service/route, không ở client.
+Quy tắc: **UI chỉ nhận DTO đã whitelist**, không nhận nguyên row DB. Mapping DTO↔domain, authz và tenant/RLS context nằm ở canonical application service; transport chỉ validate/serialize.
 
 ## 5. State pattern (React)
 
-- **Server state** (data từ API): fetch trong Server Component hoặc client hook có cache/invalidate rõ ràng. Mỗi màn khai báo state machine 4-nhánh:
+- **Server state**: Server Component gọi canonical application service trực tiếp; client hook fetch authenticated web boundary với cache/invalidate rõ ràng. Mỗi màn khai báo state machine 4-nhánh:
 
 ```ts
 type ScreenState<T> =
@@ -114,7 +120,7 @@ type ScreenState<T> =
 Trước khi code 1 màn mới, phải có đủ:
 
 - [ ] Product spec `../features/feature_<name>.md` §Screens & States (Reviewed).
-- [ ] Visual source đã được owner chốt và truy cập được: `.pen` mới được track hoặc Figma file/node được link; node/frame ID của màn tồn tại.
+- [ ] Canonical `design.pen` đã được track + owner duyệt; node/frame ID của màn tồn tại và được pin.
 - [ ] Handoff `docs/channels/web/handoff/<screen>-handoff.md` (template `../templates/feature-dev/fe-handoff-template.md`).
 - [ ] Token mapping `<screen>-token-mapping.md` (template `../templates/feature-dev/fe-token-mapping-template.md`).
 - [ ] Pipeline: xem `../channels/web/frontend-pipeline.md`.
@@ -129,7 +135,7 @@ Trước khi code 1 màn mới, phải có đủ:
 - [ ] Parse envelope `{ data, error, meta.requestId }` và `error.{code,message,statusCode}` (FE-INV-6), không raw exception.
 - [ ] Touch target ≥ 44px (xem `design-brief.md §8`).
 - [ ] `pnpm --filter @plexco/web typecheck` + `test` xanh.
-- [ ] Component mang comment `// Source: <screen>-token-mapping.md §X` (xem pipeline).
+- [ ] Screen/feature visual owner hoặc shared primitive mang `// Source: <screen>-token-mapping.md §X`; presentational atom kế thừa không lặp comment.
 
 ## 10. Cross-references
 
@@ -142,6 +148,7 @@ Trước khi code 1 màn mới, phải có đủ:
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 28/07/2026 | 0.5 | **DD-57 ✅:** activate server-first/feature-first/4-state governance; Client Component không chạm DB, Server Component/Route Handler gọi canonical application service trực tiếp; giữ FE HOLD và DD-58 per-screen gate. |
 | 18/07/2026 | 0.4 | Owner defer DD-57; đánh dấu toàn bộ FE-INV/checklist là reference proposal, không active delivery gate. |
 | 17/07/2026 | 0.3 | Reconcile FE-INV-6, data flow, error model và checklist với live canonical API envelope. |
 | 17/07/2026 | 0.2 | Reconcile DD-58 v1.40: visual source có thể là `.pen` track hoặc Figma link; không claim asset cũ không tồn tại. |

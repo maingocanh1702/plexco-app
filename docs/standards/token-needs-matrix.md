@@ -1,15 +1,15 @@
 # Token Needs Matrix — Plexco (từ BRD v3.9d)
 
-> **Status:** 🟡 Đề xuất · v0.1 · 19/07/2026 · Owner: Ngoc-Anh
+> **Status:** ✅ Active needs inventory; advisory, not value authority · v0.2 · 28/07/2026 · Owner: Ngoc-Anh
 > **Phương pháp:** Bước 6A playbook `../templates/brd-to-pen-playbook.md` (6 lăng kính, template §5.10).
-> **Vai trò:** input cho (a) đợt chốt theme (`../channels/web/theme-direction-2026-07.md`) và (b) DD-59 khi reopen. Đây là danh sách **nhu cầu** token — giá trị cụ thể chốt ở `design-tokens.md` (SoT).
-> **Đối chiếu với:** `design-tokens.md` v1.1. Cột trạng thái: ✅ có · ⚠️ một phần · ❌ thiếu.
+> **Vai trò:** inventory candidate từ BRD cho DD-59 đã chốt. Đây là danh sách **nhu cầu**, không phải token contract hay backlog tự động; giá trị cụ thể chỉ sống trong `design-tokens.md` (SoT).
+> **Đối chiếu với:** `design-tokens.md` v1.2 (authority/status bump, zero value change). Cột trạng thái: ✅ có · ⚠️ một phần · ❌ thiếu.
 
 ---
 
 ## 1. Lăng kính 3 — Enum & State machine (quan trọng nhất)
 
-> Rule: mỗi chỗ BRD liệt kê ≥2 trạng thái của cùng 1 thứ = 1 nhóm token bắt buộc (usage-token alias về foundation semantic, theo DD-59).
+> Rule inventory: mỗi chỗ BRD liệt kê ≥2 trạng thái của cùng một subject tạo một **candidate usage group**. Chỉ materialize alias khi screen/state đã được owner duyệt và semantic được tái sử dụng; không bulk-generate từ bảng này.
 
 | Nhu cầu | Nguồn BRD/DD | Nhóm token đề xuất | Trạng thái |
 |---|---|---|---|
@@ -72,6 +72,8 @@ Public marketplace surface **chỉ** dùng whitelist fields (NFR-S2/CO-5): khôn
 
 ## Tổng kết gap (ưu tiên khi chốt theme)
 
+> Đây là thứ tự xem xét khi một accepted screen cần token, không phải scope implementation tự động.
+
 1. `--reconcile-unmatched` — state đặc thù killer-feature, không map semantic sẵn.
 2. Usage-token layer cho debt/sub/join/session states (chống hardcode — đúng gap (b) DD-59).
 3. Sports đủ 7 + tránh trùng semantic; level 1..5.
@@ -82,4 +84,5 @@ Public marketplace surface **chỉ** dùng whitelist fields (NFR-S2/CO-5): khôn
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 28/07/2026 | v0.2 | **DD-59 ✅:** relabel thành active needs inventory; value SoT vẫn là `design-tokens.md`; usage alias chỉ materialize từ owner-approved accepted/reused states. |
 | 19/07/2026 | v0.1 | 🟡 Khởi tạo từ BRD v3.9d theo playbook Bước 6A; đối chiếu design-tokens.md v1.1. |
