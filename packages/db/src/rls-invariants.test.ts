@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
+import { getTableConfig } from "drizzle-orm/pg-core";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -20,6 +21,10 @@ import {
   sessionSurfaceRefs,
   zaloReplyContexts,
 } from "../schema.js";
+// Namespace import ALONGSIDE the named imports above (not a replacement) — the CND regression
+// guard (below) must enumerate EVERY table schema.ts declares, not just the ones other describe
+// blocks in this file already import by name.
+import * as schemaModule from "../schema.js";
 import { migrate } from "./migrate.js";
 import { tenantRepo, withTenant } from "./tenant.js";
 import {
@@ -61,10 +66,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(25); // 0000..0024 (0024 = public-visibility-capacity-check)
+    expect(ctx.migrateResult.applied.length).toBe(26); // 0000..0025 (0025 = check-constraint-naming-drift)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(25);
+    expect(second.skipped.length).toBe(26);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1299,12 +1304,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
         await bootstrapJobDefiner(admin);
         return migrate(url(dbName));
       });
-      expect(res.applied.length).toBe(25); // 0000..0024
+      expect(res.applied.length).toBe(26); // 0000..0025
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(25);
+        expect(rows.length).toBe(26);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -1401,21 +1406,20 @@ describe("PVC-1..PVC-8 public visibility x capacity CHECK (0024)", () => {
     // visibility literal or a non-positive slots_max, so the DB constraints are probed directly —
     // they fire identically regardless of role, so a superuser probe is representative here.
     //
-    // Matched by BEHAVIOUR (the violation is rejected), not by schema.ts's declared names
-    // sessions_vis_chk/sessions_slots_chk — live pg_constraint shows the ORIGINAL 0002 inline
-    // column CHECKs never got those names; Postgres auto-named them sessions_visibility_check and
-    // sessions_slots_max_check (same class of drift schema.ts:107-111 already documents as fixed
-    // for players in 0014 — it was never fixed for sessions). Pre-existing, out of this slice's
-    // scope (which only adds sessions_public_capacity_chk and must not touch these two);
-    // discovered while writing this test and flagged in the READY report, not silently corrected
-    // here.
+    // Matched by schema.ts's declared names sessions_vis_chk/sessions_slots_chk as of 0025
+    // (db-check-constraint-naming-drift). Before 0025, live pg_constraint showed the ORIGINAL 0002
+    // inline column CHECKs never got those names — Postgres auto-named them
+    // sessions_visibility_check and sessions_slots_max_check (same class of drift schema.ts:107-111
+    // already documented as fixed for players in 0014, never fixed for sessions until now). Found
+    // while writing THIS test in the prior slice and deliberately deferred as out of that slice's
+    // scope; 0025 is the sweep that closes it.
     await expect(
       ctx.owner.query(
         `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, visibility)
          VALUES ($1, $2, now(), now() + interval '1 hour', 'Asia/Ho_Chi_Minh', 'secret')`,
         [ctx.tenantA, ctx.badmintonSportId],
       ),
-    ).rejects.toThrow(/violates check constraint "sessions_visibility_check"/);
+    ).rejects.toThrow(/violates check constraint "sessions_vis_chk"/);
 
     await expect(
       ctx.owner.query(
@@ -1423,7 +1427,7 @@ describe("PVC-1..PVC-8 public visibility x capacity CHECK (0024)", () => {
          VALUES ($1, $2, now(), now() + interval '1 hour', 'Asia/Ho_Chi_Minh', 0)`,
         [ctx.tenantA, ctx.badmintonSportId],
       ),
-    ).rejects.toThrow(/violates check constraint "sessions_slots_max_check"/);
+    ).rejects.toThrow(/violates check constraint "sessions_slots_chk"/);
   });
 
   it("PVC-5: sessions_public_capacity_chk is live, named per convention, and shaped as expected", async () => {
@@ -1572,9 +1576,7 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
       await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
         await nsCtx.bootstrapJobDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe(
-          "0024_public_visibility_capacity_check.sql",
-        );
+        expect(res.applied[res.applied.length - 1]).toBe("0025_check_constraint_naming_drift.sql");
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -2429,5 +2431,1169 @@ describe("OAM-1..OAM-11 outbox ack marker (0023)", () => {
     expect(ackedAudit.created_at.getTime()).toBeGreaterThanOrEqual(
       claimedAudit.created_at.getTime(),
     );
+  });
+});
+
+/**
+ * CND-1..CND-11 — check constraint naming drift (0025, design-probe.md).
+ *
+ * 40 auto-generated CHECK constraint names, across 23 tables, renamed to the name schema.ts
+ * already declares. Zero predicate change — every pair below was matched by exact referenced-
+ * column-set identity, then read manually, before 0025 was written (design-probe.md appendix).
+ * 12 of the 40 are money-path (charges/bank_transactions/payment_allocations/bank_accounts) and
+ * get CND-4 coverage as individually named tests, not folded into the generic loop, per CND-5.
+ */
+describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
+  const RENAMED: { table: string; oldAuto: string; newDeclared: string; money: boolean }[] = [
+    {
+      table: "persons",
+      oldAuto: "persons_status_check",
+      newDeclared: "persons_status_chk",
+      money: false,
+    },
+    {
+      table: "channel_identities",
+      oldAuto: "channel_identities_platform_check",
+      newDeclared: "channel_identities_platform_chk",
+      money: false,
+    },
+    {
+      table: "auth_email_tokens",
+      oldAuto: "auth_email_tokens_purpose_check",
+      newDeclared: "auth_email_tokens_purpose_chk",
+      money: false,
+    },
+    {
+      table: "auth_email_deliveries",
+      oldAuto: "auth_email_deliveries_kind_check",
+      newDeclared: "auth_email_deliveries_kind_chk",
+      money: false,
+    },
+    {
+      table: "auth_email_deliveries",
+      oldAuto: "auth_email_deliveries_command_operation_check",
+      newDeclared: "auth_email_deliveries_operation_chk",
+      money: false,
+    },
+    {
+      table: "auth_email_deliveries",
+      oldAuto: "auth_email_deliveries_outcome_check",
+      newDeclared: "auth_email_deliveries_outcome_chk",
+      money: false,
+    },
+    {
+      table: "tenants",
+      oldAuto: "tenants_status_check",
+      newDeclared: "tenants_status_chk",
+      money: false,
+    },
+    {
+      table: "memberships",
+      oldAuto: "memberships_status_check",
+      newDeclared: "memberships_status_chk",
+      money: false,
+    },
+    {
+      table: "sessions",
+      oldAuto: "sessions_check",
+      newDeclared: "sessions_time_chk",
+      money: false,
+    },
+    {
+      table: "sessions",
+      oldAuto: "sessions_price_amount_check",
+      newDeclared: "sessions_price_chk",
+      money: false,
+    },
+    {
+      table: "sessions",
+      oldAuto: "sessions_slots_max_check",
+      newDeclared: "sessions_slots_chk",
+      money: false,
+    },
+    {
+      table: "sessions",
+      oldAuto: "sessions_visibility_check",
+      newDeclared: "sessions_vis_chk",
+      money: false,
+    },
+    {
+      table: "sessions",
+      oldAuto: "sessions_join_policy_check",
+      newDeclared: "sessions_join_chk",
+      money: false,
+    },
+    {
+      table: "sessions",
+      oldAuto: "sessions_status_check",
+      newDeclared: "sessions_status_chk",
+      money: false,
+    },
+    {
+      table: "telegram_links",
+      oldAuto: "telegram_links_kind_check",
+      newDeclared: "telegram_links_kind_chk",
+      money: false,
+    },
+    {
+      table: "tenant_admins",
+      oldAuto: "tenant_admins_role_check",
+      newDeclared: "tenant_admins_role_chk",
+      money: false,
+    },
+    {
+      table: "bank_accounts",
+      oldAuto: "bank_accounts_provider_check",
+      newDeclared: "bank_accounts_provider_chk",
+      money: true,
+    },
+    {
+      table: "charges",
+      oldAuto: "charges_amount_due_check",
+      newDeclared: "charges_due_chk",
+      money: true,
+    },
+    {
+      table: "charges",
+      oldAuto: "charges_amount_allocated_check",
+      newDeclared: "charges_alloc_chk",
+      money: true,
+    },
+    {
+      table: "charges",
+      oldAuto: "charges_check",
+      newDeclared: "charges_alloc_le_due_chk",
+      money: true,
+    },
+    {
+      table: "charges",
+      oldAuto: "charges_status_check",
+      newDeclared: "charges_status_chk",
+      money: true,
+    },
+    {
+      table: "bank_transactions",
+      oldAuto: "bank_transactions_amount_check",
+      newDeclared: "bank_txn_amount_chk",
+      money: true,
+    },
+    {
+      table: "bank_transactions",
+      oldAuto: "bank_transactions_unallocated_amount_check",
+      newDeclared: "bank_txn_unalloc_chk",
+      money: true,
+    },
+    {
+      table: "bank_transactions",
+      oldAuto: "bank_transactions_check",
+      newDeclared: "bank_txn_unalloc_le_chk",
+      money: true,
+    },
+    {
+      table: "bank_transactions",
+      oldAuto: "bank_transactions_reconcile_status_check",
+      newDeclared: "bank_txn_reconcile_chk",
+      money: true,
+    },
+    {
+      table: "payment_allocations",
+      oldAuto: "payment_allocations_amount_check",
+      newDeclared: "alloc_amount_nonzero_chk",
+      money: true,
+    },
+    {
+      table: "payment_allocations",
+      oldAuto: "payment_allocations_source_check",
+      newDeclared: "alloc_source_chk",
+      money: true,
+    },
+    {
+      table: "payment_allocations",
+      oldAuto: "payment_allocations_check",
+      newDeclared: "alloc_shape_chk",
+      money: true,
+    },
+    {
+      table: "provider_connections",
+      oldAuto: "provider_connections_provider_check",
+      newDeclared: "provider_connections_provider_chk",
+      money: false,
+    },
+    {
+      table: "provider_connections",
+      oldAuto: "provider_connections_auth_mode_check",
+      newDeclared: "provider_connections_auth_chk",
+      money: false,
+    },
+    {
+      table: "projector_deliveries",
+      oldAuto: "projector_deliveries_status_check",
+      newDeclared: "projector_status_chk",
+      money: false,
+    },
+    {
+      table: "join_requests",
+      oldAuto: "join_requests_status_check",
+      newDeclared: "join_requests_status_chk",
+      money: false,
+    },
+    { table: "plans", oldAuto: "plans_plan_key_check", newDeclared: "plans_key_chk", money: false },
+    {
+      table: "subscriptions",
+      oldAuto: "subscriptions_selected_extra_channel_check",
+      newDeclared: "subscriptions_extra_chk",
+      money: false,
+    },
+    {
+      table: "subscriptions",
+      oldAuto: "subscriptions_status_check",
+      newDeclared: "subscriptions_status_chk",
+      money: false,
+    },
+    {
+      table: "subscription_invoices",
+      oldAuto: "subscription_invoices_status_check",
+      newDeclared: "subscription_invoices_status_chk",
+      money: false,
+    },
+    {
+      table: "notification_intents",
+      oldAuto: "notification_intents_status_check",
+      newDeclared: "notif_intents_status_chk",
+      money: false,
+    },
+    {
+      table: "notification_deliveries",
+      oldAuto: "notification_deliveries_status_check",
+      newDeclared: "notif_deliveries_status_chk",
+      money: false,
+    },
+    {
+      table: "onboarding_runs",
+      oldAuto: "onboarding_runs_status_check",
+      newDeclared: "onboarding_runs_status_chk",
+      money: false,
+    },
+    {
+      table: "onboarding_steps",
+      oldAuto: "onboarding_steps_status_check",
+      newDeclared: "onboarding_steps_status_chk",
+      money: false,
+    },
+  ];
+
+  /** table.name -> pg_get_constraintdef, for every live CHECK constraint in the public schema. */
+  async function allLiveCheckDefs(client: pg.Client): Promise<Map<string, string>> {
+    const { rows } = await client.query<{ t: string; n: string; d: string }>(
+      `SELECT rel.relname AS t, con.conname AS n, pg_get_constraintdef(con.oid) AS d
+       FROM pg_constraint con
+       JOIN pg_class rel ON rel.oid = con.conrelid
+       JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+       WHERE con.contype = 'c' AND nsp.nspname = 'public'`,
+    );
+    return new Map(rows.map((r) => [`${r.t}.${r.n}`, r.d]));
+  }
+
+  /**
+   * Every "table.check-name" key schema.ts declares, walking its own exports — not a
+   * hand-maintained list. Table-QUALIFIED (codex round-01 [P2]): PostgreSQL constraint names are
+   * only unique PER TABLE, not globally, so a name-only guard would false-pass a declared
+   * constraint that is missing from ITS table but happens to share a name with a constraint that
+   * exists on a DIFFERENT table.
+   */
+  function declaredCheckKeys(): Set<string> {
+    const keys = new Set<string>();
+    for (const val of Object.values(schemaModule)) {
+      if (
+        val &&
+        typeof val === "object" &&
+        (val as unknown as Record<symbol, unknown>)[Symbol.for("drizzle:Name")] !== undefined
+      ) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const cfg = getTableConfig(val as any);
+        for (const c of cfg.checks) keys.add(`${cfg.name}.${c.name}`);
+      }
+    }
+    return keys;
+  }
+
+  it("CND-1/CND-2/CND-3: every renamed constraint exists under its declared name, the auto-generated name is gone, predicate identity confirmed by comparing the PRE-0025 catalog definition against the POST-0025 one (codex round-01 [P2] — not just existence)", async () => {
+    const live = await allLiveCheckDefs(ctx.owner);
+    for (const r of RENAMED) {
+      expect(
+        live.has(`${r.table}.${r.newDeclared}`),
+        `${r.table}.${r.newDeclared} must exist live`,
+      ).toBe(true);
+      expect(
+        live.has(`${r.table}.${r.oldAuto}`),
+        `${r.table}.${r.oldAuto} must no longer exist (duplicate enforcement)`,
+      ).toBe(false);
+    }
+
+    // Predicate identity, proven from first principles rather than assumed: migrate a DEDICATED
+    // throwaway database only through 0024 (the tail BEFORE this slice), capture every renamed
+    // constraint's definition under its auto-generated name, then compare byte-for-byte against
+    // the POST-0025 definition under its declared name in `ctx` (already migrated to the current
+    // tail). A hand-transcription error in a predicate would show up here even though RENAME
+    // CONSTRAINT itself cannot introduce one (there is no predicate clause to transcribe at all —
+    // this test guards the CLASS of bug, not just this migration's specific technique).
+    const dbName = "plexco_cnd3_predicate_snapshot";
+    const BASE = process.env.DATABASE_URL_TEST!;
+    const admin = new pg.Client({ connectionString: BASE });
+    await admin.connect();
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE ${dbName}`);
+      const url = new URL(BASE);
+      url.pathname = `/${dbName}`;
+      const c = new pg.Client({ connectionString: url.toString() });
+      await c.connect();
+      try {
+        // migrations 0022/0023 ASSERT (never create) the cluster-global job_definer role, so this
+        // replay must bootstrap it first and hold the same advisory lock every other path that
+        // reaches 0022 holds (codex round-02 [P1], same class PVC-6 already fixed) — job_definer is
+        // CLUSTER-global, so a concurrent vitest file (migrate.test.ts's JCL-2/JCL-3) that
+        // deliberately breaks it for its own negative-path assertion would otherwise race this
+        // replay and fail it for the wrong reason. Bootstraps via `admin` (the stable BASE
+        // connection), not `c` (the throwaway per-test database) — the role is cluster-global, so
+        // either connection creates it identically, matching every other caller in this file.
+        await withJobDefinerLock(BASE, async () => {
+          await bootstrapJobDefiner(admin);
+          const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+          for (const f of files) {
+            if (Number.parseInt(f.slice(0, 4), 10) >= 25) continue; // stop BEFORE 0025
+            await c.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+          }
+        });
+        const before = await allLiveCheckDefs(c);
+        for (const r of RENAMED) {
+          const beforeDef = before.get(`${r.table}.${r.oldAuto}`);
+          const afterDef = live.get(`${r.table}.${r.newDeclared}`);
+          expect(beforeDef, `${r.table}.${r.oldAuto} must exist pre-0025`).toBeDefined();
+          expect(
+            afterDef,
+            `${r.table}.${r.newDeclared} predicate must be byte-identical to ${r.oldAuto}'s pre-0025 predicate`,
+          ).toBe(beforeDef);
+        }
+      } finally {
+        await c.end();
+      }
+    } finally {
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.end();
+    }
+  }, 60_000);
+
+  it("CND-6: sessions_public_capacity_chk (0024) is untouched by 0025", async () => {
+    const live = await allLiveCheckDefs(ctx.owner);
+    expect(live.get("sessions.sessions_public_capacity_chk")).toBe(
+      "CHECK ((NOT ((visibility = 'public'::text) AND (slots_max IS NULL))))",
+    );
+  });
+
+  it("CND-9: 0025 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement", async () => {
+    // structural check against the migration file itself, same style as PVC-7 (0024) — 0025 must
+    // be a pure CHECK-constraint-identity rename, nothing else. RENAME CONSTRAINT (codex round-01
+    // [P1], not DROP+ADD — see the migration's own header) makes this trivially true by
+    // construction (a rename statement cannot carry a predicate/column/grant clause at all), but
+    // the structural check still guards against a future hand-edit of this file drifting from
+    // that shape.
+    const sqlText = await readFile(
+      path.join(MIGRATIONS_DIR, "0025_check_constraint_naming_drift.sql"),
+      "utf8",
+    );
+    const ddl = sqlText.replace(/--.*$/gm, ""); // strip comment lines before scanning for DDL keywords
+    expect(ddl).not.toMatch(
+      /\b(GRANT|REVOKE|CREATE POLICY|ALTER POLICY|DROP POLICY|OWNER TO|ALTER ROLE|ADD COLUMN|DROP COLUMN|ALTER COLUMN|CREATE TABLE|CREATE INDEX|DROP INDEX|SET NOT NULL|DROP NOT NULL|FOREIGN KEY|DROP CONSTRAINT|ADD CONSTRAINT|CHECK\s*\()\b/i,
+    );
+    const renameCount = (ddl.match(/ALTER TABLE \w+ RENAME CONSTRAINT \w+ TO \w+;/g) ?? []).length;
+    expect(renameCount).toBe(40);
+  });
+
+  /**
+   * CND-4/CND-5 — money-path behavioral coverage, EXPLICIT and INDIVIDUAL (never folded into a
+   * loop that could skip a case silently). Each test attempts the real violation the renamed
+   * constraint exists to reject, and a valid write, against the real table.
+   */
+  describe("CND-4/CND-5 money-path — explicit, individual behavioral coverage", () => {
+    async function chargeParents(): Promise<{ sessionId: string; playerId: string }> {
+      const sessionId = await makeSession(ctx.tenantA);
+      const membershipId = await makeMembership(ctx.tenantA);
+      const playerId = await makePlayer(ctx.tenantA, sessionId, membershipId);
+      return { sessionId, playerId };
+    }
+
+    it("bank_accounts_provider_chk rejects an unsupported provider and accepts sepay/apipay", async () => {
+      const insert = (provider: string) =>
+        ctx.owner.query(
+          `INSERT INTO bank_accounts
+             (tenant_id, provider, account_number_enc, account_fingerprint, webhook_token, webhook_secret_enc)
+           VALUES ($1, $2, '\\x00'::bytea, $3, $3, '\\x00'::bytea)`,
+          [ctx.tenantA, provider, randomUUID()],
+        );
+      await insert("apipay"); // valid
+      await expect(insert("paypal")).rejects.toThrow(
+        /violates check constraint "bank_accounts_provider_chk"/,
+      );
+    });
+
+    it("charges_due_chk rejects a negative amount_due and accepts zero", async () => {
+      const { sessionId, playerId } = await chargeParents();
+      const insert = (amountDue: number) =>
+        ctx.owner.query(
+          `INSERT INTO charges (tenant_id, session_id, player_id, amount_due) VALUES ($1,$2,$3,$4)`,
+          [ctx.tenantA, sessionId, playerId, amountDue],
+        );
+      await insert(0); // valid (>= 0 boundary)
+      // amount_allocated defaults to 0, so amount_due=-1 ALSO makes 0 <= amount_due false —
+      // charges_alloc_le_due_chk co-fires alongside charges_due_chk by construction (amount_due
+      // going negative can never keep allocated<=due once allocated's floor is 0); asserting
+      // either name still proves this rename did not break enforcement.
+      await expect(insert(-1)).rejects.toThrow(
+        /violates check constraint "(charges_due_chk|charges_alloc_le_due_chk)"/,
+      );
+    });
+
+    it("charges_alloc_chk rejects a negative amount_allocated and accepts zero", async () => {
+      const { sessionId, playerId } = await chargeParents();
+      const insert = (amountAllocated: number) =>
+        ctx.owner.query(
+          `INSERT INTO charges (tenant_id, session_id, player_id, amount_due, amount_allocated) VALUES ($1,$2,$3,100000,$4)`,
+          [ctx.tenantA, sessionId, playerId, amountAllocated],
+        );
+      await insert(0); // valid
+      await expect(insert(-1)).rejects.toThrow(/violates check constraint "charges_alloc_chk"/);
+    });
+
+    it("charges_alloc_le_due_chk rejects amount_allocated exceeding amount_due and accepts equal", async () => {
+      const { sessionId, playerId } = await chargeParents();
+      const insert = (amountAllocated: number) =>
+        ctx.owner.query(
+          `INSERT INTO charges (tenant_id, session_id, player_id, amount_due, amount_allocated) VALUES ($1,$2,$3,100000,$4)`,
+          [ctx.tenantA, sessionId, playerId, amountAllocated],
+        );
+      await insert(100000); // valid (equal boundary)
+      await expect(insert(100001)).rejects.toThrow(
+        /violates check constraint "charges_alloc_le_due_chk"/,
+      );
+    });
+
+    it("charges_status_chk rejects an unsupported status and accepts void", async () => {
+      const { sessionId, playerId } = await chargeParents();
+      const insert = (status: string) =>
+        ctx.owner.query(
+          `INSERT INTO charges (tenant_id, session_id, player_id, amount_due, status) VALUES ($1,$2,$3,100000,$4)`,
+          [ctx.tenantA, sessionId, playerId, status],
+        );
+      await insert("void"); // valid
+      await expect(insert("refunded")).rejects.toThrow(
+        /violates check constraint "charges_status_chk"/,
+      );
+    });
+
+    it("bank_txn_amount_chk rejects a non-positive amount and accepts a positive one", async () => {
+      const bankAccountId = await makeBankAccount(ctx.tenantA, randomUUID());
+      const insert = (amount: number) =>
+        ctx.owner.query(
+          `INSERT INTO bank_transactions
+             (tenant_id, bank_account_id, provider, external_id, amount, unallocated_amount, occurred_at, raw_payload_enc)
+           VALUES ($1,$2,'sepay',$3,$4,$4,now(),'\\x00'::bytea)`,
+          [ctx.tenantA, bankAccountId, randomUUID(), amount],
+        );
+      await insert(1); // valid
+      await expect(insert(0)).rejects.toThrow(/violates check constraint "bank_txn_amount_chk"/);
+    });
+
+    it("bank_txn_unalloc_chk rejects a negative unallocated_amount and accepts zero", async () => {
+      const bankAccountId = await makeBankAccount(ctx.tenantA, randomUUID());
+      const insert = (unallocatedAmount: number) =>
+        ctx.owner.query(
+          `INSERT INTO bank_transactions
+             (tenant_id, bank_account_id, provider, external_id, amount, unallocated_amount, occurred_at, raw_payload_enc)
+           VALUES ($1,$2,'sepay',$3,100000,$4,now(),'\\x00'::bytea)`,
+          [ctx.tenantA, bankAccountId, randomUUID(), unallocatedAmount],
+        );
+      await insert(0); // valid
+      await expect(insert(-1)).rejects.toThrow(/violates check constraint "bank_txn_unalloc_chk"/);
+    });
+
+    it("bank_txn_unalloc_le_chk rejects unallocated_amount exceeding amount and accepts equal", async () => {
+      const bankAccountId = await makeBankAccount(ctx.tenantA, randomUUID());
+      const insert = (unallocatedAmount: number) =>
+        ctx.owner.query(
+          `INSERT INTO bank_transactions
+             (tenant_id, bank_account_id, provider, external_id, amount, unallocated_amount, occurred_at, raw_payload_enc)
+           VALUES ($1,$2,'sepay',$3,100000,$4,now(),'\\x00'::bytea)`,
+          [ctx.tenantA, bankAccountId, randomUUID(), unallocatedAmount],
+        );
+      await insert(100000); // valid (equal boundary)
+      await expect(insert(100001)).rejects.toThrow(
+        /violates check constraint "bank_txn_unalloc_le_chk"/,
+      );
+    });
+
+    it("bank_txn_reconcile_chk rejects an unsupported reconcile_status and accepts pending", async () => {
+      const bankAccountId = await makeBankAccount(ctx.tenantA, randomUUID());
+      const insert = (reconcileStatus: string) =>
+        ctx.owner.query(
+          `INSERT INTO bank_transactions
+             (tenant_id, bank_account_id, provider, external_id, amount, unallocated_amount, occurred_at, raw_payload_enc, reconcile_status)
+           VALUES ($1,$2,'sepay',$3,100000,50000,now(),'\\x00'::bytea,$4)`,
+          [ctx.tenantA, bankAccountId, randomUUID(), reconcileStatus],
+        );
+      await insert("pending"); // valid
+      await expect(insert("archived")).rejects.toThrow(
+        /violates check constraint "bank_txn_reconcile_chk"/,
+      );
+    });
+
+    it("alloc_amount_nonzero_chk rejects a zero amount and accepts a nonzero one", async () => {
+      const { sessionId, playerId } = await chargeParents();
+      const chargeId = await makeCharge(ctx.tenantA, sessionId, playerId);
+      const personId = await makePerson();
+      const insert = (amount: number) =>
+        ctx.owner.query(
+          `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source, created_by) VALUES ($1,$2,$3,'cash',$4)`,
+          [ctx.tenantA, chargeId, amount, personId],
+        );
+      await insert(1); // valid
+      await expect(insert(0)).rejects.toThrow(
+        /violates check constraint "alloc_amount_nonzero_chk"/,
+      );
+    });
+
+    it("alloc_source_chk rejects an unsupported source (co-fires with alloc_shape_chk by schema design — no source value satisfies shape's per-branch source membership test either) and accepts cash", async () => {
+      const { sessionId, playerId } = await chargeParents();
+      const chargeId = await makeCharge(ctx.tenantA, sessionId, playerId);
+      const personId = await makePerson();
+      const insert = (source: string) =>
+        ctx.owner.query(
+          `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source, created_by) VALUES ($1,$2,50000,$3,$4)`,
+          [ctx.tenantA, chargeId, source, personId],
+        );
+      await insert("cash"); // valid
+      await expect(insert("crypto")).rejects.toThrow(
+        /violates check constraint "(alloc_source_chk|alloc_shape_chk)"/,
+      );
+    });
+
+    it("alloc_shape_chk rejects a cash allocation missing created_by (source itself stays valid) and accepts one with it", async () => {
+      const { sessionId, playerId } = await chargeParents();
+      const chargeId = await makeCharge(ctx.tenantA, sessionId, playerId);
+      const personId = await makePerson();
+      await ctx.owner.query(
+        // valid: cash + positive amount + no bank_transaction_id + created_by set
+        `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source, created_by) VALUES ($1,$2,50000,'cash',$3)`,
+        [ctx.tenantA, chargeId, personId],
+      );
+      await expect(
+        ctx.owner.query(
+          // invalid: cash but created_by NULL — source membership is satisfied, only shape fails
+          `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source) VALUES ($1,$2,50000,'cash')`,
+          [ctx.tenantA, chargeId],
+        ),
+      ).rejects.toThrow(/violates check constraint "alloc_shape_chk"/);
+    });
+  });
+
+  /**
+   * CND-4 non-money — data-driven, since CND-5 only requires MONEY-path individuality; these 28
+   * constraints get the same real catalog-fires-a-real-violation coverage via a shared loop.
+   * `alsoMayViolate` names sibling constraints on the SAME table whose predicate also references
+   * the checked column, so an out-of-domain value co-fires them too (verified by reading each
+   * predicate — see design-probe.md appendix) — asserting on that co-fire, not hiding it.
+   */
+  describe("CND-4 non-money — data-driven behavioral coverage", () => {
+    async function seedAccountEmailId(): Promise<string> {
+      const { rows: p } = await ctx.owner.query(`INSERT INTO persons DEFAULT VALUES RETURNING id`);
+      const { rows: a } = await ctx.owner.query(
+        `INSERT INTO accounts(person_id) VALUES ($1) RETURNING id`,
+        [(p[0] as { id: string }).id],
+      );
+      const { rows: e } = await ctx.owner.query(
+        `INSERT INTO account_emails(account_id, email_lookup_hash, email_enc, kms_key_version, pending_expires_at)
+         VALUES ($1,$2,'\\x00'::bytea,'v1', now() + interval '1 day') RETURNING id`,
+        [(a[0] as { id: string }).id, `cnd-${randomUUID()}`],
+      );
+      return (e[0] as { id: string }).id;
+    }
+
+    async function insertDelivery(overrides: {
+      kind?: string;
+      commandOperation?: string;
+      outcome?: string;
+    }): Promise<void> {
+      await ctx.owner.query(
+        `INSERT INTO auth_email_deliveries
+           (kind, command_id, command_owner_hash, command_operation, command_target_fingerprint,
+            provider_idempotency_key, provider_key_version, outcome, expires_at, payload_enc, kms_key_version)
+         VALUES ($1, $2, 'o', $3, 'f', $4, 'pk', $5, now() + interval '1 day', '\\x00'::bytea, 'v1')`,
+        [
+          overrides.kind ?? "verify_email",
+          randomUUID(),
+          overrides.commandOperation ?? "register",
+          `pik-${randomUUID()}`,
+          overrides.outcome ?? "queued",
+        ],
+      );
+    }
+
+    async function makeFreshTenant(): Promise<string> {
+      const { rows } = await ctx.owner.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('cnd-fixture', $1, 'active') RETURNING id`,
+        [`cnd-${randomUUID()}`],
+      );
+      return (rows[0] as { id: string }).id;
+    }
+
+    async function makeOnboardingRun(tenantId: string): Promise<string> {
+      const { rows } = await ctx.owner.query(
+        `INSERT INTO onboarding_runs (tenant_id) VALUES ($1) RETURNING id`,
+        [tenantId],
+      );
+      return (rows[0] as { id: string }).id;
+    }
+
+    /** private/open/draft/positive-price/positive-slots golden baseline; overrides isolate one check at a time. */
+    async function insertSession(
+      overrides: Partial<{
+        visibility: string;
+        joinPolicy: string;
+        status: string;
+        priceAmount: number;
+        slotsMax: number | null;
+        startsAt: Date;
+        endsAt: Date;
+      }>,
+    ): Promise<void> {
+      await ctx.owner.query(
+        `INSERT INTO sessions
+           (tenant_id, sport_id, starts_at, ends_at, timezone, visibility, join_policy, status, price_amount, slots_max)
+         VALUES ($1,$2,$3,$4,'Asia/Ho_Chi_Minh',$5,$6,$7,$8,$9)`,
+        [
+          ctx.tenantA,
+          ctx.badmintonSportId,
+          overrides.startsAt ?? new Date("2026-08-01T10:00:00Z"),
+          overrides.endsAt ?? new Date("2026-08-01T12:00:00Z"),
+          overrides.visibility ?? "private",
+          overrides.joinPolicy ?? "open",
+          overrides.status ?? "draft",
+          overrides.priceAmount ?? 100000,
+          overrides.slotsMax === undefined ? 10 : overrides.slotsMax,
+        ],
+      );
+    }
+
+    /** Deterministic, collision-free bigint source for telegram_links.chat_id fixtures. */
+    let telegramChatIdCounter = 8_000_000_000;
+    const nextTelegramChatId = () => telegramChatIdCounter++;
+    /** Deterministic, collision-free integer source for plans.version fixtures. */
+    let planVersionCounter = 900_000;
+    const nextPlanVersion = () => planVersionCounter++;
+
+    type EnumCase = {
+      name: string;
+      table: string;
+      validValue: string;
+      invalidValue: string;
+      alsoMayViolate?: string[];
+      insert: (value: string) => Promise<void>;
+    };
+
+    const CASES: EnumCase[] = [
+      {
+        name: "persons_status_chk",
+        table: "persons",
+        validValue: "merged",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          await ctx.owner.query(`INSERT INTO persons (display_name, status) VALUES ('cnd', $1)`, [
+            v,
+          ]);
+        },
+      },
+      {
+        name: "channel_identities_platform_chk",
+        table: "channel_identities",
+        validValue: "zalo",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const personId = await makePerson();
+          await ctx.owner.query(
+            `INSERT INTO channel_identities (person_id, platform, platform_user_id_enc, platform_user_lookup_hash)
+             VALUES ($1,$2,'\\x00'::bytea,$3)`,
+            [personId, v, randomUUID()],
+          );
+        },
+      },
+      {
+        name: "auth_email_tokens_purpose_chk",
+        table: "auth_email_tokens",
+        validValue: "password_reset",
+        invalidValue: "bogus",
+        // out-of-domain purpose fails BOTH OR-branches of purpose_reg_chk regardless of
+        // pending_registration_id — see design-probe.md appendix, this table's checks overlap.
+        alsoMayViolate: ["auth_email_tokens_purpose_reg_chk"],
+        insert: async (v) => {
+          const accountEmailId = await seedAccountEmailId();
+          await ctx.owner.query(
+            `INSERT INTO auth_email_tokens (account_email_id, purpose, token_hash, expires_at)
+             VALUES ($1,$2,$3,now() + interval '1 day')`,
+            [accountEmailId, v, `cnd-tok-${randomUUID()}`],
+          );
+        },
+      },
+      {
+        name: "auth_email_deliveries_kind_chk",
+        table: "auth_email_deliveries",
+        validValue: "verify_email",
+        invalidValue: "bogus",
+        alsoMayViolate: ["auth_email_deliveries_operation_kind_chk"],
+        insert: (v) => insertDelivery({ kind: v }),
+      },
+      {
+        name: "auth_email_deliveries_operation_chk",
+        table: "auth_email_deliveries",
+        validValue: "register",
+        invalidValue: "bogus",
+        alsoMayViolate: ["auth_email_deliveries_operation_kind_chk"],
+        insert: (v) => insertDelivery({ commandOperation: v }),
+      },
+      {
+        name: "auth_email_deliveries_outcome_chk",
+        table: "auth_email_deliveries",
+        validValue: "queued",
+        invalidValue: "bogus",
+        alsoMayViolate: ["auth_email_deliveries_payload_chk", "auth_email_deliveries_terminal_chk"],
+        insert: (v) => insertDelivery({ outcome: v }),
+      },
+      {
+        name: "tenants_status_chk",
+        table: "tenants",
+        validValue: "suspended",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          await ctx.owner.query(`INSERT INTO tenants (name, slug, status) VALUES ('cnd', $1, $2)`, [
+            `cnd-${randomUUID()}`,
+            v,
+          ]);
+        },
+      },
+      {
+        name: "memberships_status_chk",
+        table: "memberships",
+        validValue: "guest",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const personId = await makePerson();
+          await ctx.owner.query(
+            `INSERT INTO memberships (tenant_id, person_id, status) VALUES ($1,$2,$3)`,
+            [ctx.tenantA, personId, v],
+          );
+        },
+      },
+      {
+        name: "sessions_vis_chk",
+        table: "sessions",
+        validValue: "public",
+        invalidValue: "bogus",
+        insert: (v) => insertSession({ visibility: v }),
+      },
+      {
+        name: "sessions_join_chk",
+        table: "sessions",
+        validValue: "approval",
+        invalidValue: "bogus",
+        insert: (v) => insertSession({ joinPolicy: v }),
+      },
+      {
+        name: "sessions_status_chk",
+        table: "sessions",
+        validValue: "open",
+        invalidValue: "bogus",
+        insert: (v) => insertSession({ status: v }),
+      },
+      {
+        name: "telegram_links_kind_chk",
+        table: "telegram_links",
+        validValue: "channel",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const tenantId = await makeFreshTenant();
+          await ctx.owner.query(
+            `INSERT INTO telegram_links (tenant_id, chat_id, kind) VALUES ($1,$2,$3)`,
+            [tenantId, nextTelegramChatId(), v],
+          );
+        },
+      },
+      {
+        name: "tenant_admins_role_chk",
+        table: "tenant_admins",
+        validValue: "co_admin",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const tenantId = await makeFreshTenant();
+          await ctx.owner.query(
+            `INSERT INTO tenant_admins (tenant_id, platform_user_lookup_hash, role) VALUES ($1,$2,$3)`,
+            [tenantId, randomUUID(), v],
+          );
+        },
+      },
+      {
+        name: "provider_connections_provider_chk",
+        table: "provider_connections",
+        validValue: "apipay",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const tenantId = await makeFreshTenant();
+          await ctx.owner.query(
+            `INSERT INTO provider_connections (tenant_id, provider, auth_mode) VALUES ($1,$2,'api_key')`,
+            [tenantId, v],
+          );
+        },
+      },
+      {
+        name: "provider_connections_auth_chk",
+        table: "provider_connections",
+        validValue: "oauth2",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const tenantId = await makeFreshTenant();
+          await ctx.owner.query(
+            `INSERT INTO provider_connections (tenant_id, provider, auth_mode) VALUES ($1,'sepay',$2)`,
+            [tenantId, v],
+          );
+        },
+      },
+      {
+        name: "projector_status_chk",
+        table: "projector_deliveries",
+        validValue: "claimed",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const { rows } = await ctx.owner.query(
+            `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload)
+             VALUES ($1,'cnd_test',gen_random_uuid(),1,'cnd.test.event','{}'::jsonb) RETURNING id`,
+            [ctx.tenantA],
+          );
+          await ctx.owner.query(
+            `INSERT INTO projector_deliveries (event_id, projector, status) VALUES ($1,'cnd-projector',$2)`,
+            [(rows[0] as { id: string }).id, v],
+          );
+        },
+      },
+      {
+        name: "join_requests_status_chk",
+        table: "join_requests",
+        validValue: "approved",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const sessionId = await makeSession(ctx.tenantA);
+          const personId = await makePerson();
+          await ctx.owner.query(
+            `INSERT INTO join_requests (tenant_id, session_id, person_id, expires_at, status)
+             VALUES ($1,$2,$3,now() + interval '1 day',$4)`,
+            [ctx.tenantA, sessionId, personId, v],
+          );
+        },
+      },
+      {
+        name: "plans_key_chk",
+        table: "plans",
+        validValue: "telegram",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          await ctx.owner.query(
+            `INSERT INTO plans (plan_key, version, price) VALUES ($1,$2,100000)`,
+            [v, nextPlanVersion()],
+          );
+        },
+      },
+      {
+        name: "subscriptions_status_chk",
+        table: "subscriptions",
+        validValue: "past_due",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const tenantId = await makeFreshTenant();
+          await ctx.owner.query(
+            `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end, status)
+             VALUES ($1,'telegram',1,now(),now() + interval '30 days',$2)`,
+            [tenantId, v],
+          );
+        },
+      },
+      {
+        name: "subscription_invoices_status_chk",
+        table: "subscription_invoices",
+        validValue: "overdue",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const tenantId = await makeFreshTenant();
+          await ctx.owner.query(
+            `INSERT INTO subscription_invoices (tenant_id, invoice_code, amount_due, due_at, period_key, status)
+             VALUES ($1,$2,100000,now() + interval '7 days',$3,$4)`,
+            [tenantId, `cnd-${randomUUID()}`, `cnd-${randomUUID()}`, v],
+          );
+        },
+      },
+      {
+        name: "notif_intents_status_chk",
+        table: "notification_intents",
+        validValue: "dispatched",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const personId = await makePerson();
+          await ctx.owner.query(
+            `INSERT INTO notification_intents (tenant_id, type, aggregate_id, state_version, person_id, intent_key, status)
+             VALUES ($1,'reminder',gen_random_uuid(),1,$2,$3,$4)`,
+            [ctx.tenantA, personId, `cnd-${randomUUID()}`, v],
+          );
+        },
+      },
+      {
+        name: "notif_deliveries_status_chk",
+        table: "notification_deliveries",
+        validValue: "sent",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const personId = await makePerson();
+          const intentId = await makeNotificationIntent(
+            ctx.tenantA,
+            personId,
+            `cnd-${randomUUID()}`,
+          );
+          await ctx.owner.query(
+            `INSERT INTO notification_deliveries (tenant_id, intent_id, platform, delivery_key, status)
+             VALUES ($1,$2,'telegram',$3,$4)`,
+            [ctx.tenantA, intentId, `cnd-${randomUUID()}`, v],
+          );
+        },
+      },
+      {
+        name: "onboarding_runs_status_chk",
+        table: "onboarding_runs",
+        validValue: "abandoned",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const tenantId = await makeFreshTenant();
+          await ctx.owner.query(`INSERT INTO onboarding_runs (tenant_id, status) VALUES ($1,$2)`, [
+            tenantId,
+            v,
+          ]);
+        },
+      },
+      {
+        name: "onboarding_steps_status_chk",
+        table: "onboarding_steps",
+        validValue: "verified",
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const tenantId = await makeFreshTenant();
+          const runId = await makeOnboardingRun(tenantId);
+          await ctx.owner.query(
+            `INSERT INTO onboarding_steps (run_id, step, status) VALUES ($1,'cnd',$2)`,
+            [runId, v],
+          );
+        },
+      },
+    ];
+
+    it("every non-money enum-style renamed constraint rejects an out-of-domain value and accepts a valid one", async () => {
+      for (const c of CASES) {
+        await c.insert(c.validValue); // must succeed
+        const namesPattern = [c.name, ...(c.alsoMayViolate ?? [])].join("|");
+        await expect(
+          c.insert(c.invalidValue),
+          `${c.table}.${c.name} must reject "${c.invalidValue}"`,
+        ).rejects.toThrow(new RegExp(`violates check constraint "(${namesPattern})"`));
+      }
+    });
+
+    it("subscriptions_extra_chk accepts NULL or a member value, and rejects a non-member non-null value", async () => {
+      const insert = async (value: string | null) => {
+        const tenantId = await makeFreshTenant();
+        await ctx.owner.query(
+          `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end, selected_extra_channel)
+           VALUES ($1,'telegram',1,now(),now() + interval '30 days',$2)`,
+          [tenantId, value],
+        );
+      };
+      await insert(null); // valid — NULL branch
+      await insert("messenger"); // valid — membership branch
+      await expect(insert("bogus")).rejects.toThrow(
+        /violates check constraint "subscriptions_extra_chk"/,
+      );
+    });
+
+    it("sessions_time_chk rejects ends_at <= starts_at and accepts ends_at > starts_at", async () => {
+      await insertSession({}); // valid — default 2-hour window
+      await expect(
+        insertSession({
+          startsAt: new Date("2026-08-01T12:00:00Z"),
+          endsAt: new Date("2026-08-01T10:00:00Z"),
+        }),
+      ).rejects.toThrow(/violates check constraint "sessions_time_chk"/);
+    });
+
+    it("sessions_price_chk rejects a negative price_amount and accepts zero", async () => {
+      await insertSession({ priceAmount: 0 }); // valid boundary
+      await expect(insertSession({ priceAmount: -1 })).rejects.toThrow(
+        /violates check constraint "sessions_price_chk"/,
+      );
+    });
+
+    it("sessions_slots_chk rejects a non-positive slots_max and accepts NULL or a positive value", async () => {
+      await insertSession({ slotsMax: null }); // valid — NULL branch
+      await insertSession({ slotsMax: 1 }); // valid — positive branch
+      await expect(insertSession({ slotsMax: 0 })).rejects.toThrow(
+        /violates check constraint "sessions_slots_chk"/,
+      );
+    });
+  });
+
+  /**
+   * Regression guard (design-probe.md item (d)) — prevents a 28th unnamed CHECK from recurring.
+   *
+   * PRIMARY: every schema.ts check() name must exist live (the manifest's direct ask — the exact
+   * failure mode 0014 documents and this slice fixes: a declaration silently not applied under
+   * its own name).
+   *
+   * SECONDARY (founder-conditioned): every live CHECK must be declared, or explicitly allowlisted.
+   * The allowlist is CLOSED and finite (6 named constraints found by design-probe.md item (e)),
+   * never an open enumeration — each entry carries a reason so it cannot calcify into permanent
+   * noise nobody dares shrink (founder's explicit condition on approving this guard).
+   */
+  describe("regression guard — prevents a 28th unnamed CHECK (design-probe.md item d)", () => {
+    const KNOWN_UNDECLARED_LIVE_CHECKS: { table: string; name: string; reason: string }[] = [
+      {
+        table: "bank_accounts",
+        name: "bank_accounts_webhook_status_check",
+        reason:
+          "0003_payments_ledger.sql:35-36 — same CREATE TABLE statement as `provider` (:17), which DID get a schema.ts check(); webhook_status's sibling inline CHECK, written one statement later, did not.",
+      },
+      {
+        table: "channel_identities",
+        name: "channel_identities_status_check",
+        reason:
+          "0001_global_directory.sql:46-47 — same CREATE TABLE statement as `platform` (:41-42), which DID get a schema.ts check(); status, five lines below it, did not.",
+      },
+      {
+        table: "messenger_pages",
+        name: "messenger_pages_status_check",
+        reason:
+          "0004_channels_connectors.sql:85-86 — this table's ONLY CHECK-eligible column; no sibling check was ever wired for this table at all.",
+      },
+      {
+        table: "oauth_transactions",
+        name: "oauth_transactions_provider_check",
+        reason:
+          "0004_channels_connectors.sql:39 — this table's only CHECK-eligible column, on a narrow SECURITY DEFINER-gated bootstrap table the migration's own comment says the app must not SELECT directly.",
+      },
+      {
+        table: "provider_connections",
+        name: "provider_connections_status_check",
+        reason:
+          "0004_channels_connectors.sql:21-22 — same CREATE TABLE statement as `provider` (:13) and `auth_mode` (:14), both of which DID get schema.ts check()s; status, the next column, did not.",
+      },
+      {
+        table: "zalo_bots",
+        name: "zalo_bots_status_check",
+        reason:
+          "0004_channels_connectors.sql:54-55 — this table's ONLY CHECK-eligible column; no sibling check was ever wired for this table at all.",
+      },
+    ];
+    const ALLOWLIST_KEYS = new Set(KNOWN_UNDECLARED_LIVE_CHECKS.map((e) => `${e.table}.${e.name}`));
+
+    /**
+     * PRIMARY: declared "table.name" keys missing from the live catalog. Empty = guard passes.
+     * Table-qualified throughout (codex round-01 [P2]) — a declared constraint missing from ITS
+     * OWN table is a real violation even if a same-named constraint happens to exist elsewhere.
+     */
+    async function primaryGuardViolations(client: pg.Client): Promise<string[]> {
+      const live = await allLiveCheckDefs(client);
+      const violations: string[] = [];
+      for (const key of declaredCheckKeys()) {
+        if (!live.has(key)) violations.push(key);
+      }
+      return violations;
+    }
+
+    /** SECONDARY: live constraints that are neither declared nor allowlisted. Empty = guard passes. */
+    async function secondaryGuardViolations(client: pg.Client): Promise<string[]> {
+      const live = await allLiveCheckDefs(client);
+      const declared = declaredCheckKeys();
+      const violations: string[] = [];
+      for (const key of live.keys()) {
+        if (!declared.has(key) && !ALLOWLIST_KEYS.has(key)) violations.push(key);
+      }
+      return violations;
+    }
+
+    it("primary: every schema.ts check() name exists live", async () => {
+      expect(await primaryGuardViolations(ctx.owner)).toEqual([]);
+    });
+
+    it("secondary: every live CHECK is declared or in the reasoned allowlist", async () => {
+      expect(await secondaryGuardViolations(ctx.owner)).toEqual([]);
+    });
+
+    it("every allowlist entry names a real live constraint (the allowlist cannot drift stale-and-unused)", async () => {
+      const live = await allLiveCheckDefs(ctx.owner);
+      for (const entry of KNOWN_UNDECLARED_LIVE_CHECKS) {
+        expect(
+          live.has(`${entry.table}.${entry.name}`),
+          `${entry.table}.${entry.name} must still be live`,
+        ).toBe(true);
+        expect(
+          entry.reason.length,
+          `${entry.name} allowlist entry must carry a non-trivial reason`,
+        ).toBeGreaterThan(20);
+      }
+    });
+
+    it("CND-7: both guards catch a reintroduced unnamed CHECK (proof the guard is not vacuous)", async () => {
+      // Dedicated throwaway database, isolated from `ctx` — never corrupt the shared suite database.
+      const dbName = "plexco_cnd7_guard_proof";
+      const BASE = process.env.DATABASE_URL_TEST!;
+      const admin = new pg.Client({ connectionString: BASE });
+      await admin.connect();
+      try {
+        await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+        await admin.query(`CREATE DATABASE ${dbName}`);
+        const url = new URL(BASE);
+        url.pathname = `/${dbName}`;
+        await withJobDefinerLock(BASE, async () => {
+          await bootstrapJobDefiner(admin);
+          await migrate(url.toString());
+        });
+
+        const c = new pg.Client({ connectionString: url.toString() });
+        await c.connect();
+        try {
+          // Reintroduce the EXACT historical bug pattern: drop the correctly-named constraint and
+          // re-add the identical predicate UNNAMED, so Postgres auto-generates a name — mirroring
+          // exactly how 0002-0008 produced the class this slice fixes (design-probe.md item (b)).
+          await c.query(`ALTER TABLE bank_accounts DROP CONSTRAINT bank_accounts_provider_chk`);
+          await c.query(`ALTER TABLE bank_accounts ADD CHECK (provider IN ('sepay','apipay'))`);
+
+          const primary = await primaryGuardViolations(c);
+          expect(primary, "primary guard must name the now-missing declared constraint").toContain(
+            "bank_accounts.bank_accounts_provider_chk",
+          );
+
+          const secondary = await secondaryGuardViolations(c);
+          expect(
+            secondary,
+            "secondary guard must name the new auto-generated constraint",
+          ).toContain("bank_accounts.bank_accounts_provider_check");
+        } finally {
+          await c.end();
+        }
+      } finally {
+        await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+        await admin.end();
+      }
+    }, 60_000);
   });
 });

@@ -31,7 +31,7 @@ import {
  */
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 25; // 0000..0024 — must match rls-invariants.test.ts
+const MIGRATION_COUNT = 26; // 0000..0025 — must match rls-invariants.test.ts
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -399,9 +399,7 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
       await withJobDefinerLock(BASE!, async () => {
         await ctx.bootstrapJobDefinerForOwner();
         const res = await ctx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe(
-          "0024_public_visibility_capacity_check.sql",
-        );
+        expect(res.applied[res.applied.length - 1]).toBe("0025_check_constraint_naming_drift.sql");
       });
 
       const worker = await ctx.connectAsWorker();
