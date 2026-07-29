@@ -465,10 +465,10 @@ merged_probe: packages/db/migrations/0022_job_claim_lease_core.sql :: job_audit_
 notes: DD-89/DD-90 are the only actionable authority. `job_definer` is cluster-pre-provisioned, exact-attribute and BYPASSRLS; the job-core migration asserts it and re-owns only the named job functions. `app_worker` gets EXECUTE-only narrow operations, never direct DML on outbox/projector/audit/surface tables. The contract, decision table, bootstrap procedure, real-role test plan and negative scope are in `docs/autopilot-db-job-claim-lease-core.md`. Q6 worker preflight remains slice 2 before `boss.start()`. Scope is exact at authoring tail `0021`; before worktree/register, re-check synced main. Tail drift requires updating this scope + merged_probe, manifest and all verdict mirrors, then committing/pushing the correction and re-pinning strict `CODE_READY` — never renumber ad hoc inside the feature worktree.
 
 ## task: deps-security-bump
-title: Raise next / postcss / brace-expansion floors to clear 11 OSV advisories — without weakening the supply-chain controls
-status: planned
+title: Raise next + postcss floors to clear their OSV advisories — without weakening the supply-chain controls (brace-expansion split out 29/07)
+status: ready
 not_before: 2026-07-30
-blocked_on_owner: 2026-07-29 · **Design-probe item (b) đã đo trước, và bẫy ĐÃ KÍCH HOẠT theo hướng nặng hơn manifest phỏng đoán.** GHSA-mh99-v99m-4gvg affected `<= 5.0.7`, patched **chỉ** `5.0.8` — không có `1.1.17`, nhánh v1 không có bản vá in-range. Nhưng ép v1→v5 **không chỉ là major bump, nó vỡ runtime**: v1 `module.exports = expandTop` (hàm), v5 CJS `exports.expand` (object), mà consumer duy nhất `minimatch@3.1.5` gọi `require('brace-expansion')(...)` như hàm ⇒ `expand is not a function`, và `pnpm install` KHÔNG bắt được. Nhánh v1 chỉ do eslint toolchain kéo (`@eslint/config-array` · `@eslint/eslintrc` · `eslint@9.39.4`) ⇒ **dev-only, không có đường runtime, input là glob trong config tự viết**. Hai lối còn lại đều đòi nới `_scope_out` nên **owner phải chốt trước khi mở worktree**: (1) nâng eslint để nhánh v1 tự biến mất — vi phạm "no unrelated upgrades", **khuyến nghị**; (2) `osv-scanner.toml` ignore có lý do + hạn dùng — vi phạm "no ignore entry". `next`/`postcss` không dính nút này, bump độc lập được. Chi tiết + bằng chứng: `docs/autopilot-deps-security-bump.md`
+owner_decision: 2026-07-29 · **CHỐT: TÁCH ĐÔI. Slice này nay chỉ còn `next` + `postcss`; `brace-expansion` ra khỏi scope và đóng qua `eslint-10-migration`.** Diễn biến đáng ghi vì phép đo lật đề xuất hai lần. **(1)** Bẫy item (b) kích hoạt: GHSA-mh99-v99m-4gvg affected `<= 5.0.7`, patched **chỉ** `5.0.8` — nhánh v1 không có bản vá in-range. Ép v1→v5 **không chỉ là major bump, nó vỡ runtime**: v1 `module.exports = expandTop` (hàm) vs v5 CJS `exports.expand` (object), mà consumer duy nhất `minimatch@3.1.5` gọi `require('brace-expansion')(...)` như hàm ⇒ `expand is not a function`; `pnpm install` resolve sạch, lint chết lúc gọi. **(2)** Owner chốt lối "nâng eslint", nhưng đo tiếp thì **chính `eslint@9.39.4` phụ thuộc `minimatch 3.1.5`** (cùng `@eslint/config-array@0.21.2`, `@eslint/eslintrc@3.3.5`), và `^9.18.0` đã resolve tới 9.x mới nhất ⇒ **không gì trong dải `^9` gỡ được nhánh v1**. Lối đó chỉ chạy ở **eslint v10**, vốn liệt kê `501abd0 feat!: update dependency minimatch to v10 (#20246)` trong Breaking Changes. Đó là major toolchain upgrade có bề mặt tương thích riêng và **driven by v9 EOL 2026-08-06**, không phải bởi advisory này — nhét vào đây làm chính `_scope_out` *"NO unrelated dependency upgrades riding along"* thành vô nghĩa. **Chi phí chấp nhận:** OSV còn đỏ ở `brace-expansion` vài ngày giữa hai slice — đổi lấy việc không để lại ignore-entry phải nhớ dọn, và không có major upgrade nào chui vào slice sai. Bằng chứng đầy đủ: `docs/autopilot-deps-security-bump.md` + `_owner_decision` trong manifest.
 risk: P1
 change_class: dependency-security
 depends_on: []
@@ -476,7 +476,7 @@ invariants: [build-config]
 scope: [docs/autopilot-manifests/deps-security-bump.json, package.json, pnpm-workspace.yaml, pnpm-lock.yaml]
 manifest: docs/autopilot-manifests/deps-security-bump.json
 merged_probe: pnpm-lock.yaml :: 15.5.21
-notes: **Mở bởi CI audit 2026-07-26** — `Security / OSV full dependency scan` đỏ trên main với 11 advisory, tất cả từ `pnpm-lock.yaml`, **không phải regression của việc gần đây** (không dependency nào đổi; advisory publish upstream). `next` 15.5.20 gánh **7 advisory tới CVSS 8.3** → 15.5.21; `postcss` 8.5.16 → 8.5.18; `brace-expansion` 1.1.16 và 5.0.7 → 5.0.8. **Exposure hiện = 0**: chưa deploy, chưa có route nghiệp vụ, Google login fail-closed với `GOOGLE_OAUTH_*` rỗng. **Timing gate 30/07** — `minimumReleaseAge: 10080` (7 ngày) là control có chủ đích; đo 26/07: postcss đủ tuổi, next đủ từ 28/07, brace-expansion đủ từ 30/07. **Owner chốt 26/07: KHÔNG override** — cửa sổ 7 ngày tồn tại để chặn đúng vector publish-bị-chiếm-quyền mà một bản "security fix" giả là carrier kinh điển; đổi lớp phòng thủ đó lấy 4 ngày vá sớm trên bề mặt exposure-0 là trao đổi tồi. Ngoại lệ tương lai nếu có phải là override per-package có lý do và hạn dùng, không hạ `minimumReleaseAge` toàn cục. `design_probe_required: true` — hai bẫy: (1) **override nằm ở HAI chỗ**, `package.json` `pnpm.overrides` và `pnpm-workspace.yaml` `overrides`, `postcss` có mặt ở cả hai; sửa một bỏ một là cách bản vá không có hiệu lực mà vẫn tưởng xong; (2) OSV ghi FIXED 5.0.8 cho cả dòng `brace-expansion` 1.1.16 — nếu nhánh v1 không có bản vá in-range thì ép transitive v1 lên v5 là **major bump = quyết định**, phải hỏi chứ không tự chốt trong lockfile.
+notes: **Mở bởi CI audit 2026-07-26** — `Security / OSV full dependency scan` đỏ trên main với 11 advisory, tất cả từ `pnpm-lock.yaml`, **không phải regression của việc gần đây** (không dependency nào đổi; advisory publish upstream). `next` 15.5.20 gánh **7 advisory tới CVSS 8.3** → 15.5.21; `postcss` 8.5.16 → 8.5.18; `brace-expansion` 1.1.16 và 5.0.7 → 5.0.8. **Exposure hiện = 0**: chưa deploy, chưa có route nghiệp vụ, Google login fail-closed với `GOOGLE_OAUTH_*` rỗng. **Timing gate 30/07** — `minimumReleaseAge: 10080` (7 ngày) là control có chủ đích; đo 26/07: postcss đủ tuổi, next đủ từ 28/07, brace-expansion đủ từ 30/07. **Owner chốt 26/07: KHÔNG override** — cửa sổ 7 ngày tồn tại để chặn đúng vector publish-bị-chiếm-quyền mà một bản "security fix" giả là carrier kinh điển; đổi lớp phòng thủ đó lấy 4 ngày vá sớm trên bề mặt exposure-0 là trao đổi tồi. Ngoại lệ tương lai nếu có phải là override per-package có lý do và hạn dùng, không hạ `minimumReleaseAge` toàn cục. `design_probe_required: true` — hai bẫy: (1) **override nằm ở HAI chỗ**, `package.json` `pnpm.overrides` và `pnpm-workspace.yaml` `overrides`, `postcss` có mặt ở cả hai; sửa một bỏ một là cách bản vá không có hiệu lực mà vẫn tưởng xong; (2) OSV ghi FIXED 5.0.8 cho cả dòng `brace-expansion` 1.1.16 — bẫy này **đã kích hoạt và đã giải quyết bằng cách tách slice**, xem `owner_decision` ở trên; `brace-expansion` nay NGOÀI scope và acceptance `DSB-2b` bắt hai dòng đó **byte-unchanged**, lệch là HALT. ⚠️ `merged_probe: pnpm-lock.yaml :: 15.5.21` là **weak probe theo DISCRIMINATOR RULE** (chuỗi số, không phải identifier) — giữ nguyên vì lockfile version bump không có symbol nào identifier-shaped để probe; hệ quả là `--check` không tự flip được task này, phải đóng tay kèm SHA, cùng lớp với `owner-evidence-gate` và `docs-reconcile`.
 
 ## task: db-outbox-ack-marker
 title: Job-infra slice 2a — completion/ack cho outbox_events, đóng starvation loop mà 0022 tự flag
@@ -870,6 +870,50 @@ depends_on: []
 invariants: [schema]
 scope: []
 notes: **Phát hiện 2026-07-27 khi viết PVC-3 của `db-public-visibility-capacity-check`.** `schema.ts:~599-605` khai `sessions_time_chk` · `sessions_price_chk` · `sessions_slots_chk` · `sessions_vis_chk` · `sessions_join_chk` · `sessions_status_chk`, nhưng `pg_constraint` trên DB đã migrate đầy đủ (verify trên `plexco_test`, tail `0024`) cho thấy **KHÔNG tên nào tồn tại** — `0002:87-99` khai CHECK inline/không tên nên Postgres tự đặt `sessions_check` (time), `sessions_price_amount_check`, `sessions_slots_max_check`, `sessions_visibility_check`, `sessions_join_policy_check`, `sessions_status_check`. **Cùng lớp bug mà comment `schema.ts:107-111` tự ghi là đã tìm-và-sửa cho `players` ở `0014`** (`players_status_check`→`players_status_chk`) — chưa bao giờ sửa cho `sessions`. **Không phải bug đúng đắn hôm nay** (constraint vẫn fire và enforce đúng dưới tên thật; PVC-3 nay assert theo tên THẬT), thuần là drift mirror giữa `schema.ts` và DB sống — nhưng **mọi migration hoặc test tương lai giả định các tên đó tồn tại sẽ sai**, và `dep_checks` của chính manifest slice kia đã dính đúng bẫy đó: `scope-gate` giải bằng `git show main:<file>` + grep nên chỉ đọc được KHAI BÁO, không phân biệt được với ĐÃ ÁP DỤNG. Cách sửa mirror theo đúng `0014` cho `players`: một migration monotonic DROP từng constraint tự-sinh rồi ADD lại dưới tên `schema.ts` khai (cùng predicate, không đổi hành vi). Quyết định khi scope: có gộp luôn `sessions_public_capacity_chk` (đã đặt tên đúng) hay giữ hẹp trong năm cái cũ. **KẾT QUẢ ĐO CUỐI (design-probe, 2026-07-28) — con số 47/72 trong `rescoped:` ở trên cũng SAI, và sai theo cách có ý nghĩa:** catalog thật cho **67 khai báo `check()` · 73 constraint sống · 27 đã đúng tên · 40 cần rename · 0 khai-mà-không-có · 6 sống-mà-không-khai**. `27+40+0=67` và `27+40+6=73`. Bản 47 gộp "cần rename" với "sống nhưng chưa bao giờ khai" vào một rổ — hai vấn đề khác nhau, cách sửa khác nhau. **Nửa đáng sợ của khoảng cách 63-vs-72 đã bị bác bỏ bằng đo:** không có guard nào người ta tin là đang enforce mà thực ra vắng mặt (0 cái). Phần dư là chiều ngược lại — 6 constraint sống mà `schema.ts` không mô tả, tách thành `db-undeclared-check-constraints-schema-mirror`.
+
+## task: eslint-10-migration
+title: ESLint 9 → 10 trước EOL 2026-08-06; gỡ nhánh minimatch@3 / brace-expansion@1 như hệ quả
+status: planned
+risk: P1
+change_class: toolchain-major-upgrade
+depends_on: []
+invariants: [build-config]
+scope: [package.json, pnpm-lock.yaml, eslint.config.mjs]
+manifest: null
+merged_probe: null
+notes: |
+  **Mở 2026-07-29, tách khỏi `deps-security-bump` sau khi phép đo lật lối sửa.** Chuỗi đo, ghi lại vì
+  mỗi bước bác bước trước: (1) manifest `deps-security-bump` đoán ép `brace-expansion@1` lên v5 là
+  "major bump = quyết định owner"; (2) đo ra nó **vỡ runtime** chứ không chỉ major — v1
+  `module.exports = expandTop` (hàm) vs v5 CJS `exports.expand` (object), consumer duy nhất
+  `minimatch@3.1.5` gọi nó như hàm; (3) owner chốt lối "nâng eslint", nhưng đo tiếp thì **`eslint@9.39.4`
+  TỰ NÓ phụ thuộc `minimatch 3.1.5`** (cùng `@eslint/config-array@0.21.2`, `@eslint/eslintrc@3.3.5`), và
+  `^9.18.0` đã resolve tới 9.x mới nhất ⇒ **không gì trong dải `^9` gỡ được nhánh v1**.
+  **Lối duy nhất là v10**, và nó có hai động lực độc lập:
+  - ESLint v10.0.0 Breaking Changes liệt kê `501abd0 feat!: update dependency minimatch to v10 (#20246)`
+    ⇒ nhánh `minimatch@3` → `brace-expansion@1` biến mất, đóng GHSA-mh99-v99m-4gvg phần v1.
+  - **ESLint v9.x EOL 2026-08-06** — đây mới là lý do chính. Upgrade này phải làm bất kể advisory;
+    advisory chỉ là thứ đi kèm miễn phí. Bản mới nhất khi mở block: v10.8.0 (24/07).
+  **Vì sao KHÔNG gộp vào `deps-security-bump`:** slice đó là dependency-floor bump có `_scope_out` cấm
+  *"unrelated dependency upgrades riding along"*. Nhét một major toolchain upgrade vào làm chính điều
+  khoản đó thành vô nghĩa, và biến một slice P1 gọn thành P1 mở.
+  **Điểm thuận lợi đã xác minh:** repo **đã dùng flat config** (`eslint.config.mjs`), nên breaking change
+  lớn nhất của v10 — gỡ sạch hệ eslintrc, `.eslintrc.*`, `--no-eslintrc`, `/* eslint-env */` — **không áp
+  dụng**. Đây là lý do slice này khả thi trong một tuần thay vì là một dự án.
+  **Ba thứ probe PHẢI đo, chưa ai đo — không được suy từ "chắc là ổn":**
+  (a) `typescript-eslint@8.62` có hỗ trợ eslint 10 không, hay cần v9/bản 8.x mới hơn — đây là rủi ro lớn
+  nhất vì repo dùng `tseslint.config()` làm khung cho toàn bộ `eslint.config.mjs`;
+  (b) `@next/eslint-plugin-next` có tương thích v10 không;
+  (c) **Node floor mới `^20.19.0 || ^22.13.0 || >=24`** — CI khai `node-version: 22` (resolve latest 22.x,
+  hiện thoả) nhưng máy dev có thể không; kiểm cả hai chứ không chỉ CI.
+  Ngoài ra v10 đổi thuật toán tìm config (bắt từ thư mục của file được lint thay vì cwd) — repo là
+  monorepo pnpm workspace nên **phải xác nhận `eslint .` từ root vẫn quét đúng tập file cũ**, đừng giả định.
+  **Không được giữ block `scripts/**/*.{mjs,js}` trong `eslint.config.mjs` như lý do bỏ qua compat**: block
+  đó vá `no-undef` cho Node globals, không liên quan gì tới v10; giữ nguyên nó qua upgrade.
+  **Điều kiện promote lên `ready`:** đo xong (a)(b)(c), viết manifest với acceptance gồm *"`eslint .` trước
+  và sau trả về CÙNG một tập file được lint"* và *"`pnpm lint` exit 0"*, cộng một assertion rằng
+  `brace-expansion@1` và `minimatch@3` **không còn dòng nào** trong `pnpm-lock.yaml` — đó là cách chứng
+  minh hệ quả thứ hai thật sự xảy ra thay vì hy vọng.
 
 ## task: db-undeclared-check-constraints-schema-mirror
 title: 6 CHECK sống trong DB mà `schema.ts` không khai — mirror ngược, không migration

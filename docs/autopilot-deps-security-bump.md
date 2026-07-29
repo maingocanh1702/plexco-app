@@ -150,7 +150,28 @@ nguyên là item probe, không đưa vào file này như đã biết.
 
 ---
 
-## Quyết định owner (chặn slice)
+## ✅ Quyết định owner — CHỐT 2026-07-29: TÁCH ĐÔI
+
+> **Slice này nay chỉ còn `next` + `postcss`. `brace-expansion` ra khỏi scope**, đóng qua slice mới
+> `eslint-10-migration`. Manifest đã cập nhật (`_owner_decision`, `_scope_in/_scope_out`, `DSB-2b`).
+> Backlog block đã lên `status: ready`.
+>
+> **Phần dưới là chẩn đoán gốc — giữ nguyên, nhưng nó đề xuất một lối mà phép đo sau đó BÁC BỎ.**
+> Lối 1 viết là *"nâng eslint toolchain để nhánh v1 tự biến mất"*. Đo ra: **`eslint@9.39.4` tự nó phụ
+> thuộc `minimatch 3.1.5`** (cùng `@eslint/config-array@0.21.2` và `@eslint/eslintrc@3.3.5`), và
+> `^9.18.0` đã resolve tới bản 9.x mới nhất — nên **không gì trong dải `^9` gỡ được nhánh v1**. Lối 1
+> chỉ chạy ở **eslint v10**, vốn liệt kê `501abd0 feat!: update dependency minimatch to v10 (#20246)`
+> trong Breaking Changes.
+>
+> Điều đó biến lối 1 từ "nới scope một dòng" thành **một major toolchain upgrade** — và đồng thời làm
+> nó dễ chấp nhận hơn nhiều, vì **ESLint v9.x EOL 2026-08-06**: upgrade này phải làm trong tuần này bất
+> kể advisory. Nhưng chính vì thế nó thuộc slice riêng, không phải slice dependency-floor.
+>
+> **Đã sai hai lần ở đây, cùng một cơ chế:** manifest gốc đoán "major bump" (thật ra là vỡ runtime);
+> tôi đoán "nâng eslint là đủ" (thật ra cần v10). Cả hai đều là suy từ hình dạng vấn đề thay vì đọc
+> cây phụ thuộc thật. Ghi lại vì slice tiếp theo sẽ bị cám dỗ đoán tiếp về `typescript-eslint`.
+
+## Quyết định owner (chẩn đoán gốc, giữ để đối chiếu)
 
 **Câu hỏi:** xử lý `brace-expansion@1.1.16` theo lối nào?
 
@@ -182,4 +203,5 @@ Nếu owner chọn lối 2, ignore-entry **phải có ngày hết hạn**, cùng
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 29/07/2026 | v0.2 | **Owner chốt TÁCH ĐÔI; lối 1 của v0.1 bị chính phép đo bác bỏ.** v0.1 đề xuất "nâng eslint toolchain" — nhưng `eslint@9.39.4` TỰ NÓ phụ thuộc `minimatch 3.1.5`, và `^9.18.0` đã resolve tới 9.x mới nhất, nên không gì trong dải `^9` gỡ được nhánh v1. Chỉ **eslint v10** làm được (`501abd0 feat!: update dependency minimatch to v10 (#20246)` trong Breaking Changes v10.0.0). Điều đó biến lối 1 thành major toolchain upgrade ⇒ tách thành slice `eslint-10-migration`, và nó vốn **bắt buộc phải làm trước EOL 2026-08-06** bất kể advisory. Slice này thu về `next` + `postcss`; thêm `DSB-2b` bắt hai dòng `brace-expansion` **byte-unchanged** (lệch = HALT, nghĩa là slice drift vào package đã loại). Chi phí chấp nhận: OSV còn đỏ ở `brace-expansion` vài ngày — đổi lấy việc không để lại ignore-entry phải nhớ dọn. Backlog block → `status: ready`. |
 | 29/07/2026 | v0.1 | Soạn task contract Level 3 §3 tại `main@3d75c90`. Đo xong item (a) (xác nhận bẫy hai-chỗ, chỉ rõ cơ chế: rewrite `postcss@<8.5.10 → 8.5.16` không tự theo khi nâng floor ở `package.json`) và item (b) (GHSA-mh99-v99m-4gvg affected `<= 5.0.7` / patched `5.0.8` duy nhất ⇒ nhánh v1 không có bản vá in-range; v1.1.16 xác nhận dính thật với `max` mặc định `Infinity`; **ép v1→v5 làm vỡ `minimatch@3` vì đổi export shape hàm→object**; nhánh v1 chỉ do eslint kéo nên dev-only). Loại lối "ép override lên v5" bằng bằng chứng. Nêu quyết định owner chặn slice: cả hai lối còn lại đều đòi nới `_scope_out`. Item (c) để mở, chưa đo. |
