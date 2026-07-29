@@ -11,7 +11,7 @@ AUTO_MERGE: off
 ```
 
 > ✅ **Đã sync với canonical `Claude template` (2026-07-28):** `level3-workflow.md` (contract vận hành),
-> `autopilot-prompt-GENERIC` bản Level 3, `autopilot-invariants`, scope-gate **KIT_VERSION 11**
+> `autopilot-prompt-GENERIC` bản Level 3, `autopilot-invariants`, scope-gate (kit version: `awk '/^# KIT_VERSION:/{print $3; exit}' scripts/autopilot-scope-gate` — không hard-pin ở đây)
 > (kèm `autopilot-review-readiness.mjs`, `ap-housekeep.sh`, `codex-review-pin.sh`).
 > (Plexco-specific token vẫn ở `docs/autopilot-invariant-catalog.md`, không đụng.)
 

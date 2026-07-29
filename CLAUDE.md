@@ -57,7 +57,9 @@ forward-only, không migrate giữa chừng. Entry point vận hành: `docs/auto
    slice, giao và giám sát child agent, tích hợp rồi verify cả outcome. Không hỏi owner từng bước.
 3. **1 writing slice = 1 branch + 1 worktree + tối đa 1 writer.** Register trước khi ghi:
    `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<slug>.json`
-   (KIT_VERSION 11, fail-closed). Root worktree luôn ở `main`. Slice dùng chung migration/state/
+   (fail-closed; kit version đọc từ `scripts/autopilot-scope-gate` header, KHÔNG hard-pin trong prose
+   — số chép tay đã stale một lần ở `10` trong khi cài đặt là `11`). Root worktree luôn ở `main`.
+   Slice dùng chung migration/state/
    generated artifact → chạy tuần tự, không song song.
 4. Verify bằng lệnh thật của repo (`pnpm test` với `DATABASE_URL_TEST`, build, lint, typecheck, e2e
    khi vượt boundary thật), rồi review độc lập bắt buộc qua `scripts/codex-review-pin.sh`; slice chạm

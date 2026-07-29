@@ -19,7 +19,8 @@ AUTO_MERGE: off
 3. [`autopilot-prompt-GENERIC.md`](./autopilot-prompt-GENERIC.md) — worker contract.
 4. [`orchestrator-usage.md`](./orchestrator-usage.md) — delegation and monitoring.
 5. [`../autopilot-parallel-scope-gate.md`](../autopilot-parallel-scope-gate.md) — worktree/scope
-   lifecycle as installed in this repository (`scripts/autopilot-scope-gate`, KIT_VERSION 11).
+   lifecycle as installed in this repository. Installed kit version: read it, do not trust a number
+   copied into prose — `awk '/^# KIT_VERSION:/{print $3; exit}' scripts/autopilot-scope-gate`.
 6. Project-local README/HANDOFF/AGENTS/CLAUDE docs — repository-specific context and stricter rules.
 
 Project rules may be stricter, never weaker.

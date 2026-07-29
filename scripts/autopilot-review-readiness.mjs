@@ -14,6 +14,12 @@ import {
 } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
+// Explicit import, not the implicit Node global: a consumer repo that lints scripts/ (ESLint's
+// `ignores: ["*.mjs"]` matches only the repo ROOT, so scripts/*.mjs IS linted) otherwise fails with
+// 11 x `'process' is not defined` under js.configs.recommended, turning `pnpm lint` and its CI job red
+// the moment this pack lands. Observed in Plexco at kit v11, 2026-07-29. The sibling
+// check-review-readiness.mjs already imports it this way.
+import process from "node:process";
 
 const VERSION = "level3-readiness-v2";
 const REVIEW_TOOL = "scripts/codex-review-pin.sh";
