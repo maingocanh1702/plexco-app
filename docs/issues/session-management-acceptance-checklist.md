@@ -725,13 +725,13 @@ authorization: session runtime remains a separate, risk-classified slice.
 | 9 | Exact migration/rollback packets authored | FAIL |
 | 10 | Exact implementation artifacts and first slice | FAIL |
 | 11 | Security/RLS/fail-closed acceptance specified | PASS |
-| 12 | Immutable reviewed authority | FAIL — current pack is uncommitted working-tree state |
+| 12 | Immutable reviewed authority | PASS — pack committed at `adf5eff5c079622bfede1f1aaf40edd556e421ce` (2026-07-29) |
 
 ```text
 REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: NOT_CODE_READY
 REVIEWED_AT: 2026-07-28
-AUTHORITY_SHA: 784bc8dd297163a5ec5415f33beabbbf34bbc8d7
+AUTHORITY_SHA: adf5eff5c079622bfede1f1aaf40edd556e421ce
 BASE_BRANCH: main
 TARGET_FILES:
   - docs/issues/session-management-acceptance-checklist.md
@@ -758,7 +758,7 @@ CLOSURE_MATRIX: FAIL
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: FAIL
 IMPLEMENTATION_ARTIFACTS: FAIL
-FIRST_IMPLEMENTATION_STEP: commit and re-pin the exact authority pack then author the first mechanism-sized prerequisite packet
+FIRST_IMPLEMENTATION_STEP: author the first mechanism-sized prerequisite packet; the commit-and-re-pin step is done at adf5eff
 REMAINING_BLOCKERS:
   - blocker: recurrence edit granularity and malformed-timezone input behavior remain unresolved for the whole Session feature
     owner: Product and Session architecture owner
@@ -766,10 +766,7 @@ REMAINING_BLOCKERS:
   - blocker: hard business cores and exact migration implementation packets are absent
     owner: Session Identity and Payment architecture owners
     resolution: every named dependency has a merged probe and each mechanism-sized packet pins exact files lock order rollback and acceptance tests
-  - blocker: reviewed source pack is uncommitted working-tree state
-    owner: docs authority owner
-    resolution: commit the exact reconciled files re-pin AUTHORITY_SHA and rerun readiness validators
-NEXT_REVIEW_TRIGGER: immutable authority SHA plus bounded first-slice packet and merged hard-dependency probes
+NEXT_REVIEW_TRIGGER: bounded first-slice packet plus merged hard-dependency probes; the immutable-authority condition is closed at adf5eff
 ```
 
 **Binary verdict:** `NOT_CODE_READY`. Traceability is complete; code authorization is not.
@@ -780,6 +777,7 @@ NEXT_REVIEW_TRIGGER: immutable authority SHA plus bounded first-slice packet and
 
 | Date | Version | Thay đổi |
 | --- | --- | --- |
+| 2026-07-29 | v1.4 | **Authority pack committed — row 12 closes; và sửa một `AUTHORITY_SHA` sai.** Bản v1.3 khai `AUTHORITY_SHA: 2dc9b8c` trong khi artifact anh em `dd-32-booking-funnel-analysis.md` cùng phiên khai `784bc8d` — hai artifact DD-32 bất đồng authority, và khối readiness này là **mới thêm** ở v1.3 (bản committed trước đó không có khối nào) nên `2dc9b8c` là giá trị chép sót, không phải pin lịch sử. Nay cả hai cùng pin `adf5eff5c079622bfede1f1aaf40edd556e421ce` — squash mang đúng 27-file Option D pack. Row 12 `FAIL` → `PASS`; blocker uncommitted-authority gỡ khỏi `REMAINING_BLOCKERS`; `FIRST_IMPLEMENTATION_STEP` và `NEXT_REVIEW_TRIGGER` bỏ điều kiện commit-and-re-pin. **Verdict giữ `NOT_CODE_READY`** — `OPEN_QUESTIONS_IN_SCOPE: 2` (recurrence edit granularity, malformed-timezone) cộng rows 8/9/10 vẫn FAIL, mỗi cái chặn độc lập. Pin-only, không đổi dòng contract nào. |
 | 2026-07-28 | v1.3 | Re-pin on-disk retrace base to `main@784bc8d`; Chat docs-only commits after `2dc9b8c` do not close Session runtime dependencies or change `NOT_CODE_READY`. |
 | 2026-07-28 | v1.2 | Full retrace from Product v2.13a/Tech v2.14c to Product v2.17/Tech v2.18a. Restore `U#24a/b` omitted by checklist v1.1 (its source baseline was 68, not 66), then add 16 source rows: draft cleanup U49–61/I8, DD-45a U33r and DD-32 U25a/b; update U23/U25 semantics. The checklist therefore gains 18 rows and now maps 6 INV / 14 UC / 26 P edges / 7 events / 29 AC / 31 BE edges / 11 errors / 84 unit / 8 integration. Add testable AC28 owner-alert dedupe, cite Funnel integration #1/#3/#8 for delegated DD-32 race/projection branches, reclassify DD-45a as decided-deferred, record DD-32 runtime dependencies and remove landed `0019` from deferred prerequisites. Reconcile Tech v2.18a capacity/projector drifts. Add `enforce` classification, 12-row closure matrix and canonical `NOT_CODE_READY` verdict; no runtime/schema authorization. |
 | 2026-07-24 | v1.1 | **Publish-mechanics retrace** (`docs-session-acceptance-checklist-publish-retrace`): Sources pin bumped `P` v2.12b→v2.13a, `T` v2.13a→v2.14c. §9-B's "publish transition — decided-to-exist, mechanics deferred" bullet removed (no longer accurate — mechanics are authored and its 3 former hard dependencies are resolved at spec level) and replaced with traced coverage: 7 new §1 bullets (`SES-UC-12`, edges `#16–19`, `AC#15–20`), `T U#44` folded into the existing §5 non-admin bullet, `session_published` added to the §6 analytics-event bullet, 9 new §7 DoD rows (`U#40–48`). §8 ledger totals updated (use cases 11→12, edge cases 15→19, analytics events 6→7, AC 14→20, BE edge cases 20→24, error codes 9→10, unit tests 57→66); AC-numbering legend `1–14`→`1–20`. Feature-status migration-tail wording de-pinned to match `P`/`T`'s own de-pin sweep (tail no longer hard-pinned to `0018`). Result section's stale `0014`-status/§9-B cross-refs corrected; prior "Re-verified on-disk against `main@0dec63b`" (2026-07-23) marker preserved verbatim, this pass adds its own re-verification against `main@58788e6`. Pre-existing dated provenance preserved verbatim throughout; no new design question resolved; `AC#11` public-materialise cross-ref to `feature_marketplace_discovery` unchanged. |

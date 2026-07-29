@@ -151,9 +151,10 @@ Không gộp adapters với session/payment writer; Messenger/Zalo phải là th
 | 9 | Acceptance matrix | Funnel Product+BE coverage + Session checklist v1.2 full retrace (14 UC/26 edges/29 AC/84 unit rows) | PASS |
 | 10 | Live hard dependencies | Session/Join/Identity/Payment business runtime not implemented | FAIL |
 | 11 | Executable first slice | No exact manifest/targets/migration number/readiness packet | FAIL |
-| 12 | Immutable authority | This pack is uncommitted working-tree state | FAIL |
+| 12 | Immutable authority | Pack committed at `adf5eff5c079622bfede1f1aaf40edd556e421ce` (2026-07-29) | PASS |
 
-Contract/decision closure is complete; code authorization is not.
+Contract/decision closure is complete; code authorization is not. Closure **10/12** — rows 10 and 11
+remain FAIL and each blocks independently, so closing row 12 does **not** move the verdict.
 
 ---
 
@@ -163,7 +164,7 @@ Contract/decision closure is complete; code authorization is not.
 REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: NOT_CODE_READY
 REVIEWED_AT: 2026-07-28
-AUTHORITY_SHA: 784bc8dd297163a5ec5415f33beabbbf34bbc8d7
+AUTHORITY_SHA: adf5eff5c079622bfede1f1aaf40edd556e421ce
 BASE_BRANCH: main
 TARGET_FILES:
   - README.md
@@ -231,10 +232,7 @@ REMAINING_BLOCKERS:
   - blocker: channel booking intent migration occupancy helper and atomic payment finalizer have no exact implementation packets
     owner: Session and Payment architecture owners
     resolution: mechanism-sized manifests include exact files migrations lock order rollback and nine-group acceptance matrices
-  - blocker: reviewed authority pack is uncommitted working-tree state
-    owner: docs authority owner
-    resolution: commit the exact reconciled pack then re-pin AUTHORITY_SHA and rerun the readiness validator
-NEXT_REVIEW_TRIGGER: committed authority SHA plus merged hard-dependency probes and exact first-slice implementation packet
+NEXT_REVIEW_TRIGGER: merged hard-dependency probes plus an exact first-slice implementation packet; the committed-authority condition is closed at adf5eff
 ```
 
 **Binary verdict:** `NOT_CODE_READY`. Decision/spec are closed; runtime permission remains blocked by the three binary conditions above.
@@ -245,6 +243,7 @@ NEXT_REVIEW_TRIGGER: committed authority SHA plus merged hard-dependency probes 
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-29 | v1.3 | **Authority pack committed — row 12 closes.** Re-pin `AUTHORITY_SHA` `784bc8d` → `adf5eff5c079622bfede1f1aaf40edd556e421ce`, the squash carrying the exact 27-file Option D pack. Closure 9/12 → **10/12**; the uncommitted-authority blocker is removed from `REMAINING_BLOCKERS` and `NEXT_REVIEW_TRIGGER` drops that condition. **Verdict stays `NOT_CODE_READY`** — rows 10 (hard dependencies not merged) and 11 (no exact first-slice packet) each block independently, so this is a pin-only change with zero contract movement. Sibling `session-management-acceptance-checklist.md` re-pinned to the same SHA in the same commit; the two DD-32 artifacts previously disagreed (`2dc9b8c` vs `784bc8d`) and now cannot. |
 | 2026-07-28 | v1.2 | Re-pin live base to `main@784bc8d`; the intervening Chat docs commits do not close DD-32's uncommitted authority, hard-dependency or implementation-packet blockers. Verdict remains `NOT_CODE_READY`. |
 | 2026-07-28 | v1.1 | Complete mirror propagation and Session acceptance retrace; public browse exposes confirmed/available counts but no hold count/identity; sync BL-DSC-1/DD-78/share-card whitelist with additive `confirmed_count`; expand exact TARGET_FILES while preserving `NOT_CODE_READY`. |
 | 2026-07-28 | v1.0 | Reopen DD-32; replace Option A with Option D; pin Account predicate, 15-minute hold, approval/waitlist fairness, over/under/late payment, provider fail-closed, implementation split and readiness verdict. |
