@@ -871,6 +871,37 @@ invariants: [schema]
 scope: []
 notes: **Phát hiện 2026-07-27 khi viết PVC-3 của `db-public-visibility-capacity-check`.** `schema.ts:~599-605` khai `sessions_time_chk` · `sessions_price_chk` · `sessions_slots_chk` · `sessions_vis_chk` · `sessions_join_chk` · `sessions_status_chk`, nhưng `pg_constraint` trên DB đã migrate đầy đủ (verify trên `plexco_test`, tail `0024`) cho thấy **KHÔNG tên nào tồn tại** — `0002:87-99` khai CHECK inline/không tên nên Postgres tự đặt `sessions_check` (time), `sessions_price_amount_check`, `sessions_slots_max_check`, `sessions_visibility_check`, `sessions_join_policy_check`, `sessions_status_check`. **Cùng lớp bug mà comment `schema.ts:107-111` tự ghi là đã tìm-và-sửa cho `players` ở `0014`** (`players_status_check`→`players_status_chk`) — chưa bao giờ sửa cho `sessions`. **Không phải bug đúng đắn hôm nay** (constraint vẫn fire và enforce đúng dưới tên thật; PVC-3 nay assert theo tên THẬT), thuần là drift mirror giữa `schema.ts` và DB sống — nhưng **mọi migration hoặc test tương lai giả định các tên đó tồn tại sẽ sai**, và `dep_checks` của chính manifest slice kia đã dính đúng bẫy đó: `scope-gate` giải bằng `git show main:<file>` + grep nên chỉ đọc được KHAI BÁO, không phân biệt được với ĐÃ ÁP DỤNG. Cách sửa mirror theo đúng `0014` cho `players`: một migration monotonic DROP từng constraint tự-sinh rồi ADD lại dưới tên `schema.ts` khai (cùng predicate, không đổi hành vi). Quyết định khi scope: có gộp luôn `sessions_public_capacity_chk` (đã đặt tên đúng) hay giữ hẹp trong năm cái cũ. **KẾT QUẢ ĐO CUỐI (design-probe, 2026-07-28) — con số 47/72 trong `rescoped:` ở trên cũng SAI, và sai theo cách có ý nghĩa:** catalog thật cho **67 khai báo `check()` · 73 constraint sống · 27 đã đúng tên · 40 cần rename · 0 khai-mà-không-có · 6 sống-mà-không-khai**. `27+40+0=67` và `27+40+6=73`. Bản 47 gộp "cần rename" với "sống nhưng chưa bao giờ khai" vào một rổ — hai vấn đề khác nhau, cách sửa khác nhau. **Nửa đáng sợ của khoảng cách 63-vs-72 đã bị bác bỏ bằng đo:** không có guard nào người ta tin là đang enforce mà thực ra vắng mặt (0 cái). Phần dư là chiều ngược lại — 6 constraint sống mà `schema.ts` không mô tả, tách thành `db-undeclared-check-constraints-schema-mirror`.
 
+## task: kit-dead-citation-prompt-generic-sections
+title: 6 manifest viện dẫn `autopilot-prompt-GENERIC v0.6.1 §0.1` — section đã biến mất khi prompt viết lại cho Level 3
+status: planned
+risk: P3
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/autopilot-manifests/, scripts/autopilot-onboard.sh, docs/autopilot-templates/autopilot-prompt-GENERIC.md]
+manifest: null
+merged_probe: null
+notes: |
+  **Mở 2026-07-29 khi kiểm tiền đề launch, không phải khi tìm lỗi.** `autopilot-onboard.sh --check` in
+  `Prompt template: … (v0.6.0)` — đó là **chuỗi hard-code ở dòng 250 của chính script**, không đọc từ file.
+  Và file `docs/autopilot-templates/autopilot-prompt-GENERIC.md` **không mang version marker nào**: header
+  là `# Level 3 task prompt — generic`, sáu section là *Injected task contract · Role behavior · Start gate ·
+  Implementation loop · Terminal states · Non-negotiable boundaries*.
+  **Hệ quả:** 6 manifest viện dẫn `GENERIC v0.6.1 §0.1` cho lý do bật `design_probe_required` — và **§0.1
+  không tồn tại**, chuỗi "trigger" cũng không có ở đâu trong file. Danh sách trigger đánh số cho design-probe
+  đã **biến mất** trong lần viết lại cho Level 3; thứ gần nhất còn lại là *Start gate* mục 7, nhưng nó nói về
+  **khi nào dừng trước khi ghi**, không phải **khi nào bắt buộc probe** — hai câu hỏi khác nhau.
+  **Đã xử lý phần cấp bách:** `deps-security-bump` (`ready`, launch 30/07) đã sửa citation tại chỗ. Năm cái
+  còn lại — `db-check-constraint-naming-drift`, `db-outbox-ack-marker`, `db-public-visibility-capacity-check`,
+  `job-runtime-dispatcher`, `job-schedule-outbox-dispatch` — **đều đã merged**, nên để nguyên như bản ghi lịch sử.
+  **Việc thật của task này không phải sửa 5 citation chết.** Là quyết định upstream: hoặc **khôi phục** một
+  danh sách trigger design-probe đánh số trong prompt-GENERIC (và cho `autopilot-onboard.sh` đọc version từ
+  file thay vì hard-code), hoặc **chấp nhận** rằng `design_probe_required` là boolean tự đủ và manifest không
+  cần viện dẫn section nào. Chọn cái sau thì rẻ hơn và trung thực hơn — nhưng phải nói ra, vì hiện trạng là
+  6 manifest trỏ vào hư không mà không ai biết.
+  P3 vì không chặn gì: `design_probe_required: true` vẫn là field ràng buộc và scope-gate vẫn đọc nó; chỉ
+  phần *lý do* là dangling. Thuộc `Claude template`, không phải Plexco — sửa ở đây chỉ vá triệu chứng.
+
 ## task: eslint-10-migration
 title: ESLint 9 → 10 trước EOL 2026-08-06; gỡ nhánh minimatch@3 / brace-expansion@1 như hệ quả
 status: ready
