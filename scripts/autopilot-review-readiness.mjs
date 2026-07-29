@@ -23,9 +23,89 @@ const TRUSTED_GATE_FILES = new Set([
   REVIEW_TOOL,
 ]);
 const MAX_BUFFER = 20 * 1024 * 1024;
+const DURABLE_HALT_CODES = new Set([
+  "BASE_DRIFT",
+  "BASE_MISMATCH",
+  "BASE_STALE",
+  "BRANCH_MISMATCH",
+  "BREAKER_ACTIVE",
+  "BREAKER_EVIDENCE_MISSING",
+  "CONTRACT_INVALID",
+  "DEPENDENCY_NOT_LANDED",
+  "DEPENDENCY_PROOF_INVALID",
+  "DEPENDENCY_PROOF_REUSED",
+  "EMPTY_DIFF",
+  "GATE_INPUT_DRIFT",
+  "GATE_TIMEOUT",
+  "MANIFEST_MISSING",
+  "MANIFEST_DRIFT",
+  "MAX_ROUNDS",
+  "READINESS_COMMAND_FAILED",
+  "READINESS_JSON_INVALID",
+  "REGION_THRASH",
+  "REQUIRED_TOOL_UNAVAILABLE",
+  "REVIEW_UNAVAILABLE",
+  "REVIEW_VERDICT_INVALID",
+  "SCOPE_DRIFT",
+  "SELF_CERTIFYING_GATE_CHANGE",
+]);
+let durableStateDir;
+
+function deriveDurableStateDir(repo, manifestFile) {
+  const relative = path.relative(repo, manifestFile).split(path.sep);
+  if (
+    relative.length === 4
+    && relative[0] === ".autopilot"
+    && relative[1] === "state"
+    && /^[a-z0-9][a-z0-9._-]*$/.test(relative[2])
+    && relative[3] === "manifest.json"
+  ) {
+    durableStateDir = path.dirname(manifestFile);
+  }
+}
 
 function halt(code, message) {
+  if (durableStateDir && DURABLE_HALT_CODES.has(code)) {
+    try {
+      mkdirSync(durableStateDir, { recursive: true });
+      const safeCode = code.replace(/[^A-Z0-9_-]/gi, "_");
+      const signalPath = path.join(durableStateDir, `HALT-${safeCode}.txt`);
+      if (!existsSync(signalPath)) {
+        writeFileSync(
+          signalPath,
+          [
+            `HALT ${code}: ${message}`,
+            `created_at_utc: ${new Date().toISOString()}`,
+            "resolution: close this terminal lifecycle and create a fresh successor task after fixing the cause",
+            "",
+          ].join("\n"),
+        );
+      }
+    } catch {
+      // The original gate failure remains authoritative even if the signal path is not writable.
+    }
+  }
   process.stderr.write(`HALT ${code}: ${message}\n`);
+  process.exit(1);
+}
+
+function awaitReview(code, signalName, message) {
+  if (durableStateDir) {
+    mkdirSync(durableStateDir, { recursive: true });
+    const signalPath = path.join(durableStateDir, `AWAIT-FOUNDER-${signalName}.txt`);
+    if (!existsSync(signalPath)) {
+      writeFileSync(
+        signalPath,
+        [
+          `AWAIT ${code}: ${message}`,
+          `created_at_utc: ${new Date().toISOString()}`,
+          "resolution: resolve the reviewer condition, remove this signal, then resume the same in-flight lifecycle",
+          "",
+        ].join("\n"),
+      );
+    }
+  }
+  process.stderr.write(`AWAIT ${code}: ${message}\n`);
   process.exit(1);
 }
 
@@ -113,7 +193,7 @@ function requireObject(value, label) {
 
 function requireFullSha(value, label) {
   const sha = requireString(value, label);
-  if (!/^[0-9a-f]{40,64}$/i.test(sha) || /^0+$/.test(sha)) {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha) || /^0+$/.test(sha)) {
     halt("CONTRACT_INVALID", `${label} must be a real full commit SHA`);
   }
   return sha;
@@ -175,10 +255,12 @@ function trustedReviewEnvironment() {
 const { mode, manifest: manifestArgument } = parseArguments(process.argv);
 const repo = run("git", ["rev-parse", "--show-toplevel"], process.cwd());
 const manifestCandidate = path.resolve(process.cwd(), manifestArgument);
+deriveDurableStateDir(repo, manifestCandidate);
 if (!existsSync(manifestCandidate)) {
   halt("MANIFEST_MISSING", manifestCandidate);
 }
 const manifestPath = realpathSync(manifestCandidate);
+deriveDurableStateDir(repo, manifestPath);
 
 const manifest = readJson(manifestPath, "manifest");
 const manifestHash = sha256(readFileSync(manifestPath));
@@ -210,6 +292,7 @@ const stateDir = path.join(repo, ".autopilot", "state", feature);
 if (path.dirname(manifestPath) !== stateDir || path.basename(manifestPath) !== "manifest.json") {
   halt("CONTRACT_INVALID", `manifest must be ${path.join(".autopilot", "state", feature, "manifest.json")}`);
 }
+durableStateDir = stateDir;
 if (mode === "ready") {
   for (const staleTerminal of ["READY.txt", "gate-result.json"]) {
     const stalePath = path.join(stateDir, staleTerminal);
@@ -448,10 +531,18 @@ const regionEntries = readFileSync(regionsPath, "utf8")
   .map((line) => line.match(/^round-(\d+)\s+(.+)$/))
   .filter(Boolean)
   .map((match) => ({ round: Number(match[1]), region: match[2].trim() }));
-for (let index = 2; index < regionEntries.length; index += 1) {
-  const [a, b, c] = regionEntries.slice(index - 2, index + 1);
-  if (a.region === b.region && b.region === c.region && b.round === a.round + 1 && c.round === b.round + 1) {
-    halt("REGION_THRASH", `${c.region} repeated in rounds ${a.round}-${c.round}`);
+const roundsByRegion = new Map();
+for (const { round, region } of regionEntries) {
+  if (!roundsByRegion.has(region)) roundsByRegion.set(region, new Set());
+  roundsByRegion.get(region).add(round);
+}
+for (const [region, roundSet] of roundsByRegion) {
+  const rounds = [...roundSet].sort((a, b) => a - b);
+  for (let index = 2; index < rounds.length; index += 1) {
+    const [a, b, c] = rounds.slice(index - 2, index + 1);
+    if (b === a + 1 && c === b + 1) {
+      halt("REGION_THRASH", `${region} repeated in rounds ${a}-${c}`);
+    }
   }
 }
 const blockers = ["HALT-", "AWAIT-FOUNDER-"].flatMap((prefix) =>
@@ -487,6 +578,10 @@ function remainingMs() {
     halt("GATE_TIMEOUT", `wall-time budget of ${budgets.wall_time_minutes} minutes exhausted`);
   }
   return remaining;
+}
+
+function isTimeout(result) {
+  return result?.error?.code === "ETIMEDOUT";
 }
 
 function writeProcessLog(file, metadata, result) {
@@ -528,6 +623,9 @@ function runVerificationGroup(group, commands) {
       base_sha: baseSha,
       head_sha: initialState.headSha,
     }, result);
+    if (isTimeout(result)) {
+      halt("GATE_TIMEOUT", `${group}[${index}] exceeded the remaining wall-time budget; inspect ${relativeToRepo(repo, file)}`);
+    }
     if (result.error || result.status !== 0) {
       halt("VERIFICATION_FAILED", `${group}[${index}] failed; inspect ${relativeToRepo(repo, file)}`);
     }
@@ -535,46 +633,84 @@ function runVerificationGroup(group, commands) {
 }
 
 function runReview(kind, round, cleanMarker, findingsMarker, prompt) {
-  const file = path.join(
-    stateDir,
-    `gate-attempt-${attemptLabel}-${kind}-round-${String(round).padStart(2, "0")}.txt`,
-  );
-  const result = spawnSync(reviewerPath, ["review", "--base", baseSha, prompt], {
-    cwd: repo,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: remainingMs(),
-    maxBuffer: MAX_BUFFER,
-    env: trustedReviewEnvironment(),
-  });
-  writeProcessLog(file, {
-    kind,
-    round,
-    tool: REVIEW_TOOL,
-    base_sha: baseSha,
-    head_sha: initialState.headSha,
-    diff_sha256: initialState.diffHash,
-  }, result);
-  if (result.error || result.status !== 0) {
-    halt("REVIEW_UNAVAILABLE", `${kind} round ${round} failed; inspect ${relativeToRepo(repo, file)}`);
-  }
-  const verdict = lastNonEmptyLine(result.stdout);
-  if (verdict === findingsMarker) {
-    writeFileSync(
-      pendingFindingPath,
-      `${JSON.stringify({
-        schema_version: "level3-pending-review-finding-v1",
-        kind,
-        round,
-        head_sha: initialState.headSha,
-        diff_sha256: initialState.diffHash,
-        fix_round_count: fixRounds,
-        artifact: relativeToRepo(repo, file),
-      }, null, 2)}\n`,
+  const connectorPattern = /rmcp|mcp|transport::worker|TokenRefreshFailed/i;
+  for (let invocation = 1; invocation <= 2; invocation += 1) {
+    const retrySuffix = invocation === 1 ? "" : `-retry-${String(invocation - 1).padStart(2, "0")}`;
+    const file = path.join(
+      stateDir,
+      `gate-attempt-${attemptLabel}-${kind}-round-${String(round).padStart(2, "0")}${retrySuffix}.txt`,
     );
-    halt("REVIEW_FINDINGS", `${kind} round ${round} returned findings; inspect ${relativeToRepo(repo, file)}`);
-  }
-  if (verdict !== cleanMarker) {
+    const result = spawnSync(reviewerPath, ["review", "--base", baseSha, prompt], {
+      cwd: repo,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: remainingMs(),
+      maxBuffer: MAX_BUFFER,
+      env: trustedReviewEnvironment(),
+    });
+    writeProcessLog(file, {
+      kind,
+      round,
+      invocation,
+      tool: REVIEW_TOOL,
+      base_sha: baseSha,
+      head_sha: initialState.headSha,
+      diff_sha256: initialState.diffHash,
+    }, result);
+
+    if (isTimeout(result)) {
+      halt("GATE_TIMEOUT", `${kind} round ${round} exceeded the remaining wall-time budget; inspect ${relativeToRepo(repo, file)}`);
+    }
+
+    const rawStdout = String(result.stdout || "");
+    const rawCombined = `${rawStdout}\n${String(result.stderr || "")}`;
+    const stdoutWithoutConnectorNoise = rawStdout
+      .split(/\r?\n/)
+      .filter((line) => !connectorPattern.test(line))
+      .join("\n");
+    const combinedWithoutConnectorNoise = rawCombined
+      .split(/\r?\n/)
+      .filter((line) => !connectorPattern.test(line))
+      .join("\n")
+      .trim();
+    const verdict = lastNonEmptyLine(stdoutWithoutConnectorNoise);
+
+    // Verdict-first: connector shutdown noise or a nonzero wrapper exit cannot invalidate a real
+    // completed model verdict.
+    if (verdict === findingsMarker) {
+      writeFileSync(
+        pendingFindingPath,
+        `${JSON.stringify({
+          schema_version: "level3-pending-review-finding-v1",
+          kind,
+          round,
+          head_sha: initialState.headSha,
+          diff_sha256: initialState.diffHash,
+          fix_round_count: fixRounds,
+          artifact: relativeToRepo(repo, file),
+        }, null, 2)}\n`,
+      );
+      halt("REVIEW_FINDINGS", `${kind} round ${round} returned findings; inspect ${relativeToRepo(repo, file)}`);
+    }
+    if (verdict === cleanMarker) return;
+
+    if (/usage limit|Review was interrupted|try again at/i.test(rawCombined)) {
+      awaitReview("CODEX_QUOTA", "CODEX-QUOTA", `review quota/interruption in ${relativeToRepo(repo, file)}; wait for reset, then resume this lifecycle`);
+    }
+    if (/(^|\D)401(\D|$)|token_invalidated|invalid_grant|log in again/i.test(combinedWithoutConnectorNoise)) {
+      awaitReview("CODEX_AUTH_REQUIRED", "CODEX-AUTH", `reviewer authentication failed in ${relativeToRepo(repo, file)}; re-authenticate the pinned reviewer, then resume`);
+    }
+
+    const connectorOnly = connectorPattern.test(rawCombined) && !combinedWithoutConnectorNoise;
+    if (connectorOnly && invocation === 1) {
+      continue;
+    }
+    if (connectorOnly) {
+      awaitReview("CODEX_CONNECTOR_PERSISTENT", "CODEX-CONNECTOR", `connector-only reviewer failure repeated in ${relativeToRepo(repo, file)}; repair/disable connectors, then resume`);
+    }
+    if (result.error || result.status !== 0) {
+      halt("REVIEW_UNAVAILABLE", `${kind} round ${round} failed without a valid verdict; inspect ${relativeToRepo(repo, file)}`);
+    }
     halt("REVIEW_VERDICT_INVALID", `${kind} round ${round} lacks exact clean marker; inspect ${relativeToRepo(repo, file)}`);
   }
 }

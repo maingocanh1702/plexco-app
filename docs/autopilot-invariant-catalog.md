@@ -12,9 +12,26 @@ này; token lạ → **HALT INVARIANT_UNKNOWN** (chống synonym drift). Chi ti�
 
 ## Canonical tokens (Plexco — refine khi codebase lớn lên)
 
+Block dưới có 2 nhóm:
+
+1. **8 token vận hành Level 3 (global, KHÔNG được xoá).** Kit v11 trở đi bắt buộc — thiếu bất kỳ token
+   nào thì `autopilot-init.sh` / `autopilot-update.sh` **HALT `INVARIANT_CATALOG_GLOBALS_MISSING`**.
+   Chúng khoá các vùng *cơ chế* (contract, kit, review, merge…) chứ không phải domain nghiệp vụ.
+2. **Token domain của Plexco** — phần bên dưới, tự do refine.
+
 > **DD-37 (v3.4):** kênh phase-1 = **Zalo + Facebook Messenger** (bỏ Telegram). `transport-telegram` giữ lại (archived) để không vỡ validator/manifest cũ; slice kênh mới dùng `transport-zalo` + `transport-messenger`.
 
 <!-- catalog:start -->
+# --- Level 3 operational globals (required by kit v11+; do not remove) ---
+workflow-authority — task-contract and Level-3 operating-policy changes
+kit-integrity — shared scripts, templates, versions and consumer rollout
+risk-policy — action/surface risk derivation and autonomy lane
+terminal-lifecycle — READY/AWAIT/HALT, recovery and cleanup
+review-integrity — independent review, breaker and readiness evidence
+delegation-safety — worktree, writer ownership and child-agent boundaries
+audit-integrity — task evidence, provenance and learning history
+merge-authority — landing and optional separately-authorized automation
+# --- Plexco project domains ---
 schema — Supabase/Postgres tables, migrations, RLS policies
 auth — authentication / authorization / session / Supabase auth
 billing — subscription/billing lifecycle (feature_billing_lifecycle)

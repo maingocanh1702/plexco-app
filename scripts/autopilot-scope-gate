@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 10
+# KIT_VERSION: 11
 # autopilot-scope-gate — parallel autopilot coordination (SCOPE_COLLISION gate).
 # REPO-AGNOSTIC template. Copy to <repo>/scripts/autopilot-scope-gate, chmod +x, commit.
 #
@@ -44,14 +44,41 @@ if [ "$cmd" = "cleanup" ] && [ -n "$feature_arg" ]; then
   :
 else
   [ -n "$cmd" ] && [ -n "$manifest" ] || { echo "usage: autopilot-scope-gate <register|ready|cleanup> --manifest <path>   (or: cleanup --feature <slug>)" >&2; exit 2; }
-  [ -f "$manifest" ] || { echo "HALT: manifest not found: $manifest" >&2; exit 1; }
 fi
 
 # --- shared registry at MAIN repo root (works from any worktree) ---
-ROOT="$(cd "$(git rev-parse --git-common-dir)" && cd .. && pwd)"
-WORKTREE_ROOT="$(git rev-parse --show-toplevel)"
+ROOT="$(cd "$(git rev-parse --git-common-dir)" && cd .. && pwd -P)"
+WORKTREE_ROOT="$(cd "$(git rev-parse --show-toplevel)" && pwd -P)"
 DIR="$ROOT/.autopilot"; INFLIGHT="$DIR/INFLIGHT.md"; LOCK="$DIR/INFLIGHT.lock"
 mkdir -p "$DIR"
+TASK_STATE_CANDIDATE=""
+REGISTRY_LOCK_HELD=0
+READY_LOCK=""
+READY_LOCK_HELD=0
+
+cleanup_locks(){
+  if [ "$REGISTRY_LOCK_HELD" = 1 ]; then rmdir "$LOCK" 2>/dev/null || true; fi
+  if [ "$READY_LOCK_HELD" = 1 ] && [ -n "$READY_LOCK" ]; then rmdir "$READY_LOCK" 2>/dev/null || true; fi
+}
+trap cleanup_locks EXIT
+
+halt_gate(){
+  _halt_code="$1"; shift
+  _halt_message="$*"
+  if [ -n "$TASK_STATE_CANDIDATE" ]; then
+    mkdir -p "$TASK_STATE_CANDIDATE"
+    _halt_file="$TASK_STATE_CANDIDATE/HALT-$_halt_code.txt"
+    if [ ! -e "$_halt_file" ]; then
+      {
+        printf 'HALT %s: %s\n' "$_halt_code" "$_halt_message"
+        printf 'created_at_utc: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        printf '%s\n' 'resolution: close this terminal lifecycle and create a fresh successor task after fixing the cause'
+      } > "$_halt_file"
+    fi
+  fi
+  echo "HALT $_halt_code: $_halt_message" >&2
+  exit 1
+}
 # INFLIGHT initialisation happens inside the lock (register/ready/cleanup) to avoid
 # a race where two concurrent fresh-repo runs both see the file absent and clobber each other.
 
@@ -70,7 +97,7 @@ PY
   elif command -v jq >/dev/null 2>&1; then
     jq -r --arg k "$2" 'if (.[$k]|type)=="array" then .[$k][] else (.[$k]//empty) end' "$1"
   else
-    echo "HALT: need python3, node, or jq to parse manifest JSON" >&2; exit 1
+    echo "HALT: need python3, node, or jq to parse manifest JSON" >&2; return 1
   fi
 }
 
@@ -90,20 +117,38 @@ PY
   elif command -v jq >/dev/null 2>&1; then
     jq -r '(.dep_checks // [])[] | select(.file and .symbol) | "\(.file)\t\(.symbol)"' "$1"
   else
-    echo "HALT: need python3, node, or jq to parse manifest JSON" >&2; exit 1
+    echo "HALT: need python3, node, or jq to parse manifest JSON" >&2; return 1
   fi
 }
 
 # --- manifest fields — skipped for cleanup-by-slug ---
 if [ -n "$manifest" ]; then
-  MANABS="$(cd "$(dirname "$manifest")" && pwd)/$(basename "$manifest")"
+  _manifest_input_dir="$(dirname "$manifest")"
+  if [ ! -d "$_manifest_input_dir" ]; then
+    echo "HALT MANIFEST_MISSING: parent directory does not exist for $manifest" >&2
+    exit 1
+  fi
+  MANABS="$(cd "$_manifest_input_dir" && pwd -P)/$(basename "$manifest")"
+  _manifest_state_dir="$(dirname "$MANABS")"
+  _manifest_state_parent="$(dirname "$_manifest_state_dir")"
+  _manifest_state_feature="$(basename "$_manifest_state_dir")"
+  if [ "$_manifest_state_parent" = "$WORKTREE_ROOT/.autopilot/state" ]; then
+    case "$_manifest_state_feature" in
+      ""|[!a-z0-9]*|*[!a-z0-9._-]*) ;;
+      *) TASK_STATE_CANDIDATE="$_manifest_state_dir" ;;
+    esac
+  fi
+  [ -f "$MANABS" ] || halt_gate MANIFEST_MISSING "$MANABS"
+  if ! json_get "$MANABS" feature >/dev/null; then
+    halt_gate MANIFEST_INVALID "cannot parse $MANABS with an available JSON reader"
+  fi
   FEATURE="$(json_get "$MANABS" feature)"; BRANCH="$(json_get "$MANABS" branch)"; RISK="$(json_get "$MANABS" risk)"
   DEPS="$(json_get "$MANABS" depends_on)"; INVARIANTS="$(json_get "$MANABS" invariants)"; SCOPE="$(json_get "$MANABS" scope)"
   BASE_REF="$(json_get "$MANABS" base_ref)"; [ -n "$BASE_REF" ] || BASE_REF="main"
   MANIFEST_SCHEMA_VERSION="$(json_get "$MANABS" manifest_schema_version)"
   REVIEW_GATE_VERSION="$(json_get "$MANABS" review_gate_version)"
   DEP_CHECKS="$(json_get_dep_checks "$MANABS")"
-  [ -n "$FEATURE" ] || { echo "HALT: manifest missing 'feature'" >&2; exit 1; }
+  [ -n "$FEATURE" ] || halt_gate CONTRACT_INVALID "manifest missing 'feature'"
   if command -v python3 >/dev/null 2>&1; then
     MANREL="$(python3 - "$ROOT" "$MANABS" <<'PY'
 import os,sys;print(os.path.relpath(sys.argv[2],sys.argv[1]))
@@ -126,15 +171,44 @@ PY
   [ -n "$CATALOG" ] || CATALOG="${_cat_dir:+$_cat_dir/}autopilot-invariant-catalog.md"
 else
   FEATURE="$feature_arg"
+  case "$FEATURE" in
+    ""|[!a-z0-9]*|*[!a-z0-9._-]*) ;;
+    *) TASK_STATE_CANDIDATE="$ROOT/.autopilot/state/$FEATURE" ;;
+  esac
 fi
 
 # canonical invariant tokens between the catalog markers. The catalog contract is one token as the
 # first whitespace-delimited field per line. Avoid a sed character class containing an em dash: BSD
 # sed can parse `[—-]` as an invalid/locale-sensitive range and silently return an empty catalog.
-catalog_tokens(){ [ -f "$CATALOG" ] || return 1; awk '/<!-- catalog:start -->/{c=1;next} /<!-- catalog:end -->/{c=0} c && $1 ~ /^[a-z][a-z0-9_-]*$/ {print $1}' "$CATALOG" | sort -u; }
+catalog_tokens(){
+  [ -f "$CATALOG" ] || return 1
+  awk '
+    $0 == "<!-- catalog:start -->"{starts++; if(!start_line)start_line=NR; c=1; next}
+    $0 == "<!-- catalog:end -->"{ends++; if(!end_line)end_line=NR; c=0; next}
+    c && $1 ~ /^[a-z][a-z0-9_-]*$/ {print $1}
+    END {if (!(starts == 1 && ends == 1 && start_line < end_line)) exit 1}
+  ' "$CATALOG" | sort -u
+}
 
 # --- portable atomic lock (mkdir) ---
-acquire(){ local t=0; until mkdir "$LOCK" 2>/dev/null; do sleep 0.2; t=$((t+1)); [ $t -gt 150 ] && { echo "HALT: lock timeout ($LOCK) — another gate stuck? rmdir it if stale" >&2; exit 1; }; done; trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT; }
+acquire(){ local t=0; until mkdir "$LOCK" 2>/dev/null; do sleep 0.2; t=$((t+1)); [ $t -gt 150 ] && halt_gate REGISTRY_LOCK_TIMEOUT "shared registry lock did not clear: $LOCK"; done; REGISTRY_LOCK_HELD=1; }
+release(){ rmdir "$LOCK" 2>/dev/null || true; REGISTRY_LOCK_HELD=0; }
+acquire_ready(){
+  local t=0
+  READY_LOCK="$DIR/READY-$FEATURE.lock"
+  until mkdir "$READY_LOCK" 2>/dev/null; do
+    sleep 0.2
+    t=$((t+1))
+    if [ $t -gt 150 ]; then
+      # This rejects a duplicate invocation; it must not poison the valid transition that owns the
+      # lock with a HALT file.
+      echo "REJECT READY_TRANSITION_BUSY: another readiness transition for '$FEATURE' is still running." >&2
+      exit 1
+    fi
+  done
+  READY_LOCK_HELD=1
+}
+release_ready(){ rmdir "$READY_LOCK" 2>/dev/null || true; READY_LOCK_HELD=0; }
 
 # lines (scope|invariants values) for every ACTIVE (in-flight|ready) feature != me
 active_others(){ # $1 = scope|invariants
@@ -165,25 +239,25 @@ case "$cmd" in
   register)
     REVIEW_GATE="$WORKTREE_ROOT/scripts/autopilot-review-readiness.mjs"
     if [ "$MANIFEST_SCHEMA_VERSION" = "level3-operational-v2" ] || [ -n "$REVIEW_GATE_VERSION" ]; then
-      [ -f "$REVIEW_GATE" ] || { echo "HALT REVIEW_GATE_MISSING: $REVIEW_GATE" >&2; exit 1; }
+      [ -f "$REVIEW_GATE" ] || halt_gate REVIEW_GATE_MISSING "$REVIEW_GATE"
       node "$REVIEW_GATE" register --manifest "$MANABS"
     fi
     acquire
     [ -f "$INFLIGHT" ] || printf '# Autopilot in-flight registry\n\n---\n' > "$INFLIGHT"
     if active_feature_names | grep -qxF "$FEATURE"; then
-      echo "HALT FEATURE_ALREADY_ACTIVE: '$FEATURE' already has an in-flight/ready reservation." >&2
+      # Registration did not admit a new lifecycle. Reject the duplicate without terminalizing the
+      # already-valid active lifecycle.
+      echo "REJECT FEATURE_ALREADY_ACTIVE: '$FEATURE' already has an in-flight/ready reservation." >&2
       echo "  → resume the exact existing contract without re-registering, or use a fresh task-scoped feature id." >&2
       exit 1
     fi
     # (0) invariant catalog check (#22): every manifest invariant MUST be a canonical token.
-    cat_tokens="$(catalog_tokens)" || { echo "HALT INVARIANT_UNKNOWN: invariant catalog not found (cannot validate invariants). Tried: \$AUTOPILOT_INVARIANT_CATALOG, sibling-of-manifest, \$WORKTREE_ROOT/docs/, \$ROOT/docs/ — last: $CATALOG" >&2; exit 1; }
+    cat_tokens="$(catalog_tokens)" \
+      || halt_gate INVARIANT_UNKNOWN "catalog missing/malformed; tried explicit, manifest sibling, worktree docs and root docs; last: $CATALOG"
     if [ -n "$INVARIANTS" ]; then
       unknown="$(comm -23 <(printf '%s\n' "$INVARIANTS" | sort -u) <(printf '%s\n' "$cat_tokens"))"
       if [ -n "$unknown" ]; then
-        echo "HALT INVARIANT_UNKNOWN — '$FEATURE' uses token(s) not in catalog (docs/autopilot-invariant-catalog.md):" >&2
-        echo "$unknown" | sed 's/^/    /' >&2
-        echo "  → add the token to the catalog (if a real new domain) or use the canonical token (avoid synonyms)." >&2
-        exit 1
+        halt_gate INVARIANT_UNKNOWN "'$FEATURE' uses token(s) absent from the catalog: $(printf '%s' "$unknown" | tr '\n' ',')"
       fi
     fi
     # (a) Runtime dependency check. The v2 validator already proved each dependency landed on the
@@ -192,7 +266,7 @@ case "$cmd" in
       act="$(active_feature_names)"
       while IFS= read -r d; do [ -z "$d" ] && continue
         if printf '%s\n' "$act" | grep -qxF "$d"; then
-          echo "HALT DEP_MISSING: prerequisite '$d' still active (in-flight|ready) — not merged on base yet." >&2; exit 1
+          halt_gate DEP_MISSING "prerequisite '$d' is still active (in-flight|ready), not landed on the pinned base"
         fi
       done <<< "$DEPS"
     fi
@@ -200,23 +274,19 @@ case "$cmd" in
     # absence on the dependency base and presence at landed_sha + downstream base_sha.
     if [ -n "$DEP_CHECKS" ]; then
       git rev-parse --verify -q "$BASE_REF^{commit}" >/dev/null \
-        || { echo "HALT DEP_MISSING: base_ref '$BASE_REF' not found locally (git fetch first)." >&2; exit 1; }
+        || halt_gate DEP_MISSING "base_ref '$BASE_REF' not found locally (git fetch first)"
       while IFS="$(printf '\t')" read -r f sym; do [ -z "$f" ] && continue
         blob="$(git show "$BASE_REF:$f" 2>/dev/null)" \
-          || { echo "HALT DEP_MISSING: '$FEATURE' expects '$f' on $BASE_REF but the file is absent there." >&2; exit 1; }
+          || halt_gate DEP_MISSING "'$FEATURE' expects '$f' on $BASE_REF but the file is absent"
         grep -qF -- "$sym" <<< "$blob" \
-          || { echo "HALT DEP_MISSING: symbol '$sym' not found in $BASE_REF:$f — upstream interface drifted; re-derive refs from the merged code." >&2; exit 1; }
+          || halt_gate DEP_MISSING "symbol '$sym' absent from $BASE_REF:$f; re-derive from landed code"
       done <<< "$DEP_CHECKS"
     fi
     # (b) collision check: scope file OR invariant intersects another active feature
     cf="$(comm -12 <(printf '%s\n' "$SCOPE" | sort -u) <(active_others scope))"
     ci="$(comm -12 <(printf '%s\n' "$INVARIANTS" | sort -u) <(active_others invariants))"
     if [ -n "$cf$ci" ]; then
-      echo "HALT SCOPE_COLLISION — '$FEATURE' intersects another active feature:" >&2
-      [ -n "$cf" ] && { echo "  files:" >&2;      echo "$cf" | sed 's/^/    /' >&2; }
-      [ -n "$ci" ] && { echo "  invariants:" >&2; echo "$ci" | sed 's/^/    /' >&2; }
-      echo "  → run sequentially: wait for the blocking feature to merge + cleanup, then rebase." >&2
-      exit 1
+      halt_gate SCOPE_COLLISION "'$FEATURE' intersects active scope/invariants; files=$(printf '%s' "$cf" | tr '\n' ',') invariants=$(printf '%s' "$ci" | tr '\n' ',')"
     fi
     drop_my_block; append_block in-flight
     # Step-1 state is mechanical, not prompt discipline. Preserve existing counters on resume,
@@ -232,6 +302,24 @@ case "$cmd" in
     echo "registered: $FEATURE (in-flight)"
     ;;
   ready)
+    # A ready lifecycle is terminal. Refuse a second ready attempt before the validator can remove
+    # READY.txt/gate-result.json, otherwise the registry could remain `ready` while its proof vanishes.
+    acquire_ready
+    acquire
+    [ -f "$INFLIGHT" ] || printf '# Autopilot in-flight registry\n\n---\n' > "$INFLIGHT"
+    me_status="$(awk -v me="$FEATURE" '
+      /^## feature:/{cur=$3;st=""}
+      /^status:/{if(cur==me)st=$2}
+      END{print st}
+    ' "$INFLIGHT")"
+    if [ "$me_status" != "in-flight" ]; then
+      # A terminal READY already has its signal; an absent lifecycle was never admitted. Reject
+      # either invalid invocation without creating a conflicting HALT file.
+      echo "REJECT READY_LIFECYCLE_INVALID: '$FEATURE' status is '${me_status:-absent}', expected in-flight." >&2
+      echo "  → never re-run ready on a terminal lifecycle; create a fresh successor task when more work is required." >&2
+      exit 1
+    fi
+    release
     # Run the potentially long verify + Codex gate BEFORE taking the shared registry lock. The gate
     # binds its attestation to HEAD + current base SHA + diff hash; ap-finish verifies it again.
     REVIEW_GATE="$WORKTREE_ROOT/scripts/autopilot-review-readiness.mjs"
@@ -242,7 +330,7 @@ case "$cmd" in
     if [ "$REVIEW_REQUIRED" = 1 ] && [ -f "$REVIEW_GATE" ]; then
       node "$REVIEW_GATE" ready --manifest "$MANABS"
     elif [ "$REVIEW_REQUIRED" = 1 ]; then
-      echo "HALT REVIEW_GATE_MISSING: $REVIEW_GATE" >&2; exit 1
+      halt_gate REVIEW_GATE_MISSING "$REVIEW_GATE"
     else
       echo "WARN: legacy manifest without automatic review-readiness; applying registry-only transition" >&2
     fi
@@ -254,24 +342,22 @@ case "$cmd" in
       /^status:/{if(cur==me)st=$2}
       END{print st}
     ' "$INFLIGHT")"
-    if [ "$me_status" != "in-flight" ] && [ "$me_status" != "ready" ]; then
-      echo "HALT: '$FEATURE' has no active block in registry — run register first." >&2; exit 1
+    if [ "$me_status" != "in-flight" ]; then
+      halt_gate READY_LIFECYCLE_CHANGED "'$FEATURE' changed to '${me_status:-absent}' while readiness was running; gate result is non-authoritative"
     fi
     # Re-check collisions: another feature may have registered between our register and ready calls.
     cf="$(comm -12 <(printf '%s\n' "$SCOPE" | sort -u) <(active_others scope))"
     ci="$(comm -12 <(printf '%s\n' "$INVARIANTS" | sort -u) <(active_others invariants))"
     if [ -n "$cf$ci" ]; then
-      echo "HALT SCOPE_COLLISION — '$FEATURE' intersects another active feature (collision at ready):" >&2
-      [ -n "$cf" ] && { echo "  files:" >&2; echo "$cf" | sed 's/^/    /' >&2; }
-      [ -n "$ci" ] && { echo "  invariants:" >&2; echo "$ci" | sed 's/^/    /' >&2; }
-      echo "  → wait for the conflicting feature to merge + cleanup, then rebase." >&2
-      exit 1
+      halt_gate SCOPE_COLLISION "'$FEATURE' acquired a collision while readiness ran; files=$(printf '%s' "$cf" | tr '\n' ',') invariants=$(printf '%s' "$ci" | tr '\n' ',')"
     fi
     drop_my_block
     append_block ready
     TASK_STATE="$WORKTREE_ROOT/.autopilot/state/$FEATURE"
     mkdir -p "$TASK_STATE"
     printf 'READY: readiness gate passed for %s\n' "$FEATURE" > "$TASK_STATE/READY.txt"
+    release
+    release_ready
     echo "ready: $FEATURE" ;;
   cleanup)
     RECORD=""
@@ -280,9 +366,9 @@ case "$cmd" in
     [ -z "$RECORD" ] && [ -s "$ROOT/.autopilot/dispositions/$FEATURE.json" ] \
       && RECORD="$ROOT/.autopilot/dispositions/$FEATURE.json"
     [ -n "$RECORD" ] \
-      || { echo "HALT CLEANUP_PROOF_MISSING: use scripts/ap-finish.sh; raw reservation cleanup is forbidden." >&2; exit 1; }
+      || { echo "REJECT CLEANUP_PROOF_MISSING: use scripts/ap-finish.sh; raw reservation cleanup is forbidden." >&2; exit 1; }
     command -v node >/dev/null 2>&1 \
-      || { echo "HALT CLEANUP_PROOF_INVALID: node is required to validate $RECORD" >&2; exit 1; }
+      || { echo "REJECT CLEANUP_PROOF_INVALID: node is required to validate $RECORD" >&2; exit 1; }
     if ! node - "$RECORD" "$FEATURE" <<'NODE'
 const fs = require("fs");
 const [file, feature] = process.argv.slice(2);
@@ -294,7 +380,7 @@ if (
 ) process.exit(1);
 NODE
     then
-      echo "HALT CLEANUP_PROOF_INVALID: $RECORD" >&2
+      echo "REJECT CLEANUP_PROOF_INVALID: $RECORD" >&2
       exit 1
     fi
     acquire

@@ -101,12 +101,15 @@ if [ "$MODE" != "close" ]; then
 const fs = require("fs");
 const [file, feature] = process.argv.slice(2);
 const value = JSON.parse(fs.readFileSync(file, "utf8"));
+const commitShaPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
+const isRealCommitSha = (candidate) =>
+  commitShaPattern.test(candidate || "") && !/^0+$/.test(candidate);
 if (
   value.gate_schema_version !== "level3-readiness-v2"
   || value.result !== "pass"
   || value.feature !== feature
-  || !/^[0-9a-f]{40,64}$/i.test(value.base_sha || "")
-  || !/^[0-9a-f]{40,64}$/i.test(value.head_sha || "")
+  || !isRealCommitSha(value.base_sha)
+  || !isRealCommitSha(value.head_sha)
   || !/^[0-9a-f]{64}$/i.test(value.diff_sha256 || "")
   || !Number.isInteger(value.attempt)
   || value.attempt < 1
