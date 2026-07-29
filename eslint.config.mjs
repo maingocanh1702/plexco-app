@@ -48,6 +48,34 @@ export default tseslint.config(
     },
   },
   {
+    // Node CLI scripts under scripts/ are linted but were getting no Node globals.
+    //
+    // WHY THIS BLOCK EXISTS: the `ignores` entry `"*.mjs"` above matches ONLY the repo root — the
+    // same gotcha already documented on the `.probe/**` entry. So `scripts/*.mjs` IS linted, and
+    // `scripts/autopilot-review-readiness.mjs` failed with 11 `no-undef` on bare `process`, turning
+    // `pnpm lint` (and CI job `lint`) red on main from the moment the Level 3 kit v11 landed
+    // (`ed38106`). Its sibling `scripts/check-review-readiness.mjs` happened to pass only because it
+    // imports `node:process` explicitly.
+    //
+    // WHY HERE AND NOT IN THE SCRIPT: `autopilot-review-readiness.mjs` is a kit pack file kept
+    // byte-identical to `Claude template/autopilot/parallel/` and refreshed by `autopilot-update.sh`.
+    // An import added there is silently reverted on the next kit sync. This file is repo-owned, so
+    // the fix survives — and it fixes the whole class rather than one file.
+    files: ["scripts/**/*.{mjs,js}"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+        console: "readonly",
+        Buffer: "readonly",
+        __dirname: "readonly",
+        __filename: "readonly",
+        URL: "readonly",
+        TextEncoder: "readonly",
+        TextDecoder: "readonly",
+      },
+    },
+  },
+  {
     // HR1 choke-point: apps never touch tenant tables directly — every
     // tenant-scoped query goes through tenantRepo/withTenant (@plexco/db).
     files: ["apps/**/*.{ts,tsx}"],

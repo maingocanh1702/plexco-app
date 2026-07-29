@@ -175,8 +175,9 @@ trước đó đã chặn 17 file khỏi việc phải sửa hôm nay.
 > | 3.5 | `3acb315` | 2 | ✅ Re-pin hai artifact DD-32 → `adf5eff`, closure 9/12→10/12 |
 > | 4 | `e441901` | 14 | ✅ Theme D — FE governance (FE giữ HOLD, `design.pen` cố ý chưa track) |
 > | 5 | `3225f3f` | 38 | ✅ Theme E — Chat plan v1.8 mirror + `784bc8d` thành authority snapshot |
-> | 6 | — | 2 | ⬜ task contract + runbook này |
-> | 7 | — | 2 | ⬜ backlog reconcile + Verdict 27 |
+> | 6 | `1ca97b1` | 2 | ✅ task contract + runbook này |
+> | 7 | `8582444` | 2 | ✅ backlog reconcile + Verdict 27 + đóng capacity-chk tại `adf5eff` |
+> | 8 | — | 2 | ⬜ **phát sinh:** sửa `pnpm lint` đỏ có sẵn trên main |
 >
 > **Commit 3.5 là bước phát sinh trong lúc chạy, không có trong kế hoạch v0.1** — §1.1 chỉ nói "sửa
 > `AUTHORITY_SHA` cho khớp", nhưng sau khi Theme B land thì chính commit đó đóng closure row 12, nên
@@ -355,6 +356,26 @@ cd ~/Projects/Plexco\ app && \
 Kỳ vọng: `review-readiness: PASS (… 26 active verdict block(s) …)` · `No stale entries` ·
 `All matched files use Prettier code style!` · lint sạch.
 
+> **⚠️ `pnpm lint` ĐỎ ở lần chạy đầu (2026-07-29) — và nó có sẵn, không do 8 commit docs.**
+> 11 × `'process' is not defined` trong `scripts/autopilot-review-readiness.mjs`.
+>
+> **Chẩn đoán, không phải phỏng đoán:** `eslint.config.mjs` ignore `"*.mjs"` nhưng pattern đó **chỉ
+> khớp root** — đúng cái bẫy mà comment trên entry `.probe/**` trong chính file đó đã ghi lại một lần
+> rồi. Nên `scripts/*.mjs` VẪN bị lint, và file kit dùng `process` trần thì đỏ. File anh em
+> `scripts/check-review-readiness.mjs` pass chỉ vì nó tình cờ `import process from "node:process"`.
+> Lỗi land cùng kit v11 (`ed38106`, đã trên origin) ⇒ **CI job `lint` đỏ trên main từ lúc đó**;
+> `git diff --name-only 3d75c90..HEAD -- scripts/` trống nên 8 commit docs không liên quan.
+>
+> **Sửa ở `eslint.config.mjs`, KHÔNG sửa file script.** `autopilot-review-readiness.mjs` là kit pack
+> file giữ byte-identical với `Claude template` và được `autopilot-update.sh` refresh — thêm import
+> vào đó sẽ **bị ghi đè im lặng** ở lần sync kit tới, đúng lớp lỗi với drift `autopilot-backlog-reconcile`
+> ghi ở §5. `eslint.config.mjs` là file repo tự sở hữu nên fix sống sót, và nó vá cả lớp
+> `scripts/**/*.{mjs,js}` thay vì một file.
+>
+> **Bài học quy trình:** ba gate hẹp (`review-readiness`, `backlog-reconcile`, `prettier`) xanh
+> **không** có nghĩa CI xanh. CI chạy `pnpm -w lint` toàn repo (`ci.yml:59`). Chạy đúng lệnh CI chạy,
+> đừng chạy phiên bản hẹp của nó rồi suy ra.
+
 Sau đó chạy nốt phần nặng (cần `DATABASE_URL_TEST`):
 
 ```bash
@@ -460,6 +481,7 @@ follow-up hợp lệ mà không nới scope của chính slice. Chưa có; ghi l
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 29/07/2026 | v0.8 | **Commit 0–7 land; §3 verify phát hiện `pnpm lint` ĐỎ — có sẵn trên main, không do docs.** 11 × `no-undef` trên `process` trong `scripts/autopilot-review-readiness.mjs`; nguyên nhân là `ignores: ["*.mjs"]` **chỉ khớp root**, đúng bẫy mà comment `.probe/**` trong cùng file đã ghi. Land cùng kit v11 `ed38106` ⇒ CI job `lint` đỏ trên main từ lúc đó. Sửa ở `eslint.config.mjs` (repo-owned, sống sót `autopilot-update.sh`) chứ không sửa file kit (byte-identical template, sẽ bị ghi đè im lặng) → commit 8. `eslint .` exit 0. Bài học: ba gate hẹp xanh ≠ CI xanh. |
 | 29/07/2026 | v0.7 | **Commit 0 LAND `66c8d02`** (3 file, 3+/3−, hook pass). Sửa một khẳng định sai của v0.6: dùng **owner của `.git/index.lock`** làm dấu hiệu phân biệt lock-của-sandbox là vô dụng — mount map UID hai chiều, cùng file đó sandbox thấy `compassionate-friendly-brown` còn terminal máy thấy `maingocanh staff`, nên từ phía owner nó LUÔN là chính họ. Thay bằng hai dấu hiệu dùng được thật (**size 0** + **mtime cũ**) cộng `ps aux \| grep "[g]it " \| grep -v fsmonitor` trống. |
 | 29/07/2026 | v0.6 | **Thêm cảnh báo `.git/index.lock` vào §0** sau khi commit 0 chết ngay lần chạy đầu với `fatal: Unable to create index.lock: File exists`. Lock do **chính session Cowork** để lại: `git status` từ sandbox lấy index.lock rồi không unlink được (mount cấm sandbox xoá) → lock **0 byte, owner = user sandbox**, treo 41 phút, chặn mọi git write. Không phải commit dở. Ghi ba dấu hiệu phân biệt lock chết với commit đang chạy, và ngưỡng an toàn để `rm -f`. |
 | 29/07/2026 | v0.5 | **Soát tay toàn bộ lệnh `git` trong runbook sau lỗi v0.4** — tìm thêm hai bẫy. (1) Commit 5 dùng `git add -A -- docs/`, mà `-A` **cuốn cả untracked**: `docs/email-hoi-provider-2026-07-23.md` (orphan, zero inbound reference, đề 23/07) sẽ lặng lẽ đi nhờ dưới subject Chat-plan không liên quan — đúng hình dạng sự cố `eba1c27`. Thêm nó vào `git reset` + một bước kiểm `git status --short` sau commit 7. (2) `git log --oneline -8` không đủ để thấy hết 8 commit mới → `-10`. |
