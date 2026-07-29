@@ -874,6 +874,8 @@ notes: **Phát hiện 2026-07-27 khi viết PVC-3 của `db-public-visibility-ca
 ## task: eslint-10-migration
 title: ESLint 9 → 10 trước EOL 2026-08-06; gỡ nhánh minimatch@3 / brace-expansion@1 như hệ quả
 status: ready
+not_before: 2026-07-31
+not_after: 2026-08-06
 risk: P1
 change_class: toolchain-major-upgrade
 depends_on: []
@@ -881,6 +883,7 @@ invariants: [build-config]
 scope: [docs/autopilot-manifests/eslint-10-migration.json, package.json, pnpm-lock.yaml, eslint.config.mjs]
 manifest: docs/autopilot-manifests/eslint-10-migration.json
 merged_probe: null
+timing_note: 2026-07-29 · **`not_before`/`not_after` thêm sau khi block đã lên `ready`** — thiếu sót của lượt promote. Ràng buộc thời gian ban đầu chỉ nằm trong `_timing_gate` của manifest dưới dạng prose, mà **bot quét backlog đọc field, không đọc manifest**: nó sẽ chọn task này ngay hôm nay rồi HALT ở probe vì v10.8.0 (publish 24/07) chưa đủ 7 ngày `minimumReleaseAge` — đốt một session để tái phát hiện thứ đã biết. `deps-security-bump` có field này, block này thì không; cùng một lớp ràng buộc mà một cái machine-readable một cái không. `not_after` là EOL ESLint v9, ghi ra để nó là hạn chót đo được chứ không phải một câu trong notes.
 probe_findings: 2026-07-29 tại `main@f83995f` · **Ba câu hỏi compat đã ĐÓNG, không câu nào chặn** — nên block lên `ready` cùng ngày mở. **(a)** `typescript-eslint@8.62.1` và cả ba sub-package đã khai `peerDependencies.eslint: ^8.57.0 \|\| ^9.0.0 \|\| ^10.0.0` — **eslint 10 đã được hỗ trợ sẵn, KHÔNG cần nâng typescript-eslint**. Đây vốn là rủi ro lớn nhất vì `tseslint.config()` là khung của cả `eslint.config.mjs`. **(b)** `@next/eslint-plugin-next@15.5.20` không khai `peerDependencies` nào và chỉ phụ thuộc `fast-glob` ⇒ không ràng buộc version eslint. Vắng peer range **không phải bằng chứng tương thích**, nên đã grep source cho **cả 10 API v10 gỡ** (`context.getCwd/getFilename/getPhysicalFilename/getSourceCode`, `parserOptions`, `parserPath`, `getTokenOrCommentBefore/After`, `isSpaceBetweenTokens`, `getJSDocComment`) — **0 hit**. **(c)** Node: v10 đòi `^20.19.0 \|\| ^22.13.0 \|\| >=24`; máy `v22.22.3` ✓, CI `node-version: 22` → 22.x mới nhất ✓, **nhưng `package.json` khai `engines: {node: ">=22"}` — dải đó NHẬN 22.0–22.12 mà eslint 10 từ chối**. Lỗ thật, slice phải đóng (acceptance `E10-5`). **Baseline chống regression:** `npx eslint . -f json` = **81 file** (apps 46 · packages 31 · scripts 3 · `eslint.config.mjs` 1), sha256 danh sách đã sort prefix `3c99372c73e87ab4`.
 notes: |
   **Mở 2026-07-29, tách khỏi `deps-security-bump` sau khi phép đo lật lối sửa.** Chuỗi đo, ghi lại vì
