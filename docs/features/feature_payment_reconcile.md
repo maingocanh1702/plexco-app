@@ -2,13 +2,15 @@
 
 > **Canonical phase:** P3
 > **Track:** 💰 Payment Reconciliation
-> **Version:** 1.7a · 2026-07-19
-> **Status:** Reviewed and reconciled to BRD v3.9b / PRD v2.8 / TDD v3.1 / decisions v1.45; B1/schema/code pending build slices
-> **Implementation:** In progress — core matching/payments-logic đã có; wiring webhook→settle→notify chưa · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Version:** 1.10 · 2026-07-28
+> **Status:** Reviewed; mirror DD-32/DD-91 `DECISION_FINAL` + regional research boundary. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`; B1/runtime slices vẫn cần strict `CODE_READY`
+> **Implementation:** In progress — core matching/payments-logic + ledger integrity migrations `0019`/`0020` đã có; wiring webhook→settle→notify, `remainingAmount`, `getSelfPaymentStatus` và chat `/pay` chưa · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P0–P1 foundation + P2 tenant routing
-> **Tài liệu liên quan:** `../product/BRD.md` FR-5 · `../product/PRD.md` FLOW 6/9 + §4.1 · `../product/TDD.md` §3.2/3.6/3.7 · `../standards/decisions.md` DD-40/DD-25 · `../standards/business-rules.md` BL-PAY · `../research/player-side-saas-reconciliation.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-5 · `../product/PRD.md` FLOW 6/9 + §4.1 · `../product/TDD.md` §3.2/3.6/3.7 · `../standards/decisions.md` DD-25/DD-32/DD-40/DD-91 · `../standards/business-rules.md` BL-PAY/BL-CBF · `feature_channel_booking_funnel.md` · `BE/feature_channel_booking_funnel_tech.md` · `../research/player-side-saas-reconciliation.md` · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
 
 > **Cập nhật v3.4 (DD-40, 2026-07-10):** **Mark-paid thủ công (tiền mặt/CK, tap/multi-select) mặc định MỌI tier** (kể cả `free`) — áp DD-25 (human-initiated money mutation cần preview+confirm). **Đối soát CK tự động** (webhook match) là tính năng **`host_pro`**.
+
+> **DD-91 + regional boundary (target, chưa runtime):** `payment_reconcile_auto` là commercial entitlement, không phải bằng chứng availability. Current provider/schema authority chỉ có `sepay|apipay` cho rail Việt Nam và webhook→settle→notify chưa build, nên auto-reconcile chưa enabled ở cả Việt Nam; ngoài Việt Nam vẫn dùng mark-paid thủ công cho tới khi provider/bank/market/currency/consent gate và decision riêng đóng. Person-self payment status có một owner `getSelfPaymentStatus`; exact chat `/pay` chỉ là requester-only adapter vào cùng truth, không phải matcher/ledger writer mới.
 
 ---
 
@@ -24,6 +26,8 @@ Nhận & đối soát tiền sân của từng CLB. **Mọi tier**: host **đán
 - Tổng allocation hiệu lực không vượt tiền giao dịch hoặc số tiền charge còn thiếu.
 - Giao dịch và allocation đã audit không bị sửa/xóa; điều chỉnh bằng reversal.
 - Mọi dữ liệu ledger tenant-scoped + RLS.
+- Mọi consumer person-self đọc cùng canonical `getSelfPaymentStatus`; chỉ proven `known_zero` mới hiển thị 0. Home, web, chat và notification không tự tính lại balance.
+- Payment proof cho booking channel phải là `bank_transactions` đã durable-ingest và được exact-match theo payment reference; QR hoặc nút “Tôi đã thanh toán” không phải settlement proof.
 
 ---
 
@@ -47,6 +51,8 @@ Nhận & đối soát tiền sân của từng CLB. **Mọi tier**: host **đán
 | PAY-UC-14 | Host | Cancel pending STK change | Huỷ pending; giữ STK hiện tại |
 | PAY-UC-15 | Host (mọi tier) | **Mark-paid thủ công multi-select** — chọn 1 hoặc nhiều player (tap/multi-select), đánh dấu **tiền mặt** (`cash`) hoặc **CK** (khớp một `bank_transaction` đã ingest → `manual`) | Preview danh sách + tổng tiền → **confirm** (DD-25) → **INSERT `payment_allocations`** cho từng player (tiền mặt → `source='cash'`, không bank txn; CK khớp `bank_transactions` → `source='manual'`) + cập nhật `charges.amount_allocated`/`status`; audit; idempotent |
 | PAY-UC-16 | Host | Bỏ chọn / sửa trước confirm | Preview cập nhật real-time; chỉ ghi ledger sau khi confirm |
+| PAY-UC-17 | Player | Gõ exact `/pay` ở club chat/private Club Bot/human DM | Target DD-91: command được intercept trước message/Assistant, resolve own authorized club one/many/none rồi trả requester-only current status từ `getSelfPaymentStatus`; không ghi chat/ledger |
+| PAY-UC-18 | Player chưa link Account | Chọn “Thanh toán & giữ chỗ” ở bước xác nhận booking channel | Chỉ khi provider/market capability được chứng minh: tạo payment hold 15 phút; verified full settlement gọi shared booking finalizer để tạo player + charge + allocation atomically. Không full settlement thì không active |
 
 ---
 
@@ -91,8 +97,28 @@ Host mở roster/danh sách nợ (bot Zalo / Messenger / web)
 ```
 
 - **Mark-paid CK thủ công** ≠ auto-reconcile: CK đã ingest → host gán allocation `source='manual'`. Host attest CK **chưa có** `bank_transaction` cần B1 enum migration/source riêng + actor/evidence reference; **cấm synthetic bank transaction**, cấm map sang `cash|manual`, cấm đoán số tiền. Trước khi B1 land, boundary reject fail-closed.
-- **Auto-reconcile CK (webhook match tên+tiền+ngày, `/unmatched`)** chỉ ở tier **`host_pro`** (capability `payment_reconcile_auto`). Free = `payment_mark_manual`.
+- **Auto-reconcile CK (webhook match tên+tiền+ngày, `/unmatched`)** cần tier **`host_pro`** (capability `payment_reconcile_auto`) **và** availability gate riêng (provider/bank/market/currency/consent). Flag entitlement không đủ để enable. Free và mọi market chưa có provider path = `payment_mark_manual`.
 - Charge của mỗi lượt chơi suy theo giá kèo; nếu kèo đặt giá nam/nữ → xem **DD-39 (✅ Chốt)** / `feature_user_settings` (suy `amount_due` theo `person.gender`; decrypt lỗi → fail-closed).
+
+---
+
+### 3.2 Person-self payment truth (DD-91 target)
+
+- Canonical fields đã có: `charges.amount_due` + `charges.amount_allocated`.
+- Target primitive duy nhất: `remainingAmount(amountDue, amountAllocated) = max(0, amountDue - amountAllocated)`. `effectiveFee` giữ `fee=NULL→NULL`, sau đó mới delegate; không consumer tự copy formula.
+- `getSelfPaymentStatus` thuộc Player View person-self service và validate authz/integrity/dependency trước khi trả `known_amount|known_zero|unknown`.
+- `/api/me/charges`, Home composition, exact requester-only `/pay` và authenticated notification detail dùng cùng service/projection. `/pay` trả synchronous authenticated `private, no-store`, không result row/ref/SSE/outbox/push/history và không chạy LLM.
+- Đây là contract docs theo DD-91; `remainingAmount`, service và adapters chưa tồn tại trong runtime, còn phụ thuộc plan/slice readiness riêng.
+
+---
+
+### 3.3 Channel booking pay-now boundary (DD-32 target)
+
+- Booking funnel sở hữu intent/hold/finalizer; Payment Reconciliation chỉ sở hữu durable bank truth và allocation.
+- Payment reference của booking intent là deterministic, exact và tenant/connector/currency scoped. Giao dịch mang reference này được dành riêng cho funnel finalizer, không đi qua generic name/date/amount matcher.
+- Provider ingest phải commit `bank_transactions` + durable job trước ACK. Sau khi ingest transaction kết thúc, job riêng mới gọi funnel finalizer; không giữ bank-row lock rồi gọi ngược vào Session/Join.
+- Exact hoặc overpayment đủ phủ toàn bộ quote có thể confirm; finalizer allocate đúng `amount_due`, phần dư giữ unmatched. Underpayment, late payment, wrong reference/currency/account hoặc provider evidence không chắc chắn đều không tạo active player.
+- Host manual mark-paid/screenshot không được dùng làm instant proof để bypass first-time Account link. Khi pay-now capability unavailable/unknown, bot chỉ offer link Account hoặc tiếp tục trên web.
 
 ---
 
@@ -119,6 +145,13 @@ Host mở roster/danh sách nợ (bot Zalo / Messenger / web)
 | 17 | Attacker chiếm account host → đổi STK | Đổi STK primary → `pending_change` 24h. Hệ thống vẫn dùng STK cũ cho QR. Thông báo đổi gửi MỌI kênh đã link (Zalo/Messenger/email/web). Rate-limit: max 2 lần/30 ngày. Ref: AUDIT G1, BL-PAY-10 |
 | 18 | Mark-paid multi-select: 1 player trong batch đã paid | Skip player đó (idempotent), preview cảnh báo; các player còn lại vẫn ghi bình thường |
 | 19 | Double-tap "Confirm" mark-paid | Idempotent theo `(charge, actor, intent)` — không tạo allocation trùng, không over-pay |
+| 20 | Host Pro có entitlement nhưng provider/bank/market chưa available | Auto-reconcile absent/fail-closed; không auto-match từ feed không đủ bằng chứng; mark-paid thủ công vẫn dùng được |
+| 21 | Person-self ledger/authz/dependency không chứng minh được | `unknown` + generic retry; không biến null/error thành 0 hoặc “đã trả” |
+| 22 | Human-DM `/pay` không có tenant context | Không suy tenant từ peer; 0 club generic, 1 auto-select, nhiều club dùng opaque requester-bound picker; peer/shared history nhận zero artifact |
+| 23 | Booking pay-now trả thiếu | Không tạo player/charge/allocation; hold giữ tới TTL rồi manual review, v1 không tự cộng nhiều lần top-up |
+| 24 | Booking pay-now trả dư | Tạo player + charge + allocation đúng amount due; phần dư của bank transaction vẫn unmatched |
+| 25 | Payment ingest sau hold expiry/booking đã đóng | Không revive booking; giữ evidence và đưa manual review/refund-or-credit flow |
+| 26 | Screenshot hoặc host manual mark-paid cho intent chưa link | Không được coi là proof để instant-confirm; yêu cầu exact provider evidence hoặc link Account |
 
 ---
 
@@ -139,6 +172,7 @@ Host mở roster/danh sách nợ (bot Zalo / Messenger / web)
 - Waiver: không có bank transaction; source `waiver`, actor admin bắt buộc.
 - Reversal: amount âm, `reverses_allocation_id` bắt buộc; không reversal quá phần còn hiệu lực.
 - DD-49 correction: price/obligation delta là append-only signed obligation entry trong canonical charge aggregate; allocation reversal chỉ đảo tiền đã nhận. Một helper tính effective due/balance cho mọi consumer. Tên bảng/API chờ design-probe live UNIQUE charge/player/session; không giả định row charge thứ hai.
+- DD-91 read boundary: canonical helper/service nói trên là owner của person-self projection; Chat/Home/Notification không thêm snapshot/formula money riêng.
 - Charge paid khi effective allocations = `amount_due`; partial khi nằm giữa 0 và amount due.
 - `unallocated_amount` chỉ áp dụng bank transaction và được cập nhật dưới lock hoặc tính từ ledger.
 
@@ -169,6 +203,7 @@ Charge: `open → partial → paid`; reversal có thể đưa `paid → partial/
 | Manual allocation | Validating | Chọn một/nhiều charges + tổng allocated/remaining | Conflict → reload latest ledger | Không có charge phù hợp |
 | Cash confirmation | Validating permission | Amount + player/session + confirm | Duplicate/conflict notice | N/A |
 | Web ledger P4 | Skeleton | Transaction, allocations, charge status, audit | Retry banner | Chưa có giao dịch |
+| In-app Chat exact `/pay` (target) | "Đang kiểm tra..." | Requester-only `known_amount`/`known_zero` từ canonical person-self service | Generic retry trên `unknown` | Chỉ hiện "không còn khoản phải trả" khi proven `known_zero` |
 
 P2/P3 bắt buộc host flow qua **bot Zalo + web** (mark-paid thủ công mọi tier). Auto-reconcile webhook (`host_pro`) ở P3. Web ledger và realtime projection ở P4; notification đa kênh đầy đủ ở P4.5–P4.7 (Zalo/Messenger). *(Telegram đã loại — DD-37.)*
 
@@ -192,6 +227,7 @@ Không log raw bank content, account number, display name, secret hoặc provide
 
 - [ ] Mark-paid thủ công (mọi tier): multi-select player → preview + confirm (DD-25) → INSERT `payment_allocations` (tiền mặt `source='cash'`; CK khớp `bank_transactions` `source='manual'`) + cập nhật `charges` + audit; idempotent; không tạo bank transaction giả; enum `source` không có `bank_transfer`.
 - [ ] Auto-reconcile CK (webhook match) gated `host_pro` (`payment_reconcile_auto`); free chỉ có `payment_mark_manual`.
+- [ ] `payment_reconcile_auto` entitlement và availability được kiểm riêng; current `sepay|apipay` path chỉ phục vụ rail Việt Nam, thiếu provider/bank/market/currency/consent thì auto absent nhưng manual vẫn hoạt động.
 - [ ] Verify webhook timing-safe và route bằng trusted token + account.
 - [ ] Raw `bank_transaction` + durable job commit trước ACK.
 - [ ] Duplicate/retry/crash không tạo giao dịch hoặc allocation trùng.
@@ -209,6 +245,11 @@ Không log raw bank content, account number, display name, secret hoặc provide
 - [ ] Tenant A/B ledger isolation tests xanh.
 - [ ] Đổi STK primary → pending 24h; QR vẫn dùng STK cũ; notify tất cả kênh.
 - [ ] Rate-limit đổi STK: max 2 lần/30 ngày.
+- [ ] `/api/me/charges`, Home, exact requester-only `/pay` và authenticated notification detail dùng cùng `getSelfPaymentStatus`; không consumer re-derive balance, không null/error→0.
+- [ ] Human-DM `/pay` không suy tenant từ peer, peer/shared history nhận zero artifact; command result không tạo ledger/chat mutation.
+- [ ] Booking pay-now chỉ xuất hiện khi entitlement + provider/bank/market/currency/consent availability đều proven; unknown/false offer link/web, không nhận screenshot/manual attest làm proof.
+- [ ] Exact/overpayment trước expiry gọi một atomic funnel finalizer; exact tạo một booking/charge/allocation, overpay giữ remainder unmatched, underpay/late/wrong-reference không active.
+- [ ] Giao dịch mang exact channel-booking reference không được generic matcher claim; duplicate/retry chỉ có một terminal booking và allocation.
 
 ---
 
@@ -225,6 +266,9 @@ Không log raw bank content, account number, display name, secret hoặc provide
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v1.10 | Reconcile immutable authority `90d292d` and primary plan v1.8 `PLAN_READY`; retain B1/per-slice `CODE_READY`, regional availability and no-runtime boundaries. |
+| 2026-07-28 | v1.9 | Mirror DD-32 Option D: unlinked paid-session booking có 15-minute pay-now hold khi capability proven; only durable exact full settlement gọi shared finalizer. Pin exact/over/under/late behavior, reserve booking references khỏi generic matcher và cấm screenshot/manual attest bypass Account link. No runtime claim. |
+| 2026-07-27 | v1.8 | Sync local DD-91 `DECISION_FINAL` nhưng primary-surface plan vẫn `NOT_PLAN_READY`: pin one-payment-truth, fail-closed `known_zero|known_amount|unknown` và exact requester-only `/pay` target/no-LLM/no-persistence. Tách commercial entitlement `payment_reconcile_auto` khỏi provider/bank/market/currency/consent availability; current authority chỉ `sepay|apipay` cho rail Việt Nam, auto runtime chưa build, manual mark-paid vẫn global. Ghi live ledger-integrity migrations `0019`/`0020`; không claim webhook/service/chat implementation. |
 | 2026-07-19 | v1.7a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
 | 2026-07-17 | v1.7 | **Durable-ingest auth closure:** pin exact SePay timestamp/raw-body HMAC format, freshness and no-downgrade plus exact API-key fallback; keep ApiPay raw-body verifier as a separate provider contract. |
 | 2026-07-16 | v1.6 | **Full money propagation:** DD-49 append-only obligation-vs-allocation semantics + refund request contract; PAY-OQ-2 closed ingest-ON/automation-OFF for suspended. B1 chooses dedicated source migration and explicitly forbids synthetic bank transactions. Authority: decisions v1.37. |

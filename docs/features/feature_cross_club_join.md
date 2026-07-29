@@ -2,11 +2,11 @@
 
 > **Canonical phase:** P4.3  
 > **Track:** 🤝 Cross-club Join  
-> **Version:** 2.10a · 2026-07-19
+> **Version:** 2.11 · 2026-07-28
 > **Status:** Reviewed  
 > **Implementation:** Not started — `join_requests` có sẵn từ `0006` · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4.3 discovery · P3.5 identity · P2 session/slot transaction · P4 sync/notifications  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-3.2 · `../product/PRD.md` FLOW 13 · `../standards/decisions.md` DD-05/DD-06/**DD-45/DD-49** · `../standards/business-rules.md` BL-DSC-3/BL-SES-9/10 · `BE/feature_cross_club_join_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-3.2 · `../product/PRD.md` FLOW 13 · `../standards/decisions.md` DD-05/DD-06/**DD-32/DD-45/DD-49** · `../standards/business-rules.md` BL-DSC-3/BL-CBF/BL-SES-9/10 · `BE/feature_cross_club_join_tech.md`
 
 ---
 
@@ -24,6 +24,7 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 - Player `left` rejoin theo DD-49: re-derive eligibility/ban/capacity + live aggregate. Active: chưa-refund carry-over, refunded append lifecycle idempotent. Full: waitlisted; chưa-refund giữ historical aggregate, refunded không append lifecycle mới tới activation. Unknown→`REJOIN_REQUIRES_REVIEW`.
 - Existing `active|waitlisted|pending` resolve trước restriction preflight và trả current outcome idempotently; DD-52 không auto-evict. Chỉ absent/`left` mới được tạo membership/request/player sau DD-41/DD-42/DD-52.
 - Trên Messenger, source Page chỉ là endpoint/default/audit. Target session→tenant phải resolve từ opaque actor+Page-bound action/protected public ref; valid cross-club target có thể khác tenant Page nguồn (DD-66/68).
+- **DD-32 channel boundary:** CCJ vẫn là booking truth, nhưng Messenger/Zalo không gọi active mutation trước khi channel funnel chứng minh `free`, qualified Account pay-later hoặc verified pay-now. Full/pending paths vẫn vào waitlist/request mà không thu tiền. Generic web/direct join contract không tự bị đổi bởi channel policy.
 
 ---
 
@@ -43,6 +44,7 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 | CCJ-UC-8 | Player | Leave after paid join | Financial/refund policy applied — audit trail |
 | CCJ-UC-9 | Host | Approve first-entry after capacity full | Request → `approved`; player → `waitlisted` có position, không charge/venue; notify player |
 | CCJ-UC-10 | Host | Approve after request expired | Safe conflict — "Yêu cầu đã hết hạn" |
+| CCJ-UC-11 | Channel funnel finalizer | Gọi common join sau link/pay decision | Server-owned disposition only; active/waitlist/pending outcome canonical, không adapter-created player/charge |
 
 ### Edge Cases
 
@@ -136,6 +138,7 @@ stateDiagram-v2
 - [ ] Request-create preflights DD-41/DD-42/shared DD-52 so current ban creates no request/host alert; open join + approval re-check under lock. Ban imposed after request keeps request pending/blocked and creates no player/charge/venue
 - [ ] DD-39 promotion failure: candidate unchanged; first failure lazy-creates root; max 3 claimed attempts, completed sweep uses current order, expired final claim resolves-or-terminalizes without attempt 4. Candidate events share budget and one owner digest/root; no fallback
 - [ ] Messenger central/tenant Page dùng opaque actor+Page-bound actions; valid cross-club target đúng, wrong/stale/replay không mutate
+- [ ] Messenger/Zalo active mutation chỉ đi từ shared funnel finalizer với server-derived free/Account-linked/settled disposition; adapter/client không tự khai `linked`/`paid`. Full/approval request không bị thu trước
 
 ---
 
@@ -152,6 +155,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v2.11 | Mirror DD-32 Option D: preserve CCJ as canonical join while requiring channel finalizer proof before active mutation; full/pending remain no-pay and generic web/direct join is unchanged. No runtime. |
 | 2026-07-19 | v2.10a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v2.10 | **DD-45 claimed-attempt mirror:** lazy root on first failure, max 3 claims/completed-current-order sweep semantics, expired-final resolve-or-terminal and one owner digest/root. Runtime remains unbuilt. |
 | 2026-07-19 | v2.9 | **DD-05/DD-52 idempotency ordering:** current active/waitlisted/pending returns before restriction preflight; absent/left alone can create after DD-41/DD-42/DD-52. Active direct fill resolves stale promotion roots. Runtime remains unbuilt. |

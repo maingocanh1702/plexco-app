@@ -2,11 +2,13 @@
 
 ## Plexco — platform thể thao đa môn: thêm kênh Messenger (port từ Telegram + Zalo)
 
-**Phiên bản:** 2.4a
-**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 19/07/2026
-**Tài liệu tham chiếu:** `../../product/BRD.md` v3.9d · `../../product/PRD.md` v2.8c · `../../product/TDD.md` v3.1 · `../../standards/decisions.md` v1.67 · `../../research/player-side-saas-reconciliation.md` · `../../research/player-side-saas-AUDIT.md`
+**Phiên bản:** 2.5
+**Ngày tạo:** 16/06/2026 · **Cập nhật:** 28/07/2026
+**Tài liệu tham chiếu:** `../../product/BRD.md` · `../../product/PRD.md` · `../../product/TDD.md` · `../../standards/decisions.md` DD-32/DD-33/DD-37/DD-65..68 · `../../features/feature_channel_booking_funnel.md` · `../../features/BE/feature_channel_booking_funnel_tech.md`
 
 > **Authority hiện hành (DD-65..68 ✅):** topology là **hybrid** — Plexco central Page luôn có, Page per-club là tuỳ chọn; cả hai là shared role-aware surface cho host và player. Các assumption Page-per-club-only/player-only trước v2.2 bị supersede. Auth-link Facebook = DD-33 ✅ (phase-1; App Review pending).
+
+> **DD-32 Option D:** Messenger browse không cần Account link. Quick-reply chọn session chỉ mở detail; final confirm mới vào shared link-or-pay gate. Adapter không được tự tạo player/charge, tự tính capacity/fee hoặc tin nút “đã trả”.
 
 > **TL;DR:** Messenger là kênh DM-only dùng **một adapter + shared domain services**. Delta không chỉ là enum/bảng: cần global-protected hybrid Page registry, Page-scoped identity/reachability, protected context/action resolver và durable interaction owner. Rủi ro delivery lớn nhất vẫn là policy window; ngoài cửa sổ phải fail-closed sang web + Zalo.
 
@@ -66,7 +68,7 @@ Messenger có **cửa sổ nhắn 24 giờ**: Page chỉ được nhắn user t�
 | **1. Onboarding tenant** | Thêm bước "Nối Facebook Page": owner login FB → chọn Page → grant `pages_messaging` → lưu **Page Access Token** + đăng ký Page vào App webhook. | Vừa (cần App Review) |
 | **2. Tạo & đăng buổi** | **Không có group để auto-announce.** Owner tạo buổi như cũ; "đăng" = bot **broadcast DM** tới member còn trong cửa sổ 24h / đã OTN-opt-in. | Cần đổi |
 | **3. Join (Telegram group tap)** | **Không port.** Thay bằng FLOW-4-style. | N/A |
-| **4. Join (Zalo number-reply)** | **Map thẳng + nâng cấp:** `/join` → bot gửi **danh sách buổi dạng quick-reply/button** → user bấm (postback `pjoin:<id>`) thay vì gõ số. | Dễ (tốt hơn Zalo) |
+| **4. Join (Zalo number-reply)** | `/join` → quick-reply/button → safe session detail → final confirm qua shared DD-32 gate: free, full, approval, linked-pay-later hoặc unlinked verified-pay-now. Postback chỉ chứa opaque action, không raw `sessionId`. | Vừa |
 | **5. Identity claim & merge** | PSID page-scoped; verified account identity hoặc transactional one-time `/link` code. Owner/name/CK chỉ là review evidence, không bypass DD-50. | Vừa |
 | **6. Đối soát CK & gạch nợ** | **Không đổi** — kênh tiền (SePay) độc lập với kênh chat. | Không đổi |
 | **7. Nhắc nợ** | **Điểm đau** — xem §2. Tự động chỉ trong 24h / OTN; ngoài đó owner bấm (HUMAN_AGENT). | Khó (chính sách) |
@@ -79,7 +81,7 @@ Messenger có **cửa sổ nhắn 24 giờ**: Page chỉ được nhắn user t�
 
 # 4. Delta Domain Model (chỉ phần thêm/sửa)
 
-> Theo phong cách domain-first: Messenger là một `ChannelIdentity.platform` mới + một bảng kênh song song với `zalo_bots`. **Không** đụng vùng tiền (payments/sessions) — tách bạch kênh-chat khỏi kênh-tiền vẫn giữ nguyên.
+> Theo phong cách domain-first: Messenger là một `ChannelIdentity.platform` mới + registry endpoint. Adapter không sở hữu Session/Payment logic; nó gọi shared channel-booking funnel, còn canonical `players`/ledger vẫn do domain owners ghi.
 
 **Sửa enum:**
 
@@ -132,6 +134,7 @@ otn_token_enc: varchar nullable  -- MỚI: token One-Time Notification nếu use
 | # | Table | Vùng | RLS | Pha |
 |---|---|---|---|---|
 | 20 | `messenger_pages` | GLOBAL protected | resolver hẹp; no blanket grant | P2.5 |
+| 21 | `channel_booking_intents` | Tenant private | orchestration/hold only; RLS + exact identity/session binding | DD-32 slice |
 
 ---
 
@@ -163,7 +166,12 @@ INBOUND Messenger:
           action = resolveOpaqueActionOrRolePicker(message, identity, endpoint)
           context = resolveTargetTenantAndResource(action)
           authorize(action.capability, identity.person, context.tenant)
-          sharedDomainService.execute(action.command)
+          if action is session selection:
+              render shared safe detail only
+          if action is final booking confirmation:
+              channelBookingFunnel.execute(action, identity, context)
+          else:
+              sharedDomainService.execute(action.command)
           // missing/stale/ambiguous/replayed => deny/re-pick; never guess
 ```
 
@@ -184,6 +192,7 @@ interface ChannelAdapter {
 - `canDeliver` (Messenger) = `now() < reachability.window_expires_at` **HOẶC** có `otn_token` chưa dùng → đây là choke-point chống vi phạm 24h.
 - **Throttler** dùng lại `@grammyjs/transformer-throttler`-tư-tưởng; Messenger có rate-limit riêng theo Page → thêm bucket per page_id.
 - Choice list có tối đa **8 business choices/page** + Prev/Next/Cancel. Root menu role-aware; `/newsession` dùng một durable pre-dispatch interaction owner và final confirm phát đúng một idempotent `CreateSession` command.
+- Session selection and booking confirmation are separate opaque actions. The adapter renders the shared funnel's tagged result (`active`, `waitlisted`, `approval_pending`, `awaiting_link`, `awaiting_payment`, `reconfirm`, `manual_review`) and never invents branch logic.
 
 ---
 
@@ -223,7 +232,7 @@ sequenceDiagram
 | **P2.5.0 — Spike chính sách** | Xác nhận thực địa: OTN còn mở ở VN? Utility Templates khả dụng? App Review `pages_messaging` mất bao lâu? | Có/không từng cơ chế ngoài-24h → chốt chiến lược (A/B/C) |
 | **P2.5.1 — App, hybrid registry & webhook** | Tạo FB App, verify signature, migration mới chuyển registry thành central+tenant, protected resolver, Page-scoped identity/reachability. | central + 2 tenant Page route/context đúng; sai signature/context → deny |
 | **P2.5.2 — Adapter gửi** | `ChannelAdapter` Messenger: sendText/sendChoices (quick-reply), throttler per-page, `canDeliver` theo cửa sổ 24h. | Gửi được DM + nút; quá 24h → `canDeliver=false` |
-| **P2.5.3 — Role-aware session flows** | `GET_STARTED` → host/player/dual menu; host create wizard; player local/global discovery + opaque join action; cùng Session/Join services với web/Zalo. | Host tạo session và player join trên central lẫn tenant Page; roster/web sync |
+| **P2.5.3 — Role-aware session flows** | `GET_STARTED` → host/player/dual menu; host create wizard; player local/global discovery + safe detail + opaque DD-32 final gate; shared funnel with Zalo. | Free/full/approval/linked/unlinked branches match shared core on central + tenant Page; roster/web sync only after canonical finalizer |
 | **P2.5.4 — Reachability 24h + reminder** | Upsert `window_expires_at` mỗi inbound; reminder cron lọc cửa sổ; OTN opt-in (nếu có); HUMAN_AGENT path cho owner bấm. | Nhắc trong 24h chạy; ngoài 24h fallback đúng (web + Zalo) |
 | **P2.5.5 — one-route delivery + /myclubs** | Page-endpoint reachability; tenant Page → central → web/Zalo priority; logical dedup. | Xác nhận tới đúng một route khả dụng, không gửi trùng |
 | **P2.5.6 — Optional Page onboarding** | FB Login + chọn Page + subscribe webhook + token refresh/revoke detection. | Club không nối Page vẫn dùng central đầy đủ; club nối Page có branded parity |
@@ -241,6 +250,7 @@ sequenceDiagram
 | R3 | **Không có native phone share** | Không ảnh hưởng phase-1 proof: dùng verified account email hoặc transactional `link_code`; phone dormant |
 | R4 | **PSID page-scoped** — cùng người ở 2 club = 2 PSID khác | Đúng kỳ vọng multi-tenant; merge xuyên-Page qua verified FB identity hoặc transactional `link_code` |
 | R5 | **Page token bị thu hồi** | webhook-drift/health cron → báo owner nối lại; blast-radius gói trong 1 Page |
+| R6 | **Pay-now provider unavailable/unknown** | Không tạo hold/QR; offer Account link hoặc web. Không dùng screenshot/manual attest làm instant proof |
 | OD-A | OTN còn mở ở VN không? | ⬜ Spike P2.5.0 |
 | OD-B | Utility Templates khả dụng VN + có hợp "nhắc đóng phí"? | ⬜ Spike P2.5.0 |
 | OD-C | Có cần Messenger ở MVP? | ✅ **Có — kênh phase-1 (DD-37, thay DD-09)**; xem khuyến nghị dưới |
@@ -272,6 +282,7 @@ sequenceDiagram
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 28/07/2026 | v2.5 | Mirror DD-32 Option D: quick-reply selection is read-only detail; final confirm delegates to shared link-or-pay funnel. Add qualified Account link, optional verified-payment hold, provider fail-closed and thin-adapter boundary. No runtime claim. |
 | 19/07/2026 | v2.4a | Current-reference refresh → BRD v3.9d/PRD v2.8c/TDD v3.1/decisions v1.59. Messenger contract/runtime scope không đổi. |
 | 17/07/2026 | v2.4 | Feature-doc closure: identity dùng hai HMAC domain-separated + unique ba phần; App Secret là deployment-level, Page store chỉ giữ Page access token. Authority → BRD v3.9b/PRD v2.8/TDD v3.1. Runtime chưa implement. |
 | 17/07/2026 | v2.3 | Authority → TDD v3.0/decisions v1.45. Messenger Page scope is one provider-endpoint instance of the shared channel identity/reachability contract; runtime scope unchanged. |

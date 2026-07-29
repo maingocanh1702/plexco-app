@@ -2,8 +2,8 @@
 
 > **Canonical phase:** P3.5
 > **Track:** 🆔 Identity & Merge
-> **Version:** 1.10a · 2026-07-19
-> **Status:** Reviewed identity contract; DD-50 parent-first consume + DD-70(a) global-notification ownership aligned with current decisions v1.73. Endpoint-scoped identity/reachability schema/runtime pending build slices
+> **Version:** 1.11 · 2026-07-28
+> **Status:** Reviewed identity contract; DD-32 Account-backed channel link predicate added. Endpoint-scoped identity/reachability schema/runtime pending build slices
 > **Implementation:** Not started — bảng `link_codes`/`merge_*` có sẵn · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 tenant routing + P3 ledger stable
 > **Tài liệu liên quan:** `../product/BRD.md` FR-7 · `../product/PRD.md` FLOW 5 + §4.2 · `../product/TDD.md` §3.2–3.4/§4 · `../standards/decisions.md` DD-13/DD-33/DD-37/DD-50/DD-53/**DD-65..68** · `feature_player_messenger.md` · `../research/player-side-saas-AUDIT.md` C1–C5
@@ -13,6 +13,8 @@
 > **Cập nhật DD-15/DD-67/v1.45:** identity và reachability đều thuộc **đúng provider endpoint**. Uniqueness là `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`; Messenger scope Page, Zalo scope bot/OA cho tới khi DD-15 chứng minh có thể nới. Reachability gắn `channel_identity_id`, không thu gọn về `(person,tenant,platform)`.
 >
 > **Cập nhật v1.7:** exact endpoint binding phải được chứng minh bằng registry relation, không chỉ lookup hash: Messenger identity có Page FK, Zalo identity có bot/OA FK, và đúng một FK phải khớp `platform`. Consume `link_code` re-derive current source Person từ đúng một issuer trước mọi attempt/consume atomic.
+>
+> **Cập nhật DD-32/v1.11:** quyền paid booking `pay later` qua bot chỉ mở khi exact ChannelIdentity và một Plexco Account có verified account identity cùng resolve tới current Person. `link_code` là mechanism hoàn tất binding, không phải tier pay-later nếu chưa có Account thật.
 
 ---
 
@@ -51,6 +53,7 @@ Mỗi người thật có một `Person` toàn cục; tài khoản **Zalo / Face
 | ID-UC-10 | System | Merge reachability trùng | Re-parent theo exact `channel_identity_id`; giữ từng provider endpoint/window độc lập, không OR/copy token xuyên Page/bot/OA |
 | ID-UC-11 | Player | Rời CLB | Membership chuyển `left`; lịch sử giữ nguyên |
 | ID-UC-12 | Support admin | Xử lý merge sai | Manual split/recovery procedure có audit; không tự động undo mù |
+| ID-UC-14 | Channel player | Link Plexco Account tại final booking gate | Opaque endpoint+actor+session-bound handoff → authenticated Account → explicit binding confirm; resume chỉ sau current Person/account predicate pass |
 
 `/myclubs` và person-self web view sử dụng identity directory nhưng được deliver ở P4.6, không phải DoD của P3.5.
 
@@ -79,6 +82,18 @@ Mỗi người thật có một `Person` toàn cục; tài khoản **Zalo / Face
 - Wrong verifier increment đúng một lần bằng conditional atomic update; valid verifier conditional-set `consumed_at` đúng một lần và tạo merge plan từ re-derived Person trong cùng transaction. Concurrent/stale issuer hoặc zero-row update đều fail closed bằng lỗi generic.
 - Tối đa 5 attempts/10 phút theo source + IP/platform identity; exponential cooldown.
 - Yêu cầu explicit confirmation trước khi merge; thông báo cả hai channel sau merge.
+
+### Account-backed channel link cho deferred payment
+
+`linkedForDeferredPayment` là derived predicate, không phải cột boolean client có thể set:
+
+1. exact active ChannelIdentity re-resolve current canonical Person;
+2. một active Account resolve cùng Person;
+3. Account có ít nhất một verified `account_identity`;
+4. không freeze/merge conflict;
+5. binding được tạo qua verified auth hoặc consumed link flow + explicit impact confirmation.
+
+Facebook Login App-scoped subject không tự bằng Messenger Page-scoped PSID; Zalo Login subject không tự bằng bot/OA-scoped `from.id`. Same provider/display name/client-declared ID đều không đủ. Booking resume token chỉ route về Identity service; nó không tự merge, claim membership hay grant tenant permission.
 
 ### Merge transaction
 
@@ -178,6 +193,7 @@ Không gửi raw platform UID, phone/email, display name, bank account hoặc `l
 
 - [ ] Zalo/Messenger first contact + Google/email login tạo identity/person idempotently; Messenger same PSID trên hai Page tạo hai Page-bound identities hợp lệ.
 - [ ] Person link Google + Facebook + Zalo về 1 anchor; claim membership có tiền cần khoá mạnh (DD-13/DD-33).
+- [ ] Channel paid pay-later chỉ khi exact ChannelIdentity↔current Person↔verified Account predicate pass; `link_code` chưa hoàn tất Account binding, raw provider ID/name và stale Person đều fail closed.
 - [ ] Global identity tables không query trực tiếp từ API role.
 - [ ] Zalo/Messenger identity và reachability exact endpoint-scoped bằng Page/bot-OA registry FK + platform CHECK + server-derived hashes; không reuse window/token xuyên endpoint hoặc gửi trùng central+tenant Page.
 - [ ] Membership creation idempotent.
@@ -208,6 +224,7 @@ Không gửi raw platform UID, phone/email, display name, bank account hoặc `l
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v1.11 | Mirror DD-32 Option D: pin Account-backed channel link predicate, endpoint/action-bound booking handoff và resume-after-revalidation; `link_code` là mechanism chứ không tự là pay-later tier. No runtime. |
 | 2026-07-19 | v1.10a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v1.10 | **DD-50 v1.73 lock-order closure:** link-code consume resolves read-only, locks issuer/account + Person parent before the code row, then revalidates and conditionally accounts/consumes. Removes reset/revoke-vs-consume inversion; no runtime/migration. |
 | 2026-07-19 | v1.9 | **DD-70(a) v1.70 propagation:** link-code consume emits nothing; merge commit inventories/fences/revalidates then appends `identity_merged` from locked audit in the same transaction. Tenant outbox fallback is forbidden; unfit implementation halts. No runtime/migration. |

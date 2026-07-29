@@ -2,11 +2,11 @@
 
 > **Canonical phase:** P4.3  
 > **Track:** 🔍 Discovery & Marketplace  
-> **Version:** 2.2b · 2026-07-24
+> **Version:** 2.4 · 2026-07-28
 > **Status:** Reviewed  
-> **Implementation:** Not started — `public_sessions` có sẵn · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started — `public_sessions` có sẵn và `0024` đã enforce public session phải finite-capacity; publish/projector/routes/UI vẫn chưa có · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P2 session management · P4 sync/public projector  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-3/NFR-S2 · `../product/PRD.md` FLOW 12 · `../product/TDD.md` §3.9 · BRD OD-6/OD-8 · `BE/feature_marketplace_discovery_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-3/NFR-S2 · `../product/PRD.md` FLOW 12 · `../product/TDD.md` §3.9 · `../standards/decisions.md` DD-32 · `feature_channel_booking_funnel.md` · BRD OD-6/OD-8 · `BE/feature_marketplace_discovery_tech.md`
 
 ---
 
@@ -19,7 +19,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 - Public serializer **chỉ** emit whitelist fields — không bao giờ expose internal routing/tenant ID.
 - Private/**draft** (chưa publish)/incomplete/closed/cancelled/past sessions **KHÔNG BAO GIỜ** xuất hiện.
 - Exact venue chỉ reveal khi canonical player outcome là `active`; approved-but-waitlisted vẫn ẩn.
-- `slots_open` trong browse là advisory — join recheck capacity transactionally.
+- `confirmed_count` là canonical active players; `slots_open = max(0, slots_max - active players - live payment holds)`. Hai field public là advisory projection từ một shared occupancy helper; hold count không public và final confirm luôn recheck transactionally.
 - Messenger central mặc định global discovery; tenant Page mặc định local + “Khám phá tất cả”. Mỗi trang tối đa 8 business choices; Join CTA là opaque action, không raw routing ID.
 
 ---
@@ -34,7 +34,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 | MKT-UC-2 | Player (anon) | Browse sessions — filter sport/area/time | Results list + no-result fallback |
 | MKT-UC-3 | Player (auth) | Filter thêm skill/price/available slot | Filtered results |
 | MKT-UC-4 | Player | Mở public detail | Session info (whitelist) + Join CTA |
-| MKT-UC-5 | Player | Proceed to join flow | → Redirect sang cross_club_join |
+| MKT-UC-5 | Player | Proceed to join flow | Web → cross-club join; Zalo/Messenger → shared DD-32 safe detail + final link-or-pay gate |
 | MKT-UC-6 | Host | Edit session (time/price/visibility) | Projection updates via projector |
 | MKT-UC-7 | Host | Set session private/close/cancel | Projection removed immediately |
 | MKT-UC-8 | System | Session expired | Auto-disappear — expiry guard |
@@ -49,7 +49,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 | 2 | Security | Tenant routing ID serialized | ❌ NEVER — internal routing ID stripped from public response |
 | 3 | Security | Exact venue/address trong browse | ❌ NEVER — chỉ area (quận/khu vực). Ref: OD-6 |
 | 4 | Security | Roster/membership/bank/charge/payment/PII leak | ❌ NEVER — strict whitelist |
-| 5 | Data Integrity | `slots_open` stale khi browse | Advisory only — join rechecks transactionally |
+| 5 | Data Integrity | Aggregate counts stale khi browse | Advisory only — final join/hold rechecks shared occupancy under session lock |
 | 6 | Security | Pagination enumeration attack | Stable cursors + rate-limit per IP/session/account |
 | 7 | Data Integrity | Club/host display name inappropriate | Moderation/privacy policy gate — reject offensive names |
 | 8 | Data Integrity | Projector lag > SLO | Expiry guard prevents stale past offers |
@@ -65,7 +65,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 
 | Surface | Screen | Loading | Ready | Error | Empty |
 |---------|--------|---------|-------|-------|-------|
-| Web | Marketplace browse | Skeleton cards (3x2 grid) | Session cards: sport icon, area, time, price, slots, join CTA | Error banner + retry | "Không tìm thấy buổi chơi nào" + filter reset CTA |
+| Web | Marketplace browse | Skeleton cards (3x2 grid) | Session cards: sport icon, area, time, price, confirmed count, slots, join CTA | Error banner + retry | "Không tìm thấy buổi chơi nào" + filter reset CTA |
 | Web | Filter panel | — | Sport/area/time/skill/price/slot pickers | — | N/A |
 | Web | Session public detail | Skeleton | Whitelist info + Join CTA | "Buổi chơi không còn khả dụng" | N/A |
 | Web | Rate-limited | — | "Quá nhiều truy vấn — thử lại sau [countdown]" | — | N/A |
@@ -91,7 +91,8 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 | `skill_level` | sessions | **Live legacy only** during DD-41 expand/backfill; must disappear from projection at cutover |
 | `level_min_rank` / `level_max_rank` / `level_strict` | sessions policy (DD-41 target) | Ordered DD-08 ranks + advisory/hard flag; replaces `skill_level`, never exposes a player's level |
 | `price` | sessions.price_amount | Amount in VND |
-| `slots_open` | calculated | Advisory |
+| `confirmed_count` | active `players` count | Advisory aggregate; no roster identity |
+| `slots_open` | shared occupancy helper | `max(0, slots_max - active - live holds)`; advisory |
 | `club_display_name` | Club tenant: moderated `tenants.display_name`; personal tenant (DD-46 target): owner membership `display_name` | Personal tenant must never expose internal tenant name; blank alias => no projection |
 | `host_display_name` | memberships.display_name | Moderated; never raw person/account identity fallback |
 | `join_policy` | sessions | open / approval |
@@ -127,6 +128,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 - [ ] Public invariant test pass under replay
 - [ ] Browse latency target documented và met
 - [ ] Messenger central/tenant Page local-vs-global context đúng; opaque action TTL/snapshot/replay tests pass
+- [ ] Public DTO emits `confirmed_count` + `slots_open` from one shared occupancy projection; hold count/identities remain private, adapters never re-derive and final mutation ignores stale counts.
 - [ ] Personal-tenant session uses only nonblank moderated owner-membership alias for `club_display_name`; blank alias stays absent and internal tenant/person name never leaks
 
 ---
@@ -145,6 +147,8 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v2.4 | Mirror DD-32 public aggregates: confirmed active count and slots-open (active + live holds) from one occupancy helper; hold count stays private. Bot Join CTA routes safe detail/final gate while web retains cross-club join. No projector/runtime claim. |
+| 2026-07-27 | v2.3 | Mirror `0024`: public + unlimited capacity đã bị DB CHECK loại và dữ liệu hiện có đã validate; đây là invariant nền, không phải publish/projector/Marketplace runtime. |
 | 2026-07-24 | v2.2b | **Public-projection timing, explicit (`docs-prd-flow2-publish-projection-reconcile`, hard dependency of `docs-session-publish-contract`):** MKT-UC-1 + edge #1 + Bất biến bullet reworded to require `status='open'` in addition to `visibility='public'` — a `draft` session is never projected regardless of visibility. Closes the same cross-authority conflict already fixed in `BE/feature_marketplace_discovery_tech.md` §4 and PRD FLOW 2/12/14; this Product-spec mirror was the codex round-01 P1 gap (Reviewed spec still permitted project-on-visibility-alone). Codex round-02 [P2]: MKT-UC-1 wording corrected — `visibility` is set only at create/edit, never at publish (`PublishSession` is status-only per `feature_session_management_tech.md` §4; publish only flips `draft`→`open`, which is what actually triggers the already-public row to project). No schema/algorithm change. |
 | 2026-07-19 | v2.2a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.2 | **Live/DD-46 projection closure:** document intentional no-FK public session reference; personal tenants source public club alias only from owner membership and fail closed when blank; ranking remains deterministic time-order until MKT-OQ-3 is resolved. |

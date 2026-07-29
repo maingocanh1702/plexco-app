@@ -1,72 +1,252 @@
-# 🪝 DD-32 Analysis — Channel-first booking funnel (link → book-in-chat → app)
+<!-- review-readiness: enforce -->
+# DD-32 Analysis — Channel-first booking funnel
 
-> **Mục đích:** chốt phễu tăng trưởng + **ranh giới tiền/identity** (A vs C). Ground vào canonical.
-> **Ngày:** 2026-07-13 · **Re-check:** 2026-07-19 · **Canonical:** `feature_channel_booking_funnel.md` (Draft, DD-32 source) · `feature_cross_club_join(.md/_tech)` (guest open-join trả outcome active hoặc waitlisted) · DD-45 (waitlist) · **DD-49 (rejoin/correction)** · `feature_identity` (ID-UC-2) · DD-01 (merge key) · DD-26 (confirm money-adjacent) · DD-29 (acquisition-first) · DD-33/DD-14 (provider login). Ghi → `decisions.md` DD-32.
-
----
-
-## 0. TL;DR — ✅ Option A (phễu MỀM)
-- **Guest vẫn book — KỂ CẢ kèo CÓ PHÍ.** First-entry active→one charge; full→waitlisted/no charge/venue/QR. Existing `left`: active carry-over/append refunded lifecycle; full waitlisted, refunded defer lifecycle mới tới activation. Unknown→review.
-- **Tách rõ 3 việc (không lẫn):**
-  1. **Tạo guest booking outcome** → **được** theo A (không cần link): first-entry active mới tạo charge; first-entry waitlisted chưa có charge. Proven DD-49 rejoin có thể giữ aggregate lịch sử nhưng không tạo charge mới.
-  2. **Claim/merge một membership ĐÃ CÓ TIỀN** (nhận nợ/lịch sử người khác) → đi nguyên contract `feature_identity`: verified evidence phù hợp (OTP/phone/email/CK provenance hoặc authorized owner evidence), conflict checks, explicit confirmation + audit. **DD-26 chỉ chặn persist alias/name/claim-suggestion khi chưa confirm; KHÔNG tự nó là bằng chứng sở hữu.**
-  3. **"Linked" cho hook** = transactional one-time `/link` code confirmed **đủ** (lịch sử xuyên club, nhắc, magic-link app).
-- **Thứ tự bật social login:** DD-33 (FB) trước, rồi DD-14 (Zalo). Chưa bật → transactional `/link` code.
-- **⚠️ Nếu founder muốn paid-booking BẮT BUỘC web-auth → đó là Option C, phải ĐỔI quyết định** (hiện = A).
+> **Machine classification:** `enforce`
+> **Ngày:** 2026-07-28
+> **Decision status:** `DECISION_FINAL` — Option D
+> **Runtime status:** Not implemented
+> **Authority pin:** `main@784bc8dd297163a5ec5415f33beabbbf34bbc8d7` + exact files in §9
+> **Canonical contract:** `features/feature_channel_booking_funnel.md` + `features/BE/feature_channel_booking_funnel_tech.md`
 
 ---
 
-## 0.1 Correction log
-| Rev trước (SAI) | Sự thật |
-|---|---|
-| "web-auth đầy đủ chỉ bắt buộc ở nhánh có tiền" | Đó là điều kiện của **Option C**. Dưới A, guest **được** book paid session; first-entry active mới tạo charge, full vào waitlist/no-charge. Proven rejoin giữ aggregate theo DD-49. Strong-proof chỉ cho **claim/merge membership có tiền**, không phải tạo booking. |
-| "paid booking = luôn tạo charge ngay" | Sai: waitlisted không new obligation. Refunded rejoin chỉ append lifecycle khi active. |
+## 0. Kết luận
+
+DD-32 được reopen và thay Option A bằng **Option D — browse tự do, link-or-pay ở final confirm**:
+
+- User luôn xem được time, public area, fee, confirmed count và available slots trong Messenger/Zalo mà chưa link.
+- Free session không ép link/payment.
+- Paid session còn chỗ:
+  - account-linked → active + canonical charge, được pay later;
+  - unlinked → giữ chỗ 15 phút; verified full payment mới active.
+- Full session → waitlist không link/payment/charge/venue.
+- Approval session → request trước; chỉ sau approval mới áp final gate.
+- Pay-now không khả dụng khi hệ thống không chứng minh được exact real-time settlement capability; fallback là link account hoặc web, không phải lời khai/ảnh CK.
+
+Option A cũ cho unlinked paid guest active trước payment đã bị supersede. Generic web/marketplace guest join không tự bị cấm: gate này là channel finalisation policy và common Join service chỉ được gọi sau khi orchestrator chứng minh nhánh hợp lệ.
 
 ---
 
-## 1. Canonical hiện trạng
-| Sự thật | Nguồn |
-|---|---|
-| Funnel doc = **Draft, nguồn quyết định DD-32**; mặc định khuyến nghị phễu MỀM | `feature_channel_booking_funnel.md` |
-| Guest paid session vẫn book được không cần link; common join tạo first-entry `active`+charge hoặc full→`waitlisted` no-charge. DD-49 rejoin active→carry-over/append-refunded; full→waitlisted giữ history/defer-refunded | `feature_channel_booking_funnel` CBF-UC-2/12 · `feature_cross_club_join_tech` §4 · DD-45/49 |
-| ID-UC-2: join tenant lần đầu → membership idempotent (channel identity gắn Person tự động) | `feature_identity.md` |
-| CCJ-UC-1: open-join tạo guest membership on-the-fly | `feature_cross_club_join.md` |
-| Claim/merge money-bearing membership cần verified evidence + conflict checks + explicit confirmation/audit | `feature_identity.md` §3 · `feature_identity_tech.md` §5–6 · DD-01/13/26 |
-| DD-26 chỉ govern alias/name/claim-suggestion confirm-before-persist; không thay identity evidence | DD-26 |
-| "linked" cho FB/Zalo phụ thuộc DD-33/DD-14 (chưa bật → transactional `/link` code) | DD-33/14 · identity-model §7 |
+## 1. Vì sao reopen
+
+Yêu cầu sản phẩm mới có hai mục tiêu đồng thời:
+
+1. account link phải có giá trị rõ ràng: đặt chỗ trước, thanh toán sau;
+2. user không muốn link vẫn không bị chặn tuyệt đối: họ có thể trả ngay.
+
+Option A cũ không tạo khác biệt ở final confirm vì unlinked paid user cũng được active+charge/pay later. Option C (paid bắt buộc link) tạo conversion wall. Option D giữ browse/acquisition mềm nhưng chuyển rủi ro ở đúng mutation boundary.
 
 ---
 
-## 2. Phương án (A chọn)
-| Option | Guest book | Paid booking | Ghi chú |
-|---|---|---|---|
-| **A — MỀM (CHỌN)** | ✅ | ✅ guest book được; first-entry active→charge, full→waitlisted/no-charge; rejoin active→carry/append, full→carry-history/defer-refunded | link chỉ mở giá trị + CTA; strong-proof chỉ khi claim/merge membership có tiền |
-| B — gate cứng | ❌ phải link trước | ❌ | thu hẹp guest-join |
-| C — gate có điều kiện | ✅ free | ❌ paid cần link/web-auth | chỉ nếu founder chọn |
+## 2. Các phương án
 
-## 3. Contract "linked" (3 mức)
-1. **guest** (channel identity, không link) → book (incl paid) + CTA link.
-2. **linked-lite** (transactional one-time `/link` code confirmed) → hook: lịch sử xuyên club, nhắc, magic-link, giữ slot nhanh.
-3. **web-auth đầy đủ** (`accounts`+`account_identities` verified) → một nguồn verified identity cho app/deep actions; **không bắt buộc để tạo booking và không tự nó đủ để claim một membership cụ thể có tiền**. Claim/merge luôn theo evidence matrix + conflict checks + confirmation/audit của `feature_identity`.
+| Option | Browse | Free booking | Paid linked | Paid unlinked | Verdict |
+|---|---|---|---|---|---|
+| A — soft funnel cũ | Mở | Active | Active/pay later | Active/pay later | Superseded: link không có final-booking value |
+| B — hard link wall | Sau link | Cần link | Active/pay later | Không được book | Loại: friction quá sớm |
+| C — paid requires link | Mở | Active | Active/pay later | Bị chặn | Loại: không đáp ứng pay-without-link |
+| **D — final risk gate** | **Mở** | **Active** | **Active/pay later** | **Verified pay-now trước active** | **Chọn** |
 
-## 4. Money/identity invariants
-- Guest book paid session đi qua common join: first-entry active là money-write; waitlisted chưa money-write. DD-49 rejoin active carry-over/append refunded lifecycle; full waitlisted defer refunded lifecycle. Unknown fail-closed.
-- **Claim/merge money-bearing membership** = HR4 → verified evidence theo `feature_identity_tech` §6 + conflict checks + explicit confirmation/audit. DD-26 chỉ bảo vệ persist soft-key; không nâng soft-key thành proof. Không auto-link chéo (FB PSID ≠ web-auth subject — DD-33).
-- Book-in-chat KHÔNG lộ venue trước join (DD-06), không lộ nợ/roster người khác (HR2).
+---
 
-## 5. Dependencies
-- **DD-33** (Facebook Login) — bật trước; **DD-14** (Zalo Login) — sau (spike).
-- **`feature_identity`/`_tech` + DD-01/DD-13** định nghĩa verified evidence và conflict checks cho claim/merge; **DD-26 chỉ thêm confirm-before-persist + audit/parity**, không đứng một mình làm proof.
-- **DD-05/06** guest join + venue.
-- **DD-29** acquisition-first (lý do chọn A).
+## 3. Contract “linked”
 
-## 6. Propagation (khi build, chỉ khi promote Draft)
-`feature_channel_booking_funnel(.md/_tech)` (promote Draft + CBF-UC + edge#9 = A); `feature_zalo_channel` + Messenger design (post-book CTA/deep action); `feature_identity(.md/_tech)` (ba mức guest/linked-lite/web-auth và evidence matrix); `feature_web_auth_onboarding` (DD-33/DD-14 provider paths). `feature_cross_club_join(.md/_tech)` chỉ thêm acceptance test **guest vẫn book free/paid với first-entry active/waitlisted và DD-49 rejoin outcome**, không thay guest path hay dựng linked-tier gate. **Đã cập nhật:** funnel doc status → ✅ A; edge#9 → A; money timing → DD-45×DD-49.
+`linkedForDeferredPayment=true` không có nghĩa “bot biết một Facebook/Zalo ID”. Nó chỉ đúng khi exact endpoint-scoped `ChannelIdentity` và một Plexco `Account` có verified account identity cùng resolve tới current canonical `Person`, không bị freeze/conflict.
 
-## 7. Test fixtures
-guest book free→OK · guest first-entry paid còn slot→active+exactly-one-charge (không cần link) · first-entry paid full→waitlisted/no-charge/no-venue/no-QR · first-activation promotion→charge atomic · DD-49 not-refunded active/waitlisted→carry-over · refunded active→append lifecycle; full→waitlisted/defer lifecycle · unknown disposition→`REJOIN_REQUIRES_REVIEW`+no mutation · CTA link hiện sau guest-book · linked-lite (OTP)→hook features · **claim membership có nợ → verified evidence + conflict checks + explicit confirmation/audit theo identity policy** · alias/name confirm đơn thuần không đủ proof · FB PSID không auto-link web-auth · book-in-chat không lộ venue/nợ.
+- Messenger Page-scoped PSID ≠ Facebook Login App-scoped subject.
+- Zalo bot/OA-scoped `from.id` ≠ Zalo Login subject nếu chưa có bằng chứng/provider contract.
+- Display name, provider equality hoặc ID client tự gửi không phải proof.
+- `link_code` là cơ chế hoàn tất binding; bản thân code/“linked-lite” không mở pay-later nếu chưa có real verified Account.
+- Account link trên endpoint mới cần explicit handoff trừ khi exact ChannelIdentity đó đã cùng Person với Account.
 
-## 8. Quyết định (đã chốt)
-Option A phễu mềm; guest paid-book được. First-entry charge chỉ tạo ở active outcome; waitlisted không new obligation. DD-49 not-refunded carry-over; refunded append lifecycle only at activation; claim/merge money-bearing membership giữ nguyên evidence/confirmation/audit contract; DD-33 trước DD-14. *(Paid-booking-cần-web-auth = C nếu reopen.)* Ghi `decisions.md` DD-32 ✅.
+---
 
-**Nguồn:** `feature_channel_booking_funnel.md` CBF-UC-2/12 · `feature_cross_club_join_tech` §4 · DD-45/49 · `feature_identity.md` (ID-UC-2) · DD-01/26/29/33/14 · identity-model §7.
+## 4. Money, capacity và waitlist
+
+### 4.1 Không tạo fake booking trước payment
+
+Live `charges` bắt buộc có `player_id`; allocations bắt buộc có charge. Unlinked pay-now vì vậy cần một durable orchestration record/seat hold riêng. Không thêm `payment_pending` vào `players`, không tạo temporary charge và không nhận ảnh chụp/lời khai là paid.
+
+### 4.2 Capacity duy nhất
+
+```text
+occupied = active_players + unexpired_payment_holds
+available = max(0, slots_max - occupied)
+```
+
+Một helper phục vụ join, approval, promotion và projector. `confirmed_count` vẫn chỉ đếm active players; hold chỉ dùng nội bộ để tính availability, còn hold count/identity luôn private.
+
+### 4.3 Payment outcomes
+
+- Exact payment → finalise active + charge + allocation atomically.
+- Overpayment → allocate tối đa amount due, active; remainder ở unmatched/manual review.
+- Underpayment → không active; giữ hold tới TTL rồi manual review. V1 không cộng nhiều khoản pre-charge để auto top-up.
+- Late/wrong-code/wrong-currency/session-invalid → không revive booking; manual refund-or-credit review.
+- Payment event đầu tiên được ingest bền vững trước expiry có thể hoàn tất sau expiry-processing; event ingested sau cutoff là late.
+
+### 4.4 Waitlist fairness
+
+Không thu tiền khi chưa có slot. Khi promoted:
+
+- free → activate;
+- paid+linked → activate+charge pay later;
+- paid+unlinked → giữ một slot 15 phút và cho chọn link/pay.
+
+Hết hạn: release hold, đưa candidate xuống cuối queue đúng một lần, tiếp tục selector. Đây là explicit fairness policy để tránh một unlinked candidate chặn cả hàng.
+
+---
+
+## 5. Approval và provider failure
+
+- Request approval ban đầu chỉ tạo `join_requests.pending`; không hold/player/charge/payment/venue.
+- Sau host approval, recheck live rồi áp cùng free/paid × linked/unlinked table.
+- `join_requests.status='approved'` giữ nghĩa approval; trạng thái chờ payment thuộc booking intent, không overload approval.
+- Pay-now chỉ enable khi tenant có capability + entitlement + provider/bank/market/currency/consent đủ để verify settlement tự động.
+- Provider unhealthy/unknown → không phát QR hứa confirm. Free và linked pay-later vẫn hoạt động; unlinked paid được offer link/web.
+
+---
+
+## 6. Privacy và UX
+
+- Bot browse trả time, public area, fee display, `confirmed_count` và `slots_available`. Hold count/identity
+  không public; khi cần chỉ dùng copy chung như “một số chỗ đang được giữ”.
+- Exact venue chỉ sau `active` theo DD-06.
+- Không trả roster, debt, raw IDs hoặc bank/identity secrets.
+- Account-link handoff opaque, hash-at-rest, single-use, 15-minute TTL, exact actor+endpoint+session+action-bound.
+- Link resume luôn recheck price/capacity/session; thay đổi cần confirm lại.
+
+---
+
+## 7. Implementation decomposition
+
+Thứ tự mechanism-based:
+
+1. Identity endpoint/account-link completion core.
+2. Pure channel booking decision core.
+3. `channel_booking_intents` schema, RLS và lifecycle.
+4. Canonical occupancy helper + join/approval/promotion/projector consumers.
+5. Verified-payment finalizer + late/manual-review path.
+6. Approval/waitlist integration.
+7. Opaque account-link resume.
+8. Messenger adapter.
+9. Zalo adapter.
+10. Cross-transport E2E + enablement evidence.
+
+Không gộp adapters với session/payment writer; Messenger/Zalo phải là thin ports.
+
+---
+
+## 8. Closure matrix
+
+| # | Gate | Evidence hiện tại | Kết quả |
+|---:|---|---|---|
+| 1 | Owner/product decision | Option D được yêu cầu và pin trong DD-32 | PASS |
+| 2 | Canonical Product spec | Funnel v1.0 | PASS |
+| 3 | Canonical BE companion | Funnel BE v1.0 | PASS |
+| 4 | Decision table | Free/paid × linked/unlinked × capacity/approval/promotion | PASS |
+| 5 | Identity boundary | Exact Account-backed Person predicate + endpoint scope | PASS |
+| 6 | Money lifecycle | exact/over/under/late/duplicate pinned | PASS |
+| 7 | Capacity/waitlist | one helper + 15-minute hold + requeue-tail | PASS |
+| 8 | Privacy/security | area-only, aggregate-only, opaque single-use handoff | PASS |
+| 9 | Acceptance matrix | Funnel Product+BE coverage + Session checklist v1.2 full retrace (14 UC/26 edges/29 AC/84 unit rows) | PASS |
+| 10 | Live hard dependencies | Session/Join/Identity/Payment business runtime not implemented | FAIL |
+| 11 | Executable first slice | No exact manifest/targets/migration number/readiness packet | FAIL |
+| 12 | Immutable authority | This pack is uncommitted working-tree state | FAIL |
+
+Contract/decision closure is complete; code authorization is not.
+
+---
+
+## 9. Readiness verdict
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: NOT_CODE_READY
+REVIEWED_AT: 2026-07-28
+AUTHORITY_SHA: 784bc8dd297163a5ec5415f33beabbbf34bbc8d7
+BASE_BRANCH: main
+TARGET_FILES:
+  - README.md
+  - docs/README.md
+  - docs/00-start-here/HANDOFF.md
+  - docs/00-start-here/identity-model.md
+  - docs/dd-32-booking-funnel-analysis.md
+  - docs/dd-73-78-share-activity-analysis.md
+  - docs/issues/session-management-acceptance-checklist.md
+  - docs/pre-code-open-items-2026-07-16.md
+  - docs/product/BRD.md
+  - docs/product/PRD.md
+  - docs/product/TDD.md
+  - docs/product/ROADMAP.md
+  - docs/standards/decisions.md
+  - docs/standards/business-rules.md
+  - docs/standards/feature-dependency-graph.md
+  - docs/standards/BUILD-STATUS.md
+  - docs/features/README.md
+  - docs/features/feature_channel_booking_funnel.md
+  - docs/features/BE/feature_channel_booking_funnel_tech.md
+  - docs/features/feature_cross_club_join.md
+  - docs/features/BE/feature_cross_club_join_tech.md
+  - docs/features/feature_session_management.md
+  - docs/features/BE/feature_session_management_tech.md
+  - docs/features/feature_marketplace_discovery.md
+  - docs/features/BE/feature_marketplace_discovery_tech.md
+  - docs/features/feature_identity.md
+  - docs/features/BE/feature_identity_tech.md
+  - docs/features/feature_web_auth_onboarding.md
+  - docs/features/BE/feature_web_auth_onboarding_tech.md
+  - docs/features/feature_payment_reconcile.md
+  - docs/features/BE/feature_payment_reconcile_tech.md
+  - docs/features/feature_player_messenger.md
+  - docs/features/BE/feature_player_messenger_tech.md
+  - docs/channels/messenger/messenger-channel-design.md
+  - docs/channels/messenger/README.md
+  - docs/features/feature_zalo_channel.md
+  - docs/features/BE/feature_zalo_channel_tech.md
+  - docs/channels/zalo/README.md
+SLICE: channel-booking-decision-contract
+IN_SCOPE: channel browse summary, qualified account link, link-or-pay final gate, payment hold, approval and waitlist integration, shared finalizer contract
+OUT_OF_SCOPE: runtime code or migration, provider procurement and credentials, changing DD-06 venue privacy, changing generic web guest join, committing or publishing the current worktree
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: FAIL
+G4_TEST: PASS
+G5_SCOPE: FAIL
+G6_EXTERNAL: ENABLEMENT_ONLY:meta-app-review,zalo-login-verification,instant-settlement-provider-evidence
+HARD_DEPENDENCIES: Session Join Waitlist Identity WebAuth Payment business cores are not merged
+PRIOR_SLICES: identity-account-link-core -> channel-booking-decision-core -> channel-booking-intent-store -> session-occupancy-helper -> verified-payment-booking-finalizer
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: Meta App Review; DD-14 Zalo Login verification; provider-bank-market-currency-consent-entitlement evidence
+LIVE_REPO_VERIFICATION: PASS
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: FAIL
+ACCEPTANCE_MATRIX: PASS
+SECURITY_AND_MIGRATION_GATE: PASS
+IMPLEMENTATION_ARTIFACTS: FAIL
+FIRST_IMPLEMENTATION_STEP: author and review the identity-account-link-core packet against the current post-merge main
+REMAINING_BLOCKERS:
+  - blocker: required Session Join Waitlist Identity WebAuth and Payment business cores are not all implemented and merged
+    owner: feature core owners
+    resolution: every named hard dependency has a merged probe and green contract tests on current main
+  - blocker: channel booking intent migration occupancy helper and atomic payment finalizer have no exact implementation packets
+    owner: Session and Payment architecture owners
+    resolution: mechanism-sized manifests include exact files migrations lock order rollback and nine-group acceptance matrices
+  - blocker: reviewed authority pack is uncommitted working-tree state
+    owner: docs authority owner
+    resolution: commit the exact reconciled pack then re-pin AUTHORITY_SHA and rerun the readiness validator
+NEXT_REVIEW_TRIGGER: committed authority SHA plus merged hard-dependency probes and exact first-slice implementation packet
+```
+
+**Binary verdict:** `NOT_CODE_READY`. Decision/spec are closed; runtime permission remains blocked by the three binary conditions above.
+
+---
+
+## 10. Changelog
+
+| Date | Version | Thay đổi |
+|---|---|---|
+| 2026-07-28 | v1.2 | Re-pin live base to `main@784bc8d`; the intervening Chat docs commits do not close DD-32's uncommitted authority, hard-dependency or implementation-packet blockers. Verdict remains `NOT_CODE_READY`. |
+| 2026-07-28 | v1.1 | Complete mirror propagation and Session acceptance retrace; public browse exposes confirmed/available counts but no hold count/identity; sync BL-DSC-1/DD-78/share-card whitelist with additive `confirmed_count`; expand exact TARGET_FILES while preserving `NOT_CODE_READY`. |
+| 2026-07-28 | v1.0 | Reopen DD-32; replace Option A with Option D; pin Account predicate, 15-minute hold, approval/waitlist fairness, over/under/late payment, provider fail-closed, implementation split and readiness verdict. |
+| 2026-07-19 | v0.8 | Option A timing re-check. Superseded by v1.0. |
+| 2026-07-13 | v0.1 | Chọn Option A soft funnel. Superseded by v1.0. |

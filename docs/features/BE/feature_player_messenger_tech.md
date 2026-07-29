@@ -1,11 +1,11 @@
 # Feature: Shared Host & Player Facebook Messenger Experience — Backend Tech Spec
 
 > **Canonical phase:** P2.5
-> **Version:** 0.7 · 2026-07-19
+> **Version:** 0.9 · 2026-07-28
 > **Status:** Reviewed contract · Implementation pending
-> **Implementation:** Not started — bot mới có queue shell · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started — `apps/bot` đã có shared job lease/ack + preflight/dispatcher/scheduler gated, nhưng chưa có Messenger adapter/handler/projector; schedule mặc định OFF và delivery placeholder · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../feature_player_messenger.md`
-> **References:** `../../standards/decisions.md` DD-37 · **DD-65..68** · DD-33 · DD-45 · **DD-49** · `../../channels/messenger/messenger-channel-design.md` · `feature_session_management_tech.md` · `feature_tenant_routing_authz_tech.md`
+> **References:** `../../standards/decisions.md` DD-32/DD-33/DD-37/DD-45/DD-49/DD-65..68 · `../../channels/messenger/messenger-channel-design.md` · `feature_channel_booking_funnel_tech.md` · `feature_session_management_tech.md` · `feature_tenant_routing_authz_tech.md`
 
 > Adapter dùng **Session/Join/AuthZ services chung** với web/Zalo. `packages/db/schema.ts` là live truth nhưng **chưa đáp ứng** hybrid contract; DD-65..68 là authority cho migration triển khai mới, không được sửa migration lịch sử.
 
@@ -17,7 +17,8 @@
 Messenger webhook → verify signature → endpoint registry (central|tenant)
     → provider dedup → domain-separated HMAC(scope Page, user PSID) identity + endpoint reachability
     → opaque action/context resolver → exact AuthZ capability
-    → shared Session/Join service → outbox → one-route delivery
+    → session detail projection → shared channel-booking decision/finalizer
+    → canonical Session/Join/Payment owners → outbox → one-route delivery
 ```
 
 **Hybrid:** một Meta App, một central Page bắt buộc ở cấp Plexco và optional tenant Page. `page_id` resolve endpoint/default context; target tenant/session chỉ từ opaque action, protected public ref/referral hoặc server-side eligible-role picker. **PSID là page-scoped**, nên identity và reachability đều neo theo Page endpoint.
@@ -88,7 +89,7 @@ Exact names/DDL chốt ở migration design-probe (đã pin ở đầu §2); ch�
 | 4 | Reachability | Gửi ngoài cửa sổ 24h | ❌ Không standard-send; chỉ gửi nếu eligible/approved mechanism tồn tại, nếu không fallback web + Zalo; đánh dấu unreachable-24h |
 | 5 | Data Integrity | PSID cùng người khác Page | Page-scoped — 2 PSID; link về cùng Person qua verified account identity hoặc transactional `link_code`; không auto-merge chéo |
 | 5b | Data Integrity | PSID text trùng xuyên Page | Hai domain-separated hashes + unique 3-part key; Page scope tách identity, không gán nhầm xuyên endpoint |
-| 6 | Concurrency | Two first-entry number/quick-reply replies at last slot | Shared service locks session: first active+exactly-one-charge, second waitlisted/no-charge/no-venue |
+| 6 | Concurrency | Two final-confirm actions at last slot | Shared occupancy locks session and counts active + live holds; exactly one holds/occupies slot, second waitlisted/no-charge/no-venue |
 | 7 | Security | Page token / App Secret trong log/row sai owner | ❌ NEVER — Page token ở protected endpoint store; App Secret chỉ ở deployment secret manager; log redaction |
 | 8 | Resilience | Provider rate-limit/outage | Backoff — không rollback canonical |
 | 9 | Security | Cross-Page reachability | Scoped per channel identity + Page endpoint; never reuse window/token across Pages |
@@ -99,6 +100,12 @@ Exact names/DDL chốt ở migration design-probe (đã pin ở đầu §2); ch�
 | 14 | AuthZ | Host create from central/tenant Page | Resolve eligible tenant, require `session.manage`, re-check inside final command transaction |
 | 15 | State | Wizard cancel/expire/context switch | Single pre-dispatch interceptor clears/invalidates; no scattered branch state or partial create |
 | 16 | Delivery | Central and tenant endpoint both reachable | Select tenant Page then central fallback; one logical notification key prevents duplicate send |
+| 17 | Identity | PSID exists but no qualified Account link | Browse remains available; paid final confirm returns link-or-pay, never silently grants pay-later |
+| 18 | Payment | Pay-now capability unavailable/unknown | No hold/reference/QR; return link/web alternatives |
+| 19 | Concurrency | Link callback races payment event | One shared intent/finalizer terminal result; duplicate callbacks re-read current state |
+| 20 | Financial | Under/over/late pay-now | Under/late no active; over allocates due only and leaves remainder unmatched |
+| 21 | Fairness | Promoted unlinked player's hold expires | Shared funnel releases capacity and requeues once at tail; adapter only renders |
+| 22 | Delivery | Payment display send rejects vs times out | Definite reject reports cancel-undelivered; ambiguous timeout keeps resumable hold to TTL |
 
 ---
 
@@ -110,7 +117,7 @@ Exact names/DDL chốt ở migration design-probe (đã pin ở đầu §2); ch�
 |-----------|------|-------|
 | `GET /webhook/messenger` | Public (verify_token) | Meta webhook verification handshake |
 | `POST /webhook/messenger` | Signed (app secret) | Inbound events → endpoint/identity/action resolver → AuthZ → shared service |
-| Quick-reply: Join | Player DM | Validate → join domain service (shared) |
+| Quick-reply: Session | Player DM | Validate opaque action → shared detail projection; final-confirm action → shared channel-booking funnel |
 | Persistent menu: `/me` `/pay` | Player DM | Personal summary / payment instructions |
 | Persistent menu: `/newsession` | Host DM | Start durable wizard; preview/confirm → idempotent shared `CreateSession` |
 | Host status/approve/announce/close | Host DM | Exact action capability; reuse existing deterministic handler payload/service |
@@ -123,6 +130,9 @@ Exact names/DDL chốt ở migration design-probe (đã pin ở đầu §2); ch�
 | Central, one eligible club | Auto-select server-side and show role-aware menu |
 | Central, multiple eligible clubs | Show bounded club picker; no mutation before selection |
 | No eligible club for host action | "Bạn chưa có quyền quản lý CLB phù hợp"; player discovery remains available |
+| Session detail | Time + public area + fee + confirmed count + slots from shared projection |
+| Paid final gate | “Liên kết Plexco — giữ chỗ, trả sau” hoặc, khi available, “Thanh toán & giữ chỗ 15 phút” |
+| Awaiting payment | Exact safe payment display + expiry; “Tôi đã thanh toán” chỉ poll |
 | Active | "✅ Đã tham gia! [venue]" |
 | Waitlisted | "⏳ Bạn đang ở vị trí N" (không venue/QR) |
 | Already active/waitlisted | Render current state idempotently; không đổi rank/charge |
@@ -154,7 +164,7 @@ Exact names/DDL chốt ở migration design-probe (đã pin ở đầu §2); ch�
 | Webhook event ingest | ✅ | Provider dedup theo `mid`/event — replay không mutation mới (edge #3, test 5) |
 | Opaque action / quick-reply consume | ✅ single-use | Token bound actor+Page+TTL+target+version/snapshot; consume under lock; stale/replayed → reject/re-render (edge #10, test 9) |
 | Host create-session confirm | ✅ | Đúng một `CreateSession` theo command id; duplicate webhook/confirm trả prior outcome (§4, test 17) |
-| Player join | ✅ | Shared domain service idempotent theo command id; already active/waitlisted render current state (§4 Join → sync) |
+| Player booking intent/finalizer | ✅ | Shared intent key + command id; already active/waitlisted/terminal returns current canonical outcome |
 | Outbound delivery | ✅ | One logical notification key dedup mọi candidate route (edge #16, test 19; ledger ở `feature_sync_engine_tech.md`) |
 
 ---
@@ -170,7 +180,7 @@ Exact names/DDL chốt ở migration design-probe (đã pin ở đầu §2); ch�
    - absent → create Person + ChannelIdentity idempotently (join/approved action mới tạo membership)
 4. Set/refresh endpoint reachability for that identity/Page only
 5. Resolve role-aware menu or opaque action; derive target tenant/resource in protected resolver
-6. Authorize exact capability; consume TTL/snapshot/version under lock; execute shared domain command
+6. Authorize exact capability; consume TTL/snapshot/version under lock; selection reads detail, final-confirm delegates to shared channel-booking funnel
 ```
 
 ### Host create-session wizard
@@ -194,13 +204,22 @@ Exact names/DDL chốt ở migration design-probe (đã pin ở đầu §2); ch�
 - **Nhắc nợ:** Messenger **best-effort trong 24h**; không phải kênh nhắc chính (web + Zalo là chính).
 - Dispatcher chọn một route: reachable tenant Page → reachable central Page linked Person → web/Zalo; logical dedup chặn double send.
 
-### Join → sync
+### Booking funnel port → sync
 
-Join qua quick-reply/persistent menu → domain join service chung → canonical `players`/roster → outbox → project lên **web + public projection**. Adapter render outcome `active|waitlisted|current|rejoin_review`; DD-49 carry-over/refunded lifecycle nằm trong correction core, không ở adapter. Idempotent theo command id.
+Quick-reply selection reads the shared session projection only. Final confirm delegates to `decideChannelBooking()` / `finalizeChannelBookingIntent()` from `feature_channel_booking_funnel_tech.md`; Messenger never derives fee, occupancy, linked state, settlement or waitlist rank.
+
+- Free + available → canonical active without Account/payment.
+- Full → waitlisted/no charge/no venue.
+- Approval → pending; no hold/payment until approved.
+- Paid + qualified Account link → canonical active + exactly one charge, pay later.
+- Paid + unlinked + proven settlement capability → one 15-minute hold and exact payment reference; verified full payment finalizes.
+- Unknown provider/price/identity state fails closed to link/web.
+
+Only a completed shared finalizer writes canonical `players`/charge/allocation, then outbox projects to web/roster. Adapter renders tagged `active|waitlisted|approval_pending|awaiting_link|awaiting_payment|reconfirm|manual_review|current` outcomes.
 
 ### Account link (DD-33 ✅ phase-1; App Review pending)
 
-FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSID** là hai subject khác nhau → gắn về cùng `person` qua verified account identity hoặc transactional one-time `link_code`, không auto-link chéo. Nếu App Review chậm, dùng `/link` fallback (DD-32). Không đụng core `Person`/`Membership`.
+FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSID** là hai subject khác nhau → explicit handoff gắn về cùng current `person`, không auto-link chéo. Booking chỉ coi linked-for-pay-later khi exact Page-scoped ChannelIdentity và một Account có verified account identity resolve cùng current Person. `/link` là mechanism/fallback, không tự nó bypass predicate; callback consumes once rồi shared finalizer revalidates session/quote/identity.
 
 ### Caching Strategy
 
@@ -242,7 +261,7 @@ FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSI
 | 10 | Reachability isolated | Page A vs B | Independent |
 | 11 | Token/secret ownership + redaction | Config rows/logs | Page token only in endpoint secret store; App Secret only deployment secret manager; neither logged |
 | 12 | Account merge | Old PSID context | Invalidated → merged person |
-| 13 | Concurrent first-entry final slot | 2 quick-replies | One active+exactly-one-charge; one waitlisted/no-charge with positive position |
+| 13 | Concurrent final slot | Linked confirm + unlinked pay-now confirm | One active/live hold occupies slot; other waitlisted, no oversubscription |
 | 14 | Rejoin after left, carry-over | Paid, not refunded | Shared core rejoins with canonical current outcome; allocation preserved; no duplicate charge |
 | 14b | Rejoin after refund | Refund complete | Capacity available→shared core appends one lifecycle + active; full→waitlisted/no new lifecycle until promotion. Adapter only renders outcome |
 | 14c | Rejoin disposition unknown | Core cannot prove state | `REJOIN_REQUIRES_REVIEW`; player/charge/allocations unchanged |
@@ -251,6 +270,12 @@ FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSI
 | 17 | Wizard lifecycle | cancel/expire/context switch/duplicate confirm | Cleared or prior result; no partial/double create |
 | 18 | Pagination | >8 sessions/clubs | Stable pages + Prev/Next/Cancel, no raw IDs |
 | 19 | Delivery priority | both Page endpoints open | One tenant-Page send; central suppressed by logical dedup |
+| 20 | Browse without link | Unlinked Page-scoped identity | Detail shows safe time/area/fee/counts; no identity/payment mutation |
+| 21 | Final gate branches | free/full/approval/paid-linked/paid-unlinked | Exact shared tagged outcome; adapter performs no business derivation |
+| 22 | Link resume | Single-use callback, wrong Page/replay/changed quote | Valid resumes same intent; wrong/replay rejected; changed quote requires reconfirm |
+| 23 | Pay-now evidence | exact/over/under/late/wrong reference | Exact active once; over remainder unmatched; others no active |
+| 24 | Link/payment race + retry | Concurrent callbacks/duplicate webhook | One terminal booking/player/charge/allocation |
+| 25 | Payment display delivery | Definite reject vs timeout after hold commit | Reject cancels only if no evidence/claim; timeout keeps hold resumable |
 
 ### Integration Tests
 
@@ -263,6 +288,8 @@ FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSI
 | 5 | Role/context matrix | host, player, dual-role, multi-club | Correct menu/picker/capability on central+tenant Page |
 | 6 | Race/replay matrix | final slot + duplicate webhook/command | One active, one waitlisted; no duplicate session/player/charge |
 | 7 | Provider failure after commit | Canonical command commits, Send API fails | State retained; outbox retry/fallback; no rollback |
+| 8 | Messenger funnel parity | Same fixtures as Zalo/shared core | Identical domain outcomes; only rendering differs |
+| 9 | Promotion hold expiry | Waitlisted unlinked paid candidate | Hold releases; candidate requeued tail once; selector continues |
 
 ---
 
@@ -274,7 +301,7 @@ FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSI
 2. Submit **App Review** sớm (rủi ro lịch).
 3. Hybrid registry migration + protected resolver + central Page binding; optional club-Page onboarding.
 4. Page-scoped identity/reachability + opaque action store + single pre-dispatch interaction interceptor.
-5. Role-aware host create/manage and player local/global join via shared services.
+5. Role-aware host create/manage plus player local/global browse and DD-32 final gate via shared funnel.
 6. One-route delivery + settled confirm/best-effort reminder; outside window fallback web/Zalo.
 7. (DD-33/DD-50) Account-link verified identity/transactional `link_code`.
 
@@ -289,6 +316,8 @@ FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSI
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v0.9 | Mirror DD-32 Option D: selection becomes read-only detail, final confirm delegates to one shared decision/finalizer; pin qualified Account link, 15-minute verified-payment hold, provider fail-closed, race/fairness tests and thin-renderer outcomes. No runtime claim. |
+| 2026-07-27 | v0.8 | Current-state mirror: shared job mechanics đã merge nhưng Messenger adapter/handler/projector chưa có; không đọc queue infrastructure thành channel runtime. |
 | 2026-07-19 | v0.7 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `messenger_pages` `0004` reuse; new = hybrid registry/`messenger_page_secrets`/endpoint identity·reachability/action store), §3 Request/Response Examples + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v0.6a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v0.6 | **DD-49 timing mirror:** refunded rejoin active→append; full→waitlisted/defer until promotion. Messenger adapter remains thin and creates no financial state. |

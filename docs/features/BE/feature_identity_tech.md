@@ -1,8 +1,8 @@
 # Feature: Identity Directory & Merge — Backend Tech Spec
 
 > **Canonical phase:** P3.5
-> **Version:** 1.12a · 2026-07-24
-> **Status:** Identity implementation contract; DD-50 parent-first consume + DD-70(a) global-notification ownership aligned with current decisions v1.73. Endpoint-scoped schema/code pending identity/channel build slices
+> **Version:** 1.13 · 2026-07-28
+> **Status:** Identity implementation contract; DD-32 Account-backed channel link predicate added. Endpoint-scoped schema/code pending identity/channel build slices
 > **Implementation:** Not started — bảng `link_codes`/`merge_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_identity.md`
 > **References:** `../../product/TDD.md` §3.2–3.4/§4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-13/DD-37/DD-50/DD-53/**DD-65..68** · `feature_player_messenger_tech.md`
@@ -14,6 +14,8 @@
 > **Cập nhật v1.6:** endpoint binding không được dựa vào hash đơn độc: mỗi identity phải có đúng một FK tới Messenger Page hoặc Zalo bot/OA phù hợp với `platform`, và protected writer tự derive/re-check scope hash từ row registry đó. Consume `link_code` pin thứ tự terminal checks, XOR issuer revalidation và atomic attempt/consume.
 >
 > **Cập nhật v1.7:** sửa trust-boundary drift: `zalo_bots` vẫn là bảng tenant-private có ENABLE + FORCE RLS theo TDD/live migration; chỉ Messenger hybrid registry cùng global identity/reachability/link-code tables là global-protected. Narrow resolver phải validate Zalo endpoint dưới exact tenant context, không reclassify `zalo_bots` thành global/no-grant.
+>
+> **Cập nhật DD-32/v1.13:** booking `pay later` không dùng một client boolean hay “linked-lite”. Identity service phải derive exact ChannelIdentity→current Person←verified Account predicate và phát một opaque server result cho funnel finalizer.
 
 ---
 
@@ -210,6 +212,18 @@ The consume service is the only runtime principal granted access to `link_codes`
 5. For a valid verifier, atomically claims the already-locked code with a conditional `UPDATE ... SET consumed_at = transaction_timestamp() WHERE consumed_at IS NULL AND revoked_at IS NULL AND expires_at > transaction_timestamp() AND failed_attempts < max_attempts AND (locked_until IS NULL OR locked_until <= transaction_timestamp()) RETURNING ...`. Exactly one returned row is required. Using the re-derived source Person, it creates the merge plan in the same transaction; zero rows means generic invalid and no plan. Barrier tests cover account reset/revoke versus consume and merge commit versus consume; one side wins without deadlock, the loser revalidates fail-closed.
 
 Rate-limit counters outside the row use the same transaction-safe service boundary. Concurrent consumes therefore cannot both pass; terminal rows remain immutable apart from separately audited support revocation policy.
+
+### Account-backed link resolver for channel booking
+
+`resolveDeferredPaymentAccount(channelIdentityId, endpointContext)` is a narrow protected read:
+
+1. validates the exact Page/bot-OA relation and authenticated channel actor;
+2. locks/re-resolves current ChannelIdentity→Person when called from a finalizer;
+3. resolves an active Account on that Person with at least one verified account identity;
+4. rejects frozen, merge-pending, stale or ambiguous bindings;
+5. returns only `{qualified, account_ref, person_ref, binding_version}` to the booking core.
+
+No adapter receives Account/Person UUIDs. The booking core rechecks the returned binding version under its final lock order. Facebook Login subject↔PSID and Zalo Login subject↔`from.id` require explicit verified link; provider equality is not a join key. A booking resume token is actor+endpoint+session+action-bound and can request this resolver only after the web-auth/merge flow has consumed its own single-use proof.
 
 ---
 
@@ -409,6 +423,7 @@ Metrics: person/channel creation, merge success/failure by method, claim rejecti
 
 - [ ] Protected grants and tenant RLS tests pass.
 - [ ] Secure `link_code`, verified-email evidence and concurrency tests pass.
+- [ ] Deferred-payment resolver proves exact endpoint + current Person + verified Account; stale/merged/frozen/wrong-Page/OA and raw-ID attempts return generic false with zero mutation.
 - [ ] Merge preserves membership/history/ledger invariants.
 - [ ] Claim-with-financial-history gate passes attack tests.
 - [ ] Audit/tombstones/recovery runbook verified.
@@ -420,6 +435,7 @@ Metrics: person/channel creation, merge success/failure by method, claim rejecti
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-28 | v1.13 | Mirror DD-32 Option D: add narrow Account-backed channel-link resolver, binding-version recheck and explicit provider-subject separation for pay-later qualification. No runtime/migration. |
 | 2026-07-24 | v1.12a | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): Live-schema truth header + Migration mới numbering guidance hard-pinned `migrations 0000–0018` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Draft `0014_identity_channel_security.sql` numbering note giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v1.12 | **Reconcile migration-tail 0018:** current-state §2 migration facts sửa: (a) `tail = 0014_players_waitlist` → **tail = 0018** (`0018_oauth_completion_handoff.sql`; migrations 0000–0018 đã merge trên `main` — 0014 waitlist schema-only, lane auth DD-80 0015–0018 ⛔ chưa enable); (b) "Live-schema truth (main, migrations `0000`–`0014`)" range → `0000`–`0018` (nhất quán, tránh mâu thuẫn với tail). Numbering guidance giữ nguyên (expand migration monotonic next-available sau synced tail, verify live `packages/db/migrations/` trước khi tạo, không hardcode/sửa lịch sử; draft `0014_identity_channel_security.sql` đụng số → renumber theo tail thực tế). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v1.11 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (live `0001`/`0002`/`0004` = reuse baseline, DROP ❌ NEVER; delta endpoint-binding/link-code lifecycle/reachability re-key → migration mới monotonic, cảnh báo đụng số worktree `0014`), §7 Request/Response Examples (DD-60) + Idempotency + Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |

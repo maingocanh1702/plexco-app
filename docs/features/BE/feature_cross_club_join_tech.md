@@ -1,11 +1,11 @@
 # Feature: Cross-club Join & Approval — Backend Tech Spec
 
 > **Canonical phase:** P4.3  
-> **Version:** 2.11c · 2026-07-24
+> **Version:** 2.12 · 2026-07-28
 > **Status:** Reviewed  
 > **Implementation:** Not started — `join_requests` có sẵn từ `0006` · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_cross_club_join.md`  
-> **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-39/DD-45/DD-49/**DD-52**/**DD-65..68** · `../../dd-45-waitlist-analysis.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`) · `feature_session_management_tech.md`
+> **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-32/DD-39/DD-45/DD-49/**DD-52**/**DD-65..68** · `../../dd-45-waitlist-analysis.md` · `feature_channel_booking_funnel_tech.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`) · `feature_session_management_tech.md`
 > **⚠️ Live-schema boundary:** Waitlist schema `0014_players_waitlist` **đã merge trên `main`** tại `1a6ac38` (verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số); tính đến `origin/main`@`22c23aa` (2026-07-19) main còn dừng ở `0000–0013`, đã merge kể từ đó. DD-39/DD-49/SessionService/queue-entry-version/retry behavior chưa có runtime. Live `join_requests` chỉ có `command_id`, **không có financial-proof/version field**.
 
 ---
@@ -25,6 +25,8 @@ Public Session ID → Protected resolver → Canonical session/tenant
 Commands: `JoinPublicSession`, `CancelJoinRequest`, `ApproveJoinRequest`, `RejectJoinRequest`, `ExpireJoinRequests`, `LeaveSession`. Public ID resolved via protected service to canonical session/tenant — enter tenant context → authorize.
 
 Messenger never sends raw public/session/request IDs as authority. The Page-bound opaque action resolves target/session/request server-side with TTL+snapshot/version; source tenant Page may differ from a valid cross-club target and remains audit/default only.
+
+DD-32 does not add a second join handler. For a channel-origin active outcome, `finalizeChannelBookingIntent()` enters this same transaction with a server-owned tagged disposition (`free`, `account_linked_pay_later`, or `verified_pay_now`). The public adapter cannot set it. Full and pre-approval outcomes require no disposition because they create no active player/new charge/payment.
 
 ---
 
@@ -269,6 +271,8 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 | 26 | Promotion amount derivation failure | First-activation candidate; KMS/decrypt throws | Candidate unchanged; one candidate audit event references lazy root; opener committed; bounded claimed-attempt retry delegated to SessionService; no fallback |
 | 27 | First-entry direct open join amount derivation failure | No existing player, capacity available; KMS/decrypt throws | Join transaction aborts; no player/charge/venue; new guest membership absent; retry safe |
 | 28 | First-entry approval amount derivation failure | Pending first-entry request + capacity; KMS/decrypt throws | Approve transaction aborts; request remains pending; no player/charge/venue; retry safe |
+| 29 | Channel active call without trusted funnel disposition | Messenger/Zalo adapter calls join directly or supplies client `linked/paid=true` | Reject before membership/player/charge; only in-process finalizer context is accepted |
+| 30 | Channel pay-now completion | Live intent + verified bank transaction under funnel finalizer | Reuses common join, creates one player/charge/allocation; replay returns current outcome |
 | 29 | Existing-left request preflight | Representable current DD-49 disposition | Pending request created; no financial proof field, player or ledger mutation |
 | 30 | Existing-left request unknown | Unknown/unimplemented disposition | `REJOIN_REQUIRES_REVIEW`; no request/mutation |
 | 31 | Existing-left state drift before approve | Preflight passed, aggregate changes before decision | Approve re-derive fails; request remains pending; player/ledger unchanged |
@@ -286,6 +290,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 | 7 | Currently banned request-create | DD-52 manual ban exists before player requests approval | Shared restriction preflight rejects; no `join_request`, host notification, membership, player or charge. Preflight never replaces approve-time re-check |
 | 8 | Ban after current outcome/request | Player is active, waitlisted or already pending; ban then repeat join/request | Return exact current state idempotently; no `PLAYER_BANNED`, duplicate request, host alert/outbox, queue/charge mutation. Later approve/promotion still re-checks restriction |
 | 9 | Direct active fill closes old retry epoch | Root retry due from a failed opener; open join or approval takes final slot | Same session→root lock transaction resolves all nonterminal roots; old worker cannot sweep a later opening |
+| 10 | Channel-finalizer parity | Same actor/session via Messenger then Zalo replay after identity merge | One canonical player/charge; second transport returns current state, no duplicate ledger |
 | 10 | Cross-tenant expiry scheduler | Due requests across tenants + forged broad app scan | Broad SELECT/UPDATE denied; narrow claim returns bounded refs with audit, and exact tenant context expires only owned pending rows |
 
 ---
@@ -311,6 +316,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v2.12 | Mirror DD-32 Option D: channel finalizer enters existing Join transaction with server-owned free/account-linked/settled disposition; direct/client proof rejected; add pay-now and cross-transport idempotency tests. No runtime. |
 | 2026-07-24 | v2.11c | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): Live-schema boundary note hard-pinned `migrations 0000–0018, tail = 0018` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Dated provenance `origin/main`@`22c23aa` giữ nguyên verbatim. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v2.11b | **Reconcile 0014 merge-state:** current-state Live-schema boundary sửa → `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`, migrations 0000–0018, tail = 0018); provenance `origin/main`@`22c23aa` reframed thành historical marker (không xoá). Behavior claims (DD-39/DD-49/SessionService/retry chưa build) giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.11a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |

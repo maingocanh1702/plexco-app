@@ -1,13 +1,15 @@
 # Feature: Payment Reconciliation — Backend Tech Spec
 
 > **Canonical phase:** P3 (auto-reconcile) · P2 (manual mark-paid)
-> **Version:** 1.10 · 2026-07-19
-> **Status:** Implementation contract reconciled to TDD v3.1 / current decisions v1.67; B1/schema/code pending design-probe/build slices
-> **Implementation:** In progress — core matching/payments-logic đã có; wiring webhook→settle→notify chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Version:** 1.13 · 2026-07-28
+> **Status:** Reviewed contract; mirror DD-32/DD-91 `DECISION_FINAL` + regional availability boundary. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`; B1/runtime slices vẫn cần strict `CODE_READY`
+> **Implementation:** In progress — core matching/payments-logic + tenant-integrity migrations `0019`/`0020` đã có; wiring webhook→settle→notify, `remainingAmount`, `getSelfPaymentStatus` và chat `/pay` chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../feature_payment_reconcile.md`
-> **References:** `../../product/TDD.md` §3.2/3.6–3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-25/DD-40/DD-49/DD-51
+> **References:** `../../product/TDD.md` §3.2/3.6–3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-25/DD-32/DD-40/DD-49/DD-51/DD-91 · `feature_channel_booking_funnel_tech.md` · `../../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
 
 > **Cập nhật v1.8:** mọi ledger edge dùng composite FK để chứng minh cùng tenant; charge còn bind đúng session/player/membership và reversal bind đúng charge gốc. Migration upgrade phải backfill có kiểm chứng rồi fail-closed trên bất kỳ row lịch sử lệch scope nào.
+
+> **DD-91 + regional boundary (target, chưa runtime):** `payment_reconcile_auto` là commercial entitlement, không phải availability proof. Current provider/schema authority chỉ có `sepay|apipay` cho rail Việt Nam; webhook→settle→notify chưa build. Auto path phải require entitlement **và** proven provider/bank/market/currency/consent; missing/unknown fail-closed, trong khi `payment_mark_manual` vẫn dùng toàn cầu. Player-facing `/pay` là requester-only adapter của canonical `getSelfPaymentStatus`, không phải ledger writer/matcher mới.
 
 ---
 
@@ -26,6 +28,10 @@ webhook adapter
 ```
 
 Provider adapters never mark a player paid directly. Matching is pure proposal logic; ledger service is the only writer of allocations/charge status.
+
+Current adapters/contracts are only `sepay|apipay`. Do not treat the provider enum or Host Pro entitlement as a global provider abstraction: a future market/provider needs its own decision, currency/minor-unit contract and availability evidence before enablement.
+
+An exact channel-booking payment reference is a separate dispatch class. The generic name/date/amount reconciler must not claim it; after durable ingest, a dedicated job calls the channel-booking finalizer with the bank transaction ID.
 
 ---
 
@@ -147,13 +153,15 @@ Recommended indexes: pending/unmatched transaction by tenant/received time, open
 
 ### 2.1 Additive migration/upgrade contract
 
-Implement as a new migration after the current migration tail; do not rewrite already-applied `0002_tenants_core.sql`/`0003_payments_ledger.sql`. The migration runs as the schema migration owner with visibility over every tenant and is atomic:
+Live migration tail is `0024_public_visibility_capacity_check.sql` (`0000`–`0024`, 25 migrations). Same-tenant candidate keys/FKs across sessions/memberships/players/charges landed in `0019_tenant_integrity_fks.sql`; ledger-edge keys/FKs for bank accounts/transactions/allocations landed in `0020_ledger_tenant_integrity_fks.sql`. Reuse those exact live constraints. The stronger exact player/session/membership binding, B1 attested-transfer source and any remaining delta below require a **new monotonic migration after `0024`**; do not recreate equivalent keys or rewrite `0002`/`0003`/`0019`/`0020`.
+
+Before authoring that migration, diff §2.1 against `pg_constraint`/`packages/db/schema.ts`; omit any exact equivalent already landed. The remaining upgrade runs as the schema migration owner with visibility over every tenant and is atomic:
 
 1. Lock the seven affected tables against concurrent writes.
 2. Backfill only `charges.membership_id IS NULL` from the exact `players` row. Abort if the player is absent or its tenant/session does not equal the charge.
 3. Before adding constraints, abort on any historical mismatch: player↔session/membership; charge↔session/player/membership; bank transaction↔bank account; allocation↔transaction/charge; reversal↔original tenant/charge.
 4. Add/reuse the candidate keys shown above, add composite FKs as `NOT VALID`, validate every FK, then set `charges.membership_id NOT NULL`. Only after successful validation may the old scalar FKs be dropped.
-5. Update `packages/db/schema.ts`, DBML/ERD, RLS invariant inventory and migration tests in the same build slice. A docs-only update does not claim these runtime constraints already exist.
+5. Update `packages/db/schema.ts`, DBML/ERD, RLS invariant inventory and migration tests in the same build slice. A docs-only update does not claim the **remaining exact-binding/B1 delta** exists; constraints already landed in `0019`/`0020` remain runtime authority.
 
 Executable upgrade shape (constraint names are canonical; omit an `ADD` only when the exact candidate key already exists on the implementation base):
 
@@ -309,7 +317,7 @@ COMMIT;
 | Bước | Hành động | An toàn? |
 |------|-----------|----------|
 | 1 | Disable reconcile worker + mark-paid/allocation routes | ✅ |
-| 2 | Migration revert mới: DROP các composite FK/candidate key thêm ở §2.1, restore scalar FK cũ, DROP `charges.membership_id NOT NULL` | ✅ Constraint-only; dữ liệu backfill `membership_id` giữ nguyên (đúng theo player, vô hại) |
+| 2 | Migration revert mới: DROP **chỉ** exact-binding/B1 objects do future migration này thêm, restore scalar FK tương ứng và DROP `charges.membership_id NOT NULL`. Không drop/recreate constraint đã land trong `0019`/`0020` | ✅ Constraint-only; dữ liệu backfill `membership_id` giữ nguyên (đúng theo player, vô hại) |
 | 3 | Drop các bảng ledger baseline (`charges`/`bank_transactions`/`payment_allocations`/`bank_accounts`) | ❌ NEVER — bảng thuộc `0002`/`0003` đã apply, có thể chứa ledger thật |
 
 ---
@@ -385,6 +393,8 @@ Validation:
 
 After inserts, recompute/update `amount_allocated`, `unallocated_amount`, charge status and transaction reconcile status under the same transaction. Insert outbox events before commit.
 
+These writer aggregates are canonical inputs for person-self reads. No chat/Home/notification adapter may query allocation rows and re-derive a competing balance formula.
+
 Idempotency keys:
 
 - Webhook: `(tenant, provider, external_id)`.
@@ -396,7 +406,7 @@ Idempotency keys:
 
 ## 5b. Manual mark-paid (DD-40 ✅ — every tier)
 
-Host đánh dấu player **đã trả** thủ công — có ở **mọi tier** (capability `payment_mark_manual`), độc lập với auto-reconcile (`payment_reconcile_auto`, chỉ `host_pro`).
+Host đánh dấu player **đã trả** thủ công — có ở **mọi tier** và mọi market (capability `payment_mark_manual`), độc lập với auto-reconcile (`payment_reconcile_auto` là Host Pro entitlement nhưng vẫn cần availability gate riêng).
 
 - **Multi-select / tap:** host chọn **1 hoặc nhiều** player trong một kèo, chọn method **tiền mặt** (`cash`) hoặc **CK** — CK đã ingest thành một `bank_transactions` row (free tier không có webhook thì CK phải được ingest trước, hoặc dùng đường impl-mở bên dưới).
 - **Ledger write:** với mỗi charge được chọn, `ledger.applyAllocations` INSERT một `payment_allocations` **host-initiated** + cập nhật `charges.amount_allocated`/`status`:
@@ -407,7 +417,38 @@ Host đánh dấu player **đã trả** thủ công — có ở **mọi tier** (
 - **DD-25 preview + 2-pha confirm:** mark-paid là **human-initiated money mutation** → phải **preview** (danh sách player + method + tổng tiền) → **confirm** (single-slot fail-closed, DD-24) trước khi persist. Áp cho cả tap đơn lẫn multi-select.
 - **Idempotent:** một `commandId` cho cả batch (ghi `processed_commands`); retry trả kết quả cũ, không double-allocate. Mỗi (charge, commandId) chỉ tạo một allocation.
 - **Audit + confirm player:** ghi actor/method/reason; sau markPaid → outbox `payment.settled` → **xác nhận tự động tới player** (FR-6.2, `feature_notifications_reminders_tech.md`), best-effort, không chặn.
-- **Không** cần bank webhook; **không** đụng auto-matcher. Auto-reconcile CK (webhook match tên+tiền+ngày) vẫn là đường riêng (§3–§5), gated `payment_reconcile_auto` = `host_pro`.
+- **Không** cần bank webhook; **không** đụng auto-matcher. Auto-reconcile CK (webhook match tên+tiền+ngày) vẫn là đường riêng (§3–§5), gated bởi `payment_reconcile_auto` **và** proven provider/bank/market/currency/consent. Entitlement true nhưng availability unknown/false → auto absent, không degrade sang heuristic feed.
+
+---
+
+## 5c. Canonical person-self payment read (DD-91 target)
+
+```ts
+remainingAmount(amountDue, amountAllocated) =
+  Math.max(0, amountDue - amountAllocated)
+```
+
+- `remainingAmount` là primitive domain-neutral duy nhất. Existing `effectiveFee(OpenDebt)` giữ nhánh `fee == null → null`, sau đó delegate primitive với `paid_amount ?? 0`.
+- `getSelfPaymentStatus(authenticatedPerson, resolvedOwnClub)` thuộc Player View owner. Service validate authz, charge/allocation integrity và dependency trước khi trả `known_amount|known_zero|unknown`; chỉ proven full query mới trả `known_zero`.
+- `/api/me/charges`, Home composition, exact chat `/pay` và authenticated notification detail gọi cùng service/projection. Không consumer có formula/serializer money riêng.
+- Exact `/pay` được chat command registry intercept trước normal message/Assistant. Command response synchronous authenticated `Cache-Control: private, no-store`; zero result row/ref/SSE/outbox/push/history. Human DM resolve own eligible clubs one/many/none bằng opaque requester-bound ref, không raw tenant/person ID.
+- Đây là contract docs theo DD-91 `DECISION_FINAL`; primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng các primitive/service/route trên chưa tồn tại trong runtime và từng slice vẫn phải strict `CODE_READY`.
+
+---
+
+## 5d. Channel booking pay-now settlement port (DD-32 target)
+
+Payment Reconciliation remains the owner of bank evidence and allocations; `feature_channel_booking_funnel_tech.md` owns the pre-player intent/hold, capacity and atomic admission finalizer.
+
+1. Provider adapter verifies and durable-ingests `bank_transactions` plus its job, then commits before ACK.
+2. Dispatcher detects an exact, tenant/connector/currency-scoped booking reference. It marks that transaction for the booking-finalization class; the generic name/date/amount matcher cannot consume or allocate it.
+3. The ingest/dispatch transaction ends and releases every bank-row lock.
+4. A separate idempotent job calls `finalizeChannelBookingIntent(intentId, { bankTransactionId })`, which enters the Session-first lock order defined by the funnel spec.
+5. The finalizer rechecks hold cutoff against durable `received_at`, amount, account, currency, session quote/capacity and current identity before creating/reusing player, charge and allocation.
+
+Exact or overpayment may cover the full quote; allocate only `amount_due` and leave any remainder in canonical `unallocated_amount`. Underpayment does not create a temporary/partial charge because no canonical player exists yet. Late, wrong-reference, wrong-account/currency, revoked approval or restricted identity is retained as bank evidence and routed to manual review; it never revives a booking.
+
+Screenshot, QR display, “Tôi đã thanh toán” and host manual mark-paid are not proof for this first-time unlinked branch. If entitlement or provider/bank/market/currency/consent availability is unknown/false, no payment hold/reference is created and the adapter returns link/web alternatives.
 
 ---
 
@@ -423,6 +464,8 @@ Host đánh dấu player **đã trả** thủ công — có ở **mọi tier** (
 | Worker reconcile | System job | Auto allocations or unmatched reason (`host_pro`) |
 
 Manual request includes command ID and allocation array `{chargeId, amount}` (hoặc `playerIds` cho mark-paid multi-select). Server ignores tenant/actor supplied in body and derives both from auth context.
+
+> **Boundary:** `POST /api/chat/commands/execute` và `GET /api/me/charges` thuộc In-app Chat/Player View owners, không phải endpoint ledger mutation trong bảng này. Chúng chỉ đọc qua §5c; `/pay` không gọi matcher, không ghi allocation và không dùng Assistant entitlement.
 
 ### Request/Response Examples
 
@@ -501,10 +544,12 @@ Error codes: `INVALID_WEBHOOK_SECRET`, `ACCOUNT_MISMATCH`, `DUPLICATE_TXN` (200)
 ## 7. Concurrency and failure handling
 
 - Lock order: bank transaction → charges sorted by UUID → allocation being reversed.
+- Exact channel-booking transactions are excluded from the generic ledger path above. Their dedicated job releases ingest locks before entering the funnel's Session-first finalizer order; no code may hold a bank-row lock and call Session/Join.
 - Use short transactions; external notification never runs inside ledger transaction.
 - Worker retry is at-least-once and idempotent.
 - Sweeper finds old `pending` transactions with no live job and re-enqueues.
 - Suspended tenants always ingest; auto-settle/auto-notify are OFF fail-closed under DD-51/PAY-OQ-2. Enabling later requires a new decision + telemetry evidence.
+- Entitlement and availability are separate: `hasCapability('payment_reconcile_auto')` is necessary but insufficient. Current `sepay|apipay` contracts cover the Vietnam rail only; missing provider/bank/market/currency/consent blocks auto processing without blocking manual mark-paid.
 - Projector failure does not roll back settlement; outbox retries notification.
 
 ### Caching Strategy
@@ -550,6 +595,9 @@ Error codes: `INVALID_WEBHOOK_SECRET`, `ACCOUNT_MISMATCH`, `DUPLICATE_TXN` (200)
 - Concurrent auto/manual/cash cannot over-allocate.
 - **(DD-02) SePay `provider_code` ↔ content mismatch** (provider bóc code khác với code trong `content`/prefix/tenant) → **hard-unmatched** (fail-closed, không tự chọn bên nào); ApiPay (không có provider code) → chỉ dựa content resolver.
 - **Mark-paid (DD-40):** tiền mặt → allocation `source='cash'`+`created_by`, không tạo bank txn giả; CK → allocation `source='manual'` khớp một `bank_transactions` row; enum không có `bank_transfer`; multi-select batch idempotent theo `commandId` (retry không double); DD-25 preview→confirm bắt buộc; markPaid → 1 confirm intent tới player.
+- **Entitlement × availability:** Host Pro entitlement true nhưng provider/bank/market/currency/consent unavailable/unknown → zero auto allocation/notify, stable unavailable result; manual mark-paid vẫn hoạt động. Free/VN/non-VN cases không được suy từ `plan_key` hoặc provider enum đơn lẻ.
+- **DD-91 parity/privacy:** cùng own-club snapshot qua `/api/me/charges`, Home, exact `/pay`, notification detail → same `SelfPaymentStatus`; dependency/integrity fault → `unknown`, never zero. Human-DM peer/shared history receives zero command/picker/result artifact; command path creates no allocation/chat row.
+- **DD-32 pay-now dispatch:** exact booking reference is reserved from generic matcher; ingest commits/releases first, then dedicated job invokes finalizer. Exact settlement creates one player/charge/allocation; overpay leaves remainder unmatched; underpay/late/wrong-account-or-currency/revoked/restricted creates no active booking. Duplicate and link-vs-payment races remain single-terminal/idempotent.
 - **B1 attested transfer:** before migration → `ATTESTED_TRANSFER_UNSUPPORTED`; after migration → dedicated source, NULL bank txn, actor+opaque evidence; never synthetic bank transaction or `cash|manual` fallback.
 - **DD-49 correction:** price up/down append obligation adjustment; refund reversal links original allocation; carry-over rejoin creates no financial row. Refunded rejoin creates one idempotent lifecycle **only with active outcome**; full→waitlisted creates none until activation. Unknown state fails closed. Every assertion reads the canonical balance helper.
 - Partial, overpay, multi-charge and multi-person manual allocation totals.
@@ -571,10 +619,10 @@ Webhook → durable ACK and reconcile → settled p99 targets from TDD; burst te
 
 ## 9. Rollout and monitoring
 
-1. Add ledger tables/RLS/indexes.
+1. Reuse baseline ledger tables plus landed `0019`/`0020` tenant-integrity constraints; author only the verified remaining B1/exact-binding delta after live tail `0024`.
 2. Backfill/import tenant #1 with explicit legacy provenance.
 3. Shadow ingest provider payload without auto-allocation; compare matcher proposals.
-4. Enable auto-match for calibrated safe cases.
+4. Enable auto-match for calibrated safe cases only after entitlement **and** exact provider/bank/market/currency/consent availability gates pass; current Vietnam provider path is not runtime proof.
 5. Enable manual/cash/reversal commands.
 6. Cut webhook and monitor unmatched/duplicate/error rates.
 
@@ -591,6 +639,7 @@ Metrics: durable ACK latency, reconcile lag, auto-match rate by policy version, 
 - [ ] Composite parent keys/FKs match §2.1; upgrade and cross-tenant/cross-session negative tests pass.
 - [ ] Tenant isolation and authorization tests pass.
 - [ ] Product acceptance criteria in `../feature_payment_reconcile.md` pass.
+- [ ] DD-32 exact-reference dispatch and funnel-finalizer integration tests pass without lock inversion or generic matcher claim.
 
 ---
 
@@ -598,6 +647,9 @@ Metrics: durable ACK latency, reconcile lag, auto-match rate by policy version, 
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-28 | v1.13 | Reconcile immutable authority `90d292d` and primary plan v1.8 `PLAN_READY`; retain B1/per-slice `CODE_READY`, regional availability and no-runtime boundaries. |
+| 2026-07-28 | v1.12 | Mirror DD-32 pay-now boundary: exact booking references bypass generic matcher; durable ingest releases bank locks before a dedicated job enters the funnel Session-first finalizer. Pin exact/over/under/late evidence, single player/charge/allocation and no screenshot/manual-attest bypass. No runtime claim. |
+| 2026-07-27 | v1.11 | Sync local DD-91 `DECISION_FINAL` while primary-surface plan remains `NOT_PLAN_READY`: add canonical `remainingAmount`/`getSelfPaymentStatus` read boundary, exact requester-only `/pay` no-LLM/no-persistence contract and parity/privacy tests; no new ledger writer. Separate `payment_reconcile_auto` entitlement from provider/bank/market/currency/consent availability; current authority only `sepay|apipay` Vietnam rail and auto runtime remains absent, manual global. Reconcile live tail `0024` plus landed tenant-integrity migrations `0019`/`0020`; remaining B1/exact-binding delta must reuse live constraints in a later monotonic migration. |
 | 2026-07-19 | v1.10 | **Template v2.30/v2.33 uplift (pilot #2):** thêm §2.2 Rollback (atomic abort + revert constraint-only + NEVER drop baseline), §6 Request/Response Examples (DD-60 envelope) + bảng Idempotency (tham chiếu §5), §7 Caching Strategy + Security Checklist (map về §3/§5/§6/§9; retention → security_operations). Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v1.9a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
 | 2026-07-19 | v1.9 | **DD-49 timing mirror:** refunded rejoin appends an idempotent lifecycle only when active; full→waitlisted defers until activation. No duplicate `charges` row or runtime change. |

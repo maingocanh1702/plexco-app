@@ -1,11 +1,11 @@
 # Feature: Zalo Player Channel — Backend Tech Spec
 
 > **Canonical phase:** P4.7  
-> **Version:** 2.6b · 2026-07-24
-> **Status:** Reviewed · reconciled to decisions v1.67/DD-15/DD-45/DD-49/DD-67
+> **Version:** 2.7 · 2026-07-28
+> **Status:** Reviewed · reconciled to DD-15/DD-32/DD-45/DD-49/DD-67
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_zalo_channel.md`
-> **References:** `../../standards/decisions.md` DD-15/DD-45/DD-49/DD-67 · `../feature_connector_onboarding.md` BL-SEC-1 secret lifecycle · `feature_cross_club_join_tech.md` shared join outcomes
+> **References:** `../../standards/decisions.md` DD-15/DD-32/DD-45/DD-49/DD-67 · `../feature_connector_onboarding.md` BL-SEC-1 secret lifecycle · `feature_channel_booking_funnel_tech.md` · `feature_cross_club_join_tech.md`
 > **⚠️ Live-schema boundary:** live `channel_identities` vẫn là key **2-phần** `(platform, platform_user_lookup_hash)` và `channel_reachability` PK `(person_id, tenant_id, platform)`. Mô hình endpoint-scoped DD-67 (3-phần `provider_scope_lookup_hash`, reachability theo `channel_identity_id`) là **target**, cần migration mới land trước runtime. `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`; verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số), nên slice Zalo vẫn phải sync mọi prerequisite đã merge rồi chọn **next available monotonic number** sau tail đã merge, không hardcode/pin một số cố định và không sửa migration lịch sử. Live `zalo_bots` đã có lifecycle mới ở `0004` và RLS tenant-private ở `0009`, nhưng vẫn còn legacy `secret text`; cột này **không đạt BL-SEC-1**. Target DDL dưới thay nó bằng `webhook_secret_enc`; forward migration phải KMS-encrypt/backfill hoặc vô hiệu hóa connector chưa backfill được trước khi runtime Zalo được bật.
 
 ---
@@ -15,7 +15,8 @@
 ```text
 Webhook (opaque token → bot/tenant) → Verify provider secret
     → Normalize stable event/user IDs → Update dedup
-    → Identity/Domain Service (shared) → Outbox → Delivery
+    → session detail projection → shared channel-booking decision/finalizer
+    → canonical Identity/Session/Payment owners → Outbox → Delivery
 ```
 
 Bot-per-club model: webhook path token resolves bot endpoint/default tenant. Provider payload is NOT tenant authority. Identity lookup uses domain-separated HMACs for bot/OA scope and `from.id`; target tenant/action still re-authorize separately.
@@ -61,6 +62,8 @@ ALTER TABLE zalo_reply_contexts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE zalo_reply_contexts FORCE ROW LEVEL SECURITY;
 ```
 
+`channel_booking_intents` and its hold/payment-reference constraints are owned by `feature_channel_booking_funnel_tech.md`. The Zalo slice reuses that table/service and must not add a transport-specific intent, capacity counter, charge or payment ledger.
+
 `webhook_token` chỉ là random opaque locator trong URL; nó không thay cho provider verification secret. Handler resolve row theo token dưới narrow endpoint resolver, decrypt `webhook_secret_enc` qua KMS, so sánh header bằng constant-time compare rồi xóa secret khỏi memory sớm nhất có thể. Migration forward thực hiện theo thứ tự: add nullable encrypted column → application/KMS backfill legacy `secret` → connector không backfill được chuyển `error` và bắt owner reconnect → add/validate CHECK buộc mọi row có thể nhận webhook (`registered|active|drift`) phải có ciphertext → drop legacy `secret`. `connecting` có thể giữ NULL trong khi setup nhưng chỉ được nhận traffic sau khi ciphertext tồn tại; verified early event CAS `connecting→active`, và register finalization phải preserve `active`. `error|revoked` không nhận traffic. Không có dual-read plaintext sau cutover.
 
 ### Migration & Rollback
@@ -92,7 +95,7 @@ Chọn **next available monotonic number** sau khi sync mọi prerequisite đã 
 | 3 | Data Integrity | Number out of range | "Số không hợp lệ" |
 | 4 | Security | Forged/unknown webhook | Reject — narrow KMS decrypt + timing-safe verify; no plaintext fallback |
 | 5 | Concurrency | Replayed event | Update dedup — idempotent |
-| 6 | Concurrency | Concurrent first-entry number replies last slot | Shared service locks session: first active+exactly-one-charge, second waitlisted/no-charge/no-venue |
+| 6 | Concurrency | Concurrent final-confirm replies at last slot | Shared occupancy locks session and counts active + live holds; exactly one holds/occupies, second waitlisted/no-charge/no-venue |
 | 7 | Security | Bot token in logs | ❌ NEVER — KMS encrypted, log redaction |
 | 8 | Data Integrity | Webhook drift (URL changed) | Hourly `getWebhookInfo` — alert on drift |
 | 9 | Security | DM reachability cross-club/bot | Scoped exact `channel_identity_id` bound bot/OA; independent; target tenant re-authorized |
@@ -100,6 +103,12 @@ Chọn **next available monotonic number** sau khi sync mọi prerequisite đã 
 | 11 | Security | Free numeric message without context | NEVER execute join — require active context |
 | 12 | Data Integrity | Token rotation overlap | Support overlap period before revoke |
 | 13 | Financial | Existing player `left` join lại | Emit shared join payload; render canonical DD-49 outcome. Only pass through `REJOIN_REQUIRES_REVIEW` for unknown/unimplemented disposition; no adapter ledger logic |
+| 14 | Identity | Exact Zalo identity lacks qualified Account link | Browse remains available; paid final confirm returns link-or-pay, never pay-later |
+| 15 | Payment | Settlement capability unavailable/unknown | No payment hold/reference/QR; return link/web alternatives |
+| 16 | Concurrency | Link resume races payment event | One shared intent/finalizer terminal result; duplicate callbacks re-read |
+| 17 | Financial | Under/over/late pay-now | Under/late no active; over allocates amount due only and leaves remainder unmatched |
+| 18 | Fairness | Promotion hold expires | Shared funnel releases slot, audits and requeues tail once; adapter only renders |
+| 19 | Delivery | Payment display reject vs timeout | Definite reject reports cancel-undelivered; ambiguous timeout keeps resumable hold to TTL |
 
 ---
 
@@ -110,9 +119,10 @@ Chọn **next available monotonic number** sau khi sync mọi prerequisite đã 
 | Command | Auth | Mô tả |
 |---------|------|-------|
 | `/join` | Player DM | List open sessions |
-| Number reply | Player DM | Join selected session |
+| Number reply: session selection | Player DM | Resolve opaque context → shared safe session detail; no mutation |
+| Number reply: final booking | Player DM | Resolve second context → shared channel-booking funnel |
 | `/me` | Player DM | Personal summary |
-| `/pay` | Player DM | Payment instructions |
+| `/pay` | Player DM | Existing canonical debt/payment instructions; not a new pay-now booking intent |
 | `/leave` | Player DM | Leave session |
 
 ### Join/Error Responses (Zalo DM)
@@ -121,6 +131,9 @@ Chọn **next available monotonic number** sau khi sync mọi prerequisite đã 
 |-----------|----------|
 | Stale list | "Danh sách đã thay đổi, gõ /join để xem lại" |
 | Invalid number | "Số không hợp lệ — chọn từ 1 đến N" |
+| Session detail | Time + public area + fee + confirmed count + slots |
+| Paid final gate | “1. Liên kết Plexco — giữ chỗ, trả sau”; “2. Thanh toán & giữ chỗ 15 phút” only when available |
+| Awaiting payment | Exact safe payment display + expiry; “đã trả” only polls |
 | Active | "✅ Đã tham gia [session]! [venue]" |
 | Waitlisted | "⏳ Bạn đang ở vị trí N" (không venue/QR) |
 | Existing active/waitlisted | Render current state idempotently |
@@ -142,8 +155,8 @@ Chọn **next available monotonic number** sau khi sync mọi prerequisite đã 
 | Interface | Idempotent? | Cơ chế |
 |-----------|-------------|--------|
 | Webhook event ingest | ✅ | Provider event ID dedup — replay update dedup, không side-effect mới (edge #5, test 11) |
-| Number-reply consume | ✅ single-use | Lock context → validate person/bot/tenant/version/TTL → consume (`consumed_at`); stale/replay reject (§4) |
-| Join qua shared service | ✅ | Existing active/waitlisted render current state idempotently; final-slot race cho đúng một active + exactly-one-charge (edge #6, DD-45/DD-49) |
+| Number-reply consume | ✅ single-use | Lock context → validate channel identity/bot/tenant/version/TTL → consume (`consumed_at`); stale/replay reject (§4) |
+| Booking intent/finalizer | ✅ | Deterministic intent + command id; terminal/current state replay returns same canonical outcome |
 | `connecting→active` flip + analytics | ✅ | CAS đúng một lần; register finalization preserve `active`; analytics 1 lần (tests 25–26) |
 | Outbound delivery | — | Thuộc sync engine (`feature_sync_engine_tech.md`): logical notification key + delivery ledger |
 
@@ -154,14 +167,18 @@ Chọn **next available monotonic number** sau khi sync mọi prerequisite đã 
 ### Number-reply Context
 
 ```text
-/join → Create ordered list (session IDs + version + TTL)
-Player replies "2" → Lock context → Validate:
+/join → Create ordered list (opaque session refs + version + TTL)
+Player replies "2" → Lock list context → Validate:
   - Same person? Same bot/tenant? Version match? Not expired?
-  → YES: Consume context → resolve session → domain join service
+  → YES: Consume context → resolve session → render shared safe detail
+Player replies "1" to “Đăng ký” → Lock confirm context → Validate again
+  → YES: Consume context → shared channel-booking decision/finalizer
   → NO: Reject with appropriate message
 ```
 
 Before resolving Person, compute `provider_scope_lookup_hash=HMAC("channel-scope:zalo:"+bot_or_oa_id)` and `platform_user_lookup_hash=HMAC("channel-user:zalo:"+from.id)`. Lookup uniqueness is the three-part channel key; never use raw `from.id` alone or assume it is global across bots (DD-15).
+
+The adapter renders only the funnel's tagged outcomes. Link handoff consumes once and resumes the same intent; pay-now uses the shared 15-minute hold and durable exact payment evidence. QR, screenshot or “đã trả” never writes booking/payment state.
 
 ### Token Operations
 
@@ -202,13 +219,13 @@ Before resolving Person, compute `provider_scope_lookup_hash=HMAC("channel-scope
 | 1 | Webhook routes correct tenant | Valid webhook token | Correct tenant |
 | 2 | Forged webhook rejected | Unknown token | Rejected |
 | 3 | /join lists sessions | Open sessions exist | Numbered list |
-| 4 | Valid number reply | "2" with active context | Joined session 2 |
+| 4 | Valid list number reply | "2" with active context | Safe detail for session 2; no player/charge |
 | 5 | Stale number reply | Expired context | "Danh sách đã thay đổi" |
 | 6 | Wrong person reply | Different person | Rejected |
 | 7 | Wrong bot reply | Different bot/tenant | Rejected |
 | 8 | Number out of range | "99" | "Số không hợp lệ" |
 | 9 | Free numeric no context | "3" without /join | No action |
-| 10 | Concurrent first-entry final slot | 2 replies same slot | One active+exactly-one-charge; one waitlisted/no-charge with positive position |
+| 10 | Concurrent final slot | Linked confirm + unlinked pay-now confirm | One active/live hold occupies; one waitlisted; no oversubscription |
 | 11 | Event replay | Same event ID | Idempotent |
 | 12 | Reachability set | First interaction | Reachable |
 | 13 | Reachability isolated | Same `from.id`, two bot/OA endpoints | Two endpoint-bound identities/reachability rows; no token/window reuse |
@@ -225,6 +242,12 @@ Before resolving Person, compute `provider_scope_lookup_hash=HMAC("channel-scope
 | 24 | Webhook secret persistence | Connect/rotate Zalo credential | DB/log/API contain ciphertext/redacted metadata only; no raw header or plaintext secret |
 | 25 | Legacy secret cutover | Legacy row can/cannot be KMS-backfilled | Encrypt then drop plaintext; unprovable row becomes `error`; receiver accepts only `connecting|registered|active|drift` with ciphertext |
 | 26 | Early event vs registration | Signed event arrives after `setWebhook` but before register finalization | Event CAS sets `active`; finalization writes metadata without downgrading; analytics once |
+| 27 | Browse without Account link | Exact unlinked channel identity | Safe time/area/fee/counts; no mutation |
+| 28 | Final gate matrix | free/full/approval/paid-linked/paid-unlinked | Same tagged outcomes as shared decision table |
+| 29 | Link resume | valid/wrong OA/replay/changed quote | Valid resumes once; invalid fails; changed quote reconfirm |
+| 30 | Pay-now evidence | exact/over/under/late/wrong account/currency | Exact active once; over remainder unmatched; others no active |
+| 31 | Provider unavailable | entitlement/availability unknown | No hold/reference/QR; link/web only |
+| 32 | Payment display delivery | Definite reject vs timeout after hold commit | Reject cancels only if no evidence/claim; timeout keeps hold resumable |
 
 ### Integration Tests
 
@@ -236,6 +259,9 @@ Before resolving Person, compute `provider_scope_lookup_hash=HMAC("channel-scope
 | 4 | Drift detection | Change URL → wait | Alert within 1h |
 | 5 | Secret migration E2E | Upgrade legacy `secret` row | KMS ciphertext verifies webhook; plaintext column/value is absent after cutover |
 | 6 | Registration race E2E | Pause finalization, deliver signed event, resume | Final state remains `active`; exactly one domain delivery/analytics event |
+| 7 | Zalo funnel parity | Run shared fixtures through number-reply adapter | Domain outcomes equal Messenger; rendering only differs |
+| 8 | Link/payment race | Concurrent callbacks + duplicate provider event | One terminal booking/player/charge/allocation |
+| 9 | Promotion hold expiry | Waitlisted unlinked paid candidate | Release + requeue tail once; next selector runs |
 
 ---
 
@@ -246,7 +272,7 @@ Before resolving Person, compute `provider_scope_lookup_hash=HMAC("channel-scope
 1. Land forward migration for endpoint identity/reachability and `webhook_secret_enc`; KMS-backfill or disable every legacy plaintext-secret connector, then drop `secret`.
 2. Sandbox bot testing with narrow decrypt/timing-safe verification and no secret in DB/log/API output.
 3. Tenant #1 optional connection.
-4. Join-only commands.
+4. Browse + DD-32 final-gate commands through shared funnel.
 5. Reminders/confirmations.
 6. Beta clubs.
 
@@ -255,6 +281,7 @@ Before resolving Person, compute `provider_scope_lookup_hash=HMAC("channel-scope
 - Webhook validity / lag
 - Reply-context expiry rate
 - Join result distribution
+- Booking gate/hold/settlement/expiry result distribution
 - Outbound failure / rate-limit
 - Drift detections / token rotations
 
@@ -262,6 +289,7 @@ Before resolving Person, compute `provider_scope_lookup_hash=HMAC("channel-scope
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v2.7 | Mirror DD-32 Option D: number selection becomes safe detail, second context enters shared link-or-pay funnel; add qualified Account link, verified-payment hold, provider fail-closed, race/fairness tests and thin-adapter boundary. No runtime claim. |
 | 2026-07-24 | v2.6b | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): Live-schema boundary note hard-pinned `tail = 0018, migrations 0000–0018` + numbering guidance `(0018)` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v2.6a | **Reconcile 0014 merge-state:** current-state Live-schema boundary sửa → `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`, migrations 0000–0018, tail = 0018), trước ghi "hiện chỉ ở nhánh feat/session-waitlist-expand, chưa merge". Migration-numbering guidance giữ nguyên (sync merged prerequisites → next available monotonic number sau tail đã merge, không hardcode/sửa lịch sử), chỉ đổi justification. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v2.6 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `0004`/`0009` reuse; new = `webhook_secret_enc` + DD-67 endpoint identity), §3 Request/Response Examples + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |

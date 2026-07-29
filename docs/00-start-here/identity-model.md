@@ -14,6 +14,8 @@
 > · **Zalo Login** (DD-14 ⬜). **DD-50:** phase-1 không thu SĐT; strong proof cho claim có tiền = verified account email hoặc transactional one-time `link_code`. Phone fields giữ dormant. Xem §7 matrix.
 > **DD-15/DD-65..68 (decisions v1.47):** channel identity/reachability luôn scoped theo provider endpoint. Messenger scope = Page; Zalo scope = bot/OA cho tới khi DD-15 chứng minh rộng hơn. Reachability gắn `channel_identity_id`, không thu gọn thành `(person,tenant,platform)`.
 > **DD-50/DD-70(a) (decisions v1.73):** `link_code` consume read-only resolves candidate, locks issuer/account+Person parent before the code row, then revalidates/conditionally consumes; it emits no notification. Merge commit inventory/fence/revalidate bounded source+survivor rồi append `identity_merged` từ locked `merge_audit` trong cùng transaction; tenant outbox không phải global fallback.
+>
+> **DD-32 note (28/07/2026):** browse session trên Messenger/Zalo không cần Account. Pay-later chỉ khi exact endpoint-scoped ChannelIdentity và một active Account có verified account identity cùng resolve về current canonical Person. `/link`, cùng provider/display name, PSID hay Zalo `from.id` riêng lẻ không đủ.
 
 ---
 
@@ -41,6 +43,9 @@
    xử lý bằng flow merge/unlink có audit.
 8. **PII và raw provider IDs không nằm trong log/event/public projection.** Raw phone,
    email, platform id, OTP/code chỉ được lưu dạng encrypted/hash theo purpose.
+9. **Linked-for-deferred-payment là predicate hẹp, không phải “đã từng link”.** Booking
+   re-resolve exact ChannelIdentity → current Person và Account-backed verified identity
+   ở finalizer; merge/freeze/conflict hoặc binding drift đều fail-closed.
 
 ---
 
@@ -171,6 +176,9 @@ Invariant: một active/guest membership cho một `(tenant_id, person_id)`.
 - Người dùng nhập code ở Channel B hoặc web/app.
 - Service verify code, tạo merge plan, yêu cầu confirmation rõ ràng nếu thay đổi Person.
 - Commit chỉ xảy ra trong transaction có lock/audit.
+- Với booking handoff DD-32, token/link callback còn bind exact channel identity + endpoint +
+  session/action/intent. Consume single-use chỉ hoàn tất identity binding; booking service
+  sau đó re-resolve qualified Account predicate và live session/quote trước khi resume.
 
 Không dùng SĐT hoặc tên làm điều kiện bắt buộc để link bot. Nếu provider API thay đổi và
 cấp thêm signal, signal đó vẫn phải được verify riêng trong adapter trước khi dùng.
@@ -204,6 +212,8 @@ Yêu cầu:
 - Verify transaction resolves candidate read-only, locks canonical issuer/account + current Person parent before the exact code row, revalidates binding, then rejects expired/consumed/revoked/locked before atomic attempt accounting or single-use consume. Reset/revoke-vs-consume must follow the same order and has barrier tests.
 - Error generic: không tiết lộ code/person/channel có tồn tại.
 - Code chỉ tạo quyền lập merge proposal; merge commit cần confirmation và conflict checks.
+- Code/link success tự nó không cấp quyền pay-later; quyền đó chỉ xuất hiện sau khi resulting
+  ChannelIdentity và verified Account cùng current Person vượt predicate DD-32 tại finalizer.
 
 ---
 

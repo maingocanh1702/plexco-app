@@ -1,6 +1,9 @@
+<!-- review-readiness: enforce -->
 # Session Management — Acceptance Checklist (issue-ready, source-traced)
 
-> **Version:** 1.1 · 2026-07-24
+> **Version:** 1.2 · 2026-07-28
+> **Machine classification:** `enforce`
+> **Review policy:** 1.3
 
 > **Purpose.** Convert the acceptance criteria + Definition-of-Done already written in the two Session
 > Management specs into a source-traced, issue-ready checklist a host/founder can paste into a tracker
@@ -16,25 +19,25 @@
 
 | Key | File | Version / status |
 | --- | --- | --- |
-| **P** | `docs/features/feature_session_management.md` (Product / UX) | v2.13a · 2026-07-24 · **Reviewed** |
-| **T** | `docs/features/BE/feature_session_management_tech.md` (Backend Tech) | v2.14c · 2026-07-24 · **Reviewed** |
+| **P** | `docs/features/feature_session_management.md` (Product / UX) | v2.17 · 2026-07-28 · **Reviewed** |
+| **T** | `docs/features/BE/feature_session_management_tech.md` (Backend Tech) | v2.18a · 2026-07-28 · **Reviewed** |
 
 - **Origin:** `docs/product/ROADMAP.md` → Next Actions **#3** ("Review/sign-off feature specs của phase sắp
   build; **chuyển acceptance criteria thành issue checklist**").
-- **Feature status (both specs):** `Implementation: Not started` — migration `0014_players_waitlist`
-  (waitlist **schema only**) is **merged on `main`** at `1a6ac38` (verify tail hiện hành tại
-  `packages/db/migrations/`, không hard-pin số — tail was `0000–0018` at the 2026-07-23 reconciliation below;
-  current tail also carries `0019`/`0020` tenant-integrity composite FKs, DD-68, unrelated to waitlist); the
-  waitlist **behaviour** (auto-promote, retry) is still **unbuilt**. Both spec headers and `P §7 SES-OQ-3`
-  state this (reconciled `P` v2.12b / `T` v2.13a, 2026-07-23; verified on-disk this slice), designating
-  `docs/standards/BUILD-STATUS.md` as the implementation-status authority. This is a **pre-build** acceptance
-  checklist. See [§9](#9-unresolved--needs-spec-fail-closed).
-- **Cross-feature references (publish rows only):** the publish billing-suspend row (§1) additionally cites
-  `docs/features/BE/feature_billing_lifecycle_tech.md` §3 (status-authority) and §5 (`U#36`/`U#36a`
-  competing-writer tests, v2.8d); the Result section's publish-retrace note also cites `docs/product/PRD.md`
-  v2.8g FLOW 2 (public-projection timing). Both are owned/authoritative in their own specs and are cited here
-  only for that cross-reference — **P/T above remain the sole primary source for this checklist's acceptance
-  criteria**; no other feature is traced end-to-end in this document.
+- **Feature status (both specs):** `Implementation: Not started` for SessionService/routes/projectors and
+  waitlist/channel-booking behaviour. DB substrate `0014` (waitlist), `0019` (same-tenant integrity) and
+  `0024` (public finite-capacity CHECK) is merged, but DD-45a's partial unique position fence and DD-32's
+  `channel_booking_intents`, shared occupancy helper, account predicate, verified-payment finalizer and
+  expiry/requeue integration are **not** implemented. This is a **pre-build** acceptance checklist over the
+  uncommitted Product v2.17 / Tech v2.18a working-tree contract; `docs/standards/BUILD-STATUS.md` remains the
+  implementation-status authority. See [§9](#9-unresolved--needs-spec-fail-closed).
+- **Cross-feature references (pointer-only):** publish billing suspension additionally cites
+  `docs/features/BE/feature_billing_lifecycle_tech.md` §3/§5; positive public materialisation cites
+  `docs/features/BE/feature_marketplace_discovery_tech.md`; DD-32 final-slot/settlement/projection branches
+  cite `docs/features/feature_channel_booking_funnel.md` and
+  `docs/features/BE/feature_channel_booking_funnel_tech.md` integration tests #1/#3/#8. These owning specs
+  are not retraced end-to-end here. **P/T above remain the sole primary sources for the Session inventory**;
+  cross-feature tests prove the delegated branches named explicitly below.
 
 ## How to read a row
 
@@ -46,7 +49,7 @@
 - `P §1·INV` — Product §1 "Bất biến" (invariants).
 - `P UC-n` — Product §2 use case `SES-UC-n`.
 - `P E#n` — Product §2 edge case #_n_.
-- `P AC#n` — Product §6 acceptance criterion #_n_ (numbered 1–20, top→bottom).
+- `P AC#n` — Product §6 acceptance criterion #_n_ (numbered 1–29, top→bottom).
 - `P §5·EV` — Product §5 analytics event.
 - `T BE#n` — Tech §2 Backend edge case #_n_.
 - `T U#n` / `T I#n` — Tech §5 unit / integration test #_n_.
@@ -70,8 +73,10 @@ _Principles from `P §1·INV`; each is verified concretely by the referenced are
       `T §1` (single shared domain service); verified §1 + `T I#2`
 - [ ] Every session is bound to `tenant_id` as the **RLS choke-point** — src: `P §1·INV`; `T §2`
       (`sessions.tenant_id NOT NULL`, `ENABLE`+`FORCE` RLS); verified §5
-- [ ] **Capacity is never exceeded** — concurrent join / capacity-change lock the session row — src:
-      `P §1·INV`; verified §3 (`P AC#5`, `T BE#1`/`#14`)
+- [ ] **Admission capacity is never exceeded** — every join, payment-hold, expiry/promotion and
+      capacity-change locks the session row and reads one occupancy helper:
+      `active players + unexpired channel payment holds`; waitlisted rows and account-link-only intents do
+      not occupy — src: `P §1·INV`; verified §3 (`P AC#5`/`#6`, `T BE#1`/`#14`/`#16`)
 - [ ] A **price change after any charge exists** requires preview + an explicit policy — no silent mutation
       — src: `P §1·INV`; verified §1 (`P AC#10`, `T BE#4`)
 - [ ] **Venue detail** (name, phone, map) is shown **only** when the canonical player outcome is `active`;
@@ -140,7 +145,7 @@ _Principles from `P §1·INV`; each is verified concretely by the referenced are
       machine); `T I#1`
 - [ ] Host publishes a `draft` session to `open` via a **distinct `PublishSession` command** (chat + web, same
       shared service) — status-only, does **not** change `visibility`; only Host (`session.manage`) may call
-      it — src: `P SES-UC-12`, `P AC#15`; `T §4` (Publish transition), `T BE#21`, `T §3`
+      it — src: `P UC-12`, `P AC#15`; `T §4` (Publish transition), `T BE#21`, `T §3`
       (`POST /api/sessions/:id/publish`), `T U#40`
 - [ ] Publish surfaces on **bot** (single-action lệnh/callback "Đăng kèo" on a draft, no wizard) and on **web**
       (Publish button on draft detail + confirm dialog); both invoke the same `PublishSession` command and map
@@ -173,6 +178,39 @@ _Principles from `P §1·INV`; each is verified concretely by the referenced are
       serialize with the job (it locks `subscriptions`) and would not actually close the race — src: `P E#19`,
       `P AC#19`; `T BE#24`, `T §4` (step 6 + "Billing suspension" blockquotes), `T U#46`; competing-writer race
       closed by billing test #36 / test #36a (`feature_billing_lifecycle_tech.md` §5, cross-feature)
+- [ ] Host discards a verified-empty unpublished `draft` through the existing `CancelSession` transition:
+      `draft → cancelled`, bump `version`, emit exactly one `session.cancelled` with
+      `cancel_reason='manual'`; source `draft` has no past-time guard and only `session.manage` may mutate —
+      src: `P UC-13`, `P E#20`, `P AC#21`; `T BE#25`, `T U#49`, `T U#50`
+- [ ] `CancelSession.expectedVersion` is mandatory on every real `draft|open → cancelled` mutation; omitted
+      or mismatched after a concurrent publish/edit returns `STALE_VERSION` with zero mutation — src:
+      `P E#21`, `P AC#23`; `T BE#26`, `T U#51`, `T U#58`
+- [ ] Cancelling an already-`cancelled` session remains an idempotent no-op without a version match, while a
+      `closed` session is rejected `SESSION_NOT_OPEN` — src: `P E#20`, `P AC#24`; `T BE#27`, `T U#52`,
+      `T U#53`
+- [ ] The draft-only no-past guard does not leak to an `open` session: cancelling `open` with
+      `starts_at <= now()` is still rejected `SESSION_NOT_OPEN` with zero mutation — src: `P E#24`,
+      `P AC#22`; `T BE#31`, `T U#61`
+- [ ] A `draft` carrying any player/charge anomaly is never silently discarded or auto-expired. Host
+      discard returns the existing `CANCEL_REQUIRES_REVIEW`; background expiry leaves the row `draft` and
+      emits `session.expiry_anomaly_detected` on every detection. Consumer-level owner alert dedupe is
+      separate — src: `P E#23`, `P AC#25`/`#28`; `T BE#28`, `T U#59`, `T U#60`
+- [ ] The owner-alert consumer coalesces repeated `session.expiry_anomaly_detected` events by `session_id`
+      so repeated auto-expiry detection does not spam the owner. The implementation packet may choose the
+      exact consumer/storage mechanism, but must include a cross-tick duplicate-event integration test —
+      src: `P AC#28`; `T BE#28`, `T §4` (Events + Draft cleanup). `T U#60` intentionally covers event
+      append-only truth only and does not satisfy this consumer test.
+- [ ] Auto-expiry transitions only verified-empty `draft` rows with `starts_at <= now()` to `cancelled`
+      (`cancel_reason='auto'`, exactly one event); future drafts and all non-draft sessions remain unchanged —
+      src: `P UC-14`, `P E#20`, `P AC#26`; `T §4` (Draft cleanup), `T U#54`, `T U#55`
+- [ ] Overlapping auto-expiry runs use `FOR UPDATE SKIP LOCKED`; exactly one transition/event occurs and
+      tenant isolation remains fail-closed — src: `P E#22`, `P AC#27`; `T BE#30`, `T U#56`, `T I#8`
+- [ ] Auto-expiry racing `PublishSession` is deterministic under the shared session-row lock: job-first
+      makes publish observe `cancelled`; publish-first makes the job skip and never re-match the now-`open`
+      row; neither order double-transitions — src: `T BE#29`, `T U#57`
+- [ ] Draft-discard surfaces exist on bot (`Huỷ nháp`) and web (button + confirm), invoke the same
+      `CancelSession`, and render `SESSION_NOT_OPEN`, `STALE_VERSION` and
+      `CANCEL_REQUIRES_REVIEW` consistently — src: `P §3`, `P AC#29`; `T §3`
 
 ---
 
@@ -204,22 +242,30 @@ _Principles from `P §1·INV`; each is verified concretely by the referenced are
 
 ## 3. Waitlist & capacity (DD-45 / DD-49 + retry-liveness)
 
-- [ ] Concurrent capacity/join operations cannot over-fill — the session row is locked (first-commit-wins)
-      — src: `P AC#5`, `P E#4`; `T BE#1`/`#14`, `T U#11`, `T I#5`
+- [ ] Concurrent capacity/join/payment-hold operations cannot over-fill — the session row is locked and
+      shared occupancy (`active + unexpired holds`) is re-counted (first-commit-wins) — src: `P AC#5`,
+      `P E#4`/`#25`; `T BE#1`/`#14`/`#16`, `T U#11`, `T U#25`, `T I#5`; Funnel BE integration #1
+      (active-or-hold final-slot race, pointer-only)
 - [ ] Two first-entry players joining the last slot concurrently: exactly one becomes `active` (+ exactly
       one charge), the other becomes `waitlisted` with a positive position and no charge — src: `P E#4`;
       `T U#11`
-- [ ] Waitlisted players occupy **no capacity**, are never shown venue, and create **no charge /
-      new-obligation** — src: `P AC#6`; `T §0` (DD-45/DD-49 contract), `T §4·WE`
+- [ ] A waitlisted row itself occupies **no capacity**, is never shown venue, and creates **no charge /
+      new-obligation**. The only exception in occupancy is a separate live DD-32 payment hold associated
+      with a paid-unlinked promotion candidate; the candidate row remains waitlisted — src: `P AC#6`,
+      `P E#26`; `T §0` (DD-32/DD-45/DD-49 contract), `T §4·WE`, `T §4·WP`
 - [ ] Waitlist rows satisfy the state-shape invariant: `status='waitlisted' ⇔ waitlist_position IS NOT NULL`
       and `waitlist_position > 0`; `active`/`left` carry no position — DB CHECK rejects violations — src:
       `T §2` (`players_waitlist_shape_chk`, `players_waitlist_position_positive_chk`), `T BE#13`
-- [ ] Promotion first-activation creates **exactly one charge** (assert-no-charge, then a single insert,
-      atomic with activation) — src: `P AC#6`; `T §4·WP` (step 9), `T U#22`
-- [ ] A leave or capacity increase fills every available slot in total order
-      (`waitlist_position, joined_at, id`); finite→unlimited fills every eligible candidate; a decrease
-      below the active roster is rejected (`CAPACITY_BELOW_ROSTER`) with no evict / no mutation — src:
-      `P AC#7`, `P E#3`; `T BE#15`/`#16`, `T ERR:CAPACITY_BELOW_ROSTER`, `T U#23`, `T U#24`, `T U#25`.
+- [ ] On the existing free/qualified-linked activation path, promotion creates **exactly one canonical
+      charge/lifecycle as applicable** (assert-no-charge, then one write atomic with activation). A
+      paid-unlinked candidate does not enter this path before verified settlement — src: `P AC#6`;
+      `T §4·WP` (steps 9–10), `T U#22`, `T U#25a`
+- [ ] A leave or capacity increase fills every admission slot left after `active + live holds`, in total
+      order (`waitlist_position, joined_at, id`); finite→unlimited fills every eligible candidate. A
+      decrease below active rejects `CAPACITY_BELOW_ROSTER`; a decrease between active and active+holds
+      rejects `CAPACITY_BELOW_OCCUPANCY`; neither evicts/cancels a hold or mutates silently — src:
+      `P AC#7`, `P E#3`/`#25`; `T BE#15`/`#16`,
+      `T ERR:CAPACITY_BELOW_ROSTER`/`CAPACITY_BELOW_OCCUPANCY`, `T U#23`, `T U#24`, `T U#25`.
       **finite→unlimited (`slots_max→NULL`) is allowed only for _non-public_ sessions**: a public session
       must carry a finite `slots_max` (`P E#7`, reconciled v2.12c/v2.13b), so `finite→NULL` on a public
       session is rejected (`MISSING_DISCOVERY_FIELDS`) and the consume-time entry choke-point + promotion
@@ -233,6 +279,24 @@ _Principles from `P §1·INV`; each is verified concretely by the referenced are
 - [ ] A waitlisted DD-49 rejoin candidate re-derives live disposition at promotion (carry-over **or** append
       refunded lifecycle), activates + clears position, with no duplicate charge row — src: `P AC#6`;
       `T §4·WP` (steps 5, 9), `T U#31`
+- [ ] A paid-unlinked candidate reaching promotion receives exactly one 15-minute booking intent/payment
+      hold under the same session lock, remains waitlisted with venue hidden and no charge, and is excluded
+      from subsequent selection while the hold is live — src: `P E#26`, `P AC#6`; `T §4·WP` (steps 3, 10),
+      `T U#25a`
+- [ ] Verified settlement re-enters the shared funnel finalizer and activates atomically. Hold expiry
+      releases occupancy, moves the candidate to queue tail exactly once, and continues canonical
+      promotion; duplicate expiry is a no-op. Concurrent Account-link/payment callbacks still produce one
+      terminal booking and at-most-one allocation — src: `P E#26`, `P AC#6`; `T §4·WP` (step 10),
+      `T U#25b`; Funnel BE integration #3 (pointer-only)
+- [ ] Public projection keeps `confirmed_count=active players` while `slots_open` subtracts
+      `active + unexpired holds`; hold count/identity stays private and final mutation ignores stale
+      projection — src: `T §6` (projector parity); Funnel BE integration #8 and Marketplace BE aggregate
+      tests (pointer-only)
+- [ ] DD-45a is decision-final but not implemented: the future monotonic migration preflights duplicates,
+      HALTs for manual repair without auto-renumber, then adds partial
+      `UNIQUE (session_id, waitlist_position) WHERE status='waitlisted'`; gaps remain valid and the
+      three-key order stays as compatibility/defense — src: `P` header/DD-45a; `T §2`, `T §4·WP`,
+      `T U#33r`
 - [ ] A promotion candidate whose live DD-49 disposition is missing/malformed is **not** promoted: audit
       `WAITLIST_CHARGE_CONFLICT` + owner-review, then continue to the next — src: `T BE#18`, `T §4·WP`
       (step 5), `T U#31a`
@@ -308,9 +372,9 @@ _Principles from `P §1·INV`; each is verified concretely by the referenced are
       tenant Page; non-admin and wrong-context are denied — src: `T I#7`
 
 > Same-tenant **composite FK** tenant integrity (`(tenant_id, session_id)` → `sessions`,
-> `(tenant_id, membership_id)` → `memberships`, `session_surface_refs` same-tenant) is a documented **DD-68
-> prerequisite** that is **not** in baseline `0014` and lands in a separate migration — see
-> [§9](#9-unresolved--needs-spec-fail-closed).
+> `(tenant_id, membership_id)` → `memberships`, `session_surface_refs` same-tenant) has landed separately in
+> `0019` (DD-68). This is DB substrate only; it does not implement SessionService, admission or channel
+> booking behaviour.
 
 ---
 
@@ -378,9 +442,20 @@ stated bar._
 - [ ] `U#21` First-entry join full → `waitlisted`, positive position, no charge/venue/capacity
 - [ ] `U#22` Leave opens slot (one eligible first-activation candidate) → promote + clear position + one
       charge atomically
-- [ ] `U#23` Capacity 7→12, six eligible → promote exactly 5 in total order
+- [ ] `U#23` Capacity 7→12, active=7, live holds=1, six eligible → fill exactly 4 admission slots in total
+      order
 - [ ] `U#24` Capacity finite→NULL, eligible + banned → promote all eligible; banned stay waitlisted
-- [ ] `U#25` Capacity below active → `CAPACITY_BELOW_ROSTER`, no mutation
+- [ ] `U#24a` Public + unlimited through API/direct SQL → service rejects
+      `MISSING_DISCOVERY_FIELDS`; `sessions_public_capacity_chk` rejects direct write; private+NULL control
+      succeeds
+- [ ] `U#24b` Public+NULL compatibility/bypass row enters any admission branch → fail-closed, never treat as
+      unbounded; zero candidate/finance mutation + audit/review
+- [ ] `U#25` Capacity below active, then between active and active+live-holds →
+      `CAPACITY_BELOW_ROSTER` / `CAPACITY_BELOW_OCCUPANCY`; no mutation or hold cancellation
+- [ ] `U#25a` Paid-unlinked candidate reaches promotion head → one 15-minute hold, stays
+      waitlisted/no venue/no charge, selector excludes the live hold
+- [ ] `U#25b` Promotion hold expires → release slot + requeue-tail exactly once + continue selector;
+      duplicate expiry no-op
 - [ ] `U#26` Candidate ineligible (first fails DD-41) → skip first, promote next, first keeps position
 - [ ] `U#27` Promotion retry (same `commandId` twice) → same result, no double charge/promotion
 - [ ] `U#28` Rejoin after left, paid not refunded → **re-activate/waitlist per capacity**; carry-over same
@@ -438,6 +513,8 @@ stated bar._
 - [ ] `U#33q` Cancel / price-capacity update vs claimed worker (paid roster + claimed root; concurrent cancel
       or update) → both use `session→root→roster/finance`, no deadlock; review-required abort leaves root
       unchanged; successful close/cancel/full-capacity outcome resolves it
+- [ ] `U#33r` DD-45a future migration duplicate fence → dirty preflight HALTs/manual with zero
+      auto-renumber; clean migration adds partial unique and rejects duplicate insert; gaps remain valid
 - [ ] `U#34` Direct active join amount derivation fails → aborts; no player/charge/venue; no fallback;
       retry-safe
 - [ ] `U#35` Messenger host create parity (central / tenant Page / web) → same command/service result and
@@ -470,6 +547,21 @@ stated bar._
       `processed_commands` dedup (edge #3), not special-cased; collision-safety strengthens to
       `IDEMPOTENCY_CONFLICT` once the canonical `request_hash` migration lands (Session Organize plan,
       cross-feature — not asserted here)
+- [ ] `U#49` Host discards verified-empty draft → `cancelled`, version bump, exactly one manual-cancel event
+- [ ] `U#50` Non-admin discards draft → 403 before service; zero mutation
+- [ ] `U#51` Draft was concurrently published; old `expectedVersion` discard → `STALE_VERSION`, zero mutation
+- [ ] `U#52` Discard `closed` session → `SESSION_NOT_OPEN`, zero mutation
+- [ ] `U#53` Discard already-`cancelled` → no-op; no duplicate event; no version match required
+- [ ] `U#54` Auto-expiry verified-empty past draft → `cancelled`, `cancel_reason='auto'`, exactly one event
+- [ ] `U#55` Auto-expiry leaves future draft and open past session untouched
+- [ ] `U#56` Overlapping auto-expiry runs → one `SKIP LOCKED` winner, exactly one transition/event
+- [ ] `U#57` Auto-expiry vs publish race → deterministic first-lock winner; no double transition
+- [ ] `U#58` Omitted `expectedVersion` on a real discard mutation → `STALE_VERSION`, zero mutation
+- [ ] `U#59` Draft with roster/charge anomaly on host discard → `CANCEL_REQUIRES_REVIEW`; stays draft;
+      anomaly event written
+- [ ] `U#60` Auto-expiry detects anomalous draft on two ticks → row stays draft; one anomaly event per
+      detection; no cancel event; notification dedupe belongs to consumer
+- [ ] `U#61` Cancel `open` session after start → `SESSION_NOT_OPEN`; draft-only no-past guard did not leak
 
 ### Integration tests (`T §5`)
 
@@ -483,6 +575,8 @@ stated bar._
       audit/origin event; second may promote; bounded retries happen separately
 - [ ] `I#7` Hybrid Page host matrix (central + tenant Page; host/player/dual-role across two tenants) →
       authorized host creates correct tenant session; non-admin/wrong-context denied
+- [ ] `I#8` Auto-expiry + host discard across tenants → manually discarded row is not re-claimed; remaining
+      due drafts cancel once; RLS isolation holds
 
 ---
 
@@ -494,20 +588,20 @@ above. "Mapped in" points to the section(s) that carry it._
 | Spec inventory | Count | Mapped in | Uncovered |
 | --- | --- | --- | --- |
 | `P §1·INV` invariants | 6 | §0 (verified across §1–§6) | 0 |
-| `P §2` use cases `SES-UC-1..12` | 12 | §1 (1,4,5,6,7,10,11,12), §2 (8,9), §4 (2), §6 (3) | 0 |
-| `P §2` edge cases `#1..#19` | 19 | §1 (1,2,5,7,11,15,16,17,18,19), §2 (4,6,13,14), §3 (3,4), §4 (9), §5 (12), §6 (8,10) | 0 |
+| `P §2` use cases `SES-UC-1..14` | 14 | §1 (1,4,5,6,7,10,11,12,13,14), §2 (8,9), §4 (2), §6 (3) | 0 |
+| `P §2` edge cases `#1..#26` | 26 | §1 (1,2,5,7,11,15–24), §2 (4,6,13,14), §3 (3,4,25,26), §4 (9), §5 (12), §6 (8,10) | 0 |
 | `P §5·EV` analytics events | 7 | §6 | 0 |
-| `P §6` acceptance criteria `AC#1..#20` | 20 | §0 (1), §1 (2,3,4,10,15,16,17,18,19,20), §3 (5,6,7,9), §2 (8), §4 (12), §6 (11,13), §5 (14) | `AC#4` timezone-**input** branch → §9-A (spec-unpinned); `AC#11` public-**materialise** branch → §9-B (cross-feature, `feature_marketplace_discovery`); rest 0 |
-| `T §2` backend edge cases `BE#1..#24` | 24 | §1 (2,3,4,5,11,12,20,21,22,23,24), §2 (8,17), §3 (1,13,14,15,16,18,19), §4 (6,7), §5 (10), §6 (9) | 0 |
-| `T §3` error codes | 10 | §1, §3, §5 (each code cited at its row) | 0 |
-| `T §5` unit tests `U#1..#48` (incl. `#31a`, `#33a–q`, `#40–#48`) | 66 | §7 (all) + cited in §1–§6 | 0 |
-| `T §5` integration tests `I#1..#7` | 7 | §7 (all) + cited in §1–§6 | 0 |
+| `P §6` acceptance criteria `AC#1..#29` | 29 | §0 (1), §1 (2–4,10,15–29), §3 (5–7,9), §2 (8), §4 (12), §6 (11,13), §5 (14) | `AC#4` timezone-**input** branch → §9-A (spec-unpinned); `AC#11` public-**materialise** branch → §9-B (cross-feature, `feature_marketplace_discovery`); rest 0 |
+| `T §2` backend edge cases `BE#1..#31` | 31 | §1 (2–5,11,12,20–31), §2 (8,17), §3 (1,13–19), §4 (6,7), §5 (10), §6 (9) | 0 |
+| `T §3` error codes | 11 | §1, §3, §5 (each code cited at its row) | 0 |
+| `T §5` unit tests `U#1..#61` (incl. `#24a/b`, `#25a/b`, `#31a`, `#33a–r`) | 84 | §7 (all) + cited in §1–§6 | 0 |
+| `T §5` integration tests `I#1..#8` | 8 | §7 (all) + cited in §1–§6 | 0 |
 
-Most acceptance criteria and DoD lines trace cleanly. The four source-spec inconsistencies raised during
-traceability (`T §5 U#10` projection direction, `0014` status, create-result-status, and public ×
-unlimited-capacity) are all reconciled on `main` (see Result). `P AC#4`'s malformed-timezone-**input** case,
-recurrence-edit granularity and `waitlist_position` uniqueness remain spec-acknowledged §9-A open questions
-(recorded, non-blocking). Items the specs leave open or defer are recorded in §9, never guessed.
+Every current Product v2.17 / Tech v2.18a acceptance and DoD row is mapped. The four historical
+source-spec inconsistencies (`T §5 U#10` projection direction, `0014` status, create-result-status, and
+public × unlimited-capacity) remain reconciled. `P AC#4`'s malformed-timezone-input case and recurrence-edit
+granularity remain §9-A gaps. DD-45a is now decision-final but its migration is deferred; DD-32 hold/finalizer
+objects are contract-only. These are recorded in §9-B, never presented as runtime.
 
 ---
 
@@ -523,12 +617,6 @@ and does not pick any storage/API/mutation shape for them._
       ⬜ **Chưa chốt (undecided)**. Partial coverage exists (`T §4·REC`: "edit rule → new version; past
       occurrences not rewritten"), but the per-occurrence-vs-series contract is undefined. **Needs spec
       before any recurrence-edit acceptance can be written.** — src: `P §7 SES-OQ-2`, `T §4·REC`
-- [ ] **`waitlist_position` uniqueness** — `T §4` "Open DD-45a (live truth, 2026-07-19)": the DDL carries
-      **no** uniqueness on `waitlist_position`; equal `(position, joined_at)` rows are currently
-      representable and pinned by `waitlist-invariants.test.ts` (deterministic `id` tie-break). Recommended
-      hardening `UNIQUE (session_id, waitlist_position) WHERE status='waitlisted'` is **not decided/landed**.
-      **Needs decision + migration before a position-uniqueness acceptance can be asserted.** — src:
-      `T §4` (Open DD-45a), `T §2` (Migration: DD-45a "nếu chốt")
 - [ ] **Timezone input validation** — `P AC#4` lists "Timezone … validations", but the specs pin timezone
       **handling** (IANA + DST correctness: `T U#14`/`U#15`, `T I#3`, `T §4·REC`), **not** rejection of a
       malformed timezone string as a discrete test. That input-validation case is **not** concretely
@@ -542,12 +630,26 @@ and does not pick any storage/API/mutation shape for them._
       and API shapes remain open and are **not** chosen here. — src: `P §7 SES-OQ-1`
 - [ ] **Waitlist auto-promote — schema merged, behaviour unbuilt.** `0014_players_waitlist` (waitlist
       **schema only**) is merged on `main` at `1a6ac38` (verify tail hiện hành tại `packages/db/migrations/`,
-      không hard-pin số — tail was `0000–0018` at the 2026-07-23 reconciliation, current tail also carries
-      `0019`/`0020` tenant-integrity FKs, DD-68, unrelated to waitlist); only the **behaviour**
-      (auto-promote, retry) is unbuilt, so the §3 rows are pre-build targets. Both spec headers,
-      `P §7 SES-OQ-3` and `T §6` (Rollout step 2) now state this consistently (reconciled 2026-07-23),
-      designating `docs/standards/BUILD-STATUS.md` as the implementation-status authority. — src:
-      `P §7 SES-OQ-3`, `T §6` (Rollout step 2), `T §2` (schema note); `docs/standards/BUILD-STATUS.md`
+      không hard-pin số). Current DB substrate also includes `0019` same-tenant integrity and `0024`
+      public finite-capacity validation; only the **behaviour** (auto-promote, retry, DD-32 holds/finalizer)
+      is unbuilt, so §3 remains a pre-build target. — src: `P §7 SES-OQ-3`, `T §6` (Rollout steps 2–4),
+      `T §2`; `docs/standards/BUILD-STATUS.md`
+- [ ] **DD-45a waitlist-position final fence — decided, migration unbuilt.** Owner-final contract requires a
+      new monotonic migration with duplicate preflight HALT/manual, no auto-renumber, partial unique
+      `(session_id, waitlist_position) WHERE status='waitlisted'`, valid gaps, and the existing three-key
+      selector as compatibility/defense. `0014` remains permissive until that slice lands — src: `P`
+      header/DD-45a; `T §2`, `T §4·WP`, `T U#33r`
+- [ ] **DD-32 channel booking occupancy — contract authored, runtime unbuilt.** Session acceptance now
+      includes active+unexpired-hold occupancy, capacity-decrease fail-closed, paid-unlinked promotion hold,
+      verified-settlement activation and expiry requeue-tail. Storage and money truth stay owned by the
+      Funnel/Identity/Payment specs; `channel_booking_intents`, account-link completion, shared occupancy
+      helper, verified-payment finalizer and expiry integration do not exist in code — src: `P E#25/#26`,
+      `P AC#5/#6`; `T BE#14–#16`, `T §4·WP`, `T U#23/#25/#25a/#25b`;
+      `feature_channel_booking_funnel_tech.md`
+- [ ] **Draft-anomaly owner-alert consumer mechanism.** Behaviour is pinned by `P AC#28`: repeated
+      anomaly events coalesce per session and must not spam. Exact consumer/storage/notification mechanism
+      remains a build-slice choice; it must satisfy the testable §1 row and cannot weaken append-only event
+      truth in `T U#60` — src: `P AC#28`; `T BE#28`, `T §4` (Events/Draft cleanup)
 - [ ] **Session description fields + gating (DD-41)** — `P §7 SES-OQ-4` is ✅, but the field-level detail
       (title/notes/`session_type`/byoe/cost_shared + level-rank/gender/age gating, 9 codes) lives in
       `dd-41-session-fields-gating-analysis.md`, outside these two specs; body/schema "propagate lúc build".
@@ -564,11 +666,6 @@ and does not pick any storage/API/mutation shape for them._
 - [ ] **Invite-link token (DD-44/DD-52)** — `P §7 SES-OQ-7` ✅; detail in `dd-44-invite-token-analysis.md`.
       These specs reference DD-52 only as the shared join-restriction re-check (§2/§3). — src:
       `P §7 SES-OQ-7`
-- [ ] **Same-tenant composite FK tenant integrity (DD-68)** — `T §2` states composite candidate keys/FKs
-      (`(tenant_id, session_id)` → `sessions`, `(tenant_id, membership_id)` → `memberships`,
-      `session_surface_refs` same-tenant) are a **prerequisite** but are "CHƯA có trong 0014" — a separate
-      monotonic migration (DD-68 scope, not DD-45). Recorded as a documented deferred prerequisite. — src:
-      `T §2` (Schema comment + Migration & Rollback)
 - [ ] **Data retention / deletion contract (unpinned)** — `T §4` Security Checklist (`Data retention/xoá`)
       states this is **not pinned** in these specs ("Chưa pin trong doc này — theo
       `feature_security_operations_tech.md`"). Recorded as an unpinned cross-feature dependency; no
@@ -584,42 +681,28 @@ and does not pick any storage/API/mutation shape for them._
 
 ## Result — complete
 
-Every acceptance criterion and DoD line in both specs maps to a traceable checklist item; genuinely-open
-spec questions are recorded in §9 (never guessed). Re-verified on-disk against `main@0dec63b`.
+Every current Product v2.17 and Tech v2.18a acceptance/DoD line maps to a traceable row: 6 invariants,
+14 use cases, 26 Product edges, 7 events, 29 Product ACs, 31 BE edges, 11 error codes, 84 unit-test rows and
+8 integration-test rows. Re-verified on disk against the uncommitted working tree over
+`main@784bc8dd297163a5ec5415f33beabbbf34bbc8d7`; this is not an immutable authority pin.
 
-The four source-spec inconsistencies raised during traceability are all reconciled on `main`:
+Historical inconsistencies remain closed: create=`draft`/publish=`open`; public sessions require finite
+capacity; `0014` is merged schema-only; public→private removes projection. The v1.2 retrace also closed two
+DD-32 residual prose drifts in Tech v2.18a: capacity decrease now guards active+live-hold occupancy, and
+projector parity explicitly separates public `confirmed_count=active` from `slots_open=capacity-active-holds`
+without exposing hold count/identity.
 
-- **Projection direction:** `T §5` test #10 reads "Public → private removes projection", matching `P E#8` /
-  `P AC#11` / `P UC-5` / `P UC-10` (reconciled v2.13a). Traced in §6 / §7 `U#10`.
-- **Migration `0014` status:** both spec headers, `P §7 SES-OQ-3`, `T §2` and `T §6` (Rollout step 2) state
-  `0014_players_waitlist` (schema only) is merged on `main` at `1a6ac38` (reconciled v2.13a; tail was
-  `0000–0018` at that reconciliation — both headers now non-pin the tail per the later de-pin sweep, "verify
-  `packages/db/migrations/` at read time"; current tail also carries `0019`/`0020` tenant-integrity composite
-  FKs, DD-68, unrelated to waitlist); behaviour unbuilt. Recorded in §9-B.
-- **Create result status:** `P UC-1` now states create → `draft`, then Host publish → `open`, consistent
-  with the `T §2` DDL default `draft`, the `T §3` POST example and the `P §4` state machine (reconciled
-  v2.12c). See §1.
-- **Public × unlimited capacity:** `P E#7` binds — a public session must carry a finite `slots_max`; `NULL`
-  (unlimited) is valid only for non-public sessions, and a public+`NULL` row is rejected / never treated as
-  unbounded at the consume-time entry choke-point (reconciled v2.12c/v2.13b). See §3.
+§9-A now contains only genuine source gaps: recurrence edit granularity and malformed-timezone-input
+validation. DD-45a is no longer open; its final fence is decision-final/deferred in §9-B. Other §9-B entries
+remain explicit contract/runtime boundaries: DD-49 storage/API, auto-promotion runtime, DD-32
+intent/hold/account/finalizer runtime, DD-41/42/43/44 details, retention, and marketplace positive
+materialisation. DB integrity `0019` is landed substrate and therefore no longer listed as a deferred
+prerequisite.
 
-The remaining §9-A items (recurrence-edit granularity `P §7 SES-OQ-2` = ⬜, `waitlist_position` uniqueness
-Open DD-45a, malformed-timezone-input) are spec-acknowledged **open questions**, not untraceable criteria —
-recorded, not guessed, and do not block completion. §9-B records the remaining decided-but-deferred scope
-boundaries (DD-49 storage/API shape, waitlist auto-promote behaviour, DD-41/42/43/44 field-level detail,
-DD-68 composite FK, data retention, and the marketplace positive-materialisation cross-feature owner).
-
-**Publish transition — folded in this pass (2026-07-24, `docs-session-acceptance-checklist-publish-retrace`,
-re-verified on-disk against `main@58788e6`):** the founder-ratified publish contract (`P SES-UC-12`, edges
-`#16–19`, `AC#15–20`, `session_published` event, `T` tests `#40–48`) is now traced in §1/§5/§6 and folded into
-the §7/§8 ledgers above — it is **no longer** a §9-B deferred boundary. Its three former hard dependencies are
-all RESOLVED at spec level: billing status-authority (`feature_billing_lifecycle_tech.md` §3, founder-ratified
-`v2.8a`), PRD public-projection timing (`PRD.md` `v2.8g` FLOW 2 — project-on-publish, no longer
-project-on-create), and the publish concurrency re-check-under-lock (`feature_session_management_tech.md` §4
-step 6, closed by `v2.14c`, proof obligation = billing test #36/#36a). This is a **spec-level** closure only —
-per `T` §4's own code-readiness note, no `CODE_READY` certification (closure/acceptance-matrix, implementation
-artifacts) has run; publish remains a **build/enablement gate**, not a checklist acceptance gap. Session
-runtime (including publish) stays unbuilt — see Feature status above.
+Publish (`UC-12`, edges 16–19, AC15–20, tests 40–48), draft cleanup (`UC-13/14`, edges 20–24, AC21–29,
+tests 49–61/I8), DD-45a (`U#33r`) and DD-32 occupancy/promotion-hold coverage (`E#25/26`,
+`U#23/#25/#25a/#25b`) are all folded into the ledgers above. This is **spec-level traceability only**:
+SessionService, waitlist behaviour, booking intents, payment finalizer and adapters remain unbuilt.
 
 **Overall result: SESSION_MGMT_CHECKLIST_COMPLETE** — every stated acceptance criterion is source-traced and
 open spec questions are quarantined in §9. This marker proves traceability coverage only, **not** build
@@ -627,10 +710,78 @@ authorization: session runtime remains a separate, risk-classified slice.
 
 ---
 
+## Readiness closure matrix
+
+| # | Closure item | Result |
+|---:|---|---|
+| 1 | Exact Product + BE source files identified | PASS |
+| 2 | Product inventory fully traced | PASS |
+| 3 | BE edge/error inventory fully traced | PASS |
+| 4 | Unit/integration inventory fully traced | PASS |
+| 5 | DD-32 delegated branches point to owning Funnel tests | PASS |
+| 6 | DB substrate verified against live migrations | PASS |
+| 7 | In-scope Product questions closed | FAIL — recurrence edit granularity + malformed-timezone input remain |
+| 8 | Hard Session/Identity/Payment dependencies merged | FAIL |
+| 9 | Exact migration/rollback packets authored | FAIL |
+| 10 | Exact implementation artifacts and first slice | FAIL |
+| 11 | Security/RLS/fail-closed acceptance specified | PASS |
+| 12 | Immutable reviewed authority | FAIL — current pack is uncommitted working-tree state |
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: NOT_CODE_READY
+REVIEWED_AT: 2026-07-28
+AUTHORITY_SHA: 784bc8dd297163a5ec5415f33beabbbf34bbc8d7
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/issues/session-management-acceptance-checklist.md
+  - docs/features/feature_session_management.md
+  - docs/features/BE/feature_session_management_tech.md
+  - docs/features/feature_channel_booking_funnel.md
+  - docs/features/BE/feature_channel_booking_funnel_tech.md
+SLICE: session-management-acceptance-retrace
+IN_SCOPE: source traceability for current Session Product and BE contracts including DD-32 occupancy and promotion holds
+OUT_OF_SCOPE: runtime implementation migrations provider enablement and choosing unresolved recurrence or timezone behavior
+G1_DECISION: FAIL
+G2_SPEC: PASS
+G3_DEPENDENCY: FAIL
+G4_TEST: PASS
+G5_SCOPE: FAIL
+G6_EXTERNAL: ENABLEMENT_ONLY:meta-app-review,zalo-login-verification,instant-settlement-provider-evidence
+HARD_DEPENDENCIES: Session Join Waitlist Identity WebAuth Payment and channel booking cores are not all implemented and merged
+PRIOR_SLICES: exact mechanism packets must be authored after immutable authority and dependency verification
+OPEN_QUESTIONS_IN_SCOPE: 2
+ENABLEMENT_ONLY_GATES: Meta App Review; Zalo Login verification; instant-settlement provider evidence
+LIVE_REPO_VERIFICATION: PASS
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: FAIL
+ACCEPTANCE_MATRIX: PASS
+SECURITY_AND_MIGRATION_GATE: FAIL
+IMPLEMENTATION_ARTIFACTS: FAIL
+FIRST_IMPLEMENTATION_STEP: commit and re-pin the exact authority pack then author the first mechanism-sized prerequisite packet
+REMAINING_BLOCKERS:
+  - blocker: recurrence edit granularity and malformed-timezone input behavior remain unresolved for the whole Session feature
+    owner: Product and Session architecture owner
+    resolution: both behaviors are decided in canonical specs or explicitly excluded from a bounded implementation slice
+  - blocker: hard business cores and exact migration implementation packets are absent
+    owner: Session Identity and Payment architecture owners
+    resolution: every named dependency has a merged probe and each mechanism-sized packet pins exact files lock order rollback and acceptance tests
+  - blocker: reviewed source pack is uncommitted working-tree state
+    owner: docs authority owner
+    resolution: commit the exact reconciled files re-pin AUTHORITY_SHA and rerun readiness validators
+NEXT_REVIEW_TRIGGER: immutable authority SHA plus bounded first-slice packet and merged hard-dependency probes
+```
+
+**Binary verdict:** `NOT_CODE_READY`. Traceability is complete; code authorization is not.
+
+---
+
 ## Changelog
 
 | Date | Version | Thay đổi |
 | --- | --- | --- |
+| 2026-07-28 | v1.3 | Re-pin on-disk retrace base to `main@784bc8d`; Chat docs-only commits after `2dc9b8c` do not close Session runtime dependencies or change `NOT_CODE_READY`. |
+| 2026-07-28 | v1.2 | Full retrace from Product v2.13a/Tech v2.14c to Product v2.17/Tech v2.18a. Restore `U#24a/b` omitted by checklist v1.1 (its source baseline was 68, not 66), then add 16 source rows: draft cleanup U49–61/I8, DD-45a U33r and DD-32 U25a/b; update U23/U25 semantics. The checklist therefore gains 18 rows and now maps 6 INV / 14 UC / 26 P edges / 7 events / 29 AC / 31 BE edges / 11 errors / 84 unit / 8 integration. Add testable AC28 owner-alert dedupe, cite Funnel integration #1/#3/#8 for delegated DD-32 race/projection branches, reclassify DD-45a as decided-deferred, record DD-32 runtime dependencies and remove landed `0019` from deferred prerequisites. Reconcile Tech v2.18a capacity/projector drifts. Add `enforce` classification, 12-row closure matrix and canonical `NOT_CODE_READY` verdict; no runtime/schema authorization. |
 | 2026-07-24 | v1.1 | **Publish-mechanics retrace** (`docs-session-acceptance-checklist-publish-retrace`): Sources pin bumped `P` v2.12b→v2.13a, `T` v2.13a→v2.14c. §9-B's "publish transition — decided-to-exist, mechanics deferred" bullet removed (no longer accurate — mechanics are authored and its 3 former hard dependencies are resolved at spec level) and replaced with traced coverage: 7 new §1 bullets (`SES-UC-12`, edges `#16–19`, `AC#15–20`), `T U#44` folded into the existing §5 non-admin bullet, `session_published` added to the §6 analytics-event bullet, 9 new §7 DoD rows (`U#40–48`). §8 ledger totals updated (use cases 11→12, edge cases 15→19, analytics events 6→7, AC 14→20, BE edge cases 20→24, error codes 9→10, unit tests 57→66); AC-numbering legend `1–14`→`1–20`. Feature-status migration-tail wording de-pinned to match `P`/`T`'s own de-pin sweep (tail no longer hard-pinned to `0018`). Result section's stale `0014`-status/§9-B cross-refs corrected; prior "Re-verified on-disk against `main@0dec63b`" (2026-07-23) marker preserved verbatim, this pass adds its own re-verification against `main@58788e6`. Pre-existing dated provenance preserved verbatim throughout; no new design question resolved; `AC#11` public-materialise cross-ref to `feature_marketplace_discovery` unchanged. |
 
 <!-- SESSION_MGMT_CHECKLIST_CLOSED -->

@@ -4,10 +4,12 @@
 > **Deployable unit:** `apps/bot/messenger/`
 > **API:** Messenger Platform API (Send API + Webhooks)
 > **Phase:** **P2.5 — Phase-1 MVP** (DD-37 ✅, thay DD-09; App Review bắt buộc trước GA)
-> **Version:** v0.6 · 2026-07-17
-> **Refs:** `messenger-channel-design.md` · `../../features/feature_player_messenger.md` · `../../features/feature_notifications_reminders.md`
+> **Version:** v0.7 · 2026-07-28
+> **Refs:** `messenger-channel-design.md` · `../../features/feature_player_messenger.md` · `../../features/feature_channel_booking_funnel.md` · `../../features/feature_notifications_reminders.md`
 
 > **Authority hiện hành:** DD-65..68 ✅ thay topology Page-per-club/player-only cũ: **Page Plexco trung tâm luôn có + Page riêng per-club tuỳ chọn**; cả host và player dùng được trên cả hai. Auth-link Facebook = **DD-33 ✅ (phase-1; App Review pending)**; policy delivery vẫn phải fail-closed.
+
+> **Booking DD-32:** browse session không cần Account link. Final confirm dùng một shared gate: free join; full waitlist; approval pending; paid+qualified link pay-later; paid+unlinked verified pay-now trong hold 15 phút khi capability available.
 
 ---
 
@@ -58,13 +60,13 @@ tenant Page: pin default tenant, nhưng target cross-club vẫn resolve từ pro
 
 | Feature | Support? | Ghi chú |
 |---------|---------|---------|
-| Player join session | ✅ | Generic Template + Postback button |
+| Player browse/book session | ✅ target | Generic Template + opaque postback: list → safe detail → shared final gate; postback không trực tiếp join |
 | Player discover cross-club | ✅ | Central = global; tenant Page = local mặc định + “Khám phá tất cả”; target từ opaque action |
 | Nhắc nợ | 🟡 Best-effort | Chỉ nếu user nhắn trong 24h gần nhất, hoặc có Utility Template/OTN hợp lệ sau policy spike |
 | Xác nhận payment | ✅ | Nếu trong 24h window |
 | Host create/manage session | ✅ | Role-aware menu; `/newsession` wizard cơ bản hoàn tất trên cả central/tenant Page; shared `SessionService` |
 | Host approvals/status/announce/close | ✅ | Exact capability registry; advanced edit có thể deep-link web |
-| Identity merge | ✅ | transactional `/link` code → lock/consume once → confirm merge ChannelIdentity vào Person |
+| Account link | ✅ target | Web-auth/transactional `/link` handoff → exact Page-scoped ChannelIdentity + current Person + verified Account; callback resumes same booking intent |
 
 ### 4.1 Policy-Safe Delivery Contract
 
@@ -86,6 +88,15 @@ Rules:
 - Messenger **không** là primary reminder channel; **web + Zalo** gánh primary notification (Telegram đã loại — DD-37). Messenger = join + xác nhận + nhắc best-effort trong 24h.
 - Một logical notification chỉ chọn **một** Messenger endpoint: tenant Page reachable → central Page reachable → web/Zalo; không gửi trùng cả hai Page.
 
+### 4.2 Friendly booking gate
+
+1. User chọn session và xem time, public area, fee, confirmed count, slots.
+2. User bấm “Đăng ký”; bot không hỏi link trước bước này.
+3. Free/full/approval đi thẳng outcome tương ứng, không thu tiền sớm.
+4. Paid + linked: “Giữ chỗ, thanh toán sau”.
+5. Paid + unlinked: “Liên kết Plexco” hoặc “Thanh toán & giữ chỗ 15 phút” khi verified settlement available.
+6. QR/“Tôi đã thanh toán” chỉ là display/poll; canonical provider evidence mới được finalizer chấp nhận.
+
 ---
 
 ## 5. Risk & Decisions
@@ -98,9 +109,9 @@ Rules:
 | R3 | PSID mapping per-page | ChannelIdentity pipeline handle; merge xuyên Page qua verified identity/transactional `link_code` |
 | R4 | Central Page không pin tenant | Signed/opaque action hoặc server-side role/membership picker; missing/stale/ambiguous → deny/re-pick, không đoán |
 
-### 5.1 Required Policy Spike Before Coding
+### 5.1 Required Policy Evidence Before GA Enablement
 
-Không bắt đầu implementation Messenger trước khi có kết quả spike:
+Có thể build/test sau khi code-readiness gate pass, nhưng không enable non-test/GA Messenger capability trước khi evidence dưới đây được xác minh:
 
 | Check | Output cần có |
 |-------|---------------|
@@ -113,15 +124,15 @@ Không bắt đầu implementation Messenger trước khi có kết quả spike:
 
 Nếu spike fail cho scheduled reminders, Messenger vẫn có thể ship như **join + same-day confirmation** only.
 
-## 6. Implementation Readiness
+## 6. Implementation Evidence Inventory
 
 | Hạng mục | Status | Ghi chú |
 |----------|--------|---------|
-| Architecture fit | ✅ Contract chốt | Hybrid registry + protected resolver + one shared adapter/domain core (DD-65..68) |
+| Architecture fit | ✅ Contract chốt | Hybrid registry + protected resolver + one shared adapter + DD-32 channel-booking core |
 | Product reliability | 🔴 Low for reminders | 24h window làm nhắc nợ ngoài 24h không đáng tin → web + Zalo gánh nhắc chính |
-| Docs | 🟢 Authority chốt | DD-65..68; Product/BE specs phải bám hybrid/shared-surface contract |
-| Missing before coding | 🔴 Required | Migration hybrid registry/page-scoped reachability + shared services + policy spike/App Review/Business Verification |
-| Delivery readiness | 🟡 Medium | **Phase-1 (P2.5)**; đường tới hạn = App Review + Business Verification |
+| Docs | 🟢 Reviewed contracts | DD-32/DD-33/DD-65..68 Product/BE specs; không phải runtime hoặc `CODE_READY` proof |
+| Missing runtime dependencies | 🔴 Required | Session/Join/Identity/Payment/funnel core, intent + hybrid registry/page-scoped reachability migrations, Messenger adapter/projector |
+| External enablement | 🟡 Pending | App Review + Business Verification + policy evidence; gate non-test GA, không thay code-readiness gate |
 
 **Go/no-go:** Messenger **trong phase-1 (DD-37 ✅)**. Bắt đầu **App Review + Business Verification ngay** (critical path duy nhất). Ship như **join + xác nhận trong 24h** trước; nhắc ngoài 24h dồn qua **web + Zalo** (Messenger best-effort trong 24h). Không hứa nhắc tự động vô hạn.
 
@@ -135,6 +146,7 @@ Nếu spike fail cho scheduled reminders, Messenger vẫn có thể ship như **
 | Player join qua Messenger | [feature_player_messenger.md](../../features/feature_player_messenger.md) |
 | Notifications (24h window) | [feature_notifications_reminders.md](../../features/feature_notifications_reminders.md) |
 | Identity + Facebook link (DD-33) | [feature_identity.md](../../features/feature_identity.md) |
+| Link-or-pay booking funnel (DD-32) | [feature_channel_booking_funnel.md](../../features/feature_channel_booking_funnel.md) |
 
 ---
 
@@ -142,6 +154,7 @@ Nếu spike fail cho scheduled reminders, Messenger vẫn có thể ship như **
 
 | Date | Version | Thay đổi |
 |------|---------|----------|
+| 2026-07-28 | v0.7 | Add DD-32 friendly list→detail→final gate and link-or-verified-pay branches; Messenger remains a thin renderer and runtime is still not started. |
 | 2026-07-17 | v0.6 | Reconcile shared endpoint contract: hai HMAC domain-separated, unique ba phần; App Secret deployment-level và Page access token protected per Page. Runtime vẫn chưa implement. |
 | 2026-07-17 | v0.5 | **DD-65..68:** central Plexco Page + optional Page per-club; host/player parity trên cả hai; protected tenant/action resolver, Page-scoped identity/reachability, one-route delivery và create-session wizard shared core. Runtime vẫn chưa implement. |
 | 2026-07-15 | v0.4 | **Version/index reconcile:** đồng bộ header về v0.4 khớp README surface index; Messenger giữ **P2.5 phase-1** (DD-37); không đổi nội dung kỹ thuật. |
@@ -149,4 +162,4 @@ Nếu spike fail cho scheduled reminders, Messenger vẫn có thể ship như **
 | 2026-06-20 | v0.2 | Sửa rate-limit assumption, thêm policy-safe delivery contract, required policy spike, readiness |
 | 2026-06-19 | v0.1 | Initial surface docs |
 
-*Messenger bot surface docs v0.6. **Phase-1 (DD-37, DD-65..68)** — hybrid shared surface cho host/player; nhắc chính qua web + Zalo; App Review là critical path.*
+*Messenger bot surface docs v0.7. **Phase-1 (DD-32/DD-37/DD-65..68)** — hybrid shared surface cho host/player; nhắc chính qua web + Zalo; App Review là critical path.*

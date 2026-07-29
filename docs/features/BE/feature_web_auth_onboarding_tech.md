@@ -1,9 +1,9 @@
 # Feature: Web Authentication & Tenant Onboarding — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.12 · 2026-07-23
+> **Version:** 2.14 · 2026-07-28
 > **Status:** Reviewed
-> **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google auth lane DD-80 (migrations `0015`–`0018`: D0a revoke, `0016` email-token storage, `0017` Google-OIDC adapter, `0018` d1b completion-hop) đã merge nhưng ⛔ **CHƯA enable** (thiếu đo Safari macOS+iOS cho M3 → `GOOGLE_OAUTH_*` giữ rỗng, §4); email/password order-4 bundle (route/UI/provider send) chưa build, flag OFF · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
+> **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google auth lane DD-80 (migrations `0015`–`0018`: D0a revoke, `0016` email-token storage, `0017` Google-OIDC adapter, `0018` d1b completion-hop) đã merge và Safari macOS+iOS M3 measured PASS 2026-07-26. Engineering/measurement blocker đã đóng, nhưng Google login chưa có bằng chứng owner enable/go-live; `GOOGLE_OAUTH_*` template vẫn rỗng và các gate độc lập (A3 legal/PII/config) vẫn áp dụng. Email/password order-4 bundle (route/UI/provider send) chưa build, flag OFF · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../feature_web_auth_onboarding.md`
 > **References:** `../../standards/business-rules.md` BL-SEC-1/BL-SEC-3/BL-MSG · `../../standards/decisions.md` DD-13 · DD-31 · **DD-33** · DD-50 · DD-60 · **DD-65..67** · **DD-80 (B0 ✅; revoke-all G3 v1.88)** · `../../g3-revoke-all-concurrency-probe-seed.md` v1.0 · `../../b0-auth-credential-lifecycle-design-probe.md` · `../../standards/api-reference-convention.md` · `auth-security-invariant-table.md`
 
@@ -12,6 +12,8 @@
 ## 1. Tổng quan triển khai
 
 > **Cập nhật v2.2 (DD-37 + DD-13 ✅, 2026-07-10):** Bỏ **Telegram Login** adapter (Telegram out-of-scope — DD-37). Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅). Việc này **đảo** OQ-1 của DD-31 (2026-07-06 "giữ TG Login only"): OQ-1 nay hết hiệu lực. `account_identities.platform ∈ {google, email, facebook, zalo}`; SI-2 keyed-hash áp cho `google.sub`/email thay `telegram:id` (§4). SI-1/SI-3 giữ nguyên hiệu lực.
+>
+> **Cập nhật DD-32/v2.14:** channel-booking handoff là consumer mới của authenticated Account completion, không phải biến thể OAuth tự book. Booking service issues its own opaque actor+endpoint+session+action-bound token; Web Auth returns only a verified Account context to Identity, then booking resume revalidates live.
 
 ```text
 Auth Adapter (Google OAuth / email-password / Facebook gated) → Account/Session Service → Onboarding Workflow
@@ -86,6 +88,19 @@ CREATE TABLE onboarding_steps (
 
 > **Live-schema truth (2026-07-18):** `account_identities.platform` hiện là unrestricted `text`; migrations `0000`–`0013` không có `account_identities_platform_chk`. Build DD-33 phải audit/backfill legacy Telegram-era values rồi thêm validation gồm `facebook` trong **một migration self-contained dùng next available number**. Không được `DROP` một constraint giả định chưa tồn tại.
 
+### Channel-booking Account-link handoff (DD-32)
+
+The booking service, not Web Auth, owns the durable booking intent/resume token. Web Auth only supplies a current verified Account context:
+
+1. `GET /link/channel-booking?t=<opaque>` is a non-mutating, no-third-party landing with `Referrer-Policy: no-referrer`; it scrubs the token from the visible URL.
+2. User logs in/registers through the canonical provider flow.
+3. The page shows the redacted Plexco Account + exact Messenger/Zalo endpoint impact and requires explicit confirmation.
+4. Same-origin `POST /api/auth/channel-booking/link` carries the one-time token in the body under the Strict session + CSRF boundary.
+5. Identity service binds/merges the exact ChannelIdentity to the Account-backed Person; Web Auth never writes booking/session/player/charge state.
+6. Booking service consumes its resume fence, re-resolves identity and returns `reconfirm|active|waitlisted|manual_review` through its own finalizer.
+
+The request accepts no caller-supplied Account/Person/channel/session ID or arbitrary return URL. Wrong browser/account/endpoint, replay, expiry, identity freeze and merge conflict return a generic failure with zero booking mutation.
+
 ### Tenant readiness matrix (WAO-OQ-2 closed)
 
 `GET /api/onboarding/readiness` and the only transition to `onboarding_runs.status='completed'` use one shared predicate:
@@ -152,7 +167,7 @@ The lifecycle below is normative. **Current-state (2026-07-23): the storage laye
 **Live-schema truth (main; số migration verify live tại `packages/db/migrations/` — đừng hard-pin range):**
 
 - **Đã tồn tại — reuse baseline, không recreate; `DROP` = ❌ NEVER:** `accounts`/`web_sessions`/`account_identities` (`0001_global_directory.sql`), `onboarding_runs`/`onboarding_steps` (`0008_notifications_onboarding.sql`), `auth_login_state`/`auth_login_nonces`/`rate_limit_hits` (`0012_auth_functions.sql`).
-- **Đã merge trên main (auth DD-80 lane `0015`–`0018`, ⛔ chưa enable):** `auth_oauth_transactions` (`0017_oauth_transactions.sql`, OAuth transaction store §2) và email-credential/token/delivery tables (`0016_account_email_token_core.sql` — order-2 CODE DARK storage: bảng + PHC validator/trigger + parent-first consume helper + cleanup, **zero grant/route/UI/provider-send**). Google login vẫn ⛔ chưa bật (chờ đo Safari/iOS M3, §4 Session Security); email **order-4 bundle** (route/UI/provider send) chưa build, flag OFF (external gate `C7`).
+- **Đã merge trên main (auth DD-80 lane `0015`–`0018`; enablement chưa được chứng minh):** `auth_oauth_transactions` (`0017_oauth_transactions.sql`, OAuth transaction store §2) và email-credential/token/delivery tables (`0016_account_email_token_core.sql` — order-2 CODE DARK storage: bảng + PHC validator/trigger + parent-first consume helper + cleanup, **zero grant/route/UI/provider-send**). Safari macOS+iOS M3 đã measured PASS, nên engineering/measurement gate của d1b đã đóng; Google credentials/owner go-live và các gate độc lập vẫn chưa có proof (§4 Session Security). Email **order-4 bundle** (route/UI/provider send) chưa build, flag OFF (external gate `C7`).
 - `account_identities.platform` live là unrestricted `text` (đã pin ở "Live-schema truth 2026-07-18" phía trên) — build DD-33 thêm validation trong một migration self-contained; không `DROP` constraint chưa tồn tại.
 
 **Migration mới:** `auth_oauth_transactions` (`0017`) và email-token tables (`0016`) **đã merge trên main** — không còn pending (số `0016`/`0017` từng ghi trong slice plan v2.8a là "thứ tự tương đối giữa các slice"; nay đã cố định theo tail thực tế lúc land: `0016` order-2, `0017` order-3, `0018` completion). Object mới **còn lại (chưa build)** của surface này: (i) platform CHECK gồm `facebook` (DD-33); (ii) order-4 email bundle — public functions `auth_verify_email`/`auth_reset_password`/`auth_finalize_email_login` + route/UI email + pg-boss enqueue wiring + provider send (`0016` chỉ chứa storage + consume-helper nội bộ, **KHÔNG** có các public function này — xem D1 note §5 "Ngoài scope order-3/4"; flag OFF, gate `C7`). Chúng đi trong migration **monotonic theo next available number sau tail hiện tại của main** — **verify tail thực tế tại `packages/db/migrations/` tại thời điểm author, KHÔNG hard-pin số** (auth DD-80 lane `0015`–`0018` đã merge và các migration tenant-integrity FK sau đó cũng đã land; luôn đọc thư mục để lấy tail hiện hành, đừng chép số cứng). Không sửa migration lịch sử.
@@ -297,7 +312,13 @@ Verify/reset ordering is normative: trusted-IP limit runs before token lookup; a
 - Session rotation on: login, owner assignment, tenant switch.
 - Password reset uses an account-wide revoke primitive, not the current one-token revoke helper. Credential update + revoke-all are atomic and audited.
 
-> **⚠️ ENABLEMENT GATE — Google login session rotation (D1 order-3, owner-accepted Option A 2026-07-22).** The D1 Google callback mints a **fresh** Strict session (matrix D1-2/D1-13) but does **NOT** rotate/revoke a **pre-existing** session in the same browser, because `SameSite=Strict plx_session` is **not sent on the cross-site OAuth callback** and therefore cannot be read/rotated there. **Residual risk:** a pre-login session **survives** a Google login and stays valid in the DB. **This is a BLOCKER on ENABLING Google login** — the follow-up slice **`auth-s4-d1b-oauth-session-rotation`** (a same-site completion hop in the D0/session-web-boundary layer that reads the Strict cookie and runs the atomic rotate/reject fence) **MUST land BEFORE `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET` are set in ANY environment.** It is not merely the next slice.
+> **✅ SESSION-ROTATION GATE CLOSED (implementation + browser evidence).** D1b implemented M3 and merged
+> in migration `0018`: the callback commits a first-party landing, auto-POSTs same-origin to completion,
+> then `issueSession()` observes the Strict cookie and takes the atomic rotate/reject path. Shipping Safari
+> macOS and iOS Safari M3 were measured PASS on 2026-07-26, matching Chromium/Firefox/WebKit; the former
+> pre-login-session-survival blocker is closed. This does **not** prove Google is enabled: setting
+> `GOOGLE_OAUTH_CLIENT_ID/SECRET` remains an owner go-live action and all independent A3
+> legal/PII/config gates still apply.
 
 ### Google OIDC proof matrix (DD-50)
 
@@ -517,7 +538,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | # | Case | Setup | Expected |
 |---|---|---|---|
 | D1B-1 | Callback thôi tự mint | Callback nhận proof OIDC hợp lệ | Callback **KHÔNG** set session cookie và **KHÔNG** gọi `issueSession`; nó tạo một handoff **single-use, TTL ngắn**, bound vào đúng `auth_oauth_transactions` row, rồi chuyển sang completion hop |
-| D1B-2 | **Hop thật sự mang được cookie Strict** | Browser đã có `plx_session`; chạy hết luồng trên trình duyệt thật | Tại completion endpoint, `plx_session` **CÓ** trong request ⇒ `issueSession` đi nhánh **rotate**, không phải create. **Đã đo cho Chromium/Firefox/WebKit** qua probe (M3 ✅). Safari macOS + iOS là **enablement evidence còn thiếu** — xem §7 probe doc; không chặn CODE_READY nhưng **chặn bật Google login** |
+| D1B-2 | **Hop thật sự mang được cookie Strict** | Browser đã có `plx_session`; chạy hết luồng trên trình duyệt thật | Tại completion endpoint, `plx_session` **CÓ** trong request ⇒ `issueSession` đi nhánh **rotate**, không phải create. **Đã đo PASS cho Chromium/Firefox/WebKit và shipping Safari macOS+iOS Safari** qua probe (M3 ✅; Apple surfaces measured 2026-07-26). Measurement obligation đã đóng; Google owner go-live là gate riêng |
 | D1B-11 | **Anti-regression: cấm quay về 302 trần** | Gọi `/api/auth/google/callback` với proof hợp lệ, assert **response** | Callback trả **200 + document first-party** chứa form auto-submit same-origin và `<noscript>` fallback; **KHÔNG** phải `302`/`Location` trỏ thẳng completion. Đây là test **cấu trúc, không cần browser** — nó chính là lưới bắt failure-mode "M1 trần" mà probe đo được là hỏng trên cả 3 engine, thứ mà mọi test mock cookie sẽ bỏ lọt |
 | D1B-3 | **Residual risk đóng thật** | Có session cũ, hoàn tất login Google | Session cũ có `revoked_at`; token cũ **không** resolve nữa; account chỉ còn **đúng một** session live |
 | D1B-4 | Không có cookie cũ → không đổi hành vi | Browser chưa từng login | Đi `createWebSession` như cũ; cookie attrs **byte-for-byte** như trước; **`SameSite=Strict` không đổi** |
@@ -585,6 +606,10 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | 48 | OAuth state issue exhaustion | 11 starts/min from one trusted IP, alternating Google/Facebook | 11th returns 429 before row/cookie; callback bucket remains independent; limiter error also creates nothing |
 | 49 | Verify/reset limit ordering | IP over limit; valid target over limit; invalid/expired token | IP denial performs no token lookup; target denial performs no consume; invalid uses HMAC artifact bucket; all responses remain generic/no mutation |
 | 50 | OAuth PKCE ciphertext schema parity | Schema/migration/catalog inspection | `auth_oauth_transactions.pkce_verifier_enc=bytea`; no base64-text exception; key version remains separate metadata |
+| 51 | Booking-link landing prefetch | Scanner/preview opens link | GET is non-mutating; intent/token remain usable |
+| 52 | Booking-link explicit confirm | Authenticated Account + exact valid token | Identity binding completes; booking callback receives only opaque resume result |
+| 53 | Booking-link wrong actor/endpoint/replay | Different Account/Page/OA or second POST | Generic reject; no identity/booking mutation |
+| 54 | Booking data changed during auth | Price/capacity/session version changes before return | Web Auth does not book; funnel returns `reconfirm` from live finalizer |
 
 ### Integration Tests
 
@@ -597,6 +622,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | 5 | Optional tenant Page | Connect Page then revoke/fail | Branded endpoint status changes; central route remains available |
 | 6 | Real redirect transport | Browser starts Google flow, returns by cross-site top-level GET | Lax binding arrives and full proof succeeds; Strict session cookie is issued only afterward |
 | 7 | Webmail/link-scanner transport | Scanner GET then user opens link in original/wrong browser | Scanner is no-op; original-browser explicit POST can verify; wrong browser cannot install its attempt credential |
+| 8 | Channel booking link/resume | Bot intent → login/register → explicit link → return | Same Account-backed Person, single consumed token; changed session requires reconfirm; no duplicate player/charge |
 
 ---
 
@@ -623,6 +649,8 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-28 | v2.14 | Mirror DD-32 Option D: pin non-mutating channel-link landing, authenticated explicit POST, Identity-owned binding and booking-owned resume/reconfirm boundary; add abuse/prefetch/E2E tests. No runtime. |
+| 2026-07-27 | v2.13 | **d1b evidence/enablement boundary reconcile:** Safari macOS + iOS Safari M3 measured PASS 2026-07-26, nên session-rotation engineering/measurement blocker đã đóng; §4 và D1B-2 chuyển từ “evidence còn thiếu” sang measured complete. Google credentials/owner go-live vẫn chưa được chứng minh và A3 legal/PII/config giữ nguyên như gate độc lập. Email order-4 bundle tiếp tục OFF/chưa build. Product mirror: `../feature_web_auth_onboarding.md` v2.10c. |
 | 2026-07-23 | v2.12 | **Reconcile migration-section merge-state (auth DD-80 lane 0015–0018 merged, ⛔ chưa enable):** sửa CURRENT-STATE tự mâu thuẫn với changelog v2.11 — (a) Implementation header "Google/email DD-37 chưa code" → Google auth lane DD-80 `0015`–`0018` (D0a revoke · `0016` email-token storage · `0017` Google-OIDC adapter · `0018` d1b completion-hop) **đã merge nhưng ⛔ CHƯA enable** (chờ đo Safari/iOS M3, `GOOGLE_OAUTH_*` rỗng), email order-4 bundle (route/UI/send) chưa build (flag OFF); (b) §2 "Live-schema truth (main, migrations `0000`–`0014`)" → **non-pinned "verify live"** (bỏ hard-pin range), "Chưa tồn tại trên main: `auth_oauth_transactions`/email tables" → **đã merge** (`0016`/`0017`, storage CODE DARK zero grant/route); (c) stale tail `0014` (§2 Migration mới) / `0015` (D1 matrix note + D1E-1) → **non-pinned guidance** ("verify live tail tại `packages/db/migrations/`, KHÔNG hard-pin số" — tránh re-stale trên `0021` và tránh đua số với `BUILD-STATUS`); tail thực tế 2026-07-23 = `0020` (`0020_ledger_tenant_integrity_fks`; auth-lane `0015`–`0018` + tenant-FK `0019`/`0020`) chỉ ghi dạng dated ở changelog, không hard-pin trong body. **OUT-OF-SCOPE residual (founder-ratified defer):** `BUILD-STATUS.md`/ROADMAP/~21 BE spec vẫn ghi global-tail `0018` (pre-existing; `0019`/`0020` land sau sweep tail-0018) → backlog `docs-migration-tail-0018-to-0020-sweep`. Companion: product spec `feature_web_auth_onboarding.md` v2.10b (header + WAO-OQ-5 mirror). (d) §2 DD-50 storage design-gate (L139/L141) reconciled: B0 ✅ + storage `0016` merged → bỏ "provisional / awaiting owner / no DDL may be authored" (giữ dated 2026-07-18 provenance); Migration-mới liệt kê order-4 email public functions còn phải build (`auth_verify_email`/`auth_reset_password`/`auth_finalize_email_login`), không chỉ platform CHECK. (e) §2 Rollback table phân tầng: merged `0016`/`0017`/`0018` credential/OAuth tables **KHÔNG blind-DROP** (data-loss khi Google enabled) — chỉ new-additive (platform CHECK) mới safe-DROP; baseline `0001`/`0008`/`0012` = ❌ NEVER. Header version bù `2.10`→`2.12` (v2.11 đã ghi adapter nhưng header chưa bump). Numbering guidance giữ nguyên (monotonic next-available sau synced tail, verify live trước khi tạo, không sửa lịch sử); DDL/contract §2–§4 KHÔNG đổi; §3 endpoint ✅ `0017` + dated changelog rows (v2.11/v2.8a/v2.7a…) giữ verbatim. |
 | 2026-07-22 | v2.11 | **D1 order-3 Google-OIDC-adapter IMPLEMENTED (migration 0017).** `auth_oauth_transactions` (bytea PKCE ciphertext + own key-version, google lifecycle CHECK) + `auth_oauth_transaction_issue`/`_claim` (single-use, terminalize+NULL ciphertext) + `auth_login_google` (§4 collision cells 1-6 `login_success` / cell 7 `identity_conflict`, per-lane audit, parent-first lock). App boundary: `apps/web/lib/google-oidc.ts` (jose proof matrix — signature/iss/aud/azp/exp/iat/nonce/email_verified + maxTokenAge + token-exchange timeout), `apps/web/lib/oauth-transaction.ts` (PKCE S256 + AES-256-GCM verifier AEAD mirroring `email_enc` w/ HKDF 32-byte key, Lax path-scoped binding cookie, 0017 wrappers), routes `/api/auth/google/{state,callback}` (no `sameOriginRequest()`, session Strict, no-referrer fence, limiter fail-closed). Acceptance D1-1..D1-15 green (real PG). `jose@5` added. Facebook routes still absent (DD-33). No email lifecycle (order-4, flag OFF). Endpoints §3 flipped ⬜→✅. **DEFERRED (owner-accepted Option A):** cross-site pre-session rotation is NOT done in the adapter (Strict cookie absent cross-site) — D1 mints fresh; residual risk + **enablement blocker** `auth-s4-d1b-oauth-session-rotation` pinned in §4 Session Security + manifest `enablement_gates`. |
 | 2026-07-19 | v2.9b | **v1.86 (AP-26 HALT MAX_ROUNDS/Codex round-03):** (1) Issuance fence reject-and-reauth — `issueSession()` không fallback-mint khi có cookie mà rotate trả null (clear cookie + 401 `AUTH_INVALID`); `apps/web/lib/session-cookies.ts` vào scope D0; case D0-12 mới. (2) Partial index `web_sessions(account_id) WHERE revoked_at IS NULL` trong 0015 + `schema.ts` mirror; case D0-13 mới. (3) D1: `auth_login_google` nhận preallocated `account_emails.id` cho cell 1 — AAD contract B0 §3.3 giữ nguyên. No runtime. |
