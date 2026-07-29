@@ -2,13 +2,15 @@
 
 > **Canonical phase:** P5  
 > **Track:** 💳 Host Billing  
-> **Version:** 2.8a · 2026-07-24
+> **Version:** 2.9 · 2026-07-27
 > **Status:** Reviewed  
 > **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 tenant/authz · P3 durable payment ingestion · P3 notifications  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-9/BR-11 · `../product/PRD.md` FLOW 11 · `../standards/decisions.md` DD-29/DD-40/DD-37 · `BE/feature_billing_lifecycle_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-9/BR-11 · `../product/PRD.md` FLOW 11 · `../standards/decisions.md` DD-29/DD-37/DD-40/DD-91 · `BE/feature_billing_lifecycle_tech.md` · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
 
 > **Cập nhật v3.4 (DD-40 + DD-37, 2026-07-10):** free-tier bots = **Zalo + Facebook Messenger** (bỏ Telegram). Capability flags DD-40: **free** = `payment_mark_manual` (cash/bank), `reminders_manual`; **`host_pro`** += `payment_reconcile_auto`, `reminders_auto`, `assistant_ai_kb`, `crm_dashboard`.
+
+> **Commercial entitlement ≠ runtime availability:** exact Assistant key là `assistant_ai_kb`. `payment_reconcile_auto=true` chỉ nói tenant Host Pro đã mua quyền; auto path còn cần provider/bank/market/currency/consent đủ bằng chứng. Current authority/schema chỉ có `sepay|apipay` cho rail Việt Nam và webhook→settle→notify chưa build, nên capability chưa runtime ở cả Việt Nam. Ngoài Việt Nam, mark-paid thủ công vẫn là đường global; regional expansion còn ở mức research/decision input.
 
 ---
 
@@ -23,6 +25,7 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 - Grace days/price/tier versioned — KHÔNG retroactive mutation.
 - Suspension gating centralized by action class — safety/ingestion/read-only paths remain.
 - Entitlement gate theo **capability flags** (config-driven), không hard-code theo tenant/plan_key.
+- Commercial entitlement và operational availability là hai gate riêng; unknown availability fail-closed cho capability đắt tiền nhưng không chặn `payment_mark_manual`.
 - `suspended` (gate publish/mutation) = fail-closed **union** hai cột `tenants.status` ⊕ `subscriptions.status`, gồm cả `subscriptions.status='cancelled'` và thiếu row `subscriptions` (unprovable → khoá, không allow-by-default) — không suy ra chỉ từ một cột. Chi tiết cột nào/case nào ở `BE/feature_billing_lifecycle_tech.md` §3 Status Authority. *(✅ Founder-ratified 2026-07-24.)*
 
 ### Pricing tiers (DD-29 — thay DD-03)
@@ -30,11 +33,13 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 | Plan key | Giá / tháng / CLB | Gồm |
 |---|---:|---|
 | `free` | **0đ** | Web app + **kết nối bot Zalo + Facebook Messenger** + quản kèo/roster + **mark-paid thủ công (tiền mặt/CK, tap/multi-select)** + nhắc thủ công |
-| `host_pro` | **250.000đ** | Toàn bộ free + **đối soát CK tự động & báo thu phí** + **nhắc nợ tự động** + **Trợ lý AI + KB** + CRM dashboard |
+| `host_pro` | **250.000đ** | Toàn bộ free + commercial entitlement **`payment_reconcile_auto`** (chỉ dùng khi market/provider available) + **nhắc nợ tự động** + **Trợ lý AI + KB (`assistant_ai_kb`)** + CRM dashboard |
 
 > ⚠️ **`plans.plan_key` CHECK → `('free','host_pro')` là migration còn chờ (DD-29):** live `packages/db/schema.ts` vẫn giữ CHECK 4-tier `('free_web','telegram','plus_channel','all_channels')`. **Không** coi việc đổi CHECK là đã xong cho tới khi có migration.
 
 Kênh phase-1 = **Zalo + Facebook Messenger** (Telegram loại — DD-37; Messenger nay phase-1 P2.5, không còn chờ P4.8). Capability flags (DD-40): free = `payment_mark_manual`, `reminders_manual`; host_pro thêm `payment_reconcile_auto`, `reminders_auto`, `assistant_ai_kb`, `crm_dashboard`. Danh sách cờ chi tiết ở **Capability registry** (`BE/feature_billing_lifecycle_tech.md §4b`) — free/pro **config-driven** (đổi bằng `plans.entitlements`, không sửa code). *(Chat cơ bản + giá theo giới tính nay **✅ phase-1** — xem DD-38/DD-39 (✅ Chốt) + `feature_inapp_chat` / `feature_user_settings`.)*
+
+`payment_reconcile_auto` không tự bật chỉ vì flag true: current launch path chỉ là SePay/ApiPay Việt Nam và vẫn thiếu runtime; ngoài Việt Nam hoặc bank/provider chưa proven, UI phải coi auto unavailable/waitlist thay vì hứa capability đang dùng được. `payment_mark_manual` vẫn có ở mọi tier/market. Exact `/pay` deterministic của player không dùng `assistant_ai_kb` và không phải entitlement Assistant.
 
 ---
 
@@ -77,6 +82,8 @@ Kênh phase-1 = **Zalo + Facebook Messenger** (Telegram loại — DD-37; Messen
 | 13 | Entitlement | Host dùng kênh vượt plan | Block channel setup/use; show upgrade CTA; không ảnh hưởng player CK ingest |
 | 14 | Entitlement | Đổi capability free↔pro (config `entitlements`) | Áp theo policy versioned; audit; không retroactive invoice mutation |
 | 15 | Billing safety | Tenant `suspended` có player CK tới | Ingest ON; auto-settle/auto-notify OFF; không mất dữ liệu, không phát thông báo sai |
+| 16 | Availability | Host Pro có `payment_reconcile_auto=true` nhưng bank/provider/market/currency/consent chưa proven | Auto capability unavailable/fail-closed; không auto-match từ dữ liệu không đáng tin, không hạ cả gói Host Pro; mark-paid thủ công vẫn hoạt động |
+| 17 | Entitlement | Player dùng exact `/pay` khi `assistant_ai_kb=false` | `/pay` vẫn chạy deterministic qua person-self service; không mở Assistant/LLM |
 
 ---
 
@@ -157,6 +164,8 @@ stateDiagram-v2
 - [ ] Owner notices/corrections best-effort and audited
 - [ ] Plan/version/fair-use behavior tests pass
 - [ ] Entitlement gate đúng theo capability flags (free vs host_pro) — config-driven
+- [ ] `payment_reconcile_auto` entitlement được kiểm tách khỏi availability; thiếu provider/bank/market/currency/consent → auto unavailable, manual vẫn dùng được
+- [ ] Exact `assistant_ai_kb` chỉ gate Club Assistant/KB; deterministic `/pay` không phụ thuộc flag này
 - [ ] `free` ở `active` vô thời hạn — không sinh invoice, không bao giờ past_due/suspended vì non-payment
 - [ ] Paid invoice amount lấy từ immutable plan version, không hard-code
 - [ ] Trial 14d/reminder D-2/downgrade-free không-payment và invoice grace 7d có boundary tests
@@ -178,6 +187,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-27 | v2.9 | Pin exact `assistant_ai_kb` và DD-91 no-LLM `/pay` boundary. Tách commercial entitlement `payment_reconcile_auto` khỏi operational availability; current authority chỉ `sepay\|apipay` cho rail Việt Nam, webhook→settle→notify chưa build, manual mark-paid vẫn global. Regional research vẫn là decision input, không tự chốt provider/market expansion hay claim runtime. |
 | 2026-07-24 | v2.8a | **FOUNDER-RATIFIED + Round-06 fix (`docs-billing-publish-suspension-authority`):** Owner ratified the status-authority fail-closed union as authored — inline "⏳ pending" note removed (this review/merge is the ratification). Reactivation screen copy reverted to cause-agnostic always-show-both (payment CTA **and** contact-support line) — the round-05 conditional had no data source to pick a branch (billing overview API only exposes `subscription.status`; `TENANT_SUSPENDED` is intentionally cause-agnostic). Full rationale at BE `feature_billing_lifecycle_tech.md` v2.8a. Docs-only. |
 | 2026-07-24 | v2.8 | **Status-authority cross-ref (`docs-billing-publish-suspension-authority`):** §1 bất biến +1 bullet + edge #6 nói rõ "suspended" cho publish-suspend gate = fail-closed hai trục `tenants.status`/`subscriptions.status` (không suy ra từ một cột); +1 AC bullet. §4 Lifecycle State Machine +1 cảnh báo: diagram gộp 2 trục vào 1, "suspended → active: Payment received / manual override" chỉ là recovery trục `subscriptions` — **không** clear tenant-root hard-suspend (ToS/abuse), trục đó cần cơ chế riêng chưa xây (codex round-03 [P1] flagged nguy cơ đọc nhầm). §3 Reactivation screen copy sửa (round-05 [P2]): không còn tuyên bố tuyệt đối "trả tiền là xong" — suspended vì lý do khác billing thì payment CTA ẩn, hướng dẫn liên hệ hỗ trợ; owner-facing cause-differentiation là UX decision chưa chốt. Chi tiết decision table 6-case + concurrency contract + tests ở BE `feature_billing_lifecycle_tech.md` §3 Status Authority (mirror kỹ thuật — không lặp lại ở đây). **⏳ Founder ratification pending** cho shape cụ thể (STOP_AT_READY). Docs-only, không đổi UC/domain model/state machine (chỉ thêm chú thích diagram + sửa 1 screen copy, không sửa mermaid). Pre-existing dated changelog giữ verbatim. |
 | 2026-07-19 | v2.7a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |

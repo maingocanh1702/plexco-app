@@ -1,11 +1,11 @@
 # Feature: Host Billing & Tenant Lifecycle — Backend Tech Spec
 
 > **Canonical phase:** P5  
-> **Version:** 2.8d · 2026-07-24
+> **Version:** 2.9 · 2026-07-27
 > **Status:** Reviewed  
-> **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn; capability/availability resolver, provider wiring và lifecycle runtime chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../feature_billing_lifecycle.md`  
-> **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-29/DD-37/DD-40/DD-51
+> **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-29/DD-37/DD-40/DD-51/**DD-91** · `../../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
 
 > **Cập nhật v2.4 (DD-40 ✅ + DD-37 ✅, 2026-07-10):** §4b capability registry — free = `payment_mark_manual` (tiền mặt/CK thủ công) + `reminders_manual`; host_pro thêm `payment_reconcile_auto` + `reminders_auto` + `assistant_ai_kb` + `crm_dashboard`. Bot kênh free = **Zalo + Facebook Messenger** (bỏ Telegram — DD-37).
 
@@ -126,7 +126,7 @@ CREATE TABLE billing_overrides (
 
 ### Migration & Rollback
 
-> Grep live `packages/db/migrations/` (đã merge trên main; `0014_players_waitlist` đã merge tại `1a6ac38`; verify tail hiện hành tại thời điểm đọc, không hard-pin số): **cả 6 bảng** `plans` · `subscriptions` · `subscription_invoices` · `billing_transactions` · `billing_allocations` · `billing_overrides` **đã tồn tại từ `0007_billing.sql`** — DDL trên là baseline để đọc + target contract, **reuse, không recreate**.
+> Grep live `packages/db/migrations/` ngày 2026-07-27: `0000`–`0024` đã merge (25 migrations; tail `0024_public_visibility_capacity_check.sql`). **Cả 6 bảng** `plans` · `subscriptions` · `subscription_invoices` · `billing_transactions` · `billing_allocations` · `billing_overrides` **đã tồn tại từ `0007_billing.sql`** — DDL trên là baseline để đọc + target contract, **reuse, không recreate**. Mọi delta của slice billing phải dùng migration monotonic mới sau `0024`; không sửa migration đã apply.
 
 - **Migration (delta doc-DDL vs live `0007` → một migration mới monotonic sau tail hiện tại, KHÔNG sửa `0007`):**
   - `plans.plan_key` CHECK `('free','host_pro')` + seed v1 DD-29 — live vẫn CHECK 4-tier (ghi chú PENDING MIGRATION trong DDL trên);
@@ -165,6 +165,7 @@ CREATE TABLE billing_overrides (
 | 18 | Financial | Refund window cannot prove `paid_at` | Fail-closed manual review; never treat as within window or zero-risk |
 | 19 | Security | Override missing/overlong ticket fields | Reject unless PlatformAdmin + ticket_ref + reason + expires_at≤7d; auto-expire idempotently |
 | 20 | Billing safety | Tenant suspended receives player CK | Ingest ON; auto-settle/auto-notify OFF regardless plan capability |
+| 21 | Availability | Host Pro có `payment_reconcile_auto=true` nhưng provider/bank/market/currency/consent chưa khả dụng | Trả trạng thái unavailable ổn định (exact field/code chốt ở build slice) + manual fallback; **không** auto-settle/auto-notify, không suy entitlement thành availability và không chặn mark-paid thủ công |
 
 ---
 
@@ -339,6 +340,8 @@ Webhook → Durable ingest: billing_transaction + job COMMIT before ACK
 
 Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements.capabilities[key]` của plan hiện hành. **Đổi tính năng nào ở free/pro = sửa seed/`entitlements` (config), KHÔNG sửa code.** `plan_key` chỉ là nhãn; quyền do capability flags quyết định.
 
+Capability registry là **commercial entitlement**, không phải availability registry. Với `payment_reconcile_auto`, sau `hasCapability=true` còn phải qua một resolver riêng, fail-closed, theo ít nhất `provider × bank × market × currency × consent/connection state`. Research khu vực 2026-07-27 chỉ là **decision input**: authority hiện tại chỉ pin đường provider `sepay|apipay` cho rail Việt Nam; webhook→settle→notify và abstraction provider/market chưa có runtime. Vì vậy `payment_reconcile_auto=true` không được render thành “đã dùng được” nếu resolver chưa chứng minh availability. Mark-paid thủ công (`payment_mark_manual`) vẫn khả dụng toàn cầu và độc lập với resolver này.
+
 | Capability key | Free | Pro | Ghi chú |
 |---|:--:|:--:|---|
 | `web_app` | ✓ | ✓ | Web app + dashboard |
@@ -346,7 +349,7 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 | `session_management` | ✓ | ✓ | Kèo/roster/waitlist/join |
 | `discovery_marketplace` | ✓ | ✓ | Player-side (cross-club) |
 | `payment_mark_manual` | ✓ | ✓ | **Mark-paid thủ công** tiền mặt/CK (tap/multi-select), audit, idempotent, áp DD-25 confirm (DD-40) |
-| `payment_reconcile_auto` | ✗ | ✓ | **Auto-settle** CK khớp (webhook match tên+tiền+ngày) + **auto-notify** player đã trả |
+| `payment_reconcile_auto` | ✗ | ✓ | Entitlement thương mại cho **auto-settle** + **auto-notify**; chỉ chạy khi availability resolver cũng PASS. Authority provider hiện chỉ `sepay|apipay`/Việt Nam và chưa có runtime |
 | `reminders_manual` | ✓ | ✓ | Host bấm nhắc thủ công |
 | `reminders_auto` | ✗ | ✓ | Nhắc nợ / pre-post-session **tự động theo lịch** (2h→24h→…) |
 | `assistant_ai_kb` | ✗ | ✓ | Club Assistant + KB (DD-16..28) |
@@ -354,7 +357,7 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 
 **Limits** (`plans.limits`): `max_clubs` (free 2 · pro null=∞), `ai_monthly_question_cap` (free 0 · pro 2000). Chỉnh tự do theo config.
 
-**Bất biến gate:** (a) **CK ingest LUÔN chạy** bất kể plan (safety, BL-PAY-1) — capability chỉ gate hành vi **auto-settle/auto-notify**, không gate việc lưu giao dịch; (b) chặn capability trả về `PLAN_UPGRADE_REQUIRED`, không làm mất dữ liệu.
+**Bất biến gate:** (a) **CK ingest LUÔN chạy** bất kể plan (safety, BL-PAY-1) — capability chỉ gate hành vi **auto-settle/auto-notify**, không gate việc lưu giao dịch; (b) thiếu entitlement trả `PLAN_UPGRADE_REQUIRED`, không làm mất dữ liệu; (c) có entitlement nhưng thiếu availability trả trạng thái unavailable ổn định, không giả làm upgrade error và không fail-open; (d) deterministic requester-only `/pay` theo DD-91 không cần `assistant_ai_kb`, không gọi LLM và không ghi chat/payment-result state riêng.
 
 ---
 
@@ -403,6 +406,7 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 | 35 | Publish allowed — tenant row created via schema `DEFAULT`, no explicit status set | `tenants.status='trialing'` (column default, `0002_tenants_core.sql:15` — not set explicitly by any current path but must not self-lockout a future one), `subscriptions.status='active'` | Allow — step 1 treats `trialing` same as `active`; a normal insert relying on the default must not be classified as hard-suspended |
 | 36 | Publish vs. concurrent lifecycle-job suspend — job-first, lock held open (competing writer, deny path) | Tenant subscription eligible for the Daily Lifecycle Job's `past_due→suspended` step (not just `status='past_due'` in isolation): `plans.price > 0` (paid plan — the job's `JOIN plans WHERE plans.price > 0` filter), `subscriptions.status='past_due'`, `grace_end <= now()` (grace already elapsed — without this the job cannot claim the row at all). Test harness: Daily Lifecycle Job's transaction claims the row (`FOR UPDATE SKIP LOCKED`) and executes its `past_due`→`suspended` `UPDATE`, but does **NOT commit yet** — holds the transaction open with the row locked. While held, publish's step-6 billing re-check (`feature_session_management_tech.md` §4) attempts its own read on the same row | A correct (`FOR SHARE`) re-check **BLOCKS** on the job's held lock (cannot proceed while `FOR UPDATE` is outstanding) — harness then commits the job's transaction, publish's blocked read unblocks and observes the now-committed `suspended` value → `TENANT_SUSPENDED` (403), zero mutation, `status` stays `draft`, no `session.published`. Assert the read measurably WAITED (was blocked) before returning. A non-locking plain re-read does **NOT** block — under READ COMMITTED it sees the last-*committed* (pre-`UPDATE`) value `past_due` (still allowed) and would incorrectly let the mutation proceed; this test must fail such an implementation, not merely happen to reach the same denial by coincidence (this row's own two prior drafts both let the job's transaction fully commit BEFORE publish's read ran, so a plain re-read also observed the post-commit `suspended` value and passed without ever exercising lock contention — this version closes that gap) |
 | 36a | Publish vs. concurrent lifecycle-job suspend — publish-first (competing writer, job-deferred path) | Same eligible-row preconditions as #36 (`plans.price > 0`, `subscriptions.status='past_due'`, `grace_end <= now()`). Test harness barrier instead forces publish's step-6 `FOR SHARE` lock on the `tenants`/`subscriptions` row(s) to be acquired BEFORE the Daily Lifecycle Job's cron run attempts its `FOR UPDATE SKIP LOCKED` claim on the same row | Job's `SKIP LOCKED` claim skips the row this run (no error, no block) — suspend transition deferred to the job's next run; publish's mutation commits `status='open'` successfully, because it validly observed a not-yet-suspended tenant under lock at a real serialization point. This is the CORRECT outcome, not a race bug |
+| 37 | Auto-reconcile entitlement ≠ availability | Host Pro có `payment_reconcile_auto=true`, nhưng provider/bank/market/currency/consent không PASS | Không auto-settle/auto-notify; trả unavailable ổn định; mark-paid thủ công vẫn hoạt động. Free/thiếu entitlement vẫn là `PLAN_UPGRADE_REQUIRED` |
 
 ### Integration Tests
 
@@ -423,7 +427,7 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 2. Shadow lifecycle job (log only)
 3. Owner notices enabled
 4. Enforcement for beta
-5. Automated billing payment
+5. Automated billing payment chỉ sau khi entitlement **và** availability resolver đều PASS cho provider/bank/market/currency/consent cụ thể; manual mark-paid giữ nguyên ngoài gate
 
 ### Metrics
 
@@ -437,6 +441,7 @@ Gate tính năng đọc `hasCapability(tenant, key)` → tra `plans.entitlements
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-27 | v2.9 | Đồng bộ DD-91 + research khả dụng khu vực: `payment_reconcile_auto` là entitlement thương mại, không phải bằng chứng availability; thêm resolver fail-closed theo provider/bank/market/currency/consent, giữ manual mark-paid toàn cầu, exact `assistant_ai_kb`, và `/pay` deterministic không qua LLM. Reconcile migration live `0000`–`0024` (25 migrations, tail `0024`). Contract only; provider/lifecycle/chat runtime vẫn chưa build. |
 | 2026-07-24 | v2.8d | **Round-05 fix (`docs-session-publish-concurrency-recheck`, codex [P1]):** the round-02 fix split test #36 into job-first/publish-first, but #36's job-first barrier ("job's transaction commits before publish's read runs") let the job's transaction fully COMMIT before publish ever attempted its read — meaning by the time publish read, there was no concurrent lock holder left to contend with, so a naive plain re-read would ALSO observe the post-commit `suspended` value and pass, without the test ever exercising real lock contention. Fixed #36's harness to hold the job's transaction OPEN (claimed + `UPDATE`d but not committed) WHILE publish attempts its read: a correct `FOR SHARE` re-check now must BLOCK on the job's outstanding `FOR UPDATE` lock (assert the read measurably waited) and only proceed once the harness commits the job and the block releases; a non-locking plain re-read would NOT block and would instead see the last-*committed* (pre-`UPDATE`, still-`past_due`) value under READ COMMITTED — incorrectly allowing the mutation — so this version of the test actually fails a non-locking implementation instead of coincidentally passing it. #36a (publish-first) needed no change — its assertion ("job's `SKIP LOCKED` claim skips the row") already depends entirely on whether publish holds a real lock, with no coincidental-pass path. |
 | 2026-07-24 | v2.8c | **Round-02 fix (`docs-session-publish-concurrency-recheck`, codex [P1]+[P2]):** codex confirmed the v2.8b algorithm fix (locking re-check in `feature_session_management_tech.md` §4 step 6) is "directionally correct" but flagged test #36 as not actually proving the race is closed. [P1] the test only said "check passes; job commits before mutation commits" without forcing a DETERMINISTIC interleaving — a naive implementation using a plain final re-read (no lock) could still coincidentally pass if the job's commit landed after that unlocked read by luck, and the test never exercised the reverse ordering (publish's lock acquired first) to prove real mutual exclusion. [P2] the precondition `subscriptions.status='past_due'` alone does not make the row claimable by the Daily Lifecycle Job — that job only claims `plans.price > 0` (paid) subscriptions and only transitions `past_due→suspended` after `grace_end` has elapsed; without both, the job cannot actually produce the competing write the test is supposed to model. Fixed: split #36 into two deterministic sub-scenarios — **#36 (job-first)**: test harness forces the job's `FOR UPDATE SKIP LOCKED` claim + suspend commit to complete before publish's `FOR SHARE` re-check runs → publish must observe `suspended` and be denied. **#36a (publish-first)**: harness forces publish's `FOR SHARE` lock to be acquired before the job's claim attempt → job's `SKIP LOCKED` skips the row (suspend deferred to next run), publish proceeds correctly. Both now require the eligible-row preconditions (`plans.price > 0`, `subscriptions.status='past_due'`, `grace_end <= now()`). §3 Status Authority decision table untouched — out of scope. |
 | 2026-07-24 | v2.8b | **Clarify v2.8a scope + fix impossible-state test (`docs-session-publish-concurrency-recheck`):** (1) v2.8a's ratification clause said `feature_session_management_tech.md` §4's named hard dependency is "content-resolved by this contract" — narrowed that to **status authority only** (which column/value blocks publish, the decision table above); the **check-then-lock concurrency ordering** flagged by this same spec's own §3 Concurrency clause (added in v2.8, before v2.8a) was NOT resolved by v2.8a and is a separate sub-question — now closed directly in `feature_session_management_tech.md` §4 step 6 (billing re-check moved inside the same transaction/row-lock as the mutation) by this slice. (2) Test #36's precondition was an impossible state: it read the check-passes precondition as `subscriptions.status='active'`, but the Daily Lifecycle Job transition it races against (`past_due→suspended`) can only ever fire on a row that is ALREADY `past_due` — a single job run does not flip `active` straight to `suspended` (that requires an intervening `active→past_due` step, then a later run after `grace_end`). Corrected the precondition to `subscriptions.status='past_due'` (still an allowed status per the Suspended Action Matrix, so the check still passes — the race is now reachable). §3 Status Authority decision table **untouched** (not in scope — already ratified). Docs-only, no schema/algorithm change. |

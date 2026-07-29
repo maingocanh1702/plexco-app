@@ -9,6 +9,12 @@
 > manifest, acceptance matrix và exact target code được author.
 > **Verify-on-disk:** `main@494ad4eae9725ce113f89109de210455651a58e9`, 2026-07-23. Mọi khẳng định về
 > code/schema đều đo trực tiếp.
+>
+> **Supersession note (2026-07-28):** đây là forensic snapshot, không còn là current-state index. Trên
+> `main@784bc8d`, tenant-integrity roots `0019`–`0021`, shared job lease/ack + dispatcher/scheduler
+> `0022`–`0023`, và Session public-capacity CHECK `0024` đã merge. Scheduler vẫn OFF/placeholder và
+> SessionService/business route/projector vẫn chưa tồn tại. Dùng `HANDOFF.md`, `BUILD-STATUS.md` và
+> `ROADMAP.md` cho live order; giữ body dưới đây để giải thích vì sao đã từng re-slice.
 
 ---
 
@@ -184,5 +190,6 @@ implementation contracts/slices**, không được diễn đạt lại thành po
 
 | Ngày | Thay đổi |
 |---|---|
+| 27/07/2026 | Mark snapshot superseded: roots `0019`–`0024` và shared job mechanics đã merge; SessionService/route/projector vẫn chưa có. Không dùng thứ tự cũ làm current implementation plan. |
 | 23/07/2026 | Reconcile review at `main@494ad4eae9725ce113f89109de210455651a58e9`: add machine `criteria` classification; correct L0 to include consent states, full DD-41 policy, DD-39 price columns and all required DD-42/DD-45/DD-52 sources; add DD-49 core; remove false immediate-parallel and optional-no-retry claims. This remains analysis, not a readiness verdict or coding authorization. |
 | 23/07/2026 | Tạo analysis (superseded snapshot `main@3120bf7`): feature layer = 0 file; baseline schema + waitlist DDL exist, but SessionService runtime does not. |

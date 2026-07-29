@@ -2,13 +2,19 @@
 
 > **Canonical phase:** P3 (payment ingest) · P4 (web onboarding) · P4.7 (Zalo) — *cross-cutting upgrade*
 > **Track:** 🔌 Connector / Onboarding
-> **Version:** 0.9c · 2026-07-24
+> **Version:** 1.0 · 2026-07-27
 > **Status:** Draft (standard provider contracts reviewed; ApiPay enterprise provider gate open)
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3 webhook ingest stable · P4 onboarding wizard scaffold
-> **Tài liệu liên quan:** `feature_web_auth_onboarding.md` (nâng cấp step bank/zalo/messenger) · `feature_zalo_channel.md` · `feature_player_messenger.md` · `feature_payment_reconcile.md` · `../channels/zalo/README.md` §6–7 · `../standards/decisions.md` DD-30/DD-37/DD-33 · `../product/TDD.md` · `../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `../research/player-side-saas-AUDIT.md` §B2
+> **Tài liệu liên quan:** `feature_web_auth_onboarding.md` (nâng cấp step bank/zalo/messenger) · `feature_zalo_channel.md` · `feature_player_messenger.md` · `feature_payment_reconcile.md` · `../channels/zalo/README.md` §6–7 · `../standards/decisions.md` DD-30/DD-37/DD-33 · `../product/TDD.md` · `../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `../research/player-side-saas-AUDIT.md` §B2 · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md` (research input, không phải provider/rollout authority)
 
 > **Authority DD-65 (2026-07-17):** doc này vẫn cover connector Zalo/SePay/ApiPay. Messenger central Page do platform vận hành; FB Login + Page riêng là **optional tenant connector**, không chặn tenant readiness. Chi tiết ở `feature_player_messenger.md` + `feature_web_auth_onboarding.md`.
+>
+> **Regional/capability boundary (2026-07-27):** connector contract hiện hành chỉ có
+> `sepay|apipay`, thuộc rail Việt Nam. `payment_reconcile_auto` là commercial entitlement riêng; UI chỉ
+> được hiện `Available` khi market/provider/bank/currency/consent và runtime webhook→settle→notify cùng
+> pass. Ngoài Việt Nam giữ mark-paid thủ công và waitlist/coming-later cho auto-reconcile; research không
+> tự thêm provider hay authorize implementation.
 
 ---
 
@@ -639,6 +645,7 @@ Tỉ lệ kết nối không-chạm-webhook, `time_to_verify_ms` trung vị, t�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-27 | v1.0 | Add regional capability boundary: current connector authority is Vietnam `sepay|apipay`; entitlement is distinct from market/provider/bank/currency/consent/runtime availability. Manual remains global; research does not authorize a provider/rollout. |
 | 2026-07-24 | v0.9c | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep, round-01 codex expansion): TARGET-migration comment (`zalo_bots` `webhook_secret_enc`, L230) hard-pinned `tail = 0018` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Numbering guidance giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v0.9b | **Reconcile 0014 merge-state:** current-state TARGET-migration comment (`zalo_bots` `webhook_secret_enc`) sửa → `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`, tail = 0018), trước ghi "hiện branch-only". Numbering guidance giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v0.9a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |

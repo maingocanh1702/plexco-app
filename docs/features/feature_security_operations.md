@@ -2,13 +2,18 @@
 
 > **Canonical phase:** Cross-cutting · Completion gate P6  
 > **Track:** 🛡️ Security & Ops  
-> **Version:** 2.2a · 2026-07-19<br>
+> **Version:** 2.3 · 2026-07-27<br>
 > **Status:** Reviewed  
-> **Implementation:** In progress — RLS/HR1 guard đã thực thi; phần còn lại chưa · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** In progress — RLS/HR1 + tenant-integrity + narrow audited job lease/ack/preflight controls đã có; production delivery/ops gates còn mở · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** All production features  
 > **Tài liệu liên quan:** `../product/BRD.md` §8/§13 · `../product/TDD.md` §4/6/7/10 · `../research/player-side-saas-AUDIT.md` · `../standards/business-rules.md` · `BE/feature_security_operations_tech.md`
 
 > **DD-37/DD-65 reconcile:** secret inventory tách đúng ownership: Zalo Bot Token; **Messenger Page access token per Page/endpoint** trong protected store; **một Meta App Secret cấp deployment/platform**; Google OAuth và provider/web/KMS secrets. Không gộp Page token với App Secret thành một rotation unit. Telegram token chỉ là legacy runtime tới khi provider swap hoàn tất.
+>
+> **Current job-security boundary (2026-07-27):** `0022`/`0023` đã land audit/lease/ack,
+> lane-specific `job_definer` ownership, `app_worker` EXECUTE-only và fail-closed worker preflight.
+> Scheduler vẫn OFF, dispatcher placeholder và chưa có producer/real projector/replay/drain evidence;
+> đây là control implementation, không phải production readiness hay product delivery.
 
 ---
 
@@ -135,6 +140,7 @@
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-27 | v2.3 | Mirror implemented job-security controls (`0022`/`0023`, narrow definer, audit/lease/ack, preflight) và giữ scheduler/delivery/ops enablement gates mở. |
 | 2026-07-19 | v2.2a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
 | 2026-07-17 | v2.2 | **DD-65 secret ownership closure:** split per-Page Messenger access tokens from the single deployment/platform Meta App Secret across inventory, rotation, kill-switch and blast-radius evidence. |
 | 2026-07-15 | v2.1 | **DD-37 closure:** target secret rotation/kill-switch = Zalo + Messenger + Google/provider/web/KMS; Telegram chỉ legacy runtime tới provider swap. |

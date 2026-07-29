@@ -1,17 +1,17 @@
 # Feature: User Settings & Gender-based Pricing — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.15 · 2026-07-26
+> **Version:** 0.16 · 2026-07-27
 > **Status:** DD-39 ✅ · DD-47/48 ✅ framework — Draft, pending migration/build
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_user_settings.md` *(Draft)*
 > **References:** `../../standards/decisions.md` DD-39 (giá theo giới tính) · **DD-45 (first-activation waitlist promotion) · DD-49 (rejoin/correction)** · **DD-47 (follow graph) · DD-48 (profile visibility)** · DD-13 (Google/email — nguồn hồ sơ web) · `../BE/feature_payment_reconcile_tech.md` (suy charge) · `../BE/feature_session_management_tech.md` (đặt giá) · `feature_identity.md` (merge re-parent) · `feature_player_view.md` (profile path) · BRD MODULE 11 / FR-11 / NFR-P1
 
-> ✅ **Follow + private/public (DD-47/48 — framework chốt, §6):** `person_follows` là global protected, không table grant cho `app`; chỉ narrow `SECURITY DEFINER`. Existing users backfill private, new users default public. Social DTO chỉ chứa field có canonical source; self và host operational paths tách riêng. Migration mới — số monotonic kế tiếp sau tail đã sync (hiện `0022`); code chưa build.
+> ✅ **Follow + private/public (DD-47/48 — framework chốt, §6):** `person_follows` là global protected, không table grant cho `app`; chỉ narrow `SECURITY DEFINER`. Existing users backfill private, new users default public. Social DTO chỉ chứa field có canonical source; self và host operational paths tách riêng. Migration mới — số monotonic kế tiếp sau tail đã sync (hiện `0024`); code chưa build.
 >
-> **DD-70(a) proposal v1.70:** only a newly-created private follow request appends a global item, in the same fence-first transaction. `follow_accepted` is analytics-only; visibility bulk auto-accept emits no notification. Tenant outbox is not a global fallback.
+> ✅ **DD-70(a) owner-final target (runtime chưa build):** only a newly-created private follow request appends a global item, in the same fence-first transaction. `follow_accepted` is analytics-only; visibility bulk auto-accept emits no notification. Tenant outbox is not a global fallback; option (b) SSE-only/offline-loss đã bị loại.
 
-> ✅ **DD-39 chốt (2026-07-10).** Schema dưới đây là **thiết kế đã pin** (fail-closed khi decrypt lỗi); authoritative khi thực thi là `packages/db/schema.ts` + `migrations/*.sql` (**migration mới — số monotonic kế tiếp sau tail đã sync, hiện `0022`**) + `decisions.md` DD-39. **KHÔNG** tạo bảng song song với `persons/sessions/charges`; `persons` vẫn là anchor người thật (§P6). Propagation vào `feature_session_management`/`feature_payment_reconcile` (FR-5.3) khi build.
+> ✅ **DD-39 chốt (2026-07-10).** Schema dưới đây là **thiết kế đã pin** (fail-closed khi decrypt lỗi); authoritative khi thực thi là `packages/db/schema.ts` + `migrations/*.sql` (**migration mới — số monotonic kế tiếp sau tail đã sync, hiện `0024`**) + `decisions.md` DD-39. **KHÔNG** tạo bảng song song với `persons/sessions/charges`; `persons` vẫn là anchor người thật (§P6). Propagation vào `feature_session_management`/`feature_payment_reconcile` (FR-5.3) khi build.
 
 ---
 
@@ -58,11 +58,11 @@ ALTER TABLE sessions
 -- (bên thiếu fallback về price_amount). Phase-1 storage is these columns; no parallel price table.
 ```
 
-> **Chọn hình thức giá:** phase-1 dùng **cột `price_male`/`price_female` trên `sessions`** (2 nhóm giá phổ biến CLB cầu lông/pickleball VN). Nếu tương lai cần >2 nhóm → mở quyết định/migration sang bảng `session_price_by_gender(session_id, gender, amount)`. **DD-39 đã ✅** — hình thức cột (2 nhóm) chốt ở migration có **số monotonic kế tiếp còn trống sau khi sync mọi prerequisite đã merge**; `0014_players_waitlist` đã merge (`1a6ac38`) và giữ số của nó — không ảnh hưởng số slice này sẽ nhận (tail hiện tại: `0022`).
+> **Chọn hình thức giá:** phase-1 dùng **cột `price_male`/`price_female` trên `sessions`** (2 nhóm giá phổ biến CLB cầu lông/pickleball VN). Nếu tương lai cần >2 nhóm → mở quyết định/migration sang bảng `session_price_by_gender(session_id, gender, amount)`. **DD-39 đã ✅** — hình thức cột (2 nhóm) chốt ở migration có **số monotonic kế tiếp còn trống sau khi sync mọi prerequisite đã merge**; `0014_players_waitlist` đã merge (`1a6ac38`) và giữ số của nó — không ảnh hưởng số slice này sẽ nhận (tail hiện tại: `0024`).
 
 ### Migration & Rollback
 
-> Grep live `packages/db/migrations/` (`0000`–`0022` đã merge trên main, 23 migrations — gồm `0014_players_waitlist`): `persons` **đã tồn tại từ `0001_global_directory.sql`**, `sessions` **từ `0002_tenants_core.sql`** — reuse/ALTER additive, **không recreate**, không tạo bảng `users` song song. **Chưa có** trong `0000`–`0022`: `persons.{gender_enc, dob_enc, username, language, profile_visibility}`, `sessions.{price_male, price_female}`, bảng `person_follows` + narrow `SECURITY DEFINER` functions — toàn bộ là genuinely new.
+> Grep live `packages/db/migrations/` (`0000`–`0024` đã merge trên main, 25 migrations; tail `0024_public_visibility_capacity_check.sql`): `persons` **đã tồn tại từ `0001_global_directory.sql`**, `sessions` **từ `0002_tenants_core.sql`** — reuse/ALTER additive, **không recreate**, không tạo bảng `users` song song. **Chưa có** trong `0000`–`0024`: `persons.{gender_enc, dob_enc, username, language, profile_visibility}`, `sessions.{price_male, price_female}`, bảng `person_follows` + narrow `SECURITY DEFINER` functions — toàn bộ là genuinely new.
 
 - **Migration:** migration mới monotonic sau tail đã merge (số chốt sau khi sync prerequisites — blockquote trên; `0014` đã merge và giữ số của nó, không ảnh hưởng số slice này sẽ nhận). DD-39 = ALTER additive trên `persons`/`sessions`; DD-47/48 = transaction §6.1 (backfill existing `private` → default `public` → NOT NULL/CHECK) + `person_follows` + REVOKE/GRANT narrow functions.
 - **Rollback:**
@@ -97,6 +97,8 @@ deriveChargeAmount(session, person):
 > ⚠️ **KHÔNG gộp decrypt-fail vào nhánh "gender thiếu".** `gender_enc IS NULL` = chưa set (fallback + nhắc, hợp lệ). `gender_enc` có giá trị nhưng decrypt fail = lỗi KMS/hạ tầng → **fail-closed**, không tạo charge (nếu fallback sẽ tính sai tiền cho người đã set gender). Đây là ràng buộc đường tiền (HR2).
 >
 > **Caller behavior đã pin (DD-45×DD-49):** `deriveChargeAmount` chỉ trả amount hoặc typed failure; không tự enqueue. Direct first-entry active join/approve failure → rollback riêng transaction, không active player/charge/venue (new guest membership cũng rollback; request vẫn pending). First-activation waitlist opener failure giữ candidate `waitlisted`/no-charge/no-venue; SessionService owns audit + candidate event referencing a root `promotion_retry_id` lazy-created on first failure. Root CAS/lease job runs max 3 claimed attempts; each completed current-order sweep tries each candidate at most once. Sibling events never fork budget/job, owner digest dedupes per root, and expired final claim resolves-or-terminalizes without derivation/attempt 4. Proven DD-49 rejoin promotion revalidates live aggregate: chưa-refund carry-over; refunded append chỉ atomic với activation; full defers. Không chạy charge-create derivation hay fallback giá.
+>
+> **One-payment-truth boundary (DD-91):** `deriveChargeAmount` chỉ sở hữu **write-time amount** của charge; sau khi charge commit, canonical `charges.amount_due` + allocations là authority. Player View `getSelfPaymentStatus`/`remainingAmount` sở hữu read-time status cho Home, `/api/me/charges`, exact `/pay` và notification detail. Các reader không được decrypt gender hoặc chạy lại công thức giá để suy nợ.
 
 ### Public projection (giữ NFR-S2/CO-5)
 
@@ -183,6 +185,7 @@ deriveChargeAmount(session, person):
 
 - **PII at-rest:** `gender_enc`/`dob_enc` mã hoá KMS (như `phone_enc`); giải mã dưới authz person-self hoặc host-of-tenant cho suy giá; **không** log plaintext.
 - **Suy giá:** `deriveChargeAmount` chạy trong ledger/charge-create path (`feature_payment_reconcile` FR-5.3); fallback default + nhắc set khi thiếu gender.
+- **Ranh giới read:** kết quả derivation được persist vào canonical `charges.amount_due`; Home/chat/notification đọc qua Player View payment service, không gọi lại `deriveChargeAmount` và không tự re-derive theo gender.
 - **Sync:** đổi hồ sơ = command → canonical → project (username/display_name/language hiện đúng mọi surface).
 - **Ngôn ngữ:** `persons.language` ưu tiên cho message tới person; tenant locale (`tenants.locale`) là mặc định CLB (NFR-L1).
 
@@ -269,7 +272,7 @@ REVOKE ALL ON TABLE person_follows FROM app, PUBLIC;
 
 > **Actor binding:** identity service resolve actor từ verified session/channel identity; URL/body chỉ mang target/follower id. Privileged fn re-check `actor=follower` cho follow/unfollow và `actor=followee` cho approve/reject/remove. Function list gồm follow/unfollow/approve/reject/remove/list + profile visibility/read; fixed search path và fail-closed.
 >
-> **Status + concurrency:** `status` không có default; `person_follow_*` luôn ghi tường minh. Khi DD-70(a) active, follow/pair mutations inventory actor+target read-only, lock their inbox fences UUID-order, then lock pair/Person rows and re-derive state; drift rolls back/retries. Visibility mutation locks only the actor fence/Person and serializes the bounded follow-state update under its canonical owner; private→public auto-accept writes analytics only, not one item per follower. Known producers must obey this order or build HALT — no tenant-outbox projector fallback.
+> **Status + concurrency:** `status` không có default; `person_follow_*` luôn ghi tường minh. Theo owner-final target DD-70(a), follow/pair mutations inventory actor+target read-only, lock their inbox fences UUID-order, then lock pair/Person rows and re-derive state; drift rolls back/retries. Visibility mutation locks only the actor fence/Person and serializes the bounded follow-state update under its canonical owner; private→public auto-accept writes analytics only, not one item per follower. Known producers must obey this order or build HALT — no tenant-outbox projector fallback. Đây là target contract, chưa phải runtime.
 
 ### 6.2 Follow lifecycle
 
@@ -388,7 +391,7 @@ getProfile(viewer V, target T):
 
 ### 6.7 Chi tiết triển khai (impl-gap)
 
-- **Notify follow-request (person-directed global):** `notification_intents`/tenant `outbox_events` không cover event global. If DD-70(a), only a newly-created private follow request uses `candidate read → ordered inbox fences → Person/source → child` and appends via owner-derived helper in the same transaction; never lock target Person first then fence. If the canonical mutation cannot be reordered safely, build HALT pending an explicit GLOBAL PROTECTED source-event owner. Option (b) remains SSE/person-self with offline loss.
+- **Notify follow-request (person-directed global):** `notification_intents`/tenant `outbox_events` không cover event global. Theo DD-70(a), only a newly-created private follow request uses `candidate read → ordered inbox fences → Person/source → child` and appends via owner-derived helper in the same transaction; never lock target Person first then fence. If the canonical mutation cannot be reordered safely, build HALT pending an explicit GLOBAL PROTECTED source-event owner. Option (b) SSE/person-self with offline loss **đã bị loại**; runtime vẫn chưa build.
 - **Sync (HR3):** đổi visibility/follow state = command → canonical → normal surface projection. Durable global notification, nếu có, là same-transaction item từ canonical source — không có notification projector song song.
 - **i18n (HR5):** mọi chuỗi ("Hồ sơ riêng tư", nút follow/request…) qua `t(vi, en)`.
 
@@ -417,6 +420,7 @@ getProfile(viewer V, target T):
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-27 | v0.16 | Reconcile migration live `0000`–`0024` (25 migrations, tail `0024`) và cập nhật mọi current-tail marker. Pin DD-91 one-payment-truth boundary: gender pricing chỉ derive lúc ghi `charges.amount_due`; Home/chat/notification đọc canonical Player View status, không chạy lại công thức. Reconcile DD-70(a) từ stale proposal/conditional sang owner-final target, option (b) đã bị loại; runtime vẫn chưa build. |
 | 2026-07-26 | v0.15 | **Merge-state reconcile:** `0014_players_waitlist` đã merge (`1a6ac38`); tail sync hiện `0000`–`0022` (23 migrations). Sửa 5 dòng current-state stale (dòng 10, 14, 61, 65, 67) từng nói `0000`–`0013` là merged set / `0014` branch-only. Giữ nguyên GUIDANCE đánh số (monotonic kế tiếp sau tail đã sync) và danh sách genuinely-new không đổi. Không đổi schema/code/DD; Status/Implementation không đổi. |
 | 2026-07-19 | v0.14 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (reuse/ALTER `persons`/`sessions` baseline `0001`/`0002`; mọi object DD-39/DD-47/48 = migration mới monotonic), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v0.13a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |

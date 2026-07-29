@@ -3,8 +3,8 @@
 > Principles dùng khi thiết kế core domain, database schema, service boundary và architecture slice cho Plexco.
 > Tài liệu này không thay thế `product/TDD.md`, `standards/business-rules.md` hoặc `standards/decisions.md`; khi conflict, cập nhật decision/source document trước rồi sync lại file này.
 
-**Version:** 1.6
-**Date:** 2026-06-21 (cập nhật 2026-07-25)
+**Version:** 1.7
+**Date:** 2026-06-21 (cập nhật 2026-07-27)
 **Scope:** multi-tenant core, PostgreSQL/RLS, sync engine, identity, payment ledger, marketplace discovery, web/chat/native surfaces.
 
 > **Cập nhật v1.2 — 16/07/2026 (DD-50):** phase-1 không thu SĐT. Strong proof cho claim membership có tiền chỉ là verified account email hoặc transactional one-time `link_code`; owner/name/CK chỉ là review evidence. Phone schema giữ dormant.
@@ -16,6 +16,12 @@
 > **Cập nhật v1.5 — 19/07/2026 (DD-70(a) proposal, decisions v1.70):** known global-notification producers use bounded read-only Person discovery → inbox fences UUID-order → canonical Person/source/audit → same-transaction item. `link_code` consume emits nothing; merge commit owns `identity_merged`. Tenant outbox is never a global fallback; an unfit path is a build halt pending an explicit GLOBAL PROTECTED source-event contract.
 >
 > **Cập nhật v1.6 — 25/07/2026 (DD-89/DD-90):** một cross-tenant job function trên bảng `FORCE RLS` phải do lane-specific, `NOLOGIN BYPASSRLS` definer sở hữu, được bootstrap ở privileged cluster tier trước migration và chỉ có exact table grants. Runtime `app_worker` vẫn `NOBYPASSRLS`/EXECUTE-only; direct DML không thay stored-operation boundary. Mọi claim/reclaim có audit per-event, và function-owner allowlist là invariant.
+>
+> **Cập nhật v1.7 — 27/07/2026:** (a) `0022`/`0023` + bot preflight/dispatcher/scheduler đã
+> implement shared job mechanics, nhưng scheduler mặc định OFF và projector registry/delivery còn
+> placeholder; producer/replay/sub-minute drain vẫn là enablement blockers. (b) DD-91 pin một payment
+> truth target: mọi consumer person-self phải dùng cùng `remainingAmount` + `SelfPaymentStatus`
+> (`known_zero|known_amount|unknown`), trong đó `unknown` fail-closed; decision/plan này chưa phải runtime.
 
 ---
 
@@ -164,7 +170,7 @@ Examples:
 
 | Derived data | Canonical owner |
 |---|---|
-| `charge.paid` / outstanding amount | Payment ledger helper over `charges` + `payment_allocations` + reversals. |
+| `charge.paid` / outstanding amount | Một canonical `remainingAmount` helper over `charges` + `payment_allocations` + reversals; service map sang `SelfPaymentStatus`, không consumer nào tự tính lại. DD-91 target, chưa runtime tại v1.7. |
 | `slots_open` | Session capacity helper/projection from canonical roster and capacity. |
 | `public_sessions.slots_open` | Public projector, never hand-computed by discovery API. |
 | Person's clubs/debts | Person-self query service, not tenant dashboard query reused with bypass. |
@@ -589,6 +595,7 @@ Before merging any core/db architecture change, ask:
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-07-27 | 1.7 | Reconcile implemented-but-disabled shared job substrate and DD-91 single payment-truth/fail-closed target; preserve decision/runtime boundary. |
 | 2026-06-21 | 1.0 | Initial Plexco core/db/architecture principles. |
 | 2026-07-10 | 1.1 | DD-37 channel pivot (BRD v3.4): ví dụ adapter/provider-ingest/idempotency đổi Telegram→Zalo/Messenger; `ChannelIdentity` = Zalo/Messenger/Google/native. Không đổi nguyên tắc. |
 | 2026-07-16 | 1.2 | DD-50: replace phone/owner-confirm claim language with verified account email or transactional one-time `link_code`; keep phone schema dormant. |

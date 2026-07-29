@@ -1,10 +1,12 @@
 # 🍪 Design-probe — which completion-hop carries a `SameSite=Strict` cookie after a cross-site start
 
-> **Type:** DESIGN PROBE — measured evidence + one pinned decision. This is **not** a readiness
-> verdict and does **not** authorize coding; the follow-up slice (`auth-s4-d1b-oauth-session-rotation`)
-> and its enablement gate remain the owner's decision. Precedent: `b0-auth-credential-lifecycle-design-probe.md`,
-> `g3-revoke-all-concurrency-probe-seed.md` (probe docs carry no `review-readiness` directive).
-> **Date:** 2026-07-22
+> **Type:** IMPLEMENTATION EVIDENCE RECORD — historical design probe + closed manual browser measurement.
+> This is not a readiness verdict and does not independently authorize future enablement changes.
+> The follow-up slice `auth-s4-d1b-oauth-session-rotation` implemented M3 and merged at `ae8986e`
+> (`0018_oauth_completion_handoff.sql`).
+> **Probe date:** 2026-07-22 · **Safari/iOS evidence closure:** 2026-07-26 · **Live refresh:** 2026-07-27.
+> Engineering/measurement is closed; Google credentials/go-live remains an owner-controlled,
+> independently gated action.
 > **Authority read (live repo):** `apps/web/lib/session-cookies.ts` (`plx_session` = `SameSite=Strict`,
 > `issueSession()` rotate-vs-create branch, lines 36–113) · `apps/web/app/api/auth/google/callback/route.ts`
 > (the cross-site landing; `issueSession` at line 201) · `docs/autopilot-manifests/auth-s4-d1b-oauth-session-rotation.json`
@@ -34,17 +36,15 @@ carry the `Strict` cookie and would leave the residual risk fully intact.**
   header so the existing `sameOriginRequest()` guard applies to the mutating session-rotation step.
   `M2` (`location.replace` GET) is the clean simpler alternative if a GET completion is preferred.
 - **Cross-browser disagreement among measured engines:** **none.** All three agree on every cell.
-- **NOT MEASURED — owner must confirm:** **Safari (macOS)** and **iOS Safari** on real shipping builds.
-  The WebKit tested here is Playwright's engine build (v2251), which is a *frozen* macOS-14 build (see §2.4).
-  It is Safari's engine and agrees with Chromium/Firefox, but it is not the shipping Safari/iOS browser,
-  and iOS Safari historically applies the strictest cookie heuristics. Manual steps in §7.
+- **MEASURED PASS (2026-07-26):** shipping **Safari (macOS)** and **iOS Safari 18.3** reproduce the
+  same matrix: M1 withholds `Strict`; M2/M3/M4/M5 carry it. M3 therefore has real-browser evidence
+  on both required Apple surfaces. §7 preserves the reproduction procedure and evidence notes.
 
 **Blocker status:** the design premise in the d1b manifest — *"a same-site completion hop … a first-party
 navigation, so the Strict cookie IS sent"* — is **confirmed by measurement, with the critical refinement
 that "first-party navigation" must mean a committed first-party document, not a server redirect.** The
-blocker is resolved *for the design question on Chromium/Firefox/WebKit-engine*. It is **not** declared
-fully resolved: real Safari + iOS Safari remain to be measured by the owner (§7) before the enablement
-gate is closed. See §8.
+mechanism blocker and required Safari/iOS measurement gate are fully resolved. This does **not** prove
+Google login is enabled: credentials/go-live and independent legal/PII/config gates remain separate.
 
 ---
 
@@ -123,9 +123,10 @@ Driven by Playwright **1.61.1**, three real engine builds, headless, Apple Silic
 Host: **macOS 14.5 (23F79)**, arm64. Each `(engine × mechanism)` runs in a fresh browser context.
 
 ### 2.5 Honest limitations
-- **Safari (macOS) and iOS Safari are NOT covered** by Playwright's WebKit. Their cells are `NOT MEASURED`;
-  §7 gives exact manual steps. Do not infer them from the WebKit engine result, however clean.
-- WebKit here is a **frozen** build (§2.4); treat it as a strong proxy for Safari behavior, not as Safari itself.
+- Automated Playwright WebKit does **not** itself cover shipping Safari/iOS Safari. Those surfaces were
+  measured manually on 2026-07-26 (§7); automation still cannot continuously regress them.
+- WebKit here is a **frozen** build (§2.4); treat its result as engine evidence, not a replacement for
+  the separate manual Safari measurements.
 - Loopback `127.0.0.1`/`localhost` is a valid cross-site pair (validated by the `/callback` baseline), but it
   is not two public-suffix domains; the manual Safari steps in §7 reuse the same pair and re-validate cross-site
   via that same baseline row before trusting any result.
@@ -244,8 +245,9 @@ measured to carry `Strict`), and it requires the completion endpoint to accept P
 > The steps below are kept verbatim as the reproduction procedure.
 
 
-The automated run cannot cover shipping Safari or iOS Safari. Fill these cells manually. The harness server
-needs **only Node** (no Playwright); if `.probe/` was cleaned, recreate it from Appendix B + Appendix C.
+The automated run cannot cover shipping Safari or iOS Safari. The steps below are the procedure used for
+the 2026-07-26 PASS and can be rerun after browser/OS changes. The harness server needs **only Node**
+(no Playwright); if `.probe/` was cleaned, recreate it from Appendix B + Appendix C.
 
 **Start the harness** (one terminal, leave running):
 ```
