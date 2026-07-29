@@ -110,7 +110,53 @@ fi
 if [ "$DO_PUSH" -eq 1 ]; then
   git push origin main
   echo "✓ pushed"
+
+  # 8b. reconcile backlog status — PHẢI sau push, không thể trước.
+  #
+  # VÌ SAO CÓ BƯỚC NÀY (sự cố lặp: 2026-07-25 bảy slice, 2026-07-29 một slice):
+  # merge cập nhật code + INFLIGHT nhưng `docs/autopilot-backlog.md` giữ `status: ready|planned`.
+  # Bot quét backlog rồi launch lại slice ĐÃ XONG — đốt trọn một session để tái xác nhận kết luận cũ.
+  # Cả hai lần nguyên nhân giống hệt: không ai nhớ chạy `--fix`. Thêm một dòng nhắc vào docs không
+  # sửa được thứ hỏng vì phải-nhớ; gắn vào bước merge thì mới sửa.
+  #
+  # PHẢI SAU PUSH: `autopilot-backlog-reconcile` giải `merged_probe` bằng `git show origin/<default>`.
+  # Chạy trước push thì probe chưa có trên origin → nó báo "genuinely pending" và không flip gì cả.
+  #
+  # KHÔNG blind-commit: script này sinh ra từ đúng lớp lỗi "chuỗi nhiều bước có tác dụng phụ chạy
+  # nửa vời". Nên ở đây in diff, rồi commit như MỘT commit riêng có message cố định. Nếu commit thất
+  # bại (thường là thiếu root-lock / PLEXCO_COMMIT_OWNER) thì nói RÕ rằng merge+push ĐÃ THÀNH CÔNG và
+  # phần còn thiếu chỉ là bookkeeping — để không ai chạy lại ap-merge và tạo commit trùng.
+  echo "── reconcile backlog status (chống stale) ──"
+  if [ -x scripts/autopilot-backlog-reconcile ]; then
+    scripts/autopilot-backlog-reconcile --fix || true
+    if git diff --quiet -- docs/autopilot-backlog.md; then
+      echo "✓ backlog không có entry stale nào"
+    else
+      echo "── backlog vừa được flip: ──"
+      git --no-pager diff --stat -- docs/autopilot-backlog.md
+      if git add docs/autopilot-backlog.md &&
+         git commit -m "chore(backlog): reconcile status after merging $SLUG" &&
+         git push origin main; then
+        echo "✓ backlog reconciled + pushed: $(git rev-parse --short HEAD)"
+      else
+        echo ""
+        echo "⚠ MERGE + PUSH CỦA '$SLUG' ĐÃ THÀNH CÔNG — ĐỪNG chạy lại ap-merge.sh."
+        echo "  Chỉ còn bookkeeping: docs/autopilot-backlog.md đã sửa nhưng CHƯA commit được."
+        echo "  Thường do thiếu root-lock. Chạy tay:"
+        echo "    scripts/autopilot-root-lock acquire --owner <label>"
+        echo "    export PLEXCO_COMMIT_OWNER='<label>'"
+        echo "    git add docs/autopilot-backlog.md && git commit -m 'chore(backlog): reconcile status after merging $SLUG' && git push origin main"
+        echo "    scripts/autopilot-root-lock release --owner <label>"
+        exit 1
+      fi
+    fi
+  else
+    echo "⚠ không thấy scripts/autopilot-backlog-reconcile — bỏ qua reconcile (kiểm tay!)"
+  fi
+
   echo "→ Kế tiếp: xác nhận trên remote RỒI mới dọn:  scripts/ap-finish.sh $SLUG"
 else
   echo "→ Chưa push (thiếu --push). Kiểm tra xong thì: git push origin main"
+  echo "  LƯU Ý: reconcile backlog chỉ chạy sau push (probe giải theo origin/main)."
+  echo "  Push tay xong nhớ chạy: scripts/autopilot-backlog-reconcile --fix"
 fi

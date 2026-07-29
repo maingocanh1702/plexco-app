@@ -402,7 +402,23 @@ cd ~/Projects/Plexco\ app && \
 
 ---
 
-## §5. Sửa cơ chế — để lỗi status-stale không quay lại lần thứ ba
+## §5. Sửa cơ chế — để lỗi status-stale không quay lại lần thứ ba ✅ ĐÃ LÀM 2026-07-29
+
+> **Đã gắn vào `scripts/ap-merge.sh` bước 8b.** Chi tiết thiết kế:
+>
+> - **Chạy SAU `git push`, không thể trước.** `autopilot-backlog-reconcile` giải `merged_probe` bằng
+>   `git show origin/<default>`. Đặt trước push thì probe chưa có trên origin, nó báo *"genuinely
+>   pending"* và không flip gì — một bước trông như đã chống lỗi nhưng thật ra là no-op.
+> - **Commit riêng, không blind-chain.** In diff, rồi commit với message cố định. Chính script này ra
+>   đời từ sự cố "chuỗi nhiều bước có tác dụng phụ chạy nửa vời" (`eba1c27`), nên nó không được tái
+>   phạm cái nó chữa.
+> - **Phân biệt hai loại thất bại.** Nếu commit hỏng (thường thiếu root-lock / `PLEXCO_COMMIT_OWNER`),
+>   nó in đậm rằng **merge + push ĐÃ thành công** và phần thiếu chỉ là bookkeeping, kèm đúng bốn lệnh
+>   để đóng. Không có câu đó thì người đọc `exit 1` sẽ tưởng merge hỏng và chạy lại `ap-merge` → commit
+>   trùng trên `main`.
+> - **Nhánh không `--push`** cũng in nhắc, vì đó là lối duy nhất còn lại mà reconcile không tự chạy.
+>
+> Phần dưới giữ nguyên phần chẩn đoán gốc, gồm hai lỗ mà bước 8b **không** bịt được.
 
 `scripts/ap-merge.sh` **không** gọi `autopilot-backlog-reconcile`. Đó là lý do backlog rot sau merge:
 25/07 bảy slice, 29/07 một slice, cùng một nguyên nhân. Thêm dòng nhắc vào docs sẽ không sửa được —
@@ -481,6 +497,7 @@ follow-up hợp lệ mà không nới scope của chính slice. Chưa có; ghi l
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 29/07/2026 | v0.9 | **§5 thực thi: `ap-merge.sh` bước 8b.** `autopilot-backlog-reconcile --fix` nay chạy tự động sau `git push` trong `ap-merge.sh`, commit riêng, và khi commit hỏng thì phân biệt rõ *merge+push đã xong, chỉ thiếu bookkeeping* với *merge hỏng* — không có câu đó thì `exit 1` sẽ dụ người ta chạy lại `ap-merge` và tạo commit trùng trên `main`. Điểm thiết kế bắt buộc: **sau** push chứ không trước, vì probe giải theo `origin/main`. Kèm kit v12 (`autopilot-backlog-reconcile` nay nằm trong sync pack nên mọi repo consumer đều có `--fix`) và de-pin `KIT_VERSION` khỏi prose ở 4 doc. |
 | 29/07/2026 | v0.8 | **Commit 0–7 land; §3 verify phát hiện `pnpm lint` ĐỎ — có sẵn trên main, không do docs.** 11 × `no-undef` trên `process` trong `scripts/autopilot-review-readiness.mjs`; nguyên nhân là `ignores: ["*.mjs"]` **chỉ khớp root**, đúng bẫy mà comment `.probe/**` trong cùng file đã ghi. Land cùng kit v11 `ed38106` ⇒ CI job `lint` đỏ trên main từ lúc đó. Sửa ở `eslint.config.mjs` (repo-owned, sống sót `autopilot-update.sh`) chứ không sửa file kit (byte-identical template, sẽ bị ghi đè im lặng) → commit 8. `eslint .` exit 0. Bài học: ba gate hẹp xanh ≠ CI xanh. |
 | 29/07/2026 | v0.7 | **Commit 0 LAND `66c8d02`** (3 file, 3+/3−, hook pass). Sửa một khẳng định sai của v0.6: dùng **owner của `.git/index.lock`** làm dấu hiệu phân biệt lock-của-sandbox là vô dụng — mount map UID hai chiều, cùng file đó sandbox thấy `compassionate-friendly-brown` còn terminal máy thấy `maingocanh staff`, nên từ phía owner nó LUÔN là chính họ. Thay bằng hai dấu hiệu dùng được thật (**size 0** + **mtime cũ**) cộng `ps aux \| grep "[g]it " \| grep -v fsmonitor` trống. |
 | 29/07/2026 | v0.6 | **Thêm cảnh báo `.git/index.lock` vào §0** sau khi commit 0 chết ngay lần chạy đầu với `fatal: Unable to create index.lock: File exists`. Lock do **chính session Cowork** để lại: `git status` từ sandbox lấy index.lock rồi không unlink được (mount cấm sandbox xoá) → lock **0 byte, owner = user sandbox**, treo 41 phút, chặn mọi git write. Không phải commit dở. Ghi ba dấu hiệu phân biệt lock chết với commit đang chạy, và ngưỡng an toàn để `rm -f`. |
