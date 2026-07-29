@@ -1,7 +1,7 @@
 # HANDOFF — Plexco
 
 > **Đọc file này ĐẦU TIÊN khi tiếp quản project.** Self-contained: không cần context phiên trước.
-> Cập nhật: 2026-07-28 (BRD v3.9m · PRD v2.8l · TDD v3.1g · **ROADMAP v3.4k** · owner-final authority pack **decisions v2.10 working tree**; HEAD `main@2dc9b8c` = `origin/main` chưa chứa pack này). Migrations `0000`–**`0024`** (25 file): auth `0015`–`0018`, tenant-integrity DD-68 `0019`–`0021`, job-infra `0022`–`0023`, capacity-visibility CHECK `0024`. Google auth lane đã merge; Safari macOS+iOS M3 **đã đo PASS 26/07**, nhưng Google login **chưa được chứng minh đã enable/go-live** — set credential vẫn là owner go-live decision và các gate khác (vd A3 legal/PII) đứng độc lập. DD-87 `splitNameAmount` core đã merge (`d2a27e1`) nhưng vẫn **không có production caller**. Tầng feature nghiệp vụ vẫn **0 Chat/Assistant/notification route, 0 màn FE**. **DD-32 Option D, DD-70/71/72 và DD-86/DD-91–95 đã owner-final; DD-88 chỉ là broader `DEFERRED_PROPOSAL`.** Channel Booking, In-app Chat v0.14/v0.22, Notifications v3.10/v3.10 và Club Assistant v0.17/v0.17 có Reviewed target contract. Primary Chat plan v1.7 đã map bounded mechanisms `1–47`, API `A1–A21`, design/FE `F0–F15`, nhưng vẫn `NOT_PLAN_READY` tới khi exact 27-file pack được commit/push/re-pin; chỉ §13 là current verdict.
+> Cập nhật: 2026-07-28 (BRD v3.9n · PRD v2.8m · TDD v3.1h · **ROADMAP v3.4l** · decisions v2.11 current mirror; HEAD `main@ed38106` = `origin/main` — authority snapshot vẫn pin ở `784bc8d`, hai commit sau chỉ là autopilot docs/kit v11, không đụng authority · migration · runtime). Migrations `0000`–**`0024`** (25 file): auth `0015`–`0018`, tenant-integrity DD-68 `0019`–`0021`, job-infra `0022`–`0023`, capacity-visibility CHECK `0024`. Google auth lane đã merge; Safari macOS+iOS M3 **đã đo PASS 26/07**, nhưng Google login **chưa được chứng minh đã enable/go-live** — set credential vẫn là owner go-live decision và các gate khác (vd A3 legal/PII) đứng độc lập. DD-87 `splitNameAmount` core đã merge (`d2a27e1`) nhưng vẫn **không có production caller**. Tầng feature nghiệp vụ vẫn **0 Chat/Assistant/notification route, 0 màn FE**. **DD-32 Option D, DD-70/71/72 và DD-86/DD-91–95 đã owner-final; DD-88 chỉ là broader `DEFERRED_PROPOSAL`.** Channel Booking, In-app Chat v0.15/v0.23, Notifications v3.11/v3.11 và Club Assistant v0.18/v0.18 có Reviewed target contract. Exact 27-file Chat authority pack đã land tại `90d292d`; primary plan v1.8 đạt `PLAN_READY` closure 12/12, nhưng B4/worktree chưa author và từng slice `1–47` / `A1–A21` / `F0–F15` vẫn phải đạt strict `CODE_READY`. `PLAN_READY` không chứng minh runtime.
 >
 > ⚠️ **Hai điều dễ hiểu nhầm khi tiếp quản:** (1) canonical runner PASS trên current HEAD: **32 files / 537 workspace tests** (core 132 · DB 219 · web 146 · bot 40) + 13 readiness-validator = **550 tổng**; `460` và `419` chỉ là snapshot lịch sử. (2) Job-infra root/ack/dispatcher/preflight/schedule đã **IMPLEMENTED** (`0022`, `0023`, `fca314e`, `a03d2d6`) nhưng delivery vẫn code-dark: schedule mặc định **OFF**, `productionStubDeliver` chỉ DLQ, chưa có producer, real projector hoặc replay path; do đó không được gọi là `ENABLE_READY` hay product runtime.
 >
@@ -26,7 +26,7 @@
 3. Đọc `README.md` (tính năng + setup + doc map).
 4. **TRƯỚC mọi việc đụng code/git: nắm 5 HARD RULES ở §3 — vi phạm = rò rỉ tiền/PII thật.**
 5. Việc mới: theo workflow ở §5 (không tự ý sửa thẳng main).
-6. **Autopilot — bắt đầu ở `docs/autopilot-ONBOARDING.md`** (entry point duy nhất, pin template v0.6.0, bản canonical repo tại `docs/autopilot-templates/`, đã sync từ `Claude template` 2026-07-15). Setup máy nhanh: chạy **`scripts/autopilot-onboard.sh --codex /abs/path/to/codex`** (idempotent: `@import` invariants vào `~/.claude/CLAUDE.md`, pin `AUTOPILOT_CODEX_BIN`, verify kit). Chạy nhiều session/feature song song qua **git worktree riêng (base `main`) + `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<slug>.json`** (HALT nếu đụng `scope`/`invariants`/dep). Token domain chuẩn ở `docs/autopilot-invariant-catalog.md`; backlog ở `docs/autopilot-backlog.md`; bản canonical template ở `docs/autopilot-templates/`. Song song khi scope+invariant rời nhau, tuần tự khi đụng (vd cùng `schema`/`identity`/`money-model`).
+6. **Autopilot — bắt đầu ở `docs/autopilot-ONBOARDING.md`** (entry point duy nhất; workflow **Level 3 supervised autonomy**, contract canonical `docs/autopilot-templates/level3-workflow.md`, scope-gate **KIT_VERSION 10**, đã sync từ `Claude template` 2026-07-28). Setup máy nhanh: chạy **`scripts/autopilot-onboard.sh --codex /abs/path/to/codex`** (idempotent: `@import` invariants vào `~/.claude/CLAUDE.md`, pin `AUTOPILOT_CODEX_BIN`, verify kit). Chạy nhiều session/feature song song qua **git worktree riêng (base `main`) + `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<slug>.json`** (HALT nếu đụng `scope`/`invariants`/dep). Token domain chuẩn ở `docs/autopilot-invariant-catalog.md`; backlog ở `docs/autopilot-backlog.md`; bản canonical template ở `docs/autopilot-templates/`. Song song khi scope+invariant rời nhau, tuần tự khi đụng (vd cùng `schema`/`identity`/`money-model`).
 
 ---
 
@@ -106,17 +106,41 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 - KHÔNG hardcode hex/rgba — luôn dùng `var(--token)`
 - Xem `docs/standards/design-tokens.md`
 
-## 5. Workflow
+## 5. Workflow — Level 3 supervised autonomy
 
-1. **Branch:** feature branch từ `main`, KHÔNG sửa thẳng main
-2. **Scope nhỏ:** ~300 LOC / ≤3 module per branch
-3. **PR:** theo `.github/PULL_REQUEST_TEMPLATE.md`, checklist pass
-4. **Review:** code review trước merge
-5. **Merge:** squash 1 commit/feature vào `main`
+> Canonical contract: **`../autopilot-templates/level3-workflow.md`**. Entry point vận hành:
+> **`../autopilot-ONBOARDING.md`**. Forward-only: chỉ áp cho task mở mới; session đang chạy giữ
+> contract cũ tới terminal state.
+
+```text
+WORKFLOW_LEVEL: 3   HUMAN_ROLE: manager_of_managers
+DEFAULT_STOP_MODE: STOP_AT_READY   AUTO_MERGE: off
+```
+
+1. **Task contract trước khi code.** Primary agent resolve outcome · base · context sources · scope/
+   negative scope · risk P0–P3 · autonomy mode · slice graph · worktree plan · verification ·
+   code/security review · stop conditions (`level3-workflow.md` §3). Thiếu context material →
+   `AWAIT_CONTEXT`, không tự bịa.
+2. **Slice + worktree:** 1 writing slice = 1 branch + 1 worktree + tối đa 1 writer, base pin từ
+   `main` đã verify. Register scope trước khi ghi:
+   `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<slug>.json`.
+   Root worktree luôn ở `main`, KHÔNG sửa thẳng main. Slice đụng cùng migration/state/generated
+   artifact → tuần tự, không song song.
+3. **Scope nhỏ:** ~300 LOC / ≤3 module per slice; mỗi slice nêu đúng 1 mechanism + negative scope.
+4. **Self-verify:** `pnpm test` (bắt buộc `DATABASE_URL_TEST`) + build/lint/typecheck, e2e khi vượt
+   boundary thật, và inspect exact diff so với base đã pin.
+5. **Review độc lập bắt buộc:** `scripts/codex-review-pin.sh`; slice chạm auth/secret/permission/tiền/
+   external input/deployment chạy thêm 1 security round. Reviewer không gọi được → `HALT
+   TOOL_UNAVAILABLE`. PR theo `.github/PULL_REQUEST_TEMPLATE.md`, checklist pass.
+6. **Terminal state `READY | AWAIT | HALT`** rồi **người merge tay**: squash 1 commit/feature vào
+   `main`. Level 3 KHÔNG có auto-merge; P0 prepare-only; P1 luôn supervised.
+
+Docs/plans/specs/readiness vẫn phải qua gate chặt hơn của repo:
+`../standards/review-code-readiness-gate.md` + `pnpm review:check:changed`.
 
 ## 6. Trạng thái hiện tại (2026-07-28)
 
-**Planning & Docs — decision coverage cao** (owner-final authority pack **decisions v2.10 working tree**, chưa immutable: DD-32 Option D; DD-80 auth; DD-87 `splitNameAmount`; DD-70/71/72/86/91–95 owner-final; DD-88 broader `DEFERRED_PROPOSAL`; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated). Channel Booking, In-app Chat v0.14/v0.22, Notifications v3.10/v3.10 và Club Assistant v0.17/v0.17 có Reviewed target contract; runtime còn thiếu. Current readiness của mỗi initiative chỉ lấy từ canonical plan; Chat dùng primary plan §13. Đây không phải coding authorization.
+**Planning & Docs — decision coverage cao** (decisions v2.11 current mirror: DD-32 Option D; DD-80 auth; DD-87 `splitNameAmount`; DD-70/71/72/86/91–95 owner-final; DD-88 broader `DEFERRED_PROPOSAL`; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated). Channel Booking, In-app Chat v0.15/v0.23, Notifications v3.11/v3.11 và Club Assistant v0.18/v0.18 có Reviewed target contract; runtime còn thiếu. Chat plan v1.8 = `PLAN_READY` tại `90d292d`; từng slice vẫn cần strict `CODE_READY`. Đây không phải coding authorization.
 
 > **⚙️ Auth S4 — lane Google đã xong phần code:** **D0a (`0015`) · D0b · D1 email-token (`0016`) · D1 Google (`0017`) · d1b session-rotation (`0018`)** đều MERGE — tail toàn cục hiện `0024`. Safari macOS + iOS Safari 18.3 đã đo M3 **PASS** ngày 26/07 (`../probe-strict-cookie-completion-hop.md` §7–§8), nên measurement gate đã đóng. Google login vẫn **chưa được chứng minh đã enable/go-live**: credentials trong template giữ rỗng; owner chỉ set sau quyết định go-live và các gate độc lập còn lại. Kế tiếp trong auth vẫn là **order-4 email bundle** (flag OFF, gate C7, kế thừa D1E-18b) → gỡ Telegram. Chi tiết: **`../auth-s4-session-handoff.md`**.
 
@@ -125,9 +149,9 @@ Mọi surface (chat/web/webhook) → Command → Services → tenantRepo (choke-
 - ⬜ **Feature layer chưa build:** session/reconcile/sync/marketplace/billing/bot handlers/UI (bảng DB đã dựng sẵn; tầng command/service/projector/UI còn trắng). Session Management có hợp đồng spec đóng và `0024` đã thêm đúng capacity-visibility CHECK, nhưng vẫn **0 SessionService, 0 route**. Job-infra chung đã land tới dispatcher/schedule, song schedule OFF và chưa có producer/real projector/replay; không được tính là Session/Sync/Notification runtime.
 
 Tài liệu hoàn tất (bản mới nhất):
-- ✅ BRD v3.9m · PRD v2.8l · TDD v3.1g · ROADMAP v3.4k · decisions v2.10 working tree; exact authority pack còn phải commit/push/re-pin, runtime pending
+- ✅ BRD v3.9n · PRD v2.8m · TDD v3.1h · ROADMAP v3.4l · decisions v2.11 current mirror; exact authority pack đã land tại `90d292d`, primary plan `PLAN_READY`, runtime pending
 - ✅ 4 phụ lục (saas-plan, reconciliation, AUDIT, messenger)
-- Feature docs working tree: **24 Product/System / 24 BE = 24 cặp**; committed `main@2dc9b8c` vẫn 24/23 vì Funnel BE chưa commit. Channel Booking, In-app Chat v0.14/v0.22, Notifications v3.10/v3.10 và Club Assistant v0.17/v0.17 có Reviewed target contract; implementation chưa bắt đầu. Chat owner-final gồm DD-92 own edit/soft-delete + pre-beta search, DD-93 full registry, DD-94 generic opaque offline signal/digest và DD-95 exact moderation. Home hub (DD-79 ✅, S9) composition-only; Session Organize v0.5 (DD-61..64 ✅ accept-in-principle) build post-P4; coverage không có nghĩa runtime/build-ready — xem `features/README.md`.
+- Feature docs working tree: **24 Product/System / 24 BE = 24 cặp**; committed `main@784bc8d` vẫn 24/23 vì Funnel BE chưa commit. Channel Booking, In-app Chat v0.15/v0.23, Notifications v3.11/v3.11 và Club Assistant v0.18/v0.18 có Reviewed target contract; implementation chưa bắt đầu. Chat owner-final gồm DD-92 own edit/soft-delete + pre-beta search, DD-93 full registry, DD-94 generic opaque offline signal/digest và DD-95 exact moderation. Home hub v0.7/v0.3 (DD-79 ✅, S9) composition-only; Session Organize v0.5 (DD-61..64 ✅ accept-in-principle) build post-P4; coverage không có nghĩa runtime/build-ready — xem `features/README.md`.
 - ✅ Business rules, design tokens, dependency graph
 - ✅ README, CHANGELOG, PULL_REQUEST_TEMPLATE, HANDOFF, templates
 
@@ -192,6 +216,8 @@ Research/reconciliation/strategy là input định hướng, không được ove
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 29/07/2026 | v1.28 | **§5 Workflow → Level 3 supervised autonomy.** Canonical contract `docs/autopilot-templates/level3-workflow.md`; task contract trước khi code, 1 writing slice = 1 branch/worktree/writer, self-verify bằng lệnh thật, review độc lập bắt buộc qua `scripts/codex-review-pin.sh` + security round cho trust boundary, kết ở `READY \| AWAIT \| HALT` rồi người merge. §Tiếp quản item 6 bỏ pin stale v0.6.0 → kit **KIT_VERSION 11** (`ed38106`, đã trên `origin/main`). Review-readiness gate của repo vẫn thắng ở chỗ nào chặt hơn. Không đổi authority · scope · DD · runtime. |
+| 28/07/2026 | v1.27 | **Chat readiness re-pin + current live summary:** exact authority pack land `90d292d`, plan v1.8/analysis = `PLAN_READY` closure 12/12; HEAD `main@784bc8d`. B4/worktree và per-slice strict `CODE_READY` vẫn còn, runtime/migration/API/UI = 0. Sync BRD v3.9n/PRD v2.8m/TDD v3.1h/ROADMAP v3.4l; DD-32 contract giữ nguyên. |
 | 28/07/2026 | v1.26 | **Owner-final Chat authority + DD-32:** mirror decisions v2.10 DD-86/DD-91–95, DD-88 broader `DEFERRED_PROPOSAL`, Assistant v0.17/v0.17, Chat v0.14/v0.22, Notifications v3.10/v3.10 và plan v1.7. Current readiness remains owned only by each canonical implementation plan; Chat points to primary plan §13. Keep DD-32 Option D and first prerequisite `identity-account-link-core`. No runtime/migration/API/UI. |
 | 28/07/2026 | v1.25 | **SUPERSEDED by v1.26:** former Chat correction used Draft Assistant and the reduced no-edit/search/digest floor; no longer current authority. |
 | 27/07/2026 | v1.24 | **Live-truth reconcile tại `main@2dc9b8c`:** tail `0024`/25 migration; canonical suite 32 file/537 workspace +13 validator; job-infra `0022`/`0023` + dispatcher/preflight/schedule implemented nhưng schedule OFF, stub DLQ, chưa producer/real projector/replay; Safari macOS+iOS M3 đã đo PASS nhưng Google chưa được chứng minh enabled/go-live; DD-87 core merged nhưng chưa production caller. Next-step bỏ chuỗi Safari→job-root→dispatcher→scheduler đã hoàn tất, giữ status boundary migration/runtime/enablement/E2E. |

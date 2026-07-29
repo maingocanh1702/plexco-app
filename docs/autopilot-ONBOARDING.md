@@ -103,7 +103,8 @@ Quy ước thư mục: `docs/autopilot-*` = luật/kit; `.autopilot/` = runtime 
 |---|---|
 | `scripts/autopilot-scope-gate` | Gate điều phối chạy song song. `register \| ready \| cleanup`. Atomic mkdir-lock, resolve registry qua git-common-dir, validate invariant theo catalog, check dependency + interface-drift (`dep_checks`), check scope collision. |
 | `docs/autopilot-invariant-catalog.md` | Danh sách token domain chuẩn cho `invariants:` (chống synonym drift → HALT `INVARIANT_UNKNOWN`). Thêm domain mới = thêm 1 dòng trong block `catalog`. |
-| `docs/autopilot-manifests/_TEMPLATE.json` | Mẫu manifest 1-file/feature: `scope`, `invariants`, `depends_on`, `dep_checks` (interface-drift), `base_ref`, risk, change_class. |
+| `docs/autopilot-manifests/_TEMPLATE.json` | Mẫu manifest schema `level3-operational-v2`. Copy sang `.autopilot/state/<FEATURE_ID>/manifest.json` khi chạy (xem §3.3); thư mục này giữ template + manifest lịch sử. |
+| `docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json` | Mẫu readiness evidence; `readiness_evidence_path` trong manifest trỏ tới `.autopilot/state/<FEATURE_ID>/readiness.json`. |
 | `docs/autopilot-backlog.md` | Backlog machine-scannable: task nào chạy song song được (scope + invariants rời nhau, không phụ thuộc chưa-merge). |
 | `.autopilot/maturity-ledger.md` | Sổ tín nhiệm per-repo (TRACKED). Class P2 đạt ≥3 clean-merge-unchanged → `mature` → mới được auto-merge. P0/P1 không bao giờ auto-merge. |
 | `docs/autopilot-parallel-scope-gate.md` | Giải thích WHY của scope-gate (worktree không đủ, cần catalog + lock). |
@@ -135,16 +136,35 @@ trên là **task autopilot song song**. Linear/GitHub Projects chỉ cân nhắc
 1. **Backlog → planned.** Mở `docs/autopilot-backlog.md`, chọn task, refine `scope` (grep code thật) +
    chọn `invariants` từ catalog. Hai task song song được ⟺ `scope` rời nhau + `invariants` rời nhau +
    không cái nào `depends_on` cái kia mà chưa merge.
-2. **Tạo manifest.** Copy `_TEMPLATE.json` → `docs/autopilot-manifests/<slug>.json`, điền đủ. Nếu phụ
-   thuộc symbol của upstream, khai `dep_checks:[{file,symbol}]` — gate sẽ grep symbol đó trên `base_ref`
-   thật (chống upstream rebuild đổi tên interface → HALT `DEP_MISSING`).
-3. **Pre-flight + register.** Ở `main` sạch, đúng single-writer:
-   `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<slug>.json`
-   (HALT nếu collision / dep chưa merge / token lạ).
-4. **Worktree — PHẢI nêu base `main`:**
-   `git worktree add .autopilot/worktrees/<slug> -b feat/<slug> main`
-   (thiếu `main` → fork từ HEAD hiện tại, có thể là branch cũ — incident v0.4.8). Verify `git log -1`.
-   Mỗi worktree một `DB_PATH` riêng.
+2. **Worktree TRƯỚC — PHẢI pin base SHA tường minh:**
+   ```bash
+   BASE_SHA=$(git rev-parse origin/main)
+   git worktree add ".autopilot/worktrees/$FEATURE_ID" -b "feat/$FEATURE_ID" "$BASE_SHA"
+   ```
+   (thiếu base → fork từ HEAD hiện tại, có thể là branch cũ — incident v0.4.8). Verify
+   `git rev-parse HEAD` trong worktree phải bằng `$BASE_SHA`. Mỗi worktree một DB/port/cache riêng.
+3. **Tạo manifest TRONG worktree, tại state dir.** Copy `docs/autopilot-manifests/_TEMPLATE.json`
+   → `.autopilot/state/$FEATURE_ID/manifest.json`, điền đủ (schema `level3-operational-v2`:
+   `feature`, `branch`, `base_sha`, `risk`, `autonomy_mode`, `scope`/`negative_scope`, `invariants`,
+   `context_sources`, `verification`, `code_review`/`security_review`, `stop_conditions`,
+   `readiness_evidence_path`). Phụ thuộc symbol của upstream → khai `dep_checks:[{file,symbol}]`;
+   gate grep symbol đó trên `base_ref` thật (chống upstream đổi tên interface → HALT `DEP_MISSING`).
+
+   > **Vì sao state dir chứ không phải `docs/autopilot-manifests/`.** `halt_gate` chỉ ghi file
+   > sentinel `HALT-<CODE>.txt` khi manifest nằm đúng `<worktree>/.autopilot/state/<feature>/`;
+   > đường khác thì `TASK_STATE_CANDIDATE` rỗng và HALT **chỉ ra stderr** — watchdog quét sentinel
+   > sẽ không thấy, và task fail im lặng. Đây cũng là quy ước canonical của kit v11.
+   > `docs/autopilot-manifests/` giữ nguyên vai trò: 2 template + 47 manifest lịch sử của các slice
+   > đã chạy. Muốn manifest được review trong PR thì commit thêm một bản copy vào đó — bản trong
+   > state dir vẫn là bản gate đọc.
+4. **Register — từ trong worktree, trước khi ghi dòng code nào:**
+   ```bash
+   export AUTOPILOT_CODEX_BIN="$PWD/scripts/codex-review-pin.sh"
+   scripts/autopilot-scope-gate register --manifest ".autopilot/state/$FEATURE_ID/manifest.json"
+   ```
+   HALT nếu: `SCOPE_COLLISION` (đụng slice đang chạy) · `INVARIANT_UNKNOWN` (token ngoài catalog) ·
+   `DEP_MISSING` (upstream chưa merge / đổi interface) · `CONTRACT_INVALID` · `MANIFEST_INVALID` ·
+   `REVIEW_GATE_MISSING`.
 5. **Codegen theo prompt GENERIC.** Step 1 BẮT BUỘC tạo `regions.log` + `fix-round-count.txt`. Choke-point
    (matcher/parser/router/auth) → decision-table + reuse-scan + Step 0 design-probe trước khi code.
 6. **Review chéo bằng `$CODEX`** qua `scripts/codex-review-pin.sh` (round-NN.txt mỗi vòng).
