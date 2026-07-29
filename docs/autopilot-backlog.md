@@ -873,14 +873,15 @@ notes: **Phát hiện 2026-07-27 khi viết PVC-3 của `db-public-visibility-ca
 
 ## task: eslint-10-migration
 title: ESLint 9 → 10 trước EOL 2026-08-06; gỡ nhánh minimatch@3 / brace-expansion@1 như hệ quả
-status: planned
+status: ready
 risk: P1
 change_class: toolchain-major-upgrade
 depends_on: []
 invariants: [build-config]
-scope: [package.json, pnpm-lock.yaml, eslint.config.mjs]
-manifest: null
+scope: [docs/autopilot-manifests/eslint-10-migration.json, package.json, pnpm-lock.yaml, eslint.config.mjs]
+manifest: docs/autopilot-manifests/eslint-10-migration.json
 merged_probe: null
+probe_findings: 2026-07-29 tại `main@f83995f` · **Ba câu hỏi compat đã ĐÓNG, không câu nào chặn** — nên block lên `ready` cùng ngày mở. **(a)** `typescript-eslint@8.62.1` và cả ba sub-package đã khai `peerDependencies.eslint: ^8.57.0 \|\| ^9.0.0 \|\| ^10.0.0` — **eslint 10 đã được hỗ trợ sẵn, KHÔNG cần nâng typescript-eslint**. Đây vốn là rủi ro lớn nhất vì `tseslint.config()` là khung của cả `eslint.config.mjs`. **(b)** `@next/eslint-plugin-next@15.5.20` không khai `peerDependencies` nào và chỉ phụ thuộc `fast-glob` ⇒ không ràng buộc version eslint. Vắng peer range **không phải bằng chứng tương thích**, nên đã grep source cho **cả 10 API v10 gỡ** (`context.getCwd/getFilename/getPhysicalFilename/getSourceCode`, `parserOptions`, `parserPath`, `getTokenOrCommentBefore/After`, `isSpaceBetweenTokens`, `getJSDocComment`) — **0 hit**. **(c)** Node: v10 đòi `^20.19.0 \|\| ^22.13.0 \|\| >=24`; máy `v22.22.3` ✓, CI `node-version: 22` → 22.x mới nhất ✓, **nhưng `package.json` khai `engines: {node: ">=22"}` — dải đó NHẬN 22.0–22.12 mà eslint 10 từ chối**. Lỗ thật, slice phải đóng (acceptance `E10-5`). **Baseline chống regression:** `npx eslint . -f json` = **81 file** (apps 46 · packages 31 · scripts 3 · `eslint.config.mjs` 1), sha256 danh sách đã sort prefix `3c99372c73e87ab4`.
 notes: |
   **Mở 2026-07-29, tách khỏi `deps-security-bump` sau khi phép đo lật lối sửa.** Chuỗi đo, ghi lại vì
   mỗi bước bác bước trước: (1) manifest `deps-security-bump` đoán ép `brace-expansion@1` lên v5 là
@@ -910,10 +911,21 @@ notes: |
   monorepo pnpm workspace nên **phải xác nhận `eslint .` từ root vẫn quét đúng tập file cũ**, đừng giả định.
   **Không được giữ block `scripts/**/*.{mjs,js}` trong `eslint.config.mjs` như lý do bỏ qua compat**: block
   đó vá `no-undef` cho Node globals, không liên quan gì tới v10; giữ nguyên nó qua upgrade.
-  **Điều kiện promote lên `ready`:** đo xong (a)(b)(c), viết manifest với acceptance gồm *"`eslint .` trước
-  và sau trả về CÙNG một tập file được lint"* và *"`pnpm lint` exit 0"*, cộng một assertion rằng
-  `brace-expansion@1` và `minimatch@3` **không còn dòng nào** trong `pnpm-lock.yaml` — đó là cách chứng
-  minh hệ quả thứ hai thật sự xảy ra thay vì hy vọng.
+  **✅ Điều kiện promote đã thoả (cùng ngày, 29/07):** (a)(b)(c) đo xong — xem `probe_findings` ở trên;
+  manifest `docs/autopilot-manifests/eslint-10-migration.json` đã viết với `E10-1..E10-10`, gồm đúng ba
+  assertion đã yêu cầu — `pnpm lint` exit 0 · tập file lint **giống hệt trước/sau** (nhỏ hơn = FAIL kể cả
+  khi lint xanh) · `pnpm-lock.yaml` **zero dòng** `brace-expansion@1` và `minimatch@3`.
+  **Rủi ro số một khi chạy, đã pin thành probe item (4):** v10 đổi thuật toán tìm config sang bắt từ thư
+  mục của từng file thay vì cwd. Repo là pnpm workspace (`apps/*`, `packages/*`), nên một tập file **hẹp
+  đi âm thầm** sẽ làm `pnpm lint` xanh trong khi kiểm ít hơn — một cổng xanh đã thôi gác. Đó là cách khả dĩ
+  nhất để slice này ship một regression trông như thành công, và là lý do `E10-2` so hash chứ không so exit code.
+  **`_scope_out` có một điều khoản dễ bị vi phạm do thiện chí:** v10 cập nhật `eslint:recommended`. Nếu bộ
+  rule mới sinh lỗi, **báo cáo và HALT** — không sửa, không tắt rule. Sửa code cho lint xanh là slice khác;
+  làm ở đây thì diff sẽ lẫn "upgrade" với "sửa lỗi mới phát hiện" và không ai tách lại được.
+  **Ghi chú schema:** manifest theo shape đang dùng trong repo, **cố ý không khai `manifest_schema_version`**.
+  Khai `level3-operational-v2` sẽ **bật thêm** gate ở `autopilot-scope-gate` (readiness validator + review bắt
+  buộc); hiện **0/44 manifest** trong repo dùng nó, kể cả các manifest đã register và merge thành công. Chuyển
+  cả đội sang v2 là quyết định riêng, không nên lén đưa vào qua một slice.
 
 ## task: db-undeclared-check-constraints-schema-mirror
 title: 6 CHECK sống trong DB mà `schema.ts` không khai — mirror ngược, không migration

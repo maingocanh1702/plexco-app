@@ -1,0 +1,44 @@
+{
+  "feature": "eslint-10-migration",
+  "branch": "feat/eslint-10-migration",
+  "base_ref": "main",
+  "risk": "P1",
+  "change_class": "toolchain-major-upgrade",
+  "merge_policy": "manual_only",
+  "auto_merge": false,
+  "codex_review": "2x_clean",
+  "design_probe_required": true,
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": [
+    "build-config"
+  ],
+  "scope": [
+    "docs/autopilot-manifests/eslint-10-migration.json",
+    "package.json",
+    "pnpm-lock.yaml",
+    "eslint.config.mjs"
+  ],
+  "merged_probe": null,
+  "_problem": "ESLint v9.x reaches END-OF-LIFE on 2026-08-06 and will not be maintained after that; the repo runs eslint ^9.18.0 resolving to 9.39.4. This upgrade is driven by that date, not by a feature need. It also closes a security item for free: eslint 9 pulls minimatch 3.1.5 (directly, plus via @eslint/config-array@0.21.2 and @eslint/eslintrc@3.3.5), which pulls brace-expansion 1.1.16, which is covered by GHSA-mh99-v99m-4gvg (CVSS 7.5, affected <= 5.0.7, patched only in 5.0.8 -- so the v1 branch has NO in-range fix). ESLint v10.0.0 lists `501abd0 feat!: update dependency minimatch to v10 (#20246)` as a breaking change, so v10 removes that branch entirely. This was split out of `deps-security-bump` on 2026-07-29 because a major toolchain upgrade does not belong in a dependency-floor slice.",
+  "_why_not_the_other_route": "Forcing `brace-expansion@1` to ^5 via an override is NOT an option and must not be attempted: v1 is `module.exports = expandTop` (a function) while v5 CJS is `exports.expand` (an object), and the sole consumer minimatch@3.1.5 calls `require('brace-expansion')(...)` as a function. pnpm resolves it cleanly, nothing fails at install, and lint dies at call time with `expand is not a function`. Measured 2026-07-29.",
+  "_design_probe_findings": "MEASURED 2026-07-29 on main@f83995f -- the three compat questions the backlog block flagged are now CLOSED, all favourably. Recorded here so the slice does not re-derive them, but `_evidence_rules` still requires re-measuring at execution time. (a) typescript-eslint 8.62.1 -- root package and all three sub-packages (@typescript-eslint/eslint-plugin, /parser, /utils) already declare `peerDependencies.eslint: ^8.57.0 || ^9.0.0 || ^10.0.0`. ESLint 10 is ALREADY supported by the installed version; NO typescript-eslint upgrade is required. This was the single biggest risk because `tseslint.config()` is the frame of the entire eslint.config.mjs. (b) @next/eslint-plugin-next 15.5.20 declares NO peerDependencies at all and its only dependency is fast-glob, so it does not constrain the eslint version. Absence of a peer range is not proof of compatibility, so the plugin source was grepped for every API v10 removes -- context.getCwd(), getFilename(), getPhysicalFilename(), getSourceCode(), context.parserOptions, context.parserPath, SourceCode#getTokenOrCommentBefore/After, isSpaceBetweenTokens, getJSDocComment -- ZERO hits on all ten. (c) Node: ESLint 10 requires ^20.19.0 || ^22.13.0 || >=24. Local is v22.22.3 (satisfies); CI declares `node-version: 22` which resolves to the newest 22.x (satisfies). BUT package.json declares `engines: {node: '>=22'}`, which ADMITS 22.0.0-22.12.x -- a range ESLint 10 rejects. That is a real gap this slice must close, not a theoretical one.",
+  "_scope_in": "Upgrade eslint from ^9.18.0 to ^10 (and @eslint/js in lockstep -- it is versioned with eslint and is 10.0.0+ for the v10 line), regenerate the lockfile, tighten package.json `engines.node` to a range ESLint 10 actually supports, and prove `pnpm lint` still lints the SAME FILE SET with zero errors. Adjust eslint.config.mjs only if v10 requires it -- the config is already flat, so no eslintrc migration is expected.",
+  "_scope_out": "NO rule changes -- not enabling, disabling, or reconfiguring any rule, including anything `eslint:recommended` newly adds in v10; if the updated recommended set produces new errors, report them and HALT rather than silencing or fixing them here (that is a separate slice). NO source-code changes to satisfy lint. NO typescript-eslint upgrade -- 8.62.1 already peer-supports v10, and bumping it would smuggle an unmeasured change in. NO next/postcss bump -- that is `deps-security-bump`. NO removal or weakening of the existing `scripts/**/*.{mjs,js}` Node-globals block in eslint.config.mjs: it fixes no-undef for kit scripts and is unrelated to v10. NO lowering of minimumReleaseAge, trustPolicy or blockExoticSubdeps. NO --no-verify, --ignore-scripts or --no-frozen-lockfile.",
+  "_design_probe": "Required. Before any edit, write .autopilot/state/eslint-10-migration/design-probe.md and STOP for founder confirmation. It must pin FOUR things by measurement, not by copying `_design_probe_findings` above: (1) re-run the three compat checks (a)(b)(c) against the tree as it stands at execution time -- `deps-security-bump` may have landed first and moved @next/eslint-plugin-next from 15.5.20 to 15.5.21, so the plugin grep must be redone on the version actually installed. (2) the exact eslint 10.x version to be installed, with its publish date checked against minimumReleaseAge 10080 (7 days) -- read `npm view eslint time --json` at the VERSION key, never `time.created`. (3) the CURRENT linted-file baseline, re-derived: `npx eslint . -f json` piped to a count and a sorted-path hash. The 2026-07-29 baseline was 81 files (apps 46, packages 31, scripts 3, eslint.config.mjs 1) with sorted-path sha256 prefix 3c99372c73e87ab4. If the number has moved, say so and use the new one. (4) whether v10's new config-lookup algorithm changes that set. v10 locates eslint.config.* starting from each linted file's directory instead of cwd; this repo is a pnpm workspace with apps/* and packages/*, and a silently NARROWER file set would make `pnpm lint` pass while checking less -- a green gate that stopped gating. This is the single most likely way this slice ships a regression that looks like success.",
+  "_acceptance": [
+    "E10-1: `pnpm lint` exits 0 with eslint 10 installed.",
+    "E10-2: the linted-file set is IDENTICAL before and after -- same count and same sorted-path hash from `npx eslint . -f json`. A smaller set is a FAILURE even if lint is green; a larger set must be explained file-by-file.",
+    "E10-3: `pnpm-lock.yaml` contains ZERO lines matching `brace-expansion@1` and ZERO matching `minimatch@3`. This is the proof that the security consequence actually happened rather than was hoped for.",
+    "E10-4: `osv-scanner` reports no remaining brace-expansion finding.",
+    "E10-5: package.json `engines.node` no longer admits a version ESLint 10 rejects -- it must exclude 22.0.0-22.12.x.",
+    "E10-6: eslint.config.mjs still contains the `scripts/**/*.{mjs,js}` Node-globals block, and `npx eslint scripts/` is clean.",
+    "E10-7: no rule configuration changed -- `git diff eslint.config.mjs` shows only what v10 compatibility strictly required, and any new error from v10's updated `eslint:recommended` is REPORTED with a HALT, not fixed or silenced.",
+    "E10-8: full CI command list green -- typecheck, format:check, review:check, lint, build, and the DB suite with its canonical env.",
+    "E10-9: workspace test count is unchanged from the baseline of 561 (core 132, db 243, web 146, bot 40) measured on main@f88a2c8.",
+    "E10-10: `git diff --stat main...HEAD` touches only package.json, pnpm-lock.yaml, eslint.config.mjs and this manifest -- zero source files."
+  ],
+  "_evidence_rules": "Re-measure at execution time; the findings recorded in `_design_probe_findings` are dated 2026-07-29 and are context, not a licence to skip the probe. Read peerDependencies from the INSTALLED package.json under node_modules/.pnpm, not from documentation or memory. Grep the plugin source for removed APIs rather than trusting the absence of a peer range. For publish dates use `npm view <pkg> time --json` and read the exact version key -- `time.created` is the package's first-ever publish and is the wrong field. If any measurement disagrees with what is written above, the measurement wins and the disagreement is recorded.",
+  "_timing_gate": "Hard external deadline: ESLint v9.x EOL 2026-08-06. Also subject to minimumReleaseAge 10080 (7 days), so the chosen eslint 10.x patch must have been published at least 7 days before the run; v10.8.0 shipped 2026-07-24 and is eligible from 2026-07-31. Pick the newest ELIGIBLE version, not the newest version.",
+  "_stop_conditions": "HALT if: the linted-file set changes (E10-2); v10's updated eslint:recommended produces new errors (report them, do not fix); typescript-eslint or @next/eslint-plugin-next turns out to need an upgrade after all -- that widens scope and needs owner authorization; or no eligible eslint 10.x clears minimumReleaseAge at run time."
+}
