@@ -1,5 +1,20 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 12
+# KIT_VERSION: 14
+# v14 (2026-07-30) — pack content change, no behaviour change in THIS file. `autopilot-backlog-reconcile`
+# (its own header goes 3 → 4) stops hard-coding `DEFAULT_BRANCH="main"`. It now resolves origin's default
+# branch from refs/remotes/origin/HEAD, falls back to whichever single conventional name exists, honours
+# AUTOPILOT_DEFAULT_BRANCH, and **HALTs** when it cannot resolve. Previously, in a `master`-default
+# consumer the probe ref did not exist, `git grep ... 2>/dev/null` failed silently, every task reported
+# "genuinely pending", and `--check` returned "No stale entries" exit 0 while checking nothing — the
+# anti-rot mechanism was a silent no-op. A gate that cannot fail is not a gate.
+# v13 (2026-07-30) — pack content change, no behaviour change in THIS file. `manifests/_TEMPLATE.json` gains a
+# leading `_role` field stating that it is the RUNTIME manifest shape for
+# `.autopilot/state/<FEATURE_ID>/manifest.json`, not the schema of the tracked authored contract under
+# `docs/autopilot-manifests/`. That distinction was guessed wrong in practice: the template ships with
+# `manifest_schema_version: level3-operational-v2` while living in the authored-contract directory, which
+# reads as "your tracked manifests are an old version" when in fact adding that string to a tracked contract
+# makes `register` HALT CONTRACT_INVALID (autopilot-review-readiness.mjs pins the path). See
+# level3-workflow.md section 11.
 # v12 (2026-07-29) — pack content change, no behaviour change in THIS file. Bumped because
 # `autopilot-update.sh` derives the whole pack's canonical version from this line, and v12 adds
 # `autopilot-backlog-reconcile` to the pack (it was shipped in the kit but never synced, so consumer

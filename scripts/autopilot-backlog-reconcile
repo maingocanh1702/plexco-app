@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 3
+# KIT_VERSION: 4
 # autopilot-backlog-reconcile — derive backlog merged-status from CODE (ground truth), not the hand-typed field.
 #
 # WHY: backlog `status:` is hand-maintained; merges update INFLIGHT + code but the markdown field rots
@@ -35,11 +35,49 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BL="$REPO/docs/autopilot-backlog.md"
 [ -f "$BL" ] || { echo "HALT: backlog not found at $BL" >&2; exit 2; }
 MODE="${1:-report}"
-DEFAULT_BRANCH="main"
+
 # Probe the MERGED state on origin/<default>, NOT the working tree. A feature worktree carries the
 # slice's OWN not-yet-merged symbol, which would false-positive as "already merged" (and make --check
 # exit 1 spuriously). Refresh the ref first so the probe reflects what actually landed on origin.
 git -C "$REPO" fetch origin --quiet 2>/dev/null || true
+
+# RESOLVE the default branch; never assume it. Until KIT_VERSION 4 this was `DEFAULT_BRANCH="main"`,
+# hard-coded — and the probe on line ~90 runs `git grep ... "origin/$DEFAULT_BRANCH" ... 2>/dev/null`,
+# so in a `master`-default repository the ref simply did not exist, the grep failed silently, and EVERY
+# task reported "genuinely pending". `--check` returned `No stale entries` and exit 0 while detecting
+# nothing at all, and `--fix` could never flip anything. The anti-rot mechanism was a silent no-op in
+# exactly the repositories nobody was watching. Found 2026-07-30 in a master-default consumer whose
+# clean report was vacuous rather than clean.
+#
+# FAIL CLOSED. A wrong branch here does not produce a wrong answer, it produces a confident empty one,
+# which is worse: it reads as evidence. If the branch cannot be resolved, HALT and say so.
+DEFAULT_BRANCH="${AUTOPILOT_DEFAULT_BRANCH:-}"
+if [ -z "$DEFAULT_BRANCH" ]; then
+  # 1. origin/HEAD symref, set by `git clone` and by `git remote set-head origin -a`
+  DEFAULT_BRANCH="$(git -C "$REPO" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
+fi
+if [ -z "$DEFAULT_BRANCH" ]; then
+  # 2. exactly one of the conventional names exists as a remote-tracking ref
+  _cand=""
+  for _b in main master trunk; do
+    git -C "$REPO" rev-parse --verify --quiet "refs/remotes/origin/$_b" >/dev/null 2>&1 && _cand="$_cand $_b"
+  done
+  set -- $_cand
+  [ "$#" -eq 1 ] && DEFAULT_BRANCH="$1"
+fi
+if [ -z "$DEFAULT_BRANCH" ]; then
+  echo "HALT DEFAULT_BRANCH_UNRESOLVED: cannot determine origin's default branch." >&2
+  echo "  Fix one of these, then re-run:" >&2
+  echo "    git remote set-head origin -a                  # records refs/remotes/origin/HEAD" >&2
+  echo "    AUTOPILOT_DEFAULT_BRANCH=<name> $0 $MODE       # explicit override" >&2
+  echo "  Refusing to guess: a wrong ref makes every probe silently report 'pending'." >&2
+  exit 2
+fi
+git -C "$REPO" rev-parse --verify --quiet "refs/remotes/origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || {
+  echo "HALT DEFAULT_BRANCH_MISSING: refs/remotes/origin/$DEFAULT_BRANCH does not exist." >&2
+  echo "  Every probe would fail silently and report 'pending'. Fetch or correct the branch name." >&2
+  exit 2
+}
 
 # is_symbol_probe <regex> → 0 iff EVERY alternation token is a bare code identifier
 # ([A-Za-z_][A-Za-z0-9_]*). Rejects literals with '/', digits-led, or punctuation (dates, numbers,
@@ -89,7 +127,7 @@ for row in ${ROWS[@]+"${ROWS[@]}"}; do
       stale+=("$slug")
     else
       echo "  ✗ WEAK-PROBE: $slug ($st) — probe '$pr' matched but is NOT a slice-unique symbol"
-      echo "       (shared literal → collides with unrelated origin/main content). REFUSING to auto-flip;"
+      echo "       (shared literal → collides with unrelated origin/$DEFAULT_BRANCH content). REFUSING to auto-flip;"
       echo "       replace merged_probe with a code symbol this slice introduces."
       weak+=("$slug")
     fi
@@ -116,9 +154,9 @@ if [ "$MODE" = "--fix" ]; then
   if [ "${#stale[@]}" -eq 0 ]; then echo "Nothing to flip (only weak-probe entries)."; exit 0; fi
   today="$(date +%Y-%m-%d)"   # BSD awk (macOS) has no strftime() → pass the date in.
   for slug in ${stale[@]+"${stale[@]}"}; do
-    if awk -v s="$slug" -v today="$today" '
+    if awk -v s="$slug" -v today="$today" -v br="$DEFAULT_BRANCH" '
       $0 ~ "^## task: "s"([ (]|$)" { inblk=1 }
-      inblk && /^status:/ && !done { print "status: merged"; print "note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (" today "). Was: " $2; done=1; next }
+      inblk && /^status:/ && !done { print "status: merged"; print "note_merged: auto-reconciled — slice-unique merged_probe matched origin/" br " (" today "). Was: " $2; done=1; next }
       /^## task:/ && inblk && $3!~s { inblk=0 }
       { print }
     ' "$BL" > "$BL.tmp"; then

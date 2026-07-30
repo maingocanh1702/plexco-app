@@ -1,4 +1,5 @@
 {
+  "_role": "RUNTIME manifest shape. Copy this to .autopilot/state/<FEATURE_ID>/manifest.json at register time. It is NOT the schema of the tracked authored contract under docs/autopilot-manifests/<task-slug>.json — that file is a different artifact with a different lifetime and carries NO manifest_schema_version. autopilot-review-readiness.mjs fail-closes with HALT CONTRACT_INVALID unless the manifest it is handed sits at exactly .autopilot/state/<FEATURE_ID>/manifest.json, so adding manifest_schema_version to a tracked contract does not upgrade it — it breaks register. A repo whose tracked manifests lack that string is not on an older workflow; do not open a task to migrate them. See level3-workflow.md section 11.",
   "manifest_schema_version": "level3-operational-v2",
   "review_gate_version": "level3-readiness-v2",
   "task_id": "repo-id:task-slug",
