@@ -594,9 +594,38 @@ manifest: null
 merged_probe: null
 notes: **Opened by codex round-02/03 of `docs-marketplace-public-capacity-guard` (2026-07-26); this task is the NAMED tracking mechanism that codex required instead of prose-only deferral.** Gap: `feature_marketplace_discovery_tech.md` edge #15 pins that a public + `slots_max IS NULL` row must be skipped, its stale projection purged, and an audit emitted — but that handling only runs **when the projector evaluates the session**. A legacy/fixture/direct writer that flips an ALREADY-PROJECTED public session from finite `slots_max` to `NULL` emits no session event, so the projector never revisits it and the stale-but-now-invalid projection **remains publicly visible**. The periodic sweep today only does time-based expiry and does not detect this. Unit test #26 places the row into a batch by hand, so it proves behaviour-when-reached, NOT that every invalid row is reached. **Fix candidates (choose at scope time, do not pre-pick):** (a) durable event contract obliging any writer that bypasses the SessionService choke-point to emit an invalidation event; (b) periodic canonical reconciliation comparing `public_sessions` against `sessions` — needs `job-scheduler-cron-registration` in addition to the dispatcher; (c) the DB CHECK `NOT (visibility='public' AND slots_max IS NULL)` hardening candidate already recorded in `feature_session_management_tech.md` §2, which removes the invalid state at the source and may make (a)/(b) unnecessary — evaluate (c) FIRST, it is the cheapest and most fail-closed. **Classification: `ENABLEMENT_ONLY` gate on the future public-projection projector, NOT a hard dependency of the docs slice** — the spec correction is strictly better than the status quo and must not be blocked on unbuilt runtime; but the projector must not be ENABLED while this gap is open. Recorded on Verdict 20. Exposure today = 0: no projector exists in TypeScript, `Implementation: Not started`.
 
+## task: authorize-tenant-action-core
+title: authorizeTenantAction — choke-point resolve effective tenant status fail-closed 2-step (KHÔNG gồm hasCapability)
+status: planned
+risk: P1
+change_class: core-logic
+depends_on: []
+invariants: [tenant-isolation, authorization]
+scope: [packages/db/src/authorization.ts, packages/db/src/authorization.test.ts, packages/db/src/index.ts, docs/autopilot-manifests/authorize-tenant-action-core.json, docs/autopilot-authorize-tenant-action-core.md]
+manifest: docs/autopilot-manifests/authorize-tenant-action-core.json
+slice_doc: docs/autopilot-authorize-tenant-action-core.md
+merged_probe: packages/db/src/authorization.ts :: authorizeTenantAction
+notes: **Tách khỏi `tenant-capability-authority-core` ngày 30/07 sau ba phép đo lật cách đặt task gốc.** (1) `hasCapability` **không cài được với dữ liệu sống**: seed `0011` là flat (`'{"web_app": true, "telegram": false, ...}'`), không có lớp bọc `capabilities`, tên khoá khác spec (`zalo` vs `bot_zalo`), thiếu toàn bộ khoá nghiệp vụ; CHECK sống vẫn `plan_key IN ('free_web','telegram','plus_channel','all_channels')` (`0007:14`) — mọi lần gọi sẽ trả `undefined`. Cần DD-29, xem block dưới. (2) Task gốc khai `depends_on: [dd38-dd86-chat-schema-core]` (status `idea`) ⇒ `register` sẽ `HALT DEP_MISSING`; phụ thuộc đó thuộc nửa capability (chat), `authorizeTenantAction` không đọc bảng chat nào — tách xong tự gỡ, và slice này trở thành **root dependency**. (3) Task gốc khai `invariants: [schema, ...]` và `change_class: schema-migration`, nhưng slice này **không thêm migration, không sửa `schema.ts`** — bỏ `schema` để không khoá lane của mọi slice migration khác vô cớ.
+  **Authority:** `feature_billing_lifecycle_tech.md` §3 Status Authority — bảng 6 case founder-ratified 2026-07-24, test #29–36a. Consumer contract ở `feature_session_management_tech.md` §4 step 6 + edge #24 (locking read `FOR SHARE` trên `tenants` rồi `subscriptions`; plain re-SELECT **không đủ** dưới READ COMMITTED).
+  **Ba tiền đề spec đã verify trực tiếp trên migration 30/07:** `tenants.status` DEFAULT `'trialing'` + CHECK 5 giá trị (`0002:15-16`) · `subscriptions.status` cùng CHECK (`0007:34`) · `tenant_provision` set `'active'` tường minh (`0012`). Đều đúng.
+  **Chưa launch được:** cần verdict trong `slice-readiness-verdicts.md` trước — gate §11.2 cấm verdict một slice chưa author, nên artifact author trước (đã xong 30/07), verdict sau.
+
+## task: plans-dd29-capability-registry
+title: DD-29 — chuyển plan_key 4-tier sang 2-tier, reshape entitlements sang capabilities.*, reseed
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [schema]
+scope: []
+manifest: null
+merged_probe: null
+notes: **Tiền đề bắt buộc của `hasCapability`, phát hiện 30/07 khi author `authorize-tenant-action-core`.** Chính `feature_billing_lifecycle_tech.md` cảnh báo ở dòng 35: `⚠️ PENDING MIGRATION — live packages/db/schema.ts vẫn CHECK 4-tier`. Khoảng cách sống vs spec gồm **ba** thứ, không phải một: (a) CHECK `plan_key` `('free_web','telegram','plus_channel','all_channels')` → `('free','host_pro')`; (b) `entitlements` từ **flat** (`{"web_app": true, "zalo": false}`) sang **nested** (`{"capabilities": {...}}`) với tên khoá khác (`bot_zalo`, `session_management`, `payment_reconcile_auto`, `reminders_auto`, `assistant_ai_kb`, `crm_dashboard`); (c) reseed. Đây là **migration dữ liệu**, không phải logic — có tenant đang trỏ `subscriptions.plan_key` vào giá trị cũ nên không thể đổi CHECK trước khi map xong. Cần expand→contract, không phải một migration. Chưa author; đừng gộp vào slice logic nào.
+
 ## task: tenant-capability-authority-core
 title: Shared DD-56 capability authority — closed registry, least-privilege preset, tenant-private grants, append-only audit, fail-closed authorize
 status: idea
+split_note: **Nửa `authorizeTenantAction` đã tách ra `authorize-tenant-action-core` (30/07)** — xem block đó. Phần CÒN LẠI của task này vẫn hợp lệ và vẫn là `schema-migration`: closed registry, least-privilege preset, tenant-private grants, append-only audit, và `hasCapability`. Phần còn lại thêm `depends_on: [plans-dd29-capability-registry]` bên cạnh `dd38-dd86-chat-schema-core` đã khai — `hasCapability` đọc `plans.entitlements.capabilities.*`, mà lớp đó chưa tồn tại trong dữ liệu sống.
 risk: P1
 change_class: schema-migration
 depends_on: [dd38-dd86-chat-schema-core]
