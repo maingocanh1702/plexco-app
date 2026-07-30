@@ -1,8 +1,10 @@
-# Slice contract — `authorize-tenant-action-core`
+<!-- review-readiness: code-ready -->
 
-> **Đây là contract, KHÔNG phải verdict.** File này không khẳng định trạng thái readiness nào —
-> per `standards/review-code-readiness-gate.md` §11.2, verdict chỉ được mở sau khi slice đã author,
-> và nó sống ở `slice-readiness-verdicts.md`, không ở đây.
+# Autopilot task contract — `authorize-tenant-action-core`
+
+> **Đây là coding handoff.** Verdict canonical nằm ở cuối file. Slice được author TRƯỚC verdict
+> (gate §11.2 cấm verdict một slice chưa tồn tại), rồi verdict pin đúng commit chứa nó —
+> `AUTHORITY_SHA` dưới là commit đã land ba artifact này, không phải một nhãn version di động.
 
 ---
 
@@ -173,6 +175,68 @@ product choice. Hai câu hỏi phase sau đã pin negative scope và **không** 
 |---|---|
 | Trust-safety write path cho `tenants.status` | Chưa tồn tại. Slice này chỉ ĐỌC. Spec §3 đã pin: set ⊥ clear phải cùng một owner khi mechanism đó land; một sự kiện trục billing không được ngầm clear cột này. Negative scope trên đã cấm viết. |
 | DD-29 `plan_key` + reshape `entitlements` | Chỉ ảnh hưởng `hasCapability`, đã tách khỏi slice. `authorizeTenantAction` không đọc `plans`. |
+
+---
+
+## Verdict
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-30
+AUTHORITY_SHA: b4d08c83767f0ff6693a05452e61248b58defc01
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-authorize-tenant-action-core.md
+  - docs/autopilot-manifests/authorize-tenant-action-core.json
+  - docs/features/BE/feature_billing_lifecycle_tech.md
+  - docs/features/BE/feature_session_management_tech.md
+  - packages/db/migrations/0002_tenants_core.sql
+  - packages/db/migrations/0007_billing.sql
+  - packages/db/migrations/0012_auth_functions.sql
+SLICE: authorize-tenant-action-core
+IN_SCOPE: authorizeTenantAction resolver — fail-closed 2-step effective-status resolution over tenants.status then subscriptions.status, với locking read cho nhánh mutating; unit + real-Postgres tests
+OUT_OF_SCOPE: hasCapability · plans enum/seed/entitlements (DD-29) · migration nào · wiring vào publish/session/billing route · error code mới · write path cho tenants.status
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: none — slice này là dependency gốc
+PRIOR_SLICES: none
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS
+SECURITY_AND_MIGRATION_GATE: PASS
+IMPLEMENTATION_ARTIFACTS: PASS
+FIRST_IMPLEMENTATION_STEP: tạo packages/db/src/authorization.ts với chữ ký nhận tenantId (KHÔNG nhận status đã resolve sẵn) và test case 3 (allow path) trước, để pin shape trước khi thêm nhánh deny
+REMAINING_BLOCKERS: none
+```
+
+### Closure matrix
+
+| # | Gate | Bằng chứng | |
+|---|---|---|---|
+| 1 | Authority pin theo SHA | `b4d08c8` + `TARGET_FILES` liệt kê exact, không glob | PASS |
+| 2 | Decision trong scope đã chốt | bảng 6 case founder-ratified 2026-07-24 (`feature_billing_lifecycle_tech.md` v2.8a) | PASS |
+| 3 | Scope IN/OUT và owner rõ | manifest `scope` 5 file exact + `negative_scope` 7 mục | PASS |
+| 4 | Dependency phân loại đủ | none — root dependency; `dd38-dd86` đã loại bằng phép đo, không phải bằng giả định | PASS |
+| 5 | Live schema khớp doc | `0002:15-16` · `0007:34` · `0012` — đo trực tiếp 30/07, ba tiền đề đều đúng | PASS |
+| 6 | Data/auth contract đủ | chữ ký nhận `tenantId` · thứ tự khoá `tenants`→`subscriptions` · `TENANT_SUSPENDED` 403 cause-agnostic | PASS |
+| 7 | Fail-closed/order đủ | cả 6 case có expected; thiếu row = deny; anomaly = deny; step 1 thắng vô điều kiện | PASS |
+| 8 | Open question trong scope | 0 — hai câu hỏi phase sau đã pin negative scope | PASS |
+| 9 | Acceptance matrix có expected | 17 hàng, mỗi hàng có input · precondition · expected · layer | PASS |
+| 10 | Migration/security/rollback pin | 0 migration (F1 assert diff không có `.sql` mới) · security round bắt buộc · rollback = revert thuần, hàm chưa có caller nào | PASS |
+| 11 | First slice hard deps merged | root, không có gì phải chờ | PASS |
+| 12 | Implementation handoff sẵn sàng | slice doc + manifest + backlog entry + launcher `ap-40` | PASS |
+
+**Ba điều verdict này KHÔNG chứng minh.** Nó không nói feature publish đã sẵn sàng — slice này chỉ tạo
+dependency gốc, chưa wire caller nào. Nó không nói `hasCapability` sẵn sàng — hàm đó chờ DD-29. Và nó
+không phải bằng chứng runtime: `CODE_READY` nghĩa là mở worktree được, không phải `IMPLEMENTED`.
 
 ---
 

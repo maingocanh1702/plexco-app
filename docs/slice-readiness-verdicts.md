@@ -14,6 +14,85 @@
 
 ---
 
+## Verdict 28 — `authorize-tenant-action-core`: ba phép đo lật cách đặt task gốc, và slice tách ra trở thành root dependency (2026-07-30)
+
+> **Canonical block sống trong `docs/autopilot-authorize-tenant-action-core.md`** (mode `code-ready`,
+> đó là coding handoff). Block dưới là **bản mirror trong tracker** — sửa một chỗ phải sửa cả hai;
+> nếu hai bên lệch, bản trong slice doc thắng.
+>
+> **Verdict này cấp phép cho một slice KHÔNG tồn tại trước hôm nay.** Backlog có
+> `tenant-capability-authority-core` (`change_class: schema-migration`, title nói closed registry +
+> least-privilege preset + tenant-private grants + append-only audit). Ba phép đo cho thấy nó gộp hai
+> thứ khác hẳn nhau, và cả ba đều lật một khẳng định của chính task gốc:
+>
+> **(1) `hasCapability` không cài được với dữ liệu sống.** Spec đọc `entitlements.capabilities.<key>`.
+> Seed sống `0011:18-23` là **flat** — `'{"web_app": true, "telegram": false, "zalo": false}'` — không có
+> lớp bọc `capabilities`, tên khoá khác (`zalo` vs `bot_zalo`), thiếu toàn bộ khoá nghiệp vụ. CHECK sống
+> vẫn `plan_key IN ('free_web','telegram','plus_channel','all_channels')` (`0007:14`). Mọi lần gọi sẽ trả
+> `undefined`. Chính spec tự cảnh báo điều này ở dòng 35 (`⚠️ PENDING MIGRATION`) — nhưng cảnh báo nằm
+> trong comment SQL của một code block, chỗ dễ đọc lướt qua nhất.
+>
+> **(2) Task gốc khai một hard dependency chưa merged.** `depends_on: [dd38-dd86-chat-schema-core]`,
+> status `idea` ⇒ `register` sẽ `HALT DEP_MISSING` ngay lệnh đầu. Nhưng `authorizeTenantAction` không đọc
+> một bảng chat nào — phụ thuộc đó thuộc nửa capability. Tách xong, slice **tự gỡ blocker của chính nó**
+> và thoả B1 qua mệnh đề *"hoặc slice hiện tại chính là dependency gốc"*, chứ không phải bằng cách chờ.
+>
+> **(3) Task gốc khai `invariants: [schema, ...]`** trong khi slice này không thêm migration và không sửa
+> `schema.ts`. Khai thừa `schema` sẽ khoá lane của **mọi** slice migration khác — một chi phí song song
+> hoá trả cho một ràng buộc không có thật.
+>
+> **Ba tiền đề của spec đã đo trực tiếp, không đọc prose:** `tenants.status` DEFAULT `'trialing'` + CHECK
+> 5 giá trị (`0002:15-16`, constraint nay tên `tenants_status_chk` sau `0025`) · `subscriptions.status`
+> cùng CHECK (`0007:34`) · `tenant_provision` set `'active'` tường minh, không rơi vào default (`0012`).
+> Cả ba đúng. Hệ quả cho test: vì **có** CHECK, case 1b chỉ dựng được bằng giá trị hợp lệ trong enum.
+>
+> **Hai bài học của AP-39 đã áp thẳng vào manifest.** Slice doc và authored manifest nằm **trong** `scope`
+> — AP-39 để contract doc ngoài scope, reviewer nêu đúng chỗ lệch đó ở round 2, 4, 6, và writer không có
+> quyền đóng; ba vòng fix tiêu vào việc giải thích một khoảng cách không đóng được. Và `verification` viết
+> bằng **thuộc tính**, kèm dòng cấm tin bất kỳ con số nào chép trong repo.
+>
+> **Điều verdict này KHÔNG chứng minh:** publish chưa sẵn sàng (slice này chưa wire caller nào) ·
+> `hasCapability` chưa sẵn sàng (chờ DD-29) · `CODE_READY` ≠ `IMPLEMENTED`.
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-30
+AUTHORITY_SHA: b4d08c83767f0ff6693a05452e61248b58defc01
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-authorize-tenant-action-core.md
+  - docs/autopilot-manifests/authorize-tenant-action-core.json
+  - docs/features/BE/feature_billing_lifecycle_tech.md
+  - docs/features/BE/feature_session_management_tech.md
+  - packages/db/migrations/0002_tenants_core.sql
+  - packages/db/migrations/0007_billing.sql
+  - packages/db/migrations/0012_auth_functions.sql
+SLICE: authorize-tenant-action-core
+IN_SCOPE: authorizeTenantAction resolver — fail-closed 2-step effective-status resolution over tenants.status then subscriptions.status, với locking read cho nhánh mutating; unit + real-Postgres tests
+OUT_OF_SCOPE: hasCapability · plans enum/seed/entitlements (DD-29) · migration nào · wiring vào publish/session/billing route · error code mới · write path cho tenants.status
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: none — slice này là dependency gốc
+PRIOR_SLICES: none
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS
+SECURITY_AND_MIGRATION_GATE: PASS
+IMPLEMENTATION_ARTIFACTS: PASS
+FIRST_IMPLEMENTATION_STEP: tạo packages/db/src/authorization.ts với chữ ký nhận tenantId (KHÔNG nhận status đã resolve sẵn) và test case 3 (allow path) trước, để pin shape trước khi thêm nhánh deny
+REMAINING_BLOCKERS: none
+```
+
+---
+
 ## Verdict 27 — `db-check-constraint-naming-drift`: 40 rename, đo lại bác bỏ con số của chính verdict cấp phép; IMPLEMENTED & MERGED `3d75c90` (2026-07-29)
 
 > **Verdict này ghi nhận thực thi, không cấp phép mới.** Authority thiết kế vẫn là Verdict 26 tại `6ae2de6`.
