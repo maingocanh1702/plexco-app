@@ -518,21 +518,22 @@ notes: **Tách ra từ `deps-security-bump` ngày 30/07** khi security round c�
 ## task: reconcile-close-by-hand-declaration
 title: Cho autopilot-backlog-reconcile hiểu `close_by: hand` là khai báo có chủ đích, không phải lỗi tác giả
 status: ready
-verdict: `CODE_READY` 2026-07-30, `AUTHORITY_SHA 28e4e5a0845031d879ba5b4b6ee7093b804cc0ba`, closure 12/12 — verdict block nằm trong slice doc (`<!-- review-readiness: code-ready -->`), tracker entry Verdict 29 ở `docs/slice-readiness-verdicts.md`
+verdict: `CODE_READY` 2026-07-30 (AMENDED same day), `AUTHORITY_SHA 8c59f2905279a0f599bd095eee505fa1eae2cc3a`, closure 12/12 — verdict block nằm trong slice doc (`<!-- review-readiness: code-ready -->`), tracker entry Verdict 29 (AMENDED) ở `docs/slice-readiness-verdicts.md`. Re-pinned từ `28e4e5a` sau owner feedback (glyph/message `MALFORMED` + tách slice theo ranh giới repo); bản `28e4e5a` chưa từng có coding session nào dùng.
 launcher: .claude/commands/ap-41-reconcile-close-by-hand-declaration.md
 risk: P3
 change_class: tooling
 depends_on: []
 invariants: []
-scope: [scripts/autopilot-backlog-reconcile, docs/autopilot-manifests/reconcile-close-by-hand-declaration.json, docs/autopilot-reconcile-close-by-hand-declaration.md]
+scope: [scripts/autopilot-backlog-reconcile, scripts/autopilot-backlog-reconcile.test.sh, docs/autopilot-manifests/reconcile-close-by-hand-declaration.json, docs/autopilot-reconcile-close-by-hand-declaration.md]
 manifest: docs/autopilot-manifests/reconcile-close-by-hand-declaration.json
 slice_doc: docs/autopilot-reconcile-close-by-hand-declaration.md
 merged_probe: scripts/autopilot-backlog-reconcile :: close_by
 notes: Có một **lớp task không thể có `merged_probe` phân biệt được**, và script hiện coi mọi trường hợp như lỗi tác giả. Nó in `× WEAK-PROBE … replace merged_probe with a code symbol this slice introduces` — lời khuyên đúng cho hầu hết slice nhưng **bất khả thi** cho: (a) `dependency-security` (bump lockfile không tạo symbol nào; lockfile chỉ có version và path, mà version là literal dùng chung, có thể trùng nội dung không liên quan trên origin/main); (b) `owner-evidence-gate` (đóng bằng bằng chứng, không bằng commit); (c) `docs-reconcile` (mọi token đều có gạch nối nên trượt `is_symbol_probe`). Backlog đã tự đặt tên cả ba lớp này từ trước, nhưng script không có từ vựng để phân biệt *"tác giả lười"* với *"không tồn tại probe hợp lệ"*.
   **Đề xuất:** chấp nhận `close_by: hand` trong task block; khi có nó, `--check`/`--fix` báo dạng `⊘ manual-close: <slug>` và **không** tính là stale hay weak. Bắt buộc kèm lý do một dòng để không thành cửa sau né discriminator rule. `--audit` vẫn phải kêu nếu một task khai `close_by: hand` mà scope của nó **có** file mã nguồn — đó mới là lười thật.
   Phát hiện 30/07 khi bước 8b của `ap-merge.sh` từ chối flip `deps-security-bump` sau merge `61a2575`. Không phải bug của bước 8b: nó hành xử đúng thiết kế fail-closed, chỉ là thiếu một trạng thái thứ ba.
-  **Phát hiện thêm khi author artifact (30/07):** `scripts/autopilot-backlog-reconcile` là file **kit canonical** (verify byte-identical với `$HOME/Projects/Claude template/autopilot/parallel/autopilot-backlog-reconcile`, cả hai `# KIT_VERSION: 4`), không phải tooling riêng của Plexco, và `autopilot-sync.cjs` không quản lý nó. Implementation thật phải land canonical-first rồi mới sync xuống — chi tiết đầy đủ ở `docs/autopilot-reconcile-close-by-hand-declaration.md`.
-  **Verdict `CODE_READY` 30/07** (Verdict 29, `AUTHORITY_SHA 28e4e5a`), closure 12/12 — sẵn sàng mở worktree qua launcher `ap-41`. (Đã từng ghi "chưa launch được" ở artifact-authoring commit trước; câu đó nay lỗi thời, thay bằng dòng này thay vì để mâu thuẫn với `status: ready` ở trên.)
+  **Phát hiện thêm khi author artifact (30/07):** `scripts/autopilot-backlog-reconcile` là file **kit canonical** (verify byte-identical với `$HOME/Projects/Claude template/autopilot/parallel/autopilot-backlog-reconcile`, cả hai `# KIT_VERSION: 4`), không phải tooling riêng của Plexco, và `autopilot-sync.cjs` không quản lý nó.
+  **Revise 30/07 (owner feedback):** implementation thật KHÔNG land trong worktree Plexco. Nửa template là kit maintenance ngoài luồng (đúng tiền lệ `48db365` "sync kit v14 -> v17" — không slice/gate Plexco), nửa Plexco chỉ chạy `autopilot-update.sh` rồi author test hồi quy mới (`scripts/autopilot-backlog-reconcile.test.sh`, nay trong `scope`) — không bao giờ ghi ngoài repo Plexco. Chi tiết đầy đủ ở `docs/autopilot-reconcile-close-by-hand-declaration.md` mục "Chia slice theo ranh giới repo".
+  **Verdict `CODE_READY` 30/07** (Verdict 29 AMENDED, `AUTHORITY_SHA 8c59f29`), closure 12/12 (14 acceptance row) — sẵn sàng mở worktree qua launcher `ap-41`. (Đã từng ghi "chưa launch được" ở artifact-authoring commit trước; câu đó nay lỗi thời, thay bằng dòng này thay vì để mâu thuẫn với `status: ready` ở trên.)
 
 ## task: db-outbox-ack-marker
 title: Job-infra slice 2a — completion/ack cho outbox_events, đóng starvation loop mà 0022 tự flag

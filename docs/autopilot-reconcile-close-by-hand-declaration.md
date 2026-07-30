@@ -1,15 +1,15 @@
-# Slice contract — `reconcile-close-by-hand-declaration`
+<!-- review-readiness: code-ready -->
 
-> **Đây là contract, KHÔNG phải verdict.** Theo `standards/review-code-readiness-gate.md` §11.2, verdict
-> chỉ được mở sau khi slice đã author (có manifest + target thật, không phải placeholder). File này
-> author trước; verdict được thêm vào cuối file trong một commit riêng, sau khi các artifact đã sửa
-> (doc này, manifest) nằm trên `main` — `AUTHORITY_SHA` khi đó sẽ pin đúng commit chứa chúng, không
-> phải một nhãn version di động.
+# Autopilot task contract — `reconcile-close-by-hand-declaration`
+
+> **Đây là coding handoff.** Verdict canonical nằm ở cuối file. Slice được author TRƯỚC verdict (gate
+> §11.2 cấm verdict một slice chưa tồn tại), rồi verdict pin đúng commit chứa nó — `AUTHORITY_SHA` dưới
+> là commit `8c59f29` (revise sau feedback owner), không phải một nhãn version di động.
 >
-> **v0.3 — bản revise sau feedback owner 30/07.** Hai điểm mở ở v0.2 nay đã đóng: glyph/message chính
-> xác của `MALFORMED`, và cách chia slice qua ranh giới repo. Cả hai đổi shape thật (không chỉ đổi chữ)
-> — xem "Chia slice theo ranh giới repo" và "Ranh giới: cách chia này KHÔNG được tái dùng cho gate file"
-> dưới, và Changelog.
+> **v0.3/v0.4 — bản revise sau feedback owner 30/07.** Hai điểm mở ở v0.2 nay đã đóng: glyph/message
+> chính xác của `MALFORMED`, và cách chia slice qua ranh giới repo. Cả hai đổi shape thật (không chỉ đổi
+> chữ) — xem "Chia slice theo ranh giới repo" và "Ranh giới: cách chia này KHÔNG được tái dùng cho gate
+> file" dưới, và Changelog.
 
 ---
 
@@ -329,10 +329,69 @@ giới repo" ở trên — không còn gì bỏ ngỏ. Xem Changelog v0.3.
 
 ---
 
+## Verdict
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-30
+AUTHORITY_SHA: 8c59f2905279a0f599bd095eee505fa1eae2cc3a
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-reconcile-close-by-hand-declaration.md
+  - docs/autopilot-manifests/reconcile-close-by-hand-declaration.json
+  - scripts/autopilot-backlog-reconcile
+SLICE: reconcile-close-by-hand-declaration
+IN_SCOPE: dạy scripts/autopilot-backlog-reconcile (qua sync từ canonical, KHÔNG hand-patch) nhận diện close_by: hand · <reason> là khai báo có chủ đích; báo cáo ⊘ manual-close thay vì ✗ WEAK-PROBE; không bao giờ tự flip qua --fix; MALFORMED (thiếu lý do) không miễn trừ gì; bắt lạm dụng khi scope có file mã nguồn thật; test hồi quy trong file Plexco-only mới scripts/autopilot-backlog-reconcile.test.sh
+OUT_OF_SCOPE: scripts/autopilot-scope-gate · nới discriminator rule cho task không khai close_by · close_by: enum tổng quát · hand-patch bản Plexco độc lập với canonical · backfill deps-security-bump đã merged · tái dùng cách chia logic-in-template/test-in-consumer cho bất kỳ gate file nào
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: none trong Plexco backlog — slice này là dependency gốc. Precondition ngoài repo (nửa template phải land trước, verify bằng KIT_VERSION 5 sau autopilot-update.sh) không biểu diễn được như depends_on Plexco — xem AWAIT trong STOP_CONDITIONS.
+PRIOR_SLICES: none
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS
+SECURITY_AND_MIGRATION_GATE: PASS
+IMPLEMENTATION_ARTIFACTS: PASS
+FIRST_IMPLEMENTATION_STEP: verify the template half already landed (scripts/autopilot-backlog-reconcile at $HOME/Projects/Claude template/autopilot/parallel reads # KIT_VERSION: 5); if not, AWAIT. Then run autopilot-update.sh in the Plexco worktree, confirm the synced file matches, and author scripts/autopilot-backlog-reconcile.test.sh starting with fixtures for RCH-1..RCH-3 (the happy paths) before RCH-4/RCH-4b (malformed + no-exemption)
+REMAINING_BLOCKERS: none
+```
+
+### Closure matrix
+
+| # | Gate | Bằng chứng | |
+|---|---|---|---|
+| 1 | Authority pin theo SHA | `8c59f29` + `TARGET_FILES` liệt kê exact, không glob | PASS |
+| 2 | Decision trong scope đã chốt | cú pháp `close_by: hand · <reason>` (tiền lệ sống, dòng 485) + glyph/message `MALFORMED` + cách chia repo — cả ba owner đã trả lời 30/07, không còn product choice mở | PASS |
+| 3 | Scope IN/OUT và owner rõ | manifest `scope` 4 file exact + `negative_scope` 9 mục | PASS |
+| 4 | Dependency phân loại đủ | none trong Plexco backlog — root; precondition ngoài repo (template `KIT_VERSION 5`) ghi rõ dạng `AWAIT`, không phải `depends_on` giả | PASS |
+| 5 | Live schema khớp doc | script đọc trực tiếp 30/07 (KIT_VERSION 4); `autopilot-update.sh` verify có sync file này + tự fail-closed chống downgrade; tiền lệ `48db365` verify | PASS |
+| 6 | Data/auth contract đủ | N/A cho auth/data — phần tương đương (field-syntax, glyph `MALFORMED`, phân định repo) đã pin đủ trong §3/"Thiết kế đề xuất"/"Chia slice theo ranh giới repo" | PASS |
+| 7 | Fail-closed/order đủ | RCH-4b: malformed KHÔNG miễn trừ, vẫn vào `stale[]`/`weak[]` thật; RCH-3: khai báo luôn thắng suy luận; template chưa land → `AWAIT` chứ không tự hand-author để né chờ | PASS |
+| 8 | Open question trong scope | 0 — cả hai điểm mở ở v0.2 đã đóng 30/07 | PASS |
+| 9 | Acceptance matrix có expected | 14 hàng `RCH-1`..`RCH-13` (gồm `RCH-4b`), mỗi hàng có input · precondition · expected · layer | PASS |
+| 10 | Migration/security/rollback pin | 0 migration (`RCH-11`) · security round không bắt buộc, có lý do + void condition, càng được củng cố vì logic sync vẫn qua review Plexco đầy đủ · rollback = revert thuần | PASS |
+| 11 | First slice hard deps merged | root trong Plexco backlog; precondition ngoài repo có điều kiện resume nhị phân rõ (`KIT_VERSION 5`) | PASS |
+| 12 | Implementation handoff sẵn sàng | slice doc + manifest + backlog entry + launcher `ap-41` (steps 4/5 viết lại theo ranh giới repo) | PASS |
+
+**Verdict này KHÔNG chứng minh** implementation đã tồn tại — `CODE_READY` nghĩa là mở worktree được,
+không phải `IMPLEMENTED`. Nó cũng không chứng minh nửa template đã land; đó là precondition kiểm tra ở
+`FIRST_IMPLEMENTATION_STEP`, và nếu chưa land thì kết quả đúng là `AWAIT`, không phải tự hand-author.
+
+---
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 30/07/2026 | v0.4 | **Re-verdict CODE_READY sau revise v0.3**, `AUTHORITY_SHA 8c59f2905279a0f599bd095eee505fa1eae2cc3a`, closure 12/12 (14 acceptance row). Tracker `Verdict 29` amended in place ở `docs/slice-readiness-verdicts.md`; backlog `verdict:` line cập nhật SHA mới + `scope:` thêm file test. |
 | 30/07/2026 | v0.3 | **Revise theo owner feedback, đổi shape thật chứ không chỉ chữ.** (1) `MALFORMED close_by` dùng glyph `✗` (cùng mức nghiêm trọng với `WEAK-PROBE`) + message 3 dòng chính xác; thêm RCH-4b pin rõ "không miễn trừ" là bảo đảm phải test riêng. (2) Bỏ hẳn câu hỏi "quyền ghi sibling repo" thay vì trả lời nó: tách slice theo ranh giới repo — nửa template là kit maintenance ngoài luồng (đúng tiền lệ `48db365` v14→v17, không slice/gate Plexco), nửa Plexco chỉ chạy `autopilot-update.sh` rồi author test MỚI (`scripts/autopilot-backlog-reconcile.test.sh`, nay trong SCOPE) — không bao giờ ghi ngoài repo Plexco. Xoá HALT thiếu-quyền-ghi khỏi `STOP_CONDITIONS`/`SANDBOX_AND_PERMISSIONS`; thay bằng `AWAIT` nếu `KIT_VERSION` vẫn đọc `4` sau sync. Thêm section "Ranh giới" ghi rõ: split logic-in-template/test-in-consumer chỉ hợp lệ cho P3/non-trust-boundary/non-production, KHÔNG được tái dùng cho `scope-gate`/`review-readiness`/`codex-review-pin`. |
 | 30/07/2026 | v0.2 | **Verdict CODE_READY**, `AUTHORITY_SHA 28e4e5a0845031d879ba5b4b6ee7093b804cc0ba`, closure 12/12. Thêm `<!-- review-readiness: code-ready -->` + đổi tiêu đề từ "Slice contract" sang "Autopilot task contract". Tracker entry mirror ở `docs/slice-readiness-verdicts.md`; backlog flip `status: ready` + `launcher: .claude/commands/ap-41-reconcile-close-by-hand-declaration.md`. (Verdict này bị thay bởi v0.3/re-verdict sau — xem trên.) |
 | 30/07/2026 | v0.1 | Author slice contract từ backlog task đã mở cùng ngày. Phát hiện thêm ngoài backlog notes gốc: `scripts/autopilot-backlog-reconcile` là file kit canonical (verify byte-identical với `$HOME/Projects/Claude template/autopilot/parallel/autopilot-backlog-reconcile`, cả hai KIT_VERSION 4), không được `autopilot-sync.cjs` quản lý — bắt buộc bước canonical-first trước khi sync xuống Plexco, ghi thành NEGATIVE_SCOPE + RCH-12. Acceptance matrix RCH-1..RCH-12 pin đủ 6 đường phân loại + abuse guard + regression + kit-sync.
