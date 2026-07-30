@@ -28,6 +28,65 @@ moment the launcher itself is amended, which is exactly the drift class this rep
 `pnpm-lock.yaml` from this side, so either may run alongside. Any slice that also holds `schema` must run
 sequentially relative to this one.
 
+## Task contract
+
+Resolved per `level3-workflow.md` §2 and §3. Earlier launchers (AP-33…AP-37) carried this information as
+prose only; declaring it as the canonical block is the point of the Level 3 upgrade, because a field that is
+absent is visibly absent whereas a field buried in a paragraph is not.
+
+```text
+LEVEL3_WORKFLOW: required
+TASK_START_STATE: new_after_template_effective
+
+TASK_ID: plexco-app:db-undeclared-check-constraints-schema-mirror
+OUTCOME: schema.ts and pg_constraint agree in BOTH directions for all CHECK constraints, and a test makes
+  that agreement impossible to break silently again.
+REPOSITORY_AND_BASE: plexco-app · main · base = the origin/main tip containing this launcher (condition, not
+  a pinned SHA — see the base note above)
+CONTEXT_SOURCES:
+  - docs/autopilot-manifests/db-undeclared-check-constraints-schema-mirror.json  (execution contract)
+  - packages/db/migrations/0025_check_constraint_naming_drift.sql               (mechanism precedent)
+  - packages/db/migrations/0014_players_waitlist.sql                           (first fix of this class)
+  - packages/db/schema.ts · packages/db/src/{rls-invariants,migrate}.test.ts
+  - docs/slice-readiness-verdicts.md Verdict 27                                 (why counts are distrusted)
+  - live pg_constraint / pg_get_constraintdef                                   (the only ground truth)
+APPLICABLE_SKILLS: none — no output-format or domain skill applies; this is SQL + Drizzle + tests.
+SCOPE: exactly the manifest `scope` array (6 paths). Nothing else.
+NEGATIVE_SCOPE: see "Boundaries that fail the slice" below — predicate change, DROP+ADD, creating a
+  constraint, the 40 renamed by 0025, the 27 always-correct, any column/type/RLS/role/grant change, any
+  edit to applied migrations 0000-0025, any file outside `scope`.
+RISK: P2
+AUTONOMY_MODE: supervised
+MODEL_POLICY: this session is planner and single writer; independent reviewer is
+  scripts/codex-review-pin.sh (pinned wrapper, not a Claude sub-agent — a self-review does not satisfy the
+  gate). Reviewer unavailable ⇒ HALT TOOL_UNAVAILABLE.
+SANDBOX_AND_PERMISSIONS: local only. Network: none required beyond an already-running local Postgres.
+  Secrets: none. External side effects: none. No push to main, no merge, no branch deletion.
+HUMAN_DECISIONS_REQUIRED: one, already made — `_chk` naming + a rename migration over the cheaper
+  no-migration option (owner, 2026-07-29; recorded in the manifest `_owner_decision`). One more is
+  pending by construction: founder confirmation of the design probe before any edit.
+SLICE_GRAPH: single slice, no fan-out. depends_on: []. Runs after 0025 (merged) but does not depend on it
+  as code — 0025 only surfaced the finding.
+WORKTREE_PLAN: .autopilot/worktrees/db-undeclared-check-constraints-schema-mirror on branch
+  feat/db-undeclared-check-constraints-schema-mirror. One worktree, one writer. Root worktree stays on main.
+VERIFICATION:
+  focused:   the new UCC tests in packages/db/src/rls-invariants.test.ts + migrate.test.ts
+  canonical: pnpm typecheck · pnpm format:check · pnpm review:check · pnpm lint · pnpm build · DB suite
+             with DATABASE_URL_TEST (baseline 561 workspace tests on main@f88a2c8)
+  e2e:       none — this crosses no service or network boundary
+  diff:      inspect `git diff main...HEAD` against the manifest `scope` before declaring READY
+CODE_REVIEW: required · scripts/codex-review-pin.sh · 2 consecutive clean FULL-base rounds, same HEAD
+SECURITY_REVIEW: not required — no auth, secret, permission, money, external input or deployment surface.
+  RENAME CONSTRAINT is a catalog metadata change and alters no predicate. If the probe finds otherwise
+  (e.g. a money-path table in the set), that judgement is void: add a security round and say why.
+BUDGETS: fix_rounds_max 5 · region_thrash 3 · no wall-clock or cost ceiling set by the owner
+STOP_CONDITIONS: MAX_ROUNDS · REGION_THRASH · SCOPE_OR_BASE_DRIFT · TOOL_UNAVAILABLE ·
+  MATERIAL_CONTEXT_OR_DECISION_MISSING · plus the manifest `_stop_conditions` (count ≠ 6, a name moved, a
+  pg_get_constraintdef differs before/after, UCC-5 counts not balancing, a pre-existing violating row)
+DELIVERABLES: migration 0026 · schema.ts declarations · UCC-1..UCC-10 tests · updated MIGRATION_COUNT in
+  both test files · design-probe.md · codex round logs · terminal marker file
+```
+
 ## Hard authorization gate
 
 Do not edit until all are true:
@@ -129,7 +188,28 @@ fail*, by temporarily removing one declaration and observing a red test. A guard
 guard nobody has tested.
 
 Verify with the full CI list, then the mandatory independent review: `scripts/codex-review-pin.sh`, two
-consecutive clean FULL-base rounds on the same HEAD. Loop breakers: `MAX_ROUNDS` 5, `REGION_THRASH` 3 rounds
-touching the same region. End at **`READY | AWAIT | HALT`** and write the terminal marker into the state dir.
+consecutive clean FULL-base rounds on the same HEAD. A review with any actionable finding is not clean; a
+clean review of an empty diff is not evidence. Loop breakers: `MAX_ROUNDS` 5, `REGION_THRASH` 3 rounds
+touching the same region, and findings spreading across the design ⇒ stop and re-slice rather than keep
+patching.
+
+End at exactly one of **`READY | AWAIT | HALT`** and write the marker file with the name `level3-workflow.md`
+§9 specifies, into `.autopilot/state/db-undeclared-check-constraints-schema-mirror/`:
+
+| Terminal | File | When |
+|---|---|---|
+| `READY` | `READY.txt` | Scope, verification and both clean review rounds complete. Report outcome, changed files, test/build/review evidence, remaining risks, and the exact merge action the owner must take. |
+| `AWAIT` | `AWAIT-FOUNDER-<reason>.txt` | One concrete missing decision/authority/context that materially changes the result. Preserve work, stop writing, give ONE recommended option with trade-offs and a binary resume condition. The design-probe stop uses this. |
+| `HALT` | `HALT-<REASON>.txt` | Hard safety/scope/authority/tool/loop-breaker failure. State exact reason, forensic state, and the condition for a fresh successor task. Do not keep patching after HALT. |
+
+Use these exact names. The repo currently has both `AWAIT-FOUNDER-ready-for-manual-merge.txt` (correct shape)
+and `READY_FOR_MANUAL_MERGE.txt` (matches no shape) from earlier slices — that inconsistency is why the name
+is pinned here rather than left to judgement.
+
 **Do not merge and do not push to `main`** — the owner merges via `scripts/ap-merge.sh`, which now runs
 `autopilot-backlog-reconcile --fix` after push so the backlog status cannot rot.
+
+Then close the learning loop (`level3-workflow.md` §10): the discovered defect is already becoming a
+regression test via `UCC-5`/`UCC-6`, so state explicitly in the terminal report **what context or guardrail
+was missing** that let six constraints stay undeclared through 25 migrations — that sentence is the
+deliverable, not a formality.
