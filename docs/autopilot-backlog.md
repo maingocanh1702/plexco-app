@@ -871,6 +871,46 @@ invariants: [schema]
 scope: []
 notes: **Phát hiện 2026-07-27 khi viết PVC-3 của `db-public-visibility-capacity-check`.** `schema.ts:~599-605` khai `sessions_time_chk` · `sessions_price_chk` · `sessions_slots_chk` · `sessions_vis_chk` · `sessions_join_chk` · `sessions_status_chk`, nhưng `pg_constraint` trên DB đã migrate đầy đủ (verify trên `plexco_test`, tail `0024`) cho thấy **KHÔNG tên nào tồn tại** — `0002:87-99` khai CHECK inline/không tên nên Postgres tự đặt `sessions_check` (time), `sessions_price_amount_check`, `sessions_slots_max_check`, `sessions_visibility_check`, `sessions_join_policy_check`, `sessions_status_check`. **Cùng lớp bug mà comment `schema.ts:107-111` tự ghi là đã tìm-và-sửa cho `players` ở `0014`** (`players_status_check`→`players_status_chk`) — chưa bao giờ sửa cho `sessions`. **Không phải bug đúng đắn hôm nay** (constraint vẫn fire và enforce đúng dưới tên thật; PVC-3 nay assert theo tên THẬT), thuần là drift mirror giữa `schema.ts` và DB sống — nhưng **mọi migration hoặc test tương lai giả định các tên đó tồn tại sẽ sai**, và `dep_checks` của chính manifest slice kia đã dính đúng bẫy đó: `scope-gate` giải bằng `git show main:<file>` + grep nên chỉ đọc được KHAI BÁO, không phân biệt được với ĐÃ ÁP DỤNG. Cách sửa mirror theo đúng `0014` cho `players`: một migration monotonic DROP từng constraint tự-sinh rồi ADD lại dưới tên `schema.ts` khai (cùng predicate, không đổi hành vi). Quyết định khi scope: có gộp luôn `sessions_public_capacity_chk` (đã đặt tên đúng) hay giữ hẹp trong năm cái cũ. **KẾT QUẢ ĐO CUỐI (design-probe, 2026-07-28) — con số 47/72 trong `rescoped:` ở trên cũng SAI, và sai theo cách có ý nghĩa:** catalog thật cho **67 khai báo `check()` · 73 constraint sống · 27 đã đúng tên · 40 cần rename · 0 khai-mà-không-có · 6 sống-mà-không-khai**. `27+40+0=67` và `27+40+6=73`. Bản 47 gộp "cần rename" với "sống nhưng chưa bao giờ khai" vào một rổ — hai vấn đề khác nhau, cách sửa khác nhau. **Nửa đáng sợ của khoảng cách 63-vs-72 đã bị bác bỏ bằng đo:** không có guard nào người ta tin là đang enforce mà thực ra vắng mặt (0 cái). Phần dư là chiều ngược lại — 6 constraint sống mà `schema.ts` không mô tả, tách thành `db-undeclared-check-constraints-schema-mirror`.
 
+## task: manifest-v2-runtime-adoption
+title: Chạy `level3-operational-v2` lần đầu — sinh manifest RUNTIME ở `.autopilot/state/`, KHÔNG đổi 45 manifest đã track
+status: planned
+risk: P2
+change_class: autopilot-mechanism
+depends_on: []
+invariants: [build-config]
+scope: [.claude/commands/, docs/autopilot-manifests/_TEMPLATE.json, docs/autopilot-ONBOARDING.md]
+manifest: null
+merged_probe: null
+notes: |
+  **Mở 2026-07-30 sau khi một yêu cầu "chuyển 45 manifest lên v2" bị phép đo bác bỏ.** Ghi lại đầy đủ vì
+  cùng câu hỏi sẽ quay lại, và câu trả lời trực giác thì SAI theo cách phá được cả ba slice đang sống.
+  **`level3-operational-v2` KHÔNG phải một nhãn version — nó là artifact khác, ở đường dẫn khác.**
+  `scripts/autopilot-review-readiness.mjs:297-300` fail-closed:
+  `manifest must be .autopilot/state/<feature>/manifest.json`. Mà `.gitignore:56` là `.autopilot/*`.
+  ⇒ manifest v2 là **runtime, per-run, không track**. `docs/autopilot-manifests/*.json` là **hợp đồng được
+  author và track** — khác vai, không phải phiên bản cũ của cùng một thứ. `docs/autopilot-ONBOARDING.md:106`
+  đã nói đúng điều này từ đầu: *"Copy sang `.autopilot/state/<FEATURE_ID>/manifest.json` khi chạy"*.
+  **Nếu flip chuỗi version trên 45 file ở `docs/`:** mỗi cái `HALT CONTRACT_INVALID` ngay ở `register` — gồm
+  `deps-security-bump`, `eslint-10-migration` và slice đang in-flight. Không phải migration, là lỗi phạm trù.
+  **v2 còn đòi thứ chỉ runtime biết được:** `base_sha` **full 40 ký tự** (`requireFullSha` — file track không
+  thể biết SHA của lần chạy tương lai) · `review_gate_version === level3-readiness-v2` · `branch === feat/<feature>`
+  · `feature` filesystem-safe và khớp `task_id` · `code_review.tool` = wrapper pinned với `clean_rounds ≥ N` ·
+  `security_review.required` boolean · `stop_conditions` đủ bốn token `MAX_ROUNDS`/`REGION_THRASH`/
+  `SCOPE_OR_BASE_DRIFT`/`REQUIRED_TOOL_UNAVAILABLE`.
+  **Phát hiện làm phần lớn lo lắng ban đầu thành thừa:** `autopilot-scope-gate:335` —
+  `git cat-file -e "$BASE_REF:scripts/autopilot-review-readiness.mjs" && REVIEW_REQUIRED=1`. Review-readiness
+  gate **ĐÃ bật cho mọi manifest** chỉ vì file validator tồn tại trên base ref. Nên "0/45 manifest dùng v2"
+  **không** có nghĩa gate đang tắt. Khai v2 chỉ thêm hai thứ: một lượt validate ở `register`, và
+  `registered-manifest.sha256` chống sửa manifest giữa lifecycle. Giá trị thật nằm ở cái thứ hai.
+  **Việc của task này:** cho launcher sinh manifest runtime trong preflight — copy hợp đồng đã author, bơm
+  các field runtime, ghi `.autopilot/state/<feature>/manifest.json`, rồi `register` chống lại bản đó. Forward-only.
+  **KHÔNG chạy trên `ap-38`** — slice đó đã `register` dưới shape cũ và đang `in-flight`; đổi luật giữa ván thì
+  `ready` sẽ đi nhánh v2 trong khi `register` không để lại snapshot hash, khả năng HALT. Owner chốt 30/07: thử
+  v2 lần đầu ở **`ap-39` (`deps-security-bump`)**, chỗ chưa register.
+  **Điều kiện promote lên `ready`:** đọc `cleanup` của scope-gate (chưa ai đọc kỹ) để biết đường lùi nếu register
+  v2 fail; quyết `_TEMPLATE.json` có nên tách thành hai file (authored-contract vs runtime-manifest) thay vì một
+  template mang schema mà mọi manifest track được đều không thoả; và cập nhật `ONBOARDING` §3.3 cho khớp.
+
 ## task: kit-dead-citation-prompt-generic-sections
 title: 6 manifest viện dẫn `autopilot-prompt-GENERIC v0.6.1 §0.1` — section đã biến mất khi prompt viết lại cho Level 3
 status: planned
