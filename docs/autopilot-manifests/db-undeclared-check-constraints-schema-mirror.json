@@ -15,6 +15,7 @@
   ],
   "scope": [
     "docs/autopilot-manifests/db-undeclared-check-constraints-schema-mirror.json",
+    ".claude/commands/ap-38-db-undeclared-check-constraints-schema-mirror.md",
     "packages/db/migrations/0026_undeclared_check_constraint_names.sql",
     "packages/db/schema.ts",
     "packages/db/src/rls-invariants.test.ts",
@@ -40,5 +41,6 @@
     "UCC-10: full CI list green -- typecheck, format:check, review:check, lint, build, db:bootstrap, test; workspace test count rises by exactly the number of new UCC tests and nothing else moves."
   ],
   "_evidence_rules": "Measure from pg_constraint / pg_get_constraintdef against a real migrated database. Do not trust the counts in `_problem`: they were measured on 2026-07-28 before 0025 merged, and this repo has already produced three successive wrong constraint counts (27, then 47, then the correct 40) each of which read as fact because it was specific. If your measurement disagrees with anything written here, your measurement wins and you say so in the probe.",
-  "_stop_conditions": "HALT if: the live count is not 6, or any name in `_problem` no longer matches; any pg_get_constraintdef differs before/after a rename; UCC-5's two counts do not balance; or a pre-existing row violates a constraint being touched -- name the halt, never delete or re-parent data."
+  "_stop_conditions": "HALT if: the live count is not 6, or any name in `_problem` no longer matches; any pg_get_constraintdef differs before/after a rename; UCC-5's two counts do not balance; or a pre-existing row violates a constraint being touched -- name the halt, never delete or re-parent data.",
+  "launcher": ".claude/commands/ap-38-db-undeclared-check-constraints-schema-mirror.md"
 }
