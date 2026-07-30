@@ -14,7 +14,14 @@ else. The mechanism it reuses is merged code: `packages/db/migrations/0025_check
 
 P2 · `schema-migration` · `manual_only` · auto-merge `false` · `2x_clean`. Own worktree at
 `.autopilot/worktrees/db-undeclared-check-constraints-schema-mirror`, branch
-`feat/db-undeclared-check-constraints-schema-mirror`, created from `a539500`. Never run from the repo root.
+`feat/db-undeclared-check-constraints-schema-mirror`. Never run from the repo root.
+
+**Base is stated as a condition, not as a SHA.** The worktree must sit on an `origin/main` tip that already
+contains this launcher and the manifest — which is self-verifying: if you can invoke `/ap-38-…` at all, the
+file is in your tree. If it came back `Unknown command`, the worktree predates the launcher; fix it before
+anything else with `git fetch origin && git reset --hard origin/main` (safe only while the branch has no
+commits — check `git log --oneline main..HEAD` is empty first). A hard-pinned SHA here would go stale the
+moment the launcher itself is amended, which is exactly the drift class this repo keeps paying for.
 
 **PARALLELISM.** This slice holds `schema`. `deps-security-bump` (AP-39, eligible 2026-07-30) and
 `eslint-10-migration` (eligible 2026-07-31) both hold `build-config` and touch neither `packages/db` nor
@@ -33,8 +40,9 @@ Do not edit until all are true:
 
 ## Preflight
 
-1. Confirm worktree HEAD equals the `origin/main` tip you branched from; if `main` moved, decide explicitly
-   whether to rebase rather than silently continuing on a stale base.
+1. `git rev-parse HEAD` in the worktree equals `git rev-parse origin/main`, and
+   `ls .claude/commands/ap-38-*.md` resolves. If `main` moved after you branched, decide explicitly whether to
+   reset or rebase — never continue silently on a stale base.
 2. `.autopilot/state/db-undeclared-check-constraints-schema-mirror/` already contains `regions.log` and
    `fix-round-count.txt` from `scope-gate register`. Create `codex/` alongside them.
 3. Green baseline BEFORE any edit — full CI list: `pnpm typecheck`, `pnpm format:check` (which is
