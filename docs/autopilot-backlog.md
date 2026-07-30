@@ -871,6 +871,47 @@ invariants: [schema]
 scope: []
 notes: **Phát hiện 2026-07-27 khi viết PVC-3 của `db-public-visibility-capacity-check`.** `schema.ts:~599-605` khai `sessions_time_chk` · `sessions_price_chk` · `sessions_slots_chk` · `sessions_vis_chk` · `sessions_join_chk` · `sessions_status_chk`, nhưng `pg_constraint` trên DB đã migrate đầy đủ (verify trên `plexco_test`, tail `0024`) cho thấy **KHÔNG tên nào tồn tại** — `0002:87-99` khai CHECK inline/không tên nên Postgres tự đặt `sessions_check` (time), `sessions_price_amount_check`, `sessions_slots_max_check`, `sessions_visibility_check`, `sessions_join_policy_check`, `sessions_status_check`. **Cùng lớp bug mà comment `schema.ts:107-111` tự ghi là đã tìm-và-sửa cho `players` ở `0014`** (`players_status_check`→`players_status_chk`) — chưa bao giờ sửa cho `sessions`. **Không phải bug đúng đắn hôm nay** (constraint vẫn fire và enforce đúng dưới tên thật; PVC-3 nay assert theo tên THẬT), thuần là drift mirror giữa `schema.ts` và DB sống — nhưng **mọi migration hoặc test tương lai giả định các tên đó tồn tại sẽ sai**, và `dep_checks` của chính manifest slice kia đã dính đúng bẫy đó: `scope-gate` giải bằng `git show main:<file>` + grep nên chỉ đọc được KHAI BÁO, không phân biệt được với ĐÃ ÁP DỤNG. Cách sửa mirror theo đúng `0014` cho `players`: một migration monotonic DROP từng constraint tự-sinh rồi ADD lại dưới tên `schema.ts` khai (cùng predicate, không đổi hành vi). Quyết định khi scope: có gộp luôn `sessions_public_capacity_chk` (đã đặt tên đúng) hay giữ hẹp trong năm cái cũ. **KẾT QUẢ ĐO CUỐI (design-probe, 2026-07-28) — con số 47/72 trong `rescoped:` ở trên cũng SAI, và sai theo cách có ý nghĩa:** catalog thật cho **67 khai báo `check()` · 73 constraint sống · 27 đã đúng tên · 40 cần rename · 0 khai-mà-không-có · 6 sống-mà-không-khai**. `27+40+0=67` và `27+40+6=73`. Bản 47 gộp "cần rename" với "sống nhưng chưa bao giờ khai" vào một rổ — hai vấn đề khác nhau, cách sửa khác nhau. **Nửa đáng sợ của khoảng cách 63-vs-72 đã bị bác bỏ bằng đo:** không có guard nào người ta tin là đang enforce mà thực ra vắng mặt (0 cái). Phần dư là chiều ngược lại — 6 constraint sống mà `schema.ts` không mô tả, tách thành `db-undeclared-check-constraints-schema-mirror`.
 
+## task: scope-gate-ready-halts-every-legacy-manifest
+title: `scope-gate ready` HALT `CONTRACT_INVALID` cho MỌI manifest non-v2 — chặn toàn bộ hàng đợi P1/P2
+status: ready
+risk: P1
+change_class: autopilot-mechanism
+depends_on: []
+invariants: [build-config]
+scope: [scripts/autopilot-scope-gate, docs/autopilot-ONBOARDING.md]
+manifest: null
+merged_probe: null
+notes: |
+  **Phát hiện bởi AP-38 khi chạy thật (2026-07-30), không phải bởi đọc docs.** Nó không dùng được
+  `scope-gate ready`, phải chạy reviewer bằng tay và tự lật `INFLIGHT.md` — khai báo đầy đủ, nhưng đó là
+  triệu chứng, không phải nguyên nhân.
+  **Cơ chế:** `scripts/autopilot-scope-gate`, nhánh `ready` (grep `git cat-file -e "$BASE_REF:scripts/autopilot-review-readiness.mjs"` — **đừng trích số dòng**, kit vừa nhảy v12→v14 trong một buổi và mọi số dòng chép tay đã lệch một lần) —
+  `git cat-file -e "$BASE_REF:scripts/autopilot-review-readiness.mjs" && REVIEW_REQUIRED=1`.
+  Nó ép validator v2 chạy cho **mọi** manifest chỉ vì file validator **tồn tại trên base ref**, không hỏi
+  manifest có opt-in v2 hay không. Validator thì fail-closed ngay dòng đầu:
+  `autopilot-review-readiness.mjs` HALT `CONTRACT_INVALID` ngay khối kiểm contract đầu tiên (grep `manifest_schema_version must equal`) nếu
+  `manifest_schema_version !== "level3-operational-v2"`. Và **0/45 manifest** trong repo khai v2 — có chủ đích,
+  xem `manifest-v2-runtime-adoption`. Kết quả: mọi slice P1/P2 từ nay HALT ở bước `ready`.
+  **ATTRIBUTION — AP-38 ghi "bug từ kit v12", SAI hai version.** Dòng ép gate đó có ở **v11, v12 và v14**. Nguyên nhân
+  thật là `autopilot-review-readiness.mjs` **land lên main lần đầu tại `49fd155` (kit v10)**. Base của AP-37
+  (`2dc9b8c`) có TRƯỚC commit đó ⇒ `git cat-file -e` fail ⇒ dòng ép gate không fire ⇒ AP-37 đi nhánh legacy và
+  `ready` chạy bình thường. Base của AP-38 (`ca5da27`) đã chứa validator ⇒ fire ⇒ HALT. Ghi rõ vì "v12" sẽ dẫn
+  người sửa tới sai commit, và vì đây là **bom hẹn giờ đã cài từ v10** chứ không phải regression mới.
+  **Vỡ ở hạ nguồn, đo được:** `ap-merge.sh` không đòi artifact nào của gate ⇒ **merge vẫn chạy được**.
+  Nhưng `ap-finish.sh` đòi (grep `gate-result.json`) **cả** `READY.txt` **và** `gate-result.json`; gate chưa chạy nên
+  `gate-result.json` không tồn tại ⇒ **`ap-finish.sh` HALT**. Nghĩa là slice merge được nhưng không teardown
+  được, và đó là cách `.autopilot/*` tích rác + `INFLIGHT.md` giữ block chết.
+  **Ba lối sửa, chưa chốt:** (a) đổi dòng ép gate thành opt-in thật — chỉ ép gate khi manifest khai
+  `manifest_schema_version` hoặc `review_gate_version`, và bỏ hẳn phép thử "file tồn tại trên base"; (b) cho
+  validator chấp nhận manifest legacy ở chế độ giảm nhẹ thay vì HALT; (c) migrate cả team sang runtime-manifest
+  v2 (`manifest-v2-runtime-adoption`) rồi giữ dòng 335 nguyên. **(a) rẻ nhất và đúng ý định gốc** — chính
+  scope-gate có nhánh `WARN: legacy manifest without automatic review-readiness` ngay sau đó (grep `legacy manifest without automatic review-readiness`), tức tác giả ĐÃ thiết kế đường
+  legacy; dòng ép gate vô tình làm nhánh đó không bao giờ tới được.
+  **Thuộc `Claude template`** — sửa ở Plexco là vá triệu chứng và sẽ bị `autopilot-update.sh` ghi đè. Template
+  đang ở v14; fix phải đi cùng một lần bump.
+  **P1 vì nó chặn cả hàng đợi**, không vì nó nguy hiểm: không mất dữ liệu, không sai kết quả — chỉ là mọi slice
+  phải đi đường tay và mất `gate-result.json`.
+
 ## task: manifest-v2-runtime-adoption
 title: Chạy `level3-operational-v2` lần đầu — sinh manifest RUNTIME ở `.autopilot/state/`, KHÔNG đổi 45 manifest đã track
 status: planned
@@ -885,7 +926,7 @@ notes: |
   **Mở 2026-07-30 sau khi một yêu cầu "chuyển 45 manifest lên v2" bị phép đo bác bỏ.** Ghi lại đầy đủ vì
   cùng câu hỏi sẽ quay lại, và câu trả lời trực giác thì SAI theo cách phá được cả ba slice đang sống.
   **`level3-operational-v2` KHÔNG phải một nhãn version — nó là artifact khác, ở đường dẫn khác.**
-  `scripts/autopilot-review-readiness.mjs:297-300` fail-closed:
+  `scripts/autopilot-review-readiness.mjs` fail-closed (grep `manifest must be`):
   `manifest must be .autopilot/state/<feature>/manifest.json`. Mà `.gitignore:56` là `.autopilot/*`.
   ⇒ manifest v2 là **runtime, per-run, không track**. `docs/autopilot-manifests/*.json` là **hợp đồng được
   author và track** — khác vai, không phải phiên bản cũ của cùng một thứ. `docs/autopilot-ONBOARDING.md:106`
@@ -897,7 +938,7 @@ notes: |
   · `feature` filesystem-safe và khớp `task_id` · `code_review.tool` = wrapper pinned với `clean_rounds ≥ N` ·
   `security_review.required` boolean · `stop_conditions` đủ bốn token `MAX_ROUNDS`/`REGION_THRASH`/
   `SCOPE_OR_BASE_DRIFT`/`REQUIRED_TOOL_UNAVAILABLE`.
-  **Phát hiện làm phần lớn lo lắng ban đầu thành thừa:** `autopilot-scope-gate:335` —
+  **Phát hiện làm phần lớn lo lắng ban đầu thành thừa:** `autopilot-scope-gate`, nhánh `ready` —
   `git cat-file -e "$BASE_REF:scripts/autopilot-review-readiness.mjs" && REVIEW_REQUIRED=1`. Review-readiness
   gate **ĐÃ bật cho mọi manifest** chỉ vì file validator tồn tại trên base ref. Nên "0/45 manifest dùng v2"
   **không** có nghĩa gate đang tắt. Khai v2 chỉ thêm hai thứ: một lượt validate ở `register`, và
