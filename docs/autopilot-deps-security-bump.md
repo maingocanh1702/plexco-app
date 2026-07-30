@@ -66,6 +66,27 @@ STOP_CONDITIONS: STOP_AT_READY. HALT nếu (a) bất kỳ version đích còn tr
 DELIVERABLES: diff 4 file · design-probe.md · bằng chứng OSV trước/sau · READY report.
 ```
 
+> ### ⚠️ Khối §3 trên là KẾ HOẠCH, không phải cái đã chạy — đối chiếu 2026-07-30
+>
+> Giữ nguyên chữ để còn đối chiếu được kế hoạch với thực tế. Sáu dòng dưới đây **đã sai** so với
+> `61a2575` trên main; đọc §3 phải đọc kèm bảng này.
+>
+> | Dòng §3 | Kế hoạch | Thực tế đã land |
+> |---|---|---|
+> | `OUTCOME` | next · postcss · brace-expansion | **chỉ `next` 15.5.20→15.5.21.** `brace-expansion` tách ra 29/07 (→ `eslint-10-migration`); `postcss` tách ra 30/07 khi security round tìm ra advisory thật ở 8.5.18 mà bản vá 8.5.23 còn trong cửa sổ `minimumReleaseAge` |
+> | `REPOSITORY_AND_BASE` | pin `3d75c90` | base thật `43fcaee` |
+> | `SCOPE` | 4 file | **3 file** — `package.json` và `pnpm-workspace.yaml` không đổi byte nào, vì chỉ `postcss` mới cần chúng và postcss đã ra khỏi scope |
+> | `WORKTREE_PLAN` | `feat/deps-security-bump` | `feat/deps-security-bump--next-only` (registration thứ ba của lineage) |
+> | `VERIFICATION` baseline test | **561** | **573.** Con số 561 là lỗi của orchestrator: viết 561 vào contract ngày 29/07 rồi viết 573 vào launcher, tự tạo mâu thuẫn mà gate bắt đúng ở round 6 của lượt chạy đầu. Manifest đã de-pin ("đừng tin con số ở đây, đo lại"); dòng §3 này giữ nguyên làm bằng chứng |
+> | `CODE_REVIEW` 2× clean | — | đạt **3 vòng sạch liên tiếp** trên change set |
+>
+> **Vì sao contract không được sửa tại chỗ trong slice:** `docs/autopilot-deps-security-bump.md`
+> không nằm trong `scope` đã đăng ký, nên writer bị cấm chạm. Reviewer — vốn được lệnh "inspect live
+> source" nhưng không có luật nào giới hạn finding phải đóng được trong change set — bắt đúng chỗ lệch
+> này ở round 2, 4 và 6, mỗi vòng writer lại giải thích rõ hơn về một khoảng cách nó không có quyền
+> đóng. Đó là lỗi hợp đồng của reviewer, đã sửa upstream ở kit v17 (finding ngoài change set thành
+> ADVISORY, không tính vào verdict). Ghi lại vì đây là lần lineage này trả giá **ba** registration.
+
 ---
 
 ## Bằng chứng đo 2026-07-29 — ba item probe của manifest
@@ -203,5 +224,6 @@ Nếu owner chọn lối 2, ignore-entry **phải có ngày hết hạn**, cùng
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 30/07/2026 | v0.3 | **ĐÃ MERGE tại `61a2575` — nhưng chỉ còn `next`, và tách đôi lần thứ hai.** Security round tìm ra advisory thật cho `postcss` 8.5.18; bản vá 8.5.23 còn trong cửa sổ `minimumReleaseAge` 7 ngày, và owner đã chốt 26/07 là **không override** cửa sổ đó, nên postcss ra khỏi slice thành task riêng thay vì chờ hoặc cấp ngoại lệ. Kết quả land: `next` 15.5.20→15.5.21, 3 file, 573 test, 0 OSV finding cho next. Thêm khối đối chiếu ngay dưới §3 vì sáu dòng của contract đã sai so với thực tế (OUTCOME · base · SCOPE · branch · baseline 561 · số vòng review). **Lineage này trả ba registration và mười vòng fix**, phần lớn không phải vì code: 2 vòng là Postgres `57P01`, 1 vòng là reviewer từ chối model do CLI tự update, và 3 vòng (2·4·6 của lượt cuối) là finding docs **ngoài scope đăng ký nên writer không có quyền đóng**. Gốc là hợp đồng prompt của reviewer — đã sửa ở kit v17. Breaker `REGION_THRASH` lẽ ra phải nổ ở round 6 nhưng không, vì writer giải thích ở file khác mỗi vòng nên `file:region` luôn đổi: breaker đo chuỗi ký tự, không đo chủ đề. |
 | 29/07/2026 | v0.2 | **Owner chốt TÁCH ĐÔI; lối 1 của v0.1 bị chính phép đo bác bỏ.** v0.1 đề xuất "nâng eslint toolchain" — nhưng `eslint@9.39.4` TỰ NÓ phụ thuộc `minimatch 3.1.5`, và `^9.18.0` đã resolve tới 9.x mới nhất, nên không gì trong dải `^9` gỡ được nhánh v1. Chỉ **eslint v10** làm được (`501abd0 feat!: update dependency minimatch to v10 (#20246)` trong Breaking Changes v10.0.0). Điều đó biến lối 1 thành major toolchain upgrade ⇒ tách thành slice `eslint-10-migration`, và nó vốn **bắt buộc phải làm trước EOL 2026-08-06** bất kể advisory. Slice này thu về `next` + `postcss`; thêm `DSB-2b` bắt hai dòng `brace-expansion` **byte-unchanged** (lệch = HALT, nghĩa là slice drift vào package đã loại). Chi phí chấp nhận: OSV còn đỏ ở `brace-expansion` vài ngày — đổi lấy việc không để lại ignore-entry phải nhớ dọn. Backlog block → `status: ready`. |
 | 29/07/2026 | v0.1 | Soạn task contract Level 3 §3 tại `main@3d75c90`. Đo xong item (a) (xác nhận bẫy hai-chỗ, chỉ rõ cơ chế: rewrite `postcss@<8.5.10 → 8.5.16` không tự theo khi nâng floor ở `package.json`) và item (b) (GHSA-mh99-v99m-4gvg affected `<= 5.0.7` / patched `5.0.8` duy nhất ⇒ nhánh v1 không có bản vá in-range; v1.1.16 xác nhận dính thật với `max` mặc định `Infinity`; **ép v1→v5 làm vỡ `minimatch@3` vì đổi export shape hàm→object**; nhánh v1 chỉ do eslint kéo nên dev-only). Loại lối "ép override lên v5" bằng bằng chứng. Nêu quyết định owner chặn slice: cả hai lối còn lại đều đòi nới `_scope_out`. Item (c) để mở, chưa đo. |
