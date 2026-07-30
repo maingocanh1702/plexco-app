@@ -34,6 +34,19 @@ Resolved per `level3-workflow.md` §2 and §3. Earlier launchers (AP-33…AP-37)
 prose only; declaring it as the canonical block is the point of the Level 3 upgrade, because a field that is
 absent is visibly absent whereas a field buried in a paragraph is not.
 
+**This slice deliberately runs the pre-v2 manifest shape — do not "fix" that.** `manifest_schema_version:
+level3-operational-v2` is not a label you add to the tracked manifest: the validator fail-closes unless the
+manifest physically sits at `.autopilot/state/<feature>/manifest.json` (`autopilot-review-readiness.mjs:297-300`),
+and `.autopilot/*` is gitignored. v2 is a **runtime, per-run** artifact copied from the authored contract; the
+file under `docs/autopilot-manifests/` is the authored contract and is a different role, not an older version
+of the same thing. Flipping the string here would `HALT CONTRACT_INVALID` at `register`.
+Two further reasons not to touch it mid-flight: this slice already registered under the old shape, so `ready`
+would take the v2 branch while `register` left no `registered-manifest.sha256` snapshot; and the
+review-readiness gate is **already active anyway** — `autopilot-scope-gate:335` sets `REVIEW_REQUIRED=1`
+whenever `scripts/autopilot-review-readiness.mjs` exists on the base ref, regardless of schema version.
+First v2 run is assigned to AP-39; the full measurement is recorded in backlog
+`manifest-v2-runtime-adoption`.
+
 ```text
 LEVEL3_WORKFLOW: required
 TASK_START_STATE: new_after_template_effective
