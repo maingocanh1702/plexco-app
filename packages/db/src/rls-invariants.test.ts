@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
-import { getTableConfig } from "drizzle-orm/pg-core";
+import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -66,10 +66,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(26); // 0000..0025 (0025 = check-constraint-naming-drift)
+    expect(ctx.migrateResult.applied.length).toBe(27); // 0000..0026 (0026 = undeclared-check-constraint-names)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(26);
+    expect(second.skipped.length).toBe(27);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1304,12 +1304,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
         await bootstrapJobDefiner(admin);
         return migrate(url(dbName));
       });
-      expect(res.applied.length).toBe(26); // 0000..0025
+      expect(res.applied.length).toBe(27); // 0000..0026
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(26);
+        expect(rows.length).toBe(27);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -1576,7 +1576,9 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
       await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
         await nsCtx.bootstrapJobDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0025_check_constraint_naming_drift.sql");
+        expect(res.applied[res.applied.length - 1]).toBe(
+          "0026_undeclared_check_constraint_names.sql",
+        );
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -3460,49 +3462,17 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
    * its own name).
    *
    * SECONDARY (founder-conditioned): every live CHECK must be declared, or explicitly allowlisted.
-   * The allowlist is CLOSED and finite (6 named constraints found by design-probe.md item (e)),
-   * never an open enumeration — each entry carries a reason so it cannot calcify into permanent
-   * noise nobody dares shrink (founder's explicit condition on approving this guard).
+   * The allowlist is CLOSED and finite, never an open enumeration — each entry would carry a
+   * reason so it cannot calcify into permanent noise nobody dares shrink (founder's explicit
+   * condition on approving this guard). It held exactly 6 entries (design-probe.md item (e)) from
+   * when this guard was added (0025) until db-undeclared-check-constraints-schema-mirror (0026)
+   * declared and renamed all 6 — see that slice's design-probe.md. The allowlist is empty by
+   * measurement, not by assumption: UCC-5 (below) re-derives declared==live==73 rather than
+   * hard-coding it, so a future undeclared constraint would show up as a SECONDARY violation, not
+   * silently pass through a stale allowlist.
    */
   describe("regression guard — prevents a 28th unnamed CHECK (design-probe.md item d)", () => {
-    const KNOWN_UNDECLARED_LIVE_CHECKS: { table: string; name: string; reason: string }[] = [
-      {
-        table: "bank_accounts",
-        name: "bank_accounts_webhook_status_check",
-        reason:
-          "0003_payments_ledger.sql:35-36 — same CREATE TABLE statement as `provider` (:17), which DID get a schema.ts check(); webhook_status's sibling inline CHECK, written one statement later, did not.",
-      },
-      {
-        table: "channel_identities",
-        name: "channel_identities_status_check",
-        reason:
-          "0001_global_directory.sql:46-47 — same CREATE TABLE statement as `platform` (:41-42), which DID get a schema.ts check(); status, five lines below it, did not.",
-      },
-      {
-        table: "messenger_pages",
-        name: "messenger_pages_status_check",
-        reason:
-          "0004_channels_connectors.sql:85-86 — this table's ONLY CHECK-eligible column; no sibling check was ever wired for this table at all.",
-      },
-      {
-        table: "oauth_transactions",
-        name: "oauth_transactions_provider_check",
-        reason:
-          "0004_channels_connectors.sql:39 — this table's only CHECK-eligible column, on a narrow SECURITY DEFINER-gated bootstrap table the migration's own comment says the app must not SELECT directly.",
-      },
-      {
-        table: "provider_connections",
-        name: "provider_connections_status_check",
-        reason:
-          "0004_channels_connectors.sql:21-22 — same CREATE TABLE statement as `provider` (:13) and `auth_mode` (:14), both of which DID get schema.ts check()s; status, the next column, did not.",
-      },
-      {
-        table: "zalo_bots",
-        name: "zalo_bots_status_check",
-        reason:
-          "0004_channels_connectors.sql:54-55 — this table's ONLY CHECK-eligible column; no sibling check was ever wired for this table at all.",
-      },
-    ];
+    const KNOWN_UNDECLARED_LIVE_CHECKS: { table: string; name: string; reason: string }[] = [];
     const ALLOWLIST_KEYS = new Set(KNOWN_UNDECLARED_LIVE_CHECKS.map((e) => `${e.table}.${e.name}`));
 
     /**
@@ -3595,5 +3565,485 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
         await admin.end();
       }
     }, 60_000);
+
+    it("UCC-6: both guards catch a reintroduced unnamed CHECK on zalo_bots_status_chk — same proof as CND-7, for a constraint THIS slice (0026) declared rather than one 0025 renamed", async () => {
+      // Dedicated throwaway database, isolated from `ctx` — never corrupt the shared suite database.
+      const dbName = "plexco_ucc6_guard_proof";
+      const BASE = process.env.DATABASE_URL_TEST!;
+      const admin = new pg.Client({ connectionString: BASE });
+      await admin.connect();
+      try {
+        await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+        await admin.query(`CREATE DATABASE ${dbName}`);
+        const url = new URL(BASE);
+        url.pathname = `/${dbName}`;
+        await withJobDefinerLock(BASE, async () => {
+          await bootstrapJobDefiner(admin);
+          await migrate(url.toString());
+        });
+
+        const c = new pg.Client({ connectionString: url.toString() });
+        await c.connect();
+        try {
+          // Reintroduce the EXACT historical bug pattern this slice fixed: drop the correctly-
+          // named constraint and re-add the identical predicate UNNAMED, so Postgres auto-generates
+          // a name — mirroring exactly how 0001/0003/0004 produced the class this slice fixes
+          // (design-probe.md item (e), the six constraints 0025 explicitly excluded).
+          await c.query(`ALTER TABLE zalo_bots DROP CONSTRAINT zalo_bots_status_chk`);
+          await c.query(
+            `ALTER TABLE zalo_bots ADD CHECK (status IN ('connecting','registered','active','drift','error','revoked'))`,
+          );
+
+          const primary = await primaryGuardViolations(c);
+          expect(primary, "primary guard must name the now-missing declared constraint").toContain(
+            "zalo_bots.zalo_bots_status_chk",
+          );
+
+          const secondary = await secondaryGuardViolations(c);
+          expect(
+            secondary,
+            "secondary guard must name the new auto-generated constraint",
+          ).toContain("zalo_bots.zalo_bots_status_check");
+        } finally {
+          await c.end();
+        }
+      } finally {
+        await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+        await admin.end();
+      }
+    }, 60_000);
+  });
+
+  /**
+   * UCC-1..UCC-10 — undeclared CHECK constraint schema mirror
+   * (0026, db-undeclared-check-constraints-schema-mirror/design-probe.md).
+   *
+   * OPPOSITE direction from CND (0025) above: CND renamed live constraints to match names
+   * schema.ts ALREADY declared. This slice ADDS a schema.ts check() declaration for six live
+   * constraints that had NO declaration at all — 0025 explicitly excluded them (0025:33-40) because
+   * schema.ts had no declared name to rename them TO. All six were applied inline/unnamed by
+   * 0001/0003/0004 and enforce correctly today under their auto-generated name; migration 0026 is a
+   * naming/declaration-identity fix, not a behavior fix. Four of the six share one 6-value enum
+   * (connecting|registered|active|drift|error|revoked); two do NOT — channel_identities_status is
+   * (active|inactive) and oauth_transactions_provider is the single literal 'sepay' (design-probe.md
+   * pin 2) — UCC-4 asserts those two individually so a test that treated all six alike could not
+   * pass while being wrong about two of them.
+   */
+  describe("UCC-1..UCC-10 undeclared check constraint schema mirror (0026)", () => {
+    const DECLARED: { table: string; oldAuto: string; newDeclared: string }[] = [
+      {
+        table: "bank_accounts",
+        oldAuto: "bank_accounts_webhook_status_check",
+        newDeclared: "bank_accounts_webhook_status_chk",
+      },
+      {
+        table: "channel_identities",
+        oldAuto: "channel_identities_status_check",
+        newDeclared: "channel_identities_status_chk",
+      },
+      {
+        table: "messenger_pages",
+        oldAuto: "messenger_pages_status_check",
+        newDeclared: "messenger_pages_status_chk",
+      },
+      {
+        table: "oauth_transactions",
+        oldAuto: "oauth_transactions_provider_check",
+        newDeclared: "oauth_transactions_provider_chk",
+      },
+      {
+        table: "provider_connections",
+        oldAuto: "provider_connections_status_check",
+        newDeclared: "provider_connections_status_chk",
+      },
+      {
+        table: "zalo_bots",
+        oldAuto: "zalo_bots_status_check",
+        newDeclared: "zalo_bots_status_chk",
+      },
+    ];
+
+    async function makeFreshTenant(): Promise<string> {
+      const { rows } = await ctx.owner.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('ucc-fixture', $1, 'active') RETURNING id`,
+        [`ucc-${randomUUID()}`],
+      );
+      return (rows[0] as { id: string }).id;
+    }
+
+    it("UCC-1: all six constraints exist in pg_constraint under their new _chk name, and the auto-generated name is gone (catalog, never schema.ts source text)", async () => {
+      const live = await allLiveCheckDefs(ctx.owner);
+      for (const r of DECLARED) {
+        expect(
+          live.has(`${r.table}.${r.newDeclared}`),
+          `${r.table}.${r.newDeclared} must exist live`,
+        ).toBe(true);
+        expect(
+          live.has(`${r.table}.${r.oldAuto}`),
+          `${r.table}.${r.oldAuto} must no longer exist (duplicate enforcement)`,
+        ).toBe(false);
+      }
+    });
+
+    it("UCC-2: pg_get_constraintdef for each of the six is byte-identical before (0025 tail) and after (0026) the rename", async () => {
+      const live = await allLiveCheckDefs(ctx.owner);
+
+      // Predicate identity, proven from first principles: migrate a DEDICATED throwaway database
+      // only through 0025 (the tail BEFORE this slice), capture every constraint's definition
+      // under its auto-generated name, then compare byte-for-byte against the POST-0026 definition
+      // under its declared name in `ctx` (already migrated to the current tail). Same method as
+      // CND-1/2/3 above, cutoff moved from 0024/0025 to 0025/0026.
+      const dbName = "plexco_ucc2_predicate_snapshot";
+      const BASE = process.env.DATABASE_URL_TEST!;
+      const admin = new pg.Client({ connectionString: BASE });
+      await admin.connect();
+      try {
+        await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+        await admin.query(`CREATE DATABASE ${dbName}`);
+        const url = new URL(BASE);
+        url.pathname = `/${dbName}`;
+        const c = new pg.Client({ connectionString: url.toString() });
+        await c.connect();
+        try {
+          await withJobDefinerLock(BASE, async () => {
+            await bootstrapJobDefiner(admin);
+            const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+            for (const f of files) {
+              if (Number.parseInt(f.slice(0, 4), 10) >= 26) continue; // stop BEFORE 0026
+              await c.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+            }
+          });
+          const before = await allLiveCheckDefs(c);
+          for (const r of DECLARED) {
+            const beforeDef = before.get(`${r.table}.${r.oldAuto}`);
+            const afterDef = live.get(`${r.table}.${r.newDeclared}`);
+            expect(beforeDef, `${r.table}.${r.oldAuto} must exist pre-0026`).toBeDefined();
+            expect(
+              afterDef,
+              `${r.table}.${r.newDeclared} predicate must be byte-identical to ${r.oldAuto}'s pre-0026 predicate`,
+            ).toBe(beforeDef);
+          }
+        } finally {
+          await c.end();
+        }
+      } finally {
+        await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+        await admin.end();
+      }
+    }, 60_000);
+
+    it("UCC-5: declared check() keys and live CHECK constraints are the exact same set (re-derived, not hard-coded — see UCC-1..UCC-10 docstring)", async () => {
+      const live = await allLiveCheckDefs(ctx.owner);
+      const declared = declaredCheckKeys();
+      expect(declared.size, "declared check() count must equal live CHECK count").toBe(live.size);
+      for (const key of declared) {
+        expect(live.has(key), `declared ${key} must exist live (declared⇒live)`).toBe(true);
+      }
+      for (const key of live.keys()) {
+        expect(declared.has(key), `live ${key} must be declared (live⇒declared)`).toBe(true);
+      }
+    });
+
+    /**
+     * UCC-5's name-only comparison (declaredCheckKeys() discards each check's SQL value) cannot
+     * catch a same-name PREDICATE drift — codex round-01 [P2]: a future schema.ts edit that keeps
+     * `zalo_bots_status_chk`'s name but changes its enum would pass UCC-1 through UCC-5 unnoticed,
+     * because those only ever read the UNCHANGED live predicate, never schema.ts's own value.
+     * UCC-5b closes that gap by asking Postgres itself, not string comparison: render each of the
+     * six declarations' SQL via PgDialect (drizzle-orm's own compiler, no re-implementation), apply
+     * it as a CHECK on a throwaway table sharing the real table+column name so identifier
+     * resolution matches, then compare the resulting `pg_get_constraintdef` — already-canonicalized
+     * by Postgres on BOTH sides — against the live migrated constraint's definition. A raw text
+     * diff (e.g. Drizzle's `IN (...)` vs Postgres's stored `= ANY (ARRAY[...])`) would never match
+     * even when semantically identical, which is why this compiles rather than string-compares.
+     */
+    async function compiledPredicateDef(
+      client: pg.Client,
+      table: string,
+      column: string,
+      chunk: unknown,
+    ) {
+      const dbName = `plexco_ucc5b_${table}`;
+      await client.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await client.query(`CREATE DATABASE ${dbName}`);
+      const url = new URL(process.env.DATABASE_URL_TEST!);
+      url.pathname = `/${dbName}`;
+      const c = new pg.Client({ connectionString: url.toString() });
+      await c.connect();
+      try {
+        const { sql: predicateSql, params } = new PgDialect().sqlToQuery(
+          chunk as Parameters<PgDialect["sqlToQuery"]>[0],
+        );
+        await c.query(`CREATE TABLE ${table} (${column} text)`);
+        await c.query(
+          `ALTER TABLE ${table} ADD CONSTRAINT ucc5b_probe_chk CHECK (${predicateSql})`,
+          params,
+        );
+        const { rows } = await c.query<{ d: string }>(
+          `SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conname = 'ucc5b_probe_chk'`,
+        );
+        return rows[0]?.d;
+      } finally {
+        await c.end();
+        await client.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      }
+    }
+
+    const SIX_COLUMNS: Record<string, string> = {
+      bank_accounts: "webhook_status",
+      channel_identities: "status",
+      messenger_pages: "status",
+      oauth_transactions: "provider",
+      provider_connections: "status",
+      zalo_bots: "status",
+    };
+
+    function sixTableExports(): Map<string, unknown> {
+      const found = new Map<string, unknown>();
+      for (const val of Object.values(schemaModule)) {
+        if (
+          val &&
+          typeof val === "object" &&
+          (val as unknown as Record<symbol, unknown>)[Symbol.for("drizzle:Name")] !== undefined
+        ) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const name = getTableConfig(val as any).name;
+          if (name in SIX_COLUMNS) found.set(name, val);
+        }
+      }
+      return found;
+    }
+
+    it("UCC-5b: each of the six schema.ts predicates COMPILES (via drizzle's own PgDialect, never re-implemented) to the byte-identical live pg_get_constraintdef", async () => {
+      const live = await allLiveCheckDefs(ctx.owner);
+      const exports = sixTableExports();
+      expect(exports.size, "all six table exports must be found in schema.ts").toBe(6);
+      for (const r of DECLARED) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const cfg = getTableConfig(exports.get(r.table) as any);
+        const check = cfg.checks.find((c) => c.name === r.newDeclared);
+        expect(check, `${r.table} must declare ${r.newDeclared}`).toBeDefined();
+        const compiled = await compiledPredicateDef(
+          ctx.owner,
+          r.table,
+          SIX_COLUMNS[r.table]!,
+          check!.value,
+        );
+        expect(
+          compiled,
+          `schema.ts's ${r.newDeclared} predicate, compiled by Postgres, must equal the live definition`,
+        ).toBe(live.get(`${r.table}.${r.newDeclared}`));
+      }
+    }, 30_000);
+
+    it("UCC-5c: UCC-5b is SEEN to fail on a same-name predicate drift (proof it is not vacuous, same discipline as UCC-6/CND-7)", async () => {
+      // A deliberately WRONG predicate for the same declared name — reintroduces exactly the class
+      // codex round-01 flagged: a same-name schema.ts edit that silently changes the enum.
+      const dbName = "plexco_ucc5c_wrong_predicate";
+      const admin = ctx.owner;
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE ${dbName}`);
+      const url = new URL(process.env.DATABASE_URL_TEST!);
+      url.pathname = `/${dbName}`;
+      const c = new pg.Client({ connectionString: url.toString() });
+      await c.connect();
+      try {
+        await c.query(`CREATE TABLE zalo_bots (status text)`);
+        // Same NAME (zalo_bots_status_chk) as the real declaration, deliberately WRONG predicate
+        // (drops 'revoked') — proves UCC-5b's comparison, not just its existence check, fails red.
+        await c.query(
+          `ALTER TABLE zalo_bots ADD CONSTRAINT zalo_bots_status_chk CHECK (status IN ('connecting','registered','active','drift','error'))`,
+        );
+        const { rows } = await c.query<{ d: string }>(
+          `SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conname = 'zalo_bots_status_chk'`,
+        );
+        const live = await allLiveCheckDefs(ctx.owner);
+        expect(
+          rows[0]?.d,
+          "a same-name wrong predicate must NOT byte-match the live definition — proves UCC-5b would catch it",
+        ).not.toBe(live.get("zalo_bots.zalo_bots_status_chk"));
+      } finally {
+        await c.end();
+        await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      }
+    }, 30_000);
+
+    type UccCase = {
+      name: string;
+      table: string;
+      validValues: string[];
+      invalidValue: string;
+      insert: (value: string) => Promise<void>;
+    };
+
+    const UCC_CASES: UccCase[] = [
+      {
+        name: "bank_accounts_webhook_status_chk",
+        table: "bank_accounts",
+        validValues: ["active"],
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const tenantId = await makeFreshTenant();
+          await ctx.owner.query(
+            `INSERT INTO bank_accounts
+               (tenant_id, provider, account_number_enc, account_fingerprint, webhook_token, webhook_secret_enc, webhook_status)
+             VALUES ($1,'sepay','\\x00'::bytea,$2,$3,'\\x00'::bytea,$4)`,
+            [tenantId, randomUUID(), randomUUID(), v],
+          );
+        },
+      },
+      {
+        name: "messenger_pages_status_chk",
+        table: "messenger_pages",
+        validValues: ["active"],
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const tenantId = await makeFreshTenant();
+          await ctx.owner.query(
+            `INSERT INTO messenger_pages (tenant_id, page_id, page_token_enc, status)
+             VALUES ($1,$2,'\\x00'::bytea,$3)`,
+            [tenantId, randomUUID(), v],
+          );
+        },
+      },
+      {
+        name: "provider_connections_status_chk",
+        table: "provider_connections",
+        validValues: ["active"],
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const tenantId = await makeFreshTenant();
+          await ctx.owner.query(
+            `INSERT INTO provider_connections (tenant_id, provider, auth_mode, status)
+             VALUES ($1,'sepay','api_key',$2)`,
+            [tenantId, v],
+          );
+        },
+      },
+      {
+        name: "zalo_bots_status_chk",
+        table: "zalo_bots",
+        validValues: ["active"],
+        invalidValue: "bogus",
+        insert: async (v) => {
+          const tenantId = await makeFreshTenant();
+          await ctx.owner.query(
+            `INSERT INTO zalo_bots (tenant_id, bot_token_enc, webhook_token, status)
+             VALUES ($1,'ucc-bot-token',$2,$3)`,
+            [tenantId, randomUUID(), v],
+          );
+        },
+      },
+      {
+        // Non-uniform predicate (2-value, not the 6-value enum) — also covered individually by
+        // UCC-4a below, which additionally proves BOTH valid values and the specific rejection of
+        // 'connecting' (a value valid for the other four).
+        name: "channel_identities_status_chk",
+        table: "channel_identities",
+        validValues: ["active", "inactive"],
+        invalidValue: "connecting",
+        insert: async (v) => {
+          const personId = await makePerson();
+          await ctx.owner.query(
+            `INSERT INTO channel_identities (person_id, platform, platform_user_id_enc, platform_user_lookup_hash, status)
+             VALUES ($1,'telegram','\\x00'::bytea,$2,$3)`,
+            [personId, randomUUID(), v],
+          );
+        },
+      },
+      {
+        // Non-uniform predicate (single literal) — also covered individually by UCC-4b below,
+        // which additionally proves rejection of 'google' (valid on the UNRELATED
+        // auth_oauth_transactions table's same-named provider column, design-probe.md pin 3).
+        name: "oauth_transactions_provider_chk",
+        table: "oauth_transactions",
+        validValues: ["sepay"],
+        invalidValue: "apipay",
+        insert: async (v) => {
+          const tenantId = await makeFreshTenant();
+          await ctx.owner.query(
+            `INSERT INTO oauth_transactions (state, tenant_id, provider, code_verifier_enc, redirect_uri, created_by, expires_at)
+             VALUES ($1,$2,$3,'\\x00'::bytea,'https://example.test/callback',$4, now() + interval '1 day')`,
+            [randomUUID(), tenantId, v, randomUUID()],
+          );
+        },
+      },
+    ];
+
+    it("UCC-3: every newly-declared constraint accepts its valid value(s) and rejects an out-of-domain value", async () => {
+      for (const c of UCC_CASES) {
+        for (const valid of c.validValues) {
+          await c.insert(valid); // must succeed
+        }
+        await expect(
+          c.insert(c.invalidValue),
+          `${c.table}.${c.name} must reject "${c.invalidValue}"`,
+        ).rejects.toThrow(new RegExp(`violates check constraint "${c.name}"`));
+      }
+    });
+
+    it("UCC-4a: channel_identities_status_chk accepts BOTH active and inactive, and rejects 'connecting' — proof it does NOT share the other five's 6-value enum", async () => {
+      const insert = async (v: string) => {
+        const personId = await makePerson();
+        await ctx.owner.query(
+          `INSERT INTO channel_identities (person_id, platform, platform_user_id_enc, platform_user_lookup_hash, status)
+           VALUES ($1,'telegram','\\x00'::bytea,$2,$3)`,
+          [personId, randomUUID(), v],
+        );
+      };
+      await insert("active");
+      await insert("inactive");
+      await expect(insert("connecting")).rejects.toThrow(
+        /violates check constraint "channel_identities_status_chk"/,
+      );
+    });
+
+    it("UCC-4b: oauth_transactions_provider_chk accepts ONLY 'sepay' — rejects 'google', which the UNRELATED auth_oauth_transactions table's own provider column DOES accept", async () => {
+      const insert = async (v: string) => {
+        const tenantId = await makeFreshTenant();
+        await ctx.owner.query(
+          `INSERT INTO oauth_transactions (state, tenant_id, provider, code_verifier_enc, redirect_uri, created_by, expires_at)
+           VALUES ($1,$2,$3,'\\x00'::bytea,'https://example.test/callback',$4, now() + interval '1 day')`,
+          [randomUUID(), tenantId, v, randomUUID()],
+        );
+      };
+      await insert("sepay");
+      await expect(insert("google")).rejects.toThrow(
+        /violates check constraint "oauth_transactions_provider_chk"/,
+      );
+    });
+
+    it("UCC-7: 0000..0025 stay byte-identical after 0026 applies (recorded sha256 == on-disk content)", async () => {
+      const { rows } = await ctx.owner.query(
+        `SELECT name, sha256 FROM schema_migrations WHERE name < '0026' ORDER BY name`,
+      );
+      expect(rows.length).toBe(26);
+      for (const row of rows as { name: string; sha256: string }[]) {
+        const disk = createHash("sha256")
+          .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
+          .digest("hex");
+        expect(row.sha256, `${row.name} recorded sha must equal the on-disk file`).toBe(disk);
+      }
+    });
+
+    it("UCC-8: MIGRATION_COUNT (27) matches the actual migrations/ directory listing, and the tail is 0026", async () => {
+      const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+      expect(files.length).toBe(27);
+      expect(files[files.length - 1]).toBe("0026_undeclared_check_constraint_names.sql");
+    });
+
+    it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {
+      const sqlText = await readFile(
+        path.join(MIGRATIONS_DIR, "0026_undeclared_check_constraint_names.sql"),
+        "utf8",
+      );
+      const ddl = sqlText.replace(/--.*$/gm, "");
+      expect(ddl).not.toMatch(
+        /\b(GRANT|REVOKE|CREATE POLICY|ALTER POLICY|DROP POLICY|OWNER TO|ALTER ROLE|ADD COLUMN|DROP COLUMN|ALTER COLUMN|CREATE TABLE|CREATE INDEX|DROP INDEX|SET NOT NULL|DROP NOT NULL|FOREIGN KEY|DROP CONSTRAINT|ADD CONSTRAINT|CHECK\s*\()\b/i,
+      );
+      const renameCount = (ddl.match(/ALTER TABLE \w+ RENAME CONSTRAINT \w+ TO \w+;/g) ?? [])
+        .length;
+      expect(renameCount).toBe(6);
+    });
   });
 });

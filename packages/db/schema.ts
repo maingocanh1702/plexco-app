@@ -68,6 +68,7 @@ export const channelIdentities = pgTable("channel_identities", {
   personIdx: index("idx_channel_identities_person").on(t.personId),
   platformChk: check("channel_identities_platform_chk",
     sql`${t.platform} IN ('telegram','zalo','messenger')`),
+  statusChk: check("channel_identities_status_chk", sql`${t.status} IN ('active','inactive')`),
 }));
 
 export const linkCodes = pgTable("link_codes", {
@@ -790,6 +791,8 @@ export const bankAccounts = pgTable("bank_accounts", {
     .on(t.tenantId, t.provider, t.accountFingerprint),
   tenantIdx: index("idx_bank_accounts_tenant").on(t.tenantId),
   providerChk: check("bank_accounts_provider_chk", sql`${t.provider} IN ('sepay','apipay')`),
+  webhookStatusChk: check("bank_accounts_webhook_status_chk",
+    sql`${t.webhookStatus} IN ('connecting','registered','active','drift','error','revoked')`),
   // DD-68 (migration 0020): candidate key targeted by the same-tenant composite
   // FK bank_transactions -> bank_accounts. id is already the PK, so this
   // strict-superset UNIQUE is additive.
@@ -959,6 +962,8 @@ export const providerConnections = pgTable("provider_connections", {
   uq: uniqueIndex("provider_connections_tenant_provider_uq").on(t.tenantId, t.provider),
   providerChk: check("provider_connections_provider_chk", sql`${t.provider} IN ('sepay','apipay')`),
   authChk: check("provider_connections_auth_chk", sql`${t.authMode} IN ('oauth2','api_key')`),
+  statusChk: check("provider_connections_status_chk",
+    sql`${t.status} IN ('connecting','registered','active','drift','error','revoked')`),
   // DD-68 (migration 0020): candidate key targeted by the same-tenant composite
   // FK bank_accounts.provider_connection_id -> provider_connections. Additive.
   tenantIdCandidateKey: unique("provider_connections_tenant_id_candidate_key").on(t.tenantId, t.id),
@@ -973,7 +978,13 @@ export const oauthTransactions = pgTable("oauth_transactions", {
   createdBy: uuid("created_by").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-});
+}, (t) => ({
+  // Legacy Sepay-only channel-bootstrap table, DISTINCT from
+  // auth_oauth_transactions (Google/Facebook login). Single-literal predicate,
+  // NOT the 6-value connecting|registered|active|drift|error|revoked enum
+  // several sibling channel/connector tables share (design-probe.md pin 2).
+  providerChk: check("oauth_transactions_provider_chk", sql`${t.provider} = 'sepay'`),
+}));
 
 export const zaloBots = pgTable("zalo_bots", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -989,6 +1000,8 @@ export const zaloBots = pgTable("zalo_bots", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   webhookTokenUq: uniqueIndex("idx_zalo_bots_webhook_token").on(t.webhookToken),
+  statusChk: check("zalo_bots_status_chk",
+    sql`${t.status} IN ('connecting','registered','active','drift','error','revoked')`),
   // Non-money tenant-integrity (migration 0021): candidate key targeted by the
   // same-tenant composite FK zalo_reply_contexts.bot_id -> zalo_bots. id is
   // already the PK, so this strict-superset UNIQUE is additive (tenant_id
@@ -1029,7 +1042,10 @@ export const messengerPages = pgTable("messenger_pages", {
   status: text("status").notNull().default("connecting"),
   verifiedAt: timestamp("verified_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+  statusChk: check("messenger_pages_status_chk",
+    sql`${t.status} IN ('connecting','registered','active','drift','error','revoked')`),
+}));
 
 /* ===========================================================================
  * Sync engine
