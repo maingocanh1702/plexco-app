@@ -14,6 +14,76 @@
 
 ---
 
+## Verdict 29 — `reconcile-close-by-hand-declaration`: dạy autopilot-backlog-reconcile hiểu khai báo đóng-tay có chủ đích (2026-07-30)
+
+> **Canonical block sống trong `docs/autopilot-reconcile-close-by-hand-declaration.md`** (mode
+> `code-ready`, đó là coding handoff). Block dưới là **bản mirror trong tracker** — sửa một chỗ phải
+> sửa cả hai; nếu hai bên lệch, bản trong slice doc thắng.
+>
+> **Vấn đề đo được:** `scripts/autopilot-backlog-reconcile` (KIT_VERSION 4) coi MỌI `merged_probe`
+> không phải identifier-shaped là lỗi tác giả, in `✗ WEAK-PROBE … replace merged_probe with a code
+> symbol`. Lời khuyên đó đúng cho hầu hết slice, **bất khả thi** cho ba lớp backlog đã tự đặt tên:
+> `dependency-security` (bump lockfile không tạo symbol nào), `owner-evidence-gate` (đóng bằng bằng
+> chứng, không bằng commit), `docs-reconcile` (token có gạch nối, trượt `is_symbol_probe`). Trigger đo
+> 2026-07-30: `deps-security-bump` merged tại `61a2575` nhưng `--fix` từ chối flip vì
+> `pnpm-lock.yaml :: 15.5.21` là literal dùng chung, không phải symbol slice-unique.
+>
+> **Phát hiện thêm khi author, không có trong backlog notes gốc:** `scripts/autopilot-backlog-reconcile`
+> là file **kit canonical** — verify byte-identical với `$HOME/Projects/Claude template/autopilot/parallel/autopilot-backlog-reconcile`
+> (cả hai `# KIT_VERSION: 4`, đo 2026-07-30), không phải tooling riêng của Plexco; git log của chính file
+> này trong repo Plexco xác nhận luôn được **sync**, chưa từng hand-author độc lập (`1e503d1`, `54de276`).
+> `autopilot-sync.cjs` (SessionStart hook) không quản lý file này — không có lưới an toàn tự động bắt
+> lệch bản. Theo invariant chuẩn *"Shared KIT fixes land canonical-first … Never hand-fix only a copy"*,
+> implementation thật phải land ở file canonical trước (một repo Git khác, ngoài worktree/scope-gate của
+> slice này hoàn toàn), bump `KIT_VERSION` 4→5, rồi mới sync byte-identical xuống Plexco — pin thành
+> `NEGATIVE_SCOPE` + acceptance `RCH-12` trong slice doc.
+>
+> **Thiết kế:** khai báo `close_by: hand · <reason>` (đã có tiền lệ sống ở block `deps-security-bump`,
+> dòng 485) luôn thắng suy luận từ trạng thái probe — báo `⊘ manual-close: <slug>`, không bao giờ vào
+> `stale[]`/`weak[]`, không bao giờ tự flip qua `--fix` dù probe có match hay identifier-shaped hay
+> không. Thiếu lý do sau dấu `·` → cảnh báo `MALFORMED`, rơi về đúng discriminator rule cũ (chặn cửa sau
+> né gate thay vì lặng lẽ chấp nhận). Abuse guard: `close_by: hand` + `scope` chứa file mã nguồn thật
+> (không tính manifest/lockfile/workspace-config/docs) → cảnh báo to, tối thiểu ở `--audit`.
+>
+> **Điều verdict này KHÔNG chứng minh:** implementation chưa tồn tại — `CODE_READY` nghĩa là mở worktree
+> được, không phải `IMPLEMENTED`. Nó cũng không chứng minh canonical template đã được sửa — đó là bước
+> đầu tiên của coding session (`FIRST_IMPLEMENTATION_STEP` dưới).
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-30
+AUTHORITY_SHA: 28e4e5a0845031d879ba5b4b6ee7093b804cc0ba
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-reconcile-close-by-hand-declaration.md
+  - docs/autopilot-manifests/reconcile-close-by-hand-declaration.json
+  - scripts/autopilot-backlog-reconcile
+SLICE: reconcile-close-by-hand-declaration
+IN_SCOPE: dạy scripts/autopilot-backlog-reconcile nhận diện close_by: hand · <reason> là khai báo có chủ đích; báo cáo ⊘ manual-close thay vì ✗ WEAK-PROBE; không bao giờ tự flip qua --fix; bắt lạm dụng khi scope có file mã nguồn thật
+OUT_OF_SCOPE: scripts/autopilot-scope-gate · nới discriminator rule cho task không khai close_by · close_by: enum tổng quát · hand-patch bản Plexco độc lập với canonical · backfill deps-security-bump đã merged
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: none — slice này là dependency gốc
+PRIOR_SLICES: none
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS
+SECURITY_AND_MIGRATION_GATE: PASS
+IMPLEMENTATION_ARTIFACTS: PASS
+FIRST_IMPLEMENTATION_STEP: land the close_by: hand parsing + ⊘ manual-close reporting change in the canonical template file first ($HOME/Projects/Claude template/autopilot/parallel/autopilot-backlog-reconcile), bump its # KIT_VERSION: header 4→5, verify against fixtures for RCH-1..RCH-5, then sync the byte-identical file into scripts/autopilot-backlog-reconcile before touching the abuse guard (RCH-6/RCH-7)
+REMAINING_BLOCKERS: none
+```
+
+---
+
 ## Verdict 28 — `authorize-tenant-action-core`: ba phép đo lật cách đặt task gốc, và slice tách ra trở thành root dependency (2026-07-30)
 
 > **Canonical block sống trong `docs/autopilot-authorize-tenant-action-core.md`** (mode `code-ready`,

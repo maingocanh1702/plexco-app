@@ -517,7 +517,9 @@ notes: **Tách ra từ `deps-security-bump` ngày 30/07** khi security round c�
 
 ## task: reconcile-close-by-hand-declaration
 title: Cho autopilot-backlog-reconcile hiểu `close_by: hand` là khai báo có chủ đích, không phải lỗi tác giả
-status: planned
+status: ready
+verdict: `CODE_READY` 2026-07-30, `AUTHORITY_SHA 28e4e5a0845031d879ba5b4b6ee7093b804cc0ba`, closure 12/12 — verdict block nằm trong slice doc (`<!-- review-readiness: code-ready -->`), tracker entry Verdict 29 ở `docs/slice-readiness-verdicts.md`
+launcher: .claude/commands/ap-41-reconcile-close-by-hand-declaration.md
 risk: P3
 change_class: tooling
 depends_on: []
@@ -530,7 +532,7 @@ notes: Có một **lớp task không thể có `merged_probe` phân biệt đư�
   **Đề xuất:** chấp nhận `close_by: hand` trong task block; khi có nó, `--check`/`--fix` báo dạng `⊘ manual-close: <slug>` và **không** tính là stale hay weak. Bắt buộc kèm lý do một dòng để không thành cửa sau né discriminator rule. `--audit` vẫn phải kêu nếu một task khai `close_by: hand` mà scope của nó **có** file mã nguồn — đó mới là lười thật.
   Phát hiện 30/07 khi bước 8b của `ap-merge.sh` từ chối flip `deps-security-bump` sau merge `61a2575`. Không phải bug của bước 8b: nó hành xử đúng thiết kế fail-closed, chỉ là thiếu một trạng thái thứ ba.
   **Phát hiện thêm khi author artifact (30/07):** `scripts/autopilot-backlog-reconcile` là file **kit canonical** (verify byte-identical với `$HOME/Projects/Claude template/autopilot/parallel/autopilot-backlog-reconcile`, cả hai `# KIT_VERSION: 4`), không phải tooling riêng của Plexco, và `autopilot-sync.cjs` không quản lý nó. Implementation thật phải land canonical-first rồi mới sync xuống — chi tiết đầy đủ ở `docs/autopilot-reconcile-close-by-hand-declaration.md`.
-  **Chưa launch được:** cần verdict trong `slice-readiness-verdicts.md` trước — gate §11.2 cấm verdict một slice chưa author, nên artifact author trước (đã xong 30/07), verdict sau.
+  **Verdict `CODE_READY` 30/07** (Verdict 29, `AUTHORITY_SHA 28e4e5a`), closure 12/12 — sẵn sàng mở worktree qua launcher `ap-41`. (Đã từng ghi "chưa launch được" ở artifact-authoring commit trước; câu đó nay lỗi thời, thay bằng dòng này thay vì để mâu thuẫn với `status: ready` ở trên.)
 
 ## task: db-outbox-ack-marker
 title: Job-infra slice 2a — completion/ack cho outbox_events, đóng starvation loop mà 0022 tự flag

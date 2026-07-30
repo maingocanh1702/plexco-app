@@ -1,10 +1,11 @@
-# Slice contract — `reconcile-close-by-hand-declaration`
+<!-- review-readiness: code-ready -->
 
-> **Đây là contract, KHÔNG phải verdict.** Theo `standards/review-code-readiness-gate.md` §11.2, verdict
-> chỉ được mở sau khi slice đã author (có manifest + target thật, không phải placeholder). File này
-> author trước; verdict được thêm vào cuối file trong một commit riêng, sau khi ba artifact (doc này,
-> manifest, backlog entry) đã nằm trên `main` — `AUTHORITY_SHA` khi đó sẽ pin đúng commit chứa chúng,
-> không phải một nhãn version di động.
+# Autopilot task contract — `reconcile-close-by-hand-declaration`
+
+> **Đây là coding handoff.** Verdict canonical nằm ở cuối file. Slice được author TRƯỚC verdict (gate
+> §11.2 cấm verdict một slice chưa tồn tại), rồi verdict pin đúng commit chứa nó — `AUTHORITY_SHA` dưới
+> là commit `28e4e5a` đã land ba artifact này (doc, manifest, backlog entry), không phải một nhãn
+> version di động.
 
 ---
 
@@ -228,8 +229,67 @@ acceptance row cụ thể, không phải product choice bỏ ngỏ:
 
 ---
 
+## Verdict
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-30
+AUTHORITY_SHA: 28e4e5a0845031d879ba5b4b6ee7093b804cc0ba
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-reconcile-close-by-hand-declaration.md
+  - docs/autopilot-manifests/reconcile-close-by-hand-declaration.json
+  - scripts/autopilot-backlog-reconcile
+SLICE: reconcile-close-by-hand-declaration
+IN_SCOPE: dạy scripts/autopilot-backlog-reconcile nhận diện close_by: hand · <reason> là khai báo có chủ đích; báo cáo ⊘ manual-close thay vì ✗ WEAK-PROBE; không bao giờ tự flip qua --fix; bắt lạm dụng khi scope có file mã nguồn thật
+OUT_OF_SCOPE: scripts/autopilot-scope-gate · nới discriminator rule cho task không khai close_by · close_by: enum tổng quát · hand-patch bản Plexco độc lập với canonical · backfill deps-security-bump đã merged
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: none — slice này là dependency gốc
+PRIOR_SLICES: none
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS
+SECURITY_AND_MIGRATION_GATE: PASS
+IMPLEMENTATION_ARTIFACTS: PASS
+FIRST_IMPLEMENTATION_STEP: land the close_by: hand parsing + ⊘ manual-close reporting change in the canonical template file first ($HOME/Projects/Claude template/autopilot/parallel/autopilot-backlog-reconcile), bump its `# KIT_VERSION:` header 4→5, verify against fixtures for RCH-1..RCH-5, then sync the byte-identical file into scripts/autopilot-backlog-reconcile before touching the abuse guard (RCH-6/RCH-7)
+REMAINING_BLOCKERS: none
+```
+
+### Closure matrix
+
+| # | Gate | Bằng chứng | |
+|---|---|---|---|
+| 1 | Authority pin theo SHA | `28e4e5a` + `TARGET_FILES` liệt kê exact, không glob | PASS |
+| 2 | Decision trong scope đã chốt | cú pháp `close_by: hand · <reason>` đã có tiền lệ sống (`deps-security-bump` dòng 485, tác giả 30/07); không còn product choice mở | PASS |
+| 3 | Scope IN/OUT và owner rõ | manifest `scope` 3 file exact + `negative_scope` 8 mục | PASS |
+| 4 | Dependency phân loại đủ | none — root dependency, không đọc/gọi bảng, service hay API nào | PASS |
+| 5 | Live schema khớp doc | script đọc trực tiếp 30/07 (KIT_VERSION 4); canonical-kit sync verify byte-identical bằng `diff` | PASS |
+| 6 | Data/auth contract đủ | N/A cho auth/data — phần tương đương (field-syntax `close_by: hand · <reason>`, phân cách `·`, chỉ nhận literal `hand`) đã pin trong §3 và "Thiết kế đề xuất" | PASS |
+| 7 | Fail-closed/order đủ | RCH-4: thiếu lý do → rơi về đúng discriminator rule cũ, không lặng lẽ chấp nhận; RCH-3: khai báo luôn thắng suy luận từ probe, không rẽ nhánh theo state | PASS |
+| 8 | Open question trong scope | 0 — hai điểm còn lại (glyph, vehicle test) đã pin bằng acceptance row, không phải product choice | PASS |
+| 9 | Acceptance matrix có expected | 12 hàng `RCH-1`..`RCH-12`, mỗi hàng có input · precondition · expected · layer | PASS |
+| 10 | Migration/security/rollback pin | 0 migration (`RCH-11`) · security round không bắt buộc, có lý do + void condition · rollback = revert thuần, chưa có consumer nào phụ thuộc hành vi mới | PASS |
+| 11 | First slice hard deps merged | root, không có gì phải chờ | PASS |
+| 12 | Implementation handoff sẵn sàng | slice doc + manifest + backlog entry (`manifest:`/`slice_doc:` field, `28e4e5a`) + launcher `ap-41` | PASS |
+
+**Verdict này KHÔNG chứng minh** implementation đã tồn tại — `CODE_READY` nghĩa là mở worktree được,
+không phải `IMPLEMENTED`. Nó cũng không chứng minh canonical template đã được sửa; đó là bước đầu tiên
+của coding session, ghi rõ ở `FIRST_IMPLEMENTATION_STEP`.
+
+---
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 30/07/2026 | v0.2 | **Verdict CODE_READY**, `AUTHORITY_SHA 28e4e5a0845031d879ba5b4b6ee7093b804cc0ba`, closure 12/12. Thêm `<!-- review-readiness: code-ready -->` + đổi tiêu đề từ "Slice contract" sang "Autopilot task contract". Tracker entry mirror ở `docs/slice-readiness-verdicts.md`; backlog flip `status: ready` + `launcher: .claude/commands/ap-41-reconcile-close-by-hand-declaration.md`. |
 | 30/07/2026 | v0.1 | Author slice contract từ backlog task đã mở cùng ngày. Phát hiện thêm ngoài backlog notes gốc: `scripts/autopilot-backlog-reconcile` là file kit canonical (verify byte-identical với `$HOME/Projects/Claude template/autopilot/parallel/autopilot-backlog-reconcile`, cả hai KIT_VERSION 4), không được `autopilot-sync.cjs` quản lý — bắt buộc bước canonical-first trước khi sync xuống Plexco, ghi thành NEGATIVE_SCOPE + RCH-12. Acceptance matrix RCH-1..RCH-12 pin đủ 6 đường phân loại + abuse guard + regression + kit-sync.
