@@ -1,0 +1,118 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — deliberately carries NO manifest_schema_version; adding it makes register HALT CONTRACT_INVALID. The runtime manifest is generated at register time into .autopilot/state/<feature>/manifest.json from _TEMPLATE.json.",
+  "task_id": "plexco:reconcile-close-by-hand-declaration",
+  "feature": "reconcile-close-by-hand-declaration",
+  "branch": "feat/reconcile-close-by-hand-declaration",
+  "base_ref": "origin/main",
+  "risk": "P3",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_dependency_note": "ROOT — nothing to wait for. scripts/autopilot-backlog-reconcile exists on default branch today; this slice extends its parser and its report/--check/--fix output, it does not depend on any table/service/route.",
+  "invariants": [],
+  "_invariant_note": "Deliberately empty. This tool reads only docs/autopilot-backlog.md and git refs; it touches no schema, no tenant/auth boundary, no money path and no runtime code under packages/ or apps/. There is no domain token in docs/autopilot-invariant-catalog.md this slice needs to hold, so declaring one would lock an unrelated lane for no real reason (the same measured hazard AP-40 avoided by dropping `schema`).",
+  "_canonical_kit_sync": "scripts/autopilot-backlog-reconcile is a CANONICAL-KIT file, not Plexco-local tooling — verified byte-identical (`diff` exit 0) on 2026-07-30 against $HOME/Projects/Claude template/autopilot/parallel/autopilot-backlog-reconcile, both at header `# KIT_VERSION: 4`. Plexco's own git history shows this file is synced, never hand-authored independently (`1e503d1` 'sync backlog-reconcile KIT_VERSION 3 từ canonical', `54de276` 'sync kit to canonical v0.6.0 / backlog-reconcile KIT_VERSION 2'). Per the founder's standing global invariant 'Shared KIT fixes land canonical-first and sync consumers direction-aware. Never hand-fix only a copy or downgrade a newer consumer', the actual `close_by: hand` parsing/branching change must be authored and committed in the canonical template file FIRST (a separate git repository at $HOME/Projects/Claude template, outside this slice's worktree, base branch and scope-gate entirely — that repo has its own commit process, not Plexco's Level 3 gate), bumping its own `# KIT_VERSION:` header 4->5. This Plexco slice's actual worktree diff is then the sync-down: copy the updated canonical file byte-for-byte into scripts/autopilot-backlog-reconcile (same KIT_VERSION 5 stamp), mirroring the existing convention. The autopilot-sync.cjs SessionStart hook does NOT manage this file (it only auto-syncs scripts/autopilot-scope-gate and warns on parallel-scope-gate.md/_TEMPLATE.json drift), so nothing else will catch a hand-patched, canonical-diverged copy — this note is the only guardrail.",
+  "scope": [
+    "scripts/autopilot-backlog-reconcile",
+    "docs/autopilot-manifests/reconcile-close-by-hand-declaration.json",
+    "docs/autopilot-reconcile-close-by-hand-declaration.md"
+  ],
+  "_scope_note": "The slice doc and this manifest are IN scope on purpose (AP-39 lesson: a contract doc left out of scope cannot be closed by the writer when the reviewer flags its staleness — three fix rounds were spent explaining an unclosable gap on that slice). A fixture/regression check for the new behavior is expected inside scripts/autopilot-backlog-reconcile itself (e.g. a `--selftest` path or an adjacent test script) rather than a new top-level file, since no scope entry names one — if the implementer decides a separate test file is the right shape, amend scope to add it before writing it, per the doc/contract-in-scope rule above.",
+  "negative_scope": [
+    "NO change to scripts/autopilot-scope-gate or any other kit file — this slice touches exactly one script",
+    "NO change to the DISCRIMINATOR RULE for tasks that do NOT declare close_by: hand — the identifier-shaped-symbol requirement stays exactly as-is; this is an additive escape hatch for three named classes (dependency-security, owner-evidence-gate, docs-reconcile), not a general loosening",
+    "NO generic close_by: enum/taxonomy — accept the literal value `hand` only; a future second value is a separate decision if one is ever proposed",
+    "NO auto-flip of a close_by: hand task by --fix, ever, regardless of whether its probe currently matches origin/<default> or happens to be identifier-shaped — the entire point of the declaration is that a human confirms and flips status by hand",
+    "NO hand-patching Plexco's copy independently of canonical — see _canonical_kit_sync above; the implementer must not treat scripts/autopilot-backlog-reconcile as this slice's own file to invent behavior in",
+    "NO retroactive close_by: hand backfill onto the already-merged deps-security-bump block — it is status: merged and no longer scanned (the parser only emits rows for planned|ready|blocked); backfilling it is optional documentation polish, not required by this slice",
+    "NO touching packages/db/src or any other module outside the three scoped files",
+    "NO opening a worktree in the docs-authoring session that produces this manifest — this manifest only makes the slice registrable by a later coding session"
+  ],
+  "context_sources": [
+    "scripts/autopilot-backlog-reconcile (current script, KIT_VERSION 4, read in full 2026-07-30)",
+    "docs/autopilot-backlog.md task block `reconcile-close-by-hand-declaration` (the origin of this requirement, authored 2026-07-30)",
+    "docs/autopilot-backlog.md task block `deps-security-bump` (the real, already-merged motivating example; its `close_by: hand · <reason>` line is the existing field-syntax precedent this slice must keep parsing)",
+    "$HOME/Projects/Claude template/autopilot/parallel/autopilot-backlog-reconcile (canonical source; verified byte-identical 2026-07-30)",
+    "docs/standards/review-code-readiness-gate.md (canonical gate)"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "restricted",
+    "secrets": "none",
+    "external_side_effects": "none",
+    "_note": "Needs filesystem write access to a SIBLING repository ($HOME/Projects/Claude template), outside the Plexco worktree the scope-gate will create. A sandboxed/isolated worktree that only mounts the Plexco repo cannot complete the canonical-first step; the implementing session must run with access to both repos, or hand the canonical edit to the founder as a discrete first step before opening the Plexco worktree."
+  },
+  "verification": {
+    "focused": [
+      "every one of the six classification paths (genuinely-pending, stale, weak-probe, no-probe, manual-close well-formed, manual-close malformed-missing-reason) prints its own distinct, grep-stable marker line, exercised via a fixture backlog file containing one task block per path",
+      "a close_by: hand task is never added to the stale[] or weak[] arrays, so it can never cause --check to exit 1 and is never a candidate for --fix's flip loop",
+      "--fix leaves every close_by: hand task's status field byte-unchanged, independent of whether its probe currently matches origin/<default> or is symbol-shaped",
+      "the abuse guard fires when a close_by: hand task's scope list contains a file capable of carrying an identifier-shaped probe (application source under packages/*/src, apps/*/src, scripts/, or a new .sql migration) and does NOT fire when scope is limited to manifest/lockfile/workspace-config/doc files (package.json, pnpm-lock.yaml, pnpm-workspace.yaml, docs/autopilot-manifests/*.json, *.md) — the deps-security-bump-shaped fixture (scope = docs manifest + package.json + pnpm-workspace.yaml + pnpm-lock.yaml) must NOT trigger the guard",
+      "every existing classification path for a task block WITHOUT a close_by field is byte-identical to current output (regression) — the DEFAULT_BRANCH_UNRESOLVED / DEFAULT_BRANCH_MISSING HALT paths are untouched",
+      "running the updated script against the repo's real docs/autopilot-backlog.md reclassifies the deps-security-bump--postcss-shaped and reconcile-close-by-hand-declaration-shaped rows correctly (no crash, no false stale/weak) without requiring any edit to backlog content as a side effect of this slice",
+      "the canonical template file at $HOME/Projects/Claude template/autopilot/parallel/autopilot-backlog-reconcile is updated first and Plexco's copy is byte-identical to it (verified with `diff`), both carrying the same bumped KIT_VERSION header"
+    ],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm review:check:changed",
+      "pnpm build",
+      "pnpm test",
+      "scripts/autopilot-backlog-reconcile --check"
+    ],
+    "e2e": []
+  },
+  "_verification_note": "Stated as PROPERTIES, never literals — no pinned line count, no pinned task count from the live backlog. This manifest is hash-locked after register; a stale literal cannot be corrected in place and forces a full close-and-re-register cycle. Do NOT trust any number written anywhere in this repo's docs as a baseline: measure it at run time. No bash test harness (bats/shunit) exists in this repo today (grep found none 2026-07-30) — the implementer may add a minimal fixture-based self-check (e.g. `scripts/autopilot-backlog-reconcile --selftest` constructing a temp backlog file and asserting each marker line) or an adjacent script; either is acceptable as long as every focused-verification row above is re-runnable, not just narrated in a PR description.",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 1
+  },
+  "security_review": {
+    "required": false,
+    "reason": "No trust boundary: local bash text-processing over a repo-tracked markdown file and git refs already trusted in this repo; no secrets, no network, no auth/permission/money surface, no external input.",
+    "void_if": "the implementation is found to shell out to anything beyond git/awk/grep on local refs, or to read/write outside docs/autopilot-backlog.md and the two scoped script files — if either happens, this judgement is void: add a security round and say why."
+  },
+  "budgets": {
+    "wall_time_minutes": 90,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE",
+    "the canonical template copy and Plexco's copy are found to have already diverged (diff non-empty) at implementation time — re-verify sync state before editing; reconcile the divergence first rather than layering a new change on top of an already-diverged baseline",
+    "a fourth close-by-hand-shaped task class is discovered beyond the three named (dependency-security, owner-evidence-gate, docs-reconcile) that does not fit the `close_by: hand · <reason>` shape — HALT and report; that would mean the escape hatch's shape is underspecified, an owner question, not an implementation choice"
+  ],
+  "_acceptance": {
+    "RCH-1": "happy — close_by: hand + probe currently pending (no origin match) -> reported as manual-close, not the plain pending line, not added to stale/weak",
+    "RCH-2": "happy — close_by: hand + probe matches origin but is NOT identifier-shaped (the real deps-security-bump-before-hand-flip shape) -> ⊘ manual-close, NOT ✗ WEAK-PROBE, not added to weak[]",
+    "RCH-3": "happy — close_by: hand + probe matches origin AND happens to be identifier-shaped -> still ⊘ manual-close, never auto-flipped by --fix (declaration wins over auto-detection)",
+    "RCH-4": "boundary — close_by: hand with no reason after the separator -> ✗ MALFORMED close_by warning printed, entry falls back to normal stale/weak/no-probe/pending classification (no silent bypass of the discriminator rule)",
+    "RCH-5": "boundary — close_by: hand on a task with NO merged_probe at all -> routes to ⊘ manual-close (a human-only close is still a coherent declaration without a probe), not to the `?  no merged_probe` line",
+    "RCH-6 (abuse guard)": "close_by: hand + scope contains an application source path (packages/*/src, apps/*/src, scripts/*, or a new .sql) -> loud, non-silent warning distinct from manual-close, fires at least in --audit mode",
+    "RCH-7 (abuse guard negative)": "close_by: hand + scope limited to package.json / pnpm-lock.yaml / pnpm-workspace.yaml / docs/autopilot-manifests/*.json / *.md -> no abuse warning (this is the deps-security-bump-shaped legitimate case; it must not be flagged)",
+    "RCH-8": "--fix — a close_by: hand task's status line is byte-unchanged after --fix runs, in every one of RCH-1..RCH-3's preconditions",
+    "RCH-9": "--check exit code — any number of well-formed close_by: hand entries never causes exit 1 on their own; only a genuine stale non-close_by entry does",
+    "RCH-10 (regression)": "every task block without a close_by field classifies identically to the current script's output, for all four existing categories (pending, stale, weak, no-probe) and both HALT paths (DEFAULT_BRANCH_UNRESOLVED, DEFAULT_BRANCH_MISSING)",
+    "RCH-11 (migration)": "diff contains no file under packages/db/migrations/ and no change to packages/db/schema.ts",
+    "RCH-12 (kit sync)": "Plexco's scripts/autopilot-backlog-reconcile is byte-identical to the canonical template file post-change, both stamped with the same bumped KIT_VERSION"
+  },
+  "_evidence_rules": [
+    "Cite acceptance rows by ID (RCH-N); do not restate their content in code comments — the restatement is what goes stale.",
+    "Docs and contracts are not runtime proof. A re-runnable fixture run against the actual script is.",
+    "Do not claim CODE_READY, IMPLEMENTED or any readiness state from inside the slice; the verdict artifact is docs/slice-readiness-verdicts.md and it is authored outside the worktree."
+  ]
+}

@@ -522,11 +522,15 @@ risk: P3
 change_class: tooling
 depends_on: []
 invariants: []
-scope: [scripts/autopilot-backlog-reconcile]
+scope: [scripts/autopilot-backlog-reconcile, docs/autopilot-manifests/reconcile-close-by-hand-declaration.json, docs/autopilot-reconcile-close-by-hand-declaration.md]
+manifest: docs/autopilot-manifests/reconcile-close-by-hand-declaration.json
+slice_doc: docs/autopilot-reconcile-close-by-hand-declaration.md
 merged_probe: scripts/autopilot-backlog-reconcile :: close_by
 notes: Có một **lớp task không thể có `merged_probe` phân biệt được**, và script hiện coi mọi trường hợp như lỗi tác giả. Nó in `× WEAK-PROBE … replace merged_probe with a code symbol this slice introduces` — lời khuyên đúng cho hầu hết slice nhưng **bất khả thi** cho: (a) `dependency-security` (bump lockfile không tạo symbol nào; lockfile chỉ có version và path, mà version là literal dùng chung, có thể trùng nội dung không liên quan trên origin/main); (b) `owner-evidence-gate` (đóng bằng bằng chứng, không bằng commit); (c) `docs-reconcile` (mọi token đều có gạch nối nên trượt `is_symbol_probe`). Backlog đã tự đặt tên cả ba lớp này từ trước, nhưng script không có từ vựng để phân biệt *"tác giả lười"* với *"không tồn tại probe hợp lệ"*.
   **Đề xuất:** chấp nhận `close_by: hand` trong task block; khi có nó, `--check`/`--fix` báo dạng `⊘ manual-close: <slug>` và **không** tính là stale hay weak. Bắt buộc kèm lý do một dòng để không thành cửa sau né discriminator rule. `--audit` vẫn phải kêu nếu một task khai `close_by: hand` mà scope của nó **có** file mã nguồn — đó mới là lười thật.
   Phát hiện 30/07 khi bước 8b của `ap-merge.sh` từ chối flip `deps-security-bump` sau merge `61a2575`. Không phải bug của bước 8b: nó hành xử đúng thiết kế fail-closed, chỉ là thiếu một trạng thái thứ ba.
+  **Phát hiện thêm khi author artifact (30/07):** `scripts/autopilot-backlog-reconcile` là file **kit canonical** (verify byte-identical với `$HOME/Projects/Claude template/autopilot/parallel/autopilot-backlog-reconcile`, cả hai `# KIT_VERSION: 4`), không phải tooling riêng của Plexco, và `autopilot-sync.cjs` không quản lý nó. Implementation thật phải land canonical-first rồi mới sync xuống — chi tiết đầy đủ ở `docs/autopilot-reconcile-close-by-hand-declaration.md`.
+  **Chưa launch được:** cần verdict trong `slice-readiness-verdicts.md` trước — gate §11.2 cấm verdict một slice chưa author, nên artifact author trước (đã xong 30/07), verdict sau.
 
 ## task: db-outbox-ack-marker
 title: Job-infra slice 2a — completion/ack cho outbox_events, đóng starvation loop mà 0022 tự flag
