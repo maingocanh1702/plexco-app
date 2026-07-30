@@ -1,4 +1,38 @@
-# AP-39 — raise the next + postcss floors, and be the first slice to run the Level 3 gate for real
+# AP-39 — raise the next floor, and be the first slice to run the Level 3 gate for real
+
+> **CURRENT STATE (2026-07-30, second split) — read this before anything below.** This launcher was
+> authored for the original next+postcss+brace-expansion registration (`feature: deps-security-bump`).
+> Two owner-ratified splits have narrowed it since: (1) 2026-07-29 removed `brace-expansion` — no
+> in-range v1 patch exists, forcing v5 breaks `minimatch@3` at runtime; closed separately via
+> `eslint-10-migration`. (2) 2026-07-30 removed `postcss` too — a security-review round independently
+> reproduced a real, upstream-acknowledged file-read issue fixed in 8.5.23, which `minimumReleaseAge`
+> (7 days) blocks landing until 2026-07-31T17:04:03Z; deferred to a follow-up slice rather than
+> excepted. **The current and only authoritative execution is `feature: deps-security-bump--next-only`,
+> branch `feat/deps-security-bump--next-only`, worktree `.autopilot/worktrees/deps-security-bump--next-only`,
+> runtime manifest `.autopilot/state/deps-security-bump--next-only/manifest.json`. Scope is `next` ONLY.**
+> See `docs/autopilot-manifests/deps-security-bump.json`'s `_owner_decision` field for full history.
+> The body text below (worktree/branch examples, "next + postcss" framing) is the ORIGINAL preflight
+> record and is deliberately left as-is below this notice — same convention as the manifest's own
+> `_owner_decision` history, which is preserved verbatim rather than rewritten. It is historical, not
+> current instruction. `docs/autopilot-deps-security-bump.md` (task contract) and this feature's entry
+> in `docs/autopilot-backlog.md` carry the same pre-second-split framing; neither file is in this
+> registration's `scope`, so they are not edited by this slice.
+>
+> **CORRECTION (gate-attempt-05, round 1) — the claim this notice previously made here was wrong and
+> has been verified, not merely restated.** `scripts/ap-merge.sh` does NOT reconcile task-contract or
+> backlog narrative at merge time — read on disk, it only calls `scripts/autopilot-backlog-reconcile
+> --fix`, which rewrites exactly one `status:` line per task and touches nothing else (see that
+> script's own `KIT_VERSION 4` header). Worse, for THIS task even that narrow flip will not fire
+> automatically: this task's `merged_probe` in `docs/autopilot-backlog.md` is `pnpm-lock.yaml ::
+> 15.5.21` — a version-number literal, not a slice-unique code symbol — which `is_symbol_probe()`
+> rejects, so `--fix` reports it as `WEAK-PROBE` and explicitly refuses to flip it. **There is no
+> automatic mechanism, at merge time or otherwise, that will ever correct
+> `docs/autopilot-deps-security-bump.md` or the `deps-security-bump` backlog block's status/narrative
+> for this task.** Whoever merges this slice must manually: (1) flip that backlog block's `status:` to
+> `merged` (or add a merged-tracking note), and (2) either rewrite or explicitly mark superseded the
+> Next+PostCSS framing in both the task-contract doc and the backlog block's `title`/`scope` fields —
+> or authorize a widened-scope successor slice to do it. This manifest and this launcher (as of this
+> correction) are the only tracked artifacts that currently encode the Next-only reality correctly.
 
 Read canonical `/Users/maingocanh/Projects/Claude template/autopilot/autopilot-prompt-GENERIC.md` (the Level 3
 worker contract; its authority is `level3-workflow.md`). It carries no version marker and no numbered trigger
@@ -10,7 +44,9 @@ Execute manifest `docs/autopilot-manifests/deps-security-bump.json` — the auth
 lockfile lines to stay byte-unchanged.
 
 P1 · `dependency-security` · `manual_only` · auto-merge `false` · `2x_clean`. Own worktree at
-`.autopilot/worktrees/deps-security-bump`, branch `feat/deps-security-bump`. Never run from the repo root.
+`.autopilot/worktrees/deps-security-bump`, branch `feat/deps-security-bump` (original, pre-split — the
+CURRENT next-only execution is `.autopilot/worktrees/deps-security-bump--next-only`, branch
+`feat/deps-security-bump--next-only`; see the notice at the top of this file). Never run from the repo root.
 
 **Base is a condition, not a SHA.** The worktree must sit on an `origin/main` tip containing this launcher —
 self-verifying: if `/ap-39-…` invoked, the file is in your tree. If it returned `Unknown command`, the worktree
