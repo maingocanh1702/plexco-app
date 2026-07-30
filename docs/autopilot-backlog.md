@@ -1044,7 +1044,8 @@ notes: |
 
 ## task: db-undeclared-check-constraints-schema-mirror
 title: 6 CHECK sống trong DB mà `schema.ts` không khai — khai theo `_chk` + một migration RENAME
-status: ready
+status: merged
+note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (2026-07-30). Was: ready
 risk: P2
 change_class: schema-migration
 depends_on: []
