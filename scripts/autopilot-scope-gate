@@ -1,5 +1,42 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 14
+# KIT_VERSION: 17
+# v17 (2026-07-30) — FIRST behaviour change to the pinned reviewer contract (codex-review-pin.sh 1→2).
+# The pinned prompt bounded what to REVIEW but never bounded what could count as a BLOCKING finding: it
+# says "review only the change set", then "inspect live source", then "CLEAN only when there are zero
+# actionable findings". A reviewer following those instructions exactly will find repo-wide staleness —
+# correctly — and block on it. But a writer cannot edit outside its registered scope, so that verdict is
+# unsatisfiable and the slice loops until a breaker fires. Measured on Plexco deps-security-bump: three
+# registrations, six fix rounds, three of them (2, 4, 6) the same class of out-of-scope docs finding, each
+# round producing a better EXPLANATION of an unclosable gap. The REGION_THRASH breaker never fired because
+# the writer explained itself in a different file each round, so `file:region` kept changing. The
+# dependency change itself passed review clean three times. Fix: findings must be closable by editing the
+# change set; everything else goes under "ADVISORY (outside change set)" and is excluded from the verdict.
+# This preserves the reviewer's genuinely useful repo-wide observations without letting them deadlock a
+# scoped slice. Consumers on kit <17 keep the old blocking behaviour until they sync.
+# v16 (2026-07-30) — pack content change, no behaviour change in THIS file. Two fixes from one live
+# slice. (1) `claude-notify-hook.sh` no longer writes its forensic sentinel as `AWAIT-FOUNDER-notify.txt`.
+# That name sat inside the readiness gate's terminal-signal namespace, so every Claude Code permission
+# prompt during a slice silently planted a fake terminal signal and the next `ready` refused to run with
+# TERMINAL_CONFLICT; worse, the file's own text reads "Claude needs your permission", so deleting it was
+# indistinguishable from bypassing the permission system and the agent was correctly denied for trying.
+# The sentinel had no consumer at all — `ap-watch.sh` never scanned for it. Renamed to
+# `notify-sentinel.txt`. (2) `level3-workflow.md` section 8 records a third measured gate gap: reviewer
+# auth-TIER failures are classified terminal instead of resumable. The auth detector matches only
+# 401-shaped strings, so a 400 `invalid_request_error` naming an unsupported model for the account type
+# falls through to HALT REVIEW_UNAVAILABLE — demanding a full close-and-re-register for what is, in
+# substance, exactly the CODEX_AUTH_REQUIRED "re-authenticate, then resume" condition. Observed after a
+# mid-run operator re-auth, on a slice that had already completed three clean review rounds that day.
+# v15 (2026-07-30) — pack content change, no behaviour change in THIS file. `manifests/_TEMPLATE.json`
+# gains `_verification_rule` and `_scope_rule`. The first exists because the runtime manifest is
+# hash-locked at `register`, so a pinned literal in `verification` cannot be corrected in place — it
+# forces a full close-and-re-register cycle. A Plexco slice paid that cost: `verification.focused`
+# asserted `postcss == 8.5.18`, the owner later narrowed the slice's scope, and the third registration
+# followed. A sibling manifest pinned a test-count baseline that went stale within hours of authoring
+# and HALTed its slice at MAX_ROUNDS. Verification must assert properties, never literals. The second
+# rule restates that `scope` takes exact file paths, since a directory entry is rejected and the error
+# arrives only at register time. See also level3-workflow.md section 8, which now records two measured,
+# unresolved gaps in the gate (reviewer receives no scope; breaker counts infra flakes as fix rounds).
+# v14 (2026-07-30) — pack content change, no behaviour change in THIS file. `autopilot-backlog-reconcile`
 # v14 (2026-07-30) — pack content change, no behaviour change in THIS file. `autopilot-backlog-reconcile`
 # (its own header goes 3 → 4) stops hard-coding `DEFAULT_BRANCH="main"`. It now resolves origin's default
 # branch from refs/remotes/origin/HEAD, falls back to whichever single conventional name exists, honours

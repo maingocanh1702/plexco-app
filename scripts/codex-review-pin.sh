@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 1
+# KIT_VERSION: 2
 # Repo-agnostic pinned Codex wrapper for Level 3 independent review.
 set -euo pipefail
 
@@ -55,6 +55,11 @@ if [ "${1:-}" = "review" ]; then
         "Review only the non-empty change set from: git diff $REVIEW_BASE...HEAD" \
         "Treat $REVIEW_BASE as the immutable review base. Do not edit files or mutate repository state." \
         "Inspect live source and run read-only verification needed to support the verdict." \
+        "An ACTIONABLE finding must be closable by editing the change set itself. Repo-wide staleness," \
+        "pre-existing defects and work belonging to other slices are real and worth reporting, but they" \
+        "are NOT actionable here: list them under a heading 'ADVISORY (outside change set)' and exclude" \
+        "them from the verdict. A writer cannot edit files outside its registered scope, so a verdict" \
+        "gated on those findings can never be satisfied and the slice loops until a breaker fires." \
         "" \
         "$MARKER_PROMPT"
     )"
