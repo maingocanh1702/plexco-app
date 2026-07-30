@@ -938,6 +938,36 @@ notes: |
   **KHÔNG chạy trên AP-38** — nó đã register shape cũ và đã merged; dư của nó dọn sau khi AP-39 chứng minh
   gate chạy được.
 
+## task: pnpm-override-precedence-two-locations
+title: Đo dứt điểm: `package.json` `pnpm.overrides` vs `pnpm-workspace.yaml` `overrides` — luật nào thắng
+status: planned
+risk: P3
+change_class: docs-reconcile
+depends_on: [deps-security-bump]
+invariants: []
+scope: [docs/standards/, package.json, pnpm-workspace.yaml]
+manifest: null
+merged_probe: null
+notes: |
+  **Mở 2026-07-30 từ design-probe của `deps-security-bump` (AP-39).** Probe đó cần biết luật override nào
+  thắng khi **cả hai** cùng khai `postcss`, và **từ chối suy từ trí nhớ** — đúng kỷ luật: pnpm đang di chuyển
+  `pnpm.*` từ `package.json` sang `pnpm-workspace.yaml` qua nhiều release, nên hành vi khi cả hai cùng có cho
+  một key không phải thứ tự tin được mà không đo. Install log của repo cũng không cảnh báo bên nào.
+  **AP-39 giải bằng cách né có chủ đích:** pin **cùng một version chính xác** ở cả hai chỗ ⇒ luật nào thắng
+  cũng ra cùng kết quả, `DSB-4` thành đúng về **kiến trúc** thay vì đúng nhờ trùng hợp. Đó là cách giải tốt cho
+  slice đó và không cần đo precedence.
+  **Nhưng nó chỉ an toàn KHI hai luật còn đồng ý.** Ngay khi ai đó sửa một chỗ mà quên chỗ kia — đúng cái bẫy
+  `DSB-4` tồn tại để chặn, và đã suýt xảy ra một lần — precedence lại quyết định kết quả, và không ai biết câu
+  trả lời. Đó là lý do task này tồn tại: biến một ẩn số đang được **né** thành một dữ kiện được **ghi**.
+  **Cách đo (rẻ, ~15 phút, không cần slice):** tạm cho hai luật **lệch nhau** trên một package vô hại (không
+  phải `postcss`, không phải money-path) — ví dụ đặt `package.json` `pnpm.overrides.<pkg>: X` và
+  `pnpm-workspace.yaml` `overrides["<pkg>@<Y"]: Z` với X≠Z, chạy `pnpm install --lockfile-only`, đọc
+  `pnpm why <pkg> -r`, rồi **revert**. Ghi kết quả + version pnpm (`pnpm --version`, hiện 10.30.2) vào
+  `docs/standards/`. Kết quả phụ thuộc version nên phải ghi kèm version, không ghi như luật vĩnh viễn.
+  **Không chạy song song AP-39** — cùng chạm `package.json`/`pnpm-workspace.yaml`. `depends_on` đặt
+  `deps-security-bump` cho đúng thứ tự.
+  P3 vì không chặn gì: hiện trạng an toàn nhờ hai luật đồng ý. Đây là trả nợ hiểu biết, không phải sửa lỗi.
+
 ## task: kit-dead-citation-prompt-generic-sections
 title: 6 manifest viện dẫn `autopilot-prompt-GENERIC v0.6.1 §0.1` — section đã biến mất khi prompt viết lại cho Level 3
 status: planned
