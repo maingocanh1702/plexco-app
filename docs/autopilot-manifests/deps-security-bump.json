@@ -29,7 +29,7 @@
     "DSB-4: postcss resolves consistently regardless of which override location is consulted -- the two locations do not disagree after the edit.",
     "DSB-5: `pnpm install --frozen-lockfile` succeeds from a clean node_modules with no flag relaxing a supply-chain control.",
     "DSB-6: full CI command list green -- typecheck, format:check, review:check, lint, build, and the DB suite with its canonical env.",
-    "DSB-7: workspace test count is unchanged from the pre-bump baseline of 561 (core 132, db 243, web 146, bot 40) measured on main@f88a2c8; a changed count means a dependency altered behaviour and needs investigation, not acceptance.",
+    "DSB-7: workspace test count is unchanged from the pre-bump baseline. Do NOT trust a number written here: re-measure it in the green baseline step and use what you measure. History of why — this field said 561 (core 132, db 243, web 146, bot 40) on main@f88a2c8, which was correct when authored on 2026-07-29 and went stale hours later when AP-38 merged 12 db tests, making the true baseline 573 (db 255). AP-39's round-6 reviewer caught the contradiction between this line and its launcher. A changed count still means a dependency altered behaviour and needs investigation, not acceptance.",
     "DSB-8: `git diff --stat main...HEAD` touches only package.json, pnpm-workspace.yaml, pnpm-lock.yaml and this manifest -- zero source files.",
     "DSB-9: no new advisory is introduced -- the OSV full scan total drops and does not merely shift."
   ],

@@ -476,6 +476,10 @@ invariants: [build-config]
 scope: [docs/autopilot-manifests/deps-security-bump.json, package.json, pnpm-workspace.yaml, pnpm-lock.yaml]
 manifest: docs/autopilot-manifests/deps-security-bump.json
 launcher: .claude/commands/ap-39-deps-security-bump.md
+ap39_run: 2026-07-30 · **`HALT MAX_ROUNDS`, nhưng phần việc đã xong và verified sạch — chưa merge.** Branch `feat/deps-security-bump`, 4 commit: `next` 15.5.20→**15.5.21** (đóng 8 advisory tới CVSS 8.3) · `postcss` 8.5.16→**8.5.18** pin giống hệt ở cả hai chỗ · `brace-expansion` **byte-unchanged** (`DSB-2b` PASS, verify bằng `grep '^[+-].*brace-expansion'` trống) · diff 4 file đúng scope · osv-scanner 0 finding cho next/postcss, còn 2 finding `brace-expansion` đã biết trước (từ 11) · CI đầy đủ xanh, test 573 khớp mọi lần đo. **Round-1 sửa tốt hơn probe của tôi:** nới selector `<8.5.10`→`<8.5.18`; giữ `<8.5.10` sẽ để một package xin `^8.5.12` nằm ngoài luật điều kiện và không được rewrite.
+gate_result: **GATE THẬT CHẠY ĐƯỢC — đây là câu trả lời của `level3-gate-adoption-runtime-manifest`.** `register` pass với runtime manifest v2 ở `.autopilot/state/deps-security-bump/manifest.json`; `ready` chạy 6 attempt; review loop bắt **3 finding thật** (round 1/2/6, tự fix, verify lại sạch) **và bác 1 false-positive** (round 3: claim GHSA giả về postcss 8.5.23, đối chiếu 4 nguồn rồi loại); breaker hoạt động đúng thiết kế. **Không cần fallback tay như AP-37/AP-38.** Nhưng chưa có `gate-result.json` vì chưa có lần pass sạch ⇒ `ap-finish.sh` vẫn chưa chạy được cho cả AP-38 và slice này.
+halt_cause: `fix-round-count` 5/5. Round 6 bắt một finding **thật nhưng nhỏ**: `DSB-7` trong authored contract ghi baseline cũ (561/243, trước AP-38) trong khi launcher và mọi phép đo đều là 573/255. **Đó là lỗi của orchestrator, không phải của writer** — tôi viết `561` vào manifest ngày 29/07 rồi viết `573` vào launcher `ap-39`, tự tạo mâu thuẫn. **Đã sửa 2026-07-30 và de-pin** (`DSB-7` nay nói "đừng tin con số ở đây, đo lại"). Writer **không** tự sửa rồi certify — đúng nguyên tắc, vì mục đích slice này là chứng minh gate là trọng tài. ⚠️ Claim *"nâng budget sẽ đụng `MANIFEST_DRIFT`"* chỉ đúng cho việc nâng budget: `DSB-7` nằm ở authored contract, **không** trong runtime manifest, nên sửa nó không đụng `registered-manifest.sha256`. Bức tường thật thuần là round-count. **Và 2/5 round đó là infra flake** (Postgres `57P01`, 255/255 pass, zero code change) — xem `breaker-counts-infra-flakes-as-fix-rounds`.
+next_step: successor slice nhẹ, feature `deps-security-bump--dsb7-rebaseline`, branch `feat/deps-security-bump--dsb7-rebaseline` (thoả `feature must equal <task-slug> or start with <task-slug>--`), branch từ tip hiện tại của `feat/deps-security-bump`, runtime manifest mới với budget mới. `DSB-7` đã sửa trên `main` nên reviewer không còn gì để bắt — khả năng cao pass sạch round 1, và **đó là lần đầu có `gate-result.json`**, mở đường `ap-finish.sh` dọn dư của cả AP-38 lẫn slice này.
 merged_probe: pnpm-lock.yaml :: 15.5.21
 notes: **Mở bởi CI audit 2026-07-26** — `Security / OSV full dependency scan` đỏ trên main với 11 advisory, tất cả từ `pnpm-lock.yaml`, **không phải regression của việc gần đây** (không dependency nào đổi; advisory publish upstream). `next` 15.5.20 gánh **7 advisory tới CVSS 8.3** → 15.5.21; `postcss` 8.5.16 → 8.5.18; `brace-expansion` 1.1.16 và 5.0.7 → 5.0.8. **Exposure hiện = 0**: chưa deploy, chưa có route nghiệp vụ, Google login fail-closed với `GOOGLE_OAUTH_*` rỗng. **Timing gate 30/07** — `minimumReleaseAge: 10080` (7 ngày) là control có chủ đích; đo 26/07: postcss đủ tuổi, next đủ từ 28/07, brace-expansion đủ từ 30/07. **Owner chốt 26/07: KHÔNG override** — cửa sổ 7 ngày tồn tại để chặn đúng vector publish-bị-chiếm-quyền mà một bản "security fix" giả là carrier kinh điển; đổi lớp phòng thủ đó lấy 4 ngày vá sớm trên bề mặt exposure-0 là trao đổi tồi. Ngoại lệ tương lai nếu có phải là override per-package có lý do và hạn dùng, không hạ `minimumReleaseAge` toàn cục. `design_probe_required: true` — hai bẫy: (1) **override nằm ở HAI chỗ**, `package.json` `pnpm.overrides` và `pnpm-workspace.yaml` `overrides`, `postcss` có mặt ở cả hai; sửa một bỏ một là cách bản vá không có hiệu lực mà vẫn tưởng xong; (2) OSV ghi FIXED 5.0.8 cho cả dòng `brace-expansion` 1.1.16 — bẫy này **đã kích hoạt và đã giải quyết bằng cách tách slice**, xem `owner_decision` ở trên; `brace-expansion` nay NGOÀI scope và acceptance `DSB-2b` bắt hai dòng đó **byte-unchanged**, lệch là HALT. ⚠️ `merged_probe: pnpm-lock.yaml :: 15.5.21` là **weak probe theo DISCRIMINATOR RULE** (chuỗi số, không phải identifier) — giữ nguyên vì lockfile version bump không có symbol nào identifier-shaped để probe; hệ quả là `--check` không tự flip được task này, phải đóng tay kèm SHA, cùng lớp với `owner-evidence-gate` và `docs-reconcile`.
 
@@ -937,6 +941,39 @@ notes: |
   đọc `cleanup` của scope-gate để biết đường lùi nếu `register` v2 fail; và **không** đổi 45 authored contract.
   **KHÔNG chạy trên AP-38** — nó đã register shape cũ và đã merged; dư của nó dọn sau khi AP-39 chứng minh
   gate chạy được.
+
+## task: breaker-counts-infra-flakes-as-fix-rounds
+title: `fix-round-count` tăng cả khi round do hạ tầng, không do diff — AP-39 mất 40% budget vì Postgres flake
+status: planned
+risk: P2
+change_class: autopilot-mechanism
+depends_on: []
+invariants: [build-config]
+scope: [docs/autopilot-templates/level3-workflow.md, docs/autopilot-ONBOARDING.md]
+manifest: null
+merged_probe: null
+notes: |
+  **Đo từ AP-39, không phải suy luận.** `regions.log` của nó:
+  `round-04 infra:postgres-connection-flake (57P01 admin_shutdown during packages/db teardown; all 255
+  assertions passed; no orphaned process, container healthy, no code change)` và `round-05` cùng lớp, DB scratch
+  khác. Hai round đó **255/255 assertion pass**, **không đổi một dòng code**. Rồi `fix-round-count` = 5,
+  `budgets.fix_rounds_max` = 5 ⇒ round 6 tìm được một finding thật nhưng **không còn budget để đẩy qua gate** ⇒
+  `HALT MAX_ROUNDS`.
+  **Tức 2/5 budget (40%) bị môi trường ăn, và slice bị phạt cho việc không phải lỗi của nó.**
+  **Vì sao nó không đơn giản là "nâng budget":** breaker tồn tại để bắt **thrash thiết kế** — findings lan ra,
+  cùng một vùng bị sửa vòng này qua vòng khác. Nâng số lên 8 chỉ dịch ngưỡng và làm breaker kém nhạy với đúng
+  thứ nó sinh ra để bắt. Vấn đề là **phân loại**, không phải con số.
+  **Lối sửa cần probe:** phân biệt round *do diff* với round *do môi trường*. Ứng viên: (a) cho writer khai
+  `round-NN infra:<reason>` trong `regions.log` — cú pháp AP-39 **đã tự phát minh ra** — và validator không tính
+  các dòng `infra:` vào `fix-round-count`; (b) tách hai counter, `fix-round-count` và `infra-retry-count`, mỗi
+  cái một ngưỡng; (c) giữ nguyên và coi đây là cái giá của một breaker đơn giản.
+  **Bẫy của (a), phải pin trong probe:** nếu writer tự khai `infra:` được thì nó có thể dán nhãn một finding
+  thật thành infra để né breaker. Cần điều kiện kiểm được — ví dụ chỉ chấp nhận `infra:` khi round đó có
+  **zero diff** so với round trước (AP-39 thoả: không đổi dòng nào) và assertion count không giảm. Không có
+  điều kiện đó thì (a) mở một lỗ tệ hơn vấn đề nó sửa.
+  **Thuộc `Claude template`** — `level3-workflow.md` §8 định nghĩa breaker; Plexco chỉ mirror.
+  P2: không chặn slice nào hôm nay, nhưng sẽ tái diễn ở mọi slice có DB suite, và DB suite là phần chậm nhất
+  nên cũng là phần flake nhiều nhất.
 
 ## task: pnpm-override-precedence-two-locations
 title: Đo dứt điểm: `package.json` `pnpm.overrides` vs `pnpm-workspace.yaml` `overrides` — luật nào thắng
