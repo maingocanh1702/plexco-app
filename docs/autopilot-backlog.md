@@ -620,6 +620,38 @@ notes: **Tách khỏi `tenant-capability-authority-core` ngày 30/07 sau ba phé
   **Ba tiền đề spec đã verify trực tiếp trên migration 30/07:** `tenants.status` DEFAULT `'trialing'` + CHECK 5 giá trị (`0002:15-16`) · `subscriptions.status` cùng CHECK (`0007:34`) · `tenant_provision` set `'active'` tường minh (`0012`). Đều đúng.
   **Chưa launch được:** cần verdict trong `slice-readiness-verdicts.md` trước — gate §11.2 cấm verdict một slice chưa author, nên artifact author trước (đã xong 30/07), verdict sau.
 
+## task: db-tenants-authz-grant-security-definer
+title: Cho app role gọi được authorizeTenantAction — SECURITY DEFINER hẹp, KHÔNG grant UPDATE thô trên tenants
+status: ready
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [schema, auth, billing]
+scope: []
+manifest: null
+merged_probe: null
+notes: **CHẶN CỨNG slice caller đầu tiên. Phát hiện 30/07 trong AP-40, xác nhận bằng phép đo:** `grep -rn GRANT packages/db/migrations/*.sql | grep -w tenants` trả về **rỗng** — không một grant nào trên bảng `tenants` trong toàn bộ 27 migration. `authorizeTenantAction` đã merged tại `ddb69a9` và đúng logic, nhưng **app role không đọc nổi `tenants`**, nói gì tới khoá nó.
+  **Và không được sửa bằng cách grant thẳng.** Postgres đòi quyền `UPDATE` cho *mọi* mệnh đề khoá, kể cả `FOR SHARE` — nên `GRANT SELECT` không đủ. Mà `GRANT UPDATE ON tenants TO app` sẽ **tự mở đúng write path** mà AP-40 cố ý đóng: `tenants.status` là trục tenant-root hard override, spec §3 pin rằng set ⊥ clear phải cùng một owner, và owner đó (trust-safety mechanism) **chưa tồn tại**. Grant thô là trao quyền ghi cột đó cho app role trước khi có bất kỳ ai chịu trách nhiệm về nó.
+  **Đường đúng:** SECURITY DEFINER hẹp, đúng pattern codebase này đã dùng (`0012_auth_functions.sql`) — hàm sở hữu quyền, app role chỉ được `EXECUTE`, và bề mặt ghi vẫn bằng 0. Cần migration, nên nằm ngoài scope AP-40 một cách có chủ ý chứ không phải sót.
+  **Kiểm trước khi author:** đừng tin dòng nào ở đây; chạy lại phép đo grant, và xác nhận `FOR SHARE` thật sự cần `UPDATE` trên phiên bản Postgres đang chạy chứ không chỉ theo tài liệu.
+
+## task: docs-billing-authz-signature-reconcile
+title: Reconcile chữ ký authorizeTenantAction trong spec billing §3 — code đã merge nhận transaction
+status: ready
+risk: P3
+change_class: docs-reconcile
+depends_on: []
+invariants: [billing]
+scope: []
+manifest: null
+merged_probe: null
+close_by: hand · diff thuần prose trong một spec đã Reviewed, không tạo symbol nào để probe
+notes: **Spec đã founder-ratified nay nói sai so với code đã merge.** `feature_billing_lifecycle_tech.md` §3 ghi chữ ký `authorizeTenantAction(tenantId, actionClass)`; code merged tại `ddb69a9` là `(tx, tenantId, actionClass)`.
+  **Code đúng, spec cũ.** Codex round-01 của AP-40 bắt [P1]: hàm tự mở transaction thì `FOR SHARE` **nhả trước khi caller kịp mutate**, mở lại đúng race mà locking read sinh ra để đóng. Hai tham số không giữ nổi lock xuyên qua mutation của caller — đây là bất khả thi cơ học, không phải lựa chọn cài đặt.
+  **Không vi phạm ý định của spec.** Điều §1 bảo vệ là *"takes tenant context, not a pre-resolved status"* — hàm vẫn tự đọc cả hai cột, không caller nào truyền status vào. Thêm một transaction handle không phải pre-resolve gì cả.
+  **Vì sao là slice riêng, không sửa chèn tay:** đây là spec `Status: Reviewed`, và CLAUDE.md cấm viết thẳng vào spec đã Reviewed. Reconcile phải đi qua đường docs-reconcile như mọi lần trước.
+  **Ghi kèm một đính chính nhỏ của AP-40:** manifest ban đầu khai `invariants: [tenant-isolation, authorization]` — **cả hai token đều không tồn tại** trong `autopilot-invariant-catalog.md`, sẽ `HALT INVARIANT_UNKNOWN`. Writer đổi sang `[billing, publish-suspend-gate]` lúc register. Catalog có sẵn token `auth` ("authentication / authorization / session") mà cả hai bên đều bỏ sót — slice này nên cân nhắc thêm `auth` vào manifest tương lai của vùng authz. Nguyên nhân gốc: catalog lưu dạng `token — mô tả` với em-dash và **không backtick**, nên grep viết cho token có backtick trả rỗng, đọc y hệt một catalog trống thay vì một câu truy vấn sai. Đã ghi vào kit v18.
+
 ## task: plans-dd29-capability-registry
 title: DD-29 — chuyển plan_key 4-tier sang 2-tier, reshape entitlements sang capabilities.*, reseed
 status: idea
