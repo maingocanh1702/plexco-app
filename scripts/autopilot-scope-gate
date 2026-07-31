@@ -1,5 +1,25 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 25
+# KIT_VERSION: 26
+# v26 (2026-07-31) — v25's own note overclaimed: "the diff handed to the reviewer... is now taken from
+# the LIVE base-ref tip" was true only for the internal SCOPE_DRIFT/diffHash computation inside
+# liveDiffState(). Four other sites still read the pinned base_sha for the same window job: the --base
+# flag actually handed to the reviewer process, the two prompt strings describing that base to it, and
+# ap-finish.sh's own recomputed diff hash and file list. Measured consequences: the reviewer reviewed
+# 11 files for a slice that changed 5 (told --base <stale pin>, not the live window), and a nominally
+# PASSING gate produced a diff hash ap-finish could never reproduce, because ap-finish recomputed from
+# base_sha while the gate's own diff_files/diff_sha256 had already moved to the live base-ref tip.
+# Fix shape: one source, not two. liveDiffState() now returns diffBase alongside its other fields;
+# every reviewer invocation — the --base flag and both prompt strings — reads initialState.diffBase
+# instead of the module-level baseSha; gate-result.json gains a diff_base_sha field recording exactly
+# what the gate used. ap-finish.sh reads that field and recomputes its live_diff_hash and feature_files
+# from it — no fallback to base_sha, because a fallback is a second source of truth, which is the
+# defect this closes. base_sha itself is untouched everywhere it does its actual job: assertBaseUsable
+# ()'s legitimacy check, the register-time HEAD==base_sha equality, BASE_DRIFT, dependency-landed-
+# before-base proofs and gate-result.json's own base_sha field — kept alongside diff_base_sha, not
+# replaced by it, because legitimacy and window are still two different questions, just no longer
+# answered by the same value.
+# Also closes three defects in autopilot-backlog-reconcile's close_by/scope guard logic, found the
+# same day by the same live slice's Codex review rounds — see that file's own v7 note.
 # v25 (2026-07-31) — the root the last three fixes were circling: `base_sha` was doing TWO jobs. One is
 # proving the review rests on a legitimate base — v21/v23 moved that to assertBaseUsable(), which checks
 # ancestry plus untouched scope. The other is marking where the slice's own work begins, and for THAT the

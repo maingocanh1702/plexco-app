@@ -541,7 +541,7 @@ function liveDiffState() {
     halt("WORKTREE_DIRTY", dirty.join(" | "));
   }
   const diff = runRaw("git", ["diff", "--binary", `${diffBase}...${liveHead}`], repo);
-  return { headSha: liveHead, files, diffHash: sha256(diff) };
+  return { headSha: liveHead, diffBase, files, diffHash: sha256(diff) };
 }
 
 const initialState = liveDiffState();
@@ -694,7 +694,7 @@ function runReview(kind, round, cleanMarker, findingsMarker, prompt) {
       stateDir,
       `gate-attempt-${attemptLabel}-${kind}-round-${String(round).padStart(2, "0")}${retrySuffix}.txt`,
     );
-    const result = spawnSync(reviewerPath, ["review", "--base", baseSha, prompt], {
+    const result = spawnSync(reviewerPath, ["review", "--base", initialState.diffBase, prompt], {
       cwd: repo,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -774,7 +774,7 @@ runVerificationGroup("canonical", verification.canonical);
 runVerificationGroup("e2e", verification.e2e);
 
 const codePrompt = [
-  `Review the exact non-empty diff against base ${baseSha} for correctness, regressions, tests and scope.`,
+  `Review the exact non-empty diff against base ${initialState.diffBase} for correctness, regressions, tests and scope.`,
   "Report every actionable finding before the verdict.",
   "The LAST non-empty line must be exactly one of:",
   "AUTOPILOT_CODE_VERDICT: CLEAN",
@@ -793,7 +793,7 @@ for (let round = 1; round <= codeReview.clean_rounds; round += 1) {
 
 if (securityReview.required) {
   const securityPrompt = [
-    `Security-review the exact non-empty diff against base ${baseSha}.`,
+    `Security-review the exact non-empty diff against base ${initialState.diffBase}.`,
     "Check trust boundaries, auth, secrets, permissions, external input, money and deployment effects.",
     "Report every actionable finding before the verdict.",
     "The LAST non-empty line must be exactly one of:",
@@ -831,6 +831,7 @@ writeFileSync(
     feature,
     base_ref: baseRef,
     base_sha: baseSha,
+    diff_base_sha: finalState.diffBase,
     head_sha: finalState.headSha,
     diff_sha256: finalState.diffHash,
     diff_files: finalState.files,

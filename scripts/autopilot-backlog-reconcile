@@ -1,5 +1,46 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 4
+# KIT_VERSION: 7
+# v7 (2026-07-31) — three defects in the close_by/scope guard logic, found by a live slice's Codex
+# review rounds the same day as the base_sha overload (see autopilot-scope-gate's v26 note). All three
+# were introduced by this author, in this file, while shipping the guards they broke.
+# (1) The ABUSE branch (scope contains a file that could carry a symbol) did `weak+=(...); continue`,
+# skipping the strict merged_probe check entirely — unlike the MALFORMED branch right above it, which
+# deliberately falls through. A task that is both wrongly abuse-flagged and genuinely merged had no
+# path to auto-flip: stuck as weak forever. Fixed to match MALFORMED exactly — no bucket, no continue,
+# let the strict rules classify it; adding a bucket here too would double-count it.
+# (2) scope_can_carry_symbol failed OPEN on empty/missing scope: the `for _p in $_s` loop never
+# executes on an empty string, so control fell straight through to `return 1` ("cannot carry a
+# symbol") and close_by was granted unchecked. A guard whose entire job is refusing an exemption it
+# cannot verify must fail CLOSED on absent input, not open. Now tracks whether the loop ever ran a
+# single iteration; empty/blank scope returns 0 ("treat as can-carry-a-symbol, refuse").
+# (3) The `*.config.*` exemption from v22 was written for eslint.config.mjs (a flat config array,
+# nothing probe-worthy) but the same wildcard also exempted next.config.mjs and vitest.config.ts,
+# both of which commonly carry real exported identifiers a merged_probe could reference. Narrowed to
+# eslint.config.* specifically, the case that motivated it; every other *.config.* basename is real
+# config-with-code and stays refused.
+# v6 (2026-07-30) — fixes a field-shift defect that v5 activated. The awk→bash handoff used TAB as its
+# delimiter, and bash classifies tab as "IFS whitespace": a run of them collapses into one delimiter no
+# matter what IFS is set to. A task with no `merged_probe` emits two consecutive empty fields, they
+# collapse, and every later field shifts LEFT BY TWO — so `close_by`'s value landed in the probe-file
+# variable and the task was reported as `? no merged_probe` instead of `⊘ manual-close`. That shape is
+# not an edge case: "no probe AND close_by" is the defining shape of the owner-evidence-gate class this
+# whole feature exists for, and the same shift also disabled the abuse guard for it. The defect was
+# latent long before v5 — harmless while pf/pr were the LAST two fields, because nothing followed them
+# to shift. Appending cb/sc made it reachable. Delimiter is now ASCII Unit Separator via octal `\037`
+# (bash 3.2 on macOS is the floor, so not `\x1f`); non-whitespace delimiters have no collapsing rule.
+# Found by the regression suite the consuming slice was writing — the tests caught it before the
+# reviewer ever saw the code, which is the outcome the tests-in-the-consumer split was designed for.
+# v5 (2026-07-30) — adds `close_by:`, a third classification beside "usable probe" and "authoring nit".
+# Before this, three whole task classes were permanently displayed as unfixed authoring defects:
+# dependency-security (a lockfile bump introduces no symbol — its version string is a shared literal
+# that collides with unrelated content already on the default branch), owner-evidence-gate (closed by
+# evidence, not by a commit) and docs-reconcile (hyphenated tokens fail is_symbol_probe by construction).
+# The script told all of them to "replace merged_probe with a code symbol this slice introduces" —
+# impossible advice, since no such symbol exists. Observed on Plexco deps-security-bump after it merged
+# cleanly at 61a2575: correct work, permanently reported as a defect, with the status flip left to be
+# done by hand every time. Two guards keep the new field from becoming a bypass: a MALFORMED declaration
+# (no reason given) falls back to the strict path and exempts nothing, and a declaration whose scope
+# contains a file that could carry a symbol is REFUSED outright — if you touch source, write a real probe.
 # autopilot-backlog-reconcile — derive backlog merged-status from CODE (ground truth), not the hand-typed field.
 #
 # WHY: backlog `status:` is hand-maintained; merges update INFLIGHT + code but the markdown field rots
@@ -99,13 +140,47 @@ is_symbol_probe() {
   return 0
 }
 
-# Parse blocks → emit "slug<TAB>status<TAB>probe_file<TAB>probe_regex" for status in planned|ready|blocked.
+# A THIRD state, besides "has a usable probe" and "authoring nit".
+#
+# Some tasks CANNOT have a discriminating probe, and no amount of authoring effort creates one:
+#   · dependency-security — a lockfile bump introduces no symbol; its version string is a shared
+#     literal that collides with unrelated content already on the default branch;
+#   · owner-evidence-gate — closed by evidence, not by a commit;
+#   · docs-reconcile — every scope token is hyphenated, so it fails is_symbol_probe by construction.
+# Before this, all three were reported as `✗ WEAK-PROBE … replace merged_probe with a code symbol this
+# slice introduces` — advice that is correct for most slices and impossible for these. The script had no
+# vocabulary to tell "the author was lazy" apart from "no valid probe exists", so a real limitation was
+# permanently displayed as an unfixed authoring defect.
+#
+# `close_by: hand · <one-line reason>` declares the limitation deliberately. Two guards keep it from
+# becoming a back door:
+#   1. MALFORMED (declared with no reason) falls back to the STRICT path and grants nothing. A broken
+#      field that loosens the rules would itself be the bypass.
+#   2. ABUSE (declared, but the scope contains a file that could carry a symbol) is refused. If your
+#      slice touches source, you can probe it — write a real probe.
+#
+# Parse blocks → "slug<TAB>status<TAB>probe_file<TAB>probe_regex<TAB>close_by<TAB>scope".
 # bash 3.2 (macOS default) has no `mapfile` → read into array with a portable loop.
+#
+# THE DELIMITER IS ASCII Unit Separator (0x1F), NOT TAB — and that is load-bearing.
+# Bash classifies space, tab and newline as "IFS whitespace": a run of them collapses into ONE
+# delimiter and leading/trailing ones are dropped, no matter what IFS is set to. So with a tab
+# delimiter, a task carrying no `merged_probe` emits two consecutive empty fields, they collapse, and
+# every field after shifts LEFT BY TWO — `close_by`'s value silently lands in the probe-file variable.
+# Measured: `slug<TAB>ready<TAB><TAB><TAB>hand · reason<TAB>[docs/a.md]` parses to
+# pf=[hand · reason] pr=[[docs/a.md]] cb=[] — a task declaring an intentional manual close is read as
+# a task with a probe it never wrote. A non-whitespace delimiter has no collapsing rule, so empty
+# fields stay empty. Octal `\037` rather than `\x1f`: bash 3.2 (macOS default) is the floor here.
+# This latent defect predates close_by — it was harmless while `pf`/`pr` were the LAST two fields,
+# because there was nothing after them to shift. Appending cb/sc is what made it reachable.
+SEP=$(printf '\037')
 ROWS=()
-while IFS= read -r line; do ROWS+=("$line"); done < <(awk '
-  function flush(){ if (slug!="" && (st=="planned"||st=="ready"||st=="blocked")) printf "%s\t%s\t%s\t%s\n", slug, st, pf, pr; slug="" }
-  /^## task:/ { flush(); slug=$3; gsub(/[()]/,"",slug); st=""; pf=""; pr="" }
+while IFS= read -r line; do ROWS+=("$line"); done < <(awk -v S="$SEP" '
+  function flush(){ if (slug!="" && (st=="planned"||st=="ready"||st=="blocked")) printf "%s%s%s%s%s%s%s%s%s%s%s\n", slug, S, st, S, pf, S, pr, S, cb, S, sc; slug="" }
+  /^## task:/ { flush(); slug=$3; gsub(/[()]/,"",slug); st=""; pf=""; pr=""; cb=""; sc="" }
   /^status:/  { st=$2 }
+  /^close_by:/ { cb=$0; sub(/^close_by:[[:space:]]*/,"",cb); gsub(S," ",cb) }
+  /^scope:/    { sc=$0; sub(/^scope:[[:space:]]*/,"",sc);    gsub(S," ",sc) }
   /^merged_probe:/ {
     line=$0; sub(/^merged_probe:[[:space:]]*/,"",line)
     n=split(line, a, /[[:space:]]*::[[:space:]]*/); if(n==2){ pf=a[1]; pr=a[2] }
@@ -113,10 +188,73 @@ while IFS= read -r line; do ROWS+=("$line"); done < <(awk '
   END { flush() }
 ' "$BL")
 
-stale=(); weak=()
+# A close_by declaration is well-formed when a REASON follows the `hand` keyword. `hand` alone, or
+# `hand` with only a separator after it, is MALFORMED — the reason is the entire point of the field.
+# The `·` in the documented form is CONVENTION, not syntax: a rule that hinges on one hard-to-type
+# character invents a fresh class of authoring error while protecting nothing. Any separator is accepted;
+# an absent reason is not.
+is_wellformed_close_by() {
+  case "$1" in
+    hand) return 1 ;;
+    hand[[:space:]]*) ;;
+    *) return 1 ;;
+  esac
+  _r="${1#hand}"
+  _r="$(printf '%s' "$_r" | tr -d '[:space:]·:-')"
+  [ -n "$_r" ]
+}
+
+# A scope entry that could carry a greppable symbol disqualifies close_by: write a real probe instead.
+# The test is CONFIG-vs-SOURCE, not file extension. Extension alone was wrong and blocked a live task:
+# eslint.config.mjs is `.mjs`, so it read as source and the guard refused a dependency slice that has
+# nothing symbol-like to probe — the same category as pnpm-workspace.yaml, which was already allowed.
+# Config filenames (`*.config.*`, dotfile rc files, lockfiles) join docs, data and manifests on the
+# allowed side; real source and bare scripts stay refused.
+scope_can_carry_symbol() {
+  _s="$(printf '%s' "$1" | tr ',[]' '   ')"
+  _seen=0
+  for _p in $_s; do
+    _seen=1
+    _b="${_p##*/}"
+    case "$_p" in docs/*|*.json|*.yaml|*.yml|*.lock|*.md|"") continue ;; esac
+    case "$_b" in eslint.config.*|.*rc|.*rc.*|*.lock) continue ;; esac
+    return 0
+  done
+  # Empty/missing scope tells us NOTHING — fail closed (treat as can-carry-a-symbol) rather than
+  # falling through to the "nothing here can carry a symbol" return below, which would silently grant
+  # the close_by exemption to a task that never declared a scope to check.
+  [ "$_seen" -eq 1 ] || return 0
+  return 1
+}
+
+stale=(); weak=(); manual=()
 # ${ROWS[@]+...} guard: under `set -u`, expanding an empty array errors on bash 3.2.
 for row in ${ROWS[@]+"${ROWS[@]}"}; do
-  IFS=$'\t' read -r slug st pf pr <<< "$row"
+  IFS="$SEP" read -r slug st pf pr cb sc <<< "$row"
+
+  if [ -n "$cb" ]; then
+    if ! is_wellformed_close_by "$cb"; then
+      # Fall through to the strict rules below — declaring the field badly must exempt nothing.
+      echo "  ✗ MALFORMED close_by: $slug ($st) — declared but the reason is missing or empty."
+      echo "       Treated as UNDECLARED; the strict probe rules still apply, nothing was exempted."
+      echo "       Fix: 'close_by: hand <one-line reason>' — the reason is the whole point of the field."
+      echo "       Any separator works; the · in the docs is convention, not syntax."
+      # Deliberately no bucket and no `continue`: the strict rules below classify it exactly as they
+      # would an entry with no close_by at all. Adding it here too would double-count it.
+    elif scope_can_carry_symbol "$sc"; then
+      echo "  ✗ close_by REFUSED: $slug ($st) — scope contains a file that can carry a symbol."
+      echo "       close_by exists for slices where no discriminating probe CAN exist (lockfile bumps,"
+      echo "       evidence gates, prose reconciles). Yours touches source — write a real merged_probe."
+      # Deliberately no bucket and no `continue`, same reasoning as MALFORMED above: abuse does not
+      # grant an exemption either, so the strict rules still run and can auto-flip a task that is both
+      # wrongly abuse-flagged and genuinely merged. Adding it here too would double-count it.
+    else
+      echo "  ⊘ manual-close: $slug ($st) — $cb"
+      manual+=("$slug")
+      continue
+    fi
+  fi
+
   if [ -z "$pf" ] || [ -z "$pr" ]; then
     echo "  ?  $slug ($st) — no merged_probe (can't auto-verify; add: merged_probe: <file> :: <symbol>)"
     continue
@@ -135,6 +273,8 @@ for row in ${ROWS[@]+"${ROWS[@]}"}; do
     echo "  ✓  $slug ($st) — genuinely pending (not on origin/$DEFAULT_BRANCH)"
   fi
 done
+
+[ "${#manual[@]}" -gt 0 ] && echo "NOTE: ${#manual[@]} task(s) declared close_by — intentional manual close, not a defect."
 
 if [ "${#stale[@]}" -eq 0 ] && [ "${#weak[@]}" -eq 0 ]; then
   echo "No stale entries."; exit 0
