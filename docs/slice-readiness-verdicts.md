@@ -14,6 +14,73 @@
 
 ---
 
+## Verdict 31 — `db-tenants-authz-grant-security-definer`: SECURITY DEFINER hẹp cho app đọc-khoá `tenants`, không grant thô (2026-07-31)
+
+> **Canonical block sống trong `docs/autopilot-db-tenants-authz-grant-security-definer.md`** (mode
+> `code-ready`, đó là coding handoff). Block dưới là **bản mirror trong tracker** — sửa một chỗ phải
+> sửa cả hai; nếu hai bên lệch, bản trong slice doc thắng.
+>
+> **Vấn đề đo được:** `authorizeTenantAction` (AP-40, merged `ddb69a9`) đúng logic nhưng role `app`
+> không gọi được — `grep -rniw "tenants" packages/db/migrations/*.sql | grep -i "GRANT\|REVOKE"`
+> **rỗng** trên toàn bộ 27 migration. Không sửa được bằng `GRANT SELECT` thô: đo thực nghiệm trực
+> tiếp trên PostgreSQL 16.14 đang chạy xác nhận `FOR SHARE` đòi quyền `UPDATE`, không chỉ `SELECT`.
+> Mà `GRANT UPDATE` thẳng lại mở đúng write path lên `tenants.status` mà AP-40 cố ý đóng (trust-safety
+> mechanism cho set+clear chưa tồn tại). Đường đúng — SECURITY DEFINER hẹp, đúng pattern
+> `0012_auth_functions.sql` — đã được chính docstring của `authorization.ts` (viết bởi tác giả AP-40)
+> nêu tên sẵn.
+>
+> **Hai phát hiện thu hẹp phạm vi, không có trong backlog note gốc:** (1) `subscriptions` đã có đủ
+> `SELECT/INSERT/UPDATE/DELETE` cho `app` (nằm trong vòng lặp `tenant_tables` của `0009`) — bước đọc
+> `subscriptions FOR SHARE` hiện tại của `authorizeTenantAction` **không cần sửa**, chỉ bước đọc
+> `tenants` bị chặn. (2) `tenants` không có RLS (`pg_class.relrowsecurity = false`) — hàm SECURITY
+> DEFINER không cần lo bypass RLS trên nó, chỉ cần bypass việc hoàn toàn không có grant. Hệ quả: đúng
+> MỘT hàm hẹp bọc đúng MỘT bảng, không phải một lớp bọc rộng hơn.
+>
+> **`verification.focused[0]` là một thực nghiệm Postgres SỐNG**, không phải trích dẫn — tạo temp
+> table + role scratch trong transaction riêng, test `FOR SHARE`, rollback vô điều kiện bất kể kết
+> quả. Chạy `ALWAYS` phải PASS kể cả trước khi implement (test tiền đề chung, độc lập với slice); nếu
+> nó bắt đầu FAIL, toàn bộ premise cho hướng SECURITY DEFINER cần đo lại, không phải lỗi implementation.
+>
+> **Điều verdict này KHÔNG chứng minh:** chưa có caller sản xuất nào gọi `authorizeTenantAction` — vẫn
+> vậy sau slice này. `CODE_READY` nghĩa là mở worktree được, không phải `IMPLEMENTED`.
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-31
+AUTHORITY_SHA: 66ae878572a66c9c97e6f8afefaefb89751ead16
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-db-tenants-authz-grant-security-definer.md
+  - docs/autopilot-manifests/db-tenants-authz-grant-security-definer.json
+  - packages/db/src/authorization.ts
+  - packages/db/migrations/0009_rls_policies_grants.sql
+  - packages/db/migrations/0012_auth_functions.sql
+SLICE: db-tenants-authz-grant-security-definer
+IN_SCOPE: one narrow SECURITY DEFINER function resolve_tenant_status_locked(uuid) wrapping the tenants FOR SHARE read authorizeTenantAction already performs, EXECUTE granted to app only; authorization.ts routed through it; app-role and negative-permission test coverage; README documentation
+OUT_OF_SCOPE: any GRANT of SELECT/UPDATE/INSERT/DELETE directly on tenants · any write path for tenants.status · changes to subscriptions grants/RLS (already correct) · changes to authorizeTenantAction's decision logic · wiring authorizeTenantAction into any route/caller · EXECUTE grant to app_worker/readonly · any second migration
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: authorize-tenant-action-core — MERGED ddb69a92aa8b60afb4644acf211dffe2c0091a1b, dep_checks proof pinned in manifest
+PRIOR_SLICES: authorize-tenant-action-core
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS
+SECURITY_AND_MIGRATION_GATE: PASS
+IMPLEMENTATION_ARTIFACTS: PASS
+FIRST_IMPLEMENTATION_STEP: re-verify the live migration tail is still 0026 (re-derive the next number if not), then create packages/db/migrations/00NN_resolve_tenant_status_locked.sql with the exact function shape pinned in the manifest's _design_contract, applying it FIRST before touching authorization.ts
+REMAINING_BLOCKERS: none
+```
+
+---
+
 ## Verdict 30 — `eslint-10-migration`: EOL-driven ESLint 9→10 upgrade, hai finding brace-expansion chứ không phải một (2026-07-31)
 
 > **Canonical block sống trong `docs/autopilot-eslint-10-migration.md`** (mode `code-ready`, đó là

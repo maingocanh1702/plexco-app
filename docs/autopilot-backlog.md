@@ -625,15 +625,19 @@ title: Cho app role gọi được authorizeTenantAction — SECURITY DEFINER h�
 status: ready
 risk: P1
 change_class: schema-migration
-depends_on: []
+depends_on: [authorize-tenant-action-core]
 invariants: [schema, auth, billing]
-scope: []
-manifest: null
-merged_probe: null
+scope: [packages/db/migrations/0027_resolve_tenant_status_locked.sql, packages/db/src/authorization.ts, packages/db/src/authorization.test.ts, packages/db/README.md, docs/autopilot-manifests/db-tenants-authz-grant-security-definer.json, docs/autopilot-db-tenants-authz-grant-security-definer.md]
+manifest: docs/autopilot-manifests/db-tenants-authz-grant-security-definer.json
+slice_doc: docs/autopilot-db-tenants-authz-grant-security-definer.md
+launcher: .claude/commands/ap-43-db-tenants-authz-grant-security-definer.md
+merged_probe: packages/db/src/authorization.ts :: resolve_tenant_status_locked
+verdict: `CODE_READY` 2026-07-31, `AUTHORITY_SHA 66ae878572a66c9c97e6f8afefaefb89751ead16`, closure 12/12 — verdict block nằm trong slice doc (`<!-- review-readiness: code-ready -->`), tracker entry ở `docs/slice-readiness-verdicts.md` (Verdict 31)
 notes: **CHẶN CỨNG slice caller đầu tiên. Phát hiện 30/07 trong AP-40, xác nhận bằng phép đo:** `grep -rn GRANT packages/db/migrations/*.sql | grep -w tenants` trả về **rỗng** — không một grant nào trên bảng `tenants` trong toàn bộ 27 migration. `authorizeTenantAction` đã merged tại `ddb69a9` và đúng logic, nhưng **app role không đọc nổi `tenants`**, nói gì tới khoá nó.
   **Và không được sửa bằng cách grant thẳng.** Postgres đòi quyền `UPDATE` cho *mọi* mệnh đề khoá, kể cả `FOR SHARE` — nên `GRANT SELECT` không đủ. Mà `GRANT UPDATE ON tenants TO app` sẽ **tự mở đúng write path** mà AP-40 cố ý đóng: `tenants.status` là trục tenant-root hard override, spec §3 pin rằng set ⊥ clear phải cùng một owner, và owner đó (trust-safety mechanism) **chưa tồn tại**. Grant thô là trao quyền ghi cột đó cho app role trước khi có bất kỳ ai chịu trách nhiệm về nó.
   **Đường đúng:** SECURITY DEFINER hẹp, đúng pattern codebase này đã dùng (`0012_auth_functions.sql`) — hàm sở hữu quyền, app role chỉ được `EXECUTE`, và bề mặt ghi vẫn bằng 0. Cần migration, nên nằm ngoài scope AP-40 một cách có chủ ý chứ không phải sót.
   **Kiểm trước khi author:** đừng tin dòng nào ở đây; chạy lại phép đo grant, và xác nhận `FOR SHARE` thật sự cần `UPDATE` trên phiên bản Postgres đang chạy chứ không chỉ theo tài liệu.
+  **CODE_READY 2026-07-31, cả hai phép đo trên đã chạy lại thật, không tin dòng cũ:** grant grep mở rộng ra toàn bộ 27 file (không chỉ mẫu ban đầu) — vẫn rỗng. `FOR SHARE` privilege requirement xác nhận bằng thực nghiệm trực tiếp trên PostgreSQL 16.14 đang chạy (tạo role scratch thật, không suy từ tài liệu Postgres) — `verification.focused[0]` trong manifest LÀ chính thực nghiệm này, chạy lại được mỗi lần gate chạy, không phải một lần rồi thôi. Hai phát hiện thu hẹp phạm vi, không có trong bản gốc: `subscriptions` đã có đủ grant cho `app` (vòng lặp `tenant_tables` của `0009`) nên KHÔNG cùng cảnh ngộ với `tenants`; và `tenants` không có RLS (`pg_class.relrowsecurity=false`) nên hàm không cần lo bypass gì. `depends_on` nay khai đúng `authorize-tenant-action-core` (đã merged `ddb69a9`) với `dep_checks` pin đủ base/landed SHA + symbol trong manifest. Slice doc: `docs/autopilot-db-tenants-authz-grant-security-definer.md`. Launcher: `ap-43`.
 
 ## task: docs-billing-authz-signature-reconcile
 title: Reconcile chữ ký authorizeTenantAction trong spec billing §3 — code đã merge nhận transaction

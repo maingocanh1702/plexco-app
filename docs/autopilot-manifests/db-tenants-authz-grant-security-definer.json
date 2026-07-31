@@ -1,0 +1,127 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — deliberately carries NO manifest_schema_version; adding it makes register HALT CONTRACT_INVALID. The runtime manifest is generated at register time into .autopilot/state/<feature>/manifest.json from _TEMPLATE.json.",
+  "task_id": "plexco:db-tenants-authz-grant-security-definer",
+  "feature": "db-tenants-authz-grant-security-definer",
+  "branch": "feat/db-tenants-authz-grant-security-definer",
+  "base_ref": "origin/main",
+  "risk": "P1",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": ["authorize-tenant-action-core"],
+  "dep_checks": [
+    {
+      "feature": "authorize-tenant-action-core",
+      "base_sha": "55970df7f8ede29af9d6d0caac7e0610ed2dff78",
+      "landed_sha": "ddb69a92aa8b60afb4644acf211dffe2c0091a1b",
+      "file": "packages/db/src/authorization.ts",
+      "symbol": "authorizeTenantAction"
+    }
+  ],
+  "_dependency_note": "authorize-tenant-action-core is MERGED at ddb69a92aa8b60afb4644acf211dffe2c0091a1b (single, non-merge commit; verified 2026-07-31 that packages/db/src/authorization.ts does not exist at its parent 55970df7f8ede29af9d6d0caac7e0610ed2dff78 and exists with the symbol at the landed SHA). This slice edits that file directly, so the dependency is real and hard, not a formality.",
+  "invariants": ["schema", "auth", "billing"],
+  "_invariant_note": "schema: this slice adds exactly one new migration (unlike authorize-tenant-action-core, which deliberately excluded schema because it added none). auth: the closest existing token for an authorization-boundary change; authorize-tenant-action-core's own docs-billing-authz-signature-reconcile follow-up already flagged that both prior slices in this area missed this token and should have used it. billing: this slice's SECURITY DEFINER function reads the same billing-owned tenants/subscriptions tables authorize-tenant-action-core reads, for consistent serialization with that lineage.",
+  "scope": [
+    "packages/db/migrations/0027_resolve_tenant_status_locked.sql",
+    "packages/db/src/authorization.ts",
+    "packages/db/src/authorization.test.ts",
+    "packages/db/README.md",
+    "docs/autopilot-manifests/db-tenants-authz-grant-security-definer.json",
+    "docs/autopilot-db-tenants-authz-grant-security-definer.md"
+  ],
+  "_scope_note": "The slice doc and this manifest are IN scope on purpose (AP-39/AP-40 lesson). The migration filename 0027 is the NEXT MONOTONIC TAIL MEASURED 2026-07-31 (live tail is 0026); re-verify at execution time -- if another migration-adding slice landed first, the correct next number has moved and this scope must be corrected (re-register), not silently worked around by picking whatever number is free.",
+  "negative_scope": [
+    "NO GRANT SELECT/UPDATE/INSERT/DELETE directly on the tenants table to app or any role -- that is exactly the write path this slice exists to avoid opening (see _problem)",
+    "NO write path for tenants.status -- the SECURITY DEFINER function is READ-ONLY (FOR SHARE only), never UPDATE; the trust-safety mechanism that must own set+clear together does not exist yet, same negative scope authorize-tenant-action-core already pinned",
+    "NO changes to subscriptions grants or RLS -- already correct (app already has full SELECT/INSERT/UPDATE/DELETE via the 0009 tenant_tables loop, verified 2026-07-31 against information_schema.role_table_grants); do not touch",
+    "NO change to authorizeTenantAction's decision logic -- the 6-case table and allow/deny branches are unchanged; only the tenants-row data-access mechanism changes, from a raw SELECT to a function call, and the resulting behavior must be identical for every existing test",
+    "NO wiring authorizeTenantAction into any route or caller -- this slice makes the existing choke-point actually callable by the app role; it does not add the first production caller",
+    "NO EXECUTE grant to app_worker or readonly -- only app calls authorizeTenantAction today",
+    "NO second migration -- exactly one new .sql file",
+    "NO edit to 0012_auth_functions.sql or any other applied migration",
+    "NO general audit or fix of every table with zero app grants -- scope is exactly the tenants read this slice's own title names, not a broader access-control sweep"
+  ],
+  "context_sources": [
+    "packages/db/src/authorization.ts",
+    "packages/db/migrations/0012_auth_functions.sql",
+    "packages/db/migrations/0009_rls_policies_grants.sql",
+    "packages/db/src/authorization.test.ts",
+    "packages/db/src/test-harness.ts",
+    "docs/autopilot-authorize-tenant-action-core.md"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "none",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [
+      "cd packages/db && node -e 'const pg=require(\"pg\");const client=new pg.Client({connectionString:process.env.DATABASE_URL_TEST||\"postgres://plexco:plexco_dev@localhost:5432/plexco_test\"});(async()=>{await client.connect();const roleName=\"zz_probe_role_ver_\"+process.pid;try{await client.query(\"BEGIN\");await client.query(\"CREATE TEMP TABLE zz_probe_fs (id int)\");await client.query(\"INSERT INTO zz_probe_fs VALUES (1)\");await client.query(`CREATE ROLE ${roleName} NOLOGIN`);await client.query(`GRANT SELECT ON zz_probe_fs TO ${roleName}`);await client.query(`SET ROLE ${roleName}`);await client.query(\"SELECT * FROM zz_probe_fs FOR SHARE\");console.error(\"PROBE FAILED: a SELECT-only role successfully ran FOR SHARE\");process.exitCode=1;}catch(err){if(/permission denied/i.test(err.message)){console.log(\"PROBE OK:\",err.message);}else{console.error(\"PROBE INCONCLUSIVE:\",err.message);process.exitCode=1;}}finally{await client.query(\"ROLLBACK\").catch(()=>{});await client.end();}})();'",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -q \"SECURITY DEFINER\" \"$F\" && grep -qE \"GRANT EXECUTE ON FUNCTION resolve_tenant_status_locked\" \"$F\" && grep -q \"TO app\" \"$F\" && ! grep -qE \"GRANT[^;]*ON tenants \" \"$F\"",
+      "grep -q \"resolve_tenant_status_locked\" packages/db/src/authorization.ts && ! grep -q \"FROM tenants\" packages/db/src/authorization.ts",
+      "grep -q \"FROM subscriptions\" packages/db/src/authorization.ts && grep -q \"FOR SHARE\" packages/db/src/authorization.ts",
+      "grep -q \"appDb\" packages/db/src/authorization.test.ts",
+      "grep -q \"resolve_tenant_status_locked\" packages/db/README.md",
+      "! (grep -rniw \"tenants\" packages/db/migrations/*.sql | grep -i \"GRANT\\|REVOKE\")"
+    ],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm review:check:changed",
+      "pnpm build",
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_verification_note": "Command 1 is a LIVE, self-contained empirical re-proof of the load-bearing technical premise this whole slice rests on -- that PostgreSQL requires more than SELECT for FOR SHARE -- run against whatever Postgres version is actually running, not cited from documentation. It creates a temp table and a scratch role inside its own transaction and rolls back unconditionally, so it leaves zero footprint regardless of outcome; it is independent of this slice's own changes and must ALWAYS pass, both before and after implementation (if it ever starts failing, the entire premise for the SECURITY DEFINER approach needs re-deriving, not just this slice). Commands 2-6 are the real implementation checks; tested 2026-07-31 against the pre-implementation tree and confirmed to fail in exactly the places implementation is missing (2, 3, 5, 6) while the two properties that must hold regardless (4: subscriptions access unchanged; and the master negative-scope guard folded into 2 and standalone as 7 -- no GRANT/REVOKE anywhere in any migration ever mentions the bare word 'tenants') already pass today and must keep passing. Every command was executed via the exact spawnSync('/bin/bash',['-lc', command]) mechanism autopilot-review-readiness.mjs uses, round-tripped through JSON, not merely composed.",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 2
+  },
+  "security_review": {
+    "required": true,
+    "reason": "creates a SECURITY DEFINER function and its EXECUTE grant on a tenant-root authorization table (tenants); direct trust-boundary/access-control change on the choke-point authorize-tenant-action-core established. The exact failure mode this slice must not reopen -- granting app a write path to tenants.status -- is a money-adjacent, tenant-isolation-adjacent risk.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 120,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "REQUIRED_TOOL_UNAVAILABLE",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "the live migration tail has advanced past 0026 when the worktree opens -- re-derive the correct next number and correct scope/register rather than picking whatever is free",
+    "the FOR SHARE-requires-UPDATE premise (verification.focused command 1) is found to be false on the Postgres version actually running -- that would mean the SECURITY DEFINER approach itself needs re-deriving, an owner question",
+    "resolve_tenant_status_locked is found to need to return more than the status column, or to need any table besides tenants",
+    "any existing authorization.test.ts assertion changes behavior when run through ctx.appDb instead of ctx.superuserDb, beyond the permission gap this slice closes"
+  ],
+  "_problem": "authorizeTenantAction (packages/db/src/authorization.ts, merged ddb69a9) is correct and tested, but the app role cannot actually call it. Measured 2026-07-31: `grep -rniw \"tenants\" packages/db/migrations/*.sql | grep -i \"GRANT\\|REVOKE\"` returns EMPTY across all 27 migrations -- zero grants of any kind on the tenants table, to any role. This is not an oversight to patch with a blanket GRANT: PostgreSQL requires UPDATE privilege (not just SELECT) to run ANY row-locking clause including FOR SHARE, empirically re-confirmed 2026-07-31 on the actually-running PostgreSQL 16.14 (a SELECT-only test role fails with 'permission denied' on FOR SHARE, succeeds on plain SELECT). So `GRANT SELECT ON tenants TO app` would not be enough, and `GRANT UPDATE ON tenants TO app` would open exactly the write path authorize-tenant-action-core's own negative scope deliberately left closed: tenants.status is the tenant-root hard-override axis, and the trust-safety mechanism that must own set-and-clear together for it does not exist yet. authorization.ts's own docstring (lines 74-95, written by the prior slice's author) already names the correct fix: a narrow SECURITY DEFINER function in the style already used for every other app-restricted privileged read in this codebase (tenant_provision, auth_login_telegram, etc., 0012_auth_functions.sql) -- grant EXECUTE on a function that runs the locking read, not GRANT SELECT/UPDATE on the table itself.",
+  "_why_only_tenants_and_not_subscriptions_too": "Measured 2026-07-31 against information_schema.role_table_grants: app already holds SELECT, INSERT, UPDATE and DELETE on subscriptions (it is in the 0009_rls_policies_grants.sql tenant_tables loop, the 'billing (tenant-scoped subset)' comment names it explicitly). subscriptions already has UPDATE, so its existing raw `SELECT ... FOR SHARE` in authorization.ts already works for the app role today and must not be touched. tenants is NOT in that loop -- it is the tenant ROOT table, not a tenant-scoped child table, so it was never a candidate for the RLS+grant-loop pattern in the first place (its rows ARE the tenants, so scoping it by app.tenant_id would be structurally wrong). Confirmed via pg_class that tenants has relrowsecurity=false and relforcerowsecurity=false -- it has no RLS at all, unlike subscriptions (both true). This means the SECURITY DEFINER function does not need to worry about bypassing RLS on tenants (there is none to bypass); it only needs to bypass the total absence of any grant.",
+  "_design_contract": "Exactly one new function in exactly one new migration, following the 0012 pattern verbatim: `CREATE OR REPLACE FUNCTION resolve_tenant_status_locked(p_tenant_id uuid) RETURNS TABLE (status text) LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $$ SELECT status FROM tenants WHERE id = p_tenant_id FOR SHARE; $$; REVOKE ALL ON FUNCTION resolve_tenant_status_locked(uuid) FROM PUBLIC; GRANT EXECUTE ON FUNCTION resolve_tenant_status_locked(uuid) TO app;` -- LANGUAGE sql (not plpgsql) because the body is a single statement, matching auth_resolve_web_session's own shape in 0012. authorization.ts's first query changes from `SELECT status FROM tenants WHERE id = ${tenantId} FOR SHARE` to `SELECT status FROM resolve_tenant_status_locked(${tenantId})` -- a set-returning function called in the FROM position, valid Postgres syntax, no other change to authorization.ts's control flow. The FOR SHARE lock acquired inside a SECURITY DEFINER function is held for the remainder of the CALLING transaction (Postgres functions do not open their own transaction), so the existing 'lock survives past authorizeTenantAction's return' test must keep passing unmodified -- this is not this slice's decision to make differently.",
+  "_test_contract": "authorization.test.ts must gain coverage proving the fix from the REAL caller identity, not just the superuser connection the existing suite uses throughout (its own top-of-file comment already names this exact gap as a known follow-up for 'whoever wires the first real (app-role) caller' -- that is this slice). At minimum: one allow-path case and one deny-path case run through `ctx.appDb.db` instead of `ctx.superuserDb.db`, proving authorizeTenantAction actually succeeds end-to-end as the app role would really call it. Additionally, a regression test proving the app role still CANNOT run a raw `UPDATE tenants SET status = ...` or a raw `SELECT ... FOR SHARE` directly against tenants (bypassing the function) -- the write path and the raw-table read path must both remain closed; only the function call path opens.",
+  "_acceptance": {
+    "DBG-1": "Happy — app role, tenant active + subscription active, called through authorizeTenantAction(ctx.appDb.db-backed tx, ...) — allow, mirrors case 3, but through the real app-role connection this slice exists to unblock",
+    "DBG-2": "Happy — app role, a deny case (e.g. tenant suspended) — deny TENANT_SUSPENDED, through ctx.appDb, mirrors case 1",
+    "DBG-3": "Regression — the full existing A/B/C/D/E acceptance suite (case 1..4, C1/C2, D1, E1/E2/E3) still passes unchanged through ctx.superuserDb — decision logic must be byte-identical, only the data-access mechanism for the tenants read changed",
+    "DBG-4": "Concurrency — the FOR SHARE lock acquired via resolve_tenant_status_locked still blocks a competing FOR UPDATE/SKIP LOCKED writer exactly as before, and the lock still survives past authorizeTenantAction's return into the caller's own transaction (mirrors the existing 'lock survives past return' test, now also proven through the function-wrapped path)",
+    "DBG-5": "AuthZ/security (negative) — app role still CANNOT run a raw `SELECT ... FROM tenants ... FOR SHARE` or any `UPDATE tenants` directly (bypassing the function) — permission denied in both cases; the only opened surface is EXECUTE on the one narrow function",
+    "DBG-6": "Migration — exactly one new .sql file; contains SECURITY DEFINER, REVOKE ALL ... FROM PUBLIC, and GRANT EXECUTE ... TO app; contains no GRANT of SELECT/UPDATE/INSERT/DELETE on the tenants table to any role",
+    "DBG-7": "Security — the FOR SHARE-requires-more-than-SELECT premise is empirically re-proven live against the actually-running Postgres version (verification.focused command 1), not cited from a prior measurement or from documentation",
+    "DBG-8": "Documentation — packages/db/README.md names resolve_tenant_status_locked and the access pattern it closes, following the file's own established per-migration documentation convention",
+    "DBG-9": "Regression — full CI command list green (typecheck, format:check, review:check, lint, build, DB suite with its canonical env); workspace test count grows only by the new app-role and negative-permission tests this slice adds, never shrinks"
+  },
+  "_evidence_rules": "Re-measure at execution time; do not trust any number, SHA, or migration filename written in this manifest or the slice doc as still current. Re-run `grep -rniw \"tenants\" packages/db/migrations/*.sql | grep -i \"GRANT\\|REVOKE\"` before writing the migration, not after, to confirm nothing else landed a grant in the meantime. Re-confirm the FOR SHARE privilege requirement against the Postgres version actually running (verification.focused command 1 IS this re-confirmation, not a formality to skip). Re-confirm subscriptions' existing app grants via information_schema.role_table_grants rather than trusting this manifest's claim. Cite acceptance rows by ID (DBG-N); do not restate their content in code comments."
+}
