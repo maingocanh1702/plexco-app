@@ -1,5 +1,15 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 22
+# KIT_VERSION: 23
+# v23 (2026-07-31) — v21 fixed one of TWO copies of the BASE_STALE rule. The pre-flight copy got the new
+# ancestry+scope logic; a second copy inside liveDiffState() — the one `ready` actually passes through —
+# kept exact equality. So the fix looked landed, was verified in the file, and changed nothing for the
+# slice that needed it; the only clue was that the halt message did not match either new condition.
+# Both call sites now share ONE function, assertBaseUsable(). The rule has a single definition, so the
+# next change to it cannot land in half the places.
+# How the duplicate survived v21: the author searched for BASE_STALE and piped the result through
+# `head`, then read the truncated output as the complete set. Truncated output is not exhaustive output —
+# the same failure shape as reading an empty query result as an empty world, which this kit already
+# records. When enumerating call sites of a rule you are about to change, print all of them.
 # v22 (2026-07-31) — two findings from the first codex round to reach the close_by logic. One was a real
 # bug, one was a doc/code mismatch resolved on the doc side.
 # (1) REAL: the close_by abuse guard tested file EXTENSION rather than config-vs-source, so
