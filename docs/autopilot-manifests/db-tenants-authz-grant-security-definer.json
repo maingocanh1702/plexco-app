@@ -24,11 +24,13 @@
     "packages/db/migrations/0027_resolve_tenant_status_locked.sql",
     "packages/db/src/authorization.ts",
     "packages/db/src/authorization.test.ts",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/src/rls-invariants.test.ts",
     "packages/db/README.md",
     "docs/autopilot-manifests/db-tenants-authz-grant-security-definer.json",
     "docs/autopilot-db-tenants-authz-grant-security-definer.md"
   ],
-  "_scope_note": "The slice doc and this manifest are IN scope on purpose (AP-39/AP-40 lesson). The migration filename 0027 is the NEXT MONOTONIC TAIL MEASURED 2026-07-31 (live tail is 0026); re-verify at execution time -- if another migration-adding slice landed first, the correct next number has moved and this scope must be corrected (re-register), not silently worked around by picking whatever number is free.",
+  "_scope_note": "The slice doc and this manifest are IN scope on purpose (AP-39/AP-40 lesson). The migration filename 0027 is the NEXT MONOTONIC TAIL MEASURED 2026-07-31 (live tail is 0026); re-verify at execution time -- if another migration-adding slice landed first, the correct next number has moved and this scope must be corrected (re-register), not silently worked around by picking whatever number is free. migrate.test.ts and rls-invariants.test.ts were added to scope during implementation, not at authoring: adding migration file 0027 (the 28th migration file counting 0000-0027) bumps two hardcoded MIGRATION_COUNT/tail-filename literals that must move with it, the exact same class of fix db-undeclared-check-constraints-schema-mirror needed for its own migration (whose scope correctly included both files from the start). This slice's original authoring omitted them -- discovered when the canonical DB suite went red with 8 failures, all pinned-literal mismatches, none in this slice's own new code. Corrected via close (--authorized-close) and fresh register on the same branch/commits, not by editing scope post-registration (would HALT MANIFEST_DRIFT) or by touching the files pre-registration (would HALT SCOPE_DRIFT).",
   "negative_scope": [
     "NO GRANT SELECT/UPDATE/INSERT/DELETE directly on the tenants table to app or any role -- that is exactly the write path this slice exists to avoid opening (see _problem)",
     "NO write path for tenants.status -- the SECURITY DEFINER function is READ-ONLY (FOR SHARE only), never UPDATE; the trust-safety mechanism that must own set+clear together does not exist yet, same negative scope authorize-tenant-action-core already pinned",
@@ -38,7 +40,8 @@
     "NO EXECUTE grant to app_worker or readonly -- only app calls authorizeTenantAction today",
     "NO second migration -- exactly one new .sql file",
     "NO edit to 0012_auth_functions.sql or any other applied migration",
-    "NO general audit or fix of every table with zero app grants -- scope is exactly the tenants read this slice's own title names, not a broader access-control sweep"
+    "NO general audit or fix of every table with zero app grants -- scope is exactly the tenants read this slice's own title names, not a broader access-control sweep",
+    "migrate.test.ts/rls-invariants.test.ts edits are limited to the MIGRATION_COUNT/tail-filename literals the 28th migration file mechanically forces -- no other assertion in either file changes"
   ],
   "context_sources": [
     "packages/db/src/authorization.ts",

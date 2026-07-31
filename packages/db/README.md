@@ -432,6 +432,24 @@ acked rows stop accumulating in it — this is the actual fix for the starvation
 projector actually required for the event's type, and pass that exact set as
 `p_required_projectors`. Full design reasoning: `docs/autopilot-manifests/db-outbox-ack-marker.json`.
 
+## Tenant-root privileged read (`0027`, AP-43)
+
+`tenants` is the tenant ROOT table — it has no `tenant_id` column to scope by, so it was never a
+candidate for the `0009` `tenant_tables` RLS+grant loop, and `app` holds zero privileges on it
+(`pg_class.relrowsecurity = false`: there is no RLS to bypass here, only an absent grant to close).
+`authorizeTenantAction` (`authorization.ts`) always needed a locking `SELECT ... FOR SHARE` on
+`tenants.status`, but PostgreSQL requires UPDATE privilege for any row-locking clause, not just
+SELECT — and giving `app` UPDATE on `tenants` would open a write path to `tenants.status`, the
+tenant-root hard-override axis, before a trust-safety mechanism owning both its set and clear exists.
+
+`0027` closes the gap the same way `0012` closes it for every other `app`-restricted privileged
+read: `resolve_tenant_status_locked(uuid)`, a narrow `SECURITY DEFINER`, `LANGUAGE sql` function
+that runs exactly that locking read and returns only `status`; `REVOKE ALL ... FROM PUBLIC` then
+`GRANT EXECUTE ... TO app`. No `GRANT`/`REVOKE` naming the `tenants` table itself exists anywhere in
+the migration history — `app`'s only access to the `tenants` locking status-read path is through this
+one function (`tenant_provision`, `0012`, already covers tenant creation/lookup separately, via its
+own SECURITY DEFINER privileges rather than a table grant).
+
 ## Open items inherited from docs (not blockers)
 
 - `messenger_*` is post-MVP (P4.8, DD-09) — included for forward compatibility.

@@ -60,6 +60,10 @@ CONTEXT_SOURCES:
 APPLICABLE_SKILLS: none.
 SCOPE: packages/db/migrations/0027_resolve_tenant_status_locked.sql (mới; SỐ ĐO 2026-07-31, xác nhận
   lại tail thật lúc mở worktree) · packages/db/src/authorization.ts · packages/db/src/authorization.test.ts ·
+  packages/db/src/migrate.test.ts · packages/db/src/rls-invariants.test.ts (2 file thêm vào lúc triển
+  khai — file migration 0027 (file migration thứ 28, đếm 0000-0027) buộc phải cập nhật literal
+  MIGRATION_COUNT/tail filename hardcode ở cả hai,
+  cùng lớp fix db-undeclared-check-constraints-schema-mirror đã cần cho migration 0026 của nó) ·
   packages/db/README.md · docs/autopilot-manifests/db-tenants-authz-grant-security-definer.json ·
   docs/autopilot-db-tenants-authz-grant-security-definer.md
 NEGATIVE_SCOPE:
@@ -75,6 +79,8 @@ NEGATIVE_SCOPE:
   - KHÔNG sửa `0012_auth_functions.sql` hay bất kỳ migration đã áp dụng nào khác.
   - KHÔNG audit/sửa rộng hơn mọi bảng có zero grant `app` — đúng phạm vi bước đọc `tenants` mà tên
     slice đã nêu, không phải một sweep access-control tổng quát.
+  - Sửa `migrate.test.ts`/`rls-invariants.test.ts` CHỈ giới hạn ở literal MIGRATION_COUNT/tail
+    filename mà file migration thứ 28 buộc phải đổi — không đổi assertion nào khác trong hai file đó.
 RISK: P1 (authorization boundary trên bảng tenant-root · nếu sai, mở đúng write path AP-40 cố ý đóng)
 AUTONOMY_MODE: supervised
 MODEL_POLICY: code gate = `scripts/codex-review-pin.sh`, 2 vòng clean liên tiếp (P1). **Bắt buộc thêm
@@ -196,7 +202,7 @@ REMAINING_BLOCKERS: none
 |---|---|---|---|
 | 1 | Authority pin theo SHA | `66ae878` (ancestor-of-main) + `TARGET_FILES` liệt kê exact, không glob | PASS |
 | 2 | Decision trong scope đã chốt | negative scope của AP-40 (trust-safety write path chưa tồn tại) + thực nghiệm Postgres thật khoá hướng SECURITY DEFINER hẹp, không grant thô | PASS |
-| 3 | Scope IN/OUT và owner rõ | manifest `scope` 6 file exact + `negative_scope` 9 mục | PASS |
+| 3 | Scope IN/OUT và owner rõ | manifest `scope` 8 file exact (2 file test literal-bump thêm lúc triển khai) + `negative_scope` 10 mục | PASS |
 | 4 | Dependency phân loại đủ | `authorize-tenant-action-core` MERGED, `dep_checks` pin base `55970df`/landed `ddb69a9`/symbol `authorizeTenantAction`, verify được bằng `git show` trực tiếp | PASS |
 | 5 | Live schema/code khớp doc | `pg_class`, `information_schema.role_table_grants`, thực nghiệm FOR SHARE — tất cả đo trực tiếp 2026-07-31 trên Postgres 16.14 đang chạy | PASS |
 | 6 | Data/auth contract đủ | chữ ký hàm + body pin đúng trong `_design_contract`; `authorization.ts`'s FROM-position function call thay raw SELECT đã pin | PASS |
@@ -218,3 +224,4 @@ là mở worktree được, không phải `IMPLEMENTED`.
 | Ngày | Version | Thay đổi |
 |---|---|---|
 | 31/07/2026 | v0.1 | Author manifest + slice doc từ backlog block đã mở sẵn (30/07). Đo lại cả hai tiền đề backlog note yêu cầu re-verify thay vì tin: grant grep mở rộng ra toàn bộ 27 migration (không chỉ 2 file), và privilege requirement của `FOR SHARE` xác nhận bằng thực nghiệm trực tiếp trên Postgres 16.14 đang chạy (tạo role thật, không suy từ tài liệu). Phát hiện thêm không có trong backlog note gốc: `subscriptions` đã có đủ grant cho `app` (không cùng cảnh ngộ với `tenants`) và `tenants` không có RLS — cả hai thu hẹp đúng phạm vi sửa chữa xuống một hàm duy nhất bọc một bảng duy nhất. `verification.focused` command đầu tiên là một thực nghiệm Postgres sống (tạo role scratch, test, rollback vô điều kiện) chứ không phải trích dẫn — đã chạy qua `spawnSync` y hệt gate, round-trip qua JSON, trước khi commit. |
+| 31/07/2026 | v0.2 | Implementation. Registration hit two stale `INFLIGHT.md` entries (`authorize-tenant-action-core`, `db-undeclared-check-constraints-schema-mirror`) blocking `DEP_MISSING`/would-be `SCOPE_COLLISION` — both already merged on `main` but never closed via `ap-finish.sh` because of a real bug in its `registry_status()` (unconditional accumulator reset, only the LAST `INFLIGHT.md` block resolved correctly); fixed upstream across kit v20–v24, closed with `--squash-verified`/`--authorized-close`, this slice rebased through each sync with net-empty diffs each time. Scope gap found after implementation: adding migration 0027 bumps two hardcoded `MIGRATION_COUNT`/tail-filename literals in `packages/db/src/migrate.test.ts` and `rls-invariants.test.ts` — the same class of fix `db-undeclared-check-constraints-schema-mirror` needed and correctly scoped for; this slice's authored scope omitted both. Corrected via close (`--authorized-close`) + fresh register on the same commits, not by editing scope post-registration. Separately, unrelated to this slice: `ap-merge.sh` step 8b reconciles `docs/autopilot-backlog.md` after a merge but never clears `.autopilot/INFLIGHT.md` — the same staleness class as the `registry_status()` bug, in a different file; owner is tracking it as its own backlog item, not fixed here. |

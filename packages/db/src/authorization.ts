@@ -71,27 +71,22 @@ const DENY: AuthorizationDecision = { allowed: false, code: "TENANT_SUSPENDED" }
  * No internal try/catch: a query failure (bad connection, RLS/grant denial,
  * etc.) propagates as a rejected promise and can never collapse into allow.
  *
- * NOTE for the slice that first wires a real caller: the `app` role
- * currently has no grant on `tenants` at all (unlike the analogous
- * platform-tier `plans`/`sports` tables, which get SELECT — only
- * subscriptions is covered by the tenant_tables RLS+grant loop in 0009).
- * A plain `GRANT SELECT` would NOT be enough to fix this: PostgreSQL
+ * The `tenants` read below goes through `resolve_tenant_status_locked`
+ * (0027, AP-43) — a narrow SECURITY DEFINER function, not a grant on the
+ * table itself. `app` holds no direct privilege on `tenants` at all (unlike
+ * the analogous platform-tier `plans`/`sports` tables, which get SELECT —
+ * only `subscriptions` is covered by the tenant_tables RLS+grant loop in
+ * 0009). A plain `GRANT SELECT` would not have been enough: PostgreSQL
  * requires UPDATE privilege (not just SELECT) to run any row-locking clause
  * — FOR SHARE included, not only FOR UPDATE — because the lock can block
- * other writers regardless of lock strength. But `app` granted raw UPDATE
- * on `tenants` would ALSO be a real regression, not just an overly broad
- * grant: it would open exactly the write path to `tenants.status` this
- * slice's negative scope says must not exist yet (the trust-safety
- * mechanism that owns set+clear together). The fix that avoids both
- * problems is a narrow SECURITY DEFINER function in the style already used
- * for every other `app`-restricted privileged read in this codebase
- * (tenant_provision, auth_login_telegram, etc., 0012) — grant EXECUTE on a
- * function that runs the locking read, not GRANT SELECT/UPDATE on the table
- * itself. That is a migration, out of this slice's negative scope (both
- * columns already exist; no new .sql file here). This resolver is written
- * and tested to be correct once that access path lands; until then, calling
- * it with an `app`-role tx will fail with a Postgres permission error at
- * the tenants read, not a wrong authorization decision.
+ * other writers regardless of lock strength. Granting `app` raw UPDATE on
+ * `tenants` would instead have been a real regression, not just an overly
+ * broad grant: it would open the write path to `tenants.status` that must
+ * stay closed until a trust-safety mechanism owning set+clear together
+ * exists (AP-40's negative scope, still true today). The function runs the
+ * identical locking read this resolver always performed and returns only
+ * the `status` column — see
+ * `packages/db/migrations/0027_resolve_tenant_status_locked.sql`.
  */
 export async function authorizeTenantAction(
   tx: Tx,
@@ -105,7 +100,7 @@ export async function authorizeTenantAction(
   }
 
   const tenantResult = await tx.execute(
-    sql`SELECT status FROM tenants WHERE id = ${tenantId} FOR SHARE`,
+    sql`SELECT status FROM resolve_tenant_status_locked(${tenantId})`,
   );
   const tenantRows = tenantResult.rows as { status: string }[];
   const tenantStatus = tenantRows[0]?.status;

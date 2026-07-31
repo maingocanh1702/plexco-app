@@ -17,16 +17,10 @@ import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
  * feature_billing_lifecycle_tech.md §3 Status Authority. Cross-reference,
  * don't copy: reading the spec's case content here is how it goes stale.
  *
- * Runs against `ctx.superuserDb` rather than the real `app`-role connection:
- * the `app` role currently has no grant on `tenants` at all (unlike the
- * analogous platform-tier `plans`/`sports`, which get SELECT — only
- * `subscriptions` is covered by the tenant_tables RLS+grant loop in 0009),
- * and a locking read needs UPDATE privilege on top of that, not just
- * SELECT (PostgreSQL requires UPDATE for any row-locking clause, FOR SHARE
- * included). See the NOTE on authorizeTenantAction itself for why the right
- * fix is a narrow SECURITY DEFINER function, not a raw grant — the gap is
- * flagged in this slice's READY report as a follow-up for whoever wires the
- * first real (`app`-role) caller.
+ * Runs against `ctx.superuserDb` — this suite exercises decision-logic
+ * regression (DBG-3: behavior must stay byte-identical across AP-43), which
+ * is orthogonal to which role reads `tenants`. Real app-role coverage lives
+ * in the "app-role access through resolve_tenant_status_locked" suite below.
  */
 
 let ctx: RlsTestContext;
@@ -512,5 +506,81 @@ describe("concurrency — mutating branch locking read (E1, E2, E3)", () => {
 
     expect(decision).toEqual({ allowed: true, effectiveStatus: "active" });
     expect(stillLockedAfterDecision).toBe(true);
+  });
+
+  it("the tenants lock via resolve_tenant_status_locked survives past authorizeTenantAction's return too, not just subscriptions' (DBG-4, codex round-01 [P1] on this slice)", async () => {
+    const tenantId = await seedTenant(ctx.owner, { tenantStatus: "active", subStatus: "active" });
+    let stillLockedAfterDecision = false;
+
+    const decision = await ctx.superuserDb.db.transaction(async (tx) => {
+      const result = await authorizeTenantAction(tx, tenantId, "publish_new_sessions");
+      // Mirrors the subscriptions lock-survival test above, but for the
+      // tenants lock resolve_tenant_status_locked (0027) now acquires — a
+      // SECURITY DEFINER function does not open its own transaction, so this
+      // lock is held by the CALLING transaction exactly like the raw SELECT
+      // it replaced.
+      const claim = await ctx.owner.query(
+        `SELECT status FROM tenants WHERE id = $1 FOR UPDATE SKIP LOCKED`,
+        [tenantId],
+      );
+      stillLockedAfterDecision = claim.rows.length === 0;
+      return result;
+    });
+
+    expect(decision).toEqual({ allowed: true, effectiveStatus: "active" });
+    expect(stillLockedAfterDecision).toBe(true);
+  });
+});
+
+/**
+ * Real app-role coverage (AP-43,
+ * docs/autopilot-db-tenants-authz-grant-security-definer.md). Every suite
+ * above runs through `ctx.superuserDb`; these are the first to exercise the
+ * actual `app`-role connection this slice makes callable via
+ * `resolve_tenant_status_locked` (0027). DBG-N ids cite AP-43's own manifest
+ * acceptance matrix, not the case numbers above.
+ */
+describe("app-role access through resolve_tenant_status_locked (DBG-1, DBG-2, DBG-5)", () => {
+  it("DBG-1: app role, tenant active + subscription active — allow", async () => {
+    const tenantId = await seedTenant(ctx.owner, { tenantStatus: "active", subStatus: "active" });
+    const decision = await authorizeInOwnTransaction(
+      ctx.appDb.db,
+      tenantId,
+      "publish_new_sessions",
+    );
+    expect(decision).toEqual({ allowed: true, effectiveStatus: "active" });
+  });
+
+  it("DBG-2: app role, tenant suspended — deny", async () => {
+    const tenantId = await seedTenant(ctx.owner, {
+      tenantStatus: "suspended",
+      subStatus: "active",
+    });
+    const decision = await authorizeInOwnTransaction(
+      ctx.appDb.db,
+      tenantId,
+      "publish_new_sessions",
+    );
+    expect(decision).toEqual({ allowed: false, code: "TENANT_SUSPENDED" });
+  });
+
+  it("DBG-5: app role still cannot run a raw locking read or a raw write directly on tenants", async () => {
+    const tenantId = await seedTenant(ctx.owner, { tenantStatus: "active", subStatus: "active" });
+    await expect(
+      ctx.appPool.query(`SELECT status FROM tenants WHERE id = $1 FOR SHARE`, [tenantId]),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      ctx.appPool.query(`UPDATE tenants SET status = 'suspended' WHERE id = $1`, [tenantId]),
+    ).rejects.toThrow(/permission denied/i);
+  });
+
+  it("app_worker and readonly cannot execute resolve_tenant_status_locked -- only app has EXECUTE (security round-01)", async () => {
+    const tenantId = await seedTenant(ctx.owner, { tenantStatus: "active", subStatus: "active" });
+    await expect(
+      ctx.workerPool.query(`SELECT status FROM resolve_tenant_status_locked($1)`, [tenantId]),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      ctx.readonlyPool.query(`SELECT status FROM resolve_tenant_status_locked($1)`, [tenantId]),
+    ).rejects.toThrow(/permission denied/i);
   });
 });
