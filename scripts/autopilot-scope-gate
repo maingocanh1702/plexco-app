@@ -1,5 +1,22 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 21
+# KIT_VERSION: 22
+# v22 (2026-07-31) — two findings from the first codex round to reach the close_by logic. One was a real
+# bug, one was a doc/code mismatch resolved on the doc side.
+# (1) REAL: the close_by abuse guard tested file EXTENSION rather than config-vs-source, so
+# eslint.config.mjs read as source and the guard refused a live dependency slice that has nothing
+# symbol-like to probe — the same category as pnpm-workspace.yaml, already allowed. Config filenames
+# (`*.config.*`, dotfile rc files, lockfiles) now join docs, data and manifests on the allowed side;
+# real source and bare scripts stay refused.
+# (2) DOC, NOT CODE: the reviewer flagged that `is_wellformed_close_by` never enforced the `·` the
+# documentation showed. Measured: it accepts `hand <reason>` with any separator and rejects `hand` alone
+# — which is the behaviour worth having. Enforcing one hard-to-type character protects nothing and
+# invents a fresh class of authoring error, so the docs and the failure message were corrected to say the
+# reason is required and the interpunct is convention. The mismatch was real; the wrong side was written
+# down.
+# Worth recording about how (1) survived: the author of this helper DID test it, with fixtures for the
+# cases they had in mind rather than the cases the contract distinguishes. `hand <reason without a
+# middot>` was never among them, and it was the exact shape in question. A test suite written from the
+# same mental model that produced the code inherits that model's blind spots; the codex round did not.
 # v21 (2026-07-31) — BEHAVIOUR FIX in autopilot-review-readiness.mjs: BASE_STALE no longer requires
 # base_sha to EQUAL the tip of base_ref. It now requires base_sha to remain an ANCESTOR of that tip, and
 # no file in the slice's declared `scope` to have changed on base_ref since. Exact equality made every
