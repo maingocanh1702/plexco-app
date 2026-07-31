@@ -1,5 +1,19 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 20
+# KIT_VERSION: 21
+# v21 (2026-07-31) — BEHAVIOUR FIX in autopilot-review-readiness.mjs: BASE_STALE no longer requires
+# base_sha to EQUAL the tip of base_ref. It now requires base_sha to remain an ANCESTOR of that tip, and
+# no file in the slice's declared `scope` to have changed on base_ref since. Exact equality made every
+# concurrent registration terminal the moment anything landed on the default branch — an unrelated docs
+# commit was enough — so the parallel model this kit documents could never complete: the first slice to
+# merge killed every other in-flight slice. Measured 2026-07-31 with three lanes live; all three went
+# BASE_STALE from a single chore commit, and the symptom read as a registry fault rather than as this
+# check. The two replacement conditions preserve what mattered: a rewritten history still halts, and a
+# competing writer touching this slice's own files still halts. What is no longer fatal is somebody
+# touching an unrelated file. Division of labour, now explicit: this gate certifies the DIFF the
+# reviewer read; ap-merge.sh certifies the MERGE by performing a real one and stopping on conflict.
+# Verified before implementing, on a scratch repository, across three cases: unrelated commit on the
+# base ref (was HALT, now PASS), in-scope file changed on the base ref (HALT, unchanged), and rewritten
+# history so the base is no longer an ancestor (HALT, unchanged).
 # v20 (2026-07-31) — BEHAVIOUR FIX in this file, and it is a parallelism killer. The `ready` lifecycle
 # lookup read a feature's status out of INFLIGHT.md with an awk that reset its accumulator on EVERY
 # `## feature:` header. The status was therefore only retrievable when the feature happened to be the

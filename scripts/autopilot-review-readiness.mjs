@@ -391,7 +391,35 @@ if (currentBranch !== branch) {
 run("git", ["cat-file", "-e", `${baseSha}^{commit}`], repo);
 const baseRefSha = run("git", ["rev-parse", `${baseRef}^{commit}`], repo);
 if (baseRefSha !== baseSha) {
-  halt("BASE_STALE", `${baseRef}=${baseRefSha} manifest=${baseSha}`);
+  // base_sha does NOT have to equal the tip of baseRef. It must stay an ANCESTOR of it, and nothing in
+  // this slice's declared scope may have changed on baseRef since. Exact equality made every concurrent
+  // registration terminal the instant anything landed — an unrelated docs commit was enough — so the
+  // parallel model this kit documents could never actually complete: the first slice to merge killed
+  // every other in-flight slice, and the symptom looked like a registry problem rather than this check.
+  //
+  // The division of labour: this gate certifies the DIFF the reviewer actually read, which stays valid
+  // as long as history was not rewritten under it and no one else touched the files in question.
+  // `ap-merge.sh` separately certifies the MERGE — it performs a real merge, stops on conflict, and
+  // verifies the probe on the resulting tree. Exact equality had this gate doing ap-merge's job badly
+  // while breaking its own.
+  const ancestry = tryRun("git", ["merge-base", "--is-ancestor", baseSha, baseRefSha], repo);
+  if (ancestry.status !== 0) {
+    halt(
+      "BASE_STALE",
+      `${baseSha} is no longer an ancestor of ${baseRef}=${baseRefSha}; history was rewritten under this registration`,
+    );
+  }
+  const touched = run(
+    "git",
+    ["diff", "--name-only", `${baseSha}..${baseRefSha}`, "--", ...scope],
+    repo,
+  );
+  if (touched) {
+    halt(
+      "BASE_STALE",
+      `files in this slice's declared scope changed on ${baseRef} since ${baseSha}: ${touched.split("\n").join(", ")}`,
+    );
+  }
 }
 
 const dependencies = requireStringArray(manifest.depends_on, "depends_on", { allowEmpty: true });
