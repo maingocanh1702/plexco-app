@@ -38,6 +38,12 @@ scope của slice này. Đã sửa E10-4 trong manifest + acceptance matrix dư�
 backlog entry mới (`eslint10-brace-expansion-5-0-7-typescript-estree`, `idea`, chưa scope) thay vì
 lặng lẽ bỏ qua hay cố đóng nó ở đây.
 
+**Sửa 2026-07-31 sau code-review round 1:** "hoàn toàn không liên quan tới version eslint" ở trên đúng
+tại THỜI ĐIỂM đo (trước khi cài eslint 10) — SAI sau implementation: `eslint@10.7.0` giờ cũng resolve
+`minimatch@10.2.5` qua `@eslint/config-array` của chính nó, hội tụ về CÙNG bản `brace-expansion@5.0.7`
+với đường `typescript-eslint`. Xem mục "Phát hiện MỚI" (đã sửa) và `_acceptance.E10-4` cho đo hiện hành
+đầy đủ; dòng G1 trong acceptance matrix bên dưới có cùng claim cũ, cùng lý do stale.
+
 ---
 
 ## §3 Task contract
@@ -226,6 +232,14 @@ REMAINING_BLOCKERS: none
 **Điều verdict này KHÔNG chứng minh.** Nó không nói `brace-expansion@5.0.7` đã đóng — đó là một finding
 độc lập, routed sang backlog riêng, chưa được scope. Nó không phải bằng chứng runtime: `CODE_READY`
 nghĩa là mở worktree được, không phải `IMPLEMENTED`.
+
+**Sửa 2026-07-31, sau code-review round 2 (không sửa lại text trong block verdict ở trên — pin theo
+`AUTHORITY_SHA` đúng những gì đã biết TẠI THỜI ĐIỂM đó):** dòng `OUT_OF_SCOPE` phía trên nói
+`brace-expansion@5.0.7` "unrelated to eslint's version" — đúng khi verdict này được ký (trước khi cài
+eslint 10), KHÔNG còn đúng sau implementation. Xem mục "Phát hiện MỚI" bên dưới (đã sửa sau code-review
+round 1) và `_acceptance.E10-4` trong manifest cho phép đo hiện hành: `eslint@10.7.0` giờ cũng resolve
+`minimatch@10.2.5` qua `@eslint/config-array` của chính nó. Kết luận (out of scope, không phải việc
+slice này đóng) không đổi — chỉ lý do nêu trong `OUT_OF_SCOPE` bị stale, không phải bị sai từ đầu.
 
 ---
 
