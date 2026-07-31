@@ -628,7 +628,8 @@ notes: **Tách khỏi `tenant-capability-authority-core` ngày 30/07 sau ba phé
 
 ## task: db-tenants-authz-grant-security-definer
 title: Cho app role gọi được authorizeTenantAction — SECURITY DEFINER hẹp, KHÔNG grant UPDATE thô trên tenants
-status: ready
+status: merged
+note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (2026-07-31). Was: ready
 risk: P1
 change_class: schema-migration
 depends_on: [authorize-tenant-action-core]
