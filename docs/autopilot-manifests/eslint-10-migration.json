@@ -51,9 +51,9 @@
   },
   "verification": {
     "focused": [
-      "test -f .autopilot/state/eslint-10-migration/design-probe-file-list.txt && npx eslint . -f json | node -e 'const fs=require(\"fs\");const d=JSON.parse(fs.readFileSync(0,\"utf8\"));for(const f of d.map(x=>x.filePath.replace(process.cwd()+\"/\",\"\")).sort())console.log(f)' | diff .autopilot/state/eslint-10-migration/design-probe-file-list.txt -",
+      "test -f .autopilot/state/eslint-10-migration/design-probe-file-list.txt && npx eslint . -f json | node -e 'const fs=require(\"fs\");const d=JSON.parse(fs.readFileSync(0,\"utf8\"));const files=d.map(function(x){return x.filePath.replace(process.cwd()+\"/\",\"\");}).sort();for(const f of files)console.log(f)' | diff .autopilot/state/eslint-10-migration/design-probe-file-list.txt -",
       "! grep -qE 'brace-expansion@1\\.[0-9]' pnpm-lock.yaml && ! grep -qE 'minimatch@3\\.[0-9]' pnpm-lock.yaml",
-      "ENGINES_NODE=$(node -p 'require(\"./package.json\").engines.node'); test \"$ENGINES_NODE\" != \">=22\"",
+      "ENGINES_NODE=$(node -p 'require(\"./package.json\").engines.node'); GT=$(printf '\\x3e'); test \"$ENGINES_NODE\" != \"${GT}=22\"",
       "grep -qF 'files: [\"scripts/**/*.{mjs,js}\"]' eslint.config.mjs && npx eslint scripts/"
     ],
     "canonical": [
