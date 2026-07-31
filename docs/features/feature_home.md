@@ -2,7 +2,7 @@
 
 > **Canonical phase:** S9 (cùng PWA shell; sau P4.6 player_view vì data từ đó) — DD-79 ✅  
 > **Track:** 🏠 Home Hub  
-> **Version:** 0.7 · 2026-07-28
+> **Version:** 0.10 · 2026-07-31
 > **Status:** ✅ **Reviewed contract theo DD-79** — composition-only; implementation pending S9. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY`; không có Home/payment/chat runtime. Fork từ Sporta `feature_home.md` v2.5 + học từ design `app-design-opus-4.6.pen`.
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web auth · P4.6 player_view (data backbone) · P4.3 marketplace (suggested) · 🔔 notifications §A  
@@ -36,8 +36,7 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 | HOME-UC-1 | User | Mở app/đăng nhập xong | Thấy chips tài chính + hero kèo kế tiếp + list kèo sắp tới xuyên CLB |
 | HOME-UC-2 | Player | Tap chip "💸 Còn nợ" | → màn debt person-self (player_view) — tổng hợp xuyên CLB |
 | HOME-UC-3 | User | Tap hero card | → session detail (đúng tenant context) |
-| HOME-UC-4 | Player | Tap CTA "Thanh toán" trên hero | → route tới protected person-self payment detail/renderer dùng cùng canonical payment truth; Home không tự dựng QR/số nợ |
-| HOME-UC-5 | Host | Tap CTA trên hero (kèo mình host) | → host board của session (mark-paid, roster) |
+| HOME-UC-4 | User | Payment/management action trên hero | Không render ở current DTO: upcoming chưa trả hero amount hoặc `payAction`; muốn thêm phải mở rộng canonical projection trước |
 | HOME-UC-6 | User | Tap "Tất cả →" | → danh sách session person-self đầy đủ |
 | HOME-UC-7 | User | Tap kèo gợi ý | → public session detail (marketplace) → join flow CCJ |
 | HOME-UC-8 | User | Tap 🔔 / 💬 trên header | 🔔 → notification inbox (§A) · 💬 → chat in-app (DD-38, club + DM) |
@@ -56,7 +55,7 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 | 6 | Data | Nhiều CLB, nhiều kèo cùng giờ | Sort: host trước, rồi start time ASC; hiển thị max 4 + "Tất cả →" |
 | 7 | Cross-Feature | Session bị hủy/đổi giờ khi đang xem | SSE cập nhật card + toast; recalc chips |
 | 8 | Cross-Feature | Charge được settle (webhook/mark-paid) khi đang xem | SSE cập nhật chip Còn nợ + payment dot |
-| 9 | Network | Mất kết nối | Hiện cached view + banner offline; hành động tiền bị chặn (không optimistic money) |
+| 9 | Network | Mất kết nối | Banner offline; không render cached person-self chips/hero/upcoming. Chỉ public suggested cache có thể còn theo Marketplace policy |
 | 10 | Security | Token/session hết hạn | Refresh; fail → về login, không giữ data cá nhân trên màn |
 | 11 | Data | CLB bị suspended (billing) | Kèo CLB đó vẫn hiện person-self; CTA theo rule billing (không mở đường mới) |
 | 12 | UX | Danh sách CLB dài (>5) | Chips/list vẫn tổng hợp; không bắt user chọn tenant trước khi thấy Home |
@@ -81,14 +80,14 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 │ ┌──────────────────────────────────┐ │
 │ │ ⭐ HERO — kèo kế tiếp            │ │  gradient + glow (theme §7)
 │ │ 🏸 Cầu lông T3 · CLB Rồng Xanh  │ │  role badge · countdown
-│ │ T3 22/07 · 19:30 · 8/10          │ │
-│ │ [💳 Thanh toán 85.000₫]          │ │  CTA theo role
+│ │ T3 22/07 · 19:30                 │ │
+│ │ Tap card → session detail         │ │  không có hero payment CTA trong current DTO
 │ └──────────────────────────────────┘ │
 │ KÈO SẮP TỚI                Tất cả → │
 │ · 🏸 Đánh cầu CN — Player · 🔴      │  compact rows, max 4
 │ · ⚽ FC Phượng Hoàng — Host · 🟢    │
 │ KÈO GỢI Ý (marketplace)             │
-│ · 🏸 Cầu lông Q7 · T5 · 120k · 5/8 │  public whitelist only
+│ · 🏸 Cầu lông Q7 · T5 · 120k · 5 chỗ trống │  public whitelist: scalar price + slots_open, no denominator
 └──────────────────────────────────────┘
 ```
 
@@ -111,8 +110,8 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 |-------|----------|
 | Loading | Skeleton giữ đúng layout: 2 chip + hero + 3 rows |
 | Ready | Như layout trên |
-| Error | Toast "Không tải được trang chủ" + retry; giữ cached data |
-| Empty | Chips = [📅 0 kèo, 🔥 streak 0]; CTA "Khám phá kèo" |
+| Error | Toast "Không tải được trang chủ" + retry; không giữ/render person-self snapshot cũ |
+| Empty | Chips = [💸 Còn nợ 0đ (chỉ proven `known_zero`), 📅 0 kèo]; CTA "Khám phá kèo". Streak vẫn deferred |
 | Onboarding | Thay chips bằng checklist từ `onboarding_steps` (đã có bảng, migration `0008`) + suggested sessions |
 
 **Chips phase-1 (theo DD-79 ✅):** cố định 2 chips — 1) 💸 **Còn nợ** (tổng xuyên CLB + số CLB; hiện cả khi 0) · 2) 📅 **Kèo tuần này**. Chip 💰 Chưa thu (host) **defer** theo HOME-OQ-1 (c); 🔥 Streak **defer** theo HOME-OQ-3. Chip tiền: đỏ/vàng theo semantic token; số dùng `tabular-nums`.
@@ -138,7 +137,7 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 |-------|---------|-------------------|
 | `home_viewed` | Mở Home | `state` (ready/empty/onboarding) |
 | `home_chip_tapped` | Tap chip | `chip_type` |
-| `home_hero_tapped` / `home_hero_pay_tapped` | Tap hero / CTA tiền | `role` (host/player) — session ID opaque |
+| `home_hero_tapped` | Tap hero | `role` (host/player) — session ID opaque |
 | `home_session_item_tapped` | Tap row | opaque session ref |
 | `home_suggested_tapped` | Tap gợi ý | `position` |
 | `home_onboarding_step_tapped` | Tap checklist | `step` |
@@ -151,10 +150,11 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 
 - [ ] Home render đủ theo coverage matrix (Loading/Ready/Error/Empty/Onboarding + dark)
 - [ ] Chips adaptive đúng priority; số tiền chỉ từ canonical `remainingAmount`, không client/server re-derive; `unknown` không hiển thị 0
-- [ ] Hero = kèo kế tiếp (host ưu tiên), CTA route đúng theo role tới payment renderer sẵn có; Home không duplicate QR/confirm UI; áp hero recipe theme-direction §7
+- [ ] Hero = kèo kế tiếp (host ưu tiên), tap card tới session detail; không render payment/management CTA tới khi canonical upcoming DTO có exact action; áp hero recipe theme-direction §7
 - [ ] Upcoming: dedupe host/player, sort host-first + time ASC, max 4 + "Tất cả →"
 - [ ] Suggested chỉ hiện field whitelist; test bất biến HR2 pass
 - [ ] SSE cập nhật chips/rows khi settle/cancel; offline banner + chặn money action
+- [ ] Không cache person-self Home sections; offline chỉ được giữ public suggested projection theo Marketplace cache policy
 - [ ] Mọi string `t(vi,en)`; touch target ≥ 44px (PWA — needs-matrix §4)
 - [ ] Không request nào nhận person/tenant ID từ client cho dữ liệu cá nhân
 - [ ] Bottom nav render từ registry duy nhất; Feed gate OFF không để lại khoảng trống/tab chết; thêm/bớt tab không sửa component nav
@@ -176,6 +176,9 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-31 | v0.10 | Restore the fixed two-chip Empty contract: proven-zero debt + zero weekly sessions; streak remains deferred. No runtime authorization. |
+| 2026-07-31 | v0.9 | Gỡ hero payment/management CTA vì current Home DTO không có hero amount/`payAction`; cấm client cache person-self Home sections để khớp Player View, chỉ public suggested được cache. Không đổi runtime/readiness. |
+| 2026-07-31 | v0.8 | Đồng bộ public Marketplace projection: suggested chỉ render scalar public price + `slots_open` ("N chỗ trống"), không denominator; upcoming person-self hero không invent capacity field. Không đổi runtime/readiness. |
 | 2026-07-28 | v0.7 | Reconcile primary plan v1.8 `PLAN_READY` at `90d292d`; preserve composition-only, per-slice `CODE_READY` and no-runtime boundaries. |
 | 2026-07-27 | v0.6 | Đồng bộ DD-91: Home consume duy nhất canonical self-payment projection (`remainingAmount`/`getSelfPaymentStatus`), pin `known_zero` khác `unknown`, không query/sum ledger hay tạo payment state riêng. CTA route tới protected payment renderer; exact requester-only `/pay` là target deterministic/no-store/no-LLM và chưa có runtime. |
 | 2026-07-19 | v0.5a | Làm rõ Club tab (owner): gồm cả CLB user **tạo/sở hữu** lẫn CLB **tham gia** (cùng contract memberships person-self, phân nhóm + role badge; context theo quyền) + CTA Tạo CLB → onboarding. Không đổi contract. |

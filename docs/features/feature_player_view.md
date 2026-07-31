@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.6  
 > **Track:** 👤 Player View  
-> **Version:** 2.5 · 2026-07-28
+> **Version:** 2.7 · 2026-07-31
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3.5 identity · P3 ledger · P4 web auth/magic link · P4 sync realtime  
@@ -42,10 +42,10 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 | PVW-UC-4 | System | Join/payment/merge event | Realtime invalidate/refetch own data |
 | PVW-UC-5 | Player | View active club memberships | List with role, status, debt summary |
 | PVW-UC-6 | Player | View upcoming sessions across clubs | Timeline sorted by date |
-| PVW-UC-7 | Player | View charge/payment status | Paid/partial/unpaid + allocation details |
+| PVW-UC-7 | Player | View current outstanding payment status | Mỗi club có `known_zero` hoặc items `open|partial` + `amountDue`/`amountAllocated`/`remaining`; optional `SelfPaymentStatus.payAction` chỉ cho club đó. Paid/void history cần DTO riêng |
 | PVW-UC-8 | Player | View join request status | Pending/approved/rejected/expired |
 | PVW-UC-9 | System | Account merge | Immediately converge to canonical Person view |
-| PVW-UC-10 | Player | View left-club history | Historical ledger visible, membership status clear |
+| PVW-UC-10 | Player | View left-club history | Deferred: membership status có thể hiện khi own-club DTO trả; historical paid/void/ledger cần DTO/route riêng |
 | PVW-UC-11 | Player | Gõ exact `/pay` trong club chat hoặc private bot thread | Card payment status của chính mình, chỉ requester thấy |
 | PVW-UC-12 | Player | Gõ exact `/pay` trong human DM | Một CLB đủ điều kiện thì mở thẳng; nhiều CLB thì picker opaque chỉ requester thấy, peer không nhận command/result |
 | PVW-UC-13 | Player | Mở authenticated payment notification detail | Cùng status/remaining amount như `/api/me/charges` và `/pay` tại thời điểm đọc |
@@ -57,7 +57,7 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 |---|----------|------|-------------------|
 | 1 | Security | URL/body chứa arbitrary person ID | Reject — chỉ accept verified session/magic link |
 | 2 | Security | DTO chứa other-player roster/debt | ❌ NEVER — allowlist enforced |
-| 3 | Data Integrity | Club display sau khi left | Hiện với clear "Đã rời" status — historical ledger visible |
+| 3 | Data Integrity | Club display sau khi left | Chỉ hiện "Đã rời" khi own-membership DTO trả status; không render historical ledger từ current outstanding projection |
 | 4 | Security | Magic link replay/expired | Reject — hash-only, TTL, single-use, session-rotating |
 | 5 | Security | Magic link wrong channel/person | Reject — channel/person bound |
 | 6 | Cross-Feature | Account merge → old magic links | Invalidate old links/topics — use merged person |
@@ -81,7 +81,7 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 |---------|--------|---------|-------|-------|-------|
 | Web | /me dashboard | Skeleton cards | Clubs + upcoming sessions + debt overview | Error banner + retry | "Chưa tham gia club nào" + Discover CTA |
 | Web | /me — club detail | Skeleton | Sessions + charges for this club | Error banner | "Chưa có buổi chơi" |
-| Web | /me — charge detail | Skeleton | Payment status + allocation breakdown | Error banner | N/A |
+| Web | /me — outstanding detail | Skeleton | Open/partial items + allocation breakdown; optional aggregate pay action | Error banner | Proven `known_zero` |
 | Web | /me — join requests | Skeleton list | Pending/approved/rejected list | Error banner | "Không có yêu cầu nào" |
 | Web | Auth required (unauthenticated /me) | — | Login CTA + magic link instructions | — | N/A |
 | Web | Account merged banner | — | "🔄 Tài khoản đã được gộp — dữ liệu cập nhật" | — | N/A |
@@ -125,8 +125,8 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 - [ ] Player sees all and only their own memberships/sessions/charges
 - [ ] Arbitrary person/tenant/topic guessing returns 403/empty safely
 - [ ] Magic link security/replay/expiry tests pass
-- [ ] Merge and membership-left history render correctly
-- [ ] Partial/paid/cash/reversal status matches ledger
+- [ ] Merge refresh và own membership status converge; historical ledger/paid/void behavior chờ separate Reviewed DTO/route
+- [ ] Current payment projection chỉ render canonical `open|partial` items + allocation breakdown; không invent paid/cash/reversal history
 - [ ] Realtime authorization/reconnect/refetch works
 - [ ] DTO/log/analytics contain no other-player PII
 - [ ] `/api/me/charges`, chat `/pay` và authenticated notification detail trả cùng canonical `getSelfPaymentStatus` cho cùng snapshot; không consumer nào tự tính remaining amount.
@@ -144,6 +144,8 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-31 | v2.7 | Keep paid/void/left-club ledger history outside current `SelfPaymentStatus`; remove historical acceptance claims until a separate Reviewed DTO/route owns them. |
+| 2026-07-31 | v2.6 | Reconcile Product wording with canonical per-club `SelfPaymentStatus`: current projection contains only open/partial outstanding items with allocation breakdown; optional `payAction` belongs to that club status, never a global/item action. Paid/void history requires a separate DTO. No runtime authorization. |
 | 2026-07-28 | v2.5 | Reconcile immutable authority `90d292d` and primary plan v1.8 `PLAN_READY`; retain per-mechanism `CODE_READY`, beta OFF and no-runtime boundaries. |
 | 2026-07-28 | v2.4 | Mirror mechanism slices 17–19 và chat adapters 24–26. Pin slice 19 là read-only trên baseline đã merge, không hard-depend full SessionService; `/sessions|/waitlist` beta vẫn OFF tới strict current packets `svc-session-crud`/`svc-session-join-leave`/`svc-waitlist-promotion-core` + production-shaped data E2E. No runtime authorization. |
 | 2026-07-27 | v2.3 | Mirror DD-91: canonical `getSelfPaymentStatus` cho web `/me/charges`, chat `/pay` và authenticated notification detail; human-DM picker requester-only vì `tenant_id=NULL`; fail-closed `unknown`, không arbitrary IDs/null→zero. Giữ Reviewed/not implemented. |

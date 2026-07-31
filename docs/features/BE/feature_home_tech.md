@@ -1,7 +1,7 @@
 # Feature: Home — Personal Dashboard (PWA) — Backend Tech Spec
 
 > **Canonical phase:** S9 (cùng PWA shell) — DD-79 ✅  
-> **Version:** 0.3 · 2026-07-28
+> **Version:** 0.4 · 2026-07-31
 > **Status:** ✅ Reviewed contract theo DD-79; implementation pending S9. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY`
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_home.md`  
@@ -91,10 +91,10 @@ Không service/worker mới: reuse person-self query layer (player_view), public
     "debt": { "kind": "known_amount", "totalOutstanding": 85000, "clubCount": 2, "asOf": "…" },
     "weekSessions": { "count": 3 },
     "upcoming": [
-      { "sessionRef": "…", "title": "Cầu lông T3", "club": "CLB Rồng Xanh", "startAt": "…", "role": "host", "paymentStatus": "unpaid" }
+      { "sessionRef": "…", "title": "Cầu lông T3", "club": "CLB Rồng Xanh", "startAt": "…", "role": "host", "paymentStatus": "open" }
     ],
     "suggested": [
-      { "publicId": "…", "sport": "badminton", "title": "Cầu lông Q7", "startAt": "…", "priceAmount": 120000, "slots": "5/8" }
+      { "publicId": "…", "sport": "badminton", "title": "Cầu lông Q7", "startAt": "…", "priceAmount": 120000, "slotsOpen": 5 }
     ],
     "unreadNotifications": 3,
     "onboarding": null
@@ -124,7 +124,7 @@ Không service/worker mới: reuse person-self query layer (player_view), public
 
 | Endpoint | Idempotent? | Key |
 |----------|-------------|-----|
-| GET /api/me/home | ✅ (read-only, no side effect) | Natural — hỗ trợ `ETag`/`If-None-Match` là optimization, chốt ở build slice |
+| GET /api/me/home | ✅ (read-only, no side effect) | Natural; response person-self dùng `Cache-Control: private, no-store`, không ETag/client persistence |
 
 ### Rate Limits
 
@@ -163,15 +163,15 @@ Không service/worker mới: reuse person-self query layer (player_view), public
 
 Hero = phần tử đầu của `upcoming` — client không tự chọn; server sort là nguồn đúng đắn (product spec §3).
 
-Home composer **không** được triển khai `SUM(amount_due-amount_allocated)`, gọi ledger repository, hay suy `unknown → 0`. Nếu Player View chưa expose canonical cross-club summary cần thiết, build Home phải dừng ở dependency đó và mở rộng Player View owner; không tạo helper thứ hai trong Home. Payment CTA chỉ dùng `payAction`/protected route từ canonical projection. Exact `/pay` chat gọi cùng service nhưng không phải endpoint/handler do Home sở hữu.
+Home composer **không** được triển khai `SUM(amount_due-amount_allocated)`, gọi ledger repository, hay suy `unknown → 0`. Nếu Player View chưa expose canonical cross-club summary cần thiết, build Home phải dừng ở dependency đó và mở rộng Player View owner; không tạo helper thứ hai trong Home. Current upcoming item không có `payAction`/hero amount, nên Home không render payment/management CTA. Một future CTA cần additive canonical DTO contract trước. Exact `/pay` chat gọi cùng service nhưng không phải endpoint/handler do Home sở hữu.
 
 ### Caching Strategy
 
 | Data | Cache? | TTL | Invalidation |
 |------|--------|-----|-------------|
-| Person-self sections (debt/upcoming/unread/onboarding) | ❌ server-side cross-user | — | Luôn per-request theo person; client cache ngắn + SSE update |
+| Person-self sections (debt/upcoming/unread/onboarding) | ❌ server/client persistence | — | Luôn per-request theo person; `private, no-store`; SSE chỉ invalidate/refetch live |
 | Suggested (public read model) | ✅ shared được | 30–60s | Public data, không PII — theo caching của marketplace |
-| Aggregate DTO | Client-side | 1 phút | Pull-to-refresh, app foreground, SSE event |
+| Aggregate DTO | ❌ | — | Chứa person-self data nên không cache; offline ẩn person-self sections |
 
 ### Security Checklist (template v2.33 — map về contract nguồn)
 
@@ -238,12 +238,13 @@ Home composer **không** được triển khai `SUM(amount_due-amount_allocated)
 
 ### Metrics
 
-- Home load p95 · per-section failure rate · suggested CTR (`home_suggested_tapped`) · hero CTA rate · pull-to-refresh rate
+- Home load p95 · per-section failure rate · suggested CTR (`home_suggested_tapped`) · hero-card tap rate · pull-to-refresh rate
 
 ### Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-07-31 | v0.4 | Align Home with canonical dependent contracts: public suggested uses `slotsOpen`; current upcoming has no `payAction`, so no hero CTA; person-self aggregate is `private, no-store`, with only public suggested cacheable. No runtime authorization. |
 | 2026-07-28 | v0.3 | Reconcile primary plan v1.8 `PLAN_READY` at `90d292d`; preserve composition-only, per-slice `CODE_READY` and no-runtime boundaries. |
 | 2026-07-27 | v0.2 | Đồng bộ DD-91: Home chỉ consume Player View payment truth (`remainingAmount`/`getSelfPaymentStatus`), không query/sum ledger hay tạo serializer thứ hai; `known_zero` khác `unknown`, payment CTA dùng protected route. Thêm parity/unknown tests và hard dependency Player View trước Home. Contract only; route/service/chat runtime chưa build. |
 | 2026-07-19 | v0.1 | Khởi tạo theo DD-79 ✅ (composition-only): aggregate `GET /api/me/home` thuộc surface `/api/me*`, không bảng/migration mới; per-section degradation; DTO tiền/PII theo allowlist player_view (canonical); suggested qua public read model HR2; chips phase-1 = [Còn nợ, Kèo tuần] (defer host-receivable OQ-1(c) + streak OQ-3). Template v2.30/v2.33 đầy đủ. |
