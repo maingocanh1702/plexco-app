@@ -17,6 +17,12 @@ export {
 } from "./tenant.js";
 export { migrate, type MigrateResult } from "./migrate.js";
 export {
+  authorizeTenantAction,
+  type ActionClass,
+  type AuthorizationDecision,
+  type EffectiveStatus,
+} from "./authorization.js";
+export {
   LoginReplayError,
   SlugTakenError,
   armOauthCompletionHandoff,

@@ -10,8 +10,8 @@
   "depends_on": [],
   "dep_checks": [],
   "_dependency_note": "ROOT DEPENDENCY — nothing to wait for. The parent task `tenant-capability-authority-core` declared depends_on:[dd38-dd86-chat-schema-core] (status `idea`, unmerged), which would HALT DEP_MISSING at register. That dependency belongs to the `hasCapability` half (chat schema); authorizeTenantAction reads no chat table. Splitting removes it rather than waiting on it. Satisfies gate B1 clause 'hoặc slice hiện tại chính là dependency gốc'.",
-  "invariants": ["tenant-isolation", "authorization"],
-  "_invariant_note": "Deliberately NOT declaring `schema`. The parent task declared it, but this slice adds no migration and does not touch packages/db/schema.ts. Over-declaring `schema` would lock the lane against every other migration slice for no real reason — measured hazard, see docs/autopilot-backlog.md queue notes 2026-07-30.",
+  "invariants": ["billing", "publish-suspend-gate"],
+  "_invariant_note": "Corrected 2026-07-30 at register time: the originally-drafted tokens `tenant-isolation` and `authorization` do not exist in docs/autopilot-invariant-catalog.md (verified against the live <!-- catalog:start/end --> block) and would HALT INVARIANT_UNKNOWN. Substituted the closest existing canonical tokens: `billing` (this slice reads the billing-owned tenants/subscriptions tables and implements feature_billing_lifecycle_tech.md §3) and `publish-suspend-gate` (its own catalog definition literally names `authorizeTenantAction('publish_new_sessions')` — this slice is what creates that gate, even though no caller wires to it yet). Deliberately NOT declaring `schema`: this slice adds no migration and does not touch packages/db/schema.ts; over-declaring it would lock the lane against every other migration slice for no real reason — measured hazard, see docs/autopilot-backlog.md queue notes 2026-07-30.",
   "scope": [
     "packages/db/src/authorization.ts",
     "packages/db/src/authorization.test.ts",
@@ -52,10 +52,8 @@
   },
   "verification": {
     "focused": [
-      "every case of the ratified 6-case decision table in feature_billing_lifecycle_tech.md §3 has at least one test that cites its case number and asserts the expected allow/deny",
-      "the concurrency test fails when FOR SHARE is removed from the implementation — a test that passes against both a locking and a non-locking read proves nothing",
-      "the diff contains no new file under packages/db/migrations/",
-      "authorizeTenantAction's signature accepts a tenant identifier and resolves both status columns itself; no exported path accepts a pre-resolved status scalar"
+      "for c in 'case 1' 'case 1b' 'case 2' 'case 2b' 'case 3' 'case 4'; do grep -qF \"$c\" packages/db/src/authorization.test.ts || { echo \"missing citation: $c\"; exit 1; }; done",
+      "grep -q 'FROM tenants' packages/db/src/authorization.ts && grep -q 'FROM subscriptions' packages/db/src/authorization.ts && ! grep -nE 'export (async )?function [A-Za-z]+\\([^)]*\\bstatus\\b\\s*:' packages/db/src/authorization.ts"
     ],
     "canonical": [
       "pnpm typecheck",
@@ -63,15 +61,15 @@
       "pnpm format:check",
       "pnpm review:check:changed",
       "pnpm build",
-      "pnpm test"
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
     ],
     "e2e": []
   },
-  "_verification_note": "Stated as PROPERTIES, never literals — no pinned test count, no pinned migration tail, no pinned version. This manifest is hash-locked after register; a stale literal cannot be corrected in place and forces a full close-and-re-register cycle. Do NOT trust any number written anywhere in this repo's docs as a baseline: measure it at run time.",
+  "_verification_note": "Stated as PROPERTIES, never literals — no pinned test count, no pinned migration tail, no pinned version. This manifest is hash-locked after register; a stale literal cannot be corrected in place and forces a full close-and-re-register cycle. Do NOT trust any number written anywhere in this repo's docs as a baseline: measure it at run time. `verification.focused` corrected 2026-07-30 at register time to real executable `bash -lc` commands — autopilot-review-readiness.mjs's runVerificationGroup() literally spawns each string as a shell command; the originally-drafted prose sentences (e.g. \"the diff contains no new file under packages/db/migrations/\") are not valid shell and would fail every attempt. The no-new-migration and full-decision-table properties are still enforced — the former structurally, by SCOPE_DRIFT (no migrations/*.sql file is declared in `scope`, so the gate's own out-of-scope-file check catches one); the latter by case-citation grep here plus the real acceptance-matrix tests in `pnpm test` (canonical), including the concurrency E1/E2/E3 tests that make a non-locking implementation fail rather than silently pass.",
   "code_review": {
     "required": true,
     "tool": "scripts/codex-review-pin.sh",
-    "clean_rounds": 1
+    "clean_rounds": 2
   },
   "security_review": {
     "required": true,

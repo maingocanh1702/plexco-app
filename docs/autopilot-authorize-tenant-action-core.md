@@ -79,12 +79,13 @@ HUMAN_DECISIONS_REQUIRED: none — bảng quyết định đã founder-ratified 
   choice trong scope.
 SLICE_GRAPH: một slice, không fan-out. Root dependency.
 DEPENDENCIES: none (root)
-INVARIANTS: [tenant-isolation, authorization]
+INVARIANTS: [billing, publish-suspend-gate]  (corrected 2026-07-30 — xem changelog)
   ⚠️ **KHÔNG khai `schema`.** Task gốc khai nó, nhưng slice này không thêm migration và không sửa
   `schema.ts`. Khai thừa `schema` sẽ khoá lane của mọi slice migration khác mà không có lý do thật.
 VERIFICATION: xem Acceptance matrix dưới. Khai bằng **thuộc tính**, không phải literal — runtime
   manifest bị hash-lock sau `register`, một con số cứng đi lệch là phải đăng ký lại toàn bộ.
-CODE_REVIEW: bắt buộc, clean liên tiếp cùng HEAD.
+CODE_REVIEW: bắt buộc, **2 vòng clean liên tiếp cùng HEAD** (P1 — autopilot-review-readiness.mjs
+  yêu cầu `clean_rounds >= 2` khi `risk=P1`).
 SECURITY_REVIEW: bắt buộc (authorization boundary).
 BUDGETS: MAX_ROUNDS 5 · REGION_THRASH 3 cùng vùng ⇒ HALT. Ước lượng ≤300 LOC, 3 module, 0 migration.
 STOP_CONDITIONS: STOP_AT_READY. HALT nếu (a) phát hiện `authorizeTenantAction` cần đọc cột thứ ba
@@ -244,4 +245,5 @@ không phải bằng chứng runtime: `CODE_READY` nghĩa là mở worktree đư
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 30/07/2026 | v0.2 | **Register-time correction, launcher `ap-40` execution.** Đo trực tiếp `docs/autopilot-invariant-catalog.md` (block `<!-- catalog:start -->…<!-- catalog:end -->`) lúc mở worktree: hai token `invariants` gốc (`tenant-isolation`, `authorization`) **không tồn tại** trong catalog ⇒ `register` sẽ `HALT INVARIANT_UNKNOWN`. Đổi sang hai token canonical sẵn có: `billing` (slice đọc hai bảng do billing spec sở hữu, cài đúng §3 Status Authority) và `publish-suspend-gate` (định nghĩa trong catalog trỏ thẳng `authorizeTenantAction('publish_new_sessions')`). Đồng thời sửa `code_review.clean_rounds` từ `1` lên `2` — `autopilot-review-readiness.mjs` bắt buộc `clean_rounds ≥ 2` khi `risk=P1` (đã đọc trực tiếp source), giá trị `1` gốc sẽ bị `CONTRACT_INVALID`. Sửa `verification.focused` từ 4 câu prose thành 2 lệnh bash thật thi hành được — gate chạy từng phần tử của mảng này qua `spawnSync("/bin/bash",["-lc", cmd])`, một câu tiếng Anh không phải shell hợp lệ sẽ fail ngay attempt đầu; thuộc tính "không migration mới" đã được gate tự enforce qua cơ chế `SCOPE_DRIFT` (scope không khai file `.sql` nào) nên không cần một dòng focused riêng cho nó. Không đổi bảng quyết định 6-case, acceptance matrix, hay bất kỳ quyết định sản phẩm nào — thuần sửa lỗi cơ chế đăng ký. |
 | 30/07/2026 | v0.1 | Author slice contract, tách từ `tenant-capability-authority-core`. Ba việc đo được lật cách đặt task gốc: (1) seed `plans` sống là flat, không có lớp `capabilities` ⇒ `hasCapability` trả `undefined`, phải chờ DD-29; (2) task gốc khai `depends_on: [dd38-dd86-chat-schema-core]` chưa merged ⇒ `register` sẽ `HALT DEP_MISSING`, mà phụ thuộc đó thuộc nửa capability nên tách xong là tự gỡ; (3) task gốc khai `invariants: [schema, ...]` nhưng slice này không thêm migration cũng không sửa `schema.ts` ⇒ bỏ `schema`, tránh khoá lane migration vô cớ. Verify ba tiền đề spec trực tiếp trên `0002`/`0007`/`0012`, đều đúng. |
