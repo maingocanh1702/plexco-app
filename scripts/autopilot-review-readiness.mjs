@@ -498,11 +498,26 @@ function liveDiffState() {
   if (run("git", ["merge-base", baseSha, liveHead], repo) !== baseSha) {
     halt("BASE_DRIFT", "pinned base is not an ancestor of HEAD");
   }
-  const commitCount = Number(run("git", ["rev-list", "--count", `${baseSha}..${liveHead}`], repo));
+  // THE DIFF WINDOW IS MEASURED FROM THE LIVE BASE REF, NOT FROM THE PINNED base_sha.
+  //
+  // base_sha was doing two jobs. One is proving the review rests on a legitimate base — that is what
+  // assertBaseUsable() above now checks, via ancestry plus untouched scope. The other is marking where
+  // this slice's own work begins, and for that the pinned SHA is simply wrong once anything lands on the
+  // base branch: a slice that rebases to pick up a fix finds every intervening commit inside
+  // `base_sha...HEAD`, and SCOPE_DRIFT then reports files it never touched. Measured 2026-07-31: a slice
+  // rebased through three sanctioned kit syncs and halted on four kit files, with no legal way out —
+  // re-registering is refused while in-flight (FEATURE_ALREADY_ACTIVE) and editing the runtime manifest
+  // breaks its hash lock (MANIFEST_DRIFT). The registration was correct; the measurement was not.
+  //
+  // Using the live tip is right in both states. Rebased: merge-base(baseRef, HEAD) is the tip, so the
+  // window is exactly this slice's commits. Not rebased: merge-base is the old divergence point, which
+  // is also exactly this slice's commits. The pinned SHA is right in neither case once the branch moves.
+  const diffBase = liveBaseRefSha;
+  const commitCount = Number(run("git", ["rev-list", "--count", `${diffBase}..${liveHead}`], repo));
   if (!Number.isInteger(commitCount) || commitCount < 1) {
     halt("EMPTY_DIFF", "HEAD has no commit beyond the pinned base");
   }
-  const files = run("git", ["diff", "--name-only", "--no-renames", `${baseSha}...${liveHead}`], repo)
+  const files = run("git", ["diff", "--name-only", "--no-renames", `${diffBase}...${liveHead}`], repo)
     .split("\n")
     .filter(Boolean);
   if (files.length === 0) {
@@ -525,7 +540,7 @@ function liveDiffState() {
   if (dirty.length) {
     halt("WORKTREE_DIRTY", dirty.join(" | "));
   }
-  const diff = runRaw("git", ["diff", "--binary", `${baseSha}...${liveHead}`], repo);
+  const diff = runRaw("git", ["diff", "--binary", `${diffBase}...${liveHead}`], repo);
   return { headSha: liveHead, files, diffHash: sha256(diff) };
 }
 
