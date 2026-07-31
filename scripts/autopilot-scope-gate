@@ -1,5 +1,21 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 17
+# KIT_VERSION: 18
+# v18 (2026-07-30) — pack content change, no behaviour change in THIS file. Fixes a defect this kit
+# introduced in v15. `manifests/_TEMPLATE.json`'s `_verification_rule` called the entries "commands"
+# and then illustrated every one of them with an English sentence ("osv-scanner reports zero findings
+# for <pkg>"). runVerificationGroup() spawns each string as a shell command and gates on exit status,
+# so prose fails on the first attempt and every attempt after. The examples taught louder than the
+# wording: the author of the very next slice copied their shape and the gate rejected all of them at
+# register time (Plexco authorize-tenant-action-core, 2026-07-30) — the writer had to rewrite them
+# in-flight. Examples are now executable. Also records the adjacent lesson: some properties belong in
+# `scope` rather than in a shell test — "no new migration" is already enforced by SCOPE_DRIFT when no
+# migration path is declared, and writing a grep for it duplicates a structural guarantee.
+# Second lesson from the same slice, recorded in level3-workflow.md rather than here: invariant tokens
+# must be read out of the catalog before they are written into a manifest. Two plausible-sounding
+# tokens were invented, both absent from the catalog, and would have HALTed INVARIANT_UNKNOWN. The
+# catalog's machine block stores `token — description` lines with an em-dash and NO backticks, so a
+# grep written for backticked tokens silently returns nothing — which reads exactly like an empty
+# catalog instead of a wrong query.
 # v17 (2026-07-30) — FIRST behaviour change to the pinned reviewer contract (codex-review-pin.sh 1→2).
 # The pinned prompt bounded what to REVIEW but never bounded what could count as a BLOCKING finding: it
 # says "review only the change set", then "inspect live source", then "CLEAN only when there are zero
