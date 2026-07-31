@@ -603,7 +603,8 @@ notes: **Opened by codex round-02/03 of `docs-marketplace-public-capacity-guard`
 
 ## task: authorize-tenant-action-core
 title: authorizeTenantAction — choke-point resolve effective tenant status fail-closed 2-step (KHÔNG gồm hasCapability)
-status: ready
+status: merged
+note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (2026-07-31). Was: ready
 verdict: `CODE_READY` 2026-07-30, `AUTHORITY_SHA b4d08c83767f0ff6693a05452e61248b58defc01`, closure 12/12 — verdict block nằm trong slice doc (`<!-- review-readiness: code-ready -->`), tracker entry ở `docs/slice-readiness-verdicts.md`
 launcher: .claude/commands/ap-40-authorize-tenant-action-core.md
 risk: P1
