@@ -517,7 +517,13 @@ notes: **Tách ra từ `deps-security-bump` ngày 30/07** khi security round c�
 
 ## task: reconcile-close-by-hand-declaration
 title: Cho autopilot-backlog-reconcile hiểu `close_by: hand` là khai báo có chủ đích, không phải lỗi tác giả
-status: ready
+status: superseded
+superseded_by: kit test suite (repo `Claude template`, branch `kit-test-suite`) — reconcile v7 + `test/unit.sh` + `test/e2e.sh`
+superseded_note: **Đóng 2026-07-31 vì deliverable đã được giao ở chỗ tốt hơn, không phải vì slice sai.** Đo lúc đóng: diff của slice mang `autopilot-backlog-reconcile` **+129** (bản sync v6) và một bộ test riêng **+378** chỉ sống ở Plexco; lô kit mang **+33** trên chính script đó (v7 — **ba defect mà chính slice này tìm ra**) cộng `unit.sh` +161 và `e2e.sh` +414 đi kèm kit tới mọi consumer.
+  Hai hệ quả khiến merge nó thành sai: bản script của nó **lạc hậu** so với v7 chứ không thừa, nên merge là đưa bản cũ hơn lên main; và giữ cả hai bộ test nghĩa là bảo trì hai bộ cho một script ở hai repo mãi mãi — trong khi bộ của kit có thêm tầng e2e mà bộ này không có, và nằm cùng chỗ với script nên không trôi.
+  **Giá trị thật của slice này đã được giao và giữ lại:** bốn defect kit nó phát hiện (`close_by` phân loại · tab delimiter nuốt field · abuse guard chặn nhầm `eslint.config.mjs` · `is_wellformed_close_by` lệch doc) đều đã sửa và đã có test. Nó cũng là slice **đầu tiên viết regression test cho kit**, và chính bộ test dở dang của nó bắt được bug trong code vừa ship — bằng chứng dẫn tới quyết định dựng bộ test cho toàn kit.
+  Phần docs Plexco-local còn lại — slice doc, manifest, và khai báo `close_by` trên entry `deps-security-bump` — land bằng một commit chore, không cần gate.
+old_status: ready
 verdict: `CODE_READY` 2026-07-30 (AMENDED same day), `AUTHORITY_SHA 8c59f2905279a0f599bd095eee505fa1eae2cc3a`, closure 12/12 — verdict block nằm trong slice doc (`<!-- review-readiness: code-ready -->`), tracker entry Verdict 29 (AMENDED) ở `docs/slice-readiness-verdicts.md`. Re-pinned từ `28e4e5a` sau owner feedback (glyph/message `MALFORMED` + tách slice theo ranh giới repo); bản `28e4e5a` chưa từng có coding session nào dùng.
 launcher: .claude/commands/ap-41-reconcile-close-by-hand-declaration.md
 risk: P3
@@ -1234,9 +1240,27 @@ notes: |
   sẽ sạch hoàn toàn; đã sửa + tách sang task `eslint10-brace-expansion-5-0-7-typescript-estree` dưới. Slice
   doc: `docs/autopilot-eslint-10-migration.md`. Launcher: `ap-42`.
 
+## task: eslint10-preserve-caught-error-migrate-ts
+title: packages/db/src/migrate.ts:172 — preserve-caught-error, tạm hạ xuống `warn` trong eslint.config.mjs, cần sửa thật
+status: ready
+risk: P3
+change_class: code-quality
+depends_on: [eslint-10-migration]
+invariants: [build-config]
+scope: [packages/db/src/migrate.ts, eslint.config.mjs]
+manifest: null
+merged_probe: null
+close_by: hand · sửa một dòng rethrow, không tạo symbol mới nào để probe
+notes: **Mở 2026-07-31 vì `eslint.config.mjs` đang trỏ tới entry này mà nó chưa tồn tại trên đĩa** — chính reviewer của `eslint-10-migration` bắt được sự trỏ hụt đó.
+  **Bối cảnh:** eslint v10 bật `preserve-caught-error` trong bộ recommended, và nó báo lỗi thật ở `migrate.ts:172` — một chỗ rethrow làm mất error gốc. Finding đúng, nhưng nằm **ngoài scope** của slice eslint-10.
+  **Vì sao hạ xuống `warn` chứ không `off`, và vì sao không hoãn hẳn:** `pnpm lint` nằm trong danh sách canonical của **mọi** slice. Để nó `error` mà chưa sửa nghĩa là main đỏ, và gate của mọi lane khác fail vì một finding không liên quan gì tới chúng — "để slice sau" nghe sạch sẽ nhưng âm thầm chuyển hoá đơn sang các lane vô can. `off` thì im lặng và sống tới khi có người nhớ ra; `warn` in ra mỗi lần lint nên lời nhắc là tự động, không phụ thuộc trí nhớ. Đó là cùng một đánh đổi mà thứ tự ưu tiên áp ở chỗ khác: ngoại lệ chỉ chấp nhận được khi nó tự mang theo chủ sở hữu và lời nhắc của chính nó.
+  **Việc phải làm:** sửa `migrate.ts:172` để giữ error gốc khi rethrow, rồi **gỡ dòng hạ cấp** trong `eslint.config.mjs` — hai việc đó là một, đừng làm nửa đầu rồi để lại nửa sau.
+
 ## task: eslint10-brace-expansion-5-0-7-typescript-estree
-title: brace-expansion@5.0.7 (GHSA-mh99-v99m-4gvg) qua minimatch@10.2.5 ← typescript-eslint's own typescript-estree — độc lập với version eslint
+title: brace-expansion@5.0.7 (GHSA-mh99-v99m-4gvg) qua minimatch@10.2.5 — HAI đường provenance hội tụ, không phải một
 status: idea
+provenance_correction: **2026-07-31, cùng ngày: tiêu đề cũ ("độc lập với version eslint") đã SAI kể từ khi eslint 10 thực sự được cài.** Nó đo lúc eslint còn ở 9.x, và kết luận đúng **tại thời điểm đó**. Sau khi `eslint-10-migration` cài `eslint@10.7.0`, `pnpm why brace-expansion` cho thấy **chính eslint 10 cũng resolve `minimatch@10.2.5`** qua `@eslint/config-array@0.23.5` của riêng nó — breaking change `501abd0` của eslint 10.0.0 chuyển minimatch nội bộ v3→v10. Hai đường (typescript-eslint và eslint) **hội tụ về cùng một instance** trên cùng một lần cài. Kết luận không đổi — vẫn ngoài scope, vẫn chưa có bản vá — nhưng lý do "độc lập với eslint" thì đổi, và nó là lý do người ta sẽ dùng để ưu tiên task này.
+  **Đây là lớp lỗi đáng ghi hơn bản thân finding:** một phép đo đúng lúc đo, viết thành một khẳng định không có thời điểm, rồi mục đi khi thứ nó đo bị thay đổi bởi chính slice đang chạy. Ai cập nhật entry này lần sau phải **đo lại** `pnpm why brace-expansion` trên cây hiện hành, không tin dòng nào ở trên.
 risk: P2
 change_class: dependency-security
 depends_on: []
