@@ -1,5 +1,34 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 18
+# KIT_VERSION: 20
+# v20 (2026-07-31) — BEHAVIOUR FIX in this file, and it is a parallelism killer. The `ready` lifecycle
+# lookup read a feature's status out of INFLIGHT.md with an awk that reset its accumulator on EVERY
+# `## feature:` header. The status was therefore only retrievable when the feature happened to be the
+# LAST block in the registry; for any earlier block the captured value was erased by the next header and
+# the gate rejected a perfectly valid lifecycle with
+# `REJECT READY_LIFECYCLE_INVALID: status is 'absent'`.
+# Latent for as long as one slice ran at a time — the single active feature was always last. It surfaced
+# the moment three slices ran in parallel: the newest could run `ready`, the two before it could not, and
+# the symptom read like registry corruption rather than a query bug. Both `ready` lookups fixed by
+# dropping the reset. The per-block scanner near the top of this file KEEPS its reset — it evaluates each
+# block in turn instead of accumulating one named feature, so there the reset is required. Same idiom,
+# opposite requirement, which is exactly why the wrong one was easy to copy.
+# Known and deliberately NOT fixed here: these two lookups do not skip fenced code blocks, while other
+# INFLIGHT readers in this file do. No registry today contains a fence, and widening this change would
+# make a behaviour fix carry unrelated hardening. Separate slice.
+# v19 (2026-07-30) — the pack now carries the two docs that govern agent BEHAVIOUR, not just the scripts
+# that enforce it: autopilot-prompt-GENERIC.md and level3-workflow.md, both into docs/autopilot-templates/.
+# They were never in the pack. Each consumer held a hand-copy, and hand-copies drift: Plexco's
+# autopilot-prompt-GENERIC.md was a day stale against canonical while a sibling file in the same
+# directory had been updated that morning, and the task to build a mirror had sat unstarted in that
+# repo's own backlog. Every rule this kit has learned the hard way — findings must be closable within the
+# change set, never edit what you feed a gate, read the validator before authoring a field — reached
+# exactly one repo until now. Also adds two rules worth propagating on their own: a precedence order for
+# resolving trade-offs autonomously (fail-closed and least-privilege outrank everything, deadline never
+# outvotes them), and the test for whether a question belongs to the owner at all — it does only when the
+# answer is not derivable from the contract. Those two exist because a slice stopped to ask which version
+# to use when its own manifest had already pre-authorized the answer.
+# copy_pack now mkdir -p's the destination directory; a consumer without docs/autopilot-templates/ would
+# otherwise fail the copy.
 # v18 (2026-07-30) — pack content change, no behaviour change in THIS file. Fixes a defect this kit
 # introduced in v15. `manifests/_TEMPLATE.json`'s `_verification_rule` called the entries "commands"
 # and then illustrated every one of them with an English sentence ("osv-scanner reports zero findings
@@ -382,7 +411,11 @@ case "$cmd" in
     acquire
     [ -f "$INFLIGHT" ] || printf '# Autopilot in-flight registry\n\n---\n' > "$INFLIGHT"
     me_status="$(awk -v me="$FEATURE" '
-      /^## feature:/{cur=$3;st=""}
+      # No reset on the header line: this awk accumulates ONE named feature and prints at END, so
+      # clearing on every later header erases the answer unless me is the LAST block in the registry.
+      # The per-block scanner further up DOES reset, correctly, because it evaluates each block in turn.
+      # Same idiom, opposite requirement. Rationale in the v20 header note.
+      /^## feature:/{cur=$3}
       /^status:/{if(cur==me)st=$2}
       END{print st}
     ' "$INFLIGHT")"
@@ -412,7 +445,11 @@ case "$cmd" in
     [ -f "$INFLIGHT" ] || printf '# Autopilot in-flight registry\n\n---\n' > "$INFLIGHT"
     # Require a prior active block: ready must follow a successful register.
     me_status="$(awk -v me="$FEATURE" '
-      /^## feature:/{cur=$3;st=""}
+      # No reset on the header line: this awk accumulates ONE named feature and prints at END, so
+      # clearing on every later header erases the answer unless me is the LAST block in the registry.
+      # The per-block scanner further up DOES reset, correctly, because it evaluates each block in turn.
+      # Same idiom, opposite requirement. Rationale in the v20 header note.
+      /^## feature:/{cur=$3}
       /^status:/{if(cur==me)st=$2}
       END{print st}
     ' "$INFLIGHT")"

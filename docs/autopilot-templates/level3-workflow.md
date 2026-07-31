@@ -198,7 +198,11 @@ thrash drops the task back to supervised handling or HALT. Auto-merge is never i
   unmerged sibling worktree implicitly.
 - When two or more independent slices form one outcome, create an ephemeral no-push integration
   worktree from their common base, combine only the exact READY tips, run combined verification and
-  discard it after evidence. This is integration evidence, not merge authority.
+  discard it after evidence. This is integration evidence, not merge authority. Name that worktree
+  `_integ-<task-slug>`: it is the one worktree with no reservation and no finish record, so the
+  watchdog must be able to recognise and ignore it by name — without the prefix it is announced as a
+  new session and then reported as a lifecycle orphan when you discard it, training the founder to
+  ignore the alert that matters.
 - Remove a worktree only after its terminal state and merge/disposition are verified.
 
 ## 8. Verification and review
@@ -218,6 +222,30 @@ directly, binds every round to the current HEAD/base/diff and accepts only the e
 marker. A trust-boundary slice runs a separate security-focused round through that wrapper;
 project-native scanners augment it.
 
+Three invocation facts, each of which has already cost a wasted round:
+
+- **`--base` is the slice's pinned `base_sha`, the same value every round — never `HEAD^`.** The base
+  is immutable by contract: the readiness gate reads it from the manifest and halts `BASE_STALE` once
+  the base ref moves. `HEAD^` coincides with it only while exactly one commit sits above the base;
+  after a follow-up fix commit `HEAD^` becomes the previous feature commit, so the round reviews the
+  fix alone and silently drops the rest of the slice out of the change set. Read `base_sha` from the
+  manifest or take a verified SHA from `git rev-parse` — never from `git log --oneline`, whose short
+  SHA the wrapper's adapter form rejects as `CODEX_REVIEW_CONTRACT_INVALID`.
+- **Know which component enforces what; the wrapper is thin.** Its three-argument adapter form
+  `review --base <full SHA> <marker-prompt>` checks the SHA's shape and then asks the reviewer to
+  review exactly `git diff <base>...HEAD`, explicitly permitting it to read live source for context;
+  any other argument shape falls straight through to native `codex review`. The wrapper does **not**
+  reject an empty diff or a dirty tree — `autopilot-review-readiness.mjs` does, as `EMPTY_DIFF` and
+  `WORKTREE_DIRTY`. Do not attribute gate behaviour to the wrapper or vice versa; read whichever one
+  you are about to describe.
+- **The change set under review is committed history, so commit before invoking.** An uncommitted fix
+  is outside `<base>...HEAD` no matter how visible it is on disk, and a base equal to `HEAD` leaves
+  nothing to review — not a clean round but no round at all. Then a follow-up commit per round of
+  findings. Note also that `scripts/codex-review-pin.sh` is the post-install path: in this template
+  repository, the canonical source, the wrapper is at `autopilot/parallel/codex-review-pin.sh` and
+  there is no `scripts/` copy, so the installed path fails with `no such file or directory` — easy to
+  miss when it scrolls past between other output.
+
 A review with any actionable finding is not clean. A clean review of an empty diff is not evidence.
 If a required reviewer or verifier is unavailable, emit `HALT TOOL_UNAVAILABLE`; do not silently
 downgrade the gate.
@@ -227,6 +255,66 @@ Loop breakers remain hard:
 - more than five fix rounds → `HALT MAX_ROUNDS`;
 - the same region in three consecutive rounds → `HALT REGION_THRASH`;
 - findings spreading across the design → stop and re-slice rather than continue patching.
+
+### Two known gaps in this gate — measured, unresolved, do not work around them silently
+
+Both were surfaced by live slices on 2026-07-30 and both are recorded here rather than patched,
+because each fix carries a gaming risk that needs an owner decision, not a quiet edit.
+
+**1. The reviewer receives no scope, so an out-of-scope suggestion halts like a defect.**
+The review invocation passes exactly `--base <sha>` and a fixed prompt. It does not pass the manifest,
+`scope`, `negative_scope` or any owner decision. The reviewer therefore cannot distinguish *"this
+change is wrong"* from *"you could also do more"*, and there is no waiver channel — `REVIEW_FINDINGS`
+halts unconditionally, and only the exact clean marker proceeds.
+
+Observed: a slice bumping `postcss` to close an advisory was halted because a *later* release contained
+unrelated upstream hardening with no CVE, on a code path unreachable in that repo. The same reviewer
+stayed silent about a genuinely unfixed CVSS-7.5 advisory elsewhere in the tree — not by judgement, but
+because those lockfile lines were not in the diff. Visibility, not severity, decided which one halted.
+
+Candidate fixes, none free: pass `negative_scope` into the review prompt (a writer could then widen it
+to silence findings); split the verdict into blocking vs advisory (needs a second marker and a rule for
+who may downgrade); leave as-is and accept that scope changes must be made by removing the file from
+the diff, which is what that slice ultimately did. **Until this is decided, the correct response to an
+out-of-scope finding is to take the item out of the diff — never to argue with the reviewer or to
+re-run hoping for a different verdict.**
+
+**2. Reviewer auth-tier failures are classified as terminal `HALT`, not resumable `AWAIT`.**
+The gate already distinguishes reviewer conditions that a human can fix and resume from defects that
+end a lifecycle: `CODEX_QUOTA`, `CODEX_AUTH_REQUIRED` and `CODEX_CONNECTOR_PERSISTENT` all take the
+`awaitReview()` path, whose resolution text is "resolve the reviewer condition, remove this signal,
+then resume the same in-flight lifecycle."
+
+But the auth detector matches only 401-shaped failures — `401`, `token_invalidated`, `invalid_grant`,
+`log in again`. Observed 2026-07-30: after the operator re-authenticated mid-run, the pinned reviewer
+returned `status 400 invalid_request_error: The 'gpt-5.6-sol' model is not supported when using Codex
+with a ChatGPT account.` That is an auth-*tier* problem — the same class as `CODEX_AUTH_REQUIRED`, and
+fixed the same way — but it matches none of those patterns, so it fell through to
+`REVIEW_UNAVAILABLE`, a **durable HALT** whose resolution demands closing the lifecycle and
+re-registering a successor.
+
+The slice in question had already completed three real review rounds that day; the reviewer worked and
+then stopped working for reasons entirely outside the diff. Paying a full close-and-re-register cycle
+for an operator auth change is the wrong price, and the gate has the right mechanism one branch away.
+
+Candidate fix: widen the auth detector to include model-permission and entitlement refusals (400-class
+`invalid_request_error` naming an account type or an unsupported model) so they route to
+`CODEX_AUTH_REQUIRED`. The care needed is not to swallow genuine 400s caused by the *request* the gate
+built — a malformed `--base`, an oversized diff — which are real gate defects and must stay terminal.
+Until that is decided, an operator who recognises this specific failure may treat the HALT as an AWAIT,
+but must say so explicitly and record why; an agent must not make that call on its own.
+
+**3. `fix-round-count` increments on infrastructure failures, not just on diff defects.**
+Observed: two consecutive rounds consumed by a Postgres `57P01 admin_shutdown` during test teardown —
+255/255 assertions passing, zero code change, container healthy on restart. Those two rounds were 40%
+of the budget, and the slice then hit `MAX_ROUNDS` on a round that had found a real defect.
+
+Raising the ceiling is the wrong fix: the breaker exists to catch *design thrash*, and a higher number
+just makes it less sensitive to the thing it was built for. The problem is classification, not the
+threshold. A writer already invented the natural syntax — `round-NN infra:<reason>` in `regions.log`.
+The gaming risk is obvious: a writer that may self-declare `infra:` may relabel a real finding to dodge
+the breaker. Any fix must gate that label on a checkable condition — zero diff against the previous
+round, and no reduction in assertion count — or it opens a worse hole than it closes.
 
 ## 9. Terminal states
 
@@ -275,7 +363,72 @@ After a terminal task:
 The question after a failure is “what context, guardrail, test or routine was missing?”—not “who
 failed to watch the agent closely enough?”
 
-## 11. Readiness check
+## 11. Two manifest artifacts, one name
+
+A slice has **two** manifest files with different roles. Confusing them wastes a session, and the
+mistake is easy because the shipped template looks like the wrong one.
+
+| | Authored contract | Runtime manifest |
+|---|---|---|
+| Path | `docs/autopilot-manifests/<task-slug>.json` | `.autopilot/state/<FEATURE_ID>/manifest.json` |
+| Tracked in git | yes | **no** — `.autopilot/*` is gitignored |
+| Lifetime | permanent; reviewed, versioned, cited by verdicts | one run |
+| `manifest_schema_version` | absent | `level3-operational-v2` |
+| Written by | a human or an authoring session, before launch | copied/resolved at register time |
+
+`autopilot-review-readiness.mjs` **fail-closes** unless the manifest it is handed sits at exactly
+`.autopilot/state/<FEATURE_ID>/manifest.json` — any other path is `HALT CONTRACT_INVALID`. So marking
+a tracked `docs/autopilot-manifests/*.json` with `manifest_schema_version: level3-operational-v2`
+does not "upgrade" it; it makes `register` halt. The version string is a **role marker on the runtime
+copy**, not a maturity level on the authored contract.
+
+Two corollaries worth stating because both have been guessed wrong:
+
+- A repo whose tracked manifests carry no `manifest_schema_version` is **not** running an old
+  workflow. Do not open a task to "migrate the manifests to v2."
+- The review gate does not depend on that string. `autopilot-scope-gate` sets `REVIEW_REQUIRED=1` if
+  the schema is v2 **or** `review_gate_version` is set **or**
+  `scripts/autopilot-review-readiness.mjs` merely exists on the pinned base ref. If the validator is
+  installed, the gate is already active.
+
+`parallel/manifests/_TEMPLATE.json` is the **runtime** shape. Copy it to the state dir; do not
+mistake it for the schema of the tracked contract.
+
+## 12. Anti-drift rules
+
+Every rule here exists because a repository already paid for its absence.
+
+**Do not hard-pin a value the reader can measure.** A SHA, version number, file count, test count or
+migration tail written into prose is stale from the moment the thing it describes moves — and it
+reads as fact precisely because it is specific. Point at the measurement instead: cite the file and
+the command (`awk '/^# KIT_VERSION:/{print $3; exit}' scripts/autopilot-scope-gate`), or state the
+value as a **condition** that verifies itself. A launcher that says "created from `<sha>`" is stale as
+soon as the commit adding that launcher lands; "the worktree must sit on a tip that already contains
+this launcher — which is self-verifying, because you could invoke it" never goes stale.
+
+**When a measurement disagrees with the contract, the measurement wins — and the disagreement is
+recorded, not silently corrected.** A number that was measured once and copied forward is a claim
+about the past. Say which source you read, when, and what changed. Silently updating a figure
+destroys the evidence that the estimate was wrong, which is usually the more useful finding.
+
+**A `not required` judgement needs a condition that voids it.** `SECURITY_REVIEW: not required` with
+no escape clause is a decision frozen against facts not yet known. Write the reason **and** the
+trigger: "not required — no auth/secret/money/external-input surface. If the probe finds otherwise
+(e.g. a money-path table in the set), this judgement is void: add a security round and say why."
+
+**A slice that finds something outside its own scope needs a sanctioned way to emit it.** Refusing to
+edit an out-of-scope file is correct discipline — but the finding then lives only in the session
+transcript, and a transcript is not a queue: nothing scans it. Before reaching a terminal state, write
+every out-of-scope finding into the project's backlog or issue tracker as its own entry, even a
+one-line placeholder. This is an explicit exception to negative scope, limited to the backlog/tracker
+file, and it is part of the deliverable rather than a courtesy.
+
+**Prefer de-pinning to re-pinning.** When a pinned figure goes stale, the cheap fix is to update the
+number and the durable fix is to remove the pin. Updating buys time until the next change; de-pinning
+ends the class. A sweep that replaced hard-pinned migration tails with "verify the current tail at
+`<dir>`" later saved seventeen files from a second sweep.
+
+## 13. Readiness check
 
 A repository is ready to run a new task with this workflow when:
 
