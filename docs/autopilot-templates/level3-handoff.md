@@ -33,7 +33,15 @@ Project rules may be stricter, never weaker.
 4. Derive risk and select `supervised|proactive_routine`.
 5. Split only where slices are independently executable and verifiable.
 6. Reserve one branch/worktree per writing slice.
-7. Let the primary agent delegate, monitor, integrate and drive the task to `READY|AWAIT|HALT`.
+7. **Generate the runtime manifest before registering.** The gate reads
+   `.autopilot/state/<feature>/manifest.json`, which is per-run, gitignored and carries
+   `manifest_schema_version: level3-operational-v2`. It is a different artifact from the tracked
+   authored contract under `docs/autopilot-manifests/<slug>.json`, which must **never** carry that
+   string — the validator pins the runtime path, so adding it to the tracked file breaks `register`
+   instead of upgrading it. Copy the shape from `docs/autopilot-manifests/_TEMPLATE.json`. Omitting
+   this step is what made `scope-gate ready` halt every slice in the repo until 2026-07-30; a slice
+   that skips it does not get a weaker gate, it gets no gate.
+8. Let the primary agent delegate, monitor, integrate and drive the task to `READY|AWAIT|HALT`.
 
 The user supplies the outcome and material decisions; the primary agent owns normal sequencing and
 child-agent prompts.

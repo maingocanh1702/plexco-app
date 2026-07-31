@@ -994,7 +994,15 @@ notes: **Phát hiện 2026-07-27 khi viết PVC-3 của `db-public-visibility-ca
 
 ## task: level3-gate-adoption-runtime-manifest
 title: Bật gate Level 3 thật — slice mới sinh runtime manifest v2; 45 authored contract giữ nguyên
-status: ready
+status: merged
+note_merged: **ĐÓNG BẰNG BẰNG CHỨNG 2026-07-30, không bằng commit** — lớp `owner-evidence-gate`, cùng loại `enable-google-login-safari-measurement`. Lối (c) forward-only mà owner chốt đã được **chạy thật hai lần**, và câu hỏi task đặt ra nay có câu trả lời bằng máy chứ không bằng prose:
+  · **AP-39** (`deps-security-bump--next-only`) — `register` PASS với runtime manifest v2 tại `.autopilot/state/<feature>/manifest.json`; `ready` chạy 6 attempt; review loop bắt **3 finding thật** và **bác 1 GHSA bịa** về postcss sau khi đối chiếu 4 nguồn. Chứng minh cơ chế chạy, nhưng chưa từng có lần pass sạch nên **không sinh `gate-result.json`**.
+  · **AP-40** (`authorize-tenant-action-core`, merged `ddb69a9`) — **`gate-result.json` với `"result": "pass"` ĐẦU TIÊN trong lịch sử repo**, kèm `READY.txt`. 2 vòng code-review sạch + 1 vòng security sạch, toàn bộ do gate tự chạy. 5 vòng fix trước đó đều là finding thật, **ba trong đó P1** — gồm một denylist allow-by-default trên trục subscription, đúng lớp fail-open mà lịch sử của chính spec đó đã sửa một lần ở trục tenant.
+  **Vì sao đó là bằng chứng đủ:** phản đề của lối (c) là lối (d) — chính thức hoá đường tay của AP-38, để Level 3 lại dạng văn bản, mỗi slice tự gọi reviewer và tự lật registry, không gì máy cưỡng chế. `gate-result.json` của AP-40 là thứ lối (d) **không bao giờ tạo ra được**. Gate đã tự chạy verification, tự chạy review, tự ghi bằng chứng và tự từ chối cho tới khi sạch.
+  **Không có gì để merge:** phần mechanism nằm ở kit (`_TEMPLATE.json` `_role` từ v13; `_verification_rule` v15 rồi sửa v18; hai gap gate ghi ở v16/v17), không ở Plexco. Phần Plexco trong `scope` đã xong: `_TEMPLATE.json` có `_role` và đúng là runtime shape (nên **có** `manifest_schema_version` — đúng thiết kế); `autopilot-ONBOARDING.md` nhắc 4 lần.
+  **Một chỗ sót đã sửa cùng lúc:** `docs/autopilot-templates/level3-handoff.md` nhắc **0 lần** về runtime manifest — bước "Start a new task" bảo giữ chỗ worktree rồi nhảy thẳng sang delegate, bỏ qua đúng bước mà `register` cần. Đó chính là lỗ hổng đã sinh ra task này. Thêm step 7 tường minh, kèm cảnh báo hai vai artifact.
+  `scope` của task khai `.claude/commands/` là **thư mục** — gate từ chối thư mục, nên task này chưa bao giờ register được kể cả khi muốn. Ghi lại như một ví dụ của `_scope_rule`.
+close_by: hand · đóng bằng bằng chứng vận hành, không có commit nào để probe
 risk: P1
 change_class: autopilot-mechanism
 depends_on: []
