@@ -61,8 +61,14 @@ SCOPE_GATE="$ROOT/scripts/autopilot-scope-gate"
 
 registry_status() {
   [ -f "$INFLIGHT" ] || return 0
+  # No reset on the header line: this accumulates ONE named feature and prints at END, so clearing on
+  # every later header erases the answer unless me is the LAST block in the registry. With the reset,
+  # `ap-finish.sh --squash-verified` refused every feature that was not last — the registry plainly read
+  # `ready` while this function returned empty, so the failure claimed the status was wrong rather than
+  # that the lookup was. Same defect fixed in autopilot-scope-gate at v20; it lived in four copies across
+  # three files, and v20 only reached the two inside that one file.
   awk -v me="$SLUG" '
-    /^## feature:/{cur=$3;st=""}
+    /^## feature:/{cur=$3}
     /^status:/{if(cur==me)st=$2}
     END{print st}
   ' "$INFLIGHT"

@@ -1,5 +1,15 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 23
+# KIT_VERSION: 24
+# v24 (2026-07-31) — the v20 registry-lookup bug had FOUR copies across THREE files. v20 fixed the two
+# inside this file, because that is where the search was run. The other two — ap-finish.sh
+# registry_status() and ap-housekeep.sh — kept the reset, so `ap-finish.sh --squash-verified` refused
+# every feature that was not the last block in the registry, reporting that the status must be `ready`
+# while the registry plainly said `ready`. The housekeeping inventory silently listed live reservations
+# as `absent` for the same reason. Both fixed; a repo-wide search now finds no remaining copy.
+# This is the second time in one day that a fix landed in some copies of a rule and not all of them
+# (see v23). The pattern in both: search inside the file already open, treat that result as the whole
+# set. When changing a rule, enumerate its copies ACROSS THE PACK before editing any of them, then
+# collapse them into one definition so there is nothing left to enumerate next time.
 # v23 (2026-07-31) — v21 fixed one of TWO copies of the BASE_STALE rule. The pre-flight copy got the new
 # ancestry+scope logic; a second copy inside liveDiffState() — the one `ready` actually passes through —
 # kept exact equality. So the fix looked landed, was verified in the file, and changed nothing for the

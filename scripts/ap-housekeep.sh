@@ -51,8 +51,11 @@ git -C "$ROOT" worktree list --porcelain | awk '
   [ -n "$feature" ] || continue
   status="absent"
   if [ -f "$INFLIGHT" ]; then
+    # No reset on the header line — see ap-finish.sh registry_status(). Accumulating one named feature
+    # and clearing on every later header returns empty for anything that is not the LAST block, which
+    # here meant the inventory silently reported live reservations as `absent`.
     status="$(awk -v me="$feature" '
-      /^## feature:/{cur=$3;st=""}
+      /^## feature:/{cur=$3}
       /^status:/{if(cur==me)st=$2}
       END{print st}
     ' "$INFLIGHT")"
