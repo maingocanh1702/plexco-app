@@ -1169,9 +1169,13 @@ risk: P1
 change_class: toolchain-major-upgrade
 depends_on: []
 invariants: [build-config]
-scope: [docs/autopilot-manifests/eslint-10-migration.json, package.json, pnpm-lock.yaml, eslint.config.mjs]
+scope: [docs/autopilot-manifests/eslint-10-migration.json, docs/autopilot-eslint-10-migration.md, package.json, pnpm-lock.yaml, eslint.config.mjs]
 manifest: docs/autopilot-manifests/eslint-10-migration.json
+slice_doc: docs/autopilot-eslint-10-migration.md
+launcher: .claude/commands/ap-42-eslint-10-migration.md
 merged_probe: null
+close_by: hand · toolchain-major-upgrade bump ở package.json/pnpm-lock.yaml, không tạo code symbol nào để probe — cùng lớp `dependency-security` mà `reconcile-close-by-hand-declaration` (Verdict 29) định nghĩa
+verdict: `CODE_READY` 2026-07-31, `AUTHORITY_SHA c759c63293a3555d957f58f4a82a06b1f35cfdda`, closure 12/12 — verdict block nằm trong slice doc (`<!-- review-readiness: code-ready -->`), tracker entry ở `docs/slice-readiness-verdicts.md` (Verdict 30)
 timing_note: 2026-07-29 · **`not_before`/`not_after` thêm sau khi block đã lên `ready`** — thiếu sót của lượt promote. Ràng buộc thời gian ban đầu chỉ nằm trong `_timing_gate` của manifest dưới dạng prose, mà **bot quét backlog đọc field, không đọc manifest**: nó sẽ chọn task này ngay hôm nay rồi HALT ở probe vì v10.8.0 (publish 24/07) chưa đủ 7 ngày `minimumReleaseAge` — đốt một session để tái phát hiện thứ đã biết. `deps-security-bump` có field này, block này thì không; cùng một lớp ràng buộc mà một cái machine-readable một cái không. `not_after` là EOL ESLint v9, ghi ra để nó là hạn chót đo được chứ không phải một câu trong notes.
 probe_findings: 2026-07-29 tại `main@f83995f` · **Ba câu hỏi compat đã ĐÓNG, không câu nào chặn** — nên block lên `ready` cùng ngày mở. **(a)** `typescript-eslint@8.62.1` và cả ba sub-package đã khai `peerDependencies.eslint: ^8.57.0 \|\| ^9.0.0 \|\| ^10.0.0` — **eslint 10 đã được hỗ trợ sẵn, KHÔNG cần nâng typescript-eslint**. Đây vốn là rủi ro lớn nhất vì `tseslint.config()` là khung của cả `eslint.config.mjs`. **(b)** `@next/eslint-plugin-next@15.5.20` không khai `peerDependencies` nào và chỉ phụ thuộc `fast-glob` ⇒ không ràng buộc version eslint. Vắng peer range **không phải bằng chứng tương thích**, nên đã grep source cho **cả 10 API v10 gỡ** (`context.getCwd/getFilename/getPhysicalFilename/getSourceCode`, `parserOptions`, `parserPath`, `getTokenOrCommentBefore/After`, `isSpaceBetweenTokens`, `getJSDocComment`) — **0 hit**. **(c)** Node: v10 đòi `^20.19.0 \|\| ^22.13.0 \|\| >=24`; máy `v22.22.3` ✓, CI `node-version: 22` → 22.x mới nhất ✓, **nhưng `package.json` khai `engines: {node: ">=22"}` — dải đó NHẬN 22.0–22.12 mà eslint 10 từ chối**. Lỗ thật, slice phải đóng (acceptance `E10-5`). **Baseline chống regression:** `npx eslint . -f json` = **81 file** (apps 46 · packages 31 · scripts 3 · `eslint.config.mjs` 1), sha256 danh sách đã sort prefix `3c99372c73e87ab4`.
 notes: |
@@ -1218,6 +1222,60 @@ notes: |
   Khai `level3-operational-v2` sẽ **bật thêm** gate ở `autopilot-scope-gate` (readiness validator + review bắt
   buộc); hiện **0/44 manifest** trong repo dùng nó, kể cả các manifest đã register và merge thành công. Chuyển
   cả đội sang v2 là quyết định riêng, không nên lén đưa vào qua một slice.
+  **CODE_READY 2026-07-31.** Manifest rewrite sang shape hiện hành (`verification.focused/canonical/e2e` là
+  lệnh `bash -lc` thật đã chạy test trước khi commit, `code_review.clean_rounds: 2` đúng field validator đọc
+  thay vì `codex_review: "2x_clean"` cũ, `scope` gồm cả slice doc). Phát hiện thật khi author: `pnpm why
+  brace-expansion` lộ MỘT nguồn thứ hai (`5.0.7` qua `minimatch@10.2.5` ← `typescript-eslint`'s own
+  `typescript-estree`, không liên quan version eslint) — acceptance `E10-4` gốc sai vì giả định osv-scanner
+  sẽ sạch hoàn toàn; đã sửa + tách sang task `eslint10-brace-expansion-5-0-7-typescript-estree` dưới. Slice
+  doc: `docs/autopilot-eslint-10-migration.md`. Launcher: `ap-42`.
+
+## task: eslint10-brace-expansion-5-0-7-typescript-estree
+title: brace-expansion@5.0.7 (GHSA-mh99-v99m-4gvg) qua minimatch@10.2.5 ← typescript-eslint's own typescript-estree — độc lập với version eslint
+status: idea
+risk: P2
+change_class: dependency-security
+depends_on: []
+invariants: [build-config]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  **Phát hiện 2026-07-31 khi author `eslint-10-migration`, đo bằng `pnpm why brace-expansion`.**
+  `osv-scanner --lockfile=pnpm-lock.yaml` báo hai finding brace-expansion, không phải một:
+  `1.1.16` qua `minimatch@3.1.5` ← `eslint@9.39.4` (nhánh `eslint-10-migration` gỡ) và `5.0.7` qua
+  `minimatch@10.2.5` ← `@typescript-eslint/typescript-estree@8.62.1` ← `typescript-eslint@8.62.1`
+  (devDependency riêng, hoàn toàn tách khỏi version eslint). Cả hai bị GHSA-mh99-v99m-4gvg, patch
+  chỉ có ở `5.0.8`. `eslint-10-migration`'s `negative_scope` cấm rõ cố đóng finding này — không nâng
+  `typescript-eslint` trong slice đó, tránh nhét một thay đổi chưa đo vào một slice đã có scope chặt.
+  **Chưa scope:** cần xác nhận `typescript-eslint@8.62.x` có bản patch nào tự nâng `minimatch`/
+  `brace-expansion` nội bộ hay không trước khi chọn hướng (chờ patch upstream vs. pnpm override cho
+  riêng nhánh này — override có rủi ro tương tự override đã bị bác cho nhánh v1, cần đo runtime
+  trước khi chọn, không giả định an toàn).
+
+## task: root-lock-no-staleness-detection
+title: scripts/autopilot-root-lock không tự phát hiện lock chết — chỉ có --force, không có gợi ý PID còn sống hay không
+status: idea
+risk: P3
+change_class: autopilot-mechanism
+depends_on: []
+invariants: [kit-integrity]
+scope: [scripts/autopilot-root-lock]
+manifest: null
+merged_probe: scripts/autopilot-root-lock :: lock_holder_pid_alive
+notes: |
+  **Phát hiện 2026-07-31, một sự cố thật.** Session `gate-adoption-close` giữ lock rồi chết (đóng/crash)
+  mà không release. Session kế tiếp (`author-b`) phải tự điều tra: `scripts/autopilot-root-lock status`
+  chỉ in được owner + tuổi lock, không nói lock có còn sống hay không — phải tự chạy `ps -p <pid>` +
+  đọc `git diff --stat` để suy luận "chết hay đang chạy" trước khi dám `--force`. Việc đúng vẫn làm
+  được (`--force` tồn tại sẵn), nhưng tốn khoảng mười phút điều tra thủ công cho một câu trả lời máy
+  có thể in ra ngay lập tức.
+  **Đề xuất (không làm ở đây):** trong nhánh `status` (và trong message HALT của `acquire` khi bị chặn),
+  đọc `pid=` từ `owner` file rồi thử `kill -0 "$pid" 2>/dev/null` (portable, không cần cài gì thêm) —
+  in thêm một dòng `PID <n> is alive` hoặc `PID <n> not found on this host (likely dead session)`.
+  KHÔNG tự động `--force` dựa trên kết quả đó — quyết định vẫn phải là của người, script chỉ rút ngắn
+  bước điều tra. Lưu ý: `kill -0` chỉ đúng nếu lock-holder chạy CÙNG máy; nếu owner từng chạy trên máy
+  khác, "not found" sẽ là false positive — message phải nói rõ giới hạn này, không khẳng định chắc chắn.
 
 ## task: db-undeclared-check-constraints-schema-mirror
 title: 6 CHECK sống trong DB mà `schema.ts` không khai — khai theo `_chk` + một migration RENAME

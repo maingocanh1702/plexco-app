@@ -14,6 +14,79 @@
 
 ---
 
+## Verdict 30 — `eslint-10-migration`: EOL-driven ESLint 9→10 upgrade, hai finding brace-expansion chứ không phải một (2026-07-31)
+
+> **Canonical block sống trong `docs/autopilot-eslint-10-migration.md`** (mode `code-ready`, đó là
+> coding handoff). Block dưới là **bản mirror trong tracker** — sửa một chỗ phải sửa cả hai; nếu hai
+> bên lệch, bản trong slice doc thắng.
+>
+> **Slice này tồn tại từ 2026-07-29** (tách khỏi `deps-security-bump`, driven bởi ESLint v9
+> END-OF-LIFE 2026-08-06), nhưng manifest gốc thiếu bốn thứ đúng bốn lỗi mà chính chính sách repo
+> này liệt kê cần đọc source trước khi viết: `verification` dùng `_acceptance` prose thay vì lệnh
+> `bash -lc` chạy được (`runVerificationGroup()` spawn thẳng từng chuỗi); `code_review` dùng field
+> `codex_review: "2x_clean"` — tên field validator thật (`autopilot-review-readiness.mjs`) không hề
+> đọc, field nó đọc là `code_review.clean_rounds`; `scope` chưa có slice doc vì slice doc chưa tồn
+> tại; và `invariants` (may mắn) đã đúng sẵn. Rewrite hôm nay sang shape hiện hành —
+> `docs/autopilot-authorize-tenant-action-core.md`/`.json`, cùng ngày trước — và mọi lệnh
+> `verification.focused` đã **chạy thật** (`spawnSync` y hệt gate) trước khi commit, không chỉ
+> parse cú pháp.
+>
+> **Phát hiện thực chất khi author, không có trong bản gốc:** `pnpm why brace-expansion` cho thấy
+> **HAI** nguồn brace-expansion, không phải một — `1.1.16` qua `minimatch@3.1.5` ← `eslint@9.39.4`
+> (đúng nhánh slice này gỡ) và `5.0.7` qua `minimatch@10.2.5` ← `typescript-eslint@8.62.1`'s own
+> `typescript-estree`, hoàn toàn độc lập với version eslint. Acceptance gốc E10-4 khẳng định
+> osv-scanner sẽ hết sạch finding brace-expansion sau slice này — **sai**, không đạt được từ scope
+> của slice. Đã sửa E10-4 và route phần dư sang backlog entry mới
+> `eslint10-brace-expansion-5-0-7-typescript-estree` (`idea`), không lặng lẽ bỏ qua.
+>
+> **Một check bị loại bỏ giữa chừng, ghi lại vì lý do đáng nhớ:** `npx --yes semver` cho kiểm tra
+> `engines.node` vừa bị chính policy thực thi của môi trường chặn (external package agent tự chọn,
+> chưa khai báo trong repo) vừa cho **kết quả sai** khi test thật — báo dải `>=22` hiện tại đã thoả
+> điều kiện loại trừ 22.0.0–22.12.x trong khi thực tế nó không loại trừ gì. Thay bằng một literal-diff
+> không phụ thuộc package ngoài (assert dải không còn ĐÚNG BẰNG `>=22`) — hẹp hơn về những gì nó
+> chứng minh (không tự chứng minh dải MỚI đúng hoàn toàn, để việc đó cho coding agent + code-review
+> đọc trực tiếp), nhưng đúng và không phụ thuộc gì bên ngoài.
+>
+> **Điều verdict này KHÔNG chứng minh:** `brace-expansion@5.0.7` chưa đóng — đó là finding độc lập,
+> routed sang backlog riêng. `CODE_READY` nghĩa là mở worktree được, không phải `IMPLEMENTED`.
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-07-31
+AUTHORITY_SHA: c759c63293a3555d957f58f4a82a06b1f35cfdda
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/autopilot-eslint-10-migration.md
+  - docs/autopilot-manifests/eslint-10-migration.json
+  - package.json
+  - pnpm-lock.yaml
+  - eslint.config.mjs
+SLICE: eslint-10-migration
+IN_SCOPE: eslint ^9.18.0 -> ^10 across the workspace, lockfile regenerated, engines.node tightened to exclude 22.0.0-22.12.x, eslint.config.mjs adjusted only for strictly-required v10 compatibility, proof the linted-file set is unchanged
+OUT_OF_SCOPE: any rule configuration change · typescript-eslint upgrade · next/postcss bump (deps-security-bump) · source-code changes to satisfy lint · closing the separate brace-expansion@5.0.7 finding (typescript-eslint's own minimatch@10.2.5, unrelated to eslint's version)
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: none — root, independent slice; shares build-config token with deps-security-bump (sequential, not blocking)
+PRIOR_SLICES: none
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS (12/12)
+ACCEPTANCE_MATRIX: PASS
+SECURITY_AND_MIGRATION_GATE: PASS
+IMPLEMENTATION_ARTIFACTS: PASS
+FIRST_IMPLEMENTATION_STEP: write .autopilot/state/eslint-10-migration/design-probe.md AND the companion .autopilot/state/eslint-10-migration/design-probe-file-list.txt (sorted repo-relative linted file paths from `npx eslint . -f json`) BEFORE any edit, re-measuring all four _design_probe items in the manifest, then STOP for founder confirmation
+REMAINING_BLOCKERS: none
+```
+
+---
+
 ## Verdict 29 (AMENDED 2026-07-30) — `reconcile-close-by-hand-declaration`: dạy autopilot-backlog-reconcile hiểu khai báo đóng-tay có chủ đích
 
 > **AMENDED cùng ngày phát hành, theo feedback owner — hai điểm mở đã đóng, `AUTHORITY_SHA` di chuyển.**
