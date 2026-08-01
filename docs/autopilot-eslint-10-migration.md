@@ -124,10 +124,10 @@ DELIVERABLES: diff đúng scope · file-set baseline diff sạch (E10-2) · lock
 
 (English) Code-review round 2 (second registration) correctly flagged that marking only the fenced
 verdict blocks historical/active left the prose §3 contract and acceptance matrix above still reading
-as the current rules, contradicting the widened scope. Rather than duplicate the ~65 lines of §3 that
-are UNCHANGED (OUTCOME, ESLint-version reasoning, RISK, MODEL_POLICY, BUDGETS, STOP_CONDITIONS, all
-still accurate), this section states only the delta. Everything in §3 above not listed here still
-applies as written.
+as the current rules, contradicting the widened scope -- including one wrong claim in this section's
+own first draft: STOP_CONDITIONS was listed as unchanged below, when it was not. This is the corrected,
+complete delta. Only OUTCOME, ESLint-version reasoning, RISK, MODEL_POLICY, BUDGETS and everything else
+NOT named in this block or the inline corrections after it remains as written in §3 above.
 
 ```text
 SCOPE: the 5 files above PLUS packages/db/src/migrate.ts · packages/db/src/migrate.test.ts ·
@@ -136,6 +136,11 @@ NEGATIVE_SCOPE (additions): KHÔNG sửa migrate.ts vượt quá gắn `cause` v
   đổi message text, không refactor vòng lặp migration) · KHÔNG rule config nào khác ngoài GỠ HẲN
   `preserve-caught-error: "warn"` (không carve exception -- xem changelog v0.5 vì sao registration đầu
   bị đóng và đăng ký lại thay vì amend tại chỗ)
+STOP_CONDITIONS (corrected, not additive -- §3's (b) above is WRONG for this registration): HALT nếu
+  `eslint:recommended` v10 sinh lỗi mới ở file NGOÀI scope đã khai báo. Lỗi `preserve-caught-error` ở
+  `packages/db/src/migrate.ts:172` KHÔNG còn là HALT trigger -- nó nằm trong scope và đã được fix trực
+  tiếp (E10-11), đúng những gì manifest runtime's `stop_conditions` khai báo hiện hành. (a)(c)(d) trong
+  §3 giữ nguyên.
 DELIVERABLES (additions): migrate.ts:172 gắn `cause: error` khi rethrow (E10-11) · regression test tái
   dùng trigger đã có, không tạo mới (E10-12) · backlog task eslint10-preserve-caught-error-migrate-ts
   có `merged_probe` thật + status chính xác (E10-13, sửa lại sau khi bị flag `status: merged` sớm)
@@ -145,13 +150,10 @@ FIRST_IMPLEMENTATION_STEP: none remaining to CODE -- run scripts/autopilot-scope
   criteria (E10-1..E10-13) are implemented; what remains is 2 consecutive clean code-review rounds.
 ```
 
-J1 in the Acceptance matrix below is superseded the same way: it still says "chỉ chạm đúng 5 file",
-current mechanical enforcement is 8 files per the runtime manifest's `scope` array (still enforced the
-same way, by the gate's own SCOPE_DRIFT check -- only the count changed). E10-11/E10-12/E10-13 above
-are the acceptance rows for the 3 new files' behavior; they are not separate table rows because the
-table above predates this registration and duplicating its format for 3 rows was judged lower-value
-than this delta block, which the next reviewer should read as authoritative over J1's literal "5 file"
-text.
+J1, H2 and G1 in the Acceptance matrix below are each superseded, with an inline correction placed
+directly at each row rather than only referenced from here -- a reader hitting one of those rows in
+isolation should not see stale text with no local pointer. E10-11/E10-12/E10-13 are now proper matrix
+rows (K1/K2/K3) below, not just prose in this delta block.
 
 ---
 
@@ -176,7 +178,7 @@ verdict.
 
 ---
 
-## Acceptance matrix (first registration — J1's "5 file" text is SUPERSEDED, see §3 delta above; the rest of this table is unchanged and still active)
+## Acceptance matrix (rows A1-J1 from the first registration, G1/H2/J1 marked SUPERSEDED inline where the second registration changed them; K1-K3 added for the second registration's own acceptance criteria E10-11..E10-13)
 
 | # | Nhóm | Input / precondition | Expected | Layer |
 |---|---|---|---|---|
@@ -190,11 +192,14 @@ verdict.
 | E1 | Concurrency | — | KHÔNG áp dụng — thay đổi build-tooling đơn luồng, không có concurrent writer/lock semantics | n/a |
 | F1 | Migration (dependency, không phải DB) | `pnpm-lock.yaml` resolved entries trước vs sau cho `brace-expansion`/`minimatch` | nhánh `minimatch@3.x → brace-expansion@1.x` biến mất hoàn toàn (E10-3) | focused |
 | F2 | Migration | `git diff eslint.config.mjs` | chỉ chứa đúng phần v10 compat thật sự đòi hỏi; block Node-globals `scripts/**/*.{mjs,js}` giữ nguyên (E10-6, E10-7) | focused + code-review |
-| G1 | Security/privacy | `osv-scanner --lockfile=pnpm-lock.yaml` trước vs sau | finding `brace-expansion@1.1.16` biến mất; finding `brace-expansion@5.0.7` (không liên quan, qua `typescript-eslint`'s own `minimatch@10.2.5`) ĐÚNG là vẫn còn và phải được BÁO CÁO chứ không bị coi là chưa xong hay bị silence (E10-4, đã sửa) | manual + code-review |
+| G1 | Security/privacy | `osv-scanner --lockfile=pnpm-lock.yaml` trước vs sau | **SUPERSEDED 2026-08-01 (2 đường, không phải 1):** finding `brace-expansion@1.1.16` biến mất; finding `brace-expansion@5.0.7` còn -- KHÔNG còn "không liên quan" như dòng gốc, đo được HAI đường (`typescript-eslint`'s `typescript-estree` VÀ `eslint@10.7.0`'s own `@eslint/config-array`) hội tụ về cùng bản cài, phải được BÁO CÁO cả hai chứ không bị coi là chưa xong hay bị silence (E10-4, đã sửa lần 2) | manual + code-review |
 | H1 | Regression | full CI command list (typecheck/format:check/review:check/lint/build/test) + workspace test count | tất cả xanh; test count khớp baseline đo LÚC CHẠY, không tin số 561 chép trong doc này (E10-8, E10-9) | canonical |
-| H2 | Regression | `eslint:recommended`'s rule set mới của v10, chạy trên toàn repo | bất kỳ lỗi MỚI nào cũng phải REPORT + HALT, không được tự sửa hay silence (E10-7) | gate |
+| H2 | Regression | `eslint:recommended`'s rule set mới của v10, chạy trên toàn repo | **SUPERSEDED 2026-08-01:** dòng gốc nói bất kỳ lỗi MỚI nào cũng REPORT+HALT không tự sửa -- đúng cho file NGOÀI scope, nhưng registration này ĐÃ mở rộng scope để sửa trực tiếp đúng MỘT lỗi đã biết (`preserve-caught-error` ở `migrate.ts:172`, xem K1) thay vì HALT+defer. Lỗi MỚI khác (chưa biết) ở file ngoài scope vẫn REPORT+HALT y hệt dòng gốc (E10-7, §3 delta's STOP_CONDITIONS) | gate |
 | I1 | Observability | READY report | phải nêu tên chính xác finding `brace-expansion@5.0.7` còn lại và slug backlog follow-up, không được để nó biến mất khỏi báo cáo (E10-4) | manual |
-| J1 | Scope | `git diff --stat main...HEAD` | chỉ chạm đúng 5 file trong `scope`; enforced CƠ HỌC bởi `SCOPE_DRIFT` của chính readiness gate (E10-10) | gate |
+| J1 | Scope | `git diff --stat main...HEAD` | **SUPERSEDED 2026-08-01:** dòng gốc nói 5 file -- registration hiện hành là 8 file (xem §3 delta's SCOPE); cơ chế enforce KHÔNG đổi, vẫn `SCOPE_DRIFT` của chính readiness gate (E10-10), chỉ số file đếm đổi | gate |
+| K1 | Regression fix | `packages/db/src/migrate.ts:172` trước vs sau | `throw new Error(...)` giờ có `{ cause: error }`; message text không đổi; `git diff` không chạm gì khác trong file (E10-11) | code-review |
+| K2 | Regression fix | `packages/db/src/migrate.test.ts` trước vs sau | test mới tái dùng `hideRealJobDefiner`/`withJobDefinerLock` đã có (không tạo trigger mới), assert `.cause` được set khi migration fail; PASS khi chạy thật (478ms) (E10-12) | canonical (DB suite) |
+| K3 | Observability/debt | `docs/autopilot-backlog.md` task `eslint10-preserve-caught-error-migrate-ts` trước vs sau | `status: ready` + `merged_probe` thật (`packages/db/src/migrate.test.ts :: plexco_migrate_cause_preserved`, đo unique + absent trên `origin/main`) thay vì `status: merged` sớm + `close_by: hand` không hợp lệ (E10-13) | manual + code-review |
 
 ---
 
@@ -342,7 +347,7 @@ REMAINING_BLOCKERS: none
 | 6 | Data/contract đủ | `migrate.ts`'s error-handling contract pinned exactly (message text unchanged, `cause` attached); `migrate.test.ts`'s failure-trigger mechanism (`hideRealJobDefiner`/`withJobDefinerLock`) reused, not invented | PASS |
 | 7 | Fail-closed/order đủ | `migrate.ts`'s rollback-then-rethrow control flow is UNCHANGED -- only what's attached to the already-thrown error differs; verified via the existing JCL-2/3 tests plus the new regression test, all passing | PASS |
 | 8 | Open question trong scope | 0 | PASS |
-| 9 | Acceptance matrix có expected | 13 rows (E10-1..E10-13), each with an explicit enforcement mechanism (a named focused/canonical check or code review) | PASS |
+| 9 | Acceptance matrix có expected | 13 acceptance criteria (E10-1..E10-13) across the 18-row acceptance matrix above (A1-K3, K1-K3 added for this registration, G1/H2/J1 superseded inline), each criterion with an explicit enforcement mechanism (a named focused/canonical check or code review) | PASS |
 | 10 | Migration/security/rollback pin | no DB schema migration (`migrate.ts` is the runner, not a migration file); rollback = revert the fix commit; `security_review` correctly not required, with `reason` + `void_if` pinned in the manifest | PASS |
 | 11 | First slice hard deps merged | root, nothing to wait for | PASS |
 | 12 | Implementation handoff sẵn sàng | this slice doc (both verdicts) + manifest (8-file scope, `_reregistration_note` explaining why) + both backlog entries updated + launcher `ap-42` (unchanged) + disposition record for the closed first registration (`.autopilot/dispositions/eslint-10-migration.json`) + archive branch (`archive/eslint-10-migration-preclose`) preserving the first registration's 3 commits verbatim | PASS |
