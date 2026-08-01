@@ -56,6 +56,26 @@ export interface MigrateResult {
   skipped: string[];
 }
 
+/** Marker property carrying a caller-supplied SAFE summary for CLI logging — separate from
+ *  `.message`, which stays exactly what every throw site already sets (existing tests assert on
+ *  its content, e.g. /job_definer/i). Only the throw site knows whether its own text is safe: a
+ *  static, repo-authored string (or one interpolating only a controlled identifier like a
+ *  migration filename) is always safe; the raw text of a caught Postgres error is not, since some
+ *  SQLSTATE classes put the offending row's value directly in the primary message. */
+const SAFE_LOG_SUMMARY = Symbol("safeLogSummary");
+
+interface WithSafeLogSummary {
+  [SAFE_LOG_SUMMARY]?: string;
+}
+
+/** Throws an Error whose `.message`/`.cause` are exactly what the caller passes (unchanged
+ *  contract), plus a `safeLogSummary` the CLI's log formatter can trust without re-deriving it. */
+function throwMigrateError(message: string, safeLogSummary: string, options?: ErrorOptions): never {
+  const error: Error & WithSafeLogSummary = new Error(message, options);
+  error[SAFE_LOG_SUMMARY] = safeLogSummary;
+  throw error;
+}
+
 /**
  * Race-safe CREATE ROLE. Postgres has no `CREATE ROLE IF NOT EXISTS`, and roles
  * are CLUSTER-global while databases are not: two migrate() runs bootstrapping
@@ -80,9 +100,8 @@ export interface MigrateResult {
  */
 export async function ensureRoleExists(client: pg.Client, role: string): Promise<void> {
   if (!SAFE_ROLE_IDENT.test(role)) {
-    throw new Error(
-      `migrate: refusing to CREATE ROLE with unsafe identifier ${JSON.stringify(role)}`,
-    );
+    const message = `migrate: refusing to CREATE ROLE with unsafe identifier ${JSON.stringify(role)}`;
+    throwMigrateError(message, message);
   }
   await client.query(
     `DO $$ BEGIN
@@ -93,7 +112,8 @@ export async function ensureRoleExists(client: pg.Client, role: string): Promise
 
 export async function migrate(migrationUrl: string): Promise<MigrateResult> {
   if (!migrationUrl) {
-    throw new Error("migrate: DATABASE_URL_MIGRATION is required (DDL-owner role)");
+    const message = "migrate: DATABASE_URL_MIGRATION is required (DDL-owner role)";
+    throwMigrateError(message, message);
   }
   const client = new pg.Client({ connectionString: migrationUrl });
   await client.connect();
@@ -150,10 +170,10 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
       const prior = seen.get(file);
       if (prior !== undefined) {
         if (prior !== sha) {
-          throw new Error(
+          const message =
             `migrate: ${file} changed after being applied (sha mismatch) — ` +
-              `applied migrations are immutable; add a NEW migration instead`,
-          );
+            `applied migrations are immutable; add a NEW migration instead`;
+          throwMigrateError(message, message);
         }
         skipped.push(file);
         continue;
@@ -169,9 +189,14 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
         applied.push(file);
       } catch (error) {
         await client.query("ROLLBACK");
-        throw new Error(`migrate: ${file} failed and was rolled back: ${String(error)}`, {
-          cause: error,
-        });
+        // safeLogSummary keeps the migration filename — a controlled, repo-known identifier,
+        // never row data — but excludes String(error): the actual pg error's text, which for some
+        // SQLSTATE classes (e.g. 22P02) embeds the offending row's value directly.
+        throwMigrateError(
+          `migrate: ${file} failed and was rolled back: ${String(error)}`,
+          `migrate: ${file} failed and was rolled back`,
+          { cause: error },
+        );
       }
     }
 
@@ -179,7 +204,8 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
     // never pass as migrated.
     const policies = await client.query("SELECT count(*)::int AS n FROM pg_policies");
     if ((policies.rows[0] as { n: number }).n === 0) {
-      throw new Error("migrate: 0 RLS policies after apply — refusing to treat DB as migrated");
+      const message = "migrate: 0 RLS policies after apply — refusing to treat DB as migrated";
+      throwMigrateError(message, message);
     }
     return { applied, skipped };
   } finally {
@@ -206,26 +232,32 @@ const SAFE_CAUSE_LOG_FIELDS = [
   "line",
 ] as const;
 
-/** Builds a log line for a migration failure using ONLY the allowlisted `.cause` fields — never any
- *  free-text message, from any source. The wrapping Error's own `.message` (built by interpolating
- *  `String(error)` at the throw site) is deliberately NOT used here: Postgres's message/detail split
- *  only holds for integrity-constraint classes (23xxx) -- for a data-exception class like 22P02
+/** Builds a log line for a migration failure from ONLY pre-vetted safe sources — never Postgres's
+ *  raw message/detail text. Two sources feed it: (1) `safeLogSummary`, set by the THROW SITE itself
+ *  (see throwMigrateError) — every migrate.ts throw site knows whether its own message is static
+ *  repo text or a controlled identifier like a migration filename, so it is trusted here without
+ *  re-deriving it; falls back to a generic string if absent (e.g. an error from outside this
+ *  module). (2) the allowlisted `.cause` fields, when a Postgres error was caught and wrapped —
+ *  identifies WHICH constraint/table/column failed without echoing row contents. `detail`/`hint`/
+ *  `internalQuery`/`where` are deliberately excluded: on a unique-violation, `detail` is e.g.
+ *  `Key (email)=(user@example.com) already exists.` — the offending row's actual value. Neither
+ *  source ever includes `.message`/`String(error)` verbatim: Postgres's message/detail split only
+ *  holds for integrity-constraint classes (23xxx) -- for a data-exception class like 22P02
  *  (invalid_text_representation), the offending value sits directly in the PRIMARY message, e.g.
- *  `invalid input syntax for type integer: "user@example.com"`, with `.detail` undefined. Rather than
- *  allowlist which SQLSTATE classes are safe to quote (a classification that could silently miss a
- *  future case, or a future migration's own RAISE EXCEPTION interpolating row data), no free text is
- *  ever quoted at all -- only individually-vetted structured fields. `.message`/`.cause` on the Error
- *  object itself are untouched; this only affects what the CLI prints. */
+ *  `invalid input syntax for type integer: "user@example.com"`, with `.detail` undefined. `.message`/
+ *  `.cause` on the Error object itself are untouched; this only affects what the CLI prints. */
 export function formatMigrationFailureForLog(error: unknown): string {
+  const safeSummary =
+    error instanceof Error && typeof (error as WithSafeLogSummary)[SAFE_LOG_SUMMARY] === "string"
+      ? (error as WithSafeLogSummary)[SAFE_LOG_SUMMARY]!
+      : "migrate: a migration step failed";
   const cause = error instanceof Error ? error.cause : undefined;
   const causeRecord =
     cause && typeof cause === "object" ? (cause as Record<string, unknown>) : undefined;
   const safeParts = SAFE_CAUSE_LOG_FIELDS.filter((field) => causeRecord?.[field] !== undefined).map(
     (field) => `${field}=${String(causeRecord![field])}`,
   );
-  return safeParts.length > 0
-    ? `migrate: a migration step failed [${safeParts.join(" ")}]`
-    : "migrate: a migration step failed (no structured cause details available)";
+  return safeParts.length > 0 ? `${safeSummary} [${safeParts.join(" ")}]` : safeSummary;
 }
 
 /** The CLI's actual failure sink, exported so tests can spy on the real console.error call

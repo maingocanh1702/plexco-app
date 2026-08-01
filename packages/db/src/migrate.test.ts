@@ -535,38 +535,40 @@ describe("setupNonSuperuserOwnerContext teardown (codex round-07 [P1])", () => {
  * touch job_definer's own state at all — it bootstraps via a DIFFERENT role (`ctx.superuser`, not
  * the owner under test), which is a normal idempotent/correct bootstrap and needs no lock.
  */
-describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditions", () => {
-  async function expectNoPartialJobCoreRow(ctx: { ownerPool: pg.Pool }): Promise<void> {
-    const rec = await ctx.ownerPool.query(
-      `SELECT 1 FROM schema_migrations WHERE name = '0022_job_claim_lease_core.sql'`,
-    );
-    expect(rec.rows.length).toBe(0);
-  }
+async function expectNoPartialJobCoreRow(ctx: { ownerPool: pg.Pool }): Promise<void> {
+  const rec = await ctx.ownerPool.query(
+    `SELECT 1 FROM schema_migrations WHERE name = '0022_job_claim_lease_core.sql'`,
+  );
+  expect(rec.rows.length).toBe(0);
+}
 
-  /**
-   * A real job_definer accumulates GRANT dependents (schema USAGE, function ownership) in every
-   * database any test has bootstrapped it into — Postgres tracks role dependencies CLUSTER-wide
-   * (pg_shdepend), so `DROP ROLE job_definer` fails with "cannot be dropped because some objects
-   * depend on it" the moment ANY other suite has ever bootstrapped it, which is the common case.
-   * Renaming instead of dropping sidesteps this entirely: dependencies are tracked by OID, so a
-   * rename-away/rename-back round trip preserves every one of them, in every database, with zero
-   * cross-database cleanup. Must run inside withJobDefinerLock (the caller's job).
-   */
-  async function hideRealJobDefiner(superuser: pg.Client, fn: () => Promise<void>): Promise<void> {
-    const existing = await superuser.query(`SELECT 1 FROM pg_roles WHERE rolname = 'job_definer'`);
-    const hadRealRole = existing.rows.length > 0;
+/**
+ * A real job_definer accumulates GRANT dependents (schema USAGE, function ownership) in every
+ * database any test has bootstrapped it into — Postgres tracks role dependencies CLUSTER-wide
+ * (pg_shdepend), so `DROP ROLE job_definer` fails with "cannot be dropped because some objects
+ * depend on it" the moment ANY other suite has ever bootstrapped it, which is the common case.
+ * Renaming instead of dropping sidesteps this entirely: dependencies are tracked by OID, so a
+ * rename-away/rename-back round trip preserves every one of them, in every database, with zero
+ * cross-database cleanup. Must run inside withJobDefinerLock (the caller's job). Module-scoped
+ * (not local to JCL-2/JCL-3's describe block) because the CLI failure-log sink tests below also
+ * need a real job_definer-absent failure to exercise the real per-file throw site.
+ */
+async function hideRealJobDefiner(superuser: pg.Client, fn: () => Promise<void>): Promise<void> {
+  const existing = await superuser.query(`SELECT 1 FROM pg_roles WHERE rolname = 'job_definer'`);
+  const hadRealRole = existing.rows.length > 0;
+  if (hadRealRole) {
+    await superuser.query(`ALTER ROLE job_definer RENAME TO job_definer_hidden_for_test`);
+  }
+  try {
+    await fn();
+  } finally {
     if (hadRealRole) {
-      await superuser.query(`ALTER ROLE job_definer RENAME TO job_definer_hidden_for_test`);
-    }
-    try {
-      await fn();
-    } finally {
-      if (hadRealRole) {
-        await superuser.query(`ALTER ROLE job_definer_hidden_for_test RENAME TO job_definer`);
-      }
+      await superuser.query(`ALTER ROLE job_definer_hidden_for_test RENAME TO job_definer`);
     }
   }
+}
 
+describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditions", () => {
   it("JCL-2a: job_definer absent — migration fails, 0022 is not recorded", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_jcl2_absent");
     try {
@@ -777,6 +779,72 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
       await c.end();
     }
   }, 30_000);
+
+  // codex round-3 [P2] on this registration's own gate: round 2's fix was correct on safety but
+  // discarded USEFUL, SAFE information along with the risky text — the migration filename (for a
+  // per-file failure) and the entire message (for a direct, cause-less failure), even though both
+  // are 100% repo-controlled and carry zero row-data risk. These two tests go through the REAL
+  // throw sites in migrate.ts (not a hand-built error double, which cannot carry the private
+  // safeLogSummary marker) to prove both are preserved without reopening the leak the prior two
+  // tests guard against.
+  it("codex round-3 [P2]: a per-file migration failure preserves the migration filename in the CLI sink's actual output", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_filename_preserved");
+    try {
+      await withJobDefinerLock(BASE!, () =>
+        hideRealJobDefiner(ctx.superuser, async () => {
+          let caught: unknown;
+          try {
+            await ctx.runMigration();
+          } catch (error) {
+            caught = error;
+          }
+          expect(caught).toBeInstanceOf(Error);
+          expect((caught as Error).cause).toBeDefined();
+
+          const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+          let printed: string;
+          try {
+            logMigrationFailure(caught);
+            expect(spy).toHaveBeenCalledTimes(1);
+            printed = format(...spy.mock.calls[0]!);
+          } finally {
+            spy.mockRestore();
+          }
+          // The filename is a controlled, repo-known identifier (from readdir() on our own
+          // migrations directory) — safe to print in full, and useful: without it, every per-file
+          // failure log line looked identical regardless of which migration actually failed.
+          expect(printed).toContain("0022_job_claim_lease_core.sql");
+        }),
+      );
+      await expectNoPartialJobCoreRow(ctx);
+    } finally {
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("codex round-3 [P2]: a direct failure with no per-file cause preserves its own safe static message in full in the CLI sink's actual output", async () => {
+    let caught: unknown;
+    try {
+      await migrate("");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    // No .cause at all -- this throw site never caught a Postgres error, so there is nothing to
+    // wrap. The whole message is static, repo-authored text with zero row-data risk.
+    expect((caught as Error).cause).toBeUndefined();
+
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let printed: string;
+    try {
+      logMigrationFailure(caught);
+      expect(spy).toHaveBeenCalledTimes(1);
+      printed = format(...spy.mock.calls[0]!);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(printed).toContain("migrate: DATABASE_URL_MIGRATION is required (DDL-owner role)");
+  }, 10_000);
 });
 
 describe("job_definer bootstrap script itself fails closed on runtime-role targets (codex round-08 [P1])", () => {
