@@ -1193,7 +1193,13 @@ scope_correction: **SỬA 2026-08-01 (code-review, second registration).** `scop
   `close_by: hand` KHÔNG còn hợp lệ (`autopilot-backlog-reconcile`'s ABUSE guard: scope có source
   probe được thì không được hand-close); đổi sang `merged_probe` thật, cùng probe với task con
   `eslint10-preserve-caught-error-migrate-ts`.
-verdict: **SỬA 2026-08-01 (lần ba):** verdict "third registration — ACTIVE/canonical" (dòng dưới) bị
+verdict: **SỬA 2026-08-01 (lần bốn, gate-attempt-02 round 1 [P2] của lần đăng ký thứ năm):** verdict
+  "fourth registration — ACTIVE/canonical" (dòng dưới) bị chính nó SUPERSEDED. Đăng ký lần năm: owner
+  quyết định gỡ hẳn field `code` khỏi allowlist, đổi tiêu chí sang PROVENANCE (giữ field Postgres tự
+  điền, bỏ field bất kỳ câu lệnh SQL nào set được) thay vì lý lẽ an toàn từng field. Verdict hiện hành:
+  xem "Verdict (fifth registration — ACTIVE/canonical)" trong cùng slice doc, chưa `CODE_READY` (đang
+  chờ 2 vòng code-review sạch liên tiếp + 1 vòng security-review, cả hai chưa xong).
+  **SỬA 2026-08-01 (lần ba):** verdict "third registration — ACTIVE/canonical" (dòng dưới) bị
   chính nó SUPERSEDED sau khi registration đó CŨNG chạm `MAX_ROUNDS` (5/5) — lần này sau khi
   gate-attempt-07 round 1 đã trả `CLEAN` cho đúng code này, rồi round 2 bắt một finding về độ chính xác
   tài liệu (không phải code). Registration thứ tư đăng ký lại trên một ground khác hẳn ("miscounted, not
