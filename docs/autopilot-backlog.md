@@ -1445,6 +1445,7 @@ notes: |
   committed HEAD (not just a synthetic uncommitted-diff test) before trusting it closes the gap --
   the failure mode here specifically does not show up when testing interactively mid-edit.
 
+## task: eslint10-brace-expansion-5-0-7-typescript-estree
 title: brace-expansion@5.0.7 (GHSA-mh99-v99m-4gvg) qua minimatch@10.2.5 — HAI đường provenance hội tụ, không phải một
 status: idea
 provenance_correction: **2026-07-31, cùng ngày: tiêu đề cũ ("độc lập với version eslint") đã SAI kể từ khi eslint 10 thực sự được cài.** Nó đo lúc eslint còn ở 9.x, và kết luận đúng **tại thời điểm đó**. Sau khi `eslint-10-migration` cài `eslint@10.7.0`, `pnpm why brace-expansion` cho thấy **chính eslint 10 cũng resolve `minimatch@10.2.5`** qua `@eslint/config-array@0.23.5` của riêng nó — breaking change `501abd0` của eslint 10.0.0 chuyển minimatch nội bộ v3→v10. Hai đường (typescript-eslint và eslint) **hội tụ về cùng một instance** trên cùng một lần cài. Kết luận không đổi — vẫn ngoài scope, vẫn chưa có bản vá — nhưng lý do "độc lập với eslint" thì đổi, và nó là lý do người ta sẽ dùng để ưu tiên task này.
