@@ -65,7 +65,7 @@
     "focused": [
       "test -f .autopilot/state/eslint-10-migration/design-probe-file-list.txt && npx eslint . -f json | node -e 'const fs=require(\"fs\");const d=JSON.parse(fs.readFileSync(0,\"utf8\"));const files=d.map(function(x){return x.filePath.replace(process.cwd()+\"/\",\"\");}).sort();for(const f of files)console.log(f)' | diff .autopilot/state/eslint-10-migration/design-probe-file-list.txt -",
       "! grep -qE 'brace-expansion@1\\.[0-9]' pnpm-lock.yaml && ! grep -qE 'minimatch@3\\.[0-9]' pnpm-lock.yaml",
-      "ENGINES_NODE=$(node -p 'require(\"./package.json\").engines.node'); GT=$(printf '\\x3e'); test \"$ENGINES_NODE\" != \"${GT}=22\"",
+      "node -e 'const v=require(\"./package.json\").engines.node;const matches=[...v.matchAll(/22(?:\\.(\\d+))?/g)];for(const m of matches){const minor=m[1]!==undefined?Number(m[1]):0;if(Math.max(minor,13)!==minor)process.exit(1);}process.exit(0);'",
       "grep -qF 'files: [\"scripts/**/*.{mjs,js}\"]' eslint.config.mjs && npx eslint scripts/",
       "! grep -q 'preserve-caught-error' eslint.config.mjs",
       "npx eslint packages/db/src/migrate.ts -f json | node -e 'const d=JSON.parse(require(\"fs\").readFileSync(0,\"utf8\"));process.exit(d.some(function(f){return f.messages.length !== 0;})?1:0)'",
