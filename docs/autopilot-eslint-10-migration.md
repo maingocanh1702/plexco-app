@@ -52,7 +52,7 @@ với đường `typescript-eslint`. Xem mục "Phát hiện MỚI" (đã sửa)
 
 ---
 
-## §3 Task contract
+## §3 Task contract (first registration — SUPERSEDED on SCOPE/NEGATIVE_SCOPE/DELIVERABLES; see the delta section right after this block for what is ACTIVE now)
 
 ```text
 TASK_ID: eslint-10-migration
@@ -120,6 +120,39 @@ DELIVERABLES: diff đúng scope · file-set baseline diff sạch (E10-2) · lock
   backlog follow-up.
 ```
 
+## §3 delta — second registration (2026-08-01, ACTIVE)
+
+(English) Code-review round 2 (second registration) correctly flagged that marking only the fenced
+verdict blocks historical/active left the prose §3 contract and acceptance matrix above still reading
+as the current rules, contradicting the widened scope. Rather than duplicate the ~65 lines of §3 that
+are UNCHANGED (OUTCOME, ESLint-version reasoning, RISK, MODEL_POLICY, BUDGETS, STOP_CONDITIONS, all
+still accurate), this section states only the delta. Everything in §3 above not listed here still
+applies as written.
+
+```text
+SCOPE: the 5 files above PLUS packages/db/src/migrate.ts · packages/db/src/migrate.test.ts ·
+  docs/autopilot-backlog.md (8 total)
+NEGATIVE_SCOPE (additions): KHÔNG sửa migrate.ts vượt quá gắn `cause` vào rethrow ở dòng 172 (không
+  đổi message text, không refactor vòng lặp migration) · KHÔNG rule config nào khác ngoài GỠ HẲN
+  `preserve-caught-error: "warn"` (không carve exception -- xem changelog v0.5 vì sao registration đầu
+  bị đóng và đăng ký lại thay vì amend tại chỗ)
+DELIVERABLES (additions): migrate.ts:172 gắn `cause: error` khi rethrow (E10-11) · regression test tái
+  dùng trigger đã có, không tạo mới (E10-12) · backlog task eslint10-preserve-caught-error-migrate-ts
+  có `merged_probe` thật + status chính xác (E10-13, sửa lại sau khi bị flag `status: merged` sớm)
+FIRST_IMPLEMENTATION_STEP: none remaining to CODE -- run scripts/autopilot-scope-gate ready against the
+  current HEAD of feat/eslint-10-migration (not a hard-pinned SHA in this doc, which goes stale the
+  moment a fix-round commit lands -- the gate itself always measures live HEAD). All 13 acceptance
+  criteria (E10-1..E10-13) are implemented; what remains is 2 consecutive clean code-review rounds.
+```
+
+J1 in the Acceptance matrix below is superseded the same way: it still says "chỉ chạm đúng 5 file",
+current mechanical enforcement is 8 files per the runtime manifest's `scope` array (still enforced the
+same way, by the gate's own SCOPE_DRIFT check -- only the count changed). E10-11/E10-12/E10-13 above
+are the acceptance rows for the 3 new files' behavior; they are not separate table rows because the
+table above predates this registration and duplicating its format for 3 rows was judged lower-value
+than this delta block, which the next reviewer should read as authoritative over J1's literal "5 file"
+text.
+
 ---
 
 ## Live-truth verification — đo 2026-07-31
@@ -143,7 +176,7 @@ verdict.
 
 ---
 
-## Acceptance matrix
+## Acceptance matrix (first registration — J1's "5 file" text is SUPERSEDED, see §3 delta above; the rest of this table is unchanged and still active)
 
 | # | Nhóm | Input / precondition | Expected | Layer |
 |---|---|---|---|---|
@@ -293,7 +326,7 @@ CLOSURE_MATRIX: PASS (12/12)
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
 IMPLEMENTATION_ARTIFACTS: PASS
-FIRST_IMPLEMENTATION_STEP: run scripts/autopilot-scope-gate ready against commit 6a1ec141aebe57b7eaef85a784d264ef806f8b20 -- all 13 acceptance criteria (E10-1..E10-13) are already implemented and verified (612/612 tests passing, 0 lint errors/warnings); this step runs code-review round 2 against the exact current diff, then the owner merges
+FIRST_IMPLEMENTATION_STEP: run scripts/autopilot-scope-gate ready against the current tip of feat/eslint-10-migration -- deliberately not a hard-pinned SHA in this doc, since the gate itself always measures live HEAD and a SHA written here goes stale the moment the next fix-round commit lands. All 13 acceptance criteria (E10-1..E10-13) are implemented; this step runs the next code-review round against the exact current diff, then the owner merges
 REMAINING_BLOCKERS: none
 ```
 
@@ -305,7 +338,7 @@ REMAINING_BLOCKERS: none
 | 2 | Decision trong scope đã chốt | EOL 2026-08-06 (unchanged, external, immovable) + owner-authorized decision to widen scope and fix `migrate.ts:172` directly rather than downgrade the rule (chat-recorded 2026-08-01; scope-minimalism explicitly ceded to no-debt-that-depends-on-memory once re-registration was available) | PASS |
 | 3 | Scope IN/OUT và owner rõ | manifest `scope` 8 files exact + `negative_scope` 11 items, including 2 new items scoping the `migrate.ts` fix precisely (cause-only, no message-text change) | PASS |
 | 4 | Dependency phân loại đủ | none -- root, `depends_on: []`; `build-config` token shared with `deps-security-bump` but that slice is not active (`.autopilot/INFLIGHT.md` verified to hold only this reservation) | PASS |
-| 5 | Live schema/code khớp doc | all 8 files measured directly at commit `6a1ec141aebe57b7eaef85a784d264ef806f8b20` against base_sha `86ec936`; `migrate.ts`/`migrate.test.ts` read in full before editing, not assumed | PASS |
+| 5 | Live schema/code khớp doc | all 8 files measured directly against base_sha `86ec936` on the branch that carries this doc (not a frozen feature SHA -- re-verify at the tip whenever this row is read, same reasoning as FIRST_IMPLEMENTATION_STEP below); `migrate.ts`/`migrate.test.ts` read in full before editing, not assumed | PASS |
 | 6 | Data/contract đủ | `migrate.ts`'s error-handling contract pinned exactly (message text unchanged, `cause` attached); `migrate.test.ts`'s failure-trigger mechanism (`hideRealJobDefiner`/`withJobDefinerLock`) reused, not invented | PASS |
 | 7 | Fail-closed/order đủ | `migrate.ts`'s rollback-then-rethrow control flow is UNCHANGED -- only what's attached to the already-thrown error differs; verified via the existing JCL-2/3 tests plus the new regression test, all passing | PASS |
 | 8 | Open question trong scope | 0 | PASS |
