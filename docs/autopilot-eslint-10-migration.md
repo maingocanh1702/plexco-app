@@ -5,6 +5,12 @@
 
 # Autopilot task contract — `eslint-10-migration`
 
+> **CURRENTLY NOT LAUNCHABLE (gate-attempt-03 round 1 [P2]):** this file's top marker reads `enforce`,
+> not `code-ready`, and the active (fifth) verdict below reads `NOT_CODE_READY` -- both intentional,
+> both temporary, pending a fresh gate round. Do not read the "coding handoff" framing in the next
+> paragraph as current authorization to code from this file; it describes the file's role once ready,
+> not its present state.
+>
 > **Đây là coding handoff.** Verdict canonical nằm ở cuối file. `AUTHORITY_SHA` dưới pin đúng base
 > HEAD mà toàn bộ live-truth verification bên dưới được đo — commit ngay trước commit chứa slice
 > này. `pnpm review:check:changed` xác minh `AUTHORITY_SHA` bằng `git merge-base --is-ancestor <sha>
@@ -131,7 +137,7 @@ DELIVERABLES: diff đúng scope · file-set baseline diff sạch (E10-2) · lock
   backlog follow-up.
 ```
 
-## §3 delta — second registration (2026-08-01, ACTIVE)
+## §3 delta — second registration (2026-08-01, SUPERSEDED -- see the fifth verdict near the end of this file for what is active now)
 
 (English) Code-review round 2 (second registration) correctly flagged that marking only the fenced
 verdict blocks historical/active left the prose §3 contract and acceptance matrix above still reading
