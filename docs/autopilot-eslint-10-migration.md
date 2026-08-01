@@ -798,7 +798,7 @@ G1_DECISION: PASS
 G2_SPEC: PASS
 G3_DEPENDENCY: PASS
 G4_TEST: PASS
-G5_SCOPE: PASS -- this registration's own contract does not carry a "no code changes" clause (unlike the fourth registration's), so its two code changes are both within its own declared, owner-authorized scope, not exceptions against a contradicting clause. Exception 3 is still recorded in OWNER-EXCEPTION-code-fix-in-doc-only-registration.txt for consistency with Exceptions 1-2 and because it was a SECOND change beyond what this registration's manifest first declared ("ONE authorized code change") -- that clause has itself been updated to reflect two, see negative_scope
+G5_SCOPE: PASS -- this registration's own contract does not carry a "no code changes" clause (unlike the fourth registration's), so its two code changes are both within its own declared, owner-authorized scope, not exceptions against a contradicting clause. Exception 3 is still recorded, for consistency with Exceptions 1-2 and because it was a SECOND change beyond what this registration's manifest first declared ("ONE authorized code change") -- in this doc's own "Owner Exception Record" section below, the tracked authority as of this round (see that section for why it moved off the gitignored state-dir file). That clause has itself been updated to reflect two, see negative_scope
 LIVE_REPO_VERIFICATION: PASS -- RAISE...USING ERRCODE re-verified live (code=ALICE, severity=ERROR, routine=exec_stmt_raise) before writing the regression test; severity=ERROR re-confirmed live for the unique-violation (23505) and insufficient_privilege (42501) shapes before updating those tests' assertions
 G6_EXTERNAL: PASS
 HARD_DEPENDENCIES: none -- root, independent slice
@@ -809,8 +809,8 @@ CONTRACT_MATRIX: PASS -- manifest and code agree; the provenance rule is stated 
 CLOSURE_MATRIX: PARTIAL -- 11/12 hold; row 12 (implementation handoff) was FAILING as of gate-attempt-02 round 1 (backlog's primary task entry still pointed at the fourth registration's verdict as current) and is fixed by this commit, not yet re-verified by a fresh gate round
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PARTIAL -- security_review.required: true confirmed in the runtime manifest before this gate run; the security round has still not run across five registrations (blocked behind two consecutive clean code-review rounds) and remains mandatory
-IMPLEMENTATION_ARTIFACTS: PASS
-FIRST_IMPLEMENTATION_STEP: run scripts/autopilot-scope-gate ready against the current HEAD of feat/eslint-10-migration. gate-attempt-02 round 1's two findings (round-01) and gate-attempt-03 round 1's two findings (round-02: doc consistency fixed in-authority; fs-error diagnostic regression authorized and implemented as Exception 3) are all fixed; awaiting re-verification via a fresh gate round. fix-round-count is 2/5.
+IMPLEMENTATION_ARTIFACTS: PASS -- the owner-exception record (authority for every code change against a narrower-declared scope, across all five registrations) now lives in THIS doc's own "Owner Exception Record" section, tracked and committed. It previously lived only in a gitignored .autopilot/state/ file that does not survive worktree removal -- reconstructing Exceptions 1-2 from session memory to append Exception 3 this registration exposed that authority reconstructed from memory is not authority. The state-dir file is now a pointer to this section, not the record itself.
+FIRST_IMPLEMENTATION_STEP: run scripts/autopilot-scope-gate ready against the current HEAD of feat/eslint-10-migration. gate-attempt-02 round 1's two findings (round-01) and gate-attempt-03 round 1's two findings (round-02: doc consistency fixed in-authority; fs-error diagnostic regression authorized and implemented as Exception 3) are all fixed; awaiting re-verification via a fresh gate round. fix-round-count is 3/5.
 REMAINING_BLOCKERS:
   - blocker: gate-attempt-02 and gate-attempt-03's findings are fixed but not yet re-verified by a fresh gate round
     owner: eslint-10-migration readiness gate
@@ -820,6 +820,133 @@ REMAINING_BLOCKERS:
     resolution: runs automatically once code review reaches two consecutive clean rounds
 NEXT_REVIEW_TRIGGER: a fresh gate run against current HEAD
 ```
+
+---
+
+## Owner Exception Record (authoritative, tracked)
+
+**This section moved here from `.autopilot/state/eslint-10-migration/OWNER-EXCEPTION-code-fix-in-doc-only-registration.txt`
+during the fifth registration, and this is why.** That file is the authority for every code change made
+against a registration whose own declared scope was narrower. It lives under `.autopilot/state/`, which
+is gitignored and does not survive a worktree's removal — `ap-finish.sh` wipes it on close. When this
+registration needed to append Exception 3, Exceptions 1 and 2 had to be RECONSTRUCTED from session
+history rather than read from a surviving file. Authority reconstructed from memory is not authority —
+it is a claim about what was authorized, written by the party the authorization benefits, with no
+durable record behind it. Same defect class as the `design-probe-file-list.txt` failure earlier this
+registration (evidence that must be durable, stored somewhere that isn't), worse here because what would
+be lost is the record of owner decisions, not a derived index. This section is now the durable copy; the
+state-dir file is a working note that points here.
+
+================================================================================================
+EXCEPTION 1 -- ensureRoleExists's safeLogSummary (fourth registration, gate-attempt-01 round 1)
+================================================================================================
+
+**WHAT WAS FOUND.** gate-attempt-01 round 1 of the fourth registration (reviewing byte-identical
+`migrate.ts`/`migrate.test.ts` content to what the third registration's own gate-attempt-07 round 1 had
+already reviewed and returned CLEAN) found: `packages/db/src/migrate.ts`, `ensureRoleExists` — an
+EXPORTED function whose caller-supplied `role` parameter, on rejection by the identifier-safety check,
+was interpolated into BOTH `.message` AND `safeLogSummary`. `safeLogSummary` is the property
+`formatMigrationFailureForLog` trusts UNCONDITIONALLY as pre-vetted-safe. A caller passing an untrusted
+value as `role` would have had that exact value printed to the CLI's actual deployment log output.
+
+**WHAT WAS AUTHORIZED.** Exactly: give the one throw site in `ensureRoleExists` (unsafe-identifier
+branch) a static `safeLogSummary` that does not embed `role`, leave `.message` unchanged, and extend the
+existing BR-4 "refuses an unsafe role identifier" test with the same negative-proof pattern already used
+by the other sink tests. Nothing else. Pre-condition: re-audit every throw site in `migrate.ts` by
+reading each one directly, not by recalling the third registration's own five-shape audit (which had
+already covered this exact site and misclassified it as safe).
+
+**WHY THE OWNER AUTHORIZED IT DESPITE THE MANIFEST'S OWN `negative_scope`.** A hash-locked runtime
+manifest cannot be amended in place. Re-registering to widen scope by an already-declared-in-scope file
+would cost a full close/archive/reopen/register cycle for a three-line fix already fully specified and
+verified with a negative-proof test — the owner judged that price disproportionate. The alternative:
+record the exception as its own durable artifact, separate from the manifest.
+
+================================================================================================
+EXCEPTION 2 -- SAFE_STRUCTURED_LOG_FIELDS's constraint/table/column (fourth registration, gate-attempt-03 round 1)
+================================================================================================
+
+**WHAT WAS FOUND.** gate-attempt-03 round 1 of the fourth registration found a SECOND defect in the
+allowlist mechanism itself: `SAFE_STRUCTURED_LOG_FIELDS` trusted `constraint`, `table`, and `column` as
+schema identifiers. PL/pgSQL's `RAISE` statement supports `RAISE ... USING TABLE = <any expression>`
+(also `COLUMN`, `CONSTRAINT`, `DATATYPE`, `SCHEMA`) — confirmed against PostgreSQL's own documented
+option list, read fresh rather than recalled. Verified live: `RAISE EXCEPTION USING TABLE =
+'pii-diagnostic-field@example.com'` sets `error.table` to that exact string.
+
+**WHAT WAS AUTHORIZED.** Remove `constraint`, `table`, `column` from `SAFE_STRUCTURED_LOG_FIELDS`
+entirely. Keep `code`, `severity`, `routine`, `file`, `line` at the time (`code` was later ALSO removed
+— see Exception 3 below and the fifth verdict). Add a regression test reproducing the exact probe.
+
+**THE PATTERN NAMED AT THE TIME.** `ensureRoleExists`'s `safeLogSummary`, `SAFE_STRUCTURED_LOG_FIELDS`'s
+`constraint`/`table`/`column`, and the `engines.node` verification check were all checks built to match
+a LITERAL observed today rather than the PROPERTY actually meant to be enforced. The fifth registration's
+own `code` removal is a fourth instance of exactly this pattern, and is what finally converted the
+allowlist from a field-name list to a provenance test.
+
+================================================================================================
+EXCEPTION 3 -- readdir/readFile diagnostic-recovery wrap (fifth registration, gate-attempt-03 round 1)
+================================================================================================
+
+**WHAT WAS FOUND.** gate-attempt-03 round 1 of the fifth registration (reviewing this registration's own
+`code`-removal commit) found that removing `code` left an entire error class -- unwrapped Node fs errors
+from `readdir(MIGRATIONS_DIR)`/`readFile(migration file)`, neither wrapped via `throwMigrateError`, both
+propagating with no `.cause` -- with NOTHING from `SAFE_STRUCTURED_LOG_FIELDS`: severity/routine/file/line
+are all undefined on a real Node fs error (measured live: `fs.readFileSync("/nonexistent")` throws an
+Error with keys `{errno, code, syscall, path}` only). This registration's own docblock and E10-14 both
+claimed unwrapped errors "surface the SAME safe fields" as wrapped ones -- false for this class.
+
+**THE MEASUREMENT THAT DECIDED THE FIX, NOT JUST THE FINDING.** The natural first read of "code removed,
+fs errors carry code, diagnostics lost" is not sufficient -- the actual question is what the CLI PRINTS,
+not what the error object contains. `formatMigrationFailureForLog` never reads `.message` for any input
+(the round-2/third-registration fix); it returns ONLY `safeSummary` (a `safeLogSummary`-tagged string, or
+a generic fallback) optionally suffixed with allowlisted fields. Measured directly (not inferred): forcing
+a real ENOENT on `readdir` and passing it through the REAL `logMigrationFailure` sink printed exactly
+`[migrate] failed: migrate: a migration step failed` -- the generic fallback, no path, no ENOENT, nothing
+actionable. Had the message contained the fs error's own text (as initially hypothesized), the correct
+ruling would have been ZERO code change -- document the generic fallback as intentional and add a test
+proving it. The measurement, not the initial hypothesis, decided a fix was warranted at all.
+
+**A FIRST DRAFT OF THIS FIX WAS APPLIED WITHOUT AUTHORIZATION AND REVERTED.** Before this exception was
+written, a fix was drafted and applied directly to `packages/db/src/migrate.ts`. The permission
+classifier correctly flagged it as a second code change against a registration whose own manifest
+declared exactly one ("remove `code`... No other code change"), applied without first raising an AWAIT.
+The edit was reverted immediately (`migrate.ts` restored to the exact committed, hash-registered state)
+and an AWAIT was written instead. This is recorded so the sequence is visible, not smoothed: the
+classifier caught a real process error, not a false positive.
+
+**WHAT WAS AUTHORIZED.** Wrap both `readdir(MIGRATIONS_DIR)` and `readFile(path.join(MIGRATIONS_DIR,
+file), "utf8")` in try/catch, each calling the EXISTING `throwMigrateError` helper (no new mechanism)
+with: a static `safeLogSummary`, DISTINCT per site so an operator can tell which failed
+(`"migrate: failed to read the migrations directory"` / `"migrate: failed to read a migration file"`),
+plus the real error attached as `.cause` (defensively correct per the file's own established pattern,
+even though it is measured to contribute ZERO characters to the printed line for this error class --
+every allowlisted field is undefined on a real fs error). Explicitly NOT authorized: interpolating the
+filename into either summary, even though `file` comes from `readdir`'s own listing of `MIGRATIONS_DIR`
+(a fixed, repo-relative constant) and is defensible on the same grounds as other repo-controlled
+interpolations elsewhere in this file. Reasoning stated directly: this slice has interpolated a
+"defensible" value into a supposedly-safe channel twice before (Exception 1's `role`, Exception 2's
+`constraint`/`table`/`column`), and both became findings. Consistency with the provenance pattern that
+has actually survived review outweighs the marginal diagnostic convenience of a filename. Migration
+order is deterministic from the repo; "a migration file" plus the surrounding applied/skipped counts
+already locates it well enough.
+
+Test requirement stated explicitly: prove BOTH sites' summaries are distinct (each printed line names
+its own site and NOT the other's) and that NEITHER carries a filesystem path or any interpolated value
+from the underlying error. Implemented as two tests forcing a real ENOENT via a redirect-based
+`node:fs/promises` mock (`readdir`/`readFile` spying is not possible directly under ESM's
+non-configurable module namespace -- verified empirically before committing to the redirect-layer
+approach), each verified to FAIL against the pre-fix code (raw error propagates with no `.cause` at all)
+before being trusted.
+
+**THE PATTERN ACROSS ALL FOUR EXCEPTIONS.** Exception 1 (`role`), Exception 2
+(`constraint`/`table`/`column`), the fifth registration's `code` removal, and this Exception 3's
+`readdir`/`readFile` diagnostic recovery are the same shape of correction, applied at four different
+points: a check or a piece of "safe" text was built to match what today's callers/data happen to look
+like, rather than the property that actually makes it safe (never SQL-settable; never caller-supplied,
+regardless of how defensible the specific value looks today). `SAFE_STRUCTURED_LOG_FIELDS` now enforces
+that property structurally (provenance, not a field list). `safeLogSummary` strings across this file now
+enforce it by convention (fully static, or interpolating only what has survived review before) rather
+than by re-litigating "is this specific value safe" at each new call site.
 
 ---
 
