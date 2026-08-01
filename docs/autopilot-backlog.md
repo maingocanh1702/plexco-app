@@ -1394,7 +1394,51 @@ notes: |
   **Chưa scope vì:** cần điều tra thêm để xác định file nào thực sự cần sửa (`test-harness.ts`? BR-1's
   own iteration count/timing? `01-job-definer.sql`?) trước khi viết `scope` array chính xác.
 
-## task: eslint10-brace-expansion-5-0-7-typescript-estree
+## task: kit-review-check-changed-vacuous-on-committed-head
+title: `pnpm review:check:changed` always reports 0 classified documents when run by the readiness gate on a committed HEAD, since --changed mode diffs only uncommitted changes against HEAD
+status: idea
+risk: P3
+change_class: autopilot-mechanism
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+close_by: hand · kit-tooling design gap, scripts/check-review-readiness.mjs is not in any single feature slice's scope
+notes: |
+  **Opened 2026-08-01, found incidentally by eslint-10-migration's gate-attempt-04 round 1 [P2] --
+  not a bug in that slice, scripts/check-review-readiness.mjs is not in its declared scope array.**
+
+  `scripts/check-review-readiness.mjs`'s `changedMarkdown()` (around line 585) computes changed docs
+  via `git diff --name-only --diff-filter=ACMR HEAD -- docs` plus untracked files under `docs` --
+  i.e. it diffs the WORKING TREE against HEAD. This is exactly right for a developer running
+  `pnpm review:check:changed` mid-edit, before committing. It is structurally vacuous in a different,
+  common context: `docs/autopilot-manifests/eslint-10-migration.json`'s own `verification.canonical`
+  lists `pnpm review:check:changed` as one of the commands the readiness gate runs directly. By the
+  time the gate runs `verification.canonical`, every change is already committed (the gate reviews
+  `git diff <base_sha>...HEAD`, not working-tree state) -- so `git diff HEAD` is empty, and the
+  command reports `0 classified document(s), 0 active verdict block(s)` regardless of how many
+  markdown docs actually changed in the slice's cumulative diff. Reproduced directly: running it on
+  eslint-10-migration's fully-committed HEAD (before this task's own uncommitted doc fixes existed)
+  printed exactly that.
+
+  **Why this matters:** every registration of eslint-10-migration (and plausibly other slices using
+  the same manifest template) has included `pnpm review:check:changed` in `verification.canonical`
+  believing it verifies the slice doc's readiness classification at gate time. It has been checking
+  nothing in that role, every time -- the check that actually matters at gate time is
+  `pnpm review:check` (`--all` mode, which classifies every doc in the repo, not just ones changed
+  since HEAD) or a base-aware variant (`git diff <base_sha>...HEAD -- docs`, not `git diff HEAD`).
+
+  **Not fixed here:** `scripts/check-review-readiness.mjs` is shared kit tooling, not in
+  `eslint-10-migration`'s scope array, and a single feature slice's own gate-attempt finding is not
+  authorization to modify it. Candidate fixes for whoever scopes this: (a) manifest template guidance
+  to use `pnpm review:check` (not `:changed`) in `verification.canonical` specifically, reserving
+  `:changed` for the pre-commit/local-development use case it actually fits; (b) add a base-aware mode
+  to `changedMarkdown()` that accepts an optional base ref and diffs against that instead of `HEAD`
+  when invoked from a gate context. Whichever is chosen, verify it against a real registration's
+  committed HEAD (not just a synthetic uncommitted-diff test) before trusting it closes the gap --
+  the failure mode here specifically does not show up when testing interactively mid-edit.
+
 title: brace-expansion@5.0.7 (GHSA-mh99-v99m-4gvg) qua minimatch@10.2.5 — HAI đường provenance hội tụ, không phải một
 status: idea
 provenance_correction: **2026-07-31, cùng ngày: tiêu đề cũ ("độc lập với version eslint") đã SAI kể từ khi eslint 10 thực sự được cài.** Nó đo lúc eslint còn ở 9.x, và kết luận đúng **tại thời điểm đó**. Sau khi `eslint-10-migration` cài `eslint@10.7.0`, `pnpm why brace-expansion` cho thấy **chính eslint 10 cũng resolve `minimatch@10.2.5`** qua `@eslint/config-array@0.23.5` của riêng nó — breaking change `501abd0` của eslint 10.0.0 chuyển minimatch nội bộ v3→v10. Hai đường (typescript-eslint và eslint) **hội tụ về cùng một instance** trên cùng một lần cài. Kết luận không đổi — vẫn ngoài scope, vẫn chưa có bản vá — nhưng lý do "độc lập với eslint" thì đổi, và nó là lý do người ta sẽ dùng để ưu tiên task này.
