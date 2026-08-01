@@ -1293,7 +1293,7 @@ notes: **SỬA 2026-08-01 (code-review round 2 bắt đúng): status trước đ
 
 ## task: eslint10-security-review-classification-not-revisited
 title: security_review classification trên eslint-10-migration được chốt lúc slice còn là dependency bump, không được xét lại khi scope mở rộng vào migration runner
-status: ready
+status: idea
 risk: P3
 change_class: autopilot-mechanism
 depends_on: []
@@ -1331,8 +1331,13 @@ notes: |
   từ lúc manifest mới author. Thêm một lớp: `void_if` viết bằng PROSE không tự enforce — cần một
   reviewer round thật (không phải chỉ đọc lại doc) để bắt được, đúng như đã xảy ra ở đây hai lần liên
   tiếp (round 6 không bắt, round 7 mới bắt). Hiện chưa có cơ chế cơ học nào enforce điều này; entry này
-  ghi nhận như một process gap, không phải code fix -- `status: ready` vì cả hai lần sai đã có bằng
-  chứng cụ thể đủ để một future kit-maintenance slice thiết kế cơ chế enforce, không còn là ý tưởng mơ hồ.
+  ghi nhận như một process gap, không phải code fix.
+  **SỬA sau code-review round 1 (third registration's own gate, 2026-08-01):** entry này trước đó bị đặt
+  `status: ready` với lý do "cả hai lần sai đã có bằng chứng cụ thể đủ để scope" — SAI theo đúng nghĩa
+  backlog dùng `ready`: `scope: []` và `manifest: null` nghĩa là KHÔNG có gì launchable, dù bằng chứng
+  động lực đã đủ dày. Trả về `status: idea` — bằng chứng (hai lần sai cụ thể, ghi ở trên) vẫn đứng
+  nguyên làm động lực cho việc SCOPE nó sau này, nhưng scoping (chọn file, chọn mechanism enforce) chưa
+  xảy ra nên chưa thể `ready`.
 
 ## task: eslint10-brace-expansion-5-0-7-typescript-estree
 title: brace-expansion@5.0.7 (GHSA-mh99-v99m-4gvg) qua minimatch@10.2.5 — HAI đường provenance hội tụ, không phải một
