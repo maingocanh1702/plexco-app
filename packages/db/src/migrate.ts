@@ -214,14 +214,15 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
   }
 }
 
-/** Fields safe to print from a caught error's `.cause` — identify WHICH constraint/table/column failed
- *  without echoing row contents. `detail`/`hint`/`internalQuery`/`where` are deliberately excluded: on a
- *  unique-violation, `detail` is e.g. `Key (email)=(user@example.com) already exists.` — the offending
- *  row's actual value. A migration backfilling persons/accounts/channel_identities would otherwise print
- *  real PII into deployment logs. Node's default console.error formatting prints `.cause` recursively
- *  (in full) when handed an Error object directly, so this must run BEFORE the value reaches console.error,
- *  not be a console.error option. */
-const SAFE_CAUSE_LOG_FIELDS = [
+/** Fields safe to print from a Postgres/fs error's structured properties — identify WHICH
+ *  constraint/table/column (or fs error code) failed without echoing row contents. `detail`/`hint`/
+ *  `internalQuery`/`where` are deliberately excluded: on a unique-violation, `detail` is e.g.
+ *  `Key (email)=(user@example.com) already exists.` — the offending row's actual value. A migration
+ *  backfilling persons/accounts/channel_identities would otherwise print real PII into deployment
+ *  logs. Node's default console.error formatting prints an Error's own enumerable properties (and
+ *  `.cause`, recursively) in full when handed the object directly, so this must run BEFORE the
+ *  value reaches console.error, not be a console.error option. */
+const SAFE_STRUCTURED_LOG_FIELDS = [
   "code",
   "severity",
   "constraint",
@@ -236,27 +237,33 @@ const SAFE_CAUSE_LOG_FIELDS = [
  *  raw message/detail text. Two sources feed it: (1) `safeLogSummary`, set by the THROW SITE itself
  *  (see throwMigrateError) — every migrate.ts throw site knows whether its own message is static
  *  repo text or a controlled identifier like a migration filename, so it is trusted here without
- *  re-deriving it; falls back to a generic string if absent (e.g. an error from outside this
- *  module). (2) the allowlisted `.cause` fields, when a Postgres error was caught and wrapped —
- *  identifies WHICH constraint/table/column failed without echoing row contents. `detail`/`hint`/
- *  `internalQuery`/`where` are deliberately excluded: on a unique-violation, `detail` is e.g.
- *  `Key (email)=(user@example.com) already exists.` — the offending row's actual value. Neither
- *  source ever includes `.message`/`String(error)` verbatim: Postgres's message/detail split only
- *  holds for integrity-constraint classes (23xxx) -- for a data-exception class like 22P02
- *  (invalid_text_representation), the offending value sits directly in the PRIMARY message, e.g.
- *  `invalid input syntax for type integer: "user@example.com"`, with `.detail` undefined. `.message`/
- *  `.cause` on the Error object itself are untouched; this only affects what the CLI prints. */
+ *  re-deriving it; falls back to a generic string if absent (e.g. an error that never went through
+ *  throwMigrateError — a connection failure, an advisory-lock/setup query, or an fs error from
+ *  `readdir`/`readFile`, all of which propagate UNWRAPPED, with no `.cause`, straight out of
+ *  migrate()). (2) the allowlisted structured fields — read from `.cause` when present (a per-file
+ *  failure was caught and wrapped), otherwise read directly off the top-level error itself, since an
+ *  unwrapped pg.DatabaseError or Node fs error (ENOENT etc.) carries the SAME safe fields (code,
+ *  severity, ...) as its own properties, not nested under a cause. Neither source ever includes
+ *  `.message`/`String(error)` verbatim: Postgres's message/detail split only holds for integrity-
+ *  constraint classes (23xxx) -- for a data-exception class like 22P02 (invalid_text_representation),
+ *  the offending value sits directly in the PRIMARY message, e.g. `invalid input syntax for type
+ *  integer: "user@example.com"`, with `.detail` undefined. `.message`/`.cause` on the Error object
+ *  itself are untouched; this only affects what the CLI prints. */
 export function formatMigrationFailureForLog(error: unknown): string {
   const safeSummary =
     error instanceof Error && typeof (error as WithSafeLogSummary)[SAFE_LOG_SUMMARY] === "string"
       ? (error as WithSafeLogSummary)[SAFE_LOG_SUMMARY]!
       : "migrate: a migration step failed";
   const cause = error instanceof Error ? error.cause : undefined;
-  const causeRecord =
-    cause && typeof cause === "object" ? (cause as Record<string, unknown>) : undefined;
-  const safeParts = SAFE_CAUSE_LOG_FIELDS.filter((field) => causeRecord?.[field] !== undefined).map(
-    (field) => `${field}=${String(causeRecord![field])}`,
-  );
+  const fieldSource =
+    cause && typeof cause === "object"
+      ? (cause as Record<string, unknown>)
+      : error && typeof error === "object"
+        ? (error as Record<string, unknown>)
+        : undefined;
+  const safeParts = SAFE_STRUCTURED_LOG_FIELDS.filter(
+    (field) => fieldSource?.[field] !== undefined,
+  ).map((field) => `${field}=${String(fieldSource![field])}`);
   return safeParts.length > 0 ? `${safeSummary} [${safeParts.join(" ")}]` : safeSummary;
 }
 

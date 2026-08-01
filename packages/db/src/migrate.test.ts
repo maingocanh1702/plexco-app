@@ -670,15 +670,26 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
  * console.error(error) sink, combined with migrate.ts:172 attaching { cause: error }, would have
  * Node's default recursive .cause formatting print a real pg.DatabaseError.detail to deployment
  * logs — on a unique violation that field is the offending row's ACTUAL VALUE (e.g.
- * `Key (email)=(user@example.com) already exists.`), not schema metadata. First fix (third
- * registration, round 1): an explicit field allowlist (SAFE_CAUSE_LOG_FIELDS) applied before the
- * value ever reaches console.error — but that fix still returned the wrapping Error's own
- * `.message` verbatim, which round 2 [P1] caught as insufficient: Postgres's message/detail split
- * only holds for integrity-constraint classes (23xxx) — for a data-exception class like 22P02
- * (invalid_text_representation), the offending value sits directly in the PRIMARY message, with
- * `.detail` undefined. Final fix: formatMigrationFailureForLog no longer uses ANY free-text
- * message, from any source — only individually-vetted structured `.cause` fields. Both failure
- * shapes (unique-violation via .detail, data-exception via the primary message) are covered below.
+ * `Key (email)=(user@example.com) already exists.`), not schema metadata. Fixed across this
+ * (third) registration's own four gate rounds:
+ *   - round 1: an explicit field allowlist (SAFE_STRUCTURED_LOG_FIELDS) applied before the value
+ *     ever reaches console.error — but still returned the wrapping Error's `.message` verbatim.
+ *   - round 2 [P1]: Postgres's message/detail split only holds for integrity-constraint classes
+ *     (23xxx) — for a data-exception class like 22P02, the value sits in the PRIMARY message,
+ *     `.detail` undefined. formatMigrationFailureForLog stopped using ANY free-text message.
+ *   - round 3 [P2]: that fix discarded 100%-safe context along with the risky text (the migration
+ *     filename on a per-file failure; the whole message on a direct/cause-less failure). Added
+ *     throwMigrateError + safeLogSummary, a Symbol-keyed property the throw site attaches when it
+ *     knows its own text is safe — separate from `.message`, which stays unchanged everywhere.
+ *   - round 4 [P2]: an error that never goes through any throwMigrateError call site at all (a
+ *     connection failure, an advisory-lock/setup query, an fs error from readdir/readFile) has no
+ *     `.cause` — the formatter only read structured fields from `.cause`, so this whole class lost
+ *     even its safe fields (code/severity/etc.), which live directly on the error, not nested.
+ *     formatMigrationFailureForLog now falls back to the top-level error's own fields when there is
+ *     no `.cause`.
+ * All four failure shapes (unique-violation via .detail, data-exception via the primary message, a
+ * real per-file failure preserving the filename, a real unwrapped/cause-less failure preserving
+ * its safe fields) are covered below.
  *
  * These tests assert on what logMigrationFailure actually PASSES TO console.error — not on
  * formatMigrationFailureForLog's return value alone — because the original defect was exactly
@@ -845,6 +856,49 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
     }
     expect(printed).toContain("migrate: DATABASE_URL_MIGRATION is required (DDL-owner role)");
   }, 10_000);
+
+  // codex round-4 [P2] on this registration's own gate: an error that never reaches ANY
+  // throwMigrateError call site -- a connection failure, an advisory-lock/setup query, or (here,
+  // reusing BR-4's own real scenario) ensureRoleExists's un-swallowed insufficient_privilege --
+  // propagates UNWRAPPED, with no .cause. The formatter only read structured fields from .cause,
+  // so this whole class lost even its SAFE fields (code/severity/...), which live directly on the
+  // error object, not nested under a cause that does not exist here.
+  it("codex round-4 [P2]: a real unwrapped error with no .cause at all still surfaces its own safe structured fields in the CLI sink's actual output", async () => {
+    const lowpriv = "plexco_migrate_sink_lowpriv";
+    const target = "plexco_migrate_sink_target";
+    await admin.query(`DROP ROLE IF EXISTS ${lowpriv}`);
+    await admin.query(`DROP ROLE IF EXISTS ${target}`);
+    await admin.query(`CREATE ROLE ${lowpriv} LOGIN NOSUPERUSER NOCREATEROLE PASSWORD 'x'`);
+    const c = await connect(url(BASE_DB, lowpriv, "x"));
+    try {
+      let caught: unknown;
+      try {
+        await ensureRoleExists(c, target);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      // The defect this test proves: genuinely no .cause -- ensureRoleExists never caught this
+      // error to wrap it, it just propagated. code/severity live directly on `caught` itself.
+      expect((caught as Error).cause).toBeUndefined();
+      expect((caught as { code?: string }).code).toBe("42501"); // insufficient_privilege
+
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      let printed: string;
+      try {
+        logMigrationFailure(caught);
+        expect(spy).toHaveBeenCalledTimes(1);
+        printed = format(...spy.mock.calls[0]!);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(printed).toContain("code=42501"); // safe structured field, now surfaced
+    } finally {
+      await c.end();
+      await admin.query(`DROP ROLE IF EXISTS ${lowpriv}`);
+      await admin.query(`DROP ROLE IF EXISTS ${target}`);
+    }
+  }, 60_000);
 });
 
 describe("job_definer bootstrap script itself fails closed on runtime-role targets (codex round-08 [P1])", () => {
