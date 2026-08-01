@@ -55,10 +55,23 @@ forward-only, không migrate giữa chừng. Entry point vận hành: `docs/auto
    conditions, deliverables.
 2. Primary agent tự kéo context (code + `docs/features/*` + `docs/standards/decisions.md`), tự chia
    slice, giao và giám sát child agent, tích hợp rồi verify cả outcome. Không hỏi owner từng bước.
-3. **1 writing slice = 1 branch + 1 worktree + tối đa 1 writer.** Register trước khi ghi:
-   `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<slug>.json`
-   (fail-closed; kit version đọc từ `scripts/autopilot-scope-gate` header, KHÔNG hard-pin trong prose
-   — số chép tay đã stale một lần ở `10` trong khi cài đặt là `11`). Root worktree luôn ở `main`.
+3. **1 writing slice = 1 branch + 1 worktree + tối đa 1 writer.** Register trước khi ghi — truyền
+   **runtime manifest**, KHÔNG phải authored contract:
+   `scripts/autopilot-scope-gate register --manifest .autopilot/state/<feature>/manifest.json`
+   (tự viết tay file này từ `docs/autopilot-manifests/_TEMPLATE.json` trước khi register; nó mang
+   `manifest_schema_version: level3-operational-v2`, còn authored contract ở
+   `docs/autopilot-manifests/<slug>.json` thì BỊ CẤM mang trường đó).
+
+   > ⚠️ **Dòng này trước đây ghi authored path và mô tả là "fail-closed" — cả hai đều sai, sửa
+   > 2026-08-01.** `autopilot-scope-gate` dòng 488-491 chỉ ghi `registered-manifest.sha256` khi
+   > manifest truyền vào có `manifest_schema_version`; đưa authored path vào thì nó **bỏ qua hash-lock,
+   > không báo lỗi, vẫn in `registered`** — fail-OPEN trên đúng cơ chế toàn vẹn mà cả gate dựa vào.
+   > Một slice đã mất một vòng đăng ký vì làm đúng theo dòng cũ.
+   > **Sau mỗi lần register, kiểm `.autopilot/state/<feature>/registered-manifest.sha256` tồn tại
+   > trước khi làm bất cứ việc gì khác.** Đừng tin chữ "registered".
+
+   Kit version đọc từ `scripts/autopilot-scope-gate` header, KHÔNG hard-pin trong prose — số chép tay
+   đã stale một lần ở `10` trong khi cài đặt là `11`. Root worktree luôn ở `main`.
    Slice dùng chung migration/state/
    generated artifact → chạy tuần tự, không song song.
 4. Verify bằng lệnh thật của repo (`pnpm test` với `DATABASE_URL_TEST`, build, lint, typecheck, e2e
