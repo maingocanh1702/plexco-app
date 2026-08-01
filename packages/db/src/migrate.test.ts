@@ -742,7 +742,7 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
  * object to console.error alongside it (Node inspects every argument, not just the first).
  */
 describe("CLI failure-log sink never prints row values from a real Postgres unique violation", () => {
-  it("keeps the SQLSTATE code but drops the offending row value from console.error's actual output", async () => {
+  it("keeps Postgres-internal fields but drops the SQLSTATE code and the offending row value from console.error's actual output", async () => {
     const db = "plexco_migrate_sink_allowlist";
     await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
     await admin.query(`CREATE DATABASE ${db}`);
@@ -787,10 +787,11 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
         // the recorded call above, never before.
         spy.mockRestore();
       }
-      // constraint/table identifiers are NO LONGER in the allowlist (round 4 [P1]: RAISE...USING
-      // TABLE/CONSTRAINT/COLUMN can set these to arbitrary data -- see SAFE_STRUCTURED_LOG_FIELDS's
-      // own docblock). code (SQLSTATE) is what remains and is asserted here instead.
-      expect(printed).toContain("code=23505");
+      // code/constraint/table/column are NOT in the allowlist (gate-attempt-03/05 [P1]: all settable
+      // via RAISE...USING -- see SAFE_STRUCTURED_LOG_FIELDS's own docblock). severity/routine/file/line
+      // are Postgres-internal, never SQL-settable, and remain.
+      expect(printed).toContain("severity=ERROR");
+      expect(printed).not.toContain("code=");
       expect(printed).not.toContain(secret); // the negative proof
     } finally {
       await c.end();
@@ -831,7 +832,8 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
       } finally {
         spy.mockRestore();
       }
-      expect(printed).toContain("22P02"); // SQLSTATE code: safe, kept
+      expect(printed).toContain("severity=ERROR"); // safe structured field: kept, Postgres-internal
+      expect(printed).not.toContain("22P02"); // code is no longer in the allowlist (gate-attempt-05)
       expect(printed).not.toContain(secret); // the negative proof — what round 2 caught missing
     } finally {
       await c.end();
@@ -926,7 +928,7 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
       }
       expect(caught).toBeInstanceOf(Error);
       // The defect this test proves: genuinely no .cause -- ensureRoleExists never caught this
-      // error to wrap it, it just propagated. code/severity live directly on `caught` itself.
+      // error to wrap it, it just propagated. severity/code live directly on `caught` itself.
       expect((caught as Error).cause).toBeUndefined();
       expect((caught as { code?: string }).code).toBe("42501"); // insufficient_privilege
 
@@ -939,7 +941,9 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
       } finally {
         spy.mockRestore();
       }
-      expect(printed).toContain("code=42501"); // safe structured field, now surfaced
+      // code is NOT in the allowlist (SQL-settable via RAISE...USING) -- severity is (Postgres-internal).
+      expect(printed).toContain("severity=ERROR");
+      expect(printed).not.toContain("code=");
     } finally {
       await c.end();
       await admin.query(`DROP ROLE IF EXISTS ${lowpriv}`);
@@ -988,10 +992,54 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
       } finally {
         spy.mockRestore();
       }
-      expect(printed).toContain("code=P0001"); // safe structured field: kept
       expect(printed).toContain("routine=exec_stmt_raise"); // safe structured field: kept
       expect(printed).not.toContain(secret); // the negative proof -- what this round's finding caught
       expect(printed).not.toContain("table="); // table is no longer in the allowlist AT ALL
+      expect(printed).not.toContain("code="); // code is no longer in the allowlist either (gate-attempt-05)
+    } finally {
+      await c.end();
+    }
+  });
+
+  // Fifth registration's gate-attempt-04 [P1] (fourth registration): `code` was the last field kept
+  // by a per-field safety argument ("empirically bounded... too short for PII") rather than the
+  // provenance test the rest of the allowlist now uses. RAISE ... USING ERRCODE accepts ANY
+  // 5-character string, not just a real SQLSTATE -- a caller can set it to a name-shaped value.
+  it("gate-attempt-05 [P1]: a name-shaped value set via RAISE ... USING ERRCODE is kept out of the CLI sink's actual output", async () => {
+    const c = await connect(BASE!);
+    const secret = "ALICE";
+    try {
+      let dbError: unknown;
+      try {
+        await c.query(
+          `DO $$ BEGIN RAISE EXCEPTION USING MESSAGE = 'synthetic failure', ERRCODE = '${secret}'; END $$;`,
+        );
+      } catch (error) {
+        dbError = error;
+      }
+      expect(dbError).toBeInstanceOf(Error);
+      // Measured invariant this test proves: RAISE ... USING ERRCODE accepts an arbitrary
+      // 5-character string with no validation it names a real condition.
+      expect((dbError as { code?: string }).code).toBe(secret);
+      expect((dbError as { severity?: string }).severity).toBe("ERROR");
+
+      const wrapped = new Error(
+        `migrate: 0099_errcode_probe.sql failed and was rolled back: ${String(dbError)}`,
+        { cause: dbError },
+      );
+
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      let printed: string;
+      try {
+        logMigrationFailure(wrapped);
+        expect(spy).toHaveBeenCalledTimes(1);
+        printed = format(...spy.mock.calls[0]!);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(printed).toContain("severity=ERROR"); // safe structured field: kept, Postgres-internal
+      expect(printed).not.toContain(secret); // the negative proof -- what this round's finding caught
+      expect(printed).not.toContain("code="); // code is no longer in the allowlist AT ALL
     } finally {
       await c.end();
     }
