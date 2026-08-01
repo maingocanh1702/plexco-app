@@ -687,9 +687,10 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
  *     even its safe fields (code/severity/etc.), which live directly on the error, not nested.
  *     formatMigrationFailureForLog now falls back to the top-level error's own fields when there is
  *     no `.cause`.
- * All four failure shapes (unique-violation via .detail, data-exception via the primary message, a
- * real per-file failure preserving the filename, a real unwrapped/cause-less failure preserving
- * its safe fields) are covered below.
+ * All five failure shapes are covered below: (a) unique-violation via .detail, (b) data-exception
+ * via the primary message, (c) a real per-file failure preserving the filename, (d) a real direct/
+ * cause-less failure preserving its full safe static message, (e) a real genuinely-unwrapped
+ * failure with NO .cause at all preserving its safe structured fields.
  *
  * These tests assert on what logMigrationFailure actually PASSES TO console.error — not on
  * formatMigrationFailureForLog's return value alone — because the original defect was exactly
