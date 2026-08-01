@@ -607,14 +607,14 @@ G1_DECISION: PASS
 G2_SPEC: PASS
 G3_DEPENDENCY: PASS
 G4_TEST: PASS
-G5_SCOPE: PASS -- the one code change is an explicit, recorded owner exception to this registration's own negative_scope, not an undeclared scope violation; see OWNER-EXCEPTION-code-fix-in-doc-only-registration.txt
+G5_SCOPE: PASS -- NOT a claim that this diff textually matches negative_scope's "NO code changes this registration": it does not, on purpose. Both manifest copies (authored and hash-locked runtime) are left saying "no code changes", unedited, deliberately, so that contradiction stays visible rather than being smoothed over. PASS here means the SCOPE GOVERNANCE PROCESS worked as designed: the deviation was caught (gate-attempt-01 round 1's own finding), stopped rather than silently applied (AWAIT-FOUNDER-code-finding-in-doc-only-registration.txt, since renamed RESOLVED- by the owner directly, never by the writing agent -- kit v16's own precedent names why that distinction matters), explicitly authorized on a narrow, named scope (one throw site, one static string, one new test), and recorded as its own artifact rather than folded into a re-registration. .autopilot/state/eslint-10-migration/OWNER-EXCEPTION-code-fix-in-doc-only-registration.txt is the full record -- NOTE: that artifact is gitignored (.autopilot/* per .gitignore:56), not git-tracked; what IS git-tracked is this verdict section, the changelog entry below, and commit 31778aa itself, which together carry the same substance forward in this repo's permanent history
 G6_EXTERNAL: PASS
 HARD_DEPENDENCIES: none -- root, independent slice
 PRIOR_SLICES: none
 OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: none
 LIVE_REPO_VERIFICATION: PASS
-CONTRACT_MATRIX: PASS -- with the explicit, documented exception above; see G5_SCOPE
+CONTRACT_MATRIX: PASS -- same reading as G5_SCOPE: the registered contract and the actual diff genuinely disagree (contract says no code, diff has code) and that disagreement is not resolved by this PASS -- it is the recorded, owner-authorized exception itself. A reader treating this PASS as "contract and diff agree" would be misled; the correct reading is "the disagreement was governed, not hidden"
 CLOSURE_MATRIX: PASS (12/12)
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS -- security_review.required: true confirmed in the RUNTIME manifest (not just the authored copy) before this registration's gate run; the security round has not yet run as of this verdict and remains mandatory, not optional
@@ -629,7 +629,7 @@ REMAINING_BLOCKERS: none
 |---|---|---|---|
 | 1 | Authority pin theo SHA | `86ec936` (unchanged across all FOUR registrations -- `git fetch origin main` re-verified before each re-registration) + `TARGET_FILES` 8 exact paths | PASS |
 | 2 | Decision trong scope đã chốt | owner authorized this registration on a named ground (fix-round-count miscounted, not exhausted -- see the third verdict above and OWNER-EXCEPTION file), NOT on the "needs wider scope" ground that would make it laundering under level3-workflow.md §8 gap 4's own test | PASS |
-| 3 | Scope IN/OUT và owner rõ | manifest `scope` 8 files exact (unchanged, untouched, hash-locked); ONE explicit, git-tracked owner exception to `negative_scope` recorded as its own artifact rather than silently absorbed | PASS |
+| 3 | Scope IN/OUT và owner rõ | manifest `scope` 8 files exact (unchanged, untouched -- the runtime copy hash-locked, the authored copy left matching it by choice, not independently locked); ONE explicit owner exception to `negative_scope` recorded as its own artifact, `.autopilot/state/eslint-10-migration/OWNER-EXCEPTION-code-fix-in-doc-only-registration.txt` -- **SỬA sau gate-attempt-02 round 1 [P1]: đó KHÔNG git-tracked** (`.autopilot/*` bị `.gitignore:56` loại trừ) — sai claim gốc đã sửa; bằng chứng git-tracked thật là verdict section này + changelog + commit `31778aa` | PASS |
 | 4 | Dependency phân loại đủ | none -- root, `depends_on: []` | PASS |
 | 5 | Live schema/code khớp doc | all 5 throw sites in `migrate.ts` re-read directly at this registration's HEAD (not recalled from the third registration's own audit) -- see the throw-site enumeration above | PASS |
 | 6 | Data/contract đủ | the one code exception's exact scope (one throw site, static summary, `.message` unchanged, one new test) pinned in the OWNER-EXCEPTION artifact, not left to implementation discretion | PASS |
