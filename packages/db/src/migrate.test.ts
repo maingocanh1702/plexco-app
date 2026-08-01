@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { format } from "node:util";
 import pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ensureRoleExists, migrate } from "./migrate.js";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { ensureRoleExists, logMigrationFailure, migrate } from "./migrate.js";
 import {
   bootstrapJobDefiner,
   setupNonSuperuserOwnerContext,
@@ -660,6 +661,74 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
       await ctx.teardown();
     }
   }, 60_000);
+});
+
+/**
+ * CLI failure-log sink: Codex round-7 [P1] on the second registration found that the CLI's
+ * console.error(error) sink, combined with migrate.ts:172 attaching { cause: error }, would have
+ * Node's default recursive .cause formatting print a real pg.DatabaseError.detail to deployment
+ * logs — on a unique violation that field is the offending row's ACTUAL VALUE (e.g.
+ * `Key (email)=(user@example.com) already exists.`), not schema metadata. Fixed with an explicit
+ * field allowlist (SAFE_CAUSE_LOG_FIELDS) applied before the value ever reaches console.error.
+ *
+ * These tests assert on what logMigrationFailure actually PASSES TO console.error — not on
+ * formatMigrationFailureForLog's return value alone — because the original defect was exactly
+ * that gap: a correct formatter is not sufficient if the call site still hands the raw error
+ * object to console.error alongside it (Node inspects every argument, not just the first).
+ */
+describe("CLI failure-log sink never prints row values from a real Postgres unique violation", () => {
+  it("keeps constraint/table identifiers but drops the offending row value from console.error's actual output", async () => {
+    const db = "plexco_migrate_sink_allowlist";
+    await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${db}`);
+    const c = await connect(url(db));
+    const secret = "pii-marker+unique-violation-probe@example.com";
+    try {
+      await c.query(`CREATE TABLE sink_probe (name text PRIMARY KEY)`);
+      await c.query(`INSERT INTO sink_probe(name) VALUES ($1)`, [secret]);
+
+      let dbError: unknown;
+      try {
+        await c.query(`INSERT INTO sink_probe(name) VALUES ($1)`, [secret]);
+      } catch (error) {
+        dbError = error;
+      }
+
+      // Measured invariant this fix depends on (2026-08-01, live against this repo's Postgres):
+      // the DatabaseError's own .message is Postgres's generic summary; only .detail carries the
+      // offending value. If this ever stops holding, the allowlist below (which filters only
+      // .cause fields) would no longer be sufficient on its own.
+      expect((dbError as Error).message).not.toContain(secret);
+      expect(String((dbError as { detail?: string }).detail)).toContain(secret);
+
+      const wrapped = new Error(
+        `migrate: 0099_sink_probe.sql failed and was rolled back: ${String(dbError)}`,
+        { cause: dbError },
+      );
+
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      let printed: string;
+      try {
+        logMigrationFailure(wrapped);
+        expect(spy).toHaveBeenCalledTimes(1);
+        // node:util's format() is what Console actually calls to build the string it writes —
+        // NOT String()/.toString(), which for an Error is only "name: message" and would hide
+        // the exact defect this test exists to catch (Node's real formatter recursively renders
+        // .cause and enumerable own properties for any non-string argument).
+        printed = format(...spy.mock.calls[0]!);
+      } finally {
+        // mockRestore() also clears .mock.calls (mockReset + restore) — must run AFTER reading
+        // the recorded call above, never before.
+        spy.mockRestore();
+      }
+      expect(printed).toContain("sink_probe_pkey"); // constraint identifier: safe, kept
+      expect(printed).toContain("sink_probe"); // table identifier: safe, kept
+      expect(printed).not.toContain(secret); // the negative proof
+    } finally {
+      await c.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+    }
+  }, 30_000);
 });
 
 describe("job_definer bootstrap script itself fails closed on runtime-role targets (codex round-08 [P1])", () => {

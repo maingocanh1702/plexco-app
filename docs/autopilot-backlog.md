@@ -1193,13 +1193,21 @@ scope_correction: **SỬA 2026-08-01 (code-review, second registration).** `scop
   `close_by: hand` KHÔNG còn hợp lệ (`autopilot-backlog-reconcile`'s ABUSE guard: scope có source
   probe được thì không được hand-close); đổi sang `merged_probe` thật, cùng probe với task con
   `eslint10-preserve-caught-error-migrate-ts`.
-verdict: **SỬA 2026-08-01:** verdict `CODE_READY` 2026-07-31 (`AUTHORITY_SHA c759c63...`) bị SUPERSEDED
-  bên trong chính slice doc (`<!-- review-verdict: historical -->`, xem "Verdict (first registration)").
-  Verdict hiện hành: `CODE_READY` 2026-08-01, `AUTHORITY_SHA 86ec936109a7eaab3b3dc843144b23471cba81dd`,
-  closure 12/12, scope 8 file — verdict block "Verdict (second registration — ACTIVE/canonical)" trong
-  cùng slice doc. `docs/slice-readiness-verdicts.md` (Verdict 30) chưa cập nhật cho registration thứ
-  hai — ngoài scope của slice này để tự sửa (không phải trong `scope` array), ghi nhận ở đây cho
+verdict: **SỬA 2026-08-01 (lần hai):** verdict "second registration — ACTIVE/canonical" (dòng dưới) bị
+  chính nó SUPERSEDED sau khi registration đó chạm `MAX_ROUNDS` (5/5) với một finding còn valid (PII
+  qua CLI log sink `console.error`, xem `docs/autopilot-eslint-10-migration.md`'s §3 delta — third
+  registration). Verdict hiện hành: `CODE_READY` 2026-08-01, `AUTHORITY_SHA
+  86ec936109a7eaab3b3dc843144b23471cba81dd` (không đổi — không có commit mới nào lên `main` giữa hai lần
+  đăng ký), closure 12/12, scope vẫn 8 file — verdict block "Verdict (third registration —
+  ACTIVE/canonical)" trong cùng slice doc. `docs/slice-readiness-verdicts.md` (Verdict 30) vẫn chưa cập
+  nhật cho cả registration thứ hai lẫn thứ ba — ngoài scope của slice này để tự sửa, ghi nhận ở đây cho
   reconciliation sau.
+  **SỬA 2026-08-01 (lần một, superseded bởi trên):** verdict `CODE_READY` 2026-07-31 (`AUTHORITY_SHA
+  c759c63...`) bị SUPERSEDED bên trong chính slice doc (`<!-- review-verdict: historical -->`, xem
+  "Verdict (first registration)"). Verdict lúc đó: `CODE_READY` 2026-08-01, `AUTHORITY_SHA
+  86ec936109a7eaab3b3dc843144b23471cba81dd`, closure 12/12, scope 8 file — verdict block "Verdict
+  (second registration — ACTIVE/canonical)" — bản thân verdict này giờ cũng đã historical, xem sửa lần
+  hai ở trên.
 timing_note: 2026-07-29 · **`not_before`/`not_after` thêm sau khi block đã lên `ready`** — thiếu sót của lượt promote. Ràng buộc thời gian ban đầu chỉ nằm trong `_timing_gate` của manifest dưới dạng prose, mà **bot quét backlog đọc field, không đọc manifest**: nó sẽ chọn task này ngay hôm nay rồi HALT ở probe vì v10.8.0 (publish 24/07) chưa đủ 7 ngày `minimumReleaseAge` — đốt một session để tái phát hiện thứ đã biết. `deps-security-bump` có field này, block này thì không; cùng một lớp ràng buộc mà một cái machine-readable một cái không. `not_after` là EOL ESLint v9, ghi ra để nó là hạn chót đo được chứ không phải một câu trong notes.
 probe_findings: 2026-07-29 tại `main@f83995f` · **Ba câu hỏi compat đã ĐÓNG, không câu nào chặn** — nên block lên `ready` cùng ngày mở. **(a)** `typescript-eslint@8.62.1` và cả ba sub-package đã khai `peerDependencies.eslint: ^8.57.0 \|\| ^9.0.0 \|\| ^10.0.0` — **eslint 10 đã được hỗ trợ sẵn, KHÔNG cần nâng typescript-eslint**. Đây vốn là rủi ro lớn nhất vì `tseslint.config()` là khung của cả `eslint.config.mjs`. **(b)** `@next/eslint-plugin-next@15.5.20` không khai `peerDependencies` nào và chỉ phụ thuộc `fast-glob` ⇒ không ràng buộc version eslint. Vắng peer range **không phải bằng chứng tương thích**, nên đã grep source cho **cả 10 API v10 gỡ** (`context.getCwd/getFilename/getPhysicalFilename/getSourceCode`, `parserOptions`, `parserPath`, `getTokenOrCommentBefore/After`, `isSpaceBetweenTokens`, `getJSDocComment`) — **0 hit**. **(c)** Node: v10 đòi `^20.19.0 \|\| ^22.13.0 \|\| >=24`; máy `v22.22.3` ✓, CI `node-version: 22` → 22.x mới nhất ✓, **nhưng `package.json` khai `engines: {node: ">=22"}` — dải đó NHẬN 22.0–22.12 mà eslint 10 từ chối**. Lỗ thật, slice phải đóng (acceptance `E10-5`). **Baseline chống regression:** `npx eslint . -f json` = **81 file** (apps 46 · packages 31 · scripts 3 · `eslint.config.mjs` 1), sha256 danh sách đã sort prefix `3c99372c73e87ab4`.
 notes: |
@@ -1285,7 +1293,7 @@ notes: **SỬA 2026-08-01 (code-review round 2 bắt đúng): status trước đ
 
 ## task: eslint10-security-review-classification-not-revisited
 title: security_review classification trên eslint-10-migration được chốt lúc slice còn là dependency bump, không được xét lại khi scope mở rộng vào migration runner
-status: idea
+status: ready
 risk: P3
 change_class: autopilot-mechanism
 depends_on: []
@@ -1302,15 +1310,29 @@ notes: |
   thay vì hạ rule, classification KHÔNG được xét lại tại thời điểm đó. Code-review round (attempt 6,
   second registration) bắt đúng độ lệch: `security_review.required: false` không còn khớp với những gì
   slice thực sự chạm.
-  **Xử lý cho slice này:** giữ `required: false` — đúng trên merit, xem `security_review.reason` trong
-  manifest cho bằng chứng đo được (try block chỉ bọc 4 lệnh `client.query()`, `connect()`/`end()` nằm
-  ngoài; message cũ đã interpolate full error trước khi sửa; pg DatabaseError thật đo được không có
-  `.client`/credentials). Thêm `void_if` mới: "scope mở rộng mà classification không được re-confirm"
-  — để đúng lỗ hổng này không lặng lẽ lặp lại lần sau.
-  **Bài học chung, không chỉ slice này:** mỗi khi scope của một slice mở rộng (re-registration hay
-  authorize in-flight), `security_review` classification KHÔNG tự động còn đúng — phải re-confirm rõ
-  ràng so với scope MỚI, không được kế thừa từ lúc manifest mới author. Hiện chưa có cơ chế cơ học nào
-  enforce điều này; entry này ghi nhận như một process gap, không phải code fix.
+  **Xử lý cho slice này (2026-08-01, lúc mở entry):** giữ `required: false` — đúng trên merit, xem
+  `security_review.reason` trong manifest cho bằng chứng đo được (try block chỉ bọc 4 lệnh
+  `client.query()`, `connect()`/`end()` nằm ngoài; message cũ đã interpolate full error trước khi sửa;
+  pg DatabaseError thật đo được không có `.client`/credentials). Thêm `void_if` mới: "scope mở rộng mà
+  classification không được re-confirm" — để đúng lỗ hổng này không lặng lẽ lặp lại lần sau.
+  **SỬA cùng ngày, sau round 7 (không xoá kết luận trên — nó SAI, ghi làm bằng chứng):** kết luận "giữ
+  `required: false` — đúng trên merit" ở trên là SAI. Phép đo "message cũ đã interpolate full error" chỉ
+  đúng một nửa: `String(error)`/`error.message` quả thật sạch (đo lại 2026-08-01, xác nhận), nhưng đó
+  không phải câu hỏi đúng — nguy cơ thật nằm ở CLI's `console.error(error)` truyền thẳng raw Error object
+  (giờ mang `.cause` sau round 6's fix) cho Node's default formatter, vốn in đệ quy TOÀN BỘ `.cause` —
+  gồm cả `pg.DatabaseError.detail`, trường mang giá trị ROW THẬT (PII) trên unique-violation, không phải
+  DDL/schema. `void_if` đã viết ở trên đúng ra đã phải TRIGGER ngay khi round 6 gắn `.cause` vào — nhưng
+  không có cơ chế cơ học nào kiểm tra `void_if`, chỉ có prose; round 7's review là thứ thực sự bắt được.
+  `security_review.required` đã sửa thành `true` trong third registration (2026-08-01), với `reason` đo
+  lại đầy đủ — xem `docs/autopilot-eslint-10-migration.md`'s §3 delta — third registration.
+  **Bài học chung, không chỉ slice này (vẫn đứng, xác nhận lại bằng chính lần sai thứ hai này):** mỗi
+  khi scope của một slice mở rộng (re-registration hay authorize in-flight), `security_review`
+  classification KHÔNG tự động còn đúng — phải re-confirm rõ ràng so với scope MỚI, không được kế thừa
+  từ lúc manifest mới author. Thêm một lớp: `void_if` viết bằng PROSE không tự enforce — cần một
+  reviewer round thật (không phải chỉ đọc lại doc) để bắt được, đúng như đã xảy ra ở đây hai lần liên
+  tiếp (round 6 không bắt, round 7 mới bắt). Hiện chưa có cơ chế cơ học nào enforce điều này; entry này
+  ghi nhận như một process gap, không phải code fix -- `status: ready` vì cả hai lần sai đã có bằng
+  chứng cụ thể đủ để một future kit-maintenance slice thiết kế cơ chế enforce, không còn là ý tưởng mơ hồ.
 
 ## task: eslint10-brace-expansion-5-0-7-typescript-estree
 title: brace-expansion@5.0.7 (GHSA-mh99-v99m-4gvg) qua minimatch@10.2.5 — HAI đường provenance hội tụ, không phải một

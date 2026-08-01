@@ -188,6 +188,48 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
   }
 }
 
+/** Fields safe to print from a caught error's `.cause` — identify WHICH constraint/table/column failed
+ *  without echoing row contents. `detail`/`hint`/`internalQuery`/`where` are deliberately excluded: on a
+ *  unique-violation, `detail` is e.g. `Key (email)=(user@example.com) already exists.` — the offending
+ *  row's actual value. A migration backfilling persons/accounts/channel_identities would otherwise print
+ *  real PII into deployment logs. Node's default console.error formatting prints `.cause` recursively
+ *  (in full) when handed an Error object directly, so this must run BEFORE the value reaches console.error,
+ *  not be a console.error option. */
+const SAFE_CAUSE_LOG_FIELDS = [
+  "code",
+  "severity",
+  "constraint",
+  "table",
+  "column",
+  "routine",
+  "file",
+  "line",
+] as const;
+
+/** Builds a log line for a migration failure that includes only allowlisted `.cause` fields — never the
+ *  full cause object, which `console.error` would otherwise print in full via Node's default formatting.
+ *  The Error's own `.message` (unchanged by this function) is never truncated or altered, only what
+ *  additionally gets appended from `.cause` is filtered. */
+export function formatMigrationFailureForLog(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const cause = error instanceof Error ? error.cause : undefined;
+  if (!cause || typeof cause !== "object") {
+    return message;
+  }
+  const causeRecord = cause as Record<string, unknown>;
+  const safeParts = SAFE_CAUSE_LOG_FIELDS.filter((field) => causeRecord[field] !== undefined).map(
+    (field) => `${field}=${String(causeRecord[field])}`,
+  );
+  return safeParts.length > 0 ? `${message} [${safeParts.join(" ")}]` : message;
+}
+
+/** The CLI's actual failure sink, exported so tests can spy on the real console.error call
+ *  (what it prints) rather than only on formatMigrationFailureForLog's return value (what it
+ *  computes) — those are different questions, and the PII risk lives in the former. */
+export function logMigrationFailure(error: unknown): void {
+  console.error("[migrate] failed:", formatMigrationFailureForLog(error));
+}
+
 const invokedDirectly =
   process.argv[1]?.endsWith("migrate.ts") || process.argv[1]?.endsWith("migrate.js");
 if (invokedDirectly) {
@@ -197,7 +239,7 @@ if (invokedDirectly) {
       process.exit(0);
     })
     .catch((error) => {
-      console.error("[migrate] failed", error);
+      logMigrationFailure(error);
       process.exit(1);
     });
 }
