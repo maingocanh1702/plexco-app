@@ -707,8 +707,9 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
  * console.error(error) sink, combined with migrate.ts:172 attaching { cause: error }, would have
  * Node's default recursive .cause formatting print a real pg.DatabaseError.detail to deployment
  * logs — on a unique violation that field is the offending row's ACTUAL VALUE (e.g.
- * `Key (email)=(user@example.com) already exists.`), not schema metadata. Fixed across this
- * (third) registration's own four gate rounds:
+ * `Key (email)=(user@example.com) already exists.`), not schema metadata. Fixed across the third
+ * registration's own four gate rounds, then found insufficient a fifth time in the fourth
+ * registration:
  *   - round 1: an explicit field allowlist (SAFE_STRUCTURED_LOG_FIELDS) applied before the value
  *     ever reaches console.error — but still returned the wrapping Error's `.message` verbatim.
  *   - round 2 [P1]: Postgres's message/detail split only holds for integrity-constraint classes
@@ -724,10 +725,16 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
  *     even its safe fields (code/severity/etc.), which live directly on the error, not nested.
  *     formatMigrationFailureForLog now falls back to the top-level error's own fields when there is
  *     no `.cause`.
- * All five failure shapes are covered below: (a) unique-violation via .detail, (b) data-exception
- * via the primary message, (c) a real per-file failure preserving the filename, (d) a real direct/
- * cause-less failure preserving its full safe static message, (e) a real genuinely-unwrapped
- * failure with NO .cause at all preserving its safe structured fields.
+ *   - fourth registration, round 1 [P2]: ensureRoleExists's unsafe-identifier rejection embedded a
+ *     caller-supplied value into safeLogSummary — a throw-site bug, not the allowlist's.
+ *   - fourth registration, round 4 [P1]: the allowlist ITSELF was wrong. `constraint`/`table`/
+ *     `column` were trusted as schema identifiers, but PL/pgSQL's `RAISE ... USING TABLE = <any
+ *     expression>` (also COLUMN, CONSTRAINT) can set them to arbitrary data — verified live, not
+ *     assumed. Removed from SAFE_STRUCTURED_LOG_FIELDS; see its own docblock for the full
+ *     confirmation of which fields remain structurally safe and why.
+ * Every failure shape measured across this history is covered below — count and read the `it(...)`
+ * blocks directly rather than trusting a number restated here (this exact restatement has gone
+ * stale enough times in this file's own history to be the reason this sentence no longer states one).
  *
  * These tests assert on what logMigrationFailure actually PASSES TO console.error — not on
  * formatMigrationFailureForLog's return value alone — because the original defect was exactly
@@ -735,7 +742,7 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
  * object to console.error alongside it (Node inspects every argument, not just the first).
  */
 describe("CLI failure-log sink never prints row values from a real Postgres unique violation", () => {
-  it("keeps constraint/table identifiers but drops the offending row value from console.error's actual output", async () => {
+  it("keeps the SQLSTATE code but drops the offending row value from console.error's actual output", async () => {
     const db = "plexco_migrate_sink_allowlist";
     await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
     await admin.query(`CREATE DATABASE ${db}`);
@@ -780,8 +787,10 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
         // the recorded call above, never before.
         spy.mockRestore();
       }
-      expect(printed).toContain("sink_probe_pkey"); // constraint identifier: safe, kept
-      expect(printed).toContain("sink_probe"); // table identifier: safe, kept
+      // constraint/table identifiers are NO LONGER in the allowlist (round 4 [P1]: RAISE...USING
+      // TABLE/CONSTRAINT/COLUMN can set these to arbitrary data -- see SAFE_STRUCTURED_LOG_FIELDS's
+      // own docblock). code (SQLSTATE) is what remains and is asserted here instead.
+      expect(printed).toContain("code=23505");
       expect(printed).not.toContain(secret); // the negative proof
     } finally {
       await c.end();
@@ -937,6 +946,56 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
       await admin.query(`DROP ROLE IF EXISTS ${target}`);
     }
   }, 60_000);
+
+  // Fourth registration's gate-attempt-03 [P1]: SAFE_STRUCTURED_LOG_FIELDS trusted constraint/table/
+  // column as schema identifiers, but PL/pgSQL's RAISE ... USING TABLE/COLUMN/CONSTRAINT = <any
+  // expression> can set them to arbitrary data -- confirmed against PostgreSQL's own documented RAISE
+  // USING option list (plpgsql-errors-and-messages.html), not assumed. Reproduces Codex's own probe
+  // exactly: a real RAISE with TABLE set to a PII-shaped marker, through a real query, captured as a
+  // real error -- not a hand-built double.
+  it("codex round-4-of-fourth-registration [P1]: a table/column/constraint value set via RAISE ... USING is kept out of the CLI sink's actual output", async () => {
+    const c = await connect(BASE!);
+    const secret = "pii-diagnostic-field@example.com";
+    try {
+      let dbError: unknown;
+      try {
+        await c.query(
+          `DO $$ BEGIN RAISE EXCEPTION USING MESSAGE = 'synthetic failure', TABLE = '${secret}'; END $$;`,
+        );
+      } catch (error) {
+        dbError = error;
+      }
+      expect(dbError).toBeInstanceOf(Error);
+      // Measured invariant this test proves: RAISE ... USING TABLE sets .table to the exact
+      // expression given -- not a real object name, and not previously excluded by this formatter.
+      expect((dbError as { table?: string }).table).toBe(secret);
+      expect((dbError as { code?: string }).code).toBe("P0001");
+      // routine stays Postgres-internal (the PL/pgSQL executor itself), never caller-supplied --
+      // confirms it remains safe to keep in the allowlist.
+      expect((dbError as { routine?: string }).routine).toBe("exec_stmt_raise");
+
+      const wrapped = new Error(
+        `migrate: 0099_raise_using_probe.sql failed and was rolled back: ${String(dbError)}`,
+        { cause: dbError },
+      );
+
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      let printed: string;
+      try {
+        logMigrationFailure(wrapped);
+        expect(spy).toHaveBeenCalledTimes(1);
+        printed = format(...spy.mock.calls[0]!);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(printed).toContain("code=P0001"); // safe structured field: kept
+      expect(printed).toContain("routine=exec_stmt_raise"); // safe structured field: kept
+      expect(printed).not.toContain(secret); // the negative proof -- what this round's finding caught
+      expect(printed).not.toContain("table="); // table is no longer in the allowlist AT ALL
+    } finally {
+      await c.end();
+    }
+  });
 });
 
 describe("job_definer bootstrap script itself fails closed on runtime-role targets (codex round-08 [P1])", () => {

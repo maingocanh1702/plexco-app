@@ -219,24 +219,39 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
   }
 }
 
-/** Fields safe to print from a Postgres/fs error's structured properties — identify WHICH
- *  constraint/table/column (or fs error code) failed without echoing row contents. `detail`/`hint`/
+/** Fields safe to print from a Postgres/fs error's structured properties. `detail`/`hint`/
  *  `internalQuery`/`where` are deliberately excluded: on a unique-violation, `detail` is e.g.
  *  `Key (email)=(user@example.com) already exists.` — the offending row's actual value. A migration
  *  backfilling persons/accounts/channel_identities would otherwise print real PII into deployment
  *  logs. Node's default console.error formatting prints an Error's own enumerable properties (and
  *  `.cause`, recursively) in full when handed the object directly, so this must run BEFORE the
- *  value reaches console.error, not be a console.error option. */
-const SAFE_STRUCTURED_LOG_FIELDS = [
-  "code",
-  "severity",
-  "constraint",
-  "table",
-  "column",
-  "routine",
-  "file",
-  "line",
-] as const;
+ *  value reaches console.error, not be a console.error option.
+ *
+ *  `constraint`/`table`/`column` are ALSO deliberately excluded (removed after code-review; they were
+ *  in this list once). PL/pgSQL's RAISE statement supports `RAISE ... USING TABLE = <any expression>`
+ *  (also COLUMN, CONSTRAINT, DATATYPE, SCHEMA — confirmed against the full USING option list at
+ *  https://www.postgresql.org/docs/16/plpgsql-errors-and-messages.html, not recalled), so a migration's
+ *  own PL/pgSQL code — or any function/trigger it calls — can put arbitrary data into a field this
+ *  formatter would otherwise have trusted as a schema identifier. Verified live: `RAISE EXCEPTION
+ *  USING TABLE = 'an-arbitrary-string'` sets `error.table` to that exact string. PostgreSQL's own
+ *  protocol docs (https://www.postgresql.org/docs/16/protocol-error-fields.html) independently confirm
+ *  schema/table/column/datatype/constraint name fields are "supplied only for a limited number of
+ *  error types" and clients "should not assume these fields denote contemporary objects" — not reliable
+ *  identifiers even before considering RAISE...USING. An identifier-shape validation guard (reject
+ *  anything not matching Postgres's own identifier syntax) was considered and rejected: a plausible
+ *  human name like `john_smith` still satisfies that shape, so it would not have closed the gap, only
+ *  added a third mechanism to this file for marginal benefit.
+ *
+ *  The remaining five fields were each re-confirmed against the same USING option list (not recalled
+ *  from the pre-fix allowlist, which had already been wrong once): `code`/ERRCODE IS settable via
+ *  RAISE...USING, but empirically bounded — Postgres either resolves it as a known condition name or
+ *  requires SQLSTATE shape (rejects free text outright; accepts arbitrary 5-character codes, verified
+ *  live, which cannot carry a meaningful PII payload). `severity` is set via RAISE's fixed LEVEL
+ *  keyword (DEBUG/LOG/INFO/NOTICE/WARNING/EXCEPTION) — a closed set enforced by the SQL grammar itself,
+ *  not a runtime value. `routine`/`file`/`line` are NOT in the USING option list at all — populated
+ *  only by Postgres's own C-level error-reporting machinery; verified live that a PL/pgSQL RAISE shows
+ *  `routine: "exec_stmt_raise"` (the interpreter's own function), never anything caller-supplied. */
+const SAFE_STRUCTURED_LOG_FIELDS = ["code", "severity", "routine", "file", "line"] as const;
 
 /** Builds a log line for a migration failure from ONLY pre-vetted safe sources — never Postgres's
  *  raw message/detail text. Two sources feed it: (1) `safeLogSummary`, set by the THROW SITE itself
