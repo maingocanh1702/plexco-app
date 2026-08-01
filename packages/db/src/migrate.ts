@@ -136,7 +136,21 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
         applied_at timestamptz NOT NULL DEFAULT now()
       )`);
 
-    const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+    let files: string[];
+    try {
+      files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+    } catch (error) {
+      // Node fs errors (ENOENT etc.) never carry severity/routine/file/line -- SAFE_STRUCTURED_LOG_FIELDS
+      // surfaces nothing for an unwrapped one, and .cause contributes zero characters to the log line as
+      // a result. All recovered diagnostic value comes from safeLogSummary alone, which is why it is kept
+      // fully static and distinct from readFile's below -- an operator can tell which site failed without
+      // interpolating anything (this file's own history: ensureRoleExists's role, then the structured
+      // allowlist, both interpolated a "defensible" value into a safe channel and both became findings).
+      const message = `migrate: failed to read the migrations directory: ${String(error)}`;
+      throwMigrateError(message, "migrate: failed to read the migrations directory", {
+        cause: error,
+      });
+    }
     const seen = new Map<string, string>(
       (await client.query("SELECT name, sha256 FROM schema_migrations")).rows.map(
         (r: { name: string; sha256: string }) => [r.name, r.sha256],
@@ -170,7 +184,15 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
     }
 
     for (const file of files) {
-      const sql = await readFile(path.join(MIGRATIONS_DIR, file), "utf8");
+      let sql: string;
+      try {
+        sql = await readFile(path.join(MIGRATIONS_DIR, file), "utf8");
+      } catch (error) {
+        // Distinct from readdir's summary above, deliberately -- same reasoning, same constraint
+        // (fully static, no filename interpolation even though `file` is repo-controlled).
+        const message = `migrate: failed to read a migration file: ${String(error)}`;
+        throwMigrateError(message, "migrate: failed to read a migration file", { cause: error });
+      }
       const sha = createHash("sha256").update(sql).digest("hex");
       const prior = seen.get(file);
       if (prior !== undefined) {
@@ -235,13 +257,15 @@ const SAFE_STRUCTURED_LOG_FIELDS = ["severity", "routine", "file", "line"] as co
  *  raw message/detail text. Two sources feed it: (1) `safeLogSummary`, set by the THROW SITE itself
  *  (see throwMigrateError) — every migrate.ts throw site knows whether its own message is static
  *  repo text or a controlled identifier like a migration filename, so it is trusted here without
- *  re-deriving it; falls back to a generic string if absent (e.g. an error that never went through
- *  throwMigrateError — a connection failure, an advisory-lock/setup query, or an fs error from
- *  `readdir`/`readFile`, all of which propagate UNWRAPPED, with no `.cause`, straight out of
- *  migrate()). (2) the allowlisted structured fields — read from `.cause` when present (a per-file
- *  failure was caught and wrapped), otherwise read directly off the top-level error itself, since an
- *  unwrapped pg.DatabaseError or Node fs error (ENOENT etc.) carries the SAME safe fields (severity,
- *  routine, ...) as its own properties, not nested under a cause. Neither source ever includes
+ *  re-deriving it; falls back to a generic string if absent (e.g. a connection failure or an
+ *  advisory-lock/setup query, which propagate UNWRAPPED, with no `.cause`, straight out of migrate()
+ *  — readdir/readFile are NOT examples of this: both go through throwMigrateError, see below). (2) the
+ *  allowlisted structured fields — read from `.cause` when present (a per-file failure was caught and
+ *  wrapped), otherwise read directly off the top-level error itself, for an unwrapped pg.DatabaseError.
+ *  A Node fs error (ENOENT etc.) does NOT carry these fields — measured live, severity/routine/file/line
+ *  are all undefined on one — which is why readdir/readFile are wrapped via throwMigrateError instead of
+ *  relying on this fallback; without safeLogSummary, an unwrapped fs error would print the bare generic
+ *  fallback with no diagnostic content at all. Neither source ever includes
  *  `.message`/`String(error)` verbatim: Postgres's message/detail split only holds for integrity-
  *  constraint classes (23xxx) -- for a data-exception class like 22P02 (invalid_text_representation),
  *  the offending value sits directly in the PRIMARY message, e.g. `invalid input syntax for type

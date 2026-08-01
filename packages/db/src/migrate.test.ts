@@ -12,6 +12,32 @@ import {
   withJobDefinerLock,
 } from "./test-harness.js";
 
+// Redirect layer for gate-attempt-04 [P2] (fifth registration)'s readdir/readFile-failure tests.
+// Defaults to the REAL implementation for every other test in this file (which read real migration
+// files); only the two tests that explicitly reassign readdirImpl/readFileImpl for their own
+// duration, then restore it, ever see a different one. Necessary because migrate.ts's own
+// safeLogSummary marker is a private, unexported Symbol -- a hand-built Error cannot carry it, so
+// proving what the REAL throw sites attach requires actually reaching them, and MIGRATIONS_DIR is a
+// hardcoded module constant with no test-time override. Verified this redirect intercepts migrate.ts's
+// own import (not just this file's) before trusting it.
+const actualFsPromises =
+  await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+// Narrowed to the ONE overload migrate.ts actually calls (readdir(dir): string[], readFile(path,
+// "utf8"): string) -- avoids fighting node:fs/promises's full overload set, which this redirect layer
+// has no need to preserve.
+let readdirImpl: (dir: string) => Promise<string[]> = (dir) =>
+  actualFsPromises.readdir(dir) as Promise<string[]>;
+let readFileImpl: (filePath: string, encoding: "utf8") => Promise<string> = (filePath, encoding) =>
+  actualFsPromises.readFile(filePath, encoding);
+vi.mock("node:fs/promises", async () => {
+  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  return {
+    ...actual,
+    readdir: (dir: string) => readdirImpl(dir),
+    readFile: (filePath: string, encoding: "utf8") => readFileImpl(filePath, encoding),
+  };
+});
+
 /**
  * Migration-runner invariant suite for the CLUSTER-GLOBAL role race.
  *
@@ -1043,6 +1069,83 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
     } finally {
       await c.end();
     }
+  });
+
+  // gate-attempt-03 [P2] (fifth registration): removing `code` left readdir/readFile failures with
+  // NOTHING from SAFE_STRUCTURED_LOG_FIELDS -- severity/routine/file/line are all undefined on a real
+  // Node fs error (measured live before trusting the finding). All recovered diagnostic value comes
+  // from safeLogSummary alone, which is why the two throw sites below need DISTINCT, FULLY STATIC
+  // summaries -- a shared or filename-interpolated summary would make the fix cosmetic (this file's
+  // own history: ensureRoleExists's role and the structured allowlist both interpolated a "defensible"
+  // value into a safe channel and both became findings).
+  it("gate-attempt-03-fifth [P2]: a readdir failure on the migrations directory names its own site, with no path or interpolated value", async () => {
+    const originalReaddir = readdirImpl;
+    readdirImpl = (async () => {
+      throw Object.assign(
+        new Error("ENOENT: no such file or directory, scandir '/private/probe'"),
+        {
+          code: "ENOENT",
+          path: "/private/probe",
+        },
+      );
+    }) as typeof readdirImpl;
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let printed: string;
+    try {
+      let caught: unknown;
+      try {
+        await migrate(BASE!);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).cause).toBeInstanceOf(Error);
+      logMigrationFailure(caught);
+      expect(spy).toHaveBeenCalledTimes(1);
+      printed = format(...spy.mock.calls[0]!);
+    } finally {
+      readdirImpl = originalReaddir;
+      spy.mockRestore();
+    }
+    expect(printed).toContain("failed to read the migrations directory");
+    expect(printed).not.toContain("failed to read a migration file"); // names ITS OWN site, not the other
+    expect(printed).not.toContain("/private/probe"); // no filesystem path
+    expect(printed).not.toContain("ENOENT"); // no interpolated value from the underlying error
+  });
+
+  it("gate-attempt-03-fifth [P2]: a readFile failure on a migration file names its own site, with no path or interpolated value", async () => {
+    const originalReadFile = readFileImpl;
+    readFileImpl = (async () => {
+      throw Object.assign(
+        new Error(
+          "ENOENT: no such file or directory, open '/private/probe/0000_roles_extensions.sql'",
+        ),
+        { code: "ENOENT", path: "/private/probe/0000_roles_extensions.sql" },
+      );
+    }) as typeof readFileImpl;
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let printed: string;
+    try {
+      let caught: unknown;
+      try {
+        await migrate(BASE!);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).cause).toBeInstanceOf(Error);
+      logMigrationFailure(caught);
+      expect(spy).toHaveBeenCalledTimes(1);
+      printed = format(...spy.mock.calls[0]!);
+    } finally {
+      readFileImpl = originalReadFile;
+      spy.mockRestore();
+    }
+    expect(printed).toContain("failed to read a migration file");
+    expect(printed).not.toContain("failed to read the migrations directory"); // names ITS OWN site
+    expect(printed).not.toContain("0000_roles_extensions.sql"); // no filename interpolated
+    expect(printed).not.toContain("/private/probe"); // no filesystem path
+    expect(printed).not.toContain("ENOENT"); // no interpolated value from the underlying error
   });
 });
 
