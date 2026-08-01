@@ -668,8 +668,15 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
  * console.error(error) sink, combined with migrate.ts:172 attaching { cause: error }, would have
  * Node's default recursive .cause formatting print a real pg.DatabaseError.detail to deployment
  * logs — on a unique violation that field is the offending row's ACTUAL VALUE (e.g.
- * `Key (email)=(user@example.com) already exists.`), not schema metadata. Fixed with an explicit
- * field allowlist (SAFE_CAUSE_LOG_FIELDS) applied before the value ever reaches console.error.
+ * `Key (email)=(user@example.com) already exists.`), not schema metadata. First fix (third
+ * registration, round 1): an explicit field allowlist (SAFE_CAUSE_LOG_FIELDS) applied before the
+ * value ever reaches console.error — but that fix still returned the wrapping Error's own
+ * `.message` verbatim, which round 2 [P1] caught as insufficient: Postgres's message/detail split
+ * only holds for integrity-constraint classes (23xxx) — for a data-exception class like 22P02
+ * (invalid_text_representation), the offending value sits directly in the PRIMARY message, with
+ * `.detail` undefined. Final fix: formatMigrationFailureForLog no longer uses ANY free-text
+ * message, from any source — only individually-vetted structured `.cause` fields. Both failure
+ * shapes (unique-violation via .detail, data-exception via the primary message) are covered below.
  *
  * These tests assert on what logMigrationFailure actually PASSES TO console.error — not on
  * formatMigrationFailureForLog's return value alone — because the original defect was exactly
@@ -694,10 +701,11 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
         dbError = error;
       }
 
-      // Measured invariant this fix depends on (2026-08-01, live against this repo's Postgres):
-      // the DatabaseError's own .message is Postgres's generic summary; only .detail carries the
-      // offending value. If this ever stops holding, the allowlist below (which filters only
-      // .cause fields) would no longer be sufficient on its own.
+      // Measured (2026-08-01, live against this repo's Postgres) SPECIFICALLY for unique-violation
+      // (23505): the DatabaseError's own .message is Postgres's generic summary; only .detail
+      // carries the offending value. This does NOT generalize to every SQLSTATE class (see the
+      // 22P02 test below, where the value sits in .message itself with .detail undefined) — which
+      // is exactly why the sink no longer uses .message/.cause free text at all, for any class.
       expect((dbError as Error).message).not.toContain(secret);
       expect(String((dbError as { detail?: string }).detail)).toContain(secret);
 
@@ -727,6 +735,46 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
     } finally {
       await c.end();
       await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+    }
+  }, 30_000);
+
+  it("codex round-2 [P1]: a data-exception error (22P02) whose offending value sits in the PRIMARY message, not .detail, is also kept out of console.error's actual output", async () => {
+    const c = await connect(BASE!);
+    const secret = "pii-in-primary-message-probe@example.com";
+    try {
+      let dbError: unknown;
+      try {
+        await c.query(`SELECT $1::integer`, [secret]);
+      } catch (error) {
+        dbError = error;
+      }
+
+      // Measured invariant this test proves (2026-08-01): for 22P02 (invalid_text_representation),
+      // the offending value sits in the PRIMARY message, and .detail is undefined — the OPPOSITE
+      // shape from the unique-violation test above. A sink that trusted "the message is always
+      // safe, only .cause fields need filtering" (round 1's fix) leaks exactly here.
+      expect((dbError as { code?: string }).code).toBe("22P02");
+      expect((dbError as Error).message).toContain(secret);
+      expect((dbError as { detail?: unknown }).detail).toBeUndefined();
+
+      const wrapped = new Error(
+        `migrate: 0099_sink_primary_message_probe.sql failed and was rolled back: ${String(dbError)}`,
+        { cause: dbError },
+      );
+
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      let printed: string;
+      try {
+        logMigrationFailure(wrapped);
+        expect(spy).toHaveBeenCalledTimes(1);
+        printed = format(...spy.mock.calls[0]!);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(printed).toContain("22P02"); // SQLSTATE code: safe, kept
+      expect(printed).not.toContain(secret); // the negative proof — what round 2 caught missing
+    } finally {
+      await c.end();
     }
   }, 30_000);
 });

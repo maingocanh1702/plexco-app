@@ -206,21 +206,26 @@ const SAFE_CAUSE_LOG_FIELDS = [
   "line",
 ] as const;
 
-/** Builds a log line for a migration failure that includes only allowlisted `.cause` fields — never the
- *  full cause object, which `console.error` would otherwise print in full via Node's default formatting.
- *  The Error's own `.message` (unchanged by this function) is never truncated or altered, only what
- *  additionally gets appended from `.cause` is filtered. */
+/** Builds a log line for a migration failure using ONLY the allowlisted `.cause` fields — never any
+ *  free-text message, from any source. The wrapping Error's own `.message` (built by interpolating
+ *  `String(error)` at the throw site) is deliberately NOT used here: Postgres's message/detail split
+ *  only holds for integrity-constraint classes (23xxx) -- for a data-exception class like 22P02
+ *  (invalid_text_representation), the offending value sits directly in the PRIMARY message, e.g.
+ *  `invalid input syntax for type integer: "user@example.com"`, with `.detail` undefined. Rather than
+ *  allowlist which SQLSTATE classes are safe to quote (a classification that could silently miss a
+ *  future case, or a future migration's own RAISE EXCEPTION interpolating row data), no free text is
+ *  ever quoted at all -- only individually-vetted structured fields. `.message`/`.cause` on the Error
+ *  object itself are untouched; this only affects what the CLI prints. */
 export function formatMigrationFailureForLog(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
   const cause = error instanceof Error ? error.cause : undefined;
-  if (!cause || typeof cause !== "object") {
-    return message;
-  }
-  const causeRecord = cause as Record<string, unknown>;
-  const safeParts = SAFE_CAUSE_LOG_FIELDS.filter((field) => causeRecord[field] !== undefined).map(
-    (field) => `${field}=${String(causeRecord[field])}`,
+  const causeRecord =
+    cause && typeof cause === "object" ? (cause as Record<string, unknown>) : undefined;
+  const safeParts = SAFE_CAUSE_LOG_FIELDS.filter((field) => causeRecord?.[field] !== undefined).map(
+    (field) => `${field}=${String(causeRecord![field])}`,
   );
-  return safeParts.length > 0 ? `${message} [${safeParts.join(" ")}]` : message;
+  return safeParts.length > 0
+    ? `migrate: a migration step failed [${safeParts.join(" ")}]`
+    : "migrate: a migration step failed (no structured cause details available)";
 }
 
 /** The CLI's actual failure sink, exported so tests can spy on the real console.error call
