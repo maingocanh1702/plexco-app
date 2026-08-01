@@ -15,9 +15,11 @@
 > commit này land, vì quan hệ ancestor-của-main không đổi khi `main` tiến thêm một commit ngay trên
 > nó.
 >
-> **Sửa 2026-08-01 (lần đăng ký thứ NĂM):** file này giờ có NĂM verdict block. Bốn block đầu đều
-> `historical`. Block THỨ NĂM là active/canonical. Lý do có block thứ năm: xem `_reregistration_note`
-> trong manifest và verdict thứ năm bên dưới — ngắn gọn, không lặp lại ở đây.
+> **Cách đọc file này, không phụ thuộc số lượng verdict block hiện có:** mọi block trừ block CUỐI
+> CÙNG mang marker `<!-- review-verdict: historical -->`; block cuối cùng (không có marker đó, header
+> ghi `ACTIVE/canonical`) là verdict hiện hành. Không đếm số block ở đây — số này đổi mỗi lần đăng ký
+> và một con số ghim cứng sẽ lại đi stale đúng như phát hiện đã sửa lần này. Lý do có đăng ký mới nhất:
+> xem `_reregistration_note` trong manifest và verdict cuối cùng bên dưới.
 >
 > Lịch sử ngắn gọn: lần đăng ký thứ hai chạm `MAX_ROUNDS` (5/5) với một finding còn valid (PII qua CLI
 > log sink) và bị đóng theo đúng chỉ dẫn — không tự ý chạy vòng thứ sáu. Lần thứ ba sửa đúng sink đó
@@ -851,9 +853,11 @@ reading the diff. Boundaries (what must not happen), properties (what must hold,
 code directly), and pointers (to the Owner Exception Record above, or to the tests) are the only three
 shapes allowed. `negative_scope` in the manifest was rewritten on this principle; this verdict does not
 restate what Exception 4 did (see the Owner Exception Record section above for that, unchanged, not
-re-narrated here); the stale `migrate.ts` comment claiming connection errors propagate unwrapped is
-deleted outright rather than corrected, since the code next to it is the only description that cannot
-go stale.
+re-narrated here); `migrate.ts`'s own comments no longer restate specific wrap-site history or field
+lists (verify directly against `git diff archive/eslint-10-migration-fifth-registration...HEAD --
+packages/db/src/migrate.ts`, count not stated here on principle), stating the test/property and
+pointing at negative_scope and the Owner Exception Record instead, since the code next to them is the
+only description that cannot go stale.
 
 ### Closure matrix (sixth registration)
 
@@ -863,9 +867,9 @@ go stale.
 | 2 | Decision trong scope đã chốt | closed legitimately per level3-workflow.md §8 gap 4's test (gate-attempt-06's finding was accepted, not contested; needed round budget registration five could not provide) | PASS |
 | 3 | Scope IN/OUT và owner rõ | manifest `scope` 8 files exact, unchanged; `negative_scope` rewritten as boundaries/properties, no per-registration narrative | PASS |
 | 4 | Dependency phân loại đủ | none -- root, `depends_on: []` | PASS |
-| 5 | Live schema/code khớp doc | the 16-site enumeration and its two named exceptions are carried forward from the Owner Exception Record, not re-derived; verify against `packages/db/src/migrate.ts` directly, which negative_scope's own boundary rule now requires | PASS |
+| 5 | Live schema/code khớp doc | the 16-site enumeration is carried forward from the Owner Exception Record, not re-derived; `negative_scope`'s own boundary rule names the excluded-await categories by their location (finally block, the per-file ROLLBACK, ensureRoleExists's own call site) rather than a count -- verify against `packages/db/src/migrate.ts` and `negative_scope` directly | PASS |
 | 6 | Data/contract đủ | `SAFE_STRUCTURED_LOG_FIELDS`'s admission rule (provenance, not a field list) is stated once, in `negative_scope`, checkable against the code without restating today's field set | PASS |
-| 7 | Fail-closed/order đủ | no control-flow or SQL-execution change this registration -- only doc/manifest text and one comment deletion | PASS |
+| 7 | Fail-closed/order đủ | no control-flow or SQL-execution change this registration -- doc/manifest text, one verification command, and comment-region edits in migrate.ts only; verify via `git diff base_sha...HEAD -- packages/db/src/migrate.ts` directly | PASS |
 | 8 | Open question trong scope | 0 | PASS |
 | 9 | Acceptance matrix có expected | E10-1..E10-15 unchanged in substance; E10-14/E10-15 reworded to state properties and point at the test file rather than restate field lists or counts | PASS |
 | 10 | Migration/security/rollback pin | no schema migration; rollback = revert the fix commit; `security_review.required: true` confirmed in the runtime manifest, reason reworded as a permanent boundary rather than a dated measurement | PASS |
@@ -888,25 +892,25 @@ TARGET_FILES:
   - packages/db/src/migrate.test.ts
   - docs/autopilot-backlog.md
 SLICE: eslint-10-migration (sixth registration)
-IN_SCOPE: the review range is the full cumulative diff, base_sha...HEAD (34 commits, all six registrations) -- that range includes migrate.ts's complete error-handling boundary (every await wrapped or named-excepted) and its test suite, unchanged since the fifth registration's own HEAD. THIS REGISTRATION'S OWN new commit, on top of that range, touches: docs/autopilot-manifests/eslint-10-migration.json's negative_scope (rewritten as boundaries/properties); this doc's verdict text (pointer to the Owner Exception Record, not a restatement); two packages/db/src/migrate.ts comments (one deleted, one corrected -- see gate-attempt-01's own findings below); and the engines.node verification command (a latent gap gate-attempt-01 found, fixed in the authored manifest only -- the runtime copy is hash-locked and unedited, see G5_SCOPE).
+IN_SCOPE: the review range is the full cumulative diff, base_sha...HEAD (`git rev-list --count base_sha..HEAD` for the exact commit count -- not restated here, since a pinned number is exactly the defect class this registration exists to remove). That range includes migrate.ts's complete error-handling boundary (every await wrapped or named-excepted) and its test suite, unchanged since the fifth registration's own HEAD. THIS REGISTRATION'S OWN commits, on top of that range, touch: docs/autopilot-manifests/eslint-10-migration.json's negative_scope and its engines.node verification command (see G5_SCOPE for the property it enforces); this doc's verdict text (pointer to the Owner Exception Record, not a restatement); packages/db/src/migrate.ts's comments (region-level changes only, no logic/control-flow). Per-round finding history: .autopilot/state/eslint-10-migration/gate-attempt-*-code-review-round-*.txt.
 OUT_OF_SCOPE: any change to migrate.ts's logic or control flow (comments and one verification command only) -- brace-expansion@5.0.7 (tracked separately) -- any rule configuration change -- the kit-tooling gaps already backlogged (kit-register-silently-skips-hash-lock-on-authored-manifest-path, kit-verification-rule-should-forbid-reading-autopilot-state-paths, kit-review-check-changed-vacuous-on-committed-head)
 G1_DECISION: PASS
 G2_SPEC: PASS -- the spec (negative_scope) now states the property (provenance, await-wrapping boundary) rather than today's instance of it, so it cannot be falsified by a future round adding a site or a field
 G3_DEPENDENCY: PASS
-G4_TEST: PASS -- no test change this registration; the full suite (615 tests as of the fifth registration's own HEAD, re-measured directly rather than restated) is unaffected by doc/manifest/comment-only edits
-G5_SCOPE: PASS -- this registration's own changes are entirely within its declared scope array; no code-logic change, so no owner-exception mechanism is needed. One exception noted, not smoothed over: gate-attempt-01 round 1 found the engines.node verification command had a real robustness gap (probe-based testing missed adversarial ranges like `^22.12.10 || >=24`, which still admits unsupported Node 22.12.x). Fixed with a structural checker (compares each clause's own bounds against the exact safe boundaries, not discrete probes) in the AUTHORED manifest only -- the runtime manifest is hash-locked (register-time hash covers the whole file, verification commands included) and cannot be edited without triggering MANIFEST_DRIFT. Confirmed this does not block the gate: the old runtime checker still returns exit 0 against the real, current package.json value, since that value is genuinely correct -- only its robustness against hypothetical future values was gapped
+G4_TEST: PASS -- no test change this registration; count directly via the canonical test command, not restated here (a restated number is exactly the defect class this registration exists to remove)
+G5_SCOPE: PASS -- this registration's own changes are entirely within its declared scope array; no code-logic change, so no owner-exception mechanism is needed. The engines.node verification command enforces a positive property (every admitted version is within ESLint 10's own actual supported range, not merely outside the named bad zones) -- checkable by reading docs/autopilot-manifests/eslint-10-migration.json's verification.focused[2] directly. Fixed in the AUTHORED manifest only; the runtime manifest is hash-locked (register-time hash covers the whole file) and cannot be edited without MANIFEST_DRIFT -- confirmed the old runtime checker still returns exit 0 against the real, current package.json value, so this does not block the gate
 LIVE_REPO_VERIFICATION: PASS
 G6_EXTERNAL: PASS
 HARD_DEPENDENCIES: none -- root, independent slice
 PRIOR_SLICES: none
 OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: none
-CONTRACT_MATRIX: PASS -- manifest, doc, and code agree on the properties each states; none restates the others' content. gate-attempt-01 round 1 also found manifest's own "no narrative" rule contradicted by its _reregistration_note field carrying some -- resolved by scoping the rule explicitly to forward-facing artifacts, exempting dated historical records (which cannot be falsified by a future diff the way a forward-facing claim can), rather than stripping _reregistration_note to nothing
+CONTRACT_MATRIX: PASS -- manifest, doc, and code agree on the properties each states; none restates the others' content or a count the other could compute. The manifest's "no narrative" rule is scoped explicitly to forward-facing artifacts, exempting dated historical records (_reregistration_note, this doc's changelog, the Owner Exception Record) since those cannot be falsified by a future diff the way a forward-facing claim can
 CLOSURE_MATRIX: PARTIAL -- 12/12 hold structurally as of this commit, not yet re-verified by a fresh gate round
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PARTIAL -- security_review.required: true confirmed in the runtime manifest; the security round has never run across six registrations and remains the largest gap in this slice
 IMPLEMENTATION_ARTIFACTS: PASS
-FIRST_IMPLEMENTATION_STEP: run scripts/autopilot-scope-gate ready against the current HEAD of feat/eslint-10-migration. gate-attempt-01 round 1's three findings are fixed: a genuine logic inversion in the SAFE_STRUCTURED_LOG_FIELDS comment ("add it only if it fails this test" -- backwards, corrected to "passes"), the engines.node checker's robustness gap (structural rewrite, authored manifest only per G5_SCOPE), and the IN_SCOPE/manifest-rule consistency issues above. Awaiting a fresh gate round.
+FIRST_IMPLEMENTATION_STEP: run scripts/autopilot-scope-gate ready against the current HEAD of feat/eslint-10-migration. Fix-round history and disposition of each round's findings: .autopilot/state/eslint-10-migration/gate-attempt-*-code-review-round-*.txt and regions.log -- not enumerated here, since restating "round N found X, fixed via Y" in this block is itself the narrative pattern this registration exists to stop; that restatement is what round 2 found wrong with round 1's own response here.
 REMAINING_BLOCKERS:
   - blocker: this registration's fixes are not yet re-verified by a fresh gate round
     owner: eslint-10-migration readiness gate
