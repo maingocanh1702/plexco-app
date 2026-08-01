@@ -163,17 +163,19 @@ rows (K1/K2/K3) below, not just prose in this delta block.
 
 (English) The second registration's own `security_review.reason` contained a measurement error: it
 claimed the pre-existing wrapping message already interpolated the full stringified error, so nothing
-newly reached a consumer the message did not already carry. Measured live against this repo's Postgres
-2026-08-01 (a real unique-violation, not a guess): `error.message` and `String(error)` render ONLY
-Postgres's own generic summary (`duplicate key value violates unique constraint "..."`) -- clean, no
-row values, confirmed by direct test. The actual risk is entirely in what `migrate.ts`'s CLI catch
-block does with the now-`cause`-carrying wrapped Error: `console.error("[migrate] failed", error)`
-hands Node's default formatter the raw Error object, which recursively prints `.cause` in full --
-including `pg.DatabaseError.detail`, which on a unique violation is the offending ROW'S ACTUAL VALUE
-(e.g. `Key (email)=(user@example.com) already exists.`), not schema metadata. A migration backfill
-against `persons`/`accounts`/`channel_identities` would print real PII into deployment logs, colliding
-directly with this repo's own HARD RULE (`docs/00-start-here/HANDOFF.md`). Round 2's `security_review`
-judgement was wrong, not merely incomplete; corrected here rather than carried forward.
+newly reached a consumer the message did not already carry. That measurement was wrong. Which specific
+failure shapes expose what, and how the fix closes each one, is not restated here as prose -- prose can
+drift from the code the moment a new shape is found (this exact paragraph did, twice, before being
+corrected); the tests cannot. See `packages/db/src/migrate.test.ts`'s "CLI failure-log sink" describe
+block directly for the authoritative account -- count and enumerate the `it(...)` blocks there rather
+than trusting any number written in prose. What drove the fix: `migrate.ts`'s CLI catch
+block hands `console.error` the raw, `cause`-carrying Error object, and Node's default formatter
+recursively prints whatever that object and its `.cause` carry -- for some Postgres failure classes
+that is `pg.DatabaseError.detail` (row-shaped, e.g. `Key (email)=(user@example.com) already exists.`
+on a unique violation), for others it is the primary message itself. Either way it collides with this
+repo's own HARD RULE (`docs/00-start-here/HANDOFF.md`) that money/PII never reach a public surface.
+Round 2's `security_review` judgement was wrong, not merely incomplete; corrected here rather than
+carried forward.
 
 ```text
 SCOPE: unchanged from the second registration (same 8 files)
@@ -277,8 +279,8 @@ verdict.
 | K1 | Regression fix | `packages/db/src/migrate.ts:172` trước vs sau | `throw new Error(...)` giờ có `{ cause: error }`; message text không đổi; `git diff` không chạm gì khác trong file (E10-11) | code-review |
 | K2 | Regression fix | `packages/db/src/migrate.test.ts` trước vs sau | test mới tái dùng `hideRealJobDefiner`/`withJobDefinerLock` đã có (không tạo trigger mới), assert `.cause` được set khi migration fail; PASS khi chạy thật (478ms) (E10-12) | canonical (DB suite) |
 | K3 | Observability/debt | `docs/autopilot-backlog.md` task `eslint10-preserve-caught-error-migrate-ts` trước vs sau | `status: ready` + `merged_probe` thật (`packages/db/src/migrate.test.ts :: plexco_migrate_cause_preserved`, đo unique + absent trên `origin/main`) thay vì `status: merged` sớm + `close_by: hand` không hợp lệ (E10-13) | manual + code-review |
-| L1 | Security/privacy | `migrate.ts`'s CLI catch-block log line trước vs sau — đo thật 2026-08-01, HAI shape: (a) unique_violation 23505 — `error.message`/`String(error)` sạch, `.cause.detail` mang value; (b) **SỬA sau round 2 [P1]**: data-exception 22P02 — value nằm THẲNG trong PRIMARY message, `.cause.detail` là `undefined`. **SỬA sau round 3 [P2]**: round 2's fix (chỉ dùng field allowlist từ `.cause`) an toàn nhưng quá thô — mất luôn migration filename (per-file failure) và mất luôn message an toàn 100% static (direct/cause-less failure như thiếu `DATABASE_URL_MIGRATION`) dù cả hai KHÔNG có rủi ro row-data nào. **SỬA sau round 4 [P2]**: round 3's fix vẫn mất field an toàn cho error KHÔNG BAO GIỜ đi qua bất kỳ `throwMigrateError` nào — connection failure, advisory-lock/setup query, `readdir`/`readFile` — những error này propagate KHÔNG WRAP, không có `.cause` gì cả | `formatMigrationFailureForLog` giờ đọc `safeLogSummary` — property Symbol-keyed do CHÍNH throw site gắn qua `throwMigrateError` (tách biệt hoàn toàn khỏi `.message`, vốn giữ nguyên byte-identical mọi nơi — test `/job_definer/i`, `/changed after being applied/` không đổi) — cộng field allowlist `SAFE_STRUCTURED_LOG_FIELDS`, đọc từ `.cause` nếu có, KHÔNG thì đọc thẳng từ top-level error (bao phủ cả `pg.DatabaseError` lẫn Node fs error như `ENOENT`, đồng nhất, không cần phân nhánh theo loại error). Throw site DUY NHẤT biết chắc text của chính nó an toàn hay không; site rủi ro (dòng ~192, có `String(error)`) nhận summary loại trừ đúng phần đó, 4 site còn lại (static hoặc chỉ interpolate filename/role name cố định) nhận full message làm summary. `migrate.ts`'s `.message`/`.cause` trên MỌI Error object không đổi — chỉ output CLI in ra đổi (E10-14) | code-review + security-review |
-| L2 | Regression (negative proof) | NĂM test, một cho mỗi shape đo được: (a) real unique-violation (23505); (b) real data-exception (22P02); (c) real per-file failure (job_definer absent, qua throw site thật, không phải error double tự dựng — double không mang được private `safeLogSummary` marker); (d) real direct/cause-less failure (`migrate("")`); (e) **thêm sau round 4**: real error KHÔNG có `.cause` (`insufficient_privilege` 42501, tái dùng scenario BR-4). Cả năm bắt/kích hoạt failure thật (không mock), spy `console.error` qua `logMigrationFailure` (sink thật), format bằng `node:util`'s `format()` (KHÔNG dùng `String()`, vốn từng che mất defect round-2 bắt được) | (a)/(b) output CÓ identifier an toàn, KHÔNG có giá trị vi phạm; (c) output CÓ `0022_job_claim_lease_core.sql`; (d) output CÓ full text `DATABASE_URL_MIGRATION is required`; (e) output CÓ `code=42501` dù không có `.cause` nào để đọc. Cả năm verified có teeth: (a)/(b) fail khi revert về round-1; (c)/(d) fail khi revert về round-2; (e) fail khi revert về round-3 (chỉ đọc field từ `.cause`, không fallback về top-level error) — xác nhận từng finding thật trước khi sửa, không chỉ tin lời Codex (E10-15) | canonical (DB suite) |
+| L1 | Security/privacy | `migrate.ts`'s CLI catch-block log line, across multiple measured Postgres/fs failure shapes. **Exact shapes and per-shape message/.detail content are NOT restated here** — see `packages/db/src/migrate.test.ts`'s "CLI failure-log sink" describe block, the authority; this exact restatement went stale repeatedly (rounds 2, and again in this registration's own doc-sweep) before landing on pointing at the tests instead of re-deriving them in prose. Design evolution, which IS stable to restate (it describes the mechanism, not a specific SQLSTATE's contents): round-1 fix (allowlist `.cause` fields, kept `.message`) -> round-2 correction (drop ALL free-text message, any source) -> round-3 correction (throw-site `safeLogSummary` preserves safe context alongside the allowlist) -> round-4 correction (fall back to the top-level error's own fields when there is no `.cause`) | `formatMigrationFailureForLog` reads `safeLogSummary` — a Symbol-keyed property CHÍNH throw site gắn qua `throwMigrateError` (tách biệt hoàn toàn khỏi `.message`, vốn giữ nguyên byte-identical mọi nơi — test `/job_definer/i`, `/changed after being applied/` không đổi) — cộng field allowlist `SAFE_STRUCTURED_LOG_FIELDS`, đọc từ `.cause` nếu có, KHÔNG thì đọc thẳng từ top-level error (bao phủ cả `pg.DatabaseError` lẫn Node fs error như `ENOENT`, đồng nhất, không cần phân nhánh theo loại error). Throw site DUY NHẤT biết chắc text của chính nó an toàn hay không. `migrate.ts`'s `.message`/`.cause` trên MỌI Error object không đổi — chỉ output CLI in ra đổi (E10-14) | code-review + security-review |
+| L2 | Regression (negative proof) | Multiple regression tests, one per measured failure shape — **exact count and per-test assertion content NOT restated here**; see `packages/db/src/migrate.test.ts`'s "CLI failure-log sink" describe block directly (`grep -c '  it(' ` inside that block against live HEAD, not a number written in this row) for the current, authoritative enumeration. All go through the real sink (`logMigrationFailure`, spied via `console.error`, formatted with `node:util`'s `format()` — KHÔNG dùng `String()`, vốn từng che mất defect round-2 bắt được), not a hand-built error double, and each was verified to fail against the immediately-prior round's formatter before being trusted | Each test's own assertions are the expected result — read them directly rather than trusting a table cell that has gone stale multiple times already. Structural property that DOES hold and is safe to restate: every test both proves a safe identifier is present AND proves the specific offending/dropped content is absent — a test proving only the former does not satisfy E10-15 (E10-15) | canonical (DB suite) |
 
 ---
 
@@ -445,12 +447,14 @@ thay thế cho code review round 2 hay merge decision của owner.
 ## Verdict (third registration — ACTIVE/canonical)
 
 (English) The second registration's `security_review.required: false` judgement was wrong — see the §3
-delta above for the corrected measurement (Postgres's own MESSAGE/DETAIL split keeps `.message`/
-`String(error)` clean; the risk was entirely in the CLI sink handing the raw `cause`-carrying Error to
-`console.error`). Per §11 of the review-readiness gate, the second verdict above is marked
-`<!-- review-verdict: historical -->` rather than edited in place; this third verdict is the active one,
-covering the sink-allowlist fix, its call-site extraction (`logMigrationFailure`), and the
-negative-proving regression test.
+delta above for what drove the correction, and `packages/db/src/migrate.test.ts`'s "CLI failure-log
+sink" describe block for which specific failure shapes expose what and how the fix closes each one
+(not restated here as prose, for the same reason the §3 delta above no longer restates it: this exact
+claim went stale twice before landing on pointing at the tests instead). Per §11 of the
+review-readiness gate, the second verdict above is marked `<!-- review-verdict: historical -->` rather
+than edited in place; this third verdict is the active one, covering the sink fix (throwMigrateError +
+safeLogSummary + allowlisted structured fields), its call-site extraction (`logMigrationFailure`), and
+the negative-proving regression tests.
 
 ```text
 REVIEW_POLICY_VERSION: 1.3

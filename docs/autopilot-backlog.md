@@ -1325,6 +1325,15 @@ notes: |
   không có cơ chế cơ học nào kiểm tra `void_if`, chỉ có prose; round 7's review là thứ thực sự bắt được.
   `security_review.required` đã sửa thành `true` trong third registration (2026-08-01), với `reason` đo
   lại đầy đủ — xem `docs/autopilot-eslint-10-migration.md`'s §3 delta — third registration.
+  **SỬA lần ba, cùng ngày, registration 4 (không xoá đoạn trên — nó CŨNG thiếu, ghi làm bằng chứng lần
+  thứ ba của cùng một lớp lỗi):** câu "`String(error)`/`error.message` quả thật sạch (đo lại
+  2026-08-01, xác nhận)" ở đoạn trên là ĐÚNG cho case đo LÚC ĐÓ (unique_violation) nhưng KHÔNG đầy đủ —
+  cùng ngày, round 2 của chính third registration đo tiếp và thấy 22P02 (data-exception class) đặt giá
+  trị THẲNG vào primary message, không phải `.detail`. Không viết lại claim này thành một câu hẹp hơn
+  ở đây — điều đó chỉ tạo ra chỗ thứ tư để claim tương tự đi stale khi có shape thứ sáu. Bằng chứng
+  hiện hành, không paraphrase: `packages/db/src/migrate.test.ts`'s "CLI failure-log sink" describe
+  block — mỗi test đo một shape thật, assert cả identifier an toàn có mặt LẪN giá trị vi phạm vắng
+  mặt. Đọc trực tiếp file đó, đừng tin bất kỳ đoạn tóm tắt nào, kể cả đoạn này.
   **Bài học chung, không chỉ slice này (vẫn đứng, xác nhận lại bằng chính lần sai thứ hai này):** mỗi
   khi scope của một slice mở rộng (re-registration hay authorize in-flight), `security_review`
   classification KHÔNG tự động còn đúng — phải re-confirm rõ ràng so với scope MỚI, không được kế thừa
