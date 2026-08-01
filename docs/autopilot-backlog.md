@@ -1243,21 +1243,27 @@ notes: |
 
 ## task: eslint10-preserve-caught-error-migrate-ts
 title: packages/db/src/migrate.ts:172 — preserve-caught-error, tạm hạ xuống `warn` trong eslint.config.mjs, cần sửa thật
-status: merged
+status: ready
 risk: P3
 change_class: code-quality
 depends_on: [eslint-10-migration]
 invariants: [build-config]
-scope: [packages/db/src/migrate.ts, eslint.config.mjs]
+scope: [packages/db/src/migrate.ts, packages/db/src/migrate.test.ts, eslint.config.mjs]
 manifest: null
-merged_probe: null
-close_by: hand · sửa một dòng rethrow, không tạo symbol mới nào để probe
-notes: **CLOSED 2026-08-01, trong chính second registration của `eslint-10-migration` (base_sha 86ec936) —
-  đây là commit đã được mở ra để chờ, không phải một slice khác.** `migrate.ts:172` giờ giữ error gốc qua
-  `{ cause: error }` khi rethrow; `eslint.config.mjs` đã gỡ hẳn dòng hạ cấp `preserve-caught-error: "warn"`
-  — rule trở về mặc định `error` của `eslint:recommended`, không còn ngoại lệ. `packages/db/src/migrate.test.ts`
-  có test mới ("preserve-caught-error: a migration failure's rethrown Error attaches the original as .cause")
-  tái dùng đúng cơ chế trigger thất bại đã có (`hideRealJobDefiner`/`withJobDefinerLock`) thay vì tạo mới.
+merged_probe: packages/db/src/migrate.test.ts :: plexco_migrate_cause_preserved
+close_by: null
+notes: **SỬA 2026-08-01 (code-review round 2 bắt đúng): status trước đó ghi `merged` là SAI — commit sửa
+  chỉ tồn tại trên branch `feat/eslint-10-migration`, chưa ở trên `origin/main`. Đồng thời `close_by: hand`
+  KHÔNG hợp lệ ở đây theo chính guard của `autopilot-backlog-reconcile` (ABUSE case: scope có file source
+  probe được, không được dùng hand-close) — dù dòng rethrow tự nó không tạo symbol mới, test mới CÓ:
+  db-context-name `plexco_migrate_cause_preserved` trong `migrate.test.ts` là bare identifier, đo unique
+  (grep 0 hit trên `origin/main`, 1 hit trong worktree). Đổi lại `status: ready` + `merged_probe` thật;
+  reconciliation sau khi merge sẽ tự đưa về `merged` khi probe xuất hiện trên `origin/main`.**
+  **Fix đã implement, chờ merge:** `migrate.ts:172` giữ error gốc qua `{ cause: error }` khi rethrow;
+  `eslint.config.mjs` đã gỡ hẳn dòng hạ cấp `preserve-caught-error: "warn"` — rule trở về mặc định `error`
+  của `eslint:recommended`, không còn ngoại lệ. `packages/db/src/migrate.test.ts` có test mới
+  ("preserve-caught-error: a migration failure's rethrown Error attaches the original as .cause") tái
+  dùng đúng cơ chế trigger thất bại đã có (`hideRealJobDefiner`/`withJobDefinerLock`) thay vì tạo mới.
   Lịch sử giữ nguyên bên dưới để biết vì sao từng phải hạ tạm.
   **Mở 2026-07-31 vì `eslint.config.mjs` đang trỏ tới entry này mà nó chưa tồn tại trên đĩa** — chính reviewer của `eslint-10-migration` bắt được sự trỏ hụt đó.
   **Bối cảnh:** eslint v10 bật `preserve-caught-error` trong bộ recommended, và nó báo lỗi thật ở `migrate.ts:172` — một chỗ rethrow làm mất error gốc. Finding đúng, nhưng nằm **ngoài scope** của slice eslint-10 ban đầu.
