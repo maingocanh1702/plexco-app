@@ -100,8 +100,13 @@ function throwMigrateError(message: string, safeLogSummary: string, options?: Er
  */
 export async function ensureRoleExists(client: pg.Client, role: string): Promise<void> {
   if (!SAFE_ROLE_IDENT.test(role)) {
+    // role is a caller-supplied parameter of an EXPORTED function -- today's only call sites pass
+    // one of the three static RUNTIME_ROLES strings, but the function's own contract does not
+    // guarantee that, so it cannot be treated as a controlled identifier the way a migration
+    // filename is. .message keeps the rejected value for in-process/test visibility; safeLogSummary
+    // does not, matching every other throw site's rule (interpolate only what is provably safe).
     const message = `migrate: refusing to CREATE ROLE with unsafe identifier ${JSON.stringify(role)}`;
-    throwMigrateError(message, message);
+    throwMigrateError(message, "migrate: refusing to CREATE ROLE with an unsafe identifier");
   }
   await client.query(
     `DO $$ BEGIN

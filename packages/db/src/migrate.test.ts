@@ -287,6 +287,43 @@ describe("BR-4 only the role-already-exists race codes are swallowed", () => {
       await c.end();
     }
   });
+
+  // Fourth registration's gate-attempt-01 [P2]: ensureRoleExists is EXPORTED and `role` is a
+  // caller-supplied parameter -- today's only call sites pass a static RUNTIME_ROLES string, but
+  // the function's own contract does not guarantee that. The unsafe-identifier rejection message
+  // interpolated the rejected value into BOTH .message and safeLogSummary, so a caller-controlled
+  // value would have reached the CLI's actual log output through the channel the formatter
+  // unconditionally trusts -- exactly the class of bug this whole registration exists to prevent,
+  // missed at this one throw site during the third registration's own five-shape audit.
+  it("codex round-4-of-fourth-registration [P2]: an unsafe role identifier is kept out of the CLI sink's actual output even though it is preserved in .message", async () => {
+    const c = await connect(BASE!);
+    const secret = "pii-marker@example.com;DROP ROLE app";
+    try {
+      let caught: unknown;
+      try {
+        await ensureRoleExists(c, secret);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      // .message keeps the rejected value -- in-process/test visibility is unaffected by this fix.
+      expect((caught as Error).message).toContain(secret);
+
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      let printed: string;
+      try {
+        logMigrationFailure(caught);
+        expect(spy).toHaveBeenCalledTimes(1);
+        printed = format(...spy.mock.calls[0]!);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(printed).toContain("unsafe identifier"); // safe summary: kept
+      expect(printed).not.toContain(secret); // the negative proof — what this round's finding caught
+    } finally {
+      await c.end();
+    }
+  });
 });
 
 describe("BR-5 0022 upgrade path: pre-existing claims survive the new lease-shape CHECK", () => {

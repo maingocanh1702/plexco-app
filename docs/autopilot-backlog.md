@@ -1193,15 +1193,22 @@ scope_correction: **SỬA 2026-08-01 (code-review, second registration).** `scop
   `close_by: hand` KHÔNG còn hợp lệ (`autopilot-backlog-reconcile`'s ABUSE guard: scope có source
   probe được thì không được hand-close); đổi sang `merged_probe` thật, cùng probe với task con
   `eslint10-preserve-caught-error-migrate-ts`.
-verdict: **SỬA 2026-08-01 (lần hai):** verdict "second registration — ACTIVE/canonical" (dòng dưới) bị
-  chính nó SUPERSEDED sau khi registration đó chạm `MAX_ROUNDS` (5/5) với một finding còn valid (PII
-  qua CLI log sink `console.error`, xem `docs/autopilot-eslint-10-migration.md`'s §3 delta — third
-  registration). Verdict hiện hành: `CODE_READY` 2026-08-01, `AUTHORITY_SHA
-  86ec936109a7eaab3b3dc843144b23471cba81dd` (không đổi — không có commit mới nào lên `main` giữa hai lần
-  đăng ký), closure 12/12, scope vẫn 8 file — verdict block "Verdict (third registration —
-  ACTIVE/canonical)" trong cùng slice doc. `docs/slice-readiness-verdicts.md` (Verdict 30) vẫn chưa cập
-  nhật cho cả registration thứ hai lẫn thứ ba — ngoài scope của slice này để tự sửa, ghi nhận ở đây cho
+verdict: **SỬA 2026-08-01 (lần ba):** verdict "third registration — ACTIVE/canonical" (dòng dưới) bị
+  chính nó SUPERSEDED sau khi registration đó CŨNG chạm `MAX_ROUNDS` (5/5) — lần này sau khi
+  gate-attempt-07 round 1 đã trả `CLEAN` cho đúng code này, rồi round 2 bắt một finding về độ chính xác
+  tài liệu (không phải code). Registration thứ tư đăng ký lại trên một ground khác hẳn ("miscounted, not
+  exhausted" — xem OWNER-EXCEPTION và verdict thứ tư), rồi TỰ registration thứ tư đó lại tìm ra một
+  code finding thật (`ensureRoleExists`'s `safeLogSummary` leak) trên đúng code mà round 1 vừa CLEAN —
+  bằng chứng trực tiếp rằng CLEAN không phải bằng chứng vắng mặt. Chi tiết đầy đủ trong verdict thứ tư.
+  Verdict hiện hành: `CODE_READY` 2026-08-01, `AUTHORITY_SHA 86ec936109a7eaab3b3dc843144b23471cba81dd`
+  (không đổi qua cả BỐN lần đăng ký), closure 12/12, scope vẫn 8 file — verdict block "Verdict (fourth
+  registration — ACTIVE/canonical)" trong cùng slice doc. `docs/slice-readiness-verdicts.md` (Verdict
+  30) vẫn chưa cập nhật cho cả bốn lần đăng ký — ngoài scope của slice này để tự sửa, ghi nhận ở đây cho
   reconciliation sau.
+  **SỬA 2026-08-01 (lần hai, superseded bởi trên):** verdict "second registration — ACTIVE/canonical"
+  bị SUPERSEDED sau khi registration đó chạm `MAX_ROUNDS` (5/5) với một finding còn valid (PII qua CLI
+  log sink `console.error`). Verdict lúc đó: verdict block "Verdict (third registration —
+  ACTIVE/canonical)" — bản thân verdict này giờ cũng đã historical, xem sửa lần ba ở trên.
   **SỬA 2026-08-01 (lần một, superseded bởi trên):** verdict `CODE_READY` 2026-07-31 (`AUTHORITY_SHA
   c759c63...`) bị SUPERSEDED bên trong chính slice doc (`<!-- review-verdict: historical -->`, xem
   "Verdict (first registration)"). Verdict lúc đó: `CODE_READY` 2026-08-01, `AUTHORITY_SHA
