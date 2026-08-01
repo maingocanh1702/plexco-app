@@ -1193,7 +1193,12 @@ scope_correction: **SỬA 2026-08-01 (code-review, second registration).** `scop
   `close_by: hand` KHÔNG còn hợp lệ (`autopilot-backlog-reconcile`'s ABUSE guard: scope có source
   probe được thì không được hand-close); đổi sang `merged_probe` thật, cùng probe với task con
   `eslint10-preserve-caught-error-migrate-ts`.
-verdict: **SỬA 2026-08-01 (lần bốn, gate-attempt-02 round 1 [P2] của lần đăng ký thứ năm):** verdict
+verdict: **SỬA 2026-08-02 (lần năm, đăng ký thứ sáu):** verdict "fifth registration" bị SUPERSEDED.
+  Verdict hiện hành: xem "Verdict (sixth registration — ACTIVE/canonical)" trong slice doc. Registration
+  thứ sáu không narrate lại các thay đổi trước đó -- xem "Owner Exception Record" section trong slice doc
+  (không lặp lại ở đây, đúng nguyên tắc mà registration thứ sáu tự áp dụng: không artifact nào được chứa
+  claim tường thuật có thể bị chứng minh sai khi đọc diff).
+  **SỬA 2026-08-01 (lần bốn, gate-attempt-02 round 1 [P2] của lần đăng ký thứ năm):** verdict
   "fourth registration — ACTIVE/canonical" (dòng dưới) bị chính nó SUPERSEDED. Đăng ký lần năm: owner
   quyết định gỡ hẳn field `code` khỏi allowlist, đổi tiêu chí sang PROVENANCE (giữ field Postgres tự
   điền, bỏ field bất kỳ câu lệnh SQL nào set được) thay vì lý lẽ an toàn từng field. Verdict hiện hành:

@@ -166,12 +166,9 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
     try {
       files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
     } catch (error) {
-      // Node fs errors (ENOENT etc.) never carry severity/routine/file/line -- SAFE_STRUCTURED_LOG_FIELDS
-      // surfaces nothing for an unwrapped one, and .cause contributes zero characters to the log line as
-      // a result. All recovered diagnostic value comes from safeLogSummary alone, which is why it is kept
-      // fully static and distinct from readFile's below -- an operator can tell which site failed without
-      // interpolating anything (this file's own history: ensureRoleExists's role, then the structured
-      // allowlist, both interpolated a "defensible" value into a safe channel and both became findings).
+      // Node fs errors (ENOENT etc.) never carry severity/routine/file/line, so all recovered
+      // diagnostic value comes from safeLogSummary alone -- kept fully static and distinct from
+      // readFile's below so an operator can tell which site failed. See negative_scope for the rule.
       const message = `migrate: failed to read the migrations directory: ${String(error)}`;
       throwMigrateError(message, "migrate: failed to read the migrations directory", {
         cause: error,
@@ -293,34 +290,19 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
 
 /** The test for this allowlist is PROVENANCE, not a per-field safety argument: keep a field only if
  *  Postgres's own C-level error machinery populates it, never a value any SQL statement can set (via
- *  RAISE ... USING or otherwise) — `code`, `constraint`, `table`, `column`, `schema`, `datatype`,
- *  `detail`, `hint`, `internalQuery`, `where`, `message` are all settable and excluded on that basis
- *  alone, not because any one of them was individually measured unsafe. Two of this allowlist's own
- *  fields (`constraint`/`table`/`column`, then `code`) were kept after being argued individually safe
- *  and later disproven live via RAISE ... USING; do not re-add a field by arguing it is safe today —
- *  add it only if it fails this test. What is lost: the failure category in the log line itself.
- *  safeLogSummary (the migration filename) plus the SQL in the repo still let an operator debug by
- *  reproducing the failure. */
+ *  RAISE ... USING or otherwise). Do not re-add a field by arguing it is safe today — add it only if
+ *  it fails this test. See this feature's manifest (negative_scope) and docs/autopilot-eslint-10-
+ *  migration.md's Owner Exception Record for why this is the test, not a field list. */
 const SAFE_STRUCTURED_LOG_FIELDS = ["severity", "routine", "file", "line"] as const;
 
 /** Builds a log line for a migration failure from ONLY pre-vetted safe sources — never Postgres's
  *  raw message/detail text. Two sources feed it: (1) `safeLogSummary`, set by the THROW SITE itself
- *  (see throwMigrateError) — every migrate.ts throw site knows whether its own message is static
- *  repo text or a controlled identifier like a migration filename, so it is trusted here without
- *  re-deriving it; falls back to a generic string if absent (e.g. a connection failure or an
- *  advisory-lock/setup query, which propagate UNWRAPPED, with no `.cause`, straight out of migrate()
- *  — readdir/readFile are NOT examples of this: both go through throwMigrateError, see below). (2) the
- *  allowlisted structured fields — read from `.cause` when present (a per-file failure was caught and
- *  wrapped), otherwise read directly off the top-level error itself, for an unwrapped pg.DatabaseError.
- *  A Node fs error (ENOENT etc.) does NOT carry these fields — measured live, severity/routine/file/line
- *  are all undefined on one — which is why readdir/readFile are wrapped via throwMigrateError instead of
- *  relying on this fallback; without safeLogSummary, an unwrapped fs error would print the bare generic
- *  fallback with no diagnostic content at all. Neither source ever includes
- *  `.message`/`String(error)` verbatim: Postgres's message/detail split only holds for integrity-
- *  constraint classes (23xxx) -- for a data-exception class like 22P02 (invalid_text_representation),
- *  the offending value sits directly in the PRIMARY message, e.g. `invalid input syntax for type
- *  integer: "user@example.com"`, with `.detail` undefined. `.message`/`.cause` on the Error object
- *  itself are untouched; this only affects what the CLI prints. */
+ *  (see throwMigrateError) — falls back to a generic string if absent. (2) the allowlisted structured
+ *  fields (SAFE_STRUCTURED_LOG_FIELDS) — read from `.cause` when present, otherwise read directly off
+ *  the top-level error. Neither source ever includes `.message`/`String(error)` verbatim. Which awaits
+ *  in `migrate()` are wrapped, and the safety rule for what may be interpolated into a safeLogSummary
+ *  or added to SAFE_STRUCTURED_LOG_FIELDS, are properties of the code — see negative_scope in this
+ *  feature's manifest, not restated here. */
 export function formatMigrationFailureForLog(error: unknown): string {
   const safeSummary =
     error instanceof Error && typeof (error as WithSafeLogSummary)[SAFE_LOG_SUMMARY] === "string"
