@@ -1180,13 +1180,26 @@ risk: P1
 change_class: toolchain-major-upgrade
 depends_on: []
 invariants: [build-config]
-scope: [docs/autopilot-manifests/eslint-10-migration.json, docs/autopilot-eslint-10-migration.md, package.json, pnpm-lock.yaml, eslint.config.mjs]
+scope: [docs/autopilot-manifests/eslint-10-migration.json, docs/autopilot-eslint-10-migration.md, package.json, pnpm-lock.yaml, eslint.config.mjs, packages/db/src/migrate.ts, packages/db/src/migrate.test.ts, docs/autopilot-backlog.md]
 manifest: docs/autopilot-manifests/eslint-10-migration.json
 slice_doc: docs/autopilot-eslint-10-migration.md
 launcher: .claude/commands/ap-42-eslint-10-migration.md
-merged_probe: null
-close_by: hand · toolchain-major-upgrade bump ở package.json/pnpm-lock.yaml, không tạo code symbol nào để probe — cùng lớp `dependency-security` mà `reconcile-close-by-hand-declaration` (Verdict 29) định nghĩa
-verdict: `CODE_READY` 2026-07-31, `AUTHORITY_SHA c759c63293a3555d957f58f4a82a06b1f35cfdda`, closure 12/12 — verdict block nằm trong slice doc (`<!-- review-readiness: code-ready -->`), tracker entry ở `docs/slice-readiness-verdicts.md` (Verdict 30)
+merged_probe: packages/db/src/migrate.test.ts :: plexco_migrate_cause_preserved
+close_by: null
+scope_correction: **SỬA 2026-08-01 (code-review, second registration).** `scope` 5-file + `close_by: hand`
+  ở trên đúng cho registration ĐẦU (pure dependency bump, không code symbol nào để probe — đúng lớp
+  `dependency-security`). Registration THỨ HAI mở rộng scope để sửa trực tiếp `migrate.ts:172`
+  (preserve-caught-error) thay vì hạ rule xuống `warn` — xem changelog v0.5 trong slice doc. Từ đó
+  `close_by: hand` KHÔNG còn hợp lệ (`autopilot-backlog-reconcile`'s ABUSE guard: scope có source
+  probe được thì không được hand-close); đổi sang `merged_probe` thật, cùng probe với task con
+  `eslint10-preserve-caught-error-migrate-ts`.
+verdict: **SỬA 2026-08-01:** verdict `CODE_READY` 2026-07-31 (`AUTHORITY_SHA c759c63...`) bị SUPERSEDED
+  bên trong chính slice doc (`<!-- review-verdict: historical -->`, xem "Verdict (first registration)").
+  Verdict hiện hành: `CODE_READY` 2026-08-01, `AUTHORITY_SHA 86ec936109a7eaab3b3dc843144b23471cba81dd`,
+  closure 12/12, scope 8 file — verdict block "Verdict (second registration — ACTIVE/canonical)" trong
+  cùng slice doc. `docs/slice-readiness-verdicts.md` (Verdict 30) chưa cập nhật cho registration thứ
+  hai — ngoài scope của slice này để tự sửa (không phải trong `scope` array), ghi nhận ở đây cho
+  reconciliation sau.
 timing_note: 2026-07-29 · **`not_before`/`not_after` thêm sau khi block đã lên `ready`** — thiếu sót của lượt promote. Ràng buộc thời gian ban đầu chỉ nằm trong `_timing_gate` của manifest dưới dạng prose, mà **bot quét backlog đọc field, không đọc manifest**: nó sẽ chọn task này ngay hôm nay rồi HALT ở probe vì v10.8.0 (publish 24/07) chưa đủ 7 ngày `minimumReleaseAge` — đốt một session để tái phát hiện thứ đã biết. `deps-security-bump` có field này, block này thì không; cùng một lớp ràng buộc mà một cái machine-readable một cái không. `not_after` là EOL ESLint v9, ghi ra để nó là hạn chót đo được chứ không phải một câu trong notes.
 probe_findings: 2026-07-29 tại `main@f83995f` · **Ba câu hỏi compat đã ĐÓNG, không câu nào chặn** — nên block lên `ready` cùng ngày mở. **(a)** `typescript-eslint@8.62.1` và cả ba sub-package đã khai `peerDependencies.eslint: ^8.57.0 \|\| ^9.0.0 \|\| ^10.0.0` — **eslint 10 đã được hỗ trợ sẵn, KHÔNG cần nâng typescript-eslint**. Đây vốn là rủi ro lớn nhất vì `tseslint.config()` là khung của cả `eslint.config.mjs`. **(b)** `@next/eslint-plugin-next@15.5.20` không khai `peerDependencies` nào và chỉ phụ thuộc `fast-glob` ⇒ không ràng buộc version eslint. Vắng peer range **không phải bằng chứng tương thích**, nên đã grep source cho **cả 10 API v10 gỡ** (`context.getCwd/getFilename/getPhysicalFilename/getSourceCode`, `parserOptions`, `parserPath`, `getTokenOrCommentBefore/After`, `isSpaceBetweenTokens`, `getJSDocComment`) — **0 hit**. **(c)** Node: v10 đòi `^20.19.0 \|\| ^22.13.0 \|\| >=24`; máy `v22.22.3` ✓, CI `node-version: 22` → 22.x mới nhất ✓, **nhưng `package.json` khai `engines: {node: ">=22"}` — dải đó NHẬN 22.0–22.12 mà eslint 10 từ chối**. Lỗ thật, slice phải đóng (acceptance `E10-5`). **Baseline chống regression:** `npx eslint . -f json` = **81 file** (apps 46 · packages 31 · scripts 3 · `eslint.config.mjs` 1), sha256 danh sách đã sort prefix `3c99372c73e87ab4`.
 notes: |
@@ -1242,7 +1255,7 @@ notes: |
   doc: `docs/autopilot-eslint-10-migration.md`. Launcher: `ap-42`.
 
 ## task: eslint10-preserve-caught-error-migrate-ts
-title: packages/db/src/migrate.ts:172 — preserve-caught-error, tạm hạ xuống `warn` trong eslint.config.mjs, cần sửa thật
+title: packages/db/src/migrate.ts:172 — preserve-caught-error, đã sửa (gắn `cause` khi rethrow), chờ merge lên origin/main
 status: ready
 risk: P3
 change_class: code-quality
