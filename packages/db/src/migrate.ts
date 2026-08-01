@@ -121,20 +121,46 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
     throwMigrateError(message, message);
   }
   const client = new pg.Client({ connectionString: migrationUrl });
-  await client.connect();
+  try {
+    await client.connect();
+  } catch (error) {
+    // Never interpolate migrationUrl or any part of it -- unlike the filename question in Exception 3,
+    // there is no defensible case to interpolate here: a connection string can carry credentials.
+    throwMigrateError(
+      `migrate: failed to connect to database: ${String(error)}`,
+      "migrate: failed to connect to database",
+      { cause: error },
+    );
+  }
   const applied: string[] = [];
   const skipped: string[] = [];
   try {
     // DATABASE-scoped: serialises concurrent deploys against THIS database only.
     // It does NOT serialise cluster-global objects (roles) across databases —
     // those are made race-safe by ensureRoleExists below, not by this lock.
-    await client.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY]);
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        name text PRIMARY KEY,
-        sha256 text NOT NULL,
-        applied_at timestamptz NOT NULL DEFAULT now()
-      )`);
+    try {
+      await client.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY]);
+    } catch (error) {
+      throwMigrateError(
+        `migrate: failed to acquire the advisory lock: ${String(error)}`,
+        "migrate: failed to acquire the advisory lock",
+        { cause: error },
+      );
+    }
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          name text PRIMARY KEY,
+          sha256 text NOT NULL,
+          applied_at timestamptz NOT NULL DEFAULT now()
+        )`);
+    } catch (error) {
+      throwMigrateError(
+        `migrate: failed to create the schema_migrations table: ${String(error)}`,
+        "migrate: failed to create the schema_migrations table",
+        { cause: error },
+      );
+    }
 
     let files: string[];
     try {
@@ -151,11 +177,18 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
         cause: error,
       });
     }
-    const seen = new Map<string, string>(
-      (await client.query("SELECT name, sha256 FROM schema_migrations")).rows.map(
-        (r: { name: string; sha256: string }) => [r.name, r.sha256],
-      ),
-    );
+    let schemaMigrationsRows: { name: string; sha256: string }[];
+    try {
+      schemaMigrationsRows = (await client.query("SELECT name, sha256 FROM schema_migrations"))
+        .rows;
+    } catch (error) {
+      throwMigrateError(
+        `migrate: failed to read the schema_migrations table: ${String(error)}`,
+        "migrate: failed to read the schema_migrations table",
+        { cause: error },
+      );
+    }
+    const seen = new Map<string, string>(schemaMigrationsRows.map((r) => [r.name, r.sha256]));
 
     // Ensure the cluster-global runtime roles BEFORE 0000 runs. Gated on 0000
     // not yet applied so an already-migrated database keeps exactly today's
@@ -169,13 +202,21 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
     // autocommit (outside the per-file BEGIN/COMMIT below) so the roles are
     // durable even if a later migration file rolls back.
     if (!seen.has(ROLES_MIGRATION)) {
-      const present = new Set<string>(
-        (
+      let pgRolesRows: { rolname: string }[];
+      try {
+        pgRolesRows = (
           await client.query("SELECT rolname FROM pg_roles WHERE rolname = ANY($1::text[])", [
             [...RUNTIME_ROLES],
           ])
-        ).rows.map((r: { rolname: string }) => r.rolname),
-      );
+        ).rows;
+      } catch (error) {
+        throwMigrateError(
+          `migrate: failed to check for pre-provisioned runtime roles: ${String(error)}`,
+          "migrate: failed to check for pre-provisioned runtime roles",
+          { cause: error },
+        );
+      }
+      const present = new Set<string>(pgRolesRows.map((r) => r.rolname));
       for (const role of RUNTIME_ROLES) {
         if (!present.has(role)) {
           await ensureRoleExists(client, role);
@@ -229,7 +270,16 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
 
     // Fail closed: a schema where the RLS block silently rolled back must
     // never pass as migrated.
-    const policies = await client.query("SELECT count(*)::int AS n FROM pg_policies");
+    let policies: pg.QueryResult;
+    try {
+      policies = await client.query("SELECT count(*)::int AS n FROM pg_policies");
+    } catch (error) {
+      throwMigrateError(
+        `migrate: failed to count RLS policies after apply: ${String(error)}`,
+        "migrate: failed to count RLS policies after apply",
+        { cause: error },
+      );
+    }
     if ((policies.rows[0] as { n: number }).n === 0) {
       const message = "migrate: 0 RLS policies after apply — refusing to treat DB as migrated";
       throwMigrateError(message, message);

@@ -1147,6 +1147,214 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
     expect(printed).not.toContain("/private/probe"); // no filesystem path
     expect(printed).not.toContain("ENOENT"); // no interpolated value from the underlying error
   });
+
+  // gate-attempt-05 [P2] (fifth registration): the owner's own re-read of the instruction that produced
+  // Exception 3 found it was scoped to "throw sites" when the actual property is "every await in
+  // migrate() that can reject outside an already-wrapped region" -- readdir/readFile/connect were three
+  // instances of the same gap, not the whole set. Full enumeration (16 awaits total, mechanically
+  // counted): 6 sites below were unwrapped and are now wrapped, all with distinct fully-static
+  // safeLogSummary strings, real error as .cause, no interpolation. Excluded: the finally block's
+  // advisory-unlock/client.end() (a throw from finally masks the original error) and, found while
+  // enumerating rather than assumed, ensureRoleExists's own call site (wrapping it risks overwriting its
+  // OWN more-specific unsafe-identifier summary) and the per-file ROLLBACK call (wrapping risks masking
+  // the original per-file failure the same way the finally block would) -- both flagged to the owner
+  // rather than silently wrapped or silently skipped. See the fifth verdict's enumeration table.
+  //
+  // Each test below intercepts ONE query via pg.Client.prototype.query (verified this reaches
+  // migrate.ts's own client instance, not just this test file's calls, before trusting the pattern),
+  // asserting the sink prints ONLY that site's own summary -- never another site's, never a path or any
+  // interpolated value from the underlying error.
+  function mockQuerySiteFailure(matchText: string, errorMessage: string) {
+    const original = pg.Client.prototype.query;
+    return vi.spyOn(pg.Client.prototype, "query").mockImplementation(function (
+      this: pg.Client,
+      ...args: unknown[]
+    ) {
+      const text = typeof args[0] === "string" ? args[0] : (args[0] as { text?: string })?.text;
+      if (typeof text === "string" && text.includes(matchText)) {
+        return Promise.reject(new Error(errorMessage));
+      }
+      return (original as (...a: unknown[]) => unknown).apply(this, args) as Promise<unknown>;
+    });
+  }
+
+  const ALL_SITE_SUMMARIES = [
+    "failed to connect to database",
+    "failed to acquire the advisory lock",
+    "failed to create the schema_migrations table",
+    "failed to read the schema_migrations table",
+    "failed to check for pre-provisioned runtime roles",
+    "failed to count RLS policies after apply",
+  ];
+
+  async function expectOnlyOwnSummary(printed: string, ownSummary: string) {
+    expect(printed).toContain(ownSummary);
+    for (const other of ALL_SITE_SUMMARIES) {
+      if (other !== ownSummary) expect(printed).not.toContain(other);
+    }
+  }
+
+  it("gate-attempt-05-fifth [P2]: a client.connect() failure names its own site, never the connection string", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let printed: string;
+    try {
+      let caught: unknown;
+      try {
+        await migrate("postgres://plexco:wrongpass@127.0.0.1:1/nonexistent_probe_db");
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).cause).toBeInstanceOf(Error);
+      logMigrationFailure(caught);
+      expect(spy).toHaveBeenCalledTimes(1);
+      printed = format(...spy.mock.calls[0]!);
+    } finally {
+      spy.mockRestore();
+    }
+    await expectOnlyOwnSummary(printed, "failed to connect to database");
+    expect(printed).not.toContain("wrongpass");
+    expect(printed).not.toContain("127.0.0.1:1");
+    expect(printed).not.toContain("nonexistent_probe_db");
+  });
+
+  it("gate-attempt-05-fifth [P2]: a pg_advisory_lock failure names its own site", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const querySpy = mockQuerySiteFailure("pg_advisory_lock", "PROBE_LOCK_FAIL");
+    let printed: string;
+    try {
+      let caught: unknown;
+      try {
+        await migrate(BASE!);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).cause).toBeInstanceOf(Error);
+      logMigrationFailure(caught);
+      expect(spy).toHaveBeenCalledTimes(1);
+      printed = format(...spy.mock.calls[0]!);
+    } finally {
+      querySpy.mockRestore();
+      spy.mockRestore();
+    }
+    await expectOnlyOwnSummary(printed, "failed to acquire the advisory lock");
+    expect(printed).not.toContain("PROBE_LOCK_FAIL");
+  });
+
+  it("gate-attempt-05-fifth [P2]: a schema_migrations CREATE TABLE failure names its own site", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const querySpy = mockQuerySiteFailure(
+      "CREATE TABLE IF NOT EXISTS schema_migrations",
+      "PROBE_CREATE_FAIL",
+    );
+    let printed: string;
+    try {
+      let caught: unknown;
+      try {
+        await migrate(BASE!);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).cause).toBeInstanceOf(Error);
+      logMigrationFailure(caught);
+      expect(spy).toHaveBeenCalledTimes(1);
+      printed = format(...spy.mock.calls[0]!);
+    } finally {
+      querySpy.mockRestore();
+      spy.mockRestore();
+    }
+    await expectOnlyOwnSummary(printed, "failed to create the schema_migrations table");
+    expect(printed).not.toContain("PROBE_CREATE_FAIL");
+  });
+
+  it("gate-attempt-05-fifth [P2]: a schema_migrations SELECT failure names its own site", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const querySpy = mockQuerySiteFailure(
+      "SELECT name, sha256 FROM schema_migrations",
+      "PROBE_SELECT_FAIL",
+    );
+    let printed: string;
+    try {
+      let caught: unknown;
+      try {
+        await migrate(BASE!);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).cause).toBeInstanceOf(Error);
+      logMigrationFailure(caught);
+      expect(spy).toHaveBeenCalledTimes(1);
+      printed = format(...spy.mock.calls[0]!);
+    } finally {
+      querySpy.mockRestore();
+      spy.mockRestore();
+    }
+    await expectOnlyOwnSummary(printed, "failed to read the schema_migrations table");
+    expect(printed).not.toContain("PROBE_SELECT_FAIL");
+  });
+
+  it("gate-attempt-05-fifth [P2]: a pg_roles pre-check failure names its own site", async () => {
+    // This query only runs when ROLES_MIGRATION (0000) has not yet been recorded -- BASE already has
+    // every migration applied, so it would never reach this site. Needs a genuinely fresh database.
+    const db = "plexco_migrate_sink_roles_precheck";
+    await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${db}`);
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const querySpy = mockQuerySiteFailure(
+      "SELECT rolname FROM pg_roles WHERE rolname = ANY",
+      "PROBE_ROLES_FAIL",
+    );
+    let printed: string;
+    try {
+      let caught: unknown;
+      try {
+        await migrate(url(db));
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).cause).toBeInstanceOf(Error);
+      logMigrationFailure(caught);
+      expect(spy).toHaveBeenCalledTimes(1);
+      printed = format(...spy.mock.calls[0]!);
+    } finally {
+      querySpy.mockRestore();
+      spy.mockRestore();
+      await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+    }
+    await expectOnlyOwnSummary(printed, "failed to check for pre-provisioned runtime roles");
+    expect(printed).not.toContain("PROBE_ROLES_FAIL");
+  });
+
+  it("gate-attempt-05-fifth [P2]: a pg_policies count failure names its own site", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const querySpy = mockQuerySiteFailure(
+      "SELECT count(*)::int AS n FROM pg_policies",
+      "PROBE_POLICIES_FAIL",
+    );
+    let printed: string;
+    try {
+      let caught: unknown;
+      try {
+        await migrate(BASE!);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).cause).toBeInstanceOf(Error);
+      logMigrationFailure(caught);
+      expect(spy).toHaveBeenCalledTimes(1);
+      printed = format(...spy.mock.calls[0]!);
+    } finally {
+      querySpy.mockRestore();
+      spy.mockRestore();
+    }
+    await expectOnlyOwnSummary(printed, "failed to count RLS policies after apply");
+    expect(printed).not.toContain("PROBE_POLICIES_FAIL");
+  });
 });
 
 describe("job_definer bootstrap script itself fails closed on runtime-role targets (codex round-08 [P1])", () => {
