@@ -290,9 +290,10 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
 
 /** The test for this allowlist is PROVENANCE, not a per-field safety argument: keep a field only if
  *  Postgres's own C-level error machinery populates it, never a value any SQL statement can set (via
- *  RAISE ... USING or otherwise). Do not re-add a field by arguing it is safe today — add it only if
- *  it fails this test. See this feature's manifest (negative_scope) and docs/autopilot-eslint-10-
- *  migration.md's Owner Exception Record for why this is the test, not a field list. */
+ *  RAISE ... USING or otherwise). Do not add a field by arguing it is safe today — add it only if it
+ *  PASSES this test (Postgres's own C internals populate it, unconditionally, for every case). See
+ *  this feature's manifest (negative_scope) and docs/autopilot-eslint-10-migration.md's Owner
+ *  Exception Record for why this is the test, not a field list. */
 const SAFE_STRUCTURED_LOG_FIELDS = ["severity", "routine", "file", "line"] as const;
 
 /** Builds a log line for a migration failure from ONLY pre-vetted safe sources — never Postgres's
