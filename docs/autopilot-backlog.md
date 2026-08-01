@@ -1339,6 +1339,45 @@ notes: |
   nguyên làm động lực cho việc SCOPE nó sau này, nhưng scoping (chọn file, chọn mechanism enforce) chưa
   xảy ra nên chưa thể `ready`.
 
+## task: db-test-suite-migrate-race-role-cross-file-flake
+title: packages/db test suite intermittently fails "role plexco_migrate_race does not exist" in an UNRELATED file's bootstrapJobDefiner call, under fileParallelism
+status: idea
+risk: P3
+change_class: test-infra
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+close_by: hand · process/test-infra gap discovered incidentally, no code symbol probe until scoped
+notes: |
+  **Mở 2026-08-01, phát hiện tình cờ trong khi chạy gate cho `eslint-10-migration` (không phải bug của
+  slice đó — không chạm `test-harness.ts`, `authorization.test.ts`, `rls-invariants.test.ts`, hay
+  `migrate.test.ts`'s BR-1 test).** `DATABASE_URL_TEST=... pnpm test` (full canonical suite,
+  `fileParallelism: true`) failed TWICE trên cùng một registration, cách nhau ~30 phút, với CÙNG một
+  lỗi hệt nhau: `error: role "plexco_migrate_race" does not exist`, ném từ
+  `test-harness.ts:79` (`bootstrapJobDefiner`'s `client.query(sql)` chạy
+  `infra/postgres-init/01-job-definer.sql`) — nhưng ở HAI file nạn nhân KHÁC NHAU
+  (`rls-invariants.test.ts` lần 1, `authorization.test.ts` lần 2). Cả hai lần re-run ngay sau đó XANH
+  100% (282/282 rồi 283/283).
+  **`plexco_migrate_race` là role tạm CỦA RIÊNG `migrate.test.ts`'s BR-1 test** (`BR-1 race-safe
+  cluster-global role creation`) — nó CREATE+DROP role này trong vòng lặp chặt (5 iteration × 8 client
+  đồng thời). Việc lỗi LUÔN LUÔN nêu đúng tên role này (không phải role ngẫu nhiên khác) cho thấy có mối
+  liên hệ thật, dù cơ chế chính xác CHƯA xác nhận được trong thời gian điều tra tại chỗ.
+  **Đã loại trừ (đo trực tiếp, không phải đoán):** `01-job-definer.sql` không enumerate role tuỳ ý — nó
+  chỉ query `rolname IN ('app', 'app_worker', 'readonly')`. Role được GRANT job_definer là
+  `COALESCE(current_setting('job_definer_bootstrap.migration_role', true), current_user)` — không có
+  chỗ nào rõ ràng để `plexco_migrate_race` trở thành `current_user` của MỘT KẾT NỐI KHÁC (mỗi file dùng
+  `pg.Client`/`pg.Pool` riêng, không share). Không tìm thấy `pg.Pool` nào share giữa các test FILE (mỗi
+  file tự tạo pool/client riêng qua `setupNonSuperuserOwnerContext`/`setupRlsTestContext`). Cơ chế thật
+  vẫn CHƯA rõ — cần một agent có thời gian đọc toàn bộ `test-harness.ts` + chạy lại nhiều lần với logging
+  chi tiết hơn để bắt được đúng câu query nào tham chiếu role đó.
+  **Vì sao không chặn `eslint-10-migration`:** không liên quan gì tới eslint, tới `migrate.ts`, hay tới
+  bất kỳ file nào trong scope của slice đó. Full suite XANH khi re-run — không phải regression do slice
+  này gây ra, chỉ là flakiness của chính test-infra bị observe trong lúc chạy gate.
+  **Chưa scope vì:** cần điều tra thêm để xác định file nào thực sự cần sửa (`test-harness.ts`? BR-1's
+  own iteration count/timing? `01-job-definer.sql`?) trước khi viết `scope` array chính xác.
+
 ## task: eslint10-brace-expansion-5-0-7-typescript-estree
 title: brace-expansion@5.0.7 (GHSA-mh99-v99m-4gvg) qua minimatch@10.2.5 — HAI đường provenance hội tụ, không phải một
 status: idea
