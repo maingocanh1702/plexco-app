@@ -696,6 +696,19 @@ registration, not left implicit in the diff.
 What is lost: the failure category in the log line itself. `safeLogSummary` (the migration filename)
 plus the SQL in the repo still let an operator debug by reproducing the failure.
 
+### A kit defect found while registering this registration
+
+`scripts/autopilot-scope-gate register` reports success and admits the feature into `INFLIGHT.md`
+while silently skipping the hash-lock write (`registered-manifest.sha256`, lines 488-491, no `else`
+branch) when handed a manifest lacking `manifest_schema_version` -- exactly the AUTHORED manifest path
+this repo's own CLAUDE.md documents as the `register` argument. Fail-open on the control the entire
+gate depends on, not fail-closed. Reproduced directly this registration: registering against the
+authored path returned exit 0 with no hash file written; re-registering against the runtime path
+(hand-authored first, per `_TEMPLATE.json`'s own documented mechanism) produced the hash file and the
+JS validator's `LEVEL3_REGISTER_VALID` line. Filed as backlog task
+`kit-register-silently-skips-hash-lock-on-authored-manifest-path` -- kit tooling, not this repo's own
+code, fix belongs at the canonical source.
+
 ### Closure matrix (fifth registration)
 
 | # | Gate | Bằng chứng | |

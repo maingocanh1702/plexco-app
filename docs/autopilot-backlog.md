@@ -1463,6 +1463,71 @@ notes: |
   riêng nhánh này — override có rủi ro tương tự override đã bị bác cho nhánh v1, cần đo runtime
   trước khi chọn, không giả định an toàn).
 
+## task: kit-register-silently-skips-hash-lock-on-authored-manifest-path
+title: `scripts/autopilot-scope-gate register` reports success and admits the feature into INFLIGHT.md while silently skipping the hash-lock write (`registered-manifest.sha256`) when handed a manifest missing `manifest_schema_version` -- exactly the authored manifest path this repo's own CLAUDE.md documents as the register command's argument
+status: idea
+risk: P2
+change_class: autopilot-mechanism
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+close_by: hand · kit-tooling defect in scripts/autopilot-scope-gate (mirrored/synced from the canonical kit, not this repo's own code) -- fix belongs at the canonical source, then syncs down via KIT_VERSION bump, not a local patch here
+notes: |
+  **Opened 2026-08-01, found live during eslint-10-migration's fifth registration -- not a bug in that
+  slice, a control-plane defect in the shared kit script every registration in this repo goes through.**
+
+  Mechanism, `scripts/autopilot-scope-gate` lines 488-491:
+  ```
+  if [ "$MANIFEST_SCHEMA_VERSION" = "level3-operational-v2" ]; then
+    node -e '...sha256...' "$MANABS" > "$TASK_STATE/registered-manifest.sha256"
+  fi
+  ```
+  The hash-lock file that `ready` mode later depends on (`scripts/autopilot-review-readiness.mjs`
+  lines 489-491, `MANIFEST_DRIFT` if missing or mismatched) is written ONLY when the manifest passed
+  to `register` carries `manifest_schema_version: level3-operational-v2`. There is no `else` branch.
+  The AUTHORED contract (`docs/autopilot-manifests/<slug>.json`) is explicitly FORBIDDEN from carrying
+  that field -- its own `_role` comment says adding it "makes register HALT CONTRACT_INVALID" (true
+  for `ready`/the JS validator's path check at `autopilot-review-readiness.mjs:297-299`, which requires
+  the manifest to sit at exactly `.autopilot/state/<feature>/manifest.json` -- but NOT true for
+  `register`, which never invokes that path check at all when the schema-version condition is false).
+
+  So: registering against the authored path (`scripts/autopilot-scope-gate register --manifest
+  docs/autopilot-manifests/<slug>.json`) -- **this repo's own CLAUDE.md's documented invocation,
+  verbatim** -- succeeds, prints `registered: <feature> (in-flight)`, and admits the feature into
+  `.autopilot/INFLIGHT.md`. It does not raise, warn, or print anything indicating the hash-lock was
+  skipped. The gap surfaces much later and only if `ready` is invoked against the (never-created)
+  runtime manifest path, as `MANIFEST_DRIFT` -- a confusing failure far removed from its actual cause.
+
+  **Reproduced directly this registration:** `register` against the authored path returned exit 0 with
+  the bare `registered:` message (no `LEVEL3_REGISTER_VALID` line, meaning the JS validator's register
+  mode never ran); `ls .autopilot/state/eslint-10-migration/registered-manifest.sha256` then failed,
+  confirming the file was never written. Re-registering against the runtime path (`.autopilot/state/
+  eslint-10-migration/manifest.json`, hand-authored first per `_TEMPLATE.json`'s own documented
+  mechanism) printed the `LEVEL3_REGISTER_VALID` line AND produced the hash file, confirmed present with
+  a real SHA-256 value.
+
+  **This is fail-OPEN on the control the entire gate depends on**, not fail-closed: a mis-invoked
+  `register` call does not halt or warn, it silently produces a HALF-REGISTERED feature (admitted into
+  the in-flight registry, but with no integrity lock a later `ready` call can trust). It also directly
+  contradicts this repo's own CLAUDE.md, which documents `register --manifest docs/autopilot-manifests/
+  <slug>.json` as the invocation and calls the mechanism "fail-closed" -- in this configuration it is
+  not.
+
+  **Not fixed here:** `scripts/autopilot-scope-gate` is mirrored from the canonical kit
+  (`$HOME/Projects/Claude template/autopilot/`), not owned by this repo -- per this project's own
+  `docs/autopilot-templates/autopilot-template.md` convention ("đừng sửa scope-gate trực tiếp trong
+  repo; sửa ở canonical rồi bump KIT_VERSION"), a local patch here would be overwritten or diverge from
+  the source of truth. Candidate fixes for whoever scopes this at the canonical source: (a) an `else`
+  branch that halts `CONTRACT_INVALID` (or a clearly-named new code) when `register` is handed a
+  manifest that cannot be hash-locked, rather than silently succeeding; (b) update every doc/CLAUDE.md
+  that currently documents `register --manifest docs/autopilot-manifests/<slug>.json` to instead
+  document hand-authoring the runtime manifest first and registering against THAT path, matching what
+  `_TEMPLATE.json`'s own `_role` comment already says is the intended mechanism. This repo's own
+  CLAUDE.md is out of this backlog task's scope to edit directly (owner is already correcting it
+  separately, per session record).
+
 ## task: root-lock-no-staleness-detection
 title: scripts/autopilot-root-lock không tự phát hiện lock chết — chỉ có --force, không có gợi ý PID còn sống hay không
 status: idea
