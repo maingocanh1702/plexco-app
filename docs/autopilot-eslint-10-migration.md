@@ -696,7 +696,7 @@ registration, not left implicit in the diff.
 What is lost: the failure category in the log line itself. `safeLogSummary` (the migration filename)
 plus the SQL in the repo still let an operator debug by reproducing the failure.
 
-### A kit defect found while registering this registration
+### Kit and manifest-authoring defects found while registering this registration
 
 `scripts/autopilot-scope-gate register` reports success and admits the feature into `INFLIGHT.md`
 while silently skipping the hash-lock write (`registered-manifest.sha256`, lines 488-491, no `else`
@@ -708,6 +708,24 @@ authored path returned exit 0 with no hash file written; re-registering against 
 JS validator's `LEVEL3_REGISTER_VALID` line. Filed as backlog task
 `kit-register-silently-skips-hash-lock-on-authored-manifest-path` -- kit tooling, not this repo's own
 code, fix belongs at the canonical source.
+
+Second: this gate run's first invocation (gate-attempt-01) HALTed `VERIFICATION_FAILED` on
+`verification.focused[0]` -- `test -f .autopilot/state/eslint-10-migration/design-probe-file-list.txt
+&& ...`. That path is gitignored state; it does not survive a fresh worktree, so it fails on every
+re-registration regardless of the diff's content -- own definition of invocation-class ("the identical
+failure would occur for any diff, including an empty one"), not a judgment on this registration's
+actual code. **This is a defect in how this feature's own manifest was authored, not bad luck**:
+`verification.focused[0]` pins a path under `.autopilot/state/<feature>/`, a directory this project's
+own kit defines as not surviving the registration lifecycle it verifies inside -- the same class of
+mistake the kit's `_verification_rule` already warns against for pinned literals ("a literal is false
+the moment anything moves... this manifest is hash-locked after register, a stale literal cannot be
+corrected in place"), here pinning an ephemeral PATH instead of a stale VERSION STRING. Regenerated
+`design-probe-file-list.txt` deterministically against this exact HEAD (the same extraction command
+`verification.focused[0]` itself embeds, re-run and diffed against itself to confirm reproducibility,
+not hand-written) -- the command now passes. The manifest's own `verification.focused[0]` text cannot
+be corrected in place (hash-locked); filed as backlog task
+`kit-verification-rule-should-forbid-reading-autopilot-state-paths` to extend `_TEMPLATE.json`'s
+`_verification_rule` for future manifests.
 
 ### Closure matrix (fifth registration)
 

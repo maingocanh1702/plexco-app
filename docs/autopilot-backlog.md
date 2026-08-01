@@ -1528,6 +1528,53 @@ notes: |
   CLAUDE.md is out of this backlog task's scope to edit directly (owner is already correcting it
   separately, per session record).
 
+## task: kit-verification-rule-should-forbid-reading-autopilot-state-paths
+title: `_TEMPLATE.json`'s `_verification_rule` warns against pinned literals in `verification.focused` commands but does not warn against reading paths under `.autopilot/state/<feature>/` -- a directory the kit itself defines as not surviving the registration lifecycle those commands run inside, so any command that reads a path there fails on every re-registration regardless of the diff
+status: idea
+risk: P3
+change_class: autopilot-mechanism
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+close_by: hand · kit-tooling defect in `docs/autopilot-manifests/_TEMPLATE.json`'s `_verification_rule` (mirrored from the canonical kit) -- fix belongs at the canonical source
+notes: |
+  **Opened 2026-08-01, found live during eslint-10-migration's fifth registration.** This feature's own
+  authored manifest (carried forward, unmodified in this respect, across all five registrations) has
+  `verification.focused[0]`:
+  ```
+  test -f .autopilot/state/eslint-10-migration/design-probe-file-list.txt && npx eslint . -f json | ...
+  ```
+  `.autopilot/state/<feature>/` is gitignored and does not survive `ap-finish.sh`'s worktree removal --
+  every fresh worktree for a re-registration starts without it. This command therefore HALTs
+  `VERIFICATION_FAILED` on gate-attempt-01 of EVERY re-registration, independent of the diff (the
+  identical failure occurs even for an unchanged diff) -- confirmed live this registration: fresh
+  worktree, `test -f design-probe-file-list.txt` failed, fix-round-count was 0, no review/verification
+  result had been produced about the actual diff. Classified invocation-class per this session's own
+  test and fixed by regenerating the file deterministically against HEAD (same extraction command the
+  check itself embeds, re-run and diffed against itself to confirm reproducibility) -- but the manifest
+  text that caused it cannot be corrected in place, since the runtime manifest is hash-locked after
+  `register`.
+
+  **This is the same class of mistake `_TEMPLATE.json`'s own `_verification_rule` already documents for
+  pinned literals** ("a literal is false the moment anything moves... this manifest is hash-locked after
+  register, a stale literal cannot be corrected in place — it forces a full close-and-re-register
+  cycle. Observed cost: a slice that pinned `postcss == 8.5.18`... needed a third registration") --
+  except this pins an EPHEMERAL PATH rather than a stale VERSION STRING, and the failure mode is worse:
+  a pinned literal goes stale eventually; a path under `.autopilot/state/` is guaranteed to be absent on
+  every single re-registration, by the kit's own design (that directory is explicitly NOT meant to
+  survive the lifecycle).
+
+  **Not fixed here:** `_TEMPLATE.json` is mirrored from the canonical kit (`$HOME/Projects/Claude
+  template/autopilot/`), not owned by this repo. Candidate fix for whoever scopes this at the canonical
+  source: extend `_verification_rule`'s prose to explicitly forbid any `verification.focused`/
+  `verification.canonical` command from reading a path under `.autopilot/state/<feature>/` -- a
+  derived/regenerable artifact belongs in the command's own logic (regenerate-then-check, as this
+  registration did by hand), never as a precondition read from state that cannot outlive one worktree.
+  A `test -f <path under .autopilot/state/> && ...` pattern anywhere in a manifest's `verification` is
+  the specific shape to flag.
+
 ## task: root-lock-no-staleness-detection
 title: scripts/autopilot-root-lock không tự phát hiện lock chết — chỉ có --force, không có gợi ý PID còn sống hay không
 status: idea
