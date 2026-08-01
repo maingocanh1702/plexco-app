@@ -1283,6 +1283,35 @@ notes: **SỬA 2026-08-01 (code-review round 2 bắt đúng): status trước đ
   **Vì sao hạ xuống `warn` chứ không `off`, và vì sao không hoãn hẳn:** `pnpm lint` nằm trong danh sách canonical của **mọi** slice. Để nó `error` mà chưa sửa nghĩa là main đỏ, và gate của mọi lane khác fail vì một finding không liên quan gì tới chúng — "để slice sau" nghe sạch sẽ nhưng âm thầm chuyển hoá đơn sang các lane vô can. `off` thì im lặng và sống tới khi có người nhớ ra; `warn` in ra mỗi lần lint nên lời nhắc là tự động, không phụ thuộc trí nhớ. Đó là cùng một đánh đổi mà thứ tự ưu tiên áp ở chỗ khác: ngoại lệ chỉ chấp nhận được khi nó tự mang theo chủ sở hữu và lời nhắc của chính nó.
   **Việc phải làm (ĐÃ XONG):** sửa `migrate.ts:172` để giữ error gốc khi rethrow, rồi **gỡ dòng hạ cấp** trong `eslint.config.mjs` — hai việc đó là một, không còn làm nửa đầu rồi để lại nửa sau.
 
+## task: eslint10-security-review-classification-not-revisited
+title: security_review classification trên eslint-10-migration được chốt lúc slice còn là dependency bump, không được xét lại khi scope mở rộng vào migration runner
+status: idea
+risk: P3
+change_class: autopilot-mechanism
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+close_by: hand · process/documentation gap, không có code symbol nào để probe
+notes: |
+  **Mở 2026-08-01 — miss của OWNER, ghi rõ tên chứ không đổ cho slice-writer.** `eslint-10-migration`'s
+  manifest chốt `security_review.required: false` khi slice còn là pure devDependency toolchain bump
+  (không trust boundary, không deployment surface). Khi owner sau đó authorize mở rộng scope vào
+  `packages/db/src/migrate.ts` — DDL-owner migration runner — để sửa trực tiếp `preserve-caught-error`
+  thay vì hạ rule, classification KHÔNG được xét lại tại thời điểm đó. Code-review round (attempt 6,
+  second registration) bắt đúng độ lệch: `security_review.required: false` không còn khớp với những gì
+  slice thực sự chạm.
+  **Xử lý cho slice này:** giữ `required: false` — đúng trên merit, xem `security_review.reason` trong
+  manifest cho bằng chứng đo được (try block chỉ bọc 4 lệnh `client.query()`, `connect()`/`end()` nằm
+  ngoài; message cũ đã interpolate full error trước khi sửa; pg DatabaseError thật đo được không có
+  `.client`/credentials). Thêm `void_if` mới: "scope mở rộng mà classification không được re-confirm"
+  — để đúng lỗ hổng này không lặng lẽ lặp lại lần sau.
+  **Bài học chung, không chỉ slice này:** mỗi khi scope của một slice mở rộng (re-registration hay
+  authorize in-flight), `security_review` classification KHÔNG tự động còn đúng — phải re-confirm rõ
+  ràng so với scope MỚI, không được kế thừa từ lúc manifest mới author. Hiện chưa có cơ chế cơ học nào
+  enforce điều này; entry này ghi nhận như một process gap, không phải code fix.
+
 ## task: eslint10-brace-expansion-5-0-7-typescript-estree
 title: brace-expansion@5.0.7 (GHSA-mh99-v99m-4gvg) qua minimatch@10.2.5 — HAI đường provenance hội tụ, không phải một
 status: idea
