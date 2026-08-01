@@ -759,6 +759,19 @@ be corrected in place (hash-locked); filed as backlog task
 `kit-verification-rule-should-forbid-reading-autopilot-state-paths` to extend `_TEMPLATE.json`'s
 `_verification_rule` for future manifests.
 
+Third, from the validator's own side rather than a manifest-authoring gap this time: `ready` HALTed
+`BREAKER_ACTIVE` on `evidence.breakers.status !== "clear"` (`scripts/autopilot-review-readiness.mjs:567`)
+after `readiness.json`'s `breakers.status` held a truthful, MORE informative sentence
+(`"clear -- AWAIT resolved by owner authorization..."`) instead of the bare literal the check demands
+via strict equality. Invocation-class (diff-independent, `fix-round-count` unmoved, no review ran) and
+the underlying attestation was TRUE throughout -- a format error in a true attestation, not a false one.
+This is the fourth instance of this registration's own named pattern (a check matching a LITERAL rather
+than the PROPERTY it stands for: `>=22`, `table`, the field-allowlist assumption, now this), and the
+first from the validator's side: it demands a magic string where a structured/shape check (e.g. `status
+=== "clear" || status.startsWith("clear")`, or a separate boolean field) would accept the same truthful
+answer without forcing prose out of the field meant to hold it. Worth recording as a kit observation, not
+just this slice's fix.
+
 ### Closure matrix (fifth registration)
 
 | # | Gate | Bằng chứng | |
