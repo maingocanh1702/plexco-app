@@ -605,6 +605,27 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
     }
   }, 60_000);
 
+  it("preserve-caught-error: a migration failure's rethrown Error attaches the original as .cause", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_cause_preserved");
+    try {
+      await withJobDefinerLock(BASE!, () =>
+        hideRealJobDefiner(ctx.superuser, async () => {
+          let caught: unknown;
+          try {
+            await ctx.runMigration();
+          } catch (error) {
+            caught = error;
+          }
+          expect(caught).toBeInstanceOf(Error);
+          expect((caught as Error).cause).toBeDefined();
+        }),
+      );
+      await expectNoPartialJobCoreRow(ctx);
+    } finally {
+      await ctx.teardown();
+    }
+  }, 60_000);
+
   it("JCL-3: job_definer correct but not granted to the migration owner — ownership transfer fails closed", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_jcl3_nomembership");
     try {

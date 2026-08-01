@@ -169,7 +169,9 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
         applied.push(file);
       } catch (error) {
         await client.query("ROLLBACK");
-        throw new Error(`migrate: ${file} failed and was rolled back: ${String(error)}`);
+        throw new Error(`migrate: ${file} failed and was rolled back: ${String(error)}`, {
+          cause: error,
+        });
       }
     }
 

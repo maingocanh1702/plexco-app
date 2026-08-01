@@ -1243,7 +1243,7 @@ notes: |
 
 ## task: eslint10-preserve-caught-error-migrate-ts
 title: packages/db/src/migrate.ts:172 — preserve-caught-error, tạm hạ xuống `warn` trong eslint.config.mjs, cần sửa thật
-status: ready
+status: merged
 risk: P3
 change_class: code-quality
 depends_on: [eslint-10-migration]
@@ -1252,10 +1252,17 @@ scope: [packages/db/src/migrate.ts, eslint.config.mjs]
 manifest: null
 merged_probe: null
 close_by: hand · sửa một dòng rethrow, không tạo symbol mới nào để probe
-notes: **Mở 2026-07-31 vì `eslint.config.mjs` đang trỏ tới entry này mà nó chưa tồn tại trên đĩa** — chính reviewer của `eslint-10-migration` bắt được sự trỏ hụt đó.
-  **Bối cảnh:** eslint v10 bật `preserve-caught-error` trong bộ recommended, và nó báo lỗi thật ở `migrate.ts:172` — một chỗ rethrow làm mất error gốc. Finding đúng, nhưng nằm **ngoài scope** của slice eslint-10.
+notes: **CLOSED 2026-08-01, trong chính second registration của `eslint-10-migration` (base_sha 86ec936) —
+  đây là commit đã được mở ra để chờ, không phải một slice khác.** `migrate.ts:172` giờ giữ error gốc qua
+  `{ cause: error }` khi rethrow; `eslint.config.mjs` đã gỡ hẳn dòng hạ cấp `preserve-caught-error: "warn"`
+  — rule trở về mặc định `error` của `eslint:recommended`, không còn ngoại lệ. `packages/db/src/migrate.test.ts`
+  có test mới ("preserve-caught-error: a migration failure's rethrown Error attaches the original as .cause")
+  tái dùng đúng cơ chế trigger thất bại đã có (`hideRealJobDefiner`/`withJobDefinerLock`) thay vì tạo mới.
+  Lịch sử giữ nguyên bên dưới để biết vì sao từng phải hạ tạm.
+  **Mở 2026-07-31 vì `eslint.config.mjs` đang trỏ tới entry này mà nó chưa tồn tại trên đĩa** — chính reviewer của `eslint-10-migration` bắt được sự trỏ hụt đó.
+  **Bối cảnh:** eslint v10 bật `preserve-caught-error` trong bộ recommended, và nó báo lỗi thật ở `migrate.ts:172` — một chỗ rethrow làm mất error gốc. Finding đúng, nhưng nằm **ngoài scope** của slice eslint-10 ban đầu.
   **Vì sao hạ xuống `warn` chứ không `off`, và vì sao không hoãn hẳn:** `pnpm lint` nằm trong danh sách canonical của **mọi** slice. Để nó `error` mà chưa sửa nghĩa là main đỏ, và gate của mọi lane khác fail vì một finding không liên quan gì tới chúng — "để slice sau" nghe sạch sẽ nhưng âm thầm chuyển hoá đơn sang các lane vô can. `off` thì im lặng và sống tới khi có người nhớ ra; `warn` in ra mỗi lần lint nên lời nhắc là tự động, không phụ thuộc trí nhớ. Đó là cùng một đánh đổi mà thứ tự ưu tiên áp ở chỗ khác: ngoại lệ chỉ chấp nhận được khi nó tự mang theo chủ sở hữu và lời nhắc của chính nó.
-  **Việc phải làm:** sửa `migrate.ts:172` để giữ error gốc khi rethrow, rồi **gỡ dòng hạ cấp** trong `eslint.config.mjs` — hai việc đó là một, đừng làm nửa đầu rồi để lại nửa sau.
+  **Việc phải làm (ĐÃ XONG):** sửa `migrate.ts:172` để giữ error gốc khi rethrow, rồi **gỡ dòng hạ cấp** trong `eslint.config.mjs` — hai việc đó là một, không còn làm nửa đầu rồi để lại nửa sau.
 
 ## task: eslint10-brace-expansion-5-0-7-typescript-estree
 title: brace-expansion@5.0.7 (GHSA-mh99-v99m-4gvg) qua minimatch@10.2.5 — HAI đường provenance hội tụ, không phải một
