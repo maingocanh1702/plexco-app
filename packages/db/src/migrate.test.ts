@@ -18,8 +18,8 @@ import {
 // duration, then restore it, ever see a different one. Necessary because migrate.ts's own
 // safeLogSummary marker is a private, unexported Symbol -- a hand-built Error cannot carry it, so
 // proving what the REAL throw sites attach requires actually reaching them, and MIGRATIONS_DIR is a
-// hardcoded module constant with no test-time override. Verified this redirect intercepts migrate.ts's
-// own import (not just this file's) before trusting it.
+// hardcoded module constant with no test-time override. This redirect intercepts migrate.ts's own
+// import of node:fs/promises, not just this file's calls.
 const actualFsPromises =
   await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
 // Narrowed to the ONE overload migrate.ts actually calls (readdir(dir): string[], readFile(path,
@@ -332,7 +332,7 @@ describe("BR-4 only the role-already-exists race codes are swallowed", () => {
         caught = error;
       }
       expect(caught).toBeInstanceOf(Error);
-      // .message keeps the rejected value -- in-process/test visibility is unaffected by this fix.
+      // .message still keeps the rejected value -- in-process/test visibility is unaffected.
       expect((caught as Error).message).toContain(secret);
 
       const spy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -359,15 +359,12 @@ describe("BR-5 0022 upgrade path: pre-existing claims survive the new lease-shap
   // this would abort the migration on any database that ever claimed an outbox event before
   // upgrading.
   //
-  // An earlier version of this test ran the whole upgrade path as the superuser `admin`
-  // connection, matching this file's OTHER BR-* tests' convention — but that
-  // convention is exactly what masks the real defect for THIS specific statement: outbox_events
-  // has FORCE RLS and the backfill UPDATE sets no tenant GUC, so under the task contract's own
-  // stated production posture (a genuinely non-superuser, NOBYPASSRLS migration role —
-  // setupNonSuperuserOwnerContext's whole reason to exist), that UPDATE would silently match zero
-  // rows. Rebuilt on the non-superuser harness with a genuine CROSS-TENANT seed, so the assertion
-  // actually proves the backfill sees every tenant's legacy rows despite FORCE RLS, not just
-  // whichever one happens to match an absent GUC.
+  // outbox_events has FORCE RLS and the backfill UPDATE sets no tenant GUC, so under a genuinely
+  // non-superuser, NOBYPASSRLS migration role (the task contract's own stated production posture,
+  // and setupNonSuperuserOwnerContext's whole reason to exist) that UPDATE would silently match
+  // zero rows outside SET ROLE job_definer. Run on the non-superuser harness with a genuine
+  // CROSS-TENANT seed, so the assertion actually proves the backfill sees every tenant's legacy
+  // rows despite FORCE RLS, not just whichever one happens to match an absent GUC.
   it("backfills lease_expires_at across tenants for legacy claimed_at-only rows under a non-superuser migration owner, and the backfilled leases are immediately reclaimable", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_br5_legacy_claim");
     // ctx.superuser stays connected to the harness's OWN base database throughout (it exists for
@@ -450,11 +447,11 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
   // Membership in job_definer (asserted in 0022 Step 1) only guarantees
   // SET ROLE job_definer is AVAILABLE — it does not automatically confer job_definer's privileges
   // unless the migration role is also INHERIT. INHERIT is the default and what every OTHER test
-  // in this file uses via setupNonSuperuserOwnerContext, which is exactly why this bug (Step 4's
-  // post-transfer REVOKE/GRANT on job_definer-owned functions failing "must be owner of function"
-  // under NOINHERIT) was never caught before. NOINHERIT is a valid, more cautious production
-  // posture. This proves Step 4's SET ROLE job_definer bracket actually runs as job_definer
-  // regardless, by asserting app_worker can call a function whose EXECUTE grant that bracket set.
+  // in this file uses via setupNonSuperuserOwnerContext, so this is the one test exercising Step
+  // 4's post-transfer REVOKE/GRANT on job_definer-owned functions under NOINHERIT specifically.
+  // NOINHERIT is a valid, more cautious production posture. This proves Step 4's SET ROLE
+  // job_definer bracket actually runs as job_definer regardless, by asserting app_worker can call
+  // a function whose EXECUTE grant that bracket set.
   it("app_worker can call claim_outbox_batch after the whole migration applies", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_br6_noinherit", {
       inherit: false,
@@ -730,40 +727,26 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
 
 /**
  * CLI failure-log sink: the CLI's console.error(error) sink, combined with migrate.ts's per-file
- * catch block attaching { cause: error }, would have Node's default recursive .cause formatting print a real
- * pg.DatabaseError.detail to deployment logs — on a unique violation that field is the offending
- * row's ACTUAL VALUE (e.g. `Key (email)=(user@example.com) already exists.`), not schema
- * metadata. The mechanism went through several iterations before converging:
- *   - an explicit field allowlist (SAFE_STRUCTURED_LOG_FIELDS) applied before the value ever
- *     reaches console.error — but still returned the wrapping Error's `.message` verbatim.
- *   - Postgres's message/detail split only holds for integrity-constraint classes (23xxx) — for a
- *     data-exception class like 22P02, the value sits in the PRIMARY message, `.detail`
- *     undefined. formatMigrationFailureForLog stopped using ANY free-text message.
- *   - that fix discarded 100%-safe context along with the risky text (the migration filename on a
- *     per-file failure; the whole message on a direct/cause-less failure). Added throwMigrateError
- *     + safeLogSummary, a Symbol-keyed property the throw site attaches when it knows its own
- *     text is safe — separate from `.message`, which stays unchanged everywhere.
- *   - an error that never goes through any throwMigrateError call site at all (a connection
- *     failure, an advisory-lock/setup query, an fs error from readdir/readFile) has no `.cause` —
- *     the formatter only read structured fields from `.cause`, so this whole class lost even its
- *     safe fields (code/severity/etc.), which live directly on the error, not nested.
- *     formatMigrationFailureForLog now falls back to the top-level error's own fields when there
- *     is no `.cause`.
- *   - ensureRoleExists's unsafe-identifier rejection embedded a caller-supplied value into
- *     safeLogSummary — a throw-site bug, not the allowlist's.
- *   - the allowlist ITSELF was wrong. `constraint`/`table`/`column` were trusted as schema
- *     identifiers, but PL/pgSQL's `RAISE ... USING TABLE = <any expression>` (also COLUMN,
- *     CONSTRAINT) can set them to arbitrary data — verified live, not assumed. Removed from
- *     SAFE_STRUCTURED_LOG_FIELDS; see its own docblock for the full confirmation of which fields
- *     remain structurally safe and why.
- * Every failure shape this history surfaced is covered below — count and read the `it(...)`
- * blocks directly rather than trusting a number restated here (this exact restatement has gone
- * stale enough times in this file's own history to be the reason this sentence no longer states one).
+ * catch block attaching { cause: error }, would have Node's default recursive .cause formatting
+ * print a real pg.DatabaseError.detail to deployment logs — on a unique violation that field is
+ * the offending row's ACTUAL VALUE (e.g. `Key (email)=(user@example.com) already exists.`), not
+ * schema metadata. formatMigrationFailureForLog builds its output from exactly two sources: (1)
+ * safeLogSummary, a Symbol-keyed property the throw site attaches when it independently knows its
+ * own text is safe — separate from `.message`, which always keeps the full unredacted text for
+ * in-process/test visibility; (2) SAFE_STRUCTURED_LOG_FIELDS, an allowlist limited to fields
+ * Postgres's own C-level error machinery populates unconditionally, never a value any SQL
+ * statement can set via RAISE ... USING or otherwise (see that allowlist's own docblock for the
+ * provenance test and which fields currently pass it). Neither source ever includes
+ * `.message`/`String(error)` verbatim, from any source. When an error reaches neither source —
+ * no throwMigrateError call site, no `.cause` at all — the formatter falls back to reading
+ * structured fields directly off the top-level error object instead. Every failure shape this
+ * covers is proven below — count and read the `it(...)` blocks directly rather than trusting a
+ * number restated here.
  *
  * These tests assert on what logMigrationFailure actually PASSES TO console.error — not on
- * formatMigrationFailureForLog's return value alone — because the original defect was exactly
- * that gap: a correct formatter is not sufficient if the call site still hands the raw error
- * object to console.error alongside it (Node inspects every argument, not just the first).
+ * formatMigrationFailureForLog's return value alone — because a correct formatter is not
+ * sufficient if the call site still hands the raw error object to console.error alongside it
+ * (Node inspects every argument, not just the first).
  */
 describe("CLI failure-log sink never prints row values from a real Postgres unique violation", () => {
   it("keeps Postgres-internal fields but drops the SQLSTATE code and the offending row value from console.error's actual output", async () => {
@@ -783,11 +766,11 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
         dbError = error;
       }
 
-      // Measured (2026-08-01, live against this repo's Postgres) SPECIFICALLY for unique-violation
-      // (23505): the DatabaseError's own .message is Postgres's generic summary; only .detail
-      // carries the offending value. This does NOT generalize to every SQLSTATE class (see the
-      // 22P02 test below, where the value sits in .message itself with .detail undefined) — which
-      // is exactly why the sink no longer uses .message/.cause free text at all, for any class.
+      // For unique-violation (23505) specifically: the DatabaseError's own .message is Postgres's
+      // generic summary; only .detail carries the offending value. This does NOT generalize to
+      // every SQLSTATE class (see the 22P02 test below, where the value sits in .message itself
+      // with .detail undefined) — which is exactly why the sink never uses .message/.cause free
+      // text at all, for any class.
       expect((dbError as Error).message).not.toContain(secret);
       expect(String((dbError as { detail?: string }).detail)).toContain(secret);
 
@@ -834,10 +817,10 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
         dbError = error;
       }
 
-      // Measured invariant this test proves (2026-08-01): for 22P02 (invalid_text_representation),
-      // the offending value sits in the PRIMARY message, and .detail is undefined — the OPPOSITE
-      // shape from the unique-violation test above. A sink that trusted "the message is always
-      // safe, only .cause fields need filtering" leaks exactly here.
+      // For 22P02 (invalid_text_representation), the offending value sits in the PRIMARY message,
+      // and .detail is undefined — the OPPOSITE shape from the unique-violation test above. A sink
+      // that trusted "the message is always safe, only .cause fields need filtering" would leak
+      // exactly here.
       expect((dbError as { code?: string }).code).toBe("22P02");
       expect((dbError as Error).message).toContain(secret);
       expect((dbError as { detail?: unknown }).detail).toBeUndefined();
@@ -857,19 +840,18 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
         spy.mockRestore();
       }
       expect(printed).toContain("severity=ERROR"); // safe structured field: kept, Postgres-internal
-      expect(printed).not.toContain("22P02"); // code is no longer in the allowlist
+      expect(printed).not.toContain("22P02"); // code is not in the allowlist
       expect(printed).not.toContain(secret); // the negative proof
     } finally {
       await c.end();
     }
   }, 30_000);
 
-  // The message-stripping fix above was correct on safety but discarded USEFUL, SAFE information
-  // along with the risky text — the migration filename (for a per-file failure) and the entire
-  // message (for a direct, cause-less failure), even though both are 100% repo-controlled and
-  // carry zero row-data risk. These two tests go through the REAL throw sites in migrate.ts (not
-  // a hand-built error double, which cannot carry the private safeLogSummary marker) to prove
-  // both are preserved without reopening the leak the prior two tests guard against.
+  // The migration filename (on a per-file failure) and the whole message (on a direct, cause-less
+  // failure) are both 100% repo-controlled and carry zero row-data risk, unlike the free-text
+  // message/detail fields the two tests above prove are excluded. These two tests go through the
+  // REAL throw sites in migrate.ts (not a hand-built error double, which cannot carry the private
+  // safeLogSummary marker) to prove both are preserved in the CLI sink's actual output.
   it("preserves the migration filename in the CLI sink's actual output on a per-file migration failure", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_filename_preserved");
     try {
@@ -929,12 +911,12 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
     expect(printed).toContain("migrate: DATABASE_URL_MIGRATION is required (DDL-owner role)");
   }, 10_000);
 
-  // An error that never reaches ANY throwMigrateError call site -- a connection failure, an
-  // advisory-lock/setup query, or (here, reusing BR-4's own real scenario) ensureRoleExists's
-  // un-swallowed insufficient_privilege -- propagates UNWRAPPED, with no .cause. The formatter
-  // only read structured fields from .cause, so this whole class lost even its SAFE fields
-  // (code/severity/...), which live directly on the error object, not nested under a cause that
-  // does not exist here.
+  // An error that never reaches ANY throwMigrateError call site propagates UNWRAPPED, with no
+  // .cause -- the formatter falls back to reading structured fields directly off the top-level
+  // error instead. ensureRoleExists's own un-swallowed insufficient_privilege (reusing BR-4's real
+  // scenario) is the only path still shaped this way today: every other await in migrate() itself
+  // is wrapped, subject to the two other named exceptions in this feature's manifest
+  // (negative_scope) -- see there for why each is excluded.
   it("surfaces its own safe structured fields in the CLI sink's actual output for a real unwrapped error with no .cause at all", async () => {
     const lowpriv = "plexco_migrate_sink_lowpriv";
     const target = "plexco_migrate_sink_target";
@@ -950,8 +932,8 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
         caught = error;
       }
       expect(caught).toBeInstanceOf(Error);
-      // The defect this test proves: genuinely no .cause -- ensureRoleExists never caught this
-      // error to wrap it, it just propagated. severity/code live directly on `caught` itself.
+      // This test proves the case with genuinely no .cause -- ensureRoleExists never catches this
+      // error to wrap it, it just propagates. severity/code live directly on `caught` itself.
       expect((caught as Error).cause).toBeUndefined();
       expect((caught as { code?: string }).code).toBe("42501"); // insufficient_privilege
 
@@ -974,10 +956,10 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
     }
   }, 60_000);
 
-  // SAFE_STRUCTURED_LOG_FIELDS trusted constraint/table/column as schema identifiers, but
-  // PL/pgSQL's RAISE ... USING TABLE/COLUMN/CONSTRAINT = <any expression> can set them to
-  // arbitrary data -- confirmed against PostgreSQL's own documented RAISE USING option list
-  // (plpgsql-errors-and-messages.html), not assumed. A real RAISE with TABLE set to a PII-shaped
+  // constraint/table/column look like schema identifiers, but PL/pgSQL's RAISE ... USING
+  // TABLE/COLUMN/CONSTRAINT = <any expression> can set them to arbitrary data, per PostgreSQL's
+  // own documented RAISE USING option list (plpgsql-errors-and-messages.html) -- which is why none
+  // of the three are in SAFE_STRUCTURED_LOG_FIELDS. A real RAISE with TABLE set to a PII-shaped
   // marker, through a real query, captured as a real error -- not a hand-built double.
   it("keeps a table/column/constraint value set via RAISE ... USING out of the CLI sink's actual output", async () => {
     const c = await connect(BASE!);
@@ -992,12 +974,11 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
         dbError = error;
       }
       expect(dbError).toBeInstanceOf(Error);
-      // Measured invariant this test proves: RAISE ... USING TABLE sets .table to the exact
-      // expression given -- not a real object name, and not previously excluded by this formatter.
+      // RAISE ... USING TABLE sets .table to the exact expression given -- not a real object name.
       expect((dbError as { table?: string }).table).toBe(secret);
       expect((dbError as { code?: string }).code).toBe("P0001");
       // routine stays Postgres-internal (the PL/pgSQL executor itself), never caller-supplied --
-      // confirms it remains safe to keep in the allowlist.
+      // safe to keep in the allowlist.
       expect((dbError as { routine?: string }).routine).toBe("exec_stmt_raise");
 
       const wrapped = new Error(
@@ -1016,17 +997,17 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
       }
       expect(printed).toContain("routine=exec_stmt_raise"); // safe structured field: kept
       expect(printed).not.toContain(secret); // the negative proof
-      expect(printed).not.toContain("table="); // table is no longer in the allowlist AT ALL
-      expect(printed).not.toContain("code="); // code is no longer in the allowlist either
+      expect(printed).not.toContain("table="); // table is not in the allowlist at all
+      expect(printed).not.toContain("code="); // code is not in the allowlist either
     } finally {
       await c.end();
     }
   });
 
-  // `code` was the last field kept by a per-field safety argument ("empirically bounded... too
-  // short for PII") rather than the provenance test the rest of the allowlist now uses. RAISE ...
-  // USING ERRCODE accepts ANY 5-character string, not just a real SQLSTATE -- a caller can set it
-  // to a name-shaped value.
+  // RAISE ... USING ERRCODE accepts ANY 5-character string, not just a real SQLSTATE -- a caller
+  // can set it to a name-shaped value. `code` fails the same provenance test that excludes
+  // constraint/table/column: nothing stops an arbitrary RAISE from setting it, so it is not in
+  // SAFE_STRUCTURED_LOG_FIELDS either.
   it("keeps a name-shaped value set via RAISE ... USING ERRCODE out of the CLI sink's actual output", async () => {
     const c = await connect(BASE!);
     const secret = "ALICE";
@@ -1040,8 +1021,8 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
         dbError = error;
       }
       expect(dbError).toBeInstanceOf(Error);
-      // Measured invariant this test proves: RAISE ... USING ERRCODE accepts an arbitrary
-      // 5-character string with no validation it names a real condition.
+      // RAISE ... USING ERRCODE accepts an arbitrary 5-character string with no validation it
+      // names a real condition.
       expect((dbError as { code?: string }).code).toBe(secret);
       expect((dbError as { severity?: string }).severity).toBe("ERROR");
 
@@ -1061,19 +1042,19 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
       }
       expect(printed).toContain("severity=ERROR"); // safe structured field: kept, Postgres-internal
       expect(printed).not.toContain(secret); // the negative proof
-      expect(printed).not.toContain("code="); // code is no longer in the allowlist AT ALL
+      expect(printed).not.toContain("code="); // code is not in the allowlist at all
     } finally {
       await c.end();
     }
   });
 
-  // Removing `code` left readdir/readFile failures with NOTHING from SAFE_STRUCTURED_LOG_FIELDS --
-  // severity/routine/file/line are all undefined on a real Node fs error (measured live before
-  // trusting the finding). All recovered diagnostic value comes from safeLogSummary alone, which
-  // is why the two throw sites below need DISTINCT, FULLY STATIC summaries -- a shared or
-  // filename-interpolated summary would make the fix cosmetic (this file's own history:
-  // ensureRoleExists's role and the structured allowlist both interpolated a "defensible" value
-  // into a safe channel and both became findings).
+  // readdir/readFile failures get NOTHING from SAFE_STRUCTURED_LOG_FIELDS -- severity/routine/
+  // file/line are all undefined on a real Node fs error. All diagnostic value comes from
+  // safeLogSummary alone, which is why the two throw sites below need DISTINCT, FULLY STATIC
+  // summaries with no interpolation at all -- a shared or filename-interpolated summary would make
+  // the two sites indistinguishable, and the same provenance reasoning that excludes
+  // constraint/table/column/code from the structured allowlist applies to interpolating a
+  // filename here too.
   it("names its own site, with no path or interpolated value, on a readdir failure on the migrations directory", async () => {
     const originalReaddir = readdirImpl;
     readdirImpl = (async () => {
@@ -1144,21 +1125,13 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
     expect(printed).not.toContain("ENOENT"); // no interpolated value from the underlying error
   });
 
-  // A re-read of the instruction that produced the original await-wrapping fix found it was
-  // scoped to "throw sites" when the actual property is "every await in migrate() that can reject
-  // outside an already-wrapped region" -- readdir/readFile/connect were three instances of the
-  // same gap, not the whole set. Full enumeration (16 awaits total, mechanically counted): 6 sites
-  // below were unwrapped and are now wrapped, all with distinct fully-static safeLogSummary
-  // strings, real error as .cause, no interpolation. Excluded: the finally block's
-  // advisory-unlock/client.end() (a throw from finally masks the original error) and, found while
-  // enumerating rather than assumed, ensureRoleExists's own call site (wrapping it risks
-  // overwriting its OWN more-specific unsafe-identifier summary) and the per-file ROLLBACK call
-  // (wrapping risks masking the original per-file failure the same way the finally block would)
-  // -- both flagged to the owner rather than silently wrapped or silently skipped.
+  // Every await in migrate() that can reject is wrapped with a distinct, fully-static
+  // safeLogSummary and the real error as .cause, except the three named exceptions in this
+  // feature's manifest (negative_scope) -- see there for why each is excluded.
   //
-  // Each test below intercepts ONE query via pg.Client.prototype.query (verified this reaches
-  // migrate.ts's own client instance, not just this test file's calls, before trusting the pattern),
-  // asserting the sink prints ONLY that site's own summary -- never another site's, never a path or any
+  // Each test below intercepts ONE query via pg.Client.prototype.query -- reaching migrate.ts's
+  // own client instance directly, not just this test file's separate connections -- asserting the
+  // sink prints ONLY that site's own summary -- never another site's, never a path or any
   // interpolated value from the underlying error.
   function mockQuerySiteFailure(matchText: string, errorMessage: string) {
     const original = pg.Client.prototype.query;
@@ -1406,7 +1379,7 @@ describe("job_definer bootstrap script itself fails closed on runtime-role targe
   // app/app_worker/readonly already created by an earlier migrate() run (they are cluster-global
   // and never dropped), so a full bootstrapJobDefiner() run can never reproduce a genuinely fresh
   // cluster without unsafely dropping roles a concurrent test file may depend on. Instead this
-  // proves the underlying hazard AND the guard pattern (01-job-definer.sql now filters through
+  // proves the underlying hazard AND the guard pattern (01-job-definer.sql filters through
   // pg_roles before calling pg_has_role) directly, against a role name that is guaranteed never
   // to exist.
   it("pg_has_role on an absent role name raises rather than returning false — the exact hazard the fresh-cluster bootstrap must guard against", async () => {
