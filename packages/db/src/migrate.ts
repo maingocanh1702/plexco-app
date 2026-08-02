@@ -288,44 +288,22 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
   }
 }
 
-/** The test for this allowlist is PROVENANCE, not a per-field safety argument: keep a field only if
- *  Postgres's own C-level error machinery populates it, never a value any SQL statement can set (via
- *  RAISE ... USING or otherwise). Do not add a field by arguing it is safe today — add it only if it
- *  PASSES this test (Postgres's own C internals populate it, unconditionally, for every case). See
- *  this feature's manifest (negative_scope) for the boundary; the case history that established this
- *  test is preserved at archive/eslint-10-migration-sixth-registration's copy of
- *  docs/autopilot-eslint-10-migration.md, not the current (reverted) working tree. */
-const SAFE_STRUCTURED_LOG_FIELDS = ["severity", "routine", "file", "line"] as const;
-
-/** Builds a log line for a migration failure from ONLY pre-vetted safe sources — never Postgres's
- *  raw message/detail text. Two sources feed it: (1) `safeLogSummary`, set by the THROW SITE itself
- *  (see throwMigrateError) — falls back to a generic string if absent. (2) the allowlisted structured
- *  fields (SAFE_STRUCTURED_LOG_FIELDS) — read from `.cause` when present, otherwise read directly off
- *  the top-level error, and ONLY when that source is a genuine `pg.DatabaseError` instance: the
- *  provenance guarantee SAFE_STRUCTURED_LOG_FIELDS depends on (Postgres's own C-level machinery
- *  populates these fields, unconditionally) holds for that class specifically, not for "any object
- *  with a same-named property" — an ordinary Error carrying attacker- or caller-controlled data under
- *  a property literally named `file`, `line`, `severity`, or `routine` must not be trusted just
- *  because the property name matches. Neither source ever includes `.message`/`String(error)`
- *  verbatim. Which awaits in `migrate()` are wrapped, and the safety rule for what may be interpolated
- *  into a safeLogSummary or added to SAFE_STRUCTURED_LOG_FIELDS, are properties of the code — see
- *  negative_scope in this feature's manifest, not restated here. */
+/** Builds a log line for a migration failure from ONLY the throw site's own pre-vetted
+ *  safeLogSummary (see throwMigrateError) — falls back to a generic string if absent. Never
+ *  Postgres's raw message/detail text, and never any field read directly off the error or its
+ *  cause, structured or otherwise. An earlier version of this function also read an allowlisted
+ *  set of "structured" fields (severity/routine/file/line) whenever the source was `instanceof
+ *  pg.DatabaseError`, reasoning that Postgres's own C-level machinery populates those fields
+ *  unconditionally. That reasoning is correct for a REAL server round-trip but `instanceof` cannot
+ *  distinguish one from a same-shaped object built by calling `new pg.DatabaseError(...)` directly
+ *  and setting its fields by hand: the class and every field on it are public and constructible by
+ *  any caller, with or without a database involved. safeLogSummary has no equivalent gap — it is
+ *  set through a Symbol this module never exports, so nothing outside it can forge one. */
 export function formatMigrationFailureForLog(error: unknown): string {
-  const safeSummary =
-    error instanceof Error && typeof (error as WithSafeLogSummary)[SAFE_LOG_SUMMARY] === "string"
-      ? (error as WithSafeLogSummary)[SAFE_LOG_SUMMARY]!
-      : "migrate: a migration step failed";
-  const cause = error instanceof Error ? error.cause : undefined;
-  const fieldSource =
-    cause instanceof pg.DatabaseError
-      ? cause
-      : error instanceof pg.DatabaseError
-        ? error
-        : undefined;
-  const safeParts = SAFE_STRUCTURED_LOG_FIELDS.filter(
-    (field) => fieldSource?.[field] !== undefined,
-  ).map((field) => `${field}=${String(fieldSource![field])}`);
-  return safeParts.length > 0 ? `${safeSummary} [${safeParts.join(" ")}]` : safeSummary;
+  return error instanceof Error &&
+    typeof (error as WithSafeLogSummary)[SAFE_LOG_SUMMARY] === "string"
+    ? (error as WithSafeLogSummary)[SAFE_LOG_SUMMARY]!
+    : "migrate: a migration step failed";
 }
 
 /** The CLI's actual failure sink, exported so tests can spy on the real console.error call

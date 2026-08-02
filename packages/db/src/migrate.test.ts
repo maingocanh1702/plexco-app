@@ -560,7 +560,7 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
 });
 
 describe("CLI failure-log sink never prints row values from a real Postgres unique violation", () => {
-  it("keeps Postgres-internal fields but drops the SQLSTATE code and the offending row value from console.error's actual output", async () => {
+  it("keeps the offending row value out of console.error's actual output on a real Postgres unique violation", async () => {
     const db = "plexco_migrate_sink_allowlist";
     await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
     await admin.query(`CREATE DATABASE ${db}`);
@@ -596,8 +596,7 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
         spy.mockRestore();
       }
 
-      expect(printed).toContain("severity=ERROR");
-      expect(printed).not.toContain("code=");
+      expect(printed).toContain("migrate: a migration step failed");
       expect(printed).not.toContain(secret);
     } finally {
       await c.end();
@@ -634,7 +633,7 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
       } finally {
         spy.mockRestore();
       }
-      expect(printed).toContain("severity=ERROR");
+      expect(printed).toContain("migrate: a migration step failed");
       expect(printed).not.toContain("22P02");
       expect(printed).not.toContain(secret);
     } finally {
@@ -698,7 +697,7 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
     expect(printed).toContain("migrate: DATABASE_URL_MIGRATION is required (DDL-owner role)");
   }, 10_000);
 
-  it("surfaces its own safe structured fields in the CLI sink's actual output for a real unwrapped error with no .cause at all", async () => {
+  it("keeps the SQLSTATE off a real unwrapped error's actual output when it never reached a safeLogSummary throw site", async () => {
     const lowpriv = "plexco_migrate_sink_lowpriv";
     const target = "plexco_migrate_sink_target";
     await admin.query(`DROP ROLE IF EXISTS ${lowpriv}`);
@@ -727,8 +726,8 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
         spy.mockRestore();
       }
 
-      expect(printed).toContain("severity=ERROR");
-      expect(printed).not.toContain("code=");
+      expect(printed).toContain("migrate: a migration step failed");
+      expect(printed).not.toContain("42501");
     } finally {
       await c.end();
       await admin.query(`DROP ROLE IF EXISTS ${lowpriv}`);
@@ -761,6 +760,51 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
   it("keeps forged severity/routine/file/line off an ordinary Error's .cause out of the CLI sink's actual output", () => {
     const secret = "pii-marker-forged-cause-field@example.com";
     const forgedCause = new Error("inner synthetic failure");
+    Object.assign(forgedCause, { severity: secret, routine: secret, file: secret, line: secret });
+    const wrapped = new Error("migrate: synthetic wrapper failure", { cause: forgedCause });
+
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let printed: string;
+    try {
+      logMigrationFailure(wrapped);
+      expect(spy).toHaveBeenCalledTimes(1);
+      printed = format(...spy.mock.calls[0]!);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(printed).not.toContain(secret);
+    expect(printed).not.toContain("severity=");
+    expect(printed).not.toContain("routine=");
+    expect(printed).not.toContain("file=");
+    expect(printed).not.toContain("line=");
+  });
+
+  it("keeps forged severity/routine/file/line off a directly constructed pg.DatabaseError out of the CLI sink's actual output", () => {
+    const secret = "pii-marker-forged-database-error@example.com";
+    const forged = new pg.DatabaseError("synthetic failure", 0, "error");
+    Object.assign(forged, { severity: secret, routine: secret, file: secret, line: secret });
+
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let printed: string;
+    try {
+      logMigrationFailure(forged);
+      expect(spy).toHaveBeenCalledTimes(1);
+      printed = format(...spy.mock.calls[0]!);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(printed).not.toContain(secret);
+    expect(printed).not.toContain("severity=");
+    expect(printed).not.toContain("routine=");
+    expect(printed).not.toContain("file=");
+    expect(printed).not.toContain("line=");
+  });
+
+  it("keeps forged severity/routine/file/line off a directly constructed pg.DatabaseError's .cause out of the CLI sink's actual output", () => {
+    const secret = "pii-marker-forged-database-error-cause@example.com";
+    const forgedCause = new pg.DatabaseError("inner synthetic failure", 0, "error");
     Object.assign(forgedCause, { severity: secret, routine: secret, file: secret, line: secret });
     const wrapped = new Error("migrate: synthetic wrapper failure", { cause: forgedCause });
 
@@ -814,10 +858,8 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
       } finally {
         spy.mockRestore();
       }
-      expect(printed).toContain("routine=exec_stmt_raise");
+      expect(printed).toContain("migrate: a migration step failed");
       expect(printed).not.toContain(secret);
-      expect(printed).not.toContain("table=");
-      expect(printed).not.toContain("code=");
     } finally {
       await c.end();
     }
@@ -854,9 +896,8 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
       } finally {
         spy.mockRestore();
       }
-      expect(printed).toContain("severity=ERROR");
+      expect(printed).toContain("migrate: a migration step failed");
       expect(printed).not.toContain(secret);
-      expect(printed).not.toContain("code=");
     } finally {
       await c.end();
     }
