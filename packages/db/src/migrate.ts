@@ -301,10 +301,15 @@ const SAFE_STRUCTURED_LOG_FIELDS = ["severity", "routine", "file", "line"] as co
  *  raw message/detail text. Two sources feed it: (1) `safeLogSummary`, set by the THROW SITE itself
  *  (see throwMigrateError) — falls back to a generic string if absent. (2) the allowlisted structured
  *  fields (SAFE_STRUCTURED_LOG_FIELDS) — read from `.cause` when present, otherwise read directly off
- *  the top-level error. Neither source ever includes `.message`/`String(error)` verbatim. Which awaits
- *  in `migrate()` are wrapped, and the safety rule for what may be interpolated into a safeLogSummary
- *  or added to SAFE_STRUCTURED_LOG_FIELDS, are properties of the code — see negative_scope in this
- *  feature's manifest, not restated here. */
+ *  the top-level error, and ONLY when that source is a genuine `pg.DatabaseError` instance: the
+ *  provenance guarantee SAFE_STRUCTURED_LOG_FIELDS depends on (Postgres's own C-level machinery
+ *  populates these fields, unconditionally) holds for that class specifically, not for "any object
+ *  with a same-named property" — an ordinary Error carrying attacker- or caller-controlled data under
+ *  a property literally named `file`, `line`, `severity`, or `routine` must not be trusted just
+ *  because the property name matches. Neither source ever includes `.message`/`String(error)`
+ *  verbatim. Which awaits in `migrate()` are wrapped, and the safety rule for what may be interpolated
+ *  into a safeLogSummary or added to SAFE_STRUCTURED_LOG_FIELDS, are properties of the code — see
+ *  negative_scope in this feature's manifest, not restated here. */
 export function formatMigrationFailureForLog(error: unknown): string {
   const safeSummary =
     error instanceof Error && typeof (error as WithSafeLogSummary)[SAFE_LOG_SUMMARY] === "string"
@@ -312,10 +317,10 @@ export function formatMigrationFailureForLog(error: unknown): string {
       : "migrate: a migration step failed";
   const cause = error instanceof Error ? error.cause : undefined;
   const fieldSource =
-    cause && typeof cause === "object"
-      ? (cause as Record<string, unknown>)
-      : error && typeof error === "object"
-        ? (error as Record<string, unknown>)
+    cause instanceof pg.DatabaseError
+      ? cause
+      : error instanceof pg.DatabaseError
+        ? error
         : undefined;
   const safeParts = SAFE_STRUCTURED_LOG_FIELDS.filter(
     (field) => fieldSource?.[field] !== undefined,

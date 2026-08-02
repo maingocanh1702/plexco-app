@@ -736,6 +736,51 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
     }
   }, 60_000);
 
+  it("keeps forged severity/routine/file/line off an ordinary Error out of the CLI sink's actual output", () => {
+    const secret = "pii-marker-forged-field@example.com";
+    const forged = new Error("synthetic failure");
+    Object.assign(forged, { severity: secret, routine: secret, file: secret, line: secret });
+
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let printed: string;
+    try {
+      logMigrationFailure(forged);
+      expect(spy).toHaveBeenCalledTimes(1);
+      printed = format(...spy.mock.calls[0]!);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(printed).not.toContain(secret);
+    expect(printed).not.toContain("severity=");
+    expect(printed).not.toContain("routine=");
+    expect(printed).not.toContain("file=");
+    expect(printed).not.toContain("line=");
+  });
+
+  it("keeps forged severity/routine/file/line off an ordinary Error's .cause out of the CLI sink's actual output", () => {
+    const secret = "pii-marker-forged-cause-field@example.com";
+    const forgedCause = new Error("inner synthetic failure");
+    Object.assign(forgedCause, { severity: secret, routine: secret, file: secret, line: secret });
+    const wrapped = new Error("migrate: synthetic wrapper failure", { cause: forgedCause });
+
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let printed: string;
+    try {
+      logMigrationFailure(wrapped);
+      expect(spy).toHaveBeenCalledTimes(1);
+      printed = format(...spy.mock.calls[0]!);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(printed).not.toContain(secret);
+    expect(printed).not.toContain("severity=");
+    expect(printed).not.toContain("routine=");
+    expect(printed).not.toContain("file=");
+    expect(printed).not.toContain("line=");
+  });
+
   it("keeps a table/column/constraint value set via RAISE ... USING out of the CLI sink's actual output", async () => {
     const c = await connect(BASE!);
     const secret = "pii-diagnostic-field@example.com";
