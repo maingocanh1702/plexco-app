@@ -292,8 +292,9 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
  *  Postgres's own C-level error machinery populates it, never a value any SQL statement can set (via
  *  RAISE ... USING or otherwise). Do not add a field by arguing it is safe today — add it only if it
  *  PASSES this test (Postgres's own C internals populate it, unconditionally, for every case). See
- *  this feature's manifest (negative_scope) and docs/autopilot-eslint-10-migration.md's Owner
- *  Exception Record for why this is the test, not a field list. */
+ *  this feature's manifest (negative_scope) for the boundary; the case history that established this
+ *  test is preserved at archive/eslint-10-migration-sixth-registration's copy of
+ *  docs/autopilot-eslint-10-migration.md, not the current (reverted) working tree. */
 const SAFE_STRUCTURED_LOG_FIELDS = ["severity", "routine", "file", "line"] as const;
 
 /** Builds a log line for a migration failure from ONLY pre-vetted safe sources — never Postgres's
