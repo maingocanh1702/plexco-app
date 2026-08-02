@@ -729,8 +729,8 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
 });
 
 /**
- * CLI failure-log sink: the CLI's console.error(error) sink, combined with migrate.ts:172
- * attaching { cause: error }, would have Node's default recursive .cause formatting print a real
+ * CLI failure-log sink: the CLI's console.error(error) sink, combined with migrate.ts's per-file
+ * catch block attaching { cause: error }, would have Node's default recursive .cause formatting print a real
  * pg.DatabaseError.detail to deployment logs — on a unique violation that field is the offending
  * row's ACTUAL VALUE (e.g. `Key (email)=(user@example.com) already exists.`), not schema
  * metadata. The mechanism went through several iterations before converging:
