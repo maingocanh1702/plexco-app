@@ -1180,52 +1180,13 @@ risk: P1
 change_class: toolchain-major-upgrade
 depends_on: []
 invariants: [build-config]
-scope: [docs/autopilot-manifests/eslint-10-migration.json, docs/autopilot-eslint-10-migration.md, package.json, pnpm-lock.yaml, eslint.config.mjs, packages/db/src/migrate.ts, packages/db/src/migrate.test.ts, docs/autopilot-backlog.md]
+scope: [docs/autopilot-manifests/eslint-10-migration.json, docs/autopilot-eslint-10-migration.md, package.json, pnpm-lock.yaml, eslint.config.mjs]
 manifest: docs/autopilot-manifests/eslint-10-migration.json
 slice_doc: docs/autopilot-eslint-10-migration.md
 launcher: .claude/commands/ap-42-eslint-10-migration.md
-merged_probe: packages/db/src/migrate.test.ts :: plexco_migrate_cause_preserved
-close_by: null
-scope_correction: **SỬA 2026-08-01 (code-review, second registration).** `scope` 5-file + `close_by: hand`
-  ở trên đúng cho registration ĐẦU (pure dependency bump, không code symbol nào để probe — đúng lớp
-  `dependency-security`). Registration THỨ HAI mở rộng scope để sửa trực tiếp `migrate.ts:172`
-  (preserve-caught-error) thay vì hạ rule xuống `warn` — xem changelog v0.5 trong slice doc. Từ đó
-  `close_by: hand` KHÔNG còn hợp lệ (`autopilot-backlog-reconcile`'s ABUSE guard: scope có source
-  probe được thì không được hand-close); đổi sang `merged_probe` thật, cùng probe với task con
-  `eslint10-preserve-caught-error-migrate-ts`.
-verdict: **SỬA 2026-08-02 (lần năm, đăng ký thứ sáu):** verdict "fifth registration" bị SUPERSEDED.
-  Verdict hiện hành: xem "Verdict (sixth registration — ACTIVE/canonical)" trong slice doc. Registration
-  thứ sáu không narrate lại các thay đổi trước đó -- xem "Owner Exception Record" section trong slice doc
-  (không lặp lại ở đây, đúng nguyên tắc mà registration thứ sáu tự áp dụng: không artifact nào được chứa
-  claim tường thuật có thể bị chứng minh sai khi đọc diff).
-  **SỬA 2026-08-01 (lần bốn, gate-attempt-02 round 1 [P2] của lần đăng ký thứ năm):** verdict
-  "fourth registration — ACTIVE/canonical" (dòng dưới) bị chính nó SUPERSEDED. Đăng ký lần năm: owner
-  quyết định gỡ hẳn field `code` khỏi allowlist, đổi tiêu chí sang PROVENANCE (giữ field Postgres tự
-  điền, bỏ field bất kỳ câu lệnh SQL nào set được) thay vì lý lẽ an toàn từng field. Verdict hiện hành:
-  xem "Verdict (fifth registration — ACTIVE/canonical)" trong cùng slice doc, chưa `CODE_READY` (đang
-  chờ 2 vòng code-review sạch liên tiếp + 1 vòng security-review, cả hai chưa xong).
-  **SỬA 2026-08-01 (lần ba):** verdict "third registration — ACTIVE/canonical" (dòng dưới) bị
-  chính nó SUPERSEDED sau khi registration đó CŨNG chạm `MAX_ROUNDS` (5/5) — lần này sau khi
-  gate-attempt-07 round 1 đã trả `CLEAN` cho đúng code này, rồi round 2 bắt một finding về độ chính xác
-  tài liệu (không phải code). Registration thứ tư đăng ký lại trên một ground khác hẳn ("miscounted, not
-  exhausted" — xem OWNER-EXCEPTION và verdict thứ tư), rồi TỰ registration thứ tư đó lại tìm ra một
-  code finding thật (`ensureRoleExists`'s `safeLogSummary` leak) trên đúng code mà round 1 vừa CLEAN —
-  bằng chứng trực tiếp rằng CLEAN không phải bằng chứng vắng mặt. Chi tiết đầy đủ trong verdict thứ tư.
-  Verdict hiện hành: `CODE_READY` 2026-08-01, `AUTHORITY_SHA 86ec936109a7eaab3b3dc843144b23471cba81dd`
-  (không đổi qua cả BỐN lần đăng ký), closure 12/12, scope vẫn 8 file — verdict block "Verdict (fourth
-  registration — ACTIVE/canonical)" trong cùng slice doc. `docs/slice-readiness-verdicts.md` (Verdict
-  30) vẫn chưa cập nhật cho cả bốn lần đăng ký — ngoài scope của slice này để tự sửa, ghi nhận ở đây cho
-  reconciliation sau.
-  **SỬA 2026-08-01 (lần hai, superseded bởi trên):** verdict "second registration — ACTIVE/canonical"
-  bị SUPERSEDED sau khi registration đó chạm `MAX_ROUNDS` (5/5) với một finding còn valid (PII qua CLI
-  log sink `console.error`). Verdict lúc đó: verdict block "Verdict (third registration —
-  ACTIVE/canonical)" — bản thân verdict này giờ cũng đã historical, xem sửa lần ba ở trên.
-  **SỬA 2026-08-01 (lần một, superseded bởi trên):** verdict `CODE_READY` 2026-07-31 (`AUTHORITY_SHA
-  c759c63...`) bị SUPERSEDED bên trong chính slice doc (`<!-- review-verdict: historical -->`, xem
-  "Verdict (first registration)"). Verdict lúc đó: `CODE_READY` 2026-08-01, `AUTHORITY_SHA
-  86ec936109a7eaab3b3dc843144b23471cba81dd`, closure 12/12, scope 8 file — verdict block "Verdict
-  (second registration — ACTIVE/canonical)" — bản thân verdict này giờ cũng đã historical, xem sửa lần
-  hai ở trên.
+merged_probe: null
+close_by: hand · toolchain-major-upgrade bump ở package.json/pnpm-lock.yaml, không tạo code symbol nào để probe — cùng lớp `dependency-security` mà `reconcile-close-by-hand-declaration` (Verdict 29) định nghĩa
+verdict: `CODE_READY` 2026-07-31, `AUTHORITY_SHA c759c63293a3555d957f58f4a82a06b1f35cfdda`, closure 12/12 — verdict block nằm trong slice doc (`<!-- review-readiness: code-ready -->`), tracker entry ở `docs/slice-readiness-verdicts.md` (Verdict 30)
 timing_note: 2026-07-29 · **`not_before`/`not_after` thêm sau khi block đã lên `ready`** — thiếu sót của lượt promote. Ràng buộc thời gian ban đầu chỉ nằm trong `_timing_gate` của manifest dưới dạng prose, mà **bot quét backlog đọc field, không đọc manifest**: nó sẽ chọn task này ngay hôm nay rồi HALT ở probe vì v10.8.0 (publish 24/07) chưa đủ 7 ngày `minimumReleaseAge` — đốt một session để tái phát hiện thứ đã biết. `deps-security-bump` có field này, block này thì không; cùng một lớp ràng buộc mà một cái machine-readable một cái không. `not_after` là EOL ESLint v9, ghi ra để nó là hạn chót đo được chứ không phải một câu trong notes.
 probe_findings: 2026-07-29 tại `main@f83995f` · **Ba câu hỏi compat đã ĐÓNG, không câu nào chặn** — nên block lên `ready` cùng ngày mở. **(a)** `typescript-eslint@8.62.1` và cả ba sub-package đã khai `peerDependencies.eslint: ^8.57.0 \|\| ^9.0.0 \|\| ^10.0.0` — **eslint 10 đã được hỗ trợ sẵn, KHÔNG cần nâng typescript-eslint**. Đây vốn là rủi ro lớn nhất vì `tseslint.config()` là khung của cả `eslint.config.mjs`. **(b)** `@next/eslint-plugin-next@15.5.20` không khai `peerDependencies` nào và chỉ phụ thuộc `fast-glob` ⇒ không ràng buộc version eslint. Vắng peer range **không phải bằng chứng tương thích**, nên đã grep source cho **cả 10 API v10 gỡ** (`context.getCwd/getFilename/getPhysicalFilename/getSourceCode`, `parserOptions`, `parserPath`, `getTokenOrCommentBefore/After`, `isSpaceBetweenTokens`, `getJSDocComment`) — **0 hit**. **(c)** Node: v10 đòi `^20.19.0 \|\| ^22.13.0 \|\| >=24`; máy `v22.22.3` ✓, CI `node-version: 22` → 22.x mới nhất ✓, **nhưng `package.json` khai `engines: {node: ">=22"}` — dải đó NHẬN 22.0–22.12 mà eslint 10 từ chối**. Lỗ thật, slice phải đóng (acceptance `E10-5`). **Baseline chống regression:** `npx eslint . -f json` = **81 file** (apps 46 · packages 31 · scripts 3 · `eslint.config.mjs` 1), sha256 danh sách đã sort prefix `3c99372c73e87ab4`.
 notes: |
@@ -1281,174 +1242,20 @@ notes: |
   doc: `docs/autopilot-eslint-10-migration.md`. Launcher: `ap-42`.
 
 ## task: eslint10-preserve-caught-error-migrate-ts
-title: packages/db/src/migrate.ts:172 — preserve-caught-error, đã sửa (gắn `cause` khi rethrow), chờ merge lên origin/main
+title: packages/db/src/migrate.ts:172 — preserve-caught-error, tạm hạ xuống `warn` trong eslint.config.mjs, cần sửa thật
 status: ready
 risk: P3
 change_class: code-quality
 depends_on: [eslint-10-migration]
 invariants: [build-config]
-scope: [packages/db/src/migrate.ts, packages/db/src/migrate.test.ts, eslint.config.mjs]
+scope: [packages/db/src/migrate.ts, eslint.config.mjs]
 manifest: null
-merged_probe: packages/db/src/migrate.test.ts :: plexco_migrate_cause_preserved
-close_by: null
-notes: **SỬA 2026-08-01 (code-review round 2 bắt đúng): status trước đó ghi `merged` là SAI — commit sửa
-  chỉ tồn tại trên branch `feat/eslint-10-migration`, chưa ở trên `origin/main`. Đồng thời `close_by: hand`
-  KHÔNG hợp lệ ở đây theo chính guard của `autopilot-backlog-reconcile` (ABUSE case: scope có file source
-  probe được, không được dùng hand-close) — dù dòng rethrow tự nó không tạo symbol mới, test mới CÓ:
-  db-context-name `plexco_migrate_cause_preserved` trong `migrate.test.ts` là bare identifier, đo unique
-  (grep 0 hit trên `origin/main`, 1 hit trong worktree). Đổi lại `status: ready` + `merged_probe` thật;
-  reconciliation sau khi merge sẽ tự đưa về `merged` khi probe xuất hiện trên `origin/main`.**
-  **Fix đã implement, chờ merge:** `migrate.ts:172` giữ error gốc qua `{ cause: error }` khi rethrow;
-  `eslint.config.mjs` đã gỡ hẳn dòng hạ cấp `preserve-caught-error: "warn"` — rule trở về mặc định `error`
-  của `eslint:recommended`, không còn ngoại lệ. `packages/db/src/migrate.test.ts` có test mới
-  ("preserve-caught-error: a migration failure's rethrown Error attaches the original as .cause") tái
-  dùng đúng cơ chế trigger thất bại đã có (`hideRealJobDefiner`/`withJobDefinerLock`) thay vì tạo mới.
-  Lịch sử giữ nguyên bên dưới để biết vì sao từng phải hạ tạm.
-  **Mở 2026-07-31 vì `eslint.config.mjs` đang trỏ tới entry này mà nó chưa tồn tại trên đĩa** — chính reviewer của `eslint-10-migration` bắt được sự trỏ hụt đó.
-  **Bối cảnh:** eslint v10 bật `preserve-caught-error` trong bộ recommended, và nó báo lỗi thật ở `migrate.ts:172` — một chỗ rethrow làm mất error gốc. Finding đúng, nhưng nằm **ngoài scope** của slice eslint-10 ban đầu.
+merged_probe: null
+close_by: hand · sửa một dòng rethrow, không tạo symbol mới nào để probe
+notes: **Mở 2026-07-31 vì `eslint.config.mjs` đang trỏ tới entry này mà nó chưa tồn tại trên đĩa** — chính reviewer của `eslint-10-migration` bắt được sự trỏ hụt đó.
+  **Bối cảnh:** eslint v10 bật `preserve-caught-error` trong bộ recommended, và nó báo lỗi thật ở `migrate.ts:172` — một chỗ rethrow làm mất error gốc. Finding đúng, nhưng nằm **ngoài scope** của slice eslint-10.
   **Vì sao hạ xuống `warn` chứ không `off`, và vì sao không hoãn hẳn:** `pnpm lint` nằm trong danh sách canonical của **mọi** slice. Để nó `error` mà chưa sửa nghĩa là main đỏ, và gate của mọi lane khác fail vì một finding không liên quan gì tới chúng — "để slice sau" nghe sạch sẽ nhưng âm thầm chuyển hoá đơn sang các lane vô can. `off` thì im lặng và sống tới khi có người nhớ ra; `warn` in ra mỗi lần lint nên lời nhắc là tự động, không phụ thuộc trí nhớ. Đó là cùng một đánh đổi mà thứ tự ưu tiên áp ở chỗ khác: ngoại lệ chỉ chấp nhận được khi nó tự mang theo chủ sở hữu và lời nhắc của chính nó.
-  **Việc phải làm (ĐÃ XONG):** sửa `migrate.ts:172` để giữ error gốc khi rethrow, rồi **gỡ dòng hạ cấp** trong `eslint.config.mjs` — hai việc đó là một, không còn làm nửa đầu rồi để lại nửa sau.
-
-## task: eslint10-security-review-classification-not-revisited
-title: security_review classification trên eslint-10-migration được chốt lúc slice còn là dependency bump, không được xét lại khi scope mở rộng vào migration runner
-status: idea
-risk: P3
-change_class: autopilot-mechanism
-depends_on: []
-invariants: []
-scope: []
-manifest: null
-merged_probe: null
-close_by: hand · process/documentation gap, không có code symbol nào để probe
-notes: |
-  **Mở 2026-08-01 — miss của OWNER, ghi rõ tên chứ không đổ cho slice-writer.** `eslint-10-migration`'s
-  manifest chốt `security_review.required: false` khi slice còn là pure devDependency toolchain bump
-  (không trust boundary, không deployment surface). Khi owner sau đó authorize mở rộng scope vào
-  `packages/db/src/migrate.ts` — DDL-owner migration runner — để sửa trực tiếp `preserve-caught-error`
-  thay vì hạ rule, classification KHÔNG được xét lại tại thời điểm đó. Code-review round (attempt 6,
-  second registration) bắt đúng độ lệch: `security_review.required: false` không còn khớp với những gì
-  slice thực sự chạm.
-  **Xử lý cho slice này (2026-08-01, lúc mở entry):** giữ `required: false` — đúng trên merit, xem
-  `security_review.reason` trong manifest cho bằng chứng đo được (try block chỉ bọc 4 lệnh
-  `client.query()`, `connect()`/`end()` nằm ngoài; message cũ đã interpolate full error trước khi sửa;
-  pg DatabaseError thật đo được không có `.client`/credentials). Thêm `void_if` mới: "scope mở rộng mà
-  classification không được re-confirm" — để đúng lỗ hổng này không lặng lẽ lặp lại lần sau.
-  **SỬA cùng ngày, sau round 7 (không xoá kết luận trên — nó SAI, ghi làm bằng chứng):** kết luận "giữ
-  `required: false` — đúng trên merit" ở trên là SAI. Phép đo "message cũ đã interpolate full error" chỉ
-  đúng một nửa: `String(error)`/`error.message` quả thật sạch (đo lại 2026-08-01, xác nhận), nhưng đó
-  không phải câu hỏi đúng — nguy cơ thật nằm ở CLI's `console.error(error)` truyền thẳng raw Error object
-  (giờ mang `.cause` sau round 6's fix) cho Node's default formatter, vốn in đệ quy TOÀN BỘ `.cause` —
-  gồm cả `pg.DatabaseError.detail`, trường mang giá trị ROW THẬT (PII) trên unique-violation, không phải
-  DDL/schema. `void_if` đã viết ở trên đúng ra đã phải TRIGGER ngay khi round 6 gắn `.cause` vào — nhưng
-  không có cơ chế cơ học nào kiểm tra `void_if`, chỉ có prose; round 7's review là thứ thực sự bắt được.
-  `security_review.required` đã sửa thành `true` trong third registration (2026-08-01), với `reason` đo
-  lại đầy đủ — xem `docs/autopilot-eslint-10-migration.md`'s §3 delta — third registration.
-  **SỬA lần ba, cùng ngày, registration 4 (không xoá đoạn trên — nó CŨNG thiếu, ghi làm bằng chứng lần
-  thứ ba của cùng một lớp lỗi):** câu "`String(error)`/`error.message` quả thật sạch (đo lại
-  2026-08-01, xác nhận)" ở đoạn trên là ĐÚNG cho case đo LÚC ĐÓ (unique_violation) nhưng KHÔNG đầy đủ —
-  cùng ngày, round 2 của chính third registration đo tiếp và thấy 22P02 (data-exception class) đặt giá
-  trị THẲNG vào primary message, không phải `.detail`. Không viết lại claim này thành một câu hẹp hơn
-  ở đây — điều đó chỉ tạo ra chỗ thứ tư để claim tương tự đi stale khi có shape thứ sáu. Bằng chứng
-  hiện hành, không paraphrase: `packages/db/src/migrate.test.ts`'s "CLI failure-log sink" describe
-  block — mỗi test đo một shape thật, assert cả identifier an toàn có mặt LẪN giá trị vi phạm vắng
-  mặt. Đọc trực tiếp file đó, đừng tin bất kỳ đoạn tóm tắt nào, kể cả đoạn này.
-  **Bài học chung, không chỉ slice này (vẫn đứng, xác nhận lại bằng chính lần sai thứ hai này):** mỗi
-  khi scope của một slice mở rộng (re-registration hay authorize in-flight), `security_review`
-  classification KHÔNG tự động còn đúng — phải re-confirm rõ ràng so với scope MỚI, không được kế thừa
-  từ lúc manifest mới author. Thêm một lớp: `void_if` viết bằng PROSE không tự enforce — cần một
-  reviewer round thật (không phải chỉ đọc lại doc) để bắt được, đúng như đã xảy ra ở đây hai lần liên
-  tiếp (round 6 không bắt, round 7 mới bắt). Hiện chưa có cơ chế cơ học nào enforce điều này; entry này
-  ghi nhận như một process gap, không phải code fix.
-  **SỬA sau code-review round 1 (third registration's own gate, 2026-08-01):** entry này trước đó bị đặt
-  `status: ready` với lý do "cả hai lần sai đã có bằng chứng cụ thể đủ để scope" — SAI theo đúng nghĩa
-  backlog dùng `ready`: `scope: []` và `manifest: null` nghĩa là KHÔNG có gì launchable, dù bằng chứng
-  động lực đã đủ dày. Trả về `status: idea` — bằng chứng (hai lần sai cụ thể, ghi ở trên) vẫn đứng
-  nguyên làm động lực cho việc SCOPE nó sau này, nhưng scoping (chọn file, chọn mechanism enforce) chưa
-  xảy ra nên chưa thể `ready`.
-
-## task: db-test-suite-migrate-race-role-cross-file-flake
-title: packages/db test suite intermittently fails "role plexco_migrate_race does not exist" in an UNRELATED file's bootstrapJobDefiner call, under fileParallelism
-status: idea
-risk: P3
-change_class: test-infra
-depends_on: []
-invariants: []
-scope: []
-manifest: null
-merged_probe: null
-close_by: hand · process/test-infra gap discovered incidentally, no code symbol probe until scoped
-notes: |
-  **Mở 2026-08-01, phát hiện tình cờ trong khi chạy gate cho `eslint-10-migration` (không phải bug của
-  slice đó — không chạm `test-harness.ts`, `authorization.test.ts`, `rls-invariants.test.ts`, hay
-  `migrate.test.ts`'s BR-1 test).** `DATABASE_URL_TEST=... pnpm test` (full canonical suite,
-  `fileParallelism: true`) failed TWICE trên cùng một registration, cách nhau ~30 phút, với CÙNG một
-  lỗi hệt nhau: `error: role "plexco_migrate_race" does not exist`, ném từ
-  `test-harness.ts:79` (`bootstrapJobDefiner`'s `client.query(sql)` chạy
-  `infra/postgres-init/01-job-definer.sql`) — nhưng ở HAI file nạn nhân KHÁC NHAU
-  (`rls-invariants.test.ts` lần 1, `authorization.test.ts` lần 2). Cả hai lần re-run ngay sau đó XANH
-  100% (282/282 rồi 283/283).
-  **`plexco_migrate_race` là role tạm CỦA RIÊNG `migrate.test.ts`'s BR-1 test** (`BR-1 race-safe
-  cluster-global role creation`) — nó CREATE+DROP role này trong vòng lặp chặt (5 iteration × 8 client
-  đồng thời). Việc lỗi LUÔN LUÔN nêu đúng tên role này (không phải role ngẫu nhiên khác) cho thấy có mối
-  liên hệ thật, dù cơ chế chính xác CHƯA xác nhận được trong thời gian điều tra tại chỗ.
-  **Đã loại trừ (đo trực tiếp, không phải đoán):** `01-job-definer.sql` không enumerate role tuỳ ý — nó
-  chỉ query `rolname IN ('app', 'app_worker', 'readonly')`. Role được GRANT job_definer là
-  `COALESCE(current_setting('job_definer_bootstrap.migration_role', true), current_user)` — không có
-  chỗ nào rõ ràng để `plexco_migrate_race` trở thành `current_user` của MỘT KẾT NỐI KHÁC (mỗi file dùng
-  `pg.Client`/`pg.Pool` riêng, không share). Không tìm thấy `pg.Pool` nào share giữa các test FILE (mỗi
-  file tự tạo pool/client riêng qua `setupNonSuperuserOwnerContext`/`setupRlsTestContext`). Cơ chế thật
-  vẫn CHƯA rõ — cần một agent có thời gian đọc toàn bộ `test-harness.ts` + chạy lại nhiều lần với logging
-  chi tiết hơn để bắt được đúng câu query nào tham chiếu role đó.
-  **Vì sao không chặn `eslint-10-migration`:** không liên quan gì tới eslint, tới `migrate.ts`, hay tới
-  bất kỳ file nào trong scope của slice đó. Full suite XANH khi re-run — không phải regression do slice
-  này gây ra, chỉ là flakiness của chính test-infra bị observe trong lúc chạy gate.
-  **Chưa scope vì:** cần điều tra thêm để xác định file nào thực sự cần sửa (`test-harness.ts`? BR-1's
-  own iteration count/timing? `01-job-definer.sql`?) trước khi viết `scope` array chính xác.
-
-## task: kit-review-check-changed-vacuous-on-committed-head
-title: `pnpm review:check:changed` always reports 0 classified documents when run by the readiness gate on a committed HEAD, since --changed mode diffs only uncommitted changes against HEAD
-status: idea
-risk: P3
-change_class: autopilot-mechanism
-depends_on: []
-invariants: []
-scope: []
-manifest: null
-merged_probe: null
-close_by: hand · kit-tooling design gap, scripts/check-review-readiness.mjs is not in any single feature slice's scope
-notes: |
-  **Opened 2026-08-01, found incidentally by eslint-10-migration's gate-attempt-04 round 1 [P2] --
-  not a bug in that slice, scripts/check-review-readiness.mjs is not in its declared scope array.**
-
-  `scripts/check-review-readiness.mjs`'s `changedMarkdown()` (around line 585) computes changed docs
-  via `git diff --name-only --diff-filter=ACMR HEAD -- docs` plus untracked files under `docs` --
-  i.e. it diffs the WORKING TREE against HEAD. This is exactly right for a developer running
-  `pnpm review:check:changed` mid-edit, before committing. It is structurally vacuous in a different,
-  common context: `docs/autopilot-manifests/eslint-10-migration.json`'s own `verification.canonical`
-  lists `pnpm review:check:changed` as one of the commands the readiness gate runs directly. By the
-  time the gate runs `verification.canonical`, every change is already committed (the gate reviews
-  `git diff <base_sha>...HEAD`, not working-tree state) -- so `git diff HEAD` is empty, and the
-  command reports `0 classified document(s), 0 active verdict block(s)` regardless of how many
-  markdown docs actually changed in the slice's cumulative diff. Reproduced directly: running it on
-  eslint-10-migration's fully-committed HEAD (before this task's own uncommitted doc fixes existed)
-  printed exactly that.
-
-  **Why this matters:** every registration of eslint-10-migration (and plausibly other slices using
-  the same manifest template) has included `pnpm review:check:changed` in `verification.canonical`
-  believing it verifies the slice doc's readiness classification at gate time. It has been checking
-  nothing in that role, every time -- the check that actually matters at gate time is
-  `pnpm review:check` (`--all` mode, which classifies every doc in the repo, not just ones changed
-  since HEAD) or a base-aware variant (`git diff <base_sha>...HEAD -- docs`, not `git diff HEAD`).
-
-  **Not fixed here:** `scripts/check-review-readiness.mjs` is shared kit tooling, not in
-  `eslint-10-migration`'s scope array, and a single feature slice's own gate-attempt finding is not
-  authorization to modify it. Candidate fixes for whoever scopes this: (a) manifest template guidance
-  to use `pnpm review:check` (not `:changed`) in `verification.canonical` specifically, reserving
-  `:changed` for the pre-commit/local-development use case it actually fits; (b) add a base-aware mode
-  to `changedMarkdown()` that accepts an optional base ref and diffs against that instead of `HEAD`
-  when invoked from a gate context. Whichever is chosen, verify it against a real registration's
-  committed HEAD (not just a synthetic uncommitted-diff test) before trusting it closes the gap --
-  the failure mode here specifically does not show up when testing interactively mid-edit.
+  **Việc phải làm:** sửa `migrate.ts:172` để giữ error gốc khi rethrow, rồi **gỡ dòng hạ cấp** trong `eslint.config.mjs` — hai việc đó là một, đừng làm nửa đầu rồi để lại nửa sau.
 
 ## task: eslint10-brace-expansion-5-0-7-typescript-estree
 title: brace-expansion@5.0.7 (GHSA-mh99-v99m-4gvg) qua minimatch@10.2.5 — HAI đường provenance hội tụ, không phải một
@@ -1474,118 +1281,6 @@ notes: |
   `brace-expansion` nội bộ hay không trước khi chọn hướng (chờ patch upstream vs. pnpm override cho
   riêng nhánh này — override có rủi ro tương tự override đã bị bác cho nhánh v1, cần đo runtime
   trước khi chọn, không giả định an toàn).
-
-## task: kit-register-silently-skips-hash-lock-on-authored-manifest-path
-title: `scripts/autopilot-scope-gate register` reports success and admits the feature into INFLIGHT.md while silently skipping the hash-lock write (`registered-manifest.sha256`) when handed a manifest missing `manifest_schema_version` -- exactly the authored manifest path this repo's own CLAUDE.md documents as the register command's argument
-status: idea
-risk: P2
-change_class: autopilot-mechanism
-depends_on: []
-invariants: []
-scope: []
-manifest: null
-merged_probe: null
-close_by: hand · kit-tooling defect in scripts/autopilot-scope-gate (mirrored/synced from the canonical kit, not this repo's own code) -- fix belongs at the canonical source, then syncs down via KIT_VERSION bump, not a local patch here
-notes: |
-  **Opened 2026-08-01, found live during eslint-10-migration's fifth registration -- not a bug in that
-  slice, a control-plane defect in the shared kit script every registration in this repo goes through.**
-
-  Mechanism, `scripts/autopilot-scope-gate` lines 488-491:
-  ```
-  if [ "$MANIFEST_SCHEMA_VERSION" = "level3-operational-v2" ]; then
-    node -e '...sha256...' "$MANABS" > "$TASK_STATE/registered-manifest.sha256"
-  fi
-  ```
-  The hash-lock file that `ready` mode later depends on (`scripts/autopilot-review-readiness.mjs`
-  lines 489-491, `MANIFEST_DRIFT` if missing or mismatched) is written ONLY when the manifest passed
-  to `register` carries `manifest_schema_version: level3-operational-v2`. There is no `else` branch.
-  The AUTHORED contract (`docs/autopilot-manifests/<slug>.json`) is explicitly FORBIDDEN from carrying
-  that field -- its own `_role` comment says adding it "makes register HALT CONTRACT_INVALID" (true
-  for `ready`/the JS validator's path check at `autopilot-review-readiness.mjs:297-299`, which requires
-  the manifest to sit at exactly `.autopilot/state/<feature>/manifest.json` -- but NOT true for
-  `register`, which never invokes that path check at all when the schema-version condition is false).
-
-  So: registering against the authored path (`scripts/autopilot-scope-gate register --manifest
-  docs/autopilot-manifests/<slug>.json`) -- **this repo's own CLAUDE.md's documented invocation,
-  verbatim** -- succeeds, prints `registered: <feature> (in-flight)`, and admits the feature into
-  `.autopilot/INFLIGHT.md`. It does not raise, warn, or print anything indicating the hash-lock was
-  skipped. The gap surfaces much later and only if `ready` is invoked against the (never-created)
-  runtime manifest path, as `MANIFEST_DRIFT` -- a confusing failure far removed from its actual cause.
-
-  **Reproduced directly this registration:** `register` against the authored path returned exit 0 with
-  the bare `registered:` message (no `LEVEL3_REGISTER_VALID` line, meaning the JS validator's register
-  mode never ran); `ls .autopilot/state/eslint-10-migration/registered-manifest.sha256` then failed,
-  confirming the file was never written. Re-registering against the runtime path (`.autopilot/state/
-  eslint-10-migration/manifest.json`, hand-authored first per `_TEMPLATE.json`'s own documented
-  mechanism) printed the `LEVEL3_REGISTER_VALID` line AND produced the hash file, confirmed present with
-  a real SHA-256 value.
-
-  **This is fail-OPEN on the control the entire gate depends on**, not fail-closed: a mis-invoked
-  `register` call does not halt or warn, it silently produces a HALF-REGISTERED feature (admitted into
-  the in-flight registry, but with no integrity lock a later `ready` call can trust). It also directly
-  contradicts this repo's own CLAUDE.md, which documents `register --manifest docs/autopilot-manifests/
-  <slug>.json` as the invocation and calls the mechanism "fail-closed" -- in this configuration it is
-  not.
-
-  **Not fixed here:** `scripts/autopilot-scope-gate` is mirrored from the canonical kit
-  (`$HOME/Projects/Claude template/autopilot/`), not owned by this repo -- per this project's own
-  `docs/autopilot-templates/autopilot-template.md` convention ("đừng sửa scope-gate trực tiếp trong
-  repo; sửa ở canonical rồi bump KIT_VERSION"), a local patch here would be overwritten or diverge from
-  the source of truth. Candidate fixes for whoever scopes this at the canonical source: (a) an `else`
-  branch that halts `CONTRACT_INVALID` (or a clearly-named new code) when `register` is handed a
-  manifest that cannot be hash-locked, rather than silently succeeding; (b) update every doc/CLAUDE.md
-  that currently documents `register --manifest docs/autopilot-manifests/<slug>.json` to instead
-  document hand-authoring the runtime manifest first and registering against THAT path, matching what
-  `_TEMPLATE.json`'s own `_role` comment already says is the intended mechanism. This repo's own
-  CLAUDE.md is out of this backlog task's scope to edit directly (owner is already correcting it
-  separately, per session record).
-
-## task: kit-verification-rule-should-forbid-reading-autopilot-state-paths
-title: `_TEMPLATE.json`'s `_verification_rule` warns against pinned literals in `verification.focused` commands but does not warn against reading paths under `.autopilot/state/<feature>/` -- a directory the kit itself defines as not surviving the registration lifecycle those commands run inside, so any command that reads a path there fails on every re-registration regardless of the diff
-status: idea
-risk: P3
-change_class: autopilot-mechanism
-depends_on: []
-invariants: []
-scope: []
-manifest: null
-merged_probe: null
-close_by: hand · kit-tooling defect in `docs/autopilot-manifests/_TEMPLATE.json`'s `_verification_rule` (mirrored from the canonical kit) -- fix belongs at the canonical source
-notes: |
-  **Opened 2026-08-01, found live during eslint-10-migration's fifth registration.** This feature's own
-  authored manifest (carried forward, unmodified in this respect, across all five registrations) has
-  `verification.focused[0]`:
-  ```
-  test -f .autopilot/state/eslint-10-migration/design-probe-file-list.txt && npx eslint . -f json | ...
-  ```
-  `.autopilot/state/<feature>/` is gitignored and does not survive `ap-finish.sh`'s worktree removal --
-  every fresh worktree for a re-registration starts without it. This command therefore HALTs
-  `VERIFICATION_FAILED` on gate-attempt-01 of EVERY re-registration, independent of the diff (the
-  identical failure occurs even for an unchanged diff) -- confirmed live this registration: fresh
-  worktree, `test -f design-probe-file-list.txt` failed, fix-round-count was 0, no review/verification
-  result had been produced about the actual diff. Classified invocation-class per this session's own
-  test and fixed by regenerating the file deterministically against HEAD (same extraction command the
-  check itself embeds, re-run and diffed against itself to confirm reproducibility) -- but the manifest
-  text that caused it cannot be corrected in place, since the runtime manifest is hash-locked after
-  `register`.
-
-  **This is the same class of mistake `_TEMPLATE.json`'s own `_verification_rule` already documents for
-  pinned literals** ("a literal is false the moment anything moves... this manifest is hash-locked after
-  register, a stale literal cannot be corrected in place — it forces a full close-and-re-register
-  cycle. Observed cost: a slice that pinned `postcss == 8.5.18`... needed a third registration") --
-  except this pins an EPHEMERAL PATH rather than a stale VERSION STRING, and the failure mode is worse:
-  a pinned literal goes stale eventually; a path under `.autopilot/state/` is guaranteed to be absent on
-  every single re-registration, by the kit's own design (that directory is explicitly NOT meant to
-  survive the lifecycle).
-
-  **Not fixed here:** `_TEMPLATE.json` is mirrored from the canonical kit (`$HOME/Projects/Claude
-  template/autopilot/`), not owned by this repo. Candidate fix for whoever scopes this at the canonical
-  source: extend `_verification_rule`'s prose to explicitly forbid any `verification.focused`/
-  `verification.canonical` command from reading a path under `.autopilot/state/<feature>/` -- a
-  derived/regenerable artifact belongs in the command's own logic (regenerate-then-check, as this
-  registration did by hand), never as a precondition read from state that cannot outlive one worktree.
-  A `test -f <path under .autopilot/state/> && ...` pattern anywhere in a manifest's `verification` is
-  the specific shape to flag.
 
 ## task: root-lock-no-staleness-detection
 title: scripts/autopilot-root-lock không tự phát hiện lock chết — chỉ có --force, không có gợi ý PID còn sống hay không
