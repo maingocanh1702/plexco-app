@@ -64,7 +64,7 @@
       "grep -qE 'NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION' infra/postgres-init/02-chat-definer.sql",
       "grep -q 'chat_definer_bootstrap.migration_role' infra/postgres-init/02-chat-definer.sql",
       "! grep -qE 'GRANT (USAGE|CREATE) ON SCHEMA public TO chat_definer' infra/postgres-init/02-chat-definer.sql",
-      "! grep -q 'job_definer' infra/postgres-init/02-chat-definer.sql",
+      "! grep -v -- '^[[:space:]]*--' infra/postgres-init/02-chat-definer.sql | grep -q 'job_definer'",
       "grep -q 'pg_auth_members' infra/postgres-init/02-chat-definer.sql",
       "grep -q '02-chat-definer.sql' package.json",
       "grep -q '01-job-definer.sql' package.json",

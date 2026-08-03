@@ -583,3 +583,17 @@ REMAINING_BLOCKERS: none
    silently accumulates a second member. Explicit negative scope for this packet (`job_definer` is not
    touched), and per owner direction the backlog entry for that follow-up is the owner's own to open,
    not this packet's. Recorded here so it is not lost between sessions.
+5. **Fixed during implementation (2026-08-03): manifest `verification.focused` item asserting
+   `infra/postgres-init/02-chat-definer.sql` contains no substring `job_definer` was unsatisfiable
+   against this doc's own §5.1 pinned exact text.** §5.1's header comments correctly and extensively
+   reference `job_definer`/`01-job-definer.sql` to document the precedent relationship (mirrors
+   `01-job-definer.sql`'s own codex round-06/round-08 citations) — every occurrence is prose on a
+   full-line `--` comment, never executable SQL. The blind `grep -q 'job_definer'` check could never
+   pass while also honoring "exact, do not paraphrase." Narrowed to a non-comment-line-only check
+   (`! grep -v -- '^[[:space:]]*--' infra/postgres-init/02-chat-definer.sql | grep -q 'job_definer'`,
+   POSIX `[[:space:]]` for BSD/GNU/ugrep portability), which still catches the real hazard (executable
+   DDL referencing `job_definer` leaking into this file) while allowing the mandated prose. Applied to
+   both this doc's own manifest counterpart and the runtime manifest; discovered and fixed pre-`ready`
+   (zero rounds spent against the original registration, which was closed via
+   `ap-finish.sh --authorized-close` and re-registered fresh rather than hand-editing the hash-locked
+   runtime manifest in place).
