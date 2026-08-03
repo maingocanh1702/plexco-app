@@ -1,11 +1,14 @@
-# AP-44 — docs-billing-authz-signature-reconcile: fix a stale signature in a Reviewed spec
+# AP-44 — docs-billing-authz-signature-reconcile: fix a stale signature across two Reviewed specs
 
-`feature_billing_lifecycle_tech.md` §1/§3 still document `authorizeTenantAction(tenantId, actionClass)`.
-The merged code (`ddb69a9`, `packages/db/src/authorization.ts:91-95`) is
-`authorizeTenantAction(tx, tenantId, actionClass)` — a version that opened its own transaction would
-release its `FOR SHARE` locks before the caller could mutate, reopening the race this same §3's
-Concurrency clause exists to close (codex round-01 [P1] on `authorize-tenant-action-core`). Code is
-right, spec is stale. This slice reconciles the spec — no code change.
+`feature_billing_lifecycle_tech.md` §1/§3 and `feature_session_management_tech.md` §4 step 6 all
+document or invoke `authorizeTenantAction(tenantId, actionClass)`. The merged code (`ddb69a9`,
+`packages/db/src/authorization.ts:91-95`) is `authorizeTenantAction(tx, tenantId, actionClass)` — a
+version that opened its own transaction would release its `FOR SHARE` locks before the caller could
+mutate, reopening the race this same §3's Concurrency clause exists to close (codex round-01 [P1] on
+`authorize-tenant-action-core`). Code is right, spec is stale — and in the session spec this is not just
+stale prose: step 6 requires the re-check to run inside the transaction holding the session lock while
+printing a call shape that structurally cannot receive that transaction. This slice reconciles both
+specs — no code change.
 
 ## Read before you write
 
@@ -14,14 +17,18 @@ right, spec is stale. This slice reconciles the spec — no code change.
    verification. Read the whole file; it is short by design.
 3. `packages/db/src/authorization.ts` lines 1-95 — the live signature and its own doc comment, which
    independently explains the same FOR SHARE reasoning.
-4. `docs/features/BE/feature_billing_lifecycle_tech.md` — confirm `Status: Reviewed` at the top before
-   touching it. CLAUDE.md's actual rule bars writing an *unresolved decision* directly into a Reviewed
-   spec (those go to `decisions.md` as a proposal instead) — it is not a blanket ban on any edit. This
-   slice's change is a settled, factual signature correction, not a new decision, so that specific rule
-   does not apply to it either way. It is still a separate reconcile slice, not an inline edit, because
-   that is the established, auditable pattern this codebase already uses for every prior fix to a
-   Reviewed spec (codex round-02 [P2] on this same slice — the launcher had overstated this as a
-   blanket prohibition).
+4. `docs/features/BE/feature_billing_lifecycle_tech.md` and
+   `docs/features/BE/feature_session_management_tech.md` — confirm `Status: Reviewed` at the top of
+   each before touching them. CLAUDE.md's actual rule bars writing an *unresolved decision* directly
+   into a Reviewed spec (those go to `decisions.md` as a proposal instead) — it is not a blanket ban on
+   any edit. This slice's changes are settled, factual signature corrections, not new decisions, so that
+   specific rule does not apply to either file either way. It is still a separate reconcile slice, not
+   an inline edit, because that is the established, auditable pattern this codebase already uses for
+   every prior fix to a Reviewed spec.
+5. In `feature_session_management_tech.md`, distinguish call-shaped occurrences of
+   `authorizeTenantAction` from bare-name or single-arg prose mentions before touching anything — only
+   the former are signature claims. Grep the whole file (`grep -n authorizeTenantAction <file>`); do not
+   assume the count or shape from a prior run of this launcher.
 
 ## Registration mechanics — read this before running anything
 
@@ -83,29 +90,36 @@ incorrectly block this launcher from ever running again once any other slice is 
    — untracked, does not move `HEAD`). Register immediately (see Registration mechanics) while `HEAD`
    still equals `base_sha`. Confirm `registered-manifest.sha256` exists before proceeding.
 4. Now author the tracked authored contract
-   (`docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json`) and fix ALL FIVE
-   current-state occurrences in `feature_billing_lifecycle_tech.md`, not just the two obvious ones:
-   §1 overview diagram, §3 Status Authority heading, §2 edge case #8, and §5 test cases #29-30 —
+   (`docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json`) and fix every current-state
+   call-shaped occurrence across BOTH spec files:
+   - `feature_billing_lifecycle_tech.md`: §1 overview diagram, §3 Status Authority heading, §2 edge
+     case #8, §5 test cases #29-30 (five sites).
+   - `feature_session_management_tech.md`: §4 step 6's billing re-check (one site). Its other mentions
+     (edge #24, step 1, the "Billing suspension gate" and "Billing suspension — concurrency"
+     blockquotes) are bare-name prose or single-arg action-class shorthand, not signature claims —
+     leave those exactly as written.
+
    `(tenantId, actionClass)` / `(tenantId, 'publish_new_sessions')` →
    `(tx, tenantId, actionClass)` / `(tx, tenantId, 'publish_new_sessions')`. As currently registered,
-   `verification.focused` asserts all five sites individually (each one verified locally by reverting
+   `verification.focused` asserts all six sites individually (each one verified locally by reverting
    that single site and confirming its own assertion fails, then restoring) — but do not trust this
    sentence either: read `docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json` directly
    and count the live entries, since a manifest is hash-locked at register time and this launcher is not
    updated automatically when it changes. Do not treat "focused checks pass" as proof of completeness on
-   its own — independently run
-   `grep -n 'authorizeTenantAction(tenantId' docs/features/BE/feature_billing_lifecycle_tech.md` by hand
-   and confirm every hit is inside a legitimate historical changelog row. Add ONE new changelog row dated
-   today explaining why; preserve every existing dated row verbatim — do not touch the v2.8 row, which
-   already discusses a prior signature change and must read exactly as it did then. Bump the header
-   Version/date to match the new top row.
+   its own — independently run `grep -n authorizeTenantAction <file>` on each spec by hand and classify
+   every hit as call-shaped-current, call-shaped-historical (inside a dated changelog row — leave it),
+   or prose-shorthand (leave it). Add ONE new changelog row per file dated today explaining why; preserve
+   every existing dated row verbatim — do not touch the v2.8 row in the billing spec or the v2.14b/c rows
+   in the session spec, which already discuss prior signature/locking changes and must read exactly as
+   they did then. Bump each file's header Version/date to match its new top row.
 5. Update `docs/autopilot-backlog.md`'s own task block: fill `manifest:` and `scope:` (both are `null`/
    `[]` today — that is expected; this slice is what fills them in).
 6. Self-verify: run every `verification.focused` and `verification.canonical` command from the runtime
    manifest by hand as a pre-check. `pnpm test` needs `DATABASE_URL_TEST` —
    `docker compose -f infra/docker-compose.yml up -d postgres` first if it is not already running, then
    `DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test`.
-7. Commit the four scoped files (authored contract, launcher, spec fix, backlog update) in one commit.
+7. Commit the five scoped files (authored contract, launcher, both spec fixes, backlog update) in one
+   commit.
    `HEAD` now legitimately moves ahead of `base_sha` — this is safe here because registration already
    happened in step 3, while `HEAD` still equaled `base_sha`.
 8. Author `.autopilot/state/docs-billing-authz-signature-reconcile/readiness.json` (see
@@ -128,9 +142,9 @@ incorrectly block this launcher from ever running again once any other slice is 
 ## Negative scope
 
 No change to `packages/db/src/authorization.ts` or any code — it is already correct. No edit to any
-existing dated changelog row. No edit to `docs/autopilot-authorize-tenant-action-core.md` (AP-40's own
-pinned, already-merged coding-handoff record — historical, not live spec). No edit to
-`feature_session_management_tech.md` (its mentions are partial-arg shorthand naming the actionClass
-value, not signature assertions). No touching any of the pre-v28 launchers that still register with the
-authored path — that cleanup is the separate, deliberately deferred backlog item
-`launcher-register-path-authored-to-runtime`.
+existing dated changelog row in either spec. No edit to `docs/autopilot-authorize-tenant-action-core.md`
+(AP-40's own pinned, already-merged coding-handoff record — historical, not live spec). No edit to
+`feature_session_management_tech.md` beyond its one genuine stale call-shaped occurrence (§4 step 6) —
+its bare-name and single-arg action-class mentions elsewhere are shorthand, not signature assertions, and
+stay as written. No touching any of the pre-v28 launchers that still register with the authored path —
+that cleanup is the separate, deliberately deferred backlog item `launcher-register-path-authored-to-runtime`.

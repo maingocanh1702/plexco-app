@@ -14,20 +14,22 @@
   "scope": [
     "docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json",
     "docs/features/BE/feature_billing_lifecycle_tech.md",
+    "docs/features/BE/feature_session_management_tech.md",
     "docs/autopilot-backlog.md",
     ".claude/commands/ap-44-docs-billing-authz-signature-reconcile.md"
   ],
   "negative_scope": [
     "NO change to packages/db/src/authorization.ts or any code — the signature is already correct and merged (ddb69a9); this slice edits documentation only",
-    "NO edit to any dated changelog row already present in feature_billing_lifecycle_tech.md — add one new row, preserve every existing row verbatim",
+    "NO edit to any dated changelog row already present in feature_billing_lifecycle_tech.md or feature_session_management_tech.md — add one new row per file, preserve every existing row verbatim",
     "NO edit to docs/autopilot-authorize-tenant-action-core.md — AP-40's own pinned code-ready coding-handoff record for an already-merged slice; historical for the same reason a dated changelog row is",
-    "NO edit to feature_session_management_tech.md — its authorizeTenantAction(...) mentions are partial-arg shorthand naming the actionClass value, not signature assertions"
+    "NO edit to feature_session_management_tech.md beyond its one genuine stale call-shaped occurrence (§4 step 6) — its other authorizeTenantAction mentions (edge #24, step 1, the two blockquotes) are bare-name prose or single-arg action-class shorthand, not signature assertions, and stay as written"
   ],
   "context_sources": [
     "docs/autopilot-backlog.md task block docs-billing-authz-signature-reconcile",
     "packages/db/src/authorization.ts (merged ddb69a9) — live signature + doc comment",
     "packages/db/src/authorization.test.ts — codex round-01 [P1] regression test for the FOR SHARE lock lifetime",
     "docs/features/BE/feature_billing_lifecycle_tech.md §1, §3 (Status: Reviewed)",
+    "docs/features/BE/feature_session_management_tech.md §4 step 6 (Status: Reviewed)",
     "docs/standards/review-code-readiness-gate.md, docs/templates/review-doc-plan-session-template.md"
   ],
   "applicable_skills": [],
@@ -49,6 +51,7 @@
       "grep -F 'Suspended tenant publish new sessions' docs/features/BE/feature_billing_lifecycle_tech.md | grep -qF \"authorizeTenantAction(tx, tenantId, 'publish_new_sessions')\"",
       "grep -F 'tenant hard-suspend (abuse), subscription active' docs/features/BE/feature_billing_lifecycle_tech.md | grep -qF \"authorizeTenantAction(tx, tenantId, 'publish_new_sessions')\"",
       "grep -F 'subscription suspended (non-payment), tenant active' docs/features/BE/feature_billing_lifecycle_tech.md | grep -qF \"authorizeTenantAction(tx, tenantId, 'publish_new_sessions')\"",
+      "grep -F 'ngay TRƯỚC khi mutate, re-evaluate' docs/features/BE/feature_session_management_tech.md | grep -qF \"authorizeTenantAction(tx, tenantId, 'publish_new_sessions')\"",
       "grep -qF 'manifest: docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json' docs/autopilot-backlog.md"
     ],
     "canonical": [
