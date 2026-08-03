@@ -433,6 +433,21 @@ achieved; corrected the claim rather than the (already-accurate) check.
   (`grep -qF 'review-readiness: historical' ...`) was already accurate — it only ever asserted the
   directive text is present, not that classification occurs — so it needed no change.
 
+## Successor round 5 (codex, 2026-08-03): FINDING, addressed — the check was fine; the manifest's own
+`_note` prose (a different field) still carried the claim round 4 had just retracted here.
+
+- **[P2]** Round 4 fixed this file's claim about the directive but missed that the authored contract's
+  `_note` field said the same thing in its own words ("making it invisible... — added the historical
+  review-readiness directive at the top of the file", read as: adding it resolved the invisibility).
+  Left uncorrected, this created two tracked artifacts contradicting each other and the live validator
+  simultaneously. Reworded the `_note` to match this file's corrected language, and added a focused
+  check asserting this file records the validator's literal disproof output (the exact
+  `"directive":null` substring from directly invoking `validateReviewDocument()`, not a paraphrase) —
+  a future edit cannot silently drop the correction without failing verification. Required a fifth
+  re-registration (archive `archive/pnpm-override-precedence-two-locations-successor-round5`, reset to
+  `base_sha`, close, register, `merge --ff-only`) since both the new check and the `_note` wording live
+  in the hash-locked manifest.
+
 ## Negative scope
 
 No change to any real override declaration's effective behavior. No resolving a live override
