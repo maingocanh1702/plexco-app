@@ -512,23 +512,7 @@ scope: [package.json, pnpm-workspace.yaml, pnpm-lock.yaml, docs/autopilot-manife
 manifest: (chưa soạn)
 merged_probe: (chưa có — nhiều khả năng cùng lớp `close_by: hand` với task cha, xem `reconcile-close-by-hand-declaration`)
 notes: **Tách ra từ `deps-security-bump` ngày 30/07** khi security round của registration #3 báo một finding thật về `postcss` 8.5.18, trong khi bản vá còn trong cửa sổ `minimumReleaseAge: 10080` (7 ngày). Owner đã chốt 26/07 **không override cửa sổ đó** — nó tồn tại đúng để chặn vector publish-bị-chiếm-quyền mà một bản "security fix" giả là carrier kinh điển. Nên tách slice, không chờ và không cấp ngoại lệ.
-  **BA việc phải đo lại trước khi làm, không được chép từ đây:** (1) **advisory nào, phiên bản vá nào** — round 3 của registration #3 đã từng bác **một claim GHSA bịa đặt** về postcss sau khi đối chiếu 4 nguồn, nên đọc advisory gốc, KHÔNG qua bên thứ ba, và ghi rõ ID; (2) **ngày publish của bản vá** ⇒ `not_before` thật; đo bằng `npm view postcss time` chứ đừng suy ra; (3) **override nằm ở HAI chỗ, nhưng KHÔNG cả hai cùng sống** — xem đính chính ngay dưới.
-  **Đính chính round-6 (2026-08-03, từ `pnpm-override-precedence-two-locations`, đo dứt điểm):** dòng
-  (3) gốc ở trên SAI — "rewrite cũ vẫn kéo mọi transitive postcss xuống đúng phiên bản đang dính
-  advisory" giả định cả hai override cùng sống độc lập. Đo thật: `package.json`'s `pnpm.overrides`
-  (không rỗng) THAY TOÀN BỘ map của `pnpm-workspace.yaml` cho dependency resolution thật —
-  `pnpm-workspace.yaml`'s `postcss@<8.5.10 → 8.5.16` hiện KHÔNG có hiệu lực gì. Chi tiết + phép đo:
-  `docs/standards/dependency-override-precedence.md`.
-  **Đính chính round-7 (cùng ngày, sửa lại chính đính chính round-6 ở trên vì nó vẫn cho phép trạng
-  thái hai-chỗ):** việc thật của task này chỉ có MỘT bước bắt buộc — nâng giá trị ở `package.json`'s
-  `pnpm.overrides.postcss`. Việc đồng bộ `pnpm-workspace.yaml`'s bản postcss là TÙY CHỌN, không bắt
-  buộc, và **KHÔNG được coi là "đã consolidate"** nếu chỉ đồng bộ giá trị mà không xoá — standards doc's
-  "Consolidate all overrides into exactly one file" nghĩa là xoá hẳn entry `postcss` khỏi
-  `pnpm-workspace.yaml`'s `overrides` sau khi `package.json` đã đúng, không phải giữ một bản y hệt ở cả
-  hai nơi. Task này KHÔNG bắt buộc phải làm bước xoá đó (mục tiêu của nó là vá advisory, không phải
-  dọn kiến trúc override) — nếu không xoá, phải nói rõ trong PR/commit rằng `pnpm-workspace.yaml`'s
-  bản còn lại là tư liệu/lịch sử, không phải luật đang sống, để người đọc sau không tưởng nhầm nó có
-  hiệu lực.
+  **BA việc phải đo lại trước khi làm, không được chép từ đây:** (1) **advisory nào, phiên bản vá nào** — round 3 của registration #3 đã từng bác **một claim GHSA bịa đặt** về postcss sau khi đối chiếu 4 nguồn, nên đọc advisory gốc, KHÔNG qua bên thứ ba, và ghi rõ ID; (2) **ngày publish của bản vá** ⇒ `not_before` thật; đo bằng `npm view postcss time` chứ đừng suy ra; (3) **override precedence đã đo dứt điểm — xem `docs/standards/dependency-override-precedence.md`.** Nâng giá trị ở `package.json`'s `pnpm.overrides.postcss` — đó là nơi duy nhất ảnh hưởng dependency resolution thật. **Policy: delete-not-comment** — sau khi `package.json` đúng, XOÁ hẳn entry `postcss` khỏi `pnpm-workspace.yaml`'s `overrides`, không để lại bản comment/mirror.
   **Bài học đắt nhất của task cha, đừng lặp:** `verification` trong runtime manifest phải khai **thuộc tính**, không phải literal. Registration #2 chết vì hard-code `postcss==8.5.18`; manifest bị hash-lock sau `register` nên không sửa tại chỗ được, phải đóng và đăng ký lại toàn bộ. Viết dạng "postcss ≥ ngưỡng vá của advisory đã dẫn" thay vì một con số.
 
 ## task: reconcile-close-by-hand-declaration
@@ -1305,6 +1289,21 @@ notes: |
   rounds" thiếu hẳn entry Round 3 thật (nội dung chỉ có ở backlog), gán nhầm nội dung Round 4 (bug
   header + completeness sweep) làm "Round 3", rồi nhảy thẳng sang "Round 5" — đã chèn lại Round 3 đúng
   nội dung, đổi nhãn "Round 3" cũ thành "Round 4", thêm Round 6/7.
+  **Round 8 (codex, 2026-08-03): FINDING — cùng vùng (follow-up-task reconciliation) bị flag 3 round
+  liên tiếp (6/7/8) → HALT MAX_ROUNDS (fix-round-count 5/5) kèm REGION_THRASH, đúng theo advisory của
+  chính round 8: "Lifecycle tooling must apply MAX_ROUNDS/REGION_THRASH rather than patching
+  indefinitely." Không fix round 8 (không còn budget). Ghi `HALT-MAX_ROUNDS.txt`, báo owner.**
+  **Owner ratify (2026-08-03) — 3 quyết định, đóng registration cũ + mở lại:** (1) **Policy:
+  delete-not-comment** — entry `pnpm-workspace.yaml` dư thừa PHẢI xoá khi task sở hữu nó thực thi,
+  không để lại bản comment/mirror (gỡ đúng cái mơ hồ đã làm 3 round trên thrash). (2) esbuild là slice
+  riêng, sau này — không xử lý trong registration này. (3) Đóng registration cũ
+  (`ap-finish.sh --authorized-close`, lý do ghi REGION_THRASH + quyết định 1), mở lại CÙNG feature id,
+  scope hẹp lại: standards doc (giữ nguyên, đã qua 8 round adversarial, không sửa nội dung) + đúng
+  contract artifact của chính task này; hai task follow-up (postcss, esbuild) đổi thành entry PHẲNG,
+  không cross-reference "round N của pnpm-override-precedence-two-locations" nữa — xem nội dung đã viết
+  lại ở hai task đó. 9 commit cũ giữ nguyên qua `archive/pnpm-override-precedence-two-locations-halted-maxrounds`
+  → reset branch về `base_sha` → register mới → `git merge --ff-only` lấy lại. Disposition đóng cũ:
+  `.autopilot/dispositions/pnpm-override-precedence-two-locations.json`.
 
 ## task: pnpm-workspace-esbuild-override-inert
 title: pnpm-workspace.yaml's esbuild@<0.25.0 → 0.25.12 override câm từ commit f1af6e3 (2026-07-22) — package.json's pnpm.overrides thay toàn bộ map, không merge theo key
@@ -1317,51 +1316,19 @@ scope: []
 manifest: null
 merged_probe: null
 notes: |
-  **Mở 2026-08-03 từ round-2 review của `pnpm-override-precedence-two-locations` (ADVISORY, ngoài scope
-  slice đó).** Đo trực tiếp, không suy diễn: `pnpm-workspace.yaml` khai
-  `overrides: {"esbuild@<0.25.0": 0.25.12}`, comment giải thích "drizzle-kit carries legacy
-  esbuild-loader branches". `@esbuild-kit/core-utils@3.3.2` (dependency thật, pnpm tự flag deprecated)
-  khai `esbuild: ~0.18.20` trên registry — nằm trọn trong `<0.25.0`, đúng đối tượng rule nhắm tới. Nhưng
-  `pnpm-lock.yaml` ở base hiện tại ghi `esbuild@0.18.20`, KHÔNG bị rewrite.
-  **Đính chính (round 5, xem note round-5 ở task `pnpm-override-precedence-two-locations`): KHÔNG PHẢI
-  "chưa từng chạy".** Đo qua `git show`: tại commit `7146f51` (2026-07-17), lockfile resolve
-  `@esbuild-kit/core-utils@3.3.2` → `esbuild@0.25.12` — rule ĐANG chạy đúng. Commit `f1af6e3`
-  (2026-07-22, "fix(deps): resolve brace-expansion + sharp advisories via pnpm overrides") thêm field
-  `pnpm.overrides` ĐẦU TIÊN vào `package.json` (`brace-expansion@1`, `sharp` — không hề nhắc `esbuild`)
-  — chính đây là điểm rule của `pnpm-workspace.yaml` bắt đầu câm, đúng cơ chế whole-map replacement.
-  Câm TỪ `f1af6e3`, không phải câm vĩnh viễn từ đầu.
-  **Xác nhận bằng thực nghiệm đảo ngược (đo trong worktree riêng của slice trên, đã revert sạch, không
-  đụng file thật):** xoá hẳn field `pnpm.overrides` khỏi `package.json` (không thêm `esbuild` vào đâu
-  cả) → chạy `pnpm install --lockfile-only` → `esbuild@0.18.20` biến mất, mọi thứ resolve về
-  `0.25.12`/`0.28.1`. Phục hồi `package.json` nguyên trạng → `esbuild@0.18.20` quay lại. Đổi CHỈ sự
-  hiện diện của field, không đụng key `esbuild` ở đâu cả ⇒ **`package.json`'s `pnpm.overrides`, hễ
-  KHÔNG RỖNG, thay TOÀN BỘ map override của `pnpm-workspace.yaml` — không merge theo key.** (điều kiện
-  chính xác là "map không rỗng", không phải "có khai field" — `pnpm.overrides: {}` rỗng KHÔNG kích hoạt
-  thay thế, pnpm xoá map rỗng trước khi áp root settings; xem
-  `docs/standards/dependency-override-precedence.md`.) `postcss` hiện
-  không lộ bug này chỉ vì `package.json`'s `postcss: ^8.5.10` tự nó đã đủ che; `esbuild` không có entry
-  nào trong `package.json` nên không ai che hộ — rule của `pnpm-workspace.yaml` câm hoàn toàn, không
-  warning, không error. Nguồn: `docs/standards/dependency-override-precedence.md` (§ "A live
-  consequence"), đo ở pnpm 10.30.2 — kết quả gắn version, đo lại nếu pnpm đã đổi.
-  **Việc thật của task này:** quyết định + thực hiện MỘT trong hai. **Đính chính round-7 (task này
-  trước đó tự nhận nhầm là "theo đúng Consolidate all overrides into exactly one file" — SAI, vì tuỳ
-  chọn (a) dưới đây không hề đụng `postcss`, nên không thể tự xưng "đã consolidate cả file"):**
-  (a) [phạm vi hẹp, CHỈ sửa `esbuild`, KHÔNG đạt full-file consolidation] thêm `esbuild` vào
-  `package.json`'s `pnpm.overrides` (mirror đúng rule của `pnpm-workspace.yaml`) **VÀ xoá (hoặc comment
-  rõ lý do giữ) entry `esbuild` khỏi `pnpm-workspace.yaml`'s `overrides`** — không chỉ thêm ở
-  package.json rồi để nguyên bản câm bên kia. Làm xong (a) thì `esbuild` hết hai-chỗ, nhưng `postcss`
-  **vẫn còn khai ở cả hai file** (`pnpm-workspace.yaml`'s bản đã câm từ trước, xem task
-  `deps-security-bump--postcss`'s đính chính round-7) — (a) không tự claim đã dọn xong toàn file, chỉ
-  dọn đúng phạm vi `esbuild` của chính task này (LƯU Ý: `DSB-4` KHÔNG phải tiền lệ dùng được, pin
-  `postcss` của nó đã bị revert, xem note round-3 phía trên task `pnpm-override-precedence-two-locations`),
-  hoặc (b) [phạm vi RỘNG, đạt full-file consolidation thật] gộp toàn bộ override về
-  `pnpm-workspace.yaml` và xoá field `pnpm.overrides` khỏi `package.json` (hướng migration pnpm khuyến
-  khích, nhưng phạm vi lớn hơn vì đụng `brace-expansion@1`/`sharp`/`postcss` cùng lúc). Cả hai đều là thay đổi thật lên
-  `package.json`/`pnpm-workspace.yaml`/`pnpm-lock.yaml` — cần `full build/DB suite` guard đúng như
-  comment gốc đã đòi, và cần review risk thật (esbuild 0.18.20 vs 0.25.12 có advisory nào không — chưa
-  đo trong slice này, đây là việc của task này, không suy đoán).
-  Chưa author; risk P2 tạm thời, cần đo mức độ (exposure của `@esbuild-kit/core-utils` trong build path
-  thật) trước khi chốt.
+  **Mở 2026-08-03, phát hiện khi đo `pnpm-override-precedence-two-locations`.** `pnpm-workspace.yaml`
+  khai `overrides: {"esbuild@<0.25.0": 0.25.12}`. `@esbuild-kit/core-utils@3.3.2` (dependency thật,
+  pnpm tự flag deprecated) khai `esbuild: ~0.18.20` trên registry — đúng đối tượng rule nhắm tới. Rule
+  câm từ commit `f1af6e3` (2026-07-22, thêm field `pnpm.overrides` đầu tiên vào `package.json`) — trước
+  đó rule chạy đúng (xác nhận tại `7146f51`, 2026-07-17). Cơ chế + phép đo đầy đủ:
+  `docs/standards/dependency-override-precedence.md`.
+  **Việc thật của task này:** thêm `esbuild` vào `package.json`'s `pnpm.overrides` (mirror giá trị của
+  `pnpm-workspace.yaml`). **Policy: delete-not-comment** — sau đó XOÁ hẳn entry `esbuild` khỏi
+  `pnpm-workspace.yaml`'s `overrides`, không để lại bản comment/mirror. Task này chỉ đụng `esbuild`;
+  `postcss` là phạm vi của `deps-security-bump--postcss`, không xử lý ở đây. Thay đổi thật lên
+  `package.json`/`pnpm-workspace.yaml`/`pnpm-lock.yaml` — cần `full build/DB suite` guard, và cần đo
+  risk thật (esbuild 0.18.20 vs 0.25.12 có advisory nào không — chưa đo, là việc của task này).
+  Chưa author; risk P2 tạm thời, cần đo mức độ exposure trước khi chốt.
 
 ## task: kit-dead-citation-prompt-generic-sections
 title: 6 manifest viện dẫn `autopilot-prompt-GENERIC v0.6.1 §0.1` — section đã biến mất khi prompt viết lại cho Level 3

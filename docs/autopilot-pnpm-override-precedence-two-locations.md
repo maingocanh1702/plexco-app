@@ -307,6 +307,52 @@ documentation-only round-numbering defect in this section.**
   Round 6/7 pair — this section should now match `regions.log` and the backlog's own round-by-round
   notes exactly.
 
+**Round 8 (codex, 2026-08-03): FINDING — same region as rounds 6-7 flagged a third consecutive time.
+Not fixed; HALT MAX_ROUNDS instead.**
+
+fix-round-count was already 5/5 (`budgets.fix_rounds_max`) when round 8's own verification returned a
+real `[P2]` finding: the round-7 fix still made deleting `pnpm-workspace.yaml`'s duplicate entries
+optional, and mischaracterized a retained-but-live YAML entry as inert "history." A 6th fix round is
+not permitted regardless of the finding's validity (`fix-round-count > 5` is a hard stop). Round 8's
+own advisory text confirmed the correct response directly: *"the same follow-up-task region was
+involved in rounds 4-5. Lifecycle tooling must apply MAX_ROUNDS/REGION_THRASH rather than patching
+indefinitely."* Wrote `HALT-MAX_ROUNDS.txt` (co-occurring REGION_THRASH — the same
+`docs/autopilot-backlog.md` follow-up-task region was the actionable finding in rounds 6, 7, and 8
+consecutively) and reported to the owner rather than attempting a 6th round.
+
+## Terminal disposition: HALT, owner decision, reopened
+
+The owner reviewed the HALT and independently confirmed the core finding live (`esbuild@0.18.20`
+resolved today, below the declared floor) before ratifying three decisions:
+
+1. **Policy: delete-not-comment.** Redundant `pnpm-workspace.yaml` override entries must be deleted
+   when their owning task executes — never left as a commented mirror. This is the exact ambiguity
+   that was thrashing across rounds 6-8; removing it dissolves the region.
+2. **The `esbuild` repair is its own separate future slice**, not this registration — deferred on
+   scope, not severity (the owner noted the advisory is dev-server scope, not production runtime; the
+   defect is the declaration-versus-reality gap itself, the same class as a previously-closed kit
+   defect).
+3. **Close this registration and reopen the same feature with the follow-up-task reconciliation work
+   scoped out.** The standards document is sound after 8 adversarial rounds and carries forward
+   unchanged; the two follow-up tasks (`deps-security-bump--postcss`,
+   `pnpm-workspace-esbuild-override-inert`) get plain, minimal backlog entries with no
+   cross-referencing prose about this task's round history — that prose, accumulating inside *other*
+   tasks' blocks, is what thrashed.
+
+Executed per the owner's specified mechanics: archived the halted registration's full 9-commit tip
+(`archive/pnpm-override-precedence-two-locations-halted-maxrounds`), `ap-finish.sh --authorized-close`
+from the repository root (reason names REGION_THRASH and decision 1), reset
+`feat/pnpm-override-precedence-two-locations` to `base_sha` (the close itself does not do this — the
+prior close, before round 3's re-registration, was preceded by a manual reset; this one was not, so it
+had to be done explicitly here before the fresh worktree could register), registered the successor
+manifest (narrower `context_sources`, an added focused check asserting the `delete-not-comment` policy
+string, otherwise the same standards-doc checks since that file is unchanged) while `HEAD` still
+equaled `base_sha`, confirmed the hash-lock, then `git merge --ff-only` the archive ref back in — a
+clean fast-forward, since the branch never diverged from it. The two follow-up tasks' backlog notes
+were then rewritten (not appended-to) to plain entries per decision 3, and this note was added
+recording the disposition, per this repo's convention that a task's own round-by-round self-history is
+not the cross-referencing pattern that thrashed — only prose written *into other tasks'* blocks was.
+
 ## Negative scope
 
 No change to any real override declaration's effective behavior. No resolving a live override
