@@ -23,9 +23,18 @@ right, spec is stale. This slice reconciles the spec — no code change.
 **Kit v28 changed `register`.** It now HALTs `CONTRACT_INVALID` unless `--manifest` points at the
 RUNTIME manifest (`.autopilot/state/<feature>/manifest.json`, carrying
 `manifest_schema_version: level3-operational-v2`) — the authored contract under
-`docs/autopilot-manifests/` must never carry that field and is REJECTED as a `--manifest` input. This is
-expected to be among the first slices registered after that sync; if `register` HALTs, the message names
-the missing field and the correct path — read it before treating this as a defect.
+`docs/autopilot-manifests/` must never carry that field and is REJECTED as a `--manifest` input. If
+`register` HALTs, the message names the missing field and the correct path — read it before treating
+this as a defect.
+
+**`register` also requires worktree `HEAD` to equal the manifest's `base_sha` exactly** (checked before
+anything else). This means: author and register the RUNTIME manifest FIRST, while the worktree is still
+sitting untouched at `base_sha` — before writing any tracked file, and before merging or cherry-picking
+any prior work back in. A worktree that already carries a commit ahead of `base_sha` at register time
+HALTs `BASE_MISMATCH`, a real lifecycle-ending HALT (`docs-billing-authz-signature-reconcile` hit this
+once, first-hand, on 2026-08-03 — see the disposition record and forensics under
+`.autopilot/dispositions/`). Never resolve a `BASE_MISMATCH` (or any other `HALT-*`/`AWAIT-FOUNDER-*`
+marker) by deleting, renaming or moving the file — write an AWAIT and stop instead.
 
 ```
 scripts/autopilot-scope-gate register --manifest .autopilot/state/docs-billing-authz-signature-reconcile/manifest.json
@@ -38,32 +47,53 @@ anything else — `register` printing "registered" is not itself proof:
 test -f .autopilot/state/docs-billing-authz-signature-reconcile/registered-manifest.sha256 && echo LOCKED || echo NOT_LOCKED
 ```
 
+**There is no global-emptiness precondition for this slice.** `scope-gate register` already serializes
+correctly against other active work by checking this manifest's `scope`/`invariants` for intersection
+with other in-flight features (`docs/autopilot-parallel-scope-gate.md`) — Level 3 explicitly supports
+multiple parallel non-colliding slices. Do not gate registration on `.autopilot/INFLIGHT.md` having zero
+entries or `.autopilot/worktrees/` being empty; that was a one-time eligibility check specific to the
+kit v27→v28 mechanism sync (a repo-wide, non-slice operation), not a general precondition for an
+ordinary slice like this one, and requiring it here would incorrectly block this launcher from ever
+running again once any other slice is in flight.
+
 ## Steps
 
-1. Verify `.autopilot/INFLIGHT.md` has zero active reservations and `.autopilot/worktrees/` is empty;
-   verify `main`'s tip locally before pinning `base_sha`.
+1. Verify `main`'s tip locally and pin it as `base_sha` — no other precondition on registry state.
 2. Create worktree `.autopilot/worktrees/docs-billing-authz-signature-reconcile` on branch
-   `feat/docs-billing-authz-signature-reconcile` from that exact `base_sha`.
-3. Author the tracked contract and the runtime manifest (see Registration mechanics), then register.
-4. Fix exactly two current-state lines in `feature_billing_lifecycle_tech.md` (§1 overview diagram, §3
-   Status Authority heading): `(tenantId, actionClass)` → `(tx, tenantId, actionClass)`. Add ONE new
-   changelog row dated today explaining why; preserve every existing dated row verbatim — do not touch
-   the v2.8 row, which already discusses a prior signature change and must read exactly as it did then.
-   Bump the header Version/date to match the new top row.
+   `feat/docs-billing-authz-signature-reconcile` from that exact `base_sha`. Do not add, merge or
+   cherry-pick any commit on top yet.
+3. Author ONLY the runtime manifest (`.autopilot/state/docs-billing-authz-signature-reconcile/manifest.json`
+   — untracked, does not move `HEAD`). Register immediately (see Registration mechanics) while `HEAD`
+   still equals `base_sha`. Confirm `registered-manifest.sha256` exists before proceeding.
+4. Now author the tracked authored contract
+   (`docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json`) and fix exactly two
+   current-state lines in `feature_billing_lifecycle_tech.md` (§1 overview diagram, §3 Status Authority
+   heading): `(tenantId, actionClass)` → `(tx, tenantId, actionClass)`. Add ONE new changelog row dated
+   today explaining why; preserve every existing dated row verbatim — do not touch the v2.8 row, which
+   already discusses a prior signature change and must read exactly as it did then. Bump the header
+   Version/date to match the new top row.
 5. Update `docs/autopilot-backlog.md`'s own task block: fill `manifest:` and `scope:` (both are `null`/
    `[]` today — that is expected; this slice is what fills them in).
 6. Self-verify: run every `verification.focused` and `verification.canonical` command from the runtime
    manifest by hand as a pre-check. `pnpm test` needs `DATABASE_URL_TEST` —
    `docker compose -f infra/docker-compose.yml up -d postgres` first if it is not already running, then
    `DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test`.
-7. Commit the four scoped files in one commit.
-8. `scripts/autopilot-scope-gate ready --manifest .autopilot/state/docs-billing-authz-signature-reconcile/manifest.json`
+7. Commit the four scoped files (authored contract, launcher, spec fix, backlog update) in one commit.
+   `HEAD` now legitimately moves ahead of `base_sha` — this is safe here because registration already
+   happened in step 3, while `HEAD` still equaled `base_sha`.
+8. Author `.autopilot/state/docs-billing-authz-signature-reconcile/readiness.json` (see
+   `docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json`) BEFORE calling `ready` — `base_sha`/
+   `head_sha` must match the manifest and the live branch tip exactly, or the gate HALTs
+   `READINESS_JSON_INVALID`/`EVIDENCE_STALE`.
+9. `scripts/autopilot-scope-gate ready --manifest .autopilot/state/docs-billing-authz-signature-reconcile/manifest.json`
    — this is what actually runs the counted verification + codex review round(s), via
    `autopilot-review-readiness.mjs` and `scripts/codex-review-pin.sh`; 1 clean round required (P2,
    1x — money/logic tiers need 2x, this is prose-only). Do NOT hand-invoke `codex-review-pin.sh` as a
-   separate step first and count it — a
-   manual pre-gate round is diagnostic only, per `docs/autopilot-templates/level3-workflow.md` §8.
-9. Stop at `READY | AWAIT | HALT`. Do not merge.
+   separate step first and count it — a manual pre-gate round is diagnostic only, per
+   `docs/autopilot-templates/level3-workflow.md` §8. A round with any finding is a real fix round:
+   increment `fix-round-count.txt`, log the region in `regions.log`, fix in scope, recommit, retry —
+   never clear the round by editing state files.
+10. Stop at `READY | AWAIT | HALT`. Do not merge.
 
 ## Negative scope
 
