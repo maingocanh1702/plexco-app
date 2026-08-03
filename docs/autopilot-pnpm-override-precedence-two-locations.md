@@ -393,6 +393,30 @@ touches `verification.focused`.
   as historical reproduction record, not current instructions, and pointing to the standards doc's own
   (still-current) "Reproduction" section instead.
 
+## Successor round 3 (codex, 2026-08-03): FINDINGS, all three addressed — verification-rigor and
+documentation-hygiene gaps in round 2's own fixes, not new substantive issues.
+
+- **[P2]** This file records extensive review verdict history (rounds, findings, `HALT` states) but had
+  no `review-readiness` classification directive, so `pnpm review:check:changed` treated it as
+  invisible (`0 classified document(s)`) — a future edit misstating a review outcome here would go
+  uncaught by that layer. Added `<!-- review-readiness: historical -->` at the top, matching this
+  repo's convention for completed records that are not live coding handoffs.
+- **[P2]** Two verification gaps, both fixed with checks bound to the exact round-specific sentences
+  (not generic substring matches) and each verified with a negative test against the pre-fix commit
+  before trusting it: (a) the check for the corrected postcss-owner citation matched the string
+  `deps-security-bump--postcss`, which — unnoticed — already appeared elsewhere in the doc (the DSB-4
+  provenance section) even before the citation was fixed, so it would have passed against the wrong
+  text too; replaced with a check for the exact corrected sentence. (b) Nothing verified round 2's
+  conditional-selector fix at all; added a check for the fix's own distinguishing phrase ("not a bare").
+- **[P2]** The authored contract's `negative_scope` still described only round 1's citation fix ("only
+  a task-name citation was corrected") after round 2 had also materially corrected the esbuild
+  remediation guidance — stale relative to the actual diff. Reworded to describe both corrections and
+  to state plainly that neither touches the core measurement or evidence.
+
+Required a fourth re-registration (archive `archive/pnpm-override-precedence-two-locations-successor-round3`,
+reset to `base_sha`, close, register, `merge --ff-only`) since two of the three fixes touch
+`verification.focused`, which is hash-locked.
+
 ## Negative scope
 
 No change to any real override declaration's effective behavior. No resolving a live override
