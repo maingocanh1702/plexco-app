@@ -196,7 +196,39 @@ three addressed.**
   same reason. This entry is left as written rather than edited, per this repo's convention of
   preserving prior round notes and correcting forward.
 
-**Round 3 (codex, 2026-08-03): FINDINGS, all 5 addressed — completeness gaps in round-3-originated
+**Round 3 (codex, 2026-08-03): FINDINGS, all 5 addressed — a precision refinement of round 2's
+correct model, not a reversal.**
+
+- **[P1]** Round 2's "package.json's non-empty override map replaces the workspace map" needed a
+  boundary condition: pnpm deletes an *empty* root override map before applying it
+  (`getOptionsFromPnpmSettings`, `pnpm.cjs:20826`), so `pnpm.overrides: {}` does **not** trigger
+  replacement — the precise condition is "non-empty," not merely "declared." The root-derived map also
+  includes `package.json`'s Yarn-compatibility `resolutions` field. Fixed throughout the standards doc,
+  this file, the launcher, and the backlog.
+- **[P2]** `merged_probe: ... :: feature` (added when this task first reached `status: ready`) is not
+  slice-unique — `autopilot-backlog-reconcile` requires a genuinely unique code symbol, and `feature`
+  is a generic JSON key shared by nearly every manifest in this repo. Reverted to `merged_probe: null`
+  plus `close_by: hand`, matching `deps-security-bump`'s own precedent for the identical reason.
+- **[P2]** Manifest `verification.focused` (hash-locked) asserted only the `Winner:` enum value, which
+  could not reject a regression back to round 1's discredited per-key model while keeping the same
+  enum value. Required a second re-registration: archived the then-current 3-commit tip on
+  `archive/pnpm-override-precedence-two-locations-round3-content`, reset the branch to `base_sha`,
+  closed the prior registration via `ap-finish.sh --authorized-close`, registered a strengthened
+  manifest (new checks assert `"whole-map replacement"` and the literal `esbuild@0.18.20` — Trial 4's
+  evidence — are present in the standards doc) while `HEAD` still equaled `base_sha`, then
+  `git merge --ff-only` the archive ref back in. See "Registration mechanics note" above for the full
+  procedure.
+- **[P2]** The DSB-4 provenance in "Why this matters" was unverified: it read as though `deps-security-bump`
+  (AP-39) had shipped a same-version postcss pin still live today. Verified via `git log -S`/`git show`
+  before rewriting: today's `postcss` values predate AP-39 entirely; AP-39 did unify both locations to
+  `postcss@<8.5.18: 8.5.18` mid-flight, as its own `DSB-4` resolution, but that change was reverted in
+  the same task (commit `cf031f0`) when its own security round found an unrelated real issue in
+  `8.5.18`, deferring the whole bump to `deps-security-bump--postcss` (still `blocked`). Rewrote the
+  provenance narrative with the verified commit history instead of the assumed one.
+- **[P3]** `git diff --check` failed on trailing whitespace at `dependency-override-precedence.md:52`
+  — removed.
+
+**Round 4 (codex, 2026-08-03): FINDINGS, all 5 addressed — completeness gaps in round-3-originated
 fixes, not new substantive issues.**
 
 - **[P1]** The new backlog task `pnpm-workspace-esbuild-override-inert` (added in round 2, above) was
@@ -238,6 +270,42 @@ fixes, not new substantive issues.**
   values currently agree," implying two independently-active rules that happen to coincide — the same
   misconception whole-map replacement disproves. Fixed to state that only `package.json`'s map governs
   and `pnpm-workspace.yaml`'s copy is inert, matching the standards doc's own framing.
+
+**Round 6 (codex, 2026-08-03): FINDINGS, addressed — the standard's guidance wasn't reconciled with
+two other active backlog tasks it makes newly obsolete.**
+
+- **[P2]** `deps-security-bump--postcss` (blocked, pre-existing, not authored by this slice) instructed
+  updating overrides in both `package.json` and `pnpm-workspace.yaml`, reasoning that leaving
+  `pnpm-workspace.yaml`'s rewrite unpatched would let it "still pull every transitive postcss down to
+  the vulnerable version" — the same per-key-conflict misconception round 2 disproved for this slice.
+  Corrected in place (not rewriting the block's preserved historical `notes:`, per this repo's
+  convention — appended as a dated correction) without touching `deps-security-bump` itself (merged,
+  historical, left untouched).
+- **[P2]** This task's own new backlog entry, `pnpm-workspace-esbuild-override-inert` (added round 2),
+  offered option (a) — mirror `esbuild` into `package.json` — without saying what to do with
+  `pnpm-workspace.yaml`'s now-redundant copy, which would perpetuate the exact two-location state the
+  standard calls unsafe. Made explicit that option (a) must also remove (or clearly comment) the
+  workspace copy.
+
+**Round 7 (codex, 2026-08-03): FINDINGS, addressed — round 6's fix was itself incomplete, plus a
+documentation-only round-numbering defect in this section.**
+
+- **[P2]** Round 6 fixed the *reasoning* in both active tasks but not the *residual claim*: the
+  postcss task still said to update both locations (not just the one that matters for resolution), and
+  the esbuild task's option (a) — even after round 6's fix — only ever addresses the `esbuild` key, so
+  it cannot honestly claim "full consolidation" while `postcss` remains split across both files.
+  Rewrote both: the postcss task now states updating `package.json` alone is the only step that
+  affects resolution, with syncing `pnpm-workspace.yaml` explicitly optional and explicitly *not*
+  equivalent to consolidation unless the entry is removed, not just matched; the esbuild task's option
+  (a) is now explicitly scoped as "fixes `esbuild` only, does not by itself achieve full-file
+  consolidation" rather than implying it does.
+- **[P2]** This "Fix rounds" section itself mislabeled the missing-header/completeness-sweep findings
+  as "Round 3" and jumped straight to "Round 5," because a genuine Round 3 entry (the empty-map
+  precision, `merged_probe` correction, verification-strengthening re-registration, and DSB-4
+  provenance fixes — all real, all previously recorded only in the backlog notes) was never added here.
+  Inserted the missing Round 3 entry above, relabeled the mislabeled section to Round 4, and added this
+  Round 6/7 pair — this section should now match `regions.log` and the backlog's own round-by-round
+  notes exactly.
 
 ## Negative scope
 
