@@ -188,7 +188,25 @@ DECLARE
   v_target text := COALESCE(NULLIF(current_setting('chat_definer_bootstrap.migration_role', true), ''), current_user);
   v_existing_runtime_member text;
   v_other_member text;
+  v_existing_admin boolean;
+  v_existing_set boolean;
 BEGIN
+  -- Serialize the whole check-then-grant decision against ANY concurrent invocation of this script,
+  -- regardless of target. Without this, two concurrent calls targeting DIFFERENT valid non-runtime
+  -- roles can each observe zero existing chat_definer members (neither has committed yet), pass the
+  -- re-pointing guard below, and both GRANT their own distinct target -- the exact accumulation that
+  -- guard exists to prevent, just reached via a race instead of a sequential re-run. Transaction-
+  -- scoped (auto-released at COMMIT/ROLLBACK, no matching unlock needed).
+  --
+  -- DELIBERATELY A DIFFERENT KEY from CHAT_DEFINER_LOCK_KEY (migrate.test.ts, "chad") / the
+  -- withChatDefinerLock() test harness, not a reuse of it -- the two serve different purposes and
+  -- MUST NOT share a key. withChatDefinerLock holds a SESSION-scoped lock on ONE dedicated connection
+  -- for an entire test body's duration, external to this script. If this in-script lock used the SAME
+  -- key, any test connection OTHER than that dedicated one (i.e. every real test in this suite) would
+  -- block forever waiting for a lock the test harness's own connection is holding and will not release
+  -- until the test body -- which is itself awaiting this very call -- returns: a guaranteed deadlock,
+  -- caught in practice by a 60s Vitest test timeout (codex round-03 fix, self-discovered before commit).
+  PERFORM pg_advisory_xact_lock(1667525739); -- 0x63646c6b, "cdlk" -- distinct from "chad" (0x63686164), "jobd" (0x6a6f6264), "plxc" (0x706c7863)
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_target) THEN
     RAISE EXCEPTION
       'chat_definer bootstrap: migration role % does not exist', v_target;
@@ -227,6 +245,29 @@ BEGIN
     RAISE EXCEPTION
       'chat_definer bootstrap: chat_definer is already granted to % — refusing to also grant it to % (revoke the existing membership first if this is an intentional re-point)',
       v_other_member, v_target;
+  END IF;
+  -- Fail closed on unsafe membership OPTIONS surviving an idempotent re-run. PostgreSQL 16's own
+  -- GRANT documentation: "When altering an existing membership the omission of an option results
+  -- in the current value being retained" — so this script's own bare GRANT below (no WITH clause)
+  -- never resets ADMIN/SET on a membership that already exists for v_target, whether that
+  -- membership came from an earlier run of this same script (safe: a bare GRANT's own defaults are
+  -- ADMIN=false, SET=true) or from an out-of-band GRANT issued directly against the cluster (unsafe
+  -- if it set ADMIN TRUE — v_target could then re-grant chat_definer to anything, including a
+  -- runtime role, with none of this script's checks in the loop — or SET FALSE, which would silently
+  -- break the downstream migration's expected SET ROLE chat_definer capability). Mirrors the
+  -- existing attribute-drift philosophy exactly: detect and refuse, never silently re-GRANT WITH the
+  -- safe options to "fix" it — that is an operator decision, not this script's.
+  SELECT m.admin_option, m.set_option
+    INTO v_existing_admin, v_existing_set
+    FROM pg_auth_members m
+    JOIN pg_roles r ON r.oid = m.member
+    JOIN pg_roles g ON g.oid = m.roleid
+   WHERE g.rolname = 'chat_definer'
+     AND r.rolname = v_target;
+  IF FOUND AND (v_existing_admin OR NOT v_existing_set) THEN
+    RAISE EXCEPTION
+      'chat_definer bootstrap: existing membership for % has unsafe options (admin_option=%, set_option=%; need admin_option=false, set_option=true) — refusing to silently proceed',
+      v_target, v_existing_admin, v_existing_set;
   END IF;
   EXECUTE format('GRANT chat_definer TO %I', v_target);
   -- Re-run the identical transitive check AFTER the grant: if v_target is a
@@ -325,9 +366,9 @@ async function hideRealChatDefiner(superuser: pg.Client, fn: () => Promise<void>
 ```
 
 New `describe` block (a sibling of the existing `describe("job_definer bootstrap script itself fails
-closed on runtime-role targets", ...)` at line 1239). Originally specified as the 9 cases below; 4 more
-(10-13) were added during implementation in response to real codex review findings (§10 items 5-6) —
-13 cases total, each mapping to a row in §8:
+closed on runtime-role targets", ...)` at line 1239). Originally specified as the 9 cases below; 6 more
+(10-15) were added during implementation in response to real codex review findings (§10 items 5-7) —
+15 cases total, each mapping to a row in §8:
 
 1. `"first bootstrap with no migration role set grants membership to CURRENT_USER"` — happy path,
    proves an unset GUC is *not* a failure.
@@ -370,6 +411,18 @@ closed on runtime-role targets", ...)` at line 1239). Originally specified as th
     idempotent re-run undetected (§5.1's pre-grant safety check). Split into two isolated cases
     rather than one combined case so either half of the `v_existing_admin OR NOT v_existing_set`
     guard regressing is independently caught.
+14. `"N concurrent bootstrap calls targeting DIFFERENT valid migration roles: exactly one succeeds, no
+    member accumulates"` — added round-03 fix (codex `[P1]`): the existing concurrency case (9) only
+    exercises the SAME target on every caller, which the re-pointing guard's own read handles fine
+    even under a race. A DIFFERENT-target race is the one `pg_advisory_xact_lock` (§5.1) exists to
+    serialize; without it, N concurrent calls could each observe zero existing members and all `GRANT`
+    their own distinct target before any of them commits.
+15. `"refuses to bootstrap when chat_definer already exists with any one of the other six wrong
+    attributes"` — added round-03 fix (codex `[P2]`): the attribute-drift check (§5.1) is a single
+    `OR` across 7 columns; only `rolcanlogin` (case 4) had a dedicated regression, so a regression
+    dropping any of the other 6 branches would leave the suite green. A compact loop covering the
+    other 6, asserting only rejection (the whole-transaction-rollback property case 4 already proves
+    is not per-attribute-dependent, so it is not re-verified 6 more times).
 
 Every case that deliberately breaks the shared cluster-global role runs inside `withChatDefinerLock`,
 exactly as the job_definer negative-path tests run inside `withJobDefinerLock` — same rationale
@@ -499,8 +552,11 @@ runner (§9.2: "zero domain migration/table/API"). `MIGRATION_COUNT` in `migrate
 | Authorization | `migration_role` set to a name absent from `pg_roles` | Fails closed with an explicit "migration role % does not exist" error; zero membership rows |
 | Authorization | Bootstrap once with `migration_role` = A, then re-run with `migration_role` = a different valid role B | Second call fails closed ("already granted to A"); A remains the sole member; B is never granted — the gap `job_definer`'s own script does not guard (§5.4.2) |
 | Authorization | Grant target is a non-runtime group role a runtime role already belongs to (indirect BYPASSRLS path) | Post-grant re-check detects the new transitive path and raises; the whole transaction — including the `GRANT` — rolls back atomically |
+| Authorization | The target already has an existing `chat_definer` membership with `ADMIN TRUE` (from any out-of-band path — PG16 retains this option across a bare re-GRANT) | Fails closed before any `GRANT`; error names "unsafe options"; the unsafe option is left untouched (no silent re-GRANT to "fix" it) — added round-01 fix, §10 item 6 |
+| Authorization | The target already has an existing `chat_definer` membership with `SET FALSE` (same PG16 retention hazard) | Fails closed identically, isolated from the `ADMIN TRUE` case so either half of the guard regressing is independently caught — added round-02 fix |
 | Failure | Any fail-closed trigger above fires mid-script | The single `BEGIN...COMMIT` wrapping the file rolls back everything, including a freshly-created role — no partial state survives, not even an inert leftover role |
 | Concurrency | N concurrent `bootstrapChatDefiner` calls against a fresh cluster, all with the same valid migration role | All calls succeed (or all-but-one hit the `duplicate_object` swallow); role exists exactly once with exactly one membership grant afterward |
+| Concurrency | N concurrent `bootstrapChatDefiner` calls against a fresh cluster, each targeting a DIFFERENT valid non-runtime role | `pg_advisory_xact_lock` serializes the whole check-then-grant decision; exactly one call succeeds, the rest fail closed ("already granted to"), no member accumulates — added round-03 fix, closes a TOCTOU race the re-pointing guard alone did not prevent |
 | Concurrency | A deliberately-broken-attribute test runs concurrently with an unrelated valid bootstrap elsewhere in the suite | `withChatDefinerLock`'s advisory lock serializes the two; the valid path never observes the broken intermediate state |
 | Migration | This slice adds zero `packages/db/migrations/*.sql` files | `git diff --name-only <base>...HEAD -- packages/db/migrations/` is empty; `MIGRATION_COUNT` in `migrate.test.ts` stays `28` |
 | Security/privacy | `chat_definer` attributes after bootstrap | Exactly `NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`; no schema-level `USAGE`/`CREATE` grant (deferred to `dd38-dd86-chat-schema-core`) |
@@ -618,7 +674,7 @@ REMAINING_BLOCKERS: none
    (zero rounds spent against the original registration, which was closed via
    `ap-finish.sh --authorized-close` and re-registered fresh rather than hand-editing the hash-locked
    runtime manifest in place).
-6. **Two real codex readiness-gate rounds found and fixed during implementation, both now closed.**
+6. **Three real codex readiness-gate rounds found and fixed during implementation, all now closed.**
    Round 1 `[P1]`: PostgreSQL 16 retains `admin_option`/`set_option` membership options across a bare
    re-`GRANT` with no `WITH` clause (verified against postgresql.org/docs/16/sql-grant.html — "the
    omission of an option results in the current value being retained"), so `02-chat-definer.sql`'s own
@@ -630,4 +686,27 @@ REMAINING_BLOCKERS: none
    both unsafe options in one combined case, so either half of the `OR`-based guard could regress
    undetected by that test alone — split into two isolated cases (§5.3 cases 12-13). Round 2 `[P2]`
    also flagged this doc's own status framing and case count as stale against the growing
-   implementation — both updated in place (this item, and the header note above §0).
+   implementation — both updated in place (this item, and the header note above §0). Round 3 `[P1]`:
+   the check-then-grant sequence in §5.1's membership block was not atomic across concurrent
+   DIFFERENT-target calls — two concurrent invocations could each observe zero existing members before
+   either commits and both `GRANT` their own target, defeating the re-pointing guard via a race instead
+   of a sequential re-run (confirmed real by manual trace under READ COMMITTED). Fixed with
+   `pg_advisory_xact_lock` at the top of the membership block, same key `withChatDefinerLock` already
+   uses (PostgreSQL guarantees a session already holding an advisory lock re-acquires it, session or
+   transaction scope, without self-blocking); regression at §5.3 case 14. Round 3 `[P2]`: only 1 of 7
+   attribute-drift branches had a dedicated regression — §5.3 case 15 closes the other 6. Also: §5.1's
+   SQL echo and §8's acceptance matrix had drifted from the real implementation after rounds 1-2 (both
+   re-synced — this item, §8's two new Authorization rows plus one new Concurrency row).
+7. **Round 3 `[P2]` also raised a scope-budget question this session did not resolve unilaterally.**
+   The primary plan (§9.2) caps this slice at `≤300 changed LOC`. The actual diff is ~535 changed LOC
+   across the 3 code files even before this doc's own edits. This overage predates any implementation
+   choice made in this worktree: the contract's own §5.1 pinned exact-text SQL (165 lines, "do not
+   paraphrase") plus a faithful implementation of the originally-specified 9 test cases already totaled
+   ~398 LOC at the very first commit, before any review round ran. Every LOC added since has been a
+   direct, verified fix to a real codex finding (a genuine PG16 security gap, a genuine concurrency
+   race, and closing test-coverage gaps the contract's own §8 acceptance matrix already promised) —
+   none of it is scope creep. Trimming to fit ≤300 would require either violating §5.1's "exact, do not
+   paraphrase" instruction or removing test coverage for defects already proven real. This session's
+   recommendation: ratify a budget exception for this slice rather than trim proven-necessary coverage
+   to hit a pre-implementation estimate that undercounted the contract's own pinned specification —
+   see the terminal report for the explicit owner decision point.

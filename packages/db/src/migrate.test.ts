@@ -1665,4 +1665,99 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
       }),
     );
   }, 60_000);
+
+  it("N concurrent bootstrap calls targeting DIFFERENT valid migration roles: exactly one succeeds, no member accumulates", async () => {
+    // codex round-03 [P1]: the previous concurrent test only exercises the SAME target, which the
+    // re-pointing guard's own read handles fine even under a race (every caller resolves the
+    // identical row). A DIFFERENT-target race is the one the pg_advisory_xact_lock in SS3 exists to
+    // serialize: without it, N concurrent calls could each observe zero existing members and all
+    // GRANT their own distinct target before any of them commits.
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        const N = 4;
+        const targets = Array.from({ length: N }, (_, i) => `plexco_chat_definer_test_race_${i}`);
+        for (const t of targets) {
+          await admin.query(
+            `DO $$ BEGIN CREATE ROLE ${t}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+          );
+        }
+        try {
+          const clients = await Promise.all(Array.from({ length: N }, () => connect(BASE!)));
+          try {
+            await Promise.all(
+              clients.map((c, i) =>
+                c.query(`SET chat_definer_bootstrap.migration_role = '${targets[i]}'`),
+              ),
+            );
+            const results = await Promise.allSettled(clients.map((c) => bootstrapChatDefiner(c)));
+            const fulfilled = results.filter((r) => r.status === "fulfilled");
+            const rejected = results.filter((r) => r.status === "rejected");
+            expect(fulfilled.length).toBe(1);
+            expect(rejected.length).toBe(N - 1);
+            for (const r of rejected) {
+              expect(String((r as PromiseRejectedResult).reason)).toMatch(/already granted to/i);
+            }
+            const members = await chatDefinerMembers(admin);
+            expect(members).toHaveLength(1);
+            expect(targets).toContain(members[0]);
+          } finally {
+            await Promise.all(clients.map((c) => c.end()));
+          }
+        } finally {
+          await admin.query(`DROP ROLE IF EXISTS chat_definer`);
+          for (const t of targets) {
+            await admin.query(`DROP ROLE ${t}`);
+          }
+        }
+      }),
+    );
+  }, 60_000);
+
+  it("refuses to bootstrap when chat_definer already exists with any one of the other six wrong attributes", async () => {
+    // codex round-03 [P2]: the SQL's attribute-drift check is a single OR across 7 columns; only
+    // rolcanlogin (case above) had a dedicated regression, so a regression dropping any of the other
+    // 6 branches from that OR would leave the suite green. One full-assertion case (membership stays
+    // empty, the wrong attribute is left untouched) already exists above; these 6 only need to prove
+    // rejection, since the whole-transaction-rollback property they'd otherwise re-verify is not
+    // per-attribute-dependent.
+    const safeFlags = {
+      rolsuper: "NOSUPERUSER",
+      rolcanlogin: "NOLOGIN",
+      rolbypassrls: "BYPASSRLS",
+      rolcreatedb: "NOCREATEDB",
+      rolcreaterole: "NOCREATEROLE",
+      rolinherit: "NOINHERIT",
+      rolreplication: "NOREPLICATION",
+    };
+    const variants: Array<keyof typeof safeFlags> = [
+      "rolsuper",
+      "rolbypassrls",
+      "rolcreatedb",
+      "rolcreaterole",
+      "rolinherit",
+      "rolreplication",
+    ];
+    const badFlag: Record<keyof typeof safeFlags, string> = {
+      rolsuper: "SUPERUSER",
+      rolcanlogin: "LOGIN",
+      rolbypassrls: "NOBYPASSRLS",
+      rolcreatedb: "CREATEDB",
+      rolcreaterole: "CREATEROLE",
+      rolinherit: "INHERIT",
+      rolreplication: "REPLICATION",
+    };
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        for (const column of variants) {
+          const flags = { ...safeFlags, [column]: badFlag[column] };
+          await admin.query(`CREATE ROLE chat_definer ${Object.values(flags).join(" ")}`);
+          try {
+            await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/unexpected attributes/i);
+          } finally {
+            await admin.query(`DROP ROLE chat_definer`);
+          }
+        }
+      }),
+    );
+  }, 30_000);
 });

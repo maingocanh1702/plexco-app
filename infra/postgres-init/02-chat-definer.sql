@@ -81,6 +81,22 @@ DECLARE
   v_existing_admin boolean;
   v_existing_set boolean;
 BEGIN
+  -- Serialize the whole check-then-grant decision against ANY concurrent invocation of this script,
+  -- regardless of target. Without this, two concurrent calls targeting DIFFERENT valid non-runtime
+  -- roles can each observe zero existing chat_definer members (neither has committed yet), pass the
+  -- re-pointing guard below, and both GRANT their own distinct target -- the exact accumulation that
+  -- guard exists to prevent, just reached via a race instead of a sequential re-run. Transaction-
+  -- scoped (auto-released at COMMIT/ROLLBACK, no matching unlock needed).
+  --
+  -- DELIBERATELY A DIFFERENT KEY from CHAT_DEFINER_LOCK_KEY (migrate.test.ts, "chad") / the
+  -- withChatDefinerLock() test harness, not a reuse of it -- the two serve different purposes and
+  -- MUST NOT share a key. withChatDefinerLock holds a SESSION-scoped lock on ONE dedicated connection
+  -- for an entire test body's duration, external to this script. If this in-script lock used the SAME
+  -- key, any test connection OTHER than that dedicated one (i.e. every real test in this suite) would
+  -- block forever waiting for a lock the test harness's own connection is holding and will not release
+  -- until the test body -- which is itself awaiting this very call -- returns: a guaranteed deadlock,
+  -- caught in practice by a 60s Vitest test timeout (codex round-03 fix, self-discovered before commit).
+  PERFORM pg_advisory_xact_lock(1667525739); -- 0x63646c6b, "cdlk" -- distinct from "chad" (0x63686164), "jobd" (0x6a6f6264), "plxc" (0x706c7863)
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_target) THEN
     RAISE EXCEPTION
       'chat_definer bootstrap: migration role % does not exist', v_target;
