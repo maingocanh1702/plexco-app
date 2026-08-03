@@ -1,5 +1,32 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 26
+# KIT_VERSION: 27
+# v27 (2026-08-01) — ap-watch.sh's MAX_ROUNDS ceiling (MAXR_HALT, hard-coded default 6) sat one round
+# above the ceiling this kit actually enforces. The readiness gate's own manifest field,
+# budgets.fix_rounds_max (autopilot-review-readiness.mjs:377, manifests/_TEMPLATE.json:56), is 5, and a
+# real terminal HALT stops there, not at 6: backlog-level3-reconcile-v3's own HALT-MAX_ROUNDS.txt reads
+# "round 5 (the founder-declared last permitted round, fix_rounds_max=5) returned 5 actionable
+# findings ... no round 6 fix attempt was made" (fix-round-count.txt=5 on disk). With MAXR_HALT=6, the
+# pre-thrash warning ("fix-round-count=4 (HALT khi ≥6)") promised two rounds of headroom when only one
+# remained. The identical misleading line was logged five separate times (zalo-player-join-gate-on,
+# backlog-level3-reconcile-v3, messenger-player-join-gate-on, identity-claim-authz-hardening-v3,
+# identity-claim-authz-gate-gen2), per docs/autopilot-backlog.md's own
+# `ap-watch-max-rounds-ceiling-off-by-one` entry (filed 2026-08-01, the same day, by a session that had
+# just synced to this same KIT_VERSION 26).
+# Fix shape: do not restate the number as a second literal (6, or a corrected-but-still-hardcoded 5) —
+# read it. ap-watch.sh now derives the ceiling PER SLICE from that slice's own runtime manifest.json
+# (budgets.fix_rounds_max), via a portable python3/node/jq reader (read_fix_rounds_max, mirroring this
+# file's own json_get() pattern), falling back to 5 only when a manifest is missing, unreadable, or
+# carries a value outside the 0..5 schema range. MAXR_WARN is now derived as maxr_halt-1 ("warn one
+# round before the ceiling") instead of an independent constant, so the two numbers cannot drift apart
+# from each other the way MAXR_HALT already drifted from fix_rounds_max.
+# Same failure shape as v23 (BASE_STALE, one rule kept in two copies) and v24 (registry-lookup, one bug
+# kept in four copies across three files): a number duplicated instead of read eventually disagrees
+# with itself.
+# Per WATCHDOG-NOTES.md's own closing rule, ap-watch's alert paths — including this one — are outside
+# test-level3-operational-kit.sh's coverage (it drives only the resolver + `bash -n`; the alert paths
+# need osascript/stat -f/lsof/pgrep). This fix is verified by reading — bash -n, a standalone
+# read_fix_rounds_max test against valid/missing/malformed/out-of-range manifests, and re-derivation
+# against autopilot-review-readiness.mjs and a real HALT-MAX_ROUNDS.txt — not by CI.
 # v26 (2026-07-31) — v25's own note overclaimed: "the diff handed to the reviewer... is now taken from
 # the LIVE base-ref tip" was true only for the internal SCOPE_DRIFT/diffHash computation inside
 # liveDiffState(). Four other sites still read the pinned base_sha for the same window job: the --base
