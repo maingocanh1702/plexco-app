@@ -1173,19 +1173,20 @@ notes: |
 
 ## task: eslint-10-migration
 title: ESLint 9 → 10 trước EOL 2026-08-06; gỡ nhánh minimatch@3 / brace-expansion@1 như hệ quả
-status: ready
+status: merged (2026-08-02, squash `a93a4f6` trên origin/main; `ap-finish --squash-verified` xác nhận patch trên origin **bằng đúng** diff đã READY)
 not_before: 2026-07-31
 not_after: 2026-08-06
 risk: P1
 change_class: toolchain-major-upgrade
 depends_on: []
 invariants: [build-config]
-scope: [docs/autopilot-manifests/eslint-10-migration.json, docs/autopilot-eslint-10-migration.md, package.json, pnpm-lock.yaml, eslint.config.mjs]
+scope: [docs/autopilot-manifests/eslint-10-migration.json, package.json, pnpm-lock.yaml, packages/db/src/migrate.ts, packages/db/src/migrate.test.ts]
 manifest: docs/autopilot-manifests/eslint-10-migration.json
 slice_doc: docs/autopilot-eslint-10-migration.md
 launcher: .claude/commands/ap-42-eslint-10-migration.md
-merged_probe: null
-close_by: hand · toolchain-major-upgrade bump ở package.json/pnpm-lock.yaml, không tạo code symbol nào để probe — cùng lớp `dependency-security` mà `reconcile-close-by-hand-declaration` (Verdict 29) định nghĩa
+merged_probe: packages/db/src/migrate.ts::formatMigrationFailureForLog
+close_by_note: **`close_by: hand` gỡ 2026-08-02 — lý do của nó đã mục.** Nó lập luận "toolchain-major-upgrade bump ở package.json/pnpm-lock.yaml, không tạo code symbol nào để probe", đúng khi slice còn là bump thuần. Nhưng eslint 10 bật `preserve-caught-error`, buộc gắn `.cause` khi rethrow, và điều đó mở một đường rò PII qua `console.error` — nên slice sinh ra code thật (`formatMigrationFailureForLog`, WeakMap giữ safe-summary). Probe phân biệt được giờ tồn tại, nên phân loại `hand` không còn áp dụng. Cùng lớp lỗi mà cả slice này gặp suốt: một khẳng định viết lúc đầu, không được xét lại khi phạm vi đổi.
+scope_note: `scope` ở trên là scope **thực tế đã merge**, không phải scope dự kiến ban đầu. `eslint.config.mjs` cuối cùng không đổi byte nào (override `warn` được gỡ trước khi merge); `docs/autopilot-eslint-10-migration.md` và `docs/autopilot-backlog.md` bị **cố ý đưa ra khỏi scope** ở registration 7 vì một tài liệu mô tả diff nằm trong chính diff đó không thể tự nhất quán — chín registration đầu chết vì đúng điều này. Chi tiết: `docs/kit-design-debt.md` §4 trong `Claude template`.
 verdict: `CODE_READY` 2026-07-31, `AUTHORITY_SHA c759c63293a3555d957f58f4a82a06b1f35cfdda`, closure 12/12 — verdict block nằm trong slice doc (`<!-- review-readiness: code-ready -->`), tracker entry ở `docs/slice-readiness-verdicts.md` (Verdict 30)
 timing_note: 2026-07-29 · **`not_before`/`not_after` thêm sau khi block đã lên `ready`** — thiếu sót của lượt promote. Ràng buộc thời gian ban đầu chỉ nằm trong `_timing_gate` của manifest dưới dạng prose, mà **bot quét backlog đọc field, không đọc manifest**: nó sẽ chọn task này ngay hôm nay rồi HALT ở probe vì v10.8.0 (publish 24/07) chưa đủ 7 ngày `minimumReleaseAge` — đốt một session để tái phát hiện thứ đã biết. `deps-security-bump` có field này, block này thì không; cùng một lớp ràng buộc mà một cái machine-readable một cái không. `not_after` là EOL ESLint v9, ghi ra để nó là hạn chót đo được chứ không phải một câu trong notes.
 probe_findings: 2026-07-29 tại `main@f83995f` · **Ba câu hỏi compat đã ĐÓNG, không câu nào chặn** — nên block lên `ready` cùng ngày mở. **(a)** `typescript-eslint@8.62.1` và cả ba sub-package đã khai `peerDependencies.eslint: ^8.57.0 \|\| ^9.0.0 \|\| ^10.0.0` — **eslint 10 đã được hỗ trợ sẵn, KHÔNG cần nâng typescript-eslint**. Đây vốn là rủi ro lớn nhất vì `tseslint.config()` là khung của cả `eslint.config.mjs`. **(b)** `@next/eslint-plugin-next@15.5.20` không khai `peerDependencies` nào và chỉ phụ thuộc `fast-glob` ⇒ không ràng buộc version eslint. Vắng peer range **không phải bằng chứng tương thích**, nên đã grep source cho **cả 10 API v10 gỡ** (`context.getCwd/getFilename/getPhysicalFilename/getSourceCode`, `parserOptions`, `parserPath`, `getTokenOrCommentBefore/After`, `isSpaceBetweenTokens`, `getJSDocComment`) — **0 hit**. **(c)** Node: v10 đòi `^20.19.0 \|\| ^22.13.0 \|\| >=24`; máy `v22.22.3` ✓, CI `node-version: 22` → 22.x mới nhất ✓, **nhưng `package.json` khai `engines: {node: ">=22"}` — dải đó NHẬN 22.0–22.12 mà eslint 10 từ chối**. Lỗ thật, slice phải đóng (acceptance `E10-5`). **Baseline chống regression:** `npx eslint . -f json` = **81 file** (apps 46 · packages 31 · scripts 3 · `eslint.config.mjs` 1), sha256 danh sách đã sort prefix `3c99372c73e87ab4`.
@@ -1243,15 +1244,17 @@ notes: |
 
 ## task: eslint10-preserve-caught-error-migrate-ts
 title: packages/db/src/migrate.ts:172 — preserve-caught-error, tạm hạ xuống `warn` trong eslint.config.mjs, cần sửa thật
-status: ready
+status: merged (2026-08-02, cuốn vào `a93a4f6` — KHÔNG chạy như slice riêng)
 risk: P3
 change_class: code-quality
 depends_on: [eslint-10-migration]
 invariants: [build-config]
 scope: [packages/db/src/migrate.ts, eslint.config.mjs]
 manifest: null
-merged_probe: null
-close_by: hand · sửa một dòng rethrow, không tạo symbol mới nào để probe
+merged_probe: packages/db/src/migrate.ts::formatMigrationFailureForLog
+close_by_note: **`close_by: hand` gỡ 2026-08-02.** Nó nói "sửa một dòng rethrow, không tạo symbol mới nào để probe" — đúng với bản sửa đã hình dung, sai với bản sửa đã xảy ra.
+resolution: **Không hoãn sang slice riêng, và cái `warn` không bao giờ merge.** Chốt 2026-08-01: mở scope của chính slice eslint-10 để **sửa** thay vì hạ cấp rule. Scope minimalism thua khi giá của scope hẹp là một rule bị hạ cấp cộng một entry backlog cộng một slice tương lai. `eslint.config.mjs` cuối cùng zero-diff — override `warn` bị gỡ trước khi merge, rule giữ nguyên `error`.
+  **Và bản sửa "một dòng" hoá ra không phải một dòng.** Gắn `.cause` để giữ error gốc làm `console.error` in đệ quy toàn bộ error shape của Postgres, kể cả `detail` — trường mang **giá trị hàng thật** khi vi phạm ràng buộc. Một migration backfill chạm `persons`/`accounts`/`channel_identities` sẽ ghi dữ liệu người dùng vào log deploy. Chính chỗ đó sinh ra `formatMigrationFailureForLog`, allowlist theo nguồn gốc, và WeakMap giữ safe-summary. Chi tiết trong `a93a4f6`.
 notes: **Mở 2026-07-31 vì `eslint.config.mjs` đang trỏ tới entry này mà nó chưa tồn tại trên đĩa** — chính reviewer của `eslint-10-migration` bắt được sự trỏ hụt đó.
   **Bối cảnh:** eslint v10 bật `preserve-caught-error` trong bộ recommended, và nó báo lỗi thật ở `migrate.ts:172` — một chỗ rethrow làm mất error gốc. Finding đúng, nhưng nằm **ngoài scope** của slice eslint-10.
   **Vì sao hạ xuống `warn` chứ không `off`, và vì sao không hoãn hẳn:** `pnpm lint` nằm trong danh sách canonical của **mọi** slice. Để nó `error` mà chưa sửa nghĩa là main đỏ, và gate của mọi lane khác fail vì một finding không liên quan gì tới chúng — "để slice sau" nghe sạch sẽ nhưng âm thầm chuyển hoá đơn sang các lane vô can. `off` thì im lặng và sống tới khi có người nhớ ra; `warn` in ra mỗi lần lint nên lời nhắc là tự động, không phụ thuộc trí nhớ. Đó là cùng một đánh đổi mà thứ tự ưu tiên áp ở chỗ khác: ngoại lệ chỉ chấp nhận được khi nó tự mang theo chủ sở hữu và lời nhắc của chính nó.

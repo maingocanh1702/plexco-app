@@ -87,6 +87,13 @@ REMAINING_BLOCKERS: none
 > coding handoff). Block dưới là **bản mirror trong tracker** — sửa một chỗ phải sửa cả hai; nếu hai
 > bên lệch, bản trong slice doc thắng.
 >
+> **MERGED 2026-08-02** — squash `a93a4f6` trên origin/main; `ap-finish --squash-verified` xác nhận
+> patch trên origin bằng đúng diff đã READY. Nội dung mô tả bên dưới là trạng thái **lúc author
+> (2026-07-31)** và cố ý giữ nguyên: nó ghi đúng điều đã biết khi đó. Những gì slice thực sự trở
+> thành — đường rò PII qua `console.error`, allowlist theo nguồn gốc, WeakMap thay tag Symbol, bốn
+> ngoại lệ owner qua mười một registration — nằm ở **phần cuối slice doc**, không phải ở đây. Đừng
+> viết lại block này cho khớp; nó là bản ghi có ngày tháng, không phải mô tả hiện trạng.
+>
 > **Slice này tồn tại từ 2026-07-29** (tách khỏi `deps-security-bump`, driven bởi ESLint v9
 > END-OF-LIFE 2026-08-06), nhưng manifest gốc thiếu bốn thứ đúng bốn lỗi mà chính chính sách repo
 > này liệt kê cần đọc source trước khi viết: `verification` dùng `_acceptance` prose thay vì lệnh

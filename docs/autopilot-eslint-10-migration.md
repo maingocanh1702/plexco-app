@@ -234,3 +234,36 @@ nghĩa là mở worktree được, không phải `IMPLEMENTED`.
 | Ngày | Version | Thay đổi |
 |---|---|---|
 | 31/07/2026 | v0.1 | Author slice doc + rewrite manifest sang shape hiện hành (`verification.focused/canonical/e2e` thật, `code_review.clean_rounds`, `scope` gồm cả slice doc + manifest), sau khi phát hiện bản 2026-07-29 thiếu cả bốn: `verification` (dùng `_acceptance` prose thay vì lệnh chạy được), `code_review.clean_rounds` (dùng `codex_review: "2x_clean"` string thay vì field validator thật đọc), `scope` (chưa có slice doc vì chưa tồn tại), và một sai sót thực chất — E10-4 khẳng định osv-scanner sẽ hết sạch finding brace-expansion, đo lại bằng `pnpm why brace-expansion` cho thấy có MỘT finding thứ hai (`5.0.7` qua `typescript-eslint`'s own `minimatch@10.2.5`) hoàn toàn độc lập với version eslint, đã sửa + routed sang backlog riêng. Thử `npx --yes semver` cho check `engines.node` rồi loại bỏ: vừa bị chặn bởi policy thực thi môi trường (external package chưa khai báo) vừa cho kết quả sai khi test thật; thay bằng literal-diff không phụ thuộc package ngoài, hẹp hơn về phạm vi chứng minh nhưng đúng và không phụ thuộc gì bên ngoài. Mọi lệnh `verification.focused` đã chạy thật (`spawnSync` y hệt gate) trước khi commit, không chỉ parse cú pháp. |
+
+---
+
+## Bản ghi ngoại lệ owner — tái dựng 2026-08-02 sau khi merge
+
+> **Vì sao phần này ở đây, và vì sao nó là bản tái dựng.** Bốn ngoại lệ dưới đây sống trong
+> `.autopilot/state/eslint-10-migration/OWNER-EXCEPTION-code-fix-in-doc-only-registration.txt`, một
+> thư mục **gitignored nằm trong worktree**. `ap-finish` xoá worktree khi dọn, nên bản ghi thẩm quyền
+> cho mọi thay đổi code ngoài hợp đồng đã biến mất cùng nó. Nội dung dưới đây tái dựng từ commit
+> message của các archive branch và từ slice doc ở `archive/eslint-10-migration-sixth-registration`,
+> **không** từ file gốc — file gốc không còn.
+>
+> Đây là lỗ hổng đã được nêu trong chính phiên làm việc này rồi mới xảy ra: *thẩm quyền chỉ tồn tại
+> trong state gitignored là thẩm quyền tái dựng từ trí nhớ.* Bản sửa lẽ ra là chuyển bản ghi sang file
+> tracked, nhưng registration 7 đưa slice doc ra khỏi scope nên không thể ghi trên branch. Ghi ở đây,
+> sau merge, là chỗ đúng — một bản ghi thẩm quyền không nên nằm bên trong thứ mà nó cho phép.
+
+Registration 4 khai `negative_scope: NO code changes`. Nó bị vi phạm bốn lần, mỗi lần có uỷ quyền
+tường minh của owner. Ghi lại **cả căng thẳng**, không làm mượt: hợp đồng nói một đằng, owner cho
+phép một nẻo, và cả hai đều đúng ở thời điểm của mình.
+
+| # | Thay đổi | Vì sao được cho phép |
+|---|---|---|
+| 1 | `ensureRoleExists` — `safeLogSummary` tĩnh, không nhúng `role` | `throwMigrateError(message, message)` đẩy giá trị do caller cung cấp qua đúng kênh mà formatter tin tưởng vô điều kiện. Cùng lớp lỗi mà cả registration tồn tại để chặn, ở một throw site đã bị phân loại nhầm là an toàn. |
+| 2 | Gỡ `constraint`/`table`/`column` khỏi `SAFE_STRUCTURED_LOG_FIELDS` | `RAISE ... USING TABLE = <bất kỳ>` đặt được các trường này thành dữ liệu tuỳ ý — đo trực tiếp với `TABLE = 'pii-diagnostic-field@example.com'`. Giả định "Postgres luôn điền định danh schema thật" sai. |
+| 3 | Bọc `readdir`/`readFile` qua `throwMigrateError` | Sau khi gỡ `code`, một fs error không bọc in ra **đúng dòng chung chung, không chẩn đoán gì**. Quyết định bởi phép đo ở sink, không phải suy luận về error object: `formatMigrationFailureForLog` không đọc `.message` với bất kỳ đầu vào nào. |
+| 4 | Bọc 6 trong 16 await site có thể reject ngoài vùng đã bọc | Ngoại lệ 3 đóng hai site; chỉ thị của owner khi đó nói "throw site", hẹp hơn thuộc tính thật. `client.connect()` và ba truy vấn setup lọt qua đúng khe đó. Mở rộng thành cả lớp thay vì vá từng chỗ. Hai site trong `finally` **cố ý loại trừ** — throw ở đó che mất error gốc. |
+
+Ngoại lệ thứ năm không nằm trong bảng vì nó không phải ngoại lệ: registration 11 thay tag `Symbol`
+bằng `WeakMap` module-private. `Object.getOwnPropertySymbols()` lấy lại được Symbol từ bất kỳ Error
+đã tag nào, mà Error đã tag thì được ném ra ngoài module theo thiết kế — nên "Symbol không export"
+chưa bao giờ là riêng tư. Đó là finding của **security review**, vòng đầu tiên nó chạy được sau mười
+registration.
