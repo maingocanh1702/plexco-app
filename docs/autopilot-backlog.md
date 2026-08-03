@@ -1255,9 +1255,28 @@ notes: |
   phải** vì "DSB-4 đã land" — DSB-4 chưa từng land — mà vì giá trị PRE-AP-39 trùng hợp vẫn đủ che.
   Standards doc + launcher đã viết lại đoạn provenance này, trích commit SHA thật. [P3]: trailing
   whitespace ở `dependency-override-precedence.md:52` — đã xoá.
+  **Round 4 (codex, 2026-08-03): FINDINGS, cả 5 đã fix — 1 bug parser thật + 4 completeness gap
+  (round-3 fix đúng chỗ chính nhưng bỏ sót echo).** [P1]: task mới `pnpm-workspace-esbuild-override-inert`
+  (thêm ở round 2) THIẾU header `## task:` — parser sống chỉ mở block mới đúng prefix đó, nên dòng
+  `status: idea` của nó tràn vào ĐÈ `status: ready` của chính task này. Xác nhận + sửa, verify lại bằng
+  `scripts/autopilot-backlog-reconcile` thật (task này parse đúng `ready`, task mới bị loại đúng vì
+  `status: idea`). [P2×3]: task mới lặp lại phrasing "hễ có khai" (viết trước khi round 3 tìm ra
+  non-empty) — sửa; slice doc's round-2 entry vẫn ghi `feature` là final — thêm annotate superseded;
+  standards doc's "Practical guidance" còn 1 chỗ gọi postcss là "DSB-4's mirrored" — sửa, cộng quét lại
+  toàn bộ 5 file cho mọi echo còn sót (tìm thêm 2 chỗ "declares...any" trong standards doc + 1 chỗ
+  DSB-4-provenance trong slice doc's intro).
+  **Round 5 (codex, 2026-08-03): FINDINGS, cả 2 đã fix — đo lại qua `git show`, không tin suông.** [P2]:
+  "esbuild override chưa từng chạy" SAI — `git show 7146f51:pnpm-lock.yaml` (2026-07-17) cho thấy rule
+  ĐANG chạy đúng lúc đó; `git show f1af6e3 -- package.json` (2026-07-22, "fix(deps): resolve
+  brace-expansion + sharp advisories via pnpm overrides") là commit thêm field `pnpm.overrides` ĐẦU
+  TIÊN vào `package.json` (không hề nhắc `esbuild`) — đúng điểm rule của `pnpm-workspace.yaml` bắt đầu
+  câm. Sửa "chưa từng chạy" thành "câm từ `f1af6e3` (2026-07-22)" xuyên suốt standards doc, slice doc,
+  backlog (title + notes của task mới). [P2]: launcher's negative scope còn nói "both values currently
+  agree" — ngụ ý hai rule độc lập tình cờ khớp; sửa thành "chỉ package.json's map có hiệu lực, bản
+  pnpm-workspace.yaml câm", khớp đúng standards doc.
 
 ## task: pnpm-workspace-esbuild-override-inert
-title: pnpm-workspace.yaml's esbuild@<0.25.0 → 0.25.12 override chưa từng chạy — package.json's pnpm.overrides thay toàn bộ map, không merge theo key
+title: pnpm-workspace.yaml's esbuild@<0.25.0 → 0.25.12 override câm từ commit f1af6e3 (2026-07-22) — package.json's pnpm.overrides thay toàn bộ map, không merge theo key
 status: idea
 risk: P2
 change_class: dependency-security
@@ -1273,6 +1292,13 @@ notes: |
   esbuild-loader branches". `@esbuild-kit/core-utils@3.3.2` (dependency thật, pnpm tự flag deprecated)
   khai `esbuild: ~0.18.20` trên registry — nằm trọn trong `<0.25.0`, đúng đối tượng rule nhắm tới. Nhưng
   `pnpm-lock.yaml` ở base hiện tại ghi `esbuild@0.18.20`, KHÔNG bị rewrite.
+  **Đính chính (round 5, xem note round-5 ở task `pnpm-override-precedence-two-locations`): KHÔNG PHẢI
+  "chưa từng chạy".** Đo qua `git show`: tại commit `7146f51` (2026-07-17), lockfile resolve
+  `@esbuild-kit/core-utils@3.3.2` → `esbuild@0.25.12` — rule ĐANG chạy đúng. Commit `f1af6e3`
+  (2026-07-22, "fix(deps): resolve brace-expansion + sharp advisories via pnpm overrides") thêm field
+  `pnpm.overrides` ĐẦU TIÊN vào `package.json` (`brace-expansion@1`, `sharp` — không hề nhắc `esbuild`)
+  — chính đây là điểm rule của `pnpm-workspace.yaml` bắt đầu câm, đúng cơ chế whole-map replacement.
+  Câm TỪ `f1af6e3`, không phải câm vĩnh viễn từ đầu.
   **Xác nhận bằng thực nghiệm đảo ngược (đo trong worktree riêng của slice trên, đã revert sạch, không
   đụng file thật):** xoá hẳn field `pnpm.overrides` khỏi `package.json` (không thêm `esbuild` vào đâu
   cả) → chạy `pnpm install --lockfile-only` → `esbuild@0.18.20` biến mất, mọi thứ resolve về

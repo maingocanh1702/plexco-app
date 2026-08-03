@@ -76,7 +76,12 @@ At this document's base commit, `@esbuild-kit/core-utils@3.3.2` (a real, present
 flagged by pnpm itself as deprecated) declares `"esbuild": "~0.18.20"` on the npm registry — a range
 entirely inside `<0.25.0`, exactly what the override is meant to catch. The resolved `pnpm-lock.yaml`
 at base nonetheless records `esbuild@0.18.20`, unrewritten. **This is not a hypothetical — it is
-measured against the live, unmodified base state.**
+measured against the live, unmodified base state.** It is also not a rule that has never worked: at
+commit `7146f51` (2026-07-17), before `package.json` had any `pnpm.overrides` field at all, the
+lockfile correctly resolved this same dependency to `esbuild@0.25.12`. Commit `f1af6e3` (2026-07-22)
+added `package.json`'s first `pnpm.overrides` entries (`brace-expansion@1`, `sharp` — `esbuild` was
+never among them) to close two unrelated OSV advisories, and that non-empty map has silenced
+`pnpm-workspace.yaml`'s `esbuild` rule ever since, invisibly, as a side effect nobody was measuring for.
 
 Confirmed directly and reversibly: with `package.json`'s `pnpm.overrides` field temporarily removed
 (experiment reverted before commit, no override declaration in this repo changed), a fresh

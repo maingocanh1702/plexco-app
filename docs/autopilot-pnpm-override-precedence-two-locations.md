@@ -61,7 +61,9 @@ all, so there is no tie — yet toggling only whether `package.json`'s override 
 non-empty flips whether `pnpm-workspace.yaml`'s unrelated rule fires. That is only explainable by
 whole-map replacement, and it is a live, present-day condition in this repo, not
 a hypothetical (see the standards doc's "A live consequence" section — `pnpm-workspace.yaml`'s
-`esbuild@<0.25.0` override has never actually run). `pnpm config get overrides` disagrees with the
+`esbuild@<0.25.0` override has been inert since `package.json` first gained a non-empty
+`pnpm.overrides` field, commit `f1af6e3`, 2026-07-22 — not "never," it worked before that commit).
+`pnpm config get overrides` disagrees with the
 resolution outcome for a separate, source-cited reason (see the standards doc's "A critical
 distinction"), not evidence against this finding. Full method, evidence, source citations, and caveats
 are in `docs/standards/dependency-override-precedence.md` — this file does not duplicate them.
@@ -169,7 +171,8 @@ three addressed.**
   including keys it never mentions (an *empty* `pnpm.overrides: {}` does not trigger this — see round
   3 below). This is now Trial 4 in Measurement above, and it is a **live, present-day gap**:
   `@esbuild-kit/core-utils@3.3.2` genuinely requests `esbuild: ~0.18.20`, entirely inside the range the
-  workspace override targets, and the override has never actually applied to it. The standards doc
+  workspace override targets, and the override has been inert since `f1af6e3` (see round 5 below —
+  it worked before that commit). The standards doc
   (v1.2) was rewritten around this corrected model; the practical guidance that told readers to split
   overrides across the two files was deleted — it was actively unsafe under whole-map replacement, not
   merely imprecise — and replaced with "consolidate into one file." Round 1's unverified extrapolation
@@ -216,6 +219,25 @@ fixes, not new substantive issues.**
   phrasing (one more instance found in this file's own intro paragraph, fixed) — round 4 exists
   specifically because round 3's fixes were correct in substance but applied to only the first instance
   found per issue, not swept exhaustively; this round's fixes were swept.
+
+**Round 5 (codex, 2026-08-03): FINDINGS, both addressed — a real historical-precision gap, verified via
+`git show`, not trusted from the finding text alone.**
+
+- **[P2]** "The esbuild override has never actually applied/run" (this file, the backlog task title and
+  notes) was itself imprecise, discovered the same way the DSB-4 provenance error was: checking only
+  the base commit's state instead of the full history. Verified independently before fixing, not taken
+  on trust: at commit `7146f51` (2026-07-17), `git show 7146f51:pnpm-lock.yaml` shows the override
+  correctly resolving `@esbuild-kit/core-utils@3.3.2` to `esbuild@0.25.12` — the rule worked. Commit
+  `f1af6e3` (2026-07-22, `git show f1af6e3 -- package.json`) added `package.json`'s first-ever
+  `pnpm.overrides` entries (`brace-expansion@1`, `sharp`, closing two unrelated OSV advisories,
+  `esbuild` not among them) and that non-empty map has silenced the workspace `esbuild` rule ever
+  since, as an unmeasured side effect. Every "never ran/applied"/`chưa từng chạy` instance across the
+  standards doc, this file, and the backlog task (title and notes) corrected to "inert since `f1af6e3`
+  (2026-07-22)."
+- **[P2]** The launcher's negative scope described the current matching `postcss` resolution as "both
+  values currently agree," implying two independently-active rules that happen to coincide — the same
+  misconception whole-map replacement disproves. Fixed to state that only `package.json`'s map governs
+  and `pnpm-workspace.yaml`'s copy is inert, matching the standards doc's own framing.
 
 ## Negative scope
 

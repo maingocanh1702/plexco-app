@@ -122,5 +122,7 @@ test -f .autopilot/state/pnpm-override-precedence-two-locations/registered-manif
 ## Negative scope
 
 No change to any real override declaration's effective behavior. No resolving a live override conflict
-(none exists today — `postcss` is the only key in both locations and both values currently agree). No
-edit to `pnpm-lock.yaml`. No code change of any kind — this slice is docs-only.
+(none exists today — `postcss` is the only key declared in both locations, and both currently resolve
+to the same version, but only because `package.json`'s non-empty override map governs; the
+`pnpm-workspace.yaml` copy is inert, not independently agreeing — see the standards doc). No edit to
+`pnpm-lock.yaml`. No code change of any kind — this slice is docs-only.
