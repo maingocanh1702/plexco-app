@@ -6,9 +6,11 @@
 accept the exact same override syntax. This repo has genuine entries in both (`package.json`:
 `brace-expansion@1`, `sharp`, `postcss`; `pnpm-workspace.yaml`: `esbuild@<0.25.0`, `postcss@<8.5.10`)
 and `postcss` sits in both today. Nobody knew which file would win if the two ever disagreed for a live
-key — `deps-security-bump` (AP-39, 2026-07-30) hit this as `DSB-4` and sidestepped it by pinning the
-same exact version in both locations rather than measuring. This task measures it and records the
-result in `docs/standards/dependency-override-precedence.md`.
+key — `deps-security-bump` (AP-39, 2026-07-30) considered pinning the same exact version in both
+locations as its own `DSB-4` resolution, reasoning that "whichever wins gives the same result," but
+that specific change was reverted mid-task (commit `cf031f0`) when an unrelated security issue
+deferred the whole `postcss` bump — the precedence question was never actually measured. This task
+measures it and records the result in `docs/standards/dependency-override-precedence.md`.
 
 ## Task contract
 
@@ -184,6 +186,36 @@ three addressed.**
 - **[P2]** `status: ready` with `merged_probe: null` meant `autopilot-backlog-reconcile` could never
   auto-detect this task landing. Added `docs/autopilot-manifests/pnpm-override-precedence-two-locations.json :: feature`
   — the manifest file is entirely absent at base and the probe string is slice-unique.
+
+  **Superseded by round 3, below: `"feature"` is a generic JSON key present in nearly every manifest
+  in this repo, not slice-unique.** `autopilot-backlog-reconcile` would reject it. The backlog reverted
+  to `merged_probe: null` plus `close_by: hand`, matching `deps-security-bump`'s own precedent for the
+  same reason. This entry is left as written rather than edited, per this repo's convention of
+  preserving prior round notes and correcting forward.
+
+**Round 3 (codex, 2026-08-03): FINDINGS, all 5 addressed — completeness gaps in round-3-originated
+fixes, not new substantive issues.**
+
+- **[P1]** The new backlog task `pnpm-workspace-esbuild-override-inert` (added in round 2, above) was
+  missing its `## task:` header line entirely — the live backlog parser only opens a new block on that
+  exact prefix, so the block's `status: idea` line was silently attributed to the *previous* block
+  (this task), corrupting its parsed status. Confirmed directly against
+  `scripts/autopilot-backlog-reconcile` after the fix: this task still parses as `ready` with its
+  `close_by: hand` disposition; the new task is correctly excluded (its own `status: idea` is not
+  reconciler-tracked). Root cause not fully determined; fixed by inserting the missing header.
+- **[P2]** That same new backlog task's notes repeated the pre-non-empty-precision "declares... at all"
+  phrasing — written before round 3's empty-map finding existed. Fixed to "non-empty root-derived
+  override map," matching every other instance.
+- **[P2]** This file's own round-2 entry (above) asserted the `feature` probe resolution as final,
+  before round 3 corrected it. Annotated as superseded (see above) rather than rewritten.
+- **[P2]** The standards doc's closing "Practical guidance" section had a second, uncorrected mention
+  of `DSB-4`'s postcss entries as though still mirrored/live — the same provenance error round 3 fixed
+  in "Why this matters" but missed here. Fixed to "current/pre-existing duplicate postcss rules."
+  Swept for every remaining "declares... any/at all" phrasing across all five scoped files while fixing
+  this (two more instances found in the standards doc, both fixed) and every remaining DSB-4-as-live
+  phrasing (one more instance found in this file's own intro paragraph, fixed) — round 4 exists
+  specifically because round 3's fixes were correct in substance but applied to only the first instance
+  found per issue, not swept exhaustively; this round's fixes were swept.
 
 ## Negative scope
 

@@ -1255,6 +1255,8 @@ notes: |
   phải** vì "DSB-4 đã land" — DSB-4 chưa từng land — mà vì giá trị PRE-AP-39 trùng hợp vẫn đủ che.
   Standards doc + launcher đã viết lại đoạn provenance này, trích commit SHA thật. [P3]: trailing
   whitespace ở `dependency-override-precedence.md:52` — đã xoá.
+
+## task: pnpm-workspace-esbuild-override-inert
 title: pnpm-workspace.yaml's esbuild@<0.25.0 → 0.25.12 override chưa từng chạy — package.json's pnpm.overrides thay toàn bộ map, không merge theo key
 status: idea
 risk: P2
@@ -1275,15 +1277,19 @@ notes: |
   đụng file thật):** xoá hẳn field `pnpm.overrides` khỏi `package.json` (không thêm `esbuild` vào đâu
   cả) → chạy `pnpm install --lockfile-only` → `esbuild@0.18.20` biến mất, mọi thứ resolve về
   `0.25.12`/`0.28.1`. Phục hồi `package.json` nguyên trạng → `esbuild@0.18.20` quay lại. Đổi CHỈ sự
-  hiện diện của field, không đụng key `esbuild` ở đâu cả ⇒ **`package.json`'s `pnpm.overrides`, hễ có
-  khai, thay TOÀN BỘ map override của `pnpm-workspace.yaml` — không merge theo key.** `postcss` hiện
+  hiện diện của field, không đụng key `esbuild` ở đâu cả ⇒ **`package.json`'s `pnpm.overrides`, hễ
+  KHÔNG RỖNG, thay TOÀN BỘ map override của `pnpm-workspace.yaml` — không merge theo key.** (điều kiện
+  chính xác là "map không rỗng", không phải "có khai field" — `pnpm.overrides: {}` rỗng KHÔNG kích hoạt
+  thay thế, pnpm xoá map rỗng trước khi áp root settings; xem
+  `docs/standards/dependency-override-precedence.md`.) `postcss` hiện
   không lộ bug này chỉ vì `package.json`'s `postcss: ^8.5.10` tự nó đã đủ che; `esbuild` không có entry
   nào trong `package.json` nên không ai che hộ — rule của `pnpm-workspace.yaml` câm hoàn toàn, không
   warning, không error. Nguồn: `docs/standards/dependency-override-precedence.md` (§ "A live
   consequence"), đo ở pnpm 10.30.2 — kết quả gắn version, đo lại nếu pnpm đã đổi.
   **Việc thật của task này:** quyết định + thực hiện MỘT trong hai — (a) thêm `esbuild` vào
-  `package.json`'s `pnpm.overrides` (mirror đúng rule của `pnpm-workspace.yaml`, theo đúng pattern
-  `deps-security-bump` đã dùng cho `postcss`), hoặc (b) gộp toàn bộ override về `pnpm-workspace.yaml`
+  `package.json`'s `pnpm.overrides` (mirror đúng rule của `pnpm-workspace.yaml` — LƯU Ý: `DSB-4`
+  KHÔNG phải tiền lệ dùng được, pin `postcss` của nó đã bị revert, xem note round-3 phía trên task
+  `pnpm-override-precedence-two-locations`), hoặc (b) gộp toàn bộ override về `pnpm-workspace.yaml`
   và xoá field `pnpm.overrides` khỏi `package.json` (hướng migration pnpm khuyến khích, nhưng phạm vi
   lớn hơn vì đụng `brace-expansion@1`/`sharp`/`postcss` cùng lúc). Cả hai đều là thay đổi thật lên
   `package.json`/`pnpm-workspace.yaml`/`pnpm-lock.yaml` — cần `full build/DB suite` guard đúng như

@@ -214,9 +214,9 @@ taking effect. Revert afterward the same way.
 Trials 1-3 use a same-key conflict and are consistent with either "package.json wins ties" or
 "package.json's map wholesale-replaces the other" — they cannot distinguish the two on their own.
 **Trial 4 is the one that distinguishes them**: it touches a key (`esbuild`) `package.json` never
-declares, so there is no "tie" to win — yet toggling only whether `package.json` has *any* overrides
-field flips whether `pnpm-workspace.yaml`'s unrelated `esbuild` rule is honored. That is only
-explainable by whole-map replacement. All trials were fully reverted (`git diff` against this slice's
+declares, so there is no "tie" to win — yet toggling only whether `package.json`'s override map is
+present and non-empty flips whether `pnpm-workspace.yaml`'s unrelated `esbuild` rule is honored. That
+is only explainable by whole-map replacement. All trials were fully reverted (`git diff` against this slice's
 base commit confirmed `package.json`, `pnpm-workspace.yaml`, and `pnpm-lock.yaml` byte-identical to
 base afterward) before this document was written — no override declaration in this repo changed as a
 result of this measurement.
@@ -232,10 +232,10 @@ those independently — this document makes a claim about `overrides` specifical
 ## Practical guidance until pnpm unifies the two locations
 
 - **Do not split a repo's overrides across both files expecting each package to be governed by
-  whichever file declares it.** That is unsafe: as long as `package.json` declares *any* `pnpm.overrides`
-  entry, `pnpm-workspace.yaml`'s entire `overrides` block is inert, including keys `package.json` never
-  mentions — exactly the live gap this repo has today (see "A live consequence"). There is no partial
-  or per-key split that is safe under this mechanism.
+  whichever file declares it.** That is unsafe: as long as `package.json` declares a non-empty
+  `pnpm.overrides` entry, `pnpm-workspace.yaml`'s entire `overrides` block is inert, including keys
+  `package.json` never mentions — exactly the live gap this repo has today (see "A live consequence").
+  There is no partial or per-key split that is safe under this mechanism.
 - **Consolidate all overrides into exactly one file.** Prefer `package.json`'s `pnpm.overrides`, since
   that is the side this repo's resolution currently honors — moving an entry out of
   `pnpm-workspace.yaml` into `package.json` makes it live; leaving it in `pnpm-workspace.yaml` alongside
@@ -245,6 +245,7 @@ those independently — this document makes a claim about `overrides` specifical
 - Verify with a direct `grep '<pkg>@' pnpm-lock.yaml` after any override edit, never with
   `pnpm config get overrides` (it shows the losing side; see above) and never with plain `pnpm why`
   unless `node_modules` is known-fresh (see the reproduction-trap section above).
-- If this repo's overrides are ever consolidated, `deps-security-bump`'s (`DSB-4`) mirrored `postcss`
-  entries and `pnpm-workspace.yaml`'s `esbuild` entry are exactly the entries that need to move —
+- If this repo's overrides are ever consolidated, the current/pre-existing duplicate `postcss` rules
+  (predating `deps-security-bump`; `DSB-4`'s own attempted pin was reverted — see "Why this matters"
+  above) and `pnpm-workspace.yaml`'s `esbuild` entry are exactly the entries that need to move —
   tracked in the `pnpm-workspace-esbuild-override-inert` backlog entry, not resolved here.
