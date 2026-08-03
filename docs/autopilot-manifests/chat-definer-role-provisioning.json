@@ -1,0 +1,117 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — deliberately carries NO manifest_schema_version; adding it makes register HALT CONTRACT_INVALID. The runtime manifest is generated at register time into .autopilot/state/<feature>/manifest.json from _TEMPLATE.json.",
+  "task_id": "plexco:chat-definer-role-provisioning",
+  "feature": "chat-definer-role-provisioning",
+  "branch": "feat/chat-definer-role-provisioning",
+  "base_ref": "origin/main",
+  "risk": "P1",
+  "_risk_note": "P1, not P0: this is a code-writing slice (schema/permission-boundary category per level3-workflow.md's risk table), fully reversible pre-merge, going through the normal supervised path (isolated worktree, full verification, independent code review, security review, human merge) -- not a live/irreversible production or control-plane mutation, which is what P0 is reserved for. The AUTHORING of this contract itself was prepare-only (docs, no worktree/register/code), but the manifest's risk field describes the slice this contract governs once someone actually implements it, since that is what gets copied into the runtime manifest at register time.",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_dependency_note": "No executable dependency. This slice's only two preconditions -- infra/postgres-init/ existing as a directory, and packages/db/src/migrate.test.ts existing as a file -- are already true on origin/main (verified 2026-08-03 via git fetch + git rev-parse + ls), exactly as the primary-surface plan's own closure matrix already found (row 11: 'Slice 1 chat-definer-role-provisioning chi dua infra/postgres-init/ + packages/db/src/migrate.test.ts, ca hai da co tren default branch | PASS'). Two slices depend ON this one (chat-dm-safety-authority-core, dd38-dd86-chat-schema-core) but that is not this manifest's depends_on direction.",
+  "invariants": ["schema"],
+  "_invariant_note": "schema: Supabase/Postgres tables, migrations, RLS policies (docs/autopilot-invariant-catalog.md:35). This slice adds no migration/table/RLS itself, but it provisions a cluster-global Postgres role that is a hard functional prerequisite for dd38-dd86-chat-schema-core's own migration (ALTER FUNCTION ... OWNER TO chat_definer literally cannot apply without it) -- sharing the same token as that slice is a deliberate, harmless belt-and-suspenders serialization, consistent with dd38's own manifest choice. build-config was considered (this slice touches package.json) and rejected: it would needlessly serialize against unrelated in-flight work (deps-security-bump, eslint-10-migration) that touches different package.json keys (devDependencies/pnpm.overrides) with no real conceptual overlap.",
+  "scope": [
+    "infra/postgres-init/02-chat-definer.sql",
+    "package.json",
+    "packages/db/src/migrate.test.ts",
+    "docs/autopilot-manifests/chat-definer-role-provisioning.json",
+    "docs/autopilot-chat-definer-role-provisioning.md"
+  ],
+  "_scope_note": "Exactly the 3 files plan SS9.2 pins (infra/postgres-init/02-chat-definer.sql new, root package.json bootstrap command, packages/db/src/migrate.test.ts) plus this manifest and its slice doc (AP-39/AP-40 lesson, repeated by db-tenants-authz-grant-security-definer and dd38-dd86-chat-schema-core). packages/db/src/test-harness.ts is deliberately NOT in scope -- the new bootstrapChatDefiner/withChatDefinerLock/hideRealChatDefiner helpers are added LOCAL to migrate.test.ts, mirroring the existing hideRealJobDefiner precedent (already local there, not exported from test-harness.ts) -- see docs/autopilot-chat-definer-role-provisioning.md SS5.4. packages/db/src/migrate.ts, .github/workflows/ci.yml and infra/docker-compose.yml are read as context (to verify RUNTIME_ROLES stays untouched and that CI/compose wiring needs zero changes) but are not edited -- see the same SS5.4 for why both are safe with zero changes.",
+  "negative_scope": [
+    "NO edit to infra/postgres-init/01-job-definer.sql -- job_definer's exact behavior, attributes, and grant-target resolution are untouched",
+    "NO edit to packages/db/src/migrate.ts's RUNTIME_ROLES array or ensureRoleExists -- chat_definer must never be added there (that idiom hard-codes LOGIN NOBYPASSRLS, the opposite of a definer role)",
+    "NO GRANT of chat_definer (or membership in it) to app, app_worker, or readonly -- enforced as a fail-closed runtime check inside 02-chat-definer.sql itself, not by a static grant list",
+    "NO chat_* table, function, RLS policy, or schema object of any kind -- that is dd38-dd86-chat-schema-core's (slice 3) deliverable",
+    "NO dm_safety_enabled(), chat_pair_blocked(), assert_dm_allowed(), or any other safety table/function -- that is chat-dm-safety-authority-core's (slice 2) deliverable",
+    "NO queue/pg-boss provisioning of any kind",
+    "NO GRANT USAGE or GRANT CREATE ON SCHEMA public TO chat_definer -- deliberately deferred to dd38-dd86-chat-schema-core's own root migration, which creates and owns the SECURITY DEFINER functions that actually need it",
+    "NO new file under packages/db/migrations/ -- chat_definer is provisioned via infra/postgres-init/, entirely outside the migration runner, exactly like job_definer",
+    "NO edit to packages/db/src/test-harness.ts -- see _scope_note",
+    "NO edit to .github/workflows/ci.yml or infra/docker-compose.yml -- both already work with zero changes under this contract's grant-target design (docs/autopilot-chat-definer-role-provisioning.md SS5.4); if a future reviewer overturns that design decision, both become in-scope for a follow-up, not this slice",
+    "NO edit to docs/autopilot-backlog.md -- separate chore commit, out of this slice's scope"
+  ],
+  "context_sources": [
+    "docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md",
+    "infra/postgres-init/01-job-definer.sql",
+    "packages/db/src/migrate.ts",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/src/test-harness.ts",
+    ".github/workflows/ci.yml",
+    "infra/docker-compose.yml",
+    "docs/autopilot-invariant-catalog.md",
+    "docs/autopilot-dd38-dd86-chat-schema-core.md",
+    "docs/autopilot-chat-definer-role-provisioning.md"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "none",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [
+      "grep -q 'CREATE ROLE chat_definer' infra/postgres-init/02-chat-definer.sql",
+      "grep -qE 'NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION' infra/postgres-init/02-chat-definer.sql",
+      "grep -q 'chat_definer_bootstrap.migration_role' infra/postgres-init/02-chat-definer.sql",
+      "! grep -qE 'GRANT (USAGE|CREATE) ON SCHEMA public TO chat_definer' infra/postgres-init/02-chat-definer.sql",
+      "! grep -q 'job_definer' infra/postgres-init/02-chat-definer.sql",
+      "grep -q '02-chat-definer.sql' package.json",
+      "grep -q '01-job-definer.sql' package.json",
+      "! grep -q 'chat_definer' packages/db/src/migrate.ts",
+      "grep -q 'bootstrapChatDefiner' packages/db/src/migrate.test.ts",
+      "grep -q 'CHAT_DEFINER_LOCK_KEY' packages/db/src/migrate.test.ts",
+      "grep -q 'MIGRATION_COUNT = 28' packages/db/src/migrate.test.ts",
+      "! grep -qE 'bootstrapChatDefiner|CHAT_DEFINER' packages/db/src/test-harness.ts",
+      "! git diff --name-only origin/main...HEAD -- packages/db/migrations/ | grep -q .",
+      "! git diff --name-only origin/main...HEAD -- .github/workflows/ci.yml infra/docker-compose.yml | grep -q ."
+    ],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm review:check:changed",
+      "pnpm build",
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_verification_note": "Commands assert PROPERTIES the design contract requires (exact attribute string, exact GUC name, absence of the deferred schema grant, absence of any job_definer/RUNTIME_ROLES/CI/compose edits), not pinned literals like line counts. They will all fail today (pre-implementation, authoring-only), which is expected and correct. The two `! git diff` commands assert the negative-scope claim that this slice touches zero migrations and zero CI/compose files -- run them against the slice's own worktree diff at register/ready time, not against this authoring session (which has no branch yet).",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 2
+  },
+  "security_review": {
+    "required": true,
+    "reason": "Creates a cluster-global BYPASSRLS-capable role that a future migration (dd38-dd86-chat-schema-core) will transfer SECURITY DEFINER function ownership to -- the fail-closed grant-target validation (attribute drift, runtime-role refusal, non-existent-role refusal, transitive-membership re-check after grant) IS the entire privilege boundary this slice exists to establish. Security round must specifically verify: the single-transaction atomicity claim (no partial grant survives any failure), that the grant-target fallback to CURRENT_USER cannot be reached by any runtime role in practice, and that the deliberate omission of the schema-level USAGE/CREATE grant (deferred to the root migration) does not leave a gap the root migration fails to close.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 90,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE",
+    "the live default branch has advanced such that infra/postgres-init/ no longer contains exactly 01-job-definer.sql, or packages/db/src/migrate.test.ts's MIGRATION_COUNT is no longer 28, when the worktree opens -- re-verify live-repo state (docs/autopilot-chat-definer-role-provisioning.md SS3) before proceeding rather than assuming this contract's snapshot still holds",
+    "the chosen advisory lock key (0x63686164, \"chad\") is found to collide with a key introduced by another slice between authoring and implementation -- grep packages/ for pg_advisory_lock/_LOCK_KEY again before using it, and pick a new distinct value if it collides",
+    "implementation determines Reading A (docs/autopilot-chat-definer-role-provisioning.md SS5.4) was actually intended instead of Reading B -- HALT and report rather than silently reworking CI/docker-compose wiring beyond this slice's negative scope",
+    "any acceptance-matrix row in the contract SS8 turns out to need a file outside this slice's scope -- HALT and report, that means this slice's premise needs re-deriving, not a scope decision made mid-implementation"
+  ],
+  "readiness_evidence_path": ".autopilot/state/chat-definer-role-provisioning/readiness.json"
+}
