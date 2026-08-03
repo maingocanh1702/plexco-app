@@ -253,4 +253,5 @@ those independently — this document makes a claim about `overrides` specifical
 - If this repo's overrides are ever consolidated, the current/pre-existing duplicate `postcss` rules
   (predating `deps-security-bump`; `DSB-4`'s own attempted pin was reverted — see "Why this matters"
   above) and `pnpm-workspace.yaml`'s `esbuild` entry are exactly the entries that need to move —
-  tracked in the `pnpm-workspace-esbuild-override-inert` backlog entry, not resolved here.
+  tracked in the `deps-security-bump--postcss` and `pnpm-workspace-esbuild-override-inert` backlog
+  entries respectively, not resolved here.
