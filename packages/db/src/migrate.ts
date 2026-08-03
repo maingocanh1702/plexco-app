@@ -56,6 +56,27 @@ export interface MigrateResult {
   skipped: string[];
 }
 
+/** Caller-supplied SAFE summary for CLI logging, keyed by Error identity — separate from
+ *  `.message`, which stays exactly what every throw site already sets (existing tests assert on
+ *  its content, e.g. /job_definer/i). Only the throw site knows whether its own text is safe: a
+ *  static, repo-authored string (or one interpolating only a controlled identifier like a
+ *  migration filename) is always safe; the raw text of a caught Postgres error is not, since some
+ *  SQLSTATE classes put the offending row's value directly in the primary message. Held in a
+ *  module-private WeakMap rather than a property on the Error itself: a property is reachable by
+ *  any code holding the Error, because Object.getOwnPropertySymbols() enumerates own symbol keys
+ *  regardless of whether the Symbol was ever exported. A WeakMap has no such surface — nothing
+ *  enumerates its entries, and code without a reference to safeLogSummaries itself cannot read or
+ *  write one. */
+const safeLogSummaries = new WeakMap<Error, string>();
+
+/** Throws an Error whose `.message`/`.cause` are exactly what the caller passes (unchanged
+ *  contract), plus a `safeLogSummary` the CLI's log formatter can trust without re-deriving it. */
+function throwMigrateError(message: string, safeLogSummary: string, options?: ErrorOptions): never {
+  const error = new Error(message, options);
+  safeLogSummaries.set(error, safeLogSummary);
+  throw error;
+}
+
 /**
  * Race-safe CREATE ROLE. Postgres has no `CREATE ROLE IF NOT EXISTS`, and roles
  * are CLUSTER-global while databases are not: two migrate() runs bootstrapping
@@ -80,9 +101,13 @@ export interface MigrateResult {
  */
 export async function ensureRoleExists(client: pg.Client, role: string): Promise<void> {
   if (!SAFE_ROLE_IDENT.test(role)) {
-    throw new Error(
-      `migrate: refusing to CREATE ROLE with unsafe identifier ${JSON.stringify(role)}`,
-    );
+    // role is a caller-supplied parameter of an EXPORTED function -- today's only call sites pass
+    // one of the three static RUNTIME_ROLES strings, but the function's own contract does not
+    // guarantee that, so it cannot be treated as a controlled identifier the way a migration
+    // filename is. .message keeps the rejected value for in-process/test visibility; safeLogSummary
+    // does not, matching every other throw site's rule (interpolate only what is provably safe).
+    const message = `migrate: refusing to CREATE ROLE with unsafe identifier ${JSON.stringify(role)}`;
+    throwMigrateError(message, "migrate: refusing to CREATE ROLE with an unsafe identifier");
   }
   await client.query(
     `DO $$ BEGIN
@@ -93,30 +118,75 @@ export async function ensureRoleExists(client: pg.Client, role: string): Promise
 
 export async function migrate(migrationUrl: string): Promise<MigrateResult> {
   if (!migrationUrl) {
-    throw new Error("migrate: DATABASE_URL_MIGRATION is required (DDL-owner role)");
+    const message = "migrate: DATABASE_URL_MIGRATION is required (DDL-owner role)";
+    throwMigrateError(message, message);
   }
   const client = new pg.Client({ connectionString: migrationUrl });
-  await client.connect();
+  try {
+    await client.connect();
+  } catch (error) {
+    // Never interpolate migrationUrl or any part of it -- unlike the filename question in Exception 3,
+    // there is no defensible case to interpolate here: a connection string can carry credentials.
+    throwMigrateError(
+      `migrate: failed to connect to database: ${String(error)}`,
+      "migrate: failed to connect to database",
+      { cause: error },
+    );
+  }
   const applied: string[] = [];
   const skipped: string[] = [];
   try {
     // DATABASE-scoped: serialises concurrent deploys against THIS database only.
     // It does NOT serialise cluster-global objects (roles) across databases —
     // those are made race-safe by ensureRoleExists below, not by this lock.
-    await client.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY]);
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        name text PRIMARY KEY,
-        sha256 text NOT NULL,
-        applied_at timestamptz NOT NULL DEFAULT now()
-      )`);
+    try {
+      await client.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY]);
+    } catch (error) {
+      throwMigrateError(
+        `migrate: failed to acquire the advisory lock: ${String(error)}`,
+        "migrate: failed to acquire the advisory lock",
+        { cause: error },
+      );
+    }
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          name text PRIMARY KEY,
+          sha256 text NOT NULL,
+          applied_at timestamptz NOT NULL DEFAULT now()
+        )`);
+    } catch (error) {
+      throwMigrateError(
+        `migrate: failed to create the schema_migrations table: ${String(error)}`,
+        "migrate: failed to create the schema_migrations table",
+        { cause: error },
+      );
+    }
 
-    const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-    const seen = new Map<string, string>(
-      (await client.query("SELECT name, sha256 FROM schema_migrations")).rows.map(
-        (r: { name: string; sha256: string }) => [r.name, r.sha256],
-      ),
-    );
+    let files: string[];
+    try {
+      files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+    } catch (error) {
+      // Node fs errors (ENOENT etc.) never carry severity/routine/file/line, so all recovered
+      // diagnostic value comes from safeLogSummary alone -- kept fully static and distinct from
+      // readFile's below so an operator can tell which site failed. See negative_scope for the rule.
+      const message = `migrate: failed to read the migrations directory: ${String(error)}`;
+      throwMigrateError(message, "migrate: failed to read the migrations directory", {
+        cause: error,
+      });
+    }
+    let schemaMigrationsRows: { name: string; sha256: string }[];
+    try {
+      schemaMigrationsRows = (await client.query("SELECT name, sha256 FROM schema_migrations"))
+        .rows;
+    } catch (error) {
+      throwMigrateError(
+        `migrate: failed to read the schema_migrations table: ${String(error)}`,
+        "migrate: failed to read the schema_migrations table",
+        { cause: error },
+      );
+    }
+    const seen = new Map<string, string>(schemaMigrationsRows.map((r) => [r.name, r.sha256]));
 
     // Ensure the cluster-global runtime roles BEFORE 0000 runs. Gated on 0000
     // not yet applied so an already-migrated database keeps exactly today's
@@ -130,13 +200,21 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
     // autocommit (outside the per-file BEGIN/COMMIT below) so the roles are
     // durable even if a later migration file rolls back.
     if (!seen.has(ROLES_MIGRATION)) {
-      const present = new Set<string>(
-        (
+      let pgRolesRows: { rolname: string }[];
+      try {
+        pgRolesRows = (
           await client.query("SELECT rolname FROM pg_roles WHERE rolname = ANY($1::text[])", [
             [...RUNTIME_ROLES],
           ])
-        ).rows.map((r: { rolname: string }) => r.rolname),
-      );
+        ).rows;
+      } catch (error) {
+        throwMigrateError(
+          `migrate: failed to check for pre-provisioned runtime roles: ${String(error)}`,
+          "migrate: failed to check for pre-provisioned runtime roles",
+          { cause: error },
+        );
+      }
+      const present = new Set<string>(pgRolesRows.map((r) => r.rolname));
       for (const role of RUNTIME_ROLES) {
         if (!present.has(role)) {
           await ensureRoleExists(client, role);
@@ -145,15 +223,23 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
     }
 
     for (const file of files) {
-      const sql = await readFile(path.join(MIGRATIONS_DIR, file), "utf8");
+      let sql: string;
+      try {
+        sql = await readFile(path.join(MIGRATIONS_DIR, file), "utf8");
+      } catch (error) {
+        // Distinct from readdir's summary above, deliberately -- same reasoning, same constraint
+        // (fully static, no filename interpolation even though `file` is repo-controlled).
+        const message = `migrate: failed to read a migration file: ${String(error)}`;
+        throwMigrateError(message, "migrate: failed to read a migration file", { cause: error });
+      }
       const sha = createHash("sha256").update(sql).digest("hex");
       const prior = seen.get(file);
       if (prior !== undefined) {
         if (prior !== sha) {
-          throw new Error(
+          const message =
             `migrate: ${file} changed after being applied (sha mismatch) — ` +
-              `applied migrations are immutable; add a NEW migration instead`,
-          );
+            `applied migrations are immutable; add a NEW migration instead`;
+          throwMigrateError(message, message);
         }
         skipped.push(file);
         continue;
@@ -169,21 +255,55 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
         applied.push(file);
       } catch (error) {
         await client.query("ROLLBACK");
-        throw new Error(`migrate: ${file} failed and was rolled back: ${String(error)}`);
+        // safeLogSummary keeps the migration filename — a controlled, repo-known identifier,
+        // never row data — but excludes String(error): the actual pg error's text, which for some
+        // SQLSTATE classes (e.g. 22P02) embeds the offending row's value directly.
+        throwMigrateError(
+          `migrate: ${file} failed and was rolled back: ${String(error)}`,
+          `migrate: ${file} failed and was rolled back`,
+          { cause: error },
+        );
       }
     }
 
     // Fail closed: a schema where the RLS block silently rolled back must
     // never pass as migrated.
-    const policies = await client.query("SELECT count(*)::int AS n FROM pg_policies");
+    let policies: pg.QueryResult;
+    try {
+      policies = await client.query("SELECT count(*)::int AS n FROM pg_policies");
+    } catch (error) {
+      throwMigrateError(
+        `migrate: failed to count RLS policies after apply: ${String(error)}`,
+        "migrate: failed to count RLS policies after apply",
+        { cause: error },
+      );
+    }
     if ((policies.rows[0] as { n: number }).n === 0) {
-      throw new Error("migrate: 0 RLS policies after apply — refusing to treat DB as migrated");
+      const message = "migrate: 0 RLS policies after apply — refusing to treat DB as migrated";
+      throwMigrateError(message, message);
     }
     return { applied, skipped };
   } finally {
     await client.query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY]).catch(() => {});
     await client.end();
   }
+}
+
+/** Builds a log line for a migration failure from ONLY the throw site's own pre-vetted
+ *  safeLogSummary (see throwMigrateError) — falls back to a generic string if absent. Never
+ *  Postgres's raw message/detail text, and never any field read directly off the error or its
+ *  cause, structured or otherwise, regardless of the object's type or shape. */
+export function formatMigrationFailureForLog(error: unknown): string {
+  return error instanceof Error && safeLogSummaries.has(error)
+    ? safeLogSummaries.get(error)!
+    : "migrate: a migration step failed";
+}
+
+/** The CLI's actual failure sink, exported so tests can spy on the real console.error call
+ *  (what it prints) rather than only on formatMigrationFailureForLog's return value (what it
+ *  computes) — those are different questions, and the PII risk lives in the former. */
+export function logMigrationFailure(error: unknown): void {
+  console.error("[migrate] failed:", formatMigrationFailureForLog(error));
 }
 
 const invokedDirectly =
@@ -195,7 +315,7 @@ if (invokedDirectly) {
       process.exit(0);
     })
     .catch((error) => {
-      console.error("[migrate] failed", error);
+      logMigrationFailure(error);
       process.exit(1);
     });
 }
