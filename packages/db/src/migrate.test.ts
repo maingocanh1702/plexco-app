@@ -1298,3 +1298,260 @@ describe("job_definer bootstrap script itself fails closed on runtime-role targe
     }
   }, 30_000);
 });
+
+const CHAT_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "..",
+  "infra",
+  "postgres-init",
+  "02-chat-definer.sql",
+);
+
+async function bootstrapChatDefiner(client: pg.Client): Promise<void> {
+  const sql = await readFile(CHAT_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
+  try {
+    await client.query(sql);
+  } catch (error) {
+    // The file wraps itself in an explicit BEGIN/COMMIT (infra/postgres-init/02-chat-definer.sql),
+    // so a rejection leaves that transaction open and aborted on `client` — mirrors
+    // bootstrapJobDefiner's own catch-and-ROLLBACK idiom (test-harness.ts).
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+const CHAT_DEFINER_LOCK_KEY = 0x63686164; // "chad" — distinct from "jobd" (0x6a6f6264) and "plxc" (0x706c7863)
+
+async function withChatDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
+  const lockClient = new pg.Client({ connectionString: base });
+  await lockClient.connect();
+  await lockClient.query("SELECT pg_advisory_lock($1)", [CHAT_DEFINER_LOCK_KEY]);
+  try {
+    return await fn();
+  } finally {
+    await lockClient
+      .query("SELECT pg_advisory_unlock($1)", [CHAT_DEFINER_LOCK_KEY])
+      .catch(() => {});
+    await lockClient.end();
+  }
+}
+
+async function hideRealChatDefiner(superuser: pg.Client, fn: () => Promise<void>): Promise<void> {
+  const existing = await superuser.query(`SELECT 1 FROM pg_roles WHERE rolname = 'chat_definer'`);
+  const hadRealRole = existing.rows.length > 0;
+  if (hadRealRole) {
+    await superuser.query(`ALTER ROLE chat_definer RENAME TO chat_definer_hidden_for_test`);
+  }
+  try {
+    await fn();
+  } finally {
+    if (hadRealRole) {
+      await superuser.query(`ALTER ROLE chat_definer_hidden_for_test RENAME TO chat_definer`);
+    }
+  }
+}
+
+async function chatDefinerMembers(client: pg.Client): Promise<string[]> {
+  const result = await client.query(
+    `SELECT r.rolname FROM pg_auth_members m
+       JOIN pg_roles r ON r.oid = m.member
+       JOIN pg_roles g ON g.oid = m.roleid
+      WHERE g.rolname = 'chat_definer'`,
+  );
+  return (result.rows as { rolname: string }[]).map((r) => r.rolname).sort();
+}
+
+describe("chat_definer bootstrap script bootstraps idempotently and fails closed on invalid grant targets", () => {
+  it("first bootstrap with no migration role set grants membership to CURRENT_USER", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await bootstrapChatDefiner(admin);
+        const whoami = await admin.query(`SELECT current_user AS u`);
+        expect(await chatDefinerMembers(admin)).toEqual([(whoami.rows[0] as { u: string }).u]);
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
+  it("first bootstrap with an explicit valid migration role grants membership to that role, not CURRENT_USER", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        const target = "plexco_chat_definer_test_target_a";
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${target}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        try {
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${target}'`);
+          try {
+            await bootstrapChatDefiner(admin);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          expect(await chatDefinerMembers(admin)).toEqual([target]);
+          await admin.query(`DROP ROLE chat_definer`);
+        } finally {
+          await admin.query(`DROP ROLE ${target}`);
+        }
+      }),
+    );
+  }, 30_000);
+
+  it("exact replay is a no-op", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await bootstrapChatDefiner(admin);
+        const before = await admin.query(
+          `SELECT rolsuper, rolcanlogin, rolbypassrls, rolcreatedb, rolcreaterole, rolinherit, rolreplication
+             FROM pg_roles WHERE rolname = 'chat_definer'`,
+        );
+        const membersBefore = await chatDefinerMembers(admin);
+        await bootstrapChatDefiner(admin);
+        const after = await admin.query(
+          `SELECT rolsuper, rolcanlogin, rolbypassrls, rolcreatedb, rolcreaterole, rolinherit, rolreplication
+             FROM pg_roles WHERE rolname = 'chat_definer'`,
+        );
+        expect(after.rows).toEqual(before.rows);
+        expect(await chatDefinerMembers(admin)).toEqual(membersBefore);
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
+  it("refuses to bootstrap when chat_definer already exists with a wrong attribute", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await admin.query(
+          `CREATE ROLE chat_definer LOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`,
+        );
+        try {
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/unexpected attributes/i);
+          expect(await chatDefinerMembers(admin)).toEqual([]);
+          const attrs = await admin.query(
+            `SELECT rolcanlogin FROM pg_roles WHERE rolname = 'chat_definer'`,
+          );
+          expect((attrs.rows[0] as { rolcanlogin: boolean }).rolcanlogin).toBe(true);
+        } finally {
+          await admin.query(`DROP ROLE chat_definer`);
+        }
+      }),
+    );
+  }, 30_000);
+
+  it("refuses to grant chat_definer to a runtime role passed as the migration_role target", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await bootstrapChatDefiner(admin);
+        await admin.query(`SET chat_definer_bootstrap.migration_role = 'readonly'`);
+        try {
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/runtime role/i);
+        } finally {
+          await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+        }
+        const granted = await admin.query(
+          `SELECT 1 FROM pg_auth_members am
+             JOIN pg_roles m ON m.oid = am.member
+             JOIN pg_roles r ON r.oid = am.roleid
+            WHERE r.rolname = 'chat_definer' AND m.rolname = 'readonly'`,
+        );
+        expect(granted.rows.length).toBe(0);
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
+  it("refuses to proceed at all when chat_definer is already granted to a runtime role beforehand", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await bootstrapChatDefiner(admin);
+        await admin.query(`GRANT chat_definer TO app_worker`);
+        try {
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/already granted/i);
+        } finally {
+          await admin.query(`REVOKE chat_definer FROM app_worker`);
+        }
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
+  it("refuses to bootstrap when the migration role does not exist", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await admin.query(
+          `SET chat_definer_bootstrap.migration_role = 'zz_chat_definer_never_created_role'`,
+        );
+        try {
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/does not exist/i);
+        } finally {
+          await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+        }
+        // The whole file is one transaction: the rejection at the grant-target check rolls back
+        // the earlier CREATE too, so no inert leftover role survives (contract SS8, Failure row).
+        const roleExists = await admin.query(
+          `SELECT 1 FROM pg_roles WHERE rolname = 'chat_definer'`,
+        );
+        expect(roleExists.rows.length).toBe(0);
+      }),
+    );
+  }, 30_000);
+
+  it("refuses to re-point when chat_definer is already granted to a different valid migration role", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        const roleA = "plexco_chat_definer_test_repoint_a";
+        const roleB = "plexco_chat_definer_test_repoint_b";
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${roleA}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${roleB}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        try {
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${roleA}'`);
+          try {
+            await bootstrapChatDefiner(admin);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${roleB}'`);
+          try {
+            await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/already granted to/i);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          expect(await chatDefinerMembers(admin)).toEqual([roleA]);
+          await admin.query(`DROP ROLE chat_definer`);
+        } finally {
+          await admin.query(`DROP ROLE ${roleA}`);
+          await admin.query(`DROP ROLE ${roleB}`);
+        }
+      }),
+    );
+  }, 30_000);
+
+  it("N concurrent bootstrap calls against a fresh cluster all succeed; role exists exactly once with exactly one membership grant", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        const N = 8;
+        const clients = await Promise.all(Array.from({ length: N }, () => connect(BASE!)));
+        try {
+          const results = await Promise.allSettled(clients.map((c) => bootstrapChatDefiner(c)));
+          const rejected = results.filter((r) => r.status === "rejected");
+          expect(
+            rejected,
+            `no concurrent bootstrap call should fail: ${rejected
+              .map((r) => String((r as PromiseRejectedResult).reason))
+              .join(" | ")}`,
+          ).toEqual([]);
+          expect(await roleCount(admin, "chat_definer")).toBe(1);
+          expect(await chatDefinerMembers(admin)).toHaveLength(1);
+        } finally {
+          await Promise.all(clients.map((c) => c.end()));
+        }
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 60_000);
+});
