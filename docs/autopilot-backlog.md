@@ -1351,3 +1351,18 @@ depends_on: []
 invariants: [retry-liveness]
 scope: []
 notes: **Mở bởi hai P1 của codex vòng 3 trên `job-schedule-outbox-dispatch` (2026-07-27), owner phân xử là ĐÚNG-nhưng-ngoài-scope-slice-đó.** Cả hai đều có căn cứ, không phải nhiễu. (1) `TDD.md:82` NFR-1c yêu cầu **sync-lag p95 ≤ 3s, p99 ≤ 10s** cho "canonical store + outbox + projection", và `feature_sync_engine.md:129` mang nó như acceptance checkbox. Cron của pg-boss có **sàn một phút**, nên p95 rơi vào khoảng 57s — không đạt được bằng cron, đây là số học chứ không phải tinh chỉnh. (2) `runDispatchCycle` mặc định `DEFAULT_BATCH_LIMIT = 25` và mỗi job schedule gọi nó **đúng một lần**, nên mọi tốc độ trên 25 event/phút tạo backlog tăng không giới hạn dù worker rảnh. **Vì sao không sửa ở slice 3a:** `DD-07` đã chốt `LISTEN/NOTIFY` làm cơ chế realtime, nên trigger sub-minute muốn là NOTIFY phát **từ transaction INSERT outbox event** — tức từ PRODUCER, mà producer là `DEFERRED_OUT_OF_SCOPE` (owner 26/07); slice 3a không có seam nào để gắn vào. Và batch size + drain policy thuộc consumer theo `docs/autopilot-db-job-claim-lease-core.md §4.3`, cùng lý do đã giữ retry/backoff ra khỏi `dispatcher.ts`. **Ràng buộc đã thành cấu trúc:** cờ `OUTBOX_DISPATCH_SCHEDULE_ENABLED` nay ghi điều kiện lật gồm CẢ HAI — off cho tới khi có projector thật VÀ cho tới khi có sub-minute trigger + drain. **depends_on cần điền tên slice producer khi slice đó được author** — NOTIFY phải phát ra từ đó. Giữ cron một phút làm recovery sweep là hợp lý, không phải bỏ.
+
+## task: launcher-register-path-authored-to-runtime
+title: ~40 launcher file ở 4 repo gọi `register` bằng authored path — sẽ HALT sau khi sync kit v28
+status: idea
+risk: P3
+change_class: tooling-migration
+depends_on: []
+invariants: [build-config]
+scope: [.claude/commands/]
+manifest: null
+merged_probe: null
+notes: **Không phải regression — là fail-open cũ bị đóng lại.** Kit v28 (`ed633a4` ở `Claude template`) làm `register` HALT `CONTRACT_INVALID` khi nhận một manifest không khoá được. Trước đó nó **im lặng bỏ qua cả validator lẫn hash-lock** rồi vẫn in `registered:`, nên mọi launcher gọi `--manifest docs/autopilot-manifests/<slug>.json` đang đăng ký mà **không có khoá nào**. Chi tiết: `kit-test-suite-spec.md` Defect 7.
+  **Vì sao P3 và vì sao không sửa hàng loạt ngay:** (1) HALT chỉ nổ khi một repo sync lên v28 — Plexco hiện ở v27, ba repo anh em chưa rõ, nên có khoảng đệm; (2) thông điệp HALT tự dạy cách sửa, nó nêu đúng runtime path và trường thiếu, nên sửa là một dòng ngay tại chỗ hỏng; (3) phần lớn launcher thuộc slice **đã merge** — sửa chúng là viết lại lịch sử không ai đọc lại. Đường đúng là để công cụ chặn, rồi dọn khi chạm.
+  **Điều cần theo dõi:** repo nào sync v28 mà launcher chưa sửa thì slice tiếp theo ở đó HALT ngay ở bước register. Đó là kết quả **đúng** — nó vốn đang chạy không khoá — nhưng phải là bất ngờ có chuẩn bị, không phải bất ngờ thật. `Trum Bia Hoi` dùng default branch `master` và có reservation `ready`; kiểm trước khi sync repo đó.
+  **Gốc:** CLAUDE.md của Plexco từng ghi authored path và mô tả là "fail-closed" (sửa 2026-08-01, `340ddc8`); các launcher chép theo dòng đó. Canonical `parallel-scope-gate.md` của kit ghi đúng runtime path từ đầu.
