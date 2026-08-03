@@ -1,0 +1,105 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — deliberately carries NO manifest_schema_version; adding it makes register HALT CONTRACT_INVALID. The runtime manifest is generated at register time into .autopilot/state/<feature>/manifest.json from docs/autopilot-manifests/_TEMPLATE.json.",
+  "task_id": "plexco:pnpm-override-precedence-two-locations",
+  "feature": "pnpm-override-precedence-two-locations",
+  "branch": "feat/pnpm-override-precedence-two-locations",
+  "base_ref": "origin/main",
+  "base_sha": "b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43",
+  "risk": "P2",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": [],
+  "scope": [
+    "docs/autopilot-manifests/pnpm-override-precedence-two-locations.json",
+    "docs/autopilot-pnpm-override-precedence-two-locations.md",
+    ".claude/commands/ap-45-pnpm-override-precedence-two-locations.md",
+    "docs/autopilot-backlog.md",
+    "docs/standards/dependency-override-precedence.md"
+  ],
+  "negative_scope": [
+    "NO change to package.json or pnpm-workspace.yaml — the measurement work is complete; the standards doc's core result carries forward from the prior halted registration unchanged, refined only by a task-owner citation correction (round 1) and a conditional-selector correctness fix to the esbuild remediation guidance (round 2); the live esbuild repair and any real override deletion are owner-deferred to their own future slice(s), not this registration",
+    "NO edit to pnpm-lock.yaml",
+    "NO re-litigating the standards doc's core measurement or evidence (whole-map replacement, the measured Winner, Trials 1-4) — the corrections applied across this registration's rounds are precision fixes to guidance about FUTURE remediation of the two follow-up tasks, or to this task's own contract-artifact accuracy, not changes to what was measured",
+    "NO cross-referencing prose about this task inside the deps-security-bump--postcss or pnpm-workspace-esbuild-override-inert task blocks — those get plain, minimal pointers to the standards doc only; elaborate round-by-round cross-references from this task into those blocks is the exact pattern that caused REGION_THRASH in the prior (closed) registration"
+  ],
+  "context_sources": [
+    "docs/autopilot-backlog.md task block pnpm-override-precedence-two-locations (this task's own prior history, rounds 1-8 plus this successor's own rounds)",
+    "docs/standards/dependency-override-precedence.md (the measured result, carried forward with citation and conditional-selector corrections)",
+    "archive/pnpm-override-precedence-two-locations-successor-round6 (this successor registration's prior 17-commit tip, preserved for reference)",
+    "pnpm-lock.yaml (verified directly: tsx@4.23.0 genuinely requires esbuild@0.28.1, motivating the conditional-selector fix)",
+    "scripts/check-review-readiness.mjs's own validateReviewDocument() function, invoked directly to confirm the review-readiness directive does not machine-classify this filename",
+    "docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json (precedent: another docs-only P2 task in this backlog whose canonical verification includes the full DATABASE_URL_TEST pnpm test suite)",
+    ".autopilot/dispositions/pnpm-override-precedence-two-locations.json (this closure's disposition record)",
+    "owner-ratified disposition, 2026-08-03: (1) delete redundant pnpm-workspace.yaml override entries when the owning task executes, never a commented mirror; (2) esbuild live-inert repair is a separate future slice; (3) reopen this feature with follow-up-task prose trimmed to plain pointers, standards doc unchanged in substance"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "restricted",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [
+      "test -s docs/standards/dependency-override-precedence.md",
+      "grep -qE -e '^- Winner: (package\\.json \\(pnpm\\.overrides\\)|pnpm-workspace\\.yaml \\(overrides\\)|inconsistent / pnpm errors on conflicting overrides)$' docs/standards/dependency-override-precedence.md",
+      "grep -qF -e '- pnpm version measured: 10.30.2' docs/standards/dependency-override-precedence.md",
+      "grep -qF -e '- Measured:' docs/standards/dependency-override-precedence.md",
+      "grep -qF -e 'whole-map replacement' docs/standards/dependency-override-precedence.md",
+      "grep -qF -e 'non-empty' docs/standards/dependency-override-precedence.md",
+      "grep -qF -e 'esbuild@0.18.20' docs/standards/dependency-override-precedence.md",
+      "grep -qF -e 'tracked in the `deps-security-bump--postcss` and `pnpm-workspace-esbuild-override-inert` backlog' docs/standards/dependency-override-precedence.md",
+      "grep -qF -e 'not a bare `\"esbuild\": \"0.25.12\"`' docs/standards/dependency-override-precedence.md",
+      "awk '/^## task: deps-security-bump--postcss$/{f=1} f && /^## task:/ && !/deps-security-bump--postcss/{exit} f' docs/autopilot-backlog.md | grep -qF -e 'delete-not-comment'",
+      "awk '/^## task: pnpm-workspace-esbuild-override-inert$/{f=1} f && /^## task:/ && !/pnpm-workspace-esbuild-override-inert/{exit} f' docs/autopilot-backlog.md | grep -qF -e 'delete-not-comment'",
+      "awk '/^## task: pnpm-workspace-esbuild-override-inert$/{f=1} f && /^## task:/ && !/pnpm-workspace-esbuild-override-inert/{exit} f' docs/autopilot-backlog.md | grep -qF -e 'KHÔNG phải bare'",
+      "grep -qF -e 'review-readiness: historical' docs/autopilot-pnpm-override-precedence-two-locations.md",
+      "grep -qF -e '\"directive\":null' docs/autopilot-pnpm-override-precedence-two-locations.md",
+      "git diff --quiet b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- package.json",
+      "git diff --quiet b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- pnpm-workspace.yaml",
+      "git diff --quiet b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- pnpm-lock.yaml",
+      "grep -qF -e 'manifest: docs/autopilot-manifests/pnpm-override-precedence-two-locations.json' docs/autopilot-backlog.md",
+      "git diff --check b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- docs/standards/dependency-override-precedence.md docs/autopilot-pnpm-override-precedence-two-locations.md docs/autopilot-manifests/pnpm-override-precedence-two-locations.json .claude/commands/ap-45-pnpm-override-precedence-two-locations.md docs/autopilot-backlog.md"
+    ],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm review:check:changed",
+      "pnpm build",
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 1
+  },
+  "security_review": {
+    "required": false,
+    "reason": "not_applicable — docs-only change (docs/standards/, docs/autopilot-manifests/, docs/autopilot-backlog.md, .claude/commands/); no packages/ or apps/ surface touched, no code path changed. Retirement condition, not narrative: this becomes required if the diff ever touches packages/ or apps/.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 60,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE"
+  ],
+  "_note": "Sixth re-registration overall, fifth on the reopened successor. Round 6 found canonical verification omitted the repo's own full test suite, unlike a real precedent (docs-billing-authz-signature-reconcile, also docs-only) which includes it. Ran DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test directly before adding it, not assumed safe: exit 0, 621 tests across packages/core, packages/db, apps/web, apps/bot, all passing. The original task briefing's canonical list (5 commands, no test) predates this registration's many review rounds and did not match this repo's own established convention for docs-only P2 tasks; matched it here rather than defend the narrower original list. Closed via ap-finish.sh --authorized-close, branch reset to base_sha, prior tip preserved on archive/pnpm-override-precedence-two-locations-successor-round6 and fast-forward-merged back in after this manifest's register call. Full history: docs/autopilot-pnpm-override-precedence-two-locations.md and docs/autopilot-backlog.md's own task block."
+}
