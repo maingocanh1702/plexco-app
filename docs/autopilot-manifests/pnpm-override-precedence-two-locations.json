@@ -19,18 +19,19 @@
     "docs/standards/dependency-override-precedence.md"
   ],
   "negative_scope": [
-    "NO change to package.json or pnpm-workspace.yaml — the discriminating experiment edits both transiently in the worktree, then reverts via git checkout before any commit; verification.focused asserts identity to base_sha for both",
+    "NO change to package.json or pnpm-workspace.yaml — the discriminating experiments edit both transiently in the worktree, then revert via git checkout before any commit; verification.focused asserts identity to base_sha for both",
     "NO edit to pnpm-lock.yaml — same transient-then-reverted rule; verification.focused asserts identity to base_sha",
     "NO change to any real override declaration's effective behavior (postcss, sharp, brace-expansion@1, esbuild pinned below 0.25.0) — this slice measures and documents, it does not resolve or rewrite the live overrides",
-    "NO resolving a live override conflict — none exists today (postcss is the only key present in both locations and both values agree: package.json ^8.5.10 accepts pnpm-workspace.yaml's rewrite target 8.5.16); a future genuine conflict is an owner decision, out of scope here"
+    "NO fixing the live esbuild-pinned-below-0.25.0 override-inert gap this slice discovered — that is a real change to package.json/pnpm-workspace.yaml/pnpm-lock.yaml, tracked as its own backlog task pnpm-workspace-esbuild-override-inert, explicitly out of this slice's scope"
   ],
   "context_sources": [
     "docs/autopilot-backlog.md task block pnpm-override-precedence-two-locations (measurement recipe, opened from deps-security-bump's AP-39 design probe)",
-    "docs/autopilot-backlog.md task block deps-security-bump (owner_decision, design_probe_required trap, close_by: hand / weak merged_probe rationale)",
+    "docs/autopilot-backlog.md task block deps-security-bump (owner_decision, design_probe_required trap, close_by: hand / weak merged_probe rationale, and verified-via-git-log provenance of the current postcss override values)",
     "docs/autopilot-backlog.md task block docs-billing-authz-signature-reconcile (risk P3 to P2 correction precedent, same change_class)",
     "package.json, pnpm-workspace.yaml — current override declarations (read-only reference for the experiment baseline)",
     "docs/autopilot-invariant-catalog.md — confirms invariants: [] is valid (no domain token fits a measurement-only docs slice; build-config exists but is reserved for slices that land a real build-config change)",
-    "docs/standards/ directory listing — confirms no existing file covers package-manager/dependency-override conventions (checked deployment-infra.md, environments-setup.md headers, zero pnpm/override mentions in either)"
+    "docs/standards/ directory listing — confirms no existing file covers package-manager/dependency-override conventions (checked deployment-infra.md, environments-setup.md headers, zero pnpm/override mentions in either)",
+    "/opt/homebrew/lib/node_modules/pnpm/dist/pnpm.cjs — this machine's installed pnpm 10.30.2 CLI bundle, source-cited for the whole-map-replacement mechanism and its non-empty-map condition"
   ],
   "applicable_skills": [],
   "model_policy": {
@@ -50,10 +51,14 @@
       "grep -qE -e '^- Winner: (package\\.json \\(pnpm\\.overrides\\)|pnpm-workspace\\.yaml \\(overrides\\)|inconsistent / pnpm errors on conflicting overrides)$' docs/standards/dependency-override-precedence.md",
       "grep -qF -e '- pnpm version measured: 10.30.2' docs/standards/dependency-override-precedence.md",
       "grep -qF -e '- Measured:' docs/standards/dependency-override-precedence.md",
+      "grep -qF -e 'whole-map replacement' docs/standards/dependency-override-precedence.md",
+      "grep -qF -e 'non-empty' docs/standards/dependency-override-precedence.md",
+      "grep -qF -e 'esbuild@0.18.20' docs/standards/dependency-override-precedence.md",
       "git diff --quiet b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- package.json",
       "git diff --quiet b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- pnpm-workspace.yaml",
       "git diff --quiet b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- pnpm-lock.yaml",
-      "grep -qF -e 'manifest: docs/autopilot-manifests/pnpm-override-precedence-two-locations.json' docs/autopilot-backlog.md"
+      "grep -qF -e 'manifest: docs/autopilot-manifests/pnpm-override-precedence-two-locations.json' docs/autopilot-backlog.md",
+      "git diff --check b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- docs/standards/dependency-override-precedence.md docs/autopilot-pnpm-override-precedence-two-locations.md docs/autopilot-manifests/pnpm-override-precedence-two-locations.json .claude/commands/ap-45-pnpm-override-precedence-two-locations.md docs/autopilot-backlog.md"
     ],
     "canonical": [
       "pnpm typecheck",
@@ -75,7 +80,7 @@
     "tool": "scripts/codex-review-pin.sh"
   },
   "budgets": {
-    "wall_time_minutes": 60,
+    "wall_time_minutes": 90,
     "fix_rounds_max": 5,
     "token_budget": null,
     "cost_budget": null
@@ -87,5 +92,5 @@
     "MATERIAL_CONTEXT_OR_DECISION_MISSING",
     "REQUIRED_TOOL_UNAVAILABLE"
   ],
-  "_note": "Full reasoning lives in docs/autopilot-backlog.md task block pnpm-override-precedence-two-locations (measurement recipe, dependency trap) and deps-security-bump (DSB-4, owner_decision). Risk corrected P3 -> P2 at authoring time (autopilot-review-readiness.mjs hard-rejects register for risk outside P1/P2 — same correction docs-billing-authz-signature-reconcile made, 2026-08-03). depends_on is [] rather than the backlog's listed [deps-security-bump]: that task IS merged (61a2575) but its own merged_probe is backlog-documented as a non-slice-unique weak probe — no dep_checks proof is constructible; the dependency is historical and already on this slice's base."
+  "_note": "Second re-registration under the same feature id. First re-registration (see docs/autopilot-pnpm-override-precedence-two-locations.md 'Registration mechanics note') fixed a CONTRACT_INVALID placeholder-guard hit and a leading-hyphen grep-argument bug, before any review round ran. This second re-registration happened AFTER two completed review rounds with real, addressed findings (whole-map-replacement model correction, provenance correction, empty-map precision) — closed via scripts/ap-finish.sh --authorized-close, branch reset to base_sha with prior content preserved on archive/pnpm-override-precedence-two-locations-round3-content and fast-forward-merged back in after this manifest's register call. verification.focused was strengthened here specifically because round 3's review found the closed three-value Winner enum alone could not reject a reverted-to-per-key-model regression; the three new grep checks assert the corrected model's key terms and its concrete Trial 4 evidence are present in the standards doc, not just the enum value. Risk P2 (corrected from backlog's P3, same reasoning as docs-billing-authz-signature-reconcile). depends_on is [] rather than the backlog's listed [deps-security-bump]: that task IS merged (61a2575) but its own merged_probe is backlog-documented as a non-slice-unique weak probe — no dep_checks proof is constructible; the dependency is historical and already on this slice's base."
 }

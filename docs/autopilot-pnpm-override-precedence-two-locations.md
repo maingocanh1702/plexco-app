@@ -85,6 +85,20 @@ same feature id with `-e` added before every grep pattern; all then-testable `ve
 commands were run by hand against `/usr/bin/grep` and `/usr/bin/git` directly (not the interactive
 shell's `grep` wrapper) before the second `register` call, and passed.
 
+Third registration (after round 3, once two completed review rounds had already produced real,
+addressed findings): round 3 found the closed three-value `Winner:` enum alone could not reject a
+regression back to round 1's discredited per-key model, so `verification.focused` needed new checks —
+a change to the hash-locked manifest, requiring another close-and-re-register. By this point the
+branch carried 3 real commits, and `register` requires worktree `HEAD` to equal `base_sha` exactly, so
+a bare close-and-reregister would have discarded them. Followed the sanctioned recovery: created
+`archive/pnpm-override-precedence-two-locations-round3-content` pointing at the current tip,
+`git reset --hard` the branch back to `base_sha` (content preserved on the archive ref, not lost),
+closed the prior registration via `ap-finish.sh --authorized-close`, recreated the worktree on the
+same branch (now at `base_sha`), authored and registered the strengthened manifest while `HEAD` still
+equaled `base_sha`, then `git merge --ff-only` the archive ref back in — a clean fast-forward, since
+the branch never diverged from what the archive ref pointed at. All content was verified byte-identical
+after the merge before continuing.
+
 ## Steps
 
 Steps 1-7 happened, in order, before the commit that carries this file. Step 8 is the readiness
