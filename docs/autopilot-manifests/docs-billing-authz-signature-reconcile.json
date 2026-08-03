@@ -3,7 +3,7 @@
   "task_id": "plexco:docs-billing-authz-signature-reconcile",
   "feature": "docs-billing-authz-signature-reconcile",
   "branch": "feat/docs-billing-authz-signature-reconcile",
-  "base_ref": "main",
+  "base_ref": "origin/main",
   "base_sha": "d316b7e0ff4ab9df3016d0a699860106b72573d2",
   "risk": "P2",
   "autonomy_mode": "supervised",
@@ -65,9 +65,9 @@
     "clean_rounds": 1
   },
   "security_review": {
-    "required": false,
-    "reason": "Docs-only prose reconcile of an already-merged, already-tested function's spec description; no code, schema, auth, secret, money or external-input surface.",
-    "void_if": "the diff touches anything under packages/ or apps/, or any file outside the declared scope — if either happens, this judgement is void: add a security round and say why"
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "reason": "Not run because the substance requires it — authorization.ts is unchanged and already reviewed twice (AP-40, AP-43), and the prior void_if trigger (diff touching packages/ or apps/) never fired. Run because codex flagged the manifest's security posture twice (round-02, round-04 [P1]) on this same slice, and the cost of one security round is lower than an unbounded argument with a reviewer that has no waiver channel for an owner-dismissed finding (level3-workflow.md §8 gap 1)."
   },
   "budgets": {
     "wall_time_minutes": 60,

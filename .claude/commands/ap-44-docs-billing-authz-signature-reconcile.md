@@ -66,7 +66,7 @@ running again once any other slice is in flight.
 
 ## Steps
 
-1. Verify `main`'s tip locally and pin it as `base_sha` — no other precondition on registry state.
+1. `git fetch origin main` and confirm `main == origin/main` before pinning `base_sha` (codex round-04 [P2]).
 2. Create worktree `.autopilot/worktrees/docs-billing-authz-signature-reconcile` on branch
    `feat/docs-billing-authz-signature-reconcile` from that exact `base_sha`. Do not add, merge or
    cherry-pick any commit on top yet.
