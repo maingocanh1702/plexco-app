@@ -44,9 +44,11 @@
   },
   "verification": {
     "focused": [
-      "grep -qF 'authorizeTenantAction(tx, tenantId, actionClass)` resolve' docs/features/BE/feature_billing_lifecycle_tech.md",
       "grep -qF 'Central authorizeTenantAction(tx, tenantId, actionClass)' docs/features/BE/feature_billing_lifecycle_tech.md",
-      "grep -qF 'Round-03 (3×P1)' docs/features/BE/feature_billing_lifecycle_tech.md",
+      "grep -qF 'authorizeTenantAction(tx, tenantId, actionClass)` resolve' docs/features/BE/feature_billing_lifecycle_tech.md",
+      "grep -F 'Suspended tenant publish new sessions' docs/features/BE/feature_billing_lifecycle_tech.md | grep -qF \"authorizeTenantAction(tx, tenantId, 'publish_new_sessions')\"",
+      "grep -F 'tenant hard-suspend (abuse), subscription active' docs/features/BE/feature_billing_lifecycle_tech.md | grep -qF \"authorizeTenantAction(tx, tenantId, 'publish_new_sessions')\"",
+      "grep -F 'subscription suspended (non-payment), tenant active' docs/features/BE/feature_billing_lifecycle_tech.md | grep -qF \"authorizeTenantAction(tx, tenantId, 'publish_new_sessions')\"",
       "grep -qF 'manifest: docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json' docs/autopilot-backlog.md"
     ],
     "canonical": [
@@ -67,7 +69,7 @@
   "security_review": {
     "required": true,
     "tool": "scripts/codex-review-pin.sh",
-    "reason": "Not run because the substance requires it — authorization.ts is unchanged and already reviewed twice (AP-40, AP-43), and the prior void_if trigger (diff touching packages/ or apps/) never fired. Run because codex flagged the manifest's security posture twice (round-02, round-04 [P1]) on this same slice, and the cost of one security round is lower than an unbounded argument with a reviewer that has no waiver channel for an owner-dismissed finding (level3-workflow.md §8 gap 1)."
+    "reason": "Owner-accepted compensating round (level3-workflow.md §8 gap 1 — no waiver channel for an owner-dismissed finding), not a substantive requirement: authorization.ts is untouched, already reviewed twice. Retirement condition, not narrative: this stays required:true only while the diff does not touch packages/ or apps/ AND the review gate has no waiver channel for owner-dismissed findings — if the diff ever touches packages/ or apps/, the requirement becomes substantively real rather than compensating; if the gate gains that waiver channel first, this compensating requirement retires."
   },
   "budgets": {
     "wall_time_minutes": 60,
