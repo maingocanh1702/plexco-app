@@ -37,16 +37,21 @@ NEGATIVE_SCOPE: no change to package.json / pnpm-workspace.yaml / pnpm-lock.yaml
 
 ## Measurement
 
-Two independent trials, magnitude deliberately reversed between them to rule out a "lower/higher value
-always wins" confound, both fully reverted before this slice's commit:
+Three independent trials — 1 and 2 with magnitude deliberately reversed between them to rule out a
+"lower/higher value always wins" confound, 3 repeating trial 1 to also capture
+`pnpm config get overrides --json` for the same live conflict — all fully reverted before this
+slice's commit:
 
-| Trial | Package    | package.json value | pnpm-workspace.yaml value | Resolved | Winner       |
-| ----- | ---------- | ------------------- | -------------------------- | -------- | ------------ |
-| 1     | picocolors | 1.0.0 (lower)        | 1.0.1 (higher)              | 1.0.0    | package.json |
-| 2     | ms         | 2.1.2 (higher)       | 2.1.1 (lower)               | 2.1.2    | package.json |
+| Trial | Package    | package.json value | pnpm-workspace.yaml value | Resolved (lockfile) | `pnpm config get` | Winner (resolution) |
+| ----- | ---------- | ------------------- | -------------------------- | ---------------------- | -------------------- | ---------------------- |
+| 1     | picocolors | 1.0.0 (lower)        | 1.0.1 (higher)              | 1.0.0                   | not checked           | package.json            |
+| 2     | ms         | 2.1.2 (higher)       | 2.1.1 (lower)               | 2.1.2                   | not checked           | package.json            |
+| 3     | picocolors | 1.0.0 (lower)        | 1.0.1 (higher)              | 1.0.0                   | 1.0.1 (disagrees)     | package.json            |
 
-**Result: `package.json`'s `pnpm.overrides` wins.** Full method, evidence, and caveats are in
-`docs/standards/dependency-override-precedence.md` — this file does not duplicate them.
+**Result: `package.json`'s `pnpm.overrides` wins for actual dependency resolution.** `pnpm config get
+overrides` disagrees — it only ever surfaces `pnpm-workspace.yaml`'s map, a separate, source-cited
+phenomenon, not evidence against the resolution finding. Full method, evidence, source citation, and
+caveats are in `docs/standards/dependency-override-precedence.md` — this file does not duplicate them.
 
 ## Registration mechanics note (found live, kept for the next slice)
 
@@ -69,12 +74,18 @@ same feature id with `-e` added before every grep pattern; all then-testable `ve
 commands were run by hand against `/usr/bin/grep` and `/usr/bin/git` directly (not the interactive
 shell's `grep` wrapper) before the second `register` call, and passed.
 
-## Steps (already executed by the time this file lands in a commit)
+## Steps
+
+Steps 1-7 happened, in order, before the commit that carries this file. Step 8 is the readiness
+process itself — this review is part of it — so it cannot be described as already-completed prose in
+a commit it is still evaluating; its outcome lives only in the gate's own artifacts
+(`gate-attempt-*-code-review-round-*.txt`, `gate-result.json`, `READY.txt`/`HALT-*.txt`), never in
+this file.
 
 1. Verified `base_sha` == current `origin/main` tip (no drift) before creating the worktree.
 2. Created worktree + branch from `base_sha`; authored + registered the runtime manifest while `HEAD`
    still equaled `base_sha` (see mechanics note above for the two registration attempts).
-3. Ran the two-trial experiment inside the worktree; reverted both trials via `git checkout` before any
+3. Ran the trial experiment(s) inside the worktree; reverted every trial via `git checkout` before any
    commit; confirmed `package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml` byte-identical to
    `base_sha` afterward.
 4. Checked `docs/standards/deployment-infra.md` and `docs/standards/environments-setup.md` for an
@@ -82,9 +93,40 @@ shell's `grep` wrapper) before the second `register` call, and passed.
 5. Authored `docs/standards/dependency-override-precedence.md`, this slice doc, the authored contract,
    the launcher, and the `docs/autopilot-backlog.md` task-block update.
 6. Self-verified every `verification.focused` and `verification.canonical` command by hand.
-7. Committed the five scoped files in one commit.
-8. Authored `readiness.json`, ran `scripts/autopilot-scope-gate ready`, stopped at
-   `READY | AWAIT | HALT`. Did not merge.
+7. Committed the scoped files (one commit per fix round; see "Fix rounds" below for round 2+).
+8. Authored/refreshed `readiness.json` and ran `scripts/autopilot-scope-gate ready`. Terminal outcome
+   (`READY | AWAIT | HALT`) is recorded by the gate itself, not asserted here. Not merged regardless of
+   outcome — merge is a separate, human-authorized action.
+
+## Fix rounds
+
+**Round 1 (codex, 2026-08-03): FINDINGS, both addressed.**
+
+- **[P1]** The v1.0 standards doc claimed `package.json` wins without addressing that
+  `pnpm config get overrides --json` reports only `pnpm-workspace.yaml`'s map, and flagged that the
+  reproduction's `pnpm why` step can read a stale installed graph rather than the freshly-written
+  lockfile. Both concerns were real. Resolution: added Trial 3 (captures `pnpm config get` and the
+  resolved lockfile for the identical live conflict, proving they disagree), source-traced *why*
+  `pnpm config get` disagrees (`getOptionsFromRootManifest`/`getOptionsFromPnpmSettings` whole-field
+  replacement in the installed pnpm 10.30.2 CLI bundle, cited by file and function name), and
+  reproduced the `pnpm why` staleness trap directly (plain `why` reported the stale pre-experiment
+  version while a direct lockfile grep showed the correct, freshly-resolved one) — confirming Trials 1
+  and 2 were unaffected (that worktree never had `node_modules` installed) while rewriting the
+  documented reproduction recipe to lead with lockfile inspection. The headline conclusion
+  (`package.json` wins **for actual resolution**) is unchanged and now more rigorously scoped and
+  evidenced; the mechanism for *why* resolution honors `package.json` was not fully source-traced in
+  the time available, and the standards doc says so explicitly rather than overclaiming.
+- **[P2]** This file's "Steps" section framed step 8 (running the readiness gate) as already executed
+  at commit time, when the gate — including the review round that found this — was still running.
+  Resolution: reworded to distinguish pre-commit steps from the gate process itself; terminal state is
+  now described as living in the gate's own artifacts, never asserted here.
+
+Manifest `verification.focused` was not changed: its `Winner:` check already accepts a closed
+three-value vocabulary (`package.json (pnpm.overrides)` / `pnpm-workspace.yaml (overrides)` /
+`inconsistent / pnpm errors on conflicting overrides`) rather than free text, and the value this fix
+round records continues to be independently justified by the evidence in the same file. Loosening
+that further would need a new registration (the manifest is hash-locked); not done here since the
+substantive finding was about the conclusion's rigor, not the check's mechanics.
 
 ## Negative scope
 

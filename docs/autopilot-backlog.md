@@ -1180,6 +1180,23 @@ notes: |
   0 review round trên registration đó — không mất gì), disposition tại
   `.autopilot/dispositions/pnpm-override-precedence-two-locations.json`, đăng ký lại với `-e` trước mọi
   pattern grep.
+  **Round 1 (codex, 2026-08-03): FINDINGS, cả hai đã fix, kết luận gốc GIỮ NGUYÊN.** [P1]: bản v1.0 của
+  standards doc không nói tới việc `pnpm config get overrides --json` chỉ trả về map của
+  `pnpm-workspace.yaml` (không có entry nào của `package.json`), và bước reproduction dùng `pnpm why`
+  trơn có thể đọc nhầm state cũ từ `node_modules/.pnpm` thay vì lockfile vừa ghi. Cả hai đúng thật —
+  đo lại trực tiếp: Trial 3 lặp Trial 1 và bắt `pnpm config get` + lockfile cho ĐÚNG một conflict, cùng
+  một thời điểm — `config get` báo `1.0.1` (giá trị `pnpm-workspace.yaml`), lockfile báo `1.0.0` (giá
+  trị `package.json`, khớp Trial 1) → hai bên **bất đồng thật**, không phải nghi ngờ suông. Đã trace
+  ra nguồn nguyên nhân `config get` sai (whole-field replacement ở
+  `getOptionsFromRootManifest`/`getOptionsFromPnpmSettings` trong bundle pnpm 10.30.2 cài trên máy,
+  trích dẫn đúng function/file) — nhưng **không** trace hết được vì sao actual resolution vẫn theo
+  `package.json` (dừng ở giới hạn thời gian đọc source minify, không có debugger); standards doc nói
+  thẳng điều này thay vì overclaim. Cũng tái hiện đúng bẫy `pnpm why` đọc `node_modules` cũ (Trial 1/2
+  không dính vì worktree đó chưa từng có `node_modules`, đã xác nhận lại). [P2]: mục "Steps" của slice
+  doc mô tả bước chạy `ready` như đã xong ngay tại commit đang được chính `ready` đó review — sửa lại,
+  outcome nay chỉ nằm ở artifact của gate, không assert trong file nữa. Không đụng
+  `verification.focused` trong manifest (đã hash-lock) — check 3-giá-trị đóng vẫn đủ chặt, vấn đề
+  round 1 là độ chắc của kết luận chứ không phải cơ chế check.
 
 ## task: kit-dead-citation-prompt-generic-sections
 title: 6 manifest viện dẫn `autopilot-prompt-GENERIC v0.6.1 §0.1` — section đã biến mất khi prompt viết lại cho Level 3
