@@ -256,10 +256,14 @@ Loop breakers remain hard:
 - the same region in three consecutive rounds → `HALT REGION_THRASH`;
 - findings spreading across the design → stop and re-slice rather than continue patching.
 
-### Two known gaps in this gate — measured, unresolved, do not work around them silently
+### Four known gaps in this gate — measured, unresolved, do not work around them silently
 
-Both were surfaced by live slices on 2026-07-30 and both are recorded here rather than patched,
-because each fix carries a gaming risk that needs an owner decision, not a quiet edit.
+Recorded here rather than patched, because each fix carries a gaming risk that needs an owner decision,
+not a quiet edit. Items 1–3 were surfaced by live slices on 2026-07-30, item 4 on 2026-08-01.
+
+This heading read "Two" while numbering three items — corrected 2026-08-01. Anyone adding a fifth should
+re-count the list rather than increment this sentence; miscounting an enumeration by carrying the total
+in your head is a recurring failure in this kit, documented in `docs/kit-design-debt.md` §1.
 
 **1. The reviewer receives no scope, so an out-of-scope suggestion halts like a defect.**
 The review invocation passes exactly `--base <sha>` and a fixed prompt. It does not pass the manifest,
@@ -315,6 +319,28 @@ threshold. A writer already invented the natural syntax — `round-NN infra:<rea
 The gaming risk is obvious: a writer that may self-declare `infra:` may relabel a real finding to dodge
 the breaker. Any fix must gate that label on a checkable condition — zero diff against the previous
 round, and no reduction in assertion count — or it opens a worse hole than it closes.
+
+**4. An authorized change has no path into a hash-locked registration.**
+The lock is correct and must stay. What is absent is any route for a change that is authorized,
+necessary, and not an attempt to escape the gate. Five instances on 2026-07-31/08-01, every one resolved
+by a full close-and-rebuild: the `base_sha` overload, the `ap-finish` diff-base skew, an owner-authorized
+lint exception that existed only in the authored manifest, a branch already carrying commits that
+`register` cannot accept at all, and a `security_review.required` flag that could not be flipped
+mid-flight. Enumerated in `docs/kit-design-debt.md` §1, which is the register for open kit design
+questions and is deliberately not the test-suite spec.
+
+Note the interaction with item 3, because it is easy to miss: re-registration resets `fix-round-count`
+to zero, so `MAX_ROUNDS` is not a budget but a checkpoint a slice can move by rebuilding itself. That is
+legitimate when a slice has **accepted** a finding and the fix needs scope the current registration
+cannot express; it is laundering when the slice intends to contest the same finding with a refreshed
+budget. Until that distinction is enforced by something other than judgement, state which one you are
+doing and why, in the close reason.
+
+Item 3's conclusion holds here too and is worth repeating where a reader will hit it: **raising the
+ceiling is the wrong fix.** On 2026-08-01 a slice exhausted 5/5 arguing that a security finding was a
+false positive, halted, and handed off — whereupon the finding proved valid and worse than described.
+More rounds would not have found that; the slice was reasoning, not measuring. The cap converted a
+losing argument into a review that found the real defect. That is its function, not its limitation.
 
 ## 9. Terminal states
 

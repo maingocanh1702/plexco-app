@@ -120,6 +120,30 @@ wrong, not that the world is empty. Confirm the shape before concluding the cont
 lines, or assert a token you already know is present. A search that cannot fail loudly is a search that
 lies quietly — and "no results" is the most confident-looking lie a tool can tell you.
 
+### A measurement that answers a neighbouring question looks exactly like a measurement
+
+Both failures below happened on 2026-08-01, in the same slice, one of them mine as the orchestrator.
+Neither was a case of trusting prose — in both, someone ran a real command and read the real output.
+
+**Measure the sink, not the source.** A writer argued that attaching `{ cause: error }` exposed nothing
+new, and proved it by enumerating the error object's own keys: no credentials, no client reference. The
+enumeration was correct. It was also the wrong object. The question was what the *log* prints, and
+`console.error` formats `.cause` recursively, so it emitted the whole `pg` error shape where the previous
+code path — `String(error)` — had rendered only `error: <message>`. Two measurements were needed; one was
+taken. When reasoning about exposure, run the sink and read its output. What the value *contains* and
+what a consumer *renders* are different questions.
+
+**A list is not a claim about a list.** Reviewing that same finding I enumerated the newly-printed
+fields, then wrote that they "carry DDL already in the repo." That held for `internalQuery` and `where`.
+It did not hold for `detail`, which on a constraint violation carries the offending row values — so a
+backfill migration would print user data into deployment logs. I had `detail` in front of me, in a list I
+wrote, and generalized across it without checking the members. Later in the same session I called an
+error class's fifth instance its sixth, by incrementing a total instead of re-reading the table.
+
+Both have one shape: **the summary of a set is a separate claim from the set.** If you enumerate, check
+members individually before saying anything about all of them, and re-read a list before extending it —
+never append to a count you are carrying in your head.
+
 ### Registration mechanics — four facts that each cost a real slice to learn
 
 These are not advice. Each one halted a live slice on first contact, and none of them is discoverable
@@ -127,9 +151,23 @@ from the manifest alone.
 
 **`register` requires `HEAD === base_sha` exactly.** It is designed to be called *before* any commit
 exists, so the reservation is taken while a scope collision is still cheap. If your branch already
-carries commits — a successor slice inheriting a predecessor's work, for example — you must reset to
-the base, register, then restore. Anchor the tip with a tag *before* resetting so the commits are
-never unreachable, and restore by tag rather than by raw SHA.
+carries commits — a successor slice inheriting a predecessor's work, or a re-registration after a
+close — do **not** reset the branch. Reset makes the commits reachable only through a ref you create
+for that purpose, which is a safety net you then depend on. Prefer the sequence that never puts them
+at risk, executed twice on 2026-08-01:
+
+1. `git branch archive/<feature>-preclose <tip>` — a named ref, made first, before anything moves.
+2. `ap-finish.sh <feature> --authorized-close --reason <text>`, run from the repository root.
+3. Delete the old branch. The archive ref holds the commits, so this is uncontested.
+4. Create a **fresh worktree at the pinned base SHA**, which is what the canonical rule asks for
+   anyway — one writing slice, one branch, one worktree, created from the base.
+5. Write the manifests, `register`. `HEAD === base_sha` holds by construction.
+6. `git merge --ff-only archive/<feature>-preclose`.
+
+Step 6 is why this beats cherry-pick: if your commits sit on the pinned base — check with
+`git merge-base --is-ancestor <base> <tip>` — fast-forward restores the *same objects*. Cherry-pick
+mints new SHAs and then obliges you to prove the tree matches. **Prefer the operation with nothing to
+prove.** Keep the archive ref until the slice merges.
 
 **The runtime manifest is hash-locked the moment you register.** `register` writes
 `<STATE_DIR>/registered-manifest.sha256`; `ready` halts with `MANIFEST_DRIFT` if the file is missing
@@ -146,10 +184,38 @@ runtime manifest, is gitignored, and carries the full v2 field set. If your slic
 own contract mid-flight, put the authored file in `scope` and amend it inside your diff — that lands
 the contract change with the change it describes and needs no commit on the default branch.
 
+**But be exact about what that buys, because the sentence above reads as more than it is.** Amending
+the authored file changes the *human record*. It does not change one byte of what the gate enforces:
+the gate reads the hash-locked runtime manifest, and editing that is `MANIFEST_DRIFT` while
+re-registering the same feature is `FEATURE_ALREADY_ACTIVE`. So an authored-file amendment is real for
+prose, notes and rationale — and **cosmetic for any field with teeth**: `negative_scope`, `scope`,
+`security_review.required`, `budgets`, `stop_conditions`. Measured 2026-08-01: a slice amended
+`security_review.required` in the authored file, believed a security round would run, and it did not.
+
+If a field with teeth must change, there is no in-flight path. Close and rebuild by the sequence above.
+Before spending a round on that, check whether the change is needed at all — see
+`docs/kit-design-debt.md` §1, and note that a finding is closed by fixing code or by the reviewer
+accepting a response, **not** by turning on a reviewer that was off.
+
 **`ap-finish.sh` runs from the repository root, not from the worktree it removes.** It resolves the
 root via `git rev-parse --git-common-dir`, so you never need a throwaway worktree to close a
 reservation. `--authorized-close --reason <text>` retains the branch; only the worktree and the
 reservation go.
+
+**When scope changes, the review classification is stale until you re-derive it.** `risk`,
+`security_review.required` and `code_review.clean_rounds` were set against the scope the slice had when
+they were written. Widen scope and they describe a slice that no longer exists. Measured 2026-08-01: a
+dependency-bump slice carrying `security_review.required: false` had its scope widened into the
+database migration runner; the flag was not revisited, and the mismatch surfaced as a review finding at
+the last available fix round, by which point the runtime manifest was hash-locked and the flag could not
+be changed at all. Re-derive the classification **in the same edit** that changes scope — and if the
+scope change arrives as an instruction from an orchestrator, re-derive it anyway and say so. The
+orchestrator who widens the scope is exactly as likely to forget as you are; in that instance they did.
+
+The same staleness applies to any pre-registered clause you might later cite in your own defence. A
+`void_if` or negative-scope exemption authored under a narrower scope does not extend to work the scope
+did not then cover. Citing one to dismiss a finding about the wider scope is leaning on authority that
+expired when the scope moved.
 
 ## Implementation loop
 
