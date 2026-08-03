@@ -15,17 +15,24 @@ right, spec is stale. This slice reconciles the spec — no code change.
 3. `packages/db/src/authorization.ts` lines 1-95 — the live signature and its own doc comment, which
    independently explains the same FOR SHARE reasoning.
 4. `docs/features/BE/feature_billing_lifecycle_tech.md` — confirm `Status: Reviewed` at the top before
-   touching it. That status is why this is a separate reconcile slice, not an inline edit (CLAUDE.md
-   forbids writing directly into a Reviewed spec).
+   touching it. CLAUDE.md's actual rule bars writing an *unresolved decision* directly into a Reviewed
+   spec (those go to `decisions.md` as a proposal instead) — it is not a blanket ban on any edit. This
+   slice's change is a settled, factual signature correction, not a new decision, so that specific rule
+   does not apply to it either way. It is still a separate reconcile slice, not an inline edit, because
+   that is the established, auditable pattern this codebase already uses for every prior fix to a
+   Reviewed spec (codex round-02 [P2] on this same slice — the launcher had overstated this as a
+   blanket prohibition).
 
 ## Registration mechanics — read this before running anything
 
-**Kit v28 changed `register`.** It now HALTs `CONTRACT_INVALID` unless `--manifest` points at the
-RUNTIME manifest (`.autopilot/state/<feature>/manifest.json`, carrying
-`manifest_schema_version: level3-operational-v2`) — the authored contract under
-`docs/autopilot-manifests/` must never carry that field and is REJECTED as a `--manifest` input. If
-`register` HALTs, the message names the missing field and the correct path — read it before treating
-this as a defect.
+**Measure the live kit version from `scripts/autopilot-scope-gate`'s own `# KIT_VERSION:` header before
+assuming any behavior — do not trust a number written in this file.** At the version this launcher was
+authored against, `register` HALTs `CONTRACT_INVALID` unless `--manifest` points at the RUNTIME manifest
+(`.autopilot/state/<feature>/manifest.json`, carrying `manifest_schema_version: level3-operational-v2`)
+— the authored contract under `docs/autopilot-manifests/` must never carry that field and is REJECTED as
+a `--manifest` input. If `register` HALTs, the message names the missing field and the correct path —
+read it before treating this as a defect. If the live kit is newer and behaves differently, trust what
+`register` actually does over this description.
 
 **`register` also requires worktree `HEAD` to equal the manifest's `base_sha` exactly** (checked before
 anything else). This means: author and register the RUNTIME manifest FIRST, while the worktree is still
@@ -59,10 +66,10 @@ test -f .autopilot/state/docs-billing-authz-signature-reconcile/registered-manif
 correctly against other active work by checking this manifest's `scope`/`invariants` for intersection
 with other in-flight features (`docs/autopilot-parallel-scope-gate.md`) — Level 3 explicitly supports
 multiple parallel non-colliding slices. Do not gate registration on `.autopilot/INFLIGHT.md` having zero
-entries or `.autopilot/worktrees/` being empty; that was a one-time eligibility check specific to the
-kit v27→v28 mechanism sync (a repo-wide, non-slice operation), not a general precondition for an
-ordinary slice like this one, and requiring it here would incorrectly block this launcher from ever
-running again once any other slice is in flight.
+entries or `.autopilot/worktrees/` being empty; that was a one-time eligibility check specific to a
+prior repo-wide kit mechanism sync (a non-slice operation, done once when the installed kit was behind
+canonical), not a general precondition for an ordinary slice like this one, and requiring it here would
+incorrectly block this launcher from ever running again once any other slice is in flight.
 
 ## Steps
 
@@ -107,13 +114,16 @@ running again once any other slice is in flight.
    `head_sha` must match the manifest and the live branch tip exactly, or the gate HALTs
    `READINESS_JSON_INVALID`/`EVIDENCE_STALE`.
 9. `scripts/autopilot-scope-gate ready --manifest .autopilot/state/docs-billing-authz-signature-reconcile/manifest.json`
-   — this is what actually runs the counted verification + codex review round(s), via
-   `autopilot-review-readiness.mjs` and `scripts/codex-review-pin.sh`; 1 clean round required (P2,
-   1x — money/logic tiers need 2x, this is prose-only). Do NOT hand-invoke `codex-review-pin.sh` as a
-   separate step first and count it — a manual pre-gate round is diagnostic only, per
-   `docs/autopilot-templates/level3-workflow.md` §8. A round with any finding is a real fix round:
-   increment `fix-round-count.txt`, log the region in `regions.log`, fix in scope, recommit, retry —
-   never clear the round by editing state files.
+   — this is what actually runs the counted verification + review round(s), via
+   `autopilot-review-readiness.mjs` and `scripts/codex-review-pin.sh`. Read `code_review` and
+   `security_review` in the manifest directly rather than assuming a count here — as authored, both are
+   required: 1 clean code-review round (money/logic tiers need 2x; this is prose-only) AND a separate
+   security-review round (owner-accepted on this slice despite the content being docs-only — see the
+   manifest's `security_review.reason`, level3-workflow.md §8 gap 1). Do NOT hand-invoke
+   `codex-review-pin.sh` as a separate step first and count it — a manual pre-gate round is diagnostic
+   only, per `docs/autopilot-templates/level3-workflow.md` §8. A round with any finding is a real fix
+   round: increment `fix-round-count.txt`, log the region in `regions.log`, fix in scope, recommit,
+   retry — never clear the round by editing state files.
 10. Stop at `READY | AWAIT | HALT`. Do not merge.
 
 ## Negative scope
