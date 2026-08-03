@@ -49,13 +49,15 @@ never declares. All fully reverted before this slice's commit:
 | 3     | repeat of 1, `config get` also captured | 1.0.0 (lower) | 1.0.1 (higher) | 1.0.0 | 1.0.1 (disagrees) | package.json's map applied |
 | 4     | `package.json`'s entire `pnpm.overrides` removed; `esbuild` untouched in either file | absent | `esbuild@<0.25.0 → 0.25.12` unchanged | `esbuild@0.18.20` → gone | not checked | with `package.json`'s map absent, workspace's previously-inert `esbuild` rule fires |
 
-**Result: `package.json`'s `pnpm.overrides`, when declared at all, wholesale-replaces
+**Result: `package.json`'s `pnpm.overrides`, when non-empty, wholesale-replaces
 `pnpm-workspace.yaml`'s entire `overrides` map for actual dependency resolution — not a per-key merge.**
-Trials 1-3 alone cannot distinguish "package.json wins ties" from "package.json's map replaces the
-other entirely" (both explanations fit a same-key conflict). Trial 4 is what distinguishes them: it
-touches a key with no `package.json` counterpart at all, so there is no tie — yet toggling only whether
-`package.json` *has* an overrides field flips whether `pnpm-workspace.yaml`'s unrelated rule fires. That
-is only explainable by whole-map replacement, and it is a live, present-day condition in this repo, not
+(An empty `pnpm.overrides: {}` does not trigger this — pnpm deletes an empty override map before
+applying root settings; see the standards doc.) Trials 1-3 alone cannot distinguish "package.json wins
+ties" from "package.json's map replaces the other entirely" (both explanations fit a same-key
+conflict). Trial 4 is what distinguishes them: it touches a key with no `package.json` counterpart at
+all, so there is no tie — yet toggling only whether `package.json`'s override map is present and
+non-empty flips whether `pnpm-workspace.yaml`'s unrelated rule fires. That is only explainable by
+whole-map replacement, and it is a live, present-day condition in this repo, not
 a hypothetical (see the standards doc's "A live consequence" section — `pnpm-workspace.yaml`'s
 `esbuild@<0.25.0` override has never actually run). `pnpm config get overrides` disagrees with the
 resolution outcome for a separate, source-cited reason (see the standards doc's "A critical
@@ -147,8 +149,9 @@ three addressed.**
   `esbuild@<0.25.0 → 0.25.12` rule — previously silent — started firing immediately; restoring
   `package.json`'s field (unchanged, `esbuild` never mentioned) silenced it again. A key with no
   collision cannot be explained by "wins on conflict" — only by **whole-map replacement**:
-  `package.json`'s mere presence replaces `pnpm-workspace.yaml`'s entire override map, including keys
-  it never mentions. This is now Trial 4 in Measurement above, and it is a **live, present-day gap**:
+  `package.json`'s non-empty override map replaces `pnpm-workspace.yaml`'s entire override map,
+  including keys it never mentions (an *empty* `pnpm.overrides: {}` does not trigger this — see round
+  3 below). This is now Trial 4 in Measurement above, and it is a **live, present-day gap**:
   `@esbuild-kit/core-utils@3.3.2` genuinely requests `esbuild: ~0.18.20`, entirely inside the range the
   workspace override targets, and the override has never actually applied to it. The standards doc
   (v1.2) was rewritten around this corrected model; the practical guidance that told readers to split

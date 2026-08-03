@@ -19,13 +19,19 @@
 - pnpm version measured: 10.30.2
 - Measured: 2026-08-03
 
-**When `package.json` declares a `pnpm.overrides` field at all, it entirely replaces
+**When `package.json` declares a NON-EMPTY `pnpm.overrides` field (or a non-empty Yarn-compatibility
+`resolutions` field — both feed the same root-derived map), it entirely replaces
 `pnpm-workspace.yaml`'s `overrides` map for actual dependency resolution — a whole-map replacement,
-not a per-key merge.** Every key `pnpm-workspace.yaml` declares is dropped, including keys
-`package.json` never mentions. This is a stronger and more dangerous rule than "the two files merge
-and `package.json` wins ties" — the v1.0/v1.1 drafts of this document described it that way, and a
-code-review round caught the error before it could ship as guidance. See "A live consequence" below
-for the real, present-day gap this creates in this repo.
+not a per-key merge.** An *empty* `pnpm.overrides: {}` does **not** trigger this: pnpm deletes an
+empty override map before applying root settings (`pnpm.cjs:20826`, inside
+`getOptionsFromPnpmSettings`), so `pnpm-workspace.yaml`'s map is left alone in that specific case. The
+precise condition is "a non-empty root-derived override map is present," not merely "`package.json`
+mentions `pnpm.overrides` at all." Whenever that condition holds, every key `pnpm-workspace.yaml`
+declares is dropped, including keys `package.json` never mentions. This is a stronger and more
+dangerous rule than "the two files merge and `package.json` wins ties" — earlier drafts of this
+document described it that way, and two code-review rounds caught successive imprecisions before they
+could ship as guidance. See "A live consequence" below for the real, present-day gap this creates in
+this repo.
 
 ## Why this matters
 
@@ -33,23 +39,35 @@ pnpm has been migrating `pnpm.*` settings (`overrides`, `packageExtensions`, `pa
 from `package.json` to `pnpm-workspace.yaml` across releases, and this repo currently carries genuine
 overrides in **both** locations: `package.json`'s `pnpm.overrides` has `brace-expansion@1`, `sharp`,
 `postcss`; `pnpm-workspace.yaml`'s `overrides` has `esbuild@<0.25.0`, `postcss@<8.5.10`. Because
-`package.json` declares *any* overrides, its map is the only one actually applied — `postcss` is
+`package.json` declares a non-empty overrides map, its map is the only one actually applied — `postcss` is
 covered only because `package.json`'s own `^8.5.10` entry happens to cover it, not because the two
 rules "agree." `pnpm-workspace.yaml`'s `postcss@<8.5.10 → 8.5.16` rewrite is not contributing anything;
 it is inert. `esbuild@<0.25.0 → 0.25.12` has no `package.json` counterpart at all, so it is inert with
 nothing masking the gap — see "A live consequence" below.
 
-`deps-security-bump` (AP-39, 2026-07-30) hit the precedence question directly as `DSB-4` and
-deliberately pinned the *same exact version* in both locations for `postcss`, reasoning that "whichever
-wins gives the same result." That reasoning holds for a different reason than it assumed: only
-`package.json`'s copy is ever live, so mirroring the value into `pnpm-workspace.yaml` was cosmetic
-insurance, not a second active rule. The fix was still safe — `package.json`'s copy carried the correct
-value — but the mental model behind it (two rules, either could win, so make them agree) undercounts
-the real risk, which this document now corrects.
+**Provenance, verified via `git log -S`/`git show`, not assumed:** the `postcss` values in both files
+today (`package.json`: `^8.5.10`; `pnpm-workspace.yaml`: `<8.5.10 → 8.5.16`) **predate**
+`deps-security-bump` (AP-39) entirely — they are not that task's output. AP-39 did, mid-flight on
+2026-07-30, unify both locations to a single matching pin, `postcss@<8.5.18: 8.5.18`, as its own
+`DSB-4` resolution, reasoning that "whichever wins gives the same result." That specific change was
+then **reverted** in the same task (commit `cf031f0`, *"split postcss out of this slice; ship next
+alone"*) after AP-39's own security round independently found a real, unrelated issue in `8.5.18` still
+inside the owner-ratified `minimumReleaseAge` window — the owner deferred the whole `postcss` bump to
+a separate, still-`blocked` task (`deps-security-bump--postcss`) and restored both files
+byte-identical to their pre-AP-39 state, which is the state measured here.
+
+So today's safety is **not** "DSB-4's fix landed and covers it" — DSB-4's fix did not land. It is
+coincidence: the pre-existing `package.json` entry happens to already satisfy `pnpm-workspace.yaml`'s
+intended target. DSB-4's *reasoning* ("pin both, so whichever wins is fine") was sound given what it
+assumed (a possible per-key conflict), and would still have been safe had it landed — but whole-map
+replacement means the pin didn't need to be duplicated at all, only `package.json`'s copy was ever
+going to matter. Whoever eventually resumes `deps-security-bump--postcss` should read this document
+first: editing only `pnpm-workspace.yaml`'s copy of an already-live `postcss` bump would have zero
+effect on resolution.
 
 ## A live consequence — this repo's `esbuild` override is currently inert
 
-`pnpm-workspace.yaml`'s comment for its `overrides` block reads: *"Patched transitive floors... 
+`pnpm-workspace.yaml`'s comment for its `overrides` block reads: *"Patched transitive floors...
 drizzle-kit carries legacy esbuild-loader branches; both APIs are compatible with these maintained
 releases and the full build/DB suite guards the override."* The intent is for
 `"esbuild@<0.25.0": 0.25.12` to rewrite any esbuild request below `0.25.0` to the patched `0.25.12`.

@@ -2,9 +2,13 @@
 
 `package.json`'s `pnpm.overrides` and `pnpm-workspace.yaml`'s `overrides` accept the same syntax and
 this repo has genuine entries in both, with `postcss` present in both today. `deps-security-bump`
-(AP-39) sidestepped the precedence question by pinning `postcss` to the same exact version in both
-locations rather than measuring which wins — safe only while the two stay in agreement. This slice
-measures the precedence directly and records it in `docs/standards/dependency-override-precedence.md`.
+(AP-39) considered pinning `postcss` to the same exact version in both locations as its own `DSB-4`
+resolution, reasoning that "whichever wins gives the same result" — but that specific change was
+reverted mid-task (commit `cf031f0`) when an unrelated security issue deferred the whole `postcss`
+bump, restoring both files to their pre-AP-39 values (today's live state). The precedence question was
+never actually measured. This slice measures it directly and records it in
+`docs/standards/dependency-override-precedence.md` — see that document's "Why this matters" section
+for the verified provenance.
 
 ## Read before you write
 
@@ -84,15 +88,18 @@ test -f .autopilot/state/pnpm-override-precedence-two-locations/registered-manif
    confound rather than file location. Also run a trial that isolates whole-map replacement from
    same-key precedence: temporarily remove `package.json`'s entire `pnpm.overrides` field (leaving
    `pnpm-workspace.yaml` untouched) and check whether a `pnpm-workspace.yaml`-only key that
-   `package.json` never mentions starts being honored — if it does, `package.json`'s mere presence,
-   not any per-key conflict, is what silences `pnpm-workspace.yaml`. Revert every trial via
+   `package.json` never mentions starts being honored — if it does, `package.json`'s non-empty
+   override map, not any per-key conflict, is what silences `pnpm-workspace.yaml` (an *empty*
+   `pnpm.overrides: {}` does not trigger this — pnpm deletes it before applying root settings; see the
+   standards doc). Revert every trial via
    `git checkout -- package.json pnpm-workspace.yaml pnpm-lock.yaml` before any commit; confirm
    `git diff --stat <base_sha> -- package.json pnpm-workspace.yaml pnpm-lock.yaml` is empty afterward.
 5. Check `docs/standards/` for an existing home for the result before creating a new file — grep every
    candidate file for `pnpm`/`override` mentions rather than assuming from the filename alone.
 6. Author `docs/standards/dependency-override-precedence.md` (or the existing file chosen in step 5)
-   recording: the winning location, the pnpm version measured, the measurement date, both trials'
-   evidence, copy-paste-runnable reproduction steps, and an explicit caveat that the result is scoped to
+   recording: the winning location, the non-empty-map precision, the pnpm version measured, the
+   measurement date, every trial's evidence (same-key and whole-map-isolating alike),
+   copy-paste-runnable reproduction steps, and an explicit caveat that the result is scoped to
    the measured pnpm version, not a permanent law.
 7. Author the tracked contract (`docs/autopilot-manifests/pnpm-override-precedence-two-locations.json`)
    and this launcher.
