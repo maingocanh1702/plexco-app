@@ -34,8 +34,10 @@ a `--manifest` input. If `register` HALTs, the message names the missing field a
 read it before treating this as a defect. If the live kit is newer and behaves differently, trust what
 `register` actually does over this description.
 
-**`register` also requires worktree `HEAD` to equal the manifest's `base_sha` exactly** (checked before
-anything else). This means: author and register the RUNTIME manifest FIRST, while the worktree is still
+**`register` also requires worktree `HEAD` to equal the manifest's `base_sha` exactly** (checked
+somewhere in `register`'s validation sequence — schema/contract-field checks, dependency checks and
+reviewer availability can run before it; do not assume it is the very first thing checked, only that it
+is checked). This means: author and register the RUNTIME manifest FIRST, while the worktree is still
 sitting untouched at `base_sha` — before writing any tracked file, and before merging or cherry-picking
 any prior work back in. A worktree that already carries a commit ahead of `base_sha` at register time
 HALTs `BASE_MISMATCH`, a real HALT (`docs-billing-authz-signature-reconcile` hit this once, first-hand,
@@ -85,21 +87,18 @@ incorrectly block this launcher from ever running again once any other slice is 
    current-state occurrences in `feature_billing_lifecycle_tech.md`, not just the two obvious ones:
    §1 overview diagram, §3 Status Authority heading, §2 edge case #8, and §5 test cases #29-30 —
    `(tenantId, actionClass)` / `(tenantId, 'publish_new_sessions')` →
-   `(tx, tenantId, actionClass)` / `(tx, tenantId, 'publish_new_sessions')`. This slice's own
-   `verification.focused` only asserts 2 of the 5 (hash-locked at register time — it cannot be extended
-   after; codex round-02 [P2] caught the other 3 by direct review, not by the focused checks). Do not
-   treat "focused checks pass" as proof of completeness for this file — run
+   `(tx, tenantId, actionClass)` / `(tx, tenantId, 'publish_new_sessions')`. As currently registered,
+   `verification.focused` asserts all five sites individually (each one verified locally by reverting
+   that single site and confirming its own assertion fails, then restoring) — but do not trust this
+   sentence either: read `docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json` directly
+   and count the live entries, since a manifest is hash-locked at register time and this launcher is not
+   updated automatically when it changes. Do not treat "focused checks pass" as proof of completeness on
+   its own — independently run
    `grep -n 'authorizeTenantAction(tenantId' docs/features/BE/feature_billing_lifecycle_tech.md` by hand
-   and confirm every hit is inside a legitimate historical changelog row before moving on. This count is
-   NOT stable across edits to this same launcher's own new changelog row: an earlier draft of that row
-   phrased the before/after pair as `` `(tenantId, actionClass)` → `(tx, tenantId, actionClass)` `` (one
-   grep hit, matching the pattern above); a later edit reworded it to drop the `authorizeTenantAction`
-   prefix before the first parenthesis (zero hits from that row). Whichever wording is live when you run
-   this, RE-RUN the grep and read what it actually returns — do not carry forward a count written by an
-   earlier step in this same file, including this one. Add ONE new changelog row dated today explaining
-   why; preserve every existing dated row verbatim — do not touch the v2.8 row, which already discusses a
-   prior signature change and must read exactly as it did then. Bump the header Version/date to match the
-   new top row.
+   and confirm every hit is inside a legitimate historical changelog row. Add ONE new changelog row dated
+   today explaining why; preserve every existing dated row verbatim — do not touch the v2.8 row, which
+   already discusses a prior signature change and must read exactly as it did then. Bump the header
+   Version/date to match the new top row.
 5. Update `docs/autopilot-backlog.md`'s own task block: fill `manifest:` and `scope:` (both are `null`/
    `[]` today — that is expected; this slice is what fills them in).
 6. Self-verify: run every `verification.focused` and `verification.canonical` command from the runtime
