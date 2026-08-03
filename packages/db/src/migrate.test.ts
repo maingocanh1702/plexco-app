@@ -1375,6 +1375,27 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
     );
   }, 30_000);
 
+  it("first bootstrap with the migration role GUC explicitly set to an empty string grants membership to CURRENT_USER", async () => {
+    // package.json's db:bootstrap always issues `SET chat_definer_bootstrap.migration_role = '$mr'`,
+    // where $mr is "" when MIGRATION_ROLE is unset — the GUC is explicitly set to an empty string on
+    // every real invocation, never left fully unset. NULLIF('', '') must collapse this to the same
+    // CURRENT_USER fallback as the fully-unset case (contract SS8, Boundary row), a distinct code path
+    // from the previous test (current_setting(..., true) returning NULL vs. returning '').
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await admin.query(`SET chat_definer_bootstrap.migration_role = ''`);
+        try {
+          await bootstrapChatDefiner(admin);
+        } finally {
+          await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+        }
+        const whoami = await admin.query(`SELECT current_user AS u`);
+        expect(await chatDefinerMembers(admin)).toEqual([(whoami.rows[0] as { u: string }).u]);
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
   it("first bootstrap with an explicit valid migration role grants membership to that role, not CURRENT_USER", async () => {
     await withChatDefinerLock(BASE!, () =>
       hideRealChatDefiner(admin, async () => {
@@ -1406,6 +1427,19 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
           `SELECT rolsuper, rolcanlogin, rolbypassrls, rolcreatedb, rolcreaterole, rolinherit, rolreplication
              FROM pg_roles WHERE rolname = 'chat_definer'`,
         );
+        // Explicit values, not just before==after — a bug that flipped e.g. rolbypassrls on BOTH
+        // calls identically would still pass a bare equality check (codex round-01 [P2]).
+        expect(before.rows).toEqual([
+          {
+            rolsuper: false,
+            rolcanlogin: false,
+            rolbypassrls: true,
+            rolcreatedb: false,
+            rolcreaterole: false,
+            rolinherit: false,
+            rolreplication: false,
+          },
+        ]);
         const membersBefore = await chatDefinerMembers(admin);
         await bootstrapChatDefiner(admin);
         const after = await admin.query(
@@ -1414,6 +1448,36 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
         );
         expect(after.rows).toEqual(before.rows);
         expect(await chatDefinerMembers(admin)).toEqual(membersBefore);
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
+  it("refuses to bootstrap when the existing membership for the target has unsafe ADMIN/SET options", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await bootstrapChatDefiner(admin);
+        const whoami = await admin.query(`SELECT current_user AS u`);
+        const target = (whoami.rows[0] as { u: string }).u;
+        // Simulate an out-of-band GRANT issued directly against the cluster, outside this script —
+        // PG16 retains ADMIN/SET options across a bare re-GRANT (postgresql.org/docs/16/sql-grant.html:
+        // "the omission of an option results in the current value being retained"), so this script's
+        // own idempotent bare GRANT would otherwise silently leave these unsafe options in place.
+        await admin.query(`GRANT chat_definer TO ${target} WITH ADMIN TRUE, SET FALSE`);
+        try {
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/unsafe options/i);
+          const opts = await admin.query(
+            `SELECT m.admin_option, m.set_option FROM pg_auth_members m
+               JOIN pg_roles r ON r.oid = m.member
+               JOIN pg_roles g ON g.oid = m.roleid
+              WHERE g.rolname = 'chat_definer' AND r.rolname = '${target}'`,
+          );
+          // Rejected before the GRANT ran again — options are exactly what the probe set, untouched.
+          expect((opts.rows[0] as { admin_option: boolean }).admin_option).toBe(true);
+          expect((opts.rows[0] as { set_option: boolean }).set_option).toBe(false);
+        } finally {
+          await admin.query(`REVOKE chat_definer FROM ${target}`);
+        }
         await admin.query(`DROP ROLE chat_definer`);
       }),
     );
@@ -1472,6 +1536,39 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
           await admin.query(`REVOKE chat_definer FROM app_worker`);
         }
         await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
+  it("refuses when the migration role target is a non-runtime group a runtime role already belongs to (indirect BYPASSRLS path)", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        const group = "plexco_chat_definer_test_indirect_group";
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${group}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        await admin.query(`GRANT ${group} TO readonly`);
+        try {
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${group}'`);
+          try {
+            // The pre-grant checks see no DIRECT chat_definer membership for `readonly` or `${group}`
+            // (correct — neither has one yet), so only the POST-grant transitive recheck can catch
+            // this: granting chat_definer to ${group} would give `readonly` a brand-new indirect path
+            // (readonly -> ${group} -> chat_definer, BYPASSRLS) that did not exist before this call.
+            await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/indirect path/i);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          // Whole transaction — including the triggering GRANT — rolled back atomically (contract
+          // SS8, Failure row): no inert chat_definer role, and ${group} never became a member.
+          const roleExists = await admin.query(
+            `SELECT 1 FROM pg_roles WHERE rolname = 'chat_definer'`,
+          );
+          expect(roleExists.rows.length).toBe(0);
+        } finally {
+          await admin.query(`REVOKE ${group} FROM readonly`);
+          await admin.query(`DROP ROLE ${group}`);
+        }
       }),
     );
   }, 30_000);

@@ -78,6 +78,8 @@ DECLARE
   v_target text := COALESCE(NULLIF(current_setting('chat_definer_bootstrap.migration_role', true), ''), current_user);
   v_existing_runtime_member text;
   v_other_member text;
+  v_existing_admin boolean;
+  v_existing_set boolean;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_target) THEN
     RAISE EXCEPTION
@@ -117,6 +119,29 @@ BEGIN
     RAISE EXCEPTION
       'chat_definer bootstrap: chat_definer is already granted to % — refusing to also grant it to % (revoke the existing membership first if this is an intentional re-point)',
       v_other_member, v_target;
+  END IF;
+  -- Fail closed on unsafe membership OPTIONS surviving an idempotent re-run. PostgreSQL 16's own
+  -- GRANT documentation: "When altering an existing membership the omission of an option results
+  -- in the current value being retained" — so this script's own bare GRANT below (no WITH clause)
+  -- never resets ADMIN/SET on a membership that already exists for v_target, whether that
+  -- membership came from an earlier run of this same script (safe: a bare GRANT's own defaults are
+  -- ADMIN=false, SET=true) or from an out-of-band GRANT issued directly against the cluster (unsafe
+  -- if it set ADMIN TRUE — v_target could then re-grant chat_definer to anything, including a
+  -- runtime role, with none of this script's checks in the loop — or SET FALSE, which would silently
+  -- break the downstream migration's expected SET ROLE chat_definer capability). Mirrors the
+  -- existing attribute-drift philosophy exactly: detect and refuse, never silently re-GRANT WITH the
+  -- safe options to "fix" it — that is an operator decision, not this script's.
+  SELECT m.admin_option, m.set_option
+    INTO v_existing_admin, v_existing_set
+    FROM pg_auth_members m
+    JOIN pg_roles r ON r.oid = m.member
+    JOIN pg_roles g ON g.oid = m.roleid
+   WHERE g.rolname = 'chat_definer'
+     AND r.rolname = v_target;
+  IF FOUND AND (v_existing_admin OR NOT v_existing_set) THEN
+    RAISE EXCEPTION
+      'chat_definer bootstrap: existing membership for % has unsafe options (admin_option=%, set_option=%; need admin_option=false, set_option=true) — refusing to silently proceed',
+      v_target, v_existing_admin, v_existing_set;
   END IF;
   EXECUTE format('GRANT chat_definer TO %I', v_target);
   -- Re-run the identical transitive check AFTER the grant: if v_target is a
