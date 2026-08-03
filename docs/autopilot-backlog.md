@@ -512,7 +512,7 @@ scope: [package.json, pnpm-workspace.yaml, pnpm-lock.yaml, docs/autopilot-manife
 manifest: (chưa soạn)
 merged_probe: (chưa có — nhiều khả năng cùng lớp `close_by: hand` với task cha, xem `reconcile-close-by-hand-declaration`)
 notes: **Tách ra từ `deps-security-bump` ngày 30/07** khi security round của registration #3 báo một finding thật về `postcss` 8.5.18, trong khi bản vá còn trong cửa sổ `minimumReleaseAge: 10080` (7 ngày). Owner đã chốt 26/07 **không override cửa sổ đó** — nó tồn tại đúng để chặn vector publish-bị-chiếm-quyền mà một bản "security fix" giả là carrier kinh điển. Nên tách slice, không chờ và không cấp ngoại lệ.
-  **BA việc phải đo lại trước khi làm, không được chép từ đây:** (1) **advisory nào, phiên bản vá nào** — round 3 của registration #3 đã từng bác **một claim GHSA bịa đặt** về postcss sau khi đối chiếu 4 nguồn, nên đọc advisory gốc, KHÔNG qua bên thứ ba, và ghi rõ ID; (2) **ngày publish của bản vá** ⇒ `not_before` thật; đo bằng `npm view postcss time` chứ đừng suy ra; (3) **override precedence đã đo dứt điểm — xem `docs/standards/dependency-override-precedence.md`.** Nâng giá trị ở `package.json`'s `pnpm.overrides.postcss` — đó là nơi duy nhất ảnh hưởng dependency resolution thật. **Policy: delete-not-comment** — sau khi `package.json` đúng, XOÁ hẳn entry `postcss` khỏi `pnpm-workspace.yaml`'s `overrides`, không để lại bản comment/mirror.
+  **BA việc phải đo lại trước khi làm, không được chép từ đây:** (1) **advisory nào, phiên bản vá nào** — round 3 của registration #3 đã từng bác **một claim GHSA bịa đặt** về postcss sau khi đối chiếu 4 nguồn, nên đọc advisory gốc, KHÔNG qua bên thứ ba, và ghi rõ ID; (2) **ngày publish của bản vá** ⇒ `not_before` thật; đo bằng `npm view postcss time` chứ đừng suy ra; (3) **override precedence đã đo dứt điểm — xem `docs/standards/dependency-override-precedence.md`.** Nâng giá trị ở `package.json`'s `pnpm.overrides.postcss` — đó là nơi duy nhất ảnh hưởng dependency resolution thật. **Về selector có điều kiện của `pnpm-workspace.yaml` (`postcss@<8.5.10`): KHÔNG cần thêm bản điều kiện tương ứng vào `package.json`** — `package.json`'s `postcss` hiện là override KHÔNG điều kiện (bare key, ép mọi resolution vào range đó), phạm vi RỘNG HƠN bản điều kiện của workspace, nên đã tự bao trùm; chỉ cần bảo đảm giá trị mới nằm trong range đó. (Khác với `esbuild` — xem task `pnpm-workspace-esbuild-override-inert` — nơi workspace's bản điều kiện PHẢI được giữ nguyên khi mirror sang package.json vì package.json chưa có entry `esbuild` nào để bao trùm sẵn.) **Policy: delete-not-comment** — sau khi `package.json` đúng, XOÁ hẳn entry `postcss` khỏi `pnpm-workspace.yaml`'s `overrides`, không để lại bản comment/mirror.
   **Bài học đắt nhất của task cha, đừng lặp:** `verification` trong runtime manifest phải khai **thuộc tính**, không phải literal. Registration #2 chết vì hard-code `postcss==8.5.18`; manifest bị hash-lock sau `register` nên không sửa tại chỗ được, phải đóng và đăng ký lại toàn bộ. Viết dạng "postcss ≥ ngưỡng vá của advisory đã dẫn" thay vì một con số.
 
 ## task: reconcile-close-by-hand-declaration
@@ -1322,8 +1322,11 @@ notes: |
   câm từ commit `f1af6e3` (2026-07-22, thêm field `pnpm.overrides` đầu tiên vào `package.json`) — trước
   đó rule chạy đúng (xác nhận tại `7146f51`, 2026-07-17). Cơ chế + phép đo đầy đủ:
   `docs/standards/dependency-override-precedence.md`.
-  **Việc thật của task này:** thêm `esbuild` vào `package.json`'s `pnpm.overrides` (mirror giá trị của
-  `pnpm-workspace.yaml`). **Policy: delete-not-comment** — sau đó XOÁ hẳn entry `esbuild` khỏi
+  **Việc thật của task này:** thêm `esbuild` vào `package.json`'s `pnpm.overrides` **với ĐÚNG selector
+  có điều kiện `pnpm-workspace.yaml` đang dùng — `"esbuild@<0.25.0": "0.25.12"`, KHÔNG phải bare
+  `"esbuild": "0.25.12"`.** Lockfile hiện có consumer hợp lệ (`tsx@4.23.0`) đang resolve đúng
+  `esbuild@0.28.1` — override bare/không điều kiện sẽ ép NÓ xuống `0.25.12` sai, downgrade một dependency
+  không liên quan. **Policy: delete-not-comment** — sau đó XOÁ hẳn entry `esbuild` khỏi
   `pnpm-workspace.yaml`'s `overrides`, không để lại bản comment/mirror. Task này chỉ đụng `esbuild`;
   `postcss` là phạm vi của `deps-security-bump--postcss`, không xử lý ở đây. Thay đổi thật lên
   `package.json`/`pnpm-workspace.yaml`/`pnpm-lock.yaml` — cần `full build/DB suite` guard, và cần đo

@@ -93,10 +93,14 @@ any key collision — flips whether a *different, unrelated* key's rule fires. T
 whole-map replacement, not per-key precedence.
 
 **This document does not fix the live override.** Repairing it means adding an `esbuild` entry to
-`package.json`'s own `pnpm.overrides` (or removing `package.json`'s override block entirely and moving
-everything to `pnpm-workspace.yaml`) — a real change to `package.json`/`pnpm-workspace.yaml`/
-`pnpm-lock.yaml`, explicitly out of this slice's negative scope. It is recorded as its own backlog
-entry, `pnpm-workspace-esbuild-override-inert`, so it does not stay a transcript-only observation.
+`package.json`'s own `pnpm.overrides` **using the same conditional selector `pnpm-workspace.yaml`
+already uses, `"esbuild@<0.25.0": "0.25.12"`, not a bare `"esbuild": "0.25.12"`** — this repo's
+lockfile already has a legitimate consumer (`tsx@4.23.0`) correctly resolving `esbuild@0.28.1`, and an
+unconditional override would downgrade it needlessly. (Or removing `package.json`'s override block
+entirely and moving everything to `pnpm-workspace.yaml`.) Either is a real change to
+`package.json`/`pnpm-workspace.yaml`/`pnpm-lock.yaml`, explicitly out of this slice's negative scope.
+It is recorded as its own backlog entry, `pnpm-workspace-esbuild-override-inert`, so it does not stay a
+transcript-only observation.
 
 ## A critical distinction: resolution outcome vs. `pnpm config get` / CLI introspection
 

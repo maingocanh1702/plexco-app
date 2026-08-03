@@ -370,6 +370,27 @@ continuation of the halted one.
   required a third re-registration (archive `archive/pnpm-override-precedence-two-locations-successor-round1`,
   reset to `base_sha`, close, register, `merge --ff-only`) since `verification.focused` is hash-locked.
 
+## Successor round 2 (codex, 2026-08-03): FINDINGS, both addressed — no re-registration needed, neither
+touches `verification.focused`.
+
+- **[P1]** The esbuild follow-up task's instruction to "mirror the value" into `package.json` was
+  imprecise in a way that would have caused a real regression: `pnpm-workspace.yaml`'s
+  `"esbuild@<0.25.0": "0.25.12"` is a *conditional* selector, and this repo's own lockfile has a
+  legitimate consumer (`tsx@4.23.0`) correctly resolving `esbuild@0.28.1` today. A bare
+  `"esbuild": "0.25.12"` in `package.json` would force that consumer down to `0.25.12` too — verified
+  directly (`grep -n 'esbuild: 0.28.1' pnpm-lock.yaml` → `tsx@4.23.0`) before fixing, not assumed from
+  the finding text. Rewrote the esbuild task to specify the exact conditional selector shape. Also
+  addressed the postcss task explicitly: its `package.json` entry is already an *unconditional* override
+  (broader than the workspace's conditional one), so no equivalent conditional selector is needed there
+  — stated this reasoning directly rather than leaving it implicit, since the reviewer flagged the
+  omission as ambiguous in both tasks alike.
+- **[P2]** The launcher's reproduction steps (written when this launcher's job was to run the
+  now-complete original measurement) still read as live execution instructions, including edits to
+  `package.json`/`pnpm-workspace.yaml`/`pnpm-lock.yaml` that the current manifest's negative scope
+  forbids. Added a status banner at the top and a pointer at "## Steps" marking the file-editing steps
+  as historical reproduction record, not current instructions, and pointing to the standards doc's own
+  (still-current) "Reproduction" section instead.
+
 ## Negative scope
 
 No change to any real override declaration's effective behavior. No resolving a live override

@@ -1,5 +1,13 @@
 # AP-45 — pnpm-override-precedence-two-locations: measure which override location wins
 
+> **Status: measurement complete.** The steps below (including every instruction to edit
+> `package.json`/`pnpm-workspace.yaml`/`pnpm-lock.yaml`) are a **historical reproduction record** of
+> how the original measurement was performed — they are not instructions to re-execute. The
+> currently-registered manifest's `negative_scope` forbids editing those three files; do not follow
+> the experiment steps below as live execution instructions against the current registration. To
+> reproduce the measurement independently, see `docs/standards/dependency-override-precedence.md`'s own
+> "Reproduction" section instead, which is kept current.
+
 `package.json`'s `pnpm.overrides` and `pnpm-workspace.yaml`'s `overrides` accept the same syntax and
 this repo has genuine entries in both, with `postcss` present in both today. `deps-security-bump`
 (AP-39) considered pinning `postcss` to the same exact version in both locations as its own `DSB-4`
@@ -62,6 +70,10 @@ test -f .autopilot/state/pnpm-override-precedence-two-locations/registered-manif
 ```
 
 ## Steps
+
+> Historical reproduction record — see the status banner at the top of this file. Step 4 below in
+> particular describes the file edits that produced the measurement; it applied to the *original*
+> measurement registration and is not a live instruction under the current one.
 
 1. `git fetch origin main` and confirm `main == origin/main` before pinning `base_sha`.
 2. Create worktree `.autopilot/worktrees/pnpm-override-precedence-two-locations` on branch
