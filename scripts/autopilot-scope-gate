@@ -1,5 +1,34 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 27
+# KIT_VERSION: 28
+# v28 (2026-08-03) — BEHAVIOUR FIX in this file (docs/kit-test-suite-spec.md, "Defect 7", found
+# 2026-08-01): `register` was fail-open on the one control the rest of the gate assumes. The
+# contract-validator guard and the registered-manifest.sha256 hash-lock guard both gated on
+# manifest_schema_version == "level3-operational-v2", and neither had an else branch. Hand register
+# a manifest without that field — the tracked authored contract under docs/autopilot-manifests/ is
+# FORBIDDEN from carrying it — and both guards fell through: no validation ran, no hash-lock was
+# written, INFLIGHT.md still got a real in-flight reservation, and "registered: ... (in-flight)"
+# printed unconditionally. The writer had every reason to believe the slice was locked; it was not.
+# `ready` later halted MANIFEST_DRIFT ("manifest changed after registration") for a manifest that
+# was never locked in the first place, so the debugging trail pointed at a change that never
+# happened.
+# Fix shape: the property, not the two conditionals. `register` now HALTs CONTRACT_INVALID up
+# front — before acquire()/append_block() ever touch INFLIGHT.md, before TASK_STATE is created —
+# naming the missing field and the exact runtime path (.autopilot/state/<feature>/manifest.json)
+# the manifest should have been. Checking this before any mutation, not only at the hash-lock site,
+# is the part that matters: a patch that only added the missing else branch there would still let
+# acquire()/append_block() write a real INFLIGHT.md reservation first, so the halted attempt would
+# leave a dangling in-flight block that a corrected retry then collides with
+# (REJECT FEATURE_ALREADY_ACTIVE) — trading a silent lock failure for a locked-out legitimate retry.
+# Verified test-first on a scratch repo (test/e2e.sh, "defect7" section): RED against the pre-fix
+# code (register exited 0, no hash file, a dangling INFLIGHT.md reservation, no HALT), GREEN after
+# (a manifest without manifest_schema_version HALTs with no hash file and no INFLIGHT.md entry; the
+# real runtime manifest still registers and its hash-lock matches).
+# BREAKING CHANGE, deliberately: every consumer repo's per-slice launcher that calls
+# `register --manifest docs/autopilot-manifests/<slug>.json` (the authored path) now HALTs instead
+# of silently succeeding unlocked. That is the correct outcome — those registrations were never
+# actually locked — but it lands immediately on upgrade, not staged. Fixing those launchers is
+# explicitly out of scope for this fix; most belong to already-merged slices, and with the tool
+# halting, updating them becomes ordinary cleanup rather than a defence anyone is relying on.
 # v27 (2026-08-01) — ap-watch.sh's MAX_ROUNDS ceiling (MAXR_HALT, hard-coded default 6) sat one round
 # above the ceiling this kit actually enforces. The readiness gate's own manifest field,
 # budgets.fix_rounds_max (autopilot-review-readiness.mjs:377, manifests/_TEMPLATE.json:56), is 5, and a
@@ -455,6 +484,11 @@ append_block(){ # $1 = status
 
 case "$cmd" in
   register)
+    # v28 (defect 7): register must not exit 0 without locking the manifest. Checked up front,
+    # before acquire/append_block touch INFLIGHT.md or TASK_STATE is created, so a manifest that
+    # cannot be locked leaves no dangling reservation for a corrected retry to collide with.
+    [ "$MANIFEST_SCHEMA_VERSION" = "level3-operational-v2" ] || halt_gate CONTRACT_INVALID \
+      "manifest '$MANABS' is missing manifest_schema_version=level3-operational-v2 (got '${MANIFEST_SCHEMA_VERSION:-<empty>}'); register only locks the runtime manifest at .autopilot/state/$FEATURE/manifest.json — the authored contract under docs/autopilot-manifests/ must never carry this field and is not a valid --manifest input to register"
     REVIEW_GATE="$WORKTREE_ROOT/scripts/autopilot-review-readiness.mjs"
     if [ "$MANIFEST_SCHEMA_VERSION" = "level3-operational-v2" ] || [ -n "$REVIEW_GATE_VERSION" ]; then
       [ -f "$REVIEW_GATE" ] || halt_gate REVIEW_GATE_MISSING "$REVIEW_GATE"
