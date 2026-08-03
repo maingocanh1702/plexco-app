@@ -397,10 +397,8 @@ touches `verification.focused`.
 documentation-hygiene gaps in round 2's own fixes, not new substantive issues.
 
 - **[P2]** This file records extensive review verdict history (rounds, findings, `HALT` states) but had
-  no `review-readiness` classification directive, so `pnpm review:check:changed` treated it as
-  invisible (`0 classified document(s)`) — a future edit misstating a review outcome here would go
-  uncaught by that layer. Added `<!-- review-readiness: historical -->` at the top, matching this
-  repo's convention for completed records that are not live coding handoffs.
+  no `review-readiness` classification directive. Added `<!-- review-readiness: historical -->` at the
+  top, matching this repo's convention for completed records that are not live coding handoffs.
 - **[P2]** Two verification gaps, both fixed with checks bound to the exact round-specific sentences
   (not generic substring matches) and each verified with a negative test against the pre-fix commit
   before trusting it: (a) the check for the corrected postcss-owner citation matched the string
@@ -416,6 +414,24 @@ documentation-hygiene gaps in round 2's own fixes, not new substantive issues.
 Required a fourth re-registration (archive `archive/pnpm-override-precedence-two-locations-successor-round3`,
 reset to `base_sha`, close, register, `merge --ff-only`) since two of the three fixes touch
 `verification.focused`, which is hash-locked.
+
+## Successor round 4 (codex, 2026-08-03): FINDING, addressed — round 3's own fix overclaimed what it
+achieved; corrected the claim rather than the (already-accurate) check.
+
+- **[P2]** Round 3's note above originally said adding the `review-readiness: historical` directive
+  meant "a future edit misstating a review outcome here would go uncaught by [`pnpm review:check:changed`]" — false, and disproved by directly invoking the script's own
+  `validateReviewDocument()` rather than trusting the finding text: it returns
+  `{"errors":[],"directive":null,"activeBlocks":0}` for this file. The validator only classifies a file
+  as a candidate if its filename matches `review|readiness|plan` or it contains a literal
+  `REVIEW_VERDICT:` line; `docs/autopilot-pnpm-override-precedence-two-locations.md` satisfies neither,
+  so it returns before ever reading the directive text — present or not. **This file is still not
+  machine-classified by that tooling layer, and the directive does not change that.** Corrected the
+  claim above to describe the directive as matching repo convention, not as closing a verification gap.
+  Renaming the file to satisfy the candidate heuristic was considered and rejected as disproportionate
+  — it would ripple across every cross-reference to this filename throughout the backlog, manifest, and
+  launcher, for a P2 documentation-accuracy finding. The manifest's own check
+  (`grep -qF 'review-readiness: historical' ...`) was already accurate — it only ever asserted the
+  directive text is present, not that classification occurs — so it needed no change.
 
 ## Negative scope
 
