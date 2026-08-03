@@ -31,10 +31,18 @@ this as a defect.
 anything else). This means: author and register the RUNTIME manifest FIRST, while the worktree is still
 sitting untouched at `base_sha` — before writing any tracked file, and before merging or cherry-picking
 any prior work back in. A worktree that already carries a commit ahead of `base_sha` at register time
-HALTs `BASE_MISMATCH`, a real lifecycle-ending HALT (`docs-billing-authz-signature-reconcile` hit this
-once, first-hand, on 2026-08-03 — see the disposition record and forensics under
-`.autopilot/dispositions/`). Never resolve a `BASE_MISMATCH` (or any other `HALT-*`/`AWAIT-FOUNDER-*`
-marker) by deleting, renaming or moving the file — write an AWAIT and stop instead.
+HALTs `BASE_MISMATCH`, a real HALT (`docs-billing-authz-signature-reconcile` hit this once, first-hand,
+on 2026-08-03). **The writing agent must never resolve a `HALT-*`/`AWAIT-FOUNDER-*` marker itself** — not
+by deleting it, not by renaming it, not because the classification is obviously invocation-class, not
+even when the correct fix is already known. Leave the marker exactly as written, report the HALT, and
+stop; do not resume without an explicit disposition from the owner/orchestrator. (AWAIT is a different,
+narrower thing — a concrete missing decision/context the writer cannot resolve; do not write one just
+because a HALT fired. A HALT that never created an INFLIGHT.md block — `register` halting before
+`acquire()`, as `BASE_MISMATCH` does — has no lifecycle to formally close via `ap-finish.sh`; that
+specific incident's marker was later renamed to `RESOLVED-HALT-BASE_MISMATCH.txt` by the owner, not by
+the writing agent, with a prepended resolution note and the original content preserved below it — that
+is the pattern to expect, not something this launcher can trigger on its own. A HALT that DID create a
+lifecycle needs real disposition through `ap-finish.sh --authorized-close --reason <text>` first.)
 
 ```
 scripts/autopilot-scope-gate register --manifest .autopilot/state/docs-billing-authz-signature-reconcile/manifest.json
@@ -66,12 +74,19 @@ running again once any other slice is in flight.
    — untracked, does not move `HEAD`). Register immediately (see Registration mechanics) while `HEAD`
    still equals `base_sha`. Confirm `registered-manifest.sha256` exists before proceeding.
 4. Now author the tracked authored contract
-   (`docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json`) and fix exactly two
-   current-state lines in `feature_billing_lifecycle_tech.md` (§1 overview diagram, §3 Status Authority
-   heading): `(tenantId, actionClass)` → `(tx, tenantId, actionClass)`. Add ONE new changelog row dated
-   today explaining why; preserve every existing dated row verbatim — do not touch the v2.8 row, which
-   already discusses a prior signature change and must read exactly as it did then. Bump the header
-   Version/date to match the new top row.
+   (`docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json`) and fix ALL FIVE
+   current-state occurrences in `feature_billing_lifecycle_tech.md`, not just the two obvious ones:
+   §1 overview diagram, §3 Status Authority heading, §2 edge case #8, and §5 test cases #29-30 —
+   `(tenantId, actionClass)` / `(tenantId, 'publish_new_sessions')` →
+   `(tx, tenantId, actionClass)` / `(tx, tenantId, 'publish_new_sessions')`. This slice's own
+   `verification.focused` only asserts 2 of the 5 (hash-locked at register time — it cannot be extended
+   after; codex round-02 [P2] caught the other 3 by direct review, not by the focused checks). Do not
+   treat "focused checks pass" as proof of completeness for this file — run
+   `grep -n 'authorizeTenantAction(tenantId' docs/features/BE/feature_billing_lifecycle_tech.md` by hand
+   and confirm every hit is inside the two legitimate historical changelog rows before moving on. Add ONE
+   new changelog row dated today explaining why; preserve every existing dated row verbatim — do not
+   touch the v2.8 row, which already discusses a prior signature change and must read exactly as it did
+   then. Bump the header Version/date to match the new top row.
 5. Update `docs/autopilot-backlog.md`'s own task block: fill `manifest:` and `scope:` (both are `null`/
    `[]` today — that is expected; this slice is what fills them in).
 6. Self-verify: run every `verification.focused` and `verification.canonical` command from the runtime
