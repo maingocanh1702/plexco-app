@@ -723,14 +723,18 @@ notes: |
   not supply the slice-local strict `CODE_READY` verdict.
 
 ## task: dd38-dd86-chat-schema-core
-title: Root chat-schema migration slice (DD-38 in-app chat) — three core tables + constraints + RLS/pure-read helpers
-status: idea
+title: Chat-schema migration slice (DD-38 in-app chat) — three core tables + constraints + RLS/pure-read helpers
+status: idea — contract AUTHORED 2026-08-03, verdict NOT_CODE_READY (closure 10/12), blocked on slices 1–2
 risk: P0
 change_class: schema-migration
-depends_on: []
+depends_on: [chat-definer-role-provisioning, chat-dm-safety-authority-core]
 invariants: [schema]
 scope: []
-manifest: null
+manifest: docs/autopilot-manifests/dd38-dd86-chat-schema-core.json
+slice_doc: docs/autopilot-dd38-dd86-chat-schema-core.md
+depends_on_note: **`depends_on: []` sửa 2026-08-03 — trường cũ tự nhận là placeholder ("evidence registry anchor") và nó đúng là placeholder.** Chuỗi thật, đọc từ primary-surface plan §9 (cột dependency, KHÔNG phải cột ID — plan nói rõ số là stable catalog ID không quyết định thứ tự): `chat-definer-role-provisioning` → `chat-dm-safety-authority-core` → slice này → `tenant-capability-authority-core`.
+  **Đây là phụ thuộc CƠ HỌC, không phải thủ tục.** Migration của slice này gọi `dm_safety_enabled()` (thuộc slice 2) và chạy `ALTER FUNCTION ... OWNER TO chat_definer` (role thuộc slice 1) — thiếu một trong hai thì migration **không apply được**, không phải "nên chờ". Ai đọc nhầm thành thứ tự khuyến nghị sẽ có lúc thử đảo nó.
+  **Và slice này KHÔNG phải root** dù title cũ ghi vậy — tiêu đề đã bỏ chữ "Root". Slice 0 (`docs-chat-primary-surface-contract`) đã land tại `90d292d`; đây là packet thứ ba.
 merged_probe: packages/db/schema.ts :: chat_channels
 notes: |
   Evidence registry anchor only; this block does not issue a readiness verdict or authorize a worktree.
@@ -1361,8 +1365,24 @@ notes: |
   file thay vì hard-code), hoặc **chấp nhận** rằng `design_probe_required` là boolean tự đủ và manifest không
   cần viện dẫn section nào. Chọn cái sau thì rẻ hơn và trung thực hơn — nhưng phải nói ra, vì hiện trạng là
   6 manifest trỏ vào hư không mà không ai biết.
-  P3 vì không chặn gì: `design_probe_required: true` vẫn là field ràng buộc và scope-gate vẫn đọc nó; chỉ
-  phần *lý do* là dangling. Thuộc `Claude template`, không phải Plexco — sửa ở đây chỉ vá triệu chứng.
+  **⚠️ SỬA 2026-08-03 — câu dưới đây SAI và đã sống trong entry này nhiều ngày.** Đo trực tiếp:
+  `grep -n design_probe scripts/autopilot-review-readiness.mjs scripts/autopilot-scope-gate` trả **rỗng**.
+  **Không gate nào đọc `design_probe_required`.** Tám manifest mang field đó và không có gì cưỡng chế nó —
+  nó là tài liệu thuần. Đây đúng lớp lỗi mà entry này tồn tại để sửa: một khẳng định viết một lần, không
+  ai dẫn lại. Giữ nguyên câu gốc bên dưới để thấy nó đã sai ra sao, không xoá.
+  **TRẠNG THÁI 2026-08-03: việc thật ĐÃ XONG ở `Claude template` (kit v30).** Guidance "khi nào bắt buộc
+  design probe" đã khôi phục dưới heading có tên ổn định trong `autopilot-prompt-GENERIC.md`, kèm quy ước
+  bỏ viện dẫn theo số section. Git-archaeology tại `b2893b9^` cho thấy đó là **khôi phục nguyên văn** —
+  canonical từng có đúng danh sách đó và bản viết lại Level 3 âm thầm bỏ nó; bản duy nhất sống sót nằm
+  trong `CLAUDE.md` của repo payment bot, một file không cơ chế sync nào chạm tới. Entry này từ đây chỉ là
+  **bản ghi**, không phải việc phải làm ở Plexco.
+  **Tái phát đã ghi nhận:** `ap-42` merged 2026-08-02 vẫn mang citation chết — nhiều tuần sau khi vấn đề
+  được nêu. Không phải một instance nữa để sửa; là bằng chứng nó tái phát vì **chưa có gì đúng để chép**.
+  Ba launcher `ap-32`/`ap-33`/`ap-42` để nguyên như năm manifest đã merged: bản ghi lịch sử.
+
+  ~~P3 vì không chặn gì: `design_probe_required: true` vẫn là field ràng buộc và scope-gate vẫn đọc nó; chỉ
+  phần *lý do* là dangling. Thuộc `Claude template`, không phải Plexco — sửa ở đây chỉ vá triệu chứng.~~
+  *(Câu trên gạch ngang: nửa đầu sai — không gate nào đọc field đó. Nửa sau đúng và đã được thực hiện.)*
 
 ## task: eslint-10-migration
 title: ESLint 9 → 10 trước EOL 2026-08-06; gỡ nhánh minimatch@3 / brace-expansion@1 như hệ quả
@@ -1559,3 +1579,60 @@ notes: **Không phải regression — là fail-open cũ bị đóng lại.** Kit
   **Vì sao P3 và vì sao không sửa hàng loạt ngay:** (1) HALT chỉ nổ khi một repo tự nó lên v28 — đây là điều kiện per-repo tại thời điểm đọc, không phải danh sách tĩnh: đọc version sống của một repo từ header `scripts/autopilot-scope-gate` của chính nó (dòng `# KIT_VERSION:`, đúng field mà `autopilot-update.sh` tự kiểm); đừng tin version ghim sẵn trong ghi chú này — nó lạc hậu ngay khi bất kỳ repo nào sync; (2) thông điệp HALT tự dạy cách sửa, nó nêu đúng runtime path và trường thiếu, nên sửa là một dòng ngay tại chỗ hỏng; (3) phần lớn launcher thuộc slice **đã merge** — sửa chúng là viết lại lịch sử không ai đọc lại. Đường đúng là để công cụ chặn, rồi dọn khi chạm.
   **Điều cần theo dõi:** repo nào sync v28 mà launcher chưa sửa thì slice tiếp theo ở đó HALT ngay ở bước register. Đó là kết quả **đúng** — nó vốn đang chạy không khoá — nhưng phải là bất ngờ có chuẩn bị, không phải bất ngờ thật. `Trum Bia Hoi` dùng default branch `master` và có reservation `ready`; kiểm trước khi sync repo đó.
   **Gốc:** CLAUDE.md của Plexco từng ghi authored path và mô tả là "fail-closed" (sửa 2026-08-01, `340ddc8`); các launcher chép theo dòng đó. Canonical `parallel-scope-gate.md` của kit ghi đúng runtime path từ đầu.
+
+## task: chat-definer-role-provisioning
+title: Slice 1 chuỗi in-app-chat — provision role `chat_definer` (bootstrap script, không migration)
+status: ready — contract AUTHORED 2026-08-03, verdict `CODE_READY` closure 12/12, chưa implement
+not_before: null
+not_after: null
+risk: P1
+change_class: role-provisioning
+depends_on: []
+invariants: [] — xác nhận lúc author; slice này không thêm migration nên không mang `schema`
+scope: [infra/postgres-init/02-chat-definer.sql, package.json, packages/db/src/migrate.test.ts]
+manifest: docs/autopilot-manifests/chat-definer-role-provisioning.json
+slice_doc: docs/autopilot-chat-definer-role-provisioning.md
+launcher: .claude/commands/ap-47-chat-definer-role-provisioning.md
+merged_probe: infra/postgres-init/02-chat-definer.sql :: chat_definer
+notes: |
+  **Mở 2026-08-03, muộn — plan gọi tên slice này ở TÁM tài liệu mà chưa từng có backlog task.** Phát hiện
+  khi `dd38-dd86-chat-schema-core` author contract và tự thấy hard dependency của mình không tồn tại ở đâu
+  cả. `grep` ra 0 hit cho cả nó lẫn `chat-dm-safety-authority-core`. Một slice được đặc tả chi tiết trong
+  plan nhưng vắng mặt trong backlog thì bot quét backlog không bao giờ chọn nó — nó vô hình đúng với công
+  cụ duy nhất đi tìm việc.
+  **Scope do plan ghim, không phải ước lượng:** primary-surface plan §9.2 "Executable first slice packet"
+  pin exact file, budget (`≤300 changed LOC`, 3 module, zero domain migration/table/API), acceptance năm
+  điều kiện, negative scope và verification. Authoring là chuyển thể, không phải thiết kế.
+  **Một điểm đọc §9.2 đã được phân xử:** "missing/invalid migration role fails closed" đọc chặt (unset GUC
+  phải fail) sẽ phá CI — `ci.yml` bootstrap step không set `MIGRATION_ROLE` — và không sửa sạch được cho
+  đường docker-compose fresh-volume init-mount, nơi Postgres tự chạy file và không set GUC được. Contract
+  giữ fallback `CURRENT_USER` như `job_definer` và thêm existence-check tường minh. Đây **không phải** chọn
+  nhất quán thay vì đúng: chính câu hỏi đó đã được xử ở codex round-06 [P1] của `job_definer` và phán quyết
+  nằm trong comment `01-job-definer.sql:59-71` — explicit `MIGRATION_ROLE` thì grant cho role đó, unset (ca
+  phổ biến) fallback `CURRENT_USER`. Slice này thừa kế phán quyết, không mở lại.
+  **Chặn gì:** `chat-dm-safety-authority-core` (slice 2) và `dd38-dd86-chat-schema-core` (slice 3). Phụ
+  thuộc là cơ học — migration của slice 3 chạy `ALTER FUNCTION ... OWNER TO chat_definer`.
+  **Cosmetic, không chặn:** step CI tên "Bootstrap job_definer role" sẽ lỗi thời sau khi slice này land;
+  cố ý không sửa để giữ đúng ba file §9.2 pin.
+
+## task: chat-dm-safety-authority-core
+title: Slice 2 chuỗi in-app-chat — `dm_safety_enabled()` và authority tables/functions kèm theo
+status: idea — chưa author contract
+not_before: null
+not_after: null
+risk: P1
+change_class: schema-migration
+depends_on: [chat-definer-role-provisioning]
+invariants: [schema]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  **Mở 2026-08-03 cùng lý do với slice 1: plan đặc tả nó, backlog chưa từng có.** Khác slice 1 ở chỗ plan
+  **không** ghim exact-file packet cho nó — §9.2 chỉ ghim slice 1. Nên authoring slice này là thiết kế
+  thật, không phải chuyển thể, và cần đọc plan §9 cùng authority pack `90d292d` trước.
+  **Vì sao slice 3 không thể bỏ qua nó:** migration của `dd38-dd86-chat-schema-core` **gọi**
+  `dm_safety_enabled()`. Thiếu hàm này thì migration không apply được — cơ học, không phải thứ tự khuyến
+  nghị.
+  **Không author trước khi slice 1 merge.** Không phải kỷ luật thứ tự: `depends_on` của nó cần `dep_checks`
+  trỏ vào symbol có thật trên origin/main, mà `chat_definer` chưa tồn tại ở đó.
