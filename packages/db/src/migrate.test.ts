@@ -1453,28 +1453,42 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
     );
   }, 30_000);
 
-  it("refuses to bootstrap when the existing membership for the target has unsafe ADMIN/SET options", async () => {
+  // Two isolated cases, not one combined case (codex round-02 [P2]): the SQL guard is
+  // `v_existing_admin OR NOT v_existing_set` — a single test that sets BOTH options unsafely at once
+  // would still pass even if either half of that OR regressed away, since the other half alone still
+  // rejects. Each case below leaves the OTHER option at its own safe bare-GRANT default (ADMIN=false,
+  // SET=true — postgresql.org/docs/16/sql-grant.html) so only ONE guard clause can possibly be the
+  // reason for the rejection.
+  it("refuses to bootstrap when the existing membership for the target has ADMIN TRUE (SET left at its safe default)", async () => {
     await withChatDefinerLock(BASE!, () =>
       hideRealChatDefiner(admin, async () => {
         await bootstrapChatDefiner(admin);
         const whoami = await admin.query(`SELECT current_user AS u`);
         const target = (whoami.rows[0] as { u: string }).u;
         // Simulate an out-of-band GRANT issued directly against the cluster, outside this script —
-        // PG16 retains ADMIN/SET options across a bare re-GRANT (postgresql.org/docs/16/sql-grant.html:
-        // "the omission of an option results in the current value being retained"), so this script's
-        // own idempotent bare GRANT would otherwise silently leave these unsafe options in place.
-        await admin.query(`GRANT chat_definer TO ${target} WITH ADMIN TRUE, SET FALSE`);
+        // PG16 retains ADMIN/SET options across a bare re-GRANT ("the omission of an option results
+        // in the current value being retained"), so this script's own idempotent bare GRANT would
+        // otherwise silently leave a unilaterally-set unsafe option in place.
+        await admin.query(`GRANT chat_definer TO ${target} WITH ADMIN TRUE`);
         try {
           await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/unsafe options/i);
-          const opts = await admin.query(
-            `SELECT m.admin_option, m.set_option FROM pg_auth_members m
-               JOIN pg_roles r ON r.oid = m.member
-               JOIN pg_roles g ON g.oid = m.roleid
-              WHERE g.rolname = 'chat_definer' AND r.rolname = '${target}'`,
-          );
-          // Rejected before the GRANT ran again — options are exactly what the probe set, untouched.
-          expect((opts.rows[0] as { admin_option: boolean }).admin_option).toBe(true);
-          expect((opts.rows[0] as { set_option: boolean }).set_option).toBe(false);
+        } finally {
+          await admin.query(`REVOKE chat_definer FROM ${target}`);
+        }
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
+  it("refuses to bootstrap when the existing membership for the target has SET FALSE (ADMIN left at its safe default)", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await bootstrapChatDefiner(admin);
+        const whoami = await admin.query(`SELECT current_user AS u`);
+        const target = (whoami.rows[0] as { u: string }).u;
+        await admin.query(`GRANT chat_definer TO ${target} WITH SET FALSE`);
+        try {
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/unsafe options/i);
         } finally {
           await admin.query(`REVOKE chat_definer FROM ${target}`);
         }

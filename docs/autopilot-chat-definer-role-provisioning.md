@@ -2,8 +2,11 @@
 # AP-47 — chat-definer-role-provisioning: bootstrap the `chat_definer` cluster role
 
 > **Status:** `CODE_READY` (see verdict, §9) · **Authored:** 2026-08-03 · **Risk:** P1
-> **This is an AUTHORING artifact.** No worktree has been opened, no `register` has been attempted, no
-> code exists. It is the packet a future coding session opens a worktree from.
+> **Originally authored as a pre-implementation packet** (no worktree, no code) for a future coding
+> session to open a worktree from. **Implementation status (updated during coding):** a worktree was
+> opened on `feat/chat-definer-role-provisioning` and this contract's implementation landed there —
+> see §10 items 5-6 for two corrections discovered and fixed during implementation (both still
+> pre-`READY`, in active review as of this edit).
 
 ## 0. Session input
 
@@ -322,8 +325,9 @@ async function hideRealChatDefiner(superuser: pg.Client, fn: () => Promise<void>
 ```
 
 New `describe` block (a sibling of the existing `describe("job_definer bootstrap script itself fails
-closed on runtime-role targets", ...)` at line 1239), with these exact cases — each one maps to a row
-in §8:
+closed on runtime-role targets", ...)` at line 1239). Originally specified as the 9 cases below; 4 more
+(10-13) were added during implementation in response to real codex review findings (§10 items 5-6) —
+13 cases total, each mapping to a row in §8:
 
 1. `"first bootstrap with no migration role set grants membership to CURRENT_USER"` — happy path,
    proves an unset GUC is *not* a failure.
@@ -349,6 +353,23 @@ in §8:
 9. `"N concurrent bootstrap calls against a fresh cluster all succeed; role exists exactly once with
    exactly one membership grant"` — mirrors BR-1's shape (migrate.test.ts:80), applied to
    `bootstrapChatDefiner` directly instead of `ensureRoleExists`.
+10. `"refuses when the migration role target is a non-runtime group a runtime role already belongs to
+    (indirect BYPASSRLS path)"` — added round-01 fix (codex `[P2]`): the post-grant transitive
+    recheck (§5.1, the second `pg_has_role` check after the `GRANT`) had no regression test; the
+    whole transaction, including the triggering `GRANT`, must roll back.
+11. `"first bootstrap with the migration role GUC explicitly set to an empty string grants membership
+    to CURRENT_USER"` — added round-01 fix (codex `[P2]`): `db:bootstrap` always sends
+    `SET chat_definer_bootstrap.migration_role = ''` when `MIGRATION_ROLE` is unset (§5.2), a distinct
+    code path from the fully-unset GUC exercised by case 1.
+12. `"refuses to bootstrap when the existing membership for the target has ADMIN TRUE (SET left at its
+    safe default)"` and
+13. `"...has SET FALSE (ADMIN left at its safe default)"` — added round-02 fix (codex `[P1]` then
+    `[P2]`): PG16 retains `admin_option`/`set_option` across a bare re-GRANT
+    (postgresql.org/docs/16/sql-grant.html — "the omission of an option results in the current value
+    being retained"), so an out-of-band unsafe grant would otherwise survive this script's own
+    idempotent re-run undetected (§5.1's pre-grant safety check). Split into two isolated cases
+    rather than one combined case so either half of the `v_existing_admin OR NOT v_existing_set`
+    guard regressing is independently caught.
 
 Every case that deliberately breaks the shared cluster-global role runs inside `withChatDefinerLock`,
 exactly as the job_definer negative-path tests run inside `withJobDefinerLock` — same rationale
@@ -597,3 +618,16 @@ REMAINING_BLOCKERS: none
    (zero rounds spent against the original registration, which was closed via
    `ap-finish.sh --authorized-close` and re-registered fresh rather than hand-editing the hash-locked
    runtime manifest in place).
+6. **Two real codex readiness-gate rounds found and fixed during implementation, both now closed.**
+   Round 1 `[P1]`: PostgreSQL 16 retains `admin_option`/`set_option` membership options across a bare
+   re-`GRANT` with no `WITH` clause (verified against postgresql.org/docs/16/sql-grant.html — "the
+   omission of an option results in the current value being retained"), so `02-chat-definer.sql`'s own
+   idempotent re-run would have silently left an out-of-band unsafe grant (e.g. `ADMIN TRUE`) in place
+   instead of catching it. Fixed with an explicit pre-grant check (§5.1) mirroring the existing
+   attribute-drift philosophy. Round 1 `[P2]`: three acceptance-matrix-mapped test gaps (post-grant
+   transitive recheck, exact attribute values in the replay test, explicit-empty-string GUC boundary)
+   — all three closed, see §5.3 cases 10-11. Round 2 `[P2]`: the round-1 fix's own regression test set
+   both unsafe options in one combined case, so either half of the `OR`-based guard could regress
+   undetected by that test alone — split into two isolated cases (§5.3 cases 12-13). Round 2 `[P2]`
+   also flagged this doc's own status framing and case count as stale against the growing
+   implementation — both updated in place (this item, and the header note above §0).
