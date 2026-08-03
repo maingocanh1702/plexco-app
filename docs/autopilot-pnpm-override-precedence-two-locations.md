@@ -353,6 +353,23 @@ were then rewritten (not appended-to) to plain entries per decision 3, and this 
 recording the disposition, per this repo's convention that a task's own round-by-round self-history is
 not the cross-referencing pattern that thrashed — only prose written *into other tasks'* blocks was.
 
+## Successor round 1 (codex, 2026-08-03): FINDINGS, both addressed — a fresh 5-round budget, not a
+continuation of the halted one.
+
+- **[P2]** The standards doc's consolidation guidance named `pnpm-workspace-esbuild-override-inert` as
+  the owner of *both* the postcss and esbuild duplicate entries, but the backlog assigns postcss to
+  `deps-security-bump--postcss`. Fixed — a narrow citation correction, not a change to the measured
+  result or its evidence (which the manifest's negative scope still forbids re-litigating).
+- **[P2]** The `delete-not-comment` policy check (`grep -qF 'delete-not-comment' docs/autopilot-backlog.md`)
+  matched globally — any one of the three occurrences (postcss task, esbuild task, this task's own
+  round-8 note) would satisfy it, so either follow-up task could individually lose its policy phrase
+  without the check catching it. Confirmed with a direct negative test before designing the fix: copied
+  the backlog, removed the phrase from only the postcss block, verified the old global check still
+  passed. Replaced with two `awk`-bounded, task-block-scoped checks (one per follow-up task), each
+  re-verified to fail when its own block's phrase is missing and stay unaffected by the other block —
+  required a third re-registration (archive `archive/pnpm-override-precedence-two-locations-successor-round1`,
+  reset to `base_sha`, close, register, `merge --ff-only`) since `verification.focused` is hash-locked.
+
 ## Negative scope
 
 No change to any real override declaration's effective behavior. No resolving a live override
