@@ -647,21 +647,36 @@ notes: **CHẶN CỨNG slice caller đầu tiên. Phát hiện 30/07 trong AP-40
   **CODE_READY 2026-07-31, cả hai phép đo trên đã chạy lại thật, không tin dòng cũ:** grant grep mở rộng ra toàn bộ 27 file (không chỉ mẫu ban đầu) — vẫn rỗng. `FOR SHARE` privilege requirement xác nhận bằng thực nghiệm trực tiếp trên PostgreSQL 16.14 đang chạy (tạo role scratch thật, không suy từ tài liệu Postgres) — `verification.focused[0]` trong manifest LÀ chính thực nghiệm này, chạy lại được mỗi lần gate chạy, không phải một lần rồi thôi. Hai phát hiện thu hẹp phạm vi, không có trong bản gốc: `subscriptions` đã có đủ grant cho `app` (vòng lặp `tenant_tables` của `0009`) nên KHÔNG cùng cảnh ngộ với `tenants`; và `tenants` không có RLS (`pg_class.relrowsecurity=false`) nên hàm không cần lo bypass gì. `depends_on` nay khai đúng `authorize-tenant-action-core` (đã merged `ddb69a9`) với `dep_checks` pin đủ base/landed SHA + symbol trong manifest. Slice doc: `docs/autopilot-db-tenants-authz-grant-security-definer.md`. Launcher: `ap-43`.
 
 ## task: docs-billing-authz-signature-reconcile
-title: Reconcile chữ ký authorizeTenantAction trong spec billing §3 — code đã merge nhận transaction
+title: Reconcile chữ ký authorizeTenantAction trong spec billing §3 và session §4 step 6 — code đã merge nhận transaction
 status: ready
-risk: P3
+risk: P2
 change_class: docs-reconcile
 depends_on: []
-invariants: [billing]
-scope: []
-manifest: null
+invariants: [billing, publish-suspend-gate]
+scope: [docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json, docs/features/BE/feature_billing_lifecycle_tech.md, docs/features/BE/feature_session_management_tech.md, docs/autopilot-backlog.md, .claude/commands/ap-44-docs-billing-authz-signature-reconcile.md]
+manifest: docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json
 merged_probe: null
-close_by: hand · diff thuần prose trong một spec đã Reviewed, không tạo symbol nào để probe
+close_by: hand · diff thuần prose trong hai spec đã Reviewed (billing §3, session §4), không tạo symbol nào để probe
 notes: **Spec đã founder-ratified nay nói sai so với code đã merge.** `feature_billing_lifecycle_tech.md` §3 ghi chữ ký `authorizeTenantAction(tenantId, actionClass)`; code merged tại `ddb69a9` là `(tx, tenantId, actionClass)`.
   **Code đúng, spec cũ.** Codex round-01 của AP-40 bắt [P1]: hàm tự mở transaction thì `FOR SHARE` **nhả trước khi caller kịp mutate**, mở lại đúng race mà locking read sinh ra để đóng. Hai tham số không giữ nổi lock xuyên qua mutation của caller — đây là bất khả thi cơ học, không phải lựa chọn cài đặt.
   **Không vi phạm ý định của spec.** Điều §1 bảo vệ là *"takes tenant context, not a pre-resolved status"* — hàm vẫn tự đọc cả hai cột, không caller nào truyền status vào. Thêm một transaction handle không phải pre-resolve gì cả.
-  **Vì sao là slice riêng, không sửa chèn tay:** đây là spec `Status: Reviewed`, và CLAUDE.md cấm viết thẳng vào spec đã Reviewed. Reconcile phải đi qua đường docs-reconcile như mọi lần trước.
+  **Vì sao là slice riêng, không sửa chèn tay:** đây là spec `Status: Reviewed`. Quy tắc CLAUDE.md thật sự cấm là viết một *quyết định chưa chốt* thẳng vào spec đã Reviewed (dòng đó đi `decisions.md` dạng proposal) — không phải cấm mọi chỉnh sửa (codex round-07 [P2] trên chính slice này bắt overstatement này). Sửa chữ ký ở đây là một correction đã chốt theo code đã merge, không phải quyết định mới, nên quy tắc đó vốn không áp dụng theo cả hai chiều. Đi qua slice docs-reconcile riêng vẫn đúng — đó là pattern đã thiết lập, auditable, mà mọi lần sửa spec Reviewed trước đây trong repo này đều theo, không phải vì một lệnh cấm tuyệt đối.
   **Ghi kèm một đính chính nhỏ của AP-40:** manifest ban đầu khai `invariants: [tenant-isolation, authorization]` — **cả hai token đều không tồn tại** trong `autopilot-invariant-catalog.md`, sẽ `HALT INVARIANT_UNKNOWN`. Writer đổi sang `[billing, publish-suspend-gate]` lúc register. Catalog có sẵn token `auth` ("authentication / authorization / session") mà cả hai bên đều bỏ sót — slice này nên cân nhắc thêm `auth` vào manifest tương lai của vùng authz. Nguyên nhân gốc: catalog lưu dạng `token — mô tả` với em-dash và **không backtick**, nên grep viết cho token có backtick trả rỗng, đọc y hệt một catalog trống thay vì một câu truy vấn sai. Đã ghi vào kit v18.
+  **Đính chính risk lúc author contract (2026-08-03):** backlog ghi `P3`, nhưng `autopilot-review-readiness.mjs:311-313` (từ commit nền `b2893b9`, 2026-07-28 — không phải check mới) hard-reject `register` cho risk ngoài `P1`/`P2`; P3 đúng nghĩa là *read-only/report-only, không tracked mutation* (`level3-workflow.md` §6), mà slice này sửa thật một spec file — đổi sang `P2` (khớp precedent `docs-web-auth-migration-section-merge-state-reconcile`, cùng dạng docs-reconcile thuần prose). Trước kit v28, bug fail-open ở `register` (xem task `launcher-register-path-authored-to-runtime`) khiến check `P1`/`P2` này chưa từng thật sự chặn ai đăng ký bằng authored path; đây nhiều khả năng là lần đầu một manifest `P3` chạm nó thật. **2 task khác cùng lỗi risk, ngoài scope slice này, chưa sửa:** `pnpm-override-precedence-two-locations`, `kit-dead-citation-prompt-generic-sections` (cả hai `status: planned`, `risk: P3`, `change_class: docs-reconcile`) — sẽ `HALT CONTRACT_INVALID` y hệt nếu ai register nguyên trạng.
+  **Mở rộng scope sang `feature_session_management_tech.md` (2026-08-03, codex round-08 [P2]):** `negative_scope` bản đầu gọi mọi mention `authorizeTenantAction` trong file này là "shorthand" — sai với ít nhất một chỗ. §4 step 6 gọi `authorizeTenantAction(tenantId, 'publish_new_sessions')` (2 tham số, cũ) NGAY TRONG đoạn văn yêu cầu lệnh gọi đó phải chạy trong cùng transaction đang giữ session lock — chính đúng mâu thuẫn mà cả reconcile này tồn tại để đóng, không phải khác biệt hành văn. Đã thêm file vào `scope`, sửa đúng 1 chỗ (§4 step 6), giữ nguyên mọi mention bare-name/single-arg khác (edge #24, step 1, hai blockquote billing suspension).
+  **Thêm invariant `publish-suspend-gate` (2026-08-03, codex round-09 [P1]):** manifest/backlog ban đầu chỉ khai `billing`, nhưng chính mô tả của token `publish-suspend-gate` trong `autopilot-invariant-catalog.md` nêu đích danh cả hai file slice này sửa (`authorizeTenantAction('publish_new_sessions') × billing Status Authority, feature_session_management §4 × feature_billing_lifecycle §3`). Thiếu token này, một slice khác chỉ khai `publish-suspend-gate` (không khai `billing`) có thể chạy song song trên base cũ và giữ nguyên chữ ký 2 tham số sai. Đã thêm vào cả manifest lẫn backlog.
+
+## task: docs-feature-index-version-freshness-check
+title: README.md feature-index version cells drift from spec headers after every version bump — no automated check
+status: idea
+risk: P2
+change_class: tooling-migration
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+notes: Phát hiện lặp lại: `docs-billing-authz-signature-reconcile` (slice này) bị codex flag README index-cell stale làm advisory/ngoài-scope trong nhiều round liên tiếp (round-06/07/08), chưa từng đóng vì README không nằm trong scope. Tiền lệ liên quan — `docs-session-publish-concurrency-recheck` (2026-07-24): dù README CÓ trong scope, chính round-01→round-02 của slice đó tự bump spec version xa hơn khiến README lại stale ngay trong cùng 1 slice, phải fix lần 2 ở round-03 — cho thấy sync tay không giữ được ngay cả khi đã ở trong scope, vì lần version-bump kế tiếp lại làm nó stale lại. Đề xuất: một check máy (script/CI step) đọc header `Version:` của mỗi spec, so với README's index cell tương ứng, fail nếu lệch — không phải sửa tay từng lần README bị stale.
 
 ## task: plans-dd29-capability-registry
 title: DD-29 — chuyển plan_key 4-tier sang 2-tier, reshape entitlements sang capabilities.*, reseed

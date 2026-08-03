@@ -1,0 +1,92 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — deliberately carries NO manifest_schema_version; adding it makes register HALT CONTRACT_INVALID. The runtime manifest is generated at register time into .autopilot/state/<feature>/manifest.json from docs/autopilot-manifests/_TEMPLATE.json.",
+  "task_id": "plexco:docs-billing-authz-signature-reconcile",
+  "feature": "docs-billing-authz-signature-reconcile",
+  "branch": "feat/docs-billing-authz-signature-reconcile",
+  "base_ref": "origin/main",
+  "base_sha": "d316b7e0ff4ab9df3016d0a699860106b72573d2",
+  "risk": "P2",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": ["billing", "publish-suspend-gate"],
+  "scope": [
+    "docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json",
+    "docs/features/BE/feature_billing_lifecycle_tech.md",
+    "docs/features/BE/feature_session_management_tech.md",
+    "docs/autopilot-backlog.md",
+    ".claude/commands/ap-44-docs-billing-authz-signature-reconcile.md"
+  ],
+  "negative_scope": [
+    "NO change to packages/db/src/authorization.ts or any code — the signature is already correct and merged (ddb69a9); this slice edits documentation only",
+    "NO edit to any dated changelog row already present in feature_billing_lifecycle_tech.md or feature_session_management_tech.md — add one new row per file, preserve every existing row verbatim",
+    "NO edit to docs/autopilot-authorize-tenant-action-core.md — AP-40's own pinned code-ready coding-handoff record for an already-merged slice; historical for the same reason a dated changelog row is",
+    "NO edit to feature_session_management_tech.md beyond its one genuine stale call-shaped occurrence (§4 step 6) — its other authorizeTenantAction mentions (edge #24, step 1, the two blockquotes) are bare-name prose or single-arg action-class shorthand, not signature assertions, and stay as written"
+  ],
+  "context_sources": [
+    "docs/autopilot-backlog.md task block docs-billing-authz-signature-reconcile",
+    "packages/db/src/authorization.ts (merged ddb69a9) — live signature + doc comment",
+    "packages/db/src/authorization.test.ts — codex round-01 [P1] regression test for the FOR SHARE lock lifetime",
+    "docs/features/BE/feature_billing_lifecycle_tech.md §1, §3 (Status: Reviewed)",
+    "docs/features/BE/feature_session_management_tech.md §4 step 6 (Status: Reviewed)",
+    "docs/autopilot-invariant-catalog.md — publish-suspend-gate token description names both spec files this slice edits",
+    "docs/standards/review-code-readiness-gate.md, docs/templates/review-doc-plan-session-template.md"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "restricted",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [
+      "grep -qF 'Central authorizeTenantAction(tx, tenantId, actionClass)' docs/features/BE/feature_billing_lifecycle_tech.md",
+      "grep -qF 'authorizeTenantAction(tx, tenantId, actionClass)` resolve' docs/features/BE/feature_billing_lifecycle_tech.md",
+      "grep -F 'Suspended tenant publish new sessions' docs/features/BE/feature_billing_lifecycle_tech.md | grep -qF \"authorizeTenantAction(tx, tenantId, 'publish_new_sessions')\"",
+      "grep -F 'tenant hard-suspend (abuse), subscription active' docs/features/BE/feature_billing_lifecycle_tech.md | grep -qF \"authorizeTenantAction(tx, tenantId, 'publish_new_sessions')\"",
+      "grep -F 'subscription suspended (non-payment), tenant active' docs/features/BE/feature_billing_lifecycle_tech.md | grep -qF \"authorizeTenantAction(tx, tenantId, 'publish_new_sessions')\"",
+      "grep -F 'ngay TRƯỚC khi mutate, re-evaluate' docs/features/BE/feature_session_management_tech.md | grep -qF \"authorizeTenantAction(tx, tenantId, 'publish_new_sessions')\"",
+      "grep -qF 'manifest: docs/autopilot-manifests/docs-billing-authz-signature-reconcile.json' docs/autopilot-backlog.md"
+    ],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm build",
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test",
+      "pnpm review:check:changed"
+    ],
+    "e2e": []
+  },
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 1
+  },
+  "security_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "reason": "Owner-accepted compensating round (level3-workflow.md §8 gap 1 — no waiver channel for an owner-dismissed finding), not a substantive requirement: authorization.ts is untouched, already reviewed twice. Retirement condition, not narrative: this stays required:true only while the diff does not touch packages/ or apps/ AND the review gate has no waiver channel for owner-dismissed findings — if the diff ever touches packages/ or apps/, the requirement becomes substantively real rather than compensating; if the gate gains that waiver channel first, this compensating requirement retires."
+  },
+  "budgets": {
+    "wall_time_minutes": 60,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE"
+  ],
+  "_note": "Full reasoning lives in docs/autopilot-backlog.md task docs-billing-authz-signature-reconcile and in packages/db/src/authorization.ts's own doc comment (lines 7-64) — this contract points at both rather than restating them."
+}
