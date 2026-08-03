@@ -144,6 +144,28 @@ Both have one shape: **the summary of a set is a separate claim from the set.** 
 members individually before saying anything about all of them, and re-read a list before extending it —
 never append to a count you are carrying in your head.
 
+### A record's structured fields and its prose answer different questions
+
+A backlog entry has two layers, and they are not redundant. The fields say where the problem is VISIBLE.
+The prose says where it should be FIXED. In a kit-and-consumer setup those are routinely different places,
+because symptoms live downstream and causes live upstream.
+
+Measured 2026-08-03: an entry carried `scope: [docs/autopilot-manifests/, scripts/autopilot-onboard.sh, …]`
+— every path in the consumer repo — while its notes closed with "belongs to the kit, not here; fixing it
+here only patches the symptom." An orchestrator read the fields, wrote a task targeting the consumer, and
+a session had to refuse it after verifying against the entry that had been cited as its own source.
+
+The fields were not wrong. They correctly listed the six files showing dead citations. They simply do not
+answer "where does this task run", and nothing in their shape says so.
+
+**Before asserting where a task belongs, read the entry's prose to its last line.** In this project the
+disposition is written at the end of `notes:`, after the evidence. A `scope:` field is an inventory of
+affected files, never a routing decision.
+
+The same habit — reading a field and inferring the claim behind it — produced three stale `close_by: hand`
+declarations and a `negative_scope` clause that called a genuine stale call "shorthand". A field records
+what someone concluded once; the prose records why, and why is what goes stale.
+
 ### Registration mechanics — four facts that each cost a real slice to learn
 
 These are not advice. Each one halted a live slice on first contact, and none of them is discoverable
@@ -290,6 +312,74 @@ Use for safety, scope, base, permissions, tool or loop-breaker failure. Write
 `<STATE_DIR>/HALT-<REASON>.txt`, preserve forensic state, state the exact blocker and require a fresh
 successor task when the current run is terminal.
 
+## When a design probe is mandatory
+
+This is a floor, not a ceiling. A repository's own rules may require a probe for more cases than
+listed here, or narrow the skip exemption further — a stricter local rule wins wherever it overlaps
+with this one. A consumer enforcing more than canonical is not drift to reconcile away.
+
+Write `<STATE_DIR>/design-probe.md` before implementation begins whenever the slice has **any** of:
+
+- **Money-adjacent** — a payment, settlement or credit path, or money math.
+- **Create / choke-point** — a resolve-or-create helper (an idempotent upsert / find-or-create), or any
+  function many callers will route through as a shared entry point.
+- **Destructive / irreversible** — merge, drop, delete, unlink, hard-remove.
+- **NL / fuzzy / parsing** — natural-language classification, fuzzy matching, free-text parsing.
+- **Behaviour-divergence** — this case must be handled *differently* from a sibling or already-ratified
+  pattern, so copying that pattern verbatim would be wrong (e.g. creating a record where a sibling
+  correctly fails closed, or reordering a side effect relative to a destructive operation).
+- **Amends merged core / ratified design** — widens a shared type, or supersedes a design decision
+  already landed.
+- **Schema / migration, or a cross-transport/adapter return-type change** — a shape change that fans out
+  to multiple callers or transports.
+- **New mechanism choice** — not a fix inside an existing mechanism, but a fresh choice of algorithm,
+  data shape, or where a piece of logic lives.
+
+**Skip only when the change is a strict 1:1 leaf:** exactly one call site, no create branch, no money
+math, no destructive op, reuses an existing helper (no new mechanism), no divergence from a ratified
+sibling. One-line test: *does this slice contain a decision a mechanical copy-paste would get wrong?*
+Yes → write the probe. No → skip it, but still verify the READY diff yourself. When genuinely in doubt,
+write the probe — the cost of one you didn't need is a few minutes; the cost of a missing one is a HALT
+plus rework, or a silent behaviour bug that ships clean.
+
+This is independent of risk tier. A P2 change can still require a probe — a new NL/fuzzy matcher is
+mechanism-risky even though it is not money/schema/destructive — and a P1 change gets full review and
+human merge regardless of whether any trigger above fires. This list decides whether you owe a
+`design-probe.md` before writing code, not who merges the result.
+
+**A required probe does not put every question in it on hold for a human (2026-08-02).** Three tiers:
+
+1. **Mechanism — decide yourself.** Algorithm, data shape, code organization, how to test it. You just
+   read the code, so you know more than anyone else on this axis. Record the options you considered and
+   *why you rejected each one*, not only the option you picked — a probe recording only the winner
+   cannot be checked later.
+2. **Scope, sequencing, irreversible action — the owner's call.** What belongs to this slice versus a
+   later one, round budget, deleting or overwriting data, ship order, splitting or merging slices. No
+   amount of reading the code substitutes for knowing the project's queue and priorities.
+3. **Reversing ratified behaviour or policy — the owner's call.** A previously-locked test expectation, a
+   compliance or security position, anything that overturns a standing ruling.
+
+Tiers 2 and 3 are the same authority boundary as "Deciding for the project" below, applied to a probe's
+own questions — that section's precedence order and escalation criteria govern here too.
+
+**Escalate even while still in tier 1**, the moment you find evidence against the choice you were about
+to make that you cannot resolve yourself. That is exactly when deciding alone is most likely to be
+wrong.
+
+No gate reads `design_probe_required`; skipping a required probe is caught by a human or reviewer
+noticing, not by a machine. See `docs/kit-design-debt.md` for whether that should change, and why it has
+not, yet.
+
+### Naming the trigger, not a section number
+
+A manifest, HALT, AWAIT or review note that invokes this rule names the trigger inline — "money-
+adjacent", "new mechanism" — never a section number. This exact list used to live at `§0.1` in this
+file; the Level 3 rewrite (`b2893b9`, 2026-07-28) restructured the document without carrying it
+forward, and six Plexco manifests that had cited `autopilot-prompt-GENERIC v0.6.1 §0.1` were left
+pointing at nothing. New manifests kept copying the dead citation for weeks after the break was
+noticed — including one merged 2026-08-02 — because nothing correct existed yet to copy instead. A
+name survives a rewrite; a position never does.
+
 ## Deciding for the project — the precedence order
 
 Default: **decide, record the reasoning and the runner-up, continue.** The protection against a wrong
@@ -390,6 +480,14 @@ is write a value you already know to be false into a file the gate trusts.
 
 ## Non-negotiable boundaries
 
+- **Never delete, rename or move a `HALT-*` or `AWAIT-FOUNDER-*` file.** Not to unblock yourself, not when
+  the halt is plainly a setup gap that judged nothing, not when clearing it is obviously the right
+  outcome. Write an AWAIT describing what you found and stop. Twice in two days a session reasoned
+  correctly that a halt was pre-review — `fix-round-count` at 0, no `gate-attempt-count.txt`, an empty
+  `regions.log` — and acted on that reasoning, and both times the registration had to be closed. The
+  correct classification is exactly what makes deleting it feel safe, which is why this binds on the ACT
+  and not on the reasoning. The party who benefits from a blocker being cleared is never the party who
+  clears it.
 - No force-push, `git add -A`, silent scope expansion or destructive cleanup of unrelated WIP.
 - One worktree and one live writer per writing slice.
 - P0 live actions are preparation-only without explicit human execution authority.

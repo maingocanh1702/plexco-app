@@ -128,13 +128,19 @@ check). One deliberate, documented divergence: see §5.4.
 -- DD-89/DD-90 Q5's job_definer precedent exactly).
 --
 -- Grant-target resolution deliberately mirrors 01-job-definer.sql's own
--- COALESCE(GUC, CURRENT_USER) fallback rather than requiring the GUC unconditionally
--- (see this slice's contract doc §5.4 for why: CI's existing bootstrap step and the
--- docker-compose fresh-volume init-mount path both invoke this file with no GUC set,
--- and CURRENT_USER there is always the trusted bootstrapping superuser). What is new
--- relative to job_definer: an EXPLICIT pg_roles existence check on the resolved
--- target, giving a clear "migration role % does not exist" error instead of relying
--- on the native GRANT statement's generic Postgres error.
+-- COALESCE(GUC, CURRENT_USER) fallback rather than requiring the GUC unconditionally.
+-- That file's own codex round-06 [P1] comment (lines 59-67) already settled this exact
+-- question for job_definer: an explicit MIGRATION_ROLE grants to that role; unset (the
+-- common case, true for both CI and local dev today) falls back to CURRENT_USER. This
+-- slice inherits that ruling rather than re-deriving it — see contract doc §5.4.
+-- What is new relative to job_definer: (a) an EXPLICIT pg_roles existence check on the
+-- resolved target, giving a clear "migration role % does not exist" error instead of
+-- relying on the native GRANT statement's generic Postgres error; (b) a guard against
+-- re-pointing — job_definer's own script (see its codex round-08 [P1] comment, lines
+-- 68-74) only refuses a RUNTIME-role re-target; it does not stop a re-run with a
+-- DIFFERENT non-runtime role from silently ACCUMULATING a second member alongside the
+-- first. chat_definer closes that gap: it fails closed if it is already granted to any
+-- role other than the one being resolved right now (contract doc §5.4).
 -- ============================================================================
 
 BEGIN;
@@ -178,6 +184,7 @@ DO $$
 DECLARE
   v_target text := COALESCE(NULLIF(current_setting('chat_definer_bootstrap.migration_role', true), ''), current_user);
   v_existing_runtime_member text;
+  v_other_member text;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_target) THEN
     RAISE EXCEPTION
@@ -199,6 +206,24 @@ BEGIN
   IF v_existing_runtime_member IS NOT NULL THEN
     RAISE EXCEPTION
       'chat_definer bootstrap: chat_definer is already granted to a runtime role (app/app_worker/readonly) — revoke it before proceeding';
+  END IF;
+  -- Refuse to re-point: 01-job-definer.sql's own re-run guard (codex round-08 [P1])
+  -- only refuses a RUNTIME-role re-target, so a re-run of that file with a DIFFERENT
+  -- non-runtime role silently ACCUMULATES a second member there. chat_definer fails
+  -- closed instead: it must already have no member, or only v_target itself (exact
+  -- replay), before granting — a genuinely different target is an operator decision
+  -- (revoke the old membership first), never a silent multi-member back door.
+  SELECT r.rolname INTO v_other_member
+    FROM pg_auth_members m
+    JOIN pg_roles r ON r.oid = m.member
+    JOIN pg_roles g ON g.oid = m.roleid
+   WHERE g.rolname = 'chat_definer'
+     AND r.rolname <> v_target
+   LIMIT 1;
+  IF v_other_member IS NOT NULL THEN
+    RAISE EXCEPTION
+      'chat_definer bootstrap: chat_definer is already granted to % — refusing to also grant it to % (revoke the existing membership first if this is an intentional re-point)',
+      v_other_member, v_target;
   END IF;
   EXECUTE format('GRANT chat_definer TO %I', v_target);
   -- Re-run the identical transitive check AFTER the grant: if v_target is a
@@ -316,7 +341,12 @@ in §8:
 7. `"refuses to bootstrap when the migration role does not exist"` — set
    `chat_definer_bootstrap.migration_role` to a name absent from `pg_roles`; expect rejection matching
    `/does not exist/i`; assert zero membership rows.
-8. `"N concurrent bootstrap calls against a fresh cluster all succeed; role exists exactly once with
+8. `"refuses to re-point when chat_definer is already granted to a different valid migration role"` —
+   bootstrap once with `migration_role` set to role A (a second scratch non-runtime role created for
+   this test), then re-run with `migration_role` set to a different role B; expect the second call to
+   reject matching `/already granted to/i`; assert A is still the sole member and B was never granted
+   — the case job_definer's own script does **not** guard (§5.4).
+9. `"N concurrent bootstrap calls against a fresh cluster all succeed; role exists exactly once with
    exactly one membership grant"` — mirrors BR-1's shape (migrate.test.ts:80), applied to
    `bootstrapChatDefiner` directly instead of `ensureRoleExists`.
 
@@ -328,43 +358,68 @@ bootstrap of the same real role.
 **`MIGRATION_COUNT = 28` (migrate.test.ts:32) does not change** — this slice adds no
 `packages/db/migrations/*.sql` file.
 
-## 5.4 Design decision: why the grant-target fallback stays, and why nothing outside these 3 files needs to change
+## 5.4 Design decisions: grant-target fallback (inherited ruling) and the re-pointing guard (new)
+
+### 5.4.1 The `CURRENT_USER` fallback is an inherited ruling, not a fresh trade-off
 
 Plan §9.2's acceptance text lists "missing/invalid migration role" as one of four fail-closed
-triggers, alongside wrong attribute, runtime-role target, and concurrent bootstrap. Two readings are
-grammatically defensible:
+triggers, alongside wrong attribute, runtime-role target, and concurrent bootstrap. Read in isolation,
+this could mean "an *unset* GUC itself must fail closed — no `CURRENT_USER` fallback at all." That
+question is not new, and it was not left to this packet to decide: `01-job-definer.sql`'s own
+**codex round-06 [P1]** comment (lines 59-67) already argued it to a conclusion for the identical
+mechanism — "unset (the common case) falls back to `CURRENT_USER`" — after weighing the exact
+alternative (requiring an explicit `MIGRATION_ROLE` unconditionally) and rejecting it. `chat_definer`
+inherits that ruling rather than re-litigating it: "missing" in §9.2's text means the *resolved target
+role* is missing/invalid (mirroring "runtime-role target" being about the target's category), not that
+an unset GUC is itself a failure.
 
-- **Reading A (strict):** an *unset* GUC itself must fail closed — no `CURRENT_USER` fallback at all.
-- **Reading B (adopted):** "missing/invalid" describes the *resolved target role's* own existence/
-  validity (mirroring "runtime-role target" being about the target's category) — an unset GUC still
-  safely resolves to `CURRENT_USER` (exactly like `job_definer`), and the new, explicit failure is a
-  target that resolves to a role **absent from `pg_roles`**.
+This packet also verified the ruling is load-bearing here, not just precedent: CI's existing
+`Bootstrap job_definer role` step (§3 — `MIGRATION_ROLE` is not set there) and `docker-compose.yml`'s
+fresh-volume `docker-entrypoint-initdb.d` mount (§3 — Postgres's own init mechanism runs each file via
+`ON_ERROR_STOP=1`, and a raised exception there aborts the *entire* container initialization on a
+brand-new volume) both invoke this file with **no GUC set at all**. Requiring the GUC unconditionally
+would need a companion `.github/workflows/ci.yml` edit (outside §9.2's exact-3-files pin) and has **no
+clean fix at all** for the docker-compose path — there is no hook to inject a GUC per init-mounted file
+before Postgres executes it. Inheriting round-06's ruling produces identical, zero-touch-required
+behavior on both paths (`CURRENT_USER` there is always the trusted bootstrapping superuser — `plexco`
+— which trivially exists and is never a runtime role), confirmed by acceptance rows in §8 (Wiring
+category) rather than assumed.
 
-Reading A was tested against the two invocation paths that call this file with **no GUC set at all**
-today: CI's existing `Bootstrap job_definer role` step (§3 — `MIGRATION_ROLE` is not set there) and
-`docker-compose.yml`'s fresh-volume `docker-entrypoint-initdb.d` mount (§3 — Postgres's own init
-mechanism runs each file via `ON_ERROR_STOP=1`, and a raised exception there aborts the *entire*
-container initialization on a brand-new volume, not just this one file). Under Reading A, both paths
-would need a companion change: CI would need an explicit `MIGRATION_ROLE` env var added to its
-bootstrap step (a `.github/workflows/ci.yml` edit, outside §9.2's exact-3-files pin), and the
-docker-compose init-mount path would have **no fix available at all** within a single SQL file — there
-is no hook to inject a GUC per init-mounted file before Postgres executes it, so first-time `docker
-compose up` on a brand-new volume would fail to initialize.
+What is still genuinely new relative to `job_definer`, on top of the inherited fallback: an **explicit**
+`pg_roles` existence pre-check with a clear, named error on whatever the fallback resolves to, where
+`job_definer`'s script has none (it relies on the native `GRANT`'s generic Postgres error if the target
+doesn't exist).
 
-Reading B produces identical, zero-touch-required behavior on both paths (`CURRENT_USER` there is
-always the trusted bootstrapping superuser — `plexco` — which trivially exists and is never a runtime
-role), while still adding real, testable hardening over `job_definer`'s own script: an **explicit**
-`pg_roles` existence pre-check with a clear, named error, where `job_definer`'s script has none (it
-relies on the native `GRANT`'s generic Postgres error if the target doesn't exist). This is why §5.1's
-SQL, §5.2's `package.json` diff, and §5.3's tests all resolve around Reading B, and why `.github/
-workflows/ci.yml` and `infra/docker-compose.yml` need **zero changes** — confirmed by acceptance rows
-in §8 (Wiring category) rather than assumed.
-
-If a future reviewer determines Reading A was actually intended, the fix is bounded and known (add
+If a future reviewer determines the stricter reading was actually intended for `chat_definer`
+specifically (diverging from the inherited `job_definer` ruling), the fix is bounded and known (add
 `MIGRATION_ROLE: plexco` to the CI step's `env:` block, and accept that the docker-compose convenience
 path becomes unsafe for fresh volumes unless it is also reworked) — see §10.
 
-Also deliberately **not touched**, and why:
+### 5.4.2 The re-pointing guard: a real gap in `job_definer` that `chat_definer` closes instead of inheriting
+
+Distinct from the fallback question, this packet checked whether `01-job-definer.sql` guards a
+**re-run under a different `MIGRATION_ROLE`** — i.e. bootstrap once granting to role A, then re-run
+later with the GUC set to a different role B. Its **codex round-08 [P1]** comment (lines 68-74)
+addresses exactly one shape of this: a re-run where the *new* target is a **runtime** role
+(`app`/`app_worker`/`readonly`), which the script refuses unconditionally on every invocation (not just
+"first" runs). Verified line-by-line against the live file: this is the *only* re-run guard it has.
+Nothing in the file checks whether `job_definer` is already granted to some **other, non-runtime**
+role before granting to a new one — a re-run with `MIGRATION_ROLE=bob` after an earlier run granted to
+`alice` would silently `GRANT job_definer TO bob` too, with no rejection, no revocation, and no warning.
+`job_definer` ends up with two members, indefinitely, and nothing in its own script or
+`packages/db/src/migrate.test.ts`'s existing suite catches it. This is a genuine, already-shipped gap
+— not touched here (`job_definer` is explicit negative scope, §7) but worth naming precisely rather
+than either silently repeating or silently over-claiming it doesn't exist.
+
+`chat_definer` does not inherit this gap. §5.1's design adds an explicit pre-grant check: fail closed
+if `chat_definer` is already granted to any role **other than** the one currently being resolved
+(exact replay against the *same* target still passes, since that check excludes `v_target` itself).
+This is a natural, low-cost hardening for a fresh script — not a re-derivation of Postgres semantics,
+just closing a re-pointing back door before it ships, directly serving §9.2's own "membership **only**
+to validated migration role" language (singular, not accumulating). See §5.3 test 8 and §8's new
+Authorization row.
+
+### 5.4.3 Also deliberately not touched, and why:
 
 - **`packages/db/src/test-harness.ts`** — adding `bootstrapChatDefiner`/`withChatDefinerLock` there
   would expand scope past §9.2's exact 3 files and increase blast radius on a file
@@ -421,6 +476,7 @@ runner (§9.2: "zero domain migration/table/API"). `MIGRATION_COUNT` in `migrate
 | Authorization | `migration_role` set to `app`, `app_worker`, or `readonly` | Fails closed before any `GRANT`; error names the runtime role; zero membership rows |
 | Authorization | `chat_definer` already granted to a runtime role via some other path before bootstrap runs | Refuses to proceed at all; error states it is already granted to a runtime role |
 | Authorization | `migration_role` set to a name absent from `pg_roles` | Fails closed with an explicit "migration role % does not exist" error; zero membership rows |
+| Authorization | Bootstrap once with `migration_role` = A, then re-run with `migration_role` = a different valid role B | Second call fails closed ("already granted to A"); A remains the sole member; B is never granted — the gap `job_definer`'s own script does not guard (§5.4.2) |
 | Authorization | Grant target is a non-runtime group role a runtime role already belongs to (indirect BYPASSRLS path) | Post-grant re-check detects the new transitive path and raises; the whole transaction — including the `GRANT` — rolls back atomically |
 | Failure | Any fail-closed trigger above fires mid-script | The single `BEGIN...COMMIT` wrapping the file rolls back everything, including a freshly-created role — no partial state survives, not even an inert leftover role |
 | Concurrency | N concurrent `bootstrapChatDefiner` calls against a fresh cluster, all with the same valid migration role | All calls succeed (or all-but-one hit the `duplicate_object` swallow); role exists exactly once with exactly one membership grant afterward |
@@ -514,8 +570,16 @@ REMAINING_BLOCKERS: none
    cosmetic (the step's own comment already explains the mechanism in enough detail), and renaming it
    is outside §9.2's exact-3-files pin — worth a one-line touch-up whenever `ci.yml` is next edited for
    an unrelated reason, not worth its own slice.
-3. **Reading A vs Reading B (§5.4).** If the plan owner intended the stricter "missing GUC must fail
-   closed unconditionally" reading, the bounded fix is known (add `MIGRATION_ROLE: plexco` to CI's
-   bootstrap step, and separately decide whether the docker-compose fresh-volume convenience path is
-   allowed to become unsafe or needs its own rework) — flagged here for explicit override, not left
-   ambiguous in the contract itself.
+3. **Grant-target fallback (§5.4.1) — confirmed, not a live question.** Owner confirmed 2026-08-03:
+   the `CURRENT_USER` fallback is the right call, and it is an inherited ruling (`01-job-definer.sql`'s
+   own codex round-06 [P1]) rather than a fresh trade-off this packet invented. The bounded reversal
+   path (add `MIGRATION_ROLE: plexco` to CI's bootstrap step; separately decide whether the
+   docker-compose fresh-volume convenience path may become unsafe or needs its own rework) stays
+   documented in §5.4.1 in case a future slice deliberately diverges from this precedent — not because
+   it is in question here.
+4. **`01-job-definer.sql` itself has an unguarded re-pointing gap (§5.4.2).** Discovered while checking
+   whether `chat_definer` should mirror a re-run guard: `job_definer`'s script refuses a re-run
+   targeting a *runtime* role, but not a re-run targeting a *different non-runtime* role — that
+   silently accumulates a second member. Explicit negative scope for this packet (`job_definer` is not
+   touched), and per owner direction the backlog entry for that follow-up is the owner's own to open,
+   not this packet's. Recorded here so it is not lost between sessions.

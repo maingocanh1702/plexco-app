@@ -1,5 +1,44 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 28
+# KIT_VERSION: 30
+# v30 (2026-08-03) — pack content change, no behaviour change in THIS file. `autopilot-prompt-GENERIC.md`
+# gains "When a design probe is mandatory": the Level 3 rewrite (`b2893b9`, 2026-07-28) dropped a
+# numbered `§0.1` trigger classifier with no replacement, and two consumers separately absorbed the
+# gap — Plexco's manifests kept citing the now-dead `§0.1` (six of them, one merged as late as
+# 2026-08-02), while Bestminton Club Payment check bot's `CLAUDE.md` hand-carried the pre-rewrite list
+# forward and extended it with a three-tier decision model canonical never had. This restores the
+# substance from that consumer's copy — generalized, repo-specific examples stripped — under a stable
+# named heading instead of a number, states explicitly that it is a floor a stricter local rule may
+# tighten, and retires section-number citation in favour of naming the trigger inline.
+# `docs/kit-design-debt.md`'s "files that ship with the kit but are not in the sync pack drift into
+# forks" entry gains the third recorded instance of this drift shape (content dropped from a pack
+# file, not a file outside the pack); a new entry right after it records that no gate reads
+# `design_probe_required` and why building one now would be speculative. No manifest schema change, no
+# new validator, no behaviour change in this file or `autopilot-review-readiness.mjs` — see that new
+# entry for why not yet.
+# v29 (2026-08-03) — pack content change, no behaviour change in THIS file. `autopilot-update.sh`
+# gains a post-sync report (docs/kit-design-debt.md §6, "the cheap half"): after the pack sync
+# completes, it now compares a small, explicitly maintained list of kit files that ship OUTSIDE
+# pack_pairs against a plausible consumer-side path, and reports — never syncs, never halts on — one
+# that exists there and differs from canonical. Measured 2026-08-03: canonical `ap-merge.sh` has no
+# step 8b and never calls `autopilot-backlog-reconcile`, but Plexco's own `scripts/ap-merge.sh` grew a
+# step 8b calling `reconcile --fix` right after its own probe verification — functionality canonical
+# never had. Nothing reported the fork, because a file outside the pack produces no diff during a
+# sync; a sync that says nothing about `ap-merge.sh` was indistinguishable from one that confirmed it
+# matched. `unsynced_candidates()` currently holds exactly one entry (`ap-merge.sh` →
+# `scripts/ap-merge.sh`) — deliberately not a sweep of every file the kit ships, since most either
+# have no consumer-side counterpart at all (template-repo-internal planning/reference docs) or are
+# explicitly canonical-only by documented design (`ap-watch.sh` and its installers: see the
+# `WATCHDOG = CANONICAL-ONLY` comment a few lines below this one). Grows one entry at a time, the same
+# way `pack_pairs` itself did (v12 through v19), only when a real consumer copy is found — guessing a
+# mapping up front is exactly the pattern-guessing this change was asked not to do.
+# Explicitly NOT decided here, and it is a separate, larger question left open in kit-design-debt.md
+# §6: whether `ap-merge.sh` (or anything else) belongs IN the pack. Forcing a legitimately per-repo
+# file into the pack can overwrite local adaptation the updater has no merge strategy for; that is an
+# owner decision, not this updater's to make. This change only makes the drift visible.
+# Verified test-first (test/e2e.sh, "kit:sync-drift-report" section, 8 assertions, run in a dedicated
+# detached worktree so the suite's own stub `codex-review-pin.sh` doesn't confound the pack-drift
+# check): RED against the pre-fix code (the report never appeared), GREEN after (the drifted file is
+# named and clearly marked, exit stays 0, an identical or absent consumer copy stays silent).
 # v28 (2026-08-03) — BEHAVIOUR FIX in this file (docs/kit-test-suite-spec.md, "Defect 7", found
 # 2026-08-01): `register` was fail-open on the one control the rest of the gate assumes. The
 # contract-validator guard and the registered-manifest.sha256 hash-lock guard both gated on

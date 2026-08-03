@@ -26,17 +26,25 @@ in-app-chat serialized DB lane. Mirrors `infra/postgres-init/01-job-definer.sql`
    and the `describe("job_definer bootstrap script itself fails closed on runtime-role targets", ...)`
    block (line 1239) — your new describe block is a sibling of that one, adapted per contract §5.3.
 
-## The one thing that is easy to get wrong
+## The two things that are easy to get wrong
 
 **Do not require an explicit `chat_definer_bootstrap.migration_role` unconditionally.** It is tempting
 to read plan §9.2's "missing/invalid migration role fails closed" as "an unset GUC must fail" — the
-contract doc §5.4 already worked through why that reading breaks CI's existing bootstrap step (no
+contract doc §5.4.1 already worked through why that reading breaks CI's existing bootstrap step (no
 `MIGRATION_ROLE` set there) and has no clean fix at all for the docker-compose fresh-volume
-init-mount path. The adopted design keeps the `COALESCE(GUC, CURRENT_USER)` fallback exactly like
-`job_definer`, and adds a new **explicit `pg_roles` existence check** on whatever the fallback
-resolves to — that is what "invalid migration role" means in this contract. If you find yourself
-about to add `MIGRATION_ROLE: <value>` to `.github/workflows/ci.yml`, stop and re-read §5.4 first —
-that is a sign you've drifted to the rejected reading.
+init-mount path, and cites `01-job-definer.sql`'s own codex round-06 [P1] as the ruling this design
+inherits, not re-derives. The adopted design keeps the `COALESCE(GUC, CURRENT_USER)` fallback exactly
+like `job_definer`, and adds a new **explicit `pg_roles` existence check** on whatever the fallback
+resolves to — that is what "invalid migration role" means in this contract. If you find yourself about
+to add `MIGRATION_ROLE: <value>` to `.github/workflows/ci.yml`, stop and re-read §5.4.1 first — that is
+a sign you've drifted to the rejected reading.
+
+**Do not skip the re-pointing guard.** Contract §5.4.2/§5.1: before the `GRANT`, check whether
+`chat_definer` is already granted to some role *other than* the one you're about to grant to (via
+`pg_auth_members`, excluding `v_target` itself so exact replay still passes) and fail closed if so.
+`01-job-definer.sql` does **not** have this check for a non-runtime re-target — it only guards a
+runtime-role re-target (codex round-08 [P1]) — so do not copy that file's membership block verbatim and
+assume it's equivalent; `chat_definer`'s version is deliberately stricter here.
 
 ## Steps
 

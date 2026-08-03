@@ -65,6 +65,7 @@
       "grep -q 'chat_definer_bootstrap.migration_role' infra/postgres-init/02-chat-definer.sql",
       "! grep -qE 'GRANT (USAGE|CREATE) ON SCHEMA public TO chat_definer' infra/postgres-init/02-chat-definer.sql",
       "! grep -q 'job_definer' infra/postgres-init/02-chat-definer.sql",
+      "grep -q 'pg_auth_members' infra/postgres-init/02-chat-definer.sql",
       "grep -q '02-chat-definer.sql' package.json",
       "grep -q '01-job-definer.sql' package.json",
       "! grep -q 'chat_definer' packages/db/src/migrate.ts",
@@ -93,7 +94,7 @@
   },
   "security_review": {
     "required": true,
-    "reason": "Creates a cluster-global BYPASSRLS-capable role that a future migration (dd38-dd86-chat-schema-core) will transfer SECURITY DEFINER function ownership to -- the fail-closed grant-target validation (attribute drift, runtime-role refusal, non-existent-role refusal, transitive-membership re-check after grant) IS the entire privilege boundary this slice exists to establish. Security round must specifically verify: the single-transaction atomicity claim (no partial grant survives any failure), that the grant-target fallback to CURRENT_USER cannot be reached by any runtime role in practice, and that the deliberate omission of the schema-level USAGE/CREATE grant (deferred to the root migration) does not leave a gap the root migration fails to close.",
+    "reason": "Creates a cluster-global BYPASSRLS-capable role that a future migration (dd38-dd86-chat-schema-core) will transfer SECURITY DEFINER function ownership to -- the fail-closed grant-target validation (attribute drift, runtime-role refusal, non-existent-role refusal, re-pointing refusal, transitive-membership re-check after grant) IS the entire privilege boundary this slice exists to establish. Security round must specifically verify: the single-transaction atomicity claim (no partial grant survives any failure), that the grant-target fallback to CURRENT_USER cannot be reached by any runtime role in practice (an inherited ruling from 01-job-definer.sql's own codex round-06 [P1], not a fresh trade-off), that the re-pointing guard (docs/autopilot-chat-definer-role-provisioning.md SS5.4.2 -- refuses a second non-runtime member instead of silently accumulating one, a gap job_definer's own script does not close) is correctly scoped to exclude v_target itself so exact replay still passes, and that the deliberate omission of the schema-level USAGE/CREATE grant (deferred to the root migration) does not leave a gap the root migration fails to close.",
     "tool": "scripts/codex-review-pin.sh"
   },
   "budgets": {
