@@ -83,10 +83,16 @@ running again once any other slice is in flight.
    after; codex round-02 [P2] caught the other 3 by direct review, not by the focused checks). Do not
    treat "focused checks pass" as proof of completeness for this file — run
    `grep -n 'authorizeTenantAction(tenantId' docs/features/BE/feature_billing_lifecycle_tech.md` by hand
-   and confirm every hit is inside the two legitimate historical changelog rows before moving on. Add ONE
-   new changelog row dated today explaining why; preserve every existing dated row verbatim — do not
-   touch the v2.8 row, which already discusses a prior signature change and must read exactly as it did
-   then. Bump the header Version/date to match the new top row.
+   and confirm every hit is inside a legitimate historical changelog row before moving on. This count is
+   NOT stable across edits to this same launcher's own new changelog row: an earlier draft of that row
+   phrased the before/after pair as `` `(tenantId, actionClass)` → `(tx, tenantId, actionClass)` `` (one
+   grep hit, matching the pattern above); a later edit reworded it to drop the `authorizeTenantAction`
+   prefix before the first parenthesis (zero hits from that row). Whichever wording is live when you run
+   this, RE-RUN the grep and read what it actually returns — do not carry forward a count written by an
+   earlier step in this same file, including this one. Add ONE new changelog row dated today explaining
+   why; preserve every existing dated row verbatim — do not touch the v2.8 row, which already discusses a
+   prior signature change and must read exactly as it did then. Bump the header Version/date to match the
+   new top row.
 5. Update `docs/autopilot-backlog.md`'s own task block: fill `manifest:` and `scope:` (both are `null`/
    `[]` today — that is expected; this slice is what fills them in).
 6. Self-verify: run every `verification.focused` and `verification.canonical` command from the runtime
