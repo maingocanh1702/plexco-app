@@ -37,21 +37,30 @@ NEGATIVE_SCOPE: no change to package.json / pnpm-workspace.yaml / pnpm-lock.yaml
 
 ## Measurement
 
-Three independent trials — 1 and 2 with magnitude deliberately reversed between them to rule out a
-"lower/higher value always wins" confound, 3 repeating trial 1 to also capture
-`pnpm config get overrides --json` for the same live conflict — all fully reverted before this
-slice's commit:
+Four trials. 1 and 2 reverse magnitude to rule out a "lower/higher value always wins" confound; 3
+repeats trial 1 to also capture `pnpm config get overrides --json` for the same live conflict; 4
+isolates whole-map replacement from same-key precedence by touching a key (`esbuild`) `package.json`
+never declares. All fully reverted before this slice's commit:
 
-| Trial | Package    | package.json value | pnpm-workspace.yaml value | Resolved (lockfile) | `pnpm config get` | Winner (resolution) |
-| ----- | ---------- | ------------------- | -------------------------- | ---------------------- | -------------------- | ---------------------- |
-| 1     | picocolors | 1.0.0 (lower)        | 1.0.1 (higher)              | 1.0.0                   | not checked           | package.json            |
-| 2     | ms         | 2.1.2 (higher)       | 2.1.1 (lower)               | 2.1.2                   | not checked           | package.json            |
-| 3     | picocolors | 1.0.0 (lower)        | 1.0.1 (higher)              | 1.0.0                   | 1.0.1 (disagrees)     | package.json            |
+| Trial | What changed | package.json value | pnpm-workspace.yaml value | Resolved (lockfile) | `pnpm config get` | Result |
+| ----- | ------------- | -------------------- | --------------------------- | ---------------------- | -------------------- | -------- |
+| 1     | `picocolors` set in both | 1.0.0 (lower) | 1.0.1 (higher) | 1.0.0 | not checked | package.json's map applied |
+| 2     | `ms` set in both, magnitude reversed | 2.1.2 (higher) | 2.1.1 (lower) | 2.1.2 | not checked | package.json's map applied |
+| 3     | repeat of 1, `config get` also captured | 1.0.0 (lower) | 1.0.1 (higher) | 1.0.0 | 1.0.1 (disagrees) | package.json's map applied |
+| 4     | `package.json`'s entire `pnpm.overrides` removed; `esbuild` untouched in either file | absent | `esbuild@<0.25.0 → 0.25.12` unchanged | `esbuild@0.18.20` → gone | not checked | with `package.json`'s map absent, workspace's previously-inert `esbuild` rule fires |
 
-**Result: `package.json`'s `pnpm.overrides` wins for actual dependency resolution.** `pnpm config get
-overrides` disagrees — it only ever surfaces `pnpm-workspace.yaml`'s map, a separate, source-cited
-phenomenon, not evidence against the resolution finding. Full method, evidence, source citation, and
-caveats are in `docs/standards/dependency-override-precedence.md` — this file does not duplicate them.
+**Result: `package.json`'s `pnpm.overrides`, when declared at all, wholesale-replaces
+`pnpm-workspace.yaml`'s entire `overrides` map for actual dependency resolution — not a per-key merge.**
+Trials 1-3 alone cannot distinguish "package.json wins ties" from "package.json's map replaces the
+other entirely" (both explanations fit a same-key conflict). Trial 4 is what distinguishes them: it
+touches a key with no `package.json` counterpart at all, so there is no tie — yet toggling only whether
+`package.json` *has* an overrides field flips whether `pnpm-workspace.yaml`'s unrelated rule fires. That
+is only explainable by whole-map replacement, and it is a live, present-day condition in this repo, not
+a hypothetical (see the standards doc's "A live consequence" section — `pnpm-workspace.yaml`'s
+`esbuild@<0.25.0` override has never actually run). `pnpm config get overrides` disagrees with the
+resolution outcome for a separate, source-cited reason (see the standards doc's "A critical
+distinction"), not evidence against this finding. Full method, evidence, source citations, and caveats
+are in `docs/standards/dependency-override-precedence.md` — this file does not duplicate them.
 
 ## Registration mechanics note (found live, kept for the next slice)
 
@@ -127,6 +136,37 @@ three-value vocabulary (`package.json (pnpm.overrides)` / `pnpm-workspace.yaml (
 round records continues to be independently justified by the evidence in the same file. Loosening
 that further would need a new registration (the manifest is hash-locked); not done here since the
 substantive finding was about the conclusion's rigor, not the check's mechanics.
+
+**Round 2 (codex, 2026-08-03): FINDINGS — round 1's model was wrong, not just under-evidenced; all
+three addressed.**
+
+- **[P1, the substantive one]** Round 1 shipped "package.json wins when the two conflict on the same
+  key" — a **per-key precedence** model. This is wrong. Direct isolation test: temporarily removed
+  `package.json`'s entire `pnpm.overrides` field (touching no key that collides with anything in
+  `pnpm-workspace.yaml`) and re-ran `pnpm install --lockfile-only`. `pnpm-workspace.yaml`'s
+  `esbuild@<0.25.0 → 0.25.12` rule — previously silent — started firing immediately; restoring
+  `package.json`'s field (unchanged, `esbuild` never mentioned) silenced it again. A key with no
+  collision cannot be explained by "wins on conflict" — only by **whole-map replacement**:
+  `package.json`'s mere presence replaces `pnpm-workspace.yaml`'s entire override map, including keys
+  it never mentions. This is now Trial 4 in Measurement above, and it is a **live, present-day gap**:
+  `@esbuild-kit/core-utils@3.3.2` genuinely requests `esbuild: ~0.18.20`, entirely inside the range the
+  workspace override targets, and the override has never actually applied to it. The standards doc
+  (v1.2) was rewritten around this corrected model; the practical guidance that told readers to split
+  overrides across the two files was deleted — it was actively unsafe under whole-map replacement, not
+  merely imprecise — and replaced with "consolidate into one file." Round 1's unverified extrapolation
+  that `assertWantedLockfileUpToDate` also reads the workspace-replaced view was retracted rather than
+  defended; the variable it actually reads (`rootManifestOptions`) was not independently confirmed to
+  be that same value, so the doc now makes no claim about that function either way. The live esbuild gap
+  is not fixed here (negative scope) — recorded as backlog task `pnpm-workspace-esbuild-override-inert`.
+- **[P2]** The launcher's step 4 and the backlog's original 2026-07-30 measurement recipe still taught
+  plain `pnpm why` as the primary evidence — the exact trap round 1 fixed in the standards doc, still
+  live in two other instructions. Fixed both: lockfile grep is now the stated primary evidence in the
+  launcher, with `pnpm why`/`pnpm config get` explicitly downgraded to diagnostic-only; the backlog's
+  original recipe line got an inline correction note pointing at this fix (original text preserved,
+  per this repo's established convention for dated notes).
+- **[P2]** `status: ready` with `merged_probe: null` meant `autopilot-backlog-reconcile` could never
+  auto-detect this task landing. Added `docs/autopilot-manifests/pnpm-override-precedence-two-locations.json :: feature`
+  — the manifest file is entirely absent at base and the probe string is slice-unique.
 
 ## Negative scope
 

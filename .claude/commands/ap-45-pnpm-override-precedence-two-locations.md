@@ -70,10 +70,22 @@ test -f .autopilot/state/pnpm-override-precedence-two-locations/registered-manif
    already present in the dependency graph and not already overridden anywhere in this repo. Set a
    bare-name selector to one value in `package.json`'s `pnpm.overrides` and a *different* value for the
    same bare-name selector in `pnpm-workspace.yaml`'s `overrides`. Run `pnpm install --lockfile-only`,
-   then `pnpm why <pkg> -r` to read the resolved version — that reveals the winner. Run a second trial
+   then read the resolved version with **`grep '<pkg>@' pnpm-lock.yaml` directly — this is the primary
+   and only trusted evidence.** Do not rely on plain `pnpm why <pkg> -r` as evidence: it reads
+   `node_modules/.pnpm`'s installed graph when one already exists in the worktree (e.g. from an earlier
+   unrelated `pnpm install` for `typecheck`/`lint`/`build`), which can report a stale, pre-experiment
+   version instead of the freshly-written lockfile — confirmed directly in this slice's own round 1.
+   Likewise do not use `pnpm config get overrides --json` as evidence of the resolution outcome: at
+   pnpm 10.30.2 it reads a *different*, workspace-only view of the same config and disagrees with
+   actual resolution by design (see the standards doc's "A critical distinction" section) — useful only
+   as a diagnostic of that separate divergence, never as the experiment's result. Run a second trial
    with a different package and the value magnitudes swapped (lower value in whichever file won the
    first trial's higher value, and vice versa) to rule out "lower/higher value always wins" as a
-   confound rather than file location. Revert both trials via
+   confound rather than file location. Also run a trial that isolates whole-map replacement from
+   same-key precedence: temporarily remove `package.json`'s entire `pnpm.overrides` field (leaving
+   `pnpm-workspace.yaml` untouched) and check whether a `pnpm-workspace.yaml`-only key that
+   `package.json` never mentions starts being honored — if it does, `package.json`'s mere presence,
+   not any per-key conflict, is what silences `pnpm-workspace.yaml`. Revert every trial via
    `git checkout -- package.json pnpm-workspace.yaml pnpm-lock.yaml` before any commit; confirm
    `git diff --stat <base_sha> -- package.json pnpm-workspace.yaml pnpm-lock.yaml` is empty afterward.
 5. Check `docs/standards/` for an existing home for the result before creating a new file — grep every
