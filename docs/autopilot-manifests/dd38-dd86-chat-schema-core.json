@@ -1,0 +1,131 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — deliberately carries NO manifest_schema_version; adding it makes register HALT CONTRACT_INVALID. The runtime manifest is generated at register time into .autopilot/state/<feature>/manifest.json from _TEMPLATE.json.",
+  "task_id": "plexco:dd38-dd86-chat-schema-core",
+  "feature": "dd38-dd86-chat-schema-core",
+  "branch": "feat/dd38-dd86-chat-schema-core",
+  "base_ref": "origin/main",
+  "risk": "P0",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": ["chat-definer-role-provisioning", "chat-dm-safety-authority-core"],
+  "dep_checks": [],
+  "_dependency_note": "depends_on names the TRUE prerequisites (corrected from the docs/autopilot-backlog.md stub's depends_on: [], which that entry's own notes say is a placeholder: 'this is an evidence registry anchor, not evidence that the executable slice graph has no dependencies'). dep_checks is deliberately EMPTY: neither chat-definer-role-provisioning nor chat-dm-safety-authority-core has a backlog entry, manifest, or launcher yet (verified 2026-08-03 via grep across docs/autopilot-backlog.md -- zero hits for either slug), so there is no base_sha/landed_sha/symbol proof to cite. This is not an oversight -- fabricating placeholder SHAs here would be exactly the 'evidence with a machine-checked shell' failure review-code-readiness-gate.md SS11.2 warns against. This is a HARD functional dependency, not just collision-avoidance: this slice's own migration calls dm_safety_enabled() (owned by chat-dm-safety-authority-core) inside dm_current_read_allowed(), and does ALTER FUNCTION ... OWNER TO chat_definer / GRANT ... TO chat_definer, which requires the chat_definer role (chat-definer-role-provisioning's entire deliverable) to already exist with exact NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION attributes. Without slice 1, this slice's own migration cannot even apply. tenant-capability-authority-core's dependency ON this slice (the reverse direction) is explicitly the OTHER kind -- collision-only, shared migration tail/schema.ts/catalog tests, not semantic -- and is not listed here since it is a successor, not a prerequisite. See docs/autopilot-dd38-dd86-chat-schema-core.md SS4 for the full derivation across 8+ source docs.",
+  "invariants": ["schema"],
+  "_invariant_note": "schema: Supabase/Postgres tables, migrations, RLS policies (docs/autopilot-invariant-catalog.md:35) -- this slice adds exactly one migration touching RLS. No other domain token applies: no money/billing path, no auth/session mutation (chat_definer is a role, not an auth boundary change), no cross-club logic.",
+  "scope": [
+    "packages/db/migrations/0029_chat_schema_core.sql",
+    "packages/db/schema.ts",
+    "packages/db/src/chat-schema-invariants.test.ts",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/README.md",
+    "docs/autopilot-manifests/dd38-dd86-chat-schema-core.json",
+    "docs/autopilot-dd38-dd86-chat-schema-core.md"
+  ],
+  "_scope_note": "The slice doc and this manifest are IN scope on purpose (AP-39/AP-40 lesson, repeated by db-tenants-authz-grant-security-definer). packages/db/src/migrate.test.ts is pre-declared in scope for the same mechanical-literal-bump reason that manifest documented as a lesson learned during its own implementation, not authoring -- do not repeat that omission. packages/db/README.md documents the two new SECURITY DEFINER functions (chat_current_is_member, dm_current_read_allowed), matching the per-migration documentation convention every prior SECURITY DEFINER slice has followed. rls-invariants.test.ts is deliberately NOT in scope: its CND (check-constraint-naming-drift) regression guard iterates Object.values(schemaModule) generically and already covers new tables, PROVIDED every constraint in the schema.ts mirror uses an explicit declared name (check()/unique()/foreignKey() builders) -- see _design_contract.",
+  "_migration_number_note": "0029 is a PROVISIONAL placeholder, not a commitment. Live tail measured 2026-08-03 is 0027_resolve_tenant_status_locked.sql. chat-definer-role-provisioning (slice 1) does NOT consume a migration number -- its exact packet (primary-surface plan SS9.2) creates infra/postgres-init/02-chat-definer.sql, a superuser bootstrap script parallel to the existing 01-job-definer.sql, run via a db:bootstrap-style command, never a packages/db/migrations/*.sql file. chat-dm-safety-authority-core (slice 2) DOES add one independent migration (+1 -> 0028). This slice's migration would then be 0029 IF exactly zero other migration-adding slices land in between -- re-derive with `ls packages/db/migrations/*.sql | sort | tail -5` immediately before creating anything, and only after confirming slices 1 and 2 have actually landed on origin/main.",
+  "negative_scope": [
+    "NO create_dm, send_chat_message, mark_read, edit/delete/search/reaction/moderation RPC -- all owned by post-root slices 6/7/8/13/14/15",
+    "NO HTTP route or SSE topic of any kind -- routes belong to A1-A21 thin adapters, none of which exist yet",
+    "NO chat_message_mentions, chat_message_reactions, chat_message_revisions tables (DD-92 interaction slices 13/14/15)",
+    "NO chat_notification_preferences, chat_notification_dispatches tables (DD-94 slice 42)",
+    "NO chat_channel_mutes, chat_moderation_audit tables (DD-95 chat-club-moderation-core, slice 6)",
+    "NO chat_command_receipts table (slash registry slices 22-26)",
+    "NO DD-56 capability registry, grants, or append-only grant audit (tenant-capability-authority-core, slice 4 -- collision-dependent on THIS slice, not the reverse)",
+    "NO media/object-storage table of any kind (DD-55 media slices 11/12)",
+    "NO Assistant/KB table or route",
+    "NO creation of the chat_definer role itself -- that is slice 1's deliverable; this slice only CONSUMES an already-provisioned role via ALTER FUNCTION ... OWNER TO chat_definer",
+    "NO CREATE OR REPLACE or re-ownership of dm_safety_enabled(), chat_pair_blocked(), or assert_dm_allowed() -- those are slice 2's deliverable; this slice only CALLS dm_safety_enabled() from inside dm_current_read_allowed()",
+    "NO GRANT of INSERT/UPDATE/DELETE on chat_channels, chat_members, or chat_messages to app, app_worker, or readonly -- mutation has no owner yet; granting it now repeats exactly the failure mode authorize-tenant-action-core/db-tenants-authz-grant-security-definer deliberately avoided (never grant a capability whose full lifecycle has no owner)",
+    "NO new exported helper on packages/db/src/tenant.ts (e.g. a withPerson) -- the new test file sets app.person_id inline via its own local set_config call; adding a shared helper would be a 4th module and breach the B3 budget exception's 3-module ceiling",
+    "NO edit to packages/db/src/rls-invariants.test.ts -- its generic CND guard already covers new tables when constraints are named per convention",
+    "NO edit to docs/autopilot-backlog.md -- separate chore commit, out of this slice's scope"
+  ],
+  "context_sources": [
+    "docs/autopilot-backlog.md",
+    "docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md",
+    "docs/features/BE/feature_inapp_chat_tech.md",
+    "docs/features/feature_inapp_chat.md",
+    "docs/dd-86-in-app-multi-channel-analysis.md",
+    "docs/standards/decisions.md",
+    "docs/standards/feature-dependency-graph.md",
+    "packages/db/schema.ts",
+    "packages/db/migrations/0009_rls_policies_grants.sql",
+    "packages/db/migrations/0012_auth_functions.sql",
+    "packages/db/src/tenant.ts",
+    "packages/db/src/test-harness.ts",
+    "docs/autopilot-invariant-catalog.md",
+    "docs/autopilot-dd38-dd86-chat-schema-core.md"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "none",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -qc 'CREATE TABLE chat_channels' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -qc 'CREATE TABLE chat_members' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -qc 'CREATE TABLE chat_messages' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); test \"$(grep -c 'FORCE ROW LEVEL SECURITY' \"$F\")\" = \"3\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -q 'REVOKE INSERT, UPDATE, DELETE ON chat_channels, chat_members, chat_messages FROM app' \"$F\" && grep -q 'GRANT SELECT ON chat_channels, chat_members, chat_messages TO app' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); ! grep -qE 'CREATE (OR REPLACE )?FUNCTION (create_dm|send_chat_message|mark_read)\\(' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); ! grep -qE 'CREATE (TABLE|OR REPLACE FUNCTION) (chat_message_mentions|chat_message_reactions|chat_message_revisions|chat_notification_preferences|chat_notification_dispatches|chat_channel_mutes|chat_moderation_audit|chat_command_receipts)' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -q 'dm_safety_enabled()' \"$F\" && ! grep -qE 'CREATE (OR REPLACE )?FUNCTION dm_safety_enabled' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -q 'ALTER FUNCTION chat_current_is_member(uuid) OWNER TO chat_definer' \"$F\" && grep -q 'ALTER FUNCTION dm_current_read_allowed(uuid) OWNER TO chat_definer' \"$F\" && ! grep -qE 'CREATE ROLE chat_definer' \"$F\"",
+      "grep -q 'export const chatChannels = pgTable(\"chat_channels\"' packages/db/schema.ts",
+      "grep -q 'export const chatMembers = pgTable(\"chat_members\"' packages/db/schema.ts",
+      "grep -q 'export const chatMessages = pgTable(\"chat_messages\"' packages/db/schema.ts",
+      "! (grep -rn 'GRANT INSERT\\|GRANT UPDATE\\|GRANT DELETE' packages/db/migrations/*.sql | grep -E 'chat_channels|chat_members|chat_messages')",
+      "test -f packages/db/src/chat-schema-invariants.test.ts",
+      "grep -q 'cross-tenant' packages/db/src/chat-schema-invariants.test.ts",
+      "grep -q 'third' packages/db/src/chat-schema-invariants.test.ts || grep -qi 'non-participant\\|not a member of the dm' packages/db/src/chat-schema-invariants.test.ts",
+      "grep -q 'chat_current_is_member\\|dm_current_read_allowed' packages/db/README.md"
+    ],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm review:check:changed",
+      "pnpm build",
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_verification_note": "Commands assert PROPERTIES of the migration/schema/test files this slice's own design contract requires (exact table/function/grant/revoke shape, exact negative-scope absences), not pinned literals like row/test counts. They are written to run once the files in scope exist -- they will all fail today (pre-implementation), which is expected and correct for an authoring-only packet. The two negative-proof test-name greps (cross-tenant / non-participant DM) are a coarse proxy for 'the negative-path tests exist', not a substitute for a human/reviewer actually reading chat-schema-invariants.test.ts's assertions -- codex review must verify the negative assertions actually check zero-row results, not just that a describe/it block with a matching name exists.",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 2
+  },
+  "security_review": {
+    "required": true,
+    "reason": "Creates the first RLS boundary on tenant-scoped conversation content (chat_channels/chat_members/chat_messages) and the first person-scoped RLS GUC (app.person_id) in this codebase -- every prior RLS policy (0009_rls_policies_grants.sql) is tenant-scoped only. A permissive default or a mis-ORed club/dm policy is a cross-tenant or cross-person read of private conversation content, the most sensitive data class this schema introduces. Security round must specifically verify: FORCE RLS on all 3 tables, the two-policy-per-table OR structure does not accidentally admit rows neither policy intends, the WITH CHECK impersonation guard on chat_messages, and that app has zero mutation grant on any of the three tables.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 180,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE",
+    "chat-definer-role-provisioning or chat-dm-safety-authority-core is not merged to origin/main with a verifiable landed symbol at the time this slice's worktree would open -- HALT, do not proceed with a stubbed/mocked chat_definer role or a stubbed dm_safety_enabled()",
+    "the live migration tail has advanced past the number assumed in SS6 when the worktree opens -- re-derive the correct next number and correct scope/register rather than picking whatever is free",
+    "FORCE ROW LEVEL SECURITY does not actually block the table owner (chat_definer, BYPASSRLS at the role level) from an unintended read when tested live -- that would mean the FORCE-RLS-plus-BYPASSRLS-owner premise this whole design rests on needs re-deriving, an owner question, not an implementation choice",
+    "the two-policy-OR structure on any of the three tables is found to admit a row neither the club nor the dm policy branch should allow (a design defect in the Reviewed spec itself, not an implementation bug) -- HALT and report, do not silently narrow the policy without owner sign-off",
+    "dep_checks in the runtime manifest cannot be populated with real base_sha/landed_sha/symbol proof for both dependencies -- registration must not proceed with fabricated or placeholder proof"
+  ],
+  "readiness_evidence_path": ".autopilot/state/dd38-dd86-chat-schema-core/readiness.json"
+}

@@ -1,0 +1,130 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — deliberately carries NO manifest_schema_version; adding it makes register HALT CONTRACT_INVALID. The runtime manifest is generated at register time into .autopilot/state/<feature>/manifest.json from _TEMPLATE.json.",
+  "_status": "CODE_READY as of 2026-08-03 (v1.1 reconciliation) — see docs/autopilot-plans-dd29-capability-registry.md verdict block. v1.0's three open questions are resolved: Q1 (live-tenant pre-flight) is answered structurally by the expand migration's own guard 1/guard 2, not by an owner decision; Q2 (deploy cadence) decided as ship-both-in-one-release; Q3 (derived mapping) recorded as a derivation enforced by the same guard. Safe to register.",
+  "task_id": "plexco:plans-dd29-capability-registry",
+  "feature": "plans-dd29-capability-registry",
+  "branch": "feat/plans-dd29-capability-registry",
+  "base_ref": "origin/main",
+  "risk": "P1",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_dependency_note": "ROOT — nothing in packages/db blocks this. Downstream: tenant-capability-authority-core (backlog split_note, line 696) declares depends_on:[plans-dd29-capability-registry], i.e. this slice is a dependency FOR that one, not the reverse.",
+  "invariants": ["schema", "billing"],
+  "_invariant_note": "Refined from the backlog's estimate-only [schema] (backlog's own rule: idea-stage scope/invariants are estimates to refine before promoting to manifest). `billing` added because this slice's entire blast radius sits on `plans`/`subscriptions` — the same two tables `authorize-tenant-action-core` tagged `billing` for. Both tokens verified present verbatim in docs/autopilot-invariant-catalog.md's <!-- catalog:start -->...<!-- catalog:end --> block (em-dash format, no backticks) at lines 35 and 37.",
+  "scope": [
+    "packages/db/migrations/0028_dd29_capability_registry_expand.sql",
+    "packages/db/migrations/0029_dd29_capability_registry_contract.sql",
+    "packages/db/schema.ts",
+    "packages/db/src/auth.test.ts",
+    "packages/db/src/authorization.test.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "packages/db/src/migrate.test.ts",
+    "docs/features/BE/feature_billing_lifecycle_tech.md",
+    "docs/standards/decisions.md",
+    "docs/autopilot-manifests/plans-dd29-capability-registry.json",
+    "docs/autopilot-plans-dd29-capability-registry.md"
+  ],
+  "_scope_note": "Migration file numbers (0028/0029) are a PROPERTY (next-two-after-tail-0027), not a permanent literal — re-verify with `ls packages/db/migrations/ | sort | tail -5` before opening the worktree; other lanes landed 0026/0027 after this backlog task was written on 2026-07-30. If the tail has moved, rename both files keeping the same relative order and re-author this scope array before registering (a stale filename here is exactly the kind of literal level3-workflow.md warns forces a full close-and-re-register). rls-invariants.test.ts, auth.test.ts, authorization.test.ts and migrate.test.ts were NOT in the original backlog estimate — found during this session's live-truth read (tenant_provision() hardcodes the old plan_key; three test call sites hardcode old plan_key literals as fixture ballast; migrate.test.ts already has the right BR-5/BR-7/JCL-2 pattern to extend for the fail-closed proof). See the slice doc's 'Coupled blast radius' section.",
+  "negative_scope": [
+    "NO hasCapability implementation — that is tenant-capability-authority-core, downstream of this slice",
+    "NO changes to subscriptions.selected_extra_channel, period_start/period_end nullability, subscription_invoices.paid_at, or billing_overrides.ticket_ref — DD-51 lifecycle deltas, tracked separately under the idea-status P0 feature-billing-lifecycle backlog task. The tech spec's own Migration section bundles them narratively with the DD-29 delta; this slice does not follow that bundling.",
+    "NO edits to already-applied migrations (0007_billing.sql, 0011_seeds.sql, 0012_auth_functions.sql, 0025_check_constraint_naming_drift.sql) — new behavior lands via new monotonic migrations plus CREATE OR REPLACE FUNCTION only",
+    "NO grandfather or re-pricing policy invention — if the live pre-flight finds a paying tenant on an old paid tier, STOP and escalate (AWAIT_FOUNDER), do not invent proration/notification/legacy-price logic",
+    "NO wiring of hasCapability callers, routes, or UI",
+    "NO edits to packages/db/src/authorization.ts itself — only its sibling test file's fixture literal",
+    "NO renaming plans_key_chk again — keep the name 0025 established; only its predicate changes"
+  ],
+  "context_sources": [
+    "docs/autopilot-backlog.md",
+    "docs/features/BE/feature_billing_lifecycle_tech.md",
+    "docs/standards/decisions.md",
+    "docs/autopilot-plans-dd29-capability-registry.md",
+    "docs/autopilot-authorize-tenant-action-core.md",
+    "packages/db/schema.ts",
+    "packages/db/migrations/0007_billing.sql",
+    "packages/db/migrations/0011_seeds.sql",
+    "packages/db/migrations/0012_auth_functions.sql",
+    "packages/db/migrations/0025_check_constraint_naming_drift.sql",
+    "packages/db/src/migrate.ts",
+    "packages/db/src/migrate.test.ts"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "restricted",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [
+      "grep -qF \"IN ('free','host_pro')\" packages/db/schema.ts",
+      "ls packages/db/migrations/ | grep -qE '_dd29_capability_registry_expand\\.sql$'",
+      "ls packages/db/migrations/ | grep -qE '_dd29_capability_registry_contract\\.sql$'",
+      "grep -qF '\"free\"' packages/db/src/auth.test.ts",
+      "grep -qF \"'host_pro'\" packages/db/src/rls-invariants.test.ts",
+      "! grep -qF \"'free_web'\" packages/db/src/authorization.test.ts"
+    ],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm review:check:changed",
+      "pnpm build",
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_verification_note": "Stated as PROPERTIES via real `bash -lc` commands (runVerificationGroup spawns each literally), never pinned literals. Verified by hand at authoring time (2026-08-03) that every `focused` entry currently FAILS against live main: schema.ts still has the 4-tier IN-list (not free/host_pro); neither migration file exists yet; auth.test.ts:369 asserts `.toBe(\"free_web\")` not `\"free\"` (the fixed string `\"free\"` — with closing quote — is not a substring of `\"free_web\"`); rls-invariants.test.ts has zero occurrences of `host_pro` anywhere (repo-wide grep confirmed); authorization.test.ts:49 currently DOES contain `'free_web'`, so the negated last check currently fails (exit 1) as intended and will pass once the fixture is updated to `'free'`. This is the 'at least one must fail against the current schema' requirement, satisfied six ways over. The real correctness proof (guards 1/2, contract self-guard, upgrade-path preservation) lives in `verification.canonical`'s real-Postgres `pnpm test` run, extending migrate.test.ts's existing BR-5/BR-7/JCL-2 pattern — see the slice doc's acceptance matrix rows A4/A5/B2.",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 2
+  },
+  "security_review": {
+    "required": true,
+    "reason": "modifies a SECURITY DEFINER function body (tenant_provision) and sets the capability defaults that gate money-adjacent automation (auto-reconcile, auto-reminders) per tenant tier",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 180,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE",
+    "migration 0028's guard 1 (unmapped plan_key) or guard 2 (old plan_key at plan_version != 1) actually fires against a real target database — the migration aborts on its own (transaction rollback); stop for owner review rather than widening the map or retrying blindly",
+    "a guard-1 hit also carries status in (active, past_due) on the affected row — this additionally raises a grandfather-vs-reprice policy question that this contract deliberately does not pre-answer"
+  ],
+  "_acceptance": {
+    "A1": "apply 0028 against tail-0027 + standard 0011 seed -> new free/host_pro v1 rows exist, old 4 rows still exist, CHECK accepts both sets",
+    "A2": "tenant_provision() after 0028 creates a subscriptions row with plan_key='free', not 'free_web'",
+    "A3": "pre-existing subscriptions row on an old key is repointed to the mapped new key + version 1",
+    "A4": "synthetic subscriptions row with plan_key='bogus' before 0028 -> 0028 raises and rolls back entirely (guard 1); reuse migrate.test.ts BR-5/BR-7/JCL-2 pattern",
+    "A5": "synthetic subscriptions row with plan_key='telegram', plan_version=2 before 0028 -> 0028 raises and rolls back (guard 2)",
+    "B1": "apply 0029 immediately after clean 0028 -> succeeds; old 4 plans rows gone; CHECK now free/host_pro only",
+    "B2": "apply 0029 against a DB where a synthetic row was forced back onto an old plan_key after 0028 -> 0029's own guard raises",
+    "C1": "UPDATE — rls-invariants.test.ts:3300-3311 plans_key_chk validValue -> host_pro (asserts a real thing about the value)",
+    "C2": "MAKE INDIFFERENT — rls-invariants.test.ts subscriptions_status_chk (:3313-3324) and subscriptions_extra_chk (:3413-3424) fixtures swapped off 'telegram' to any valid post-migration key (ballast only, asserts nothing about plan_key)",
+    "C3": "UPDATE — auth.test.ts:369 .toBe(\"free\") (asserts tenant_provision()'s real new output)",
+    "C4": "MAKE INDIFFERENT — authorization.test.ts:49 fixture swapped off 'free_web' (ballast only)",
+    "D1": "full existing suite outside the touched fixtures stays green",
+    "E1": "feature_billing_lifecycle_tech.md's PENDING MIGRATION banner removed/updated with a dated note only once 0028+0029 are verified applied"
+  },
+  "_evidence_rules": [
+    "Cite the slice doc's migration design section for exact SQL; do not re-derive the seed/capability literals from memory — transcribe verbatim from feature_billing_lifecycle_tech.md:68-81.",
+    "Docs and contracts are not runtime proof. A passing test against a live Postgres is.",
+    "Do not claim IMPLEMENTED from inside this slice's worktree — the verdict artifact is this manifest's sibling slice doc, authored/amended outside the worktree. It reached CODE_READY on 2026-08-03 (v1.1); CODE_READY means a worktree can open, not that anything is implemented yet."
+  ]
+}
