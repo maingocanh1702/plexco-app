@@ -1127,13 +1127,13 @@ notes: |
 
 ## task: pnpm-override-precedence-two-locations
 title: Đo dứt điểm: `package.json` `pnpm.overrides` vs `pnpm-workspace.yaml` `overrides` — luật nào thắng
-status: planned
-risk: P3
+status: ready
+risk: P2
 change_class: docs-reconcile
-depends_on: [deps-security-bump]
+depends_on: []
 invariants: []
-scope: [docs/standards/, package.json, pnpm-workspace.yaml]
-manifest: null
+scope: [docs/autopilot-manifests/pnpm-override-precedence-two-locations.json, docs/autopilot-pnpm-override-precedence-two-locations.md, .claude/commands/ap-45-pnpm-override-precedence-two-locations.md, docs/autopilot-backlog.md, docs/standards/dependency-override-precedence.md]
+manifest: docs/autopilot-manifests/pnpm-override-precedence-two-locations.json
 merged_probe: null
 notes: |
   **Mở 2026-07-30 từ design-probe của `deps-security-bump` (AP-39).** Probe đó cần biết luật override nào
@@ -1154,6 +1154,32 @@ notes: |
   **Không chạy song song AP-39** — cùng chạm `package.json`/`pnpm-workspace.yaml`. `depends_on` đặt
   `deps-security-bump` cho đúng thứ tự.
   P3 vì không chặn gì: hiện trạng an toàn nhờ hai luật đồng ý. Đây là trả nợ hiểu biết, không phải sửa lỗi.
+  **Đo xong 2026-08-03 — kết quả: `package.json` `pnpm.overrides` thắng.** Hai trial độc lập, đảo ngược
+  quan hệ lớn/nhỏ giữa hai trial để loại khả năng "giá trị thấp/cao hơn luôn thắng" thay vì đúng do vị trí
+  file: trial 1 (`picocolors`, `package.json`=1.0.0 thấp hơn, `pnpm-workspace.yaml`=1.0.1 cao hơn) → resolve
+  1.0.0; trial 2 (`ms`, `package.json`=2.1.2 cao hơn, `pnpm-workspace.yaml`=2.1.1 thấp hơn) → resolve 2.1.2.
+  Cả hai lần `package.json` thắng, không lần nào có warning/error từ `pnpm install`. Cả hai trial đã revert
+  sạch (`git diff` so `base_sha` = rỗng cho cả ba file) trước khi commit. Đầy đủ evidence + reproduction
+  steps + caveat theo version pnpm: `docs/standards/dependency-override-precedence.md`. Slice doc:
+  `docs/autopilot-pnpm-override-precedence-two-locations.md`. Launcher: `ap-45`.
+  **Đính chính risk lúc author contract (2026-08-03), cùng lỗi `docs-billing-authz-signature-reconcile` đã
+  ghi cùng ngày:** backlog ghi `P3`, nhưng `autopilot-review-readiness.mjs` hard-reject `register` cho risk
+  ngoài `P1`/`P2` (P3 đúng nghĩa read-only/report-only, slice này sửa thật file spec) — đổi sang `P2`.
+  **`depends_on` đổi từ `[deps-security-bump]` sang `[]`:** task đó đã `merged` (`61a2575`) nhưng
+  `merged_probe` của nó (`pnpm-lock.yaml :: 15.5.21`) tự backlog ghi nhận là weak probe (chuỗi số, không
+  phải identifier), `autopilot-backlog-reconcile` từ chối — không dựng được `dep_checks` cho nó. Phụ thuộc
+  là lịch sử, base của slice này đã ở sau nó.
+  **Hai lỗi cơ chế register phát hiện sống, ghi lại cho slice sau (chi tiết: slice doc mục "Registration
+  mechanics note"):** (1) `context_sources` chứa `->` (mũi tên tắt cho "to") bị `requireString()` coi là
+  placeholder vì chứa ký tự `>` — HALT `CONTRACT_INVALID`, không tạo lifecycle, để nguyên không xoá. (2) Sau
+  khi register lần 2 thành công + hash-lock, self-verify tay phát hiện 2/8 lệnh `verification.focused` dùng
+  pattern `grep -qF '- ...'` bắt đầu bằng dấu `-` — `/usr/bin/grep` (BSD, máy này) coi đó là option lạ bất kể
+  nội dung, check không bao giờ pass được. Không sửa tại chỗ được (manifest hash-lock, `register` lần 2 cho
+  cùng feature bị `FEATURE_ALREADY_ACTIVE`) → đóng bằng
+  `scripts/ap-finish.sh pnpm-override-precedence-two-locations --authorized-close --reason "..."` (0 commit,
+  0 review round trên registration đó — không mất gì), disposition tại
+  `.autopilot/dispositions/pnpm-override-precedence-two-locations.json`, đăng ký lại với `-e` trước mọi
+  pattern grep.
 
 ## task: kit-dead-citation-prompt-generic-sections
 title: 6 manifest viện dẫn `autopilot-prompt-GENERIC v0.6.1 §0.1` — section đã biến mất khi prompt viết lại cho Level 3

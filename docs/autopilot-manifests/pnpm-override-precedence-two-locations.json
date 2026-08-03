@@ -1,0 +1,91 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — deliberately carries NO manifest_schema_version; adding it makes register HALT CONTRACT_INVALID. The runtime manifest is generated at register time into .autopilot/state/<feature>/manifest.json from docs/autopilot-manifests/_TEMPLATE.json.",
+  "task_id": "plexco:pnpm-override-precedence-two-locations",
+  "feature": "pnpm-override-precedence-two-locations",
+  "branch": "feat/pnpm-override-precedence-two-locations",
+  "base_ref": "origin/main",
+  "base_sha": "b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43",
+  "risk": "P2",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": [],
+  "scope": [
+    "docs/autopilot-manifests/pnpm-override-precedence-two-locations.json",
+    "docs/autopilot-pnpm-override-precedence-two-locations.md",
+    ".claude/commands/ap-45-pnpm-override-precedence-two-locations.md",
+    "docs/autopilot-backlog.md",
+    "docs/standards/dependency-override-precedence.md"
+  ],
+  "negative_scope": [
+    "NO change to package.json or pnpm-workspace.yaml — the discriminating experiment edits both transiently in the worktree, then reverts via git checkout before any commit; verification.focused asserts identity to base_sha for both",
+    "NO edit to pnpm-lock.yaml — same transient-then-reverted rule; verification.focused asserts identity to base_sha",
+    "NO change to any real override declaration's effective behavior (postcss, sharp, brace-expansion@1, esbuild pinned below 0.25.0) — this slice measures and documents, it does not resolve or rewrite the live overrides",
+    "NO resolving a live override conflict — none exists today (postcss is the only key present in both locations and both values agree: package.json ^8.5.10 accepts pnpm-workspace.yaml's rewrite target 8.5.16); a future genuine conflict is an owner decision, out of scope here"
+  ],
+  "context_sources": [
+    "docs/autopilot-backlog.md task block pnpm-override-precedence-two-locations (measurement recipe, opened from deps-security-bump's AP-39 design probe)",
+    "docs/autopilot-backlog.md task block deps-security-bump (owner_decision, design_probe_required trap, close_by: hand / weak merged_probe rationale)",
+    "docs/autopilot-backlog.md task block docs-billing-authz-signature-reconcile (risk P3 to P2 correction precedent, same change_class)",
+    "package.json, pnpm-workspace.yaml — current override declarations (read-only reference for the experiment baseline)",
+    "docs/autopilot-invariant-catalog.md — confirms invariants: [] is valid (no domain token fits a measurement-only docs slice; build-config exists but is reserved for slices that land a real build-config change)",
+    "docs/standards/ directory listing — confirms no existing file covers package-manager/dependency-override conventions (checked deployment-infra.md, environments-setup.md headers, zero pnpm/override mentions in either)"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "restricted",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [
+      "test -s docs/standards/dependency-override-precedence.md",
+      "grep -qE -e '^- Winner: (package\\.json \\(pnpm\\.overrides\\)|pnpm-workspace\\.yaml \\(overrides\\)|inconsistent / pnpm errors on conflicting overrides)$' docs/standards/dependency-override-precedence.md",
+      "grep -qF -e '- pnpm version measured: 10.30.2' docs/standards/dependency-override-precedence.md",
+      "grep -qF -e '- Measured:' docs/standards/dependency-override-precedence.md",
+      "git diff --quiet b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- package.json",
+      "git diff --quiet b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- pnpm-workspace.yaml",
+      "git diff --quiet b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- pnpm-lock.yaml",
+      "grep -qF -e 'manifest: docs/autopilot-manifests/pnpm-override-precedence-two-locations.json' docs/autopilot-backlog.md"
+    ],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm review:check:changed",
+      "pnpm build"
+    ],
+    "e2e": []
+  },
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 1
+  },
+  "security_review": {
+    "required": false,
+    "reason": "not_applicable — docs-only change (docs/standards/, docs/autopilot-manifests/, docs/autopilot-backlog.md, .claude/commands/); no packages/ or apps/ surface touched, no code path changed. Retirement condition, not narrative: this becomes required if the diff ever touches packages/ or apps/.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 60,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE"
+  ],
+  "_note": "Full reasoning lives in docs/autopilot-backlog.md task block pnpm-override-precedence-two-locations (measurement recipe, dependency trap) and deps-security-bump (DSB-4, owner_decision). Risk corrected P3 -> P2 at authoring time (autopilot-review-readiness.mjs hard-rejects register for risk outside P1/P2 — same correction docs-billing-authz-signature-reconcile made, 2026-08-03). depends_on is [] rather than the backlog's listed [deps-security-bump]: that task IS merged (61a2575) but its own merged_probe is backlog-documented as a non-slice-unique weak probe — no dep_checks proof is constructible; the dependency is historical and already on this slice's base."
+}
