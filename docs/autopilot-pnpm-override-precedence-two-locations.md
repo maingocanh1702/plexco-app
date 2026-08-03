@@ -1,3 +1,5 @@
+<!-- review-readiness: historical -->
+
 # Autopilot task contract — `pnpm-override-precedence-two-locations`
 
 ## Why this file exists
