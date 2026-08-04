@@ -771,6 +771,132 @@ describe("DD29-7 0028 expand fails closed on any legacy channel-tier subscriptio
   }, 60_000);
 });
 
+describe("DD29-8 0028's lock ordering avoids a deadlock with concurrent tenant_provision()", () => {
+  it("structural: 0028's first statement touching subscriptions appears before its first statement touching plans", async () => {
+    // The dynamic test below proves "if 0028 locks subscriptions first, a concurrent
+    // tenant_provision() call blocks cleanly instead of deadlocking" — but it manually replays
+    // just the one ALTER statement, not 0028's actual file, so on its own it cannot prove 0028
+    // ITSELF has that order. This structural check closes that gap by reading the real file.
+    const sql0028 = await readFile(
+      path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+      "utf8",
+    );
+    const withoutComments = sql0028.replace(/--.*$/gm, "");
+    const firstSubscriptionsStatement = withoutComments.search(/\bsubscriptions\b/i);
+    const firstPlansStatement = withoutComments.search(/\bALTER TABLE plans\b/i);
+    expect(firstSubscriptionsStatement).toBeGreaterThan(-1);
+    expect(firstPlansStatement).toBeGreaterThan(-1);
+    expect(
+      firstSubscriptionsStatement,
+      "0028 must touch subscriptions (acquiring its lock) before it touches plans, or a concurrent tenant_provision() call can deadlock against it — see the file's own lock-ordering header note",
+    ).toBeLessThan(firstPlansStatement);
+  });
+
+  it("a concurrent tenant_provision() call blocks cleanly on 0028's subscriptions lock and completes once the migration's transaction ends — no deadlock (codex round-05 [P1], gate-attempt-08)", async () => {
+    const dbName = "plexco_migrate_dd29_lockorder";
+    const admin = new pg.Client({ connectionString: BASE! });
+    await admin.connect();
+    let dbClient: pg.Client | undefined;
+    let appClient: pg.Client | undefined;
+    let migrationClient: pg.Client | undefined;
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE ${dbName}`);
+
+      // Superuser-owned replay of 0000-0027 (matches setupRlsTestContext's own pattern, the same
+      // one auth.test.ts's already-passing tenant_provision tests rely on) — every object,
+      // including tenant_provision() itself, ends up owned by a role that bypasses RLS. Using
+      // setupNonSuperuserOwnerContext here instead would make tenant_provision()'s OWN inserts
+      // (memberships, tenant_admins — unrelated to this test's subscriptions/plans concern) hit
+      // FORCE RLS with no app.tenant_id set, for a reason orthogonal to the lock-ordering fix this
+      // test targets.
+      dbClient = await connect(url(dbName));
+      await withJobDefinerLock(BASE!, async () => {
+        await bootstrapJobDefiner(admin);
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+          await dbClient!.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Connect as `app` — the runtime role tenant_provision() is GRANTed to (already granted by
+      // 0012, part of the 0000-0027 replay above). `app` is a CLUSTER-GLOBAL role, shared with
+      // every other suite's own setRolePasswordRaceSafe(client, "app", "plexco_test_app", ...) —
+      // this MUST set the exact same password those use (a first version of this test picked its
+      // own literal instead and, by racing a concurrent suite's ALTER ROLE, broke every other
+      // connect-as-app test in the run with "password authentication failed"). Retry on the same
+      // "tuple concurrently updated" race test-harness.ts's own helper tolerates, since two
+      // concurrent ALTERs to the identical value can still MVCC-conflict.
+      const appPassword = "plexco_test_app";
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await dbClient.query(`ALTER ROLE app WITH LOGIN PASSWORD '${appPassword}'`);
+          break;
+        } catch (error) {
+          if (String(error).includes("tuple concurrently updated") && attempt < 10) {
+            await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
+            continue;
+          }
+          throw error;
+        }
+      }
+      appClient = await connect(url(dbName, "app", appPassword));
+
+      const personRow = await dbClient.query(
+        `INSERT INTO persons (display_name) VALUES ('DD29 Lock Order Owner') RETURNING id`,
+      );
+      const personId = (personRow.rows[0] as { id: string }).id;
+
+      // A: take 0028's FIRST lock-acquiring statement (subscriptions) and hold it open —
+      // simulates the migration being mid-flight. Lock conflicts are enforced regardless of role
+      // privilege (RLS bypass only affects policy evaluation, not lock acquisition), so this still
+      // exercises the exact mechanic the fix relies on.
+      migrationClient = await connect(url(dbName));
+      await migrationClient.query("BEGIN");
+      await migrationClient.query("ALTER TABLE subscriptions NO FORCE ROW LEVEL SECURITY");
+
+      // B: a concurrent tenant_provision() call needs the SAME subscriptions lock for its own
+      // INSERT — with the fix, it must BLOCK (queue), not error and not deadlock, while A holds it.
+      const provisionPromise = appClient.query(
+        `SELECT tenant_provision($1, $2, $3, $4, $5) AS tenant_id`,
+        ["dd29-lockorder-tenant", "DD29 Lock Order Tenant", "Asia/Ho_Chi_Minh", "vi", personId],
+      );
+      let settled = false;
+      let rejection: unknown;
+      provisionPromise.then(
+        () => {
+          settled = true;
+        },
+        (error: unknown) => {
+          settled = true;
+          rejection = error;
+        },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(
+        settled,
+        `tenant_provision() must still be BLOCKED (not resolved, not errored) while the migration's transaction holds the subscriptions lock. rejection=${String(rejection)}`,
+      ).toBe(false);
+
+      // A commits — releases the lock. B's blocked call must now complete cleanly: no deadlock
+      // error, a real tenant_id returned.
+      await migrationClient.query("COMMIT");
+      const provisionResult = await provisionPromise;
+      expect(rejection).toBeUndefined();
+      expect((provisionResult.rows[0] as { tenant_id: string }).tenant_id).toMatch(
+        /^[0-9a-f-]{36}$/i,
+      );
+    } finally {
+      if (migrationClient) await migrationClient.end();
+      if (appClient) await appClient.end();
+      if (dbClient) await dbClient.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`).catch(() => {});
+      await admin.end();
+    }
+  }, 60_000);
+});
+
 describe("DD29-3 0028 expand upgrade path: pre-existing subscriptions rows are correctly repointed", () => {
   it("A1/A3: old plans rows survive alongside the new ones, and a pre-existing free_web row remaps to free at version 1", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_upgrade");
