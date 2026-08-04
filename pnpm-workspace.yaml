@@ -12,5 +12,4 @@ blockExoticSubdeps: true
 # drizzle-kit carries legacy esbuild-loader branches; both APIs are compatible
 # with these maintained releases and the full build/DB suite guards the override.
 overrides:
-  "esbuild@<0.25.0": 0.25.12
   "postcss@<8.5.10": 8.5.16
