@@ -112,28 +112,35 @@
 -- for owner review — never widen the map, invent a repricing policy, or
 -- retry blindly (see manifest stop_conditions).
 --
--- Rollback (codex round-14 [P1] x2, gate-attempt-03: round-13's provenance
--- design fixed WHICH rows to identify, but this note never said the steps
--- MUST run inside one explicit transaction — pasted one statement at a time
--- into a default-autocommit psql session, a failed step (e.g. guard 1b's new
--- exact analogue below) would leave subscriptions and tenant_provision()
--- ALREADY committed while plans/CHECK were not, exactly the partial-commit
--- this note's own prose claimed could not happen. Separately, the plain
--- `DELETE FROM plans WHERE plan_key IN ('free','host_pro')` had no version
--- filter at all — an unreferenced free@2/host_pro@2 row (a later, legitimate
--- price-change version created after this pair landed) would be silently
--- destroyed by the same DELETE, the exact "plan version is immutable, never
--- silently destroyed" hazard guard 2/2-catalog and 0029's guard 1b already
--- exist to prevent on the FORWARD path — this rollback needed the identical
--- guard on its own DELETE):
+-- Rollback (codex round-15 [P1], gate-attempt-04: round-14's combined
+-- sequence said "run everything in one BEGIN/COMMIT" while ALSO saying "roll
+-- 0029 back first — see its own rollback note", and that note's own rollback
+-- is ITSELF wrapped in its own BEGIN/COMMIT. PostgreSQL has no nested
+-- transactions — a literal reading either commits 0029's reversal as its own
+-- transaction before this one even starts (so a later failure here no longer
+-- undoes it, contradicting "aborts cleanly"), or attempts a bare nested BEGIN,
+-- which Postgres just folds into the same outer transaction while an inner
+-- COMMIT ends the WHOLE thing early. This note now INLINES 0029's exact two
+-- statements directly, so there is only ever one transaction boundary when
+-- rolling back the full pair — 0029's own rollback note's BEGIN/COMMIT is for
+-- rolling IT back alone, with 0028 remaining applied, a genuinely different,
+-- standalone operation from what is documented here):
 --
--- Run the ENTIRE sequence below inside one explicit transaction — this is
+-- Run the ENTIRE sequence below inside ONE explicit transaction — this is
 -- not optional, it is what makes "a failure aborts cleanly" true instead of
--- aspirational:
+-- aspirational. Omit steps 1a/1b if 0029 was never applied on this database:
 --   BEGIN;
---     -- 1. (only if 0029 has already applied) roll 0029 back first — see its
---     --    own rollback note — so plans('free_web',1) etc. exist again
---     --    before step 2 needs to reference them.
+--     -- 1a/1b. Only if 0029 has already applied — inlined here, NOT run as
+--     --    0029's own separately-committed rollback, so a failure anywhere
+--     --    below (including 0029's own guard-1b-equivalent concern, already
+--     --    closed by widening the CHECK here) still undoes these two too:
+--     ALTER TABLE plans DROP CONSTRAINT plans_key_chk;
+--     ALTER TABLE plans ADD CONSTRAINT plans_key_chk
+--       CHECK (plan_key IN ('free_web','telegram','plus_channel','all_channels','free','host_pro'));
+--     -- re-insert the 4 deleted plans rows using 0011_seeds.sql's original
+--     -- literals verbatim (0011 is the source of truth), with
+--     -- ON CONFLICT (plan_key, version) DO NOTHING for idempotent retries.
+--
 --     -- 2. Revert ONLY the tracked tenants, never a blanket "every 'free' row":
 --     UPDATE subscriptions SET plan_key = 'free_web'
 --       WHERE plan_key = 'free'
@@ -144,8 +151,17 @@
 --     -- from dd29_migrated_tenants, so this never touches it, unconditionally.
 --     -- 3. Revert tenant_provision() to the old literal (CREATE OR REPLACE,
 --     --    same body as 0012_auth_functions.sql).
---     -- 4. Refuse to delete a later, legitimate price-change version this
---     --    migration never created — mirrors guard 2-catalog/0029's guard 1b:
+--     -- 4. Lock plans EXCLUSIVELY before checking it (codex round-15 [P1],
+--     --    gate-attempt-04, same reasoning as 0029's own guard 1b: a plain
+--     --    SELECT below takes only ACCESS SHARE, which would not block a
+--     --    concurrent INSERT of a new price-change version landing between
+--     --    this check and the DELETE two steps down):
+--     LOCK TABLE plans IN ACCESS EXCLUSIVE MODE;
+--     -- 5. Refuse to delete a later, legitimate price-change version this
+--     --    migration never created — mirrors guard 2-catalog/0029's guard 1b.
+--     --    Now race-free: nothing can insert into plans between this check
+--     --    and the DELETE below, because step 4 already holds the exclusive
+--     --    lock for the rest of this transaction:
 --     DO $$ DECLARE v_extra_version integer; BEGIN
 --       SELECT count(*) INTO v_extra_version FROM plans
 --         WHERE plan_key IN ('free','host_pro') AND version <> 1;
@@ -154,23 +170,24 @@
 --           USING ERRCODE = 'data_exception';
 --       END IF;
 --     END $$;
---     -- 5. Attempt the actual safety net for step 2's targeted revert — this
+--     -- 6. Attempt the actual safety net for step 2's targeted revert — this
 --     --    is enforced by Postgres itself, not by this migration's own logic:
 --     DELETE FROM plans WHERE plan_key IN ('free','host_pro');
 --     -- If ANYTHING still references either row after step 2 — an untracked
 --     -- new tenant, an untracked anomaly, or a 'host_pro' row with no inverse
 --     -- to revert to — the FK (subscriptions_plan_key_plan_version_fkey)
 --     -- makes this DELETE fail. Because the whole sequence runs inside this
---     -- one BEGIN/COMMIT, that failure aborts EVERYTHING above too — steps 2
---     -- and 3 are undone along with it, not left half-applied. That failure
---     -- IS the correct outcome: resolving it (reassigning those specific
---     -- tenants manually, or accepting 'free'/'host_pro' as permanent and
---     -- doing a code-only partial rollback of just tenant_provision()'s
---     -- literal, run as its own separate statement outside this transaction)
---     -- is an owner decision this migration does not make.
---     -- 6. Only reached if step 5 succeeded: narrow the CHECK back and retire
+--     -- one BEGIN/COMMIT, that failure aborts EVERYTHING above too — steps 1
+--     -- through 3 are undone along with it, not left half-applied. That
+--     -- failure IS the correct outcome: resolving it (reassigning those
+--     -- specific tenants manually, or accepting 'free'/'host_pro' as
+--     -- permanent and doing a code-only partial rollback of just
+--     -- tenant_provision()'s literal, run as its own separate statement
+--     -- outside this transaction) is an owner decision this migration does
+--     -- not make.
+--     -- 7. Only reached if step 6 succeeded: narrow the CHECK back and retire
 --     --    the provenance table — the very last steps of a fully successful
---     --    rollback, never attempted before step 5 has actually committed.
+--     --    rollback, never attempted before step 6 has actually committed.
 --     ALTER TABLE plans DROP CONSTRAINT plans_key_chk;
 --     ALTER TABLE plans ADD CONSTRAINT plans_key_chk
 --       CHECK (plan_key IN ('free_web','telegram','plus_channel','all_channels'));

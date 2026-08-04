@@ -788,6 +788,8 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
     return match[0];
   };
 
+  const LOCK_PLANS = `LOCK TABLE plans IN ACCESS EXCLUSIVE MODE`;
+
   const VERSION_GUARD = `
     DO $$ DECLARE v_extra_version integer; BEGIN
       SELECT count(*) INTO v_extra_version FROM plans
@@ -876,6 +878,8 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
       await dbClient.query("BEGIN");
       await dbClient.query(TARGETED_REVERT);
       await dbClient.query(REVERT_TENANT_PROVISION(sql0012));
+      await dbClient.query(LOCK_PLANS);
+      await dbClient.query(VERSION_GUARD);
       await expect(
         dbClient.query(`DELETE FROM plans WHERE plan_key IN ('free','host_pro')`),
       ).rejects.toThrow(/foreign key constraint/i);
@@ -938,6 +942,7 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
       await dbClient.query("BEGIN");
       await dbClient.query(TARGETED_REVERT);
       await dbClient.query(REVERT_TENANT_PROVISION(sql0012));
+      await dbClient.query(LOCK_PLANS);
       await expect(dbClient.query(VERSION_GUARD)).rejects.toThrow(/free\/host_pro at version/i);
       await dbClient.query("ROLLBACK");
 
@@ -983,11 +988,13 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
 
       const sql0012 = await readFile(path.join(MIGRATIONS_DIR, "0012_auth_functions.sql"), "utf8");
       await dbClient.query("BEGIN");
-      // STEP 2 (0029 never applied in this test, so STEP 1 does not apply): targeted revert.
+      // STEP 2 (1a/1b — 0029 never applied in this test, so those do not apply): targeted revert.
       await dbClient.query(TARGETED_REVERT);
       // STEP 3: revert tenant_provision().
       await dbClient.query(REVERT_TENANT_PROVISION(sql0012));
-      // STEP 4: version guard — nothing extra exists, so this passes silently.
+      // STEP 4: lock plans exclusively before checking it.
+      await dbClient.query(LOCK_PLANS);
+      // STEP 5: version guard — nothing extra exists, so this passes silently.
       await dbClient.query(VERSION_GUARD);
       // STEP 5: nothing untracked exists, so this succeeds — the FK naturally allows it once
       // step 2 cleared every reference dd29_migrated_tenants knew about.
@@ -1550,6 +1557,95 @@ describe("DD29-4/DD29-5 0029 contract narrows plans_key_chk and self-guards on s
     } finally {
       await superuserInDb.end();
       await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("guard 1b's LOCK TABLE plans closes the TOCTOU race: a concurrent INSERT into plans blocks while 0029 holds the exclusive lock, and only resolves (rejected by the now-narrowed CHECK) after 0029 commits — never sneaking in between the check and the DELETE (codex round-15 [P1], gate-attempt-04: the guard's own SELECT alone only takes ACCESS SHARE, which does not block a concurrent writer)", async () => {
+    const dbName = "plexco_migrate_dd29_contract_lock_race";
+    const admin = new pg.Client({ connectionString: BASE! });
+    await admin.connect();
+    let dbClient: pg.Client | undefined;
+    let migrationClient: pg.Client | undefined;
+    let concurrentClient: pg.Client | undefined;
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE ${dbName}`);
+      dbClient = await connect(url(dbName));
+      await withJobDefinerLock(BASE!, async () => {
+        await bootstrapJobDefiner(admin);
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 29) continue;
+          await dbClient!.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Split 0029's real file at its own LOCK TABLE statement, rather than hand-transcribing a
+      // parallel copy, so this test can never silently drift from what the migration actually
+      // runs. Part A ends with (and includes) the LOCK acquisition; part B is guard 1b through
+      // the CHECK narrow.
+      const sql0029 = await readFile(
+        path.join(MIGRATIONS_DIR, "0029_dd29_capability_registry_contract.sql"),
+        "utf8",
+      );
+      const lockStatement = "LOCK TABLE plans IN ACCESS EXCLUSIVE MODE;";
+      const lockIndex = sql0029.indexOf(lockStatement);
+      if (lockIndex === -1) {
+        throw new Error("could not find 0029's LOCK TABLE statement to split the file on");
+      }
+      const bodyStart = sql0029.indexOf("ALTER TABLE subscriptions NO FORCE ROW LEVEL SECURITY;");
+      const partA = sql0029.slice(bodyStart, lockIndex + lockStatement.length);
+      const partB = sql0029.slice(lockIndex + lockStatement.length);
+
+      migrationClient = await connect(url(dbName));
+      await migrationClient.query("BEGIN");
+      await migrationClient.query(partA);
+
+      // Concurrent writer: attempts to insert a stray old-key catalog row WHILE 0029 holds the
+      // exclusive lock it just took. With the fix, this must BLOCK (queue), not succeed
+      // immediately — that would be the exact race the guard is supposed to close.
+      concurrentClient = await connect(url(dbName));
+      const insertPromise = concurrentClient.query(
+        `INSERT INTO plans (plan_key, version, price) VALUES ('telegram', 2, 89000)`,
+      );
+      let settled = false;
+      let insertError: unknown;
+      insertPromise.then(
+        () => {
+          settled = true;
+        },
+        (error: unknown) => {
+          settled = true;
+          insertError = error;
+        },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(
+        settled,
+        `the concurrent INSERT must still be BLOCKED while 0029 holds the exclusive lock on plans. error=${String(insertError)}`,
+      ).toBe(false);
+
+      // 0029 proceeds — guard 1b passes (0 bad rows, since the concurrent insert has not landed
+      // and cannot land while the lock is held), the DELETE and CHECK narrow both succeed, commit.
+      await migrationClient.query(partB);
+      await migrationClient.query("COMMIT");
+
+      // The blocked INSERT now unblocks. It must fail — not because it was silently deleted, but
+      // because it never actually existed during 0029's transaction at all: by the time Postgres
+      // lets it proceed, plans_key_chk has already narrowed to ('free','host_pro'), so 'telegram'
+      // is rejected outright. This is the proof the race window is closed, not just documented.
+      await expect(insertPromise).rejects.toThrow(/plans_key_chk|check constraint/i);
+
+      const finalPlans = await dbClient.query(
+        `SELECT plan_key, version FROM plans WHERE plan_key = 'telegram'`,
+      );
+      expect(finalPlans.rows.length).toBe(0);
+    } finally {
+      if (migrationClient) await migrationClient.end();
+      if (concurrentClient) await concurrentClient.end();
+      if (dbClient) await dbClient.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`).catch(() => {});
+      await admin.end();
     }
   }, 60_000);
 });

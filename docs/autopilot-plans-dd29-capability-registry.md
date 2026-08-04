@@ -427,6 +427,17 @@ by construction *within* `0028` — bundling `0029` immediately after just means
 release-boundary process to get wrong in between. Shipping together is the simpler design with no
 offsetting benefit to splitting.
 
+> **[SUPERSEDED, v1.2 — see the top-of-document notice]** The paragraph below describes this
+> contract's ORIGINAL plan for `telegram`/`plus_channel`/`all_channels` → `host_pro`: a *correct*
+> destination value, derived because no third destination could exist. Implementation review found
+> this answered the wrong question — a *correct* destination is not the same as a *consensual* one,
+> and collapsing three distinctly-priced tiers into `host_pro` is a re-pricing event regardless of
+> which single destination is mathematically forced. The derivation below was never shipped as an
+> executable mapping: guard 3 aborts instead, for any subscription on one of those three keys. The
+> paragraph's closing claim — "the migration fails loudly rather than silently mis-mapping it" — is
+> still true, but stronger than originally written: it fails loudly for every affected row, not only
+> an unanticipated one, because the destination question turned out to need an owner, not a formula.
+
 **Q3 — Confirm the derived mapping. Recorded as a derivation, enforced by the same guard.** `free_web` →
 `free` is explicit (decisions.md changelog + the `tenant_provision()` code comment). `telegram` /
 `plus_channel` / `all_channels` → `host_pro` is a **derivation**: DD-29 collapses 4 tiers into exactly one
@@ -467,18 +478,28 @@ than left open.
 
 ## Verdict
 
-> **[v1.2, 2026-08-05] Historical planning snapshot — read before trusting anything below as
-> current status.** This verdict block is unmodified since v1.1 (2026-08-03) by design — this
-> project's convention is to correct a Reviewed document additively (changelog + markers), never
-> to rewrite its verdict in place (codex round-11 flagged the same convention when this section
-> was found stale). What changed since: implementation has LANDED in the implementing slice's own
-> worktree (pending review/merge to `main`), through its own separate readiness gate — the
+> **[v1.5, 2026-08-05] Historical planning snapshot — read before trusting anything below as
+> current status.** This verdict block, INCLUDING `TARGET_FILES` and `FIRST_IMPLEMENTATION_STEP`,
+> is now byte-for-byte exactly as authored at `REVIEWED_AT 2026-08-03` / `AUTHORITY_SHA b3d3b4a2` —
+> it is an exact-target audit record of what was reviewed at that SHA, not a place for later
+> corrections, even clearly marked ones. (v1.2-v1.3 had added the two migration files to
+> `TARGET_FILES` and annotated `FIRST_IMPLEMENTATION_STEP` as completed, both marked inline — codex
+> round-15/gate-attempt-04 correctly found that this ITSELF broke the "pins exactly what was
+> reviewed" invariant, since those two files could not have been reviewed at a SHA that predates
+> their existence, marked or not. Reverted; this is the fix, not a new problem.) What changed since
+> `REVIEWED_AT`, stated here in prose instead: implementation has LANDED in the implementing
+> slice's own worktree (pending review/merge to `main`, through its own separate readiness gate,
+> touching `packages/db/migrations/0028_dd29_capability_registry_expand.sql` and
+> `..._contract.sql` in addition to everything `TARGET_FILES` already lists) — the
 > `REVIEW_VERDICT: CODE_READY` below asserts "safe to start coding," which was and remains true; it
-> does NOT assert "coding has not started yet," which is no longer true. Two lines below are
-> factually stale as pending-work descriptions and are corrected inline: `TARGET_FILES` (the two
-> migration files did not exist yet at authoring time) and `FIRST_IMPLEMENTATION_STEP` (already
-> executed). Every `PASS`/`G*`/closure-matrix judgment reflects a real planning-time assessment
-> that has not been invalidated — it is not being re-litigated here.
+> does NOT assert "coding has not started yet," which is no longer true, and `FIRST_IMPLEMENTATION_STEP`
+> below is accordingly already executed, not still pending. Every `PASS`/`G*`/closure-matrix
+> judgment reflects a real planning-time assessment that has not been invalidated — it is not being
+> re-litigated here. The Q3 mapping text in §"The mapping" and §"Migration design" above carries
+> its own `[SUPERSEDED]`/`[SUPERSEDED AGAIN, v1.4]` markers directly at the affected prose — those
+> sections, unlike this fenced verdict block, are this contract's own narrative, not a pinned
+> external audit record, so marking supersession in place there (rather than only in prose above
+> them) does not carry the same risk.
 
 ```text
 REVIEW_POLICY_VERSION: 1.3
@@ -500,10 +521,6 @@ TARGET_FILES:
   - packages/db/src/authorization.test.ts
   - packages/db/src/rls-invariants.test.ts
   - packages/db/src/migrate.test.ts
-  # [v1.2 addition — these two did not exist at REVIEWED_AT 2026-08-03; the implementing slice
-  #  created them, they are not part of what THIS verdict originally reviewed]
-  - packages/db/migrations/0028_dd29_capability_registry_expand.sql
-  - packages/db/migrations/0029_dd29_capability_registry_contract.sql
 SLICE: plans-dd29-capability-registry
 IN_SCOPE: expand+contract migration pair for plans.plan_key/entitlements + reseed + tenant_provision()
   repoint + coupled test-fixture updates
@@ -533,8 +550,7 @@ ACCEPTANCE_MATRIX: PASS — every row has an expected result, including which of
 SECURITY_AND_MIGRATION_GATE: PASS — migration/rollback fully pinned; security review is declared
   required in the manifest and will run inside the implementing slice's own gate
 IMPLEMENTATION_ARTIFACTS: PASS
-FIRST_IMPLEMENTATION_STEP: [v1.2: COMPLETED — both files authored, guard 3 added, A1-A5 proven; see
-  v1.2 changelog] author `0028_dd29_capability_registry_expand.sql` first (guard 1 + guard 2 +
+FIRST_IMPLEMENTATION_STEP: author `0028_dd29_capability_registry_expand.sql` first (guard 1 + guard 2 +
   widen CHECK + insert new rows + redefine tenant_provision), prove A1-A5 against real Postgres before
   touching `0029`; ship both migrations in the same release per Q2
 REMAINING_BLOCKERS: none
@@ -567,6 +583,7 @@ Q1, but because Q1 was the wrong shape of question — re-derived into a run-tim
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-08-05 | v1.6 | **Close a TOCTOU race, fix a nested-transaction contradiction, restore the verdict block byte-for-byte (same-day follow-up to v1.5).** Codex review (gate-attempt-04) found: (1) `0029`'s new guard 1b (v1.4) ran its `SELECT` on `plans` under only an ACCESS SHARE lock, which does not block a concurrent `INSERT` — a `telegram@2`-shaped row could commit AFTER the guard's count read 0 but BEFORE the unconditional `DELETE` ran, and would then be silently destroyed despite the guard "having checked." Fixed by taking `LOCK TABLE plans IN ACCESS EXCLUSIVE MODE` immediately after the subscriptions guard (preserving the subscriptions-then-plans lock order 0028's header establishes) and before guard 1b runs — the same fix was needed, and applied, to `0028`'s own rollback-sequence version guard (v1.5), which had the identical gap. (2) v1.4/v1.5's combined-rollback instructions said "run everything in one BEGIN/COMMIT" while also saying "roll `0029` back first — see its own rollback note," whose OWN rollback is separately wrapped in its own BEGIN/COMMIT — PostgreSQL has no nested transactions, so a literal reading either commits `0029`'s reversal early (defeating "aborts cleanly") or folds a bare nested BEGIN into the same transaction while an inner COMMIT ends the whole thing prematurely. Fixed by inlining `0029`'s exact two rollback statements directly into `0028`'s single combined transaction, and relabeling `0029`'s own BEGIN/COMMIT-wrapped note as the STANDALONE case only (rolling back `0029` alone, `0028` remaining applied — a genuinely different, valid operation). (3) `TARGET_FILES`/`FIRST_IMPLEMENTATION_STEP` inside the fenced verdict block were themselves found to violate the "pins exactly what was reviewed at this SHA" invariant — even a clearly `[v1.2 addition]`-marked entry for a file that did not exist at `REVIEWED_AT` breaks the exact-target audit trail. Reverted both lines to their exact v1.1 original text; the historical-snapshot notice above the block now carries ALL clarification in prose instead, and is itself updated to describe this fix rather than the reverted approach. The Q3 mapping paragraph (§"Human decisions — resolved") — the one piece of `[SUPERSEDED]`-style prose living in this contract's own narrative rather than the pinned verdict — gained the same marker the mapping table and CASE block already carry, closing the one place that style of annotation had been missed. |
 | 2026-08-05 | v1.5 | **Rollback atomicity + immutable-version guard; verdict-block consistency completed (same-day follow-up to v1.4).** Codex review (gate-attempt-03) found the v1.4 provenance redesign was sound but incompletely applied: (1) the rollback note described a multi-step sequence without ever stating it must run inside one explicit transaction — a bare sequence of auto-committing statements pasted into a default psql session would leave `subscriptions`/`tenant_provision()` already changed if a later step (e.g. the DELETE) failed, contradicting the note's own "aborts cleanly" claim; (2) the plans-row `DELETE FROM plans WHERE plan_key IN ('free','host_pro')` had no version filter, so an unreferenced, legitimate LATER price-change version (a `free@2`/`host_pro@2` created after this pair landed) would be silently destroyed by the same DELETE — the identical "plan version is immutable" hazard guard 2-catalog/`0029`'s guard 1b already prevent on the forward path, now needed on the rollback's own DELETE too; (3) this document's own v1.2 rollback paragraph (superseding v1.0/v1.1's original text) was itself left stale after v1.4's redesign, still directing a reader to the discarded `tenants.created_at`/`schema_migrations.applied_at` mechanism — added a second `[SUPERSEDED AGAIN, v1.4]` layer rather than deleting the v1.2 text, preserving the full historical chain. `0028`/`0029`'s own rollback notes now prescribe explicit `BEGIN`/`COMMIT` wrapping and the version guard; the test fixture's now-dead `schema_migrations` setup (needed only by the discarded age-based precondition) is removed. |
 | 2026-08-05 | v1.4 | **Rollback redesign: explicit provenance instead of inference (same-day follow-up to v1.3).** Codex review (gate-attempt-02) found two more gaps in the age/unconditional-count precondition approach: (1) guard 4's own tolerance of a pre-existing, correctly-shaped `free`/`host_pro` catalog row means a subscription could already reference it before `0028` ever runs — no inference from tenant age or plan_key alone can then distinguish "never touched by this migration" from "migrated by this migration," so the precondition-based rollback could revert a subscription this migration never touched; (2) `0029`'s own guard only ever scanned `subscriptions`, so a historical catalog-only row (e.g. a `telegram@2` price snapshot) inserted in the gap between the two migrations would sail past it and be silently deleted. Converged on a design needing no inference: `0028`'s data-migrate `UPDATE` now records the exact tenant_ids it touches, atomically, in a new `dd29_migrated_tenants` table (via a writable CTE) — rollback becomes a plain lookup, not a derived property, and the plans-row `DELETE`'s own FK constraint is the actual safety net (Postgres refuses it if anything untracked still references either row, which is the correct outcome, not a bug). `0029` gained a mirrored catalog-version guard (guard 1b) closing the gap-window case. See `0028`'s and `0029`'s own rollback notes for the exact sequence. |
 | 2026-08-05 | v1.3 | **Verdict-block internal consistency (docs-only, same-day follow-up to v1.2).** Codex review (gate-attempt-01 on the implementing slice's scope-expanded registration) correctly found that v1.2's markers, while not rewriting the verdict, left it internally self-contradictory as a "current" artifact: `TARGET_FILES` omitted the two migration files (they did not exist at `REVIEWED_AT`), and `FIRST_IMPLEMENTATION_STEP` still read as a pending instruction to author `0028` when it was already done. Added a historical-snapshot notice directly above the verdict block explaining what `CODE_READY` still asserts (safe to start coding — true) versus what it no longer implies (coding has not started — false), and corrected both stale lines inline with `[v1.2 addition]`/`[v1.2: COMPLETED]` markers rather than deleting the original text. The G1-G6/closure-matrix judgments and `REVIEW_VERDICT: CODE_READY` itself are unchanged — this entry does not re-assess them, only the two objectively-stale factual lines the reviewer named. Separately, the implementing slice's own rollback logic gained a second precondition this round: `host_pro` subscriptions must be checked unconditionally (not tenant-age-scoped like `free`), since an older, pre-`0028` tenant could still end up on `host_pro` via a manual/future write with no unambiguous inverse — see `0028_dd29_capability_registry_expand.sql`'s own rollback note. |

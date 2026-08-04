@@ -60,10 +60,18 @@
 --      Keep the constraint NAME plans_key_chk (0025 established it for
 --      schema.ts alignment) — only the predicate narrows.
 --
--- Rollback (codex round-14 [P1], gate-attempt-03: run inside one explicit
--- transaction, same reasoning as 0028's own rollback note — a widened CHECK
--- with the 4 rows not yet reinserted, left half-done by an unhandled error,
--- is not a state anyone should observe):
+-- Rollback — STANDALONE case only (codex round-15 [P1], gate-attempt-04: this
+-- note's own BEGIN/COMMIT below is for rolling back 0029 BY ITSELF, with 0028
+-- remaining applied — e.g. this file was deployed but something later needs
+-- the wider CHECK/old rows back temporarily, without reverting 0028 too. This
+-- is a genuinely different, standalone operation from rolling back the FULL
+-- pair. If 0028 is ALSO being rolled back, do NOT run the transaction below —
+-- Postgres has no nested transactions, so wrapping these same two statements
+-- in their own BEGIN/COMMIT while ALSO wrapping the full pair in an outer one
+-- would either commit this piece early or truncate the outer transaction.
+-- 0028's own rollback note inlines these exact two statements directly into
+-- its single combined transaction instead — use that note for a full-pair
+-- rollback, this one only for reverting 0029 alone):
 --   BEGIN;
 --     ALTER TABLE plans DROP CONSTRAINT plans_key_chk;
 --     ALTER TABLE plans ADD CONSTRAINT plans_key_chk
@@ -72,15 +80,13 @@
 --     -- literals verbatim (this file does not carry them; 0011 is the source
 --     -- of truth for their original price/limits/entitlements). Use
 --     -- ON CONFLICT (plan_key, version) DO NOTHING, mirroring 0028's own seed
---     -- insert idiom — makes a retried rollback attempt (e.g. after the
---     -- transaction above committed but a LATER step in 0028's own rollback
---     -- failed and this whole procedure is re-run from the top) idempotent
---     -- instead of erroring on a duplicate key.
+--     -- insert idiom — makes a retried rollback attempt idempotent instead of
+--     -- erroring on a duplicate key.
 --   COMMIT;
--- Apply this file's rollback BEFORE 0028's, mirroring the reverse of the
--- expand→contract application order — 0028's own rollback note assumes
--- `plans` still has the 4 old rows to reference, which is only true again
--- once this step has run.
+-- Whether standalone or inlined into 0028's transaction, this step always runs
+-- BEFORE 0028's own reversal, mirroring the reverse of the expand→contract
+-- application order — 0028's own rollback assumes `plans` still has the 4 old
+-- rows to reference, which is only true again once this step has run.
 -- ============================================================================
 
 ALTER TABLE subscriptions NO FORCE ROW LEVEL SECURITY;
@@ -94,13 +100,26 @@ DO $$ DECLARE v_remaining integer; BEGIN
 END $$;
 ALTER TABLE subscriptions FORCE ROW LEVEL SECURITY;
 
+-- Lock plans EXCLUSIVELY before checking it (codex round-15 [P1], gate-attempt-04:
+-- guard 1b's own SELECT takes only ACCESS SHARE, which does not conflict with a
+-- concurrent INSERT — a telegram@2-shaped row could commit AFTER guard 1b's count
+-- already read 0 but BEFORE the DELETE below runs, and would then be silently
+-- destroyed by that DELETE despite guard 1b "having checked"). Taking this lock
+-- AFTER subscriptions above (not before) preserves the same subscriptions-then-plans
+-- order 0028's own header establishes to avoid deadlocking a concurrent
+-- tenant_provision() call — this migration touches subscriptions first (guard 1's
+-- toggle), then plans, never the reverse.
+LOCK TABLE plans IN ACCESS EXCLUSIVE MODE;
+
 -- guard 1b (codex round-13 [P1], gate-attempt-02): refuse if any old-key
 -- plans row exists at a version other than 1 — regardless of whether any
 -- subscription references it. Mirrors 0028's own guard-2-catalog check, on
 -- this file's side of the 0028-to-0029 gap: a historical price-change
 -- snapshot (e.g. telegram@2) inserted into the catalog AFTER 0028 committed
 -- would pass guard 1 above untouched (it only scans subscriptions) and then
--- be silently destroyed by the unconditional DELETE below.
+-- be silently destroyed by the unconditional DELETE below. The exclusive lock
+-- just taken above means nothing can insert such a row between this check and
+-- the DELETE — closing the TOCTOU race, not just documenting it away.
 DO $$ DECLARE v_bad_catalog_version integer; BEGIN
   SELECT count(*) INTO v_bad_catalog_version FROM plans
     WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels') AND version <> 1;
