@@ -433,7 +433,10 @@ closed on runtime-role targets", ...)` at line 1239). Originally specified as th
    direct port of migrate.test.ts:1264.
 7. `"refuses to bootstrap when the migration role does not exist"` — set
    `chat_definer_bootstrap.migration_role` to a name absent from `pg_roles`; expect rejection matching
-   `/does not exist/i`; assert zero membership rows.
+   `/migration role .* does not exist/i` (tightened from the originally-specified `/does not exist/i`
+   during the §11 audit — codex round 9, this registration: the broader regex also matched
+   PostgreSQL's own native `GRANT`-time role-existence error, so it passed even with the explicit
+   §5.1 check disabled; see §11.1 case 7); assert zero membership rows.
 8. `"refuses to re-point when chat_definer is already granted to a different valid migration role"` —
    bootstrap once with `migration_role` set to role A (a second scratch non-runtime role created for
    this test), then re-run with `migration_role` set to a different role B; expect the second call to
@@ -978,12 +981,20 @@ Notes only where the check surfaced something beyond a clean pass/fail.
 
 ### 11.3 Case 16 itself — re-verified non-tautological, both gaps now closed (round 7)
 
-Case 16 doesn't call `bootstrapChatDefiner()` for its core assertion (§5.3's own description already
-explains why the round-trip is unreachable) — it hand-mirrors §5.1's exact `EXISTS` condition and runs
-it directly. This means it is **structurally decoupled** from the live SQL file: mutating
-`02-chat-definer.sql`'s real `EXISTS` condition while case 16 was already-mutated-and-reverted (§11.1
-case 9(b)) had zero effect on case 16's own pass/fail — confirmed directly, not assumed. This is a
-known, accepted, and previously-documented tradeoff (§5.3), not a new finding.
+**Current state, read this first:** as of round 7 (below), case 16 is coupled to the live SQL file —
+it extracts and runs the real `EXISTS (...)` predicate at run time, not a hand-typed copy. The
+paragraph immediately below describes the **original, pre-round-7 state** found during the audit's
+main pass, kept for the record of what was found and why; it is superseded by the "second round-7
+finding" further down, not a description of current behavior.
+
+At the time of the audit's main pass, case 16 did not call `bootstrapChatDefiner()` for its core
+assertion (§5.3's own description already explains why the round-trip is unreachable) — it hand-mirrored
+§5.1's exact `EXISTS` condition and ran it directly. This meant it was **structurally decoupled** from
+the live SQL file: mutating `02-chat-definer.sql`'s real `EXISTS` condition while case 16 was
+already-mutated-and-reverted (§11.1 case 9(b)) had zero effect on case 16's own pass/fail — confirmed
+directly, not assumed. This was treated as a known, accepted, previously-documented tradeoff (§5.3), not
+a new finding — until codex's round-7 review (below) asked for it to be closed structurally rather than
+left as an accepted gap.
 
 What the round-6 redesign (§10 item 10) needed to prove instead was that the test's *own* fixture isn't
 tautological — that `unsafeExists.found` can actually read `false`. Verified by mutating the case's own
