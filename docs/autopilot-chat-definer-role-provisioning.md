@@ -3,10 +3,13 @@
 
 > **Status:** `CODE_READY` (see verdict, §9) · **Authored:** 2026-08-03 · **Risk:** P1
 > **Originally authored as a pre-implementation packet** (no worktree, no code) for a future coding
-> session to open a worktree from. **Implementation status (updated during coding):** a worktree was
-> opened on `feat/chat-definer-role-provisioning` and this contract's implementation landed there —
-> see §10 items 5-6 for two corrections discovered and fixed during implementation (both still
-> pre-`READY`, in active review as of this edit).
+> session to open a worktree from. **Implementation status (updated 2026-08-04):** rounds 1-5 landed on
+> `feat/chat-definer-role-provisioning`, then round 6 (codex, §10 item 10) HALTed at `MAX_ROUNDS` — six
+> rounds, six distinct issues, never the same region twice. Per owner direction the halted branch was
+> archived (`archive/chat-definer-role-provisioning-2026-08-04-halt-round6`) and rounds 1-5 carried
+> forward onto a freshly re-verified base (§2 rebase note); both round-6 fixes landed there, then every
+> one of the other 15 test cases was mutation-tested alongside case 16 — see §11 for the full audit
+> record. Now pending: fresh scope-gate registration and the readiness gate run.
 
 ## 0. Session input
 
@@ -64,6 +67,15 @@ if the role does not already exist with the exact right attributes. This is a **
   `infra/postgres-init/`, or `packages/db/src/migrate.test.ts` — confirmed by `git log --oneline -3` and
   by this packet's own live-repo verification (§3) finding the exact same facts AP-45 recorded at its
   slightly older base. No blast-radius conflict.
+- **Rebase note (2026-08-04, carry-forward after the round-6 HALT — §10 item 10):** the branch that
+  actually implements this contract does not sit on `ace61a6b9` above — per owner direction it was
+  re-derived rather than reusing any previously-mentioned number. Re-verified this session: `git fetch
+  origin main` + `git rev-parse origin/main` both return `de78394493cf448ddc7f4a35f8483373ddf1d0c7` =
+  `main` = `origin/main`, zero drift. `feat/chat-definer-role-provisioning`'s merge-base with `main` is
+  exactly this SHA. Between `ace61a6b9` and `de78394`, `main` picked up one further docs-only commit
+  (`de78394` itself, a backlog reconcile) — confirmed by inspection to touch none of this slice's files.
+  `ace61a6b9` above is the AUTHORING-time pin (still correct for when §9's original `CODE_READY` verdict
+  was granted); `de78394` is the IMPLEMENTATION base the landed code actually carries.
 
 ## 3. Live-repo verification (this session, 2026-08-03)
 
@@ -378,6 +390,11 @@ async function hideRealChatDefiner(superuser: pg.Client, fn: () => Promise<void>
   try {
     await fn();
   } finally {
+    // round-06 [P2] + audit finding (§11): unconditional either way -- a caller's assertion throwing
+    // before its OWN cleanup line runs is just as reachable when hadRealRole is false (the common case
+    // in a test database), and an orphan there survives to mislead the NEXT test's existence check.
+    // The rename-back only applies when there was a real role to restore.
+    await superuser.query(`DROP ROLE IF EXISTS chat_definer`);
     if (hadRealRole) {
       await superuser.query(`ALTER ROLE chat_definer_hidden_for_test RENAME TO chat_definer`);
     }
@@ -815,3 +832,153 @@ REMAINING_BLOCKERS: none
     audited by deliberately breaking the SQL logic each one claims to protect and confirming the case
     goes red before reverting, since case 16's own failure mode (a test passing without exercising
     what it asserts) had never been checked for the other 15. See §11 for the audit record.
+
+## 11. Audit record: mutation-testing all 16 test cases (2026-08-04)
+
+**Method.** For each of the 16 cases in §5.3, deliberately break the exact SQL logic (or, for case 16,
+the test's own fixture) the case claims to protect — one targeted mutation per check, applied with
+`sed`/`Edit` directly against `infra/postgres-init/02-chat-definer.sql`, never the compiled/cached
+artifact — run that one case in isolation, confirm it goes **RED**, `git checkout --` the file to
+revert, confirm **GREEN** again against the real script. A case that stays green under its own
+mutation is passing for a reason unrelated to what it asserts — the exact failure mode case 16 itself
+was found to have (§10 item 10) — and this is what the audit exists to rule out for the other 15. Two
+`sed` line-number mutations landed on the wrong line after an earlier edit shifted line numbers (§11.4)
+and produced misleading results; both were caught by inspecting the actual diff before trusting the
+test result, not by the test run alone — recorded there as a caution about the method itself, not
+about the SQL.
+
+### 11.1 Findings that changed something (4)
+
+**Case 6 — regex matched an unrelated check.** `/already granted/i` also matches the re-pointing
+guard's message (§5.1, "chat_definer is already granted to % — refusing to also grant it to %"), which
+independently fires in this test's exact fixture too (`app_worker != CURRENT_USER`, the implicit
+`v_target`). Disabling the pre-grant runtime-member check this case exists to test left it green.
+Tightened to `/already granted to a runtime role/i`, the phrase only that specific check raises.
+Confirmed: RED with the real check disabled, GREEN with it intact.
+
+**Case 7 — regex matched PostgreSQL's own native error.** `/does not exist/i` also matches the native
+error from the later `GRANT chat_definer TO %I` (`role "..." does not exist`, no "migration" word) when
+the explicit §5.1 pre-check is disabled — the script still fails closed downstream (same atomic
+rollback, §5.1's own transaction), just via a less specific message. Confirmed via `docker exec ...
+psql`: `GRANT pg_read_all_data TO zz_nonexistent` raises exactly `role "zz_nonexistent" does not
+exist`. Tightened to `/migration role .* does not exist/i`. Confirmed: RED with the real check
+disabled, GREEN with it intact.
+
+**Case 14 — the fixture gave the lock accidental cover, never exercising it.** Starting from a fully
+absent `chat_definer` (`hideRealChatDefiner`'s normal hidden state), every one of the N concurrent
+callers' first write is block 1's `CREATE ROLE chat_definer`. PostgreSQL's own unique-index insert
+forces every loser to block until the winner's transaction resolves — by which point the winner's
+`GRANT` (same transaction) has already committed too, so the re-pointing guard alone finishes the job
+without the advisory lock ever mattering. Disabling `pg_advisory_xact_lock` (§5.1) left this test green
+across **8/8** empirical runs (5 initial + 3 confirmation). Verified the mechanism directly with a
+throwaway script (`node` + `pg`, not committed): pre-creating `chat_definer` bare and already-committed
+before firing 4 concurrent different-target calls, with the lock disabled, reproducibly gave **4/4
+fulfilled and 4 members** — the exact accumulation §5.1's own comment says the lock exists to prevent.
+Fixed by changing the case's own fixture to pre-create `chat_definer` bare and committed before the
+race (§5.3 snippet, case 14), removing the accidental serialization so only the lock — or its absence —
+decides the outcome. Confirmed: RED (4 fulfilled, not 1) with the lock disabled and this fixture, GREEN
+with the lock intact.
+
+**Harness — `hideRealChatDefiner`'s cleanup was asymmetric, not any one numbered case.** The round-06
+fix (§10 item 10) unconditionally cleared a leftover scratch `chat_definer` only inside the
+`hadRealRole` branch, reasoning solely about the rename-back colliding with one. The same root cause —
+a caller's assertion throwing before *its own* cleanup line runs — is just as reachable when
+`hadRealRole` is false, the common case in a test database with no production `chat_definer` to hide.
+That orphan then survives to the next test's existence check, which misreads it as real, hides it via a
+pointless rename, and buries the *original* failing assertion under a confusing secondary error several
+tests later (`role "..." cannot be dropped because some objects depend on it` /
+`duplicate_object`) — exactly the failure-mode-laundering this audit exists to catch, just in the
+harness instead of the script under test. Discovered directly: case 7's own fixture-mutation check
+(§11.2) left an orphaned `chat_definer` that produced this exact cascade on the next full-suite run.
+Fixed: unconditional `DROP ROLE IF EXISTS chat_definer` in `hideRealChatDefiner`'s `finally`, either
+way; the rename-back still only applies when there was a real role to restore (§5.3 snippet). Confirmed
+the fix by reproducing the same failing fixture on a verified-clean database afterward: `chat_definer`
+itself was gone from `pg_roles` immediately after the run despite the triggering case's own assertion
+still failing — and a subsequent full 16-case run self-healed with no manual cleanup, where the same
+sequence previously required a manual `DROP ROLE` sweep.
+
+### 11.2 Confirmed sound, no change (12)
+
+Each below was mutated, ran RED against the broken check, reverted, ran GREEN against the real script.
+Notes only where the check surfaced something beyond a clean pass/fail.
+
+- **Case 1** (no GUC → `CURRENT_USER`): mutated the `COALESCE` fallback's `current_user` term to a
+  hardcoded wrong role name — RED (native "role does not exist" on the `GRANT`).
+- **Case 2** (explicit valid role, not `CURRENT_USER`): mutated `v_target` to ignore the GUC
+  unconditionally — RED (wrong member granted).
+- **Case 3** (exact replay no-op): mutated block 1's exception handler to catch
+  `insufficient_privilege` instead of `duplicate_object OR unique_violation` — RED (second bootstrap
+  call throws on the now-unswallowed re-create).
+- **Case 4** (wrong-attribute rejection, `rolcanlogin`): removed the `r.rolcanlogin` disjunct from
+  block 2's `OR` chain — RED.
+- **Case 5** (refuses runtime-role target): mutated the direct `v_target IN (...)` check (§5.1 line
+  ~116) to `IF FALSE` — RED. Worth recording: with that check disabled, the re-pointing guard fires
+  instead (`readonly` isn't `CURRENT_USER`, the prior sole member), but its message doesn't match
+  `/runtime role/i` — so the case correctly distinguishes "the specific check I target" from "some
+  other check happened to also reject," unlike cases 6/7 above.
+- **Case 8** (re-pointing guard): mutated the guard's `IF v_other_member IS NOT NULL` to `IF FALSE` —
+  RED. `/already granted to/i` is shared with case 6's message cluster-wide, but neither `roleA` nor
+  `roleB` in this fixture is a runtime role, so the pre-grant runtime check can never fire here — the
+  regex is unambiguous for this specific scenario even though it isn't globally unique.
+- **Case 9** (N concurrent, same target): two checks. (a) Disabled the advisory lock — stayed **green
+  3/3**, confirming this case genuinely does not need it (the code comment's own claim, now verified
+  rather than assumed — the re-pointing guard's read handles a same-target race fine). (b) Mutated the
+  unsafe-options `EXISTS` check to fire on any existing row regardless of `admin_option`/`set_option`
+  (`AND TRUE` in place of the safety predicate) — RED (false rejections under the race). First attempt
+  at (b) landed the mutation one line off (fused into the preceding `JOIN ... ON` clause instead of the
+  `WHERE` filter) and gave a misleading green; caught by reading the diff, redone correctly with `Edit`
+  against verified content.
+- **Case 10** (indirect BYPASSRLS / post-grant recheck): mutated the post-grant `IF
+  v_existing_runtime_member IS NOT NULL` to `IF FALSE` — RED. Confirmed "indirect path" appears nowhere
+  else as a raised message.
+- **Case 11** (empty-string GUC): mutated away the `NULLIF(..., '')` wrapper — RED. Confirmed case 1
+  stays green under this same mutation (it never sets the GUC, so `current_setting(..., true)` returns
+  `NULL` regardless of `NULLIF`) — the two cases are genuinely testing distinct branches, not
+  duplicates of each other.
+- **Case 12 / 13** (unsafe ADMIN/SET options, isolated): mutated `m.admin_option` and `NOT
+  m.set_option` independently (each replaced with `FALSE` while leaving the other term live) — each
+  case RED only for its own term. The existing code comment above these two cases (§5.3) already
+  anticipated exactly this mutation-testing concern when they were split from one combined case in
+  round 2 (§10 item 6) — confirmed the split still holds.
+- **Case 15** (six other wrong attributes, loop): removed the `rolbypassrls` disjunct (one
+  representative branch of the seven) from block 2's `OR` chain — RED on that specific loop iteration.
+
+### 11.3 Case 16 itself — re-verified non-tautological, one narrow gap left open
+
+Case 16 doesn't call `bootstrapChatDefiner()` for its core assertion (§5.3's own description already
+explains why the round-trip is unreachable) — it hand-mirrors §5.1's exact `EXISTS` condition and runs
+it directly. This means it is **structurally decoupled** from the live SQL file: mutating
+`02-chat-definer.sql`'s real `EXISTS` condition while case 16 was already-mutated-and-reverted (§11.1
+case 9(b)) had zero effect on case 16's own pass/fail — confirmed directly, not assumed. This is a
+known, accepted, and previously-documented tradeoff (§5.3), not a new finding.
+
+What the round-6 redesign (§10 item 10) needed to prove instead was that the test's *own* fixture isn't
+tautological — that `unsafeExists.found` can actually read `false`. Verified by mutating the case's own
+fixture (not the SQL file): changed the deliberately-unsafe second grant
+(`GRANT chat_definer TO target WITH ADMIN TRUE GRANTED BY otherGrantor`) to a genuinely safe one (`WITH
+ADMIN FALSE, SET TRUE`), confirmed via a direct `pg_auth_members` query that both rows really are safe
+(`admin_option=f, set_option=t`), and confirmed the case's own `expect(found).toBe(true)` assertion then
+fails — the case is not vacuously true.
+
+**One narrow, lower-severity gap found and left open, not fixed:** when that assertion fails, the
+case's own cleanup (`REVOKE ... GRANTED BY otherGrantor`, `DROP ROLE chat_definer`) sits *after* the
+assertion in the same `try` block and never runs, which cascades into a second, more confusing error at
+the outer `finally`'s `DROP ROLE otherGrantor` (`cannot be dropped because some objects depend on it`)
+that buries the real `AssertionError`. This is a narrower instance of the same class the harness fix
+(§11.1) closes for `chat_definer` itself, scoped to this one case's own scratch roles
+(`plexco_chat_definer_test_grantor_target`/`_b`). Not fixed here: it only surfaces when case 16's own
+assertion is already failing (never in normal CI), its blast radius is one case's scratch roles rather
+than the shared `chat_definer` name every case depends on, and a correct fix means restructuring this
+case's `try`/`finally` nesting — worth doing the next time this case is touched for an unrelated reason,
+not on its own.
+
+### 11.4 On the method itself: two self-inflicted false signals, both caught before being trusted
+
+Two `sed` mutations during this audit used a stale line number after an earlier `Edit` (the harness fix,
+§11.1) shifted every subsequent line down by ~10 — once corrupting a comment line instead of the target
+GRANT statement (silently making the "mutation" a no-op, read as a false green), once fusing a `WHERE`
+clause into the preceding `JOIN ... ON` instead of replacing it (a different, unintended query, also
+read as a false green). Both were caught by reading `git diff` before trusting the test result, not by
+the test run itself — worth recording because it is the same discipline this whole audit applies to
+codex's findings and to case 16's original design, now applied to the audit's own tooling: an
+unexpected green is a reason to inspect the actual diff, not a reason to move on.

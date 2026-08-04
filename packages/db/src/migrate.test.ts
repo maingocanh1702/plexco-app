@@ -1347,15 +1347,19 @@ async function hideRealChatDefiner(superuser: pg.Client, fn: () => Promise<void>
   try {
     await fn();
   } finally {
+    // codex round-06 [P2] + audit finding (this session): the round-06 fix unconditionally cleared a
+    // leftover scratch chat_definer only inside the hadRealRole branch, because it only reasoned about
+    // the rename-back colliding with one. But the same root cause -- a caller's assertion throwing
+    // before ITS OWN cleanup line runs -- is just as reachable when hadRealRole is false, which is the
+    // common case in a test database with no production chat_definer to hide. That orphan then survives
+    // to the NEXT test's existence check, which misreads it as a real role, hides it via a pointless
+    // rename, and the ORIGINAL failing test's assertion gets buried under a confusing secondary
+    // "duplicate object" / "cannot be dropped, objects depend on it" error several tests later --
+    // exactly the failure-mode-laundering this whole audit exists to catch, just in the harness instead
+    // of the script under test. Unconditional either way; the rename-back only applies when there was a
+    // real role to restore.
+    await superuser.query(`DROP ROLE IF EXISTS chat_definer`);
     if (hadRealRole) {
-      // codex round-06 [P2]: many callers drop their own scratch chat_definer only AFTER their
-      // assertions (e.g. the case right above). If an assertion throws first, that cleanup line
-      // never runs and a scratch chat_definer is left behind -- the rename-back then collides with
-      // it, fails with a confusing duplicate-role-name error that masks the real assertion failure,
-      // and leaves the cluster corrupted (real role still hidden, scratch role squatting the name)
-      // for every later test. Unconditionally clear the name first; harmless when the caller's own
-      // cleanup already ran.
-      await superuser.query(`DROP ROLE IF EXISTS chat_definer`);
       await superuser.query(`ALTER ROLE chat_definer_hidden_for_test RENAME TO chat_definer`);
     }
   }
@@ -1635,12 +1639,20 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
   }, 30_000);
 
   it("refuses to proceed at all when chat_definer is already granted to a runtime role beforehand", async () => {
+    // Audit finding (this session): the original /already granted/i regex also matches the
+    // re-pointing guard's message ("chat_definer is already granted to % -- refusing to also grant
+    // it to %"), which independently fires here too since app_worker != CURRENT_USER (the implicit
+    // v_target). The test passed even with the pre-grant runtime-member check (SS5.1) disabled,
+    // for a reason unrelated to what it claims to prove. Tightened to the exact distinguishing
+    // phrase this specific check raises, so only it can satisfy the assertion.
     await withChatDefinerLock(BASE!, () =>
       hideRealChatDefiner(admin, async () => {
         await bootstrapChatDefiner(admin);
         await admin.query(`GRANT chat_definer TO app_worker`);
         try {
-          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/already granted/i);
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(
+            /already granted to a runtime role/i,
+          );
         } finally {
           await admin.query(`REVOKE chat_definer FROM app_worker`);
         }
@@ -1683,13 +1695,20 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
   }, 30_000);
 
   it("refuses to bootstrap when the migration role does not exist", async () => {
+    // Audit finding (this session): /does not exist/i also matches PostgreSQL's OWN native error
+    // from the later `GRANT chat_definer TO %I` (role "..." does not exist, no "migration" word) --
+    // the explicit SS5.1 pre-check this test targets can be disabled entirely and the test still
+    // passes, because the script fails closed downstream regardless (same atomic-rollback outcome,
+    // just a less specific message). Tightened to the exact phrase only the explicit check raises.
     await withChatDefinerLock(BASE!, () =>
       hideRealChatDefiner(admin, async () => {
         await admin.query(
           `SET chat_definer_bootstrap.migration_role = 'zz_chat_definer_never_created_role'`,
         );
         try {
-          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/does not exist/i);
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(
+            /migration role .* does not exist/i,
+          );
         } finally {
           await admin.query(`RESET chat_definer_bootstrap.migration_role`);
         }
@@ -1767,8 +1786,22 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
     // identical row). A DIFFERENT-target race is the one the pg_advisory_xact_lock in SS3 exists to
     // serialize: without it, N concurrent calls could each observe zero existing members and all
     // GRANT their own distinct target before any of them commits.
+    //
+    // Audit finding (this session): starting from a HIDDEN (fully absent) chat_definer, as this test
+    // originally did, gives false confidence. All N callers' first write is block 1's `CREATE ROLE
+    // chat_definer`, and PostgreSQL's own unique-index insert forces every loser to BLOCK until the
+    // winner's transaction commits or rolls back -- by which point the winner's GRANT (same
+    // transaction) has already committed too, so the re-pointing guard alone finishes the job. The
+    // advisory lock was never exercised; disabling it left this test green across 8/8 empirical runs.
+    // Pre-creating chat_definer bare and COMMITTED here removes that accidental serialization: block 1
+    // resolves instantly for every caller (no insert to wait on), so only the lock -- or lack of it --
+    // determines the outcome. Confirmed empirically: with the lock disabled and this fixture, 4/4
+    // concurrent calls fulfilled and chat_definer ended up with 4 members, reproducibly.
     await withChatDefinerLock(BASE!, () =>
       hideRealChatDefiner(admin, async () => {
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE chat_definer NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;`,
+        );
         const N = 4;
         const targets = Array.from({ length: N }, (_, i) => `plexco_chat_definer_test_race_${i}`);
         for (const t of targets) {
