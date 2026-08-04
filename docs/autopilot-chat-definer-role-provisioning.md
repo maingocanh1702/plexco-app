@@ -9,7 +9,10 @@
 > archived (`archive/chat-definer-role-provisioning-2026-08-04-halt-round6`) and rounds 1-5 carried
 > forward onto a freshly re-verified base (§2 rebase note); both round-6 fixes landed there, then every
 > one of the other 15 test cases was mutation-tested alongside case 16 — see §11 for the full audit
-> record. Now pending: fresh scope-gate registration and the readiness gate run.
+> record. This registration (base `de78394493cf448ddc7f4a35f8483373ddf1d0c7`, runtime manifest
+> registered against it) has been through the readiness gate multiple times since — see §10 item 11 for
+> rounds 7-9. Currently mid-cycle: verification passes; awaiting 2 consecutive clean code-review rounds
+> plus 1 clean security round.
 
 ## 0. Session input
 
@@ -708,11 +711,13 @@ REMAINING_BLOCKERS: none
 
 ## 10. Open items (non-blocking — do not read as `CODE_READY` blockers)
 
-1. **`docs/autopilot-backlog.md` has no entry for this slice.** Confirmed absent (§3), matching AP-45's
-   own finding. Out of this packet's scope by explicit instruction (separate chore commit). A future
-   session should add a `## task:` block once this packet lands, so the backlog's own scanner can see
-   it — until then, `dd38-dd86-chat-schema-core`'s own backlog-derived `depends_on: []` will keep
-   reading as "no dependency" to anything that scans the backlog file alone rather than this packet.
+1. **STALE (corrected 2026-08-04, codex round 10 advisory):** this item originally said
+   `docs/autopilot-backlog.md` had no entry for this slice, confirmed absent at authoring time (§3),
+   matching AP-45's own finding. That is no longer true — the backlog now carries
+   `## task: chat-definer-role-provisioning` at `docs/autopilot-backlog.md:1583`, added by a later
+   session. §3's verification-table row describing it as absent is similarly a snapshot of 2026-08-03,
+   not current truth. Still out of this packet's own negative scope to edit `docs/autopilot-backlog.md`
+   directly (§7) — this item only corrects what this doc claims about it, not the backlog file itself.
 2. **CI's step display name will be mildly stale.** `.github/workflows/ci.yml:70`'s step is named
    `Bootstrap job_definer role`; after implementation it also bootstraps `chat_definer`. Purely
    cosmetic (the step's own comment already explains the mechanism in enough detail), and renaming it
