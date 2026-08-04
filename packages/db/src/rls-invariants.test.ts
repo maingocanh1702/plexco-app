@@ -2798,6 +2798,13 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
     }
   }, 60_000);
 
+  it("DD29-6: plans_key_chk's final predicate is exactly the DD-29 target (free, host_pro) — the one entry CND-1/2/3 excludes from its pre-0025 byte-identity check, because 0028/0029 intentionally narrow it later", async () => {
+    const live = await allLiveCheckDefs(ctx.owner);
+    expect(live.get("plans.plans_key_chk")).toBe(
+      "CHECK ((plan_key = ANY (ARRAY['free'::text, 'host_pro'::text])))",
+    );
+  });
+
   it("CND-6: sessions_public_capacity_chk (0024) is untouched by 0025", async () => {
     const live = await allLiveCheckDefs(ctx.owner);
     expect(live.get("sessions.sessions_public_capacity_chk")).toBe(
