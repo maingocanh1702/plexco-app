@@ -14,8 +14,13 @@
 --
 -- chat_definer is CLUSTER-global (like job_definer, app/app_worker/readonly) and is
 -- pre-provisioned OUTSIDE the migration runner: the future dd38-dd86-chat-schema-core
--- migration only ASSERTS/consumes these exact attributes and membership via
--- `ALTER FUNCTION ... OWNER TO chat_definer`; it never creates or alters this role.
+-- migration transfers ownership to it via `ALTER FUNCTION ... OWNER TO chat_definer`,
+-- which mechanically requires the role to EXIST (SET ROLE-eligible + schema CREATE
+-- privilege) but does NOT re-validate NOLOGIN/BYPASSRLS/other attributes
+-- (postgresql.org/docs/16/sql-alterfunction.html: "you must be able to SET ROLE to
+-- the new owning role, and that role must have CREATE privilege on the function's
+-- schema") -- those are guaranteed by THIS bootstrap's own fail-closed attribute-drift
+-- check (block 2 below), not re-asserted downstream. It never creates or alters this role.
 -- Must NOT be added to migrate.ts's RUNTIME_ROLES/ensureRoleExists — that idiom
 -- hard-codes LOGIN NOBYPASSRLS, the opposite of what a definer role needs (mirrors
 -- DD-89/DD-90 Q5's job_definer precedent exactly).

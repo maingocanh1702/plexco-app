@@ -45,8 +45,14 @@ It exists because `dd38-dd86-chat-schema-core`'s own root migration (already aut
 `docs/autopilot-dd38-dd86-chat-schema-core.md`, currently `NOT_CODE_READY` pending this packet) does
 `ALTER FUNCTION chat_current_is_member(uuid) OWNER TO chat_definer` and
 `ALTER FUNCTION dm_current_read_allowed(uuid) OWNER TO chat_definer` — statements that fail outright
-if the role does not already exist with the exact right attributes. This is a **mechanical** dependency
-(the DDL literally cannot apply), not a scheduling preference.
+if the role does not already exist (PostgreSQL requires the invoking role to `SET ROLE` to it, plus
+`CREATE` privilege on the function's schema — postgresql.org/docs/16/sql-alterfunction.html).
+**Correction (codex round 8, this registration):** existence is the mechanical dependency (the DDL
+literally cannot apply to a nonexistent role); `ALTER FUNCTION ... OWNER TO` does **not** re-validate
+`NOLOGIN`/`BYPASSRLS`/other attributes, so attribute correctness is guaranteed by this slice's own
+bootstrap-time fail-closed check (§5.1), not re-asserted by the downstream migration. This is a
+**mechanical existence** dependency, not a scheduling preference — and not, as an earlier version of
+this section overstated, an attribute-re-assertion one.
 
 ## 2. Authority pins
 
@@ -136,8 +142,13 @@ check). One deliberate, documented divergence: see §5.4.
 --
 -- chat_definer is CLUSTER-global (like job_definer, app/app_worker/readonly) and is
 -- pre-provisioned OUTSIDE the migration runner: the future dd38-dd86-chat-schema-core
--- migration only ASSERTS/consumes these exact attributes and membership via
--- `ALTER FUNCTION ... OWNER TO chat_definer`; it never creates or alters this role.
+-- migration transfers ownership to it via `ALTER FUNCTION ... OWNER TO chat_definer`,
+-- which mechanically requires the role to EXIST (SET ROLE-eligible + schema CREATE
+-- privilege) but does NOT re-validate NOLOGIN/BYPASSRLS/other attributes
+-- (postgresql.org/docs/16/sql-alterfunction.html: "you must be able to SET ROLE to
+-- the new owning role, and that role must have CREATE privilege on the function's
+-- schema") -- those are guaranteed by THIS bootstrap's own fail-closed attribute-drift
+-- check (block 2 below), not re-asserted downstream. It never creates or alters this role.
 -- Must NOT be added to migrate.ts's RUNTIME_ROLES/ensureRoleExists — that idiom
 -- hard-codes LOGIN NOBYPASSRLS, the opposite of what a definer role needs (mirrors
 -- DD-89/DD-90 Q5's job_definer precedent exactly).
@@ -832,6 +843,28 @@ REMAINING_BLOCKERS: none
     audited by deliberately breaking the SQL logic each one claims to protect and confirming the case
     goes red before reverting, since case 16's own failure mode (a test passing without exercising
     what it asserts) had never been checked for the other 15. See §11 for the audit record.
+11. **Rounds 7-8 (codex, this fresh registration, both `[P2]`) — one from the audit's own findings,
+    one a new, independent finding.** Round 7 closed the two gaps the audit itself had already
+    surfaced and left open in §11.3: case 16's `unsafeExists` query was a hand-duplicated literal,
+    disconnected from the live SQL (mutating the real predicate did not turn it red); and its cleanup
+    ran only after its assertions, so a failing assertion cascaded into a confusing secondary
+    `DROP ROLE` error instead of a clean one. Both closed — see §11.3 for the full record (extraction
+    regex, guaranteed nested `finally`, before/after verification in both directions).
+    Round 8 found something the audit had not looked for: this doc's own §1 and §5.1's SQL header
+    comment both claimed the downstream `dd38-dd86-chat-schema-core` migration's
+    `ALTER FUNCTION ... OWNER TO chat_definer` statements "ASSERT/consume these exact attributes."
+    Verified against postgresql.org/docs/16/sql-alterfunction.html: ownership transfer requires only
+    that the invoking role can `SET ROLE` to the new owner and that the new owner has `CREATE`
+    privilege on the function's schema — it does not re-validate `NOLOGIN`/`BYPASSRLS`/other role
+    attributes. The claim was directionally right about *existence* (a nonexistent role does make the
+    DDL fail outright — a real mechanical dependency) but wrong about *attribute enforcement*: a
+    `chat_definer` that drifted to the wrong attributes after this bootstrap would still pass
+    ownership transfer silently. Fixed in three places (§1 prose, the SQL header comment, and its
+    exact mirror in §5.1) to state the corrected claim: existence is mechanically required; attribute
+    correctness is guaranteed by this slice's own bootstrap-time fail-closed check (§5.1 block 2), not
+    re-asserted downstream. `dd38-dd86-chat-schema-core` independently re-asserting exact attributes
+    immediately before its own `OWNER TO` statements is a real hardening opportunity, correctly scoped
+    to that slice's own contract (out of this packet's negative scope) — recorded here, not fixed here.
 
 ## 11. Audit record: mutation-testing all 16 test cases (2026-08-04)
 
