@@ -1298,3 +1298,658 @@ describe("job_definer bootstrap script itself fails closed on runtime-role targe
     }
   }, 30_000);
 });
+
+const CHAT_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "..",
+  "infra",
+  "postgres-init",
+  "02-chat-definer.sql",
+);
+
+async function bootstrapChatDefiner(client: pg.Client): Promise<void> {
+  const sql = await readFile(CHAT_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
+  try {
+    await client.query(sql);
+  } catch (error) {
+    // The file wraps itself in an explicit BEGIN/COMMIT (infra/postgres-init/02-chat-definer.sql),
+    // so a rejection leaves that transaction open and aborted on `client` — mirrors
+    // bootstrapJobDefiner's own catch-and-ROLLBACK idiom (test-harness.ts).
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+const CHAT_DEFINER_LOCK_KEY = 0x63686164; // "chad" — distinct from "jobd" (0x6a6f6264) and "plxc" (0x706c7863)
+
+async function withChatDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
+  const lockClient = new pg.Client({ connectionString: base });
+  await lockClient.connect();
+  await lockClient.query("SELECT pg_advisory_lock($1)", [CHAT_DEFINER_LOCK_KEY]);
+  try {
+    return await fn();
+  } finally {
+    await lockClient
+      .query("SELECT pg_advisory_unlock($1)", [CHAT_DEFINER_LOCK_KEY])
+      .catch(() => {});
+    await lockClient.end();
+  }
+}
+
+async function hideRealChatDefiner(superuser: pg.Client, fn: () => Promise<void>): Promise<void> {
+  const existing = await superuser.query(`SELECT 1 FROM pg_roles WHERE rolname = 'chat_definer'`);
+  const hadRealRole = existing.rows.length > 0;
+  if (hadRealRole) {
+    await superuser.query(`ALTER ROLE chat_definer RENAME TO chat_definer_hidden_for_test`);
+  }
+  try {
+    await fn();
+  } finally {
+    // codex round-06 [P2] + audit finding (this session): the round-06 fix unconditionally cleared a
+    // leftover scratch chat_definer only inside the hadRealRole branch, because it only reasoned about
+    // the rename-back colliding with one. But the same root cause -- a caller's assertion throwing
+    // before ITS OWN cleanup line runs -- is just as reachable when hadRealRole is false, which is the
+    // common case in a test database with no production chat_definer to hide. That orphan then survives
+    // to the NEXT test's existence check, which misreads it as a real role, hides it via a pointless
+    // rename, and the ORIGINAL failing test's assertion gets buried under a confusing secondary
+    // "duplicate object" / "cannot be dropped, objects depend on it" error several tests later --
+    // exactly the failure-mode-laundering this whole audit exists to catch, just in the harness instead
+    // of the script under test. Unconditional either way; the rename-back only applies when there was a
+    // real role to restore.
+    await superuser.query(`DROP ROLE IF EXISTS chat_definer`);
+    if (hadRealRole) {
+      await superuser.query(`ALTER ROLE chat_definer_hidden_for_test RENAME TO chat_definer`);
+    }
+  }
+}
+
+async function chatDefinerMembers(client: pg.Client): Promise<string[]> {
+  const result = await client.query(
+    `SELECT r.rolname FROM pg_auth_members m
+       JOIN pg_roles r ON r.oid = m.member
+       JOIN pg_roles g ON g.oid = m.roleid
+      WHERE g.rolname = 'chat_definer'`,
+  );
+  return (result.rows as { rolname: string }[]).map((r) => r.rolname).sort();
+}
+
+describe("chat_definer bootstrap script bootstraps idempotently and fails closed on invalid grant targets", () => {
+  it("first bootstrap with no migration role set grants membership to CURRENT_USER", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await bootstrapChatDefiner(admin);
+        const whoami = await admin.query(`SELECT current_user AS u`);
+        expect(await chatDefinerMembers(admin)).toEqual([(whoami.rows[0] as { u: string }).u]);
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
+  it("first bootstrap with the migration role GUC explicitly set to an empty string grants membership to CURRENT_USER", async () => {
+    // package.json's db:bootstrap always issues `SET chat_definer_bootstrap.migration_role = '$mr'`,
+    // where $mr is "" when MIGRATION_ROLE is unset — the GUC is explicitly set to an empty string on
+    // every real invocation, never left fully unset. NULLIF('', '') must collapse this to the same
+    // CURRENT_USER fallback as the fully-unset case (contract SS8, Boundary row), a distinct code path
+    // from the previous test (current_setting(..., true) returning NULL vs. returning '').
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await admin.query(`SET chat_definer_bootstrap.migration_role = ''`);
+        try {
+          await bootstrapChatDefiner(admin);
+        } finally {
+          await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+        }
+        const whoami = await admin.query(`SELECT current_user AS u`);
+        expect(await chatDefinerMembers(admin)).toEqual([(whoami.rows[0] as { u: string }).u]);
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
+  it("first bootstrap with an explicit valid migration role grants membership to that role, not CURRENT_USER", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        const target = "plexco_chat_definer_test_target_a";
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${target}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        try {
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${target}'`);
+          try {
+            await bootstrapChatDefiner(admin);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          expect(await chatDefinerMembers(admin)).toEqual([target]);
+          await admin.query(`DROP ROLE chat_definer`);
+        } finally {
+          await admin.query(`DROP ROLE ${target}`);
+        }
+      }),
+    );
+  }, 30_000);
+
+  it("exact replay is a no-op", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await bootstrapChatDefiner(admin);
+        const before = await admin.query(
+          `SELECT rolsuper, rolcanlogin, rolbypassrls, rolcreatedb, rolcreaterole, rolinherit, rolreplication
+             FROM pg_roles WHERE rolname = 'chat_definer'`,
+        );
+        // Explicit values, not just before==after — a bug that flipped e.g. rolbypassrls on BOTH
+        // calls identically would still pass a bare equality check (codex round-01 [P2]).
+        expect(before.rows).toEqual([
+          {
+            rolsuper: false,
+            rolcanlogin: false,
+            rolbypassrls: true,
+            rolcreatedb: false,
+            rolcreaterole: false,
+            rolinherit: false,
+            rolreplication: false,
+          },
+        ]);
+        const membersBefore = await chatDefinerMembers(admin);
+        await bootstrapChatDefiner(admin);
+        const after = await admin.query(
+          `SELECT rolsuper, rolcanlogin, rolbypassrls, rolcreatedb, rolcreaterole, rolinherit, rolreplication
+             FROM pg_roles WHERE rolname = 'chat_definer'`,
+        );
+        expect(after.rows).toEqual(before.rows);
+        expect(await chatDefinerMembers(admin)).toEqual(membersBefore);
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
+  // Two isolated cases, not one combined case (codex round-02 [P2]): the SQL guard is
+  // `v_existing_admin OR NOT v_existing_set` — a single test that sets BOTH options unsafely at once
+  // would still pass even if either half of that OR regressed away, since the other half alone still
+  // rejects. Each case below leaves the OTHER option at its own safe bare-GRANT default (ADMIN=false,
+  // SET=true — postgresql.org/docs/16/sql-grant.html) so only ONE guard clause can possibly be the
+  // reason for the rejection.
+  it("refuses to bootstrap when the existing membership for the target has ADMIN TRUE (SET left at its safe default)", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await bootstrapChatDefiner(admin);
+        const whoami = await admin.query(`SELECT current_user AS u`);
+        const target = (whoami.rows[0] as { u: string }).u;
+        // Simulate an out-of-band GRANT issued directly against the cluster, outside this script —
+        // PG16 retains ADMIN/SET options across a bare re-GRANT ("the omission of an option results
+        // in the current value being retained"), so this script's own idempotent bare GRANT would
+        // otherwise silently leave a unilaterally-set unsafe option in place.
+        await admin.query(`GRANT chat_definer TO ${target} WITH ADMIN TRUE`);
+        try {
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/unsafe options/i);
+        } finally {
+          await admin.query(`REVOKE chat_definer FROM ${target}`);
+        }
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
+  it("refuses to bootstrap when the existing membership for the target has SET FALSE (ADMIN left at its safe default)", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await bootstrapChatDefiner(admin);
+        const whoami = await admin.query(`SELECT current_user AS u`);
+        const target = (whoami.rows[0] as { u: string }).u;
+        await admin.query(`GRANT chat_definer TO ${target} WITH SET FALSE`);
+        try {
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/unsafe options/i);
+        } finally {
+          await admin.query(`REVOKE chat_definer FROM ${target}`);
+        }
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
+  it("the unsafe-options EXISTS check examines every grant record for the target, not one arbitrary row", async () => {
+    // codex round-04 [P1]: PG16 allows multiple pg_auth_members rows for the same (role, member)
+    // pair from different grantors ("Allow multiple role membership records" -- release notes;
+    // pre-16 a new grant replaced the prior row). A non-STRICT SELECT INTO with no ORDER BY could
+    // pick an arbitrary one of them and miss an unsafe record left by a different grantor. Fixed by
+    // replacing the single-row SELECT INTO with the EXISTS check at SS5.1.
+    //
+    // codex round-06 [P1]: the ORIGINAL version of this test tried to exercise that fix through a
+    // full bootstrapChatDefiner() round-trip, using a second grantor role to create the second row.
+    // That is unreachable: PostgreSQL requires a non-superuser grantor to hold live ADMIN OPTION
+    // (membership) before it can be named via GRANTED BY, and holding that membership makes it a
+    // SECOND, DIFFERENT chat_definer member -- which SS5.1's re-pointing guard (checking "any member
+    // other than v_target") correctly refuses BEFORE the unsafe-options check is ever reached. This
+    // was verified exhaustively this session: a second SUPERUSER collapses onto one grantor row
+    // (round-06's original bug); a non-superuser CREATEROLE+BYPASSRLS grantor is refused outright
+    // ("permission denied... only roles with ADMIN option... may grant this role" -- PG16 tightened
+    // this from pre-16); and a role attempting to grant itself a second, differently-attributed row
+    // is refused ("ADMIN option cannot be granted back to your own grantor"). There is no reachable
+    // state, via ordinary GRANT statements, with two distinct grantor rows for one member and no
+    // second live member -- which also means the re-pointing guard already closes this exact class
+    // of multi-grantor attack for free, in every state a real client can produce.
+    //
+    // The EXISTS fix therefore is not a gap the full script can be driven into today; it is defense
+    // in depth against states that are NOT reachable via GRANT (a future re-pointing-guard change, a
+    // different script version without one, or direct catalog manipulation). This test proves the
+    // query itself is correct against exactly that kind of state, constructed directly rather than
+    // through bootstrapChatDefiner.
+    //
+    // codex round-07 [P2]: the prior version hand-duplicated SS5.1's EXISTS condition as a literal
+    // string, which the audit (SS11.3) confirmed is disconnected from the real file -- mutating the
+    // production predicate does not turn this test red. Fixed by EXTRACTING the exact EXISTS(...)
+    // block from the loaded SQL text (never hand-copied) and running that extracted predicate,
+    // parameterized, against the directly-constructed two-row state. A regression to the production
+    // condition now changes what this test actually executes, closing the disconnect structurally
+    // rather than by convention.
+    //
+    // codex round-07 [P2]: the prior version's cleanup (REVOKE + DROP ROLE chat_definer) sat after
+    // the assertions with no guard, so a failing assertion skipped it and the outer finally's
+    // `DROP ROLE otherGrantor` then failed on a dependent grant record, burying the real
+    // AssertionError under a confusing secondary one (found and left open in SS11.3; closed here).
+    // Dropping the GROUP role directly removes every chat_definer membership row regardless of
+    // grantor (confirmed empirically this session, SS11.1's hideRealChatDefiner fix), so a bare
+    // `DROP ROLE IF EXISTS chat_definer` in a guaranteed nested finally is sufficient -- no separate
+    // REVOKE needed.
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        const target = "plexco_chat_definer_test_grantor_target";
+        const otherGrantor = "plexco_chat_definer_test_grantor_b";
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${target}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${otherGrantor}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        try {
+          // Use the real bootstrap to create chat_definer with its exact attributes and the first
+          // (safe) grant record, rather than hand-duplicating the attribute list here.
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${target}'`);
+          try {
+            await bootstrapChatDefiner(admin);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          await admin.query(`GRANT chat_definer TO ${otherGrantor} WITH ADMIN TRUE`);
+          // Safe row already exists (grantor: bootstrap superuser, from bootstrapChatDefiner above);
+          // this adds the unsafe SECOND row (grantor: otherGrantor) for the SAME target -- the
+          // non-STRICT bug this fix closes picked whichever row postgres returned first, which was
+          // never guaranteed to be either specific one.
+          await admin.query(
+            `GRANT chat_definer TO ${target} WITH ADMIN TRUE GRANTED BY ${otherGrantor}`,
+          );
+          try {
+            const grantors = await admin.query(
+              `SELECT DISTINCT g.rolname AS grantor
+                 FROM pg_auth_members m
+                 JOIN pg_roles r ON r.oid = m.member
+                 JOIN pg_roles role_ ON role_.oid = m.roleid
+                 JOIN pg_roles g ON g.oid = m.grantor
+                WHERE role_.rolname = 'chat_definer' AND r.rolname = '${target}'`,
+            );
+            expect(grantors.rows.length).toBe(2); // genuinely two distinct grantor records, not one
+
+            const sql = await readFile(CHAT_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
+            // The \n right after "(" is load-bearing: SS5.1 also has an earlier single-line
+            // `EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_target)` (the migration-role
+            // existence check) that a bare `EXISTS \(` would match first, then lazily swallow
+            // everything up to THIS block's own close -- self-caught the first time this was written.
+            const existsMatch = sql.match(/(EXISTS \(\n[\s\S]+?\n {2}\)) THEN/);
+            const existsBlock = existsMatch?.[1];
+            if (!existsBlock) {
+              throw new Error(
+                "could not locate the unsafe-options EXISTS block in 02-chat-definer.sql -- the " +
+                  "extraction regex needs updating alongside whatever changed its shape",
+              );
+            }
+            const existsPredicate = existsBlock.replace("v_target", "$1");
+            const unsafeExists = await admin.query(`SELECT ${existsPredicate} AS found`, [target]);
+            expect((unsafeExists.rows[0] as { found: boolean }).found).toBe(true);
+          } finally {
+            await admin.query(`DROP ROLE IF EXISTS chat_definer`);
+          }
+        } finally {
+          await admin.query(`DROP ROLE ${otherGrantor}`);
+          await admin.query(`DROP ROLE ${target}`);
+        }
+      }),
+    );
+  }, 30_000);
+
+  it("refuses to bootstrap when chat_definer already exists with a wrong attribute", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await admin.query(
+          `CREATE ROLE chat_definer LOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`,
+        );
+        try {
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/unexpected attributes/i);
+          expect(await chatDefinerMembers(admin)).toEqual([]);
+          const attrs = await admin.query(
+            `SELECT rolcanlogin FROM pg_roles WHERE rolname = 'chat_definer'`,
+          );
+          expect((attrs.rows[0] as { rolcanlogin: boolean }).rolcanlogin).toBe(true);
+        } finally {
+          await admin.query(`DROP ROLE chat_definer`);
+        }
+      }),
+    );
+  }, 30_000);
+
+  it("refuses to bootstrap when chat_definer already exists as a member of another role, even with INHERIT overriding its own NOINHERIT", async () => {
+    // codex round 12 [P1] (prior registration's MAX_ROUNDS halt): PostgreSQL 16 lets a per-grant
+    // WITH INHERIT TRUE override chat_definer's own NOINHERIT for that specific membership
+    // (postgresql.org/docs/16/role-attributes.html: "inheritance can be overridden for individual
+    // grants"), so a chat_definer with every attribute column exactly correct can still silently
+    // inherit another role's privileges through such a grant -- invisible to the attribute-only
+    // check SS5.1 block 2 had before this fix. Verified empirically against the real bootstrap
+    // script (this session, before landing this regression): a scratch superuser role granted TO a
+    // correctly-attributed chat_definer WITH INHERIT TRUE gave pg_has_role(..., 'USAGE') = true
+    // despite chat_definer.rolinherit reading false, and running the real script against that state
+    // raised exactly the message this test asserts on.
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        const privilegedRole = "plexco_chat_definer_test_privileged";
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${privilegedRole} SUPERUSER; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        await admin.query(
+          `CREATE ROLE chat_definer NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`,
+        );
+        await admin.query(`GRANT ${privilegedRole} TO chat_definer WITH INHERIT TRUE`);
+        try {
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(
+            /chat_definer is unexpectedly a member of/i,
+          );
+          expect(await chatDefinerMembers(admin)).toEqual([]);
+          const stillMember = await admin.query(
+            `SELECT 1 FROM pg_auth_members m
+               JOIN pg_roles g ON g.oid = m.roleid
+               JOIN pg_roles r ON r.oid = m.member
+              WHERE r.rolname = 'chat_definer' AND g.rolname = '${privilegedRole}'`,
+          );
+          expect(stillMember.rows.length).toBe(1); // fail-closed, not silently revoked
+        } finally {
+          await admin.query(`REVOKE ${privilegedRole} FROM chat_definer`);
+          await admin.query(`DROP ROLE chat_definer`);
+          await admin.query(`DROP ROLE ${privilegedRole}`);
+        }
+      }),
+    );
+  }, 30_000);
+
+  it("refuses to grant chat_definer to a runtime role passed as the migration_role target", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await bootstrapChatDefiner(admin);
+        await admin.query(`SET chat_definer_bootstrap.migration_role = 'readonly'`);
+        try {
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/runtime role/i);
+        } finally {
+          await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+        }
+        const granted = await admin.query(
+          `SELECT 1 FROM pg_auth_members am
+             JOIN pg_roles m ON m.oid = am.member
+             JOIN pg_roles r ON r.oid = am.roleid
+            WHERE r.rolname = 'chat_definer' AND m.rolname = 'readonly'`,
+        );
+        expect(granted.rows.length).toBe(0);
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
+  it("refuses to proceed at all when chat_definer is already granted to a runtime role beforehand", async () => {
+    // Audit finding (this session): the original /already granted/i regex also matches the
+    // re-pointing guard's message ("chat_definer is already granted to % -- refusing to also grant
+    // it to %"), which independently fires here too since app_worker != CURRENT_USER (the implicit
+    // v_target). The test passed even with the pre-grant runtime-member check (SS5.1) disabled,
+    // for a reason unrelated to what it claims to prove. Tightened to the exact distinguishing
+    // phrase this specific check raises, so only it can satisfy the assertion.
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await bootstrapChatDefiner(admin);
+        await admin.query(`GRANT chat_definer TO app_worker`);
+        try {
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(
+            /already granted to a runtime role/i,
+          );
+        } finally {
+          await admin.query(`REVOKE chat_definer FROM app_worker`);
+        }
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 30_000);
+
+  it("refuses when the migration role target is a non-runtime group a runtime role already belongs to (indirect BYPASSRLS path)", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        const group = "plexco_chat_definer_test_indirect_group";
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${group}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        await admin.query(`GRANT ${group} TO readonly`);
+        try {
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${group}'`);
+          try {
+            // The pre-grant checks see no DIRECT chat_definer membership for `readonly` or `${group}`
+            // (correct — neither has one yet), so only the POST-grant transitive recheck can catch
+            // this: granting chat_definer to ${group} would give `readonly` a brand-new indirect path
+            // (readonly -> ${group} -> chat_definer, BYPASSRLS) that did not exist before this call.
+            await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/indirect path/i);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          // Whole transaction — including the triggering GRANT — rolled back atomically (contract
+          // SS8, Failure row): no inert chat_definer role, and ${group} never became a member.
+          const roleExists = await admin.query(
+            `SELECT 1 FROM pg_roles WHERE rolname = 'chat_definer'`,
+          );
+          expect(roleExists.rows.length).toBe(0);
+        } finally {
+          await admin.query(`REVOKE ${group} FROM readonly`);
+          await admin.query(`DROP ROLE ${group}`);
+        }
+      }),
+    );
+  }, 30_000);
+
+  it("refuses to bootstrap when the migration role does not exist", async () => {
+    // Audit finding (this session): /does not exist/i also matches PostgreSQL's OWN native error
+    // from the later `GRANT chat_definer TO %I` (role "..." does not exist, no "migration" word) --
+    // the explicit SS5.1 pre-check this test targets can be disabled entirely and the test still
+    // passes, because the script fails closed downstream regardless (same atomic-rollback outcome,
+    // just a less specific message). Tightened to the exact phrase only the explicit check raises.
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await admin.query(
+          `SET chat_definer_bootstrap.migration_role = 'zz_chat_definer_never_created_role'`,
+        );
+        try {
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(
+            /migration role .* does not exist/i,
+          );
+        } finally {
+          await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+        }
+        // The whole file is one transaction: the rejection at the grant-target check rolls back
+        // the earlier CREATE too, so no inert leftover role survives (contract SS8, Failure row).
+        const roleExists = await admin.query(
+          `SELECT 1 FROM pg_roles WHERE rolname = 'chat_definer'`,
+        );
+        expect(roleExists.rows.length).toBe(0);
+      }),
+    );
+  }, 30_000);
+
+  it("refuses to re-point when chat_definer is already granted to a different valid migration role", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        const roleA = "plexco_chat_definer_test_repoint_a";
+        const roleB = "plexco_chat_definer_test_repoint_b";
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${roleA}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${roleB}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        try {
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${roleA}'`);
+          try {
+            await bootstrapChatDefiner(admin);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${roleB}'`);
+          try {
+            await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/already granted to/i);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          expect(await chatDefinerMembers(admin)).toEqual([roleA]);
+          await admin.query(`DROP ROLE chat_definer`);
+        } finally {
+          await admin.query(`DROP ROLE ${roleA}`);
+          await admin.query(`DROP ROLE ${roleB}`);
+        }
+      }),
+    );
+  }, 30_000);
+
+  it("N concurrent bootstrap calls against a fresh cluster all succeed; role exists exactly once with exactly one membership grant", async () => {
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        const N = 8;
+        const clients = await Promise.all(Array.from({ length: N }, () => connect(BASE!)));
+        try {
+          const results = await Promise.allSettled(clients.map((c) => bootstrapChatDefiner(c)));
+          const rejected = results.filter((r) => r.status === "rejected");
+          expect(
+            rejected,
+            `no concurrent bootstrap call should fail: ${rejected
+              .map((r) => String((r as PromiseRejectedResult).reason))
+              .join(" | ")}`,
+          ).toEqual([]);
+          expect(await roleCount(admin, "chat_definer")).toBe(1);
+          expect(await chatDefinerMembers(admin)).toHaveLength(1);
+        } finally {
+          await Promise.all(clients.map((c) => c.end()));
+        }
+        await admin.query(`DROP ROLE chat_definer`);
+      }),
+    );
+  }, 60_000);
+
+  it("N concurrent bootstrap calls targeting DIFFERENT valid migration roles: exactly one succeeds, no member accumulates", async () => {
+    // codex round-03 [P1]: the previous concurrent test only exercises the SAME target, which the
+    // re-pointing guard's own read handles fine even under a race (every caller resolves the
+    // identical row). A DIFFERENT-target race is the one the pg_advisory_xact_lock in SS3 exists to
+    // serialize: without it, N concurrent calls could each observe zero existing members and all
+    // GRANT their own distinct target before any of them commits.
+    //
+    // Audit finding (this session): starting from a HIDDEN (fully absent) chat_definer, as this test
+    // originally did, gives false confidence. All N callers' first write is block 1's `CREATE ROLE
+    // chat_definer`, and PostgreSQL's own unique-index insert forces every loser to BLOCK until the
+    // winner's transaction commits or rolls back -- by which point the winner's GRANT (same
+    // transaction) has already committed too, so the re-pointing guard alone finishes the job. The
+    // advisory lock was never exercised; disabling it left this test green across 8/8 empirical runs.
+    // Pre-creating chat_definer bare and COMMITTED here removes that accidental serialization: block 1
+    // resolves instantly for every caller (no insert to wait on), so only the lock -- or lack of it --
+    // determines the outcome. Confirmed empirically: with the lock disabled and this fixture, 4/4
+    // concurrent calls fulfilled and chat_definer ended up with 4 members, reproducibly.
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE chat_definer NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;`,
+        );
+        const N = 4;
+        const targets = Array.from({ length: N }, (_, i) => `plexco_chat_definer_test_race_${i}`);
+        for (const t of targets) {
+          await admin.query(
+            `DO $$ BEGIN CREATE ROLE ${t}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+          );
+        }
+        try {
+          const clients = await Promise.all(Array.from({ length: N }, () => connect(BASE!)));
+          try {
+            await Promise.all(
+              clients.map((c, i) =>
+                c.query(`SET chat_definer_bootstrap.migration_role = '${targets[i]}'`),
+              ),
+            );
+            const results = await Promise.allSettled(clients.map((c) => bootstrapChatDefiner(c)));
+            const fulfilled = results.filter((r) => r.status === "fulfilled");
+            const rejected = results.filter((r) => r.status === "rejected");
+            expect(fulfilled.length).toBe(1);
+            expect(rejected.length).toBe(N - 1);
+            for (const r of rejected) {
+              expect(String((r as PromiseRejectedResult).reason)).toMatch(/already granted to/i);
+            }
+            const members = await chatDefinerMembers(admin);
+            expect(members).toHaveLength(1);
+            expect(targets).toContain(members[0]);
+          } finally {
+            await Promise.all(clients.map((c) => c.end()));
+          }
+        } finally {
+          await admin.query(`DROP ROLE IF EXISTS chat_definer`);
+          for (const t of targets) {
+            await admin.query(`DROP ROLE ${t}`);
+          }
+        }
+      }),
+    );
+  }, 60_000);
+
+  it("refuses to bootstrap when chat_definer already exists with any one of the other six wrong attributes", async () => {
+    // codex round-03 [P2]: the SQL's attribute-drift check is a single OR across 7 columns; only
+    // rolcanlogin (case above) had a dedicated regression, so a regression dropping any of the other
+    // 6 branches from that OR would leave the suite green. One full-assertion case (membership stays
+    // empty, the wrong attribute is left untouched) already exists above; these 6 only need to prove
+    // rejection, since the whole-transaction-rollback property they'd otherwise re-verify is not
+    // per-attribute-dependent.
+    const safeFlags = {
+      rolsuper: "NOSUPERUSER",
+      rolcanlogin: "NOLOGIN",
+      rolbypassrls: "BYPASSRLS",
+      rolcreatedb: "NOCREATEDB",
+      rolcreaterole: "NOCREATEROLE",
+      rolinherit: "NOINHERIT",
+      rolreplication: "NOREPLICATION",
+    };
+    const variants: Array<keyof typeof safeFlags> = [
+      "rolsuper",
+      "rolbypassrls",
+      "rolcreatedb",
+      "rolcreaterole",
+      "rolinherit",
+      "rolreplication",
+    ];
+    const badFlag: Record<keyof typeof safeFlags, string> = {
+      rolsuper: "SUPERUSER",
+      rolcanlogin: "LOGIN",
+      rolbypassrls: "NOBYPASSRLS",
+      rolcreatedb: "CREATEDB",
+      rolcreaterole: "CREATEROLE",
+      rolinherit: "INHERIT",
+      rolreplication: "REPLICATION",
+    };
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        for (const column of variants) {
+          const flags = { ...safeFlags, [column]: badFlag[column] };
+          await admin.query(`CREATE ROLE chat_definer ${Object.values(flags).join(" ")}`);
+          try {
+            await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/unexpected attributes/i);
+          } finally {
+            await admin.query(`DROP ROLE chat_definer`);
+          }
+        }
+      }),
+    );
+  }, 30_000);
+});
