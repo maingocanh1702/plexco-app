@@ -1311,7 +1311,7 @@ notes: |
 
 ## task: pnpm-workspace-esbuild-override-inert
 title: pnpm-workspace.yaml's esbuild@<0.25.0 → 0.25.12 override câm từ commit f1af6e3 (2026-07-22) — package.json's pnpm.overrides thay toàn bộ map, không merge theo key
-status: ready — contract AUTHORED 2026-08-04, verdict `CODE_READY` closure 12/12, chưa implement
+status: ready — implemented + READY (2026-08-04): feat/pnpm-workspace-esbuild-override-inert @ 726c2f0e3c8c7ef0a709bccdd1f183193c765dc8, gate pass attempt 1/1, code review CLEAN, security review CLEAN, chưa merge (owner quyết định merge)
 risk: P2
 change_class: dependency-security
 depends_on: []
@@ -1349,6 +1349,55 @@ notes: |
   `package.json`/`pnpm-workspace.yaml`/`pnpm-lock.yaml` — cần `full build/DB suite` guard, và cần đo
   risk thật (esbuild 0.18.20 vs 0.25.12 có advisory nào không — chưa đo, là việc của task này).
   Chưa author; risk P2 tạm thời, cần đo mức độ exposure trước khi chốt.
+  **Implemented + READY (2026-08-04).** Register lần đầu HALT `CONTRACT_INVALID`: manifest gốc viết
+  literal `esbuild@<0.25.0` / `>=0.25.0` trong `negative_scope` và `verification.focused`, trúng
+  `autopilot-review-readiness.mjs`'s `requireString` — regex `/[<>]/` coi bất kỳ ký tự `<`/`>` nào
+  trong CHUỖI manifest là placeholder chưa resolve, kể cả khi ký tự đó là cú pháp selector hợp lệ.
+  Sửa: diễn giải lại `negative_scope` bằng chữ (không dùng `<`/`>`); các lệnh `grep` cần match literal
+  `<` build ký tự đó lúc CHẠY qua `printf '\74'` (octal escape) thay vì viết `<` trực tiếp trong JSON.
+  File `HALT-CONTRACT_INVALID.txt` còn sót lại trong state dir chặn `ready` bằng `TERMINAL_CONFLICT`
+  (không xoá tay theo kỷ luật never-delete-halt-files) — đóng registration cũ bằng
+  `ap-finish.sh --authorized-close` (disposition:
+  `.autopilot/dispositions/pnpm-workspace-esbuild-override-inert.json`), commit archive qua
+  `archive/pnpm-workspace-esbuild-override-inert-preclose`, đăng ký lại vào worktree mới sạch, rồi
+  `git merge --ff-only` lấy lại đúng commit `726c2f0` (không rebuild, không mất object). Version dùng:
+  `0.25.12` — đo trực tiếp lúc chạy qua registry.npmjs.org, publish 2025-11-01, là bản mới nhất trong
+  dòng `0.25.x` (không có `0.25.13+`), vượt xa `minimumReleaseAge` (10080 phút). Gate pass attempt 1/1,
+  0 fix round. Code review + security review đều CLEAN — security round tự chạy
+  `@esbuild-kit/core-utils@3.3.2`'s `transformSync`/`transform` thật với `esbuild@0.25.12`, xác nhận
+  hoạt động đúng, không chỉ tin cậy build/test suite. Code review round-01 phát hiện 1 ADVISORY ngoài
+  scope, tách thành task riêng bên dưới (`osv-scanner-stale-esbuild-ignore-reason`). Chưa merge — owner
+  quyết định.
+
+## task: osv-scanner-stale-esbuild-ignore-reason
+title: osv-scanner.toml's GHSA-67mh-4wv8-2f99 ignore lý do đã lỗi thời sau pnpm-workspace-esbuild-override-inert
+status: idea — chưa author contract
+risk: P3
+change_class: docs-reconcile
+depends_on: [pnpm-workspace-esbuild-override-inert]
+invariants: []
+scope: [osv-scanner.toml]
+manifest: null
+merged_probe: null
+notes: |
+  **Mở 2026-08-04, phát hiện bởi code-review round-01 của `pnpm-workspace-esbuild-override-inert` —
+  ADVISORY ngoài scope của slice đó, không phải finding trong nó (reviewer explicit: "outside the
+  registered scope... excluded from the verdict").** `osv-scanner.toml`'s `[[IgnoredVulns]]` cho
+  `id = "GHSA-67mh-4wv8-2f99"` có `reason` nói: "Not patched because the @esbuild-kit/* wrapper chain
+  is deprecated... pins the esbuild ~0.18 API; forcing esbuild >=0.25 breaks drizzle-kit's ESM loader."
+  `pnpm-workspace-esbuild-override-inert` (READY 2026-08-04, chưa merge) vừa làm đúng việc "forcing
+  esbuild >=0.25" đó — ép `@esbuild-kit/core-utils@3.3.2` lên `esbuild@0.25.12` qua
+  `package.json`'s `pnpm.overrides` — và không hỏng gì: full canonical suite xanh (typecheck/lint/
+  format/build, 651 test 0 fail) + security review's phép đo runtime riêng (`transformSync`/
+  `transform` thật qua `@esbuild-kit/core-utils` với `esbuild@0.25.12`, output đúng) đều xác nhận.
+  Premise của `reason` field giờ sai sự thật ngay khi slice kia merge.
+  **Việc thật của task này:** khi `pnpm-workspace-esbuild-override-inert` merge, xoá (hoặc sửa lại
+  `reason` cho khớp sự thật) entry `IgnoredVulns` cho `GHSA-67mh-4wv8-2f99` trong `osv-scanner.toml` —
+  advisory đã patched thật trong lockfile (không còn `esbuild@0.18.20` nào), nên entry ignore không
+  còn lý do đứng nguyên dạng cũ. `ignoreUntil = 2026-10-22` đã có sẵn làm hạn chót tự nhiên nếu risk P3
+  không cần ưu tiên sớm hơn. depends_on `pnpm-workspace-esbuild-override-inert` vì premise của fix này
+  cần slice đó đã MERGE (không chỉ READY) — trước đó `osv-scanner.toml`'s reason vẫn còn đúng với
+  trạng thái thật của `main`. Chưa author.
 
 ## task: kit-dead-citation-prompt-generic-sections
 title: 6 manifest viện dẫn `autopilot-prompt-GENERIC v0.6.1 §0.1` — section đã biến mất khi prompt viết lại cho Level 3
