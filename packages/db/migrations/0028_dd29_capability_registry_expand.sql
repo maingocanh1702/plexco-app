@@ -10,14 +10,16 @@
 -- Moves plans.plan_key from the live 4-tier CHECK
 -- ('free_web','telegram','plus_channel','all_channels') to DD-29's 2-tier
 -- ('free','host_pro'), reshapes plans.entitlements to the nested
--- {"capabilities": {...}} shape, reseeds, repoints every existing
--- subscriptions row and tenant_provision()'s write path. Runs as ONE
--- transaction (migrate.ts wraps each file in BEGIN…COMMIT/ROLLBACK) in this
--- order:
+-- {"capabilities": {...}} shape, reseeds, repoints tenant_provision()'s write
+-- path and every free_web subscriptions row (the only tier this migration
+-- ever auto-migrates — see guard 3 below: a subscription still on telegram/
+-- plus_channel/all_channels aborts the whole transaction instead of being
+-- repointed). Runs as ONE transaction (migrate.ts wraps each file in
+-- BEGIN…COMMIT/ROLLBACK) in this order:
 --   1. widen plans_key_chk (union of old ∪ new values — a CHECK applies to
 --      every row, so the new rows below need it widened before they can
---      insert, and the old rows need it widened until every subscriptions
---      row referencing them has been repointed, below);
+--      insert, and free_web rows need it widened until they have been
+--      repointed, below);
 --   2. insert the two new plans rows (idempotent, ON CONFLICT DO NOTHING);
 --   3. redefine tenant_provision() so every NEW tenant created from this
 --      point on gets 'free', not 'free_web' — same transaction as step 2, so

@@ -133,19 +133,28 @@ CREATE TABLE billing_overrides (
 
 > Grep live `packages/db/migrations/` ngày 2026-07-27: `0000`–`0024` đã merge (25 migrations; tail `0024_public_visibility_capacity_check.sql`). **Cả 6 bảng** `plans` · `subscriptions` · `subscription_invoices` · `billing_transactions` · `billing_allocations` · `billing_overrides` **đã tồn tại từ `0007_billing.sql`** — DDL trên là baseline để đọc + target contract, **reuse, không recreate**. Mọi delta của slice billing phải dùng migration monotonic mới sau `0024`; không sửa migration đã apply.
 
-- **Migration (delta doc-DDL vs live `0007` → một migration mới monotonic sau tail hiện tại, KHÔNG sửa `0007`):**
+- **Migration (delta doc-DDL vs live `0007` → monotonic migration(s) sau tail hiện tại, KHÔNG sửa `0007`;
+  the `plans.plan_key` delta below specifically needed an expand→contract PAIR, not the single file this
+  heading's general phrasing implies for a typical billing delta):**
   - `plans.plan_key` CHECK `('free','host_pro')` + seed v1 (DD-29) — ✅ **authored + verified 2026-08-04**
-    (`plans-dd29-capability-registry` slice): `packages/db/migrations/0028_dd29_capability_registry_expand.sql`
-    (expand — widen CHECK, seed, repoint every existing `subscriptions` row, fail-closed guards
-    incl. one that unconditionally refuses to collapse ANY row still on `telegram`/`plus_channel`/
-    `all_channels` regardless of status, since the UPDATE irreversibly loses which tier it held) +
-    `0029_dd29_capability_registry_contract.sql` (contract — self-guarding narrow). Pending
-    review/merge to `main`; see the PENDING MIGRATION note in the DDL above for exact status.
-  - **Still pending (separate DD-51 deltas, NOT part of the above slice):** `subscriptions`: bỏ
-    `selected_extra_channel`; `period_start`/`period_end` nullable cho free (live đang NOT NULL);
-    `subscription_invoices.paid_at` (refund window đọc canonical `paid_at`; live chưa có cột);
-    `billing_overrides.ticket_ref NOT NULL` (live chưa có cột). These four track under the separate,
-    currently `idea`-status `feature-billing-lifecycle` backlog task — the DD-29 slice above
+    (`plans-dd29-capability-registry` slice), landed as TWO files:
+    `packages/db/migrations/0028_dd29_capability_registry_expand.sql` (expand — widen CHECK, seed,
+    redefine `tenant_provision()`, and repoint the `free_web` subscriptions row, the ONLY tier this
+    migration ever auto-migrates — a fail-closed guard unconditionally ABORTS the whole transaction
+    instead if any subscriptions row still references `telegram`/`plus_channel`/`all_channels`,
+    regardless of status, since the UPDATE would otherwise irreversibly lose which of those three
+    tiers the row held) + `0029_dd29_capability_registry_contract.sql` (contract — self-guarding
+    narrow). Pending review/merge to `main`; see the PENDING MIGRATION note in the DDL above for
+    exact status.
+  - **Still pending, NOT part of the above slice:** `period_start`/`period_end` nullable cho free
+    (DD-51 — live đang NOT NULL); `subscription_invoices.paid_at` (DD-51 — refund window đọc canonical
+    `paid_at`; live chưa có cột); `billing_overrides.ticket_ref NOT NULL` (DD-51 — live chưa có cột).
+    `subscriptions.selected_extra_channel` column removal is ALSO not part of the above slice — note
+    this doc's own DDL comment above attributes it to DD-29 while an earlier version of this bullet
+    called it DD-51; that classification inconsistency predates this slice and is not resolved here,
+    but either way, removing the column is out of this slice's scope regardless of which decision owns
+    it. All of the above track under the separate, currently `idea`-status `feature-billing-lifecycle`
+    backlog task — the DD-29 slice above
     explicitly does not touch them (see its manifest `negative_scope`), even though this section
     bundles them narratively with the DD-29 delta under one heading.
 - **Rollback:**
@@ -153,7 +162,8 @@ CREATE TABLE billing_overrides (
 | Bước | Hành động | An toàn? |
 |------|-----------|----------|
 | 1 | Disable billing routes (`/api/billing*`, `/internal/billing/*`) + daily lifecycle job + billing webhook worker | ✅ |
-| 2 | Migration revert mới: revert **CHỈ additive/alter objects của slice** (CHECK/seed DD-29 + các cột DD-51 ở trên) sau khi kiểm tra dependency/data | ✅ Có điều kiện |
+| 2a | DD-29 pair revert (`0028`+`0029`, once landed): revert **ONLY** `tenant_provision()`, the `plans_key_chk` CHECK, and the `plans` seed rows — conditional on no new-key row created downstream since, per each migration's own header | ✅ Có điều kiện — see each file's own rollback note |
+| 2b | DD-51 columns revert (separate, future slice — not yet landed): revert **ONLY** those additive/alter objects, independently of 2a | ✅ Có điều kiện — chốt khi slice đó thực thi |
 | 3 | Drop baseline 6 bảng billing của `0007` | ❌ NEVER — migration đã apply trên main, có thể chứa billing data thật |
 
 ### Edge Cases (Backend)
