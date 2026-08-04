@@ -24,11 +24,17 @@
 --      insert, and free_web rows need it widened until they have been
 --      repointed, below);
 --   3. insert the two new plans rows (idempotent, ON CONFLICT DO NOTHING);
---   4. redefine tenant_provision() so every NEW tenant created from this
+--   4. verify both target rows — whether just inserted or pre-existing —
+--      exactly match the canonical DD-29 shape (codex round-07 [P1],
+--      gate-attempt-01 on this registration): ON CONFLICT DO NOTHING silently
+--      keeps a pre-existing row as-is, so a stray free@1/host_pro@1 row with
+--      the wrong price/limits/capabilities would otherwise become canonical
+--      without anyone noticing;
+--   5. redefine tenant_provision() so every NEW tenant created from this
 --      point on gets 'free', not 'free_web' — same transaction as step 3, so
 --      there is no window where a concurrent tenant_provision() call could
 --      insert against a plan_key that doesn't exist yet;
---   5. fail-loud guards, then the data migration UPDATE.
+--   6. fail-loud guards, then the data migration UPDATE.
 --
 -- Lock ordering vs. concurrent tenant_provision() (codex round-05 [P1],
 -- gate-attempt-08): tenant_provision() is a live, SECURITY DEFINER write path
@@ -161,7 +167,51 @@ INSERT INTO plans (plan_key, version, price, limits, entitlements) VALUES
 ON CONFLICT (plan_key, version) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
--- 4. Redefine tenant_provision() — identical body to 0012_auth_functions.sql
+-- 4. Verify the two target rows exactly match the canonical DD-29 shape,
+-- whether this INSERT just created them or ON CONFLICT DO NOTHING left a
+-- pre-existing row untouched (codex round-07 [P1], gate-attempt-01 on this
+-- registration): guards 1-3 below validate subscriptions' plan_key/version
+-- references, but nothing previously checked the plans CATALOG payload
+-- itself — a stray free@1 or host_pro@1 row from an earlier manual edit or a
+-- partially-applied prior attempt could silently become "canonical" with the
+-- wrong price/limits/capabilities, and every subscription this file repoints
+-- would inherit that wrong entitlement set with no error anywhere. The
+-- literal below is the exact same one used in step 3's INSERT (transcribed
+-- from feature_billing_lifecycle_tech.md:68-81) — kept in sync by being
+-- copied from the same source, proven non-vacuous by DD29-9's regression
+-- test (a conflicting pre-existing free@1 row).
+-- ---------------------------------------------------------------------------
+DO $$ DECLARE v_free_ok boolean; v_host_pro_ok boolean; BEGIN
+  SELECT (
+    price = 0 AND currency = 'VND' AND interval = 'monthly' AND active
+    AND limits = '{"max_clubs": 2, "ai_monthly_question_cap": 0}'::jsonb
+    AND entitlements = '{"capabilities": {"web_app": true, "bot_zalo": true, "bot_messenger": true,
+         "session_management": true, "discovery_marketplace": true,
+         "payment_mark_manual": true, "payment_reconcile_auto": false,
+         "reminders_manual": true, "reminders_auto": false,
+         "assistant_ai_kb": false, "crm_dashboard": false}}'::jsonb
+  ) INTO v_free_ok FROM plans WHERE plan_key = 'free' AND version = 1;
+  SELECT (
+    price = 250000 AND currency = 'VND' AND interval = 'monthly' AND active
+    AND limits = '{"max_clubs": null, "ai_monthly_question_cap": 2000}'::jsonb
+    AND entitlements = '{"capabilities": {"web_app": true, "bot_zalo": true, "bot_messenger": true,
+         "session_management": true, "discovery_marketplace": true,
+         "payment_mark_manual": true, "payment_reconcile_auto": true,
+         "reminders_manual": true, "reminders_auto": true,
+         "assistant_ai_kb": true, "crm_dashboard": true}}'::jsonb
+  ) INTO v_host_pro_ok FROM plans WHERE plan_key = 'host_pro' AND version = 1;
+  IF NOT coalesce(v_free_ok, false) THEN
+    RAISE EXCEPTION 'DD-29 expand: an existing free@1 plans row does not match the canonical DD-29 payload (price/currency/interval/active/limits/entitlements) — resolve the conflicting row before retrying'
+      USING ERRCODE = 'data_exception';
+  END IF;
+  IF NOT coalesce(v_host_pro_ok, false) THEN
+    RAISE EXCEPTION 'DD-29 expand: an existing host_pro@1 plans row does not match the canonical DD-29 payload (price/currency/interval/active/limits/entitlements) — resolve the conflicting row before retrying'
+      USING ERRCODE = 'data_exception';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- 5. Redefine tenant_provision() — identical body to 0012_auth_functions.sql
 -- (never edit that file directly; it is already applied), changing only the
 -- literal on the subscriptions INSERT from 'free_web' to 'free'. Ownership
 -- and grants are not reset by CREATE OR REPLACE FUNCTION with an unchanged
@@ -237,7 +287,7 @@ REVOKE ALL ON FUNCTION tenant_provision(text,text,text,text,uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION tenant_provision(text,text,text,text,uuid) TO app;
 
 -- ---------------------------------------------------------------------------
--- 5. Fail-loud guards, then data-migrate — in this order. See header for why
+-- 6. Fail-loud guards, then data-migrate — in this order. See header for why
 -- these are checked properties, not defensive boilerplate.
 --
 -- subscriptions carries ENABLE + FORCE ROW LEVEL SECURITY (0009), keyed on the

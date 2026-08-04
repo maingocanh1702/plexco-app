@@ -669,6 +669,61 @@ describe("DD29-1/DD29-2 0028 expand fails closed on plan_key data anomalies", ()
   }, 60_000);
 });
 
+describe("DD29-9 0028 expand fails closed on a conflicting pre-existing plans catalog row", () => {
+  it("guard 4: a pre-existing free@1 row with the wrong payload survives ON CONFLICT DO NOTHING, and the post-insert check catches it (codex round-07 [P1], gate-attempt-01 on this registration)", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard4");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Simulate a stray free@1 row from an earlier manual edit or a partially-applied
+      // prior attempt: widen the CHECK ourselves (same predicate 0028's own step 2
+      // creates — its later DROP+re-ADD is then a harmless no-op) so a 'free' value is
+      // insertable, then insert a row whose payload does NOT match the canonical DD-29
+      // shape (wrong price, empty limits/entitlements instead of the real ones).
+      await superuserInDb.query(`ALTER TABLE plans DROP CONSTRAINT plans_key_chk`);
+      await superuserInDb.query(
+        `ALTER TABLE plans ADD CONSTRAINT plans_key_chk
+           CHECK (plan_key IN ('free_web','telegram','plus_channel','all_channels','free','host_pro'))`,
+      );
+      await superuserInDb.query(
+        `INSERT INTO plans (plan_key, version, price, limits, entitlements)
+         VALUES ('free', 1, 999999, '{}', '{}')`,
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0028)).rejects.toThrow(
+        /free@1 plans row does not match/i,
+      );
+
+      // Prove the whole file rolled back: the stray row is untouched (still the wrong
+      // price, not silently "fixed"), and host_pro was never left half-inserted either.
+      const free = await superuserInDb.query(
+        `SELECT price, limits, entitlements FROM plans WHERE plan_key = 'free' AND version = 1`,
+      );
+      expect(free.rows.length).toBe(1);
+      expect((free.rows[0] as { price: number }).price).toBe(999999);
+      const hostPro = await superuserInDb.query(
+        `SELECT 1 FROM plans WHERE plan_key = 'host_pro' AND version = 1`,
+      );
+      expect(hostPro.rows.length).toBe(0);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
 describe("DD29-7 0028 expand fails closed on any legacy channel-tier subscription, regardless of status (guard 3)", () => {
   async function replayThrough27(ctx: {
     bootstrapJobDefinerForOwner: () => Promise<void>;
