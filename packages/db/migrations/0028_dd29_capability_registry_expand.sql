@@ -33,13 +33,19 @@
 -- live data is exactly the kind of thing that goes stale silently the moment
 -- it stops being true, and nothing announces that change. So instead of
 -- assuming "only free_web/telegram/plus_channel/all_channels at version 1
--- ever exist", the two guards below make both assumptions CHECKED PROPERTIES:
--- guard 1 refuses to proceed if any subscriptions row references a plan_key
--- outside the known old∪new set; guard 2 refuses the "only v1 ever seeded"
--- assumption unless it actually holds on THIS database. Either guard firing
--- rolls back this whole file (RAISE EXCEPTION inside a DO block aborts the
--- migration's transaction) and stops the run for owner review — never widen
--- the map or retry blindly (see manifest stop_conditions).
+-- ever exist, and none of them is a currently-paying tenant", the three
+-- guards below make all three assumptions CHECKED PROPERTIES: guard 1
+-- refuses to proceed if any subscriptions row references a plan_key outside
+-- the known old∪new set; guard 2 refuses the "only v1 ever seeded"
+-- assumption unless it actually holds on THIS database; guard 3 refuses to
+-- silently reprice/upgrade a tenant actively paying (active/past_due) for an
+-- old channel tier into host_pro — a business policy decision this migration
+-- deliberately does not make (see guard 3's own comment; this correction was
+-- found by codex round-01 review, gate-attempt-02 — guards 1/2 alone cannot
+-- express it). Any guard firing rolls back this whole file (RAISE EXCEPTION
+-- inside a DO block aborts the migration's transaction) and stops the run
+-- for owner review — never widen the map, invent a repricing policy, or
+-- retry blindly (see manifest stop_conditions).
 --
 -- Rollback (conditional — safe only if committed and no new-key row has been
 -- created downstream since): revert tenant_provision() to the old literal,
@@ -199,6 +205,34 @@ DO $$ DECLARE v_bad_version integer; BEGIN
     WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels') AND plan_version <> 1;
   IF v_bad_version > 0 THEN
     RAISE EXCEPTION 'DD-29 expand: % subscriptions row(s) sit on an old plan_key at version <> 1 — the CASE mapping below only handles v1', v_bad_version
+      USING ERRCODE = 'data_exception';
+  END IF;
+END $$;
+
+-- guard 3: refuse to silently reprice/upgrade a tenant ACTIVELY PAYING for an old
+-- channel tier (telegram=79k, plus_channel=159k, all_channels=199k) into host_pro
+-- (250k) with full automation capabilities it never purchased. Guards 1/2 above are
+-- pure data-integrity checks (unrecognized value, wrong version) — neither one, by
+-- its own predicate, can ever fire for a row on a RECOGNIZED old key at version 1,
+-- which is exactly the shape of a real, currently-paying tenant. This manifest's
+-- negative_scope is explicit: "if the live pre-flight finds a paying tenant on an
+-- old paid tier, STOP and escalate (AWAIT_FOUNDER), do not invent proration/
+-- notification/legacy-price logic" — guard 3 is the mechanism that actually
+-- enforces that, correcting a gap in this slice's own authoring: the CODE_READY
+-- contract's STOP_CONDITIONS text described this check as something "a guard-1
+-- hit" would carry, but guard 1's predicate cannot express it (found by codex
+-- round-01 review, gate-attempt-02). free_web is excluded on purpose: it maps to
+-- 'free' at the same price (0), so there is no re-pricing question for it — only
+-- the three PAID old tiers can trigger this guard. Only 'active'/'past_due' count
+-- as "actively paying" (matching the STOP_CONDITIONS text's own status list) —
+-- 'cancelled'/'suspended' tenants are not being charged right now, so remapping
+-- their catalog reference is not a live repricing event.
+DO $$ DECLARE v_paying integer; BEGIN
+  SELECT count(*) INTO v_paying FROM subscriptions
+    WHERE plan_key IN ('telegram','plus_channel','all_channels')
+      AND status IN ('active','past_due');
+  IF v_paying > 0 THEN
+    RAISE EXCEPTION 'DD-29 expand: % subscriptions row(s) are actively paying (active/past_due) for an old channel tier (telegram/plus_channel/all_channels) — remapping to host_pro would silently change price and grant capabilities never purchased. This is a grandfather-vs-reprice policy decision this migration deliberately does not make; STOP and escalate to the owner', v_paying
       USING ERRCODE = 'data_exception';
   END IF;
 END $$;

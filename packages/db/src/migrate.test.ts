@@ -585,9 +585,14 @@ describe("DD29-1/DD29-2 0028 expand fails closed on plan_key data anomalies", ()
       // The live FK is Postgres-auto-named (0007_billing.sql never named it, and
       // 0025's naming-drift sweep covered CHECK constraints only, not this FK), so
       // look its actual name up rather than assuming schema.ts's declared name.
+      // subscriptions carries TWO FKs (tenant_id -> tenants, (plan_key, plan_version)
+      // -> plans) — filter by the referenced table so this can never accidentally
+      // grab the tenant FK instead (codex round-01 [P2], gate-attempt-02).
       const fk = await superuserInDb.query(
-        `SELECT conname FROM pg_constraint WHERE conrelid = 'subscriptions'::regclass AND contype = 'f'`,
+        `SELECT conname FROM pg_constraint
+         WHERE conrelid = 'subscriptions'::regclass AND contype = 'f' AND confrelid = 'plans'::regclass`,
       );
+      expect(fk.rows.length, "exactly one FK from subscriptions to plans").toBe(1);
       const fkName = (fk.rows[0] as { conname: string }).conname;
       await superuserInDb.query(`ALTER TABLE subscriptions DROP CONSTRAINT ${fkName}`);
       const t = await superuserInDb.query(
@@ -664,6 +669,147 @@ describe("DD29-1/DD29-2 0028 expand fails closed on plan_key data anomalies", ()
   }, 60_000);
 });
 
+describe("DD29-7 0028 expand fails closed on actively-paying legacy tenants (guard 3)", () => {
+  async function replayThrough27(ctx: {
+    bootstrapJobDefinerForOwner: () => Promise<void>;
+    ownerPool: { query: (sql: string) => Promise<unknown> };
+  }): Promise<void> {
+    await withJobDefinerLock(BASE!, async () => {
+      await ctx.bootstrapJobDefinerForOwner();
+      const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+      for (const f of files) {
+        if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+        await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+      }
+    });
+  }
+
+  it("guard 3 fires for an ACTIVE telegram subscription — remapping to host_pro would silently reprice/upgrade a paying tenant", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard3_active");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await replayThrough27(ctx);
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Guard3 Active', 'dd29-guard3-active', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      await superuserInDb.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end, status)
+         VALUES ($1, 'telegram', 1, now(), now() + interval '30 days', 'active')`,
+        [tenantId],
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0028)).rejects.toThrow(/actively paying/i);
+
+      const plans = await superuserInDb.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free','host_pro')`,
+      );
+      expect(plans.rows.length).toBe(0);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("guard 3 fires for a PAST_DUE plus_channel subscription too, not just active", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard3_pastdue");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await replayThrough27(ctx);
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Guard3 PastDue', 'dd29-guard3-pastdue', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      await superuserInDb.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end, status, grace_end)
+         VALUES ($1, 'plus_channel', 1, now(), now() + interval '30 days', 'past_due', now() + interval '7 days')`,
+        [tenantId],
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0028)).rejects.toThrow(/actively paying/i);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("guard 3 does NOT fire for a CANCELLED all_channels subscription — no live billing relationship, remapped cleanly to host_pro", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard3_cancelled");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await replayThrough27(ctx);
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Guard3 Cancelled', 'dd29-guard3-cancelled', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      await superuserInDb.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end, status)
+         VALUES ($1, 'all_channels', 1, now(), now() + interval '30 days', 'cancelled')`,
+        [tenantId],
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await ctx.ownerPool.query(sql0028);
+
+      const sub = await superuserInDb.query(
+        `SELECT plan_key, plan_version FROM subscriptions WHERE tenant_id = $1`,
+        [tenantId],
+      );
+      const subRow = sub.rows[0] as { plan_key: string; plan_version: number };
+      expect(subRow.plan_key).toBe("host_pro");
+      expect(subRow.plan_version).toBe(1);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("guard 3 does NOT fire for an ACTIVE free_web subscription — free_web is not a paid tier, no re-pricing question, remapped cleanly to free", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard3_freeweb");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await replayThrough27(ctx);
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Guard3 FreeWeb', 'dd29-guard3-freeweb', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      await superuserInDb.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end, status)
+         VALUES ($1, 'free_web', 1, now(), 'infinity', 'active')`,
+        [tenantId],
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await ctx.ownerPool.query(sql0028);
+
+      const sub = await superuserInDb.query(
+        `SELECT plan_key, plan_version FROM subscriptions WHERE tenant_id = $1`,
+        [tenantId],
+      );
+      const subRow = sub.rows[0] as { plan_key: string; plan_version: number };
+      expect(subRow.plan_key).toBe("free");
+      expect(subRow.plan_version).toBe(1);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
 describe("DD29-3 0028 expand upgrade path: pre-existing subscriptions rows are correctly repointed", () => {
   it("A1/A3: old plans rows survive alongside the new ones, and every pre-existing subscriptions row remaps to the correct new key at version 1", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_upgrade");
@@ -713,6 +859,58 @@ describe("DD29-3 0028 expand upgrade path: pre-existing subscriptions rows are c
       expect(plans.rows.map((r) => r.plan_key).sort()).toEqual(
         ["all_channels", "free", "free_web", "host_pro", "plus_channel", "telegram"].sort(),
       );
+
+      // A1 (capability payload): the exact price/limits/entitlements for both new
+      // rows, not just plan_key existence — a plan_key-only check would miss a
+      // flipped capability flag, a wrong price, or a dropped key (codex round-01
+      // [P2], gate-attempt-02). Literals match feature_billing_lifecycle_tech.md:68-81
+      // verbatim, same source 0028's own INSERT transcribes from.
+      const catalog = await superuserInDb.query(
+        `SELECT plan_key, price, limits, entitlements FROM plans
+         WHERE plan_key IN ('free','host_pro') ORDER BY plan_key`,
+      );
+      expect(catalog.rows).toEqual([
+        {
+          plan_key: "free",
+          price: 0,
+          limits: { max_clubs: 2, ai_monthly_question_cap: 0 },
+          entitlements: {
+            capabilities: {
+              web_app: true,
+              bot_zalo: true,
+              bot_messenger: true,
+              session_management: true,
+              discovery_marketplace: true,
+              payment_mark_manual: true,
+              payment_reconcile_auto: false,
+              reminders_manual: true,
+              reminders_auto: false,
+              assistant_ai_kb: false,
+              crm_dashboard: false,
+            },
+          },
+        },
+        {
+          plan_key: "host_pro",
+          price: 250000,
+          limits: { max_clubs: null, ai_monthly_question_cap: 2000 },
+          entitlements: {
+            capabilities: {
+              web_app: true,
+              bot_zalo: true,
+              bot_messenger: true,
+              session_management: true,
+              discovery_marketplace: true,
+              payment_mark_manual: true,
+              payment_reconcile_auto: true,
+              reminders_manual: true,
+              reminders_auto: true,
+              assistant_ai_kb: true,
+              crm_dashboard: true,
+            },
+          },
+        },
+      ]);
 
       // A3: every pre-existing subscriptions row remapped to the correct new key at version 1.
       for (const [oldKey, tenantId] of tenantIdByOldKey) {
