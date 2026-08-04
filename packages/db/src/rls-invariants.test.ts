@@ -66,10 +66,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(28); // 0000..0027 (0027 = resolve-tenant-status-locked)
+    expect(ctx.migrateResult.applied.length).toBe(30); // 0000..0029 (0029 = dd29-capability-registry-contract)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(28);
+    expect(second.skipped.length).toBe(30);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1304,12 +1304,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
         await bootstrapJobDefiner(admin);
         return migrate(url(dbName));
       });
-      expect(res.applied.length).toBe(28); // 0000..0027
+      expect(res.applied.length).toBe(30); // 0000..0029
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(28);
+        expect(rows.length).toBe(30);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -1576,7 +1576,9 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
       await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
         await nsCtx.bootstrapJobDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0027_resolve_tenant_status_locked.sql");
+        expect(res.applied[res.applied.length - 1]).toBe(
+          "0029_dd29_capability_registry_contract.sql",
+        );
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -2770,6 +2772,18 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
           const beforeDef = before.get(`${r.table}.${r.oldAuto}`);
           const afterDef = live.get(`${r.table}.${r.newDeclared}`);
           expect(beforeDef, `${r.table}.${r.oldAuto} must exist pre-0025`).toBeDefined();
+          if (r.table === "plans" && r.newDeclared === "plans_key_chk") {
+            // DD-29 (packages/db/migrations/0028_dd29_capability_registry_expand.sql +
+            // 0029_dd29_capability_registry_contract.sql) intentionally DROP+ADDs this
+            // exact constraint's PREDICATE later — 4-tier plan_key set narrowed to
+            // 2-tier — a real, intentional business change unrelated to 0025's pure
+            // rename. "byte-identical to its pre-0025 predicate" no longer holds for
+            // this one entry by design; the name-identity assertions above (exists
+            // under the declared name, auto-generated name gone) still apply
+            // unconditionally to it, only this predicate-byte-identity check is
+            // exempted here.
+            continue;
+          }
           expect(
             afterDef,
             `${r.table}.${r.newDeclared} predicate must be byte-identical to ${r.oldAuto}'s pre-0025 predicate`,
@@ -3300,7 +3314,7 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       {
         name: "plans_key_chk",
         table: "plans",
-        validValue: "telegram",
+        validValue: "host_pro",
         invalidValue: "bogus",
         insert: async (v) => {
           await ctx.owner.query(
@@ -3318,7 +3332,7 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
           const tenantId = await makeFreshTenant();
           await ctx.owner.query(
             `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end, status)
-             VALUES ($1,'telegram',1,now(),now() + interval '30 days',$2)`,
+             VALUES ($1,'free',1,now(),now() + interval '30 days',$2)`,
             [tenantId, v],
           );
         },
@@ -3415,7 +3429,7 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
         const tenantId = await makeFreshTenant();
         await ctx.owner.query(
           `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end, selected_extra_channel)
-           VALUES ($1,'telegram',1,now(),now() + interval '30 days',$2)`,
+           VALUES ($1,'free',1,now(),now() + interval '30 days',$2)`,
           [tenantId, value],
         );
       };
@@ -4024,10 +4038,10 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       }
     });
 
-    it("UCC-8: MIGRATION_COUNT (28) matches the actual migrations/ directory listing, and the tail is 0027", async () => {
+    it("UCC-8: MIGRATION_COUNT (30) matches the actual migrations/ directory listing, and the tail is 0029", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      expect(files.length).toBe(28);
-      expect(files[files.length - 1]).toBe("0027_resolve_tenant_status_locked.sql");
+      expect(files.length).toBe(30);
+      expect(files[files.length - 1]).toBe("0029_dd29_capability_registry_contract.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {

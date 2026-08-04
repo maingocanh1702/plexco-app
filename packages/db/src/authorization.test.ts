@@ -46,7 +46,7 @@ async function seedTenant(
   if (opts.subStatus !== "missing") {
     await owner.query(
       `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
-       VALUES ($1, 'free_web', 1, $2, now(), now() + interval '30 days')`,
+       VALUES ($1, 'free', 1, $2, now(), now() + interval '30 days')`,
       [tenantId, opts.subStatus],
     );
   }
@@ -338,7 +338,7 @@ describe("concurrency — mutating branch locking read (E1, E2, E3)", () => {
   // Modeled after the same competing-writer scenario billing test #36/#36a
   // exercises for the Daily Lifecycle Job (feature_billing_lifecycle_tech.md
   // §4/§5) — but that job doesn't exist as code in this repo yet, only as
-  // spec prose, and these tests seed a free_web/active fixture rather than
+  // spec prose, and these tests seed a free/active fixture rather than
   // its exact eligibility predicate (a paid plan, subscriptions.status =
   // 'past_due', grace_end elapsed, joined through plans.price > 0). They
   // prove the FOR SHARE / FOR UPDATE SKIP LOCKED lock-primitive interaction

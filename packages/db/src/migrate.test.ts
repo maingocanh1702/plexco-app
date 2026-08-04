@@ -29,7 +29,7 @@ vi.mock("node:fs/promises", async () => {
 });
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 28;
+const MIGRATION_COUNT = 30;
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -351,7 +351,9 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
       await withJobDefinerLock(BASE!, async () => {
         await ctx.bootstrapJobDefinerForOwner();
         const res = await ctx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0027_resolve_tenant_status_locked.sql");
+        expect(res.applied[res.applied.length - 1]).toBe(
+          "0029_dd29_capability_registry_contract.sql",
+        );
       });
 
       const worker = await ctx.connectAsWorker();
@@ -554,6 +556,258 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
         }
       });
     } finally {
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
+describe("DD29-1/DD29-2 0028 expand fails closed on plan_key data anomalies", () => {
+  it("DD29-1 (guard 1): a subscriptions row referencing an unrecognized plan_key rolls back 0028 entirely", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard1");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      // 0000-0027 includes 0022/0023, which require job_definer membership on the
+      // migration owner (see BR-5/BR-7) — bootstrap it before replaying the files.
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Seed via the superuser connection (bypasses RLS), matching BR-5/BR-7 — the
+      // owner pool is reserved for applying migration files, not application DML.
+      // An orphaned subscriptions row referencing a plan_key outside the known
+      // old∪new set can only exist live via a historical FK bypass (see 0028's
+      // header) — drop the FK momentarily to construct that anomaly for the test.
+      // The live FK is Postgres-auto-named (0007_billing.sql never named it, and
+      // 0025's naming-drift sweep covered CHECK constraints only, not this FK), so
+      // look its actual name up rather than assuming schema.ts's declared name.
+      const fk = await superuserInDb.query(
+        `SELECT conname FROM pg_constraint WHERE conrelid = 'subscriptions'::regclass AND contype = 'f'`,
+      );
+      const fkName = (fk.rows[0] as { conname: string }).conname;
+      await superuserInDb.query(`ALTER TABLE subscriptions DROP CONSTRAINT ${fkName}`);
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Guard1', 'dd29-guard1', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      await superuserInDb.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
+         VALUES ($1, 'bogus', 1, now(), now() + interval '30 days')`,
+        [tenantId],
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0028)).rejects.toThrow(/unrecognized plan_key/i);
+
+      // Prove the whole file rolled back, not just the failing guard statement.
+      const plans = await superuserInDb.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free','host_pro')`,
+      );
+      expect(plans.rows.length).toBe(0);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("DD29-2 (guard 2): an old plan_key at plan_version != 1 rolls back 0028 entirely", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard2");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Seed via the superuser connection (bypasses RLS), matching BR-5/BR-7. A
+      // hypothetical price-change event on an old tier: the schema explicitly
+      // supports multiple plan versions per key (edge case #6 / test #19 — "plan
+      // version immutable, change price -> new version created").
+      await superuserInDb.query(
+        `INSERT INTO plans (plan_key, version, price) VALUES ('telegram', 2, 89000)`,
+      );
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Guard2', 'dd29-guard2', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      await superuserInDb.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
+         VALUES ($1, 'telegram', 2, now(), now() + interval '30 days')`,
+        [tenantId],
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0028)).rejects.toThrow(/version <> 1/i);
+
+      const plans = await superuserInDb.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free','host_pro')`,
+      );
+      expect(plans.rows.length).toBe(0);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
+describe("DD29-3 0028 expand upgrade path: pre-existing subscriptions rows are correctly repointed", () => {
+  it("A1/A3: old plans rows survive alongside the new ones, and every pre-existing subscriptions row remaps to the correct new key at version 1", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_upgrade");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // One pre-existing subscriptions row per old tier, at version 1 (0011's seed shape).
+      const expectedNewKey: Record<string, string> = {
+        free_web: "free",
+        telegram: "host_pro",
+        plus_channel: "host_pro",
+        all_channels: "host_pro",
+      };
+      const tenantIdByOldKey = new Map<string, string>();
+      for (const oldKey of Object.keys(expectedNewKey)) {
+        const t = await superuserInDb.query(
+          `INSERT INTO tenants (name, slug, status) VALUES ($1, $2, 'active') RETURNING id`,
+          [`DD29 Upgrade ${oldKey}`, `dd29-upgrade-${oldKey}`],
+        );
+        const tenantId = (t.rows[0] as { id: string }).id;
+        tenantIdByOldKey.set(oldKey, tenantId);
+        await superuserInDb.query(
+          `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
+           VALUES ($1, $2, 1, now(), now() + interval '30 days')`,
+          [tenantId, oldKey],
+        );
+      }
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await ctx.ownerPool.query(sql0028);
+
+      // A1: the 4 old catalog rows still exist alongside the 2 new ones.
+      const plans = await superuserInDb.query<{ plan_key: string }>(
+        `SELECT plan_key FROM plans ORDER BY plan_key`,
+      );
+      expect(plans.rows.map((r) => r.plan_key).sort()).toEqual(
+        ["all_channels", "free", "free_web", "host_pro", "plus_channel", "telegram"].sort(),
+      );
+
+      // A3: every pre-existing subscriptions row remapped to the correct new key at version 1.
+      for (const [oldKey, tenantId] of tenantIdByOldKey) {
+        const sub = await superuserInDb.query(
+          `SELECT plan_key, plan_version FROM subscriptions WHERE tenant_id = $1`,
+          [tenantId],
+        );
+        const subRow = sub.rows[0] as { plan_key: string; plan_version: number };
+        expect(subRow.plan_key, `tenant seeded on ${oldKey}`).toBe(expectedNewKey[oldKey]);
+        expect(subRow.plan_version, `tenant seeded on ${oldKey}`).toBe(1);
+      }
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
+describe("DD29-4/DD29-5 0029 contract narrows plans_key_chk and self-guards on stragglers", () => {
+  it("B1: applying 0029 immediately after a clean 0028 succeeds — old 4 plans rows gone, plans_key_chk now free/host_pro only", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_contract_clean");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 29) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      const sql0029 = await readFile(
+        path.join(MIGRATIONS_DIR, "0029_dd29_capability_registry_contract.sql"),
+        "utf8",
+      );
+      await ctx.ownerPool.query(sql0029);
+
+      const plans = await superuserInDb.query<{ plan_key: string }>(
+        `SELECT plan_key FROM plans ORDER BY plan_key`,
+      );
+      expect(plans.rows.map((r) => r.plan_key).sort()).toEqual(["free", "host_pro"]);
+
+      const chk = await superuserInDb.query(
+        `SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conname = 'plans_key_chk'`,
+      );
+      const chkDef = (chk.rows[0] as { d: string }).d;
+      expect(chkDef).toMatch(/'free'/);
+      expect(chkDef).toMatch(/'host_pro'/);
+      expect(chkDef).not.toMatch(/free_web|telegram|plus_channel|all_channels/);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("B2: 0029's own guard rejects a subscriptions row still on an old plan_key, even after 0028 already ran", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_contract_straggler");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 29) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // A straggler created AFTER 0028 ran (e.g. a write path 0028 didn't know about,
+      // or a restored/replayed row) — the old plans row still exists post-0028 (0029
+      // is what deletes it), so this FK insert is still valid at this point.
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Straggler', 'dd29-straggler', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      await superuserInDb.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
+         VALUES ($1, 'telegram', 1, now(), now() + interval '30 days')`,
+        [tenantId],
+      );
+
+      const sql0029 = await readFile(
+        path.join(MIGRATIONS_DIR, "0029_dd29_capability_registry_contract.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0029)).rejects.toThrow(/still on an old plan_key/i);
+
+      // Prove the whole file rolled back — the 4 old plans rows must still exist.
+      const plans = await superuserInDb.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels')`,
+      );
+      expect(plans.rows.length).toBe(4);
+    } finally {
+      await superuserInDb.end();
       await ctx.teardown();
     }
   }, 60_000);

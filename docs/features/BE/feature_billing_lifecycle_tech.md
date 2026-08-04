@@ -32,8 +32,13 @@ Billing ledger **separate schema/table set** from player ledger. Central `author
 CREATE TABLE plans (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   plan_key text NOT NULL CHECK (plan_key IN ('free','host_pro')),  -- DD-29 target (thay DD-03 4-tier)
-  -- ⚠️ PENDING MIGRATION: live packages/db/schema.ts vẫn CHECK 4-tier
-  --   ('free_web','telegram','plus_channel','all_channels'). CHECK ('free','host_pro') chưa land — không claim done.
+  -- ✅ Migration authored + verified 2026-08-04 (plans-dd29-capability-registry slice):
+  --   packages/db/migrations/0028_dd29_capability_registry_expand.sql (expand) +
+  --   0029_dd29_capability_registry_contract.sql (contract) move plans_key_chk to this
+  --   exact 2-tier CHECK; packages/db/schema.ts's keyChk predicate updated to match.
+  --   Verified against real Postgres in this slice's own worktree (guards, upgrade
+  --   path and contract self-guard all pass) — pending review/merge to `main`. Remove
+  --   this note once merged and `main` itself reflects the 2-tier CHECK live.
   version integer NOT NULL,
   price integer NOT NULL,
   currency text NOT NULL DEFAULT 'VND',
