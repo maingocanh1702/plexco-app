@@ -11,7 +11,7 @@
 > one of the other 15 test cases was mutation-tested alongside case 16 — see §11 for the full audit
 > record. This registration (base `de78394493cf448ddc7f4a35f8483373ddf1d0c7`, runtime manifest
 > registered against it) has been through the readiness gate multiple times since — see §10 item 11 for
-> rounds 7-9. Currently mid-cycle: verification passes; awaiting 2 consecutive clean code-review rounds
+> rounds 7-10. Currently mid-cycle: verification passes; awaiting 2 consecutive clean code-review rounds
 > plus 1 clean security round.
 
 ## 0. Session input
@@ -851,8 +851,8 @@ REMAINING_BLOCKERS: none
     audited by deliberately breaking the SQL logic each one claims to protect and confirming the case
     goes red before reverting, since case 16's own failure mode (a test passing without exercising
     what it asserts) had never been checked for the other 15. See §11 for the audit record.
-11. **Rounds 7-8 (codex, this fresh registration, both `[P2]`) — one from the audit's own findings,
-    one a new, independent finding.** Round 7 closed the two gaps the audit itself had already
+11. **Rounds 7-10 (codex, this fresh registration, all `[P2]`) — doc/test self-consistency findings,
+    none touching the shipped SQL's actual behavior.** Round 7 closed the two gaps the audit itself had already
     surfaced and left open in §11.3: case 16's `unsafeExists` query was a hand-duplicated literal,
     disconnected from the live SQL (mutating the real predicate did not turn it red); and its cleanup
     ran only after its assertions, so a failing assertion cascaded into a confusing secondary
@@ -873,6 +873,31 @@ REMAINING_BLOCKERS: none
     re-asserted downstream. `dd38-dd86-chat-schema-core` independently re-asserting exact attributes
     immediately before its own `OWNER TO` statements is a real hardening opportunity, correctly scoped
     to that slice's own contract (out of this packet's negative scope) — recorded here, not fixed here.
+    Round 9 found this doc had drifted from its own fixes: §5.3 case 7's description still specified
+    the original `/does not exist/i` regex round 7's audit (§11.1) had already tightened to
+    `/migration role .* does not exist/i` in the actual test code — the case list was never updated
+    when the audit section was. Separately, §11.3 described case 16 as "structurally decoupled" from
+    the live SQL in present tense in its opening paragraph, then later in the same section said this
+    was fixed by extraction (round 7) — an internal contradiction from appending the round-7 fix
+    narrative onto the original finding rather than revising it. Both fixed: §5.3 case 7 now states the
+    current regex with a forward reference to §11.1; §11.3's opening now separates "current state" from
+    "at the time of the audit's main pass" so the timeline reads unambiguously.
+    Round 10 found two more staleness gaps, both self-inflicted by earlier rounds in this same
+    sequence: this doc's own top-of-file status header (just above §0) still said fresh scope-gate
+    registration was pending, after registration had already happened and several gate rounds had run
+    — updated to describe the actual current state (mid review-cycle) rather than a snapshot from
+    before round 7. And this very item's own heading said "Rounds 7-8" while the header above already
+    pointed readers to "rounds 7-9" — corrected to "Rounds 7-10" now that this item covers itself
+    landing. Separately (codex's advisory, not the blocking finding, but fixed alongside it since it
+    was flagged twice): item 1 above still said `docs/autopilot-backlog.md` had no entry for this
+    slice; a later, unrelated session had since added one — item 1 corrected to say so, without editing
+    `docs/autopilot-backlog.md` itself (still out of this packet's own negative scope, §7). The pattern
+    across rounds 9-10 — a large, frequently-edited contract doc drifting from its own most recent
+    edits faster than a single pass catches — is worth naming plainly rather than treating each
+    instance as a surprise: appending a fix narrative without revising what it supersedes, or updating
+    a summary pointer without updating the thing it points at, reliably produces exactly this class of
+    self-contradiction. Read the doc end-to-end after each round that touches it, not just the section
+    the round's own finding named.
 
 ## 11. Audit record: mutation-testing all 16 test cases (2026-08-04)
 
