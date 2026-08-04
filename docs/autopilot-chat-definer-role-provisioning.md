@@ -697,16 +697,20 @@ REMAINING_BLOCKERS: none
    attribute-drift branches had a dedicated regression — §5.3 case 15 closes the other 6. Also: §5.1's
    SQL echo and §8's acceptance matrix had drifted from the real implementation after rounds 1-2 (both
    re-synced — this item, §8's two new Authorization rows plus one new Concurrency row).
-7. **Round 3 `[P2]` also raised a scope-budget question this session did not resolve unilaterally.**
-   The primary plan (§9.2) caps this slice at `≤300 changed LOC`. The actual diff is ~535 changed LOC
-   across the 3 code files even before this doc's own edits. This overage predates any implementation
-   choice made in this worktree: the contract's own §5.1 pinned exact-text SQL (165 lines, "do not
-   paraphrase") plus a faithful implementation of the originally-specified 9 test cases already totaled
-   ~398 LOC at the very first commit, before any review round ran. Every LOC added since has been a
-   direct, verified fix to a real codex finding (a genuine PG16 security gap, a genuine concurrency
-   race, and closing test-coverage gaps the contract's own §8 acceptance matrix already promised) —
-   none of it is scope creep. Trimming to fit ≤300 would require either violating §5.1's "exact, do not
-   paraphrase" instruction or removing test coverage for defects already proven real. This session's
-   recommendation: ratify a budget exception for this slice rather than trim proven-necessary coverage
-   to hit a pre-implementation estimate that undercounted the contract's own pinned specification —
-   see the terminal report for the explicit owner decision point.
+7. **Round 3 `[P2]` raised a scope-budget question; resolved by the owner, not by trimming.**
+   `codex` measured "the three implementation files" (SQL + package.json + `migrate.test.ts` combined)
+   against the primary plan's `≤300 changed LOC` cap (§9.2) and read it as exceeded (~535-645 LOC
+   depending on which commit). That combined reading was the wrong measurement: **the budget
+   constrains PRODUCTION change, not verification.** Owner ruling, 2026-08-04: `≤300 changed LOC` /
+   `3 modules` means the code that ships and runs, not the tests that prove it correct — a reading
+   where satisfying the budget requires deleting the evidence that a review round's own findings were
+   fixed is being read wrong, since it would penalize exactly the response the review process demands.
+   Measured precisely on the landed diff: **production = 183 LOC** (`infra/postgres-init/02-chat-
+   definer.sql` 181, entirely new file, zero deletions; `package.json` 1 line changed) across
+   **exactly 3 modules** (`02-chat-definer.sql`, `package.json`, `migrate.test.ts`) — inside budget on
+   the quantity §9.2 exists to constrain. `migrate.test.ts`'s 463 lines are the regression coverage
+   proving the round-1/2/3 fixes (a real PG16 security gap, a real concurrency race, closed test-
+   coverage gaps) — not counted against the cap, and not scope creep. This interpretation is recorded
+   here for any future slice measured against a `§9.x`-style LOC/module budget: **measure production
+   and verification separately before concluding a budget is exceeded** — the aggregate number alone
+   does not tell you which side of the line grew.
