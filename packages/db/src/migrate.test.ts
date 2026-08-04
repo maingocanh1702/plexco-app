@@ -669,7 +669,7 @@ describe("DD29-1/DD29-2 0028 expand fails closed on plan_key data anomalies", ()
   }, 60_000);
 });
 
-describe("DD29-7 0028 expand fails closed on actively-paying legacy tenants (guard 3)", () => {
+describe("DD29-7 0028 expand fails closed on any legacy channel-tier subscription, regardless of status (guard 3)", () => {
   async function replayThrough27(ctx: {
     bootstrapJobDefinerForOwner: () => Promise<void>;
     ownerPool: { query: (sql: string) => Promise<unknown> };
@@ -684,26 +684,27 @@ describe("DD29-7 0028 expand fails closed on actively-paying legacy tenants (gua
     });
   }
 
-  it("guard 3 fires for an ACTIVE telegram subscription — remapping to host_pro would silently reprice/upgrade a paying tenant", async () => {
-    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard3_active");
+  async function expectGuard3Fires(dbSlug: string, planKey: string, status: string) {
+    const ctx = await setupNonSuperuserOwnerContext(dbSlug);
     const superuserInDb = await connect(url(ctx.dbName));
     try {
       await replayThrough27(ctx);
       const t = await superuserInDb.query(
-        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Guard3 Active', 'dd29-guard3-active', 'active') RETURNING id`,
+        `INSERT INTO tenants (name, slug, status) VALUES ($1, $2, 'active') RETURNING id`,
+        [`DD29 Guard3 ${dbSlug}`, `dd29-guard3-${dbSlug}`],
       );
       const tenantId = (t.rows[0] as { id: string }).id;
       await superuserInDb.query(
         `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end, status)
-         VALUES ($1, 'telegram', 1, now(), now() + interval '30 days', 'active')`,
-        [tenantId],
+         VALUES ($1, $2, 1, now(), now() + interval '30 days', $3)`,
+        [tenantId, planKey, status],
       );
 
       const sql0028 = await readFile(
         path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
         "utf8",
       );
-      await expect(ctx.ownerPool.query(sql0028)).rejects.toThrow(/actively paying/i);
+      await expect(ctx.ownerPool.query(sql0028)).rejects.toThrow(/distinctly-priced channel tier/i);
 
       const plans = await superuserInDb.query(
         `SELECT plan_key FROM plans WHERE plan_key IN ('free','host_pro')`,
@@ -713,66 +714,26 @@ describe("DD29-7 0028 expand fails closed on actively-paying legacy tenants (gua
       await superuserInDb.end();
       await ctx.teardown();
     }
+  }
+
+  it("guard 3 fires for an ACTIVE telegram subscription — remapping to host_pro would silently reprice/upgrade a paying tenant", async () => {
+    await expectGuard3Fires("plexco_migrate_dd29_guard3_active", "telegram", "active");
   }, 60_000);
 
-  it("guard 3 fires for a PAST_DUE plus_channel subscription too, not just active", async () => {
-    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard3_pastdue");
-    const superuserInDb = await connect(url(ctx.dbName));
-    try {
-      await replayThrough27(ctx);
-      const t = await superuserInDb.query(
-        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Guard3 PastDue', 'dd29-guard3-pastdue', 'active') RETURNING id`,
-      );
-      const tenantId = (t.rows[0] as { id: string }).id;
-      await superuserInDb.query(
-        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end, status, grace_end)
-         VALUES ($1, 'plus_channel', 1, now(), now() + interval '30 days', 'past_due', now() + interval '7 days')`,
-        [tenantId],
-      );
-
-      const sql0028 = await readFile(
-        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
-        "utf8",
-      );
-      await expect(ctx.ownerPool.query(sql0028)).rejects.toThrow(/actively paying/i);
-    } finally {
-      await superuserInDb.end();
-      await ctx.teardown();
-    }
+  it("guard 3 fires for a PAST_DUE plus_channel subscription", async () => {
+    await expectGuard3Fires("plexco_migrate_dd29_guard3_pastdue", "plus_channel", "past_due");
   }, 60_000);
 
-  it("guard 3 does NOT fire for a CANCELLED all_channels subscription — no live billing relationship, remapped cleanly to host_pro", async () => {
-    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard3_cancelled");
-    const superuserInDb = await connect(url(ctx.dbName));
-    try {
-      await replayThrough27(ctx);
-      const t = await superuserInDb.query(
-        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Guard3 Cancelled', 'dd29-guard3-cancelled', 'active') RETURNING id`,
-      );
-      const tenantId = (t.rows[0] as { id: string }).id;
-      await superuserInDb.query(
-        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end, status)
-         VALUES ($1, 'all_channels', 1, now(), now() + interval '30 days', 'cancelled')`,
-        [tenantId],
-      );
+  it("guard 3 fires for a CANCELLED all_channels subscription too — tier identity is unconditionally lost once collapsed, regardless of status (codex round-02 [P1], gate-attempt-03: trialing/suspended rows can later reactivate onto the wrong tier if this were allowed through)", async () => {
+    await expectGuard3Fires("plexco_migrate_dd29_guard3_cancelled", "all_channels", "cancelled");
+  }, 60_000);
 
-      const sql0028 = await readFile(
-        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
-        "utf8",
-      );
-      await ctx.ownerPool.query(sql0028);
+  it("guard 3 fires for a TRIALING telegram subscription — a trial can convert to active later, still on the wrong tier if collapsed now", async () => {
+    await expectGuard3Fires("plexco_migrate_dd29_guard3_trialing", "telegram", "trialing");
+  }, 60_000);
 
-      const sub = await superuserInDb.query(
-        `SELECT plan_key, plan_version FROM subscriptions WHERE tenant_id = $1`,
-        [tenantId],
-      );
-      const subRow = sub.rows[0] as { plan_key: string; plan_version: number };
-      expect(subRow.plan_key).toBe("host_pro");
-      expect(subRow.plan_version).toBe(1);
-    } finally {
-      await superuserInDb.end();
-      await ctx.teardown();
-    }
+  it("guard 3 fires for a SUSPENDED plus_channel subscription — a suspended tenant can pay its balance and reactivate, still onto the wrong tier if collapsed now", async () => {
+    await expectGuard3Fires("plexco_migrate_dd29_guard3_suspended", "plus_channel", "suspended");
   }, 60_000);
 
   it("guard 3 does NOT fire for an ACTIVE free_web subscription — free_web is not a paid tier, no re-pricing question, remapped cleanly to free", async () => {
@@ -811,7 +772,7 @@ describe("DD29-7 0028 expand fails closed on actively-paying legacy tenants (gua
 });
 
 describe("DD29-3 0028 expand upgrade path: pre-existing subscriptions rows are correctly repointed", () => {
-  it("A1/A3: old plans rows survive alongside the new ones, and every pre-existing subscriptions row remaps to the correct new key at version 1", async () => {
+  it("A1/A3: old plans rows survive alongside the new ones, and a pre-existing free_web row remaps to free at version 1", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_upgrade");
     const superuserInDb = await connect(url(ctx.dbName));
     try {
@@ -824,27 +785,19 @@ describe("DD29-3 0028 expand upgrade path: pre-existing subscriptions rows are c
         }
       });
 
-      // One pre-existing subscriptions row per old tier, at version 1 (0011's seed shape).
-      const expectedNewKey: Record<string, string> = {
-        free_web: "free",
-        telegram: "host_pro",
-        plus_channel: "host_pro",
-        all_channels: "host_pro",
-      };
-      const tenantIdByOldKey = new Map<string, string>();
-      for (const oldKey of Object.keys(expectedNewKey)) {
-        const t = await superuserInDb.query(
-          `INSERT INTO tenants (name, slug, status) VALUES ($1, $2, 'active') RETURNING id`,
-          [`DD29 Upgrade ${oldKey}`, `dd29-upgrade-${oldKey}`],
-        );
-        const tenantId = (t.rows[0] as { id: string }).id;
-        tenantIdByOldKey.set(oldKey, tenantId);
-        await superuserInDb.query(
-          `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
-           VALUES ($1, $2, 1, now(), now() + interval '30 days')`,
-          [tenantId, oldKey],
-        );
-      }
+      // Only free_web is ever auto-repointed by this migration (0011's seed shape,
+      // version 1). telegram/plus_channel/all_channels are deliberately NOT seeded
+      // here — guard 3 (see 0028) unconditionally halts on any row referencing one
+      // of those three, regardless of status; DD29-7's tests prove that behavior.
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Upgrade free_web', 'dd29-upgrade-free-web', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      await superuserInDb.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
+         VALUES ($1, 'free_web', 1, now(), now() + interval '30 days')`,
+        [tenantId],
+      );
 
       const sql0028 = await readFile(
         path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
@@ -912,16 +865,14 @@ describe("DD29-3 0028 expand upgrade path: pre-existing subscriptions rows are c
         },
       ]);
 
-      // A3: every pre-existing subscriptions row remapped to the correct new key at version 1.
-      for (const [oldKey, tenantId] of tenantIdByOldKey) {
-        const sub = await superuserInDb.query(
-          `SELECT plan_key, plan_version FROM subscriptions WHERE tenant_id = $1`,
-          [tenantId],
-        );
-        const subRow = sub.rows[0] as { plan_key: string; plan_version: number };
-        expect(subRow.plan_key, `tenant seeded on ${oldKey}`).toBe(expectedNewKey[oldKey]);
-        expect(subRow.plan_version, `tenant seeded on ${oldKey}`).toBe(1);
-      }
+      // A3: the pre-existing free_web row remapped to free at version 1.
+      const sub = await superuserInDb.query(
+        `SELECT plan_key, plan_version FROM subscriptions WHERE tenant_id = $1`,
+        [tenantId],
+      );
+      const subRow = sub.rows[0] as { plan_key: string; plan_version: number };
+      expect(subRow.plan_key).toBe("free");
+      expect(subRow.plan_version).toBe(1);
     } finally {
       await superuserInDb.end();
       await ctx.teardown();
