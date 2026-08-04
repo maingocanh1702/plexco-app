@@ -33,6 +33,17 @@
 --   3. narrow plans_key_chk to the final DD-29 shape, ('free','host_pro').
 --      Keep the constraint NAME plans_key_chk (0025 established it for
 --      schema.ts alignment) — only the predicate narrows.
+--
+-- Rollback (conditional — safe only if committed and no row created since
+-- relies on the narrowed CHECK or the deleted rows being gone): widen
+-- plans_key_chk back to 0028's post-expand predicate (union of old ∪ new
+-- values — the exact ALTER in 0028's own step 1), and re-insert the 4
+-- deleted plans rows using 0011_seeds.sql's original literals verbatim
+-- (this file does not carry them; 0011 is the source of truth for their
+-- original price/limits/entitlements). Apply this file's rollback BEFORE
+-- 0028's, mirroring the reverse of the expand→contract application order —
+-- 0028's own rollback note assumes `plans` still has the 4 old rows to
+-- reference, which is only true again once this step has run.
 -- ============================================================================
 
 ALTER TABLE subscriptions NO FORCE ROW LEVEL SECURITY;

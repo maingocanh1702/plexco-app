@@ -158,7 +158,7 @@ CREATE TABLE billing_overrides (
 | Bước | Hành động | An toàn? |
 |------|-----------|----------|
 | 1 | Disable billing routes (`/api/billing*`, `/internal/billing/*`) + daily lifecycle job + billing webhook worker | ✅ |
-| 2a | DD-29 pair revert (`0028`+`0029`, once landed): revert **ONLY** `tenant_provision()`, the `plans_key_chk` CHECK, and the `plans` seed rows — conditional on no new-key row created downstream since, per each migration's own header | ✅ Có điều kiện — see each file's own rollback note |
+| 2a | DD-29 pair revert (`0029` first, then `0028` — reverse of application order), once landed: revert `tenant_provision()` to its old literal, the `subscriptions.plan_key` UPDATE (only rows `0028` itself touched), the `plans_key_chk` CHECK, and the `plans` seed rows — conditional on no new-key row created downstream since | ✅ Có điều kiện — see each file's own rollback note; `0029`'s note explains why it must run first |
 | 2b | DD-51 columns revert (separate, future slice — not yet landed): revert **ONLY** those additive/alter objects, independently of 2a | ✅ Có điều kiện — chốt khi slice đó thực thi |
 | 3 | Drop baseline 6 bảng billing của `0007` | ❌ NEVER — migration đã apply trên main, có thể chứa billing data thật |
 
