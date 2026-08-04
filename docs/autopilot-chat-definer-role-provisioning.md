@@ -943,7 +943,7 @@ Notes only where the check surfaced something beyond a clean pass/fail.
 - **Case 15** (six other wrong attributes, loop): removed the `rolbypassrls` disjunct (one
   representative branch of the seven) from block 2's `OR` chain — RED on that specific loop iteration.
 
-### 11.3 Case 16 itself — re-verified non-tautological, one narrow gap left open
+### 11.3 Case 16 itself — re-verified non-tautological, both gaps now closed (round 7)
 
 Case 16 doesn't call `bootstrapChatDefiner()` for its core assertion (§5.3's own description already
 explains why the round-trip is unreachable) — it hand-mirrors §5.1's exact `EXISTS` condition and runs
@@ -960,17 +960,34 @@ ADMIN FALSE, SET TRUE`), confirmed via a direct `pg_auth_members` query that bot
 (`admin_option=f, set_option=t`), and confirmed the case's own `expect(found).toBe(true)` assertion then
 fails — the case is not vacuously true.
 
-**One narrow, lower-severity gap found and left open, not fixed:** when that assertion fails, the
-case's own cleanup (`REVOKE ... GRANTED BY otherGrantor`, `DROP ROLE chat_definer`) sits *after* the
-assertion in the same `try` block and never runs, which cascades into a second, more confusing error at
-the outer `finally`'s `DROP ROLE otherGrantor` (`cannot be dropped because some objects depend on it`)
-that buries the real `AssertionError`. This is a narrower instance of the same class the harness fix
-(§11.1) closes for `chat_definer` itself, scoped to this one case's own scratch roles
-(`plexco_chat_definer_test_grantor_target`/`_b`). Not fixed here: it only surfaces when case 16's own
-assertion is already failing (never in normal CI), its blast radius is one case's scratch roles rather
-than the shared `chat_definer` name every case depends on, and a correct fix means restructuring this
-case's `try`/`finally` nesting — worth doing the next time this case is touched for an unrelated reason,
-not on its own.
+**A narrow, lower-severity gap was found and initially left open, then closed in round 7 (codex, first
+review round on this registration):** when that assertion fails, the case's own cleanup
+(`REVOKE ... GRANTED BY otherGrantor`, `DROP ROLE chat_definer`) sat *after* the assertion in the same
+`try` block and never ran, cascading into a second, more confusing error at the outer `finally`'s
+`DROP ROLE otherGrantor` (`cannot be dropped because some objects depend on it`) that buried the real
+`AssertionError`. Codex's own review (round 7, `[P2]`) flagged this as worth closing rather than
+deferring. Fixed: the assertions now sit in their own inner `try`, with a guaranteed `finally` that runs
+`DROP ROLE IF EXISTS chat_definer` unconditionally — dropping the GROUP role directly removes every
+membership row regardless of grantor (the same mechanism §11.1's `hideRealChatDefiner` fix relies on),
+so no separate `REVOKE` is needed and the outer `finally`'s `DROP ROLE otherGrantor`/`DROP ROLE target`
+never sees a dependency it can't satisfy. Re-verified: re-running the same "make the second grant
+genuinely safe" experiment now produces a single clean `AssertionError` (expected `true`, received
+`false`) with no cascading error, and `pg_roles` shows `chat_definer` gone immediately after despite the
+assertion failure.
+
+**A second round-7 finding, also closed:** the `unsafeExists` query was a hand-typed literal string
+duplicating §5.1's `EXISTS` condition — codex confirmed this matches §11.3's own audit finding above
+(mutating the real predicate does not turn this test red) and asked for the disconnect to be closed
+structurally rather than documented as accepted. Fixed: the test now reads `02-chat-definer.sql` at run
+time and extracts the exact `EXISTS (...)` block via `sql.match(/(EXISTS \(\n[\s\S]+?\n {2}\)) THEN/)`
+(the leading `\n` after `EXISTS \(` is load-bearing — SS5.1 also has an earlier single-line
+`EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_target)`, the migration-role existence check, that a
+bare `EXISTS \(` would match first and then lazily swallow everything up to this block's own close; a
+bug the extraction itself hit and self-caught on first write, confirmed via a `node -e` diagnostic
+before landing), replaces the sole `v_target` occurrence with a `$1` placeholder, and runs the extracted
+predicate as a parameterized query. Re-verified both directions on the redesigned test: mutating the
+real predicate (`AND r.rolname = v_target` to `AND FALSE`) now turns this specific case red (it did not,
+before); reverting restores green; the full 57-test suite stays green throughout.
 
 ### 11.4 On the method itself: two self-inflicted false signals, both caught before being trusted
 

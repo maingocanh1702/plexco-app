@@ -1535,9 +1535,24 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
     // in depth against states that are NOT reachable via GRANT (a future re-pointing-guard change, a
     // different script version without one, or direct catalog manipulation). This test proves the
     // query itself is correct against exactly that kind of state, constructed directly rather than
-    // through bootstrapChatDefiner: it mirrors SS5.1's EXISTS condition verbatim
-    // (`m.admin_option OR NOT m.set_option`) so a regression to a single-row read is still caught,
-    // without asserting something the full script cannot be made to demonstrate honestly.
+    // through bootstrapChatDefiner.
+    //
+    // codex round-07 [P2]: the prior version hand-duplicated SS5.1's EXISTS condition as a literal
+    // string, which the audit (SS11.3) confirmed is disconnected from the real file -- mutating the
+    // production predicate does not turn this test red. Fixed by EXTRACTING the exact EXISTS(...)
+    // block from the loaded SQL text (never hand-copied) and running that extracted predicate,
+    // parameterized, against the directly-constructed two-row state. A regression to the production
+    // condition now changes what this test actually executes, closing the disconnect structurally
+    // rather than by convention.
+    //
+    // codex round-07 [P2]: the prior version's cleanup (REVOKE + DROP ROLE chat_definer) sat after
+    // the assertions with no guard, so a failing assertion skipped it and the outer finally's
+    // `DROP ROLE otherGrantor` then failed on a dependent grant record, burying the real
+    // AssertionError under a confusing secondary one (found and left open in SS11.3; closed here).
+    // Dropping the GROUP role directly removes every chat_definer membership row regardless of
+    // grantor (confirmed empirically this session, SS11.1's hideRealChatDefiner fix), so a bare
+    // `DROP ROLE IF EXISTS chat_definer` in a guaranteed nested finally is sufficient -- no separate
+    // REVOKE needed.
     await withChatDefinerLock(BASE!, () =>
       hideRealChatDefiner(admin, async () => {
         const target = "plexco_chat_definer_test_grantor_target";
@@ -1565,29 +1580,35 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
           await admin.query(
             `GRANT chat_definer TO ${target} WITH ADMIN TRUE GRANTED BY ${otherGrantor}`,
           );
-          const grantors = await admin.query(
-            `SELECT DISTINCT g.rolname AS grantor
-               FROM pg_auth_members m
-               JOIN pg_roles r ON r.oid = m.member
-               JOIN pg_roles role_ ON role_.oid = m.roleid
-               JOIN pg_roles g ON g.oid = m.grantor
-              WHERE role_.rolname = 'chat_definer' AND r.rolname = '${target}'`,
-          );
-          expect(grantors.rows.length).toBe(2); // genuinely two distinct grantor records, not one
-          const unsafeExists = await admin.query(
-            `SELECT EXISTS (
-               SELECT 1
+          try {
+            const grantors = await admin.query(
+              `SELECT DISTINCT g.rolname AS grantor
                  FROM pg_auth_members m
                  JOIN pg_roles r ON r.oid = m.member
-                 JOIN pg_roles g ON g.oid = m.roleid
-                WHERE g.rolname = 'chat_definer'
-                  AND r.rolname = '${target}'
-                  AND (m.admin_option OR NOT m.set_option)
-             ) AS found`,
-          );
-          expect((unsafeExists.rows[0] as { found: boolean }).found).toBe(true);
-          await admin.query(`REVOKE chat_definer FROM ${target} GRANTED BY ${otherGrantor}`);
-          await admin.query(`DROP ROLE chat_definer`); // drops the remaining grant records
+                 JOIN pg_roles role_ ON role_.oid = m.roleid
+                 JOIN pg_roles g ON g.oid = m.grantor
+                WHERE role_.rolname = 'chat_definer' AND r.rolname = '${target}'`,
+            );
+            expect(grantors.rows.length).toBe(2); // genuinely two distinct grantor records, not one
+
+            const sql = await readFile(CHAT_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
+            // The \n right after "(" is load-bearing: SS5.1 also has an earlier single-line
+            // `EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_target)` (the migration-role
+            // existence check) that a bare `EXISTS \(` would match first, then lazily swallow
+            // everything up to THIS block's own close -- self-caught the first time this was written.
+            const existsMatch = sql.match(/(EXISTS \(\n[\s\S]+?\n {2}\)) THEN/);
+            if (!existsMatch) {
+              throw new Error(
+                "could not locate the unsafe-options EXISTS block in 02-chat-definer.sql -- the " +
+                  "extraction regex needs updating alongside whatever changed its shape",
+              );
+            }
+            const existsPredicate = existsMatch[1].replace("v_target", "$1");
+            const unsafeExists = await admin.query(`SELECT ${existsPredicate} AS found`, [target]);
+            expect((unsafeExists.rows[0] as { found: boolean }).found).toBe(true);
+          } finally {
+            await admin.query(`DROP ROLE IF EXISTS chat_definer`);
+          }
         } finally {
           await admin.query(`DROP ROLE ${otherGrantor}`);
           await admin.query(`DROP ROLE ${target}`);
