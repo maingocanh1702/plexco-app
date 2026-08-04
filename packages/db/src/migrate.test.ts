@@ -1348,6 +1348,14 @@ async function hideRealChatDefiner(superuser: pg.Client, fn: () => Promise<void>
     await fn();
   } finally {
     if (hadRealRole) {
+      // codex round-06 [P2]: many callers drop their own scratch chat_definer only AFTER their
+      // assertions (e.g. the case right above). If an assertion throws first, that cleanup line
+      // never runs and a scratch chat_definer is left behind -- the rename-back then collides with
+      // it, fails with a confusing duplicate-role-name error that masks the real assertion failure,
+      // and leaves the cluster corrupted (real role still hidden, scratch role squatting the name)
+      // for every later test. Unconditionally clear the name first; harmless when the caller's own
+      // cleanup already ran.
+      await superuser.query(`DROP ROLE IF EXISTS chat_definer`);
       await superuser.query(`ALTER ROLE chat_definer_hidden_for_test RENAME TO chat_definer`);
     }
   }
@@ -1497,35 +1505,88 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
     );
   }, 30_000);
 
-  it("refuses to bootstrap when an unsafe grant record exists from a DIFFERENT grantor than the safe one", async () => {
+  it("the unsafe-options EXISTS check examines every grant record for the target, not one arbitrary row", async () => {
     // codex round-04 [P1]: PG16 allows multiple pg_auth_members rows for the same (role, member)
-    // pair from different grantors ("Allow multiple role membership records" -- release notes; pre-16
-    // a new grant replaced the prior row). A non-STRICT SELECT INTO with no ORDER BY could pick an
-    // arbitrary one of them and miss an unsafe record left by a different grantor. This test creates
-    // TWO distinct grant records for the same target -- one safe (from CURRENT_USER's own bootstrap),
-    // one unsafe (from a second superuser grantor) -- and proves the fix catches it regardless.
+    // pair from different grantors ("Allow multiple role membership records" -- release notes;
+    // pre-16 a new grant replaced the prior row). A non-STRICT SELECT INTO with no ORDER BY could
+    // pick an arbitrary one of them and miss an unsafe record left by a different grantor. Fixed by
+    // replacing the single-row SELECT INTO with the EXISTS check at SS5.1.
+    //
+    // codex round-06 [P1]: the ORIGINAL version of this test tried to exercise that fix through a
+    // full bootstrapChatDefiner() round-trip, using a second grantor role to create the second row.
+    // That is unreachable: PostgreSQL requires a non-superuser grantor to hold live ADMIN OPTION
+    // (membership) before it can be named via GRANTED BY, and holding that membership makes it a
+    // SECOND, DIFFERENT chat_definer member -- which SS5.1's re-pointing guard (checking "any member
+    // other than v_target") correctly refuses BEFORE the unsafe-options check is ever reached. This
+    // was verified exhaustively this session: a second SUPERUSER collapses onto one grantor row
+    // (round-06's original bug); a non-superuser CREATEROLE+BYPASSRLS grantor is refused outright
+    // ("permission denied... only roles with ADMIN option... may grant this role" -- PG16 tightened
+    // this from pre-16); and a role attempting to grant itself a second, differently-attributed row
+    // is refused ("ADMIN option cannot be granted back to your own grantor"). There is no reachable
+    // state, via ordinary GRANT statements, with two distinct grantor rows for one member and no
+    // second live member -- which also means the re-pointing guard already closes this exact class
+    // of multi-grantor attack for free, in every state a real client can produce.
+    //
+    // The EXISTS fix therefore is not a gap the full script can be driven into today; it is defense
+    // in depth against states that are NOT reachable via GRANT (a future re-pointing-guard change, a
+    // different script version without one, or direct catalog manipulation). This test proves the
+    // query itself is correct against exactly that kind of state, constructed directly rather than
+    // through bootstrapChatDefiner: it mirrors SS5.1's EXISTS condition verbatim
+    // (`m.admin_option OR NOT m.set_option`) so a regression to a single-row read is still caught,
+    // without asserting something the full script cannot be made to demonstrate honestly.
     await withChatDefinerLock(BASE!, () =>
       hideRealChatDefiner(admin, async () => {
-        await bootstrapChatDefiner(admin);
-        const whoami = await admin.query(`SELECT current_user AS u`);
-        const target = (whoami.rows[0] as { u: string }).u;
+        const target = "plexco_chat_definer_test_grantor_target";
         const otherGrantor = "plexco_chat_definer_test_grantor_b";
         await admin.query(
-          `DO $$ BEGIN CREATE ROLE ${otherGrantor} LOGIN SUPERUSER PASSWORD 'plexco_test_grantor_b'; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+          `DO $$ BEGIN CREATE ROLE ${target}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${otherGrantor}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
         );
         try {
-          const grantorClient = await connect(url(BASE_DB, otherGrantor, "plexco_test_grantor_b"));
+          // Use the real bootstrap to create chat_definer with its exact attributes and the first
+          // (safe) grant record, rather than hand-duplicating the attribute list here.
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${target}'`);
           try {
-            // A SECOND, distinct grant record for the SAME (chat_definer, target) pair, from a
-            // DIFFERENT grantor than CURRENT_USER's own bootstrap above.
-            await grantorClient.query(`GRANT chat_definer TO ${target} WITH ADMIN TRUE`);
+            await bootstrapChatDefiner(admin);
           } finally {
-            await grantorClient.end();
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
           }
-          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/unsafe options/i);
-          await admin.query(`DROP ROLE chat_definer`); // drops ALL grant records, both grantors'
+          await admin.query(`GRANT chat_definer TO ${otherGrantor} WITH ADMIN TRUE`);
+          // Safe row already exists (grantor: bootstrap superuser, from bootstrapChatDefiner above);
+          // this adds the unsafe SECOND row (grantor: otherGrantor) for the SAME target -- the
+          // non-STRICT bug this fix closes picked whichever row postgres returned first, which was
+          // never guaranteed to be either specific one.
+          await admin.query(
+            `GRANT chat_definer TO ${target} WITH ADMIN TRUE GRANTED BY ${otherGrantor}`,
+          );
+          const grantors = await admin.query(
+            `SELECT DISTINCT g.rolname AS grantor
+               FROM pg_auth_members m
+               JOIN pg_roles r ON r.oid = m.member
+               JOIN pg_roles role_ ON role_.oid = m.roleid
+               JOIN pg_roles g ON g.oid = m.grantor
+              WHERE role_.rolname = 'chat_definer' AND r.rolname = '${target}'`,
+          );
+          expect(grantors.rows.length).toBe(2); // genuinely two distinct grantor records, not one
+          const unsafeExists = await admin.query(
+            `SELECT EXISTS (
+               SELECT 1
+                 FROM pg_auth_members m
+                 JOIN pg_roles r ON r.oid = m.member
+                 JOIN pg_roles g ON g.oid = m.roleid
+                WHERE g.rolname = 'chat_definer'
+                  AND r.rolname = '${target}'
+                  AND (m.admin_option OR NOT m.set_option)
+             ) AS found`,
+          );
+          expect((unsafeExists.rows[0] as { found: boolean }).found).toBe(true);
+          await admin.query(`REVOKE chat_definer FROM ${target} GRANTED BY ${otherGrantor}`);
+          await admin.query(`DROP ROLE chat_definer`); // drops the remaining grant records
         } finally {
           await admin.query(`DROP ROLE ${otherGrantor}`);
+          await admin.query(`DROP ROLE ${target}`);
         }
       }),
     );

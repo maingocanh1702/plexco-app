@@ -443,13 +443,25 @@ closed on runtime-role targets", ...)` at line 1239). Originally specified as th
     dropping any of the other 6 branches would leave the suite green. A compact loop covering the
     other 6, asserting only rejection (the whole-transaction-rollback property case 4 already proves
     is not per-attribute-dependent, so it is not re-verified 6 more times).
-16. `"refuses to bootstrap when an unsafe grant record exists from a DIFFERENT grantor than the safe
-    one"` — added round-04 fix (codex `[P1]`): PG16 allows multiple `pg_auth_members` rows for the
-    same (role, member) pair from different grantors ("Allow multiple role membership records" — PG16
-    release notes; pre-16 a new grant replaced the prior row instead). Creates two distinct grant
-    records for the same target (one safe, from this bootstrap's own earlier run; one unsafe, from a
-    second scratch superuser grantor) and proves the `EXISTS`-based check (§5.1) catches it regardless
-    of which record a naive single-row read would have picked.
+16. `"the unsafe-options EXISTS check examines every grant record for the target, not one arbitrary
+    row"` — added round-04 fix (codex `[P1]`), redesigned round-06 (codex `[P1]`): PG16 allows
+    multiple `pg_auth_members` rows for the same (role, member) pair from different grantors ("Allow
+    multiple role membership records" — PG16 release notes; pre-16 a new grant replaced the prior row
+    instead). The round-04 version tried to construct this through a full `bootstrapChatDefiner()`
+    round-trip using a second grantor role; round 06 found this unreachable — PostgreSQL requires a
+    non-superuser grantor to hold live `ADMIN OPTION` (membership) before `GRANTED BY` can name it,
+    and holding that membership makes it a second, different `chat_definer` member, which §5.1's
+    re-pointing guard refuses *before* the unsafe-options check runs. Verified exhaustively (a second
+    superuser collapses onto one grantor row per round-04's own finding; a non-superuser
+    `CREATEROLE`+`BYPASSRLS` grantor is refused outright by PG16's tightened grant-permission model;
+    self-grant is refused as a grantor cycle) — there is no reachable state, via ordinary `GRANT`,
+    with two distinct grantor rows for one member and no second live member. The re-pointing guard
+    therefore already closes this exact multi-grantor class for free in every state a real client can
+    produce; the `EXISTS` fix is defense in depth against states GRANT cannot reach (a future
+    re-pointing-guard change, a script version without one, direct catalog manipulation). The test now
+    constructs the two-row state directly (bypassing the full script for the final check) and mirrors
+    §5.1's exact `EXISTS` condition, proving the query itself is correct without claiming the full
+    script can be driven through this exact path today.
 
 Every case that deliberately breaks the shared cluster-global role runs inside `withChatDefinerLock`,
 exactly as the job_definer negative-path tests run inside `withJobDefinerLock` — same rationale
@@ -786,3 +798,20 @@ REMAINING_BLOCKERS: none
    cluster-wide is a separate, owner-level engineering question about the pattern, opened as a
    follow-up rather than answered here. No change to the concurrency boundary. A third consecutive
    round on this same region is `REGION_THRASH`.
+10. **Round 6 (codex, on the original branch) found two more real, DIFFERENT-region issues — not
+    thrash — which is why this branch HALTed at `MAX_ROUNDS` (5) instead of continuing: six rounds,
+    six distinct issues, never the same region twice, is a slice getting reviewed more deeply than it
+    was specified, not design thrash.** `[P1]` case 16's original design (a second grantor role built
+    via a live `GRANTED BY` round-trip) does not prove what it claims — see the corrected case 16
+    description above for the full finding and its resolution. `[P2]` `hideRealChatDefiner`'s cleanup
+    could collide with a scratch `chat_definer` a failed assertion left behind, masking the real
+    failure and corrupting shared cluster state for later tests — fixed with an unconditional
+    `DROP ROLE IF EXISTS chat_definer` before the rename-back (§5.3 helper, not a numbered case).
+    Per owner direction: this was NOT patched as a round-06 fix on the halted branch. Instead, per
+    owner direction, this contract's already-landed rounds 1-5 were carried forward onto a freshly
+    re-verified base (the halted branch preserved as
+    `archive/chat-definer-role-provisioning-2026-08-04-halt-round6`), both round-6 fixes were
+    implemented here, and — per owner direction — every one of the other 15 cases was additionally
+    audited by deliberately breaking the SQL logic each one claims to protect and confirming the case
+    goes red before reverting, since case 16's own failure mode (a test passing without exercising
+    what it asserts) had never been checked for the other 15. See §11 for the audit record.
