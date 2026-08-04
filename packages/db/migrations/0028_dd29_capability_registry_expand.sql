@@ -112,13 +112,36 @@
 -- for owner review — never widen the map, invent a repricing policy, or
 -- retry blindly (see manifest stop_conditions).
 --
--- Rollback (conditional — safe only if committed and no new-key row has been
--- created downstream since; if 0029 has already applied too, roll IT back
--- first — see 0029's own rollback note — so the 4 old plans rows this
--- migration's rollback needs to narrow back onto actually exist again):
--- revert tenant_provision() to the old literal, reverse the UPDATE below for
--- only the rows this migration touched, delete the 2 new plans rows, narrow
--- plans_key_chk back to the 4 old values.
+-- Rollback (conditional — if 0029 has already applied too, roll IT back first
+-- — see 0029's own rollback note — so the 4 old plans rows this migration's
+-- rollback needs to narrow back onto actually exist again):
+-- revert tenant_provision() to the old literal, delete the 2 new plans rows,
+-- narrow plans_key_chk back to the 4 old values, and reverse the UPDATE below
+-- for ONLY the rows this migration touched — never every 'free' row, since
+-- the redefined tenant_provision() may have already created genuinely NEW
+-- 'free' tenants after this migration committed, and reverting those would
+-- corrupt unrelated tenants (codex round-09 [P1], gate-attempt-05: "reverse
+-- ... only the rows this migration touched" previously named no mechanism
+-- for identifying which rows those are).
+--
+-- The provenance needed already exists on tenants/schema_migrations — no new
+-- column or audit table is required. Before this migration ran, NO
+-- subscription could have plan_key='free' at all (the pre-0028 CHECK
+-- disallowed it), and a tenant's row is always inserted before its
+-- subscription, in the same transaction (tenant_provision()'s own body) — so
+-- a subscription now on 'free' whose TENANT predates this migration's own
+-- applied_at can only be one this migration's UPDATE touched; one whose
+-- tenant postdates it can only be a new tenant created by the redefined
+-- function afterward. Scope the reversal to the first set only:
+--   UPDATE subscriptions SET plan_key = 'free_web'
+--     WHERE plan_key = 'free' AND tenant_id IN (
+--       SELECT s.tenant_id FROM subscriptions s JOIN tenants t ON t.id = s.tenant_id
+--         WHERE s.plan_key = 'free' AND t.created_at <= (
+--           SELECT applied_at FROM schema_migrations
+--             WHERE name = '0028_dd29_capability_registry_expand.sql'));
+-- This is exact, not approximate, PROVIDED tenant_provision() remains the
+-- only writer of subscriptions.plan_key at rollback time (re-verify this
+-- still holds — grep for other writers — before trusting the query above).
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------

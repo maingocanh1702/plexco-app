@@ -712,6 +712,115 @@ describe("DD29-1/DD29-2 0028 expand fails closed on plan_key data anomalies", ()
   }, 60_000);
 });
 
+describe("DD29-11 0028's documented rollback-scoping query distinguishes migrated vs. newly-created subscriptions", () => {
+  it("the tenants.created_at vs. schema_migrations.applied_at query in 0028's rollback note selects exactly the migrated tenant, never a tenant provisioned after 0028 committed (codex round-09 [P1], gate-attempt-05)", async () => {
+    const dbName = "plexco_migrate_dd29_rollback_scope";
+    const admin = new pg.Client({ connectionString: BASE! });
+    await admin.connect();
+    let dbClient: pg.Client | undefined;
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE ${dbName}`);
+
+      // Superuser-owned replay (same reason as DD29-8: tenant_provision()'s own inserts into
+      // memberships/tenant_admins hit FORCE RLS with no app.tenant_id set for a brand-new tenant
+      // unless the function — and everything it touches — is owned by a role that bypasses RLS).
+      dbClient = await connect(url(dbName));
+      await withJobDefinerLock(BASE!, async () => {
+        await bootstrapJobDefiner(admin);
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+          await dbClient!.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // A pre-existing tenant on the old free_web tier — created before 0028 runs, exactly the
+      // shape 0028's UPDATE repoints.
+      const preExisting = await dbClient.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Rollback Migrated', 'dd29-rollback-migrated', 'active') RETURNING id`,
+      );
+      const migratedTenantId = (preExisting.rows[0] as { id: string }).id;
+      await dbClient.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
+         VALUES ($1, 'free_web', 1, now(), 'infinity')`,
+        [migratedTenantId],
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await dbClient.query(sql0028);
+
+      // This test raw-replays files (like every other DD29-* test here) rather than going
+      // through migrate(), so schema_migrations — normally created/populated by migrate.ts
+      // itself — doesn't exist yet. Recreate it with the exact DDL migrate.ts uses and record
+      // 0028's own application, so the rollback note's query has the applied_at it depends on.
+      await dbClient.query(`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          name text PRIMARY KEY,
+          sha256 text NOT NULL,
+          applied_at timestamptz NOT NULL DEFAULT now()
+        )`);
+      await dbClient.query(
+        `INSERT INTO schema_migrations (name, sha256) VALUES ($1, 'test-fixture')`,
+        ["0028_dd29_capability_registry_expand.sql"],
+      );
+
+      // Onboarding "resumes" after the deploy: a genuinely new tenant, created by the redefined
+      // tenant_provision(), lands on 'free' directly — never touched by 0028's own UPDATE.
+      const personRow = await dbClient.query(
+        `INSERT INTO persons (display_name) VALUES ('DD29 Rollback New Owner') RETURNING id`,
+      );
+      const personId = (personRow.rows[0] as { id: string }).id;
+      const newTenantRow = await dbClient.query(
+        `SELECT tenant_provision($1, $2, $3, $4, $5) AS tenant_id`,
+        ["dd29-rollback-new", "DD29 Rollback New Tenant", "Asia/Ho_Chi_Minh", "vi", personId],
+      );
+      const newTenantId = (newTenantRow.rows[0] as { tenant_id: string }).tenant_id;
+
+      // The exact scoping query from 0028's rollback note.
+      const scoped = await dbClient.query(
+        `SELECT s.tenant_id FROM subscriptions s JOIN tenants t ON t.id = s.tenant_id
+           WHERE s.plan_key = 'free' AND t.created_at <= (
+             SELECT applied_at FROM schema_migrations
+               WHERE name = '0028_dd29_capability_registry_expand.sql')`,
+      );
+      const scopedIds = scoped.rows.map((r) => (r as { tenant_id: string }).tenant_id).sort();
+      expect(scopedIds).toEqual([migratedTenantId].sort());
+      expect(scopedIds).not.toContain(newTenantId);
+
+      // Prove it is actually usable, not just correct in isolation: run the real reversal UPDATE
+      // scoped by this exact query and confirm only the migrated tenant reverts.
+      await dbClient.query(
+        `UPDATE subscriptions SET plan_key = 'free_web'
+           WHERE plan_key = 'free' AND tenant_id IN (
+             SELECT s.tenant_id FROM subscriptions s JOIN tenants t ON t.id = s.tenant_id
+               WHERE s.plan_key = 'free' AND t.created_at <= (
+                 SELECT applied_at FROM schema_migrations
+                   WHERE name = '0028_dd29_capability_registry_expand.sql'))`,
+      );
+      const afterRevert = await dbClient.query(
+        `SELECT tenant_id, plan_key FROM subscriptions WHERE tenant_id IN ($1, $2)`,
+        [migratedTenantId, newTenantId],
+      );
+      const byTenant = new Map(
+        afterRevert.rows.map((r) => [
+          (r as { tenant_id: string }).tenant_id,
+          (r as { plan_key: string }).plan_key,
+        ]),
+      );
+      expect(byTenant.get(migratedTenantId)).toBe("free_web");
+      expect(byTenant.get(newTenantId)).toBe("free");
+    } finally {
+      await dbClient?.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.end();
+    }
+  }, 60_000);
+});
+
 describe("DD29-9 0028 expand fails closed on a conflicting pre-existing plans catalog row", () => {
   it("guard 4: a pre-existing free@1 row with the wrong payload survives ON CONFLICT DO NOTHING, and the post-insert check catches it (codex round-07 [P1], gate-attempt-01 on this registration)", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard4");
