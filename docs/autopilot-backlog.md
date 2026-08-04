@@ -1311,14 +1311,27 @@ notes: |
 
 ## task: pnpm-workspace-esbuild-override-inert
 title: pnpm-workspace.yaml's esbuild@<0.25.0 → 0.25.12 override câm từ commit f1af6e3 (2026-07-22) — package.json's pnpm.overrides thay toàn bộ map, không merge theo key
-status: idea
+status: ready — contract AUTHORED 2026-08-04, verdict `CODE_READY` closure 12/12, chưa implement
 risk: P2
 change_class: dependency-security
 depends_on: []
 invariants: [build-config]
-scope: []
-manifest: null
-merged_probe: null
+scope: [package.json, pnpm-lock.yaml, pnpm-workspace.yaml]
+manifest: docs/autopilot-manifests/pnpm-workspace-esbuild-override-inert.json
+slice_doc: docs/autopilot-pnpm-workspace-esbuild-override-inert.md
+launcher: .claude/commands/ap-48-pnpm-workspace-esbuild-override-inert.md
+merged_probe: package.json :: esbuild@<0.25.0
+authoring_note: **Selector có điều kiện là bắt buộc, không phải phong cách.** `tsx@4.23.0` cần
+  `esbuild@0.28.1` một cách hợp lệ, nên một override khoá trần `esbuild` sẽ ép cả cây xuống sàn và làm
+  hỏng tsx. Phải giữ đúng dạng `esbuild@<0.25.0` mà `pnpm-workspace.yaml` vốn đã khai — bản sửa là **dời
+  chỗ**, không phải viết lại. Phát hiện lúc author, không có trong entry gốc.
+  **Advisory đã truy nguồn sơ cấp:** GHSA-67mh-4wv8-2f99 qua OSV.dev — MODERATE, dev-server CORS, fixed
+  0.25.0. Truy nguồn vì repo này đã từng có một advisory **bịa ra** lọt vào một slice và bị bắt; từ đó
+  claim GHSA không nguồn không được nhận.
+  **`minimumReleaseAge` không chặn:** 0.25.12 publish 2025-11-01, 0.28.1 publish 2026-06-11 — cả hai vượt
+  xa 7 ngày. Nhưng implementer phải **đo lại lúc chạy**, không tin số này.
+  **Không ghim version literal vào contract** — cố ý. Runtime manifest bị khoá hash; một literal mục nát
+  buộc đóng-và-đăng-ký-lại toàn phần, và một slice tuần này đã trả giá đó năm lần.
 notes: |
   **Mở 2026-08-03, phát hiện khi đo `pnpm-override-precedence-two-locations`.** `pnpm-workspace.yaml`
   khai `overrides: {"esbuild@<0.25.0": 0.25.12}`. `@esbuild-kit/core-utils@3.3.2` (dependency thật,

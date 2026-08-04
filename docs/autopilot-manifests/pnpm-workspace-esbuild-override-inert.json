@@ -1,0 +1,106 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — deliberately carries NO manifest_schema_version; adding it makes register HALT CONTRACT_INVALID. The runtime manifest is generated at register time into .autopilot/state/pnpm-workspace-esbuild-override-inert/manifest.json from docs/autopilot-manifests/_TEMPLATE.json.",
+  "task_id": "plexco:pnpm-workspace-esbuild-override-inert",
+  "feature": "pnpm-workspace-esbuild-override-inert",
+  "branch": "feat/pnpm-workspace-esbuild-override-inert",
+  "base_ref": "origin/main",
+  "base_sha": "ddc1278790a9ef127668f18069a20ffa55ad1d25",
+  "risk": "P2",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_dependency_note": "pnpm-override-precedence-two-locations (AP-45) is merged to origin/main: docs/standards/dependency-override-precedence.md exists at base_sha, landed via 9 commits on the standards doc (latest 92c7832), verified via `git merge-base --is-ancestor 92c7832 <base_sha>` = true. No dep_checks entry is constructible: that task's own backlog block (docs/autopilot-backlog.md:1132) declares `close_by: hand` because its deliverable is docs-only with no slice-unique code symbol — autopilot-backlog-reconcile rejects a shared literal as a weak probe. Same class as authorize-tenant-action-core's precedent and deps-security-bump's own close_by: hand declaration. depends_on is [] because the dependency is historical and already on this slice's base, not because none exists.",
+  "invariants": ["build-config"],
+  "_invariant_note": "docs/autopilot-invariant-catalog.md:52 — `build-config — package manifest / lockfile / tsconfig / bundler`. Matches exactly: this slice edits package.json, pnpm-workspace.yaml and pnpm-lock.yaml.",
+  "scope": [
+    "package.json",
+    "pnpm-workspace.yaml",
+    "pnpm-lock.yaml",
+    "docs/autopilot-manifests/pnpm-workspace-esbuild-override-inert.json",
+    "docs/autopilot-pnpm-workspace-esbuild-override-inert.md",
+    ".claude/commands/ap-48-pnpm-workspace-esbuild-override-inert.md"
+  ],
+  "_scope_note": "docs/autopilot-backlog.md is deliberately EXCLUDED even though its task block (line 1312) will read as stale (status: idea) once this lands. Two parallel registrations collided on that shared file this same week; updating its status is an out-of-band, by-hand action after this slice reaches a terminal state, not part of this slice's registered scope.",
+  "negative_scope": [
+    "NEVER touch pnpm-workspace.yaml's minimumReleaseAge / trustPolicy / blockExoticSubdeps lines (lines 7-9 at base_sha, immediately above the overrides block) — delete the esbuild override entry by KEY only, never by line range or block edit",
+    "NO lowering or waiving minimumReleaseAge (10080), trustPolicy (no-downgrade), or blockExoticSubdeps (true)",
+    "NO --ignore-scripts, --no-frozen-lockfile, or --no-verify on any pnpm invocation",
+    "NO hand-editing pnpm-lock.yaml — it is regenerated only via `pnpm install`, never authored",
+    "NO touching the postcss, brace-expansion@1, or sharp entries in either file — postcss's own duplicate-location cleanup belongs to deps-security-bump--postcss (status: blocked), a separate task",
+    "NO bare/unconditional \"esbuild\": \"<version>\" key in package.json — must reuse pnpm-workspace.yaml's existing conditional selector verbatim, \"esbuild@<0.25.0\", not a bare key. tsx@4.23.0 has a real, legitimate direct dependency on esbuild@0.28.1 (pnpm-lock.yaml base_sha lines 3581-3585); a bare override would downgrade it needlessly",
+    "NO editing docs/autopilot-backlog.md as part of this slice's own scope (see _scope_note)",
+    "NO re-opening or re-measuring dependency-override-precedence.md's core finding (whole-map replacement, the measured Winner, Trials 1-4) — that is settled and cited, not re-litigated here",
+    "NO pinning a specific replacement version literal into this manifest's verification — the exact patched version is a property the implementer measures at run time against the floor (>=0.25.0) and minimumReleaseAge (10080 minutes), not a value this contract dictates"
+  ],
+  "context_sources": [
+    "docs/autopilot-backlog.md task block pnpm-workspace-esbuild-override-inert (line 1312) — opened 2026-08-03 from pnpm-override-precedence-two-locations's own measurement; states the exact remediation approach (conditional selector, delete-not-comment) and flags the risk-exposure measurement as this task's own job",
+    "docs/standards/dependency-override-precedence.md v1.2 (2026-08-03, commit 92c7832) — measured mechanism (non-empty-map whole-map replacement), \"A live consequence\" section, and the exact remediation guidance this slice executes verbatim",
+    "package.json at base_sha — pnpm.overrides non-empty (brace-expansion@1, sharp, postcss), no esbuild key",
+    "pnpm-workspace.yaml at base_sha — overrides block (esbuild@<0.25.0, postcss@<8.5.10) sits directly below minimumReleaseAge/trustPolicy/blockExoticSubdeps",
+    "pnpm-lock.yaml at base_sha — header `overrides:` block (lines 7-10) lists only brace-expansion@1/sharp/postcss, no esbuild; three parallel top-level esbuild resolutions exist: 0.18.20 (lines 1439/3016, via drizzle-kit@0.31.10 -> @esbuild-kit/esm-loader@2.6.5 -> @esbuild-kit/core-utils@3.3.2's own plain `esbuild: 0.18.20` dependency), 0.25.12 (lines 1444/3041), 0.28.1 (lines 1449/3070, via tsx@4.23.0's own plain `esbuild: 0.28.1` dependency, confirmed at lines 3581-3585)",
+    "OSV.dev API (api.osv.dev/v1/query, this session, 2026-08-04) queried for esbuild@0.18.20 — returns exactly one advisory, GHSA-67mh-4wv8-2f99, MODERATE, CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:N/A:N, CWE-346, affected range [0, 0.25.0), fixed 0.25.0. Verified against a primary source, not recalled from memory — this repo's own review history already rejected one fabricated GHSA claim about postcss (docs/autopilot-backlog.md notes on deps-security-bump), so this citation is deliberately sourced",
+    "registry.npmjs.org/esbuild time metadata (this session, 2026-08-04) — esbuild@0.25.12 published 2025-11-01 (well past the 10080-minute/7-day minimumReleaseAge floor); esbuild@0.28.1 (current dist-tags.latest) published 2026-06-11 (also past the floor)",
+    "docs/autopilot-invariant-catalog.md:52 — build-config token, em-dash catalog format",
+    "git log --oneline -- docs/standards/dependency-override-precedence.md (9 commits, confirms merged); git merge-base --is-ancestor 92c7832 <base_sha> confirmed true",
+    "docs/autopilot-manifests/authorize-tenant-action-core.json — precedent for depends_on: [] plus a documented non-constructible dep_checks reason when the dependency's own merged_probe is a non-discriminating literal"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "restricted",
+    "secrets": "none",
+    "external_side_effects": "approval_required"
+  },
+  "verification": {
+    "focused": [
+      "awk '/^  esbuild@[0-9]+\\.[0-9]+\\.[0-9]+:$/ { s=$0; sub(/^  esbuild@/,\"\",s); sub(/:$/,\"\",s); split(s,v,\".\"); if ((v[1]+0)==0 && (v[2]+0)<25) bad=1 } END { exit bad?1:0 }' pnpm-lock.yaml",
+      "! grep -qFe '\"esbuild@<0.25.0\"' pnpm-workspace.yaml",
+      "grep -qFe 'minimumReleaseAge: 10080' pnpm-workspace.yaml && grep -qFe 'trustPolicy: no-downgrade' pnpm-workspace.yaml && grep -qFe 'blockExoticSubdeps: true' pnpm-workspace.yaml",
+      "grep -qFe '\"esbuild@<0.25.0\"' package.json",
+      "! grep -qE '\"esbuild\"[[:space:]]*:' package.json",
+      "grep -qFe '\"postcss\": \"^8.5.10\"' package.json && grep -qFe '\"brace-expansion@1\": \"^1.1.16\"' package.json && grep -qFe '\"sharp\": \"^0.35.0\"' package.json",
+      "grep -qFe '\"postcss@<8.5.10\"' pnpm-workspace.yaml"
+    ],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm review:check:changed",
+      "pnpm build",
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_verification_note": "Checks 1/2/4 assert the defect and MUST currently fail (esbuild floor violated in the lockfile; workspace still carries the now-dead key; package.json lacks the selector). Checks 3/5/6/7 assert standing regression guards and correctly PASS today already — they exist to catch collateral damage (deleting the wrong block, downgrading tsx, touching postcss/brace-expansion/sharp), not to detect today's defect. See slice doc S7 for the measured today-state of every check and why the task briefing's \"prove both fail today\" does not hold verbatim for the security-settings check specifically. Every command asserts a PROPERTY (selector-key presence/absence, numeric floor, literal policy-line identity) — none pins a resolved package version.",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 1
+  },
+  "security_review": {
+    "required": true,
+    "reason": "Closes GHSA-67mh-4wv8-2f99 (MODERATE, CWE-346, esbuild dev-server CORS, fixed 0.25.0) on a floor this repo's own pnpm-workspace.yaml already declared intentionally, and deletes a block adjacent to this repo's supply-chain policy lines (minimumReleaseAge/trustPolicy/blockExoticSubdeps). Security round must specifically verify: (1) the deleted overrides key is exactly `esbuild@<0.25.0` and nothing else in the workspace file's overrides/policy block moved; (2) the new package.json key is the conditional selector, not a bare unconditional override (a bare override would silently downgrade tsx@4.23.0's legitimate esbuild@0.28.1 — a real regression, not a hypothetical); (3) the version written satisfies both the >=0.25.0 floor and minimumReleaseAge (10080 minutes) at the implementer's own run time, re-measured, not copied from this contract; (4) no other override (postcss, brace-expansion@1, sharp) moved or changed value.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 90,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE"
+  ],
+  "readiness_evidence_path": ".autopilot/state/pnpm-workspace-esbuild-override-inert/readiness.json",
+  "_note": "Authored 2026-08-04 in an authoring-only session (no register, no worktree, no implementation — see task briefing). Two candidate live-repo experiments were attempted directly in this session to strengthen evidence beyond citation: (1) a reversible targeted-fix experiment mirroring the sibling task's own Trial methodology (temporarily add the exact conditional selector to package.json, delete the workspace key, run `pnpm install --lockfile-only`, inspect, then revert) — correctly blocked by the session's auto-mode classifier for mutating package.json/pnpm-workspace.yaml outside a worktree, consistent with the authoring-only boundary; (2) a subsequent pure read-only dry-run of the seven verification.focused commands against the live tree, to empirically confirm today's pass/fail state before hash-locking them — also blocked, apparently over-broadly (keyed on filename mention rather than mutation; an unrelated Bash command in the same session executed normally immediately after). Neither attempt was retried. Every command's today-state is instead confirmed by direct inspection of file contents already captured via the Read tool and via grep calls that succeeded earlier in this same session, before the classifier's block state began — cited by exact line number in the slice doc S3/S7, not asserted from memory. The launcher instructs the implementer to hand-execute every verification.focused command against the real system awk/grep before calling register, the same discipline pnpm-override-precedence-two-locations's own registration-mechanics note already established after a live BSD-grep failure."
+}
