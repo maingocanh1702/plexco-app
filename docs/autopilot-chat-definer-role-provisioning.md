@@ -719,9 +719,14 @@ REMAINING_BLOCKERS: none
    DIFFERENT-target calls — two concurrent invocations could each observe zero existing members before
    either commits and both `GRANT` their own target, defeating the re-pointing guard via a race instead
    of a sequential re-run (confirmed real by manual trace under READ COMMITTED). Fixed with
-   `pg_advisory_xact_lock` at the top of the membership block, same key `withChatDefinerLock` already
-   uses (PostgreSQL guarantees a session already holding an advisory lock re-acquires it, session or
-   transaction scope, without self-blocking); regression at §5.3 case 14. Round 3 `[P2]`: only 1 of 7
+   `pg_advisory_xact_lock` at the top of the membership block. **Correction (found and fixed before
+   this landed, not by codex):** the first draft of this fix reused `withChatDefinerLock`'s own lock
+   key ("chad"), which deadlocked nearly the whole suite — that harness holds the key at SESSION scope
+   on one dedicated connection for an entire test body's duration, and the in-script lock, invoked
+   from a DIFFERENT connection inside that same body, would block forever waiting for a lock its own
+   caller holds and cannot release until the call returns. Caught by a direct test run hitting Vitest's
+   60s per-test timeout (not a silent hang), fixed with a genuinely distinct key ("cdlk") so the two
+   locks serve their separate purposes without conflicting; regression at §5.3 case 14. Round 3 `[P2]`: only 1 of 7
    attribute-drift branches had a dedicated regression — §5.3 case 15 closes the other 6. Also: §5.1's
    SQL echo and §8's acceptance matrix had drifted from the real implementation after rounds 1-2 (both
    re-synced — this item, §8's two new Authorization rows plus one new Concurrency row).
@@ -733,15 +738,20 @@ REMAINING_BLOCKERS: none
    `3 modules` means the code that ships and runs, not the tests that prove it correct — a reading
    where satisfying the budget requires deleting the evidence that a review round's own findings were
    fixed is being read wrong, since it would penalize exactly the response the review process demands.
-   Measured precisely on the landed diff: **production = 183 LOC** (`infra/postgres-init/02-chat-
-   definer.sql` 181, entirely new file, zero deletions; `package.json` 1 line changed) across
-   **exactly 3 modules** (`02-chat-definer.sql`, `package.json`, `migrate.test.ts`) — inside budget on
-   the quantity §9.2 exists to constrain. `migrate.test.ts`'s 463 lines are the regression coverage
-   proving the round-1/2/3 fixes (a real PG16 security gap, a real concurrency race, closed test-
-   coverage gaps) — not counted against the cap, and not scope creep. This interpretation is recorded
-   here for any future slice measured against a `§9.x`-style LOC/module budget: **measure production
-   and verification separately before concluding a budget is exceeded** — the aggregate number alone
-   does not tell you which side of the line grew.
+   **Do not trust a pinned figure here — it goes stale with every further fix round (already did
+   once, corrected 2026-08-04).** Measure directly: `git diff --shortstat <base>...HEAD --
+   infra/postgres-init/02-chat-definer.sql package.json` for production,
+   `git diff --shortstat <base>...HEAD -- packages/db/src/migrate.test.ts` for verification. At this
+   correction's landing (round 4's commit): production = 203 LOC (SQL 201, entirely new file, zero
+   deletions; `package.json` 1 line changed) across **exactly 3 modules** (`02-chat-definer.sql`,
+   `package.json`, `migrate.test.ts`) — inside budget on the quantity §9.2 exists to constrain.
+   `migrate.test.ts`'s 497 lines are the regression coverage proving the round-1 through round-4 fixes
+   (a real PG16 security gap, a real concurrency race, a real multi-grantor detection gap, closed
+   test-coverage gaps) — not counted against the cap, and not scope creep. This interpretation is
+   recorded here for any future slice measured against a `§9.x`-style LOC/module budget: **measure
+   production and verification separately before concluding a budget is exceeded, and measure at the
+   moment you need the number, not from a value written down earlier** — the aggregate alone does not
+   tell you which side of the line grew, and a frozen figure does not survive the next commit.
 8. **Round 4 found two more real gaps in the same §5.1 membership block — one closed, one deliberately
    bounded rather than chased further.** `[P1]`: the round-03 unsafe-options check read one arbitrary
    `pg_auth_members` row via a non-`STRICT SELECT INTO`; PG16 allows multiple rows for the same
@@ -766,3 +776,13 @@ REMAINING_BLOCKERS: none
    authority/budget question, so it was made directly rather than escalated. If a future deployment
    does adopt a multi-database-per-cluster topology, this boundary must be revisited before that
    change ships.
+9. **Round 5 re-raised item 8's cross-database boundary; not fixed, per owner ruling, 2026-08-04.**
+   §9.2 verbatim: "concurrent bootstrap fails closed without partial grants" — an atomicity guarantee,
+   not a claim against cluster-wide interleaving. `01-job-definer.sql` (the precedent §9.2 pins this
+   slice against) has zero internal locking of any kind and provides atomicity only; this slice
+   already exceeds it by adding same-database serialization (round 3). This finding describes a
+   characteristic of the existing, already-merged bootstrap pattern — not something this slice
+   introduces — so it is not this slice's to fix; whether both definer bootstraps should serialize
+   cluster-wide is a separate, owner-level engineering question about the pattern, opened as a
+   follow-up rather than answered here. No change to the concurrency boundary. A third consecutive
+   round on this same region is `REGION_THRASH`.
