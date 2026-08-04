@@ -1,6 +1,6 @@
 {
   "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — deliberately carries NO manifest_schema_version; adding it makes register HALT CONTRACT_INVALID. The runtime manifest is generated at register time into .autopilot/state/<feature>/manifest.json from _TEMPLATE.json.",
-  "_status": "CODE_READY as of 2026-08-03 (v1.1 reconciliation) — see docs/autopilot-plans-dd29-capability-registry.md verdict block. v1.0's three open questions are resolved: Q1 (live-tenant pre-flight) is answered structurally by the expand migration's own guard 1/guard 2, not by an owner decision; Q2 (deploy cadence) decided as ship-both-in-one-release; Q3 (derived mapping) recorded as a derivation enforced by the same guard. Safe to register.",
+  "_status": "CODE_READY as of 2026-08-03 (v1.1 reconciliation) — see docs/autopilot-plans-dd29-capability-registry.md verdict block. v1.0's three open questions are resolved: Q1 (live-tenant pre-flight) is answered structurally by the expand migration's own guard 1/guard 2, not by an owner decision; Q2 (deploy cadence) decided as ship-both-in-one-release; Q3 (derived mapping) recorded as a derivation enforced by the same guard. Safe to register. POST-IMPLEMENTATION CORRECTION (2026-08-05, docs-only — see the slice doc's v1.2 changelog entry and top-of-document notice): a guard 3 was added during the implementing slice's own review that ABORTS instead of executing the telegram/plus_channel/all_channels -> host_pro mapping this contract originally specified (silent re-pricing risk this contract itself flagged as unanswered). _acceptance.A3 below and stop_conditions[5]/[6] describe the ORIGINAL plan; see the slice doc for the corrected, shipped behavior.",
   "task_id": "plexco:plans-dd29-capability-registry",
   "feature": "plans-dd29-capability-registry",
   "branch": "feat/plans-dd29-capability-registry",
@@ -105,14 +105,14 @@
     "MATERIAL_CONTEXT_OR_DECISION_MISSING",
     "REQUIRED_TOOL_UNAVAILABLE",
     "migration 0028's guard 1 (unmapped plan_key) or guard 2 (old plan_key at plan_version != 1) actually fires against a real target database — the migration aborts on its own (transaction rollback); stop for owner review rather than widening the map or retrying blindly",
-    "a guard-1 hit also carries status in (active, past_due) on the affected row — this additionally raises a grandfather-vs-reprice policy question that this contract deliberately does not pre-answer"
+    "[SUPERSEDED 2026-08-05, docs-only — see slice doc v1.2] a guard-1 hit also carries status in (active, past_due) on the affected row — this additionally raises a grandfather-vs-reprice policy question that this contract deliberately does not pre-answer. Shipped as guard 3 instead: any subscription on telegram/plus_channel/all_channels aborts the migration regardless of status (not just active/past_due) or guard-1's predicate, since collapsing three distinctly-priced tiers into one new price is unconditionally a re-pricing question, not one specific to those two statuses"
   ],
   "_acceptance": {
     "A1": "apply 0028 against tail-0027 + standard 0011 seed -> new free/host_pro v1 rows exist, old 4 rows still exist, CHECK accepts both sets",
     "A2": "tenant_provision() after 0028 creates a subscriptions row with plan_key='free', not 'free_web'",
-    "A3": "pre-existing subscriptions row on an old key is repointed to the mapped new key + version 1",
+    "A3": "[SUPERSEDED 2026-08-05, docs-only — see slice doc v1.2] pre-existing subscriptions row on an old key is repointed to the mapped new key + version 1. Shipped: only free_web repoints to free; any subscription on telegram/plus_channel/all_channels instead aborts the whole migration (guard 3) rather than repointing to host_pro",
     "A4": "synthetic subscriptions row with plan_key='bogus' before 0028 -> 0028 raises and rolls back entirely (guard 1); reuse migrate.test.ts BR-5/BR-7/JCL-2 pattern",
-    "A5": "synthetic subscriptions row with plan_key='telegram', plan_version=2 before 0028 -> 0028 raises and rolls back (guard 2)",
+    "A5": "synthetic subscriptions row with plan_key='telegram', plan_version=2 before 0028 -> 0028 raises and rolls back (guard 2). Also independently caught by guard 3 (any legacy paid-tier row aborts regardless of version or status)",
     "B1": "apply 0029 immediately after clean 0028 -> succeeds; old 4 plans rows gone; CHECK now free/host_pro only",
     "B2": "apply 0029 against a DB where a synthetic row was forced back onto an old plan_key after 0028 -> 0029's own guard raises",
     "C1": "UPDATE — rls-invariants.test.ts:3300-3311 plans_key_chk validValue -> host_pro (asserts a real thing about the value)",

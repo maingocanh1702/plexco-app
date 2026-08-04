@@ -9,6 +9,21 @@
 > into a property the migration itself proves at run time. Q2 and Q3 are genuine decisions, recorded
 > below with reasoning. Verdict is now `CODE_READY` — see the verdict block at the end.
 
+> **Implementation correction, v1.2 (2026-08-05) — read before trusting "The mapping" or A3/A5
+> below.** This contract's `telegram`/`plus_channel`/`all_channels` → `host_pro` mapping (§"The
+> mapping", the `CASE` block in §"Migration design", acceptance row A3) was **superseded during
+> implementation review**: collapsing three distinctly-priced legacy tiers into one new price is a
+> silent re-pricing of a paying tenant this contract itself flagged as a business-policy question it
+> does not answer (§"The mapping"'s own closing paragraph) — codex review (gate-attempt-02/03 on the
+> implementing slice) caught that guards 1/2 alone let that silent collapse through anyway. The
+> implemented, tested, and merged-pending behavior instead **aborts the whole migration** if any
+> subscription still references one of those three keys, regardless of status — this contract's own
+> `manifest.stop_conditions` and "Negative scope" already required exactly this ("no grandfather or
+> re-pricing policy invention... STOP and escalate"); guard 3 is what actually enforces it, where
+> guards 1/2 could not. Full detail in the Changelog's v1.2 entry. Every other row of this contract
+> (the CHECK target, capability keys, `free_web`→`free` mapping, expand→contract split, guards 1/2)
+> still reflects the shipped implementation exactly as written below.
+
 ---
 
 ## Why this file exists
@@ -125,17 +140,25 @@ DELIVERABLES (this session): docs/autopilot-plans-dd29-capability-registry.md (t
 
 ## The mapping — derived from a ratified decision, not invented
 
+> **[SUPERSEDED, v1.2 — see the notice at the top of this document]** The `telegram`/`plus_channel`/
+> `all_channels` → `host_pro` rows below describe this contract's ORIGINAL plan, not the shipped
+> behavior. The implementation aborts instead of executing this mapping, for exactly the "business
+> policy question" reason this section's own closing paragraph already named. Kept verbatim below for
+> historical record of what was originally proposed and why it needed a guard, not as a description of
+> current behavior.
+
 | Old `plan_key` | Old price | New `plan_key` | Basis |
 |---|---|---|---|
 | `free_web` | 0 | `free` | **Explicit**, verbatim in `decisions.md` DD-29 changelog (line 457, v2.3): *"Rename plan_key cũ `free_web`→`free`."* Independently confirmed by `0012_auth_functions.sql:231`'s code comment. |
-| `telegram` | 79000 | `host_pro` | **Derived**, not verbatim-tabulated anywhere as a literal 4→2 mapping. Grounded in DD-29's ratified text (line 382): *"Bỏ 3 tier theo kênh (`telegram`/`plus_channel`/`all_channels`)"* — replaced by **one** paid tier, `host_pro`. There is no third target value for these three old keys to map to. |
-| `plus_channel` | 159000 | `host_pro` | same basis |
-| `all_channels` | 199000 | `host_pro` | same basis |
+| `telegram` | 79000 | `host_pro` [SUPERSEDED — aborts instead, see notice above] | **Derived**, not verbatim-tabulated anywhere as a literal 4→2 mapping. Grounded in DD-29's ratified text (line 382): *"Bỏ 3 tier theo kênh (`telegram`/`plus_channel`/`all_channels`)"* — replaced by **one** paid tier, `host_pro`. There is no third target value for these three old keys to map to. |
+| `plus_channel` | 159000 | `host_pro` [SUPERSEDED — aborts instead] | same basis |
+| `all_channels` | 199000 | `host_pro` [SUPERSEDED — aborts instead] | same basis |
 
 The key-level mapping is unambiguous given DD-29 is `✅ Chốt` (4 old keys → 2 new keys, and only one of
 the two is a paid tier). What is **not** settled by any doc is the **price transition** for a tenant
 already paying 79k/159k/199k who gets repointed to `host_pro` at 250k — that is a business policy
-question, not a schema question, and is listed under "Human decisions required" rather than assumed here.
+question, not a schema question, and is listed under "Human decisions required" rather than assumed
+here. **This is exactly the gap the implementation closed by aborting instead of guessing** (v1.2).
 
 ---
 
@@ -194,7 +217,10 @@ Runs as one transaction, in this order:
          USING ERRCODE = 'data_exception';
      END IF;
    END $$;
-   -- data migrate
+   -- data migrate — [SUPERSEDED, v1.2: this CASE mapping was never shipped. A third guard (guard 3)
+   -- was added during review that ABORTS the whole migration if any subscription still references
+   -- telegram/plus_channel/all_channels, regardless of status, instead of executing the mapping below —
+   -- see the notice at the top of this document. The shipped UPDATE only ever repoints free_web->free.]
    UPDATE subscriptions SET
      plan_key = CASE plan_key
        WHEN 'free_web' THEN 'free'
@@ -207,7 +233,9 @@ Runs as one transaction, in this order:
    ```
    Both guards make the two load-bearing assumptions ("no stray values", "only v1 ever seeded")
    **checked properties**, not silent hardcodes — directly satisfying the briefing's "fail loudly, never
-   silently defaulted" requirement.
+   silently defaulted" requirement. **[v1.2]** They turned out to be necessary but not sufficient: guard
+   3 (added during implementation review) is what actually enforces "no grandfather or re-pricing policy
+   invention" for the three legacy paid tiers — see the top-of-document notice.
 
 **Rollback (conditional, mirrors the tech spec's own rollback table style):** safe to revert ONLY if no
 new-key row has been created downstream since — i.e., revert `tenant_provision()` to the old literal,
@@ -216,7 +244,13 @@ track via a `version` bump or a same-transaction audit if a revert path is requi
 `plans` rows, narrow `plans_key_chk` back to the 4 old values. Because everything is one transaction, a
 mid-run failure already rolls back to nothing; the "conditional" rollback only matters for an
 **already-committed** expand migration, and is genuinely conditional the same way the tech spec's own
-migration-rollback table marks its step 2 "✅ Có điều kiện."
+migration-rollback table marks its step 2 "✅ Có điều kiện." **[SUPERSEDED, v1.2]** — "track via a
+version bump or a same-transaction audit" was a placeholder, not a design; the shipped mechanism needs
+neither: `tenants.created_at` vs. this migration's own `schema_migrations.applied_at` already provides
+exact provenance (no subscription could be on `free` before this migration ran at all), and the shipped
+sequence adds an explicit precondition (zero tenants provisioned since this migration committed) because
+a full rollback and "preserve a genuinely-new post-deploy tenant" are fundamentally incompatible — see
+`0028_dd29_capability_registry_expand.sql`'s own rollback note for the exact query and ordering.
 
 ### Migration N+1 — `0029_dd29_capability_registry_contract.sql` (CONTRACT)
 
@@ -403,9 +437,9 @@ than left open.
 |---|---|---|---|
 | A1 | Expand | Apply `0028` against a DB at tail `0027` with the standard `0011` seed | New `free`/`host_pro` v1 rows exist; old 4 rows still exist; `plans_key_chk` accepts both sets |
 | A2 | Expand | Call `tenant_provision()` after `0028` | New `subscriptions` row has `plan_key='free'`, not `'free_web'` |
-| A3 | Expand | Pre-existing `subscriptions` row on `free_web`/`telegram`/`plus_channel`/`all_channels` | Repointed to `free`/`host_pro` v1 respectively after `0028` |
+| A3 | Expand | Pre-existing `subscriptions` row on `free_web` | Repointed to `free` v1 after `0028` — **[SUPERSEDED, v1.2]** original A3 also claimed `telegram`/`plus_channel`/`all_channels` repoint to `host_pro`; shipped behavior instead aborts the whole migration for any of those three (guard 3) — see the notice at the top of this document |
 | A4 | Expand · fail-closed | Synthetic `subscriptions` row with `plan_key='bogus'` before applying `0028` | `0028` transaction raises and rolls back entirely (guard 1) — reuse `migrate.test.ts` BR-5/BR-7/JCL-2 pattern |
-| A5 | Expand · fail-closed | Synthetic `subscriptions` row with `plan_key='telegram'`, `plan_version=2` before applying `0028` | `0028` raises and rolls back (guard 2) |
+| A5 | Expand · fail-closed | Synthetic `subscriptions` row with `plan_key='telegram'`, `plan_version=2` before applying `0028` | `0028` raises and rolls back — shipped as guard 2 (version check); ALSO now caught independently by guard 3 (any legacy paid-tier row aborts regardless of version or status) |
 | B1 | Contract | Apply `0029` immediately after a clean `0028` | Succeeds; old 4 `plans` rows gone; `plans_key_chk` now `('free','host_pro')` only |
 | B2 | Contract · fail-closed | Apply `0029` against a DB where a synthetic row was forced back onto an old plan_key after `0028` | `0029`'s own guard raises — proves the self-guard is real, not just documentation |
 | C1 | Regression (update) | `rls-invariants.test.ts:3300-3311` `plans_key_chk` case, `validValue` updated to `host_pro` | Passes against the new CHECK — the test's assertion is now about the new valid value |
@@ -501,5 +535,6 @@ Q1, but because Q1 was the wrong shape of question — re-derived into a run-tim
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-08-05 | v1.2 | **Post-implementation reconciliation (docs-only — the code it describes already landed in the implementing slice's own worktree, pending review/merge; this entry does not re-open review of that code).** Codex review across the implementing slice's gate rounds found that guards 1/2 (designed in v1.0/v1.1) do not, by themselves, prevent the silent re-pricing this contract's own §"The mapping" flagged as an unanswered business-policy question: collapsing `telegram`/`plus_channel`/`all_channels` (79k/159k/199k) into `host_pro` (250k) via the `CASE` mapping below would upgrade a paying tenant's price without consent. A third guard (guard 3) was added that aborts the whole migration instead, for any subscription on one of those three keys regardless of status — directly enforcing this contract's own negative-scope line ("no grandfather or re-pricing policy invention... STOP and escalate") where guards 1/2 could not. Acceptance A3 narrowed to `free_web`→`free` only (the only mapping actually executed); A5 gained a second, independent guard. The rollback note's "track via a version bump or a same-transaction audit if a revert path is required" placeholder was replaced with a working mechanism: `tenants.created_at` vs. this migration's own `schema_migrations.applied_at` provides exact provenance for free (no schema change needed), plus an explicit precondition (zero tenants provisioned since this migration committed) — a full rollback and preserving a genuinely-new post-deploy tenant are fundamentally incompatible, so this is now a named STOP rather than a step that silently corrupts data or fails. Every other row of this contract (CHECK target, capability keys, `free_web`→`free`, expand→contract split, guards 1/2, deploy-together decision) is unchanged and reflects the shipped implementation. This entry does not flip the verdict block above — it remains the historical record of what v1.1 decided; this is a factual correction of what shipped, layered on top via markers at each affected section, per this project's convention of not rewriting a Reviewed document's original content in place. |
 | 2026-08-03 | v1.1 | Reconciliation round. Q1 (live-tenant pre-flight) re-derived from "an owner decision this session cannot settle" into "a property the migration itself asserts" — guard 1/guard 2 were already designed in v1.0, this round changes only the framing and the verdict, not the SQL. Q2 decided: ship `0028`+`0029` in one release (self-guarding design makes splitting safe but buys nothing with no live data, and costs a real gap-window process; `tenant_provision()`'s fix already lands atomically inside `0028` regardless). Q3 recorded explicitly as a derivation (not a verbatim-quoted mapping) enforced by the same guard. Split the "coupled test fixes" list into update-vs-make-indifferent, since two of the five assert something real about the old value and three use it only as FK ballast — conflating them risks turning a ballast fixture into an accidental new assertion. Verdict flipped `NOT_PLAN_READY` → `CODE_READY`, closure matrix 11/12 → 12/12. |
 | 2026-08-03 | v1.0 | Authored. Measured live schema/migrations/tests directly; found the target shape already fully specified in a Reviewed tech spec (not a fresh design); found three uncoupled test-fixture breaks and one live SECURITY DEFINER function coupling (`tenant_provision`) the original backlog estimate did not name; corrected the capability-key count from the briefing's 6-key example list to the spec's real 11. Verdict `NOT_PLAN_READY` — 3 open questions presented, not settled, per this session's own scope. |
