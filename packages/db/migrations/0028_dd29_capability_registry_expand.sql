@@ -33,15 +33,17 @@
 -- live data is exactly the kind of thing that goes stale silently the moment
 -- it stops being true, and nothing announces that change. So instead of
 -- assuming "only free_web/telegram/plus_channel/all_channels at version 1
--- ever exist, and none of them is a currently-paying tenant", the three
--- guards below make all three assumptions CHECKED PROPERTIES: guard 1
+-- ever exist, and none of the three old PAID tiers has any row at all", the
+-- three guards below make all three assumptions CHECKED PROPERTIES: guard 1
 -- refuses to proceed if any subscriptions row references a plan_key outside
 -- the known old∪new set; guard 2 refuses the "only v1 ever seeded"
 -- assumption unless it actually holds on THIS database; guard 3 refuses to
--- silently reprice/upgrade a tenant actively paying (active/past_due) for an
--- old channel tier into host_pro — a business policy decision this migration
--- deliberately does not make (see guard 3's own comment; this correction was
--- found by codex round-01 review, gate-attempt-02 — guards 1/2 alone cannot
+-- collapse ANY subscription still on an old channel tier (telegram/
+-- plus_channel/all_channels, any status) into host_pro — a business policy
+-- decision this migration deliberately does not make, because the UPDATE
+-- irreversibly destroys which of the three tiers a row held regardless of
+-- its current status (see guard 3's own comment; this correction was found
+-- by codex review across gate-attempt-02/03 — guards 1/2 alone cannot
 -- express it). Any guard firing rolls back this whole file (RAISE EXCEPTION
 -- inside a DO block aborts the migration's transaction) and stops the run
 -- for owner review — never widen the map, invent a repricing policy, or
@@ -209,30 +211,35 @@ DO $$ DECLARE v_bad_version integer; BEGIN
   END IF;
 END $$;
 
--- guard 3: refuse to silently reprice/upgrade a tenant ACTIVELY PAYING for an old
--- channel tier (telegram=79k, plus_channel=159k, all_channels=199k) into host_pro
--- (250k) with full automation capabilities it never purchased. Guards 1/2 above are
--- pure data-integrity checks (unrecognized value, wrong version) — neither one, by
--- its own predicate, can ever fire for a row on a RECOGNIZED old key at version 1,
--- which is exactly the shape of a real, currently-paying tenant. This manifest's
--- negative_scope is explicit: "if the live pre-flight finds a paying tenant on an
--- old paid tier, STOP and escalate (AWAIT_FOUNDER), do not invent proration/
--- notification/legacy-price logic" — guard 3 is the mechanism that actually
--- enforces that, correcting a gap in this slice's own authoring: the CODE_READY
--- contract's STOP_CONDITIONS text described this check as something "a guard-1
--- hit" would carry, but guard 1's predicate cannot express it (found by codex
--- round-01 review, gate-attempt-02). free_web is excluded on purpose: it maps to
--- 'free' at the same price (0), so there is no re-pricing question for it — only
--- the three PAID old tiers can trigger this guard. Only 'active'/'past_due' count
--- as "actively paying" (matching the STOP_CONDITIONS text's own status list) —
--- 'cancelled'/'suspended' tenants are not being charged right now, so remapping
--- their catalog reference is not a live repricing event.
-DO $$ DECLARE v_paying integer; BEGIN
-  SELECT count(*) INTO v_paying FROM subscriptions
-    WHERE plan_key IN ('telegram','plus_channel','all_channels')
-      AND status IN ('active','past_due');
-  IF v_paying > 0 THEN
-    RAISE EXCEPTION 'DD-29 expand: % subscriptions row(s) are actively paying (active/past_due) for an old channel tier (telegram/plus_channel/all_channels) — remapping to host_pro would silently change price and grant capabilities never purchased. This is a grandfather-vs-reprice policy decision this migration deliberately does not make; STOP and escalate to the owner', v_paying
+-- guard 3: refuse to silently collapse ANY subscription on an old, distinctly-
+-- priced channel tier (telegram=79k, plus_channel=159k, all_channels=199k) into
+-- host_pro (250k) with full automation capabilities it never purchased —
+-- REGARDLESS OF STATUS. Guards 1/2 above are pure data-integrity checks
+-- (unrecognized value, wrong version) — neither one, by its own predicate, can
+-- ever fire for a row on a RECOGNIZED old key at version 1, which is exactly the
+-- shape of a real tenant on one of these tiers. This manifest's negative_scope is
+-- explicit: "if the live pre-flight finds a paying tenant on an old paid tier,
+-- STOP and escalate (AWAIT_FOUNDER), do not invent proration/notification/
+-- legacy-price logic" — guard 3 is the mechanism that actually enforces that,
+-- correcting a gap in this slice's own authoring: the CODE_READY contract's
+-- STOP_CONDITIONS text described this check as something "a guard-1 hit" would
+-- carry, but guard 1's predicate cannot express it.
+--
+-- Status is NOT filtered (widened from an earlier active/past_due-only version
+-- — codex round-02 review, gate-attempt-03 [P1]): the UPDATE below overwrites
+-- plan_key, irreversibly destroying which of the three tiers a row came from —
+-- this loss applies to EVERY row on these keys, not just ones currently being
+-- billed. A trialing tenant can convert to active later; a suspended tenant can
+-- pay its balance and reactivate — either would then be priced/entitled as
+-- host_pro instead of the tier it actually held, with no way to reconstruct the
+-- original afterward (the rollback note below cannot recover data this UPDATE
+-- already overwrote). free_web is still excluded: it maps to 'free' at the same
+-- price (0), so there is no identity/re-pricing question for it at all.
+DO $$ DECLARE v_legacy_paid integer; BEGIN
+  SELECT count(*) INTO v_legacy_paid FROM subscriptions
+    WHERE plan_key IN ('telegram','plus_channel','all_channels');
+  IF v_legacy_paid > 0 THEN
+    RAISE EXCEPTION 'DD-29 expand: % subscriptions row(s) still reference an old, distinctly-priced channel tier (telegram/plus_channel/all_channels) — collapsing any of them into host_pro would irreversibly destroy which tier they held and silently change price/capabilities regardless of current status. This is a grandfather-vs-reprice policy decision this migration deliberately does not make; STOP and escalate to the owner', v_legacy_paid
       USING ERRCODE = 'data_exception';
   END IF;
 END $$;

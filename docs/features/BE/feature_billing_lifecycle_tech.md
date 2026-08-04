@@ -134,10 +134,20 @@ CREATE TABLE billing_overrides (
 > Grep live `packages/db/migrations/` ngày 2026-07-27: `0000`–`0024` đã merge (25 migrations; tail `0024_public_visibility_capacity_check.sql`). **Cả 6 bảng** `plans` · `subscriptions` · `subscription_invoices` · `billing_transactions` · `billing_allocations` · `billing_overrides` **đã tồn tại từ `0007_billing.sql`** — DDL trên là baseline để đọc + target contract, **reuse, không recreate**. Mọi delta của slice billing phải dùng migration monotonic mới sau `0024`; không sửa migration đã apply.
 
 - **Migration (delta doc-DDL vs live `0007` → một migration mới monotonic sau tail hiện tại, KHÔNG sửa `0007`):**
-  - `plans.plan_key` CHECK `('free','host_pro')` + seed v1 DD-29 — live vẫn CHECK 4-tier (ghi chú PENDING MIGRATION trong DDL trên);
-  - `subscriptions`: bỏ `selected_extra_channel` (DD-29 — live còn cột này); `period_start`/`period_end` nullable cho free (DD-51 — live đang NOT NULL);
-  - `subscription_invoices.paid_at` (DD-51 — refund window đọc canonical `paid_at`; live chưa có cột);
-  - `billing_overrides.ticket_ref NOT NULL` (DD-51 — live chưa có cột).
+  - `plans.plan_key` CHECK `('free','host_pro')` + seed v1 (DD-29) — ✅ **authored + verified 2026-08-04**
+    (`plans-dd29-capability-registry` slice): `packages/db/migrations/0028_dd29_capability_registry_expand.sql`
+    (expand — widen CHECK, seed, repoint every existing `subscriptions` row, fail-closed guards
+    incl. one that unconditionally refuses to collapse ANY row still on `telegram`/`plus_channel`/
+    `all_channels` regardless of status, since the UPDATE irreversibly loses which tier it held) +
+    `0029_dd29_capability_registry_contract.sql` (contract — self-guarding narrow). Pending
+    review/merge to `main`; see the PENDING MIGRATION note in the DDL above for exact status.
+  - **Still pending (separate DD-51 deltas, NOT part of the above slice):** `subscriptions`: bỏ
+    `selected_extra_channel`; `period_start`/`period_end` nullable cho free (live đang NOT NULL);
+    `subscription_invoices.paid_at` (refund window đọc canonical `paid_at`; live chưa có cột);
+    `billing_overrides.ticket_ref NOT NULL` (live chưa có cột). These four track under the separate,
+    currently `idea`-status `feature-billing-lifecycle` backlog task — the DD-29 slice above
+    explicitly does not touch them (see its manifest `negative_scope`), even though this section
+    bundles them narratively with the DD-29 delta under one heading.
 - **Rollback:**
 
 | Bước | Hành động | An toàn? |
