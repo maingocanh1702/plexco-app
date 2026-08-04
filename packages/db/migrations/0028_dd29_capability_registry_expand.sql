@@ -130,6 +130,25 @@
 -- not optional, it is what makes "a failure aborts cleanly" true instead of
 -- aspirational. Omit steps 1a/1b if 0029 was never applied on this database:
 --   BEGIN;
+--     -- 0. Lock subscriptions FIRST, before touching plans at all (codex
+--     --    round-16 [P1], gate-attempt-04 self-review, before re-submitting
+--     --    for review: this same file's OWN header extensively documents why
+--     --    0028's forward path must lock subscriptions before plans — a
+--     --    concurrent tenant_provision() call always takes that order, so
+--     --    reversing it can deadlock. Steps 1a/1b below touch plans via an
+--     --    ALTER (ACCESS EXCLUSIVE) before step 2 ever touches subscriptions —
+--     --    exactly the reversed order gate-attempt-08 already fixed once, now
+--     --    reintroduced in the rollback path. Taking this toggle FIRST, on
+--     --    subscriptions, before plans is touched, restores the same order.
+--     --    It doubles as the same NO FORCE / FORCE toggle guards 1-3 and the
+--     --    data-migrate UPDATE need in the forward file: subscriptions carries
+--     --    FORCE ROW LEVEL SECURITY (0009), so step 2's UPDATE below, run
+--     --    under a connection with no app.tenant_id set (the normal case for
+--     --    a migration/DBA session), would otherwise silently match ZERO
+--     --    rows across every tenant — the exact RLS trap 0024 and 0028's own
+--     --    guards document — turning the revert into a silent no-op instead
+--     --    of a real one.
+--     ALTER TABLE subscriptions NO FORCE ROW LEVEL SECURITY;
 --     -- 1a/1b. Only if 0029 has already applied — inlined here, NOT run as
 --     --    0029's own separately-committed rollback, so a failure anywhere
 --     --    below (including 0029's own guard-1b-equivalent concern, already
@@ -149,13 +168,17 @@
 --     -- provisioned afterward, a pre-existing anomalous 'free' row guard 4
 --     -- tolerated, or a manually-assigned 'host_pro' row — is simply absent
 --     -- from dd29_migrated_tenants, so this never touches it, unconditionally.
+--     -- 2b. Restore FORCE now that subscriptions is done being written.
+--     ALTER TABLE subscriptions FORCE ROW LEVEL SECURITY;
 --     -- 3. Revert tenant_provision() to the old literal (CREATE OR REPLACE,
 --     --    same body as 0012_auth_functions.sql).
 --     -- 4. Lock plans EXCLUSIVELY before checking it (codex round-15 [P1],
 --     --    gate-attempt-04, same reasoning as 0029's own guard 1b: a plain
 --     --    SELECT below takes only ACCESS SHARE, which would not block a
 --     --    concurrent INSERT of a new price-change version landing between
---     --    this check and the DELETE two steps down):
+--     --    this check and the DELETE two steps down). A no-op re-acquisition
+--     --    if steps 1a/1b already took it; the first and only acquisition if
+--     --    0029 was never applied and those steps were skipped:
 --     LOCK TABLE plans IN ACCESS EXCLUSIVE MODE;
 --     -- 5. Refuse to delete a later, legitimate price-change version this
 --     --    migration never created — mirrors guard 2-catalog/0029's guard 1b.
@@ -177,8 +200,8 @@
 --     -- new tenant, an untracked anomaly, or a 'host_pro' row with no inverse
 --     -- to revert to — the FK (subscriptions_plan_key_plan_version_fkey)
 --     -- makes this DELETE fail. Because the whole sequence runs inside this
---     -- one BEGIN/COMMIT, that failure aborts EVERYTHING above too — steps 1
---     -- through 3 are undone along with it, not left half-applied. That
+--     -- one BEGIN/COMMIT, that failure aborts EVERYTHING above too — every
+--     -- step from 0 through 3 is undone along with it, not left half-applied. That
 --     -- failure IS the correct outcome: resolving it (reassigning those
 --     -- specific tenants manually, or accepting 'free'/'host_pro' as
 --     -- permanent and doing a code-only partial rollback of just

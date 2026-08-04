@@ -753,6 +753,14 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
     return { dbClient, migratedTenantId };
   }
 
+  // Matches the documented sequence exactly (codex round-16 self-review before gate-attempt-05):
+  // subscriptions carries FORCE ROW LEVEL SECURITY, so the UPDATE below would silently match zero
+  // rows under a connection with no app.tenant_id set unless toggled off first, same as every
+  // other subscriptions-touching statement in both migration files. The toggle also locks
+  // subscriptions before anything below ever touches plans, preserving the subscriptions-then-plans
+  // order 0028's own header requires to avoid deadlocking a concurrent tenant_provision() call.
+  const LOCK_AND_TOGGLE_SUBSCRIPTIONS = `ALTER TABLE subscriptions NO FORCE ROW LEVEL SECURITY`;
+  const RESTORE_SUBSCRIPTIONS_RLS = `ALTER TABLE subscriptions FORCE ROW LEVEL SECURITY`;
   const TARGETED_REVERT = `
     UPDATE subscriptions SET plan_key = 'free_web'
       WHERE plan_key = 'free' AND tenant_id IN (SELECT tenant_id FROM dd29_migrated_tenants)`;
@@ -876,7 +884,9 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
       // references plans('free',1); ROLLBACK must then undo the targeted revert too.
       const sql0012 = await readFile(path.join(MIGRATIONS_DIR, "0012_auth_functions.sql"), "utf8");
       await dbClient.query("BEGIN");
+      await dbClient.query(LOCK_AND_TOGGLE_SUBSCRIPTIONS);
       await dbClient.query(TARGETED_REVERT);
+      await dbClient.query(RESTORE_SUBSCRIPTIONS_RLS);
       await dbClient.query(REVERT_TENANT_PROVISION(sql0012));
       await dbClient.query(LOCK_PLANS);
       await dbClient.query(VERSION_GUARD);
@@ -940,7 +950,9 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
 
       const sql0012 = await readFile(path.join(MIGRATIONS_DIR, "0012_auth_functions.sql"), "utf8");
       await dbClient.query("BEGIN");
+      await dbClient.query(LOCK_AND_TOGGLE_SUBSCRIPTIONS);
       await dbClient.query(TARGETED_REVERT);
+      await dbClient.query(RESTORE_SUBSCRIPTIONS_RLS);
       await dbClient.query(REVERT_TENANT_PROVISION(sql0012));
       await dbClient.query(LOCK_PLANS);
       await expect(dbClient.query(VERSION_GUARD)).rejects.toThrow(/free\/host_pro at version/i);
@@ -988,8 +1000,13 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
 
       const sql0012 = await readFile(path.join(MIGRATIONS_DIR, "0012_auth_functions.sql"), "utf8");
       await dbClient.query("BEGIN");
-      // STEP 2 (1a/1b — 0029 never applied in this test, so those do not apply): targeted revert.
+      // STEP 0 (1a/1b — 0029 never applied in this test, so those do not apply): lock/toggle
+      // subscriptions before touching plans at all.
+      await dbClient.query(LOCK_AND_TOGGLE_SUBSCRIPTIONS);
+      // STEP 2: targeted revert.
       await dbClient.query(TARGETED_REVERT);
+      // STEP 2b: restore subscriptions RLS now that the revert is done.
+      await dbClient.query(RESTORE_SUBSCRIPTIONS_RLS);
       // STEP 3: revert tenant_provision().
       await dbClient.query(REVERT_TENANT_PROVISION(sql0012));
       // STEP 4: lock plans exclusively before checking it.
