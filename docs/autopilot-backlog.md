@@ -1320,7 +1320,18 @@ scope: [package.json, pnpm-lock.yaml, pnpm-workspace.yaml]
 manifest: docs/autopilot-manifests/pnpm-workspace-esbuild-override-inert.json
 slice_doc: docs/autopilot-pnpm-workspace-esbuild-override-inert.md
 launcher: .claude/commands/ap-48-pnpm-workspace-esbuild-override-inert.md
-merged_probe: package.json :: esbuild@<0.25.0
+merged_probe: null
+close_by: hand · **Sửa 2026-08-04 sau khi reconciler bác probe cũ.** `merged_probe` trước ghi
+  `package.json :: esbuild@<0.25.0` kèm khẳng định rằng đó là symbol phân biệt được. Sai:
+  `autopilot-backlog-reconcile` bắt `× WEAK-PROBE — shared literal → collides with unrelated origin/main
+  content`, vì chuỗi đó **đã có sẵn** trong `pnpm-workspace.yaml` từ trước slice, nên probe hit cả trước
+  lẫn sau merge.
+  Slice này đổi config và lockfile, **không tạo symbol nào** — nên không tồn tại probe phân biệt được, và
+  `close_by: hand` là phân loại đúng chứ không phải lối thoát. Cùng lớp với `deps-security-bump`, vốn tự
+  ghi đúng điều này về chính nó.
+  Bài học của người viết entry: `close_by: hand` bị coi là mùi hôi vì ba entry tuần này mang nó với lý do
+  đã mục. Cảm giác đó bị áp nhầm sang một ca mà nó chính xác. Một phân loại sai vì lý do mục khác với một
+  phân loại đúng.
 authoring_note: **Selector có điều kiện là bắt buộc, không phải phong cách.** `tsx@4.23.0` cần
   `esbuild@0.28.1` một cách hợp lệ, nên một override khoá trần `esbuild` sẽ ép cả cây xuống sàn và làm
   hỏng tsx. Phải giữ đúng dạng `esbuild@<0.25.0` mà `pnpm-workspace.yaml` vốn đã khai — bản sửa là **dời
