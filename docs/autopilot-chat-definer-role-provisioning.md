@@ -492,10 +492,13 @@ closed on runtime-role targets", ...)` at line 1239). Originally specified as th
     with two distinct grantor rows for one member and no second live member. The re-pointing guard
     therefore already closes this exact multi-grantor class for free in every state a real client can
     produce; the `EXISTS` fix is defense in depth against states GRANT cannot reach (a future
-    re-pointing-guard change, a script version without one, direct catalog manipulation). The test now
-    constructs the two-row state directly (bypassing the full script for the final check) and mirrors
-    §5.1's exact `EXISTS` condition, proving the query itself is correct without claiming the full
-    script can be driven through this exact path today.
+    re-pointing-guard change, a script version without one, direct catalog manipulation). The test
+    constructs the two-row state directly (bypassing the full script for the final check), then
+    **reads `02-chat-definer.sql` at run time and extracts the live `EXISTS (...)` predicate itself**
+    (codex round 7, this registration — the original version hand-mirrored the condition as a literal
+    string, which mutation-testing later proved was disconnected from the real file; see §11.1 case
+    9(b) and §11.3), so a regression to the production condition changes what this test actually
+    executes rather than being caught only by convention.
 
 Every case that deliberately breaks the shared cluster-global role runs inside `withChatDefinerLock`,
 exactly as the job_definer negative-path tests run inside `withJobDefinerLock` — same rationale

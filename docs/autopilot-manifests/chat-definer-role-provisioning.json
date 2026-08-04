@@ -86,7 +86,7 @@
     ],
     "e2e": []
   },
-  "_verification_note": "Commands assert PROPERTIES the design contract requires (exact attribute string, exact GUC name, absence of the deferred schema grant, absence of any job_definer/RUNTIME_ROLES/CI/compose edits), not pinned literals like line counts. They will all fail today (pre-implementation, authoring-only), which is expected and correct. The two `! git diff` commands assert the negative-scope claim that this slice touches zero migrations and zero CI/compose files -- run them against the slice's own worktree diff at register/ready time, not against this authoring session (which has no branch yet).",
+  "_verification_note": "Commands assert PROPERTIES the design contract requires (exact attribute string, exact GUC name, absence of the deferred schema grant, absence of any job_definer/RUNTIME_ROLES/CI/compose edits), not pinned literals like line counts. Written pre-implementation (authoring-only), when they were all expected to fail; implementation has since landed and all fifteen pass against the current worktree (verified 2026-08-04, this registration -- codex round 11 advisory). The two `! git diff` commands assert the negative-scope claim that this slice touches zero migrations and zero CI/compose files -- run against the slice's own worktree diff, not against the authoring session that no longer applies.",
   "code_review": {
     "required": true,
     "tool": "scripts/codex-review-pin.sh",
