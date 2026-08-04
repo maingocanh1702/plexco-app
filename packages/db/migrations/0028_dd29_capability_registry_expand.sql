@@ -52,9 +52,12 @@
 -- retry blindly (see manifest stop_conditions).
 --
 -- Rollback (conditional — safe only if committed and no new-key row has been
--- created downstream since): revert tenant_provision() to the old literal,
--- reverse the UPDATE below for only the rows this migration touched, delete
--- the 2 new plans rows, narrow plans_key_chk back to the 4 old values.
+-- created downstream since; if 0029 has already applied too, roll IT back
+-- first — see 0029's own rollback note — so the 4 old plans rows this
+-- migration's rollback needs to narrow back onto actually exist again):
+-- revert tenant_provision() to the old literal, reverse the UPDATE below for
+-- only the rows this migration touched, delete the 2 new plans rows, narrow
+-- plans_key_chk back to the 4 old values.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
