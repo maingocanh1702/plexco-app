@@ -16,16 +16,43 @@
 -- plus_channel/all_channels aborts the whole transaction instead of being
 -- repointed). Runs as ONE transaction (migrate.ts wraps each file in
 -- BEGIN…COMMIT/ROLLBACK) in this order:
---   1. widen plans_key_chk (union of old ∪ new values — a CHECK applies to
+--   1. lock subscriptions FIRST, before touching plans at all (codex round-05
+--      [P1], gate-attempt-08 — see the dedicated note below: this ordering
+--      is what prevents a deadlock against concurrent tenant_provision());
+--   2. widen plans_key_chk (union of old ∪ new values — a CHECK applies to
 --      every row, so the new rows below need it widened before they can
 --      insert, and free_web rows need it widened until they have been
 --      repointed, below);
---   2. insert the two new plans rows (idempotent, ON CONFLICT DO NOTHING);
---   3. redefine tenant_provision() so every NEW tenant created from this
---      point on gets 'free', not 'free_web' — same transaction as step 2, so
+--   3. insert the two new plans rows (idempotent, ON CONFLICT DO NOTHING);
+--   4. redefine tenant_provision() so every NEW tenant created from this
+--      point on gets 'free', not 'free_web' — same transaction as step 3, so
 --      there is no window where a concurrent tenant_provision() call could
 --      insert against a plan_key that doesn't exist yet;
---   4. fail-loud guards, then the data migration UPDATE.
+--   5. fail-loud guards, then the data migration UPDATE.
+--
+-- Lock ordering vs. concurrent tenant_provision() (codex round-05 [P1],
+-- gate-attempt-08): tenant_provision() is a live, SECURITY DEFINER write path
+-- (apps/web's POST /api/onboarding/start) that, in its one INSERT INTO
+-- subscriptions, takes a table-level lock on subscriptions FIRST and then a
+-- FOR KEY SHARE row lock on the referenced plans row (Postgres validates the
+-- FK as part of that same INSERT) — always in that order, since it never
+-- touches plans anywhere else in its body. An earlier version of this
+-- migration took ACCESS EXCLUSIVE on plans FIRST (step 2's DROP/ADD
+-- CONSTRAINT) and did not lock subscriptions until step 5 — the REVERSE
+-- order. Under that reverse order, a concurrent tenant_provision() call that
+-- reaches its subscriptions INSERT while this migration already holds
+-- plans, then this migration reaching its own subscriptions lock while that
+-- INSERT's FK check is blocked waiting on plans, forms a genuine circular
+-- wait: this migration blocks on subscriptions (held by tenant_provision's
+-- insert), tenant_provision blocks on plans (held by this migration) —
+-- Postgres's deadlock detector would abort one of the two transactions
+-- (possibly the live onboarding request, not the migration) after
+-- deadlock_timeout. Locking subscriptions FIRST here — matching
+-- tenant_provision()'s own fixed order — makes that cycle structurally
+-- impossible: whichever transaction reaches subscriptions first simply
+-- makes the other wait for it, never the reverse. DD29-8 (migrate.test.ts)
+-- proves the concurrent call blocks cleanly (not errors) and completes once
+-- this migration's transaction ends.
 --
 -- Why the guards are load-bearing, not defensive boilerplate: this session's
 -- live-truth read found zero application code anywhere reading
@@ -61,7 +88,20 @@
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
--- 1. Widen plans_key_chk: union of old ∪ new values. Postgres has no
+-- 1. Lock subscriptions FIRST — before touching plans at all. See the lock-
+-- ordering note in the header above: this ACCESS EXCLUSIVE acquisition must
+-- happen before plans is touched, matching tenant_provision()'s own fixed
+-- lock order (subscriptions, then plans via its FK check), or a concurrent
+-- tenant_provision() call and this migration can deadlock each other.
+-- NO FORCE ROW LEVEL SECURITY is also the mechanism guards 1-3 and the data
+-- migrate UPDATE below need (subscriptions carries FORCE RLS, 0009 — see
+-- their own comments for why), so taking it here serves both purposes at
+-- once; it is restored at the very end of this file, after the UPDATE.
+-- ---------------------------------------------------------------------------
+ALTER TABLE subscriptions NO FORCE ROW LEVEL SECURITY;
+
+-- ---------------------------------------------------------------------------
+-- 2. Widen plans_key_chk: union of old ∪ new values. Postgres has no
 -- in-place CHECK-predicate ALTER — DROP + ADD is required. plans is a small
 -- shared catalog table (a handful of rows total), so the re-validation
 -- ADD CONSTRAINT performs is cheap, unlike the money-path tables 0025 had to
@@ -72,7 +112,7 @@ ALTER TABLE plans ADD CONSTRAINT plans_key_chk
   CHECK (plan_key IN ('free_web','telegram','plus_channel','all_channels','free','host_pro'));
 
 -- ---------------------------------------------------------------------------
--- 2. Insert the two new catalog rows. Literals transcribed verbatim from
+-- 3. Insert the two new catalog rows. Literals transcribed verbatim from
 -- feature_billing_lifecycle_tech.md:68-81 (Reviewed) — not re-derived.
 -- ---------------------------------------------------------------------------
 INSERT INTO plans (plan_key, version, price, limits, entitlements) VALUES
@@ -93,7 +133,7 @@ INSERT INTO plans (plan_key, version, price, limits, entitlements) VALUES
 ON CONFLICT (plan_key, version) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
--- 3. Redefine tenant_provision() — identical body to 0012_auth_functions.sql
+-- 4. Redefine tenant_provision() — identical body to 0012_auth_functions.sql
 -- (never edit that file directly; it is already applied), changing only the
 -- literal on the subscriptions INSERT from 'free_web' to 'free'. Ownership
 -- and grants are not reset by CREATE OR REPLACE FUNCTION with an unchanged
@@ -169,7 +209,7 @@ REVOKE ALL ON FUNCTION tenant_provision(text,text,text,text,uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION tenant_provision(text,text,text,text,uuid) TO app;
 
 -- ---------------------------------------------------------------------------
--- 4. Fail-loud guards, then data-migrate — in this order. See header for why
+-- 5. Fail-loud guards, then data-migrate — in this order. See header for why
 -- these are checked properties, not defensive boilerplate.
 --
 -- subscriptions carries ENABLE + FORCE ROW LEVEL SECURITY (0009), keyed on the
@@ -183,18 +223,14 @@ GRANT EXECUTE ON FUNCTION tenant_provision(text,text,text,text,uuid) TO app;
 -- documented for `sessions` (that migration's own "RLS trap" comment, closed
 -- there via VALIDATE CONSTRAINT's RLS-immune scan). Guards 1/2 and the UPDATE
 -- below need an actual row count / actual affected rows across ALL tenants,
--- not just a boolean, so the guard here is a straight toggle instead:
--- NO FORCE ROW LEVEL SECURITY restores the owner exemption for the scope of
--- this transaction only (ALTER TABLE ... FORCE/NO FORCE requires only table
--- ownership — every table here was created by this same migration role — no
--- BYPASSRLS/superuser attribute needed), then FORCE is restored before this
--- transaction commits. Both toggles run inside the one transaction migrate.ts
--- wraps this whole file in, so a concurrent session only ever observes the
--- fully-committed FORCE-ON state, never a relaxed window, and any failure
--- below rolls the toggle back too — there is no path that leaves RLS relaxed
--- outside this migration's own transaction.
+-- not just a boolean — step 1 already took NO FORCE ROW LEVEL SECURITY for
+-- exactly this (and for lock ordering; see the header note), so it is
+-- already in effect here. FORCE is restored at the very end, after the
+-- UPDATE, before this transaction commits — the one toggle-off/toggle-on
+-- pair runs inside the one transaction migrate.ts wraps this whole file in,
+-- so a concurrent session only ever observes the fully-committed FORCE-ON
+-- state, never a relaxed window, and any failure below rolls it back too.
 -- ---------------------------------------------------------------------------
-ALTER TABLE subscriptions NO FORCE ROW LEVEL SECURITY;
 
 -- guard 1: refuse to proceed if any row is outside the known old∪new set
 DO $$ DECLARE v_bad integer; BEGIN
