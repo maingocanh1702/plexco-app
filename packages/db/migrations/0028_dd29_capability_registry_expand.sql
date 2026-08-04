@@ -320,12 +320,27 @@ DO $$ DECLARE v_bad integer; BEGIN
   END IF;
 END $$;
 
--- guard 2: refuse the "only v1 ever existed" assumption unless it actually holds on THIS database
-DO $$ DECLARE v_bad_version integer; BEGIN
+-- guard 2: refuse the "only v1 ever existed" assumption unless it actually holds on THIS
+-- database — checked against BOTH subscriptions (whose plan_version the CASE mapping below
+-- assumes is 1) AND the plans catalog itself (codex round-08 [P1], gate-attempt-04: an
+-- old-key catalog row at version <> 1 that no subscription references — e.g. a historical
+-- telegram@2 price-change snapshot, exactly the shape business-rules.md edge case #6 calls
+-- out as "plan version immutable" — would pass the subscriptions-only check below, then
+-- 0029's unconditional DELETE FROM plans WHERE plan_key IN (...) silently erases it, since
+-- that DELETE has no version filter. Checking plans directly closes that gap regardless of
+-- whether any subscription ever pointed at the row.
+DO $$ DECLARE v_bad_version integer; v_bad_catalog_version integer; BEGIN
   SELECT count(*) INTO v_bad_version FROM subscriptions
     WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels') AND plan_version <> 1;
   IF v_bad_version > 0 THEN
     RAISE EXCEPTION 'DD-29 expand: % subscriptions row(s) sit on an old plan_key at version <> 1 — the CASE mapping below only handles v1', v_bad_version
+      USING ERRCODE = 'data_exception';
+  END IF;
+
+  SELECT count(*) INTO v_bad_catalog_version FROM plans
+    WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels') AND version <> 1;
+  IF v_bad_catalog_version > 0 THEN
+    RAISE EXCEPTION 'DD-29 expand: % plans catalog row(s) exist on an old plan_key at version <> 1 (referenced by a live subscription or not) — 0029''s later DELETE has no version filter and would silently erase this immutable pricing history', v_bad_catalog_version
       USING ERRCODE = 'data_exception';
   END IF;
 END $$;

@@ -667,6 +667,49 @@ describe("DD29-1/DD29-2 0028 expand fails closed on plan_key data anomalies", ()
       await ctx.teardown();
     }
   }, 60_000);
+
+  it("DD29-10 (guard 2, catalog check): an UNREFERENCED old-key plans row at version != 1 rolls back 0028 entirely (codex round-08 [P1], gate-attempt-04) — no subscription needs to point at it", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard2_catalog");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // A historical price-change snapshot that NOTHING references any more (the tenant that
+      // was on it long since cancelled/migrated away) — deliberately no subscriptions INSERT
+      // here, unlike DD29-2. The subscriptions-only check in guard 2 would miss this row
+      // entirely; only the catalog-side check added for this finding can see it.
+      await superuserInDb.query(
+        `INSERT INTO plans (plan_key, version, price) VALUES ('telegram', 2, 89000)`,
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0028)).rejects.toThrow(/plans catalog row/i);
+
+      // Prove the whole file rolled back and the historical row survives untouched.
+      const legacy = await superuserInDb.query(
+        `SELECT price FROM plans WHERE plan_key = 'telegram' AND version = 2`,
+      );
+      expect(legacy.rows.length).toBe(1);
+      expect((legacy.rows[0] as { price: number }).price).toBe(89000);
+      const plans = await superuserInDb.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free','host_pro')`,
+      );
+      expect(plans.rows.length).toBe(0);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
 });
 
 describe("DD29-9 0028 expand fails closed on a conflicting pre-existing plans catalog row", () => {
