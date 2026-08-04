@@ -112,79 +112,46 @@
 -- for owner review — never widen the map, invent a repricing policy, or
 -- retry blindly (see manifest stop_conditions).
 --
--- Rollback (codex round-12 [P1], gate-attempt-01 on the scope-expanded
--- registration: round-10's precondition checked tenant AGE for 'free'/
--- 'host_pro' together, but age is the wrong signal for 'host_pro' — an OLDER
--- tenant, predating this migration, could still end up on 'host_pro' via a
--- direct manual UPDATE or a not-yet-built upgrade flow, entirely outside
--- tenant_provision(). The age-based precondition would not catch that row,
--- and the sequence below never reverted 'host_pro' subscriptions at all — it
--- would then try to delete plans('host_pro',1) while that row still
--- referenced it, the exact FK failure round-10 was supposed to prevent, just
--- for the other plan. This note now separates the two plans, since they are
--- NOT symmetric: 'free' has an unambiguous inverse ('free_web'); 'host_pro'
--- has none — it could have come from any of three old tiers, or from no old
--- tier at all):
+-- Rollback (codex round-13 [P1], gate-attempt-02: rounds 10 and 12 each
+-- patched one gap in an INFERENCE-based precondition (tenant age, then an
+-- unconditional host_pro count) and each left another — guard 4 above
+-- deliberately TOLERATES a pre-existing 'free'/'host_pro' catalog row with
+-- the correct payload, and a subscription could already reference it before
+-- this migration ever runs; no inference from timestamps or plan_key values
+-- alone can distinguish that untouched subscription from one this migration
+-- actually repointed. Converged on a design that needs no inference: this
+-- migration now records EXACTLY which subscriptions its own UPDATE touches,
+-- in dd29_migrated_tenants (see that table's own comment below), so "which
+-- rows to revert" is a plain lookup, not a derived property with edge cases):
 --
--- STEP 0a — HOST_PRO CHECK (unconditional, run first; changes nothing):
---   SELECT count(*) FROM subscriptions WHERE plan_key = 'host_pro';
--- If this is > 0, STOP — do not run any step below. There is no automated,
--- unambiguous inverse for a 'host_pro' row (unlike 'free', which always
--- reverts to 'free_web'), so ANY existing 'host_pro' subscription — regardless
--- of its tenant's age — blocks a full rollback until an owner manually
--- resolves each one (assign it a specific old-style plan_key, or decide
--- 'host_pro' must remain permanent in the catalog and fall back to a
--- code-only partial rollback: revert tenant_provision()'s literal only,
--- leave the CHECK/catalog/already-migrated subscriptions as they are). As of
--- this migration, tenant_provision() never writes 'host_pro' — this check is
--- 0 today by construction — but it is unconditional, not tenant-age-scoped,
--- because a future write path (or a manual upgrade) could set it on a
--- tenant of ANY age, not just one newer than this migration.
---
--- STEP 0b — FREE PRECONDITION (run only if step 0a passed; changes nothing):
---   SELECT count(*) FROM subscriptions s JOIN tenants t ON t.id = s.tenant_id
---     WHERE s.plan_key = 'free' AND t.created_at > (
---       SELECT applied_at FROM schema_migrations
---         WHERE name = '0028_dd29_capability_registry_expand.sql');
--- If this is > 0, STOP for the same reason as before: at least one tenant was
--- provisioned onto 'free' after this migration committed, and reverting every
--- 'free' row would corrupt it. Age IS the right signal here, unlike for
--- 'host_pro', because 'free' has exactly one writer (tenant_provision(),
--- verified — see below) that sets it ONCE, atomically, at tenant creation,
--- and nothing else ever changes a subscription's plan_key after that. This is
--- exactly the scenario the OPERATIONAL PRECONDITION above exists to prevent —
--- if deploys correctly paused onboarding for their duration, this count is
--- always 0 at rollback time.
---
--- If BOTH checks pass (zero 'host_pro' rows, zero new-tenant 'free' rows),
--- the full sequence is safe, in this exact order:
+-- To roll back (in this order):
 --   1. (only if 0029 has already applied) roll 0029 back first — see its own
 --      rollback note — so plans('free_web',1) etc. exist again before step 2
 --      needs to reference them.
---   2. Revert EVERY subscription currently on plan_key='free' back to
---      'free_web' — not a filtered subset. Step 0b just proved the "new
---      tenant" set is empty, so "every row on 'free'" and "every row this
---      migration's UPDATE touched" are now the SAME set:
---        UPDATE subscriptions SET plan_key = 'free_web' WHERE plan_key = 'free';
---      Doing this BEFORE the delete in step 3 is what makes step 3 FK-safe —
---      by the time step 3 runs, nothing references plans('free',1) OR
---      plans('host_pro',1) any more (step 0a already proved zero rows
---      reference the latter).
---   3. Revert tenant_provision() to the old literal, delete the plans('free',1)
---      and ('host_pro',1) rows, narrow plans_key_chk back to the 4 old values.
---
--- Step 0b's provenance needs no new column or audit table — it already exists
--- on tenants/schema_migrations. Before this migration ran, NO subscription
--- could have plan_key='free' at all (the pre-0028 CHECK disallowed it), and a
--- tenant's row is always inserted before its own subscription, in the same
--- transaction (tenant_provision()'s body) — so a 'free' subscription whose
--- tenant predates this migration's own applied_at can only be one this
--- migration's UPDATE touched; one whose tenant postdates it can only be new.
--- This reasoning holds only while tenant_provision() remains the sole writer
--- of subscriptions.plan_key — re-verify that (grep for other writers) before
--- trusting step 0b's query at rollback time. Step 0a needs no such caveat —
--- it does not depend on who writes plan_key or when, only that no row
--- currently holds 'host_pro'.
+--   2. Revert ONLY the tracked tenants, never a blanket "every 'free' row":
+--        UPDATE subscriptions SET plan_key = 'free_web'
+--          WHERE plan_key = 'free'
+--            AND tenant_id IN (SELECT tenant_id FROM dd29_migrated_tenants);
+--      A tenant this migration never touched — a genuinely new one
+--      provisioned afterward, OR a pre-existing anomalous 'free' row guard 4
+--      tolerated, OR a manually-assigned 'host_pro' row — is simply absent
+--      from dd29_migrated_tenants, so step 2 never touches it, unconditionally,
+--      with no age check or plan-specific check required.
+--   3. Revert tenant_provision() to the old literal, then attempt:
+--        DELETE FROM plans WHERE plan_key IN ('free','host_pro');
+--      This is the actual safety net, and it is enforced by Postgres itself,
+--      not by this migration's own logic: if ANYTHING still references either
+--      row after step 2 — an untracked new tenant, an untracked anomaly, or a
+--      'host_pro' row with no inverse to revert to — the FK
+--      (subscriptions_plan_key_plan_version_fkey) makes this DELETE fail,
+--      aborting the whole rollback transaction cleanly. That failure IS the
+--      correct outcome: resolving it (reassigning those specific tenants
+--      manually, or accepting 'free'/'host_pro' as permanent and doing a
+--      code-only partial rollback of just tenant_provision()'s literal) is an
+--      owner decision this migration does not make. Only once the DELETE
+--      succeeds is it safe to also narrow plans_key_chk back to the 4 old
+--      values and DROP TABLE dd29_migrated_tenants — the very last step of a
+--      fully successful rollback, never before.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -444,18 +411,46 @@ DO $$ DECLARE v_legacy_paid integer; BEGIN
   END IF;
 END $$;
 
+-- Explicit rollback provenance (codex round-13 [P1], gate-attempt-02: rounds
+-- 10/12's inference-based rollback preconditions — tenant age for 'free',
+-- an unconditional count for 'host_pro' — each closed one gap but left
+-- another: guard 4 above deliberately TOLERATES a pre-existing 'free'/
+-- 'host_pro' catalog row with the correct payload, and a subscription could
+-- already reference that row before this migration even runs; the age-based
+-- check could not distinguish that untouched subscription from one this
+-- migration actually repointed, and would incorrectly revert it too. A
+-- design needing no inference closes this permanently: record exactly which
+-- subscriptions THIS UPDATE touches, in the same transaction, via a plain
+-- table — "which rows to revert" becomes a lookup, not a derived property
+-- with edge cases. Left in place indefinitely (harmless, one row per
+-- migrated tenant) — 0029 must never drop it; only a fully successful
+-- rollback of THIS file removes it, as its very last step.
+CREATE TABLE IF NOT EXISTS dd29_migrated_tenants (
+  tenant_id uuid PRIMARY KEY REFERENCES tenants(id)
+);
+
 -- data migrate: free_web -> free (explicit, DD-29 changelog); telegram /
 -- plus_channel / all_channels -> host_pro (derived — DD-29 collapses 4 tiers
 -- into exactly one paid tier, so no third destination value exists for any
--- of the three to map to instead).
-UPDATE subscriptions SET
-  plan_key = CASE plan_key
-    WHEN 'free_web' THEN 'free'
-    WHEN 'telegram' THEN 'host_pro'
-    WHEN 'plus_channel' THEN 'host_pro'
-    WHEN 'all_channels' THEN 'host_pro'
-    ELSE plan_key END,
-  plan_version = 1
-WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels');
+-- of the three to map to instead — though guard 3 above makes these three
+-- branches unreachable in practice; the WHERE clause below only ever
+-- actually matches free_web rows). The RETURNING/INSERT captures exactly
+-- the tenant_ids this UPDATE touches into dd29_migrated_tenants, atomically,
+-- in the same statement.
+WITH migrated AS (
+  UPDATE subscriptions SET
+    plan_key = CASE plan_key
+      WHEN 'free_web' THEN 'free'
+      WHEN 'telegram' THEN 'host_pro'
+      WHEN 'plus_channel' THEN 'host_pro'
+      WHEN 'all_channels' THEN 'host_pro'
+      ELSE plan_key END,
+    plan_version = 1
+  WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels')
+  RETURNING tenant_id
+)
+INSERT INTO dd29_migrated_tenants (tenant_id)
+SELECT tenant_id FROM migrated
+ON CONFLICT (tenant_id) DO NOTHING;
 
 ALTER TABLE subscriptions FORCE ROW LEVEL SECURITY;

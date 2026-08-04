@@ -40,10 +40,22 @@
 --      `sessions`), so the guard's own count query needs the same
 --      NO FORCE / FORCE ROW LEVEL SECURITY toggle 0028 uses, scoped to this
 --      transaction only;
---   2. delete the 4 old plans rows — safe once the guard above proves no
---      subscriptions row still references them (plans carries no RLS — it is
---      a shared global catalog, not a tenant-scoped table, so no toggle is
---      needed for this step);
+--   1b. catalog-version guard (codex round-13 [P1], gate-attempt-02: this
+--      file's own gap — 0028's guard 2/2-catalog only ever ran AT 0028's OWN
+--      COMMIT; anything inserted into `plans` on an old key AFTER that, in the
+--      window before this file runs — e.g. a stray telegram@2 historical
+--      price-change row with no subscription pointing at it — would sail past
+--      guard 1 above (which only checks subscriptions) and then get silently
+--      erased by the unconditional DELETE below, exactly the "plan version is
+--      immutable, never silently destroyed" hazard 0028's own guard 2-catalog
+--      exists to prevent, just on this file's side of the gap instead):
+--      refuse if any `plans` row on an old key still exists at a version other
+--      than 1 — the CHECK below only handles version 1 rows dying together
+--      with the fixed 4-row seed;
+--   2. delete the 4 old plans rows — safe once guards 1 and 1b above prove no
+--      subscriptions row still references them AND no unexpected extra
+--      version exists (plans carries no RLS — it is a shared global catalog,
+--      not a tenant-scoped table, so no toggle is needed for this step);
 --   3. narrow plans_key_chk to the final DD-29 shape, ('free','host_pro').
 --      Keep the constraint NAME plans_key_chk (0025 established it for
 --      schema.ts alignment) — only the predicate narrows.
@@ -71,8 +83,25 @@ DO $$ DECLARE v_remaining integer; BEGIN
 END $$;
 ALTER TABLE subscriptions FORCE ROW LEVEL SECURITY;
 
+-- guard 1b (codex round-13 [P1], gate-attempt-02): refuse if any old-key
+-- plans row exists at a version other than 1 — regardless of whether any
+-- subscription references it. Mirrors 0028's own guard-2-catalog check, on
+-- this file's side of the 0028-to-0029 gap: a historical price-change
+-- snapshot (e.g. telegram@2) inserted into the catalog AFTER 0028 committed
+-- would pass guard 1 above untouched (it only scans subscriptions) and then
+-- be silently destroyed by the unconditional DELETE below.
+DO $$ DECLARE v_bad_catalog_version integer; BEGIN
+  SELECT count(*) INTO v_bad_catalog_version FROM plans
+    WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels') AND version <> 1;
+  IF v_bad_catalog_version > 0 THEN
+    RAISE EXCEPTION 'DD-29 contract: % plans catalog row(s) exist on an old plan_key at version <> 1 — this DELETE only knows how to retire the fixed 4-row v1 seed; resolve the extra version before retrying', v_bad_catalog_version
+      USING ERRCODE = 'data_exception';
+  END IF;
+END $$;
+
 DELETE FROM plans WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels');
--- safe: the guard above proves no subscriptions FK still references these rows.
+-- safe: the guards above prove no subscriptions FK still references these
+-- rows, and no unexpected extra version exists among them.
 
 ALTER TABLE plans DROP CONSTRAINT plans_key_chk;
 ALTER TABLE plans ADD CONSTRAINT plans_key_chk CHECK (plan_key IN ('free','host_pro'));

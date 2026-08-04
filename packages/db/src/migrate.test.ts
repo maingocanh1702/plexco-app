@@ -769,52 +769,12 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
     return { dbClient, migratedTenantId };
   }
 
-  // The exact precondition queries from 0028's rollback note — split (codex round-12 [P1],
-  // gate-attempt-01 on the scope-expanded registration) because tenant age is the right signal
-  // for 'free' (one atomic writer, tenant_provision()) but the wrong one for 'host_pro' (no
-  // writer today, but no safe inverse either — a future/manual write could target ANY tenant
-  // age, so that check must be unconditional, not age-scoped).
-  const HOST_PRO_CHECK_QUERY = `SELECT count(*)::int AS n FROM subscriptions WHERE plan_key = 'host_pro'`;
-  const FREE_PRECONDITION_QUERY = `
-    SELECT count(*)::int AS n FROM subscriptions s JOIN tenants t ON t.id = s.tenant_id
-      WHERE s.plan_key = 'free' AND t.created_at > (
-        SELECT applied_at FROM schema_migrations
-          WHERE name = '0028_dd29_capability_registry_expand.sql')`;
+  const TARGETED_REVERT = `
+    UPDATE subscriptions SET plan_key = 'free_web'
+      WHERE plan_key = 'free' AND tenant_id IN (SELECT tenant_id FROM dd29_migrated_tenants)`;
 
-  it("STEP 0b: the free precondition finds a tenant provisioned after 0028 and correctly signals full rollback is unsafe (codex round-10 [P1], gate-attempt-06)", async () => {
-    const dbName = "plexco_migrate_dd29_rollback_precondition";
-    const admin = new pg.Client({ connectionString: BASE! });
-    await admin.connect();
-    let dbClient: pg.Client | undefined;
-    try {
-      const setup = await bootstrapThrough0028(dbName, admin);
-      dbClient = setup.dbClient;
-
-      // Onboarding "resumes" after the deploy: a genuinely new tenant, created by the
-      // redefined tenant_provision(), lands on 'free' directly — never touched by 0028's UPDATE.
-      const personRow = await dbClient.query(
-        `INSERT INTO persons (display_name) VALUES ('DD29 Rollback New Owner') RETURNING id`,
-      );
-      const personId = (personRow.rows[0] as { id: string }).id;
-      await dbClient.query(`SELECT tenant_provision($1, $2, $3, $4, $5)`, [
-        "dd29-rollback-new",
-        "DD29 Rollback New Tenant",
-        "Asia/Ho_Chi_Minh",
-        "vi",
-        personId,
-      ]);
-
-      const precondition = await dbClient.query(FREE_PRECONDITION_QUERY);
-      expect((precondition.rows[0] as { n: number }).n).toBe(1);
-    } finally {
-      await dbClient?.end();
-      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
-      await admin.end();
-    }
-  }, 60_000);
-
-  it("STEP 0a: the host_pro check unconditionally blocks even for an OLDER tenant (predating 0028) — age is the wrong signal for host_pro since it has no writer today but no safe inverse either (codex round-12 [P1], gate-attempt-01 on the scope-expanded registration)", async () => {
-    const dbName = "plexco_migrate_dd29_rollback_hostpro_older";
+  it("dd29_migrated_tenants records exactly the tenant 0028's own UPDATE touches, nothing more", async () => {
+    const dbName = "plexco_migrate_dd29_provenance";
     const admin = new pg.Client({ connectionString: BASE! });
     await admin.connect();
     let dbClient: pg.Client | undefined;
@@ -823,19 +783,10 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
       dbClient = setup.dbClient;
       const { migratedTenantId } = setup;
 
-      // Simulate a manual upgrade (or a not-yet-built upgrade flow) setting an OLDER,
-      // pre-0028 tenant directly onto 'host_pro' — no tenant_provision() call involved, so the
-      // AGE-based free precondition would never see this at all (it only checks 'free').
-      await dbClient.query(`UPDATE subscriptions SET plan_key = 'host_pro' WHERE tenant_id = $1`, [
+      const tracked = await dbClient.query(`SELECT tenant_id FROM dd29_migrated_tenants`);
+      expect(tracked.rows.map((r) => (r as { tenant_id: string }).tenant_id)).toEqual([
         migratedTenantId,
       ]);
-
-      const hostProCheck = await dbClient.query(HOST_PRO_CHECK_QUERY);
-      expect((hostProCheck.rows[0] as { n: number }).n).toBe(1);
-
-      // Prove the age-based check alone would have missed this — it only ever looks at 'free'.
-      const freePrecondition = await dbClient.query(FREE_PRECONDITION_QUERY);
-      expect((freePrecondition.rows[0] as { n: number }).n).toBe(0);
     } finally {
       await dbClient?.end();
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
@@ -843,7 +794,104 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
     }
   }, 60_000);
 
-  it("when both preconditions hold (no host_pro row, no new-tenant free row), the complete rollback sequence — blanket subscriptions revert, THEN the plans-row delete — succeeds with no FK violation and reaches the exact pre-migration state (codex round-10 [P1], gate-attempt-06: the previous fix scoped WHICH rows to revert but never fixed the surrounding delete-before-revert ordering, which was FK-impossible whenever any row had to be preserved)", async () => {
+  it("a pre-existing 'free' subscription 0028 never touched (guard 4 tolerated a matching catalog row already there before 0028 ran) is absent from dd29_migrated_tenants and left untouched by the targeted revert — the exact gap codex round-13 [P1] found in the age-based approach (gate-attempt-02)", async () => {
+    const dbName = "plexco_migrate_dd29_rollback_anomaly";
+    const admin = new pg.Client({ connectionString: BASE! });
+    await admin.connect();
+    let dbClient: pg.Client | undefined;
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE ${dbName}`);
+      dbClient = await connect(url(dbName));
+      await withJobDefinerLock(BASE!, async () => {
+        await bootstrapJobDefiner(admin);
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+          await dbClient!.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Bypass the pre-0028 CHECK to construct a 'free'@1 catalog row with the CANONICAL
+      // (correct) payload — exactly what guard 4 tolerates as pre-existing and valid — plus a
+      // subscription that already references it, before 0028 ever runs.
+      await dbClient.query(`ALTER TABLE plans DROP CONSTRAINT plans_key_chk`);
+      await dbClient.query(
+        `ALTER TABLE plans ADD CONSTRAINT plans_key_chk
+           CHECK (plan_key IN ('free_web','telegram','plus_channel','all_channels','free','host_pro'))`,
+      );
+      await dbClient.query(
+        `INSERT INTO plans (plan_key, version, price, limits, entitlements) VALUES (
+           'free', 1, 0,
+           '{"max_clubs": 2, "ai_monthly_question_cap": 0}',
+           '{"capabilities": {"web_app": true, "bot_zalo": true, "bot_messenger": true,
+              "session_management": true, "discovery_marketplace": true,
+              "payment_mark_manual": true, "payment_reconcile_auto": false,
+              "reminders_manual": true, "reminders_auto": false,
+              "assistant_ai_kb": false, "crm_dashboard": false}}')`,
+      );
+      const anomaly = await dbClient.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Rollback Anomaly', 'dd29-rollback-anomaly', 'active') RETURNING id`,
+      );
+      const anomalyTenantId = (anomaly.rows[0] as { id: string }).id;
+      await dbClient.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
+         VALUES ($1, 'free', 1, now(), 'infinity')`,
+        [anomalyTenantId],
+      );
+
+      // The migrated tenant, exactly as the shared helper builds it.
+      const preExisting = await dbClient.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Rollback Migrated', 'dd29-rollback-migrated', 'active') RETURNING id`,
+      );
+      const migratedTenantId = (preExisting.rows[0] as { id: string }).id;
+      await dbClient.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
+         VALUES ($1, 'free_web', 1, now(), 'infinity')`,
+        [migratedTenantId],
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await dbClient.query(sql0028);
+
+      const tracked = await dbClient.query(`SELECT tenant_id FROM dd29_migrated_tenants`);
+      expect(tracked.rows.map((r) => (r as { tenant_id: string }).tenant_id)).toEqual([
+        migratedTenantId,
+      ]);
+      expect(tracked.rows.map((r) => (r as { tenant_id: string }).tenant_id)).not.toContain(
+        anomalyTenantId,
+      );
+
+      await dbClient.query(TARGETED_REVERT);
+      const afterRevert = await dbClient.query(
+        `SELECT tenant_id, plan_key FROM subscriptions WHERE tenant_id IN ($1, $2)`,
+        [migratedTenantId, anomalyTenantId],
+      );
+      const byTenant = new Map(
+        afterRevert.rows.map((r) => [
+          (r as { tenant_id: string }).tenant_id,
+          (r as { plan_key: string }).plan_key,
+        ]),
+      );
+      expect(byTenant.get(migratedTenantId)).toBe("free_web");
+      expect(byTenant.get(anomalyTenantId)).toBe("free");
+
+      // Postgres's own FK is the safety net: the anomaly's subscription still references
+      // plans('free',1), so this delete must fail, not silently corrupt the anomaly's row.
+      await expect(
+        dbClient.query(`DELETE FROM plans WHERE plan_key IN ('free','host_pro')`),
+      ).rejects.toThrow(/foreign key constraint/i);
+    } finally {
+      await dbClient?.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.end();
+    }
+  }, 60_000);
+
+  it("the complete rollback sequence succeeds end to end when nothing untracked exists, and reaches the exact pre-migration state — no precondition query needed, the plans-row DELETE's own FK is the check (codex round-13 [P1], gate-attempt-02: converged design after rounds 10/12's inference-based preconditions each left a gap)", async () => {
     const dbName = "plexco_migrate_dd29_rollback_complete";
     const admin = new pg.Client({ connectionString: BASE! });
     await admin.connect();
@@ -853,17 +901,8 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
       dbClient = setup.dbClient;
       const { migratedTenantId } = setup;
 
-      const hostProCheck = await dbClient.query(HOST_PRO_CHECK_QUERY);
-      expect((hostProCheck.rows[0] as { n: number }).n).toBe(0);
-      const freePrecondition = await dbClient.query(FREE_PRECONDITION_QUERY);
-      expect((freePrecondition.rows[0] as { n: number }).n).toBe(0);
-
-      // STEP 2 (0029 never applied in this test, so STEP 1 does not apply): blanket revert —
-      // safe because step 0b just proved every 'free' subscription is a migrated one, and step
-      // 0a already proved zero rows reference plans('host_pro',1).
-      await dbClient.query(
-        `UPDATE subscriptions SET plan_key = 'free_web' WHERE plan_key = 'free'`,
-      );
+      // STEP 2 (0029 never applied in this test, so STEP 1 does not apply): targeted revert.
+      await dbClient.query(TARGETED_REVERT);
 
       // STEP 3: revert tenant_provision(), delete the new catalog rows, narrow the CHECK.
       // Extract 0012's exact original function definition rather than hand-transcribing it,
@@ -877,14 +916,15 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
       }
       await dbClient.query(originalFunction[0]);
 
-      // This is the exact point codex round-10 found FK-impossible: with step 2 already
-      // done, nothing references plans('free',1)/('host_pro',1) any more, so this succeeds.
+      // Nothing untracked exists, so this succeeds — the FK naturally allows it once step 2
+      // cleared every reference dd29_migrated_tenants knew about.
       await dbClient.query(`DELETE FROM plans WHERE plan_key IN ('free','host_pro')`);
       await dbClient.query(`ALTER TABLE plans DROP CONSTRAINT plans_key_chk`);
       await dbClient.query(
         `ALTER TABLE plans ADD CONSTRAINT plans_key_chk
            CHECK (plan_key IN ('free_web','telegram','plus_channel','all_channels'))`,
       );
+      await dbClient.query(`DROP TABLE dd29_migrated_tenants`);
 
       // Final state matches pre-0028 exactly: only the 4 old plans rows, migrated tenant back
       // on free_web, and tenant_provision() writing free_web again for any brand-new tenant.
@@ -1387,6 +1427,51 @@ describe("DD29-4/DD29-5 0029 contract narrows plans_key_chk and self-guards on s
         `SELECT plan_key FROM plans WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels')`,
       );
       expect(plans.rows.length).toBe(4);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("guard 1b: an unreferenced old-key plans row inserted in the gap AFTER 0028 committed but BEFORE 0029 runs rolls 0029 back entirely, instead of being silently deleted (codex round-13 [P1], gate-attempt-02: 0029's guard 1 only ever scanned subscriptions, so a catalog-only gap-window row sailed past it)", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_contract_catalog_gap");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 29) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Simulate the gap window: a historical price-change snapshot lands in the catalog
+      // AFTER 0028 already committed (e.g. a manual pricing note, unrelated to onboarding
+      // traffic) — deliberately NO subscription references it, so 0029's guard 1 (which only
+      // scans subscriptions) would see zero remaining references and proceed straight to the
+      // unconditional DELETE without guard 1b.
+      await superuserInDb.query(
+        `INSERT INTO plans (plan_key, version, price) VALUES ('telegram', 2, 89000)`,
+      );
+
+      const sql0029 = await readFile(
+        path.join(MIGRATIONS_DIR, "0029_dd29_capability_registry_contract.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0029)).rejects.toThrow(/plans catalog row.*version/i);
+
+      // Prove the whole file rolled back: the gap-window row survives untouched, and so do
+      // the original 4 old plans rows (0029 never reached its DELETE).
+      const legacy = await superuserInDb.query(
+        `SELECT price FROM plans WHERE plan_key = 'telegram' AND version = 2`,
+      );
+      expect(legacy.rows.length).toBe(1);
+      expect((legacy.rows[0] as { price: number }).price).toBe(89000);
+      const oldPlans = await superuserInDb.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels') AND version = 1`,
+      );
+      expect(oldPlans.rows.length).toBe(4);
     } finally {
       await superuserInDb.end();
       await ctx.teardown();
