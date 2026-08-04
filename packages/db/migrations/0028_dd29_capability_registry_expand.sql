@@ -112,46 +112,70 @@
 -- for owner review — never widen the map, invent a repricing policy, or
 -- retry blindly (see manifest stop_conditions).
 --
--- Rollback (codex round-13 [P1], gate-attempt-02: rounds 10 and 12 each
--- patched one gap in an INFERENCE-based precondition (tenant age, then an
--- unconditional host_pro count) and each left another — guard 4 above
--- deliberately TOLERATES a pre-existing 'free'/'host_pro' catalog row with
--- the correct payload, and a subscription could already reference it before
--- this migration ever runs; no inference from timestamps or plan_key values
--- alone can distinguish that untouched subscription from one this migration
--- actually repointed. Converged on a design that needs no inference: this
--- migration now records EXACTLY which subscriptions its own UPDATE touches,
--- in dd29_migrated_tenants (see that table's own comment below), so "which
--- rows to revert" is a plain lookup, not a derived property with edge cases):
+-- Rollback (codex round-14 [P1] x2, gate-attempt-03: round-13's provenance
+-- design fixed WHICH rows to identify, but this note never said the steps
+-- MUST run inside one explicit transaction — pasted one statement at a time
+-- into a default-autocommit psql session, a failed step (e.g. guard 1b's new
+-- exact analogue below) would leave subscriptions and tenant_provision()
+-- ALREADY committed while plans/CHECK were not, exactly the partial-commit
+-- this note's own prose claimed could not happen. Separately, the plain
+-- `DELETE FROM plans WHERE plan_key IN ('free','host_pro')` had no version
+-- filter at all — an unreferenced free@2/host_pro@2 row (a later, legitimate
+-- price-change version created after this pair landed) would be silently
+-- destroyed by the same DELETE, the exact "plan version is immutable, never
+-- silently destroyed" hazard guard 2/2-catalog and 0029's guard 1b already
+-- exist to prevent on the FORWARD path — this rollback needed the identical
+-- guard on its own DELETE):
 --
--- To roll back (in this order):
---   1. (only if 0029 has already applied) roll 0029 back first — see its own
---      rollback note — so plans('free_web',1) etc. exist again before step 2
---      needs to reference them.
---   2. Revert ONLY the tracked tenants, never a blanket "every 'free' row":
---        UPDATE subscriptions SET plan_key = 'free_web'
---          WHERE plan_key = 'free'
---            AND tenant_id IN (SELECT tenant_id FROM dd29_migrated_tenants);
---      A tenant this migration never touched — a genuinely new one
---      provisioned afterward, OR a pre-existing anomalous 'free' row guard 4
---      tolerated, OR a manually-assigned 'host_pro' row — is simply absent
---      from dd29_migrated_tenants, so step 2 never touches it, unconditionally,
---      with no age check or plan-specific check required.
---   3. Revert tenant_provision() to the old literal, then attempt:
---        DELETE FROM plans WHERE plan_key IN ('free','host_pro');
---      This is the actual safety net, and it is enforced by Postgres itself,
---      not by this migration's own logic: if ANYTHING still references either
---      row after step 2 — an untracked new tenant, an untracked anomaly, or a
---      'host_pro' row with no inverse to revert to — the FK
---      (subscriptions_plan_key_plan_version_fkey) makes this DELETE fail,
---      aborting the whole rollback transaction cleanly. That failure IS the
---      correct outcome: resolving it (reassigning those specific tenants
---      manually, or accepting 'free'/'host_pro' as permanent and doing a
---      code-only partial rollback of just tenant_provision()'s literal) is an
---      owner decision this migration does not make. Only once the DELETE
---      succeeds is it safe to also narrow plans_key_chk back to the 4 old
---      values and DROP TABLE dd29_migrated_tenants — the very last step of a
---      fully successful rollback, never before.
+-- Run the ENTIRE sequence below inside one explicit transaction — this is
+-- not optional, it is what makes "a failure aborts cleanly" true instead of
+-- aspirational:
+--   BEGIN;
+--     -- 1. (only if 0029 has already applied) roll 0029 back first — see its
+--     --    own rollback note — so plans('free_web',1) etc. exist again
+--     --    before step 2 needs to reference them.
+--     -- 2. Revert ONLY the tracked tenants, never a blanket "every 'free' row":
+--     UPDATE subscriptions SET plan_key = 'free_web'
+--       WHERE plan_key = 'free'
+--         AND tenant_id IN (SELECT tenant_id FROM dd29_migrated_tenants);
+--     -- A tenant this migration never touched — a genuinely new one
+--     -- provisioned afterward, a pre-existing anomalous 'free' row guard 4
+--     -- tolerated, or a manually-assigned 'host_pro' row — is simply absent
+--     -- from dd29_migrated_tenants, so this never touches it, unconditionally.
+--     -- 3. Revert tenant_provision() to the old literal (CREATE OR REPLACE,
+--     --    same body as 0012_auth_functions.sql).
+--     -- 4. Refuse to delete a later, legitimate price-change version this
+--     --    migration never created — mirrors guard 2-catalog/0029's guard 1b:
+--     DO $$ DECLARE v_extra_version integer; BEGIN
+--       SELECT count(*) INTO v_extra_version FROM plans
+--         WHERE plan_key IN ('free','host_pro') AND version <> 1;
+--       IF v_extra_version > 0 THEN
+--         RAISE EXCEPTION 'DD-29 rollback: % plans catalog row(s) exist on free/host_pro at version <> 1 — a legitimate later price-change version cannot be told apart from this migration''s own row by the DELETE below; resolve before retrying', v_extra_version
+--           USING ERRCODE = 'data_exception';
+--       END IF;
+--     END $$;
+--     -- 5. Attempt the actual safety net for step 2's targeted revert — this
+--     --    is enforced by Postgres itself, not by this migration's own logic:
+--     DELETE FROM plans WHERE plan_key IN ('free','host_pro');
+--     -- If ANYTHING still references either row after step 2 — an untracked
+--     -- new tenant, an untracked anomaly, or a 'host_pro' row with no inverse
+--     -- to revert to — the FK (subscriptions_plan_key_plan_version_fkey)
+--     -- makes this DELETE fail. Because the whole sequence runs inside this
+--     -- one BEGIN/COMMIT, that failure aborts EVERYTHING above too — steps 2
+--     -- and 3 are undone along with it, not left half-applied. That failure
+--     -- IS the correct outcome: resolving it (reassigning those specific
+--     -- tenants manually, or accepting 'free'/'host_pro' as permanent and
+--     -- doing a code-only partial rollback of just tenant_provision()'s
+--     -- literal, run as its own separate statement outside this transaction)
+--     -- is an owner decision this migration does not make.
+--     -- 6. Only reached if step 5 succeeded: narrow the CHECK back and retire
+--     --    the provenance table — the very last steps of a fully successful
+--     --    rollback, never attempted before step 5 has actually committed.
+--     ALTER TABLE plans DROP CONSTRAINT plans_key_chk;
+--     ALTER TABLE plans ADD CONSTRAINT plans_key_chk
+--       CHECK (plan_key IN ('free_web','telegram','plus_channel','all_channels'));
+--     DROP TABLE dd29_migrated_tenants;
+--   COMMIT;
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------

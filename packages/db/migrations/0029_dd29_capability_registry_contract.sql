@@ -60,16 +60,22 @@
 --      Keep the constraint NAME plans_key_chk (0025 established it for
 --      schema.ts alignment) — only the predicate narrows.
 --
--- Rollback (conditional — safe only if committed and no row created since
--- relies on the narrowed CHECK or the deleted rows being gone): widen
--- plans_key_chk back to 0028's post-expand predicate (union of old ∪ new
--- values — the exact ALTER in 0028's own step 1), and re-insert the 4
--- deleted plans rows using 0011_seeds.sql's original literals verbatim
--- (this file does not carry them; 0011 is the source of truth for their
--- original price/limits/entitlements). Apply this file's rollback BEFORE
--- 0028's, mirroring the reverse of the expand→contract application order —
--- 0028's own rollback note assumes `plans` still has the 4 old rows to
--- reference, which is only true again once this step has run.
+-- Rollback (codex round-14 [P1], gate-attempt-03: run inside one explicit
+-- transaction, same reasoning as 0028's own rollback note — a widened CHECK
+-- with the 4 rows not yet reinserted, left half-done by an unhandled error,
+-- is not a state anyone should observe):
+--   BEGIN;
+--     ALTER TABLE plans DROP CONSTRAINT plans_key_chk;
+--     ALTER TABLE plans ADD CONSTRAINT plans_key_chk
+--       CHECK (plan_key IN ('free_web','telegram','plus_channel','all_channels','free','host_pro'));
+--     -- re-insert the 4 deleted plans rows using 0011_seeds.sql's original
+--     -- literals verbatim (this file does not carry them; 0011 is the source
+--     -- of truth for their original price/limits/entitlements).
+--   COMMIT;
+-- Apply this file's rollback BEFORE 0028's, mirroring the reverse of the
+-- expand→contract application order — 0028's own rollback note assumes
+-- `plans` still has the 4 old rows to reference, which is only true again
+-- once this step has run.
 -- ============================================================================
 
 ALTER TABLE subscriptions NO FORCE ROW LEVEL SECURITY;
