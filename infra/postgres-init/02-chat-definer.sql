@@ -78,8 +78,6 @@ DECLARE
   v_target text := COALESCE(NULLIF(current_setting('chat_definer_bootstrap.migration_role', true), ''), current_user);
   v_existing_runtime_member text;
   v_other_member text;
-  v_existing_admin boolean;
-  v_existing_set boolean;
 BEGIN
   -- Serialize the whole check-then-grant decision against ANY concurrent invocation of this script,
   -- regardless of target. Without this, two concurrent calls targeting DIFFERENT valid non-runtime
@@ -96,6 +94,20 @@ BEGIN
   -- block forever waiting for a lock the test harness's own connection is holding and will not release
   -- until the test body -- which is itself awaiting this very call -- returns: a guaranteed deadlock,
   -- caught in practice by a 60s Vitest test timeout (codex round-03 fix, self-discovered before commit).
+  --
+  -- KNOWN, ACCEPTED BOUNDARY (codex round-04 [P1]): this lock -- like every PostgreSQL advisory lock
+  -- -- only serializes callers connected to the SAME database ("Advisory locks are local to each
+  -- database" -- postgresql.org/docs/16/explicit-locking.html). chat_definer itself is cluster-global
+  -- (pg_authid is a documented SHARED catalog, one copy per cluster, not per database --
+  -- postgresql.org/docs/16/catalog-pg-authid.html), so two bootstrap invocations against DIFFERENT
+  -- databases in the same cluster are not serialized by this lock and could in principle still race.
+  -- Matches 01-job-definer.sql's own advisory-lock scope exactly (the identical limitation, never
+  -- required to be closed for that role) and this application's actual deployment model, which does
+  -- not run multiple databases per cluster in normal operation. A cluster-wide fix exists in
+  -- principle (SERIALIZABLE isolation with caller-side retry -- the underlying pg_auth_members rows
+  -- ARE shared, so PostgreSQL's own conflict detection would correctly span databases) but would
+  -- require new retry logic in package.json's plain `psql` invocation that exists nowhere else in
+  -- this codebase's bootstrap tooling; deliberately deferred rather than built here.
   PERFORM pg_advisory_xact_lock(1667525739); -- 0x63646c6b, "cdlk" -- distinct from "chad" (0x63686164), "jobd" (0x6a6f6264), "plxc" (0x706c7863)
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_target) THEN
     RAISE EXCEPTION
@@ -147,17 +159,25 @@ BEGIN
   -- break the downstream migration's expected SET ROLE chat_definer capability). Mirrors the
   -- existing attribute-drift philosophy exactly: detect and refuse, never silently re-GRANT WITH the
   -- safe options to "fix" it — that is an operator decision, not this script's.
-  SELECT m.admin_option, m.set_option
-    INTO v_existing_admin, v_existing_set
-    FROM pg_auth_members m
-    JOIN pg_roles r ON r.oid = m.member
-    JOIN pg_roles g ON g.oid = m.roleid
-   WHERE g.rolname = 'chat_definer'
-     AND r.rolname = v_target;
-  IF FOUND AND (v_existing_admin OR NOT v_existing_set) THEN
+  --
+  -- Checks EXISTENCE across ALL matching records, not one arbitrary row (codex round-04 [P1]):
+  -- PostgreSQL 16 allows MULTIPLE pg_auth_members rows for the same (role, member) pair from
+  -- different grantors ("Allow multiple role membership records" — PG16 release notes; pre-16 a new
+  -- grant replaced the prior row instead). A single non-STRICT SELECT INTO with no ORDER BY would
+  -- pick an arbitrary one of them, silently missing an unsafe record left by a DIFFERENT grantor if
+  -- the arbitrary pick happened to be the safe one.
+  IF EXISTS (
+    SELECT 1
+      FROM pg_auth_members m
+      JOIN pg_roles r ON r.oid = m.member
+      JOIN pg_roles g ON g.oid = m.roleid
+     WHERE g.rolname = 'chat_definer'
+       AND r.rolname = v_target
+       AND (m.admin_option OR NOT m.set_option)
+  ) THEN
     RAISE EXCEPTION
-      'chat_definer bootstrap: existing membership for % has unsafe options (admin_option=%, set_option=%; need admin_option=false, set_option=true) — refusing to silently proceed',
-      v_target, v_existing_admin, v_existing_set;
+      'chat_definer bootstrap: existing membership for % has at least one unsafe grant record with unsafe options (admin_option or not set_option) — refusing to silently proceed',
+      v_target;
   END IF;
   EXECUTE format('GRANT chat_definer TO %I', v_target);
   -- Re-run the identical transitive check AFTER the grant: if v_target is a

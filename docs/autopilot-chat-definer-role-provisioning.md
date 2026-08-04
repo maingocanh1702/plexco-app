@@ -188,8 +188,6 @@ DECLARE
   v_target text := COALESCE(NULLIF(current_setting('chat_definer_bootstrap.migration_role', true), ''), current_user);
   v_existing_runtime_member text;
   v_other_member text;
-  v_existing_admin boolean;
-  v_existing_set boolean;
 BEGIN
   -- Serialize the whole check-then-grant decision against ANY concurrent invocation of this script,
   -- regardless of target. Without this, two concurrent calls targeting DIFFERENT valid non-runtime
@@ -206,6 +204,20 @@ BEGIN
   -- block forever waiting for a lock the test harness's own connection is holding and will not release
   -- until the test body -- which is itself awaiting this very call -- returns: a guaranteed deadlock,
   -- caught in practice by a 60s Vitest test timeout (codex round-03 fix, self-discovered before commit).
+  --
+  -- KNOWN, ACCEPTED BOUNDARY (codex round-04 [P1]): this lock -- like every PostgreSQL advisory lock
+  -- -- only serializes callers connected to the SAME database ("Advisory locks are local to each
+  -- database" -- postgresql.org/docs/16/explicit-locking.html). chat_definer itself is cluster-global
+  -- (pg_authid is a documented SHARED catalog, one copy per cluster, not per database --
+  -- postgresql.org/docs/16/catalog-pg-authid.html), so two bootstrap invocations against DIFFERENT
+  -- databases in the same cluster are not serialized by this lock and could in principle still race.
+  -- Matches 01-job-definer.sql's own advisory-lock scope exactly (the identical limitation, never
+  -- required to be closed for that role) and this application's actual deployment model, which does
+  -- not run multiple databases per cluster in normal operation. A cluster-wide fix exists in
+  -- principle (SERIALIZABLE isolation with caller-side retry -- the underlying pg_auth_members rows
+  -- ARE shared, so PostgreSQL's own conflict detection would correctly span databases) but would
+  -- require new retry logic in package.json's plain `psql` invocation that exists nowhere else in
+  -- this codebase's bootstrap tooling; deliberately deferred rather than built here.
   PERFORM pg_advisory_xact_lock(1667525739); -- 0x63646c6b, "cdlk" -- distinct from "chad" (0x63686164), "jobd" (0x6a6f6264), "plxc" (0x706c7863)
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_target) THEN
     RAISE EXCEPTION
@@ -257,17 +269,25 @@ BEGIN
   -- break the downstream migration's expected SET ROLE chat_definer capability). Mirrors the
   -- existing attribute-drift philosophy exactly: detect and refuse, never silently re-GRANT WITH the
   -- safe options to "fix" it — that is an operator decision, not this script's.
-  SELECT m.admin_option, m.set_option
-    INTO v_existing_admin, v_existing_set
-    FROM pg_auth_members m
-    JOIN pg_roles r ON r.oid = m.member
-    JOIN pg_roles g ON g.oid = m.roleid
-   WHERE g.rolname = 'chat_definer'
-     AND r.rolname = v_target;
-  IF FOUND AND (v_existing_admin OR NOT v_existing_set) THEN
+  --
+  -- Checks EXISTENCE across ALL matching records, not one arbitrary row (codex round-04 [P1]):
+  -- PostgreSQL 16 allows MULTIPLE pg_auth_members rows for the same (role, member) pair from
+  -- different grantors ("Allow multiple role membership records" — PG16 release notes; pre-16 a new
+  -- grant replaced the prior row instead). A single non-STRICT SELECT INTO with no ORDER BY would
+  -- pick an arbitrary one of them, silently missing an unsafe record left by a DIFFERENT grantor if
+  -- the arbitrary pick happened to be the safe one.
+  IF EXISTS (
+    SELECT 1
+      FROM pg_auth_members m
+      JOIN pg_roles r ON r.oid = m.member
+      JOIN pg_roles g ON g.oid = m.roleid
+     WHERE g.rolname = 'chat_definer'
+       AND r.rolname = v_target
+       AND (m.admin_option OR NOT m.set_option)
+  ) THEN
     RAISE EXCEPTION
-      'chat_definer bootstrap: existing membership for % has unsafe options (admin_option=%, set_option=%; need admin_option=false, set_option=true) — refusing to silently proceed',
-      v_target, v_existing_admin, v_existing_set;
+      'chat_definer bootstrap: existing membership for % has at least one unsafe grant record with unsafe options (admin_option or not set_option) — refusing to silently proceed',
+      v_target;
   END IF;
   EXECUTE format('GRANT chat_definer TO %I', v_target);
   -- Re-run the identical transitive check AFTER the grant: if v_target is a
@@ -366,9 +386,9 @@ async function hideRealChatDefiner(superuser: pg.Client, fn: () => Promise<void>
 ```
 
 New `describe` block (a sibling of the existing `describe("job_definer bootstrap script itself fails
-closed on runtime-role targets", ...)` at line 1239). Originally specified as the 9 cases below; 6 more
-(10-15) were added during implementation in response to real codex review findings (§10 items 5-7) —
-15 cases total, each mapping to a row in §8:
+closed on runtime-role targets", ...)` at line 1239). Originally specified as the 9 cases below; 7 more
+(10-16) were added during implementation in response to real codex review findings (§10 items 5-8) —
+16 cases total, each mapping to a row in §8:
 
 1. `"first bootstrap with no migration role set grants membership to CURRENT_USER"` — happy path,
    proves an unset GUC is *not* a failure.
@@ -423,6 +443,13 @@ closed on runtime-role targets", ...)` at line 1239). Originally specified as th
     dropping any of the other 6 branches would leave the suite green. A compact loop covering the
     other 6, asserting only rejection (the whole-transaction-rollback property case 4 already proves
     is not per-attribute-dependent, so it is not re-verified 6 more times).
+16. `"refuses to bootstrap when an unsafe grant record exists from a DIFFERENT grantor than the safe
+    one"` — added round-04 fix (codex `[P1]`): PG16 allows multiple `pg_auth_members` rows for the
+    same (role, member) pair from different grantors ("Allow multiple role membership records" — PG16
+    release notes; pre-16 a new grant replaced the prior row instead). Creates two distinct grant
+    records for the same target (one safe, from this bootstrap's own earlier run; one unsafe, from a
+    second scratch superuser grantor) and proves the `EXISTS`-based check (§5.1) catches it regardless
+    of which record a naive single-row read would have picked.
 
 Every case that deliberately breaks the shared cluster-global role runs inside `withChatDefinerLock`,
 exactly as the job_definer negative-path tests run inside `withJobDefinerLock` — same rationale
@@ -556,7 +583,8 @@ runner (§9.2: "zero domain migration/table/API"). `MIGRATION_COUNT` in `migrate
 | Authorization | The target already has an existing `chat_definer` membership with `SET FALSE` (same PG16 retention hazard) | Fails closed identically, isolated from the `ADMIN TRUE` case so either half of the guard regressing is independently caught — added round-02 fix |
 | Failure | Any fail-closed trigger above fires mid-script | The single `BEGIN...COMMIT` wrapping the file rolls back everything, including a freshly-created role — no partial state survives, not even an inert leftover role |
 | Concurrency | N concurrent `bootstrapChatDefiner` calls against a fresh cluster, all with the same valid migration role | All calls succeed (or all-but-one hit the `duplicate_object` swallow); role exists exactly once with exactly one membership grant afterward |
-| Concurrency | N concurrent `bootstrapChatDefiner` calls against a fresh cluster, each targeting a DIFFERENT valid non-runtime role | `pg_advisory_xact_lock` serializes the whole check-then-grant decision; exactly one call succeeds, the rest fail closed ("already granted to"), no member accumulates — added round-03 fix, closes a TOCTOU race the re-pointing guard alone did not prevent |
+| Concurrency | N concurrent `bootstrapChatDefiner` calls against the SAME database, each targeting a DIFFERENT valid non-runtime role | `pg_advisory_xact_lock` serializes the whole check-then-grant decision within that database; exactly one call succeeds, the rest fail closed ("already granted to"), no member accumulates — added round-03 fix, closes a TOCTOU race the re-pointing guard alone did not prevent. **Boundary, not covered:** two invocations against DIFFERENT databases in the same cluster are not serialized by this lock (PostgreSQL advisory locks are database-local; `chat_definer` is cluster-global) — known, accepted, matches `01-job-definer.sql`'s identical limitation; see round-04 note, §10 item 8 |
+| Authorization | An unsafe grant record exists from a DIFFERENT grantor than the one this bootstrap's own earlier run used (PG16 permits multiple `pg_auth_members` rows per (role, member) pair per grantor) | Fails closed identically — the check examines EXISTENCE across all matching records, not one arbitrary row — added round-04 fix |
 | Concurrency | A deliberately-broken-attribute test runs concurrently with an unrelated valid bootstrap elsewhere in the suite | `withChatDefinerLock`'s advisory lock serializes the two; the valid path never observes the broken intermediate state |
 | Migration | This slice adds zero `packages/db/migrations/*.sql` files | `git diff --name-only <base>...HEAD -- packages/db/migrations/` is empty; `MIGRATION_COUNT` in `migrate.test.ts` stays `28` |
 | Security/privacy | `chat_definer` attributes after bootstrap | Exactly `NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`; no schema-level `USAGE`/`CREATE` grant (deferred to `dd38-dd86-chat-schema-core`) |
@@ -714,3 +742,27 @@ REMAINING_BLOCKERS: none
    here for any future slice measured against a `§9.x`-style LOC/module budget: **measure production
    and verification separately before concluding a budget is exceeded** — the aggregate number alone
    does not tell you which side of the line grew.
+8. **Round 4 found two more real gaps in the same §5.1 membership block — one closed, one deliberately
+   bounded rather than chased further.** `[P1]`: the round-03 unsafe-options check read one arbitrary
+   `pg_auth_members` row via a non-`STRICT SELECT INTO`; PG16 allows multiple rows for the same
+   (role, member) pair from different grantors ("Allow multiple role membership records" — PG16
+   release notes; pre-16 a new grant replaced the prior row), so an unsafe record from a different
+   grantor could hide behind a safe one. Fixed: `EXISTS`-based check across all matching records
+   (§5.1); regression at §5.3 case 16. `[P1]`: `pg_advisory_xact_lock` (round 3) only serializes
+   callers connected to the SAME database — confirmed against postgresql.org/docs/16/explicit-
+   locking.html ("Advisory locks are local to each database") — while `chat_definer` is cluster-global
+   (`pg_authid` confirmed a shared, one-per-cluster catalog per postgresql.org/docs/16/catalog-pg-
+   authid.html). Two invocations against different databases in the same cluster are therefore not
+   serialized by this lock. **Decision: document this boundary rather than close it.** A cluster-wide
+   fix exists in principle (`SERIALIZABLE` isolation with caller-side retry — the underlying
+   `pg_auth_members` rows are shared, so PostgreSQL's own conflict detection would correctly span
+   databases) but would require new retry logic in `package.json`'s plain `psql` invocation that
+   exists nowhere else in this codebase's bootstrap tooling, and `01-job-definer.sql` — the
+   established precedent for the identical cluster-global-role pattern — carries the exact same
+   limitation, never required to close it, consistent with this application's actual single-database-
+   per-cluster deployment model (no evidence anywhere in the codebase of a multi-database-per-cluster
+   topology). Narrowing the claim to what the lock actually guarantees (§5.1 comment, §8's Concurrency
+   row) was judged the proportionate response — this is a technical scope-boundary call, not an
+   authority/budget question, so it was made directly rather than escalated. If a future deployment
+   does adopt a multi-database-per-cluster topology, this boundary must be revisited before that
+   change ships.

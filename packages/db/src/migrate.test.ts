@@ -1497,6 +1497,40 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
     );
   }, 30_000);
 
+  it("refuses to bootstrap when an unsafe grant record exists from a DIFFERENT grantor than the safe one", async () => {
+    // codex round-04 [P1]: PG16 allows multiple pg_auth_members rows for the same (role, member)
+    // pair from different grantors ("Allow multiple role membership records" -- release notes; pre-16
+    // a new grant replaced the prior row). A non-STRICT SELECT INTO with no ORDER BY could pick an
+    // arbitrary one of them and miss an unsafe record left by a different grantor. This test creates
+    // TWO distinct grant records for the same target -- one safe (from CURRENT_USER's own bootstrap),
+    // one unsafe (from a second superuser grantor) -- and proves the fix catches it regardless.
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await bootstrapChatDefiner(admin);
+        const whoami = await admin.query(`SELECT current_user AS u`);
+        const target = (whoami.rows[0] as { u: string }).u;
+        const otherGrantor = "plexco_chat_definer_test_grantor_b";
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${otherGrantor} LOGIN SUPERUSER PASSWORD 'plexco_test_grantor_b'; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        try {
+          const grantorClient = await connect(url(BASE_DB, otherGrantor, "plexco_test_grantor_b"));
+          try {
+            // A SECOND, distinct grant record for the SAME (chat_definer, target) pair, from a
+            // DIFFERENT grantor than CURRENT_USER's own bootstrap above.
+            await grantorClient.query(`GRANT chat_definer TO ${target} WITH ADMIN TRUE`);
+          } finally {
+            await grantorClient.end();
+          }
+          await expect(bootstrapChatDefiner(admin)).rejects.toThrow(/unsafe options/i);
+          await admin.query(`DROP ROLE chat_definer`); // drops ALL grant records, both grantors'
+        } finally {
+          await admin.query(`DROP ROLE ${otherGrantor}`);
+        }
+      }),
+    );
+  }, 30_000);
+
   it("refuses to bootstrap when chat_definer already exists with a wrong attribute", async () => {
     await withChatDefinerLock(BASE!, () =>
       hideRealChatDefiner(admin, async () => {
