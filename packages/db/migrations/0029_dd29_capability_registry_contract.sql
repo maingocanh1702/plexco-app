@@ -15,6 +15,20 @@
 -- migration refuses to proceed rather than deleting a plans row a live FK
 -- still points to.
 --
+-- OPERATIONAL PRECONDITION (see 0028's header for the full mechanism and the
+-- evidence behind it; restated here since a deployer may read this file
+-- without re-reading 0028's): IF THIS PAIR IS EVER APPLIED TO AN ENVIRONMENT
+-- CARRYING LIVE ONBOARDING TRAFFIC, PAUSE WRITES TO tenant_provision() (i.e.
+-- onboarding) FOR THE DURATION OF THE DEPLOY. No code fence is added,
+-- deliberately: the window this guards against — a tenant_provision() call
+-- already in flight when 0028's CREATE OR REPLACE FUNCTION commits, finishing
+-- on its session's cached OLD function body — closes PERMANENTLY once this
+-- pair lands, so a fence would protect exactly one deploy event, and today
+-- that event has zero traffic to protect. The self-guard immediately below IS
+-- the enforcement for this precondition: if it is ignored anyway and a
+-- straggler 'free_web' row was created, this guard aborts the migration on
+-- it — a loud, recoverable deploy failure, not silent data corruption.
+--
 -- Runs as ONE transaction (migrate.ts wraps each file in BEGIN…COMMIT/
 -- ROLLBACK):
 --   1. self-guard: refuse if any subscriptions row still references an old

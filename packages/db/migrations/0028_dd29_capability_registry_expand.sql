@@ -54,6 +54,34 @@
 -- proves the concurrent call blocks cleanly (not errors) and completes once
 -- this migration's transaction ends.
 --
+-- OPERATIONAL PRECONDITION (found round-06 review; owner-ratified, no code
+-- fence): a narrower window remains past the fix above. A tenant_provision()
+-- call that started executing BEFORE step 4's CREATE OR REPLACE FUNCTION
+-- commits — and was blocked on the subscriptions lock this file now takes
+-- first — resumes, once unblocked, using Postgres's session-cached OLD
+-- function body (still writing 'free_web'), because PL/pgSQL caches a
+-- function's compiled body for the life of a call regardless of concurrent
+-- redefinition. That call can therefore insert a 'free_web' row AFTER this
+-- file's own guards have already run. IF THIS PAIR (0028+0029) IS EVER
+-- APPLIED TO AN ENVIRONMENT CARRYING LIVE ONBOARDING TRAFFIC, PAUSE WRITES
+-- TO tenant_provision() (i.e. onboarding) FOR THE DURATION OF THE DEPLOY.
+-- No code fence (e.g. an advisory lock around tenant creation) is added for
+-- this, deliberately: the window exists only between this file's commit and
+-- 0029's, and closes PERMANENTLY once this pair lands — no future migration
+-- ever reproduces it, so a fence would protect exactly one deploy event, and
+-- today that event has zero traffic to protect (infra-do-app-vpc-deployment
+-- is still status:idea — no deployment contract authored yet; BUILD-STATUS
+-- records Chat and Channel Booking runtime at 0, D1 email-token as CODE
+-- DARK with no route/provider send, DD-87 with no production caller; and a
+-- repo-wide re-check at this slice's re-authoring confirmed tenant_provision
+-- is still the ONLY writer of subscriptions.plan_key — zero application-level
+-- references to plan_key/planKey exist outside this migration and its own
+-- tests). If a straggler 'free_web' row is nonetheless created despite this
+-- precondition being ignored, 0029's own self-guard (DD29-5/B2,
+-- migrate.test.ts) already aborts on it — the failure mode is a loud,
+-- recoverable deploy failure, not silent data corruption, which is why an
+-- operational precondition is the right tool here rather than more code.
+--
 -- Why the guards are load-bearing, not defensive boilerplate: this session's
 -- live-truth read found zero application code anywhere reading
 -- entitlements/capabilities, and no deployment contract yet authored

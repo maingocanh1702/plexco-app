@@ -144,6 +144,21 @@ CREATE TABLE billing_overrides (
     tiers the row held) + `0029_dd29_capability_registry_contract.sql` (contract — self-guarding
     narrow). Pending review/merge to `main`; see the PENDING MIGRATION note in the DDL above for
     exact status.
+  - **Operational precondition for applying the DD-29 pair (owner-ratified 2026-08-04, no code
+    fence):** if this pair is ever applied to an environment carrying live onboarding traffic, pause
+    writes to `tenant_provision()` (i.e. onboarding) for the duration of the deploy. Reason: a
+    `tenant_provision()` call already in flight when `0028`'s `CREATE OR REPLACE FUNCTION` commits
+    finishes on its session's cached OLD function body (still writing `free_web`) — PL/pgSQL caches a
+    function's compiled body for the life of an in-progress call regardless of concurrent
+    redefinition. No fence (e.g. an advisory lock around tenant creation) is added because this window
+    closes PERMANENTLY once the pair lands — no future migration reproduces it — and today it has zero
+    traffic to protect: `infra-do-app-vpc-deployment` is still `status: idea` (no deployment contract
+    authored yet), BUILD-STATUS records Chat and Channel Booking runtime at 0, D1 email-token as CODE
+    DARK with no route/provider send, and DD-87 with no production caller; a repo-wide re-check at this
+    slice's re-authoring also confirmed `tenant_provision()` is still the ONLY writer of
+    `subscriptions.plan_key`. `0029`'s own self-guard is the enforcement if this precondition is
+    ignored anyway: a straggler `free_web` row aborts that migration loudly (a recoverable deploy
+    failure), not silently. See both migration files' own headers for the full mechanism.
   - **Still pending, NOT part of the above slice:** `period_start`/`period_end` nullable cho free
     (DD-51 — live đang NOT NULL); `subscription_invoices.paid_at` (DD-51 — refund window đọc canonical
     `paid_at`; live chưa có cột); `billing_overrides.ticket_ref NOT NULL` (DD-51 — live chưa có cột).
