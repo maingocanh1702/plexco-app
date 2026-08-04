@@ -1597,13 +1597,14 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
             // existence check) that a bare `EXISTS \(` would match first, then lazily swallow
             // everything up to THIS block's own close -- self-caught the first time this was written.
             const existsMatch = sql.match(/(EXISTS \(\n[\s\S]+?\n {2}\)) THEN/);
-            if (!existsMatch) {
+            const existsBlock = existsMatch?.[1];
+            if (!existsBlock) {
               throw new Error(
                 "could not locate the unsafe-options EXISTS block in 02-chat-definer.sql -- the " +
                   "extraction regex needs updating alongside whatever changed its shape",
               );
             }
-            const existsPredicate = existsMatch[1].replace("v_target", "$1");
+            const existsPredicate = existsBlock.replace("v_target", "$1");
             const unsafeExists = await admin.query(`SELECT ${existsPredicate} AS found`, [target]);
             expect((unsafeExists.rows[0] as { found: boolean }).found).toBe(true);
           } finally {
