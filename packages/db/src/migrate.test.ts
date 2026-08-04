@@ -712,107 +712,168 @@ describe("DD29-1/DD29-2 0028 expand fails closed on plan_key data anomalies", ()
   }, 60_000);
 });
 
-describe("DD29-11 0028's documented rollback-scoping query distinguishes migrated vs. newly-created subscriptions", () => {
-  it("the tenants.created_at vs. schema_migrations.applied_at query in 0028's rollback note selects exactly the migrated tenant, never a tenant provisioned after 0028 committed (codex round-09 [P1], gate-attempt-05)", async () => {
-    const dbName = "plexco_migrate_dd29_rollback_scope";
+describe("DD29-11 0028's documented rollback precondition and full sequence are FK-safe and complete", () => {
+  // Superuser-owned replay (same reason as DD29-8: tenant_provision()'s own inserts into
+  // memberships/tenant_admins hit FORCE RLS with no app.tenant_id set for a brand-new tenant
+  // unless the function — and everything it touches — is owned by a role that bypasses RLS).
+  async function bootstrapThrough0028(
+    dbName: string,
+    admin: pg.Client,
+  ): Promise<{ dbClient: pg.Client; migratedTenantId: string }> {
+    await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${dbName}`);
+    const dbClient = await connect(url(dbName));
+    await withJobDefinerLock(BASE!, async () => {
+      await bootstrapJobDefiner(admin);
+      const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+      for (const f of files) {
+        if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+        await dbClient.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+      }
+    });
+
+    // A pre-existing tenant on the old free_web tier — created before 0028 runs, exactly the
+    // shape 0028's UPDATE repoints.
+    const preExisting = await dbClient.query(
+      `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Rollback Migrated', 'dd29-rollback-migrated', 'active') RETURNING id`,
+    );
+    const migratedTenantId = (preExisting.rows[0] as { id: string }).id;
+    await dbClient.query(
+      `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
+       VALUES ($1, 'free_web', 1, now(), 'infinity')`,
+      [migratedTenantId],
+    );
+
+    const sql0028 = await readFile(
+      path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+      "utf8",
+    );
+    await dbClient.query(sql0028);
+
+    // This test raw-replays files (like every other DD29-* test here) rather than going
+    // through migrate(), so schema_migrations — normally created/populated by migrate.ts
+    // itself — doesn't exist yet. Recreate it with the exact DDL migrate.ts uses and record
+    // 0028's own application, so the rollback note's precondition query has the applied_at
+    // it depends on.
+    await dbClient.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        name text PRIMARY KEY,
+        sha256 text NOT NULL,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      )`);
+    await dbClient.query(
+      `INSERT INTO schema_migrations (name, sha256) VALUES ($1, 'test-fixture')`,
+      ["0028_dd29_capability_registry_expand.sql"],
+    );
+
+    return { dbClient, migratedTenantId };
+  }
+
+  // The exact precondition query from 0028's rollback note (STEP 0).
+  const PRECONDITION_QUERY = `
+    SELECT count(*)::int AS n FROM subscriptions s JOIN tenants t ON t.id = s.tenant_id
+      WHERE s.plan_key IN ('free','host_pro') AND t.created_at > (
+        SELECT applied_at FROM schema_migrations
+          WHERE name = '0028_dd29_capability_registry_expand.sql')`;
+
+  it("the precondition query finds a tenant provisioned after 0028 and correctly signals full rollback is unsafe (codex round-10 [P1], gate-attempt-06)", async () => {
+    const dbName = "plexco_migrate_dd29_rollback_precondition";
     const admin = new pg.Client({ connectionString: BASE! });
     await admin.connect();
     let dbClient: pg.Client | undefined;
     try {
-      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
-      await admin.query(`CREATE DATABASE ${dbName}`);
+      const setup = await bootstrapThrough0028(dbName, admin);
+      dbClient = setup.dbClient;
 
-      // Superuser-owned replay (same reason as DD29-8: tenant_provision()'s own inserts into
-      // memberships/tenant_admins hit FORCE RLS with no app.tenant_id set for a brand-new tenant
-      // unless the function — and everything it touches — is owned by a role that bypasses RLS).
-      dbClient = await connect(url(dbName));
-      await withJobDefinerLock(BASE!, async () => {
-        await bootstrapJobDefiner(admin);
-        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-        for (const f of files) {
-          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
-          await dbClient!.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
-        }
-      });
-
-      // A pre-existing tenant on the old free_web tier — created before 0028 runs, exactly the
-      // shape 0028's UPDATE repoints.
-      const preExisting = await dbClient.query(
-        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Rollback Migrated', 'dd29-rollback-migrated', 'active') RETURNING id`,
-      );
-      const migratedTenantId = (preExisting.rows[0] as { id: string }).id;
-      await dbClient.query(
-        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
-         VALUES ($1, 'free_web', 1, now(), 'infinity')`,
-        [migratedTenantId],
-      );
-
-      const sql0028 = await readFile(
-        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
-        "utf8",
-      );
-      await dbClient.query(sql0028);
-
-      // This test raw-replays files (like every other DD29-* test here) rather than going
-      // through migrate(), so schema_migrations — normally created/populated by migrate.ts
-      // itself — doesn't exist yet. Recreate it with the exact DDL migrate.ts uses and record
-      // 0028's own application, so the rollback note's query has the applied_at it depends on.
-      await dbClient.query(`
-        CREATE TABLE IF NOT EXISTS schema_migrations (
-          name text PRIMARY KEY,
-          sha256 text NOT NULL,
-          applied_at timestamptz NOT NULL DEFAULT now()
-        )`);
-      await dbClient.query(
-        `INSERT INTO schema_migrations (name, sha256) VALUES ($1, 'test-fixture')`,
-        ["0028_dd29_capability_registry_expand.sql"],
-      );
-
-      // Onboarding "resumes" after the deploy: a genuinely new tenant, created by the redefined
-      // tenant_provision(), lands on 'free' directly — never touched by 0028's own UPDATE.
+      // Onboarding "resumes" after the deploy: a genuinely new tenant, created by the
+      // redefined tenant_provision(), lands on 'free' directly — never touched by 0028's UPDATE.
       const personRow = await dbClient.query(
         `INSERT INTO persons (display_name) VALUES ('DD29 Rollback New Owner') RETURNING id`,
       );
       const personId = (personRow.rows[0] as { id: string }).id;
-      const newTenantRow = await dbClient.query(
-        `SELECT tenant_provision($1, $2, $3, $4, $5) AS tenant_id`,
-        ["dd29-rollback-new", "DD29 Rollback New Tenant", "Asia/Ho_Chi_Minh", "vi", personId],
-      );
-      const newTenantId = (newTenantRow.rows[0] as { tenant_id: string }).tenant_id;
+      await dbClient.query(`SELECT tenant_provision($1, $2, $3, $4, $5)`, [
+        "dd29-rollback-new",
+        "DD29 Rollback New Tenant",
+        "Asia/Ho_Chi_Minh",
+        "vi",
+        personId,
+      ]);
 
-      // The exact scoping query from 0028's rollback note.
-      const scoped = await dbClient.query(
-        `SELECT s.tenant_id FROM subscriptions s JOIN tenants t ON t.id = s.tenant_id
-           WHERE s.plan_key = 'free' AND t.created_at <= (
-             SELECT applied_at FROM schema_migrations
-               WHERE name = '0028_dd29_capability_registry_expand.sql')`,
-      );
-      const scopedIds = scoped.rows.map((r) => (r as { tenant_id: string }).tenant_id).sort();
-      expect(scopedIds).toEqual([migratedTenantId].sort());
-      expect(scopedIds).not.toContain(newTenantId);
+      const precondition = await dbClient.query(PRECONDITION_QUERY);
+      expect((precondition.rows[0] as { n: number }).n).toBe(1);
+    } finally {
+      await dbClient?.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.end();
+    }
+  }, 60_000);
 
-      // Prove it is actually usable, not just correct in isolation: run the real reversal UPDATE
-      // scoped by this exact query and confirm only the migrated tenant reverts.
+  it("when the precondition holds (no new tenant), the complete rollback sequence — blanket subscriptions revert, THEN the plans-row delete — succeeds with no FK violation and reaches the exact pre-migration state (codex round-10 [P1], gate-attempt-06: the previous fix scoped WHICH rows to revert but never fixed the surrounding delete-before-revert ordering, which was FK-impossible whenever any row had to be preserved)", async () => {
+    const dbName = "plexco_migrate_dd29_rollback_complete";
+    const admin = new pg.Client({ connectionString: BASE! });
+    await admin.connect();
+    let dbClient: pg.Client | undefined;
+    try {
+      const setup = await bootstrapThrough0028(dbName, admin);
+      dbClient = setup.dbClient;
+      const { migratedTenantId } = setup;
+
+      const precondition = await dbClient.query(PRECONDITION_QUERY);
+      expect((precondition.rows[0] as { n: number }).n).toBe(0);
+
+      // STEP 2 (0029 never applied in this test, so STEP 1 does not apply): blanket revert —
+      // safe because the precondition just proved every 'free' subscription is a migrated one.
       await dbClient.query(
-        `UPDATE subscriptions SET plan_key = 'free_web'
-           WHERE plan_key = 'free' AND tenant_id IN (
-             SELECT s.tenant_id FROM subscriptions s JOIN tenants t ON t.id = s.tenant_id
-               WHERE s.plan_key = 'free' AND t.created_at <= (
-                 SELECT applied_at FROM schema_migrations
-                   WHERE name = '0028_dd29_capability_registry_expand.sql'))`,
+        `UPDATE subscriptions SET plan_key = 'free_web' WHERE plan_key = 'free'`,
       );
-      const afterRevert = await dbClient.query(
-        `SELECT tenant_id, plan_key FROM subscriptions WHERE tenant_id IN ($1, $2)`,
-        [migratedTenantId, newTenantId],
+
+      // STEP 3: revert tenant_provision(), delete the new catalog rows, narrow the CHECK.
+      // Extract 0012's exact original function definition rather than hand-transcribing it,
+      // so the test can never silently drift from the real revert target.
+      const sql0012 = await readFile(path.join(MIGRATIONS_DIR, "0012_auth_functions.sql"), "utf8");
+      const originalFunction = sql0012.match(
+        /CREATE OR REPLACE FUNCTION tenant_provision\([\s\S]*?GRANT EXECUTE ON FUNCTION tenant_provision\([^)]*\) TO app;/,
       );
-      const byTenant = new Map(
-        afterRevert.rows.map((r) => [
-          (r as { tenant_id: string }).tenant_id,
-          (r as { plan_key: string }).plan_key,
-        ]),
+      if (!originalFunction) {
+        throw new Error("could not extract tenant_provision's original definition from 0012");
+      }
+      await dbClient.query(originalFunction[0]);
+
+      // This is the exact point codex round-10 found FK-impossible: with step 2 already
+      // done, nothing references plans('free',1)/('host_pro',1) any more, so this succeeds.
+      await dbClient.query(`DELETE FROM plans WHERE plan_key IN ('free','host_pro')`);
+      await dbClient.query(`ALTER TABLE plans DROP CONSTRAINT plans_key_chk`);
+      await dbClient.query(
+        `ALTER TABLE plans ADD CONSTRAINT plans_key_chk
+           CHECK (plan_key IN ('free_web','telegram','plus_channel','all_channels'))`,
       );
-      expect(byTenant.get(migratedTenantId)).toBe("free_web");
-      expect(byTenant.get(newTenantId)).toBe("free");
+
+      // Final state matches pre-0028 exactly: only the 4 old plans rows, migrated tenant back
+      // on free_web, and tenant_provision() writing free_web again for any brand-new tenant.
+      const plans = await dbClient.query(`SELECT plan_key FROM plans ORDER BY plan_key`);
+      expect(plans.rows.map((r) => (r as { plan_key: string }).plan_key).sort()).toEqual(
+        ["all_channels", "free_web", "plus_channel", "telegram"].sort(),
+      );
+      const migrated = await dbClient.query(
+        `SELECT plan_key FROM subscriptions WHERE tenant_id = $1`,
+        [migratedTenantId],
+      );
+      expect((migrated.rows[0] as { plan_key: string }).plan_key).toBe("free_web");
+
+      const personRow = await dbClient.query(
+        `INSERT INTO persons (display_name) VALUES ('DD29 Post-Rollback Owner') RETURNING id`,
+      );
+      const personId = (personRow.rows[0] as { id: string }).id;
+      const postRollbackTenant = await dbClient.query(
+        `SELECT tenant_provision($1, $2, $3, $4, $5) AS tenant_id`,
+        ["dd29-post-rollback", "DD29 Post Rollback Tenant", "Asia/Ho_Chi_Minh", "vi", personId],
+      );
+      const postRollbackTenantId = (postRollbackTenant.rows[0] as { tenant_id: string }).tenant_id;
+      const postRollbackSub = await dbClient.query(
+        `SELECT plan_key FROM subscriptions WHERE tenant_id = $1`,
+        [postRollbackTenantId],
+      );
+      expect((postRollbackSub.rows[0] as { plan_key: string }).plan_key).toBe("free_web");
     } finally {
       await dbClient?.end();
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
