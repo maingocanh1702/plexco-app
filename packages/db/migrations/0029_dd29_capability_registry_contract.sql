@@ -70,7 +70,12 @@
 --       CHECK (plan_key IN ('free_web','telegram','plus_channel','all_channels','free','host_pro'));
 --     -- re-insert the 4 deleted plans rows using 0011_seeds.sql's original
 --     -- literals verbatim (this file does not carry them; 0011 is the source
---     -- of truth for their original price/limits/entitlements).
+--     -- of truth for their original price/limits/entitlements). Use
+--     -- ON CONFLICT (plan_key, version) DO NOTHING, mirroring 0028's own seed
+--     -- insert idiom — makes a retried rollback attempt (e.g. after the
+--     -- transaction above committed but a LATER step in 0028's own rollback
+--     -- failed and this whole procedure is re-run from the top) idempotent
+--     -- instead of erroring on a duplicate key.
 --   COMMIT;
 -- Apply this file's rollback BEFORE 0028's, mirroring the reverse of the
 -- expand→contract application order — 0028's own rollback note assumes
