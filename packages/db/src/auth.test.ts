@@ -366,7 +366,7 @@ describe("tenant_provision (BL-BIL-1)", () => {
       trial_end: Date | null;
       period_end: Date | string;
     };
-    expect(s.plan_key).toBe("free_web");
+    expect(s.plan_key).toBe("free");
     expect(s.status).toBe("active"); // never trialing/past_due for free
     expect(s.trial_end).toBeNull();
     expect(String(s.period_end)).toMatch(/infinity/i);
