@@ -769,14 +769,19 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
     return { dbClient, migratedTenantId };
   }
 
-  // The exact precondition query from 0028's rollback note (STEP 0).
-  const PRECONDITION_QUERY = `
+  // The exact precondition queries from 0028's rollback note — split (codex round-12 [P1],
+  // gate-attempt-01 on the scope-expanded registration) because tenant age is the right signal
+  // for 'free' (one atomic writer, tenant_provision()) but the wrong one for 'host_pro' (no
+  // writer today, but no safe inverse either — a future/manual write could target ANY tenant
+  // age, so that check must be unconditional, not age-scoped).
+  const HOST_PRO_CHECK_QUERY = `SELECT count(*)::int AS n FROM subscriptions WHERE plan_key = 'host_pro'`;
+  const FREE_PRECONDITION_QUERY = `
     SELECT count(*)::int AS n FROM subscriptions s JOIN tenants t ON t.id = s.tenant_id
-      WHERE s.plan_key IN ('free','host_pro') AND t.created_at > (
+      WHERE s.plan_key = 'free' AND t.created_at > (
         SELECT applied_at FROM schema_migrations
           WHERE name = '0028_dd29_capability_registry_expand.sql')`;
 
-  it("the precondition query finds a tenant provisioned after 0028 and correctly signals full rollback is unsafe (codex round-10 [P1], gate-attempt-06)", async () => {
+  it("STEP 0b: the free precondition finds a tenant provisioned after 0028 and correctly signals full rollback is unsafe (codex round-10 [P1], gate-attempt-06)", async () => {
     const dbName = "plexco_migrate_dd29_rollback_precondition";
     const admin = new pg.Client({ connectionString: BASE! });
     await admin.connect();
@@ -799,7 +804,7 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
         personId,
       ]);
 
-      const precondition = await dbClient.query(PRECONDITION_QUERY);
+      const precondition = await dbClient.query(FREE_PRECONDITION_QUERY);
       expect((precondition.rows[0] as { n: number }).n).toBe(1);
     } finally {
       await dbClient?.end();
@@ -808,7 +813,37 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
     }
   }, 60_000);
 
-  it("when the precondition holds (no new tenant), the complete rollback sequence — blanket subscriptions revert, THEN the plans-row delete — succeeds with no FK violation and reaches the exact pre-migration state (codex round-10 [P1], gate-attempt-06: the previous fix scoped WHICH rows to revert but never fixed the surrounding delete-before-revert ordering, which was FK-impossible whenever any row had to be preserved)", async () => {
+  it("STEP 0a: the host_pro check unconditionally blocks even for an OLDER tenant (predating 0028) — age is the wrong signal for host_pro since it has no writer today but no safe inverse either (codex round-12 [P1], gate-attempt-01 on the scope-expanded registration)", async () => {
+    const dbName = "plexco_migrate_dd29_rollback_hostpro_older";
+    const admin = new pg.Client({ connectionString: BASE! });
+    await admin.connect();
+    let dbClient: pg.Client | undefined;
+    try {
+      const setup = await bootstrapThrough0028(dbName, admin);
+      dbClient = setup.dbClient;
+      const { migratedTenantId } = setup;
+
+      // Simulate a manual upgrade (or a not-yet-built upgrade flow) setting an OLDER,
+      // pre-0028 tenant directly onto 'host_pro' — no tenant_provision() call involved, so the
+      // AGE-based free precondition would never see this at all (it only checks 'free').
+      await dbClient.query(`UPDATE subscriptions SET plan_key = 'host_pro' WHERE tenant_id = $1`, [
+        migratedTenantId,
+      ]);
+
+      const hostProCheck = await dbClient.query(HOST_PRO_CHECK_QUERY);
+      expect((hostProCheck.rows[0] as { n: number }).n).toBe(1);
+
+      // Prove the age-based check alone would have missed this — it only ever looks at 'free'.
+      const freePrecondition = await dbClient.query(FREE_PRECONDITION_QUERY);
+      expect((freePrecondition.rows[0] as { n: number }).n).toBe(0);
+    } finally {
+      await dbClient?.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.end();
+    }
+  }, 60_000);
+
+  it("when both preconditions hold (no host_pro row, no new-tenant free row), the complete rollback sequence — blanket subscriptions revert, THEN the plans-row delete — succeeds with no FK violation and reaches the exact pre-migration state (codex round-10 [P1], gate-attempt-06: the previous fix scoped WHICH rows to revert but never fixed the surrounding delete-before-revert ordering, which was FK-impossible whenever any row had to be preserved)", async () => {
     const dbName = "plexco_migrate_dd29_rollback_complete";
     const admin = new pg.Client({ connectionString: BASE! });
     await admin.connect();
@@ -818,11 +853,14 @@ describe("DD29-11 0028's documented rollback precondition and full sequence are 
       dbClient = setup.dbClient;
       const { migratedTenantId } = setup;
 
-      const precondition = await dbClient.query(PRECONDITION_QUERY);
-      expect((precondition.rows[0] as { n: number }).n).toBe(0);
+      const hostProCheck = await dbClient.query(HOST_PRO_CHECK_QUERY);
+      expect((hostProCheck.rows[0] as { n: number }).n).toBe(0);
+      const freePrecondition = await dbClient.query(FREE_PRECONDITION_QUERY);
+      expect((freePrecondition.rows[0] as { n: number }).n).toBe(0);
 
       // STEP 2 (0029 never applied in this test, so STEP 1 does not apply): blanket revert —
-      // safe because the precondition just proved every 'free' subscription is a migrated one.
+      // safe because step 0b just proved every 'free' subscription is a migrated one, and step
+      // 0a already proved zero rows reference plans('host_pro',1).
       await dbClient.query(
         `UPDATE subscriptions SET plan_key = 'free_web' WHERE plan_key = 'free'`,
       );

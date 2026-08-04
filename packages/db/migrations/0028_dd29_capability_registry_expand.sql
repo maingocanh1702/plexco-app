@@ -112,62 +112,79 @@
 -- for owner review — never widen the map, invent a repricing policy, or
 -- retry blindly (see manifest stop_conditions).
 --
--- Rollback (codex round-10 [P1], gate-attempt-06: round-09's fix scoped WHICH
--- subscriptions to revert but never fixed the surrounding SEQUENCE, which was
--- FK-impossible whenever any row had to be preserved — deleting plans('free',1)
--- while ANY subscription still references it violates
--- subscriptions_plan_key_plan_version_fkey. This note now gives a complete,
--- ordered, FK-safe sequence with an explicit precondition instead):
+-- Rollback (codex round-12 [P1], gate-attempt-01 on the scope-expanded
+-- registration: round-10's precondition checked tenant AGE for 'free'/
+-- 'host_pro' together, but age is the wrong signal for 'host_pro' — an OLDER
+-- tenant, predating this migration, could still end up on 'host_pro' via a
+-- direct manual UPDATE or a not-yet-built upgrade flow, entirely outside
+-- tenant_provision(). The age-based precondition would not catch that row,
+-- and the sequence below never reverted 'host_pro' subscriptions at all — it
+-- would then try to delete plans('host_pro',1) while that row still
+-- referenced it, the exact FK failure round-10 was supposed to prevent, just
+-- for the other plan. This note now separates the two plans, since they are
+-- NOT symmetric: 'free' has an unambiguous inverse ('free_web'); 'host_pro'
+-- has none — it could have come from any of three old tiers, or from no old
+-- tier at all):
 --
--- STEP 0 — PRECONDITION CHECK (run first, before touching any schema; changes
--- nothing):
+-- STEP 0a — HOST_PRO CHECK (unconditional, run first; changes nothing):
+--   SELECT count(*) FROM subscriptions WHERE plan_key = 'host_pro';
+-- If this is > 0, STOP — do not run any step below. There is no automated,
+-- unambiguous inverse for a 'host_pro' row (unlike 'free', which always
+-- reverts to 'free_web'), so ANY existing 'host_pro' subscription — regardless
+-- of its tenant's age — blocks a full rollback until an owner manually
+-- resolves each one (assign it a specific old-style plan_key, or decide
+-- 'host_pro' must remain permanent in the catalog and fall back to a
+-- code-only partial rollback: revert tenant_provision()'s literal only,
+-- leave the CHECK/catalog/already-migrated subscriptions as they are). As of
+-- this migration, tenant_provision() never writes 'host_pro' — this check is
+-- 0 today by construction — but it is unconditional, not tenant-age-scoped,
+-- because a future write path (or a manual upgrade) could set it on a
+-- tenant of ANY age, not just one newer than this migration.
+--
+-- STEP 0b — FREE PRECONDITION (run only if step 0a passed; changes nothing):
 --   SELECT count(*) FROM subscriptions s JOIN tenants t ON t.id = s.tenant_id
---     WHERE s.plan_key IN ('free','host_pro') AND t.created_at > (
+--     WHERE s.plan_key = 'free' AND t.created_at > (
 --       SELECT applied_at FROM schema_migrations
 --         WHERE name = '0028_dd29_capability_registry_expand.sql');
--- If this is > 0, STOP — do not run any step below. At least one tenant was
--- provisioned onto 'free'/'host_pro' AFTER this migration committed (the
--- redefined tenant_provision() never writes 'host_pro' as of this migration,
--- so in practice this only ever fires for 'free' today, but the check is
--- written generally). A full rollback — removing 'free'/'host_pro' from the
--- catalog entirely — would corrupt that tenant no matter what order the
--- remaining steps run in, because SOME subscription must keep referencing
--- whichever of those two plans rows it holds. This is an owner decision, not
--- a mechanical one: either reassign that tenant to an old-style plan_key
--- manually first (itself a policy call this migration does not make), or
--- accept 'free'/'host_pro' as permanent in the catalog and fall back to a
--- code-only partial rollback (revert tenant_provision()'s literal only;
--- leave the CHECK, catalog rows, and already-migrated subscriptions as they
--- are). This is exactly the scenario the OPERATIONAL PRECONDITION above
--- exists to prevent — if deploys correctly paused onboarding for their
--- duration, this count is always 0 at rollback time.
+-- If this is > 0, STOP for the same reason as before: at least one tenant was
+-- provisioned onto 'free' after this migration committed, and reverting every
+-- 'free' row would corrupt it. Age IS the right signal here, unlike for
+-- 'host_pro', because 'free' has exactly one writer (tenant_provision(),
+-- verified — see below) that sets it ONCE, atomically, at tenant creation,
+-- and nothing else ever changes a subscription's plan_key after that. This is
+-- exactly the scenario the OPERATIONAL PRECONDITION above exists to prevent —
+-- if deploys correctly paused onboarding for their duration, this count is
+-- always 0 at rollback time.
 --
--- If the precondition holds (count = 0), the full sequence is safe, in this
--- exact order:
+-- If BOTH checks pass (zero 'host_pro' rows, zero new-tenant 'free' rows),
+-- the full sequence is safe, in this exact order:
 --   1. (only if 0029 has already applied) roll 0029 back first — see its own
 --      rollback note — so plans('free_web',1) etc. exist again before step 2
 --      needs to reference them.
 --   2. Revert EVERY subscription currently on plan_key='free' back to
---      'free_web' — not a filtered subset. The precondition just proved the
---      "new tenant" set is empty, so "every row on 'free'" and "every row
---      this migration's UPDATE touched" are now the SAME set; no per-row
---      scoping is needed or safer than the blanket form:
+--      'free_web' — not a filtered subset. Step 0b just proved the "new
+--      tenant" set is empty, so "every row on 'free'" and "every row this
+--      migration's UPDATE touched" are now the SAME set:
 --        UPDATE subscriptions SET plan_key = 'free_web' WHERE plan_key = 'free';
 --      Doing this BEFORE the delete in step 3 is what makes step 3 FK-safe —
---      by the time step 3 runs, nothing references plans('free',1) any more.
+--      by the time step 3 runs, nothing references plans('free',1) OR
+--      plans('host_pro',1) any more (step 0a already proved zero rows
+--      reference the latter).
 --   3. Revert tenant_provision() to the old literal, delete the plans('free',1)
 --      and ('host_pro',1) rows, narrow plans_key_chk back to the 4 old values.
 --
--- The precondition's provenance needs no new column or audit table — it
--- already exists on tenants/schema_migrations. Before this migration ran, NO
--- subscription could have plan_key='free' at all (the pre-0028 CHECK
--- disallowed it), and a tenant's row is always inserted before its own
--- subscription, in the same transaction (tenant_provision()'s body) — so a
--- 'free' subscription whose tenant predates this migration's own applied_at
--- can only be one this migration's UPDATE touched; one whose tenant postdates
--- it can only be new. This reasoning holds only while tenant_provision()
--- remains the sole writer of subscriptions.plan_key — re-verify that (grep
--- for other writers) before trusting the precondition query at rollback time.
+-- Step 0b's provenance needs no new column or audit table — it already exists
+-- on tenants/schema_migrations. Before this migration ran, NO subscription
+-- could have plan_key='free' at all (the pre-0028 CHECK disallowed it), and a
+-- tenant's row is always inserted before its own subscription, in the same
+-- transaction (tenant_provision()'s body) — so a 'free' subscription whose
+-- tenant predates this migration's own applied_at can only be one this
+-- migration's UPDATE touched; one whose tenant postdates it can only be new.
+-- This reasoning holds only while tenant_provision() remains the sole writer
+-- of subscriptions.plan_key — re-verify that (grep for other writers) before
+-- trusting step 0b's query at rollback time. Step 0a needs no such caveat —
+-- it does not depend on who writes plan_key or when, only that no row
+-- currently holds 'host_pro'.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
