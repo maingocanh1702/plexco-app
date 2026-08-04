@@ -1582,7 +1582,8 @@ notes: **Không phải regression — là fail-open cũ bị đóng lại.** Kit
 
 ## task: chat-definer-role-provisioning
 title: Slice 1 chuỗi in-app-chat — provision role `chat_definer` (bootstrap script, không migration)
-status: ready — contract AUTHORED 2026-08-03, verdict `CODE_READY` closure 12/12, chưa implement
+status: merged
+note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (2026-08-04). Was: ready
 not_before: null
 not_after: null
 risk: P1
