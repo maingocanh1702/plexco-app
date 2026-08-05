@@ -450,6 +450,53 @@ the migration history — `app`'s only access to the `tenants` locking status-re
 one function (`tenant_provision`, `0012`, already covers tenant creation/lookup separately, via its
 own SECURITY DEFINER privileges rather than a table grant).
 
+## DM safety authority core (DD-55, `0030` — CODE DARK)
+
+Canonical block/report/rate/audit storage for in-app DM safety plus three `chat_definer`-owned
+`SECURITY DEFINER` functions. **Inert** (zero live caller) until `dd38-dd86-chat-schema-core`
+(slice 3) lands its `dm_current_read_allowed`/`create_dm`/`send_chat_message`/`mark_read` — this
+migration is the FIRST to transfer function ownership to `chat_definer` (`chat-definer-role-
+provisioning`, merged, provisions the role itself but grants it no privileges).
+
+- `dm_safety_enabled() RETURNS boolean` — pure predicate, the AND of `chat_dm_safety_config`'s four
+  independent capability toggles (`block_enabled`/`report_enabled`/`rate_limit_enabled`/
+  `audit_enabled`). A missing config row (should never happen — one is seeded by this migration, no
+  delete grant to anyone) still fails closed via `COALESCE(..., false)`, not an error.
+- `chat_pair_blocked(a uuid, b uuid) RETURNS boolean` — pure predicate, direction-agnostic: checks
+  both storage directions in `chat_blocks` (a current-state relation, not a log — a row means
+  "blocker currently blocks blocked"). `chat_blocks` is the canonical, cross-feature block store
+  reused by chat/social/User Settings (DD-55) — do not create a second one.
+  `chat_blocks`/`chat_reports` mutation (block/unblock/report-submit) has no owner yet; this
+  migration grants `chat_definer` only the reads its own predicates need.
+- `assert_dm_allowed(actor uuid, peer uuid, action text) RETURNS void` — side-effecting fail-closed
+  gate, called by `create_dm`/`send_chat_message` for `action IN ('create','send')` and by
+  `mark_read` for `action = 'read'`. Order: malformed input → disabled → blocked → sender rate →
+  target rate; the two `rate_limit_check` (`0012`, BL-SEC-5) calls are skipped entirely for `'read'`
+  (receiver-side bookkeeping, not a spam vector). Rate buckets: `chat_dm_sender:<actor>` and
+  `chat_dm_target:<peer>`, both 1-minute windows, limits read live from
+  `chat_dm_safety_config.dm_sender_limit_per_min`/`dm_target_limit_per_min` (default 30 each,
+  `CHECK > 0`) — retuning is a plain `UPDATE`, never a new migration (P17: migrations are
+  forward-only). Every deny path raises the exact same string `chat safety blocked`
+  (`send_chat_message`'s own existing RLS-boundary error text) regardless of `deny_reason` — no
+  block-detail leak to the caller.
+
+All four tables (`chat_dm_safety_config`, `chat_blocks`, `chat_reports`, `chat_dm_safety_audit`) are
+global-protected: no RLS, zero grant to `app`/`app_worker`/`readonly` — same model as
+`persons`/`accounts` (`0009`). Reached only through the three functions above.
+
+**Known open defect (unresolved at merge time — see this slice's HALT report, not fixed in `0030`):**
+every deny path in `assert_dm_allowed` does `INSERT INTO chat_dm_safety_audit` immediately followed
+by `RAISE EXCEPTION` in the same statement. PL/pgSQL's exception handling is savepoint-rollback-based,
+so the `RAISE` unconditionally undoes the just-inserted audit row — proven empirically (a bare
+top-level autocommit call loses the row) with no `dblink`/autonomous-transaction precedent anywhere
+in this codebase to work around it. `chat_dm_safety_audit` is created, granted, and structurally
+correct, but **does not yet durably record anything** through normal `assert_dm_allowed` calls; the
+regression test `chat-dm-safety-invariants.test.ts` keeps the acceptance-matrix assertion (one audit
+row per denial) in place, marked `KNOWN DEFECT`, as the reproduction rather than weakening it.
+Resolving this needs an owner decision (accept best-effort/no audit-on-deny vs. a cross-transaction
+write mechanism such as `dblink` vs. another design) before any DM-mutating caller (slices 7/8) can
+treat this table as a working abuse-forensics log.
+
 ## Open items inherited from docs (not blockers)
 
 - `messenger_*` is post-MVP (P4.8, DD-09) — included for forward compatibility.

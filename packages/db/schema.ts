@@ -761,6 +761,77 @@ export const routingAudit = pgTable("routing_audit", {
 });
 
 /* ===========================================================================
+ * Chat DM safety authority (GLOBAL protected, DD-55, migration 0030)
+ * Cross-tenant, person-scoped — no RLS, zero grant to app/readonly. Reached
+ * only through chat_definer-owned SECURITY DEFINER functions
+ * (dm_safety_enabled/chat_pair_blocked/assert_dm_allowed), same model as
+ * persons/accounts above.
+ * ======================================================================== */
+
+export const chatDmSafetyConfig = pgTable("chat_dm_safety_config", {
+  singleton: boolean("singleton").primaryKey().default(true),
+  blockEnabled: boolean("block_enabled").notNull().default(true),
+  reportEnabled: boolean("report_enabled").notNull().default(true),
+  rateLimitEnabled: boolean("rate_limit_enabled").notNull().default(true),
+  auditEnabled: boolean("audit_enabled").notNull().default(true),
+  dmSenderLimitPerMin: integer("dm_sender_limit_per_min").notNull().default(30),
+  dmTargetLimitPerMin: integer("dm_target_limit_per_min").notNull().default(30),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  singletonChk: check("chat_dm_safety_config_singleton_chk", sql`${t.singleton}`),
+  senderLimitPositiveChk: check("chat_dm_safety_config_sender_limit_positive_chk",
+    sql`${t.dmSenderLimitPerMin} > 0`),
+  targetLimitPositiveChk: check("chat_dm_safety_config_target_limit_positive_chk",
+    sql`${t.dmTargetLimitPerMin} > 0`),
+}));
+
+export const chatBlocks = pgTable("chat_blocks", {
+  blockerPersonId: uuid("blocker_person_id").notNull().references(() => persons.id),
+  blockedPersonId: uuid("blocked_person_id").notNull().references(() => persons.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.blockerPersonId, t.blockedPersonId] }),
+  noSelfChk: check("chat_blocks_no_self_chk", sql`${t.blockerPersonId} <> ${t.blockedPersonId}`),
+}));
+
+export const chatReports = pgTable("chat_reports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  reporterPersonId: uuid("reporter_person_id").notNull().references(() => persons.id),
+  reportedPersonId: uuid("reported_person_id").notNull().references(() => persons.id),
+  reasonCode: text("reason_code").notNull(),
+  note: text("note"),
+  status: text("status").notNull().default("submitted"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  reasonCodeChk: check("chat_reports_reason_code_chk",
+    sql`${t.reasonCode} IN ('spam','harassment','unsafe','off_topic','other')`),
+  statusChk: check("chat_reports_status_chk",
+    sql`${t.status} IN ('submitted','triaged','actioned','closed')`),
+  noSelfChk: check("chat_reports_no_self_chk", sql`${t.reporterPersonId} <> ${t.reportedPersonId}`),
+  // Reused DD-95 taxonomy: 'other' requires a bounded note, every non-other rejects one.
+  noteShapeChk: check("chat_reports_note_shape_chk",
+    sql`(${t.reasonCode} = 'other' AND ${t.note} IS NOT NULL AND length(btrim(${t.note})) BETWEEN 1 AND 500)
+        OR (${t.reasonCode} <> 'other' AND ${t.note} IS NULL)`),
+}));
+
+export const chatDmSafetyAudit = pgTable("chat_dm_safety_audit", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  // No FK to persons — matches mergeAudit/routingAudit above: an audit row
+  // must survive independent of the referenced person's later merge/lifecycle.
+  actorPersonId: uuid("actor_person_id").notNull(),
+  peerPersonId: uuid("peer_person_id").notNull(),
+  action: text("action").notNull(),
+  denyReason: text("deny_reason").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  createdAtIdx: index("idx_chat_dm_safety_audit_created_at").on(t.createdAt),
+  actionChk: check("chat_dm_safety_audit_action_chk", sql`${t.action} IN ('create','send','read')`),
+  denyReasonChk: check("chat_dm_safety_audit_deny_reason_chk",
+    sql`${t.denyReason} IN ('safety_disabled','blocked','rate_limited_sender','rate_limited_target')`),
+}));
+
+/* ===========================================================================
  * Payments ledger (TENANT-private, append-only)
  * ======================================================================== */
 

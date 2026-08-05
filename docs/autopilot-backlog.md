@@ -1770,7 +1770,32 @@ notes: |
 
 ## task: chat-dm-safety-authority-core
 title: Slice 2 chuỗi in-app-chat — `dm_safety_enabled()` và authority tables/functions kèm theo
-status: planned — contract authored CODE_READY 2026-08-05, chưa register/worktree/implement
+status: AWAIT_FOUNDER (2026-08-05) — implemented in worktree feat/chat-dm-safety-authority-core,
+  base_sha 3289e3b90b1e46739ead4bab8a05fe95fec0b77a, NOT yet at the review gate. 372/380 DB tests
+  green; 8 failures are 3 distinct findings, none fixable within this slice's own scope without an
+  owner decision or a scope amendment. Full detail:
+  .autopilot/worktrees/chat-dm-safety-authority-core/.autopilot/state/chat-dm-safety-authority-core/AWAIT-FOUNDER-audit-persistence-and-test-harness-gaps.txt
+  (gitignored — durable summary below survives independent of that worktree's lifecycle).
+  (1) assert_dm_allowed()'s own pinned SS6.1 shape (INSERT audit row, then RAISE EXCEPTION, same
+  statement) makes chat_dm_safety_audit structurally unable to durably record a denial — PL/pgSQL's
+  savepoint-rollback exception semantics undo the insert unconditionally, proven empirically
+  (chat-dm-safety-invariants.test.ts, 1 failing test kept as reproduction, other 33/34 pass). Needs an
+  owner call among: accept the limitation / dblink (needs a new LOGIN role, chat_definer is NOLOGIN) /
+  RAISE LOG hybrid (recommended interim: zero new infra, moves the durable signal to the server log
+  instead of the table). (2) packages/db/src/test-harness.ts's setupNonSuperuserOwnerContext has a
+  bootstrapJobDefinerForOwner() but no chat_definer counterpart — 0030 is the first migration to
+  ALTER FUNCTION ... OWNER TO chat_definer, which needs SET ROLE membership a non-superuser migration
+  owner never gets. Breaks migrate.test.ts BR-3/BR-6 and rls-invariants.test.ts JCL-1. Fix is
+  mechanical (mirror the job_definer helper) but touches 2 files this slice's manifest negative-scopes
+  entirely. (3) migrate.test.ts's definer-bootstrap-cluster-wide-serialization DigitalOcean-degraded-
+  lock test's own cleanup (`DROP ROLE IF EXISTS chat_definer`) now fails ("cannot be dropped because
+  some objects depend on it") since chat_definer owns real objects for the first time — belongs to an
+  already-merged prior slice (286f48b/b55d628), needs a second pair of eyes before patching. Plus 3
+  purely-numeric stale migration-count/tail literals in rls-invariants.test.ts (30→31,
+  "0029_..."→"0030_..."), left untouched since that file carries a flat no-edit line with no literal
+  carve-out (unlike migrate.test.ts, which the manifest explicitly authorized for exactly this class
+  of fix). Resume: same worktree/branch/registration, nothing drifted. See the AWAIT file for the full
+  cost/benefit writeup per option.
 not_before: null
 not_after: null
 launcher: .claude/commands/ap-50-chat-dm-safety-authority-core.md

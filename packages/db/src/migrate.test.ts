@@ -29,7 +29,7 @@ vi.mock("node:fs/promises", async () => {
 });
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 30;
+const MIGRATION_COUNT = 31;
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -351,9 +351,7 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
       await withJobDefinerLock(BASE!, async () => {
         await ctx.bootstrapJobDefinerForOwner();
         const res = await ctx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe(
-          "0029_dd29_capability_registry_contract.sql",
-        );
+        expect(res.applied[res.applied.length - 1]).toBe("0030_chat_dm_safety_authority_core.sql");
       });
 
       const worker = await ctx.connectAsWorker();
