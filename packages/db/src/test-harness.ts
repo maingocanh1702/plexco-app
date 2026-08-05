@@ -200,17 +200,44 @@ export async function restoreChatDefinerMembership(
 const CHAT_DEFINER_LOCK_KEY = 0x63686164; // "chad" — distinct from "jobd" (0x6a6f6264) and "plxc" (0x706c7863)
 
 export async function withChatDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
-  const lockClient = new pg.Client({ connectionString: base });
-  await lockClient.connect();
-  await lockClient.query("SELECT pg_advisory_lock($1)", [CHAT_DEFINER_LOCK_KEY]);
+  const { release } = await acquireChatDefinerLock(base);
   try {
     return await fn();
   } finally {
-    await lockClient
-      .query("SELECT pg_advisory_unlock($1)", [CHAT_DEFINER_LOCK_KEY])
-      .catch(() => {});
-    await lockClient.end();
+    await release();
   }
+}
+
+/**
+ * Manual-release counterpart to withChatDefinerLock (codex round-05 [P1]): a caller whose
+ * chat_definer hand-off spans more than one function call -- bootstrap now, arbitrary test work
+ * later, restore/drop at teardown -- cannot express that as one callback. The prior shape (separate
+ * withChatDefinerLock calls for the bootstrap step and, independently, the teardown/restore step)
+ * released the lock in between, leaving a real window: another test could acquire it, install its
+ * OWN scratch member, and have that member either overwritten (bootstrapChatDefiner's own
+ * one-non-runtime-member refusal doesn't apply to a plain GRANT) or wrongly co-exist with the first
+ * test's restored predecessor -- reproduced live this session (JCL-1 observed BR-6's own transient
+ * member). Callers holding the whole lifecycle use this directly and MUST call release() exactly
+ * once, in a finally, after their own restore/cleanup completes -- see
+ * setupNonSuperuserOwnerContext's bootstrapChatDefinerForOwner/teardown for the pattern.
+ */
+export async function acquireChatDefinerLock(
+  base: string,
+): Promise<{ release: () => Promise<void> }> {
+  const lockClient = new pg.Client({ connectionString: base });
+  await lockClient.connect();
+  await lockClient.query("SELECT pg_advisory_lock($1)", [CHAT_DEFINER_LOCK_KEY]);
+  let released = false;
+  return {
+    release: async () => {
+      if (released) return;
+      released = true;
+      await lockClient
+        .query("SELECT pg_advisory_unlock($1)", [CHAT_DEFINER_LOCK_KEY])
+        .catch(() => {});
+      await lockClient.end();
+    },
+  };
 }
 
 /**
@@ -476,6 +503,12 @@ export async function setupNonSuperuserOwnerContext(
   // Populated by bootstrapChatDefinerForOwner if/when it runs; restored in teardown() (codex
   // round-03 [P1]) — empty means either it never ran, or chat_definer had no pre-existing member.
   let revokedChatDefinerMembers: string[] = [];
+  // Held from bootstrapChatDefinerForOwner's own revoke through teardown's own restore, as ONE
+  // continuous critical section (codex round-05 [P1] — releasing and re-acquiring between those two
+  // points left a real window for another test to occupy the slot in between; see
+  // acquireChatDefinerLock's own comment for the reproduction). null until bootstrapChatDefinerForOwner
+  // actually runs.
+  let chatDefinerLockRelease: (() => Promise<void>) | null = null;
 
   const bootstrapJobDefinerForOwner = async () => {
     // job_definer needs BYPASSRLS, and PG16 forbids a role from creating (or being granted) a
@@ -502,6 +535,12 @@ export async function setupNonSuperuserOwnerContext(
     // revokeStaleChatDefinerMembership first: chat_definer's OWN bootstrap script (unlike
     // job_definer's) refuses to re-point to a different target once any member exists — see that
     // helper's own comment. Its return value is restored in teardown() (codex round-03 [P1]).
+    //
+    // The lock is acquired HERE and released only in teardown(), after the restore below completes
+    // (codex round-05 [P1]) — the whole revoke -> bootstrap -> [caller's own work] -> teardown ->
+    // restore sequence is one continuous critical section, not two separately-locked halves with a
+    // gap another test could occupy in between.
+    chatDefinerLockRelease = (await acquireChatDefinerLock(base)).release;
     revokedChatDefinerMembers = await revokeStaleChatDefinerMembership(admin, ownerRole);
     await admin.query(`SET chat_definer_bootstrap.migration_role = '${ownerRole}'`);
     try {
@@ -551,13 +590,19 @@ export async function setupNonSuperuserOwnerContext(
       // REVOKE step needed.
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
       await admin.query(`DROP ROLE IF EXISTS ${ownerRole}`);
-      // Restore whatever bootstrapChatDefinerForOwner revoked (codex round-03 [P1]) — under the
-      // same lock that protects every other chat_definer mutation, since ownerRole's own DROP
-      // ROLE above is a different role and does not itself race this. Empty array is a no-op.
-      if (revokedChatDefinerMembers.length > 0) {
-        await withChatDefinerLock(base, () =>
-          restoreChatDefinerMembership(admin, revokedChatDefinerMembers),
-        );
+      // Restore whatever bootstrapChatDefinerForOwner revoked (codex round-03 [P1]), still under
+      // the SAME lock acquired back in bootstrapChatDefinerForOwner — never released in between
+      // (codex round-05 [P1]), so no other test can occupy the slot between the DROP ROLE above
+      // (which vacates it) and this restore. Empty array is a no-op; release regardless, since the
+      // lock was acquired whether or not there was anything to revoke.
+      if (chatDefinerLockRelease) {
+        try {
+          if (revokedChatDefinerMembers.length > 0) {
+            await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
+          }
+        } finally {
+          await chatDefinerLockRelease();
+        }
       }
       await admin.end();
     },

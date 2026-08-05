@@ -584,21 +584,24 @@ docs/autopilot-backlog.md                                        -- own entry + 
 stale twice already by not doing that (codex round-03 [P2]: claimed 1,121/1,503 against an actual
 1,257/1,743; then this same figure went stale again mid-round-03 itself before being caught before
 commit). The discipline that finally held: measure ONLY after every code change for the round is
-complete, never before.** `git diff --numstat <base_sha>...HEAD` on the final, post-round-04 diff
-totals **1,579 insertions across `packages/db/*`** (`chat-dm-safety-invariants.test.ts` 714,
-migration 363, `test-harness.ts` 178, `migrate.test.ts` 137, `schema.ts` 68,
-`rls-invariants.test.ts` 60, `README.md` 59) plus the doc/manifest/backlog files (this file's own
-size necessarily keeps moving as this exact paragraph is edited, so not pinned to a single digit
-here — see `git diff --stat` for the live number). File set stayed at the 10 files named in
-TARGET_FILES throughout all four rounds — only line count grew, driven by four real codex review
-rounds' worth of fixes: temp-shadow regression tests, a genuinely-concurrent-connections rewrite of
-the concurrency test, a full snapshot/restore fix for chat_definer's cluster-global membership with
-its own round-trip regression test, a role/table/privilege coverage matrix for the zero-grant proof
+complete, never before.** `git diff --numstat <base_sha>...HEAD` on the final, post-round-05 diff
+totals **1,616 insertions across `packages/db/*`** (`chat-dm-safety-invariants.test.ts` 714,
+migration 363, `test-harness.ts` 223, `migrate.test.ts` 143, `schema.ts` 68,
+`README.md` 59, `rls-invariants.test.ts` 46 — this one net-SHRANK from round-04's own peak, since
+round-05 removed a redundant lock-nesting layer rather than adding one) plus the doc/manifest/backlog
+files (this file's own size necessarily keeps moving as this exact paragraph is edited, so not
+pinned to a single digit here — see `git diff --stat` for the live number). File set stayed at the
+10 files named in TARGET_FILES throughout all five rounds — only line count grew, driven by five
+real codex review rounds' worth of fixes: temp-shadow regression tests, a
+genuinely-concurrent-connections rewrite of the concurrency test, a full snapshot/restore fix for
+chat_definer's cluster-global membership with its own round-trip regression test, a
+role/table/privilege coverage matrix for the zero-grant proof
 (`has_table_privilege`/`has_function_privilege` across all PG16 privilege types), a
-`client_min_messages` leak closure with its own regression suite — not scope creep into new
-tables/RPCs/grants. This exceeds the original `~650-750` planning estimate by roughly 2.1x.
-Recorded honestly rather than re-asserting a stale figure; the original planning line below is kept
-for history, not as a current claim.
+`client_min_messages` leak closure with its own regression suite, and a manual-release lock handle
+(`acquireChatDefinerLock`) closing a real gap between a test's own revoke and its later restore —
+not scope creep into new tables/RPCs/grants. This exceeds the original `~650-750` planning estimate
+by roughly 2.2x. Recorded honestly rather than re-asserting a stale figure; the original planning
+line below is kept for history, not as a current claim.
 
 <details><summary>Original planning estimate (2026-08-05, pre-implementation — historical, not
 current)</summary>
@@ -659,13 +662,23 @@ This slice does **NOT** create:
 - a report-triage/action UI or API — future support/ops tooling, unscoped
 - any modification to `infra/postgres-init/02-chat-definer.sql`, `01-job-definer.sql`, or
   `packages/db/src/tenant.ts`
-- (narrowed 2026-08-05, owner-authorized scope amendment, §6.3) `packages/db/src/test-harness.ts` and
-  `packages/db/src/rls-invariants.test.ts` are no longer blanket-excluded — this migration is the first
-  to require `chat_definer` membership under a non-superuser migration role, breaking 3 pre-existing
-  tests through no fault of their own. Still excluded: any edit to either file beyond the narrow fix
-  those 3 breakages need (a `bootstrapChatDefinerForOwner` mirroring the existing `bootstrapJobDefinerForOwner`,
-  wired into its 3 call sites, plus `rls-invariants.test.ts`'s 3 stale migration-count/tail literals) —
-  no broader refactor, no new RLS coverage for these tables (they still have none, unchanged)
+- (narrowed 2026-08-05, owner-authorized scope amendment, §6.3; enumeration EXPANDED codex round-05
+  [P2] to match every touch actually made across rounds 1-5, all mechanically necessitated by the
+  same gap, none a broader refactor) `packages/db/src/test-harness.ts`, `packages/db/src/
+  rls-invariants.test.ts`, and `packages/db/src/migrate.test.ts` are no longer blanket-excluded —
+  this migration is the first to require `chat_definer` membership under a non-superuser migration
+  role, breaking 3 pre-existing tests through no fault of their own. Still excluded: any edit beyond
+  the following, all closing the SAME chat_definer-membership-race problem class: a
+  `bootstrapChatDefinerForOwner` mirroring the existing `bootstrapJobDefinerForOwner`, wired into its
+  3 original call sites; `rls-invariants.test.ts`'s 3 stale migration-count/tail literals;
+  `revokeStaleChatDefinerMembership`/`restoreChatDefinerMembership` as a matched revoke/restore pair
+  with regression tests, closing a real membership-loss bug this migration's own test infrastructure
+  introduced (round-03); `withChatDefinerLock` on `rls-invariants.test.ts`'s TI-7/CND-7/UCC-6 — the
+  only three unfiltered full-migration replay paths in that file (round-03); a role x table x
+  privilege catalog matrix proving the zero-grant contract (round-04); `acquireChatDefinerLock`
+  replacing a two-separately-locked-halves pattern that left a real race between a test's own revoke
+  and its later restore (round-05). No broader refactor beyond these named fixes; no new RLS
+  coverage for these tables (they still have none, unchanged)
 - a new exported `withPerson`-style helper — this slice's own test file sets `app.person_id` inline for
   its own fixtures the same way `chat-schema-invariants.test.ts` will; not a shared export (would be a
   4th module, breaching the B3 budget's module ceiling)
@@ -772,8 +785,31 @@ which does not parse prose qualifiers above the fence).**
   `status:` line was unparseable by `autopilot-backlog-reconcile` (a narrative sentence instead of a
   canonical token), and the zero-grant test only covered SELECT/INSERT/EXECUTE — widened to the full
   PG16 table-privilege set via `has_table_privilege`/`has_function_privilege`. None of the four
-  findings changed G1/G2/G3; G4/G5/G6 re-verified again against the round-04 state. The mandatory
-  independent code +
+  findings changed G1/G2/G3; G4/G5/G6 re-verified again against the round-04 state.
+- **2026-08-06, round-05 re-verification (this feature's LAST allowed review round under the
+  MAX_ROUNDS=5 breaker):** found and fixed the most subtle defect across all five rounds — the
+  chat_definer revoke/restore hand-off (added round-03 to fix a real membership-loss bug) itself
+  released the advisory lock between the revoke step and the later restore step, leaving a genuine
+  window for another test to occupy the slot in between; reproduced in this session's own history
+  (JCL-1 observing BR-6's transient member) but not previously recognized as a LOCKING gap rather
+  than just a missing-restore gap. Fixed with `acquireChatDefinerLock`, a manual-release counterpart
+  to `withChatDefinerLock`, holding one continuous critical section from the initial revoke through
+  the final restore across `test-harness.ts`'s `bootstrapChatDefinerForOwner`/`teardown`,
+  `migrate.test.ts`'s BR-3, and `rls-invariants.test.ts`'s JCL-1 — which required REMOVING two
+  now-redundant outer `withChatDefinerLock` wrappers (BR-6, JCL-1) that would otherwise deadlock
+  against the newly-internal lock (verified this restructuring directly: 3 consecutive full DB
+  suite runs, 414/414 each, no hangs). Also fixed: the manifest's own `_verification_note` and
+  `security_review.reason` still described the PRE-round-04 (leaky) RAISE LOG behavior as the
+  thing to verify, exactly backwards from what round-04 made correct; the negative-scope
+  enumeration in both the manifest and this doc's SS8 had not been updated since the original
+  2026-08-05 owner amendment despite three further rounds of narrowly-justified, mechanically-
+  necessitated additions on top of it; and this doc's own closure matrix still cited the stale
+  `5cad41f` original-authoring base (SS10 itself was already correctly pinned to `3289e3b`) and a
+  stale `planned` backlog status (round-04 had already corrected the actual status line to
+  `blocked`). None of round-05's findings changed G1/G2/G3; G4/G5/G6 re-verified again against the
+  round-05 state — this is the closest any round came to a scope-boundary finding (G5), resolved by
+  accurately enumerating what was already narrowly justified, not by reverting real fixes. The
+  mandatory independent code +
   security review (manifest `code_review`/`security_review`) is running against this exact,
   re-verified, as-amended diff — this block is not a substitute for that review, it is this slice's
   own re-affirmation ahead of it.
@@ -781,7 +817,7 @@ which does not parse prose qualifiers above the fence).**
 ```text
 REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: CODE_READY
-REVIEWED_AT: 2026-08-06 (re-verified after round-04; originally 2026-08-05, re-verified again after round-01/02/03)
+REVIEWED_AT: 2026-08-06 (re-verified after round-05, the last allowed round under MAX_ROUNDS=5; originally 2026-08-05, re-verified again after round-01/02/03/04)
 AUTHORITY_SHA: 90d292d85fbe92db7a5afcd118a99e28f3d3b3b7
 LIVE_BASE_SHA: 3289e3b90b1e46739ead4bab8a05fe95fec0b77a
 BASE_BRANCH: main
@@ -837,10 +873,11 @@ CLOSURE_MATRIX: PASS (12/12 — see §10.1, re-verified 2026-08-06 against the a
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
 IMPLEMENTATION_ARTIFACTS: PASS (implemented in worktree feat/chat-dm-safety-authority-core, 2026-08-05,
-  amended same day per owner ruling, re-verified 2026-08-06 across four real codex review rounds —
-  see amendment history above)
-FIRST_IMPLEMENTATION_STEP: DONE — see the amendment history above; next step is a fifth code +
-  security review round on this exact, round-04-fixed diff
+  amended same day per owner ruling, re-verified 2026-08-06 across five real codex review rounds —
+  see amendment history above; round-05 is the last allowed round under MAX_ROUNDS=5)
+FIRST_IMPLEMENTATION_STEP: DONE — see the amendment history above; next step is a sixth code +
+  security review round on this exact, round-05-fixed diff. Per this repo's own MAX_ROUNDS=5
+  breaker, any actionable finding in that round is a HALT, not a sixth fix round
 REMAINING_BLOCKERS: none in this slice's own scope; the local dev cluster's chat_definer role
   currently has zero members (confirmed real damage from this session's own pre-fix test runs,
   not caused by the fix itself — see backlog note) and needs an operator-run `pnpm db:bootstrap`
@@ -852,7 +889,7 @@ REMAINING_BLOCKERS: none in this slice's own scope; the local dev cluster's chat
 
 | # | Gate | Evidence | PASS/FAIL |
 |---|---|---|---|
-| 1 | Authority snapshot pin theo SHA | `90d292d` (decision) + `5cad41f` (live base = origin/main = HEAD), both verified 2026-08-05 | PASS |
+| 1 | Authority snapshot pin theo SHA | `90d292d` (decision, unchanged) + `3289e3b` (codex round-05 [P2]: this row still cited `5cad41f`, the original 2026-08-05 authoring-time base, three commits behind the ACTUAL pinned worktree/implementation base `3289e3b` that every round's own review has been diffing against since; corrected to match §10's own `LIVE_BASE_SHA`), verified 2026-08-06 | PASS |
 | 2 | Decision trong scope đã chốt | DD-55 `✅ Chốt` (2026-07-16, hard-gate language quoted verbatim §5); no open product/policy question touches this slice's storage+predicate+gate scope | PASS |
 | 3 | Scope IN/OUT và owner rõ | §6 (in) / §8 (out), each row justified against the Reviewed spec or an explicit forward-reference/ownership constraint | PASS |
 | 4 | Dependency phân loại đủ | Exactly one hard dependency, `chat-definer-role-provisioning`, classified `MERGED` with same-order `base_sha`/`landed_sha`/`file`/`symbol` proof (§4.1) — not a placeholder | PASS |
@@ -861,9 +898,9 @@ REMAINING_BLOCKERS: none in this slice's own scope; the local dev cluster's chat
 | 7 | Fail-closed/idempotency/order đủ | `COALESCE(...,false)` on missing config, incl. `audit_enabled` (amended); ordered `disabled → blocked → rate` checks; generic exception text; `RAISE LOG` (amended, replacing an append-only audit table that could not persist); `rate_limit_check` reuse inherits its own proven idempotent-consume/retention behavior | PASS |
 | 8 | Open question trong scope = 0 | §5 escalation check — all 14 design decisions resolved at Tier 1 at authoring time; row 6's mechanism was later found wrong by implementation and amended by the owner (§5 row 6) — not a Tier 2/3 escalation left open, a closed amendment | PASS |
 | 9 | Acceptance matrix có expected result | §9 (amended 2026-08-05 for the `RAISE LOG` mechanism), full B2 category coverage incl. negative-proof rows (blocked/disabled/rate-limited, no-leak, permission-denied) | PASS |
-| 10 | Migration/security/rollback pin | Exactly 1 migration (+ mechanical/doc files + owner-authorized scope amendment, §6.4); B3 budget exception `≤750 LOC` cited and measured EXCEEDED by roughly 2.1x (§6.4 — codex round-03 [P2]: this row previously said "estimated within" after §6.4 itself already recorded otherwise, an internal contradiction, not just a stale number), attributed to four real review rounds' worth of fixes and NOT scope creep — file set held at 10 throughout; module count grew 3→5 with the owner-authorized amendment; P17 forward-only acknowledged explicitly (no rollback runbook, nothing destructive to undo); safe to drop entirely pre-enable (zero live caller until slice 3 lands) | PASS |
+| 10 | Migration/security/rollback pin | Exactly 1 migration (+ mechanical/doc files + owner-authorized scope amendment, §6.4); B3 budget exception `≤750 LOC` cited and measured EXCEEDED by roughly 2.2x (§6.4 — codex round-03 [P2]: this row previously said "estimated within" after §6.4 itself already recorded otherwise, an internal contradiction, not just a stale number), attributed to five real review rounds' worth of fixes and NOT scope creep — file set held at 10 throughout; module count grew 3→5 with the owner-authorized amendment; P17 forward-only acknowledged explicitly (no rollback runbook, nothing destructive to undo); safe to drop entirely pre-enable (zero live caller until slice 3 lands) | PASS |
 | 11 | First slice có hard dependency merged | `chat-definer-role-provisioning` is merged (§4.1) — this is not a first-to-code node with an unmerged prerequisite, unlike AP-45's own current state | PASS |
-| 12 | Implementation handoff sẵn sàng | Packet (this doc) + manifest + launcher all authored and internally complete; backlog entry updated to `planned` in the same session (§11 of this task's own work, tracked separately from this doc) | PASS |
+| 12 | Implementation handoff sẵn sàng | Packet (this doc) + manifest + launcher all authored and internally complete; backlog entry's canonical status token is `blocked` (codex round-05 [P2]: this row said `planned`, stale since round-04 corrected the backlog line's own token from an unparseable narrative sentence to `blocked` — accurate for a task genuinely blocked pending its own review-gate cycle, not `planned`, which implies not-yet-started) — §11 of this task's own work, tracked separately from this doc | PASS |
 
 12/12 PASS. Verdict: `CODE_READY`.
 

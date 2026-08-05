@@ -1770,13 +1770,12 @@ notes: |
 
 ## task: chat-dm-safety-authority-core
 title: Slice 2 chuỗi in-app-chat — `dm_safety_enabled()` và authority tables/functions kèm theo
-status: blocked — at the review gate (2026-08-06), codex round-04 gate-attempt-07 outcome not yet
-  known as of this note (codex round-04 [P2]: this line previously started with a narrative sentence
-  instead of a canonical first token, so autopilot-backlog-reconcile's own awk parser read the token
-  `at` as the status, matched none of planned/ready/blocked, and silently dropped this task from
-  reconciliation entirely — first token fixed, narrative moved below). Owner ruling implemented,
-  4 codex review rounds (round-01 gate-attempt-03, round-02 gate-attempt-05, round-03 gate-attempt-06,
-  round-04 gate-attempt-07) all real, all fixed in-slice. Separately: the local dev cluster's
+status: blocked — at the review gate (2026-08-06), codex round-05 gate-attempt-08 outcome not yet
+  known as of this note (round-05 is this feature's LAST allowed review round under MAX_ROUNDS=5 —
+  any actionable finding in the next round is a HALT, not a sixth fix round). Owner ruling
+  implemented, 5 codex review rounds (round-01 gate-attempt-03, round-02 gate-attempt-05, round-03
+  gate-attempt-06, round-04 gate-attempt-07, round-05 gate-attempt-08) all real, all fixed in-slice.
+  Separately: the local dev cluster's
   chat_definer role currently has zero members (confirmed real damage from this session's own
   pre-fix test runs; the round-03 fix prevents recurrence but does not retroactively repair it) —
   needs an owner-run `pnpm db:bootstrap`, out of this slice's own scope to perform. See the dated
@@ -1925,6 +1924,40 @@ notes: |
   exactly the mistake this note is now correcting a second time; re-measured after ALL round-03 code
   changes were complete (not before), landing at 1,487 `packages/db/*` insertions, still 10 files.
   Closure row 10 also directly contradicted §6.4's own already-corrected LOC finding — fixed to match.
+
+  **2026-08-06, codex review round-04 (gate-attempt-07), real, all 3 findings fixed in-slice.**
+  [P1, the most consequential finding across all rounds] `client_min_messages` is a plain,
+  caller-controlled session GUC — any caller with `EXECUTE` could raise their own session's
+  threshold to `log` and receive `assert_dm_allowed`'s `RAISE LOG` content (actor/peer/action/
+  deny_reason), directly contradicting DD-55's "no block detail leaked" requirement, a gap that
+  survived three earlier rounds. Fixed with `SET client_min_messages = warning` on the function
+  itself. This made the RAISE LOG test suite's own content-assertions permanently unobservable —
+  rewrote all four to prove the security property (nothing arrives, regardless of the caller's own
+  session) instead. [P2] this task's own `status:` line was a narrative sentence, silently invisible
+  to `autopilot-backlog-reconcile`'s own parser — rewritten with `blocked` as the canonical token.
+  [P2] the zero-grant test still only covered SELECT/INSERT/EXECUTE — widened to the full PG16
+  table-privilege set via `has_table_privilege`/`has_function_privilege`. Full detail:
+  `docs/autopilot-chat-dm-safety-authority-core.md` §10's own round-04 amendment entry.
+
+  **2026-08-06, codex review round-05 (gate-attempt-08) — this feature's LAST allowed round under
+  MAX_ROUNDS=5 — real, all 4 findings fixed in-slice.** [P1] the chat_definer revoke/restore
+  hand-off (added round-03) released its advisory lock BETWEEN the revoke and the later restore,
+  leaving a real window for another test to occupy the slot in between — the exact mechanism behind
+  the JCL-1/BR-6 interleaving already documented in this session's own code comments, now correctly
+  identified as a locking gap rather than only a missing-restore gap. Fixed with
+  `acquireChatDefinerLock`, a manual-release lock, holding one continuous critical section from
+  revoke through restore across `test-harness.ts`, `migrate.test.ts`'s BR-3, and
+  `rls-invariants.test.ts`'s JCL-1 — required removing two now-redundant outer `withChatDefinerLock`
+  wrappers (BR-6, JCL-1) that would otherwise deadlock against the newly-internal lock (verified: 3
+  consecutive full DB suite runs, 414/414, no hangs). [P2] the manifest's own verification note and
+  security-review reason still described the pre-round-04 (leaky) behavior as correct — corrected.
+  [P2] the negative-scope enumeration (manifest + this doc's §8) had not been updated since the
+  original 2026-08-05 owner amendment despite three further rounds of narrowly-justified additions
+  on top of it — expanded to name every actual touch and its justification, per round. [P2] the
+  closure matrix still cited the stale `5cad41f` original-authoring base and a stale `planned`
+  backlog status — corrected to `3289e3b` and `blocked`. Full detail: the contract doc's own
+  round-05 amendment entry. If the next review round returns any actionable finding, this feature
+  HALTs `MAX_ROUNDS` per this repo's own hard breaker — not a sixth fix round.
 
 ## task: chat-dm-safety-audit-queryable-path
 title: A queryable, structured store for DM-safety denial forensics (chat_dm_safety_audit's deferred

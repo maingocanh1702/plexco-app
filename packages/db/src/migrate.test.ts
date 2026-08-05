@@ -7,6 +7,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ensureRoleExists, logMigrationFailure, migrate } from "./migrate.js";
 import {
+  acquireChatDefinerLock,
   bootstrapChatDefiner,
   bootstrapJobDefiner,
   restoreChatDefinerMembership,
@@ -210,6 +211,12 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
     await admin.query(`CREATE ROLE ${owner} LOGIN NOSUPERUSER NOCREATEROLE PASSWORD 'x'`);
     await admin.query(`CREATE DATABASE ${db} OWNER ${owner}`);
     let revokedChatDefinerMembers: string[] = [];
+    // Held from the revoke below through the restore in the outer finally, as ONE continuous
+    // critical section (codex round-05 [P1] — two separate withChatDefinerLock calls, one for
+    // revoke+bootstrap+migrate and a second, later one for the restore, left a real window in
+    // between for another test to occupy the slot; see acquireChatDefinerLock's own comment for
+    // the reproduction: JCL-1 observed BR-6's own transient member this exact way).
+    const { release: releaseChatDefinerLock } = await acquireChatDefinerLock(BASE!);
     try {
       await admin.query(`SET job_definer_bootstrap.migration_role = '${owner}'`);
       try {
@@ -217,7 +224,7 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
       } finally {
         await admin.query(`RESET job_definer_bootstrap.migration_role`);
       }
-      // chat_definer bootstrap + migrate() wrapped in withChatDefinerLock (2026-08-05, fixing a
+      // chat_definer bootstrap + migrate() run under the lock acquired above (2026-08-05, fixing a
       // race this exact session discovered live): migrate() now reaches 0030
       // (chat-dm-safety-authority-core), which does ALTER FUNCTION ... OWNER TO chat_definer and
       // mechanically requires `owner` to already be a member of chat_definer.
@@ -232,24 +239,24 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
       // outer finally below (codex round-03 [P1] — the original version revoked and forgot,
       // confirmed to have left this session's own local dev cluster's chat_definer with zero
       // members).
-      const res = await withChatDefinerLock(BASE!, async () => {
-        revokedChatDefinerMembers = await revokeStaleChatDefinerMembership(admin, owner);
-        await admin.query(`SET chat_definer_bootstrap.migration_role = '${owner}'`);
-        try {
-          await bootstrapChatDefiner(admin);
-        } finally {
-          await admin.query(`RESET chat_definer_bootstrap.migration_role`);
-        }
-        return migrate(url(db, owner, "x"));
-      });
+      revokedChatDefinerMembers = await revokeStaleChatDefinerMembership(admin, owner);
+      await admin.query(`SET chat_definer_bootstrap.migration_role = '${owner}'`);
+      try {
+        await bootstrapChatDefiner(admin);
+      } finally {
+        await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+      }
+      const res = await migrate(url(db, owner, "x"));
       expect(res.applied.length).toBe(MIGRATION_COUNT);
     } finally {
       await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
       await admin.query(`DROP ROLE IF EXISTS ${owner}`);
-      if (revokedChatDefinerMembers.length > 0) {
-        await withChatDefinerLock(BASE!, () =>
-          restoreChatDefinerMembership(admin, revokedChatDefinerMembers),
-        );
+      try {
+        if (revokedChatDefinerMembers.length > 0) {
+          await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
+        }
+      } finally {
+        await releaseChatDefinerLock();
       }
     }
   }, 60_000);
@@ -457,16 +464,16 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
       inherit: false,
     });
     try {
-      await withJobDefinerLock(BASE!, () =>
-        withChatDefinerLock(BASE!, async () => {
-          await ctx.bootstrapJobDefinerForOwner();
-          await ctx.bootstrapChatDefinerForOwner();
-          const res = await ctx.runMigration();
-          expect(res.applied[res.applied.length - 1]).toBe(
-            "0030_chat_dm_safety_authority_core.sql",
-          );
-        }),
-      );
+      // codex round-05 [P1]: bootstrapChatDefinerForOwner now acquires and holds the chat lock
+      // itself, internally, through ctx.teardown() (see test-harness.ts's own comment) — wrapping
+      // it in another withChatDefinerLock here would deadlock (two different connections each
+      // waiting on the same session-scoped advisory lock the other holds). job_definer has no such
+      // internal hold (its own bootstrap never revokes an existing member, so there is nothing to
+      // race a later restore against), so withJobDefinerLock still wraps it explicitly here.
+      await withJobDefinerLock(BASE!, () => ctx.bootstrapJobDefinerForOwner());
+      await ctx.bootstrapChatDefinerForOwner();
+      const res = await ctx.runMigration();
+      expect(res.applied[res.applied.length - 1]).toBe("0030_chat_dm_safety_authority_core.sql");
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
