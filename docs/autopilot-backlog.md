@@ -169,6 +169,35 @@ manifest: docs/autopilot-manifests/infra-do-app-vpc-deployment.json
 merged_probe: infra/app.prod.yaml :: ^name:[[:space:]]+plexco-prod$
 notes: P0 manual workflow only; canonical v0.6.0 classifies its migration orchestration and secret-bearing DB/deploy wiring as ineligible for autopilot codegen. AP-21 is a disabled historical launcher, not an execution entry point. First merge `infra-egress-compatibility-evidence`; then manually re-slice/prove the provider-specific design without weakening VPC, DB-role, secret or migration boundaries. Full design contract: `docs/autopilot-infra-do-app-vpc-deployment.md`.
 
+  **⚠️ DEPLOYMENT INPUTS — DO Managed PostgreSQL never grants superuser (`doadmin` is `CREATEROLE`,
+  not superuser). Two separate slices hit this and each recorded it locally; consolidated here
+  2026-08-05 so this contract does not have to rediscover them.** Both are already-tested facts, not
+  predictions:
+
+  1. **`LOCK TABLE pg_auth_members` fails with `insufficient_privilege`** — shared catalogs need
+     superuser. `definer-bootstrap-cluster-wide-serialization` (merged `b55d628`) therefore made the
+     cluster-wide lock **fail-OPEN with a loud `RAISE WARNING`**, sitting on top of an unconditional
+     same-database advisory lock that needs no privilege. On DO the advisory layer is the only real
+     serialization; the catalog layer degrades. That is by design and is asserted by five
+     mutation-tested concurrency tests — do not "fix" it during deployment by granting more.
+  2. **`GRANT USAGE ON SCHEMA public TO job_definer` silently no-ops** under that same role — it emits
+     PostgreSQL's native `WARNING: no privileges were granted for "public"` and the transaction still
+     **commits**. `01-job-definer.sql`'s final statement is affected. Recorded as
+     `docs/autopilot-definer-bootstrap-cluster-wide-serialization.md` §10 item 8, deliberately NOT
+     fixed there (out of that slice's negative scope, statement predates it). Consequence for this
+     contract: on the real production host `job_definer` finishes bootstrap **without** `USAGE` on
+     `public`, and nothing surfaces until the first migration actually runs and fails on permissions.
+     Two options, both belong to this slice: grant schema usage out-of-band as a one-time manual step
+     in the `MIGRATION_ROLE` setup (it does not need to be idempotent bootstrap logic), or move the
+     `GRANT` inside a privilege-aware conditional the way block 3's membership grant already is.
+
+  Related, same root cause, different mechanism: PostgreSQL 16 auto-grants a `CREATEROLE` holder
+  membership in roles it creates (`chat-definer-role-provisioning`, `286f48b`). Any assumption that a
+  provisioning role ends up with no membership in what it provisioned is false on DO.
+
+  **Treat these as inputs, not findings to re-derive.** Each cost a review round to discover on a
+  slice whose actual subject was something else.
+
 ## task: infra-egress-compatibility-evidence
 title: Close DD-04 fixed-egress compatibility evidence for SePay, ApiPay, Zalo and Meta
 status: blocked
