@@ -767,7 +767,7 @@ export const routingAudit = pgTable("routing_audit", {
  * (dm_safety_enabled/chat_pair_blocked/assert_dm_allowed), same model as
  * persons/accounts above.
  *
- * No chatDmSafetyAudit table (owner-amended 2026-08-05): an INSERT
+ * No chat_dm_safety_audit table (owner-amended 2026-08-05): an INSERT
  * immediately before RAISE EXCEPTION in the same statement can never
  * persist — PL/pgSQL's exception handling is savepoint-rollback-based, so
  * the RAISE unconditionally undoes it. assert_dm_allowed() emits RAISE LOG
