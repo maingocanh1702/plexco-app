@@ -1741,16 +1741,18 @@ notes: |
 
 ## task: chat-dm-safety-authority-core
 title: Slice 2 chuỗi in-app-chat — `dm_safety_enabled()` và authority tables/functions kèm theo
-status: idea — chưa author contract
+status: planned — contract authored CODE_READY 2026-08-05, chưa register/worktree/implement
 not_before: null
 not_after: null
+launcher: .claude/commands/ap-50-chat-dm-safety-authority-core.md
 risk: P1
 change_class: schema-migration
 depends_on: [chat-definer-role-provisioning]
 invariants: [schema]
-scope: []
-manifest: null
-merged_probe: null
+scope: [packages/db/migrations/0030_chat_dm_safety_authority_core.sql, packages/db/schema.ts, packages/db/src/chat-dm-safety-invariants.test.ts, packages/db/src/migrate.test.ts, packages/db/README.md, docs/autopilot-manifests/chat-dm-safety-authority-core.json, docs/autopilot-chat-dm-safety-authority-core.md]
+manifest: docs/autopilot-manifests/chat-dm-safety-authority-core.json
+slice_doc: docs/autopilot-chat-dm-safety-authority-core.md
+merged_probe: packages/db/schema.ts :: chatDmSafetyConfig
 notes: |
   **Mở 2026-08-03 cùng lý do với slice 1: plan đặc tả nó, backlog chưa từng có.** Khác slice 1 ở chỗ plan
   **không** ghim exact-file packet cho nó — §9.2 chỉ ghim slice 1. Nên authoring slice này là thiết kế
@@ -1760,3 +1762,18 @@ notes: |
   nghị.
   **Không author trước khi slice 1 merge.** Không phải kỷ luật thứ tự: `depends_on` của nó cần `dep_checks`
   trỏ vào symbol có thật trên origin/main, mà `chat_definer` chưa tồn tại ở đó.
+  **Authored 2026-08-05, slice 1 đã merge (`286f48b`, hardened bởi AP-49 `b55d628`).** Contract đạt
+  `CODE_READY` 12/12 closure (không như root/AP-45, hiện vẫn `NOT_CODE_READY` vì đúng slice này từng
+  chưa tồn tại) — xem `docs/autopilot-chat-dm-safety-authority-core.md` §10. Thiết kế: singleton
+  `chat_dm_safety_config` (4 toggle) cho `dm_safety_enabled()`; `chat_blocks`/`chat_reports` canonical
+  (tên đã pin ở ≥15 chỗ khác trong docs, không phải lựa chọn); `chat_dm_safety_audit` ghi riêng deny
+  reason, không log mọi call; rate-limit **tái dùng** `rate_limit_check` (0012, BL-SEC-5) thay vì bảng
+  mới. `chat_reports` KHÔNG có `channel_id` — `chat_channels` chưa tồn tại tại vị trí migration này
+  trong dependency order (root/slice 3 land sau). Toàn bộ 4 bảng mới là global-protected plane (không
+  RLS, không grant `app`) — mirror đúng model `persons`/`accounts` ở `0009`, không phải model tenant-RLS.
+  Migration number `0030` provisional (tail đo 2026-08-05 là `0029`, hai file DD-29 pricing — không
+  phải DD-56 chat capability — đã ăn mất số `0029` mà chính AP-45 từng đoán cho chính nó).
+  **Next:** mở worktree theo `docs/autopilot-manifests/chat-dm-safety-authority-core.json`, re-verify
+  migration tail, implement theo `docs/autopilot-chat-dm-safety-authority-core.md` §6. Sau khi slice
+  này merge, `dd38-dd86-chat-schema-core` (AP-45) cần re-run gate của chính nó — dependency thứ hai
+  (slice này) khi đó mới `MERGED`.
