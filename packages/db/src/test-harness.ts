@@ -128,15 +128,21 @@ export async function bootstrapChatDefiner(client: pg.Client): Promise<void> {
  * this repo's own `pnpm db:bootstrap`/CI step, which falls back to CURRENT_USER when MIGRATION_ROLE
  * is unset — the common case). This helper clears that path the same way an operator would per the
  * script's own error text ("revoke the existing membership first if this is an intentional
- * re-point") before calling bootstrapChatDefiner for a DIFFERENT target — safe in a test context
- * (every prior target is either a superuser needing no membership to function, or a scratch role
- * this run created and will drop at teardown) and a no-op when chat_definer does not exist yet or
- * already points at `keepTarget` (added 2026-08-05, owner-authorized scope amendment).
+ * re-point") before calling bootstrapChatDefiner for a DIFFERENT target.
+ *
+ * Returns the revoked role names so the CALLER can restore them (codex round-03 [P1]: the original
+ * version revoked and forgot — every caller's own teardown only dropped its OWN scratch role,
+ * never re-granting whatever this revoked. Confirmed as a REAL, not theoretical, break: this
+ * session's own test runs against the local dev cluster left chat_definer with zero members,
+ * verified directly via pg_auth_members after the fact). Restoring is a plain `GRANT chat_definer
+ * TO <role>` with no extra options, matching 02-chat-definer.sql's own grant shape exactly (that
+ * script's `GRANT chat_definer TO %I` is the ONLY code path in this repo that ever grants this
+ * membership, so there is no other options-shape to replay).
  */
 export async function revokeStaleChatDefinerMembership(
   client: pg.Client,
   keepTarget: string,
-): Promise<void> {
+): Promise<string[]> {
   const { rows } = await client.query(
     `SELECT r.rolname FROM pg_auth_members m
        JOIN pg_roles r ON r.oid = m.member
@@ -144,13 +150,39 @@ export async function revokeStaleChatDefinerMembership(
       WHERE g.rolname = 'chat_definer' AND r.rolname <> $1`,
     [keepTarget],
   );
-  for (const { rolname } of rows as { rolname: string }[]) {
+  const revoked = (rows as { rolname: string }[]).map((r) => r.rolname);
+  for (const rolname of revoked) {
     // Quoted via pg's own escapeIdentifier (codex round-01 [P2]) rather than this file's usual
     // plain interpolation (e.g. DROP ROLE IF EXISTS ${ownerRole} elsewhere, always a literal
     // this file itself just chose) — rolname here is catalog-sourced, so a role created with a
     // quoted identifier containing a space/quote/statement terminator would otherwise break or
     // misparse the REVOKE statement.
     await client.query(`REVOKE chat_definer FROM ${client.escapeIdentifier(rolname)}`);
+  }
+  return revoked;
+}
+
+/**
+ * Faithful counterpart to revokeStaleChatDefinerMembership's own return value (codex round-03
+ * [P1]). Tolerates `undefined_object` (SQLSTATE 42704, "role does not exist") specifically: the
+ * revoked snapshot can legitimately name ANOTHER test's own transient scratch owner role (chat_
+ * definer tolerates only one non-runtime member, so whichever test held it moments before this one
+ * ran is what gets snapshotted, not necessarily a stable role like `plexco`) — reproduced live in
+ * this session (JCL-1 snapshotted BR-6's own scratch owner, which BR-6 had already DROP ROLE'd by
+ * the time JCL-1's restore ran). That role's own DROP ROLE already revoked its chat_definer
+ * membership as a side effect, so there is nothing left to restore for it — not a real failure.
+ * Any OTHER error still propagates.
+ */
+export async function restoreChatDefinerMembership(
+  client: pg.Client,
+  roleNames: string[],
+): Promise<void> {
+  for (const rolname of roleNames) {
+    try {
+      await client.query(`GRANT chat_definer TO ${client.escapeIdentifier(rolname)}`);
+    } catch (error) {
+      if ((error as { code?: string }).code !== "42704") throw error;
+    }
   }
 }
 
@@ -441,6 +473,9 @@ export async function setupNonSuperuserOwnerContext(
   const ownerUrl = testUrl(base, { db: dbName, user: ownerRole, password: NONSUPER_OWNER_PW });
   const ownerPool = new pg.Pool({ connectionString: ownerUrl, max: 2 });
   const workerPools: pg.Pool[] = [];
+  // Populated by bootstrapChatDefinerForOwner if/when it runs; restored in teardown() (codex
+  // round-03 [P1]) — empty means either it never ran, or chat_definer had no pre-existing member.
+  let revokedChatDefinerMembers: string[] = [];
 
   const bootstrapJobDefinerForOwner = async () => {
     // job_definer needs BYPASSRLS, and PG16 forbids a role from creating (or being granted) a
@@ -466,8 +501,8 @@ export async function setupNonSuperuserOwnerContext(
     // same session-GUC mechanism pnpm db:bootstrap/CI use for a distinct migration-role identity.
     // revokeStaleChatDefinerMembership first: chat_definer's OWN bootstrap script (unlike
     // job_definer's) refuses to re-point to a different target once any member exists — see that
-    // helper's own comment.
-    await revokeStaleChatDefinerMembership(admin, ownerRole);
+    // helper's own comment. Its return value is restored in teardown() (codex round-03 [P1]).
+    revokedChatDefinerMembers = await revokeStaleChatDefinerMembership(admin, ownerRole);
     await admin.query(`SET chat_definer_bootstrap.migration_role = '${ownerRole}'`);
     try {
       await bootstrapChatDefiner(admin);
@@ -516,6 +551,14 @@ export async function setupNonSuperuserOwnerContext(
       // REVOKE step needed.
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
       await admin.query(`DROP ROLE IF EXISTS ${ownerRole}`);
+      // Restore whatever bootstrapChatDefinerForOwner revoked (codex round-03 [P1]) — under the
+      // same lock that protects every other chat_definer mutation, since ownerRole's own DROP
+      // ROLE above is a different role and does not itself race this. Empty array is a no-op.
+      if (revokedChatDefinerMembers.length > 0) {
+        await withChatDefinerLock(base, () =>
+          restoreChatDefinerMembership(admin, revokedChatDefinerMembers),
+        );
+      }
       await admin.end();
     },
   };

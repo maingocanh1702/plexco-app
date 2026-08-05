@@ -498,8 +498,10 @@ GRANT EXECUTE ON FUNCTION rate_limit_check(text, integer, interval) TO chat_defi
 
 </details>
 
-Line-count estimate for this file superseded by the measured total in §6.4 (1,121 insertions across
-`packages/db/*`, 1,503 total) — not repeated here to avoid a second place for it to go stale.
+Line-count estimate for this file superseded by the measured total in §6.4 — genuinely not repeated
+here this time (self-caught while fixing codex round-03 [P2]'s LOC finding: this exact sentence was
+itself echoing round-02's now-stale numbers, proving "point at the measurement" only works if the
+pointer itself carries no number to go stale).
 
 ### 6.2 Schema mirror (`packages/db/schema.ts`)
 
@@ -562,19 +564,23 @@ docs/autopilot-chat-dm-safety-authority-core.md                  -- self
 docs/autopilot-backlog.md                                        -- own entry + new chat-dm-safety-audit-queryable-path idea entry
 ```
 
-**Measured, not estimated (codex round-02 [P2]: the `~650-750` figure below was the original
-planning estimate, superseded — the artifact stated it was "still within `≤750 LOC`" after
-measuring nothing, which is false):** `git diff --numstat <base_sha>...HEAD` on the final,
-post-round-02 diff totals **1,121 insertions across `packages/db/*`** (migration 321,
-`chat-dm-safety-invariants.test.ts` 474, `test-harness.ts` 123, `schema.ts` 62,
-`migrate.test.ts` 52, `rls-invariants.test.ts` 35, `README.md` 54) plus 382/135/32/103 lines
-across the four doc/manifest/backlog files — 1,503 insertions total, 10 files. This exceeds the
-original `~650-750` planning estimate by roughly 50%, driven by: two real codex review rounds'
-worth of fixes (temp-shadow regression tests, a genuinely-concurrent-connections rewrite of the
-concurrency test, additional CHECK-constraint tests), not scope creep into new tables/RPCs/grants
-— `git diff --stat` confirms the file SET stayed at the 10 files named in TARGET_FILES throughout;
-only line count grew. Recorded honestly rather than re-asserting the stale estimate; the original
-planning line above is kept for history, not as a current claim.
+**Measured, not estimated — and re-measured again after round-03, since the round-02 number here was
+itself stale by the time it was read (codex round-03 [P2]: this doc claimed 1,121/1,503 while the
+actual round-02 commit already measured 1,257/1,743 — a self-inflicted repeat of the same "measure
+before your own change lands, not after" mistake, this time within one slice's own review cycle).**
+`git diff --numstat <base_sha>...HEAD` on the final, post-round-03 diff totals **1,487 insertions
+across `packages/db/*`** (migration 350, `chat-dm-safety-invariants.test.ts` 640, `test-harness.ts`
+178, `migrate.test.ts` 137, `schema.ts` 68, `rls-invariants.test.ts` 60, `README.md` 54) plus the
+doc/manifest/backlog files (this file's own size necessarily keeps moving as this exact paragraph
+is edited, so not pinned to a single digit here — see `git diff --stat` for the live number). File
+set stayed at the 10 files named in TARGET_FILES throughout all three rounds — only line count grew,
+driven by three real codex review rounds' worth of fixes (temp-shadow regression tests, a
+genuinely-concurrent-connections rewrite of the concurrency test, a full snapshot/restore fix for
+chat_definer's cluster-global membership with its own round-trip regression test, a role/table
+coverage matrix for the zero-grant proof, additional CHECK-constraint and RAISE-LOG tests) — not
+scope creep into new tables/RPCs/grants. This exceeds the original `~650-750` planning estimate by
+roughly 2x. Recorded honestly rather than re-asserting a stale figure; the original planning line
+below is kept for history, not as a current claim.
 
 <details><summary>Original planning estimate (2026-08-05, pre-implementation — historical, not
 current)</summary>
@@ -689,9 +695,11 @@ re-deriving, an owner question, not an implementation choice.
 | Failure | `assert_dm_allowed(a, b, 'unknown_action')` | Raises `invalid_parameter_value` |
 | Failure | `assert_dm_allowed(a, b, NULL)` (codex round-01 [P1]) | Raises `invalid_parameter_value` — `NULL NOT IN (...)` is SQL `UNKNOWN`, not `TRUE`, so this needs an explicit `p_action IS NULL` guard, not just the whitelist check |
 | Concurrency | 6 truly concurrent `assert_dm_allowed(a, x, 'create')` calls (different peers, independent connections, codex round-02 [P2] — the original test fired all 6 through one `pg.Client`, which node-postgres queues FIFO on a single connection, never exercising real contention) racing against `dm_sender_limit_per_min = 3` | `rate_limit_check`'s own advisory-lock serialization (0012, already proven) admits exactly 3 of 6; the rest deny with `deny_reason='rate_limited_sender'` |
-| Concurrency | `assert_dm_allowed` denial path racing the same `(actor,peer,action)` twice | Two independent `RAISE LOG` lines (no dedupe expected — each call logs independently) |
 | Security | A same-session temp table named `chat_dm_safety_config`/`chat_blocks` (codex round-02 [P1]) | `dm_safety_enabled()`/`chat_pair_blocked()` still read the real `public.*` table — `SET search_path = public, pg_temp` (pg_temp last) means an unqualified reference resolves to the real table before ever reaching a same-named temp shadow |
-| Boundary | `chat_dm_safety_config` retuned via `UPDATE` (codex round-01 [P2]) | `updated_at` advances — `trg_chat_dm_safety_config_touch_updated_at` fires on every `UPDATE`, not just the initial `INSERT`'s `DEFAULT now()` |
+| Boundary | `chat_dm_safety_config` retuned via `UPDATE` (codex round-01 [P2], actually asserted in round-03 — round-01's own claim of a test was never backed by one) | `updated_at` advances — `trg_chat_dm_safety_config_touch_updated_at` fires on every `UPDATE`, not just the initial `INSERT`'s `DEFAULT now()` |
+| Failure | `dm_safety_enabled()`/`assert_dm_allowed()` with the `chat_dm_safety_config` row itself deleted (codex round-03 [P2]) | Both deny (`false`/`safety_disabled`), not error — COALESCE fails closed on a missing row, matching the migration's own comment |
+| Authorization | `app`/`app_worker`/`readonly` each attempt `SELECT` AND `INSERT` on all three tables, plus `EXECUTE` on all three functions (codex round-03 [P2] — the original only tried `SELECT` and only `app`) | Permission denied in all 21 combinations — zero grant of any kind to any of the three protected roles |
+| Observability | Racing the same `(actor,peer,action)` denial twice (codex round-03 [P2]) | Two independent `RAISE LOG` lines, no dedupe |
 | Migration | Exactly one new `.sql` file added | `git diff --name-only` against base shows exactly one file under `packages/db/migrations/` |
 | Migration | No destructive change to any existing table | Only fresh `CREATE TABLE`/`CREATE FUNCTION` and one new `GRANT ... TO chat_definer` on the pre-existing `rate_limit_check`; zero `ALTER`/`DROP` on any table that predates this migration |
 | Migration | Migration applies under the real, non-superuser `DATABASE_URL_MIGRATION` role after `chat_definer` bootstrap | Succeeds — mirrors root's own test #25/#26 (PG16 `ALTER FUNCTION ... OWNER TO` needs `CREATE ON SCHEMA public` granted first); this slice's own `GRANT CREATE ... / REVOKE CREATE ...` bracket proves it independently of root |
@@ -714,14 +722,24 @@ which does not parse prose qualifiers above the fence).**
 - **2026-08-05, same day, owner-directed amendment:** SS5 row 6 rationale replaced, SS6.1 DDL rewritten
   (drop `chat_dm_safety_audit`, add `RAISE LOG`), scope extended to `packages/db/src/test-harness.ts`/
   `packages/db/src/rls-invariants.test.ts` (SS6.3/SS8).
-- **2026-08-06, this re-verification:** every gate below RE-CHECKED against the amended, as-implemented
-  state (not carried over from 2026-08-05) — `REVIEWED_AT` updated to reflect that. None needed to
-  change verdict: G1 (authority pin, DD-55 itself unchanged)/G2 (decision scope, the audit-mechanism
-  swap is an implementation detail, not a new product/policy question)/G3 (dependency,
-  `chat-definer-role-provisioning` still MERGED)/G6 (external, same) hold unconditionally; G4
-  (acceptance-matrix coverage) re-verified against the amended SS9, backed by 36/36 passing tests in
-  `chat-dm-safety-invariants.test.ts`; G5 (scope) re-verified against the CURRENT, amended
-  `TARGET_FILES`/`IN_SCOPE` below, not the original 7-file list. The mandatory independent code +
+- **2026-08-06, round-01/02 re-verification:** every gate below RE-CHECKED against the amended,
+  as-implemented state (not carried over from 2026-08-05) — `REVIEWED_AT` updated to reflect that.
+  None needed to change verdict: G1 (authority pin, DD-55 itself unchanged)/G2 (decision scope, the
+  audit-mechanism swap is an implementation detail, not a new product/policy question)/G3
+  (dependency, `chat-definer-role-provisioning` still MERGED)/G6 (external, same) hold
+  unconditionally; G4 (acceptance-matrix coverage) re-verified against the amended SS9; G5 (scope)
+  re-verified against the CURRENT, amended `TARGET_FILES`/`IN_SCOPE` below, not the original
+  7-file list.
+- **2026-08-06, round-03 re-verification:** a hard-pinned test count ("36/36") was here and went
+  stale within the SAME re-verification note after round-02 added tests — removed rather than
+  re-pinned (codex round-03 [P2]); G4's own evidence is `pnpm --filter @plexco/db test` passing in
+  full, not a specific number copied into this doc. Round-03 also found and fixed one genuine P1
+  (chat_definer cluster-global membership permanently lost on test teardown, confirmed as real
+  damage to this session's own local dev cluster, not theoretical) and 3 P2s (an unlocked
+  full-migration path, an under-covered acceptance/security matrix including a claimed-but-
+  never-actually-tested NULL-action regression, and this doc's own LOC/test-count claims going stale a
+  second time within one slice). None change G1/G2/G3/G6; G4/G5 re-verified again against the
+  round-03 state specifically. The mandatory independent code +
   security review (manifest `code_review`/`security_review`) is running against this exact,
   re-verified, as-amended diff — this block is not a substitute for that review, it is this slice's
   own re-affirmation ahead of it.
@@ -729,7 +747,7 @@ which does not parse prose qualifiers above the fence).**
 ```text
 REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: CODE_READY
-REVIEWED_AT: 2026-08-06 (re-verified post-amendment; originally 2026-08-05)
+REVIEWED_AT: 2026-08-06 (re-verified after round-03; originally 2026-08-05, re-verified again after round-01/02)
 AUTHORITY_SHA: 90d292d85fbe92db7a5afcd118a99e28f3d3b3b7
 LIVE_BASE_SHA: 3289e3b90b1e46739ead4bab8a05fe95fec0b77a
 BASE_BRANCH: main
@@ -785,10 +803,15 @@ CLOSURE_MATRIX: PASS (12/12 — see §10.1, re-verified 2026-08-06 against the a
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
 IMPLEMENTATION_ARTIFACTS: PASS (implemented in worktree feat/chat-dm-safety-authority-core, 2026-08-05,
-  amended same day per owner ruling, re-verified 2026-08-06 — see amendment history above)
-FIRST_IMPLEMENTATION_STEP: DONE — see the amendment history above; next step is the code + security
-  review gate on this exact, re-verified, as-amended diff
-REMAINING_BLOCKERS: none
+  amended same day per owner ruling, re-verified 2026-08-06 across three real codex review rounds —
+  see amendment history above)
+FIRST_IMPLEMENTATION_STEP: DONE — see the amendment history above; next step is a fourth code +
+  security review round on this exact, round-03-fixed diff
+REMAINING_BLOCKERS: none in this slice's own scope; the local dev cluster's chat_definer role
+  currently has zero members (confirmed real damage from this session's own pre-fix test runs,
+  not caused by the fix itself — see backlog note) and needs an operator-run `pnpm db:bootstrap`
+  to restore normal (non-test) migration capability. Not a code blocker on this slice; flagged for
+  the owner to action directly.
 ```
 
 ### 10.1 Closure matrix (12/12)
@@ -804,7 +827,7 @@ REMAINING_BLOCKERS: none
 | 7 | Fail-closed/idempotency/order đủ | `COALESCE(...,false)` on missing config, incl. `audit_enabled` (amended); ordered `disabled → blocked → rate` checks; generic exception text; `RAISE LOG` (amended, replacing an append-only audit table that could not persist); `rate_limit_check` reuse inherits its own proven idempotent-consume/retention behavior | PASS |
 | 8 | Open question trong scope = 0 | §5 escalation check — all 14 design decisions resolved at Tier 1 at authoring time; row 6's mechanism was later found wrong by implementation and amended by the owner (§5 row 6) — not a Tier 2/3 escalation left open, a closed amendment | PASS |
 | 9 | Acceptance matrix có expected result | §9 (amended 2026-08-05 for the `RAISE LOG` mechanism), full B2 category coverage incl. negative-proof rows (blocked/disabled/rate-limited, no-leak, permission-denied) | PASS |
-| 10 | Migration/security/rollback pin | Exactly 1 migration (+ mechanical/doc files + owner-authorized scope amendment, §6.4); B3 budget exception `≤750 LOC` cited and estimated within (module count grew 3→5 with the amendment, flagged to the reviewer, §6.4); P17 forward-only acknowledged explicitly (no rollback runbook, nothing destructive to undo); safe to drop entirely pre-enable (zero live caller until slice 3 lands) | PASS |
+| 10 | Migration/security/rollback pin | Exactly 1 migration (+ mechanical/doc files + owner-authorized scope amendment, §6.4); B3 budget exception `≤750 LOC` cited and measured EXCEEDED by roughly 2x (§6.4 — codex round-03 [P2]: this row previously said "estimated within" after §6.4 itself already recorded otherwise, an internal contradiction, not just a stale number), attributed to three real review rounds' worth of fixes and NOT scope creep — file set held at 10 throughout; module count grew 3→5 with the owner-authorized amendment; P17 forward-only acknowledged explicitly (no rollback runbook, nothing destructive to undo); safe to drop entirely pre-enable (zero live caller until slice 3 lands) | PASS |
 | 11 | First slice có hard dependency merged | `chat-definer-role-provisioning` is merged (§4.1) — this is not a first-to-code node with an unmerged prerequisite, unlike AP-45's own current state | PASS |
 | 12 | Implementation handoff sẵn sàng | Packet (this doc) + manifest + launcher all authored and internally complete; backlog entry updated to `planned` in the same session (§11 of this task's own work, tracked separately from this doc) | PASS |
 

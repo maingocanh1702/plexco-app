@@ -1770,9 +1770,13 @@ notes: |
 
 ## task: chat-dm-safety-authority-core
 title: Slice 2 chuỗi in-app-chat — `dm_safety_enabled()` và authority tables/functions kèm theo
-status: at the review gate (2026-08-06) — owner ruling implemented, 2 codex review rounds (round-01
-  gate-attempt-03, round-02 gate-attempt-05) both real, both fixed in-slice; gate re-invoked after
-  round-02's fixes, outcome not yet known as of this note. See the dated notes at the end of
+status: at the review gate (2026-08-06) — owner ruling implemented, 3 codex review rounds (round-01
+  gate-attempt-03, round-02 gate-attempt-05, round-03 gate-attempt-06) all real, all fixed in-slice;
+  gate re-invoked after round-03's fixes, outcome not yet known as of this note. Separately: the
+  local dev cluster's chat_definer role currently has zero members (confirmed real damage from
+  this session's own pre-fix test runs; the round-03 fix prevents recurrence but does not
+  retroactively repair it) — needs an owner-run `pnpm db:bootstrap`, out of this slice's own scope
+  to perform. See the dated notes at the end of
   `notes:` for what each round found and changed; the AWAIT paragraph immediately below is preserved
   as the dated record of what was asked, per this repo's own "never rewrite dated history" convention.
 status_history_2026-08-05_AWAIT: implemented in worktree feat/chat-dm-safety-authority-core,
@@ -1879,6 +1883,44 @@ notes: |
   reconcile it separately when next touching that spec section. (b)
   `packages/db/README.md`'s pre-existing migration-order list (unrelated section, untouched by this
   slice's own diff) still stops at `0023` — a pre-existing drift, not introduced or widened here.
+
+  **2026-08-06, codex review round-03 (gate-attempt-06), real, all 4 findings fixed in-slice, plus
+  one bug this round's own new regression test found in its own fix.** (1) [P1, most consequential
+  finding this whole slice] `revokeStaleChatDefinerMembership` revoked chat_definer's pre-existing
+  member (e.g. `plexco`, granted by `pnpm db:bootstrap`) to make room for a scratch test owner, but
+  NOTHING ever restored it — every caller's own teardown only dropped ITS OWN scratch role. This was
+  not theoretical: verified directly against `pg_auth_members` that this session's own earlier test
+  runs had already left the local dev cluster's chat_definer with ZERO members. Fixed by having
+  `revokeStaleChatDefinerMembership` return what it revoked and adding `restoreChatDefinerMembership`
+  as its counterpart, wired into every caller's teardown/finally under `withChatDefinerLock`. A new
+  regression test proving the round-trip actually works (not just that it compiles) then itself
+  surfaced a SECOND real bug: the snapshotted "previous member" can legitimately be ANOTHER test
+  file's own transient scratch role (chat_definer tolerates only one non-runtime member at a time),
+  which may already be `DROP ROLE`'d by the time THIS test's restore runs — reproduced live (JCL-1
+  snapshotted BR-6's own scratch owner mid-suite). Fixed by having `restoreChatDefinerMembership`
+  tolerate SQLSTATE 42704 (`undefined_object`) specifically, with its own regression test. The LOCAL
+  DEV CLUSTER's chat_definer STILL has zero members as of this note — the fix prevents FUTURE loss,
+  it does not retroactively repair damage from BEFORE the fix existed; `pnpm db:bootstrap` (owner-run,
+  blocked for this session by the safety classifier as a shared-infra mutation) is the remedy. (2)
+  [P2] three full-migration test paths (TI-7, CND-7, UCC-6 in rls-invariants.test.ts) reached 0030
+  under only `withJobDefinerLock`, missing `withChatDefinerLock` — verified via `grep` that these
+  were the ONLY three unfiltered `migrate()` calls in that file (every other `withJobDefinerLock`
+  site either doesn't call `migrate()` or has an explicit numeric-prefix upper bound stopping before
+  0025/0026); all three fixed with the established job-outer/chat-inner nesting. (3) [P2] the
+  zero-grant security test only tried `SELECT` and only for `app` — expanded to a role x table x
+  operation matrix covering `app`/`app_worker`/`readonly` x all 3 tables x `SELECT`+`INSERT`, plus
+  `EXECUTE` on all 3 functions, for all 3 roles (21 assertions, up from 2). The NULL-action
+  regression claimed fixed and tested in round-01 was never actually testable — `callAssertDmAllowed`'s
+  own TypeScript signature required a non-null `action: string`, so the claimed test could not have
+  existed; widened the signature and added the real test. Also added: config-row-deleted fail-closed
+  test (claimed in the migration's own comment, never asserted), `updated_at`-advances-on-UPDATE test
+  (claimed fixed and documented in round-01, same "claimed but never written" pattern as the
+  NULL-action case), and a duplicate-denial-log test. (4) [P2] this doc's own SS10 verdict block
+  still measured LOC/test-count claims from mid-round-02, already stale by the time round-02's own
+  commit landed (1,121/1,503 claimed vs 1,257/1,743 actual) — a repeat, within the SAME session, of
+  exactly the mistake this note is now correcting a second time; re-measured after ALL round-03 code
+  changes were complete (not before), landing at 1,487 `packages/db/*` insertions, still 10 files.
+  Closure row 10 also directly contradicted §6.4's own already-corrected LOC finding — fixed to match.
 
 ## task: chat-dm-safety-audit-queryable-path
 title: A queryable, structured store for DM-safety denial forensics (chat_dm_safety_audit's deferred

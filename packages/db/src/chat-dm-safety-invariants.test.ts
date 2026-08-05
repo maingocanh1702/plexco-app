@@ -64,7 +64,7 @@ async function seedPerson(name: string): Promise<string> {
   return (rows[0] as { id: string }).id;
 }
 
-function callAssertDmAllowed(actor: string | null, peer: string | null, action: string) {
+function callAssertDmAllowed(actor: string | null, peer: string | null, action: string | null) {
   return ctx.owner.query(`SELECT assert_dm_allowed($1, $2, $3)`, [actor, peer, action]);
 }
 
@@ -145,6 +145,41 @@ describe("chat_dm_safety_config boundary", () => {
       `SELECT dm_target_limit_per_min FROM chat_dm_safety_config`,
     );
     expect((rows[0] as { dm_target_limit_per_min: number }).dm_target_limit_per_min).toBe(30);
+  });
+
+  // codex round-03 [P2]: claimed tested (SS9's own acceptance-matrix row, round-01) but never
+  // actually asserted anywhere in this file — a manual one-off smoke test against a scratch
+  // database during implementation is not a regression test. Added for real here.
+  it("updated_at advances on UPDATE, not just at INSERT (trg_chat_dm_safety_config_touch_updated_at)", async () => {
+    const before = (await ctx.owner.query(`SELECT updated_at FROM chat_dm_safety_config`))
+      .rows[0] as { updated_at: Date };
+    await ctx.owner.query(`SELECT pg_sleep(0.01)`); // ensure now() advances past clock resolution
+    await setConfigFlag("dm_sender_limit_per_min", 30);
+    const after = (await ctx.owner.query(`SELECT updated_at FROM chat_dm_safety_config`))
+      .rows[0] as { updated_at: Date };
+    expect(new Date(after.updated_at).getTime()).toBeGreaterThan(
+      new Date(before.updated_at).getTime(),
+    );
+  });
+});
+
+// codex round-03 [P2]: the migration's own comment claims a missing config row fails closed via
+// COALESCE rather than erroring — claimed, never asserted anywhere in this file until now. Only a
+// superuser (no DELETE grant exists to anyone else) can reach this state, exactly as ctx.owner is.
+describe("dm_safety_enabled() / assert_dm_allowed() fail closed when the config row itself is missing", () => {
+  it("both deny (not error) with the row deleted, and both recover once it's restored", async () => {
+    await resetConfigDefaults();
+    await ctx.owner.query(`DELETE FROM chat_dm_safety_config`);
+    try {
+      expect(await dmSafetyEnabled()).toBe(false);
+      const a = await seedPerson("Missing Config A");
+      const b = await seedPerson("Missing Config B");
+      await expect(callAssertDmAllowed(a, b, "create")).rejects.toThrow(/chat safety blocked/);
+    } finally {
+      await ctx.owner.query(`INSERT INTO chat_dm_safety_config (singleton) VALUES (true)`);
+      await resetConfigDefaults();
+    }
+    expect(await dmSafetyEnabled()).toBe(true);
   });
 });
 
@@ -383,37 +418,69 @@ describe("assert_dm_allowed() denies a blocked pair", () => {
     );
     expect(notices.find((n) => n.severity === "LOG")).toBeUndefined();
   });
+
+  // codex round-03 [P2]: claimed in SS9's acceptance matrix ("no dedupe expected"), never asserted.
+  it("racing the same (actor,peer,action) denial twice logs two independent RAISE LOG lines, no dedupe", async () => {
+    await resetConfigDefaults();
+    const a = await seedPerson("Dup Log A");
+    const b = await seedPerson("Dup Log B");
+    await ctx.owner.query(
+      `INSERT INTO chat_blocks (blocker_person_id, blocked_person_id) VALUES ($1, $2)`,
+      [a, b],
+    );
+    const notices = await captureNotices(async () => {
+      await expect(callAssertDmAllowed(a, b, "create")).rejects.toThrow(/chat safety blocked/);
+      await expect(callAssertDmAllowed(a, b, "create")).rejects.toThrow(/chat safety blocked/);
+    });
+    const logLines = notices.filter((n) => n.severity === "LOG");
+    expect(logLines).toHaveLength(2);
+    for (const line of logLines) {
+      expect(line.message).toContain(`actor=${a}`);
+      expect(line.message).toContain(`peer=${b}`);
+    }
+  });
 });
 
-describe("role app has zero direct access (global-protected plane)", () => {
-  it("app cannot SELECT/INSERT chat_dm_safety_config/chat_blocks/chat_reports", async () => {
-    await expect(ctx.appPool.query(`SELECT 1 FROM chat_dm_safety_config`)).rejects.toThrow(
-      /permission denied/i,
-    );
-    await expect(ctx.appPool.query(`SELECT 1 FROM chat_blocks`)).rejects.toThrow(
-      /permission denied/i,
-    );
-    await expect(ctx.appPool.query(`SELECT 1 FROM chat_reports`)).rejects.toThrow(
-      /permission denied/i,
-    );
-  });
+describe("roles app/app_worker/readonly have zero direct access (global-protected plane)", () => {
+  // codex round-03 [P2]: the original version only tried SELECT, and only for `app` — it could not
+  // have detected a stray DML grant, or a grant to app_worker/readonly, either of which this
+  // negative-scope explicitly forbids (SS8: "NO grant of any kind to app, app_worker, or readonly").
+  const TABLES = ["chat_dm_safety_config", "chat_blocks", "chat_reports"];
+  const ROLES: Array<["app" | "app_worker" | "readonly", () => pg.Pool]> = [
+    ["app", () => ctx.appPool],
+    ["app_worker", () => ctx.workerPool],
+    ["readonly", () => ctx.readonlyPool],
+  ];
 
-  it("app cannot EXECUTE dm_safety_enabled/chat_pair_blocked/assert_dm_allowed", async () => {
-    await expect(ctx.appPool.query(`SELECT dm_safety_enabled()`)).rejects.toThrow(
-      /permission denied/i,
-    );
-    await expect(
-      ctx.appPool.query(`SELECT chat_pair_blocked($1, $1)`, [
-        "00000000-0000-0000-0000-000000000000",
-      ]),
-    ).rejects.toThrow(/permission denied/i);
-    await expect(
-      ctx.appPool.query(`SELECT assert_dm_allowed($1, $2, 'create')`, [
-        "00000000-0000-0000-0000-000000000000",
-        "00000000-0000-0000-0000-000000000001",
-      ]),
-    ).rejects.toThrow(/permission denied/i);
-  });
+  for (const [roleName, getPool] of ROLES) {
+    for (const table of TABLES) {
+      it(`${roleName} cannot SELECT from ${table}`, async () => {
+        await expect(getPool().query(`SELECT 1 FROM ${table}`)).rejects.toThrow(
+          /permission denied/i,
+        );
+      });
+
+      it(`${roleName} cannot INSERT into ${table}`, async () => {
+        await expect(getPool().query(`INSERT INTO ${table} DEFAULT VALUES`)).rejects.toThrow(
+          /permission denied/i,
+        );
+      });
+    }
+
+    it(`${roleName} cannot EXECUTE dm_safety_enabled/chat_pair_blocked/assert_dm_allowed`, async () => {
+      const pool = getPool();
+      await expect(pool.query(`SELECT dm_safety_enabled()`)).rejects.toThrow(/permission denied/i);
+      await expect(
+        pool.query(`SELECT chat_pair_blocked($1, $1)`, ["00000000-0000-0000-0000-000000000000"]),
+      ).rejects.toThrow(/permission denied/i);
+      await expect(
+        pool.query(`SELECT assert_dm_allowed($1, $2, 'create')`, [
+          "00000000-0000-0000-0000-000000000000",
+          "00000000-0000-0000-0000-000000000001",
+        ]),
+      ).rejects.toThrow(/permission denied/i);
+    });
+  }
 });
 
 describe("dm_safety_enabled() / assert_dm_allowed() fail closed per capability flag", () => {
@@ -447,6 +514,16 @@ describe("assert_dm_allowed() invalid input", () => {
     const a = await seedPerson("Invalid Action A");
     const b = await seedPerson("Invalid Action B");
     await expect(callAssertDmAllowed(a, b, "delete")).rejects.toThrow(/invalid action/);
+  });
+
+  // codex round-03 [P2]: this exact regression was CLAIMED fixed and tested in round-01, but
+  // callAssertDmAllowed's own signature required a non-null string for action, so the claimed
+  // test could never have been written — the acceptance-matrix row was asserting something this
+  // file never actually verified. Widened the helper's type and added the real test.
+  it("rejects a NULL action (codex round-01 [P1] fix, actually exercised here)", async () => {
+    const a = await seedPerson("Null Action A");
+    const b = await seedPerson("Null Action B");
+    await expect(callAssertDmAllowed(a, b, null)).rejects.toThrow(/invalid action/);
   });
 });
 

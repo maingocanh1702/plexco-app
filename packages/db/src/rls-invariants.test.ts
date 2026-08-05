@@ -1300,11 +1300,17 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
     try {
       // job_definer must exist (correctly) before this reaches 0022 — this describe block uses
       // its own local `admin` connection (not setupRlsTestContext), so bootstrap+migrate need the
-      // same lock protection as everywhere else 0022 is reached for the first time.
-      const res = await withJobDefinerLock(BASE!, async () => {
-        await bootstrapJobDefiner(admin);
-        return migrate(url(dbName));
-      });
+      // same lock protection as everywhere else 0022 is reached for the first time. Also under
+      // withChatDefinerLock (codex round-03 [P2]): this full replay reaches 0030, which needs
+      // chat_definer the ROLE to exist by NAME (admin is a superuser, so no membership needed,
+      // unlike the non-superuser-owner contexts) — a sibling file's negative test renaming it away
+      // could otherwise race this exact moment.
+      const res = await withJobDefinerLock(BASE!, () =>
+        withChatDefinerLock(BASE!, async () => {
+          await bootstrapJobDefiner(admin);
+          return migrate(url(dbName));
+        }),
+      );
       expect(res.applied.length).toBe(31); // 0000..0030
 
       const c = await connect(url(dbName));
@@ -3559,10 +3565,13 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
         await admin.query(`CREATE DATABASE ${dbName}`);
         const url = new URL(BASE);
         url.pathname = `/${dbName}`;
-        await withJobDefinerLock(BASE, async () => {
-          await bootstrapJobDefiner(admin);
-          await migrate(url.toString());
-        });
+        // Also under withChatDefinerLock (codex round-03 [P2]): this full migrate() reaches 0030.
+        await withJobDefinerLock(BASE, () =>
+          withChatDefinerLock(BASE, async () => {
+            await bootstrapJobDefiner(admin);
+            await migrate(url.toString());
+          }),
+        );
 
         const c = new pg.Client({ connectionString: url.toString() });
         await c.connect();
@@ -3603,10 +3612,13 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
         await admin.query(`CREATE DATABASE ${dbName}`);
         const url = new URL(BASE);
         url.pathname = `/${dbName}`;
-        await withJobDefinerLock(BASE, async () => {
-          await bootstrapJobDefiner(admin);
-          await migrate(url.toString());
-        });
+        // Also under withChatDefinerLock (codex round-03 [P2]): this full migrate() reaches 0030.
+        await withJobDefinerLock(BASE, () =>
+          withChatDefinerLock(BASE, async () => {
+            await bootstrapJobDefiner(admin);
+            await migrate(url.toString());
+          }),
+        );
 
         const c = new pg.Client({ connectionString: url.toString() });
         await c.connect();
