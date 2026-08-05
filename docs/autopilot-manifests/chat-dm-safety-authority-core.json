@@ -83,6 +83,8 @@
   "verification": {
     "focused": [
       "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -qc 'CREATE TABLE chat_dm_safety_config' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -q 'dm_sender_limit_per_min integer NOT NULL DEFAULT 30' \"$F\" && grep -q 'dm_target_limit_per_min integer NOT NULL DEFAULT 30' \"$F\" && grep -q 'chat_dm_safety_config_sender_limit_positive_chk' \"$F\" && grep -q 'chat_dm_safety_config_target_limit_positive_chk' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); ! grep -qE \"rate_limit_check\\('chat_dm_(sender|target):' \\|\\| p_[a-z]+::text, 30,\" \"$F\" && grep -q \"rate_limit_check('chat_dm_sender:' || p_actor::text, v_sender_limit,\" \"$F\" && grep -q \"rate_limit_check('chat_dm_target:' || p_peer::text, v_target_limit,\" \"$F\"",
       "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -qc 'CREATE TABLE chat_blocks' \"$F\"",
       "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -qc 'CREATE TABLE chat_reports' \"$F\"",
       "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -qc 'CREATE TABLE chat_dm_safety_audit' \"$F\"",

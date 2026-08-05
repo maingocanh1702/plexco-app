@@ -152,7 +152,7 @@ states the choice, the rejected alternative(s), and why.
 | 8 | RLS posture for all 4 new tables | **No RLS**, **zero grant to `app`/`readonly`** — global-protected plane, reached only via `chat_definer`-owned `SECURITY DEFINER` functions | RLS keyed on `app.tenant_id` (root's own idiom) — rejected: DM safety is a cross-tenant, person-level concern (`tenant_id` does not even apply — DM channels have `tenant_id IS NULL`); `app` never needs direct access to these tables at all (every access is mediated), which is exactly the `persons`/`accounts` model already established in `0009`, not the tenant-isolation model |
 | 9 | `assert_dm_allowed` rate-check scope across its 3 actions (`create`/`send`/`read`) | Enforce `dm_safety_enabled()` + `chat_pair_blocked()` uniformly for all 3 actions; enforce the sender/target **rate** dimension only for `create`/`send`, **skip it for `read`** | Rate-limit `read` too (uniform for all 3) — rejected: `mark_read` (the only caller of `assert_dm_allowed(...,'read')`) is receiver-side bookkeeping invoked on ordinary UI scroll/view activity, not a spam vector; root's own `dm_current_read_allowed` RLS predicate (the actual message/channel read boundary) never has a rate dimension either — rate-limiting `read` would risk locking an active legitimate user out of their own inbox for normal usage |
 | 10 | Rate dimensions | Exactly **2** buckets: `chat_dm_sender:<actor>` and `chat_dm_target:<peer>`, each covering both `create` and `send` uniformly | 4 buckets (separate create/send × sender/target) — rejected as premature: decisions.md line 690 literally says "per-sender và per-target" (two dimensions), test #30's title is "Sender-target throttle" (two, not four); 2 buckets already satisfy the literal decision text and the acceptance test, and can be split later via a forward migration (P12) if real traffic data shows a need |
-| 11 | Numeric limits | `30` per bucket per `interval '1 minute'` | No existing DD/spec pins an exact number. Anchored against the closest BL-SEC-5 registry tiers already in this repo (`Session CRUD 60/min`, `Chat command execute 60/min` (DD-91, not yet implemented), `Identity link-code 5/min`) — picked a midpoint slightly stricter than general chat-command traffic (since DM creation is the higher-abuse-risk surface) while staying well above legitimate rapid-conversation cadence. Documented here as this slice's own implementation default, tunable by a future forward migration if operational data disagrees — not presented as an owner-ratified number |
+| 11 | Numeric limits — **value and storage location** | Value: `30` per bucket per `interval '1 minute'`, unchanged. Storage: **`chat_dm_safety_config.dm_sender_limit_per_min`/`dm_target_limit_per_min`** (integer columns, `CHECK > 0`), read at call time — **not** a literal baked into `assert_dm_allowed`'s body (this contract's original choice, corrected 2026-08-05) | No existing DD/spec pins an exact number; the `30` itself is still anchored against the closest BL-SEC-5 registry tiers already in this repo (`Session CRUD 60/min`, `Chat command execute 60/min` (DD-91, not yet implemented), `Identity link-code 5/min`) — a midpoint slightly stricter than general chat-command traffic while staying well above legitimate rapid-conversation cadence. **Storage location, on reflection:** a hardcoded literal — this session's own original choice — was inconsistent with the reasoning row 2 already used to put the four kill-switch flags in `chat_dm_safety_config` instead of an env var (unreachable from this call context, so config has to be DB-native). That same argument applies unchanged to the two numbers: under P17 (migrations are forward-only, no reverse runbook), retuning a hardcoded literal requires an entirely new migration that recreates this `SECURITY DEFINER` function's body — full code+security review for what is purely an operational number, not a behavior change. A config column makes retuning a single `UPDATE`, auditable via `updated_at`, no migration, no redeploy. Still this slice's own implementation default, not an owner-ratified number — only *where it lives* changed, not who gets to change it or how confident this session is in `30` specifically |
 | 12 | Indexes | **None beyond the 4 tables' own PK/unique/FK-backed indexes** — no `idx_chat_blocks_blocked`, no `idx_chat_reports_reported` | Added reverse-lookup indexes for a future "who blocked me" / "reports against me" UI — rejected for this slice: no function this slice creates queries by `blocked_person_id`/`reported_person_id`; `chat_pair_blocked`'s OR-of-two-equalities is already served by the `chat_blocks` primary key (leading column covers both branches). A speculative index guessed at the wrong shape is worse than no index; the slice that actually needs the reverse query (a future block-management/report-triage UI) adds the exact index its own access pattern needs, per P14 |
 | 13 | Grants on `chat_blocks`/`chat_reports` in this slice | `chat_definer` gets `SELECT` on `chat_blocks` only (needed by `chat_pair_blocked`); **zero** grant on `chat_reports` at all (nothing in this slice reads or writes it) | Pre-granting `INSERT`/`UPDATE`/`DELETE` now for slice 8's future convenience — rejected: repeats exactly the failure mode root's own doc (AP-45 §7) explicitly avoided for `chat_channels`/`chat_members`/`chat_messages` — "never grant a capability whose full lifecycle has no owner yet." Slice 8 adds its own grant in its own migration when it lands the block/report RPCs |
 | 14 | Denial error text | Reuse the **exact existing string** `'chat safety blocked'`, already pinned verbatim in the Reviewed spec's `send_chat_message` DDL (`feature_inapp_chat_tech.md:684`, `dd38-dd86-chat-schema-core` contract §5.1) | Inventing a new message — rejected: the Reviewed spec already established this exact generic string at the RLS/DML boundary for the identical "no block-detail leak" requirement; reusing it means one wire-visible error for the whole DM-safety surface by construction |
@@ -185,12 +185,29 @@ re-derive it)
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
--- chat_dm_safety_config -- singleton kill-switch row. Four independent
--- capability toggles; dm_safety_enabled() is their AND. Global protected:
--- no RLS (not tenant-scoped), zero grant to app/chat_definer for writes --
--- flipped only via direct DDL-owner/superuser access, never through the
--- application. All default true: this migration ships all four subsystems
--- complete, so there is no reason to land it pre-disabled.
+-- chat_dm_safety_config -- singleton kill-switch + tuning row. Four
+-- independent capability toggles; dm_safety_enabled() is their AND. Global
+-- protected: no RLS (not tenant-scoped), zero grant to app/chat_definer for
+-- writes -- flipped only via direct DDL-owner/superuser access, never
+-- through the application. All boolean flags default true: this migration
+-- ships all four subsystems complete, so there is no reason to land it
+-- pre-disabled.
+--
+-- dm_sender_limit_per_min/dm_target_limit_per_min carry the same two
+-- numbers previously hardcoded as literal arguments inside
+-- assert_dm_allowed() (30 each -- see contract SS5 design-probe row 11).
+-- Moved here for the identical reason the four booleans are here and not in
+-- an env var: this table is read from inside SECURITY DEFINER functions
+-- reached via direct-role test harnesses and future RPCs that never touch
+-- the Node app layer, so config has to be DB-native. Under P17 (migrations
+-- are forward-only, no reverse runbook), a hardcoded literal can only be
+-- retuned by a brand-new migration that recreates this function's body --
+-- full code+security review for what is purely an operational number.
+-- A config column makes retuning a plain UPDATE. CHECK > 0 on both: a
+-- typo'd UPDATE that sets either to 0 must fail loudly at write time, not
+-- silently turn into "0 allowed per minute" (i.e. the limiter effectively
+-- always denies, indistinguishable from a self-inflicted outage) discovered
+-- only when DM traffic stops.
 -- ---------------------------------------------------------------------------
 CREATE TABLE chat_dm_safety_config (
   singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
@@ -198,6 +215,10 @@ CREATE TABLE chat_dm_safety_config (
   report_enabled boolean NOT NULL DEFAULT true,
   rate_limit_enabled boolean NOT NULL DEFAULT true,
   audit_enabled boolean NOT NULL DEFAULT true,
+  dm_sender_limit_per_min integer NOT NULL DEFAULT 30
+    CONSTRAINT chat_dm_safety_config_sender_limit_positive_chk CHECK (dm_sender_limit_per_min > 0),
+  dm_target_limit_per_min integer NOT NULL DEFAULT 30
+    CONSTRAINT chat_dm_safety_config_target_limit_positive_chk CHECK (dm_target_limit_per_min > 0),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 INSERT INTO chat_dm_safety_config (singleton) VALUES (true);
@@ -322,11 +343,25 @@ REVOKE ALL ON FUNCTION chat_pair_blocked(uuid, uuid) FROM PUBLIC;
 -- (feature_inapp_chat_tech.md:684, send_chat_message) -- one wire-visible
 -- error text for the whole DM safety surface, by construction, not by
 -- convention someone has to remember.
+--
+-- The two rate limits are read from chat_dm_safety_config on every call,
+-- the same COALESCE-wrapped-scalar-subquery-to-fail-closed idiom
+-- dm_safety_enabled() itself already uses, not a fresh pattern. A missing
+-- config row (should never happen -- see that table's own header) COALESCEs
+-- to 0, which makes rate_limit_check deny unconditionally (v_count >= 0 is
+-- true even for a brand-new bucket) -- fail-closed defense in depth, even
+-- though dm_safety_enabled()'s own identical missing-row COALESCE already
+-- denies first via the IF/ELSIF chain below and would prevent this branch
+-- from ever being reached with a NULL-turned-0 limit in practice. Belt and
+-- suspenders on purpose: this function's fail-closed property should not
+-- depend on the two checks staying in this exact order forever.
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION assert_dm_allowed(p_actor uuid, p_peer uuid, p_action text) RETURNS void
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 DECLARE
   v_deny_reason text;
+  v_sender_limit integer;
+  v_target_limit integer;
 BEGIN
   IF p_action NOT IN ('create','send','read') THEN
     RAISE EXCEPTION 'assert_dm_allowed: invalid action' USING ERRCODE = 'invalid_parameter_value';
@@ -335,15 +370,18 @@ BEGIN
     RAISE EXCEPTION 'assert_dm_allowed: invalid participants' USING ERRCODE = 'invalid_parameter_value';
   END IF;
 
+  v_sender_limit := COALESCE((SELECT dm_sender_limit_per_min FROM chat_dm_safety_config WHERE singleton), 0);
+  v_target_limit := COALESCE((SELECT dm_target_limit_per_min FROM chat_dm_safety_config WHERE singleton), 0);
+
   IF NOT dm_safety_enabled() THEN
     v_deny_reason := 'safety_disabled';
   ELSIF chat_pair_blocked(p_actor, p_peer) THEN
     v_deny_reason := 'blocked';
   ELSIF p_action IN ('create','send')
-        AND NOT rate_limit_check('chat_dm_sender:' || p_actor::text, 30, interval '1 minute') THEN
+        AND NOT rate_limit_check('chat_dm_sender:' || p_actor::text, v_sender_limit, interval '1 minute') THEN
     v_deny_reason := 'rate_limited_sender';
   ELSIF p_action IN ('create','send')
-        AND NOT rate_limit_check('chat_dm_target:' || p_peer::text, 30, interval '1 minute') THEN
+        AND NOT rate_limit_check('chat_dm_target:' || p_peer::text, v_target_limit, interval '1 minute') THEN
     v_deny_reason := 'rate_limited_target';
   END IF;
 
@@ -392,13 +430,15 @@ this slice (plan line 409).
 ### 6.2 Schema mirror (`packages/db/schema.ts`)
 
 Add Drizzle definitions for `chatDmSafetyConfig`, `chatBlocks`, `chatReports`, `chatDmSafetyAudit`
-matching the DDL above exactly (column names, nullability, defaults, checks). Every `CHECK`/`UNIQUE`/FK
-constraint must use an explicit declared name via Drizzle's `check()`/`unique()`/`foreignKey()`
-builders (e.g. `chat_blocks_no_self_chk`, `chat_reports_note_shape_chk`), matching this repo's existing
-convention (`notif_deliveries_status_chk` precedent, tail of `schema.ts`) — this is what lets
-`rls-invariants.test.ts`'s generic CND (check-constraint-naming-drift) guard cover these new tables
-automatically; **no edit to `rls-invariants.test.ts` is needed**, same reasoning root's own contract
-(§5.2) already established.
+matching the DDL above exactly (column names, nullability, defaults, checks) — including
+`chatDmSafetyConfig`'s two new integer columns `dmSenderLimitPerMin`/`dmTargetLimitPerMin` and their
+named `chat_dm_safety_config_sender_limit_positive_chk`/`chat_dm_safety_config_target_limit_positive_chk`
+constraints. Every `CHECK`/`UNIQUE`/FK constraint must use an explicit declared name via Drizzle's
+`check()`/`unique()`/`foreignKey()` builders (e.g. `chat_blocks_no_self_chk`, `chat_reports_note_shape_chk`),
+matching this repo's existing convention (`notif_deliveries_status_chk` precedent, tail of `schema.ts`)
+— this is what lets `rls-invariants.test.ts`'s generic CND (check-constraint-naming-drift) guard cover
+these new tables automatically; **no edit to `rls-invariants.test.ts` is needed**, same reasoning root's
+own contract (§5.2) already established.
 
 ### 6.3 Focused invariant test — new file
 
@@ -504,6 +544,9 @@ re-deriving, an owner question, not an implementation choice.
 | Happy path | `dm_safety_enabled()` with all four config flags true | Returns `true` |
 | Happy path | `chat_pair_blocked(a,b)` with no row for either direction | Returns `false` |
 | Boundary | `chat_dm_safety_config` has exactly one row after migration | `SELECT count(*) FROM chat_dm_safety_config` = 1; second `INSERT` violates the `singleton` PK |
+| Boundary | `chat_dm_safety_config` default `dm_sender_limit_per_min`/`dm_target_limit_per_min` after migration | Both `30` |
+| Boundary | `UPDATE chat_dm_safety_config SET dm_sender_limit_per_min = 0` (and `= -1`); same for `dm_target_limit_per_min` | Rejected — CHECK constraint; row's prior value unchanged |
+| Failure | `UPDATE chat_dm_safety_config SET dm_sender_limit_per_min = 1`, then two `assert_dm_allowed(a, x, 'create')` calls for the same `a` inside the rate window (no migration, no reconnect) | First succeeds, second denies with `deny_reason='rate_limited_sender'` — the new limit takes effect on the very next call, proving tuning is a live `UPDATE`, not a migration (this is the acceptance proof for §5 row 11's whole rationale) |
 | Boundary | `chat_blocks` insert with `blocker_person_id = blocked_person_id` | Rejected — CHECK constraint |
 | Boundary | `chat_reports` insert with `reason_code='other'` and NULL/empty note | Rejected — CHECK constraint |
 | Boundary | `chat_reports` insert with `reason_code='spam'` and non-NULL note | Rejected — CHECK constraint |
