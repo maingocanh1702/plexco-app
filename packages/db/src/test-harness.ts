@@ -88,6 +88,97 @@ export async function bootstrapJobDefiner(client: pg.Client): Promise<void> {
 }
 
 /**
+ * Canonical chat_definer bootstrap (chat-definer-role-provisioning, merged 286f48b) — mirrors
+ * bootstrapJobDefiner exactly, same reason: chat-dm-safety-authority-core's migration 0030 is the
+ * first to ALTER FUNCTION ... OWNER TO chat_definer, which mechanically requires the migration role
+ * to already be a member of chat_definer (PostgreSQL: "you must be able to SET ROLE to the new
+ * owning role"). Every test path whose migration reaches 0030 under a non-superuser role must
+ * bootstrap first, exactly like production/CI must (added 2026-08-05, owner-authorized scope
+ * amendment — see docs/autopilot-chat-dm-safety-authority-core.md SS6.3/SS8).
+ */
+const CHAT_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "..",
+  "infra",
+  "postgres-init",
+  "02-chat-definer.sql",
+);
+
+export async function bootstrapChatDefiner(client: pg.Client): Promise<void> {
+  const sql = await readFile(CHAT_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
+  try {
+    await client.query(sql);
+  } catch (error) {
+    // Same reasoning as bootstrapJobDefiner: 02-chat-definer.sql wraps itself in an explicit
+    // BEGIN/COMMIT, so a rejection leaves that transaction open and aborted on `client`.
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+/**
+ * Unlike job_definer's own bootstrap (01-job-definer.sql's re-run guard only refuses a RUNTIME-role
+ * re-target, so a different non-runtime target silently ACCUMULATES as an additional member),
+ * chat_definer's bootstrap (02-chat-definer.sql, chat-definer-role-provisioning, merged) explicitly
+ * REFUSES to grant a second, different non-runtime member — intentional, reviewed, fail-closed
+ * design; not a bug and not this slice's to change. That means bootstrapChatDefiner alone cannot be
+ * called for a NEW target once ANY other role already holds membership (e.g. `plexco`, granted by
+ * this repo's own `pnpm db:bootstrap`/CI step, which falls back to CURRENT_USER when MIGRATION_ROLE
+ * is unset — the common case). This helper clears that path the same way an operator would per the
+ * script's own error text ("revoke the existing membership first if this is an intentional
+ * re-point") before calling bootstrapChatDefiner for a DIFFERENT target — safe in a test context
+ * (every prior target is either a superuser needing no membership to function, or a scratch role
+ * this run created and will drop at teardown) and a no-op when chat_definer does not exist yet or
+ * already points at `keepTarget` (added 2026-08-05, owner-authorized scope amendment).
+ */
+export async function revokeStaleChatDefinerMembership(
+  client: pg.Client,
+  keepTarget: string,
+): Promise<void> {
+  const { rows } = await client.query(
+    `SELECT r.rolname FROM pg_auth_members m
+       JOIN pg_roles r ON r.oid = m.member
+       JOIN pg_roles g ON g.oid = m.roleid
+      WHERE g.rolname = 'chat_definer' AND r.rolname <> $1`,
+    [keepTarget],
+  );
+  for (const { rolname } of rows as { rolname: string }[]) {
+    // Plain interpolation, matching this file's own convention elsewhere (e.g. DROP ROLE IF EXISTS
+    // ${ownerRole} above) — rolname is read back from pg_roles, not user input.
+    await client.query(`REVOKE chat_definer FROM ${rolname}`);
+  }
+}
+
+/**
+ * chat_definer is CLUSTER-global, same hazard withJobDefinerLock documents for job_definer: a test
+ * that deliberately puts it into a BROKEN/hidden state (migrate.test.ts's own bootstrap-script
+ * negative-path tests) races every OTHER parallel test FILE's own ordinary bootstrap+migrate call.
+ * Moved here from migrate.test.ts (2026-08-05, owner-authorized scope amendment) so it can be
+ * shared cross-file, exactly like withJobDefinerLock already is — chat-dm-safety-authority-core's
+ * migration 0030 is the first NON-migrate.test.ts caller (rls-invariants.test.ts's JCL-1, via
+ * setupNonSuperuserOwnerContext's bootstrapChatDefinerForOwner) to need this same protection;
+ * leaving the lock stranded as a local, non-exported function in migrate.test.ts would have left
+ * that caller with no way to synchronize against migrate.test.ts's own hiding tests.
+ */
+const CHAT_DEFINER_LOCK_KEY = 0x63686164; // "chad" — distinct from "jobd" (0x6a6f6264) and "plxc" (0x706c7863)
+
+export async function withChatDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
+  const lockClient = new pg.Client({ connectionString: base });
+  await lockClient.connect();
+  await lockClient.query("SELECT pg_advisory_lock($1)", [CHAT_DEFINER_LOCK_KEY]);
+  try {
+    return await fn();
+  } finally {
+    await lockClient
+      .query("SELECT pg_advisory_unlock($1)", [CHAT_DEFINER_LOCK_KEY])
+      .catch(() => {});
+    await lockClient.end();
+  }
+}
+
+/**
  * job_definer is CLUSTER-global, so a test that deliberately puts it into a BROKEN state (JCL-2:
  * absent / wrong attributes) races every OTHER parallel test FILE's own bootstrap+migrate — the
  * same class of hazard BR-1 documents for app/app_worker/readonly, except those tests dodge it by
@@ -280,6 +371,12 @@ export interface NonSuperuserOwnerContext {
    *  each call separately leaves a gap between them, and locking inside both would deadlock a caller
    *  that already holds the lock. */
   bootstrapJobDefinerForOwner: () => Promise<void>;
+  /** idempotent chat_definer bootstrap (grants membership to ownerRole) — call before runMigration()
+   *  whenever the migration will reach 0030 (chat-dm-safety-authority-core) or later under a
+   *  non-superuser role. Same NOT-internally-lock-protected caveat as bootstrapJobDefinerForOwner:
+   *  the caller must wrap the whole "bootstrap...ForOwner() then runMigration()" sequence in ONE
+   *  withJobDefinerLock (added 2026-08-05, mirrors bootstrapJobDefinerForOwner exactly). */
+  bootstrapChatDefinerForOwner: () => Promise<void>;
   /** run the real migration runner AS the non-superuser owner (never superuser) */
   runMigration: () => Promise<MigrateResult>;
   /** call AFTER a successful runMigration(): ensures app_worker's test password (superuser-backed,
@@ -352,6 +449,23 @@ export async function setupNonSuperuserOwnerContext(
     }
   };
 
+  const bootstrapChatDefinerForOwner = async () => {
+    // Mirrors bootstrapJobDefinerForOwner exactly (2026-08-05): chat_definer needs BYPASSRLS, so
+    // ownerRole (CREATEROLE but not BYPASSRLS) can never self-bootstrap it either. The privileged
+    // `admin` connection creates/verifies chat_definer, then grants membership to ownerRole via the
+    // same session-GUC mechanism pnpm db:bootstrap/CI use for a distinct migration-role identity.
+    // revokeStaleChatDefinerMembership first: chat_definer's OWN bootstrap script (unlike
+    // job_definer's) refuses to re-point to a different target once any member exists — see that
+    // helper's own comment.
+    await revokeStaleChatDefinerMembership(admin, ownerRole);
+    await admin.query(`SET chat_definer_bootstrap.migration_role = '${ownerRole}'`);
+    try {
+      await bootstrapChatDefiner(admin);
+    } finally {
+      await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+    }
+  };
+
   const connectAsWorker = async (): Promise<pg.Pool> => {
     await setRolePasswordRaceSafe(
       admin,
@@ -377,16 +491,19 @@ export async function setupNonSuperuserOwnerContext(
     superuser: admin,
     ownerPool,
     bootstrapJobDefinerForOwner,
+    bootstrapChatDefinerForOwner,
     runMigration: () => migrate(ownerUrl),
     connectAsWorker,
     teardown: async () => {
       await ownerPool.end();
       for (const p of workerPools) await p.end();
       // codex round-07 [P1]: closing connections alone leaves the database, the cluster-global
-      // ownerRole, and its job_definer membership behind — a LOGIN role with a known, fixed
-      // password and BYPASSRLS-via-membership on a shared local cluster. Drop the database
+      // ownerRole, and its job_definer/chat_definer membership behind — a LOGIN role with a known,
+      // fixed password and BYPASSRLS-via-membership on a shared local cluster. Drop the database
       // (ownerRole owns it, so it must go first) then the role itself, before closing the admin
-      // connection that is the one privileged enough to do both.
+      // connection that is the one privileged enough to do both. DROP ROLE natively revokes every
+      // membership the dropped role held (job_definer's, chat_definer's, or both) — no separate
+      // REVOKE step needed.
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
       await admin.query(`DROP ROLE IF EXISTS ${ownerRole}`);
       await admin.end();

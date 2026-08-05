@@ -452,7 +452,7 @@ own SECURITY DEFINER privileges rather than a table grant).
 
 ## DM safety authority core (DD-55, `0030` — CODE DARK)
 
-Canonical block/report/rate/audit storage for in-app DM safety plus three `chat_definer`-owned
+Canonical block/report/rate storage for in-app DM safety plus three `chat_definer`-owned
 `SECURITY DEFINER` functions. **Inert** (zero live caller) until `dd38-dd86-chat-schema-core`
 (slice 3) lands its `dm_current_read_allowed`/`create_dm`/`send_chat_message`/`mark_read` — this
 migration is the FIRST to transfer function ownership to `chat_definer` (`chat-definer-role-
@@ -480,22 +480,26 @@ provisioning`, merged, provisions the role itself but grants it no privileges).
   (`send_chat_message`'s own existing RLS-boundary error text) regardless of `deny_reason` — no
   block-detail leak to the caller.
 
-All four tables (`chat_dm_safety_config`, `chat_blocks`, `chat_reports`, `chat_dm_safety_audit`) are
-global-protected: no RLS, zero grant to `app`/`app_worker`/`readonly` — same model as
-`persons`/`accounts` (`0009`). Reached only through the three functions above.
+All three tables (`chat_dm_safety_config`, `chat_blocks`, `chat_reports`) are global-protected: no
+RLS, zero grant to `app`/`app_worker`/`readonly` — same model as `persons`/`accounts` (`0009`).
+Reached only through the three functions above.
 
-**Known open defect (unresolved at merge time — see this slice's HALT report, not fixed in `0030`):**
-every deny path in `assert_dm_allowed` does `INSERT INTO chat_dm_safety_audit` immediately followed
-by `RAISE EXCEPTION` in the same statement. PL/pgSQL's exception handling is savepoint-rollback-based,
-so the `RAISE` unconditionally undoes the just-inserted audit row — proven empirically (a bare
-top-level autocommit call loses the row) with no `dblink`/autonomous-transaction precedent anywhere
-in this codebase to work around it. `chat_dm_safety_audit` is created, granted, and structurally
-correct, but **does not yet durably record anything** through normal `assert_dm_allowed` calls; the
-regression test `chat-dm-safety-invariants.test.ts` keeps the acceptance-matrix assertion (one audit
-row per denial) in place, marked `KNOWN DEFECT`, as the reproduction rather than weakening it.
-Resolving this needs an owner decision (accept best-effort/no audit-on-deny vs. a cross-transaction
-write mechanism such as `dblink` vs. another design) before any DM-mutating caller (slices 7/8) can
-treat this table as a working abuse-forensics log.
+**Denial forensics is `RAISE LOG`, not a queryable table (owner-amended 2026-08-05, replacing this
+slice's originally pinned design).** The original design added a `chat_dm_safety_audit` table and had
+`assert_dm_allowed` `INSERT` a row immediately before `RAISE EXCEPTION` in the same statement — proven
+during implementation to be structurally unable to persist anything: PL/pgSQL's exception handling is
+savepoint-rollback-based, so the `RAISE` unconditionally undoes the just-inserted row, for every
+calling pattern. Shipping that table anyway would have looked like a working audit trail to the next
+reader while permanently holding zero rows. `assert_dm_allowed` instead does `RAISE LOG` (gated by
+`chat_dm_safety_config.audit_enabled`, same fail-closed-on-missing-row `COALESCE` as everything else
+in this migration) with the same fields the table would have carried — `actor`, `peer`, `action`,
+`deny_reason`, `at`. `RAISE LOG` is delivered through Postgres's own logging subsystem, which sits
+outside transactional rollback, so it survives the `RAISE EXCEPTION` immediately after it — but it is
+invisible to a client at the default `client_min_messages` (`notice`); `chat-dm-safety-invariants.test.ts`
+sets `client_min_messages = 'log'` on its owner connection and asserts on the driver's `notice` event.
+A queryable table remains the eventual goal — tracked as backlog `chat-dm-safety-audit-queryable-path`
+(depends on `dd38-dd86-chat-schema-core`; the write needs to happen from a caller's own exception
+handler, in a transaction that actually commits, or via a genuinely separate connection).
 
 ## Open items inherited from docs (not blockers)
 

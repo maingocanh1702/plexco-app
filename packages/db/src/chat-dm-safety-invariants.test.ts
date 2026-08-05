@@ -4,38 +4,52 @@ import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 /**
  * DD-55 DM safety authority invariants (migration 0030).
  *
- * chat_dm_safety_config/chat_blocks/chat_reports/chat_dm_safety_audit are
- * global-protected (no RLS, zero grant to app/readonly) -- every access goes
- * through the three chat_definer-owned SECURITY DEFINER functions or, for
- * fixture setup, the privileged owner connection directly (this slice owns
- * no write RPC, so seeding chat_blocks is direct SQL, exactly as root's own
- * test plan directly manipulates chat_members to test RLS in isolation).
+ * chat_dm_safety_config/chat_blocks/chat_reports are global-protected (no
+ * RLS, zero grant to app/readonly) -- every access goes through the three
+ * chat_definer-owned SECURITY DEFINER functions or, for fixture setup, the
+ * privileged owner connection directly (this slice owns no write RPC, so
+ * seeding chat_blocks is direct SQL, exactly as root's own test plan
+ * directly manipulates chat_members to test RLS in isolation).
  *
- * KNOWN, REPORTED DEFECT (see session HALT report, not a test bug): every
- * deny path in assert_dm_allowed() does `INSERT INTO chat_dm_safety_audit`
- * immediately followed by `RAISE EXCEPTION` in the SAME statement/
- * transaction. PL/pgSQL's exception handling is savepoint-rollback-based, so
- * the RAISE unconditionally undoes the just-inserted audit row -- proven
- * empirically (a bare top-level autocommit call loses the row) and by
- * exhaustive elimination of alternatives (no dblink/autonomous-transaction
- * precedent exists in this codebase). The tests below assert the *contract*
- * exactly as specified in the slice doc's acceptance matrix (SS9) rather
- * than the observed behavior -- they are expected to FAIL until an owner
- * decision resolves the underlying transactional design gap. Every other
- * assertion in this file (deny/allow decisions, CHECK constraints, grants,
- * rate limiting, direction-agnostic blocking) is independent of this defect
- * and is expected to pass.
+ * NO chat_dm_safety_audit table (owner-amended 2026-08-05): the original
+ * pinned design (INSERT an audit row, then RAISE EXCEPTION, same statement)
+ * can never persist a row -- PL/pgSQL's exception handling is
+ * savepoint-rollback-based, so the RAISE unconditionally undoes the INSERT,
+ * proven empirically during this slice's own implementation. Rather than
+ * ship a table that always reads empty, assert_dm_allowed() emits RAISE LOG
+ * instead, which Postgres delivers outside transactional rollback. RAISE LOG
+ * is invisible to a client at the default client_min_messages ('notice'), so
+ * tests that assert on it SET client_min_messages = 'log' on ctx.owner and
+ * capture the pg driver's 'notice' event -- see captureNotices() below.
  */
 
 let ctx: RlsTestContext;
 
 beforeAll(async () => {
   ctx = await setupRlsTestContext("plexco_chat_dm_safety_check");
+  // RAISE LOG sits below the default 'notice' client_min_messages threshold;
+  // this makes it visible to ctx.owner's own 'notice' event for the rest of
+  // this file. Harmless for every other test here: none of them RAISE at
+  // LOG level, so this only adds visibility, never behavior.
+  await ctx.owner.query(`SET client_min_messages = 'log'`);
 }, 120_000);
 
 afterAll(async () => {
   await ctx?.teardown();
 });
+
+/** Captures pg 'notice' events (including RAISE LOG, see beforeAll) raised by ctx.owner during fn(). */
+async function captureNotices(fn: () => Promise<unknown>): Promise<Array<{ severity?: string; message?: string }>> {
+  const notices: Array<{ severity?: string; message?: string }> = [];
+  const handler = (n: { severity?: string; message?: string }) => notices.push(n);
+  ctx.owner.on("notice", handler);
+  try {
+    await fn();
+  } finally {
+    ctx.owner.off("notice", handler);
+  }
+  return notices;
+}
 
 async function seedPerson(name: string): Promise<string> {
   const { rows } = await ctx.owner.query(
@@ -70,7 +84,6 @@ async function resetConfigDefaults() {
        audit_enabled = true, dm_sender_limit_per_min = 30, dm_target_limit_per_min = 30`,
   );
   await ctx.owner.query(`DELETE FROM chat_blocks`);
-  await ctx.owner.query(`DELETE FROM chat_dm_safety_audit`);
   await ctx.owner.query(`DELETE FROM rate_limit_hits WHERE bucket LIKE 'chat_dm_%'`);
 }
 
@@ -253,32 +266,54 @@ describe("assert_dm_allowed() denies a blocked pair", () => {
     await expect(callAssertDmAllowed(a, b, "create")).rejects.toThrow(/chat safety blocked/);
   });
 
-  // KNOWN DEFECT (see file header + session HALT report): the audit INSERT
-  // inside assert_dm_allowed is unconditionally rolled back by the RAISE
-  // EXCEPTION that follows it in the same transaction. This assertion is the
-  // slice doc's own acceptance-matrix row (SS9, "one chat_dm_safety_audit row
-  // with deny_reason='blocked'") and is expected to FAIL until that gap is
-  // resolved -- kept here, not deleted or weakened, as the reproduction.
-  it("KNOWN DEFECT: writes one chat_dm_safety_audit row with deny_reason='blocked' (audit does not survive the raise)", async () => {
+  it("emits a RAISE LOG line carrying actor/peer/action/deny_reason (no chat_dm_safety_audit table — see file header)", async () => {
     await resetConfigDefaults();
-    const a = await seedPerson("Deny Audit A");
-    const b = await seedPerson("Deny Audit B");
+    const a = await seedPerson("Deny Log A");
+    const b = await seedPerson("Deny Log B");
     await ctx.owner.query(
       `INSERT INTO chat_blocks (blocker_person_id, blocked_person_id) VALUES ($1, $2)`,
       [a, b],
     );
-    await expect(callAssertDmAllowed(a, b, "create")).rejects.toThrow(/chat safety blocked/);
-    const { rows } = await ctx.owner.query(
-      `SELECT deny_reason FROM chat_dm_safety_audit WHERE actor_person_id = $1 AND peer_person_id = $2`,
+    const notices = await captureNotices(() =>
+      expect(callAssertDmAllowed(a, b, "create")).rejects.toThrow(/chat safety blocked/),
+    );
+    const logLine = notices.find((n) => n.severity === "LOG");
+    expect(logLine?.message).toContain(`actor=${a}`);
+    expect(logLine?.message).toContain(`peer=${b}`);
+    expect(logLine?.message).toContain("action=create");
+    expect(logLine?.message).toContain("deny_reason=blocked");
+  });
+
+  it("still logs when the denial reason is safety_disabled via a flag OTHER than audit_enabled", async () => {
+    await resetConfigDefaults();
+    const a = await seedPerson("Deny Log Other Flag A");
+    const b = await seedPerson("Deny Log Other Flag B");
+    await setConfigFlag("block_enabled", false); // audit_enabled itself stays true
+    const notices = await captureNotices(() =>
+      expect(callAssertDmAllowed(a, b, "create")).rejects.toThrow(/chat safety blocked/),
+    );
+    const logLine = notices.find((n) => n.severity === "LOG");
+    expect(logLine?.message).toContain("deny_reason=safety_disabled");
+  });
+
+  it("emits NO RAISE LOG line when audit_enabled is false (fail-closed: missing/disabled audit means silent, not 'log anyway')", async () => {
+    await resetConfigDefaults();
+    const a = await seedPerson("Deny No Log A");
+    const b = await seedPerson("Deny No Log B");
+    await ctx.owner.query(
+      `INSERT INTO chat_blocks (blocker_person_id, blocked_person_id) VALUES ($1, $2)`,
       [a, b],
     );
-    expect(rows).toHaveLength(1);
-    expect((rows[0] as { deny_reason: string }).deny_reason).toBe("blocked");
+    await setConfigFlag("audit_enabled", false);
+    const notices = await captureNotices(() =>
+      expect(callAssertDmAllowed(a, b, "create")).rejects.toThrow(/chat safety blocked/),
+    );
+    expect(notices.find((n) => n.severity === "LOG")).toBeUndefined();
   });
 });
 
 describe("role app has zero direct access (global-protected plane)", () => {
-  it("app cannot SELECT/INSERT chat_dm_safety_config/chat_blocks/chat_reports/chat_dm_safety_audit", async () => {
+  it("app cannot SELECT/INSERT chat_dm_safety_config/chat_blocks/chat_reports", async () => {
     await expect(ctx.appPool.query(`SELECT 1 FROM chat_dm_safety_config`)).rejects.toThrow(
       /permission denied/i,
     );
@@ -286,9 +321,6 @@ describe("role app has zero direct access (global-protected plane)", () => {
       /permission denied/i,
     );
     await expect(ctx.appPool.query(`SELECT 1 FROM chat_reports`)).rejects.toThrow(
-      /permission denied/i,
-    );
-    await expect(ctx.appPool.query(`SELECT 1 FROM chat_dm_safety_audit`)).rejects.toThrow(
       /permission denied/i,
     );
   });

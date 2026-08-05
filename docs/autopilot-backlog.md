@@ -1770,7 +1770,11 @@ notes: |
 
 ## task: chat-dm-safety-authority-core
 title: Slice 2 chuỗi in-app-chat — `dm_safety_enabled()` và authority tables/functions kèm theo
-status: AWAIT_FOUNDER (2026-08-05) — implemented in worktree feat/chat-dm-safety-authority-core,
+status: implementing owner ruling (2026-08-05, same day as the AWAIT below) — all 3 findings ruled on,
+  amendment in progress in the same worktree/branch/registration. See the dated note at the end of
+  `notes:` for the ruling and what changed; the AWAIT paragraph immediately below is preserved as the
+  dated record of what was asked, per this repo's own "never rewrite dated history" convention.
+status_history_2026-08-05_AWAIT: implemented in worktree feat/chat-dm-safety-authority-core,
   base_sha 3289e3b90b1e46739ead4bab8a05fe95fec0b77a, NOT yet at the review gate. 372/380 DB tests
   green; 8 failures are 3 distinct findings, none fixable within this slice's own scope without an
   owner decision or a scope amendment. Full detail:
@@ -1803,7 +1807,7 @@ risk: P1
 change_class: schema-migration
 depends_on: [chat-definer-role-provisioning]
 invariants: [schema]
-scope: [packages/db/migrations/0030_chat_dm_safety_authority_core.sql, packages/db/schema.ts, packages/db/src/chat-dm-safety-invariants.test.ts, packages/db/src/migrate.test.ts, packages/db/README.md, docs/autopilot-manifests/chat-dm-safety-authority-core.json, docs/autopilot-chat-dm-safety-authority-core.md]
+scope: [packages/db/migrations/0030_chat_dm_safety_authority_core.sql, packages/db/schema.ts, packages/db/src/chat-dm-safety-invariants.test.ts, packages/db/src/migrate.test.ts, packages/db/src/test-harness.ts, packages/db/src/rls-invariants.test.ts, packages/db/README.md, docs/autopilot-manifests/chat-dm-safety-authority-core.json, docs/autopilot-chat-dm-safety-authority-core.md, docs/autopilot-backlog.md]
 manifest: docs/autopilot-manifests/chat-dm-safety-authority-core.json
 slice_doc: docs/autopilot-chat-dm-safety-authority-core.md
 merged_probe: packages/db/schema.ts :: chatDmSafetyConfig
@@ -1831,3 +1835,76 @@ notes: |
   migration tail, implement theo `docs/autopilot-chat-dm-safety-authority-core.md` §6. Sau khi slice
   này merge, `dd38-dd86-chat-schema-core` (AP-45) cần re-run gate của chính nó — dependency thứ hai
   (slice này) khi đó mới `MERGED`.
+
+  **2026-08-05, owner ruling on the AWAIT above (English per this repo's language convention for
+  autopilot artifacts).** All 3 findings ruled on same day. (1) Finding 1 changes the contract, ruled
+  the owner's to change: `chat_dm_safety_audit` (the table) is DROPPED from this slice's scope
+  entirely; `assert_dm_allowed` emits `RAISE LOG` instead (gated by `audit_enabled`, same fields).
+  Design note above describing `chat_dm_safety_audit` is now SUPERSEDED — `docs/autopilot-chat-dm-
+  safety-authority-core.md` §5 row 6 and §6.1 carry the amended, authoritative design (rationale
+  replaced, not appended, per owner instruction). `merged_probe` above (`chatDmSafetyConfig`) is
+  unaffected — that table still exists. (2) Finding 2 (test-harness.ts `chat_definer` bootstrap gap)
+  and (3) Finding 3 (a prior slice's own `DROP ROLE chat_definer` test cleanup, broken by this
+  migration being the first to give the role real objects) are both owner-authorized to fix in this
+  SAME registration — narrowly, no broader refactor, no weakened assertions. New backlog task below,
+  `chat-dm-safety-audit-queryable-path`, tracks the deferred queryable-table follow-up Finding 1's
+  ruling named explicitly.
+
+## task: chat-dm-safety-audit-queryable-path
+title: A queryable, structured store for DM-safety denial forensics (chat_dm_safety_audit's deferred
+  follow-up)
+status: idea
+not_before: null
+not_after: null
+launcher: null
+risk: P2
+change_class: schema-migration
+depends_on: [dd38-dd86-chat-schema-core]
+invariants: [schema]
+scope: []
+manifest: null
+slice_doc: null
+merged_probe: null
+notes: |
+  Opened 2026-08-05, owner-authorized, as part of `chat-dm-safety-authority-core`'s (AP-50) Finding-1
+  ruling. `assert_dm_allowed()` (migration `0030`) emits `RAISE LOG` for every denial instead of
+  writing a queryable table — the original `chat_dm_safety_audit` table design was proven, during
+  AP-50's own implementation, structurally unable to persist a row: `INSERT` immediately before
+  `RAISE EXCEPTION` in the same statement is unconditionally undone by PL/pgSQL's savepoint-rollback
+  exception handling, for every calling pattern. `RAISE LOG` is a real, working interim (verified:
+  Postgres's log levels sit outside transactional rollback, so the line survives), but it trades a
+  queryable SQL table for unstructured server-log text gated by `log_min_messages`/
+  `client_min_messages` configuration this repo has not audited for production.
+
+  The denial signal that matters for abuse forensics — who attempted a DM against whom, and why it was
+  refused — is not captured anywhere else (`rate_limit_hits` records hits, not denials or reasons;
+  `chat_blocks` is current state, not an attempt log). This is a real, unfilled observability gap
+  against DD-55/BL-SEC-6/P15, not a wontfix — hence this task exists rather than silently accepting
+  the limitation forever.
+
+  **Two viable routes, named by the ruling, neither implemented yet:**
+  1. **Caller-side write in an exception handler.** The future DM-mutating RPCs (`create_dm`/
+     `send_chat_message`/`mark_read` — `chat-shared-message-command-core`/`chat-dm-lifecycle-command-
+     core`, slices 7/8, not yet built) catch `assert_dm_allowed`'s raised exception themselves and
+     write the audit row from inside their OWN exception handler, in a transaction that actually
+     commits (i.e. the write happens as normal, successful business logic reacting to a caught error,
+     not nested inside the same aborting statement). Needs those callers to exist first — hence
+     `depends_on: [dd38-dd86-chat-schema-core]` here as the nearer dependency in the chat tree, though
+     the REAL blocking dependency is slices 7/8 specifically; revisit `depends_on` once those slices
+     are themselves authored.
+  2. **A dedicated `LOGIN` role plus `dblink`** (or `postgres_fdw` self-loopback) so `assert_dm_allowed`
+     itself commits the audit row in a genuinely separate transaction before raising. Rejected FOR NOW
+     in AP-50 on cost, not correctness: `chat_definer` is `NOLOGIN` and cannot itself authenticate a
+     loopback connection, so this needs a brand-new dedicated `LOGIN` role — new credential surface on
+     the exact mechanism that decides who can reach whom. **DO Managed PostgreSQL's `dblink`
+     availability is UNVERIFIED — measure, do not assume it works.** This repo already has two
+     confirmed, unrelated findings of this exact host refusing things assumed to work (`LOCK TABLE`
+     needing superuser; `GRANT USAGE ON SCHEMA public` silently no-op-ing under a `CREATEROLE`-only
+     role) — see `infra-do-app-vpc-deployment`'s consolidated "DEPLOYMENT INPUTS" note. Whoever picks
+     up this route must probe `dblink` (or `postgres_fdw`) against the actual production-shaped
+     non-superuser role BEFORE designing around it, not after.
+
+  Neither route is clearly cheaper — pick based on which future slice (7/8's own authoring, or a
+  standalone infra probe) reaches this question first. Not scoped further than this; the next
+  implementer authors a real contract once slice 7/8's own shape is known.
+

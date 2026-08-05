@@ -32,6 +32,7 @@ import {
   expectErrorChainToMatch,
   setupNonSuperuserOwnerContext,
   setupRlsTestContext,
+  withChatDefinerLock,
   withJobDefinerLock,
   type RlsTestContext,
 } from "./test-harness.js";
@@ -66,10 +67,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(30); // 0000..0029 (0029 = dd29-capability-registry-contract)
+    expect(ctx.migrateResult.applied.length).toBe(31); // 0000..0030 (0030 = chat-dm-safety-authority-core)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(30);
+    expect(second.skipped.length).toBe(31);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1304,12 +1305,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
         await bootstrapJobDefiner(admin);
         return migrate(url(dbName));
       });
-      expect(res.applied.length).toBe(30); // 0000..0029
+      expect(res.applied.length).toBe(31); // 0000..0030
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(30);
+        expect(rows.length).toBe(31);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -1572,28 +1573,34 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
     try {
       // bootstrap + migrate + the ownership verification below all reference job_definer BY NAME
       // (grant; the 0022 assertion and ownership transfers; pg_get_userbyid comparison) — one
-      // continuous lock hold, matching setupRlsTestContext / JCL-4 / JCL-12.
-      await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
-        await nsCtx.bootstrapJobDefinerForOwner();
-        const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe(
-          "0029_dd29_capability_registry_contract.sql",
-        );
+      // continuous lock hold, matching setupRlsTestContext / JCL-4 / JCL-12. Also chat_definer
+      // (2026-08-05, owner-authorized scope amendment): migrate() now reaches 0030
+      // (chat-dm-safety-authority-core), which does ALTER FUNCTION ... OWNER TO chat_definer and
+      // mechanically requires nsCtx's owner role to already be a member of chat_definer.
+      await withJobDefinerLock(process.env.DATABASE_URL_TEST!, () =>
+        withChatDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
+          await nsCtx.bootstrapJobDefinerForOwner();
+          await nsCtx.bootstrapChatDefinerForOwner();
+          const res = await nsCtx.runMigration();
+          expect(res.applied[res.applied.length - 1]).toBe(
+            "0030_chat_dm_safety_authority_core.sql",
+          );
 
-        const { rows } = await nsCtx.ownerPool.query(
-          `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
-        );
-        expect((rows as { proname: string }[]).map((r) => r.proname).sort()).toEqual(
-          [
-            "ack_outbox_event",
-            "claim_outbox_batch",
-            "claim_projector_delivery_batch",
-            "complete_projector_delivery",
-            "forbid_job_audit_mutation",
-            "job_prepare_projector_delivery",
-          ].sort(),
-        );
-      });
+          const { rows } = await nsCtx.ownerPool.query(
+            `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
+          );
+          expect((rows as { proname: string }[]).map((r) => r.proname).sort()).toEqual(
+            [
+              "ack_outbox_event",
+              "claim_outbox_batch",
+              "claim_projector_delivery_batch",
+              "complete_projector_delivery",
+              "forbid_job_audit_mutation",
+              "job_prepare_projector_delivery",
+            ].sort(),
+          );
+        }),
+      );
     } finally {
       await nsCtx.teardown();
     }
@@ -4045,10 +4052,10 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       }
     });
 
-    it("UCC-8: MIGRATION_COUNT (30) matches the actual migrations/ directory listing, and the tail is 0029", async () => {
+    it("UCC-8: MIGRATION_COUNT (31) matches the actual migrations/ directory listing, and the tail is 0030", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      expect(files.length).toBe(30);
-      expect(files[files.length - 1]).toBe("0029_dd29_capability_registry_contract.sql");
+      expect(files.length).toBe(31);
+      expect(files[files.length - 1]).toBe("0030_chat_dm_safety_authority_core.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {

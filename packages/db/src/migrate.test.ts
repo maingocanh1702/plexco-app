@@ -7,8 +7,11 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ensureRoleExists, logMigrationFailure, migrate } from "./migrate.js";
 import {
+  bootstrapChatDefiner,
   bootstrapJobDefiner,
+  revokeStaleChatDefinerMembership,
   setupNonSuperuserOwnerContext,
+  withChatDefinerLock,
   withJobDefinerLock,
 } from "./test-harness.js";
 
@@ -212,6 +215,19 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
       } finally {
         await admin.query(`RESET job_definer_bootstrap.migration_role`);
       }
+      // Mirrors the job_definer dance immediately above (2026-08-05, owner-authorized scope
+      // amendment): migrate() now reaches 0030 (chat-dm-safety-authority-core), which does
+      // ALTER FUNCTION ... OWNER TO chat_definer and mechanically requires `owner` to already be a
+      // member of chat_definer. revokeStaleChatDefinerMembership first: unlike job_definer's
+      // bootstrap, chat_definer's own script refuses to re-point to a different target once any
+      // member exists (see that helper's own comment, test-harness.ts).
+      await revokeStaleChatDefinerMembership(admin, owner);
+      await admin.query(`SET chat_definer_bootstrap.migration_role = '${owner}'`);
+      try {
+        await bootstrapChatDefiner(admin);
+      } finally {
+        await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+      }
       const res = await migrate(url(db, owner, "x"));
       expect(res.applied.length).toBe(MIGRATION_COUNT);
     } finally {
@@ -348,11 +364,14 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
       inherit: false,
     });
     try {
-      await withJobDefinerLock(BASE!, async () => {
-        await ctx.bootstrapJobDefinerForOwner();
-        const res = await ctx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0030_chat_dm_safety_authority_core.sql");
-      });
+      await withJobDefinerLock(BASE!, () =>
+        withChatDefinerLock(BASE!, async () => {
+          await ctx.bootstrapJobDefinerForOwner();
+          await ctx.bootstrapChatDefinerForOwner();
+          const res = await ctx.runMigration();
+          expect(res.applied[res.applied.length - 1]).toBe("0030_chat_dm_safety_authority_core.sql");
+        }),
+      );
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
@@ -2436,6 +2455,9 @@ describe("job_definer bootstrap script itself fails closed on runtime-role targe
   }, 60_000);
 });
 
+// Raw-file-content path, mirrors JOB_DEFINER_BOOTSTRAP_SQL_PATH above: several tests below read
+// 02-chat-definer.sql's own text directly (regex matching, race-window injection) rather than only
+// calling the imported bootstrapChatDefiner function.
 const CHAT_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -2445,35 +2467,6 @@ const CHAT_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
   "postgres-init",
   "02-chat-definer.sql",
 );
-
-async function bootstrapChatDefiner(client: pg.Client): Promise<void> {
-  const sql = await readFile(CHAT_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
-  try {
-    await client.query(sql);
-  } catch (error) {
-    // The file wraps itself in an explicit BEGIN/COMMIT (infra/postgres-init/02-chat-definer.sql),
-    // so a rejection leaves that transaction open and aborted on `client` — mirrors
-    // bootstrapJobDefiner's own catch-and-ROLLBACK idiom (test-harness.ts).
-    await client.query("ROLLBACK");
-    throw error;
-  }
-}
-
-const CHAT_DEFINER_LOCK_KEY = 0x63686164; // "chad" — distinct from "jobd" (0x6a6f6264) and "plxc" (0x706c7863)
-
-async function withChatDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
-  const lockClient = new pg.Client({ connectionString: base });
-  await lockClient.connect();
-  await lockClient.query("SELECT pg_advisory_lock($1)", [CHAT_DEFINER_LOCK_KEY]);
-  try {
-    return await fn();
-  } finally {
-    await lockClient
-      .query("SELECT pg_advisory_unlock($1)", [CHAT_DEFINER_LOCK_KEY])
-      .catch(() => {});
-    await lockClient.end();
-  }
-}
 
 async function hideRealChatDefiner(superuser: pg.Client, fn: () => Promise<void>): Promise<void> {
   const existing = await superuser.query(`SELECT 1 FROM pg_roles WHERE rolname = 'chat_definer'`);
@@ -3341,7 +3334,19 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
         // comment above) rather than merely leaving a documented side effect.
       } finally {
         await scratchClient.end();
-        await admin.query(`DROP ROLE IF EXISTS chat_definer`);
+        // No explicit chat_definer cleanup here (fixed 2026-08-05, owner-authorized scope
+        // amendment to chat-dm-safety-authority-core) — mirrors the job_definer half of this same
+        // test (see the comment at its own "No explicit job_definer cleanup" line): by this point
+        // withChatDefinerLock/hideRealChatDefiner above has ALREADY restored the real chat_definer
+        // role (the scratch bootstrap attempt inside it rolled back entirely and left no role to
+        // clean up — see that block's own comment). A bare `DROP ROLE IF EXISTS chat_definer` here
+        // was always semantically wrong: it targets the just-restored REAL role, not a scratch
+        // leftover. It stayed silently harmless only because chat_definer never owned any object
+        // for a DROP to fail on — chat-dm-safety-authority-core's migration 0030 is the first to
+        // give it real objects (in whatever other database has 0030 applied, cluster-wide, since
+        // chat_definer is cluster-global), which turned this latent mistake into a hard failure
+        // ("role chat_definer cannot be dropped because some objects depend on it"). Removed, not
+        // patched around — hideRealChatDefiner's own restoration is already correct and sufficient.
       }
     });
   }, 60_000);

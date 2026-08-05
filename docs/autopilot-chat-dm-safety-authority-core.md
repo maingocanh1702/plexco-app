@@ -1,14 +1,19 @@
 <!-- review-readiness: code-ready -->
 # AP-50 — chat-dm-safety-authority-core: DD-55 DM safety authority contract
 
-> **Status:** `CODE_READY` (see verdict, §10) · **Authored:** 2026-08-05 · **Risk:** P1 (preparation-only —
-> no worktree opened, no code written)
-> **This is an AUTHORING artifact.** No `register` has been attempted, no worktree exists. Slice 2 of
-> the serialized DB lane `chat-definer-role-provisioning → chat-dm-safety-authority-core →
-> dd38-dd86-chat-schema-core → tenant-capability-authority-core`. Unlike its root sibling
-> (`dd38-dd86-chat-schema-core`, AP-45), the primary-surface plan does **not** pin an exact-file
-> packet for this slice (§9.2 only pins slice 1) — authoring this is real design work, not
-> transcription, per the backlog stub's own note.
+> **Status:** `CODE_READY` (see verdict, §10), **amended 2026-08-05** (implementation session, same
+> day) · **Authored:** 2026-08-05 · **Risk:** P1
+> **This is an AUTHORING artifact, now also an implementation record.** Implemented in worktree
+> `feat/chat-dm-safety-authority-core`. The amendment: `chat_dm_safety_audit` (a table) is REMOVED
+> from this slice's scope, replaced by `assert_dm_allowed` emitting `RAISE LOG` — implementation proved
+> the original table-INSERT-then-RAISE-EXCEPTION shape can never persist a row (§5 row 6, §6.1 both
+> updated in place, rationale replaced not appended, per owner instruction). Scope also amended to
+> include `packages/db/src/test-harness.ts` and `packages/db/src/rls-invariants.test.ts` (§6.3, §8) —
+> owner-authorized, same registration, no separate slice. Slice 2 of the serialized DB lane
+> `chat-definer-role-provisioning → chat-dm-safety-authority-core → dd38-dd86-chat-schema-core →
+> tenant-capability-authority-core`. Unlike its root sibling (`dd38-dd86-chat-schema-core`, AP-45), the
+> primary-surface plan does **not** pin an exact-file packet for this slice (§9.2 only pins slice 1) —
+> authoring this was real design work, not transcription, per the backlog stub's own note.
 
 ## 0. Session input
 
@@ -147,9 +152,9 @@ states the choice, the rejected alternative(s), and why.
 | 3 | `chat_blocks` shape | Current-state relation: `PRIMARY KEY (blocker_person_id, blocked_person_id)`, row exists ⇔ blocked. Block = idempotent insert, unblock = delete (both owned by slice 8, not this slice) | Append-only log with an `active` flag — rejected: no history requirement anywhere in DD-55/spec; `chat_pair_blocked` only ever needs a present/absent answer, and the simpler shape is what "loại hai chiều" (bidirectional exclusion) naturally maps to (predicate checks both directions at query time, not at write time) |
 | 4 | `chat_reports` — channel reference | **No** `channel_id` column; row keyed by the `(reporter_person_id, reported_person_id)` pair only | A `channel_id uuid REFERENCES chat_channels(id)` — rejected, and not just stylistically: `chat_channels` **does not exist yet** at this migration's position in the dependency order (root/slice 3 lands *after* this slice). Adding that FK here is a forward reference to a table this slice structurally cannot see; DM identity is already fully expressed by the person pair (`dm_key = least(a,b):greatest(a,b)` is root's own scheme), so no information is lost |
 | 5 | `chat_reports` reason vocabulary | Reuse DD-95's exact set `spam\|harassment\|unsafe\|off_topic\|other`, plus DD-95's "other requires a bounded note, every non-other rejects a note" shape (note ≤500 chars) | A DM-specific vocabulary — rejected: one taxonomy across the chat safety surface avoids parallel-vocabulary drift; DD-55 and DD-95 are siblings in the same feature family and nothing in either spec calls for divergent categories |
-| 6 | `chat_dm_safety_audit` write granularity | Log **denials only** (one row per failed `assert_dm_allowed` call, with the real reason) | Log every call (allow + deny) — rejected: unbounded volume with no abuse-forensics value over what `rate_limit_hits` (already logs every hit) and message history already capture; "abuse audit" is naturally about denied/abusive attempts, not routine traffic |
-| 7 | `chat_dm_safety_audit` — FK to `persons` | **No** FK on `actor_person_id`/`peer_person_id` | FK to `persons(id)` — rejected: breaks the established `merge_audit`/`routing_audit` precedent in this exact codebase, where audit rows are deliberately independent of the referenced person's later merge/lifecycle (an audit record must survive a merge that re-parents or tombstones the person it names) |
-| 8 | RLS posture for all 4 new tables | **No RLS**, **zero grant to `app`/`readonly`** — global-protected plane, reached only via `chat_definer`-owned `SECURITY DEFINER` functions | RLS keyed on `app.tenant_id` (root's own idiom) — rejected: DM safety is a cross-tenant, person-level concern (`tenant_id` does not even apply — DM channels have `tenant_id IS NULL`); `app` never needs direct access to these tables at all (every access is mediated), which is exactly the `persons`/`accounts` model already established in `0009`, not the tenant-isolation model |
+| 6 | Denial audit mechanism (owner-amended 2026-08-05, replacing this row's original rationale rather than appending to it — the original chose *what* to log inside a `chat_dm_safety_audit` table without noticing the deny path is exactly the path that rolls back everything written on it) | **`RAISE LOG`** inside `assert_dm_allowed`, gated by `audit_enabled`, carrying `actor`/`peer`/`action`/`deny_reason`/`at` — no table. Postgres's log levels are delivered outside transactional rollback, so the line survives the `RAISE EXCEPTION` immediately after it; a table row written by the SAME `INSERT`-then-`RAISE EXCEPTION` statement cannot, for any calling pattern (verified empirically during implementation). The denial signal that matters for abuse forensics — who attempted, against whom, why refused — is **not** captured by `rate_limit_hits` (records hits, not denials or reasons) or `chat_blocks` (current state, not an attempt log); this is a real, unfilled gap, not a wontfix. A queryable table remains the goal, deferred to backlog `chat-dm-safety-audit-queryable-path` (depends on `dd38-dd86-chat-schema-core`): the write needs to happen from a transaction that actually commits, which means either the future caller (`create_dm`/`send_chat_message`/`mark_read`) writes it itself from inside its OWN exception handler after catching the refusal — that caller does not exist yet — or a genuinely separate connection (e.g. `dblink`) commits it independently | **Keep the original `chat_dm_safety_audit` table, ship empty** — rejected: an audit table that always reads zero rows does not look unimplemented to the next reader, it looks like a working audit trail; a machine-readable claim contradicting reality. **`dblink` now, in this slice** — rejected on cost, not correctness: `chat_definer` is `NOLOGIN` and cannot itself authenticate a loopback connection, so this needs a brand-new dedicated `LOGIN` role — new credential surface on the exact mechanism that decides who can reach whom — plus a new per-denial connection, plus DO Managed PostgreSQL's `dblink` availability is itself unverified (this host has twice already refused things assumed to work, `infra-do-app-vpc-deployment`'s consolidated deployment inputs) |
+| 7 | **OBSOLETE 2026-08-05** — `chat_dm_safety_audit` — FK to `persons` (superseded by row 6's amendment: no such table exists, so this row's decision no longer applies to anything; kept, not deleted, so the escalation-check paragraph below still refers to "14 rows" accurately) | ~~**No** FK on `actor_person_id`/`peer_person_id`~~ | ~~FK to `persons(id)` — rejected: breaks the established `merge_audit`/`routing_audit` precedent...~~ |
+| 8 | RLS posture for all new tables (3, after row 6's amendment removed the 4th) | **No RLS**, **zero grant to `app`/`readonly`** — global-protected plane, reached only via `chat_definer`-owned `SECURITY DEFINER` functions | RLS keyed on `app.tenant_id` (root's own idiom) — rejected: DM safety is a cross-tenant, person-level concern (`tenant_id` does not even apply — DM channels have `tenant_id IS NULL`); `app` never needs direct access to these tables at all (every access is mediated), which is exactly the `persons`/`accounts` model already established in `0009`, not the tenant-isolation model |
 | 9 | `assert_dm_allowed` rate-check scope across its 3 actions (`create`/`send`/`read`) | Enforce `dm_safety_enabled()` + `chat_pair_blocked()` uniformly for all 3 actions; enforce the sender/target **rate** dimension only for `create`/`send`, **skip it for `read`** | Rate-limit `read` too (uniform for all 3) — rejected: `mark_read` (the only caller of `assert_dm_allowed(...,'read')`) is receiver-side bookkeeping invoked on ordinary UI scroll/view activity, not a spam vector; root's own `dm_current_read_allowed` RLS predicate (the actual message/channel read boundary) never has a rate dimension either — rate-limiting `read` would risk locking an active legitimate user out of their own inbox for normal usage |
 | 10 | Rate dimensions | Exactly **2** buckets: `chat_dm_sender:<actor>` and `chat_dm_target:<peer>`, each covering both `create` and `send` uniformly | 4 buckets (separate create/send × sender/target) — rejected as premature: decisions.md line 690 literally says "per-sender và per-target" (two dimensions), test #30's title is "Sender-target throttle" (two, not four); 2 buckets already satisfy the literal decision text and the acceptance test, and can be split later via a forward migration (P12) if real traffic data shows a need |
 | 11 | Numeric limits — **value and storage location** | Value: `30` per bucket per `interval '1 minute'`, unchanged. Storage: **`chat_dm_safety_config.dm_sender_limit_per_min`/`dm_target_limit_per_min`** (integer columns, `CHECK > 0`), read at call time — **not** a literal baked into `assert_dm_allowed`'s body (this contract's original choice, corrected 2026-08-05) | No existing DD/spec pins an exact number; the `30` itself is still anchored against the closest BL-SEC-5 registry tiers already in this repo (`Session CRUD 60/min`, `Chat command execute 60/min` (DD-91, not yet implemented), `Identity link-code 5/min`) — a midpoint slightly stricter than general chat-command traffic while staying well above legitimate rapid-conversation cadence. **Storage location, on reflection:** a hardcoded literal — this session's own original choice — was inconsistent with the reasoning row 2 already used to put the four kill-switch flags in `chat_dm_safety_config` instead of an env var (unreachable from this call context, so config has to be DB-native). That same argument applies unchanged to the two numbers: under P17 (migrations are forward-only, no reverse runbook), retuning a hardcoded literal requires an entirely new migration that recreates this `SECURITY DEFINER` function's body — full code+security review for what is purely an operational number, not a behavior change. A config column makes retuning a single `UPDATE`, auditable via `updated_at`, no migration, no redeploy. Still this slice's own implementation default, not an owner-ratified number — only *where it lives* changed, not who gets to change it or how confident this session is in `30` specifically |
@@ -171,17 +176,48 @@ re-derive it)
 
 ### 6.1 Migration body
 
+This block is a verbatim copy of the AS-IMPLEMENTED and merged migration
+(`packages/db/migrations/0030_chat_dm_safety_authority_core.sql`), kept here so the contract and the
+code never drift. **Amended 2026-08-05, owner-directed, replacing the originally pinned shape**: the
+original had a fourth table, `chat_dm_safety_audit`, and `assert_dm_allowed` wrote to it via `INSERT`
+immediately before `RAISE EXCEPTION` in the same statement. Implementation proved empirically that this
+can never persist a row — PL/pgSQL's exception handling is savepoint-rollback-based, so the `RAISE`
+unconditionally undoes the `INSERT`, for every calling pattern. Per §5 row 6 (rationale replaced, not
+appended), the table was dropped entirely and `assert_dm_allowed` emits `RAISE LOG` instead — see that
+function's own comment below.
+
 ```sql
 -- ============================================================================
--- 0030_chat_dm_safety_authority_core.sql   -- number is PROVISIONAL, see §7
+-- 0030_chat_dm_safety_authority_core.sql
 -- chat-dm-safety-authority-core (slice 2 of the DD-38/DD-86 chat tree).
--- Canonical DD-55 DM safety authority: block/report/rate/audit storage plus
--- the pure predicates and fail-closed gate that dd38-dd86-chat-schema-core
+-- Canonical DD-55 DM safety authority: block/report/rate storage plus the
+-- pure predicates and fail-closed gate that dd38-dd86-chat-schema-core
 -- (slice 3) and every later DM-touching slice (7/8) call into. Creates no
 -- chat_* content table -- those are root's own deliverable (slice 3).
 -- Source: docs/autopilot-chat-dm-safety-authority-core.md, decisions.md
 --         DD-55, feature_inapp_chat_tech.md v0.23 section "DD-55 design-probe
 --         gates" / section 2 (helper idiom) / section 4-5.
+--
+-- Every CHECK below carries an explicit CONSTRAINT name (contract SS6.1's own
+-- verbatim text left 6 of 8 unnamed; SS6.2 requires the schema.ts mirror to
+-- declare matching explicit names so rls-invariants.test.ts's generic CND
+-- guard covers these tables -- an unnamed CHECK here would make that
+-- instruction unsatisfiable, since schema.ts can only truthfully declare a
+-- name Postgres actually assigned). Naming propagates SS6.1's own two
+-- examples (chat_dm_safety_config_{sender,target}_limit_positive_chk) to the
+-- rest; no CHECK semantics changed.
+--
+-- NO chat_dm_safety_audit TABLE (owner-amended 2026-08-05, replacing SS6.1's
+-- original pinned shape -- see design probe row 6 and this file's own
+-- assert_dm_allowed() comment below for why). A table written via INSERT
+-- immediately before RAISE EXCEPTION in the same statement can never persist
+-- a row through normal operation: PL/pgSQL's exception handling is
+-- savepoint-rollback-based, so the RAISE unconditionally undoes the INSERT,
+-- for every calling pattern (proven empirically, not just reasoned). Shipping
+-- that table anyway would have looked like a working audit trail to the next
+-- reader while never actually holding a row -- a machine-readable claim that
+-- contradicts reality. assert_dm_allowed() instead emits RAISE LOG, which
+-- Postgres delivers outside transactional rollback.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -192,6 +228,14 @@ re-derive it)
 -- through the application. All boolean flags default true: this migration
 -- ships all four subsystems complete, so there is no reason to land it
 -- pre-disabled.
+--
+-- audit_enabled has TWO effects (owner-amended 2026-08-05, no new column):
+-- (1) unchanged -- it is one of the four flags dm_safety_enabled() ANDs, so
+-- disabling it alone still fail-closes the whole subsystem (test #28's own
+-- "disable any ONE of the four" requirement). (2) it now ALSO gates whether
+-- assert_dm_allowed() emits its RAISE LOG line on a denial -- see that
+-- function's own comment; there is no queryable chat_dm_safety_audit table
+-- in this migration.
 --
 -- dm_sender_limit_per_min/dm_target_limit_per_min carry the same two
 -- numbers previously hardcoded as literal arguments inside
@@ -210,7 +254,8 @@ re-derive it)
 -- only when DM traffic stops.
 -- ---------------------------------------------------------------------------
 CREATE TABLE chat_dm_safety_config (
-  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  singleton boolean PRIMARY KEY DEFAULT true
+    CONSTRAINT chat_dm_safety_config_singleton_chk CHECK (singleton),
   block_enabled boolean NOT NULL DEFAULT true,
   report_enabled boolean NOT NULL DEFAULT true,
   rate_limit_enabled boolean NOT NULL DEFAULT true,
@@ -241,7 +286,7 @@ CREATE TABLE chat_blocks (
   blocked_person_id uuid NOT NULL REFERENCES persons(id),
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (blocker_person_id, blocked_person_id),
-  CHECK (blocker_person_id <> blocked_person_id)
+  CONSTRAINT chat_blocks_no_self_chk CHECK (blocker_person_id <> blocked_person_id)
 );
 
 -- ---------------------------------------------------------------------------
@@ -263,43 +308,20 @@ CREATE TABLE chat_reports (
   reporter_person_id uuid NOT NULL REFERENCES persons(id),
   reported_person_id uuid NOT NULL REFERENCES persons(id),
   reason_code text NOT NULL
+    CONSTRAINT chat_reports_reason_code_chk
     CHECK (reason_code IN ('spam','harassment','unsafe','off_topic','other')),
   note text,
   status text NOT NULL DEFAULT 'submitted'
+    CONSTRAINT chat_reports_status_chk
     CHECK (status IN ('submitted','triaged','actioned','closed')),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  CHECK (reporter_person_id <> reported_person_id),
-  CHECK (
+  CONSTRAINT chat_reports_no_self_chk CHECK (reporter_person_id <> reported_person_id),
+  CONSTRAINT chat_reports_note_shape_chk CHECK (
     (reason_code = 'other' AND note IS NOT NULL AND length(btrim(note)) BETWEEN 1 AND 500)
     OR (reason_code <> 'other' AND note IS NULL)
   )
 );
-
--- ---------------------------------------------------------------------------
--- chat_dm_safety_audit -- append-only abuse-forensics log. Records only
--- DENIALS from assert_dm_allowed (not every call -- see design probe row 6
--- for the volume/signal tradeoff): what would otherwise be invisible ops
--- telemetry, since the caller only ever sees a generic error (no
--- block-detail leak, feature_inapp_chat_tech.md line 1186). No FK on the
--- person columns, matching merge_audit/routing_audit's existing convention
--- in this codebase -- an audit row must survive independent of the
--- referenced person's later merge/lifecycle. No delete/retention sweep
--- (BL-SEC-6: audit logs are archived after retention, never deleted); a
--- created_at index exists for that future archival job and for ops
--- "what got denied and why" queries, mirroring auth_audit_events'
--- created_at index.
--- ---------------------------------------------------------------------------
-CREATE TABLE chat_dm_safety_audit (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  actor_person_id uuid NOT NULL,
-  peer_person_id uuid NOT NULL,
-  action text NOT NULL CHECK (action IN ('create','send','read')),
-  deny_reason text NOT NULL
-    CHECK (deny_reason IN ('safety_disabled','blocked','rate_limited_sender','rate_limited_target')),
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_chat_dm_safety_audit_created_at ON chat_dm_safety_audit(created_at);
 
 -- ---------------------------------------------------------------------------
 -- dm_safety_enabled() -- pure predicate, the AND of all four capability
@@ -338,23 +360,40 @@ REVOKE ALL ON FUNCTION chat_pair_blocked(uuid, uuid) FROM PUBLIC;
 -- target rate; rate dimensions are skipped for 'read' (mark_read is
 -- receiver-side bookkeeping, not a spam vector -- dm_current_read_allowed,
 -- root's own RLS predicate, never rate-limits reads either). On any deny,
--- writes ONE audit row with the real reason, then raises the SAME generic
--- message the Reviewed spec already uses at the RLS boundary
--- (feature_inapp_chat_tech.md:684, send_chat_message) -- one wire-visible
--- error text for the whole DM safety surface, by construction, not by
--- convention someone has to remember.
+-- emits ONE RAISE LOG line with the real reason (when audit_enabled), then
+-- raises the SAME generic message the Reviewed spec already uses at the RLS
+-- boundary (feature_inapp_chat_tech.md:684, send_chat_message) -- one
+-- wire-visible error text for the whole DM safety surface, by construction,
+-- not by convention someone has to remember.
 --
--- The two rate limits are read from chat_dm_safety_config on every call,
--- the same COALESCE-wrapped-scalar-subquery-to-fail-closed idiom
--- dm_safety_enabled() itself already uses, not a fresh pattern. A missing
--- config row (should never happen -- see that table's own header) COALESCEs
--- to 0, which makes rate_limit_check deny unconditionally (v_count >= 0 is
--- true even for a brand-new bucket) -- fail-closed defense in depth, even
--- though dm_safety_enabled()'s own identical missing-row COALESCE already
--- denies first via the IF/ELSIF chain below and would prevent this branch
--- from ever being reached with a NULL-turned-0 limit in practice. Belt and
--- suspenders on purpose: this function's fail-closed property should not
--- depend on the two checks staying in this exact order forever.
+-- RAISE LOG, not a chat_dm_safety_audit table (owner-amended 2026-08-05,
+-- replacing SS6.1's original pinned shape; see design probe row 6): an
+-- INSERT immediately before RAISE EXCEPTION in the same statement can never
+-- persist, because PL/pgSQL's exception handling is savepoint-rollback-based
+-- -- the RAISE unconditionally undoes the INSERT, for every calling pattern
+-- (proven empirically). RAISE LOG is delivered through Postgres's own
+-- logging subsystem, which sits OUTSIDE transactional rollback, so it
+-- survives the RAISE EXCEPTION that immediately follows it. This trades a
+-- queryable table for unstructured server-log text; a queryable path is a
+-- separate, deliberately deferred follow-up (backlog:
+-- chat-dm-safety-audit-queryable-path) once a caller exists that can write
+-- the row from inside its OWN exception handler, in a transaction that
+-- actually commits.
+--
+-- The two rate limits (and now audit_enabled) are read from
+-- chat_dm_safety_config on every call, the same
+-- COALESCE-wrapped-scalar-subquery-to-fail-closed idiom dm_safety_enabled()
+-- itself already uses, not a fresh pattern. A missing config row (should
+-- never happen -- see that table's own header) COALESCEs the two limits to
+-- 0, which makes rate_limit_check deny unconditionally (v_count >= 0 is true
+-- even for a brand-new bucket) -- fail-closed defense in depth, even though
+-- dm_safety_enabled()'s own identical missing-row COALESCE already denies
+-- first via the IF/ELSIF chain below and would prevent this branch from ever
+-- being reached with a NULL-turned-0 limit in practice. Belt and suspenders
+-- on purpose: this function's fail-closed property should not depend on the
+-- two checks staying in this exact order forever. audit_enabled COALESCEs to
+-- false on a missing row -- fail-closed means "do not log", consistent with
+-- every other missing-row behavior in this migration, never "log anyway".
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION assert_dm_allowed(p_actor uuid, p_peer uuid, p_action text) RETURNS void
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
@@ -362,6 +401,7 @@ DECLARE
   v_deny_reason text;
   v_sender_limit integer;
   v_target_limit integer;
+  v_audit_enabled boolean;
 BEGIN
   IF p_action NOT IN ('create','send','read') THEN
     RAISE EXCEPTION 'assert_dm_allowed: invalid action' USING ERRCODE = 'invalid_parameter_value';
@@ -372,6 +412,7 @@ BEGIN
 
   v_sender_limit := COALESCE((SELECT dm_sender_limit_per_min FROM chat_dm_safety_config WHERE singleton), 0);
   v_target_limit := COALESCE((SELECT dm_target_limit_per_min FROM chat_dm_safety_config WHERE singleton), 0);
+  v_audit_enabled := COALESCE((SELECT audit_enabled FROM chat_dm_safety_config WHERE singleton), false);
 
   IF NOT dm_safety_enabled() THEN
     v_deny_reason := 'safety_disabled';
@@ -386,8 +427,10 @@ BEGIN
   END IF;
 
   IF v_deny_reason IS NOT NULL THEN
-    INSERT INTO chat_dm_safety_audit(actor_person_id, peer_person_id, action, deny_reason)
-    VALUES (p_actor, p_peer, p_action, v_deny_reason);
+    IF v_audit_enabled THEN
+      RAISE LOG 'chat_dm_safety_audit actor=% peer=% action=% deny_reason=% at=%',
+        p_actor, p_peer, p_action, v_deny_reason, clock_timestamp();
+    END IF;
     RAISE EXCEPTION 'chat safety blocked' USING ERRCODE = 'insufficient_privilege';
   END IF;
 END; $$;
@@ -411,34 +454,34 @@ REVOKE CREATE ON SCHEMA public FROM chat_definer;
 
 GRANT SELECT ON chat_dm_safety_config TO chat_definer;
 GRANT SELECT ON chat_blocks TO chat_definer;
-GRANT INSERT ON chat_dm_safety_audit TO chat_definer;
 GRANT EXECUTE ON FUNCTION rate_limit_check(text, integer, interval) TO chat_definer;
 
--- No grant of any kind to app/app_worker/readonly on any of the four
--- tables above: all global protected (not tenant-scoped -- DM is
--- cross-tenant/person-scoped, RLS keyed on app.tenant_id would be the
--- wrong boundary here), reached only through chat_definer-owned
--- SECURITY DEFINER functions -- same model as persons/accounts (0009).
--- No grant on chat_reports at all: nothing in this slice reads or writes
--- it (see design probe row 13); slice 8 grants what it needs when it
--- lands the report RPC.
+-- No grant of any kind to app/app_worker/readonly on either table above:
+-- both global protected (not tenant-scoped -- DM is cross-tenant/
+-- person-scoped, RLS keyed on app.tenant_id would be the wrong boundary
+-- here), reached only through chat_definer-owned SECURITY DEFINER
+-- functions -- same model as persons/accounts (0009). No grant on
+-- chat_reports at all: nothing in this slice reads or writes it (see
+-- design probe row 13); slice 8 grants what it needs when it lands the
+-- report RPC.
 ```
 
-Estimated ~150 lines including comments — well inside the plan's `≤750 changed LOC` B3 exception for
-this slice (plan line 409).
+Estimated ~230 lines including comments (grew from the original ~150-line estimate after the 2026-08-05
+amendment's comment-heavy explanation of the audit-mechanism change) — still inside the plan's
+`≤750 changed LOC` B3 exception for this slice (plan line 409).
 
 ### 6.2 Schema mirror (`packages/db/schema.ts`)
 
-Add Drizzle definitions for `chatDmSafetyConfig`, `chatBlocks`, `chatReports`, `chatDmSafetyAudit`
-matching the DDL above exactly (column names, nullability, defaults, checks) — including
-`chatDmSafetyConfig`'s two new integer columns `dmSenderLimitPerMin`/`dmTargetLimitPerMin` and their
-named `chat_dm_safety_config_sender_limit_positive_chk`/`chat_dm_safety_config_target_limit_positive_chk`
-constraints. Every `CHECK`/`UNIQUE`/FK constraint must use an explicit declared name via Drizzle's
-`check()`/`unique()`/`foreignKey()` builders (e.g. `chat_blocks_no_self_chk`, `chat_reports_note_shape_chk`),
-matching this repo's existing convention (`notif_deliveries_status_chk` precedent, tail of `schema.ts`)
-— this is what lets `rls-invariants.test.ts`'s generic CND (check-constraint-naming-drift) guard cover
-these new tables automatically; **no edit to `rls-invariants.test.ts` is needed**, same reasoning root's
-own contract (§5.2) already established.
+Add Drizzle definitions for `chatDmSafetyConfig`, `chatBlocks`, `chatReports` matching the DDL above
+exactly (column names, nullability, defaults, checks) — including `chatDmSafetyConfig`'s two integer
+columns `dmSenderLimitPerMin`/`dmTargetLimitPerMin` and their named
+`chat_dm_safety_config_sender_limit_positive_chk`/`chat_dm_safety_config_target_limit_positive_chk`
+constraints. No `chatDmSafetyAudit` (owner-amended 2026-08-05 — no such table). Every `CHECK`/`UNIQUE`/FK
+constraint must use an explicit declared name via Drizzle's `check()`/`unique()`/`foreignKey()` builders
+(e.g. `chat_blocks_no_self_chk`, `chat_reports_note_shape_chk`), matching this repo's existing
+convention (`notif_deliveries_status_chk` precedent, tail of `schema.ts`) — this is what lets
+`rls-invariants.test.ts`'s generic CND (check-constraint-naming-drift) guard cover these new tables
+automatically.
 
 ### 6.3 Focused invariant test — new file
 
@@ -450,29 +493,50 @@ no write RPC, so fixture setup is direct SQL, exactly as root's own test plan di
 `chat_members` to test RLS in isolation). Must cover the full acceptance matrix in §9 — the negative-
 proof rows (blocked pair denies both directions, disabled-capability denies, rate-limit denies,
 read is never rate-limited, no block-detail in the raised exception) are the actual point of this
-slice; do not ship only happy-path coverage.
+slice; do not ship only happy-path coverage. Since `assert_dm_allowed` emits `RAISE LOG` rather than
+writing a table (§6.1 amendment), a test asserting on it must `SET client_min_messages = 'log'` on its
+owner connection and capture the `pg` driver's `notice` event — `RAISE LOG` is invisible to a client at
+the default `client_min_messages` (`notice`).
 
 `packages/db/src/migrate.test.ts` needs the same mechanical literal bump (migration count/tail
 filename) the `dd38-dd86-chat-schema-core` and `db-tenants-authz-grant-security-definer` manifests both
 pre-declared for the identical reason — declared here to not repeat that lesson a third time.
 
+**Scope amendment (owner-authorized 2026-08-05, same registration):** implementation surfaced that this
+migration is the first in the repo to require `chat_definer` role membership under a non-superuser
+migration role (`ALTER FUNCTION ... OWNER TO chat_definer` needs `SET ROLE` privilege), which
+`packages/db/src/test-harness.ts`'s `setupNonSuperuserOwnerContext` has no counterpart for (it has
+`bootstrapJobDefinerForOwner()` but no `chat_definer` equivalent) — breaking 3 pre-existing tests
+(`migrate.test.ts` BR-3/BR-6, `rls-invariants.test.ts` JCL-1). Since this slice's own migration causes
+the breakage, the owner authorized closing the gap in the SAME registration rather than opening a
+separate slice: mirror `bootstrapJobDefinerForOwner` for `chat_definer` in `test-harness.ts`, wire it
+into those 3 call sites, and fix `rls-invariants.test.ts`'s 3 stale migration-count/tail literals
+(`30`→`31`, `"0029_..."`→`"0030_..."`) that any new migration mechanically forces stale. Also fix
+`migrate.test.ts`'s own `chat_definer` DigitalOcean-degraded-lock test cleanup (`DROP ROLE IF EXISTS
+chat_definer` now fails — the role owns real objects for the first time) — narrowly, without weakening
+any assertion or refactoring the surrounding test.
+
 ### 6.4 Full scope list
 
 ```text
-packages/db/migrations/0030_chat_dm_safety_authority_core.sql   -- SEE §7 — number is provisional
+packages/db/migrations/0030_chat_dm_safety_authority_core.sql
 packages/db/schema.ts
 packages/db/src/chat-dm-safety-invariants.test.ts                -- NEW file
-packages/db/src/migrate.test.ts                                  -- mechanical literal bump only
+packages/db/src/migrate.test.ts                                  -- literal bump + amended cleanup fix
+packages/db/src/test-harness.ts                                  -- scope amendment, SS6.3
+packages/db/src/rls-invariants.test.ts                            -- scope amendment, SS6.3 (literal bump only)
 packages/db/README.md                                            -- document the three new functions
 docs/autopilot-manifests/chat-dm-safety-authority-core.json      -- self, per AP-39/AP-40 lesson
 docs/autopilot-chat-dm-safety-authority-core.md                  -- self
+docs/autopilot-backlog.md                                        -- own entry + new chat-dm-safety-audit-queryable-path idea entry
 ```
 
-Estimated total ~550-650 changed LOC (migration ~150, schema mirror ~90, focused test ~300-350 covering
-the full §9 matrix, `migrate.test.ts` ~5, `README.md` ~15-20) — an estimate for planning only, not a
-measurement; safely inside the plan's `≤750 LOC / ≤3 modules / 1 migration` B3 exception for this slice
-(module count = migration + schema mirror + focused test = 3; `migrate.test.ts`/`README.md`/self-docs
-are mechanical/documentation, same accounting root's own contract used).
+Estimated total ~650-750 changed LOC (migration ~230 after the audit-mechanism amendment, schema mirror
+~75, focused test ~350-400, `migrate.test.ts` ~15, `test-harness.ts` ~40, `rls-invariants.test.ts` ~5,
+`README.md` ~30, backlog ~40) — an estimate for planning only, not a measurement; module count for the
+B3 budget grows from 3 to 5 with the owner-authorized scope amendment (migration + schema mirror +
+focused test + test-harness + the two amended pre-existing test files), still within the `≤750 LOC`
+ceiling but no longer comfortably so — flag to the reviewer rather than silently absorb.
 
 ### 6.5 `packages/db/README.md` addition
 
@@ -510,26 +574,37 @@ This slice does **NOT** create:
 - any `INSERT`/`UPDATE`/`DELETE` grant to `chat_definer` on `chat_blocks` or `chat_reports` — mutation
   has no owner yet in this slice; granting it now repeats exactly the failure mode root's own contract
   (AP-45 §7) avoided for `chat_channels`/`chat_members`/`chat_messages`
-- any grant of any kind to `app`, `app_worker`, or `readonly` on any of the four tables this slice
-  creates — global-protected plane, mediated access only (§5 design-probe row 8)
+- any grant of any kind to `app`, `app_worker`, or `readonly` on any of the tables this slice
+  creates (3, after the row-6 amendment) — global-protected plane, mediated access only (§5
+  design-probe row 8)
 - the DD-56 capability registry, grants, or append-only grant audit (`tenant-capability-authority-core`,
   catalog slice 4 — collision-dependent on root, not on this slice)
 - any HTTP route or SSE topic
 - a `channel_id` column on `chat_reports` (§5 design-probe row 4 — hard forward-reference constraint,
   not a style choice)
 - a report-triage/action UI or API — future support/ops tooling, unscoped
-- any modification to `infra/postgres-init/02-chat-definer.sql`, `01-job-definer.sql`,
-  `packages/db/src/tenant.ts`, `packages/db/src/test-harness.ts`, or `packages/db/src/rls-invariants.test.ts`
+- any modification to `infra/postgres-init/02-chat-definer.sql`, `01-job-definer.sql`, or
+  `packages/db/src/tenant.ts`
+- (narrowed 2026-08-05, owner-authorized scope amendment, §6.3) `packages/db/src/test-harness.ts` and
+  `packages/db/src/rls-invariants.test.ts` are no longer blanket-excluded — this migration is the first
+  to require `chat_definer` membership under a non-superuser migration role, breaking 3 pre-existing
+  tests through no fault of their own. Still excluded: any edit to either file beyond the narrow fix
+  those 3 breakages need (a `bootstrapChatDefinerForOwner` mirroring the existing `bootstrapJobDefinerForOwner`,
+  wired into its 3 call sites, plus `rls-invariants.test.ts`'s 3 stale migration-count/tail literals) —
+  no broader refactor, no new RLS coverage for these tables (they still have none, unchanged)
 - a new exported `withPerson`-style helper — this slice's own test file sets `app.person_id` inline for
   its own fixtures the same way `chat-schema-invariants.test.ts` will; not a shared export (would be a
   4th module, breaching the B3 budget's module ceiling)
 - an edit to `docs/autopilot-backlog.md`'s `merged_probe`/`status` for `dd38-dd86-chat-schema-core` or
-  any other sibling slice's entry — only this slice's own backlog entry is touched
+  any other sibling slice's entry — only this slice's own backlog entry, plus one NEW entry
+  (`chat-dm-safety-audit-queryable-path`, owner-authorized 2026-08-05, §5 row 6 amendment) are touched
 - a rollback/reverse-migration runbook (P17 — forward-only; every object created here is fresh/additive,
   nothing to roll back on failure, and a later-judged-wrong decision gets a new forward migration)
-- a retention/deletion sweep on `chat_reports` or `chat_dm_safety_audit` — BL-SEC-6 requires audit logs
-  be archived after retention, never deleted; no archival tooling exists yet in this repo, so this
-  slice takes no destructive action and defers archival to a future, separately-scoped operational slice
+- a retention/deletion sweep on `chat_reports` — BL-SEC-6 requires audit-shaped data be archived after
+  retention, never deleted; no archival tooling exists yet in this repo, so this slice takes no
+  destructive action and defers archival to a future, separately-scoped operational slice (moot for
+  denial forensics specifically after the row-6 amendment: `RAISE LOG` output lives in Postgres's own
+  log retention, not a table this slice owns)
 
 If any acceptance row in §9 turns out to need a file outside this slice's scope, or the four-capability
 kill-switch model proves insufficient, HALT and report — that means this slice's premise needs
@@ -539,7 +614,7 @@ re-deriving, an owner question, not an implementation choice.
 
 | Category | Row | Expected |
 |---|---|---|
-| Happy path | Unblocked pair, safety fully enabled, under rate limits, `assert_dm_allowed(a,b,'create')` | Returns (void), no exception, no audit row written |
+| Happy path | Unblocked pair, safety fully enabled, under rate limits, `assert_dm_allowed(a,b,'create')` | Returns (void), no exception, no `RAISE LOG` line |
 | Happy path | Same, `action='send'` and `action='read'` | Returns (void) for both |
 | Happy path | `dm_safety_enabled()` with all four config flags true | Returns `true` |
 | Happy path | `chat_pair_blocked(a,b)` with no row for either direction | Returns `false` |
@@ -553,25 +628,37 @@ re-deriving, an owner question, not an implementation choice.
 | Boundary | `chat_reports` note at exactly 500 chars / 501 chars | 500 succeeds, 501 rejected |
 | Authorization | `chat_pair_blocked(a,b)` after a row `(blocker=a, blocked=b)` exists | Returns `true` |
 | Authorization | `chat_pair_blocked(b,a)` (swapped args) after the same row | Returns `true` — direction-agnostic |
-| Authorization | `assert_dm_allowed(a,b,'create')` when `chat_pair_blocked(a,b)` is true | Raises `chat safety blocked`; one `chat_dm_safety_audit` row with `deny_reason='blocked'` |
-| Authorization | `role app` attempts direct `SELECT`/`INSERT` on `chat_blocks`/`chat_reports`/`chat_dm_safety_config`/`chat_dm_safety_audit` | Permission denied — zero grants issued to `app` |
+| Authorization | `assert_dm_allowed(a,b,'create')` when `chat_pair_blocked(a,b)` is true | Raises `chat safety blocked`; one `RAISE LOG` line (severity `LOG`, visible only with `client_min_messages='log'`) carrying `deny_reason=blocked` |
+| Authorization | `role app` attempts direct `SELECT`/`INSERT` on `chat_blocks`/`chat_reports`/`chat_dm_safety_config` | Permission denied — zero grants issued to `app` |
 | Authorization | `role app` attempts direct `EXECUTE` on `dm_safety_enabled`/`chat_pair_blocked`/`assert_dm_allowed` | Permission denied — `REVOKE ALL ... FROM PUBLIC`, no `GRANT ... TO app` issued (only `chat_definer`, via ownership) |
 | Failure | `chat_dm_safety_config.block_enabled = false` (others true) | `dm_safety_enabled()` → `false`; `assert_dm_allowed` denies with `deny_reason='safety_disabled'` regardless of block/rate state |
 | Failure | Same, toggling `report_enabled`/`rate_limit_enabled`/`audit_enabled` false one at a time | Each independently makes `dm_safety_enabled()` → `false` (test #28's "disable any ONE") |
 | Failure | `assert_dm_allowed(NULL, b, 'create')`, `(a, NULL, 'create')`, `(a, a, 'create')` | All raise `invalid_parameter_value` before any audit/rate side effect |
 | Failure | `assert_dm_allowed(a, b, 'unknown_action')` | Raises `invalid_parameter_value` |
 | Concurrency | Two concurrent `assert_dm_allowed(a, x, 'send')` / `assert_dm_allowed(a, y, 'send')` calls (different peers) racing against the sender bucket at its limit boundary | `rate_limit_check`'s own advisory-lock serialization (0012, already proven) admits exactly up to the configured limit; the rest deny with `deny_reason='rate_limited_sender'` — this slice does not need to re-prove `rate_limit_check`'s own concurrency safety, only that it is correctly consumed |
-| Concurrency | `assert_dm_allowed` denial path racing the same `(actor,peer,action)` twice | Two independent audit rows (append-only, no dedupe expected — this is a log, not an idempotent command) |
+| Concurrency | `assert_dm_allowed` denial path racing the same `(actor,peer,action)` twice | Two independent `RAISE LOG` lines (no dedupe expected — each call logs independently) |
 | Migration | Exactly one new `.sql` file added | `git diff --name-only` against base shows exactly one file under `packages/db/migrations/` |
 | Migration | No destructive change to any existing table | Only fresh `CREATE TABLE`/`CREATE FUNCTION` and one new `GRANT ... TO chat_definer` on the pre-existing `rate_limit_check`; zero `ALTER`/`DROP` on any table that predates this migration |
 | Migration | Migration applies under the real, non-superuser `DATABASE_URL_MIGRATION` role after `chat_definer` bootstrap | Succeeds — mirrors root's own test #25/#26 (PG16 `ALTER FUNCTION ... OWNER TO` needs `CREATE ON SCHEMA public` granted first); this slice's own `GRANT CREATE ... / REVOKE CREATE ...` bracket proves it independently of root |
 | Security/privacy | Exception raised by `assert_dm_allowed` on any deny path | Message is exactly `chat safety blocked` regardless of `deny_reason` — no reason code, bucket name, or block state leaked to the caller |
-| Security/privacy | `chat_dm_safety_audit` row content | Real `deny_reason` stored server-side only; table has zero grant to `app` — no caller-reachable read path exists in this slice |
-| Security/privacy | `dm_safety_enabled()`/`chat_pair_blocked()`/`assert_dm_allowed()` all `SECURITY DEFINER` owned by `chat_definer` | `chat_definer` is `BYPASSRLS` at the role level, but none of the four tables use RLS at all — access control is entirely the grant system (§5 design-probe row 8), not RLS bypass |
+| Security/privacy | `RAISE LOG` line content | Real `deny_reason` delivered only through Postgres's own logging subsystem (server log, or a `client_min_messages='log'` connection) — no table, so no caller-reachable read path exists in this slice regardless of grants |
+| Security/privacy | `dm_safety_enabled()`/`chat_pair_blocked()`/`assert_dm_allowed()` all `SECURITY DEFINER` owned by `chat_definer` | `chat_definer` is `BYPASSRLS` at the role level, but none of the three tables use RLS at all — access control is entirely the grant system (§5 design-probe row 8), not RLS bypass |
 | Regression | Full existing canonical DB suite stays green | `DATABASE_URL_TEST=... pnpm test` — no existing test's behavior changes; the one modified pre-existing object (`rate_limit_check`) only gains an additional grantee, no signature/body change |
-| Observability | Every denial is individually attributable | `chat_dm_safety_audit` row carries `actor_person_id`, `peer_person_id`, `action`, `deny_reason`, `created_at` — sufficient for an on-call abuse investigation per P15 |
+| Observability | Every denial is individually attributable | Each `RAISE LOG` line carries `actor`, `peer`, `action`, `deny_reason`, `at` — sufficient for an on-call abuse investigation per P15 IF the server's `log_min_messages` captures LOG-level lines (an ops/deploy config this slice does not verify); the queryable-without-that-dependency version is backlog `chat-dm-safety-audit-queryable-path` |
 
 ## 10. Canonical verdict
+
+**Amendment note (2026-08-05, same day, owner-directed):** the verdict below is the original authoring
+verdict, dated and SHA-pinned as of that review — kept verbatim as the historical record of what was
+reviewed then, per this repo's own "never rewrite a dated record" convention. It does not re-state
+facts this doc's body no longer holds: `TARGET_FILES`/`IN_SCOPE`/`OUT_OF_SCOPE` below are the CURRENT,
+amended values (updated in place, since they describe the CURRENT contract, not a dated snapshot); `G1`–`G6`
+and the closure matrix are the original PASS record for the pre-amendment design and are NOT re-run
+here — the amendment (drop `chat_dm_safety_audit`, add `RAISE LOG`, extend scope to `test-harness.ts`/
+`rls-invariants.test.ts`) is a same-day, owner-directed simplification discovered during this slice's
+own implementation, not a new unreviewed addition requiring a fresh multi-gate cycle. The mandatory
+independent code + security review (manifest `code_review`/`security_review`) still applies to the
+AS-IMPLEMENTED diff in full, including this amendment.
 
 ```text
 REVIEW_POLICY_VERSION: 1.3
@@ -594,16 +681,21 @@ TARGET_FILES:
   - infra/postgres-init/02-chat-definer.sql
   - packages/db/schema.ts
   - packages/db/migrations/0012_auth_functions.sql
+  - packages/db/src/test-harness.ts
+  - packages/db/src/rls-invariants.test.ts
   - docs/autopilot-chat-dm-safety-authority-core.md
   - docs/autopilot-manifests/chat-dm-safety-authority-core.json
 SLICE: chat-dm-safety-authority-core
-IN_SCOPE: chat_dm_safety_config/chat_blocks/chat_reports/chat_dm_safety_audit storage;
-  dm_safety_enabled()/chat_pair_blocked() pure predicates; assert_dm_allowed() fail-closed gate;
-  exact grants (chat_definer SELECT/INSERT + EXECUTE on rate_limit_check); invariant tests proving
-  the negative (blocked/disabled/rate-limited all deny, no leak)
+IN_SCOPE: chat_dm_safety_config/chat_blocks/chat_reports storage; dm_safety_enabled()/
+  chat_pair_blocked() pure predicates; assert_dm_allowed() fail-closed gate emitting RAISE LOG on
+  deny (amended 2026-08-05 — no chat_dm_safety_audit table); exact grants (chat_definer SELECT +
+  EXECUTE on rate_limit_check); invariant tests proving the negative (blocked/disabled/rate-limited
+  all deny, no leak); owner-authorized scope amendment closing a chat_definer test-harness gap
+  (test-harness.ts, rls-invariants.test.ts — §6.3/§8)
 OUT_OF_SCOPE: any chat_* content table; chat_definer role creation; create_dm/send_chat_message/
-  mark_read/block-report RPCs; any grant to app on the four new tables; any mutation grant to
-  chat_definer on chat_blocks/chat_reports; DD-56 capability registry; any HTTP route (full list §8)
+  mark_read/block-report RPCs; any grant to app on the three new tables; any mutation grant to
+  chat_definer on chat_blocks/chat_reports; DD-56 capability registry; any HTTP route; a queryable
+  audit table (backlog: chat-dm-safety-audit-queryable-path) (full list §8)
 G1_DECISION: PASS
 G2_SPEC: PASS
 G3_DEPENDENCY: PASS
@@ -622,12 +714,10 @@ CONTRACT_MATRIX: PASS
 CLOSURE_MATRIX: PASS (12/12 — see §10.1)
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
-IMPLEMENTATION_ARTIFACTS: PASS (packet/manifest/launcher authored this session; executable once
-  registered)
-FIRST_IMPLEMENTATION_STEP: open a worktree from this slice's manifest
-  (docs/autopilot-manifests/chat-dm-safety-authority-core.json), register the scope gate, write
-  packages/db/migrations/0030_chat_dm_safety_authority_core.sql exactly per §6.1 (re-deriving the
-  real number per §7 first), then the schema mirror and focused test per §6.2/§6.3
+IMPLEMENTATION_ARTIFACTS: PASS (implemented in worktree feat/chat-dm-safety-authority-core, 2026-08-05,
+  amended same day per owner ruling — see amendment note above)
+FIRST_IMPLEMENTATION_STEP: DONE — see the amendment note above; next step is the code + security review
+  gate on the as-implemented, as-amended diff
 REMAINING_BLOCKERS: none
 ```
 
@@ -640,11 +730,11 @@ REMAINING_BLOCKERS: none
 | 3 | Scope IN/OUT và owner rõ | §6 (in) / §8 (out), each row justified against the Reviewed spec or an explicit forward-reference/ownership constraint | PASS |
 | 4 | Dependency phân loại đủ | Exactly one hard dependency, `chat-definer-role-provisioning`, classified `MERGED` with same-order `base_sha`/`landed_sha`/`file`/`symbol` proof (§4.1) — not a placeholder | PASS |
 | 5 | Live schema/code khớp doc | §3 table — migration tail `0029` (re-derived, corrects AP-45's own stale `0029` guess), zero `chat_*` runtime, `chat_definer` role confirmed live with exact attributes | PASS |
-| 6 | Data/API/state/auth contract đủ | Exact DDL §6.1, copied from this slice's own design work (§5), consistent with root's pinned consumer contract (§4.2) and every applicable core-db-architecture-principles.md rule (P1/P2/P4/P6/P7/P8/P17) | PASS |
-| 7 | Fail-closed/idempotency/order đủ | `COALESCE(...,false)` on missing config; ordered `disabled → blocked → rate` checks; generic exception text; append-only audit; `rate_limit_check` reuse inherits its own proven idempotent-consume/retention behavior | PASS |
-| 8 | Open question trong scope = 0 | §5 escalation check — all 14 design decisions resolved at Tier 1, zero Tier 2/3 escalation | PASS |
-| 9 | Acceptance matrix có expected result | §9, full B2 category coverage incl. negative-proof rows (blocked/disabled/rate-limited, no-leak, permission-denied) | PASS |
-| 10 | Migration/security/rollback pin | Exactly 1 migration (+3 mechanical/doc files, §6.4); B3 budget exception `≤750 LOC/3 modules/1 migration` cited and estimated within; P17 forward-only acknowledged explicitly (no rollback runbook, nothing destructive to undo); safe to drop entirely pre-enable (zero live caller until slice 3 lands) | PASS |
+| 6 | Data/API/state/auth contract đủ | Exact DDL §6.1 (amended 2026-08-05: `chat_dm_safety_audit` table removed, `RAISE LOG` added — implementation-proven, see §5 row 6), consistent with root's pinned consumer contract (§4.2) and every applicable core-db-architecture-principles.md rule (P1/P2/P4/P6/P7/P8/P17) | PASS |
+| 7 | Fail-closed/idempotency/order đủ | `COALESCE(...,false)` on missing config, incl. `audit_enabled` (amended); ordered `disabled → blocked → rate` checks; generic exception text; `RAISE LOG` (amended, replacing an append-only audit table that could not persist); `rate_limit_check` reuse inherits its own proven idempotent-consume/retention behavior | PASS |
+| 8 | Open question trong scope = 0 | §5 escalation check — all 14 design decisions resolved at Tier 1 at authoring time; row 6's mechanism was later found wrong by implementation and amended by the owner (§5 row 6) — not a Tier 2/3 escalation left open, a closed amendment | PASS |
+| 9 | Acceptance matrix có expected result | §9 (amended 2026-08-05 for the `RAISE LOG` mechanism), full B2 category coverage incl. negative-proof rows (blocked/disabled/rate-limited, no-leak, permission-denied) | PASS |
+| 10 | Migration/security/rollback pin | Exactly 1 migration (+ mechanical/doc files + owner-authorized scope amendment, §6.4); B3 budget exception `≤750 LOC` cited and estimated within (module count grew 3→5 with the amendment, flagged to the reviewer, §6.4); P17 forward-only acknowledged explicitly (no rollback runbook, nothing destructive to undo); safe to drop entirely pre-enable (zero live caller until slice 3 lands) | PASS |
 | 11 | First slice có hard dependency merged | `chat-definer-role-provisioning` is merged (§4.1) — this is not a first-to-code node with an unmerged prerequisite, unlike AP-45's own current state | PASS |
 | 12 | Implementation handoff sẵn sàng | Packet (this doc) + manifest + launcher all authored and internally complete; backlog entry updated to `planned` in the same session (§11 of this task's own work, tracked separately from this doc) | PASS |
 
@@ -652,19 +742,30 @@ REMAINING_BLOCKERS: none
 
 ## 11. Notes for the future implementer
 
-- Re-verify §7's migration number and §3's "no `chat_*` exists" claim live, immediately before writing
-  code — both are point-in-time facts from this authoring session (2026-08-05), not guarantees.
-- Copy §6.1 verbatim. If anything in it looks wrong once you're staring at a live database, that is a
-  signal this slice's premise needs re-deriving — HALT and report, per §8's closing paragraph — not an
-  invitation to improvise a fix inline.
-- The two rate-limit numbers (30/min sender, 30/min target, §5 row 11) are this session's own default,
-  not an owner ruling. If real traffic data or an owner review disagrees, change them via this same
-  migration (not yet applied anywhere) or, if already applied, a new forward migration (P17) — never a
-  hand-edited already-applied file.
+**Implemented 2026-08-05** in worktree `feat/chat-dm-safety-authority-core`, migration number `0030`
+(re-derived at implementation time, matched the provisional guess in §7). The notes below are kept as
+the historical implementation record; §6.1 is now the AS-IMPLEMENTED, owner-amended DDL.
+
+- Migration number and "no `chat_*` exists" were re-verified live at implementation time, per this
+  section's original instruction — both held; `0030` was correct.
+- §6.1 was copied verbatim at first, THEN amended: implementation found `chat_dm_safety_audit` (an
+  `INSERT`-then-`RAISE EXCEPTION` table write) could never persist a row — exactly the class of
+  "looks wrong once you're staring at a live database" this note originally warned about. Per this
+  note's own original instruction, that was reported rather than silently patched; the owner ruled
+  (a) drop the table, emit `RAISE LOG` instead, (b) go further and record the design-gap rationale in
+  §5 row 6, (c) authorize a scope amendment to `test-harness.ts`/`rls-invariants.test.ts` (§6.3/§8) for
+  a related, mechanically-forced test-harness gap. §6.1/§5 row 6/§8/§9 are all updated in place to
+  match.
+- The two rate-limit numbers (30/min sender, 30/min target, §5 row 11) remained this session's own
+  default, not an owner ruling, through the amendment — unaffected by it. If real traffic data or an
+  owner review disagrees, change them via a new forward migration (P17) — never a hand-edited
+  already-applied file.
 - Security review (manifest `security_review.required: true`) must specifically verify: (a)
   `dm_safety_enabled()` truly fails closed (not just "usually returns false") when the config row is
   missing/mid-transaction-invisible; (b) `chat_pair_blocked` checks BOTH directions (a common one-line
   bug is to check only one); (c) `assert_dm_allowed`'s raised exception never varies by `deny_reason`;
   (d) no grant beyond exactly what §6.1's owner/grant block lists exists after migration (in particular,
-  confirm `app` truly has zero grant on any of the four new tables and zero `EXECUTE` on any of the
-  three new functions).
+  confirm `app` truly has zero grant on any of the three tables and zero `EXECUTE` on any of the three
+  functions); (e) **amended** — `RAISE LOG` fires only when `audit_enabled` is true (fail-closed:
+  missing config row means no log, not "log anyway"), and never leaks beyond the server log /
+  `client_min_messages`-gated notice channel (no table, no grant, so no caller-reachable read path).

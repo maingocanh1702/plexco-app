@@ -766,6 +766,13 @@ export const routingAudit = pgTable("routing_audit", {
  * only through chat_definer-owned SECURITY DEFINER functions
  * (dm_safety_enabled/chat_pair_blocked/assert_dm_allowed), same model as
  * persons/accounts above.
+ *
+ * No chatDmSafetyAudit table (owner-amended 2026-08-05): an INSERT
+ * immediately before RAISE EXCEPTION in the same statement can never
+ * persist — PL/pgSQL's exception handling is savepoint-rollback-based, so
+ * the RAISE unconditionally undoes it. assert_dm_allowed() emits RAISE LOG
+ * instead (see the migration's own comment); a queryable table is a
+ * separate, deferred follow-up (backlog: chat-dm-safety-audit-queryable-path).
  * ======================================================================== */
 
 export const chatDmSafetyConfig = pgTable("chat_dm_safety_config", {
@@ -813,22 +820,6 @@ export const chatReports = pgTable("chat_reports", {
   noteShapeChk: check("chat_reports_note_shape_chk",
     sql`(${t.reasonCode} = 'other' AND ${t.note} IS NOT NULL AND length(btrim(${t.note})) BETWEEN 1 AND 500)
         OR (${t.reasonCode} <> 'other' AND ${t.note} IS NULL)`),
-}));
-
-export const chatDmSafetyAudit = pgTable("chat_dm_safety_audit", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  // No FK to persons — matches mergeAudit/routingAudit above: an audit row
-  // must survive independent of the referenced person's later merge/lifecycle.
-  actorPersonId: uuid("actor_person_id").notNull(),
-  peerPersonId: uuid("peer_person_id").notNull(),
-  action: text("action").notNull(),
-  denyReason: text("deny_reason").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => ({
-  createdAtIdx: index("idx_chat_dm_safety_audit_created_at").on(t.createdAt),
-  actionChk: check("chat_dm_safety_audit_action_chk", sql`${t.action} IN ('create','send','read')`),
-  denyReasonChk: check("chat_dm_safety_audit_deny_reason_chk",
-    sql`${t.denyReason} IN ('safety_disabled','blocked','rate_limited_sender','rate_limited_target')`),
 }));
 
 /* ===========================================================================

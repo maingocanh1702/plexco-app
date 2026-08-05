@@ -1,8 +1,8 @@
 -- ============================================================================
 -- 0030_chat_dm_safety_authority_core.sql
 -- chat-dm-safety-authority-core (slice 2 of the DD-38/DD-86 chat tree).
--- Canonical DD-55 DM safety authority: block/report/rate/audit storage plus
--- the pure predicates and fail-closed gate that dd38-dd86-chat-schema-core
+-- Canonical DD-55 DM safety authority: block/report/rate storage plus the
+-- pure predicates and fail-closed gate that dd38-dd86-chat-schema-core
 -- (slice 3) and every later DM-touching slice (7/8) call into. Creates no
 -- chat_* content table -- those are root's own deliverable (slice 3).
 -- Source: docs/autopilot-chat-dm-safety-authority-core.md, decisions.md
@@ -17,6 +17,18 @@
 -- name Postgres actually assigned). Naming propagates SS6.1's own two
 -- examples (chat_dm_safety_config_{sender,target}_limit_positive_chk) to the
 -- rest; no CHECK semantics changed.
+--
+-- NO chat_dm_safety_audit TABLE (owner-amended 2026-08-05, replacing SS6.1's
+-- original pinned shape -- see design probe row 6 and this file's own
+-- assert_dm_allowed() comment below for why). A table written via INSERT
+-- immediately before RAISE EXCEPTION in the same statement can never persist
+-- a row through normal operation: PL/pgSQL's exception handling is
+-- savepoint-rollback-based, so the RAISE unconditionally undoes the INSERT,
+-- for every calling pattern (proven empirically, not just reasoned). Shipping
+-- that table anyway would have looked like a working audit trail to the next
+-- reader while never actually holding a row -- a machine-readable claim that
+-- contradicts reality. assert_dm_allowed() instead emits RAISE LOG, which
+-- Postgres delivers outside transactional rollback.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -27,6 +39,14 @@
 -- through the application. All boolean flags default true: this migration
 -- ships all four subsystems complete, so there is no reason to land it
 -- pre-disabled.
+--
+-- audit_enabled has TWO effects (owner-amended 2026-08-05, no new column):
+-- (1) unchanged -- it is one of the four flags dm_safety_enabled() ANDs, so
+-- disabling it alone still fail-closes the whole subsystem (test #28's own
+-- "disable any ONE of the four" requirement). (2) it now ALSO gates whether
+-- assert_dm_allowed() emits its RAISE LOG line on a denial -- see that
+-- function's own comment; there is no queryable chat_dm_safety_audit table
+-- in this migration.
 --
 -- dm_sender_limit_per_min/dm_target_limit_per_min carry the same two
 -- numbers previously hardcoded as literal arguments inside
@@ -115,33 +135,6 @@ CREATE TABLE chat_reports (
 );
 
 -- ---------------------------------------------------------------------------
--- chat_dm_safety_audit -- append-only abuse-forensics log. Records only
--- DENIALS from assert_dm_allowed (not every call -- see design probe row 6
--- for the volume/signal tradeoff): what would otherwise be invisible ops
--- telemetry, since the caller only ever sees a generic error (no
--- block-detail leak, feature_inapp_chat_tech.md line 1186). No FK on the
--- person columns, matching merge_audit/routing_audit's existing convention
--- in this codebase -- an audit row must survive independent of the
--- referenced person's later merge/lifecycle. No delete/retention sweep
--- (BL-SEC-6: audit logs are archived after retention, never deleted); a
--- created_at index exists for that future archival job and for ops
--- "what got denied and why" queries, mirroring auth_audit_events'
--- created_at index.
--- ---------------------------------------------------------------------------
-CREATE TABLE chat_dm_safety_audit (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  actor_person_id uuid NOT NULL,
-  peer_person_id uuid NOT NULL,
-  action text NOT NULL
-    CONSTRAINT chat_dm_safety_audit_action_chk CHECK (action IN ('create','send','read')),
-  deny_reason text NOT NULL
-    CONSTRAINT chat_dm_safety_audit_deny_reason_chk
-    CHECK (deny_reason IN ('safety_disabled','blocked','rate_limited_sender','rate_limited_target')),
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_chat_dm_safety_audit_created_at ON chat_dm_safety_audit(created_at);
-
--- ---------------------------------------------------------------------------
 -- dm_safety_enabled() -- pure predicate, the AND of all four capability
 -- toggles. Missing config row (should never happen -- inserted above, no
 -- delete grant to anyone) still fails closed via COALESCE, not an error.
@@ -178,23 +171,40 @@ REVOKE ALL ON FUNCTION chat_pair_blocked(uuid, uuid) FROM PUBLIC;
 -- target rate; rate dimensions are skipped for 'read' (mark_read is
 -- receiver-side bookkeeping, not a spam vector -- dm_current_read_allowed,
 -- root's own RLS predicate, never rate-limits reads either). On any deny,
--- writes ONE audit row with the real reason, then raises the SAME generic
--- message the Reviewed spec already uses at the RLS boundary
--- (feature_inapp_chat_tech.md:684, send_chat_message) -- one wire-visible
--- error text for the whole DM safety surface, by construction, not by
--- convention someone has to remember.
+-- emits ONE RAISE LOG line with the real reason (when audit_enabled), then
+-- raises the SAME generic message the Reviewed spec already uses at the RLS
+-- boundary (feature_inapp_chat_tech.md:684, send_chat_message) -- one
+-- wire-visible error text for the whole DM safety surface, by construction,
+-- not by convention someone has to remember.
 --
--- The two rate limits are read from chat_dm_safety_config on every call,
--- the same COALESCE-wrapped-scalar-subquery-to-fail-closed idiom
--- dm_safety_enabled() itself already uses, not a fresh pattern. A missing
--- config row (should never happen -- see that table's own header) COALESCEs
--- to 0, which makes rate_limit_check deny unconditionally (v_count >= 0 is
--- true even for a brand-new bucket) -- fail-closed defense in depth, even
--- though dm_safety_enabled()'s own identical missing-row COALESCE already
--- denies first via the IF/ELSIF chain below and would prevent this branch
--- from ever being reached with a NULL-turned-0 limit in practice. Belt and
--- suspenders on purpose: this function's fail-closed property should not
--- depend on the two checks staying in this exact order forever.
+-- RAISE LOG, not a chat_dm_safety_audit table (owner-amended 2026-08-05,
+-- replacing SS6.1's original pinned shape; see design probe row 6): an
+-- INSERT immediately before RAISE EXCEPTION in the same statement can never
+-- persist, because PL/pgSQL's exception handling is savepoint-rollback-based
+-- -- the RAISE unconditionally undoes the INSERT, for every calling pattern
+-- (proven empirically). RAISE LOG is delivered through Postgres's own
+-- logging subsystem, which sits OUTSIDE transactional rollback, so it
+-- survives the RAISE EXCEPTION that immediately follows it. This trades a
+-- queryable table for unstructured server-log text; a queryable path is a
+-- separate, deliberately deferred follow-up (backlog:
+-- chat-dm-safety-audit-queryable-path) once a caller exists that can write
+-- the row from inside its OWN exception handler, in a transaction that
+-- actually commits.
+--
+-- The two rate limits (and now audit_enabled) are read from
+-- chat_dm_safety_config on every call, the same
+-- COALESCE-wrapped-scalar-subquery-to-fail-closed idiom dm_safety_enabled()
+-- itself already uses, not a fresh pattern. A missing config row (should
+-- never happen -- see that table's own header) COALESCEs the two limits to
+-- 0, which makes rate_limit_check deny unconditionally (v_count >= 0 is true
+-- even for a brand-new bucket) -- fail-closed defense in depth, even though
+-- dm_safety_enabled()'s own identical missing-row COALESCE already denies
+-- first via the IF/ELSIF chain below and would prevent this branch from ever
+-- being reached with a NULL-turned-0 limit in practice. Belt and suspenders
+-- on purpose: this function's fail-closed property should not depend on the
+-- two checks staying in this exact order forever. audit_enabled COALESCEs to
+-- false on a missing row -- fail-closed means "do not log", consistent with
+-- every other missing-row behavior in this migration, never "log anyway".
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION assert_dm_allowed(p_actor uuid, p_peer uuid, p_action text) RETURNS void
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
@@ -202,6 +212,7 @@ DECLARE
   v_deny_reason text;
   v_sender_limit integer;
   v_target_limit integer;
+  v_audit_enabled boolean;
 BEGIN
   IF p_action NOT IN ('create','send','read') THEN
     RAISE EXCEPTION 'assert_dm_allowed: invalid action' USING ERRCODE = 'invalid_parameter_value';
@@ -212,6 +223,7 @@ BEGIN
 
   v_sender_limit := COALESCE((SELECT dm_sender_limit_per_min FROM chat_dm_safety_config WHERE singleton), 0);
   v_target_limit := COALESCE((SELECT dm_target_limit_per_min FROM chat_dm_safety_config WHERE singleton), 0);
+  v_audit_enabled := COALESCE((SELECT audit_enabled FROM chat_dm_safety_config WHERE singleton), false);
 
   IF NOT dm_safety_enabled() THEN
     v_deny_reason := 'safety_disabled';
@@ -226,8 +238,10 @@ BEGIN
   END IF;
 
   IF v_deny_reason IS NOT NULL THEN
-    INSERT INTO chat_dm_safety_audit(actor_person_id, peer_person_id, action, deny_reason)
-    VALUES (p_actor, p_peer, p_action, v_deny_reason);
+    IF v_audit_enabled THEN
+      RAISE LOG 'chat_dm_safety_audit actor=% peer=% action=% deny_reason=% at=%',
+        p_actor, p_peer, p_action, v_deny_reason, clock_timestamp();
+    END IF;
     RAISE EXCEPTION 'chat safety blocked' USING ERRCODE = 'insufficient_privilege';
   END IF;
 END; $$;
@@ -251,14 +265,13 @@ REVOKE CREATE ON SCHEMA public FROM chat_definer;
 
 GRANT SELECT ON chat_dm_safety_config TO chat_definer;
 GRANT SELECT ON chat_blocks TO chat_definer;
-GRANT INSERT ON chat_dm_safety_audit TO chat_definer;
 GRANT EXECUTE ON FUNCTION rate_limit_check(text, integer, interval) TO chat_definer;
 
--- No grant of any kind to app/app_worker/readonly on any of the four
--- tables above: all global protected (not tenant-scoped -- DM is
--- cross-tenant/person-scoped, RLS keyed on app.tenant_id would be the
--- wrong boundary here), reached only through chat_definer-owned
--- SECURITY DEFINER functions -- same model as persons/accounts (0009).
--- No grant on chat_reports at all: nothing in this slice reads or writes
--- it (see design probe row 13); slice 8 grants what it needs when it
--- lands the report RPC.
+-- No grant of any kind to app/app_worker/readonly on either table above:
+-- both global protected (not tenant-scoped -- DM is cross-tenant/
+-- person-scoped, RLS keyed on app.tenant_id would be the wrong boundary
+-- here), reached only through chat_definer-owned SECURITY DEFINER
+-- functions -- same model as persons/accounts (0009). No grant on
+-- chat_reports at all: nothing in this slice reads or writes it (see
+-- design probe row 13); slice 8 grants what it needs when it lands the
+-- report RPC.
