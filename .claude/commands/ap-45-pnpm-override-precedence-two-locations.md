@@ -1,5 +1,10 @@
 # AP-45 — pnpm-override-precedence-two-locations: measure which override location wins
 
+> **MERGED 2026-08-03 (`92c7832`) — do not launch this. Historical record only.**
+> Two launchers share the number `ap-45`; the live one is
+> `ap-45-dd38-dd86-chat-schema-core.md`. This file is kept because the reproduction steps below
+> document how the measurement was made, not because there is work left in it.
+
 > **Status: measurement complete.** The steps below (including every instruction to edit
 > `package.json`/`pnpm-workspace.yaml`/`pnpm-lock.yaml`) are a **historical reproduction record** of
 > how the original measurement was performed — they are not instructions to re-execute. The

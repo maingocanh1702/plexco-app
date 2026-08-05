@@ -541,6 +541,45 @@ notes: Có một **lớp task không thể có `merged_probe` phân biệt đư�
   **Revise 30/07 (owner feedback):** implementation thật KHÔNG land trong worktree Plexco. Nửa template là kit maintenance ngoài luồng (đúng tiền lệ `48db365` "sync kit v14 -> v17" — không slice/gate Plexco), nửa Plexco chỉ chạy `autopilot-update.sh` rồi author test hồi quy mới (`scripts/autopilot-backlog-reconcile.test.sh`, nay trong `scope`) — không bao giờ ghi ngoài repo Plexco. Chi tiết đầy đủ ở `docs/autopilot-reconcile-close-by-hand-declaration.md` mục "Chia slice theo ranh giới repo".
   **Verdict `CODE_READY` 30/07** (Verdict 29 AMENDED, `AUTHORITY_SHA 8c59f29`), closure 12/12 (14 acceptance row) — sẵn sàng mở worktree qua launcher `ap-41`. (Đã từng ghi "chưa launch được" ở artifact-authoring commit trước; câu đó nay lỗi thời, thay bằng dòng này thay vì để mâu thuẫn với `status: ready` ở trên.)
 
+## task: reconcile-hand-closed-entries-never-age-out
+title: `close_by: hand` miễn probe vĩnh viễn — không có gì phát hiện một entry khai tay không bao giờ được đóng tay
+status: planned
+risk: P2
+change_class: tooling
+depends_on: []
+invariants: []
+scope: [scripts/autopilot-backlog-reconcile, scripts/autopilot-backlog-reconcile.test.sh]
+manifest: (chưa author)
+merged_probe: scripts/autopilot-backlog-reconcile :: hand_closed_age_days
+notes: |
+  **Không phải bug — là chi phí đã được dự đoán của một thiết kế đã chốt, lần đầu quan sát được.**
+  `reconcile-close-by-hand-declaration` (superseded, deliverable land qua kit test suite) đề xuất đúng
+  nguyên văn: khi có `close_by: hand`, reconcile báo `⊘ manual-close: <slug>` và "**không** tính là stale
+  hay weak". Kit v7 làm đúng vậy. Hệ quả: một entry khai tay **không bao giờ được kiểm nữa**, và việc đóng
+  nó phụ thuộc hoàn toàn vào một con người nhớ ra.
+
+  **Đo 2026-08-05 — ba trên ba entry `close_by: hand` đang sai cùng lúc**, trong khi reconcile in
+  "✓ backlog không có entry stale nào":
+
+  | task | backlog nói | thực tế |
+  |---|---|---|
+  | `docs-billing-authz-signature-reconcile` | `ready` | merged `b3d3b4a`, 2026-08-03 |
+  | `pnpm-override-precedence-two-locations` | `ready` | merged `92c7832`, 2026-08-03 |
+  | `pnpm-workspace-esbuild-override-inert` | `ready` · "chưa merge" | merged `62304b5`, 2026-08-04 |
+
+  `--audit` cũng không bắt: nó chỉ kêu khi một task khai `close_by: hand` mà `scope` **có** file mã nguồn.
+  Cả ba đều docs-only, nên audit sạch. Hai lớp kiểm, không lớp nào nhìn vào thứ thực sự sai.
+
+  **Đề xuất (chưa chốt):** không cần probe — chỉ cần **tuổi**. Ghi ngày một entry vào `ready`; nếu một
+  entry `close_by: hand` ở `ready` quá N ngày, in `⚠ hand-closed, unclosed for N days` và tính là finding.
+  Chuyển "không kiểm được bằng máy" thành "không kiểm bằng máy được, nên phải nhắc", thay vì thành "miễn
+  kiểm". Không chặn — cảnh báo — vì lý do miễn probe ban đầu vẫn đúng.
+
+  **Cảnh báo phép đo cho bất cứ ai xác minh bảng trên:** đừng dùng `git merge-base --is-ancestor <tip>
+  main`. `ap-merge.sh` squash-merge nên branch tip không bao giờ là ancestor của `main`; lệnh đó trả NO cho
+  mọi slice, đã merge hay chưa. Phiên phát hiện việc này suýt kết luận ngược đúng vì đọc NO thành "chưa
+  merge". So nội dung trên `main` mới là bằng chứng.
+
 ## task: db-outbox-ack-marker
 title: Job-infra slice 2a — completion/ack cho outbox_events, đóng starvation loop mà 0022 tự flag
 status: merged
@@ -648,7 +687,10 @@ notes: **CHẶN CỨNG slice caller đầu tiên. Phát hiện 30/07 trong AP-40
 
 ## task: docs-billing-authz-signature-reconcile
 title: Reconcile chữ ký authorizeTenantAction trong spec billing §3 và session §4 step 6 — code đã merge nhận transaction
-status: ready
+status: merged — `b3d3b4a` (2026-08-03). Sửa 2026-08-05: khối này mang `status: ready` suốt hai ngày sau
+  khi đã merge. `close_by: hand` khiến `autopilot-backlog-reconcile` in `⊘ manual-close` và **không** tính
+  là stale — đúng thiết kế đã chốt, nên vẫn ra "No stale entries". Cả ba entry `close_by: hand` trong
+  backlog đều đang sai cùng lúc; xem task `reconcile-hand-closed-entries-never-age-out`.
 risk: P2
 change_class: docs-reconcile
 depends_on: []
@@ -1131,7 +1173,8 @@ notes: |
 
 ## task: pnpm-override-precedence-two-locations
 title: Đo dứt điểm: `package.json` `pnpm.overrides` vs `pnpm-workspace.yaml` `overrides` — luật nào thắng
-status: ready
+status: merged — `92c7832` (2026-08-03); cả bốn file trong `scope` đều có trên `origin/main`. Sửa
+  2026-08-05 sau khi so nội dung, không phải sau khi đọc `status`.
 risk: P2
 change_class: docs-reconcile
 depends_on: []
@@ -1311,7 +1354,14 @@ notes: |
 
 ## task: pnpm-workspace-esbuild-override-inert
 title: pnpm-workspace.yaml's esbuild@<0.25.0 → 0.25.12 override câm từ commit f1af6e3 (2026-07-22) — package.json's pnpm.overrides thay toàn bộ map, không merge theo key
-status: ready — implemented + READY (2026-08-04): feat/pnpm-workspace-esbuild-override-inert @ 726c2f0e3c8c7ef0a709bccdd1f183193c765dc8, gate pass attempt 1/1, code review CLEAN, security review CLEAN, chưa merge (owner quyết định merge)
+status: merged — squash-merge `62304b5` (2026-08-04) từ `feat/pnpm-workspace-esbuild-override-inert @
+  726c2f0e3c8c7ef0a709bccdd1f183193c765dc8`; gate pass attempt 1/1, code review CLEAN, security review
+  CLEAN. Sửa 2026-08-05: dòng cũ ghi "chưa merge (owner quyết định merge)" trong khi override đã nằm
+  trong `package.json` và mirror đã bị xoá khỏi `pnpm-workspace.yaml` trên `origin/main`.
+  **Cảnh báo phép đo cho ai kiểm khối này:** `git merge-base --is-ancestor 726c2f0 main` trả về NO, và
+  điều đó KHÔNG có nghĩa chưa merge. `ap-merge.sh` dùng `git merge --squash`, nên branch tip không bao
+  giờ là ancestor của `main` — lệnh đó trả NO cho mọi slice, đã merge hay chưa. Bằng chứng duy nhất là
+  so nội dung trên `main`.
 risk: P2
 change_class: dependency-security
 depends_on: []
