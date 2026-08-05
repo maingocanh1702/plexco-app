@@ -215,20 +215,28 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
       } finally {
         await admin.query(`RESET job_definer_bootstrap.migration_role`);
       }
-      // Mirrors the job_definer dance immediately above (2026-08-05, owner-authorized scope
-      // amendment): migrate() now reaches 0030 (chat-dm-safety-authority-core), which does
-      // ALTER FUNCTION ... OWNER TO chat_definer and mechanically requires `owner` to already be a
-      // member of chat_definer. revokeStaleChatDefinerMembership first: unlike job_definer's
-      // bootstrap, chat_definer's own script refuses to re-point to a different target once any
-      // member exists (see that helper's own comment, test-harness.ts).
-      await revokeStaleChatDefinerMembership(admin, owner);
-      await admin.query(`SET chat_definer_bootstrap.migration_role = '${owner}'`);
-      try {
-        await bootstrapChatDefiner(admin);
-      } finally {
-        await admin.query(`RESET chat_definer_bootstrap.migration_role`);
-      }
-      const res = await migrate(url(db, owner, "x"));
+      // chat_definer bootstrap + migrate() wrapped in withChatDefinerLock (2026-08-05, fixing a
+      // race this exact session discovered live): migrate() now reaches 0030
+      // (chat-dm-safety-authority-core), which does ALTER FUNCTION ... OWNER TO chat_definer and
+      // mechanically requires `owner` to already be a member of chat_definer.
+      // revokeStaleChatDefinerMembership first, since unlike job_definer's bootstrap,
+      // chat_definer's own script refuses to re-point to a different target once any member
+      // exists (see that helper's own comment, test-harness.ts) — chat_definer tolerates only ONE
+      // non-runtime member at a time. Without the lock, a DIFFERENT test file's own concurrent
+      // revoke-then-grant sequence (BR-6, JCL-1, both correctly wrapped) can steal this test's
+      // membership grant in the window between granting it and migrate() actually consuming it
+      // via SET ROLE — reproduced empirically as an intermittent "must be able to SET ROLE
+      // chat_definer" failure before this wrap was added.
+      const res = await withChatDefinerLock(BASE!, async () => {
+        await revokeStaleChatDefinerMembership(admin, owner);
+        await admin.query(`SET chat_definer_bootstrap.migration_role = '${owner}'`);
+        try {
+          await bootstrapChatDefiner(admin);
+        } finally {
+          await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+        }
+        return migrate(url(db, owner, "x"));
+      });
       expect(res.applied.length).toBe(MIGRATION_COUNT);
     } finally {
       await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
@@ -369,7 +377,9 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
           await ctx.bootstrapJobDefinerForOwner();
           await ctx.bootstrapChatDefinerForOwner();
           const res = await ctx.runMigration();
-          expect(res.applied[res.applied.length - 1]).toBe("0030_chat_dm_safety_authority_core.sql");
+          expect(res.applied[res.applied.length - 1]).toBe(
+            "0030_chat_dm_safety_authority_core.sql",
+          );
         }),
       );
 

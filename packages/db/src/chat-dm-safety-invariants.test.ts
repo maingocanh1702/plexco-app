@@ -39,7 +39,9 @@ afterAll(async () => {
 });
 
 /** Captures pg 'notice' events (including RAISE LOG, see beforeAll) raised by ctx.owner during fn(). */
-async function captureNotices(fn: () => Promise<unknown>): Promise<Array<{ severity?: string; message?: string }>> {
+async function captureNotices(
+  fn: () => Promise<unknown>,
+): Promise<Array<{ severity?: string; message?: string }>> {
   const notices: Array<{ severity?: string; message?: string }> = [];
   const handler = (n: { severity?: string; message?: string }) => notices.push(n);
   ctx.owner.on("notice", handler);
