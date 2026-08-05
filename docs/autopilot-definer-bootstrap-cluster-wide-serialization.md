@@ -255,16 +255,16 @@ cannot be obtained — the mechanism gives the guarantee where it can be taken (
 the guarantee is operational instead, and the WARNING (§5.4.1) is what proves, per run, that the mechanical
 half did or didn't hold.
 
-**I could not locate a document in this repo matching "tenant_provision session-cache race"** despite a
-multi-angle search this session (the exact phrase; "session-cache" alone; singleton/never-concurrent/
-one-place language; `cache`+`tenant` combinations; `packages/db/src/auth.ts`; `docs/dd-46-skip-club-
-analysis.md`) — flagging this rather than presenting a citation I have not actually read. This section
-records the ruling's shape as given in this conversation (owner authority, 2026-08-05), not as a
-citation of a prior written ruling. The closest **located** precedent for "serialize a hard-to-lock shared
-resource by rule rather than by mechanism" is `tenant_get_or_create_personal`'s own `persons`-row `FOR
-UPDATE` lock taken jointly with the merge path (`docs/dd-46-skip-club-analysis.md:75`, `docs/standards/
-decisions.md:594`) — a mechanical lock, not an operational one, so it is not the same shape; noted only as
-the nearest thing found, not as the referenced precedent itself.
+**The `tenant_provision session-cache race` precedent is a forward reference, not a missing one** —
+confirmed by the owner after this session's multi-angle search (the exact phrase; "session-cache" alone;
+singleton/never-concurrent/one-place language; `cache`+`tenant` combinations; `packages/db/src/auth.ts`;
+`docs/dd-46-skip-club-analysis.md`) came up empty. It lives in DD-29's `0028`/`0029` migration headers,
+authored as part of the `plans-dd29-capability-registry` slice (`docs/autopilot-plans-dd29-capability-
+registry.md`) — whose own status is `ready` in its worktree but **unmerged**: neither migration is on
+`main` as of this slice's `BASE_SHA` (§2). There was nothing on disk yet to find; flagging it instead of
+citing it blind was the correct response to a real gap, not a search failure. The reference resolves once
+`plans-dd29-capability-registry` lands. Until then, this section records the ruling's shape as given in
+this conversation (owner authority, 2026-08-05), not as a citation of a document that exists yet.
 
 **Not yet given a durable home.** This rule needs to live somewhere a deploy actually reads — a deployment
 runbook, a CI/CD guard preventing concurrent bootstrap invocations against the production connection
@@ -562,6 +562,19 @@ REMAINING_BLOCKERS: none
 
 12/12 PASS. Verdict: **`CODE_READY`**.
 
+### 9.2 A structural asymmetry this verdict corrects, worth carrying past this slice
+
+`286f48bbbd5b9f41c3e63e5f201ecfd276706bff`'s merge commit message asserted the `SERIALIZABLE`-isolation
+candidate (§5.2) from plausibility, not measurement — written in good faith, never tested against a live
+cluster before being committed. A merge commit message is immutable and unreviewed after the fact: nothing
+re-checks it once it lands, and nothing enforces that a mechanism it names was ever verified. A mistake
+recorded there propagates indefinitely — this slice's own original task briefing cited it as the likely
+fix before it was tested here (§10 item 5). A document like this one can still be wrong, but it can also
+still be reopened, corrected, and re-verified; a commit message cannot. The lesson generalizes past this
+one commit: **a technical claim about a mechanism's guarantee belongs in something that can be corrected
+if it will ever be relied on again without being re-tested — not solely in a commit message.** Worth
+remembering the next time a deferral names a candidate fix it has not measured.
+
 ## 10. Open items (non-blocking — do not read as `CODE_READY` blockers)
 
 1. **RESOLVED this revision (was open item 1 in the prior version): production superuser availability.**
@@ -595,7 +608,8 @@ REMAINING_BLOCKERS: none
    it false: two concurrent `SERIALIZABLE` transactions from different databases both committed conflicting
    grants with no serialization failure. `02-chat-definer.sql`'s own copy of the claim is removed as part
    of this slice's diff (§7.2). The merge commit's message is immutable git history and cannot be
-   corrected in place — this document is the only durable place that records the correction.
+   corrected in place — this document is the only durable place that records the correction. See §9.2 for
+   why this asymmetry (commit message vs. correctable document) generalizes past this one finding.
 6. **This slice's own empirical measurements (mechanism selection, §5; fail-open design, §5.4.1;
    auto-membership finding, §5.4.2) are against `postgres:16-alpine` specifically** (the exact image
    `infra/docker-compose.yml` runs) and against a scratch role built to mirror `doadmin`'s documented
