@@ -274,9 +274,22 @@ REVOKE ALL ON FUNCTION chat_pair_blocked(uuid, uuid) FROM PUBLIC;
 -- two checks staying in this exact order forever. audit_enabled COALESCEs to
 -- false on a missing row -- fail-closed means "do not log", consistent with
 -- every other missing-row behavior in this migration, never "log anyway".
+--
+-- SET client_min_messages = warning (codex round-04 [P1]): client_min_messages is a plain,
+-- caller-controlled session GUC -- any role with EXECUTE on this function can `SET
+-- client_min_messages = 'log'` on its OWN connection before calling it and receive the RAISE
+-- LOG's full text (actor/peer/action/deny_reason) as a client-visible notice, verified directly
+-- (a session that sets this itself DOES get the message). That contradicts this migration's own
+-- design goal and DD-55's "no block detail leaked" requirement -- RAISE LOG alone is not a
+-- caller-unreachable channel the way a zero-grant table is. A function-local SET clause forces
+-- client_min_messages to warning for the DURATION of this call only (verified: the caller's own
+-- session setting is untouched before/after), suppressing the LOG-severity notice from the client
+-- regardless of what the caller's own session requests, while log_min_messages (a separate GUC,
+-- unaffected by this) still delivers it to the server log as before.
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION assert_dm_allowed(p_actor uuid, p_peer uuid, p_action text) RETURNS void
-  LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+  SET client_min_messages = warning AS $$
 DECLARE
   v_deny_reason text;
   v_sender_limit integer;

@@ -20,10 +20,22 @@ const TEST_DB_NAME = "plexco_chat_dm_safety_check";
  * savepoint-rollback-based, so the RAISE unconditionally undoes the INSERT,
  * proven empirically during this slice's own implementation. Rather than
  * ship a table that always reads empty, assert_dm_allowed() emits RAISE LOG
- * instead, which Postgres delivers outside transactional rollback. RAISE LOG
- * is invisible to a client at the default client_min_messages ('notice'), so
- * tests that assert on it SET client_min_messages = 'log' on ctx.owner and
- * capture the pg driver's 'notice' event -- see captureNotices() below.
+ * instead, which Postgres delivers outside transactional rollback.
+ *
+ * client_min_messages is a plain, caller-controlled session GUC (codex round-04 [P1]) -- a session
+ * that SETs it to 'log' itself DOES receive a LOG-severity RAISE as a client notice, verified
+ * directly; nothing about SECURITY DEFINER changes that, since delivery is keyed to the CALLING
+ * connection, not the function owner. That means RAISE LOG alone was never actually
+ * caller-unreachable, contradicting this migration's own design goal. assert_dm_allowed() now
+ * carries its own `SET client_min_messages = warning` clause, forcing the threshold above LOG for
+ * the DURATION of that one call regardless of what the caller's session requests (log_min_messages,
+ * a separate GUC, still delivers it to the server log as before). captureNotices() below remains a
+ * valid general technique, but it can no longer observe assert_dm_allowed()'s own RAISE LOG content
+ * from ANY client connection, including ctx.owner's -- that unreachability is now the property
+ * under test, not an artifact to work around. This environment's Postgres logs to stderr with
+ * logging_collector off (no log file in the data directory), so there is no portable, in-SQL way to
+ * verify the suppressed message's CONTENT from this suite either; that specific claim is verifiable
+ * by reading the migration's own RAISE LOG statement, not by a live round-trip test.
  */
 
 let ctx: RlsTestContext;
@@ -374,7 +386,14 @@ describe("assert_dm_allowed() denies a blocked pair", () => {
     await expect(callAssertDmAllowed(a, b, "create")).rejects.toThrow(/chat safety blocked/);
   });
 
-  it("emits a RAISE LOG line carrying actor/peer/action/deny_reason (no chat_dm_safety_audit table — see file header)", async () => {
+  // codex round-04 [P1]: the four tests below used to assert on the RAISE LOG's own CLIENT-VISIBLE
+  // content (actor/peer/action/deny_reason), which was itself the leak this round closed — a
+  // caller-controlled client_min_messages='log' session received the same text a genuine attacker's
+  // own connection could request. assert_dm_allowed() now forces client_min_messages = warning for
+  // its own call, so that content is no longer observable from ANY client, including ctx.owner's
+  // (see file header). These now prove the opposite, and more important, property: nothing arrives,
+  // no matter what the caller's own session asks for, on every path that used to be checked.
+  it("exposes nothing to the client on a denial, even though ctx.owner's own session requests client_min_messages='log'", async () => {
     await resetConfigDefaults();
     const a = await seedPerson("Deny Log A");
     const b = await seedPerson("Deny Log B");
@@ -385,14 +404,10 @@ describe("assert_dm_allowed() denies a blocked pair", () => {
     const notices = await captureNotices(() =>
       expect(callAssertDmAllowed(a, b, "create")).rejects.toThrow(/chat safety blocked/),
     );
-    const logLine = notices.find((n) => n.severity === "LOG");
-    expect(logLine?.message).toContain(`actor=${a}`);
-    expect(logLine?.message).toContain(`peer=${b}`);
-    expect(logLine?.message).toContain("action=create");
-    expect(logLine?.message).toContain("deny_reason=blocked");
+    expect(notices.find((n) => n.severity === "LOG")).toBeUndefined();
   });
 
-  it("still logs when the denial reason is safety_disabled via a flag OTHER than audit_enabled", async () => {
+  it("exposes nothing to the client regardless of which flag/reason caused the denial", async () => {
     await resetConfigDefaults();
     const a = await seedPerson("Deny Log Other Flag A");
     const b = await seedPerson("Deny Log Other Flag B");
@@ -400,11 +415,10 @@ describe("assert_dm_allowed() denies a blocked pair", () => {
     const notices = await captureNotices(() =>
       expect(callAssertDmAllowed(a, b, "create")).rejects.toThrow(/chat safety blocked/),
     );
-    const logLine = notices.find((n) => n.severity === "LOG");
-    expect(logLine?.message).toContain("deny_reason=safety_disabled");
+    expect(notices.find((n) => n.severity === "LOG")).toBeUndefined();
   });
 
-  it("emits NO RAISE LOG line when audit_enabled is false (fail-closed: missing/disabled audit means silent, not 'log anyway')", async () => {
+  it("exposes nothing to the client whether audit_enabled is true or false — that distinction is now server-side only, by design", async () => {
     await resetConfigDefaults();
     const a = await seedPerson("Deny No Log A");
     const b = await seedPerson("Deny No Log B");
@@ -419,8 +433,7 @@ describe("assert_dm_allowed() denies a blocked pair", () => {
     expect(notices.find((n) => n.severity === "LOG")).toBeUndefined();
   });
 
-  // codex round-03 [P2]: claimed in SS9's acceptance matrix ("no dedupe expected"), never asserted.
-  it("racing the same (actor,peer,action) denial twice logs two independent RAISE LOG lines, no dedupe", async () => {
+  it("racing the same (actor,peer,action) denial twice exposes nothing to the client either time", async () => {
     await resetConfigDefaults();
     const a = await seedPerson("Dup Log A");
     const b = await seedPerson("Dup Log B");
@@ -432,12 +445,20 @@ describe("assert_dm_allowed() denies a blocked pair", () => {
       await expect(callAssertDmAllowed(a, b, "create")).rejects.toThrow(/chat safety blocked/);
       await expect(callAssertDmAllowed(a, b, "create")).rejects.toThrow(/chat safety blocked/);
     });
-    const logLines = notices.filter((n) => n.severity === "LOG");
-    expect(logLines).toHaveLength(2);
-    for (const line of logLines) {
-      expect(line.message).toContain(`actor=${a}`);
-      expect(line.message).toContain(`peer=${b}`);
-    }
+    expect(notices.filter((n) => n.severity === "LOG")).toHaveLength(0);
+  });
+
+  it("assert_dm_allowed's own client_min_messages override does not leak into the caller's session afterward", async () => {
+    await resetConfigDefaults();
+    const a = await seedPerson("Threshold Restore A");
+    const b = await seedPerson("Threshold Restore B");
+    await ctx.owner.query(
+      `INSERT INTO chat_blocks (blocker_person_id, blocked_person_id) VALUES ($1, $2)`,
+      [a, b],
+    );
+    await expect(callAssertDmAllowed(a, b, "create")).rejects.toThrow(/chat safety blocked/);
+    const { rows } = await ctx.owner.query(`SHOW client_min_messages`);
+    expect((rows[0] as { client_min_messages: string }).client_min_messages).toBe("log");
   });
 });
 
@@ -481,6 +502,59 @@ describe("roles app/app_worker/readonly have zero direct access (global-protecte
       ).rejects.toThrow(/permission denied/i);
     });
   }
+
+  // codex round-04 [P2]: the live-attempt tests above only try SELECT/INSERT/EXECUTE — they could
+  // not have caught a stray UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER grant, or a column-level one.
+  // has_table_privilege/has_function_privilege query the ACTUAL catalog-derived effective privilege
+  // set (via ctx.owner, a superuser, checking on each role's behalf — no live connection needed per
+  // role/privilege combination), covering every table-level privilege PG16 defines.
+  const TABLE_PRIVILEGES = [
+    "SELECT",
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "TRUNCATE",
+    "REFERENCES",
+    "TRIGGER",
+  ];
+  const FUNCTIONS = [
+    "dm_safety_enabled()",
+    "chat_pair_blocked(uuid, uuid)",
+    "assert_dm_allowed(uuid, uuid, text)",
+  ];
+
+  it("catalog confirms zero table privilege of any kind, for any role, on any of the three tables", async () => {
+    for (const [roleName] of ROLES) {
+      for (const table of TABLES) {
+        for (const privilege of TABLE_PRIVILEGES) {
+          const { rows } = await ctx.owner.query(`SELECT has_table_privilege($1, $2, $3) AS has`, [
+            roleName,
+            table,
+            privilege,
+          ]);
+          expect(
+            (rows[0] as { has: boolean }).has,
+            `${roleName} must not have ${privilege} on ${table}`,
+          ).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("catalog confirms zero EXECUTE privilege, for any role, on any of the three functions", async () => {
+    for (const [roleName] of ROLES) {
+      for (const fn of FUNCTIONS) {
+        const { rows } = await ctx.owner.query(
+          `SELECT has_function_privilege($1, $2, 'EXECUTE') AS has`,
+          [roleName, fn],
+        );
+        expect(
+          (rows[0] as { has: boolean }).has,
+          `${roleName} must not have EXECUTE on ${fn}`,
+        ).toBe(false);
+      }
+    }
+  });
 });
 
 describe("dm_safety_enabled() / assert_dm_allowed() fail closed per capability flag", () => {

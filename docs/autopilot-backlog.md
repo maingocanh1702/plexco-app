@@ -1770,13 +1770,17 @@ notes: |
 
 ## task: chat-dm-safety-authority-core
 title: Slice 2 chuỗi in-app-chat — `dm_safety_enabled()` và authority tables/functions kèm theo
-status: at the review gate (2026-08-06) — owner ruling implemented, 3 codex review rounds (round-01
-  gate-attempt-03, round-02 gate-attempt-05, round-03 gate-attempt-06) all real, all fixed in-slice;
-  gate re-invoked after round-03's fixes, outcome not yet known as of this note. Separately: the
-  local dev cluster's chat_definer role currently has zero members (confirmed real damage from
-  this session's own pre-fix test runs; the round-03 fix prevents recurrence but does not
-  retroactively repair it) — needs an owner-run `pnpm db:bootstrap`, out of this slice's own scope
-  to perform. See the dated notes at the end of
+status: blocked — at the review gate (2026-08-06), codex round-04 gate-attempt-07 outcome not yet
+  known as of this note (codex round-04 [P2]: this line previously started with a narrative sentence
+  instead of a canonical first token, so autopilot-backlog-reconcile's own awk parser read the token
+  `at` as the status, matched none of planned/ready/blocked, and silently dropped this task from
+  reconciliation entirely — first token fixed, narrative moved below). Owner ruling implemented,
+  4 codex review rounds (round-01 gate-attempt-03, round-02 gate-attempt-05, round-03 gate-attempt-06,
+  round-04 gate-attempt-07) all real, all fixed in-slice. Separately: the local dev cluster's
+  chat_definer role currently has zero members (confirmed real damage from this session's own
+  pre-fix test runs; the round-03 fix prevents recurrence but does not retroactively repair it) —
+  needs an owner-run `pnpm db:bootstrap`, out of this slice's own scope to perform. See the dated
+  notes at the end of
   `notes:` for what each round found and changed; the AWAIT paragraph immediately below is preserved
   as the dated record of what was asked, per this repo's own "never rewrite dated history" convention.
 status_history_2026-08-05_AWAIT: implemented in worktree feat/chat-dm-safety-authority-core,

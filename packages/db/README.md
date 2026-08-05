@@ -497,9 +497,14 @@ reader while permanently holding zero rows. `assert_dm_allowed` instead does `RA
 `chat_dm_safety_config.audit_enabled`, same fail-closed-on-missing-row `COALESCE` as everything else
 in this migration) with the same fields the table would have carried — `actor`, `peer`, `action`,
 `deny_reason`, `at`. `RAISE LOG` is delivered through Postgres's own logging subsystem, which sits
-outside transactional rollback, so it survives the `RAISE EXCEPTION` immediately after it — but it is
-invisible to a client at the default `client_min_messages` (`notice`); `chat-dm-safety-invariants.test.ts`
-sets `client_min_messages = 'log'` on its owner connection and asserts on the driver's `notice` event.
+outside transactional rollback, so it survives the `RAISE EXCEPTION` immediately after it. It is
+server-log-only: `assert_dm_allowed` carries its own `SET client_min_messages = warning` clause
+(codex round-04 [P1] — `client_min_messages` is a plain caller-controlled session GUC, so without
+this the line was visible to any caller that raised its own threshold to `log`, contradicting the
+whole point of dropping the queryable table), forcing that threshold above `LOG` for the duration of
+the call regardless of what the caller's own session requests. `chat-dm-safety-invariants.test.ts`
+proves the negative — no client, including one that sets `client_min_messages = 'log'` on its own
+session, ever receives the notice.
 A queryable table remains the eventual goal — tracked as backlog `chat-dm-safety-audit-queryable-path`
 (depends on `dd38-dd86-chat-schema-core`; the write needs to happen from a caller's own exception
 handler, in a transaction that actually commits, or via a genuinely separate connection).

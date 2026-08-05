@@ -207,6 +207,19 @@ appended), the table was dropped entirely and `assert_dm_allowed` emits `RAISE L
   1 AND 500`, which only bounded the trimmed length — a note padded with whitespace could store
   arbitrarily more than 500 raw characters) plus `length(btrim(note)) >= 1` for non-emptiness.
 
+**Amended 2026-08-06, codex round-04 finding, fixed in the migration file directly:**
+- `assert_dm_allowed` carries its own `SET client_min_messages = warning` clause, alongside its
+  existing `SET search_path`. `client_min_messages` is a plain, caller-controlled session GUC — a
+  session that itself sets it to `log` DOES receive a `LOG`-severity `RAISE` as a client notice
+  (verified directly), regardless of `SECURITY DEFINER`, since delivery is keyed to the calling
+  connection, not the function owner. Without this override, `assert_dm_allowed`'s own `RAISE LOG`
+  (actor/peer/action/deny_reason) was client-reachable by any role with `EXECUTE`, contradicting
+  this migration's own design goal and DD-55's "no block detail leaked" requirement. The
+  function-local `SET` clause forces the threshold above `LOG` for the duration of that call only
+  (confirmed: the caller's own session setting is unchanged before and after), suppressing the
+  client-visible notice while leaving `log_min_messages` (a separate GUC controlling the SERVER log)
+  unaffected.
+
 Shape otherwise unchanged from the round-01 description: 3 tables (`chat_dm_safety_config`,
 `chat_blocks`, `chat_reports`, no `chat_dm_safety_audit`), a `trg_chat_dm_safety_config_touch_updated_at`
 trigger (round-01), and the 3 functions (`dm_safety_enabled`, `chat_pair_blocked`,
@@ -527,9 +540,12 @@ no write RPC, so fixture setup is direct SQL, exactly as root's own test plan di
 proof rows (blocked pair denies both directions, disabled-capability denies, rate-limit denies,
 read is never rate-limited, no block-detail in the raised exception) are the actual point of this
 slice; do not ship only happy-path coverage. Since `assert_dm_allowed` emits `RAISE LOG` rather than
-writing a table (§6.1 amendment), a test asserting on it must `SET client_min_messages = 'log'` on its
-owner connection and capture the `pg` driver's `notice` event — `RAISE LOG` is invisible to a client at
-the default `client_min_messages` (`notice`).
+writing a table (§6.1 amendment), and that function forces `client_min_messages = warning` for its
+own call regardless of the caller's session (codex round-04 [P1] — closing a leak where the original
+version left it client-observable to any caller that raised its own threshold), the CONTENT of that
+line is not verifiable from a live client round-trip test at all — tests instead prove the negative
+(no client ever sees it, via `captureNotices()` returning nothing on every denial path, no matter
+what the caller's session requests).
 
 `packages/db/src/migrate.test.ts` needs the same mechanical literal bump (migration count/tail
 filename) the `dd38-dd86-chat-schema-core` and `db-tenants-authz-grant-security-definer` manifests both
@@ -564,23 +580,25 @@ docs/autopilot-chat-dm-safety-authority-core.md                  -- self
 docs/autopilot-backlog.md                                        -- own entry + new chat-dm-safety-audit-queryable-path idea entry
 ```
 
-**Measured, not estimated — and re-measured again after round-03, since the round-02 number here was
-itself stale by the time it was read (codex round-03 [P2]: this doc claimed 1,121/1,503 while the
-actual round-02 commit already measured 1,257/1,743 — a self-inflicted repeat of the same "measure
-before your own change lands, not after" mistake, this time within one slice's own review cycle).**
-`git diff --numstat <base_sha>...HEAD` on the final, post-round-03 diff totals **1,487 insertions
-across `packages/db/*`** (migration 350, `chat-dm-safety-invariants.test.ts` 640, `test-harness.ts`
-178, `migrate.test.ts` 137, `schema.ts` 68, `rls-invariants.test.ts` 60, `README.md` 54) plus the
-doc/manifest/backlog files (this file's own size necessarily keeps moving as this exact paragraph
-is edited, so not pinned to a single digit here — see `git diff --stat` for the live number). File
-set stayed at the 10 files named in TARGET_FILES throughout all three rounds — only line count grew,
-driven by three real codex review rounds' worth of fixes (temp-shadow regression tests, a
-genuinely-concurrent-connections rewrite of the concurrency test, a full snapshot/restore fix for
-chat_definer's cluster-global membership with its own round-trip regression test, a role/table
-coverage matrix for the zero-grant proof, additional CHECK-constraint and RAISE-LOG tests) — not
-scope creep into new tables/RPCs/grants. This exceeds the original `~650-750` planning estimate by
-roughly 2x. Recorded honestly rather than re-asserting a stale figure; the original planning line
-below is kept for history, not as a current claim.
+**Measured, not estimated — and re-measured after EVERY round, because this exact paragraph went
+stale twice already by not doing that (codex round-03 [P2]: claimed 1,121/1,503 against an actual
+1,257/1,743; then this same figure went stale again mid-round-03 itself before being caught before
+commit). The discipline that finally held: measure ONLY after every code change for the round is
+complete, never before.** `git diff --numstat <base_sha>...HEAD` on the final, post-round-04 diff
+totals **1,579 insertions across `packages/db/*`** (`chat-dm-safety-invariants.test.ts` 714,
+migration 363, `test-harness.ts` 178, `migrate.test.ts` 137, `schema.ts` 68,
+`rls-invariants.test.ts` 60, `README.md` 59) plus the doc/manifest/backlog files (this file's own
+size necessarily keeps moving as this exact paragraph is edited, so not pinned to a single digit
+here — see `git diff --stat` for the live number). File set stayed at the 10 files named in
+TARGET_FILES throughout all four rounds — only line count grew, driven by four real codex review
+rounds' worth of fixes: temp-shadow regression tests, a genuinely-concurrent-connections rewrite of
+the concurrency test, a full snapshot/restore fix for chat_definer's cluster-global membership with
+its own round-trip regression test, a role/table/privilege coverage matrix for the zero-grant proof
+(`has_table_privilege`/`has_function_privilege` across all PG16 privilege types), a
+`client_min_messages` leak closure with its own regression suite — not scope creep into new
+tables/RPCs/grants. This exceeds the original `~650-750` planning estimate by roughly 2.1x.
+Recorded honestly rather than re-asserting a stale figure; the original planning line below is kept
+for history, not as a current claim.
 
 <details><summary>Original planning estimate (2026-08-05, pre-implementation — historical, not
 current)</summary>
@@ -686,7 +704,7 @@ re-deriving, an owner question, not an implementation choice.
 | Boundary | `chat_reports` note: 1 real char padded with whitespace to 501 raw chars (codex round-02 [P2]) | Rejected — raw `length(note) <= 500`, not just the trimmed length |
 | Authorization | `chat_pair_blocked(a,b)` after a row `(blocker=a, blocked=b)` exists | Returns `true` |
 | Authorization | `chat_pair_blocked(b,a)` (swapped args) after the same row | Returns `true` — direction-agnostic |
-| Authorization | `assert_dm_allowed(a,b,'create')` when `chat_pair_blocked(a,b)` is true | Raises `chat safety blocked`; one `RAISE LOG` line (severity `LOG`, visible only with `client_min_messages='log'`) carrying `deny_reason=blocked` |
+| Authorization | `assert_dm_allowed(a,b,'create')` when `chat_pair_blocked(a,b)` is true | Raises `chat safety blocked`; one `RAISE LOG` line carrying `deny_reason=blocked` written to the SERVER log (codex round-04 [P1]: NOT visible to any client, even one whose own session requests `client_min_messages='log'` — see the row below) |
 | Authorization | `role app` attempts direct `SELECT`/`INSERT` on `chat_blocks`/`chat_reports`/`chat_dm_safety_config` | Permission denied — zero grants issued to `app` |
 | Authorization | `role app` attempts direct `EXECUTE` on `dm_safety_enabled`/`chat_pair_blocked`/`assert_dm_allowed` | Permission denied — `REVOKE ALL ... FROM PUBLIC`, no `GRANT ... TO app` issued (only `chat_definer`, via ownership) |
 | Failure | `chat_dm_safety_config.block_enabled = false` (others true) | `dm_safety_enabled()` → `false`; `assert_dm_allowed` denies with `deny_reason='safety_disabled'` regardless of block/rate state |
@@ -704,7 +722,7 @@ re-deriving, an owner question, not an implementation choice.
 | Migration | No destructive change to any existing table | Only fresh `CREATE TABLE`/`CREATE FUNCTION` and one new `GRANT ... TO chat_definer` on the pre-existing `rate_limit_check`; zero `ALTER`/`DROP` on any table that predates this migration |
 | Migration | Migration applies under the real, non-superuser `DATABASE_URL_MIGRATION` role after `chat_definer` bootstrap | Succeeds — mirrors root's own test #25/#26 (PG16 `ALTER FUNCTION ... OWNER TO` needs `CREATE ON SCHEMA public` granted first); this slice's own `GRANT CREATE ... / REVOKE CREATE ...` bracket proves it independently of root |
 | Security/privacy | Exception raised by `assert_dm_allowed` on any deny path | Message is exactly `chat safety blocked` regardless of `deny_reason` — no reason code, bucket name, or block state leaked to the caller |
-| Security/privacy | `RAISE LOG` line content | Real `deny_reason` delivered only through Postgres's own logging subsystem (server log, or a `client_min_messages='log'` connection) — no table, so no caller-reachable read path exists in this slice regardless of grants |
+| Security/privacy | `RAISE LOG` line content | Real `deny_reason` delivered only through Postgres's own SERVER-side logging subsystem (codex round-04 [P1]: NOT a `client_min_messages='log'` connection — that path was itself a leak, since client_min_messages is a plain caller-controlled session GUC; `assert_dm_allowed`'s own `SET client_min_messages = warning` clause forces the threshold above LOG for the duration of that call regardless of what the caller's session requests) — no table, no client-visible channel of any kind, so no caller-reachable read path exists in this slice regardless of grants |
 | Security/privacy | `dm_safety_enabled()`/`chat_pair_blocked()`/`assert_dm_allowed()` all `SECURITY DEFINER` owned by `chat_definer` | `chat_definer` is `BYPASSRLS` at the role level, but none of the three tables use RLS at all — access control is entirely the grant system (§5 design-probe row 8), not RLS bypass |
 | Regression | Full existing canonical DB suite stays green | `DATABASE_URL_TEST=... pnpm test` — no existing test's behavior changes; the one modified pre-existing object (`rate_limit_check`) only gains an additional grantee, no signature/body change |
 | Observability | Every denial is individually attributable | Each `RAISE LOG` line carries `actor`, `peer`, `action`, `deny_reason`, `at` — sufficient for an on-call abuse investigation per P15 IF the server's `log_min_messages` captures LOG-level lines (an ops/deploy config this slice does not verify); the queryable-without-that-dependency version is backlog `chat-dm-safety-audit-queryable-path` |
@@ -739,7 +757,23 @@ which does not parse prose qualifiers above the fence).**
   full-migration path, an under-covered acceptance/security matrix including a claimed-but-
   never-actually-tested NULL-action regression, and this doc's own LOC/test-count claims going stale a
   second time within one slice). None change G1/G2/G3/G6; G4/G5 re-verified again against the
-  round-03 state specifically. The mandatory independent code +
+  round-03 state specifically.
+- **2026-08-06, round-04 re-verification:** found and fixed the most consequential defect across all
+  four rounds — `client_min_messages` is a plain, caller-controlled session GUC, so
+  `assert_dm_allowed`'s own `RAISE LOG` (actor/peer/action/deny_reason) was client-reachable by any
+  caller that raised its own threshold to `log`, directly contradicting DD-55's "no block detail
+  leaked" requirement and this migration's own stated design goal (§5 row 6, §9's own prior wording)
+  — a real gap this doc itself had not caught across three earlier rounds. Fixed with a
+  function-local `SET client_min_messages = warning` clause, verified directly (a session that sets
+  `client_min_messages='log'` itself no longer receives the notice; the override does not persist
+  into the caller's own session afterward). This closes a security property this doc had
+  (incorrectly) described as already satisfied — SS5 row 6, SS9, and this file's README counterpart
+  are all corrected accordingly, not just this block. Also fixed: this backlog entry's own
+  `status:` line was unparseable by `autopilot-backlog-reconcile` (a narrative sentence instead of a
+  canonical token), and the zero-grant test only covered SELECT/INSERT/EXECUTE — widened to the full
+  PG16 table-privilege set via `has_table_privilege`/`has_function_privilege`. None of the four
+  findings changed G1/G2/G3; G4/G5/G6 re-verified again against the round-04 state. The mandatory
+  independent code +
   security review (manifest `code_review`/`security_review`) is running against this exact,
   re-verified, as-amended diff — this block is not a substitute for that review, it is this slice's
   own re-affirmation ahead of it.
@@ -747,7 +781,7 @@ which does not parse prose qualifiers above the fence).**
 ```text
 REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: CODE_READY
-REVIEWED_AT: 2026-08-06 (re-verified after round-03; originally 2026-08-05, re-verified again after round-01/02)
+REVIEWED_AT: 2026-08-06 (re-verified after round-04; originally 2026-08-05, re-verified again after round-01/02/03)
 AUTHORITY_SHA: 90d292d85fbe92db7a5afcd118a99e28f3d3b3b7
 LIVE_BASE_SHA: 3289e3b90b1e46739ead4bab8a05fe95fec0b77a
 BASE_BRANCH: main
@@ -803,10 +837,10 @@ CLOSURE_MATRIX: PASS (12/12 — see §10.1, re-verified 2026-08-06 against the a
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
 IMPLEMENTATION_ARTIFACTS: PASS (implemented in worktree feat/chat-dm-safety-authority-core, 2026-08-05,
-  amended same day per owner ruling, re-verified 2026-08-06 across three real codex review rounds —
+  amended same day per owner ruling, re-verified 2026-08-06 across four real codex review rounds —
   see amendment history above)
-FIRST_IMPLEMENTATION_STEP: DONE — see the amendment history above; next step is a fourth code +
-  security review round on this exact, round-03-fixed diff
+FIRST_IMPLEMENTATION_STEP: DONE — see the amendment history above; next step is a fifth code +
+  security review round on this exact, round-04-fixed diff
 REMAINING_BLOCKERS: none in this slice's own scope; the local dev cluster's chat_definer role
   currently has zero members (confirmed real damage from this session's own pre-fix test runs,
   not caused by the fix itself — see backlog note) and needs an operator-run `pnpm db:bootstrap`
@@ -827,7 +861,7 @@ REMAINING_BLOCKERS: none in this slice's own scope; the local dev cluster's chat
 | 7 | Fail-closed/idempotency/order đủ | `COALESCE(...,false)` on missing config, incl. `audit_enabled` (amended); ordered `disabled → blocked → rate` checks; generic exception text; `RAISE LOG` (amended, replacing an append-only audit table that could not persist); `rate_limit_check` reuse inherits its own proven idempotent-consume/retention behavior | PASS |
 | 8 | Open question trong scope = 0 | §5 escalation check — all 14 design decisions resolved at Tier 1 at authoring time; row 6's mechanism was later found wrong by implementation and amended by the owner (§5 row 6) — not a Tier 2/3 escalation left open, a closed amendment | PASS |
 | 9 | Acceptance matrix có expected result | §9 (amended 2026-08-05 for the `RAISE LOG` mechanism), full B2 category coverage incl. negative-proof rows (blocked/disabled/rate-limited, no-leak, permission-denied) | PASS |
-| 10 | Migration/security/rollback pin | Exactly 1 migration (+ mechanical/doc files + owner-authorized scope amendment, §6.4); B3 budget exception `≤750 LOC` cited and measured EXCEEDED by roughly 2x (§6.4 — codex round-03 [P2]: this row previously said "estimated within" after §6.4 itself already recorded otherwise, an internal contradiction, not just a stale number), attributed to three real review rounds' worth of fixes and NOT scope creep — file set held at 10 throughout; module count grew 3→5 with the owner-authorized amendment; P17 forward-only acknowledged explicitly (no rollback runbook, nothing destructive to undo); safe to drop entirely pre-enable (zero live caller until slice 3 lands) | PASS |
+| 10 | Migration/security/rollback pin | Exactly 1 migration (+ mechanical/doc files + owner-authorized scope amendment, §6.4); B3 budget exception `≤750 LOC` cited and measured EXCEEDED by roughly 2.1x (§6.4 — codex round-03 [P2]: this row previously said "estimated within" after §6.4 itself already recorded otherwise, an internal contradiction, not just a stale number), attributed to four real review rounds' worth of fixes and NOT scope creep — file set held at 10 throughout; module count grew 3→5 with the owner-authorized amendment; P17 forward-only acknowledged explicitly (no rollback runbook, nothing destructive to undo); safe to drop entirely pre-enable (zero live caller until slice 3 lands) | PASS |
 | 11 | First slice có hard dependency merged | `chat-definer-role-provisioning` is merged (§4.1) — this is not a first-to-code node with an unmerged prerequisite, unlike AP-45's own current state | PASS |
 | 12 | Implementation handoff sẵn sàng | Packet (this doc) + manifest + launcher all authored and internally complete; backlog entry updated to `planned` in the same session (§11 of this task's own work, tracked separately from this doc) | PASS |
 
@@ -859,6 +893,10 @@ the historical implementation record; §6.1 is now the AS-IMPLEMENTED, owner-ame
   bug is to check only one); (c) `assert_dm_allowed`'s raised exception never varies by `deny_reason`;
   (d) no grant beyond exactly what §6.1's owner/grant block lists exists after migration (in particular,
   confirm `app` truly has zero grant on any of the three tables and zero `EXECUTE` on any of the three
-  functions); (e) **amended** — `RAISE LOG` fires only when `audit_enabled` is true (fail-closed:
-  missing config row means no log, not "log anyway"), and never leaks beyond the server log /
-  `client_min_messages`-gated notice channel (no table, no grant, so no caller-reachable read path).
+  functions); (e) **amended, then hardened in codex round-04 [P1]** — `RAISE LOG` fires only when
+  `audit_enabled` is true (fail-closed: missing config row means no log, not "log anyway"), and
+  never leaks to ANY client, including one that raises its own `client_min_messages` to `log` —
+  `assert_dm_allowed`'s own `SET client_min_messages = warning` clause forces that regardless of the
+  caller's session (verified directly that the override is scoped to the single call and does not
+  persist into the caller's session afterward) — SERVER log only, no table, no grant, so no
+  caller-reachable read path of any kind.
