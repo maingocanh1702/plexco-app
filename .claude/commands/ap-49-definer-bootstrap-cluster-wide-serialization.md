@@ -1,5 +1,27 @@
 # AP-49 — definer-bootstrap-cluster-wide-serialization: give both definer bootstraps a real cluster-wide lock
 
+> **Implementation status, 2026-08-05: IN PROGRESS, currently on the `-v3` registration.** The
+> "Registration mechanics" and "Steps" sections below describe the ORIGINAL, pre-implementation plan
+> (bare feature slug, no version suffix) and are retained as the historical starting point — they are NOT
+> a live instruction to register or worktree from that bare slug again. Two registrations have already
+> been closed via `ap-finish.sh --authorized-close` after live-testing/review found real defects requiring
+> changes to an already hash-locked runtime manifest (level3-workflow.md §8, "no path into a hash-locked
+> registration" — each forced a full close-and-re-register rather than an in-place edit): `-v1` (a SQL
+> dollar-quote parse bug and two over-broad verification checks) and `-v2` (a real regression: chat_definer's
+> degraded/production path lost protection it previously had). See `docs/autopilot-definer-bootstrap-
+> cluster-wide-serialization.md` §9.3 and §9.4 for the full writeup of both. If continuing this work, resume
+> on `feat/definer-bootstrap-cluster-wide-serialization-v3` and its own `.autopilot/state/definer-bootstrap-
+> cluster-wide-serialization-v3/manifest.json` — do not restart from the bare-slug plan below without first
+> reading both of those sections.
+>
+> **The mechanism description in the paragraph immediately below ("replaces both with A SINGLE mechanism")
+> is also stale and describes the ORIGINAL, round-00 plan only — it is NOT corrected here, per the same
+> owner-imposed bound on this file (status notice and stale v1 references only, no edits to this launcher's
+> substantive description/instructions).** The ACTUAL, current, two-layer design (an unconditional
+> same-database advisory lock plus the `LOCK TABLE` cluster-wide upgrade this paragraph describes) is
+> authoritatively described in `docs/autopilot-definer-bootstrap-cluster-wide-serialization.md` §7.1/§7.2
+> (kept live-synced) and §9.4. Do not implement from the paragraph below as written.
+
 `infra/postgres-init/01-job-definer.sql` and `02-chat-definer.sql` each bootstrap a cluster-global,
 `BYPASSRLS`-capable role. Roles and `pg_auth_members` are shared across the whole Postgres cluster, not
 per-database; neither script's current serialization actually covers that. `chat_definer`'s own

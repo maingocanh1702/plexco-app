@@ -109,36 +109,82 @@ DECLARE
   v_existing_runtime_member text;
   v_other_member text;
 BEGIN
-  -- Serialize the whole check-then-grant decision against ANY concurrent invocation of this script,
-  -- regardless of target. Without this, two concurrent calls targeting DIFFERENT valid non-runtime
-  -- roles can each observe zero existing chat_definer members (neither has committed yet), pass the
-  -- re-pointing guard below, and both GRANT their own distinct target -- the exact accumulation that
-  -- guard exists to prevent, just reached via a race instead of a sequential re-run. Transaction-
-  -- scoped (auto-released at COMMIT/ROLLBACK, no matching unlock needed).
+  -- Cluster-wide serialization (definer-bootstrap-cluster-wide-serialization, 2026-08-05): roles and
+  -- pg_auth_members are CLUSTER-shared, not database-local, so a concurrent bootstrap of this same role
+  -- from a DIFFERENT database in this cluster is a real, measured race this file had zero protection
+  -- against (not even same-database -- that gap was chat_definer-only). Measured against a live cluster
+  -- before choosing this mechanism: pg_advisory_xact_lock is documented+confirmed database-local;
+  -- SERIALIZABLE isolation does NOT detect this specific conflict (verified empirically -- two concurrent
+  -- SERIALIZABLE transactions from different databases both committed a GRANT to distinct targets with no
+  -- serialization_failure -- this corrects the "SERIALIZABLE isolation with caller-side retry... exists in
+  -- principle" claim the merge commit deferring this fix originally made; see docs/autopilot-definer-
+  -- bootstrap-cluster-wide-serialization.md SS5.2); a row-level FOR UPDATE lock on a shared-catalog row
+  -- does NOT block cross-database despite the catalog's storage being physically shared (verified
+  -- empirically, SS5.3). A RELATION-level LOCK on a shared catalog DOES block cross-database (verified
+  -- empirically, SS5.4) and, at SHARE UPDATE EXCLUSIVE, self-conflicts without blocking ordinary
+  -- GRANT/REVOKE elsewhere (which take ROW EXCLUSIVE -- confirmed non-conflicting).
+  --
+  -- Requires a true superuser connection -- confirmed no ACL grant or pg_write_all_data membership
+  -- substitutes (SS5.4). This application's actual production host, DigitalOcean Managed PostgreSQL, NEVER
+  -- grants superuser -- a product constraint, not a config gap (docs.digitalocean.com/products/databases/
+  -- postgresql/how-to/modify-user-privileges/: doadmin's attributes are exactly Create role, Create DB,
+  -- Replication, Bypass RLS -- no Superuser, confirmed 2026-08-05). This statement WILL fail there. It
+  -- fails OPEN, not silently and not fatally: catches insufficient_privilege specifically (SQLSTATE 42501,
+  -- never any other error class) and announces the degraded run via RAISE WARNING, loud in every
+  -- deployment/CI log capturing this script's output. This LOCK statement is the ONLY superuser-specific
+  -- requirement in this file -- doadmin's own Bypass RLS attribute is exactly what CREATE ROLE ...
+  -- BYPASSRLS requires of its creator (verified empirically against a role shaped exactly like doadmin's
+  -- documented attribute set, SS5.4.1). That does NOT mean the overall bootstrap SUCCEEDS under doadmin,
+  -- unlike 01-job-definer.sql's identical claim (true there): a SEPARATE, pre-existing check further down
+  -- this same block (the unsafe-membership-options / re-pointing logic below, unrelated to superuser
+  -- privilege) currently refuses every fresh, non-superuser-created chat_definer unconditionally --
+  -- confirmed empirically, see docs/autopilot-definer-bootstrap-cluster-wide-serialization.md SS10 item 7
+  -- for the full writeup. Not fixed here -- out of this slice's negative scope (SS8).
+  --
+  -- TWO-LAYER design, added round-01 codex review (2026-08-05): this LOCK TABLE statement alone gives
+  -- ZERO protection on the one host it cannot mechanically take its lock on -- the exact production host
+  -- this bootstrap targets, and this file previously had SOME protection there (the original
+  -- pg_advisory_xact_lock below, database-local but needing no elevated privilege) that a LOCK-TABLE-only
+  -- design would have silently thrown away on exactly the host that matters most. Restored, unconditional,
+  -- taken FIRST, before this statement: it needs no privilege beyond ordinary connect rights and always
+  -- succeeds for any authenticated role, so it guarantees AT LEAST same-database serialization on every
+  -- host. LOCK TABLE then attempts to UPGRADE that to cluster-wide serialization when the connection can
+  -- take it (local/CI/docker-compose today; never on DigitalOcean). Layered, not either/or: on a
+  -- superuser connection both locks are held (redundant, harmless); on a degraded connection only the
+  -- advisory lock holds, which is still strictly better than zero. On a host where the cluster-wide
+  -- upgrade cannot be taken, cluster-wide safety (beyond the same-database floor this advisory lock
+  -- guarantees) depends on an OPERATIONAL rule: this bootstrap runs from exactly one place, never
+  -- concurrently, against that cluster -- see docs/autopilot-definer-bootstrap-cluster-wide-serialization.md SS5.5.
+  -- The WARNING appearing (or not) in a given run's log is the only evidence of whether the cluster-wide
+  -- upgrade held for that run -- this statement's mere presence in the file is not proof.
   --
   -- DELIBERATELY A DIFFERENT KEY from CHAT_DEFINER_LOCK_KEY (migrate.test.ts, "chad") / the
-  -- withChatDefinerLock() test harness, not a reuse of it -- the two serve different purposes and
-  -- MUST NOT share a key. withChatDefinerLock holds a SESSION-scoped lock on ONE dedicated connection
-  -- for an entire test body's duration, external to this script. If this in-script lock used the SAME
-  -- key, any test connection OTHER than that dedicated one (i.e. every real test in this suite) would
-  -- block forever waiting for a lock the test harness's own connection is holding and will not release
-  -- until the test body -- which is itself awaiting this very call -- returns: a guaranteed deadlock,
-  -- caught in practice by a 60s Vitest test timeout (codex round-03 fix, self-discovered before commit).
-  --
-  -- KNOWN, ACCEPTED BOUNDARY (codex round-04 [P1]): this lock -- like every PostgreSQL advisory lock
-  -- -- only serializes callers connected to the SAME database ("Advisory locks are local to each
-  -- database" -- postgresql.org/docs/16/explicit-locking.html). chat_definer itself is cluster-global
-  -- (pg_authid is a documented SHARED catalog, one copy per cluster, not per database --
-  -- postgresql.org/docs/16/catalog-pg-authid.html), so two bootstrap invocations against DIFFERENT
-  -- databases in the same cluster are not serialized by this lock and could in principle still race.
-  -- Matches 01-job-definer.sql's own advisory-lock scope exactly (the identical limitation, never
-  -- required to be closed for that role) and this application's actual deployment model, which does
-  -- not run multiple databases per cluster in normal operation. A cluster-wide fix exists in
-  -- principle (SERIALIZABLE isolation with caller-side retry -- the underlying pg_auth_members rows
-  -- ARE shared, so PostgreSQL's own conflict detection would correctly span databases) but would
-  -- require new retry logic in package.json's plain `psql` invocation that exists nowhere else in
-  -- this codebase's bootstrap tooling; deliberately deferred rather than built here.
-  PERFORM pg_advisory_xact_lock(1667525739); -- 0x63646c6b, "cdlk" -- distinct from "chad" (0x63686164), "jobd" (0x6a6f6264), "plxc" (0x706c7863)
+  -- withChatDefinerLock() test harness, not a reuse of it -- the two serve different purposes and MUST
+  -- NOT share a key. withChatDefinerLock holds a SESSION-scoped lock on ONE dedicated connection for an
+  -- entire test body's duration, external to this script. If this in-script lock used the SAME key, any
+  -- test connection OTHER than that dedicated one (i.e. every real test in this suite) would block
+  -- forever waiting for a lock the test harness's own connection is holding and will not release until
+  -- the test body -- which is itself awaiting this very call -- returns: a guaranteed deadlock, caught in
+  -- practice by a 60s Vitest test timeout (codex round-03 fix, self-discovered before commit, chat-
+  -- definer-role-provisioning).
+  PERFORM pg_advisory_xact_lock(1667525739); -- 0x63646c6b, "cdlk" -- distinct from "chad" (0x63686164),
+  -- "jobd" (0x6a6f6264), "plxc" (0x706c7863), and "jdlk" (0x6a646c6b, job_definer's own equivalent
+  -- same-database fallback, 01-job-definer.sql)
+  DO $lock$
+  BEGIN
+    LOCK TABLE pg_auth_members IN SHARE UPDATE EXCLUSIVE MODE;
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      RAISE WARNING 'chat_definer bootstrap: DEGRADED -- cannot acquire the cluster-wide serialization lock on pg_auth_members (insufficient privilege on this connection -- expected on a managed Postgres host with no true superuser). Proceeding WITHOUT the cross-database concurrency guarantee; this run depends on the operational single-bootstrap-point rule instead (docs/autopilot-definer-bootstrap-cluster-wide-serialization.md SS5.5).';
+  END
+  $lock$;
+  -- (distinct dollar-quote tag "lock", not the bare empty tag: the outer block already opened with the
+  -- bare empty dollar-quote tag, and PostgreSQL closes a dollar-quoted string at the FIRST subsequent
+  -- occurrence of that SAME tag -- nesting another bare-tag DO block here would prematurely close the
+  -- OUTER block's string right at this inner DO's own opening tag, breaking the rest of this block into
+  -- unparsable top-level SQL. Confirmed empirically this session: the bare-tag form throws "syntax error
+  -- at or near BEGIN" at the inner block's own BEGIN -- and this exact comment must never itself contain
+  -- the literal two-character dollar-quote tag sequence, or it reproduces the same collision.)
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_target) THEN
     RAISE EXCEPTION
       'chat_definer bootstrap: migration role % does not exist', v_target;

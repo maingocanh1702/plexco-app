@@ -467,6 +467,17 @@ async function hideRealJobDefiner(superuser: pg.Client, fn: () => Promise<void>)
   try {
     await fn();
   } finally {
+    // round-01 (v3) codex review finding: unconditional, mirroring hideRealChatDefiner's own pattern —
+    // a caller's assertion/query throwing before its OWN scratch-role cleanup runs must not leave a
+    // leftover scratch job_definer colliding with the rename-back below, masking the original failure
+    // and leaking cluster-global role state to whichever test or test file runs next. Unlike
+    // chat_definer, job_definer's own bootstrap grants USAGE ON SCHEMA public as its final statement
+    // (01-job-definer.sql) — a plain DROP ROLE fails ("cannot be dropped because some objects depend on
+    // it: privileges for schema public") until that grant is revoked first; there is no CASCADE option
+    // for DROP ROLE. Revoke is best-effort (a harmless no-op if it was never granted, or if no scratch
+    // job_definer exists at all).
+    await superuser.query(`REVOKE USAGE ON SCHEMA public FROM job_definer`).catch(() => {});
+    await superuser.query(`DROP ROLE IF EXISTS job_definer`);
     if (hadRealRole) {
       await superuser.query(`ALTER ROLE job_definer_hidden_for_test RENAME TO job_definer`);
     }
@@ -2158,6 +2169,69 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
   });
 });
 
+const JOB_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "..",
+  "infra",
+  "postgres-init",
+  "01-job-definer.sql",
+);
+
+// Shared by the job_definer and chat_definer cluster-wide-serialization concurrency cases below
+// (definer-bootstrap-cluster-wide-serialization). Widens the race window so a genuinely concurrent
+// race — two real connections, Promise.all/allSettled, not sequential awaits — reliably exercises
+// whichever lock is under test instead of finishing too fast to ever contend.
+//
+// round-01 (v3) codex review finding: injecting the sleep INSIDE the LOCK TABLE statement's own text
+// (the original design) meant a mutation test that removes/neutralizes that statement ALSO destroys the
+// injection point, so the "test" only proved the marker-guard below fires — never that the TIMING
+// assertion itself depends on a lock actually being held. Anchored instead on JOB_DEFINER_RACE_ANCHOR /
+// CHAT_DEFINER_RACE_ANCHOR — the first statement AFTER *both* lock attempts (advisory lock, then LOCK
+// TABLE) and unrelated to either one's own text — so removing/neutralizing EITHER lock statement leaves
+// the injection point intact and the timing assertion genuinely free to go red.
+const JOB_DEFINER_RACE_ANCHOR = "IF v_grant_to IN ('app', 'app_worker', 'readonly') THEN";
+const CHAT_DEFINER_RACE_ANCHOR =
+  "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_target) THEN";
+
+async function withSyntheticRaceWindow(
+  sql: string,
+  seconds: number,
+  marker: string,
+): Promise<string> {
+  if (!sql.includes(marker)) {
+    throw new Error(
+      `withSyntheticRaceWindow: marker not found (${marker}) — has the file's mechanism changed?`,
+    );
+  }
+  return sql.replace(marker, `PERFORM pg_sleep(${seconds});\n  ${marker}`);
+}
+
+// Mirrors DigitalOcean's own documented doadmin attribute set exactly (docs.digitalocean.com/products/
+// databases/postgresql/how-to/modify-user-privileges/, confirmed 2026-08-05): CREATEROLE, CREATEDB,
+// REPLICATION, BYPASSRLS — deliberately NOT superuser. Used to prove the fail-open degraded-privilege
+// design (definer-bootstrap-cluster-wide-serialization contract §5.4.1) and the auto-membership side
+// effect (§5.4.2) against a role shaped like the real production credential, not an arbitrary
+// non-superuser role. Created via the superuser `admin` connection, which — being superuser — can
+// freely grant any attribute set to a scratch role regardless of what that role itself will later be
+// able to do.
+async function withManagedPostgresAdminRole<T>(
+  fn: (roleName: string, password: string) => Promise<T>,
+): Promise<T> {
+  const roleName = "zz_managed_pg_admin_sim";
+  const password = "probe";
+  await admin.query(`DROP ROLE IF EXISTS ${roleName}`);
+  await admin.query(
+    `CREATE ROLE ${roleName} LOGIN NOSUPERUSER CREATEROLE CREATEDB REPLICATION BYPASSRLS PASSWORD '${password}'`,
+  );
+  try {
+    return await fn(roleName, password);
+  } finally {
+    await admin.query(`DROP ROLE IF EXISTS ${roleName}`);
+  }
+}
+
 describe("job_definer bootstrap script itself fails closed on runtime-role targets", () => {
   it("refuses to grant job_definer to a runtime role passed as the migration_role target", async () => {
     await withJobDefinerLock(BASE!, async () => {
@@ -2219,6 +2293,149 @@ describe("job_definer bootstrap script itself fails closed on runtime-role targe
       await admin.end();
     }
   }, 30_000);
+
+  it("N=2 concurrent bootstrap calls against DIFFERENT databases in the same cluster genuinely serialize (timing-verified)", async () => {
+    // definer-bootstrap-cluster-wide-serialization: job_definer is CLUSTER-global (pg_auth_members is a
+    // shared catalog, not per-database), so a concurrent bootstrap from a DIFFERENT database in the same
+    // cluster is a real race this file previously had zero protection against. Unlike the chat_definer
+    // case below, job_definer has no re-pointing guard (a separately-recorded, deliberately out-of-scope
+    // gap), so both calls here target the SAME migration role — this case can only prove what the LOCK
+    // TABLE mechanism actually guarantees: (a) genuine serialization, proven by TIMING, not by one call
+    // being refused; (b) zero duplicate-grant errors when both callers agree on the same target.
+    await withJobDefinerLock(BASE!, async () => {
+      await bootstrapJobDefiner(admin);
+      const scratchDb = "plexco_migrate_clusterlock_job";
+      await admin.query(`DROP DATABASE IF EXISTS ${scratchDb}`);
+      await admin.query(`CREATE DATABASE ${scratchDb}`);
+      const target = "plexco_job_definer_test_clusterlock_target";
+      await admin.query(
+        `DO $$ BEGIN CREATE ROLE ${target}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+      );
+      try {
+        const sql = await readFile(JOB_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
+        const racySql = await withSyntheticRaceWindow(sql, 2, JOB_DEFINER_RACE_ANCHOR);
+        const clientA = await connect(BASE!);
+        const clientB = await connect(url(scratchDb));
+        try {
+          await clientA.query(`SET job_definer_bootstrap.migration_role = '${target}'`);
+          await clientB.query(`SET job_definer_bootstrap.migration_role = '${target}'`);
+          const startedAt = Date.now();
+          const results = await Promise.allSettled([
+            clientA.query(racySql),
+            clientB.query(racySql),
+          ]);
+          const elapsedMs = Date.now() - startedAt;
+          // Two 2s-holding calls that genuinely serialize take close to the SUM of both holds (~4s+);
+          // two that race concurrently finish close to the MAX (~2s). 3000ms cleanly separates the two.
+          expect(elapsedMs).toBeGreaterThan(3_000);
+          const rejected = results.filter((r) => r.status === "rejected");
+          expect(
+            rejected,
+            `no concurrent bootstrap call targeting the SAME role should fail: ${rejected
+              .map((r) => String((r as PromiseRejectedResult).reason))
+              .join(" | ")}`,
+          ).toEqual([]);
+          const granted = await admin.query(
+            `SELECT 1 FROM pg_auth_members am
+               JOIN pg_roles m ON m.oid = am.member
+               JOIN pg_roles r ON r.oid = am.roleid
+              WHERE r.rolname = 'job_definer' AND m.rolname = $1`,
+            [target],
+          );
+          expect(granted.rows.length).toBe(1);
+        } finally {
+          await clientA.end();
+          await clientB.end();
+        }
+      } finally {
+        await admin.query(`REVOKE job_definer FROM ${target}`).catch(() => {});
+        await admin.query(`DROP ROLE IF EXISTS ${target}`);
+        await admin.query(`DROP DATABASE IF EXISTS ${scratchDb}`);
+      }
+    });
+  }, 60_000);
+
+  it("N=2 concurrent DEGRADED (non-superuser) bootstrap calls against the SAME database still serialize via the same-database advisory-lock fallback, even though the cluster-wide LOCK TABLE upgrade cannot be taken", async () => {
+    // round-01 codex review (2026-08-05): the FIRST version of this fix removed chat_definer's
+    // pre-existing pg_advisory_xact_lock outright, leaving the degraded (production) path with ZERO
+    // protection -- a regression, since that lock needs no elevated privilege and would have kept
+    // providing same-database serialization there. Both files now take it UNCONDITIONALLY, before
+    // attempting the LOCK TABLE upgrade (see the "TWO-LAYER design" comment in both SQL files). This
+    // proves the RESTORED fallback actually serializes two genuinely concurrent DEGRADED callers
+    // targeting the SAME database -- the exact scenario the regression would have broken, and the
+    // realistic production shape (one shared doadmin-like credential, not a distinct one per caller).
+    //
+    // round-01 (v3) codex review finding: starting from a HIDDEN (fully absent) job_definer, as this
+    // test originally did, gives the same false confidence case 14's own comment already documents for
+    // chat_definer -- both racing callers' first write is block 1's CREATE ROLE, and PostgreSQL's own
+    // unique-index insert would serialize the LOSER against the WINNER'S ENTIRE transaction (including
+    // its injected sleep) regardless of whether the advisory lock does anything at all. Pre-create
+    // job_definer via `roleName` itself (not `admin`) BEFORE the race: this makes both racing
+    // connections' own CREATE ROLE a fast duplicate_object no-op (removing the confound) while keeping
+    // both eligible to grant membership to themselves (PG16 auto-grants `roleName` ADMIN OPTION as the
+    // actual creator here, SS5.4.2 -- a role's ADMIN OPTION is a property of the ROLE, not of any one
+    // connection, so both racing connections -- also authenticated as `roleName` -- inherit it).
+    await withJobDefinerLock(BASE!, () =>
+      withManagedPostgresAdminRole(async (roleName, password) => {
+        await hideRealJobDefiner(admin, async () => {
+          const setupClient = await connect(url(BASE_DB, roleName, password));
+          try {
+            await setupClient.query(await readFile(JOB_DEFINER_BOOTSTRAP_SQL_PATH, "utf8"));
+          } finally {
+            await setupClient.end();
+          }
+          const sql = await readFile(JOB_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
+          const racySql = await withSyntheticRaceWindow(sql, 2, JOB_DEFINER_RACE_ANCHOR);
+          const clientA = await connect(url(BASE_DB, roleName, password));
+          const clientB = await connect(url(BASE_DB, roleName, password));
+          const notices: Array<{ severity?: string; message?: string }> = [];
+          clientA.on("notice", (n) => notices.push({ severity: n.severity, message: n.message }));
+          clientB.on("notice", (n) => notices.push({ severity: n.severity, message: n.message }));
+          try {
+            const startedAt = Date.now();
+            const results = await Promise.allSettled([
+              clientA.query(racySql),
+              clientB.query(racySql),
+            ]);
+            const elapsedMs = Date.now() - startedAt;
+            // Two 2s-holding calls that genuinely serialize take close to the SUM of both holds (~4s+);
+            // two that race concurrently (the regression this test guards against) finish close to the
+            // MAX (~2s).
+            expect(elapsedMs).toBeGreaterThan(3_000);
+            const rejected = results.filter((r) => r.status === "rejected");
+            expect(
+              rejected,
+              `no concurrent DEGRADED bootstrap call targeting the SAME role should fail: ${rejected
+                .map((r) => String((r as PromiseRejectedResult).reason))
+                .join(" | ")}`,
+            ).toEqual([]);
+            // Both callers independently attempt the LOCK TABLE upgrade and independently fail it —
+            // two DEGRADED warnings expected, not one (the setup call's own warning is not captured —
+            // no notice listener was attached to setupClient).
+            const warnings = notices.filter((n) => n.severity === "WARNING");
+            expect(
+              warnings.filter((n) => /^job_definer bootstrap: DEGRADED/.test(n.message ?? "")),
+            ).toHaveLength(2);
+            const granted = await admin.query(
+              `SELECT 1 FROM pg_auth_members am
+                 JOIN pg_roles m ON m.oid = am.member
+                 JOIN pg_roles r ON r.oid = am.roleid
+                WHERE r.rolname = 'job_definer' AND m.rolname = $1
+                LIMIT 1`,
+              [roleName],
+            );
+            expect(granted.rows.length).toBe(1);
+          } finally {
+            await clientA.end();
+            await clientB.end();
+          }
+          // No explicit job_definer cleanup here — hideRealJobDefiner's own finally now
+          // unconditionally revokes schema usage and drops it (round-01 v3 review finding; see that
+          // helper's own comment).
+        });
+      }),
+    );
+  }, 60_000);
 });
 
 const CHAT_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
@@ -2769,16 +2986,30 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
   it("N concurrent bootstrap calls targeting DIFFERENT valid migration roles: exactly one succeeds, no member accumulates", async () => {
     // codex round-03 [P1]: the previous concurrent test only exercises the SAME target, which the
     // re-pointing guard's own read handles fine even under a race (every caller resolves the
-    // identical row). A DIFFERENT-target race is the one the pg_advisory_xact_lock in SS3 exists to
-    // serialize: without it, N concurrent calls could each observe zero existing members and all
+    // identical row). A DIFFERENT-target race is the one the serialization statement in block 3 exists
+    // to serialize: without it, N concurrent calls could each observe zero existing members and all
     // GRANT their own distinct target before any of them commits.
+    //
+    // STALE COMMENT UPDATED TWICE (definer-bootstrap-cluster-wide-serialization, 2026-08-05): this test
+    // originally exercised pg_advisory_xact_lock alone. round-00's fix replaced it with LOCK TABLE
+    // pg_auth_members and briefly removed the advisory lock outright; round-01's codex review found that
+    // a REGRESSION (chat_definer's degraded/production path lost the same-database protection it
+    // previously had) and restored the advisory lock as an UNCONDITIONAL fallback, taken before LOCK
+    // TABLE is attempted (see 02-chat-definer.sql's own block 3 "TWO-LAYER design" comment and
+    // docs/autopilot-definer-bootstrap-cluster-wide-serialization.md §9.4). So this test's own SAME
+    // mechanism (the advisory lock) is still exactly what it exercises today — this test's assertions
+    // were never wrong, only this comment's account of what SQL text backs them. The outcome it proves
+    // (exactly one caller succeeds, no member accumulates) also holds under the LOCK TABLE upgrade layer
+    // when superuser is available, and the "N=2 concurrent bootstrap calls against DIFFERENT databases"
+    // case below exists to prove that upgrade closes the cross-database gap this test's own advisory
+    // lock cannot (database-local, §5.1).
     //
     // Audit finding (this session): starting from a HIDDEN (fully absent) chat_definer, as this test
     // originally did, gives false confidence. All N callers' first write is block 1's `CREATE ROLE
     // chat_definer`, and PostgreSQL's own unique-index insert forces every loser to BLOCK until the
     // winner's transaction commits or rolls back -- by which point the winner's GRANT (same
     // transaction) has already committed too, so the re-pointing guard alone finishes the job. The
-    // advisory lock was never exercised; disabling it left this test green across 8/8 empirical runs.
+    // serialization statement was never exercised; disabling it left this test green across 8/8 empirical runs.
     // Pre-creating chat_definer bare and COMMITTED here removes that accidental serialization: block 1
     // resolves instantly for every caller (no insert to wait on), so only the lock -- or lack of it --
     // determines the outcome. Confirmed empirically: with the lock disabled and this fixture, 4/4
@@ -2823,6 +3054,144 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
             await admin.query(`DROP ROLE ${t}`);
           }
         }
+      }),
+    );
+  }, 60_000);
+
+  it("N=2 concurrent bootstrap calls against DIFFERENT databases in the same cluster serialize correctly; at most one non-runtime member ever exists", async () => {
+    // definer-bootstrap-cluster-wide-serialization: chat_definer is CLUSTER-global, so — unlike the case
+    // above, which only proves same-database serialization — this proves the LOCK TABLE mechanism closes
+    // the cross-database gap the prior pg_advisory_xact_lock mechanism could not (that lock is
+    // database-local; see docs/autopilot-definer-bootstrap-cluster-wide-serialization.md §5.1). This is
+    // the assertion that goes red if the LOCK TABLE statement is removed: without it, both callers can
+    // observe zero existing members and both succeed, landing two members and never triggering the
+    // re-pointing guard's rejection at all (verified by mutation-testing during implementation).
+    //
+    // round-01 (v3) codex review finding: this test originally started from a HIDDEN (fully absent)
+    // chat_definer, exactly the false-confidence shape case 14's own comment above documents — both
+    // racing callers' first write would be block 1's CREATE ROLE, and PostgreSQL's own unique-index
+    // insert alone would serialize the loser against the winner's full transaction regardless of the
+    // LOCK TABLE statement's presence. Pre-creating chat_definer bare and COMMITTED here (mirroring case
+    // 14's own established fix for the identical confound) removes that accidental serialization: block
+    // 1 resolves instantly for both callers, so only the LOCK TABLE statement — or its absence —
+    // determines the timing.
+    await withChatDefinerLock(BASE!, () =>
+      hideRealChatDefiner(admin, async () => {
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE chat_definer NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;`,
+        );
+        const scratchDb = "plexco_migrate_clusterlock_chat_b";
+        await admin.query(`DROP DATABASE IF EXISTS ${scratchDb}`);
+        await admin.query(`CREATE DATABASE ${scratchDb}`);
+        const targetA = "plexco_chat_definer_test_clusterlock_a";
+        const targetB = "plexco_chat_definer_test_clusterlock_b";
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${targetA}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        await admin.query(
+          `DO $$ BEGIN CREATE ROLE ${targetB}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+        );
+        try {
+          const sql = await readFile(CHAT_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
+          const racySql = await withSyntheticRaceWindow(sql, 2, CHAT_DEFINER_RACE_ANCHOR);
+          const clientA = await connect(BASE!);
+          const clientB = await connect(url(scratchDb));
+          try {
+            await clientA.query(`SET chat_definer_bootstrap.migration_role = '${targetA}'`);
+            await clientB.query(`SET chat_definer_bootstrap.migration_role = '${targetB}'`);
+            const startedAt = Date.now();
+            const results = await Promise.allSettled([
+              clientA.query(racySql),
+              clientB.query(racySql),
+            ]);
+            const elapsedMs = Date.now() - startedAt;
+            // Two 2s-holding calls that genuinely serialize take close to the SUM of both holds (~4s+);
+            // two that race concurrently (the pre-fix behavior) finish close to the MAX (~2s).
+            expect(elapsedMs).toBeGreaterThan(3_000);
+            const fulfilled = results.filter((r) => r.status === "fulfilled");
+            const rejected = results.filter((r) => r.status === "rejected");
+            expect(fulfilled.length).toBe(1);
+            expect(rejected.length).toBe(1);
+            expect(String((rejected[0] as PromiseRejectedResult).reason)).toMatch(
+              /already granted to/i,
+            );
+            const members = await chatDefinerMembers(admin);
+            expect(members).toHaveLength(1);
+            expect([targetA, targetB]).toContain(members[0]);
+          } finally {
+            await clientA.end();
+            await clientB.end();
+          }
+        } finally {
+          await admin.query(`DROP ROLE IF EXISTS chat_definer`);
+          await admin.query(`DROP ROLE IF EXISTS ${targetA}`);
+          await admin.query(`DROP ROLE IF EXISTS ${targetB}`);
+          await admin.query(`DROP DATABASE IF EXISTS ${scratchDb}`);
+        }
+      }),
+    );
+  }, 60_000);
+
+  it("N=2 concurrent DEGRADED (non-superuser) chat_definer bootstrap calls against the SAME database still serialize via the same-database advisory-lock fallback (timing-verified), even though the cluster-wide LOCK TABLE upgrade cannot be taken", async () => {
+    // round-01 (v3) codex review finding: the "both files, degraded path" case below proves the
+    // DEGRADED WARNING itself fires correctly for chat_definer, but with only ONE degraded caller it
+    // cannot prove the RESTORED advisory-lock fallback actually SERIALIZES two concurrent degraded
+    // callers -- the exact regression round-01 (v2 registration) found and fixed. The job_definer
+    // sibling case above proves this for job_definer; this is chat_definer's own dedicated behavioral
+    // proof, not just the manifest's grep check on the SQL text.
+    //
+    // chat_definer is pre-created via the SUPERUSER `admin` connection deliberately, not via the
+    // degraded `roleName` used to race below: this means NEITHER racing caller has ADMIN OPTION on
+    // chat_definer (only its actual creator would, per PG16's auto-membership side effect, SS5.4.2), so
+    // both are EXPECTED to fail at the final `EXECUTE format('GRANT chat_definer TO %I', ...)` step via
+    // ordinary PostgreSQL permission semantics ("permission denied to grant role... Only roles with the
+    // ADMIN option... may grant this role") -- deliberately DIFFERENT from, and avoiding, the
+    // pre-existing "unsafe membership options"/"re-pointing" bug (SS10 item 7) this test does not exist
+    // to exercise (that bug fires only when the DEGRADED caller is itself chat_definer's creator).
+    // Failure mode aside, the TIMING proof below is unaffected: it depends only on the advisory lock,
+    // acquired (or not) identically regardless of what happens afterward.
+    await withChatDefinerLock(BASE!, () =>
+      withManagedPostgresAdminRole(async (roleName, password) => {
+        await hideRealChatDefiner(admin, async () => {
+          await admin.query(
+            `DO $$ BEGIN CREATE ROLE chat_definer NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;`,
+          );
+          const sql = await readFile(CHAT_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
+          const racySql = await withSyntheticRaceWindow(sql, 2, CHAT_DEFINER_RACE_ANCHOR);
+          const clientA = await connect(url(BASE_DB, roleName, password));
+          const clientB = await connect(url(BASE_DB, roleName, password));
+          const notices: Array<{ severity?: string; message?: string }> = [];
+          clientA.on("notice", (n) => notices.push({ severity: n.severity, message: n.message }));
+          clientB.on("notice", (n) => notices.push({ severity: n.severity, message: n.message }));
+          try {
+            const startedAt = Date.now();
+            const results = await Promise.allSettled([
+              clientA.query(racySql),
+              clientB.query(racySql),
+            ]);
+            const elapsedMs = Date.now() - startedAt;
+            // Two 2s-holding calls that genuinely serialize take close to the SUM of both holds (~4s+);
+            // two that race concurrently (the regression this test guards against) finish close to the
+            // MAX (~2s).
+            expect(elapsedMs).toBeGreaterThan(3_000);
+            const rejected = results.filter((r) => r.status === "rejected");
+            expect(rejected).toHaveLength(2);
+            for (const r of rejected) {
+              expect(String((r as PromiseRejectedResult).reason)).toMatch(
+                /permission denied to grant role/i,
+              );
+            }
+            const warnings = notices.filter((n) => n.severity === "WARNING");
+            expect(
+              warnings.filter((n) => /^chat_definer bootstrap: DEGRADED/.test(n.message ?? "")),
+            ).toHaveLength(2);
+          } finally {
+            await clientA.end();
+            await clientB.end();
+          }
+          // No explicit chat_definer cleanup here — hideRealChatDefiner's own finally already
+          // unconditionally drops it regardless of outcome.
+        });
       }),
     );
   }, 60_000);
@@ -2874,4 +3243,108 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
       }),
     );
   }, 30_000);
+
+  it("when the connecting role cannot acquire the cluster-wide lock (mirroring DigitalOcean's doadmin), the LOCK TABLE statement itself degrades loudly instead of aborting silently for both files — job_definer's bootstrap transaction then commits without aborting (though its own unrelated final schema-usage grant separately no-ops under this role, §10 item 8, not this mechanism's concern); chat_definer's is separately refused by a pre-existing, unrelated check (documented, not fixed here)", async () => {
+    // definer-bootstrap-cluster-wide-serialization §5.4.1: DigitalOcean Managed PostgreSQL never grants
+    // superuser, so LOCK TABLE pg_auth_members fails there with insufficient_privilege. The design is
+    // fail-OPEN with a loud RAISE WARNING, not a silent no-op and not a hard abort — proven here for
+    // BOTH bootstrap files against one scratch role shaped exactly like doadmin's own documented
+    // attributes (CREATEROLE, CREATEDB, REPLICATION, BYPASSRLS, no SUPERUSER).
+    await withManagedPostgresAdminRole(async (roleName, password) => {
+      const scratchClient = await connect(url(BASE_DB, roleName, password));
+      const notices: Array<{ severity?: string; message?: string }> = [];
+      scratchClient.on("notice", (n) => notices.push({ severity: n.severity, message: n.message }));
+      try {
+        await withJobDefinerLock(BASE!, () =>
+          hideRealJobDefiner(admin, async () => {
+            const jobSql = await readFile(JOB_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
+            await expect(scratchClient.query(jobSql)).resolves.toBeDefined();
+            const jobGranted = await admin.query(
+              `SELECT 1 FROM pg_auth_members am
+                 JOIN pg_roles m ON m.oid = am.member
+                 JOIN pg_roles r ON r.oid = am.roleid
+                WHERE r.rolname = 'job_definer' AND m.rolname = $1
+                LIMIT 1`,
+              [roleName],
+            );
+            // LIMIT 1, not an exact count: PostgreSQL 16 allows multiple pg_auth_members rows for the
+            // same (role, member) pair from different grantors (§5.4.2's own auto-membership finding —
+            // the CREATE-time auto-grant and the bootstrap's own explicit GRANT are two separate
+            // records here), so this only proves membership EXISTS, not how many records back it.
+            expect(jobGranted.rows.length).toBe(1);
+            // No explicit job_definer cleanup here — hideRealJobDefiner's own finally now
+            // unconditionally revokes schema usage and drops it even if an assertion above throws
+            // (round-01 v3 review finding; see that helper's own comment).
+          }),
+        );
+
+        // NEWLY DISCOVERED, SEVERE finding (this session, via this exact test): unlike job_definer,
+        // chat_definer's bootstrap CANNOT COMPLETE under ANY non-superuser CREATEROLE scenario. All
+        // three natural cases were tested empirically:
+        //   1. self-targeting fresh creation (what this test exercises below): chat_definer's own
+        //      "unsafe membership options" check (chat-definer-role-provisioning/AP-47 codex round-04,
+        //      unrelated to this slice) refuses — it sees its OWN just-created PG16 auto-granted
+        //      (§5.4.2) ADMIN-OPTION record on the connecting role and treats it as an unsafe grant.
+        //   2. different-target fresh creation: chat_definer's "re-pointing" guard refuses instead,
+        //      reading that SAME auto-grant as "already granted to a different role".
+        //   3. re-run against an ALREADY-EXISTING chat_definer created by someone else: ordinary
+        //      Postgres refuses the GRANT itself — "permission denied to grant role... Only roles with
+        //      the ADMIN option... may grant this role" — since the connecting role never had ADMIN
+        //      OPTION on chat_definer to begin with (it did not create it).
+        // Every path is blocked. This means chat_definer's bootstrap, AS MERGED TODAY, can never
+        // succeed on the real target production host (DigitalOcean Managed PostgreSQL, doadmin, no true
+        // superuser) — a materially more severe conclusion than the already-merged §5.4.2 note's
+        // "benign when MIGRATION_ROLE is unset". NOT fixed here: this slice's negative scope is the
+        // serialization mechanism only, not chat_definer's existing fail-closed checks or Postgres's own
+        // GRANT/ADMIN-OPTION semantics. What this test proves instead, and what IS this slice's own
+        // responsibility: the LOCK TABLE mechanism itself still degrades correctly in ISOLATION — the
+        // WARNING fires and the transaction does not abort AT THAT STATEMENT (confirmed by the notice
+        // assertion below capturing it) — before the SEPARATE, pre-existing check refuses the overall
+        // bootstrap for its own, unrelated reason, rolling back the whole transaction (including the
+        // role creation itself — verified empirically: chat_definer does not exist afterward, so no
+        // extra cleanup is needed here beyond hideRealChatDefiner's own unconditional DROP ROLE IF
+        // EXISTS). See docs/autopilot-definer-bootstrap-cluster-wide-serialization.md §10 for the full
+        // writeup and the recommended (not implemented here) follow-up.
+        await withChatDefinerLock(BASE!, () =>
+          hideRealChatDefiner(admin, async () => {
+            const chatSql = await readFile(CHAT_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
+            await expect(scratchClient.query(chatSql)).rejects.toThrow(/unsafe grant record/i);
+          }),
+        );
+
+        // Not an exact total count: job_definer's own bootstrap (unchanged by this slice) issues a bare
+        // `GRANT USAGE ON SCHEMA public TO job_definer;` as its FINAL statement, outside any DO block —
+        // when run by this non-superuser scratch role, that GRANT itself no-ops with Postgres's OWN
+        // native WARNING ("no privileges were granted for \"public\""), a genuinely new finding this
+        // end-to-end test surfaced (the manual §5.4.1 probe used a simplified sequence, not this exact
+        // file). Pre-existing, unedited behavior, outside this slice's negative scope to fix — recorded
+        // in docs/autopilot-definer-bootstrap-cluster-wide-serialization.md §10 item 8 (codex round-06,
+        // gate-attempt-06: item 8 did not exist when this comment was first written, an actual gap this
+        // round corrected, not just a wrong pointer). This test asserts on the SPECIFIC DEGRADED warnings
+        // this slice's own mechanism is responsible for, not this schema-usage no-op nor a total warning
+        // count — it does not, and is not intended to, verify job_definer's effective schema privileges.
+        const warnings = notices.filter((n) => n.severity === "WARNING");
+        expect(
+          warnings.some((n) =>
+            /^job_definer bootstrap: DEGRADED.*cannot acquire.*lock/i.test(n.message ?? ""),
+          ),
+        ).toBe(true);
+        expect(
+          warnings.some((n) =>
+            /^chat_definer bootstrap: DEGRADED.*cannot acquire.*lock/i.test(n.message ?? ""),
+          ),
+        ).toBe(true);
+
+        // §5.4.2 auto-membership finding, documented here for job_definer — NOT asserted as a pass/fail
+        // condition: PostgreSQL 16 auto-grants a CREATEROLE-holding creator membership (with ADMIN
+        // OPTION) in any role it creates, so `roleName` itself was ALSO a member of job_definer
+        // (before this test's own cleanup dropped it above) — real and expected, not a defect. For
+        // chat_definer the same auto-grant is what makes its bootstrap refuse outright (see the large
+        // comment above) rather than merely leaving a documented side effect.
+      } finally {
+        await scratchClient.end();
+        await admin.query(`DROP ROLE IF EXISTS chat_definer`);
+      }
+    });
+  }, 60_000);
 });
