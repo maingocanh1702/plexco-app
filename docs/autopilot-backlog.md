@@ -1770,18 +1770,24 @@ notes: |
 
 ## task: chat-dm-safety-authority-core
 title: Slice 2 chuỗi in-app-chat — `dm_safety_enabled()` và authority tables/functions kèm theo
-status: blocked — at the review gate (2026-08-06), codex round-05 gate-attempt-08 outcome not yet
-  known as of this note (round-05 is this feature's LAST allowed review round under MAX_ROUNDS=5 —
-  any actionable finding in the next round is a HALT, not a sixth fix round). Owner ruling
-  implemented, 5 codex review rounds (round-01 gate-attempt-03, round-02 gate-attempt-05, round-03
-  gate-attempt-06, round-04 gate-attempt-07, round-05 gate-attempt-08) all real, all fixed in-slice.
-  Separately: the local dev cluster's
-  chat_definer role currently has zero members (confirmed real damage from this session's own
-  pre-fix test runs; the round-03 fix prevents recurrence but does not retroactively repair it) —
-  needs an owner-run `pnpm db:bootstrap`, out of this slice's own scope to perform. See the dated
-  notes at the end of
-  `notes:` for what each round found and changed; the AWAIT paragraph immediately below is preserved
-  as the dated record of what was asked, per this repo's own "never rewrite dated history" convention.
+status: blocked — HALT MAX_ROUNDS (2026-08-06). 5 real codex review rounds (round-01 gate-attempt-03,
+  round-02 gate-attempt-05, round-03 gate-attempt-06, round-04 gate-attempt-07, round-05
+  gate-attempt-08) all real, all fixed in-slice, fix-round-count.txt reached the hard cap of 5. A
+  sixth review (gate-attempt-09, reviewing commit 018ef92) found 2 more real, verified-accurate
+  findings — a job_definer locking regression round-05's own fix introduced while fixing a DIFFERENT
+  (chat_definer) deadlock, and 2 sites where a new manual lock's release() is not unconditionally
+  reached on cleanup failure. Per this repo's own MAX_ROUNDS breaker and this session's own repeated
+  written commitment, this HALTs rather than attempting a sixth fix round — full detail, exact fix
+  for both findings, and resume instructions in the worktree's own
+  `.autopilot/state/chat-dm-safety-authority-core/HALT-MAX_ROUNDS.txt` (gitignored, durable summary
+  here). A fresh successor task/registration is required to apply the two fixes and resume review
+  with a new MAX_ROUNDS budget — do not hand-edit the current worktree further under this
+  registration. Separately, unrelated to this HALT: the local dev cluster's chat_definer role has
+  zero members (real, pre-existing damage from BEFORE round-03's own fix existed) — needs an
+  owner-run `pnpm db:bootstrap`, out of this slice's own scope to perform. See the dated notes at
+  the end of `notes:` for what each round found and changed; the AWAIT paragraph immediately below
+  is preserved as the dated record of what was asked, per this repo's own "never rewrite dated
+  history" convention.
 status_history_2026-08-05_AWAIT: implemented in worktree feat/chat-dm-safety-authority-core,
   base_sha 3289e3b90b1e46739ead4bab8a05fe95fec0b77a, NOT yet at the review gate. 372/380 DB tests
   green; 8 failures are 3 distinct findings, none fixable within this slice's own scope without an
@@ -1958,6 +1964,35 @@ notes: |
   backlog status — corrected to `3289e3b` and `blocked`. Full detail: the contract doc's own
   round-05 amendment entry. If the next review round returns any actionable finding, this feature
   HALTs `MAX_ROUNDS` per this repo's own hard breaker — not a sixth fix round.
+
+  **2026-08-06, codex review round-06 (gate-attempt-09, reviewing commit 018ef92) — HALT MAX_ROUNDS.**
+  fix-round-count.txt had already reached 5 (the hard cap) after round-05. This sixth review found
+  2 more real findings, both independently re-verified against the actual code before writing this
+  note (not taken on faith): [P1] round-05's own fix narrowed `migrate.test.ts` BR-6's
+  `withJobDefinerLock` to wrap ONLY `bootstrapJobDefinerForOwner()` (to avoid a deadlock against
+  `bootstrapChatDefinerForOwner`'s newly-internal chat lock) — but this also removed job_definer's
+  own protection during the SAME test's later `runMigration()` call, which reaches migration 0022
+  (job_definer is only ASSERTED there, never created) unprotected. A concurrent JCL-2/JCL-3 test
+  (which deliberately hides/corrupts job_definer for its own negative-path assertion) can now race
+  it. **The fix**: wrap `bootstrapJobDefinerForOwner()` + `bootstrapChatDefinerForOwner()` +
+  `runMigration()` all inside ONE `withJobDefinerLock` (job-outer/chat-inner ordering preserved) —
+  this does NOT reintroduce round-05's own deadlock, since `withJobDefinerLock`'s key (`0x6a6f6264`
+  "jobd") and the chat lock's key (`0x63686164` "chad") are different; only nesting the SAME key
+  twice deadlocks. Re-check `rls-invariants.test.ts`'s JCL-1 (round-05's other fix site) for the
+  identical shape before trusting it clean. [P2] `acquireChatDefinerLock`'s manual release is not
+  reached on every cleanup-failure path: `test-harness.ts`'s own `teardown()` runs pool
+  shutdown/`DROP DATABASE`/`DROP ROLE` BEFORE the `finally` that calls `chatDefinerLockRelease()`,
+  and `migrate.test.ts`'s BR-3 has the identical shape — if any of those earlier statements throws,
+  the lock is never released, blocking every other file's chat_definer work until timeout. **The
+  fix**: wrap the WHOLE post-acquisition cleanup sequence (pools, DROP DATABASE, DROP ROLE, AND the
+  restore) in one outer `try/finally` whose `finally` unconditionally releases the lock, re-throwing
+  the original cleanup error rather than swallowing it. Per this repo's own MAX_ROUNDS breaker and
+  this session's own repeated written commitment (readiness.json notes for rounds 03/04/05), this
+  HALTs here rather than applying these two fixes as a sixth round. Full HALT record with exact
+  code-level detail: `.autopilot/state/chat-dm-safety-authority-core/HALT-MAX_ROUNDS.txt`
+  (gitignored — this note is the durable, tracked summary). A fresh successor task/registration
+  applies both fixes as its own first commit and resumes review with a new round budget; do not
+  hand-edit the current worktree under this registration.
 
 ## task: chat-dm-safety-audit-queryable-path
 title: A queryable, structured store for DM-safety denial forensics (chat_dm_safety_audit's deferred
