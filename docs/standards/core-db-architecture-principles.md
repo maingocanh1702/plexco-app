@@ -3,8 +3,8 @@
 > Principles dùng khi thiết kế core domain, database schema, service boundary và architecture slice cho Plexco.
 > Tài liệu này không thay thế `product/TDD.md`, `standards/business-rules.md` hoặc `standards/decisions.md`; khi conflict, cập nhật decision/source document trước rồi sync lại file này.
 
-**Version:** 1.7
-**Date:** 2026-06-21 (cập nhật 2026-07-27)
+**Version:** 1.8
+**Date:** 2026-06-21 (cập nhật 2026-08-05)
 **Scope:** multi-tenant core, PostgreSQL/RLS, sync engine, identity, payment ledger, marketplace discovery, web/chat/native surfaces.
 
 > **Cập nhật v1.2 — 16/07/2026 (DD-50):** phase-1 không thu SĐT. Strong proof cho claim membership có tiền chỉ là verified account email hoặc transactional one-time `link_code`; owner/name/CK chỉ là review evidence. Phone schema giữ dormant.
@@ -377,6 +377,37 @@ Every core/db slice should include tests for:
 
 Test names should state the invariant being protected.
 
+### P17. Migrations Are Forward-Only; There Is No Reverse Runbook
+
+`migrate.ts` (`packages/db/src/migrate.ts`) tracks applied migrations in `schema_migrations` by
+filename and skips any file already recorded there, regardless of the live schema's actual state.
+This is a property of the runner, not of any individual migration: hand-written reverse SQL run
+against a live database to "undo" a migration desynchronizes the ledger from the schema — the
+runner will believe the file is still applied and never reconsider it, with no built-in
+reconciliation path. No migration in this repo is reversible by runbook.
+
+The same check also bites during ordinary local iteration on a migration that has not shipped yet,
+not just deliberate rollback: editing an already-applied file's content and re-running the suite
+against the same test database trips this identical guard — the recorded `sha256` no longer matches,
+so the runner raises `changed after being applied (sha mismatch)` instead of silently re-applying the
+new content. That is the guard working correctly, not a bug to work around: reset the test database
+(drop and recreate) before re-running, never edit or delete `schema_migrations` rows to make it pass.
+
+Two cases cover every reason a migration might seem to need reversing:
+
+- **The migration fails.** A well-guarded migration (fail-closed checks before any destructive
+  step, one transaction per file — see P12) aborts entirely on its own; Postgres rolls back
+  everything. There is nothing left to undo by hand.
+- **The migration succeeds and is later judged wrong.** That is a product decision made with
+  knowledge that did not exist when the migration was authored. The correct response is a NEW
+  forward migration, written at that time, informed by what actually needs to change — not a
+  rollback runbook speculatively built before anyone knows what, if anything, will go wrong.
+
+Do not author a reverse-SQL runbook for a migration "just in case," and do not add schema or
+bookkeeping (audit tables, provenance tracking) whose only purpose is to support one. If such a
+table earns its place as a genuine audit record independent of reversal, that is a separate,
+deliberate decision — justify it on its own, don't back into it as rollback residue.
+
 ---
 
 ## 5. Database Design Checklist
@@ -426,7 +457,8 @@ Use this before approving a new table, migration or read model.
 - [ ] Does new code tolerate old data during rollout?
 - [ ] Is backfill bounded/resumable?
 - [ ] Are constraints validated after backfill?
-- [ ] Is rollback/correction plan written?
+- [ ] Does this migration fail closed with its own guards (nothing to undo on failure), and is
+      correction-if-judged-wrong deferred to a future forward migration, not a reverse runbook? (P17)
 
 ---
 
@@ -595,6 +627,7 @@ Before merging any core/db architecture change, ask:
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-08-05 | 1.8 | Add P17 (migrations are forward-only; no reverse runbook) and its 5.5 checklist item. Generalized from the `plans-dd29-capability-registry` slice: `migrate.ts` skips any migration file already recorded in `schema_migrations` regardless of live schema state, so a hand-written reverse-SQL runbook desynchronizes the ledger from the schema with no reconciliation path — a property of the runner, not of any one migration. Recorded once here rather than per-migration-header; a migration that fails aborts atomically on its own (nothing to undo), and a migration later judged wrong is corrected by a new forward migration, not reversed. Same-day addition: the identical hash check also bites during ordinary local iteration on an unshipped migration — editing an already-applied file and re-running the suite against the same test database trips `changed after being applied (sha mismatch)`, correctly; the fix is resetting the test database, never editing/deleting `schema_migrations` rows to force a pass. Surfaced by that slice's own re-verification run hitting this exact papercut. |
 | 2026-07-27 | 1.7 | Reconcile implemented-but-disabled shared job substrate and DD-91 single payment-truth/fail-closed target; preserve decision/runtime boundary. |
 | 2026-06-21 | 1.0 | Initial Plexco core/db/architecture principles. |
 | 2026-07-10 | 1.1 | DD-37 channel pivot (BRD v3.4): ví dụ adapter/provider-ingest/idempotency đổi Telegram→Zalo/Messenger; `ChannelIdentity` = Zalo/Messenger/Google/native. Không đổi nguyên tắc. |

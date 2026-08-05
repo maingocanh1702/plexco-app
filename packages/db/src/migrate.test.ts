@@ -29,7 +29,7 @@ vi.mock("node:fs/promises", async () => {
 });
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 28;
+const MIGRATION_COUNT = 30;
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -351,7 +351,9 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
       await withJobDefinerLock(BASE!, async () => {
         await ctx.bootstrapJobDefinerForOwner();
         const res = await ctx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0027_resolve_tenant_status_locked.sql");
+        expect(res.applied[res.applied.length - 1]).toBe(
+          "0029_dd29_capability_registry_contract.sql",
+        );
       });
 
       const worker = await ctx.connectAsWorker();
@@ -554,6 +556,926 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
         }
       });
     } finally {
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
+describe("DD29-1/DD29-2 0028 expand fails closed on plan_key data anomalies", () => {
+  it("DD29-1 (guard 1): a subscriptions row referencing an unrecognized plan_key rolls back 0028 entirely", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard1");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      // 0000-0027 includes 0022/0023, which require job_definer membership on the
+      // migration owner (see BR-5/BR-7) — bootstrap it before replaying the files.
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Seed via the superuser connection (bypasses RLS), matching BR-5/BR-7 — the
+      // owner pool is reserved for applying migration files, not application DML.
+      // An orphaned subscriptions row referencing a plan_key outside the known
+      // old∪new set can only exist live via a historical FK bypass (see 0028's
+      // header) — drop the FK momentarily to construct that anomaly for the test.
+      // The live FK is Postgres-auto-named (0007_billing.sql never named it, and
+      // 0025's naming-drift sweep covered CHECK constraints only, not this FK), so
+      // look its actual name up rather than assuming schema.ts's declared name.
+      // subscriptions carries TWO FKs (tenant_id -> tenants, (plan_key, plan_version)
+      // -> plans) — filter by the referenced table so this can never accidentally
+      // grab the tenant FK instead (codex round-01 [P2], gate-attempt-02).
+      const fk = await superuserInDb.query(
+        `SELECT conname FROM pg_constraint
+         WHERE conrelid = 'subscriptions'::regclass AND contype = 'f' AND confrelid = 'plans'::regclass`,
+      );
+      expect(fk.rows.length, "exactly one FK from subscriptions to plans").toBe(1);
+      const fkName = (fk.rows[0] as { conname: string }).conname;
+      await superuserInDb.query(`ALTER TABLE subscriptions DROP CONSTRAINT ${fkName}`);
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Guard1', 'dd29-guard1', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      await superuserInDb.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
+         VALUES ($1, 'bogus', 1, now(), now() + interval '30 days')`,
+        [tenantId],
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0028)).rejects.toThrow(/unrecognized plan_key/i);
+
+      // Prove the whole file rolled back, not just the failing guard statement.
+      const plans = await superuserInDb.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free','host_pro')`,
+      );
+      expect(plans.rows.length).toBe(0);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("DD29-2 (guard 2): an old plan_key at plan_version != 1 rolls back 0028 entirely", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard2");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Seed via the superuser connection (bypasses RLS), matching BR-5/BR-7. A
+      // hypothetical price-change event on an old tier: the schema explicitly
+      // supports multiple plan versions per key (edge case #6 / test #19 — "plan
+      // version immutable, change price -> new version created").
+      await superuserInDb.query(
+        `INSERT INTO plans (plan_key, version, price) VALUES ('telegram', 2, 89000)`,
+      );
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Guard2', 'dd29-guard2', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      await superuserInDb.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
+         VALUES ($1, 'telegram', 2, now(), now() + interval '30 days')`,
+        [tenantId],
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0028)).rejects.toThrow(/version <> 1/i);
+
+      const plans = await superuserInDb.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free','host_pro')`,
+      );
+      expect(plans.rows.length).toBe(0);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("DD29-10 (guard 2, catalog check): an UNREFERENCED old-key plans row at version != 1 rolls back 0028 entirely (codex round-08 [P1], gate-attempt-04) — no subscription needs to point at it", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard2_catalog");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // A historical price-change snapshot that NOTHING references any more (the tenant that
+      // was on it long since cancelled/migrated away) — deliberately no subscriptions INSERT
+      // here, unlike DD29-2. The subscriptions-only check in guard 2 would miss this row
+      // entirely; only the catalog-side check added for this finding can see it.
+      await superuserInDb.query(
+        `INSERT INTO plans (plan_key, version, price) VALUES ('telegram', 2, 89000)`,
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0028)).rejects.toThrow(/plans catalog row/i);
+
+      // Prove the whole file rolled back and the historical row survives untouched.
+      const legacy = await superuserInDb.query(
+        `SELECT price FROM plans WHERE plan_key = 'telegram' AND version = 2`,
+      );
+      expect(legacy.rows.length).toBe(1);
+      expect((legacy.rows[0] as { price: number }).price).toBe(89000);
+      const plans = await superuserInDb.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free','host_pro')`,
+      );
+      expect(plans.rows.length).toBe(0);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
+describe("DD29-9 0028 expand fails closed on a conflicting pre-existing plans catalog row", () => {
+  it("guard 4: a pre-existing free@1 row with the wrong payload survives ON CONFLICT DO NOTHING, and the post-insert check catches it (codex round-07 [P1], gate-attempt-01 on this registration)", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard4");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Simulate a stray free@1 row from an earlier manual edit or a partially-applied
+      // prior attempt: widen the CHECK ourselves (same predicate 0028's own step 2
+      // creates — its later DROP+re-ADD is then a harmless no-op) so a 'free' value is
+      // insertable, then insert a row whose payload does NOT match the canonical DD-29
+      // shape (wrong price, empty limits/entitlements instead of the real ones).
+      await superuserInDb.query(`ALTER TABLE plans DROP CONSTRAINT plans_key_chk`);
+      await superuserInDb.query(
+        `ALTER TABLE plans ADD CONSTRAINT plans_key_chk
+           CHECK (plan_key IN ('free_web','telegram','plus_channel','all_channels','free','host_pro'))`,
+      );
+      await superuserInDb.query(
+        `INSERT INTO plans (plan_key, version, price, limits, entitlements)
+         VALUES ('free', 1, 999999, '{}', '{}')`,
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0028)).rejects.toThrow(
+        /free@1 plans row does not match/i,
+      );
+
+      // Prove the whole file rolled back: the stray row is untouched (still the wrong
+      // price, not silently "fixed"), and host_pro was never left half-inserted either.
+      const free = await superuserInDb.query(
+        `SELECT price, limits, entitlements FROM plans WHERE plan_key = 'free' AND version = 1`,
+      );
+      expect(free.rows.length).toBe(1);
+      expect((free.rows[0] as { price: number }).price).toBe(999999);
+      const hostPro = await superuserInDb.query(
+        `SELECT 1 FROM plans WHERE plan_key = 'host_pro' AND version = 1`,
+      );
+      expect(hostPro.rows.length).toBe(0);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
+describe("DD29-7 0028 expand fails closed on any legacy channel-tier subscription, regardless of status (guard 3)", () => {
+  async function replayThrough27(ctx: {
+    bootstrapJobDefinerForOwner: () => Promise<void>;
+    ownerPool: { query: (sql: string) => Promise<unknown> };
+  }): Promise<void> {
+    await withJobDefinerLock(BASE!, async () => {
+      await ctx.bootstrapJobDefinerForOwner();
+      const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+      for (const f of files) {
+        if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+        await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+      }
+    });
+  }
+
+  async function expectGuard3Fires(dbSlug: string, planKey: string, status: string) {
+    const ctx = await setupNonSuperuserOwnerContext(dbSlug);
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await replayThrough27(ctx);
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ($1, $2, 'active') RETURNING id`,
+        [`DD29 Guard3 ${dbSlug}`, `dd29-guard3-${dbSlug}`],
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      await superuserInDb.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end, status)
+         VALUES ($1, $2, 1, now(), now() + interval '30 days', $3)`,
+        [tenantId, planKey, status],
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0028)).rejects.toThrow(/distinctly-priced channel tier/i);
+
+      const plans = await superuserInDb.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free','host_pro')`,
+      );
+      expect(plans.rows.length).toBe(0);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }
+
+  it("guard 3 fires for an ACTIVE telegram subscription — remapping to host_pro would silently reprice/upgrade a paying tenant", async () => {
+    await expectGuard3Fires("plexco_migrate_dd29_guard3_active", "telegram", "active");
+  }, 60_000);
+
+  it("guard 3 fires for a PAST_DUE plus_channel subscription", async () => {
+    await expectGuard3Fires("plexco_migrate_dd29_guard3_pastdue", "plus_channel", "past_due");
+  }, 60_000);
+
+  it("guard 3 fires for a CANCELLED all_channels subscription too — tier identity is unconditionally lost once collapsed, regardless of status (codex round-02 [P1], gate-attempt-03: trialing/suspended rows can later reactivate onto the wrong tier if this were allowed through)", async () => {
+    await expectGuard3Fires("plexco_migrate_dd29_guard3_cancelled", "all_channels", "cancelled");
+  }, 60_000);
+
+  it("guard 3 fires for a TRIALING telegram subscription — a trial can convert to active later, still on the wrong tier if collapsed now", async () => {
+    await expectGuard3Fires("plexco_migrate_dd29_guard3_trialing", "telegram", "trialing");
+  }, 60_000);
+
+  it("guard 3 fires for a SUSPENDED plus_channel subscription — a suspended tenant can pay its balance and reactivate, still onto the wrong tier if collapsed now", async () => {
+    await expectGuard3Fires("plexco_migrate_dd29_guard3_suspended", "plus_channel", "suspended");
+  }, 60_000);
+
+  it("guard 3 does NOT fire for an ACTIVE free_web subscription — free_web is not a paid tier, no re-pricing question, remapped cleanly to free", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_guard3_freeweb");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await replayThrough27(ctx);
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Guard3 FreeWeb', 'dd29-guard3-freeweb', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      await superuserInDb.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end, status)
+         VALUES ($1, 'free_web', 1, now(), 'infinity', 'active')`,
+        [tenantId],
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await ctx.ownerPool.query(sql0028);
+
+      const sub = await superuserInDb.query(
+        `SELECT plan_key, plan_version FROM subscriptions WHERE tenant_id = $1`,
+        [tenantId],
+      );
+      const subRow = sub.rows[0] as { plan_key: string; plan_version: number };
+      expect(subRow.plan_key).toBe("free");
+      expect(subRow.plan_version).toBe(1);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+});
+
+describe("DD29-8 0028's lock ordering avoids a deadlock with concurrent tenant_provision()", () => {
+  it("structural: 0028's first statement touching subscriptions appears before its first statement touching plans", async () => {
+    // The dynamic test below proves "if 0028 locks subscriptions first, a concurrent
+    // tenant_provision() call blocks cleanly instead of deadlocking" — but it manually replays
+    // just the one ALTER statement, not 0028's actual file, so on its own it cannot prove 0028
+    // ITSELF has that order. This structural check closes that gap by reading the real file.
+    const sql0028 = await readFile(
+      path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+      "utf8",
+    );
+    const withoutComments = sql0028.replace(/--.*$/gm, "");
+    const firstSubscriptionsStatement = withoutComments.search(/\bsubscriptions\b/i);
+    const firstPlansStatement = withoutComments.search(/\bALTER TABLE plans\b/i);
+    expect(firstSubscriptionsStatement).toBeGreaterThan(-1);
+    expect(firstPlansStatement).toBeGreaterThan(-1);
+    expect(
+      firstSubscriptionsStatement,
+      "0028 must touch subscriptions (acquiring its lock) before it touches plans, or a concurrent tenant_provision() call can deadlock against it — see the file's own lock-ordering header note",
+    ).toBeLessThan(firstPlansStatement);
+  });
+
+  it("a concurrent tenant_provision() call blocks cleanly on 0028's subscriptions lock and completes once the migration's transaction ends — no deadlock (codex round-05 [P1], gate-attempt-08)", async () => {
+    const dbName = "plexco_migrate_dd29_lockorder";
+    const admin = new pg.Client({ connectionString: BASE! });
+    await admin.connect();
+    let dbClient: pg.Client | undefined;
+    let appClient: pg.Client | undefined;
+    let migrationClient: pg.Client | undefined;
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE ${dbName}`);
+
+      // Superuser-owned replay of 0000-0027 (matches setupRlsTestContext's own pattern, the same
+      // one auth.test.ts's already-passing tenant_provision tests rely on) — every object,
+      // including tenant_provision() itself, ends up owned by a role that bypasses RLS. Using
+      // setupNonSuperuserOwnerContext here instead would make tenant_provision()'s OWN inserts
+      // (memberships, tenant_admins — unrelated to this test's subscriptions/plans concern) hit
+      // FORCE RLS with no app.tenant_id set, for a reason orthogonal to the lock-ordering fix this
+      // test targets.
+      dbClient = await connect(url(dbName));
+      await withJobDefinerLock(BASE!, async () => {
+        await bootstrapJobDefiner(admin);
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+          await dbClient!.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Connect as `app` — the runtime role tenant_provision() is GRANTed to (already granted by
+      // 0012, part of the 0000-0027 replay above). `app` is a CLUSTER-GLOBAL role, shared with
+      // every other suite's own setRolePasswordRaceSafe(client, "app", "plexco_test_app", ...) —
+      // this MUST set the exact same password those use (a first version of this test picked its
+      // own literal instead and, by racing a concurrent suite's ALTER ROLE, broke every other
+      // connect-as-app test in the run with "password authentication failed"). Retry on the same
+      // "tuple concurrently updated" race test-harness.ts's own helper tolerates, since two
+      // concurrent ALTERs to the identical value can still MVCC-conflict.
+      const appPassword = "plexco_test_app";
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await dbClient.query(`ALTER ROLE app WITH LOGIN PASSWORD '${appPassword}'`);
+          break;
+        } catch (error) {
+          if (String(error).includes("tuple concurrently updated") && attempt < 10) {
+            await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
+            continue;
+          }
+          throw error;
+        }
+      }
+      appClient = await connect(url(dbName, "app", appPassword));
+
+      const personRow = await dbClient.query(
+        `INSERT INTO persons (display_name) VALUES ('DD29 Lock Order Owner') RETURNING id`,
+      );
+      const personId = (personRow.rows[0] as { id: string }).id;
+
+      // A: take 0028's FIRST lock-acquiring statement (subscriptions) and hold it open —
+      // simulates the migration being mid-flight. Lock conflicts are enforced regardless of role
+      // privilege (RLS bypass only affects policy evaluation, not lock acquisition), so this still
+      // exercises the exact mechanic the fix relies on.
+      migrationClient = await connect(url(dbName));
+      await migrationClient.query("BEGIN");
+      await migrationClient.query("ALTER TABLE subscriptions NO FORCE ROW LEVEL SECURITY");
+
+      // B: a concurrent tenant_provision() call needs the SAME subscriptions lock for its own
+      // INSERT — with the fix, it must BLOCK (queue), not error and not deadlock, while A holds it.
+      const provisionPromise = appClient.query(
+        `SELECT tenant_provision($1, $2, $3, $4, $5) AS tenant_id`,
+        ["dd29-lockorder-tenant", "DD29 Lock Order Tenant", "Asia/Ho_Chi_Minh", "vi", personId],
+      );
+      let settled = false;
+      let rejection: unknown;
+      provisionPromise.then(
+        () => {
+          settled = true;
+        },
+        (error: unknown) => {
+          settled = true;
+          rejection = error;
+        },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(
+        settled,
+        `tenant_provision() must still be BLOCKED (not resolved, not errored) while the migration's transaction holds the subscriptions lock. rejection=${String(rejection)}`,
+      ).toBe(false);
+
+      // A commits — releases the lock. B's blocked call must now complete cleanly: no deadlock
+      // error, a real tenant_id returned.
+      await migrationClient.query("COMMIT");
+      const provisionResult = await provisionPromise;
+      expect(rejection).toBeUndefined();
+      expect((provisionResult.rows[0] as { tenant_id: string }).tenant_id).toMatch(
+        /^[0-9a-f-]{36}$/i,
+      );
+    } finally {
+      if (migrationClient) await migrationClient.end();
+      if (appClient) await appClient.end();
+      if (dbClient) await dbClient.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`).catch(() => {});
+      await admin.end();
+    }
+  }, 60_000);
+});
+
+describe("DD29-3 0028 expand upgrade path: pre-existing subscriptions rows are correctly repointed", () => {
+  it("A1/A3: old plans rows survive alongside the new ones, and a pre-existing free_web row remaps to free at version 1", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_upgrade");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 28) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Only free_web is ever auto-repointed by this migration (0011's seed shape,
+      // version 1). telegram/plus_channel/all_channels are deliberately NOT seeded
+      // here — guard 3 (see 0028) unconditionally halts on any row referencing one
+      // of those three, regardless of status; DD29-7's tests prove that behavior.
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Upgrade free_web', 'dd29-upgrade-free-web', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      await superuserInDb.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
+         VALUES ($1, 'free_web', 1, now(), now() + interval '30 days')`,
+        [tenantId],
+      );
+
+      const sql0028 = await readFile(
+        path.join(MIGRATIONS_DIR, "0028_dd29_capability_registry_expand.sql"),
+        "utf8",
+      );
+      await ctx.ownerPool.query(sql0028);
+
+      // A1: the 4 old catalog rows still exist alongside the 2 new ones.
+      const plans = await superuserInDb.query<{ plan_key: string }>(
+        `SELECT plan_key FROM plans ORDER BY plan_key`,
+      );
+      expect(plans.rows.map((r) => r.plan_key).sort()).toEqual(
+        ["all_channels", "free", "free_web", "host_pro", "plus_channel", "telegram"].sort(),
+      );
+
+      // A1 (capability payload): the exact price/limits/entitlements for both new
+      // rows, not just plan_key existence — a plan_key-only check would miss a
+      // flipped capability flag, a wrong price, or a dropped key (codex round-01
+      // [P2], gate-attempt-02). Literals match feature_billing_lifecycle_tech.md:68-81
+      // verbatim, same source 0028's own INSERT transcribes from.
+      const catalog = await superuserInDb.query(
+        `SELECT plan_key, price, limits, entitlements FROM plans
+         WHERE plan_key IN ('free','host_pro') ORDER BY plan_key`,
+      );
+      expect(catalog.rows).toEqual([
+        {
+          plan_key: "free",
+          price: 0,
+          limits: { max_clubs: 2, ai_monthly_question_cap: 0 },
+          entitlements: {
+            capabilities: {
+              web_app: true,
+              bot_zalo: true,
+              bot_messenger: true,
+              session_management: true,
+              discovery_marketplace: true,
+              payment_mark_manual: true,
+              payment_reconcile_auto: false,
+              reminders_manual: true,
+              reminders_auto: false,
+              assistant_ai_kb: false,
+              crm_dashboard: false,
+            },
+          },
+        },
+        {
+          plan_key: "host_pro",
+          price: 250000,
+          limits: { max_clubs: null, ai_monthly_question_cap: 2000 },
+          entitlements: {
+            capabilities: {
+              web_app: true,
+              bot_zalo: true,
+              bot_messenger: true,
+              session_management: true,
+              discovery_marketplace: true,
+              payment_mark_manual: true,
+              payment_reconcile_auto: true,
+              reminders_manual: true,
+              reminders_auto: true,
+              assistant_ai_kb: true,
+              crm_dashboard: true,
+            },
+          },
+        },
+      ]);
+
+      // A3: the pre-existing free_web row remapped to free at version 1.
+      const sub = await superuserInDb.query(
+        `SELECT plan_key, plan_version FROM subscriptions WHERE tenant_id = $1`,
+        [tenantId],
+      );
+      const subRow = sub.rows[0] as { plan_key: string; plan_version: number };
+      expect(subRow.plan_key).toBe("free");
+      expect(subRow.plan_version).toBe(1);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("A2: tenant_provision() writes plan_key='free' immediately after 0028 alone, with 0029 NOT yet applied (codex round-2, gate-attempt-03 [P2]: no existing test isolates this phase boundary — DD29-8's deadlock test never runs 0028's SQL at all, and auth.test.ts's own plan_key='free' assertion runs after the full migration tail, so it would pass unchanged even if the function redefinition had been mistakenly authored in 0029 instead of 0028)", async () => {
+    const dbName = "plexco_migrate_dd29_provision_0028_only";
+    const admin = new pg.Client({ connectionString: BASE! });
+    await admin.connect();
+    let dbClient: pg.Client | undefined;
+    let appClient: pg.Client | undefined;
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE ${dbName}`);
+
+      // Superuser-owned replay of 0000-0028 ONLY — same reasoning as DD29-8: every object,
+      // including tenant_provision() itself, ends up owned by a role that bypasses RLS, so its
+      // own inserts (memberships, tenant_admins) don't hit FORCE RLS with no app.tenant_id set.
+      dbClient = await connect(url(dbName));
+      await withJobDefinerLock(BASE!, async () => {
+        await bootstrapJobDefiner(admin);
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 29) continue;
+          await dbClient!.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Confirm 0029 genuinely has not run — the old 4 plans rows must still exist, or this
+      // test would prove nothing about the phase boundary it claims to isolate.
+      const preCheck = await dbClient.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels')`,
+      );
+      expect(preCheck.rows.length).toBe(4);
+
+      // Connect as `app` — same password convention DD29-8 uses (shared cluster-global role;
+      // must match every other suite's own setRolePasswordRaceSafe(client, "app", ...) literal).
+      const appPassword = "plexco_test_app";
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await dbClient.query(`ALTER ROLE app WITH LOGIN PASSWORD '${appPassword}'`);
+          break;
+        } catch (error) {
+          if (String(error).includes("tuple concurrently updated") && attempt < 10) {
+            await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
+            continue;
+          }
+          throw error;
+        }
+      }
+      appClient = await connect(url(dbName, "app", appPassword));
+
+      const personRow = await dbClient.query(
+        `INSERT INTO persons (display_name) VALUES ('DD29 A2 Phase Owner') RETURNING id`,
+      );
+      const personId = (personRow.rows[0] as { id: string }).id;
+
+      const result = await appClient.query(
+        `SELECT tenant_provision($1, $2, $3, $4, $5) AS tenant_id`,
+        ["dd29-a2-phase", "DD29 A2 Phase Tenant", "Asia/Ho_Chi_Minh", "vi", personId],
+      );
+      const tenantId = (result.rows[0] as { tenant_id: string }).tenant_id;
+
+      const subOut = await dbClient.query(
+        `SELECT plan_key, plan_version, status FROM subscriptions WHERE tenant_id = $1`,
+        [tenantId],
+      );
+      const subOutRow = subOut.rows[0] as {
+        plan_key: string;
+        plan_version: number;
+        status: string;
+      };
+      expect(subOutRow.plan_key).toBe("free");
+      expect(subOutRow.plan_version).toBe(1);
+      expect(subOutRow.status).toBe("active");
+    } finally {
+      if (appClient) await appClient.end();
+      if (dbClient) await dbClient.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`).catch(() => {});
+      await admin.end();
+    }
+  }, 60_000);
+});
+
+describe("DD29-4/DD29-5 0029 contract narrows plans_key_chk and self-guards on stragglers", () => {
+  it("B1: applying 0029 immediately after a clean 0028 succeeds — old 4 plans rows gone, plans_key_chk now free/host_pro only", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_contract_clean");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 29) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      const sql0029 = await readFile(
+        path.join(MIGRATIONS_DIR, "0029_dd29_capability_registry_contract.sql"),
+        "utf8",
+      );
+      await ctx.ownerPool.query(sql0029);
+
+      const plans = await superuserInDb.query<{ plan_key: string }>(
+        `SELECT plan_key FROM plans ORDER BY plan_key`,
+      );
+      expect(plans.rows.map((r) => r.plan_key).sort()).toEqual(["free", "host_pro"]);
+
+      const chk = await superuserInDb.query(
+        `SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conname = 'plans_key_chk'`,
+      );
+      const chkDef = (chk.rows[0] as { d: string }).d;
+      expect(chkDef).toMatch(/'free'/);
+      expect(chkDef).toMatch(/'host_pro'/);
+      expect(chkDef).not.toMatch(/free_web|telegram|plus_channel|all_channels/);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("B2: 0029's own guard rejects a subscriptions row still on an old plan_key, even after 0028 already ran", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_contract_straggler");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 29) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // A straggler created AFTER 0028 ran (e.g. a write path 0028 didn't know about,
+      // or a restored/replayed row) — the old plans row still exists post-0028 (0029
+      // is what deletes it), so this FK insert is still valid at this point.
+      const t = await superuserInDb.query(
+        `INSERT INTO tenants (name, slug, status) VALUES ('DD29 Straggler', 'dd29-straggler', 'active') RETURNING id`,
+      );
+      const tenantId = (t.rows[0] as { id: string }).id;
+      await superuserInDb.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, period_start, period_end)
+         VALUES ($1, 'telegram', 1, now(), now() + interval '30 days')`,
+        [tenantId],
+      );
+
+      const sql0029 = await readFile(
+        path.join(MIGRATIONS_DIR, "0029_dd29_capability_registry_contract.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0029)).rejects.toThrow(/still on an old plan_key/i);
+
+      // Prove the whole file rolled back — the 4 old plans rows must still exist.
+      const plans = await superuserInDb.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels')`,
+      );
+      expect(plans.rows.length).toBe(4);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("guard 1b: an unreferenced old-key plans row inserted in the gap AFTER 0028 committed but BEFORE 0029 runs rolls 0029 back entirely, instead of being silently deleted (codex round-13 [P1], gate-attempt-02: 0029's guard 1 only ever scanned subscriptions, so a catalog-only gap-window row sailed past it)", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_contract_catalog_gap");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 29) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Simulate the gap window: a historical price-change snapshot lands in the catalog
+      // AFTER 0028 already committed (e.g. a manual pricing note, unrelated to onboarding
+      // traffic) — deliberately NO subscription references it, so 0029's guard 1 (which only
+      // scans subscriptions) would see zero remaining references and proceed straight to the
+      // unconditional DELETE without guard 1b.
+      await superuserInDb.query(
+        `INSERT INTO plans (plan_key, version, price) VALUES ('telegram', 2, 89000)`,
+      );
+
+      const sql0029 = await readFile(
+        path.join(MIGRATIONS_DIR, "0029_dd29_capability_registry_contract.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0029)).rejects.toThrow(/plans catalog row.*version/i);
+
+      // Prove the whole file rolled back: the gap-window row survives untouched, and so do
+      // the original 4 old plans rows (0029 never reached its DELETE).
+      const legacy = await superuserInDb.query(
+        `SELECT price FROM plans WHERE plan_key = 'telegram' AND version = 2`,
+      );
+      expect(legacy.rows.length).toBe(1);
+      expect((legacy.rows[0] as { price: number }).price).toBe(89000);
+      const oldPlans = await superuserInDb.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels') AND version = 1`,
+      );
+      expect(oldPlans.rows.length).toBe(4);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("guard 1b's LOCK TABLE plans closes the TOCTOU race: a concurrent INSERT into plans blocks while 0029 holds the exclusive lock, and only resolves (rejected by the now-narrowed CHECK) after 0029 commits — never sneaking in between the check and the DELETE (codex round-15 [P1], gate-attempt-04: the guard's own SELECT alone only takes ACCESS SHARE, which does not block a concurrent writer)", async () => {
+    const dbName = "plexco_migrate_dd29_contract_lock_race";
+    const admin = new pg.Client({ connectionString: BASE! });
+    await admin.connect();
+    let dbClient: pg.Client | undefined;
+    let migrationClient: pg.Client | undefined;
+    let concurrentClient: pg.Client | undefined;
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE ${dbName}`);
+      dbClient = await connect(url(dbName));
+      await withJobDefinerLock(BASE!, async () => {
+        await bootstrapJobDefiner(admin);
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 29) continue;
+          await dbClient!.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Split 0029's real file at its own LOCK TABLE statement, rather than hand-transcribing a
+      // parallel copy, so this test can never silently drift from what the migration actually
+      // runs. Part A ends with (and includes) the LOCK acquisition; part B is guard 1b through
+      // the CHECK narrow.
+      const sql0029 = await readFile(
+        path.join(MIGRATIONS_DIR, "0029_dd29_capability_registry_contract.sql"),
+        "utf8",
+      );
+      const lockStatement = "LOCK TABLE plans IN ACCESS EXCLUSIVE MODE;";
+      const lockIndex = sql0029.indexOf(lockStatement);
+      if (lockIndex === -1) {
+        throw new Error("could not find 0029's LOCK TABLE statement to split the file on");
+      }
+      const bodyStart = sql0029.indexOf("ALTER TABLE subscriptions NO FORCE ROW LEVEL SECURITY;");
+      const partA = sql0029.slice(bodyStart, lockIndex + lockStatement.length);
+      const partB = sql0029.slice(lockIndex + lockStatement.length);
+
+      migrationClient = await connect(url(dbName));
+      await migrationClient.query("BEGIN");
+      await migrationClient.query(partA);
+
+      // Concurrent writer: attempts to insert a stray old-key catalog row WHILE 0029 holds the
+      // exclusive lock it just took. With the fix, this must BLOCK (queue), not succeed
+      // immediately — that would be the exact race the guard is supposed to close.
+      concurrentClient = await connect(url(dbName));
+      const insertPromise = concurrentClient.query(
+        `INSERT INTO plans (plan_key, version, price) VALUES ('telegram', 2, 89000)`,
+      );
+      let settled = false;
+      let insertError: unknown;
+      insertPromise.then(
+        () => {
+          settled = true;
+        },
+        (error: unknown) => {
+          settled = true;
+          insertError = error;
+        },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(
+        settled,
+        `the concurrent INSERT must still be BLOCKED while 0029 holds the exclusive lock on plans. error=${String(insertError)}`,
+      ).toBe(false);
+
+      // 0029 proceeds — guard 1b passes (0 bad rows, since the concurrent insert has not landed
+      // and cannot land while the lock is held), the DELETE and CHECK narrow both succeed, commit.
+      await migrationClient.query(partB);
+      await migrationClient.query("COMMIT");
+
+      // The blocked INSERT now unblocks. It must fail — not because it was silently deleted, but
+      // because it never actually existed during 0029's transaction at all: by the time Postgres
+      // lets it proceed, plans_key_chk has already narrowed to ('free','host_pro'), so 'telegram'
+      // is rejected outright. This is the proof the race window is closed, not just documented.
+      await expect(insertPromise).rejects.toThrow(/plans_key_chk|check constraint/i);
+
+      const finalPlans = await dbClient.query(
+        `SELECT plan_key, version FROM plans WHERE plan_key = 'telegram'`,
+      );
+      expect(finalPlans.rows.length).toBe(0);
+    } finally {
+      if (migrationClient) await migrationClient.end();
+      if (concurrentClient) await concurrentClient.end();
+      if (dbClient) await dbClient.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`).catch(() => {});
+      await admin.end();
+    }
+  }, 60_000);
+
+  it("guard 1c: a target row (host_pro@1) DELETED in the gap window after 0028 committed but before 0029 runs rolls 0029 back entirely, instead of narrowing plans_key_chk over a missing FK target (codex round-1 [P1], gate-attempt-02: guards 1/1b only ever scan for OLD-key rows, so a gap-window edit to the NEW target rows sailed past both)", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_contract_target_deleted");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 29) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Simulate the gap window: a privileged edit removes host_pro@1 after 0028 committed
+      // (0028's own guard 4 validated it at that commit — this is strictly AFTER that).
+      await superuserInDb.query(`DELETE FROM plans WHERE plan_key = 'host_pro' AND version = 1`);
+
+      const sql0029 = await readFile(
+        path.join(MIGRATIONS_DIR, "0029_dd29_capability_registry_contract.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0029)).rejects.toThrow(
+        /host_pro@1 plans row is missing or no longer matches/i,
+      );
+
+      // Prove the whole file rolled back: the old 4 plans rows survive untouched, and
+      // plans_key_chk is still the wide expand-phase CHECK, not narrowed over a missing target.
+      const oldPlans = await superuserInDb.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels') AND version = 1`,
+      );
+      expect(oldPlans.rows.length).toBe(4);
+      const chk = await superuserInDb.query(
+        `SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conname = 'plans_key_chk'`,
+      );
+      expect((chk.rows[0] as { d: string }).d).toMatch(/free_web/);
+    } finally {
+      await superuserInDb.end();
+      await ctx.teardown();
+    }
+  }, 60_000);
+
+  it("guard 1c: a target row (free@1) MODIFIED (wrong price) in the gap window after 0028 committed but before 0029 runs rolls 0029 back entirely, instead of narrowing plans_key_chk over a corrupted catalog row (codex round-1 [P1], gate-attempt-02)", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_dd29_contract_target_modified");
+    const superuserInDb = await connect(url(ctx.dbName));
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+        for (const f of files) {
+          if (Number.parseInt(f.slice(0, 4), 10) >= 29) continue;
+          await ctx.ownerPool.query(await readFile(path.join(MIGRATIONS_DIR, f), "utf8"));
+        }
+      });
+
+      // Simulate the gap window: a privileged edit alters free@1's price after 0028 committed.
+      await superuserInDb.query(
+        `UPDATE plans SET price = 19000 WHERE plan_key = 'free' AND version = 1`,
+      );
+
+      const sql0029 = await readFile(
+        path.join(MIGRATIONS_DIR, "0029_dd29_capability_registry_contract.sql"),
+        "utf8",
+      );
+      await expect(ctx.ownerPool.query(sql0029)).rejects.toThrow(
+        /free@1 plans row is missing or no longer matches/i,
+      );
+
+      // Prove the whole file rolled back: the corrupted row survives exactly as altered (not
+      // silently accepted as canonical), and the old 4 plans rows are untouched too.
+      const free = await superuserInDb.query(
+        `SELECT price FROM plans WHERE plan_key = 'free' AND version = 1`,
+      );
+      expect((free.rows[0] as { price: number }).price).toBe(19000);
+      const oldPlans = await superuserInDb.query(
+        `SELECT plan_key FROM plans WHERE plan_key IN ('free_web','telegram','plus_channel','all_channels') AND version = 1`,
+      );
+      expect(oldPlans.rows.length).toBe(4);
+    } finally {
+      await superuserInDb.end();
       await ctx.teardown();
     }
   }, 60_000);

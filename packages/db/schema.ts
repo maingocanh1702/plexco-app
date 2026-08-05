@@ -1241,7 +1241,7 @@ export const plans = pgTable("plans", {
 }, (t) => ({
   uq: uniqueIndex("plans_key_version_uq").on(t.planKey, t.version),
   keyChk: check("plans_key_chk",
-    sql`${t.planKey} IN ('free_web','telegram','plus_channel','all_channels')`),
+    sql`${t.planKey} IN ('free','host_pro')`),
 }));
 
 export const subscriptions = pgTable("subscriptions", {

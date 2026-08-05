@@ -1,7 +1,7 @@
 # Feature: Host Billing & Tenant Lifecycle — Backend Tech Spec
 
 > **Canonical phase:** P5  
-> **Version:** 2.10 · 2026-08-03
+> **Version:** 2.12 · 2026-08-05
 > **Status:** Reviewed  
 > **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn; capability/availability resolver, provider wiring và lifecycle runtime chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../feature_billing_lifecycle.md`  
@@ -32,8 +32,12 @@ Billing ledger **separate schema/table set** from player ledger. Central `author
 CREATE TABLE plans (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   plan_key text NOT NULL CHECK (plan_key IN ('free','host_pro')),  -- DD-29 target (thay DD-03 4-tier)
-  -- ⚠️ PENDING MIGRATION: live packages/db/schema.ts vẫn CHECK 4-tier
-  --   ('free_web','telegram','plus_channel','all_channels'). CHECK ('free','host_pro') chưa land — không claim done.
+  -- Implemented by packages/db/migrations/0028_dd29_capability_registry_expand.sql (expand) +
+  -- 0029_dd29_capability_registry_contract.sql (contract), which move plans_key_chk to this exact
+  -- 2-tier CHECK; packages/db/schema.ts's keyChk predicate mirrors it. Self-verifying landed
+  -- condition (checkable directly, not a status claim that can go stale): this has reached main
+  -- once `ls packages/db/migrations/ | grep dd29_capability_registry` from repo root, on main,
+  -- lists both files.
   version integer NOT NULL,
   price integer NOT NULL,
   currency text NOT NULL DEFAULT 'VND',
@@ -128,17 +132,47 @@ CREATE TABLE billing_overrides (
 
 > Grep live `packages/db/migrations/` ngày 2026-07-27: `0000`–`0024` đã merge (25 migrations; tail `0024_public_visibility_capacity_check.sql`). **Cả 6 bảng** `plans` · `subscriptions` · `subscription_invoices` · `billing_transactions` · `billing_allocations` · `billing_overrides` **đã tồn tại từ `0007_billing.sql`** — DDL trên là baseline để đọc + target contract, **reuse, không recreate**. Mọi delta của slice billing phải dùng migration monotonic mới sau `0024`; không sửa migration đã apply.
 
-- **Migration (delta doc-DDL vs live `0007` → một migration mới monotonic sau tail hiện tại, KHÔNG sửa `0007`):**
-  - `plans.plan_key` CHECK `('free','host_pro')` + seed v1 DD-29 — live vẫn CHECK 4-tier (ghi chú PENDING MIGRATION trong DDL trên);
-  - `subscriptions`: bỏ `selected_extra_channel` (DD-29 — live còn cột này); `period_start`/`period_end` nullable cho free (DD-51 — live đang NOT NULL);
-  - `subscription_invoices.paid_at` (DD-51 — refund window đọc canonical `paid_at`; live chưa có cột);
-  - `billing_overrides.ticket_ref NOT NULL` (DD-51 — live chưa có cột).
+- **Migration (delta doc-DDL vs live `0007` → monotonic migration(s) sau tail hiện tại, KHÔNG sửa `0007`):**
+  - `plans.plan_key` CHECK `('free','host_pro')` + seed v1 (DD-29), implemented as TWO files
+    (`plans-dd29-capability-registry` slice): `packages/db/migrations/0028_dd29_capability_registry_expand.sql`
+    (expand — widen CHECK, seed, redefine `tenant_provision()`, and repoint the `free_web`
+    subscriptions row, the ONLY tier this migration ever auto-migrates — a fail-closed guard
+    unconditionally ABORTS the whole transaction instead if any subscriptions row still references
+    `telegram`/`plus_channel`/`all_channels`, regardless of status, since the UPDATE would otherwise
+    irreversibly lose which of those three tiers the row held) + `0029_dd29_capability_registry_contract.sql`
+    (contract — self-guarding narrow, re-validates the target catalog rows themselves before deleting
+    the old ones). See the DDL note above for the self-verifying landed condition.
+  - **Operational precondition for applying the DD-29 pair (owner-ratified 2026-08-04, no code
+    fence):** if this pair is ever applied to an environment carrying live onboarding traffic, pause
+    writes to `tenant_provision()` (i.e. onboarding) for the duration of the deploy. Reason: a
+    `tenant_provision()` call already in flight when `0028`'s `CREATE OR REPLACE FUNCTION` commits
+    finishes on its session's cached OLD function body (still writing `free_web`) — PL/pgSQL caches a
+    function's compiled body for the life of an in-progress call regardless of concurrent
+    redefinition. No fence (e.g. an advisory lock around tenant creation) is added because this window
+    closes PERMANENTLY once the pair lands — no future migration reproduces it — and today it has zero
+    traffic to protect: `infra-do-app-vpc-deployment` is still `status: idea` (no deployment contract
+    authored yet), BUILD-STATUS records Chat and Channel Booking runtime at 0, D1 email-token as CODE
+    DARK with no route/provider send, and DD-87 with no production caller; a repo-wide re-check at this
+    slice's re-authoring also confirmed `tenant_provision()` is still the ONLY writer of
+    `subscriptions.plan_key`. `0029`'s own self-guard is the enforcement if this precondition is
+    ignored anyway: a straggler `free_web` row aborts that migration loudly (a recoverable deploy
+    failure), not silently. See both migration files' own headers for the full mechanism.
+  - **Still pending, NOT part of the above slice:** `period_start`/`period_end` nullable cho free
+    (DD-51 — live đang NOT NULL); `subscription_invoices.paid_at` (DD-51 — refund window đọc canonical
+    `paid_at`; live chưa có cột); `billing_overrides.ticket_ref NOT NULL` (DD-51 — live chưa có cột).
+    `subscriptions.selected_extra_channel` column removal is ALSO not part of the above slice — note
+    this doc's own DDL comment above attributes it to DD-29 while an earlier version of this bullet
+    called it DD-51; that classification inconsistency predates this slice and is not resolved here,
+    but either way, removing the column is out of this slice's scope regardless of which decision owns
+    it (see the DD-29 slice's manifest `negative_scope`). All of the above track under the separate,
+    currently `idea`-status `feature-billing-lifecycle` backlog task.
 - **Rollback:**
 
 | Bước | Hành động | An toàn? |
 |------|-----------|----------|
 | 1 | Disable billing routes (`/api/billing*`, `/internal/billing/*`) + daily lifecycle job + billing webhook worker | ✅ |
-| 2 | Migration revert mới: revert **CHỈ additive/alter objects của slice** (CHECK/seed DD-29 + các cột DD-51 ở trên) sau khi kiểm tra dependency/data | ✅ Có điều kiện |
+| 2a | DD-29 pair (`0028`/`0029`) — no reverse runbook. Migrations in this repo are forward-only (`docs/standards/core-db-architecture-principles.md` P17): a failure aborts the whole transaction on its own, nothing to undo; a later decision that the migration was wrong ships as a new forward migration, informed by what actually needs correcting, not a speculative rollback of this one. | N/A — see P17 |
+| 2b | DD-51 columns revert (separate, future slice — not yet landed): revert **ONLY** those additive/alter objects, independently of 2a | ✅ Có điều kiện — chốt khi slice đó thực thi |
 | 3 | Drop baseline 6 bảng billing của `0007` | ❌ NEVER — migration đã apply trên main, có thể chứa billing data thật |
 
 ### Edge Cases (Backend)
@@ -441,6 +475,8 @@ Capability registry là **commercial entitlement**, không phải availability r
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-05 | v2.12 | **Drop the DD-29 pair's reverse runbook (`plans-dd29-capability-registry` slice, docs-only):** §2 Migration & Rollback row 2a replaced — the detailed hand-written revert sequence (explicit transaction, `dd29_migrated_tenants` provenance lookup, version guard, FK safety net) is removed, not merely shortened. Migrations in this repo have no reverse runbook (new `docs/standards/core-db-architecture-principles.md` P17): a migration that fails aborts its own transaction atomically, nothing to undo; a migration later judged wrong is corrected by a new forward migration authored with knowledge of what actually needs to change, not reverted. `0028`'s `dd29_migrated_tenants` provenance table is removed along with the mechanism it existed solely to support — no other consumer ever read it, and no precedent for a bespoke per-migration audit table exists elsewhere in this repo's 27 prior migrations; its data-migrate step reverts to a plain `UPDATE`. Row 2b (DD-51 columns, separate future slice) is unrelated and unchanged. Supersedes v2.11's "separate rollback steps for the DD-29 pair" framing. |
+| 2026-08-04 | v2.11 | **DD-29 migration authored (`plans-dd29-capability-registry` slice, docs-only — code/migrations/tests land in that slice's own worktree, pending review/merge):** `plans.plan_key` CHECK's PENDING MIGRATION note (§2 DDL) updated with the exact authoring status; new §2 Migration & Rollback subsection reconciled to describe the `0028`(expand)+`0029`(contract) pair explicitly, its fail-closed guards (including one that unconditionally aborts on any `telegram`/`plus_channel`/`all_channels` subscription regardless of status — collapsing them into `host_pro` would irreversibly lose which tier they held), and separate rollback steps for the DD-29 pair vs. the still-pending DD-51 column deltas. Corrects an earlier internal contradiction (docs-only, found during that slice's own review rounds) that said "authored + verified" in one place while still describing the CHECK as live-pending elsewhere. |
 | 2026-08-03 | v2.10 | **Reconcile `authorizeTenantAction` signature (`docs-billing-authz-signature-reconcile`):** every current-state call/signature mention updated `(tenantId, actionClass)` / `(tenantId, 'publish_new_sessions')` → `(tx, tenantId, actionClass)` / `(tx, tenantId, 'publish_new_sessions')`: §1 overview diagram, §3 Status Authority heading, §2 edge case #8, §5 test cases #29–30 — merged code (`ddb69a9`, `packages/db/src/authorization.ts:91-95`) takes the caller's already-open transaction as its first parameter; a version that opens its own transaction releases its `FOR SHARE` locks before the caller can mutate, reopening exactly the race this same §3's Concurrency clause (v2.8 round-05) exists to close — mechanically required, not a design choice (codex round-01 [P1] on `authorize-tenant-action-core`; the completeness gap across edge case #8 and tests #29–30 itself caught by this slice's own codex round-02 [P2]). §1's "takes tenant context, not a pre-resolved status" guarantee is unchanged — callers still never read/pass a resolved status, only now also pass their own open `tx`. Docs-only; code/schema/tests already merged and unchanged by this reconcile. Pre-existing dated changelog giữ verbatim. |
 | 2026-07-27 | v2.9 | Đồng bộ DD-91 + research khả dụng khu vực: `payment_reconcile_auto` là entitlement thương mại, không phải bằng chứng availability; thêm resolver fail-closed theo provider/bank/market/currency/consent, giữ manual mark-paid toàn cầu, exact `assistant_ai_kb`, và `/pay` deterministic không qua LLM. Reconcile migration live `0000`–`0024` (25 migrations, tail `0024`). Contract only; provider/lifecycle/chat runtime vẫn chưa build. |
 | 2026-07-24 | v2.8d | **Round-05 fix (`docs-session-publish-concurrency-recheck`, codex [P1]):** the round-02 fix split test #36 into job-first/publish-first, but #36's job-first barrier ("job's transaction commits before publish's read runs") let the job's transaction fully COMMIT before publish ever attempted its read — meaning by the time publish read, there was no concurrent lock holder left to contend with, so a naive plain re-read would ALSO observe the post-commit `suspended` value and pass, without the test ever exercising real lock contention. Fixed #36's harness to hold the job's transaction OPEN (claimed + `UPDATE`d but not committed) WHILE publish attempts its read: a correct `FOR SHARE` re-check now must BLOCK on the job's outstanding `FOR UPDATE` lock (assert the read measurably waited) and only proceed once the harness commits the job and the block releases; a non-locking plain re-read would NOT block and would instead see the last-*committed* (pre-`UPDATE`, still-`past_due`) value under READ COMMITTED — incorrectly allowing the mutation — so this version of the test actually fails a non-locking implementation instead of coincidentally passing it. #36a (publish-first) needed no change — its assertion ("job's `SKIP LOCKED` claim skips the row") already depends entirely on whether publish holds a real lock, with no coincidental-pass path. |
