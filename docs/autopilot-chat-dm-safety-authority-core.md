@@ -176,15 +176,45 @@ re-derive it)
 
 ### 6.1 Migration body
 
-This block is a verbatim copy of the AS-IMPLEMENTED and merged migration
-(`packages/db/migrations/0030_chat_dm_safety_authority_core.sql`), kept here so the contract and the
-code never drift. **Amended 2026-08-05, owner-directed, replacing the originally pinned shape**: the
-original had a fourth table, `chat_dm_safety_audit`, and `assert_dm_allowed` wrote to it via `INSERT`
-immediately before `RAISE EXCEPTION` in the same statement. Implementation proved empirically that this
-can never persist a row — PL/pgSQL's exception handling is savepoint-rollback-based, so the `RAISE`
+**Not a verbatim copy (codex round-02 [P2] made the cost of that promise concrete: this block drifted
+from the real file across BOTH review rounds this session, most recently by not tracking the
+round-02 search_path/config-default/note-constraint fixes below).** The prior approach — a full
+embedded copy, "kept here so the contract and the code never drift" — required a byte-for-byte
+re-sync on every round and failed to deliver that twice. Per this repo's own anti-drift principle
+("don't hard-pin a value the reader can measure — point at the measurement instead"),
+`packages/db/migrations/0030_chat_dm_safety_authority_core.sql` is the sole authoritative source;
+this section summarizes shape and intent, not literal text.
+
+**Amended 2026-08-05, owner-directed, replacing the originally pinned shape**: the original had a
+fourth table, `chat_dm_safety_audit`, and `assert_dm_allowed` wrote to it via `INSERT` immediately
+before `RAISE EXCEPTION` in the same statement. Implementation proved empirically that this can
+never persist a row — PL/pgSQL's exception handling is savepoint-rollback-based, so the `RAISE`
 unconditionally undoes the `INSERT`, for every calling pattern. Per §5 row 6 (rationale replaced, not
-appended), the table was dropped entirely and `assert_dm_allowed` emits `RAISE LOG` instead — see that
-function's own comment below.
+appended), the table was dropped entirely and `assert_dm_allowed` emits `RAISE LOG` instead.
+
+**Amended 2026-08-06, codex round-02 findings, all fixed in the migration file directly:**
+- All three `SECURITY DEFINER` functions use `SET search_path = public, pg_temp` (not `pg_catalog,
+  public`, which left `pg_temp` implicitly searched first — a same-session temp table could shadow
+  `chat_dm_safety_config`/`chat_blocks`). Matches this codebase's own existing convention across
+  every other `SECURITY DEFINER` function (0012/0016), including `rate_limit_check` which this
+  migration calls.
+- `chat_dm_safety_config`'s four capability booleans (`block_enabled`/`report_enabled`/
+  `rate_limit_enabled`/`audit_enabled`) default `false`, not `true` — an enablement gate (see
+  `ENABLEMENT_ONLY_GATES` in §10), reversing round-01's position. `dm_sender_limit_per_min`/
+  `dm_target_limit_per_min` still default to `30` (unaffected — placeholder operational numbers,
+  not a live/dead-subsystem question).
+- `chat_reports_note_shape_chk` bounds raw `length(note) <= 500` (not `length(btrim(note)) BETWEEN
+  1 AND 500`, which only bounded the trimmed length — a note padded with whitespace could store
+  arbitrarily more than 500 raw characters) plus `length(btrim(note)) >= 1` for non-emptiness.
+
+Shape otherwise unchanged from the round-01 description: 3 tables (`chat_dm_safety_config`,
+`chat_blocks`, `chat_reports`, no `chat_dm_safety_audit`), a `trg_chat_dm_safety_config_touch_updated_at`
+trigger (round-01), and the 3 functions (`dm_safety_enabled`, `chat_pair_blocked`,
+`assert_dm_allowed`) with the grants described in §6.3 below.
+
+<details><summary>Migration body as of commit 79cb540 (round-01 fixes) — historical, superseded by
+round-02 above, kept for the record rather than deleted per this repo's own "never rewrite dated
+history" convention. Read the live file for current truth.</summary>
 
 ```sql
 -- ============================================================================
@@ -466,9 +496,10 @@ GRANT EXECUTE ON FUNCTION rate_limit_check(text, integer, interval) TO chat_defi
 -- report RPC.
 ```
 
-Estimated ~230 lines including comments (grew from the original ~150-line estimate after the 2026-08-05
-amendment's comment-heavy explanation of the audit-mechanism change) — still inside the plan's
-`≤750 changed LOC` B3 exception for this slice (plan line 409).
+</details>
+
+Line-count estimate for this file superseded by the measured total in §6.4 (1,121 insertions across
+`packages/db/*`, 1,503 total) — not repeated here to avoid a second place for it to go stale.
 
 ### 6.2 Schema mirror (`packages/db/schema.ts`)
 
@@ -531,12 +562,31 @@ docs/autopilot-chat-dm-safety-authority-core.md                  -- self
 docs/autopilot-backlog.md                                        -- own entry + new chat-dm-safety-audit-queryable-path idea entry
 ```
 
+**Measured, not estimated (codex round-02 [P2]: the `~650-750` figure below was the original
+planning estimate, superseded — the artifact stated it was "still within `≤750 LOC`" after
+measuring nothing, which is false):** `git diff --numstat <base_sha>...HEAD` on the final,
+post-round-02 diff totals **1,121 insertions across `packages/db/*`** (migration 321,
+`chat-dm-safety-invariants.test.ts` 474, `test-harness.ts` 123, `schema.ts` 62,
+`migrate.test.ts` 52, `rls-invariants.test.ts` 35, `README.md` 54) plus 382/135/32/103 lines
+across the four doc/manifest/backlog files — 1,503 insertions total, 10 files. This exceeds the
+original `~650-750` planning estimate by roughly 50%, driven by: two real codex review rounds'
+worth of fixes (temp-shadow regression tests, a genuinely-concurrent-connections rewrite of the
+concurrency test, additional CHECK-constraint tests), not scope creep into new tables/RPCs/grants
+— `git diff --stat` confirms the file SET stayed at the 10 files named in TARGET_FILES throughout;
+only line count grew. Recorded honestly rather than re-asserting the stale estimate; the original
+planning line above is kept for history, not as a current claim.
+
+<details><summary>Original planning estimate (2026-08-05, pre-implementation — historical, not
+current)</summary>
+
 Estimated total ~650-750 changed LOC (migration ~230 after the audit-mechanism amendment, schema mirror
 ~75, focused test ~350-400, `migrate.test.ts` ~15, `test-harness.ts` ~40, `rls-invariants.test.ts` ~5,
 `README.md` ~30, backlog ~40) — an estimate for planning only, not a measurement; module count for the
 B3 budget grows from 3 to 5 with the owner-authorized scope amendment (migration + schema mirror +
 focused test + test-harness + the two amended pre-existing test files), still within the `≤750 LOC`
 ceiling but no longer comfortably so — flag to the reviewer rather than silently absorb.
+
+</details>
 
 ### 6.5 `packages/db/README.md` addition
 
@@ -616,7 +666,8 @@ re-deriving, an owner question, not an implementation choice.
 |---|---|---|
 | Happy path | Unblocked pair, safety fully enabled, under rate limits, `assert_dm_allowed(a,b,'create')` | Returns (void), no exception, no `RAISE LOG` line |
 | Happy path | Same, `action='send'` and `action='read'` | Returns (void) for both |
-| Happy path | `dm_safety_enabled()` with all four config flags true | Returns `true` |
+| Happy path | `dm_safety_enabled()` with all four config flags explicitly set true | Returns `true` |
+| Boundary | `dm_safety_enabled()` on a genuinely fresh migration, no config `UPDATE` yet (codex round-02 [P1]) | Returns `false` — all four flags default `false`, an enablement gate (see §10 `ENABLEMENT_ONLY_GATES`) |
 | Happy path | `chat_pair_blocked(a,b)` with no row for either direction | Returns `false` |
 | Boundary | `chat_dm_safety_config` has exactly one row after migration | `SELECT count(*) FROM chat_dm_safety_config` = 1; second `INSERT` violates the `singleton` PK |
 | Boundary | `chat_dm_safety_config` default `dm_sender_limit_per_min`/`dm_target_limit_per_min` after migration | Both `30` |
@@ -626,6 +677,7 @@ re-deriving, an owner question, not an implementation choice.
 | Boundary | `chat_reports` insert with `reason_code='other'` and NULL/empty note | Rejected — CHECK constraint |
 | Boundary | `chat_reports` insert with `reason_code='spam'` and non-NULL note | Rejected — CHECK constraint |
 | Boundary | `chat_reports` note at exactly 500 chars / 501 chars | 500 succeeds, 501 rejected |
+| Boundary | `chat_reports` note: 1 real char padded with whitespace to 501 raw chars (codex round-02 [P2]) | Rejected — raw `length(note) <= 500`, not just the trimmed length |
 | Authorization | `chat_pair_blocked(a,b)` after a row `(blocker=a, blocked=b)` exists | Returns `true` |
 | Authorization | `chat_pair_blocked(b,a)` (swapped args) after the same row | Returns `true` — direction-agnostic |
 | Authorization | `assert_dm_allowed(a,b,'create')` when `chat_pair_blocked(a,b)` is true | Raises `chat safety blocked`; one `RAISE LOG` line (severity `LOG`, visible only with `client_min_messages='log'`) carrying `deny_reason=blocked` |
@@ -635,8 +687,11 @@ re-deriving, an owner question, not an implementation choice.
 | Failure | Same, toggling `report_enabled`/`rate_limit_enabled`/`audit_enabled` false one at a time | Each independently makes `dm_safety_enabled()` → `false` (test #28's "disable any ONE") |
 | Failure | `assert_dm_allowed(NULL, b, 'create')`, `(a, NULL, 'create')`, `(a, a, 'create')` | All raise `invalid_parameter_value` before any audit/rate side effect |
 | Failure | `assert_dm_allowed(a, b, 'unknown_action')` | Raises `invalid_parameter_value` |
-| Concurrency | Two concurrent `assert_dm_allowed(a, x, 'send')` / `assert_dm_allowed(a, y, 'send')` calls (different peers) racing against the sender bucket at its limit boundary | `rate_limit_check`'s own advisory-lock serialization (0012, already proven) admits exactly up to the configured limit; the rest deny with `deny_reason='rate_limited_sender'` — this slice does not need to re-prove `rate_limit_check`'s own concurrency safety, only that it is correctly consumed |
+| Failure | `assert_dm_allowed(a, b, NULL)` (codex round-01 [P1]) | Raises `invalid_parameter_value` — `NULL NOT IN (...)` is SQL `UNKNOWN`, not `TRUE`, so this needs an explicit `p_action IS NULL` guard, not just the whitelist check |
+| Concurrency | 6 truly concurrent `assert_dm_allowed(a, x, 'create')` calls (different peers, independent connections, codex round-02 [P2] — the original test fired all 6 through one `pg.Client`, which node-postgres queues FIFO on a single connection, never exercising real contention) racing against `dm_sender_limit_per_min = 3` | `rate_limit_check`'s own advisory-lock serialization (0012, already proven) admits exactly 3 of 6; the rest deny with `deny_reason='rate_limited_sender'` |
 | Concurrency | `assert_dm_allowed` denial path racing the same `(actor,peer,action)` twice | Two independent `RAISE LOG` lines (no dedupe expected — each call logs independently) |
+| Security | A same-session temp table named `chat_dm_safety_config`/`chat_blocks` (codex round-02 [P1]) | `dm_safety_enabled()`/`chat_pair_blocked()` still read the real `public.*` table — `SET search_path = public, pg_temp` (pg_temp last) means an unqualified reference resolves to the real table before ever reaching a same-named temp shadow |
+| Boundary | `chat_dm_safety_config` retuned via `UPDATE` (codex round-01 [P2]) | `updated_at` advances — `trg_chat_dm_safety_config_touch_updated_at` fires on every `UPDATE`, not just the initial `INSERT`'s `DEFAULT now()` |
 | Migration | Exactly one new `.sql` file added | `git diff --name-only` against base shows exactly one file under `packages/db/migrations/` |
 | Migration | No destructive change to any existing table | Only fresh `CREATE TABLE`/`CREATE FUNCTION` and one new `GRANT ... TO chat_definer` on the pre-existing `rate_limit_check`; zero `ALTER`/`DROP` on any table that predates this migration |
 | Migration | Migration applies under the real, non-superuser `DATABASE_URL_MIGRATION` role after `chat_definer` bootstrap | Succeeds — mirrors root's own test #25/#26 (PG16 `ALTER FUNCTION ... OWNER TO` needs `CREATE ON SCHEMA public` granted first); this slice's own `GRANT CREATE ... / REVOKE CREATE ...` bracket proves it independently of root |
@@ -676,26 +731,24 @@ REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: CODE_READY
 REVIEWED_AT: 2026-08-06 (re-verified post-amendment; originally 2026-08-05)
 AUTHORITY_SHA: 90d292d85fbe92db7a5afcd118a99e28f3d3b3b7
-LIVE_BASE_SHA: 5cad41f4d7f6d47a2f591a1d70c75885568cb4b0
+LIVE_BASE_SHA: 3289e3b90b1e46739ead4bab8a05fe95fec0b77a
 BASE_BRANCH: main
 BASE_REMOTE_RELATION: MAIN_EQUALS_ORIGIN_MAIN
 TARGET_FILES:
-  - docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md
-  - docs/features/BE/feature_inapp_chat_tech.md
-  - docs/features/feature_inapp_chat.md
-  - docs/standards/decisions.md
-  - docs/standards/business-rules.md
-  - docs/standards/core-db-architecture-principles.md
+  # codex round-02 [P2]: the list below was this slice's ROOT (dd38-dd86-chat-schema-core)
+  # contract's own TARGET_FILES, copy-carried in error -- it neither matched this slice's actual
+  # diff nor omitted files, it was simply the WRONG list. Replaced with the exact 10 files in
+  # `git diff --stat <LIVE_BASE_SHA>...HEAD`, matching manifest.json's own scope array.
   - docs/autopilot-backlog.md
-  - docs/autopilot-dd38-dd86-chat-schema-core.md
-  - docs/autopilot-manifests/dd38-dd86-chat-schema-core.json
-  - infra/postgres-init/02-chat-definer.sql
-  - packages/db/schema.ts
-  - packages/db/migrations/0012_auth_functions.sql
-  - packages/db/src/test-harness.ts
-  - packages/db/src/rls-invariants.test.ts
   - docs/autopilot-chat-dm-safety-authority-core.md
   - docs/autopilot-manifests/chat-dm-safety-authority-core.json
+  - packages/db/README.md
+  - packages/db/migrations/0030_chat_dm_safety_authority_core.sql
+  - packages/db/schema.ts
+  - packages/db/src/chat-dm-safety-invariants.test.ts
+  - packages/db/src/migrate.test.ts
+  - packages/db/src/rls-invariants.test.ts
+  - packages/db/src/test-harness.ts
 SLICE: chat-dm-safety-authority-core
 IN_SCOPE: chat_dm_safety_config/chat_blocks/chat_reports storage; dm_safety_enabled()/
   chat_pair_blocked() pure predicates; assert_dm_allowed() fail-closed gate emitting RAISE LOG on
@@ -719,7 +772,13 @@ HARD_DEPENDENCIES:
       infra/postgres-init/02-chat-definer.sql, symbol chat_definer) — see §4.1
 PRIOR_SLICES: chat-definer-role-provisioning (1, MERGED) -> chat-dm-safety-authority-core (2, this packet)
 OPEN_QUESTIONS_IN_SCOPE: 0
-ENABLEMENT_ONLY_GATES: none
+ENABLEMENT_ONLY_GATES: chat_dm_safety_config's four capability flags (block_enabled/
+  report_enabled/rate_limit_enabled/audit_enabled) default false (codex round-02 [P1], reversing
+  round-01's position -- see the migration's own comment). dm_safety_enabled() is false and
+  assert_dm_allowed() denies with safety_disabled on a fresh migration; an explicit operator
+  UPDATE is required to enable, expected to land alongside slice 7/8's create_dm/send_chat_message
+  wiring once production-appropriate dm_sender_limit_per_min/dm_target_limit_per_min values are
+  confirmed. Proven by a dedicated fresh-migration test (SS9 row updated).
 LIVE_REPO_VERIFICATION: PASS
 CONTRACT_MATRIX: PASS
 CLOSURE_MATRIX: PASS (12/12 — see §10.1, re-verified 2026-08-06 against the amended state)

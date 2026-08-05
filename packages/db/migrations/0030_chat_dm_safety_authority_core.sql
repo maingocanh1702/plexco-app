@@ -29,6 +29,18 @@
 -- reader while never actually holding a row -- a machine-readable claim that
 -- contradicts reality. assert_dm_allowed() instead emits RAISE LOG, which
 -- Postgres delivers outside transactional rollback.
+--
+-- All three SECURITY DEFINER functions below use `SET search_path = public,
+-- pg_temp` (codex round-02 [P1]: an earlier `pg_catalog, public` draft, with
+-- no explicit pg_temp entry, left pg_temp searched FIRST by Postgres's own
+-- implicit default -- a session could create a temp table named
+-- chat_dm_safety_config/chat_blocks and have every unqualified reference in
+-- these definer-owned functions silently resolve to the attacker's shadow
+-- instead of the real table). `public, pg_temp` is this codebase's own
+-- existing, already-reviewed convention (every SECURITY DEFINER function in
+-- 0012/0016, including rate_limit_check which this file itself calls, uses
+-- the identical pattern with unqualified references) -- matched exactly
+-- rather than inventing a third variant.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -36,32 +48,44 @@
 -- independent capability toggles; dm_safety_enabled() is their AND. Global
 -- protected: no RLS (not tenant-scoped), zero grant to app/chat_definer for
 -- writes -- flipped only via direct DDL-owner/superuser access, never
--- through the application. All boolean flags default true: this migration
--- ships all four subsystems complete, so there is no reason to land it
--- pre-disabled.
+-- through the application.
 --
--- audit_enabled has TWO effects (owner-amended 2026-08-05, no new column):
--- (1) unchanged -- it is one of the four flags dm_safety_enabled() ANDs, so
--- disabling it alone still fail-closes the WHOLE subsystem (test #28's own
--- "disable any ONE of the four" requirement). (2) it now ALSO gates whether
--- assert_dm_allowed() emits its RAISE LOG line on a denial -- see that
--- function's own comment; there is no queryable chat_dm_safety_audit table
--- in this migration.
+-- All four boolean flags default FALSE (codex round-02 [P1], reversing this
+-- file's own round-01 position -- see below). dm_safety_enabled() is
+-- currently uncalled by anything live: create_dm/send_chat_message (slices
+-- 7/8) do not exist yet, so there is no reachability exposure either way
+-- today. But this table's STATE outlives that fact -- once slice 7/8 lands
+-- and starts calling assert_dm_allowed() for real, a default of true would
+-- mean the gate starts enforcing on whatever config happens to be sitting
+-- here, including the placeholder dm_sender_limit_per_min/
+-- dm_target_limit_per_min values below, with no forced moment to confirm
+-- they were validated for production. That is the exact shape this repo's
+-- own BE contract already rejects elsewhere for this same feature area:
+-- "Numeric DM/media/report thresholds are enablement values, not guessed
+-- code defaults... routes remain OFF/fail-closed until configured values
+-- pass boundary tests" (feature_inapp_chat_tech.md). Defaulting to false
+-- makes that the SAME failure mode as every other not-yet-configured
+-- capability in this migration: assert_dm_allowed() denies with
+-- safety_disabled, loudly and immediately, until an operator makes an
+-- explicit, reviewable UPDATE to turn it on -- never a silent, unvalidated
+-- enable. See assert_dm_allowed()'s own acceptance-matrix test proving a
+-- genuinely fresh migration (no UPDATE yet) returns dm_safety_enabled() =
+-- false.
 --
--- KEEPING audit_enabled's default at true (codex round-01 [P1], addressed not
--- silently accepted): the reviewer's own suggested fix -- default audit to
--- false until log capture/retention is proven -- would, per effect (1) above,
--- default the ENTIRE DM safety subsystem to DISABLED on every fresh install,
--- not just logging: dm_safety_enabled() ANDs all four flags, by design (this
--- file's own contract SS5 design-probe row 2, itself required by BE spec
--- test #28's "disable any ONE independently" requirement, which presupposes
--- all four start enabled). That is a strictly worse outcome than the
--- observability gap it would fix -- DD-55 is a HARD gate (decisions.md:
--- "Thiếu một gate → DM disabled fail-closed"), not an opt-in one, and
--- shipping it pre-disabled defeats the migration's entire purpose. The real
--- gap the reviewer names -- production log capture/retention for RAISE LOG
--- is unverified -- is real and already tracked, not silently dropped: see
--- backlog chat-dm-safety-audit-queryable-path.
+-- (Round-01 had kept this at true, reasoning that flipping ONLY
+-- audit_enabled to false -- that round's specific finding -- would
+-- disable the whole AND-gate. That narrower claim about audit_enabled
+-- alone was correct and remains correct; it just should not have been
+-- generalized into "so all four must default true". A test requiring
+-- each flag to independently disable the gate (BE spec test #28) does not
+-- require the flags to default enabled -- proven by this file's own test,
+-- which resets to true explicitly before every assertion rather than
+-- relying on the column default.)
+--
+-- audit_enabled additionally gates whether assert_dm_allowed() emits its
+-- RAISE LOG line on a denial (owner-amended 2026-08-05, no new column) --
+-- see that function's own comment; there is no queryable
+-- chat_dm_safety_audit table in this migration.
 --
 -- dm_sender_limit_per_min/dm_target_limit_per_min carry the same two
 -- numbers previously hardcoded as literal arguments inside
@@ -82,10 +106,10 @@
 CREATE TABLE chat_dm_safety_config (
   singleton boolean PRIMARY KEY DEFAULT true
     CONSTRAINT chat_dm_safety_config_singleton_chk CHECK (singleton),
-  block_enabled boolean NOT NULL DEFAULT true,
-  report_enabled boolean NOT NULL DEFAULT true,
-  rate_limit_enabled boolean NOT NULL DEFAULT true,
-  audit_enabled boolean NOT NULL DEFAULT true,
+  block_enabled boolean NOT NULL DEFAULT false,
+  report_enabled boolean NOT NULL DEFAULT false,
+  rate_limit_enabled boolean NOT NULL DEFAULT false,
+  audit_enabled boolean NOT NULL DEFAULT false,
   dm_sender_limit_per_min integer NOT NULL DEFAULT 30
     CONSTRAINT chat_dm_safety_config_sender_limit_positive_chk CHECK (dm_sender_limit_per_min > 0),
   dm_target_limit_per_min integer NOT NULL DEFAULT 30
@@ -168,8 +192,13 @@ CREATE TABLE chat_reports (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT chat_reports_no_self_chk CHECK (reporter_person_id <> reported_person_id),
+  -- length(note) bounds the RAW stored value (codex round-02 [P2]: the original
+  -- length(btrim(note)) BETWEEN 1 AND 500 only bounded the trimmed length, so a
+  -- 1-character note padded with thousands of spaces still passed and was
+  -- stored in full); length(btrim(note)) >= 1 separately guards against a
+  -- whitespace-only note satisfying the raw-length cap alone.
   CONSTRAINT chat_reports_note_shape_chk CHECK (
-    (reason_code = 'other' AND note IS NOT NULL AND length(btrim(note)) BETWEEN 1 AND 500)
+    (reason_code = 'other' AND note IS NOT NULL AND length(note) <= 500 AND length(btrim(note)) >= 1)
     OR (reason_code <> 'other' AND note IS NULL)
   )
 );
@@ -180,7 +209,7 @@ CREATE TABLE chat_reports (
 -- delete grant to anyone) still fails closed via COALESCE, not an error.
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION dm_safety_enabled() RETURNS boolean
-  LANGUAGE sql SECURITY DEFINER STABLE SET search_path = pg_catalog, public AS $$
+  LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public, pg_temp AS $$
   SELECT COALESCE(
     (SELECT block_enabled AND report_enabled AND rate_limit_enabled AND audit_enabled
        FROM chat_dm_safety_config WHERE singleton),
@@ -194,7 +223,7 @@ REVOKE ALL ON FUNCTION dm_safety_enabled() FROM PUBLIC;
 -- both storage directions -- DD-55 "loại hai chiều").
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION chat_pair_blocked(p_a uuid, p_b uuid) RETURNS boolean
-  LANGUAGE sql SECURITY DEFINER STABLE SET search_path = pg_catalog, public AS $$
+  LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public, pg_temp AS $$
   SELECT EXISTS (
     SELECT 1 FROM chat_blocks
     WHERE (blocker_person_id = p_a AND blocked_person_id = p_b)
@@ -247,7 +276,7 @@ REVOKE ALL ON FUNCTION chat_pair_blocked(uuid, uuid) FROM PUBLIC;
 -- every other missing-row behavior in this migration, never "log anyway".
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION assert_dm_allowed(p_actor uuid, p_peer uuid, p_action text) RETURNS void
-  LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   v_deny_reason text;
   v_sender_limit integer;

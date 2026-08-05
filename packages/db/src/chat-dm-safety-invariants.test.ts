@@ -1,5 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import pg from "pg";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
+
+const TEST_DB_NAME = "plexco_chat_dm_safety_check";
 
 /**
  * DD-55 DM safety authority invariants (migration 0030).
@@ -26,7 +29,7 @@ import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 let ctx: RlsTestContext;
 
 beforeAll(async () => {
-  ctx = await setupRlsTestContext("plexco_chat_dm_safety_check");
+  ctx = await setupRlsTestContext(TEST_DB_NAME);
   // RAISE LOG sits below the default 'notice' client_min_messages threshold;
   // this makes it visible to ctx.owner's own 'notice' event for the rest of
   // this file. Harmless for every other test here: none of them RAISE at
@@ -93,6 +96,13 @@ describe("migration baseline", () => {
   it("0030 is applied", () => {
     expect(ctx.migrateResult.applied).toContain("0030_chat_dm_safety_authority_core.sql");
   });
+
+  // codex round-02 [P1]: must run before any resetConfigDefaults() call in this file, which is
+  // exactly why it lives here rather than in the "fail closed per capability flag" describe block
+  // below — this is the ONE assertion that needs the untouched, as-migrated row, not a reset one.
+  it("dm_safety_enabled() is false on a genuinely fresh migration (no config UPDATE yet)", async () => {
+    expect(await dmSafetyEnabled()).toBe(false);
+  });
 });
 
 describe("chat_dm_safety_config boundary", () => {
@@ -138,8 +148,60 @@ describe("chat_dm_safety_config boundary", () => {
   });
 });
 
+// codex round-02 [P1]: proves the `SET search_path = public, pg_temp` fix (not `pg_catalog,
+// public`, which this file originally shipped) actually closes the temp-table shadowing hole --
+// without an explicit pg_temp entry, Postgres searches pg_temp FIRST regardless, so a session's
+// own temp table of the same name would silently substitute for the real one inside every
+// unqualified reference in these SECURITY DEFINER function bodies.
+describe("SECURITY DEFINER functions resist temp-table shadowing", () => {
+  afterEach(async () => {
+    await ctx.owner.query(`DROP TABLE IF EXISTS pg_temp.chat_dm_safety_config`);
+    await ctx.owner.query(`DROP TABLE IF EXISTS pg_temp.chat_blocks`);
+    await resetConfigDefaults();
+  });
+
+  it("dm_safety_enabled() ignores a same-session temp table shadowing chat_dm_safety_config", async () => {
+    await resetConfigDefaults();
+    expect(await dmSafetyEnabled()).toBe(true);
+    await ctx.owner.query(`
+      CREATE TEMP TABLE chat_dm_safety_config (
+        singleton boolean PRIMARY KEY DEFAULT true,
+        block_enabled boolean, report_enabled boolean,
+        rate_limit_enabled boolean, audit_enabled boolean
+      )
+    `);
+    await ctx.owner.query(
+      `INSERT INTO pg_temp.chat_dm_safety_config
+         (singleton, block_enabled, report_enabled, rate_limit_enabled, audit_enabled)
+       VALUES (true, false, false, false, false)`,
+    );
+    // If the shadow were consulted, this would flip to false (the poisoned temp row).
+    expect(await dmSafetyEnabled()).toBe(true);
+  });
+
+  it("chat_pair_blocked() ignores a same-session temp table shadowing chat_blocks", async () => {
+    const a = await seedPerson("Shadow Pair A");
+    const b = await seedPerson("Shadow Pair B");
+    expect(await chatPairBlocked(a, b)).toBe(false);
+    await ctx.owner.query(`
+      CREATE TEMP TABLE chat_blocks (
+        blocker_person_id uuid, blocked_person_id uuid
+      )
+    `);
+    await ctx.owner.query(
+      `INSERT INTO pg_temp.chat_blocks (blocker_person_id, blocked_person_id) VALUES ($1, $2)`,
+      [a, b],
+    );
+    // If the shadow were consulted, this would flip to true (the poisoned temp row).
+    expect(await chatPairBlocked(a, b)).toBe(false);
+  });
+});
+
 describe("dm_safety_enabled() / chat_pair_blocked() happy path", () => {
-  it("dm_safety_enabled() is true with default config", async () => {
+  // "reset" here means resetConfigDefaults()'s own all-enabled operational baseline, distinct
+  // from the migration's own column DEFAULT (false as of codex round-02 -- see "migration
+  // baseline"'s fresh-migration test above for that one).
+  it("dm_safety_enabled() is true once all four capabilities are explicitly enabled", async () => {
     await resetConfigDefaults();
     expect(await dmSafetyEnabled()).toBe(true);
   });
@@ -214,6 +276,15 @@ describe("chat_reports boundary", () => {
     await expect(insertReport(a, b, "other", "x".repeat(500))).resolves.toBeTruthy();
     const c = await seedPerson("Report Note Len C");
     await expect(insertReport(a, c, "other", "x".repeat(501))).rejects.toThrow(
+      /chat_reports_note_shape_chk/,
+    );
+  });
+
+  it("rejects a 1-character note padded with whitespace to 501 raw chars (codex round-02 [P2])", async () => {
+    const a = await seedPerson("Report Note Padded A");
+    const b = await seedPerson("Report Note Padded B");
+    const padded = " ".repeat(250) + "x" + " ".repeat(250); // trimmed length 1, raw length 501
+    await expect(insertReport(a, b, "other", padded)).rejects.toThrow(
       /chat_reports_note_shape_chk/,
     );
   });
@@ -446,7 +517,12 @@ describe("security/privacy: denial message never varies by deny_reason", () => {
 });
 
 describe("concurrency: sender bucket admits exactly up to the configured limit", () => {
-  it("admits exactly 3 of 6 concurrent create attempts at limit=3", async () => {
+  // codex round-02 [P2]: the original version fired all 6 calls through ctx.owner, a single
+  // pg.Client — node-postgres queues a Client's queries FIFO on one connection, so despite
+  // Promise.allSettled at the JS layer, Postgres itself ran them strictly sequentially and never
+  // exercised assert_dm_allowed()'s pg_advisory_xact_lock serialization at all. Six independent
+  // clients, connected first (a barrier) and then fired together, exercise a real race.
+  it("admits exactly 3 of 6 truly concurrent create attempts at limit=3", async () => {
     await resetConfigDefaults();
     const a = await seedPerson("Concurrency Sender A");
     await setConfigFlag("dm_sender_limit_per_min", 3);
@@ -454,13 +530,26 @@ describe("concurrency: sender bucket admits exactly up to the configured limit",
       Array.from({ length: 6 }, (_, i) => seedPerson(`Concurrency Target ${i}`)),
     );
 
-    const results = await Promise.allSettled(
-      targets.map((t) => callAssertDmAllowed(a, t, "create")),
+    const dbUrl = new URL(process.env.DATABASE_URL_TEST as string);
+    dbUrl.pathname = `/${TEST_DB_NAME}`;
+    const clients = Array.from(
+      { length: 6 },
+      () => new pg.Client({ connectionString: dbUrl.toString() }),
     );
-    const fulfilled = results.filter((r) => r.status === "fulfilled").length;
-    const rejected = results.filter((r) => r.status === "rejected").length;
-    expect(fulfilled).toBe(3);
-    expect(rejected).toBe(3);
+    await Promise.all(clients.map((c) => c.connect()));
+    try {
+      const results = await Promise.allSettled(
+        clients.map((c, i) =>
+          c.query(`SELECT assert_dm_allowed($1, $2, 'create')`, [a, targets[i]]),
+        ),
+      );
+      const fulfilled = results.filter((r) => r.status === "fulfilled").length;
+      const rejected = results.filter((r) => r.status === "rejected").length;
+      expect(fulfilled).toBe(3);
+      expect(rejected).toBe(3);
+    } finally {
+      await Promise.all(clients.map((c) => c.end()));
+    }
   });
 });
 

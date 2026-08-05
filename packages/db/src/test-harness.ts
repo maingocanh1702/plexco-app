@@ -300,12 +300,19 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
   // 2. real runner against the fresh db. job_definer is cluster-global and must exist (correctly)
   // before migrate() reaches 0022 (which only asserts it, never creates it) — bootstrap+migrate
   // run under the lock so this can never overlap a sibling file's own bootstrap+migrate with the
-  // JCL-2/3 negative tests' deliberately-broken window (see withJobDefinerLock).
+  // JCL-2/3 negative tests' deliberately-broken window (see withJobDefinerLock). Also under
+  // withChatDefinerLock (codex round-02 [P2], same order as BR-6/JCL-1's own fix: job outer, chat
+  // inner) — migrate() runs through 0030, which ALTER FUNCTION ... OWNER TO chat_definer's three
+  // functions and so needs chat_definer to exist and be stable for that entire window; without
+  // this lock, a sibling file's negative test renaming/dropping chat_definer under
+  // withChatDefinerLock could intermittently race this ordinary migration.
   const migrationUrl = testUrl(base, { db: dbName });
-  const migrateResult = await withJobDefinerLock(base, async () => {
-    await bootstrapJobDefiner(admin);
-    return migrate(migrationUrl);
-  });
+  const migrateResult = await withJobDefinerLock(base, () =>
+    withChatDefinerLock(base, async () => {
+      await bootstrapJobDefiner(admin);
+      return migrate(migrationUrl);
+    }),
+  );
   await admin.end();
 
   // roles now certainly exist (ensured by the runner + 0000) — set passwords

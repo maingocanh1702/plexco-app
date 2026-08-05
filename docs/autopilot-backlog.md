@@ -1770,10 +1770,11 @@ notes: |
 
 ## task: chat-dm-safety-authority-core
 title: Slice 2 chuỗi in-app-chat — `dm_safety_enabled()` và authority tables/functions kèm theo
-status: implementing owner ruling (2026-08-05, same day as the AWAIT below) — all 3 findings ruled on,
-  amendment in progress in the same worktree/branch/registration. See the dated note at the end of
-  `notes:` for the ruling and what changed; the AWAIT paragraph immediately below is preserved as the
-  dated record of what was asked, per this repo's own "never rewrite dated history" convention.
+status: at the review gate (2026-08-06) — owner ruling implemented, 2 codex review rounds (round-01
+  gate-attempt-03, round-02 gate-attempt-05) both real, both fixed in-slice; gate re-invoked after
+  round-02's fixes, outcome not yet known as of this note. See the dated notes at the end of
+  `notes:` for what each round found and changed; the AWAIT paragraph immediately below is preserved
+  as the dated record of what was asked, per this repo's own "never rewrite dated history" convention.
 status_history_2026-08-05_AWAIT: implemented in worktree feat/chat-dm-safety-authority-core,
   base_sha 3289e3b90b1e46739ead4bab8a05fe95fec0b77a, NOT yet at the review gate. 372/380 DB tests
   green; 8 failures are 3 distinct findings, none fixable within this slice's own scope without an
@@ -1849,6 +1850,35 @@ notes: |
   SAME registration — narrowly, no broader refactor, no weakened assertions. New backlog task below,
   `chat-dm-safety-audit-queryable-path`, tracks the deferred queryable-table follow-up Finding 1's
   ruling named explicitly.
+
+  **2026-08-06, codex review rounds 01/02 (gate-attempt-03/05), both real, both fixed in-slice.**
+  Round-01 (7 findings, commit 79cb540): NULL `p_action` bypassed the whitelist and both rate
+  limits (SQL three-valued logic); `updated_at` never advanced on `UPDATE` (no trigger existed);
+  `revokeStaleChatDefinerMembership` interpolated an unquoted role identifier; README wrongly
+  attributed `create_dm`/`send_chat_message`/`mark_read` to this slice's dependency chain; the SS10
+  verdict block mixed amended and un-re-verified fields in one machine-checked fence; a trailing
+  blank line. One suggested fix (default `audit_enabled` false) was NOT applied — see round-02.
+  Round-02 (6 findings + 2 advisories): all three `SECURITY DEFINER` functions used
+  `search_path = pg_catalog, public` (no `pg_temp`), open to same-session temp-table shadowing —
+  fixed to `public, pg_temp`, matching this codebase's own existing convention; ALL FOUR capability
+  flags now default `false`, not `true` (reversing round-01's position after a closer look — see
+  the migration's own comment, this is a real design reversal, not a lint fix); `chat_reports.note`'s
+  CHECK bounded only the trimmed length, letting a whitespace-padded note store past 500 raw chars;
+  `setupRlsTestContext` (shared across the whole DB test suite) held only `withJobDefinerLock`
+  while migrating through 0030, missing `withChatDefinerLock` — a real, if narrow, cross-file race;
+  the "concurrency" test fired 6 calls through one `pg.Client`, which node-postgres queues FIFO, so
+  it never actually exercised concurrent admission — rewritten with 6 independent connections; the
+  SS10 verdict's `LIVE_BASE_SHA` and `TARGET_FILES` were stale/wrong (a leftover copy of the ROOT
+  slice's own file list, not this slice's actual 10-file diff), and its `≤750 LOC` claim was an
+  unmeasured carry-forward against an actual 1,121-insertion diff — all three corrected with
+  measured values. Both review rounds' findings are recorded in this file's own commit history
+  (79cb540 round-01; round-02's own commit lands with this note) — not re-derived here.
+  **Two advisories, explicitly out of this slice's diff, not fixed here:** (a)
+  `docs/features/BE/feature_inapp_chat_tech.md`'s own reference SQL repeats the same
+  `search_path = pg_catalog, public` pattern this slice just fixed — that file's owner should
+  reconcile it separately when next touching that spec section. (b)
+  `packages/db/README.md`'s pre-existing migration-order list (unrelated section, untouched by this
+  slice's own diff) still stops at `0023` — a pre-existing drift, not introduced or widened here.
 
 ## task: chat-dm-safety-audit-queryable-path
 title: A queryable, structured store for DM-safety denial forensics (chat_dm_safety_audit's deferred

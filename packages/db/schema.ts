@@ -777,10 +777,14 @@ export const routingAudit = pgTable("routing_audit", {
 
 export const chatDmSafetyConfig = pgTable("chat_dm_safety_config", {
   singleton: boolean("singleton").primaryKey().default(true),
-  blockEnabled: boolean("block_enabled").notNull().default(true),
-  reportEnabled: boolean("report_enabled").notNull().default(true),
-  rateLimitEnabled: boolean("rate_limit_enabled").notNull().default(true),
-  auditEnabled: boolean("audit_enabled").notNull().default(true),
+  // All four default false (codex round-02 [P1]): an enablement gate, not a
+  // guessed-safe default — see the migration's own comment for the full
+  // reasoning. assert_dm_allowed() denies with safety_disabled until an
+  // explicit UPDATE turns each on.
+  blockEnabled: boolean("block_enabled").notNull().default(false),
+  reportEnabled: boolean("report_enabled").notNull().default(false),
+  rateLimitEnabled: boolean("rate_limit_enabled").notNull().default(false),
+  auditEnabled: boolean("audit_enabled").notNull().default(false),
   dmSenderLimitPerMin: integer("dm_sender_limit_per_min").notNull().default(30),
   dmTargetLimitPerMin: integer("dm_target_limit_per_min").notNull().default(30),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -817,8 +821,10 @@ export const chatReports = pgTable("chat_reports", {
     sql`${t.status} IN ('submitted','triaged','actioned','closed')`),
   noSelfChk: check("chat_reports_no_self_chk", sql`${t.reporterPersonId} <> ${t.reportedPersonId}`),
   // Reused DD-95 taxonomy: 'other' requires a bounded note, every non-other rejects one.
+  // Raw length(note) <= 500 bounds the STORED value (codex round-02 [P2] — trimmed-only would
+  // let a padded note store far more than 500 chars); trimmed length >= 1 rejects whitespace-only.
   noteShapeChk: check("chat_reports_note_shape_chk",
-    sql`(${t.reasonCode} = 'other' AND ${t.note} IS NOT NULL AND length(btrim(${t.note})) BETWEEN 1 AND 500)
+    sql`(${t.reasonCode} = 'other' AND ${t.note} IS NOT NULL AND length(${t.note}) <= 500 AND length(btrim(${t.note})) >= 1)
         OR (${t.reasonCode} <> 'other' AND ${t.note} IS NULL)`),
 }));
 
