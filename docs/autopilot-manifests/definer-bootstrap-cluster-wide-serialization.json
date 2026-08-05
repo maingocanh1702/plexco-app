@@ -1,0 +1,122 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — deliberately carries NO manifest_schema_version; adding it makes register HALT CONTRACT_INVALID. The runtime manifest is generated at register time into .autopilot/state/definer-bootstrap-cluster-wide-serialization/manifest.json from docs/autopilot-manifests/_TEMPLATE.json.",
+  "task_id": "plexco:definer-bootstrap-cluster-wide-serialization",
+  "feature": "definer-bootstrap-cluster-wide-serialization",
+  "branch": "feat/definer-bootstrap-cluster-wide-serialization",
+  "base_ref": "origin/main",
+  "base_sha": "18e88f28b268c48e21d11d7ef42ac96bbe5ca396",
+  "risk": "P1",
+  "_risk_note": "Corrected from the task briefing's proposed P2 — see slice doc S0.1. level3-workflow.md S6's own risk table puts schema/migration/shared-choke-point changes at P1; the sibling slice that first wrote these exact two files (chat-definer-role-provisioning, AP-47) was classified P1 under the identical privilege-boundary reasoning, not for adding a grant. This slice edits the same fail-closed serialization mechanism those files exist to provide, corrects an already-merged, owner-reviewed security claim that turned out to be empirically false (slice doc S5.2), and adds a fail-open (catch-and-warn) degradation path that must behave exactly as specified on the one privilege class where it fires. Supervised, full verification, independent code review AND security review, human merge.",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_dependency_note": "No executable dependency. Both target files (infra/postgres-init/01-job-definer.sql, infra/postgres-init/02-chat-definer.sql) already exist and are merged on origin/main as of base_sha (verified 2026-08-05 via git fetch + git rev-parse + Read). This slice is itself the closure of a deferral recorded in 286f48bbbd5b9f41c3e63e5f201ecfd276706bff, not a consumer of any unmerged work.",
+  "invariants": [],
+  "_invariant_note": "No existing docs/autopilot-invariant-catalog.md token precisely fits 'privileged cluster-role bootstrap infra (infra/postgres-init/*)'. `schema` ('Supabase/Postgres tables, migrations, RLS policies') does not fit -- this slice adds no migration/table/RLS. `auth` ('authentication / authorization / session') is a closer conceptual fit but would unnecessarily serialize this slice against the currently-active Auth S4 email-bundle work, which touches none of this slice's files. Owner agreed (2026-08-05): leave invariants empty and propose a dedicated `definer-bootstrap` token as a separate, tiny, independently-reviewed commit -- adding a shared catalog token changes what every future slice can declare, which belongs in its own change with its own review, not folded into this one. Not done here because docs/autopilot-invariant-catalog.md is outside this slice's own scope list. See slice doc S10 item 4.",
+  "scope": [
+    "infra/postgres-init/01-job-definer.sql",
+    "infra/postgres-init/02-chat-definer.sql",
+    "packages/db/src/migrate.test.ts",
+    "docs/autopilot-manifests/definer-bootstrap-cluster-wide-serialization.json",
+    "docs/autopilot-definer-bootstrap-cluster-wide-serialization.md",
+    ".claude/commands/ap-49-definer-bootstrap-cluster-wide-serialization.md"
+  ],
+  "_scope_note": "Exactly the two bootstrap files whose serialization mechanism changes, the test file gaining the three new cases that prove it (two concurrency cases plus one degraded-privilege case), and this slice's own three contract artifacts (AP-39/AP-40 lesson: include the manifest/doc/launcher in their own scope). packages/db/src/test-harness.ts, .github/workflows/ci.yml, infra/docker-compose.yml, package.json, docs/standards/deployment-infra.md and docs/autopilot-invariant-catalog.md are read as context but deliberately not edited -- see slice doc S8 for why each is safe with zero changes or is a named follow-up instead.",
+  "negative_scope": [
+    "NO change to either script's role attributes (NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION) or attribute-drift fail-closed checks",
+    "NO change to job_definer's or chat_definer's existing runtime-role-target refusal, missing-role refusal, or (chat_definer only) re-pointing guard / unsafe-membership-options check / membership-denial check -- only the serialization statement changes",
+    "NO adding a re-pointing guard to job_definer -- that gap (docs/autopilot-chat-definer-role-provisioning.md SS5.4.2, SS10 item 4) is real, already recorded, and explicitly the owner's own follow-up to open, not this slice's",
+    "NO fixing the CREATEROLE-based auto-membership side effect (slice doc SS5.4.2) -- a grant-behavior question, not a serialization concern; out of this slice's negative scope by the task briefing's own boundary",
+    "NO giving the operational single-bootstrap-point rule (slice doc SS5.5) a durable enforced home (deployment-infra.md, CI/CD guard, or equivalent) -- named as a follow-up (slice doc S10 item 3), outside this slice's own file scope",
+    "NO edit to packages/db/src/test-harness.ts -- bootstrapJobDefiner/bootstrapChatDefiner/withJobDefinerLock/withChatDefinerLock are pass-through readers/executors needing no change; withChatDefinerLock's own lock key ('chad') protects a different, unaffected concern (test-suite parallelism, not the SQL file's internal mechanism)",
+    "NO edit to .github/workflows/ci.yml, infra/docker-compose.yml, or package.json -- the bootstrap invocation shape (pnpm db:bootstrap, both psql calls) is unchanged; only the two .sql files' internal content changes",
+    "NO edit to docs/autopilot-invariant-catalog.md -- a new definer-bootstrap token is recommended as a follow-up, not added here (see _invariant_note)",
+    "NO edit to docs/autopilot-backlog.md -- no entry exists yet for this slice; adding one is a separate, out-of-band chore commit, consistent with recent sibling slices",
+    "NO new file under packages/db/migrations/ -- this slice adds no migration",
+    "NO catching any exception class other than insufficient_privilege around the LOCK TABLE statement -- every other error must still abort the whole bootstrap transaction (fail closed), exactly as every other check in these files already does"
+  ],
+  "context_sources": [
+    "286f48bbbd5b9f41c3e63e5f201ecfd276706bff (merge commit recording the finding as ACCEPTED and DEFERRED, with the reasoning, including the now-corrected SERIALIZABLE candidate)",
+    "infra/postgres-init/01-job-definer.sql (live, no cluster-wide lock of any kind today)",
+    "infra/postgres-init/02-chat-definer.sql (live, same-database-only pg_advisory_xact_lock today)",
+    "packages/db/src/migrate.test.ts (live, 1956 lines at base)",
+    "docs/autopilot-chat-definer-role-provisioning.md SS5.4.2, SS10 items 8-9 (the deferred boundary and its named candidate fix)",
+    "docs/standards/deployment-infra.md SS3-4 (production topology -- single application database)",
+    "packages/db/README.md 'Runner-level role bootstrap' section (the CREATE-race precedent, already cluster-safe via the unique index, distinct from the membership-grant race this slice fixes)",
+    "docs/autopilot-invariant-catalog.md (read for token selection; see _invariant_note)",
+    "live Postgres 16 cluster (postgres:16-alpine, this session's local docker-compose instance) -- direct empirical measurement of all four candidate mechanisms and the fail-open design, see slice doc S5",
+    "docs.digitalocean.com/products/databases/postgresql/how-to/modify-user-privileges/ (fetched 2026-08-05) -- doadmin's documented attribute set: CREATEROLE, CREATEDB, REPLICATION, BYPASSRLS, no SUPERUSER",
+    "docs/features/BE/feature_payment_reconcile_tech.md:170 (existing LOCK TABLE precedent in this codebase, on application tables)",
+    "owner ruling, this session (2026-08-05): the fail-open-with-warning design and the operational single-bootstrap-point rule for the production host, per slice doc SS5.4.1/SS5.5"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "restricted",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [
+      "grep -q 'LOCK TABLE pg_auth_members IN SHARE UPDATE EXCLUSIVE MODE' infra/postgres-init/01-job-definer.sql",
+      "grep -q 'LOCK TABLE pg_auth_members IN SHARE UPDATE EXCLUSIVE MODE' infra/postgres-init/02-chat-definer.sql",
+      "grep -q 'WHEN insufficient_privilege THEN' infra/postgres-init/01-job-definer.sql",
+      "grep -q 'WHEN insufficient_privilege THEN' infra/postgres-init/02-chat-definer.sql",
+      "grep -qi 'RAISE WARNING' infra/postgres-init/01-job-definer.sql",
+      "grep -qi 'RAISE WARNING' infra/postgres-init/02-chat-definer.sql",
+      "! grep -q 'pg_advisory_xact_lock' infra/postgres-init/02-chat-definer.sql",
+      "! grep -qi 'SERIALIZABLE isolation with caller-side retry' infra/postgres-init/02-chat-definer.sql",
+      "grep -q 'withSyntheticRaceWindow' packages/db/src/migrate.test.ts",
+      "grep -q 'withManagedPostgresAdminRole' packages/db/src/migrate.test.ts",
+      "! grep -q 'chat_definer' packages/db/src/migrate.ts",
+      "! git diff --name-only origin/main...HEAD -- packages/db/migrations/ | grep -q ."
+    ],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm review:check:changed",
+      "pnpm build",
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_verification_note": "Checks 1-6, 9-10 assert additions that do not exist yet and MUST currently fail. Check 7 also currently fails: infra/postgres-init/02-chat-definer.sql's existing pg_advisory_xact_lock call is present today, so the negated grep exits nonzero until it is removed. Checks 11-12 are standing regression guards that already pass today (chat_definer already correctly absent from migrate.ts's RUNTIME_ROLES; no migration file exists in the diff since there is no diff yet) -- they exist to catch collateral damage during implementation, not to detect today's defect. Every command asserts a PROPERTY (exact statement/exception-handler text present/absent, exact stale-comment phrase absent, no new migration file) -- none pins a resolved value or count that goes stale on the next commit.",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 2
+  },
+  "security_review": {
+    "required": true,
+    "reason": "This slice's entire purpose is correcting the serialization guarantee of a privilege-boundary bootstrap for two cluster-global, BYPASSRLS-capable roles, and its design deliberately runs in a DEGRADED, unserialized mode on the confirmed-real production host (DigitalOcean Managed PostgreSQL never grants superuser). Security round must specifically verify: (1) the exception handler catches ONLY insufficient_privilege (SQLSTATE 42501) around the LOCK TABLE statement -- any broader WHEN clause (e.g. WHEN OTHERS) would silently swallow unrelated failures and must be rejected; (2) the RAISE WARNING text is unconditionally emitted on that specific failure and is not itself gated behind some condition that could suppress it; (3) SHARE UPDATE EXCLUSIVE is the mode actually used, not a stronger mode that would newly block ordinary GRANT/REVOKE cluster-wide, nor a weaker mode that would not self-conflict; (4) chat-definer.sql's removed comment block is exactly the pg_advisory_xact_lock rationale (including the now-disproven SERIALIZABLE claim) and no adjacent, still-valid comment (attribute-drift rationale, re-pointing guard rationale) was accidentally removed alongside it; (5) neither file's attributes, fail-closed checks, or (chat_definer) re-pointing guard changed; (6) the new migrate.test.ts concurrency cases genuinely exercise cross-database concurrency (two distinct database connections, Promise.all, not sequential awaits) and would fail if the LOCK TABLE statement were removed -- ask the implementer to demonstrate this via the one-time mutation-test check named in slice doc S7.4; (7) the new degraded-privilege test case actually connects as a non-superuser role shaped like DigitalOcean's documented doadmin attributes, not merely asserts the warning text without exercising the real permission boundary.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 90,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE",
+    "the live default branch has advanced such that either target file's content no longer matches what slice doc S7 pins (the exact pg_advisory_xact_lock/comment block to remove in chat-definer.sql, or the exact insertion point in job-definer.sql) when the worktree opens -- re-verify live-repo state before proceeding rather than assuming this contract's snapshot still holds",
+    "the LOCK TABLE statement fails with any SQLSTATE other than insufficient_privilege (42501) -- that is not the modeled degradation case; HALT and report rather than widening the exception handler to catch it",
+    "the exception handler ever suppresses the RAISE WARNING or allows the bootstrap to proceed with NEITHER the lock held NOR the warning emitted -- that is exactly the silent-no-op this design exists to prevent; HALT and redesign",
+    "implementation observes LOCK TABLE pg_auth_members IN SHARE UPDATE EXCLUSIVE MODE blocking an ordinary GRANT or REVOKE in the real target environment -- this would contradict this contract's own empirical measurement (slice doc S5.4, measured against postgres:16-alpine); HALT and re-verify against the real deployment Postgres version rather than assuming the local measurement generalizes",
+    "the new concurrency test cases pass even when the LOCK TABLE statement is temporarily removed (the mutation-test check named in slice doc S7.4) -- that means the test proves nothing; HALT and redesign the test rather than shipping it green",
+    "the degraded-privilege test case passes without the scratch role actually lacking LOCK TABLE privilege (e.g. accidentally run as superuser) -- that would prove nothing about the real degradation path; verify the scratch role's own attributes match doadmin's documented set before trusting a green result"
+  ],
+  "readiness_evidence_path": ".autopilot/state/definer-bootstrap-cluster-wide-serialization/readiness.json",
+  "_note": "Authored 2026-08-05 in an authoring-only session (no register, no worktree, no implementation), then revised the same day after owner review resolved the production-privilege question. Two rounds of live experimentation informed this contract. Round 1 (mechanism selection, slice doc S5): two of the three candidates named in the already-merged deferral (docs/autopilot-chat-definer-role-provisioning.md SS10 item 8) were tested against this session's local Postgres 16 cluster and found NOT to work as documented -- SERIALIZABLE isolation does not detect the cross-database conflict, and a row-level FOR UPDATE lock on a shared catalog row does not block cross-database despite the catalog's storage being physically shared. The chosen mechanism (relation-level LOCK TABLE) was cross-checked for three separate properties: that it blocks cross-database (it does), that it does not block ordinary GRANT/REVOKE elsewhere (it does not), and what privilege it requires (confirmed superuser-only via three separate negative tests). Round 2 (production-privilege resolution, slice doc S5.4.1/S5.4.2), triggered by owner feedback confirming DigitalOcean Managed PostgreSQL never grants superuser: built a scratch role mirroring doadmin's own documented attribute set (fetched from DigitalOcean's own docs, not assumed) and ran the full bootstrap sequence under it end to end, which both confirmed the fail-open design works as intended AND surfaced a second, previously-unconsidered finding -- PostgreSQL 16 auto-grants a CREATEROLE-holding creator membership in any role it creates, a side effect invisible in every environment this repo runs today because the real credential there is a true superuser. All scratch roles, tables, and databases created during both rounds of experimentation were dropped before this manifest was authored."
+}
