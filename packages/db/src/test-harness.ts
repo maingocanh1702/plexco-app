@@ -145,9 +145,12 @@ export async function revokeStaleChatDefinerMembership(
     [keepTarget],
   );
   for (const { rolname } of rows as { rolname: string }[]) {
-    // Plain interpolation, matching this file's own convention elsewhere (e.g. DROP ROLE IF EXISTS
-    // ${ownerRole} above) — rolname is read back from pg_roles, not user input.
-    await client.query(`REVOKE chat_definer FROM ${rolname}`);
+    // Quoted via pg's own escapeIdentifier (codex round-01 [P2]) rather than this file's usual
+    // plain interpolation (e.g. DROP ROLE IF EXISTS ${ownerRole} elsewhere, always a literal
+    // this file itself just chose) — rolname here is catalog-sourced, so a role created with a
+    // quoted identifier containing a space/quote/statement terminator would otherwise break or
+    // misparse the REVOKE statement.
+    await client.query(`REVOKE chat_definer FROM ${client.escapeIdentifier(rolname)}`);
   }
 }
 

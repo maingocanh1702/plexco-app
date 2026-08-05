@@ -648,22 +648,33 @@ re-deriving, an owner question, not an implementation choice.
 
 ## 10. Canonical verdict
 
-**Amendment note (2026-08-05, same day, owner-directed):** the verdict below is the original authoring
-verdict, dated and SHA-pinned as of that review — kept verbatim as the historical record of what was
-reviewed then, per this repo's own "never rewrite a dated record" convention. It does not re-state
-facts this doc's body no longer holds: `TARGET_FILES`/`IN_SCOPE`/`OUT_OF_SCOPE` below are the CURRENT,
-amended values (updated in place, since they describe the CURRENT contract, not a dated snapshot); `G1`–`G6`
-and the closure matrix are the original PASS record for the pre-amendment design and are NOT re-run
-here — the amendment (drop `chat_dm_safety_audit`, add `RAISE LOG`, extend scope to `test-harness.ts`/
-`rls-invariants.test.ts`) is a same-day, owner-directed simplification discovered during this slice's
-own implementation, not a new unreviewed addition requiring a fresh multi-gate cycle. The mandatory
-independent code + security review (manifest `code_review`/`security_review`) still applies to the
-AS-IMPLEMENTED diff in full, including this amendment.
+**Amendment history, both dated, neither silently blended (codex round-01 [P1] on this exact block:
+the original text left `TARGET_FILES`/`IN_SCOPE` amended in place while claiming `G1`–`G6`/
+`CLOSURE_MATRIX` PASS were untouched pre-amendment values — internally inconsistent, since the block
+below is read as ONE active, machine-checked verdict by this repo's own `pnpm review:check:changed`,
+which does not parse prose qualifiers above the fence).**
+
+- **2026-08-05, original authoring:** `AUTHORITY_SHA`/`LIVE_BASE_SHA` pinned, `REVIEWED_AT: 2026-08-05`,
+  design per SS6.1's original (pre-amendment) `chat_dm_safety_audit` table shape.
+- **2026-08-05, same day, owner-directed amendment:** SS5 row 6 rationale replaced, SS6.1 DDL rewritten
+  (drop `chat_dm_safety_audit`, add `RAISE LOG`), scope extended to `packages/db/src/test-harness.ts`/
+  `packages/db/src/rls-invariants.test.ts` (SS6.3/SS8).
+- **2026-08-06, this re-verification:** every gate below RE-CHECKED against the amended, as-implemented
+  state (not carried over from 2026-08-05) — `REVIEWED_AT` updated to reflect that. None needed to
+  change verdict: G1 (authority pin, DD-55 itself unchanged)/G2 (decision scope, the audit-mechanism
+  swap is an implementation detail, not a new product/policy question)/G3 (dependency,
+  `chat-definer-role-provisioning` still MERGED)/G6 (external, same) hold unconditionally; G4
+  (acceptance-matrix coverage) re-verified against the amended SS9, backed by 36/36 passing tests in
+  `chat-dm-safety-invariants.test.ts`; G5 (scope) re-verified against the CURRENT, amended
+  `TARGET_FILES`/`IN_SCOPE` below, not the original 7-file list. The mandatory independent code +
+  security review (manifest `code_review`/`security_review`) is running against this exact,
+  re-verified, as-amended diff — this block is not a substitute for that review, it is this slice's
+  own re-affirmation ahead of it.
 
 ```text
 REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: CODE_READY
-REVIEWED_AT: 2026-08-05
+REVIEWED_AT: 2026-08-06 (re-verified post-amendment; originally 2026-08-05)
 AUTHORITY_SHA: 90d292d85fbe92db7a5afcd118a99e28f3d3b3b7
 LIVE_BASE_SHA: 5cad41f4d7f6d47a2f591a1d70c75885568cb4b0
 BASE_BRANCH: main
@@ -711,13 +722,13 @@ OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: none
 LIVE_REPO_VERIFICATION: PASS
 CONTRACT_MATRIX: PASS
-CLOSURE_MATRIX: PASS (12/12 — see §10.1)
+CLOSURE_MATRIX: PASS (12/12 — see §10.1, re-verified 2026-08-06 against the amended state)
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
 IMPLEMENTATION_ARTIFACTS: PASS (implemented in worktree feat/chat-dm-safety-authority-core, 2026-08-05,
-  amended same day per owner ruling — see amendment note above)
-FIRST_IMPLEMENTATION_STEP: DONE — see the amendment note above; next step is the code + security review
-  gate on the as-implemented, as-amended diff
+  amended same day per owner ruling, re-verified 2026-08-06 — see amendment history above)
+FIRST_IMPLEMENTATION_STEP: DONE — see the amendment history above; next step is the code + security
+  review gate on this exact, re-verified, as-amended diff
 REMAINING_BLOCKERS: none
 ```
 

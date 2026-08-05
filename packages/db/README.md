@@ -454,9 +454,12 @@ own SECURITY DEFINER privileges rather than a table grant).
 
 Canonical block/report/rate storage for in-app DM safety plus three `chat_definer`-owned
 `SECURITY DEFINER` functions. **Inert** (zero live caller) until `dd38-dd86-chat-schema-core`
-(slice 3) lands its `dm_current_read_allowed`/`create_dm`/`send_chat_message`/`mark_read` — this
-migration is the FIRST to transfer function ownership to `chat_definer` (`chat-definer-role-
-provisioning`, merged, provisions the role itself but grants it no privileges).
+(slice 3) lands its `dm_current_read_allowed` — this migration is the FIRST to transfer function
+ownership to `chat_definer` (`chat-definer-role-provisioning`, merged, provisions the role itself
+but grants it no privileges). `create_dm`/`send_chat_message`/`mark_read` (codex round-01 [P2]:
+corrected here, not slice 3's own deliverable) are owned by later slices 7
+(`chat-shared-message-command-core`) and 8 (`chat-dm-lifecycle-command-core`) — this migration
+stays inert for them too, until those slices land.
 
 - `dm_safety_enabled() RETURNS boolean` — pure predicate, the AND of `chat_dm_safety_config`'s four
   independent capability toggles (`block_enabled`/`report_enabled`/`rate_limit_enabled`/

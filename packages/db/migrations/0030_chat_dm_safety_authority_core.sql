@@ -42,11 +42,26 @@
 --
 -- audit_enabled has TWO effects (owner-amended 2026-08-05, no new column):
 -- (1) unchanged -- it is one of the four flags dm_safety_enabled() ANDs, so
--- disabling it alone still fail-closes the whole subsystem (test #28's own
+-- disabling it alone still fail-closes the WHOLE subsystem (test #28's own
 -- "disable any ONE of the four" requirement). (2) it now ALSO gates whether
 -- assert_dm_allowed() emits its RAISE LOG line on a denial -- see that
 -- function's own comment; there is no queryable chat_dm_safety_audit table
 -- in this migration.
+--
+-- KEEPING audit_enabled's default at true (codex round-01 [P1], addressed not
+-- silently accepted): the reviewer's own suggested fix -- default audit to
+-- false until log capture/retention is proven -- would, per effect (1) above,
+-- default the ENTIRE DM safety subsystem to DISABLED on every fresh install,
+-- not just logging: dm_safety_enabled() ANDs all four flags, by design (this
+-- file's own contract SS5 design-probe row 2, itself required by BE spec
+-- test #28's "disable any ONE independently" requirement, which presupposes
+-- all four start enabled). That is a strictly worse outcome than the
+-- observability gap it would fix -- DD-55 is a HARD gate (decisions.md:
+-- "Thiếu một gate → DM disabled fail-closed"), not an opt-in one, and
+-- shipping it pre-disabled defeats the migration's entire purpose. The real
+-- gap the reviewer names -- production log capture/retention for RAISE LOG
+-- is unverified -- is real and already tracked, not silently dropped: see
+-- backlog chat-dm-safety-audit-queryable-path.
 --
 -- dm_sender_limit_per_min/dm_target_limit_per_min carry the same two
 -- numbers previously hardcoded as literal arguments inside
@@ -78,6 +93,31 @@ CREATE TABLE chat_dm_safety_config (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 INSERT INTO chat_dm_safety_config (singleton) VALUES (true);
+
+-- ---------------------------------------------------------------------------
+-- chat_dm_safety_config's own updated_at needs a touch-on-UPDATE trigger
+-- (codex round-01 [P2]): `DEFAULT now()` alone only stamps the INSERT above;
+-- every later `UPDATE chat_dm_safety_config SET ...` (retuning limits,
+-- flipping a capability) would otherwise leave updated_at frozen at insert
+-- time forever, contradicting design probe row 11's own claim that retuning
+-- is "auditable via updated_at". No existing touch-on-update trigger exists
+-- elsewhere in this codebase to reuse (0010/0022's own triggers are all
+-- append-only/immutability guards, a different shape); scoped to this one
+-- table, matching this repo's per-table (not generic shared) trigger
+-- convention.
+-- ---------------------------------------------------------------------------
+CREATE FUNCTION chat_dm_safety_config_touch_updated_at()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER trg_chat_dm_safety_config_touch_updated_at
+  BEFORE UPDATE ON chat_dm_safety_config
+  FOR EACH ROW EXECUTE FUNCTION chat_dm_safety_config_touch_updated_at();
 
 -- ---------------------------------------------------------------------------
 -- chat_blocks -- canonical, cross-feature block-pair store (DD-55: "dùng
@@ -214,7 +254,11 @@ DECLARE
   v_target_limit integer;
   v_audit_enabled boolean;
 BEGIN
-  IF p_action NOT IN ('create','send','read') THEN
+  -- p_action IS NULL checked explicitly: `NULL NOT IN (...)` evaluates to NULL (SQL three-valued
+  -- logic), not TRUE, so `IF p_action NOT IN (...) THEN` alone silently treats NULL as valid --
+  -- skipping this guard AND, later, both `p_action IN ('create','send')` rate-limit branches
+  -- (also NULL, also non-TRUE), reaching a normal return with no exception (codex round-01 [P1]).
+  IF p_action IS NULL OR p_action NOT IN ('create','send','read') THEN
     RAISE EXCEPTION 'assert_dm_allowed: invalid action' USING ERRCODE = 'invalid_parameter_value';
   END IF;
   IF p_actor IS NULL OR p_peer IS NULL OR p_actor = p_peer THEN

@@ -1907,4 +1907,3 @@ notes: |
   Neither route is clearly cheaper — pick based on which future slice (7/8's own authoring, or a
   standalone infra probe) reaches this question first. Not scoped further than this; the next
   implementer authors a real contract once slice 7/8's own shape is known.
-
