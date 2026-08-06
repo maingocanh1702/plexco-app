@@ -579,32 +579,42 @@ export async function setupNonSuperuserOwnerContext(
     runMigration: () => migrate(ownerUrl),
     connectAsWorker,
     teardown: async () => {
-      await ownerPool.end();
-      for (const p of workerPools) await p.end();
-      // codex round-07 [P1]: closing connections alone leaves the database, the cluster-global
-      // ownerRole, and its job_definer/chat_definer membership behind — a LOGIN role with a known,
-      // fixed password and BYPASSRLS-via-membership on a shared local cluster. Drop the database
-      // (ownerRole owns it, so it must go first) then the role itself, before closing the admin
-      // connection that is the one privileged enough to do both. DROP ROLE natively revokes every
-      // membership the dropped role held (job_definer's, chat_definer's, or both) — no separate
-      // REVOKE step needed.
-      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
-      await admin.query(`DROP ROLE IF EXISTS ${ownerRole}`);
-      // Restore whatever bootstrapChatDefinerForOwner revoked (codex round-03 [P1]), still under
-      // the SAME lock acquired back in bootstrapChatDefinerForOwner — never released in between
-      // (codex round-05 [P1]), so no other test can occupy the slot between the DROP ROLE above
-      // (which vacates it) and this restore. Empty array is a no-op; release regardless, since the
-      // lock was acquired whether or not there was anything to revoke.
-      if (chatDefinerLockRelease) {
-        try {
-          if (revokedChatDefinerMembers.length > 0) {
-            await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
-          }
-        } finally {
+      // codex round-06 [P2]: the whole post-acquisition cleanup sequence now runs under ONE outer
+      // try/finally whose finally unconditionally releases the chat lock (and closes admin) —
+      // previously, pool shutdown / DROP DATABASE / DROP ROLE ran BEFORE the try/finally that
+      // released the lock, so if any of those earlier statements threw, chatDefinerLockRelease()
+      // was never called: the dedicated lock-holder connection leaked, and the advisory lock it
+      // held blocked every other test file's own chat_definer work until timeout. This finally
+      // does not catch/swallow — a genuine cleanup failure still propagates as a test failure,
+      // it just never leaks the lock on the way out.
+      try {
+        await ownerPool.end();
+        for (const p of workerPools) await p.end();
+        // codex round-07 [P1]: closing connections alone leaves the database, the cluster-global
+        // ownerRole, and its job_definer/chat_definer membership behind — a LOGIN role with a known,
+        // fixed password and BYPASSRLS-via-membership on a shared local cluster. Drop the database
+        // (ownerRole owns it, so it must go first) then the role itself, before closing the admin
+        // connection that is the one privileged enough to do both. DROP ROLE natively revokes every
+        // membership the dropped role held (job_definer's, chat_definer's, or both) — no separate
+        // REVOKE step needed.
+        await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+        await admin.query(`DROP ROLE IF EXISTS ${ownerRole}`);
+        // Restore whatever bootstrapChatDefinerForOwner revoked (codex round-03 [P1]), still under
+        // the SAME lock acquired back in bootstrapChatDefinerForOwner — never released in between
+        // (codex round-05 [P1]), so no other test can occupy the slot between the DROP ROLE above
+        // (which vacates it) and this restore. Empty array is a no-op.
+        if (revokedChatDefinerMembers.length > 0) {
+          await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
+        }
+      } finally {
+        // Release regardless of whether anything above threw, and regardless of whether there was
+        // ever anything to revoke — the lock was acquired unconditionally in
+        // bootstrapChatDefinerForOwner whenever that ran.
+        if (chatDefinerLockRelease) {
           await chatDefinerLockRelease();
         }
+        await admin.end();
       }
-      await admin.end();
     },
   };
 }

@@ -249,9 +249,15 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
       const res = await migrate(url(db, owner, "x"));
       expect(res.applied.length).toBe(MIGRATION_COUNT);
     } finally {
-      await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
-      await admin.query(`DROP ROLE IF EXISTS ${owner}`);
+      // codex round-06 [P2]: DROP DATABASE/DROP ROLE now run INSIDE the same try this finally
+      // covers, alongside the restore — previously they ran BEFORE a separate inner try/finally
+      // that released the lock, so a throw from either one would skip releaseChatDefinerLock()
+      // entirely, leaking the dedicated lock-holder connection and blocking every other test
+      // file's own chat_definer work until timeout. This finally does not catch/swallow — a
+      // genuine cleanup failure still propagates, it just never leaks the lock on the way out.
       try {
+        await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+        await admin.query(`DROP ROLE IF EXISTS ${owner}`);
         if (revokedChatDefinerMembers.length > 0) {
           await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
         }
@@ -465,14 +471,25 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
     });
     try {
       // codex round-05 [P1]: bootstrapChatDefinerForOwner now acquires and holds the chat lock
-      // itself, internally, through ctx.teardown() (see test-harness.ts's own comment) — wrapping
-      // it in another withChatDefinerLock here would deadlock (two different connections each
-      // waiting on the same session-scoped advisory lock the other holds). job_definer has no such
-      // internal hold (its own bootstrap never revokes an existing member, so there is nothing to
-      // race a later restore against), so withJobDefinerLock still wraps it explicitly here.
-      await withJobDefinerLock(BASE!, () => ctx.bootstrapJobDefinerForOwner());
-      await ctx.bootstrapChatDefinerForOwner();
-      const res = await ctx.runMigration();
+      // itself, internally, through ctx.teardown() (see test-harness.ts's own comment) — nesting
+      // withChatDefinerLock here would deadlock (two different connections each waiting on the
+      // same session-scoped advisory lock the other holds). job_definer has no such internal hold
+      // (its own bootstrap never revokes an existing member), so withJobDefinerLock still wraps
+      // explicitly here.
+      //
+      // codex round-06 [P1] regression fix: round-05's own fix above narrowed withJobDefinerLock to
+      // wrap ONLY bootstrapJobDefinerForOwner(), releasing it before bootstrapChatDefinerForOwner()
+      // and runMigration() ran — but runMigration() reaches migration 0022, which ASSERTS (never
+      // creates) job_definer, so it still needs that lock's protection against a concurrent
+      // JCL-2/JCL-3 test hiding/corrupting job_definer. withJobDefinerLock (key 0x6a6f6264 "jobd")
+      // and the chat lock bootstrapChatDefinerForOwner acquires internally (key 0x63686164 "chad")
+      // are DIFFERENT advisory-lock keys, so wrapping the whole sequence in withJobDefinerLock does
+      // NOT reintroduce round-05's own deadlock — only nesting the SAME key twice deadlocks.
+      const res = await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        await ctx.bootstrapChatDefinerForOwner();
+        return ctx.runMigration();
+      });
       expect(res.applied[res.applied.length - 1]).toBe("0030_chat_dm_safety_authority_core.sql");
 
       const worker = await ctx.connectAsWorker();
