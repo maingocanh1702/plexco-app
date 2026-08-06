@@ -1,12 +1,23 @@
 # Plexco Web App — Design Brief cho Designer
 
-> **Version:** 2.3 · 2026-07-28
-> **Tài liệu tham chiếu:** `../../product/BRD.md` v3.9n · `../../product/PRD.md` v2.8m · `../../product/TDD.md` v3.1h · `../../product/ROADMAP.md` v3.4l · `../../features/README.md` current · `../../standards/decisions.md` v2.11 current mirror · `../../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` v1.8
+> **Version:** 2.4 · 2026-08-07
+> **Tài liệu tham chiếu:** `../../product/BRD.md` v3.9n · `../../product/PRD.md` v2.8m · `../../product/TDD.md` **v3.1i** · `../../product/ROADMAP.md` **v3.4m** · `../../features/README.md` current · `../../standards/decisions.md` **v2.12 current mirror** · `../../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` v1.8
+> **Vẽ màn theo:** `./FE/feature_<name>_fe.md` (12 FE spec — chi tiết nhất cho từng màn) · `../../standards/design-system.md` (component catalog) · `../../standards/design-tokens.md` (value SoT). Brief này cho **bối cảnh sản phẩm**; khi brief và FE spec lệch nhau thì **FE spec thắng**.
 > **Target audience:** Designer (UI/UX)
 >
 > **Cập nhật v3.4 (DD-37 ✅):** Đăng nhập = **Google + email** (bỏ Telegram Login). Kênh phase-1 = **web + Zalo + Facebook Messenger** (Telegram loại). Onboarding link **Zalo + Facebook Messenger** (không còn bước Telegram). Thêm màn **chat in-app** (DD-38 ✅), **cài đặt hồ sơ + giá theo giới tính** (DD-39 ✅), **mark-paid thủ công tap/multi-select** (DD-40 ✅).
 >
-> **Cập nhật DD-79/DD-81 (19/07/2026; current mirror 28/07):** phase-1 PWA có màn **Home hub** làm landing sau đăng nhập (`../../features/feature_home.md` v0.7 — chips Còn nợ/Kèo tuần · hero kèo kế tiếp gradient+glow theo theme-direction §7 · upcoming + suggested). **Bottom nav 5 slot: Home · Feed (config-OFF tới DD-76) · [Khám phá — center/FAB] · Club (CLB sở hữu + tham gia, CTA Tạo CLB) · Setting**; **💬 chat + 🔔 trên header** mọi màn chính. Visual tool = **Pencil**, canonical root file `design.pen`; target theme = Candidate C Energetic Orange `#FF5A1F` + Sora/Inter. Current Indigo/Outfit giữ active; FE mapping chỉ bắt đầu sau tracked owner-approved `design.pen` + visual/WCAG gate.
+> **Cập nhật DD-79/DD-81 (19/07/2026; current mirror 28/07):** phase-1 PWA có màn **Home hub** làm landing sau đăng nhập (`../../features/feature_home.md` **v0.10** — chips Còn nợ/Kèo tuần · hero kèo kế tiếp gradient+glow theo theme-direction §7 · upcoming + suggested). **Bottom nav 5 slot: Home · Feed (config-OFF tới DD-76) · [Khám phá — center/FAB] · Club (CLB sở hữu + tham gia, CTA Tạo CLB) · Setting**; **💬 chat + 🔔 trên header** mọi màn chính. Visual tool = **Pencil**, canonical root file `design.pen`; target theme = Candidate C Energetic Orange `#FF5A1F` + Sora/Inter. Current Indigo/Outfit giữ active; FE mapping chỉ bắt đầu sau tracked owner-approved `design.pen` + visual/WCAG gate.
+>
+> ⚠️ **Home đã đổi 3 lần kể từ v0.7 — Home là màn vẽ ĐẦU TIÊN nên đọc kỹ trước khi bắt đầu:**
+> - **v0.8** — suggested chỉ render scalar public price + `slots_open` ("N chỗ trống"), **không denominator**; hero person-self không invent capacity field.
+> - **v0.9** — **gỡ hero payment/management CTA** vì Home DTO hiện không có hero amount/`payAction`; cấm client cache person-self Home sections (chỉ public suggested được cache).
+> - **v0.10** — Empty state chốt **đúng hai chip**: proven-zero debt + zero weekly sessions. Streak vẫn deferred, không vẽ.
+>
+> ⚠️ **DD-96 (owner 2026-08-07) — hai chip tiền của Home, đọc trước khi vẽ chip nào:**
+> - **Chip "Còn nợ" (Part A ✅ `DECISION_FINAL` contract shape):** là aggregate **cross-club** thuộc owner `player_view`, Home chỉ consume. Ba trạng thái, không phải một con số: `known_zero` · `known` (`totalOutstanding` + `clubCount` = số CLB **có** outstanding > 0) · `unknown`. **Unknown-dominates:** bất kỳ CLB nào `unknown` ⇒ **cả chip** `unknown`, **cấm** cộng các CLB known rồi hiển thị — partial sum tạo con số trông authoritative nhưng **thấp hơn nợ thật**. Chỉ `known_zero` mới được vẽ số 0. Tap chip → `/me` outstanding detail (đã có, không cần màn mới). **Không** có pay CTA ở tầng aggregate.
+> - **Chip "Chưa thu" (Part B — direction ✅, mechanism 🟡 `NOT_PLAN_READY`):** owner đã duyệt *hướng*, nhưng còn 4 blocker chưa đóng. **Tới khi đóng: Home KHÔNG render chip này — không placeholder, không `0`, không "coming soon", không slot trống**, y như cách Feed tab bị xử lý (config-OFF, không tab chết). Lý do không phải thẩm mỹ: "Còn nợ" là tiền *của tôi* (person-self), "Chưa thu" là tiền *người khác nợ tôi* (tenant-scoped, role-gated, chưa owner nào sở hữu) — hai authz class khác hẳn dù nằm cạnh nhau trên màn.
+> - Ghi chú: `feature_home.md`/`feature_home_fe.md` **chưa mirror DD-96** (decisions v2.12 tự khai còn nợ mirror). Khi lệch, `decisions.md` DD-96 thắng.
 >
 > **Cập nhật DD-57/58/59 (28/07):** FE governance đã ✅ chốt: server-first/feature-first/4-state; Pencil-only `design.pen → handoff → token-mapping → code → screenshot verify`; `standards/design-tokens.md` là value SoT và benchmark chỉ tư vấn. Đây là contract, không phải runtime/FE evidence.
 >
@@ -598,6 +609,7 @@ Step 4: Facebook Messenger + Readiness
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 07/08/2026 | v2.4 | **Refresh authority pin + surface DD-96 cho màn vẽ đầu tiên.** Version pin lệch: TDD v3.1h→**v3.1i**, ROADMAP v3.4l→**v3.4m**, decisions mirror v2.11→**v2.12**, `feature_home.md` v0.7→**v0.10**. Thêm dòng "vẽ màn theo" trỏ 12 FE spec + `design-system.md` + `design-tokens.md`, kèm quy tắc **FE spec thắng brief** khi lệch — brief này cho bối cảnh sản phẩm, không phải nguồn để vẽ pixel. Tóm 3 thay đổi Home kể từ v0.7 (v0.8 bỏ denominator ở suggested; v0.9 gỡ hero payment CTA + cấm cache person-self; v0.10 Empty chốt đúng 2 chip) vì Home là màn vẽ đầu tiên theo `designer-kickoff §3B`. Thêm **DD-96** (owner 07/08): chip "Còn nợ" là aggregate cross-club 3 trạng thái với **unknown-dominates** (cấm partial sum — nó hiện số thấp hơn nợ thật), chỉ `known_zero` mới vẽ 0, không pay CTA ở tầng aggregate; chip "Chưa thu" **không render dưới bất kỳ hình thức nào** tới khi 4 blocker B1–B4 đóng. Ghi rõ Home pair/FE chưa mirror DD-96 nên `decisions.md` thắng khi lệch. |
 | 28/07/2026 | v2.3 | Refresh current authority refs and mirror plan v1.8 `PLAN_READY` at `90d292d`; retain slice-local `CODE_READY`, no-runtime and design-authority HOLD boundaries. |
 | 28/07/2026 | v2.2 | Mirror DD-57/58/59 active governance and DD-81 target C + Sora/Inter; distinguish current Indigo/Outfit from gated target and pin dark on-primary contrast. |
 | 27/07/2026 | v2.1 | Refresh authority refs and add DD-91 conditional Chat-primary/`/pay` direction while preserving `NOT_PLAN_READY`, no-runtime and design-authority HOLD boundaries. |
