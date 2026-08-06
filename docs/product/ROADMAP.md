@@ -1,16 +1,16 @@
 # 🗺️ ROADMAP — Plexco
 
-**Phiên bản:** v3.4l
-**Ngày tạo:** 16/06/2026 · **Cập nhật:** 28/07/2026
+**Phiên bản:** v3.4m
+**Ngày tạo:** 16/06/2026 · **Cập nhật:** 06/08/2026
 **Căn cứ:** `BRD.md` v3.9n · `PRD.md` v2.8m · `TDD.md` v3.1h · `../standards/decisions.md` **v2.11 current mirror** (DD-86/DD-91–95 owner-final; DD-88 broader `DEFERRED_PROPOSAL`) · `../features/feature_channel_booking_funnel.md` + BE companion · `../standards/BUILD-STATUS.md`
 
 > ROADMAP là nguồn sự thật cho **delivery order + dev progress**. Product scope thuộc BRD; behavior thuộc PRD; implementation contract thuộc TDD.
 
-> **📌 Repo truth snapshot — `main@784bc8dd297163a5ec5415f33beabbbf34bbc8d7` (28/07/2026, = `origin/main`).** Mọi số đếm hiện hành trong file này lấy từ cây repo/runner tại commit trên hoặc exact code-identical test snapshot được pin rõ, không phải từ prose. Hai commit sau `2dc9b8c` chỉ thay authority/readiness docs, nên runtime inventory/test source không đổi. Cách tái tạo: xem §Cách đọc tiến độ → "Lệnh tái tạo số đếm". Nếu số không tái tạo được ⇒ coi như **stale**, không dùng để ra verdict.
+> **📌 Repo truth snapshot — `main@2cd52ced65597546fc2bfce82ffae0cdf8e49a53` (06/08/2026, = `origin/main`).** Mọi số đếm hiện hành trong file này lấy từ cây repo/runner tại commit trên hoặc exact code-identical test snapshot được pin rõ, không phải từ prose. Cách tái tạo: xem §Cách đọc tiến độ → "Lệnh tái tạo số đếm". Nếu số không tái tạo được ⇒ coi như **stale**, không dùng để ra verdict.
 >
-> ✅ **Hai lớp bằng chứng hiện hành.** Static/source inventory tại `784bc8d`: **25 migrations, 32 test files, 528 static test declarations, 10 API routes, 24 Product + 23 BE feature specs**. Canonical runner gần nhất trên source test-identical product tree PASS **537 workspace tests** (core 132 · DB 219 · web 146 · bot 40) + **13 readiness-validator tests**; đúng một generator thêm 9 cases (`528 + 9 = 537`).
+> ⚠️ **Hai lớp bằng chứng hiện hành — lớp static đã đo lại, lớp runner CHƯA.** Static/source inventory tại `2cd52ce`: **30 migrations (`0000`–`0029`), 33 test files, 655 static test declarations** (core 132 · db 346 · web 137 · bot 40)**, 10 API routes** (8 auth + 2 onboarding, không đổi)**, 24 Product + 24 BE feature specs = 24 cặp, tất cả đã committed** (khoảng trống 24/23 của snapshot 28/07 đã đóng: DD-32 BE companion nay có trên `main`)**.** **Canonical runner chưa chạy lại kể từ `3d75c90`** (561 workspace + 13 validator, 29/07) ⇒ trục **Tests mang nhãn `STALE`**: static tăng 528→655 vì `0026`–`0029` + `authorizeTenantAction` kéo db 219→**346**, nhưng theo luật 4 chỉ output runner mới được khai làm số test. Không suy runner từ static.
 >
-> **Working-tree docs overlay 28/07:** DD-32 BE companion đã được author nhưng chưa commit, nên inventory hiện tại là **24 Product + 24 BE = 24 pairs**. Không dùng overlay này để sửa số snapshot của `main@784bc8d` hoặc claim runtime.
+> **Working-tree overlay 06/08 (chưa commit, KHÔNG tính vào bất kỳ trục nào):** `design.pen` (root), **12 FE spec** `docs/channels/web/FE/feature_*_fe.md`, 2 session doc `docs/sessions/2026-07-31-*`, `docs/autopilot-templates/level3.1-design-discussion.md`, `docs/templates/feature-dev/fe-spec-template.md`. Theo luật 3, FE spec + `.pen` **không** kéo trục FE/UI lên; FE vẫn **HOLD** và cột FE/UI vẫn 0 màn.
 
 > **v3.4 channel pivot (DD-37):** bỏ Telegram; kênh phase-1 = **web + Zalo + Facebook Messenger**. Messenger nâng từ post-MVP (P4.8) lên **phase-1 (P2.5, phụ thuộc App Review)**. Thêm **Google login** (P0–P1), **chat in-app** + **cài đặt hồ sơ/giá theo giới tính** (P4, DD-38/DD-39 ✅ scope-committed phase-1; schema chờ migration), **mark-paid thủ công tiền mặt/CK** (P2).
 
@@ -49,6 +49,15 @@
 > **Cập nhật 27/07/2026 (v3.4h — evidence snapshot, superseded về Chat bởi v3.4k):** `main@2dc9b8c` có đủ **25 migrations (`0000`–`0024`)**. Sau `0022`/`0023`, TypeScript dispatcher, queue registry/provision/preflight và worker lifecycle đã merge (`fca314e`); recovery scheduler 1 phút đã merge (`a03d2d6`) nhưng `OUTBOX_DISPATCH_SCHEDULE_ENABLED` mặc định **OFF** và chưa có domain producer/real projector, nên Sync/Session vẫn không runnable. `0024` chỉ cấm public session thiếu `slots_max`. Evidence hiện hành = **32 files / 537 workspace PASS + 13 validator**, static **528 + 9 generated**. Safari macOS/iOS M3 measurement đã đóng, nhưng Google login vẫn chưa enable. DD-91 chốt in-app Chat là **primary daily player surface mục tiêu** + requester-only `/pay`; migration/code/runtime Chat chưa tồn tại. Auto-reconcile giữ manual global và chỉ mở khi `payment_reconcile_auto` + exact market/provider/bank/currency/consent pass; SePay/ApiPay là Vietnam launch path chưa enable.
 >
 > **Cập nhật 28/07/2026 (v3.4l — Chat authority immutable/re-pin):** exact 27-file authority pack đã land tại `90d292d`; primary plan v1.8 và DD-86 analysis đã re-pin, closure 12/12, verdict `PLAN_READY`. Đây chỉ là quyền tách/author slice: B4 artifacts/worktree chưa có và mỗi mechanism/API/FE slice vẫn phải đạt strict `CODE_READY`. Owner-final DD-86/DD-91–95, DD-88 broader `DEFERRED_PROPOSAL`, mechanisms `1–47`, API `A1–A21`, FE `F0–F15`, G6 enablement gates và serialized DB lane `1→2→3→4` không đổi. Migration/code/runtime Chat vẫn chưa tồn tại; DD-32 Option D và delivery order không đổi.
+
+> **Cập nhật 06/08/2026 (v3.4m — tuần 30/07→06/08, reconcile tại `2cd52ce`):** **88 commit** sau `3d75c90` (`git rev-list --count 3d75c90..2cd52ce` — `--first-parent` và `--no-merges` cũng đều 88; con số `58` ở bản nháp trước sai, không tái tạo được). **Migration tail `0025`→`0029`** (26→**30 file**), bốn file, ba lớp khác nhau và **không lớp nào mở hành vi nghiệp vụ**:
+> `0026` (`89e074b`) đổi tên 6 CHECK sống-mà-không-khai sang tên `schema.ts` vừa khai — RENAME-only, zero predicate, đóng nốt phần `0025` cố ý loại ra;
+> `0027` (`432ba11`) thêm `resolve_tenant_status_locked` SECURITY DEFINER read-only theo đúng khuôn `0012`, vì `FOR SHARE` đòi quyền UPDATE mà cấp UPDATE thẳng trên `tenants` sẽ mở lại đúng write-path mà AP-40 vừa đóng;
+> `0028`/`0029` (`f901626`) là cặp **expand→contract DD-29 capability registry**: `plans.plan_key` 4-tier → **2-tier `free|host_pro`**, `plans.entitlements` sang shape lồng `{"capabilities": {...}}`, reseed, repoint write-path của `tenant_provision()` + mọi subscription `free_web`; row còn ở tier cũ ⇒ abort cả transaction thay vì repoint im lặng.
+> **Đây là migration đầu tiên trong tháng chạm một hàm đang có caller runtime** (`tenant_provision()` gọi tại `packages/db/src/auth.ts:212`, đường onboarding) — nhưng **chưa TS nào đọc `entitlements`/`capabilities`**, nên vẫn chưa có behavior gating.
+> **Code merge ngoài migration:** `authorizeTenantAction` — resolver trạng thái tenant fail-closed 2 bước (`ddb69a9`, `packages/db/src/authorization.ts`), **zero production caller**, mới chỉ re-export ở `packages/db/src/index.ts`; role `chat_definer` được provision bằng bootstrap script chứ không bằng migration (`286f48b`, `infra/postgres-init/02-chat-definer.sql`); bootstrap definer được serialize cluster-wide bằng khoá 2 tầng, **fail-open có chủ đích** dưới managed Postgres (`b55d628`). **Deps/security:** `next` 15.5.21 (`61a2575`), ESLint 9→**10.7.0** trước EOL (`a93a4f6`), và sàn `esbuild` khai-mà-không-áp-dụng nay áp thật, đóng GHSA-67mh-4wv8-2f99 (`62304b5`).
+> **Chat lane:** `chat-definer-role-provisioning` đã merged; `chat-dm-safety-authority-core` **authored `CODE_READY` 05/08** (`521a904`, amend `ed54e31` đưa rate limit ra config) nhưng **chưa register/worktree/implement**; `dd38-dd86-chat-schema-core` authored `NOT_CODE_READY` (closure 10/12, chờ slice 1–2). Chat vẫn **0 migration · 0 API · 0 UI**.
+> **Không đổi:** phase, DD status, delivery order, và thanh **~33%** — không slice nào mở producer/projector/service/route/FE nghiệp vụ. Trục Tests mang nhãn `STALE` cho tới lần chạy canonical runner kế tiếp. Autopilot kit v11→**v31**; verdict ledger tới **Verdict 31**.
 
 > **Đánh số phase:** toàn bộ tài liệu dùng duy nhất **canonical P-number**. Các tên Foundation/Tenant Engine/... chỉ là delivery-group label, không tạo một hệ số thứ hai.
 
@@ -182,7 +191,7 @@ Plexco xây **repo riêng**; lift logic thuần (matching, payments-logic, dates
 | **Tests** | Test chạy xanh trong CI | tên file test + số case |
 | **Invariant** | Test bất biến xanh — **tenant isolation/RLS · public field-whitelist · no-money-leak · concurrency/race-safety** | `packages/db/src/*-invariants.test.ts` **+ danh sách invariant-class đặt tên khác** (bảng ngay dưới). Không suy ra từ tên file: file chỉ tính khi có tên trong danh sách |
 
-**Danh sách invariant-class (re-verify tại `784bc8d`)** — trục Invariant chỉ đếm các file dưới đây; thêm file mới phải thêm dòng ở đây, không dựa vào quy ước đặt tên:
+**Danh sách invariant-class (re-verify tại `2cd52ce` — vẫn đúng 3 file; `rls-invariants.test.ts` và `migrate.test.ts` có nhận case mới trong tuần 30/07→06/08 nhưng không sinh file invariant-class mới)** — trục Invariant chỉ đếm các file dưới đây; thêm file mới phải thêm dòng ở đây, không dựa vào quy ước đặt tên:
 
 | File | Invariant bảo vệ | Khớp pattern `*-invariants` |
 |---|---|---|
@@ -200,6 +209,7 @@ Plexco xây **repo riêng**; lift logic thuần (matching, payments-logic, dates
 4. **Đếm được thì phải tái tạo được.** Mọi số trong file này đi kèm lệnh tái tạo bên dưới. Với test case: **canonical runner (`pnpm test`) là authority duy nhất**; *static grep* là cross-check chạy được không cần DB, dùng để **phát hiện drift**, không dùng để khai số.
    **Công thức đối chiếu:** `static + Σ(test sinh trong loop) = runner`. Test sinh trong loop = table-driven test viết bằng `for…of`/`forEach` bọc ngoài `it()` — grep chỉ đếm 1 lần dù runner sinh N.
    **Generator hiện hành tại `784bc8d` — vẫn đúng 1 chỗ:** `apps/web/lib/google-oidc.test.ts` (`for (const row of rows)`, `rows.length = 10` ⇒ `+9`). Đối chiếu: `528 + 9 = 537` ✅.
+   **Lưu ý 06/08:** phép đối chiếu này chỉ hợp lệ khi static và runner cùng đo trên một commit. Tại `2cd52ce` static = **655** nhưng runner lần cuối chạy ở `3d75c90` (561) ⇒ **không được cộng `655 + 9` rồi khai là số test.** Kiểm kê generator phải chạy lại cùng lúc với runner; `packages/db` là nơi tăng toàn bộ +127 nên đó là chỗ phải soi generator mới trước tiên.
    Nếu công thức không khớp ⇒ hoặc có generator mới chưa kiểm kê (thêm vào danh sách trên), hoặc doc đã drift. **Không được chọn số lớn hơn để cho khớp.**
 5. **Trục yếu nhất là trạng thái thật.** Một group có Spec ✅ / BE ✅ / FE ⬜ thì là **⬜ chưa dùng được**, không phải "gần xong".
 
@@ -231,19 +241,19 @@ find docs/features/BE -maxdepth 1 -type f -name "feature_*_tech.md" | wc -l
 
 ## 📊 Dev Progress Overview
 
-**Số đếm kiểm chứng được — `main@784bc8dd297163a5ec5415f33beabbbf34bbc8d7` (28/07/2026):**
+**Số đếm kiểm chứng được — `main@2cd52ced65597546fc2bfce82ffae0cdf8e49a53` (06/08/2026):**
 
 | Hạng mục | Số thực | Ghi chú |
 |---|---|---|
-| Migrations trên `main` | **25** (`0000`–`0024`) | ✅ re-verify tại `784bc8d`; two commits after runtime snapshot `2dc9b8c` are docs-only. `0015` D0a · `0016` D1 email-token · `0017` OAuth tx · `0018` handoff · `0019`/`0020`/`0021` tenant-integrity composite FK DD-68 · `0022` job-infra lease/reclaim · `0023` outbox ack marker · `0024` `sessions_public_capacity_chk` |
-| Test file | **32** | core 9 · db 4 · web 15 · bot 4 |
-| Test case — **canonical runner** | **537 workspace PASS** *(đo tại `a03d2d6`; product/test source không đổi tới `784bc8d`)* · **550 gồm validator** | core 132 · db **219** · web 146 · bot **40**; thêm **13 readiness-validator tests PASS**. Chuỗi historical: 460 (`2937ed9`) → 482 (`34429fc`) → 493 (`76e1f7b`) → 519 (`fca314e`) → 526 (`c100937`) → **537** (`a03d2d6`). "Workspace" không gồm validator |
-| Test case — **static cross-check** | **528** | core 132 · db 219 · web 137 · bot 40. Đúng một table-driven loop sinh thêm 9 cases ⇒ `528 + 9 = 537`; static không thay runner |
-| Bằng chứng test per-slice (real-PG) | db **167** → **173** → **179** → **201** → **212** → **219** | `0019` → `0020` → `0021` → `0022` job-infra → `0023` ack marker → `0024` capacity CHECK (PVC-1..PVC-8). Là authority của **chính slice đó**, không phải aggregate toàn repo |
+| Migrations trên `main` | **30** (`0000`–`0029`) | ✅ re-verify tại `2cd52ce`. `0015` D0a · `0016` D1 email-token · `0017` OAuth tx · `0018` handoff · `0019`–`0021` tenant-integrity composite FK DD-68 · `0022` job lease/reclaim · `0023` outbox ack marker · `0024` `sessions_public_capacity_chk` · `0025` rename 40 CHECK · **`0026` rename 6 CHECK sống-không-khai** · **`0027` `resolve_tenant_status_locked` SECURITY DEFINER read-only** · **`0028`/`0029` DD-29 capability registry expand→contract** |
+| Test file | **33** | +1 so với snapshot 28/07 |
+| Test case — **canonical runner** | ⚠️ **`STALE` — 561 workspace PASS đo tại `3d75c90` (29/07)** · **574 gồm validator** | core 132 · db **243** · web 146 · bot 40 + 13 readiness-validator. **Chưa chạy lại** sau `0026`–`0029`/`authorizeTenantAction`. Chuỗi historical: 460 (`2937ed9`) → 482 (`34429fc`) → 493 (`76e1f7b`) → 519 (`fca314e`) → 526 (`c100937`) → 537 (`a03d2d6`) → **561** (`3d75c90`). Theo luật 4, đây vẫn là số duy nhất được khai cho trục Tests cho tới lần chạy runner kế tiếp |
+| Test case — **static cross-check** | **655** *(đo tại `2cd52ce`)* | core 132 · db **346** · web 137 · bot 40. Static 528 → 655 (+127, toàn bộ ở `packages/db`) là **tín hiệu drift**, **không** phải số test: nó nói runner sẽ vượt 561 khi chạy lại, không nói vượt bao nhiêu. Công thức `static + Σ(generated) = runner` chỉ được đối chiếu tại thời điểm cả hai cùng đo |
+| Bằng chứng test per-slice (real-PG) | db **167** → **173** → **179** → **201** → **212** → **219** → **243** | `0019` → `0020` → `0021` → `0022` → `0023` → `0024` → `0025`. Là authority của **chính slice đó**, không phải aggregate toàn repo; per-slice của `0026`–`0029` nằm trong verdict tương ứng |
 | Invariant test | **3 file** | `rls-invariants` · `waitlist-invariants` · `migrate` (race-safety `0000`) — xem danh sách invariant-class ở §Cách đọc tiến độ |
-| API route đang có | **10** | ✅ re-verify tại `784bc8d`. 8 auth + 2 onboarding. **0 route nghiệp vụ** (session/payment/sync) |
-| Feature spec | **24 Product + 23 BE** | ✅ re-verify committed `main@784bc8d`. Working tree has 24/24 because the DD-32 BE companion is uncommitted; coverage cao — *không* phải readiness |
-| Màn FE nối API thật | **0** | FE HOLD: canonical `design.pen` chưa được persist/track + owner nghiệm thu làm authority; chưa map screen/component/token |
+| API route đang có | **10** | ✅ re-verify tại `2cd52ce` — **không đổi**. 8 auth + 2 onboarding. **0 route nghiệp vụ** (session/payment/sync) |
+| Feature spec | **24 Product + 24 BE = 24 cặp** | ✅ re-verify committed `main@2cd52ce`; khoảng trống 24/23 đã đóng. Coverage cao — *không* phải readiness |
+| Màn FE nối API thật | **0** | FE vẫn **HOLD**. 12 FE spec `docs/channels/web/FE/feature_*_fe.md` + `design.pen` tồn tại trong working tree nhưng **chưa commit** và theo luật 3 **không tính vào trục FE/UI** |
 
 > **Lịch sử (22/07) — static/canonical divergence, nguyên nhân đã xác định.** *(Giữ nguyên làm tiền lệ đối chiếu; con số dưới đây thuộc `f93873b`, không phải `2937ed9`.)* Static grep cho **410** (core 111 · db 159 · web 137 · bot 3); canonical runner PASS cho **419** (web 146). Chênh **9** đến từ **đúng một table-driven generator**: `apps/web/lib/google-oidc.test.ts:133` — `for (const row of rows) { it(…) }` với `rows.length = 10`, grep đếm 1 lần trong khi vitest sinh 10. Loop viết bằng `for…of` thuần nên **không** bị `it.each` bắt được (repo có 0 hit `.each`); hai loop còn lại ở `oauth-transaction.test.ts:71,96` nằm *trong* thân `it()` nên mỗi cái vẫn là 1 test.
 > Đối chiếu khớp: `410 + 9 = 419`. **Authority duy nhất cho số test và trục Tests vẫn là output canonical runner**; static giữ vai trò phát hiện drift qua công thức ở luật 4.
@@ -252,10 +262,12 @@ find docs/features/BE -maxdepth 1 -type f -name "feature_*_tech.md" | wc -l
 
 | Delivery group | Spec | Migration | BE | FE/UI | Tests | Invariant | Trạng thái thật (trục yếu nhất) |
 |---|---|---|---|---|---|---|---|
-| **P0–P1 Foundation** | ✅ | ✅ `0000`–`0014` | ✅ core+db | ⬜ | ✅ runner: core 132 + db 219 | ✅ RLS + waitlist + migrate-race | 🟡 **nền xong, chưa có surface** |
+| **P0–P1 Foundation** | ✅ | ✅ `0000`–`0014` | ✅ core+db | ⬜ | ✅ runner: core 132 + db 243 *(`STALE` từ 29/07)* | ✅ RLS + waitlist + migrate-race | 🟡 **nền xong, chưa có surface** |
 | **P0–P1 · 3b Auth (Google lane)** | ✅ | ✅ `0015`–`0018` | ✅ 8 route | 🟡 callback/landing | ✅ runner web 146 | ✅ auth/RLS trong db suite | 🟢 **merged · measurement closed · ⛔ chưa bật** (owner go-live/env decision) |
 | **Tenant-integrity FK (DD-68, ngoài P-number)** | ✅ (DD-68 chốt) | ✅ `0019`–`0021` | — *(code dark, không service/route)* | — | ✅ real-PG per-slice: db 167 → 173 → 179 | ✅ cross-tenant reject theo từng FK dưới app role | ✅ **merged** — integrity đóng, **không mở hành vi nào** |
 | **Shared job runtime (cross-cutting)** | ✅ DD-89/DD-90 | ✅ `0022`–`0023` | 🟡 claim/ack + dispatcher + queue/preflight + scheduler | — | ✅ db 201→212 + bot 3→40 | ✅ narrow EXECUTE-only/audit/fan-out completeness | 🟡 **infra merged, schedule OFF, no producer/projector** |
+| **Naming-identity CHECK (ngoài P-number)** | — *(không phải feature)* | ✅ `0025`–`0026` | — | — | ✅ real-PG db 219→243 (`0025`) | — | ✅ **merged** — RENAME-only, zero predicate change, không mở hành vi nào |
+| **Tenant authz + capability registry (DD-29, ngoài P-number)** | ✅ DD-29 · billing BE §2/§4b Reviewed | ✅ `0027` definer read · `0028`/`0029` expand→contract | 🟡 `authorizeTenantAction` merged nhưng **0 production caller**; `tenant_provision()` write-path đã repoint | — | ✅ per-slice trong Verdict 28/31 + DD-29 slice | 🟡 fail-closed 2-bước + refuse-to-proceed guard ở `0029` | 🟢 **merged · code dark** — chưa TS nào đọc `entitlements`/`capabilities`, chưa gate hành vi nào |
 | **P2–P3 Tenant Engine** | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started |
 | **P2.5 Messenger** | ✅ Reviewed contract | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started · 🔗 chặn App Review |
 | **P3.5 Identity** | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started |
@@ -274,6 +286,8 @@ TỔNG (code, theo slice roadmap)  ██████░░░░░░░░░
 > **Đọc con số ~33% cho đúng:** nó đo *slice roadmap đã merge*, không đo "sản phẩm dùng được". Theo luật 5, sản phẩm hiện ở mức **⬜ chưa host nào dùng được** — vì FE/UI = 0 màn và route nghiệp vụ = 0. Đây là chỗ trước đây file khai 75% cho Foundation và gây hiểu nhầm.
 >
 > **Vì sao ~33% chưa tăng:** `0019`–`0021` và `0024` là integrity-only; core fix nằm trong module đã tính; docs không phải runtime. `0022`/`0023` + dispatcher/scheduler là shared job capability nhưng schedule OFF và chưa có product producer/projector/service/route/FE, nên không đóng một delivery group dùng được. Chỉ cập nhật % khi một slice roadmap có hành vi product thực sự land.
+>
+> **Tuần 30/07→06/08 cũng không tăng, và lý do đáng ghi vì nó dễ bị đọc nhầm:** `0025`/`0026` là rename thuần; `0027` là quyền đọc-khoá cho một hàm chưa ai gọi; `0028`/`0029` đổi hình dạng plan/entitlement và repoint `tenant_provision()` — **có chạm đường onboarding thật**, nhưng chưa TS nào đọc `capabilities` nên chưa entitlement nào được thực thi. `authorizeTenantAction` là **root dependency** đã merge chứ chưa phải feature: nó tồn tại để các slice sau gọi. Bốn migration trong một tuần vẫn ra **0 hành vi product mới**.
 
 > **FE boundary hiện hành:** cột FE/UI trống toàn bộ, nhưng không mở UI tạm trong chuỗi BE kế tiếp. FE giữ **HOLD** tới khi canonical `design.pen` được persist/track + owner nghiệm thu làm authority; sau đó mới map screen/component/token/state lên BE contract đã ổn định.
 
@@ -306,12 +320,12 @@ TỔNG (code, theo slice roadmap)  ██████░░░░░░░░░
 | 14 | Player join Messenger (quick-reply; base enablement P2.5) | 🎯 | P4.5 | 🟡 draft | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 15 | Player join Zalo (number-reply) | 🎯 | P4.7 | ✅ Reviewed | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 16 | Reminder + notifyPlayersPaid (+ sync) — web + Zalo chính, Messenger 24h | 🎯 | P4.5–P4.7 | 🟡 Draft | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 | ⬜ |
-| 18 | Billing + lifecycle | 💰 | P5 | ✅ Reviewed | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 | ⬜ |
+| 18 | Billing + lifecycle | 💰 | P5 | ✅ Reviewed | 🟢 `0027`–`0029` (DD-29 registry + tenant status read) | 🟡 `authorizeTenantAction` merged, **0 caller** | ⬜ | ✅ per-slice | 🔴 | 🟢 **nền authz/entitlement merged · code dark** — chưa TS đọc `capabilities`, chưa gate/charge gì |
 | 19 | Hardening (pen/load/obs + **public pen-test**) | 🔒 | P6 | ✅ Reviewed | — | ⬜ | — | ⬜ | ⬜ | ⬜ |
 
 > Module 17 (Messenger) **phase-1** nhưng chặn bởi **App Review Meta** — nộp sớm; degrade sang web + Zalo nếu App Review chậm (BRD OD-9/DD-37 · `../channels/messenger/messenger-channel-design.md`).
 >
-> **Module 3b (auth) — reconcile 22/07:** toàn bộ lane Google **đã merge** trên `main@f93873b08d73f7a11c2576196b09633b9197ad60` (D0a `0015` → D0b → D1 email-token `0016` → D1 google-adapter `0017` → d1b session-rotation `0018`); canonical suite PASS (db 159 · web 146 — xem §Dev Progress). **Nhưng chưa bật:** completion-hop M3 cần bằng chứng đo trên **Safari macOS + iOS thật** (Playwright chỉ có WebKit đóng băng); `GOOGLE_OAUTH_CLIENT_ID/SECRET` giữ rỗng tới khi đo xong — thủ tục ở `../probe-strict-cookie-completion-hop.md` §7. Đây là ví dụ chuẩn của luật **merged ≠ enabled**: trạng thái là 🟢, **không** phải ✅.
+> **Module 3b (auth) — reconcile 22/07:** toàn bộ lane Google **đã merge** trên `main@f93873b08d73f7a11c2576196b09633b9197ad60` (D0a `0015` → D0b → D1 email-token `0016` → D1 google-adapter `0017` → d1b session-rotation `0018`); canonical suite PASS (db 159 · web 146 — xem §Dev Progress). **Nhưng chưa bật:** completion-hop M3 cần bằng chứng đo trên **Safari macOS + iOS thật** (Playwright chỉ có WebKit đóng băng); `GOOGLE_OAUTH_CLIENT_ID/SECRET` giữ rỗng tới khi đo xong — thủ tục ở `../probes/probe-strict-cookie-completion-hop.md` §7. Đây là ví dụ chuẩn của luật **merged ≠ enabled**: trạng thái là 🟢, **không** phải ✅.
 >
 > **Cập nhật hiện hành 27/07:** Safari macOS + iOS Safari đã đo pass ngày 26/07; measurement obligation đã đóng. Google login vẫn **chưa enable** vì setting `GOOGLE_OAUTH_*`/CTA là owner go-live decision riêng và các gate production khác không tự được miễn. Ghi chú 22/07 phía trên chỉ còn là historical timeline.
 >
@@ -643,7 +657,7 @@ Foundation(RLS+sports+3-tier+Google) → Zalo-tenant → CK-reconcile → migrat
 ## Next Actions (Priority Order)
 
 1. ✅ ~~BRD / PRD / TDD core review~~ — đã sync v3.4 channel pivot (bỏ Telegram; Zalo + Messenger + Google login); **DD-38/39 ✅ committed**
-2. 🔴 Đóng các gate còn lại: ~~lifecycle grace/trial timing~~ ✅ **DD-51**; **DD-04 đã chốt**, còn egress-IP/provider verification + infra build/restore/failover/load drill; **legal A3** (PII retention — luật sư VN, chặn go-live); Zalo external spikes **DD-14/15**; **DD-33 đã chốt nhưng exact Meta evidence cho messaging và Facebook Login/account-link vẫn pending** (không coi một approval tự bao nhóm kia); Club Assistant go-live **DD-18** và chi tiết P7 **DD-34/35/36**. Schema/code/infra vẫn land theo build slice. Checklist: `../pre-code-open-items-2026-07-16.md`.
+2. 🔴 Đóng các gate còn lại: ~~lifecycle grace/trial timing~~ ✅ **DD-51**; **DD-04 đã chốt**, còn egress-IP/provider verification + infra build/restore/failover/load drill; **legal A3** (PII retention — luật sư VN, chặn go-live); Zalo external spikes **DD-14/15**; **DD-33 đã chốt nhưng exact Meta evidence cho messaging và Facebook Login/account-link vẫn pending** (không coi một approval tự bao nhóm kia); Club Assistant go-live **DD-18** và chi tiết P7 **DD-34/35/36**. Schema/code/infra vẫn land theo build slice. Checklist: `../probes/pre-code-open-items-2026-07-16.md`.
 3. 🟡 Review/sign-off feature specs của phase sắp build; chuyển acceptance criteria thành issue checklist — **Session Management đã xong** (`docs/issues/session-management-acceptance-checklist.md` COMPLETE, re-traced tới hợp đồng publish ngày 24/07). Các feature còn lại chưa có checklist.
 4. ✅ ~~Setup monorepo (pnpm: core/bot/web) + Postgres docker~~ — đã merge (S1)
 5. ✅ ~~Lift `core` + `sports` + test xanh~~ — đã merge (S2)
