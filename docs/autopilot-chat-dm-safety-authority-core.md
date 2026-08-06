@@ -937,3 +937,119 @@ the historical implementation record; §6.1 is now the AS-IMPLEMENTED, owner-ame
   caller's session (verified directly that the override is scoped to the single call and does not
   persist into the caller's session afterward) — SERVER log only, no table, no grant, so no
   caller-reachable read path of any kind.
+
+## 12. HALT MAX_ROUNDS record (2026-08-06)
+
+Copied verbatim from the gitignored, worktree-local
+`.autopilot/state/chat-dm-safety-authority-core/HALT-MAX_ROUNDS.txt` (7739 bytes, confirmed by byte
+count before this copy) into this tracked file, because `ap-finish.sh`'s own sanctioned close path
+removes the worktree — and with it, that file — with no separate warning at the moment it does so.
+The backlog entry's own dated note (`docs/autopilot-backlog.md`, commit `ddb9bc9`) summarizes the
+same two findings; this section is the exact, complete record, kept verbatim rather than
+re-derived, per this repo's own "never rewrite dated history" convention.
+
+```text
+HALT: MAX_ROUNDS
+FEATURE: chat-dm-safety-authority-core
+DATE: 2026-08-06
+WORKTREE: .autopilot/worktrees/chat-dm-safety-authority-core
+BRANCH: feat/chat-dm-safety-authority-core
+BASE_SHA: 3289e3b90b1e46739ead4bab8a05fe95fec0b77a
+HEAD_SHA (last committed, NOT fixed further): 018ef920d186dfeea78d13d984e724f326e5474e
+FIX_ROUND_COUNT: 5 (hard cap under this repo's own operating invariants: "fix-round-count > 5 -> HALT MAX_ROUNDS, a HARD stop, not advisory")
+
+WHY THIS IS A HALT, NOT ANOTHER FIX ROUND
+------------------------------------------
+Five real codex review rounds ran against this feature (gate-attempt-03/05/06/07/08), each with
+genuine, distinct findings, each fixed in-slice:
+  round-01 (commit 79cb540): 7 findings
+  round-02 (commit ba1935d): 6 findings
+  round-03 (commit 4336f38): 4 findings
+  round-04 (commit 7daa250): 3 findings
+  round-05 (commit 018ef92): 4 findings
+fix-round-count.txt now reads 5 -- the exact hard cap. A sixth review round (gate-attempt-09,
+reviewing commit 018ef92) returned 2 MORE actionable findings. Per this repo's own global
+operating invariant ("fix-round-count > 5 -> HALT MAX_ROUNDS -- a HARD stop, not advisory. The
+round loop MUST exit at >5 even if findings are still 'real' and distinct; do NOT 'just one more
+round'"), and per this session's own explicit, written commitment to that effect recorded in the
+readiness.json acceptance notes for rounds 03, 04, and 05, this HALTs now rather than attempting a
+sixth fix round -- regardless of how small or clearly-correct the two findings below are.
+
+THE TWO UNFIXED FINDINGS FROM ROUND-06 (gate-attempt-09-code-review-round-01.txt) -- BOTH VERIFIED
+ACCURATE BY DIRECT RE-READ OF THE ACTUAL CODE BEFORE WRITING THIS FILE, NOT TAKEN ON FAITH
+----------------------------------------------------------------------------------------------------
+
+1. [P1] job_definer is unlocked before BR-6 runs the migration (packages/db/src/migrate.test.ts:473).
+   Round-05's own fix (this HALT's own predecessor commit) narrowed BR-6's withJobDefinerLock to wrap
+   ONLY `ctx.bootstrapJobDefinerForOwner()`, specifically to avoid a deadlock against
+   bootstrapChatDefinerForOwner's newly-internal chat lock. That fix was correct for the chat-lock
+   deadlock it targeted, but it is a REGRESSION for job_definer's own protection: migration 0022
+   ASSERTS (never creates) the cluster-global job_definer role, and `ctx.runMigration()` (line 475,
+   AFTER the job lock has already been released at line 473) now reaches it unprotected. With
+   fileParallelism enabled, a concurrent migrate.test.ts JCL-2/JCL-3 test (which deliberately hides
+   or corrupts job_definer for its own negative-path assertion) can now race BR-6's own migration
+   run, producing intermittent, misleading failures -- exactly the class of bug withJobDefinerLock
+   exists to prevent, and exactly what job_definer's own lock contract (test-harness.ts's own
+   withJobDefinerLock documentation, ~line 243) requires it not do.
+
+   THE FIX (not applied, out of round budget): keep bootstrapJobDefinerForOwner, bootstrapChatDefiner
+   ForOwner, and runMigration all inside ONE withJobDefinerLock, preserving job-outer/chat-inner
+   ordering -- i.e. `withJobDefinerLock(BASE!, async () => { await ctx.bootstrapJobDefinerForOwner();
+   await ctx.bootstrapChatDefinerForOwner(); await ctx.runMigration(); ... })`. This does NOT
+   reintroduce the chat-lock deadlock round-05 fixed: withJobDefinerLock and the chat lock
+   bootstrapChatDefinerForOwner acquires internally are DIFFERENT advisory-lock keys (0x6a6f6264
+   "jobd" vs 0x63686164 "chad"), so nesting the (unrelated-key) job lock around a call that
+   internally acquires the chat lock is safe -- only nesting the SAME key twice deadlocks, which is
+   what round-05 correctly removed. rls-invariants.test.ts's JCL-1 (round-05's OTHER fix site) may
+   have the identical shape -- re-check it under the same lens before trusting it clean.
+
+2. [P2] The new manual advisory-lock lifecycles (acquireChatDefinerLock, added round-05) do not
+   release on every cleanup failure.
+   - test-harness.ts's own teardown() (~line 581-599): `ownerPool.end()`, each workerPool's `.end()`,
+     `DROP DATABASE ... WITH (FORCE)`, and `DROP ROLE IF EXISTS` all run BEFORE the
+     `if (chatDefinerLockRelease) { try { ...restore... } finally { await chatDefinerLockRelease(); } }`
+     block. If ANY of those four preceding statements throws, chatDefinerLockRelease() is never
+     called -- the dedicated lock-holder pg.Client connection is never closed, and the advisory lock
+     it holds is never released, blocking every other test file's own chat_definer work until the
+     leaked connection times out or the whole suite run ends.
+   - migrate.test.ts's BR-3 (~line 246-260) has the same shape: `DROP DATABASE`/`DROP ROLE` run
+     before the `try { restore } finally { releaseChatDefinerLock() }` block, not inside an outer
+     finally that covers them too.
+
+   THE FIX (not applied, out of round budget): wrap the ENTIRE post-acquisition cleanup sequence --
+   pool shutdown, database/role deletion, AND the restore -- in one outer try/finally whose finally
+   unconditionally calls the lock's release(), re-throwing (not swallowing) whatever the inner
+   cleanup itself threw, so a genuine cleanup failure still surfaces as a test failure while never
+   leaking the lock.
+
+WHAT IS SAFE, VERIFIED, AND SHOULD NOT BE RE-LITIGATED FROM SCRATCH
+---------------------------------------------------------------------
+- Every prior round's fix (79cb540, ba1935d, 4336f38, 7daa250) remains correct and does not need
+  re-review; only round-05's own commit (018ef92) introduced the job_definer-lock regression above.
+- 414/414 DB tests, 732/732 total across the monorepo, all passed cleanly as of commit 018ef92 --
+  these findings describe a RACE CONDITION (job_definer) and a CLEANUP-FAILURE-PATH leak (both
+  require a specific concurrent-timing or throwing-cleanup condition to manifest), not a
+  deterministic failure the existing green suite would have caught. This is not "the suite is lying"
+  -- it is the suite testing the happy path correctly while these two edge conditions sit outside it.
+- The local dev cluster's chat_definer role currently has ZERO members (confirmed real, pre-existing
+  damage from EARLY in this session, BEFORE round-03's fix existed -- not caused by round-05's
+  regression above). This still needs an owner-run `pnpm db:bootstrap` to repair; unrelated to this
+  HALT, tracked separately in the backlog entry's own status line and REMAINING_BLOCKERS field.
+
+RESUME CONDITION
+----------------
+Per this repo's canonical registration mechanics (any change to `scope`, `verification`,
+`stop_conditions`, or fields "with teeth" requires the full close-and-rebuild sequence): a fresh
+successor task/registration should re-slice from `main` at a freshly-verified base SHA (main has not
+moved since 3289e3b as of this HALT, but re-verify before trusting that), apply the two fixes above
+as its OWN first commit (not a continuation of fix-round-count, which resets with the new
+registration per this repo's own documented registration mechanics), then resume the review cycle
+with a fresh MAX_ROUNDS=5 budget. Do NOT hand-edit this worktree further under the current
+registration to "sneak in" the two fixes above -- that would not reset fix-round-count honestly and
+would misrepresent this feature's own review history.
+
+Every other artifact in this worktree (readiness.json, regions.log, fix-round-count.txt, the 5
+commits, the contract doc's own round-01..05 amendment history, the manifest's negative-scope
+enumeration) is accurate as of this HALT and should be read, not re-derived, by whoever picks this
+up next.
+```
