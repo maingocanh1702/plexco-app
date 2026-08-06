@@ -1,6 +1,6 @@
 # Frontend Architecture Principles — Plexco Web
 
-> **Status:** ✅ Active FE governance (owner 2026-07-28) · **Version:** 0.5 · 2026-07-28
+> **Status:** ✅ Active FE governance (owner 2026-07-28) · **Version:** 0.6 · 2026-08-07
 > **Nguồn:** ported từ Sporta `architecture/frontend_architecture_flutter.md` — adapt sang stack Plexco (Next.js App Router + React, CSS-variable tokens, **không Tailwind**).
 > **Decision:** `decisions.md` DD-57 (✅).
 > **Áp dụng cho:** `apps/web` (Next.js 15 App Router · React 19 · SSE).
@@ -122,6 +122,7 @@ type ScreenState<T> =
 Trước khi code 1 màn mới, phải có đủ:
 
 - [ ] Product spec `../features/feature_<name>.md` §Screens & States (Reviewed).
+- [ ] **FE design spec `../channels/web/FE/feature_<name>_fe.md`** (template `../templates/feature-dev/fe-spec-template.md`) — có đủ: §6 `Data hiển thị` với exact response path hoặc `UNPINNED — omit active UI`, cột i18n `t(vi, en)` (FE-INV-4), và **bảng `#### Error mapping` cho từng screen** map status/error code → visible state, mã lấy nguyên văn từ BE tech doc, kết bằng hàng unknown/missing/timeout fail-closed (FE-INV-1/FE-INV-6). 12 spec đầu tiên đã có trên `main`.
 - [ ] Canonical `design.pen` đã được track + owner duyệt; node/frame ID của màn tồn tại và được pin.
 - [ ] Handoff `docs/channels/web/handoff/<screen>-handoff.md` (template `../templates/feature-dev/fe-handoff-template.md`).
 - [ ] Token mapping `<screen>-token-mapping.md` (template `../templates/feature-dev/fe-token-mapping-template.md`).
@@ -141,7 +142,8 @@ Trước khi code 1 màn mới, phải có đủ:
 
 ## 10. Cross-references
 
-- Tokens: `design-tokens.md` · benchmark/method: `design-tokens-benchmark.md`
+- Tokens: `design-tokens.md` (value SoT) · design system: `design-system.md` (component catalog, usage tokens, layout, motion, a11y) · benchmark/method: `design-tokens-benchmark.md`
+- FE design specs: `../channels/web/FE/feature_*_fe.md` · template: `../templates/feature-dev/fe-spec-template.md`
 - Pipeline visual-source→code: `../channels/web/frontend-pipeline.md`
 - API convention: `api-reference-convention.md`
 - BE counterpart: `core-db-architecture-principles.md` · HARD RULES: `../00-start-here/HANDOFF.md §3`
@@ -150,6 +152,7 @@ Trước khi code 1 màn mới, phải có đủ:
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 07/08/2026 | 0.6 | **Ghi nhận 12 FE design spec + siết §8 gate (docs-only, không đổi FE-INV nào).** §8 docs-before-code thêm artifact bắt buộc **FE design spec** `../channels/web/FE/feature_<name>_fe.md`: trước đây gate chỉ đòi Product spec + `.pen` node + handoff + token mapping, nên không có chỗ nào bắt buộc pin i18n `t(vi, en)`, exact response path (hay `UNPINNED — omit`) và bảng error mapping status→state — đúng ba lỗ đã khiến 12 spec đầu tiên phải sửa lại toàn bộ sau khi viết. §10 cross-reference thêm `design-system.md` và thư mục FE spec. Status boundary không đổi: spec Draft ≠ FE implemented, trục FE/UI vẫn 0 màn, `design.pen` vẫn untracked, gate DD-58 vẫn đóng. *(Ghi chú 06/08 ở header được thêm ở commit trước mà quên bump version + changelog — dòng này đóng luôn khoảng trống đó.)* |
 | 28/07/2026 | 0.5 | **DD-57 ✅:** activate server-first/feature-first/4-state governance; Client Component không chạm DB, Server Component/Route Handler gọi canonical application service trực tiếp; giữ FE HOLD và DD-58 per-screen gate. |
 | 18/07/2026 | 0.4 | Owner defer DD-57; đánh dấu toàn bộ FE-INV/checklist là reference proposal, không active delivery gate. |
 | 17/07/2026 | 0.3 | Reconcile FE-INV-6, data flow, error model và checklist với live canonical API envelope. |
