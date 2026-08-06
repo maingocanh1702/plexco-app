@@ -3,8 +3,8 @@
 > **Surface:** plexco.app (web dashboard + marketplace + player view + chat in-app)
 > **Deployable unit:** `apps/web`
 > **Tech stack:** Next.js App Router baseline · Route Handlers/API · SSE · vanilla CSS · Google Fonts
-> **Version:** v0.7 · 2026-07-28
-> **Refs:** `../../product/TDD.md` v3.1h §3.9 · `../../features/feature_web_auth_onboarding.md` · `../../features/feature_sync_engine.md` · `../../features/feature_marketplace_discovery.md` · `../../features/feature_player_view.md` · `../../features/feature_inapp_chat.md`
+> **Version:** v0.8 · 2026-08-06
+> **Refs:** `../../product/TDD.md` v3.1i §3.9 · `../../features/feature_web_auth_onboarding.md` · `../../features/feature_sync_engine.md` · `../../features/feature_marketplace_discovery.md` · `../../features/feature_player_view.md` · `../../features/feature_inapp_chat.md`
 
 > **Cập nhật 18/07:** Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅) + link **Facebook** (DD-33 ✅; external approval evidence là enablement gate, capability chưa pass phải OFF + one-time `link_code` fallback) / **Zalo** (DD-14 ⬜). Kênh phase-1 = **web + Zalo + Facebook Messenger** (Telegram loại). Web còn là surface của chat in-app, settings/giá theo giới tính và mark-paid thủ công.
 >
@@ -18,6 +18,14 @@
 > **Cập nhật 28/07:** DD-57/58/59 đã ✅ chốt FE architecture, Pencil-only handoff pipeline và
 > `.md` token-value SoT. DD-81 chọn target Candidate C Energetic Orange + Sora/Inter, nhưng current
 > Indigo/Outfit giữ active và FE HOLD tới tracked owner-approved `design.pen` + visual/WCAG gate.
+>
+> **Cập nhật 06/08 — 12 FE design spec đã commit, FE VẪN HOLD.** `FE/feature_*_fe.md` (12 file) nay
+> nằm trên `main`, projected từ Product/BE contract đã Reviewed tại baseline `0c5808fc`, kèm
+> `../../templates/feature-dev/fe-spec-template.md`. Chúng là **spec Draft, không phải màn đã build**:
+> trục FE/UI vẫn **0 màn**, `design.pen` vẫn untracked, gate per-screen DD-58 vẫn đóng. Mỗi spec tự
+> mang fixture fence và §6 đánh dấu `UNPINNED — omit active UI` cho field chưa có owner DTO; đọc
+> chúng như tiến độ FE là đọc sai. Bốn vòng review đã áp: i18n về `t(vi, en)`, 31 bảng error mapping /
+> 78 mã lấy nguyên văn từ BE tech doc, gỡ 5 field/state không có nguồn, consent PII cho `gender`/`dob`.
 >
 > **📌 `design.pen` CỐ Ý CHƯA TRACK (owner quyết 2026-07-29) — đây không phải thiếu sót.** File tồn
 > tại trên máy owner (552 KB, mtime 22/07) và **21 doc** trỏ tới nó, nhưng nó **untracked**, nên điều

@@ -1,7 +1,7 @@
 # Plexco Feature Specs — Coverage Index
 
 > **Version:** 2.61 · 2026-07-28
-> **Scope source:** `../product/BRD.md` v3.9n · `../product/PRD.md` v2.8m · `../product/TDD.md` v3.1h · `../product/ROADMAP.md` v3.4l · `../standards/decisions.md` **v2.11 current mirror**. DD-32 đã reopen và `DECISION_FINAL` theo Option D; DD-70/71/72/86/91–95 owner-final; DD-88 broader `DEFERRED_PROPOSAL`; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; DD-87 fail-closed split-name/amount đã có core nhưng chưa production caller. Runtime gates không đổi.
+> **Scope source:** `../product/BRD.md` v3.9n · `../product/PRD.md` v2.8m · `../product/TDD.md` **v3.1i** · `../product/ROADMAP.md` **v3.4m** · `../standards/decisions.md` **v2.11 current mirror**. DD-32 đã reopen và `DECISION_FINAL` theo Option D; DD-70/71/72/86/91–95 owner-final; DD-88 broader `DEFERRED_PROPOSAL`; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; DD-87 fail-closed split-name/amount đã có core nhưng chưa production caller. Runtime gates không đổi.
 
 > **Cập nhật DD-37 (2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (**Telegram loại khỏi phạm vi**). `feature_player_telegram` → **Archived (DD-37)**, thay bằng `feature_player_messenger`. Thêm phase-1: `feature_inapp_chat` (DD-38 ✅), `feature_user_settings` (DD-39 ✅), Google login (DD-13 ✅, trong `feature_web_auth_onboarding`), mark-paid thủ công (DD-40 ✅, trong `feature_payment_reconcile`).
 

@@ -7,6 +7,8 @@
 > **Đây là counterpart FE của** `core-db-architecture-principles.md` (BE). Không override HARD RULES ở `00-start-here/HANDOFF.md §3`.
 >
 > **Status boundary:** DD-57 là governance cho FE mới hoặc materially changed, không phải bằng chứng FE đã implement. FE vẫn HOLD tới khi canonical `design.pen` được track + owner duyệt và gate per-screen của DD-58 đóng.
+>
+> **Cập nhật 06/08:** 12 FE design spec đã commit tại `../channels/web/FE/`. Chúng **không** đổi status boundary trên: spec Draft ≠ FE implemented, trục FE/UI vẫn 0 màn, `design.pen` vẫn untracked. Checklist §DD-58 dưới đây vẫn còn ô "canonical `design.pen` đã được track + owner duyệt" chưa tick.
 
 Tài liệu này định nghĩa **cách cấu trúc code FE** — không phải design tokens (xem `design-tokens.md`) và không phải screen spec (xem `../features/feature_*.md` §Screens & States + `../channels/web/design-brief.md`).
 

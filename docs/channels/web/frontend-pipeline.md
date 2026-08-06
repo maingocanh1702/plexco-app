@@ -6,6 +6,12 @@
 > **Token SoT:** `../../standards/design-tokens.md`.
 > **Visual SoT hiện tại:** DD-81 đã chọn canonical path `design.pen`, nhưng file trong root đang
 > untracked và chưa được owner nghiệm thu; vì vậy **chưa có visual authority usable**.
+>
+> **Cập nhật 06/08 — có FE spec rồi, vẫn chưa có visual authority.** 12 spec `FE/feature_*_fe.md` đã
+> commit và đóng được **contract layer** của pipeline (route, state, error mapping có mã thật, i18n
+> `t(vi, en)`, field nào `UNPINNED` phải omit). Nhưng bước 1 dưới đây — "mỗi screen phải trỏ tới exact
+> node trong canonical `design.pen` đã được track + owner duyệt" — **vẫn chưa đóng**, nên handoff
+> per-screen vẫn dừng trước code. Có spec không thay được gate nguồn visual.
 > `Plexco-DS-fable5.pen` đã superseded. Chỉ sau persist/track + owner approval mới được dùng stable node
 > IDs cho handoff/code.
 > **Kiến trúc FE:** `../../standards/frontend-architecture.md` · **Tokens:** `../../standards/design-tokens.md`.

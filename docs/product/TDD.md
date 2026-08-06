@@ -1,7 +1,7 @@
 # Technical Design Document (TDD) — Plexco
 ## Platform thể thao đa môn (host + player) — multi-tenant, marketplace discovery, sync đa surface, Zalo + Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi — DD-37)*
 
-**Phiên bản:** 3.1h — *28/07: Chat plan v1.8 `PLAN_READY` re-pin + DD-32 Option D; target vẫn tách khỏi runtime.*
+**Phiên bản:** 3.1i — *06/08: live-truth reconcile tại `2cd52ce` — 30 migrations, trục Tests `STALE`, DD-29 registry + `authorizeTenantAction` merged nhưng code dark. Contract kỹ thuật không đổi.*
 **Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 28/07/2026
 **Tài liệu tham chiếu:**
 - `BRD.md` v3.9n — yêu cầu nghiệp vụ
@@ -20,7 +20,13 @@
 > **Khác bot single-club hiện tại:** Plexco là **repo riêng**, lift logic thuần (matching, payments-logic, dates, format) sang `packages/core`; viết lại tầng data trên Postgres + RLS.
 > **Bốn bất biến lõi:** (1) tiền/roster không rò cross-tenant; (2) tiền/PII không lọt public discovery; (3) allocation không làm mất/đếm quá tiền; (4) PostgreSQL/domain model là nguồn sự thật, surface chỉ là projection.
 >
-> **As-built boundary — `main@784bc8d` (28/07):** 25 migrations (`0000`–`0024`); `0022`/`0023` + `apps/bot` đã có narrow worker claim/ack, dispatcher, queue provision/preflight và recovery schedule, nhưng `OUTBOX_DISPATCH_SCHEDULE_ENABLED` mặc định OFF và chưa có producer/projector nghiệp vụ thật. `0024` chỉ enforce `sessions_public_capacity_chk`. Last canonical aggregate: **32 test files / 537 workspace PASS** (core 132 · db 219 · web 146 · bot 40) + **13 validator PASS**; static cross-check **528 + 9 generated = 537**. Safari macOS/iOS M3 measurement đã pass, Google login vẫn OFF. Assistant Product/BE v0.18, Chat Product/BE v0.15/v0.23 và Notifications Product/BE v3.11 đều Reviewed; primary Chat plan v1.8 = `PLAN_READY` tại authority `90d292d`, nhưng từng slice còn strict `CODE_READY`. Không có chat/payment product runtime, migration, API hoặc UI.
+> 🔴 **As-built boundary — đo lại `main@2cd52ce` (06/08/2026). Đọc mục này TRƯỚC đoạn `784bc8d` ngay dưới; đoạn đó đã mục ở phần migration và test.**
+> **30 migrations (`0000`–`0029`)**, không phải 25: thêm `0025`/`0026` (rename CHECK, RENAME-only, zero predicate change), `0027` (`resolve_tenant_status_locked` — SECURITY DEFINER read-only), `0028`/`0029` (**DD-29 capability registry**, expand→contract: `plans.plan_key` về 2-tier `free|host_pro`, `entitlements` sang shape `{"capabilities": {...}}`, repoint `tenant_provision()`).
+> **Trục Tests `STALE`:** canonical runner chưa chạy lại kể từ `3d75c90` (561 workspace + 13 validator, 29/07). Static tại `2cd52ce` = **655** (core 132 · db 346 · web 137 · bot 40), 33 file — static là **tín hiệu drift**, không phải số test; đừng cộng `655 + 9` rồi khai.
+> **Đã merge nhưng CODE DARK, đừng đọc là feature:** `authorizeTenantAction` (`ddb69a9`) — 0 production caller; DD-29 registry — **0 TypeScript đọc `entitlements`/`capabilities`**, nên chưa entitlement nào được thực thi dù `tenant_provision()` đã repoint; role `chat_definer` provision bằng bootstrap script (`infra/postgres-init/02-chat-definer.sql`), không phải migration.
+> **Không đổi:** 10 API route (8 auth + 2 onboarding), 0 route nghiệp vụ, **0 màn FE**, Chat 0 migration/API/UI. 12 FE **design spec** đã commit tại `docs/channels/web/FE/` nhưng là spec Draft, không phải màn đã build — FE vẫn HOLD.
+>
+> **As-built boundary — `main@784bc8d` (28/07), historical:** 25 migrations (`0000`–`0024`); `0022`/`0023` + `apps/bot` đã có narrow worker claim/ack, dispatcher, queue provision/preflight và recovery schedule, nhưng `OUTBOX_DISPATCH_SCHEDULE_ENABLED` mặc định OFF và chưa có producer/projector nghiệp vụ thật. `0024` chỉ enforce `sessions_public_capacity_chk`. Last canonical aggregate: **32 test files / 537 workspace PASS** (core 132 · db 219 · web 146 · bot 40) + **13 validator PASS**; static cross-check **528 + 9 generated = 537**. Safari macOS/iOS M3 measurement đã pass, Google login vẫn OFF. Assistant Product/BE v0.18, Chat Product/BE v0.15/v0.23 và Notifications Product/BE v3.11 đều Reviewed; primary Chat plan v1.8 = `PLAN_READY` tại authority `90d292d`, nhưng từng slice còn strict `CODE_READY`. Không có chat/payment product runtime, migration, API hoặc UI.
 
 ---
 
@@ -707,7 +713,9 @@ webhook burst (≤5s P99), cron 1k tenant (throttler), join đồng thời (race
 
 ### 6.4 Live verification snapshot (không thay acceptance plan)
 
-Tại `main@784bc8d`, canonical aggregate gần nhất PASS **537 workspace tests / 32 files** (core 132 · db 219 · web 146 · bot 40) và **13 readiness-validator tests**; static source count **528** cộng đúng **9** cases sinh từ table-driven loop = 537. Hai commit sau runtime snapshot `2dc9b8c` chỉ là authority/readiness docs; green baseline chứng minh hạ tầng hiện có, không chứng minh các test target ở §6.2 đã được implement.
+🔴 **Đo lại 06/08/2026 tại `main@2cd52ce` — trục Tests đang `STALE`.** Canonical runner **chưa chạy lại** kể từ `3d75c90` (29/07): **561 workspace + 13 validator** (core 132 · db 243 · web 146 · bot 40). Static cross-check tại `2cd52ce` = **655** (core 132 · db **346** · web 137 · bot 40), 33 file — tăng 528→655 toàn bộ ở `packages/db` do `0026`–`0029` + `authorizeTenantAction`. Static là **tín hiệu drift**, không phải số test: nó nói runner sẽ vượt 561 khi chạy lại, **không nói vượt bao nhiêu**. Công thức `static + Σ(generated) = runner` chỉ hợp lệ khi cả hai đo trên cùng một commit, nên **không được cộng `655 + 9` rồi khai làm số test**. Số duy nhất được khai cho trục Tests vẫn là **561** cho tới lần chạy runner kế tiếp.
+
+*Historical:* tại `main@784bc8d`, canonical aggregate PASS **537 workspace tests / 32 files** (core 132 · db 219 · web 146 · bot 40) và **13 readiness-validator tests**; static source count **528** cộng đúng **9** cases sinh từ table-driven loop = 537. Hai commit sau runtime snapshot `2dc9b8c` chỉ là authority/readiness docs; green baseline chứng minh hạ tầng hiện có, không chứng minh các test target ở §6.2 đã được implement.
 
 ---
 
@@ -832,6 +840,7 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 06/08/2026 | v3.1i | **Live-truth reconcile tại `main@2cd52ce` (docs-only, không đổi contract kỹ thuật):** as-built boundary §Scope và §6.4 đều thêm block đo lại — 25→**30 migrations** (`0025`/`0026` rename CHECK, `0027` definer read-only, `0028`/`0029` DD-29 registry expand→contract); trục Tests đánh dấu **`STALE`** vì canonical runner chưa chạy lại kể từ `3d75c90` (561+13), static tại `2cd52ce` = 655 chỉ là tín hiệu drift và **không được cộng `655 + 9`** rồi khai. Ghi rõ hai thứ đã merge nhưng **code dark**: `authorizeTenantAction` 0 production caller, DD-29 registry 0 TypeScript đọc `entitlements`/`capabilities`. 12 FE design spec đã commit nhưng **0 màn FE** và FE vẫn HOLD — spec ≠ màn đã build. Đoạn `784bc8d` cũ giữ verbatim, gắn nhãn historical. |
 | 28/07/2026 | v3.1h | **Readiness mirror re-pin:** primary Chat plan v1.8 = `PLAN_READY` tại immutable authority `90d292d` (closure 12/12), live pointer `main@784bc8d`. B4/slice-local artifacts chưa author nên không có worktree/code authorization; Chat/payment runtime/migration/API/UI vẫn absent. DD-32 technical contract không đổi. |
 | 28/07/2026 | v3.1g | **Owner-final Chat authority + DD-32 mirror:** align technical target to decisions v2.10 DD-86/DD-91–95, including per-policy Assistant defaults, edit/delete/search/reactions, full surface-aware command registry, unread-derived opaque offline signal/digest and exact moderation. DD-88 is broader `DEFERRED_PROPOSAL`; current readiness remains owned only by primary plan §13. Runtime/migration/API/UI remain 0. DD-32 Option D target remains unchanged. |
 | 28/07/2026 | v3.1f | **SUPERSEDED by v3.1g:** former correction used universal default-OFF, three commands and no-digest floor; no longer current authority. |

@@ -4,7 +4,7 @@
 > **Track:** 🔍 Discovery & Marketplace  
 > **Version:** 2.4 · 2026-07-28
 > **Status:** Reviewed  
-> **Implementation:** Not started — `public_sessions` có sẵn và `0024` đã enforce public session phải finite-capacity; publish/projector/routes/UI vẫn chưa có · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
+> **Implementation:** Not started — `public_sessions` có sẵn và `0024` đã enforce public session phải finite-capacity; publish/projector/routes/UI vẫn chưa có · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status). *Tail migration hiện hành là `0029` (đo 06/08 tại `2cd52ce`), nhưng `0025`–`0029` không chạm marketplace: rename CHECK, definer read-only và DD-29 billing registry.*
 > **Prerequisites:** P2 session management · P4 sync/public projector  
 > **Tài liệu liên quan:** `../product/BRD.md` FR-3/NFR-S2 · `../product/PRD.md` FLOW 12 · `../product/TDD.md` §3.9 · `../standards/decisions.md` DD-32 · `feature_channel_booking_funnel.md` · BRD OD-6/OD-8 · `BE/feature_marketplace_discovery_tech.md`
 
