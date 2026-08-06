@@ -5,7 +5,9 @@ name: linear-sync
 #   • push            → mỗi lần bạn đẩy code (branch/PR đã flip Linear qua native integration)
 #   • repository_dispatch (linear-changed) → Linear webhook bắn sự kiện = realtime đúng nghĩa
 #   • workflow_dispatch → sync hoặc reconcile structure có kiểm soát
-#   • schedule */10    → lưới an toàn nếu webhook lỡ
+#   • schedule 0 */6   → lưới an toàn nếu webhook lỡ (từng là */10 — 144 run/ngày đốt sạch
+#     2000 phút Actions free của private repo trong vài ngày, gây "job was not acquired by
+#     Runner" toàn repo từ 2026-08-05; webhook + push vẫn là đường realtime, cron chỉ là backstop)
 on:
   push:
     branches: [main]
@@ -23,7 +25,7 @@ on:
           - reconcile-check
           - reconcile-apply
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "0 */6 * * *"
 
 permissions:
   contents: write
@@ -37,6 +39,9 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    # Sync khỏe chạy ~1-2 phút; các run 15-23 phút gần đây là treo/retry — cap lại để một
+    # lần treo không ăn cả giờ quota.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (SHA verified vs tag 2026-07-17; Node 24 runtime)
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 (SHA verified vs tag 2026-07-17; Node 24 runtime)

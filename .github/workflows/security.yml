@@ -14,10 +14,17 @@ on:
 permissions:
   contents: read
 
+# Actions-minutes hygiene (2026-08-07) — xem ghi chú ở ci.yml. Job osv-* gọi reusable
+# workflow nên không đặt được timeout-minutes tại đây; cap áp cho semgrep.
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   semgrep:
     name: Semgrep CE
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: github.actor != 'dependabot[bot]'
     container:
       image: semgrep/semgrep@sha256:2b33f46ba66cf8cc2ad59ccfa7d22951fd00c632c38f1339e84ec8e6e641a942

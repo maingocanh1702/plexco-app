@@ -5,9 +5,17 @@ on:
     branches: [main, "feat/**"]
   pull_request:
 
+# Actions-minutes hygiene (2026-08-07): quota tháng này từng cạn vì linear-sync cron */10.
+# Run bị đẩy lùi bởi push mới trên cùng ref thì hủy — trạng thái đáng tin là của HEAD.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # Suite xanh chạy dưới ~10 phút; cap để run treo không ăn 6h quota mặc định.
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
