@@ -355,4 +355,27 @@ Tenant mutations dùng exact canonical capabilities: `content.manage` cho CLB co
 
 ---
 
-_FE Design Spec v0.4 · 2026-07-31 · Sources: feature_user_settings.md v0.9a + feature_tenant_routing_authz.md v2.7 + feature_payment_reconcile.md v1.10 + feature_connector_onboarding.md v1.0_
+## Analytics Events (Draft — đề xuất, chưa phải contract)
+
+> Skeleton — chưa điền. Quy tắc khi điền: params cấm amount/tiền/PII; chỉ opaque id, enum, count, boolean. Nguồn template: Sporta FE porting analysis 2026-08-07.
+
+| Event | Trigger | Params | Ghi chú |
+|---|---|---|---|
+| TBD (UNPINNED) | | | |
+
+## State Machine (Draft)
+
+> Skeleton — node lấy từ §States hiện có của file này: Personal settings states (§3 `/me/settings`): Current implementation (omit) · Loading · Ready (target) · Error · Success; `/dashboard/settings` không có block §States riêng — TBD (UNPINNED). Transition: TBD (UNPINNED) — chỉ được điền từ flow/edge case đã pin, không suy diễn.
+
+## Acceptance Criteria (Draft)
+
+> Skeleton — mỗi AC khi điền phải trace về một § có sẵn trong file. TBD.
+
+## Testing Notes (Draft)
+
+> Skeleton — unit/component/e2e hooks map theo AC. TBD.
+
+---
+
+_FE Design Spec v0.5 · 2026-08-07 · Sources: feature_user_settings.md v0.9a + feature_tenant_routing_authz.md v2.7 + feature_payment_reconcile.md v1.10 + feature_connector_onboarding.md v1.0_
+_Changelog v0.5: Thêm skeleton 4 section Draft (Analytics/State Machine/AC/Testing) — nguồn: Sporta FE porting analysis 2026-08-07_

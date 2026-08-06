@@ -10,6 +10,7 @@
 > **FE design status:** Draft
 > **Runtime status:** Partial ledger schema only — reconcile service/routes/web UI chưa build
 > **Negative scope:** Không suy money state client-side; auto-reconcile chỉ hiện khi entitlement và availability đều PASS
+> **Liên quan (2026-08-07, decisions v2.18):** Statement/export sao kê = surface riêng thuộc **DD-97** (per-session view free · kỳ + export `host_pro`) — KHÔNG thuộc file này. Mark-paid/`cash|waiver` surface (SourceBadge §4 hiện dead enum) = **DD-99 P4**, prioritized sau P2; refund-on-cancel tách chờ refund policy. **DD-98** NP-1/NP-4 chặn custom split per player + auto-archive nợ theo tuổi.
 
 ---
 
@@ -300,6 +301,14 @@ Quản lý thu tiền của CLB: xem ledger giao dịch, xử lý CK chưa khớ
 | 9 | CK amount = 0 hoặc âm | Không hiện trong UI (filtered server-side) |
 | 10 | Mobile: allocation panel | Bottom sheet pattern (swipe down to close) |
 
+> **Draft bổ sung cho #8 — happy empty state (copy-level, thêm 2026-08-07):** Ngoài trường hợp
+> "mới dùng, chưa có giao dịch" giữ nguyên copy #8 ở trên, khi dữ liệu server trả cho thấy đồng thời
+> (a) không còn bank transaction nào chưa khớp VÀ (b) không charge nào ở trạng thái `open | partial`,
+> empty state dùng tone tích cực: `t("Tất cả đã khớp — không còn gì cần đối soát 🎉", "All reconciled — nothing left to match 🎉")`.
+> Điều kiện xác định thuần từ dữ liệu server trả (danh sách/count do server cung cấp); FE không tự
+> suy điều kiện từ tính toán client-side (§6 "Không tự cộng client-side"). Đây là bổ sung copy,
+> không thêm fetch/surface nào ngoài những gì đã pin ở trên.
+
 ---
 
 ## 6. Data hiển thị
@@ -338,4 +347,118 @@ Quản lý thu tiền của CLB: xem ledger giao dịch, xử lý CK chưa khớ
 
 > **Implementation boundary:** Trước khi activate Flow 1 hoặc unified table, owner contract phải pin discriminator, response fields, pagination/sort, monthly period + tenant timezone, gross/net/reversal formula và per-row navigation. Thiếu bất kỳ phần nào → omit, không dùng fixture làm DTO.
 
-_FE Design Spec v0.3 · 2026-07-31 · Source: feature_payment_reconcile.md v1.10_
+---
+
+## Analytics Events (Draft — đề xuất, chưa phải contract)
+
+> **Draft — đề xuất, chưa phải contract, KHÔNG authorize implement.** Event name/schema cuối cùng do
+> analytics owner pin. **Ràng buộc params (bắt buộc, kế thừa negative scope header + hard rule
+> tiền/PII):** params KHÔNG BAO GIỜ chứa amount/số tiền, tên người, nội dung/memo chuyển khoản,
+> số tài khoản; chỉ được dùng opaque id, enum, count, boolean.
+
+Reconcile funnel: `payments_txn_viewed` → `payments_allocation_started` → `payments_allocation_confirmed` / `payments_reversal_confirmed`.
+
+| # | Event | Khi bắn (trace flow) | Params đề xuất (opaque id · enum · count · boolean) |
+|---|---|---|---|
+| 1 | `payments_txn_viewed` | Host xem chi tiết 1 bank transaction từ ledger (Flow 1 bước 3 · Flow 2 bước 2–3) | `bank_transaction_id` (opaque id) · `txn_status` (`matched\|unmatched\|partial`) · `entry_tab` (`all\|unmatched\|history`) |
+| 2 | `payments_allocation_started` | Allocation Panel mở (Flow 2 bước 3 · Flow 3 bước 1) | `bank_transaction_id` (opaque id) · `txn_status` (enum) · `candidate_count` (count) · `from_suggestion` (boolean — mở từ candidate hệ thống gợi ý (Flow 2 bước 4) hay host tự chọn) |
+| 3 | `payments_allocation_confirmed` | CHỈ sau khi server trả success cho request gán (Flow 3 bước 4); không bắn optimistic | `bank_transaction_id` (opaque id) · `charge_count` (count charge trong request) · `result_txn_status` (enum server trả: `matched\|partial\|unmatched`) |
+| 4 | `payments_reversal_confirmed` | CHỈ sau khi server trả success cho reversal (Flow 4 bước 3); không bắn optimistic | `allocation_id` (opaque id) · `result_charge_status` (enum server trả: `open\|partial\|paid\|void`) · `result_txn_status` (enum server trả: `matched\|partial\|unmatched`) |
+
+- Không có event cho failure path trong Draft này — error analytics (nếu cần) sẽ đề xuất riêng, và
+  cũng chỉ được mang `error.code` enum, không mang nội dung response.
+- Mọi `result_*` param lấy từ canonical state server trả (Flow 4 bước 3), không phải state FE tự suy.
+
+---
+
+## State Machine (Draft)
+
+> **Draft — mô tả để đọc/QA, KHÔNG phải logic FE.** Server là nơi duy nhất thực hiện transition
+> (Flow 4 bước 3: server append reversal, recompute rồi trả canonical states); FE chỉ render state
+> server trả, không tự suy post-state từ action. Chỉ liệt kê state đã có trong file này; transition
+> suy từ Flow 1–4 + §5; thiếu căn cứ → TBD (UNPINNED).
+
+### Bank transaction — `matched | partial | unmatched` (Flow 4)
+
+| Từ | Đến | Trigger (server-side) | Căn cứ trong file |
+|---|---|---|---|
+| `unmatched` | `partial` | Allocation confirm nhưng chưa phủ hết số tiền CK | Flow 3 · §5 #2/#3 |
+| `unmatched` | `matched` | Allocation phủ đủ (host confirm hoặc auto-reconcile/webhook match) | Flow 2–3 · §5 #5 |
+| `partial` | `matched` | Gán tiếp phần dư ("Gán dư") | Flow 3 · §3 layout row `partial` |
+| `matched` | `partial` / `unmatched` | Reversal append → server recompute; FE không đoán nhánh nào | Flow 4 |
+| `partial` | `unmatched` | Reversal append → server recompute | Flow 4 |
+
+Không tồn tại state `reversed` cho bank transaction (§6 · §7) — reversal là allocation entry
+âm/append-only, không phải bank-transaction status.
+
+### Charge — `open | partial | paid | void` (Flow 4)
+
+| Từ | Đến | Trigger (server-side) | Căn cứ trong file |
+|---|---|---|---|
+| `open` | `partial` | Allocation một phần | Flow 3 · §5 #2 |
+| `open` | `paid` | Allocation đủ amount due | Flow 3 |
+| `partial` | `paid` | Allocation phần còn thiếu | Flow 3 |
+| `paid` | `partial` / `open` | Reversal → server recompute; FE không đoán nhánh nào | Flow 4 |
+| `partial` | `open` | Reversal → server recompute | Flow 4 |
+| vào/ra `void` | — | TBD (UNPINNED) — không flow nào trong file này tạo/thoát `void`; Flow 4 chỉ liệt kê `void` trong tập canonical | Flow 4 |
+
+### UI-local states (client-local, không phải BE token)
+
+- Allocation Panel: `Loading → Ready → (Success | Error)`; nhánh over-allocation do server phán quyết
+  qua `ALLOCATION_EXCEEDS_FUNDS` (§3 Allocation Panel States) — bản thân chuỗi Loading/Ready/Success/Error
+  là trạng thái UI thuần client (client-local, không phải BE token).
+- Reversal Dialog: `confirm → processing → success` (§4 `ReversalDialog`) — cũng là trạng thái UI
+  thuần client (client-local, không phải BE token), không map vào error catalog hay charge/txn state.
+
+---
+
+## Acceptance Criteria (Draft)
+
+> **Draft — KHÔNG authorize implement.** Mỗi AC trace về section có sẵn trong file; AC không thêm
+> error code/HTTP status mới (các ô "—" và surface UNPINNED giữ nguyên) và không mở surface/flow mới.
+> **Nguyên tắc xuyên suốt (§6 "Không tự cộng client-side" + negative scope header): FE không tự
+> cộng/tự tính bất kỳ con số nào — mọi số hiển thị đều đến từ server.**
+
+| # | AC | Trace |
+|---|---|---|
+| AC-1 | `/dashboard/payments` không render cho user thiếu quyền admin; `NOT_TENANT_ADMIN` → redirect về dashboard đúng error mapping | §3 Ledger error mapping |
+| AC-2 | Baseline: unified ledger + month summary không fetch, không render row/card/summary — ở cả 3 breakpoint | §3 fixture note · §3 Responsive · §6 |
+| AC-3 | Thiếu entitlement `payment_reconcile_auto` HOẶC availability không PASS → toàn bộ auto-reconcile surface absent (tab "Chưa khớp", card CK chưa khớp, mọi auto action); không render control disabled | §5 #6/#6a · header Capability |
+| AC-4 | Không có phép cộng/trừ/so sánh tiền nào ở client: vùng tổng Allocation Panel chỉ hiển thị giá trị server trả; chưa pin preview DTO → unavailable placeholder; toast success dùng số trong response, không dựng lại từ selection | §3 Allocation Panel note + States · §4 `AllocationTotal` · §6 |
+| AC-5 | `ALLOCATION_EXCEEDS_FUNDS` → inline error, panel giữ mở; FE không tự so sánh tổng với số tiền CK trước khi submit | §3 Allocation Panel error mapping |
+| AC-6 | Sau reversal confirm: FE refetch và render canonical states server trả, không hardcode post-state; không render bank-transaction status `reversed` | Flow 4 · §6 · §7 |
+| AC-7 | Unknown/missing/timeout response → fail closed: unavailable placeholder + retry; không render 0đ, empty state hay success từ response thiếu | §3 các dòng *(unknown / missing / timeout)* |
+| AC-8 | Happy empty state chỉ hiện khi dữ liệu server trả cho thấy đồng thời: không còn bank txn chưa khớp VÀ không charge `open\|partial`; FE không tự suy điều kiện từ tính toán; trường hợp new-user giữ copy #8 gốc | §5 #8 + Draft bổ sung #8 |
+| AC-9 | Mọi chuỗi user-facing đi qua `t(vi, en)`; không hardcode một ngôn ngữ | §6 i18n note |
+| AC-10 | `SourceBadge` render đủ 5 giá trị enum; không gộp `auto` + `manual` thành một badge "CK" | §4 `SourceBadge` · §6 Source type |
+| AC-11 | Request gán gửi exact `bank_transaction_id` + `charge_id`; không gửi/tìm theo tên hiển thị | Flow 2 bước 3–4 · Flow 3 bước 2 · §5 #1 |
+| AC-12 | Analytics params không chứa amount/số tiền, tên người, số tài khoản, memo; chỉ opaque id, enum, count, boolean | Analytics Events (Draft) · header Negative scope |
+| AC-13 | Với mã lỗi chưa pin HTTP status, FE map theo `error.code`; AC này không pin thêm status nào (cột Status "—" giữ nguyên) | §3 note trên Allocation Panel error mapping · header BE tokens |
+
+---
+
+## Testing Notes (Draft)
+
+> **Draft — KHÔNG authorize implement.** Runtime hiện chưa có reconcile service/routes/web UI
+> (header Runtime status), nên E2E chỉ chạy được khi runtime slice tồn tại. Test chống lại surface
+> UNPINNED (unified ledger, month summary, preview total) KHÔNG được viết fixture giả định DTO shape.
+
+- **Component/unit (viết được khi component tồn tại):**
+  - `SourceBadge`: đủ 5 enum, không gộp `auto`/`manual` (AC-10)
+  - `AllocationTotal`: đổi selection KHÔNG làm đổi giá trị hiển thị khi chưa có response server; chưa pin preview DTO → unavailable placeholder (AC-4)
+  - `BankTransactionStatusBadge`: đúng 3 status, không nhận `reversed` (AC-6)
+  - Fail-closed: response thiếu field/malformed → unavailable + retry, không render 0đ/empty/success (AC-7)
+- **Gating matrix (mock server):** 4 tổ hợp entitlement × availability — chỉ PASS+PASS render auto surface; 3 tổ hợp còn lại absent hoàn toàn, không có control disabled (AC-3)
+- **Error mapping:** mỗi dòng đã pin trong §3 có 1 test render đúng visible state + i18n string; assert theo `error.code`, KHÔNG assert HTTP status cho dòng đang để "—" (AC-5 · AC-13)
+- **State render:** FE render đúng canonical state server trả cho mọi hàng trong State Machine (Draft); KHÔNG viết test kiểu "FE tự chuyển state" vì transition là server-side (AC-6)
+- **Concurrency (§5 #5):** mock conflict host-gán + webhook-match → reload latest state + toast "Đã có thay đổi"
+- **Happy empty state:** chỉ hiện khi mock server trả đủ cả 2 điều kiện; từng điều kiện lẻ → không hiện (AC-8)
+- **i18n:** snapshot cả vi lẫn en cho mọi chuỗi mới (AC-9)
+- **Keyboard (§7):** Tab qua rows, Enter mở detail, Escape đóng panel
+- **Analytics schema allowlist:** test tự động assert payload 4 event chỉ chứa key trong bảng đề xuất; fail nếu xuất hiện key dạng amount/name/account (AC-12)
+- **E2E (deferred):** Flow 2→3→4 trên runtime thật khi slice tương ứng CODE_READY — TBD (UNPINNED), không viết trước theo fixture
+
+---
+
+_FE Design Spec v0.4 · 2026-08-07 · Source: feature_payment_reconcile.md v1.10_
+_Changelog v0.3 → v0.4 (2026-08-07): Thêm happy empty state + 4 section Draft — nguồn: Sporta FE porting analysis 2026-08-07_

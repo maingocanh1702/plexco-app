@@ -291,4 +291,27 @@ Chat trong app giữa thành viên CLB và host — group chat theo CLB + DM gi�
 
 ---
 
-_FE Design Spec v0.4 · 2026-07-31 · Source: feature_inapp_chat.md v0.15_
+## Analytics Events (Draft — đề xuất, chưa phải contract)
+
+> Skeleton — chưa điền. Quy tắc khi điền: params cấm amount/tiền/PII; chỉ opaque id, enum, count, boolean. Nguồn template: Sporta FE porting analysis 2026-08-07.
+
+| Event | Trigger | Params | Ghi chú |
+|---|---|---|---|
+| TBD (UNPINNED) | | | |
+
+## State Machine (Draft)
+
+> Skeleton — node lấy từ §States hiện có của file này: Chat List (§3): Loading · Ready · Empty · Error; Message View (§3): Loading · Ready · Empty (new thread) · Error · Slash command result. Transition: TBD (UNPINNED) — chỉ được điền từ flow/edge case đã pin, không suy diễn.
+
+## Acceptance Criteria (Draft)
+
+> Skeleton — mỗi AC khi điền phải trace về một § có sẵn trong file. TBD.
+
+## Testing Notes (Draft)
+
+> Skeleton — unit/component/e2e hooks map theo AC. TBD.
+
+---
+
+_FE Design Spec v0.5 · 2026-08-07 · Source: feature_inapp_chat.md v0.15_
+_Changelog v0.5: Thêm skeleton 4 section Draft (Analytics/State Machine/AC/Testing) — nguồn: Sporta FE porting analysis 2026-08-07_

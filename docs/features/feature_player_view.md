@@ -2,11 +2,11 @@
 
 > **Canonical phase:** P4.6  
 > **Track:** 👤 Player View  
-> **Version:** 2.7 · 2026-07-31
+> **Version:** 2.8 · 2026-08-07
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3.5 identity · P3 ledger · P4 web auth/magic link · P4 sync realtime  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-8 · `../product/PRD.md` FLOW 10 · `../product/TDD.md` §3.4/§4 (person-self contract) · `BE/feature_player_view_tech.md` · `../standards/decisions.md` DD-91 · `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-8 · `../product/PRD.md` FLOW 10 · `../product/TDD.md` §3.4/§4 (person-self contract) · `BE/feature_player_view_tech.md` · `../standards/decisions.md` DD-91/DD-96 · `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md`
 
 > **DD-48 boundary:** `/me` vẫn person-self và không nhận arbitrary person id. Cross-user social profile thuộc `feature_user_settings` (`GET /api/persons/:id/profile`) với DTO riêng; host operational member/roster data đi tenant-scoped path riêng. Không tái dùng `/me` serializer cho hai path đó.
 
@@ -27,6 +27,8 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 - Cross-tenant errors KHÔNG reveal inaccessible club existence.
 - `/api/me/charges`, chat `/pay` và authenticated notification detail phải đọc cùng `getSelfPaymentStatus`; không surface nào tự tính lại số còn nợ.
 - Số 0 chỉ được hiển thị khi ledger chứng minh `SelfPaymentStatus.kind="known_zero"`; dữ liệu thiếu/không xác minh được phải fail-closed thành `unknown`.
+- **Cross-club aggregate (DD-96 Part A):** `getSelfPaymentSummary` là owner duy nhất của tổng nợ xuyên CLB; consumer (Home) KHÔNG được cộng per-club status. Một CLB `unknown` ⇒ cả summary `unknown` — cấm partial sum.
+- **Host receivable ("Chưa thu") KHÔNG thuộc feature này** (DD-96 Part B): đó là charge của người khác, tenant-scoped, role-gated → owner riêng theo DD-48. Không mở rộng `/me*` hay serializer person-self để chứa nó.
 
 ---
 
@@ -50,6 +52,7 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 | PVW-UC-12 | Player | Gõ exact `/pay` trong human DM | Một CLB đủ điều kiện thì mở thẳng; nhiều CLB thì picker opaque chỉ requester thấy, peer không nhận command/result |
 | PVW-UC-13 | Player | Mở authenticated payment notification detail | Cùng status/remaining amount như `/api/me/charges` và `/pay` tại thời điểm đọc |
 | PVW-UC-14 | Player | Gõ exact `/sessions` hoặc `/waitlist` trong club chat/private Club Bot | Requester-only DTO của chính mình từ canonical person-self read; chỉ bật beta sau current Session packets + production-shaped data E2E |
+| PVW-UC-15 | Player | Xem tổng nợ xuyên CLB (chip "Còn nợ" trên Home) | `getSelfPaymentSummary` trả `totalOutstanding` + `clubCount` (số CLB có outstanding > 0) hoặc proven `known_zero`; tap → outstanding detail liệt kê per-club `items[]` = các kèo chưa trả |
 
 ### Edge Cases
 
@@ -72,6 +75,8 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 | 15 | Data Integrity | Ledger/authz/dependency không chứng minh được balance | Trả `unknown` + retry/fallback generic; không diễn giải null/error là không nợ |
 | 16 | Security | Client gửi `person_id`/raw `tenant_id` cùng `/pay` hoặc notification detail | Reject/ignore fail-closed; person từ authenticated context, CLB từ trusted channel hoặc opaque actor-bound ref |
 | 17 | Enablement | Slice 19 read tests xanh nhưng một Session packet hoặc production-shaped E2E còn thiếu | Giữ `/sessions|/waitlist` beta OFF; không suy full Session authority từ read core |
+| 18 | Money/Data | Cross-club summary: 1 CLB `known_amount`, 1 CLB `unknown` | Summary = `unknown` + retry. ❌ NEVER trả tổng của riêng CLB known — con số đó thấp hơn nợ thật và trông authoritative |
+| 19 | Data Integrity | Person chưa thuộc CLB nào gọi summary | `known_zero` (không phải `unknown`) — không CLB nào là bằng chứng không nợ, khác với không đọc được |
 
 ---
 
@@ -133,6 +138,7 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 - [ ] Human-DM `/pay` không suy tenant từ peer: một own eligible club auto-select, nhiều club dùng opaque actor-bound picker; peer không thấy command/picker/result và shared history không có artifact.
 - [ ] Mọi person/club authority đến từ authenticated context, trusted club channel hoặc opaque requester-bound ref; arbitrary `person_id`/raw `tenant_id` không được chấp nhận.
 - [ ] Null, authz failure, integrity failure và dependency failure trả `unknown`; chỉ proven `known_zero` mới hiển thị 0.
+- [ ] Cross-club `getSelfPaymentSummary` là owner duy nhất của tổng xuyên CLB; không consumer nào cộng lại per-club status. Một CLB `unknown` ⇒ summary `unknown`, không partial sum. `clubCount` chỉ đếm CLB có outstanding > 0. Summary không mang `payAction`.
 - [ ] Slice 19 chỉ đọc baseline `players/memberships/sessions`, không duplicate join/leave/promotion/session business rules và không cần full SessionService để author.
 - [ ] `/sessions|/waitlist` beta chỉ enable khi cả ba strict current-authority packets `svc-session-crud`, `svc-session-join-leave`, `svc-waitlist-promotion-core` và production-shaped data E2E đều pass; tên cơ chế trong analysis cũ không tự là authority.
 
@@ -144,6 +150,7 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-07 | v2.8 | **DD-96 Part A:** thêm cross-club `getSelfPaymentSummary` làm owner duy nhất của tổng nợ xuyên CLB (đóng gap `feature_home_tech.md:166` — `SelfPaymentStatus` là per-club, Home bị cấm tự cộng). Pin unknown-dominates, `clubCount` = số CLB có outstanding > 0, không `payAction` ở tầng aggregate. Thêm PVW-UC-15, edge #18–19, 1 acceptance. Ghi rõ host receivable ("Chưa thu") **không** thuộc feature này (DD-48; xem DD-96 Part B). Không authorize runtime. |
 | 2026-07-31 | v2.7 | Keep paid/void/left-club ledger history outside current `SelfPaymentStatus`; remove historical acceptance claims until a separate Reviewed DTO/route owns them. |
 | 2026-07-31 | v2.6 | Reconcile Product wording with canonical per-club `SelfPaymentStatus`: current projection contains only open/partial outstanding items with allocation breakdown; optional `payAction` belongs to that club status, never a global/item action. Paid/void history requires a separate DTO. No runtime authorization. |
 | 2026-07-28 | v2.5 | Reconcile immutable authority `90d292d` and primary plan v1.8 `PLAN_READY`; retain per-mechanism `CODE_READY`, beta OFF and no-runtime boundaries. |

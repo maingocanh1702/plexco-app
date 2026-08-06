@@ -181,6 +181,47 @@ Màn hình đầu tiên sau đăng nhập trên PWA — personal dashboard tổn
 | `OnboardingChecklist` | progress bar + items | Replace chips khi user mới |
 | `OfflineBanner` | visible, hidden | "Không có kết nối" banner |
 
+### 4.1 OnboardingChecklist — nội dung bước (Draft — đề xuất, cần owner duyệt)
+
+> **Draft — đề xuất, cần owner duyệt.** Component `OnboardingChecklist` (bảng §4) và state Onboarding
+> (§3) đã pin **vị trí** (thay chips khi user mới — §2 Flow 2) nhưng chưa pin **nội dung bước**.
+> Đề xuất dưới đây chỉ dùng hành động đã tồn tại trong docs Plexco — không mở feature mới. Trạng thái
+> hoàn thành từng bước đọc từ server (`onboarding_steps` — bảng đã có, migration `0008`,
+> `feature_home.md` §4); FE không tự suy completion phía client. Mapping step-key → rows
+> `onboarding_steps`: TBD (UNPINNED) — chốt ở build slice.
+
+**3 bước đề xuất (Draft):**
+
+| # | Bước | Hành động → đích | Căn cứ (hành động sẵn có) |
+|---|---|---|---|
+| ① | Hoàn tất hồ sơ cá nhân | ⚙️ Setting → `/me/settings` — tên hiển thị, username, giới tính, ngày sinh, ngôn ngữ | Bottom Nav (§3 file này); `feature_user_settings.md` (hồ sơ Person) |
+| ② | Tham gia kèo đầu tiên | "Khám phá kèo" → `/discover` marketplace → public session detail → join flow CCJ | §2 Flow 2 file này; `feature_home.md` HOME-UC-7 |
+| ③ | Tạo CLB của bạn | Club tab → CTA "+ Tạo CLB" → onboarding wizard sẵn có | `feature_home.md` §3 (Bottom Nav slot Club); `feature_web_auth_onboarding.md` |
+
+> Không đề xuất "Tạo kèo đầu tiên" hay "Mời thành viên" làm bước: tạo kèo yêu cầu đã có CLB
+> (wizard Step 5 — `feature_web_auth_onboarding.md`, là hành động host sau khi tạo CLB), còn
+> "mời thành viên" chưa có flow user-facing được pin trong docs Plexco — không bịa feature.
+
+**Auto-dismiss (Draft):** đạt 3/3 → checklist tự ẩn, không cần user action; Home rời state
+Onboarding và render Ready hoặc Empty theo aggregate response kế tiếp (§9). Trạng thái
+hoàn-thành/đã-dismiss là dữ liệu server (`onboarding_steps`), không lưu client-only — reload hoặc
+thiết bị khác không hiện lại checklist.
+
+**Phân biệt Onboarding vs Empty (Draft):**
+
+| State | Điều kiện đề xuất | Căn cứ |
+|---|---|---|
+| Onboarding | User mới — **chưa thuộc CLB nào** (chưa từng có dữ liệu person-self) và checklist chưa 3/3 | `feature_home.md` HOME-UC-9; §2 Flow 2; §3 States |
+| Empty | **Đã qua onboarding** (thuộc ≥1 CLB hoặc checklist 3/3) nhưng **không có kèo sắp tới** | §3 States (Empty) |
+
+> Điều kiện thành phần của Empty liên quan chip nợ giữ nguyên đúng theo §3 hiện có — không diễn giải
+> thêm tại đây: TBD — chờ DD-96 mirror.
+>
+> Điểm chưa chốt: nếu user hoàn thành ② (join kèo) hoặc ③ (tạo CLB) trước khi đủ 3/3 thì điều kiện
+> "chưa thuộc CLB" của HOME-UC-9 hết đúng — rời Onboarding ngay dù checklist chưa 3/3, hay giữ
+> checklist tới 3/3? TBD (UNPINNED) — owner chốt precedence. Quyết định state do server aggregate
+> trả về, FE không tự suy (fence §1).
+
 ---
 
 ## 5. Edge Cases (UX)
@@ -233,4 +274,96 @@ Màn hình đầu tiên sau đăng nhập trên PWA — personal dashboard tổn
 
 ---
 
-_FE Design Spec v0.4 · 2026-07-31 · Source: feature_home.md v0.10 + DD-79_
+## 8. Analytics Events (Draft — đề xuất, chưa phải contract)
+
+> **Draft — đề xuất, chưa phải contract.** Đối chiếu event list nguồn ở `feature_home.md` §5.
+> Params chỉ được dùng: **opaque id · enum · count · boolean** — CẤM amount/số tiền/PII
+> (convention analytics hiện hành). Mọi chi tiết liên quan chip tiền/debt row:
+> **TBD — chờ DD-96 mirror**, không đặc tả tại đây.
+
+| Event | Khi nào | Params (đề xuất) | Trace |
+|---|---|---|---|
+| `home_viewed` | Home settle vào state sau load | `state` enum `ready \| empty \| onboarding` (theo nguồn; error/offline chưa có trong nguồn — TBD) | §3 States; `feature_home.md` §5 |
+| `home_chip_tapped` | Tap chip | `chip_type` enum — chip lịch: `sessions_week`; giá trị cho chip tiền: TBD — chờ DD-96 mirror | §2 Flow 1; §4 `FinanceChips` |
+| `home_hero_tapped` | Tap hero card | `role` enum `host \| player` + opaque session ref | §2 Flow 1; §6 Hero action |
+| `home_session_item_tapped` | Tap upcoming row | opaque session ref + `position` count (1–4) | §3 layout; §4 `UpcomingRow` |
+| `home_upcoming_see_all_tapped` | Tap "Tất cả →" | — | §2 Flow 1 bước 4 |
+| `home_suggested_tapped` | Tap kèo gợi ý | `position` count | §2 Flow 2; §4 `SuggestedSection` |
+| `home_onboarding_step_tapped` | Tap 1 bước checklist | `step` enum (3 key theo §4.1 — sau khi owner duyệt) | §4.1; `feature_home.md` §5 |
+| `home_onboarding_completed` | Checklist đạt 3/3, auto-dismiss | `steps_completed` count (= 3) | §4.1 (Draft) |
+| `home_pull_to_refresh` | Gesture pull-to-refresh | `success` boolean (client-local, không phải BE token) | §5 case 10; §7 |
+| `home_section_retry_tapped` | Tap retry tại section unavailable | `section` enum `upcoming \| suggested \| unread`; giá trị cho chip tiền: TBD — chờ DD-96 mirror | §3 Error mapping |
+| `nav_tab_tapped` | Tap tab bottom nav | `tab_key` enum từ registry | §3 Bottom Nav; `feature_home.md` §6 |
+
+---
+
+## 9. State Machine (Draft)
+
+> **Draft.** Chỉ dùng các state đã có trong §3: `Loading · Ready · Error · Empty · Onboarding ·
+> Offline`. Transition suy từ flow/edge case có sẵn trong file; thiếu căn cứ → TBD (UNPINNED).
+> Toàn bộ là mô tả UI-state phía client trên aggregate response — không authorize fetch/implement
+> (fence §1).
+
+| Từ | Sự kiện | Đến | Căn cứ |
+|---|---|---|---|
+| (mount) | Mở Home, bắt đầu fetch aggregate | Loading | §3 States |
+| Loading | Response OK — có dữ liệu person-self | Ready | §3 States |
+| Loading | Response OK — user mới chưa thuộc CLB | Onboarding | §3 States; §2 Flow 2; §4.1 |
+| Loading | Response OK — điều kiện Empty theo §3 (thành phần liên quan chip nợ: TBD — chờ DD-96 mirror) | Empty | §3 States; §4.1 |
+| Loading | Unknown/missing/timeout — fail closed | Error | §3 Error mapping |
+| Error | Tap retry | Loading | §3 States (Error) |
+| Ready | 200 per-section `UNAVAILABLE` | **Không đổi state** — vẫn Ready, section đó render placeholder + retry | §3 Error mapping |
+| Ready · Empty · Onboarding | Pull-to-refresh → refetch aggregate + SSE reconnect; hiển thị refresh indicator (client-local, không phải BE token); có quay lại skeleton Loading hay không: TBD (UNPINNED) | State theo response mới | §5 case 10; §7 |
+| Ready | SSE event (session hủy / charge settled) → refetch aggregate; chi tiết render chip tiền giữ nguyên §5 case 4–5, không mô tả thêm | Ready (re-render theo server) | §5 case 4–5; §7 SSE |
+| Onboarding | Checklist đạt 3/3 → auto-dismiss (Draft) | Ready hoặc Empty theo aggregate | §4.1 (Draft) |
+| Bất kỳ | 401 `AUTH_REQUIRED` / token refresh fail | Thoát Home → login, clear person-self khỏi view | §3 Error mapping; §5 case 9 |
+| Bất kỳ | 429 `RATE_LIMITED` | Giữ nguyên state; chặn refetch/pull-to-refresh tạm + retry sau | §3 Error mapping |
+| Bất kỳ | Mất kết nối | Offline | §3 States (Offline) |
+| Offline | Có kết nối lại | TBD (UNPINNED) — §7 chỉ pin SSE auto-reconnect, chưa pin state đích khi online lại | §7 |
+
+---
+
+## 10. Acceptance Criteria (Draft)
+
+- [ ] Render đủ 6 state §3 (Loading/Ready/Error/Empty/Onboarding/Offline) đúng mô tả; skeleton giữ đúng layout 2 chips + hero + 3 rows (§3 States)
+- [ ] Error mapping đúng bảng §3: per-section `UNAVAILABLE` → placeholder + retry tại chính section, không toast toàn trang; unknown/missing/timeout → fail-closed toast + retry, không render person-self snapshot cũ (§3 Error mapping). Hành vi chip tiền: TBD — chờ DD-96 mirror
+- [ ] 401 → về login + clear person-self khỏi view (§3 Error mapping; §5 case 9)
+- [ ] 429 → chặn refetch/pull-to-refresh tạm + retry sau (§3 Error mapping)
+- [ ] Bottom nav 4 tab đúng slot; Feed slot reserved, không render tab chết; FAB center raised (§3 Bottom Nav; §5 case 8)
+- [ ] Hero: tap toàn card → session detail đúng tenant context; không render payment/management CTA (§2 Flow 1; §6 Hero action)
+- [ ] Upcoming: max 4 rows compact 44px, dedupe host-ưu-tiên, sort host trước → time ASC, "Tất cả →" hoạt động (§3; §5 case 1–2; §7)
+- [ ] Onboarding: checklist thay chips, suggested vẫn hiện (§2 Flow 2; §3 States); nội dung 3 bước + auto-dismiss + phân biệt Onboarding vs Empty theo §4.1 sau khi owner duyệt (§4.1)
+- [ ] Pull-to-refresh: refresh aggregate + SSE reconnect (§5 case 10; §7)
+- [ ] Offline: banner hiện, ẩn person-self chips/hero/upcoming; chỉ public suggested cache theo Marketplace policy (§3 States Offline)
+- [ ] SSE: subscribe khi mount, auto-reconnect; cancel/settle → refetch aggregate, FE không recalc (§5 case 4–5; §7)
+- [ ] i18n: mọi chuỗi user-facing qua `t(vi, en)` (§3 Error mapping; §6 note)
+- [ ] Suggested lazy-load dưới fold; above-fold render trước (§7)
+- [ ] Analytics events bắn theo §8 sau khi owner chốt contract; param không chứa amount/PII (§8)
+- [ ] Mọi AC liên quan chip tiền/debt row: TBD — chờ DD-96 mirror
+
+---
+
+## 11. Testing Notes (Draft)
+
+- **Fence trước tiên:** toàn bộ §6 là `UNPINNED` (§1) — chưa có runtime endpoint. Test hiện tại chỉ là component/visual-state test với mock cấu trúc minh hoạ; KHÔNG assert field name BE (chốt ở build slice), KHÔNG dùng mock làm seed/default/fallback (§1)
+- **Component states:** mỗi component §4 test đủ states khai báo (storybook/visual variant), kèm dark mode (§7). Skeleton và refresh indicator là trạng thái thuần client (client-local, không phải BE token)
+- **Error mapping:** mock từng row bảng §3 — per-section `UNAVAILABLE` cho các section ngoài tiền (upcoming/suggested/unread) · 401 · 429 · timeout — assert đúng visible state + i18n string (§3 Error mapping). Test cho chip tiền: TBD — chờ DD-96 mirror
+- **State machine:** test transition theo §9 — mount→Loading→(Ready|Onboarding|Empty|Error); retry Error→Loading; 401 thoát + clear person-self; per-section unavailable không đổi state (§9; §3)
+- **Onboarding:** test phân biệt Onboarding vs Empty và auto-dismiss 3/3 theo §4.1 — chỉ viết sau khi owner duyệt nội dung bước (§4.1)
+- **Interaction:** pull-to-refresh gesture + bị chặn khi 429 (§3; §5 case 10); SSE reconnect + refetch khi cancel/settle (§5 case 4–5; §7) — e2e thật chỉ khi runtime tồn tại (§1)
+- **A11y:** accessible labels theo §6 (hero card, unread indicator); labels liên quan payment dot/chip tiền: TBD — chờ DD-96 mirror; row compact 44px đủ touch target (§6; §7)
+- **i18n:** assert chuỗi đi qua `t(vi, en)`, không hardcode một ngôn ngữ (§6 note)
+- **Analytics:** assert payload chỉ chứa opaque id/enum/count/boolean, không amount/PII (§8) — contract test chỉ sau khi owner chốt §8
+
+---
+
+## Changelog
+
+| Ngày | Version | Nội dung |
+|---|---|---|
+| 2026-07-31 | v0.4 | Baseline trước khi có changelog table — xem git history |
+| 2026-08-07 | v0.5 | Thêm 4 section Draft + nội dung OnboardingChecklist (Draft) — nguồn: Sporta FE porting analysis 2026-08-07 |
+
+---
+
+_FE Design Spec v0.5 · 2026-08-07 · Source: feature_home.md v0.10 + DD-79_

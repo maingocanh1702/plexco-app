@@ -293,4 +293,27 @@ Chuỗi static do file này authorize (shell + navigation + CTA). Không có res
 
 ---
 
-_FE Design Spec v0.2 · 2026-07-31 · Source: session v2.17 + payment v1.10 + notifications v3.11_
+## Analytics Events (Draft — đề xuất, chưa phải contract)
+
+> Skeleton — chưa điền. Quy tắc khi điền: params cấm amount/tiền/PII; chỉ opaque id, enum, count, boolean. Nguồn template: Sporta FE porting analysis 2026-08-07.
+
+| Event | Trigger | Params | Ghi chú |
+|---|---|---|---|
+| TBD (UNPINNED) | | | |
+
+## State Machine (Draft)
+
+> Skeleton — node lấy từ §States hiện có của file này: `/dashboard` (§3): Loading · Ready · Unavailable · Error (section Sidebar không có block §States riêng). Transition: TBD (UNPINNED) — chỉ được điền từ flow/edge case đã pin, không suy diễn.
+
+## Acceptance Criteria (Draft)
+
+> Skeleton — mỗi AC khi điền phải trace về một § có sẵn trong file. TBD.
+
+## Testing Notes (Draft)
+
+> Skeleton — unit/component/e2e hooks map theo AC. TBD.
+
+---
+
+_FE Design Spec v0.3 · 2026-08-07 · Source: session v2.17 + payment v1.10 + notifications v3.11_
+_Changelog v0.3: Thêm skeleton 4 section Draft (Analytics/State Machine/AC/Testing) — nguồn: Sporta FE porting analysis 2026-08-07_

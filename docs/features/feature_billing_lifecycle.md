@@ -10,6 +10,8 @@
 
 > **Cập nhật v3.4 (DD-40 + DD-37, 2026-07-10):** free-tier bots = **Zalo + Facebook Messenger** (bỏ Telegram). Capability flags DD-40: **free** = `payment_mark_manual` (cash/bank), `reminders_manual`; **`host_pro`** += `payment_reconcile_auto`, `reminders_auto`, `assistant_ai_kb`, `crm_dashboard`.
 
+> **Pointer 2026-08-07 (DD-97, owner-delegated):** statement/export sao kê tách hai lớp entitlement theo cùng logic DD-40 — per-session collection statement **view** thuộc **free**; statement theo **kỳ/tháng + export PDF/XLSX** thuộc **`host_pro`** (họ `crm_dashboard`). Exact capability key + registry entry chốt ở build slice (`plans.entitlements` config-driven, §4b BE tech — cơ chế không đổi). Mechanism DD-97 chưa `PLAN_READY`; đây chỉ là decision pointer, không mở surface/spec mới trong file này.
+
 > **Commercial entitlement ≠ runtime availability:** exact Assistant key là `assistant_ai_kb`. `payment_reconcile_auto=true` chỉ nói tenant Host Pro đã mua quyền; auto path còn cần provider/bank/market/currency/consent đủ bằng chứng. Current authority/schema chỉ có `sepay|apipay` cho rail Việt Nam và webhook→settle→notify chưa build, nên capability chưa runtime ở cả Việt Nam. Ngoài Việt Nam, mark-paid thủ công vẫn là đường global; regional expansion còn ở mức research/decision input.
 
 ---

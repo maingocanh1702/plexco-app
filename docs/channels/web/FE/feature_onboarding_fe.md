@@ -504,4 +504,98 @@ Wizard giúp host mới thiết lập CLB khi server-authorized navigation đưa
 
 > **Boundary:** Bank `active` chỉ là onboarding readiness evidence. Nó không tự bật auto-reconcile; payment availability còn cần entitlement, provider/bank/market/currency, consent và runtime gates riêng.
 
+---
+
+## 8. Analytics Events (Draft — đề xuất, chưa phải contract)
+
+> Đề xuất instrumentation phía FE, **chưa phải contract** — tên event/param chưa được owner chốt và
+> KHÔNG thuộc BE error catalog. Params tuân thủ ràng buộc cứng: **không amount/tiền (giá mặc định là
+> tiền — không bao giờ vào params), không PII (tên, sđt, email), không token/secret, không tên CLB,
+> không bank label/STK, không page name** — chỉ opaque id, enum, count, boolean, duration.
+> Event chỉ bắn khi flow tương ứng reachable: connector wizard/UI chưa build (header Runtime status)
+> nên funnel dưới đây là target.
+
+### Step funnel (§2 Flow 1 · Flow 2 · Flow 3)
+
+| Event | Khi nào bắn | Params (đề xuất) |
+|---|---|---|
+| `onboarding_started` | Wizard render lần đầu sau exact server-authorized navigation (§2 Flow 1 bước 1) | — |
+| `onboarding_step_viewed` | Step content hiển thị (§3) | `step` (enum: `club` \| `bank` \| `zalo` \| `messenger` \| `readiness`) · `is_resume` (boolean — §2 Flow 2) |
+| `onboarding_step_completed` | Step chuyển sang completed ✅ trên stepper (§4 `Stepper`) | `step` (enum) · `duration_ms` (từ `onboarding_step_viewed` của step đó) |
+| `onboarding_step_skipped` | User bấm "Bỏ qua" trên step optional (§2 Flow 1 bước 4–5) | `step` (enum: `zalo` \| `messenger`) |
+| `onboarding_step_failed` | Một mã trong bảng Error mapping của step được render (§3) | `step` (enum) · `error_code` (enum — đúng nguyên văn mã BE catalog, không đặt mã mới) |
+| `onboarding_bank_fallback_selected` | Chọn nhánh fallback ở Step 2 (§2 Flow 3) | `fallback` (enum: `sepay_oauth` \| `apipay_byo`) |
+| `onboarding_exited` | Click [Thoát] trên header wizard (§3 Layout) | `step` (enum — step đang active) · `completed_steps_count` (count) |
+| `onboarding_completed` | TBD (UNPINNED) — completion gate phụ thuộc target readiness DTO chưa pin (§3 Readiness); KHÔNG bắn ở baseline | — |
+
+- **Drop-off:** đo bằng phân tích funnel — `step_viewed` không có `step_completed`/`step_skipped` tương ứng (kết hợp `onboarding_exited`); không cần event drop-off riêng.
+
+---
+
+## 9. State Machine (Draft)
+
+> Chỉ dùng các state đã có trong file: step state của `Stepper` (§4) và connector lifecycle
+> server-owned `connecting | registered | active | drift | error | revoked` (§1 · §4). FE chỉ render
+> lifecycle server trả, không tự derive transition connector; mọi chuyển trạng thái connector là
+> server-authoritative. Transition suy từ §2 Flows và §5 Edge Cases; thiếu căn cứ → TBD (UNPINNED).
+
+### Step-level (`Stepper` — §4)
+
+- `upcoming ○` → flow đưa tới step → `active ●` (§2 Flow 1)
+- `active ●` → save/confirm step thành công → `completed ✅` (§2 Flow 1)
+- `active ●` → "Bỏ qua" (chỉ step optional Zalo/Messenger) → `skipped ⏭` (§2 Flow 1 bước 4–5 · §3 Step 3 States)
+- `completed ✅` → click trên stepper → mở review/edit mode cho step đó, không reset steps sau (§5 case 9)
+- Refresh giữa wizard → resume đúng step đang `active`, steps đã xong giữ ✅ (§2 Flow 2 · §5 case 1)
+
+### Connector lifecycle (server-owned — §1)
+
+- (no row) → user xác nhận TK / lưu token → `connecting` (§3 Step 2/3 States)
+- `connecting` → server provision/lưu OK → `registered` (§2 Flow 1 bước 3 · §3 Step 2 tier 1)
+- `registered` → server xác nhận (bank kích hoạt / Zalo inbound event verified) → `active` (§3 Step 2 tier 2 · Step 3 States)
+- `connecting` / `registered` → server trả lỗi → `error` + CTA "Thử lại" (§3 Step 2 States)
+- `error` → retry (provision retry dùng cùng idempotency key — §3 Step 2 Error mapping 502) → `connecting`
+- `active` → `drift` / `revoked`: chỉ do server trả; FE render warning/blocked + CTA theo capability (§3 Step 2 States)
+- Authorization denial / expired grant → **overlay**, KHÔNG phải lifecycle state mới (§1 · §4 `StatusChip`)
+- `drift` / `revoked` → recover: TBD (UNPINNED) — CTA sửa/kết nối lại chỉ hiện khi capability còn hợp lệ, flow recover chưa được pin (§3 Step 2 States)
+
+### Completion (Readiness — §3)
+
+- Mọi transition sang "onboarding hoàn tất" / next destination: TBD (UNPINNED) — chỉ mở khi server chứng minh required steps passed **và** cùng response pin exact authorized next destination (§3 Readiness completion gate); FE không tự derive.
+
+---
+
+## 10. Acceptance Criteria (Draft)
+
+| # | Criterion | Trace |
+|---|---|---|
+| AC-1 | Wizard chỉ render sau exact server-authorized navigation; 401 → không render, quay về `/` | §2 Flow 1 bước 1 · §3 Error mapping wizard |
+| AC-2 | Resume: refresh giữa wizard quay lại đúng step; steps đã hoàn tất giữ ✅ và click vào mở review/edit, không reset steps sau | §2 Flow 2 · §5 case 1, 9 |
+| AC-3 | Step 2 chỉ submit `bankSelectionRef` opaque server-cấp; không tồn tại input raw STK/chủ TK ở bất kỳ state nào | §3 Step 2 contract note · §4 `BankSelector` |
+| AC-4 | `APIPAY_ENTERPRISE_UNAVAILABLE` / `APIPAY_ENTERPRISE_BANK_UNSUPPORTED` → ẩn đường auto-provision, hiện CTA phụ SePay / BYO | §3 Step 2 Error mapping · §5 case 3 |
+| AC-5 | Zalo manual-only: không gọi `getMe`, không tự set webhook, không tự suy `active`; `active` chỉ sau server xác minh inbound event | §3 Step 3 note CO-OQ-1 |
+| AC-6 | Phân biệt đúng 2 tier: `registered` ("chờ kích hoạt") ≠ `active` ("đang hoạt động"); không nhảy tier ở client | §3 Step 2 States · §5 case 2 |
+| AC-7 | Readiness checklist động + CTA "Tiếp tục" omit hoàn toàn ở baseline (target DTO `UNPINNED`, legacy endpoint non-consumable), ở mọi breakpoint | §3 Readiness · §6 |
+| AC-8 | Bỏ qua Zalo/Messenger không chặn readiness; club config + bank `active` + first session vẫn required | §5 case 6 |
+| AC-9 | `IDEMPOTENCY_KEY_REUSED` → không tạo connector thứ hai, giữ nguyên state hiện tại + CTA tải lại | §3 Step 2/3/4 Error mapping |
+| AC-10 | Mọi mã trong các bảng Error mapping render đúng visible state + i18n copy đã pin; unknown/missing/timeout → fail closed, KHÔNG suy `registered`/`active`/ready | §3 (mọi bảng Error mapping) |
+| AC-11 | Mobile: footer actions sticky đáy màn hình, mỗi nút full-width ≥ 44px | §3 Responsive wizard · §7 |
+| AC-12 | Analytics events không chứa tên CLB, giá (tiền), bank label/STK, token/secret, page name hay PII; chỉ opaque id, enum, count, boolean, duration | §8 |
+
+---
+
+## 11. Testing Notes (Draft)
+
+- **Unit — error mapping:** mỗi row trong các bảng Error mapping §3 (wizard container, Step 1–4, Readiness) có test: response (status + code) → đúng visible state + copy `t(vi,en)`; unknown/missing/timeout → fail-closed placeholder + retry, KHÔNG suy trạng thái thành công.
+- **Unit — lifecycle render:** `StatusChip`/`ConnectorCard` chỉ nhận 6 state canonical `connecting | registered | active | drift | error | revoked` (§4); authorization denial/expired grant render overlay, không thêm state; giá trị lạ từ server → fail closed.
+- **Unit — BankSelector:** không tồn tại đường nhập raw STK/chủ TK; payload submit chỉ chứa `bankSelectionRef` opaque; ref sai/hết hạn → `APIPAY_BANK_SELECTION_INVALID` → buộc chọn lại từ danh sách (§3 Step 2 · §4).
+- **Unit — omit set:** readiness checklist động + CTA "Tiếp tục" absent trong DOM ở baseline (§3 Readiness); contract-test guard bảo đảm legacy readiness endpoint không bị FE target consume (Legacy runtime warning §3).
+- **Unit — Zalo manual-only:** không có request `getMe`/set-webhook nào từ client; save token chỉ tới endpoint lưu secret; `active` chỉ render khi server trả (§3 Step 3 · CO-OQ-1).
+- **Integration — resume:** refresh tại mỗi step → đúng step active + stepper đúng trạng thái (§5 case 1); click step completed → review mode, steps sau không reset (§5 case 9).
+- **Integration — idempotency:** double-submit/retry → đúng 1 connector; `IDEMPOTENCY_KEY_REUSED` giữ state hiện tại (§3 Step 2/3/4 Error mapping).
+- **Analytics guard:** snapshot test payload các event §8 — assert không có key club_name/price/bank/account/token/secret/page_name/email/phone.
+- **E2E (target-gated):** connector wizard/UI chưa build (header Runtime status) → E2E đánh dấu skipped-by-gate; không giả lập provider, không coi legacy readiness endpoint là target (§3 Readiness).
+
+---
+
 _FE Design Spec v0.2 · 2026-07-31 · Source: feature_web_auth_onboarding.md v2.11 + feature_connector_onboarding.md v1.0_
+_FE Design Spec v0.3 · 2026-08-07 · Changelog: Thêm 4 section Draft (Analytics/State Machine/AC/Testing) — nguồn: Sporta FE porting analysis 2026-08-07_

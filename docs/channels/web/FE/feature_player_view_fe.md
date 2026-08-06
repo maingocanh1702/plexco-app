@@ -287,7 +287,7 @@ Source authorize surface này: `feature_player_view.md` §3 hàng "Web | /me —
 | `PersonChips` | design-only pending owner contract | 2 chips: nợ + kèo tuần. Không implement tới khi cross-club debt aggregate và person-self sessions DTO được pin (§6 `UNPINNED`); future states: loading, ready (values), error (dash) |
 | `ClubCard` | default, hover, debt (red badge) | Card CLB: icon + name + role + debt |
 | `UpcomingRow` | default, payment dot (🔴 `open`, ⚠️ `partial`), unavailable (— khi `unknown`) | Row kèo sắp tới compact. **Union chỉ `open \| partial`** (`BE/feature_player_view_tech.md:184`) — không có state `paid`, không dùng 🟢. Khoản đã tất toán rời khỏi `SelfPaymentStatus` (v2.7 cố ý để paid/void/left-club ngoài union) |
-| `OutstandingItemCard` | open (orange), partial (yellow) | Session + `amountDue` + `amountAllocated` + `remaining`; không có per-item action |
+| `OutstandingItemCard` | open (orange), partial (yellow) | Session + `amountDue` + `amountAllocated` + `remaining`; không có per-item action. State `partial` có thể vẽ progress bar — **presentation thuần** của tỉ lệ `amountAllocated`/`amountDue` server trả; ba con số hiển thị vẫn nguyên từ response, không hiện % như một giá trị tiền mới và không tự tính lại allocation |
 | `ClubPayAction` | absent, ready, loading, error | Optional `data.clubs[].status.payAction`; một protected CTA cho đúng club status |
 | `JoinRequestList` | loading, ready, empty, unknown | Person-self requests only; `pending | approved | rejected | expired` |
 | `MergedBanner` | visible, dismissed | Account merged notification banner |
@@ -311,6 +311,7 @@ Source authorize surface này: `feature_player_view.md` §3 hàng "Web | /me —
 | 8 | Account merge xảy ra realtime | SSE cập nhật + toast "Tài khoản đã gộp" |
 | 9 | Offline | Banner "Cần kết nối để xem thông tin cá nhân". Không render cached clubs/upcoming/charges/requests vì toàn bộ person-self DTO đều không được cache |
 | 10 | SSE mất kết nối | Reconnect rồi authenticated refetch; có thể live-poll tạm thời theo server policy, nhưng không đọc persisted/cached person-self snapshot |
+| 11 | Charge settle trong lúc đang xem `/me/charges` | Refetch (SSE/manual) → item **rời khỏi danh sách** vì paid rời union `open \| partial` (BE v2.7). Không render trạng thái "paid" tại chỗ, không toast số tiền ở surface này — settled confirmation thuộc Notification pipeline (NTF-UC-3), không phải `/me/charges`. Club chuyển `known_zero` khi server trả vậy → empty state "🎉" như §3 |
 
 ---
 
@@ -349,6 +350,7 @@ Source authorize surface này: `feature_player_view.md` §3 hàng "Web | /me —
 - **Chips:** Sticky top. Chưa được implement/author tới khi owner contract tồn tại; design target sau đó: tap → navigate (nợ → `/me/charges`, kèo → full list)
 - **Club cards:** Hover lift (desktop). Tap → `/me/clubs/:clubId`
 - **Payment action:** Optional per-club CTA chỉ mở protected `data.clubs[].status.payAction.href`; không global/per-item CTA, không QR component
+- **Partial presentation:** Progress bar (nếu dùng) trong `OutstandingItemCard` chỉ là tỉ lệ hiển thị của `amountAllocated`/`amountDue` server trả — không sinh con số tiền/percent mới ngoài ba giá trị response (§4)
 - **Realtime:** SSE là primary; reconnect + authenticated refetch (hoặc bounded live polling nếu owner cho phép). Không cache person-self DTO
 - **Dark mode:** Chips `var(--bg-card)`, debt red `var(--error)`, proven-zero green `var(--success)`
 - **Fallback freshness:** Không background-poll mặc định; khi SSE đứt, reconnect rồi authenticated refetch. Chỉ bounded live polling nếu owner policy explicit cho phép
@@ -356,4 +358,90 @@ Source authorize surface này: `feature_player_view.md` §3 hàng "Web | /me —
 
 ---
 
+## Analytics Events (Draft — đề xuất, chưa phải contract)
+
+> **Draft addition 2026-08-07 — đề xuất instrumentation, chưa phải contract.** Event/param name chưa
+> được owner pin. Params **CẤM** amount/tiền (kể cả `totalOutstanding`/`remaining`), tên người, tên
+> CLB dạng text và mọi PII — chỉ opaque id, enum, count, boolean. Không log `payAction.href`
+> (protected link). Giữ nguyên negative scope của file: không QR/STK/pay_code, không cache
+> person-self DTO, payAction chỉ per-club.
+
+| Event | Khi nào bắn | Params (đề xuất) |
+|---|---|---|
+| `player_view_viewed` | `/me` đạt Ready (§3) | `entry` (enum: `web_login \| magic_link` — Flow 1/2 §2), `club_count` (count), `has_merged_banner` (boolean) |
+| `player_view_club_expanded` | Tap/click club card → `/me/clubs/:clubId` (§7 "Tap → `/me/clubs/:clubId`") | `club_id` (opaque id), `status_kind` (enum: `known_amount \| known_zero \| unknown` — §6) |
+| `player_view_pay_cta_clicked` | Click CTA `t("Thanh toán CLB này", "Pay this club")` từ `data.clubs[].status.payAction` (§3 `/me/charges`) | `club_id` (opaque id), `outstanding_item_count` (count) — **không amount**, không href |
+
+---
+
+## State Machine (Draft)
+
+> **Draft addition 2026-08-07 — Draft.** Chỉ dùng state đã có trong file; transition suy từ flow §2
+> và states §3; thiếu căn cứ → TBD (UNPINNED). Mọi state dưới đây là server-owned DTO state trừ khi
+> ghi rõ client-local; FE không tự chuyển state — chuyển chỉ qua response mới (SSE → authenticated
+> refetch, §7; không đọc cached snapshot, §5 #9/#10).
+
+### Per-club `SelfPaymentStatus.kind` (server-owned)
+
+- `unknown → known_amount | known_zero`: chỉ qua retry/refetch trả response mới (§3 States/Error mapping); FE không tự suy `known_zero` từ unknown.
+- `known_amount → known_zero`: khi server trả status mới sau tất toán — trigger phía server, FE chỉ render (§4: khoản đã tất toán rời khỏi `SelfPaymentStatus`).
+- Mọi chuyển khác (kể cả `known_* → unknown`): theo response server trả; FE không giữ giá trị cũ làm fallback (không cache person-self DTO).
+
+### Outstanding item `status` (server-owned, union chỉ `open | partial` — §4/§6)
+
+- `open → partial`: khi server trả `amountAllocated` một phần (Flow 3 §2).
+- `open | partial → (rời khỏi union)`: khi tất toán — item biến mất khỏi DTO, **không** có state `paid` (§4 UpcomingRow).
+- `partial → open`: không có căn cứ trong file — TBD (UNPINNED).
+
+### Join request (server-owned — §2 Flow 4)
+
+- `pending → approved | rejected | expired`: server quyết; FE render đúng như server trả, không suy outcome từ membership/session (Flow 4 §2).
+- `approved | rejected | expired → *`: không có căn cứ trong file — TBD (UNPINNED).
+
+### `MagicLinkAuth` (§4, client-local, không phải BE token)
+
+`validating → { success | expired | error }`; `success` → vào `/me` (Flow 2 §2); `expired` → màn lỗi
+generic + CTA "Yêu cầu link mới" (`MAGIC_LINK_INVALID` §3), không mint session.
+
+### Screen-level (client-local, không phải BE token)
+
+`Loading → { Ready | Empty | Error }`; `Error → Loading` qua retry (§3 States các màn). Unknown
+không bao giờ chuyển thành Empty/0 ở client (§3 `/me/charges`).
+
+---
+
+## Acceptance Criteria (Draft)
+
+> **Draft addition 2026-08-07 — Draft.** Mỗi AC trace về § có sẵn trong file.
+
+- **AC-1** (§3 `/me` fence + §6): chips omit ở baseline (`UNPINNED`); không render 0, không sum `data.clubs[]` ở client, fixture không làm seed/default/fallback.
+- **AC-2** (§3 `/me/charges` States): `status.kind = "unknown"` → "Không thể kiểm tra lúc này" + retry, KHÔNG hiện 0; empty "Không còn khoản phải trả 🎉" chỉ khi `known_zero`.
+- **AC-3** (§3 `/me/charges` contract fence + §4 `ClubPayAction`): tối đa **một** CTA per club, đúng từ `data.clubs[].status.payAction`; không global action, không per-item action, không QR/STK/pay_code.
+- **AC-4** (§5 #9/#10 + §7): không cache person-self DTO; offline → banner, không render cached clubs/upcoming/charges/requests; SSE đứt → reconnect + authenticated refetch.
+- **AC-5** (§3 `/me/clubs/:clubId` No-disclosure): CLB ngoài own membership → generic no-access, không lộ club tồn tại hay không, không lộ tên/thông tin CLB.
+- **AC-6** (§3 Join requests): panel absent hoàn toàn ở baseline (route/DTO `UNPINNED`); unknown/error không biến thành empty/`rejected`/`expired`.
+- **AC-7** (§3 Error mapping `/me`): `AUTH_REQUIRED` → redirect login, không hiện 0, không đọc cached person-self; `MAGIC_LINK_INVALID` → màn lỗi generic + CTA "Yêu cầu link mới", không mint session.
+- **AC-8** (§4 `UpcomingRow` + §6): outstanding union chỉ `open | partial`; không render state `paid`/🟢.
+- **AC-9** (Analytics Events — Draft): không event nào mang amount/tiền/PII/href; params chỉ opaque id, enum, count, boolean.
+
+---
+
+## Testing Notes (Draft)
+
+> **Draft addition 2026-08-07 — Draft.** Test cho surface còn `UNPINNED` (chips, club-detail zones,
+> join-request panel) chỉ được viết khi owner pin DTO — tới lúc đó là spec-only.
+
+- **Unknown vs zero** (§3 `/me` + `/me/charges`): mock `status.kind = "unknown"` → assert chip "—" / "Không thể kiểm tra lúc này" + retry; assert KHÔNG render "0đ", không empty-celebration, không CTA thanh toán.
+- **No-cache** (§5 #9/#10 + §7): reload khi offline → assert không đọc persisted/cached person-self snapshot; assert banner "Cần kết nối để xem thông tin cá nhân".
+- **Pay CTA** (§3 `/me/charges` + §4 `ClubPayAction`): `payAction` absent → không CTA; present → đúng 1 CTA per club với href đúng từ DTO; assert không mount QR/STK/pay_code surface nào.
+- **No-disclosure** (§3 `/me/clubs/:clubId`): club ngoài membership và club không tồn tại → cùng một generic no-access screen, không khác biệt quan sát được.
+- **Join requests** (§3 Join requests): unknown/error → generic retry; assert không map sang empty/`rejected`/`expired`; baseline → assert panel không fetch, absent hoàn toàn.
+- **Union guard** (§4 `UpcomingRow`): item tất toán rời khỏi DTO → assert row biến mất, không render badge `paid`.
+- **Analytics** (Analytics Events — Draft): snapshot allowlist param; assert payload không chứa key amount/tiền/PII/`href` nào.
+- **i18n** (§6 i18n note): mọi chuỗi mới đi qua `t(vi, en)`.
+
+---
+
 _FE Design Spec v0.4 · 2026-07-31 · Source: feature_player_view.md v2.7_
+_FE Design Spec v0.5 · 2026-08-07 · Δ v0.4→v0.5 (chỉ thêm, không sửa nội dung cũ): 4 section Draft cuối file (Analytics · State Machine · AC · Testing) · Source: Sporta FE porting analysis 2026-08-07_
+_FE Design Spec v0.6 · 2026-08-07 · Δ v0.5→v0.6: §4 `OutstandingItemCard` partial progress = presentation-only · §5 edge #11 settle-while-viewing (item rời union `open|partial`, confirmation thuộc NTF-UC-3) · §7 partial presentation note · Source: `../../../research/sporta-payment-fe-port-analysis-2026-08-07.md` (DD-97/DD-98 🟡 liên quan)_

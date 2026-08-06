@@ -190,6 +190,35 @@ Quản lý buổi chơi thể thao của CLB: tạo mới, xem danh sách, xem c
   - Visibility public + chưa đủ fields → "Kèo công khai cần: môn, khu vực, thời gian, số chỗ"
 - **Empty:** N/A (form)
 
+#### Trạng thái Submitting (Draft — client-local, không phải BE token)
+
+> **Draft addition 2026-08-07 — design spec — không authorize render (theo §6 omit-active-UI).**
+> Trạng thái này thuần client (client-local, không phải BE token) — không map từ error catalog và
+> không thêm mã mới vào catalog.
+
+- Khi user bấm CTA "Tạo buổi chơi (Draft)" và request đang in-flight: spinner hiện **trong** CTA,
+  CTA chuyển `disabled`, copy đổi thành `t("Đang tạo…", "Creating…")`.
+- **Chặn double-submit:** CTA disabled trong suốt thời gian in-flight; bấm thêm không tạo request
+  thứ hai. Form fields giữ nguyên data (khớp hàng *(unknown / missing / timeout)* ở Error mapping
+  dưới — fail closed, không báo tạo thành công khi chưa có response).
+- Kết thúc: response thành công → Success surface (subsection dưới); server error đã pin → CTA trở
+  lại enabled + đúng visible state trong Error mapping hiện có; unknown/timeout → fail closed theo
+  bảng dưới, không retry ngầm.
+
+#### Success surface sau khi tạo kèo thành công (Draft)
+
+> **Draft addition 2026-08-07 — design spec — không authorize render (theo §6 omit-active-UI).**
+> Summary card đọc tên/giờ/slots từ **response**, nhưng §6 hiện đánh toàn bộ session/capacity DTO là
+> `UNPINNED — omit active UI`, nên phần này chỉ là design target: không fetch/render active tới khi
+> owner pin exact DTO; không dùng form input hay fixture làm nguồn thay response.
+
+- Sau khi server xác nhận tạo thành công (session ở status `draft`): hiện summary card gồm tên kèo,
+  thời gian, số slot — giá trị lấy từ response server trả, không echo lại form input làm nguồn.
+- 2 CTA: `t("Xem chi tiết", "View detail")` → `/dashboard/sessions/:id`; `t("Chia sẻ", "Share")` —
+  hành vi share (target/deep-link/copy-link) chưa có căn cứ trong file: TBD (UNPINNED), không invent.
+- Không auto-publish: card ghi rõ kèo đang ở `draft` — "Đăng kèo" vẫn là bước riêng có confirm
+  (khớp Flow 1 §2).
+
 #### Error mapping
 
 | Status | Error code | Visible state | i18n `t(vi, en)` |
@@ -408,4 +437,81 @@ Quản lý buổi chơi thể thao của CLB: tạo mới, xem danh sách, xem c
 
 ---
 
+## Analytics Events (Draft — đề xuất, chưa phải contract)
+
+> **Draft addition 2026-08-07 — đề xuất instrumentation, chưa phải contract; design spec — không
+> authorize render (theo §6 omit-active-UI).** Event/param name chưa được owner pin. Params **CẤM**
+> amount/giá/tiền, tên kèo, venue text, tên người và mọi PII — chỉ opaque id, enum, count, boolean.
+> `error_code` chỉ lấy nguyên văn token đã pin trong Error mapping §3 — không thêm mã mới vào catalog.
+
+Funnel tạo kèo (bám Flow 1 §2 + States/Submitting/Success §3):
+
+| Event | Khi nào bắn | Params (đề xuất) |
+|---|---|---|
+| `session_create_form_opened` | Form `/dashboard/sessions/new` đạt Ready (§3) | `club_id` (opaque id), `entry_point` (enum: `dashboard \| session_list` — Flow 1 §2) |
+| `session_create_submitted` | User bấm CTA, request bắt đầu — vào Submitting (§3, client-local) | `club_id` (opaque id), `sport` (enum), `visibility` (enum: `private \| public`), `join_policy` (enum: `auto \| approval`), `has_female_price` (boolean), `is_unlimited_slots` (boolean), `slot_count` (count — chỉ khi hữu hạn) |
+| `session_create_success` | Server xác nhận draft tạo thành công — Success surface (§3) | `club_id` (opaque id), `session_id` (opaque id) |
+| `session_create_failed` | Server trả error đã pin trong Error mapping §3, hoặc unknown/timeout | `club_id` (opaque id), `error_code` (enum — token có sẵn trong Error mapping §3; unknown/timeout ghi `unknown`), `is_network` (boolean) |
+
+---
+
+## State Machine (Draft)
+
+> **Draft addition 2026-08-07 — design spec — không authorize render (theo §6 omit-active-UI).**
+> Chỉ dùng state đã có trong file (StatusBadge §4: `draft · open · closed · cancelled`); transition
+> suy từ Flow §2 + ActionBar §3; thiếu căn cứ → TBD (UNPINNED). Status là server-owned: FE không tự
+> đổi state/badge — action bar dựng lại theo response server trả (`SESSION_NOT_OPEN`,
+> `STALE_VERSION` §3).
+
+### Session status (server-owned)
+
+| Từ | Đến | Trigger (căn cứ) |
+|---|---|---|
+| `draft` | `open` | "Đăng kèo" + confirm (Flow 1 §2; ActionBar §3). Chặn bởi `MISSING_DISCOVERY_FIELDS` (§3) và publish quá giờ (§5 #4) — state giữ `draft` |
+| `draft` | `cancelled` | "Huỷ nháp" + confirm (Flow 4 §2). `CANCEL_REQUIRES_REVIEW` → dừng tại chỗ, state giữ nguyên (§2/§3) |
+| `open` | `closed` | "Đóng" (ActionBar §3) hoặc tự động khi hết giờ (§1) |
+| `open` | `cancelled` | "Huỷ" (ActionBar §3); `CANCEL_REQUIRES_REVIEW` như trên |
+| `closed` / `cancelled` | — | Không có transition nào trong file — chỉ xem (§3). Reopen hoặc bất kỳ transition khác: TBD (UNPINNED) |
+
+### Create form (client-local, không phải BE token)
+
+`Loading → Ready → Submitting → { Success surface | Ready + inline error | Ready + fail-closed retry }`
+(States + Submitting/Success §3). `Ready → Ready` khi inline validation (§3 Error). Không có đường
+tắt `Ready → Success` bỏ qua Submitting.
+
+---
+
+## Acceptance Criteria (Draft)
+
+> **Draft addition 2026-08-07 — design spec — không authorize render (theo §6 omit-active-UI).**
+> Mỗi AC trace về § có sẵn trong file.
+
+- **AC-1** (§3 `/dashboard/sessions/new` States): Loading hiện skeleton form; Ready pre-fill defaults từ CLB config.
+- **AC-2** (§3 Submitting — Draft, client-local): trong khi request in-flight, CTA disabled + spinner + `t("Đang tạo…", "Creating…")`; bấm CTA lần 2 không tạo request thứ hai.
+- **AC-3** (§3 Success surface — Draft): sau response thành công, summary card đọc giá trị từ response + đúng 2 CTA `t("Xem chi tiết", "View detail")` / `t("Chia sẻ", "Share")`; không auto-publish.
+- **AC-4** (§3 Error mapping form tạo): mỗi error code đã pin hiện đúng visible state; unknown/timeout fail closed — form giữ data, không báo tạo thành công.
+- **AC-5** (§2 Flow 1/4 + §3 tab Chi tiết): `draft` chỉ hiện Sửa + Đăng kèo + Huỷ nháp; `open` chỉ hiện Sửa + Đóng + Huỷ; `closed`/`cancelled` chỉ xem.
+- **AC-6** (§3 Tab Thanh toán): payment surface absent hoàn toàn ở baseline — không fetch, không render error surface.
+- **AC-7** (§6): không field session/capacity/roster DTO nào được fetch/render active khi còn `UNPINNED — omit active UI`; fixture §3 không làm seed/default/fallback.
+- **AC-8** (§5 #10): offline khi submit → toast "Không có kết nối" + form giữ data.
+- **AC-9** (Analytics Events — Draft): không event nào mang amount/tiền/PII; params chỉ opaque id, enum, count, boolean.
+
+---
+
+## Testing Notes (Draft)
+
+> **Draft addition 2026-08-07 — design spec — không authorize render (theo §6 omit-active-UI).**
+> Test cho surface còn `UNPINNED` chỉ được viết khi owner pin DTO — tới lúc đó là spec-only.
+
+- **Double-submit** (§3 Submitting — Draft): mock latency, click CTA 2 lần nhanh → assert đúng 1 request; assert CTA disabled + copy `t("Đang tạo…", "Creating…")` trong lúc in-flight.
+- **Submit outcomes** (§3 Error mapping): với mỗi error code đã pin → assert đúng visible state + form data giữ nguyên; unknown/timeout → fail-closed placeholder, không success toast.
+- **Success surface** (§3 Success — Draft): assert giá trị card lấy từ mocked response chứ không từ form input; assert CTA điều hướng `/dashboard/sessions/:id`.
+- **Status/ActionBar** (State Machine — Draft + §3): với mỗi status server trả, assert đúng tập action; assert FE không tự đổi badge trước refetch sau `SESSION_NOT_OPEN`/`STALE_VERSION`.
+- **Omission** (§3 Tab Thanh toán + §6): assert payment tab không mount và không có network call payment; assert field `UNPINNED` không render active.
+- **Analytics** (Analytics Events — Draft): snapshot allowlist param; assert payload không chứa key amount/tiền/PII nào.
+- **i18n** (§6 i18n note): mọi chuỗi mới đi qua `t(vi, en)`.
+
+---
+
 _FE Design Spec v0.2 · 2026-07-31 · Source: feature_session_management.md v2.17 + feature_payment_reconcile.md v1.10_
+_FE Design Spec v0.3 · 2026-08-07 · Δ v0.2→v0.3 (chỉ thêm, không sửa nội dung cũ): Draft Submitting + Success surface (§3 form tạo) và 4 section Draft cuối file (Analytics · State Machine · AC · Testing) · Source: Sporta FE porting analysis 2026-08-07_

@@ -170,6 +170,7 @@ Nguồn: `docs/autopilot-backlog.md` (Phase-1 full-launch, S1→S20; **DD-37: Me
 | S19 club-assistant (DD-gate ✅) · S20 polish | | ⬜ chưa |
 | Telegram | bỏ khỏi phạm vi (DD-37 thay DD-09) | ✂️ out |
 | App Native phase-2 (DD-69) | RN+Expo recommendation; client/API/auth/push/offline/store gates | ✅ direction accepted (18/07) · ⬜ build chưa schedule |
+| Statement/export sao kê (DD-97) | Per-session collection view (free) · kỳ/tháng + export PDF/XLSX (`host_pro`); composition-only trên charges/allocations, export trên DD-89 foundation, HR2 authenticated download | ✅ direction + entitlement (07/08, owner-delegated) · ⬜ chờ DTO owner Reviewed + spec pair; build chưa schedule |
 
 **Tiến độ: S1–S3 + Google lane DD-80 + tenant-integrity + job-infra machinery + `0024` đã land; current committed tree `main@784bc8d` vẫn ≈ 33% chặng đường code theo roadmap vì chưa có business vertical/E2E. Safari evidence đã đóng nhưng Google chưa proven enabled; email/password bundle order-4 và Telegram removal chưa code. Chat `PLAN_READY` không làm tăng phần trăm implementation.**
 

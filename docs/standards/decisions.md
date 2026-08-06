@@ -18,7 +18,7 @@
 | DD-03 | Pricing/tier subscription host (4 tier theo kênh) | 🔄 Thay bằng DD-29 | P5 | BRD OD-3 · TDD Q4 |
 | DD-04 | Hosting PostgreSQL → ✅ **(c) co-locate DigitalOcean** (App Platform + Managed PG HA-standby, VPC private, Singapore); Fly = fallback (a); **pre-build gate = §7.1 egress-IP verify** | ✅ Accepted (2026-07-16) | P0 | BRD OD-4 · TDD Q2 · `deployment-infra.md §2` · `../decisions/analysis/dd-04-hosting-final-decision.md` · `../decisions/analysis/dd-04-hosting-decision-brief.md` |
 | DD-05 | Join cross-club: open vs approval → ✅ **per-session, default open**; approval first-entry chỉ tạo `join_requests(pending)`. Join/request resolve existing player trước: `active|waitlisted` trả current outcome idempotently; chỉ absent/`left` mới chạy DD-41/DD-42/shared DD-52 trước mutation/request. Existing-`left` request-create chỉ preflight DD-49 trên live aggregate, **không persist financial proof trong `join_requests`**; approve phải lock rồi re-check restrictions + re-derive/revalidate disposition hiện hành trước mutation | ✅ Chốt (2026-07-13; integrity re-check 2026-07-19) | P4.3 | `../decisions/analysis/dd-05-join-policy-analysis.md` |
-| DD-06 | Độ chi tiết vị trí public → ✅ **`area` only public; venue chỉ khi outcome `players.status='active'`** (invariant test) | ✅ Chốt (2026-07-13; clarified 2026-07-19) | P4.3 | `../decisions/analysis/dd-06-location-granularity-analysis.md` |
+| DD-06 | Độ chi tiết vị trí public → ✅ **`area` only public; venue chỉ khi outcome `players.status='active'`** (invariant test) | ✅ Chốt (2026-07-13; clarified 2026-07-19) | P4.3 | `../decisions/analysis/dd-06-location-granularity-analysis.md` · DD-98 NP-5 (geo/radius negative scope trong khuôn DD-06) |
 | DD-07 | Web realtime: SSE + fan-out qua `LISTEN/NOTIFY` | ✅ Chốt | P4 | BRD OD-7 · TDD Q7 · `deployment-infra.md §2` |
 | DD-08 | Danh sách môn khởi điểm + taxonomy trình độ | ✅ Chốt (2026-07-13) | P0 | BRD OD-8 |
 | DD-09 | Messenger vào lộ trình lúc nào | 🔄 Thay bằng DD-37 (Messenger là kênh phase-1) | P4.8→P2.5 | BRD OD-9 |
@@ -109,6 +109,10 @@
 | DD-93 | **Slash grammar/catalog theo surface** → ASCII case-insensitive canonicalization, zero alias/argument; sáu command `/help\|/pay\|/me\|/myclubs\|/discover\|/name` ở club, private Club Bot và human-DM overlay; thêm `/sessions\|/waitlist` chỉ ở club/bot; invalid/unsupported private-reject trước persist | ✅ `DECISION_FINAL` (owner 2026-07-28), không authorize runtime/code | Registry core rồi thin domain adapters | `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` · DD-91 |
 | DD-94 | **Offline Chat digest delivery contract** → source truth là Chat unread; zero durable item/message snapshot/body/title/amount; DM/direct mention/reply default ON; club preference `all\|mentions\|off`, default `mentions`; coalesce `(person,channel,highest_unread_cursor)`; mark-read cancels obsolete pending; live reauth ngay trước provider write; timing config enablement-only | ✅ `DECISION_FINAL` (owner 2026-07-28), không authorize runtime/code/enablement | Notification delivery slice sau Chat read model; DD-88 không phải dependency | `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` · DD-70..72/DD-88/DD-91 |
 | DD-95 | **Club-only moderation** → `chat.message.moderate` hide/restore và `chat.member.mute` timed `1h\|24h\|7d`; reason `spam\|harassment\|unsafe\|off_topic\|other`, bounded note cho `other`; actor-scoped receipt/fingerprint + append-only audit; mute chặn write không chặn read | ✅ `DECISION_FINAL` (owner 2026-07-28), không authorize runtime/code | `chat-club-moderation-core` land dark sau root/channel lifecycle và trước shared send; sở hữu duy nhất storage/writers/receipts/audit | `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` · DD-55/DD-56/DD-91 |
+| DD-96 | **Home money chips** → **Part A ✅** canonical `SelfPaymentSummary` cross-club thuộc `player_view` (Home cấm tự cộng; `feature_home_tech.md:166` đã yêu cầu mở rộng Player View owner), **unknown-dominates**: một CLB `unknown` ⇒ cả summary `unknown`, cấm sum các CLB known; `clubCount` = số CLB có outstanding > 0; không `payAction` ở tầng aggregate. **Part B 🟡** chip "Chưa thu" cross-club — owner chốt direction, đảo HOME-OQ-1(c), nhưng **không thuộc player_view** (DD-48 + DTO allowlist "other charges ❌ NEVER"); cần host-self owner riêng và còn 4 blocker B1–B4 (design-probe · `authorizeTenantAction` 0 caller · chưa Reviewed per-club owner · fan-out semantics) | Part A ✅ `DECISION_FINAL` contract shape (owner 2026-08-07), chưa authorize code · Part B ✅ direction / 🟡 `NOT_PLAN_READY` mechanism | Part A: S9 (cùng Home) sau P4.6 · Part B: sau per-club host receivable owner | DD-48 · DD-79 (HOME-OQ-1) · DD-91 · `../features/BE/feature_player_view_tech.md` · `../features/BE/feature_home_tech.md:166` · `../channels/web/FE/feature_dashboard_fe.md:59-66` |
+| DD-97 | **Collection statement + export sao kê per-session/kỳ (PDF/XLSX)** → composition-only trên `charges`+`payment_allocations` (không bảng/formula tiền mới; DTO cần owner Reviewed — cùng họ blocker B3 của DD-96); export async behavior-contract-only trên DD-89 foundation (không authorize enablement); download authenticated tenant-scoped, không public link (HR2); entitlement ✅ tách lớp: per-session statement view = **free** · kỳ/tháng + export file = **`host_pro`** | ✅ Direction + entitlement chốt (owner-delegated 2026-08-07) · mechanism chờ DTO owner Reviewed | P5+ TBD | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · DD-89 · DD-40 |
+| DD-98 | **Negative scope cho mechanic Sporta không port** → không theo đuổi: custom split per player (đụng derivation DD-39/41/45/49) · timeout-hold release cho linked member (DD-32 Option D giữ pay-later) · OS push kèm tiền/QR (mirror NTF — đã cấm sẵn) · auto-archive "nợ cũ" theo tuổi · geo/radius/distance/map picker (NP-5 — mâu thuẫn DD-06 area-only public) | ✅ Chốt (owner-delegated 2026-08-07) | — | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · `../research/sporta-fe-docs-gap-2026-08-07.md` · DD-06/32/39/49 |
+| DD-99 | **FE spec hardening + player-facing FE backlog (Sporta FE porting)** → P1 ratify bộ 4 section Analytics/State Machine/AC/Testing (12 file FE đã nhận dạng Draft 2026-08-07) thành điều kiện FE Draft→Reviewed; P2 FE spec player session-detail + join/leave/waitlist UX (hard-dep: owner gỡ mâu thuẫn header/§6 `feature_sessions_fe.md`); P3 security/account-management owner contract (logout · delete account · linked providers · session-device); P4 surface contract mark-paid + `cash\|waiver` + refund-on-cancel (SourceBadge hiện dead enum); OQ-DD99-1 breakpoint 768px → F0 | ✅ P1 + OQ-1 chốt · P2→P4→P3 prioritized (owner-delegated 2026-08-07) | — | `../research/sporta-fe-docs-gap-2026-08-07.md` · DD-96/97/98 |
 
 ---
 
@@ -1241,6 +1245,155 @@
 
 ---
 
+## DD-96 — Home money chips: cross-club self-payment summary (A ✅) + host receivable cross-club (B 🟡) · owner 2026-08-07
+
+> **Nguồn:** owner request 2026-08-07 — "cần có chip Còn nợ bên cạnh chip Chưa thu, hiển thị số tiền còn nợ các kèo chưa trả, click → màn chi tiết các kèo chưa trả tiền".
+> **Status boundary:** Part A = `DECISION_FINAL` cho contract shape, **không** authorize migration/route/runtime. Part B = `DECISION_FINAL` cho **direction**, `NOT_PLAN_READY` cho mechanism — reopen HOME-OQ-1 nhưng chưa đóng điều kiện reopen của DD-79.
+
+### Bối cảnh — ba sự thật đã verify tại `cc0e8a8`
+
+1. **Phần "màn chi tiết các kèo chưa trả" đã tồn tại trong contract, không cần contract mới.** `SelfPaymentStatus.items[]` (`../features/BE/feature_player_view_tech.md:178-185`) đã mang per-session `sessionRef/startsAt/amountDue/amountAllocated/remaining/status`; màn đích `/me — outstanding detail` đã ở `../features/feature_player_view.md:84`; Home đã wire ở HOME-UC-2 (`../features/feature_home.md:37`).
+2. **`SelfPaymentStatus` là per-club, không có cross-club aggregate nào.** `/api/me/charges` trả `clubs: [{clubRef, clubLabel, status}]`. Chip "Còn nợ" của Home cần `totalOutstanding` + `clubCount` xuyên CLB, mà `../features/feature_home.md:26` cấm Home tự tính tiền và `../features/BE/feature_home_tech.md:166` đã pin sẵn: *"Nếu Player View chưa expose canonical cross-club summary cần thiết, build Home phải dừng ở dependency đó và mở rộng Player View owner; không tạo helper thứ hai trong Home."* Đây là gap thật → Part A.
+3. **"Chưa thu" không thuộc player_view.** DD-48 boundary có ở cả hai spec player_view; DTO allowlist `../features/BE/feature_player_view_tech.md:228-229` ghi `Other player roster ❌ NEVER` và `Admin data: tenant settings, other charges ❌ NEVER`. Host receivable **theo định nghĩa** là charge của người khác → tenant-scoped, phải qua `tenantRepo` per tenant. Nhét vào `getSelfPaymentStatus` là gộp hai authz model vào một serializer — đúng thứ DD-48 cấm → Part B phải có owner riêng.
+
+### Part A — cross-club self-payment summary · ✅ `DECISION_FINAL` (owner 2026-08-07)
+
+- **Owner:** `player_view`. Cùng service family với `getSelfPaymentStatus`, dùng chung primitive `remainingAmount`. **Không** helper/formula/serializer thứ hai; Home vẫn là pure consumer.
+- **Contract shape** (field name chốt ở build slice, nhưng discriminant/semantics là contract):
+
+```ts
+type SelfPaymentSummary =
+  | { kind: "known_zero"; currency: "VND"; asOf: string }
+  | {
+      kind: "known_amount";
+      currency: "VND";
+      totalOutstanding: number;   // tổng remaining xuyên CLB
+      clubCount: number;          // số CLB CÓ outstanding > 0, không phải tổng số CLB
+      asOf: string;
+    }
+  | { kind: "unknown"; reasonCode: string; retryable: boolean };
+```
+
+- **Unknown-dominates (owner ✅ 2026-08-07):** nếu **bất kỳ** club nào trong own authorized set trả `kind='unknown'`, summary = `unknown`. **Cấm** sum các club known rồi hiển thị. Lý do: partial sum tạo một con số **trông authoritative nhưng thấp hơn nợ thật** — user đọc thành "đã trả gần hết". Đây là cùng một fail-closed với bất biến hiện hành *"chỉ `known_zero` mới hiển thị 0"* (`../features/feature_player_view.md:29`), áp ở tầng aggregate.
+- `known_zero` chỉ khi **mọi** authorized club đều proven `known_zero`. Zero-club (chưa vào CLB nào) cũng là `known_zero` — không phải `unknown`.
+- **Không** thêm `payAction` ở tầng summary. `payAction` là optional field của per-club `SelfPaymentStatus` (v2.6 pin: *"never a global/item action"*); một aggregate pay CTA xuyên CLB là quyết định khác, chưa mở.
+- Chip tap → `/me` outstanding detail đã có; **không** contract mới cho màn detail.
+- **Không migration, không bảng mới, không route mới** — additive read trên `/api/me/charges` surface hoặc sibling; chốt ở build slice.
+
+### Part B — host receivable cross-club ("Chưa thu") · ✅ direction, 🟡 mechanism
+
+- **Owner direction (2026-08-07):** có chip "Chưa thu" cạnh "Còn nợ" trên Home, phạm vi **cross-club**. Đảo HOME-OQ-1 (c) của DD-79.
+- **Owner mới bắt buộc — KHÔNG phải player_view.** Cần một `host-self` read owner tách biệt, authz theo role owner/admin per tenant, đi qua `tenantRepo(tenantId)` từng tenant. Không tái dùng serializer person-self.
+- **Blocker chưa đóng được trong session này:**
+
+| # | Blocker | Owner | Điều kiện đóng (nhị phân) |
+|---|---|---|---|
+| B1 | Chưa có design-probe contract host-self cross-tenant — chính là điều kiện reopen mà DD-79 ghi (`decisions.md:1005`) | owner + BE | Một probe doc tồn tại, pin authz model + fan-out semantics, được owner duyệt |
+| B2 | `authorizeTenantAction` merged (`ddb69a9`) nhưng **0 production caller**; DD-29 capability registry **0 TS đọc `entitlements`/`capabilities`** → không có role/capability gate đang chạy. **G3 FAIL** | job/authz lane | `authorizeTenantAction` có ít nhất một production caller đã merge trên `main` |
+| B3 | Chưa Reviewed DTO owner nào sở hữu host receivable ở bất kỳ đâu. `../channels/web/FE/feature_dashboard_fe.md:59-66` ghi thẳng "OWNER CONTRACT PENDING" cho đúng stat card này | Product+BE | Một cặp spec Reviewed sở hữu per-club host receivable (formula gross/net, reversal, timezone, period boundary) |
+| B4 | Cross-club host aggregate là **fan-out N tenant**, không phải một query. Chưa pin per-tenant timeout, unknown-dominates, tenant suspended, role bị thu hồi giữa fan-out | BE | Các mục này được pin trong probe B1 |
+
+- **Thứ tự bắt buộc:** B3 (per-club owner) → B1 (probe cross-tenant) → B2 (authz gate có caller thật) → cross-club chip. **Cấm** đi tắt cross-club trước khi per-club có owner; đó là cách tạo formula tiền thứ hai.
+- **Unknown-dominates cho Part B:** *suy ra* từ ratification của Part A, **chưa được owner ratify riêng**. Ghi ở đây để hiển lộ, không phải để coi là đã chốt — probe B1 phải hỏi lại.
+- **Negative scope tới khi B1–B4 đóng:** Home **không** render chip "Chưa thu" — không placeholder, không `0`, không "coming soon", không slot trống. Giống cách Feed tab bị xử lý ở DD-79 (config-OFF, không tab chết).
+
+### Lý do
+
+Tách A/B vì hai chip trông giống nhau trên màn hình nhưng **khác hẳn authz class**: "Còn nợ" là tiền *của tôi* (person-self, cross-tenant read đã có contract); "Chưa thu" là tiền *của người khác nợ tôi* (tenant-scoped, role-gated, chưa có owner nào). Gộp chúng vào một projection vì chúng cạnh nhau trong UI là đúng loại lỗi mà DD-48 và HR1 tồn tại để chặn. Part A rẻ và mở khoá được ngay yêu cầu chính; Part B đắt và bị chặn ở tầng dependency thật, không phải ở tầng doc.
+
+### Hệ quả — mirror phải propagate
+
+| Artifact | Thay đổi | Trạng thái |
+|---|---|---|
+| `../features/BE/feature_player_view_tech.md` | Thêm `SelfPaymentSummary` + unknown-dominates vào §4; thêm unit test cross-club aggregate + unknown-dominates | ✅ v2.9 (session này) |
+| `../features/feature_player_view.md` | Thêm use case + acceptance criterion cho cross-club summary | ✅ v2.8 (session này) |
+| `../features/feature_home.md` | HOME-OQ-1 reopen (status đổi từ "✅ chốt defer"); chip "Còn nợ" trỏ `SelfPaymentSummary`; Part B negative scope | ⬜ chưa làm |
+| `../features/BE/feature_home_tech.md` | `debt` section wrap `SelfPaymentSummary` thay vì "wraps `getSelfPaymentStatus`" | ⬜ chưa làm |
+| `../channels/web/FE/feature_home_fe.md` | §6 debt row response path; chip unavailable khi aggregate `unknown` | ⬜ chưa làm |
+| `../features/README.md:144` | Dòng ghi HOME-OQ-1 "chặn riêng chip host receivable" — nay reopen | ⬜ chưa làm |
+| DD-79 (`decisions.md:1001,1005`) | HOME-OQ-1 (c) defer bị Part B đảo | ⬜ chưa làm |
+
+**Không** authorize worktree/code. Part A cần slice riêng đạt strict `CODE_READY`; Part B chưa `PLAN_READY`.
+
+---
+
+## DD-97 — Collection statement + export sao kê per-session/kỳ · ✅ Direction + entitlement chốt (owner-delegated 2026-08-07)
+
+> **Status boundary:** ✅ direction + entitlement split là `DECISION_FINAL` (owner uỷ quyền quyết định trong session 2026-08-07, tiêu chí lợi ích lớn nhất cho pj); **mechanism vẫn chưa `PLAN_READY`** — không authorize schema/migration/route/UI/worker/enablement. Mọi ràng buộc composition-only + HR2 bên dưới giữ nguyên hiệu lực.
+> Nguồn: đối chiếu 5 FE docs payment của Sporta Phase-2 (`../research/sporta-payment-fe-port-analysis-2026-08-07.md`) — gap thật duy nhất trong nhóm docs đó.
+
+### Bối cảnh — verify tại `main@7e21f65dc4eff0fb845448d8c9a974bcb64f7edb`
+
+1. Không feature spec nào sở hữu "host xem bảng tổng kết ai trả/chưa trả per session/kỳ + export file": `feature_billing_lifecycle.md` là **host subscription** (platform thu tiền host — khác hẳn host thu tiền player); `feature_payment_reconcile.md` sở hữu ledger/allocation nhưng không statement/export; `feature_dashboard_fe.md` stat card còn "OWNER CONTRACT PENDING"; `feature_payments_fe.md` unified ledger/month summary còn `UNPINNED`.
+2. Input đã canonical trong live schema: `charges` (`open|partial|paid|void`, `amount_due`/`amount_allocated`) + `payment_allocations` (append-only, source `auto|manual|cash|waiver|reversal`, reversal qua `reverses_allocation_id`) + `bank_transactions`. Persona P1 Host pain "soi sao kê CK thủ công" (`../product/ROADMAP.md:133`) là đúng bài này.
+3. DD-89 job foundation đã land (`0022`/`0023`, dispatcher, schedule OFF) — có chỗ đứng cho async export mà không dựng hạ tầng mới.
+
+### Đề xuất
+
+- **Statement read model — composition-only.** Per-session: project từ charges+allocations của session (ai trả/thiếu, source, waiver, reversal). Per-kỳ: group theo period + tenant timezone. **Không bảng tiền mới, không formula thứ hai:** gross/net/reversal/timezone formula phải có DTO owner Reviewed — cùng họ blocker B3 của DD-96; statement không đi trước owner đó.
+- **Export PDF/XLSX async — behavior contract only.** request → job → ready → authenticated download → expire (+ re-request). Job chạy trên DD-89 foundation; proposal này **không** authorize producer/enablement — export slice phải qua readiness riêng (giữ altitude: spec pin hành vi, defer job-infra).
+- **HR2 fail-closed.** File chứa tiền + PII → download chỉ authenticated + tenant-scoped admin; **không** public/unauthenticated signed URL; file expiry + audit export actor. "Share invoice qua chat/Zalo" của Sporta **ngoài scope** (nếu muốn: chỉ summary không PII, DD riêng).
+- **Entitlement ✅ (owner-delegated 2026-08-07) — tách hai lớp theo đúng logic DD-40 (manual=free, heavy/auto=pro):**
+  - **Free:** per-session collection statement **view** (đọc composition ai-trả/ai-thiếu của một kèo). Lý do: đây là mặt đọc của core loop P1 Host ("soi sao kê thủ công" — pain số 1 của persona trả tiền tương lai); chặn nó sau paywall là chặn chính lý do host adopt sản phẩm. Chi phí hạ tầng ≈ 0 (read trên projection, không job).
+  - **`host_pro`:** statement theo **kỳ/tháng** + **export file PDF/XLSX**. Lý do: (1) export job có chi phí hạ tầng thật (DD-89 foundation, storage, retry); (2) nhu cầu "sổ sách theo kỳ" xuất hiện khi CLB đủ lớn — đúng thời điểm host sẵn sàng trả tiền; (3) cùng họ `crm_dashboard` của DD-40, giữ ranh giới free/pro nhất quán, không tạo tier logic mới.
+- **BE mechanics input (bổ sung 2026-08-07, vòng BE):** `../research/sporta-be-docs-gap-2026-08-07.md` §2.1 — dedupe pending job, `202` + `estimatedSeconds`, cờ `preliminary` cho kỳ chưa chốt, cap record + streaming, fail path bounded → `FAILED` + notify. Dùng khi author spec pair; không thay đổi các ràng buộc đã pin ở trên.
+
+### Lý do
+
+Gap có thật, giá trị host cao (P1 persona pain), mọi input đã canonical — chi phí chủ yếu là DTO owner + export job slice. Ghi proposal để giữ altitude đúng: không nhét vào `feature_payments_fe.md` hiện tại (surface đó còn `UNPINNED`), không mở job enablement bằng docs.
+
+### Hệ quả nếu owner ✅
+
+| Việc | Ghi chú |
+|---|---|
+| DTO owner Reviewed cho statement formula | Có thể chung owner với dashboard/month summary (payments_fe đang chờ đúng owner này) |
+| Spec pair mới hoặc § mới trong payment_reconcile pair | Product + BE tech |
+| Export job slice | Sau readiness riêng; DD-89 foundation, schedule vẫn OFF tới enablement |
+| FE surface | Sau F0 + DTO owner; states/error-mapping theo chuẩn FE template |
+
+---
+
+## DD-98 — Negative scope cho mechanic Sporta không port · ✅ Chốt (owner-delegated 2026-08-07)
+
+> **Status boundary:** ✅ `DECISION_FINAL` — NP-1..5 là negative scope chính thức (owner uỷ quyền 2026-08-07).
+> Lý do chốt nguyên gói: cả 5 mục đều là hệ quả trực tiếp của decision đã ✅ từ trước (DD-39/41/45/49 ·
+> DD-32 Option D · NTF contract · player_view fence · DD-06) — ratify không tạo ràng buộc mới, chỉ đóng
+> cửa drift; chi phí = 0, lợi ích = mọi session tương lai đọc Sporta docs có ranh giới cứng để cite.
+> Muốn mở mục nào → DD mới reopen decision gốc tương ứng, không sửa DD-98. Không đổi contract Reviewed nào.
+
+- **NP-1 · Custom split bill per player — không theo đuổi.** Charge amount là derived per-player từ canonical (DD-39 gender pricing · DD-41 gating · DD-45 promotion derive-before-mutation · DD-49 price-change carry-over). Custom split = formula tiền thứ hai + đổi promotion/rejoin derive; muốn mở phải DD mới với blast radius charges/promotion/rejoin, không phải FE port.
+- **NP-2 · Timeout-hold slot release cho linked member — không theo đuổi.** DD-32 Option D đã pin: linked account book paid → pay later, không mất chỗ vì chưa trả; hold 15' chỉ cho unlinked pay-now. Nợ xử lý qua NTF reminders. Sporta "host bật hold cho mọi player" là admission model khác.
+- **NP-3 · OS push kèm số tiền/QR — mirror, đã cấm sẵn.** NTF contract: OS push generic-only; số tiền/QR chỉ sau authenticated fetch (Zalo/Messenger DM theo policy riêng — NTF-UC-7). Ghi lại để người port không mở lại.
+- **NP-4 · Auto-archive "nợ cũ" theo tuổi (>30 ngày) — không theo đuổi.** `SelfPaymentStatus` union chỉ `open|partial`; paid/void rời surface (BE v2.7 cố ý). "Archive" theo tuổi tạo trạng thái tiền thứ hai ngoài canonical + đổi ngữ nghĩa reminder eligibility. History surface (nếu cần) là DTO owner riêng như `feature_player_view_fe.md` đã fence.
+- **NP-5 · Geo/location port (radius filter · distance sort · lat/lng public · map picker) — không theo đuổi trong khuôn DD-06 hiện hành.** *(Bổ sung 2026-08-07, vòng 2 — ratify điều `../research/sporta-fe-docs-gap-2026-08-07.md` đã REJECT ở mức phân tích.)* DD-06 pin `area`-only public; venue chỉ hiện khi `players.status='active'`. Radius/Haversine/distance sort đòi venue coordinates trên public surface — mâu thuẫn trực tiếp. Muốn có geo discovery → reopen DD-06 với privacy analysis riêng (coarse-grid/quantized coords là một hướng), không phải FE port. Filter theo `area` hiện hành không bị ảnh hưởng.
+- **Hệ quả:** research/design-input docs link về đây; owner muốn mở mục nào → DD mới, không sửa DD-98 thành "✅ một phần".
+
+---
+
+## DD-99 — FE spec hardening + player-facing FE backlog (Sporta FE porting) · ✅ P1 + OQ-1 chốt · P2–P4 prioritized (owner-delegated 2026-08-07)
+
+> **Status boundary:** ✅ P1 và OQ-DD99-1 là `DECISION_FINAL`; P2–P4 được xếp thứ tự ưu tiên (chưa phải
+> build authorization — mỗi mục vẫn cần spec + review riêng theo gate). Không authorize code/runtime/render.
+> **Nguồn:** `../research/sporta-fe-docs-gap-2026-08-07.md` (FE-level; bổ trợ — không trùng — 2 research files payment/session cùng ngày, DD-96/97/98 và 2 proposals `cross-project-standardization` · `sporta-payment-ux-port-design-input`).
+
+- **P1 · Ratify bộ 4 section FE spec.** Session 2026-08-07 đã thêm 4 section dạng Draft (Analytics Events · State Machine · Acceptance Criteria · Testing Notes) vào cả 12 file `docs/channels/web/FE/*_fe.md` — nguồn template: 7 file Sporta FE đều có 4 mục này trong khi Plexco FE thiếu hệ thống (spec không AC = không testable). Đề xuất: owner ratify bộ 4 section thành **điều kiện G2 khi FE doc Draft→Reviewed**; nếu duyệt, sửa gate/template là docs-only slice riêng. Quy tắc điền đã pin trong từng section: analytics cấm amount/tiền/PII; state machine chỉ dùng state đã pin; AC trace về § có sẵn; thiếu căn cứ → `TBD (UNPINNED)`.
+- **P2 · FE spec: player session-detail + join/leave/waitlist UX** ⬜ — surface player xem chi tiết 1 kèo, join/leave với confirm + hệ quả, waitlist join/promote/expire (product/BE đã có DD-45/45a/49; FE chưa spec). **Hard-dep:** owner gỡ mâu thuẫn header vs §6 của `feature_sessions_fe.md` (đã ghi nhận trong file, chưa gỡ — §6 chặt hơn đang có hiệu lực) + DTO pin. Không mở screen ngoài scope `feature_session_management.md` Reviewed.
+- **P3 · Security/account-management owner contract** ⬜ — logout, delete account, linked providers, session-device list/revoke. `feature_settings_fe.md` đang treo negative scope **có chủ đích** chờ đúng source authority này; `feature_auth_fe.md` Flow 4 nhắc revoke session nhưng không UI nào own. Gap thật = chưa ai author source contract, không phải FE quên.
+- **P4 · Payment FE leftovers chưa ai own** ⬜ — surface contract cho manual mark-paid + tạo `cash|waiver` (`feature_payments_fe.md` §4 `SourceBadge` hiện là dead enum — có badge, không có flow tạo) và refund-on-cancel UX (`void` chưa có flow vào/ra nào trong file). **KHÔNG gồm** (đã có owner khác): QR/protected-pay (design-input §1) · reminder-config (design-input §2) · statement/export (DD-97) · các mục negative scope (DD-98).
+- **OQ-DD99-1 · Breakpoint 768px** ⬜ → F0 design authority: `feature_sessions_fe.md` (hàng 768px ở ~129/213/335, kế thừa `feature_dashboard_fe.md` ≤768 sidebar) pin breakpoint trung gian, trong khi `feature_home_fe.md`/`feature_player_view_fe.md` chỉ pin 375px + desktop và cấm tự đặt số trung gian. Resolution nhị phân: (a) pin rule "dashboard-shell surfaces được phép 768px" hoặc (b) bỏ các hàng 768px khỏi 2 file. `NEXT_REVIEW_TRIGGER`: phiên F0 design authority kế tiếp.
+- **Hệ quả:** các section Draft trong 12 file FE là đề xuất, không phải contract — owner duyệt P1 thì mới thành điều kiện Reviewed-gate. Không mục nào authorize render/implement; P2–P4 mỗi mục cần spec + review riêng theo gate hiện hành.
+
+### Owner decisions (delegated) — 2026-08-07
+
+- **P1 → ✅ ratified.** Bộ 4 section (Analytics Events · State Machine · Acceptance Criteria · Testing Notes) là **điều kiện bắt buộc khi FE doc Draft→Reviewed**. Lý do: 12/12 file đã có sẵn dạng Draft — chi phí ratify ≈ 0; lợi ích = spec không AC thì không testable, và điều kiện gate chặn được thế-hệ-template-trộn-lẫn (đúng bệnh BotShopez docs mắc phải — `../research/botshopez-docs-template-gap-2026-08-07.md` §3). **Optional, không bắt buộc:** State Coverage Matrix · AC trace BRD `FR-x.y` · effect matrix · Forbidden-appendix đánh số (cùng research §2) — giữ gate nhẹ, tránh template phình. Việc sửa `review-code-readiness-gate.md`/template là **docs-only slice riêng**, đi gate bình thường, chưa schedule ở đây.
+- **OQ-DD99-1 → ✅ chốt (a), có điều kiện F0-override.** Rule hai lớp: **dashboard-shell surfaces** (sessions/payments/members/settings/dashboard — kế thừa sidebar ≤768 của `feature_dashboard_fe.md`) **được phép pin 768px**; **player-facing mobile-first surfaces** (home, player_view) chỉ pin 375px + desktop, ngưỡng trung gian thuộc F0. Lý do chọn (a) thay (b): các hàng 768px hiện có của sessions_fe mô tả hành vi kế thừa có thật từ dashboard shell — xoá đi là mất thông tin đúng; (b) chỉ đổi mâu thuẫn văn bản thành lỗ hổng thông tin. F0 design authority có quyền override cả hai lớp khi có visual design thật — `NEXT_REVIEW_TRIGGER` giữ nguyên phiên F0 kế tiếp. Không file nào phải sửa ngay (hai lớp đang tự mô tả đúng hành vi của mình).
+- **P2–P4 → thứ tự ưu tiên: P2 → P4 → P3.** Căn cứ roadmap hiện hành:
+  1. **P2 trước** — player session-detail/join/leave/waitlist FE nằm trên critical path S9–S12 (PWA player-facing là target phase-1; ROADMAP gate native = "PWA live + retention đo được"). Hard-dep của nó (gỡ mâu thuẫn header/§6 `feature_sessions_fe.md`) là docs-only, rẻ, nên gỡ ngay trong slice authoring P2.
+  2. **P4 giữa** — mark-paid + `cash|waiver` surface là **free-tier core value** (DD-40: `payment_mark_manual` là capability free; SourceBadge dead enum là inconsistency đang nằm trong spec). Tách **refund-on-cancel ra sau** — bị chặn bởi refund/void policy chưa chốt, không cho nó kéo cả P4.
+  3. **P3 sau** — account-management cần identity/security source contract nặng (họ DD-70), không chặn adoption ngắn hạn; làm sớm sẽ tranh capacity với P2/P4 mà lợi ích dồn về sau.
+
+---
+
 ## DD-89 — Job-infra: worker access và thẩm quyền grant của pg-boss · ✅ Chốt (owner 2026-07-25)
 
 > **Status boundary:** `DECISION_FINAL`; implementation đã land qua `0022` core, `0023` ack,
@@ -1273,6 +1426,14 @@
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 07/08/2026 | v2.19 | **Propagation pass cho decision batch v2.18 (DD-97/98/99).** ROADMAP v3.4n: Phụ lục A +DD-96..99 + changelog mirror. BUILD-STATUS: +row Statement/export (DD-97) direction ✅ · build chưa schedule. `feature_billing_lifecycle.md`: pointer blockquote DD-97 entitlement split (không đổi body/cơ chế registry). `feature_payment_reconcile.md`: header liên quan +DD-97/DD-98. `feature_payments_fe.md` (Draft): note DD-97 surface riêng + DD-99 P4 + DD-98 NP-1/NP-4. Design-input proposal + 3 research files: addendum trạng thái đã chốt. DD-06 row: back-pointer DD-98 NP-5. Toàn bộ là pointer/mirror — không đổi contract body của spec Reviewed nào, không authorize code/build. |
+| 07/08/2026 | v2.18 | **Owner-delegated decision batch — chốt DD-97/98/99** (owner uỷ quyền trong session 2026-08-07, tiêu chí "lợi ích lớn nhất cho pj"; provenance ghi rõ ở từng DD). **DD-97 ✅ direction + entitlement:** per-session statement view = free (mặt đọc của core loop P1 Host, chi phí ≈ 0, chặn paywall là chặn adoption) · kỳ/tháng + export PDF/XLSX = `host_pro` (chi phí job/storage thật, nhu cầu xuất hiện khi CLB đủ lớn, cùng họ `crm_dashboard` DD-40); mechanism vẫn chưa `PLAN_READY` — chờ DTO owner Reviewed. **DD-98 ✅ `DECISION_FINAL`** NP-1..5 (cả 5 là hệ quả decision đã ✅ từ trước — ratify đóng cửa drift, chi phí 0). **DD-99:** P1 ✅ (4 section = điều kiện FE Draft→Reviewed; matrix/FR-trace/effect-matrix/Forbidden-appendix là optional — giữ gate nhẹ; sửa gate/template = docs-only slice riêng chưa schedule) · OQ-DD99-1 ✅ option (a) rule hai lớp: dashboard-shell được phép 768px, player-facing mobile-first chỉ 375+desktop, F0 override được cả hai · P2→P4→P3 prioritized theo critical path S9–S12 PWA (P2 trước; P4 = free-tier core value, tách refund-on-cancel chờ refund policy; P3 sau vì cần identity contract nặng). Không mục nào authorize code/runtime; mirror ROADMAP/BUILD-STATUS cho DD-96..99 còn nợ (ghi nhận, chưa làm). |
+| 07/08/2026 | v2.17 | **BotShopez docs-template sweep.** Thêm `../research/botshopez-docs-template-gap-2026-08-07.md` (khảo sát template 18 FE + 17 BE docs `Saas Bot tele` — bổ trợ, không trùng, `cross-project-standardization` vốn chỉ so code conventions). Verdict: template Plexco cover/vượt gần hết; **không DD mới, không sửa spec/gate nào**. Giữ 4 pattern nhỏ làm input cho DD-99 P1 khi owner ratify (State Coverage Matrix · AC trace BRD FR-x.y · effect matrix cho transition đa domain · Forbidden-appendix đánh số) + 1 authoring pattern cho channel docs (bot copy block nguyên văn — Zalo channel docs hiện chưa có, messenger có). REJECT table 8 mục kèm lý do (JSON schema copy vào FE doc, rollback DROP TABLE, tenant app-level-only, test quota không map file thật, caching FE cho person/money surface...) để chống port nhầm về sau. Không authorize code/runtime. |
+| 07/08/2026 | v2.16 | **BE sweep — kết thúc toàn bộ đối chiếu Sporta (12/12 BE docs).** Thêm `../research/sporta-be-docs-gap-2026-08-07.md`: BE là chiều Plexco vượt gần như toàn diện (ledger vs status flags, outbox vs in-process events, invariant tests vs cron reconcile, fail-closed vs zero-fallback) — **không DD mới, không sửa BE spec Reviewed nào**. Giữ 4 cụm design input: §2.1 export mechanics → DD-97 (thêm pointer trong body DD-97); §2.2 organize mechanics (SPORT_RULES table-driven, preview≠commit, degrade tường minh, grace-period edit) → DD-61..64 build post-P4; §2.3 text-search scale path cho marketplace (⚠️ config `'vietnamese'` của Sporta không tồn tại trong PostgreSQL — dùng `simple` như DD-92); §2.4 startup catch-up + queue-depth alert → check-item cho worker slice DD-89/90. Template BE: không cần ratify gì (ngược với FE/DD-99 P1); chỉ ghi nhận discipline "quantified optimization triggers" đáng áp tự nguyện. Không authorize code/runtime. |
+| 07/08/2026 | v2.15 | **DD-98 +NP-5 (geo/location) + design-input §5 (vòng 2 sweep Phase-1).** NP-5 ratify điều research `sporta-fe-docs-gap` đã REJECT: radius filter/distance sort/lat-lng public/map picker mâu thuẫn DD-06 `area`-only public — muốn geo discovery phải reopen DD-06, không phải FE port. Design-input proposal thêm §5: bank-setup verify STK + auto-fill tên chủ TK (consumer settings_fe tab Ngân hàng, không đổi lifecycle), gate "chưa có bank" khi tạo kèo có giá (product rule chưa pin — cần owner), marketplace giữ search state khi back (client-local), candidate global search đa entity (đụng DD-47/48 → DD riêng nếu owner muốn). Dedup với DD-99 P2/P3/P4 và research gap doc (recent-searches ADAPT, FilterSheet count/sort GAP). Không đổi spec Reviewed nào; không authorize code/runtime. |
+| 07/08/2026 | v2.14 | **Thêm DD-99 (🟡 FE spec hardening + player-facing FE backlog).** Nguồn: `../research/sporta-fe-docs-gap-2026-08-07.md` (đối chiếu 7 file Sporta FE với 12 file `docs/channels/web/FE/*_fe.md`). P1: 12 file FE đã nhận 4 section Draft (Analytics/State Machine/AC/Testing — add-only, không error code mới, analytics cấm amount/PII, client-local states đánh dấu tường minh) + vá GAP nhỏ (auth `AUTH_CANCELLED` client-local · marketplace search behavior/2-CTA/loading tách · sessions submitting/success surface fenced theo §6 · home checklist content · payments happy empty); đề xuất ratify bộ 4 section thành điều kiện FE Draft→Reviewed. P2 player session-detail/join/leave/waitlist FE spec (hard-dep gỡ mâu thuẫn header/§6 sessions_fe) · P3 security/account-management owner contract · P4 mark-paid/`cash\|waiver`/refund-on-cancel surface · OQ-DD99-1 breakpoint 768px → F0. Dedup tường minh với DD-96/97/98 + 2 proposals cùng ngày. Không đổi spec Reviewed nào; không authorize code/runtime/render. |
+| 07/08/2026 | v2.13 | **Thêm DD-97 (🟡 collection statement/export) + DD-98 (🟡 negative scope Sporta port).** Nguồn: đối chiếu 5 FE docs payment Sporta (`../research/sporta-payment-fe-port-analysis-2026-08-07.md`). DD-97: bảng tổng kết thu per-session/kỳ + export PDF/XLSX — composition-only trên `charges`+`payment_allocations` (không bảng/formula tiền mới; DTO owner Reviewed bắt buộc, cùng họ blocker B3 DD-96), export async behavior-contract-only trên DD-89 foundation (không enablement), download authenticated tenant-scoped (HR2 — không public link), entitlement ⬜. DD-98 negative scope NP-1..4: custom split per player · timeout-hold release cho linked member · OS push kèm tiền/QR (mirror NTF) · auto-archive nợ theo tuổi. Kèm design input `../proposals/sporta-payment-ux-port-design-input-2026-08-07.md` (protected-pay UX · reminder-config UI · CBF countdown — toàn bộ non-authoritative, chờ surface owner) và enrich `feature_player_view_fe.md` v0.6 (partial progress presentation + settle-while-viewing edge; v0.5 cùng ngày là của session song song). Không đổi spec Reviewed nào; không authorize code/runtime. |
+| 07/08/2026 | v2.12 | **Thêm DD-96 — Home money chips.** Part A ✅ `DECISION_FINAL` contract shape: canonical `SelfPaymentSummary` cross-club thuộc `player_view` (gap thật — `SelfPaymentStatus` là per-club, Home bị cấm tự cộng bởi `feature_home.md:26`, và `feature_home_tech.md:166` đã pin sẵn phải mở rộng Player View owner); **unknown-dominates** owner-ratified: một CLB `unknown` ⇒ cả chip `unknown`, cấm partial sum vì nó hiện số thấp hơn nợ thật; `clubCount` = số CLB có outstanding > 0; không `payAction` ở tầng aggregate; không migration/bảng/route mới. Part B ✅ direction / 🟡 mechanism: chip "Chưa thu" cross-club đảo HOME-OQ-1(c) của DD-79, nhưng **không được vào player_view** — DD-48 boundary + DTO allowlist `other charges ❌ NEVER`; cần host-self owner riêng, còn 4 blocker (B1 design-probe cross-tenant · B2 `authorizeTenantAction` merged `ddb69a9` nhưng 0 production caller ⇒ G3 FAIL · B3 chưa Reviewed owner nào sở hữu per-club host receivable, `feature_dashboard_fe.md` ghi "OWNER CONTRACT PENDING" · B4 fan-out N-tenant chưa pin timeout/suspended/role-revoke). Mirror player_view pair đã propagate (Product v2.8 + BE v2.9); mirror Home pair/FE/README/DD-79 còn nợ. Không authorize worktree/code/runtime. |
 | 28/07/2026 | v2.11 | **Readiness mirror only:** exact Chat authority pack đã land `90d292d`; primary plan v1.8/analysis đạt `PLAN_READY`, closure 12/12. Không đổi DD semantics, dependency graph hay runtime. Ghi rõ B4/per-slice strict `CODE_READY` vẫn bắt buộc và chưa có migration/API/UI. |
 | 28/07/2026 | v2.10 | **Primary Chat owner-final closure.** Giữ DD-86 Option B; Assistant mặc định true `all_members`/false `admins_only`, mutable trên cả hai policy qua exact `chat.channel.manage`. DD-91 giữ requester-only `/pay`; thêm DD-92 interaction/edit/delete/search, DD-93 exact slash catalog × surface, DD-94 generic coalesced digest và DD-95 club-only moderation. Final semantic freeze pin DD-56 `admin|co_admin` cùng least-privilege preset + cross-feature `tenant-capability-authority-core`, DD-95 storage trước shared send và canonical one-owner slice IDs. DD-88 hạ đúng thành broader `DEFERRED_PROPOSAL`, không sở hữu/chặn digest. Không authorize migration/runtime/code; current readiness chỉ lấy từ primary plan §13; DD-32 Option D v2.09 giữ nguyên. |
 | 28/07/2026 | v2.09 | **DD-32 reopen → Option D.** Browse session không link; final paid booking linked Account→pay later, unlinked→verified pay-now trong hold 15 phút; free/full/approval timing, qualified Account predicate, occupancy active+hold, waitlist requeue-tail, over/under/late payment và provider fail-closed được pin. Tạo Product/BE funnel v1.0; sync DD-78/BL-DSC-1 với additive public `confirmed_count` + active/live-hold `slots_open`, không public hold count/identity. No runtime/code authorization. |

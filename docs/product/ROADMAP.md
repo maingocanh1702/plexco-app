@@ -1,7 +1,7 @@
 # 🗺️ ROADMAP — Plexco
 
-**Phiên bản:** v3.4m
-**Ngày tạo:** 16/06/2026 · **Cập nhật:** 06/08/2026
+**Phiên bản:** v3.4n
+**Ngày tạo:** 16/06/2026 · **Cập nhật:** 07/08/2026
 **Căn cứ:** `BRD.md` v3.9n · `PRD.md` v2.8m · `TDD.md` v3.1h · `../standards/decisions.md` **v2.11 current mirror** (DD-86/DD-91–95 owner-final; DD-88 broader `DEFERRED_PROPOSAL`) · `../features/feature_channel_booking_funnel.md` + BE companion · `../standards/BUILD-STATUS.md`
 
 > ROADMAP là nguồn sự thật cho **delivery order + dev progress**. Product scope thuộc BRD; behavior thuộc PRD; implementation contract thuộc TDD.
@@ -735,6 +735,10 @@ Foundation(RLS+sports+3-tier+Google) → Zalo-tenant → CK-reconcile → migrat
 | DD-93 | ASCII case-insensitive, zero-arg, surface-aware slash registry | ✅ `DECISION_FINAL`; no runtime |
 | DD-94 | Chat-unread-derived generic opaque offline signal/digest + preferences/live authz | ✅ `DECISION_FINAL`; timing/config enablement-only; no runtime |
 | DD-95 | Club-only hide/restore + exact timed mute/reason/audit contract | ✅ `DECISION_FINAL`; no runtime |
+| DD-96 | Home money chips: cross-club `SelfPaymentSummary` (Part A) + host receivable "Chưa thu" (Part B) | ✅ A contract-shape final · B direction ✅ / mechanism 🟡 (4 blocker B1–B4) |
+| DD-97 | Collection statement + export sao kê — per-session view **free** · kỳ/tháng + export PDF/XLSX **`host_pro`** | ✅ direction + entitlement (owner-delegated 07/08) · mechanism chờ DTO owner Reviewed |
+| DD-98 | Negative scope Sporta-port NP-1..5 (custom split · hold linked member · push kèm tiền · auto-archive nợ · geo/radius vs DD-06) | ✅ `DECISION_FINAL` (owner-delegated 07/08) |
+| DD-99 | FE spec hardening: 4 section (Analytics/State Machine/AC/Testing) = điều kiện FE Draft→Reviewed · backlog P2→P4→P3 · breakpoint rule 2 lớp (OQ-1) | ✅ P1 + OQ-1 chốt · priorities pinned (owner-delegated 07/08); không authorize build |
 
 ---
 
@@ -742,6 +746,7 @@ Foundation(RLS+sports+3-tier+Google) → Zalo-tenant → CK-reconcile → migrat
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 07/08/2026 | **v3.4n** | **Mirror decision batch 07/08 (decisions v2.18):** Phụ lục A thêm DD-96..99. DD-97 statement/export: direction + entitlement chốt (per-session view free · kỳ/export `host_pro`), mechanism chờ DTO owner. DD-98 negative scope NP-1..5 final. DD-99: 4 section FE = điều kiện Draft→Reviewed; backlog FE prioritized P2 (player session-detail/join/waitlist — critical path S9–S12) → P4 (mark-paid `cash\|waiver`; refund-on-cancel tách chờ refund policy) → P3 (account-management); breakpoint rule 2 lớp. Delivery order/code readiness không đổi; không authorize build mới. |
 | 28/07/2026 | **v3.4l** | **Chat readiness re-pin + current HEAD:** exact 27-file authority pack land tại `90d292d`; plan v1.8/analysis đạt `PLAN_READY` closure 12/12. Re-pin live summary tới `main@784bc8d`; code/test inventory không đổi vì hai commit mới chỉ docs. Giữ B4/per-slice `CODE_READY`, no runtime/migration/API/UI, DD-32 WIP overlay và ~33% delivery boundary. |
 | 28/07/2026 | **v3.4k** | **Owner-final Chat authority + DD-32 reconcile:** mirror DD-86/DD-91–95 and demote DD-88 to broader `DEFERRED_PROPOSAL`; Assistant/Chat/Notifications pairs Reviewed. Current readiness remains owned only by primary plan §13. Preserve committed `main@2dc9b8c` 24/23 snapshot while recording uncommitted 24/24 docs overlay and DD-32 Option D target. Runtime/delivery percentage unchanged. |
 | 28/07/2026 | **v3.4j** | **SUPERSEDED by v3.4k:** former Chat correction used universal default-OFF, three commands and no-digest floor; no longer current authority. |

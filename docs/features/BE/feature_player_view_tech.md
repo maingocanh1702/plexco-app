@@ -1,11 +1,11 @@
 # Feature: Player View (Person-self) — Backend Tech Spec
 
 > **Canonical phase:** P4.6  
-> **Version:** 2.8 · 2026-07-28
+> **Version:** 2.9 · 2026-08-07
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../feature_player_view.md`  
-> **References:** `../../product/TDD.md` §3.4/§4 (person-self contract) · `../../standards/decisions.md` DD-37/DD-91 · `../../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md`
+> **References:** `../../product/TDD.md` §3.4/§4 (person-self contract) · `../../standards/decisions.md` DD-37/DD-91/DD-96 · `../../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md`
 
 > **DD-48 boundary:** endpoints `/api/me*` chỉ self. Cross-user social profile dùng service/DTO trong `feature_user_settings_tech` §6; host operational reads tiếp tục qua tenant-scoped membership/roster authz. Không thêm `:personId` vào player-view API và không share serializer có tiền/PII.
 
@@ -188,6 +188,18 @@ type SelfPaymentStatus =
     }
   | { kind: "unknown"; reasonCode: string; retryable: boolean };
 
+// DD-96 Part A — cross-club aggregate. Owner = player_view; KHÔNG helper thứ hai ở consumer.
+type SelfPaymentSummary =
+  | { kind: "known_zero"; currency: "VND"; asOf: string }
+  | {
+      kind: "known_amount";
+      currency: "VND";
+      totalOutstanding: number;  // tổng remaining xuyên CLB
+      clubCount: number;         // số CLB CÓ outstanding > 0 — không phải tổng số CLB
+      asOf: string;
+    }
+  | { kind: "unknown"; reasonCode: string; retryable: boolean };
+
 function remainingAmount(amountDue: number, amountAllocated: number): number {
   return Math.max(0, amountDue - amountAllocated);
 }
@@ -205,6 +217,13 @@ function effectiveFee(d: OpenDebt): number | null {
 
 - `getSelfPaymentStatus(authenticatedPerson, resolvedOwnClub)` nhận person từ verified auth context; không nhận `person_id` từ URL/body/message. `resolvedOwnClub` chỉ đến từ trusted club channel, authenticated notification subject hoặc opaque requester-bound club ref.
 - Chỉ số `amountDue`/`amountAllocated` đã được service chứng minh hợp lệ mới đi vào `remainingAmount`. Missing row/field, allocation không toàn vẹn, authz hoặc dependency failure trả `{kind:"unknown"}`; **không** coerce thành `0`. `effectiveFee` giữ semantics hiện hành: `fee=NULL → NULL`; với fee đã biết, `paid_amount=NULL` mang nghĩa canonical “chưa allocate” rồi mới delegate primitive.
+- **`getSelfPaymentSummary(authenticatedPerson)` (DD-96 Part A)** — cross-club aggregate cho Home chip "Còn nợ". Cùng service family, cùng primitive `remainingAmount`; consumer (Home) **không** được tự cộng per-club status. Quy tắc:
+  - **Unknown-dominates:** bất kỳ club nào trong own authorized set trả `kind='unknown'` ⇒ summary = `unknown`. **Cấm** sum các club `known_*` rồi hiển thị — partial sum tạo một con số trông authoritative nhưng **thấp hơn nợ thật**, user đọc thành "đã trả gần hết". Đây là bất biến `unknown ≠ 0` (§Bất biến Product) áp ở tầng aggregate, không phải một policy mới.
+  - `known_zero` chỉ khi **mọi** authorized club đều proven `known_zero`. Person chưa thuộc CLB nào cũng là `known_zero`, không phải `unknown`.
+  - `clubCount` đếm **CLB có `totalOutstanding > 0`**, không phải tổng số membership — chip hiện "còn nợ ở N CLB".
+  - **Không** `payAction` ở tầng summary: `payAction` là optional field của per-club `SelfPaymentStatus` và v2.6 đã pin *"never a global/item action"*. Aggregate pay CTA xuyên CLB là quyết định chưa mở.
+  - Chip tap điều hướng tới outstanding detail đã có (`/me — outstanding detail`), nơi render per-club `SelfPaymentStatus.items[]` = các kèo chưa trả. Không cần DTO mới cho màn detail.
+  - Additive read-only; **không** bảng/migration/route mới — surface (`/api/me/charges` mở rộng hay sibling endpoint) chốt ở build slice.
 - `/api/me/charges` enumerate own authorized clubs rồi bọc mỗi kết quả thành `{clubRef, clubLabel, status: SelfPaymentStatus}`; wrapper không chứa raw tenant ID. Exact chat `/pay` và authenticated notification detail gọi cùng service một lần cho trusted/opaque selected club. Ba consumer không có formula/serializer money riêng. `known_zero` chỉ được tạo sau query ledger đầy đủ chứng minh không còn open/partial remaining.
 
 **Human-DM `/pay` tenant resolution (`chat_channels.tenant_id=NULL`):**
@@ -292,6 +311,12 @@ Bot conversation (Zalo/Messenger) → Verify conversation → Issue magic link
 | 26 | Arbitrary ID rejection | Body/message có other `person_id` hoặc raw `tenant_id` | Không ảnh hưởng resolver; reject generic, không leak |
 | 27 | Sessions/waitlist baseline read | Own active/left memberships + upcoming players/waitlist rows | Chỉ own DTO; không đọc roster người khác hoặc gọi mutation rule |
 | 28 | Session adapter boundary | `/sessions|/waitlist` qua slice 26 | Adapter delegate slice 19; không duplicate join/leave/promotion logic |
+| 29 | Cross-club summary happy (DD-96) | 3 CLB: `known_amount` 50k · `known_amount` 35k · `known_zero` | `kind='known_amount'`, `totalOutstanding=85000`, `clubCount=2` (CLB `known_zero` không đếm) |
+| 30 | **Unknown dominates** (DD-96) | 1 CLB `known_amount` 50k + 1 CLB `unknown` | `kind='unknown'`; **KHÔNG** trả `50000`, không partial sum, không `clubCount=1` |
+| 31 | Summary all-zero | Mọi authorized club `known_zero` | `kind='known_zero'` |
+| 32 | Summary zero-club | Person chưa có membership nào | `kind='known_zero'` — **không** `unknown` |
+| 33 | No aggregate payAction | Summary có outstanding > 0 | DTO summary không chứa `payAction` (per-club only, v2.6) |
+| 34 | Consumer không re-derive | Home consume summary | Không có code path nào ngoài `getSelfPaymentSummary` tạo cross-club total |
 
 ### Integration Tests
 
@@ -330,6 +355,7 @@ Bot conversation (Zalo/Messenger) → Verify conversation → Issue magic link
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-07 | v2.9 | **DD-96 Part A:** thêm canonical cross-club `SelfPaymentSummary` + `getSelfPaymentSummary` vào §4 — đóng gap `feature_home_tech.md:166` (`SelfPaymentStatus` là per-club, Home bị cấm tự cộng). Pin **unknown-dominates** (một CLB `unknown` ⇒ cả summary `unknown`, cấm partial sum vì nó hiện số thấp hơn nợ thật), `clubCount` = số CLB có outstanding > 0, không `payAction` ở tầng aggregate. Thêm unit #29–34. Additive read-only: không bảng/migration/route mới, surface chốt ở build slice. Host receivable ("Chưa thu") **không** vào file này — DD-48 + DTO allowlist §4 `other charges ❌ NEVER`; xem DD-96 Part B. Không authorize runtime. |
 | 2026-07-28 | v2.8 | Reconcile immutable authority `90d292d` and primary plan v1.8 `PLAN_READY`; retain per-mechanism `CODE_READY`, beta OFF and no-runtime boundaries. |
 | 2026-07-28 | v2.7 | Mirror exact read owners 17–19 và thin chat adapters 24–26; pin slice 19 authorable từ merged baseline nhưng `/sessions|/waitlist` beta giữ OFF tới ba strict current Session packets + production-shaped data E2E. Add unit #27–28/integration #8; pair remains Not started/no runtime authorization. |
 | 2026-07-27 | v2.6 | Sửa signature `effectiveFee` trong §snippet: v2.5 viết tham số thành object literal `{ fee: number \| null; paid_amount: number \| null }`, thu hẹp so với live `OpenDebt` (`paid_amount?` OPTIONAL, `payments-logic.ts:258`) và bỏ guard `undefined`. Implement đúng chữ sẽ làm bốn caller hiện có (`coverRemaining`, `classifyDeposit`, `classifyIncoming`, `classifyCoverage`) vỡ typecheck — trái ràng buộc "bốn caller giữ nguyên" của DD-91. Chỉ sửa contract snippet; không đổi semantics, không đổi status. |

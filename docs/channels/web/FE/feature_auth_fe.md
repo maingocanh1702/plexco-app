@@ -306,6 +306,21 @@ Trang đầu tiên host và player thấy khi vào plexco.app. Gồm Landing pag
 
 ---
 
+### Client-local states (Draft)
+
+> Các state dưới đây là **client-local, không phải BE token** — không thuộc error catalog của
+> `feature_web_auth_onboarding_tech.md` §3 và không được thêm vào bất kỳ bảng Error mapping nào ở trên.
+> FE tự quản lý hoàn toàn ở phía client; không gửi lên server như error code.
+
+| State | Điều kiện vào (client-side) | Hành vi hiển thị |
+|---|---|---|
+| `AUTH_CANCELLED` (client-local, không phải BE token) | User hủy giữa OAuth consent: bấm Back từ consent screen hoặc đóng popup/tab rồi quay về `/` **không kèm** query `auth_error` và không có callback hoàn tất (§2 Flow 1 · Flow 5) | Quay về entry point (`/`) **im lặng**: landing + login card ở state Ready (§3 `/` States), **KHÔNG** hiện error banner/toast, không log như auth failure |
+
+- **Phân biệt với `AUTH_INVALID`:** bảng Error mapping §3 chỉ áp khi server **thực sự trả** mã (401 hoặc redirect `/?auth_error=AUTH_INVALID`). Quay về `/` sạch (không có `auth_error`) → `AUTH_CANCELLED`, không rơi nhầm vào `AUTH_INVALID` và không hiện "Xác thực không hợp lệ" sai ngữ cảnh.
+- Nếu provider denial khiến BE redirect **kèm** `?auth_error=AUTH_INVALID` → vẫn theo đúng bảng Error mapping §3 (pinned, không đổi). BE có tách user-denied-consent thành tín hiệu riêng hay không → TBD (UNPINNED); FE không tự đặt mã mới.
+
+---
+
 ## 4. Components Used
 
 | Component | States | Mô tả |
@@ -375,4 +390,101 @@ Trang đầu tiên host và player thấy khi vào plexco.app. Gồm Landing pag
 
 ---
 
+## 8. Analytics Events (Draft — đề xuất, chưa phải contract)
+
+> Đề xuất instrumentation phía FE, **chưa phải contract** — tên event/param chưa được owner chốt và
+> KHÔNG thuộc BE error catalog. Params tuân thủ ràng buộc cứng: **không amount/tiền, không PII
+> (tên, sđt, email), không mật khẩu/token** — chỉ opaque id, enum, count, boolean, duration.
+> Event chỉ bắn khi flow tương ứng reachable: baseline Google flow chưa reachable (provider DTO
+> `UNPINNED` — §2 Flow 1) và email capability OFF (§6), nên funnel dưới đây phần lớn là target.
+
+### Funnel login (§2 Flow 1 · Flow 3 · Flow 5)
+
+| Event | Khi nào bắn | Params (đề xuất) |
+|---|---|---|
+| `auth_login_started` | Login card hiển thị ở state Ready (§3 `/` States) | `providers_rendered_count` (count — số provider đang active-render theo §6) |
+| `auth_method_selected` | User click một provider control đang render: Google (§2 Flow 1) · Facebook (§2 Flow 5) · tab email (§2 Flow 3) | `method` (enum: `google` \| `facebook` \| `email`) |
+| `auth_submitted` | OAuth redirect bắt đầu, hoặc email form submit (§2 Flow 3) | `method` (enum) |
+| `auth_succeeded` | Completion quay về `/` theo live contract (§2 Flow 1 bước 3) | `method` (enum) · `duration_ms` (duration từ `auth_submitted`) |
+| `auth_failed` | Một mã trong bảng Error mapping §3 được render | `method` (enum) · `error_code` (enum — đúng nguyên văn mã BE catalog §3, không đặt mã mới) |
+| `auth_cancelled` | Vào state `AUTH_CANCELLED` (§3 Client-local states — client-local, không phải BE token) | `method` (enum: `google` \| `facebook`) |
+
+### Funnel phụ: register / verify / reset (§2 Flow 2 · Flow 4)
+
+| Event | Khi nào bắn | Params (đề xuất) |
+|---|---|---|
+| `auth_register_submitted` | Submit form Đăng ký (§2 Flow 2 bước 3) | — (không gửi email/họ tên — PII) |
+| `auth_verify_viewed` | GET `/auth/email/verify` render landing (§3) | — (không gửi token) |
+| `auth_verify_confirmed` | POST verify success (§2 Flow 2 bước 6–7) | `duration_ms` (từ `auth_verify_viewed`) |
+| `auth_reset_started` | GET `/auth/email/reset` render form (§2 Flow 4 bước 3) | — |
+| `auth_reset_completed` | POST reset success (§2 Flow 4 bước 5) | — |
+
+---
+
+## 9. State Machine (Draft)
+
+> Chỉ dùng các state đã liệt kê trong §3 (kèm client-local state ở §3 → Client-local states).
+> Transition suy từ §2 Flows và §5 Edge Cases; điểm chưa có căn cứ ghi TBD (UNPINNED).
+> Lưu ý: §3 `/` không liệt kê screen-level state "Submitting" — trạng thái đang submit được mô tả
+> bằng component loading state (`PrimaryButton`/`SocialButton` loading — §4, §5 case 10, §7),
+> không phát minh screen state mới.
+
+### `/` — Landing + Login (§3)
+
+- `Ready` → user submit/click provider (§2 Flow 1/3/5) → component loading state: button spinner + disabled (§4 · §5 case 10 · §7)
+- (loading) → success → follow exact server destination; baseline quay về `/` (§2 Flow 1 bước 3 · Flow 3 bước 2) — post-auth destination khác `/` là TBD (UNPINNED) (§1)
+- (loading) → BE trả mã trong bảng Error mapping §3 → `Error — auth fail` hoặc `Error — form validation` theo đúng visible state đã pin
+- `Error — auth fail` / `Error — form validation` → user sửa input hoặc retry → `Ready` (login card vẫn sẵn — §3 States)
+- OAuth redirect → user hủy consent → `AUTH_CANCELLED` (client-local, không phải BE token) → `Ready` im lặng (§3 Client-local states)
+- `LOGIN_RATE_LIMITED` → submit disabled tạm thời (§3 Error mapping) → thời điểm re-enable: TBD (UNPINNED) — retry-after chưa được pin trong file này
+
+### `/auth/email/verify` (§3)
+
+- `Landing (GET)` → click [✅ Xác nhận] → `Verifying (POST)` (§3 States)
+- `Verifying (POST)` → 2xx → `Success` → CTA "Đăng nhập" → `/` (§3 States)
+- `Verifying (POST)` → `AUTH_TOKEN_INVALID` / `CSRF_INVALID` / `LOGIN_RATE_LIMITED` / unknown → `Error` theo đúng bảng Error mapping §3 (unknown → fail closed)
+- `Error` → "Gửi lại" chỉ khi exact browser-bound verify-attempt cookie còn hợp lệ; ngược lại CTA quay về đăng ký (§3 States · §5 case 6)
+
+### `/auth/email/reset` (§3)
+
+- `Ready (GET)` → submit → `Submitting (single POST)` (§3 States — không có pre-validation request)
+- `Submitting (single POST)` → 2xx → `Success` ("Đã đổi mật khẩu! Đăng nhập lại.") (§3 States)
+- `Submitting (single POST)` → token invalid/expired/đã dùng → `Error` + nút "Gửi lại link" (§3 States)
+- `Error` / `Success` → không có transition quay lại `Submitting` với cùng token (token single-use — §3 GET inert note)
+
+---
+
+## 10. Acceptance Criteria (Draft)
+
+| # | Criterion | Trace |
+|---|---|---|
+| AC-1 | Baseline omit set đúng: không render Google/Facebook/email control khi availability `UNPINNED`/OFF; control absent hoàn toàn, không disabled/grayed, ở mọi breakpoint | §3 `/` fixture note · §3 Responsive · §6 |
+| AC-2 | GET `/auth/email/verify` không consume token; chỉ explicit POST sau click [✅ Xác nhận] mới verify | §2 Flow 2 bước 5–6 · §3 verify |
+| AC-3 | Token được scrub khỏi URL vào memory trên cả verify và reset | §2 Flow 2 bước 5 · Flow 4 bước 3 |
+| AC-4 | Reset là đúng một POST tới `/api/auth/email/reset`, không pre-validation request | §2 Flow 4 bước 4 · §3 reset |
+| AC-5 | Login sai/pending/không tồn tại đều là generic `AUTH_INVALID`; register/forgot không lộ email lifecycle | §2 Flow 3–4 · §5 case 2, 3, 5 |
+| AC-6 | Mọi mã trong 3 bảng Error mapping render đúng visible state + i18n copy đã pin; unknown/missing/timeout → fail closed | §3 Error mapping (cả 3 màn) |
+| AC-7 | Password chỉ validate độ dài 15–128 Unicode, không composition rule; blocklist là server-side, FE không tự kiểm và không gửi raw password tới third party | §5 case 4, 4b · header DD-80 |
+| AC-8 | User hủy OAuth consent → quay về `/` im lặng (state `AUTH_CANCELLED`, client-local), không error banner; chỉ khi URL có `auth_error` mới hiện toast | §3 Client-local states |
+| AC-9 | Double-submit bị chặn: button disabled + spinner ngay sau click đầu | §5 case 10 · §7 |
+| AC-10 | Touch target ≥ 44px và focus ring visible cho mọi control auth | §7 |
+| AC-11 | Mọi chuỗi user-facing đi qua `t(vi, en)` — chuỗi thật, không phải key | §6 i18n note |
+| AC-12 | Analytics events không chứa amount/tiền/PII/mật khẩu/token; chỉ opaque id, enum, count, boolean, duration | §8 |
+
+---
+
+## 11. Testing Notes (Draft)
+
+- **Unit — error mapping:** mỗi row trong 3 bảng Error mapping §3 có test: response (status + code) → đúng visible state + copy `t(vi,en)`; case unknown/missing/timeout → fail-closed placeholder + retry, KHÔNG render success.
+- **Unit — GET inert:** load `/auth/email/verify` và `/auth/email/reset` với token trong URL → assert không có request verify/consume nào được gửi (§2 Flow 2 · Flow 4); token biến mất khỏi URL/history sau scrub (§3).
+- **Unit — omit set:** availability thiếu/unknown/expired/revoked → provider control absent trong DOM (không phải hidden/disabled) ở mọi breakpoint (§3 States Ready · §5 case 7).
+- **Unit — client-local cancel:** vào `/` không kèm `auth_error` (sau khi rời trang sang consent) → không toast, login card Ready (§3 Client-local states); vào `/?auth_error=AUTH_INVALID` → toast đúng copy pinned (§3 Error mapping).
+- **Unit — enumeration safety:** register và forgot-password luôn render cùng generic copy cho mọi nhánh response đã pin (§5 case 2, 5).
+- **Integration:** double-click submit chỉ tạo đúng 1 request (§5 case 10); `LOGIN_RATE_LIMITED` → submit disabled, không auto-retry (§3).
+- **Analytics guard:** snapshot test payload các event §8 — assert không có key email/name/phone/password/token/amount.
+- **E2E (target-gated):** funnel email và Google end-to-end chỉ chạy khi capability bật; baseline email OFF + provider DTO `UNPINNED` → E2E đánh dấu skipped-by-gate, không giả lập enablement (header Runtime status · §6).
+
+---
+
 _FE Design Spec v0.2 · 2026-07-31 · Source: feature_web_auth_onboarding.md v2.11_
+_FE Design Spec v0.3 · 2026-08-07 · Changelog: Thêm 4 section Draft (Analytics/State Machine/AC/Testing) + subsection "Client-local states (Draft)" với `AUTH_CANCELLED` (client-local) — nguồn: Sporta FE porting analysis 2026-08-07_
