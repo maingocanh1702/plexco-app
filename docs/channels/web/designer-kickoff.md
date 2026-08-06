@@ -1,6 +1,6 @@
 # Designer Kickoff — Plexco Web FE
 
-> **Status:** ✅ Active governance; execution HOLD · **Version:** 0.8 · 2026-07-28
+> **Status:** ✅ Active governance; execution HOLD · **Version:** 0.9 · 2026-08-07
 > **Execution boundary:** kickoff/pipeline đã chốt nhưng không tự mở FE; exact screen chỉ bắt đầu sau Reviewed feature spec + tracked owner-approved node trong `design.pen`.
 > **Visual source:** ✅ **DD-81: Pencil; canonical path amended 25/07/2026** — root file `design.pen`. FE/design handoff vẫn HOLD tới khi file được persist/track + owner nghiệm thu; variables phải khớp SoT `../../standards/design-tokens.md` tại gate đó. `Plexco-DS-fable5.pen` superseded, không dùng.
 > **Authority:** DD-57/58/59 đã ✅ chốt (owner 2026-07-28); DD-60 API convention áp độc lập cho API docs mới/materially changed. Governance final không phải runtime proof.
@@ -15,12 +15,18 @@
 | # | Tài liệu | Dùng để |
 |---|---|---|
 | 1 | `design-brief.md` | Sản phẩm, personas, key screens, deliverables §9, a11y §8 |
-| 2 | `../../standards/design-tokens.md` | **Token canonical** — designer bám giá trị này |
-| 3 | `../../standards/frontend-architecture.md` | Active DD-57 governance (server-first · feature-first · FE-INV-1..6) |
-| 4 | `./README.md §2` | **Route/auth/phase canonical** (Screen Map + Permission Matrix) |
-| 5 | `./frontend-pipeline.md` + `../../templates/feature-dev/fe-*-template.md` | Cách bàn giao từng màn visual-source→code |
-| 6 | `../../standards/design-tokens-benchmark.md` | Khi cần đề xuất đổi/thêm token (không tự chế) |
-| 7 | `../../features/feature_*.md §Screens & States / §Use Cases + Edge Cases` | Chi tiết state + edge case mỗi feature |
+| 2 | `../../standards/design-tokens.md` | **Token canonical (value SoT)** — designer bám giá trị này |
+| 3 | `../../standards/design-system.md` | **Component catalog + usage token layer** — 45+ component với states, layout pattern, 4-state, motion, a11y, responsive grid. Reference value từ `design-tokens.md`, không override |
+| 4 | `../../standards/frontend-architecture.md` | Active DD-57 governance (server-first · feature-first · FE-INV-1..6) |
+| 5 | `./README.md §2` | **Route/auth/phase canonical** (Screen Map + Permission Matrix) |
+| 6 | **`./FE/feature_<name>_fe.md`** | ⭐ **Tài liệu chi tiết nhất cho từng màn** — layout wireframe, 4 state, bảng `#### Error mapping` (status/error code → visible state), §6 Data hiển thị với `t(vi, en)` và field nào `UNPINNED — omit active UI`, edge case, responsive 375/768/1440. **Đọc file này trước khi vẽ màn tương ứng**; §3B dưới đây chỉ cho thứ tự |
+| 7 | `./frontend-pipeline.md` + `../../templates/feature-dev/fe-*-template.md` | Cách bàn giao từng màn visual-source→code (`fe-spec-template.md` · `fe-handoff-template.md` · `fe-token-mapping-template.md`) |
+| 8 | `../../standards/design-tokens-benchmark.md` · `../../standards/token-needs-matrix.md` | Khi cần đề xuất đổi/thêm token (không tự chế) |
+| 9 | `../../features/feature_*.md §Screens & States / §Use Cases + Edge Cases` | Product spec nguồn — đọc khi cần hiểu vì sao, còn *vẽ gì* thì theo #6 |
+
+> ⚠️ **Nếu #6 và #9 lệch nhau thì #6 thắng.** FE spec là projection đã reconcile với BE contract và đã
+> qua 4 vòng review; Product spec mô tả target nghiệp vụ và có phần chưa có owner DTO. Field nào FE
+> spec đánh `UNPINNED — omit active UI` thì **không vẽ**, kể cả Product spec có mô tả.
 
 ## 1. Chốt trước khi bắt đầu (owner)
 
@@ -59,7 +65,7 @@
 | 2 | Onboarding | `/onboarding` wizard 4 bước (Club · SePay · Zalo · Messenger + readiness) | `feature_connector_onboarding.md` |
 | 3 | Host core | `/dashboard` overview | `feature_session_management.md` · `feature_payment_reconcile.md` |
 | 4 | Host core | `/dashboard/sessions` list + `/sessions/new` create | `feature_session_management.md` (DD-41 fields/gating) |
-| 5 | Host core | `/dashboard/sessions/:id` detail (roster · **mark-paid tap/multi-select** · QR) | `feature_session_management.md` · `feature_payment_reconcile.md` (DD-40) |
+| 5 | Host core | `/dashboard/sessions/:id` detail — **baseline chỉ 2 tab: Roster + Chi tiết**. Roster **không có payment column/action**; tab Thanh toán, mark-paid và QR/STK **omit hoàn toàn** (xem cảnh báo dưới bảng) | `FE/feature_sessions_fe.md` · `feature_session_management.md` |
 | 6 | Host money | `/dashboard/payments` ledger · unmatched · manual allocation | `feature_payment_reconcile.md` |
 | 7 | Host | `/dashboard/members` list + merge tool | `feature_identity.md` |
 | 8 | Host | `/dashboard/settings` config · bank · bot links | `feature_user_settings.md` · `feature_tenant_routing_authz.md` |
@@ -68,6 +74,18 @@
 | 11 | Chat | Chat in-app (club + DM) | `feature_inapp_chat.md` (DD-38) |
 | 12 | Settings | Hồ sơ + **giá theo giới tính** | `feature_user_settings.md` (DD-39) |
 | 13 | Home | Landing sau đăng nhập — personal dashboard (chips Còn nợ/Kèo tuần · hero next-session · suggested) | `feature_home.md` (DD-79 ✅) — dựng ĐẦU TIÊN để **confirm/tune target C + Sora/Inter** và kiểm light/dark/WCAG; không tự reopen hue |
+
+> ⚠️ **Không vẽ payment widget (QR/STK/pay_code) ở bất kỳ màn nào.** `feature_sessions_fe.md:264`:
+> `payAction` hiện chỉ là protected link cho **player self**, không cung cấp host aggregate/QR/bank
+> renderer DTO và **không được overload**. Toàn bộ tab Thanh toán phải omit tới khi một Reviewed owner
+> contract pin exact fields, formula, payer/charge binding, authorization và expiry. Phía player,
+> `feature_player_view_fe.md` cũng chốt "FE KHÔNG tự render QR/STK/pay_code" và đã bỏ component
+> `QRPayment`. Bản kickoff ≤ v0.8 ghi "QR" ở dòng 5 — đó là mô tả cũ, đã sai.
+>
+> **Ba thứ khác cũng đừng vẽ, vì cùng lớp "chưa có owner contract":** running total cộng client-side ở
+> allocation panel (số tiền phải do server trả), `impact_policy` selector khi đổi giá lúc đã có charges
+> (Save bị block), và system message trong chat. Mỗi FE spec có fixture fence riêng ở đầu §3 — đọc nó
+> trước khi vẽ, nó nói rõ phần nào của wireframe chỉ để kiểm hierarchy chứ không authorize implement.
 
 ### Giai đoạn C — Handoff từng màn (pipeline DD-58)
 Với mỗi màn xong design: canonical `design.pen` path + exact node id → `handoff/<screen>-handoff.md` (template) → `handoff/<screen>-token-mapping.md` (template) → code → verify screenshot ×3 breakpoint.
@@ -95,6 +113,7 @@ Với mỗi màn xong design: canonical `design.pen` path + exact node id → `h
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 07/08/2026 | 0.9 | **Gói tài liệu §0 bổ sung hai nguồn ra đời sau v0.8, và sửa một dòng §3B đã sai.** §0 thêm `design-system.md` (component catalog + usage token) và **`FE/feature_<name>_fe.md`** — 12 FE spec là tài liệu chi tiết nhất cho từng màn (wireframe, 4 state, bảng error mapping status→state, §6 `t(vi, en)` + field `UNPINNED — omit`), trước đây §0 chỉ trỏ Product spec nên designer đọc theo bảng sẽ bỏ sót đúng thứ cần nhất; thêm quy tắc **FE spec thắng Product spec** khi lệch. §3B dòng 5 bỏ "QR" và "mark-paid" khỏi `/dashboard/sessions/:id`: baseline chỉ 2 tab Roster + Chi tiết, roster không có payment column/action, tab Thanh toán omit hoàn toàn tới khi có Reviewed owner contract (`feature_sessions_fe.md:264` — `payAction` là protected link player-self, không được overload thành host QR/bank renderer). Thêm cảnh báo gom 4 thứ không được vẽ (payment widget, client-side running total, `impact_policy` selector, chat system message). Không đổi thứ tự ưu tiên 13 màn, không đổi gate DD-57/58/59/81. |
 | 28/07/2026 | 0.8 | Mirror immutable Chat authority and primary plan v1.8 `PLAN_READY`; retain exact-slice `CODE_READY` and tracked owner-approved `design.pen` gates. |
 | 28/07/2026 | 0.7 | **DD-57/58/59/81 ratification:** activate FE/pipeline/token governance; chọn target C + Sora/Inter; Pencil-only exact-node handoff; giữ execution HOLD tới tracked owner-approved `design.pen` + visual/WCAG gate. |
 | 27/07/2026 | 0.6 | Add DD-91 conditional/no-handoff boundary; keep deferred status and `design.pen` approval gate. |
