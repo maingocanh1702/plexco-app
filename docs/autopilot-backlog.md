@@ -609,6 +609,74 @@ notes: |
   mọi slice, đã merge hay chưa. Phiên phát hiện việc này suýt kết luận ngược đúng vì đọc NO thành "chưa
   merge". So nội dung trên `main` mới là bằng chứng.
 
+## task: local-dev-sanctioned-paths-are-harder-than-the-forbidden-one
+title: Ba chỗ khiến đường đúng đắt hơn `DELETE FROM schema_migrations` — đo trong một phiên 2026-08-05/06
+status: planned
+risk: P2
+change_class: tooling
+depends_on: []
+invariants: [build-config]
+scope: [package.json, docs/standards/environments-setup.md]
+manifest: (chưa author)
+merged_probe: package.json :: db:reset:test
+notes: |
+  Không phải ba bug rời. Ba mảnh cùng một hệ quả: **luật cấm đang gánh phần việc mà công cụ phải
+  làm**, và luật cấm hỏng vào đúng lúc người ta mệt và đang bị chặn.
+
+  | đường đúng | vì sao đắt |
+  |---|---|
+  | reset test DB sau khi sửa migration chưa merge | không có `db:reset:test`; phải gõ tay `DROP DATABASE ... WITH (FORCE)` + `CREATE DATABASE`, mỗi vòng sửa một lần |
+  | cấp lại membership cho definer role | `pnpm db:bootstrap` gọi `psql` trên host, mà `psql` không được khai là phụ thuộc dev và không có trên máy owner |
+  | chẩn đoán vì sao migration bị chặn | guard bất biến P17 ném qua path không set `.cause`; triệu chứng là `expected undefined to be an instance of Error` |
+
+  Đường **sai** thì luôn một dòng và luôn chạy được: `DELETE FROM schema_migrations WHERE name = ...`.
+  Nó bị cấm bằng rule, và rule đó đã giữ được trong phiên này — nhưng chỉ vì có người ngồi cạnh nhắc.
+
+  **Bằng chứng cụ thể (phiên 2026-08-05/06, slice `chat-dm-safety-authority-core`):** ba lần chặn,
+  mỗi lần cần owner chạy tay một lệnh phá huỷ. `infra/docker-compose.yml` tự viết ngay trên dòng mount
+  rằng `pnpm db:bootstrap` "is the path every environment (CI, existing local, production) actually
+  depends on" — và nó không chạy được trên máy chủ dự án. `test-harness.ts:43` khai
+  `DATABASE_URL_TEST` là "a SUPERUSER url on a THROWAWAY cluster (CI service ...)"; CI được container
+  mới mỗi lần chạy nên không bao giờ gặp; dev local thì database sống dai qua mọi lần sửa. Guard đúng
+  ở cả hai môi trường; chỉ một môi trường khớp giả định của nó.
+
+  **Đề xuất (chưa chốt):** thêm `db:reset:test` chạy qua container thay vì đòi `psql` trên host; khai
+  `psql` là phụ thuộc dev trong `environments-setup.md` hoặc bỏ hẳn nhu cầu đó khỏi `db:bootstrap`.
+  Không nới rule — làm đường đúng rẻ đi.
+
+## task: gates-that-fire-correctly-and-cannot-say-why
+title: Hai gate chặn đúng nhưng không tự xưng được tên — cùng một slice, cùng một ngày
+status: planned
+risk: P3
+change_class: tooling
+depends_on: []
+invariants: []
+scope: [packages/db/src/migrate.ts, scripts/autopilot-scope-gate]
+manifest: (chưa author)
+merged_probe: null
+close_by: hand · đề xuất chưa chốt, chưa có symbol nào để probe; khai tay để reconcile không báo weak.
+  Nếu vẫn `ready` quá ngưỡng thì `autopilot-backlog-reconcile` v8 sẽ kêu AGED — đó là ý đồ.
+notes: |
+  Cả hai gate dưới đây **hành xử đúng**. Chi phí không nằm ở việc chúng chặn, mà ở việc chúng không
+  nói được vì sao, khiến người đọc phải suy lại từ đầu cả nguyên nhân lẫn cách chữa.
+
+  1. **`migrate.ts` — guard bất biến P17.** Sửa nội dung một migration đã được ghi vào
+     `schema_migrations` thì guard ném đúng như thiết kế, nhưng qua một code path **không set
+     `.cause`**. Triệu chứng nổi lên là `expected undefined to be an instance of Error` — không nhắc
+     sha, không nhắc migration, không nhắc bất biến. Bằng chứng: hash ghi `4606baf8…`, hash trên đĩa
+     `482e9a74…`, và không hash nào xuất hiện trong thứ người dùng nhìn thấy. Giá: hai chẩn đoán sai
+     và ~40 phút của một phiên đang làm rất kỷ luật.
+  2. **`autopilot-scope-gate register` — `BASE_MISMATCH`.** In ra hai SHA rồi dừng. Không nói rằng
+     ràng buộc là `HEAD === base_sha`, cũng không nói cách chữa là **register trước, merge sau**.
+     Một nhánh đã mang commit thì không đăng ký được — đã ghi ở `kit-design-debt §1 instance 4` và ở
+     phần re-registration mechanics của `autopilot-prompt-GENERIC.md`, nhưng thông điệp lỗi không dẫn
+     tới chỗ nào trong hai chỗ đó. Giá: một vòng dựng lại worktree.
+
+  Ghi chung một entry vì đây là **một lớp**, không phải hai sự cố: fail-closed đúng, self-describing
+  kém. Với `migrate.ts` lưu ý AP-42 đã sở hữu vùng xử lý lỗi của file này (allowlist theo provenance,
+  chống rò PII ra log) — nó lo *log không được nói quá nhiều*; chỗ này là *lỗi phải nói đủ*. Hai mục
+  tiêu ngược chiều nhau, nên bản sửa phải qua cùng kỷ luật đó, không phải thêm `console.error`.
+
 ## task: db-outbox-ack-marker
 title: Job-infra slice 2a — completion/ack cho outbox_events, đóng starvation loop mà 0022 tự flag
 status: merged
