@@ -14,7 +14,7 @@
   "scope": [
     "docs/autopilot-manifests/docs-session-acceptance-checklist-publish-retrace.json",
     "docs/issues/session-management-acceptance-checklist.md",
-    "docs/autopilot-docs-session-acceptance-checklist-publish-retrace.md",
+    "docs/autopilot/contracts/autopilot-docs-session-acceptance-checklist-publish-retrace.md",
     ".claude/commands/ap-30-docs-session-acceptance-checklist-publish-retrace.md",
     "docs/autopilot-backlog.md"
   ]

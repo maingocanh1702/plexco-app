@@ -26,10 +26,10 @@
   ],
   "scope": [
     "docs/autopilot-manifests/docs-auth-d1-packet.json",
-    "docs/auth-d1-implementation-packet.md",
+    "docs/auth/auth-d1-implementation-packet.md",
     "docs/autopilot-backlog.md",
     ".claude/commands/ap-28-docs-auth-d1-packet.md",
-    "docs/autopilot-docs-auth-d1-packet.md"
+    "docs/autopilot/contracts/autopilot-docs-auth-d1-packet.md"
   ],
-  "_note": "Scope 2026-07-23 (owner Option 2 = split): §C DD-38 chat readiness removed from the packet; DD-38 chat becomes root slice dd38-dd86-chat-schema-core, anchored as a ## task: block (with merged_probe) in docs/autopilot-backlog.md (status idea, blocked by DD-55 probe + DD-86 ratify + CHT-OQ-2). §C keeps only the DD-39 gender/pricing surface (evidence inventory, no readiness state, gate §11.2). Under the same owner authorization the slice's own contract files — launcher .claude/commands/ap-28-docs-auth-d1-packet.md + task doc docs/autopilot-docs-auth-d1-packet.md — were reconciled to the split (title, scope count, no-marker, DD-39-only §C, current authority pins) and are ADDED to scope so the declared scope equals the 5 modified files (the launcher's stated file count = this scope count = 5). All authority/version pins across the artifacts are synced to base main@399c5eb / verdicts v2.0 / tech header-v2.10-changelog-v2.11 / D1+d1b merged."
+  "_note": "Scope 2026-07-23 (owner Option 2 = split): §C DD-38 chat readiness removed from the packet; DD-38 chat becomes root slice dd38-dd86-chat-schema-core, anchored as a ## task: block (with merged_probe) in docs/autopilot-backlog.md (status idea, blocked by DD-55 probe + DD-86 ratify + CHT-OQ-2). §C keeps only the DD-39 gender/pricing surface (evidence inventory, no readiness state, gate §11.2). Under the same owner authorization the slice's own contract files — launcher .claude/commands/ap-28-docs-auth-d1-packet.md + task doc docs/autopilot/contracts/autopilot-docs-auth-d1-packet.md — were reconciled to the split (title, scope count, no-marker, DD-39-only §C, current authority pins) and are ADDED to scope so the declared scope equals the 5 modified files (the launcher's stated file count = this scope count = 5). All authority/version pins across the artifacts are synced to base main@399c5eb / verdicts v2.0 / tech header-v2.10-changelog-v2.11 / D1+d1b merged."
 }

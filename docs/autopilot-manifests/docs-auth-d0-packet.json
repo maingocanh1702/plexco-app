@@ -24,6 +24,6 @@
   ],
   "scope": [
     "docs/autopilot-manifests/docs-auth-d0-packet.json",
-    "docs/auth-d0-implementation-packet.md"
+    "docs/auth/auth-d0-implementation-packet.md"
   ]
 }

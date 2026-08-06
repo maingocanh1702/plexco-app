@@ -16,7 +16,7 @@
 
 ## Verdict 31 — `db-tenants-authz-grant-security-definer`: SECURITY DEFINER hẹp cho app đọc-khoá `tenants`, không grant thô (2026-07-31)
 
-> **Canonical block sống trong `docs/autopilot-db-tenants-authz-grant-security-definer.md`** (mode
+> **Canonical block sống trong `docs/autopilot/contracts/autopilot-db-tenants-authz-grant-security-definer.md`** (mode
 > `code-ready`, đó là coding handoff). Block dưới là **bản mirror trong tracker** — sửa một chỗ phải
 > sửa cả hai; nếu hai bên lệch, bản trong slice doc thắng.
 >
@@ -51,7 +51,7 @@ REVIEWED_AT: 2026-07-31
 AUTHORITY_SHA: 66ae878572a66c9c97e6f8afefaefb89751ead16
 BASE_BRANCH: main
 TARGET_FILES:
-  - docs/autopilot-db-tenants-authz-grant-security-definer.md
+  - docs/autopilot/contracts/autopilot-db-tenants-authz-grant-security-definer.md
   - docs/autopilot-manifests/db-tenants-authz-grant-security-definer.json
   - packages/db/src/authorization.ts
   - packages/db/migrations/0009_rls_policies_grants.sql
@@ -83,7 +83,7 @@ REMAINING_BLOCKERS: none
 
 ## Verdict 30 — `eslint-10-migration`: EOL-driven ESLint 9→10 upgrade, hai finding brace-expansion chứ không phải một (2026-07-31)
 
-> **Canonical block sống trong `docs/autopilot-eslint-10-migration.md`** (mode `code-ready`, đó là
+> **Canonical block sống trong `docs/autopilot/contracts/autopilot-eslint-10-migration.md`** (mode `code-ready`, đó là
 > coding handoff). Block dưới là **bản mirror trong tracker** — sửa một chỗ phải sửa cả hai; nếu hai
 > bên lệch, bản trong slice doc thắng.
 >
@@ -101,7 +101,7 @@ REMAINING_BLOCKERS: none
 > `codex_review: "2x_clean"` — tên field validator thật (`autopilot-review-readiness.mjs`) không hề
 > đọc, field nó đọc là `code_review.clean_rounds`; `scope` chưa có slice doc vì slice doc chưa tồn
 > tại; và `invariants` (may mắn) đã đúng sẵn. Rewrite hôm nay sang shape hiện hành —
-> `docs/autopilot-authorize-tenant-action-core.md`/`.json`, cùng ngày trước — và mọi lệnh
+> `docs/autopilot/contracts/autopilot-authorize-tenant-action-core.md`/`.json`, cùng ngày trước — và mọi lệnh
 > `verification.focused` đã **chạy thật** (`spawnSync` y hệt gate) trước khi commit, không chỉ
 > parse cú pháp.
 >
@@ -131,7 +131,7 @@ REVIEWED_AT: 2026-07-31
 AUTHORITY_SHA: c759c63293a3555d957f58f4a82a06b1f35cfdda
 BASE_BRANCH: main
 TARGET_FILES:
-  - docs/autopilot-eslint-10-migration.md
+  - docs/autopilot/contracts/autopilot-eslint-10-migration.md
   - docs/autopilot-manifests/eslint-10-migration.json
   - package.json
   - pnpm-lock.yaml
@@ -170,7 +170,7 @@ REMAINING_BLOCKERS: none
 > không có coding session nào từng dùng nó (verdict phát hành và revise trong cùng phiên), nên re-pin
 > không để lại khoảng trống bằng chứng nào.
 >
-> **Canonical block sống trong `docs/autopilot-reconcile-close-by-hand-declaration.md`** (mode
+> **Canonical block sống trong `docs/autopilot/contracts/autopilot-reconcile-close-by-hand-declaration.md`** (mode
 > `code-ready`, đó là coding handoff). Block dưới là **bản mirror trong tracker** — sửa một chỗ phải
 > sửa cả hai; nếu hai bên lệch, bản trong slice doc thắng.
 >
@@ -225,7 +225,7 @@ REVIEWED_AT: 2026-07-30
 AUTHORITY_SHA: 8c59f2905279a0f599bd095eee505fa1eae2cc3a
 BASE_BRANCH: main
 TARGET_FILES:
-  - docs/autopilot-reconcile-close-by-hand-declaration.md
+  - docs/autopilot/contracts/autopilot-reconcile-close-by-hand-declaration.md
   - docs/autopilot-manifests/reconcile-close-by-hand-declaration.json
   - scripts/autopilot-backlog-reconcile
 SLICE: reconcile-close-by-hand-declaration
@@ -255,7 +255,7 @@ REMAINING_BLOCKERS: none
 
 ## Verdict 28 — `authorize-tenant-action-core`: ba phép đo lật cách đặt task gốc, và slice tách ra trở thành root dependency (2026-07-30)
 
-> **Canonical block sống trong `docs/autopilot-authorize-tenant-action-core.md`** (mode `code-ready`,
+> **Canonical block sống trong `docs/autopilot/contracts/autopilot-authorize-tenant-action-core.md`** (mode `code-ready`,
 > đó là coding handoff). Block dưới là **bản mirror trong tracker** — sửa một chỗ phải sửa cả hai;
 > nếu hai bên lệch, bản trong slice doc thắng.
 >
@@ -300,7 +300,7 @@ REVIEWED_AT: 2026-07-30
 AUTHORITY_SHA: b4d08c83767f0ff6693a05452e61248b58defc01
 BASE_BRANCH: main
 TARGET_FILES:
-  - docs/autopilot-authorize-tenant-action-core.md
+  - docs/autopilot/contracts/autopilot-authorize-tenant-action-core.md
   - docs/autopilot-manifests/authorize-tenant-action-core.json
   - docs/features/BE/feature_billing_lifecycle_tech.md
   - docs/features/BE/feature_session_management_tech.md
@@ -733,7 +733,7 @@ SLICE: db-outbox-ack-marker
 IN_SCOPE: one module (packages/db) — exactly ONE monotonic migration after the live tail adding a completion/ack mechanism to outbox_events, updating claim_outbox_batch so BOTH its reclaim pass and its claim pass skip acked rows, keeping the partial indexes selective so acked rows stop accumulating in idx_outbox_expired_lease, and a narrow SECURITY DEFINER ack function owned by job_definer with EXECUTE granted to app_worker only; plus the schema.ts mirror, migration-count assertions and real-role tests
 OUT_OF_SCOPE: worker, handler, queue, cron, producer or projector wiring (slice 2b); any change to claim ordering (ORDER BY created_at is the sync-engine contract, DD-89 Q3); weakening or removing outbox_events_lease_shape_chk or outbox_events_producer_lease_boundary_chk; edits to applied migrations 0000-0022; new roles or RUNTIME_ROLES changes; job_audit_events retention or cleanup; surface_refs; any direct DML grant on outbox_events to a runtime role
 G1_DECISION: PASS — the requirement is merged reviewed code, not an opinion: 0022:166-181 states it by name, and DD-89/DD-90 bind the surrounding privilege and audit contract. The one genuinely open mechanism question (ack granularity) is routed to the mandatory design-probe STOP gate, which v0.6.1 §0.1 establishes as the closure mechanism for this class
-G2_SPEC: PASS — infra slice with equivalent reviewed technical authority rather than a fabricated Product spec: 0022 itself plus docs/autopilot-db-job-claim-lease-core.md §4.2/§4.3
+G2_SPEC: PASS — infra slice with equivalent reviewed technical authority rather than a fabricated Product spec: 0022 itself plus docs/autopilot/contracts/autopilot-db-job-claim-lease-core.md §4.2/§4.3
 G3_DEPENDENCY: PASS — db-job-claim-lease-core merged at 34429fc; no unmerged dependency. dep_checks verified on disk at 28d0c3a: claim_outbox_batch, outbox_events_lease_shape_chk and idx_outbox_expired_lease all present in 0022
 G4_TEST: PASS — OAM-1..OAM-10 authored before code with exact expected results. OAM-2 is the row this slice exists for and the one a passing-but-useless implementation would fail: older acked-and-expired events must not consume the batch ahead of a newer unacked event. OAM-4 pins that job_audit_events stops growing, OAM-6 requires proving both CHECKs still reject their original violations by attempting them rather than reading the catalog
 G5_SCOPE: PASS — 6 files, one module, exactly one monotonic migration; inside budget. Same shape as the 0019/0020/0021 integrity migrations this repo has run cleanly
@@ -847,7 +847,7 @@ SLICE: job-runtime-dispatcher
 IN_SCOPE: one module (apps/bot) — DD-90 Q6 fail-closed preflight run before boss.start() from an app_worker connection; first real queue registration; one boss.work() handler driving the full lifecycle claim_outbox_batch -> job_prepare_projector_delivery -> claim_projector_delivery_batch -> complete_projector_delivery for delivered/retry/dlq -> ack_outbox_event once fan-out completes, with the real projection step behind an injected interface that ships no production implementation; the required-projector list as a code-owned constant; tests for both files against real PostgreSQL with a real app_worker seat
 OUT_OF_SCOPE: any producer — zero INSERT into outbox_events in shipped code, owner-decided DEFERRED_OUT_OF_SCOPE; cron/schedule registration (slice 3); real projector or surface_refs access (slice 4); edits to provision-queue.ts, queue.ts options or migrations 0000-0023; ANY new migration — now a hard boundary rather than the 26/07 contradiction, since slice 2a shipped the schema half at 0023, so a migration here means scope drifted back into 2a and the slice HALTs; RLS or GRANT changes; claim ordering (ORDER BY created_at is the sync-engine contract, DD-89 Q3); direct DML on outbox_events, projector_deliveries or job_audit_events from app_worker
 G1_DECISION: PASS — DD-89 (Q1 narrow definer functions, Q2 provisioning exception, Q3 ordering) and DD-90 Q6 (preflight before boss.start(), not boss.work()) are owner-final; the two product/scope choices were owner-decided 2026-07-26; the ack shape and the stale-token guard were owner-decided at the 2a design probe and are now merged code (0023) rather than an open question
-G2_SPEC: PASS — infra slice with equivalent reviewed technical authority rather than a fabricated Product spec: the DB contract is merged code (0022 + 0023) plus docs/autopilot-db-job-claim-lease-core.md §4.2/§4.3, and the runtime contract is DD-90 Q6 + TDD §3.4. Deliberately NO separate task-contract doc — re-authoring the state machine would create a second authority free to drift
+G2_SPEC: PASS — infra slice with equivalent reviewed technical authority rather than a fabricated Product spec: the DB contract is merged code (0022 + 0023) plus docs/autopilot/contracts/autopilot-db-job-claim-lease-core.md §4.2/§4.3, and the runtime contract is DD-90 Q6 + TDD §3.4. Deliberately NO separate task-contract doc — re-authoring the state machine would create a second authority free to drift
 G3_DEPENDENCY: PASS — RESTORED 2026-07-27. Both hard dependencies are merged and probe-verified on origin/main, not read from the backlog: 0022 (34429fc) contains job_audit_events and grants the four functions to app_worker at 0022:527-530; 0023 (76e1f7b) contains ack_outbox_event(uuid, text[], uuid) with REVOKE ALL FROM PUBLIC and GRANT EXECUTE to app_worker at 0023:297-298. The 26/07 FAIL is preserved in the preamble as evidence the probe gate caught the contradiction before any code was written
 G4_TEST: PASS — JRD-1..JRD-17 authored before code with exact expected results. Four are anti-regression rather than coverage: JRD-4 requires proving NO pg-boss startup or maintenance work occurred when preflight fails (the boss.start() vs boss.work() distinction DD-90 Q6 turns on); JRD-12 greps the shipped diff for INSERT into outbox_events so the producer deferral cannot silently become "already proven"; JRD-15 fails if the ack call is omitted, which is the only way to catch a handler that looks correct and starves the queue; JRD-17 is explicitly NOT satisfied by a green run with one projector registered. JRD-3, JRD-5, JRD-11 and JRD-15..17 are not satisfiable by a mocked pool
 G5_SCOPE: PASS with a named budget exception — one module (apps/bot), 7 files including two new sources and two new test files, above the nominal comfort and UNCHANGED by this amendment: the ack call and the required-projector constant land in dispatcher.ts, adding no file. Splitting preflight from the handler was considered and rejected on DD-90 Q6's own logic: the preflight exists to fence the FIRST real queue registration, so a preflight slice with QUEUES still empty would assert nothing. No migration is added — the schema half is slice 2a. If implementation materially overruns ~300 LOC, that is a re-slice trigger to be raised at the design probe, not a silent overrun
@@ -968,7 +968,7 @@ NEXT_REVIEW_TRIGGER: n/a — merged. Deferred follow-up RESOLVED at main@f6e1c72
 ## Verdict 19 — `db-job-claim-lease-core`, job lease/audit/definer root; `CODE_READY` (2026-07-25, re-pinned to `948636f`)
 
 > **Tracker of record cho slice này.** Hai mirror phải giữ đồng nhất từng field với block dưới đây:
-> `docs/autopilot-db-job-claim-lease-core.md` §Verdict và `docs/project-progress-review-2026-07-25.md` §7.
+> `docs/autopilot/contracts/autopilot-db-job-claim-lease-core.md` §Verdict và `docs/archive/project-progress-review-2026-07-25.md` §7.
 > Nếu lệch, block này thắng. Mọi lần re-pin `AUTHORITY_SHA` phải cập nhật cả ba.
 >
 > **Provenance của lần re-pin này.** Block được author tại `2937ed9` với verdict `NOT_CODE_READY`; blocker duy
@@ -986,12 +986,12 @@ BASE_BRANCH: main
 TARGET_FILES:
   - docs/standards/decisions.md
   - docs/autopilot-manifests/db-job-claim-lease-core.json
-  - docs/autopilot-db-job-claim-lease-core.md
+  - docs/autopilot/contracts/autopilot-db-job-claim-lease-core.md
   - .claude/commands/ap-31-db-job-claim-lease-core.md
   - docs/autopilot-backlog.md
   - docs/slice-readiness-verdicts.md
   - docs/standards/BUILD-STATUS.md
-  - docs/project-progress-review-2026-07-25.md
+  - docs/archive/project-progress-review-2026-07-25.md
   - docs/standards/core-db-architecture-principles.md
   - docs/standards/deployment-infra.md
   - packages/db/README.md
@@ -1034,7 +1034,7 @@ REVIEWED_AT: 2026-07-19
 AUTHORITY_SHA: 22c23aab080183913d2852805a085bba1057a91a
 BASE_BRANCH: main
 TARGET_FILES:
-  - docs/b0-auth-credential-lifecycle-design-probe.md
+  - docs/probes/b0-auth-credential-lifecycle-design-probe.md
   - docs/features/feature_web_auth_onboarding.md
   - docs/features/BE/feature_web_auth_onboarding_tech.md
   - docs/features/BE/auth-security-invariant-table.md
@@ -1152,7 +1152,7 @@ REVIEWED_AT: 2026-07-19
 AUTHORITY_SHA: 352e6ec (feat/session-waitlist-expand; DD-80 tại c1a3957; code-truth main@ca6c97e)
 BASE_BRANCH: main
 TARGET_FILES:
-  - docs/b0-auth-credential-lifecycle-design-probe.md (✅ owner-approved)
+  - docs/probes/b0-auth-credential-lifecycle-design-probe.md (✅ owner-approved)
   - docs/standards/decisions.md (DD-80 · v1.77)
   - docs/features/BE/feature_web_auth_onboarding_tech.md (v2.8 §3 + acceptance D0)
   - docs/autopilot-manifests/auth-s4-d0-revoke-core.json
@@ -1193,7 +1193,7 @@ REVIEWED_AT: 2026-07-19
 AUTHORITY_SHA: 352e6ec (feat/session-waitlist-expand)
 BASE_BRANCH: main
 TARGET_FILES:
-  - docs/b0-auth-credential-lifecycle-design-probe.md §2/§4/§4.1/§8.2
+  - docs/probes/b0-auth-credential-lifecycle-design-probe.md §2/§4/§4.1/§8.2
   - docs/features/BE/feature_web_auth_onboarding_tech.md (v2.8 §3/§4 + acceptance D1)
   - docs/autopilot-manifests/auth-s4-d1-google-adapter.json
 SLICE: auth-s4-d1-google-adapter
@@ -1232,8 +1232,8 @@ AUTHORITY_SHA: 033ccc8fd9c3f247abf8aa0cb5a0f48b96d006e2 (v1.88 authority bundle 
 BASE_BRANCH: main
 TARGET_FILES:
   - docs/standards/decisions.md (DD-80 v1.88, committed 033ccc8)
-  - docs/g3-revoke-all-concurrency-probe-seed.md (v1.0 final contract)
-  - docs/b0-auth-credential-lifecycle-design-probe.md (§6 v1.88)
+  - docs/probes/g3-revoke-all-concurrency-probe-seed.md (v1.0 final contract)
+  - docs/probes/b0-auth-credential-lifecycle-design-probe.md (§6 v1.88)
   - docs/features/BE/feature_web_auth_onboarding_tech.md (v2.10 D0a)
   - docs/autopilot-manifests/auth-s4-d0-revoke-core.json
   - docs/autopilot-backlog.md
@@ -1269,7 +1269,7 @@ REVIEWED_AT: 2026-07-20
 AUTHORITY_SHA: 9c6e5875cf66b153a7ec58b57c424a23e495c999 (live base; v1.88 authority is an uncommitted working-copy delta)
 BASE_BRANCH: main
 TARGET_FILES:
-  - docs/g3-revoke-all-concurrency-probe-seed.md (v1.0 §4.5-§4.6/§7-§8)
+  - docs/probes/g3-revoke-all-concurrency-probe-seed.md (v1.0 §4.5-§4.6/§7-§8)
   - docs/features/BE/feature_web_auth_onboarding_tech.md (v2.10 D0b)
   - docs/autopilot-manifests/auth-s4-d0-session-web-boundary.json
   - docs/autopilot-backlog.md
@@ -1354,7 +1354,7 @@ AUTHORITY_SHA: fc7d0a41b50269a734a9cd74626469e2e9be385b
 BASE_BRANCH: main
 TARGET_FILES:
   - docs/standards/decisions.md
-  - docs/b0-auth-credential-lifecycle-design-probe.md
+  - docs/probes/b0-auth-credential-lifecycle-design-probe.md
   - docs/features/BE/feature_web_auth_onboarding_tech.md
   - docs/autopilot-manifests/auth-s4-d1-email-token-core.json
   - packages/db/schema.ts
@@ -1441,7 +1441,7 @@ AUTHORITY_SHA: 8f6a0515e95e69ee4f911281d6c5e5d218eb4d9b
 BASE_BRANCH: main
 TARGET_FILES:
   - docs/standards/decisions.md
-  - docs/b0-auth-credential-lifecycle-design-probe.md
+  - docs/probes/b0-auth-credential-lifecycle-design-probe.md
   - docs/features/BE/feature_web_auth_onboarding_tech.md
   - docs/autopilot-manifests/auth-s4-d1-google-adapter.json
   - packages/db/src/auth.ts
@@ -1577,7 +1577,7 @@ REVIEWED_AT: 2026-07-22
 AUTHORITY_SHA: fa94e3b072afe123ab64a2377e6be353ba1a5d34
 BASE_BRANCH: main
 TARGET_FILES:
-  - docs/probe-strict-cookie-completion-hop.md
+  - docs/probes/probe-strict-cookie-completion-hop.md
   - docs/features/BE/feature_web_auth_onboarding_tech.md
   - docs/autopilot-manifests/auth-s4-d1b-oauth-session-rotation.json
   - apps/web/lib/session-cookies.ts
@@ -1605,7 +1605,7 @@ REMAINING_BLOCKERS: none
 NEXT_REVIEW_TRIGGER: d1b merged AND Safari/iOS cells measured -> only then may GOOGLE_OAUTH_CLIENT_ID/SECRET be set in any environment
 ```
 
-**Đọc verdict — blocker được đóng bằng ĐO, không bằng lập luận.** Verdict 11 giữ slice lại vì cơ chế hop chưa pin. Probe (`../probe-strict-cookie-completion-hop.md`) chạy harness hai site thật trên Chromium 149 · Firefox 151 · WebKit 26.5 và cho kết quả **quan trọng**: **M1 — 302 trần — KHÔNG mang cookie `Strict` trên cả ba engine.** Đó chính xác là cơ chế mà một implementer sẽ mặc định chọn; nếu không probe, d1b đã ship một fix **vô dụng thầm lặng** (vẫn mint-fresh, residual risk nguyên vẹn) trong khi mọi unit test mock cookie vẫn xanh. Control của probe (`None`/`Lax` tới được mọi hop, `Strict` vắng **đúng** tại callback cross-site) chứng minh harness trung thực chứ không phải artefact.
+**Đọc verdict — blocker được đóng bằng ĐO, không bằng lập luận.** Verdict 11 giữ slice lại vì cơ chế hop chưa pin. Probe (`./probes/probe-strict-cookie-completion-hop.md`) chạy harness hai site thật trên Chromium 149 · Firefox 151 · WebKit 26.5 và cho kết quả **quan trọng**: **M1 — 302 trần — KHÔNG mang cookie `Strict` trên cả ba engine.** Đó chính xác là cơ chế mà một implementer sẽ mặc định chọn; nếu không probe, d1b đã ship một fix **vô dụng thầm lặng** (vẫn mint-fresh, residual risk nguyên vẹn) trong khi mọi unit test mock cookie vẫn xanh. Control của probe (`None`/`Lax` tới được mọi hop, `Strict` vắng **đúng** tại callback cross-site) chứng minh harness trung thực chứ không phải artefact.
 
 **Safari/iOS được phân loại là ENABLEMENT_ONLY, không phải open question.** Lý do: nó không đổi *code nên viết thế nào* — M3 là lựa chọn đúng bất kể Safari trả lời gì, vì 4/5 cơ chế thắng trên 3 engine và M1 thua ở mọi nơi. Nhưng nó **vẫn thuộc gate bật Google login**: nếu Safari bản ship giữ lại cookie ở M3 thì người dùng Safari âm thầm vẫn dính residual risk. Vì vậy điều kiện bật là **d1b merged VÀ Safari/iOS đã đo**, không phải chỉ merged.
 
@@ -1620,7 +1620,7 @@ NEXT_REVIEW_TRIGGER: d1b merged AND Safari/iOS cells measured -> only then may G
 > hoàn toàn Chromium 149 / Firefox 151 / WebKit 26.5: `M1` giữ lại `Strict`, còn `M2`/`M3`/`M4`/`M5` đều
 > mang được — **`M3`, cơ chế đã ship, PASS trên cả hai**. Control toàn vẹn ở cả hai nền: mọi dòng
 > `stage=callback` của M1–M5 đều `strict=false`, chứng minh chặng quay về thật sự cross-site.
-> Bằng chứng: `../probe-strict-cookie-completion-hop.md` §3.1 · §7 · §8.
+> Bằng chứng: `./probes/probe-strict-cookie-completion-hop.md` §3.1 · §7 · §8.
 >
 > Hệ quả: gate này **không còn nghĩa vụ đo nào**. Việc set `GOOGLE_OAUTH_CLIENT_ID/SECRET` từ đây là một
 > **quyết định go-live của owner**, không phải một blocker kỹ thuật. Các gate khác gắn vào go-live (vd A3
@@ -1636,7 +1636,7 @@ BASE_BRANCH: main
 TARGET_FILES:
   - docs/features/BE/feature_web_auth_onboarding_tech.md
   - docs/autopilot-manifests/auth-s4-d1b-oauth-session-rotation.json
-  - docs/probe-strict-cookie-completion-hop.md
+  - docs/probes/probe-strict-cookie-completion-hop.md
   - packages/db/schema.ts
 SLICE: auth-s4-d1b-oauth-session-rotation
 IN_SCOPE: M3 completion hop (callback returns a first-party non-mutating landing that auto-submits a same-origin POST; noscript Continue fallback); migration 0018 expand-only adding resolved_account_id + handoff_hash + handoff_expires_at + handoff_consumed_at to auth_oauth_transactions plus auth_oauth_handoff_arm/_consume; completion route running the EXISTING issueSession()
@@ -1785,14 +1785,14 @@ REVIEWED_AT: 2026-07-22
 AUTHORITY_SHA: 6a28072c433d24aa489b3456b301b5a7e99a2716
 BASE_BRANCH: main
 TARGET_FILES:
-  - docs/dd-87-splitnameamount-decision-table-analysis.md
+  - docs/decisions/analysis/dd-87-splitnameamount-decision-table-analysis.md
   - docs/standards/decisions.md
   - docs/autopilot-manifests/core-matcher-grouped-amount-parsing.json
-  - docs/autopilot-core-split-name-amount-ambiguity-contract.md
+  - docs/autopilot/contracts/autopilot-core-split-name-amount-ambiguity-contract.md
   - .claude/commands/ap-29-core-split-name-amount-ambiguity-contract.md
   - docs/autopilot-backlog.md
   - docs/slice-readiness-verdicts.md
-  - docs/auth-s4-session-handoff.md
+  - docs/auth/auth-s4-session-handoff.md
 SLICE: core-matcher-grouped-amount-parsing
 IN_SCOPE: splitNameAmount exhaustive tagged-union contract, all positive parseMoney trailing candidates, exact unit assertions
 OUT_OF_SCOPE: transports, DB/schema/migrations, ledger mutation, classifyAmount/FIFO, consumer picker implementation, ignored historical table lift
@@ -1852,14 +1852,14 @@ REVIEWED_AT: 2026-07-22
 AUTHORITY_SHA: 827d24d17e7004c15f277fb8a53f0cb7d90f6547
 BASE_BRANCH: main
 TARGET_FILES:
-  - docs/dd-87-splitnameamount-decision-table-analysis.md
+  - docs/decisions/analysis/dd-87-splitnameamount-decision-table-analysis.md
   - docs/standards/decisions.md
   - docs/autopilot-manifests/core-matcher-grouped-amount-parsing.json
-  - docs/autopilot-core-split-name-amount-ambiguity-contract.md
+  - docs/autopilot/contracts/autopilot-core-split-name-amount-ambiguity-contract.md
   - .claude/commands/ap-29-core-split-name-amount-ambiguity-contract.md
   - docs/autopilot-backlog.md
   - docs/slice-readiness-verdicts.md
-  - docs/auth-s4-session-handoff.md
+  - docs/auth/auth-s4-session-handoff.md
 SLICE: core-matcher-grouped-amount-parsing
 IN_SCOPE: splitNameAmount exhaustive tagged-union contract, all positive parseMoney trailing candidates, exact unit assertions
 OUT_OF_SCOPE: transports, DB/schema/migrations, ledger mutation, classifyAmount/FIFO, consumer picker implementation, ignored historical table lift
@@ -1938,7 +1938,7 @@ CONTRACT_MATRIX: PASS (7 FKs enumerated with exact parent/child columns in manif
 CLOSURE_MATRIX: PASS (12/12 -- authority pinned at 29635be with exact target files; DD-68 prerequisite + HR1 are the closed decision; scope IN/OUT and exclusions pinned; root slice with no unmerged dependency; live schema verified on disk; FK contract complete; fail-closed via NOT VALID->probe->VALIDATE and MATCH-SIMPLE nullable semantics; zero open questions; TI-1..TI-9 have expected results; migration expand-only with named rollback; no hard dependency to wait on; manifest handoff ready)
 ACCEPTANCE_MATRIX: PASS (TI-1..TI-9 in the manifest; TI-1 cross-tenant reject per FK under the real app role via withTenant, TI-3 nullable MATCH-SIMPLE semantics, TI-6 named-halt violation probe, TI-8 migration count 19->20 in BOTH assertions, TI-9 session_occurrences untouched)
 SECURITY_AND_MIGRATION_GATE: PASS (expand-only; 0000-0018 byte-identical, immutability guard intact; no role/attribute/grant/RLS-policy change; rollback = DROP the 7 FKs + 2 candidate keys, no data migration; if any pre-existing violating row is found by the probe, HALT with the offending table/row named rather than delete or re-parent it. Migration number is 0019 assuming no other schema-token slice lands first; if one does, renumber to the next-available monotonic tail at author time -- do not hard-assume 0019 is free at merge)
-IMPLEMENTATION_ARTIFACTS: PASS (manifest committed with problem statement, key finding, pinned mechanism, rejected alternative, negative scope, scope_fks inventory and TI-1..TI-9; this verdict; analysis at docs/session-service-reslice-analysis.md L0a)
+IMPLEMENTATION_ARTIFACTS: PASS (manifest committed with problem statement, key finding, pinned mechanism, rejected alternative, negative scope, scope_fks inventory and TI-1..TI-9; this verdict; analysis at docs/archive/session-service-reslice-analysis.md L0a)
 FIRST_IMPLEMENTATION_STEP: after AP-25 (docs-session-management-acceptance-checklist, holds `schema`) merges so scope-gate register does not HALT SCOPE_COLLISION, open a manual P0 worktree from origin/main; write 0019 as candidate keys + 7 FKs NOT VALID, then the violation probe, then VALIDATE; mirror schema.ts; write TI-1..TI-9 with a seeded violating-row fixture for TI-6 BEFORE flipping the migration-count assertion 19->20 in both places
 REMAINING_BLOCKERS: none for CODE_READY. Register-time (not readiness) gate: `schema` token is held by in-flight AP-25; scope-gate will HALT until it merges. This is a scheduling wait, not a contract gap
 NEXT_REVIEW_TRIGGER: n/a -- CODE_READY; next event is the coding slice itself, once `schema` is free

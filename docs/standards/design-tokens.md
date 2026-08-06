@@ -3,6 +3,7 @@
 > Foundation-level design tokens cho web app. Khai báo CSS custom properties trong `:root`.
 > **Khi cần color/spacing/font mới → thêm vào đây kèm ghi chú.**
 > v1.2 · 2026-07-28 · **SoT duy nhất cho giá trị token** — `channels/web/design-tokens.md` chỉ còn là pointer (DD-59 ✅).
+> **Design System:** xem `design-system.md` (v1.0, 07/08/2026) cho component catalog, usage tokens, layout patterns, motion, a11y, và responsive grid — document đó reference values từ file này.
 > **Authority boundary:** current active values bên dưới vẫn là Indigo + Outfit/Inter. DD-81 đã chọn target Candidate C Energetic Orange + Sora/Inter, nhưng chưa activate trước tracked owner-approved `design.pen` + visual/WCAG/drift gate. `design.pen` variables phải match file này; authority flip cần DD mới + exporter + drift proof. Nhu cầu token: `token-needs-matrix.md`.
 
 ---

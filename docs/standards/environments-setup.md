@@ -3,7 +3,7 @@
 > **Version:** v2.1 · 2026-07-16
 > **Authority:** DD-04 = DigitalOcean co-location: App Platform + Managed PostgreSQL HA in Singapore,
 > connected through the `sgp1` VPC. The accepted record is
-> [`../dd-04-hosting-final-decision.md`](../dd-04-hosting-final-decision.md).
+> [`../decisions/analysis/dd-04-hosting-final-decision.md`](../decisions/analysis/dd-04-hosting-final-decision.md).
 > **Current repository state:** the local Docker Compose definition exists and validates; Docker-daemon
 > availability remains machine state and **must be checked before each run**. The daemon was started for the
 > 2026-07-16 closure and the canonical PostgreSQL/RLS/auth suite passed; the test container was then stopped.

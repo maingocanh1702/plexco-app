@@ -582,7 +582,7 @@ Error codes: `INVALID_WEBHOOK_SECRET`, `ACCOUNT_MISMATCH`, `DUPLICATE_TXN` (200)
 - FIFO ordering and partial plans.
 - Ambiguous multi-person returns manual, never auto split.
 - Ledger sum/reversal/state derivation.
-- **Pay-code resolver + allocation (DD-02 — assert the §4 worker contract; full spec `../../dd-02-paycode-analysis.md`):** `discoverPayCodeCandidates` → `batchResolve` (full-issued ⟺ `registry.locked_at NOT NULL` + `pay_code` match) → memo-level precedence → `planIncomingAllocations`. Fixtures:
+- **Pay-code resolver + allocation (DD-02 — assert the §4 worker contract; full spec `../../decisions/analysis/dd-02-paycode-analysis.md`):** `discoverPayCodeCandidates` → `batchResolve` (full-issued ⟺ `registry.locked_at NOT NULL` + `pay_code` match) → memo-level precedence → `planIncomingAllocations`. Fixtures:
   - `THANH TOAN`; `PAYMENT` (own vs non-own `PAY`); `BMT7Q2B` unissued → hard; foreign full-issued → hard; `ABC-7Q2A` foreign dash → hard; `BMTRANS` noise → `none`; `BMT-RANS` → hard; full-issued token in `skipCodes` → resolve (issued wins); `BMT7Q2A`/`BMT-7Q2A` both accepted; prefix-change-before-first-issuance (`BMT9K2P` none / `BMT-9K2P` hard); unknown-fee 100k→unknown pay 150k → allocate 100k keep 50k; unknown-fee-first → unmatched; concurrent prefix claim → 1 tx wins; lowercase/all-digit CHECK reject; `merged` → follow tombstone.
 
 ### Integration

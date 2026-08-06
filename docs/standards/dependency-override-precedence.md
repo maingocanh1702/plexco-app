@@ -9,7 +9,7 @@
 > commands report — see "A critical distinction" below, where those commands disagree with the
 > resolution outcome.
 > **References:** `docs/autopilot-backlog.md` task `pnpm-override-precedence-two-locations` (opened
-> from `deps-security-bump`'s AP-39 design probe) · `docs/autopilot-pnpm-override-precedence-two-locations.md`
+> from `deps-security-bump`'s AP-39 design probe) · `docs/autopilot/contracts/autopilot-pnpm-override-precedence-two-locations.md`
 
 ---
 

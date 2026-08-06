@@ -17,7 +17,7 @@
     "packages/db/src/authorization.test.ts",
     "packages/db/src/index.ts",
     "docs/autopilot-manifests/authorize-tenant-action-core.json",
-    "docs/autopilot-authorize-tenant-action-core.md"
+    "docs/autopilot/contracts/autopilot-authorize-tenant-action-core.md"
   ],
   "_scope_note": "The slice doc and this manifest are IN scope on purpose. AP-39 (deps-security-bump) left its contract doc out of scope; the reviewer then raised the resulting staleness in rounds 2, 4 and 6 and the writer had no authority to close it — three fix rounds spent explaining an unclosable gap. Contract amendments must be able to land with the change they describe.",
   "negative_scope": [
@@ -32,7 +32,7 @@
   "context_sources": [
     "docs/features/BE/feature_billing_lifecycle_tech.md",
     "docs/features/BE/feature_session_management_tech.md",
-    "docs/autopilot-authorize-tenant-action-core.md",
+    "docs/autopilot/contracts/autopilot-authorize-tenant-action-core.md",
     "packages/db/migrations/0002_tenants_core.sql",
     "packages/db/migrations/0007_billing.sql",
     "packages/db/migrations/0012_auth_functions.sql",

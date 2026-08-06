@@ -28,7 +28,7 @@
     "packages/db/src/rls-invariants.test.ts",
     "packages/db/README.md",
     "docs/autopilot-manifests/db-tenants-authz-grant-security-definer.json",
-    "docs/autopilot-db-tenants-authz-grant-security-definer.md"
+    "docs/autopilot/contracts/autopilot-db-tenants-authz-grant-security-definer.md"
   ],
   "_scope_note": "The slice doc and this manifest are IN scope on purpose (AP-39/AP-40 lesson). The migration filename 0027 is the NEXT MONOTONIC TAIL MEASURED 2026-07-31 (live tail is 0026); re-verify at execution time -- if another migration-adding slice landed first, the correct next number has moved and this scope must be corrected (re-register), not silently worked around by picking whatever number is free. migrate.test.ts and rls-invariants.test.ts were added to scope during implementation, not at authoring: adding migration file 0027 (the 28th migration file counting 0000-0027) bumps two hardcoded MIGRATION_COUNT/tail-filename literals that must move with it, the exact same class of fix db-undeclared-check-constraints-schema-mirror needed for its own migration (whose scope correctly included both files from the start). This slice's original authoring omitted them -- discovered when the canonical DB suite went red with 8 failures, all pinned-literal mismatches, none in this slice's own new code. Corrected via close (--authorized-close) and fresh register on the same branch/commits, not by editing scope post-registration (would HALT MANIFEST_DRIFT) or by touching the files pre-registration (would HALT SCOPE_DRIFT).",
   "negative_scope": [
@@ -49,7 +49,7 @@
     "packages/db/migrations/0009_rls_policies_grants.sql",
     "packages/db/src/authorization.test.ts",
     "packages/db/src/test-harness.ts",
-    "docs/autopilot-authorize-tenant-action-core.md"
+    "docs/autopilot/contracts/autopilot-authorize-tenant-action-core.md"
   ],
   "applicable_skills": [],
   "model_policy": {

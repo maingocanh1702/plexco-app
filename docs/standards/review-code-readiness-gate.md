@@ -409,7 +409,7 @@ vì validator sẽ báo xanh trên một khẳng định không ai đo. Trong t�
 kiểm kê bằng chứng, và mở verdict khi slice đã được author. **Không mở slice placeholder chỉ để có chỗ verdict.**
 
 Điều khoản này **không** thêm/bớt field nào validator kiểm, nên **không bump `REVIEW_POLICY_VERSION`** — nó
-định nghĩa phạm vi áp dụng, không đổi hợp đồng máy. Tiền lệ: AP-28 §C3 (`docs/auth-d1-implementation-packet.md`)
+định nghĩa phạm vi áp dụng, không đổi hợp đồng máy. Tiền lệ: AP-28 §C3 (`docs/auth/auth-d1-implementation-packet.md`)
 chuyển từ ma trận per-gate sang kiểm kê tiêu chí→bằng chứng; DD-38/39 không nhận verdict vì chưa là slice.
 
 ---

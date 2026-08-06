@@ -13,7 +13,7 @@
   "invariants": [],
   "scope": [
     "docs/autopilot-manifests/pnpm-override-precedence-two-locations.json",
-    "docs/autopilot-pnpm-override-precedence-two-locations.md",
+    "docs/autopilot/contracts/autopilot-pnpm-override-precedence-two-locations.md",
     ".claude/commands/ap-45-pnpm-override-precedence-two-locations.md",
     "docs/autopilot-backlog.md",
     "docs/standards/dependency-override-precedence.md"
@@ -60,13 +60,13 @@
       "awk '/^## task: deps-security-bump--postcss$/{f=1} f && /^## task:/ && !/deps-security-bump--postcss/{exit} f' docs/autopilot-backlog.md | grep -qF -e 'delete-not-comment'",
       "awk '/^## task: pnpm-workspace-esbuild-override-inert$/{f=1} f && /^## task:/ && !/pnpm-workspace-esbuild-override-inert/{exit} f' docs/autopilot-backlog.md | grep -qF -e 'delete-not-comment'",
       "awk '/^## task: pnpm-workspace-esbuild-override-inert$/{f=1} f && /^## task:/ && !/pnpm-workspace-esbuild-override-inert/{exit} f' docs/autopilot-backlog.md | grep -qF -e 'KHÔNG phải bare'",
-      "grep -qF -e 'review-readiness: historical' docs/autopilot-pnpm-override-precedence-two-locations.md",
-      "grep -qF -e '\"directive\":null' docs/autopilot-pnpm-override-precedence-two-locations.md",
+      "grep -qF -e 'review-readiness: historical' docs/autopilot/contracts/autopilot-pnpm-override-precedence-two-locations.md",
+      "grep -qF -e '\"directive\":null' docs/autopilot/contracts/autopilot-pnpm-override-precedence-two-locations.md",
       "git diff --quiet b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- package.json",
       "git diff --quiet b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- pnpm-workspace.yaml",
       "git diff --quiet b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- pnpm-lock.yaml",
       "grep -qF -e 'manifest: docs/autopilot-manifests/pnpm-override-precedence-two-locations.json' docs/autopilot-backlog.md",
-      "git diff --check b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- docs/standards/dependency-override-precedence.md docs/autopilot-pnpm-override-precedence-two-locations.md docs/autopilot-manifests/pnpm-override-precedence-two-locations.json .claude/commands/ap-45-pnpm-override-precedence-two-locations.md docs/autopilot-backlog.md"
+      "git diff --check b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43 -- docs/standards/dependency-override-precedence.md docs/autopilot/contracts/autopilot-pnpm-override-precedence-two-locations.md docs/autopilot-manifests/pnpm-override-precedence-two-locations.json .claude/commands/ap-45-pnpm-override-precedence-two-locations.md docs/autopilot-backlog.md"
     ],
     "canonical": [
       "pnpm typecheck",
@@ -101,5 +101,5 @@
     "MATERIAL_CONTEXT_OR_DECISION_MISSING",
     "REQUIRED_TOOL_UNAVAILABLE"
   ],
-  "_note": "Sixth re-registration overall, fifth on the reopened successor. Round 6 found canonical verification omitted the repo's own full test suite, unlike a real precedent (docs-billing-authz-signature-reconcile, also docs-only) which includes it. Ran DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test directly before adding it, not assumed safe: exit 0, 621 tests across packages/core, packages/db, apps/web, apps/bot, all passing. The original task briefing's canonical list (5 commands, no test) predates this registration's many review rounds and did not match this repo's own established convention for docs-only P2 tasks; matched it here rather than defend the narrower original list. Closed via ap-finish.sh --authorized-close, branch reset to base_sha, prior tip preserved on archive/pnpm-override-precedence-two-locations-successor-round6 and fast-forward-merged back in after this manifest's register call. Full history: docs/autopilot-pnpm-override-precedence-two-locations.md and docs/autopilot-backlog.md's own task block."
+  "_note": "Sixth re-registration overall, fifth on the reopened successor. Round 6 found canonical verification omitted the repo's own full test suite, unlike a real precedent (docs-billing-authz-signature-reconcile, also docs-only) which includes it. Ran DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test directly before adding it, not assumed safe: exit 0, 621 tests across packages/core, packages/db, apps/web, apps/bot, all passing. The original task briefing's canonical list (5 commands, no test) predates this registration's many review rounds and did not match this repo's own established convention for docs-only P2 tasks; matched it here rather than defend the narrower original list. Closed via ap-finish.sh --authorized-close, branch reset to base_sha, prior tip preserved on archive/pnpm-override-precedence-two-locations-successor-round6 and fast-forward-merged back in after this manifest's register call. Full history: docs/autopilot/contracts/autopilot-pnpm-override-precedence-two-locations.md and docs/autopilot-backlog.md's own task block."
 }

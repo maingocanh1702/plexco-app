@@ -5,7 +5,7 @@
 > **Status:** Reviewed
 > **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google auth lane DD-80 (migrations `0015`–`0018`: D0a revoke, `0016` email-token storage, `0017` Google-OIDC adapter, `0018` d1b completion-hop) đã merge và Safari macOS+iOS M3 measured PASS 2026-07-26. Engineering/measurement blocker đã đóng, nhưng Google login chưa có bằng chứng owner enable/go-live; `GOOGLE_OAUTH_*` template vẫn rỗng và các gate độc lập (A3 legal/PII/config) vẫn áp dụng. Email/password order-4 bundle (route/UI/provider send) chưa build, flag OFF · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../feature_web_auth_onboarding.md`
-> **References:** `../../standards/business-rules.md` BL-SEC-1/BL-SEC-3/BL-MSG · `../../standards/decisions.md` DD-13 · DD-31 · **DD-33** · DD-50 · DD-60 · **DD-65..67** · **DD-80 (B0 ✅; revoke-all G3 v1.88)** · `../../g3-revoke-all-concurrency-probe-seed.md` v1.0 · `../../b0-auth-credential-lifecycle-design-probe.md` · `../../standards/api-reference-convention.md` · `auth-security-invariant-table.md`
+> **References:** `../../standards/business-rules.md` BL-SEC-1/BL-SEC-3/BL-MSG · `../../standards/decisions.md` DD-13 · DD-31 · **DD-33** · DD-50 · DD-60 · **DD-65..67** · **DD-80 (B0 ✅; revoke-all G3 v1.88)** · `../../probes/g3-revoke-all-concurrency-probe-seed.md` v1.0 · `../../probes/b0-auth-credential-lifecycle-design-probe.md` · `../../standards/api-reference-convention.md` · `auth-security-invariant-table.md`
 
 ---
 
@@ -153,7 +153,7 @@ No table grant to runtime roles. Narrow issue/claim functions hash state+binding
 
 The lifecycle below is normative. **Current-state (2026-07-23): the storage layer has since been built & merged — `0016_account_email_token_core` on `main` (§2 Migration & Rollback); tables/indexes are live and reusable, NO longer provisional** (B0 ✅ per DD-80 references above: it mapped every register/verify/login/forgot/reset/revoke path and proved one transactional consume boundary, produced the decision table and exact uniqueness/expiry/cleanup constraints, and did not assume the single-token `revokeWebSession` helper already provides account-wide revocation). The design-gate wording below is retained as the original (pre-merge) rationale.
 
-> **(2026-07-18) Probe draft:** `../../b0-auth-credential-lifecycle-design-probe.md` — maps every register/verify/login/forgot/reset/revoke path, pins the single transactional consume boundary, the account-wide revoke primitive (ungranted internal helper + current-session-derived public wrapper), multi-attempt verify-first registration, the protected outbox → pg-boss delivery boundary and the login finalizer that closes the stale-password/reset race. **(Trạng thái tại 2026-07-18: còn awaiting owner approval.)** **Cập nhật current-state 2026-07-23:** B0 ✅ và storage layer đã được author + merge (`0016_account_email_token_core`, §2) — tables/indexes/consume-helper live, KHÔNG còn provisional, có thể reuse. Chỉ còn OPEN: email **PROVIDER order-4** (public functions `auth_verify_email`/`auth_reset_password`/`auth_finalize_email_login` + route/UI + provider send) chưa build; email provider vẫn fail-closed OFF (external gate `C7` in `../../pre-code-open-items-2026-07-16.md` §C).
+> **(2026-07-18) Probe draft:** `../../probes/b0-auth-credential-lifecycle-design-probe.md` — maps every register/verify/login/forgot/reset/revoke path, pins the single transactional consume boundary, the account-wide revoke primitive (ungranted internal helper + current-session-derived public wrapper), multi-attempt verify-first registration, the protected outbox → pg-boss delivery boundary and the login finalizer that closes the stale-password/reset race. **(Trạng thái tại 2026-07-18: còn awaiting owner approval.)** **Cập nhật current-state 2026-07-23:** B0 ✅ và storage layer đã được author + merge (`0016_account_email_token_core`, §2) — tables/indexes/consume-helper live, KHÔNG còn provisional, có thể reuse. Chỉ còn OPEN: email **PROVIDER order-4** (public functions `auth_verify_email`/`auth_reset_password`/`auth_finalize_email_login` + route/UI + provider send) chưa build; email provider vẫn fail-closed OFF (external gate `C7` in `../../probes/pre-code-open-items-2026-07-16.md` §C).
 
 - Credential record: one active password hash per email identity; unverified identity cannot login.
 - Verify/reset artifact: purpose-bound, random high-entropy raw token returned only to the delivery boundary; database stores only its hash, `expires_at`, `consumed_at`, and audit metadata.
@@ -501,7 +501,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 > cross-site, `cookies().get(plx_session)` trả `undefined` nên `issueSession` rơi vào `createWebSession`
 > (mint-fresh); đó là toàn bộ nguyên nhân của residual risk.
 >
-> **✅ Cơ chế hop ĐÃ PIN — đo thật, không suy đoán.** `../probe-strict-cookie-completion-hop.md` (2026-07-22)
+> **✅ Cơ chế hop ĐÃ PIN — đo thật, không suy đoán.** `../../probes/probe-strict-cookie-completion-hop.md` (2026-07-22)
 > chạy harness hai site trên Chromium 149 · Firefox 151 · WebKit 26.5:
 > **M1 (302 trần từ callback) = KHÔNG mang cookie Strict trên CẢ BA engine.** Mọi cơ chế commit một
 > **first-party document trước** rồi mới điều hướng same-site (`location.replace`, auto-POST, meta-refresh,

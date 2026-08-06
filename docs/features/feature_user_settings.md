@@ -2,7 +2,7 @@
 
 > ⚙️ **Status:** ✅ **DD-39 chốt (2026-07-10)** — Draft, pending migration. Nguồn canonical: `../standards/decisions.md` **DD-39** (ràng buộc đã pin: decrypt-fail → fail-closed, chỉ fallback khi gender NULL thật).
 >
-> ✅ **Follow + private/public (DD-47/48 — framework CHỐT 2026-07-13, build P4+):** khung design duyệt; §7 dưới đây là contract-level. `person_follows` là **global protected**, chỉ qua narrow `SECURITY DEFINER`; `profile_visibility` default public cho user mới nhưng backfill user cũ=`private`; social profile chỉ trả field có canonical source; self/host operational data đi route riêng. DD-55 đã đóng DM + block; còn **3 open item DD-48** chốt lúc build. Chi tiết `../dd-47-follow-graph-analysis.md` + `../dd-48-profile-visibility-analysis.md`.
+> ✅ **Follow + private/public (DD-47/48 — framework CHỐT 2026-07-13, build P4+):** khung design duyệt; §7 dưới đây là contract-level. `person_follows` là **global protected**, chỉ qua narrow `SECURITY DEFINER`; `profile_visibility` default public cho user mới nhưng backfill user cũ=`private`; social profile chỉ trả field có canonical source; self/host operational data đi route riêng. DD-55 đã đóng DM + block; còn **3 open item DD-48** chốt lúc build. Chi tiết `../decisions/analysis/dd-47-follow-graph-analysis.md` + `../decisions/analysis/dd-48-profile-visibility-analysis.md`.
 
 > **Canonical phase:** P4 (hồ sơ + nguồn `gender` cho giá kèo; follow/visibility P4+)
 > **Track:** ⚙️ User Settings & Profile
@@ -228,12 +228,12 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 | USR-OQ-1 | Tập giá trị gender + xử lý "khác" cho giá kèo | ✅ **Chốt DD-39 addendum (2026-07-16)** — `male`/`female`/`other`/`undisclosed`; `other`/`undisclosed`/NULL → **giá base**; fail-closed CHỈ khi KMS/decrypt lỗi. Kèm **DD-54**: gender/DOB là PII optional — thu thập theo platform config trên CMS admin dashboard |
 | USR-OQ-2 | Lưu giá theo giới tính: cột `price_male/price_female` vs bảng `session_price_by_gender` | ✅ **Chốt phase-1:** additive columns `sessions.price_male/price_female` beside canonical `price_amount`, matching BE/TDD/DD-39. A generalized table requires a future decision + migration, not an alternate current implementation. |
 | USR-OQ-3 | Retention/anonymization SLA cho PII hồ sơ | 🟠 **Partial (DD-54, 2026-07-16):** collection policy ✅ (PII optional theo platform config; field vận hành không config-off); retention/erasure matrix vẫn chờ legal review VN (Luật 91/2025 + NĐ 356/2025) — founder brief Item 6 |
-| USR-OQ-4 | Tập "stats" trong profile whitelist + có aggregate **cross-tenant** không (rủi ro lộ hoạt động xuyên CLB) | ⬜ Build-time — **DD-48 open item #1** (framework ✅; default exclude tới khi có model) → `../dd-48-profile-visibility-analysis.md` §5 |
-| USR-OQ-5 | Follower-count / following-list của user **private** có ẩn với non-follower không | ⬜ Build-time — **DD-48 open item #2** (framework ✅) → `../dd-48-profile-visibility-analysis.md` §5 |
+| USR-OQ-4 | Tập "stats" trong profile whitelist + có aggregate **cross-tenant** không (rủi ro lộ hoạt động xuyên CLB) | ⬜ Build-time — **DD-48 open item #1** (framework ✅; default exclude tới khi có model) → `../decisions/analysis/dd-48-profile-visibility-analysis.md` §5 |
+| USR-OQ-5 | Follower-count / following-list của user **private** có ẩn với non-follower không | ⬜ Build-time — **DD-48 open item #2** (framework ✅) → `../decisions/analysis/dd-48-profile-visibility-analysis.md` §5 |
 | USR-OQ-6 | Private có ảnh hưởng quyền **DM in-app** (DD-38) không | ✅ **Chốt DD-55:** phase-1 profile private/public không đổi quyền DM; mọi DM qua safety gate. Phase-2 accepted follow DM trực tiếp, non-follower vào request box |
 | USR-OQ-7 | Có cần cơ chế **block** user không (chống re-request spam) | ✅ **Chốt DD-55/decisions v1.45:** có; reuse canonical `chat_blocks` + safety service của In-app Chat cho follow/profile/DM, không tạo bảng block thứ hai |
-| USR-OQ-8 | Trong session **chung**, đồng đội thấy tên user tới mức nào (roster-presence vận hành vs profile xã hội — căng với "ẩn cả đồng đội") | ⬜ Build-time — **DD-48 open item #5** (framework ✅) → `../dd-48-profile-visibility-analysis.md` §5 |
-| USR-OQ-9 | Đường **notify follow-request** (person-directed global): global notify path mới vs SSE person-self / in-app inbox (`outbox`/`notification_intents` hiện tenant-scoped) | ⬜ Build-time — **DD-47 notify impl-gap** (framework ✅) → `../dd-47-follow-graph-analysis.md` §4 |
+| USR-OQ-8 | Trong session **chung**, đồng đội thấy tên user tới mức nào (roster-presence vận hành vs profile xã hội — căng với "ẩn cả đồng đội") | ⬜ Build-time — **DD-48 open item #5** (framework ✅) → `../decisions/analysis/dd-48-profile-visibility-analysis.md` §5 |
+| USR-OQ-9 | Đường **notify follow-request** (person-directed global): global notify path mới vs SSE person-self / in-app inbox (`outbox`/`notification_intents` hiện tenant-scoped) | ⬜ Build-time — **DD-47 notify impl-gap** (framework ✅) → `../decisions/analysis/dd-47-follow-graph-analysis.md` §4 |
 
 ### Changelog
 

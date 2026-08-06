@@ -5,7 +5,7 @@
 > **Status:** Reviewed  
 > **Implementation:** Partial DB substrate only — `0014` waitlist, `0019` same-tenant integrity và `0024` public-capacity CHECK đã merge; SessionService/routes/projectors/auto-promote/auto-expiry vẫn chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../feature_session_management.md`  
-> **References:** `../../product/TDD.md` §3.2/3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-32/DD-39/DD-45/**DD-45a**/DD-49/**DD-52**/**DD-65..68** · `../../dd-45-waitlist-analysis.md` · `feature_channel_booking_funnel_tech.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`)
+> **References:** `../../product/TDD.md` §3.2/3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-32/DD-39/DD-45/**DD-45a**/DD-49/**DD-52**/**DD-65..68** · `../../decisions/analysis/dd-45-waitlist-analysis.md` · `feature_channel_booking_funnel_tech.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`)
 
 > **DD-32/DD-45/DD-49 contract:** waitlisted tự thân không chiếm capacity, không tạo charge/new-obligation/venue; live paid-unlinked booking intent có thể giữ đúng một slot trong 15 phút. Admission occupancy dùng một helper `active + unexpired holds`. Promotion free/linked giữ DD-45/DD-49 timing; paid+unlinked candidate vẫn waitlisted/ẩn venue tới verified settlement, expiry release + audited requeue-tail. Runtime/intent schema chưa tồn tại.
 >

@@ -18,9 +18,9 @@
     "package.json",
     "packages/db/src/migrate.test.ts",
     "docs/autopilot-manifests/chat-definer-role-provisioning.json",
-    "docs/autopilot-chat-definer-role-provisioning.md"
+    "docs/autopilot/contracts/autopilot-chat-definer-role-provisioning.md"
   ],
-  "_scope_note": "Exactly the 3 files plan SS9.2 pins (infra/postgres-init/02-chat-definer.sql new, root package.json bootstrap command, packages/db/src/migrate.test.ts) plus this manifest and its slice doc (AP-39/AP-40 lesson, repeated by db-tenants-authz-grant-security-definer and dd38-dd86-chat-schema-core). packages/db/src/test-harness.ts is deliberately NOT in scope -- the new bootstrapChatDefiner/withChatDefinerLock/hideRealChatDefiner helpers are added LOCAL to migrate.test.ts, mirroring the existing hideRealJobDefiner precedent (already local there, not exported from test-harness.ts) -- see docs/autopilot-chat-definer-role-provisioning.md SS5.4. packages/db/src/migrate.ts, .github/workflows/ci.yml and infra/docker-compose.yml are read as context (to verify RUNTIME_ROLES stays untouched and that CI/compose wiring needs zero changes) but are not edited -- see the same SS5.4 for why both are safe with zero changes.",
+  "_scope_note": "Exactly the 3 files plan SS9.2 pins (infra/postgres-init/02-chat-definer.sql new, root package.json bootstrap command, packages/db/src/migrate.test.ts) plus this manifest and its slice doc (AP-39/AP-40 lesson, repeated by db-tenants-authz-grant-security-definer and dd38-dd86-chat-schema-core). packages/db/src/test-harness.ts is deliberately NOT in scope -- the new bootstrapChatDefiner/withChatDefinerLock/hideRealChatDefiner helpers are added LOCAL to migrate.test.ts, mirroring the existing hideRealJobDefiner precedent (already local there, not exported from test-harness.ts) -- see docs/autopilot/contracts/autopilot-chat-definer-role-provisioning.md SS5.4. packages/db/src/migrate.ts, .github/workflows/ci.yml and infra/docker-compose.yml are read as context (to verify RUNTIME_ROLES stays untouched and that CI/compose wiring needs zero changes) but are not edited -- see the same SS5.4 for why both are safe with zero changes.",
   "negative_scope": [
     "NO edit to infra/postgres-init/01-job-definer.sql -- job_definer's exact behavior, attributes, and grant-target resolution are untouched",
     "NO edit to packages/db/src/migrate.ts's RUNTIME_ROLES array or ensureRoleExists -- chat_definer must never be added there (that idiom hard-codes LOGIN NOBYPASSRLS, the opposite of a definer role)",
@@ -31,7 +31,7 @@
     "NO GRANT USAGE or GRANT CREATE ON SCHEMA public TO chat_definer -- deliberately deferred to dd38-dd86-chat-schema-core's own root migration, which creates and owns the SECURITY DEFINER functions that actually need it",
     "NO new file under packages/db/migrations/ -- chat_definer is provisioned via infra/postgres-init/, entirely outside the migration runner, exactly like job_definer",
     "NO edit to packages/db/src/test-harness.ts -- see _scope_note",
-    "NO edit to .github/workflows/ci.yml or infra/docker-compose.yml -- both already work with zero changes under this contract's grant-target design (docs/autopilot-chat-definer-role-provisioning.md SS5.4); if a future reviewer overturns that design decision, both become in-scope for a follow-up, not this slice",
+    "NO edit to .github/workflows/ci.yml or infra/docker-compose.yml -- both already work with zero changes under this contract's grant-target design (docs/autopilot/contracts/autopilot-chat-definer-role-provisioning.md SS5.4); if a future reviewer overturns that design decision, both become in-scope for a follow-up, not this slice",
     "NO edit to docs/autopilot-backlog.md -- separate chore commit, out of this slice's scope"
   ],
   "context_sources": [
@@ -43,8 +43,8 @@
     ".github/workflows/ci.yml",
     "infra/docker-compose.yml",
     "docs/autopilot-invariant-catalog.md",
-    "docs/autopilot-dd38-dd86-chat-schema-core.md",
-    "docs/autopilot-chat-definer-role-provisioning.md"
+    "docs/autopilot/contracts/autopilot-dd38-dd86-chat-schema-core.md",
+    "docs/autopilot/contracts/autopilot-chat-definer-role-provisioning.md"
   ],
   "applicable_skills": [],
   "model_policy": {
@@ -94,7 +94,7 @@
   },
   "security_review": {
     "required": true,
-    "reason": "Creates a cluster-global BYPASSRLS-capable role that a future migration (dd38-dd86-chat-schema-core) will transfer SECURITY DEFINER function ownership to -- the fail-closed grant-target validation (attribute drift, runtime-role refusal, non-existent-role refusal, re-pointing refusal, transitive-membership re-check after grant) IS the entire privilege boundary this slice exists to establish. Security round must specifically verify: the single-transaction atomicity claim (no partial grant survives any failure), that the grant-target fallback to CURRENT_USER cannot be reached by any runtime role in practice (an inherited ruling from 01-job-definer.sql's own codex round-06 [P1], not a fresh trade-off), that the re-pointing guard (docs/autopilot-chat-definer-role-provisioning.md SS5.4.2 -- refuses a second non-runtime member instead of silently accumulating one, a gap job_definer's own script does not close) is correctly scoped to exclude v_target itself so exact replay still passes, and that the deliberate omission of the schema-level USAGE/CREATE grant (deferred to the root migration) does not leave a gap the root migration fails to close.",
+    "reason": "Creates a cluster-global BYPASSRLS-capable role that a future migration (dd38-dd86-chat-schema-core) will transfer SECURITY DEFINER function ownership to -- the fail-closed grant-target validation (attribute drift, runtime-role refusal, non-existent-role refusal, re-pointing refusal, transitive-membership re-check after grant) IS the entire privilege boundary this slice exists to establish. Security round must specifically verify: the single-transaction atomicity claim (no partial grant survives any failure), that the grant-target fallback to CURRENT_USER cannot be reached by any runtime role in practice (an inherited ruling from 01-job-definer.sql's own codex round-06 [P1], not a fresh trade-off), that the re-pointing guard (docs/autopilot/contracts/autopilot-chat-definer-role-provisioning.md SS5.4.2 -- refuses a second non-runtime member instead of silently accumulating one, a gap job_definer's own script does not close) is correctly scoped to exclude v_target itself so exact replay still passes, and that the deliberate omission of the schema-level USAGE/CREATE grant (deferred to the root migration) does not leave a gap the root migration fails to close.",
     "tool": "scripts/codex-review-pin.sh"
   },
   "budgets": {
@@ -109,9 +109,9 @@
     "SCOPE_OR_BASE_DRIFT",
     "MATERIAL_CONTEXT_OR_DECISION_MISSING",
     "REQUIRED_TOOL_UNAVAILABLE",
-    "the live default branch has advanced such that infra/postgres-init/ no longer contains exactly 01-job-definer.sql, or packages/db/src/migrate.test.ts's MIGRATION_COUNT is no longer 28, when the worktree opens -- re-verify live-repo state (docs/autopilot-chat-definer-role-provisioning.md SS3) before proceeding rather than assuming this contract's snapshot still holds",
+    "the live default branch has advanced such that infra/postgres-init/ no longer contains exactly 01-job-definer.sql, or packages/db/src/migrate.test.ts's MIGRATION_COUNT is no longer 28, when the worktree opens -- re-verify live-repo state (docs/autopilot/contracts/autopilot-chat-definer-role-provisioning.md SS3) before proceeding rather than assuming this contract's snapshot still holds",
     "the chosen advisory lock key (0x63686164, \"chad\") is found to collide with a key introduced by another slice between authoring and implementation -- grep packages/ for pg_advisory_lock/_LOCK_KEY again before using it, and pick a new distinct value if it collides",
-    "implementation determines Reading A (docs/autopilot-chat-definer-role-provisioning.md SS5.4) was actually intended instead of Reading B -- HALT and report rather than silently reworking CI/docker-compose wiring beyond this slice's negative scope",
+    "implementation determines Reading A (docs/autopilot/contracts/autopilot-chat-definer-role-provisioning.md SS5.4) was actually intended instead of Reading B -- HALT and report rather than silently reworking CI/docker-compose wiring beyond this slice's negative scope",
     "any acceptance-matrix row in the contract SS8 turns out to need a file outside this slice's scope -- HALT and report, that means this slice's premise needs re-deriving, not a scope decision made mid-implementation"
   ],
   "readiness_evidence_path": ".autopilot/state/chat-definer-role-provisioning/readiness.json"

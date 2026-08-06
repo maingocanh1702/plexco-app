@@ -18,7 +18,7 @@
     "pnpm-workspace.yaml",
     "pnpm-lock.yaml",
     "docs/autopilot-manifests/pnpm-workspace-esbuild-override-inert.json",
-    "docs/autopilot-pnpm-workspace-esbuild-override-inert.md",
+    "docs/autopilot/contracts/autopilot-pnpm-workspace-esbuild-override-inert.md",
     ".claude/commands/ap-48-pnpm-workspace-esbuild-override-inert.md"
   ],
   "_scope_note": "docs/autopilot-backlog.md is deliberately EXCLUDED even though its task block (line 1312) will read as stale (status: idea) once this lands. Two parallel registrations collided on that shared file this same week; updating its status is an out-of-band, by-hand action after this slice reaches a terminal state, not part of this slice's registered scope.",

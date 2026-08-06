@@ -86,7 +86,7 @@ by mechanism into bounded artifacts, classify risk again, and merge prerequisite
 
 Selected slug: `infra-egress-compatibility-evidence`  
 Manifest: `docs/autopilot-manifests/infra-egress-compatibility-evidence.json`  
-Task contract: `docs/autopilot-infra-egress-compatibility-evidence.md`  
+Task contract: `docs/autopilot/contracts/autopilot-infra-egress-compatibility-evidence.md`  
 Launcher: `.claude/commands/ap-22-infra-egress-compatibility-evidence.md`
 
 Run the following once from the repository root **after** the current documentation closure, this dispatcher,
@@ -102,10 +102,10 @@ test -z "$(git status --porcelain)"
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
 
 test -f docs/autopilot-manifests/infra-egress-compatibility-evidence.json
-test -f docs/autopilot-infra-egress-compatibility-evidence.md
+test -f docs/autopilot/contracts/autopilot-infra-egress-compatibility-evidence.md
 test -f .claude/commands/ap-22-infra-egress-compatibility-evidence.md
 git show origin/main:docs/autopilot-manifests/infra-egress-compatibility-evidence.json >/dev/null
-git show origin/main:docs/autopilot-infra-egress-compatibility-evidence.md >/dev/null
+git show origin/main:docs/autopilot/contracts/autopilot-infra-egress-compatibility-evidence.md >/dev/null
 git show origin/main:.claude/commands/ap-22-infra-egress-compatibility-evidence.md >/dev/null
 
 scripts/autopilot-backlog-reconcile --check

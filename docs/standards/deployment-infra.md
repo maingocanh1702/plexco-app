@@ -1,6 +1,6 @@
 # Deployment & Infrastructure — Plexco
 
-> **Version:** v1.9 · 2026-07-25 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; DD-89/DD-90 add the privileged `job_definer` bootstrap boundary; Day-1 `$120–135` với read isolation trên primary; read-only node là upgrade theo telemetry; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../dd-04-hosting-final-decision.md`)
+> **Version:** v1.9 · 2026-07-25 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; DD-89/DD-90 add the privileged `job_definer` bootstrap boundary; Day-1 `$120–135` với read isolation trên primary; read-only node là upgrade theo telemetry; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../decisions/analysis/dd-04-hosting-final-decision.md`)
 > **Status:** Draft (chờ review)
 > **Scope:** Cách deploy Plexco tối ưu/hiệu quả/dễ maintain, kèm scalability & security ở tầng hạ tầng.
 > **References:** `../product/TDD.md` §3.4/§7/§8 · `../strategy/saas-implementation-plan.md` §4/§5/§7 · `../research/player-side-saas-AUDIT.md` (C1–C8b · B1–B6 · G1–G6) · `../features/BE/feature_security_operations_tech.md`
@@ -10,7 +10,7 @@
 
 ## 0. TL;DR
 
-Deploy Plexco như **một modular monolith container-hoá**: **1 Docker image → 3 process group** (`web` · `discovery` · `worker`) cùng codebase, khác entrypoint/DB-role. Chạy trên **DigitalOcean App Platform** (compute) + **DO Managed Postgres HA-standby cùng VPC private**, **region Singapore** (DD-04 ✅ (c), 2026-07-16 — thay Fly; Fly = fallback (a); pre-build **egress-IP gate §7.1** — xem `../dd-04-hosting-final-decision.md`). Full infra spec (DO App Spec, supersede `fly.toml`) làm ở **build slice riêng**. Queue/cron nằm trên Postgres qua **pg-boss** (không Redis/Kafka). Realtime = **SSE fan-out qua Postgres `LISTEN/NOTIFY`** (không cần message broker).
+Deploy Plexco như **một modular monolith container-hoá**: **1 Docker image → 3 process group** (`web` · `discovery` · `worker`) cùng codebase, khác entrypoint/DB-role. Chạy trên **DigitalOcean App Platform** (compute) + **DO Managed Postgres HA-standby cùng VPC private**, **region Singapore** (DD-04 ✅ (c), 2026-07-16 — thay Fly; Fly = fallback (a); pre-build **egress-IP gate §7.1** — xem `../decisions/analysis/dd-04-hosting-final-decision.md`). Full infra spec (DO App Spec, supersede `fly.toml`) làm ở **build slice riêng**. Queue/cron nằm trên Postgres qua **pg-boss** (không Redis/Kafka). Realtime = **SSE fan-out qua Postgres `LISTEN/NOTIFY`** (không cần message broker).
 
 **KHÔNG:** Kubernetes · tách microservices · serverless function cho worker/webhook/SSE · Redis cho queue.
 
@@ -39,11 +39,11 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 
 ### DD-04 (OD-4) — Postgres hosting · ✅ Accepted 2026-07-16 — Option (c) DO co-locate
 
-> ✅ **FINAL (2026-07-16):** chọn **(c) co-locate DigitalOcean** — compute = **DO App Platform** (thay Fly), DB = **DO Managed PG HA-standby cùng VPC private**, Singapore. Fly = **fallback (a)**. **Pre-build gate = egress-IP verify (§7.1)**; full DO App Spec + supersede `fly.toml` = **infra build slice**. Record: `../dd-04-hosting-final-decision.md`.
+> ✅ **FINAL (2026-07-16):** chọn **(c) co-locate DigitalOcean** — compute = **DO App Platform** (thay Fly), DB = **DO Managed PG HA-standby cùng VPC private**, Singapore. Fly = **fallback (a)**. **Pre-build gate = egress-IP verify (§7.1)**; full DO App Spec + supersede `fly.toml` = **infra build slice**. Record: `../decisions/analysis/dd-04-hosting-final-decision.md`.
 
 **Đã chốt:** Managed Postgres **HA (auto-failover) + PITR**, **region Singapore**, **private VPC** (co-locate). Compute = **DigitalOcean App Platform** (DD-10 giữ nguyên: standalone container, không Vercel).
 **Gate cứng (đã đạt qua (c)):** **auto-failover HA + uptime SLA + posture private-network** (VPC by construction).
-**Phân tích đầy đủ + nguồn:** `../dd-04-hosting-final-decision.md` (final ✅) · `../dd-04-hosting-decision-brief.md` (rev 5, phân tích) — bảng dưới là tóm tắt (a/b/c ứng viên, giữ làm tham chiếu; (c) đã chọn).
+**Phân tích đầy đủ + nguồn:** `../decisions/analysis/dd-04-hosting-final-decision.md` (final ✅) · `../decisions/analysis/dd-04-hosting-decision-brief.md` (rev 5, phân tích) — bảng dưới là tóm tắt (a/b/c ứng viên, giữ làm tham chiếu; (c) đã chọn).
 
 **Lịch sử QĐ-1 (đã superseded bởi quyết định ở trên):** khi compute còn target Fly, DB managed khác cloud nên không private thật trừ PrivateLink/co-locate. **(a)** public TLS + `sslmode=verify-full` + static-egress-IP allowlist [Fly, nay chỉ là fallback] · **(b)** PrivateLink AWS [loại] · **(c)** co-locate compute+DB cùng cloud [**đã chọn**; đổi deployment target nhưng không đảo DD-10].
 
@@ -228,7 +228,7 @@ push → build immutable image (signed) → CI gates → deploy staging → prom
 
 ## 9. Cost estimate — Day-1 baseline + trigger-based upgrades (DD-04 Rev 2)
 
-> **Model (thay Tier A/B cũ $121–133 / $202–254).** Day-1 chạy **baseline money-safe tối thiểu** `$120–135/tháng` — đã gồm non-negotiables: HA primary+standby, PITR, VPC private, fail-closed RLS, KMS envelope encryption, offsite-backup allowance, cùng **§9.3 read-isolation controls**. Các add-on đắt (read replica vật lý, WAF Pro, Sentry Team, worker thứ 2, resize DB) **KHÔNG bắt buộc Day-1** — bật theo **telemetry trigger đo được** (§9.2). Nguồn chuẩn: `../dd-04-hosting-final-decision.md` §5.
+> **Model (thay Tier A/B cũ $121–133 / $202–254).** Day-1 chạy **baseline money-safe tối thiểu** `$120–135/tháng` — đã gồm non-negotiables: HA primary+standby, PITR, VPC private, fail-closed RLS, KMS envelope encryption, offsite-backup allowance, cùng **§9.3 read-isolation controls**. Các add-on đắt (read replica vật lý, WAF Pro, Sentry Team, worker thứ 2, resize DB) **KHÔNG bắt buộc Day-1** — bật theo **telemetry trigger đo được** (§9.2). Nguồn chuẩn: `../decisions/analysis/dd-04-hosting-final-decision.md` §5.
 
 ### Tier A — Day-1 baseline (money-safe với fail-closed + §9.3 read isolation)
 

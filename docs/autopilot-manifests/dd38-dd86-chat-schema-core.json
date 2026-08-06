@@ -9,7 +9,7 @@
   "writer_processes_max": 1,
   "depends_on": ["chat-definer-role-provisioning", "chat-dm-safety-authority-core"],
   "dep_checks": [],
-  "_dependency_note": "depends_on names the TRUE prerequisites (corrected from the docs/autopilot-backlog.md stub's depends_on: [], which that entry's own notes say is a placeholder: 'this is an evidence registry anchor, not evidence that the executable slice graph has no dependencies'). dep_checks is deliberately EMPTY: neither chat-definer-role-provisioning nor chat-dm-safety-authority-core has a backlog entry, manifest, or launcher yet (verified 2026-08-03 via grep across docs/autopilot-backlog.md -- zero hits for either slug), so there is no base_sha/landed_sha/symbol proof to cite. This is not an oversight -- fabricating placeholder SHAs here would be exactly the 'evidence with a machine-checked shell' failure review-code-readiness-gate.md SS11.2 warns against. This is a HARD functional dependency, not just collision-avoidance: this slice's own migration calls dm_safety_enabled() (owned by chat-dm-safety-authority-core) inside dm_current_read_allowed(), and does ALTER FUNCTION ... OWNER TO chat_definer / GRANT ... TO chat_definer, which requires the chat_definer role (chat-definer-role-provisioning's entire deliverable) to already exist with exact NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION attributes. Without slice 1, this slice's own migration cannot even apply. tenant-capability-authority-core's dependency ON this slice (the reverse direction) is explicitly the OTHER kind -- collision-only, shared migration tail/schema.ts/catalog tests, not semantic -- and is not listed here since it is a successor, not a prerequisite. See docs/autopilot-dd38-dd86-chat-schema-core.md SS4 for the full derivation across 8+ source docs.",
+  "_dependency_note": "depends_on names the TRUE prerequisites (corrected from the docs/autopilot-backlog.md stub's depends_on: [], which that entry's own notes say is a placeholder: 'this is an evidence registry anchor, not evidence that the executable slice graph has no dependencies'). dep_checks is deliberately EMPTY: neither chat-definer-role-provisioning nor chat-dm-safety-authority-core has a backlog entry, manifest, or launcher yet (verified 2026-08-03 via grep across docs/autopilot-backlog.md -- zero hits for either slug), so there is no base_sha/landed_sha/symbol proof to cite. This is not an oversight -- fabricating placeholder SHAs here would be exactly the 'evidence with a machine-checked shell' failure review-code-readiness-gate.md SS11.2 warns against. This is a HARD functional dependency, not just collision-avoidance: this slice's own migration calls dm_safety_enabled() (owned by chat-dm-safety-authority-core) inside dm_current_read_allowed(), and does ALTER FUNCTION ... OWNER TO chat_definer / GRANT ... TO chat_definer, which requires the chat_definer role (chat-definer-role-provisioning's entire deliverable) to already exist with exact NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION attributes. Without slice 1, this slice's own migration cannot even apply. tenant-capability-authority-core's dependency ON this slice (the reverse direction) is explicitly the OTHER kind -- collision-only, shared migration tail/schema.ts/catalog tests, not semantic -- and is not listed here since it is a successor, not a prerequisite. See docs/autopilot/contracts/autopilot-dd38-dd86-chat-schema-core.md SS4 for the full derivation across 8+ source docs.",
   "invariants": ["schema"],
   "_invariant_note": "schema: Supabase/Postgres tables, migrations, RLS policies (docs/autopilot-invariant-catalog.md:35) -- this slice adds exactly one migration touching RLS. No other domain token applies: no money/billing path, no auth/session mutation (chat_definer is a role, not an auth boundary change), no cross-club logic.",
   "scope": [
@@ -19,7 +19,7 @@
     "packages/db/src/migrate.test.ts",
     "packages/db/README.md",
     "docs/autopilot-manifests/dd38-dd86-chat-schema-core.json",
-    "docs/autopilot-dd38-dd86-chat-schema-core.md"
+    "docs/autopilot/contracts/autopilot-dd38-dd86-chat-schema-core.md"
   ],
   "_scope_note": "The slice doc and this manifest are IN scope on purpose (AP-39/AP-40 lesson, repeated by db-tenants-authz-grant-security-definer). packages/db/src/migrate.test.ts is pre-declared in scope for the same mechanical-literal-bump reason that manifest documented as a lesson learned during its own implementation, not authoring -- do not repeat that omission. packages/db/README.md documents the two new SECURITY DEFINER functions (chat_current_is_member, dm_current_read_allowed), matching the per-migration documentation convention every prior SECURITY DEFINER slice has followed. rls-invariants.test.ts is deliberately NOT in scope: its CND (check-constraint-naming-drift) regression guard iterates Object.values(schemaModule) generically and already covers new tables, PROVIDED every constraint in the schema.ts mirror uses an explicit declared name (check()/unique()/foreignKey() builders) -- see _design_contract.",
   "_migration_number_note": "0029 is a PROVISIONAL placeholder, not a commitment. Live tail measured 2026-08-03 is 0027_resolve_tenant_status_locked.sql. chat-definer-role-provisioning (slice 1) does NOT consume a migration number -- its exact packet (primary-surface plan SS9.2) creates infra/postgres-init/02-chat-definer.sql, a superuser bootstrap script parallel to the existing 01-job-definer.sql, run via a db:bootstrap-style command, never a packages/db/migrations/*.sql file. chat-dm-safety-authority-core (slice 2) DOES add one independent migration (+1 -> 0028). This slice's migration would then be 0029 IF exactly zero other migration-adding slices land in between -- re-derive with `ls packages/db/migrations/*.sql | sort | tail -5` immediately before creating anything, and only after confirming slices 1 and 2 have actually landed on origin/main.",
@@ -45,7 +45,7 @@
     "docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md",
     "docs/features/BE/feature_inapp_chat_tech.md",
     "docs/features/feature_inapp_chat.md",
-    "docs/dd-86-in-app-multi-channel-analysis.md",
+    "docs/decisions/analysis/dd-86-in-app-multi-channel-analysis.md",
     "docs/standards/decisions.md",
     "docs/standards/feature-dependency-graph.md",
     "packages/db/schema.ts",
@@ -54,7 +54,7 @@
     "packages/db/src/tenant.ts",
     "packages/db/src/test-harness.ts",
     "docs/autopilot-invariant-catalog.md",
-    "docs/autopilot-dd38-dd86-chat-schema-core.md"
+    "docs/autopilot/contracts/autopilot-dd38-dd86-chat-schema-core.md"
   ],
   "applicable_skills": [],
   "model_policy": {

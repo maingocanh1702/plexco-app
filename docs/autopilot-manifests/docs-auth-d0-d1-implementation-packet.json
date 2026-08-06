@@ -11,7 +11,7 @@
   "depends_on": [],
   "dep_checks": [
     { "file": "docs/autopilot-manifests/auth-s4-d0-revoke-core.json", "symbol": "auth-s4-d0-revoke-core" },
-    { "file": "docs/b0-auth-credential-lifecycle-design-probe.md", "symbol": "DD-80" }
+    { "file": "docs/probes/b0-auth-credential-lifecycle-design-probe.md", "symbol": "DD-80" }
   ],
   "invariants": ["auth", "schema"],
   "negative_scope": [

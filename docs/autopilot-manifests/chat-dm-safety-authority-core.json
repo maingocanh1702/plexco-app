@@ -17,7 +17,7 @@
       "symbol": "chat_definer"
     }
   ],
-  "_dependency_note": "Single hard dependency, MERGED with same-order proof: infra/postgres-init/02-chat-definer.sql does not exist at base_sha (confirmed 2026-08-05 -- git show <base_sha>:<path> errors 'exists on disk, but not in <base_sha>'; git grep chat_definer <base_sha> is zero hits repo-wide) and exists with the exact bootstrapped role at landed_sha and at the current live base (5cad41f4d7f6d47a2f591a1d70c75885568cb4b0). This is a HARD functional dependency, not collision-avoidance: this slice's own migration does ALTER FUNCTION ... OWNER TO chat_definer on all three functions it creates, which mechanically requires the role to already exist (PostgreSQL: 'you must be able to SET ROLE to the new owning role, and that role must have CREATE privilege on the function's schema'). dd38-dd86-chat-schema-core (slice 3) in turn hard-depends on THIS slice the same way -- its own migration calls dm_safety_enabled() and repeats the same ALTER FUNCTION ... OWNER TO chat_definer pattern for its own functions; see docs/autopilot-chat-dm-safety-authority-core.md SS4.2.",
+  "_dependency_note": "Single hard dependency, MERGED with same-order proof: infra/postgres-init/02-chat-definer.sql does not exist at base_sha (confirmed 2026-08-05 -- git show <base_sha>:<path> errors 'exists on disk, but not in <base_sha>'; git grep chat_definer <base_sha> is zero hits repo-wide) and exists with the exact bootstrapped role at landed_sha and at the current live base (5cad41f4d7f6d47a2f591a1d70c75885568cb4b0). This is a HARD functional dependency, not collision-avoidance: this slice's own migration does ALTER FUNCTION ... OWNER TO chat_definer on all three functions it creates, which mechanically requires the role to already exist (PostgreSQL: 'you must be able to SET ROLE to the new owning role, and that role must have CREATE privilege on the function's schema'). dd38-dd86-chat-schema-core (slice 3) in turn hard-depends on THIS slice the same way -- its own migration calls dm_safety_enabled() and repeats the same ALTER FUNCTION ... OWNER TO chat_definer pattern for its own functions; see docs/autopilot/contracts/autopilot-chat-dm-safety-authority-core.md SS4.2.",
   "invariants": ["schema"],
   "_invariant_note": "schema: Supabase/Postgres tables, migrations, RLS policies (docs/autopilot-invariant-catalog.md:35) -- this slice adds exactly one migration; no RLS is actually used (all four new tables are global-protected plane, zero grant to app -- see slice doc SS5 design-probe row 8), but 'schema' is still the correct token since it covers 'tables, migrations' generically and this is the same token every sibling chat-tree DB slice (AP-45/AP-47/AP-49) declares, which is what correctly serializes this slice against them (shared migration tail/schema.ts/catalog tests). No money/billing path, no auth/session table mutation (chat_definer is a role grant, not an auth boundary change), no cross-club logic -- no other domain token applies.",
   "scope": [
@@ -27,7 +27,7 @@
     "packages/db/src/migrate.test.ts",
     "packages/db/README.md",
     "docs/autopilot-manifests/chat-dm-safety-authority-core.json",
-    "docs/autopilot-chat-dm-safety-authority-core.md"
+    "docs/autopilot/contracts/autopilot-chat-dm-safety-authority-core.md"
   ],
   "_scope_note": "Module count for the plan's B3 budget exception (SS9, line 422: <=750 LOC / <=3 modules / 1 migration) is 3: migration + schema mirror + focused invariant test, matching root's own accounting. packages/db/src/migrate.test.ts (mechanical literal bump) and packages/db/README.md (per-migration doc convention) are mechanical/documentation, same accounting dd38-dd86-chat-schema-core's own manifest used for its own scope. The slice doc and this manifest are in scope on purpose (AP-39/AP-40 lesson). rls-invariants.test.ts, tenant.ts, test-harness.ts and the two infra/postgres-init/*.sql bootstrap files are read as context but deliberately NOT edited -- see negative_scope.",
   "_migration_number_note": "0030 is a PROVISIONAL placeholder, not a commitment. Live tail measured 2026-08-05 is 0029_dd29_capability_registry_contract.sql (unrelated DD-29 billing/pricing migration -- confirmed not the DD-56 chat capability registry, see slice doc SS3). This slice's only hard dependency (chat-definer-role-provisioning) consumes zero packages/db/migrations/*.sql numbers -- its deliverable is infra/postgres-init/02-chat-definer.sql, run via pnpm db:bootstrap, never a numbered migration file -- so 0030 is a tighter estimate than dd38-dd86-chat-schema-core's own guess was. Still re-derive with `ls packages/db/migrations/*.sql | sort | tail -5` immediately before creating anything at implementation time.",
@@ -57,7 +57,7 @@
     "docs/standards/decisions.md",
     "docs/standards/business-rules.md",
     "docs/standards/core-db-architecture-principles.md",
-    "docs/autopilot-dd38-dd86-chat-schema-core.md",
+    "docs/autopilot/contracts/autopilot-dd38-dd86-chat-schema-core.md",
     "docs/autopilot-manifests/dd38-dd86-chat-schema-core.json",
     "docs/autopilot-manifests/db-tenants-authz-grant-security-definer.json",
     "infra/postgres-init/02-chat-definer.sql",
@@ -66,7 +66,7 @@
     "packages/db/migrations/0012_auth_functions.sql",
     "packages/db/README.md",
     "docs/autopilot-invariant-catalog.md",
-    "docs/autopilot-chat-dm-safety-authority-core.md"
+    "docs/autopilot/contracts/autopilot-chat-dm-safety-authority-core.md"
   ],
   "applicable_skills": [],
   "model_policy": {

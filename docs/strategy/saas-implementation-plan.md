@@ -5,7 +5,7 @@
 >
 > **Reposition (v2 doc, 18/06/2026):** từ "SaaS thu phí cầu lông" → **platform đa môn + marketplace discovery + web sync 2 chiều**. Module đối soát CK (killer cũ) giữ nguyên thiết kế, thành 1 module. Thêm **3 tầng hiển thị** (public discovery / tenant-private RLS / person-self), **sync engine**, **chiều `sport`**.
 >
-> **Tài liệu liên quan hiện hành:** `../product/BRD.md` v3.9n · `../product/PRD.md` v2.8m · `../product/TDD.md` v3.1h · `../product/ROADMAP.md` v3.4l · `../standards/decisions.md` v2.11 current mirror · `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` v1.8 · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md` · `../dd-69-app-native-analysis.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md`.
+> **Tài liệu liên quan hiện hành:** `../product/BRD.md` v3.9n · `../product/PRD.md` v2.8m · `../product/TDD.md` v3.1h · `../product/ROADMAP.md` v3.4l · `../standards/decisions.md` v2.11 current mirror · `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` v1.8 · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md` · `../decisions/analysis/dd-69-app-native-analysis.md` · `../research/player-side-saas-AUDIT.md` · `../channels/messenger/messenger-channel-design.md`.
 >
 > ⚠️ **Version note (19/07/2026):** body gốc là historical implementation analysis. Authority hiện hành = BRD 3.9d/PRD 2.8c/TDD 3.1/ROADMAP 3.3c/decisions v1.67. DD-57..59 deferred; DD-60 accepted; DD-61..64 accepted-in-principle/no-runtime; DD-69 direction accepted; DD-70..72 🟡, DD-73..78 ✅ chốt (build gated). PWA vẫn là target chưa có runtime evidence, native phase 2 chưa có lịch, và mọi implementation phải qua technical/store/legal gates trong DD-69.
 >
@@ -638,7 +638,7 @@ Cutover: chạy migrate trên copy → verify đối chiếu số dòng & vài s
 
 **Đã chốt sau bản gốc:** hosting DD-04; capability registry DD-56; lifecycle DD-51; Messenger hybrid/shared surface DD-65..68. Các quyết định không tự chứng minh code đã land.
 
-**Còn mở:** trần fair-use OCR/STT chính thức trước P7 go-live; provider LLM/privacy due-diligence DD-18; external DD-14/15/33; legal A3 và các design-probe B0/B1/B2/B3 trong `../pre-code-open-items-2026-07-16.md`.
+**Còn mở:** trần fair-use OCR/STT chính thức trước P7 go-live; provider LLM/privacy due-diligence DD-18; external DD-14/15/33; legal A3 và các design-probe B0/B1/B2/B3 trong `../probes/pre-code-open-items-2026-07-16.md`.
 
 **Đã chốt sau bản gốc:** web stack = Next.js App Router, standalone/container (DD-10 ✅); public read model = `public_sessions` projector (DD-12 ✅).
 

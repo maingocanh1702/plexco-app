@@ -7,7 +7,7 @@
   "merge_policy": "manual_only",
   "auto_merge": false,
   "codex_review": "2x_clean",
-  "authority": "feature_session_management_tech.md §2 Schema note (same-tenant composite candidate keys/FKs are a DD-68 prerequisite, explicitly NOT in 0014) · HANDOFF HR1 RLS fail-closed · docs/session-service-reslice-analysis.md L0a",
+  "authority": "feature_session_management_tech.md §2 Schema note (same-tenant composite candidate keys/FKs are a DD-68 prerequisite, explicitly NOT in 0014) · HANDOFF HR1 RLS fail-closed · docs/archive/session-service-reslice-analysis.md L0a",
   "depends_on": [],
   "dep_checks": [],
   "invariants": ["schema"],

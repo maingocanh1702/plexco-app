@@ -17,7 +17,7 @@
     "scripts/autopilot-backlog-reconcile",
     "scripts/autopilot-backlog-reconcile.test.sh",
     "docs/autopilot-manifests/reconcile-close-by-hand-declaration.json",
-    "docs/autopilot-reconcile-close-by-hand-declaration.md"
+    "docs/autopilot/contracts/autopilot-reconcile-close-by-hand-declaration.md"
   ],
   "_scope_note": "The slice doc and this manifest are IN scope on purpose (AP-39 lesson: a contract doc left out of scope cannot be closed by the writer when the reviewer flags its staleness — three fix rounds were spent explaining an unclosable gap on that slice). scripts/autopilot-backlog-reconcile.test.sh is a NEW, Plexco-only file and MUST stay that way: the regression harness cannot live inside scripts/autopilot-backlog-reconcile itself (e.g. a `--selftest` mode), because that file's bytes are fully dictated by the synced canonical copy and must remain byte-identical to it post-sync — adding logic there in the Plexco worktree would be exactly the hand-patch this design exists to avoid. The test file exercises the synced script as a black box (subprocess against fixture backlog files), never edits it. See RCH-13.",
   "negative_scope": [

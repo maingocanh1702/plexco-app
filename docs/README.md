@@ -56,6 +56,46 @@ Bản đồ điều hướng cho toàn bộ docs. Bắt đầu từ đây.
 | `design-tokens.md` | Token thiết kế dùng chung (canonical) |
 | `BUILD-STATUS.md` | Trạng thái build |
 
+### `decisions/` — phân tích & brief dẫn tới quyết định
+
+Đây là **input** của quyết định; bản thân quyết định (authority) luôn nằm ở `standards/decisions.md`.
+
+| Thư mục | Nội dung |
+|---|---|
+| `decisions/analysis/` | 26 phân tích `dd-*` — mỗi file mổ một DD (waitlist, join policy, hosting, tournament…), ground vào `schema.ts` + migration + feature spec, kết luận ghi ngược về `standards/decisions.md` |
+| `decisions/briefs/` | 8 `founder-decision-brief-*` theo ngày — gom item cần founder duyệt một lượt. **Toàn bộ là historical input**; mỗi brief tự khai đã CLOSED/superseded, current `decisions.md` thắng khi lệch |
+
+### `probes/` — design probe & open-items còn sống
+
+Probe là **khảo sát kỹ thuật**, không phải Reviewed contract — trích được nhưng không cấp phép build.
+
+| File | Vai trò |
+|---|---|
+| `b0-auth-credential-lifecycle-design-probe.md` | Nền của DD-80: token lifecycle, password floor 15–128 + Argon2id, blocklist, slice order D0/D1 |
+| `g3-revoke-all-concurrency-probe-seed.md` | Seed đo concurrency cho revoke-all (`session_epoch`/`minted_epoch`) |
+| `probe-strict-cookie-completion-hop.md` | Hành vi Safari/iOS với strict cookie ở completion hop |
+| `pre-code-open-items-2026-07-16.md` | Open items phải đóng trước khi code |
+
+### `auth/` — packet & ledger của lane auth
+
+`auth-d0-implementation-packet.md` (**tự khai SUPERSEDED**) · `auth-d1-implementation-packet.md` ·
+`auth-s4-session-handoff.md` · `auth-s4-d0a-review-ledger/` (HALT log + regions).
+
+### `archive/` — đã đóng, giữ làm lịch sử
+
+Doc không còn doc live nào trỏ tới như authority: `review-fix-closure-2026-07-16.md` ·
+`project-progress-review-2026-07-25.md` · `session-docs-feature-updates-2026-07-17.md` ·
+`session-service-reslice-analysis.md` · `runbook-unblock-2026-07-29.md` ·
+`email-hoi-provider-2026-07-23.md` · `ap22-egress-run/` · `phase1-autopilot-run/`.
+
+> Transcript trong `archive/*/`.txt cố ý **giữ nguyên path cũ** — đó là bản ghi verbatim của phiên
+> agent trước; rewrite vào đó là làm sai bản ghi lịch sử.
+
+### `autopilot/` — task contract theo slice
+
+`autopilot/contracts/` giữ 23 task contract Level 3 (`autopilot-<slug>.md`). Chúng **không cấp phép** gì —
+authority thi hành là `autopilot-manifests/<slug>.json`, và không file nào ở đây mang `REVIEW_VERDICT:`.
+
 ### `channels/` — docs theo surface
 
 `channels/zalo/` · `channels/messenger/` · `channels/web/` (`channels/telegram/` **archived — DD-37, giữ làm lịch sử**). Mỗi surface có `README.md`; `channels/web/` thêm `design-brief.md`, `design-tokens.md`, `screens/`; `channels/messenger/` có `messenger-channel-design.md` (kênh **phase-1 P2.5**). Booking dùng một shared DD-32 decision core; Messenger/Zalo chỉ là thin adapters. Product + BE player/funnel specs đều đã có, nhưng adapter/App Review/account-link/hold/finalizer/product-channel E2E vẫn pending.
@@ -76,11 +116,16 @@ Proposal 🟡 trước khi promote vào spec/decision (vd `plexco-global-kb-and-
 
 `onboarding.md` (điểm vào) · `playbook.md` (phương pháp thi công) · `automation-overview.md` (3 chế độ) · `product-backlog.md` (checklist DoD M1–M6).
 
-### `autopilot-*` — autopilot-kit (path ổn định, scripts phụ thuộc)
+### `autopilot-*` ở root — autopilot-kit (path ổn định, scripts phụ thuộc)
 
 **Người mới chạy autopilot: bắt đầu ở `autopilot-ONBOARDING.md`.** Kèm theo: `autopilot-backlog.md`
 (slice registry) · `autopilot-invariant-catalog.md` · `autopilot-parallel-scope-gate.md` ·
 `autopilot-manifests/` · `autopilot-templates/` · `../.autopilot/maturity-ledger.md` (sổ tín nhiệm auto-merge).
+
+> ⚠️ **Năm file này cố ý nằm ở root `docs/`, không gom vào `autopilot/`** — `scripts/autopilot-*`
+> trỏ thẳng vào path đó, mà `scripts/` được sync từ canonical kit (KIT_VERSION 31). Sửa path trong
+> script để chiều thư mục sẽ tạo drift với canonical, nên path của chúng là **ràng buộc**, không phải
+> lựa chọn thẩm mỹ. Task contract theo slice thì đã chuyển sang `autopilot/contracts/`.
 
 ### `templates/` — doc/spec templates
 
@@ -93,7 +138,7 @@ Proposal 🟡 trước khi promote vào spec/decision (vd `plexco-global-kb-and-
 3. Ledger không mất / không đếm quá tiền
 4. PostgreSQL + domain model là **nguồn sự thật duy nhất**
 
-> **Live DB marker:** migration tail trên `main` hiện là `0024_public_visibility_capacity_check.sql`; CHECK `sessions_public_capacity_chk` đã land, cấm `visibility='public' AND slots_max IS NULL` nhưng vẫn cho phép private session có capacity unlimited. Mốc migration là runtime/schema evidence riêng, không chứng minh Session/Marketplace UI/service đã build.
+> **Live DB marker (đo lại 06/08/2026 tại `main@2cd52ce`):** migration tail là **`0029`** — 30 file, không phải `0024`. Sau `0024_public_visibility_capacity_check.sql` còn: `0025`/`0026` rename CHECK (RENAME-only, zero predicate change), `0027` `resolve_tenant_status_locked` (SECURITY DEFINER read-only), `0028`/`0029` DD-29 capability registry (expand→contract). CHECK `sessions_public_capacity_chk` vẫn cấm `visibility='public' AND slots_max IS NULL` và vẫn cho private session capacity unlimited. Mốc migration là runtime/schema evidence riêng, **không** chứng minh Session/Marketplace UI/service đã build — FE vẫn 0 màn.
 
 ## ✍️ Quy ước khi sửa docs
 
@@ -103,4 +148,4 @@ Proposal 🟡 trước khi promote vào spec/decision (vd `plexco-global-kb-and-
 
 ---
 
-*Index v1.9 — 28/07/2026 (sync immutable plan authority, current decision mirror and companion versions: Assistant v0.18/v0.18, Chat v0.15/v0.23, Notifications v3.11/v3.11; per-slice `CODE_READY`, runtime 0). · v1.8 — 28/07/2026 (historical companion snapshot Assistant v0.17/v0.17, Chat v0.14/v0.22, Notifications v3.10/v3.10). · v1.7 — 28/07/2026 (owner-final Chat DD-86/DD-91–95, DD-88 broader deferred). · v1.6 — 28/07/2026 (sync DD-32 Option D + Funnel BE companion; working-tree inventory 24/24, Funnel `NOT_CODE_READY`, no runtime). · v1.5 — **SUPERSEDED by v1.7 for Chat authority**. · v1.4 — 27/07/2026 (sync DD-91 status boundary, regional auto-reconcile research boundary, inventory 24/23 và live migration tail `0024`; không claim runtime). · v1.3 — 16/07/2026 (DD-04: production target = DO App Platform + Managed PG HA/VPC; canonical runbook = `standards/environments-setup.md` v2.0; cost model = `dd-04-hosting-final-decision.md` Rev 2). · v1.2 — 10/07/2026.*
+*Index v2.0 — 06/08/2026 (**docs reorg**: 70 file rời `docs/` root vào `decisions/analysis/` (26) · `decisions/briefs/` (8) · `autopilot/contracts/` (23) · `probes/` (4) · `auth/` (3+ledger) · `archive/` (6). Root từ **76 → 6 file**, đúng 6 file `scripts/` phụ thuộc nên path là ràng buộc. 350 reference + 22 manifest JSON rewrite; 0 broken link, tổng 233 `.md` không đổi. Đo lại migration tail `0024`→`0029` tại `2cd52ce`). · v1.9 — 28/07/2026 (sync immutable plan authority, current decision mirror and companion versions: Assistant v0.18/v0.18, Chat v0.15/v0.23, Notifications v3.11/v3.11; per-slice `CODE_READY`, runtime 0). · v1.8 — 28/07/2026 (historical companion snapshot Assistant v0.17/v0.17, Chat v0.14/v0.22, Notifications v3.10/v3.10). · v1.7 — 28/07/2026 (owner-final Chat DD-86/DD-91–95, DD-88 broader deferred). · v1.6 — 28/07/2026 (sync DD-32 Option D + Funnel BE companion; working-tree inventory 24/24, Funnel `NOT_CODE_READY`, no runtime). · v1.5 — **SUPERSEDED by v1.7 for Chat authority**. · v1.4 — 27/07/2026 (sync DD-91 status boundary, regional auto-reconcile research boundary, inventory 24/23 và live migration tail `0024`; không claim runtime). · v1.3 — 16/07/2026 (DD-04: production target = DO App Platform + Managed PG HA/VPC; canonical runbook = `standards/environments-setup.md` v2.0; cost model = `dd-04-hosting-final-decision.md` Rev 2). · v1.2 — 10/07/2026.*

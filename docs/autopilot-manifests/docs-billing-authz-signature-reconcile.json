@@ -21,7 +21,7 @@
   "negative_scope": [
     "NO change to packages/db/src/authorization.ts or any code — the signature is already correct and merged (ddb69a9); this slice edits documentation only",
     "NO edit to any dated changelog row already present in feature_billing_lifecycle_tech.md or feature_session_management_tech.md — add one new row per file, preserve every existing row verbatim",
-    "NO edit to docs/autopilot-authorize-tenant-action-core.md — AP-40's own pinned code-ready coding-handoff record for an already-merged slice; historical for the same reason a dated changelog row is",
+    "NO edit to docs/autopilot/contracts/autopilot-authorize-tenant-action-core.md — AP-40's own pinned code-ready coding-handoff record for an already-merged slice; historical for the same reason a dated changelog row is",
     "NO edit to feature_session_management_tech.md beyond its one genuine stale call-shaped occurrence (§4 step 6) — its other authorizeTenantAction mentions (edge #24, step 1, the two blockquotes) are bare-name prose or single-arg action-class shorthand, not signature assertions, and stay as written"
   ],
   "context_sources": [

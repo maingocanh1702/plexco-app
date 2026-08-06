@@ -38,7 +38,7 @@ Slice P0 security (identity/link/connector-secret) chưa từng được commit 
 Đã verify: apply lên `21e42ea` cho ra **byte-for-byte** đúng 27 file gốc.
 Header trong patch ghi rõ 2 việc bắt buộc trước khi revive (đánh số lại migration vì
 `0014` đã bị DD-45 chiếm; rebase vì base đã cũ). Bối cảnh vì sao candidate không thành
-authority: `../session-docs-feature-updates-2026-07-17.md` §2.2.
+authority: `./session-docs-feature-updates-2026-07-17.md` §2.2.
 
 ### `phase1-autopilot-run/`
 

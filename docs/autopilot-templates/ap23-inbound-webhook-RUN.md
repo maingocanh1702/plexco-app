@@ -3,7 +3,7 @@
 > **Model:** `claude-fable-5` · **Framework:** canonical `autopilot-prompt-GENERIC` v0.6.0
 > **Slice:** P2 docs-only · `manual_only` · 1× FULL-base Codex clean round · STOP_AT_READY
 > **Manifest:** `docs/autopilot-manifests/infra-inbound-webhook-auth-evidence.json`
-> **Task contract:** `docs/autopilot-infra-inbound-webhook-auth-evidence.md`
+> **Task contract:** `docs/autopilot/contracts/autopilot-infra-inbound-webhook-auth-evidence.md`
 > **Launcher:** `.claude/commands/ap-23-infra-inbound-webhook-auth-evidence.md`
 > **Soạn:** 2026-07-22 · base `main@6a28072`
 >
@@ -70,7 +70,7 @@ thái `in-flight`. Block `auth-s4-d0-revoke-core` có `status: merged (...)` nê
 Preflight có `test -z "$(git status --porcelain)"`. Trạng thái lúc cập nhật (2026-07-22 22:44):
 
 ```
- M docs/auth-s4-session-handoff.md
+ M docs/auth/auth-s4-session-handoff.md
  M docs/autopilot-backlog.md
  M docs/autopilot-manifests/core-matcher-grouped-amount-parsing.json
  M docs/autopilot-manifests/db-migration-0000-idempotent-role-create.json
@@ -78,9 +78,9 @@ Preflight có `test -z "$(git status --porcelain)"`. Trạng thái lúc cập nh
  M docs/standards/decisions.md
 ?? .claude/commands/ap-29-core-split-name-amount-ambiguity-contract.md
 ?? design.pen
-?? docs/autopilot-core-split-name-amount-ambiguity-contract.md
+?? docs/autopilot/contracts/autopilot-core-split-name-amount-ambiguity-contract.md
 ?? docs/autopilot-templates/ap23-inbound-webhook-RUN.md
-?? docs/dd-87-splitnameamount-decision-table-analysis.md
+?? docs/decisions/analysis/dd-87-splitnameamount-decision-table-analysis.md
 ```
 
 Phần lớn là **authority packet DD-87 + amendment Verdict 14** — chính là `HARD_DEPENDENCIES` mà
@@ -110,10 +110,10 @@ test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
 
 # artifacts phải có mặt trên origin/main, không chỉ trên đĩa
 test -f docs/autopilot-manifests/infra-inbound-webhook-auth-evidence.json
-test -f docs/autopilot-infra-inbound-webhook-auth-evidence.md
+test -f docs/autopilot/contracts/autopilot-infra-inbound-webhook-auth-evidence.md
 test -f .claude/commands/ap-23-infra-inbound-webhook-auth-evidence.md
 git show origin/main:docs/autopilot-manifests/infra-inbound-webhook-auth-evidence.json >/dev/null
-git show origin/main:docs/autopilot-infra-inbound-webhook-auth-evidence.md >/dev/null
+git show origin/main:docs/autopilot/contracts/autopilot-infra-inbound-webhook-auth-evidence.md >/dev/null
 git show origin/main:.claude/commands/ap-23-infra-inbound-webhook-auth-evidence.md >/dev/null
 
 scripts/autopilot-backlog-reconcile --check

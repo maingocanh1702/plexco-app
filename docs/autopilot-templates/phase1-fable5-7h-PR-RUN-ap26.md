@@ -54,9 +54,9 @@ test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
 # 1) Artifact set AP-26 phải có trên origin/main
 for f in \
   docs/autopilot-manifests/docs-auth-d0-d1-implementation-packet.json \
-  docs/autopilot-docs-auth-d0-d1-implementation-packet.md \
+  docs/autopilot/contracts/autopilot-docs-auth-d0-d1-implementation-packet.md \
   .claude/commands/ap-26-docs-auth-d0-d1-implementation-packet.md \
-  docs/b0-auth-credential-lifecycle-design-probe.md \
+  docs/probes/b0-auth-credential-lifecycle-design-probe.md \
   docs/autopilot-manifests/auth-s4-d0-revoke-core.json \
   docs/autopilot-manifests/auth-s4-d1-google-adapter.json ; do
   git show "origin/main:$f" >/dev/null || { echo "MISS $f on origin/main"; exit 1; }
