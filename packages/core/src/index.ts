@@ -13,6 +13,7 @@
  */
 export const CORE_PACKAGE = "@plexco/core";
 
+export * from "./api-contract.js";
 export * from "./time.js";
 export * from "./dates.js";
 export * from "./format.js";

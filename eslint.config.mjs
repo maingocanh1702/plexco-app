@@ -72,6 +72,9 @@ export default tseslint.config(
         URL: "readonly",
         TextEncoder: "readonly",
         TextDecoder: "readonly",
+        // Node ≥18 global fetch API (used by scripts/smoke-predeploy.mjs)
+        fetch: "readonly",
+        AbortSignal: "readonly",
       },
     },
   },
