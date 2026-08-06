@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# ap-finish.sh <feature-id> [--squash-verified <origin-commit>|--authorized-close --reason <text>]
+# ap-finish.sh <feature-id> [--squash-verified <origin-commit>|--authorized-close --reason <text>] [--no-archive]
 # Remove a Level 3 worktree/reservation only after landing or an explicit durable disposition.
 set -euo pipefail
 
-SLUG="${1:?usage: ap-finish.sh <feature-id> [--squash-verified <origin-commit>|--authorized-close --reason <text>]}"
+SLUG="${1:?usage: ap-finish.sh <feature-id> [--squash-verified <origin-commit>|--authorized-close --reason <text>] [--no-archive]}"
 shift
 MODE="ancestor"
 MODE_FLAGS=0
 PROOF_SHA=""
 REASON=""
+NO_ARCHIVE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --squash-verified)
@@ -27,6 +28,10 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || { echo "HALT: --reason needs non-empty text" >&2; exit 2; }
       REASON="$2"
       shift 2
+      ;;
+    --no-archive)
+      NO_ARCHIVE=1
+      shift
       ;;
     *)
       echo "HALT: unknown argument: $1" >&2
@@ -230,6 +235,27 @@ fs.writeFileSync(file, `${JSON.stringify({
 NODE
 
 if [ -d "$WT" ]; then
+  # STATE lives nested inside the worktree (.autopilot/worktrees/<slug>/.autopilot/state/<slug>/),
+  # gitignored, uncommitted -- design-probe.md, HALT/AWAIT history, every gate-attempt/codex-review
+  # artifact. `git worktree remove` deletes it unconditionally along with everything else. Archive it
+  # OUTSIDE the worktree first, by default, so the design reasoning and review evidence survive
+  # disposal the same way the code already does via git. See docs/autopilot-LESSONS.md L67 for the
+  # same byte/mtime-identical quality bar applied to the narrower single-HALT-file case this generalizes.
+  if [ "$NO_ARCHIVE" -eq 1 ]; then
+    echo "SKIPPED archive: --no-archive requested for $SLUG."
+  elif [ -d "$STATE" ]; then
+    archive_timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    archive_dir="$ROOT/.autopilot/state-archive/${SLUG}-${archive_timestamp}"
+    if [ -e "$archive_dir" ]; then
+      echo "HALT: archive destination already exists: $archive_dir" >&2
+      exit 1
+    fi
+    mkdir -p "$archive_dir"
+    cp -Rp "$STATE" "$archive_dir/state"
+    echo "archived: $STATE -> $archive_dir/state"
+  else
+    echo "no state directory to archive for $SLUG (nothing under $STATE)."
+  fi
   git -C "$ROOT" worktree remove "$WT"
   echo "worktree removed: $SLUG"
 else

@@ -1,5 +1,59 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 7
+# KIT_VERSION: 8
+# v8 (2026-08-05) — a `ready` task carrying close_by:hand ages out. Measured in a consumer repo: three
+# close_by:hand tasks were simultaneously wrong (all three had already merged, contradicting their own
+# "ready" status) while this script reported "No stale entries" — the manual-close bucket is excluded
+# from the staleness check by design (v5's whole reason for existing: no discriminating probe CAN exist
+# for the dependency-security/owner-evidence-gate/docs-reconcile classes) and nothing ever re-examined
+# the exemption after it was granted. kit-design-debt.md §7 already named this exact shape in passing —
+# "close_by: hand … a value chosen at the earliest possible moment, with nothing checking it stays
+# true" — this is that check, for that value specifically.
+# This does NOT add a probe; that would contradict v5 for the same three classes. It warns when a task
+# has been sitting at `status: ready` with `close_by` present too long, using the git commit date of
+# the STATUS LINE (via `git blame --porcelain`, a `stln` line-number field threaded through the same
+# awk/SEP handoff v6 fixed) as the "how long has this been ready" clock, compared against
+# AUTOPILOT_CLOSE_BY_AGE_WARN_DAYS (default 5).
+# THE CLOCK IS status:ready, NOT close_by's declaration — this was wrong in the first draft and caught
+# in review before it shipped. The risk this check exists to catch ("merged but nobody flipped it")
+# cannot exist before a task reaches ready; a slice legitimately in flight with close_by already
+# declared is not yet rotting, and clocking from declaration time warns on live work instead. It also
+# forced the wrong threshold: on the declaration clock, all three motivating entries would still be
+# unflagged at 14 days (they went wrong within ~2 days of declaring, but the check would not fire until
+# 2026-08-17) — a check calibrated to miss the cases that motivated it is switched off with extra steps,
+# not conservative. Blaming the STATUS line and gating on status==ready measures the actual window and
+# lets the threshold drop to 5 days: in this project a ready slice normally merges same-day (DD-29 and
+# AP-49 both did, the week this was written), so 5 days at ready is already anomalous, and it would have
+# caught all three motivating entries within days instead of two weeks. The self-correction property is
+# unchanged from the first draft, just moved to a different line: a real status transition (ready ->
+# merged, or back to planned) changes the status line's text, blame resets, the clock restarts; git
+# diff/blame track by content match, not byte position, so an unrelated whole-file rewrite does not
+# reset it (confirmed against this file's own --fix, which rewrites every line via `{ print }` but
+# changes none of them for a task outside the stale bucket).
+# ASSUMES status-line churn tracks real status transitions. Checked, not assumed blind, on 2026-08-05:
+# no script in this kit rewrites a status: line except this file's own --fix, which touches ONLY entries
+# already in the stale[] bucket (manual-close/aged entries `continue` before reaching that code), and
+# autopilot-update.sh explicitly documents that it never touches docs/autopilot-backlog.md at all. If a
+# future tool or a human editing pattern is later found rewriting status: lines for reasons other than
+# an actual transition (a formatting pass, a bulk find-replace), this clock reads that as a false reset
+# — say so and revisit rather than silently trusting the ages it reports.
+# REJECTED (1): a hand-typed close_by date field. Doesn't retroactively cover existing entries — none
+# of the three motivating ones would have carried it — and repeats the authoring-burden-nobody-
+# remembers failure close_by's own free-text reason already tolerates only because a human reads it at
+# declare time, not later.
+# REJECTED (2): the backlog FILE's own last-commit date. Resets on ANY unrelated edit to
+# docs/autopilot-backlog.md — the base_sha "one token, two meanings" mistake again: touching a different
+# task would silently un-age this one.
+# SUPERSEDED (3): the first draft of this feature blamed the close_by: LINE itself, gated on nothing
+# (any manual-close, regardless of status), default 14 days. Same mechanism — git blame on one specific
+# line — wrong line; see "THE CLOCK IS status:ready" above for why it measured the wrong window.
+# RULING, not open — exit code stays warn-only. An aged manual-close prints "⚠ AGED manual-close" and is
+# counted, but — like WEAK-PROBE — never fails --check; only a genuine STALE (a merged_probe that
+# resolves) does. Line age is a proxy for merge state, not merge state itself, and a proxy that can be
+# wrong in both directions must not gate other repos' CI — the first false block teaches people to route
+# around the check, which is how close_by came to be trusted unconditionally in the first place.
+# Reopening trigger: revisit once this has produced findings for long enough to know its false-positive
+# rate, not before. An unmeasurable age (uncommitted line, blame failure) stays silent rather than
+# guessing.
 # v7 (2026-07-31) — three defects in the close_by/scope guard logic, found by a live slice's Codex
 # review rounds the same day as the base_sha overload (see autopilot-scope-gate's v26 note). All three
 # were introduced by this author, in this file, while shipping the guards they broke.
@@ -70,12 +124,23 @@
 #   scripts/autopilot-backlog-reconcile --check    # exit 1 if any stale OR any weak (non-discriminating) probe
 #
 # A task with NO merged_probe is reported as "no-probe" (can't auto-verify) — add a symbol when you author it.
+#
+# A `ready` task carrying `close_by: hand` for longer than AUTOPILOT_CLOSE_BY_AGE_WARN_DAYS (default 5)
+# is reported as AGED in every mode — warn-only, like WEAK-PROBE, never affects exit code (a ruling, not
+# an open question — see KIT_VERSION 8 header). A close_by declared on a planned/blocked task is not
+# aged; the clock only runs while status is ready, since that is when "merged but nobody flipped it"
+# becomes possible.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BL="$REPO/docs/autopilot-backlog.md"
 [ -f "$BL" ] || { echo "HALT: backlog not found at $BL" >&2; exit 2; }
 MODE="${1:-report}"
+
+# How many days a task may sit at status:ready with close_by present before it is flagged AGED (see v8
+# comment above for why the clock is status:ready and not close_by's own declaration). Override locally
+# with AUTOPILOT_CLOSE_BY_AGE_WARN_DAYS.
+CLOSE_BY_AGE_WARN_DAYS="${AUTOPILOT_CLOSE_BY_AGE_WARN_DAYS:-5}"
 
 # Probe the MERGED state on origin/<default>, NOT the working tree. A feature worktree carries the
 # slice's OWN not-yet-merged symbol, which would false-positive as "already merged" (and make --check
@@ -159,8 +224,13 @@ is_symbol_probe() {
 #   2. ABUSE (declared, but the scope contains a file that could carry a symbol) is refused. If your
 #      slice touches source, you can probe it — write a real probe.
 #
-# Parse blocks → "slug<TAB>status<TAB>probe_file<TAB>probe_regex<TAB>close_by<TAB>scope".
+# Parse blocks → "slug<TAB>status<TAB>probe_file<TAB>probe_regex<TAB>close_by<TAB>scope<TAB>status_line".
 # bash 3.2 (macOS default) has no `mapfile` → read into array with a portable loop.
+# status_line (kit v8) is the awk NR the `status:` field matched at — the line number `git blame` needs
+# to date how long this task has held its CURRENT status (the "how long has this been ready" clock; see
+# v8 header comment). It trails every existing field so a blank value still leaves it last and empty,
+# the same shape v6 already fixed for cb/sc; adding a field after the ones that shift does not reopen
+# that defect.
 #
 # THE DELIMITER IS ASCII Unit Separator (0x1F), NOT TAB — and that is load-bearing.
 # Bash classifies space, tab and newline as "IFS whitespace": a run of them collapses into ONE
@@ -176,9 +246,9 @@ is_symbol_probe() {
 SEP=$(printf '\037')
 ROWS=()
 while IFS= read -r line; do ROWS+=("$line"); done < <(awk -v S="$SEP" '
-  function flush(){ if (slug!="" && (st=="planned"||st=="ready"||st=="blocked")) printf "%s%s%s%s%s%s%s%s%s%s%s\n", slug, S, st, S, pf, S, pr, S, cb, S, sc; slug="" }
-  /^## task:/ { flush(); slug=$3; gsub(/[()]/,"",slug); st=""; pf=""; pr=""; cb=""; sc="" }
-  /^status:/  { st=$2 }
+  function flush(){ if (slug!="" && (st=="planned"||st=="ready"||st=="blocked")) printf "%s%s%s%s%s%s%s%s%s%s%s%s%s\n", slug, S, st, S, pf, S, pr, S, cb, S, sc, S, stln; slug="" }
+  /^## task:/ { flush(); slug=$3; gsub(/[()]/,"",slug); st=""; pf=""; pr=""; cb=""; sc=""; stln="" }
+  /^status:/  { st=$2; stln=NR }
   /^close_by:/ { cb=$0; sub(/^close_by:[[:space:]]*/,"",cb); gsub(S," ",cb) }
   /^scope:/    { sc=$0; sub(/^scope:[[:space:]]*/,"",sc);    gsub(S," ",sc) }
   /^merged_probe:/ {
@@ -227,10 +297,40 @@ scope_can_carry_symbol() {
   return 1
 }
 
-stale=(); weak=(); manual=()
+# blame_line_age_from_porcelain <porcelain_text> <now_epoch> — PURE, and deliberately generic: it
+# knows nothing about close_by or status, only "how old is this one blamed line". Parses `git blame -L
+# N,N --porcelain` output for exactly one line and prints its age in whole days as of <now_epoch>.
+# Fails silently (empty stdout, return 1) rather than guessing when the line is uncommitted (blame's
+# all-zero "Not Committed Yet" SHA — nothing to measure yet, not age zero) or the text carries no usable
+# `author-time`. This is an advisory nudge, not a gate; an unmeasurable age must never manufacture a
+# warning. Separated from the git call below so it can be unit-tested with canned text. The caller below
+# decides WHICH line matters (the status: line, per the v8 header comment) and WHEN to ask (status ==
+# ready) — this function has no opinion on either.
+blame_line_age_from_porcelain() {
+  _blp_text="$1" _blp_now="$2"
+  _blp_sha="$(printf '%s\n' "$_blp_text" | head -1 | awk '{print $1}')"
+  [ -z "$_blp_sha" ] && return 1
+  case "$_blp_sha" in 0000000000000000000000000000000000000000) return 1 ;; esac
+  _blp_ts="$(printf '%s\n' "$_blp_text" | awk '/^author-time /{print $2; exit}')"
+  case "$_blp_ts" in ''|*[!0-9]*) return 1 ;; esac   # absent or non-numeric — never trust a guess
+  echo $(( (_blp_now - _blp_ts) / 86400 ))
+}
+
+# blame_line_age_days <line_no> — IMPURE wrapper: real `git blame` against the CURRENT WORKING TREE of
+# $BL (no revision pinned), which is exactly the copy the awk parser above just read — so a line number
+# captured as awk's NR lines up with blame's line numbering with nothing in between able to shift it.
+# Covered by test/e2e.sh, which has real git history to blame against.
+blame_line_age_days() {
+  _bld_ln="$1"
+  _bld_out="$(git -C "$REPO" blame -L "${_bld_ln},${_bld_ln}" --porcelain -- "$BL" 2>/dev/null)" || return 1
+  [ -z "$_bld_out" ] && return 1
+  blame_line_age_from_porcelain "$_bld_out" "$(date +%s)"
+}
+
+stale=(); weak=(); manual=(); aged=()
 # ${ROWS[@]+...} guard: under `set -u`, expanding an empty array errors on bash 3.2.
 for row in ${ROWS[@]+"${ROWS[@]}"}; do
-  IFS="$SEP" read -r slug st pf pr cb sc <<< "$row"
+  IFS="$SEP" read -r slug st pf pr cb sc stln <<< "$row"
 
   if [ -n "$cb" ]; then
     if ! is_wellformed_close_by "$cb"; then
@@ -251,6 +351,17 @@ for row in ${ROWS[@]+"${ROWS[@]}"}; do
     else
       echo "  ⊘ manual-close: $slug ($st) — $cb"
       manual+=("$slug")
+      # The clock is status:ready, not close_by's own declaration (see v8 header comment) — a
+      # planned/blocked task carrying close_by is legitimately in flight, not rotting, so the age check
+      # only runs once status is ready.
+      if [ "$st" = "ready" ]; then
+        if _age="$(blame_line_age_days "$stln")" && [ -n "$_age" ] && [ "$_age" -ge "$CLOSE_BY_AGE_WARN_DAYS" ]; then
+          echo "  ⚠ AGED manual-close: $slug ($st) — ready+close_by unresolved for ${_age}d (>= ${CLOSE_BY_AGE_WARN_DAYS}d)."
+          echo "       Age alone is not proof the exemption is wrong — re-verify it still holds (nothing"
+          echo "       else does). Does not affect exit code (ruling, not open — see KIT_VERSION 8 header)."
+          aged+=("$slug")
+        fi
+      fi
       continue
     fi
   fi
@@ -275,6 +386,7 @@ for row in ${ROWS[@]+"${ROWS[@]}"}; do
 done
 
 [ "${#manual[@]}" -gt 0 ] && echo "NOTE: ${#manual[@]} task(s) declared close_by — intentional manual close, not a defect."
+[ "${#aged[@]}" -gt 0 ] && echo "NOTE: ${#aged[@]} of those are AGED (>= ${CLOSE_BY_AGE_WARN_DAYS}d at status:ready with close_by present, see ⚠ above) — re-verify by hand; does not affect exit code (ruling: stays warn-only until it has produced findings long enough to know its false-positive rate — see KIT_VERSION 8 header)."
 
 if [ "${#stale[@]}" -eq 0 ] && [ "${#weak[@]}" -eq 0 ]; then
   echo "No stale entries."; exit 0

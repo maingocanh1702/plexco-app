@@ -1,6 +1,34 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 2
+# KIT_VERSION: 3
 # Repo-agnostic pinned Codex wrapper for Level 3 independent review.
+# v3 (2026-08-04) — the pinned `codex exec --ephemeral` call (the --base adapter path below) now
+# redirects stdin from /dev/null. Per `codex exec --help`: "[PROMPT] ... If not provided as an
+# argument (or if `-` is used), instructions are read from stdin. If stdin is piped and a prompt is
+# ALSO provided, stdin is appended as a `<stdin>` block" -- `codex exec` consults stdin even when a
+# full prompt is already supplied as a CLI argument, exactly this wrapper's usage. A caller that
+# leaves stdin open/unredirected (e.g. backgrounding this wrapper with `&` from an interactive
+# terminal, or any standalone invocation during iterative fix rounds) previously hung the process
+# forever waiting for an EOF nothing would ever send. Root-caused 2026-08-03 (see
+# docs/autopilot-backlog.md task codex-review-pin-stdin-hang and docs/autopilot-LESSONS.md L18
+# "Nguyên nhân 2" in the Bestminton Club Payment check bot consumer): two hung rounds sat at PIDs
+# alive for 3 days, ~1:40 accumulated CPU time each, output frozen at exactly 39 bytes -- the ENTIRE
+# file content being only "Reading additional input from stdin...". That banner line alone is NOT
+# evidence of a hang -- codex prints it as routine startup noise on every invocation, including large
+# completed reviews. The corpse signature is that banner being the WHOLE file, not one line among
+# hundreds of KB of real review output.
+# Deliberately NOT redirected: the native `review "$@"` passthrough two lines below, and the generic
+# catch-all at the bottom (`exec "$REAL_BIN" "$@"`, used for `codex login`/`codex logout` among other
+# native subcommands). `codex review --help` documents a NARROWER, opt-in contract than `exec`:
+# "[PROMPT] ... If `-` is used, read from stdin" -- no "append if piped" behavior, and no reading at
+# all unless the prompt is exactly `-`. An earlier version of this fix (KIT_VERSION 3, first cut)
+# blanket-redirected the native passthrough too and broke that `-` convention outright (a real caller
+# piping a prompt via `review -` would have silently gotten an empty one instead) -- caught by a real
+# review round on this exact diff, not by inspection. Both documented incidents' `ps aux` evidence
+# also specifically shows the adapter's `exec --sandbox read-only --ephemeral <prompt>` invocation
+# shape, never the native passthrough. `codex login`/`codex logout` additionally have their own
+# legitimate stdin uses (`--with-api-key`/`--with-access-token` read credentials from stdin by
+# design; this repo's own L18 auth-death remediation is `"$CODEX" logout && "$CODEX" login`, which
+# needs a real interactive session) -- the generic catch-all must stay untouched for that reason too.
 set -euo pipefail
 
 REAL_BIN="${AUTOPILOT_CODEX_REAL_BIN:-$HOME/.npm-global/bin/codex}"
@@ -63,7 +91,7 @@ if [ "${1:-}" = "review" ]; then
         "" \
         "$MARKER_PROMPT"
     )"
-    exec "$REAL_BIN" "${PIN_FLAGS[@]}" exec --sandbox read-only --ephemeral "$PINNED_REVIEW_PROMPT"
+    exec "$REAL_BIN" "${PIN_FLAGS[@]}" exec --sandbox read-only --ephemeral "$PINNED_REVIEW_PROMPT" < /dev/null
   fi
   exec "$REAL_BIN" "${PIN_FLAGS[@]}" review "$@"
 fi

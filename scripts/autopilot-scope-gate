@@ -1,5 +1,23 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 30
+# KIT_VERSION: 31
+# v31 (2026-08-06) — pack content change, no behaviour change in THIS file. `ap-finish.sh` archives a
+# slice's gitignored state directory before removing its worktree, instead of deleting it
+# unconditionally along with everything else. Ported verbatim from `Bestminton Club Payment check
+# bot`'s `scripts/ap-finish.sh`, its only divergence from canonical (1291 bytes, one block plus flag
+# plumbing) — see docs/kit-design-debt.md §9. `.autopilot/` is gitignored, so `design-probe.md`, every
+# `HALT-*.txt`/`AWAIT-FOUNDER-*.txt`, and every gate-attempt/codex-review artifact exist only inside
+# the worktree's filesystem; `git worktree remove` deleted all of it unconditionally. The standing
+# rule "never delete a HALT-*/AWAIT-FOUNDER-* file" binds on the act and so never fired here, because
+# the sanctioned disposal path reached the same destructive outcome without ever performing that act.
+# Observed 2026-08-06, Plexco `chat-dm-safety-authority-core`: a HALT at MAX_ROUNDS left 7739 bytes of
+# diagnosed-but-unapplied fix detail one `--authorized-close` away from disappearing with no trace
+# anywhere else. Fix: archive `$STATE` to `$ROOT/.autopilot/state-archive/<slug>-<utc-timestamp>/state`
+# before `git worktree remove`, on by default, `--no-archive` to opt out, and HALT rather than
+# silently overwrite an existing archive destination. Ported faithfully, not redesigned — the
+# collision-halt and the opt-out flag are the consumer's own choices, kept as found; any concern about
+# them is a separate question from this port. Tests written first (test/e2e.sh's state-archive
+# section: happy path, collision halt, opt-out flag), confirmed RED against the pre-port file, GREEN
+# after.
 # v30 (2026-08-03) — pack content change, no behaviour change in THIS file. `autopilot-prompt-GENERIC.md`
 # gains "When a design probe is mandatory": the Level 3 rewrite (`b2893b9`, 2026-07-28) dropped a
 # numbered `§0.1` trigger classifier with no replacement, and two consumers separately absorbed the
