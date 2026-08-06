@@ -132,7 +132,8 @@ từng slice tự đạt readiness theo `docs/standards/review-code-readiness-ga
 > - **S2 (C1+C2) DONE:** root scripts `test:core|db|web|bot`, `check:quick`,
 >   `smoke:predeploy` + `scripts/smoke-predeploy.mjs` (healthz-only, khớp Fly http_check).
 >   CI giữ nguyên — smoke chạy thủ công/predeploy, không thêm step.
-> - **S3 (A) → correction:** DD-57 §3 đã cover cấu trúc (`features/<name>/`); phần còn lại
->   là amendment đề xuất ở §2, **chưa apply** vì frontend-architecture.md là standard
->   Reviewed — cần owner duyệt.
+> - **S3 (A) DONE (owner duyệt 07/08, apply cùng ngày):** amendment §2 đã vào
+>   `frontend-architecture.md` v0.7 — `features/<name>/` thành chuẩn (bỏ "đề xuất"),
+>   route mỏng + barrel, apiClient ở `lib/`, mapper chuẩn `toAppError` @plexco/core
+>   (code companion `packages/core/src/app-error.ts`).
 > - **C3 e2e + D turbo:** giữ DEFER như §4/§5.

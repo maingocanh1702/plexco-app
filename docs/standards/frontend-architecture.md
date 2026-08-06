@@ -1,6 +1,6 @@
 # Frontend Architecture Principles — Plexco Web
 
-> **Status:** ✅ Active FE governance (owner 2026-07-28) · **Version:** 0.6 · 2026-08-07
+> **Status:** ✅ Active FE governance (owner 2026-07-28) · **Version:** 0.7 · 2026-08-07
 > **Nguồn:** ported từ Sporta `architecture/frontend_architecture_flutter.md` — adapt sang stack Plexco (Next.js App Router + React, CSS-variable tokens, **không Tailwind**).
 > **Decision:** `decisions.md` DD-57 (✅).
 > **Áp dụng cho:** `apps/web` (Next.js 15 App Router · React 19 · SSE).
@@ -61,14 +61,18 @@ apps/web/
 │   ├── player/              ← player view
 │   └── (shared route segments)
 ├── lib/                     ← api-envelope, session-cookies, auth-secrets, login-state…
+│                              (+ apiClient client-side khi FE mở: token inject, refresh
+│                               rotation, parse envelope → AppError qua `toAppError` @plexco/core)
 ├── components/              ← shared presentational components (đề xuất: tách shared vs feature)
-├── features/<name>/         ← (đề xuất) UI theo feature: components/ + state/ + hooks/
+├── features/<name>/         ← UI theo feature: components/ + state/ + hooks/ + index.ts (barrel)
 └── styles/
     ├── index.css            ← :root tokens + reset
     └── components/          ← CSS theo component
 ```
 
 > **Quy ước import:** Client Component **KHÔNG** import từ `@plexco/db` hoặc gọi `tenantRepo`; chỉ dùng web boundary đã auth. Server Component/Route Handler gọi canonical authenticated application service trực tiếp; chỉ service/repository owner mới chạm `tenantRepo`.
+>
+> **Quy ước route mỏng (0.7):** segment trong `app/` chỉ compose từ `features/<name>/index.ts` (barrel), không chứa business/UI logic. Feature tách khỏi router ⇒ port PWA → RN+Expo phase-2 (DD-69) chỉ đổi shell/router, giữ nguyên `features/`. Nguồn: pattern đã chạy production ở Sporta (`sporta-app/src`); bối cảnh so sánh ở `../proposals/cross-project-standardization-2026-08-07.md` §2.
 
 ## 4. Data flow (bắt buộc)
 
@@ -109,6 +113,7 @@ type ScreenState<T> =
 
 - Mọi lỗi API map về sealed `AppError`: `network | unauthorized | forbidden | notFound | validation | server | unknown`.
 - Nguồn: parse canonical envelope `{ data:null, error:{code,message,statusCode}, meta:{requestId} }` (`lib/api-envelope.ts`) → `AppError`. **Không** ném raw `Error`/HTTP status lên UI.
+- **Mapper chuẩn (0.7):** `toAppError` từ `@plexco/core` (browser-safe, cạnh `api-contract.ts`) — network failure và envelope error đều map qua một chỗ; UI không tự map status→kind rải rác từng màn.
 - `code` map sang message i18n `t(vi,en)`; không hiển thị `code` thô cho user.
 
 ## 7. Realtime (SSE — DD-07)
@@ -152,6 +157,7 @@ Trước khi code 1 màn mới, phải có đủ:
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 07/08/2026 | 0.7 | **Amendment cross-project standardization (owner duyệt 07/08 qua Cowork).** §3: `features/<name>/` bỏ nhãn "(đề xuất)" → chuẩn, thêm `index.ts` barrel + quy ước route mỏng (app/ chỉ compose, port-friendly DD-69) + apiClient client-side định vị ở `lib/`; §6 pin mapper chuẩn `toAppError` @plexco/core. Docs-only với FE runtime (vẫn 0 màn, FE HOLD + gate DD-58 không đổi); code companion là `packages/core/src/app-error.ts` cùng ngày. Nguồn so sánh: `../proposals/cross-project-standardization-2026-08-07.md`. |
 | 07/08/2026 | 0.6 | **Ghi nhận 12 FE design spec + siết §8 gate (docs-only, không đổi FE-INV nào).** §8 docs-before-code thêm artifact bắt buộc **FE design spec** `../channels/web/FE/feature_<name>_fe.md`: trước đây gate chỉ đòi Product spec + `.pen` node + handoff + token mapping, nên không có chỗ nào bắt buộc pin i18n `t(vi, en)`, exact response path (hay `UNPINNED — omit`) và bảng error mapping status→state — đúng ba lỗ đã khiến 12 spec đầu tiên phải sửa lại toàn bộ sau khi viết. §10 cross-reference thêm `design-system.md` và thư mục FE spec. Status boundary không đổi: spec Draft ≠ FE implemented, trục FE/UI vẫn 0 màn, `design.pen` vẫn untracked, gate DD-58 vẫn đóng. *(Ghi chú 06/08 ở header được thêm ở commit trước mà quên bump version + changelog — dòng này đóng luôn khoảng trống đó.)* |
 | 28/07/2026 | 0.5 | **DD-57 ✅:** activate server-first/feature-first/4-state governance; Client Component không chạm DB, Server Component/Route Handler gọi canonical application service trực tiếp; giữ FE HOLD và DD-58 per-screen gate. |
 | 18/07/2026 | 0.4 | Owner defer DD-57; đánh dấu toàn bộ FE-INV/checklist là reference proposal, không active delivery gate. |
