@@ -471,6 +471,30 @@ between the pinned prose and this repo's own already-reviewed idiom it cites as 
 semantic change to the intended (GUC-set) behavior, only the previously-unreachable empty-string
 edge case now fails closed instead of crashing.
 
+**Two further deviations, found by codex review round-01 (2026-08-10), not authoring.** Both are
+confirmed present in the pinned source spec's own DDL text too (`feature_inapp_chat_tech.md`) — the
+review's own ADVISORY section names this explicitly: "the pre-existing BE authority contains the
+same nullable-CHECK and DM-update trigger definitions. Reconcile that document in its owning slice
+after correcting the implementation" — so fixing them here is a deviation from the pinned text, not
+an implementation bug relative to it; reconciling the spec document itself is out of this slice's
+scope.
+
+1. `chat_channels_shape_chk`'s club branch used `creation_origin IN (...)` and
+   `post_policy IN (...)` with no explicit `IS NOT NULL`. PostgreSQL CHECK constraints only reject a
+   row when the expression evaluates to `FALSE` — `NULL IN (...)` evaluates to `NULL` (UNKNOWN), which
+   *passes*. A club channel with `creation_origin`/`post_policy` left `NULL` (all other club fields
+   correctly set) was silently accepted despite the shape CHECK's evident intent. Fixed by adding
+   `creation_origin IS NOT NULL AND` / `post_policy IS NOT NULL AND` before each `IN (...)`, in both
+   the migration and the `schema.ts` mirror. Regression tests added to §5.3's invariant file.
+2. `chat_dm_member_insert_guard()` only fires `BEFORE INSERT` — an `UPDATE` that moves an existing
+   `chat_members` row's `channel_id` away from a DM channel is validated only against the *new*
+   channel by the deferred `AFTER` trigger (`chat_dm_two_from_members`), never against the vacated DM
+   channel, silently leaving it with 1 member. Fixed with a new, narrower trigger
+   (`chat_members_identity_immutable`, `BEFORE UPDATE OF channel_id, person_id`) that rejects any
+   attempt to change either column on an existing row — there is no legitimate business operation
+   that reassigns a membership row to a different channel/person; join is a new row, leave is a
+   delete. Regression tests added to §5.3's invariant file.
+
 ### 5.2 Schema mirror (`packages/db/schema.ts`)
 
 Add Drizzle definitions for `chatChannels`, `chatMembers`, `chatMessages` matching the DDL above
