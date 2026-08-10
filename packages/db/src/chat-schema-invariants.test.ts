@@ -862,18 +862,33 @@ describe("regression — SECURITY DEFINER ownership/grant matrix (round-04 P2)",
     ]);
   });
 
-  it("the complete table x role x privilege matrix for all three chat tables has no unintended DML grants (round-07 P2: the exact allowlist across all 3 tables and all relevant roles, not one sampled operation per table)", async () => {
+  it("the complete table x role x privilege matrix for all three chat tables has no unintended DML grants (round-08 P2: a denylist excluding only the owner, not an allowlist of expected grantees)", async () => {
     // Supersedes sampling one DML op per table (write-boundary describe block) and INSERT-only for
-    // chat_definer (above): information_schema.table_privileges enumerates every explicit grant row
-    // for every grantee across all three tables at once, catching ANY unintended grant (UPDATE on
-    // chat_channels, DELETE on chat_members, any grant at all to app_worker/readonly, a grant option)
-    // automatically rather than only the specific combinations a test happened to sample.
+    // chat_definer (above). round-07's first attempt at this used
+    // `grantee IN ('app', 'chat_definer', 'app_worker', 'readonly')` -- an ALLOWLIST that fails
+    // OPEN: a future `GRANT ... TO PUBLIC` or any role not in that literal list would be silently
+    // discarded before the assertion ever saw it, leaving the test green despite unintended access.
+    //
+    // A denylist excluding only the OWNER fails CLOSED instead -- but unlike the function-level
+    // test above (round-05), the owner here is NOT chat_definer: chat_channels/chat_members/
+    // chat_messages are owned by whichever role ran the migration (measured live: `plexco`, not
+    // chat_definer), which is why a plain `grantee <> 'chat_definer'` first cut of this fix
+    // returned 24 rows instead of 3 -- the actual table owner's implicit full privilege set (all
+    // 7 standard table privileges x 3 tables = 21 rows) is NOT excluded by that filter, because
+    // chat_definer's own chat_channels/chat_members access here is a genuine explicit GRANT, not
+    // ownership -- the exact opposite relationship from the function case, where chat_definer IS
+    // the owner. Excluding the actual owner dynamically (via pg_tables.tableowner, rather than
+    // hardcoding a second literal role name) keeps this correct regardless of which role happens
+    // to run migrations in a given environment. chat_definer's own explicit grants correctly
+    // remain in the expected result below -- that is the real, intended state, not a gap; the
+    // separate owner-privilege test above additionally pins chat_definer's exact privilege shape.
     const { rows } = await ctx.owner.query(
-      `SELECT grantee, table_name, privilege_type, is_grantable
-       FROM information_schema.table_privileges
-       WHERE table_name IN ('chat_channels', 'chat_members', 'chat_messages')
-         AND grantee IN ('app', 'chat_definer', 'app_worker', 'readonly')
-       ORDER BY table_name, grantee, privilege_type`,
+      `SELECT tp.grantee, tp.table_name, tp.privilege_type, tp.is_grantable
+       FROM information_schema.table_privileges tp
+       JOIN pg_tables pt ON pt.tablename = tp.table_name AND pt.schemaname = 'public'
+       WHERE tp.table_name IN ('chat_channels', 'chat_members', 'chat_messages')
+         AND tp.grantee <> pt.tableowner
+       ORDER BY tp.table_name, tp.grantee, tp.privilege_type`,
     );
     expect(rows).toEqual([
       { grantee: "app", table_name: "chat_channels", privilege_type: "SELECT", is_grantable: "NO" },
