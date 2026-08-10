@@ -494,7 +494,15 @@ describe("concurrency", () => {
     try {
       await c1.query("BEGIN");
       await c2.query("BEGIN");
-      const runOne = async (client: pg.PoolClient): Promise<"fulfilled" | "rejected"> => {
+      // codex round-09 [P2]: the bare `catch {}` this replaced converted ANY exception -- a
+      // trigger firing, a permission error, an unrelated bug -- into "rejected", so the test could
+      // pass without the dm_key uniqueness race ever being exercised. Capturing the error and
+      // asserting its exact SQLSTATE (23505 unique_violation) and constraint name
+      // (chat_channels_dm_key_uq) ties the assertion to the specific mechanism this test exists to
+      // prove, not just "one of the two attempts failed for some reason".
+      const runOne = async (
+        client: pg.PoolClient,
+      ): Promise<{ outcome: "fulfilled" | "rejected"; code?: string; constraint?: string }> => {
         try {
           const { rows } = await client.query(
             `INSERT INTO chat_channels (kind, dm_key) VALUES ('dm', $1) RETURNING id`,
@@ -506,15 +514,19 @@ describe("concurrency", () => {
             [channelId, raceA, raceB],
           );
           await client.query("COMMIT");
-          return "fulfilled";
-        } catch {
+          return { outcome: "fulfilled" };
+        } catch (error) {
           await client.query("ROLLBACK").catch(() => {});
-          return "rejected";
+          const pgError = error as { code?: string; constraint?: string };
+          return { outcome: "rejected", code: pgError.code, constraint: pgError.constraint };
         }
       };
       const outcomes = await Promise.all([runOne(c1), runOne(c2)]);
-      expect(outcomes.filter((o) => o === "fulfilled")).toHaveLength(1);
-      expect(outcomes.filter((o) => o === "rejected")).toHaveLength(1);
+      expect(outcomes.filter((o) => o.outcome === "fulfilled")).toHaveLength(1);
+      const rejected = outcomes.filter((o) => o.outcome === "rejected");
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]?.code).toBe("23505");
+      expect(rejected[0]?.constraint).toBe("chat_channels_dm_key_uq");
     } finally {
       c1.release();
       c2.release();

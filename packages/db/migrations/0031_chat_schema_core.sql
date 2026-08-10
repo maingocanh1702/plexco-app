@@ -160,7 +160,10 @@ CREATE TABLE chat_messages (
   CONSTRAINT chat_messages_membership_null_chk CHECK (author_type = 'person' OR membership_id IS NULL),
   CONSTRAINT chat_messages_membership_required_chk CHECK (author_type <> 'person' OR tenant_id IS NULL OR membership_id IS NOT NULL)
 );
-CREATE INDEX idx_chat_messages_channel_time ON chat_messages(channel_id, created_at, id);
+-- No separate channel_id/created_at/id index: chat_messages_channel_created_at_id_uq above already
+-- creates a backing B-tree on the identical (channel_id, created_at, id) column list (codex round-09
+-- [P2] -- a prior explicit CREATE INDEX here duplicated it exactly, adding permanent storage and
+-- write amplification on the highest-write table with zero query benefit).
 CREATE INDEX idx_chat_messages_search_simple
   ON chat_messages USING gin(search_document)
   WHERE moderation_state='visible' AND author_deleted_at IS NULL;

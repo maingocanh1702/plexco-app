@@ -962,7 +962,6 @@ export const chatMessages = pgTable("chat_messages", {
     sql`${t.authorType} = 'person' OR ${t.membershipId} IS NULL`),
   membershipRequiredChk: check("chat_messages_membership_required_chk",
     sql`${t.authorType} <> 'person' OR ${t.tenantId} IS NULL OR ${t.membershipId} IS NOT NULL`),
-  channelTimeIdx: index("idx_chat_messages_channel_time").on(t.channelId, t.createdAt, t.id),
   searchSimpleIdx: index("idx_chat_messages_search_simple")
     .using("gin", t.searchDocument)
     .where(sql`${t.moderationState}='visible' AND ${t.authorDeletedAt} IS NULL`),
