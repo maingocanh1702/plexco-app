@@ -1990,7 +1990,14 @@ notes: |
 
 ## task: chat-dm-safety-authority-core
 title: Slice 2 chuỗi in-app-chat — `dm_safety_enabled()` và authority tables/functions kèm theo
-status: blocked — HALT MAX_ROUNDS (2026-08-06). 5 real codex review rounds (round-01 gate-attempt-03,
+status: in-flight — registered as chat-dm-safety-authority-core--v3 (base 2ba4d04, branched fresh off
+  origin/main after --v2 closed authorized_close/BASE_STALE on 2026-08-09), 12 commits merged forward
+  from --v2 unchanged including the byte-preserved HALT record (688a622), round-01 codex findings
+  applied 2026-08-10, gate in progress. Full HALT/AWAIT history preserved unchanged below as
+  status_history_2026-08-06_HALT and status_history_2026-08-05_AWAIT, per this repo's own "never
+  rewrite dated history" convention — only the current-status label moved, no byte of either record
+  changed.
+status_history_2026-08-06_HALT: HALT MAX_ROUNDS (2026-08-06). 5 real codex review rounds (round-01 gate-attempt-03,
   round-02 gate-attempt-05, round-03 gate-attempt-06, round-04 gate-attempt-07, round-05
   gate-attempt-08) all real, all fixed in-slice, fix-round-count.txt reached the hard cap of 5. A
   sixth review (gate-attempt-09, reviewing commit 018ef92) found 2 more real, verified-accurate
@@ -2041,7 +2048,7 @@ risk: P1
 change_class: schema-migration
 depends_on: [chat-definer-role-provisioning]
 invariants: [schema]
-scope: [packages/db/migrations/0030_chat_dm_safety_authority_core.sql, packages/db/schema.ts, packages/db/src/chat-dm-safety-invariants.test.ts, packages/db/src/migrate.test.ts, packages/db/src/test-harness.ts, packages/db/src/rls-invariants.test.ts, packages/db/README.md, docs/autopilot-manifests/chat-dm-safety-authority-core.json, docs/autopilot-chat-dm-safety-authority-core.md, docs/autopilot-backlog.md]
+scope: [packages/db/migrations/0030_chat_dm_safety_authority_core.sql, packages/db/schema.ts, packages/db/src/chat-dm-safety-invariants.test.ts, packages/db/src/migrate.test.ts, packages/db/src/test-harness.ts, packages/db/src/rls-invariants.test.ts, packages/db/README.md, docs/autopilot-manifests/chat-dm-safety-authority-core.json, docs/autopilot/contracts/autopilot-chat-dm-safety-authority-core.md, docs/autopilot-backlog.md]
 manifest: docs/autopilot-manifests/chat-dm-safety-authority-core.json
 slice_doc: docs/autopilot/contracts/autopilot-chat-dm-safety-authority-core.md
 merged_probe: packages/db/schema.ts :: chatDmSafetyConfig
@@ -2066,7 +2073,7 @@ notes: |
   Migration number `0030` provisional (tail đo 2026-08-05 là `0029`, hai file DD-29 pricing — không
   phải DD-56 chat capability — đã ăn mất số `0029` mà chính AP-45 từng đoán cho chính nó).
   **Next:** mở worktree theo `docs/autopilot-manifests/chat-dm-safety-authority-core.json`, re-verify
-  migration tail, implement theo `docs/autopilot-chat-dm-safety-authority-core.md` §6. Sau khi slice
+  migration tail, implement theo `docs/autopilot/contracts/autopilot-chat-dm-safety-authority-core.md` §6. Sau khi slice
   này merge, `dd38-dd86-chat-schema-core` (AP-45) cần re-run gate của chính nó — dependency thứ hai
   (slice này) khi đó mới `MERGED`.
 
@@ -2163,7 +2170,7 @@ notes: |
   to `autopilot-backlog-reconcile`'s own parser — rewritten with `blocked` as the canonical token.
   [P2] the zero-grant test still only covered SELECT/INSERT/EXECUTE — widened to the full PG16
   table-privilege set via `has_table_privilege`/`has_function_privilege`. Full detail:
-  `docs/autopilot-chat-dm-safety-authority-core.md` §10's own round-04 amendment entry.
+  `docs/autopilot/contracts/autopilot-chat-dm-safety-authority-core.md` §10's own round-04 amendment entry.
 
   **2026-08-06, codex review round-05 (gate-attempt-08) — this feature's LAST allowed round under
   MAX_ROUNDS=5 — real, all 4 findings fixed in-slice.** [P1] the chat_definer revoke/restore

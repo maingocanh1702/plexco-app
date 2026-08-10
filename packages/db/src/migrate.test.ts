@@ -256,10 +256,18 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
       // file's own chat_definer work until timeout. This finally does not catch/swallow — a
       // genuine cleanup failure still propagates, it just never leaks the lock on the way out.
       try {
-        await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
-        await admin.query(`DROP ROLE IF EXISTS ${owner}`);
-        if (revokedChatDefinerMembers.length > 0) {
-          await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
+        // codex round-08 [P1]: nest the restore in its own finally so it still runs when DROP
+        // DATABASE/DROP ROLE themselves throw — previously it sat at the end of this same try, so
+        // an earlier exception here skipped it entirely, leaving chat_definer's original member
+        // permanently revoked even though the lock released cleanly (mirrors the identical fix in
+        // test-harness.ts's teardown()). A genuine failure still propagates afterward.
+        try {
+          await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+          await admin.query(`DROP ROLE IF EXISTS ${owner}`);
+        } finally {
+          if (revokedChatDefinerMembers.length > 0) {
+            await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
+          }
         }
       } finally {
         await releaseChatDefinerLock();

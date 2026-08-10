@@ -94,7 +94,7 @@ export async function bootstrapJobDefiner(client: pg.Client): Promise<void> {
  * to already be a member of chat_definer (PostgreSQL: "you must be able to SET ROLE to the new
  * owning role"). Every test path whose migration reaches 0030 under a non-superuser role must
  * bootstrap first, exactly like production/CI must (added 2026-08-05, owner-authorized scope
- * amendment — see docs/autopilot-chat-dm-safety-authority-core.md SS6.3/SS8).
+ * amendment — see docs/autopilot/contracts/autopilot-chat-dm-safety-authority-core.md SS6.3/SS8).
  */
 const CHAT_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -588,23 +588,33 @@ export async function setupNonSuperuserOwnerContext(
       // does not catch/swallow — a genuine cleanup failure still propagates as a test failure,
       // it just never leaks the lock on the way out.
       try {
-        await ownerPool.end();
-        for (const p of workerPools) await p.end();
-        // codex round-07 [P1]: closing connections alone leaves the database, the cluster-global
-        // ownerRole, and its job_definer/chat_definer membership behind — a LOGIN role with a known,
-        // fixed password and BYPASSRLS-via-membership on a shared local cluster. Drop the database
-        // (ownerRole owns it, so it must go first) then the role itself, before closing the admin
-        // connection that is the one privileged enough to do both. DROP ROLE natively revokes every
-        // membership the dropped role held (job_definer's, chat_definer's, or both) — no separate
-        // REVOKE step needed.
-        await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
-        await admin.query(`DROP ROLE IF EXISTS ${ownerRole}`);
-        // Restore whatever bootstrapChatDefinerForOwner revoked (codex round-03 [P1]), still under
-        // the SAME lock acquired back in bootstrapChatDefinerForOwner — never released in between
-        // (codex round-05 [P1]), so no other test can occupy the slot between the DROP ROLE above
-        // (which vacates it) and this restore. Empty array is a no-op.
-        if (revokedChatDefinerMembers.length > 0) {
-          await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
+        // codex round-08 [P1]: the restore below must run even when pool/database/role cleanup
+        // itself throws. It previously sat at the end of this same try block, so an earlier
+        // exception here jumped straight past it to the outer finally — the lock would still
+        // release cleanly, but chat_definer's original member would stay permanently revoked, the
+        // exact cluster corruption this whole revoke/restore mechanism exists to prevent. Nesting
+        // the restore in its own finally guarantees it runs regardless of which statement above it
+        // fails, while a genuine failure still propagates afterward (nothing here catches/swallows).
+        try {
+          await ownerPool.end();
+          for (const p of workerPools) await p.end();
+          // codex round-07 [P1]: closing connections alone leaves the database, the cluster-global
+          // ownerRole, and its job_definer/chat_definer membership behind — a LOGIN role with a
+          // known, fixed password and BYPASSRLS-via-membership on a shared local cluster. Drop the
+          // database (ownerRole owns it, so it must go first) then the role itself, before closing
+          // the admin connection that is the one privileged enough to do both. DROP ROLE natively
+          // revokes every membership the dropped role held (job_definer's, chat_definer's, or
+          // both) — no separate REVOKE step needed.
+          await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+          await admin.query(`DROP ROLE IF EXISTS ${ownerRole}`);
+        } finally {
+          // Restore whatever bootstrapChatDefinerForOwner revoked (codex round-03 [P1]), still
+          // under the SAME lock acquired back in bootstrapChatDefinerForOwner — never released in
+          // between (codex round-05 [P1]), so no other test can occupy the slot between the DROP
+          // ROLE above (which vacates it) and this restore. Empty array is a no-op.
+          if (revokedChatDefinerMembers.length > 0) {
+            await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
+          }
         }
       } finally {
         // Release regardless of whether anything above threw, and regardless of whether there was

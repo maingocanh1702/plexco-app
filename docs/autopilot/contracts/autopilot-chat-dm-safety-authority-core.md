@@ -576,7 +576,7 @@ packages/db/src/test-harness.ts                                  -- scope amendm
 packages/db/src/rls-invariants.test.ts                            -- scope amendment, SS6.3 (literal bump only)
 packages/db/README.md                                            -- document the three new functions
 docs/autopilot-manifests/chat-dm-safety-authority-core.json      -- self, per AP-39/AP-40 lesson
-docs/autopilot-chat-dm-safety-authority-core.md                  -- self
+docs/autopilot/contracts/autopilot-chat-dm-safety-authority-core.md -- self
 docs/autopilot-backlog.md                                        -- own entry + new chat-dm-safety-audit-queryable-path idea entry
 ```
 
@@ -828,7 +828,7 @@ TARGET_FILES:
   # diff nor omitted files, it was simply the WRONG list. Replaced with the exact 10 files in
   # `git diff --stat <LIVE_BASE_SHA>...HEAD`, matching manifest.json's own scope array.
   - docs/autopilot-backlog.md
-  - docs/autopilot-chat-dm-safety-authority-core.md
+  - docs/autopilot/contracts/autopilot-chat-dm-safety-authority-core.md
   - docs/autopilot-manifests/chat-dm-safety-authority-core.json
   - packages/db/README.md
   - packages/db/migrations/0030_chat_dm_safety_authority_core.sql
