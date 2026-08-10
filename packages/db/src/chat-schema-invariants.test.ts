@@ -341,6 +341,31 @@ describe("boundary rows", () => {
       ),
     ).rejects.toThrow(/violates check constraint "chat_channels_shape_chk"/);
   });
+
+  // codex round-05 (acceptance matrix row 46 -- "DD-86 DM metadata shape"): the boundary tests above
+  // only prove the NULL direction (a valid DM has every club-only field NULL). This proves the
+  // reverse -- a DM row carrying club metadata is rejected, not silently accepted -- for both the
+  // content-field group and tenant_id specifically, since tenant_id also gates RLS's own club/dm
+  // branch split (dm rows must have tenant_id NULL for chat_channels_dm's policy to ever apply).
+  it("a dm channel with club-only content fields set is rejected by the shape CHECK", async () => {
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO chat_channels
+           (kind, dm_key, title, is_default, sort_order, creation_origin, post_policy, assistant_enabled)
+         VALUES ('dm', $1, 'Forbidden Club Title', true, 1, 'system_bootstrap', 'all_members', false)`,
+        [dmKeyFor(randomUUID(), randomUUID())],
+      ),
+    ).rejects.toThrow(/violates check constraint "chat_channels_shape_chk"/);
+  });
+
+  it("a dm channel with tenant_id set is rejected by the shape CHECK", async () => {
+    await expect(
+      ctx.owner.query(`INSERT INTO chat_channels (kind, dm_key, tenant_id) VALUES ('dm', $1, $2)`, [
+        dmKeyFor(randomUUID(), randomUUID()),
+        ctx.tenantA,
+      ]),
+    ).rejects.toThrow(/violates check constraint "chat_channels_shape_chk"/);
+  });
 });
 
 describe("authorization — club channels", () => {
@@ -727,6 +752,47 @@ describe("migration shape", () => {
           "CREATE UNIQUE INDEX chat_messages_channel_created_at_id_uq ON public.chat_messages USING btree (channel_id, created_at, id)",
       },
     ]);
+  });
+});
+
+// codex round-05 (acceptance matrix row 45: "Composite parent key tồn tại thật"). The previous
+// describe block's own "additive UNIQUE constraint" test proves memberships_id_person_tenant_uq
+// exists; these prove the composite FKs that reference it actually enforce the full triple, not
+// just that membership_id points at *some* row -- a membership belonging to the wrong person or
+// the wrong tenant must be rejected, on both chat_members and chat_messages.
+describe("composite parent-key FK enforcement (acceptance matrix row 45)", () => {
+  it("a chat_members row citing a membership that belongs to a different person is rejected by the composite FK", async () => {
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO chat_members (channel_id, person_id, membership_id) VALUES ($1, $2, $3)`,
+        [channelClubA, personB1, membershipA1],
+      ),
+    ).rejects.toThrow(/violates foreign key constraint "chat_members_membership_fk"/);
+  });
+
+  it("a chat_members row citing a membership from a different tenant than the channel is rejected by the composite FK", async () => {
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO chat_members (channel_id, person_id, membership_id) VALUES ($1, $2, $3)`,
+        [channelClubB, personA1, membershipA1],
+      ),
+    ).rejects.toThrow(/violates foreign key constraint "chat_members_membership_fk"/);
+  });
+
+  it("a chat_messages row citing a membership that belongs to a different author is rejected by the composite FK", async () => {
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO chat_messages (channel_id, author_person_id, membership_id, body, client_msg_id)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          channelClubA,
+          personB1,
+          membershipA1,
+          "forbidden cross-person membership",
+          `fk-test-${randomUUID()}`,
+        ],
+      ),
+    ).rejects.toThrow(/violates foreign key constraint "chat_messages_membership_fk"/);
   });
 });
 

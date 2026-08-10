@@ -661,6 +661,10 @@ Root does **NOT** create:
 | Boundary | Empty channel, no messages | Empty result, no error |
 | Boundary | Insert `dm` channel with all club-only fields NULL | Succeeds (CHECK shape clause) |
 | Boundary | Insert `club` channel with `title` NULL | Rejected — CHECK constraint |
+| Boundary | Insert `dm` channel with club-only content fields set (`title`/`is_default`/`sort_order`/`creation_origin`/`post_policy`/`assistant_enabled`) | Rejected — CHECK constraint (spec row 46) |
+| Boundary | Insert `dm` channel with `tenant_id` set | Rejected — CHECK constraint (spec row 46) |
+| Boundary | Insert `chat_members`/`chat_messages` row whose `membership_id` belongs to a different person than the row's own `person_id`/`author_person_id` | Rejected — composite FK (spec row 45) |
+| Boundary | Insert `chat_members` row whose `membership_id` is from a different tenant than the channel | Rejected — composite FK (spec row 45) |
 | Authorization | Person not a member of a club channel in their own tenant | Zero rows |
 | Authorization | Member of channel X, same tenant, not a member of channel Y | Zero rows for Y |
 | Authorization | `app.tenant_id` set to tenant B, target row is tenant A's club channel/members/messages, exact UUID known | Zero rows — cross-tenant fail-closed even by UUID guess |
