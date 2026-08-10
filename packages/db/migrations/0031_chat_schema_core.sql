@@ -72,8 +72,8 @@ CREATE TABLE chat_channels (
     (kind = 'club'
       AND tenant_id IS NOT NULL AND dm_key IS NULL
       AND title IS NOT NULL AND is_default IS NOT NULL AND sort_order IS NOT NULL
-      AND creation_origin IN ('actor','system_bootstrap')
-      AND post_policy IN ('all_members','admins_only')
+      AND creation_origin IS NOT NULL AND creation_origin IN ('actor','system_bootstrap')
+      AND post_policy IS NOT NULL AND post_policy IN ('all_members','admins_only')
       AND assistant_enabled IS NOT NULL)
     OR
     (kind = 'dm'
@@ -196,6 +196,22 @@ DECLARE k text; c int; BEGIN
 END; $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_chat_dm_member_insert BEFORE INSERT ON chat_members
   FOR EACH ROW EXECUTE FUNCTION chat_dm_member_insert_guard();
+
+-- Membership identity is immutable post-insert (codex round-01 [P1]): without this, an UPDATE
+-- moving a chat_members row's channel_id away from a DM channel is validated only against the
+-- NEW channel by the deferred AFTER trigger below (chat_dm_two_from_members), never against the
+-- vacated DM channel -- silently leaving it with 1 member. There is no legitimate business
+-- operation that reassigns an existing membership row to a different channel/person; join = new
+-- row, leave = delete row.
+CREATE FUNCTION chat_members_identity_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'chat_members.channel_id/person_id are immutable; delete and re-insert instead';
+END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_chat_members_identity_immutable
+  BEFORE UPDATE OF channel_id, person_id ON chat_members
+  FOR EACH ROW
+  WHEN (NEW.channel_id IS DISTINCT FROM OLD.channel_id OR NEW.person_id IS DISTINCT FROM OLD.person_id)
+  EXECUTE FUNCTION chat_members_identity_immutable();
 
 CREATE FUNCTION chat_assert_dm_two(p_channel uuid) RETURNS void AS $$
 DECLARE c int; k text; BEGIN

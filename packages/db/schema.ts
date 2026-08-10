@@ -525,6 +525,11 @@ export const memberships = pgTable("memberships", {
   // UNIQUE (tenant_id, id) is a strict-superset uniqueness — additive, cannot
   // reject any existing row.
   tenantIdCandidateKey: unique("memberships_tenant_id_candidate_key").on(t.tenantId, t.id),
+  // dd38-dd86-chat-schema-core (migration 0031, codex round-01 [P2]): candidate key the chat
+  // schema's own composite FKs (chat_channels/chat_members/chat_messages -> memberships) target.
+  // id is already the PK, so this is a strict-superset uniqueness -- additive, cannot reject any
+  // existing row.
+  idPersonTenantUq: unique("memberships_id_person_tenant_uq").on(t.id, t.personId, t.tenantId),
   // Non-money tenant-integrity (migration 0021): same-tenant self-referencing
   // composite FK, additive over the single-column FK above. Nullable (set
   // only when status='merged') — MATCH SIMPLE (the PostgreSQL default) leaves
@@ -860,8 +865,8 @@ export const chatChannels = pgTable("chat_channels", {
     (${t.kind} = 'club'
       AND ${t.tenantId} IS NOT NULL AND ${t.dmKey} IS NULL
       AND ${t.title} IS NOT NULL AND ${t.isDefault} IS NOT NULL AND ${t.sortOrder} IS NOT NULL
-      AND ${t.creationOrigin} IN ('actor','system_bootstrap')
-      AND ${t.postPolicy} IN ('all_members','admins_only')
+      AND ${t.creationOrigin} IS NOT NULL AND ${t.creationOrigin} IN ('actor','system_bootstrap')
+      AND ${t.postPolicy} IS NOT NULL AND ${t.postPolicy} IN ('all_members','admins_only')
       AND ${t.assistantEnabled} IS NOT NULL)
     OR
     (${t.kind} = 'dm'

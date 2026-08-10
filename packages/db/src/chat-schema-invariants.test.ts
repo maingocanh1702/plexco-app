@@ -319,6 +319,28 @@ describe("boundary rows", () => {
       ),
     ).rejects.toThrow(/violates check constraint "chat_channels_shape_chk"/);
   });
+
+  it("a club channel with creation_origin NULL is rejected by the shape CHECK (codex round-01 P2: a plain IN (...) passes on NULL/UNKNOWN unless explicitly guarded)", async () => {
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO chat_channels
+           (tenant_id, kind, title, is_default, sort_order, creation_origin, post_policy, assistant_enabled)
+         VALUES ($1, 'club', 'Regression Null Origin', true, 100, NULL, 'all_members', false)`,
+        [ctx.tenantA],
+      ),
+    ).rejects.toThrow(/violates check constraint "chat_channels_shape_chk"/);
+  });
+
+  it("a club channel with post_policy NULL is rejected by the shape CHECK", async () => {
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO chat_channels
+           (tenant_id, kind, title, is_default, sort_order, creation_origin, post_policy, assistant_enabled)
+         VALUES ($1, 'club', 'Regression Null Policy', true, 101, 'system_bootstrap', NULL, false)`,
+        [ctx.tenantA],
+      ),
+    ).rejects.toThrow(/violates check constraint "chat_channels_shape_chk"/);
+  });
 });
 
 describe("authorization — club channels", () => {
@@ -530,6 +552,27 @@ describe("concurrency", () => {
       await client.query("ROLLBACK").catch(() => {});
       client.release();
     }
+  });
+});
+
+describe("regression — chat_members identity immutability (round-01 P1)", () => {
+  it("UPDATE of channel_id on a DM chat_members row is rejected, closing the exactly-two-members bypass an UPDATE would otherwise open", async () => {
+    await expect(
+      ctx.owner.query(
+        `UPDATE chat_members SET channel_id = $1 WHERE channel_id = $2 AND person_id = $3`,
+        [channelClubA, channelDm, personDm1],
+      ),
+    ).rejects.toThrow(/immutable/);
+  });
+
+  it("UPDATE of person_id on a chat_members row is rejected", async () => {
+    const personSpare = await seedPerson("Regression Spare");
+    await expect(
+      ctx.owner.query(
+        `UPDATE chat_members SET person_id = $1 WHERE channel_id = $2 AND person_id = $3`,
+        [personSpare, channelDm, personDm2],
+      ),
+    ).rejects.toThrow(/immutable/);
   });
 });
 
