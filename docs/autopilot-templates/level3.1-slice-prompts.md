@@ -88,8 +88,8 @@ OUTCOME: re-register the closed chat-dm-safety lane as chat-dm-safety-authority-
 preserving every byte of its 2026-08-05 owner-authorized scope amendment, then reach READY.
 
 PRECONDITION — verify, do not assume:
-- `git rev-parse main origin/main` must return the SAME sha. Measured 2026-08-10: both were 2e577c7
-  after the owner pushed the five docs commits 18005e6..2e577c7 — but re-measure, do not trust that.
+- `git rev-parse main origin/main` must return the SAME sha. Both were 7909798 when this line was last
+  touched (2026-08-10) — a claim about the past, not a premise. Re-measure; do not trust that number.
   If they differ, report AWAIT: base_sha must be the origin/main tip AND remain an ancestor of it
   (assertBaseUsable, v21), which a local-only main cannot satisfy. Do not push on their behalf.
 - `git status --porcelain` on the root tree must show NOTHING except these three, which are untracked
@@ -176,12 +176,13 @@ scope only. Reviewer unreachable → HALT TOOL_UNAVAILABLE; never lower the gate
 If any AWAIT-FOUNDER-* or HALT-* file appears, report and STOP — you may never delete, rename or move
 one (autopilot-prompt-GENERIC.md:483).
 
-KNOWN OPEN QUESTION, do not decide it yourself: the reconciled manifest declares 5 modules against the
+ALREADY-ANSWERED QUESTION — do NOT AWAIT on it. The reconciled manifest declares 5 modules against the
 plan's §9 ceiling of 3, and the 3 core modules alone are ~1,145 changed LOC against a 750 ceiling. Plan
-§9 line 416 prescribes SCOPE_DESIGN hard stop and re-slice for that condition; the owner instead
-authorized an amendment on 2026-08-05. If a reviewer raises this, report AWAIT with both facts and let
-the owner close it in decisions.md (blocker B1b). Do not re-slice on your own authority, and do not trim
-tests to fit — §9 line 416 forbids that explicitly.
+§9 line 416 prescribes SCOPE_DESIGN hard stop and re-slice for that condition. The owner ratified the
+2026-08-05 amendment instead, as **DD-101** (decisions v2.21, 2026-08-10) — an authorized exception for
+THIS SLICE ONLY, explicitly not a precedent. If a reviewer raises the ceiling, cite DD-101 and continue.
+Do not re-slice on your own authority, do not trim tests to fit (§9:416 forbids it), and do not stop to
+ask a question the owner has already closed in writing.
 
 Terminate at READY | AWAIT | HALT. Do not merge.
 ```
