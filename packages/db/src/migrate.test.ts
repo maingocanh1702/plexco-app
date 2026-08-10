@@ -7,8 +7,15 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ensureRoleExists, logMigrationFailure, migrate } from "./migrate.js";
 import {
+  acquireChatDefinerLock,
+  bootstrapChatDefiner,
   bootstrapJobDefiner,
+  ensureChatDefinerMembershipRevoked,
+  restoreChatDefinerMembership,
+  revokeAllChatDefinerMembers,
+  revokeStaleChatDefinerMembership,
   setupNonSuperuserOwnerContext,
+  withChatDefinerLock,
   withJobDefinerLock,
 } from "./test-harness.js";
 
@@ -29,7 +36,7 @@ vi.mock("node:fs/promises", async () => {
 });
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 30;
+const MIGRATION_COUNT = 31;
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -205,6 +212,13 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
 
     await admin.query(`CREATE ROLE ${owner} LOGIN NOSUPERUSER NOCREATEROLE PASSWORD 'x'`);
     await admin.query(`CREATE DATABASE ${db} OWNER ${owner}`);
+    let revokedChatDefinerMembers: string[] = [];
+    // Held from the revoke below through the restore in the outer finally, as ONE continuous
+    // critical section (codex round-05 [P1] — two separate withChatDefinerLock calls, one for
+    // revoke+bootstrap+migrate and a second, later one for the restore, left a real window in
+    // between for another test to occupy the slot; see acquireChatDefinerLock's own comment for
+    // the reproduction: JCL-1 observed BR-6's own transient member this exact way).
+    const { release: releaseChatDefinerLock } = await acquireChatDefinerLock(BASE!);
     try {
       await admin.query(`SET job_definer_bootstrap.migration_role = '${owner}'`);
       try {
@@ -212,13 +226,213 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
       } finally {
         await admin.query(`RESET job_definer_bootstrap.migration_role`);
       }
+      // chat_definer bootstrap + migrate() run under the lock acquired above (2026-08-05, fixing a
+      // race this exact session discovered live): migrate() now reaches 0030
+      // (chat-dm-safety-authority-core), which does ALTER FUNCTION ... OWNER TO chat_definer and
+      // mechanically requires `owner` to already be a member of chat_definer.
+      // revokeStaleChatDefinerMembership first, since unlike job_definer's bootstrap,
+      // chat_definer's own script refuses to re-point to a different target once any member
+      // exists (see that helper's own comment, test-harness.ts) — chat_definer tolerates only ONE
+      // non-runtime member at a time. Without the lock, a DIFFERENT test file's own concurrent
+      // revoke-then-grant sequence (BR-6, JCL-1, both correctly wrapped) can steal this test's
+      // membership grant in the window between granting it and migrate() actually consuming it
+      // via SET ROLE — reproduced empirically as an intermittent "must be able to SET ROLE
+      // chat_definer" failure before this wrap was added. Its return value is restored in the
+      // outer finally below (codex round-03 [P1] — the original version revoked and forgot,
+      // confirmed to have left this session's own local dev cluster's chat_definer with zero
+      // members).
+      revokedChatDefinerMembers = await revokeStaleChatDefinerMembership(admin, owner);
+      await admin.query(`SET chat_definer_bootstrap.migration_role = '${owner}'`);
+      try {
+        await bootstrapChatDefiner(admin);
+      } finally {
+        await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+      }
       const res = await migrate(url(db, owner, "x"));
       expect(res.applied.length).toBe(MIGRATION_COUNT);
     } finally {
-      await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
-      await admin.query(`DROP ROLE IF EXISTS ${owner}`);
+      // codex round-06 [P2]: DROP DATABASE/DROP ROLE now run INSIDE the same try this finally
+      // covers, alongside the restore — previously they ran BEFORE a separate inner try/finally
+      // that released the lock, so a throw from either one would skip releaseChatDefinerLock()
+      // entirely, leaking the dedicated lock-holder connection and blocking every other test
+      // file's own chat_definer work until timeout. This finally does not catch/swallow — a
+      // genuine cleanup failure still propagates, it just never leaks the lock on the way out.
+      try {
+        // codex round-08 [P1]: nest the restore in its own finally so it still runs when DROP
+        // DATABASE/DROP ROLE themselves throw — previously it sat at the end of this same try, so
+        // an earlier exception here skipped it entirely, leaving chat_definer's original member
+        // permanently revoked even though the lock released cleanly (mirrors the identical fix in
+        // test-harness.ts's teardown()). A genuine failure still propagates afterward.
+        try {
+          await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+          await admin.query(`DROP ROLE IF EXISTS ${owner}`);
+        } finally {
+          // codex round-02 [P1]: DROP ROLE above may itself have thrown, in which case owner still
+          // exists and may still hold the chat_definer slot — revoke it explicitly before
+          // restoring, so a failed DROP ROLE can never leave both owner AND the restored
+          // predecessor as simultaneous members (mirrors the identical fix in test-harness.ts's
+          // teardown()).
+          await ensureChatDefinerMembershipRevoked(admin, owner);
+          if (revokedChatDefinerMembers.length > 0) {
+            await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
+          }
+        }
+      } finally {
+        await releaseChatDefinerLock();
+      }
     }
   }, 60_000);
+
+  // codex round-03 [P1]: revokeStaleChatDefinerMembership on its own permanently strips whoever
+  // held chat_definer before a test ran (e.g. `plexco`, granted by this repo's own
+  // pnpm db:bootstrap) — confirmed as a REAL break this session, not a theoretical one: running
+  // this suite against the local dev cluster left chat_definer with zero members, verified
+  // directly via pg_auth_members. This proves the restore half of the fix actually works, not
+  // just that it compiles.
+  it("revokeStaleChatDefinerMembership + restoreChatDefinerMembership round-trips a pre-existing member", async () => {
+    const predecessor = "plexco_migrate_predecessor";
+    const newTarget = "plexco_migrate_restore_target";
+    await admin.query(`DROP ROLE IF EXISTS ${predecessor}`);
+    await admin.query(`DROP ROLE IF EXISTS ${newTarget}`);
+    await admin.query(`CREATE ROLE ${predecessor} NOLOGIN`);
+    await admin.query(`CREATE ROLE ${newTarget} NOLOGIN`);
+    const memberOf = async (role: string): Promise<boolean> => {
+      const { rows } = await admin.query(
+        `SELECT 1 FROM pg_auth_members m
+           JOIN pg_roles r ON r.oid = m.member
+           JOIN pg_roles g ON g.oid = m.roleid
+          WHERE g.rolname = 'chat_definer' AND r.rolname = $1`,
+        [role],
+      );
+      return rows.length > 0;
+    };
+    try {
+      // One lock scope for the whole revoke -> bootstrap -> revoke -> restore -> restore sequence
+      // (not several separate acquisitions) — a sibling file's own test could otherwise mutate
+      // chat_definer's membership in the gap between releases, invalidating this test's own
+      // assertions about what it revoked/restored.
+      await withChatDefinerLock(BASE!, async () => {
+        // Reproduced live (codex round-03 follow-up): a sibling FILE's own test can genuinely
+        // hold chat_definer's one non-runtime member slot when this test starts under
+        // fileParallelism — bootstrapChatDefiner refuses to re-point onto an existing member, so
+        // this test's OWN setup needs the same revoke-stale-first discipline every real caller
+        // uses, not an assumed-clean slate. What was there originally is restored at the end.
+        const preExisting = await revokeStaleChatDefinerMembership(admin, predecessor);
+        try {
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${predecessor}'`);
+          try {
+            await bootstrapChatDefiner(admin);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          expect(await memberOf(predecessor)).toBe(true);
+
+          const revoked = await revokeStaleChatDefinerMembership(admin, newTarget);
+          expect(revoked).toContain(predecessor);
+          expect(await memberOf(predecessor)).toBe(false);
+
+          await restoreChatDefinerMembership(admin, revoked);
+          expect(await memberOf(predecessor)).toBe(true);
+        } finally {
+          // codex round-03 [P1]: preExisting was captured above but only ever handed back at the
+          // very end of this callback — a throw from any assertion or step in between (bootstrap,
+          // an unexpected membership state) skipped straight past that hand-back, permanently
+          // losing whatever held chat_definer before this test ran. revokeAllChatDefinerMembers
+          // clears the slot regardless of which role (predecessor, newTarget, or nobody) is
+          // currently holding it before preExisting is restored on top.
+          await revokeAllChatDefinerMembers(admin);
+          await restoreChatDefinerMembership(admin, preExisting);
+        }
+      });
+    } finally {
+      await admin.query(`DROP ROLE IF EXISTS ${predecessor}`);
+      await admin.query(`DROP ROLE IF EXISTS ${newTarget}`);
+    }
+  }, 30_000);
+
+  // codex round-03 [P1] follow-up, found by this exact fix's own new regression test in CI: the
+  // revoked snapshot can legitimately name ANOTHER test's own transient scratch owner role (chat_
+  // definer tolerates only one non-runtime member at a time), which may already be DROP ROLE'd by
+  // the time THIS test's restore runs (reproduced live: JCL-1 snapshotted BR-6's own scratch owner
+  // mid-suite). That DROP ROLE already revoked the membership as a side effect — restoring to an
+  // already-gone role must be a graceful no-op, not a hard failure.
+  it("restoreChatDefinerMembership tolerates a role that no longer exists (undefined_object, 42704)", async () => {
+    const ghost = "plexco_migrate_ghost_predecessor";
+    await admin.query(`DROP ROLE IF EXISTS ${ghost}`);
+    // Never created — restoreChatDefinerMembership must not throw for a name that never existed
+    // either, the same as one that existed and was since dropped.
+    await expect(restoreChatDefinerMembership(admin, [ghost])).resolves.toBeUndefined();
+  });
+
+  // codex round-02 [P1]: a cleanup failure (DROP ROLE throwing after DROP DATABASE succeeds, or
+  // never running at all) must not leave TWO simultaneous chat_definer members. Simulates the
+  // exact failure this fixes: the scratch owner is never dropped (as if DROP ROLE had thrown), so
+  // its own chat_definer membership survives to the moment restoreChatDefinerMembership runs.
+  // Without ensureChatDefinerMembershipRevoked immediately before it, the predecessor would be
+  // restored ON TOP OF the still-present scratch owner, leaving two members; with it, exactly the
+  // predecessor remains -- proving the invariant teardown()/BR-3's own finally now depends on.
+  it("ensureChatDefinerMembershipRevoked + restoreChatDefinerMembership leaves exactly one member even when the scratch role is never dropped (simulated cleanup failure)", async () => {
+    const predecessor = "plexco_migrate_cleanup_fail_predecessor";
+    const scratchOwner = "plexco_migrate_cleanup_fail_scratch";
+    await admin.query(`DROP ROLE IF EXISTS ${predecessor}`);
+    await admin.query(`DROP ROLE IF EXISTS ${scratchOwner}`);
+    await admin.query(`CREATE ROLE ${predecessor} NOLOGIN`);
+    await admin.query(`CREATE ROLE ${scratchOwner} NOLOGIN`);
+    const chatDefinerMembers = async (): Promise<string[]> => {
+      const { rows } = await admin.query(
+        `SELECT r.rolname FROM pg_auth_members m
+           JOIN pg_roles r ON r.oid = m.member
+           JOIN pg_roles g ON g.oid = m.roleid
+          WHERE g.rolname = 'chat_definer'`,
+      );
+      return (rows as { rolname: string }[]).map((r) => r.rolname);
+    };
+    try {
+      await withChatDefinerLock(BASE!, async () => {
+        // Simulate prior state: predecessor holds the slot, exactly like BR-3's own setup.
+        const preExisting = await revokeStaleChatDefinerMembership(admin, predecessor);
+        try {
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${predecessor}'`);
+          try {
+            await bootstrapChatDefiner(admin);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          expect(await chatDefinerMembers()).toEqual([predecessor]);
+
+          // Simulate bootstrapChatDefinerForOwner running for scratchOwner: revoke predecessor
+          // (captured for later restore), grant scratchOwner.
+          const revoked = await revokeStaleChatDefinerMembership(admin, scratchOwner);
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${scratchOwner}'`);
+          try {
+            await bootstrapChatDefiner(admin);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          expect(await chatDefinerMembers()).toEqual([scratchOwner]);
+
+          // The failure this proves fixed: DROP ROLE never runs (as if it had thrown), so
+          // scratchOwner is STILL a member here — exactly the state teardown's own inner
+          // try/finally would be in when DROP DATABASE/DROP ROLE throws before completing.
+          await ensureChatDefinerMembershipRevoked(admin, scratchOwner);
+          await restoreChatDefinerMembership(admin, revoked);
+          expect(await chatDefinerMembers()).toEqual([predecessor]);
+        } finally {
+          // codex round-03 [P1]: preExisting was captured above but only ever handed back at the
+          // very end of this callback — a throw from any assertion or step in between skipped
+          // straight past that hand-back, permanently losing whatever held chat_definer before
+          // this test ran (the same defect found in the round-trip test above, inherited here by
+          // copying its structure). revokeAllChatDefinerMembers clears the slot regardless of
+          // which role is currently holding it before preExisting is restored on top.
+          await revokeAllChatDefinerMembers(admin);
+          await restoreChatDefinerMembership(admin, preExisting);
+        }
+      });
+    } finally {
+      await admin.query(`DROP ROLE IF EXISTS ${predecessor}`);
+      await admin.query(`DROP ROLE IF EXISTS ${scratchOwner}`);
+    }
+  }, 30_000);
 });
 
 describe("BR-4 only the role-already-exists race codes are swallowed", () => {
@@ -348,13 +562,27 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
       inherit: false,
     });
     try {
-      await withJobDefinerLock(BASE!, async () => {
+      // codex round-05 [P1]: bootstrapChatDefinerForOwner now acquires and holds the chat lock
+      // itself, internally, through ctx.teardown() (see test-harness.ts's own comment) — nesting
+      // withChatDefinerLock here would deadlock (two different connections each waiting on the
+      // same session-scoped advisory lock the other holds). job_definer has no such internal hold
+      // (its own bootstrap never revokes an existing member), so withJobDefinerLock still wraps
+      // explicitly here.
+      //
+      // codex round-06 [P1] regression fix: round-05's own fix above narrowed withJobDefinerLock to
+      // wrap ONLY bootstrapJobDefinerForOwner(), releasing it before bootstrapChatDefinerForOwner()
+      // and runMigration() ran — but runMigration() reaches migration 0022, which ASSERTS (never
+      // creates) job_definer, so it still needs that lock's protection against a concurrent
+      // JCL-2/JCL-3 test hiding/corrupting job_definer. withJobDefinerLock (key 0x6a6f6264 "jobd")
+      // and the chat lock bootstrapChatDefinerForOwner acquires internally (key 0x63686164 "chad")
+      // are DIFFERENT advisory-lock keys, so wrapping the whole sequence in withJobDefinerLock does
+      // NOT reintroduce round-05's own deadlock — only nesting the SAME key twice deadlocks.
+      const res = await withJobDefinerLock(BASE!, async () => {
         await ctx.bootstrapJobDefinerForOwner();
-        const res = await ctx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe(
-          "0029_dd29_capability_registry_contract.sql",
-        );
+        await ctx.bootstrapChatDefinerForOwner();
+        return ctx.runMigration();
       });
+      expect(res.applied[res.applied.length - 1]).toBe("0030_chat_dm_safety_authority_core.sql");
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
@@ -447,6 +675,53 @@ describe("setupNonSuperuserOwnerContext teardown", () => {
       expect(role.rows.length).toBe(0);
     } finally {
       await admin.end();
+    }
+  }, 30_000);
+
+  // codex round-04 [P2]: acquireChatDefinerLock opens a brand new connection every call, so a
+  // second bootstrapChatDefinerForOwner() before teardown() used to try to acquire the same
+  // session-level advisory lock from a SECOND session while the first (open until teardown())
+  // still held it -- deadlocking forever, since the test could never reach teardown() to release
+  // the first lock either. Must resolve promptly, not hang; the 30s test timeout is the backstop
+  // that turns "hangs forever" into "a specific failing test" if this regresses.
+  it("bootstrapChatDefinerForOwner is idempotent — a second call before teardown() does not deadlock", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_chat_definer_idempotent");
+    try {
+      await ctx.bootstrapChatDefinerForOwner();
+      await ctx.bootstrapChatDefinerForOwner();
+
+      const { rows } = await ctx.superuser.query(
+        `SELECT r.rolname FROM pg_auth_members m
+           JOIN pg_roles r ON r.oid = m.member
+           JOIN pg_roles g ON g.oid = m.roleid
+          WHERE g.rolname = 'chat_definer'`,
+      );
+      expect((rows as { rolname: string }[]).map((r) => r.rolname)).toEqual([ctx.ownerRole]);
+    } finally {
+      await ctx.teardown();
+    }
+  }, 30_000);
+
+  // codex round-05 [P2]: round-04's own fix guarded on chatDefinerLockRelease, set only AFTER an
+  // `await` -- two callers racing via Promise.all could both observe it null before either
+  // finished, so both would proceed into acquireChatDefinerLock and the second would deadlock
+  // against the first's still-held lock, exactly like the original round-04 bug. The sequential
+  // test above never exercised this: with `await` between the two calls, the first always finishes
+  // before the second starts. This one starts both from the same synchronous tick.
+  it("bootstrapChatDefinerForOwner is safe under concurrent calls, not just sequential ones", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_chat_definer_concurrent");
+    try {
+      await Promise.all([ctx.bootstrapChatDefinerForOwner(), ctx.bootstrapChatDefinerForOwner()]);
+
+      const { rows } = await ctx.superuser.query(
+        `SELECT r.rolname FROM pg_auth_members m
+           JOIN pg_roles r ON r.oid = m.member
+           JOIN pg_roles g ON g.oid = m.roleid
+          WHERE g.rolname = 'chat_definer'`,
+      );
+      expect((rows as { rolname: string }[]).map((r) => r.rolname)).toEqual([ctx.ownerRole]);
+    } finally {
+      await ctx.teardown();
     }
   }, 30_000);
 });
@@ -2438,6 +2713,9 @@ describe("job_definer bootstrap script itself fails closed on runtime-role targe
   }, 60_000);
 });
 
+// Raw-file-content path, mirrors JOB_DEFINER_BOOTSTRAP_SQL_PATH above: several tests below read
+// 02-chat-definer.sql's own text directly (regex matching, race-window injection) rather than only
+// calling the imported bootstrapChatDefiner function.
 const CHAT_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -2447,35 +2725,6 @@ const CHAT_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
   "postgres-init",
   "02-chat-definer.sql",
 );
-
-async function bootstrapChatDefiner(client: pg.Client): Promise<void> {
-  const sql = await readFile(CHAT_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
-  try {
-    await client.query(sql);
-  } catch (error) {
-    // The file wraps itself in an explicit BEGIN/COMMIT (infra/postgres-init/02-chat-definer.sql),
-    // so a rejection leaves that transaction open and aborted on `client` — mirrors
-    // bootstrapJobDefiner's own catch-and-ROLLBACK idiom (test-harness.ts).
-    await client.query("ROLLBACK");
-    throw error;
-  }
-}
-
-const CHAT_DEFINER_LOCK_KEY = 0x63686164; // "chad" — distinct from "jobd" (0x6a6f6264) and "plxc" (0x706c7863)
-
-async function withChatDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
-  const lockClient = new pg.Client({ connectionString: base });
-  await lockClient.connect();
-  await lockClient.query("SELECT pg_advisory_lock($1)", [CHAT_DEFINER_LOCK_KEY]);
-  try {
-    return await fn();
-  } finally {
-    await lockClient
-      .query("SELECT pg_advisory_unlock($1)", [CHAT_DEFINER_LOCK_KEY])
-      .catch(() => {});
-    await lockClient.end();
-  }
-}
 
 async function hideRealChatDefiner(superuser: pg.Client, fn: () => Promise<void>): Promise<void> {
   const existing = await superuser.query(`SELECT 1 FROM pg_roles WHERE rolname = 'chat_definer'`);
@@ -3343,7 +3592,19 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
         // comment above) rather than merely leaving a documented side effect.
       } finally {
         await scratchClient.end();
-        await admin.query(`DROP ROLE IF EXISTS chat_definer`);
+        // No explicit chat_definer cleanup here (fixed 2026-08-05, owner-authorized scope
+        // amendment to chat-dm-safety-authority-core) — mirrors the job_definer half of this same
+        // test (see the comment at its own "No explicit job_definer cleanup" line): by this point
+        // withChatDefinerLock/hideRealChatDefiner above has ALREADY restored the real chat_definer
+        // role (the scratch bootstrap attempt inside it rolled back entirely and left no role to
+        // clean up — see that block's own comment). A bare `DROP ROLE IF EXISTS chat_definer` here
+        // was always semantically wrong: it targets the just-restored REAL role, not a scratch
+        // leftover. It stayed silently harmless only because chat_definer never owned any object
+        // for a DROP to fail on — chat-dm-safety-authority-core's migration 0030 is the first to
+        // give it real objects (in whatever other database has 0030 applied, cluster-wide, since
+        // chat_definer is cluster-global), which turned this latent mistake into a hard failure
+        // ("role chat_definer cannot be dropped because some objects depend on it"). Removed, not
+        // patched around — hideRealChatDefiner's own restoration is already correct and sufficient.
       }
     });
   }, 60_000);
