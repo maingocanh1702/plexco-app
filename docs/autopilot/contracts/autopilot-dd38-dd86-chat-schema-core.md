@@ -7,7 +7,9 @@
 > **Implementation is underway (2026-08-10, same day as the readiness re-review below).** The worktree
 > is open, `register` succeeded, and code exists: migration 0031, the `schema.ts` mirror, and
 > `packages/db/src/chat-schema-invariants.test.ts` are implemented, committed, and passing the full
-> canonical suite through two code-review fix rounds. §0-§9 immediately below (session input through
+> canonical suite through iterative code-review fix rounds (exact count is a stale-prone number this
+> prose won't re-assert — see `regions.log`/`fix-round-count.txt` in the state dir, or `git log` on
+> this branch, for the current true count). §0-§9 immediately below (session input through
 > the `CODE_READY` verdict) describe the READINESS re-review that preceded implementation and are kept
 > verbatim as the historical record of how this slice reached `CODE_READY` — they are not a live claim
 > that no worktree/register/code exists. §5.1's "Deviation from the pinned text" notes below track what

@@ -784,3 +784,63 @@ describe("regression — SECURITY DEFINER functions resist temp-table shadowing 
     }
   });
 });
+
+// codex round-04 [P2]: the security-definer privilege boundary (owner, EXECUTE grants, schema
+// CREATE) had no catalog-level regression coverage -- existing tests sample DML/return-type
+// behavior but would not catch an incorrect function owner, a lingering PUBLIC/runtime-role
+// EXECUTE grant, or a retained CREATE on schema public for chat_definer.
+describe("regression — SECURITY DEFINER ownership/grant matrix (round-04 P2)", () => {
+  it("both read helpers are owned by chat_definer, not the migration role", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT p.proname, pg_get_userbyid(p.proowner) AS owner FROM pg_proc p
+       WHERE p.proname IN ('chat_current_is_member', 'dm_current_read_allowed') ORDER BY p.proname`,
+    );
+    expect(rows).toEqual([
+      { proname: "chat_current_is_member", owner: "chat_definer" },
+      { proname: "dm_current_read_allowed", owner: "chat_definer" },
+    ]);
+  });
+
+  it("PUBLIC has no EXECUTE on either helper, and app has exactly EXECUTE", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT
+         has_function_privilege('public', 'chat_current_is_member(uuid)', 'EXECUTE') AS public_current_is_member,
+         has_function_privilege('app', 'chat_current_is_member(uuid)', 'EXECUTE') AS app_current_is_member,
+         has_function_privilege('public', 'dm_current_read_allowed(uuid)', 'EXECUTE') AS public_dm_read_allowed,
+         has_function_privilege('app', 'dm_current_read_allowed(uuid)', 'EXECUTE') AS app_dm_read_allowed`,
+    );
+    expect(rows).toEqual([
+      {
+        public_current_is_member: false,
+        app_current_is_member: true,
+        public_dm_read_allowed: false,
+        app_dm_read_allowed: true,
+      },
+    ]);
+  });
+
+  it("chat_definer's CREATE grant on schema public is revoked after ownership transfer, not left lingering", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT has_schema_privilege('chat_definer', 'public', 'CREATE') AS has_create`,
+    );
+    expect((rows[0] as { has_create: boolean }).has_create).toBe(false);
+  });
+
+  it("chat_definer's own table access is read-only (SELECT), matching the least-privilege the two helpers actually need", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT
+         has_table_privilege('chat_definer', 'chat_channels', 'SELECT') AS select_channels,
+         has_table_privilege('chat_definer', 'chat_channels', 'INSERT') AS insert_channels,
+         has_table_privilege('chat_definer', 'chat_members', 'SELECT') AS select_members,
+         has_table_privilege('chat_definer', 'chat_members', 'INSERT') AS insert_members`,
+    );
+    expect(rows).toEqual([
+      {
+        select_channels: true,
+        insert_channels: false,
+        select_members: true,
+        insert_members: false,
+      },
+    ]);
+  });
+});
