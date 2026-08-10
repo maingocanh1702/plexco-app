@@ -10,6 +10,7 @@ import {
   acquireChatDefinerLock,
   bootstrapChatDefiner,
   bootstrapJobDefiner,
+  ensureChatDefinerMembershipRevoked,
   restoreChatDefinerMembership,
   revokeStaleChatDefinerMembership,
   setupNonSuperuserOwnerContext,
@@ -265,6 +266,12 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
           await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
           await admin.query(`DROP ROLE IF EXISTS ${owner}`);
         } finally {
+          // codex round-02 [P1]: DROP ROLE above may itself have thrown, in which case owner still
+          // exists and may still hold the chat_definer slot — revoke it explicitly before
+          // restoring, so a failed DROP ROLE can never leave both owner AND the restored
+          // predecessor as simultaneous members (mirrors the identical fix in test-harness.ts's
+          // teardown()).
+          await ensureChatDefinerMembershipRevoked(admin, owner);
           if (revokedChatDefinerMembers.length > 0) {
             await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
           }
@@ -349,6 +356,69 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
     // either, the same as one that existed and was since dropped.
     await expect(restoreChatDefinerMembership(admin, [ghost])).resolves.toBeUndefined();
   });
+
+  // codex round-02 [P1]: a cleanup failure (DROP ROLE throwing after DROP DATABASE succeeds, or
+  // never running at all) must not leave TWO simultaneous chat_definer members. Simulates the
+  // exact failure this fixes: the scratch owner is never dropped (as if DROP ROLE had thrown), so
+  // its own chat_definer membership survives to the moment restoreChatDefinerMembership runs.
+  // Without ensureChatDefinerMembershipRevoked immediately before it, the predecessor would be
+  // restored ON TOP OF the still-present scratch owner, leaving two members; with it, exactly the
+  // predecessor remains -- proving the invariant teardown()/BR-3's own finally now depends on.
+  it("ensureChatDefinerMembershipRevoked + restoreChatDefinerMembership leaves exactly one member even when the scratch role is never dropped (simulated cleanup failure)", async () => {
+    const predecessor = "plexco_migrate_cleanup_fail_predecessor";
+    const scratchOwner = "plexco_migrate_cleanup_fail_scratch";
+    await admin.query(`DROP ROLE IF EXISTS ${predecessor}`);
+    await admin.query(`DROP ROLE IF EXISTS ${scratchOwner}`);
+    await admin.query(`CREATE ROLE ${predecessor} NOLOGIN`);
+    await admin.query(`CREATE ROLE ${scratchOwner} NOLOGIN`);
+    const chatDefinerMembers = async (): Promise<string[]> => {
+      const { rows } = await admin.query(
+        `SELECT r.rolname FROM pg_auth_members m
+           JOIN pg_roles r ON r.oid = m.member
+           JOIN pg_roles g ON g.oid = m.roleid
+          WHERE g.rolname = 'chat_definer'`,
+      );
+      return (rows as { rolname: string }[]).map((r) => r.rolname);
+    };
+    try {
+      await withChatDefinerLock(BASE!, async () => {
+        // Simulate prior state: predecessor holds the slot, exactly like BR-3's own setup.
+        const preExisting = await revokeStaleChatDefinerMembership(admin, predecessor);
+        await admin.query(`SET chat_definer_bootstrap.migration_role = '${predecessor}'`);
+        try {
+          await bootstrapChatDefiner(admin);
+        } finally {
+          await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+        }
+        expect(await chatDefinerMembers()).toEqual([predecessor]);
+
+        // Simulate bootstrapChatDefinerForOwner running for scratchOwner: revoke predecessor
+        // (captured for later restore), grant scratchOwner.
+        const revoked = await revokeStaleChatDefinerMembership(admin, scratchOwner);
+        await admin.query(`SET chat_definer_bootstrap.migration_role = '${scratchOwner}'`);
+        try {
+          await bootstrapChatDefiner(admin);
+        } finally {
+          await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+        }
+        expect(await chatDefinerMembers()).toEqual([scratchOwner]);
+
+        // The failure this proves fixed: DROP ROLE never runs (as if it had thrown), so
+        // scratchOwner is STILL a member here — exactly the state teardown's own inner try/finally
+        // would be in when DROP DATABASE/DROP ROLE throws before completing.
+        await ensureChatDefinerMembershipRevoked(admin, scratchOwner);
+        await restoreChatDefinerMembership(admin, revoked);
+        expect(await chatDefinerMembers()).toEqual([predecessor]);
+
+        // Hand the slot back, same convention as the round-trip test above.
+        await admin.query(`REVOKE chat_definer FROM ${predecessor}`);
+        await restoreChatDefinerMembership(admin, preExisting);
+      });
+    } finally {
+      await admin.query(`DROP ROLE IF EXISTS ${predecessor}`);
+      await admin.query(`DROP ROLE IF EXISTS ${scratchOwner}`);
+    }
+  }, 30_000);
 });
 
 describe("BR-4 only the role-already-exists race codes are swallowed", () => {

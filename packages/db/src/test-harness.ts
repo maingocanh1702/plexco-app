@@ -187,6 +187,28 @@ export async function restoreChatDefinerMembership(
 }
 
 /**
+ * Unconditionally revokes roleName's own chat_definer membership, tolerating the role already
+ * being gone (codex round-02 [P1]). `DROP ROLE` normally revokes membership as a side effect of
+ * dropping the role entirely, which is the common case this is a no-op for (42704 -- the role no
+ * longer exists to query). It exists for the case where DROP ROLE itself threw and the role, still
+ * present, may still hold the slot: without this call, restoreChatDefinerMembership running
+ * unconditionally in the same cleanup (codex round-01 [P1]) would add the predecessor back ON TOP
+ * of a scratch role that was never actually removed, leaving TWO simultaneous non-runtime members
+ * and violating the one-member invariant every caller of chat_definer's bootstrap depends on.
+ * Always call this immediately before restoreChatDefinerMembership, never after.
+ */
+export async function ensureChatDefinerMembershipRevoked(
+  client: pg.Client,
+  roleName: string,
+): Promise<void> {
+  try {
+    await client.query(`REVOKE chat_definer FROM ${client.escapeIdentifier(roleName)}`);
+  } catch (error) {
+    if ((error as { code?: string }).code !== "42704") throw error;
+  }
+}
+
+/**
  * chat_definer is CLUSTER-global, same hazard withJobDefinerLock documents for job_definer: a test
  * that deliberately puts it into a BROKEN/hidden state (migrate.test.ts's own bootstrap-script
  * negative-path tests) races every OTHER parallel test FILE's own ordinary bootstrap+migrate call.
@@ -608,6 +630,12 @@ export async function setupNonSuperuserOwnerContext(
           await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
           await admin.query(`DROP ROLE IF EXISTS ${ownerRole}`);
         } finally {
+          // codex round-02 [P1]: DROP ROLE above may itself have thrown, in which case ownerRole
+          // still exists and may still hold the chat_definer slot — revoke it explicitly and
+          // unconditionally before restoring, so a failed DROP ROLE can never leave both ownerRole
+          // AND the restored predecessor as simultaneous members. ensureChatDefinerMembershipRevoked
+          // tolerates ownerRole already being gone (the common case, when DROP ROLE succeeded).
+          await ensureChatDefinerMembershipRevoked(admin, ownerRole);
           // Restore whatever bootstrapChatDefinerForOwner revoked (codex round-03 [P1]), still
           // under the SAME lock acquired back in bootstrapChatDefinerForOwner — never released in
           // between (codex round-05 [P1]), so no other test can occupy the slot between the DROP

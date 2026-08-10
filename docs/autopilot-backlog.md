@@ -2081,8 +2081,8 @@ notes: |
   autopilot artifacts).** All 3 findings ruled on same day. (1) Finding 1 changes the contract, ruled
   the owner's to change: `chat_dm_safety_audit` (the table) is DROPPED from this slice's scope
   entirely; `assert_dm_allowed` emits `RAISE LOG` instead (gated by `audit_enabled`, same fields).
-  Design note above describing `chat_dm_safety_audit` is now SUPERSEDED — `docs/autopilot-chat-dm-
-  safety-authority-core.md` §5 row 6 and §6.1 carry the amended, authoritative design (rationale
+  Design note above describing `chat_dm_safety_audit` is now SUPERSEDED — `docs/autopilot/contracts/
+  autopilot-chat-dm-safety-authority-core.md` §5 row 6 and §6.1 carry the amended, authoritative design (rationale
   replaced, not appended, per owner instruction). `merged_probe` above (`chatDmSafetyConfig`) is
   unaffected — that table still exists. (2) Finding 2 (test-harness.ts `chat_definer` bootstrap gap)
   and (3) Finding 3 (a prior slice's own `DROP ROLE chat_definer` test cleanup, broken by this
