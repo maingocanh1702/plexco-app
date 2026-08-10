@@ -801,20 +801,33 @@ describe("regression — SECURITY DEFINER ownership/grant matrix (round-04 P2)",
     ]);
   });
 
-  it("PUBLIC has no EXECUTE on either helper, and app has exactly EXECUTE", async () => {
+  it("the complete grantee list for both helpers is exactly app+EXECUTE, not-grantable — no PUBLIC, app_worker, readonly, or grant options (round-05 P2: the exact allowlist, not a sampled subset)", async () => {
+    // information_schema.routine_privileges enumerates every EXPLICIT grant row for every
+    // grantee -- unlike checking has_function_privilege() one role at a time, this catches ANY
+    // unintended grantee (app_worker, readonly, PUBLIC, ...) automatically, not just the ones
+    // this test happened to think to ask about. chat_definer is excluded: as OWNER it has
+    // implicit full privileges that may or may not surface as an explicit row here depending on
+    // how ownership vs. grants are represented -- that's covered by the separate owner test
+    // above, not this allowlist.
     const { rows } = await ctx.owner.query(
-      `SELECT
-         has_function_privilege('public', 'chat_current_is_member(uuid)', 'EXECUTE') AS public_current_is_member,
-         has_function_privilege('app', 'chat_current_is_member(uuid)', 'EXECUTE') AS app_current_is_member,
-         has_function_privilege('public', 'dm_current_read_allowed(uuid)', 'EXECUTE') AS public_dm_read_allowed,
-         has_function_privilege('app', 'dm_current_read_allowed(uuid)', 'EXECUTE') AS app_dm_read_allowed`,
+      `SELECT grantee, routine_name, privilege_type, is_grantable
+       FROM information_schema.routine_privileges
+       WHERE routine_name IN ('chat_current_is_member', 'dm_current_read_allowed')
+         AND grantee <> 'chat_definer'
+       ORDER BY routine_name, grantee, privilege_type`,
     );
     expect(rows).toEqual([
       {
-        public_current_is_member: false,
-        app_current_is_member: true,
-        public_dm_read_allowed: false,
-        app_dm_read_allowed: true,
+        grantee: "app",
+        routine_name: "chat_current_is_member",
+        privilege_type: "EXECUTE",
+        is_grantable: "NO",
+      },
+      {
+        grantee: "app",
+        routine_name: "dm_current_read_allowed",
+        privilege_type: "EXECUTE",
+        is_grantable: "NO",
       },
     ]);
   });
@@ -842,5 +855,35 @@ describe("regression — SECURITY DEFINER ownership/grant matrix (round-04 P2)",
         insert_members: false,
       },
     ]);
+  });
+
+  it("chat_definer's memberships grant is column-scoped to exactly id/person_id/tenant_id/status, not the whole table", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT column_name, privilege_type, is_grantable
+       FROM information_schema.column_privileges
+       WHERE table_name = 'memberships' AND grantee = 'chat_definer'
+       ORDER BY column_name`,
+    );
+    expect(rows.map((r) => (r as { column_name: string }).column_name)).toEqual([
+      "id",
+      "person_id",
+      "status",
+      "tenant_id",
+    ]);
+    expect(
+      rows.every(
+        (r) =>
+          (r as { privilege_type: string }).privilege_type === "SELECT" &&
+          (r as { is_grantable: string }).is_grantable === "NO",
+      ),
+    ).toBe(true);
+  });
+
+  it("chat_definer has no grant of any kind on chat_messages — neither helper reads it", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT count(*)::int AS n FROM information_schema.table_privileges
+       WHERE table_name = 'chat_messages' AND grantee = 'chat_definer'`,
+    );
+    expect((rows[0] as { n: number }).n).toBe(0);
   });
 });
