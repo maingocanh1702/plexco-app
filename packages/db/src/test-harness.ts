@@ -478,11 +478,12 @@ export interface NonSuperuserOwnerContext {
   /** idempotent chat_definer bootstrap (grants membership to ownerRole) — call before runMigration()
    *  whenever the migration will reach 0030 (chat-dm-safety-authority-core) or later under a
    *  non-superuser role. UNLIKE bootstrapJobDefinerForOwner, this one DOES acquire its own lock
-   *  internally (acquireChatDefinerLock, codex round-05 [P1]) and holds it until teardown() runs —
-   *  the caller does not need to wrap it in withJobDefinerLock. A second call before teardown() is
-   *  a no-op (codex round-04 [P2] — corrected here; this comment previously, incorrectly, claimed
-   *  the same not-internally-lock-protected caveat as bootstrapJobDefinerForOwner, which would have
-   *  made a repeat call deadlock against the lock this same function already holds). */
+   *  internally (acquireChatDefinerLock, codex round-05 [P1] of the predecessor lane) and holds it
+   *  until teardown() runs — the caller does not need to wrap it in withJobDefinerLock. Safe to
+   *  call more than once, sequentially OR concurrently: every call after the first, however soon it
+   *  arrives, awaits the SAME in-flight or completed bootstrap rather than starting a second one
+   *  (codex round-04/round-05 [P2] of this registration — a boolean "already ran" guard alone
+   *  raced across the internal `await`; a synchronously-assigned memoized promise does not). */
   bootstrapChatDefinerForOwner: () => Promise<void>;
   /** run the real migration runner AS the non-superuser owner (never superuser) */
   runMigration: () => Promise<MigrateResult>;
@@ -547,6 +548,15 @@ export async function setupNonSuperuserOwnerContext(
   // acquireChatDefinerLock's own comment for the reproduction). null until bootstrapChatDefinerForOwner
   // actually runs.
   let chatDefinerLockRelease: (() => Promise<void>) | null = null;
+  // codex round-05 [P2]: memoizes bootstrapChatDefinerForOwner's own in-flight/completed call.
+  // Assigned SYNCHRONOUSLY (no `await` between the null-check and this assignment), which is what
+  // makes it safe against concurrent callers -- chatDefinerLockRelease alone (round-04's fix) was
+  // check-then-act across an `await` boundary: two callers could both observe it null before
+  // either finished acquiring the lock, so both would proceed, and the second would deadlock
+  // against the first exactly like the original round-04 bug. A caller arriving after this promise
+  // is created but before the underlying bootstrap finishes now awaits the SAME promise instead of
+  // returning early into a still-incomplete bootstrap.
+  let chatDefinerBootstrapPromise: Promise<void> | null = null;
 
   const bootstrapJobDefinerForOwner = async () => {
     // job_definer needs BYPASSRLS, and PG16 forbids a role from creating (or being granted) a
@@ -565,7 +575,7 @@ export async function setupNonSuperuserOwnerContext(
     }
   };
 
-  const bootstrapChatDefinerForOwner = async () => {
+  const bootstrapChatDefinerForOwner = (): Promise<void> => {
     // Mirrors bootstrapJobDefinerForOwner exactly (2026-08-05): chat_definer needs BYPASSRLS, so
     // ownerRole (CREATEROLE but not BYPASSRLS) can never self-bootstrap it either. The privileged
     // `admin` connection creates/verifies chat_definer, then grants membership to ownerRole via the
@@ -574,25 +584,34 @@ export async function setupNonSuperuserOwnerContext(
     // job_definer's) refuses to re-point to a different target once any member exists — see that
     // helper's own comment. Its return value is restored in teardown() (codex round-03 [P1]).
     //
-    // codex round-04 [P2]: a second call before teardown() must be a no-op, not a repeat bootstrap
-    // — acquireChatDefinerLock opens a BRAND NEW connection every call, so calling this twice would
-    // try to acquire the same session-level advisory lock from a SECOND session while the first
-    // (still open, held until teardown()) already holds it, deadlocking forever: the second call
-    // never returns, so the test never reaches teardown(), so the first lock never releases either.
-    // chatDefinerLockRelease is exactly "has this already run" — null only until the first call.
-    if (chatDefinerLockRelease) return;
-    // The lock is acquired HERE and released only in teardown(), after the restore below completes
-    // (codex round-05 [P1]) — the whole revoke -> bootstrap -> [caller's own work] -> teardown ->
-    // restore sequence is one continuous critical section, not two separately-locked halves with a
-    // gap another test could occupy in between.
-    chatDefinerLockRelease = (await acquireChatDefinerLock(base)).release;
-    revokedChatDefinerMembers = await revokeStaleChatDefinerMembership(admin, ownerRole);
-    await admin.query(`SET chat_definer_bootstrap.migration_role = '${ownerRole}'`);
-    try {
-      await bootstrapChatDefiner(admin);
-    } finally {
-      await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+    // codex round-04/round-05 [P2]: a second call before teardown() must be a no-op, not a repeat
+    // bootstrap or a race — acquireChatDefinerLock opens a BRAND NEW connection every call, so
+    // calling this twice would try to acquire the same session-level advisory lock from a SECOND
+    // session while the first (still open, held until teardown()) already holds it, deadlocking
+    // forever. Round-04 guarded on chatDefinerLockRelease, but that check happened BEFORE the
+    // `await` that sets it — two concurrent callers could both observe it null before either
+    // finished, so both would proceed (round-05's own finding). Guarding on
+    // chatDefinerBootstrapPromise instead and assigning it in this SAME synchronous tick (nothing
+    // awaited between the null-check and the assignment) closes that: every caller, concurrent or
+    // sequential, either creates the one shared promise or immediately awaits the one already
+    // created by whichever caller got there first.
+    if (!chatDefinerBootstrapPromise) {
+      chatDefinerBootstrapPromise = (async () => {
+        // The lock is acquired HERE and released only in teardown(), after the restore completes
+        // (codex round-05 [P1]) — the whole revoke -> bootstrap -> [caller's own work] -> teardown
+        // -> restore sequence is one continuous critical section, not two separately-locked halves
+        // with a gap another test could occupy in between.
+        chatDefinerLockRelease = (await acquireChatDefinerLock(base)).release;
+        revokedChatDefinerMembers = await revokeStaleChatDefinerMembership(admin, ownerRole);
+        await admin.query(`SET chat_definer_bootstrap.migration_role = '${ownerRole}'`);
+        try {
+          await bootstrapChatDefiner(admin);
+        } finally {
+          await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+        }
+      })();
     }
+    return chatDefinerBootstrapPromise;
   };
 
   const connectAsWorker = async (): Promise<pg.Pool> => {

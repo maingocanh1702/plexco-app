@@ -701,6 +701,29 @@ describe("setupNonSuperuserOwnerContext teardown", () => {
       await ctx.teardown();
     }
   }, 30_000);
+
+  // codex round-05 [P2]: round-04's own fix guarded on chatDefinerLockRelease, set only AFTER an
+  // `await` -- two callers racing via Promise.all could both observe it null before either
+  // finished, so both would proceed into acquireChatDefinerLock and the second would deadlock
+  // against the first's still-held lock, exactly like the original round-04 bug. The sequential
+  // test above never exercised this: with `await` between the two calls, the first always finishes
+  // before the second starts. This one starts both from the same synchronous tick.
+  it("bootstrapChatDefinerForOwner is safe under concurrent calls, not just sequential ones", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_chat_definer_concurrent");
+    try {
+      await Promise.all([ctx.bootstrapChatDefinerForOwner(), ctx.bootstrapChatDefinerForOwner()]);
+
+      const { rows } = await ctx.superuser.query(
+        `SELECT r.rolname FROM pg_auth_members m
+           JOIN pg_roles r ON r.oid = m.member
+           JOIN pg_roles g ON g.oid = m.roleid
+          WHERE g.rolname = 'chat_definer'`,
+      );
+      expect((rows as { rolname: string }[]).map((r) => r.rolname)).toEqual([ctx.ownerRole]);
+    } finally {
+      await ctx.teardown();
+    }
+  }, 30_000);
 });
 
 async function expectNoPartialJobCoreRow(ctx: { ownerPool: pg.Pool }): Promise<void> {
