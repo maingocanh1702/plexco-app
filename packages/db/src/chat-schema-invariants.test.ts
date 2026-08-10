@@ -576,6 +576,109 @@ describe("regression — chat_members identity immutability (round-01 P1)", () =
   });
 });
 
+describe("regression — chat_channels identity immutability (round-02 P1)", () => {
+  it("UPDATE of kind (dm -> club) is rejected, closing the bypass that would silently disarm the exactly-two-members and no-delete guards", async () => {
+    await expect(
+      ctx.owner.query(
+        `UPDATE chat_channels SET kind = 'club', tenant_id = $1, title = 'Hijacked', is_default = false,
+           sort_order = 999, creation_origin = 'system_bootstrap', post_policy = 'all_members',
+           assistant_enabled = false, dm_key = NULL
+         WHERE id = $2`,
+        [ctx.tenantA, channelDm],
+      ),
+    ).rejects.toThrow(/immutable/);
+  });
+});
+
+describe("regression — dm_current_read_allowed restricted to dm channels (round-02 P2)", () => {
+  it("direct invocation for a club channel with 2 members returns false, not true", async () => {
+    const person1 = await seedPerson("Round02 Club Member 1");
+    const membership1 = await seedMembership(ctx.tenantA, person1);
+    const person2 = await seedPerson("Round02 Club Member 2");
+    const membership2 = await seedMembership(ctx.tenantA, person2);
+    const twoMemberClub = await seedClubChannel(ctx.tenantA, {
+      isDefault: false,
+      sortOrder: 200,
+      title: "Round02 Two Member Club",
+    });
+    await addClubMember(twoMemberClub, person1, membership1);
+    await addClubMember(twoMemberClub, person2, membership2);
+
+    const { rows } = await ctx.owner.query(`SELECT dm_current_read_allowed($1) AS v`, [
+      twoMemberClub,
+    ]);
+    expect((rows[0] as { v: boolean }).v).toBe(false);
+  });
+});
+
+describe("regression — live revocation and hard-DM security paths (round-02 P2)", () => {
+  it("a club member whose membership status changes to 'left' immediately loses read access", async () => {
+    const personLeaving = await seedPerson("Round02 Leaving Member");
+    const membershipLeaving = await seedMembership(ctx.tenantA, personLeaving);
+    const dedicatedChannel = await seedClubChannel(ctx.tenantA, {
+      isDefault: false,
+      sortOrder: 201,
+      title: "Round02 Revocation Channel",
+    });
+    await addClubMember(dedicatedChannel, personLeaving, membershipLeaving);
+
+    const beforeLeave = await withChatPerson(ctx.appDb.db, personLeaving, ctx.tenantA, (tx) =>
+      tx.select().from(chatChannels).where(eq(chatChannels.id, dedicatedChannel)),
+    );
+    expect(beforeLeave.map((c) => c.id)).toEqual([dedicatedChannel]);
+
+    await ctx.owner.query(`UPDATE memberships SET status = 'left' WHERE id = $1`, [
+      membershipLeaving,
+    ]);
+
+    const afterLeave = await withChatPerson(ctx.appDb.db, personLeaving, ctx.tenantA, (tx) =>
+      tx.select().from(chatChannels).where(eq(chatChannels.id, dedicatedChannel)),
+    );
+    expect(afterLeave).toEqual([]);
+  });
+
+  it("a chat_blocks row denies DM read even when dm_safety_enabled() is true, direction-agnostically", async () => {
+    await ctx.owner.query(
+      `INSERT INTO chat_blocks (blocker_person_id, blocked_person_id) VALUES ($1, $2)`,
+      [personDm2, personDm1],
+    );
+    try {
+      const asBlocked = await withChatPerson(ctx.appDb.db, personDm1, null, (tx) =>
+        tx.select().from(chatChannels).where(eq(chatChannels.id, channelDm)),
+      );
+      expect(asBlocked).toEqual([]);
+
+      const asBlocker = await withChatPerson(ctx.appDb.db, personDm2, null, (tx) =>
+        tx.select().from(chatChannels).where(eq(chatChannels.id, channelDm)),
+      );
+      expect(asBlocker).toEqual([]);
+    } finally {
+      await ctx.owner.query(
+        `DELETE FROM chat_blocks WHERE blocker_person_id = $1 AND blocked_person_id = $2`,
+        [personDm2, personDm1],
+      );
+    }
+  });
+
+  it("DELETE of a DM member is rejected — DM membership is immutable except via archived_at", async () => {
+    await expect(
+      ctx.owner.query(`DELETE FROM chat_members WHERE channel_id = $1 AND person_id = $2`, [
+        channelDm,
+        personDm1,
+      ]),
+    ).rejects.toThrow(/soft-close channel via archived_at/);
+  });
+
+  it("direct INSERT attempting a 3rd member row into an already-2-member DM channel is rejected by the count>=2 guard, not just the dm_key mismatch guard", async () => {
+    await expect(
+      ctx.owner.query(`INSERT INTO chat_members (channel_id, person_id) VALUES ($1, $2)`, [
+        channelDm,
+        personDm1,
+      ]),
+    ).rejects.toThrow(/DM channel already has 2 members/);
+  });
+});
+
 describe("migration shape", () => {
   it("adds exactly one new migration file for this slice", () => {
     const thisSlice = ctx.migrateResult.applied.filter((f) => f.includes("chat_schema_core"));
