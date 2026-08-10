@@ -862,6 +862,38 @@ describe("regression — SECURITY DEFINER ownership/grant matrix (round-04 P2)",
     ]);
   });
 
+  it("the complete table x role x privilege matrix for all three chat tables has no unintended DML grants (round-07 P2: the exact allowlist across all 3 tables and all relevant roles, not one sampled operation per table)", async () => {
+    // Supersedes sampling one DML op per table (write-boundary describe block) and INSERT-only for
+    // chat_definer (above): information_schema.table_privileges enumerates every explicit grant row
+    // for every grantee across all three tables at once, catching ANY unintended grant (UPDATE on
+    // chat_channels, DELETE on chat_members, any grant at all to app_worker/readonly, a grant option)
+    // automatically rather than only the specific combinations a test happened to sample.
+    const { rows } = await ctx.owner.query(
+      `SELECT grantee, table_name, privilege_type, is_grantable
+       FROM information_schema.table_privileges
+       WHERE table_name IN ('chat_channels', 'chat_members', 'chat_messages')
+         AND grantee IN ('app', 'chat_definer', 'app_worker', 'readonly')
+       ORDER BY table_name, grantee, privilege_type`,
+    );
+    expect(rows).toEqual([
+      { grantee: "app", table_name: "chat_channels", privilege_type: "SELECT", is_grantable: "NO" },
+      {
+        grantee: "chat_definer",
+        table_name: "chat_channels",
+        privilege_type: "SELECT",
+        is_grantable: "NO",
+      },
+      { grantee: "app", table_name: "chat_members", privilege_type: "SELECT", is_grantable: "NO" },
+      {
+        grantee: "chat_definer",
+        table_name: "chat_members",
+        privilege_type: "SELECT",
+        is_grantable: "NO",
+      },
+      { grantee: "app", table_name: "chat_messages", privilege_type: "SELECT", is_grantable: "NO" },
+    ]);
+  });
+
   it("chat_definer's memberships grant is column-scoped to exactly id/person_id/tenant_id/status, not the whole table", async () => {
     const { rows } = await ctx.owner.query(
       `SELECT column_name, privilege_type, is_grantable
