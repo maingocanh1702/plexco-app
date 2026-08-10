@@ -28,10 +28,12 @@
 
 ---
 
-## T0 — Đóng B1: resume và merge lane Chat đang đỗ
+## ~~T0 — Đóng B1: resume và merge lane Chat đang đỗ~~ ⛔ SUPERSEDED 2026-08-09
 
-> **Vì sao đi trước mọi thứ 3.1:** lane này đang chờ đúng `scripts/codex-review-pin.sh` mà T2/T3/T4
-> sẽ sửa. Sửa reviewer wrapper khi một lane đã verification sạch đang chờ nó = đổi luật giữa hiệp.
+> ⛔ **ĐỪNG PASTE.** Giữ lại làm hồ sơ. Lane `--v2` đã **không** resume được: sau khi owner clear AWAIT,
+> `ready` HALT `BASE_STALE` và lane đã đóng bằng `ap-finish.sh --authorized-close`. Worktree đã gỡ,
+> registration đã xoá khỏi registry. Prompt này sẽ khiến agent đi tìm một state dir không còn tồn tại.
+> **Dùng T0b thay thế.**
 
 ```text
 Read docs/00-start-here/HANDOFF.md first.
@@ -86,9 +88,15 @@ OUTCOME: re-register the closed chat-dm-safety lane as chat-dm-safety-authority-
 preserving every byte of its 2026-08-05 owner-authorized scope amendment, then reach READY.
 
 PRECONDITION — verify, do not assume:
-- `git status --porcelain` on the root tree. A dirty base must not be registered. If the working tree
-  still carries the uncommitted docs reorg / docs/expert/ additions / the backlog reconcile ap-finish
-  left behind, report AWAIT and stop. Closing that is the owner's call (blocker B3).
+- `git rev-parse main origin/main` must return the SAME sha. Measured 2026-08-10: both were 2e577c7
+  after the owner pushed the five docs commits 18005e6..2e577c7 — but re-measure, do not trust that.
+  If they differ, report AWAIT: base_sha must be the origin/main tip AND remain an ancestor of it
+  (assertBaseUsable, v21), which a local-only main cannot satisfy. Do not push on their behalf.
+- `git status --porcelain` on the root tree must show NOTHING except these three, which are untracked
+  on purpose and are not blockers:
+      design.pen, fe.pen        (DD-81 canonical not yet chosen — owner decision, FE stays HOLD)
+      docs/standards.zip        (redundant archive of docs/standards/, deliberately not committed)
+  Anything else means a batch was missed: report AWAIT rather than registering on a dirty base.
 - Confirm feat/chat-dm-safety-authority-core--v2 still exists and points at the same head recorded in
   .autopilot/dispositions/chat-dm-safety-authority-core--v2.json.
 
