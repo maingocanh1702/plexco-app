@@ -1080,40 +1080,62 @@ notes: |
 
 ## task: dd38-dd86-chat-schema-core
 title: Chat-schema migration slice (DD-38 in-app chat) — three core tables + constraints + RLS/pure-read helpers
-status: idea — contract AUTHORED 2026-08-03, verdict NOT_CODE_READY (closure 10/12), blocked on slices 1–2
-risk: P0
+status: ready — contract CODE_READY 2026-08-10 (closure 12/12); not yet registered or worktree-opened
+status_history_2026-08-03_idea: idea — contract AUTHORED 2026-08-03, verdict NOT_CODE_READY (closure
+  10/12), blocked on slices 1–2 not existing as their own authored/merged slices yet. Both blockers
+  closed 2026-08-10: chat-definer-role-provisioning merged `286f48b` (hardened `b55d628`);
+  chat-dm-safety-authority-core merged `d5b31f9` (DD-102 evidence-based close via
+  `ap-finish.sh --authorized-close`, not a clean scope-gate `READY`). Re-verified live against
+  `origin/main` in the 2026-08-10 pass, not carried from either dependency's own closing note — see
+  slice_doc §3/§4/§9.
+risk: P1
+risk_note_2026-08-10: corrected from `P0`. `P0` ("live production/control mutation, secrets,
+  irreversible privilege action") does not fit a reviewed, forward-only, pre-enable-reversible schema
+  migration; both sibling slices in this same dependency chain (`chat-definer-role-provisioning`,
+  `chat-dm-safety-authority-core`) are `P1`, and the manifest's own `code_review.clean_rounds: 2` +
+  `security_review.required: true` already matched the P1 tier, not P0's prepare-only posture. See
+  `docs/autopilot-manifests/dd38-dd86-chat-schema-core.json` `_risk_note`.
 change_class: schema-migration
 depends_on: [chat-definer-role-provisioning, chat-dm-safety-authority-core]
 invariants: [schema]
-scope: []
+scope: [packages/db/migrations/0031_chat_schema_core.sql, packages/db/schema.ts, packages/db/src/chat-schema-invariants.test.ts, packages/db/src/migrate.test.ts, packages/db/README.md, docs/autopilot-manifests/dd38-dd86-chat-schema-core.json, docs/autopilot/contracts/autopilot-dd38-dd86-chat-schema-core.md]
 manifest: docs/autopilot-manifests/dd38-dd86-chat-schema-core.json
 slice_doc: docs/autopilot/contracts/autopilot-dd38-dd86-chat-schema-core.md
+launcher: .claude/commands/ap-45-dd38-dd86-chat-schema-core.md
 depends_on_note: **`depends_on: []` sửa 2026-08-03 — trường cũ tự nhận là placeholder ("evidence registry anchor") và nó đúng là placeholder.** Chuỗi thật, đọc từ primary-surface plan §9 (cột dependency, KHÔNG phải cột ID — plan nói rõ số là stable catalog ID không quyết định thứ tự): `chat-definer-role-provisioning` → `chat-dm-safety-authority-core` → slice này → `tenant-capability-authority-core`.
   **Đây là phụ thuộc CƠ HỌC, không phải thủ tục.** Migration của slice này gọi `dm_safety_enabled()` (thuộc slice 2) và chạy `ALTER FUNCTION ... OWNER TO chat_definer` (role thuộc slice 1) — thiếu một trong hai thì migration **không apply được**, không phải "nên chờ". Ai đọc nhầm thành thứ tự khuyến nghị sẽ có lúc thử đảo nó.
   **Và slice này KHÔNG phải root** dù title cũ ghi vậy — tiêu đề đã bỏ chữ "Root". Slice 0 (`docs-chat-primary-surface-contract`) đã land tại `90d292d`; đây là packet thứ ba.
+  **Cập nhật 2026-08-10:** cả hai phụ thuộc trên đã MERGED (không chỉ named/spec'd) — xem `dep_checks`
+  trong manifest cho bằng chứng base_sha/landed_sha/symbol độc lập, và slice_doc §4.3.
 merged_probe: packages/db/schema.ts :: chat_channels
 notes: |
-  Evidence registry anchor only; this block does not issue a readiness verdict or authorize a worktree.
-  Immutable authority `90d292d` makes DD-86/DD-91–95 owner-final; current decisions v2.11 mirrors it.
-  DD-88 is a broader DEFERRED_PROPOSAL and does not own or block DD-94. Club Assistant Product/BE
-  v0.18, Chat Product v0.15/BE v0.23 and Notifications Product/BE v3.11 are Reviewed target
-  contracts. No chat_* schema, service, route, UI runtime or new migration exists at main@784bc8d.
-  Current initiative readiness, blocker and next trigger are owned exclusively by primary-surface
-  plan v1.8 §13 (`PLAN_READY` at `90d292d`); any future slice packet
-  must re-evaluate its own readiness against the immutable authority it pins.
-  This root slice is deliberately bounded to final `chat_channels`/`chat_members`/`chat_messages`
+  Immutable authority `90d292d` makes DD-86/DD-91–95 owner-final; current decisions v2.11 mirrors it
+  (DD-101/DD-102 landed later in the same chain, read and scoped in the slice_doc §4.4 — neither
+  reopens a decision this slice owns). DD-88 is a broader DEFERRED_PROPOSAL and does not own or block
+  DD-94. Club Assistant Product/BE v0.18, Chat Product v0.15/BE v0.23 and Notifications Product/BE
+  v3.11 are Reviewed target contracts.
+  This slice is deliberately bounded to final `chat_channels`/`chat_members`/`chat_messages`
   shape + DM read adapter + RLS/policies + read-helper owner/grants + invariant tests. It must NOT
   own create_dm/send/mark-read HTTP/RPC, capability registry/grants, media, Assistant, slash
   execution, notification delivery or moderation endpoints. The cross-feature
   `tenant-capability-authority-core` is semantically independent but executes only as slice 4
-  after this root slice because worktrees 1→2→3→4 share migration/schema/catalog-test scope;
+  after this slice because worktrees 1→2→3→4 share migration/schema/catalog-test scope;
   it must land before every lifecycle/restricted-post/moderation/mute consumer. DD-92 requires own edit, author soft-delete
   and search before beta; DD-93/94/95 require the full registry, unread-derived generic opaque
   offline signal/digest and exact moderation contract, all dependency-ordered by plan v1.8.
-  depends_on remains [] because this is an evidence registry anchor, not evidence that the executable
-  slice graph has no dependencies. Replace it with the immutable plan's exact prerequisites
-  when authoring the real packet. This block only preserves the root anchor originally split out of AP-28;
-  it AUTHORIZES nothing.
+
+  **2026-08-10, readiness re-review (this entry + manifest + slice_doc, no worktree/register/code):**
+  both hard dependencies above are now merged to `origin/main` with independently-verified
+  base_sha/landed_sha/symbol proof (manifest `dep_checks`, slice_doc §4.3) — the original packet's
+  single largest open item is closed. Also corrected: migration number `0029`→`0031` (re-derived
+  against the live tail, now `0030_chat_dm_safety_authority_core.sql` — the original `0029` guess was
+  consumed by two unrelated DD-29 capability-registry migrations before slice 2 landed; see slice_doc
+  §6); `risk: P0`→`P1` (see risk_note above); closure matrix `10/12`→`12/12`; classification directive
+  flipped `enforce`→`code-ready`. This backlog entry mirrors the slice_doc's verdict — the slice_doc
+  (`docs/autopilot/contracts/autopilot-dd38-dd86-chat-schema-core.md` §9) is the authoritative gate,
+  not this block. `status: ready` signals CODE_READY, not an opened worktree or an authorized register
+  — the next actionable step is `scripts/autopilot-scope-gate register` from a freshly-verified
+  `origin/main` tip, per slice_doc §9 `FIRST_IMPLEMENTATION_STEP`.
 
 ## task: docs-session-management-spec-reconcile
 title: Reconcile 2 pinned Session Management spec defects (projection direction + stale 0014 merge-state) to PRD

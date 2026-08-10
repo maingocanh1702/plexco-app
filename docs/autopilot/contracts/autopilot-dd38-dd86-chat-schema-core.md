@@ -1,35 +1,45 @@
-<!-- review-readiness: enforce -->
+<!-- review-readiness: code-ready -->
 # AP-45 — dd38-dd86-chat-schema-core: root chat-schema migration slice contract
 
-> **Status:** `NOT_CODE_READY` (see verdict, §9) · **Authored:** 2026-08-03 · **Risk:** P0 (preparation-only)
+> **Status:** `CODE_READY` (see verdict, §9) · **Authored:** 2026-08-03 · **Re-verified:** 2026-08-10 ·
+> **Risk:** P1 (schema/migration — corrected from P0, see §9's `_risk_note` cross-reference in the
+> manifest; P0 is reserved for live production/control mutation, not a reviewed forward-only migration)
 > **This is an AUTHORING artifact.** No worktree has been opened, no `register` has been attempted, no
 > code exists. It re-evaluates its own readiness against the immutable authority it pins rather than
 > inheriting the `docs/autopilot-backlog.md` entry's own disclaimer that that entry "does not issue a
-> readiness verdict."
+> readiness verdict." The 2026-08-10 pass is a **readiness-only re-review**: both hard dependencies
+> that blocked the original 2026-08-03 verdict have since merged to `origin/main`; this pass re-verifies
+> that closure live (not by trusting either dependency's own closing note) and updates every stale
+> current-state claim the first packet made about a then-unmerged dependency graph. It still does not
+> open a worktree, register scope, or write implementation code — that remains the next session's job.
 
 ## 0. Session input
 
 ```text
-REQUEST: final-readiness (authoring, not implementation)
+REQUEST: readiness re-review 2026-08-10 (authoring/readiness only, not implementation) — closes the
+  two dependency blockers the 2026-08-03 verdict recorded; does not re-litigate scope/contract/DDL,
+  which are unchanged from authoring
 TARGET_FILES:
   - docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md (v1.8, §7-§13)
   - docs/features/BE/feature_inapp_chat_tech.md (v0.23, §2 schema/RLS)
   - docs/features/FE/feature_inapp_chat.md (v0.15)
   - docs/decisions/analysis/dd-86-in-app-multi-channel-analysis.md
-  - docs/standards/decisions.md (DD-38/55/86/91-95 anchors, §1112/§1193)
+  - docs/standards/decisions.md (DD-38/55/86/91-95 anchors, §1112/§1193; DD-101/DD-102 — §4.4 below)
   - docs/standards/feature-dependency-graph.md
-  - docs/autopilot-backlog.md (task dd38-dd86-chat-schema-core, line 725)
-  - packages/db/schema.ts (live, 1409 lines at base)
-  - packages/db/migrations/*.sql (live, tail 0027)
+  - docs/autopilot-backlog.md (task dd38-dd86-chat-schema-core)
+  - packages/db/schema.ts (live)
+  - packages/db/migrations/*.sql (live, tail 0030 as of 2026-08-10 — was 0027 at authoring)
   - packages/db/migrations/0009_rls_policies_grants.sql (RLS/grants idiom)
   - packages/db/migrations/0012_auth_functions.sql (SECURITY DEFINER idiom)
+  - packages/db/migrations/0030_chat_dm_safety_authority_core.sql (slice 2, now landed — dependency proof)
   - packages/db/src/tenant.ts, packages/db/src/test-harness.ts (GUC-setting idiom)
   - docs/autopilot-invariant-catalog.md (`schema` token)
-  - infra/postgres-init/ (live listing — confirms slice 1 unlanded)
-EXPECTED_OUTCOME: CODE_READY (target); actual = NOT_CODE_READY, see §9
+  - infra/postgres-init/02-chat-definer.sql (slice 1, now landed — dependency proof)
+EXPECTED_OUTCOME: CODE_READY (target); actual = CODE_READY, see §9
 BASE_BRANCH: main
 SCOPE_REPO: /Users/maingocanh/Projects/Plexco app
-USER_AUTHORIZED_EDITS: yes (authoring this packet + manifest + launcher only; no register/worktree/code)
+USER_AUTHORIZED_EDITS: yes (this readiness re-review: contract + manifest + backlog entry only; no
+  register/worktree/code)
 ```
 
 ## 1. What this slice is
@@ -48,38 +58,53 @@ delivery. See §5 for the full negative-scope list, pinned verbatim from the Rev
 - **Immutable decision authority:** `90d292d85fbe92db7a5afcd118a99e28f3d3b3b7` — commit
   `docs(chat): commit the in-app-chat primary-surface authority pack`, exactly 27 `TARGET_FILES`,
   reviewed at primary-surface plan v1.8 §13, `PLAN_READY`, closure 12/12.
-- **Live base (verified 2026-08-03, this session):** `b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43` =
-  `origin/main` = `main` (`git rev-parse origin/main HEAD` both returned this SHA; working tree has
-  only untracked, unrelated WIP: `.msg-a.txt`, `.msg-b.txt`, `design.pen`,
-  `docs/autopilot-templates/level3.1-design-discussion.md`, `docs/channels/web/FE/`,
-  `docs/channels/web/docs_comparison.md`, `docs/sessions/`,
-  `docs/templates/feature-dev/fe-spec-template.md` — none touch chat/schema).
-- **Why two SHAs:** the plan's product/design content is frozen at `90d292d`; this packet additionally
-  re-verifies *current* live-repo truth (migration tail, absence of `chat_*`, dependency-slice
-  landing state) against the live base, per this repo's own rule that a slice packet must
-  re-evaluate its own readiness rather than inherit a stale one. The backlog's queue-state notes
-  (top of `docs/autopilot-backlog.md`) warn that `784bc8d` was wrongly called "current HEAD" in ~30
-  files after `main` moved past it — this packet does not repeat that mistake: `90d292d` is cited
+- **Live base at original authoring (2026-08-03):** `b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43` =
+  `origin/main` = `main` at that time. Superseded below — kept here only as the dated record of what
+  was true when §3's original table (now updated) was first measured.
+- **Live base (re-verified 2026-08-10, this session):** `3891bdf7cffa8be583d00364139babf981a5f9a7` =
+  `origin/main` = `main` (`git rev-parse origin/main HEAD` both returned this SHA). Working tree has
+  only untracked, unrelated files (`design.pen`, `docs/standards.zip`, `fe.pen`) — none touch
+  chat/schema; tracked tree is clean.
+- **Why two SHAs (still applies, now pointing at the current base):** the plan's product/design content
+  is frozen at `90d292d`; this packet additionally re-verifies *current* live-repo truth (migration
+  tail, dependency-slice landing state) against the live base, per this repo's own rule that a slice
+  packet must re-evaluate its own readiness rather than inherit a stale one. The backlog's queue-state
+  notes (top of `docs/autopilot-backlog.md`) warn that `784bc8d` was wrongly called "current HEAD" in
+  ~30 files after `main` moved past it — this packet does not repeat that mistake: `90d292d` is cited
   only as the frozen decision snapshot, never as "current HEAD".
+- **Mapping to §9's machine-checked field names (2026-08-10):** the verdict block's `AUTHORITY_SHA`
+  field holds the *live base* value (`3891bdf`) — the commit the 2026-08-10 verification was performed
+  against — not the frozen decision commit. The frozen decision commit (`90d292d`, "Immutable decision
+  authority" above) is carried in the verdict block's `DECISION_AUTHORITY_SHA` field instead. This
+  differs from how this packet's original 2026-08-03 verdict used these two field names (it put the
+  frozen decision commit under `AUTHORITY_SHA` and the live base under `LIVE_BASE_SHA`); the field
+  *names* changed meaning on re-review, the underlying two SHAs and what each one means did not.
 
-## 3. Live-repo verification (re-run 2026-08-03, not trusted from the backlog stub)
+## 3. Live-repo verification
 
-| Claim | Method | Result |
+Original run 2026-08-03 (not trusted from the backlog stub) is superseded by the re-run below where the
+two disagree; rows unaffected by the dependency landings are carried forward unchanged.
+
+| Claim | Method | Result (re-verified 2026-08-10) |
 |---|---|---|
-| No `chat_*` schema/service/route/UI/migration exists | `grep -rli "chat_channels\|chat_members\|chat_messages" --include="*.ts" --include="*.sql" --include="*.tsx" .` (excl. node_modules) | Zero hits — **confirmed still true** at `b3d3b4a` |
-| Migration tail | `ls packages/db/migrations/` | `0027_resolve_tenant_status_locked.sql` — no `chat_*` file |
-| `schema` invariant token exists in catalog | `grep -n "^schema" docs/autopilot-invariant-catalog.md` | `schema — Supabase/Postgres tables, migrations, RLS policies` (line 35, em-dash format, no backticks) |
-| Slice 1 (`chat-definer-role-provisioning`) landed? | `ls infra/postgres-init/` | Only `01-job-definer.sql` exists — **`02-chat-definer.sql` (the exact file §9.2 of the plan names) is absent. Slice 1 has NOT landed.** |
-| Slices 1/2 registered anywhere? | `grep -n "chat-definer-role-provisioning\|chat-dm-safety-authority-core" docs/autopilot-backlog.md` | **Zero hits. Neither has a backlog `## task:` entry, manifest, or launcher**, despite being named, ordered and spec'd across 8+ docs (plan §9 row 1/2, §9.2 exact packet, `dd-86-in-app-multi-channel-analysis.md`, `feature_inapp_chat.md`, `feature_inapp_chat_tech.md`, `feature_tenant_routing_authz_tech.md`, `TDD.md`, `feature-dependency-graph.md`, `decisions.md` ×3) |
-| Person-scoped RLS GUC (`app.person_id`) precedent | `grep -n "withPerson\|app\.person_id" packages/db/src/tenant.ts` | No existing helper — every RLS policy in this repo to date (`0009_rls_policies_grants.sql`) is tenant-scoped only via `app.tenant_id`. **This slice introduces the first person-scoped RLS GUC.** |
-| `chat_current_is_member`/`dm_current_read_allowed` naming collision | repo-wide grep | None |
+| No `chat_channels`/`chat_members`/`chat_messages` (THIS slice's own tables) exists yet | `grep -rli "chat_channels\|chat_members\|chat_messages" --include="*.ts" --include="*.sql" --include="*.tsx" .` (excl. node_modules) | Zero hits — **still true at `3891bdf`.** Note this claim is now narrower than the original "no `chat_*` anywhere": `chat_dm_safety_config`/`chat_blocks`/`chat_reports` (slice 2's tables) and the `chat_definer` role (slice 1) now exist live — expected and correct, since both dependencies have merged; they are not this slice's own deliverable |
+| Migration tail | `ls packages/db/migrations/*.sql \| sort \| tail` | `0030_chat_dm_safety_authority_core.sql` (was `0027` at authoring — `0028`/`0029` were unrelated DD-29 capability-registry migrations, `0030` is slice 2's own landed migration; see §6) |
+| `schema` invariant token exists in catalog | `grep -n "^schema" docs/autopilot-invariant-catalog.md` | Unchanged: `schema — Supabase/Postgres tables, migrations, RLS policies` (line 35) |
+| Slice 1 (`chat-definer-role-provisioning`) landed? | `ls infra/postgres-init/`; `git show 286f48b:infra/postgres-init/02-chat-definer.sql \| grep -c "CREATE ROLE chat_definer"` | **`02-chat-definer.sql` exists** (`chat_definer` role, exact `NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION` attributes). Merged `286f48b` (2026-08-04, owner override past a `REGION_THRASH` halt — recorded in that commit's own message), hardened `b55d628` (2026-08-05, AP-49 cluster-wide bootstrap serialization). Present on current tip `3891bdf`. **Slice 1 has landed.** |
+| Slice 2 (`chat-dm-safety-authority-core`) landed? | `ls packages/db/migrations/`; `git show d5b31f9:packages/db/migrations/0030_chat_dm_safety_authority_core.sql \| grep -c "CREATE FUNCTION dm_safety_enabled"` | **`0030_chat_dm_safety_authority_core.sql` exists**, creating `dm_safety_enabled()`/`chat_pair_blocked()`/`assert_dm_allowed()` + `chat_dm_safety_config`/`chat_blocks`/`chat_reports`, owned by `chat_definer`. Merged `d5b31f9` (2026-08-10, on review evidence under DD-102, not through scope-gate `READY` — see §4.4). Present on current tip `3891bdf`. **Slice 2 has landed.** |
+| Slices 1/2 registered/tracked in the backlog? | `grep -n "chat-definer-role-provisioning\|chat-dm-safety-authority-core" docs/autopilot-backlog.md` | Both now have full `## task:` entries with `status: merged`, manifest, slice_doc and launcher (added 2026-08-03/05, closed 2026-08-04/10) — the "zero hits" gap the original packet found is closed |
+| Person-scoped RLS GUC (`app.person_id`) precedent | `grep -n "withPerson\|app\.person_id" packages/db/src/tenant.ts` | Still no existing helper — every RLS policy in this repo to date (`0009_rls_policies_grants.sql`) is tenant-scoped only via `app.tenant_id`. **This slice still introduces the first person-scoped RLS GUC** (unaffected by the dependency landings — neither slice 1 nor slice 2 added tenant/RLS-policy surface: slice 2's tables are global-protected, zero RLS, per its own contract) |
+| `chat_current_is_member`/`dm_current_read_allowed` naming collision | repo-wide grep, re-run against current tip | None |
+| `dm_current_read_allowed`'s calls into slice 2 — are they exposed to the DD-102 torn-read waiver? | Read `docs/autopilot/contracts/autopilot-dd38-dd86-chat-schema-core.md` §5.1 own DDL + `packages/db/migrations/0030_chat_dm_safety_authority_core.sql` | **No.** `dm_current_read_allowed` calls exactly two slice-2 symbols: `dm_safety_enabled()` and `chat_pair_blocked()` — never `assert_dm_allowed()`. DD-102's waived finding is specific to `assert_dm_allowed()`, which reads `chat_dm_safety_config` across 4 separate statements. Both `dm_safety_enabled()` (one `SELECT ... COALESCE(...)`) and `chat_pair_blocked()` (one `SELECT EXISTS(...)`) are single-statement `LANGUAGE sql` functions — one statement, one snapshot each, neither subject to the same torn-read shape. See §4.4 |
 
 ## 4. Dependency graph — corrected from the backlog stub
 
-The backlog entry (`docs/autopilot-backlog.md:725`) carries `depends_on: []` **by its own admission
-as a placeholder**: *"depends_on remains `[]` because this is an evidence registry anchor, not
-evidence that the executable slice graph has no dependencies. Replace it with the immutable plan's
-exact prerequisites when authoring the real packet."* This section does that.
+The backlog entry (task `dd38-dd86-chat-schema-core` — do not hard-pin a line number here, the file
+grows) originally carried `depends_on: []` **by its own admission as a placeholder**: *"depends_on
+remains `[]` because this is an evidence registry anchor, not evidence that the executable slice graph
+has no dependencies. Replace it with the immutable plan's exact prerequisites when authoring the real
+packet."* This section does that (and, as of the 2026-08-10 pass, the backlog entry itself has been
+corrected to match — see §10 #2).
 
 ### 4.1 The real chain
 
@@ -115,23 +140,55 @@ references symbols slices 1/2 create**:
 This is a **hard functional dependency**, provable by reading root's own target DDL, not a narrative
 claim.
 
-### 4.3 The gap this packet cannot close by itself
+### 4.3 The gap this packet could not close by itself — now closed (2026-08-10)
 
 Per this repo's own dependency-proof rule (`autopilot-invariants.md` §"Backlog / registry / parallel
 gate"): *"Every Level-3 `depends_on` row carries a same-order proof with dependency `base_sha`,
 `landed_sha`, exact file and slice-unique identifier absent on the dependency base and present on
-both landed/downstream trees."* That proof requires the dependency to be **merged**. Neither
-`chat-definer-role-provisioning` nor `chat-dm-safety-authority-core` has been merged — neither has
-even been **authored** as its own slice (no backlog entry, no manifest, no launcher; confirmed §3).
+both landed/downstream trees."* At original authoring (2026-08-03), neither `chat-definer-role-
+provisioning` nor `chat-dm-safety-authority-core` had even been **authored** as its own slice (no
+backlog entry, no manifest, no launcher; confirmed by the 2026-08-03 run of §3).
 
-So this packet's manifest (`docs/autopilot-manifests/dd38-dd86-chat-schema-core.json`) declares
-`depends_on: ["chat-definer-role-provisioning", "chat-dm-safety-authority-core"]` (the true names,
-correcting the backlog stub) but **`dep_checks: []`** — there is no `base_sha`/`landed_sha`/`symbol`
-proof to cite yet. Fabricating placeholder SHAs here would be exactly the "evidence with a
-machine-checked shell" failure mode `review-code-readiness-gate.md` §11.2 warns against. This is the
-single largest open item in this packet — see §10.
+**Both have since been authored, implemented and merged to `origin/main`.** This packet's manifest
+(`docs/autopilot-manifests/dd38-dd86-chat-schema-core.json`) now carries a filled `dep_checks` array
+with real, independently-verified proof for each:
 
-### 4.4 Successors (for orientation, not owned by this packet)
+| Dependency | base_sha (symbol absent) | landed_sha (symbol present) | File | Symbol |
+|---|---|---|---|---|
+| `chat-definer-role-provisioning` | `de78394` | `286f48b` (2026-08-04) | `infra/postgres-init/02-chat-definer.sql` | `chat_definer` |
+| `chat-dm-safety-authority-core` | `75f06c5` | `d5b31f9` (2026-08-10) | `packages/db/migrations/0030_chat_dm_safety_authority_core.sql` | `dm_safety_enabled` |
+
+Both `base_sha` values are the exact parent commit of their `landed_sha` (`git log -1 <landed_sha>^`) —
+the tightest same-order proof available — and both symbols were independently re-confirmed present at
+the current tip `3891bdf` (not merely at their own landed commit), per this repo's own rule that a
+dependency proof must hold against the live base being registered against, not just historically. No
+placeholder or fabricated SHA is used anywhere in this proof. This was the single largest open item in
+the original packet (§10 #1) and is now closed.
+
+### 4.4 DD-102's torn-read waiver — read and scoped, does not block this slice
+
+`chat-dm-safety-authority-core`'s round-5 review found `assert_dm_allowed()` reads
+`chat_dm_safety_config` across four separate statements (one `dm_safety_enabled()` call plus three
+direct column reads), a torn read under READ COMMITTED — waived conditionally by **DD-102**
+(`docs/standards/decisions.md`, ✅ 2026-08-10), on the record that it is **not fail-open** (every
+`COALESCE` default denies) and exposure is zero (no production caller exists yet). DD-102's hard
+condition is that a follow-up (`chat-dm-safety-config-single-read`, tracked in the backlog) must land
+**before the first caller of `assert_dm_allowed()`** — i.e. before slices 7/8
+(`chat-shared-message-command-core` / `chat-dm-lifecycle-command-core`).
+
+**This slice never calls `assert_dm_allowed()`.** Root's own DDL (§5.1) calls exactly two DM-safety
+symbols from inside `dm_current_read_allowed()`: `dm_safety_enabled()` and `chat_pair_blocked()`.
+Both are `LANGUAGE sql` functions containing a single statement each (`SELECT ... COALESCE(...)` and
+`SELECT EXISTS(...)` respectively) — one statement, one MVCC snapshot, not a multi-statement read, so
+neither is an instance of the torn-read shape DD-102 waived (that finding is specific to
+`assert_dm_allowed()`'s four-statement body, which reads `chat_dm_safety_config` three times plus one
+`dm_safety_enabled()` call). DD-102's hard condition ("before slice 7/8") does not name this slice, and
+the mechanism it names (`assert_dm_allowed()`) does not appear anywhere in this slice's own dependency
+edge. Conclusion: DD-102 is read, understood, and does not open a blocker, open question, or
+negative-scope gap for `dd38-dd86-chat-schema-core` — it remains exclusively a precondition on slices
+7/8, which must re-check it themselves before their own worktrees open.
+
+### 4.5 Successors (for orientation, not owned by this packet)
 
 `4 tenant-capability-authority-core` (collision-only dep on this slice) → `5 chat-club-channel-
 lifecycle-core` → `9 chat-authorized-member-target-read-core` → `6 chat-club-moderation-core` → `7
@@ -429,7 +486,7 @@ here to not repeat that lesson.
 ### 5.4 Full scope list
 
 ```text
-packages/db/migrations/0029_chat_schema_core.sql   -- SEE §6 — number is provisional, re-derive at build time
+packages/db/migrations/0031_chat_schema_core.sql   -- SEE §6 — re-derived 2026-08-10, re-verify again at build time
 packages/db/schema.ts
 packages/db/src/chat-schema-invariants.test.ts     -- NEW file
 packages/db/src/migrate.test.ts                    -- mechanical literal bump only
@@ -438,22 +495,32 @@ docs/autopilot-manifests/dd38-dd86-chat-schema-core.json   -- self, per AP-39/AP
 docs/autopilot/contracts/autopilot-dd38-dd86-chat-schema-core.md               -- self
 ```
 
-## 6. Migration numbering — provisional, do not trust
+## 6. Migration numbering — re-derived 2026-08-10, still re-verify at build time
 
-Live tail at authoring time: `0027_resolve_tenant_status_locked.sql`. Slice 1
-(`chat-definer-role-provisioning`) does **not** consume a migration number — its exact packet (plan
-§9.2) creates `infra/postgres-init/02-chat-definer.sql`, a superuser bootstrap script parallel to the
-existing `01-job-definer.sql`, run via a `db:bootstrap`-style command, **not** a
-`packages/db/migrations/*.sql` file. Slice 2 (`chat-dm-safety-authority-core`) does add "một migration
-độc lập" (+1 → `0028`). This slice's migration would then be `0029`.
+Live tail at original authoring (2026-08-03): `0027_resolve_tenant_status_locked.sql`. The packet
+projected slice 1 (no migration number, bootstrap script only) then slice 2 (+1) → `0029` as a
+placeholder.
 
-**This is a working placeholder, not a commitment.** Unlike the `db-tenants-authz-grant-security-
-definer` precedent (which pinned `0027` when its only dependency was already merged with no migration
-of its own pending), this slice has **two unauthored, unlanded prerequisite migrations ahead of it**.
-The real number depends on exactly how many migrations slices 1 and 2 end up needing (§9's budget
-caps each at "đúng 1 migration monotonic", so 0028 for slice 2 is the current best estimate, but
-re-derive with `ls packages/db/migrations/*.sql | sort | tail -5` immediately before creating
-anything, and after confirming slices 1/2 have actually landed — not before.
+**Re-measured 2026-08-10:** `ls packages/db/migrations/*.sql | sort | tail` → live tail is now
+`0030_chat_dm_safety_authority_core.sql`. Both dependency assumptions held **in kind** — slice 1
+(`chat-definer-role-provisioning`, merged `286f48b`) consumed zero migration numbers exactly as
+predicted (its deliverable is `infra/postgres-init/02-chat-definer.sql`, run via `pnpm db:bootstrap`,
+never a `packages/db/migrations/*.sql` file); slice 2 (`chat-dm-safety-authority-core`, merged
+`d5b31f9`) consumed exactly one, landing as `0030`. But the original `0029` guess itself was **not**
+free by the time slice 2 actually landed: two unrelated `DD-29` capability-registry migrations
+(`0028_dd29_capability_registry_expand.sql`, `0029_dd29_capability_registry_contract.sql`) landed in
+between authoring and slice 2's implementation and consumed `0028`/`0029` first — the exact "guessed a
+free number, unrelated work took it" failure mode this same packet's §9 notes already warned about
+once (its own original number, also `0029`, had already been taken once before by two DD-29 billing
+migrations at an earlier point in this chain's history — see the backlog's own note on
+`chat-dm-safety-authority-core`: *"Migration number `0030` provisional (tail đo 2026-08-05 là `0029`,
+hai file DD-29 pricing ... đã ăn mất số `0029` mà chính AP-45 từng đoán cho chính nó)"*).
+
+**This slice's migration number is `0031`**, re-derived (not guessed) against the current confirmed
+tail. Per this same lesson, repeated now for the second time on this slice: **re-derive again with
+`ls packages/db/migrations/*.sql | sort | tail` immediately before creating anything** at worktree-open
+time — do not trust `0031` if any other migration-adding slice lands between this re-review and that
+moment (see manifest `stop_conditions`).
 
 ## 7. Negative scope (pinned verbatim from the Reviewed spec, `feature_inapp_chat_tech.md:475`)
 
@@ -470,7 +537,9 @@ Root does **NOT** create:
 - any Assistant/KB table or route
 - the `chat_definer` role itself (slice 1's deliverable — root only *consumes* an already-provisioned role)
 - `dm_safety_enabled()`, `chat_pair_blocked()`, `assert_dm_allowed()` (slice 2's deliverable — root
-  only *calls* these, never `CREATE OR REPLACE`/re-owns them)
+  never `CREATE OR REPLACE`/re-owns any of the three; in practice root's own DDL calls only the first
+  two, `dm_safety_enabled()` and `chat_pair_blocked()`, from inside `dm_current_read_allowed()` —
+  `assert_dm_allowed()` is not called anywhere in this slice, see §4.4)
 - any `INSERT`/`UPDATE`/`DELETE` grant to `app`, `app_worker`, or `readonly` on any of the three
   tables — mutation has no owner yet (send/create/mark-read are later slices); granting it now would
   repeat exactly the failure mode `authorize-tenant-action-core`/`db-tenants-authz-grant-security-
@@ -504,12 +573,24 @@ Root does **NOT** create:
 
 ## 9. Canonical verdict
 
+`AUTHORITY_SHA` is re-pinned in this 2026-08-10 pass to `3891bdf` — the commit this verification was
+actually performed against — rather than left at `90d292d`, the original 2026-08-03 authoring commit.
+A `CODE_READY` verdict asserting facts measured on 2026-08-10 (both dependencies' landed SHAs, the
+migration tail, the `0031` re-derivation) under an `AUTHORITY_SHA` that predates that evidence would be
+internally inconsistent. The frozen product/decision snapshot this packet's design still depends on
+(DD-38/55/86/91-95, `90d292d`) has not moved and is not invalidated — it is preserved under
+`DECISION_AUTHORITY_SHA` (renamed from this packet's prior `LIVE_BASE_SHA` field, which held the same
+`3891bdf` value `AUTHORITY_SHA` now holds and would otherwise duplicate it). Both are custom fields
+beyond `review-code-readiness-gate.md`'s base template (neither is in the validator's
+`REQUIRED_FIELDS`); §2 above still carries the full "why two SHAs" explanation, prose-only, unaffected
+by this rename.
+
 ```text
 REVIEW_POLICY_VERSION: 1.3
-REVIEW_VERDICT: NOT_CODE_READY
-REVIEWED_AT: 2026-08-03
-AUTHORITY_SHA: 90d292d85fbe92db7a5afcd118a99e28f3d3b3b7
-LIVE_BASE_SHA: b3d3b4a26abc3fddbbb51ebb3d9f4d33d899ab43
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-08-10
+AUTHORITY_SHA: 3891bdf7cffa8be583d00364139babf981a5f9a7
+DECISION_AUTHORITY_SHA: 90d292d85fbe92db7a5afcd118a99e28f3d3b3b7
 BASE_BRANCH: main
 BASE_REMOTE_RELATION: MAIN_EQUALS_ORIGIN_MAIN
 TARGET_FILES:
@@ -531,79 +612,79 @@ OUT_OF_SCOPE: create_dm/send/mark-read HTTP or RPC; capability registry/grants; 
   slash commands; moderation/mute storage; notification delivery (full list §7)
 G1_DECISION: PASS
 G2_SPEC: PASS
-G3_DEPENDENCY: FAIL
+G3_DEPENDENCY: PASS
 G4_TEST: PASS
 G5_SCOPE: PASS
 G6_EXTERNAL: PASS
 HARD_DEPENDENCIES:
-  - chat-definer-role-provisioning: NOT_MERGED, NOT_AUTHORED (no backlog entry/manifest/launcher; infra/postgres-init/02-chat-definer.sql absent)
-  - chat-dm-safety-authority-core: NOT_MERGED, NOT_AUTHORED (no backlog entry/manifest/launcher; dm_safety_enabled() absent)
-PRIOR_SLICES: chat-definer-role-provisioning (1) -> chat-dm-safety-authority-core (2) -> dd38-dd86-chat-schema-core (3, this packet)
+  - chat-definer-role-provisioning: MERGED (286f48b, 2026-08-04; hardened b55d628, 2026-08-05) — symbol
+      `chat_definer` verified present in infra/postgres-init/02-chat-definer.sql at the current tip
+      (3891bdf); dep_checks proof base_sha de78394 (absent) -> landed_sha 286f48b (present)
+  - chat-dm-safety-authority-core: MERGED (d5b31f9, 2026-08-10, on review evidence under DD-102 —
+      ap-finish.sh --authorized-close, not scope-gate READY; see §4.4) — symbol `dm_safety_enabled`
+      verified present in packages/db/migrations/0030_chat_dm_safety_authority_core.sql at the current
+      tip (3891bdf); dep_checks proof base_sha 75f06c5 (absent) -> landed_sha d5b31f9 (present)
+PRIOR_SLICES: chat-definer-role-provisioning (1, MERGED) -> chat-dm-safety-authority-core (2, MERGED)
+  -> dd38-dd86-chat-schema-core (3, this packet — next unimplemented node)
 OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: none
 LIVE_REPO_VERIFICATION: PASS
 CONTRACT_MATRIX: PASS
-CLOSURE_MATRIX: PARTIAL (10/12 — see §9.1)
+CLOSURE_MATRIX: PASS (12/12 — see §9.1)
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
-IMPLEMENTATION_ARTIFACTS: PASS (packet/manifest/launcher authored; executable once HARD_DEPENDENCIES close)
-FIRST_IMPLEMENTATION_STEP: blocked — author and land chat-definer-role-provisioning's own CODE_READY packet first
-REMAINING_BLOCKERS:
-  - blocker: chat-definer-role-provisioning has no backlog entry, manifest, or launcher despite the
-      plan pinning an exact executable packet for it (plan §9.2: exact files, budget, acceptance,
-      negative scope)
-    owner: primary orchestrator / founder — whoever authors the next slice in this chain
-    resolution: author its own docs/autopilot-manifests + docs/autopilot-<slug>.md + launcher, reach
-      its own strict CODE_READY, merge to origin/main, verify infra/postgres-init/02-chat-definer.sql
-      (or whatever filename its own authoring settles on) exists on origin/main with the exact role
-      attributes pinned in plan §9.2
-  - blocker: chat-dm-safety-authority-core has the same gap (hard-dep on the blocker above)
-    owner: same
-    resolution: same pattern; verify dm_safety_enabled()/chat_pair_blocked()/assert_dm_allowed() exist
-      on origin/main after merge
-  - blocker: this packet's manifest dep_checks is empty (no base_sha/landed_sha/symbol proof exists
-      yet for either dependency) — it CANNOT pass scripts/autopilot-scope-gate register until both
-      close
-    owner: whoever attempts to register this slice
-    resolution: fill dep_checks with real proof once both blockers above close; re-verify the live
-      migration tail at that time (§6); do not register before then
-NEXT_REVIEW_TRIGGER: chat-definer-role-provisioning AND chat-dm-safety-authority-core both merged to
-  origin/main, each with a verifiable landed symbol (chat_definer role attributes; dm_safety_enabled
-  function) — re-open this packet, fill dep_checks, re-verify the live migration tail, re-run this
-  gate before attempting register
+IMPLEMENTATION_ARTIFACTS: PASS (packet/manifest/launcher authored; both HARD_DEPENDENCIES now closed,
+  dep_checks populated with real proof — executable)
+FIRST_IMPLEMENTATION_STEP: open a worktree from a freshly re-verified origin/main tip; re-derive the
+  migration number immediately per §6 (0031 as of 2026-08-10 — do not trust without re-checking
+  `ls packages/db/migrations/*.sql | sort | tail`); register scope via
+  `scripts/autopilot-scope-gate register` using the runtime manifest generated from
+  docs/autopilot-manifests/dd38-dd86-chat-schema-core.json; implement §5.1's DDL verbatim
+REMAINING_BLOCKERS: none
 ```
 
 ### 9.1 Closure matrix (12 rows)
 
 | # | Gate | Evidence | PASS/FAIL |
 |---|---|---|---|
-| 1 | Authority snapshot pin theo SHA | `90d292d` (decision) + `b3d3b4a` (live base), both verified 2026-08-03 | PASS |
-| 2 | Decision trong scope đã chốt | DD-38/55/86/91-95 all closed 13/13, plan §12 | PASS |
-| 3 | Scope IN/OUT và owner rõ | §5/§7 above, pinned verbatim from Reviewed spec | PASS |
-| 4 | Dependency phân loại đủ | Slices 1/2 named + ordered + spec'd in the plan, but **not authored as their own slice** (no backlog/manifest/launcher) — does not cleanly satisfy `PRIOR_SLICE`'s "có slice riêng" at the executable level | **FAIL** |
-| 5 | Live schema/code khớp doc | §3 table — migration tail 0027, no `chat_*` anywhere, `infra/postgres-init/` confirms slice 1 unlanded | PASS |
-| 6 | Data/API/state/auth contract đủ | Exact DDL/RLS/grants pinned §5.1 from Reviewed BE spec v0.23 | PASS |
-| 7 | Fail-closed/idempotency/order đủ | `FORCE ROW LEVEL SECURITY` + NULLIF/`current_setting(...,true)` fail-closed idiom; two-policy OR structure avoids the tenant-only-policy-hides-DM trap | PASS |
-| 8 | Open question trong scope = 0 | No open product/design decision in this slice's scope (13/13 closed) — the blocker is dependency-readiness, a different gate | PASS |
-| 9 | Acceptance matrix có expected result | §8, full B2 category coverage incl. negative-proof rows | PASS |
-| 10 | Migration/security/rollback pin | Exactly 1 migration (+3 files touched for mechanical reasons, §5.3); B3 budget exception ≤1,000 LOC/≤3 modules cited; rollback: safe to drop entirely pre-enable (zero routes ever reference these tables) | PASS |
-| 11 | First slice có hard dependency merged | This is **not** the first-to-code node — slices 1/2 are, and neither is merged nor authored | **FAIL** |
-| 12 | Implementation handoff sẵn sàng | Packet + manifest + launcher are internally complete and executable, contingent on rows 4/11 closing | PASS |
+| 1 | Authority snapshot pin theo SHA | `AUTHORITY_SHA` = `3891bdf` (commit this verification was performed against, re-pinned 2026-08-10) + `DECISION_AUTHORITY_SHA` = `90d292d` (frozen decision snapshot, unchanged, still an ancestor of `3891bdf`) | PASS |
+| 2 | Decision trong scope đã chốt | DD-38/55/86/91-95 all closed 13/13, plan §12; DD-101/DD-102 read and scoped (§4.4) — neither reopens a decision this slice owns | PASS |
+| 3 | Scope IN/OUT và owner rõ | §5/§7 above, pinned verbatim from Reviewed spec — unchanged since authoring | PASS |
+| 4 | Dependency phân loại đủ | Slices 1/2 are now each authored AND merged as their own executable slice — backlog `## task:` entry, manifest, slice_doc and launcher all exist and both show `status: merged` (`chat-definer-role-provisioning`, `chat-dm-safety-authority-core`). `PRIOR_SLICE`'s "có slice riêng" is satisfied at the executable level, not just named-in-the-plan | **PASS** |
+| 5 | Live schema/code khớp doc | §3 table (re-run 2026-08-10) — migration tail 0030, `chat_channels`/`chat_members`/`chat_messages` (this slice's own tables) still absent as expected, `chat_definer` role and slice 2's tables/functions now present | PASS |
+| 6 | Data/API/state/auth contract đủ | Exact DDL/RLS/grants pinned §5.1 from Reviewed BE spec v0.23 — unchanged | PASS |
+| 7 | Fail-closed/idempotency/order đủ | `FORCE ROW LEVEL SECURITY` + NULLIF/`current_setting(...,true)` fail-closed idiom; two-policy OR structure avoids the tenant-only-policy-hides-DM trap; DD-102's torn-read finding does not apply to this slice's two single-statement calls (`dm_safety_enabled()`, `chat_pair_blocked()`) — see §4.4 | PASS |
+| 8 | Open question trong scope = 0 | No open product/design decision in this slice's scope (13/13 closed); DD-102 read and confirmed non-blocking for this slice specifically (§4.4) — 0 open questions remain, dependency-readiness gaps (rows 4/11 prior) are now closed, not merely reclassified | PASS |
+| 9 | Acceptance matrix có expected result | §8, full B2 category coverage incl. negative-proof rows — unchanged | PASS |
+| 10 | Migration/security/rollback pin | Exactly 1 migration (0031, re-derived §6) + 3 files touched for mechanical reasons (§5.3); B3 budget exception cited; rollback: safe to drop entirely pre-enable (zero routes ever reference these tables) | PASS |
+| 11 | First slice có hard dependency merged | This is not the first-to-code node in the chat tree, but both nodes ahead of it (slices 1/2) are now MERGED with independently-verified `dep_checks` proof (base_sha/landed_sha/symbol pairs, §4.3) — the gate's actual requirement ("mọi hard dependency đã merge và verify bằng merged probe") is met | **PASS** |
+| 12 | Implementation handoff sẵn sàng | Packet + manifest + launcher are internally complete and executable; rows 4/11 (the only prior blockers) are now closed | PASS |
 
-10/12 PASS. `CODE_READY` requires 12/12 — **not reached**. Verdict: `NOT_CODE_READY`.
+12/12 PASS. `CODE_READY` reached. Verdict: `CODE_READY`.
 
-## 10. Open questions (for the human — not "open questions in scope" per the gate's vocabulary; these are dependency-readiness/process gaps, not product decisions)
+## 10. Open questions — resolved 2026-08-10 (kept for history, not deleted; none remain open)
 
-1. **Who authors `chat-definer-role-provisioning` and `chat-dm-safety-authority-core` as their own
-   slices, and when?** Both are fully specified in the plan (§9 rows 1-2, §9.2 gives slice 1 an exact
-   executable packet) but neither has a backlog entry. This packet cannot proceed to `register`
-   without them landing first. Recommend: author slice 1 next (it is the plan's own
-   `FIRST_IMPLEMENTATION_STEP`), using the exact §9.2 packet, before this packet is revisited.
-2. **Should `docs/autopilot-backlog.md`'s `dd38-dd86-chat-schema-core` entry be updated to reflect the
-   real `depends_on` derived here?** This packet was told not to edit the backlog (separate chore
-   commit per task instructions) — the correction lives here (§4) and in the manifest, but the
-   backlog's own `depends_on: []` field will keep reading as "no dependencies" to any bot that scans
-   it until someone applies this correction there too.
-3. **Is `chat_schema_core` an acceptable migration filename stem**, or does the owner want the literal
-   task slug reflected in the filename instead (precedent varies — see §6)? Low-stakes, but binds the
-   moment the worktree opens.
+1. **~~Who authors `chat-definer-role-provisioning` and `chat-dm-safety-authority-core` as their own
+   slices, and when?~~ RESOLVED.** Both were authored, implemented, reviewed and merged to
+   `origin/main`: `chat-definer-role-provisioning` at `286f48b` (2026-08-04, hardened `b55d628`
+   2026-08-05); `chat-dm-safety-authority-core` at `d5b31f9` (2026-08-10, closed on review evidence
+   under DD-102 per `ap-finish.sh --authorized-close`, not through a clean scope-gate `READY`). See §3
+   and §4.3 for the live proof.
+2. **~~Should `docs/autopilot-backlog.md`'s `dd38-dd86-chat-schema-core` entry be updated to reflect the
+   real `depends_on` derived here?~~ RESOLVED.** Applied in this same 2026-08-10 pass — the backlog
+   entry's `depends_on: []` placeholder is corrected to the real prerequisite list, matching this
+   contract and the manifest (all three now agree; no artifact still asserts "no dependencies").
+3. **~~Is `chat_schema_core` an acceptable migration filename stem, or does the owner want the literal
+   task slug reflected instead?~~ RESOLVED — keep `chat_schema_core`.** This repo has precedent both
+   ways (`0028_dd29_capability_registry_expand.sql` embeds its DD number; `0030_chat_dm_safety_
+   authority_core.sql` — slice 2, landed since this question was first asked — does not embed its own
+   DD-55 reference despite its own header comment naming DD-55 explicitly). Deciding now rather than
+   deferring again: keep the mechanism-named stem the original packet already chose. Migration
+   filenames are permanent, forward-only identifiers; `dd38`/`dd86` are decision-tracking numbers that
+   this same repo has already renumbered/reorganized around (DD-101, DD-102 accumulated on top of the
+   original DD-38/55/86 set during this very dependency chain's implementation) — the mechanism name
+   (`chat_schema_core`) is the stable part. This also matches the immediately-preceding sibling
+   migration's own precedent (`chat_dm_safety_authority_core` — no `dd55` prefix despite being the
+   DD-55 migration). No re-slice or re-authoring needed; `packages/db/migrations/0031_chat_schema_core.sql`
+   is the filename to create at implementation time (number itself still subject to §6's re-derive
+   requirement).
