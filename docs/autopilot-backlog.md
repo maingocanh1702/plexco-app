@@ -1990,10 +1990,15 @@ notes: |
 
 ## task: chat-dm-safety-authority-core
 title: Slice 2 chuỗi in-app-chat — `dm_safety_enabled()` và authority tables/functions kèm theo
-status: in-flight — registered as chat-dm-safety-authority-core--v3 (base 2ba4d04, branched fresh off
-  origin/main after --v2 closed authorized_close/BASE_STALE on 2026-08-09), 12 commits merged forward
-  from --v2 unchanged including the byte-preserved HALT record (688a622), round-01 codex findings
-  applied 2026-08-10, gate in progress. Full HALT/AWAIT history preserved unchanged below as
+status: blocked — token chosen for scripts/autopilot-backlog-reconcile compatibility (codex round-03
+  [P2]: `st=$2` at that script's own line 254 only ever recognizes planned/ready/blocked, even
+  though this file's own Block format legend above documents in-flight as a valid status too —
+  using in-flight here, as round-01 did, made post-merge `--fix` unable to ever transition this
+  entry to merged. The actual state is in-flight, not blocked-on-something: registered as
+  chat-dm-safety-authority-core--v3 (base 2ba4d04, branched fresh off origin/main after --v2 closed
+  authorized_close/BASE_STALE on 2026-08-09), 12 commits merged forward from --v2 unchanged
+  including the byte-preserved HALT record (688a622), round-01/02 codex findings applied
+  2026-08-10, gate in progress. Full HALT/AWAIT history preserved unchanged below as
   status_history_2026-08-06_HALT and status_history_2026-08-05_AWAIT, per this repo's own "never
   rewrite dated history" convention — only the current-status label moved, no byte of either record
   changed.

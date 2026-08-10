@@ -12,6 +12,7 @@ import {
   bootstrapJobDefiner,
   ensureChatDefinerMembershipRevoked,
   restoreChatDefinerMembership,
+  revokeAllChatDefinerMembers,
   revokeStaleChatDefinerMembership,
   setupNonSuperuserOwnerContext,
   withChatDefinerLock,
@@ -317,25 +318,31 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
         // this test's OWN setup needs the same revoke-stale-first discipline every real caller
         // uses, not an assumed-clean slate. What was there originally is restored at the end.
         const preExisting = await revokeStaleChatDefinerMembership(admin, predecessor);
-
-        await admin.query(`SET chat_definer_bootstrap.migration_role = '${predecessor}'`);
         try {
-          await bootstrapChatDefiner(admin);
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${predecessor}'`);
+          try {
+            await bootstrapChatDefiner(admin);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          expect(await memberOf(predecessor)).toBe(true);
+
+          const revoked = await revokeStaleChatDefinerMembership(admin, newTarget);
+          expect(revoked).toContain(predecessor);
+          expect(await memberOf(predecessor)).toBe(false);
+
+          await restoreChatDefinerMembership(admin, revoked);
+          expect(await memberOf(predecessor)).toBe(true);
         } finally {
-          await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          // codex round-03 [P1]: preExisting was captured above but only ever handed back at the
+          // very end of this callback — a throw from any assertion or step in between (bootstrap,
+          // an unexpected membership state) skipped straight past that hand-back, permanently
+          // losing whatever held chat_definer before this test ran. revokeAllChatDefinerMembers
+          // clears the slot regardless of which role (predecessor, newTarget, or nobody) is
+          // currently holding it before preExisting is restored on top.
+          await revokeAllChatDefinerMembers(admin);
+          await restoreChatDefinerMembership(admin, preExisting);
         }
-        expect(await memberOf(predecessor)).toBe(true);
-
-        const revoked = await revokeStaleChatDefinerMembership(admin, newTarget);
-        expect(revoked).toContain(predecessor);
-        expect(await memberOf(predecessor)).toBe(false);
-
-        await restoreChatDefinerMembership(admin, revoked);
-        expect(await memberOf(predecessor)).toBe(true);
-
-        // Hand the slot back to whichever sibling test (or nothing) held it before this test ran.
-        await admin.query(`REVOKE chat_definer FROM ${predecessor}`);
-        await restoreChatDefinerMembership(admin, preExisting);
       });
     } finally {
       await admin.query(`DROP ROLE IF EXISTS ${predecessor}`);
@@ -384,35 +391,42 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
       await withChatDefinerLock(BASE!, async () => {
         // Simulate prior state: predecessor holds the slot, exactly like BR-3's own setup.
         const preExisting = await revokeStaleChatDefinerMembership(admin, predecessor);
-        await admin.query(`SET chat_definer_bootstrap.migration_role = '${predecessor}'`);
         try {
-          await bootstrapChatDefiner(admin);
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${predecessor}'`);
+          try {
+            await bootstrapChatDefiner(admin);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          expect(await chatDefinerMembers()).toEqual([predecessor]);
+
+          // Simulate bootstrapChatDefinerForOwner running for scratchOwner: revoke predecessor
+          // (captured for later restore), grant scratchOwner.
+          const revoked = await revokeStaleChatDefinerMembership(admin, scratchOwner);
+          await admin.query(`SET chat_definer_bootstrap.migration_role = '${scratchOwner}'`);
+          try {
+            await bootstrapChatDefiner(admin);
+          } finally {
+            await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          }
+          expect(await chatDefinerMembers()).toEqual([scratchOwner]);
+
+          // The failure this proves fixed: DROP ROLE never runs (as if it had thrown), so
+          // scratchOwner is STILL a member here — exactly the state teardown's own inner
+          // try/finally would be in when DROP DATABASE/DROP ROLE throws before completing.
+          await ensureChatDefinerMembershipRevoked(admin, scratchOwner);
+          await restoreChatDefinerMembership(admin, revoked);
+          expect(await chatDefinerMembers()).toEqual([predecessor]);
         } finally {
-          await admin.query(`RESET chat_definer_bootstrap.migration_role`);
+          // codex round-03 [P1]: preExisting was captured above but only ever handed back at the
+          // very end of this callback — a throw from any assertion or step in between skipped
+          // straight past that hand-back, permanently losing whatever held chat_definer before
+          // this test ran (the same defect found in the round-trip test above, inherited here by
+          // copying its structure). revokeAllChatDefinerMembers clears the slot regardless of
+          // which role is currently holding it before preExisting is restored on top.
+          await revokeAllChatDefinerMembers(admin);
+          await restoreChatDefinerMembership(admin, preExisting);
         }
-        expect(await chatDefinerMembers()).toEqual([predecessor]);
-
-        // Simulate bootstrapChatDefinerForOwner running for scratchOwner: revoke predecessor
-        // (captured for later restore), grant scratchOwner.
-        const revoked = await revokeStaleChatDefinerMembership(admin, scratchOwner);
-        await admin.query(`SET chat_definer_bootstrap.migration_role = '${scratchOwner}'`);
-        try {
-          await bootstrapChatDefiner(admin);
-        } finally {
-          await admin.query(`RESET chat_definer_bootstrap.migration_role`);
-        }
-        expect(await chatDefinerMembers()).toEqual([scratchOwner]);
-
-        // The failure this proves fixed: DROP ROLE never runs (as if it had thrown), so
-        // scratchOwner is STILL a member here — exactly the state teardown's own inner try/finally
-        // would be in when DROP DATABASE/DROP ROLE throws before completing.
-        await ensureChatDefinerMembershipRevoked(admin, scratchOwner);
-        await restoreChatDefinerMembership(admin, revoked);
-        expect(await chatDefinerMembers()).toEqual([predecessor]);
-
-        // Hand the slot back, same convention as the round-trip test above.
-        await admin.query(`REVOKE chat_definer FROM ${predecessor}`);
-        await restoreChatDefinerMembership(admin, preExisting);
       });
     } finally {
       await admin.query(`DROP ROLE IF EXISTS ${predecessor}`);

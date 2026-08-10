@@ -209,6 +209,19 @@ export async function ensureChatDefinerMembershipRevoked(
 }
 
 /**
+ * Revokes EVERY current chat_definer member, unconditionally (codex round-03 [P1]). A thin wrapper
+ * over revokeStaleChatDefinerMembership with a keepTarget no real role can ever equal (Postgres
+ * identifiers are never empty) -- exists for tests whose own body can throw between capturing a
+ * `preExisting` snapshot and restoring it: at that point ANY role (the test's own scratch target,
+ * or nobody, depending on exactly where the throw happened) could hold the slot, not necessarily
+ * one known name ensureChatDefinerMembershipRevoked could target. Always call immediately before
+ * restoring the snapshot, in a finally that wraps everything after the snapshot was captured.
+ */
+export async function revokeAllChatDefinerMembers(client: pg.Client): Promise<string[]> {
+  return revokeStaleChatDefinerMembership(client, "");
+}
+
+/**
  * chat_definer is CLUSTER-global, same hazard withJobDefinerLock documents for job_definer: a test
  * that deliberately puts it into a BROKEN/hidden state (migrate.test.ts's own bootstrap-script
  * negative-path tests) races every OTHER parallel test FILE's own ordinary bootstrap+migrate call.
