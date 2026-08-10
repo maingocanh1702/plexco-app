@@ -2,6 +2,7 @@
 
 > Copy file này mỗi khi bắt đầu dev feature mới, điền tên feature và tick dần.
 > Áp dụng cho mọi feature Plexco — điều chỉnh từng section phù hợp.
+> **Template v1.2 · 2026-08-09:** Merged Sporta best practices: source tracing, .pen verification step, dark mode QA.
 > **Template v1.1 · 2026-07-28:** FE governance DD-57/58/59 ✅; dùng không có nghĩa feature đã `CODE_READY`.
 
 **Project:** Plexco
@@ -49,6 +50,7 @@
 - [ ] DTOs + input validation
 - [ ] Auth / authz (tenant-resolve middleware)
 - [ ] Outbox events (sync engine integration)
+- [ ] **Source tracing:** mỗi service/controller có comment `/** Source: feature_{name}_tech.md §X */`
 
 ### 2.3 Quality
 - [ ] Response theo canonical envelope `{ data, error, meta.requestId }`; error dùng `error.{code,message,statusCode}` (DD-60)
@@ -69,12 +71,15 @@
 ### 3.1 Design → Code
 - [ ] Product spec §Screens & States đã Reviewed
 - [ ] Exact node trong canonical `design.pen` đã được track + owner duyệt
+- [ ] **Design .pen verification:** screenshot từ .pen khớp với spec wireframe
+- [ ] **Cover 4 states trong .pen:** loading / ready / empty / error
 - [ ] Pixel-perfect handoff hoàn tất (`docs/channels/web/handoff/<screen>-handoff.md`)
 - [ ] Token mapping hoàn tất (`docs/channels/web/handoff/<screen>-token-mapping.md`)
 - [ ] Design tokens áp dụng từ value SoT `docs/standards/design-tokens.md`
 - [ ] Usage/component alias chỉ sinh từ owner-approved accepted/reused state (DD-59)
 - [ ] Component structure tạo xong
 - [ ] Screen/feature visual owner hoặc shared primitive có `// Source:`; presentational atom không lặp comment
+- [ ] **Pixel-perfect verify:** so sánh side-by-side code vs .pen tại 375px, 430px, 768px
 
 ### 3.2 UI Quality
 - [ ] 4 states trên mọi view: **loading / ready / empty / error**
@@ -102,6 +107,11 @@
 - [ ] Happy path flow
 - [ ] Edge cases (input rỗng, text dài, Unicode, ký tự đặc biệt)
 - [ ] Error/loading/empty states hiển thị đúng
+
+### Cross-cutting
+- [ ] **Dark mode** (nếu applicable)
+- [ ] Deep links (nếu applicable)
+- [ ] Notifications (nếu applicable)
 
 ### Security & Isolation
 - [ ] RLS test: tenant A không thấy data tenant B
@@ -137,4 +147,5 @@
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 09/08/2026 | v1.2 | Merged Sporta best practices: BE source tracing rule (`/** Source: §X */`), Design .pen verification (4 states + screenshot + side-by-side verify at 3 breakpoints), Cross-cutting QA (dark mode, deep links, notifications). Source: `docs/expert/README.md`. |
 | 28/07/2026 | v1.1 | Activate DD-57/58/59 FE gates; add canonical `design.pen` handoff/token mapping, client/server service boundary, value SoT, scoped source comments and canonical API envelope. |

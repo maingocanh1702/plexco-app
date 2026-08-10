@@ -2,7 +2,7 @@
 # Feature: {Name} — FE Design Spec
 
 > **Route(s):** `/{route}`
-> **Source authority:** `../../features/feature_{name}.md` v{source-version} · baseline `{full 40-char source SHA}`
+> **Source authority:** `../../features/FE/feature_{name}.md` v{source-version} · baseline `{full 40-char source SHA}`
 > **Source contract status:** {Draft | Reviewed | DECISION_FINAL — không suy ra runtime}
 > **Projection/API contract:** {exact DTO/endpoint owner | `UNPINNED — omit active UI`}
 > **Capability/availability:** {exact server-owned gate(s) | `none`}
