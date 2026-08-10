@@ -33,11 +33,11 @@
     "mechanism": "teardown() ends ownerPool and every workerPool, then runs DROP DATABASE ... WITH (FORCE). Since PostgreSQL 13 FORCE terminates every remaining connection to the target database, and a terminated backend reports 57P01 to its client. A pg.Pool with no 'error' listener turns that into an unhandled error, which vitest counts under 'Errors' and which fails the suite even though no test failed.",
     "why_it_survived": "Reproduces on CI, not on the owner's machine (683/732 green locally) - a timing-dependent race. docs/autopilot-backlog.md task deps-security-bump already recorded '2x Postgres 57P01' as infrastructure interruptions in late July; it was classified as noise and no task was opened. It has since become a permanent red."
   },
-  "_leak_hypotheses": [
-    "H1 - listener-less pools. grep '\\.on(.error.' packages/db/src/test-harness.ts returns ZERO matches across 8 pool/client construction sites. node-postgres documents that a Pool without an 'error' listener will surface idle-client errors as unhandled. This alone explains 'Errors 2' with 0 test failures and is the cheapest fix.",
-    "H2 - a connection teardown() does not know about. The error's user is '<dbName>_owner', i.e. ownerPool or a workerPool, both of which teardown() ends BEFORE the DROP. pg.Pool.end() resolves once idle clients are closed; a client still checked out at that moment is not waited on. Worth measuring - a leak that H1 merely silences is still a leak.",
+  "_leak_hypotheses": {
+    "H1": "listener-less pools. grep '\\.on(.error.' packages/db/src/test-harness.ts returns ZERO matches across 8 pool/client construction sites. node-postgres documents that a Pool without an 'error' listener will surface idle-client errors as unhandled. This alone explains 'Errors 2' with 0 test failures and is the cheapest fix.",
+    "H2": "a connection teardown() does not know about. The error's user is '<dbName>_owner', i.e. ownerPool or a workerPool, both of which teardown() ends BEFORE the DROP. pg.Pool.end() resolves once idle clients are closed; a client still checked out at that moment is not waited on. Worth measuring - a leak that H1 merely silences is still a leak.",
     "_note": "H1 and H2 are not alternatives. H1 stops the suite failing; H2 is whether anything is actually still connected. The writer must report which one the evidence supports rather than fixing H1 and declaring the matter closed."
-  ],
+  },
   "context_sources": [
     "packages/db/src/test-harness.ts - setupNonSuperuserOwnerContext and its teardown(), including the codex round-07 [P1] comment explaining why DROP DATABASE and DROP ROLE must run and in that order",
     "packages/db/src/migrate.test.ts - the DD29-3 test at the point of failure, and its existing finally block",
