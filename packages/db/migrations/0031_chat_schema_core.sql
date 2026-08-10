@@ -213,6 +213,26 @@ CREATE TRIGGER trg_chat_members_identity_immutable
   WHEN (NEW.channel_id IS DISTINCT FROM OLD.channel_id OR NEW.person_id IS DISTINCT FROM OLD.person_id)
   EXECUTE FUNCTION chat_members_identity_immutable();
 
+-- Channel identity is immutable post-insert (codex round-02 [P1]): without this, flipping kind
+-- from 'dm' to 'club' (satisfying chat_channels_shape_chk's club branch) makes BOTH
+-- chat_assert_dm_two and chat_dm_no_member_delete below silently no-op -- each re-reads the
+-- CURRENT (already-updated) kind via a fresh SELECT, so a channel that was 'dm' a moment ago now
+-- reads as 'club' and their `IF kind = 'dm'` guards skip entirely, reopening the exactly-two-
+-- members and no-delete invariants this migration exists to enforce. tenant_id/dm_key guarded too
+-- (preferred, per review): both are paired with kind by the shape CHECK, so either changing
+-- independently reopens the same class of shape-mismatch bypass.
+CREATE FUNCTION chat_channels_identity_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'chat_channels.kind/tenant_id/dm_key are immutable; archive and create a new channel instead';
+END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_chat_channels_identity_immutable
+  BEFORE UPDATE OF kind, tenant_id, dm_key ON chat_channels
+  FOR EACH ROW
+  WHEN (NEW.kind IS DISTINCT FROM OLD.kind
+        OR NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
+        OR NEW.dm_key IS DISTINCT FROM OLD.dm_key)
+  EXECUTE FUNCTION chat_channels_identity_immutable();
+
 CREATE FUNCTION chat_assert_dm_two(p_channel uuid) RETURNS void AS $$
 DECLARE c int; k text; BEGIN
   IF (SELECT kind FROM chat_channels WHERE id = p_channel) = 'dm' THEN
@@ -261,12 +281,18 @@ REVOKE ALL ON FUNCTION chat_current_is_member(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION chat_current_is_member(uuid) TO app;
 
 -- REQUIRES slice 2 landed: calls dm_safety_enabled() owned by chat-dm-safety-authority-core.
+-- Joins chat_channels and requires kind='dm' (codex round-02 [P2]): without it, this function
+-- returns true for ANY two-member channel regardless of kind -- safe today only because every
+-- current caller (the RLS policies below) additionally ANDs `tenant_id IS NULL`, but the function
+-- is itself SECURITY DEFINER and directly EXECUTE-granted to app, so its own contract must not
+-- depend on every future caller remembering that external guard.
 CREATE FUNCTION dm_current_read_allowed(p_channel uuid) RETURNS boolean
   LANGUAGE sql SECURITY DEFINER STABLE SET search_path = pg_catalog, public AS $$
   SELECT dm_safety_enabled()
      AND EXISTS (
        SELECT 1
        FROM chat_members me
+       JOIN chat_channels c ON c.id = me.channel_id AND c.kind = 'dm'
        JOIN chat_members peer ON peer.channel_id = me.channel_id AND peer.person_id <> me.person_id
        WHERE me.channel_id = p_channel
          AND me.person_id = NULLIF(current_setting('app.person_id', true), '')::uuid

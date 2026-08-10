@@ -4,14 +4,14 @@
 > **Status:** `CODE_READY` (see verdict, §9) · **Authored:** 2026-08-03 · **Re-verified:** 2026-08-10 ·
 > **Risk:** P1 (schema/migration — corrected from P0, see §9's `_risk_note` cross-reference in the
 > manifest; P0 is reserved for live production/control mutation, not a reviewed forward-only migration)
-> **This is an AUTHORING artifact.** No worktree has been opened, no `register` has been attempted, no
-> code exists. It re-evaluates its own readiness against the immutable authority it pins rather than
-> inheriting the `docs/autopilot-backlog.md` entry's own disclaimer that that entry "does not issue a
-> readiness verdict." The 2026-08-10 pass is a **readiness-only re-review**: both hard dependencies
-> that blocked the original 2026-08-03 verdict have since merged to `origin/main`; this pass re-verifies
-> that closure live (not by trusting either dependency's own closing note) and updates every stale
-> current-state claim the first packet made about a then-unmerged dependency graph. It still does not
-> open a worktree, register scope, or write implementation code — that remains the next session's job.
+> **Implementation is underway (2026-08-10, same day as the readiness re-review below).** The worktree
+> is open, `register` succeeded, and code exists: migration 0031, the `schema.ts` mirror, and
+> `packages/db/src/chat-schema-invariants.test.ts` are implemented, committed, and passing the full
+> canonical suite through two code-review fix rounds. §0-§9 immediately below (session input through
+> the `CODE_READY` verdict) describe the READINESS re-review that preceded implementation and are kept
+> verbatim as the historical record of how this slice reached `CODE_READY` — they are not a live claim
+> that no worktree/register/code exists. §5.1's "Deviation from the pinned text" notes below track what
+> changed during implementation itself, found by code review, not at authoring.
 
 ## 0. Session input
 
@@ -471,13 +471,13 @@ between the pinned prose and this repo's own already-reviewed idiom it cites as 
 semantic change to the intended (GUC-set) behavior, only the previously-unreachable empty-string
 edge case now fails closed instead of crashing.
 
-**Two further deviations, found by codex review round-01 (2026-08-10), not authoring.** Both are
-confirmed present in the pinned source spec's own DDL text too (`feature_inapp_chat_tech.md`) — the
-review's own ADVISORY section names this explicitly: "the pre-existing BE authority contains the
-same nullable-CHECK and DM-update trigger definitions. Reconcile that document in its owning slice
-after correcting the implementation" — so fixing them here is a deviation from the pinned text, not
-an implementation bug relative to it; reconciling the spec document itself is out of this slice's
-scope.
+**Four further deviations, found by codex review rounds 01-02 (2026-08-10), not authoring.** All are
+confirmed present in the pinned source spec's own DDL text too (`feature_inapp_chat_tech.md`) — round-01's
+ADVISORY section names this explicitly: "the pre-existing BE authority contains the same nullable-CHECK
+and DM-update trigger definitions. Reconcile that document in its owning slice after correcting the
+implementation"; round-02's ADVISORY repeats it verbatim, since the same defect family recurred as an
+independent instance — so fixing them here is a deviation from the pinned text, not an implementation
+bug relative to it; reconciling the spec document itself is out of this slice's scope.
 
 1. `chat_channels_shape_chk`'s club branch used `creation_origin IN (...)` and
    `post_policy IN (...)` with no explicit `IS NOT NULL`. PostgreSQL CHECK constraints only reject a
@@ -494,6 +494,20 @@ scope.
    attempt to change either column on an existing row — there is no legitimate business operation
    that reassigns a membership row to a different channel/person; join is a new row, leave is a
    delete. Regression tests added to §5.3's invariant file.
+3. Neither `chat_channels.kind`, `tenant_id`, nor `dm_key` was protected against `UPDATE` — flipping
+   `kind` from `'dm'` to `'club'` (satisfying `chat_channels_shape_chk`'s club branch) makes both
+   `chat_assert_dm_two` and `chat_dm_no_member_delete` re-read the now-`'club'` row and silently
+   no-op their own `IF kind = 'dm'` guards, reopening the exactly-two-members and no-delete
+   invariants via a second, independent bypass path (item 2 above closed the `chat_members`-side
+   path; this is the `chat_channels`-side path the same underlying gap admits). Fixed with
+   `chat_channels_identity_immutable` (`BEFORE UPDATE OF kind, tenant_id, dm_key`), rejecting any
+   change to any of the three. Regression test added to §5.3's invariant file.
+4. `dm_current_read_allowed()` never checked `chat_channels.kind` itself — called directly (it is
+   `SECURITY DEFINER` and `EXECUTE`-granted to `app`), it returns `true` for any two-member channel
+   regardless of kind, safe today only because the RLS policies below additionally `AND tenant_id IS
+   NULL`. Fixed by joining `chat_channels` and requiring `kind = 'dm'` inside the function itself, so
+   its own contract does not depend on every future caller remembering the external guard.
+   Regression test added to §5.3's invariant file.
 
 ### 5.2 Schema mirror (`packages/db/schema.ts`)
 
@@ -622,7 +636,8 @@ Root does **NOT** create:
 | Authorization | `app`-role transaction attempts direct `INSERT`/`UPDATE`/`DELETE` on any of the three tables | Rejected — permission denied (`REVOKE`) |
 | Failure | `dm_safety_enabled()` returns false/unavailable | `dm_current_read_allowed` → false, DM read denied, no error surfaced as a bypass |
 | Failure | `app.tenant_id` or `app.person_id` GUC unset (NULL) | Policy predicate false/NULL → zero rows, not an error |
-| Concurrency | Two inserts racing to become the 3rd member of one DM channel | `FOR UPDATE` row lock in `chat_dm_member_insert_guard` serializes; second fails `count>=2` |
+| Concurrency | Two concurrent full-DM-creation attempts for the same `dm_key` (channel+both members, a realistic double-submit/retry) | Exactly one commits; `chat_channels_dm_key_uq` rejects the other, no partial (0- or 1-member) row survives |
+| Authorization | Direct INSERT of a 3rd member into an already-2-member DM channel (codex round-02 [P2]: sequential, not the race form this row originally promised — see §5.3) | Rejected — `chat_dm_member_insert_guard`'s own `count>=2` branch, exercised directly rather than only via the `dm_key` unique-index race above |
 | Concurrency | Transaction inserts channel + only 1 DM member, then commits | Deferred constraint trigger fires at COMMIT, transaction rejected |
 | Migration | Exactly one new `.sql` file added | `git diff --name-only` against base shows exactly one file under `packages/db/migrations/` |
 | Migration | No destructive change to baseline tables | Only additive `UNIQUE` constraint on `memberships`; no `DROP`/`ALTER TYPE`/data loss |
