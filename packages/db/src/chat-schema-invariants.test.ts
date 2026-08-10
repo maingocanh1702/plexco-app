@@ -708,6 +708,26 @@ describe("migration shape", () => {
     );
     expect(rows).toHaveLength(1);
   });
+
+  // codex round-04: chat_messages_channel_created_at_id_uq's own backing index already covers
+  // (channel_id, created_at, id) -- a second explicit index over the identical columns would be
+  // pure write amplification with zero query benefit. Pins that a future reconciliation with the
+  // BE spec's still-verbatim idx_chat_messages_channel_time text cannot silently reintroduce it.
+  it("chat_messages carries no index duplicating chat_messages_channel_created_at_id_uq's own (channel_id, created_at, id) backing index", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'chat_messages' ORDER BY indexname`,
+    );
+    const sameColumns = rows.filter((r: { indexdef: string }) =>
+      r.indexdef.includes("(channel_id, created_at, id)"),
+    );
+    expect(sameColumns).toEqual([
+      {
+        indexname: "chat_messages_channel_created_at_id_uq",
+        indexdef:
+          "CREATE UNIQUE INDEX chat_messages_channel_created_at_id_uq ON public.chat_messages USING btree (channel_id, created_at, id)",
+      },
+    ]);
+  });
 });
 
 describe("security / privacy", () => {

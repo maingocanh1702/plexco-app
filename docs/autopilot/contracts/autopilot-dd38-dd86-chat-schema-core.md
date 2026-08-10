@@ -526,6 +526,22 @@ itself is out of this slice's scope.
    mirroring `chat-dm-safety-invariants.test.ts`'s own "resist temp-table shadowing" tests for 0030's
    functions.
 
+**Sixth deviation, found by codex review round-03 of the `--v2` re-slice (2026-08-10), not
+authoring.** The verbatim DDL above still includes `CREATE INDEX idx_chat_messages_channel_time ON
+chat_messages(channel_id, created_at, id);` (line 315) because it is the pinned source spec's own
+text and this block is kept unmodified for diffing purposes — the implementation intentionally omits
+it. `chat_messages_channel_created_at_id_uq` (`UNIQUE (channel_id, created_at, id)`, item in §5.1's
+table DDL above) already creates a B-tree index over the identical columns in the identical order;
+Postgres uses one index to enforce both a UNIQUE constraint and ordinary query planning, so the named
+`idx_chat_messages_channel_time` was pure duplication — same storage and write-amplification cost on
+`chat_messages`, the highest-write table in this slice, with zero additional query capability. Removed
+from both the migration and the `schema.ts` mirror. A catalog-level regression test
+(`packages/db/src/chat-schema-invariants.test.ts`, "migration shape" describe block) now asserts no
+second index shares that column list, so a future reconciliation with the still-unmodified BE spec
+text cannot silently reintroduce the duplicate. The BE spec document itself
+(`feature_inapp_chat_tech.md:243`) is out of this slice's scope to edit; reconciling it is the same
+kind of follow-up as the five deviations above.
+
 ### 5.2 Schema mirror (`packages/db/schema.ts`)
 
 Add Drizzle definitions for `chatChannels`, `chatMembers`, `chatMessages` matching the DDL above
