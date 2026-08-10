@@ -453,13 +453,14 @@ own SECURITY DEFINER privileges rather than a table grant).
 ## DM safety authority core (DD-55, `0030` — CODE DARK)
 
 Canonical block/report/rate storage for in-app DM safety plus three `chat_definer`-owned
-`SECURITY DEFINER` functions. **Inert** (zero live caller) until `dd38-dd86-chat-schema-core`
-(slice 3) lands its `dm_current_read_allowed` — this migration is the FIRST to transfer function
-ownership to `chat_definer` (`chat-definer-role-provisioning`, merged, provisions the role itself
-but grants it no privileges). `create_dm`/`send_chat_message`/`mark_read` (codex round-01 [P2]:
-corrected here, not slice 3's own deliverable) are owned by later slices 7
-(`chat-shared-message-command-core`) and 8 (`chat-dm-lifecycle-command-core`) — this migration
-stays inert for them too, until those slices land.
+`SECURITY DEFINER` functions. This migration was the FIRST to transfer function ownership to
+`chat_definer` (`chat-definer-role-provisioning`, merged, provisions the role itself but grants it no
+privileges). `dm_safety_enabled()`/`chat_pair_blocked()` now have a live caller —
+`dd38-dd86-chat-schema-core` (`0031`, see below) reads both from `dm_current_read_allowed`.
+`assert_dm_allowed()` is still uncalled: `create_dm`/`send_chat_message`/`mark_read` (codex round-01
+[P2]: corrected here, not slice 3's own deliverable) are owned by later slices 7
+(`chat-shared-message-command-core`) and 8 (`chat-dm-lifecycle-command-core`) — this function stays
+inert for them, until those slices land.
 
 - `dm_safety_enabled() RETURNS boolean` — pure predicate, the AND of `chat_dm_safety_config`'s four
   independent capability toggles (`block_enabled`/`report_enabled`/`rate_limit_enabled`/
@@ -508,6 +509,30 @@ session, ever receives the notice.
 A queryable table remains the eventual goal — tracked as backlog `chat-dm-safety-audit-queryable-path`
 (depends on `dd38-dd86-chat-schema-core`; the write needs to happen from a caller's own exception
 handler, in a transaction that actually commits, or via a genuinely separate connection).
+
+## Chat schema core (DD-38/DD-86, `0031` — root of the chat tree, CODE DARK)
+
+Final `chat_channels`/`chat_members`/`chat_messages` shape, DM exactly-2-members guards (insert-time
+`chat_dm_member_insert_guard` plus deferred constraint triggers `chat_assert_dm_two`), the tenant-bind
+trigger closing the FK MATCH-SIMPLE-NULL loophole, and two `chat_definer`-owned `SECURITY DEFINER`
+read helpers. **CODE DARK**: zero HTTP route or RPC references any of the three tables yet —
+`create_dm`/`send_chat_message`/`mark_read` and every other mutation path belong to later slices
+(7/8/13/14/15). Safe to drop entirely pre-enable.
+
+- `chat_current_is_member(p_channel uuid) RETURNS boolean` — pure predicate, club membership (active
+  `memberships` row) OR any DM membership (DM channels have no `status` column to check — the exactly-
+  2-members invariant plus RLS's own `dm_current_read_allowed` branch carries that instead).
+- `dm_current_read_allowed(p_channel uuid) RETURNS boolean` — the pure DM read adapter this migration
+  exists to close the dependency chain for: `dm_safety_enabled() AND` current caller is one of the
+  channel's two members `AND NOT chat_pair_blocked(...)` against the other member. Calls exactly two
+  `chat-dm-safety-authority-core` (`0030`) symbols — never `assert_dm_allowed()`, which is a later
+  slice's (7/8) concern, not a read-path one.
+
+Both functions are `STABLE`, `SET search_path = pg_catalog, public`, owned by `chat_definer` (requires
+`chat-definer-role-provisioning`, `infra/postgres-init/02-chat-definer.sql`, already landed). RLS on
+all three tables is `ENABLE` + `FORCE`, two permissive policies per table (club branch OR dm branch);
+`app` has `SELECT` only — zero `INSERT`/`UPDATE`/`DELETE` grant on any of the three, since mutation has
+no owner yet.
 
 ## Open items inherited from docs (not blockers)
 

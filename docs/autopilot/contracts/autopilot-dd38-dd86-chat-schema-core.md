@@ -453,6 +453,24 @@ Source: `feature_inapp_chat_tech.md` (v0.23) lines 127-249, 400-471, 521-603 —
 contract. Do not paraphrase; copy verbatim into the migration. The "Root-owned schema/read boundary"
 paragraph at that file's line 473-475 is the spec's own explicit IN/OUT statement for this slice.
 
+**Deviation from the pinned text, found during implementation (2026-08-10), not authoring.** The
+DDL above wraps every `current_setting('app.tenant_id'/'app.person_id', true)` in
+`NULLIF(..., '')` before the `::uuid` cast — the source spec's own line-127-249/521-603 text does
+not. Proven necessary by direct testing against this project's own Postgres, not a style
+preference: a custom GUC that has been `set_config(name, value, true)`'d at least once on a
+connection reverts to `''` (empty string) once that transaction ends, never back to a true SQL
+`NULL` — `current_setting(name, true)` only returns `NULL` for a GUC that was never referenced at
+all on that session. On a pooled connection, a later transaction that legitimately leaves
+`app.tenant_id`/`app.person_id` unset can land on a connection a prior transaction already set it
+on, making a bare `''::uuid` cast throw `invalid input syntax for type uuid` instead of the
+policy gracefully evaluating to no-match. `0009_rls_policies_grants.sql` — this exact migration's
+own cited RLS/grants idiom source (§2 context_sources) — already established the
+`NULLIF(current_setting(...), '')::uuid` wrapper for exactly this reason; the chat spec's DDL text
+simply omits it. Same class of precedent as §5.2's constraint-naming deviation below: fixing a gap
+between the pinned prose and this repo's own already-reviewed idiom it cites as context, zero
+semantic change to the intended (GUC-set) behavior, only the previously-unreachable empty-string
+edge case now fails closed instead of crashing.
+
 ### 5.2 Schema mirror (`packages/db/schema.ts`)
 
 Add Drizzle definitions for `chatChannels`, `chatMembers`, `chatMessages` matching the DDL above
@@ -490,10 +508,28 @@ packages/db/migrations/0031_chat_schema_core.sql   -- SEE §6 — re-derived 202
 packages/db/schema.ts
 packages/db/src/chat-schema-invariants.test.ts     -- NEW file
 packages/db/src/migrate.test.ts                    -- mechanical literal bump only
+packages/db/src/rls-invariants.test.ts             -- mechanical literal bump only, added post-authoring (see below)
 packages/db/README.md                              -- document the two new SECURITY DEFINER functions
 docs/autopilot-manifests/dd38-dd86-chat-schema-core.json   -- self, per AP-39/AP-40 lesson
 docs/autopilot/contracts/autopilot-dd38-dd86-chat-schema-core.md               -- self
 ```
+
+**Scope amendment, 2026-08-10 (discovered during implementation, not at authoring):** the original
+§5.3 text said `rls-invariants.test.ts` needs no edit because its generic CND guard already covers
+new tables once schema.ts names every constraint explicitly. That is still true for CND specifically
+— but the same file separately hardcodes several now-false migration-count/tail-filename literals
+once migration 0031 lands. A grep-verified sweep (`toBe(31)` / `0030_chat_dm_safety_authority_core.sql`,
+excluding the two safe substring-scoped assertions in `chat-dm-safety-invariants.test.ts` that stay
+correct regardless) found six: two count/skip assertions plus two row-count assertions in the
+"migrations" describe block near the top of the file, the JCL-1 tail assertion (~line 1597), and
+UCC-8's `MIGRATION_COUNT`/tail pair (~line 4070) — do not treat "six" as pinned either; re-grep before
+trusting any count, including this one. This is the exact mechanical-literal-bump class already
+pre-authorized for `migrate.test.ts`, and the exact fix this same file already received once before
+for the immediately-prior sibling slice (`chat-dm-safety-authority-core`, 2026-08-05, per that file's
+own comment: "owner-authorized scope amendment"). The first registration attempt (zero commits) was
+closed via `ap-finish.sh --authorized-close` and re-registered with this file added to `scope`, bounded
+to only now-false migration-count/tail literals — see the manifest's `negative_scope` for the exact
+boundary and `.autopilot/dispositions/dd38-dd86-chat-schema-core.json` for the closure record.
 
 ## 6. Migration numbering — re-derived 2026-08-10, still re-verify at build time
 
