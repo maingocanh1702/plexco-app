@@ -471,13 +471,16 @@ between the pinned prose and this repo's own already-reviewed idiom it cites as 
 semantic change to the intended (GUC-set) behavior, only the previously-unreachable empty-string
 edge case now fails closed instead of crashing.
 
-**Four further deviations, found by codex review rounds 01-02 (2026-08-10), not authoring.** All are
+**Five further deviations, found by codex review rounds 01-03 (2026-08-10), not authoring.** All are
 confirmed present in the pinned source spec's own DDL text too (`feature_inapp_chat_tech.md`) — round-01's
 ADVISORY section names this explicitly: "the pre-existing BE authority contains the same nullable-CHECK
 and DM-update trigger definitions. Reconcile that document in its owning slice after correcting the
 implementation"; round-02's ADVISORY repeats it verbatim, since the same defect family recurred as an
-independent instance — so fixing them here is a deviation from the pinned text, not an implementation
-bug relative to it; reconciling the spec document itself is out of this slice's scope.
+independent instance; round-03's ADVISORY adds the same about the unsafe `search_path` pattern
+("The BE authority repeats the unsafe search path in several later helper/RPC definitions... Reconcile
+it in its owning documentation slice after fixing this change set") — so fixing them here is a
+deviation from the pinned text, not an implementation bug relative to it; reconciling the spec document
+itself is out of this slice's scope.
 
 1. `chat_channels_shape_chk`'s club branch used `creation_origin IN (...)` and
    `post_policy IN (...)` with no explicit `IS NOT NULL`. PostgreSQL CHECK constraints only reject a
@@ -508,6 +511,18 @@ bug relative to it; reconciling the spec document itself is out of this slice's 
    NULL`. Fixed by joining `chat_channels` and requiring `kind = 'dm'` inside the function itself, so
    its own contract does not depend on every future caller remembering the external guard.
    Regression test added to §5.3's invariant file.
+5. Both `SECURITY DEFINER` read helpers used `SET search_path = pg_catalog, public`, which leaves
+   `pg_temp` searched *first* by Postgres's own implicit default (an explicit `search_path` entry is
+   required to override that default position). Since ordinary `CREATE TEMP TABLE` needs no special
+   privilege, an `app`-role session could shadow `chat_members`, `chat_channels`, or `memberships`
+   with an attacker-controlled temp table, and every unqualified reference inside these
+   `chat_definer`-owned (`BYPASSRLS`) functions would silently resolve to it instead of the real
+   table — the function's boolean result, which directly authorizes RLS access, would then reflect
+   attacker-controlled rows. Fixed by changing both to `SET search_path = public, pg_temp`, this
+   codebase's own already-reviewed convention (`0012`, `0016`, and `0030`'s three `SECURITY DEFINER`
+   functions all use the identical pattern). Three regression tests added to §5.3's invariant file,
+   mirroring `chat-dm-safety-invariants.test.ts`'s own "resist temp-table shadowing" tests for 0030's
+   functions.
 
 ### 5.2 Schema mirror (`packages/db/schema.ts`)
 
