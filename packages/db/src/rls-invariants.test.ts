@@ -32,6 +32,7 @@ import {
   expectErrorChainToMatch,
   setupNonSuperuserOwnerContext,
   setupRlsTestContext,
+  withChatDefinerLock,
   withJobDefinerLock,
   type RlsTestContext,
 } from "./test-harness.js";
@@ -66,10 +67,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(30); // 0000..0029 (0029 = dd29-capability-registry-contract)
+    expect(ctx.migrateResult.applied.length).toBe(31); // 0000..0030 (0030 = chat-dm-safety-authority-core)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(30);
+    expect(second.skipped.length).toBe(31);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1299,17 +1300,23 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
     try {
       // job_definer must exist (correctly) before this reaches 0022 — this describe block uses
       // its own local `admin` connection (not setupRlsTestContext), so bootstrap+migrate need the
-      // same lock protection as everywhere else 0022 is reached for the first time.
-      const res = await withJobDefinerLock(BASE!, async () => {
-        await bootstrapJobDefiner(admin);
-        return migrate(url(dbName));
-      });
-      expect(res.applied.length).toBe(30); // 0000..0029
+      // same lock protection as everywhere else 0022 is reached for the first time. Also under
+      // withChatDefinerLock (codex round-03 [P2]): this full replay reaches 0030, which needs
+      // chat_definer the ROLE to exist by NAME (admin is a superuser, so no membership needed,
+      // unlike the non-superuser-owner contexts) — a sibling file's negative test renaming it away
+      // could otherwise race this exact moment.
+      const res = await withJobDefinerLock(BASE!, () =>
+        withChatDefinerLock(BASE!, async () => {
+          await bootstrapJobDefiner(admin);
+          return migrate(url(dbName));
+        }),
+      );
+      expect(res.applied.length).toBe(31); // 0000..0030
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(30);
+        expect(rows.length).toBe(31);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -1572,13 +1579,22 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
     try {
       // bootstrap + migrate + the ownership verification below all reference job_definer BY NAME
       // (grant; the 0022 assertion and ownership transfers; pg_get_userbyid comparison) — one
-      // continuous lock hold, matching setupRlsTestContext / JCL-4 / JCL-12.
+      // continuous lock hold, matching setupRlsTestContext / JCL-4 / JCL-12. Also chat_definer
+      // (2026-08-05, owner-authorized scope amendment): migrate() now reaches 0030
+      // (chat-dm-safety-authority-core), which does ALTER FUNCTION ... OWNER TO chat_definer and
+      // mechanically requires nsCtx's owner role to already be a member of chat_definer.
+      //
+      // codex round-05 [P1]: bootstrapChatDefinerForOwner now acquires and holds the chat lock
+      // itself, internally, through nsCtx.teardown() (see test-harness.ts's own comment) — nesting
+      // withChatDefinerLock here would deadlock (two different connections each waiting on the
+      // same session-scoped advisory lock the other holds). job_definer has no such internal hold
+      // (its own bootstrap never revokes an existing member), so withJobDefinerLock still wraps
+      // this whole sequence explicitly.
       await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
         await nsCtx.bootstrapJobDefinerForOwner();
+        await nsCtx.bootstrapChatDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe(
-          "0029_dd29_capability_registry_contract.sql",
-        );
+        expect(res.applied[res.applied.length - 1]).toBe("0030_chat_dm_safety_authority_core.sql");
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -3552,10 +3568,13 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
         await admin.query(`CREATE DATABASE ${dbName}`);
         const url = new URL(BASE);
         url.pathname = `/${dbName}`;
-        await withJobDefinerLock(BASE, async () => {
-          await bootstrapJobDefiner(admin);
-          await migrate(url.toString());
-        });
+        // Also under withChatDefinerLock (codex round-03 [P2]): this full migrate() reaches 0030.
+        await withJobDefinerLock(BASE, () =>
+          withChatDefinerLock(BASE, async () => {
+            await bootstrapJobDefiner(admin);
+            await migrate(url.toString());
+          }),
+        );
 
         const c = new pg.Client({ connectionString: url.toString() });
         await c.connect();
@@ -3596,10 +3615,13 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
         await admin.query(`CREATE DATABASE ${dbName}`);
         const url = new URL(BASE);
         url.pathname = `/${dbName}`;
-        await withJobDefinerLock(BASE, async () => {
-          await bootstrapJobDefiner(admin);
-          await migrate(url.toString());
-        });
+        // Also under withChatDefinerLock (codex round-03 [P2]): this full migrate() reaches 0030.
+        await withJobDefinerLock(BASE, () =>
+          withChatDefinerLock(BASE, async () => {
+            await bootstrapJobDefiner(admin);
+            await migrate(url.toString());
+          }),
+        );
 
         const c = new pg.Client({ connectionString: url.toString() });
         await c.connect();
@@ -4045,10 +4067,10 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       }
     });
 
-    it("UCC-8: MIGRATION_COUNT (30) matches the actual migrations/ directory listing, and the tail is 0029", async () => {
+    it("UCC-8: MIGRATION_COUNT (31) matches the actual migrations/ directory listing, and the tail is 0030", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      expect(files.length).toBe(30);
-      expect(files[files.length - 1]).toBe("0029_dd29_capability_registry_contract.sql");
+      expect(files.length).toBe(31);
+      expect(files[files.length - 1]).toBe("0030_chat_dm_safety_authority_core.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {

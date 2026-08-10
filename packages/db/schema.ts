@@ -761,6 +761,74 @@ export const routingAudit = pgTable("routing_audit", {
 });
 
 /* ===========================================================================
+ * Chat DM safety authority (GLOBAL protected, DD-55, migration 0030)
+ * Cross-tenant, person-scoped — no RLS, zero grant to app/readonly. Reached
+ * only through chat_definer-owned SECURITY DEFINER functions
+ * (dm_safety_enabled/chat_pair_blocked/assert_dm_allowed), same model as
+ * persons/accounts above.
+ *
+ * No chat_dm_safety_audit table (owner-amended 2026-08-05): an INSERT
+ * immediately before RAISE EXCEPTION in the same statement can never
+ * persist — PL/pgSQL's exception handling is savepoint-rollback-based, so
+ * the RAISE unconditionally undoes it. assert_dm_allowed() emits RAISE LOG
+ * instead (see the migration's own comment); a queryable table is a
+ * separate, deferred follow-up (backlog: chat-dm-safety-audit-queryable-path).
+ * ======================================================================== */
+
+export const chatDmSafetyConfig = pgTable("chat_dm_safety_config", {
+  singleton: boolean("singleton").primaryKey().default(true),
+  // All four default false (codex round-02 [P1]): an enablement gate, not a
+  // guessed-safe default — see the migration's own comment for the full
+  // reasoning. assert_dm_allowed() denies with safety_disabled until an
+  // explicit UPDATE turns each on.
+  blockEnabled: boolean("block_enabled").notNull().default(false),
+  reportEnabled: boolean("report_enabled").notNull().default(false),
+  rateLimitEnabled: boolean("rate_limit_enabled").notNull().default(false),
+  auditEnabled: boolean("audit_enabled").notNull().default(false),
+  dmSenderLimitPerMin: integer("dm_sender_limit_per_min").notNull().default(30),
+  dmTargetLimitPerMin: integer("dm_target_limit_per_min").notNull().default(30),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  singletonChk: check("chat_dm_safety_config_singleton_chk", sql`${t.singleton}`),
+  senderLimitPositiveChk: check("chat_dm_safety_config_sender_limit_positive_chk",
+    sql`${t.dmSenderLimitPerMin} > 0`),
+  targetLimitPositiveChk: check("chat_dm_safety_config_target_limit_positive_chk",
+    sql`${t.dmTargetLimitPerMin} > 0`),
+}));
+
+export const chatBlocks = pgTable("chat_blocks", {
+  blockerPersonId: uuid("blocker_person_id").notNull().references(() => persons.id),
+  blockedPersonId: uuid("blocked_person_id").notNull().references(() => persons.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.blockerPersonId, t.blockedPersonId] }),
+  noSelfChk: check("chat_blocks_no_self_chk", sql`${t.blockerPersonId} <> ${t.blockedPersonId}`),
+}));
+
+export const chatReports = pgTable("chat_reports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  reporterPersonId: uuid("reporter_person_id").notNull().references(() => persons.id),
+  reportedPersonId: uuid("reported_person_id").notNull().references(() => persons.id),
+  reasonCode: text("reason_code").notNull(),
+  note: text("note"),
+  status: text("status").notNull().default("submitted"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  reasonCodeChk: check("chat_reports_reason_code_chk",
+    sql`${t.reasonCode} IN ('spam','harassment','unsafe','off_topic','other')`),
+  statusChk: check("chat_reports_status_chk",
+    sql`${t.status} IN ('submitted','triaged','actioned','closed')`),
+  noSelfChk: check("chat_reports_no_self_chk", sql`${t.reporterPersonId} <> ${t.reportedPersonId}`),
+  // Reused DD-95 taxonomy: 'other' requires a bounded note, every non-other rejects one.
+  // Raw length(note) <= 500 bounds the STORED value (codex round-02 [P2] — trimmed-only would
+  // let a padded note store far more than 500 chars); trimmed length >= 1 rejects whitespace-only.
+  noteShapeChk: check("chat_reports_note_shape_chk",
+    sql`(${t.reasonCode} = 'other' AND ${t.note} IS NOT NULL AND length(${t.note}) <= 500 AND length(btrim(${t.note})) >= 1)
+        OR (${t.reasonCode} <> 'other' AND ${t.note} IS NULL)`),
+}));
+
+/* ===========================================================================
  * Payments ledger (TENANT-private, append-only)
  * ======================================================================== */
 
