@@ -34,7 +34,7 @@ async function checkHealthz() {
   try {
     res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS), redirect: "error" });
   } catch (cause) {
-    throw new Error(`GET ${url} failed: ${cause?.message ?? cause}`);
+    throw new Error(`GET ${url} failed: ${cause?.message ?? cause}`, { cause });
   }
   if (res.status !== 200) {
     throw new Error(`GET ${url} → HTTP ${res.status} (expected 200)`);

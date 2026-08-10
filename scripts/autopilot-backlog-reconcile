@@ -191,10 +191,15 @@ git -C "$REPO" rev-parse --verify --quiet "refs/remotes/origin/$DEFAULT_BRANCH" 
 is_symbol_probe() {
   local re="$1" tok
   re="${re//[()]/}"                     # allow grouping parens around a symbol set
-  # nosemgrep: bash.lang.security.ifs-tampering.ifs-tampering
   # The rule's own guidance is "don't set IFS globally; set it locally" — which is exactly what this is.
   # `local IFS` is scoped to this function and restored on return, so word-splitting elsewhere is unaffected.
   # Semgrep's pattern matches any IFS assignment without distinguishing scope, so this is a false positive.
+  #
+  # The suppression MUST stay on the line immediately above the match. It was four lines up (behind the
+  # three explanation lines) from the day it was written, so Semgrep never honoured it and every consumer
+  # running `semgrep scan --config auto --error` had a permanently red Security job for one false positive.
+  # Measured on Plexco 2026-08-10: Security #217, 1 blocking finding, exit 1.
+  # nosemgrep: bash.lang.security.ifs-tampering.ifs-tampering
   local IFS='|'; local toks=($re)       # split on alternation
   [ "${#toks[@]}" -eq 0 ] && return 1
   for tok in "${toks[@]}"; do
