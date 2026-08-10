@@ -1,0 +1,103 @@
+{
+  "task_id": "plexco:db-test-harness-teardown-57p01",
+  "feature": "db-test-harness-teardown-57p01",
+  "branch": "feat/db-test-harness-teardown-57p01",
+  "base_ref": "origin/main",
+  "base_sha": "10d223c3d8a6e6324d1172b07bb6446989aa9734",
+  "risk": "P2",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": ["test-chain"],
+  "scope": [
+    "packages/db/src/test-harness.ts",
+    "docs/autopilot-manifests/db-test-harness-teardown-57p01.json",
+    "docs/autopilot/contracts/autopilot-db-test-harness-teardown-57p01.md",
+    "docs/autopilot-backlog.md"
+  ],
+  "_scope_note": "The defect is in the harness's connection lifecycle, not in any test's assertions and not in any product code. All 346 packages/db tests PASS at base_sha; the suite fails only on 2 unhandled pool errors. packages/db/src/migrate.test.ts is deliberately NOT in scope: its DD29-3 test already closes its own client and calls ctx.teardown() in a finally block, and the leaked connection is owned by the harness. If the writer proves the leak originates in the test file rather than the harness, that is a scope finding - report it, do not widen the diff. The slice doc and this manifest are in scope on purpose (AP-39/AP-40 lesson).",
+  "negative_scope": [
+    "NEVER attach a blanket, always-on error swallow to any pool or client. The handler must suppress ONLY during teardown and ONLY for the known connection-termination codes; outside that window every error must still surface. A harness that cannot report a connection failure is the 'gate that cannot fail' this kit already recorded once - see scope-gate v14's own header note on autopilot-backlog-reconcile.",
+    "NEVER remove or weaken `WITH (FORCE)` on the teardown DROP DATABASE. It exists because closing connections alone leaves the database, the cluster-global ownerRole and its job_definer membership behind - a LOGIN role with a fixed password and BYPASSRLS-via-membership on a shared cluster (codex round-07 [P1], recorded in the teardown's own comment). Terminating stragglers is the point; delivering FATAL to a listener-less pool is the defect.",
+    "NEVER set fileParallelism:false in packages/db/vitest.config.* to make the symptom go away. Serial execution was deliberately re-enabled to parallel after both original hazards were closed, with >=5 consecutive green full-suite runs as evidence. Hiding a lifecycle bug behind serialisation trades a 90s suite for a slower one and leaves the leak live.",
+    "NO change to any test assertion, expected count, or migration. 346 tests pass at base_sha and must still pass at the same count.",
+    "NO change to product code under packages/db/src outside test-harness.ts.",
+    "NO new dependency."
+  ],
+  "_measured_defect": {
+    "measured_at": "2026-08-10, CI run #223 job verify (also #224), step Test",
+    "symptom": "Test Files 5 passed (5) / Tests 346 passed (346) / Errors 2 errors / Failed",
+    "error": "Postgres FATAL 57P01 (admin_shutdown), routine ProcessInterrupts, on a connection with user '<dbName>_owner' to database '<dbName>' - measured instance: plexco_migrate_dd29_upgrade",
+    "originating_file": "packages/db/src/migrate.test.ts, last test before the throw: 'DD29-3 A1/A3: old plans rows survive alongside the new ones, and a pre-existing free_web row remaps to free at version 1'",
+    "mechanism": "teardown() ends ownerPool and every workerPool, then runs DROP DATABASE ... WITH (FORCE). Since PostgreSQL 13 FORCE terminates every remaining connection to the target database, and a terminated backend reports 57P01 to its client. A pg.Pool with no 'error' listener turns that into an unhandled error, which vitest counts under 'Errors' and which fails the suite even though no test failed.",
+    "why_it_survived": "Reproduces on CI, not on the owner's machine (683/732 green locally) - a timing-dependent race. docs/autopilot-backlog.md task deps-security-bump already recorded '2x Postgres 57P01' as infrastructure interruptions in late July; it was classified as noise and no task was opened. It has since become a permanent red."
+  },
+  "_leak_hypotheses": [
+    "H1 - listener-less pools. grep '\\.on(.error.' packages/db/src/test-harness.ts returns ZERO matches across 8 pool/client construction sites. node-postgres documents that a Pool without an 'error' listener will surface idle-client errors as unhandled. This alone explains 'Errors 2' with 0 test failures and is the cheapest fix.",
+    "H2 - a connection teardown() does not know about. The error's user is '<dbName>_owner', i.e. ownerPool or a workerPool, both of which teardown() ends BEFORE the DROP. pg.Pool.end() resolves once idle clients are closed; a client still checked out at that moment is not waited on. Worth measuring - a leak that H1 merely silences is still a leak.",
+    "_note": "H1 and H2 are not alternatives. H1 stops the suite failing; H2 is whether anything is actually still connected. The writer must report which one the evidence supports rather than fixing H1 and declaring the matter closed."
+  ],
+  "context_sources": [
+    "packages/db/src/test-harness.ts - setupNonSuperuserOwnerContext and its teardown(), including the codex round-07 [P1] comment explaining why DROP DATABASE and DROP ROLE must run and in that order",
+    "packages/db/src/migrate.test.ts - the DD29-3 test at the point of failure, and its existing finally block",
+    "packages/db/vitest.config.* - the fileParallelism:true rationale and the two hazards it claims are closed",
+    "docs/autopilot-backlog.md task deps-security-bump - the earlier '2x Postgres 57P01' sightings recorded as infra noise",
+    "CI run #223 job verify step Test - the exact serialized error and the 346-pass/2-error summary",
+    "commit 286f48b - the owner override of HALT REGION_THRASH, where the reviewer raised three times that pg_advisory_xact_lock is DATABASE-local while pg_auth_members is CLUSTER-shared"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "restricted",
+    "secrets": "none",
+    "external_side_effects": "approval_required"
+  },
+  "verification": {
+    "_shape_note": "Expressed as properties. The failure is a race, so a single green run proves nothing - repetition is the measurement.",
+    "focused": [
+      "every pg.Pool and pg.Client constructed in packages/db/src/test-harness.ts has an 'error' listener attached before it is first used",
+      "the listener suppresses only while teardown is in progress and only for connection-termination codes; outside that window it rethrows or reports",
+      "a deliberately injected non-termination error during teardown still surfaces - the suppression cannot be a blanket catch",
+      "packages/db/vitest.config.* is byte-unchanged (fileParallelism stays true)",
+      "the teardown DROP DATABASE still carries WITH (FORCE)",
+      "no test assertion or expected count changed"
+    ],
+    "canonical": [
+      "DATABASE_URL_TEST set; packages/db suite run 5 consecutive times, every run reporting 346 passed and Errors 0",
+      "full monorepo suite green at the same count as base_sha or higher",
+      "pnpm -w typecheck, lint, build",
+      "if H2 is confirmed, evidence that the straggler connection is closed rather than merely silenced"
+    ]
+  },
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 1
+  },
+  "security_review": {
+    "required": false,
+    "reason": "Test-harness connection lifecycle only. No product code, no auth/permission path, no migration, no external input, no deployment surface. The one security-adjacent element - the teardown DROP ROLE that removes a fixed-password LOGIN role with BYPASSRLS-via-membership from a shared cluster - is explicitly protected by negative_scope and must come out unchanged."
+  },
+  "budgets": {
+    "wall_time_minutes": 120,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE",
+    "LEAK_ORIGIN_OUTSIDE_HARNESS"
+  ],
+  "_stop_condition_note": "LEAK_ORIGIN_OUTSIDE_HARNESS is slice-specific: if the straggler connection turns out to be opened by a test file rather than by the harness, that is a different slice. Report AWAIT with the evidence; do not widen the diff into migrate.test.ts.",
+  "readiness_evidence_path": ".autopilot/state/db-test-harness-teardown-57p01/readiness.json"
+}

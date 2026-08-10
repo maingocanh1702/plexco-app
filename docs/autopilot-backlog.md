@@ -110,6 +110,77 @@ notes: <link spec>
 
 ---
 
+## task: db-test-harness-teardown-57p01
+title: Suite `packages/db` đỏ với 346/346 test PASS — 2 unhandled Postgres 57P01 từ teardown
+status: planned
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [packages/db/src/test-harness.ts, docs/autopilot-manifests/db-test-harness-teardown-57p01.json, docs/autopilot/contracts/autopilot-db-test-harness-teardown-57p01.md, docs/autopilot-backlog.md]
+manifest: docs/autopilot-manifests/db-test-harness-teardown-57p01.json
+launcher: .claude/commands/ap-52-db-test-harness-teardown-57p01.md
+merged_probe: packages/db/src/test-harness.ts :: tearingDown
+_probe_note: Probes the teardown-scoped suppression flag the fix must introduce — slice-unique and
+  identifier-shaped, so `--check` can auto-verify. If the writer names it differently, repoint the probe
+  to the actual identifier rather than falling back to `close_by: hand`.
+notes: |
+  **Mở 2026-08-10 từ CI audit.** CI `verify` đỏ ở bước **Test** từ `286f48b` (04/08) — **7 ngày**. Đo tại
+  run #223 (`b2c3d59`) và #224 (`9d7d6ac`):
+
+  ```
+  Test Files  5 passed (5)
+  Tests       346 passed (346)
+  Errors      2 errors
+  Failed
+  ```
+
+  **Không test nào sai.** Suite đỏ vì 2 unhandled error: Postgres `FATAL 57P01` (`admin_shutdown`,
+  `routine: ProcessInterrupts`) trên kết nối `user: <dbName>_owner` tới `database: <dbName>` — instance đo
+  được `plexco_migrate_dd29_upgrade`, phát sinh trong `packages/db/src/migrate.test.ts` tại test
+  `DD29-3 A1/A3`.
+
+  **Cơ chế:** `teardown()` trong `test-harness.ts` chạy `DROP DATABASE ... WITH (FORCE)`. Từ PostgreSQL 13,
+  `FORCE` **chấm dứt mọi kết nối còn lại** tới DB đó, và backend bị giết trả `57P01` về client. `pg.Pool`
+  **không có listener `'error'`** biến nó thành unhandled → vitest tính vào `Errors` → suite Failed dù
+  không assertion nào hỏng. ⚠️ **Teardown đã đúng thứ tự** (`ownerPool.end()` + mọi `workerPool.end()`
+  chạy TRƯỚC DROP — chính là bản vá `codex round-07 [P1]`), nên mọi patch dựa trên giả định "quên đóng
+  pool" là sai từ trước khi viết.
+
+  **Hai giả thuyết, không phải hai lựa chọn.** **H1:** `grep -c "\.on(['\"]error" test-harness.ts` = **0**
+  trên 8 chỗ tạo pool/client; node-postgres đưa lỗi idle-client thành unhandled khi thiếu listener — đủ
+  giải thích triệu chứng, và là fix rẻ. **H2:** `pg.Pool.end()` chỉ chờ client **idle**; client đang
+  checked-out lúc đó không được chờ ⇒ có thể có straggler thật. Sửa H1 rồi tuyên bố xong = biến một race
+  nhìn thấy được thành một race im lặng.
+
+  **Ranh giới cứng của fix:** suppression chỉ được scope theo teardown và theo mã lỗi
+  connection-termination. Swallow always-on làm harness **mất khả năng báo** kết nối chết — đúng defect mà
+  header `scope-gate` v14 đã đặt tên khi `autopilot-backlog-reconcile` trả *"No stale entries"* exit 0
+  trong khi không kiểm gì: *"A gate that cannot fail is not a gate."*
+
+  **Ba thứ phải ra byte-unchanged:** `WITH (FORCE)` (giết straggler là chủ đích — bỏ nó để lại DB +
+  `ownerRole` LOGIN password cố định + membership `job_definer` BYPASSRLS trên cluster dùng chung);
+  `fileParallelism: true` (serialize để giấu triệu chứng là đánh đổi suite 90s lấy suite chậm và để lại
+  leak); và mọi assertion/expected count.
+
+  **Vì sao sống được 7 ngày.** Chỉ nổ ở CI — máy owner 683/732 xanh, đây là race phụ thuộc timing. Và nó
+  **đã từng xuất hiện**: task `deps-security-bump` ghi *"2× Postgres `57P01`"* trong "ba gián đoạn hạ tầng
+  cùng lineage" cuối tháng 7, được xếp là nhiễu hạ tầng và **không ai mở task**. Sau đó hai lỗi khác chồng
+  lên che nó hoàn toàn — Lint từ eslint 9→10 (`a93a4f6`) và budget Actions `$0` chặn mọi runner (06/08) —
+  nên suốt 4 ngày không ai đọc được lớp này. Bài học đáng ghi thẳng vào fix: **"nhiễu hạ tầng" mà tái diễn
+  là một defect không có chủ.**
+
+  **Cảnh báo liên quan cùng trục:** `286f48b` merge dưới **owner override of `HALT REGION_THRASH`**, và
+  message của chính nó ghi reviewer đã nêu **ba lần** rằng `pg_advisory_xact_lock` là DATABASE-local trong
+  khi `pg_auth_members` là CLUSTER-shared. Cảnh báo đó nói về role bootstrap chứ không phải teardown,
+  nhưng cùng một trục: trạng thái dùng chung toàn cluster được bảo vệ bằng lập luận cục bộ theo database.
+  Nếu H2 được xác nhận, kiểm xem straggler có vượt ranh giới đó không.
+
+  **Blocker khi author:** nguồn leak chưa đo (H1 vs H2 chỉ tách được bằng instrumentation), và lỗi chưa
+  tái hiện được ngoài CI. Verdict authored: `NOT_CODE_READY`.
+
+---
+
 ## task: deps-osv-transitive-floors
 title: Raise nanoid / brace-expansion 5.x / postcss floors past six new OSV advisories — without weakening the supply-chain controls
 status: planned
