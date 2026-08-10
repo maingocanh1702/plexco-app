@@ -677,6 +677,30 @@ describe("setupNonSuperuserOwnerContext teardown", () => {
       await admin.end();
     }
   }, 30_000);
+
+  // codex round-04 [P2]: acquireChatDefinerLock opens a brand new connection every call, so a
+  // second bootstrapChatDefinerForOwner() before teardown() used to try to acquire the same
+  // session-level advisory lock from a SECOND session while the first (open until teardown())
+  // still held it -- deadlocking forever, since the test could never reach teardown() to release
+  // the first lock either. Must resolve promptly, not hang; the 30s test timeout is the backstop
+  // that turns "hangs forever" into "a specific failing test" if this regresses.
+  it("bootstrapChatDefinerForOwner is idempotent — a second call before teardown() does not deadlock", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_chat_definer_idempotent");
+    try {
+      await ctx.bootstrapChatDefinerForOwner();
+      await ctx.bootstrapChatDefinerForOwner();
+
+      const { rows } = await ctx.superuser.query(
+        `SELECT r.rolname FROM pg_auth_members m
+           JOIN pg_roles r ON r.oid = m.member
+           JOIN pg_roles g ON g.oid = m.roleid
+          WHERE g.rolname = 'chat_definer'`,
+      );
+      expect((rows as { rolname: string }[]).map((r) => r.rolname)).toEqual([ctx.ownerRole]);
+    } finally {
+      await ctx.teardown();
+    }
+  }, 30_000);
 });
 
 async function expectNoPartialJobCoreRow(ctx: { ownerPool: pg.Pool }): Promise<void> {

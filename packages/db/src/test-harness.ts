@@ -477,9 +477,12 @@ export interface NonSuperuserOwnerContext {
   bootstrapJobDefinerForOwner: () => Promise<void>;
   /** idempotent chat_definer bootstrap (grants membership to ownerRole) — call before runMigration()
    *  whenever the migration will reach 0030 (chat-dm-safety-authority-core) or later under a
-   *  non-superuser role. Same NOT-internally-lock-protected caveat as bootstrapJobDefinerForOwner:
-   *  the caller must wrap the whole "bootstrap...ForOwner() then runMigration()" sequence in ONE
-   *  withJobDefinerLock (added 2026-08-05, mirrors bootstrapJobDefinerForOwner exactly). */
+   *  non-superuser role. UNLIKE bootstrapJobDefinerForOwner, this one DOES acquire its own lock
+   *  internally (acquireChatDefinerLock, codex round-05 [P1]) and holds it until teardown() runs —
+   *  the caller does not need to wrap it in withJobDefinerLock. A second call before teardown() is
+   *  a no-op (codex round-04 [P2] — corrected here; this comment previously, incorrectly, claimed
+   *  the same not-internally-lock-protected caveat as bootstrapJobDefinerForOwner, which would have
+   *  made a repeat call deadlock against the lock this same function already holds). */
   bootstrapChatDefinerForOwner: () => Promise<void>;
   /** run the real migration runner AS the non-superuser owner (never superuser) */
   runMigration: () => Promise<MigrateResult>;
@@ -571,6 +574,13 @@ export async function setupNonSuperuserOwnerContext(
     // job_definer's) refuses to re-point to a different target once any member exists — see that
     // helper's own comment. Its return value is restored in teardown() (codex round-03 [P1]).
     //
+    // codex round-04 [P2]: a second call before teardown() must be a no-op, not a repeat bootstrap
+    // — acquireChatDefinerLock opens a BRAND NEW connection every call, so calling this twice would
+    // try to acquire the same session-level advisory lock from a SECOND session while the first
+    // (still open, held until teardown()) already holds it, deadlocking forever: the second call
+    // never returns, so the test never reaches teardown(), so the first lock never releases either.
+    // chatDefinerLockRelease is exactly "has this already run" — null only until the first call.
+    if (chatDefinerLockRelease) return;
     // The lock is acquired HERE and released only in teardown(), after the restore below completes
     // (codex round-05 [P1]) — the whole revoke -> bootstrap -> [caller's own work] -> teardown ->
     // restore sequence is one continuous critical section, not two separately-locked halves with a
