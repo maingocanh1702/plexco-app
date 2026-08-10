@@ -16,7 +16,7 @@
  * (bytea) with deterministic *_lookup_hash for equality lookup.
  */
 import {
-  pgTable, uuid, text, integer, bigint, bigserial, boolean, jsonb, timestamp,
+  pgTable, uuid, text, integer, bigint, bigserial, smallint, boolean, jsonb, timestamp,
   time, customType, uniqueIndex, unique, index, primaryKey, check, foreignKey,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
@@ -826,6 +826,176 @@ export const chatReports = pgTable("chat_reports", {
   noteShapeChk: check("chat_reports_note_shape_chk",
     sql`(${t.reasonCode} = 'other' AND ${t.note} IS NOT NULL AND length(${t.note}) <= 500 AND length(btrim(${t.note})) >= 1)
         OR (${t.reasonCode} <> 'other' AND ${t.note} IS NULL)`),
+}));
+
+/* ===========================================================================
+ * Chat content (DD-38/DD-86, migration 0031 — dd38-dd86-chat-schema-core)
+ * RLS FORCE on all three; app has SELECT only, zero mutation grant (mutation
+ * RPCs are later slices). Declared channels -> messages -> members (not the
+ * conceptual channels -> members -> messages reading order) because
+ * chat_members' own cross-table FK targets chat_messages, and JS evaluates
+ * these top-to-bottom.
+ * ======================================================================== */
+
+const tsvectorType = customType<{ data: string }>({ dataType: () => "tsvector" });
+
+export const chatChannels = pgTable("chat_channels", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").references(() => tenants.id),
+  kind: text("kind").notNull(),
+  dmKey: text("dm_key"),
+  title: text("title"),
+  isDefault: boolean("is_default"),
+  sortOrder: integer("sort_order"),
+  createdByMembershipId: uuid("created_by_membership_id"),
+  createdByPersonId: uuid("created_by_person_id"),
+  creationOrigin: text("creation_origin"),
+  postPolicy: text("post_policy"),
+  assistantEnabled: boolean("assistant_enabled"),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  kindChk: check("chat_channels_kind_chk", sql`${t.kind} IN ('club','dm')`),
+  shapeChk: check("chat_channels_shape_chk", sql`
+    (${t.kind} = 'club'
+      AND ${t.tenantId} IS NOT NULL AND ${t.dmKey} IS NULL
+      AND ${t.title} IS NOT NULL AND ${t.isDefault} IS NOT NULL AND ${t.sortOrder} IS NOT NULL
+      AND ${t.creationOrigin} IN ('actor','system_bootstrap')
+      AND ${t.postPolicy} IN ('all_members','admins_only')
+      AND ${t.assistantEnabled} IS NOT NULL)
+    OR
+    (${t.kind} = 'dm'
+      AND ${t.tenantId} IS NULL AND ${t.dmKey} IS NOT NULL
+      AND ${t.title} IS NULL AND ${t.isDefault} IS NULL AND ${t.sortOrder} IS NULL
+      AND ${t.createdByMembershipId} IS NULL AND ${t.createdByPersonId} IS NULL
+      AND ${t.creationOrigin} IS NULL
+      AND ${t.postPolicy} IS NULL AND ${t.assistantEnabled} IS NULL)
+  `),
+  createdByPairChk: check("chat_channels_created_by_pair_chk",
+    sql`(${t.createdByMembershipId} IS NULL) = (${t.createdByPersonId} IS NULL)`),
+  creationOriginChk: check("chat_channels_creation_origin_chk", sql`
+    ${t.kind} <> 'club'
+    OR (${t.creationOrigin}='actor' AND ${t.createdByMembershipId} IS NOT NULL)
+    OR (${t.creationOrigin}='system_bootstrap' AND ${t.createdByMembershipId} IS NULL)
+  `),
+  createdByMembershipFk: foreignKey({
+    columns: [t.createdByMembershipId, t.createdByPersonId, t.tenantId],
+    foreignColumns: [memberships.id, memberships.personId, memberships.tenantId],
+    name: "chat_channels_created_by_membership_fk",
+  }),
+  dmKeyUq: unique("chat_channels_dm_key_uq").on(t.dmKey),
+  idTenantUq: unique("chat_channels_id_tenant_uq").on(t.id, t.tenantId),
+  defaultUq: uniqueIndex("chat_channels_default_uq")
+    .on(t.tenantId)
+    .where(sql`${t.kind}='club' AND ${t.isDefault} IS TRUE AND ${t.archivedAt} IS NULL`),
+}));
+
+export const chatMessages = pgTable("chat_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  channelId: uuid("channel_id").notNull().references(() => chatChannels.id),
+  tenantId: uuid("tenant_id"),
+  authorType: text("author_type").notNull().default("person"),
+  authorPersonId: uuid("author_person_id").references(() => persons.id),
+  membershipId: uuid("membership_id"),
+  body: text("body").notNull(),
+  replyToMessageId: uuid("reply_to_message_id"),
+  editedAt: timestamp("edited_at", { withTimezone: true }),
+  editCount: smallint("edit_count").notNull().default(0),
+  authorDeletedAt: timestamp("author_deleted_at", { withTimezone: true }),
+  moderationState: text("moderation_state").notNull().default("visible"),
+  moderationUpdatedAt: timestamp("moderation_updated_at", { withTimezone: true }),
+  moderationActorPersonId: uuid("moderation_actor_person_id").references(() => persons.id),
+  moderationReasonCode: text("moderation_reason_code"),
+  clientMsgId: text("client_msg_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  searchDocument: tsvectorType("search_document").generatedAlwaysAs(
+    sql`to_tsvector('simple'::regconfig, coalesce(body, ''))`,
+  ),
+}, (t) => ({
+  channelClientMsgUq: unique("chat_messages_channel_client_msg_uq").on(t.channelId, t.clientMsgId),
+  channelIdUq: unique("chat_messages_channel_id_uq").on(t.channelId, t.id),
+  channelCreatedAtIdUq: unique("chat_messages_channel_created_at_id_uq")
+    .on(t.channelId, t.createdAt, t.id),
+  channelTenantFk: foreignKey({
+    columns: [t.channelId, t.tenantId],
+    foreignColumns: [chatChannels.id, chatChannels.tenantId],
+    name: "chat_messages_channel_tenant_fk",
+  }),
+  membershipFk: foreignKey({
+    columns: [t.membershipId, t.authorPersonId, t.tenantId],
+    foreignColumns: [memberships.id, memberships.personId, memberships.tenantId],
+    name: "chat_messages_membership_fk",
+  }),
+  replyToFk: foreignKey({
+    columns: [t.channelId, t.replyToMessageId],
+    foreignColumns: [t.channelId, t.id],
+    name: "chat_messages_reply_to_fk",
+  }),
+  authorTypeChk: check("chat_messages_author_type_chk",
+    sql`${t.authorType} IN ('person','assistant','system')`),
+  editCountChk: check("chat_messages_edit_count_chk", sql`${t.editCount} BETWEEN 0 AND 5`),
+  moderationStateChk: check("chat_messages_moderation_state_chk",
+    sql`${t.moderationState} IN ('visible','hidden')`),
+  moderationReasonCodeChk: check("chat_messages_moderation_reason_code_chk", sql`
+    ${t.moderationReasonCode} IS NULL
+    OR ${t.moderationReasonCode} IN ('spam','harassment','unsafe','off_topic','other')
+  `),
+  replyNotSelfChk: check("chat_messages_reply_not_self_chk",
+    sql`${t.replyToMessageId} IS NULL OR ${t.replyToMessageId} IS DISTINCT FROM ${t.id}`),
+  moderationPairChk: check("chat_messages_moderation_pair_chk", sql`
+    (${t.moderationState}='visible' AND ${t.moderationUpdatedAt} IS NULL
+      AND ${t.moderationActorPersonId} IS NULL AND ${t.moderationReasonCode} IS NULL)
+    OR
+    (${t.moderationState}='hidden' AND ${t.moderationUpdatedAt} IS NOT NULL
+      AND ${t.moderationActorPersonId} IS NOT NULL AND ${t.moderationReasonCode} IS NOT NULL)
+  `),
+  authorPersonRequiredChk: check("chat_messages_author_person_required_chk",
+    sql`${t.authorType} <> 'person' OR ${t.authorPersonId} IS NOT NULL`),
+  authorPersonNullChk: check("chat_messages_author_person_null_chk",
+    sql`${t.authorType} = 'person' OR ${t.authorPersonId} IS NULL`),
+  membershipNullChk: check("chat_messages_membership_null_chk",
+    sql`${t.authorType} = 'person' OR ${t.membershipId} IS NULL`),
+  membershipRequiredChk: check("chat_messages_membership_required_chk",
+    sql`${t.authorType} <> 'person' OR ${t.tenantId} IS NULL OR ${t.membershipId} IS NOT NULL`),
+  channelTimeIdx: index("idx_chat_messages_channel_time").on(t.channelId, t.createdAt, t.id),
+  searchSimpleIdx: index("idx_chat_messages_search_simple")
+    .using("gin", t.searchDocument)
+    .where(sql`${t.moderationState}='visible' AND ${t.authorDeletedAt} IS NULL`),
+}));
+
+export const chatMembers = pgTable("chat_members", {
+  channelId: uuid("channel_id").notNull().references(() => chatChannels.id),
+  tenantId: uuid("tenant_id"),
+  personId: uuid("person_id").notNull().references(() => persons.id),
+  membershipId: uuid("membership_id"),
+  role: text("role").notNull().default("member"),
+  lastReadCreatedAt: timestamp("last_read_created_at", { withTimezone: true }),
+  lastReadMessageId: uuid("last_read_message_id"),
+  joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.channelId, t.personId] }),
+  roleChk: check("chat_members_role_chk", sql`${t.role} IN ('member','admin')`),
+  channelTenantFk: foreignKey({
+    columns: [t.channelId, t.tenantId],
+    foreignColumns: [chatChannels.id, chatChannels.tenantId],
+    name: "chat_members_channel_tenant_fk",
+  }),
+  membershipFk: foreignKey({
+    columns: [t.membershipId, t.personId, t.tenantId],
+    foreignColumns: [memberships.id, memberships.personId, memberships.tenantId],
+    name: "chat_members_membership_fk",
+  }),
+  lastReadMessageFk: foreignKey({
+    columns: [t.channelId, t.lastReadCreatedAt, t.lastReadMessageId],
+    foreignColumns: [chatMessages.channelId, chatMessages.createdAt, chatMessages.id],
+    name: "chat_members_last_read_message_fk",
+  }),
+  tenantMembershipPairChk: check("chat_members_tenant_membership_pair_chk", sql`
+    (${t.tenantId} IS NOT NULL AND ${t.membershipId} IS NOT NULL)
+    OR (${t.tenantId} IS NULL AND ${t.membershipId} IS NULL)
+  `),
+  lastReadPairChk: check("chat_members_last_read_pair_chk",
+    sql`(${t.lastReadCreatedAt} IS NULL) = (${t.lastReadMessageId} IS NULL)`),
 }));
 
 /* ===========================================================================
