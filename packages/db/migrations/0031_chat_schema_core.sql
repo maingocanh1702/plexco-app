@@ -263,9 +263,19 @@ END; $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_chat_dm_no_delete BEFORE DELETE ON chat_members
   FOR EACH ROW EXECUTE FUNCTION chat_dm_no_member_delete();
 
--- Read helpers (SECURITY DEFINER, owner = chat_definer — REQUIRES slice 1 landed):
+-- Read helpers (SECURITY DEFINER, owner = chat_definer — REQUIRES slice 1 landed).
+-- SET search_path = public, pg_temp (codex round-03 [P1]): the `pg_catalog, public` draft below
+-- (matching the source spec's own DDL text) left pg_temp searched FIRST by Postgres's own implicit
+-- default, since no explicit pg_temp entry was present -- an ordinary `app` session (CREATE TEMP
+-- TABLE needs no special privilege) could shadow chat_members/chat_channels/memberships with an
+-- attacker-controlled temp table, and every unqualified reference in these BYPASSRLS-owner
+-- functions would silently resolve to it instead of the real table. `public, pg_temp` is this
+-- codebase's own existing, already-reviewed convention (0012, 0016, and 0030's own three SECURITY
+-- DEFINER functions all use the identical pattern) -- matched exactly rather than inventing a
+-- fourth variant. pg_catalog needs no explicit entry: Postgres always implicitly searches it for
+-- built-in types/operators regardless of search_path.
 CREATE FUNCTION chat_current_is_member(p_channel uuid) RETURNS boolean
-  LANGUAGE sql SECURITY DEFINER STABLE SET search_path = pg_catalog, public AS $$
+  LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public, pg_temp AS $$
   SELECT EXISTS (
     SELECT 1
     FROM chat_members cm
@@ -287,7 +297,7 @@ GRANT EXECUTE ON FUNCTION chat_current_is_member(uuid) TO app;
 -- is itself SECURITY DEFINER and directly EXECUTE-granted to app, so its own contract must not
 -- depend on every future caller remembering that external guard.
 CREATE FUNCTION dm_current_read_allowed(p_channel uuid) RETURNS boolean
-  LANGUAGE sql SECURITY DEFINER STABLE SET search_path = pg_catalog, public AS $$
+  LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public, pg_temp AS $$
   SELECT dm_safety_enabled()
      AND EXISTS (
        SELECT 1

@@ -528,7 +528,11 @@ read helpers. **CODE DARK**: zero HTTP route or RPC references any of the three 
   `chat-dm-safety-authority-core` (`0030`) symbols — never `assert_dm_allowed()`, which is a later
   slice's (7/8) concern, not a read-path one.
 
-Both functions are `STABLE`, `SET search_path = pg_catalog, public`, owned by `chat_definer` (requires
+Both functions are `STABLE`, `SET search_path = public, pg_temp` (codex round-03 [P1]: not `pg_catalog,
+public`, which left `pg_temp` searched first by Postgres's own implicit default and let an ordinary
+session shadow `chat_members`/`chat_channels`/`memberships` with an attacker-controlled temp table —
+`public, pg_temp` is the same already-reviewed convention `0012`/`0016`/`0030` use), owned by
+`chat_definer` (requires
 `chat-definer-role-provisioning`, `infra/postgres-init/02-chat-definer.sql`, already landed). RLS on
 all three tables is `ENABLE` + `FORCE`, two permissive policies per table (club branch OR dm branch);
 `app` has `SELECT` only — zero `INSERT`/`UPDATE`/`DELETE` grant on any of the three, since mutation has

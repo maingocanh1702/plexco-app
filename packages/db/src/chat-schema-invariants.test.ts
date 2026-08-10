@@ -717,3 +717,70 @@ describe("security / privacy", () => {
     ]);
   });
 });
+
+// codex round-03 [P1]: proves the `SET search_path = public, pg_temp` fix (not `pg_catalog, public`,
+// which this migration originally shipped, matching the source spec's own DDL text) actually closes
+// the temp-table shadowing hole -- without an explicit pg_temp entry, Postgres searches pg_temp FIRST
+// regardless, so an ordinary app-role session's own same-named temp table would silently substitute
+// for the real chat_members/chat_channels/memberships inside every unqualified reference in these
+// SECURITY DEFINER (BYPASSRLS-owner) function bodies. Mirrors chat-dm-safety-invariants.test.ts's own
+// "resist temp-table shadowing" tests for 0030's three functions.
+describe("regression — SECURITY DEFINER functions resist temp-table shadowing (round-03 P1)", () => {
+  it("chat_current_is_member ignores a same-session temp table shadowing chat_members", async () => {
+    await ctx.owner.query(`SELECT set_config('app.person_id', $1, false)`, [personA1]);
+    try {
+      const before = await ctx.owner.query(`SELECT chat_current_is_member($1) AS v`, [
+        channelClubA,
+      ]);
+      expect((before.rows[0] as { v: boolean }).v).toBe(true);
+      await ctx.owner.query(
+        `CREATE TEMP TABLE chat_members (channel_id uuid, tenant_id uuid, person_id uuid, membership_id uuid)`,
+      );
+      // Shadow is empty: if consulted, the EXISTS subquery finds nothing and this flips to false.
+      const shadowed = await ctx.owner.query(`SELECT chat_current_is_member($1) AS v`, [
+        channelClubA,
+      ]);
+      expect((shadowed.rows[0] as { v: boolean }).v).toBe(true);
+    } finally {
+      await ctx.owner.query(`DROP TABLE IF EXISTS pg_temp.chat_members`);
+      await ctx.owner.query(`SELECT set_config('app.person_id', '', false)`);
+    }
+  });
+
+  it("chat_current_is_member ignores a same-session temp table shadowing memberships (club-path status check)", async () => {
+    await ctx.owner.query(`SELECT set_config('app.person_id', $1, false)`, [personA1]);
+    try {
+      await ctx.owner.query(
+        `CREATE TEMP TABLE memberships (id uuid, person_id uuid, tenant_id uuid, status text)`,
+      );
+      // Shadow is empty: if consulted, the LEFT JOIN's m.status is NULL, breaking the club-path
+      // check (`c.kind = 'club' AND m.status = 'active'`) and flipping this to false.
+      const shadowed = await ctx.owner.query(`SELECT chat_current_is_member($1) AS v`, [
+        channelClubA,
+      ]);
+      expect((shadowed.rows[0] as { v: boolean }).v).toBe(true);
+    } finally {
+      await ctx.owner.query(`DROP TABLE IF EXISTS pg_temp.memberships`);
+      await ctx.owner.query(`SELECT set_config('app.person_id', '', false)`);
+    }
+  });
+
+  it("dm_current_read_allowed ignores a same-session temp table shadowing chat_channels", async () => {
+    await ctx.owner.query(`SELECT set_config('app.person_id', $1, false)`, [personDm1]);
+    try {
+      const before = await ctx.owner.query(`SELECT dm_current_read_allowed($1) AS v`, [channelDm]);
+      expect((before.rows[0] as { v: boolean }).v).toBe(true);
+
+      await ctx.owner.query(`CREATE TEMP TABLE chat_channels (id uuid, kind text)`);
+      // Shadow is empty: if consulted, the `JOIN chat_channels c ON ... c.kind = 'dm'` finds
+      // nothing and this flips to false.
+      const shadowed = await ctx.owner.query(`SELECT dm_current_read_allowed($1) AS v`, [
+        channelDm,
+      ]);
+      expect((shadowed.rows[0] as { v: boolean }).v).toBe(true);
+    } finally {
+      await ctx.owner.query(`DROP TABLE IF EXISTS pg_temp.chat_channels`);
+      await ctx.owner.query(`SELECT set_config('app.person_id', '', false)`);
+    }
+  });
+});
