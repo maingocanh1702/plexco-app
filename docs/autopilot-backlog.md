@@ -110,6 +110,74 @@ notes: <link spec>
 
 ---
 
+## task: deps-osv-transitive-floors
+title: Raise nanoid / brace-expansion 5.x / postcss floors past six new OSV advisories — without weakening the supply-chain controls
+status: planned
+risk: P2
+change_class: build-config
+depends_on: []
+invariants: [build-config]
+scope: [package.json, pnpm-lock.yaml, osv-scanner.toml, docs/autopilot-manifests/deps-osv-transitive-floors.json, docs/autopilot/contracts/autopilot-deps-osv-transitive-floors.md, docs/autopilot-backlog.md]
+manifest: docs/autopilot-manifests/deps-osv-transitive-floors.json
+launcher: .claude/commands/ap-51-deps-osv-transitive-floors.md
+merged_probe: package.json :: nanoid@<3\.3\.17
+_probe_note: Probes the override KEY this slice adds, not a resolved version — the key is slice-unique and
+  survives a moving target version, unlike `deps-security-bump`'s `pnpm-lock.yaml :: 15.5.21`, which that
+  task's own notes flagged as a weak numeric probe under the DISCRIMINATOR RULE. `close_by: hand` was
+  refused by `autopilot-backlog-reconcile --check` because `package.json` can carry a symbol — correct
+  refusal, and this is the symbol. **Conditional:** if `nanoid` splits out under RELEASE_AGE_WINDOW
+  (§3 of the contract), repoint the probe to whichever override key actually lands.
+notes: |
+  **Mở 2026-08-10 từ CI audit** — `Security / OSV full dependency scan` đỏ trên `main` tại run #219
+  (`9d7d6ac`): **6 advisory / 3 package**, tất cả từ `pnpm-lock.yaml`, **không phải regression** (không
+  dependency nào đổi; advisory publish upstream). `nanoid` 3.3.15 → **3.3.17** (GHSA-28wg-ghj8-5hjv +
+  GHSA-2v37-7h3g-55p8, cả hai CVSS 8.2) · `brace-expansion` 5.0.7 → **5.0.9** (GHSA-mh99-v99m-4gvg +
+  GHSA-rgw5-rvv9-x895, 7.5) · `postcss` 8.5.16 → **8.5.23** (GHSA-r28c-9q8g-f849 7.5 +
+  GHSA-fxqj-rqcc-2cmp 6.3). Mỗi package có **hai** advisory với fixed version khác nhau ⇒ floor phải
+  lấy bản cao hơn. OSV tự ghi *"6 vulnerabilities can be fixed"*. **Exposure hiện = 0** (chưa deploy, 0
+  route nghiệp vụ, 0 màn FE, Google login fail-closed) — đây là nâng floor, không phải sự cố; nhưng scan
+  là merge gate, và một gate đỏ thường trực là gate không ai còn đọc.
+
+  **Ba ràng buộc kế thừa, mỗi cái đã được trả giá một lần:**
+
+  1. **Sửa `package.json`, KHÔNG sửa `pnpm-workspace.yaml`.** Đo 2026-08-03 (pnpm 10.30.2,
+     `docs/standards/dependency-override-precedence.md`): `pnpm.overrides` không-rỗng ở `package.json`
+     **thay thế toàn bộ** map `overrides` của workspace file — whole-map replacement, không merge. Map
+     hiện tại không rỗng ⇒ dòng `"postcss@<8.5.10": 8.5.16` trong workspace file **đang inert**. Thêm
+     floor ở đó là diff trông đúng mà resolve không đổi — đúng defect mà `62304b5` phải sinh ra để sửa
+     cho esbuild. `pnpm-workspace.yaml` nằm trong `negative_scope`, phải ra byte-unchanged.
+  2. **`minimumReleaseAge: 10080` là quyết định scope, không phải rào để vượt.** Owner chốt 2026-07-26
+     (task `deps-security-bump`): cửa sổ 7 ngày tồn tại để chặn vector publish-bị-chiếm-quyền mà một
+     bản "security fix" giả là carrier kinh điển. Đã áp dụng đúng một lần: `postcss` bị **tách khỏi**
+     `deps-security-bump` ngày 30/07 vì bản vá còn trong cửa sổ. Target nào còn trong cửa sổ ⇒ tách gói
+     đó ra, báo `AWAIT RELEASE_AGE_WINDOW` kèm ngày publish đo được. Cấm hạ ngưỡng, cấm flag per-invoke,
+     cấm thêm `IgnoredVulns` để che.
+  3. **Verification viết thành THUỘC TÍNH, không phải literal.** Registration #2 của `deps-security-bump`
+     phải huỷ vì runtime manifest hard-code `postcss==8.5.18`; manifest hash-locked sau `register` nên
+     khi target dời sang 8.5.23 không còn edit hợp lệ nào. Viết *"không entry nào resolve dưới X"*.
+
+  **Bẫy `brace-expansion` v1 đã hết hạn — nhưng phải đo lại.** Quyết định 29/07 tách nó ra vì ép v1→v5
+  **vỡ runtime**: v1 `module.exports = expandTop` (hàm) vs v5 `exports.expand` (object), consumer duy
+  nhất `minimatch@3.1.5` gọi như hàm ⇒ `pnpm install` resolve sạch, lint chết lúc gọi. Đo 2026-08-10 tại
+  `9d7d6ac`: `grep -c 'brace-expansion@1\.' pnpm-lock.yaml` = **0** — eslint 9→10 (`a93a4f6`) đã gỡ nhánh
+  v1, đúng như quyết định đó dự đoán. Chỉ còn 5.0.7 ⇒ floor 5.x an toàn. Re-measure trước khi tin dòng
+  này; v1 quay lại thì `brace-expansion` tách ra lần nữa. Giữ nguyên entry `"brace-expansion@1"` —
+  nó là guard đã pin nhánh v1, xoá là ngoài scope.
+
+  **Kèm theo: xoá một ignore đã chết.** Cùng run báo `osv-scanner.toml has unused ignores:
+  GHSA-67mh-4wv8-2f99`. Entry đó là reachability argument cho esbuild 0.18.20 qua
+  `drizzle-kit → @esbuild-kit/*`; `62304b5` đã làm floor có hiệu lực nên cây nay resolve `esbuild@0.25.12`
+  + `0.28.1`, ngoài dải advisory. Theo chính sách của chính file đó (*"an entry here is a REACHABILITY
+  argument, never a convenience mute"*), entry chết tệ hơn không có entry: nó là một khẳng định về cây
+  phụ thuộc không còn đúng, và người đọc sau không phân biệt được với entry sống nếu không tự đo lại.
+
+  **Blocker khi author (2026-08-10):** (a) chưa đo release age của ba target ⇒ chưa biết slice gồm mấy
+  package; (b) CI `verify` đang đỏ ở bước **Test** trên `main`, truy tới `286f48b` (04/08), **không liên
+  quan** slice này — owner cần quyết cho land trên nền Test đỏ hay chờ. Verdict authored:
+  `NOT_CODE_READY`.
+
+---
+
 ## task: auth-provider-google-email-swap
 title: Replace Telegram-era web auth with Google OAuth + email/password while preserving SI-1..SI-8
 status: idea
