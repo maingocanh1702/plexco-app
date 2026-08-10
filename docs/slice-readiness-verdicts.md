@@ -1035,7 +1035,7 @@ AUTHORITY_SHA: 22c23aab080183913d2852805a085bba1057a91a
 BASE_BRANCH: main
 TARGET_FILES:
   - docs/probes/b0-auth-credential-lifecycle-design-probe.md
-  - docs/features/feature_web_auth_onboarding.md
+  - docs/features/FE/feature_web_auth_onboarding.md
   - docs/features/BE/feature_web_auth_onboarding_tech.md
   - docs/features/BE/auth-security-invariant-table.md
 SLICE: auth-s4-account-session-core (D0 revoke-core → D1 google-adapter)
@@ -1080,7 +1080,7 @@ TARGET_FILES:
   - packages/db/migrations/0006_discovery.sql
   - packages/db/schema.ts
   - docs/standards/business-rules.md (BL-DSC-1)
-  - docs/features/feature_marketplace_discovery.md
+  - docs/features/FE/feature_marketplace_discovery.md
 SLICE: dd41-public-session-projection-fields
 IN_SCOPE: expand public_sessions whitelist theo BL-DSC-1 (retire skill_level; add session_type/level_*_rank/gender_restriction/age_*); invariant tests; code dark
 OUT_OF_SCOPE: projector ghi (DD-12); fence/guarded-view (DD-12); share route (DD-73)

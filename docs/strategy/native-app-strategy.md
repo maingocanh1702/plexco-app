@@ -2,7 +2,7 @@
 
 **Phiên bản:** 2.0
 **Ngày tạo:** 18/06/2026 · **Cập nhật:** 28/07/2026
-**Tài liệu tham chiếu:** `../product/BRD.md` v3.9n · `../product/PRD.md` v2.8m · `../product/TDD.md` v3.1h · `../product/ROADMAP.md` v3.4l · `../features/feature_sync_engine.md` · `../features/feature_marketplace_discovery.md` · `../features/feature_identity.md` · `../standards/decisions.md` v2.11 current mirror · `../decisions/analysis/dd-69-app-native-analysis.md`
+**Tài liệu tham chiếu:** `../product/BRD.md` v3.9n · `../product/PRD.md` v2.8m · `../product/TDD.md` v3.1h · `../product/ROADMAP.md` v3.4l · `../features/FE/feature_sync_engine.md` · `../features/FE/feature_marketplace_discovery.md` · `../features/FE/feature_identity.md` · `../standards/decisions.md` v2.11 current mirror · `../decisions/analysis/dd-69-app-native-analysis.md`
 
 > ⚠️ **Version note (19/07/2026):** companion strategy, không phải source of truth. Authority hiện hành: **BRD v3.9f · PRD v2.8e · TDD v3.1 · ROADMAP v3.3e · decisions v1.74/DD-78**. Native direction accepted nhưng build phase-2 TBD.
 >

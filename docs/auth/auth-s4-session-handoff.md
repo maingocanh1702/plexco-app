@@ -237,7 +237,7 @@ manual merge. P0 (auth/identity/billing/migration) = **manual only, không launc
 | Hợp đồng G3 revoke-all | `docs/probes/g3-revoke-all-concurrency-probe-seed.md` |
 | B0 auth credential lifecycle | `docs/probes/b0-auth-credential-lifecycle-design-probe.md` |
 | Verdict slice (5a/5b) | `docs/slice-readiness-verdicts.md` |
-| Spec auth Product/BE | `docs/features/feature_web_auth_onboarding.md` v2.10c + `BE/feature_web_auth_onboarding_tech.md` v2.13 |
+| Spec auth Product/BE | `docs/features/FE/feature_web_auth_onboarding.md` v2.10c + `BE/feature_web_auth_onboarding_tech.md` v2.13 |
 | SI-1..SI-8 invariant table | `docs/features/BE/auth-security-invariant-table.md` |
 | Backlog + manifests | `docs/autopilot-backlog.md` · `docs/autopilot-manifests/` |
 | Gate review readiness | `docs/standards/review-code-readiness-gate.md` + `docs/templates/review-doc-plan-session-template.md` |

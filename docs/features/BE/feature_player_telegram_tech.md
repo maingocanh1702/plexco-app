@@ -5,7 +5,7 @@
 > **Canonical phase:** P4.5 *(archived)*
 > **Version:** 2.1 · 2026-07-13
 > **Status:** ⚠️ ARCHIVED (DD-37, 2026-07-10) — superseded by `feature_player_messenger_tech.md`
-> **Product spec:** `../feature_player_telegram.md`
+> **Product spec:** `../FE/feature_player_telegram.md`
 > **References:** `../../product/TDD.md` §3.3/3.4 · `../../standards/decisions.md` DD-37
 
 ---

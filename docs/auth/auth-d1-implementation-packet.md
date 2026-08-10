@@ -345,7 +345,7 @@ the two would leave both green. The chain (preallocated id → stored `account_e
 
 ## C. DD-39 gender/pricing readiness surface (DD-38 chat is split out — see the pointer after C1)
 
-> Sources: `features/BE/feature_user_settings_tech.md` · `features/feature_user_settings.md` ·
+> Sources: `features/BE/feature_user_settings_tech.md` · `features/FE/feature_user_settings.md` ·
 > `standards/decisions.md` DD-39 (+ addendum USR-OQ-1, consent-state PIN) · `slice-readiness-verdicts.md`
 > Verdict 2. Every row is src-traced; no column is invented. This lists the **DD-39 gender/pricing** surface
 > a future user-settings migration must create — it does **not** exist on `main` at this base (unlike the D1

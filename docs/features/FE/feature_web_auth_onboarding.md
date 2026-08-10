@@ -2,11 +2,11 @@
 
 > **Canonical phase:** P4  
 > **Track:** 🌐 Web Auth & Onboarding  
-> **Version:** 2.11 · 2026-07-28
+> **Version:** 2.12 · 2026-08-09
 > **Status:** Reviewed  
 > **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google auth lane DD-80 (migrations `0015`–`0018`) đã merge và Safari macOS+iOS M3 measured PASS 2026-07-26. Engineering/measurement blocker đã đóng, nhưng Google login chưa có bằng chứng owner enable/go-live; template `GOOGLE_OAUTH_*` vẫn rỗng và các gate độc lập (A3 legal/PII/config) vẫn áp dụng. Email/password order-4 bundle (route/UI/provider send) chưa build, flag OFF · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P0–P1 foundation · P2 routing/authz · P3 ledger/provider model  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-1 · `../product/PRD.md` FLOW 1 · `../standards/decisions.md` DD-13/DD-30/DD-33/DD-50/**DD-65** · `BE/feature_web_auth_onboarding_tech.md` · `feature_connector_onboarding.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-1 · `../product/PRD.md` FLOW 1 · `../standards/decisions.md` DD-13/DD-30/DD-33/DD-50/**DD-65** · `../BE/feature_web_auth_onboarding_tech.md` · `feature_connector_onboarding.md`
 
 > **Cập nhật 18/07:** bỏ Telegram Login; baseline auth = Google OAuth + email/password. **Facebook Login / Messenger link** = DD-33 ✅, nhưng exact external approval evidence là enablement gate; chưa pass thì capability OFF + transactional one-time `link_code` fallback.
 >
@@ -94,16 +94,282 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 
 ## 3. Screens & States
 
-| Surface | Screen | Loading | Ready | Error | Empty |
-|---------|--------|---------|-------|-------|-------|
-| Web | Login page | — | Google + email/password; Facebook CTA chỉ hiện khi provider external gate active; "Quên mật khẩu" | "Xác thực thất bại" + retry hoặc `link_code` fallback | N/A |
-| Web | Verify email / reset password | Validating token | Generic success + login CTA | Generic invalid/expired message + safe retry | N/A |
-| Web | Onboarding wizard — Step 1: Club config | Skeleton form | Form: name, timezone, sport, price, visibility | Inline errors per field | Default values pre-filled |
-| Web | Onboarding wizard — Step 2: Bank connect | Skeleton | **ApiPay primary:** "Thiết lập tài khoản nhận tiền" → chọn/xác nhận TK host → enterprise provision → chip `registered → active`; SePay OAuth là lựa chọn provider khác; "Dùng ApiPay key riêng" là CTA phụ mở BYO form | Enterprise unsupported/unavailable → mời BYO; provision fail → retry idempotent; không tự downgrade. BYO key/PENDING có lỗi riêng | Chưa chọn bank: giải thích tiền về TK riêng của host; BYO không hiện như đường mặc định |
-| Web | Onboarding wizard — Step 3: Zalo bot | Skeleton | Dán bot token → auto `setWebhook` (🟡 blocked CO-OQ-1) → verify | "Kết nối thất bại" + retry | N/A |
-| Web | Optional Messenger Page | Skeleton | “Dùng Plexco central Page” (default) hoặc FB Login → chọn Page riêng → active | Lỗi Page riêng → tiếp tục central Page | Central selected |
-| Web | Onboarding wizard — Step 5: First session | Session form | Create + optional publish | Inline validation | N/A |
-| Web | Readiness checklist | — | ✅/❌ per step + "Bắt đầu" CTA | — | N/A |
+> All web screens. Mobile-first 375px; desktop ≥1024. Auth screens use split-layout (branding left + form right).
+
+### Login page
+
+**Purpose:** Entry point — Google, email/password, Facebook (conditional).
+
+**Layout (desktop — split layout):**
+
+```
+┌───────────────────────┬──────────────────────────────────┐
+│                       │                                  │
+│    🏸 Plexco           │   Đăng nhập                      │
+│                       │                                  │
+│  Quản lý CLB thể thao │   [🟦 Đăng nhập bằng Google]     │
+│   dễ dàng hơn bao giờ │                                  │
+│         hết            │   [🟦 Đăng nhập bằng Facebook]   │
+│                       │   ↑ chỉ hiện khi provider gate   │
+│  • Tạo kèo nhanh     │     active                       │
+│  • Thu tiền tự động   │                                  │
+│  • Quản lý đa kênh   │   ──── hoặc ────                 │
+│                       │                                  │
+│                       │   Email *  [                  ]  │
+│                       │   Mật khẩu [                  ]  │
+│                       │            [👁]                   │
+│                       │                                  │
+│                       │   [Quên mật khẩu?]               │
+│                       │                                  │
+│                       │   [═══ Đăng nhập ═══]            │
+│                       │                                  │
+│                       │   Chưa có tài khoản? [Đăng ký]   │
+│                       │                                  │
+└───────────────────────┴──────────────────────────────────┘
+```
+
+**Component: Auth providers:**
+
+| Provider | CTA | Gate | Fallback |
+|----------|-----|------|----------|
+| Google OAuth | 🟦 "Đăng nhập bằng Google" | Always available | — |
+| Facebook Login | 🟦 "Đăng nhập bằng Facebook" | External approval evidence (DD-33) | `link_code` transactional |
+| Email/password | Form fields | DD-50 lifecycle complete | Feature flag OFF |
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Splash/checking existing session → auto redirect nếu đã login |
+| Ready | Split layout: branding + auth form |
+| Error | "Xác thực thất bại" toast + retry; `link_code` fallback nếu FB unavailable |
+| Empty | N/A (luôn có form) |
+
+### Register page
+
+**Layout (desktop — split layout, same frame):**
+
+```
+┌───────────────────────┬──────────────────────────────────┐
+│                       │                                  │
+│    🏸 Plexco           │   Tạo tài khoản                  │
+│                       │                                  │
+│  Quản lý CLB thể thao │   [🟦 Đăng ký bằng Google]       │
+│   dễ dàng hơn bao giờ │                                  │
+│         hết            │   ──── hoặc ────                 │
+│                       │                                  │
+│                       │   Email *     [                ]  │
+│                       │   Mật khẩu *  [                ]  │
+│                       │   Xác nhận *  [                ]  │
+│                       │                                  │
+│                       │   [═══ Tạo tài khoản ═══]        │
+│                       │                                  │
+│                       │   Đã có tài khoản? [Đăng nhập]   │
+│                       │                                  │
+└───────────────────────┴──────────────────────────────────┘
+```
+
+### Verify email / Reset password
+
+**Layout (centered card):**
+
+```
+┌──────────────────────────────────────┐
+│                                      │
+│          ✅ / ❌                       │
+│                                      │
+│   Email đã xác nhận thành công       │
+│                                      │
+│   [═══ Đăng nhập ═══]               │
+│                                      │
+│   — HOẶC (reset) —                  │
+│                                      │
+│   Đặt mật khẩu mới                  │
+│   Mật khẩu mới * [              ]   │
+│   Xác nhận *     [              ]   │
+│   [═══ Lưu mật khẩu ═══]            │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+**States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | "Đang xác thực..." (validating token) |
+| Ready (verify) | ✅ "Email đã xác nhận" + CTA login |
+| Ready (reset) | Form đặt mật khẩu mới |
+| Error | "Link không hợp lệ hoặc đã hết hạn" + "Gửi lại email" CTA |
+
+### Onboarding wizard — Step 1: Club config
+
+**Layout (desktop):**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Thiết lập CLB                    Bước 1/5  ●○○○○        │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  Tên CLB *           [Cầu lông Bình Thạnh      ]        │
+│  Múi giờ             [Asia/Ho_Chi_Minh ▼]                │
+│  Ngôn ngữ            [Tiếng Việt ▼]                      │
+│                                                          │
+│  Môn thể thao *      [🏸 Cầu lông ✓] [🏓 Pickleball]    │
+│                      [⚽ Bóng đá] [🎾 Tennis]             │
+│                                                          │
+│  ─── Giá mặc định (tùy chọn) ───                        │
+│  Hình thức           [Chia đều ▼]                        │
+│  Giá/buổi            [         ₫]                        │
+│                                                          │
+│  ─── Hiển thị mặc định ───                               │
+│  (●) Public  (○) Private                                 │
+│                                                          │
+│  ─── Hoặc: tạo nhanh không gian cá nhân ───             │
+│  [Skip — Dùng không gian cá nhân] (DD-46)               │
+│                                                          │
+│              [═══ Tiếp tục ═══]                          │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**States:** Loading (skeleton form) | Ready (form pre-filled defaults) | Error (inline per field) | Empty (default values pre-filled)
+
+### Onboarding wizard — Step 2: Bank connect
+
+**Layout (desktop):**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Thiết lập thanh toán              Bước 2/5  ●●○○○       │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  💳 Tiền buổi chơi về thẳng tài khoản của bạn           │
+│                                                          │
+│  ─── Chọn phương thức ───                                │
+│  (●) ApiPay tự động (recommended)                        │
+│      → Chọn ngân hàng + xác nhận TK                     │
+│  (○) SePay (OAuth)                                       │
+│  (○) Dùng ApiPay key riêng (BYO fallback)               │
+│                                                          │
+│  ─── ApiPay tự động ───                                  │
+│  Ngân hàng *         [Vietcombank ▼]                     │
+│  Số tài khoản *      [0123456789    ]                    │
+│  Chủ TK              NGUYEN VAN A  ✅ (auto-fill)       │
+│                                                          │
+│  Status: [registered → active]  chip                     │
+│                                                          │
+│              [═══ Xác nhận & Tiếp tục ═══]               │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**States:** Loading (skeleton) | Ready (provider selection + bank form) | Error (enterprise unsupported → BYO CTA; provision fail → retry) | Empty (chưa chọn: giải thích flow)
+
+### Onboarding wizard — Step 3: Zalo bot (optional)
+
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Kết nối Zalo Bot                  Bước 3/5  ●●●○○       │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  💬 Kết nối Zalo OA để nhận tin nhắn từ player           │
+│                                                          │
+│  Bot Token *         [                              ]    │
+│  [Hướng dẫn lấy token →]                                │
+│                                                          │
+│  Status: ⏳ Chưa kết nối                                 │
+│                                                          │
+│  [═══ Kết nối ═══]        [Bỏ qua →]                    │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Onboarding wizard — Step 4: Messenger Page (optional)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Messenger Page                    Bước 4/5  ●●●●○       │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  📱 CLB có thể dùng Plexco central Page (mặc định)      │
+│     hoặc kết nối Page riêng                              │
+│                                                          │
+│  (●) Dùng Plexco central Page (recommended)             │
+│  (○) Kết nối Page riêng → [Facebook Login]              │
+│                                                          │
+│  [═══ Tiếp tục ═══]                                     │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Onboarding wizard — Step 5: First session
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Tạo buổi chơi đầu tiên           Bước 5/5  ●●●●●       │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  🎉 Sắp xong! Tạo buổi chơi đầu tiên để bắt đầu       │
+│                                                          │
+│  [Cùng form tạo session — xem feature_session_management │
+│   §3 "Web P4 — Session create/edit form"]                │
+│                                                          │
+│  [═══ Tạo buổi chơi & Hoàn tất ═══]                     │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Readiness checklist
+
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ✅ Readiness — CLB Cầu lông Bình Thạnh                  │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  ─── Bắt buộc ───                                        │
+│  ✅ Tài khoản xác thực (Google)                          │
+│  ✅ CLB đã thiết lập                                     │
+│  ✅ Tài khoản ngân hàng (ApiPay enterprise)              │
+│  ⏳ Buổi chơi đầu tiên                    [Tạo ngay →]  │
+│                                                          │
+│  ─── Tùy chọn ───                                        │
+│  ✅ Zalo Bot kết nối                                     │
+│  ⚠️ Messenger Page — dùng central Page                  │
+│                                                          │
+│  [═══ Bắt đầu quản lý CLB ═══]  (disabled tới khi 100%) │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Auth state | `account_identities` + session cookie | Provider-specific verification |
+| Club config | `tenants` + `onboarding_state` | Idempotent create |
+| Bank status | `bank_accounts.verified_at` | Enterprise vs BYO |
+| Zalo status | `zalo_bots` per tenant | Token + webhook verify |
+| Messenger status | Messenger Page registry (DD-65) | Central vs tenant Page |
+| Readiness | `onboarding_state` JSON per step | Derived from step statuses |
+
+### State coverage matrix
+
+| Screen | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| Login page | ✅ Session check → redirect | ✅ Split layout + providers | ✅ "Xác thực thất bại" + `link_code` | ⚪ N/A |
+| Register page | ✅ Minimal | ✅ Form + Google | ✅ Inline validation | ⚪ N/A |
+| Verify email | ✅ "Đang xác thực..." | ✅ Success + CTA login | ✅ "Link hết hạn" + re-send | ⚪ N/A |
+| Reset password | ✅ Validating token | ✅ New password form | ✅ "Link hết hạn" | ⚪ N/A |
+| Step 1: Club config | ✅ Skeleton form | ✅ Pre-filled defaults | ✅ Inline per field | ✅ Defaults |
+| Step 2: Bank | ✅ Skeleton | ✅ Provider + bank form | ✅ Retry / BYO fallback | ✅ Explain flow |
+| Step 3: Zalo (optional) | ✅ Skeleton | ✅ Token input | ✅ "Kết nối thất bại" + retry | ⚪ N/A |
+| Step 4: Messenger (optional) | ✅ Skeleton | ✅ Central/Page choice | ✅ Page fail → central | ✅ Central selected |
+| Step 5: First session | ✅ Skeleton form | ✅ Session create form | ✅ Inline validation | ⚪ N/A |
+| Readiness checklist | — | ✅ Status per step | — | — |
 
 ---
 
@@ -200,7 +466,7 @@ stateDiagram-v2
 |---|---|---|
 | 2026-07-28 | v2.11 | Mirror DD-32 Option D: add channel-booking Account link handoff, explicit impact confirm and safe resume/reconfirm boundary; OAuth callback never mutates booking. No new auth runtime. |
 | 2026-07-27 | v2.10c | **Auth enablement evidence reconcile:** Safari macOS + iOS Safari M3 measured PASS 2026-07-26, đóng engineering/measurement blocker của d1b. Google login vẫn chưa có owner enable/go-live proof; `GOOGLE_OAUTH_*` template giữ rỗng và A3 legal/PII/config vẫn là gate độc lập. Email order-4 bundle tiếp tục OFF/chưa build. Không đổi product contract. |
-| 2026-07-23 | v2.10b | **Reconcile Implementation current-state (mirror của BE tech spec):** header "Google/email DD-37 chưa code" → Google auth lane DD-80 `0015`–`0018` **đã merge nhưng ⛔ CHƯA enable** (chờ đo Safari/iOS M3, `GOOGLE_OAUTH_*` rỗng); email order-4 bundle (route/UI/send) chưa build, flag OFF. WAO-OQ-5 (§7 Open Questions) reframe: "chưa author slice S4 / chờ owner duyệt" → D0/D1 storage+adapter (`0015`–`0018`) đã merge, chỉ còn email order-4/gate `C7` mở. Đồng bộ với `BE/feature_web_auth_onboarding_tech.md` v2.12. Không đổi contract/UX. |
+| 2026-07-23 | v2.10b | **Reconcile Implementation current-state (mirror của BE tech spec):** header "Google/email DD-37 chưa code" → Google auth lane DD-80 `0015`–`0018` **đã merge nhưng ⛔ CHƯA enable** (chờ đo Safari/iOS M3, `GOOGLE_OAUTH_*` rỗng); email order-4 bundle (route/UI/send) chưa build, flag OFF. WAO-OQ-5 (§7 Open Questions) reframe: "chưa author slice S4 / chờ owner duyệt" → D0/D1 storage+adapter (`0015`–`0018`) đã merge, chỉ còn email order-4/gate `C7` mở. Đồng bộ với `../BE/feature_web_auth_onboarding_tech.md` v2.12. Không đổi contract/UX. |
 | 2026-07-19 | v2.10a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
 | 2026-07-18 | v2.10 | **Cross-site auth correction:** tách OAuth redirect khỏi live Telegram same-origin primitive bằng one-time transaction + path-scoped Lax binding cookie; email verify/reset dùng non-mutating landing GET → explicit same-origin POST; thêm link-scanner/wrong-browser tests; session cookie giữ Strict. |
 | 2026-07-18 | v2.9 | **DD-33 propagation:** pin Facebook Login server-side exchange + app-scoped subject, external enablement gate, fail-closed CTA/capability, PSID separation và one-time `link_code` fallback; ghi đúng live schema chưa có platform CHECK. |

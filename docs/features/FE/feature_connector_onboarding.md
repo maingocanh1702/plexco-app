@@ -392,7 +392,7 @@ Platform giữ **1 credential ApiPay enterprise** và tự động provision per
 - **Bảo mật:** enterprise credential là tài sản **KMS cấp platform** (không per-tenant); lộ = ảnh hưởng nhiều tenant → rotation + audit riêng + rate-limit provisioning. `provider_connections.auth_mode='enterprise'` phân biệt rõ với `api_key`.
 - **Production gate:** xác nhận điều khoản + request/response thực tế của enterprise ApiPay (giới hạn account/webhook, phí, SLA) và một replay mechanism chứng minh được: provider idempotency key **hoặc** exact lookup/reuse bằng deterministic provision ref. Không có một trong hai → `APIPAY_ENTERPRISE_UNAVAILABLE`, không gọi create mù sau timeout và không suy từ standard BYO API.
 
-> Nguồn authority: **DD-30** (`../standards/decisions.md`). Provider vẫn `apipay`; chỉ khác ai cấp credential và ai provision. KHÔNG đụng ledger/reconcile core. Internal endpoint chi tiết ở `BE/feature_connector_onboarding_tech.md` §3.
+> Nguồn authority: **DD-30** (`../standards/decisions.md`). Provider vẫn `apipay`; chỉ khác ai cấp credential và ai provision. KHÔNG đụng ledger/reconcile core. Internal endpoint chi tiết ở `../BE/feature_connector_onboarding_tech.md` §3.
 
 #### 4.3.2 Fallback — BYO API key + auto-register (standard API ✅ verified)
 
@@ -499,14 +499,111 @@ function verifySepay(request: Request, rawBody: Buffer): boolean {
 
 ## 6. Screens & States (nâng cấp wizard onboarding)
 
-| Surface | Loading | Ready | Error | Empty |
-|---|---|---|---|---|
-| SePay connect | redirect OAuth | "Kết nối SePay" → chọn TK → `registered` → `active` (giả lập GD) | OAuth từ chối / token hết hạn → kết nối lại | chưa kết nối: CTA + giải thích |
-| ApiPay connect | spinner provision/status | **Primary:** chọn/xác nhận TK host → enterprise provision → `registered` → `active`; CTA phụ "Dùng ApiPay key riêng" mở BYO form | enterprise unavailable/unsupported → mời BYO; provision fail → retry cùng idempotency key; BYO key sai/PENDING hiện lỗi riêng | chưa chọn TK: CTA "Thiết lập tài khoản nhận tiền"; BYO chỉ ở fallback |
-| Zalo connect 🟡 | (blocked) | *thiết kế dự kiến* — ô dán token → `registered` → `active` | token sai / setWebhook fail → fallback dán URL | chưa kết nối: CTA "Kết nối Zalo" |
+> Web dashboard → Settings → Connectors. Mobile-first 375px; desktop ≥1024.
 
-> Mọi màn có trạng thái "đang chờ tín hiệu thử" (registered→active) với CTA rõ ("Nhắn cho bot" / "Giả lập giao dịch" / "CK thử").
+### SePay connect (OAuth)
 
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← Kết nối               🔗 SePay                        │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  ─── Bước 1: Kết nối tài khoản ───                      │
+│  [═══ Kết nối SePay (OAuth) ═══]                         │
+│  ↳ Redirect tới SePay → xác nhận quyền → callback       │
+│                                                          │
+│  ─── Bước 2: Chọn tài khoản ───                         │
+│  ( ) VCB - 0123456789 (Nguyễn Văn A)                    │
+│  (●) ACB - 9876543210 (Nguyễn Văn A)                    │
+│  [Chọn TK này]                                          │
+│                                                          │
+│  ─── Bước 3: Xác minh ───                               │
+│  ✅ Đã kết nối · ⏳ Đang chờ tín hiệu thử              │
+│  [Giả lập giao dịch]   ← SePay sandbox                 │
+│                                                          │
+│  ─── Hoàn tất ───                                       │
+│  ✅ Đã xác minh! Webhook hoạt động.                     │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### ApiPay connect (Enterprise primary + BYO fallback)
+
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← Kết nối               💳 ApiPay                       │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  ─── Primary: Tự động (Enterprise) ───                   │
+│  Chọn tài khoản ngân hàng của bạn:                      │
+│  [Vietcombank ▼]   [0123456789     ]                    │
+│  ☑️ Tôi đồng ý cho Plexco tự động nhận webhook         │
+│  [═══ Thiết lập tự động ═══]                            │
+│                                                          │
+│  ─── HOẶC: Dùng ApiPay key riêng (BYO) ───              │
+│  Access Key *  [                    ]                    │
+│  Secret Key *  [                    ]                    │
+│  [Kết nối]                                              │
+│                                                          │
+│  ─── Trạng thái ───                                     │
+│  ⏳ Đang thiết lập...                                    │
+│  ✅ Đã kết nối (registered)                              │
+│  ✅ Đã xác minh (active) — CK thử thành công           │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Zalo connect 🟡 (blocked CO-OQ-1)
+
+**Layout (dự kiến):**
+
+```
+┌──────────────────────────────────────┐
+│ ← Kết nối         💬 Zalo OA       │
+├──────────────────────────────────────┤
+│                                      │
+│  Bot Token *   [                  ]  │
+│  [Kết nối]                          │
+│                                      │
+│  ✅ Đã kết nối                       │
+│  ⏳ Nhắn cho bot để xác minh        │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+### Component: Status chip (Tier 1 → Tier 2)
+
+| Status | Chip | Tier | CTA |
+|--------|------|------|-----|
+| `connecting` | ⏳ Đang kết nối | — | — |
+| `registered` | ✅ Đã kết nối | Tier 1 | "Nhắn cho bot" / "Giả lập GD" / "CK thử" |
+| `active` | ✅ Đã xác minh | Tier 2 | — |
+| `drift` | ⚠️ Webhook lệch | — | [Sửa webhook] |
+| `error` | ❌ Lỗi | — | [Kết nối lại] |
+| `revoked` | ⛔ Đã gỡ | — | [Kết nối lại] |
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| SePay OAuth | `provider_connections` + `oauth_transactions` | PKCE + state |
+| Bank accounts | `bank_accounts` per tenant | Webhook status per account |
+| ApiPay provision | `provider_connections` (enterprise) | Idempotency-Key required |
+| Zalo bot | `zalo_bots` per tenant | `UNIQUE(tenant)` |
+| Status chips | `provider_connections.status` → vocabulary §3.1 | Rollup from children |
+
+### State coverage matrix
+
+| Screen | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| SePay connect | ✅ Redirect OAuth | ✅ Chọn TK → registered → active | ✅ OAuth denied / token expired | ✅ CTA "Kết nối SePay" |
+| ApiPay connect | ✅ Spinner provision | ✅ Primary enterprise / BYO fallback | ✅ Unsupported bank / key invalid | ✅ CTA "Thiết lập TK nhận tiền" |
+| Zalo connect 🟡 | ⚪ blocked | ✅ Token → registered → active | ✅ Token invalid / webhook fail | ✅ CTA "Kết nối Zalo" |
+| Status overview | ✅ Loading connectors | ✅ Per-provider status chips | ✅ "Lỗi tải" | ✅ "Chưa kết nối" |
 ---
 
 ## 7. API Contract (endpoint nội bộ Plexco — nâng cấp `/api/onboarding/*`)

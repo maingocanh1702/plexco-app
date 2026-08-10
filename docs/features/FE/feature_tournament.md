@@ -6,7 +6,7 @@
 > **Status:** Draft *(chưa qua readiness gate — KHÔNG phải Reviewed contract; DD-82 mới ở mức "chốt hướng")*
 > **Implementation:** Not started
 > **Prerequisites:** Session core (Session Management) ổn định; DD-12 guarded public read model; DD-83 slug registry
-> **Tài liệu liên quan:** `../standards/decisions.md` **DD-82** (aggregate độc lập) · DD-83 (URL/slug) · DD-73/DD-75 (share/guarded view) · DD-12 (public read model) · DD-06 (location granularity) · DD-41 (retire `session_type='tournament'`) · HR2 (tiền/PII không public) · `BE/feature_tournament_tech.md`
+> **Tài liệu liên quan:** `../standards/decisions.md` **DD-82** (aggregate độc lập) · DD-83 (URL/slug) · DD-73/DD-75 (share/guarded view) · DD-12 (public read model) · DD-06 (location granularity) · DD-41 (retire `session_type='tournament'`) · HR2 (tiền/PII không public) · `../BE/feature_tournament_tech.md`
 
 ---
 
@@ -87,16 +87,69 @@ Phiên bản **v1 cố tình gọn**: chỉ gồm (1) thông tin giải đấu, 
 
 ## 3. Screens & States
 
-| Surface | Loading | Ready | Error | Empty |
-|---------|---------|-------|-------|-------|
-| Host — Tạo/sửa giải đấu (`/host/tournaments/new`,`/edit`) | Skeleton form | Form đầy đủ field | Validation lỗi map Error Codes BE §3 | N/A (form) |
-| Host — Danh sách giải đấu (`/host/tournaments`) | Skeleton list | Bảng giải đấu + trạng thái | Lỗi tải | "Chưa có giải đấu nào" + CTA tạo |
-| Host — Roster đăng ký (`/host/tournaments/:id/registrations`) | Skeleton | Bảng người đăng ký (RLS) | Lỗi tải | "Chưa có ai đăng ký" |
-| Public — Trang giải đấu (`/tournament/<slug>`) | Skeleton card | Card whitelist + CTA đăng ký | 404 nếu slug không tồn tại/tombstoned | N/A |
-| Player — Giải của tôi (`/me/tournaments`) | Skeleton | Danh sách đăng ký person-self | Lỗi tải | "Bạn chưa đăng ký giải nào" |
+> Web tournament area + bot announcements. Mobile-first 375px; desktop ≥1024.
 
-> Error state map về Error Codes catalog trong BE tech §3. Chuỗi tiếng Việt nhất quán, một catalog duy nhất.
+### Web — Tournament bracket
 
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← CLB              🏆 Giải đấu mùa hè 2026             │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  📅 01/08 — 15/08  👥 16 đội  🏸 Cầu lông              │
+│  Trạng thái: 🟢 Đang diễn ra                             │
+│                                                          │
+│  ─── Bảng đấu (Vòng 1/4) ───                            │
+│  ┌──────────┐     ┌──────────┐                           │
+│  │ Đội A ✅  │──┐  │          │                           │
+│  └──────────┘  ├──│ Đội A    │                           │
+│  ┌──────────┐  │  │          │                           │
+│  │ Đội B     │──┘  └──────────┘                           │
+│  └──────────┘                                             │
+│                                                          │
+│  [Đăng ký] [Xem lịch thi đấu] [Kết quả]                │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Web — Tournament registration
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ ← Giải đấu      📝 Đăng ký         │
+├──────────────────────────────────────┤
+│                                      │
+│ Tên đội *         [                ] │
+│ Thành viên *      [+ Thêm thành viên]│
+│ Trình độ          [Trung bình ▼]    │
+│                                      │
+│ 💰 Phí tham gia: 200,000₫ / đội    │
+│                                      │
+│      [═══ Đăng ký ═══]              │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Tournament info | `tournaments` per tenant | Phase-gated |
+| Bracket | `tournament_matches` | Tree structure |
+| Registration | `tournament_teams` + `tournament_team_members` | |
+| Results | `tournament_matches.result` | |
+
+### State coverage matrix
+
+| Screen | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| Bracket | ✅ Skeleton tree | ✅ Match tree + results | ✅ "Lỗi tải" | ✅ "Chưa có trận đấu" |
+| Registration | — | ✅ Team form + fee | ✅ "Hết chỗ" / validation | ⚪ N/A |
+| Results | ✅ Skeleton | ✅ Match results list | ✅ "Lỗi" | ✅ "Chưa có kết quả" |
 ---
 
 ## 4. Domain Model

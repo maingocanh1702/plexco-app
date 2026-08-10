@@ -1,7 +1,7 @@
 # Feature: Host Dashboard — FE Design Spec
 
 > **Route(s):** `/dashboard`
-> **Source authority:** `../../../features/feature_session_management.md` v2.17 + `../../../features/feature_payment_reconcile.md` v1.10 + `../../../features/feature_notifications_reminders.md` v3.11 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
+> **Source authority:** `../../../features/FE/feature_session_management.md` v2.17 + `../../../features/FE/feature_payment_reconcile.md` v1.10 + `../../../features/FE/feature_notifications_reminders.md` v3.11 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
 > **Source contract status:** Reviewed source contracts; dashboard aggregate DTO chưa có authority
 > **Projection/API contract:** `UNPINNED` — aggregate/projection zones omitted
 > **Capability/availability:** Server-authorized tenant shell/navigation only

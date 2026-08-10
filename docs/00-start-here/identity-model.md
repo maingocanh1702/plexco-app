@@ -5,7 +5,7 @@
 >
 > Trạng thái: working model (**orientation — KHÔNG phải source of truth**), căn theo schema/docs hiện tại:
 > `packages/db/schema.ts`, `packages/db/migrations/0001_global_directory.sql`,
-> `docs/features/feature_identity.md`, `docs/features/BE/feature_identity_tech.md`,
+> `docs/features/FE/feature_identity.md`, `docs/features/BE/feature_identity_tech.md`,
 > `docs/features/BE/feature_web_auth_onboarding_tech.md`,
 > `docs/standards/core-db-architecture-principles.md`.
 >

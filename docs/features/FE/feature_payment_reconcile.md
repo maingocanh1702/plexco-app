@@ -2,11 +2,11 @@
 
 > **Canonical phase:** P3
 > **Track:** 💰 Payment Reconciliation
-> **Version:** 1.10 · 2026-07-28
+> **Version:** 1.11 · 2026-08-09
 > **Status:** Reviewed; mirror DD-32/DD-91 `DECISION_FINAL` + regional research boundary. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`; B1/runtime slices vẫn cần strict `CODE_READY`
 > **Implementation:** In progress — core matching/payments-logic + ledger integrity migrations `0019`/`0020` đã có; wiring webhook→settle→notify, `remainingAmount`, `getSelfPaymentStatus` và chat `/pay` chưa · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P0–P1 foundation + P2 tenant routing
-> **Tài liệu liên quan:** `../product/BRD.md` FR-5 · `../product/PRD.md` FLOW 6/9 + §4.1 · `../product/TDD.md` §3.2/3.6/3.7 · `../standards/decisions.md` DD-25/DD-32/DD-40/DD-91 · **DD-97** (statement/export — composition consumer trên ledger này, surface riêng) · **DD-98** (negative scope: NP-1 custom split · NP-4 auto-archive) · `../standards/business-rules.md` BL-PAY/BL-CBF · `feature_channel_booking_funnel.md` · `BE/feature_channel_booking_funnel_tech.md` · `../research/player-side-saas-reconciliation.md` · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-5 · `../product/PRD.md` FLOW 6/9 + §4.1 · `../product/TDD.md` §3.2/3.6/3.7 · `../standards/decisions.md` DD-25/DD-32/DD-40/DD-91 · **DD-97** (statement/export — composition consumer trên ledger này, surface riêng) · **DD-98** (negative scope: NP-1 custom split · NP-4 auto-archive) · `../standards/business-rules.md` BL-PAY/BL-CBF · `feature_channel_booking_funnel.md` · `../BE/feature_channel_booking_funnel_tech.md` · `../research/player-side-saas-reconciliation.md` · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
 
 > **Cập nhật v3.4 (DD-40, 2026-07-10):** **Mark-paid thủ công (tiền mặt/CK, tap/multi-select) mặc định MỌI tier** (kể cả `free`) — áp DD-25 (human-initiated money mutation cần preview+confirm). **Đối soát CK tự động** (webhook match) là tính năng **`host_pro`**.
 
@@ -196,14 +196,235 @@ Charge: `open → partial → paid`; reversal có thể đưa `paid → partial/
 
 ## 6. Screens và states
 
-| Surface | Loading | Ready | Error | Empty |
-|---|---|---|---|---|
-| `/unmatched` (Zalo/web, `host_pro`) | Đang tải | CK còn dư + candidate + assign CTA | Retry, không mất selection | Không có CK chưa khớp |
-| Mark-paid thủ công (mọi tier) | Validating | Roster + multi-select player + chọn tiền mặt (`cash`) / CK (`manual` khớp bank txn) → **Preview** (tổng tiền) → **Confirm** (DD-25) | Conflict → reload latest ledger; player đã paid → skip | Không có charge phù hợp |
-| Manual allocation | Validating | Chọn một/nhiều charges + tổng allocated/remaining | Conflict → reload latest ledger | Không có charge phù hợp |
-| Cash confirmation | Validating permission | Amount + player/session + confirm | Duplicate/conflict notice | N/A |
-| Web ledger P4 | Skeleton | Transaction, allocations, charge status, audit | Retry banner | Chưa có giao dịch |
-| In-app Chat exact `/pay` (target) | "Đang kiểm tra..." | Requester-only `known_amount`/`known_zero` từ canonical person-self service | Generic retry trên `unknown` | Chỉ hiện "không còn khoản phải trả" khi proven `known_zero` |
+> Coverage matrix `state × surface`: Bot screens text-based (Zalo/Messenger); Web P4 visual.
+
+### Mark-paid thủ công — Bot (Zalo/Messenger, mọi tier)
+
+**Purpose:** Host đánh dấu player đã trả (tiền mặt/CK) — multi-select + preview + confirm.
+
+**Flow tree:**
+
+```
+Host mở roster (session detail / danh sách nợ)
+  │
+  ├→ Tap chọn 1 hoặc NHIỀU player (multi-select checkbox)
+  │     └→ Player đã paid → skip (dimmed, không chọn được)
+  │
+  ├→ Chọn nguồn thanh toán:
+  │     ├→ 💵 Tiền mặt (cash) — không cần bank txn
+  │     └→ 🏦 Chuyển khoản (CK) — khớp một bank_transaction đã ingest
+  │           └→ Hiện dropdown: CK chưa gán (unmatched) → chọn 1
+  │
+  ├→ PREVIEW (DD-25 — human-initiated money mutation):
+  │     ┌────────────────────────────────────────┐
+  │     │ ⚡ Xác nhận đánh dấu đã trả            │
+  │     │                                        │
+  │     │ 2 player · Tiền mặt · 150,000₫        │
+  │     │                                        │
+  │     │  ✅ Nguyễn Văn A     75,000₫           │
+  │     │  ✅ Trần Thị B       75,000₫           │
+  │     │                                        │
+  │     │ ⚠️ Lê Văn C — đã thanh toán (bỏ qua)  │
+  │     │                                        │
+  │     │ [Xác nhận]        [Huỷ]                │
+  │     └────────────────────────────────────────┘
+  │
+  └→ CONFIRM → INSERT payment_allocations
+        ├→ Success → "✅ Đã ghi nhận thanh toán cho 2 player"
+        ├→ Conflict → Reload latest ledger + retry
+        └→ Error → Toast + retry
+```
+
+**Bot states:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | "Đang kiểm tra..." |
+| Ready | Roster multi-select + nguồn chọn + preview |
+| Error | Conflict → "Đã có thay đổi, vui lòng thử lại"; player đã paid → skip |
+| Empty | "Không có khoản phải thu cho kèo này" |
+
+### Mark-paid thủ công — Web P4
+
+**Layout (desktop ≥1024px):**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Thanh toán — 🏸 Cầu lông chiều T5              [draft]  │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  ─── Tổng quan ───                                       │
+│  ▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░  50% (3/6 đã trả)                │
+│  Đã thu: 225,000₫ / 450,000₫                            │
+│                                                          │
+│  ─── Danh sách (☑️ chọn để đánh dấu) ───                │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ ☐ [AV] Nguyễn Văn A     75,000₫     ⏳ Chưa TT   │  │
+│  │ ☐ [AV] Trần Thị B       75,000₫     ⏳ Chưa TT   │  │
+│  │ ── [AV] Lê Văn C        75,000₫     ✅ Đã TT     │  │
+│  │ ☐ [AV] Phạm D           75,000₫     ⏳ Chưa TT   │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+│  Đã chọn: 2 player · 150,000₫                           │
+│  Nguồn: (●) Tiền mặt  (○) CK [▼ Chọn giao dịch]       │
+│                                                          │
+│  [═══ Xem trước & Xác nhận ═══]                         │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Component: Player row:**
+
+| Player status | Icon | Selectable? | Ghi chú |
+|--------------|------|-------------|---------|
+| `open` (chưa trả) | ⏳ | ✅ Checkbox | Multi-select enabled |
+| `partial` | ⚠️ | ✅ | Hiện remaining amount |
+| `paid` | ✅ | ❌ Dimmed | Đã paid, không chọn được |
+| `void` | — | ❌ | Hidden hoặc strikethrough |
+
+### `/unmatched` — Giao dịch CK chưa khớp (Bot + Web, `host_pro`)
+
+**Purpose:** Host xem CK đã nhận nhưng chưa gán được cho player, manual assign.
+
+**Layout (Web):**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Giao dịch chưa khớp (3)                                 │
+├──────────────────────────────────────────────────────────┤
+│ ┌─ Transaction #1 ────────────────────────────────────┐ │
+│ │ 🏦 VCB · 09/08 14:23 · 75,000₫                    │ │
+│ │ Nội dung: "NGUYEN VAN A S2503"                      │ │
+│ │ Chưa gán: 75,000₫                                  │ │
+│ │ Lý do: Nhiều candidate trùng tên                    │ │
+│ │ [Gán cho...▼]  [Bỏ qua]                            │ │
+│ ├─────────────────────────────────────────────────────┤ │
+│ │ 🏦 MB · 09/08 15:01 · 150,000₫                    │ │
+│ │ Nội dung: ""  (rỗng)                               │ │
+│ │ Chưa gán: 150,000₫                                 │ │
+│ │ Lý do: Nội dung CK rỗng                            │ │
+│ │ [Gán cho...▼]  [Bỏ qua]                            │ │
+│ └─────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Bot layout:**
+
+```
+🏦 Giao dịch chưa khớp (3 CK)
+
+1️⃣ VCB · 09/08 · 75,000₫
+   "NGUYEN VAN A S2503"
+   Lý do: Nhiều candidate trùng tên
+   [Gán] [Bỏ qua]
+
+2️⃣ MB · 09/08 · 150,000₫
+   Nội dung rỗng
+   [Gán] [Bỏ qua]
+```
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton list (3 transaction blocks) |
+| Ready | Transaction list + candidate + assign CTA |
+| Error | Retry banner; không mất selection state |
+| Empty | Icon 🎉 + "Không có giao dịch CK chưa khớp" |
+
+### Web P4 — Ledger view
+
+**Purpose:** Host xem full ledger: transactions, allocations, charge status, audit trail.
+
+**Layout (desktop):**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Sổ thanh toán                      [Xuất CSV] (DD-97)    │
+├──────────────────────────────────────────────────────────┤
+│ Tabs: [Giao dịch] [Phân bổ] [Charges] [Audit]           │
+│                                                          │
+│ ─── Giao dịch CK (Tab 1) ───                            │
+│ ┌────────────────────────────────────────────────────┐   │
+│ │ Date       │ Bank │ Amount   │ Nội dung    │ Status│   │
+│ ├────────────┼──────┼──────────┼─────────────┼───────┤   │
+│ │ 09/08 14:23│ VCB  │ 75,000₫  │ NVA S2503   │ ✅    │   │
+│ │ 09/08 15:01│ MB   │ 150,000₫ │ (rỗng)      │ ⚠️    │   │
+│ │ 09/08 16:30│ TCB  │ 80,000₫  │ TTB S2503   │ ✅    │   │
+│ └────────────────────────────────────────────────────┘   │
+│                                                          │
+│ ─── Charges (Tab 3) ───                                  │
+│ ┌────────────────────────────────────────────────────┐   │
+│ │ Player        │ Due      │ Allocated│ Status      │   │
+│ ├───────────────┼──────────┼──────────┼─────────────┤   │
+│ │ Nguyễn Văn A  │ 75,000₫  │ 75,000₫  │ ✅ paid     │   │
+│ │ Trần Thị B    │ 75,000₫  │ 0₫       │ ⏳ open     │   │
+│ │ Lê Văn C      │ 75,000₫  │ 50,000₫  │ ⚠️ partial  │   │
+│ └────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
+```
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton table (header + 3 rows shimmer) |
+| Ready | Full tabbed ledger view |
+| Error | Error banner + retry |
+| Empty | Icon 📊 + "Chưa có giao dịch nào" + subtitle "Giao dịch sẽ xuất hiện khi player thanh toán" |
+
+### In-app Chat `/pay` — Person-self (DD-91 target)
+
+**Purpose:** Player xem trạng thái thanh toán cá nhân từ canonical `getSelfPaymentStatus`.
+
+**Layout (Bot message):**
+
+```
+💰 Thanh toán của bạn
+
+Kèo: 🏸 Cầu lông chiều T5 · 09/08
+
+Phí:       75,000₫
+Đã trả:    0₫
+Còn lại:   75,000₫
+
+📎 Chuyển khoản tới:
+  🏦 Vietcombank · 0123456789
+  Chủ TK: NGUYEN HOST
+
+[Đã thanh toán? Host sẽ xác nhận cho bạn]
+```
+
+**3 Outputs:**
+
+| Result | Hiển thị |
+|--------|----------|
+| `known_amount` | Fee + đã trả + còn lại + bank info |
+| `known_zero` | "✅ Bạn không còn khoản phải trả nào" |
+| `unknown` | "⏳ Không thể kiểm tra lúc này. Vui lòng thử lại sau" |
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Roster multi-select | `charges` table (per session) | Tenant-scoped via RLS |
+| Payment summary bar | `charges` aggregate (amount_due vs amount_allocated) | Canonical helper |
+| Unmatched list | `bank_transactions` WHERE `unallocated_amount > 0` | `host_pro` only |
+| Ledger table | `bank_transactions` + `payment_allocations` + `charges` | Join view |
+| Person-self `/pay` | `getSelfPaymentStatus` service | One canonical owner |
+| Bank info for QR | `bank_accounts` table | Encrypted secret |
+
+### State coverage matrix
+
+| Surface | Screen | Loading | Ready | Error | Empty |
+|---------|--------|---------|-------|-------|-------|
+| Bot | Mark-paid multi-select | ✅ "Đang kiểm tra..." | ✅ Roster+preview+confirm | ✅ Conflict reload | ✅ "Không có khoản phải thu" |
+| Bot | `/unmatched` (`host_pro`) | ✅ "Đang tải..." | ✅ CK list+assign CTA | ✅ Retry | ✅ "Không có CK chưa khớp" |
+| Bot | `/pay` person-self | ✅ "Đang kiểm tra..." | ✅ known_amount/known_zero | ✅ unknown+retry | ⚪ N/A |
+| Web P4 | Mark-paid (mọi tier) | ✅ Skeleton form | ✅ Multi-select+preview | ✅ Conflict reload | ✅ "Không có charge" |
+| Web P4 | Unmatched view (`host_pro`) | ✅ Skeleton list | ✅ Transaction+assign | ✅ Retry banner | ✅ "Không có CK chưa khớp" |
+| Web P4 | Ledger view | ✅ Skeleton table | ✅ Tabbed ledger | ✅ Retry banner | ✅ "Chưa có giao dịch" |
+| Web P4 | Cash confirmation | ✅ Validating | ✅ Amount+confirm | ✅ Duplicate notice | ⚪ N/A |
 
 P2/P3 bắt buộc host flow qua **bot Zalo + web** (mark-paid thủ công mọi tier). Auto-reconcile webhook (`host_pro`) ở P3. Web ledger và realtime projection ở P4; notification đa kênh đầy đủ ở P4.5–P4.7 (Zalo/Messenger). *(Telegram đã loại — DD-37.)*
 

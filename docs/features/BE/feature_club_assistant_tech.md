@@ -4,7 +4,7 @@
 > **Version:** 0.18 · 2026-07-28
 > **Status:** ✅ **Reviewed contract** — async ask, DLP/generation, retention, private-thread, canonical-chat reuse, DD-86/DD-93 mirrors và provider-attempt semantics đã qua companion closure. **DD-18** (provider LLM + privacy/ToS/DPA) chỉ là `ENABLEMENT_ONLY` cho GO-LIVE vì provider đặt sau interface `EmbeddingProvider`/`ChatProvider` swappable; Reviewed không tự authorize implementation trước strict slice `CODE_READY`.
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
-> **Product spec:** `../feature_club_assistant.md`
+> **Product spec:** `../FE/feature_club_assistant.md`
 
 > **DD-91 primary-surface boundary:** exact entitlement key của Assistant là `assistant_ai_kb` (Host Pro). Exact slash `/pay` được command registry intercept trước Assistant, route tới canonical Player View `getSelfPaymentStatus`, không tạo `bot_queries`, không gọi embed/chat provider và không phụ thuộc Assistant entitlement. Natural-language debt question qua @mention vẫn đi KB-RAG nhưng chỉ được trả KB guidance hoặc `no_answer`; Assistant không được đọc money tables/service.
 > **Nguồn:** proposal `../../proposals/club-ai-bot-knowledge-base.md` · `../../standards/core-db-architecture-principles.md` (INV-1..10, P1–P16) · migrations `0004`/`0005`/`0009` **chỉ là historical schema/RLS baselines, không phải edit targets**
@@ -403,6 +403,21 @@ Mọi endpoint dùng canonical API envelope của repo: thành công `{ data, er
 | Không phải member / eligibility fail | "Bạn cần là thành viên CLB để hỏi trợ lý." |
 | Provider lỗi | "Trợ lý đang bận, thử lại sau ít phút." |
 
+
+### Endpoints
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| GET | `/api/clubs/:cid/assistant/config` | TenantAdmin | Get bot config |
+| PUT | `/api/clubs/:cid/assistant/config` | TenantAdmin | Update bot config |
+| GET | `/api/clubs/:cid/assistant/kb/sources` | TenantAdmin | List KB sources |
+| POST | `/api/clubs/:cid/assistant/kb/sources` | TenantAdmin | Add KB source |
+| POST | `/api/clubs/:cid/assistant/kb/sources/:sid/reingest` | TenantAdmin | Re-ingest source |
+| PUT | `/api/clubs/:cid/assistant/kb/sources/:sid/archive` | TenantAdmin | Archive source |
+| POST | `/api/clubs/:cid/assistant/query` | Authenticated (member) | Ask assistant |
+| GET | `/api/clubs/:cid/assistant/analytics` | TenantAdmin | Analytics dashboard |
+
+> Envelope DD-60.
 ---
 
 ## 4. Chi tiết triển khai

@@ -11,7 +11,7 @@
 > **Framework:** grammY (TypeScript)
 > **Phase:** ~~P2 (tenant middleware) → P4.5 (player join)~~ — **ARCHIVED (DD-37): out of scope phase-1**
 > **Version:** v0.2 · 2026-06-20 (archived 2026-07-10)
-> **Refs:** `../../features/feature_tenant_routing_authz.md` · `../../features/feature_player_telegram.md` · `../../features/feature_session_management.md`
+> **Refs:** `../../features/FE/feature_tenant_routing_authz.md` · `../../features/FE/feature_player_telegram.md` · `../../features/FE/feature_session_management.md`
 
 ---
 
@@ -167,11 +167,11 @@ Default group policy: **không show số tiền nợ cá nhân trong group**; ch
 
 | Topic | Doc |
 |-------|-----|
-| Tenant routing + authz | [feature_tenant_routing_authz.md](../../features/feature_tenant_routing_authz.md) |
-| Player join TG | [feature_player_telegram.md](../../features/feature_player_telegram.md) |
-| Session management | [feature_session_management.md](../../features/feature_session_management.md) |
-| Notifications | [feature_notifications_reminders.md](../../features/feature_notifications_reminders.md) |
-| Identity merge (/link) | [feature_identity.md](../../features/feature_identity.md) |
+| Tenant routing + authz | [feature_tenant_routing_authz.md](../../features/FE/feature_tenant_routing_authz.md) |
+| Player join TG | [feature_player_telegram.md](../../features/FE/feature_player_telegram.md) |
+| Session management | [feature_session_management.md](../../features/FE/feature_session_management.md) |
+| Notifications | [feature_notifications_reminders.md](../../features/FE/feature_notifications_reminders.md) |
+| Identity merge (/link) | [feature_identity.md](../../features/FE/feature_identity.md) |
 
 ---
 

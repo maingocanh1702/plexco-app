@@ -4,7 +4,7 @@
 > **Version:** 2.12 · 2026-07-28
 > **Status:** Reviewed  
 > **Implementation:** Not started — `join_requests` có sẵn từ `0006` · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
-> **Product spec:** `../feature_cross_club_join.md`  
+> **Product spec:** `../FE/feature_cross_club_join.md`  
 > **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-32/DD-39/DD-45/DD-49/**DD-52**/**DD-65..68** · `../../decisions/analysis/dd-45-waitlist-analysis.md` · `feature_channel_booking_funnel_tech.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`) · `feature_session_management_tech.md`
 > **⚠️ Live-schema boundary:** Waitlist schema `0014_players_waitlist` **đã merge trên `main`** tại `1a6ac38` (verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số); tính đến `origin/main`@`22c23aa` (2026-07-19) main còn dừng ở `0000–0013`, đã merge kể từ đó. DD-39/DD-49/SessionService/queue-entry-version/retry behavior chưa có runtime. Live `join_requests` chỉ có `command_id`, **không có financial-proof/version field**.
 

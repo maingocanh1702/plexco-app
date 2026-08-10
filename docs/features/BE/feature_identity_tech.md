@@ -4,7 +4,7 @@
 > **Version:** 1.13 · 2026-07-28
 > **Status:** Identity implementation contract; DD-32 Account-backed channel link predicate added. Endpoint-scoped schema/code pending identity/channel build slices
 > **Implementation:** Not started — bảng `link_codes`/`merge_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
-> **Product spec:** `../feature_identity.md`
+> **Product spec:** `../FE/feature_identity.md`
 > **References:** `../../product/TDD.md` §3.2–3.4/§4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-13/DD-37/DD-50/DD-53/**DD-65..68** · `feature_player_messenger_tech.md`
 
 > **Cập nhật v1.3 (DD-50/v1.37):** phase-1 không thu SĐT; phone columns remain dormant. Debt-bearing claim proof = server-verified account email or transactional one-time `link_code`; schema presence alone is not runtime implementation.
@@ -349,6 +349,36 @@ P4.6 `/myclubs` consumes `resolvePersonSelf`; it is not part of P3.5 rollout.
 | Idempotency | §4 consume + §5 commit + bảng Idempotency ở trên |
 | Data retention/xoá | §8: PII deletion = anonymization/crypto-shredding, tôn trọng financial/legal retention; audit IDs/tombstones giữ lại. Retention schedule per-table chưa pin — theo `feature_security_operations_tech.md` |
 
+
+### Endpoints (HTTP)
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| POST | `/api/identity/link` | Authenticated session | Issue link_code cho person hiện tại |
+| POST | `/api/identity/link/consume` | Authenticated channel identity | Consume link_code, tạo merge plan |
+| POST | `/api/identity/merge/confirm` | Authenticated session + merge_plan_id | Commit merge plan |
+| POST | `/api/identity/claim` | TenantAdmin | Claim membership có tài chính (strong proof) |
+| GET | `/api/identity/me` | Authenticated session | Resolve person-self (clubs, channels) |
+| POST | `/api/identity/merge/recover` | Restricted support role | Recovery split command |
+
+> Mọi response dùng envelope DD-60 (`{data, error, meta.requestId}`).
+
+### Error Codes
+
+| Code | Error Code | Message | Trigger |
+|------|-----------|---------|---------|
+| 400 | `LINK_CODE_INVALID` | Mã liên kết không hợp lệ | Sai code / hết hạn / đã sử dụng / bị khoá |
+| 400 | `LINK_CODE_ISSUER_MISMATCH` | Không thể sử dụng mã này | Issuer person đã merge/thay đổi |
+| 400 | `MERGE_PLAN_STALE` | Kế hoạch gộp đã thay đổi, vui lòng kiểm tra lại | Plan version stale |
+| 400 | `MERGE_CONFLICT_REQUIRES_REVIEW` | Cần quản trị viên xem xét | Membership + financial conflict |
+| 400 | `CLAIM_STRONG_PROOF_REQUIRED` | Cần xác minh danh tính bổ sung | Debt-bearing membership claim |
+| 400 | `CLAIM_ALREADY_OWNED` | Thành viên này đã được liên kết | Duplicate claim |
+| 400 | `IDENTITY_PLATFORM_MISMATCH` | Nền tảng không khớp | Channel platform ≠ endpoint FK |
+| 400 | `IDENTITY_ENDPOINT_MISMATCH` | Thiết bị không khớp | Scope hash mismatch |
+| 401 | `AUTH_REQUIRED` | Cần đăng nhập | No valid session |
+| 403 | `PERSON_ACCESS_DENIED` | Không có quyền truy cập | Person-self mismatch |
+| 403 | `CLAIM_TENANT_MISMATCH` | Không có quyền thao tác CLB này | Admin cross-tenant |
+| 429 | `LINK_CODE_RATE_LIMITED` | Quá nhiều yêu cầu liên kết | Rate limit exceeded |
 ---
 
 ## 8. Recovery and deletion
@@ -365,7 +395,7 @@ PII deletion uses anonymization/crypto-shredding subject to financial/legal rete
 
 ---
 
-## 9. Testing
+## 9. Testing Plan
 
 ### Unit
 
@@ -427,7 +457,7 @@ Metrics: person/channel creation, merge success/failure by method, claim rejecti
 - [ ] Merge preserves membership/history/ledger invariants.
 - [ ] Claim-with-financial-history gate passes attack tests.
 - [ ] Audit/tombstones/recovery runbook verified.
-- [ ] Product acceptance criteria in `../feature_identity.md` pass.
+- [ ] Product acceptance criteria in `../FE/feature_identity.md` pass.
 
 ---
 

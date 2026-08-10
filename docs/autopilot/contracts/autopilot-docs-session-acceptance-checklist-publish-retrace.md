@@ -3,7 +3,7 @@
 > **Slug:** `docs-session-acceptance-checklist-publish-retrace`
 > **Risk:** P2 docs-only · `manual_only` · STOP_AT_READY · 1 FULL-base Codex clean round
 > **Canonical framework:** `autopilot-prompt-GENERIC` v0.6.0
-> **Authority (LOCAL specs only):** `features/feature_session_management.md` (v2.13a) · `features/BE/feature_session_management_tech.md` (v2.14c) · `features/BE/feature_billing_lifecycle_tech.md` (v2.8d, cross-ref only) · `product/PRD.md` (v2.8g, cross-ref only)
+> **Authority (LOCAL specs only):** `features/FE/feature_session_management.md` (v2.13a) · `features/BE/feature_session_management_tech.md` (v2.14c) · `features/BE/feature_billing_lifecycle_tech.md` (v2.8d, cross-ref only) · `product/PRD.md` (v2.8g, cross-ref only)
 > **Manifest:** `docs/autopilot-manifests/docs-session-acceptance-checklist-publish-retrace.json`
 > **Depends on:** `docs-session-publish-contract` (merged)
 

@@ -4,7 +4,7 @@
 
 **Phiên bản:** 2.5
 **Ngày tạo:** 16/06/2026 · **Cập nhật:** 28/07/2026
-**Tài liệu tham chiếu:** `../../product/BRD.md` · `../../product/PRD.md` · `../../product/TDD.md` · `../../standards/decisions.md` DD-32/DD-33/DD-37/DD-65..68 · `../../features/feature_channel_booking_funnel.md` · `../../features/BE/feature_channel_booking_funnel_tech.md`
+**Tài liệu tham chiếu:** `../../product/BRD.md` · `../../product/PRD.md` · `../../product/TDD.md` · `../../standards/decisions.md` DD-32/DD-33/DD-37/DD-65..68 · `../../features/FE/feature_channel_booking_funnel.md` · `../../features/BE/feature_channel_booking_funnel_tech.md`
 
 > **Authority hiện hành (DD-65..68 ✅):** topology là **hybrid** — Plexco central Page luôn có, Page per-club là tuỳ chọn; cả hai là shared role-aware surface cho host và player. Các assumption Page-per-club-only/player-only trước v2.2 bị supersede. Auth-link Facebook = DD-33 ✅ (phase-1; App Review pending).
 

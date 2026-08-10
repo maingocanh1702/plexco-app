@@ -6,7 +6,7 @@
 > **Status:** Reviewed  
 > **Implementation:** Not started — `join_requests` có sẵn từ `0006` · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4.3 discovery · P3.5 identity · P2 session/slot transaction · P4 sync/notifications  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-3.2 · `../product/PRD.md` FLOW 13 · `../standards/decisions.md` DD-05/DD-06/**DD-32/DD-45/DD-49** · `../standards/business-rules.md` BL-DSC-3/BL-CBF/BL-SES-9/10 · `BE/feature_cross_club_join_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-3.2 · `../product/PRD.md` FLOW 13 · `../standards/decisions.md` DD-05/DD-06/**DD-32/DD-45/DD-49** · `../standards/business-rules.md` BL-DSC-3/BL-CBF/BL-SES-9/10 · `../BE/feature_cross_club_join_tech.md`
 
 ---
 
@@ -70,16 +70,73 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 
 ## 3. Screens & States
 
-| Surface | Screen | Loading | Ready | Error | Empty |
-|---------|--------|---------|-------|-------|-------|
-| Web | Join CTA (public detail) | "Đang xử lý..." | Còn slot: "✅ Đã tham gia! [Venue]"; full: "⏳ Bạn đang ở vị trí N" (area only) | "❌ Cần đăng nhập" / "Cần host kiểm tra trạng thái tiền" khi disposition không chứng minh được | N/A |
-| Web | Pending approval | — | "⏳ Đang chờ host duyệt" + Cancel CTA | "❌ Yêu cầu hết hạn" | N/A |
-| Web | Rejected | — | "❌ Host từ chối — [reason nếu có]" | — | N/A |
-| Web | Closed | — | "Buổi chơi đã đóng" | — | N/A |
-| Web | Rate-limited | — | "Quá nhiều yêu cầu — thử lại sau" | — | N/A |
-| Messenger Bot | Host approval queue | "📋 Danh sách chờ duyệt" | Opaque Approve/Reject actions, max 8/page + navigation; exact host capability | "Không có yêu cầu nào" | "Không có yêu cầu" |
-| Zalo/Messenger Bot | Player join confirm | — | Active: "✅ Đã join [session]. [venue]"; waitlisted: "⏳ Vị trí N" (không venue) | Rejoin cần host review | N/A |
+> Web join flow (from marketplace or direct link). Mobile-first 375px.
 
+### Web — Join request flow
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ ← Marketplace    🏸 Tham gia kèo    │
+├──────────────────────────────────────┤
+│                                      │
+│ 🏸 Cầu lông chiều T5                │
+│ CLB Rồng Xanh · 19:00 · Q3          │
+│ 💰 120,000₫ · 2 chỗ còn trống      │
+│                                      │
+│ ─── Thông tin tham gia ───           │
+│ Tên hiển thị: {displayName}         │
+│ Trình độ: Trung bình                │
+│                                      │
+│ ☑️ Tôi đồng ý nội quy CLB          │
+│                                      │
+│     [═══ Xác nhận tham gia ═══]     │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+**Post-join states:**
+
+```
+┌──────────────────────────────────────┐
+│ ✅ Đã xác nhận!                      │
+│ 📍 123 Nguyễn Đình Chiểu, Q3        │  ← venue revealed
+│ 💰 120,000₫ — thanh toán trước kèo  │
+│ [Xem chi tiết] [Quay về Marketplace] │
+└──────────────────────────────────────┘
+  — HOẶC —
+┌──────────────────────────────────────┐
+│ ⏳ Danh sách chờ — vị trí #3        │
+│ Bạn sẽ được thông báo khi có chỗ    │
+│ [Quay về Marketplace]                │
+└──────────────────────────────────────┘
+  — HOẶC —
+┌──────────────────────────────────────┐
+│ 📋 Yêu cầu đã gửi                   │
+│ Host sẽ duyệt yêu cầu của bạn      │
+│ [Quay về Marketplace]                │
+└──────────────────────────────────────┘
+```
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Session info | `public_sessions` (whitelist) | Pre-join: no venue |
+| Join action | `players` INSERT + occupancy check | Transactional |
+| Post-join venue | `sessions.venue` | Only if active |
+| Waitlist position | `players` WHERE waitlisted, ordered | |
+| Approval status | `players.status = 'pending'` | Host approves |
+
+### State coverage matrix
+
+| Screen | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| Join request | ✅ Skeleton | ✅ Session info + confirm | ✅ "Kèo hết chỗ" / "Lỗi" | ⚪ N/A |
+| Post-join (active) | — | ✅ Venue + payment info | — | ⚪ N/A |
+| Post-join (waitlisted) | — | ✅ Position | — | ⚪ N/A |
+| Post-join (approval) | — | ✅ "Đang chờ duyệt" | — | ⚪ N/A |
 ---
 
 ## 4. Domain Model

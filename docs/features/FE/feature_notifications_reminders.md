@@ -7,7 +7,7 @@
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > ⚠️ **Historical:** doc hạ Reviewed → Draft ngày 2026-07-18 do gộp tài liệu, KHÔNG phải mở lại luật tiền §A. DD-70/71/72 được owner chốt 2026-07-21 nên v3.5 promote lại Reviewed; runtime/migration vẫn chưa tồn tại. NTF-OQ-14..16 và các OQ chi tiết theo slice vẫn là build/enablement gates. Nhận định v3.8 rằng digest còn phải trì hoãn đã được DD-94 thay thế; session/activity, `message_request` và scoped/bulk vẫn thuộc proposal DD-88.
 > **Prerequisites:** P3 ledger stable · P3.5 identity/reachability · P4 sync/projectors · (inbox global plane) DD-47/48 · (announce) DD-43 migration · (push) mechanisms 36→41 + A19/F15
-> **Tài liệu liên quan:** `../product/BRD.md` FR-6 · `../product/PRD.md` FLOW 7/8 · `../standards/decisions.md` **DD-37/DD-40/DD-43/DD-45/DD-47/DD-48/DD-49/DD-50/DD-67/DD-69/DD-70..72/DD-91/DD-94 ✅ · DD-88 🟡 proposal** · `../standards/business-rules.md` BL-MSG-3/5, **BL-NTF-1..6**, BL-SEC-5 · `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` §7.2 (DD-94) · `../proposals/notification-grouping.md` (DD-88 chỉ còn session/activity/`message_request`/scoped-bulk rộng hơn) · `../decisions/analysis/dd-43-membership-tags-analysis.md` · `../decisions/analysis/dd-45-waitlist-analysis.md` · `../decisions/analysis/dd-47-follow-graph-analysis.md` · `../decisions/analysis/dd-69-app-native-analysis.md` · `feature_identity.md` · `feature_user_settings.md` · `feature_session_management.md` (SES-UC-3) · `feature_inapp_chat.md` · `BE/feature_notifications_reminders_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-6 · `../product/PRD.md` FLOW 7/8 · `../standards/decisions.md` **DD-37/DD-40/DD-43/DD-45/DD-47/DD-48/DD-49/DD-50/DD-67/DD-69/DD-70..72/DD-91/DD-94 ✅ · DD-88 🟡 proposal** · `../standards/business-rules.md` BL-MSG-3/5, **BL-NTF-1..6**, BL-SEC-5 · `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` §7.2 (DD-94) · `../proposals/notification-grouping.md` (DD-88 chỉ còn session/activity/`message_request`/scoped-bulk rộng hơn) · `../decisions/analysis/dd-43-membership-tags-analysis.md` · `../decisions/analysis/dd-45-waitlist-analysis.md` · `../decisions/analysis/dd-47-follow-graph-analysis.md` · `../decisions/analysis/dd-69-app-native-analysis.md` · `feature_identity.md` · `feature_user_settings.md` · `feature_session_management.md` (SES-UC-3) · `feature_inapp_chat.md` · `../BE/feature_notifications_reminders_tech.md`
 >
 > **Current infrastructure boundary (2026-07-27):** shared job lease/ack + preflight/dispatcher/flagged
 > scheduler đã merge nhưng đang OFF/placeholder. Chưa có notification producer/projector, Inbox/Web Push
@@ -252,32 +252,115 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 
 ## 3. Screens & States
 
-| Surface | Screen | Loading | Ready | Error | Empty |
-|---------|--------|---------|-------|-------|-------|
-| Bot (Zalo) / Web | Manual remind preview | "Đang tính..." | List: eligible players + excluded (lý do) + channel + Send/Cancel buttons | "Không có ai cần nhắc" | N/A (empty = no eligible = hiện message) |
-| Bot (Zalo) / Web | Reminder sent confirmation | — | "✅ Đã gửi nhắc nợ cho X người" | "⚠️ Gửi thất bại Y/X — xem report" | N/A |
-| Zalo DM / Messenger (24h) | Payment confirmation/correction (player) | — | Copy chi tiết đã authorize, có thể gồm amount/ref theo policy | — | N/A |
-| OS Web Push | Payment confirmation/correction | — | Copy generic + CTA; **không amount/ref/QR/tên CLB**. Mở app rồi authenticated fetch mới hiện chi tiết | — | N/A |
-| Web P4 | Notification settings | Skeleton | Policy form: thresholds, quiet hours, cooldown, max count | Error banner | Default policy values |
-| Web P4 | Delivery report | Skeleton table | Sent/failed/skipped/**unknown** per notification; unknown có cảnh báo manual review/no fallback | Error banner | "Chưa có notification nào" |
-| Web P4 🟡 | Inbox list | Skeleton rows | Item list (icon loại · tiêu đề · thời gian · dot chưa đọc) + filter CLB/loại + mark-all-read | "Không tải được thông báo" + Retry | "Chưa có thông báo nào" |
-| Web P4 🟡 | Badge (header) | — | Số chưa đọc, trần "99+" | Ẩn badge (fail-soft) | Ẩn khi = 0 |
-| Web P4 🟡 | Item detail / deep-link | Skeleton | Nội dung render từ nguồn + CTA (Trả nợ / Xem session / Approve follow); payment detail dùng canonical person-self self-payment projection tại read time | "Nội dung không còn khả dụng" | N/A |
-| Web P4 🟡 | Follow-request item (inline) | — | `display_name` + Approve/Reject | "Không xử lý được yêu cầu" | N/A |
-| Web P4 🟡 | Soạn announcement | Skeleton | Editor + audience (tất cả / theo tag) + đếm recipient realtime + Preview | "Không tải được danh sách thành viên" | "CLB chưa có thành viên nào" |
-| Web P4 🟡 | Preview + confirm | "Đang tính..." | Số người theo kênh (web/Zalo/Messenger/không reachable) + cảnh báo DLP + Gửi/Huỷ | "Không tính được audience" | "Không có ai trong nhóm này" |
-| Web P4 🟡 | Quản lý tag · gán tag | Skeleton | List tag + số thành viên/tag; roster + multi-select gán/gỡ | Error banner | "Chưa có nhãn nào — tạo nhãn đầu tiên" |
-| Web P4 🟡 | Prompt bật thông báo (có ngữ cảnh) | — | "Bật thông báo để không bỏ lỡ nhắc đóng tiền?" + Bật/Để sau | "Trình duyệt chặn — xem hướng dẫn" | N/A |
-| Web P4 (iOS) 🟡 | Hướng dẫn add-to-home-screen | — | Các bước cài PWA + lý do (iOS yêu cầu) | "Thiết bị không hỗ trợ" | N/A |
-| Web P4 🟡 | Settings → Thiết bị nhận thông báo | Skeleton | List thiết bị (tên/nền tảng/lần cuối) + thu hồi toàn thiết bị; preference announcement nằm ở settings CLB, không có toggle per-type chưa có BE owner | Error banner | "Chưa có thiết bị nào bật thông báo" |
-| Web P4 🟡 | Chat channel → Notification preference | Skeleton | Club: `Tất cả` / `Chỉ mention & reply` / `Tắt`; default `Chỉ mention & reply`. DM default ON | Không ghi được → giữ server value cũ; dependency unknown không tự bật send | Canonical default theo DD-94 |
-| OS notification 🟡 | Push nhận được | — | Tiêu đề generic + CTA; chi tiết sau khi mở | — | N/A |
-| OS notification 🟡 | Offline Chat digest | — | Copy generic "Bạn có tin nhắn mới" + opaque deep-link; không tên CLB/người gửi/body/amount | — | Route OFF nếu timing config chưa enable |
-| Web P4 (PWA) 🟡 | Inbox/push khi offline | Cached shell | Shell + "Đang offline"; **không** tiền/PII | Retry | N/A |
-| Ops/Admin 🟡 | Dashboard độ tin cậy push | Skeleton | delivered/opened/latency theo platform + installed rate — **DD-69 gate #4** | Error banner | "Chưa đủ dữ liệu" |
-| Bot (Zalo) 🟡 | Announce nhanh | "Đang tính..." | Preview rút gọn + xác nhận (số reply — Zalo không inline button) | "Gửi thất bại — xem web" | "Không có ai cần nhận" |
-| Bot (Zalo/Messenger) 🟡 | Inbox | — | **N/A — inbox là surface web.** Bot vẫn nhận push theo mảng A | — | — |
+> Web notification center (bell icon) + Bot push. Mobile-first 375px; desktop ≥1024.
 
+### Web — Notification inbox
+
+**Purpose:** Player/host xem tất cả notifications grouped by recency.
+
+**Layout (mobile):**
+
+```
+┌──────────────────────────────────────┐
+│ ← Home                 🔔 Thông báo │
+├──────────────────────────────────────┤
+│ [Tất cả] [Chưa đọc] [Kèo] [Thanh…] │  filter chips
+├──────────────────────────────────────┤
+│                                      │
+│ 🟦 Hôm nay                          │
+│ ┌────────────────────────────────┐   │
+│ │ 🏸 Kèo T5 đã tạo thành công  │   │  notification card
+│ │ CLB Rồng Xanh · 2 phút trước │   │
+│ │                           🔵  │   │  unread dot
+│ └────────────────────────────────┘   │
+│ ┌────────────────────────────────┐   │
+│ │ 💰 Minh Hoàng đã thanh toán   │   │
+│ │ 75,000₫ · CLB BT · 5 phút    │   │
+│ └────────────────────────────────┘   │
+│                                      │
+│ 🟦 Hôm qua                          │
+│ ┌────────────────────────────────┐   │
+│ │ ⚠️ Kèo T3 sắp bắt đầu (1h)  │   │
+│ │ CLB BT · hôm qua 18:00       │   │
+│ └────────────────────────────────┘   │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+**Component: Notification card:**
+
+| Field | Data source | Ghi chú |
+|-------|-------------|---------|
+| Icon | Notification type → icon map | 🏸/💰/⚠️/👥/🔔 |
+| Title | `notification_intents.title` | Localized |
+| Subtitle | Club name + relative time | |
+| Unread dot | `notification_deliveries.read_at IS NULL` | 🔵 |
+| Tap action | Deep link to relevant screen | |
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton (5 notification card skeletons) |
+| Ready | Grouped by date + filter chips |
+| Error | "Lỗi tải thông báo" + retry |
+| Empty | Icon 🔔 + "Chưa có thông báo nào" |
+
+### Bot — Push notifications
+
+**Layout:**
+
+```
+🔔 Nhắc nhở — CLB Cầu lông BT
+
+⏰ Kèo cầu lông tối nay 19:00
+📍 Quận 3 (link maps sau khi vào app)
+👥 Bạn đã xác nhận tham gia
+
+[Xem chi tiết]
+```
+
+### Notification settings
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ ← Cài đặt      🔔 Thông báo        │
+├──────────────────────────────────────┤
+│                                      │
+│ ─── Kèo ───                         │
+│ Nhắc trước kèo     [●○] ON          │
+│ Thời gian nhắc     [1 giờ ▼]        │
+│ Kèo mới trong CLB  [●○] ON          │
+│                                      │
+│ ─── Thanh toán ───                   │
+│ Xác nhận TT        [●○] ON          │
+│ Nhắc nợ            [●○] ON          │
+│                                      │
+│ ─── CLB ───                         │
+│ Thành viên mới     [●○] ON          │
+│ Tin nhắn chat      [●○] ON          │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Inbox list | `notification_intents` + `notification_deliveries` | Tenant-scoped |
+| Unread count | `deliveries WHERE read_at IS NULL` | Badge on bell icon |
+| Settings | `notification_preferences` per person | Per-type toggles |
+| Bot push | Outbound via Zalo/Messenger API | Channel-specific format |
+
+### State coverage matrix
+
+| Screen | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| Notification inbox | ✅ Skeleton cards | ✅ Grouped + filters | ✅ "Lỗi tải" + retry | ✅ "Chưa có thông báo" |
+| Notification settings | — | ✅ Toggle per type | ✅ "Lỗi lưu" toast | ✅ Defaults ON |
+| Bot push | — | ✅ Message delivered | — | ⚪ N/A |
 ---
 
 ## 4. Domain Model
@@ -311,7 +394,7 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 | `push_delivery_telemetry` 🟡 | sent/delivered/opened/failed/**unknown/expired**/latency per physical attempt | GLOBAL PROTECTED raw table; `event_key` UNIQUE; **không tiền/PII/endpoint**. Server ghi `sent\|failed\|unknown\|expired`; client capability chỉ ghi `delivered\|opened`, write-only và hết hạn `send_started_at+24h`; ops chỉ đọc aggregate |
 | Chat digest delivery signal 🟡 *(physical owner `chat-unread-notification-core`)* | Notification-owned retry/coalesce state; **không phải Inbox item** | Per person+channel, opaque highest-unread cursor + generic delivery/idempotency metadata only; zero body/title/amount/author/attachment and zero row per source message. Chat owns unread proof; Notification owns provider attempt |
 
-> ⚠️ **Mọi entity đánh dấu 🟡 CHƯA có trong `packages/db/schema.ts`** (kể cả `membership_tags` — DD-43 mới chốt *contract*, chưa có migration). 🟡 ở đây nghĩa là **target chưa implement**, không phải DD-70/71/72 còn mở. Full schema: [BE/feature_notifications_reminders_tech.md](./BE/feature_notifications_reminders_tech.md).
+> ⚠️ **Mọi entity đánh dấu 🟡 CHƯA có trong `packages/db/schema.ts`** (kể cả `membership_tags` — DD-43 mới chốt *contract*, chưa có migration). 🟡 ở đây nghĩa là **target chưa implement**, không phải DD-70/71/72 còn mở. Full schema: [../BE/feature_notifications_reminders_tech.md](./../BE/feature_notifications_reminders_tech.md).
 
 ### State machines 🟡
 

@@ -251,7 +251,7 @@ nên câu "commit đúng toàn packet" **không** bao gồm nhóm A. Ghi rõ đ�
 
 | Commit | Nội dung | Quan hệ với verdict §7 |
 |---|---|---|
-| **A — docs current-state reconcile** | `docs/00-start-here/HANDOFF.md` · `docs/product/ROADMAP.md` · `docs/product/BRD.md` · `docs/product/PRD.md` · `docs/product/TDD.md` · `docs/features/README.md` · `docs/features/feature_notifications_reminders.md` · `docs/features/BE/feature_notifications_reminders_tech.md` · `docs/channels/web/design-brief.md` · `docs/channels/web/designer-kickoff.md` · `docs/channels/web/theme-direction-2026-07.md` | **Ngoài** `TARGET_FILES`. Đóng source/index/HANDOFF/ROADMAP/core-pointer/DD-81 mirror drift; không đóng verdict |
+| **A — docs current-state reconcile** | `docs/00-start-here/HANDOFF.md` · `docs/product/ROADMAP.md` · `docs/product/BRD.md` · `docs/product/PRD.md` · `docs/product/TDD.md` · `docs/features/README.md` · `docs/features/FE/feature_notifications_reminders.md` · `docs/features/BE/feature_notifications_reminders_tech.md` · `docs/channels/web/design-brief.md` · `docs/channels/web/designer-kickoff.md` · `docs/channels/web/theme-direction-2026-07.md` | **Ngoài** `TARGET_FILES`. Đóng source/index/HANDOFF/ROADMAP/core-pointer/DD-81 mirror drift; không đóng verdict |
 | **B — authority packet** | Đúng 11 file trong `TARGET_FILES`, gồm BUILD-STATUS và report này | **Là** commit mà `NEXT_REVIEW_TRIGGER` chờ; hoàn tất status mirror và cho phép re-pin verdict |
 
 A và B phải **serialize A → B** vì BUILD-STATUS/report trong B mirror trạng thái được A chốt. Giữ hai commit

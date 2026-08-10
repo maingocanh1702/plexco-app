@@ -6,7 +6,7 @@
 > **Status:** Reviewed  
 > **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 tenant/authz · P3 durable payment ingestion · P3 notifications  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-9/BR-11 · `../product/PRD.md` FLOW 11 · `../standards/decisions.md` DD-29/DD-37/DD-40/DD-91 · `BE/feature_billing_lifecycle_tech.md` · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-9/BR-11 · `../product/PRD.md` FLOW 11 · `../standards/decisions.md` DD-29/DD-37/DD-40/DD-91 · `../BE/feature_billing_lifecycle_tech.md` · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
 
 > **Cập nhật v3.4 (DD-40 + DD-37, 2026-07-10):** free-tier bots = **Zalo + Facebook Messenger** (bỏ Telegram). Capability flags DD-40: **free** = `payment_mark_manual` (cash/bank), `reminders_manual`; **`host_pro`** += `payment_reconcile_auto`, `reminders_auto`, `assistant_ai_kb`, `crm_dashboard`.
 
@@ -28,7 +28,7 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 - Suspension gating centralized by action class — safety/ingestion/read-only paths remain.
 - Entitlement gate theo **capability flags** (config-driven), không hard-code theo tenant/plan_key.
 - Commercial entitlement và operational availability là hai gate riêng; unknown availability fail-closed cho capability đắt tiền nhưng không chặn `payment_mark_manual`.
-- `suspended` (gate publish/mutation) = fail-closed **union** hai cột `tenants.status` ⊕ `subscriptions.status`, gồm cả `subscriptions.status='cancelled'` và thiếu row `subscriptions` (unprovable → khoá, không allow-by-default) — không suy ra chỉ từ một cột. Chi tiết cột nào/case nào ở `BE/feature_billing_lifecycle_tech.md` §3 Status Authority. *(✅ Founder-ratified 2026-07-24.)*
+- `suspended` (gate publish/mutation) = fail-closed **union** hai cột `tenants.status` ⊕ `subscriptions.status`, gồm cả `subscriptions.status='cancelled'` và thiếu row `subscriptions` (unprovable → khoá, không allow-by-default) — không suy ra chỉ từ một cột. Chi tiết cột nào/case nào ở `../BE/feature_billing_lifecycle_tech.md` §3 Status Authority. *(✅ Founder-ratified 2026-07-24.)*
 
 ### Pricing tiers (DD-29 — thay DD-03)
 
@@ -39,7 +39,7 @@ Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, su
 
 > ⚠️ **`plans.plan_key` CHECK → `('free','host_pro')` là migration còn chờ (DD-29):** live `packages/db/schema.ts` vẫn giữ CHECK 4-tier `('free_web','telegram','plus_channel','all_channels')`. **Không** coi việc đổi CHECK là đã xong cho tới khi có migration.
 
-Kênh phase-1 = **Zalo + Facebook Messenger** (Telegram loại — DD-37; Messenger nay phase-1 P2.5, không còn chờ P4.8). Capability flags (DD-40): free = `payment_mark_manual`, `reminders_manual`; host_pro thêm `payment_reconcile_auto`, `reminders_auto`, `assistant_ai_kb`, `crm_dashboard`. Danh sách cờ chi tiết ở **Capability registry** (`BE/feature_billing_lifecycle_tech.md §4b`) — free/pro **config-driven** (đổi bằng `plans.entitlements`, không sửa code). *(Chat cơ bản + giá theo giới tính nay **✅ phase-1** — xem DD-38/DD-39 (✅ Chốt) + `feature_inapp_chat` / `feature_user_settings`.)*
+Kênh phase-1 = **Zalo + Facebook Messenger** (Telegram loại — DD-37; Messenger nay phase-1 P2.5, không còn chờ P4.8). Capability flags (DD-40): free = `payment_mark_manual`, `reminders_manual`; host_pro thêm `payment_reconcile_auto`, `reminders_auto`, `assistant_ai_kb`, `crm_dashboard`. Danh sách cờ chi tiết ở **Capability registry** (`../BE/feature_billing_lifecycle_tech.md §4b`) — free/pro **config-driven** (đổi bằng `plans.entitlements`, không sửa code). *(Chat cơ bản + giá theo giới tính nay **✅ phase-1** — xem DD-38/DD-39 (✅ Chốt) + `feature_inapp_chat` / `feature_user_settings`.)*
 
 `payment_reconcile_auto` không tự bật chỉ vì flag true: current launch path chỉ là SePay/ApiPay Việt Nam và vẫn thiếu runtime; ngoài Việt Nam hoặc bank/provider chưa proven, UI phải coi auto unavailable/waitlist thay vì hứa capability đang dùng được. `payment_mark_manual` vẫn có ở mọi tier/market. Exact `/pay` deterministic của player không dùng `assistant_ai_kb` và không phải entitlement Assistant.
 
@@ -91,14 +91,161 @@ Kênh phase-1 = **Zalo + Facebook Messenger** (Telegram loại — DD-37; Messen
 
 ## 3. Screens & States
 
-| Surface | Screen | Loading | Ready | Error | Empty |
-|---------|--------|---------|-------|-------|-------|
-| Web | Billing overview | Skeleton | Plan name, trial/period dates, grace days, status badge | Error banner | N/A (always has plan info) |
-| Web | Invoice list | Skeleton table | Invoice rows: code, amount, status, date | Error banner | "Chưa có hoá đơn" |
-| Web | Payment instructions | — | QR + bank info + invoice code | — | N/A |
-| Web | Subscription status badges | — | ✅ Active / ⚠️ Expiring / 🔴 Past Due / ⛔ Suspended | — | N/A |
-| Web | Reactivation | — | "Thanh toán để kích hoạt lại" + payment CTA **và** "Liên hệ hỗ trợ nếu bạn cho rằng đây là nhầm lẫn" — luôn hiển thị CẢ HAI, không rẽ nhánh theo nguyên nhân suspend (billing overview API không có nguồn dữ liệu nào để phân biệt; `TENANT_SUSPENDED` cố tình cause-agnostic — xem `BE/feature_billing_lifecycle_tech.md` §3 Status Authority) | "Lỗi — liên hệ support" | N/A |
-| Bot (Zalo/Messenger) | Owner notice | — | "⚠️ [Club] sắp hết hạn / đã bị tạm ngưng" | — | N/A |
+> Web settings/billing area (host-only). Mobile-first 375px; desktop ≥1024.
+
+### Web — Billing overview
+
+**Purpose:** Host xem plan hiện tại, trạng thái subscription, ngày hết hạn.
+
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← Cài đặt CLB          💳 Thanh toán                    │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  ─── Gói hiện tại ───                                    │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ 🏆 Host Pro                        ✅ Active       │  │
+│  │                                                    │  │
+│  │ Bắt đầu: 01/07/2026                               │  │
+│  │ Hết hạn:  01/08/2026    (còn 22 ngày)             │  │
+│  │ Grace:    3 ngày sau hết hạn                       │  │
+│  │                                                    │  │
+│  │ [Đổi gói]           [Huỷ gia hạn]                 │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+│  ─── Hoá đơn ───                                 Tất cả →│
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ INV-2026-0012  150,000₫  ✅ Đã thanh toán  01/07  │  │
+│  │ INV-2026-0011  150,000₫  ⏳ Chờ thanh toán  01/06  │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Component: Status badge:**
+
+| Status | Badge | Hành vi |
+|--------|-------|---------|
+| `active` | ✅ Active (xanh) | Normal operation |
+| `trial` | 🆓 Dùng thử (tím) | Trial period, countdown |
+| `expiring` | ⚠️ Sắp hết hạn (vàng) | ≤7 ngày, CTA gia hạn |
+| `past_due` | 🔴 Quá hạn (đỏ) | Grace period, CTA thanh toán |
+| `suspended` | ⛔ Tạm ngưng (đỏ đậm) | Capabilities OFF, reactivation CTA |
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton (plan card + 2 invoice row skeletons) |
+| Ready | Plan info + status badge + recent invoices |
+| Error | Error banner + retry |
+| Empty | N/A (always has plan — free plan at minimum) |
+
+### Web — Invoice list (full)
+
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← Thanh toán           📄 Hoá đơn                       │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │ Mã          Số tiền      Trạng thái    Ngày     │    │
+│  ├──────────────────────────────────────────────────┤    │
+│  │ INV-0012    150,000₫     ✅ Đã TT      01/07   │    │
+│  │ INV-0011    150,000₫     ⏳ Chờ TT     01/06   │    │
+│  │ INV-0010    150,000₫     ✅ Đã TT      01/05   │    │
+│  └──────────────────────────────────────────────────┘    │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**States:** Loading (skeleton table) | Ready (invoice rows) | Error (banner) | Empty ("Chưa có hoá đơn")
+
+### Web — Payment instructions
+
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← Hoá đơn             💳 Thanh toán INV-0011            │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  Số tiền: 150,000₫                                       │
+│                                                          │
+│  ┌────────────────────────┐                              │
+│  │     [QR VietQR]        │                              │
+│  │                        │                              │
+│  └────────────────────────┘                              │
+│                                                          │
+│  Ngân hàng: Vietcombank                                  │
+│  Số TK: 0123456789                                       │
+│  Chủ TK: PLEXCO TECHNOLOGY                               │
+│  Nội dung CK: INV-2026-0011                              │
+│                                                          │
+│  [📋 Sao chép thông tin]                                 │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Web — Reactivation (suspended)
+
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                                                          │
+│        ⛔ CLB đang bị tạm ngưng                          │
+│                                                          │
+│  Thanh toán để kích hoạt lại dịch vụ.                    │
+│                                                          │
+│  [═══ Thanh toán ngay ═══]                               │
+│                                                          │
+│  Liên hệ hỗ trợ nếu bạn cho rằng                        │
+│  đây là nhầm lẫn.                                        │
+│  [📧 Liên hệ support]                                   │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+> Luôn hiển thị CẢ HAI CTA — `TENANT_SUSPENDED` cause-agnostic, không rẽ nhánh theo nguyên nhân.
+
+### Bot — Owner notice
+
+**Layout:**
+
+```
+⚠️ CLB Cầu lông Bình Thạnh
+
+Gói Host Pro sắp hết hạn ngày 01/08.
+Thanh toán trước để tránh gián đoạn.
+
+[Thanh toán →]
+```
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Plan card | `subscriptions` per tenant | `plan_key`, `status`, dates |
+| Status badge | `subscriptions.status` | Enum → badge mapping |
+| Invoice list | `subscription_invoices` | Sorted by date DESC |
+| Payment QR | Platform bank + invoice_code | VietQR standard |
+| Reactivation | `subscriptions.status = 'suspended'` | Cause-agnostic CTA |
+
+### State coverage matrix
+
+| Screen | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| Billing overview | ✅ Skeleton card + rows | ✅ Plan + badge + invoices | ✅ Banner + retry | ⚪ N/A (always has plan) |
+| Invoice list | ✅ Skeleton table | ✅ Invoice rows | ✅ Banner + retry | ✅ "Chưa có hoá đơn" |
+| Payment instructions | — | ✅ QR + bank info | — | ⚪ N/A |
+| Status badges | — | ✅ Active/Expiring/PastDue/Suspended | — | ⚪ N/A |
+| Reactivation | — | ✅ Payment + support CTAs | ✅ "Lỗi — liên hệ support" | ⚪ N/A |
+| Bot notice | — | ✅ Warning message | — | ⚪ N/A |
 
 ---
 
@@ -135,7 +282,7 @@ stateDiagram-v2
 
 > **Host Pro DD-51:** trial đúng 14 ngày, reminder khi còn 2 ngày; trial hết chưa trả → downgrade `free` ngay, không vào invoice grace. Grace 7 ngày chỉ áp invoice của kỳ trả phí đã active. Refund window tính duy nhất từ invoice `paid_at`; override không thay đổi refund window.
 
-> **⚠️ Diagram trên gộp hai trục vào một:** `suspended` thực chất sống trên **hai cột vật lý khác nhau** — `subscriptions.status` (non-payment, diagram này) và `tenants.status` (tenant-root hard override, abuse/ToS — chưa build write path, xem `BE/feature_billing_lifecycle_tech.md` §3 Status Authority). `suspended --> active: Payment received / manual override` mô tả **chỉ recovery của trục `subscriptions`** — trả nợ hoặc `ApplyOverride` (cả hai đều billing-axis). Nó **KHÔNG** clear một tenant-root hard-suspend (ToS/abuse): trục đó cần một trust-safety un-suspend riêng (chưa xây) sở hữu cả set lẫn clear. Implementer đọc diagram này không được suy ra rằng trả tiền tự động gỡ suspend vì lạm dụng.
+> **⚠️ Diagram trên gộp hai trục vào một:** `suspended` thực chất sống trên **hai cột vật lý khác nhau** — `subscriptions.status` (non-payment, diagram này) và `tenants.status` (tenant-root hard override, abuse/ToS — chưa build write path, xem `../BE/feature_billing_lifecycle_tech.md` §3 Status Authority). `suspended --> active: Payment received / manual override` mô tả **chỉ recovery của trục `subscriptions`** — trả nợ hoặc `ApplyOverride` (cả hai đều billing-axis). Nó **KHÔNG** clear một tenant-root hard-suspend (ToS/abuse): trục đó cần một trust-safety un-suspend riêng (chưa xây) sở hữu cả set lẫn clear. Implementer đọc diagram này không được suy ra rằng trả tiền tự động gỡ suspend vì lạm dụng.
 
 ---
 

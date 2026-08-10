@@ -7,7 +7,7 @@
 > payment service/writer/webhook→settle→notify, protected QR route và UI vẫn chưa tồn tại. Proposal và
 > verdict giữ nguyên `NOT_PLAN_READY`; provider snapshot phải probe lại trước pilot.
 > **Nguồn ngoài đã probe lại 2026-07-22:** `GET https://api.vietqr.io/v2/banks` · Android/iOS deeplink APIs · VietQR changelog · Quick Link · lookup notice  
-> **Canonical repo:** `packages/db/schema.ts` · `packages/core/src/vietqr.ts` · `docs/features/feature_payment_reconcile.md` · `docs/features/BE/feature_payment_reconcile_tech.md` · `docs/standards/decisions.md` (DD-02/24/25/30/40/49) · `docs/standards/business-rules.md` · `docs/00-start-here/HANDOFF.md` §3  
+> **Canonical repo:** `packages/db/schema.ts` · `packages/core/src/vietqr.ts` · `docs/features/FE/feature_payment_reconcile.md` · `docs/features/BE/feature_payment_reconcile_tech.md` · `docs/standards/decisions.md` (DD-02/24/25/30/40/49) · `docs/standards/business-rules.md` · `docs/00-start-here/HANDOFF.md` §3  
 > **Mục tiêu:** đánh giá và đề xuất contract cho (1) danh mục ngân hàng/BIN, (2) sinh QR chuyển khoản, (3) deeplink app ngân hàng và (4) xác minh tài khoản nhận tiền.
 
 ---
@@ -334,7 +334,7 @@ Các recommendation dưới đây **chưa phải owner approval**.
 Sau khi VQR-OQ-1..4 được owner chốt:
 
 1. Ghi decision vào `docs/standards/decisions.md` với provenance/date.
-2. Propagate contract vào `docs/features/feature_payment_reconcile.md` và `docs/features/BE/feature_payment_reconcile_tech.md`.
+2. Propagate contract vào `docs/features/FE/feature_payment_reconcile.md` và `docs/features/BE/feature_payment_reconcile_tech.md`.
 3. Re-run readiness gate cho **D1a** trước; không author D1b–D4 như một mega-slice.
 4. Chỉ sau `PLAN_READY/CODE_READY` mới tạo manifest/launcher/worktree theo autopilot policy.
 

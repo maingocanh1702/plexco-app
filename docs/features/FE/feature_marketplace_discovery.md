@@ -6,7 +6,7 @@
 > **Status:** Reviewed  
 > **Implementation:** Not started — `public_sessions` có sẵn và `0024` đã enforce public session phải finite-capacity; publish/projector/routes/UI vẫn chưa có · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status). *Tail migration hiện hành là `0029` (đo 06/08 tại `2cd52ce`), nhưng `0025`–`0029` không chạm marketplace: rename CHECK, definer read-only và DD-29 billing registry.*
 > **Prerequisites:** P2 session management · P4 sync/public projector  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-3/NFR-S2 · `../product/PRD.md` FLOW 12 · `../product/TDD.md` §3.9 · `../standards/decisions.md` DD-32 · `feature_channel_booking_funnel.md` · BRD OD-6/OD-8 · `BE/feature_marketplace_discovery_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-3/NFR-S2 · `../product/PRD.md` FLOW 12 · `../product/TDD.md` §3.9 · `../standards/decisions.md` DD-32 · `feature_channel_booking_funnel.md` · BRD OD-6/OD-8 · `../BE/feature_marketplace_discovery_tech.md`
 
 ---
 
@@ -63,13 +63,176 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 
 ## 3. Screens & States
 
-| Surface | Screen | Loading | Ready | Error | Empty |
-|---------|--------|---------|-------|-------|-------|
-| Web | Marketplace browse | Skeleton cards (3x2 grid) | Session cards: sport icon, area, time, price, confirmed count, slots, join CTA | Error banner + retry | "Không tìm thấy buổi chơi nào" + filter reset CTA |
-| Web | Filter panel | — | Sport/area/time/skill/price/slot pickers | — | N/A |
-| Web | Session public detail | Skeleton | Whitelist info + Join CTA | "Buổi chơi không còn khả dụng" | N/A |
-| Web | Rate-limited | — | "Quá nhiều truy vấn — thử lại sau [countdown]" | — | N/A |
-| Zalo/Messenger Bot | `/search` (Zalo) · quick-reply (Messenger) | "🔍 Đang tìm..." | Messenger: max 8 kết quả/page + Prev/Next/Cancel; Zalo theo number-reply contract | "Không tìm thấy" | "Không có buổi nào phù hợp" |
+> Web = center tab "🔍 Khám phá" (bottom nav slot 3, emphasized/FAB). Bot = `/search` (Zalo) / quick-reply (Messenger). Mobile-first 375px; desktop ≥1024 (2-column grid).
+
+### Web — Marketplace browse
+
+**Purpose:** Player tìm + filter public sessions across clubs.
+
+**Layout (mobile):**
+
+```
+┌──────────────────────────────────────┐
+│ 🔍 Khám phá                    🔔   │
+├──────────────────────────────────────┤
+│ [🏸 Cầu lông] [⚽ Bóng đá] [Tất cả]│  sport filter chips (scroll-x)
+│ [📍 Khu vực ▼] [📅 Ngày ▼] [💰 Giá]│  filter bar
+├──────────────────────────────────────┤
+│                                      │
+│ ┌────────────────────────────────┐   │
+│ │ 🏸 Cầu lông chiều T5          │   │  session card
+│ │ 📍 Q3 · 📅 10/08 · 19:00     │   │
+│ │ 💰 120,000₫ · 👥 6/8 · 2 chỗ │   │
+│ │ CLB Rồng Xanh · Host: Anh T  │   │
+│ │ [═══ Tham gia ═══]            │   │
+│ └────────────────────────────────┘   │
+│ ┌────────────────────────────────┐   │
+│ │ ⚽ Bóng đá T7                  │   │
+│ │ 📍 Thủ Đức · 📅 12/08 · 16:00│   │
+│ │ 💰 85,000₫ · 👥 8/10 · 2 chỗ │   │
+│ │ FC Weekend · Host: B          │   │
+│ │ [═══ Tham gia ═══]            │   │
+│ └────────────────────────────────┘   │
+│                                      │
+│ ┌────────────────────────────────┐   │
+│ │        Xem thêm ↓              │   │  cursor pagination
+│ └────────────────────────────────┘   │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+**Component: Session card (public):**
+
+| Field | Data source | Ghi chú |
+|-------|-------------|---------|
+| Sport icon + name | `public_sessions.sport_key` → `sports` taxonomy | Không expose internal ID |
+| Area | `public_sessions.area` | Coarse (quận/khu vực), KHÔNG address |
+| Date/time | `public_sessions.starts_at` | Format `DD/MM · HH:mm` |
+| Price | `public_sessions.price` | VND, scalar — không lộ gender pricing |
+| Confirmed / Slots | `confirmed_count` + `slots_open` | Advisory — final check at join |
+| Club name | `public_sessions.club_display_name` | Moderated; personal blank → no project |
+| Host name | `public_sessions.host_display_name` | Moderated; never raw identity |
+| Join CTA | Opaque action → `cross_club_join` | Không raw routing ID |
+
+**Component: Filter bar:**
+
+| Filter | Type | Options |
+|--------|------|---------|
+| Môn thể thao | Chip row (scroll-x) | From `sports` taxonomy |
+| Khu vực | Dropdown | Quận/khu vực từ area taxonomy |
+| Ngày | Date picker / range | Hôm nay → 2 tuần tới |
+| Giá | Range slider | 0 → 500,000₫ |
+| Trình độ | Chips (DD-41) | Ordered ranks, không lộ player level |
+| Slot còn trống | Toggle: "Chỉ còn chỗ" | `slots_open > 0` filter |
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton: sport chips + filter bar + 4 card skeletons (2×2 grid desktop) |
+| Ready | Session cards grid + pagination |
+| Error | Error banner: "Không tải được" + retry |
+| Empty | Icon 🔍 + "Không tìm thấy buổi chơi nào" + [Reset bộ lọc] CTA |
+
+### Web — Session public detail
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ ← Khám phá                          │
+├──────────────────────────────────────┤
+│                                      │
+│ 🏸 Cầu lông chiều T5                │
+│ CLB Rồng Xanh · Host: Anh T         │
+│                                      │
+│ 📅 Thứ 5, 10/08/2026                │
+│ 🕒 19:00 — 21:00                    │
+│ 📍 Quận 3 (địa chỉ chính xác sau   │
+│    khi xác nhận tham gia)            │
+│                                      │
+│ 💰 120,000₫ / người                 │
+│ 👥 6 / 8 người · 2 chỗ còn trống   │
+│ 🏅 Trình độ: Trung bình — Khá      │
+│                                      │
+│ ─── Chính sách tham gia ───         │
+│ Đăng ký mở (open) / Cần duyệt      │
+│                                      │
+│      [═══ Tham gia buổi này ═══]    │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+**States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton layout |
+| Ready | Full whitelist info + Join CTA |
+| Error | "Buổi chơi không còn khả dụng" + back CTA |
+| Empty | N/A (always has data or error) |
+
+### Bot — `/search` (Zalo) / quick-reply (Messenger)
+
+**Layout (Messenger — max 8 choices/page):**
+
+```
+🔍 Tìm buổi chơi
+
+1️⃣ 🏸 Cầu lông T5 · Q3 · 19:00
+   💰 120k · 👥 6/8 · 2 chỗ
+   
+2️⃣ ⚽ Bóng đá T7 · Thủ Đức · 16:00
+   💰 85k · 👥 8/10 · 2 chỗ
+
+3️⃣ 🏓 Pickleball CN · Q7 · 8:00
+   💰 150k · 👥 4/6 · 2 chỗ
+
+[Trang sau →] [Huỷ tìm]
+```
+
+> Messenger: max 8/page, Prev/Next/Cancel. Zalo: number-reply contract.
+
+**Bot states:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | "🔍 Đang tìm..." |
+| Ready | Kết quả list + pagination |
+| Error | "Không tìm được lúc này" |
+| Empty | "Không có buổi nào phù hợp — thử đổi bộ lọc" |
+
+### Rate-limited screen
+
+```
+┌──────────────────────────────────────┐
+│                                      │
+│        ⏳                             │
+│  Quá nhiều truy vấn                  │
+│  Thử lại sau [00:30]                 │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Session cards | `public_sessions` (materialized) | Whitelist only, no FK to tenant |
+| Sport chips | `sports` taxonomy | Ordered |
+| Area filter | `public_sessions.area` DISTINCT | Coarse taxonomy |
+| Counts | `confirmed_count`, `slots_open` | Advisory, shared occupancy helper |
+| Join action | Opaque session ref → `cross_club_join` | No raw routing ID |
+
+### State coverage matrix
+
+| Screen | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| Browse grid | ✅ Skeleton cards | ✅ Cards + pagination | ✅ Banner + retry | ✅ "Không tìm thấy" + reset |
+| Filter panel | — | ✅ Sport/area/time/price pickers | — | ⚪ N/A |
+| Session detail | ✅ Skeleton | ✅ Whitelist info + Join CTA | ✅ "Không còn khả dụng" | ⚪ N/A |
+| Rate-limited | — | ✅ Countdown | — | ⚪ N/A |
+| Bot search | ✅ "Đang tìm..." | ✅ Results + pagination | ✅ "Không tìm được" | ✅ "Không phù hợp" |
 
 ---
 
@@ -149,7 +312,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 |---|---|---|
 | 2026-07-28 | v2.4 | Mirror DD-32 public aggregates: confirmed active count and slots-open (active + live holds) from one occupancy helper; hold count stays private. Bot Join CTA routes safe detail/final gate while web retains cross-club join. No projector/runtime claim. |
 | 2026-07-27 | v2.3 | Mirror `0024`: public + unlimited capacity đã bị DB CHECK loại và dữ liệu hiện có đã validate; đây là invariant nền, không phải publish/projector/Marketplace runtime. |
-| 2026-07-24 | v2.2b | **Public-projection timing, explicit (`docs-prd-flow2-publish-projection-reconcile`, hard dependency of `docs-session-publish-contract`):** MKT-UC-1 + edge #1 + Bất biến bullet reworded to require `status='open'` in addition to `visibility='public'` — a `draft` session is never projected regardless of visibility. Closes the same cross-authority conflict already fixed in `BE/feature_marketplace_discovery_tech.md` §4 and PRD FLOW 2/12/14; this Product-spec mirror was the codex round-01 P1 gap (Reviewed spec still permitted project-on-visibility-alone). Codex round-02 [P2]: MKT-UC-1 wording corrected — `visibility` is set only at create/edit, never at publish (`PublishSession` is status-only per `feature_session_management_tech.md` §4; publish only flips `draft`→`open`, which is what actually triggers the already-public row to project). No schema/algorithm change. |
+| 2026-07-24 | v2.2b | **Public-projection timing, explicit (`docs-prd-flow2-publish-projection-reconcile`, hard dependency of `docs-session-publish-contract`):** MKT-UC-1 + edge #1 + Bất biến bullet reworded to require `status='open'` in addition to `visibility='public'` — a `draft` session is never projected regardless of visibility. Closes the same cross-authority conflict already fixed in `../BE/feature_marketplace_discovery_tech.md` §4 and PRD FLOW 2/12/14; this Product-spec mirror was the codex round-01 P1 gap (Reviewed spec still permitted project-on-visibility-alone). Codex round-02 [P2]: MKT-UC-1 wording corrected — `visibility` is set only at create/edit, never at publish (`PublishSession` is status-only per `feature_session_management_tech.md` §4; publish only flips `draft`→`open`, which is what actually triggers the already-public row to project). No schema/algorithm change. |
 | 2026-07-19 | v2.2a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.2 | **Live/DD-46 projection closure:** document intentional no-FK public session reference; personal tenants source public club alias only from owner membership and fail closed when blank; ranking remains deterministic time-order until MKT-OQ-3 is resolved. |
 | 2026-07-17 | v2.1 | **DD-65/66/68:** Messenger central global vs tenant Page local-default discovery; max 8 business choices/page và opaque Join actions. |

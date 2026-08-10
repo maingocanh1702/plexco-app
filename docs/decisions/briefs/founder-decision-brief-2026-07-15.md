@@ -238,7 +238,7 @@
 - Split plan phải map rõ channel identities, memberships, players và charges; **không rewrite bank transactions/payment allocations**. Apply idempotent, re-run tenant/ledger invariants rồi mới unfreeze.
 - SLA đề xuất: freeze ≤4 giờ khi nghi sai tiền/identity; plan chuẩn ≤1 ngày làm việc. SLA không được biến thành quyền bypass evidence.
 
-**Pointer:** `features/feature_identity.md` ID-OQ-2 · `00-start-here/identity-model.md` ID-MERGE-1 · `features/BE/feature_identity_tech.md §7–§8` · `features/feature_tenant_routing_authz.md` RTE-OQ-2.
+**Pointer:** `features/FE/feature_identity.md` ID-OQ-2 · `00-start-here/identity-model.md` ID-MERGE-1 · `features/BE/feature_identity_tech.md §7–§8` · `features/FE/feature_tenant_routing_authz.md` RTE-OQ-2.
 
 ---
 

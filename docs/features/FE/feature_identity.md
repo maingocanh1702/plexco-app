@@ -160,16 +160,129 @@ Facebook Login App-scoped subject không tự bằng Messenger Page-scoped PSID;
 
 ## 6. Screens và states
 
-| Surface | Loading | Ready | Error | Empty |
-|---|---|---|---|---|
-| `/link` | Đang tạo mã | Code + expiry + cảnh báo không chia sẻ | Rate-limit/generic error | N/A |
-| Verify link | Đang xác minh | Impact summary + confirm | Invalid/expired/consumed | N/A |
-| Merge confirmation | Đang kiểm tra conflict | Accounts/CLBs bị ảnh hưởng + Confirm/Cancel | Requires admin review | N/A |
-| Host claim review | Skeleton | Evidence + debt/history warning | Permission/conflict | Không có suggestion |
-| Member detail P4 | Skeleton | Channels, memberships, audit summary | Redacted error | N/A |
+> Web identity management. Minimal UI (identity ops mostly automated). Mobile-first 375px.
+
+### /link — Tạo mã liên kết
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ ← Cài đặt        🔗 Liên kết TK    │
+├──────────────────────────────────────┤
+│                                      │
+│ Để liên kết tài khoản Zalo/Messenger │
+│ với Plexco, dùng mã bên dưới:       │
+│                                      │
+│     ┌──────────────────────┐        │
+│     │   PLXC-A7B2-F9D1    │        │
+│     └──────────────────────┘        │
+│     Hết hạn sau 10:00               │
+│                                      │
+│ ⚠️ Không chia sẻ mã này cho         │
+│    người khác                        │
+│                                      │
+│ [📋 Copy mã]                        │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+### Verify link — Xác minh liên kết
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ ← Link           ✅ Xác minh        │
+├──────────────────────────────────────┤
+│                                      │
+│ Liên kết tài khoản:                  │
+│                                      │
+│ 📱 Zalo: CLB Cầu lông BT           │
+│    ↕                                │
+│ 🌐 Plexco: nguyenvana@gmail.com    │
+│                                      │
+│ ─── Ảnh hưởng ───                   │
+│ • 2 CLB sẽ được gộp                 │
+│ • Lịch sử kèo được giữ nguyên      │
+│                                      │
+│ [═══ Xác nhận liên kết ═══]         │
+│ [Hủy]                                │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+### Merge confirmation — Xác nhận gộp
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ ⚠️ Xác nhận gộp tài khoản           │
+├──────────────────────────────────────┤
+│                                      │
+│ Bạn đang gộp 2 tài khoản:           │
+│                                      │
+│ TK nguồn: Zalo (Minh Hoàng)         │
+│ TK đích:  Plexco (nguyenvana@...)   │
+│                                      │
+│ ─── Ảnh hưởng ───                   │
+│ CLBs: 3 CLB sẽ gộp vào 1 profile   │
+│ Kèo: 12 kèo lịch sử được giữ       │
+│ Nợ: ⚠️ 75,000₫ nợ từ TK nguồn      │
+│                                      │
+│ [═══ Xác nhận gộp ═══]              │
+│ [Hủy — giữ tách biệt]              │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+### Host claim review
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ 👥 Yêu cầu nhận quyền thành viên   │
+├──────────────────────────────────────┤
+│                                      │
+│ Người yêu cầu: Minh Hoàng           │
+│ Thành viên: "MinhH" (chưa liên kết) │
+│                                      │
+│ ─── Bằng chứng ───                  │
+│ 📊 Lịch sử: 8 kèo, 2 tháng         │
+│ 💰 Nợ: ⚠️ 150,000₫ chưa thanh toán │
+│                                      │
+│ ─── Khoá mạnh cần thiết (DD-13) ─── │
+│ Thành viên có lịch sử tài chính     │
+│ → Cần xác minh danh tính bổ sung    │
+│                                      │
+│ [Chấp nhận]      [Từ chối]          │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Link code | `link_codes` (single-use, TTL) | Opaque, no PII in code |
+| Verify | `channel_identities` + `persons` | Endpoint-scoped |
+| Merge | `merge_audit` (protected, retention) | Idempotent commit |
+| Claim review | `memberships` + `charges` | Financial history = strong key |
+| Member detail | `channel_identities` + `memberships` per person | P4 feature |
+
+### State coverage matrix
+
+| Screen | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| /link (create) | ✅ "Đang tạo mã" | ✅ Code + expiry + warning | ✅ Rate-limit / generic | ⚪ N/A |
+| Verify link | ✅ "Đang xác minh" | ✅ Impact summary + confirm | ✅ Invalid/expired/consumed | ⚪ N/A |
+| Merge confirmation | ✅ "Đang kiểm tra conflict" | ✅ Accounts + impact + confirm | ✅ "Cần admin review" | ⚪ N/A |
+| Host claim review | ✅ Skeleton | ✅ Evidence + debt warning | ✅ Permission/conflict | ✅ "Không có suggestion" |
+| Member detail (P4) | ✅ Skeleton | ✅ Channels + memberships | ✅ Redacted error | ⚪ N/A |
 
 Không hiển thị email, phone dormant, bank account hoặc raw platform IDs trong suggestion UI.
-
 ---
 
 ## 7. Analytics và audit

@@ -4,7 +4,7 @@
 > **Version:** 0.9 · 2026-07-28
 > **Status:** Reviewed contract · Implementation pending
 > **Implementation:** Not started — `apps/bot` đã có shared job lease/ack + preflight/dispatcher/scheduler gated, nhưng chưa có Messenger adapter/handler/projector; schedule mặc định OFF và delivery placeholder · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
-> **Product spec:** `../feature_player_messenger.md`
+> **Product spec:** `../FE/feature_player_messenger.md`
 > **References:** `../../standards/decisions.md` DD-32/DD-33/DD-37/DD-45/DD-49/DD-65..68 · `../../channels/messenger/messenger-channel-design.md` · `feature_channel_booking_funnel_tech.md` · `feature_session_management_tech.md` · `feature_tenant_routing_authz_tech.md`
 
 > Adapter dùng **Session/Join/AuthZ services chung** với web/Zalo. `packages/db/schema.ts` là live truth nhưng **chưa đáp ứng** hybrid contract; DD-65..68 là authority cho migration triển khai mới, không được sửa migration lịch sử.
@@ -109,6 +109,17 @@ Exact names/DDL chốt ở migration design-probe (đã pin ở đầu §2); ch�
 
 ---
 
+### Query Patterns
+
+```sql
+-- resolveIdentityFromPSID (protected function, per Page)
+SELECT ci.id, ci.person_id, ci.platform
+FROM channel_identities ci
+WHERE ci.platform = 'messenger'
+  AND ci.provider_scope_lookup_hash = $1  -- HMAC(page_id + psid)
+  AND ci.status = 'active';
+```
+
 ## 3. API Contract
 
 ### Messenger Adapter (webhook + send)
@@ -122,6 +133,62 @@ Exact names/DDL chốt ở migration design-probe (đã pin ở đầu §2); ch�
 | Persistent menu: `/newsession` | Host DM | Start durable wizard; preview/confirm → idempotent shared `CreateSession` |
 | Host status/approve/announce/close | Host DM | Exact action capability; reuse existing deterministic handler payload/service |
 | Send API (outbound) | System | Gửi trong 24h window; ngoài 24h → skip |
+
+### Endpoints
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| GET | `/webhook/messenger` | Public (verify_token) | Meta webhook verification handshake |
+| POST | `/webhook/messenger` | Signed (X-Hub-Signature-256) | Inbound events → resolver → AuthZ → service |
+
+> Không có app-facing REST API — mọi interaction qua Messenger webhook + DM.
+
+### Error Codes (webhook responses)
+
+| Code | Error Code | Message | Trigger |
+|------|-----------|---------|---------|
+| 200 | (ACK) | — | Valid webhook event processed |
+| 400 | `WEBHOOK_SIGNATURE_INVALID` | — | X-Hub-Signature-256 mismatch |
+| 400 | `WEBHOOK_PAYLOAD_MALFORMED` | — | Unparseable body |
+| 400 | `WEBHOOK_VERIFY_TOKEN_MISMATCH` | — | GET verify_token wrong |
+| 429 | `WEBHOOK_RATE_LIMITED` | — | Edge burst cap exceeded |
+
+### DM Error Responses (user-facing)
+
+| Situation | Response (tiếng Việt) | Error Code (internal) |
+|-----------|----------------------|----------------------|
+| Stale quick-reply | "Danh sách đã thay đổi, gõ menu để xem lại" | `ACTION_STALE` |
+| Session closed | "❌ Buổi chơi đã kết thúc" | `SESSION_CLOSED` |
+| Session full | "Hết chỗ — bạn đã được thêm vào danh sách chờ" | `SESSION_FULL` |
+| No eligible club | "Bạn chưa có quyền quản lý CLB phù hợp" | `NO_ELIGIBLE_CLUB` |
+| Payment expired | "Chỗ giữ đã hết hạn" | `HOLD_EXPIRED` |
+| Unknown command | "Mình chưa hiểu, gõ 'menu' để xem lại" | `UNKNOWN_COMMAND` |
+### Request/Response Examples
+
+> Webhook trả theo Meta provider contract; DM response theo bảng đã pin.
+
+**`POST /webhook/messenger`** — valid event processed:
+
+```json
+{
+  "object": "page",
+  "entry": [{
+    "messaging": [{
+      "sender": { "id": "PSID_..." },
+      "message": { "text": "menu" }
+    }]
+  }]
+}
+```
+
+Response: `200 OK` (ACK to Meta).
+
+**Invalid signature:**
+
+```json
+{ "error": "WEBHOOK_SIGNATURE_INVALID" }
+```
+
 
 ### Join/Error Responses (Messenger DM)
 

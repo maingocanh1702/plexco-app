@@ -424,7 +424,7 @@ erDiagram
 | 25 | `projector_deliveries` | WORKER | narrow privileged access | P4 (projector inbox/delivery ledger) |
 | 25a | `channel_booking_intents` | TENANT | ✅ | DD-32 orchestration/link-resume/payment hold only; exact DDL/state in funnel BE spec, **not canonical booking/money truth** |
 | 26 | `chat_*` — N club channel/tenant + human DM; revisions + soft-delete tombstone + structured mentions + reactions; generated `simple` search vector; surface-aware command registry; unread cursors/preferences/coalesced delivery references; exact moderation audit + timed mute | TENANT (club-chat) / person-self (1-1) | ✅ | P4 — DD-86/DD-91–95 target contract Reviewed, schema **chờ migration** (chưa vào canonical) |
-| 27 | hồ sơ người dùng (`person.gender/dob/username/language`) — **scope-committed phase-1 (DD-39 ✅)** | GLOBAL (PII, consent) | protected | P4 — cột **chờ migration**, xem doc Draft `../features/feature_user_settings.md` |
+| 27 | hồ sơ người dùng (`person.gender/dob/username/language`) — **scope-committed phase-1 (DD-39 ✅)** | GLOBAL (PII, consent) | protected | P4 — cột **chờ migration**, xem doc Draft `../features/FE/feature_user_settings.md` |
 
 > **Live migration tail (không thay target model ở bảng trên):** `0022_job_claim_lease_core.sql` tạo lease/reclaim/audit + narrow `job_definer`/`app_worker`; `0023_outbox_ack_marker.sql` thêm `claim_token`, `acked_at`, `ack_outbox_event`; `0024_public_visibility_capacity_check.sql` thêm `sessions_public_capacity_chk`, cấm session `visibility='public'` mà `slots_max IS NULL`. Ba migration này là shared infrastructure/invariant, không chứng minh Session, Sync hay Marketplace runtime.
 >

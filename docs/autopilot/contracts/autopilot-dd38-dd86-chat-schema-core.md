@@ -14,7 +14,7 @@ REQUEST: final-readiness (authoring, not implementation)
 TARGET_FILES:
   - docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md (v1.8, §7-§13)
   - docs/features/BE/feature_inapp_chat_tech.md (v0.23, §2 schema/RLS)
-  - docs/features/feature_inapp_chat.md (v0.15)
+  - docs/features/FE/feature_inapp_chat.md (v0.15)
   - docs/decisions/analysis/dd-86-in-app-multi-channel-analysis.md
   - docs/standards/decisions.md (DD-38/55/86/91-95 anchors, §1112/§1193)
   - docs/standards/feature-dependency-graph.md
@@ -515,7 +515,7 @@ BASE_REMOTE_RELATION: MAIN_EQUALS_ORIGIN_MAIN
 TARGET_FILES:
   - docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md
   - docs/features/BE/feature_inapp_chat_tech.md
-  - docs/features/feature_inapp_chat.md
+  - docs/features/FE/feature_inapp_chat.md
   - docs/decisions/analysis/dd-86-in-app-multi-channel-analysis.md
   - docs/standards/decisions.md
   - docs/standards/feature-dependency-graph.md

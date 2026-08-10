@@ -1,7 +1,7 @@
 # Feature: Onboarding Wizard — FE Design Spec
 
 > **Route(s):** `/onboarding`
-> **Source authority:** `../../../features/feature_web_auth_onboarding.md` v2.11 + `../../../features/feature_connector_onboarding.md` v1.0 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
+> **Source authority:** `../../../features/FE/feature_web_auth_onboarding.md` v2.11 + `../../../features/FE/feature_connector_onboarding.md` v1.0 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
 > **Source authority (BE connector catalog + contract):** `../../../features/BE/feature_connector_onboarding_tech.md` §3 — *Error Codes* (`APIPAY_BANK_SELECTION_INVALID` · `APIPAY_KEY_INVALID` · `APIPAY_BANK_NOT_ACTIVE` · `APIPAY_ENTERPRISE_BANK_UNSUPPORTED` · `APIPAY_ENTERPRISE_PROVISION_FAILED` · `APIPAY_ENTERPRISE_UNAVAILABLE` · `PROVIDER_WEBHOOK_REGISTER_FAILED` · `SEPAY_OAUTH_DENIED` · `OAUTH_STATE_INVALID` · `BANK_ALREADY_BOUND` · `IDEMPOTENCY_KEY_REUSED` · `RATE_LIMITED`) và `POST /api/onboarding/apipay/provision` — nơi định nghĩa `bankSelectionRef` là reference **opaque, TTL ngắn, server-cấp**, không phải số TK thô/credential.
 > **Source authority (BE auth catalog):** `../../../features/BE/feature_web_auth_onboarding_tech.md` §3 — `AUTH_INVALID` · `CSRF_INVALID` lấy nguyên văn từ bảng Error Codes ở đó.
 > **Source contract status:** Auth onboarding Reviewed; connector auto-register Draft/externally gated

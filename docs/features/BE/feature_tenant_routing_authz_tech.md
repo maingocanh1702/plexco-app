@@ -4,7 +4,7 @@
 > **Version:** 2.7 · 2026-07-28
 > **Status:** Reviewed · reconciled to TDD v3.1 / decisions DD-56/DD-86
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
-> **Product spec:** `../feature_tenant_routing_authz.md`
+> **Product spec:** `../FE/feature_tenant_routing_authz.md`
 > **References:** `../../product/TDD.md` §3.3–3.5 · `../../standards/business-rules.md` BL-SEC-2/BL-SEC-5 · `../../standards/decisions.md` DD-27 · DD-51 · DD-53 · DD-56 · **DD-65..68**
 
 ---
@@ -140,6 +140,32 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 
 ---
 
+### Query Patterns
+
+```sql
+-- resolveTenantFromChannel (Zalo: trusted token context)
+SELECT t.id, t.display_name, t.status
+FROM tenants t
+JOIN zalo_bots zb ON zb.tenant_id = t.id
+WHERE zb.oa_id = $1
+  AND t.status = 'active';
+
+-- getMemberRole (authorization check)
+SELECT m.role, m.person_id
+FROM memberships m
+WHERE m.tenant_id = current_setting('app.tenant_id', true)::uuid
+  AND m.person_id = $1
+  AND m.status = 'active';
+
+-- getSessionGrants (session-scoped capabilities)
+SELECT g.action, g.resource_id, g.expires_at
+FROM grants g
+WHERE g.grantee_person_id = $1
+  AND g.resource_type = 'session'
+  AND g.resource_id = $2
+  AND g.expires_at > now();
+```
+
 ## 3. API Contract
 
 ### Resolution Precedence
@@ -212,6 +238,21 @@ CREATE INDEX idx_link_codes_expiry ON tenant_link_codes(expires_at) WHERE consum
 | Callback/action snapshot | ✅ fail-closed | Stale snapshot invalidate/re-pick; capability + target re-check tại consume (edge #9, test #9) |
 | Admin command HTTP key | ⬜ chưa pin — chốt ở build slice | — |
 
+
+### Endpoints
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| POST | `/api/auth/resolve-tenant` | Authenticated session | Resolve tenant from channel/session context |
+| GET | `/api/tenants/:tid/members` | TenantAdmin | List tenant members with roles |
+| POST | `/api/tenants/:tid/members/invite` | TenantAdmin | Invite member to tenant |
+| PUT | `/api/tenants/:tid/members/:mid/role` | TenantOwner | Change member role |
+| DELETE | `/api/tenants/:tid/members/:mid` | TenantAdmin | Remove member |
+| GET | `/api/tenants/:tid/grants` | TenantAdmin | List session-scoped grants |
+| POST | `/api/tenants/:tid/grants` | TenantAdmin | Create session-scoped grant |
+| DELETE | `/api/tenants/:tid/grants/:gid` | TenantAdmin | Revoke grant |
+
+> Envelope DD-60.
 ---
 
 ## 4. Chi tiết triển khai

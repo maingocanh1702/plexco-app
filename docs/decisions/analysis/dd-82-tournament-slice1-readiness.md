@@ -14,7 +14,7 @@ REQUEST: final-readiness
 TARGET_FILES:
   - docs/standards/decisions.md (DD-82, DD-41, DD-06, DD-12, DD-83)
   - docs/decisions/analysis/dd-82-tournament-analysis.md
-  - docs/features/feature_tournament.md
+  - docs/features/FE/feature_tournament.md
   - docs/features/BE/feature_tournament_tech.md
   - packages/db/schema.ts
   - packages/db/migrations/0009_rls_policies_grants.sql
@@ -116,7 +116,7 @@ BASE_BRANCH: main
 TARGET_FILES:
   - docs/standards/decisions.md
   - docs/decisions/analysis/dd-82-tournament-analysis.md
-  - docs/features/feature_tournament.md
+  - docs/features/FE/feature_tournament.md
   - docs/features/BE/feature_tournament_tech.md
   - packages/db/schema.ts
   - packages/db/migrations/0009_rls_policies_grants.sql

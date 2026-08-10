@@ -4,7 +4,7 @@
 > **Version:** 2.13 · 2026-08-06
 > **Status:** Reviewed  
 > **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn; capability/availability resolver, provider wiring và lifecycle runtime chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
-> **Product spec:** `../feature_billing_lifecycle.md`  
+> **Product spec:** `../FE/feature_billing_lifecycle.md`  
 > **References:** `../../standards/business-rules.md` · `../../standards/decisions.md` DD-29/DD-37/DD-40/DD-51/**DD-91** · `../../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
 
 > **Cập nhật v2.4 (DD-40 ✅ + DD-37 ✅, 2026-07-10):** §4b capability registry — free = `payment_mark_manual` (tiền mặt/CK thủ công) + `reminders_manual`; host_pro thêm `payment_reconcile_auto` + `reminders_auto` + `assistant_ai_kb` + `crm_dashboard`. Bot kênh free = **Zalo + Facebook Messenger** (bỏ Telegram — DD-37).
@@ -318,6 +318,16 @@ Case 1b (`tenants.status ∈ {past_due, cancelled}`) và case 4 (thiếu `subscr
 
 **`TENANT_SUSPENDED` giờ có hai root cause khác nhau — reuse cùng code, KHÔNG tự tách code mới (theo đúng discipline slice này):** case 1/1b (`tenants.status`) là abuse/ToS hard override; case 2/2b/4 (`subscriptions.status`/missing row) là non-payment billing. Canonical error code/message ("Club đang tạm ngưng" — owned bởi `feature_tenant_routing_authz_tech.md`) không phân biệt hai nguyên nhân, và **trả tiền không sửa được case 1/1b** (xem cảnh báo cross-axis ở `feature_billing_lifecycle.md` §4). Owner-facing copy ("Reactivation" — §3 Screens & States) **không rẽ nhánh theo nguyên nhân** — billing overview API chỉ trả `subscription.status`, không có nguồn dữ liệu nào để UI phân biệt case nào đang áp; copy luôn hiển thị cả payment CTA lẫn "liên hệ hỗ trợ nếu nhầm lẫn", không tuyên bố tuyệt đối "trả tiền là xong". **Phân biệt rõ nguyên nhân cho owner** (server-side disposition field riêng cho hai root cause) là **scope expansion chưa chốt** — không resolve ở đây (không invent field/code mới, không sửa `feature_tenant_routing_authz_tech.md`); flag làm follow-up sản phẩm khi trust-safety mechanism thật sự được build (hiện chưa có write path nào tạo case 1, xem bảng cột trên).
 
+
+### Rate Limits
+
+| Endpoint | Limit | Scope |
+|----------|-------|-------|
+| `POST /api/billing/invoices` | 10/min | per tenant |
+| `POST /api/billing/payments` | 5/min | per tenant |
+| `GET /api/billing/overview` | 30/min | per tenant |
+| `POST /api/billing/reactivate` | 3/min | per tenant |
+| `POST /api/billing/webhook` | 100/min | per IP |
 ---
 
 ## 4. Chi tiết triển khai

@@ -2,7 +2,7 @@
 
 > **FE route(s):** `/` · `/auth/email/verify` · `/auth/email/reset`
 > **API-owned callback(s):** Provider callback routes belong to the backend and are not FE pages
-> **Source authority:** `../../../features/feature_web_auth_onboarding.md` v2.11 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
+> **Source authority:** `../../../features/FE/feature_web_auth_onboarding.md` v2.11 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
 > **Source authority (password rule):** `../../../standards/decisions.md` DD-80 (owner-chốt 2026-07-19) — password **15–128 Unicode**, không composition rule. Quy tắc này **không** nằm trong feature doc v2.11 ở trên; đừng tìm ở đó.
 > **Source (chưa Reviewed):** `../../../probes/b0-auth-credential-lifecycle-design-probe.md` §8 — blocklist common/compromised/context. Là **design probe**, không phải Reviewed contract ⇒ copy blocklist là design target, không phải hợp đồng đã chốt.
 > **Source authority (BE error catalog):** `../../../features/BE/feature_web_auth_onboarding_tech.md` §3 → *Error Codes* (`AUTH_INVALID` · `AUTH_STALE` · `CSRF_INVALID` · `LOGIN_RATE_LIMITED` · `AUTH_TOKEN_INVALID` · `AUTH_PROVIDER_UNAVAILABLE`) + §5 acceptance matrix D1-8 (`AUTH_IDENTITY_CONFLICT`). Mã trong §3 của file này lấy nguyên văn từ đó; FE không tự đặt mã.

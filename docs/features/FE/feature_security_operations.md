@@ -6,7 +6,7 @@
 > **Status:** Reviewed  
 > **Implementation:** In progress — RLS/HR1 + tenant-integrity + narrow audited job lease/ack/preflight controls đã có; production delivery/ops gates còn mở · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** All production features  
-> **Tài liệu liên quan:** `../product/BRD.md` §8/§13 · `../product/TDD.md` §4/6/7/10 · `../research/player-side-saas-AUDIT.md` · `../standards/business-rules.md` · `BE/feature_security_operations_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` §8/§13 · `../product/TDD.md` §4/6/7/10 · `../research/player-side-saas-AUDIT.md` · `../standards/business-rules.md` · `../BE/feature_security_operations_tech.md`
 
 > **DD-37/DD-65 reconcile:** secret inventory tách đúng ownership: Zalo Bot Token; **Messenger Page access token per Page/endpoint** trong protected store; **một Meta App Secret cấp deployment/platform**; Google OAuth và provider/web/KMS secrets. Không gộp Page token với App Secret thành một rotation unit. Telegram token chỉ là legacy runtime tới khi provider swap hoàn tất.
 >

@@ -4,7 +4,7 @@
 > **Version:** 2.9 · 2026-08-07
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
-> **Product spec:** `../feature_player_view.md`  
+> **Product spec:** `../FE/feature_player_view.md`  
 > **References:** `../../product/TDD.md` §3.4/§4 (person-self contract) · `../../standards/decisions.md` DD-37/DD-91/DD-96 · `../../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md`
 
 > **DD-48 boundary:** endpoints `/api/me*` chỉ self. Cross-user social profile dùng service/DTO trong `feature_user_settings_tech` §6; host operational reads tiếp tục qua tenant-scoped membership/roster authz. Không thêm `:personId` vào player-view API và không share serializer có tiền/PII.
@@ -81,6 +81,32 @@ Uses existing tables: `persons`, `memberships`, `players`, `charges`, `payment_a
 | 17 | Enablement | Slice 19 read tests pass nhưng một current Session packet hoặc production-shaped E2E còn thiếu | Deploy/read core dark nếu cần; `/sessions|/waitlist` beta route vẫn OFF |
 
 ---
+
+### Query Patterns
+
+```sql
+-- getPlayerDashboard (person-self, multi-tenant aggregate)
+SELECT s.id, s.sport_key, s.starts_at, s.area, s.price,
+       p.status AS player_status,
+       t.display_name AS club_name
+FROM players p
+JOIN sessions s ON s.id = p.session_id
+JOIN tenants t ON t.id = s.tenant_id
+WHERE p.person_id = $1
+  AND s.starts_at > now()
+ORDER BY s.starts_at
+LIMIT 20;
+
+-- getPaymentHistory (person-self)
+SELECT c.id, c.amount, c.currency, c.status, c.created_at,
+       s.sport_key, s.starts_at
+FROM charges c
+JOIN players p ON p.id = c.player_id
+JOIN sessions s ON s.id = p.session_id
+WHERE p.person_id = $1
+ORDER BY c.created_at DESC
+LIMIT 20;
+```
 
 ## 3. API Contract
 
@@ -161,6 +187,15 @@ Uses existing tables: `persons`, `memberships`, `players`, `charges`, `payment_a
 | 400 | `MAGIC_LINK_INVALID` | Link không hợp lệ hoặc đã hết hạn | Invalid/expired/used |
 | 403 | `TOPIC_UNAUTHORIZED` | Không có quyền theo dõi | Wrong realtime topic |
 
+
+### Rate Limits
+
+| Endpoint | Limit | Scope |
+|----------|-------|-------|
+| `GET /api/player/dashboard` | 30/min | per user |
+| `GET /api/player/sessions` | 30/min | per user |
+| `GET /api/player/payments` | 20/min | per user |
+| `GET /api/player/clubs` | 20/min | per user |
 ---
 
 ## 4. Chi tiết triển khai

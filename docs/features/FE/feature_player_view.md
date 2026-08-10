@@ -2,11 +2,11 @@
 
 > **Canonical phase:** P4.6  
 > **Track:** 👤 Player View  
-> **Version:** 2.8 · 2026-08-07
+> **Version:** 2.9 · 2026-08-09
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3.5 identity · P3 ledger · P4 web auth/magic link · P4 sync realtime  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-8 · `../product/PRD.md` FLOW 10 · `../product/TDD.md` §3.4/§4 (person-self contract) · `BE/feature_player_view_tech.md` · `../standards/decisions.md` DD-91/DD-96 · `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-8 · `../product/PRD.md` FLOW 10 · `../product/TDD.md` §3.4/§4 (person-self contract) · `../BE/feature_player_view_tech.md` · `../standards/decisions.md` DD-91/DD-96 · `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md`
 
 > **DD-48 boundary:** `/me` vẫn person-self và không nhận arbitrary person id. Cross-user social profile thuộc `feature_user_settings` (`GET /api/persons/:id/profile`) với DTO riêng; host operational member/roster data đi tenant-scoped path riêng. Không tái dùng `/me` serializer cho hai path đó.
 
@@ -82,19 +82,260 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 
 ## 3. Screens & States
 
+> Coverage: Web (person-self dashboard) + Bot (Zalo/Messenger) + Chat adapters. Mobile-first 375px; desktop ≥1024.
+
+### Web — `/me` dashboard
+
+**Purpose:** Player xem tổng quan: clubs, upcoming sessions, debt overview.
+
+**Layout (desktop ≥1024px):**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ 👤 Xin chào, {displayName}                              │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  ─── Tổng nợ ───                                         │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ 💰 Còn nợ: 225,000₫ (2 CLB)       [Xem chi tiết →]│  │
+│  └────────────────────────────────────────────────────┘  │
+│  ↑ chỉ hiện khi getSelfPaymentSummary trả known_amount   │
+│  ↑ nếu unknown → "⏳ Không xác nhận được lúc này"        │
+│  ↑ nếu known_zero → ẩn section / "✅ Không còn nợ"      │
+│                                                          │
+│  ─── CLB của bạn (3) ───                                 │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ 🏸 CLB Cầu lông Bình Thạnh                        │  │
+│  │    Thành viên · 2 kèo sắp tới · Còn nợ: 75,000₫  │  │
+│  ├────────────────────────────────────────────────────┤  │
+│  │ ⚽ FC Thủ Đức                                      │  │
+│  │    Thành viên · 1 kèo sắp tới · ✅ Không nợ       │  │
+│  ├────────────────────────────────────────────────────┤  │
+│  │ 🏓 Pickleball Q7                                   │  │
+│  │    Thành viên · Không có kèo · Còn nợ: 150,000₫   │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+│  ─── Kèo sắp tới (3) ───                                │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ 🏸 Cầu lông chiều T5    📅 10/08  18:00           │  │
+│  │    CLB Cầu lông BT · 👥 6/8 · ⏳ Chưa TT 75,000₫ │  │
+│  ├────────────────────────────────────────────────────┤  │
+│  │ ⚽ Bóng đá T7            📅 12/08  16:00           │  │
+│  │    FC Thủ Đức · 👥 8/10 · ✅ Đã TT                │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Component: Club card:**
+
+| Field | Data source | Ghi chú |
+|-------|-------------|---------|
+| Club name + sport icon | `tenants` via `memberships` | Cross-tenant read |
+| Role | `memberships.role` | "Thành viên" / "Admin" |
+| Upcoming count | `players` WHERE own + future | Per-club aggregate |
+| Debt chip | `getSelfPaymentStatus` per club | `known_zero` / `known_amount` / `unknown` |
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton cards (debt chip + 3 club cards + 2 session cards) |
+| Ready | Clubs + sessions + debt summary |
+| Error | Error banner: "Không tải được dữ liệu" + retry |
+| Empty | Icon 🏸 + "Chưa tham gia club nào" + CTA "Khám phá" |
+
+### Web — `/me` club detail
+
+**Layout (desktop):**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← Dashboard      🏸 CLB Cầu lông Bình Thạnh             │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  Vai trò: Thành viên · Tham gia từ: 01/06/2026          │
+│                                                          │
+│  ─── Kèo sắp tới ───                                    │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ 🏸 Cầu lông chiều T5    📅 10/08  18:00           │  │
+│  │    📍 Sân ABC · 👥 6/8 · 💰 75,000₫ · ⏳ Chưa TT  │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+│  ─── Thanh toán ───                                      │
+│  Còn nợ: 75,000₫ (1 kèo)                                │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ 🏸 Cầu lông chiều T5  75,000₫  ⏳ open            │  │
+│  │    Đã trả: 0₫ / 75,000₫                           │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton (info + session list + charge list) |
+| Ready | Club info + sessions + charges |
+| Error | Error banner + retry |
+| Empty | "Chưa có buổi chơi" |
+
+### Web — Outstanding detail
+
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← Dashboard           💰 Các khoản còn nợ               │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  Tổng nợ: 225,000₫ (2 CLB)                              │
+│                                                          │
+│  ─── CLB Cầu lông Bình Thạnh ───                        │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ 🏸 Cầu lông chiều T5     75,000₫     ⏳ open      │  │
+│  │    Đã trả: 0₫ / 75,000₫                           │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+│  ─── Pickleball Q7 ───                                   │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ 🏓 Pickleball T3         100,000₫   ⚠️ partial    │  │
+│  │    Đã trả: 50,000₫ / 100,000₫                     │  │
+│  │ 🏓 Pickleball CN         50,000₫    ⏳ open        │  │
+│  │    Đã trả: 0₫ / 50,000₫                           │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton list (2 club sections × 2 items) |
+| Ready | Per-club outstanding items grouped |
+| Error | Error banner + retry |
+| Empty | Icon 🎉 + "✅ Không còn khoản phải trả!" (proven `known_zero`) |
+
+### Web — Join requests
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton list |
+| Ready | Pending/approved/rejected list with timestamps |
+| Error | Error banner + retry |
+| Empty | "Không có yêu cầu tham gia nào" |
+
+### Web — Auth required (unauthenticated `/me`)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                                                          │
+│              🔐                                          │
+│        Đăng nhập để xem dữ liệu                         │
+│                                                          │
+│  [═══ Đăng nhập bằng Google ═══]                         │
+│                                                          │
+│  Hoặc mở link từ bot Zalo/Messenger                      │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Bot — `/myclubs` (Zalo) / persistent menu (Messenger)
+
+**Layout (Bot message):**
+
+```
+👤 CLB của bạn (3)
+
+1️⃣ 🏸 CLB Cầu lông Bình Thạnh
+   Thành viên · 2 kèo sắp tới
+   💰 Còn nợ: 75,000₫
+
+2️⃣ ⚽ FC Thủ Đức
+   Thành viên · 1 kèo sắp tới
+   ✅ Không nợ
+
+3️⃣ 🏓 Pickleball Q7
+   Thành viên · 0 kèo
+   💰 Còn nợ: 150,000₫
+
+Tổng nợ: 225,000₫ (2 CLB)
+```
+
+**Bot states:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | "Đang tải..." |
+| Ready | Club list + debt + upcoming per club |
+| Error | "Lỗi, thử lại sau" |
+| Empty | "Bạn chưa tham gia club nào" |
+
+### Chat — Exact `/pay` (club chat / private bot thread)
+
+**Layout (requester-only card):**
+
+```
+💰 Thanh toán — CLB Cầu lông Bình Thạnh
+
+Kèo: 🏸 Cầu lông chiều T5 · 10/08
+Phí:       75,000₫
+Đã trả:    0₫
+Còn lại:   75,000₫
+
+📎 TK nhận: Vietcombank · 0123456789
+
+[Đã thanh toán? Host sẽ xác nhận]
+```
+
+> Chỉ requester thấy; peer/shared history = zero artifact.
+
+### Chat — Exact `/pay` (human DM, `tenant_id=NULL`)
+
+**Flow:**
+
+```
+Player gõ /pay trong human DM
+  │
+  ├→ 1 CLB eligible → auto-select → requester-only card (như trên)
+  │
+  └→ Nhiều CLB eligible → opaque picker:
+        "Chọn CLB để xem thanh toán:"
+        [CLB Cầu lông BT]  [FC Thủ Đức]  [Pickleball Q7]
+        ↑ chỉ requester thấy
+```
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Club list | `memberships` JOIN `tenants` | Cross-tenant, person-scoped |
+| Upcoming sessions | `players` JOIN `sessions` | Future only, per-club |
+| Per-club debt | `getSelfPaymentStatus` per club | `known_zero` / `known_amount` / `unknown` |
+| Cross-club summary | `getSelfPaymentSummary` | One owner; 1 `unknown` = all `unknown` |
+| Outstanding items | `charges` WHERE `status IN (open, partial)` | Per-person, per-club grouped |
+| Join requests | `join_requests` WHERE own | Status + timestamps |
+| Chat `/pay` | `getSelfPaymentStatus` | Same canonical service |
+
+### State coverage matrix
+
 | Surface | Screen | Loading | Ready | Error | Empty |
 |---------|--------|---------|-------|-------|-------|
-| Web | /me dashboard | Skeleton cards | Clubs + upcoming sessions + debt overview | Error banner + retry | "Chưa tham gia club nào" + Discover CTA |
-| Web | /me — club detail | Skeleton | Sessions + charges for this club | Error banner | "Chưa có buổi chơi" |
-| Web | /me — outstanding detail | Skeleton | Open/partial items + allocation breakdown; optional aggregate pay action | Error banner | Proven `known_zero` |
-| Web | /me — join requests | Skeleton list | Pending/approved/rejected list | Error banner | "Không có yêu cầu nào" |
-| Web | Auth required (unauthenticated /me) | — | Login CTA + magic link instructions | — | N/A |
-| Web | Account merged banner | — | "🔄 Tài khoản đã được gộp — dữ liệu cập nhật" | — | N/A |
-| Zalo/Messenger Bot | `/myclubs` (Zalo) · menu (Messenger) | "Đang tải..." | Club list + debt + upcoming session per club | "Lỗi" | "Bạn chưa tham gia club nào" |
-| In-app chat | Exact `/pay` — club chat/private bot thread | "Đang kiểm tra..." | Requester-only payment status card | "Không kiểm tra được lúc này" + retry | "Bạn không còn khoản phải trả" chỉ khi ledger chứng minh |
-| In-app human DM | Exact `/pay` | "Đang tải CLB..." | Một CLB → requester-only card; nhiều CLB → opaque club picker | Generic retry, không leak club | "Không có CLB phù hợp" |
-| In-app notification | Authenticated payment detail | "Đang cập nhật..." | Canonical current payment status | Generic retry | Proven no-open-debt state |
-| In-app chat / Club Bot | Exact `/sessions` / `/waitlist` | "Đang tải..." | Own upcoming/session/waitlist status từ canonical read | Generic retry; beta route OFF nếu Session gate chưa đủ | Không có session/waitlist item |
+| Web | /me dashboard | ✅ Skeleton cards | ✅ Clubs+sessions+debt | ✅ Banner+retry | ✅ "Chưa tham gia" + CTA |
+| Web | /me club detail | ✅ Skeleton | ✅ Info+sessions+charges | ✅ Banner+retry | ✅ "Chưa có buổi chơi" |
+| Web | Outstanding detail | ✅ Skeleton list | ✅ Per-club items | ✅ Banner+retry | ✅ "✅ Không nợ" |
+| Web | Join requests | ✅ Skeleton list | ✅ Status list | ✅ Banner+retry | ✅ "Không có yêu cầu" |
+| Web | Auth required | — | ✅ Login CTA | — | ⚪ N/A |
+| Web | Account merged | — | ✅ Banner notification | — | ⚪ N/A |
+| Bot | /myclubs | ✅ "Đang tải..." | ✅ Club list+debt | ✅ "Lỗi" | ✅ "Chưa tham gia" |
+| Chat | /pay (club) | ✅ "Đang kiểm tra..." | ✅ Requester-only card | ✅ Generic retry | ✅ "Không còn nợ" (proven) |
+| Chat | /pay (human DM) | ✅ "Đang tải CLB..." | ✅ Card or picker | ✅ Generic retry | ✅ "Không có CLB" |
+| Notification | Payment detail | ✅ "Đang cập nhật..." | ✅ Canonical status | ✅ Generic retry | ✅ Proven no-debt |
+| Chat | /sessions /waitlist (beta) | ✅ "Đang tải..." | ✅ Own session/waitlist | ✅ Generic retry | ✅ "Không có" |
 
 ---
 

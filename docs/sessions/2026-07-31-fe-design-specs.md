@@ -14,9 +14,9 @@ The session created a designer-readable projection layer for Plexco:
 - 1 historical comparison at [`../channels/web/docs_comparison.md`](../channels/web/docs_comparison.md)
 - this session inventory
 - 3 dependent contract mirrors reconciled in place:
-  [`feature_home.md`](../features/feature_home.md),
+  [`feature_home.md`](../features/FE/feature_home.md),
   [`feature_home_tech.md`](../features/BE/feature_home_tech.md) and
-  [`feature_player_view.md`](../features/feature_player_view.md)
+  [`feature_player_view.md`](../features/FE/feature_player_view.md)
 - 1 separate non-authorizing workflow discussion:
   [`level3.1-design-discussion.md`](../autopilot-templates/level3.1-design-discussion.md)
 

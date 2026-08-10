@@ -6,7 +6,7 @@
 > **Status:** ✅ Accept-in-principle (owner 2026-07-18, DD-61..64) — build **post-P4**, phased. Vẫn **chưa phải build contract**: schema/migration/service/engine chưa có trong code; không triển khai trước khi có prerequisite. DD-63 `balanced` degrade tới khi có level source per-sport.
 > **Implementation:** Not started — build post-P4 · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** SessionService/Session CRUD · DD-41 session gating · DD-42 attendance/reliability · DD-45 waitlist · DD-56 authz action registry · DD-08 taxonomy trình độ
-> **Tài liệu liên quan:** `feature_session_management.md` · `../standards/decisions.md` DD-61..64 · `../standards/business-rules.md` · `BE/feature_session_organize_tech.md`
+> **Tài liệu liên quan:** `feature_session_management.md` · `../standards/decisions.md` DD-61..64 · `../standards/business-rules.md` · `../BE/feature_session_organize_tech.md`
 
 > **⚠️ Live-repo reality:** Cặp tài liệu này mô tả design đã accepted-in-principle. `packages/db/schema.ts` hiện chỉ có `sessions`/`players` nền tảng; chưa có 5 bảng organize, migration, OrganizeService, assign/scoring engine, SSE topic, hay capability/grant session-scoped. Các choke-point như `removeMemberFromSession` và session close/cancel hook dưới đây là **contract tương lai**, không phải tên hàm đã tồn tại. Owner acceptance đã xong; build vẫn phải đợi Session CRUD/Sync, DD-56 registry/grant storage, slice manifest và migration/service implementation tương ứng.
 
@@ -123,13 +123,139 @@ Mọi grant organize/score là **session-scoped**, có `resource_type='session'`
 
 ### Screens
 
-| Surface | Screen | Ready | Error/Empty |
-|---|---|---|---|
-| Web | Organize board | Cột sân, match card, active-player pool | Retry banner; CTA thêm sân |
-| Web | Assign preview | Mode, plan, warnings, Apply | Stale plan yêu cầu preview lại |
-| Web | Live scoreboard | Điểm hai phía, set, +1/reversal theo quyền | Reconnect + guarded reload; read-only nếu player |
-| Web | Match history | Trận completed/cancelled trong session | “Chưa có trận nào” |
-| Chat | Organize/score command | Thin adapter gọi cùng command service | Localized domain error; không tự giữ score state |
+> Web organize board (host dashboard). Mobile-first 375px; desktop ≥1024 (split: court list + board).
+
+#### Organize board (host)
+
+**Layout (desktop):**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← Session            🏸 Cầu lông T5 · Organize         │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  ─── Sân (3) ───                              [+ Sân]   │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
+│  │ Sân 1    │  │ Sân 2    │  │ Sân 3    │              │
+│  │ 🟢 LIVE  │  │ ⚪ Trống  │  │ 🟢 LIVE  │              │
+│  │ A vs B   │  │          │  │ C vs D   │              │
+│  │ 15-12    │  │          │  │ 8-11     │              │
+│  └──────────┘  └──────────┘  └──────────┘              │
+│                                                          │
+│  ─── Chưa xếp (4 người) ───                             │
+│  [E. Minh] [F. Hoàng] [G. Lan] [H. Tuấn]               │
+│                                                          │
+│  [Xếp ngẫu nhiên] [Xếp cân bằng] [Xoay tua]            │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Component: Court card:**
+
+| Field | Data source | Ghi chú |
+|-------|-------------|---------|
+| Label | `session_courts.label` | Unique trong session |
+| Status | Match status on court | 🟢 LIVE / ⚪ Trống / ✅ Done |
+| Teams | `match_participants` side 0 vs 1 | Display names |
+| Score | `match_sets` materialized | Current set score |
+
+**Component: Player pool chip:**
+
+| State | Display | Ghi chú |
+|-------|---------|---------|
+| Unassigned | Blue chip | Available for assignment |
+| On court (live) | Green chip + court label | Cannot assign elsewhere |
+| Resting | Gray chip + rest count | Rotation priority |
+
+#### Assign preview modal
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ 🎲 Preview — Xếp cân bằng          │
+├──────────────────────────────────────┤
+│                                      │
+│ Sân 1: [E. Minh + F. Hoàng]        │
+│     vs [G. Lan + H. Tuấn]          │
+│ ⚠️ Thiếu rating cho G. Lan          │
+│                                      │
+│ Sân 2: [A. Nam + B. Đức]           │
+│     vs [C. Thảo + D. Hùng]         │
+│                                      │
+│ [Apply plan]          [Preview lại] │
+└──────────────────────────────────────┘
+```
+
+#### Live scoreboard
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ 🏸 Sân 1 — Set 2/3                 │
+├──────────────────────────────────────┤
+│                                      │
+│     E. Minh + F. Hoàng              │
+│          ┌─────┐                    │
+│          │  15 │  ← tap +1          │
+│          └─────┘                    │
+│     ─────────────                    │
+│          ┌─────┐                    │
+│          │  12 │  ← tap +1          │
+│          └─────┘                    │
+│     G. Lan + H. Tuấn               │
+│                                      │
+│  Set 1: 21-18 ✅                    │
+│  Set 2: 15-12 🔴 live              │
+│                                      │
+│  [↩ Undo] [⏹ Kết thúc trận]       │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+**Component: Score controls:**
+
+| Action | Who | Condition |
+|--------|-----|-----------|
+| +1 point | Actor with `session.score` | Match live, session window |
+| Undo | Actor with `session.score` | Latest effective point, bounded |
+| End match | Actor with `session.organize` | Match live |
+
+#### Match history
+
+```
+┌──────────────────────────────────────┐
+│ 📋 Lịch sử trận                    │
+├──────────────────────────────────────┤
+│                                      │
+│ Trận 1: E+F vs G+H  21-18, 15-21,  │
+│         21-17 → E+F thắng 2-1       │
+│ Trận 2: A+B vs C+D  đang chơi...   │
+│ Trận 3: draft                        │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+#### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Courts | `session_courts` per session | Label unique |
+| Matches | `matches` + `match_participants` | Version-locked |
+| Score | `score_events` (ledger) → `match_sets` (materialized) | Append-only |
+| Assignment | OrganizeService preview/apply | Deterministic seed |
+| Live updates | SSE per session | Re-auth per event |
+
+#### State coverage matrix
+
+| Screen | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| Organize board | ✅ Skeleton courts | ✅ Courts + matches + pool | ✅ Retry banner | ✅ "Thêm sân để bắt đầu" |
+| Assign preview | ✅ "Đang xếp..." | ✅ Plan + warnings | ✅ "Stale — preview lại" | ⚪ N/A |
+| Live scoreboard | ✅ Connecting SSE | ✅ Score + controls | ✅ Reconnect + reload | ⚪ N/A (always has match) |
+| Match history | ✅ Skeleton list | ✅ Completed/cancelled matches | ✅ "Lỗi tải" | ✅ "Chưa có trận nào" |
+| Chat command | — | ✅ Thin adapter response | ✅ Localized error | ⚪ N/A |
 
 ### Match state machine
 

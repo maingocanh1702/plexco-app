@@ -4,7 +4,7 @@
 > **Version:** 1.0 · 2026-07-28
 > **Status:** Reviewed contract · Implementation pending
 > **Implementation:** Not started — live schema has no channel booking intent/payment hold/finalizer
-> **Product spec:** `../feature_channel_booking_funnel.md`
+> **Product spec:** `../FE/feature_channel_booking_funnel.md`
 > **References:** `../../standards/decisions.md` DD-05/06/32/33/39/45/49/50/67 · `feature_cross_club_join_tech.md` · `feature_session_management_tech.md` · `feature_identity_tech.md` · `feature_web_auth_onboarding_tech.md` · `feature_payment_reconcile_tech.md`
 
 ---
@@ -211,6 +211,23 @@ Waitlisted players are not occupied. An account-link-only intent does not occupy
 
 ---
 
+### Query Patterns
+
+```sql
+-- getSessionForBooking (public projection)
+SELECT ps.session_id, ps.sport_key, ps.starts_at, ps.ends_at,
+       ps.area, ps.price, ps.slots_open, ps.join_policy,
+       ps.club_display_name
+FROM public_sessions ps
+WHERE ps.session_id = $1;
+
+-- checkPlayerEligibility (tenant-scoped)
+SELECT p.id, p.status, p.person_id
+FROM players p
+WHERE p.session_id = $1
+  AND p.person_id = $2;
+```
+
 ## 3. API contract
 
 ### 3.1 Internal service interfaces
@@ -277,6 +294,38 @@ Provider adapters render this shared union. App-facing HTTP routes use the DD-60
 
 External copy is generic where identity/payment enumeration is possible; logs contain opaque refs and reason codes only.
 
+
+### Endpoints
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| POST | `/api/booking/intent` | Channel identity | Tạo booking intent (browse → confirm gate) |
+| POST | `/api/booking/confirm` | Channel identity (linked) | Confirm paid booking (pay-later) |
+| POST | `/api/booking/hold` | Channel identity (unlinked) | Tạo 15-min payment hold |
+| POST | `/api/booking/free-join` | Channel identity | Join free session |
+| POST | `/api/booking/waitlist` | Channel identity | Join waitlist |
+| POST | `/api/booking/approval-request` | Channel identity | Request approval join |
+| GET | `/api/booking/status/:intentId` | Channel identity | Current booking status |
+| POST | `/api/booking/handoff` | System | Create link handoff token |
+| POST | `/api/booking/handoff/callback` | System | Link handoff completion callback |
+
+> Mọi endpoint qua channel adapter (bot); không có user-facing REST.
+
+### Error Codes
+
+| Code | Error Code | Message | Trigger |
+|------|-----------|---------|---------|
+| 400 | `SESSION_FULL` | Hết chỗ | No slots available |
+| 400 | `SESSION_CLOSED` | Buổi chơi đã kết thúc | Session ended |
+| 400 | `HOLD_EXPIRED` | Chỗ giữ đã hết hạn | Payment hold TTL exceeded |
+| 400 | `PAYMENT_INSUFFICIENT` | Số tiền không đủ | Underpay |
+| 400 | `ALREADY_ACTIVE` | Bạn đã tham gia buổi chơi này | Duplicate join |
+| 400 | `HANDOFF_EXPIRED` | Link đã hết hạn | Handoff TTL exceeded |
+| 400 | `HANDOFF_CONSUMED` | Link đã được sử dụng | Single-use consumed |
+| 400 | `PRICE_CHANGED` | Giá đã thay đổi, vui lòng xác nhận lại | Price delta detected |
+| 400 | `CAPACITY_CHANGED` | Số chỗ đã thay đổi | Capacity delta detected |
+| 403 | `RESTRICTED_PLAYER` | Không đủ điều kiện tham gia | DD-42 restriction |
+| 429 | `BOOKING_RATE_LIMITED` | Quá nhiều yêu cầu | Per-user burst |
 ---
 
 ## 4. Chi tiết triển khai
@@ -424,6 +473,42 @@ Unique constraints on player/session, charge/player/session, allocation keys and
 9. RLS/role tests prove adapters cannot select/write intent, identity or money base tables.
 10. Provider outage hides pay-now while free and linked pay-later paths remain available.
 
+
+### Testing Plan
+
+#### Unit Tests
+
+| # | Test | Input | Expected |
+|---|------|-------|----------|
+| 1 | Browse session → public summary | Valid session | Summary with aggregate counts |
+| 2 | Linked paid confirm → active | Linked player, paid session | Active + charge |
+| 3 | Unlinked pay-now → hold | Unlinked, paid | 15-min hold created |
+| 4 | Hold expires → requeue | After 15 min | Requeued to tail |
+| 5 | Free join → active | Free session, slot available | Active, no payment |
+| 6 | Full session → waitlist | No slots | Waitlisted |
+| 7 | Approval session → pending | Approval required | Pending request |
+| 8 | Concurrent slot grab | 2 players, 1 slot | Exactly one active |
+| 9 | Price changed during intent | Price delta | Reconfirm required |
+| 10 | Capacity changed during intent | Capacity delta | Reconfirm required |
+| 11 | Duplicate callback → idempotent | Same callback twice | Same outcome |
+| 12 | Payment after expiry → reject | Late payment | No auto-book |
+| 13 | Overpay → allocate due | Amount > charge | Allocate due, rest unmatched |
+| 14 | Handoff single-use → reject 2nd | Same handoff code | HANDOFF_CONSUMED |
+| 15 | Handoff expired → reject | Past TTL | HANDOFF_EXPIRED |
+| 16 | Restricted player → reject | DD-42 restriction | RESTRICTED_PLAYER |
+| 17 | Already active → idempotent | Same player, same session | Current state returned |
+| 18 | Waitlist promotion → offer | Slot freed | 15-min offer created |
+| 19 | Waitlist offer expires → requeue | After 15 min | Requeued to tail |
+| 20 | Link callback + payment race | Simultaneous | One finalizer wins |
+
+#### Integration Tests
+
+| # | Test | Setup | Expected |
+|---|------|-------|----------|
+| 1 | Full linked flow | Browse → confirm → active | Player active + charge |
+| 2 | Full unlinked pay-now flow | Browse → hold → payment → active | Player active after settlement |
+| 3 | Link handoff flow | Create handoff → web binding → callback → resume | Booking resumed |
+| 4 | Concurrent race conditions | 2 players, 1 slot, same time | Exactly one active |
 ---
 
 ## 6. Rollout plan

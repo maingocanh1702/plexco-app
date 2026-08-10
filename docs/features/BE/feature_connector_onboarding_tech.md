@@ -4,7 +4,7 @@
 > **Version:** 0.9 · 2026-07-28
 > **Status:** Draft · SePay inbound auth reconciled; ApiPay enterprise-primary internal contract pinned, provider gate open
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
-> **Product spec:** `../feature_connector_onboarding.md`
+> **Product spec:** `../FE/feature_connector_onboarding.md`
 > **References:** `../../product/TDD.md` §3.2/3.6 · `../../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `feature_payment_reconcile_tech.md` (ingest downstream) · `feature_zalo_channel_tech.md` (channel events downstream) · `feature_web_auth_onboarding_tech.md` (wizard) · `../../research/player-side-saas-AUDIT.md` §B2 · `../../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
 
 > **Current availability/runtime boundary (`main@784bc8d`):** provider enum vẫn chỉ
@@ -531,7 +531,7 @@ Tỉ lệ connect không-chạm-webhook; `time_to_verify_ms` (registered→activ
 - [ ] ApiPay xử lý đúng `ACTIVE/PENDING/manualActivationPending`.
 - [ ] Tenant isolation (RLS) + `BANK_ALREADY_BOUND` pass.
 - [ ] Provider API fail → fallback, không chặn onboarding (B6).
-- [ ] Acceptance criteria ở `../feature_connector_onboarding.md` pass.
+- [ ] Acceptance criteria ở `../FE/feature_connector_onboarding.md` pass.
 
 ### Changelog
 

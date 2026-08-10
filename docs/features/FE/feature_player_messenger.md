@@ -6,7 +6,7 @@
 > **Status:** Reviewed contract · Implementation pending
 > **Implementation:** Not started — shared job mechanics đã merge nhưng Messenger adapter/handler/projector chưa có; schedule OFF/placeholder · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P2 routing/authz · P3.5 identity · P2 session/join · P3 notifications · P4 sync · **App Review Meta** (DD-33)
-> **Tài liệu liên quan:** `../product/BRD.md` FR-3.3 / BR-17 / CO-3 · `../standards/decisions.md` **DD-32/DD-33/DD-37/DD-45/DD-49/DD-65..68** · `../channels/messenger/messenger-channel-design.md` · `feature_channel_booking_funnel.md` · `feature_session_management.md` · `feature_tenant_routing_authz.md` · `feature_identity.md` · `BE/feature_player_messenger_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-3.3 / BR-17 / CO-3 · `../standards/decisions.md` **DD-32/DD-33/DD-37/DD-45/DD-49/DD-65..68** · `../channels/messenger/messenger-channel-design.md` · `feature_channel_booking_funnel.md` · `feature_session_management.md` · `feature_tenant_routing_authz.md` · `feature_identity.md` · `../BE/feature_player_messenger_tech.md`
 
 > **Kênh (DD-37 ✅):** Facebook Messenger là kênh phase-1. **Link tài khoản Facebook (DD-33 ✅ phase-1):** App Review/BM verification submission pending; nếu chậm → degrade sang transactional one-time `/link` code.
 
@@ -86,18 +86,81 @@ Cho host **tạo/quản lý session cơ bản** và player **discover/join/leave
 
 ## 3. Screens & States
 
-| Surface | Screen | Loading | Ready | Error | Empty |
-|---------|--------|---------|-------|-------|-------|
-| Messenger | Persistent menu | — | Join kèo / Kèo của tôi / Nợ của tôi | — | N/A |
-| Messenger | Host menu | — | Tạo session / Status / Duyệt / Thông báo / Đóng | “Không có quyền” | Không có club hợp lệ → hướng dẫn |
-| Messenger | Create-session wizard | “Đang lưu bước…” | Preview đầy đủ + Xác nhận/Huỷ | Stale/quyền đổi → dừng an toàn | Expired → bắt đầu lại |
-| Messenger | Session detail | "Đang tải..." | Time · public area · fee · confirmed count · slots; CTA “Đăng ký” | Stale/closed → refresh list | N/A |
-| Messenger | Final booking gate | "Đang kiểm tra..." | Free: confirm; paid: “Liên kết Plexco — đặt trước, trả sau” / “Thanh toán & giữ chỗ 15 phút” | Provider unavailable → link/web only | N/A |
-| Messenger | Booking result | "⏳ Đang xử lý..." | Active + venue / waitlisted position / approval pending / awaiting payment expiry | Rejoin/manual review / expired | N/A |
-| Messenger | Kèo của tôi | "Đang tải..." | Clubs + kèo sắp tới | "Lỗi — thử lại" | "Chưa có kèo" |
-| Messenger | Nhắc/Xác nhận (trong 24h) | — | "[Club] Bạn còn nợ [amount]. [QR]" / "✅ Đã nhận CK [amount]" | — | N/A |
-| Messenger | Link tài khoản (DD-33) | — | Nhập one-time `/link` code / xác nhận impact | "Mã sai/hết hạn" | N/A |
+> Messenger bot interface (Facebook Messenger platform). No web surface.
 
+### Messenger — Persistent menu + welcome
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ 🏸 Plexco Bot                       │
+├──────────────────────────────────────┤
+│                                      │
+│  Chào bạn! 👋                        │
+│  Mình là Plexco — trợ lý thể thao.  │
+│                                      │
+│  Bạn muốn làm gì?                   │
+│  [🏸 Xem kèo]                       │
+│  [💰 Thanh toán]                     │
+│  [⚙️ Cài đặt]                       │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+**Component: Persistent menu (max 3 top-level):**
+
+| Slot | Label | Action |
+|------|-------|--------|
+| 1 | 🏸 Kèo của tôi | Show active sessions |
+| 2 | 💰 Thanh toán | Payment status / QR |
+| 3 | ⚙️ Cài đặt | Settings / link account |
+
+### Messenger — Session card (rich template)
+
+**Layout (Generic template):**
+
+```
+┌──────────────────────────────────────┐
+│ [Session image / sport icon]         │
+│                                      │
+│ 🏸 Cầu lông chiều T5                │
+│ 📍 Q3 · 19:00 · 120,000₫            │
+│ 👥 6/8 · 2 chỗ còn                  │
+│                                      │
+│ [Đăng ký] [Chi tiết]                │
+└──────────────────────────────────────┘
+```
+
+> Max 10 generic templates per carousel; max 3 buttons per card.
+
+### Messenger — Quick replies
+
+**Layout:**
+
+```
+Bot: Bạn muốn xem kèo môn nào?
+
+[🏸 Cầu lông] [⚽ Bóng đá] [🏓 Pickle] [Tất cả]
+```
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Persistent menu | Static config per Page | Max 3 top-level |
+| Session cards | `public_sessions` / roster | Carousel format |
+| Quick replies | Sport taxonomy | Max 13 per message |
+| Payment status | `charges` per person-self | Via canonical service |
+
+### State coverage matrix
+
+| Screen | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| Welcome | — | ✅ Greeting + menu | — | ⚪ N/A |
+| Session list | ✅ "Đang tải..." | ✅ Carousel cards | ✅ "Lỗi — thử lại" | ✅ "Chưa có kèo nào" |
+| Payment status | ✅ "Đang kiểm tra..." | ✅ Amount + status | ✅ "Lỗi" | ✅ "Không có khoản nào" |
+| Quick replies | — | ✅ Sport chips | — | ⚪ N/A |
 ---
 
 ## 4. Domain Model

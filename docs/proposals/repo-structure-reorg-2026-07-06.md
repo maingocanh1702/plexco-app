@@ -152,7 +152,7 @@ docs/
 |---|---|
 | `design-tokens.md` (×3 — KHÔNG cùng loại, KHÔNG identical) | `docs/standards/design-tokens.md` = **nguồn Plexco thực**; `docs/web-app/design-tokens.md` = **overlap nhưng có token riêng của web** (vd `--bg-page`, `--bg-sidebar`, `--font-heading`, `--text-inverse`, `--transition-base`) → **merge token web-only vào standards TRƯỚC**, rồi thay web-app doc bằng 1 dòng trỏ về nguồn (KHÔNG xoá thẳng như duplicate). **`templates/design-tokens.md` là TEMPLATE GENERIC** (features/README §Template files trỏ tới) → **KHÔNG xoá**; rename `docs/templates/design-tokens-template.md` + update ref. |
 | `feature-dependency-graph.md` (×2) | Nguồn duy nhất ở **`docs/standards/`**; bản trong `templates/feature-dev/` là template rỗng thì đổi tên `…-TEMPLATE.md` cho khỏi nhầm. |
-| `messenger-channel-design.md` | Là feature spec chờ convert (README features đã ghi). Đề xuất: chuyển vào `channels/messenger/` hoặc convert thành `features/feature_messenger_channel.md` khi tới P4.8 — **không để trong `research/`**. |
+| `messenger-channel-design.md` | Là feature spec chờ convert (README features đã ghi). Đề xuất: chuyển vào `channels/messenger/` hoặc convert thành `features/FE/feature_messenger_channel.md` khi tới P4.8 — **không để trong `research/`**. |
 | `.DS_Store` | **Không tracked** (đã verify `git ls-files` = 0). Việc cần làm: **xoá bản local ignored** trên đĩa + **gộp 3 dòng `.DS_Store` trùng** trong `.gitignore` thành 1. (Không phải "xoá tracked".) |
 | `progress.json` / `plexco-dashboard.html` / `linear-snapshot.json` | **Đã trả lời ở Q4 §8** — `progress.json` là **state versioned** (source-of-truth), `dashboard.html` là **projection** (nhúng EMBEDDED từ progress qua `sync-embedded.mjs`), `snapshot.json` **generated-nhưng-đang-versioned** bởi workflow. Move phải kèm sửa workflow + `__dir` (xem §6 P2). |
 | `PR_TEMPLATE.md` | Chuyển `.github/PULL_REQUEST_TEMPLATE.md` (GitHub tự nhận). ⚠️ **Có reference**: `README.md` (L234) link `./PR_TEMPLATE.md`, `HANDOFF.md` (L98/L114) nhắc tên → update kèm (không phải "không đụng link"). |
@@ -162,7 +162,7 @@ docs/
 ## 5. Quy ước đặt tên (đề xuất chuẩn hoá dần)
 
 - **Thư mục**: `kebab-case`, số nhiều theo loại (`features/`, `channels/`, `proposals/`).
-- **File docs**: `kebab-case.md`. **Ngoại lệ giữ nguyên** (vì reference dày / tooling): `features/feature_*.md`, `decisions.md`, `business-rules.md`, `BRD/PRD/TDD` (tên riêng quen thuộc).
+- **File docs**: `kebab-case.md`. **Ngoại lệ giữ nguyên** (vì reference dày / tooling): `features/FE/feature_*.md`, `decisions.md`, `business-rules.md`, `BRD/PRD/TDD` (tên riêng quen thuộc).
 - **File có ngày**: hậu tố `-YYYY-MM-DD` (đã dùng ở proposals — giữ).
 - **Không** đổi tên hàng loạt trong `features/` ở đợt này (chi phí update link cao, rủi ro GitNexus/anchor). Chuẩn hoá naming là **đợt riêng**, sau khi cấu trúc thư mục ổn.
 
@@ -204,8 +204,8 @@ Mỗi phase: chạy link-checker + `git grep` path cũ để không sót referen
 | ID | Câu hỏi | Khuyến nghị |
 |---|---|---|
 | Q1 | Numeric prefix cho **mọi** nhóm docs (`10-product/…`) hay chỉ `00-start-here/`? | Chỉ `00-start-here/` (đủ rõ, ít noise) |
-| Q2 | Có chuẩn hoá naming `features/feature_*.md` → kebab không? | **Không** đợt này (chi phí link cao); để đợt riêng |
-| Q3 | `messenger-channel-design.md`: đưa `channels/messenger/` hay convert thành `features/feature_messenger_channel.md`? | `channels/messenger/` tới khi vào P4.8 rồi convert |
+| Q2 | Có chuẩn hoá naming `features/FE/feature_*.md` → kebab không? | **Không** đợt này (chi phí link cao); để đợt riêng |
+| Q3 | `messenger-channel-design.md`: đưa `channels/messenger/` hay convert thành `features/FE/feature_messenger_channel.md`? | `channels/messenger/` tới khi vào P4.8 rồi convert |
 | Q4 | `progress.json`/`snapshot`/`dashboard` bản chất là gì? | **Đã tra được từ docs**: `progress.json` = **state versioned, source-of-truth** (giữ commit, KHÔNG gitignore); `plexco-dashboard.html` = **projection** (nhúng từ progress qua `sync-embedded.mjs`); `linear-snapshot.json` = **generated nhưng đang được workflow commit** (chỉ đổi thành gitignore nếu redesign flow sync). Còn lại: bạn chỉ cần chốt **có move khỏi root không** (nếu có → sửa workflow + __dir). |
 | Q5 | Làm tới phase nào? | **P1, P2, P3a, P4, P5** an toàn (docs/tooling có kiểm soát). **P3b (move autopilot-kit) mặc định BỎ** — chỉ làm nếu bạn thực sự muốn, vì phải sửa 3 scripts + verify. P6 naming tuỳ. |
 

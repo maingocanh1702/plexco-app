@@ -19,7 +19,7 @@
 
 | Key | File | Version / status |
 | --- | --- | --- |
-| **P** | `docs/features/feature_session_management.md` (Product / UX) | v2.17 · 2026-07-28 · **Reviewed** |
+| **P** | `docs/features/FE/feature_session_management.md` (Product / UX) | v2.17 · 2026-07-28 · **Reviewed** |
 | **T** | `docs/features/BE/feature_session_management_tech.md` (Backend Tech) | v2.18a · 2026-07-28 · **Reviewed** |
 
 - **Origin:** `docs/product/ROADMAP.md` → Next Actions **#3** ("Review/sign-off feature specs của phase sắp
@@ -34,7 +34,7 @@
 - **Cross-feature references (pointer-only):** publish billing suspension additionally cites
   `docs/features/BE/feature_billing_lifecycle_tech.md` §3/§5; positive public materialisation cites
   `docs/features/BE/feature_marketplace_discovery_tech.md`; DD-32 final-slot/settlement/projection branches
-  cite `docs/features/feature_channel_booking_funnel.md` and
+  cite `docs/features/FE/feature_channel_booking_funnel.md` and
   `docs/features/BE/feature_channel_booking_funnel_tech.md` integration tests #1/#3/#8. These owning specs
   are not retraced end-to-end here. **P/T above remain the sole primary sources for the Session inventory**;
   cross-feature tests prove the delegated branches named explicitly below.
@@ -735,9 +735,9 @@ AUTHORITY_SHA: adf5eff5c079622bfede1f1aaf40edd556e421ce
 BASE_BRANCH: main
 TARGET_FILES:
   - docs/issues/session-management-acceptance-checklist.md
-  - docs/features/feature_session_management.md
+  - docs/features/FE/feature_session_management.md
   - docs/features/BE/feature_session_management_tech.md
-  - docs/features/feature_channel_booking_funnel.md
+  - docs/features/FE/feature_channel_booking_funnel.md
   - docs/features/BE/feature_channel_booking_funnel_tech.md
 SLICE: session-management-acceptance-retrace
 IN_SCOPE: source traceability for current Session Product and BE contracts including DD-32 occupancy and promotion holds

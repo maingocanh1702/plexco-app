@@ -4,7 +4,7 @@
 > **Deployable unit:** `apps/web`
 > **Tech stack:** Next.js App Router baseline · Route Handlers/API · SSE · vanilla CSS · Google Fonts
 > **Version:** v0.8 · 2026-08-06
-> **Refs:** `../../product/TDD.md` v3.1i §3.9 · `../../features/feature_web_auth_onboarding.md` · `../../features/feature_sync_engine.md` · `../../features/feature_marketplace_discovery.md` · `../../features/feature_player_view.md` · `../../features/feature_inapp_chat.md`
+> **Refs:** `../../product/TDD.md` v3.1i §3.9 · `../../features/FE/feature_web_auth_onboarding.md` · `../../features/FE/feature_sync_engine.md` · `../../features/FE/feature_marketplace_discovery.md` · `../../features/FE/feature_player_view.md` · `../../features/FE/feature_inapp_chat.md`
 
 > **Cập nhật 18/07:** Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅) + link **Facebook** (DD-33 ✅; external approval evidence là enablement gate, capability chưa pass phải OFF + one-time `link_code` fallback) / **Zalo** (DD-14 ⬜). Kênh phase-1 = **web + Zalo + Facebook Messenger** (Telegram loại). Web còn là surface của chat in-app, settings/giá theo giới tính và mark-paid thủ công.
 >
@@ -277,13 +277,13 @@ Duplicate `commandId` returns previous semantic result. UI must not retry with a
 
 | Topic | Doc |
 |-------|-----|
-| Auth + onboarding | [feature_web_auth_onboarding.md](../../features/feature_web_auth_onboarding.md) |
-| Sync engine (command/outbox/SSE) | [feature_sync_engine.md](../../features/feature_sync_engine.md) |
-| Marketplace discovery | [feature_marketplace_discovery.md](../../features/feature_marketplace_discovery.md) |
-| Player view | [feature_player_view.md](../../features/feature_player_view.md) |
-| Cross-club join | [feature_cross_club_join.md](../../features/feature_cross_club_join.md) |
-| Session management | [feature_session_management.md](../../features/feature_session_management.md) |
-| Payment reconcile | [feature_payment_reconcile.md](../../features/feature_payment_reconcile.md) |
+| Auth + onboarding | [feature_web_auth_onboarding.md](../../features/FE/feature_web_auth_onboarding.md) |
+| Sync engine (command/outbox/SSE) | [feature_sync_engine.md](../../features/FE/feature_sync_engine.md) |
+| Marketplace discovery | [feature_marketplace_discovery.md](../../features/FE/feature_marketplace_discovery.md) |
+| Player view | [feature_player_view.md](../../features/FE/feature_player_view.md) |
+| Cross-club join | [feature_cross_club_join.md](../../features/FE/feature_cross_club_join.md) |
+| Session management | [feature_session_management.md](../../features/FE/feature_session_management.md) |
+| Payment reconcile | [feature_payment_reconcile.md](../../features/FE/feature_payment_reconcile.md) |
 | Design tokens | [design-tokens.md](./design-tokens.md) |
 | Native app strategy | [native-app-strategy.md](../../strategy/native-app-strategy.md) |
 

@@ -65,7 +65,7 @@ visual source ──► handoff.md ──► token-mapping.md ──► code ─
 ```
 
 ## Checklist khi thêm màn mới
-- [ ] Product spec §Screens & States Reviewed (`../../features/feature_<name>.md`).
+- [ ] Product spec §Screens & States Reviewed (`../../features/FE/feature_<name>.md`).
 - [ ] Canonical `design.pen` đã được track + owner duyệt.
 - [ ] Exact node/frame tồn tại cho màn và ID được ghi trong handoff.
 - [ ] `<screen>-handoff.md` (giá trị từ visual source, icon đủ 5 thuộc tính).

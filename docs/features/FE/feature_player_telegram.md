@@ -7,7 +7,7 @@
 > **Version:** 2.1 · 2026-07-13
 > **Status:** Archived (DD-37)
 > **Prerequisites:** P2 routing/authz · P3.5 identity · P2 session/join · P3 notifications · P4 sync
-> **Tài liệu liên quan:** `../product/BRD.md` FR-3.1/BR-4 · `../product/PRD.md` FLOW 3 + §4.2/4.4 · `../product/TDD.md` §3.3/3.4 · `BE/feature_player_telegram_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-3.1/BR-4 · `../product/PRD.md` FLOW 3 + §4.2/4.4 · `../product/TDD.md` §3.3/3.4 · `../BE/feature_player_telegram_tech.md`
 
 ---
 

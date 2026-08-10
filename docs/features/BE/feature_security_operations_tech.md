@@ -4,7 +4,7 @@
 > **Version:** 2.6 · 2026-07-28
 > **Status:** Reviewed
 > **Implementation:** In progress — RLS/HR1, tenant-integrity and `0022`/`0023` narrow audited job controls đã thực thi; remaining production/ops gates chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
-> **Product spec:** `../feature_security_operations.md`
+> **Product spec:** `../FE/feature_security_operations.md`
 > **References:** `../../product/TDD.md` §4/6/7/10 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37/DD-65
 
 > **Cập nhật v2.2 (DD-65 ✅, 2026-07-17):** kênh phase-1 = **Zalo + Facebook Messenger**. Messenger secret ownership tách bắt buộc: Page access token là secret **per Page endpoint** trong protected store; Meta App Secret là **một deployment/platform secret** dùng verify webhook cho toàn App. Hai loại có blast radius và runbook riêng.
@@ -75,6 +75,23 @@ No new business tables — cross-cutting controls applied to all existing tables
 
 ---
 
+### Query Patterns
+
+```sql
+-- getAuditLog (SuperAdmin, paginated)
+SELECT id, actor_id, action, resource_type, resource_id, 
+       details, created_at
+FROM audit_log
+WHERE created_at BETWEEN $1 AND $2
+ORDER BY created_at DESC
+LIMIT $3 OFFSET $4;
+
+-- getSecurityHealth
+SELECT count(*) FILTER (WHERE has_rls = false) AS tables_without_rls,
+       count(*) FILTER (WHERE role_bypass = true) AS roles_with_bypass
+FROM pg_security_audit_view;
+```
+
 ## 3. API Contract
 
 ### SLO Targets
@@ -104,6 +121,42 @@ N/A — doc này không own HTTP endpoint/error-code table nào (cross-cutting o
 | Webhook replay (cross-cutting requirement) | ✅ bắt buộc | Same event → idempotent (§5 Security test #10); key per-provider ở `feature_payment_reconcile_tech.md` §5 |
 | Migration job | Forward-only, controlled job (§6) — never rollback irreversible | Per-migration; fresh/upgrade/rollback-forward test ở CI gate #2 (§4) |
 
+
+### Endpoints
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| GET | `/api/admin/audit-log` | SuperAdmin | Query audit log |
+| GET | `/api/admin/security/events` | SuperAdmin | Security events stream |
+| POST | `/api/admin/security/rotate-keys` | SuperAdmin | Trigger key rotation |
+| GET | `/api/admin/security/health` | SuperAdmin | Security health check |
+| POST | `/api/admin/retention/sweep` | System (cron) | Retention sweep job |
+
+> Envelope DD-60. Mọi endpoint yêu cầu SuperAdmin role.
+
+### Request/Response Examples
+
+**`GET /api/admin/audit-log`** — `200`:
+
+```json
+{
+  "data": {
+    "entries": [
+      {
+        "id": "evt_...",
+        "actor": "admin_...",
+        "action": "member_role_changed",
+        "resource": "tenant_...",
+        "timestamp": "2026-08-01T10:00:00Z",
+        "details": { "from": "member", "to": "co-admin" }
+      }
+    ],
+    "pagination": { "cursor": "...", "hasMore": true }
+  },
+  "error": null,
+  "meta": { "requestId": "req_..." }
+}
+```
 ---
 
 ## 4. Chi tiết triển khai

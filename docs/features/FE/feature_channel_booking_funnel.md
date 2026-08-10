@@ -6,7 +6,7 @@
 > **Status:** Reviewed contract — DD-32 Option D (`browse freely → link hoặc pay-now ở final confirm`)
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** Identity/account link · common Session/Join/Waitlist core · payment settlement capability · Zalo/Messenger adapters · web-auth handoff
-> **Tài liệu liên quan:** `../standards/decisions.md` DD-05/06/32/33/39/45/49/50/67 · `../standards/business-rules.md` BL-CBF · `feature_cross_club_join.md` · `feature_identity.md` · `feature_web_auth_onboarding.md` · `BE/feature_channel_booking_funnel_tech.md`
+> **Tài liệu liên quan:** `../standards/decisions.md` DD-05/06/32/33/39/45/49/50/67 · `../standards/business-rules.md` BL-CBF · `feature_cross_club_join.md` · `feature_identity.md` · `feature_web_auth_onboarding.md` · `../BE/feature_channel_booking_funnel_tech.md`
 
 ---
 
@@ -134,9 +134,67 @@ Messenger có thể dùng provider-native account-link CTA khi capability đư�
 - Full: nút **Vào danh sách chờ**, không QR/payment.
 - Approval: nút **Gửi yêu cầu tham gia**; sau host approval bot mới mở final gate nếu có tiền.
 
+### 3.6 Component tables
+
+**Component: Session browse card (bot):**
+
+| Field | Data source | Ghi chú |
+|-------|-------------|---------|
+| Sport + session name | `public_sessions.sport_key` + `sessions.name` | |
+| Time | `sessions.starts_at/ends_at` | Format HH:mm DD/MM |
+| Area | `sessions.area` | Coarse, KHÔNG address |
+| Confirmed count | Shared occupancy helper | Active players only |
+| Slots available | `slots_max - active - live_holds` | Advisory |
+| Fee | `sessions.price_amount` | VND |
+| CTA buttons | `[Đăng ký]` `[Xem kèo khác]` | Platform quick-reply |
+
+**Component: Final confirm gate (decision table):**
+
+| Condition | CTA shown | Flow |
+|-----------|-----------|------|
+| Linked + paid + còn chỗ | [Xác nhận đăng ký] | Active + charge |
+| Unlinked + paid + còn chỗ | [Link Plexco] / [TT ngay] | Link handoff HOẶC hold 15' |
+| Free + còn chỗ | [Đăng ký miễn phí] | Active, no link needed |
+| Full (hết chỗ) | [Vào danh sách chờ] | Waitlisted, no payment |
+| Approval required | [Gửi yêu cầu] | Pending → host approve |
+
+**Component: Payment hold timer:**
+
+| State | Display | Timeout |
+|-------|---------|---------|
+| Active hold | "Giữ chỗ: [MM:SS]" countdown | 15:00 |
+| ≤2 min left | Countdown turns red/pulse | Warning |
+| Expired | "Hết hạn — chuyển về cuối hàng" | Auto-requeue |
+| Payment verified | "✅ Đã xác nhận" | Timer stops |
+
+### 3.7 Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Browse card | `public_sessions` (whitelist) | No roster/PII |
+| Occupancy | Shared occupancy helper | Holds counted |
+| Payment hold | `payment_holds` per session | 15' TTL, capacity deducted |
+| Link handoff | `booking_handoffs` (opaque, single-use) | Bound to channel+session+action |
+| Settlement | Provider webhook → reconcile | Verified exact match |
+| Waitlist | `players` WHERE `status='waitlisted'` | Ordered, requeue-to-tail |
+
+### 3.8 State coverage matrix
+
+| Screen/Surface | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| Browse card (bot) | N/A (inline message) | ✅ Session summary card | ✅ "Kèo này không còn" | ✅ "Chưa có buổi chơi nào" |
+| Final confirm (linked) | — | ✅ Confirm gate + price | ✅ "Giá đã đổi — xem lại" | ⚪ N/A |
+| Final confirm (unlinked) | — | ✅ Link/Pay-now choice | ✅ "Lỗi — thử lại" | ⚪ N/A |
+| Payment hold | ✅ Creating hold... | ✅ QR + countdown | ✅ "Hết hạn — cuối hàng" | ⚪ N/A |
+| Post-confirm (active) | — | ✅ Venue + payment status | — | ⚪ N/A |
+| Post-confirm (waitlisted) | — | ✅ Position + no venue | — | ⚪ N/A |
+| Link handoff | ✅ "Đang mở Plexco..." | ✅ Web binding page | ✅ "Link hết hạn" | ⚪ N/A |
+| Free/Full/Approval | — | ✅ Appropriate CTA | ✅ "Lỗi — thử lại" | ⚪ N/A |
+
 ---
 
 ## 4. Use cases
+
 
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|

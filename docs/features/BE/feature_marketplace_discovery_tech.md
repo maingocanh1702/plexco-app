@@ -4,7 +4,7 @@
 > **Version:** 2.6 · 2026-07-28
 > **Status:** Reviewed  
 > **Implementation:** DB invariant `0024` đã land; `public_sessions` baseline có sẵn, nhưng projector/API/cache invalidation chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
-> **Product spec:** `../feature_marketplace_discovery.md`  
+> **Product spec:** `../FE/feature_marketplace_discovery.md`  
 > **References:** `../../product/TDD.md` §3.9 · `../../standards/decisions.md` DD-32 · `feature_channel_booking_funnel_tech.md`
 
 ---

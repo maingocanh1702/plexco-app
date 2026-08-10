@@ -4,7 +4,7 @@
 > **Version:** 0.16 · 2026-07-27
 > **Status:** DD-39 ✅ · DD-47/48 ✅ framework — Draft, pending migration/build
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
-> **Product spec:** `../feature_user_settings.md` *(Draft)*
+> **Product spec:** `../FE/feature_user_settings.md` *(Draft)*
 > **References:** `../../standards/decisions.md` DD-39 (giá theo giới tính) · **DD-45 (first-activation waitlist promotion) · DD-49 (rejoin/correction)** · **DD-47 (follow graph) · DD-48 (profile visibility)** · DD-13 (Google/email — nguồn hồ sơ web) · `../BE/feature_payment_reconcile_tech.md` (suy charge) · `../BE/feature_session_management_tech.md` (đặt giá) · `feature_identity.md` (merge re-parent) · `feature_player_view.md` (profile path) · BRD MODULE 11 / FR-11 / NFR-P1
 
 > ✅ **Follow + private/public (DD-47/48 — framework chốt, §6):** `person_follows` là global protected, không table grant cho `app`; chỉ narrow `SECURITY DEFINER`. Existing users backfill private, new users default public. Social DTO chỉ chứa field có canonical source; self và host operational paths tách riêng. Migration mới — số monotonic kế tiếp sau tail đã sync (hiện `0024`); code chưa build.

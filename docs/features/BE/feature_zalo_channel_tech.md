@@ -4,8 +4,8 @@
 > **Version:** 2.7 · 2026-07-28
 > **Status:** Reviewed · reconciled to DD-15/DD-32/DD-45/DD-49/DD-67
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
-> **Product spec:** `../feature_zalo_channel.md`
-> **References:** `../../standards/decisions.md` DD-15/DD-32/DD-45/DD-49/DD-67 · `../feature_connector_onboarding.md` BL-SEC-1 secret lifecycle · `feature_channel_booking_funnel_tech.md` · `feature_cross_club_join_tech.md`
+> **Product spec:** `../FE/feature_zalo_channel.md`
+> **References:** `../../standards/decisions.md` DD-15/DD-32/DD-45/DD-49/DD-67 · `../FE/feature_connector_onboarding.md` BL-SEC-1 secret lifecycle · `feature_channel_booking_funnel_tech.md` · `feature_cross_club_join_tech.md`
 > **⚠️ Live-schema boundary:** live `channel_identities` vẫn là key **2-phần** `(platform, platform_user_lookup_hash)` và `channel_reachability` PK `(person_id, tenant_id, platform)`. Mô hình endpoint-scoped DD-67 (3-phần `provider_scope_lookup_hash`, reachability theo `channel_identity_id`) là **target**, cần migration mới land trước runtime. `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`; verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số), nên slice Zalo vẫn phải sync mọi prerequisite đã merge rồi chọn **next available monotonic number** sau tail đã merge, không hardcode/pin một số cố định và không sửa migration lịch sử. Live `zalo_bots` đã có lifecycle mới ở `0004` và RLS tenant-private ở `0009`, nhưng vẫn còn legacy `secret text`; cột này **không đạt BL-SEC-1**. Target DDL dưới thay nó bằng `webhook_secret_enc`; forward migration phải KMS-encrypt/backfill hoặc vô hiệu hóa connector chưa backfill được trước khi runtime Zalo được bật.
 
 ---
@@ -112,7 +112,76 @@ Chọn **next available monotonic number** sau khi sync mọi prerequisite đã 
 
 ---
 
+### Query Patterns
+
+```sql
+-- resolveIdentityFromZaloUID (protected function, per OA)
+SELECT ci.id, ci.person_id, ci.platform
+FROM channel_identities ci
+WHERE ci.platform = 'zalo'
+  AND ci.provider_scope_lookup_hash = $1  -- HMAC(oa_id + zalo_uid)
+  AND ci.status = 'active';
+
+-- getZaloBotConfig (tenant-scoped via RLS)
+SELECT zb.id, zb.oa_id, zb.oa_name, zb.status,
+       zb.access_token_enc, zb.refresh_token_enc
+FROM zalo_bots zb
+WHERE zb.tenant_id = current_setting('app.tenant_id', true)::uuid;
+```
+
 ## 3. API Contract
+
+### Endpoints
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| POST | `/webhook/zalo` | Signed (Zalo webhook signature) | Inbound OA events → resolver → AuthZ → service |
+
+> Không có app-facing REST API — mọi interaction qua Zalo OA webhook + DM.
+
+### Error Codes (webhook + DM)
+
+| Code | Error Code | Message | Trigger |
+|------|-----------|---------|---------|
+| 200 | (ACK) | — | Valid webhook event processed |
+| 400 | `WEBHOOK_SIGNATURE_INVALID` | — | Zalo signature mismatch |
+| 400 | `WEBHOOK_PAYLOAD_MALFORMED` | — | Unparseable body |
+| 429 | `WEBHOOK_RATE_LIMITED` | — | Burst cap exceeded |
+
+### DM Error Responses (user-facing)
+
+| Situation | Response (tiếng Việt) | Error Code (internal) |
+|-----------|----------------------|----------------------|
+| Invalid number input | "Mình chưa hiểu, gõ số từ menu để chọn" | `INVALID_INPUT` |
+| Session closed | "❌ Buổi chơi đã kết thúc" | `SESSION_CLOSED` |
+| Session full | "Hết chỗ — bạn đã được thêm vào danh sách chờ" | `SESSION_FULL` |
+| Payment expired | "Chỗ giữ đã hết hạn" | `HOLD_EXPIRED` |
+| No eligible club | "Bạn chưa có quyền quản lý CLB phù hợp" | `NO_ELIGIBLE_CLUB` |
+| Unknown command | "Gõ số để chọn từ menu" | `UNKNOWN_COMMAND` |
+
+### Request/Response Examples
+
+> Webhook trả theo **Zalo provider contract**; DM response theo bảng Error Responses.
+
+**`POST /webhook/zalo`** — signature hợp lệ:
+
+```json
+{
+  "event_name": "user_send_text",
+  "sender": { "id": "zalo_user_id" },
+  "message": { "text": "1" },
+  "timestamp": "1722000000000"
+}
+```
+
+Response: `200 OK` (ACK).
+
+**Signature sai:**
+
+```json
+{ "error": "WEBHOOK_SIGNATURE_INVALID" }
+```
+
 
 ### Zalo Adapter Commands
 

@@ -160,6 +160,6 @@
 - Meta — Marketing Messages on Messenger FAQ (paid/opt-in, thay Recurring Notifications): https://developers.facebook.com/docs/messenger-platform/marketing-messages-on-messenger/faq
 - Meta — m.me links & `messaging_referrals` webhook (routing `ref`): https://developers.facebook.com/docs/messenger-platform/reference/webhook-events/messaging_referrals
 - Zalo Bot Platform: https://zbot.com.vn/
-- Nội bộ: `docs/standards/deployment-infra.md` §9–§10, `docs/features/feature_connector_onboarding.md` §4.1 (CO-OQ-1), `docs/product/PRD.md`, `docs/channels/web/ux-sync-design.md`.
+- Nội bộ: `docs/standards/deployment-infra.md` §9–§10, `docs/features/FE/feature_connector_onboarding.md` §4.1 (CO-OQ-1), `docs/product/PRD.md`, `docs/channels/web/ux-sync-design.md`.
 
 > ⚠️ Trang Meta Marketing Messages FAQ render bằng JS, chưa đọc trực tiếp được trong phiên này — số liệu policy lấy từ tài liệu Meta + kiểm chứng chéo; **xác nhận lại trên docs Meta live** (đặc biệt tình trạng Message Tags/OTN sau khai tử và giá Marketing Messages tại VN) trước khi build.

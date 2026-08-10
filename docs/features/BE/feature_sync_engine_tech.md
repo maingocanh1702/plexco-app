@@ -4,7 +4,7 @@
 > **Version:** 2.7 · 2026-07-28
 > **Status:** Reviewed (v2.4: live-schema rollout truth + endpoint-exact channel delivery)
 > **Implementation:** Infrastructure in progress — `0022`/`0023` + fail-closed preflight/dispatcher/flagged scheduler merged; schedule OFF, dispatcher placeholder, no producer/real projector/replay/sub-minute drain · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
-> **Product spec:** `../feature_sync_engine.md`
+> **Product spec:** `../FE/feature_sync_engine.md`
 > **References:** `../../product/TDD.md` §3.8 · `../../standards/decisions.md` DD-37 · **DD-65..68**
 > **⚠️ Live-schema boundary:** endpoint-exact delivery ở đây dựa trên `channel_identity_id` và reachability theo `channel_identity_id` — đó là **target** DD-67; live `channel_reachability` vẫn PK `(person_id, tenant_id, platform)` và `channel_identities` là key 2-phần. Cần migration mới land trước runtime; `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`; verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số), nên slice Sync vẫn phải sync mọi prerequisite đã merge rồi chọn **next available monotonic number** sau tail đã merge, không hardcode/pin một số cố định. Live tables sync (`processed_commands`/`outbox_events`/`projector_deliveries`/`surface_refs`/`public_sessions`) không đổi.
 >

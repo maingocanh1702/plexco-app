@@ -1,7 +1,7 @@
 # Feature: Player View (/me) — FE Design Spec
 
 > **Route(s):** `/me` · `/me/clubs/:clubId` · `/me/charges`
-> **Source authority:** `../../../features/feature_player_view.md` v2.7 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
+> **Source authority:** `../../../features/FE/feature_player_view.md` v2.7 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
 > **Source contract status:** Reviewed
 > **Projection/API contract:** Canonical `SelfPaymentStatus` for `/api/me/charges`; club-detail DTO (`GET /api/me/clubs/:id`) và join-request HTTP route `UNPINNED`
 > **Capability/availability:** Authenticated person-self only; no arbitrary person/tenant input

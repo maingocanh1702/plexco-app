@@ -53,7 +53,7 @@ workflow.
 2. `docs/probes/b0-auth-credential-lifecycle-design-probe.md` — §2/§3.2#6/§3.3 (v1.86 note)/§4 (v1.86 AAD-handoff)/§4.1/§5.2/§8.2/§8.3 (v1.85 per-lane finalizer)/§10.
 3. `docs/features/BE/feature_web_auth_onboarding_tech.md` header v2.10 / changelog v2.11 — §3 endpoints, §4, acceptance matrix D1-1..15.
 4. `docs/features/BE/feature_identity_tech.md` v1.10 §4–§5 (lock hierarchy) · `apps/web/lib/session-cookies.ts` (issueSession/clientIp — style only).
-5. For §C (DD-39 gender/pricing only): `docs/features/BE/feature_user_settings_tech.md` · `docs/features/feature_user_settings.md` · decisions DD-39/DD-55 blocks · current `slice-readiness-verdicts.md` Verdict 2 · `review-code-readiness-gate.md` §11.2 (the evidence-inventory test). DD-38 chat sources (`feature_inapp_chat*.md`) are removed — chat is split to root slice `dd38-dd86-chat-schema-core`.
+5. For §C (DD-39 gender/pricing only): `docs/features/BE/feature_user_settings_tech.md` · `docs/features/FE/feature_user_settings.md` · decisions DD-39/DD-55 blocks · current `slice-readiness-verdicts.md` Verdict 2 · `review-code-readiness-gate.md` §11.2 (the evidence-inventory test). DD-38 chat sources (`feature_inapp_chat*.md`) are removed — chat is split to root slice `dd38-dd86-chat-schema-core`.
 6. Reference monolith via `git show cab0c2a:docs/auth-d0-d1-implementation-packet.md` (§B + §C sections + §D rows).
 
 Any conflict between these sources → stop that section, write the exact two sides (file/line each) to `HALT-AUTHORITY_AMBIGUOUS.txt`. Never pick a side locally.

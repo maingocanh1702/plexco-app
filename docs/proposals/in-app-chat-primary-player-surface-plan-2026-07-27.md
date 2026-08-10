@@ -9,7 +9,7 @@
 > **Authority live-repo đã đối chiếu:** `main@90d292d85fbe92db7a5afcd118a99e28f3d3b3b7` = `origin/main` (re-pin 2026-07-28); migration tail quan sát được là `0024`; `chat_*`, `/api/chat/*`, `/api/me*`, Assistant/KB runtime và product chat UI chưa tồn tại.
 > **Provenance snapshot:** `90d292d` = commit `docs(chat): commit the in-app-chat primary-surface authority pack`, chứa **đúng 27 file** `TARGET_FILES` và không file nào khác; 73 file WIP không liên quan trong worktree được cố ý loại khỏi baseline. Toàn bộ nội dung review ở bản này (trừ chính metadata pin của v1.8) nằm tại `90d292d`.
 > **Drift từ snapshot review trước:** `6ae2de6..81b4fe8` đã land scheduler/outbox (`a03d2d6`) và docs reconciliation; `81b4fe8..2dc9b8c` chỉ đổi readiness artifacts cho slice DB constraint-naming; `2dc9b8c..90d292d` là chính authority pack này. Các delta trước `90d292d` **không chạm** chat, Player View, Assistant, Notification contracts, payment helper hay migration tail; vì vậy không invalidate blast radius. Migration mới vẫn phải lấy **next available monotonic number sau khi sync main tại lúc author**, không hard-code `0025`.
-> **Canonical liên quan:** `../decisions/analysis/dd-86-in-app-multi-channel-analysis.md` · `../features/README.md` · `../features/feature_inapp_chat.md` · `../features/BE/feature_inapp_chat_tech.md` · `../features/feature_club_assistant.md` · `../features/BE/feature_club_assistant_tech.md` · `../features/feature_player_view.md` · `../features/BE/feature_player_view_tech.md` · `../features/feature_notifications_reminders.md` · `../features/BE/feature_notifications_reminders_tech.md` · `../features/feature_tenant_routing_authz.md` · `../features/BE/feature_tenant_routing_authz_tech.md` · `../standards/decisions.md` · `../standards/core-db-architecture-principles.md`.
+> **Canonical liên quan:** `../decisions/analysis/dd-86-in-app-multi-channel-analysis.md` · `../features/README.md` · `../features/FE/feature_inapp_chat.md` · `../features/BE/feature_inapp_chat_tech.md` · `../features/FE/feature_club_assistant.md` · `../features/BE/feature_club_assistant_tech.md` · `../features/FE/feature_player_view.md` · `../features/BE/feature_player_view_tech.md` · `../features/FE/feature_notifications_reminders.md` · `../features/BE/feature_notifications_reminders_tech.md` · `../features/FE/feature_tenant_routing_authz.md` · `../features/BE/feature_tenant_routing_authz_tech.md` · `../standards/decisions.md` · `../standards/core-db-architecture-principles.md`.
 
 ---
 
@@ -678,15 +678,15 @@ WORKTREE_STATE: AUTHORITY_PACK_COMMITTED_AND_PUSHED; 73 unrelated WIP files rema
 TARGET_FILES:
   - docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md
   - docs/decisions/analysis/dd-86-in-app-multi-channel-analysis.md
-  - docs/features/feature_inapp_chat.md
+  - docs/features/FE/feature_inapp_chat.md
   - docs/features/BE/feature_inapp_chat_tech.md
-  - docs/features/feature_club_assistant.md
+  - docs/features/FE/feature_club_assistant.md
   - docs/features/BE/feature_club_assistant_tech.md
-  - docs/features/feature_player_view.md
+  - docs/features/FE/feature_player_view.md
   - docs/features/BE/feature_player_view_tech.md
-  - docs/features/feature_notifications_reminders.md
+  - docs/features/FE/feature_notifications_reminders.md
   - docs/features/BE/feature_notifications_reminders_tech.md
-  - docs/features/feature_tenant_routing_authz.md
+  - docs/features/FE/feature_tenant_routing_authz.md
   - docs/features/BE/feature_tenant_routing_authz_tech.md
   - docs/features/README.md
   - docs/proposals/club-ai-bot-knowledge-base.md

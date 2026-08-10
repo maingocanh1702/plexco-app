@@ -10,7 +10,7 @@
 >
 > **Cập nhật 06/08:** 12 FE design spec đã commit tại `../channels/web/FE/`. Chúng **không** đổi status boundary trên: spec Draft ≠ FE implemented, trục FE/UI vẫn 0 màn, `design.pen` vẫn untracked. Checklist §DD-58 dưới đây vẫn còn ô "canonical `design.pen` đã được track + owner duyệt" chưa tick.
 
-Tài liệu này định nghĩa **cách cấu trúc code FE** — không phải design tokens (xem `design-tokens.md`) và không phải screen spec (xem `../features/feature_*.md` §Screens & States + `../channels/web/design-brief.md`).
+Tài liệu này định nghĩa **cách cấu trúc code FE** — không phải design tokens (xem `design-tokens.md`) và không phải screen spec (xem `../features/FE/feature_*.md` §Screens & States + `../channels/web/design-brief.md`).
 
 ---
 
@@ -126,7 +126,7 @@ type ScreenState<T> =
 
 Trước khi code 1 màn mới, phải có đủ:
 
-- [ ] Product spec `../features/feature_<name>.md` §Screens & States (Reviewed).
+- [ ] Product spec `../features/FE/feature_<name>.md` §Screens & States (Reviewed).
 - [ ] **FE design spec `../channels/web/FE/feature_<name>_fe.md`** (template `../templates/feature-dev/fe-spec-template.md`) — có đủ: §6 `Data hiển thị` với exact response path hoặc `UNPINNED — omit active UI`, cột i18n `t(vi, en)` (FE-INV-4), và **bảng `#### Error mapping` cho từng screen** map status/error code → visible state, mã lấy nguyên văn từ BE tech doc, kết bằng hàng unknown/missing/timeout fail-closed (FE-INV-1/FE-INV-6). 12 spec đầu tiên đã có trên `main`.
 - [ ] Canonical `design.pen` đã được track + owner duyệt; node/frame ID của màn tồn tại và được pin.
 - [ ] Handoff `docs/channels/web/handoff/<screen>-handoff.md` (template `../templates/feature-dev/fe-handoff-template.md`).

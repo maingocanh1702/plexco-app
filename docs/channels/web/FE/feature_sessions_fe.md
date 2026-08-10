@@ -1,7 +1,7 @@
 # Feature: Session CRUD — FE Design Spec
 
 > **Route(s):** `/dashboard/sessions` · `/dashboard/sessions/new` · `/dashboard/sessions/:id`
-> **Source authority:** `../../../features/feature_session_management.md` v2.17 + `../../../features/feature_payment_reconcile.md` v1.10 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
+> **Source authority:** `../../../features/FE/feature_session_management.md` v2.17 + `../../../features/FE/feature_payment_reconcile.md` v1.10 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
 > **Source authority (BE error/policy tokens):** `../../../features/BE/feature_session_management_tech.md` — `CANCEL_REQUIRES_REVIEW` (§3 *Error Codes*) và `impact_policy` (§2 *Edge Cases* #4, price/capacity change có charges). Hai token này **không** nằm trong feature doc v2.17 ở trên; FE lấy nguyên văn từ BE tech doc, không tự đặt mã hay enum.
 > **Source authority (roster disambiguator):** `../../../standards/decisions.md` DD-85 (owner-chốt 2026-07-21) — `pay_code` là disambiguator mặc định khi ≥2 active/guest membership trong cùng tenant trùng `display_name` sau chuẩn-hoá `NFKC → trim → collapse whitespace → locale-safe casefold` (giữ dấu, không fuzzy/token-subset). Chỉ surface host/authenticated; không dùng phone (DD-50); avatar/gender ngoài phase-1.
 > **Source contract status:** Reviewed; payment renderer DTO và price-adjustment API chưa author

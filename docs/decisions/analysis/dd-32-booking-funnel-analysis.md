@@ -6,7 +6,7 @@
 > **Decision status:** `DECISION_FINAL` — Option D
 > **Runtime status:** Not implemented
 > **Authority pin:** `main@784bc8dd297163a5ec5415f33beabbbf34bbc8d7` + exact files in §9
-> **Canonical contract:** `features/feature_channel_booking_funnel.md` + `features/BE/feature_channel_booking_funnel_tech.md`
+> **Canonical contract:** `features/FE/feature_channel_booking_funnel.md` + `features/BE/feature_channel_booking_funnel_tech.md`
 
 ---
 
@@ -184,25 +184,25 @@ TARGET_FILES:
   - docs/standards/feature-dependency-graph.md
   - docs/standards/BUILD-STATUS.md
   - docs/features/README.md
-  - docs/features/feature_channel_booking_funnel.md
+  - docs/features/FE/feature_channel_booking_funnel.md
   - docs/features/BE/feature_channel_booking_funnel_tech.md
-  - docs/features/feature_cross_club_join.md
+  - docs/features/FE/feature_cross_club_join.md
   - docs/features/BE/feature_cross_club_join_tech.md
-  - docs/features/feature_session_management.md
+  - docs/features/FE/feature_session_management.md
   - docs/features/BE/feature_session_management_tech.md
-  - docs/features/feature_marketplace_discovery.md
+  - docs/features/FE/feature_marketplace_discovery.md
   - docs/features/BE/feature_marketplace_discovery_tech.md
-  - docs/features/feature_identity.md
+  - docs/features/FE/feature_identity.md
   - docs/features/BE/feature_identity_tech.md
-  - docs/features/feature_web_auth_onboarding.md
+  - docs/features/FE/feature_web_auth_onboarding.md
   - docs/features/BE/feature_web_auth_onboarding_tech.md
-  - docs/features/feature_payment_reconcile.md
+  - docs/features/FE/feature_payment_reconcile.md
   - docs/features/BE/feature_payment_reconcile_tech.md
-  - docs/features/feature_player_messenger.md
+  - docs/features/FE/feature_player_messenger.md
   - docs/features/BE/feature_player_messenger_tech.md
   - docs/channels/messenger/messenger-channel-design.md
   - docs/channels/messenger/README.md
-  - docs/features/feature_zalo_channel.md
+  - docs/features/FE/feature_zalo_channel.md
   - docs/features/BE/feature_zalo_channel_tech.md
   - docs/channels/zalo/README.md
 SLICE: channel-booking-decision-contract

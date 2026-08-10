@@ -118,17 +118,175 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 
 ## 3. Screens & States
 
-| Surface | Screen | Loading | Ready | Error | Empty |
-|---------|--------|---------|-------|-------|-------|
-| Web/App | Danh sách kênh (CLB + DM) | Skeleton | List kênh CLB + DM gần đây + badge chưa đọc | "Lỗi tải" + retry | "Chưa có hội thoại" |
-| Web/App | Chat toàn CLB | "Đang tải..." | Lịch sử + ô soạn + realtime | "Mất kết nối — đang thử lại" | "Chưa có tin nhắn" |
-| Web/App | DM 1-1 | "Đang tải..." | Lịch sử 2 người + ô soạn | "Lỗi gửi — thử lại" | "Bắt đầu trò chuyện" |
-| Web/App | Requester-only command overlay | "Đang kiểm tra..." | Card tạm thời chỉ requester; 1 CLB auto / nhiều CLB picker private | Lỗi generic, retry không tạo message | Không có CLB eligible |
-| Web/App | Reaction controls | — | Một active reaction/person từ closed set nhỏ | Private generic deny, không optimistic partial state | Control ẩn khi không eligible |
-| Web/App | Search trong Chat | "Đang tìm..." | Kết quả current-visible + optional channel filter | Generic retry; không leak forbidden count | "Không tìm thấy" |
-| Web/App | Media composer/viewer | Upload/scan progress | Preview attachment `ready`; signed view/download | Rejected/quarantined/deleted tombstone | Chọn ảnh/file |
-| Web/App | Safety actions | — | Block / unblock / report + generic confirmation | Generic retry | N/A |
-| Web/App | Kiểm duyệt club channel | — | Soft-hide/restore human message; timed mute; required reason | Private generic error | N/A |
+> Header entry 💬 (not bottom nav tab). Mobile-first 375px; desktop ≥1024 (split: channel list left + chat right).
+
+### Channel list (CLB + DM)
+
+**Purpose:** Danh sách kênh chat: CLB channels + DM conversations, sorted by recency.
+
+**Layout (mobile):**
+
+```
+┌──────────────────────────────────────┐
+│ ← Home            💬 Hội thoại      │
+├──────────────────────────────────────┤
+│ [🔍 Tìm kiếm...]                    │
+├──────────────────────────────────────┤
+│                                      │
+│ 🏸 CLB Cầu lông BT          2m ago  │
+│   Anh T: Ai đi tối nay?        🔴3  │
+│ ──────────────────────────────────── │
+│ 👤 Minh Hoàng (DM)           5m ago  │
+│   Bạn: OK, gặp lúc 7h          ✓✓  │
+│ ──────────────────────────────────── │
+│ ⚽ FC Thủ Đức                30m ago  │
+│   System: Session T7 đã tạo         │
+│ ──────────────────────────────────── │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+**Component: Channel row:**
+
+| Field | Data source | Ghi chú |
+|-------|-------------|---------|
+| Icon | Club sport icon (club) / Avatar (DM) | Kind-specific |
+| Name | `chat_channels.name` (club) / person display_name (DM) | |
+| Last message preview | `chat_messages` latest | Truncated, sender prefix |
+| Unread badge | `chat_members.last_read_at` vs latest | 🔴 count |
+| Timestamp | Relative (vừa xong / 2m / 5h / hôm qua) | |
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton (5 channel row skeletons) |
+| Ready | Channel list sorted by recency |
+| Error | "Lỗi tải" toast + retry |
+| Empty | Icon 💬 + "Chưa có hội thoại" + "Tham gia CLB để bắt đầu" |
+
+### Club chat (full channel)
+
+**Layout (mobile):**
+
+```
+┌──────────────────────────────────────┐
+│ ← Hội thoại    🏸 CLB Cầu lông BT  │
+├──────────────────────────────────────┤
+│                                      │
+│        [Tin nhắn cũ hơn ↑]          │
+│                                      │
+│  Anh T                     19:30    │
+│  ┌──────────────────────────────┐   │
+│  │ Ai đi cầu lông tối nay?    │   │  bubble left (other)
+│  └──────────────────────────────┘   │
+│                        👍1 ❤️2      │  reactions
+│                                      │
+│                            Bạn 19:32│
+│  ┌──────────────────────────────┐   │
+│  │ Mình đi!                    │   │  bubble right (self)
+│  └──────────────────────────────┘   │
+│                                      │
+│  ── System ──────────────────────── │
+│  📋 Session "Cầu lông T5" đã tạo   │  system message
+│                                      │
+├──────────────────────────────────────┤
+│ [📎] [Soạn tin nhắn...        ] [→] │  composer
+└──────────────────────────────────────┘
+```
+
+**Component: Message bubble:**
+
+| Type | Hiển thị | Ghi chú |
+|------|----------|---------|
+| Text | Bubble + sender name + timestamp | Left (others) / Right (self) |
+| System | Centered, muted style | Session events, moderation |
+| Media | Thumbnail + tap to view | Upload progress, scan status |
+| Edited | "(đã chỉnh sửa)" label | Bounded own edit |
+| Deleted | "Tin nhắn đã bị xóa" tombstone | No hard-delete |
+| Command result | Requester-only card (ephemeral) | `/pay`, `/sessions` |
+
+**Component: Reactions:**
+
+| Reaction | Set |
+|----------|-----|
+| Available | 👍 ❤️ 😂 😮 😢 🙏 |
+| Rule | 1 active per person per message; tap to toggle/replace |
+
+### DM (1-1)
+
+**Layout:** Same as club chat nhưng:
+- Header: Avatar + display_name (person)
+- No system messages (session events)
+- Safety: Block/report controls in ⋮ menu
+
+**States:** Loading ("Đang tải...") | Ready (chat history + composer) | Error ("Lỗi gửi — thử lại") | Empty ("Bắt đầu trò chuyện")
+
+### Command overlay (requester-only)
+
+**Layout (ephemeral card — chỉ requester thấy):**
+
+```
+┌──────────────────────────────────────┐
+│ 💰 /pay — Thanh toán                │
+│                                      │
+│ Kèo: 🏸 Cầu lông T5 · 10/08       │
+│ Phí:       75,000₫                  │
+│ Đã trả:    0₫                       │
+│ Còn lại:   75,000₫                  │
+│                                      │
+│ [Đã thanh toán? Host sẽ xác nhận]   │
+│                              [Đóng] │
+└──────────────────────────────────────┘
+```
+
+> Nếu nhiều CLB eligible → club picker (opaque, chỉ requester thấy).
+
+### Search trong Chat
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ 🔍 [tìm kiếm tin nhắn...       ] ✕ │
+├──────────────────────────────────────┤
+│ Kết quả (3)                          │
+│                                      │
+│ 🏸 CLB Cầu lông BT · Anh T · 19:30│
+│   "Ai đi cầu lông tối nay?"        │
+│                                      │
+│ 👤 Minh Hoàng · 18:00              │
+│   "cầu lông không?"                 │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+**States:** Loading ("Đang tìm...") | Ready (results + channel context) | Error (generic retry) | Empty ("Không tìm thấy")
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Channel list | `chat_channels` + `chat_members` | club/dm split, sorted recency |
+| Messages | `chat_messages` + search vector | Paginated, realtime SSE |
+| Unread count | `chat_members.last_read_at` | Per-channel per-person |
+| Reactions | `chat_message_reactions` | Closed set, 1/person/message |
+| Command results | Canonical services (`getSelfPaymentStatus`) | Requester-only ephemeral |
+| Safety | `chat_blocks` (DD-55) | Block/report/mute |
+
+### State coverage matrix
+
+| Screen | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| Channel list | ✅ Skeleton rows | ✅ Sorted + badges | ✅ Toast + retry | ✅ "Chưa có hội thoại" |
+| Club chat | ✅ "Đang tải..." | ✅ History + composer + realtime | ✅ "Mất kết nối" + retry | ✅ "Chưa có tin nhắn" |
+| DM 1-1 | ✅ "Đang tải..." | ✅ History + composer | ✅ "Lỗi gửi" + retry | ✅ "Bắt đầu trò chuyện" |
+| Command overlay | ✅ "Đang kiểm tra..." | ✅ Requester-only card | ✅ Generic retry | ✅ "Không có CLB eligible" |
+| Reactions | — | ✅ Closed set controls | ✅ Private deny | ⚪ N/A |
+| Search | ✅ "Đang tìm..." | ✅ Results + context | ✅ Generic retry | ✅ "Không tìm thấy" |
+| Media viewer | ✅ Upload/scan progress | ✅ Preview + download | ✅ Quarantined tombstone | ✅ "Chọn ảnh/file" |
+| Safety actions | — | ✅ Block/report + confirm | ✅ Generic retry | ⚪ N/A |
+| Kiểm duyệt | — | ✅ Hide/mute + reason | ✅ Private error | ⚪ N/A |
 
 ---
 
@@ -148,7 +306,7 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 | `chat_attachments` (proposal) | Private, channel-authorized | Metadata + storage/scan/deletion state | Owner + object key; `pending_scan → ready | rejected | quarantined | deleted`; message chỉ attach `ready`; no raw signed URL persisted |
 | `chat_blocks` / `chat_reports` (DD-55 canonical contract; schema pending) | Person-self / abuse-control | Open-DM safety gate | Deterministic actor-target block; report reason/status + immutable audit; không làm DM readable cho host/support |
 
-- **RLS:** `club` channel → thêm `chat_*` vào RLS list (ENABLE + FORCE theo `app.tenant_id`). `dm` (`tenant_id` NULL) **không** qua tenant-RLS mà gate **person-self** (chỉ 2 person trong `dm_key`) — khớp `BE/feature_inapp_chat_tech.md`. Migration RLS list tương lai.
+- **RLS:** `club` channel → thêm `chat_*` vào RLS list (ENABLE + FORCE theo `app.tenant_id`). `dm` (`tenant_id` NULL) **không** qua tenant-RLS mà gate **person-self** (chỉ 2 person trong `dm_key`) — khớp `../BE/feature_inapp_chat_tech.md`. Migration RLS list tương lai.
 - **Realtime:** SSE + `LISTEN/NOTIFY` theo tenant/person (DD-07) — cùng cơ chế sync engine.
 - **Read state:** `chat_members.last_read_at` vẫn là Chat authority cho history/reconnect/unread/badge. DD-94 Notification chỉ giữ opaque coalesced `highest_unread_cursor` signal; không durable notification item per source message hoặc content snapshot.
 - **Không** entity nào thuộc public plane.
@@ -252,5 +410,5 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 | 2026-07-17 | v0.6 | **DD-55 bootstrap closure:** one canonical DM safety decision now explicitly owns request/create/bootstrap/send/read; `create_dm` cannot bypass block/rate/enablement gates. |
 | 2026-07-16 | v0.4 | **Propagation (light) DD-55:** CHT-OQ-1 ✅ (phase-1 open DM / phase-2 follow-gated + request box; host không đọc DM), CHT-OQ-3 ✅ (media in-scope full stack). CHT-OQ-2 giữ mở (build-time). Media stack/schema defer build slice — BE tech cần bổ sung media requirements. Authority: decisions v1.36. |
 | 2026-07-16 | v0.5 | **Full propagation DD-55 (decisions v1.37):** open-DM hard safety gate; block/report abuse contract; host/support DM denial; full private media upload/scan/signed-access/quota/moderation/deletion lifecycle; acceptance + domain proposals pinned. |
-| 2026-07-15 | v0.3 | Làm rõ §4 Domain Model: `dm` là **person-self** (`tenant_id` NULL, `dm_key` cặp person) tách khỏi `club` tenant-private — khớp §1 + `BE/feature_inapp_chat_tech.md`. RLS note tách club (tenant-RLS) vs dm (person-self gate). Đồng bộ version header ↔ changelog. |
+| 2026-07-15 | v0.3 | Làm rõ §4 Domain Model: `dm` là **person-self** (`tenant_id` NULL, `dm_key` cặp person) tách khỏi `club` tenant-private — khớp §1 + `../BE/feature_inapp_chat_tech.md`. RLS note tách club (tenant-RLS) vs dm (person-self gate). Đồng bộ version header ↔ changelog. |
 | 2026-07-10 | v0.1 | Khởi tạo Draft (DD-38): chat toàn CLB + 1-1, chỉ Plexco (không bridge, CO-7), SSE (DD-07), RLS tenant cho club-chat + person-self cho DM, anti-spam; tái dùng `chat_*` mà trợ lý DD-19/DD-20 dùng ở P7. Schema proposal-level trỏ decisions.md + `packages/db/schema.ts`. |

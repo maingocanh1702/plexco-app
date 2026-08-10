@@ -79,12 +79,200 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 
 ## 3. Screens & States
 
-| Surface | Screen | Loading | Ready | Error | Empty |
-|---------|--------|---------|-------|-------|-------|
-| Web/App | Hồ sơ cá nhân | Skeleton | Form: tên, username, giới tính, ngày sinh, ngôn ngữ + consent toggle | Inline error per field | Default values |
-| Web/App | Đổi username | — | Input + kiểm tra trùng realtime | "Username đã tồn tại" | N/A |
-| Web/App | Quyền riêng tư / consent | — | Toggle consent PII + nút xoá dữ liệu | "Lỗi lưu" | N/A |
-| Web (host) | Đặt giá kèo nam/nữ | — | Giá đơn / giá nam + giá nữ (tại session form) | Inline validation | N/A |
+> Web/App settings tab (bottom nav slot 5). Mobile-first 375px; desktop ≥1024.
+
+### Hồ sơ cá nhân
+
+**Purpose:** Xem/sửa profile: tên, username, giới tính, ngày sinh, ngôn ngữ, consent.
+
+**Layout (mobile):**
+
+```
+┌──────────────────────────────────────┐
+│ ← Cài đặt                           │
+├──────────────────────────────────────┤
+│                                      │
+│         [Avatar placeholder]         │
+│         {displayName}                │
+│         @{username}                  │
+│                                      │
+│  ─── Thông tin cá nhân ───           │
+│  Tên hiển thị    [{displayName}   ]  │
+│  Username        [@{username}     ]  │
+│                  ↳ kiểm tra trùng ⏳  │
+│  Giới tính       [Nam ▼]             │
+│                  ↳ Nam/Nữ/Khác/      │
+│                    Không tiết lộ      │
+│  Ngày sinh       [DD/MM/YYYY     ]   │
+│  Ngôn ngữ        [Tiếng Việt ▼]     │
+│                                      │
+│  ─── Quyền riêng tư ───             │
+│  Cho phép CLB sử dụng     [●○]  ON  │
+│  giới tính để tính giá              │
+│                                      │
+│  [🔐 Đổi mật khẩu]                  │
+│  [🗑️ Xoá tài khoản]    ← danger    │
+│                                      │
+│        [═══ Lưu thay đổi ═══]       │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+**Component: Gender selector (DD-39):**
+
+| Giá trị | Display | Impact charge |
+|---------|---------|---------------|
+| `male` | Nam | `sessions.price_male` (nếu có) |
+| `female` | Nữ | `sessions.price_female` (nếu có) |
+| `other` | Khác | Fallback `price_amount` base |
+| `undisclosed` | Không tiết lộ | Fallback `price_amount` base |
+| `NULL` (chưa set) | — | Fallback base + nhắc set |
+
+**Component: PII consent toggle:**
+
+| State | Hiển thị | Hệ quả |
+|-------|----------|--------|
+| ON | "Cho phép CLB sử dụng giới tính để tính giá" ✅ | Host đọc gender cho suy giá |
+| OFF | "Không chia sẻ giới tính" | Gender trả NULL cho host → base price |
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton form (avatar shimmer + 5 field skeletons + 2 toggle skeletons) |
+| Ready | Form pre-filled từ `persons` |
+| Error | Inline error per field (VD: "Username đã tồn tại", "Ngày sinh không hợp lệ") |
+| Empty | Default values pre-filled (ngôn ngữ vi, gender/dob blank) |
+
+### Đổi username
+
+**Layout (inline real-time check):**
+
+```
+┌──────────────────────────────────────┐
+│  Username *      [@plexco_user    ]  │
+│                  ✅ "Có thể dùng"   │
+│   — HOẶC —                          │
+│                  ❌ "Đã có người     │
+│                      dùng"           │
+│   — HOẶC —                          │
+│                  ⏳ "Đang kiểm       │
+│                      tra..."         │
+└──────────────────────────────────────┘
+```
+
+> Debounce 300ms trước khi gọi check API. Case-insensitive unique check.
+
+### Đổi mật khẩu
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ ← Hồ sơ                             │
+├──────────────────────────────────────┤
+│                                      │
+│  🔐 Đổi mật khẩu                    │
+│                                      │
+│  Mật khẩu hiện tại [             ]   │
+│  Mật khẩu mới      [             ]   │
+│  Xác nhận           [             ]   │
+│                                      │
+│       [═══ Đổi mật khẩu ═══]        │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+### Quyền riêng tư / Consent
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ ← Cài đặt                           │
+├──────────────────────────────────────┤
+│                                      │
+│  🔒 Quyền riêng tư                  │
+│                                      │
+│  ─── Hồ sơ ───                      │
+│  Hiển thị hồ sơ     (●) Công khai   │
+│                      (○) Riêng tư    │
+│  ↳ Riêng tư: người khác chỉ thấy   │
+│    placeholder, cần follow để xem   │
+│                                      │
+│  ─── Dữ liệu cá nhân (PII) ───     │
+│  Chia sẻ giới tính   [●○]  ON       │
+│  cho CLB tính giá                   │
+│                                      │
+│  ─── Tài khoản ───                  │
+│  [📋 Yêu cầu xuất dữ liệu]         │
+│  [🗑️ Xoá dữ liệu cá nhân]  danger │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+### Host — Giá kèo nam/nữ (tại session form)
+
+> Cross-ref: `feature_session_management` §3 "Web P4 — Session create/edit form"
+
+**Component: Gender pricing toggle (trong session form):**
+
+```
+┌──────────────────────────────────────┐
+│  ─── Giá ───                         │
+│  (●) Giá đồng nhất                  │
+│      Giá / người    [120,000₫    ]   │
+│                                      │
+│  (○) Giá theo giới tính (DD-39)     │
+│      Giá nam        [150,000₫    ]   │
+│      Giá nữ         [100,000₫    ]   │
+│      Giá mặc định   [120,000₫    ]   │
+│      ↳ Áp dụng cho Khác/Không       │
+│        tiết lộ/chưa set gender      │
+└──────────────────────────────────────┘
+```
+
+### Xoá tài khoản (danger flow)
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│         ⚠️                            │
+│  Bạn có chắc muốn xoá tài khoản?    │
+│                                      │
+│  Dữ liệu cá nhân sẽ bị xoá.        │
+│  Lịch sử tài chính giữ cho audit.   │
+│                                      │
+│  Nhập "XOÁ TÀI KHOẢN" để xác nhận: │
+│  [                              ]    │
+│                                      │
+│  [═══ Xoá vĩnh viễn ═══]  danger    │
+│  [Huỷ]                              │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Profile fields | `persons` (gender/dob encrypted at-rest) | PII consent gated |
+| Username check | `persons` WHERE `lower(username)` | Unique, debounce 300ms |
+| PII consent | `persons.gender_consent` (or equivalent) | Controls host visibility |
+| Visibility | `persons.profile_visibility` | public/private (DD-48) |
+| Gender pricing | `sessions.price_male/price_female` | Cross-ref session form |
+
+### State coverage matrix
+
+| Screen | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| Hồ sơ cá nhân | ✅ Skeleton form | ✅ Pre-filled form | ✅ Inline per field | ✅ Default values |
+| Đổi username | ⚪ N/A (inline) | ✅ Realtime check | ✅ "Đã tồn tại" | ⚪ N/A |
+| Đổi mật khẩu | ⚪ N/A | ✅ Form | ✅ "Mật khẩu không đúng" | ⚪ N/A |
+| Quyền riêng tư | — | ✅ Toggles + explain | ✅ "Lỗi lưu" toast | ✅ Default public |
+| Giá nam/nữ (host) | — | ✅ Toggle + 3 fields | ✅ Inline validation | ⚪ N/A |
+| Xoá tài khoản | — | ✅ Confirm dialog | ✅ "Có khoản chưa TT" | ⚪ N/A |
 
 ---
 
@@ -190,7 +378,7 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 | `person_follows` (mới) | GLOBAL protected | Cạnh follow có hướng | no table grant cho app/PUBLIC; narrow functions; `UNIQUE`, no-self, pending/accepted |
 | `chat_blocks` (DD-55 canonical) | GLOBAL protected/person-self | Một block pair dùng chung social + DM | không tạo block store thứ hai trong User Settings; block/unblock qua narrow safety service |
 
-> Schema chi tiết + gating + API ở `BE/feature_user_settings_tech.md` §6. **KHÔNG** tạo bảng identity song song (`persons` là anchor, §P6).
+> Schema chi tiết + gating + API ở `../BE/feature_user_settings_tech.md` §6. **KHÔNG** tạo bảng identity song song (`persons` là anchor, §P6).
 
 ### 7.6 Analytics Events (bổ sung — no PII)
 

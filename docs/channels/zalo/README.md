@@ -5,7 +5,7 @@
 > **API:** Zalo OA API v3 (HTTP REST, không SDK)
 > **Phase:** **P4.7 — Phase-1 channel delivery** (DD-37 ✅; dependencies start earlier)
 > **Version:** v0.7 · 2026-07-28
-> **Refs:** `../../features/feature_zalo_channel.md` · `../../features/BE/feature_zalo_channel_tech.md` · `../../features/feature_channel_booking_funnel.md` · `../../research/player-side-saas-AUDIT.md` §B2
+> **Refs:** `../../features/FE/feature_zalo_channel.md` · `../../features/BE/feature_zalo_channel_tech.md` · `../../features/FE/feature_channel_booking_funnel.md` · `../../research/player-side-saas-AUDIT.md` §B2
 
 > **Cập nhật v3.4 (DD-37 ✅, thay DD-09):** Zalo là **kênh phase-1** cùng web + Facebook Messenger; **Telegram đã bị loại khỏi phạm vi**. Zalo DM là **kênh nhắc nợ chính** (cùng web push); Messenger chỉ best-effort trong cửa sổ 24h. Bảng "Khác biệt vs Telegram" bên dưới giữ làm **design rationale** — không hàm ý Telegram còn trong scope.
 >
@@ -193,11 +193,11 @@ Provider event id phải được dedupe trước khi gọi domain service.
 
 | Topic | Doc |
 |-------|-----|
-| Zalo channel spec | [feature_zalo_channel.md](../../features/feature_zalo_channel.md) |
+| Zalo channel spec | [feature_zalo_channel.md](../../features/FE/feature_zalo_channel.md) |
 | Zalo BE tech | [feature_zalo_channel_tech.md](../../features/BE/feature_zalo_channel_tech.md) |
 | Token leak threat | [AUDIT.md §B2](../../research/player-side-saas-AUDIT.md) |
-| ChannelReachability | [feature_identity.md](../../features/feature_identity.md) |
-| Link-or-pay booking funnel | [feature_channel_booking_funnel.md](../../features/feature_channel_booking_funnel.md) |
+| ChannelReachability | [feature_identity.md](../../features/FE/feature_identity.md) |
+| Link-or-pay booking funnel | [feature_channel_booking_funnel.md](../../features/FE/feature_channel_booking_funnel.md) |
 
 ---
 

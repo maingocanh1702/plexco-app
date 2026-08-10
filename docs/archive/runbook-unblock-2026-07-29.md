@@ -215,8 +215,8 @@ cd ~/Projects/Plexco\ app && \
 
 ```bash
 cd ~/Projects/Plexco\ app && \
-  git add docs/features/feature_billing_lifecycle.md docs/features/BE/feature_billing_lifecycle_tech.md \
-          docs/features/feature_connector_onboarding.md docs/features/feature_security_operations.md \
+  git add docs/features/FE/feature_billing_lifecycle.md docs/features/BE/feature_billing_lifecycle_tech.md \
+          docs/features/FE/feature_connector_onboarding.md docs/features/FE/feature_security_operations.md \
           docs/features/BE/feature_user_settings_tech.md docs/archive/session-service-reslice-analysis.md \
           docs/standards/core-db-architecture-principles.md docs/probes/probe-strict-cookie-completion-hop.md \
           docs/research/auto-debt-reconciliation-regional-availability-2026-07-27.md .env.example && \
@@ -239,17 +239,17 @@ Sửa §1.1 trước, rồi:
 
 ```bash
 cd ~/Projects/Plexco\ app && \
-  git add docs/00-start-here/identity-model.md docs/features/feature_channel_booking_funnel.md \
+  git add docs/00-start-here/identity-model.md docs/features/FE/feature_channel_booking_funnel.md \
           docs/features/BE/feature_channel_booking_funnel_tech.md \
-          docs/features/feature_identity.md docs/features/BE/feature_identity_tech.md \
-          docs/features/feature_cross_club_join.md docs/features/BE/feature_cross_club_join_tech.md \
-          docs/features/feature_zalo_channel.md docs/features/BE/feature_zalo_channel_tech.md \
+          docs/features/FE/feature_identity.md docs/features/BE/feature_identity_tech.md \
+          docs/features/FE/feature_cross_club_join.md docs/features/BE/feature_cross_club_join_tech.md \
+          docs/features/FE/feature_zalo_channel.md docs/features/BE/feature_zalo_channel_tech.md \
           docs/channels/messenger/ docs/channels/zalo/ docs/probes/pre-code-open-items-2026-07-16.md \
-          docs/features/feature_session_management.md docs/features/BE/feature_session_management_tech.md \
-          docs/features/feature_marketplace_discovery.md docs/features/BE/feature_marketplace_discovery_tech.md \
-          docs/features/feature_player_messenger.md docs/features/BE/feature_player_messenger_tech.md \
-          docs/features/feature_web_auth_onboarding.md docs/features/BE/feature_web_auth_onboarding_tech.md \
-          docs/features/feature_payment_reconcile.md docs/features/BE/feature_payment_reconcile_tech.md \
+          docs/features/FE/feature_session_management.md docs/features/BE/feature_session_management_tech.md \
+          docs/features/FE/feature_marketplace_discovery.md docs/features/BE/feature_marketplace_discovery_tech.md \
+          docs/features/FE/feature_player_messenger.md docs/features/BE/feature_player_messenger_tech.md \
+          docs/features/FE/feature_web_auth_onboarding.md docs/features/BE/feature_web_auth_onboarding_tech.md \
+          docs/features/FE/feature_payment_reconcile.md docs/features/BE/feature_payment_reconcile_tech.md \
           docs/decisions/analysis/dd-32-booking-funnel-analysis.md docs/decisions/analysis/dd-45-waitlist-analysis.md \
           docs/decisions/analysis/dd-73-78-share-activity-analysis.md docs/issues/session-management-acceptance-checklist.md && \
   git diff --cached --stat

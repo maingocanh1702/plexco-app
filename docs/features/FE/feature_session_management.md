@@ -2,11 +2,11 @@
 
 > **Canonical phase:** P2 (chat CRUD) · P4 (web parity)  
 > **Track:** 📋 Session CRUD  
-> **Version:** 2.17 · 2026-07-28
+> **Version:** 2.18 · 2026-08-09
 > **Status:** Reviewed  
 > **Implementation:** Not started — waitlist schema `0014` và validated public finite-capacity invariant `0024` đã merge; SessionService/routes/projector/auto-promote vẫn chưa build · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P0–P1 foundation stable · P2 tenant routing/authz  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-2 · `../product/PRD.md` FLOW 2/13 · `../product/TDD.md` §3.2/3.8 · `../standards/decisions.md` **DD-32/DD-39/DD-45/DD-45a/DD-49** · DD-37/DD-65..68 · `../standards/business-rules.md` BL-CBF/BL-SES-9/10 · `feature_channel_booking_funnel.md` · `BE/feature_session_management_tech.md`
+> **Tài liệu liên quan:** `../product/BRD.md` FR-2 · `../product/PRD.md` FLOW 2/13 · `../product/TDD.md` §3.2/3.8 · `../standards/decisions.md` **DD-32/DD-39/DD-45/DD-45a/DD-49** · DD-37/DD-65..68 · `../standards/business-rules.md` BL-CBF/BL-SES-9/10 · `feature_channel_booking_funnel.md` · `../BE/feature_session_management_tech.md`
 
 > **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Messenger** + web (bỏ Telegram). **Giá theo giới tính** (giá nam/nữ) nay **✅ phase-1** — xem **DD-39 (✅ Chốt)** / `feature_user_settings.md`; schema giới tính sống ở `feature_user_settings`, KHÔNG thêm vào doc này (chỉ pointer).
 >
@@ -20,7 +20,7 @@
 
 Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **session thể thao đa môn** — với time, venue, price, capacity, visibility và join policy nhất quán. P2 deliver qua **Zalo + Messenger admin commands**; trên Messenger host dùng được **central Plexco Page hoặc optional Page riêng của club** với chức năng cơ bản tương đương. P4 bổ sung web parity và event projections.
 
-**Ngoài phạm vi:** Đặt sân (court booking), chấm điểm theo môn (sport-specific scoring) — **được theo dõi riêng ở `feature_session_organize.md` + `BE/feature_session_organize_tech.md` (DD-61..64 ✅ accept-in-principle, build post-P4)**; pointer only, không thêm scope organize vào body Reviewed này. **Dọn draft chưa publish** (draft-lifecycle gap có sẵn từ `create=draft`, v2.12c) nay đã author: host-discard (SES-UC-13) và system auto-expiry draft quá giờ (SES-UC-14) đều flip `draft`→`cancelled` qua `CancelSession` mở rộng (state machine §4, founder-ratified `docs-session-draft-lifecycle`); publish contract giữ nguyên chỉ author `draft`→`open`.
+**Ngoài phạm vi:** Đặt sân (court booking), chấm điểm theo môn (sport-specific scoring) — **được theo dõi riêng ở `feature_session_organize.md` + `../BE/feature_session_organize_tech.md` (DD-61..64 ✅ accept-in-principle, build post-P4)**; pointer only, không thêm scope organize vào body Reviewed này. **Dọn draft chưa publish** (draft-lifecycle gap có sẵn từ `create=draft`, v2.12c) nay đã author: host-discard (SES-UC-13) và system auto-expiry draft quá giờ (SES-UC-14) đều flip `draft`→`cancelled` qua `CancelSession` mở rộng (state machine §4, founder-ratified `docs-session-draft-lifecycle`); publish contract giữ nguyên chỉ author `draft`→`open`.
 
 ### Bất biến
 
@@ -89,18 +89,313 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 
 ## 3. Screens & States
 
+> Coverage matrix `state × surface`: Bot screens text-based (Zalo/Messenger); Web P4 visual. Mobile-first 375px; desktop ≥1024 table layout.
+
+### Bot — `/newsession` wizard (Zalo/Messenger)
+
+**Purpose:** Host tạo kèo nhanh qua chat commands — step-by-step input.
+
+**Flow tree:**
+
+```
+Host gọi /newsession (central Page hoặc tenant Page)
+  │
+  ├→ Multi-tenant? → Tenant picker (nếu host manage >1 club)
+  │     └→ Chọn club → verify session.manage + tenant context
+  │
+  └→ Wizard steps:
+        ├→ Step 1: Chọn môn thể thao (chips/quick reply)
+        │     └→ Active sport taxonomy only (E#2)
+        ├→ Step 2: Ngày & giờ
+        │     ├→ Ngày: date picker / quick "Hôm nay", "Ngày mai", "T7 này"
+        │     ├→ Giờ bắt đầu + kết thúc
+        │     └→ Validate: ends_at > starts_at (E#1)
+        ├→ Step 3: Địa điểm
+        │     ├→ Input: tên sân / địa chỉ
+        │     └→ Area code (cho public discovery)
+        ├→ Step 4: Hình thức thanh toán
+        │     ├→ Miễn phí — không thu
+        │     ├→ Chia đều — input tổng tiền sân → auto ÷ slots
+        │     ├→ Cố định/slot — input giá/người
+        │     └→ Cố định theo giới tính — input giá nam + giá nữ (DD-39)
+        ├→ Step 5: Số người tham gia (slots_max)
+        │     └→ Public: bắt buộc finite > 0 (E#7)
+        ├→ Step 6: Hiển thị (Public / Private)
+        │     └→ Private: toggle link mời, yêu cầu duyệt
+        │
+        ├→ Preview card (summary tất cả fields)
+        │     └→ Re-check session.manage + tenant context + snapshot
+        │
+        └→ Confirm → CreateSession command (idempotent)
+              ├→ Success → Session card + "Đăng kèo" CTA (draft) + "Chia sẻ link"
+              ├→ Error → Inline error per field
+              └→ Duplicate confirm → no-op (1 session only)
+```
+
+**Pricing variant UI (Bot):**
+
+| Pricing Type | Bot hiển thị | Input yêu cầu | Summary text |
+|-------------|-------------|----------------|-------------|
+| Miễn phí | "Miễn phí — không thu phí" | Không cần | "X người · Miễn phí" |
+| Chia đều | "Nhập tổng tiền sân (VND)" | `totalVenueCost` | "X người · {total} ÷ {slots} = {perSlot}₫/người" |
+| Cố định/slot | "Nhập giá mỗi người (VND)" | `pricePerSlot` | "X người × {price}₫ = {total}₫" |
+| Cố định theo giới tính | "Nhập giá nam + giá nữ (VND)" | `priceMale`, `priceFemale` | "Nam: {priceMale}₫ · Nữ: {priceFemale}₫" |
+
+**Bot states:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Typing indicator |
+| Ready | Step-by-step input (sport → time → venue → price → capacity → visibility → preview → confirm) |
+| Error | Inline error per field: "Giờ kết thúc phải sau giờ bắt đầu", "Số người phải > 0" |
+| Empty | N/A (wizard luôn có content) |
+
+### Bot — Session detail (`/status`)
+
+**Purpose:** Host xem session info, roster, payment status.
+
+**Layout (Bot message):**
+
+```
+📋 Buổi chơi: {title}
+━━━━━━━━━━━━━━━━━━━━━
+🏸 {sport}
+📅 {date} · {startTime}–{endTime}
+📍 {venue}
+👥 {filledSlots}/{totalSlots} người · {status badge}
+💰 {pricePerSlot}₫/người
+
+Đã tham gia:
+  ✅ Nguyễn Văn A (đã TT)
+  ⏳ Trần Thị B (chưa TT)
+  ⏳ Lê Văn C (chưa TT)
+
+Thanh toán: {paidCount}/{totalCount} · {paidAmount}/{totalAmount}₫
+
+[Đăng kèo] [Sửa] [Huỷ] [Chia sẻ link]
+```
+
+> Nút "Đăng kèo" chỉ hiện khi `status=draft`; nút "Huỷ nháp" thay "Huỷ" khi `status=draft`.
+
+### Bot — Publish draft / Discard draft
+
+**Publish (lệnh/callback "Đăng kèo"):**
+
+| State | Nội dung |
+|-------|----------|
+| Ready | Confirm: "Đăng kèo này?" → `draft`→`open` (single-action, KHÔNG wizard) |
+| Error | `SESSION_NOT_OPEN`: "Buổi chơi không mở được" (quá giờ/không draft) · `MISSING_DISCOVERY_FIELDS`: "Thiếu thông tin công khai" · `TENANT_SUSPENDED` (403): "Gói bị tạm ngưng" |
+
+**Discard (lệnh/callback "Huỷ nháp"):**
+
+| State | Nội dung |
+|-------|----------|
+| Ready | Confirm: "Huỷ buổi nháp này?" → `draft`→`cancelled` (xác nhận một chạm khi rỗng) |
+| Error | `SESSION_NOT_OPEN`: "Buổi chơi không thể huỷ" · `STALE_VERSION`: "Dữ liệu đã thay đổi" · `CANCEL_REQUIRES_REVIEW`: "Cần xác nhận huỷ" (anomaly — route sang review UI SES-UC-6) |
+
+### Web P4 — Session list
+
+**Purpose:** Host xem tất cả sessions của club.
+
+**Layout (desktop ≥1024px):**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Buổi chơi                           [+ Tạo buổi mới]    │
+├──────────────────────────────────────────────────────────┤
+│ Tabs: [Sắp tới ✓] [Đã qua] [Nháp]                      │
+│                                                          │
+│ ┌─ Sort: Ngày ↓ ──────────────────────────────────────┐ │
+│ │ 🏸 Cầu lông chiều T5        draft  📅 05/08  18:00 │ │
+│ │    📍 Sân ABC · 👥 0/8 · 💰 75k₫/ng  [Đăng kèo]   │ │
+│ ├──────────────────────────────────────────────────────┤ │
+│ │ ⚽ Bóng đá T7               open   📅 07/08  16:00 │ │
+│ │    📍 Sân XYZ · 👥 6/10 · 💰 50k₫/ng              │ │
+│ ├──────────────────────────────────────────────────────┤ │
+│ │ 🏸 Cầu lông CN              open   📅 08/08  08:00 │ │
+│ │    📍 Sân DEF · 👥 8/8 · Đã đầy                    │ │
+│ └──────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Session row component:**
+
+| Field | Data source | Ghi chú |
+|-------|-------------|---------|
+| Sport icon + title | `sessions.sport_id` + `sessions.title` | Taxonomy lookup for icon |
+| Status badge | `sessions.status` | `draft`(grey) / `open`(green) / `closed`(red) / `cancelled`(dim) |
+| Date + time | `sessions.starts_at` | Tenant timezone format |
+| Venue | `sessions.venue_name` | Truncate >30 chars |
+| Capacity | `players` aggregate | `active_count / slots_max` |
+| Price | `sessions.price_per_slot` | Format VND; "Miễn phí" if 0 |
+| Actions | Conditional | Draft: "Đăng kèo" + "Huỷ nháp"; Open: "Sửa" + "Huỷ" |
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton rows (3 blocks × full width, shimmer) |
+| Ready | Table/card list sortable by date |
+| Error | Error banner: "Không tải được danh sách" + retry button |
+| Empty | Icon 📋 + "Chưa có buổi chơi nào" + CTA "Tạo buổi mới" |
+
+**Empty state layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Buổi chơi                           [+ Tạo buổi mới]    │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│              📋                                          │
+│         Chưa có buổi chơi nào                            │
+│    Tạo buổi chơi đầu tiên cho club                       │
+│                                                          │
+│         [═══ Tạo buổi mới ═══]                           │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Web P4 — Session create/edit form
+
+**Purpose:** Host tạo/sửa session qua web — cùng domain service như Bot.
+
+**Layout (desktop):**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← Quay lại         Tạo buổi chơi mới                    │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  Môn thể thao *     [🏸 Cầu lông ▼]                     │
+│                                                          │
+│  Ngày *             [📅 05/08/2026    ]                  │
+│  Giờ bắt đầu *     [18:00  ]   Giờ kết thúc * [20:00]   │
+│                                                          │
+│  Địa điểm *         [Sân ABC, Q.Bình Thạnh    ]         │
+│  Khu vực             [Quận Bình Thạnh ▼]                 │
+│                                                          │
+│  ─── Thanh toán ───                                      │
+│  (○) Miễn phí                                            │
+│  (●) Chia đều  →  Tổng tiền sân: [600,000 ₫]            │
+│  (○) Cố định/slot                                        │
+│  (○) Theo giới tính (DD-39)                              │
+│  Summary: "8 người · 600,000₫ ÷ 8 = 75,000₫/người"     │
+│                                                          │
+│  Số người *         [- 8 +]                              │
+│  Hiển thị           [Public ▼]                           │
+│                                                          │
+│  ─── Cài đặt nâng cao (collapsed) ───                   │
+│                                                          │
+│         [═══════ Tạo buổi chơi ═══════]                  │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Form field spec:**
+
+| Field | Type | Required? | Validation |
+|-------|------|-----------|------------|
+| Môn thể thao | Select (taxonomy) | ✅ | Active sport taxonomy only (E#2) |
+| Ngày | Date picker | ✅ | ≥ today |
+| Giờ bắt đầu/kết thúc | Time picker | ✅ | ends_at > starts_at (E#1) |
+| Địa điểm | Text input | ✅ | Non-empty |
+| Khu vực | Select | Optional | For public discovery (E#7) |
+| Hình thức thanh toán | Radio group | ✅ | Default: Chia đều |
+| Tổng tiền sân / Giá/slot | Number input | Conditional | Required if paid pricing |
+| Số người (slots_max) | Counter | ✅ | > 0; public bắt buộc finite (E#7) |
+| Hiển thị | Select | ✅ | Public / Private |
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton form (6 input blocks shimmer) |
+| Ready | Full form with validation — CTA enabled khi tất cả required fields valid |
+| Error | Inline errors per field: red border + text dưới input |
+| Empty | N/A (form luôn có content) |
+
+### Web P4 — Session detail
+
+**Purpose:** Host xem + quản lý session — roster, payments, actions.
+
+**Layout (desktop):**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← Danh sách      🏸 Cầu lông chiều T5    [draft] badge  │
+├────────────────────────────┬─────────────────────────────┤
+│  📅 05/08/2026 18:00–20:00│  ─── Hành động ───          │
+│  📍 Sân ABC, Q.Bình Thạnh │  [Đăng kèo]  (draft only)  │
+│  💰 75,000₫/người          │  [Sửa]                     │
+│  👥 6/8 người               │  [Chia sẻ link]            │
+│                             │  [Huỷ nháp]  (draft only)  │
+│                             │  [Huỷ]  (open only)        │
+├────────────────────────────┴─────────────────────────────┤
+│  ─── Danh sách tham gia (6/8) ───                        │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ [AV] Nguyễn Văn A     active    ✅ Đã thanh toán  │  │
+│  │ [AV] Trần Thị B       active    ⏳ Chưa TT        │  │
+│  │ [AV] Lê Văn C         active    ⏳ Chưa TT        │  │
+│  │ [AV] Phạm D           waitlisted  #1              │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+│  ─── Thanh toán (3/6 đã TT) ───                         │
+│  ▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░  50%                              │
+│  Đã thu: 225,000₫ / 450,000₫                            │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Component: Publish/Discard controls (Web):**
+
+| Condition | Hiển thị | Tap action |
+|-----------|----------|------------|
+| `status=draft` | Nút "Đăng kèo" (primary) + "Huỷ nháp" (danger) | Confirm dialog → `PublishSession` / `CancelSession` |
+| `status=open` | Nút "Sửa" + "Huỷ" | Edit form / Cancel confirm (với roster preview) |
+| `status=closed/cancelled` | Chỉ badge + readonly info | — |
+
+**Component: Roster list:**
+
+| Player status | Icon | Hiển thị | Venue visible? |
+|--------------|------|----------|----------------|
+| `active` | ✅/⏳ | Tên + payment status | ✅ Yes (E#6) |
+| `waitlisted` | 🕐 | Tên + position (#N) | ❌ Area only (E#6) |
+| `left` | ↩️ | Tên + "Đã rời" (dimmed) | ❌ |
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton: info card + roster list (4 rows) + payment bar |
+| Ready | Full session info + roster + payment + action buttons |
+| Error | Error banner: "Không tải được buổi chơi" + retry |
+| Empty | N/A (session always has data) |
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Session info card | `sessions` table (direct) | Tenant-scoped via RLS |
+| Roster list | `players` table + join `memberships` | Active/waitlisted/left filter |
+| Payment summary | `charges` table (aggregate) | Canonical contract from `feature_payment_reconcile` |
+| Status badge | `sessions.status` enum | State machine §4 |
+| Sport icon | `sport_taxonomy` | Active taxonomy lookup |
+| Publish/Discard controls | `sessions.status` | Conditional: draft-only actions |
+
+### State coverage matrix
+
 | Surface | Screen | Loading | Ready | Error | Empty |
 |---------|--------|---------|-------|-------|-------|
-| Bot (Zalo/Messenger) | `/newsession` wizard | Typing indicator | Step-by-step input (sport → time → venue → price → capacity → visibility) | Inline error per field ("Giờ kết thúc phải sau giờ bắt đầu") | N/A (wizard luôn có content) |
-| Bot (Zalo/Messenger) | Session detail (`/status`) | "Đang tải..." message | Roster + payment status + session info | "Không tìm thấy session" | N/A |
-| Bot (Zalo/Messenger) | Session cancel confirm | — | Preview: roster count, paid amount, refund responsibility | — | N/A |
-| Bot (Zalo/Messenger) | Publish draft (lệnh/callback "Đăng kèo") | — | Nút/lệnh "Đăng kèo" trên draft → confirm "Đăng kèo này?" → `draft`→`open` (single-action, KHÔNG wizard; cùng `PublishSession`) | "Buổi chơi không mở được" (`SESSION_NOT_OPEN` — quá giờ/không draft) · "Thiếu thông tin công khai" (`MISSING_DISCOVERY_FIELDS`) · "Gói bị tạm ngưng" (`TENANT_SUSPENDED` 403) | N/A |
-| Web P4 | Session detail — Publish control | Button spinner | Draft: nút "Đăng kèo" + confirm dialog → `open` (nút ẩn khi đã `open`; status badge `draft`/`open`) | Inline: `SESSION_NOT_OPEN` / `MISSING_DISCOVERY_FIELDS` / `STALE_VERSION` / `TENANT_SUSPENDED` (403) — map BE §3 Error Codes | N/A |
-| Bot (Zalo/Messenger) | Discard draft (lệnh/callback "Huỷ nháp") | — | Nút/lệnh "Huỷ nháp" trên draft → confirm "Huỷ buổi nháp này?" (draft không roster/thanh toán — xác nhận một chạm) → `draft`→`cancelled` (single-action, cùng `CancelSession`) | "Buổi chơi không thể huỷ" (`SESSION_NOT_OPEN`) · "Dữ liệu đã thay đổi" (`STALE_VERSION`) · "Cần xác nhận huỷ" (`CANCEL_REQUIRES_REVIEW` — anomaly, hiếm; cùng review surface SES-UC-6 đã dùng cho `open`) | N/A |
-| Web P4 | Session detail — Discard draft control | Button spinner | Draft: nút "Huỷ nháp" + confirm dialog → `cancelled` (nút ẩn khi không còn draft; status badge cập nhật) | Inline: `SESSION_NOT_OPEN` / `STALE_VERSION` / `CANCEL_REQUIRES_REVIEW` (anomaly — route sang cùng review UI đã có cho `open`) — map BE §3 Error Codes | N/A |
-| Web P4 | Session list | Skeleton rows | Table/card list sortable by date | Error banner + retry | "Chưa có buổi chơi nào" + CTA "Tạo buổi mới" |
-| Web P4 | Session create/edit form | Skeleton form | Full form with validation | Inline errors per field | N/A |
-| Web P4 | Session detail | Skeleton cards | Roster + QR + payments + timeline | Error banner | N/A |
+| Bot | `/newsession` wizard | ✅ Typing indicator | ✅ Step-by-step | ✅ Inline error/field | ⚪ N/A (wizard) |
+| Bot | Session detail `/status` | ✅ "Đang tải..." | ✅ Info + roster | ✅ "Không tìm thấy" | ⚪ N/A |
+| Bot | Session cancel confirm | ⚪ N/A | ✅ Preview impact | ⚪ N/A | ⚪ N/A |
+| Bot | Publish draft | ⚪ N/A | ✅ Confirm | ✅ 3 error codes | ⚪ N/A |
+| Bot | Discard draft | ⚪ N/A | ✅ Confirm | ✅ 3 error codes | ⚪ N/A |
+| Web P4 | Session list | ✅ Skeleton rows | ✅ Table/card sort | ✅ Banner + retry | ✅ CTA "Tạo buổi mới" |
+| Web P4 | Session create/edit | ✅ Skeleton form | ✅ Full form | ✅ Inline errors | ⚪ N/A (form) |
+| Web P4 | Session detail | ✅ Skeleton cards | ✅ Full info + roster | ✅ Banner + retry | ⚪ N/A |
+| Web P4 | Publish control | ✅ Button spinner | ✅ Confirm dialog | ✅ Inline error codes | ⚪ N/A |
+| Web P4 | Discard draft control | ✅ Button spinner | ✅ Confirm dialog | ✅ Inline error codes | ⚪ N/A |
 
 ---
 

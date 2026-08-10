@@ -4,7 +4,7 @@
 > **Version:** 0.6b · 2026-07-24
 > **Status:** Accepted-in-principle design — implementation inactive; schema/migration/service chưa tồn tại
 > **Implementation:** Not started — build post-P4 · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
-> **Product spec:** `../feature_session_organize.md`
+> **Product spec:** `../FE/feature_session_organize.md`
 > **References:** `feature_session_management_tech.md` · `feature_sync_engine_tech.md` · `../../standards/decisions.md` DD-07/DD-41/DD-42/DD-45/DD-56/DD-60/DD-61..64 · `../../standards/api-reference-convention.md` · `../../standards/business-rules.md` · `../../standards/core-db-architecture-principles.md`
 
 > **⚠️ Live-repo reality:** Migration tail — verify hiện hành tại `packages/db/migrations/`, không hard-pin số (`0014_players_waitlist` đã merge tại `1a6ac38`); `packages/db/schema.ts` mới có `sessions`/`players`, còn `packages/db/src/tenant.ts` chỉ có session list/get/create tối thiểu. Chưa có OrganizeService, assign/scoring core, relation-based board read, SSE organize topic hoặc session-scoped scorer grant. Các hook SessionService được nêu dưới đây là contract phải build cùng prerequisite, không phải symbol đang có.
@@ -12,6 +12,19 @@
 ---
 
 ## 1. Kiến trúc và boundary
+
+**Module structure:**
+
+```text
+apps/api/src/organize/
+├── organize.module.ts        ← NestJS module
+├── organize.controller.ts    ← REST endpoints + SSE
+├── organize.service.ts       ← Match/court orchestration
+├── scoring.service.ts        ← Score event ledger
+└── assignment.service.ts     ← Preview/apply assignment engine
+```
+
+> Registered in `AppModule.imports`.
 
 ```text
 Web/chat adapter
@@ -554,6 +567,25 @@ Các rate sau là **inactive implementation target** cho tới khi BL-SEC-5 regi
 - Không serialize `actor_membership_id`, `person_id`, `membership_id`, tên/contact, payment hoặc venue-private fields.
 - Projector fail không rollback command; outbox retry. Client reconnect theo last event/version rồi guarded reload, không tự replay mutation.
 
+
+### Endpoints
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| GET | `/api/sessions/:id/organize/board` | session.organize OR active player | Board state |
+| POST | `/api/sessions/:id/organize/courts` | session.organize | Thêm sân |
+| PUT | `/api/sessions/:id/organize/courts/:cid` | session.organize | Sửa sân |
+| POST | `/api/sessions/:id/organize/matches` | session.organize | Tạo trận |
+| PUT | `/api/sessions/:id/organize/matches/:mid/config` | session.organize | Sửa config trận |
+| POST | `/api/sessions/:id/organize/preview` | session.organize | Preview assignment |
+| POST | `/api/sessions/:id/organize/apply` | session.organize | Apply assignment plan |
+| POST | `/api/sessions/:id/organize/matches/:mid/start` | session.organize | Bắt đầu trận |
+| POST | `/api/sessions/:id/organize/matches/:mid/score` | session.score | Ghi điểm |
+| POST | `/api/sessions/:id/organize/matches/:mid/undo` | session.score | Undo điểm |
+| POST | `/api/sessions/:id/organize/matches/:mid/end` | session.organize | Kết thúc trận |
+| GET | `/api/sessions/:id/organize/sse` | session.organize OR active player | Live SSE stream |
+
+> Envelope DD-60. Mọi mutation yêu cầu `commandId` (idempotency key).
 ---
 
 ## 4. Domain service details
@@ -682,6 +714,44 @@ Reducer must reject negative score and invalid reversal chains rather than clamp
 
 Canonical DB suite must run with repository test database contract; migration/RLS tests are blocked, not passed, if Postgres is unavailable.
 
+
+### Testing Plan
+
+#### Unit Tests
+
+| # | Test | Input | Expected |
+|---|------|-------|----------|
+| 1 | Add court → success | Valid label | Court created |
+| 2 | Add court duplicate label → error | Same label | DUPLICATE_COURT_LABEL |
+| 3 | Create match → success | 2 sides, valid players | Match draft |
+| 4 | Create match with player from other session | Wrong session player | PLAYER_SESSION_MISMATCH |
+| 5 | Start match → live | Match ready, session window | Match live, court occupied |
+| 6 | Start match before session starts | Before starts_at | SESSION_NOT_STARTED |
+| 7 | Start match after session ends | After ends_at | SESSION_ENDED |
+| 8 | Score point → success | Match live, valid side | Score incremented |
+| 9 | Score into non-live match → error | Match draft | MATCH_NOT_LIVE |
+| 10 | Score invalid side → error | Side=2 | INVALID_SIDE |
+| 11 | Undo point → reversal | Latest effective point | Score decremented |
+| 12 | Undo already-undone → error | Already reversed | INVALID_REVERSAL |
+| 13 | Two matches on same court → error | Court occupied | COURT_OCCUPIED |
+| 14 | Player on two live matches → error | Already on court | PLAYER_ALREADY_ON_COURT |
+| 15 | Preview random assignment | 8 players, 2 courts | Deterministic plan |
+| 16 | Preview balanced → missing rating warning | Players without rating | Warning + random fallback |
+| 17 | Apply stale plan → error | Version mismatch | STALE_ASSIGNMENT_PLAN |
+| 18 | Concurrent score → lock | Same match, same time | Exactly one succeeds |
+| 19 | Idempotent retry → same result | Same commandId | Prior result returned |
+| 20 | Winning point → set/match complete | target_points reached | Terminal state |
+| 21 | Undo winning point → reopen | Latest terminal point | Set/match reopened |
+| 22 | Undo after court reassignment → reject | Court now has new match | COURT_REASSIGNED |
+
+#### Integration Tests
+
+| # | Test | Setup | Expected |
+|---|------|-------|----------|
+| 1 | Full match flow | Create → start → score → complete | Match completed, scores preserved |
+| 2 | Concurrent scoring | 2 clients scoring same match | Lock prevents data loss |
+| 3 | SSE authorization | Revoke player access | SSE stream closed |
+| 4 | Session close with live match | Close session | Matches cancelled, ledger preserved |
 ---
 
 ## 6. Rollout và changelog

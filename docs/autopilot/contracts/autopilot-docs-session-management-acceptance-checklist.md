@@ -3,7 +3,7 @@
 > **Slug:** `docs-session-management-acceptance-checklist`  
 > **Risk:** P2 docs-only · `manual_only` · STOP_AT_READY · 1 FULL-base Codex clean round  
 > **Canonical framework:** `autopilot-prompt-GENERIC` v0.6.0  
-> **Authority (LOCAL specs only):** `features/feature_session_management.md` · `features/BE/feature_session_management_tech.md` · `product/ROADMAP.md` (Next Actions #3)  
+> **Authority (LOCAL specs only):** `features/FE/feature_session_management.md` · `features/BE/feature_session_management_tech.md` · `product/ROADMAP.md` (Next Actions #3)  
 > **Manifest:** `docs/autopilot-manifests/docs-session-management-acceptance-checklist.json`
 
 ## Task

@@ -6,7 +6,7 @@
 > **Status:** Reviewed · reconciled to DD-15/DD-32/DD-45/DD-49/DD-67
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 onboarding (Zalo token connect) · P3.5 identity/account-link · P2 session/join · payment evidence/finalizer · P3 notifications · P4 sync
-> **Tài liệu liên quan:** `../product/PRD.md` FLOW 4 + §4.2/4.4 · `../product/BRD.md` CO-2 · `../standards/decisions.md` DD-32 · `feature_channel_booking_funnel.md` · `BE/feature_zalo_channel_tech.md`
+> **Tài liệu liên quan:** `../product/PRD.md` FLOW 4 + §4.2/4.4 · `../product/BRD.md` CO-2 · `../standards/decisions.md` DD-32 · `feature_channel_booking_funnel.md` · `../BE/feature_zalo_channel_tech.md`
 
 ---
 
@@ -70,18 +70,77 @@ Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, 
 
 ## 3. Screens & States
 
-| Surface | Screen | Loading | Ready | Error | Empty |
-|---------|--------|---------|-------|-------|-------|
-| Zalo DM | `/join` session list | "Đang tải danh sách..." | Numbered list: "1. [Sport] [Time] [Area] — [Slots]" | "Lỗi — thử lại" | "Chưa có buổi chơi nào mở" |
-| Zalo DM | Session detail | "Đang tải..." | Time · public area · fee · confirmed count · slots; “1. Đăng ký / 0. Quay lại” | Stale/closed → refresh list | N/A |
-| Zalo DM | Final booking gate | "Đang kiểm tra..." | Free confirm; paid: “1. Liên kết Plexco” / “2. Thanh toán & giữ chỗ 15 phút” khi available | Provider unavailable → link/web only | N/A |
-| Zalo DM | Booking result | "Đang xử lý..." | Active + venue / waitlisted position / approval pending / awaiting payment + expiry | Expired/reconfirm/manual review | N/A |
-| Zalo DM | `/me` summary | "Đang tải..." | Club info + debt + upcoming | "Lỗi" | "Chưa có hoạt động" |
-| Zalo DM | `/pay` | — | QR image + payment instructions | "Lỗi — thử lại" | N/A |
-| Zalo DM | Reminder received | — | "[Club] Bạn còn nợ [amount]" | — | N/A |
-| Zalo DM | Paid confirmation | — | "✅ Đã nhận CK [amount]" | — | N/A |
-| Zalo DM | Magic link | — | "🔗 Xem chi tiết: [link] (hết hạn sau 5 phút)" | "Lỗi tạo link" | N/A |
+> Zalo OA bot interface. No web surface (host config in connector_onboarding).
 
+### Zalo OA — Welcome + menu
+
+**Layout:**
+
+```
+┌──────────────────────────────────────┐
+│ 🏸 CLB Cầu lông BT (Zalo OA)       │
+├──────────────────────────────────────┤
+│                                      │
+│  Chào bạn! 👋                        │
+│  Đây là CLB Cầu lông Bình Thạnh.    │
+│                                      │
+│  Gõ số để chọn:                      │
+│  1. 🏸 Xem kèo                      │
+│  2. 💰 Thanh toán                    │
+│  3. ❓ Hỏi trợ lý                   │
+│  4. ⚙️ Cài đặt                      │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+> Zalo: number-reply contract (không có persistent menu/quick reply như Messenger).
+
+### Zalo OA — Session card
+
+**Layout:**
+
+```
+🏸 Cầu lông tối T5
+🕒 19:00–21:00, 10/08
+📍 Quận 3
+💰 120.000đ
+👥 6/8 · 2 chỗ
+
+Gõ 1 để đăng ký
+Gõ 0 để quay lại
+```
+
+### Zalo OA — Payment notification
+
+**Layout:**
+
+```
+💰 Xác nhận thanh toán
+
+Kèo: Cầu lông T5 · 10/08
+Số tiền: 75,000₫
+Trạng thái: ⏳ Chờ xác nhận từ host
+
+Gõ /pay để xem chi tiết
+```
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| OA menu | Number-reply mapping | Stateless, per-message |
+| Session cards | `public_sessions` / roster | Text format (no template) |
+| Payment info | `charges` per person-self | Via canonical service |
+| Webhook | Zalo Webhook API | `from.id` = OA-scoped |
+
+### State coverage matrix
+
+| Screen | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| Welcome | — | ✅ Menu + greeting | — | ⚪ N/A |
+| Session list | ✅ "Đang tải..." | ✅ Text cards + number reply | ✅ "Lỗi — gõ lại" | ✅ "Chưa có kèo" |
+| Payment | ✅ "Đang kiểm tra..." | ✅ Amount + status | ✅ "Lỗi" | ✅ "Không có khoản" |
+| Search | ✅ "🔍 Đang tìm..." | ✅ Results + number reply | ✅ "Lỗi" | ✅ "Không tìm thấy" |
 ---
 
 ## 4. Domain Model

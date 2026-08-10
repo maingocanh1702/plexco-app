@@ -1,7 +1,7 @@
 # Feature: In-App Chat — FE Design Spec
 
 > **Route(s):** `/chat` · `/chat/:threadId` (accessed via 💬 header icon)
-> **Source authority:** `../../../features/feature_inapp_chat.md` v0.15 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
+> **Source authority:** `../../../features/FE/feature_inapp_chat.md` v0.15 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
 > **Source contract status:** Reviewed
 > **Projection/API contract:** Product/BE Chat §3; exact HTTP handoff still requires slice-local pin before implementation
 > **Capability/availability:** Live channel/DM authz + exact `chat.channel.post_restricted` · `chat.message.moderate` · `chat.member.mute` · `chat.channel.manage`

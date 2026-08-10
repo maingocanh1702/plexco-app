@@ -61,7 +61,7 @@ The canonical user-settings contract instead requires PII anonymization while pr
 
 - Target: `docs/decisions/briefs/founder-decision-brief-2026-07-15.md:112-115`.
 - Live contract: `packages/db/schema.ts` — multiple foreign keys reference `persons.id`.
-- Canonical product rule: `docs/features/feature_user_settings.md:70,127` — anonymize PII without breaking financial audit.
+- Canonical product rule: `docs/features/FE/feature_user_settings.md:70,127` — anonymize PII without breaking financial audit.
 
 **Required closure**
 
@@ -80,7 +80,7 @@ The brief asks for an override SLA but does not actually decide the maximum dura
 **Evidence**
 
 - Target: `docs/decisions/briefs/founder-decision-brief-2026-07-15.md:55-58`.
-- Canonical security rule: `docs/features/feature_billing_lifecycle.md:71`.
+- Canonical security rule: `docs/features/FE/feature_billing_lifecycle.md:71`.
 - Technical endpoint contract: `docs/features/BE/feature_billing_lifecycle_tech.md:138,158,248` — `PlatformAdmin`, required expiry, auto-expire.
 - Database policy: `packages/db/migrations/0007_billing.sql` — platform-admin-only override path.
 

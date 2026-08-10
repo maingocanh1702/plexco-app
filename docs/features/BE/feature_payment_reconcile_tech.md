@@ -4,7 +4,7 @@
 > **Version:** 1.13 · 2026-07-28
 > **Status:** Reviewed contract; mirror DD-32/DD-91 `DECISION_FINAL` + regional availability boundary. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`; B1/runtime slices vẫn cần strict `CODE_READY`
 > **Implementation:** In progress — core matching/payments-logic + tenant-integrity migrations `0019`/`0020` đã có; wiring webhook→settle→notify, `remainingAmount`, `getSelfPaymentStatus` và chat `/pay` chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
-> **Product spec:** `../feature_payment_reconcile.md`
+> **Product spec:** `../FE/feature_payment_reconcile.md`
 > **References:** `../../product/TDD.md` §3.2/3.6–3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-25/DD-32/DD-40/DD-49/DD-51/DD-91 · `feature_channel_booking_funnel_tech.md` · `../../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
 
 > **Cập nhật v1.8:** mọi ledger edge dùng composite FK để chứng minh cùng tenant; charge còn bind đúng session/player/membership và reversal bind đúng charge gốc. Migration upgrade phải backfill có kiểm chứng rồi fail-closed trên bất kỳ row lịch sử lệch scope nào.
@@ -14,6 +14,19 @@
 ---
 
 ## 1. Components
+
+**Module structure:**
+
+```text
+apps/api/src/payment/
+├── payment.module.ts       ← NestJS module
+├── payment.controller.ts   ← REST endpoints + webhook handlers
+├── payment.service.ts      ← Ledger business logic
+├── reconcile.service.ts    ← Matching/allocation engine
+└── webhook-handler.ts      ← SePay/ApiPay signature verification
+```
+
+> Registered in `AppModule.imports`.
 
 ```text
 webhook adapter
@@ -340,6 +353,33 @@ Endpoint examples: `POST /webhook/sepay/:token`, `POST /webhook/apipay/:token`.
 
 Never ACK a newly accepted transaction if step 5–6 has not committed. Duplicate returns 200 without a second job. Payload/secret errors use stable JSON errors and do not log sensitive fields.
 
+
+### Endpoints
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| POST | `/webhook/sepay` | Signed (HMAC) | SePay transaction callback |
+| POST | `/webhook/apipay` | Signed (API key) | ApiPay transaction callback |
+| GET | `/api/payments/tenant/:tid/ledger` | TenantAdmin | Tenant payment ledger |
+| GET | `/api/payments/tenant/:tid/unmatched` | TenantAdmin | Unmatched transactions |
+| POST | `/api/payments/tenant/:tid/manual-match` | TenantAdmin | Manual match unmatched transaction |
+| GET | `/api/payments/person-self/charges` | Authenticated | Player own charges |
+| GET | `/api/payments/person-self/status/:sessionId` | Authenticated | Payment status for session |
+
+> Envelope DD-60.
+
+### Error Codes
+
+| Code | Error Code | Message | Trigger |
+|------|-----------|---------|---------|
+| 400 | `PAYMENT_ALREADY_MATCHED` | Giao dịch đã được khớp | Double match attempt |
+| 400 | `PAYMENT_AMOUNT_MISMATCH` | Số tiền không khớp | Underpay / wrong amount |
+| 400 | `PAYMENT_EXPIRED` | Giao dịch đã hết hạn | Payment after hold expiry |
+| 400 | `PAYMENT_INVALID_REFERENCE` | Mã tham chiếu không hợp lệ | Reference code invalid |
+| 400 | `MANUAL_MATCH_INVALID` | Không thể khớp thủ công | Invalid manual match |
+| 401 | `AUTH_REQUIRED` | Cần đăng nhập | No valid session |
+| 403 | `TENANT_ACCESS_DENIED` | Không có quyền truy cập | Cross-tenant |
+| 429 | `WEBHOOK_RATE_LIMITED` | Quá nhiều yêu cầu | Webhook burst |
 ---
 
 ## 4. Reconcile worker
@@ -402,6 +442,42 @@ Idempotency keys:
 - Manual action: `commandId` in `processed_commands`.
 - Reversal: unique command + target allocation checks.
 
+
+### Testing Plan
+
+#### Unit Tests
+
+| # | Test | Input | Expected |
+|---|------|-------|----------|
+| 1 | Webhook valid signature → process | Valid HMAC body | 200, transaction created |
+| 2 | Webhook invalid signature → reject | Bad HMAC | 400, no mutation |
+| 3 | Webhook replay same txn_id → idempotent | Duplicate txn_id | 200, no new record |
+| 4 | Exact match: amount + reference | 120000 + PXC-XXXX | charge.status=paid |
+| 5 | Underpay: amount < charge | 100000 vs 120000 | unmatched, manual_review |
+| 6 | Overpay: amount > charge | 150000 vs 120000 | allocate due, remainder unmatched |
+| 7 | Wrong reference code | Invalid PXC code | unmatched |
+| 8 | Payment after hold expiry | Expired hold | no auto-book, manual_review |
+| 9 | Manual match: valid unmatched → charge | Admin match | charge.status=paid |
+| 10 | Manual match: already matched → error | Matched txn | PAYMENT_ALREADY_MATCHED |
+| 11 | Concurrent webhook + manual match | Race condition | One wins, other idempotent |
+| 12 | Ledger query: tenant isolation | Tenant A query | Only tenant A data |
+| 13 | Person-self: own charges only | Person query | Only own charges |
+| 14 | Person-self: cross-person reject | Other person_id | 403 |
+| 15 | Multiple charges for same session | Session with 2 players | Independent settlement |
+| 16 | Currency mismatch | USD vs VND | unmatched |
+| 17 | Zero amount payment | amount=0 | Rejected |
+| 18 | Webhook body malformed | Invalid JSON | 400 |
+| 19 | Webhook timeout → retry | Slow processing | Idempotent on retry |
+| 20 | Ledger totals after match | After successful match | Ledger balanced |
+
+#### Integration Tests
+
+| # | Test | Setup | Expected |
+|---|------|-------|----------|
+| 1 | Full payment flow | Create charge → webhook → match | charge paid, player active |
+| 2 | Cross-tenant isolation | 2 tenants, same reference | Separate matching |
+| 3 | Concurrent payments | 2 webhooks for same charge | Exactly one match |
+| 4 | Manual review flow | Unmatched → admin match | Charge settled |
 ---
 
 ## 5b. Manual mark-paid (DD-40 ✅ — every tier)
@@ -638,7 +714,7 @@ Metrics: durable ACK latency, reconcile lag, auto-match rate by policy version, 
 - [ ] No auto split on ambiguous amount-only input.
 - [ ] Composite parent keys/FKs match §2.1; upgrade and cross-tenant/cross-session negative tests pass.
 - [ ] Tenant isolation and authorization tests pass.
-- [ ] Product acceptance criteria in `../feature_payment_reconcile.md` pass.
+- [ ] Product acceptance criteria in `../FE/feature_payment_reconcile.md` pass.
 - [ ] DD-32 exact-reference dispatch and funnel-finalizer integration tests pass without lock inversion or generic matcher claim.
 
 ---

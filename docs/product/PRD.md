@@ -4,7 +4,7 @@
 **Sản phẩm:** **Plexco** — platform quản lý & khám phá hoạt động thể thao đa môn, 2 phía (host + player); bot-in-chat (Zalo/Messenger) + web app sync 2 chiều; **phase-1 không app native** (target = web app PWA installable/offline; S9/S20 chưa phải runtime evidence) — **native là hướng phase-2** (DD-69 direction ✅ accepted; build TBD)
 **Phiên bản:** 2.8m
 **Ngày cập nhật:** 28/07/2026
-**Tài liệu tham chiếu:** `BRD.md` v3.9n · `TDD.md` v3.1h · `../standards/decisions.md` **v2.11 current mirror** (DD-32/DD-86/DD-91–95 `DECISION_FINAL`; DD-88 broader `DEFERRED_PROPOSAL`) · `../features/feature_channel_booking_funnel.md` · `../features/BE/feature_channel_booking_funnel_tech.md` · `../channels/messenger/messenger-channel-design.md` · `../research/player-side-saas-AUDIT.md`
+**Tài liệu tham chiếu:** `BRD.md` v3.9n · `TDD.md` v3.1h · `../standards/decisions.md` **v2.11 current mirror** (DD-32/DD-86/DD-91–95 `DECISION_FINAL`; DD-88 broader `DEFERRED_PROPOSAL`) · `../features/FE/feature_channel_booking_funnel.md` · `../features/BE/feature_channel_booking_funnel_tech.md` · `../channels/messenger/messenger-channel-design.md` · `../research/player-side-saas-AUDIT.md`
 
 > **Current boundary — `main@784bc8d` (28/07 docs snapshot):** current decision mirror v2.11 phản ánh owner-final DD-86/DD-91–95; DD-88 chỉ còn broader `DEFERRED_PROPOSAL`. Assistant Product/BE v0.18, Chat Product/BE v0.15/v0.23 và Notifications Product/BE v3.11 đều Reviewed. Primary plan v1.8 đạt `PLAN_READY` tại authority `90d292d` (closure 12/12), gán đầy đủ bounded mechanisms `1–47`, thin API `A1–A21` và tracked-design FE `F0–F15`; đây là ownership/execution plan, **không** phải runtime hoặc coding authorization. Từng slice vẫn phải đạt strict `CODE_READY`. Chat/payment migration, API và UI chưa tồn tại. Shared dispatcher/scheduler vẫn OFF và chưa có producer/projector nghiệp vụ; `0024` chỉ là DB invariant. Không dùng flow dưới đây để suy `IMPLEMENTED`/`ENABLE_READY`.
 
@@ -200,7 +200,7 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 
 ## FLOW 10: PLAYER VIEW — `/myclubs` + Web *(P4.6)*
 
-> **DD-79 ✅ (19/07) — Home hub (S9):** phase-1 PWA lấy **Home** làm landing sau đăng nhập, compose chính data của FLOW này (person-self) + marketplace + notifications §A + onboarding_steps: chips Còn nợ/Kèo tuần · hero kèo kế tiếp (CTA theo role) · upcoming max 4 + "Tất cả →" (= danh sách person-self FLOW 10) · suggested. Shell: bottom nav 5 slot **Home · Feed (config-OFF tới DD-76) · [Khám phá — center/FAB] · Club (CLB sở hữu owner/admin + CLB tham gia, CTA Tạo CLB) · Setting**, 💬 chat (DD-38) + 🔔 ở header. Không flow tiền mới, không data contract mới. Spec: `../features/feature_home.md` v0.7.
+> **DD-79 ✅ (19/07) — Home hub (S9):** phase-1 PWA lấy **Home** làm landing sau đăng nhập, compose chính data của FLOW này (person-self) + marketplace + notifications §A + onboarding_steps: chips Còn nợ/Kèo tuần · hero kèo kế tiếp (CTA theo role) · upcoming max 4 + "Tất cả →" (= danh sách person-self FLOW 10) · suggested. Shell: bottom nav 5 slot **Home · Feed (config-OFF tới DD-76) · [Khám phá — center/FAB] · Club (CLB sở hữu owner/admin + CLB tham gia, CTA Tạo CLB) · Setting**, 💬 chat (DD-38) + 🔔 ở header. Không flow tiền mới, không data contract mới. Spec: `../features/FE/feature_home.md` v0.7.
 
 1. `/myclubs` (bot Zalo/Messenger) hoặc web (auth = phiên Google/email verify) → liệt kê **các CLB của Person + nợ/trạng thái từng CLB**.
 2. **Chỉ dữ liệu của chính họ** — đường query person-authorized, KHÔNG qua tenant-RLS thường (AUDIT C6).

@@ -2,7 +2,7 @@
 
 > **Trạng thái:** 🟡 Draft đề xuất — chờ review · 2026-07-06
 > **Loại:** Proposal (chưa Reviewed). **KHÔNG** sửa `schema.ts`/`migrations`/spec đã Reviewed cho tới khi DD-34/35/36 ✅.
-> **Quan hệ:** mở rộng pair **Club Assistant** v0.17 (`../features/feature_club_assistant.md` + `../features/BE/feature_club_assistant_tech.md`). Pair nền đã là ✅ Reviewed contract; proposal DD-34/35/36 này vẫn là track Draft riêng và không hạ status, tự authorize runtime hoặc viết lại contract nền.
+> **Quan hệ:** mở rộng pair **Club Assistant** v0.17 (`../features/FE/feature_club_assistant.md` + `../features/BE/feature_club_assistant_tech.md`). Pair nền đã là ✅ Reviewed contract; proposal DD-34/35/36 này vẫn là track Draft riêng và không hạ status, tự authorize runtime hoặc viết lại contract nền.
 > **Quyết định mở:** `../standards/decisions.md` **DD-34** (Plexco global KB plane), **DD-35** (auto-derive KB-club từ canonical), **DD-36** (freshness / scheduled re-ingest).
 > **Nguồn tham chiếu:** `../standards/core-db-architecture-principles.md` (INV-1..10, P1–P16) · `../00-start-here/HANDOFF.md §3` (5 HARD RULES) · Club Assistant pair v0.17 · DD-12 (public read-model + readonly grant) · DD-28 (live-context tool). Migration mới phải self-contained; không sửa `0009` đã apply.
 

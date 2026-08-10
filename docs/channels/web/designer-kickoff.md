@@ -22,7 +22,7 @@
 | 6 | **`./FE/feature_<name>_fe.md`** | ⭐ **Tài liệu chi tiết nhất cho từng màn** — layout wireframe, 4 state, bảng `#### Error mapping` (status/error code → visible state), §6 Data hiển thị với `t(vi, en)` và field nào `UNPINNED — omit active UI`, edge case, responsive 375/768/1440. **Đọc file này trước khi vẽ màn tương ứng**; §3B dưới đây chỉ cho thứ tự |
 | 7 | `./frontend-pipeline.md` + `../../templates/feature-dev/fe-*-template.md` | Cách bàn giao từng màn visual-source→code (`fe-spec-template.md` · `fe-handoff-template.md` · `fe-token-mapping-template.md`) |
 | 8 | `../../standards/design-tokens-benchmark.md` · `../../standards/token-needs-matrix.md` | Khi cần đề xuất đổi/thêm token (không tự chế) |
-| 9 | `../../features/feature_*.md §Screens & States / §Use Cases + Edge Cases` | Product spec nguồn — đọc khi cần hiểu vì sao, còn *vẽ gì* thì theo #6 |
+| 9 | `../../features/FE/feature_*.md §Screens & States / §Use Cases + Edge Cases` | Product spec nguồn — đọc khi cần hiểu vì sao, còn *vẽ gì* thì theo #6 |
 
 > ⚠️ **Nếu #6 và #9 lệch nhau thì #6 thắng.** FE spec là projection đã reconcile với BE contract và đã
 > qua 4 vòng review; Product spec mô tả target nghiệp vụ và có phần chưa có owner DTO. Field nào FE

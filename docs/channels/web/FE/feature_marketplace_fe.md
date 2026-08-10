@@ -1,7 +1,7 @@
 # Feature: Marketplace — FE Design Spec
 
 > **Route(s):** `/discover` · `/discover/:sessionId`
-> **Source authority:** `../../../features/feature_marketplace_discovery.md` v2.4 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
+> **Source authority:** `../../../features/FE/feature_marketplace_discovery.md` v2.4 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
 > **Source contract status:** Reviewed
 > **Projection/API contract:** Public whitelist DTO from Marketplace BE §3; exact join mutation/outcome owned by cross-club join
 > **Capability/availability:** Public read availability + authenticated join authority; venue only after canonical `active`

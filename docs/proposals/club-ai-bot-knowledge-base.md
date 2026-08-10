@@ -4,7 +4,7 @@
 
 > **Trạng thái:** 🗂️ Proposal lịch sử đã reconcile · **v1.1 · 2026-07-28**. Giữ lại rationale ban đầu; **không còn là implementation authority**.
 > **Scope:** Feature mới, **post-MVP**, **CHỈ trong app Plexco** (không Telegram/Zalo/Messenger). Phụ thuộc: web/app surface + sync engine (P4), identity (P3.5), billing entitlement (P5).
-> **Implementation authority:** Product/BE pair `../features/feature_club_assistant.md` + `../features/BE/feature_club_assistant_tech.md`; chat canonical `../features/feature_inapp_chat.md` + `../features/BE/feature_inapp_chat_tech.md`; quyết định `../standards/decisions.md`. Nếu proposal này khác các tài liệu đó, **authority hiện hành thắng**.
+> **Implementation authority:** Product/BE pair `../features/FE/feature_club_assistant.md` + `../features/BE/feature_club_assistant_tech.md`; chat canonical `../features/FE/feature_inapp_chat.md` + `../features/BE/feature_inapp_chat_tech.md`; quyết định `../standards/decisions.md`. Nếu proposal này khác các tài liệu đó, **authority hiện hành thắng**.
 > **Evidence boundary:** In-app Chat và Club Assistant Product/BE đều là **Reviewed contract**; runtime/migration chưa có. DD-86/DD-91..95 đã `DECISION_FINAL`; DD-18 chỉ chặn **GO-LIVE**. Current readiness, blocker và next trigger chỉ lấy từ primary plan §13. Proposal lịch sử này không tự cấp quyền sửa `schema.ts`/migrations.
 > **Nguồn tham chiếu:** `../standards/core-db-architecture-principles.md` (INV-1..10, P1–P16) · `../00-start-here/HANDOFF.md §3` (5 HARD RULES) · các authority ở trên.
 

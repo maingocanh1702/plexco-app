@@ -3,7 +3,7 @@
 
 > **Mục đích:** chốt hướng data model cho việc mỗi CLB có **nhiều kênh chat theo chủ đề** (Main / Feedback / Announcements / host tự tạo thêm), thay vì đúng **1 kênh club/CLB** như mô hình DD-38 hiện tại. Mỗi kênh vẫn @mention được **Club Assistant** (bot đã feed KB) để trả lời câu hỏi.
 > **Ngày:** 2026-07-28 · **Version:** 1.1 · **Trạng thái:** ✅ **DECISION_FINAL** — owner ratify **Option B** và toàn bộ DD-86-Q1..Q10. Đây là product/architecture authority để hoàn thiện spec; **không** phải `PLAN_READY`, `CODE_READY`, migration hay runtime proof. §13 ghi verdict review của execution pack, không cấp phép code.
-> **Canonical đối chiếu:** `docs/features/BE/feature_inapp_chat_tech.md` (DDL đề xuất chat `chat_*`, RLS 2-policy) · `docs/features/feature_inapp_chat.md` (DD-38) · `docs/features/feature_club_assistant.md` + `docs/proposals/club-ai-bot-knowledge-base.md` (bot+KB) · `decisions.md` DD-38/DD-55/DD-16..29/DD-71/DD-79/DD-83/DD-86/DD-91..95; DD-88 chỉ là broader proposal · `packages/db/schema.ts` (**AUTHORITATIVE** khi build; `chat_*` HIỆN CHƯA có trong đây) · HANDOFF §3 (5 HARD RULES).
+> **Canonical đối chiếu:** `docs/features/BE/feature_inapp_chat_tech.md` (DDL đề xuất chat `chat_*`, RLS 2-policy) · `docs/features/FE/feature_inapp_chat.md` (DD-38) · `docs/features/FE/feature_club_assistant.md` + `docs/proposals/club-ai-bot-knowledge-base.md` (bot+KB) · `decisions.md` DD-38/DD-55/DD-16..29/DD-71/DD-79/DD-83/DD-86/DD-91..95; DD-88 chỉ là broader proposal · `packages/db/schema.ts` (**AUTHORITATIVE** khi build; `chat_*` HIỆN CHƯA có trong đây) · HANDOFF §3 (5 HARD RULES).
 > **Lưu ý tên:** "channel" ở doc này = **kênh chat trong app Plexco theo chủ đề** (in-app topic channel). KHÁC hoàn toàn `docs/channels/` (= adapter nền tảng ngoài: Zalo/Messenger/web). Đừng trộn hai khái niệm.
 
 ---
@@ -292,15 +292,15 @@ WORKTREE_STATE: AUTHORITY_PACK_COMMITTED_AND_PUSHED  # 90d292d contains exactly 
 TARGET_FILES:
   - docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md
   - docs/decisions/analysis/dd-86-in-app-multi-channel-analysis.md
-  - docs/features/feature_inapp_chat.md
+  - docs/features/FE/feature_inapp_chat.md
   - docs/features/BE/feature_inapp_chat_tech.md
   - docs/features/BE/feature_club_assistant_tech.md
-  - docs/features/feature_club_assistant.md
-  - docs/features/feature_player_view.md
+  - docs/features/FE/feature_club_assistant.md
+  - docs/features/FE/feature_player_view.md
   - docs/features/BE/feature_player_view_tech.md
-  - docs/features/feature_notifications_reminders.md
+  - docs/features/FE/feature_notifications_reminders.md
   - docs/features/BE/feature_notifications_reminders_tech.md
-  - docs/features/feature_tenant_routing_authz.md
+  - docs/features/FE/feature_tenant_routing_authz.md
   - docs/features/BE/feature_tenant_routing_authz_tech.md
   - docs/features/README.md
   - docs/proposals/club-ai-bot-knowledge-base.md

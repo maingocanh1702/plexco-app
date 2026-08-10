@@ -4,7 +4,7 @@
 > **Version:** 0.23 · 2026-07-28
 > **Status:** ✅ Reviewed contract — DD-38/DD-55/DD-86/DD-91/DD-92/DD-93/DD-94/DD-95 ratified; pending migration
 > **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
-> **Product spec:** `../feature_inapp_chat.md` *(Reviewed)*
+> **Product spec:** `../FE/feature_inapp_chat.md` *(Reviewed)*
 > **References:** `../../standards/decisions.md` DD-38 (chat cơ bản phase-1) · DD-55 (open-DM safety + media) · DD-56 (capability registry) · DD-86 (multi-channel final) · DD-91 (requester-only `/pay`) · DD-92 (conversation interactions/search) · DD-93 (slash registry) · DD-94 (unread-derived notification/digest) · DD-95 (club moderation) · DD-19/DD-20 (trợ lý tái dùng hạ tầng chat) · DD-07 (SSE + LISTEN/NOTIFY) · `../BE/feature_multi_tenant_tech.md` (RLS template) · `../BE/feature_sync_engine_tech.md` (realtime authz)
 
 > ✅ **DD-38 chốt (2026-07-10).** Schema dưới đây là **thiết kế đã pin** (ràng buộc trong DD-38: 2 loại channel, DM guard, dedupe theo `client_msg_id`); nguồn authoritative khi thực thi vẫn là `packages/db/schema.ts` + `packages/db/migrations/*.sql` (**thêm `chat_*` + RLS bằng migration monotonic mới sau migration canonical mới nhất tại lúc build**) + `decisions.md` DD-38. **KHÔNG** tạo bảng song song với `persons/memberships/tenants`.

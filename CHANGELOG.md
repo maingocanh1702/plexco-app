@@ -6,6 +6,27 @@ versioning theo [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [v0.0.2] — 2026-08-07
+
+> Entry gộp giai đoạn 18/06 → 07/08 (README đã tự nhận v0.0.2 từ trước; entry này đóng khoảng trống ghi nhận —
+> chi tiết từng bước xem `docs/standards/BUILD-STATUS.md` + `docs/00-start-here/HANDOFF.md` changelog, đó mới là
+> nguồn sự thật tiến độ; CHANGELOG này chỉ là mốc thô).
+
+### Added (Code — foundation, chưa có product runtime)
+
+- Monorepo pnpm: `packages/core` (logic thuần đã lift từ Bestminton + DD-87 `splitNameAmount` + `api-contract`/`app-error`) · `packages/db` (Drizzle + RLS choke-point `tenantRepo`) · `apps/web` (Next.js App Router; 8 auth route + 2 onboarding route) · `apps/bot` (pg-boss worker skeleton, scheduler OFF)
+- Migrations `0000`–`0029` (30 file): foundation/RLS/grants/seeds `0000`–`0013` · waitlist `0014` · auth S4 `0015`–`0018` (Google + email lane, session rotation) · tenant-integrity FK DD-68 `0019`–`0021` · job lease/ack DD-89/90 `0022`–`0023` · public-capacity CHECK `0024` · CHECK naming `0025`–`0026` · `resolve_tenant_status_locked` `0027` · DD-29 capability registry `0028`–`0029`
+- Test suite: canonical runner 683 (đo 07/08 tại `528540e`; 13 validator + 670 workspace) + 14 core tests sau đó (`5b2b8f5`); invariant tests RLS/public-whitelist/waitlist/migrate-race
+- Review-readiness machine enforcement (`pnpm review:check`) + autopilot kit (scope-gate, codex review, backlog reconcile)
+
+### Docs
+
+- Authority stack BRD/PRD/TDD/ROADMAP + decisions.md tới v2.19 (DD-01..DD-99); 24 cặp feature spec Product/BE; 12 FE spec (Draft); Chat primary plan `PLAN_READY` tại `90d292d`
+
+### Chưa có (đọc cho đúng)
+
+- 0 business API route · 0 màn FE nối API · 0 Chat migration/API/UI · scheduler OFF, dispatcher placeholder · Google login chưa bật (owner go-live decision)
+
 ## [v0.0.1] — 2026-06-18
 
 ### Added (Planning & Docs)

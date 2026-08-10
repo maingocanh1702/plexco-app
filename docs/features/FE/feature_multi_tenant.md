@@ -119,17 +119,85 @@ Xây nền bắt buộc cho mọi feature: monorepo, PostgreSQL + Drizzle, schem
 
 ## 5. Screens và observability
 
-P0–P1 không có UI end-user. Deliverables quan sát được:
+> P0–P1: không có UI end-user. Deliverables là CLI/ops tooling.
 
-| Surface | Ready | Error |
-|---|---|---|
-| Migration runner | Version + duration + checksum | Migration ID + rollback guidance |
-| Seed command | Counts + idempotent result | Transaction rollback + actionable error |
-| CI isolation suite | Tenant/public/worker invariants xanh | Nêu policy/query vi phạm |
-| Ops metrics | RLS denial, worker claim, migration duration | Alert khi privileged function bất thường |
+### CLI — Migration runner
+
+**Layout (terminal):**
+
+```
+$ pnpm db:migrate
+
+┌──────────────────────────────────────────────────────────┐
+│ 🔄 Running migrations...                                │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  ✅ 0001_create_sports          0.12s   checksum: a3f2   │
+│  ✅ 0002_create_tenants         0.08s   checksum: b7c1   │
+│  ✅ 0003_create_sessions        0.15s   checksum: d4e9   │
+│  ✅ 0004_create_players         0.11s   checksum: f1a0   │
+│  ✅ 0005_enable_rls             0.03s   checksum: c8b3   │
+│  ...                                                     │
+│  ✅ 0013_public_projections     0.09s   checksum: e5d7   │
+│                                                          │
+│  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
+│  13 migrations applied in 1.42s                          │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### CLI — Seed command
+
+```
+$ pnpm db:seed
+
+✅ Sports: 8 upserted (idempotent)
+✅ Tenants: 3 created (CLB BT, FC Thủ Đức, Personal)
+✅ Sessions: 10 seeded across tenants
+✅ Players: 25 seeded with various statuses
+```
+
+### CI — Isolation test suite
+
+```
+$ pnpm test:isolation
+
+  ✅ Tenant A cannot read Tenant B sessions (RLS)
+  ✅ Query without tenant context returns 0 rows
+  ✅ Runtime role is NOSUPERUSER NOBYPASSRLS
+  ✅ Public projection only contains whitelist fields
+  ✅ Private session not projected to public
+  ✅ Worker claim via narrow function only
+  ✅ Person-self rejects foreign person_id
+
+  7/7 invariants passed ✅
+```
+
+### Ops dashboard (future)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ 🏢 Multi-tenant Ops                                     │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  Tenants: 12 active · 2 suspended                       │
+│  RLS denials (24h): 3 ⚠️                                │
+│  Worker claims (24h): 142                                │
+│  Migration: v13 · last run 2h ago                       │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### State coverage matrix
+
+| Surface | Loading | Ready | Error | Empty |
+|---------|---------|-------|-------|-------|
+| Migration runner | ✅ "Running..." | ✅ Version + duration + checksum | ✅ Migration ID + rollback guidance | ⚪ N/A |
+| Seed command | ✅ "Seeding..." | ✅ Counts + idempotent result | ✅ Transaction rollback + error | ⚪ N/A |
+| CI isolation suite | ✅ Running tests | ✅ All invariants green | ✅ Policy/query violation identified | ⚪ N/A |
+| Ops metrics | ✅ Loading dashboard | ✅ RLS denials, worker claims, migration status | ✅ Alert on anomaly | ✅ "No data yet" |
 
 Không gửi schema/migration telemetry chứa row data hoặc PII.
-
 ---
 
 ## 6. Acceptance Criteria
@@ -158,7 +226,7 @@ Không gửi schema/migration telemetry chứa row data hoặc PII.
 |---|---|---|
 | BRD OD-4 | Managed Postgres provider | ✅ **DD-04 (2026-07-16): (c) co-locate DigitalOcean** (App Platform + Managed PG, VPC private); Fly=fallback; egress-IP gate → `../decisions/analysis/dd-04-hosting-final-decision.md` |
 | BRD OD-8 | Danh sách môn + taxonomy trình độ | ✅ **Chốt DD-08** (2026-07-13) — môn mở rộng được + level 5-bậc rank |
-| MT-OQ-1 | Narrow worker functions cụ thể | ✅ Contract đã pin trong `BE/feature_multi_tenant_tech.md §4`: SECURITY DEFINER claim chỉ trả `job_id/tenant_id/entity_id`, fixed `search_path`, revoke PUBLIC, grant `app_worker`; exact function name thuộc từng queue slice, không còn là founder/P0 gate |
+| MT-OQ-1 | Narrow worker functions cụ thể | ✅ Contract đã pin trong `../BE/feature_multi_tenant_tech.md §4`: SECURITY DEFINER claim chỉ trả `job_id/tenant_id/entity_id`, fixed `search_path`, revoke PUBLIC, grant `app_worker`; exact function name thuộc từng queue slice, không còn là founder/P0 gate |
 | MT-OQ-2 | Kèo không thuộc CLB (Skip Club / personal meet) | ✅ **Chốt DD-46** — Option B "personal tenant" (`tenants.kind='personal'`+`owner_person_id`, auto-provision, free; giữ `tenant_id NOT NULL`+RLS; CẤM nullable). Schema/provision propagate lúc build → `../decisions/analysis/dd-46-skip-club-analysis.md` |
 | MT-OQ-3 | Nhãn/hạng thành viên (audience targeting) | ✅ **Chốt DD-43** — `membership_tags` many-to-many per-tenant, host-defined; MVP chỉ announce audience; public không lộ tag; bỏ `membership_tier` MVP → `../decisions/analysis/dd-43-membership-tags-analysis.md` |
 

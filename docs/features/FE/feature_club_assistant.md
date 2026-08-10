@@ -6,7 +6,7 @@
 > **Status:** ✅ **Reviewed contract** — DD-86/DD-91/DD-93 authority đã mirror, Product/BE companion closure hoàn tất; implementation vẫn chưa bắt đầu. **DD-18** (provider LLM + privacy/ToS) chỉ là `ENABLEMENT_ONLY` cho GO-LIVE vì provider nằm sau interface swappable; Reviewed không tự authorize code/runtime.
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web/app surface + sync engine · P3.5 identity · P5 billing entitlement · (KHÔNG cần channel adapters — trợ lý chỉ chạy trong app Plexco)
-> **Tài liệu liên quan:** proposal `../proposals/club-ai-bot-knowledge-base.md` · BE `BE/feature_club_assistant_tech.md` · `feature_inapp_chat.md` (DD-38/DD-86) · `../standards/decisions.md` DD-16..DD-23 · DD-37/DD-38/DD-86/DD-91 · `../standards/core-db-architecture-principles.md`
+> **Tài liệu liên quan:** proposal `../proposals/club-ai-bot-knowledge-base.md` · BE `../BE/feature_club_assistant_tech.md` · `feature_inapp_chat.md` (DD-38/DD-86) · `../standards/decisions.md` DD-16..DD-23 · DD-37/DD-38/DD-86/DD-91 · `../standards/core-db-architecture-principles.md`
 
 > **Cập nhật v3.4 (DD-37 + DD-38, 2026-07-10):** hạ tầng `chat_*` (native chat in-app) nay **được dựng sớm ở P4** bởi **DD-38** (chat cơ bản phase-1, người↔người) — trợ lý (pha B, DD-19) **tái dùng** cùng bộ bảng ở P7, không tạo model song song. Kênh phase-1 = **Zalo + Messenger** (Telegram loại — DD-37); trợ lý vẫn **chỉ trong app Plexco**, không trả lời ở kênh ngoài.
 
@@ -97,14 +97,192 @@ Hai pha surface, đều trong app Plexco (DD-19): **Pha A** = panel "Hỏi trợ
 
 ## 3. Screens & States
 
-| Surface | Screen | Loading | Ready | Error | Empty |
-|---------|--------|---------|-------|-------|-------|
-| Web dashboard | KB manager (danh sách nguồn) | "Đang tải KB..." | Bảng nguồn + generation + status chip + nút re-ingest/archive; `blocked_sensitive_content` hiện “Đã cách ly” | "Lỗi tải KB" | "Chưa có tài liệu — thêm FAQ/upload" |
-| Web dashboard | Upload/nạp nguồn | "Đang xử lý tài liệu..." | "✅ Đã index [n] đoạn" | File lỗi hoặc “Nội dung nhạy cảm — đã cách ly; hãy redact rồi nạp lại”; chỉ hiện detector class, không hiển thị secret | N/A |
-| Web dashboard | Cấu hình trợ lý (tên, tone, ngưỡng) | — | Form + preview giọng | "Lỗi lưu cấu hình" | N/A |
-| App panel | Hỏi trợ lý (pha A) | "Đang tìm..." | Câu trả lời + trích dẫn nguồn | "Lỗi — thử lại" | "Chưa có tri thức để trả lời" |
-| Native chat (pha B) | Bot trả lời khi @mention | typing indicator | Tin nhắn assistant + trích dẫn | "Lỗi — thử lại" | "Mình chưa có thông tin này" |
-| Web dashboard | Analytics trợ lý | "Đang tải..." | Câu hỏi/tháng, %no-answer, top câu chưa trả lời | "Lỗi" | "Chưa có lượt hỏi" |
+> Host web dashboard (KB management + analytics) + Player app/chat (Q&A). Mobile-first 375px; desktop ≥1024.
+
+### Web dashboard — KB manager
+
+**Purpose:** Host quản lý Knowledge Base: upload, re-ingest, archive sources.
+
+**Layout (desktop):**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← CLB Settings       🤖 Trợ lý CLB                      │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  ─── Nguồn tri thức (3) ───                    [+ Thêm] │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ Tên              Loại    Đoạn  Gen  Trạng thái    │  │
+│  ├────────────────────────────────────────────────────┤  │
+│  │ FAQ Cầu lông     Text     12   v3   ✅ Active     │  │
+│  │ Nội quy CLB      PDF       8   v1   ✅ Active     │  │
+│  │ Bảng giá 2026    CSV       5   v2   ⚠️ Cách ly   │  │
+│  │                                      [Re-ingest]   │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Component: Status chip:**
+
+| Status | Chip | Ghi chú |
+|--------|------|---------|
+| `active` | ✅ Active | Current gen, queryable |
+| `processing` | ⏳ Đang xử lý | Ingesting/embedding |
+| `blocked_sensitive_content` | ⚠️ Cách ly | DLP flagged; chỉ hiện class, không secret |
+| `archived` | 📦 Đã lưu trữ | No longer queryable |
+| `error` | ❌ Lỗi | Ingest/embed failed |
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | "Đang tải KB..." skeleton table |
+| Ready | Source table + status chips + actions |
+| Error | "Lỗi tải KB" banner + retry |
+| Empty | Icon 📚 + "Chưa có tài liệu" + "Thêm FAQ / Upload" CTA |
+
+### Web dashboard — Upload / nạp nguồn
+
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← KB Manager          📄 Thêm nguồn tri thức            │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  Loại nguồn     [Text/FAQ ▼]                             │
+│                                                          │
+│  ─── Text ───                                            │
+│  Tên nguồn *    [FAQ Cầu lông              ]             │
+│  Nội dung *     [                          ]             │
+│                 [                          ]             │
+│                 [                          ]             │
+│                                                          │
+│  ─── HOẶC Upload file ───                                │
+│  [📎 Kéo thả file hoặc chọn file]                       │
+│  Hỗ trợ: PDF, TXT, CSV, MD (≤5MB)                      │
+│                                                          │
+│        [═══ Nạp & Index ═══]                             │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**States:** Loading ("Đang xử lý tài liệu...") | Ready ("✅ Đã index [n] đoạn") | Error ("Nội dung nhạy cảm — đã cách ly") | Empty (N/A)
+
+### Web dashboard — Cấu hình trợ lý
+
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← Trợ lý CLB         ⚙️ Cấu hình                       │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  Tên trợ lý      [Trợ lý CLB Rồng Xanh     ]           │
+│  Giọng điệu      [Thân thiện ▼]                         │
+│                   Chuyên nghiệp / Thân thiện / Vui vẻ   │
+│  Ngưỡng tương tự  [0.7] ◼◼◼◼◼◻◻◻ (min_similarity)      │
+│  Giới hạn/tháng   [500] câu hỏi                         │
+│  Bật trợ lý       [●○] ON                               │
+│                                                          │
+│  ─── Preview ───                                         │
+│  "Xin chào! Mình là trợ lý CLB Rồng Xanh 👋            │
+│   Hỏi mình bất cứ gì về CLB nhé!"                       │
+│                                                          │
+│        [═══ Lưu cấu hình ═══]                            │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### App panel — Hỏi trợ lý (Pha A)
+
+**Layout (side panel or modal):**
+
+```
+┌──────────────────────────────────────┐
+│ 🤖 Trợ lý CLB Rồng Xanh            │
+├──────────────────────────────────────┤
+│                                      │
+│  Bạn: "Giá cầu lông bao nhiêu?"     │
+│                                      │
+│  🤖: "Giá buổi cầu lông là          │
+│       120,000₫/người. Buổi tối      │
+│       thứ 3, 5 là 150,000₫."        │
+│                                      │
+│  📎 Nguồn: FAQ Cầu lông (đoạn 3)   │
+│                                      │
+│  ─── Bạn hài lòng? ───              │
+│  [👍] [👎]                           │
+│                                      │
+├──────────────────────────────────────┤
+│ [Hỏi trợ lý...                 ] [→]│
+└──────────────────────────────────────┘
+```
+
+**States:** Loading ("Đang tìm...") | Ready (answer + source citation) | Error ("Lỗi — thử lại") | Empty ("Chưa có tri thức để trả lời")
+
+### Native chat — Bot reply (Pha B)
+
+**Layout (in-chat):**
+
+```
+│  @Trợ lý giá cầu lông?       Bạn   │
+│                                      │
+│  🤖 Trợ lý CLB                      │
+│  ┌──────────────────────────────┐   │
+│  │ Giá cầu lông: 120,000₫.    │   │
+│  │ Buổi tối T3/T5: 150,000₫.  │   │
+│  │ 📎 FAQ Cầu lông             │   │
+│  └──────────────────────────────┘   │
+```
+
+### Web dashboard — Analytics trợ lý
+
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ← Trợ lý CLB         📊 Phân tích                       │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  ─── Tháng 08/2026 ───                                   │
+│  Câu hỏi: 142 / 500          ████████░░ 28%             │
+│  Không trả lời được: 8%                                  │
+│                                                          │
+│  ─── Top câu chưa trả lời ───                           │
+│  1. "Sân ở đâu?" (12 lần)                               │
+│  2. "Có dạy kèm không?" (5 lần)                         │
+│  3. "Giờ mở cửa?" (3 lần)                               │
+│                                                          │
+│  → Thêm câu trả lời vào KB để cải thiện                │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**States:** Loading ("Đang tải...") | Ready (stats + top unanswered) | Error ("Lỗi") | Empty ("Chưa có lượt hỏi")
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| KB sources | `kb_sources` per tenant | Status + generation tracking |
+| Documents | `kb_documents` per source | Text normalized, revision |
+| Chunks/vectors | `kb_chunks` | Embedding + FTS, fenced by source |
+| Config | `bot_configs` per tenant | Tone, threshold, cap |
+| Query log | `bot_queries` | Append-only, retention/redact |
+| Embed cache | `embedding_cache` | Global, profile+hash key |
+
+### State coverage matrix
+
+| Screen | Loading | Ready | Error | Empty |
+|--------|---------|-------|-------|-------|
+| KB manager | ✅ "Đang tải KB..." | ✅ Source table + chips | ✅ "Lỗi tải KB" | ✅ "Chưa có tài liệu" + CTA |
+| Upload source | ✅ "Đang xử lý..." | ✅ "Đã index [n] đoạn" | ✅ "Cách ly" / file error | ⚪ N/A |
+| Config | — | ✅ Form + preview | ✅ "Lỗi lưu" | ⚪ N/A |
+| App Q&A (Pha A) | ✅ "Đang tìm..." | ✅ Answer + citation | ✅ "Lỗi — thử lại" | ✅ "Chưa có tri thức" |
+| Chat bot (Pha B) | ✅ Typing indicator | ✅ Bot message + citation | ✅ "Lỗi — thử lại" | ✅ "Chưa có thông tin" |
+| Analytics | ✅ "Đang tải..." | ✅ Stats + top unanswered | ✅ "Lỗi" | ✅ "Chưa có lượt hỏi" |
 
 ---
 
@@ -123,7 +301,7 @@ Hai pha surface, đều trong app Plexco (DD-19): **Pha A** = panel "Hỏi trợ
 | `chat_members` | Theo canonical In-app Chat | Membership/read-state của channel | Tái dùng nguyên `feature_inapp_chat.md`; không tạo membership table song song |
 | `chat_messages` | Theo canonical In-app Chat | Tin nhắn person/assistant/system | `author_type ∈ {person,assistant,system}`, `client_msg_id`; assistant/system ⇒ `membership_id` NULL; assistant adapter gắn `bot_query_id` |
 
-> Chi tiết DDL + RLS ở `BE/feature_club_assistant_tech.md §2`. Không entity nào thuộc public plane (không vào `public_sessions`).
+> Chi tiết DDL + RLS ở `../BE/feature_club_assistant_tech.md §2`. Không entity nào thuộc public plane (không vào `public_sessions`).
 
 ---
 

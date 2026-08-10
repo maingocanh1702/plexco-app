@@ -5,7 +5,7 @@
 > **API:** Messenger Platform API (Send API + Webhooks)
 > **Phase:** **P2.5 — Phase-1 MVP** (DD-37 ✅, thay DD-09; App Review bắt buộc trước GA)
 > **Version:** v0.7 · 2026-07-28
-> **Refs:** `messenger-channel-design.md` · `../../features/feature_player_messenger.md` · `../../features/feature_channel_booking_funnel.md` · `../../features/feature_notifications_reminders.md`
+> **Refs:** `messenger-channel-design.md` · `../../features/FE/feature_player_messenger.md` · `../../features/FE/feature_channel_booking_funnel.md` · `../../features/FE/feature_notifications_reminders.md`
 
 > **Authority hiện hành:** DD-65..68 ✅ thay topology Page-per-club/player-only cũ: **Page Plexco trung tâm luôn có + Page riêng per-club tuỳ chọn**; cả host và player dùng được trên cả hai. Auth-link Facebook = **DD-33 ✅ (phase-1; App Review pending)**; policy delivery vẫn phải fail-closed.
 
@@ -143,10 +143,10 @@ Nếu spike fail cho scheduled reminders, Messenger vẫn có thể ship như **
 | Topic | Doc |
 |-------|-----|
 | Messenger channel design | [messenger-channel-design.md](messenger-channel-design.md) |
-| Player join qua Messenger | [feature_player_messenger.md](../../features/feature_player_messenger.md) |
-| Notifications (24h window) | [feature_notifications_reminders.md](../../features/feature_notifications_reminders.md) |
-| Identity + Facebook link (DD-33) | [feature_identity.md](../../features/feature_identity.md) |
-| Link-or-pay booking funnel (DD-32) | [feature_channel_booking_funnel.md](../../features/feature_channel_booking_funnel.md) |
+| Player join qua Messenger | [feature_player_messenger.md](../../features/FE/feature_player_messenger.md) |
+| Notifications (24h window) | [feature_notifications_reminders.md](../../features/FE/feature_notifications_reminders.md) |
+| Identity + Facebook link (DD-33) | [feature_identity.md](../../features/FE/feature_identity.md) |
+| Link-or-pay booking funnel (DD-32) | [feature_channel_booking_funnel.md](../../features/FE/feature_channel_booking_funnel.md) |
 
 ---
 

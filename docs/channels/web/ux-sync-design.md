@@ -2,7 +2,7 @@
 
 > Version: v0.5 · 2026-07-28
 > Scope: UX architecture cho web/app khi Plexco có các bot surfaces phase-1: **Zalo + Facebook Messenger** (Telegram đã loại — DD-37).
-> Related docs: `README.md`, `design-brief.md`, `../../features/feature_sync_engine.md`, `../../features/feature_session_management.md`, `../../features/feature_payment_reconcile.md`, `../../features/feature_marketplace_discovery.md`, `../../features/feature_player_view.md`, `../../standards/business-rules.md`
+> Related docs: `README.md`, `design-brief.md`, `../../features/FE/feature_sync_engine.md`, `../../features/FE/feature_session_management.md`, `../../features/FE/feature_payment_reconcile.md`, `../../features/FE/feature_marketplace_discovery.md`, `../../features/FE/feature_player_view.md`, `../../standards/business-rules.md`
 >
 > **Cập nhật DD-65..68:** Messenger là shared host/player surface trên central Plexco Page hoặc optional per-club Page. Host tạo session cơ bản bằng durable `/newsession` wizard; player discover/join bằng opaque action. Cả hai gọi cùng canonical services với web; web vẫn là control plane/fallback cho tác vụ nâng cao. Nhắc nợ chính = web + Zalo DM, Messenger best-effort trong 24h.
 >

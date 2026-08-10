@@ -4,7 +4,7 @@
 > **Version:** 0.2a · 2026-07-24
 > **Status:** Draft *(chưa qua readiness gate — KHÔNG phải Reviewed contract)*
 > **Implementation:** Not started
-> **Product spec:** `../feature_tournament.md`
+> **Product spec:** `../FE/feature_tournament.md`
 > **References:** `../../standards/decisions.md` DD-82 · DD-83 · DD-73/DD-75 · DD-12 · DD-06 · DD-41 · `../../standards/business-rules.md` (HR2, BL-SEC-5) · `../../standards/api-reference-convention.md` (DD-60 envelope)
 
 ---

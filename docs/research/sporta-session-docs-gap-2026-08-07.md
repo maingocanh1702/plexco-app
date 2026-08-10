@@ -5,7 +5,7 @@
 >
 > **Ngày:** 2026-08-07
 > **Input (external, non-authoritative):** `feature_session.md` · `feature_session_detail.md` — sản phẩm "Sporta", mobile-first, host-centric. User xác nhận: **sản phẩm khác / bản cũ**, dùng làm tham khảo UX, KHÔNG phải authority.
-> **Baseline Plexco:** `docs/features/feature_session_management.md` v2.17 · `docs/features/BE/feature_session_management_tech.md` v2.18b · `docs/features/feature_session_organize.md` v0.5a · `docs/channels/web/FE/feature_sessions_fe.md` v0.2 · `docs/standards/decisions.md`
+> **Baseline Plexco:** `docs/features/FE/feature_session_management.md` v2.17 · `docs/features/BE/feature_session_management_tech.md` v2.18b · `docs/features/FE/feature_session_organize.md` v0.5a · `docs/channels/web/FE/feature_sessions_fe.md` v0.2 · `docs/standards/decisions.md`
 > **Method:** mọi claim "Plexco có/không có" đều verify bằng live repo (`packages/db/schema.ts`, `packages/db/migrations/`), không suy từ prose.
 
 ---

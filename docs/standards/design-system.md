@@ -277,7 +277,7 @@
 ### 3.6 Payment Source
 
 Enum canonical có **5** giá trị — `auto | manual | cash | waiver | reversal`
-(`../features/feature_payment_reconcile.md:275`). Mỗi giá trị một token; **không gộp `auto` với
+(`../features/FE/feature_payment_reconcile.md:275`). Mỗi giá trị một token; **không gộp `auto` với
 `manual`** (khớp tự động ≠ host tự xác nhận — khác nguồn phán quyết) và không thêm giá trị ngoài enum.
 
 ```css

@@ -20,9 +20,9 @@ NL-parsing/format).
 
 REQUIRED READING FIRST (do not skip):
 - docs/proposals/auth-security-design-pass-plan-2026-07-06.md  (the approved plan; SI-1..SI-8 + 4 real gaps)
-- Reviewed specs: docs/features/feature_web_auth_onboarding.md + BE/feature_web_auth_onboarding_tech.md
+- Reviewed specs: docs/features/FE/feature_web_auth_onboarding.md + BE/feature_web_auth_onboarding_tech.md
   (rotation L19/L69/L21/L144, web_sessions.rotated_from L46, session-fixation test L167, TG HMAC L83)
-- docs/features/feature_identity.md + BE/feature_identity_tech.md (keyed-KMS lookup hash L118/L139 — CHANNEL layer)
+- docs/features/FE/feature_identity.md + BE/feature_identity_tech.md (keyed-KMS lookup hash L118/L139 — CHANNEL layer)
 - Evidence trail: .autopilot/state/auth-onboarding-v2/codex/round-01..09.txt + HALT-MAX_ROUNDS.txt
   + AWAIT-FOUNDER-round09-nonconvergence.txt + regions.log + prescan.md
 - v2 code for reference: branch feat/auth-onboarding-v2 @ 7407caa (fixes round 06-08 carry over)

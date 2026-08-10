@@ -17,7 +17,7 @@ REQUEST: final-readiness (authoring, not implementation)
 TARGET_FILES:
   - docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md (v1.8, §8.3/§9 row 2/§9.2)
   - docs/features/BE/feature_inapp_chat_tech.md (v0.23, §"DD-55 design-probe gates", §2 DDL, §4/§5)
-  - docs/features/feature_inapp_chat.md (v0.15, CHT-OQ-1/2/3)
+  - docs/features/FE/feature_inapp_chat.md (v0.15, CHT-OQ-1/2/3)
   - docs/standards/decisions.md (DD-55 full entry + DD-38/48/86/91-95 cross-refs)
   - docs/standards/business-rules.md (BL-SEC-5 rate-limit registry, BL-SEC-6 audit retention, BL-SOC-5)
   - docs/standards/core-db-architecture-principles.md (v1.8 — P1/P2/P4/P6/P7/P8/P17, §3.1 planes)
@@ -584,7 +584,7 @@ BASE_REMOTE_RELATION: MAIN_EQUALS_ORIGIN_MAIN
 TARGET_FILES:
   - docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md
   - docs/features/BE/feature_inapp_chat_tech.md
-  - docs/features/feature_inapp_chat.md
+  - docs/features/FE/feature_inapp_chat.md
   - docs/standards/decisions.md
   - docs/standards/business-rules.md
   - docs/standards/core-db-architecture-principles.md
