@@ -2055,7 +2055,8 @@ notes: |
 
 ## task: chat-dm-safety-authority-core
 title: Slice 2 chuỗi in-app-chat — `dm_safety_enabled()` và authority tables/functions kèm theo
-status: blocked — token chosen for scripts/autopilot-backlog-reconcile compatibility (codex round-03
+status: merged
+note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (2026-08-10). Was: blocked
   [P2]: `st=$2` at that script's own line 254 only ever recognizes planned/ready/blocked, even
   though this file's own Block format legend above documents in-flight as a valid status too —
   using in-flight here, as round-01 did, made post-merge `--fix` unable to ever transition this
