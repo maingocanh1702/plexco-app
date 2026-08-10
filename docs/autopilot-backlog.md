@@ -110,6 +110,71 @@ notes: <link spec>
 
 ---
 
+## task: chat-dm-safety-config-single-read
+title: `assert_dm_allowed` đọc config qua 4 statement — gộp về một lần đọc nhất quán
+status: planned
+risk: P1
+change_class: schema
+depends_on: [chat-dm-safety-authority-core]
+invariants: [schema]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: Sẽ có probe thật khi author manifest — migration mới tạo function/statement có tên, không
+  thuộc loại `close_by: hand`. Để `null` cho tới lúc đó.
+notes: |
+  **Mở 2026-08-10 từ DD-102** (waiver có điều kiện). `assert_dm_allowed` trong
+  `0030_chat_dm_safety_authority_core.sql` đọc cấu hình qua **bốn statement riêng**: ba
+  `SELECT … FROM chat_dm_safety_config WHERE singleton` (`dm_sender_limit_per_min`,
+  `dm_target_limit_per_min`, `audit_enabled`) cộng `dm_safety_enabled()`. Dưới READ COMMITTED mỗi
+  statement lấy snapshot riêng ⇒ **torn read**: một lần siết config đồng thời có thể chỉ áp một phần
+  cho lời gọi đang bay.
+
+  **Không phải fail-open** (đo 2026-08-10): `rate_limit_check(bucket, 0, …)` chạy
+  `IF v_count >= p_limit THEN RETURN false`, mà `v_count >= 0` luôn đúng ⇒ deny. Config thiếu ⇒ deny.
+  `dm_safety_enabled()` false ⇒ `safety_disabled` ⇒ deny. `audit_enabled` chỉ tắt `RAISE LOG`. Nên
+  hệ quả bị chặn ở "một lần siết có thể chậm một nhịp", không phải "deny thành allow".
+
+  **⛔ MỐC CỨNG từ DD-102:** migration này phải land **TRƯỚC caller đầu tiên** — trước slice 7
+  (`chat-shared-message-command-core`) và slice 8 (`chat-dm-lifecycle-command-core`). Nếu slice 7/8 vào
+  hàng đợi mà việc này chưa xong thì **nó là blocker của slice đó**, không được mang tiếp như nợ.
+  Hiện exposure = 0 vì `assert_dm_allowed` chưa có caller production nào.
+
+  **Hình dạng fix (đề xuất, chưa chốt):** một `SELECT … INTO` lấy cả ba cột trong một statement, và cân
+  nhắc gộp luôn `dm_safety_enabled()` nếu nó cũng chỉ đọc cùng hàng singleton. Không sửa `0030` — nó đã
+  apply và hash-lock; đây là migration mới.
+
+---
+
+## task: codex-review-verdict-nondeterminism
+title: Cùng một finding bị xếp advisory 3 vòng rồi nâng blocking ở vòng 4, không nêu lý do đổi
+status: idea
+risk: P2
+change_class: kit-maintenance
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+close_by: hand · quan sát về hành vi reviewer, chưa có cơ chế để probe.
+notes: |
+  **Quan sát 2026-08-10, lane `chat-dm-safety-authority-core--v3`.** Finding về torn read trong
+  `assert_dm_allowed` (xem DD-102) xuất hiện ở **bốn vòng liên tiếp**. Round 2, 3 và 4 đều xếp nó là
+  *advisory / ngoài registration / cần migration kế tiếp / không chặn verdict* — **giống hệt nhau ba
+  lần**. Round 5 nâng thành **blocking**, không nêu lý do vì sao phân loại đổi.
+
+  Hệ quả đo được: lane hết `fix-round-count` (5/5) ở đúng vòng đó, không thể thử lại mà không dính
+  `MAX_ROUNDS`, và phải đóng bằng owner waiver + merge trên bằng chứng. Một finding **không đổi nội
+  dung** giữa các vòng nhưng **đổi mức chặn** làm ngân sách vòng trở nên không dự đoán được — writer
+  không có cách nào lập kế hoạch quanh nó, và cũng không có kênh hỏi lại reviewer.
+
+  Cùng họ với `gates-that-fire-correctly-and-cannot-say-why`. Chưa rõ đây là non-determinism của model,
+  của prompt gate, hay của việc diff thay đổi giữa các vòng làm finding đổi ngữ cảnh — **cần đo trước
+  khi đề xuất fix**. Bằng chứng đầy đủ: các file `gate-attempt-*-code-review-round-*.txt` trong
+  `.autopilot/state-archive/chat-dm-safety-authority-core--v3-20260810T105628Z/state/`.
+
+---
+
 ## task: db-test-harness-teardown-57p01
 title: Suite `packages/db` đỏ với 346/346 test PASS — 2 unhandled Postgres 57P01 từ teardown
 status: planned
