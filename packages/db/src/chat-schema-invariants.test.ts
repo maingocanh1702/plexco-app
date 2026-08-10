@@ -362,16 +362,16 @@ describe("authorization — club channels", () => {
     expect(members).toEqual([]);
   });
 
-  it("cross-tenant: app.tenant_id=B against tenant A's channel/members/messages is zero rows even by exact UUID", async () => {
-    const channels = await withChatPerson(ctx.appDb.db, personB1, ctx.tenantB, (tx) =>
+  it("cross-tenant: app.tenant_id=B against tenant A's channel/members/messages is zero rows even for a person who IS a legitimate member of the target channel (round-06 P1: personB1 was never a channelClubA member, so the original test would pass even with the tenant_id check removed — personA1 isolates the tenant boundary specifically from the membership check)", async () => {
+    const channels = await withChatPerson(ctx.appDb.db, personA1, ctx.tenantB, (tx) =>
       tx.select().from(chatChannels).where(eq(chatChannels.id, channelClubA)),
     );
     expect(channels).toEqual([]);
-    const members = await withChatPerson(ctx.appDb.db, personB1, ctx.tenantB, (tx) =>
+    const members = await withChatPerson(ctx.appDb.db, personA1, ctx.tenantB, (tx) =>
       tx.select().from(chatMembers).where(eq(chatMembers.channelId, channelClubA)),
     );
     expect(members).toEqual([]);
-    const messages = await withChatPerson(ctx.appDb.db, personB1, ctx.tenantB, (tx) =>
+    const messages = await withChatPerson(ctx.appDb.db, personA1, ctx.tenantB, (tx) =>
       tx.select().from(chatMessages).where(eq(chatMessages.id, messageClubA1)),
     );
     expect(messages).toEqual([]);
@@ -591,7 +591,7 @@ describe("regression — chat_channels identity immutability (round-02 P1)", () 
 });
 
 describe("regression — dm_current_read_allowed restricted to dm channels (round-02 P2)", () => {
-  it("direct invocation for a club channel with 2 members returns false, not true", async () => {
+  it("direct invocation for a club channel with 2 members returns false, not true (round-06 P2: must set app.person_id to a real member first — the un-set-GUC path already returns false for an unrelated reason, so it would pass even with the kind='dm' guard removed)", async () => {
     const person1 = await seedPerson("Round02 Club Member 1");
     const membership1 = await seedMembership(ctx.tenantA, person1);
     const person2 = await seedPerson("Round02 Club Member 2");
@@ -604,10 +604,15 @@ describe("regression — dm_current_read_allowed restricted to dm channels (roun
     await addClubMember(twoMemberClub, person1, membership1);
     await addClubMember(twoMemberClub, person2, membership2);
 
-    const { rows } = await ctx.owner.query(`SELECT dm_current_read_allowed($1) AS v`, [
-      twoMemberClub,
-    ]);
-    expect((rows[0] as { v: boolean }).v).toBe(false);
+    await ctx.owner.query(`SELECT set_config('app.person_id', $1, false)`, [person1]);
+    try {
+      const { rows } = await ctx.owner.query(`SELECT dm_current_read_allowed($1) AS v`, [
+        twoMemberClub,
+      ]);
+      expect((rows[0] as { v: boolean }).v).toBe(false);
+    } finally {
+      await ctx.owner.query(`SELECT set_config('app.person_id', '', false)`);
+    }
   });
 });
 
