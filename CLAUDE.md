@@ -34,6 +34,39 @@ Policy này áp dụng kể cả khi user chỉ nói “review”, “check”, 
 
 ---
 
+## Ngôn ngữ — ranh giới là NGƯỜI ĐỌC, không phải loại file
+
+**Agent-facing ⇒ English.** Mọi thứ một agent đọc để thực thi: `.claude/commands/*.md`,
+`docs/autopilot/contracts/*`, `docs/autopilot-templates/autopilot-prompt-*.md`,
+`level3-workflow.md` + `level3-handoff.md`, và **mọi khối ` ```text ` được paste vào Claude Code**.
+
+**Owner-facing ⇒ tiếng Việt.** `docs/standards/decisions.md`, `docs/product/*`,
+`docs/00-start-here/HANDOFF.md`, `docs/slice-readiness-verdicts.md`,
+`docs/standards/review-code-readiness-gate.md`, và các doc quyết định/plan `level3.1-*`
+(`design-discussion`, `adoption-plan`) — chúng là artifact owner đọc để quyết, không phải prompt.
+
+> ⚠️ Đừng khai lớp bằng glob `level3*.md`: đo 2026-08-09 cho thấy `level3-workflow.md`/`level3-handoff.md`
+> = 0 dòng tiếng Việt, còn `level3.1-design-discussion.md` = 191 và `level3.1-adoption-plan.md` = 109.
+> Cùng tiền tố, khác lớp người đọc.
+
+Khuôn lai chuẩn cho RUN/prompt doc: **prose dẫn tiếng Việt, payload English** — xem
+`docs/autopilot-templates/ap23-inbound-webhook-RUN.md` và `level3.1-slice-prompts.md`.
+
+> ⚠️ **Luật này trước đây KHÔNG được viết ở đâu** (grep `english|language|ngôn ngữ` trả zero khắp
+> `CLAUDE.md` · `AGENTS.md` · `docs/standards/` · `docs/autopilot-templates/`), nên nó chỉ sống trong
+> convention của file đang có. 2026-08-09 một phiên đã viết 10 slice prompt bằng tiếng Việt vì suy từ
+> các doc tiếng Việt xung quanh thay vì kiểm lớp người đọc. Ghi ra đây để "grep không thấy" thôi
+> không còn là lý do.
+
+Kiểm nhanh trước khi commit một file có khối prompt:
+
+```bash
+awk '/^```text$/{f=1;next} /^```$/{f=0} f' <file> \
+  | grep -P '[àáảãạăâđèéẻêìíỉòóỏôơùúủưỳýỵ]'   # phải rỗng
+```
+
+---
+
 <!-- level3-workflow:start -->
 ## Workflow mặc định — Level 3 supervised autonomy
 
@@ -96,25 +129,24 @@ Gate review/readiness ở trên vẫn áp song song và **chặt hơn** thì th�
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **plexco-app** (2994 symbols, 3635 relationships, 40 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **plexco-app** (7523 symbols, 9070 relationships, 96 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
-> Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
+> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `query({search_query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
-- For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source→sink flows; needs `analyze --pdg`).
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `impact` on it.
+- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
-- NEVER commit changes without running `detect_changes()` to check affected scope.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
 
 ## Resources
 
