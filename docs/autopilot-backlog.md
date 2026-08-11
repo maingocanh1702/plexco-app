@@ -1130,7 +1130,8 @@ notes: |
 
 ## task: dd38-dd86-chat-schema-core
 title: Chat-schema migration slice (DD-38 in-app chat) — three core tables + constraints + RLS/pure-read helpers
-status: ready — contract CODE_READY 2026-08-10 (closure 12/12); not yet registered or worktree-opened
+status: merged
+note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (2026-08-11). Was: ready
 status_history_2026-08-03_idea: idea — contract AUTHORED 2026-08-03, verdict NOT_CODE_READY (closure
   10/12), blocked on slices 1–2 not existing as their own authored/merged slices yet. Both blockers
   closed 2026-08-10: chat-definer-role-provisioning merged `286f48b` (hardened `b55d628`);
