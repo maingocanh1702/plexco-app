@@ -3,7 +3,7 @@
   "feature": "deps-osv-transitive-floors",
   "branch": "feat/deps-osv-transitive-floors",
   "base_ref": "origin/main",
-  "base_sha": "9d7d6ac0dbaf171758b8e427067e1074d20a8f29",
+  "base_sha": "005a44e6275bfd4b2c29e63c9a351fb2a9a1ced2",
   "risk": "P2",
   "autonomy_mode": "supervised",
   "writer_processes_max": 1,
@@ -28,13 +28,13 @@
     "NO edit to .github/workflows/security.yml or ci.yml. The scanner configuration is not the defect."
   ],
   "_target_floors": {
-    "measured_at": "2026-08-10, Security run #219 on 9d7d6ac, job 'OSV full dependency scan'",
+    "measured_at": "2026-08-10, Security run #219 on 9d7d6ac, job 'OSV full dependency scan'. RE-VERIFIED unchanged 2026-08-11 at the current OSV run on 005a44e (run id 31460751255): identical 6 advisories, identical fixed-in versions, identical 'Total 3 packages ... 6 vulnerabilities' summary. Publish dates measured 2026-08-11 via `npm view <pkg> time --json`: nanoid@3.3.17 2026-08-03T10:39:22Z (7d18h), brace-expansion@5.0.9 2026-07-30T10:00:32Z (11d19h), postcss@8.5.23 2026-07-24T17:05:13Z (17d12h) - all clear minimumReleaseAge 10080 (7d), so NONE split out. nanoid@3.3.18 (2026-08-07) and postcss@8.5.26 (2026-08-06) are younger than 7d and are NOT installable; ^3.3.17 -> 3.3.17 and ^8.5.23 -> 8.5.25 today. nanoid@3.3.18 becomes eligible 2026-08-14 - the properties-not-literals shape below survives that.",
     "nanoid": "3.3.15 -> >=3.3.17 (GHSA-28wg-ghj8-5hjv CVSS 8.2 fixed 3.3.16; GHSA-2v37-7h3g-55p8 CVSS 8.2 fixed 3.3.17)",
     "brace-expansion": "5.0.7 -> >=5.0.9 (GHSA-mh99-v99m-4gvg CVSS 7.5 fixed 5.0.8; GHSA-rgw5-rvv9-x895 CVSS 7.5 fixed 5.0.9)",
     "postcss": "8.5.16 -> >=8.5.23 (GHSA-r28c-9q8g-f849 CVSS 7.5 fixed 8.5.18; GHSA-fxqj-rqcc-2cmp CVSS 6.3 fixed 8.5.23)",
     "_note": "Two advisories per package with different fixed versions - the floor must clear BOTH, so take the higher. OSV reported 'Total 3 packages affected by 6 known vulnerabilities (0 Critical, 5 High, 1 Medium) ... 6 vulnerabilities can be fixed.'"
   },
-  "_brace_expansion_v1_note": "The 2026-07-29 owner decision split brace-expansion out of deps-security-bump because forcing v1 to v5 breaks at runtime: v1 is `module.exports = expandTop` (a function) while v5 is CJS `exports.expand` (an object), and its only consumer minimatch@3.1.5 calls it as a function. Measured 2026-08-10 at 9d7d6ac: `grep -c 'brace-expansion@1\\.' pnpm-lock.yaml` returns 0 - the v1 branch is GONE, removed by the eslint 9->10 migration (a93a4f6) exactly as that decision predicted. The trap therefore does not apply here. RE-MEASURE before relying on this; if any v1 entry has returned, brace-expansion splits out again.",
+  "_brace_expansion_v1_note": "The 2026-07-29 owner decision split brace-expansion out of deps-security-bump because forcing v1 to v5 breaks at runtime: v1 is `module.exports = expandTop` (a function) while v5 is CJS `exports.expand` (an object), and its only consumer minimatch@3.1.5 calls it as a function. Measured 2026-08-10 at 9d7d6ac: `grep -c 'brace-expansion@1\\.' pnpm-lock.yaml` returns 0 - the v1 branch is GONE, removed by the eslint 9->10 migration (a93a4f6) exactly as that decision predicted. The trap therefore does not apply here. RE-MEASURE before relying on this; if any v1 entry has returned, brace-expansion splits out again. Re-measured 2026-08-11 at 005a44e: still 0 (only brace-expansion@5.0.7 remains, lock lines 1145/2747; the `brace-expansion@1: ^1.1.16` guard is intact at line 8). Trap stays expired; a plain 5.x floor is safe.",
   "context_sources": [
     "docs/autopilot-backlog.md task deps-security-bump (line ~524) - same class, three registrations, owner decisions on minimumReleaseAge and on splitting a package out when its patch is inside the window",
     "docs/standards/dependency-override-precedence.md - the measured whole-map replacement rule and why editing the wrong file looks like a fix",

@@ -467,6 +467,20 @@ notes: |
   quan** slice này — owner cần quyết cho land trên nền Test đỏ hay chờ. Verdict authored:
   `NOT_CODE_READY`.
 
+  **Cập nhật 2026-08-11 (readiness pass — không code, không register):** cả hai blocker đóng.
+  Base re-pin `9d7d6ac`→`005a44e` (sáu file scope byte-identical giữa hai base). Đo publish date ba target
+  (`npm view <pkg> time --json`): nanoid@3.3.17 03/08 (7d18h) · brace-expansion@5.0.9 30/07 (11d19h) ·
+  postcss@8.5.23 24/07 (17d12h) — cả ba vượt cửa sổ 7 ngày ⇒ **không gói nào tách ra**, BLOCKER (a) đóng;
+  `merged_probe` `nanoid@<3.3.17` giữ nguyên (điều kiện repoint không kích hoạt). OSV table re-verify tại
+  run hiện tại trên `005a44e` (run 31460751255): y hệt 6 advisory + fixed version; GHSA-67mh-4wv8-2f99 vẫn
+  là unused ignore. `grep -c 'brace-expansion@1\.' pnpm-lock.yaml` = 0 (bẫy v1 vẫn hết hạn). CI `verify`
+  bước **Test** XANH trên `005a44e` (run 31460750915) sau khi AP-52 (`cb52bbe`) sửa race teardown 57P01 ⇒
+  BLOCKER (b) đóng — **1 run xanh liên tiếp** quan sát được, không làm tròn thành "ổn định" (hai run ngay
+  trước bị concurrency huỷ; hai run hoàn tất trước fix đều đỏ ở Test); backed bởi causal fix. Verdict:
+  `NOT_CODE_READY`→`CODE_READY`, header `enforce`→`code-ready`. **Giữ `status: planned`**: artifact
+  readiness còn ở working tree (owner commit) — promote lên `ready` + `register` + worktree là bước kế của
+  owner; quyết định land trên nền chỉ 1 run xanh cũng của owner.
+
 ---
 
 ## task: auth-provider-google-email-swap

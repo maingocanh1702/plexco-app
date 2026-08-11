@@ -1,17 +1,17 @@
-<!-- review-readiness: enforce -->
+<!-- review-readiness: code-ready -->
 
 # AP-51 — deps-osv-transitive-floors: raise nanoid / brace-expansion / postcss past their OSV advisories
 
-> **Status:** authored 2026-08-10 · **Risk:** P2 · **preparation-only — no worktree opened, no code written.**
-> **Base:** `9d7d6ac0dbaf171758b8e427067e1074d20a8f29` (`main` = `origin/main`, measured 2026-08-10).
+> **Status:** authored 2026-08-10 · readiness re-verified and carried to strict `CODE_READY` **2026-08-11** · **Risk:** P2 · **preparation-only — no worktree opened, no code written.**
+> **Base:** `005a44e6275bfd4b2c29e63c9a351fb2a9a1ced2` (`main` = `origin/main`, re-pinned 2026-08-11; authoring base was `9d7d6ac0dbaf171758b8e427067e1074d20a8f29`). The six scope files are byte-identical between the two bases — verified `git diff --stat 9d7d6ac..005a44e -- package.json pnpm-workspace.yaml pnpm-lock.yaml osv-scanner.toml <manifest> <this doc>` is empty — so every factual claim below about the tree still holds verbatim; only the SHA pin moved.
 > **Manifest:** `docs/autopilot-manifests/deps-osv-transitive-floors.json`
-> This is an AUTHORING artifact. No `register` has been attempted.
+> This is an AUTHORING artifact carried to strict `CODE_READY`. No `register` has been attempted; `register` + worktree creation are the owner's next action.
 
 ---
 
 ## 1. What this closes
 
-`Security / OSV full dependency scan` is red on `main`. Measured at run #219 on `9d7d6ac`:
+`Security / OSV full dependency scan` is red on `main`. Measured at run #219 on `9d7d6ac`, and **re-verified unchanged 2026-08-11 at the current OSV run on `005a44e` (run id 31460751255)** — identical six advisories, identical fixed-in versions, identical summary line:
 
 ```
 Total 3 packages affected by 6 known vulnerabilities (0 Critical, 5 High, 1 Medium, 0 Low) from 1 ecosystem.
@@ -87,6 +87,29 @@ out** of `deps-security-bump` because its patch (8.5.23) was still inside the wi
   measured dates, and proceed with the remainder.
 - Never lower the setting, never pass a per-invoke flag to bypass it, never add an `IgnoredVulns` entry
   to paper over it.
+
+**Measured 2026-08-11 (this readiness pass)** — `npm view <pkg> time --json`, against now = `2026-08-11T05:35Z`,
+so the cutoff is "published before `2026-08-04T05:35Z`":
+
+| Target | Published | Age at measurement | Result |
+| --- | --- | --- | --- |
+| `nanoid@3.3.17` | `2026-08-03T10:39:22Z` | 7d 18h | **PASSES** — no margin; crossed the 7-day line only on 2026-08-10T10:39Z |
+| `brace-expansion@5.0.9` | `2026-07-30T10:00:32Z` | 11d 19h | **PASSES** |
+| `postcss@8.5.23` | `2026-07-24T17:05:13Z` | 17d 12h | **PASSES** |
+
+All three clear the floor, so **no package splits out** under this section; `nanoid` stays in scope and the
+`package.json :: nanoid@<3\.3\.17` merged-probe key is unchanged (the conditional repoint in the backlog note does not fire).
+
+Two consequences that make "upgrade to latest" the WRONG action here — each is a property this slice must preserve, never a literal:
+
+- **The newer versions are below the floor and are not installable.** `nanoid@3.3.18` (2026-08-07, 3d 13h old) and
+  `postcss@8.5.26` (2026-08-06, 4d 21h old) are younger than 7 days, so pnpm will not select them. A caret range
+  resolves `^3.3.17` → 3.3.17 and `^8.5.23` → 8.5.25 (2026-07-29, eligible) today. Never run `pnpm update --latest`,
+  and never read a refusal to install a brand-new version as a broken lockfile.
+- **The window moves.** `nanoid@3.3.18` becomes eligible on 2026-08-14T16:41Z. If implementation runs after that,
+  `^3.3.17` resolves to 3.3.18 — still above the advisory floor, still correct, but the lockfile delta will not
+  match any literal written here. This is exactly why §6 requires every verification check to be a PROPERTY
+  ("no `nanoid` entry resolves below 3.3.17"), never a version literal. Do not convert any property into a literal.
 
 ---
 
@@ -170,13 +193,48 @@ A property survives a moving target. A literal does not, and this slice's target
 
 ---
 
-## 8. Verdict
+## 8. Blockers closed since authoring (2026-08-11)
+
+**BLOCKER 1 — release age of the three targets.** Closed. Measured in §3: `nanoid@3.3.17`, `brace-expansion@5.0.9`
+and `postcss@8.5.23` all cleared the 7-day `minimumReleaseAge`. No package splits out; the slice ships all three.
+
+**BLOCKER 2 — CI red on `main` at the Test step.** Closed. Root cause was a Postgres `57P01 admin_shutdown`
+teardown race in `packages/db/src/test-harness.ts`, fixed by AP-52 and merged as `cb52bbe`. The `CI` workflow on
+the current tip `005a44e` (run id 31460750915) concluded **success**, and its `verify` job's **Test** step passed.
+`005a44e` is a descendant of `cb52bbe`, so the green run includes the root-cause fix — not a lucky pass of the old
+harness.
+
+**Evidence strength, stated honestly (not rounded up to "stable").** Consecutive green `CI` runs observed on `main`
+= **1** — the current tip only. The two runs immediately before it (`cb52bbe`, `a36ae80`) were cancelled by the
+concurrency group, not completed; the last completed runs before the fix (`200f11f`, `e8311a9`) both failed at Test.
+One green run meets the blocker's literal resolution ("Test step green on `main`") and is backed by a causal fix, but
+it is a single observation on a historically flaky harness. The merge decision remains the owner's.
+
+## 9. Acceptance matrix — expected result by §B2 group
+
+Each property is checked at implementation time. A deps-floor slice has no runtime state, so several groups are
+justified `N/A` rather than padded with invented cases.
+
+| Group | Case | Precondition | Expected result | Check layer |
+| --- | --- | --- | --- | --- |
+| Happy path | Floors raised, install clean | `package.json` `pnpm.overrides` raises postcss and adds nanoid / brace-expansion 5.x floors | `pnpm install --frozen-lockfile` succeeds; `osv-scanner -r ./` reports 0 findings for the three packages | pnpm install + osv-scanner |
+| Boundary | Release-age edge | a target younger than the 7-day `minimumReleaseAge` | that package splits out; `AWAIT RELEASE_AGE_WINDOW` with measured dates; remainder proceeds | §3 measurement — 2026-08-11: none split |
+| Boundary | Moving window / caret drift | `^3.3.17` may resolve to 3.3.18 after 2026-08-14 | property "no `nanoid` entry resolves below 3.3.17" still holds — a property, never a literal | grep `pnpm-lock.yaml` |
+| Authorization | N/A | build-config only; no tenant / person / role / RLS surface | — | — |
+| Failure | A floor cannot be forced without a runtime break | e.g. `brace-expansion@1` present (v1→v5 breaks at call time) | split that package out; keep the `brace-expansion@1` guard | `grep -c 'brace-expansion@1\.' pnpm-lock.yaml` = 0 at `005a44e` → not triggered |
+| Concurrency | Single writer | `writer_processes_max: 1`; lockfile regenerated deterministically | no competing writer; lockfile is reviewed output, never hand-edited | manifest |
+| Migration | N/A | no DB migration, no schema / grant / RLS change | — | — |
+| Security / privacy | No supply-chain control weakened to pass the scan | override map + `pnpm-workspace.yaml` controls | `pnpm-workspace.yaml` byte-unchanged; `minimumReleaseAge` / `trustPolicy` / `blockExoticSubdeps` untouched; no new `IgnoredVulns`; only the dead ignore deleted | `git diff --quiet pnpm-workspace.yaml`; osv-scanner.toml diff = one deletion; codex security round |
+| Regression | Existing suite + no unrelated dep drift | base test count at `005a44e` (CI Test green); lockfile deltas | `pnpm -w test` at the same count or higher; `pnpm-lock.yaml` version deltas only for the three packages + their forced transitives | pnpm test; lockfile diff review |
+| Observability | The scan gate itself | `Security / OSV full dependency scan` is the merge gate | post-change: 0 findings for the three packages, no "unused ignores" warning; backlog entry updated with the measured result | osv-scanner re-run; backlog |
+
+## 10. Verdict
 
 ```text
 REVIEW_POLICY_VERSION: 1.3
-REVIEW_VERDICT: NOT_CODE_READY
-REVIEWED_AT: 2026-08-10
-AUTHORITY_SHA: 9d7d6ac0dbaf171758b8e427067e1074d20a8f29
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-08-11
+AUTHORITY_SHA: 005a44e6275bfd4b2c29e63c9a351fb2a9a1ced2
 BASE_BRANCH: main
 TARGET_FILES:
   - package.json
@@ -186,39 +244,33 @@ TARGET_FILES:
   - docs/autopilot/contracts/autopilot-deps-osv-transitive-floors.md
   - docs/autopilot-backlog.md
 SLICE: deps-osv-transitive-floors
-IN_SCOPE: raise the effective pnpm override floors for nanoid, brace-expansion 5.x and postcss past the six OSV advisories measured at Security run 219; delete the dead GHSA-67mh-4wv8-2f99 ignore from osv-scanner.toml; regenerate pnpm-lock.yaml
+IN_SCOPE: raise the effective pnpm override floors for nanoid, brace-expansion 5.x and postcss past the six OSV advisories measured at Security run 219 and re-verified unchanged at the current OSV run on 005a44e; delete the dead GHSA-67mh-4wv8-2f99 ignore from osv-scanner.toml; regenerate pnpm-lock.yaml
 OUT_OF_SCOPE: any edit to pnpm-workspace.yaml; lowering or bypassing minimumReleaseAge, trustPolicy or blockExoticSubdeps; unrelated dependency upgrades; hand-editing pnpm-lock.yaml; adding any new IgnoredVulns entry; changes to security.yml or ci.yml
 G1_DECISION: PASS
 G2_SPEC: PASS
 G3_DEPENDENCY: PASS
-G4_TEST: FAIL
+G4_TEST: PASS
 G5_SCOPE: PASS
-G6_EXTERNAL: FAIL
+G6_EXTERNAL: PASS
 HARD_DEPENDENCIES: none
 PRIOR_SLICES: deps-security-bump (three registrations, 2026-07-26..30); pnpm-override-precedence-two-locations (merged 92c7832); pnpm-workspace-esbuild-override-inert
 OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: none
 LIVE_REPO_VERIFICATION: PASS
 CONTRACT_MATRIX: PASS
-CLOSURE_MATRIX: PARTIAL
-ACCEPTANCE_MATRIX: FAIL
+CLOSURE_MATRIX: PASS
+ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
-IMPLEMENTATION_ARTIFACTS: NOT_REQUIRED_FOR_PLAN_READY
-FIRST_IMPLEMENTATION_STEP: measure the publish date of nanoid@3.3.17, brace-expansion@5.0.9 and postcss@8.5.23 against minimumReleaseAge, and split out any target still inside the window
-REMAINING_BLOCKERS:
-  - blocker: release age of the three target versions is unmeasured; any target inside the 7-day window must be split out per the 2026-07-26 owner decision
-    owner: assigned writer at implementation time
-    resolution: publish dates measured and each package either included or split out
-  - blocker: CI verify is red on main at the Test step, unrelated to this slice, traced to 286f48b (2026-08-04)
-    owner: Owner
-    resolution: Test step green on main, or an owner record that this slice may land against a known-red Test step
-NEXT_REVIEW_TRIGGER: publish dates measured for all three targets, plus a decision on landing against the red Test step
+IMPLEMENTATION_ARTIFACTS: PASS
+FIRST_IMPLEMENTATION_STEP: edit package.json pnpm.overrides only — raise the postcss floor to >=8.5.23 and add a nanoid >=3.3.17 entry and a brace-expansion 5.x >=5.0.9 entry, leaving brace-expansion@1, sharp and esbuild@<0.25.0 untouched; then run pnpm install to regenerate pnpm-lock.yaml (all three targets cleared the 7-day minimumReleaseAge as measured 2026-08-11, so none split out)
+REMAINING_BLOCKERS: none
 ```
 
 ---
 
-## 9. Changelog
+## 11. Changelog
 
 | Date | Change |
 | --- | --- |
+| 2026-08-11 | **Readiness pass → strict `CODE_READY`.** Base re-pinned `9d7d6ac`→`005a44e` (the six scope files are byte-identical between the two bases). Measured the three publish dates — nanoid@3.3.17 (08-03, 7d 18h), brace-expansion@5.0.9 (07-30, 11d 19h), postcss@8.5.23 (07-24, 17d 12h): all clear the 7-day floor, none split out (closes authoring BLOCKER 1). Re-verified the OSV advisory table unchanged at the current run on `005a44e` (6 advisories, same fixed-in versions), and GHSA-67mh-4wv8-2f99 still reported as an unused ignore. Re-measured `grep -c 'brace-expansion@1\.' pnpm-lock.yaml` = 0 (v1 trap still expired). CI Test step green on `005a44e` after AP-52 (`cb52bbe`) fixed the 57P01 teardown race (closes BLOCKER 2 — 1 consecutive green run observed, backed by the causal fix; not rounded up to "stable"). Flipped G4_TEST, G6_EXTERNAL, CLOSURE_MATRIX, ACCEPTANCE_MATRIX and IMPLEMENTATION_ARTIFACTS to PASS; added the §9 acceptance matrix; verdict `NOT_CODE_READY`→`CODE_READY`; header `enforce`→`code-ready`. |
 | 2026-08-10 | Authored from Security run #219 on `9d7d6ac`. Pinned the override-location rule, the release-age decision, the expired brace-expansion trap, the dead ignore, and the properties-not-literals lesson from `deps-security-bump` registration #2. Verdict `NOT_CODE_READY`. |
