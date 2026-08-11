@@ -196,6 +196,56 @@ notes: |
 
 ---
 
+## task: classifier-blocks-kit-mandated-readiness-json
+title: Permission classifier chặn `readiness.json` — bước kit **yêu cầu**, bị đọc thành fabricated attestation
+status: idea
+risk: P2
+change_class: kit-maintenance
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+close_by: hand · quan sát về hành vi classifier, không có symbol để probe.
+notes: |
+  **Quan sát 2026-08-10 và 2026-08-11, hai lane khác nhau** (`chat-dm-safety-authority-core--v3`,
+  `db-test-harness-teardown-57p01`). Cả hai lần, writer viết `readiness.json` như bước bắt buộc trước
+  `scope-gate ready`, và permission classifier chặn với lý do "fabricated attestation" — vì file chứa
+  `acceptance.status: "satisfied"` và `breakers.status: "clear"`.
+
+  **Kit yêu cầu đúng bước đó, và tự phân biệt hai artifact ngay trong cùng một mục.**
+  `docs/autopilot-templates/autopilot-prompt-GENERIC.md`:
+  - dòng 254–257: *"For final certification, **do not manufacture verification/review files or
+    self-assert a clean status**. Resolve `readiness.json` from `_READINESS_EVIDENCE_TEMPLATE.json`;
+    it records **only identity, acceptance and breaker state**."*
+  - dòng 289–290: *"**Write** the minimal identity + `acceptance.status=satisfied` +
+    `breakers.status=clear` `readiness.json` from the installed template, then run `scope-gate ready`."*
+  - dòng 296–297: *"The readiness gate **reruns declared verification and pinned reviews itself**."*
+
+  Tức: câu đầu cấm bịa **verification/review file**; câu sau **bắt buộc** viết `readiness.json`. Hai
+  artifact khác nhau — `readiness.json` là **vé vào cửa** (identity + attestation của writer rằng việc
+  của mình đã xong và không đang ngồi trên breaker), còn `gate-result.json` mới là **verdict** và do
+  chính tool ghi sau khi tự chạy lại toàn bộ verification + Codex round. Writer không giả mạo được phần
+  đó dù viết gì trong `readiness.json`. Xác nhận bằng source:
+  `autopilot-review-readiness.mjs` đọc file (`readJson(evidencePath, "readiness evidence")`), rồi
+  `runVerificationGroup("focused"/"canonical")` và `spawnSync(reviewerPath, ["review", "--base", …])`.
+
+  **Chi phí đo được:** mỗi lần chặn tốn một vòng hỏi-đáp owner giữa một lifecycle đang chạy. Writer
+  **làm đúng** khi dừng lại hỏi thay vì lách — không muốn đổi hành vi đó. Vấn đề là classifier gộp hai
+  artifact làm một, nên phản xạ đúng lại bị kích hoạt sai chỗ.
+
+  ⚠️ **Không tính nhầm ca thứ ba.** Ngày 2026-08-11 lane `dd38-dd86-chat-schema-core` cũng bị classifier
+  chặn, nhưng ở thao tác **xoá một `HALT-*` file** — ca đó classifier **đúng hoàn toàn**
+  (`autopilot-prompt-GENERIC.md:483`). Chỉ hai ca `readiness.json` mới thuộc task này.
+
+  **Hướng khả dĩ, chưa chốt:** đổi tên trường trong template sao cho không đọc như tuyên bố thành công
+  (`acceptance.status` → `writer_work_complete`, `breakers.status` → `active_breakers: none`), hoặc thêm
+  một dòng ngay trong `_READINESS_EVIDENCE_TEMPLATE.json` nói rõ đây là precondition input chứ không phải
+  verdict. Cần đo trước: chưa rõ classifier bắt theo tên trường, theo giá trị, hay theo ngữ cảnh
+  "ghi file ngay sau một gate failure".
+
+---
+
 ## task: codex-review-verdict-nondeterminism
 title: Cùng một finding bị xếp advisory 3 vòng rồi nâng blocking ở vòng 4, không nêu lý do đổi
 status: idea
