@@ -7,6 +7,40 @@ import { migrate, type MigrateResult } from "./migrate.js";
 import { createDb, type DbHandle } from "./client.js";
 
 /**
+ * DROP DATABASE's FORCE option (used throughout this file's teardown paths) calls
+ * pg_terminate_backend() on every remaining connection to the target database, which delivers a
+ * FATAL 57P01 (admin_shutdown) to whichever client still holds that connection — including one
+ * that is already in the middle of its own client.end() (pg-pool's Pool.end() removes an idle
+ * client from its bookkeeping synchronously, in _remove(), before the client's actual socket
+ * close resolves, so end() can return slightly before the connection is gone). A pg.Pool/pg.Client
+ * with no 'error' listener turns that into an unhandled error that crashes the whole test run,
+ * even though the termination is expected and harmless. Every pool/client this file constructs is
+ * guarded, but the guard is scoped: it swallows ONLY a connection-termination code, and ONLY while
+ * the owning context's own teardown is in progress — anything else still throws, exactly as it
+ * would with no listener at all, so a genuine connection failure never goes silent.
+ */
+const CONNECTION_TERMINATION_CODES = new Set(["57P01"]);
+
+function isConnectionTerminationError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return typeof code === "string" && CONNECTION_TERMINATION_CODES.has(code);
+}
+
+function guardPoolErrors(pool: pg.Pool, isTearingDown: () => boolean): void {
+  pool.on("error", (error) => {
+    if (isTearingDown() && isConnectionTerminationError(error)) return;
+    throw error;
+  });
+}
+
+function guardClientErrors(client: pg.Client, isTearingDown: () => boolean): void {
+  client.on("error", (error) => {
+    if (isTearingDown() && isConnectionTerminationError(error)) return;
+    throw error;
+  });
+}
+
+/**
  * Assert a rejection whose message appears ANYWHERE in the error's cause chain.
  *
  * Required for anything routed through drizzle (withTenant/tenantRepo): drizzle
@@ -260,6 +294,8 @@ export async function acquireChatDefinerLock(
   base: string,
 ): Promise<{ release: () => Promise<void> }> {
   const lockClient = new pg.Client({ connectionString: base });
+  let tearingDown = false;
+  guardClientErrors(lockClient, () => tearingDown);
   await lockClient.connect();
   await lockClient.query("SELECT pg_advisory_lock($1)", [CHAT_DEFINER_LOCK_KEY]);
   let released = false;
@@ -267,6 +303,7 @@ export async function acquireChatDefinerLock(
     release: async () => {
       if (released) return;
       released = true;
+      tearingDown = true;
       await lockClient
         .query("SELECT pg_advisory_unlock($1)", [CHAT_DEFINER_LOCK_KEY])
         .catch(() => {});
@@ -292,11 +329,14 @@ const JOB_DEFINER_LOCK_KEY = 0x6a6f6264; // "jobd"
 
 export async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
   const lockClient = new pg.Client({ connectionString: base });
+  let tearingDown = false;
+  guardClientErrors(lockClient, () => tearingDown);
   await lockClient.connect();
   await lockClient.query("SELECT pg_advisory_lock($1)", [JOB_DEFINER_LOCK_KEY]);
   try {
     return await fn();
   } finally {
+    tearingDown = true;
     await lockClient.query("SELECT pg_advisory_unlock($1)", [JOB_DEFINER_LOCK_KEY]).catch(() => {});
     await lockClient.end();
   }
@@ -382,6 +422,8 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
 
   // 1. fresh database
   const admin = new pg.Client({ connectionString: base });
+  let tearingDown = false;
+  guardClientErrors(admin, () => tearingDown);
   await admin.connect();
   await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
   await admin.query(`CREATE DATABASE ${dbName}`);
@@ -411,6 +453,7 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
 
   // roles now certainly exist (ensured by the runner + 0000) — set passwords
   const owner = new pg.Client({ connectionString: migrationUrl });
+  guardClientErrors(owner, () => tearingDown);
   await owner.connect();
   for (const [role, pw] of Object.entries(ROLE_PW)) {
     await setRolePasswordRaceSafe(owner, role, pw, /* allowMissing */ false);
@@ -432,6 +475,10 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
   const readonlyPool = new pg.Pool({ connectionString: readonlyUrl, max: 2 });
   const workerPool = new pg.Pool({ connectionString: workerUrl, max: 4 });
   const superuserDb = createDb(migrationUrl, { max: 2 });
+  guardPoolErrors(appDb.pool, () => tearingDown);
+  guardPoolErrors(readonlyPool, () => tearingDown);
+  guardPoolErrors(workerPool, () => tearingDown);
+  guardPoolErrors(superuserDb.pool, () => tearingDown);
 
   return {
     owner,
@@ -446,6 +493,7 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
     migrateResult,
     remigrate: () => migrate(migrationUrl),
     teardown: async () => {
+      tearingDown = true;
       await appDb.close();
       await readonlyPool.end();
       await workerPool.end();
@@ -523,6 +571,8 @@ export async function setupNonSuperuserOwnerContext(
   const inheritClause = opts.inherit === false ? "NOINHERIT" : "INHERIT";
   const ownerRole = `${dbName}_owner`;
   const admin = new pg.Client({ connectionString: base });
+  let tearingDown = false;
+  guardClientErrors(admin, () => tearingDown);
   await admin.connect();
   await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
   // race-safe create/reset, mirrors migrate.ts's ensureRoleExists swallow idiom. ownerRole is
@@ -538,6 +588,7 @@ export async function setupNonSuperuserOwnerContext(
 
   const ownerUrl = testUrl(base, { db: dbName, user: ownerRole, password: NONSUPER_OWNER_PW });
   const ownerPool = new pg.Pool({ connectionString: ownerUrl, max: 2 });
+  guardPoolErrors(ownerPool, () => tearingDown);
   const workerPools: pg.Pool[] = [];
   // Populated by bootstrapChatDefinerForOwner if/when it runs; restored in teardown() (codex
   // round-03 [P1]) — empty means either it never ran, or chat_definer had no pre-existing member.
@@ -629,6 +680,7 @@ export async function setupNonSuperuserOwnerContext(
       }),
       max: 2,
     });
+    guardPoolErrors(pool, () => tearingDown);
     workerPools.push(pool);
     return pool;
   };
@@ -643,6 +695,7 @@ export async function setupNonSuperuserOwnerContext(
     runMigration: () => migrate(ownerUrl),
     connectAsWorker,
     teardown: async () => {
+      tearingDown = true;
       // codex round-06 [P2]: the whole post-acquisition cleanup sequence now runs under ONE outer
       // try/finally whose finally unconditionally releases the chat lock (and closes admin) —
       // previously, pool shutdown / DROP DATABASE / DROP ROLE ran BEFORE the try/finally that

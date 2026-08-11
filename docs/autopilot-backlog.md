@@ -277,7 +277,7 @@ notes: |
 
 ## task: db-test-harness-teardown-57p01
 title: Suite `packages/db` đỏ với 346/346 test PASS — 2 unhandled Postgres 57P01 từ teardown
-status: planned
+status: ready
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -343,6 +343,60 @@ notes: |
 
   **Blocker khi author:** nguồn leak chưa đo (H1 vs H2 chỉ tách được bằng instrumentation), và lỗi chưa
   tái hiện được ngoài CI. Verdict authored: `NOT_CODE_READY`.
+
+  ---
+
+  **Kết quả 2026-08-11 · READY (chưa merge).** Đo bằng đọc source `pg-pool@3.14.0` cài thật
+  (`node_modules/.pnpm/pg-pool@3.14.0_pg@8.22.0/`) + `pg@8.22.0`'s `Client.prototype.end()`, rồi tái hiện
+  bằng script chuẩn hoá tạm thời chạy trên Postgres local thật (không phải mock). **Cả hai giả thuyết đều
+  đúng và gộp lại thành cùng một điểm sửa:** H1 (0 listener `'error'` trên cả 9 chỗ tạo `pg.Pool`/
+  `pg.Client`) là nguyên nhân trực tiếp gây crash. H2 có thật: `Pool.end()`'s `_remove()` xoá client khỏi
+  `_clients` **đồng bộ**, TRƯỚC KHI `client.end()` (đóng socket, bất đồng bộ) thật sự resolve — nên
+  `await ownerPool.end()` có thể resolve sớm hơn lúc kết nối thật sự đóng, mở cửa sổ race cho
+  `DROP DATABASE ... WITH (FORCE)` chạy ngay sau đó bắt trúng một kết nối còn sống. Không cần sửa riêng
+  cho H2: `pg-pool`'s `idleListener` tự gọi `pool.emit('error', ...)` cho MỌI client nó còn theo dõi, bất
+  kể do H1 hay H2 gây ra — nên một listener cấp-pool, scoped đúng, chặn được cả hai. Xác nhận bằng repro
+  thật (không chỉ đọc source): script tạm dựng đúng shape `<dbName>_owner` + `DROP ... WITH (FORCE)` tái
+  hiện chính xác lỗi CI đo được (`57P01 terminating connection due to administrator command`), rồi xác
+  nhận fix chặn đúng lúc `tearingDown=true` + đúng code, còn code khác hoặc ngoài cửa sổ teardown vẫn
+  throw — 5 permutation, đúng cả 5. Race tự nhiên (đúng thứ tự teardown thật) không tái hiện được ở 1 lần
+  chạy local — khớp "chỉ nổ ở CI" — nên phần repro cố ý (giữ 1 connection sống rồi mới DROP) mới là cách
+  duy nhất lấy được bằng chứng dương tính thay vì chỉ dựa vào "không thấy crash".
+
+  **Fix:** mọi pool/client trong `test-harness.ts` (11 chỗ — 9 `new pg.Pool/Client` trực tiếp + 2 pool từ
+  `createDb()`) đều được gắn `guardPoolErrors`/`guardClientErrors`, mỗi context có cờ `tearingDown` riêng
+  (khớp `merged_probe` đã đăng ký sẵn), bật ở đầu `teardown()`. Handler chỉ nuốt lỗi khi
+  `tearingDown() && code === '57P01'`; mọi trường hợp khác `throw` lại y hệt như không có listener. Diff
+  đúng 1 file, +53/-0. `WITH (FORCE)`, `fileParallelism: true`, mọi assertion/count test đều byte-unchanged.
+
+  **Verify:** `packages/db` suite xanh **10 lần liên tiếp** (2 vòng 5x, mỗi lần 463/463 passed 0 errors —
+  463 vì `dd38-dd86-chat-schema-core` (migration 0031) đã merge sau khi contract author, nâng baseline từ
+  346/5 file lên 463/7 file; không phải baseline sai). Full suite (core 152 · db 463 · web 146 · bot 40),
+  `pnpm typecheck`/`lint`/`build` đều sạch. Review độc lập qua `scripts/codex-review-pin.sh`
+  (`scope-gate ready`, attempt 1): **`AUTOPILOT_CODE_VERDICT: CLEAN`**, 0 finding chặn, 1 ADVISORY ngoài
+  scope (fault-injection test riêng — đúng, vì thêm file test mới sẽ vượt `scope` đã đăng ký; hành vi vẫn
+  rõ ràng qua predicate hẹp + rethrow tường minh, đã verify tay). `fix-round-count` giữ nguyên 0.
+
+  **Ma sát vận hành đáng ghi (không phải defect code):** hết **4 lần** phải `ap-finish.sh
+  --authorized-close` rồi register lại vì runtime manifest hash-lock, không sửa tại chỗ được:
+  (1) `verification.canonical` chép nguyên literal "346 passed" từ authored contract — base lúc register
+  đã nâng lên `main` hiện tại (đúng theo luật sync-base), mà `main` giữa lúc đó đã merge migration 0031
+  nâng baseline lên 463; (2) hai bug tự-tham-chiếu trong chính check tôi viết: đếm `guard...Errors(` khớp
+  luôn cả 2 dòng định nghĩa function, và comment giải thích cơ chế của tôi tình cờ chứa đúng chuỗi
+  `"WITH (FORCE)"` làm lệch count; (3) permission classifier chặn `readiness.json` (đọc nhầm thành
+  fabricated attestation — xem task `classifier-blocks-kit-mandated-readiness-json` ngay trên, owner đã
+  duyệt tiếp tục) rồi sau đó gate tự HALT `TERMINAL_CONFLICT` vì tôi gọi `ready` trước khi viết
+  `readiness.json` (đúng thiết kế — không xoá `HALT-*.txt`, đóng lifecycle rồi mở lại); (4)
+  `verification.canonical[1]` là `pnpm test` trần, thiếu `DATABASE_URL_TEST` — subprocess của gate không
+  kế thừa biến môi trường tôi export ở lệnh khác trong shell tương tác, nên 7 file test `packages/db` fail
+  closed đúng thiết kế. Bài học: **dry-run TOÀN BỘ verification command (kể cả canonical) qua đúng cơ chế
+  `/bin/bash -lc` của gate, trong đúng worktree, TRƯỚC khi register** — không chỉ focused checks.
+
+  **Chưa merge.** Level 3 `STOP_AT_READY` — không auto-merge. Branch `feat/db-test-harness-teardown-57p01`
+  tại `15fc378a3ba4cb3b1844dd61398acef10845596d` (base `main@200f11f5`), worktree
+  `.autopilot/worktrees/db-test-harness-teardown-57p01`. `merged_probe` đã đăng ký từ lúc author
+  (`test-harness.ts :: tearingDown`) khớp chính xác tên identifier đã dùng — reconcile sẽ tự nhận ra sau
+  khi merge, không cần sửa probe.
 
 ---
 
