@@ -112,6 +112,7 @@
 | DD-96 | **Home money chips** → **Part A ✅** canonical `SelfPaymentSummary` cross-club thuộc `player_view` (Home cấm tự cộng; `feature_home_tech.md:166` đã yêu cầu mở rộng Player View owner), **unknown-dominates**: một CLB `unknown` ⇒ cả summary `unknown`, cấm sum các CLB known; `clubCount` = số CLB có outstanding > 0; không `payAction` ở tầng aggregate. **Part B 🟡** chip "Chưa thu" cross-club — owner chốt direction, đảo HOME-OQ-1(c), nhưng **không thuộc player_view** (DD-48 + DTO allowlist "other charges ❌ NEVER"); cần host-self owner riêng và còn 4 blocker B1–B4 (design-probe · `authorizeTenantAction` 0 caller · chưa Reviewed per-club owner · fan-out semantics) | Part A ✅ `DECISION_FINAL` contract shape (owner 2026-08-07), chưa authorize code · Part B ✅ direction / 🟡 `NOT_PLAN_READY` mechanism | Part A: S9 (cùng Home) sau P4.6 · Part B: sau per-club host receivable owner | DD-48 · DD-79 (HOME-OQ-1) · DD-91 · `../features/BE/feature_player_view_tech.md` · `../features/BE/feature_home_tech.md:166` · `../channels/web/FE/feature_dashboard_fe.md:59-66` |
 | DD-97 | **Collection statement + export sao kê per-session/kỳ (PDF/XLSX)** → composition-only trên `charges`+`payment_allocations` (không bảng/formula tiền mới; DTO cần owner Reviewed — cùng họ blocker B3 của DD-96); export async behavior-contract-only trên DD-89 foundation (không authorize enablement); download authenticated tenant-scoped, không public link (HR2); entitlement ✅ tách lớp: per-session statement view = **free** · kỳ/tháng + export file = **`host_pro`** | ✅ Direction + entitlement chốt (owner-delegated 2026-08-07) · mechanism chờ DTO owner Reviewed | P5+ TBD | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · DD-89 · DD-40 |
 | DD-98 | **Negative scope cho mechanic Sporta không port** → không theo đuổi: custom split per player (đụng derivation DD-39/41/45/49) · timeout-hold release cho linked member (DD-32 Option D giữ pay-later) · OS push kèm tiền/QR (mirror NTF — đã cấm sẵn) · auto-archive "nợ cũ" theo tuổi · geo/radius/distance/map picker (NP-5 — mâu thuẫn DD-06 area-only public) | ✅ Chốt (owner-delegated 2026-08-07) | — | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · `../research/sporta-fe-docs-gap-2026-08-07.md` · DD-06/32/39/49 |
+| DD-104 | **`DeleteSession` hard delete — cơ chế cascade mà spec dựa vào KHÔNG tồn tại** → `feature_session_management_tech.md` v2.20 (WIP, chưa commit) thêm command `DeleteSession` + `DELETE /api/sessions/:id`, algorithm bước 5 khai *"FK cascade xóa `players`, `session_surface_refs`, `session_occurrences` tự động"*. **Đo 2026-08-11: 9 FK trỏ tới `sessions`, ZERO khai `ON DELETE CASCADE`** ⇒ mặc định `NO ACTION` ⇒ `DELETE FROM sessions` ném FK violation ngay khi có child row, mà draft có người tham gia thì đã có `players` row. Ba quyết định: **D1** có chấp nhận hard delete và trả giá bằng sửa 9 FK (gồm `charges` → cascade xuống sổ tiền, chạm HARD RULE *claim-có-tiền cần khoá mạnh*), hay chỉ xoá khi không còn child row, hay bỏ hard delete; **D2** nếu hard delete thì charge `pending`/`failed` của mọi người và charge `paid` **của host** sẽ bị xoá — guard hiện chỉ chặn `paid` của player ngoài host; **D3** ai được xoá (spec tự mâu thuẫn ba chỗ) | 🟡 Đề xuất (chờ owner chốt) | P2/P4 (session management) | `../features/BE/feature_session_management_tech.md` §4 *Delete transition* · `../features/FE/feature_session_management.md` · `packages/db/migrations/0003_payments_ledger.sql:46` · DD-103 |
 | DD-103 | **Chấp nhận gap Person-merge re-parent của `0031_chat_schema_core`, có ràng buộc cứng** → trigger `chat_members_identity_immutable` / `chat_channels_identity_immutable` chặn vô điều kiện UPDATE lên `person_id`/`dm_key`, cộng composite FK tới `memberships` **không `DEFERRABLE`** ⇒ **cấu trúc chặn** việc re-parent chat rows khi merge Person — không phải "chưa implement". Spec `feature_inapp_chat_tech.md` (hàng `| 10 | Cross-Feature | Account merge → chat authorship |` và acceptance `| 11 | Merge re-parent |`) đang khai hành vi này như yêu cầu, schema hiện tại **không đáp ứng được**. Exposure = 0 (zero implementation của Person-merge trong repo). **Ràng buộc cứng:** slice implement Person-merge **phải** mang theo migration mở đường; chưa có thì đó là blocker của chính slice đó | ✅ Chốt (owner 2026-08-11) | P3.5 (Identity) | `../autopilot-backlog.md` task `chat-identity-merge-reparent-enablement` · `../features/BE/feature_inapp_chat_tech.md` (hàng 10 + acceptance 11) · `../00-start-here/identity-model.md:234-237` |
 | DD-102 | **Waiver round-5 finding 1 cho `chat-dm-safety-authority-core--v3`, có điều kiện** → `assert_dm_allowed` đọc config qua **4 statement riêng** (3 × `chat_dm_safety_config` + `dm_safety_enabled()`), mỗi statement một snapshot READ COMMITTED ⇒ **torn read**, một lần siết config đồng thời có thể không áp đủ cho lời gọi đang bay. **KHÔNG phải fail-open**: mọi `COALESCE` default đều deny — `rate_limit_check(bucket, 0, …)` chạy `IF v_count >= p_limit THEN RETURN false` mà `v_count >= 0` luôn đúng ⇒ deny; config thiếu ⇒ deny; `dm_safety_enabled()` false ⇒ `safety_disabled` ⇒ deny. **Exposure = 0** (zero production caller). Fix bất khả thi trong scope: `0030` đã apply + hash-lock. **Điều kiện cứng:** migration follow-up phải land **TRƯỚC caller đầu tiên** (slice 7/8) | ✅ Chốt (owner 2026-08-10) | P4 (chat tree) | `../autopilot-backlog.md` task `chat-dm-safety-config-single-read` · `.autopilot/dispositions/chat-dm-safety-authority-core--v3.json` |
 | DD-101 | **Ratify B3-budget amendment cho `chat-dm-safety-authority-core`** → owner-authorized scope amendment 2026-08-05 **override** `plan §9:416` (*"Vượt ceiling hoặc cần module thứ tư → SCOPE_DESIGN hard stop và re-slice"*) **cho riêng slice này**; module count 3→**5**, changed LOC ~**1.145** vs trần **750**. Ngoại lệ **có ghi chép, không phải trần bị phá lén**: `_scope_note` trên branch tự khai vượt trần, `negative_scope` liệt kê từng touch kèm lý do cơ học, và toàn bộ đã qua 5 vòng codex. Trần 750/3-module **vẫn hiệu lực cho mọi slice khác**; ngoại lệ không tạo tiền lệ tự động | ✅ Chốt (owner 2026-08-10) | — (kit/process, ngoài P-number) | `../autopilot-templates/level3.1-adoption-plan.md` B1b · `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` §9:409,416,422 |
@@ -1426,6 +1427,71 @@ Gap có thật, giá trị host cao (P1 persona pain), mọi input đã canonica
 
 ---
 
+## DD-104 — `DeleteSession` hard delete · 🟡 Đề xuất (mở 2026-08-11)
+
+> **Status boundary:** đây là **proposal**, chưa chốt. Nội dung `DeleteSession` hiện đang nằm trong
+> `feature_session_management_tech.md` v2.20 và `feature_session_management.md` **dưới dạng WIP chưa
+> commit**. Cả hai file mang `Status: Reviewed`, nên theo `CLAUDE.md` nội dung chưa-chốt thuộc về đây,
+> không thuộc về spec. Không authorize migration, code hay FK change nào.
+
+- **Phát hiện chặn, đo 2026-08-11 tại `main@d91656c`.** Algorithm bước 5 của spec khai:
+
+  > `DELETE FROM sessions WHERE id = :id` — FK cascade xóa `players`, `session_surface_refs`,
+  > `session_occurrences` tự động
+
+  Đo trên migration (canonical, không đọc `schema.ts`):
+
+  ```
+  grep -riE "REFERENCES +(public\.)?sessions ?\(" packages/db/migrations/*.sql
+  → 9 FK · số khai ON DELETE CASCADE: 0
+  ```
+
+  Mặc định Postgres là `NO ACTION`. **Câu `DELETE` đó sẽ ném foreign-key violation** ngay khi tồn tại
+  bất kỳ child row nào — và một draft đã có người tham gia thì đã có `players` row. Spec không mô tả một
+  hành vi chưa implement; nó mô tả một **cơ chế không tồn tại**. Mọi thảo luận về guard, race và error
+  code đều đứng trên tiền đề này.
+
+- **D1 — Có chấp nhận hard delete không, và trả giá thế nào?** Ba hướng khác nhau về bản chất:
+  1. **Cascade thật** — sửa 9 FK sang `ON DELETE CASCADE`, gồm `charges`
+     (`0003_payments_ledger.sql:46`). Mở đường cascade từ session xuống **sổ tiền**; chạm trực tiếp
+     HARD RULE *"claim-có-tiền cần khoá mạnh"*. Mạnh nhất, rủi ro nhất, và một khi FK đã cascade thì
+     mọi đường xoá session khác cũng thừa hưởng — không chỉ `DeleteSession`.
+  2. **Giữ `NO ACTION`, chỉ xoá khi sạch child row** — FK trở thành chốt chặn tự nhiên: DB từ chối thay
+     vì code phải nhớ kiểm. Fail-closed theo mặc định. Đổi lại host phải dọn thủ công trước.
+  3. **Bỏ hard delete** — dùng `CancelSession` (soft delete đã có) cộng lọc ở UI.
+
+- **D2 — Nếu chọn hard delete: bản ghi tài chính nào bị xoá?** Guard trong spec chỉ chặn charge
+  `status='paid'` của player **ngoài host membership**. Hệ quả trực tiếp: charge `pending`/`failed` của
+  **mọi người**, và charge `paid` **của chính host**, sẽ bị xoá cùng session. Xoá một bản ghi thanh toán
+  đã hoàn tất là quyết định kế toán, không phải chi tiết implement — cần chốt tường minh chứ không để
+  suy ra từ phạm vi guard.
+
+- **D3 — Ai được xoá?** Spec tự mâu thuẫn ba chỗ trong cùng một bản sửa:
+
+  | Vị trí trong spec | Chủ thể |
+  | --- | --- |
+  | bảng endpoint | `Host (web/Messenger)` |
+  | bảng API | `TenantAdmin` |
+  | algorithm bước 1 | `session.manage` (Host) |
+
+  Đây không phải quyết định — là lỗi cần sửa. Ghi ở đây để nó không bị code theo dòng sai.
+
+- **Hai điểm ĐÃ kiểm và KHÔNG cần quyết:**
+  - `processed_commands` **không** có FK tới `sessions`, nên nó sống sót sau hard delete ⇒ replay trả
+    previous result đúng như spec khai. Phần này chuẩn.
+  - Ghi outbox `session.deleted` trước `DELETE` trong cùng transaction: cơ chế hợp lệ.
+
+- **Cờ phụ — i18n.** Error message đang là chuỗi tiếng Việt literal trong spec
+  (`"Chỉ có thể xoá buổi chơi nháp"`, `"Cần hoàn tiền cho người chơi trước khi xoá"`). i18n nằm trong 5
+  HARD RULE. Nếu chuẩn là key thì sửa lúc còn là proposal rẻ hơn nhiều so với sau khi land.
+
+- **Trạng thái hiện tại:** hai file spec đang `modified` trong working tree, **chưa commit**. Chúng chặn
+  `ap-merge.sh` (gate tree-sạch chỉ xét file tracked) nên sẽ dừng lane kế tiếp cho tới khi được xử lý.
+  Chốt D1 rồi mới sửa spec cho khớp, hoặc revert phần `DeleteSession` khỏi spec và giữ nó ở đây tới khi
+  có quyết định.
+
+---
+
 ## DD-103 — Gap Person-merge re-parent của `0031_chat_schema_core` · ✅ Chốt (2026-08-11)
 
 > **Status boundary:** DD-103 chấp nhận một gap **cấu trúc**, không waive một finding. Nó không nới bất kỳ gate nào, và **không** miễn nghĩa vụ sửa — nó chuyển nghĩa vụ đó sang slice Person-merge kèm mốc cứng.
@@ -1504,6 +1570,7 @@ Gap có thật, giá trị host cao (P1 persona pain), mọi input đã canonica
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 11/08/2026 | v2.24 | **Thêm DD-104 🟡 — `DeleteSession` hard delete, proposal (chưa chốt).** Nội dung `DeleteSession` đang nằm WIP-chưa-commit trong `feature_session_management_tech.md` v2.20 + `feature_session_management.md`, cả hai mang `Status: Reviewed` ⇒ theo `CLAUDE.md` nội dung chưa-chốt thuộc `decisions.md`, không thuộc spec. **Phát hiện chặn:** algorithm bước 5 khai *"FK cascade xóa `players`, `session_surface_refs`, `session_occurrences` tự động"*, nhưng đo trên migration (canonical, không đọc `schema.ts`) cho **9 FK trỏ tới `sessions` và ZERO khai `ON DELETE CASCADE`** ⇒ mặc định `NO ACTION` ⇒ `DELETE FROM sessions` ném FK violation ngay khi có child row. Spec không mô tả hành vi chưa-implement mà mô tả một cơ chế **không tồn tại**. D1 = cascade thật (sửa 9 FK gồm `charges` ⇒ cascade xuống sổ tiền, chạm HARD RULE *claim-có-tiền cần khoá mạnh*) vs giữ `NO ACTION` để FK làm chốt fail-closed vs bỏ hard delete dùng `CancelSession`. D2 = guard chỉ chặn `paid` của player ngoài host ⇒ charge `pending`/`failed` của mọi người và charge `paid` **của host** sẽ bị xoá — quyết định kế toán, phải chốt tường minh. D3 = authz mâu thuẫn ba chỗ (`Host` / `TenantAdmin` / `session.manage`) — lỗi cần sửa, không phải quyết định. Đã kiểm và KHÔNG cần quyết: `processed_commands` không có FK tới `sessions` nên replay đúng như spec khai; outbox ghi trước DELETE trong cùng transaction hợp lệ. Cờ phụ: error message là literal tiếng Việt, i18n nằm trong 5 HARD RULE. Không authorize migration/code/FK change nào. |
 | 11/08/2026 | v2.23 | **Thêm DD-103 ✅ — chấp nhận gap Person-merge re-parent của `0031_chat_schema_core`, có ràng buộc cứng.** Trigger `chat_members_identity_immutable`/`chat_channels_identity_immutable` (do chính slice thêm ở round 1–2 để đóng một security bypass) chặn vô điều kiện UPDATE lên `person_id`/`dm_key`; composite FK tới `memberships` không `DEFERRABLE` ⇒ **cấu trúc chặn** re-parent, không phải chưa-implement. Đo lại xác nhận cả ba: spec `feature_inapp_chat_tech.md` (hàng `| 10 | Cross-Feature | Account merge → chat authorship |` và acceptance `| 11 | Merge re-parent |`) khai re-parent là yêu cầu; `identity-model.md:234-237` xác nhận re-parent vật lý là mặc định còn tombstone chỉ là ngoại lệ có tên cho `pay_code` (DD-02); Person-merge **chưa tồn tại** (zero implementation) nên exposure = 0. Chấp nhận vì hình dạng escape hatch + `DEFERRABLE` phụ thuộc transaction merge thật chưa có — thiết kế mù dễ phải làm lại, và `pay_code` là tiền lệ "quyết lúc xây entity". **Ràng buộc cứng:** slice Person-merge phải mang theo migration mở đường (escape hatch merge-scoped, FK `DEFERRABLE INITIALLY IMMEDIATE`, regression test deferred-transaction); thiếu là blocker của chính nó. Backlog `chat-identity-merge-reparent-enablement`. Lane `--v2` ở `fix-round-count` 5/5 nên đóng qua `--authorized-close` + merge trên bằng chứng (795 test xanh tại `a8f120f`, 11 vòng review, mọi finding đều thật). |
 | 10/08/2026 | v2.22 | **Thêm DD-102 ✅ — waiver có điều kiện cho round-5 finding 1 của `chat-dm-safety-authority-core--v3`.** `assert_dm_allowed` đọc config qua 4 statement riêng ⇒ torn read dưới READ COMMITTED. **Đo lại: KHÔNG phải fail-open** — `rate_limit_check(…, 0, …)` trả `false` (`v_count >= 0` luôn đúng) nên thiếu config là deny; `dm_safety_enabled()` false cũng deny; `audit_enabled` chỉ đụng log. Exposure = 0 (zero production caller; slice 7/8 chưa tồn tại). Fix bất khả thi trong scope vì `0030` đã apply + hash-lock, và `fix-round-count` 5/5 với `clean_rounds` 2. **Điều kiện cứng:** migration follow-up (`chat-dm-safety-config-single-read`) phải land TRƯỚC slice 7/8; nếu chưa, nó là blocker của slice đó. Đóng qua `ap-finish.sh --authorized-close` + merge trên bằng chứng, theo tiền lệ `deps-security-bump` #3. Ghi nhận riêng: cùng finding bị round 2/3/4 xếp advisory ba lần rồi round 5 nâng blocking không nêu lý do — reviewer non-determinism, mở backlog riêng. |
 | 10/08/2026 | v2.21 | **Thêm DD-101 ✅ — ratify B3-budget amendment cho `chat-dm-safety-authority-core`.** Owner-authorized scope amendment 2026-08-05 override `plan §9:416` cho **riêng slice này**: module 3→5, ~1.145 changed LOC (3 module cốt lõi) vs trần 750. Lý do: ngoại lệ **có ghi chép** (`_scope_note` tự khai vượt trần; `negative_scope` "NARROWED, not blanket-excluded" liệt kê từng touch; mở rộng ở codex round-05); phần vượt là **hệ quả cơ học** của `ALTER FUNCTION … OWNER TO chat_definer` trong `0030`, không phải scope creep; và re-slice sẽ phải chia `chat-dm-safety-invariants.test.ts` (714 dòng) — thứ `§9:416` cấm cắt để ép budget. **Ranh giới:** trần 750/3-module giữ nguyên cho slice 4/36 và mọi slice khác; slice 3 giữ trần riêng ≤1.000; **không tạo tiền lệ tự động**; không miễn `--v3` khỏi gate nào. Mục đích vận hành: reviewer `--v3` nêu chuyện trần thì trỏ DD-101 và đi tiếp thay vì `AWAIT` tốn một vòng codex. Không authorize code. |
