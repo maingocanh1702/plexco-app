@@ -1,8 +1,8 @@
-# Feature: Marketplace Discovery & Public Projection — Product/UX Spec
+# Feature: Marketplace Discovery & Global Search — Product/UX Spec
 
-> **Canonical phase:** P4.3  
-> **Track:** 🔍 Discovery & Marketplace  
-> **Version:** 2.4 · 2026-07-28
+> **Canonical phase:** P4.3 (Marketplace) · P4.5 (Global Search)  
+> **Track:** 🔍 Discovery, Marketplace & Search  
+> **Version:** 2.5 · 2026-08-10
 > **Status:** Reviewed  
 > **Implementation:** Not started — `public_sessions` có sẵn và `0024` đã enforce public session phải finite-capacity; publish/projector/routes/UI vẫn chưa có · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status). *Tail migration hiện hành là `0029` (đo 06/08 tại `2cd52ce`), nhưng `0025`–`0029` không chạm marketplace: rename CHECK, definer read-only và DD-29 billing registry.*
 > **Prerequisites:** P2 session management · P4 sync/public projector  
@@ -12,7 +12,20 @@
 
 ## 1. Mô tả
 
-Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/sports — mà KHÔNG expose tenant-private roster, money, contact hay exact venue. Cover: publishing, filtering/ranking, detail view, privacy, expiry và abuse controls. Joining là feature riêng (cross_club_join).
+**Marketplace (P4.3):** Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/sports — mà KHÔNG expose tenant-private roster, money, contact hay exact venue. Cover: publishing, filtering/ranking, detail view, privacy, expiry và abuse controls. Joining là feature riêng (cross_club_join).
+
+**Global Search (P4.5):** Unified search bar tìm kiếm **đa entity**: Users, Sessions (public), Clubs, Tournaments (public). Kết quả grouped theo entity type, debounced 300ms, suggestions real-time. Privacy-safe: chỉ trả dữ liệu public/moderated — không lộ PII, internal IDs, tenant routing.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Home → search icon | Header `🔍` → `/search` | Any (auth) | Global search overlay |
+| Marketplace tab → search bar | `/discover` → focus search | Player | Scoped to public sessions |
+| Club tab → member search | `/clubs/:id/members` → search | Host/Admin | In-club member search |
+| Bot command | `/search` (Zalo/Messenger) | Player | Bot search (sessions only — P4.3) |
+| Deep link | `/search?q=...&type=...` | Any (auth) | Pre-filled search |
+| Keyboard shortcut | `⌘K` / `Ctrl+K` | Any (auth) | Quick search overlay |
 
 ### Bất biến
 
@@ -40,6 +53,12 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 | MKT-UC-8 | System | Session expired | Auto-disappear — expiry guard |
 | MKT-UC-9 | Player | Search với unknown filters | Empty results + filter reset CTA — KHÔNG expose taxonomy internals |
 | MKT-UC-10 | System | Rate-limit exceeded | 429 — "Quá nhiều truy vấn, thử lại sau" |
+| MKT-UC-11 | Player | Gõ keyword vào Global Search bar | Debounce 300ms → suggestions dropdown (grouped: Users, Clubs, Sessions, Tournaments) |
+| MKT-UC-12 | Player | Chọn entity type tab (Users/Clubs/Sessions/Tournaments) | Kết quả filtered theo type + query |
+| MKT-UC-13 | Player | Tap user suggestion | Navigate → User profile (public) |
+| MKT-UC-14 | Player | Tap club suggestion | Navigate → Club detail (public info) |
+| MKT-UC-15 | Player | Tap tournament suggestion | Navigate → Tournament detail (public) |
+| MKT-UC-16 | Player | Search không có kết quả | Empty state + gợi ý categories/trending |
 
 ### Edge Cases
 
@@ -58,6 +77,14 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 | 11 | Security | Unknown filter values probe taxonomy | Return empty — KHÔNG expose taxonomy internals in error |
 | 12 | Security | Scraping/bot abuse | Rate-limit + CAPTCHA challenge sau threshold |
 | 13 | Privacy | Personal-tenant session has blank/unverified owner alias | Fail closed: do not project; never fall back to internal tenant name, person name or account identity |
+| 14 | Security | Global Search query chứa SQL/XSS payload | Sanitize input — parameterized query, strip tags, max 100 chars |
+| 15 | Privacy | User search lộ email/phone/private profile | ❌ NEVER — chỉ trả `display_name`, `avatar_url`, `sport_interests[]`, `public_club_count` |
+| 16 | Data Integrity | Search suggest trả club/tournament đã xóa/archived | Filter `status=active` — archived/deleted KHÔNG BAO GIỜ hiện |
+| 17 | Performance | Query quá rộng (1 char) trả millions kết quả | Require min 2 chars; max 50 results/type; cursor pagination |
+| 18 | Security | User enumerate via search (scraping) | Rate limit 30 req/min per account; fuzziness không expose exact match count |
+| 19 | Data Integrity | Stale search index (user đổi tên, club xóa) | Index refresh SLO ≤ 5s; fallback: verify on-click (404 → remove from cache) |
+| 20 | Privacy | Search result lộ member count/roster danh sách thật | Chỉ trả `member_count` aggregate — không roster, không identity |
+| 21 | Security | Competitor enumerate toàn bộ user database | Pagination cap 200 total results; no full-list export; progressive CAPTCHA |
 
 ---
 
@@ -172,6 +199,113 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 | Error | "Buổi chơi không còn khả dụng" + back CTA |
 | Empty | N/A (always has data or error) |
 
+### Web — Global Search overlay
+
+**Purpose:** Unified search bar — tìm Users, Sessions, Clubs, Tournaments từ một nơi.
+
+**Layout (mobile 375px — overlay mode):**
+
+```
+┌──────────────────────────────────────┐
+│ [🔍 Tìm kiếm...              ] [✕] │  auto-focus + keyboard
+├──────────────────────────────────────┤
+│ Tabs: [Tất cả ✓] [👤 Users] [🏸 Sessions] [🏢 CLB] [🏆 Giải đấu] │
+├──────────────────────────────────────┤
+│                                      │
+│ 👤 Người dùng                       │  section header
+│ ┌────────────────────────────────┐   │
+│ │ [AV] Nguyễn Văn A             │   │
+│ │      🏸 Cầu lông · 3 CLB     │   │
+│ ├────────────────────────────────┤   │
+│ │ [AV] Trần Thị B               │   │
+│ │      ⚽ Bóng đá · 1 CLB      │   │
+│ └────────────────────────────────┘   │
+│ [Xem thêm →]                        │
+│                                      │
+│ 🏢 CLB                              │  section header
+│ ┌────────────────────────────────┐   │
+│ │ [AV] CLB Rồng Xanh            │   │
+│ │      🏸 Cầu lông · 45 TV     │   │
+│ ├────────────────────────────────┤   │
+│ │ [AV] FC Weekend               │   │
+│ │      ⚽ Bóng đá · 22 TV      │   │
+│ └────────────────────────────────┘   │
+│ [Xem thêm →]                        │
+│                                      │
+│ 🏆 Giải đấu                         │
+│ ┌────────────────────────────────┐   │
+│ │ Giải Cầu lông Mùa Hè 2026    │   │
+│ │ 📅 15/08 · 👥 32 đội · open  │   │
+│ └────────────────────────────────┘   │
+│                                      │
+│ 🏸 Buổi chơi                        │
+│ ┌────────────────────────────────┐   │
+│ │ 🏸 Cầu lông T5 · Q3 · 19:00  │   │
+│ │ 💰 120k · 👥 6/8 · 2 chỗ     │   │
+│ └────────────────────────────────┘   │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+**Suggestion dropdown (before full search — as-you-type):**
+
+```
+┌──────────────────────────────────────┐
+│ [🔍 "Cầu lông"                ] [✕] │
+├──────────────────────────────────────┤
+│ 🔥 Gợi ý                            │
+│  🏸 "Cầu lông" trong Buổi chơi (12)│  quick filter
+│  🏢 "Cầu lông" trong CLB (5)       │  quick filter
+│  👤 "Cầu lông" trong Người dùng (3)│  quick filter
+│                                      │
+│ ⏱️ Tìm kiếm gần đây                │
+│  🏸 Cầu lông Q3                     │  history item
+│  👤 Nguyễn Văn A                     │  history item
+│  [Xóa lịch sử]                      │  danger link
+└──────────────────────────────────────┘
+```
+
+**Component: Search result row (by entity type):**
+
+| Entity | Avatar | Primary | Secondary | Action |
+|--------|--------|---------|-----------|--------|
+| User | Profile avatar | `display_name` (highlighted match) | Sport interests + public club count | → User profile |
+| Club | Club avatar | `display_name` (highlighted) | Primary sport + member count | → Club detail |
+| Tournament | Sport icon | `name` (highlighted) | Date range + team count + status | → Tournament detail |
+| Session | Sport icon | `{sport} {title}` (highlighted) | Area + date + price + slots | → Session public detail |
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton: 3 sections × 2 rows each (shimmer) |
+| Ready | Grouped results by entity type |
+| Error | Error banner: "Không tìm kiếm được" + retry |
+| Empty | Icon 🔍 + "Không tìm thấy kết quả cho '{query}'" + trending/categories CTA |
+
+**Empty state layout:**
+
+```
+┌──────────────────────────────────────┐
+│ [🔍 "xyz123"                  ] [✕] │
+├──────────────────────────────────────┤
+│                                      │
+│         🔍                           │
+│   Không tìm thấy kết quả            │
+│   cho "xyz123"                       │
+│                                      │
+│   Gợi ý:                            │
+│   • Kiểm tra chính tả               │
+│   • Thử từ khóa khác                │
+│   • Tìm theo môn thể thao           │
+│                                      │
+│   ─── Đang hot ───                   │
+│   [🏸 Cầu lông] [⚽ Bóng đá]       │
+│   [🏓 Pickleball] [🏐 Bóng chuyền] │
+│                                      │
+└──────────────────────────────────────┘
+```
+
 ### Bot — `/search` (Zalo) / quick-reply (Messenger)
 
 **Layout (Messenger — max 8 choices/page):**
@@ -228,11 +362,16 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 
 | Screen | Loading | Ready | Error | Empty |
 |--------|---------|-------|-------|-------|
-| Browse grid | ✅ Skeleton cards | ✅ Cards + pagination | ✅ Banner + retry | ✅ "Không tìm thấy" + reset |
+| Browse grid (Marketplace) | ✅ Skeleton cards | ✅ Cards + pagination | ✅ Banner + retry | ✅ "Không tìm thấy" + reset |
 | Filter panel | — | ✅ Sport/area/time/price pickers | — | ⚪ N/A |
 | Session detail | ✅ Skeleton | ✅ Whitelist info + Join CTA | ✅ "Không còn khả dụng" | ⚪ N/A |
 | Rate-limited | — | ✅ Countdown | — | ⚪ N/A |
 | Bot search | ✅ "Đang tìm..." | ✅ Results + pagination | ✅ "Không tìm được" | ✅ "Không phù hợp" |
+| Global Search overlay | ✅ Skeleton grouped | ✅ Results by entity | ✅ Banner + retry | ✅ Trending + suggestions |
+| Suggestion dropdown | ✅ Spinner inline | ✅ Quick filters + history | — | ✅ "Nhập từ khóa" |
+| User result row | ✅ Skeleton | ✅ Avatar + name + sports | — | — |
+| Club result row | ✅ Skeleton | ✅ Avatar + name + members | — | — |
+| Tournament result row | ✅ Skeleton | ✅ Icon + name + date | — | — |
 
 ---
 
@@ -242,6 +381,10 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 |--------|---------|-----------------|
 | `public_sessions` | Materialized public read/projection table | Whitelist columns only; `id=session.id` + internal `session_id` reference **without FK by design** so public plane cannot cascade/query canonical tenant tables; auto-expire |
 | `sessions` | Canonical source | `visibility` enum, required discovery fields |
+| `search_index` | Full-text search index (denormalized) | Covers users, clubs, tournaments, sessions; refreshed on write via event/trigger; searchable columns: `display_name`, `title`, `sport_key`, `area` |
+| `persons` (search view) | User public profile projection | Only `display_name`, `avatar_url`, `sport_interests`, `public_club_count` — NO PII |
+| `tenants` (search view) | Club public projection | Only `display_name`, `avatar_url`, `primary_sport`, `member_count`, `status=active` |
+| `public_tournaments` | Tournament public read model | `name`, `sport`, `starts_at`, `team_count`, `status`, `registration_status` |
 
 ### Public Contract (whitelist)
 
@@ -275,8 +418,13 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 | `marketplace_join_cta_clicked` | Player click Join | `session_id` (opaque), `source` |
 | `marketplace_no_results` | Search trả 0 results | `filters_used[]` |
 | `marketplace_projection_lag` | Projector lag > threshold | `lag_ms`, `threshold_ms` |
+| `global_search_executed` | Player thực hiện global search (sau debounce) | `query_length`, `entity_types_requested[]`, `result_counts{}`, `source` |
+| `global_search_result_clicked` | Player tap vào kết quả search | `entity_type`, `entity_id` (opaque), `result_position`, `query_length` |
+| `global_search_no_results` | Search trả 0 kết quả toàn bộ entity types | `query` (hashed/bucketed — KHÔNG raw text), `filters_used[]` |
+| `global_search_suggestion_used` | Player chọn suggestion/history item | `suggestion_type` (quick_filter/history), `entity_type` |
+| `global_search_history_cleared` | Player xóa lịch sử tìm kiếm | `history_count` |
 
-> Không retain IP, PII, raw location ngoài security policy.
+> Không retain IP, PII, raw location, raw query text ngoài security policy.
 
 ---
 
@@ -293,6 +441,22 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 - [ ] Messenger central/tenant Page local-vs-global context đúng; opaque action TTL/snapshot/replay tests pass
 - [ ] Public DTO emits `confirmed_count` + `slots_open` from one shared occupancy projection; hold count/identities remain private, adapters never re-derive and final mutation ignores stale counts.
 - [ ] Personal-tenant session uses only nonblank moderated owner-membership alias for `club_display_name`; blank alias stays absent and internal tenant/person name never leaks
+- [ ] Global Search debounce 300ms — không fire request mỗi keystroke
+- [ ] Search min 2 chars — 1 char không trigger search
+- [ ] Results grouped by entity type (Users → Clubs → Tournaments → Sessions) với count indicators
+- [ ] User search result chỉ trả public profile (display_name, avatar, sport_interests, public_club_count) — KHÔNG email/phone/PII
+- [ ] Club search chỉ trả active clubs — archived/deleted/suspended filtered
+- [ ] Tournament search chỉ trả public tournaments — draft/cancelled filtered
+- [ ] Session search reuse marketplace whitelist — cùng privacy contract
+- [ ] Tab filtering work correctly — switching tab giữ query, chỉ đổi entity type
+- [ ] Search history lưu local (localStorage/AsyncStorage) — không gửi lên server
+- [ ] Highlight matched text trong result rows (bold hoặc color)
+- [ ] Rate limit 30 req/min per account — 429 state hiển thị đúng
+- [ ] `⌘K` / `Ctrl+K` shortcut mở search overlay
+- [ ] Suggestion dropdown (as-you-type) hiện trước full results — quick filter + history
+- [ ] Click result navigate đúng entity detail page
+- [ ] Search input sanitized — XSS/SQL injection prevented
+- [ ] Max 50 results/entity type; cursor pagination cho "Xem thêm"
 
 ---
 
@@ -310,6 +474,7 @@ Cho bất kỳ player nào tìm **public sessions đang joinable** across clubs/
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.5 | **Global Search (P4.5):** Mở rộng doc từ session-only marketplace thành unified search. Thêm: Global Search scope (§1 — multi-entity: Users, Clubs, Tournaments, Sessions), entry points table (6 entries), 6 use cases mới (MKT-UC-11→16), 8 edge cases mới (#14→21 — sanitize, privacy, stale index, enumerate protection), 3 screens mới (Global Search overlay + suggestion dropdown + empty state — tất cả có ASCII layouts), search result component spec (4 entity types), 5 state coverage rows mới, 4 domain model entities (search_index, persons view, tenants view, public_tournaments), 5 analytics events (global_search_*), 17 acceptance criteria mới. Privacy-safe: chỉ public/moderated data, no PII leak. Additive-only — marketplace contract không đổi. |
 | 2026-07-28 | v2.4 | Mirror DD-32 public aggregates: confirmed active count and slots-open (active + live holds) from one occupancy helper; hold count stays private. Bot Join CTA routes safe detail/final gate while web retains cross-club join. No projector/runtime claim. |
 | 2026-07-27 | v2.3 | Mirror `0024`: public + unlimited capacity đã bị DB CHECK loại và dữ liệu hiện có đã validate; đây là invariant nền, không phải publish/projector/Marketplace runtime. |
 | 2026-07-24 | v2.2b | **Public-projection timing, explicit (`docs-prd-flow2-publish-projection-reconcile`, hard dependency of `docs-session-publish-contract`):** MKT-UC-1 + edge #1 + Bất biến bullet reworded to require `status='open'` in addition to `visibility='public'` — a `draft` session is never projected regardless of visibility. Closes the same cross-authority conflict already fixed in `../BE/feature_marketplace_discovery_tech.md` §4 and PRD FLOW 2/12/14; this Product-spec mirror was the codex round-01 P1 gap (Reviewed spec still permitted project-on-visibility-alone). Codex round-02 [P2]: MKT-UC-1 wording corrected — `visibility` is set only at create/edit, never at publish (`PublishSession` is status-only per `feature_session_management_tech.md` §4; publish only flips `draft`→`open`, which is what actually triggers the already-public row to project). No schema/algorithm change. |

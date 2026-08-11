@@ -1,7 +1,7 @@
 # Feature: Club AI Assistant + Knowledge Base — Backend Tech Spec
 
 > **Canonical phase:** P7 (post-MVP)
-> **Version:** 0.18 · 2026-07-28
+> **Version:** 0.19 · 2026-08-10
 > **Status:** ✅ **Reviewed contract** — async ask, DLP/generation, retention, private-thread, canonical-chat reuse, DD-86/DD-93 mirrors và provider-attempt semantics đã qua companion closure. **DD-18** (provider LLM + privacy/ToS/DPA) chỉ là `ENABLEMENT_ONLY` cho GO-LIVE vì provider đặt sau interface `EmbeddingProvider`/`ChatProvider` swappable; Reviewed không tự authorize implementation trước strict slice `CODE_READY`.
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_club_assistant.md`
@@ -16,6 +16,19 @@
 ## 1. Tổng quan triển khai
 
 Hai đường dữ liệu, đều bám canonical-store + sync engine sẵn có. Gọi provider (embedding/LLM) **ngoài DB txn** (P9); mọi truy vấn KB **dưới RLS tenant**.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `POST /api/clubs/:id/kb/sources` | Host (web dashboard) | Ingest FAQ/upload/paste/URL → KB source |
+| `POST /api/clubs/:id/assistant/ask` | Player (ask panel) | Async ask → `202 {query_id}` + SSE answer |
+| `@mention` in club channel | Player (chat) | Chat mention → `bot.ask` via canonical chat |
+| `/pay` slash command | Player (chat) | Registry intercept → canonical `getSelfPaymentStatus`, bypasses Assistant |
+| KB ingest worker (pg-boss) | System | Extract → DLP → chunk → embed → activate |
+| `bot.ask` worker (pg-boss) | System | Retrieve → augment → generate → project response |
+| KB admin CRUD | Host (web) | Manage sources, view status, delete/supersede |
+| Channel flag toggle | Admin (`chat.channel.manage`) | Enable/disable Assistant per channel |
 
 ```text
 INGEST (write path = host nạp KB)
@@ -702,6 +715,7 @@ Contract enforceable: `project_assistant_answer(query_id)` là `SECURITY DEFINER
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v0.19 | **A-grade upgrade:** thêm Entry points table (8 entries); bump version. Không đổi contract/provider model. |
 | 2026-07-28 | v0.18 | Re-pin primary plan v1.8 `PLAN_READY` tại `90d292d`; immutable-pack blocker đã đóng. Giữ exact next gate là per-slice packet/manifest/launcher + strict `CODE_READY`; DD-18 remains enablement-only, runtime/migration = 0. |
 | 2026-07-28 | v0.17 | Replace broad phase rollout bằng exact bounded chain 27→35: storage/config → text → URL/file → generation-CAS index → retrieval → `bot.ask` → mention/private thread; pin thin HTTP owners A14–A16 và FE owners F12/F13 sau F0. Giữ immutable authority + strict per-slice `CODE_READY` gate; no runtime/migration authorization. |
 | 2026-07-28 | v0.16 | Owner-final companion closure: promote BE spec to Reviewed; DD-86 defaults true `all_members`/false `admins_only`, mutable on both under exact capability + all gates; Announcements is not a special-case; DD-93 eight-command private-thread registry is canonicalized ASCII case-insensitively before `bot.ask`. No runtime/migration. |

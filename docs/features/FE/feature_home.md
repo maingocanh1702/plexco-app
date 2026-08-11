@@ -2,7 +2,7 @@
 
 > **Canonical phase:** S9 (cùng PWA shell; sau P4.6 player_view vì data từ đó) — DD-79 ✅  
 > **Track:** 🏠 Home Hub  
-> **Version:** 0.12 · 2026-08-08
+> **Version:** 0.13 · 2026-08-10
 > **Status:** ✅ **Reviewed contract theo DD-79** — composition-only; implementation pending S9. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY`; không có Home/payment/chat runtime. Fork từ Sporta `feature_home.md` v2.5 + học từ design `app-design-opus-4.6.pen`.
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web auth · P4.6 player_view (data backbone) · P4.3 marketplace (suggested) · 🔔 notifications §A  
@@ -120,13 +120,13 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 
 **Bottom Nav (DD-79 amendment 19/07 — shell contract, config-driven):**
 
-| Slot | Tab | Route/đích | Phase-1 |
-|------|-----|-----------|---------|
-| 1 | 🏠 Home | Landing (màn này) — chứa hero + upcoming; **"Kèo của tôi" đầy đủ = sub-screen** mở từ "Tất cả →" và chip Còn nợ (person-self, player_view) | ✅ |
-| 2 | 📰 Feed | Activity feed (DD-76) | ⛔ **config-OFF tới DD-76 clear** — slot reserved, không tab chết |
-| 3 | **🔍 Khám phá** | Tìm & join kèo public mọi CLB — `/discover` marketplace, **center emphasized/FAB** | ✅ |
-| 4 | 🏸 **Club** | CLB của tôi — **cả 2 nhóm**: (a) CLB user tạo/sở hữu (role owner/admin) và (b) CLB user tham gia (member/guest) — cùng từ person-self memberships (`/me/clubs`, player_view), phân nhóm + role badge. Club context theo quyền: owner/admin → host board (mark-paid, roster, settings); member → member view (sessions CLB, chat club). CTA **+ Tạo CLB** → onboarding wizard sẵn có | ✅ |
-| 5 | ⚙️ Setting | Profile/user_settings | ✅ |
+| Slot | Tab | Route/đích | Feature doc | Phase-1 |
+|------|-----|-----------|-------------|---------|
+| 1 | 🏠 Home | Landing (màn này) — hero + upcoming + chips | *(trang này)* | ✅ |
+| 2 | 📰 Feed | Activity feed (DD-76) | Chưa có — chờ DD-76 clear | ⛔ config-OFF |
+| 3 | 🔍 **Khám phá** | Tìm kèo public xuyên CLB — `/discover` marketplace, **center FAB** | `feature_marketplace_discovery.md` | ✅ |
+| 4 | 🏸 **Club** | CLB của tôi — Club list/detail, News (pin post), Members, Sessions, Chat, Settings | `feature_club.md` | ✅ |
+| 5 | ⚙️ Setting | Profile, preferences, account | `feature_user_settings.md` | ✅ |
 
 **Header (mọi màn chính):** `[Avatar] Xin chào {tên} … 💬 🔔●` — **Chat entry ở header** (inapp_chat DD-38, badge unread), KHÔNG chiếm tab; 🔔 notification inbox §A.
 
@@ -337,6 +337,7 @@ Phase-2 thêm 💰 Chưa thu (host, cross-club, DD-96 Part B): khi > 0 → đẩ
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v0.13 | **Club tab → feature riêng:** Tách Club tab thành `feature_club.md` độc lập. Home chỉ cross-reference. Pin post và News/Announcement chuyển sang `feature_club.md`. |
 | 2026-08-08 | v0.12 | **Port Sporta UX decisions:** (1) Chips chuyển từ cố định 2 → **adaptive selection** (pick top 2 from pool by priority) — phase-1 pool [💸 Còn nợ, 🔥 Streak, 📅 Kèo tuần], phase-2 thêm [💰 Chưa thu] sau B1–B4. (2) **Hero CTA** "Thanh toán" (player) / "Bảng thu tiền" (host) — conditional, gated bởi HOME-OQ-4 (`payAction` trong upcoming DTO). (3) **Streak un-defer** (HOME-OQ-3) — đếm ngày liên tiếp, vào pool phase-1 priority #2. (4) HOME-OQ-1 reopen theo DD-96 Part B. Thêm HOME-UC-4b/UC-5, chip selection matrix, hero CTA spec table, 1 analytics event (`hero_pay_tapped`). Không đổi composition-only boundary DD-79. |
 | 2026-08-08 | v0.11 | Port Sporta ưu điểm: thêm component spec tables (payment dots, role badges, countdown), per-state ASCII layouts (Empty/Onboarding/Loading), 6 analytics events mới (`view_all`, `suggested_view_more`, `onboarding_completed`, `empty_explore`, `notification`, `pull_to_refresh`), AC restructure thành Functional/States/UI/Analytics sub-sections. Không đổi boundary/contract. |
 | 2026-07-31 | v0.10 | Restore the fixed two-chip Empty contract: proven-zero debt + zero weekly sessions; streak remains deferred. No runtime authorization. |

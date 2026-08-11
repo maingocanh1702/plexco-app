@@ -2,7 +2,7 @@
 
 > **Canonical phase:** Cross-cutting · Completion gate P6  
 > **Track:** 🛡️ Security & Ops  
-> **Version:** 2.3 · 2026-07-27<br>
+> **Version:** 2.4 · 2026-08-10<br>
 > **Status:** Reviewed  
 > **Implementation:** In progress — RLS/HR1 + tenant-integrity + narrow audited job lease/ack/preflight controls đã có; production delivery/ops gates còn mở · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** All production features  
@@ -20,6 +20,18 @@
 ## 1. Mô tả
 
 Định nghĩa production controls + evidence cho: tenant/public/person isolation, secret/PII handling, audit, availability, backups, observability, load testing, incident response và provider degradation. Security build throughout — P6 là **release gate**, không phải first implementation point.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Security dashboard | Internal admin tool | Ops | SLO metrics, backup status, secret rotation |
+| Audit log viewer | Internal admin tool | Ops/Support | Filterable immutable audit entries |
+| CI security gate | CI/CD pipeline | CI | Dependency scan, SAST/DAST, container scanning |
+| Secret rotation CLI | `pnpm ops:rotate-secret` | Ops | Per-scope secret rotation with drill evidence |
+| PITR restore drill | Ops runbook | Ops | Backup restore + ledger reconciliation |
+| Incident response | PagerDuty / Ops channel | Ops | Severity → containment → postmortem |
+| Pen-test / Load-test | External tooling | Security team | Enumeration, RLS bypass, contention tests |
 
 ### Bất biến
 
@@ -75,6 +87,16 @@
 | Web (Admin) | Incident status page | — | Current incidents + status | — | "Không có sự cố" |
 
 > Most security screens are internal/ops — not exposed to host/player.
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Security dashboard | `secret_inventory` + SLO metrics store + backup metadata | Internal only |
+| Audit log viewer | `audit_log` (append-only) | Filterable by actor, action, aggregate |
+| Incident status | `incident_log` | Severity + status + owner |
+| CI gates | Dependency scanner + SAST/DAST results | Automated per-commit |
+| RLS invariants | `pnpm test:isolation` results | CI pipeline |
 
 ---
 
@@ -140,6 +162,7 @@
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.4 | **A-grade upgrade:** thêm Entry points table (7 entries), Data source mapping; bump version. Không đổi contract/domain model. |
 | 2026-07-27 | v2.3 | Mirror implemented job-security controls (`0022`/`0023`, narrow definer, audit/lease/ack, preflight) và giữ scheduler/delivery/ops enablement gates mở. |
 | 2026-07-19 | v2.2a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (In progress). Không đổi contract. |
 | 2026-07-17 | v2.2 | **DD-65 secret ownership closure:** split per-Page Messenger access tokens from the single deployment/platform Meta App Secret across inventory, rotation, kill-switch and blast-radius evidence. |

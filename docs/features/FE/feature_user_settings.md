@@ -6,7 +6,7 @@
 
 > **Canonical phase:** P4 (hồ sơ + nguồn `gender` cho giá kèo; follow/visibility P4+)
 > **Track:** ⚙️ User Settings & Profile
-> **Version:** 0.9a · 2026-07-19
+> **Version:** 0.10 · 2026-08-10
 > **Status:** DD-39 ✅ · DD-47/48 ✅ framework — Draft (pending migration/build)
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3.5 identity (Person) · P4 web/app surface · (giá theo giới tính đọc bởi `feature_session_management` + `feature_payment_reconcile`) · (follow/visibility: `feature_identity` merge + `feature_player_view` profile path)
@@ -23,6 +23,19 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 **Follow + private/public (DD-47/48 — ✅ framework):** user có thể follow user khác và đặt `public`/`private`. User mới default public; user tồn tại trước migration được backfill private. Private cần approve follower và ẩn social profile với non-follower, kể cả đồng đội. Host vẫn thấy dữ liệu cần cho vận hành/suy giá qua tenant membership/roster path riêng; host role không mở rộng social-profile DTO. Đây là gate bổ sung, không thay/nới RLS và không đụng đường tiền/PII.
 
 **DD-70(a) proposal (authority v1.70):** chỉ private follow mới tạo durable `follow_request`. `follow_accepted` trong bảng analytics dưới đây **không phải notification type**; public follow và private→public bulk auto-accept không fan-out thông báo hay lock follower fences hàng loạt.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Profile settings | `/settings/profile` | Player/Host | Edit name, username, gender, dob, language |
+| Profile public view | `/users/:username` (hoặc `/persons/:id/profile`) | Any user | Social profile (whitelist fields) |
+| Follow action | Profile page → Follow button | Player | Follow / request follow |
+| Privacy toggle | `/settings/privacy` | Player | Toggle public/private |
+| Gender-pricing (host) | Session create/edit → price_male/price_female | Host | Set giá theo giới tính |
+| Charge derivation | System (join session) | System | Suy giá từ `person.gender` |
+| Follow requests inbox | `/settings/follow-requests` | Player (private) | Approve/reject follow requests |
+| Bot → "Hồ sơ" menu | Messenger/Zalo persistent menu | Player | Xem/sửa hồ sơ cơ bản |
 
 ### Bất biến
 
@@ -427,6 +440,7 @@ Người dùng **cài đặt hồ sơ**: **giới tính**, **ngày sinh**, **tê
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v0.10 | **A-grade upgrade:** thêm Entry points table (8 entries); bump version. Không đổi contract/domain model. |
 | 2026-07-19 | v0.9a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v0.9 | **DD-70(a) v1.70 propagation:** `follow_accepted` is analytics-only; private→public bulk auto-accept creates no notification/fan-out or unbounded follower-fence work. No runtime/migration. |
 | 2026-07-17 | v0.8 | **DD-39 storage closure:** close USR-OQ-2 on phase-1 `price_male/price_female` columns beside canonical `price_amount`; remove the competing current-table implementation path. |

@@ -1,7 +1,7 @@
 # Feature: Web Authentication & Tenant Onboarding — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.14 · 2026-07-28
+> **Version:** 2.15 · 2026-08-10
 > **Status:** Reviewed
 > **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google auth lane DD-80 (migrations `0015`–`0018`: D0a revoke, `0016` email-token storage, `0017` Google-OIDC adapter, `0018` d1b completion-hop) đã merge và Safari macOS+iOS M3 measured PASS 2026-07-26. Engineering/measurement blocker đã đóng, nhưng Google login chưa có bằng chứng owner enable/go-live; `GOOGLE_OAUTH_*` template vẫn rỗng và các gate độc lập (A3 legal/PII/config) vẫn áp dụng. Email/password order-4 bundle (route/UI/provider send) chưa build, flag OFF · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_web_auth_onboarding.md`
@@ -33,6 +33,22 @@ Tables: auth/onboarding + tenant bank/Zalo. Messenger central/tenant registry an
 - **(DD-31 SI-3, added 2026-07-06)** Every tenant-scoped read on this surface combines `withTenant` (RLS) **and** an explicit `tenant_id` predicate in the query — belt-and-suspenders, not RLS alone. See §4 "Explicit Tenant-Filter Policy".
 
 > **Provider roadmap:** `google` + `email` là baseline; DD-33 đã chốt `facebook`, nhưng capability cho non-test users fail-closed OFF tới khi exact App Review/Business Verification/permission evidence được ghi nhận. Nếu chưa pass, dùng transactional one-time `link_code`. Facebook Login subject và Messenger Page-scoped PSID là hai identity layers độc lập. DD-14 `zalo` vẫn open.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `GET /api/auth/google` | Browser | Initiate Google OAuth + PKCE |
+| `GET /api/auth/google/callback` | Google redirect | Verify OIDC → mint session (Lax cookie) |
+| `POST /api/auth/email/login` | Browser | Email + password → session (Strict cookie) |
+| `POST /api/auth/email/register` | Browser | Create account + email verify token |
+| `POST /api/auth/email/verify` | Browser | Consume verify token (hash-only, TTL, single-use) |
+| `POST /api/auth/email/forgot` | Browser | Enumeration-safe forgot → reset token |
+| `POST /api/auth/email/reset` | Browser | Reset password + revoke all sessions |
+| `GET /api/auth/facebook/callback` | Facebook redirect (gated) | Exchange code → verify app-scoped subject |
+| `POST /api/auth/logout` | Browser | Invalidate session token |
+| `POST /api/onboarding/:runId/step/:step` | Host (web) | Idempotent onboarding step (`run_id + step + key`) |
+| `GET /api/link/:code` | Player (browser) | Non-mutating channel-link landing → explicit POST |
 
 ---
 
@@ -649,6 +665,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.15 | **A-grade upgrade:** thêm Entry points table (11 entries); bump version. Không đổi contract/auth model. |
 | 2026-07-28 | v2.14 | Mirror DD-32 Option D: pin non-mutating channel-link landing, authenticated explicit POST, Identity-owned binding and booking-owned resume/reconfirm boundary; add abuse/prefetch/E2E tests. No runtime. |
 | 2026-07-27 | v2.13 | **d1b evidence/enablement boundary reconcile:** Safari macOS + iOS Safari M3 measured PASS 2026-07-26, nên session-rotation engineering/measurement blocker đã đóng; §4 và D1B-2 chuyển từ “evidence còn thiếu” sang measured complete. Google credentials/owner go-live vẫn chưa được chứng minh và A3 legal/PII/config giữ nguyên như gate độc lập. Email order-4 bundle tiếp tục OFF/chưa build. Product mirror: `../FE/feature_web_auth_onboarding.md` v2.10c. |
 | 2026-07-23 | v2.12 | **Reconcile migration-section merge-state (auth DD-80 lane 0015–0018 merged, ⛔ chưa enable):** sửa CURRENT-STATE tự mâu thuẫn với changelog v2.11 — (a) Implementation header "Google/email DD-37 chưa code" → Google auth lane DD-80 `0015`–`0018` (D0a revoke · `0016` email-token storage · `0017` Google-OIDC adapter · `0018` d1b completion-hop) **đã merge nhưng ⛔ CHƯA enable** (chờ đo Safari/iOS M3, `GOOGLE_OAUTH_*` rỗng), email order-4 bundle (route/UI/send) chưa build (flag OFF); (b) §2 "Live-schema truth (main, migrations `0000`–`0014`)" → **non-pinned "verify live"** (bỏ hard-pin range), "Chưa tồn tại trên main: `auth_oauth_transactions`/email tables" → **đã merge** (`0016`/`0017`, storage CODE DARK zero grant/route); (c) stale tail `0014` (§2 Migration mới) / `0015` (D1 matrix note + D1E-1) → **non-pinned guidance** ("verify live tail tại `packages/db/migrations/`, KHÔNG hard-pin số" — tránh re-stale trên `0021` và tránh đua số với `BUILD-STATUS`); tail thực tế 2026-07-23 = `0020` (`0020_ledger_tenant_integrity_fks`; auth-lane `0015`–`0018` + tenant-FK `0019`/`0020`) chỉ ghi dạng dated ở changelog, không hard-pin trong body. **OUT-OF-SCOPE residual (founder-ratified defer):** `BUILD-STATUS.md`/ROADMAP/~21 BE spec vẫn ghi global-tail `0018` (pre-existing; `0019`/`0020` land sau sweep tail-0018) → backlog `docs-migration-tail-0018-to-0020-sweep`. Companion: product spec `feature_web_auth_onboarding.md` v2.10b (header + WAO-OQ-5 mirror). (d) §2 DD-50 storage design-gate (L139/L141) reconciled: B0 ✅ + storage `0016` merged → bỏ "provisional / awaiting owner / no DDL may be authored" (giữ dated 2026-07-18 provenance); Migration-mới liệt kê order-4 email public functions còn phải build (`auth_verify_email`/`auth_reset_password`/`auth_finalize_email_login`), không chỉ platform CHECK. (e) §2 Rollback table phân tầng: merged `0016`/`0017`/`0018` credential/OAuth tables **KHÔNG blind-DROP** (data-loss khi Google enabled) — chỉ new-additive (platform CHECK) mới safe-DROP; baseline `0001`/`0008`/`0012` = ❌ NEVER. Header version bù `2.10`→`2.12` (v2.11 đã ghi adapter nhưng header chưa bump). Numbering guidance giữ nguyên (monotonic next-available sau synced tail, verify live trước khi tạo, không sửa lịch sử); DDL/contract §2–§4 KHÔNG đổi; §3 endpoint ✅ `0017` + dated changelog rows (v2.11/v2.8a/v2.7a…) giữ verbatim. |

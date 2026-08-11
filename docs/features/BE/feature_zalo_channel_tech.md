@@ -1,7 +1,7 @@
 # Feature: Zalo Player Channel — Backend Tech Spec
 
 > **Canonical phase:** P4.7  
-> **Version:** 2.7 · 2026-07-28
+> **Version:** 2.8 · 2026-08-10
 > **Status:** Reviewed · reconciled to DD-15/DD-32/DD-45/DD-49/DD-67
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_zalo_channel.md`
@@ -20,6 +20,18 @@ Webhook (opaque token → bot/tenant) → Verify provider secret
 ```
 
 Bot-per-club model: webhook path token resolves bot endpoint/default tenant. Provider payload is NOT tenant authority. Identity lookup uses domain-separated HMACs for bot/OA scope and `from.id`; target tenant/action still re-authorize separately.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `POST /api/webhooks/zalo/:webhookToken` | Zalo webhook | Opaque token → bot/tenant → verify provider secret |
+| Identity resolver (HMAC) | Zalo event | Domain-separated HMAC(bot/OA scope, `from.id`) → ChannelIdentity |
+| Session detail projection | Player (Zalo DM) | Number-reply → session card (no inline button) |
+| Shared channel-booking decision | Internal | `decideChannelBookingPath()` → join/hold/link |
+| `finalizeChannelBookingIntent()` | Account-link / bank event | Atomic settle for Zalo-origin booking |
+| Zalo DM delivery adapter | Dispatcher (notifications) | DM delivery via bot/OA endpoint |
+| Reply context store | Zalo adapter | `zalo_reply_contexts` → stateful number-reply mapping |
 
 ---
 
@@ -358,6 +370,7 @@ The adapter renders only the funnel's tagged outcomes. Link handoff consumes onc
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.8 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/adapter model. |
 | 2026-07-28 | v2.7 | Mirror DD-32 Option D: number selection becomes safe detail, second context enters shared link-or-pay funnel; add qualified Account link, verified-payment hold, provider fail-closed, race/fairness tests and thin-adapter boundary. No runtime claim. |
 | 2026-07-24 | v2.6b | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): Live-schema boundary note hard-pinned `tail = 0018, migrations 0000–0018` + numbering guidance `(0018)` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v2.6a | **Reconcile 0014 merge-state:** current-state Live-schema boundary sửa → `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`, migrations 0000–0018, tail = 0018), trước ghi "hiện chỉ ở nhánh feat/session-waitlist-expand, chưa merge". Migration-numbering guidance giữ nguyên (sync merged prerequisites → next available monotonic number sau tail đã merge, không hardcode/sửa lịch sử), chỉ đổi justification. Pre-existing dated changelog giữ verbatim. Không đổi contract. |

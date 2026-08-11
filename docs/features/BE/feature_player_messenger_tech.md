@@ -1,7 +1,7 @@
 # Feature: Shared Host & Player Facebook Messenger Experience — Backend Tech Spec
 
 > **Canonical phase:** P2.5
-> **Version:** 0.9 · 2026-07-28
+> **Version:** 0.10 · 2026-08-10
 > **Status:** Reviewed contract · Implementation pending
 > **Implementation:** Not started — `apps/bot` đã có shared job lease/ack + preflight/dispatcher/scheduler gated, nhưng chưa có Messenger adapter/handler/projector; schedule mặc định OFF và delivery placeholder · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_player_messenger.md`
@@ -22,6 +22,18 @@ Messenger webhook → verify signature → endpoint registry (central|tenant)
 ```
 
 **Hybrid:** một Meta App, một central Page bắt buộc ở cấp Plexco và optional tenant Page. `page_id` resolve endpoint/default context; target tenant/session chỉ từ opaque action, protected public ref/referral hoặc server-side eligible-role picker. **PSID là page-scoped**, nên identity và reachability đều neo theo Page endpoint.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `POST /api/webhooks/messenger` | Meta webhook | Verify signature → endpoint registry (central\|tenant) |
+| Interaction interceptor | Messenger event | Pre-dispatch wizard state → opaque action resolver |
+| Session detail projection | Player (Messenger) | Read-only session card via quick-reply |
+| Shared channel-booking decision | Internal | `decideChannelBookingPath()` → join/hold/link |
+| `finalizeChannelBookingIntent()` | Account-link callback / bank event | Atomic settle for Messenger-origin booking |
+| One-route delivery adapter | Dispatcher (notifications) | Messenger DM best-effort within 24h window |
+| Persistent menu / quick-reply renderer | Messenger surface | Opaque outcome → platform-native UX |
 
 **Ràng buộc chính sách 2026 (DD-37 / CO-3):**
 - **Cửa sổ 24h:** chỉ gửi message tự do trong 24h kể từ inbound cuối của user.
@@ -383,6 +395,7 @@ FB Login (web-auth `account_identities.platform='facebook'`) và Messenger **PSI
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v0.10 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/adapter model. |
 | 2026-07-28 | v0.9 | Mirror DD-32 Option D: selection becomes read-only detail, final confirm delegates to one shared decision/finalizer; pin qualified Account link, 15-minute verified-payment hold, provider fail-closed, race/fairness tests and thin-renderer outcomes. No runtime claim. |
 | 2026-07-27 | v0.8 | Current-state mirror: shared job mechanics đã merge nhưng Messenger adapter/handler/projector chưa có; không đọc queue infrastructure thành channel runtime. |
 | 2026-07-19 | v0.7 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `messenger_pages` `0004` reuse; new = hybrid registry/`messenger_page_secrets`/endpoint identity·reachability/action store), §3 Request/Response Examples + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |

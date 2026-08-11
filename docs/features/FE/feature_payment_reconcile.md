@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P3
 > **Track:** 💰 Payment Reconciliation
-> **Version:** 1.11 · 2026-08-09
+> **Version:** 1.12 · 2026-08-10
 > **Status:** Reviewed; mirror DD-32/DD-91 `DECISION_FINAL` + regional research boundary. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`; B1/runtime slices vẫn cần strict `CODE_READY`
 > **Implementation:** In progress — core matching/payments-logic + ledger integrity migrations `0019`/`0020` đã có; wiring webhook→settle→notify, `remainingAmount`, `getSelfPaymentStatus` và chat `/pay` chưa · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P0–P1 foundation + P2 tenant routing
@@ -17,6 +17,19 @@
 ## 1. Mục tiêu và nguyên tắc
 
 Nhận & đối soát tiền sân của từng CLB. **Mọi tier**: host **đánh dấu đã trả thủ công** (tiền mặt/CK) bằng tap/multi-select. **`host_pro`**: thêm **tự động nhận chuyển khoản** qua webhook, lưu bền vững, đối chiếu với các khoản phải thu và cho host xử lý phần chưa khớp. Platform không giữ tiền player; ledger chỉ phản ánh giao dịch và phân bổ.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Session detail → Roster → Mark paid | `/clubs/:id/sessions/:sid/roster` | Host | Tap/multi-select mark-paid thủ công |
+| Club dashboard → Payments | `/clubs/:id/payments` | Host | Tổng hợp transactions + unmatched |
+| Unmatched queue | `/clubs/:id/payments/unmatched` | Host | Gán manual CK cho người/charge |
+| Webhook receiver | `/api/webhooks/:token` | System | SePay/ApiPay durable-ingest |
+| Player self → Charges | `/api/me/charges` • Home tab | Player | Xem trạng thái thanh toán cá nhân |
+| Bot → `/pay` command | Club chat / private DM | Player | Exact requester-only payment status |
+| Bank account settings | `/clubs/:id/settings/bank` | Host | Quản lý STK primary, đổi STK |
+| Reversal / undo | `/clubs/:id/payments/:alloc_id/reverse` | Host | Hoàn tác allocation sai |
 
 ### Bất biến
 
@@ -487,6 +500,7 @@ Không log raw bank content, account number, display name, secret hoặc provide
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v1.12 | **A-grade upgrade:** thêm Entry points table (8 entries); bump version. Không đổi contract/ledger model. |
 | 2026-07-28 | v1.10 | Reconcile immutable authority `90d292d` and primary plan v1.8 `PLAN_READY`; retain B1/per-slice `CODE_READY`, regional availability and no-runtime boundaries. |
 | 2026-07-28 | v1.9 | Mirror DD-32 Option D: unlinked paid-session booking có 15-minute pay-now hold khi capability proven; only durable exact full settlement gọi shared finalizer. Pin exact/over/under/late behavior, reserve booking references khỏi generic matcher và cấm screenshot/manual attest bypass Account link. No runtime claim. |
 | 2026-07-27 | v1.8 | Sync local DD-91 `DECISION_FINAL` nhưng primary-surface plan vẫn `NOT_PLAN_READY`: pin one-payment-truth, fail-closed `known_zero|known_amount|unknown` và exact requester-only `/pay` target/no-LLM/no-persistence. Tách commercial entitlement `payment_reconcile_auto` khỏi provider/bank/market/currency/consent availability; current authority chỉ `sepay|apipay` cho rail Việt Nam, auto runtime chưa build, manual mark-paid vẫn global. Ghi live ledger-integrity migrations `0019`/`0020`; không claim webhook/service/chat implementation. |

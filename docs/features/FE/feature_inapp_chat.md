@@ -4,7 +4,7 @@
 
 > **Canonical phase:** P4 (đề xuất — dựng sớm hạ tầng `chat_*`)
 > **Track:** 💬 In-app Chat
-> **Version:** 0.15 · 2026-07-28
+> **Version:** 0.16 · 2026-08-10
 > **Status:** ✅ Reviewed — final Product contract, pending migration
 > **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web/app surface + sync engine · **DD-07** (SSE + `LISTEN/NOTIFY`) · P3.5 identity (Person/Membership)
@@ -80,6 +80,8 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 | CHT-UC-16 | Author | Sửa hoặc xoá tin của chính mình | Edit body `<15m`/max 5 với revision audit; soft-delete bất cứ lúc nào thành shared tombstone |
 | CHT-UC-17 | User | Tìm tin nhắn | Search current-visible canonical content trong channel đang đọc; optional channel filter, không trả tombstone/private result |
 | CHT-UC-18 | Offline recipient | Nhận digest generic | Coalesce tới highest unread cursor theo DD-94; không body/title/amount/durable item per message |
+| CHT-UC-19 | Member | Forward tin nhắn từ club/group chat cho 1 user khác qua DM | Chọn tin → Forward → chọn người nhận (DM hiện có hoặc tạo mới). Tin forward kèm attribution gốc (sender, channel, timestamp). Không forward được tin đã xóa/ẩn (tombstone) |
+| CHT-UC-20 | User | Forward tin nhắn từ DM người này sang DM người khác | Tương tự CHT-UC-19 nhưng source là DM. Chỉ forward được tin của chính mình hoặc tin nhận được (không forward tin của người thứ 3 mà mình không tham gia DM) |
 
 ### Edge Cases
 
@@ -113,6 +115,8 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 | 26 | Data Integrity | Edit hết thời hạn/quá 5 lần hoặc cố đổi reply/mention/attachment | Reject trước mutation; DB time + expected revision; immutable fields không đổi |
 | 27 | Privacy | Search trả tombstone/revision/slash/private bot result hoặc channel vừa mất quyền | ❌ NEVER — canonical current-row index + live authz re-check |
 | 28 | Privacy | Digest gửi sau mark-read/block/leave/preference OFF/device epoch đổi | Cancel ngay trước provider write; unknown fail-closed, retry không duplicate |
+| 29 | Security | Forward tin từ club A cho user không phải member club A | Tin forward chỉ chứa body/media snapshot + attribution (sender name, channel name); không grant access vào channel gốc. Recipient thấy nội dung nhưng không thể navigate về source channel nếu không có membership |
+| 30 | Privacy | Forward tin DM riêng tư của người khác mà mình không tham gia | ❌ NEVER — chỉ forward được tin trong DM mà user là participant (person-self boundary). Tin đã tombstone/hidden không forward được |
 
 ---
 
@@ -397,6 +401,7 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v0.16 | **Message Forward:** Thêm khả năng forward tin nhắn: (1) từ club/group chat → DM user khác, (2) từ DM → DM khác. Forward kèm attribution gốc (sender, channel, timestamp). Boundary: chỉ forward tin mình có quyền đọc (member club hoặc participant DM); không forward tombstone/hidden. Thêm CHT-UC-19/UC-20, edge case #29/#30. |
 | 2026-07-28 | v0.15 | Re-pin primary-surface plan v1.8 `PLAN_READY` tại immutable authority `90d292d`, closure 12/12. Giữ runtime = 0, B4/worktree chưa author và strict per-slice `CODE_READY`; không đổi Product contract. |
 | 2026-07-28 | v0.14 | Mirror executable ownership từ primary-surface plan v1.7: serialize actual DB lane `1→2→3→4`, rồi Chat chain `5→9→6→7→8`; pin slice 4 DD-56 closed registry + append-only grant audit, slice 9 safe current-channel member target trước các consumer, A1–A13 HTTP owners và F1–F10 FE owners sau F0. Giữ `NOT_PLAN_READY`, runtime = 0 tới immutable re-pin + strict per-slice `CODE_READY`. |
 | 2026-07-28 | v0.13 | Owner-final DD-86/DD-91..95: Assistant defaults true `all_members`/false `admins_only`; exact emoji reactions, bounded own edit/soft-delete/authorized search; zero-arg slash catalog × surface; generic coalesced digest; club-only moderation. DD-88 remains broader proposal. Migration/runtime remain not started. |

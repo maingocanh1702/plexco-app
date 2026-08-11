@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P3 (payment ingest) · P4 (web onboarding) · P4.7 (Zalo) — *cross-cutting upgrade*
 > **Track:** 🔌 Connector / Onboarding
-> **Version:** 1.0 · 2026-07-27
+> **Version:** 1.1 · 2026-08-10
 > **Status:** Draft (standard provider contracts reviewed; ApiPay enterprise provider gate open)
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3 webhook ingest stable · P4 onboarding wizard scaffold
@@ -59,6 +59,32 @@ Bước "copy URL → mò vào dashboard bên thứ ba → dán đúng chỗ →
 ## 1. Mô tả
 
 Cung cấp một trải nghiệm "Kết nối" (Connect) thống nhất cho 3 connector. ApiPay phase-1 dùng enterprise auto-provision nên host chỉ chọn/xác nhận TK nhận tiền, không nhập platform credential; SePay dùng OAuth consent; Zalo và ApiPay-BYO fallback mới nhận credential thuộc về owner. Việc đăng ký webhook về Plexco và xác minh hoạt động do hệ thống tự làm.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Onboarding wizard → Bank | `/onboarding/step/bank` | Host | First-time SePay/ApiPay setup trong wizard |
+| Club settings → Connectors | `/clubs/:id/settings/connectors` | Host | Manage/reconnect connectors after setup |
+| SePay OAuth callback | `/api/onboarding/sepay/oauth/callback` | System | SePay redirect sau user consent |
+| Connector status page | `/clubs/:id/settings/connectors/status` | Host | Xem trạng thái Tier 1/2 per provider |
+| Zalo connect (blocked) | `/clubs/:id/settings/connectors/zalo` | Host | 🟡 Token input, pending CO-OQ-1 |
+
+### Use Cases
+
+| ID | Actor | Hành động | Kết quả |
+|---|---|---|---|
+| CO-UC-1 | Host | Kết nối SePay bằng OAuth consent | OAuth redirect → callback → list bank accounts → chọn TK → `POST /webhooks` → `registered` |
+| CO-UC-2 | Host | Kết nối SePay bằng API token (fallback) | Nhập token → validate → `POST /webhooks` → `registered` |
+| CO-UC-3 | Host | Kết nối ApiPay enterprise (primary) | Chọn/xác nhận TK → provision per-host bank + webhook → `registered` |
+| CO-UC-4 | Host | Kết nối ApiPay BYO API key (fallback) | Nhập accessKey + secretKey → validate → `POST /webhooks` → `registered` |
+| CO-UC-5 | Host | Kết nối Zalo bot 🟡 | Nhập bot token → `getMe` → `setWebhook` → `registered` (blocked CO-OQ-1) |
+| CO-UC-6 | System | Nhận event đầu tiên qua webhook | Tier 2 verify: `registered` → `active` (đã xác minh end-to-end) |
+| CO-UC-7 | System | Drift detection (cron) | `getWebhookInfo` phát hiện URL lệch → auto re-register → `drift` → `registered` |
+| CO-UC-8 | Host | Gỡ kết nối (revoke) | Revoke OAuth/API + `DELETE /webhooks/:id` → `revoked`; giữ transaction history |
+| CO-UC-9 | Host | Retry kết nối sau lỗi | `error` → `connecting` → revalidate + re-register |
+| CO-UC-10 | System | SePay refresh token hết hạn | `error` → nhắc host kết nối lại; TK khác không ảnh hưởng |
+| CO-UC-11 | Host | Xem trạng thái tổng hợp connectors | Per-provider status chip theo vocabulary §3.1 |
 
 ### Bất biến
 
@@ -742,6 +768,7 @@ Tỉ lệ kết nối không-chạm-webhook, `time_to_verify_ms` trung vị, t�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v1.1 | **A-grade upgrade:** thêm Entry points table + formal Use Cases table (CO-UC-1..11); bump version. Không đổi contract/schema. |
 | 2026-07-27 | v1.0 | Add regional capability boundary: current connector authority is Vietnam `sepay|apipay`; entitlement is distinct from market/provider/bank/currency/consent/runtime availability. Manual remains global; research does not authorize a provider/rollout. |
 | 2026-07-24 | v0.9c | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep, round-01 codex expansion): TARGET-migration comment (`zalo_bots` `webhook_secret_enc`, L230) hard-pinned `tail = 0018` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Numbering guidance giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v0.9b | **Reconcile 0014 merge-state:** current-state TARGET-migration comment (`zalo_bots` `webhook_secret_enc`) sửa → `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`, tail = 0018), trước ghi "hiện branch-only". Numbering guidance giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |

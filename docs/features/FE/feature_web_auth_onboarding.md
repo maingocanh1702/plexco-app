@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4  
 > **Track:** 🌐 Web Auth & Onboarding  
-> **Version:** 2.12 · 2026-08-09
+> **Version:** 2.13 · 2026-08-10
 > **Status:** Reviewed  
 > **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google auth lane DD-80 (migrations `0015`–`0018`) đã merge và Safari macOS+iOS M3 measured PASS 2026-07-26. Engineering/measurement blocker đã đóng, nhưng Google login chưa có bằng chứng owner enable/go-live; template `GOOGLE_OAUTH_*` vẫn rỗng và các gate độc lập (A3 legal/PII/config) vẫn áp dụng. Email/password order-4 bundle (route/UI/provider send) chưa build, flag OFF · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P0–P1 foundation · P2 routing/authz · P3 ledger/provider model  
@@ -40,6 +40,20 @@ Connector connect (bank/Zalo) **chỉ chạy trên web** — không dán secret/
 > **Zalo** = BYO Bot Token per-CLB. **Messenger** = một platform App + central Page; optional tenant Page qua FB Login → chọn Page. Central Page readiness do platform ops sở hữu, không lặp trong từng tenant wizard.
 
 > **Auth phase-1 (DD-13/DD-33):** Google OAuth + email-password là baseline; Facebook Login đã accepted nhưng fail-closed OFF cho non-test users tới khi external evidence active. Target providers là `{google,email,facebook,zalo}` nhưng live DB chưa có platform CHECK; `persons` vẫn là anchor và Zalo Login vẫn gated DD-14. Chi tiết: decisions DD-13/14/33 + identity-model §7.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Google OAuth | `/auth/google` → callback | New/returning Host | Google OIDC login + account create |
+| Email/password login | `/auth/login` | Host | Email + password (khi lifecycle đủ) |
+| Email register | `/auth/register` | New Host | Multi-attempt verify-first registration |
+| Facebook Login | `/auth/facebook` → callback | Host | DD-33 gated; OFF khi chưa App Review |
+| Onboarding wizard (web) | `/onboarding` | New Host | Club config → bank → first session |
+| Bot magic-link handoff | Zalo/Messenger DM → `/onboarding?token=` | Host | Bot-first → web cho bank/OAuth steps |
+| Channel booking handoff | `/link/:handoff_id` | Player | Messenger/Zalo → web Account link |
+| Forgot/reset password | `/auth/forgot` → `/auth/reset/:token` | Host | Enumeration-safe reset flow |
+| Resume onboarding | `/onboarding` (authenticated) | Host | Resume incomplete wizard steps |
 
 ---
 
@@ -464,6 +478,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.13 | **A-grade upgrade:** thêm Entry points table (9 entries); bump version. Không đổi contract/auth model. |
 | 2026-07-28 | v2.11 | Mirror DD-32 Option D: add channel-booking Account link handoff, explicit impact confirm and safe resume/reconfirm boundary; OAuth callback never mutates booking. No new auth runtime. |
 | 2026-07-27 | v2.10c | **Auth enablement evidence reconcile:** Safari macOS + iOS Safari M3 measured PASS 2026-07-26, đóng engineering/measurement blocker của d1b. Google login vẫn chưa có owner enable/go-live proof; `GOOGLE_OAUTH_*` template giữ rỗng và A3 legal/PII/config vẫn là gate độc lập. Email order-4 bundle tiếp tục OFF/chưa build. Không đổi product contract. |
 | 2026-07-23 | v2.10b | **Reconcile Implementation current-state (mirror của BE tech spec):** header "Google/email DD-37 chưa code" → Google auth lane DD-80 `0015`–`0018` **đã merge nhưng ⛔ CHƯA enable** (chờ đo Safari/iOS M3, `GOOGLE_OAUTH_*` rỗng); email order-4 bundle (route/UI/send) chưa build, flag OFF. WAO-OQ-5 (§7 Open Questions) reframe: "chưa author slice S4 / chờ owner duyệt" → D0/D1 storage+adapter (`0015`–`0018`) đã merge, chỉ còn email order-4/gate `C7` mở. Đồng bộ với `../BE/feature_web_auth_onboarding_tech.md` v2.12. Không đổi contract/UX. |

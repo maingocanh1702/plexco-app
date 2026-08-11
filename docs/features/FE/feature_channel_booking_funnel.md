@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.3 / P4.7 + Messenger P2.5
 > **Track:** Growth / Channel Acquisition
-> **Version:** 1.0 · 2026-07-28
+> **Version:** 1.1 · 2026-08-10
 > **Status:** Reviewed contract — DD-32 Option D (`browse freely → link hoặc pay-now ở final confirm`)
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** Identity/account link · common Session/Join/Waitlist core · payment settlement capability · Zalo/Messenger adapters · web-auth handoff
@@ -21,6 +21,17 @@ Plexco cho phép người dùng tìm hiểu và đăng ký session ngay trong Me
 3. **Deepen:** account đã link mở lịch sử xuyên CLB, nhắc, app và các hành động sâu hơn.
 
 Feature này không tạo một hệ booking riêng trong bot. Messenger/Zalo chỉ thu intent và render kết quả; mọi eligibility, capacity, waitlist, giá, charge và payment allocation đi qua shared core.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Messenger browse | Messenger window → structured menu/postback | Player | Xem session card trong Messenger |
+| Zalo browse | Zalo OA DM → structured menu | Player | Xem session card trong Zalo |
+| Shared link (deep) | `plexco.app/s/:ref` → bot redirect | Player | Nhấn link session được chia sẻ |
+| Final confirm gate | Bot inline CTA | Player | Đăng ký / TT ngay / Link Plexco |
+| Web handoff (link) | `/link/:handoff_id` | Player | Binding Account từ bot |
+| Webhook settlement | Provider callback | System | Verified payment → finalizer |
 
 ### Bất biến sản phẩm
 
@@ -285,6 +296,7 @@ Không còn product question trong scope. DD-14/DD-15, Meta App Review và payme
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v1.1 | **A-grade upgrade:** thêm Entry points table (6 entries); bump version. Không đổi contract/decision table. |
 | 2026-07-28 | v1.0 | Reopen + chốt DD-32 Option D: browse tự do; final confirm linked→pay later, unlinked paid→verified pay-now; free/full/approval exceptions; 15-minute capacity hold; waitlist promotion/requeue; exact account-link predicate; provider fail-closed. |
 | 2026-07-19 | v0.8a | Metadata/implementation reconciliation; Option A soft funnel. Superseded by v1.0/DD-32 Option D. |
 | 2026-07-15 | v0.3 | DD-32 Option A: guest book free/paid. Superseded by v1.0. |

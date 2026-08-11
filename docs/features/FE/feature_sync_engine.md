@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4
 > **Track:** 🔄 Sync Engine
-> **Version:** 2.5 · 2026-07-28
+> **Version:** 2.6 · 2026-08-10
 > **Status:** Reviewed (v2.3: canonical command/outbox keys + endpoint-exact channel delivery)
 > **Implementation:** Infrastructure in progress — lease/ack + preflight/dispatcher/flagged scheduler đã merge, nhưng schedule OFF/placeholder và chưa có producer/real projector/replay/sub-minute drain; business sync E2E chưa bắt đầu · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P2 canonical domain services · P3 pg-boss/outbox · P4 channel adapters
@@ -21,6 +21,18 @@
 ## 1. Mô tả
 
 Normalize writes thành idempotent commands, persist canonical+outbox atomically, project tới web/Zalo/Messenger/public. Mỗi channel projector resolve `channel_identity_id` gắn đúng provider endpoint (Messenger Page hoặc Zalo bot/OA), authorize target tenant riêng, rồi chọn đúng một route — không broadcast — và không rollback canonical khi delivery fail.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Domain service command | Any write (create/edit/close session, join, payment...) | Host/Player/System | Command → canonical + outbox atomic commit |
+| Dispatcher (pg-boss) | Queue claim pipeline | System | Claim ordered outbox events → projector delivery |
+| Zalo projector | Zalo DM adapter | System | Resolve endpoint-bound identity → send |
+| Messenger projector | Messenger Send API adapter | System | Resolve Page-scoped identity → send (24h window) |
+| Web projector (SSE) | Postgres `LISTEN/NOTIFY` → SSE | System | Realtime push to web clients |
+| Public projector | `public_sessions` materialized view | System | Update/remove public listing |
+| Reproject CLI | `pnpm ops:reproject` | Ops | Rebuild derived projections from canonical |
 
 ### Bất biến
 
@@ -149,6 +161,7 @@ Surface → Command → Domain Service → [State + Deduped Command + Outbox] CO
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.6 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/pipeline model. |
 | 2026-07-28 | v2.5 | Re-pin as-built overlay to `main@784bc8d`; docs-only Chat authority commits do not add Sync producers/projectors/E2E, and schedule remains OFF/placeholder. |
 | 2026-07-27 | v2.4 | Current-state mirror: shared job lease/ack + preflight/dispatcher/scheduler đã merge nhưng disabled/placeholder; business producer/projectors/replay/sub-minute drain và E2E vẫn chưa có. |
 | 2026-07-19 | v2.3a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |

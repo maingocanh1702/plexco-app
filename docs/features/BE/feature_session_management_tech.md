@@ -1,7 +1,7 @@
 # Feature: Session Management — Backend Tech Spec
 
 > **Canonical phase:** P2/P4  
-> **Version:** 2.18b · 2026-08-03
+> **Version:** 2.19 · 2026-08-10
 > **Status:** Reviewed  
 > **Implementation:** Partial DB substrate only — `0014` waitlist, `0019` same-tenant integrity và `0024` public-capacity CHECK đã merge; SessionService/routes/projectors/auto-promote/auto-expiry vẫn chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_session_management.md`  
@@ -29,6 +29,20 @@ Commands: `CreateSession`, `UpdateSession`, `PublishSession`, `AnnounceSession`,
 - Optimistic concurrency via `version` column — stale edits rejected.
 - Outbox events carry identifiers + safe changed fields — projectors reload canonical data cho sensitive rendering.
 - Messenger central/tenant adapters emit the same commands. A single pre-dispatch interaction interceptor owns create wizard state; final consume re-authorizes `session.manage` and target tenant before `SessionService`.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `POST /api/sessions` | Host (web/Messenger) | `CreateSession` command |
+| `PATCH /api/sessions/:id` | Host | `UpdateSession` (optimistic `expected_version`) |
+| `POST /api/sessions/:id/publish` | Host | `PublishSession` (draft → open, billing gate step 6) |
+| `POST /api/sessions/:id/cancel` | Host / System (auto-expiry) | `CancelSession` (draft\|open → cancelled) |
+| `POST /api/sessions/:id/close` | Host | `CloseSession` (open → closed) |
+| `POST /api/sessions/:id/announce` | Host | `AnnounceSession` → outbox → channel projectors |
+| `GenerateOccurrences` job (pg-boss) | System | Recurring session → generate future instances |
+| Auto-expiry job (pg-boss) | System | Cancel forgotten drafts past deadline |
+| Projectors (Zalo/Messenger/Web SSE/Public) | Outbox consumer | Render canonical session changes |
 
 ---
 
@@ -585,6 +599,7 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.19 | **A-grade upgrade:** thêm Entry points table (9 entries); bump version. Không đổi contract/session model. |
 | 2026-08-03 | v2.18b | **Reconcile `authorizeTenantAction` call in §4 step 6 (`docs-billing-authz-signature-reconcile`):** step 6's mandatory billing re-check documented `authorizeTenantAction(tenantId, 'publish_new_sessions')` — merged code (`ddb69a9`, `packages/db/src/authorization.ts:91-95`) requires the caller's already-open transaction as its first parameter. This was a genuine contradiction, not a stylistic gap: the same sentence requires the call to run inside the transaction holding the session lock while printing a signature that structurally cannot receive that transaction — the same defect `feature_billing_lifecycle_tech.md`'s own reconcile (v2.10) exists to close (codex round-08 [P2] on that slice, verified against this file directly). Updated to `authorizeTenantAction(tx, tenantId, 'publish_new_sessions')`. Every other mention in this file (edge #24, step 1, the "Billing suspension gate" and "Billing suspension — concurrency" blockquotes) is bare-name prose or single-argument action-class shorthand naming which action is being cross-referenced, not a signature assertion, and stays unchanged. Docs-only; code/schema/tests already merged and unaffected by this reconcile. Pre-existing dated changelog giữ verbatim. |
 | 2026-07-28 | v2.18a | Reconcile two DD-32 residual drifts found by acceptance retrace: capacity-decrease step now guards active+live-hold occupancy with exact error split; projector parity keeps `confirmed_count=active` while `slots_open` subtracts active+holds and exposes no hold count. No runtime/schema. |
 | 2026-07-28 | v2.18 | Mirror DD-32 Option D: shared active+hold occupancy, capacity-reduction error, selector exclusion, paid-unlinked promotion hold and expiry requeue-tail; add tests/rollout blockers. No runtime/schema. |

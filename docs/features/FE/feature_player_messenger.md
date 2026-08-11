@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P2.5 / P4.5 (kênh phase-1 — thay `feature_player_telegram` đã archive)
 > **Track:** 📱 Shared Host & Player Messenger
-> **Version:** 0.9 · 2026-07-28
+> **Version:** 0.10 · 2026-08-10
 > **Status:** Reviewed contract · Implementation pending
 > **Implementation:** Not started — shared job mechanics đã merge nhưng Messenger adapter/handler/projector chưa có; schedule OFF/placeholder · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P2 routing/authz · P3.5 identity · P2 session/join · P3 notifications · P4 sync · **App Review Meta** (DD-33)
@@ -19,6 +19,18 @@
 Cho host **tạo/quản lý session cơ bản** và player **discover/join/leave kèo** trên cùng Messenger surface. Plexco central Page luôn dùng được; Page riêng per-club là tuỳ chọn nhưng có capability parity. Cover: role-aware menu, fail-closed context/action routing, durable create-session wizard, quick-reply/postback, cửa sổ 24h và đồng bộ canonical lên web.
 
 **Ràng buộc kênh (CO-3):** Messenger standard messaging trong **cửa sổ 24h**; gửi ngoài cửa sổ chỉ qua cơ chế Meta đủ điều kiện/được phê duyệt → MVP dùng mô hình **"join + xác nhận"**, **nhắc best-effort trong 24h**, fallback **web + Zalo**. **Không inline button** kiểu Telegram → dùng **quick-reply / persistent menu**.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Messenger persistent menu | Central Page / tenant Page | Host/Player | Role-aware menu: tạo session, xem kèo, join, nợ... |
+| User DM → bot | Direct message window | Player | Inbound message trigger bot response |
+| Central Page → Discover | `m.me/plexco` | Player | Global discovery, eligible-role picker |
+| Tenant Page → local | `m.me/<page_id>` | Player | CLB-scoped default context |
+| Quick-reply session card | Inline bot response | Player | Session detail → final confirm gate |
+| Web handoff (link Account) | `/link/:handoff_id` | Player | Single-use binding callback |
+| Webhook receiver | Meta webhook → bot adapter | System | Messenger event ingestion |
 
 ### Bất biến
 
@@ -229,6 +241,7 @@ Bot: Bạn muốn xem kèo môn nào?
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v0.10 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/domain model. |
 | 2026-07-28 | v0.9 | Mirror DD-32 Option D: quick-reply mở detail rồi shared final gate; qualified Account link gets pay-later, unlinked paid path gets verified-payment hold, free/full/approval keep no-premature-pay semantics. Adapter remains thin; no runtime claim. |
 | 2026-07-27 | v0.8 | Current-state mirror: job infrastructure không đồng nghĩa Messenger runtime; adapter/handler/projector và App Review/E2E vẫn pending. |
 | 2026-07-19 | v0.7a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |

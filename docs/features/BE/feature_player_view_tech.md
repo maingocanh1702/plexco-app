@@ -1,7 +1,7 @@
 # Feature: Player View (Person-self) — Backend Tech Spec
 
 > **Canonical phase:** P4.6  
-> **Version:** 2.9 · 2026-08-07
+> **Version:** 2.10 · 2026-08-10
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_player_view.md`  
@@ -29,6 +29,18 @@ Authenticated session / Magic link → Person resolver
 ```
 
 Privileged cross-tenant read path — NOT normal tenant-admin access. Person authority comes only from verified session/magic link.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `GET /api/me/charges` | Player (web) | Person-self payment status per club |
+| `GET /api/me/payment-summary` | Player (web/Home) | Cross-club `SelfPaymentSummary` (unknown-dominates) |
+| `GET /api/me/profile` | Player (web) | Own profile + clubs read (slice 18) |
+| `GET /api/me/sessions` | Player (web) | Own sessions + waitlist over players/memberships (slice 19) |
+| `/pay` chat command adapter | Player (chat) | Requester-only `getSelfPaymentStatus` — no ledger write |
+| Magic link resolver | Player (Zalo/Messenger) | Verify hash → person session → DTO allowlist |
+| SSE `person:<id>` topic | System | Realtime push for person-self changes |
 
 ---
 
@@ -390,6 +402,7 @@ Bot conversation (Zalo/Messenger) → Verify conversation → Issue magic link
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.10 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/person-self model. |
 | 2026-08-07 | v2.9 | **DD-96 Part A:** thêm canonical cross-club `SelfPaymentSummary` + `getSelfPaymentSummary` vào §4 — đóng gap `feature_home_tech.md:166` (`SelfPaymentStatus` là per-club, Home bị cấm tự cộng). Pin **unknown-dominates** (một CLB `unknown` ⇒ cả summary `unknown`, cấm partial sum vì nó hiện số thấp hơn nợ thật), `clubCount` = số CLB có outstanding > 0, không `payAction` ở tầng aggregate. Thêm unit #29–34. Additive read-only: không bảng/migration/route mới, surface chốt ở build slice. Host receivable ("Chưa thu") **không** vào file này — DD-48 + DTO allowlist §4 `other charges ❌ NEVER`; xem DD-96 Part B. Không authorize runtime. |
 | 2026-07-28 | v2.8 | Reconcile immutable authority `90d292d` and primary plan v1.8 `PLAN_READY`; retain per-mechanism `CODE_READY`, beta OFF and no-runtime boundaries. |
 | 2026-07-28 | v2.7 | Mirror exact read owners 17–19 và thin chat adapters 24–26; pin slice 19 authorable từ merged baseline nhưng `/sessions|/waitlist` beta giữ OFF tới ba strict current Session packets + production-shaped data E2E. Add unit #27–28/integration #8; pair remains Not started/no runtime authorization. |

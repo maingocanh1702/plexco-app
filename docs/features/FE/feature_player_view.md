@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.6  
 > **Track:** 👤 Player View  
-> **Version:** 2.9 · 2026-08-09
+> **Version:** 2.10 · 2026-08-10
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3.5 identity · P3 ledger · P4 web auth/magic link · P4 sync realtime  
@@ -19,6 +19,19 @@
 ## 1. Mô tả
 
 Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcoming sessions, charges/payment status và join requests **across tenants** trên web và bot. Đây là privileged cross-tenant read path — KHÔNG phải tenant-admin access.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Web → `/me` dashboard | `/me` (authenticated) | Player | Tổng hợp clubs + sessions + charges |
+| Home tab → "Đã tham gia" | Home → My sessions section | Player | Upcoming sessions card |
+| Home tab → "Còn nợ" chip | Home → Outstanding debt summary | Player | `getSelfPaymentSummary` aggregate |
+| Bot → "Kèo của tôi" / "Nợ của tôi" | Messenger/Zalo persistent menu | Player | Person-self summary trong bot |
+| Bot → `/pay` command | Club chat / private DM | Player | Requester-only payment status |
+| Bot → `/sessions` / `/waitlist` | Club chat / private Club Bot | Player | Beta: own sessions/waitlist status |
+| Notification detail | Push/in-app noti → deep link | Player | Authenticated charge detail |
+| Magic link (Zalo) | Web auth callback | Player | Zalo → web person-self view |
 
 ### Bất biến
 
@@ -391,6 +404,7 @@ Player gõ /pay trong human DM
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.10 | **A-grade upgrade:** thêm Entry points table (8 entries); bump version. Không đổi contract/domain model. |
 | 2026-08-07 | v2.8 | **DD-96 Part A:** thêm cross-club `getSelfPaymentSummary` làm owner duy nhất của tổng nợ xuyên CLB (đóng gap `feature_home_tech.md:166` — `SelfPaymentStatus` là per-club, Home bị cấm tự cộng). Pin unknown-dominates, `clubCount` = số CLB có outstanding > 0, không `payAction` ở tầng aggregate. Thêm PVW-UC-15, edge #18–19, 1 acceptance. Ghi rõ host receivable ("Chưa thu") **không** thuộc feature này (DD-48; xem DD-96 Part B). Không authorize runtime. |
 | 2026-07-31 | v2.7 | Keep paid/void/left-club ledger history outside current `SelfPaymentStatus`; remove historical acceptance claims until a separate Reviewed DTO/route owns them. |
 | 2026-07-31 | v2.6 | Reconcile Product wording with canonical per-club `SelfPaymentStatus`: current projection contains only open/partial outstanding items with allocation breakdown; optional `payAction` belongs to that club status, never a global/item action. Paid/void history requires a separate DTO. No runtime authorization. |

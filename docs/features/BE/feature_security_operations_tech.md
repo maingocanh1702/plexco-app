@@ -1,7 +1,7 @@
 # Feature: Security, Reliability & Operations — Engineering/Ops Spec
 
 > **Canonical phase:** Cross-cutting / P6
-> **Version:** 2.6 · 2026-07-28
+> **Version:** 2.7 · 2026-08-10
 > **Status:** Reviewed
 > **Implementation:** In progress — RLS/HR1, tenant-integrity and `0022`/`0023` narrow audited job controls đã thực thi; remaining production/ops gates chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_security_operations.md`
@@ -28,6 +28,18 @@ Environment: dev/staging/prod (separated)
 ```
 
 Security built throughout all phases. P6 is the **release gate** — final verification, not first implementation.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| IAM role provisioning | Deploy / migration | Least-privilege DB/cloud roles per environment |
+| Secret service (KMS envelope) | All services | Encrypt/decrypt/rotate secrets → kill switch |
+| PII redaction middleware | API layer | Consent/encryption/retention/deletion enforcement |
+| Tenant/person-self invariant tests | CI pipeline | Automated RLS isolation verification |
+| Structured logging pipeline | All services | Redacted logs → metrics → traces → SLO alerts |
+| Backup/PITR | Managed infra | Restore drills → reconciliation |
+| Job lease/audit (`0022`/`0023`) | Worker runtime | Narrow `job_definer` + token-bound ack + preflight |
 
 ---
 
@@ -288,6 +300,7 @@ Required runbooks: cross-tenant leak, public PII, wrong allocation, identity com
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.7 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/security model. |
 | 2026-07-28 | v2.6 | Re-pin as-built job-control boundary to `main@784bc8d`; docs-only Chat authority commits do not change scheduler OFF/placeholder or remaining production/ops gates. |
 | 2026-07-27 | v2.5 | Reconcile `0022`/`0023` + worker preflight as implemented least-privilege/audit controls; explicitly retain scheduler OFF/placeholder and missing delivery/ops evidence. |
 | 2026-07-24 | v2.4a | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): §2 cross-cutting DB controls note + numbering guidance hard-pinned `migrations 0000–0018` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Pre-existing dated changelog giữ verbatim. Không đổi contract. |

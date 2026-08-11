@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P3 (nhắc/xác nhận baseline) · P4 (Inbox + Web Push mechanisms 36–47) · P4.5–P4.7 (channel delivery) · P4+ (global plane · announcements) — *cross-cutting cụm 🔔*
 > **Track:** 🔔 Notifications
-> **Version:** 3.11 · 2026-07-28
+> **Version:** 3.12 · 2026-08-10
 > **Status:** ✅ **Reviewed contract** — §A giữ nguyên; §B/C/D theo DD-70/71/72 owner-final; §E offline Chat digest theo DD-94 owner-final. DD-88 chỉ còn proposal cho grouping/`message_request`/scoped-bulk rộng hơn. Target runtime/migrations vẫn pending; `Reviewed` không đồng nghĩa `CODE_READY` hay `Implemented`.
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > ⚠️ **Historical:** doc hạ Reviewed → Draft ngày 2026-07-18 do gộp tài liệu, KHÔNG phải mở lại luật tiền §A. DD-70/71/72 được owner chốt 2026-07-21 nên v3.5 promote lại Reviewed; runtime/migration vẫn chưa tồn tại. NTF-OQ-14..16 và các OQ chi tiết theo slice vẫn là build/enablement gates. Nhận định v3.8 rằng digest còn phải trì hoãn đã được DD-94 thay thế; session/activity, `message_request` và scoped/bulk vẫn thuộc proposal DD-88.
@@ -84,6 +84,17 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 - Mark-read làm mọi pending cursor không còn unread trở thành obsolete. Ngay trước provider write, worker phải chứng minh lại current channel/DM read authority, membership, pair block+safety, preference, active device + current `trust_epoch`, và cursor vẫn unread; false/unknown đều skip với reason code, không gửi.
 - Push chỉ dùng copy generic + opaque deep-link. Delay/coalesce duration là named enablement config; thiếu config hoặc chưa pass boundary tests thì Chat digest route **OFF**, trong khi realtime/history/unread/badge vẫn hoạt động độc lập.
 - DD-88 không còn sở hữu hay chặn exact digest này. DD-88 chỉ giữ proposal cho taxonomy/grouping rộng hơn, `message_request`, session/activity và scoped/bulk Inbox.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Header bell icon | `🔔` badge → `/notifications` | Any (auth) | Notification inbox (primary) |
+| Home tab → bell badge | Top-right header | Player/Host | Badge count → tap opens inbox |
+| Push notification tap | OS notification → deep link | Player | Navigate to relevant item |
+| Settings → Notifications | `/settings/notifications` | Player/Host | Notification preferences |
+| Bot DM | Zalo/Messenger push message | Player | Inline notification with CTA |
+| Chat → unread badge | Chat tab badge overflow | Player | Indirect — Chat digest triggers notification |
 
 ### Bất biến
 
@@ -256,55 +267,137 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 
 ### Web — Notification inbox
 
-**Purpose:** Player/host xem tất cả notifications grouped by recency.
+**Purpose:** Player/host xem tất cả notifications grouped theo category, filter unread, mark all read.
 
 **Layout (mobile):**
 
 ```
 ┌──────────────────────────────────────┐
-│ ← Home                 🔔 Thông báo │
+│ ← Home          🔔 Thông báo  [✓✓] │  [✓✓] = Mark all read
 ├──────────────────────────────────────┤
-│ [Tất cả] [Chưa đọc] [Kèo] [Thanh…] │  filter chips
+│ Group tabs (scroll-x):                  │
+│ [Tất cả (12)] [Hoạt động (5)] [CLB (3)]│
+│ [Chat (2)] [Nhắc nhở (1)] [Hệ thống (1)]│
+├──────────────────────────────────────┤
+│ [○] Chỉ chưa đọc              [✓✓ tab]  │  filter + mark group read
 ├──────────────────────────────────────┤
 │                                      │
-│ 🟦 Hôm nay                          │
+│ 🟦 Hôm nay                          │  date section
 │ ┌────────────────────────────────┐   │
-│ │ 🏸 Kèo T5 đã tạo thành công  │   │  notification card
-│ │ CLB Rồng Xanh · 2 phút trước │   │
-│ │                           🔵  │   │  unread dot
+│ │ 🏸 Kèo T5 đã tạo thành công  │   │  ← group: Hoạt động
+│ │ CLB Rồng Xanh · 2p trước   🔵  │   │  unread dot
 │ └────────────────────────────────┘   │
 │ ┌────────────────────────────────┐   │
-│ │ 💰 Minh Hoàng đã thanh toán   │   │
-│ │ 75,000₫ · CLB BT · 5 phút    │   │
+│ │ 💬 Anh T nhắn bạn trong CLB  │   │  ← group: Chat
+│ │ CLB BT · 5p trước           🔵  │   │
+│ └────────────────────────────────┘   │
+│ ┌────────────────────────────────┐   │
+│ │ 💰 Minh Hoàng đã thanh toán   │   │  ← group: Nhắc nhở
+│ │ 75,000₫ · CLB BT · 10p      │   │
 │ └────────────────────────────────┘   │
 │                                      │
 │ 🟦 Hôm qua                          │
 │ ┌────────────────────────────────┐   │
-│ │ ⚠️ Kèo T3 sắp bắt đầu (1h)  │   │
-│ │ CLB BT · hôm qua 18:00       │   │
+│ │ 👥 Nguyễn Văn B join CLB BT  │   │  ← group: CLB
+│ │ hôm qua 14:30                │   │
+│ └────────────────────────────────┘   │
+│ ┌────────────────────────────────┐   │
+│ │ 🔐 Đăng nhập mới từ iPhone  │   │  ← group: Hệ thống
+│ │ hôm qua 08:15                │   │
 │ └────────────────────────────────┘   │
 │                                      │
 └──────────────────────────────────────┘
 ```
 
-**Component: Notification card:**
+**Component: Group tabs**
+
+| Group | Icon | Types included | Badge |
+|-------|------|---------------|-------|
+| Tất cả | 🔔 | All types | Total unread count |
+| Hoạt động | 🏃 | `session_created`, `session_joined`, `session_cancelled`, `tournament_registered`, `waitlist_promoted` | Unread in group |
+| CLB | 🏢 | `member_joined`, `member_left`, `announcement`, `club_updated`, `role_changed` | Unread in group |
+| Chat | 💬 | `chat_message`, `chat_mention`, `chat_reply`, `chat_digest` (DD-94) | Unread in group |
+| Nhắc nhở | ⏰ | `payment_reminder`, `payment_settled`, `payment_correction`, `session_reminder` | Unread in group |
+| Hệ thống | 🔐 | `security_alert`, `identity_link`, `identity_merged`, `follow_request`, `app_update` | Unread in group |
+
+> Group derive từ `notification_intents.type` — không cần cột `group` trong DB. Mapping có thể update/mở rộng từ client config.
+
+**Component: Mark all read [✓✓]**
+
+| Scope | Button | Behavior |
+|-------|--------|----------|
+| Global | [✓✓] header | Mark ALL visible unread → read. Confirm dialog: "Đánh dấu tất cả đã đọc?" |
+| Per-group | [✓✓ tab] next to filter | Mark unread TRONG GROUP hiện tại → read. No confirm (lighter action) |
+
+> Mark-all sử dụng bounded `READ COMMITTED` transaction với per-Person inbox fence (xem Bất biến). Hidden/late items giữ unread.
+
+**Component: Filter unread toggle**
+
+| State | Behavior |
+|-------|----------|
+| OFF (default) | Show all notifications (read + unread) |
+| ON | Show only unread notifications. Badge: "(N) chưa đọc" |
+
+**Component: Notification card (updated):**
 
 | Field | Data source | Ghi chú |
 |-------|-------------|---------|
-| Icon | Notification type → icon map | 🏸/💰/⚠️/👥/🔔 |
+| Group icon | `type` → group mapping → icon | 🏃/🏢/💬/⏰/🔐 |
 | Title | `notification_intents.title` | Localized |
 | Subtitle | Club name + relative time | |
-| Unread dot | `notification_deliveries.read_at IS NULL` | 🔵 |
+| Unread dot | `notification_reads` NOT EXISTS | 🔵 |
 | Tap action | Deep link to relevant screen | |
+| Swipe left | Mark read / Mark unread | Toggle read state |
+| Swipe right | Delete (archive) | Soft-delete with undo toast (5s) |
+
+**Empty state per group:**
+
+```
+┌──────────────────────────────────────┐
+│ [Tất cả] [Hoạt động ✓] [CLB] ...  │
+├──────────────────────────────────────┤
+│                                      │
+│         🏃                           │
+│   Chưa có hoạt động nào              │
+│   Tham gia một buổi chơi để          │
+│   nhận thông báo đầu tiên!           │
+│                                      │
+│       [═══ Khám phá kèo ═══]        │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+| Group | Empty icon | Empty text | CTA |
+|-------|-----------|------------|-----|
+| Tất cả | 🔔 | "Chưa có thông báo nào" | "Khám phá kèo" |
+| Hoạt động | 🏃 | "Chưa có hoạt động nào" | "Khám phá kèo" |
+| CLB | 🏢 | "Chưa có tin tức CLB" | "Tìm CLB" |
+| Chat | 💬 | "Chưa có tin nhắn mới" | "Mở Chat" |
+| Nhắc nhở | ⏰ | "Không có nhắc nhở nào" | — |
+| Hệ thống | 🔐 | "Không có thông báo hệ thống" | — |
+
+**Filter unread empty state:**
+
+```
+┌──────────────────────────────────────┐
+│ [●] Chỉ chưa đọc                      │
+├──────────────────────────────────────┤
+│                                      │
+│         ✅                           │
+│   Bạn đã đọc hết thông báo!        │
+│   Tuyệt vời!                        │
+│                                      │
+└──────────────────────────────────────┘
+```
 
 **4 States:**
 
 | State | Nội dung |
 |-------|----------|
-| Loading | Skeleton (5 notification card skeletons) |
-| Ready | Grouped by date + filter chips |
-| Error | "Lỗi tải thông báo" + retry |
-| Empty | Icon 🔔 + "Chưa có thông báo nào" |
+| Loading | Skeleton: group tabs shimmer + 5 notification card skeletons |
+| Ready | Grouped by date + group tabs + filter toggle + mark-all |
+| Error | Error banner: "Lỗi tải thông báo" + retry |
+| Empty | Per-group empty state (icon + text + CTA) |
 
 ### Bot — Push notifications
 
@@ -322,6 +415,8 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 
 ### Notification settings
 
+**Purpose:** Player cấu hình notification preferences per group + per channel.
+
 **Layout:**
 
 ```
@@ -329,38 +424,77 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 │ ← Cài đặt      🔔 Thông báo        │
 ├──────────────────────────────────────┤
 │                                      │
-│ ─── Kèo ───                         │
-│ Nhắc trước kèo     [●○] ON          │
-│ Thời gian nhắc     [1 giờ ▼]        │
+│ Push Notifications  [●○] ON          │  master toggle
+│                                      │
+│ ─── 🏃 Hoạt động ───                │
 │ Kèo mới trong CLB  [●○] ON          │
+│ Kết quả đăng ký   [●○] ON          │
+│ Nhắc trước kèo    [●○] ON          │
+│   Thời gian nhắc  [1 giờ ▼]        │
 │                                      │
-│ ─── Thanh toán ───                   │
-│ Xác nhận TT        [●○] ON          │
-│ Nhắc nợ            [●○] ON          │
+│ ─── 🏢 CLB ───                       │
+│ Thành viên mới    [●○] ON          │
+│ Thông báo CLB     [●○] ON          │
+│ Thay đổi vai trò   [●○] ON          │
 │                                      │
-│ ─── CLB ───                         │
-│ Thành viên mới     [●○] ON          │
-│ Tin nhắn chat      [●○] ON          │
+│ ─── 💬 Chat ───                      │
+│ Tin nhắn mới      [●○] ON          │
+│ Mention/Reply     [●○] ON          │
+│ Club chat         [Mentions ▼]      │  all/mentions/off
+│                                      │
+│ ─── ⏰ Nhắc nhở ───                  │
+│ Nhắc nợ           [●○] ON  🔒     │  🔒 = non-opt-out
+│ Xác nhận TT       [●○] ON  🔒     │  schema-enforced
+│                                      │
+│ ─── 🔐 Hệ thống ───                  │
+│ Bảo mật          [●○] ON  🔒     │  🔒 = non-opt-out
+│ Liên kết TK       [●○] ON          │
+│ Cập nhật app     [●○] ON          │
+│                                      │
+│ ─── Im lặng ───                       │
+│ Chế độ im lặng    [●○] OFF         │
+│ Từ               [22:00  ]           │
+│ Đến               [07:00  ]           │
 │                                      │
 └──────────────────────────────────────┘
 ```
+
+**Permission matrix (notification preferences):**
+
+| Type | Opt-out allowed? | Reason |
+|------|-----------------|--------|
+| 🏃 Hoạt động | ✅ Yes | User preference |
+| 🏢 CLB | ✅ Yes | User preference |
+| 💬 Chat | ✅ Yes (per channel: all/mentions/off) | DD-94 |
+| ⏰ Nhắc nợ / Xác nhận TT | ❌ No (schema-enforced) | Money/financial integrity |
+| 🔐 Bảo mật | ❌ No (schema-enforced) | Security alerts mandatory |
+| 🔐 Liên kết TK / Cập nhật app | ✅ Yes | User preference |
 
 ### Data source mapping
 
 | Component | Data source | Ghi chú |
 |-----------|-------------|---------|
-| Inbox list | `notification_intents` + `notification_deliveries` | Tenant-scoped |
-| Unread count | `deliveries WHERE read_at IS NULL` | Badge on bell icon |
-| Settings | `notification_preferences` per person | Per-type toggles |
-| Bot push | Outbound via Zalo/Messenger API | Channel-specific format |
+| Inbox list | `notification_intents` + `person_notifications` | Tenant + global plane |
+| Group tabs | `notification_intents.type` → client group mapping | No DB column, derive client-side |
+| Unread count (total) | `WHERE NOT EXISTS notification_reads` | Badge on bell icon |
+| Unread count (per group) | Filter by type → group → count unread | Client-side grouping |
+| Mark all read | `notification_reads` bulk insert | Per-Person bounded TX |
+| Filter unread | Client-side filter OR server `?unread=true` | Prefer server for pagination |
+| Settings | `notification_preferences` per person per type | Per-type toggles + DD-94 per-channel |
+| Bot push | Outbound via Zalo/Messenger/Web Push API | Channel-specific format |
+| Quiet hours | `notification_preferences.quiet_*` | Tenant timezone |
 
 ### State coverage matrix
 
 | Screen | Loading | Ready | Error | Empty |
 |--------|---------|-------|-------|-------|
-| Notification inbox | ✅ Skeleton cards | ✅ Grouped + filters | ✅ "Lỗi tải" + retry | ✅ "Chưa có thông báo" |
-| Notification settings | — | ✅ Toggle per type | ✅ "Lỗi lưu" toast | ✅ Defaults ON |
+| Notification inbox (all) | ✅ Skeleton tabs + cards | ✅ Grouped + tabs + filter | ✅ Banner + retry | ✅ "Chưa có thông báo" |
+| Notification inbox (group) | ✅ Skeleton cards | ✅ Filtered by group | ✅ Banner + retry | ✅ Per-group empty (icon+text+CTA) |
+| Filter unread ON | ✅ Skeleton cards | ✅ Unread only list | ✅ Banner + retry | ✅ "Đã đọc hết!" |
+| Mark all read | ✅ Button spinner | ✅ Confirm dialog | ✅ Toast error | ⚪ N/A |
+| Notification settings | — | ✅ Toggles per group/type | ✅ Toast "Lỗi lưu" | ✅ Defaults ON |
 | Bot push | — | ✅ Message delivered | — | ⚪ N/A |
+
 ---
 
 ## 4. Domain Model
@@ -608,6 +742,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v3.12 | **Grouped Inbox + Mark All Read + Filter Unread (P4.5):** Rewrite §3 Screens. Thêm: entry points table (6 entries), group tabs (5 groups: Hoạt động/CLB/Chat/Nhắc nhở/Hệ thống — derived từ `type`, không DB column), mark-all-read (✓✓ global + per-group), filter unread toggle, swipe actions (mark read/unread + archive), per-group empty states (6 groups × unique icon+text+CTA), filter-unread empty state ("Đã đọc hết!"), notification settings mở rộng (per-group sections + master toggle + quiet hours + non-opt-out lock 🔒 cho money/security), permission matrix (opt-out rules per type), data source mapping mở rộng (+group tabs, +per-group count, +mark-all, +filter, +quiet hours), state coverage tăng từ 3 → 6 rows. Additive-only — không đổi existing Bất biến, Use Cases, Edge Cases, Domain Model, Analytics, AC, OQs. Groups extensible bằng cách thêm types vào client mapping. |
 | 2026-07-28 | v3.11 | Re-pin primary-surface plan v1.8 `PLAN_READY` tại `90d292d`; closure 12/12. Giữ notification/chat/payment runtime = 0, enablement gates và strict per-slice `CODE_READY`; không đổi delivery contract. |
 | 2026-07-28 | v3.10 | Replace stale S9/S20 ownership bằng exact mechanism graph 36→41, Chat unread 42 và payment lifecycle 43→44/45→46→47; pin HTTP A17–A19 và FE F11/F14/F15 sau F0. Payment enablement requires real producer + exactly-once/correction E2E + authenticated-detail parity. `NOT_PLAN_READY`/runtime = 0 giữ nguyên tới immutable re-pin. |
 | 2026-07-28 | v3.9 | Mirror DD-94 owner-final and close NTF-OQ-19 by split: Chat unread remains source truth; generic signal coalesces by person+channel+highest cursor; DM/direct mention/reply default ON; club `all\|mentions\|off` default `mentions`; mark-read/authorization/block/preference/device/trust epoch rechecked immediately before provider write; timing config absent/untested keeps route OFF. Zero Inbox item/per-message row/content snapshot; DD-88 remains only broader proposal. No runtime/migration authorization. |

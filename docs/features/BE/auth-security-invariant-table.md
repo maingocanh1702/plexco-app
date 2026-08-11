@@ -1,7 +1,7 @@
 # Feature: Web Auth & Onboarding — Security Invariant & Test Matrix (auth-onboarding v3)
 
 > **Canonical phase:** P4
-> **Version:** 1.3 · 2026-07-19
+> **Version:** 1.4 · 2026-08-10
 > **Status (cập nhật 2026-07-19):** **IMPLEMENTED (Telegram-era) — v3 đã MERGE vào `main@1eb6f60`** (`5b1193b Merge feat/auth-onboarding-v3`; kèm migrations `0012/0013`, session-cookies, KMS pepper client, `auth.test.ts`). Bảng này nay là **AUDIT checklist trên code đã merge** (verify SI-1..SI-8 còn giữ) + **spec carry-over cho việc thay provider Telegram Login → Google/email** (DD-37/DD-13, **chưa implement**). ~~"Proposal / build-new / DD-31 chờ v3 merge"~~ đã lỗi thời. DD-31 → xem `../../standards/decisions.md` (đổi từ "chờ merge" → "merged; residual = Google/email swap").
 > **Scope:** Executable invariant catalog for the auth-onboarding v3 security-design pass. Product/BE specs remain Reviewed and now mirror the 2026-07-18 cross-site transport correction; this table is the audit checklist, not a separate runtime claim.
 > **Source note:** The approved plan `docs/proposals/auth-security-design-pass-plan-2026-07-06.md` is now SYNCED into this branch (it was drafted in the main working tree; since copied + committed here) and this table has been reconciled against it — SI-1..SI-8 + the 4 gaps + the layer split match the plan. The catalog is cross-derived from that plan, the Reviewed product/BE specs, the live schema, and the `auth-onboarding-v2` evidence trail (`.autopilot/state/auth-onboarding-v2/codex/round-01..09.txt`, `HALT-MAX_ROUNDS.txt`, `AWAIT-FOUNDER-round09-nonconvergence.txt`, `regions.log`, `prescan.md`).
@@ -21,6 +21,19 @@
 - **Đã land trên `main@1eb6f60`** (verified git): merge `5b1193b feat/auth-onboarding-v3`; migrations **`0012_auth_functions.sql` + `0013_onboarding_steps_recency.sql`**; **KMS pepper client** (`37296ef`); `SECURITY DEFINER search_path` fix (`3ce516f`); session-cookies; bộ test auth. **Telegram-era** (routes/hash dùng `telegram`).
 - **Các nhãn pre-merge đã được đóng:** SI-1 "NEW table/route", SI-2 "helper chưa wire / no code reads KMS", SI-3–SI-8 "GAP / PORT / reimplement từ v2 @7407caa", §3 "zero hits/no code" chỉ mô tả snapshot lịch sử `feat/phase1-fable5`. Ma trận §2 bên dưới đã được reconcile về code/test live; phần Google/email được ghi riêng là carry-over chưa implement.
 - **Việc hiện tại (carry-over):** (1) **AUDIT** SI-1..SI-8 trên code đã merge (verify từng bất biến còn giữ + test hiện có trên `main` xanh); (2) **thay provider** Telegram Login → **Google/email** (DD-37/DD-13) rồi re-verify SI-1/SI-2 cho `google.sub`/email. Theo dõi như hạng mục con của DD-13, KHÔNG mở lại DD-31.
+
+### Entry points (audit surfaces)
+
+| SI | Entry / Surface | Code Location | Audit Target |
+|----|----------------|--------------|-------------|
+| SI-1 | Login CSRF state | `auth_login_state` table + OAuth transaction | Browser-bound state, Lax callback binding |
+| SI-2 | Platform user hash | `account_identities.platform_user_hash` | Keyed HMAC (KMS/dev secret) |
+| SI-3 | Tenant filter | `onboardingSnapshot()` | `withTenant` + explicit `tenant_id` predicate |
+| SI-4 | Session cookies | `Set-Cookie` headers | `secure`, `httpOnly`, `sameSite=strict`, rotation |
+| SI-5 | Onboarding idempotency | `/api/onboarding/*` endpoints | Idempotency keys, no duplicate tenant |
+| SI-6 | Secret write-only | Bank/bot credential storage | KMS encrypted, masked after save |
+| SI-7 | Privilege escalation | Role assignment flow | Owner confirmation + audit trail |
+| SI-8 | Step ordering | `onboarding_steps.seq DESC` | Authoritative ordering (not `created_at`) |
 
 ---
 

@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P2
 > **Track:** 🔐 Routing & AuthZ
-> **Version:** 2.7 · 2026-07-28
+> **Version:** 2.8 · 2026-08-10
 > **Status:** Reviewed · reconciled to TDD v3.1 / decisions DD-56/DD-86
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P0–P1 foundation stable
@@ -15,6 +15,19 @@
 ## 1. Mô tả
 
 Route mọi Zalo/Messenger/admin interaction tới **đúng tenant/resource** rồi authorize action độc lập. P2 cover Zalo bot-token per-club, Messenger hybrid endpoint + server-side context/action resolver, admin link, host/player DM context và TenantAdmin roles.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Zalo webhook | `POST /api/webhooks/zalo/:token` | System | Bot-token → endpoint → tenant resolve |
+| Messenger webhook | `POST /api/webhooks/messenger` | System | Page ID → endpoint → context + action resolver |
+| Admin link (one-time) | `/admin/link/:code` | Owner | High-entropy code → TenantAdmin binding |
+| Deep link (club slug) | `/clubs/:slug` | Player | Sticky context only — no grant |
+| DM context picker | Bot DM window | Host/Player | Ambiguous multi-club → picker |
+| Capability registry | Code API (internal) | System | action→capability resolve + grant check |
+| Grant management | `/clubs/:id/settings/team/:memberId/grants` | Owner | Explicit grant/revoke with audit |
+| Recovery runbook | Support tool | PlatformAdmin | Owner recovery when provider account lost |
 
 ### Bất biến
 
@@ -201,6 +214,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.8 | **A-grade upgrade:** thêm Entry points table (8 entries); bump version. Không đổi contract/capability model. |
 | 2026-07-28 | v2.7 | Mirror DD-86 final: add exact Chat capability keys for channel lifecycle, restricted post, soft moderation and timed mute; pin `admin|co_admin` to one least-privilege preset, cross-feature `tenant-capability-authority-core`, consume-time re-check, fail-closed unknown key and explicit human-DM denial. Reviewed/not implemented unchanged. |
 | 2026-07-19 | v2.6a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-17 | v2.6 | **decisions v1.45:** generalized provider-endpoint identity/reachability cho Messenger + Zalo; endpoint/default context tách khỏi target-tenant eligibility. |

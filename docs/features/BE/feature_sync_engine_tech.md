@@ -1,7 +1,7 @@
 # Feature: Sync Engine & Re-projection — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.7 · 2026-07-28
+> **Version:** 2.8 · 2026-08-10
 > **Status:** Reviewed (v2.4: live-schema rollout truth + endpoint-exact channel delivery)
 > **Implementation:** Infrastructure in progress — `0022`/`0023` + fail-closed preflight/dispatcher/flagged scheduler merged; schedule OFF, dispatcher placeholder, no producer/real projector/replay/sub-minute drain · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_sync_engine.md`
@@ -37,6 +37,19 @@ Worker (FOR UPDATE SKIP LOCKED) → Claim events by aggregate order
 - Crash after provider success handled via provider idempotency or convergent edit/upsert.
 - Worker partitions by aggregate ordering key (not tenant-wide).
 - Messenger và Zalo delivery đều resolve exact endpoint-bound `channel_identity_id` (Page hoặc bot/OA), authorize target tenant bằng check riêng, rồi chọn đúng một route. Logical notification id dedups mọi candidate; không broadcast.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| Outbox append (same TX as domain mutation) | All domain services | Monotonic event → `outbox_events` |
+| Worker claim (`FOR UPDATE SKIP LOCKED`) | System (pg-boss) | Claim events by aggregate order |
+| Projector lease + delivery | Worker | Create `projector_deliveries` → reload canonical → external call |
+| `LISTEN/NOTIFY` trigger | PostgreSQL | Sub-minute drain signal (target, not yet built) |
+| SSE `web_realtime` topic | Web surface | Realtime push for subscribed aggregates |
+| Zalo DM projector | Zalo adapter | DM delivery via bot/OA endpoint |
+| Messenger DM projector | Messenger adapter | DM delivery within 24h window via Page endpoint |
+| DLQ replay (controlled) | Ops/System | Manual or scheduled retry of failed deliveries |
 
 ---
 
@@ -313,6 +326,7 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.8 | **A-grade upgrade:** thêm Entry points table (8 entries); bump version. Không đổi contract/sync model. |
 | 2026-07-28 | v2.7 | Re-pin as-built overlay to `main@784bc8d`; docs-only Chat authority commits do not add Sync producers/projectors/E2E, and schedule remains OFF/placeholder. |
 | 2026-07-27 | v2.6 | Reconcile `0022`/`0023` + bot preflight/dispatcher/flagged scheduler as implemented infrastructure. Pin schedule OFF/placeholder boundary and missing producer, real projector, replay, sub-minute drain; update rollout order without claiming Sync E2E. |
 | 2026-07-24 | v2.5b | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): Live-schema boundary note hard-pinned `tail = 0018, migrations 0000–0018` + numbering guidance `(0018)` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Pre-existing dated changelog giữ verbatim. Không đổi contract. |

@@ -1,7 +1,7 @@
 # Channel-first Booking Funnel — Backend Technical Spec
 
 > **Canonical phase:** P4.3 / P4.7 + Messenger P2.5
-> **Version:** 1.0 · 2026-07-28
+> **Version:** 1.1 · 2026-08-10
 > **Status:** Reviewed contract · Implementation pending
 > **Implementation:** Not started — live schema has no channel booking intent/payment hold/finalizer
 > **Product spec:** `../FE/feature_channel_booking_funnel.md`
@@ -30,7 +30,19 @@ Messenger/Zalo adapter
 
 Adapters must not calculate fee, capacity, linked state, payment result or waitlist order. They pass opaque action IDs to shared services and render the returned tagged outcome.
 
-### 1.2 Canonical truths
+### 1.2 Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `channelSessionSummary()` | Messenger/Zalo adapter | Read-only session listing for player |
+| `startChannelBookingIntent()` | Adapter (final CTA) | Create durable booking intent |
+| `decideChannelBookingPath()` | Internal (intent service) | Pure shared core: free/full/approval/paid path |
+| `finalizeChannelBookingIntent()` | Account-link callback / bank event | Single atomic writer — settle intent |
+| `POST /api/webhooks/:provider` | Bank provider | Verified payment event → finalizer |
+| Hold expiry job (pg-boss) | System cron | Expire unpaid 15-min holds |
+| Manual review queue | Admin dashboard | Inspect late/over/under payments |
+
+### 1.3 Canonical truths
 
 | Concern | Single source of truth |
 |---|---|
@@ -540,4 +552,5 @@ Metrics: funnel conversion, hold creation/expiry, settlement latency, over/under
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v1.1 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/pipeline model. |
 | 2026-07-28 | v1.0 | Tạo BE companion cho DD-32 Option D: shared decision core, qualified Account link, durable intent/15-minute hold, occupancy helper, atomic finalizer, approval/waitlist/late-payment behavior, API/security/test/rollout contract. No runtime. |

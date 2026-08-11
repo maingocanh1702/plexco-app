@@ -1,7 +1,7 @@
 # Feature: Notifications — Reminders · Inbox · Announcements · Web Push — Backend Tech Spec
 
 > **Canonical phase:** P3 / P4 (Inbox + Web Push mechanisms 36–47) / P4.5–P4.7 (channel delivery) / P4+ (global plane · announcements)
-> **Version:** 3.11 · 2026-07-28
+> **Version:** 3.12 · 2026-08-10
 > **Status:** ✅ **Reviewed contract** — §A giữ nguyên; §B/C/D theo DD-70/71/72 owner-final; §E offline Chat digest theo DD-94 owner-final. DD-88 chỉ còn proposal cho grouping/`message_request`/scoped-bulk rộng hơn. DDL vẫn chưa có trong `packages/db/schema.ts`; từng implementation slice vẫn cần strict `CODE_READY`.
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > ⚠️ Historical: hạ Reviewed → Draft ngày 2026-07-18 do **gộp tài liệu**, không phải mở lại luật tiền §A. DD-70/71/72 được owner chốt 2026-07-21 nên v3.5 promote lại Reviewed. Nhận định v3.8 rằng digest còn phải trì hoãn đã được DD-94 thay thế; session/activity, `message_request` và scoped/bulk vẫn thuộc proposal DD-88. 🟡 trong body nay chỉ target chưa implement/OQ hoặc physical contract theo slice, không phải các decision còn mở.
@@ -96,6 +96,21 @@
 ```
 
 **Design decisions:**
+
+### Entry points
+
+| Entry | Caller / Pipeline | Mô tả |
+|-------|-------------------|-------|
+| Scheduler (narrow-claim due tenants) | §A System | Payment reminder eligibility → create intents |
+| Ledger outbox consumer | §A System | Settled/correction → confirm intents (idempotent) |
+| `GET /api/me/notifications` | §B Player (web) | Inbox read API — merge tenant + global plane |
+| `POST /api/me/notifications/mark-all-read` | §B Player | Mark all read (per-type optional) |
+| SSE `person:<id>` notification topic | §B System | Inbox signal projector → badge/realtime |
+| `POST /api/clubs/:id/announcements` | §C Host | Compose + preview (opaque proof) → fan-out |
+| Web Push subscription endpoint | §D Player (PWA) | Register/unregister push subscription |
+| Dispatcher route `web` worker | §D System | Send-claim → WebPushAdapter → VAPID |
+| Chat unread source adapter | §E System | Coalescing signal (person, channel, cursor) |
+| Preference API `PUT /api/me/notification-preferences` | §B Player | Per-type/channel preference authority |
 
 *§A — business invariants kế thừa từ v2.5:*
 - Logical delivery dedupe dùng intent/delivery UNIQUE keys; **physical send không được giả định safe chỉ từ UNIQUE/provider idempotency**. Mỗi intent có tối đa một active route xuyên platform; mỗi exact target có tối đa một live attempt claim với sequence server-owned. Lease hết sau `send_started_at` ⇒ `unknown` trừ khi provider idempotency đã được chứng minh.
@@ -2109,6 +2124,7 @@ RLS đã fence `tenant_id`; điều kiện `tenant_id` tường minh trong join 
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v3.12 | **A-grade upgrade:** thêm Entry points table (10 entries across §A–§E); bump version. Không đổi contract/pipeline model. |
 | 2026-07-28 | v3.11 | Re-pin primary plan v1.8 `PLAN_READY` tại `90d292d`, closure 12/12. Giữ runtime/migration = 0, Web Push/payment/digest enablement gates và strict per-slice `CODE_READY`; không đổi contract. |
 | 2026-07-28 | v3.10 | Replace stale S9/S20 rollout bằng exact mechanism owners 36→41, Chat unread 42 và payment 43→44/45→46→47; pin thin HTTP A17–A19 và FE F11/F14/F15 after F0. Payment enablement requires real producer + exactly-once/correction E2E + authenticated-detail parity; no runtime/migration authorization. |
 | 2026-07-28 | v3.9 | Mirror DD-94 owner-final: Chat unread is sole source; generic signal only, no Inbox/per-message item/content snapshot; exact DM/mention/reply and club preference defaults; monotonic cursor coalescing; mark-read + membership/DM safety/preference/device/trust proof immediately before provider write; sticky retry/unknown idempotency; timing config fail-closed OFF. Add §4.7a, unit #98–107 and integration #29–30. DD-88 remains only broader proposal; no runtime/migration authorization. |

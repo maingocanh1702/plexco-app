@@ -1,7 +1,7 @@
 # Feature: Tournament (Giải đấu) — Backend Tech Spec
 
 > **Canonical phase:** P4+ (sau session core)
-> **Version:** 0.2a · 2026-07-24
+> **Version:** 0.3 · 2026-08-10
 > **Status:** Draft *(chưa qua readiness gate — KHÔNG phải Reviewed contract)*
 > **Implementation:** Not started
 > **Product spec:** `../FE/feature_tournament.md`
@@ -13,6 +13,7 @@
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v0.3 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/tournament model. |
 | 2026-07-24 | v0.2a | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): §Migration&Rollback baseline note hard-pinned `baseline main = 0000–0018` → non-pinned "verify tail hiện hành tại `packages/db/migrations/` trước khi build, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Auth lane `0015`–`0018` citation giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v0.2 | **Reconcile migration-tail 0018:** current-state §2 migration baseline sửa `baseline main = 0000–0014; 0015 in-flight chưa merge` → `0000–0018` (0014 waitlist schema-only; lane auth DD-80 `0015`–`0018` đã merge nhưng ⛔ chưa enable). Numbering guidance giữ nguyên (số next-available monotonic sau synced tail, verify live `packages/db/migrations/` trước khi tạo, không hardcode). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-21 | v0.1 | Khởi tạo từ DD-82. Data model aggregate độc lập (`tournaments` + `tournament_registrations` tenant-scoped/RLS + `public_tournaments` read model whitelist). v1 không đụng tiền; bracket/standings/entry-fee = slice sau. Draft, chưa readiness gate — DDL là **contract cần build**, chưa migrate. |
@@ -35,6 +36,18 @@ Host/Player command → TournamentService → tenantRepo (choke-point, RLS)
 - **v1 không đụng tiền.** Đăng ký **không** tạo `charges`/`payment_allocations`. Entry-fee (mô hình tiền riêng) deferred — giữ đường tiền sạch, không mở blast radius sang ledger.
 - **Public qua read model, không canonical.** `public_tournaments` mirror pattern `public_sessions` (`id = tournaments.id`, `tenant_id` internal-only, field-whitelist, `projected_at`/`expires_at`), projector-owned. Guarded view (DD-12) đọc read model, không đọc canonical.
 - **Retire `session_type='tournament'`** — coordinate DD-41 (xem §2 Migration; live schema **hiện chưa có** cột `session_type`).
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `POST /api/tournaments` | Host (web) | Create tournament (tenant-scoped, RLS) |
+| `PATCH /api/tournaments/:id` | Host | Update tournament details |
+| `POST /api/tournaments/:id/publish` | Host | Publish → open registration |
+| `POST /api/tournaments/:id/register` | Player (web) | Register person (v1 no payment) |
+| `DELETE /api/tournaments/:id/register` | Player | Cancel own registration |
+| `GET /api/public/tournaments/:slug` | Anonymous | Guarded view via `public_tournaments` read model (DD-12/DD-83) |
+| Projector `public_tournaments` | Outbox consumer | Field-whitelist projection |
 
 > **Gate 3 chiều (trước khi Reviewed):** mọi claim (tên bảng/cột, CHECK, index, độ dài slug) phải khớp cả ba: (a) bảng/claim trong spec ↔ (b) snippet DDL trong spec ↔ (c) live code/schema trên `main`. Hiện chưa migrate ⇒ (c) = "chưa tồn tại"; khi build phải re-verify với `packages/db/schema.ts` + migrations.
 

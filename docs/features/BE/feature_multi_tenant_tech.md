@@ -1,7 +1,7 @@
 # Feature: Multi-tenant Foundation — Backend Tech Spec
 
 > **Canonical phase:** P0–P1
-> **Version:** 1.6 · 2026-07-19
+> **Version:** 1.7 · 2026-08-10
 > **Status:** Implementation contract reconciled to TDD v3.1 / decisions v1.45; P0–P1 live schema/migrations/tests remain the reality baseline, DD-15/DD-65..68 migration pending
 > **Implementation:** Implemented (foundation) — RLS + tenantRepo + migrations 0000–0013 trên `main` · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_multi_tenant.md`
@@ -28,6 +28,18 @@ packages/jobs       pg-boss producers/handlers, tenant-scoped execution wrapper
 ```
 
 PostgreSQL/domain services are canonical. Runtime requests never set tenant from untrusted body/content. Zalo/web can provide trusted tenant context; Messenger resolves endpoint first and target tenant separately through protected server state, followed by role/action authorization.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `tenantRepo.withTenant(tx, tenantId)` | All tenant-scoped services | SET LOCAL `app.tenant_id` → RLS enforcement |
+| `tenant_provision()` | Onboarding wizard / auto-provision | Create tenant + seed defaults |
+| `SET LOCAL app.person_id` | Auth middleware | Person context for person-self RLS |
+| Zalo adapter ingress | Zalo webhook | Trusted tenant from `zalo_bots` FK |
+| Messenger adapter ingress | Messenger webhook | Global endpoint resolve → separate target-tenant authorization |
+| `apps/web` auth middleware | Web request | Session → account → membership → trusted tenant |
+| Migration runner (`packages/db`) | Deploy | DDL + RLS policies + role grants |
 
 ### Database roles
 
@@ -357,6 +369,7 @@ Fail if any tenant table lacks `tenant_id`, ENABLE/FORCE RLS, policy USING/WITH 
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-08-10 | v1.7 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/RLS model. |
 | 2026-07-19 | v1.6 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `0002`/`0009` LIVE — reuse, không recreate; DROP baseline = ❌ NEVER), §5 Request/Response Examples (DD-60 pointer — doc không pin endpoint riêng) + Idempotency, §8 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v1.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Implemented (foundation)). Không đổi contract. |
 | 2026-07-17 | v1.5 | **Live-schema closure:** replace the abridged `sessions` block with the exact `0002`/Drizzle contract, including nullable `area`, venue address, defaults, optimistic version and audit timestamps. |

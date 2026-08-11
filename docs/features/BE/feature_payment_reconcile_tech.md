@@ -1,7 +1,7 @@
 # Feature: Payment Reconciliation — Backend Tech Spec
 
 > **Canonical phase:** P3 (auto-reconcile) · P2 (manual mark-paid)
-> **Version:** 1.13 · 2026-07-28
+> **Version:** 1.14 · 2026-08-10
 > **Status:** Reviewed contract; mirror DD-32/DD-91 `DECISION_FINAL` + regional availability boundary. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`; B1/runtime slices vẫn cần strict `CODE_READY`
 > **Implementation:** In progress — core matching/payments-logic + tenant-integrity migrations `0019`/`0020` đã có; wiring webhook→settle→notify, `remainingAmount`, `getSelfPaymentStatus` và chat `/pay` chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_payment_reconcile.md`
@@ -45,6 +45,19 @@ Provider adapters never mark a player paid directly. Matching is pure proposal l
 Current adapters/contracts are only `sepay|apipay`. Do not treat the provider enum or Host Pro entitlement as a global provider abstraction: a future market/provider needs its own decision, currency/minor-unit contract and availability evidence before enablement.
 
 An exact channel-booking payment reference is a separate dispatch class. The generic name/date/amount reconciler must not claim it; after durable ingest, a dedicated job calls the channel-booking finalizer with the bank transaction ID.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `POST /api/webhooks/sepay` | SePay provider | Authenticate + normalize → durable ingest |
+| `POST /api/webhooks/apipay` | ApiPay provider | Authenticate + normalize → durable ingest |
+| Reconcile worker (pg-boss) | System | Tenant-scoped matching → allocation plan → ledger apply |
+| Channel-booking finalizer job | System | Exact booking reference → settle intent |
+| `POST /api/sessions/:id/players/:id/mark-paid` | Host (web) | Manual mark-paid (`payment_mark_manual`, all tiers) |
+| `GET /api/me/payment-status` | Player | Canonical `getSelfPaymentStatus` → `remainingAmount` |
+| `/pay` slash command | Player (chat) | Requester-only adapter — no ledger write, no LLM |
+| Ledger outbox (payment.settled) | System | Outbox event → notification/projector consumers |
 
 ---
 
@@ -723,6 +736,7 @@ Metrics: durable ACK latency, reconcile lag, auto-match rate by policy version, 
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-08-10 | v1.14 | **A-grade upgrade:** thêm Entry points table (8 entries); bump version. Không đổi contract/ledger model. |
 | 2026-07-28 | v1.13 | Reconcile immutable authority `90d292d` and primary plan v1.8 `PLAN_READY`; retain B1/per-slice `CODE_READY`, regional availability and no-runtime boundaries. |
 | 2026-07-28 | v1.12 | Mirror DD-32 pay-now boundary: exact booking references bypass generic matcher; durable ingest releases bank locks before a dedicated job enters the funnel Session-first finalizer. Pin exact/over/under/late evidence, single player/charge/allocation and no screenshot/manual-attest bypass. No runtime claim. |
 | 2026-07-27 | v1.11 | Sync local DD-91 `DECISION_FINAL` while primary-surface plan remains `NOT_PLAN_READY`: add canonical `remainingAmount`/`getSelfPaymentStatus` read boundary, exact requester-only `/pay` no-LLM/no-persistence contract and parity/privacy tests; no new ledger writer. Separate `payment_reconcile_auto` entitlement from provider/bank/market/currency/consent availability; current authority only `sepay|apipay` Vietnam rail and auto runtime remains absent, manual global. Reconcile live tail `0024` plus landed tenant-integrity migrations `0019`/`0020`; remaining B1/exact-binding delta must reuse live constraints in a later monotonic migration. |

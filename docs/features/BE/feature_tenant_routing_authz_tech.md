@@ -1,7 +1,7 @@
 # Feature: Tenant Routing & Admin Authorization — Backend Tech Spec
 
 > **Canonical phase:** P2
-> **Version:** 2.7 · 2026-07-28
+> **Version:** 2.8 · 2026-08-10
 > **Status:** Reviewed · reconciled to TDD v3.1 / decisions DD-56/DD-86
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_tenant_routing_authz.md`
@@ -30,6 +30,18 @@ Channel event → endpointResolver (Zalo tenant | Messenger central/tenant | web
 - **Channel identity/reachability là provider-endpoint scoped** → 3-part key `(platform, provider_scope_lookup_hash, platform_user_lookup_hash)`; Messenger scope Page, Zalo scope bot/OA; explicit endpoint binding, không reuse window/token hoặc auto-merge xuyên endpoint.
 - **DD-56:** one canonical action→capability registry owns authorization. Live role labels `admin` and `co_admin` resolve to the same least-privilege co-admin preset, never owner rights. Unknown action/capability, missing grant, expired grant, or registry failure all deny. Adapters/API/UI may render registry output but may not infer privileges from role labels.
 - **DD-86 Chat registry:** exact keys are `chat.channel.manage`, `chat.channel.post_restricted`, `chat.message.moderate`, `chat.member.mute`. All four require `kind='club'` target derivation + current tenant/channel/membership re-check at consume; none grants host/admin/support access to human DM.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `endpointResolver` middleware | Channel event (Zalo/Messenger/web) | Map trusted endpoint → provider + optional default tenant |
+| `contextActionResolver` middleware | Post-endpoint | Resolve target tenant/resource from opaque action/protected ref |
+| `authzMiddleware` | Post-resolver | `authorize(action, actor, target)` → deny/allow |
+| `tenantCapabilityRegistry` (DD-56) | Authorization layer | Canonical action→capability mapping; unknown = deny |
+| Chat capability consumer (DD-86) | Chat service | 4 exact keys + `kind='club'` + consume-time re-check |
+| `memberships` role resolver | Authorization layer | `admin`\|`co_admin` → least-privilege preset; never owner rights |
+| Link code verifier | Identity / Player view | Hash-only lookup + TTL + single-use |
 
 ---
 
@@ -412,6 +424,7 @@ Before authoring the capability migration, design-probe legacy `tenant_admins` w
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.8 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/authz model. |
 | 2026-07-28 | v2.7 | Mirror DD-86 final into the canonical action registry: add four exact Chat capability keys, map `admin|co_admin` to one least-privilege preset, pin `tenant-capability-authority-core` as the shared runtime owner before Chat consumers, and retain club-only target/consume-time guards plus human-DM denial tests. Reviewed/not implemented unchanged. |
 | 2026-07-19 | v2.6 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `0002`/`0004`/`0009` LIVE — reuse, không recreate; DROP baseline = ❌ NEVER; delta DD-65..68 = migration mới), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
 | 2026-07-19 | v2.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |

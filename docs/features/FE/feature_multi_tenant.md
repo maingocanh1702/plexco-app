@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P0–P1
 > **Track:** 🏢 Multi-tenant Core + 3-tier
-> **Version:** 1.7a · 2026-07-19
+> **Version:** 1.8 · 2026-08-10
 > **Status:** Reviewed and reconciled to BRD v3.9b / PRD v2.8 / TDD v3.1 / decisions v1.45; P0–P1 live implementation remains the reality baseline, DD-15/DD-65..68 migration pending
 > **Implementation:** Implemented (foundation) — RLS + tenantRepo + migrations 0000–0013 trên `main` · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Tài liệu liên quan:** `../product/BRD.md` §6–8 · `../product/TDD.md` §3.2–3.4 · `../standards/decisions.md` DD-37/**DD-65..68** · `feature_identity.md` · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md`
@@ -18,6 +18,18 @@
 Xây nền bắt buộc cho mọi feature: monorepo, PostgreSQL + Drizzle, schema tenant-aware, multi-sport, RLS fail-closed, repository choke-point, protected global identity directory, public read-model skeleton và worker contract.
 
 **Giá trị:** nhiều CLB dùng chung platform nhưng tiền/roster không rò cross-tenant; player chỉ thấy dữ liệu của chính mình; marketplace chỉ đọc projection công khai được whitelist.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| `pnpm db:migrate` | CLI | Developer/CI | Chạy migration PostgreSQL |
+| `pnpm db:seed` | CLI | Developer | Seed data cho dev/test |
+| `pnpm test:isolation` | CI pipeline | CI | Chạy invariant isolation tests |
+| `tenantRepo(tenantId)` | Code API | Runtime service | Entry point duy nhất để truy cập tenant data |
+| `public_sessions` view | HTTP API | Anonymous | Public projection read-only |
+| Worker narrow function | Queue claim | System worker | Cross-tenant job processing |
+| Ops dashboard (future) | Internal tool | Ops team | RLS denials, worker claims, migration status |
 
 ### Trong phạm vi P0–P1
 
@@ -198,6 +210,26 @@ $ pnpm test:isolation
 | Ops metrics | ✅ Loading dashboard | ✅ RLS denials, worker claims, migration status | ✅ Alert on anomaly | ✅ "No data yet" |
 
 Không gửi schema/migration telemetry chứa row data hoặc PII.
+
+### Data source mapping
+
+| Component | Data source | Ghi chú |
+|-----------|-------------|---------|
+| Migration runner | `packages/db/migrations/` | Drizzle migration files |
+| Seed command | `packages/db/seeds/` | Idempotent upsert scripts |
+| Isolation tests | `packages/core/__tests__/isolation/` | RLS invariant tests |
+| Ops dashboard | `tenants` + RLS denial logs + worker claim logs | Future observability |
+| Public projection | `public_sessions` materialized view | Whitelist fields only |
+
+### Analytics Events
+
+| Event | Khi nào | Payload (no PII) |
+|---|---|---|
+| `tenant_created` | Tạo tenant mới | tenant_id, plan_key, kind |
+| `migration_applied` | Migration chạy thành công | version, duration_ms, checksum |
+| `rls_denial_detected` | Query bị RLS chặn | tenant_id, table, action |
+| `worker_job_claimed` | Worker claim job | queue, tenant_id, job_id |
+| `isolation_test_failed` | CI invariant test fail | test_name, policy_violated |
 ---
 
 ## 6. Acceptance Criteria
@@ -234,6 +266,7 @@ Không gửi schema/migration telemetry chứa row data hoặc PII.
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v1.8 | **A-grade upgrade:** thêm Entry points table (7 entries), Analytics Events table (5 events), Data source mapping; bump version. Không đổi contract/schema. |
 | 2026-07-19 | v1.7a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Implemented (foundation)). Không đổi contract. |
 | 2026-07-17 | v1.7 | **DD-67 v1.45 generalization:** identity/reachability của Messenger + Zalo scoped theo provider endpoint; reachability gắn `channel_identity_id`, target-tenant eligibility authorize riêng. Live P0–P1 RLS baseline không đổi; migration pending. |
 | 2026-07-17 | v1.6 | **DD-65..68 boundary propagation:** Messenger registry/identity/endpoint reachability chuyển target contract sang GLOBAL protected+narrow resolver; tenant Page chỉ default context, không cấp target authority. Live P0–P1 RLS baseline không đổi; migration pending. |

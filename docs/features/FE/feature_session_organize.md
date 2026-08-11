@@ -2,7 +2,7 @@
 
 > **Delivery:** Sau Session CRUD + Sync; **post-P4** (owner accept-in-principle 2026-07-18, DD-61..64). Exact canonical phase TBD.
 > **Track:** 🎾 In-session Organize
-> **Version:** 0.5a · 2026-07-19
+> **Version:** 0.6 · 2026-08-10
 > **Status:** ✅ Accept-in-principle (owner 2026-07-18, DD-61..64) — build **post-P4**, phased. Vẫn **chưa phải build contract**: schema/migration/service/engine chưa có trong code; không triển khai trước khi có prerequisite. DD-63 `balanced` degrade tới khi có level source per-sport.
 > **Implementation:** Not started — build post-P4 · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** SessionService/Session CRUD · DD-41 session gating · DD-42 attendance/reliability · DD-45 waitlist · DD-56 authz action registry · DD-08 taxonomy trình độ
@@ -24,6 +24,17 @@ Scoring có hai mode:
 - `live`: điểm theo set với `target_points > 0`, `best_of` là số lẻ dương và `win_by > 0`.
 
 **Ngoài phạm vi:** booking sân với nhà cung cấp, bracket/tournament nhiều vòng, ELO xuyên buổi, thanh toán theo trận, N-side scoring, privileged correction sau khi session kết thúc, attendance tự động từ lịch sử trận.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Session detail → Organize tab | `/clubs/:id/sessions/:sid/organize` | Host/Scorer | Board: courts + matches + assignments |
+| Bot → "/organize" command | Club chat / private thread | Host | Quick court/match/assign qua bot |
+| Bot → score command | Club chat / private thread | Scorer | Live point scoring qua bot |
+| SSE live board | Real-time subscription | Player (active) | Live score updates |
+| Web → Match detail | `/clubs/:id/sessions/:sid/matches/:mid` | Host/Player | Set scores + point ledger |
+| Pre-session setup | Session detail → "Chuẩn bị" | Host | Court declaration + match config |
 
 ### Bất biến
 
@@ -331,7 +342,6 @@ SSE topic là `session:<sessionId>:organize`. Gateway authorize khi connect/reco
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| 2026-07-19 | v0.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | ORG-OQ-1 | Aggregate court/match/participant hang off `sessions`/`players`, tenant-private | ✅ Accepted-in-principle DD-61; implementation inactive/post-P4 |
 | ORG-OQ-2 | Set + point/reversal ledger append-only, SSE theo session topic | ✅ Accepted-in-principle DD-62; implementation inactive/post-P4 |
 | ORG-OQ-3 | Four-mode assign engine; balanced fallback khi chưa có source rating đáng tin | ✅ Accepted-in-principle DD-63; 🔗 level-source dependency, implementation inactive |
@@ -341,6 +351,8 @@ SSE topic là `session:<sessionId>:organize`. Gateway authorize khi connect/reco
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v0.6 | **A-grade upgrade:** thêm Entry points table (6 entries); bump version. Không đổi contract/domain model. |
+| 2026-07-19 | v0.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-18 | v0.5 | Owner accepted DD-61..64 in principle; close ORG-OQ-1..4 at design level while preserving explicit post-P4/prerequisite/no-runtime boundary. |
 | 2026-07-17 | v0.4 | **DD-62/DD-64 closure:** bounded terminal winning-point undo/correction with latest/version/dependency/court guards; active SSE re-auth before event + heartbeat ≤30s. Vẫn là proposal, không claim runtime. |
 | 2026-07-17 | v0.3 | Khóa exact authz: `session.organize` không bao hàm `session.score`; mô hình substitution bằng participant stint + partial active uniqueness; đồng bộ version/API acceptance với backend contract. |

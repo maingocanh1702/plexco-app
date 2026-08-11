@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P2 (chat CRUD) · P4 (web parity)  
 > **Track:** 📋 Session CRUD  
-> **Version:** 2.18 · 2026-08-09
+> **Version:** 2.19 · 2026-08-10
 > **Status:** Reviewed  
 > **Implementation:** Not started — waitlist schema `0014` và validated public finite-capacity invariant `0024` đã merge; SessionService/routes/projector/auto-promote vẫn chưa build · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P0–P1 foundation stable · P2 tenant routing/authz  
@@ -21,6 +21,20 @@
 Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **session thể thao đa môn** — với time, venue, price, capacity, visibility và join policy nhất quán. P2 deliver qua **Zalo + Messenger admin commands**; trên Messenger host dùng được **central Plexco Page hoặc optional Page riêng của club** với chức năng cơ bản tương đương. P4 bổ sung web parity và event projections.
 
 **Ngoài phạm vi:** Đặt sân (court booking), chấm điểm theo môn (sport-specific scoring) — **được theo dõi riêng ở `feature_session_organize.md` + `../BE/feature_session_organize_tech.md` (DD-61..64 ✅ accept-in-principle, build post-P4)**; pointer only, không thêm scope organize vào body Reviewed này. **Dọn draft chưa publish** (draft-lifecycle gap có sẵn từ `create=draft`, v2.12c) nay đã author: host-discard (SES-UC-13) và system auto-expiry draft quá giờ (SES-UC-14) đều flip `draft`→`cancelled` qua `CancelSession` mở rộng (state machine §4, founder-ratified `docs-session-draft-lifecycle`); publish contract giữ nguyên chỉ author `draft`→`open`.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Home tab → hero card | `/` → tap hero | Player | Upcoming session hero → session detail (player view) |
+| Home tab → "Kèo của tôi" | `/me/sessions` | Player | Person-self sessions list → session detail |
+| Club tab → Sessions | `/clubs/:tenantId/sessions` | Host/Member | Club-scoped session list → session detail |
+| Marketplace → session card | `/discover` → tap card | Player | Public session → join flow |
+| Bot command | `/newsession` (Zalo/Messenger) | Host | Create session wizard |
+| Bot command | `/status` (Zalo/Messenger) | Host | View session detail |
+| Deep link | `/sessions/:id` | Any (auth-gated) | Direct navigate to session detail |
+| Notification tap | Push/Inbox → session | Player/Host | Navigate to relevant session |
+| Chat message link | In-app chat → session ref | Player | Shared session link → detail |
 
 ### Bất biến
 
@@ -371,16 +385,79 @@ Thanh toán: {paidCount}/{totalCount} · {paidAmount}/{totalAmount}₫
 | Error | Error banner: "Không tải được buổi chơi" + retry |
 | Empty | N/A (session always has data) |
 
+### Web P4 — Session detail (Player view)
+
+**Purpose:** Player xem session mình tham gia hoặc session public muốn join — read-only, không có host controls.
+
+**Layout (mobile 375px):**
+
+```
+┌──────────────────────────────────────┐
+│ ← Quay lại      🏸 Cầu lông T5     │
+├──────────────────────────────────────┤
+│ ┌────────────────────────────────┐   │
+│ │  📅 05/08/2026 · 18:00–20:00  │   │
+│ │  📍 Sân ABC, Q.Bình Thạnh     │   │  ← venue chỉ hiện nếu active
+│ │     (or: 📍 Quận Bình Thạnh)  │   │  ← area only nếu waitlisted
+│ │  💰 75,000₫/người              │   │
+│ │  👥 6/8 người                  │   │
+│ │  🟢 Đang mở                    │   │
+│ └────────────────────────────────┘   │
+│                                      │
+│ Trạng thái của bạn                   │
+│ ┌────────────────────────────────┐   │
+│ │  (active — đã join)            │   │
+│ │  ✅ Bạn đã tham gia            │   │
+│ │  💳 ⏳ Chưa thanh toán         │   │
+│ │  [Rời buổi chơi]              │   │  danger button
+│ │                                │   │
+│ │  (waitlisted — #3)             │   │
+│ │  🕐 Bạn đang chờ · Vị trí #3  │   │
+│ │  [Rời hàng chờ]               │   │
+│ │                                │   │
+│ │  (chưa join)                   │   │
+│ │  [═══ Tham gia ═══]           │   │  primary CTA
+│ └────────────────────────────────┘   │
+│                                      │
+│ Thông tin CLB                        │
+│ ┌────────────────────────────────┐   │
+│ │  🏸 CLB Cầu lông Bình Thạnh  │   │
+│ │  Tổ chức bởi: Anh T           │   │
+│ └────────────────────────────────┘   │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+**Component: Player status card**
+
+| Player outcome | Hiển thị | Venue | Actions |
+|---------------|----------|-------|---------|
+| `active` | ✅ Đã tham gia + payment status | ✅ Full venue | [Rời buổi chơi] |
+| `waitlisted` | 🕐 Đang chờ + position #N | ❌ Area only (E#6) | [Rời hàng chờ] |
+| Not joined | CTA "Tham gia" | ❌ Area only | [Tham gia] |
+| `left` | ↩️ Đã rời (dimmed) | ❌ | [Tham gia lại] (re-derive DD-49) |
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton: info card + status card |
+| Ready | Session info + player status + club info |
+| Error | Toast "Không tải được buổi chơi" + retry |
+| Empty | N/A (session always has data if navigated to) |
+
 ### Data source mapping
 
 | Component | Data source | Ghi chú |
 |-----------|-------------|---------|
 | Session info card | `sessions` table (direct) | Tenant-scoped via RLS |
-| Roster list | `players` table + join `memberships` | Active/waitlisted/left filter |
+| Roster list (host) | `players` table + join `memberships` | Active/waitlisted/left filter |
+| Player status card | `players` WHERE person_id = self | Person-self outcome |
 | Payment summary | `charges` table (aggregate) | Canonical contract from `feature_payment_reconcile` |
 | Status badge | `sessions.status` enum | State machine §4 |
 | Sport icon | `sport_taxonomy` | Active taxonomy lookup |
-| Publish/Discard controls | `sessions.status` | Conditional: draft-only actions |
+| Publish/Discard controls | `sessions.status` | Conditional: draft-only, host-only |
+| Club info | `tenants` via `sessions.tenant_id` | Display name + host |
 
 ### State coverage matrix
 
@@ -391,9 +468,11 @@ Thanh toán: {paidCount}/{totalCount} · {paidAmount}/{totalAmount}₫
 | Bot | Session cancel confirm | ⚪ N/A | ✅ Preview impact | ⚪ N/A | ⚪ N/A |
 | Bot | Publish draft | ⚪ N/A | ✅ Confirm | ✅ 3 error codes | ⚪ N/A |
 | Bot | Discard draft | ⚪ N/A | ✅ Confirm | ✅ 3 error codes | ⚪ N/A |
-| Web P4 | Session list | ✅ Skeleton rows | ✅ Table/card sort | ✅ Banner + retry | ✅ CTA "Tạo buổi mới" |
+| Web P4 | Session list (host) | ✅ Skeleton rows | ✅ Table/card sort | ✅ Banner + retry | ✅ CTA "Tạo buổi mới" |
 | Web P4 | Session create/edit | ✅ Skeleton form | ✅ Full form | ✅ Inline errors | ⚪ N/A (form) |
-| Web P4 | Session detail | ✅ Skeleton cards | ✅ Full info + roster | ✅ Banner + retry | ⚪ N/A |
+| Web P4 | Session detail (host) | ✅ Skeleton cards | ✅ Full info + roster | ✅ Banner + retry | ⚪ N/A |
+| Web P4 | Session detail (player) | ✅ Skeleton cards | ✅ Info + status card | ✅ Toast + retry | ⚪ N/A |
+| Web P4 | Join/Leave action | ✅ Button spinner | ✅ Confirm dialog | ✅ Error toast | ⚪ N/A |
 | Web P4 | Publish control | ✅ Button spinner | ✅ Confirm dialog | ✅ Inline error codes | ⚪ N/A |
 | Web P4 | Discard draft control | ✅ Button spinner | ✅ Confirm dialog | ✅ Inline error codes | ⚪ N/A |
 
@@ -423,6 +502,25 @@ stateDiagram-v2
     note right of closed: No new joins, read-only
     note right of cancelled: Read-only, refund flag (draft-origin: 0 roster/refund khi verified-empty — trường hợp thường; draft mang anomaly đi qua cùng review path với open, có thể có impact thật — edge #23)
 ```
+
+### Permission matrix
+
+| Action | Host/Admin | Member (same tenant) | Player (cross-club join) | Guest |
+|--------|-----------|---------------------|------------------------|-------|
+| Tạo session | ✅ `session.manage` | ❌ | ❌ | ❌ |
+| Sửa session | ✅ `session.manage` | ❌ | ❌ | ❌ |
+| Publish draft | ✅ `session.manage` | ❌ | ❌ | ❌ |
+| Discard draft | ✅ `session.manage` | ❌ | ❌ | ❌ |
+| Close session | ✅ `session.manage` | ❌ | ❌ | ❌ |
+| Cancel session | ✅ `session.manage` | ❌ | ❌ | ❌ |
+| Announce | ✅ `session.manage` | ❌ | ❌ | ❌ |
+| Xem roster + payment | ✅ (full roster + amounts) | ❌ | ❌ | ❌ |
+| Join session (public) | ✅ (self) | ✅ | ✅ (per DD-41/42/52) | ❌ (auth gate) |
+| Join session (private) | ✅ (self) | ✅ (invite token DD-44) | ✅ (invite token DD-44) | ❌ |
+| Leave session | ✅ (own) | ✅ (own) | ✅ (own) | ❌ |
+| Xem session detail (host) | ✅ | ❌ | ❌ | ❌ |
+| Xem session detail (player) | ✅ | ✅ (if joined/public) | ✅ (if joined/public) | Public page only |
+| Xem venue | ✅ | ✅ (if `active`) | ✅ (if `active`) | ❌ |
 
 ---
 
@@ -494,7 +592,8 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
-| 2026-07-28 | v2.17 | Mirror DD-32 Option D: admission occupancy = active+live payment holds; capacity reduction guard, paid-unlinked promotion hold/venue boundary and expiry requeue-tail. Contract only; SessionService/intent runtime absent. |
+| 2026-08-10 | v2.19 | **A-grade uplift:** Thêm entry points table (9 entries: Home hero, Kèo của tôi, Club Sessions, Marketplace, Bot commands, deep link, notification, chat link), player-facing session detail screen (mobile ASCII layout + player status card component + 4 outcome variants), permission matrix (14 actions × 4 roles với capability refs), 2 state coverage rows mới (player detail + join/leave action). Data source mapping mở rộng (+player status card, +club info). Additive-only — không đổi contract/UC/edge/AC. |
+| 2026-08-09 | v2.18 | Mirror DD-32 Option D: admission occupancy = active+live payment holds; capacity reduction guard, paid-unlinked promotion hold/venue boundary and expiry requeue-tail. Contract only; SessionService/intent runtime absent. |
 | 2026-07-28 | v2.16 | Mirror DD-45a owner-final: future promotion slice thêm partial unique position bằng migration monotonic mới; preflight duplicate HALT/manual, không auto-renumber; gaps hợp lệ; session-lock allocator + unique final fence. Schema `0014`/runtime hiện tại không đổi. |
 | 2026-07-27 | v2.15 | Mirror migration `0024`: validated public-session finite-capacity CHECK đã merge. Giữ `Implementation: Not started` cho SessionService/routes/projector/auto-promote; DB invariant không phải product runtime. |
 | 2026-07-24 | v2.14 | **Draft-lifecycle cleanup (founder-ratified, `docs-session-draft-lifecycle`):** đóng gap publish contract flagged ở v2.13 (codex round-03) — một `draft` quá `starts_at` mà chưa publish bị kẹt vĩnh viễn (không có draft-terminal transition). Author CẢ HAI cleanup path founder chốt, terminal status `cancelled` (reuse enum có sẵn): **SES-UC-13** (Host discard `draft` qua `CancelSession` mở rộng nhận nguồn `draft` ngoài `open` — draft không thể có roster/charge **theo thiết kế** vì join chỉ mở tại publish (SES-UC-12), nhưng đây là bất biến ứng dụng chứ không phải DB constraint nên hệ thống **verify dưới lock** thay vì giả định, fail-closed nếu phát hiện anomaly (edge #23); `expectedVersion` **bắt buộc** trên nhánh mutate, mọi nguồn — đóng race click-cũ-cancel-nhầm-session-vừa-published; không past-guard như publish) và **SES-UC-14** (System auto-expiry job quét draft quá giờ chưa publish, cùng transition, `cancel_reason=auto`, mirror discipline `FOR UPDATE SKIP LOCKED` của Daily Lifecycle Job — BE §4; cơ chế thực thi cross-tenant chính xác là build-slice detail, cùng mức trừu tượng Daily Lifecycle Job tự thân). Edge #20 (discard transition + idempotent cancel-already-cancelled), #21 (`expectedVersion` thiếu/không khớp trên draft vừa publish → `STALE_VERSION`, chặn silent-cancel một session đã `open` ngoài ý host), #22 (auto-expiry job concurrency xuyên tenant — không double-cancel, không rò rỉ cross-tenant), #23 (draft mang roster/charge bất thường → fail-closed, `CANCEL_REQUIRES_REVIEW` — cùng lỗi review đã có cho `open` paid roster, không phải lỗi riêng cho draft), #24 mới (huỷ session `open` đã quá giờ vẫn reject như cũ — no-past-guard CHỈ áp dụng nguồn `draft`, giữ đúng lời hứa "open không đổi hành vi", provable qua BE test #61 chứ không chỉ khẳng định). §3 Screens & States: discard draft surface trên bot (lệnh/callback "Huỷ nháp") + web (nút "Huỷ nháp"), cả hai đều thêm error state "Cần xác nhận huỷ" cho case anomaly. State machine §4: transition mới `draft --> cancelled` (note cancelled-state điều kiện theo verified-empty vs. anomaly-reviewed). `session_cancelled` analytics event thêm `cancel_reason` (manual/auto), mirror shape `close_reason` có sẵn của `session_closed`. 9 AC bullet mới. §1 Ngoài phạm vi: pointer cũ (forward-pointer tới slice này) nay resolve thành cross-ref SES-UC-13/14. Không schema change tới object hiện có; BE target contract thêm một partial index mới chưa applied (`idx_sessions_draft_starts_at`, cùng budget `≤1 monotonic migration`); không endpoint mới (reuse `POST /api/sessions/:id/cancel`); không error code mới (reuse `SESSION_NOT_OPEN`/`STALE_VERSION`/`CANCEL_REQUIRES_REVIEW`). Negative scope: không đụng publish (`draft`→`open`), billing suspend-gate hay `feature_billing_lifecycle`. **Iteration note:** contract này hội tụ qua nhiều vòng codex review (lịch sử đầy đủ ở `docs/autopilot-backlog.md` task block); các vòng đầu khám phá một cơ chế Postgres privilege/role-bootstrap đầy đủ cho auto-expiry job trước khi founder redirect toàn bộ lớp chi tiết đó theo đúng precedent Daily Lifecycle Job (chỉ business contract, infra wiring dời sang build slice); một vòng full-base confirmation sau đó phát hiện wording "không past-guard" của draft-discard đã vô tình nới rộng sang exempt cả nguồn `open` khỏi past-session restriction cũ — sửa lại đúng phạm vi (chỉ `draft`) và wire nhánh anomaly vào `CANCEL_REQUIRES_REVIEW` sẵn có thay vì để ngỏ. Bản ghi ở đây là scope cuối cùng, founder-confirmed. Dated changelog giữ verbatim; không resolve OQ nào khác. |

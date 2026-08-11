@@ -1,7 +1,7 @@
 # Feature: In-app Chat (club-wide + 1-1) — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.23 · 2026-07-28
+> **Version:** 0.25 · 2026-08-10
 > **Status:** ✅ Reviewed contract — DD-38/DD-55/DD-86/DD-91/DD-92/DD-93/DD-94/DD-95 ratified; pending migration
 > **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_inapp_chat.md` *(Reviewed)*
@@ -33,6 +33,23 @@ Chat **chỉ sống trong Plexco** (web + app surface). **KHÔNG bridge** ra gro
 - Trợ lý AI (DD-19 pha B, P7) **tái dùng** chính bộ bảng `chat_*` — phát ngôn với `author_type='assistant'` (DD-20), **không** tạo Person/ChannelIdentity mới. Chat cơ bản (DD-38) dựng hạ tầng sớm ở P4; trợ lý plug vào sau.
 - Idempotent theo `client_msg_id` (chống double khi retry/mạng chờn).
 - Anti-spam: rate-limit per (person, channel) + cap kích thước message.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `POST /api/chat/channels/:id/messages` | Player (web) | Send message (idempotent `client_msg_id`) |
+| `POST /api/chat/dm` | Player (web) | Create/reuse DM channel (`create_dm` SECURITY DEFINER) |
+| `POST /api/chat/channels/:id/messages/:id/react` | Player | Add/remove Unicode reaction |
+| `PATCH /api/chat/channels/:id/messages/:id` | Author | Own body edit (<15m, max 5) |
+| `DELETE /api/chat/channels/:id/messages/:id` | Author | Irreversible author tombstone |
+| `POST /api/chat/channels/:id/mark-read` | Player | `mark_read()` SECURITY DEFINER |
+| `POST /api/chat/channels/:id/messages/:id/forward` | Player | Forward to target channel |
+| `GET /api/chat/channels/:id/search` | Player | PostgreSQL `simple` text search |
+| `/pay` slash command | Player | Registry intercept → canonical `getSelfPaymentStatus` |
+| `POST /api/chat/channels/:id/moderate` | Admin (`chat.message.moderate`) | Soft-hide/restore + timed mute |
+| `POST /api/chat/media/upload` | Player | Private media upload with scan/moderation |
+| SSE `chat:channel:<id>` topic | System | Realtime fan-out via `LISTEN/NOTIFY` |
 - **DD-55 hard gate:** open DM remains disabled until block, report, per-sender/per-target throttles, and abuse audit all pass. Host/support/tenant-admin roles never gain DM read access.
 - **DD-55 media:** private object storage + short-lived signed access + content-derived MIME/type/size/quota checks + malware scan + moderation + deletion/orphan lifecycle. A message can attach only an actor-owned object in `ready` state.
 - **DD-92 conversation floor:** same-channel authorized reply; immutable structured mentions; one active Unicode reaction/person/message from exact `👍|❤️|😂|😮|😢|🙏`; own human body edit `<15m` and at most five revisions; author soft-delete anytime to an irreversible shared tombstone; current-visible authorized search is a required pre-beta slice.
@@ -140,6 +157,8 @@ CREATE TABLE chat_channels (
   creation_origin text,
   post_policy text,
   assistant_enabled boolean,
+  pinned_message_id uuid,                          -- 1 pinned post/channel; NULL = no pin; club only
+  pinned_at timestamptz,                           -- khi nào pin; NULL nếu chưa pin
   archived_at timestamptz,                          -- soft-close DM (thay cho xoá member)
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (
@@ -213,6 +232,12 @@ CREATE TABLE chat_messages (
       moderation_reason_code IS NULL
       OR moderation_reason_code IN ('spam','harassment','unsafe','off_topic','other')
     ),
+  -- Forward support: khi message là forwarded, lưu attribution gốc
+  forward_from_message_id uuid,                    -- original message id (nullable — NULL = không phải forward)
+  forward_from_channel_id uuid REFERENCES chat_channels(id), -- original channel
+  forward_from_author_name text,                   -- snapshot tên người gửi gốc (không join realtime)
+  forward_from_channel_name text,                  -- snapshot tên channel gốc
+  forward_from_created_at timestamptz,              -- timestamp gốc
   client_msg_id text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   search_document tsvector GENERATED ALWAYS AS (
@@ -1333,6 +1358,8 @@ Catalog IDs are stable identifiers, not execution order. Runtime work follows ex
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v0.25 | **A-grade upgrade:** thêm Entry points table (12 entries); bump version. Không đổi contract/schema. |
+| 2026-08-10 | v0.24 | **Message Forward:** Thêm forward fields vào `chat_messages`: `forward_from_message_id`, `forward_from_channel_id`, `forward_from_author_name`, `forward_from_channel_name`, `forward_from_created_at`. Forward lưu snapshot attribution gốc để hiển thị mà không cần JOIN realtime. Authz: chỉ forward tin mình có quyền đọc; reject tombstone/hidden. Chỉ tạo message mới trong target channel. |
 | 2026-07-28 | v0.23 | Re-pin primary plan v1.8 `PLAN_READY` tại immutable authority `90d292d`; thay gate “commit pack” đã đóng bằng exact next gate: author slice-1 artifacts + strict `CODE_READY` trước worktree. No runtime/migration change. |
 | 2026-07-28 | v0.22 | Reconcile primary-surface execution topology: bounded mechanism catalog `1–47`, separate thin API `A1–A21` and tracked-design FE `F0–F15`; serialize DB worktrees `1→2→3→4`, then lifecycle→safe current-channel target `5→9`→moderation dark `6`→shared send `7`→DM `8`. Add opaque target/ref privacy + consume-time re-authorization tests, split media/registry/KB/Web Push/payment chains, and distinguish Session read authoring from producer/E2E enablement. Retire active bundled media/slash/notification substrate ownership; Reviewed/not implemented unchanged. |
 | 2026-07-28 | v0.21 | Owner-final DD-56/DD-86/DD-92–DD-95: Assistant defaults ON for `all_members`/OFF for `admins_only`, mutable on both behind the full gate; same-channel reply + immutable mentions; exact Unicode reactions; own body edit `<15m`/max five + restricted revisions; irreversible author tombstone; required pre-beta current-visible PostgreSQL `simple` search; ASCII case-insensitive exact eight-command registry; unread-derived generic push/digest with exact preferences/coalescing/cancel/re-auth/sticky attempt and enablement-only timing; club-only exact moderation reasons + `1h|24h|7d` mutes. Semantic freeze adds the missing cross-feature capability-authority branch, makes DD-95 storage/writers a dark prerequisite of shared send, keeps reply/mention atomic in that shared writer, and canonicalizes every slice ID across plan/graph/BE. Requester-only responses use `private, no-store`; Reviewed/not implemented unchanged. |

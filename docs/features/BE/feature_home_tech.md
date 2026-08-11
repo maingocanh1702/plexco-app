@@ -1,7 +1,7 @@
 # Feature: Home — Personal Dashboard (PWA) — Backend Tech Spec
 
 > **Canonical phase:** S9 (cùng PWA shell) — DD-79 ✅  
-> **Version:** 0.5 · 2026-08-08
+> **Version:** 0.6 · 2026-08-10
 > **Status:** ✅ Reviewed contract theo DD-79; implementation pending S9. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY`
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_home.md`  
@@ -21,6 +21,16 @@ Authenticated session → Person resolver (player_view canonical)
 ```
 
 Không service/worker mới: reuse person-self query layer (player_view), public read model (marketplace), notification read model §A. Composition chạy trong 1 request handler; mỗi section độc lập — section lỗi trả `null` + reason, KHÔNG fail cả aggregate (trừ auth). Các service/route trên hiện chưa được build; đây là target contract, không phải runtime proof.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `GET /api/me/home` | Player (PWA) | Composition aggregate: payment + upcoming + streak + unread + suggested |
+| `GET /api/me/payment-summary` | Reuse (player_view) | Canonical `getSelfPaymentStatus` → `remainingAmount` |
+| `GET /api/me/upcoming-sessions` | Reuse (player_view) | Person-self upcoming sessions (host-first sort) |
+| `GET /api/public/sessions/suggested` | Reuse (marketplace) | Public read model, whitelist fields, limit 3 |
+| SSE `person:<id>` topic | System | Realtime push for payment/session/unread changes |
 
 > **Gate 3 chiều:** doc này không chứa claim kỹ thuật độc lập — mọi invariant tiền/PII/authz trỏ về spec canonical tương ứng; khi build, đối chiếu handler ↔ doc này ↔ contract nguồn (player_view/marketplace/§A).
 
@@ -284,6 +294,7 @@ Home composer **không** được triển khai `SUM(amount_due-amount_allocated)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v0.6 | **A-grade upgrade:** thêm Entry points table (5 entries); bump version. Không đổi composition-only boundary. |
 | 2026-08-08 | v0.5 | **Port Sporta UX decisions (BE):** (1) Streak count composition: read-only trên person-self session history, không bảng mới; đếm backward from today, streak=0 → FE ẩn chip. (2) Hero CTA gating: kèm `payAction` vào hero item nếu Player View expose nó (HOME-OQ-4); không tự tạo `payAction`. (3) DTO response thêm `streak` + `payAction` trong upcoming. (4) 6 unit tests mới (#22–27). Không đổi composition-only boundary DD-79; không migration/bảng mới. |
 | 2026-07-31 | v0.4 | Align Home with canonical dependent contracts: public suggested uses `slotsOpen`; hero CTA gated on `payAction` availability; person-self aggregate is `private, no-store`, with only public suggested cacheable. No runtime authorization. |
 | 2026-07-28 | v0.3 | Reconcile primary plan v1.8 `PLAN_READY` at `90d292d`; preserve composition-only, per-slice `CODE_READY` and no-runtime boundaries. |

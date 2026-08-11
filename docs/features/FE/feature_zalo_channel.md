@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.7  
 > **Track:** 💬 Zalo Channel  
-> **Version:** 2.6 · 2026-07-28
+> **Version:** 2.7 · 2026-08-10
 > **Status:** Reviewed · reconciled to DD-15/DD-32/DD-45/DD-49/DD-67
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 onboarding (Zalo token connect) · P3.5 identity/account-link · P2 session/join · payment evidence/finalizer · P3 notifications · P4 sync
@@ -13,6 +13,20 @@
 ## 1. Mô tả
 
 Support **bot-per-club** Zalo DM cho session listing, number-reply join, `/me`, `/pay`, `/leave`, reminders và settlement confirmations. Zalo group beta và inline buttons **chưa support** — DM-only, text-reply context.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Zalo DM → bot | Direct message window | Player | Inbound DM trigger bot response |
+| `/join` command | Zalo DM | Player | List open sessions → number choice |
+| Number reply | Zalo DM | Player | Session detail → final confirm gate |
+| `/me` command | Zalo DM | Player | Personal club summary |
+| `/pay` command | Zalo DM | Player | QR/payment instructions từ canonical debt |
+| `/leave` command | Zalo DM | Player | Leave with financial policy check |
+| Webhook receiver | `POST /api/webhooks/zalo/:token` | System | Zalo event ingestion → tenant resolve |
+| Magic link request | Zalo DM → web | Player | Short-lived link for player view |
+| Onboarding connect | `/onboarding/zalo` (web) | Host | BYO bot token + webhook setup |
 
 ### Bất biến
 
@@ -195,6 +209,7 @@ Gõ /pay để xem chi tiết
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.7 | **A-grade upgrade:** thêm Entry points table (9 entries); bump version. Không đổi contract/domain model. |
 | 2026-07-28 | v2.6 | Mirror DD-32 Option D: number selection now opens safe detail, final confirm delegates to shared link-or-pay funnel; pin qualified Account link, verified-payment hold, provider fail-closed and waitlist fairness. No runtime claim. |
 | 2026-07-19 | v2.5a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v2.5 | **DD-49 timing mirror:** active rejoin carry/append; full rejoin carry-history/defer-refunded. Zalo remains a thin renderer; authority v1.67. |

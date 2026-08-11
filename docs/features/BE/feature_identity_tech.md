@@ -1,7 +1,7 @@
 # Feature: Identity Directory & Merge — Backend Tech Spec
 
 > **Canonical phase:** P3.5
-> **Version:** 1.13 · 2026-07-28
+> **Version:** 1.14 · 2026-08-10
 > **Status:** Identity implementation contract; DD-32 Account-backed channel link predicate added. Endpoint-scoped schema/code pending identity/channel build slices
 > **Implementation:** Not started — bảng `link_codes`/`merge_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_identity.md`
@@ -30,6 +30,18 @@ channel adapter → resolve stable platform identity
 /link → link-code service → merge planner → merge transaction
 admin suggestion → tenant authz → merge planner → merge transaction
 ```
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| Channel adapter `resolveIdentity()` | Messenger/Zalo webhook | Resolve stable platform identity → Person |
+| `POST /api/link/:code` | Player (web) | Consume one-time link code → merge planner |
+| `isAccountLinked()` predicate | Channel booking funnel | ChannelIdentity→Person←Account verification |
+| Merge planner + transaction | Identity service (internal) | Evaluate → plan → atomic merge |
+| `POST /api/me/identities/claim` | Player (web) | Claim proof (email/link_code) for debt-bearing identity |
+| Recovery runbook | PlatformAdmin | Owner account recovery (DD-53, strong proof) |
+| Endpoint reachability writer | System | Update DM availability per bot/OA/Page endpoint |
 
 Global does not mean public. Runtime API role receives no broad SELECT on persons/channel identities/link codes/audit. Access occurs through identity service functions with authenticated actor, purpose and audit.
 
@@ -465,6 +477,7 @@ Metrics: person/channel creation, merge success/failure by method, claim rejecti
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-08-10 | v1.14 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/identity model. |
 | 2026-07-28 | v1.13 | Mirror DD-32 Option D: add narrow Account-backed channel-link resolver, binding-version recheck and explicit provider-subject separation for pay-later qualification. No runtime/migration. |
 | 2026-07-24 | v1.12a | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): Live-schema truth header + Migration mới numbering guidance hard-pinned `migrations 0000–0018` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Draft `0014_identity_channel_security.sql` numbering note giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v1.12 | **Reconcile migration-tail 0018:** current-state §2 migration facts sửa: (a) `tail = 0014_players_waitlist` → **tail = 0018** (`0018_oauth_completion_handoff.sql`; migrations 0000–0018 đã merge trên `main` — 0014 waitlist schema-only, lane auth DD-80 0015–0018 ⛔ chưa enable); (b) "Live-schema truth (main, migrations `0000`–`0014`)" range → `0000`–`0018` (nhất quán, tránh mâu thuẫn với tail). Numbering guidance giữ nguyên (expand migration monotonic next-available sau synced tail, verify live `packages/db/migrations/` trước khi tạo, không hardcode/sửa lịch sử; draft `0014_identity_channel_security.sql` đụng số → renumber theo tail thực tế). Pre-existing dated changelog giữ verbatim. Không đổi contract. |

@@ -1,7 +1,7 @@
 # Feature: Marketplace Discovery & Public Projection — Backend Tech Spec
 
 > **Canonical phase:** P4.3  
-> **Version:** 2.6 · 2026-07-28
+> **Version:** 2.7 · 2026-08-10
 > **Status:** Reviewed  
 > **Implementation:** DB invariant `0024` đã land; `public_sessions` baseline có sẵn, nhưng projector/API/cache invalidation chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_marketplace_discovery.md`  
@@ -18,6 +18,16 @@ Session Projector → public_sessions (dedicated projection table)
 ```
 
 `public_sessions` là **dedicated projection**, không phải view join tenant-private tables. Discovery DB role có SELECT-only trên approved public view/function.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `GET /api/public/sessions` | Anonymous / Player | Discovery API — whitelist DTO, short TTL cache |
+| `GET /api/public/sessions/:id` | Anonymous / Player | Single session detail (public fields only) |
+| Session projector (outbox consumer) | System | Publish/unpublish/update → `public_sessions` |
+| Cache invalidation (purge on unpublish) | System | Privacy-critical: immediate purge on visibility change |
+| `getSessionOccupancy()` | Internal (projector) | Active + live holds count for `slots_open` |
 
 ---
 
@@ -282,6 +292,7 @@ Periodic sweep: DELETE WHERE expires_at < now()
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.7 | **A-grade upgrade:** thêm Entry points table (5 entries); bump version. Không đổi contract/projection model. |
 | 2026-07-28 | v2.6 | Mirror DD-32: add target `confirmed_count`, change existing `slots_open` projector semantics to active + live holds through one `getSessionOccupancy()` read, keep hold count private, invalidate on player/hold events and keep final mutation independent of cached counts. Live migration/projector remain unbuilt. |
 | 2026-07-27 | v2.5 | Reconcile live `0024_public_visibility_capacity_check`: validated `sessions_public_capacity_chk` now rejects public + unlimited capacity at DB level while preserving nullable capacity for non-public rows. Reclassify projector skip/purge as defensive compatibility behavior for pre-`0024`/fixture/bypass input; add direct DB invariant coverage. Projector/API/cache runtime remains unbuilt. |
 | 2026-07-26 | v2.4 | **Public capacity-guard delegation, executed (`docs-marketplace-public-capacity-guard`):** §2 Edge Cases gets new row #15 pinning `visibility='public'` + `slots_max IS NULL` existing outside the SessionService validation choke-point (legacy/fixture/writer bypass — DB column stays nullable, no CHECK) as an invalid state, cross-ref `feature_session_management_tech.md` §2 (Capacity × visibility, PRD E#7 authority). §4 Projector Logic gate made explicit — `required fields present?` for `visibility='public'` now spells out `slots_max IS NOT NULL` — plus a new note pinning the concrete handling: projector does not upsert, deletes any pre-existing projection row for that session, purges the cached public DTO/CDN entry for that session (same trigger class as unpublish — §4 Caching Strategy), emits an audit/integrity signal, and CONTINUEs the batch (does not halt the projector on one bad row). §4 Caching Strategy Invalidation cell for Public session DTO extended to name this fail-closed skip as a purge trigger alongside unpublish. Added unit test #26 (invalid-but-previously-cached fixture + sibling-still-projects regression, asserting both the projection row and the cache/CDN entry are purged — catches a halt-on-fault implementation and a stale-cache-serves-invalid-row implementation). This slice executes the technical delegation `feature_session_management_tech.md` §2 already assigned to this doc as owner of public projection — it does not re-open that decision. No schema/migration/DB CHECK change: the hardening candidate `NOT (visibility='public' AND slots_max IS NULL)` stays an unscoped future migration exactly as `feature_session_management_tech.md` §2 already records it. |

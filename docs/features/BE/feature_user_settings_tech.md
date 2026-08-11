@@ -1,7 +1,7 @@
 # Feature: User Settings & Gender-based Pricing — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.16 · 2026-07-27
+> **Version:** 0.17 · 2026-08-10
 > **Status:** DD-39 ✅ · DD-47/48 ✅ framework — Draft, pending migration/build
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_user_settings.md` *(Draft)*
@@ -33,6 +33,17 @@ Public projection → field-whitelist (KHÔNG gender, KHÔNG per-gender price/PI
 - Host của CLB member tham gia chỉ thấy giới tính **ở mức cần cho suy giá** (kết quả giá, không phơi raw gender ra marketplace).
 - Member **thiếu gender** (`gender_enc IS NULL`) khi kèo đặt giá nam/nữ → **fallback giá mặc định** + nhắc set (không đoán giới tính). **Nhưng** nếu `gender_enc` có mà **decrypt lỗi (KMS)** → **fail-closed**, KHÔNG tạo charge (không fallback — tránh tính sai tiền).
 - `username` duy nhất toàn hệ; đổi có kiểm tra trùng.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `PATCH /api/me/profile` | Player (web) | Update gender/dob/username/language (PII enc at-rest) |
+| `PUT /api/me/username` | Player (web) | Set/change unique username (global uniqueness check) |
+| `deriveChargeAmount(session, person.gender)` | SessionService / Join flow | Derive price from gender when host sets male/female pricing |
+| `POST /api/me/follow/:personId` | Player (web) | Create private follow request → global notification (DD-70a) |
+| `DELETE /api/me/follow/:personId` | Player (web) | Unfollow |
+| KMS decrypt `gender_enc`/`dob_enc` | Internal | Fail-closed: decrypt error → block charge creation |
 
 ---
 
@@ -420,6 +431,7 @@ getProfile(viewer V, target T):
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v0.17 | **A-grade upgrade:** thêm Entry points table (6 entries); bump version. Không đổi contract/settings model. |
 | 2026-07-27 | v0.16 | Reconcile migration live `0000`–`0024` (25 migrations, tail `0024`) và cập nhật mọi current-tail marker. Pin DD-91 one-payment-truth boundary: gender pricing chỉ derive lúc ghi `charges.amount_due`; Home/chat/notification đọc canonical Player View status, không chạy lại công thức. Reconcile DD-70(a) từ stale proposal/conditional sang owner-final target, option (b) đã bị loại; runtime vẫn chưa build. |
 | 2026-07-26 | v0.15 | **Merge-state reconcile:** `0014_players_waitlist` đã merge (`1a6ac38`); tail sync hiện `0000`–`0022` (23 migrations). Sửa 5 dòng current-state stale (dòng 10, 14, 61, 65, 67) từng nói `0000`–`0013` là merged set / `0014` branch-only. Giữ nguyên GUIDANCE đánh số (monotonic kế tiếp sau tail đã sync) và danh sách genuinely-new không đổi. Không đổi schema/code/DD; Status/Implementation không đổi. |
 | 2026-07-19 | v0.14 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (reuse/ALTER `persons`/`sessions` baseline `0001`/`0002`; mọi object DD-39/DD-47/48 = migration mới monotonic), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |

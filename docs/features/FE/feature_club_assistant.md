@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P7 (post-MVP)
 > **Track:** 🤖 Club Assistant
-> **Version:** 0.18 · 2026-07-28
+> **Version:** 0.19 · 2026-08-10
 > **Status:** ✅ **Reviewed contract** — DD-86/DD-91/DD-93 authority đã mirror, Product/BE companion closure hoàn tất; implementation vẫn chưa bắt đầu. **DD-18** (provider LLM + privacy/ToS) chỉ là `ENABLEMENT_ONLY` cho GO-LIVE vì provider nằm sau interface swappable; Reviewed không tự authorize code/runtime.
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web/app surface + sync engine · P3.5 identity · P5 billing entitlement · (KHÔNG cần channel adapters — trợ lý chỉ chạy trong app Plexco)
@@ -23,6 +23,17 @@ Mỗi CLB (tenant) bật được một **trợ lý AI** riêng **bên trong app
 Hai pha surface, đều trong app Plexco (DD-19): **Pha A** = panel "Hỏi trợ lý" (Q&A trực tiếp, MVP feature), gồm private Club Bot thread derive theo `(tenant_id, requester_person_id)`. **Pha B** = kênh chat in-app native (channel/message/realtime), Assistant trả lời khi structured `@mention` bằng `author_type='assistant'`; không thêm bot membership hay bot `Person`.
 
 **Execution ownership theo primary-surface plan v1.8:** `assistant-kb-storage-authority-core` (27: storage + bounded config) → `assistant-kb-text-ingest-core` (28) → URL/file adapters (29/30) → `assistant-kb-index-activation-worker` (31: generation re-check + CAS activation) → `assistant-kb-retrieval-core` (32) → `assistant-bot-ask-worker` (33) → chat mention/private thread (34/35). HTTP được giao riêng cho A14 `assistant-private-thread-ask-api`, A15 `assistant-kb-text-url-config-api`, A16 `assistant-kb-file-status-api`; product UI được giao cho F12 `assistant-fe-kb-source-manager` và F13 `assistant-fe-config-tone-analytics` sau F0 design authority. Mechanism slices 27–35 không ngầm sở hữu route/UI và adapter không được tái dựng KB, retrieval hoặc provider state. Initiative `PLAN_READY` tại `90d292d`, runtime = 0 và từng slice vẫn phải đạt strict `CODE_READY`.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Club settings → Trợ lý | `/clubs/:id/settings/assistant` | Host | KB manager + config + analytics |
+| Chat channel → @mention | In-app chat channel → `@Trợ_lý` | Member | Pha B: bot reply trong channel |
+| Club detail → "Hỏi trợ lý" | Side panel / FAB button | Member | Pha A: private ask panel Q&A |
+| Club Bot thread | `/clubs/:id/assistant` | Member | Private derived thread `(tenant,requester)` |
+| Settings → Upload KB | `/clubs/:id/settings/assistant/sources` | Host | Upload/manage KB sources |
+| Settings → Analytics | `/clubs/:id/settings/assistant/analytics` | Host | Usage stats + top unanswered |
 
 ### Bất biến
 
@@ -370,6 +381,7 @@ Hai pha surface, đều trong app Plexco (DD-19): **Pha A** = panel "Hỏi trợ
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v0.19 | **A-grade upgrade:** thêm Entry points table (6 entries); bump version. Không đổi contract/domain model. |
 | 2026-07-28 | v0.18 | Re-pin primary-surface plan v1.8 `PLAN_READY` tại `90d292d`; immutable authority/closure blocker đã đóng. Giữ runtime = 0, B4/worktree chưa author và strict per-slice `CODE_READY`; DD-18 vẫn enablement-only. |
 | 2026-07-28 | v0.17 | Mirror executable ownership từ primary-surface plan v1.7: slices 27→35 tách storage/config, text, URL/file, generation-CAS index, retrieval, `bot.ask`, mention/private thread; A14–A16 sở hữu HTTP và F12/F13 sở hữu Host UI sau F0. Giữ `NOT_PLAN_READY`, runtime = 0 tới immutable re-pin + strict per-slice `CODE_READY`. |
 | 2026-07-28 | v0.16 | Owner-final companion closure: promote Product spec to Reviewed; mirror DD-86 defaults true `all_members`/false `admins_only`, mutable on both policies under exact capability + full conjunction; mirror DD-93 eight-command private-thread registry. DD-18 remains enablement-only; no runtime/migration authorization. |

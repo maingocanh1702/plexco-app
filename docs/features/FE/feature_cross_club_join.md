@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.3  
 > **Track:** 🤝 Cross-club Join  
-> **Version:** 2.11 · 2026-07-28
+> **Version:** 2.12 · 2026-08-10
 > **Status:** Reviewed  
 > **Implementation:** Not started — `join_requests` có sẵn từ `0006` · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4.3 discovery · P3.5 identity · P2 session/slot transaction · P4 sync/notifications  
@@ -13,6 +13,17 @@
 ## 1. Mô tả
 
 Cho player chưa phải member có thể **join public session trực tiếp** (open policy) hoặc **request host approval**. Guest membership chỉ được tạo trong final open join/approve thành công; nếu session full thì vào waitlist và chỉ reveal exact venue sau khi active.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Marketplace → Session card → "Tham gia" | `/sessions/:public_id/join` | Player | Main join flow từ marketplace discovery |
+| Direct link (shared/QR) | `/join/:public_id` | Player | Deep link join từ URL share/QR code |
+| Club page → Upcoming sessions | `/clubs/:slug/sessions` → Join CTA | Player | Join từ club public page |
+| Bot channel (Messenger/Zalo) | Channel funnel finalizer | Player | Cross-club join qua bot sau link/pay decision |
+| Host dashboard → Pending requests | `/clubs/:id/sessions/:sid/requests` | Host | Approve/reject join requests |
+| Notification → "Xem yêu cầu" | Deep link từ push notification | Host | Từ noti navigate đến request review |
 
 ### Bất biến
 
@@ -212,6 +223,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.12 | **A-grade upgrade:** thêm Entry points table (6 entries); bump version. Không đổi contract/domain model. |
 | 2026-07-28 | v2.11 | Mirror DD-32 Option D: preserve CCJ as canonical join while requiring channel finalizer proof before active mutation; full/pending remain no-pay and generic web/direct join is unchanged. No runtime. |
 | 2026-07-19 | v2.10a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v2.10 | **DD-45 claimed-attempt mirror:** lazy root on first failure, max 3 claims/completed-current-order sweep semantics, expired-final resolve-or-terminal and one owner digest/root. Runtime remains unbuilt. |

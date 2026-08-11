@@ -1,7 +1,7 @@
 # Feature: Connector Onboarding (Zalo · SePay · ApiPay) — Backend Tech Spec
 
 > **Canonical phase:** P3 (payment ingest) · P4 (onboarding) · P4.7 (Zalo) — *cross-cutting*
-> **Version:** 0.9 · 2026-07-28
+> **Version:** 0.10 · 2026-08-10
 > **Status:** Draft · SePay inbound auth reconciled; ApiPay enterprise-primary internal contract pinned, provider gate open
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_connector_onboarding.md`
@@ -20,6 +20,19 @@
 **Phạm vi feature này:** lớp *provisioning → auto-register webhook → verify 2 tầng → lifecycle* của kết nối. **KHÔNG** bao gồm: reconcile/matching giao dịch (xem `feature_payment_reconcile_tech.md`) và number-reply/reachability của Zalo (xem `feature_zalo_channel_tech.md`). Feature này thay **đường thiết lập** webhook (từ owner dán tay → Plexco gọi API), rồi **delegate** cho handler hạ nguồn đã có.
 
 Hai pipeline:
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `POST /api/onboarding/bank` | Host (wizard) | SePay OAuth / ApiPay enterprise / BYO fallback → validate + autoRegisterWebhook |
+| `POST /api/onboarding/zalo` | Host (wizard) | BYO bot token → validate + setWebhook |
+| `POST /api/webhooks/sepay` | SePay callback | Inbound auth verify → payment ingest |
+| `POST /api/webhooks/apipay` | ApiPay callback | Webhook verify → payment ingest |
+| `POST /api/webhooks/zalo/:token` | Zalo callback | Bot event ingestion |
+| OAuth refresh job (pg-boss) | System | Refresh SePay OAuth tokens before expiry |
+| Bank recheck job (pg-boss) | System | Periodic connectivity/drift check |
+| `POST /api/clubs/:id/connectors/:id/rotate` | Host | Credential rotation (write-only/KMS) |
 
 ```text
 CONNECT (owner-initiated, trong onboarding wizard)
@@ -537,6 +550,7 @@ Tỉ lệ connect không-chạm-webhook; `time_to_verify_ms` (registered→activ
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v0.10 | **A-grade upgrade:** thêm Entry points table (8 entries); bump version. Không đổi contract/pipeline model. |
 | 2026-07-28 | v0.9 | Re-pin current availability/runtime boundary to `main@784bc8d`; provider enum and unregistered/disabled connector-job status remain unchanged. |
 | 2026-07-27 | v0.8 | Mirror regional provider boundary and implemented-but-unwired shared scheduler: no connector/payment jobs are registered or enabled; entitlement remains separate from capability availability. |
 | 2026-07-24 | v0.7b | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep, round-01 codex expansion): TARGET-migration comment (§2 `zalo_bots`, L144) hard-pinned `tail = 0018` -> non-pinned "verify current tail at `packages/db/migrations/` at author time, do not hard-pin" (live tail now `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Numbering guidance unchanged. Pre-existing dated changelog preserved verbatim. No contract change. |

@@ -1,7 +1,7 @@
 # Feature: Cross-club Join & Approval — Backend Tech Spec
 
 > **Canonical phase:** P4.3  
-> **Version:** 2.12 · 2026-07-28
+> **Version:** 2.13 · 2026-08-10
 > **Status:** Reviewed  
 > **Implementation:** Not started — `join_requests` có sẵn từ `0006` · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_cross_club_join.md`  
@@ -23,6 +23,18 @@ Public Session ID → Protected resolver → Canonical session/tenant
 ```
 
 Commands: `JoinPublicSession`, `CancelJoinRequest`, `ApproveJoinRequest`, `RejectJoinRequest`, `ExpireJoinRequests`, `LeaveSession`. Public ID resolved via protected service to canonical session/tenant — enter tenant context → authorize.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `POST /api/sessions/:publicId/join` | Player (web/bot) | Public session → protected resolver → join TX |
+| `POST /api/sessions/:publicId/join-request` | Player | Approval-required session → create request |
+| `POST /api/join-requests/:id/approve` | Host | Approve + execute join outcome |
+| `POST /api/join-requests/:id/reject` | Host | Reject + notify |
+| `POST /api/sessions/:id/leave` | Player | Leave with financial policy check |
+| `finalizeChannelBookingIntent()` | Channel booking funnel (DD-32) | Server-owned disposition → enter same join TX |
+| `ExpireJoinRequests` job (pg-boss) | System | Auto-expire stale requests |
 
 Messenger never sends raw public/session/request IDs as authority. The Page-bound opaque action resolves target/session/request server-side with TTL+snapshot/version; source tenant Page may differ from a valid cross-club target and remains audit/default only.
 
@@ -316,6 +328,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.13 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/join model. |
 | 2026-07-28 | v2.12 | Mirror DD-32 Option D: channel finalizer enters existing Join transaction with server-owned free/account-linked/settled disposition; direct/client proof rejected; add pay-now and cross-transport idempotency tests. No runtime. |
 | 2026-07-24 | v2.11c | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): Live-schema boundary note hard-pinned `migrations 0000–0018, tail = 0018` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Dated provenance `origin/main`@`22c23aa` giữ nguyên verbatim. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v2.11b | **Reconcile 0014 merge-state:** current-state Live-schema boundary sửa → `0014_players_waitlist` **đã merge trên `main`** (`1a6ac38`, migrations 0000–0018, tail = 0018); provenance `origin/main`@`22c23aa` reframed thành historical marker (không xoá). Behavior claims (DD-39/DD-49/SessionService/retry chưa build) giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |

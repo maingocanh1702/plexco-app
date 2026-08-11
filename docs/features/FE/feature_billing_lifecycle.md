@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P5  
 > **Track:** 💳 Host Billing  
-> **Version:** 2.9 · 2026-07-27
+> **Version:** 2.10 · 2026-08-10
 > **Status:** Reviewed  
 > **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 tenant/authz · P3 durable payment ingestion · P3 notifications  
@@ -19,6 +19,17 @@
 ## 1. Mô tả
 
 Quản lý **host subscription**: trial, invoice, payment, renewal, past-due, suspension, reactivation — mà KHÔNG mix platform revenue với player payment ledger.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Club settings → Billing | `/clubs/:id/settings/billing` | Host | Plan overview + invoice list + payment status |
+| Onboarding wizard → Plan | `/onboarding/step/plan` | Host | Chọn plan khi tạo CLB |
+| Upgrade CTA (in-app) | Feature paywall modal | Host | Upgrade prompt khi dùng tính năng host_pro |
+| Daily lifecycle job | System cron | System | Auto-transition trial→active, past_due, suspension |
+| Platform admin → Override | Internal tool | PlatformAdmin | Manual override temporary (max 7d) |
+| Invoice email → Payment link | Deep link từ email/noti | Host | Trả invoice từ link trong email |
 
 ### Bất biến
 
@@ -336,6 +347,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v2.10 | **A-grade upgrade:** thêm Entry points table (6 entries); bump version. Không đổi contract/domain model. |
 | 2026-07-27 | v2.9 | Pin exact `assistant_ai_kb` và DD-91 no-LLM `/pay` boundary. Tách commercial entitlement `payment_reconcile_auto` khỏi operational availability; current authority chỉ `sepay\|apipay` cho rail Việt Nam, webhook→settle→notify chưa build, manual mark-paid vẫn global. Regional research vẫn là decision input, không tự chốt provider/market expansion hay claim runtime. |
 | 2026-07-24 | v2.8a | **FOUNDER-RATIFIED + Round-06 fix (`docs-billing-publish-suspension-authority`):** Owner ratified the status-authority fail-closed union as authored — inline "⏳ pending" note removed (this review/merge is the ratification). Reactivation screen copy reverted to cause-agnostic always-show-both (payment CTA **and** contact-support line) — the round-05 conditional had no data source to pick a branch (billing overview API only exposes `subscription.status`; `TENANT_SUSPENDED` is intentionally cause-agnostic). Full rationale at BE `feature_billing_lifecycle_tech.md` v2.8a. Docs-only. |
 | 2026-07-24 | v2.8 | **Status-authority cross-ref (`docs-billing-publish-suspension-authority`):** §1 bất biến +1 bullet + edge #6 nói rõ "suspended" cho publish-suspend gate = fail-closed hai trục `tenants.status`/`subscriptions.status` (không suy ra từ một cột); +1 AC bullet. §4 Lifecycle State Machine +1 cảnh báo: diagram gộp 2 trục vào 1, "suspended → active: Payment received / manual override" chỉ là recovery trục `subscriptions` — **không** clear tenant-root hard-suspend (ToS/abuse), trục đó cần cơ chế riêng chưa xây (codex round-03 [P1] flagged nguy cơ đọc nhầm). §3 Reactivation screen copy sửa (round-05 [P2]): không còn tuyên bố tuyệt đối "trả tiền là xong" — suspended vì lý do khác billing thì payment CTA ẩn, hướng dẫn liên hệ hỗ trợ; owner-facing cause-differentiation là UX decision chưa chốt. Chi tiết decision table 6-case + concurrency contract + tests ở BE `feature_billing_lifecycle_tech.md` §3 Status Authority (mirror kỹ thuật — không lặp lại ở đây). **⏳ Founder ratification pending** cho shape cụ thể (STOP_AT_READY). Docs-only, không đổi UC/domain model/state machine (chỉ thêm chú thích diagram + sửa 1 screen copy, không sửa mermaid). Pre-existing dated changelog giữ verbatim. |

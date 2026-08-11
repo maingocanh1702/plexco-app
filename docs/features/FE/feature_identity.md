@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P3.5
 > **Track:** 🆔 Identity & Merge
-> **Version:** 1.11 · 2026-07-28
+> **Version:** 1.12 · 2026-08-10
 > **Status:** Reviewed identity contract; DD-32 Account-backed channel link predicate added. Endpoint-scoped identity/reachability schema/runtime pending build slices
 > **Implementation:** Not started — bảng `link_codes`/`merge_*` có sẵn · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 tenant routing + P3 ledger stable
@@ -23,6 +23,18 @@
 Mỗi người thật có một `Person` toàn cục; tài khoản **Zalo / Facebook Messenger** được gắn bằng `ChannelIdentity`, **Google / email / Facebook** (web-auth) gắn qua `account_identities` (DD-13); quan hệ với CLB nằm ở `Membership`. **Telegram đã loại khỏi phạm vi (DD-37)** — không còn Telegram identity/adapter.
 
 **Giá trị:** cùng một người hoạt động qua nhiều kênh vẫn có một lịch sử membership/charge, không tách đôi nợ và không nhận nhắc/xác nhận sai tenant.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Bot channel → first contact | Zalo DM / Messenger window | Player | Tự động tạo ChannelIdentity + Person |
+| Bot → `/link` command | Zalo/Messenger → `/link` | Player | Sinh `link_code` để liên kết cross-channel |
+| Web/app → "Liên kết tài khoản" | `/settings/link` | Player (authenticated) | Sinh/consume `link_code` để merge |
+| Google/email login | `/auth/google` • `/auth/email` | Player | Tạo/verify account identity |
+| Channel → booking gate → link Account | Opaque handoff link | Player | Liên kết Account để mở pay-later |
+| Host dashboard → Member → Claim review | `/clubs/:id/members/:mid/claims` | Host | Duyệt merge/claim suggestions |
+| Support admin → Merge/split | Internal tool | Support | Manual recovery/split procedure |
 
 ### Bất biến
 
@@ -337,6 +349,7 @@ Không gửi raw platform UID, phone/email, display name, bank account hoặc `l
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v1.12 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/domain model. |
 | 2026-07-28 | v1.11 | Mirror DD-32 Option D: pin Account-backed channel link predicate, endpoint/action-bound booking handoff và resume-after-revalidation; `link_code` là mechanism chứ không tự là pay-later tier. No runtime. |
 | 2026-07-19 | v1.10a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |
 | 2026-07-19 | v1.10 | **DD-50 v1.73 lock-order closure:** link-code consume resolves read-only, locks issuer/account + Person parent before the code row, then revalidates and conditionally accounts/consumes. Removes reset/revoke-vs-consume inversion; no runtime/migration. |

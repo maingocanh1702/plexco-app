@@ -7,7 +7,7 @@
 > **Projection/API contract:** `UNPINNED` — unified ledger/month summaries phải omit khỏi active UI tới khi có discriminated DTO owner
 > **Capability/availability:** `payment_reconcile_auto` entitlement + server availability; both required
 > **Priority:** 6 — designer-kickoff.md §3B (payments = màn 5+6)
-> **FE design status:** Draft
+> **FE design status:** Draft (A-grade coverage)
 > **Runtime status:** Partial ledger schema only — reconcile service/routes/web UI chưa build
 > **Negative scope:** Không suy money state client-side; auto-reconcile chỉ hiện khi entitlement và availability đều PASS
 > **Liên quan (2026-08-07, decisions v2.18):** Statement/export sao kê = surface riêng thuộc **DD-97** (per-session view free · kỳ + export `host_pro`) — KHÔNG thuộc file này. Mark-paid/`cash|waiver` surface (SourceBadge §4 hiện dead enum) = **DD-99 P4**, prioritized sau P2; refund-on-cancel tách chờ refund policy. **DD-98** NP-1/NP-4 chặn custom split per player + auto-archive nợ theo tuổi.
@@ -131,8 +131,12 @@ Quản lý thu tiền của CLB: xem ledger giao dịch, xử lý CK chưa khớ
 
 #### States
 
-- **Current implementation:** Omit entire unified ledger/month-summary surface; projection DTO is unpinned
-- **Future Loading/Ready/Empty/Error:** Author only with the Reviewed discriminated projection; wireframe copy is not fallback data
+- **Loading:** Skeleton layout: 3 summary card skeletons (1 row, equal width, pulsing) + tab bar skeleton + 5 transaction row skeletons (full width, alternating height). Summary cards giữ proportion từ wireframe (§7: Desktop 3 cards 1 row; Mobile: horizontal scroll strip)
+- **Ready:** Summary cards populated với giá trị server trả + tab bar active + transaction rows với status badges. Auto-reconcile surface (tab "Chưa khớp", badge "3 CK chưa khớp") chỉ hiện khi entitlement `payment_reconcile_auto` VÀ availability đều PASS
+- **Empty (mới dùng):** Illustration 💳 + `t("Chưa có giao dịch nào", "No transactions yet")` + mô tả cách hoạt động: `t("Khi thành viên chuyển khoản qua SePay, giao dịch sẽ hiển thị tại đây", "When members make bank transfers via SePay, transactions will appear here")`. Summary cards hiện `--` (không render 0đ)
+- **Empty (đã khớp hết):** Tone tích cực: illustration ✅ + `t("Tất cả đã khớp — không còn gì cần đối soát 🎉", "All reconciled — nothing left to match 🎉")`. Điều kiện: server trả không còn unmatched transactions VÀ không charge `open|partial`. FE không tự suy
+- **Error:** Error banner inline dưới tab bar + retry CTA. Giữ stale rows nếu có (shimmer overlay). Không render Empty từ response thiếu
+- **Current implementation note:** Unified ledger + month summary = `UNPINNED — omit active UI` tới khi có discriminated DTO owner. Designer dùng layout fixture cho hierarchy/spacing; 4-state descriptions ở trên áp dụng khi owner contract được pin
 
 #### Error mapping
 
@@ -299,7 +303,9 @@ Quản lý thu tiền của CLB: xem ledger giao dịch, xử lý CK chưa khớ
 | 7 | Tên CK bị garbled/thiếu | Hiện raw text từ bank + "?" icon |
 | 8 | Không có CK nào (mới dùng) | Empty state: "Chưa có giao dịch CK" + giải thích cách hoạt động |
 | 9 | CK amount = 0 hoặc âm | Không hiện trong UI (filtered server-side) |
-| 10 | Mobile: allocation panel | Bottom sheet pattern (swipe down to close) |
+| 10 | Mobile: allocation panel | Bottom sheet pattern (swipe down to close); touch targets ≥ 44px |
+| 11 | Tab "Chưa khớp" có 0 items (tất cả đã auto-match) | Tab vẫn hiện (nếu entitlement + availability PASS) nhưng content = empty state mini: icon ✅ + "Không có CK nào chờ khớp". Badge count trên tab = 0 → ẩn badge |
+| 12 | Dark mode transaction table | Row bg `var(--bg-card)`, hover `var(--bg-hover)`, amount text `var(--text-primary)`, status badge colors: matched `var(--success)`, unmatched `var(--warning)`, partial `var(--info)`, reversal `var(--error-muted)` |
 
 > **Draft bổ sung cho #8 — happy empty state (copy-level, thêm 2026-08-07):** Ngoài trường hợp
 > "mới dùng, chưa có giao dịch" giữ nguyên copy #8 ở trên, khi dữ liệu server trả cho thấy đồng thời
@@ -460,5 +466,6 @@ Không tồn tại state `reversed` cho bank transaction (§6 · §7) — revers
 
 ---
 
-_FE Design Spec v0.4 · 2026-08-07 · Source: feature_payment_reconcile.md v1.10_
+_FE Design Spec v0.5 · 2026-08-10 · Source: feature_payment_reconcile.md v1.10_
+_Changelog v0.5: A-grade upgrade — bổ sung 4-state cụ thể cho Ledger (Loading skeleton/Ready/Empty mới dùng/Empty đã khớp/Error), thêm edge cases 10→12, dark mode tokens, tab empty sub-state._
 _Changelog v0.3 → v0.4 (2026-08-07): Thêm happy empty state + 4 section Draft — nguồn: Sporta FE porting analysis 2026-08-07_

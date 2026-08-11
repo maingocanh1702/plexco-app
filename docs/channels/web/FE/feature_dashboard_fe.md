@@ -6,7 +6,7 @@
 > **Projection/API contract:** `UNPINNED` — aggregate/projection zones omitted
 > **Capability/availability:** Server-authorized tenant shell/navigation only
 > **Priority:** 3 — designer-kickoff.md §3B
-> **FE design status:** Draft shell
+> **FE design status:** Draft
 > **Runtime status:** Not started — không có dashboard route/API/UI
 > **Negative scope:** Không render revenue/trend/member/debt/activity aggregate tới khi có Reviewed DTO owner
 
@@ -135,10 +135,11 @@ Trang tổng quan cho host sau đăng nhập. Baseline hiện chỉ authorizes p
 
 #### States
 
-- **Loading:** Shell/navigation loading only; không dựng skeleton aggregate chưa có contract
-- **Ready:** Shell + authorized navigation + CTA "Tạo buổi mới"
-- **Unavailable:** Omit Zone 1–4 hoặc hiện neutral "Tổng quan chi tiết chưa khả dụng"; không render 0 vì 0 là một business assertion
-- **Error:** Shell-level error + retry; future per-zone behavior phải theo DTO contract tương ứng
+- **Loading:** Shell skeleton: sidebar pulsing (full-width block × 6 items) + header bar skeleton + CTA skeleton block. Zone 1: 4 stat card skeletons (mỗi card = rectangle 120×80 pulsing). Zone 2: 3 session card skeletons (60% width). Zone 3: 3 debt row skeletons (40% width). Zone 4: 3 activity row skeletons. Designer dùng skeleton layout này cho wireframe Loading state
+- **Ready:** Shell + authorized navigation + CTA "Tạo buổi mới" + Zone 1–4 populated (khi DTO owner contract có)
+- **Empty:** CLB mới tạo, chưa có dữ liệu: Zone 1 = 4 stat cards với giá trị `--` (không render 0); Zone 2 = illustration 📅 + "Chưa có buổi chơi nào" + CTA "Tạo buổi đầu tiên"; Zone 3 = illustration 💰 + "Không có khoản chưa thu"; Zone 4 = "Chưa có hoạt động". Shell/sidebar/CTA vẫn hiển thị bình thường
+- **Unavailable:** Omit Zone 1–4 hoặc hiện neutral "Tổng quan chi tiết chưa khả dụng"; không render 0 vì 0 là một business assertion. Dùng cho trường hợp DTO owner chưa pin — khác với Empty (đã pin nhưng không có data)
+- **Error:** Shell-level error banner dưới header + retry CTA; shell giữ sidebar/navigation, không render Zone 1–4 aggregate, không render 0, không giữ stale snapshot. Per-zone error (future): mỗi zone có thể fail độc lập — zone lỗi hiện retry inline, zone khác vẫn render
 
 #### Error mapping
 
@@ -240,10 +241,16 @@ Trang tổng quan cho host sau đăng nhập. Baseline hiện chỉ authorizes p
 
 | # | Case | Hiển thị |
 |---|---|---|
-| 1 | CLB mới hoặc aggregate DTO chưa available | Shell + CTA "Tạo buổi đầu tiên"; không suy mọi aggregate = 0 |
+| 1 | CLB mới tạo — chưa có session/member/payment nào | Empty state: Zone 1 stat cards = `--`, Zone 2 illustration + CTA "Tạo buổi đầu tiên", Zone 3 "Không có khoản chưa thu", Zone 4 "Chưa có hoạt động" |
 | 2 | Bất kỳ aggregate/projection owner nào chưa pin DTO | Omit zone tương ứng hoặc neutral unavailable; không derive, sort, paginate, format hay navigate từ fixture |
-| 3 | Shell/navigation request lỗi hoặc offline | Generic error/banner + retry; không giữ stale aggregate snapshot |
+| 3 | Shell/navigation request lỗi hoặc offline | Error banner dưới header + retry CTA; không giữ stale aggregate snapshot; sidebar vẫn hiển thị nếu đã cache nav |
 | 4 | Capability/tenant context không chứng minh được | Fail closed: không render action/tenant data, chuyển sang server-authorized recovery/login flow |
+| 5 | Multi-club host switch CLB | Shell re-render với tenant data mới; Zone 1–4 re-fetch (Loading → Ready/Empty); sidebar CLB name cập nhật; không giữ aggregate cũ |
+| 6 | Sidebar collapse/expand animation | Desktop >1024px → full label; ≤1024px → icon-only + tooltip hover. Transition: width animate 200ms ease-out; label fade 150ms |
+| 7 | Mobile bottom nav badge (future) | Badge count omit baseline; khi có DTO owner, hiện dot badge (không số) trên tab có unread; không render 0 |
+| 8 | Notification bell badge overflow | Badge count > 99 → hiện "99+"; badge scale-in animation (spring 300ms); tap → notification panel |
+| 9 | Tên CLB rất dài (>30 chars) | Sidebar: truncate + tooltip full name; Header: truncate + ellipsis; Mobile: 1 line max |
+| 10 | Dark mode stat cards | Bg `var(--bg-card)`, text `var(--text-primary)`, trend up `var(--success)`, trend down `var(--error)`; border `var(--border-subtle)` |
 
 ---
 
@@ -315,5 +322,6 @@ Chuỗi static do file này authorize (shell + navigation + CTA). Không có res
 
 ---
 
-_FE Design Spec v0.3 · 2026-08-07 · Source: session v2.17 + payment v1.10 + notifications v3.11_
+_FE Design Spec v0.4 · 2026-08-10 · Source: session v2.17 + payment v1.10 + notifications v3.11_
+_Changelog v0.4: A-grade upgrade — bổ sung Empty state cụ thể per-zone, mở rộng edge cases 4→10, chi tiết skeleton Loading state per-zone, thêm per-zone Error behavior, dark mode tokens._
 _Changelog v0.3: Thêm skeleton 4 section Draft (Analytics/State Machine/AC/Testing) — nguồn: Sporta FE porting analysis 2026-08-07_

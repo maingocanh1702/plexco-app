@@ -1,7 +1,7 @@
 # Feature: Session Organize (Match & Court Orchestration) — Backend Tech Spec
 
 > **Delivery target:** Sau Session CRUD + Sync; sớm nhất sau P4. Canonical phase **TBD**; DD-61..64 đã owner accept-in-principle.
-> **Version:** 0.6b · 2026-07-24
+> **Version:** 0.7 · 2026-08-10
 > **Status:** Accepted-in-principle design — implementation inactive; schema/migration/service chưa tồn tại
 > **Implementation:** Not started — build post-P4 · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_session_organize.md`
@@ -44,6 +44,19 @@ Web/chat adapter
 - `processed_commands` hiện có là durable idempotency ledger cho **mọi mutation**. `score_events.command_id` giữ correlation/fence bổ sung ở aggregate nóng.
 - Organize không có projector tới `public_sessions`. Outbox chỉ mang aggregate IDs, sequence và field tối thiểu.
 - V0.4 chỉ hỗ trợ contest hai phía. `side_count` tồn tại nhưng phải bằng `2`.
+
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `POST /api/sessions/:id/courts` | Host (web) | Create/update court assignment |
+| `POST /api/sessions/:id/matches` | Host (web) | Create match (manual or from assignment engine) |
+| `POST /api/sessions/:id/matches/:id/score` | Host / Scorer | Record score event (đúng 1 set) |
+| `POST /api/sessions/:id/organize/preview` | Host | Preview assignment (read-only, no DB write) |
+| `POST /api/sessions/:id/organize/apply` | Host | Apply assignment (`basisVersion` check under lock) |
+| `GET /api/sessions/:id/organize/board` | Host (web) | Read relation-based organize board |
+| SSE `session:<id>:organize` topic | System | Realtime organize state projector |
+| `processed_commands` dedupe | All mutations | Durable idempotency ledger |
 
 ### Lock order và transaction rule
 
@@ -765,6 +778,7 @@ Canonical DB suite must run with repository test database contract; migration/RL
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-10 | v0.7 | **A-grade upgrade:** thêm Entry points table (8 entries); bump version. Không đổi contract/organize model. |
 | 2026-07-24 | v0.6b | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): Live-repo reality note hard-pinned `Migration tail hiện tại là 0018 (0000–0018 đã merge)` → non-pinned "verify hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-23 | v0.6a | **Reconcile 0014 merge-state:** current-state Live-repo reality sửa → migration tail = `0018` (0000–0018 đã merge; `0014_players_waitlist` merged `1a6ac38`), trước ghi "Migration hiện dừng ở 0013". §3 migration-strategy note ("0014 nay đã bị `0014_players_waitlist` chiếm") đã đúng — giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |
 | 2026-07-19 | v0.6 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (bổ sung rollback cho Migration strategy sẵn có; 5 bảng organize chưa vào canonical → migration mới; DROP baseline = ❌ NEVER), §3 Idempotency (tham chiếu §1), §4 Caching Strategy + Security Checklist. Request/Response Examples đã có sẵn theo DD-60 (Endpoint contract + preview example) — skip. Derivative/editorial — không đổi contract. |
