@@ -55,9 +55,35 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
 fi
 echo "✓ tracked tree sạch (untracked bỏ qua — đúng ý)"
 
-# 3. đồng bộ với origin
-git pull --ff-only
-echo "✓ main == origin/main"
+# 3. đồng bộ với origin — KHẲNG ĐỊNH bất biến, KHÔNG đi qua lệnh mang ngữ nghĩa merge.
+#
+# Trước đây bước này là `git pull --ff-only`. 2026-08-11 nó chết bằng
+#   fatal: Cannot fast-forward to multiple branches.
+# NGAY KHI main đang bằng đúng origin/main (cả hai = 200f11f) và .git/FETCH_HEAD do chính lần
+# pull đó ghi ra chỉ chứa MỘT merge candidate — 39 dòng còn lại đều `not-for-merge`. Không có
+# MERGE_HEAD sót, `branch.main.merge` chỉ một giá trị, một remote duy nhất. Tức lệnh đã từ chối
+# vì một lý do KHÔNG nằm trong câu hỏi mà bước này cần trả lời.
+#
+# Câu hỏi ở đây là nhị phân: "main có bằng origin/main không?". Trả lời nó bằng `pull` là mượn
+# nguyên một cỗ máy merge — và thừa hưởng mọi cách cỗ máy đó có thể từ chối. Cùng lớp sai lầm với
+# sự cố 2026-07-22 ghi ở header: dùng công cụ rộng hơn câu hỏi thì nhận về failure mode rộng hơn.
+# So sánh SHA thì không có failure mode nào ngoài "khác nhau".
+git fetch --quiet origin main || { echo "HALT: fetch origin main thất bại"; exit 1; }
+LOCAL_MAIN="$(git rev-parse main)"
+REMOTE_MAIN="$(git rev-parse FETCH_HEAD)"
+if [ "$LOCAL_MAIN" != "$REMOTE_MAIN" ]; then
+  if git merge-base --is-ancestor "$LOCAL_MAIN" "$REMOTE_MAIN"; then
+    echo "HALT: main ($LOCAL_MAIN) đi SAU origin/main ($REMOTE_MAIN)."
+    echo "      Fast-forward thủ công rồi chạy lại:  git merge --ff-only $REMOTE_MAIN"
+  elif git merge-base --is-ancestor "$REMOTE_MAIN" "$LOCAL_MAIN"; then
+    echo "HALT: main ($LOCAL_MAIN) đi TRƯỚC origin/main ($REMOTE_MAIN) — còn commit chưa push."
+    echo "      Push trước đã, đừng chồng thêm squash lên trạng thái chưa đồng bộ."
+  else
+    echo "HALT: main ($LOCAL_MAIN) đã PHÂN KỲ khỏi origin/main ($REMOTE_MAIN) — script không tự sửa."
+  fi
+  exit 1
+fi
+echo "✓ main == origin/main ($LOCAL_MAIN)"
 
 # 4. squash-merge; fail là dừng, và dọn index để không để lại trạng thái nửa vời
 if ! git merge --squash "$BR"; then
