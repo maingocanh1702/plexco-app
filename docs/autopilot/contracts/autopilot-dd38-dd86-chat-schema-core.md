@@ -4,14 +4,16 @@
 > **Status:** `CODE_READY` (see verdict, §9) · **Authored:** 2026-08-03 · **Re-verified:** 2026-08-10 ·
 > **Risk:** P1 (schema/migration — corrected from P0, see §9's `_risk_note` cross-reference in the
 > manifest; P0 is reserved for live production/control mutation, not a reviewed forward-only migration)
-> **This is an AUTHORING artifact.** No worktree has been opened, no `register` has been attempted, no
-> code exists. It re-evaluates its own readiness against the immutable authority it pins rather than
-> inheriting the `docs/autopilot-backlog.md` entry's own disclaimer that that entry "does not issue a
-> readiness verdict." The 2026-08-10 pass is a **readiness-only re-review**: both hard dependencies
-> that blocked the original 2026-08-03 verdict have since merged to `origin/main`; this pass re-verifies
-> that closure live (not by trusting either dependency's own closing note) and updates every stale
-> current-state claim the first packet made about a then-unmerged dependency graph. It still does not
-> open a worktree, register scope, or write implementation code — that remains the next session's job.
+> **Implementation is underway (2026-08-10, same day as the readiness re-review below).** The worktree
+> is open, `register` succeeded, and code exists: migration 0031, the `schema.ts` mirror, and
+> `packages/db/src/chat-schema-invariants.test.ts` are implemented, committed, and passing the full
+> canonical suite through iterative code-review fix rounds (exact count is a stale-prone number this
+> prose won't re-assert — see `regions.log`/`fix-round-count.txt` in the state dir, or `git log` on
+> this branch, for the current true count). §0-§9 immediately below (session input through
+> the `CODE_READY` verdict) describe the READINESS re-review that preceded implementation and are kept
+> verbatim as the historical record of how this slice reached `CODE_READY` — they are not a live claim
+> that no worktree/register/code exists. §5.1's "Deviation from the pinned text" notes below track what
+> changed during implementation itself, found by code review, not at authoring.
 
 ## 0. Session input
 
@@ -453,6 +455,93 @@ Source: `feature_inapp_chat_tech.md` (v0.23) lines 127-249, 400-471, 521-603 —
 contract. Do not paraphrase; copy verbatim into the migration. The "Root-owned schema/read boundary"
 paragraph at that file's line 473-475 is the spec's own explicit IN/OUT statement for this slice.
 
+**Deviation from the pinned text, found during implementation (2026-08-10), not authoring.** The
+DDL above wraps every `current_setting('app.tenant_id'/'app.person_id', true)` in
+`NULLIF(..., '')` before the `::uuid` cast — the source spec's own line-127-249/521-603 text does
+not. Proven necessary by direct testing against this project's own Postgres, not a style
+preference: a custom GUC that has been `set_config(name, value, true)`'d at least once on a
+connection reverts to `''` (empty string) once that transaction ends, never back to a true SQL
+`NULL` — `current_setting(name, true)` only returns `NULL` for a GUC that was never referenced at
+all on that session. On a pooled connection, a later transaction that legitimately leaves
+`app.tenant_id`/`app.person_id` unset can land on a connection a prior transaction already set it
+on, making a bare `''::uuid` cast throw `invalid input syntax for type uuid` instead of the
+policy gracefully evaluating to no-match. `0009_rls_policies_grants.sql` — this exact migration's
+own cited RLS/grants idiom source (§2 context_sources) — already established the
+`NULLIF(current_setting(...), '')::uuid` wrapper for exactly this reason; the chat spec's DDL text
+simply omits it. Same class of precedent as §5.2's constraint-naming deviation below: fixing a gap
+between the pinned prose and this repo's own already-reviewed idiom it cites as context, zero
+semantic change to the intended (GUC-set) behavior, only the previously-unreachable empty-string
+edge case now fails closed instead of crashing.
+
+**Five further deviations, found by codex review rounds 01-03 (2026-08-10), not authoring.** All are
+confirmed present in the pinned source spec's own DDL text too (`feature_inapp_chat_tech.md`) — round-01's
+ADVISORY section names this explicitly: "the pre-existing BE authority contains the same nullable-CHECK
+and DM-update trigger definitions. Reconcile that document in its owning slice after correcting the
+implementation"; round-02's ADVISORY repeats it verbatim, since the same defect family recurred as an
+independent instance; round-03's ADVISORY adds the same about the unsafe `search_path` pattern
+("The BE authority repeats the unsafe search path in several later helper/RPC definitions... Reconcile
+it in its owning documentation slice after fixing this change set") — so fixing them here is a
+deviation from the pinned text, not an implementation bug relative to it; reconciling the spec document
+itself is out of this slice's scope.
+
+1. `chat_channels_shape_chk`'s club branch used `creation_origin IN (...)` and
+   `post_policy IN (...)` with no explicit `IS NOT NULL`. PostgreSQL CHECK constraints only reject a
+   row when the expression evaluates to `FALSE` — `NULL IN (...)` evaluates to `NULL` (UNKNOWN), which
+   *passes*. A club channel with `creation_origin`/`post_policy` left `NULL` (all other club fields
+   correctly set) was silently accepted despite the shape CHECK's evident intent. Fixed by adding
+   `creation_origin IS NOT NULL AND` / `post_policy IS NOT NULL AND` before each `IN (...)`, in both
+   the migration and the `schema.ts` mirror. Regression tests added to §5.3's invariant file.
+2. `chat_dm_member_insert_guard()` only fires `BEFORE INSERT` — an `UPDATE` that moves an existing
+   `chat_members` row's `channel_id` away from a DM channel is validated only against the *new*
+   channel by the deferred `AFTER` trigger (`chat_dm_two_from_members`), never against the vacated DM
+   channel, silently leaving it with 1 member. Fixed with a new, narrower trigger
+   (`chat_members_identity_immutable`, `BEFORE UPDATE OF channel_id, person_id`) that rejects any
+   attempt to change either column on an existing row — there is no legitimate business operation
+   that reassigns a membership row to a different channel/person; join is a new row, leave is a
+   delete. Regression tests added to §5.3's invariant file.
+3. Neither `chat_channels.kind`, `tenant_id`, nor `dm_key` was protected against `UPDATE` — flipping
+   `kind` from `'dm'` to `'club'` (satisfying `chat_channels_shape_chk`'s club branch) makes both
+   `chat_assert_dm_two` and `chat_dm_no_member_delete` re-read the now-`'club'` row and silently
+   no-op their own `IF kind = 'dm'` guards, reopening the exactly-two-members and no-delete
+   invariants via a second, independent bypass path (item 2 above closed the `chat_members`-side
+   path; this is the `chat_channels`-side path the same underlying gap admits). Fixed with
+   `chat_channels_identity_immutable` (`BEFORE UPDATE OF kind, tenant_id, dm_key`), rejecting any
+   change to any of the three. Regression test added to §5.3's invariant file.
+4. `dm_current_read_allowed()` never checked `chat_channels.kind` itself — called directly (it is
+   `SECURITY DEFINER` and `EXECUTE`-granted to `app`), it returns `true` for any two-member channel
+   regardless of kind, safe today only because the RLS policies below additionally `AND tenant_id IS
+   NULL`. Fixed by joining `chat_channels` and requiring `kind = 'dm'` inside the function itself, so
+   its own contract does not depend on every future caller remembering the external guard.
+   Regression test added to §5.3's invariant file.
+5. Both `SECURITY DEFINER` read helpers used `SET search_path = pg_catalog, public`, which leaves
+   `pg_temp` searched *first* by Postgres's own implicit default (an explicit `search_path` entry is
+   required to override that default position). Since ordinary `CREATE TEMP TABLE` needs no special
+   privilege, an `app`-role session could shadow `chat_members`, `chat_channels`, or `memberships`
+   with an attacker-controlled temp table, and every unqualified reference inside these
+   `chat_definer`-owned (`BYPASSRLS`) functions would silently resolve to it instead of the real
+   table — the function's boolean result, which directly authorizes RLS access, would then reflect
+   attacker-controlled rows. Fixed by changing both to `SET search_path = public, pg_temp`, this
+   codebase's own already-reviewed convention (`0012`, `0016`, and `0030`'s three `SECURITY DEFINER`
+   functions all use the identical pattern). Three regression tests added to §5.3's invariant file,
+   mirroring `chat-dm-safety-invariants.test.ts`'s own "resist temp-table shadowing" tests for 0030's
+   functions.
+
+**Sixth deviation, found by codex review round-03 of the `--v2` re-slice (2026-08-10), not
+authoring.** The verbatim DDL above still includes `CREATE INDEX idx_chat_messages_channel_time ON
+chat_messages(channel_id, created_at, id);` (line 315) because it is the pinned source spec's own
+text and this block is kept unmodified for diffing purposes — the implementation intentionally omits
+it. `chat_messages_channel_created_at_id_uq` (`UNIQUE (channel_id, created_at, id)`, item in §5.1's
+table DDL above) already creates a B-tree index over the identical columns in the identical order;
+Postgres uses one index to enforce both a UNIQUE constraint and ordinary query planning, so the named
+`idx_chat_messages_channel_time` was pure duplication — same storage and write-amplification cost on
+`chat_messages`, the highest-write table in this slice, with zero additional query capability. Removed
+from both the migration and the `schema.ts` mirror. A catalog-level regression test
+(`packages/db/src/chat-schema-invariants.test.ts`, "migration shape" describe block) now asserts no
+second index shares that column list, so a future reconciliation with the still-unmodified BE spec
+text cannot silently reintroduce the duplicate. The BE spec document itself
+(`feature_inapp_chat_tech.md:243`) is out of this slice's scope to edit; reconciling it is the same
+kind of follow-up as the five deviations above.
+
 ### 5.2 Schema mirror (`packages/db/schema.ts`)
 
 Add Drizzle definitions for `chatChannels`, `chatMembers`, `chatMessages` matching the DDL above
@@ -490,10 +579,28 @@ packages/db/migrations/0031_chat_schema_core.sql   -- SEE §6 — re-derived 202
 packages/db/schema.ts
 packages/db/src/chat-schema-invariants.test.ts     -- NEW file
 packages/db/src/migrate.test.ts                    -- mechanical literal bump only
+packages/db/src/rls-invariants.test.ts             -- mechanical literal bump only, added post-authoring (see below)
 packages/db/README.md                              -- document the two new SECURITY DEFINER functions
 docs/autopilot-manifests/dd38-dd86-chat-schema-core.json   -- self, per AP-39/AP-40 lesson
 docs/autopilot/contracts/autopilot-dd38-dd86-chat-schema-core.md               -- self
 ```
+
+**Scope amendment, 2026-08-10 (discovered during implementation, not at authoring):** the original
+§5.3 text said `rls-invariants.test.ts` needs no edit because its generic CND guard already covers
+new tables once schema.ts names every constraint explicitly. That is still true for CND specifically
+— but the same file separately hardcodes several now-false migration-count/tail-filename literals
+once migration 0031 lands. A grep-verified sweep (`toBe(31)` / `0030_chat_dm_safety_authority_core.sql`,
+excluding the two safe substring-scoped assertions in `chat-dm-safety-invariants.test.ts` that stay
+correct regardless) found six: two count/skip assertions plus two row-count assertions in the
+"migrations" describe block near the top of the file, the JCL-1 tail assertion (~line 1597), and
+UCC-8's `MIGRATION_COUNT`/tail pair (~line 4070) — do not treat "six" as pinned either; re-grep before
+trusting any count, including this one. This is the exact mechanical-literal-bump class already
+pre-authorized for `migrate.test.ts`, and the exact fix this same file already received once before
+for the immediately-prior sibling slice (`chat-dm-safety-authority-core`, 2026-08-05, per that file's
+own comment: "owner-authorized scope amendment"). The first registration attempt (zero commits) was
+closed via `ap-finish.sh --authorized-close` and re-registered with this file added to `scope`, bounded
+to only now-false migration-count/tail literals — see the manifest's `negative_scope` for the exact
+boundary and `.autopilot/dispositions/dd38-dd86-chat-schema-core.json` for the closure record.
 
 ## 6. Migration numbering — re-derived 2026-08-10, still re-verify at build time
 
@@ -554,6 +661,10 @@ Root does **NOT** create:
 | Boundary | Empty channel, no messages | Empty result, no error |
 | Boundary | Insert `dm` channel with all club-only fields NULL | Succeeds (CHECK shape clause) |
 | Boundary | Insert `club` channel with `title` NULL | Rejected — CHECK constraint |
+| Boundary | Insert `dm` channel with club-only content fields set (`title`/`is_default`/`sort_order`/`creation_origin`/`post_policy`/`assistant_enabled`) | Rejected — CHECK constraint (spec row 46) |
+| Boundary | Insert `dm` channel with `tenant_id` set | Rejected — CHECK constraint (spec row 46) |
+| Boundary | Insert `chat_members`/`chat_messages` row whose `membership_id` belongs to a different person than the row's own `person_id`/`author_person_id` | Rejected — composite FK (spec row 45) |
+| Boundary | Insert `chat_members` row whose `membership_id` is from a different tenant than the channel | Rejected — composite FK (spec row 45) |
 | Authorization | Person not a member of a club channel in their own tenant | Zero rows |
 | Authorization | Member of channel X, same tenant, not a member of channel Y | Zero rows for Y |
 | Authorization | `app.tenant_id` set to tenant B, target row is tenant A's club channel/members/messages, exact UUID known | Zero rows — cross-tenant fail-closed even by UUID guess |
@@ -562,7 +673,8 @@ Root does **NOT** create:
 | Authorization | `app`-role transaction attempts direct `INSERT`/`UPDATE`/`DELETE` on any of the three tables | Rejected — permission denied (`REVOKE`) |
 | Failure | `dm_safety_enabled()` returns false/unavailable | `dm_current_read_allowed` → false, DM read denied, no error surfaced as a bypass |
 | Failure | `app.tenant_id` or `app.person_id` GUC unset (NULL) | Policy predicate false/NULL → zero rows, not an error |
-| Concurrency | Two inserts racing to become the 3rd member of one DM channel | `FOR UPDATE` row lock in `chat_dm_member_insert_guard` serializes; second fails `count>=2` |
+| Concurrency | Two concurrent full-DM-creation attempts for the same `dm_key` (channel+both members, a realistic double-submit/retry) | Exactly one commits; `chat_channels_dm_key_uq` rejects the other, no partial (0- or 1-member) row survives |
+| Authorization | Direct INSERT of a 3rd member into an already-2-member DM channel (codex round-02 [P2]: sequential, not the race form this row originally promised — see §5.3) | Rejected — `chat_dm_member_insert_guard`'s own `count>=2` branch, exercised directly rather than only via the `dm_key` unique-index race above |
 | Concurrency | Transaction inserts channel + only 1 DM member, then commits | Deferred constraint trigger fires at COMMIT, transaction rejected |
 | Migration | Exactly one new `.sql` file added | `git diff --name-only` against base shows exactly one file under `packages/db/migrations/` |
 | Migration | No destructive change to baseline tables | Only additive `UNIQUE` constraint on `memberships`; no `DROP`/`ALTER TYPE`/data loss |
