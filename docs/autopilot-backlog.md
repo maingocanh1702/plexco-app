@@ -411,13 +411,19 @@ invariants: [build-config]
 scope: [package.json, pnpm-lock.yaml, osv-scanner.toml, docs/autopilot-manifests/deps-osv-transitive-floors.json, docs/autopilot/contracts/autopilot-deps-osv-transitive-floors.md, docs/autopilot-backlog.md]
 manifest: docs/autopilot-manifests/deps-osv-transitive-floors.json
 launcher: .claude/commands/ap-51-deps-osv-transitive-floors.md
-merged_probe: package.json :: nanoid@<3\.3\.17
+merged_probe: package.json :: nanoid
 _probe_note: Probes the override KEY this slice adds, not a resolved version — the key is slice-unique and
   survives a moving target version, unlike `deps-security-bump`'s `pnpm-lock.yaml :: 15.5.21`, which that
   task's own notes flagged as a weak numeric probe under the DISCRIMINATOR RULE. `close_by: hand` was
   refused by `autopilot-backlog-reconcile --check` because `package.json` can carry a symbol — correct
-  refusal, and this is the symbol. **Conditional:** if `nanoid` splits out under RELEASE_AGE_WINDOW
-  (§3 of the contract), repoint the probe to whichever override key actually lands.
+  refusal, and this is the symbol. **Corrected 2026-08-11 (codex round-01 [P2]):** authored as
+  `nanoid@<3\.3\.17`, mirroring `esbuild@<0.25.0`'s conditional-selector shape — but the implementation
+  uses a bare unconditional override (`"nanoid": "^3.3.17"`), since unlike `brace-expansion` there is no
+  coexisting major-version line for nanoid in this tree that a conditional selector needs to spare. The
+  literal string `nanoid@<3.3.17` never appears in the diff, so the old probe would never hit on
+  `origin/main` post-merge and would leave this task stuck reporting `? no merged_probe`/pending forever.
+  Repointed to the bare key that actually lands. **Conditional:** if `nanoid` splits out under
+  RELEASE_AGE_WINDOW (§3 of the contract), repoint the probe to whichever override key actually lands.
 notes: |
   **Mở 2026-08-10 từ CI audit** — `Security / OSV full dependency scan` đỏ trên `main` tại run #219
   (`9d7d6ac`): **6 advisory / 3 package**, tất cả từ `pnpm-lock.yaml`, **không phải regression** (không
@@ -480,6 +486,33 @@ notes: |
   `NOT_CODE_READY`→`CODE_READY`, header `enforce`→`code-ready`. **Giữ `status: planned`**: artifact
   readiness còn ở working tree (owner commit) — promote lên `ready` + `register` + worktree là bước kế của
   owner; quyết định land trên nền chỉ 1 run xanh cũng của owner.
+
+  **Cập nhật 2026-08-11 (implementation pass — worktree `deps-osv-transitive-floors`, commit
+  `2d16a43`):** `base_sha` đăng ký = **live tip `6509efd`**, KHÔNG phải `005a44e` mà authored contract
+  pin — `005a44e` đã stale ngay từ đầu phiên vì `425f5ab`+`6509efd` (chính hai commit publish gói
+  CODE_READY) đã chạm 3 file nằm trong `scope` của slice này (manifest, contract, backlog) sau
+  `005a44e`; copy nguyên `005a44e` sẽ khiến `register` HALT `BASE_STALE` trên đúng 3 file slice tự khai
+  scope — đọc như tự vi phạm scope trong khi chỉ là base cũ hơn gói vừa authorize nó. Verify
+  `main`==`origin/main` bằng SHA trước khi tạo worktree.
+
+  Sửa đúng `package.json` `pnpm.overrides` (không đụng `pnpm-workspace.yaml`, verify byte-unchanged
+  bằng `git diff --quiet <base>`): `postcss` `^8.5.10`→`^8.5.23` (resolve **8.5.25** — đúng như contract
+  §3 dự đoán, KHÔNG phải 8.5.23 literal, đúng lý do checks phải viết property); thêm `nanoid`
+  `^3.3.17` (resolve 3.3.17); thêm `brace-expansion@5` `^5.0.9` (resolve 5.0.9, chọn selector
+  conditional song song `brace-expansion@1` có sẵn thay vì bare key, tránh nới scope ngoài dự định).
+  `pnpm-lock.yaml` regenerate qua `pnpm install`; script tự viết so version-set trước/sau base xác nhận
+  CHỈ 3 package đổi version, không drift gói nào khác. Xoá block `IgnoredVulns` chết
+  (`GHSA-67mh-4wv8-2f99`) trong `osv-scanner.toml` — verify `esbuild` vẫn resolve `0.25.12`/`0.28.1`
+  (không phải `0.18.20`) TRƯỚC khi xoá.
+
+  Verify: `typecheck`/`lint`/`build` pass; `pnpm test` (`DATABASE_URL_TEST=...plexco_test`) **801 test
+  pass** (152 core + 463 db + 146 web + 15 bot... tổng đúng bằng tail hiện tại, không test nào bị sửa/xoá).
+  `osv-scanner` CLI trên host bị sandbox chặn filesystem walk (luôn báo "root: /", 0 package dù path
+  nào) — route qua Docker (`ghcr.io/google/osv-scanner:latest`), xác nhận baseline pre-fix khớp y hệt 6
+  advisory trong contract, và post-fix: **0 finding cho nanoid/brace-expansion/postcss, hết cảnh báo
+  unused-ignore**. Đang chạy `scope-gate ready` (code review + security review qua
+  `scripts/codex-review-pin.sh`) — kết quả terminal (READY/AWAIT/HALT) xem báo cáo phiên hoặc
+  `HALT-*.txt`/`READY.txt` tại `.autopilot/worktrees/deps-osv-transitive-floors/.autopilot/state/deps-osv-transitive-floors/`.
 
 ---
 
