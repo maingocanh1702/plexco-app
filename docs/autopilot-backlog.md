@@ -21,6 +21,19 @@ Ghi rõ trong `notes`: **ai** đóng được, **bằng gì**, và điều kiệ
 Lý do có trạng thái này: AP-22 từng mang `ready` dù đã HALT fail-closed đúng và output đã merge, nên nó bị
 launch lại và lặp y nguyên kết luận cũ.
 
+> **📌 Backlog reconcile 2026-08-11 (correction only — không phải full queue re-audit).** Sau `0e8d252`
+> (AP-51 `deps-osv-transitive-floors`, merged): ba task đóng **`status: superseded`** (không phải
+> `merged` — none từng vào lane riêng/register/in-flight, deliverable đi qua lane KHÁC là AP-51, xem
+> §Lifecycle đầu file) — `deps-security-bump--postcss` (residual pnpm-workspace.yaml tách sang
+> `pnpm-workspace-postcss-override-inert` mới mở, P3, KHÔNG tự đóng theo `superseded_by`),
+> `osv-scanner-stale-esbuild-ignore-reason`, `eslint10-brace-expansion-5-0-7-typescript-estree` — xem
+> block riêng của từng task. `scripts/autopilot-backlog-reconcile --check` re-run 2026-08-11
+> vẫn in `No stale entries` (task `idea`/vừa đóng tay không nằm trong phạm vi quét của bot — xem §Lifecycle
+> đầu file). Bảng "trạng thái 07/08" ngay dưới **giữ nguyên làm lịch sử, không sửa tại chỗ** — phiên này
+> KHÔNG re-verify các slug khác trong đó; đọc dòng `blocked ×4` là **3 thật** sau khi trừ
+> `deps-security-bump--postcss` (`infra-egress-compatibility-evidence` · `apipay-signed-body-reconciliation`
+> · `email-provider-c7-evidence` chưa được đo lại hôm nay).
+>
 > **📌 Queue state — reconcile 2026-08-07, đo tại `64e9ccb` (= `origin/main`).** Verify: `scripts/autopilot-backlog-reconcile --check` → chạy 07/08: **`No stale entries`** (5 entry `? no merged_probe` là loại không auto-verify được + 1 `✗ close_by REFUSED` cho `gates-that-fire-correctly-and-cannot-say-why` — task đó chạm source nên phải viết merged_probe thật trước khi launch).
 >
 > | slug | trạng thái 07/08 |
@@ -951,18 +964,54 @@ notes: **Mở bởi CI audit 2026-07-26** — `Security / OSV full dependency sc
 
 ## task: deps-security-bump--postcss
 title: Nâng postcss lên bản vá advisory của nó, sau khi bản vá đủ tuổi minimumReleaseAge
-status: blocked
-blocked_on: **phép đo, không phải quyết định.** ĐỪNG tin con số nào viết ở đây — đo lại trước khi mở worktree.
+status: superseded
+superseded_by: deps-osv-transitive-floors (0e8d252, merged 2026-08-11)
+superseded_note: **Task này chưa từng vào lane riêng của nó — không manifest, không register, không in-flight (xem `manifest` dưới, chưa từng soạn).** Theo §Lifecycle đầu file (`idea → planned → scope → manifest → ready → register → in-flight → merge → merged`), `merged` là điểm cuối của một lane đã thực sự chạy qua các bước đó; lane của task này chưa bao giờ chạy — nên đây là `superseded`, không phải `merged`. Đo trực tiếp trên `main`: `package.json`'s `pnpm.overrides.postcss` = `^8.5.23`, lockfile resolve **8.5.25**, `osv-scanner` báo 0 finding cho `postcss` (xác nhận trong `deps-osv-transitive-floors`'s notes) — nhưng deliverable này đi qua lane KHÁC. `^8.5.23` đúng là floor mà registration #3 của `deps-security-bump` đã đo ra ngày 30/07 và bị `minimumReleaseAge` chặn — không phải một con số tình cờ trùng lặp: AP-51 (mở từ CI audit MỚI 2026-08-10, run #219) tìm ra 2 advisory postcss riêng (GHSA-r28c-9q8g-f849, GHSA-fxqj-rqcc-2cmp) cùng đòi đúng floor này, và tác giả AP-51 tự trích dẫn tiền lệ tách-slice của chính task này khi quyết định không cần tách gói nào lần này ("Đã áp dụng đúng một lần: postcss bị tách khỏi deps-security-bump ngày 30/07 vì bản vá còn trong cửa sổ" — notes của `deps-osv-transitive-floors`). Cùng file, cùng override key, cùng floor version, cùng policy giữ nguyên (không hạ `minimumReleaseAge`) — deliverable đã được giao ở lane khác, không phải slice này sai hay chờ vô ích.
+  **Residual CHƯA đóng, tách sang task riêng `pnpm-workspace-postcss-override-inert` (block ngay dưới đây) — KHÔNG tự động đóng theo `superseded_by`.** Notes gốc dưới đây có chỉ thị **delete-not-comment**: sau khi `package.json` đúng, xoá hẳn entry `postcss` khỏi `pnpm-workspace.yaml`. `0e8d252` KHÔNG làm việc này — `pnpm-workspace.yaml` byte-unchanged theo đúng chủ ý của AP-51 (xem notes của nó), nhưng điều đó vẫn để lại đúng thứ delete-not-comment muốn xoá. Đo hiện tại: `pnpm-workspace.yaml`'s `overrides:` giờ chỉ còn đúng 1 entry (`"postcss@<8.5.10": 8.5.16`) và **100% inert** (map override không rỗng ở `package.json` đã thay thế toàn bộ, đúng cơ chế whole-map-replacement). Cùng lớp defect AP-48 đã sửa cho `esbuild`.
+old_status: blocked
 risk: P1
 change_class: dependency-security
 depends_on: []
 invariants: [build-config]
 scope: [package.json, pnpm-workspace.yaml, pnpm-lock.yaml, docs/autopilot-manifests/deps-security-bump--postcss.json]
-manifest: (chưa soạn)
-merged_probe: (chưa có — nhiều khả năng cùng lớp `close_by: hand` với task cha, xem `reconcile-close-by-hand-declaration`)
+manifest: (chưa soạn — sẽ không soạn nữa, xem superseded_note)
+merged_probe: package.json :: "postcss": "^8.5.23"
+_probe_note: Bare key `postcss` đã tồn tại từ trước `0e8d252` (giá trị cũ `^8.5.10`, có từ commit `1dacd6e`), nên một mình KHÔNG phân biệt được theo DISCRIMINATOR RULE. Probe ở trên bắt cặp key:value MỚI — chuỗi `"postcss": "^8.5.23"` không tồn tại trên `origin/main` trước `0e8d252` (verify: `git show 0e8d252^:package.json` chỉ có `"postcss": "^8.5.10"`).
 notes: **Tách ra từ `deps-security-bump` ngày 30/07** khi security round của registration #3 báo một finding thật về `postcss` 8.5.18, trong khi bản vá còn trong cửa sổ `minimumReleaseAge: 10080` (7 ngày). Owner đã chốt 26/07 **không override cửa sổ đó** — nó tồn tại đúng để chặn vector publish-bị-chiếm-quyền mà một bản "security fix" giả là carrier kinh điển. Nên tách slice, không chờ và không cấp ngoại lệ.
   **BA việc phải đo lại trước khi làm, không được chép từ đây:** (1) **advisory nào, phiên bản vá nào** — round 3 của registration #3 đã từng bác **một claim GHSA bịa đặt** về postcss sau khi đối chiếu 4 nguồn, nên đọc advisory gốc, KHÔNG qua bên thứ ba, và ghi rõ ID; (2) **ngày publish của bản vá** ⇒ `not_before` thật; đo bằng `npm view postcss time` chứ đừng suy ra; (3) **override precedence đã đo dứt điểm — xem `docs/standards/dependency-override-precedence.md`.** Nâng giá trị ở `package.json`'s `pnpm.overrides.postcss` — đó là nơi duy nhất ảnh hưởng dependency resolution thật. **Về selector có điều kiện của `pnpm-workspace.yaml` (`postcss@<8.5.10`): KHÔNG cần thêm bản điều kiện tương ứng vào `package.json`** — `package.json`'s `postcss` hiện là override KHÔNG điều kiện (bare key, ép mọi resolution vào range đó), phạm vi RỘNG HƠN bản điều kiện của workspace, nên đã tự bao trùm; chỉ cần bảo đảm giá trị mới nằm trong range đó. (Khác với `esbuild` — xem task `pnpm-workspace-esbuild-override-inert` — nơi workspace's bản điều kiện PHẢI được giữ nguyên khi mirror sang package.json vì package.json chưa có entry `esbuild` nào để bao trùm sẵn.) **Policy: delete-not-comment** — sau khi `package.json` đúng, XOÁ hẳn entry `postcss` khỏi `pnpm-workspace.yaml`'s `overrides`, không để lại bản comment/mirror.
   **Bài học đắt nhất của task cha, đừng lặp:** `verification` trong runtime manifest phải khai **thuộc tính**, không phải literal. Registration #2 chết vì hard-code `postcss==8.5.18`; manifest bị hash-lock sau `register` nên không sửa tại chỗ được, phải đóng và đăng ký lại toàn bộ. Viết dạng "postcss ≥ ngưỡng vá của advisory đã dẫn" thay vì một con số.
+
+## task: pnpm-workspace-postcss-override-inert
+title: pnpm-workspace.yaml's postcss@<8.5.10 override is now 100% inert — package.json's non-empty overrides map replaces it wholesale (same defect class AP-48 already fixed for esbuild)
+status: idea
+risk: P3
+change_class: docs-reconcile
+depends_on: []
+invariants: [build-config]
+scope: [pnpm-workspace.yaml]
+manifest: null
+merged_probe: null
+notes: |
+  **Mở 2026-08-11, phát hiện khi reconcile `deps-security-bump--postcss` sau `0e8d252` (AP-51
+  `deps-osv-transitive-floors`).** `deps-security-bump--postcss`'s notes mang chỉ thị **delete-not-comment**
+  (thêm 2026-08-03 qua round 6/7 adversarial review của `pnpm-override-precedence-two-locations`): một khi
+  `package.json`'s postcss override đúng, XOÁ hẳn entry `postcss` khỏi `pnpm-workspace.yaml`, không để lại
+  bản comment/mirror. `0e8d252` nâng đúng floor ở `package.json` (`^8.5.23`, resolve `8.5.25`) nhưng để
+  `pnpm-workspace.yaml` byte-unchanged — **chủ ý của AP-51 cho diff của chính nó** (AP-51's own
+  `negative_scope` giữ `pnpm-workspace.yaml` byte-unchanged vì sửa giá trị ở đó "trông đúng mà resolve
+  không đổi", đúng bài học từ esbuild), không phải sai sót — nhưng hệ quả là để lại đúng entry mà
+  delete-not-comment của `deps-security-bump--postcss` muốn xoá.
+  **Đo hiện tại (2026-08-11):** `package.json`'s `pnpm.overrides` không rỗng (6 key) ⇒ toàn bộ map
+  `overrides` của `pnpm-workspace.yaml` (nay chỉ còn đúng 1 entry, `"postcss@<8.5.10": 8.5.16`) là
+  **100% inert** theo whole-map-replacement precedence (`docs/standards/dependency-override-precedence.md`)
+  — không entry nào trong file đó còn ảnh hưởng resolution thật. Đây đúng lớp defect mà `62304b5`
+  (`pnpm-workspace-esbuild-override-inert`, AP-48) đã sửa cho `esbuild`; `postcss` là entry còn lại cuối
+  cùng chưa qua cùng lượt dọn.
+  **Việc thật:** xoá dòng `"postcss@<8.5.10": 8.5.16` khỏi `pnpm-workspace.yaml`'s `overrides:`; đo lại
+  lúc thực thi xem có nên xoá luôn key `overrides:` (nếu là entry cuối cùng, còn rỗng thì để lại một map
+  rỗng có ý nghĩa gì không) — đừng giả định, xem cách AP-48 đã xử lý phần đuôi tương tự. Kỳ vọng zero
+  resolution impact (đã inert từ trước khi xoá); risk P3 vì đây là dọn dẹp không ảnh hưởng runtime/advisory
+  đang mở, không phải lỗ bảo mật. Chưa author.
 
 ## task: reconcile-close-by-hand-declaration
 title: Cho autopilot-backlog-reconcile hiểu `close_by: hand` là khai báo có chủ đích, không phải lỗi tác giả
@@ -1972,7 +2021,11 @@ notes: |
 
 ## task: osv-scanner-stale-esbuild-ignore-reason
 title: osv-scanner.toml's GHSA-67mh-4wv8-2f99 ignore lý do đã lỗi thời sau pnpm-workspace-esbuild-override-inert
-status: idea — chưa author contract
+status: superseded
+superseded_by: deps-osv-transitive-floors (0e8d252, merged 2026-08-11)
+close_by: hand · **docs-reconcile trên một khối bị XOÁ — không có symbol để probe presence, cùng lớp mà `reconcile-close-by-hand-declaration` đã đặt tên.** Verify trực tiếp: `osv-scanner.toml` hiện có **0 khối `[[IgnoredVulns]]`** (đọc file 2026-08-11); `git show 0e8d252 -- osv-scanner.toml` = 20 dòng xoá / 0 dòng thêm — đúng nhánh XOÁ mà notes gốc coi là một trong hai lựa chọn hợp lệ ("xoá (hoặc sửa lại reason cho khớp sự thật)").
+superseded_note: **Task này chưa từng vào lane riêng (không manifest, không register — xem §Lifecycle đầu file).** Deliverable đi qua `deps-osv-transitive-floors` (AP-51), một slice mở từ trigger KHÁC (CI audit 2026-08-10 tìm 6 advisory/3 package) nhưng scope của nó có bao gồm đúng việc này ("Kèm theo: xoá một ignore đã chết" — notes của AP-51). Đọc lại toàn văn notes gốc để xác nhận không có ask nào khác sống sót: **task này chỉ có đúng một việc** — xoá hoặc sửa `reason` của entry `GHSA-67mh-4wv8-2f99` một khi lý do reachability của nó sai; không có nhánh POLICY nào khác (vd một luật tổng quát "khi nào một ignore được phép tồn tại") được yêu cầu trong notes gốc. `0e8d252`'s commit message chọn nhánh xoá, lý do gần như trùng khớp phân tích gốc của task này ("It was a reachability argument for an esbuild version the tree no longer resolves... Deleting it also restores the signal"). `depends_on: [pnpm-workspace-esbuild-override-inert]` đã thoả từ lâu (`62304b5`, 2026-08-04) — không phải blocker khi `0e8d252` chạy. Header policy "an entry here is a REACHABILITY argument, never a convenience mute" trong `osv-scanner.toml` đã tồn tại TRƯỚC `0e8d252` (diff của nó không chạm header, chỉ xoá khối `[[IgnoredVulns]]`) — không phải deliverable của task này; task này không hề yêu cầu tạo policy mới, chỉ áp policy có sẵn vào một entry đã mục, và điều đó đã xảy ra đầy đủ, chỉ không qua lane riêng của task này.
+old_status: idea
 risk: P3
 change_class: docs-reconcile
 depends_on: [pnpm-workspace-esbuild-override-inert]
@@ -2138,16 +2191,21 @@ notes: **Mở 2026-07-31 vì `eslint.config.mjs` đang trỏ tới entry này m�
 
 ## task: eslint10-brace-expansion-5-0-7-typescript-estree
 title: brace-expansion@5.0.7 (GHSA-mh99-v99m-4gvg) qua minimatch@10.2.5 — HAI đường provenance hội tụ, không phải một
-status: idea
-provenance_correction: **2026-07-31, cùng ngày: tiêu đề cũ ("độc lập với version eslint") đã SAI kể từ khi eslint 10 thực sự được cài.** Nó đo lúc eslint còn ở 9.x, và kết luận đúng **tại thời điểm đó**. Sau khi `eslint-10-migration` cài `eslint@10.7.0`, `pnpm why brace-expansion` cho thấy **chính eslint 10 cũng resolve `minimatch@10.2.5`** qua `@eslint/config-array@0.23.5` của riêng nó — breaking change `501abd0` của eslint 10.0.0 chuyển minimatch nội bộ v3→v10. Hai đường (typescript-eslint và eslint) **hội tụ về cùng một instance** trên cùng một lần cài. Kết luận không đổi — vẫn ngoài scope, vẫn chưa có bản vá — nhưng lý do "độc lập với eslint" thì đổi, và nó là lý do người ta sẽ dùng để ưu tiên task này.
-  **Đây là lớp lỗi đáng ghi hơn bản thân finding:** một phép đo đúng lúc đo, viết thành một khẳng định không có thời điểm, rồi mục đi khi thứ nó đo bị thay đổi bởi chính slice đang chạy. Ai cập nhật entry này lần sau phải **đo lại** `pnpm why brace-expansion` trên cây hiện hành, không tin dòng nào ở trên.
+status: superseded
+superseded_by: deps-osv-transitive-floors (0e8d252, merged 2026-08-11)
+superseded_note: **Task này chưa từng vào lane riêng (scope mở với `[]`, không manifest, không register — xem §Lifecycle đầu file).** Deliverable đi qua `deps-osv-transitive-floors` (AP-51) — đúng một trong hai hướng mà mục "Chưa scope" dưới đây từng nêu: **pnpm override cho riêng nhánh `brace-expansion@5`** (hướng còn lại, chờ `typescript-eslint` tự vá nội bộ, không được chọn). AP-51 thêm `"brace-expansion@5": "^5.0.9"` vào `package.json`'s `pnpm.overrides` (selector conditional song song `brace-expansion@1` có sẵn, KHÔNG phải bare key) — vá đúng GHSA-mh99-v99m-4gvg (fixed tại `5.0.8`, nay resolve `5.0.9`). **Không chỉ version đổi — cơ chế hội tụ hai đường mà `provenance_correction` mô tả cũng bị chặn ở tầng override:** pnpm override áp theo package+range bất kể ai request, nên cả `typescript-eslint`'s `typescript-estree` (dòng `minimatch: 10.2.5` trong snapshot của nó) lẫn eslint 10's `@eslint/config-array@0.23.5` (cùng `minimatch: 10.2.5`) đều bị ép về cùng một bản `brace-expansion@5.0.9` — verify: `grep -c 'brace-expansion@5\.0\.9' pnpm-lock.yaml` = 2 (định nghĩa package + snapshot, không có bản 5.x nào khác). Override này đứng vĩnh viễn như guard (cùng lớp `brace-expansion@1`), không phải bump một lần — nên "rủi ro runtime của override" (mối lo mà "Chưa scope" nêu, cần đo trước khi chọn) đã được đo bởi chính security round của AP-51 trên cùng cơ chế override, không phải giả định suông. Concern gốc (hai đường provenance hội tụ, không phải một) không còn sống sót ngoài phần đã đóng — chỉ không qua lane riêng của task này.
+old_status: idea
 risk: P2
 change_class: dependency-security
 depends_on: []
 invariants: [build-config]
-scope: []
+scope: [package.json, pnpm-lock.yaml]
+scope_note: Task mở với `scope: []` vì còn `idea`, chưa author — điền lại tại closure theo diff thật của `0e8d252` cho nhánh `brace-expansion@5`, cùng quy ước `eslint-10-migration`'s `scope_note` ("scope thực tế đã merge, không phải scope dự kiến ban đầu").
 manifest: null
-merged_probe: null
+merged_probe: package.json :: brace-expansion@5
+_probe_note: Key override `brace-expansion@5` không tồn tại trước `0e8d252` (dòng thêm mới trong cả `package.json` và `pnpm-lock.yaml`'s top-level `overrides:`) — phân biệt được theo DISCRIMINATOR RULE, khác `brace-expansion@1` vốn có từ trước.
+provenance_correction: **2026-07-31, cùng ngày: tiêu đề cũ ("độc lập với version eslint") đã SAI kể từ khi eslint 10 thực sự được cài.** Nó đo lúc eslint còn ở 9.x, và kết luận đúng **tại thời điểm đó**. Sau khi `eslint-10-migration` cài `eslint@10.7.0`, `pnpm why brace-expansion` cho thấy **chính eslint 10 cũng resolve `minimatch@10.2.5`** qua `@eslint/config-array@0.23.5` của riêng nó — breaking change `501abd0` của eslint 10.0.0 chuyển minimatch nội bộ v3→v10. Hai đường (typescript-eslint và eslint) **hội tụ về cùng một instance** trên cùng một lần cài. Kết luận không đổi — vẫn ngoài scope, vẫn chưa có bản vá — nhưng lý do "độc lập với eslint" thì đổi, và nó là lý do người ta sẽ dùng để ưu tiên task này.
+  **Đây là lớp lỗi đáng ghi hơn bản thân finding:** một phép đo đúng lúc đo, viết thành một khẳng định không có thời điểm, rồi mục đi khi thứ nó đo bị thay đổi bởi chính slice đang chạy. Ai cập nhật entry này lần sau phải **đo lại** `pnpm why brace-expansion` trên cây hiện hành, không tin dòng nào ở trên.
 notes: |
   **Phát hiện 2026-07-31 khi author `eslint-10-migration`, đo bằng `pnpm why brace-expansion`.**
   `osv-scanner --lockfile=pnpm-lock.yaml` báo hai finding brace-expansion, không phải một:
