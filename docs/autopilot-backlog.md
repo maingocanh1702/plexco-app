@@ -189,7 +189,8 @@ notes: |
 
 ## task: chat-dm-safety-config-single-read
 title: `assert_dm_allowed` đọc config qua 4 statement — gộp về một lần đọc nhất quán
-status: ready
+status: merged
+note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (2026-08-12). Was: ready
 risk: P1
 change_class: schema
 depends_on: [chat-dm-safety-authority-core]
