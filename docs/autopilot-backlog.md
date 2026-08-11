@@ -110,6 +110,56 @@ notes: <link spec>
 
 ---
 
+## task: chat-identity-merge-reparent-enablement
+title: Mở đường re-parent chat rows khi merge Person — trigger escape hatch + FK `DEFERRABLE`
+status: planned
+risk: P1
+change_class: schema
+depends_on: [dd38-dd86-chat-schema-core]
+invariants: [schema, identity]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: Probe viết khi author manifest — migration mới tạo trigger/constraint có tên.
+_invariant_note: `schema` (migration + trigger + FK) và `identity` (*"member/account identity link/merge
+  (feature_identity)"*, catalog). KHÔNG dùng `merge-authority` — token đó nghĩa là *"landing and optional
+  separately-authorized automation"*, tức merge **của autopilot vào main**, không phải merge Person. Hai
+  chữ "merge" khác nghĩa hoàn toàn; nhầm là serialize sai slice.
+notes: |
+  **Mở 2026-08-11 từ DD-103.** `0031_chat_schema_core` khai hai trigger
+  `chat_members_identity_immutable` / `chat_channels_identity_immutable` chặn **vô điều kiện** UPDATE lên
+  `person_id` / `dm_key` (thêm ở round 1–2 để đóng một security bypass thật), cộng composite FK tới
+  `memberships` **không `DEFERRABLE`**. Kết quả: re-parent chat rows trong một transaction merge là
+  **bất khả thi về cấu trúc** — không phải "chưa implement".
+
+  **Ba dữ kiện đã đo (2026-08-11):**
+  - `docs/features/BE/feature_inapp_chat_tech.md`, hàng `| 10 | Cross-Feature | Account merge → chat authorship |`, khai *"Account merge → chat authorship | Re-parent
+    `author_person_id`/members về canonical person"*; hàng `| 11 | Merge re-parent |` là acceptance criterion. Spec đang khai một
+    hành vi schema hiện tại **không đáp ứng được**.
+  - `docs/00-start-here/identity-model.md:234-237`: re-parent vật lý là **mặc định** của codebase
+    (`channel_identities`, `players`/`charges`, reachability). Tombstone-in-place là ngoại lệ **có tên**,
+    chỉ `pay_code` (DD-02). Chữ "Re-parent" của spec chat khớp mặc định.
+  - Person-merge **chưa tồn tại**: zero match `mergePersons`/`mergeIdentity`/`merge_persons` trong
+    `packages`/`apps`. Exposure hôm nay = 0.
+
+  **⛔ MỐC CỨNG từ DD-103:** slice nào implement Person-merge **phải** mang theo, trong cùng slice đó:
+  1. escape hatch **merge-scoped** cho hai trigger — **không** được nới thành mở vô điều kiện; bypass mà
+     round 1–2 đóng phải giữ nguyên đóng;
+  2. composite FK tới `memberships` chuyển `DEFERRABLE INITIALLY IMMEDIATE`;
+  3. regression test chạy re-parent trong **một transaction deferred** thật.
+  Thiếu bất kỳ mục nào ⇒ **blocker của chính slice Person-merge**, không mang tiếp như nợ.
+
+  **Vì sao không thiết kế ngay bây giờ:** hình dạng đúng của escape hatch và của `DEFERRABLE` phụ thuộc
+  transaction merge thật trông thế nào — mà nó chưa tồn tại. Thiết kế mù rồi phải làm lại là kịch bản
+  nhiều khả năng hơn. Tiền lệ: `pay_code` (DD-02) được quyết cách xử lý lúc merge **khi entity đó được
+  xây**. Bằng chứng đầy đủ:
+  `.autopilot/worktrees/dd38-dd86-chat-schema-core--v2/.autopilot/state/.../HALT-MAX_ROUNDS-identity-merge-design-gap.txt`
+
+  **Đừng sửa spec thành "tombstone"** để cho khớp schema — đó là đổi một quyết định sản phẩm bằng một hạn
+  chế kỹ thuật tạm thời. Spec giữ nguyên; DD-103 là nơi ghi rằng schema chưa theo kịp.
+
+---
+
 ## task: chat-dm-safety-config-single-read
 title: `assert_dm_allowed` đọc config qua 4 statement — gộp về một lần đọc nhất quán
 status: planned
