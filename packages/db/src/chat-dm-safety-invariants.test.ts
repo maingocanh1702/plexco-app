@@ -712,3 +712,175 @@ describe("migration shape", () => {
     expect(chatMigrations).toEqual(["0030_chat_dm_safety_authority_core.sql"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// chat-dm-safety-config-single-read (migration 0032, DD-102 hard condition):
+// assert_dm_allowed() now decides on ONE consistent snapshot of
+// chat_dm_safety_config instead of four independent READ COMMITTED reads. The 66
+// behavioural tests above already re-assert 0030's every deny path against the
+// RECREATED functions (the harness applies 0032); the tests below add the new
+// invariants the collapse itself introduces — the structural single-read proof,
+// dm_safety_enabled()'s behaviour-preservation across the CREATE OR REPLACE, the
+// out-of-scope consumer dm_current_read_allowed() being unaffected, and the new
+// pure helper leaking nothing.
+// ---------------------------------------------------------------------------
+
+/** dm_key = the two person ids sorted ascending, matching chat_assert_dm_two's own
+ *  `string_agg(person_id::text, ':' ORDER BY person_id)` (canonical lowercase uuid text
+ *  compares in the same order Postgres sorts the uuid type). Mirrors chat-schema-invariants. */
+function dmKeyFor(personA: string, personB: string): string {
+  const [a, b] = [personA, personB].sort();
+  return `${a}:${b}`;
+}
+
+/** Channel + both members MUST commit in one transaction: chat_assert_dm_two's deferred
+ *  constraint triggers re-check "exactly 2 members" at COMMIT, so a dm channel can never
+ *  durably rest at 0 or 1 member between separate autocommit statements. */
+async function seedDmChannelWithMembers(personA: string, personB: string): Promise<string> {
+  await ctx.owner.query("BEGIN");
+  try {
+    const { rows } = await ctx.owner.query(
+      `INSERT INTO chat_channels (kind, dm_key) VALUES ('dm', $1) RETURNING id`,
+      [dmKeyFor(personA, personB)],
+    );
+    const channelId = (rows[0] as { id: string }).id;
+    await ctx.owner.query(
+      `INSERT INTO chat_members (channel_id, person_id) VALUES ($1, $2), ($1, $3)`,
+      [channelId, personA, personB],
+    );
+    await ctx.owner.query("COMMIT");
+    return channelId;
+  } catch (error) {
+    await ctx.owner.query("ROLLBACK");
+    throw error;
+  }
+}
+
+async function dmCurrentReadAllowed(channelId: string): Promise<boolean> {
+  const { rows } = await ctx.owner.query(`SELECT dm_current_read_allowed($1) AS v`, [channelId]);
+  return (rows[0] as { v: boolean }).v;
+}
+
+describe("0032 single-read collapse: structural proof (acceptance rows 1 & 2)", () => {
+  it("assert_dm_allowed() reads the singleton config row exactly once and no longer calls dm_safety_enabled()", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT pg_get_functiondef('assert_dm_allowed(uuid, uuid, text)'::regprocedure) AS def`,
+    );
+    const def = (rows[0] as { def: string }).def;
+    // one snapshot: exactly one read of the singleton row. The `%ROWTYPE` type reference in the
+    // DECLARE is not a read, so match the read predicate specifically, not the bare table name.
+    expect(def.match(/chat_dm_safety_config WHERE singleton/g) ?? []).toHaveLength(1);
+    // torn read closed: the 4th read (the dm_safety_enabled() call) is gone. `dm_safety_flags_enabled(`
+    // is NOT matched by /dm_safety_enabled\(/ (it has `flags_` between), so this is unambiguous.
+    expect(def).not.toMatch(/dm_safety_enabled\(/);
+    // enabled is derived from the shared single-source helper, from that same one snapshot.
+    expect(def).toMatch(/dm_safety_flags_enabled\(/);
+  });
+
+  it("dm_safety_enabled() delegates to the single-source helper and keeps its own single read", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT pg_get_functiondef('dm_safety_enabled()'::regprocedure) AS def`,
+    );
+    const def = (rows[0] as { def: string }).def;
+    expect(def).toMatch(/dm_safety_flags_enabled\(/);
+    expect(def.match(/chat_dm_safety_config WHERE singleton/g) ?? []).toHaveLength(1);
+  });
+});
+
+describe("0032: dm_safety_enabled() observable semantics preserved across CREATE OR REPLACE (acceptance row 2b)", () => {
+  const flags = ["block_enabled", "report_enabled", "rate_limit_enabled", "audit_enabled"];
+
+  it("returns false — not NULL, not an error — when the singleton config row is missing (outer COALESCE)", async () => {
+    await resetConfigDefaults();
+    await ctx.owner.query(`DELETE FROM chat_dm_safety_config`);
+    try {
+      const { rows } = await ctx.owner.query(
+        `SELECT dm_safety_enabled() AS v, dm_safety_enabled() IS NULL AS is_null`,
+      );
+      expect((rows[0] as { v: boolean }).v).toBe(false);
+      expect((rows[0] as { is_null: boolean }).is_null).toBe(false); // outer COALESCE, not the NULL-returning inner form
+    } finally {
+      await ctx.owner.query(`INSERT INTO chat_dm_safety_config (singleton) VALUES (true)`);
+      await resetConfigDefaults();
+    }
+  });
+
+  it.each(flags)(
+    "returns false when only %s is disabled (each toggle independently gates)",
+    async (flag) => {
+      await resetConfigDefaults();
+      await setConfigFlag(flag, false);
+      expect(await dmSafetyEnabled()).toBe(false);
+      await resetConfigDefaults();
+    },
+  );
+
+  it("returns true when all four flags are enabled", async () => {
+    await resetConfigDefaults();
+    expect(await dmSafetyEnabled()).toBe(true);
+  });
+});
+
+describe("0032: dm_current_read_allowed() (0031, out of scope) is unaffected by the dm_safety_enabled() recreation (acceptance row 12)", () => {
+  it("still gates on the recreated dm_safety_enabled() and chat_pair_blocked()", async () => {
+    await resetConfigDefaults();
+    const p1 = await seedPerson("Consumer DM A");
+    const p2 = await seedPerson("Consumer DM B");
+    const channelId = await seedDmChannelWithMembers(p1, p2);
+    try {
+      await ctx.owner.query(`SELECT set_config('app.person_id', $1, false)`, [p1]);
+      // safety fully enabled, pair not blocked, caller is a member -> read allowed
+      expect(await dmCurrentReadAllowed(channelId)).toBe(true);
+      // disabling any safety flag flips dm_safety_enabled() to false -> read denied (the recreated term)
+      await setConfigFlag("block_enabled", false);
+      expect(await dmCurrentReadAllowed(channelId)).toBe(false);
+      await resetConfigDefaults();
+      expect(await dmCurrentReadAllowed(channelId)).toBe(true);
+      // blocking the pair -> chat_pair_blocked() true -> read denied (unchanged second term)
+      await ctx.owner.query(
+        `INSERT INTO chat_blocks (blocker_person_id, blocked_person_id) VALUES ($1, $2)`,
+        [p1, p2],
+      );
+      expect(await dmCurrentReadAllowed(channelId)).toBe(false);
+    } finally {
+      await ctx.owner.query(`SELECT set_config('app.person_id', '', false)`);
+      await resetConfigDefaults();
+    }
+  });
+});
+
+describe("0032: the new pure helper dm_safety_flags_enabled leaks nothing (security item 8)", () => {
+  const helper = "dm_safety_flags_enabled(boolean, boolean, boolean, boolean)";
+
+  it("is owned by chat_definer (so the two definer callers keep implicit EXECUTE)", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT pg_get_userbyid(proowner) AS owner FROM pg_proc WHERE proname = 'dm_safety_flags_enabled'`,
+    );
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as { owner: string }).owner).toBe("chat_definer");
+    const cd = await ctx.owner.query(
+      `SELECT has_function_privilege('chat_definer', $1, 'EXECUTE') AS has`,
+      [helper],
+    );
+    expect((cd.rows[0] as { has: boolean }).has).toBe(true);
+  });
+
+  it("grants zero EXECUTE to app/app_worker/readonly (REVOKE PUBLIC intact)", async () => {
+    for (const role of ["app", "app_worker", "readonly"]) {
+      const { rows } = await ctx.owner.query(
+        `SELECT has_function_privilege($1, $2, 'EXECUTE') AS has`,
+        [role, helper],
+      );
+      expect((rows[0] as { has: boolean }).has, `${role} must not EXECUTE the helper`).toBe(false);
+    }
+  });
+
+  it("touches no table (pure): it reads only its four boolean arguments", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT pg_get_functiondef('${helper}'::regprocedure) AS def`,
+    );
+    const def = (rows[0] as { def: string }).def;
+    expect(def).not.toMatch(/chat_dm_safety_config/); // no table access at all
+    expect(def).toMatch(/p_block AND p_report AND p_rate AND p_audit/);
+  });
+});

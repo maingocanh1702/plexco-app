@@ -538,6 +538,37 @@ all three tables is `ENABLE` + `FORCE`, two permissive policies per table (club 
 `app` has `SELECT` only — zero `INSERT`/`UPDATE`/`DELETE` grant on any of the three, since mutation has
 no owner yet.
 
+## Chat DM safety config single-read (DD-102, `0032` — CODE DARK)
+
+Discharges DD-102's hard condition: `assert_dm_allowed()` (from `0030`) read `chat_dm_safety_config`
+through **four** independent `READ COMMITTED` statements (three inline limit/audit sub-selects plus the
+`SELECT` inside `dm_safety_enabled()`), so a concurrent config tightening could apply **partially** to an
+in-flight call — a torn read. DD-102 measured this is **not** fail-open (every missing/NULL path still
+denies), so it is a consistency fix that must land **before the first caller** (slices 7/8). This
+migration recreates the two functions to decide on **one** snapshot; behaviour is byte-identical except
+the read count (four → one).
+
+- `dm_safety_flags_enabled(p_block, p_report, p_rate, p_audit boolean) RETURNS boolean` — new **pure**
+  helper (no table access, `IMMUTABLE`), the **single definition** of the four-flag kill-switch AND
+  (`COALESCE(... AND ..., false)`). Owned by `chat_definer`, `REVOKE`d from `PUBLIC`; the two definer
+  callers keep implicit `EXECUTE`, and `app`/`app_worker`/`readonly` get none.
+- `dm_safety_enabled() RETURNS boolean` — recreated to **delegate** to `dm_safety_flags_enabled()` (one
+  definition of the AND) while keeping the **outer** `COALESCE` over the singleton sub-query, so its
+  missing-row → `false` semantics are preserved exactly (the inner-only form would return `NULL`, which
+  `dm_current_read_allowed()` at `0031` would inherit). Signature/semantics otherwise unchanged.
+- `assert_dm_allowed(actor, peer, action) RETURNS void` — recreated to read the singleton row **once**
+  into a `chat_dm_safety_config%ROWTYPE` record and derive enabled/limits/audit from that one snapshot.
+  Every deny branch, deny reason, the uniform `chat safety blocked` exception text, the `read`-action
+  rate skip, the `audit_enabled`-gated `RAISE LOG` line and the `SET client_min_messages = warning`
+  no-leak clause are preserved verbatim. `chat_pair_blocked()` stays a **separate** statement (a
+  different table, `chat_blocks`, out of DD-102's scope).
+
+The two `CREATE OR REPLACE` statements run under a `SET ROLE chat_definer` bracket with a transient
+`GRANT CREATE ON SCHEMA public` (restored at the end), because replacing a `chat_definer`-owned function
+checks both ownership (`has_privs_of_role`, INHERIT-sensitive in PG16) and `CREATE` on the schema — the
+same idiom `0022`/`0023` use so a NOINHERIT migration role can apply it. Forward-only (P17); `0030` is
+applied and hash-locked and is **not** edited.
+
 ## Open items inherited from docs (not blockers)
 
 - `messenger_*` is post-MVP (P4.8, DD-09) — included for forward compatibility.
