@@ -277,7 +277,8 @@ notes: |
 
 ## task: db-test-harness-teardown-57p01
 title: Suite `packages/db` đỏ với 346/346 test PASS — 2 unhandled Postgres 57P01 từ teardown
-status: ready
+status: merged
+note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (2026-08-11). Was: ready
 risk: P2
 change_class: test-infra
 depends_on: []
