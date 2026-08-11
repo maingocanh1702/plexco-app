@@ -403,7 +403,7 @@ notes: |
 
 ## task: deps-osv-transitive-floors
 title: Raise nanoid / brace-expansion 5.x / postcss floors past six new OSV advisories — without weakening the supply-chain controls
-status: planned
+status: ready
 risk: P2
 change_class: build-config
 depends_on: []
