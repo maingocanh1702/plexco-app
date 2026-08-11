@@ -1,0 +1,132 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — deliberately carries NO manifest_schema_version; adding it makes register HALT CONTRACT_INVALID (autopilot-scope-gate:548). The runtime manifest is generated at register time into .autopilot/state/chat-dm-safety-config-single-read/manifest.json from docs/autopilot-manifests/_TEMPLATE.json, copying every field below including the already-filled dep_checks. See docs/autopilot/contracts/autopilot-chat-dm-safety-config-single-read.md for the full slice contract and the CODE_READY verdict.",
+  "_base_sha_note": "base_sha below is DOCUMENTATION ONLY — the value that was origin/main tip at authoring time (2026-08-11). The operational base is re-derived at register time from the live origin/main tip (register requires HEAD === base_sha exactly); do not treat this literal as the base to build from. Left here so a reader can see which tree this contract was authored against.",
+  "base_sha": "37c6f8bc3fc4d2b2d15416adeed2138d1f0e8262",
+  "task_id": "plexco:chat-dm-safety-config-single-read",
+  "feature": "chat-dm-safety-config-single-read",
+  "branch": "feat/chat-dm-safety-config-single-read",
+  "base_ref": "origin/main",
+  "risk": "P1",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": ["chat-dm-safety-authority-core"],
+  "dep_checks": [
+    {
+      "feature": "chat-dm-safety-authority-core",
+      "base_sha": "75f06c5dbfb78bd36db57418784b13730f68c182",
+      "landed_sha": "d5b31f942969ad3629bcd673f2fd4de91678147a",
+      "file": "packages/db/migrations/0030_chat_dm_safety_authority_core.sql",
+      "symbol": "assert_dm_allowed"
+    }
+  ],
+  "_dependency_note": "Single HARD functional dependency, MERGED with same-order proof. This slice's whole job is a CREATE OR REPLACE of assert_dm_allowed()/dm_safety_enabled(), both of which 0030 (chat-dm-safety-authority-core) creates — the slice literally cannot exist without them on the base. Proof: assert_dm_allowed is ABSENT in packages/ at the dependency's own base_sha 75f06c5 (verified 2026-08-11: git grep 'assert_dm_allowed' 75f06c5 -- packages/db/migrations returns nothing) and PRESENT at landed_sha d5b31f9 and at the current live base. This is not collision-avoidance: the migration this slice writes recreates a function 0030 owns. chat-dm-safety-authority-core was itself closed via owner-authorized disposition + evidence merge (DD-102 / DD-101), not through a normal READY gate; the merged code at d5b31f9 is the authority, verified on disk, not the lane's lifecycle status.",
+  "invariants": ["schema"],
+  "_invariant_note": "schema: Supabase/Postgres tables, migrations, RLS policies (docs/autopilot-invariant-catalog.md). This slice adds exactly one forward-only migration that recreates three functions and touches no table structure. 'schema' is the same token every sibling chat-tree DB slice (chat-dm-safety-authority-core, dd38-dd86-chat-schema-core) declares, which is exactly what SERIALIZES this slice against them on the shared migration tail / schema.ts / migrate.test.ts / rls-invariants.test.ts state. It also serializes this slice against chat-identity-merge-reparent-enablement (the sibling DD-103 debt), which likewise takes a migration number and edits the same test-count literals — the two cannot run in parallel; this one goes first (it is CODE_READY and carries the DD-102 hard deadline; the other is NOT_CODE_READY, blocked on a non-existent Person-merge transaction). No money/billing path (rate limiting reuses the existing rate_limit_check counter unchanged); no auth/session table mutation (chat_definer is unchanged); no cross-club logic — no other domain token applies. NOT 'identity' — this slice touches nothing about person/account identity.",
+  "scope": [
+    "packages/db/migrations/0032_chat_dm_safety_config_single_read.sql",
+    "packages/db/src/chat-dm-safety-invariants.test.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/README.md",
+    "docs/autopilot-manifests/chat-dm-safety-config-single-read.json",
+    "docs/autopilot/contracts/autopilot-chat-dm-safety-config-single-read.md",
+    "docs/autopilot-backlog.md"
+  ],
+  "_migration_number_note": "0032 is a PROVISIONAL placeholder derived at authoring time (2026-08-11): live tail was 0031_chat_schema_core.sql (ls packages/db/migrations/*.sql | sort | tail -1), so the next monotonic number is 0032. RE-DERIVE it at register time — a sibling slice (chat-identity-merge-reparent-enablement) also wants the next number and any unrelated migration-adding slice could land between now and worktree open. Precedent: AP-45 guessed its number and two unrelated DD-29 migrations consumed it; chat-dm-safety-authority-core's own 0030 guess only held because nothing landed in between. If the tail has moved, correct scope to the real number and re-register rather than picking whatever is free.",
+  "_scope_note": "Core-logic modules: the migration (recreates dm_safety_enabled() + assert_dm_allowed() via CREATE OR REPLACE, adds the pure helper dm_safety_flags_enabled()) and chat-dm-safety-invariants.test.ts (adds the single-read structural assertion, the dm_safety_enabled() behaviour-preservation test [acceptance row 2b], and fail-closed regression coverage). The other three code/doc touches are MECHANICAL, not new logic, same accounting the sibling chat-dm-safety-authority-core manifest used: rls-invariants.test.ts and migrate.test.ts carry hard-coded migration-count/tail literals a new migration MECHANICALLY forces (count +1, tail -> new filename). DERIVE THE FULL SET BY GREP, NOT A LINE LIST -- line numbers shift as migrations land, so a list stales and this manifest is hash-locked at register (uncorrectable in place). See contract section 5 for the exact number-agnostic grep and the migrate.test.ts-const-vs-rls-invariants-inline distinction (at authoring the grep returns 14 lines / 10 literal sites); the full pnpm test suite going green is the completeness proof, not a line count. NO other change to those two test files. README.md follows the per-migration doc convention. schema.ts is deliberately OUT of scope (see negative_scope): this slice changes zero table/constraint structure, and functions are not Drizzle objects.",
+  "negative_scope": [
+    "NO edit to packages/db/migrations/0030_chat_dm_safety_authority_core.sql — it is applied and hash-locked; DD-102 is explicit that the fix is a NEW forward-only migration, never an in-place edit of 0030 (that would break the migration immutability check). P17: forward-only, no reverse runbook.",
+    "NO new column, table, constraint, index, RLS policy or grant. chat_dm_safety_config keeps its exact shape; the three new/recreated functions keep their exact signatures, owner (chat_definer), SECURITY DEFINER/STABLE/IMMUTABLE properties, search_path (public, pg_temp), REVOKE-PUBLIC posture and the assert_dm_allowed client_min_messages=warning clause. This is a read-consistency refactor of function bodies only.",
+    "NO change to packages/db/schema.ts — this slice alters no table/constraint that schema.ts mirrors, and the functions it recreates are not Drizzle objects. The existing schema.ts comment block describing assert_dm_allowed's RAISE-LOG behavior remains accurate and is not touched.",
+    "NO change to chat_pair_blocked()'s call or storage. DD-102 is specifically about the chat_dm_safety_config torn read; chat_pair_blocked() reads a DIFFERENT table (chat_blocks) whose current-state semantics accept a block landing mid-call — it stays a separate statement, unchanged.",
+    "NO change to any deny-branch order, deny reason, the uniform 'chat safety blocked' exception text, the read-action rate-limit skip, or the RAISE-LOG audit line / audit_enabled gate. Behavior is byte-for-byte preserved; ONLY the number of statements reading chat_dm_safety_config changes (four → one).",
+    "NO new rate-limit table or dimension — the two rate_limit_check calls keep their exact bucket-key prefixes and window; only their limit arguments now come from the single-read record instead of two separate SELECTs.",
+    "NO create_dm / send_chat_message / mark_read / block / report RPC, NO HTTP route, NO SSE topic — those are slices 7/8 and later. This slice must land BEFORE the first of them per DD-102, but implements none of them.",
+    "NO change to dd38-dd86-chat-schema-core's dm_current_read_allowed() — it calls dm_safety_enabled(); this slice preserves that function's signature and exact semantics (missing-row → false) so that consumer is unaffected. Verified as a required invariant, not assumed.",
+    "NO edit to docs/autopilot-backlog.md entries for any OTHER slice — only this slice's own entry.",
+    "NO rollback/reverse-migration runbook (P17 — forward-only; every statement is an additive CREATE or an idempotent CREATE OR REPLACE)."
+  ],
+  "context_sources": [
+    "docs/autopilot-backlog.md",
+    "docs/standards/decisions.md",
+    "docs/features/BE/feature_inapp_chat_tech.md",
+    "docs/autopilot/contracts/autopilot-chat-dm-safety-authority-core.md",
+    "docs/autopilot-manifests/chat-dm-safety-authority-core.json",
+    "packages/db/migrations/0030_chat_dm_safety_authority_core.sql",
+    "packages/db/migrations/0012_auth_functions.sql",
+    "packages/db/src/chat-dm-safety-invariants.test.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/schema.ts",
+    "packages/db/README.md",
+    "docs/autopilot-invariant-catalog.md"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "none",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -q 'CREATE FUNCTION dm_safety_flags_enabled(' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -q 'CREATE OR REPLACE FUNCTION dm_safety_enabled()' \"$F\" && grep -q 'dm_safety_flags_enabled(' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -q 'CREATE OR REPLACE FUNCTION assert_dm_allowed(' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); test $(grep -c 'FROM chat_dm_safety_config WHERE singleton' \"$F\") -eq 2",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); ! grep -qE 'v_sender_limit :=|v_target_limit :=|v_audit_enabled :=' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); grep -q \"RAISE EXCEPTION 'chat safety blocked'\" \"$F\" && grep -q 'client_min_messages = warning' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); ! grep -qE 'CREATE TABLE|ALTER TABLE|CREATE POLICY|DROP ' \"$F\"",
+      "F=$(ls packages/db/migrations/*.sql | sort | tail -1); ! grep -qE 'GRANT [^;]*TO app\\b' \"$F\"",
+      "git diff --quiet HEAD -- packages/db/schema.ts",
+      "grep -qi 'single.read\\|single statement\\|one snapshot\\|torn' packages/db/src/chat-dm-safety-invariants.test.ts",
+      "grep -q 'pg_get_functiondef' packages/db/src/chat-dm-safety-invariants.test.ts",
+      "grep -qE 'dm_safety_enabled\\(\\)' packages/db/src/chat-dm-safety-invariants.test.ts",
+      "grep -q 'dm_safety_flags_enabled\\|assert_dm_allowed' packages/db/README.md"
+    ],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm review:check:changed",
+      "pnpm build",
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_verification_note": "Every focused command asserts a PROPERTY the slice's contract requires, never a pinned literal (no row/test counts, no migration number). Two intentional structural checks: (1) 'FROM chat_dm_safety_config WHERE singleton' appears EXACTLY twice in the migration — once in the recreated dm_safety_enabled() and once as assert_dm_allowed()'s single SELECT-INTO; the pre-fix assert_dm_allowed had three of its own plus dm_safety_enabled()'s = four reads, so a count of two proves the collapse. (2) the three PL/pgSQL locals the old body assigned in separate statements (v_sender_limit/v_target_limit/v_audit_enabled) are GONE — their values now come from the single record read. The runtime torn-read invariant itself is proven in chat-dm-safety-invariants.test.ts via pg_get_functiondef(assert_dm_allowed) asserting exactly one chat_dm_safety_config read and zero dm_safety_enabled() call inside the body (a true two-session interleave is not deterministically expressible because the read is a single statement by construction — the structural proof IS the proof). Reviewer must confirm the fail-closed regression rows actually assert deny behavior (missing-row, each capability flag, both block directions, sender+target rate) against the RECREATED functions, not merely that a describe block exists; that dm_safety_enabled()'s OWN observable semantics are pinned by a direct call (acceptance row 2b: missing singleton row -> false; each of the four toggles individually false -> false; all true -> true), proving the CREATE OR REPLACE preserved behaviour rather than only checking the downstream consumer; and that dm_current_read_allowed() (owned by 0031, out of scope) still behaves identically after dm_safety_enabled() is recreated.",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 2
+  },
+  "security_review": {
+    "required": true,
+    "reason": "assert_dm_allowed() is the DD-55 fail-closed authority gate for cross-person DM abuse (block + rate-limit). This slice recreates its body AND recreates dm_safety_enabled() — the predicate a security-sensitive RLS policy on root (dd38-dd86-chat-schema-core's dm_current_read_allowed / chat_channels_dm / chat_members_dm / chat_messages_dm) depends on. A regression here is fail-OPEN on a safety gate: the security round must verify, against the migrated live DB, that after the refactor (1) a missing chat_dm_safety_config row still denies on ALL four flags (single-read record all-NULL → dm_safety_flags_enabled → false → safety_disabled; limits COALESCE to 0 → rate deny) — fail-closed is PRESERVED, not weakened; (2) each capability flag independently disabling the gate still holds; (3) chat_pair_blocked() is still checked in BOTH directions; (4) the raised exception text never varies by deny_reason; (5) the RAISE LOG line still fires only when audit_enabled and never leaks to any client (client_min_messages=warning clause intact); (6) dm_safety_enabled()'s recreated body preserves missing-row → false exactly (outer COALESCE over the singleton subquery, NOT the inner form which would return NULL on an empty row set); (7) app/app_worker/readonly still have zero grant/EXECUTE on the tables and functions; (8) the new pure helper dm_safety_flags_enabled leaks nothing (no table access, REVOKE PUBLIC). This is the exact class DD-102 waived once already; the fix closing it must not open a different hole.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 120,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE",
+    "chat-dm-safety-authority-core (migration 0030) is found NOT actually present on origin/main with assert_dm_allowed / dm_safety_enabled / chat_dm_safety_config as landed — HALT, do not proceed against a stubbed base; this slice's premise is that it recreates 0030's functions",
+    "the live migration tail has advanced past the number assumed here when the worktree opens — re-derive the correct next number and correct scope/register, do not pick whatever is free",
+    "after the refactor, dm_safety_enabled() or assert_dm_allowed() is found to admit ANY case that 0030 denied (a missing row, a disabled flag, a blocked pair in either direction, or an over-limit sender/target now allowed) — that is fail-OPEN on the safety gate, HALT and report; the whole point of this slice is that behavior is byte-identical except the read count",
+    "dm_current_read_allowed() (root, 0031) is found to change behavior after dm_safety_enabled() is recreated — HALT; the recreation must be a pure single-source delegation with identical semantics",
+    "the single-read collapse turns out to require touching chat_dm_safety_config's structure or any file outside this scope to be correct — HALT and report; that means the slice premise needs re-deriving, an owner question, not an implementation choice"
+  ],
+  "readiness_evidence_path": ".autopilot/state/chat-dm-safety-config-single-read/readiness.json"
+}

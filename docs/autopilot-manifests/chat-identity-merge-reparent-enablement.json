@@ -1,0 +1,109 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — carries NO manifest_schema_version. This slice is NOT_CODE_READY (see docs/autopilot/contracts/autopilot-chat-identity-merge-reparent-enablement.md §verdict): do NOT register or open a worktree from it. The fields below describe the INTENDED shape so the future Person-merge slice inherits a specified target rather than a blank one; they are documentation, not authorization.",
+  "_blocked_note": "BLOCKED per DD-103 (owner-final 2026-08-11). 0031_chat_schema_core declares chat_members_identity_immutable and chat_channels_identity_immutable (unconditional block on UPDATE of person_id / dm_key), added in rounds 1-2 to close a REAL security bypass, plus composite FKs to memberships that are NOT DEFERRABLE. Re-parenting chat rows inside a Person-merge transaction is therefore STRUCTURALLY IMPOSSIBLE, not merely unimplemented. DD-103 accepts the gap with a HARD CONSTRAINT: the escape hatch (merge-scoped trigger bypass), the FK -> DEFERRABLE INITIALLY IMMEDIATE change, and a deferred-transaction regression test must land IN THE SAME SLICE as the Person-merge implementation, because the correct shape depends on what that merge transaction actually is -- and Person-merge has zero implementation in the repo (verified 2026-08-11: git grep 'mergePersons|merge_persons|mergeIdentity|person_merge' -- packages apps returns nothing). Authoring the DDL blind would likely need rework; DD-103 cites the pay_code (DD-02) precedent of deciding merge behavior when the entity is built. This manifest exists to hold the specified target and design direction, not to be run standalone.",
+  "_base_sha_note": "base_sha below is DOCUMENTATION ONLY — origin/main tip at authoring time (2026-08-11). Not the base to build from; a real base is pinned only when/if the Person-merge slice opens.",
+  "base_sha": "37c6f8bc3fc4d2b2d15416adeed2138d1f0e8262",
+  "task_id": "plexco:chat-identity-merge-reparent-enablement",
+  "feature": "chat-identity-merge-reparent-enablement",
+  "branch": "feat/chat-identity-merge-reparent-enablement",
+  "base_ref": "origin/main",
+  "risk": "P1",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": ["dd38-dd86-chat-schema-core"],
+  "dep_checks": [
+    {
+      "feature": "dd38-dd86-chat-schema-core",
+      "base_sha": "6f63c7dc631d470a9c6da760fbbe24822dc8e0e1",
+      "landed_sha": "3b3bb091205564e181f5c077a7e3390388a31e31",
+      "file": "packages/db/migrations/0031_chat_schema_core.sql",
+      "symbol": "chat_members_identity_immutable"
+    }
+  ],
+  "_dependency_note": "MERGED schema dependency, same-order proof: chat_members_identity_immutable is ABSENT in packages/ at the dependency base 6f63c7d (verified 2026-08-11) and PRESENT at landed 3b3bb09. This is the schema this slice would AMEND. But it is NOT the slice's blocking dependency -- the BLOCKING dependency is the Person-merge transaction/role, which does not exist and has no slug to list here. That coupling is the NOT_CODE_READY blocker, documented in _blocked_note and the contract verdict, not resolvable by a dep_check.",
+  "invariants": ["schema", "identity"],
+  "_invariant_note": "Per docs/autopilot-invariant-catalog.md and the backlog task's own _invariant_note. 'schema': this slice would add a migration recreating two triggers and altering FK DEFERRABLE-ity + the schema.ts mirror. 'identity': it re-parents person_id/author_person_id/dm_key across chat_members/chat_channels/chat_messages during an identity merge (catalog 'member/account identity link/merge (feature_identity)'). DO NOT use 'merge-authority' — in this repo that token means 'landing and optional separately-authorized automation', i.e. the merge of an AUTOPILOT LANE into main, NOT the merge of a Person. Two different senses of 'merge'; picking merge-authority would serialize this slice against unrelated landing-automation lanes and miss the real serialization it needs (shared schema/identity with other chat + identity slices).",
+  "scope": [
+    "packages/db/migrations/0033_chat_identity_merge_reparent_enablement.sql",
+    "packages/db/schema.ts",
+    "packages/db/src/chat-schema-invariants.test.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/README.md",
+    "docs/autopilot-manifests/chat-identity-merge-reparent-enablement.json",
+    "docs/autopilot/contracts/autopilot-chat-identity-merge-reparent-enablement.md",
+    "docs/autopilot-backlog.md"
+  ],
+  "_scope_note": "INTENDED scope, NOT authorized to write yet (see _blocked_note). The migration would (a) recreate the two immutability triggers to allow the identity-changing UPDATE ONLY when executed by the designated Person-merge role (DB-role identity, not an app-settable flag) while keeping every other UPDATE blocked, and (b) ALTER the composite FKs to memberships to DEFERRABLE INITIALLY IMMEDIATE. schema.ts mirrors the FK DEFERRABLE-ity. chat-schema-invariants.test.ts adds the deferred-transaction re-parent regression + the still-closed-for-app negative test. rls-invariants.test.ts / migrate.test.ts carry only the mechanical migration-count/tail literal bumps. The EXACT column set, trigger predicate, and which FKs to defer depend on the real Person-merge transaction and are therefore NOT pinned here (DD-103).",
+  "_migration_number_note": "0033 is a PROVISIONAL, LOW-CONFIDENCE placeholder: it assumes chat-dm-safety-config-single-read (0032) lands first and nothing else intervenes. Because this slice is blocked far behind the live tail, its real number is genuinely unknown -- RE-DERIVE with `ls packages/db/migrations/*.sql | sort | tail -1` at the (future) implementation time inside the Person-merge slice. Do NOT trust 0033. AP-45 lost its guessed number to unrelated migrations.",
+  "negative_scope": [
+    "DO NOT remove or weaken the two immutability triggers into an unconditional open UPDATE. The security bypass they closed in 0031 rounds 1-2 (flipping chat_members.channel_id/person_id to strand a DM at 1 member; flipping chat_channels.kind/dm_key to no-op the exactly-2 guards) MUST stay closed for every path except a provably-authorized Person-merge.",
+    "DO NOT authorize the identity-changing UPDATE via an app-settable signal (a custom GUC like app.merge_authorized, a session var, or an application-layer check). Any app session can set those; that is not provable authorization. Authorization must be a DB-enforced ROLE identity (see contract design direction).",
+    "DO NOT grant app (the NOBYPASSRLS runtime) any ability to change person_id / dm_key / author_person_id / created_by_person_id. app stays read-only on the chat tables.",
+    "DO NOT design or write this slice standalone ahead of the Person-merge transaction. DD-103's hard constraint is that the escape hatch, the DEFERRABLE FK, and the deferred-transaction test land in the SAME slice as Person-merge. This manifest is the specified target for that slice, not a separate runnable one.",
+    "DO NOT edit 0031_chat_schema_core.sql in place (hash-locked; P17 forward-only). The change is a NEW migration.",
+    "DO NOT change the spec (feature_inapp_chat_tech.md rows 10/11) to 'tombstone' to match the current schema. DD-103 is explicit: that would swap a product decision for a temporary technical limitation. The spec keeps declaring re-parent as the target; DD-103 is where the schema-not-yet-caught-up fact lives."
+  ],
+  "context_sources": [
+    "docs/standards/decisions.md",
+    "docs/autopilot-backlog.md",
+    "packages/db/migrations/0031_chat_schema_core.sql",
+    "docs/features/BE/feature_inapp_chat_tech.md",
+    "docs/00-start-here/identity-model.md",
+    "docs/features/BE/feature_identity_tech.md",
+    "packages/db/schema.ts",
+    "packages/db/src/chat-schema-invariants.test.ts",
+    "docs/autopilot-invariant-catalog.md",
+    "docs/autopilot/contracts/autopilot-dd38-dd86-chat-schema-core.md"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "none",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm review:check:changed",
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_verification_note": "verification.focused is intentionally EMPTY: the concrete property checks (which trigger predicate proves the merge role, which FKs became DEFERRABLE, the deferred-transaction re-parent test) cannot be written until the Person-merge transaction shape exists (DD-103). They are authored in the Person-merge slice. Do not fabricate placeholder checks here — an empty list honestly reflects a blocked slice, per the readiness gate's evidence-inventory-not-fabrication rule.",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 2
+  },
+  "security_review": {
+    "required": true,
+    "reason": "This slice deliberately opens a hole in a trigger pair that closed a REAL security bypass in 0031 rounds 1-2. The security round must prove the hole is EXACTLY as wide as an authorized Person-merge and no wider: (1) the identity-changing UPDATE succeeds ONLY when current_user is the designated merge role (DB-enforced identity, not an app-settable GUC/flag), verified by a test that the same UPDATE from app / a non-merge role STILL raises; (2) the exactly-2-DM-members and dm_key-consistency invariants still hold at COMMIT after a deferred re-parent; (3) the DEFERRABLE FK change does not let an ordinary transaction leave a dangling membership reference at COMMIT; (4) app retains zero write on person_id/dm_key/author_person_id. Because the exact mechanism is not yet pinned (DD-103), this reason states the properties the eventual security round must establish, not a diff to review.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 180,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE",
+    "This slice is opened standalone (without the Person-merge implementation) — HALT: DD-103 requires the escape hatch, DEFERRABLE FK and deferred-transaction test to land in the SAME slice as Person-merge; a standalone enablement slice is a scope-design error.",
+    "The escape hatch is designed against a Person-merge transaction that does not actually exist in the worktree — HALT: the trigger predicate, FK set and regression test all depend on the real merge transaction (DD-103); designing blind is the failure mode DD-103 rejects.",
+    "Any design that authorizes the identity-changing UPDATE via an app-settable signal rather than a DB-enforced role identity — HALT and report; that is not provable authorization and reopens the bypass to the app layer."
+  ],
+  "readiness_evidence_path": ".autopilot/state/chat-identity-merge-reparent-enablement/readiness.json"
+}

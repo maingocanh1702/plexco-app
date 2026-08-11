@@ -126,14 +126,19 @@ notes: <link spec>
 ## task: chat-identity-merge-reparent-enablement
 title: Mở đường re-parent chat rows khi merge Person — trigger escape hatch + FK `DEFERRABLE`
 status: planned
+_readiness: NOT_CODE_READY (blocked) — see `../autopilot/contracts/autopilot-chat-identity-merge-reparent-enablement.md` §7
 risk: P1
 change_class: schema
 depends_on: [dd38-dd86-chat-schema-core]
 invariants: [schema, identity]
 scope: []
-manifest: null
+manifest: docs/autopilot-manifests/chat-identity-merge-reparent-enablement.json
+launcher: .claude/commands/ap-54-chat-identity-merge-reparent-enablement.md
 merged_probe: null
-_probe_note: Probe viết khi author manifest — migration mới tạo trigger/constraint có tên.
+_probe_note: Left `null` on purpose — this slice is NOT_CODE_READY (blocked on the non-existent Person-merge
+  transaction, DD-103). The real probe (a merge-role-gated trigger predicate + `DEFERRABLE` FK, all
+  slice-unique) is authored INSIDE the Person-merge slice that absorbs this one; there is nothing to merge
+  until then. `scope: []` = no authorized write scope yet; the INTENDED target scope lives in the manifest.
 _invariant_note: `schema` (migration + trigger + FK) và `identity` (*"member/account identity link/merge
   (feature_identity)"*, catalog). KHÔNG dùng `merge-authority` — token đó nghĩa là *"landing and optional
   separately-authorized automation"*, tức merge **của autopilot vào main**, không phải merge Person. Hai
@@ -171,20 +176,33 @@ notes: |
   **Đừng sửa spec thành "tombstone"** để cho khớp schema — đó là đổi một quyết định sản phẩm bằng một hạn
   chế kỹ thuật tạm thời. Spec giữ nguyên; DD-103 là nơi ghi rằng schema chưa theo kịp.
 
+  **Packet authored 2026-08-11 → NOT_CODE_READY** (contract + manifest + launcher ap-54). Contract §3 pins
+  the **design direction to argue for** (không finalize): escape hatch = bypass merge-scoped trong hai
+  trigger, gate bằng **DB-role identity** (`current_user` = một Person-merge role riêng, chỉ tới được qua
+  `SECURITY DEFINER` merge function của role đó) — **không** GUC/app-flag (app set được ⇒ không chứng minh
+  được ở DB); FK → `DEFERRABLE INITIALLY IMMEDIATE`; regression test re-parent trong một transaction
+  deferred thật, chứng minh app/non-merge role vẫn `RAISE`. 4 open question chặn code (role nào, tập cột
+  repoint gồm cả `author_person_id`/`created_by_person_id`, FK nào defer, và va chạm `dm_key` UNIQUE khi hai
+  người đã có DM cùng peer). Blocked trên Person-merge (zero impl). Đi **SAU** `chat-dm-safety-config-single-read`.
+
 ---
 
 ## task: chat-dm-safety-config-single-read
 title: `assert_dm_allowed` đọc config qua 4 statement — gộp về một lần đọc nhất quán
-status: planned
+status: ready
 risk: P1
 change_class: schema
 depends_on: [chat-dm-safety-authority-core]
 invariants: [schema]
-scope: []
-manifest: null
-merged_probe: null
-_probe_note: Sẽ có probe thật khi author manifest — migration mới tạo function/statement có tên, không
-  thuộc loại `close_by: hand`. Để `null` cho tới lúc đó.
+scope: [packages/db/migrations/0032_chat_dm_safety_config_single_read.sql, packages/db/src/chat-dm-safety-invariants.test.ts, packages/db/src/rls-invariants.test.ts, packages/db/src/migrate.test.ts, packages/db/README.md, docs/autopilot-manifests/chat-dm-safety-config-single-read.json, docs/autopilot/contracts/autopilot-chat-dm-safety-config-single-read.md, docs/autopilot-backlog.md]
+manifest: docs/autopilot-manifests/chat-dm-safety-config-single-read.json
+launcher: .claude/commands/ap-53-chat-dm-safety-config-single-read.md
+merged_probe: packages/db/migrations/0032_chat_dm_safety_config_single_read.sql :: dm_safety_flags_enabled
+_probe_note: Slice-unique symbol `dm_safety_flags_enabled` (the new pure helper this slice adds) — verified
+  ABSENT on origin/main 2026-08-11 (git grep returns nothing repo-wide). The migration FILE NUMBER 0032 is
+  provisional (re-derive the tail at worktree open — a sibling slice also wants the next number); repoint the
+  probe file if the number moves, but the symbol is the stable proof. Authored 2026-08-11 → CODE_READY (see
+  `../autopilot/contracts/autopilot-chat-dm-safety-config-single-read.md` §8).
 notes: |
   **Mở 2026-08-10 từ DD-102** (waiver có điều kiện). `assert_dm_allowed` trong
   `0030_chat_dm_safety_authority_core.sql` đọc cấu hình qua **bốn statement riêng**: ba
@@ -203,9 +221,18 @@ notes: |
   hàng đợi mà việc này chưa xong thì **nó là blocker của slice đó**, không được mang tiếp như nợ.
   Hiện exposure = 0 vì `assert_dm_allowed` chưa có caller production nào.
 
-  **Hình dạng fix (đề xuất, chưa chốt):** một `SELECT … INTO` lấy cả ba cột trong một statement, và cân
-  nhắc gộp luôn `dm_safety_enabled()` nếu nó cũng chỉ đọc cùng hàng singleton. Không sửa `0030` — nó đã
-  apply và hash-lock; đây là migration mới.
+  **Hình dạng fix (đã chốt trong contract §3):** migration mới (KHÔNG sửa `0030`, đã hash-lock)
+  `CREATE OR REPLACE assert_dm_allowed` để đọc singleton row **một lần** (`SELECT * INTO v_cfg … WHERE
+  singleton`) rồi suy mọi thứ từ snapshot đó; thêm pure helper `dm_safety_flags_enabled(4×boolean)` làm
+  **single source** của phép AND kill-switch, và `CREATE OR REPLACE dm_safety_enabled()` để delegate về
+  helper đó (giữ nguyên missing-row→false qua outer COALESCE, nên `dm_current_read_allowed` của `0031`
+  không đổi hành vi). Fail-closed bảo toàn từng nhánh; chỉ SỐ LẦN đọc config đổi (4→1). `chat_pair_blocked`
+  giữ statement riêng (bảng khác — ngoài phạm vi torn read của DD-102).
+
+  **Thứ tự vs `chat-identity-merge-reparent-enablement`:** slice này đi **TRƯỚC** — nó CODE_READY và mang
+  mốc cứng DD-102 (land trước slice 7/8); slice kia NOT_CODE_READY, blocked trên Person-merge chưa tồn tại.
+  Hai slice **không chạy song song** (cùng lấy một migration number, cùng sửa literal count trong
+  `rls-invariants.test.ts`/`migrate.test.ts`, cùng edit `docs/autopilot-backlog.md`, cùng token `schema`).
 
 ---
 
@@ -548,7 +575,20 @@ change_class: manual-identity-feature
 depends_on: []
 invariants: [identity, schema, auth]
 scope: []
-notes: docs/features/FE/feature_identity.md. Đụng auth/token + migration + debt-bearing claim/ledger preservation nên P0 manual-only; split core directory, link-code lifecycle và merge/claim mutation thành các reviewable manual slices, không launch qua unattended autopilot.
+notes: |
+  docs/features/FE/feature_identity.md. Đụng auth/token + migration + debt-bearing claim/ledger
+  preservation nên P0 manual-only; split core directory, link-code lifecycle và merge/claim mutation
+  thành các reviewable manual slices, không launch qua unattended autopilot.
+
+  **Hard precondition của merge/claim slice (ghi 2026-08-11):** slice `merge/claim mutation` ở trên
+  **phải mang theo** `chat-identity-merge-reparent-enablement` (land trong CÙNG slice — DD-103). Lý do
+  cấu trúc: `0031_chat_schema_core` khai 2 trigger immutable (`chat_members_identity_immutable`,
+  `chat_channels_identity_immutable`) chặn vô điều kiện UPDATE `person_id`/`dm_key`, cộng 3 composite FK
+  tới `memberships` **không `DEFERRABLE`** (`chat_channels_created_by_membership_fk`,
+  `chat_members_membership_fk`, `chat_messages_membership_fk`) ⇒ re-parent chat rows khi merge Person là
+  **bất khả thi về cấu trúc** tới khi merge/claim slice mang theo escape hatch merge-scoped (gate bằng
+  DB-role identity, KHÔNG app-flag) + FK→`DEFERRABLE INITIALLY IMMEDIATE` + regression test deferred.
+  Contract/direction: `../autopilot/contracts/autopilot-chat-identity-merge-reparent-enablement.md`.
 
 ## task: feature-billing-lifecycle
 title: Subscription / billing lifecycle
