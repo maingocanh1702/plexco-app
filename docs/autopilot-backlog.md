@@ -2878,7 +2878,8 @@ notes: |
 
 ## task: open-decisions-long-term-reconcile
 title: Reconcile open decisions dài hạn — clean subset (DD-104/DD-18/DD-96/DD-79 deferred); land DD-14/15 + DD-34/35/36 + identity/README
-status: in-flight
+status: merged
+note_merged: đóng tay 2026-08-12 — squash `cc7388f` trên `origin/main`. KHÔNG auto-reconciled: lane docs không có code probe phân biệt được, nên `autopilot-backlog-reconcile` không tự flip (xem task `backlog-status-taxonomy-inflight-manual-close-gap`). Land trên **owner-accepted evidence**, KHÔNG phải clean gate — registration terminal ở `fix-round-count` 5/5, đóng bằng `--authorized-close`, và 3 finding cuối (P2/P2/P3 doc-consistency) được sửa SAU vòng gate cuối nên không mang review độc lập nào.
 risk: P1
 change_class: docs
 depends_on: []
