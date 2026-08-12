@@ -1,57 +1,41 @@
-# 📞 DD-14 / DD-15 Analysis — Zalo Login gating + Bot `from.id` stability (SPIKE)
+# DD-14 / DD-15 — Zalo external-evidence contract
 
-> **Mục đích:** đây **KHÔNG phải quyết định nội bộ** — cần **spike xác minh với Zalo**. File này = **spike plan** (cần verify gì, cách, tác động). Không chặn build (link_codes bao ca xấu nhất).
-> **Ngày:** 2026-07-13 · **Canonical:** `00-start-here/identity-model.md` §3/§5/§7 · `link_codes` (merge/link contract) · DD-32 (funnel — nhánh Zalo) · DD-01 (merge key). Ghi → `decisions.md` DD-14/DD-15.
+> **Classification:** DD-14 = external enablement evidence; DD-15 = external optimization evidence. Neither is an internal product decision and neither authorizes identity merging.
+> **Reconciled:** 2026-08-11 · **Canonical:** `00-start-here/identity-model.md` §3/§5/§7 · DD-01/32/50/67.
 
----
+## 1. Durable defaults
 
-## 0. TL;DR — ⬜ SPIKE (không phải decision)
-- **DD-14:** Zalo Login (Social API) có **bị chặn bởi cửa đăng ký OA verified** (đang pending) không, hay độc lập? → **verify với developers.zalo.me**.
-- **DD-15:** Zalo Bot `from.id` có **ổn định xuyên nhiều bot** (id toàn cục theo user Zalo) hay **scoped-per-bot**? (Messenger PSID đã xác nhận page-scoped.) → **verify với Zalo Bot Platform**.
-- **KHÔNG chặn build:** transactional one-time `link_codes` đã bao **ca xấu nhất** (mỗi CLB link một lần). Kết quả spike chỉ ảnh hưởng mức auto-match + linked-state Zalo cho DD-32.
+- Zalo Login and bot/OA identities are separate subjects until an explicit, verified link binds them. Provider-name equality is never a join key.
+- The verified one-time link-code path (DD-50 `/link`) is the decided safe account-linking path for every supported Zalo topology (link_codes storage exists; the `/link` command handler is a phase-1 contract, not yet built).
+- Bot identity remains scoped to the exact bot/OA endpoint. No schema, uniqueness, merge or cross-bot dedupe rule may assume a global `from.id`.
+- Missing, ambiguous or stale provider evidence keeps optional Login/CTA OFF; it never weakens an already-safe build.
 
----
+## 2. DD-14 — Login enablement evidence
 
-## 1. Canonical hiện trạng
-| Sự thật | Nguồn |
-|---|---|
-| Zalo có nhiều bề mặt tách biệt (Bot Open API · Mini App · OA OpenAPI · Social/Login) | identity-model §7 |
-| Plexco đa-bot (mỗi host/CLB một bot) | ROADMAP · identity-model |
-| `link_codes` (OTP) = đường link/merge cross-channel — bao ca xấu nhất | identity-model §3/§5 |
-| Messenger PSID = **page-scoped** (đã xác nhận) | messenger-channel-design |
-| DD-32 funnel: "link ↔ Zalo" phụ thuộc DD-14 (chưa bật → transactional `/link` code) | DD-32 |
+Question: can a Plexco Zalo Login app be enabled independently of an OA verification state?
 
----
+The item closes only when the repository records one of:
 
-## 2. DD-14 — Spike plan (Zalo Login gating)
-- **Câu hỏi:** Zalo Login yêu cầu đăng ký app trên developers.zalo.me — có **buộc phải có OA verified** (thứ đang pending) không, hay độc lập?
-- **Cách verify:** đọc docs developers.zalo.me (Social/Login) + thử tạo app Login sandbox (không cần OA) → xem có bật được không.
-- **Kết quả → tác động:**
-  - **Độc lập** → có thể bật Zalo Login **trước** OA → làm cầu **auto-match "Zalo login ↔ Zalo bot"** (giảm friction, thay SĐT). Ảnh hưởng **DD-32/provider-link path** (KHÔNG phải DD-13 — đã fence Google/email).
-  - **Phụ thuộc OA verified** → chờ OA; phễu Zalo tạm dùng transactional `/link` code.
+1. attributable official documentation with URL, capture date, applicable product/API version and exact App/OA prerequisites; or
+2. a reproducible sandbox run with exact configuration, expected result and observed result.
 
-## 3. DD-15 — Spike plan (Bot `from.id` cross-bot)
-- **Câu hỏi:** cùng một người ở hai bot khác nhau: `from.id` là **id toàn cục theo user Zalo** hay **scoped-per-bot**?
-- **Cách verify:** cùng một tài khoản Zalo nhắn 2 bot khác nhau (2 app) → so `from.id`.
-- **Kết quả → tác động:**
-  - **Ổn định xuyên bot** → giảm số lần link cần thiết (auto-match rộng hơn).
-  - **Scoped-per-bot** → mỗi CLB link một lần (như hiện tại). **Không chặn** — `link_codes` đã bao.
+If independence is proven, that evidence may enable the Zalo Login surface after its normal security/release gates. It does **not** auto-link the Login subject to a bot/OA `from.id`. If independence is not proven, Login/CTA stays OFF; account-linking uses only the verified one-time link-code path (DD-50 `/link`, a phase-1 contract not yet implemented), never an auto-link.
 
-## 4. Invariants (bất kể kết quả spike)
-- **Không auto-link chéo** dựa suy đoán — debt-bearing claim vẫn cần verified account email hoặc transactional one-time `link_code` theo DD-50.
-- `link_codes` là đường an toàn mặc định; auto-match chỉ là tối ưu friction, **không** thay khoá merge.
-- Token/PII Zalo lộ = giới hạn 1 CLB messaging, không chạm DB/tiền (AUDIT).
+## 3. DD-15 — cross-bot optimization evidence
 
-## 5. Dependencies
-- **DD-32** (funnel nhánh Zalo — chờ DD-14).
-- **DD-01/`feature_identity`** (merge key — auto-match không thay).
-- **identity-model §7** (provider/channel phase matrix).
+Question: does the same Zalo account emit the same `from.id` across two distinct Plexco bot/OA endpoints?
 
-## 6. Hành động
-- **Giao 1 spike** (dev) xác minh DD-14 + DD-15 với Zalo **trước khi** phụ thuộc auto-match hoặc bật nhánh Zalo của DD-32.
-- Ghi kết quả vào `decisions.md` DD-14/DD-15 (chuyển ⬜ → kết luận) + `identity-model §7`.
+Close evidence must be official and attributable or a two-endpoint reproducible probe that records endpoint/app identities, payload fields, dates and provider environment. Until then, storage and lookup stay endpoint-scoped.
 
-## 7. Quyết định
-**Không chốt được từ nội bộ** — cần spike. Giữ ⬜. `link_codes` bao ca xấu nhất → không chặn build. Ghi `decisions.md` DD-14/DD-15 = SPIKE.
+Even if stability is proven, a separate reviewed proposal must define migration, collision handling, rollback and privacy consequences before uniqueness or merge scope changes. The spike result alone authorizes no data-model change.
 
-**Nguồn:** `identity-model.md` §3/§5/§7 · `link_codes` · DD-32/01 · messenger-channel-design (PSID page-scoped) · AUDIT.
+## 4. Verification and propagation
+
+- Negative tests: same-looking subjects on two endpoints never auto-merge; provider outage/unknown returns the `/link` path; a Login success without verified link cannot claim a bot identity.
+- Reopen DD-14 immediately before enabling Zalo Login or its CTA.
+- Reopen DD-15 immediately before proposing cross-bot dedupe, wider uniqueness or fewer explicit links.
+- Propagate only the evidence outcome and its bounded consequence to `decisions.md` and `identity-model.md`; do not copy transient portal observations as timeless authority.
+
+## 5. Status boundary
+
+These evidence tasks do not block endpoint-scoped identity, `/link`, or the Google/email phase-1 contract. They do block the specific optional enablement/optimization named above. No runtime, migration or provider activation is authorized here.

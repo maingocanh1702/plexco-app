@@ -2837,3 +2837,103 @@ notes: |
   Neither route is clearly cheaper — pick based on which future slice (7/8's own authoring, or a
   standalone infra probe) reaches this question first. Not scoped further than this; the next
   implementer authors a real contract once slice 7/8's own shape is known.
+
+---
+
+## task: dd18-embedding-candidate-active-multiprofile
+title: DD-18 blocker — kb_chunks single-slot UNIQUE cannot hold candidate + active embeddings
+status: idea
+risk: P1
+change_class: schema
+depends_on: []
+invariants: [schema]
+scope: [docs/features/BE/feature_club_assistant_tech.md]
+close_by: hand · DD-18 open; design blocker, no code-symbol probe until the multi-profile schema is chosen.
+notes: |
+  **Property (contradiction) — from the archived v7 candidate (HEAD `5009686`, since reverted):** the current base contract keeps a single-slot `kb_chunks` (fixed `vector(1536)`, no profile registry; schema not migrated). The v7-candidate reshaped `kb_chunks` to a profile-keyed single slot per `(tenant_id, document_id, chunk_index)` UNIQUE, but DD-18's proposed candidate/active lifecycle requires candidate backfill + atomic flip + retained-previous-for-rollback + "never mutate active vectors in place." One slot under that UNIQUE cannot hold candidate AND active embeddings at once → that candidate design is unimplementable. A future DD-18 embedding spec needs a multi-profile `(chunk_id, profile_key)` structure + a migration. Evidence: the contradiction property above (self-contained, tracked in this backlog), surfaced in the closed v7 candidate review, finding #1. **DD-18 is OPEN; this is a prerequisite before its embedding lifecycle can be specified/ratified — not a current-schema contradiction.** Owner-only: pick the multi-profile schema shape before authoring. `close_by: hand`.
+
+## task: dd18-profile-activation-cas-boundary
+title: DD-18 blocker — profile activation lacks a protected CAS boundary on bot_configs
+status: idea
+risk: P1
+change_class: schema
+depends_on: []
+invariants: [schema, auth]
+scope: [docs/features/BE/feature_club_assistant_tech.md]
+close_by: hand · DD-18 open; design blocker, no code-symbol probe yet.
+notes: |
+  **Property (contradiction) — from the archived v7 candidate (since reverted; the current base `bot_configs` has no active-profile field and the schema is not migrated):** the v7-candidate put `active_embedding_profile_key` on host-configurable `bot_configs` with only an FK to `embedding_profiles`; nothing structurally enforced "only slice 31 activates" — no protected CAS boundary, trigger, protected-state table or narrow activation function. A host-editable row could flip the active profile. Evidence: the contradiction property above (self-contained, tracked in this backlog), surfaced in the closed v7 candidate review, finding #2. **DD-18 is OPEN; a prerequisite its future spec must resolve.** `close_by: hand`.
+
+## task: dd18-embedding-provider-profile-equality
+title: DD-18 blocker — EmbeddingProvider adapter not pinned to the selected profile
+status: idea
+risk: P1
+change_class: docs
+depends_on: []
+invariants: [schema]
+scope: [docs/features/BE/feature_club_assistant_tech.md]
+close_by: hand · DD-18 open; contract blocker, no code-symbol probe yet.
+notes: |
+  **Property (contradiction) — from the archived v7 candidate (since reverted):** the v7-candidate `EmbeddingProvider` interface never required the adapter's provider/model/dims to equal the selected immutable profile before persistence; a same-dimension misconfigured adapter could return vectors from model B labeled as profile A and still pass the FK + `vector_dims()` checks, corrupting cache/index semantics. A future DD-18 spec needs an adapter-to-profile equality gate. Evidence: the contradiction property above (self-contained, tracked in this backlog), surfaced in the closed v7 candidate review, finding #3. **DD-18 is OPEN; a prerequisite its future spec must resolve.** `close_by: hand`.
+
+## task: open-decisions-long-term-reconcile
+title: Reconcile open decisions dài hạn — clean subset (DD-104/DD-18/DD-96/DD-79 deferred); land DD-14/15 + DD-34/35/36 + identity/README
+status: in-flight
+risk: P1
+change_class: docs
+depends_on: []
+invariants: [money-model, auth, api-contract, audit-integrity]
+scope: [docs/standards/decisions.md, docs/decisions/analysis/dd-14-15-zalo-spike-analysis.md, docs/decisions/analysis/dd-34-36-kb-platform-analysis.md, docs/decisions/analysis/dd-remaining-cluster-analysis.md, docs/00-start-here/identity-model.md, docs/features/README.md, docs/autopilot-backlog.md]
+manifest: .autopilot/state/open-decisions-reconcile-clean/manifest.json
+close_by: hand · docs reconcile; `ap-finish --squash-verified` only VERIFIES the origin squash — it does NOT commit/push the backlog (see `scripts/ap-finish.sh`). This manual-close docs row is NOT auto-reconciled: `scripts/autopilot-backlog-reconcile` only auto-probes `planned|ready|blocked` rows via a `merged_probe`, so after origin landing a human MUST manually edit this task's status to `merged`. Not a code-symbol probe.
+notes: |
+  Lane **open-decisions-reconcile-clean** (base `7f5a886`), re-slice sau owner decision (A) 2026-08-12 defer DD-104. Recommendation doc **excluded** (readiness-synthesis mis-classified `criteria`); decisions.md + bốn analysis đã là authority trên main. **Land:** DD-14/15, DD-34/35/36, identity/README. **Defer:** DD-104 (→ base 🟡 proposal + blocker note, xem task `dd104-delete-session-ratification`); DD-18 (blocker tasks ở trên) và DD-96/DD-79 (blockers B1–B4 ở `decisions.md` DD-96 Part B section; không có backlog task riêng); records revert về base + deferred-blocker note. Changelog: chỉ v2.26 ratify clean DDs; v2.27/v2.28/v2.29 removed; v2.25↓ landed không đụng. Session specs (`feature_session_management_tech.md` + FE) giữ **byte-identical to base** (DD-104 content deferred). DD-104 tách khỏi core vì deep review (sau khi vá codex-regurgitation, xem task `codex-review-pin-worktree-isolation-defect`) cho thấy nó là money/destructive/authority monolith chưa spec đủ. Docs-only; không authorize runtime/migration/enablement. Merge = squash 1 commit + `ap-finish --squash-verified` (verifies the origin merge only; ap-finish does NOT commit/push the backlog). Sau khi land origin, MANUALLY sửa status task này thành `merged` (docs reconcile không có code-symbol probe; reconciler chỉ auto-close `planned|ready|blocked` rows có `merged_probe`, không đụng manual-close row này). Closeout nằm trong diff trước gate.
+
+## task: dd104-delete-session-ratification
+title: DD-104 DeleteSession hard-delete — ratification blocked (deferred from clean subset)
+status: idea
+risk: P1
+change_class: decision
+depends_on: []
+invariants: [money-model, auth, api-contract]
+scope: [docs/standards/decisions.md, docs/features/BE/feature_session_management_tech.md, docs/features/FE/feature_session_management.md]
+close_by: hand · ratify DD-104 khi slice DD-104 riêng giải 4 blocker với decision-table chốt up-front (authority incl. suspension gate · 23503 trusted-resolution · money-FK boundaries · concurrency ordering) — quyết trước khi viết algorithm, không phát hiện từng vòng.
+notes: |
+  Surfaced in open-decisions-reconcile-core codex round-04 (post-regurgitation-archive deep review), 2026-08-12; DD-104 giữ 🟡 đề xuất trên `decisions.md`. **Blockers (properties):**
+  1. `DeleteSession` là destructive admin mutation (theo thiết kế DD-104, deferred — không có trong session specs), authorize chỉ `session.manage`. Billing `feature_billing_lifecycle_tech.md:30` scope `authorizeTenantAction` cho "Any mutating API" (fail-closed 2-step suspension gate), `:329` nêu admin mutation là mutating action class → một tenant suspended vẫn hard-delete được session.
+  2. `:329` yêu cầu check in-transaction gần commit (concurrent suspend serialize trước hoặc block). Publish ordering đã đóng (`docs-session-publish-concurrency-recheck` **merged**, resolved ở `feature_session_management_tech.md` §4); Delete cùng shape nhưng cần delete-specific ordering obligation riêng, dùng publish làm precedent.
+  3. `23503` map cần trusted constraint resolution (`confrelid=sessions` qua `pg_constraint`), không blanket map.
+  4. **Money-FK boundaries (D1/D2 chưa chốt):** `DELETE FROM sessions` chạm 9 FK child gồm `charges` (sổ tiền); D1 (cascade thật sửa 9 FK → cascade `charges` vs giữ `NO ACTION` vs bỏ hard delete dùng `CancelSession`) và D2 (charge `pending`/`failed` của mọi người + charge `paid` của host bị xoá — quyết định kế toán) chưa chốt. Blocker destructive-money cốt lõi (HARD RULE claim-có-tiền cần khoá mạnh).
+  Disposition: `feature_session_management_tech.md` + `feature_session_management.md` giữ base (DD-104 content không land ở clean subset). `close_by: hand`.
+
+## task: codex-review-pin-worktree-isolation-defect
+title: Reviewer reads prior-round findings from the worktree it runs inside (contaminates multi-round review)
+status: idea
+risk: P2
+change_class: kit-maintenance
+depends_on: []
+invariants: [review-integrity]
+scope: []
+merged_probe: null
+close_by: hand · isolate the reviewer's READABLE tree (not just its write) — kit-maintenance path, separately reviewed.
+notes: |
+  **Defect:** prior-round review artifacts (`gate-attempt-*`, `pending-review-finding.json`) live in the SAME worktree the reviewer (`codex exec --sandbox read-only` via `codex-review-pin.sh`) runs inside. `codex-review-pin.sh:84` tells the reviewer not to MUTATE state but does not isolate what it may READ, so a later round can read and re-emit an earlier round's finding.
+  **Evidence:** open-decisions-reconcile-core round-03 (2026-08-12) — codex re-returned the already-fixed v2.28 finding verbatim, citing removed content at old line numbers (`decisions.md:1529` = v2.27 after the v2.28 deletion) while the gate metadata correctly targeted HEAD ca3557e0 (diff_sha256 matched). Archiving the accumulated review artifacts unblocked a fresh review that returned different, real findings (the DD-104 authority gap).
+  **Consequence (honest):** any multi-round lane may have had contaminated input, so "distinct findings spreading across many files round after round" is a WEAKER slice-too-big / edge-family signal than it was treated as — including in the reasoning that produced the DD-104 split. Verify a repeat finding against live HEAD before trusting it. Related but distinct from `codex-review-verdict-nondeterminism` (verdict variance on a frozen diff; this is stale-input contamination).
+  **Proposed fix (kit-maintenance):** run the reviewer against a clean checkout of HEAD with no `.autopilot/state`, or make `.autopilot/` unreadable to the reviewer. Do NOT clear canonical gate state (e.g. `pending-review-finding.json`) — it is the enforcement input that prevents unchanged-HEAD retries (`scripts/autopilot-review-readiness.mjs`). `close_by: hand`.
+
+
+## task: backlog-status-taxonomy-inflight-manual-close-gap
+title: No backlog status expresses "in-flight, manually closed" (docs reconcile w/o code probe)
+status: idea
+risk: P3
+change_class: kit-maintenance
+depends_on: []
+invariants: []
+scope: []
+merged_probe: null
+close_by: hand · add a status (or documented convention) for an in-flight lane that closes by hand.
+notes: |
+  **Defect:** the backlog status vocabulary (`idea|planned|ready|in-flight|merged|blocked|superseded|deferred`) has no status for a lane that is actively IN-FLIGHT yet closes by a MANUAL post-landing edit (a docs reconcile with no code-symbol `merged_probe`). `in-flight` is not auto-reconciled (`scripts/autopilot-backlog-reconcile` only auto-probes `planned|ready|blocked`), so it never auto-flips to `merged`; `planned`/`ready` are dispatchable (the scanner selects them), risking a duplicate launch. Both are defensible, so the status oscillated.
+  **Evidence:** open-decisions-reconcile-clean round-05 changed the closeout `in-flight`→`planned` (to make it reconcilable), round-06 flagged `planned` as dispatchable and required `in-flight` back. A taxonomy gap, not a lane defect — a new slice inherits it and oscillates again.
+  **Proposed fix (kit-maintenance):** either add an explicit terminal-pending status (e.g. `awaiting-manual-close`) that is neither dispatchable nor auto-probed, or document the convention that `in-flight` + `close_by: hand` = manually closed after landing and intentionally not auto-reconciled. `close_by: hand`.

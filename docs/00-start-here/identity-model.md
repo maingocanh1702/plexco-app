@@ -11,7 +11,7 @@
 >
 > **v3.4 Phase-1 pivot (DD-37 ✅):** một Person link **Google + Facebook + Zalo** — **không còn Telegram**.
 > Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅, thay TG Login) · link **Facebook** (DD-33 ✅, phase-1)
-> · **Zalo Login** (DD-14 ⬜). **DD-50:** phase-1 không thu SĐT; strong proof cho claim có tiền = verified account email hoặc transactional one-time `link_code`. Phone fields giữ dormant. Xem §7 matrix.
+> · **Zalo Login** (DD-14 external enablement evidence). **DD-50:** phase-1 không thu SĐT; strong proof cho claim có tiền = verified account email hoặc transactional one-time `link_code`. Phone fields giữ dormant. Xem §7 matrix.
 > **DD-15/DD-65..68 (decisions v1.47):** channel identity/reachability luôn scoped theo provider endpoint. Messenger scope = Page; Zalo scope = bot/OA cho tới khi DD-15 chứng minh rộng hơn. Reachability gắn `channel_identity_id`, không thu gọn thành `(person,tenant,platform)`.
 > **DD-50/DD-70(a) (decisions v1.73):** `link_code` consume read-only resolves candidate, locks issuer/account+Person parent before the code row, then revalidates/conditionally consumes; it emits no notification. Merge commit inventory/fence/revalidate bounded source+survivor rồi append `identity_merged` từ locked `merge_audit` trong cùng transaction; tenant outbox không phải global fallback.
 >
@@ -258,7 +258,7 @@ Rollback toàn bộ nếu bất kỳ tenant/money step nào fail.
 | **Google login (OAuth)** | web auth | **phase-1 ✅ (DD-13)** | `account_identities.platform='google'` + `web_sessions`; SI-2 keyed-hash cho `google.sub` |
 | **Email/password (self-register)** | web auth | **phase-1 ✅ (DD-13)** | credential/verification table riêng (P12 expand→contract); verified email = auto-merge signal |
 | **Facebook Login** | web auth | **phase-1 ✅ (DD-33, owner 18/07)** | `platform='facebook'`; external evidence pending nên non-test capability OFF; degrade → transactional one-time `/link` code; **không** auto-link chéo với Messenger PSID |
-| **Zalo Login** | web auth | ⬜ (DD-14) | `platform='zalo'`; cần xác minh gating OA; đường link cho auto-match Zalo bot |
+| **Zalo Login** | web auth | 🔗 external enablement (DD-14) | `platform='zalo'`; cần evidence gating OA; Login subject vẫn cần explicit verified link với bot/OA identity, không auto-match theo provider |
 | ~~Telegram Login / web fallback~~ | web auth | **loại khỏi phase-1 (DD-37)** | adapter TG Login đã bỏ; không còn là đường auth |
 | **Zalo bot** | channel | **phase-1** | BYO bot token per club; identity scope bot/OA + `from.id`; ingress có default tenant nhưng tenant eligibility vẫn authorize riêng; DM-only, number-reply |
 | **Messenger central + optional tenant Page** | channel | **phase-1 (P2.5), DD-65..68 ✅** | Page→endpoint/default; Page-scoped PSID, reachability theo `channel_identity_id`; target protected; 24h/App Review; runtime pending |
@@ -280,7 +280,7 @@ Thêm provider/channel mới không được viết là "chỉ thêm dòng vào 
 | ID-AUTH-1 | Google/email làm auth phase-1? | ✅ **CHỐT — DD-13** (Google OAuth + email/password là auth phase-1, bỏ TG Login theo DD-37) |
 | ID-AUTH-2 | Email credential là password, magic-link, hay OAuth-only email claim? | ✅ **DD-13**: email + password self-register (credential table riêng) |
 | ID-AUTH-3 | Facebook Login/Messenger account-link như web-auth provider (`platform='facebook'`) | ✅ **phase-1 — DD-33**; external evidence là enablement gate, capability OFF + one-time `link_code` fallback tới khi pass; không auto-link PSID |
-| ID-LINK-1 | Per-provider bot id có scoped theo bot/page/OA thế nào? | verify khi implement → **DD-14** (Zalo Login/OA), **DD-15** (Zalo bot `from.id` cross-bot) |
+| ID-LINK-1 | Per-provider bot id có scoped theo bot/page/OA thế nào? | ✅ **endpoint-scoped identity là baseline đã chốt — authority là DD-67** (`identity unique (platform, provider_scope_lookup_hash, platform_user_lookup_hash)`); **DD-14/15 là external-evidence gates, KHÔNG phải authority** — DD-14 gate Zalo Login enablement, DD-15 chỉ reopen trước khi nới uniqueness scope; không auto-link/nới từ spike |
 | ID-MERGE-1 | Support recovery/split SLA và quyền support cụ thể | ✅ **DD-53:** PlatformAdmin freeze; split apply cần 2 approval; break-glass có ticket/expiry/audit; recovery proof không tự mở debt claim |
 
 > **Truy vết:** file này là orientation, KHÔNG chốt quyết định. Mọi mục ở trên phải được

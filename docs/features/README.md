@@ -1,7 +1,7 @@
 # Plexco Feature Specs — Coverage Index
 
-> **Version:** 2.62 · 2026-08-10
-> **Scope source:** `../product/BRD.md` v3.9n · `../product/PRD.md` v2.8m · `../product/TDD.md` **v3.1i** · `../product/ROADMAP.md` **v3.4m** · `../standards/decisions.md` **v2.11 current mirror**. DD-32 đã reopen và `DECISION_FINAL` theo Option D; DD-70/71/72/86/91–95 owner-final; DD-88 broader `DEFERRED_PROPOSAL`; DD-73/74/75/78 dependency/consumer-sequenced, DD-76/77 evidence-gated; DD-87 fail-closed split-name/amount đã có core nhưng chưa production caller. Runtime gates không đổi.
+> **Version:** 2.63 · 2026-08-12
+> **Scope source:** `../product/BRD.md` · `../product/PRD.md` · `../product/TDD.md` · `../product/ROADMAP.md` · `../standards/decisions.md` (current versions — không hard-pin số). DD-32 đã reopen và `DECISION_FINAL` theo Option D; DD-70/71/72/86/91–95 owner-final; DD-96 Part A `DECISION_FINAL`, Part B direction-only (mechanism chưa chốt — xem `decisions.md` DD-96); per-decision readiness boundaries recorded in `decisions.md`; runtime gates không đổi.
 
 > **Cập nhật DD-37 (2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (**Telegram loại khỏi phạm vi**). `FE/feature_player_telegram` → **Archived (DD-37)**, thay bằng `FE/feature_player_messenger`. Thêm phase-1: `FE/feature_inapp_chat` (DD-38 ✅), `FE/feature_user_settings` (DD-39 ✅), Google login (DD-13 ✅, trong `FE/feature_web_auth_onboarding`), mark-paid thủ công (DD-40 ✅, trong `FE/feature_payment_reconcile`).
 
@@ -26,18 +26,18 @@ Core docs remain authoritative by topic. Feature specs add build/test detail but
 
 Các nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**, KHÔNG có nghĩa đã implement:
 
-- **Legacy coverage (pre-pivot)** — 15 cặp spec MVP viết trước DD-37 (bảng ngay dưới); trong đó `FE/feature_player_telegram` nay **Archived**.
-- **Pre-existing cross-cutting** — 1 cặp Connector Onboarding, hiện Draft.
-- **Phase-1 additions — tracked; pending migration/build** — 3 cặp Messenger/chat/settings: Messenger + Chat đã **Reviewed contract**; Settings vẫn Draft. "DD ✅/Reviewed" không có nghĩa "đã build".
-- **Standalone/post-phase inventory** — 5 cặp trong bảng cuối: Club Assistant, Channel Booking Funnel, Home, Session Organize và Tournament; status từng cặp được ghi riêng.
+- **Legacy coverage (pre-pivot)** — các spec MVP viết trước DD-37 (bảng ngay dưới); `FE/feature_player_telegram` nay **Archived**.
+- **Pre-existing cross-cutting** — Connector Onboarding, hiện Draft.
+- **Phase-1 additions — tracked; pending migration/build** — Messenger/chat/settings: Messenger + Chat đã **Reviewed contract**; Settings vẫn Draft. "DD ✅/Reviewed" không có nghĩa "đã build".
+- **Standalone/post-phase inventory** — Club Assistant, Channel Booking Funnel, Home, Club Management, Session Organize và Tournament; status từng cặp được ghi riêng trong bảng.
 
-**Status lens (không cộng thêm vào inventory):** **19 Reviewed contracts** = 14 legacy active + Messenger + Chat + Home + Channel Booking Funnel + Club Assistant. Ngoài ra có 1 Telegram Archived, 3 Draft (Connector/Settings/Tournament) và 1 Session Organize accept-in-principle. `Reviewed` chỉ nói contract baseline đã qua decision gate; từng implementation slice vẫn phải đóng readiness/acceptance riêng và đọc cột code trong BUILD-STATUS.
+**Status lens:** derive trực tiếp từ cột Status của các bảng bên dưới; không lưu aggregate count hoặc SHA snapshot thứ hai ở phần prose này. `Reviewed` chỉ nói contract baseline đã qua decision gate; từng implementation slice vẫn phải đóng readiness/acceptance riêng và đọc cột code trong BUILD-STATUS.
 
-> ⚠️ **Reconcile với `../standards/BUILD-STATUS.md`:** working tree có **24 Product/System specs + 24 BE tech specs = 24 cặp**. Committed base `main@784bc8d` vẫn là snapshot **24 Product + 23 BE** vì BE companion của funnel chưa commit. Coverage chỉ nghĩa là file tồn tại; không phải canonical phase hay implementation readiness.
+> ⚠️ **Reconcile với `../standards/BUILD-STATUS.md`:** inventory/count được derive từ các Product/BE pair đang có trên disk và bảng hiện hành, không hand-maintain tại đây. Coverage chỉ nghĩa là file tồn tại; không phải canonical phase hay implementation readiness.
 >
-> **Live boundary 28/07:** migration tail `0024` (25 files). Waitlist/same-tenant/capacity và shared job substrate có DB/infra evidence từng phần, nhưng không suy thành Session/Marketplace/Sync/Channel Booking runtime. DD-32 Option D và DD-86/DD-91–95 là `DECISION_FINAL`; Channel Booking, Chat và DD-56 capability registry/grant/`authorize` runtime vẫn chưa tồn tại. Chat primary plan v1.8 §13 đạt `PLAN_READY` tại immutable authority `90d292d`, closure 12/12; mỗi slice vẫn phải strict `CODE_READY` trước worktree/code. `payment_reconcile_auto` entitlement khác provider/market availability; manual mark-paid vẫn global.
+> **Live boundary 12/08:** DD-102 torn-read obligation đã đóng (xem `decisions.md` v2.25); migration tail verify tại `packages/db/migrations/`, không hard-pin SHA/số. Waitlist/same-tenant/capacity, shared job substrate và serialized Chat DB slices 1–3 có evidence từng phần, nhưng không suy thành Session/Marketplace/Sync/Channel Booking hay production Chat API/UI. DD-32 Option D và DD-86/DD-91–95 là final; DD-56 grant-read/`hasCapability` consumers vẫn thiếu. DD-104 (pristine-draft delete) vẫn 🟡 đề xuất — deferred trong clean subset này (blocker: suspension gate + money-FK boundaries D1/D2 + concurrency ordering + 23503 trusted-resolution). DD-18 vẫn **open** và DD-96 Part A giữ `DECISION_FINAL` — cả hai KHÔNG re-ratify/reconcile trong clean subset này; contradictions ghi ở backlog blocker tasks + `decisions.md` deferred notes. Chat primary plan v1.8 tại `90d292d` (readiness ghi ở plan doc); mỗi unmerged slice vẫn qua strict readiness gate trước merge. `payment_reconcile_auto` entitlement khác provider/market availability; manual mark-paid vẫn global.
 
-### Legacy coverage — 15 cặp spec MVP (1 Archived)
+### Legacy coverage (gồm Telegram Archived)
 
 | Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
 |---|---|---|---|---|
@@ -65,17 +65,17 @@ Các nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**,
 
 ### Phase-1 additions — DD ✅, tracked; pending migration/build (DD-37/38/39/65..68)
 
-3 feature pair mới (6 file) — **DD đã ✅**, Product spec + BE tech **đã tracked trong documentation baseline**; chờ migration/build. KHÔNG tính vào 15 legacy.
+Các phase-1 pair — **DD đã ✅**, Product spec + BE tech **đã tracked trong documentation baseline**; chờ migration/build. Không thuộc nhóm legacy.
 
 | Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
 |---|---|---|---|---|
 | P2.5/P4.5 | Shared Host & Player Facebook Messenger (thay Telegram) | `FE/feature_player_messenger.md` v0.9 | `BE/feature_player_messenger_tech.md` v0.9 | ✅ Reviewed contract; DD-32 thin-adapter booking gate added; implementation/App Review/product-channel E2E pending |
-| P4 | In-app Chat (primary player surface + 1-1) | `FE/feature_inapp_chat.md` v0.15 | `BE/feature_inapp_chat_tech.md` v0.23 | ✅ Reviewed target contract theo DD-38/DD-55/DD-86/DD-91–95. Actual serialized DB lane `1→2→3→4`, rồi Chat chain `5→9→6→7→8`; slice 4 owns DD-56 + append-only grant audit, slice 9 owns safe current-channel target trước các consumer. HTTP A1–A13, FE F1–F10 after F0. Primary plan v1.8 = `PLAN_READY` at `90d292d`; runtime = 0 và từng slice còn strict `CODE_READY` |
+| P4 | In-app Chat (primary player surface + 1-1) | `FE/feature_inapp_chat.md` v0.15 | `BE/feature_inapp_chat_tech.md` v0.23 | ✅ Reviewed target contract theo DD-38/DD-55/DD-86/DD-91–95. Serialized DB lane slices 1–3 đã merge dark; slice 4 DD-56 và toàn bộ production service/API/UI vẫn thiếu. Chain tiếp theo `4→5→9→6→7→8`; HTTP A1–A13, FE F1–F10 after F0. Unaffected Chat authority giữ v1.8 (readiness ở plan doc); mỗi unmerged slice còn qua strict readiness gate |
 | P4/P4+ | User Settings & Profile + Follow/Visibility | `FE/feature_user_settings.md` v0.9a | `BE/feature_user_settings_tech.md` v0.16 | ✅ DD-39(+addendum)/54 + DD-47/48 framework — Draft, pending migration/build; charge write-time derivation không phải reader formula |
 
 ### Notification cluster — DD-70/71/72/DD-94 owner-final; contract Reviewed, runtime chưa build
 
-**Một cặp** cross-cutting mở rộng cụm 🔔 Notifications — cùng khuôn `FE/feature_connector_onboarding` (gom Zalo · SePay · ApiPay, 3 phase, trong 1 cặp) và `FE/feature_user_settings` (đa DD/đa phase trong 1 cặp).
+Nhóm cross-cutting mở rộng cụm 🔔 Notifications — cùng khuôn `FE/feature_connector_onboarding` (gom Zalo · SePay · ApiPay trong một pair) và `FE/feature_user_settings` (đa DD/đa phase trong một pair).
 
 | Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
 |---|---|---|---|---|
@@ -102,7 +102,7 @@ Các nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**,
 | P4.3/P4.7 + Messenger P2.5 | Channel-first Booking Funnel | `FE/feature_channel_booking_funnel.md` v1.0 + `BE/feature_channel_booking_funnel_tech.md` v1.0 (✅ Reviewed contract, DD-32 Option D) | Runtime absent; implementation plan owns the prerequisite/readiness verdict |
 | S9 (**DD-79 ✅ owner 2026-07-19**) | Home — Personal Dashboard (PWA) | `FE/feature_home.md` v0.13 + `BE/feature_home_tech.md` v0.5 (✅ Reviewed contract — fork từ Sporta feature_home v2.5 + hero recipe theme-direction §7) | Implementation pending S9. Composition-only `GET /api/me/home`; payment chip/CTA chỉ consume Player View `getSelfPaymentStatus`, không tự sum; `known_zero` khác `unknown`. Club tab = cross-ref `feature_club.md`. Primary plan `PLAN_READY`, per-slice `CODE_READY` pending; không bảng/migration/runtime mới |
 | P4 (**mới 2026-08-10**) | Club — CLB Management | `FE/feature_club.md` v1.0 + `BE/feature_club_tech.md` v1.0 (🟡 Draft) | Club list, Club detail, News/Announcement (pin post), Members, Sessions, Chat, Settings, Tạo CLB. Tái dùng `chat_channels` + `chat_messages` cho announcements; pin post via `pinned_message_id` + auto-unpin trigger |
-| Post-P4 (accept-in-principle, owner 18/07) — sau Session CRUD + Sync | Session Organize (court + match + live score) | `FE/feature_session_organize.md` v0.5a + `BE/feature_session_organize_tech.md` v0.6b (accepted design, DD-61..64 ✅ accept-in-principle; no runtime) | Build post-P4: extend DD-56 registry/grant storage và triển khai SessionService prerequisites. V0.4 two-side; participant stint + partial assigned uniqueness; migration mới + tenant-safe FKs/RLS; point/reversal ledger idempotent; independent organize/score grants; relation-based read/SSE; balanced phụ thuộc level source. **Đã tính vào current working-tree coverage 24 Product/System / 24 BE, chưa tính là runtime/build-ready.** |
+| Post-P4 (accept-in-principle, owner 18/07) — sau Session CRUD + Sync | Session Organize (court + match + live score) | `FE/feature_session_organize.md` v0.5a + `BE/feature_session_organize_tech.md` v0.6b (accepted design, DD-61..64 ✅ accept-in-principle; no runtime) | Build post-P4: extend DD-56 registry/grant storage và triển khai SessionService prerequisites. V0.4 two-side; participant stint + partial assigned uniqueness; migration mới + tenant-safe FKs/RLS; point/reversal ledger idempotent; independent organize/score grants; relation-based read/SSE; balanced phụ thuộc level source. Có trong inventory hiện hành nhưng chưa runtime/build-ready. |
 | P4+ (sau session core) — **DD-82 ✅ chốt hướng owner 21/07** | Tournament (Giải đấu) | `FE/feature_tournament.md` v0.1 + `BE/feature_tournament_tech.md` v0.2a (🟡 **Draft** — DD-82 chốt hướng, **chưa readiness gate**) | Aggregate độc lập (không tái dùng `sessions`/`players`): canonical `tournaments` + `tournament_registrations` tenant-scoped/RLS + `public_tournaments` read model (field-whitelist, không tiền/PII, không serialize `tenant_id`) cho URL share DD-83 (opaque slug). v1 gọn: info + đăng ký, **v1 không đụng tiền**; bracket/standings/entry-fee = slice sau. **Hard dependency:** coordinate DD-41 retire `session_type='tournament'` (live schema chưa có cột `session_type`); analysis doc + readiness gate + owner ratify trước build. Migration mới monotonic (số next-available), không sửa lịch sử. |
 
 ## Review gates
@@ -117,6 +117,7 @@ Với spec mới hoặc spec được promote sang **Reviewed**, review gate k�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-12 | v2.63 | Open-decision reconcile (clean subset): de-pin decisions pointer + derive inventory/status from tables; DD-104 (Session delete) deferred — giữ 🟡 đề xuất, Session row unchanged from base. DD-18 (Assistant) and DD-96/DD-79 (Home) ratification deferred pending blockers — Assistant/Home rows unchanged from base. No runtime/readiness promotion. |
 | 2026-08-10 | v2.62 | **Thêm cặp Club Management** (`FE/feature_club.md` v1.0 + `BE/feature_club_tech.md` v1.0, 🟡 Draft). Tách Club tab từ `feature_home.md` thành feature riêng biệt. Sub-features: Club list, Club detail, News/Announcement (pin 1 post lên top), Members, Sessions, Chat, Settings, Tạo CLB. Tái dùng `chat_channels`/`chat_messages`. Thêm forward message vào Chat FE v0.16 + BE v0.24. Home v0.13 cross-ref Club. On-disk → **25 Product + 25 BE = 25 cặp**. |
 | 2026-07-28 | v2.61 | Sync current as-built mirror versions after re-pin to `main@784bc8d`: Sync 2.5/2.7, Security BE 2.6 and Connector BE 0.9. Runtime/enablement statuses are unchanged. |
 | 2026-07-28 | v2.60 | Sync current companion versions after immutable-authority reconciliation: Payment 1.10/1.13, Notifications 3.11/3.11, Player View 2.5/2.8, Assistant 0.18/0.18 and Home 0.7/0.3. All retain per-slice `CODE_READY` and no-runtime boundaries. |

@@ -92,8 +92,8 @@
 ## Post-MVP (P7) + External — quick-ref (chi tiết → file riêng)
 
 - **DD-18 (LLM provider) — ⬜ hướng ✅** → `dd-18-llm-provider-analysis.md`: API hosted-first sau interface swappable; **provider + ToS/DPA/data-region CHẶN GO-LIVE** (P6), không chặn build.
-- **DD-34/35/36 (KB platform) — 🟡 approve-in-principle P7** → `dd-34-36-kb-platform-analysis.md`: global KB plane grant-isolated + scanner PII; auto-derive field-whitelist; freshness re-crawl; **patch DD-21 khi build P7**.
-- **DD-14/DD-15 (Zalo Login / `from.id`) — ⬜ SPIKE** → `dd-14-15-zalo-spike-analysis.md`: **xác minh với Zalo** (không phải quyết định nội bộ). Không chặn (link_codes bao ca xấu nhất).
+- **DD-34/35/36 — 🟡 approve-in-principle P7** → `dd-34-36-kb-platform-analysis.md`: exact reopen triggers; whitelist chỉ từ live canonical owners/events; serving lifecycle tách sync-attempt lifecycle; patch DD-21 cùng slice mở rộng grounding.
+- **DD-14/DD-15 — 🔗 external evidence** → `dd-14-15-zalo-spike-analysis.md`: DD-14 enablement, DD-15 optimization; `/link` + endpoint-scoped identity là fail-safe, không auto-link hoặc nới uniqueness từ spike.
 
 ---
 
