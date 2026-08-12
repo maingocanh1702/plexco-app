@@ -32,8 +32,16 @@ Do not register or edit until all are true:
 ## Preflight
 
 1. Create the worktree from the current `origin/main` tip at the path above and verify both SHAs match.
-2. Register before any edit:
-   `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/job-runtime-dispatcher.json`
+2. Register before any edit — with the RUNTIME manifest, never the authored contract. Hand-write
+   `.autopilot/state/job-runtime-dispatcher/manifest.json` from `docs/autopilot-manifests/_TEMPLATE.json`,
+   filling it from the authored contract `docs/autopilot-manifests/job-runtime-dispatcher.json` and
+   deriving `base_sha` from the live `origin/main` tip — never copying `base_sha` out of the authored file.
+   Then:
+   `scripts/autopilot-scope-gate register --manifest .autopilot/state/job-runtime-dispatcher/manifest.json`
+   Verify `.autopilot/state/job-runtime-dispatcher/registered-manifest.sha256` EXISTS before doing anything
+   else. The gate writes that file only when the manifest carries `manifest_schema_version`, which the
+   authored contract is forbidden to carry — pass the authored path and it silently skips the hash-lock,
+   raises no error, and still prints `registered:`. No hash-lock file means no hash-lock.
 3. Create `.autopilot/state/job-runtime-dispatcher/codex/`, `regions.log`, `fix-round-count.txt`.
 4. Resolve `CODEX="${AUTOPILOT_CODEX_BIN:?HALT CODEX_UNAVAILABLE}"` and require it executable. Never a PATH
    `codex`, a manual reviewer or another model.
