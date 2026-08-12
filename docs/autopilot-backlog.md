@@ -34,6 +34,30 @@ launch lại và lặp y nguyên kết luận cũ.
 > `deps-security-bump--postcss` (`infra-egress-compatibility-evidence` · `apipay-signed-body-reconciliation`
 > · `email-provider-c7-evidence` chưa được đo lại hôm nay).
 >
+> **📌 Kit-friction triage — 2026-08-12, đo tại `bdf8586` (= `origin/main`).** 9 task kit + 7 quan sát
+> (2026-08-11/12) gom về **4 root cause**, không phải 16 defect rời. **(A) Discrimination deficit** (một check
+> không phân biệt được ca hợp lệ với ca nó sinh ra để bắt): `classifier-blocks-kit-mandated-readiness-json`
+> (+obs a), `codex-review-verdict-nondeterminism`, `breaker-counts-infra-flakes-as-fix-rounds`, obs (g). **(B)
+> Terminal-by-default lifecycle** (setup/precondition HALT tự chặn resume + hash-lock không amend tại chỗ ⇒ mỗi
+> lỗi setup = 1 close+rebuild): obs (b)/(c), `launcher-register-path-authored-to-runtime`. **(C) Evidence
+> non-authoritative** (nhiều probe "đã land/đã xong" bất nhất, không kiểm ở author-time): obs (d)/(e)/(f),
+> `reconcile-hand-closed-entries-never-age-out`. **(D) Legibility/DX gap**:
+> `gates-that-fire-correctly-and-cannot-say-why`, `local-dev-sanctioned-paths-are-harder-than-the-forbidden-one`,
+> `root-lock-no-staleness-detection`.
+> **3 task mới mở dưới đây:** `precondition-halt-and-hashlock-force-full-rebuild` (obs b+c),
+> `ap-merge-test-and-clean-tree-scope` (obs f+g), `ap-finish-squash-verify-defeated-by-closeout-order` (obs d).
+> **Fold:** obs (a)→`classifier-blocks-kit-mandated-readiness-json`; obs (e)→`reconcile-hand-closed-entries-never-age-out`.
+> **Đóng (`superseded`):** `kit-dead-citation-prompt-generic-sections` — deliverable đã land upstream `Claude
+> template` kit v30, chưa từng blocked lane Plexco nào (record-only). 6 owner-intervention đo được trong cửa sổ
+> 08-11/08-12 (enum + acceptance-per-task ở báo cáo phiên triage). **Không** phải full queue re-audit; bảng 08-07
+> / 08-11 dưới đây giữ nguyên làm lịch sử.
+> **Follow-up 2026-08-12 (owner corrections):** `launcher-register-path-authored-to-runtime` reclass
+> HYPOTHETICAL→**ACTUAL** (5 launcher `ap-33..37` còn authored path; fail-open `autopilot-scope-gate:607-611`;
+> đã fired 1× per `CLAUDE.md`) — GIỮ, đẩy TRÊN cheap wins RC-A. `root-lock-no-staleness-detection` →
+> **`superseded`** (declined-by-design, `autopilot-root-lock:26-28`). Land direction mọi kit-fix = **DD-100 D1**
+> (Plexco-local trước, canonical/backport sau). Codex-nondeterminism measurement **AUTHORIZED (đo, KHÔNG fix)**
+> nhưng **DEFERRED** — lane `open-decisions-long-term-reconcile-v6` đang mid-review (quota-scarce).
+>
 > **📌 Queue state — reconcile 2026-08-07, đo tại `64e9ccb` (= `origin/main`).** Verify: `scripts/autopilot-backlog-reconcile --check` → chạy 07/08: **`No stale entries`** (5 entry `? no merged_probe` là loại không auto-verify được + 1 `✗ close_by REFUSED` cho `gates-that-fire-correctly-and-cannot-say-why` — task đó chạm source nên phải viết merged_probe thật trước khi launch).
 >
 > | slug | trạng thái 07/08 |
@@ -285,6 +309,19 @@ notes: |
   verdict. Cần đo trước: chưa rõ classifier bắt theo tên trường, theo giá trị, hay theo ngữ cảnh
   "ghi file ngay sau một gate failure".
 
+  **Addendum 2026-08-12 (triage) — discriminator là NỘI DUNG, và chỗ bắt nó đang sai tầng.** Đo lại: template
+  `docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json` đúng **7** top-level key (`jq 'keys|length'` = 7,
+  cross-check `python3` = 7) — `evidence_schema_version, task_id, feature, base_sha, head_sha, acceptance{status},
+  breakers{status}` — KHÔNG có `acceptance.notes`/`breakers.fix_round_count`/`breakers.notes`. Nên hai ca KHÁC nhau:
+  lần 1 (`chat-dm-safety-authority-core--v3`, 08-10) file đúng minimal ⇒ block SAI (false positive); lần 2
+  (`db-test-harness-teardown-57p01`, 08-11) file MANG thêm field tự-assert ⇒ dòng 254 ("records only identity,
+  acceptance and breaker state") biến nó thành **vi phạm thật** (true positive). Discriminator = content, không phải act.
+  **Chỗ hỏng sâu hơn:** validator `scripts/autopilot-review-readiness.mjs:554-569` chỉ presence/value-check 7 key và
+  **KHÔNG reject key thừa** — nên permission classifier là thứ DUY NHẤT bắt field tự-assert. Fix bền: cho validator
+  fail-closed trên key ngoài whitelist (biến phán xử ad-hoc của classifier thành rule deterministic), rồi mới cân nhắc
+  đổi tên field. ⚠️ Đề xuất đổi `acceptance.status`→`writer_work_complete` ở trên giảm false-positive nhưng phải KHÔNG
+  làm mù ca true-positive (field thừa) — nếu không sẽ mở lại đúng lỗ dòng 254 tồn tại để chặn.
+
 ---
 
 ## task: codex-review-verdict-nondeterminism
@@ -313,6 +350,19 @@ notes: |
   của prompt gate, hay của việc diff thay đổi giữa các vòng làm finding đổi ngữ cảnh — **cần đo trước
   khi đề xuất fix**. Bằng chứng đầy đủ: các file `gate-attempt-*-code-review-round-*.txt` trong
   `.autopilot/state-archive/chat-dm-safety-authority-core--v3-20260810T105628Z/state/`.
+
+  **Addendum 2026-08-12 (triage) — measurement AUTHORIZED (owner, cite DD-100 D1), fix KHÔNG.** Owner cấp phép
+  MỘT pass ĐO, không sửa: lấy một diff đã merged (đề xuất diff code của lane này — `git diff d5b31f9^...d5b31f9`,
+  migration 0030 `assert_dm_allowed`, chính nơi finding torn-read đổi advisory→blocking), chạy pinned reviewer
+  `scripts/codex-review-pin.sh review --base <sha> "<marker>"` **N ∈ [3,5]** lần trên đúng input không đổi (worktree
+  detached, không đụng root/session khác), report **verdict + finding-count mỗi run + cái gì biến thiên**. KHÔNG
+  propose/implement fix trong cùng pass — đo trước, quyết sau. Ràng buộc owner: N 3-5; **chỉ chạy khi KHÔNG lane nào
+  đang cần review** (quota scarce; 2 lane từng park vì cạn quota). Vì sao đo quan trọng: "2 vòng codex sạch" là xương
+  sống mọi readiness verdict trong repo — verdict biến thiên trên diff đóng băng ⇒ mọi gate yếu hơn giả định (kể cả
+  `fix-round-count: 0` của AP-53).
+  **DEFERRED 2026-08-12:** precondition CHƯA thoả — lane `open-decisions-long-term-reconcile-v6` đang mid-review
+  (`.autopilot/worktrees/…-v6/.autopilot/state/*/gate-attempt-06-code-review-round-01.txt` 1.2MB @ 01:39 +
+  `pending-review-finding.json`, chưa disposition). Chạy khi lane đó đóng + tree sạch.
 
 ---
 
@@ -1118,6 +1168,17 @@ notes: |
   main`. `ap-merge.sh` squash-merge nên branch tip không bao giờ là ancestor của `main`; lệnh đó trả NO cho
   mọi slice, đã merge hay chưa. Phiên phát hiện việc này suýt kết luận ngược đúng vì đọc NO thành "chưa
   merge". So nội dung trên `main` mới là bằng chứng.
+
+  **Addendum 2026-08-12 (triage) — fold obs (e): merged_probe QUALITY không kiểm ở author-time.** Cùng họ
+  evidence-layer. AP-51 author `merged_probe: nanoid@<3.3.17` (conditional-selector, mirror `esbuild@<0.25.0`)
+  trong khi impl dùng bare `"nanoid": "^3.3.17"` — literal `nanoid@<3.3.17` không bao giờ có trong diff ⇒ post-merge
+  probe không hit ⇒ task sẽ báo `? no merged_probe`/pending mãi mãi. Bắt bởi **codex round-01 [P2]**, KHÔNG bởi gate
+  nào (đã repoint sang `package.json :: nanoid`). `is_symbol_probe` (`scripts/autopilot-backlog-reconcile:191-211`)
+  reject non-identifier probe nhưng chỉ chạy downstream trên STALE/WEAK, KHÔNG ở author/register gate. Đề xuất chung
+  với age-out: check author-time rằng chuỗi `merged_probe` thật sự **xuất hiện trong diff của chính slice** trước khi
+  cho `ready` — bắt sớm cái codex tình cờ bắt. Đối chiếu: `chat-dm-safety-config-single-read` auto-flip `merged` nhờ
+  probe thật, còn AP-52 phải `authorized_close` vì squash-verify (evidence khác) hỏng — hai cơ chế evidence bất nhất
+  trên cùng lớp lane (xem `ap-finish-squash-verify-defeated-by-closeout-order`).
 
 ## task: local-dev-sanctioned-paths-are-harder-than-the-forbidden-one
 title: Ba chỗ khiến đường đúng đắt hơn `DELETE FROM schema_migrations` — đo trong một phiên 2026-08-05/06
@@ -2096,7 +2157,9 @@ notes: |
 
 ## task: kit-dead-citation-prompt-generic-sections
 title: 6 manifest viện dẫn `autopilot-prompt-GENERIC v0.6.1 §0.1` — section đã biến mất khi prompt viết lại cho Level 3
-status: planned
+status: superseded
+superseded_by: `Claude template` kit v30 — design-probe guidance khôi phục dưới heading tên ổn định trong `autopilot-prompt-GENERIC.md` + quy ước bỏ viện dẫn theo số section (git-archaeology `b2893b9^` xác nhận restore nguyên văn).
+superseded_note: **Đóng 2026-08-12 (triage) — deliverable đã land upstream, chưa từng blocked lane Plexco nào.** Block này tự ghi "Entry này từ đây chỉ là bản ghi, không phải việc phải làm ở Plexco"; 5 citation chết còn lại đều ở manifest/launcher ĐÃ merged (bản ghi lịch sử, không sửa). Đóng cũng gỡ một hazard tiềm ẩn: `risk: P3` + `change_class: docs-reconcile` sẽ `HALT CONTRACT_INVALID` ở `autopilot-review-readiness.mjs:311-314` nếu ai register nguyên trạng (chỉ P1/P2 register được) — xem `gates-that-fire-correctly-and-cannot-say-why`.
 risk: P3
 change_class: docs-reconcile
 depends_on: []
@@ -2260,9 +2323,71 @@ notes: |
   riêng nhánh này — override có rủi ro tương tự override đã bị bác cho nhánh v1, cần đo runtime
   trước khi chọn, không giả định an toàn).
 
+## task: ap-merge-test-and-clean-tree-scope
+title: `ap-merge.sh` — `--test` redundant/env-fragile (obs f) + clean-tree gate whole-tree không lane-scope (obs g)
+status: idea
+risk: P2
+change_class: kit-maintenance
+depends_on: []
+invariants: [kit-integrity]
+scope: [scripts/ap-merge.sh]
+manifest: null
+merged_probe: null
+close_by: hand · thuộc `Claude template`, Plexco mirror; quan sát hành vi + câu hỏi thiết kế, chưa có symbol để probe.
+notes: |
+  Hai gap trong `scripts/ap-merge.sh`, cùng file, cùng slice — một là discrimination deficit (g), một là evidence
+  redundancy (f). Cả hai gây một owner-intervention trong cửa sổ 08-11/08-12.
+
+  **obs (f) — `--test` chạy lại suite mà readiness gate vừa chạy, không bound diff, sau khi đã commit.**
+  `ap-merge.sh:128-133`: `if DO_TEST: pnpm test`. KHÔNG bound `diff_sha256` (script không hề đọc `gate-result.json`),
+  KHÔNG export/require `DATABASE_URL_TEST`. Readiness gate ĐÃ chạy canonical suite bound `diff_sha256`
+  (`autopilot-review-readiness.mjs`), nên `--test` là bản sao non-authoritative, binding yếu hơn. 2026-08-12 (merge
+  AP-53 `80a3464`) nó chạy KHÔNG có `DATABASE_URL_TEST` ⇒ `packages/db` fail-closed theo môi trường (không phải code),
+  **sau khi squash commit đã tạo** ⇒ merge nửa chừng, push chưa chạy → owner hoàn tất tay. Tiền lệ:
+  `job-schedule-outbox-dispatch` (Verdict 24) `--test` cũng từng bị vô hiệu bởi block lệnh reviewer. Câu hỏi thiết kế:
+  `--test` có đáng tồn tại khi gate đã chạy suite bound diff? Nếu có, phải **refuse-to-run** khi thiếu `DATABASE_URL_TEST`, không fail SAU commit.
+
+  **obs (g) — clean-tree gate chặn trên BẤT KỲ file tracked nào cả worktree, không chỉ scope của lane.**
+  `ap-merge.sh:50-56`: `if ! git diff --quiet || ! git diff --cached --quiet` → HALT. Cố ý bỏ qua untracked
+  (design.pen/.probe), nhưng KHÔNG narrow theo `scope` của lane. 2026-08-11/12 hai lần chặn vì spec edit tracked đang
+  dở của **session khác**; remedy cả hai lần là `git stash` quanh merge. Gate đúng và tồn tại vì sự cố 2026-07-22 thật;
+  câu hỏi là "clean tree" nên là *whole-tree* hay *no-uncommitted-change-to-this-lane's-declared-scope*.
+  ⚠️ Ngay tại phiên triage này working tree đang có `M docs/features/BE/feature_inapp_chat_tech.md` v.v. — chính loại tracked-edit-ngoài-lane sẽ trip gate.
+  **Land (DD-100 D1, owner 2026-08-09):** Plexco-local trước, canonical/backport sau — mở backport entry cho `Claude template` (B5, `level3.1-adoption-plan.md`).
+
+## task: ap-finish-squash-verify-defeated-by-closeout-order
+title: `ap-finish.sh --squash-verified` bất khả thi khi closeout ghi docs sau gate ⇒ rơi về `--authorized-close` ghi "never landed" cho việc đã land (obs d)
+status: idea
+risk: P2
+change_class: kit-maintenance
+depends_on: []
+invariants: [kit-integrity]
+scope: [scripts/ap-finish.sh]
+manifest: null
+merged_probe: null
+close_by: hand · thuộc `Claude template`, Plexco mirror; quan sát hành vi + đề xuất, chưa có symbol để probe.
+notes: |
+  **Đo bằng disposition record thật, không suy luận.** `gate-result.json` (schema `level3-readiness-v2`) đóng băng
+  `diff_files` lúc gate; closeout instruction của kit bảo lane ghi READY summary vào docs SAU đó. Theo instruction ⇒
+  lane không chứng minh được. `ap-finish.sh:194` (file-set equality `feature_files == proof_files`) từ chối khi squash
+  commit trên origin mang nhiều file hơn frozen diff.
+
+  **Controlled comparison, 3 lane, verify trên đĩa:**
+  - AP-52 `db-test-harness-teardown-57p01`: `.autopilot/dispositions/db-test-harness-teardown-57p01.json` → `status:"authorized_close"`, `origin_proof_sha:null`, `base_sha:null` — **field máy-đọc khẳng định "never landed" cho việc ĐÃ land** (`cb52bbe` trên origin). `reason` tự ghi: gate frozen `diff_files=[packages/db/src/test-harness.ts]` một file, nhưng lane ghi closeout vào `docs/autopilot-backlog.md` + contract doc ở commit `1644090` SAU gate (`15fc378`) ⇒ squash mang 3 file vs 1-file READY diff ⇒ fail equality tại `ap-finish.sh:194`. `recorded_by: maingocanh`.
+  - AP-51 `deps-osv-transitive-floors`: `.autopilot/landings/deps-osv-transitive-floors.json` → `status:"landed"`, `mode:"squash"`, `origin_proof_sha:"0e8d252…"` (thật) — vì `docs/autopilot-backlog.md` NẰM TRONG frozen `diff_files` của gate (ghi trước gate).
+  - AP-53 `chat-dm-safety-config-single-read`: `.autopilot/landings/chat-dm-safety-config-single-read.json` → `status:"landed"`, `mode:"squash"`, `origin_proof_sha:"80a3464…"` (thật) — closeout backlog reconcile (`0c7c0a8`) là commit RIÊNG SAU squash `80a3464`, nên squash == đúng frozen `diff_files` (README + 0032 + 3 test).
+  Thứ tự là toàn bộ khác biệt: 2 landed-with-proof, 1 authorized-close-null.
+
+  ⚠️ **Đính chính:** `status`/`origin_proof_sha` KHÔNG nằm trong `gate-result.json` (schema `level3-readiness-v2` chỉ có `diff_files`, `result`); chúng ở disposition record `.autopilot/{dispositions,landings}/<feature>.json` (schema `level3-disposition-v1`) do `ap-finish.sh` ghi (`origin_proof_sha: proofSha || null`, `ap-finish.sh:231`). Đừng gộp hai file.
+
+  **Đề xuất (chưa chốt):** một landed-proof authoritative không phụ thuộc thứ tự docs — vd so **blob từng file trong frozen `diff_files`** (AP-52 reason tự chỉ ra blob `test-harness.ts` bằng nhau ở `15fc378`/tip/main) thay vì đòi file-set bằng nhau tuyệt đối; hoặc bắt closeout docs là commit riêng SAU squash (như AP-53 vô tình làm đúng). `authorized_close` đang thành exit mặc định (chat-dm v2 BASE_STALE, v3, AP-52) — khi landed-with-proof thường xuyên bất khả thi, record "never landed" mất nghĩa.
+  **Land (DD-100 D1, owner 2026-08-09):** Plexco-local trước, canonical/backport sau — mở backport entry cho `Claude template` (B5, `level3.1-adoption-plan.md`).
+
 ## task: root-lock-no-staleness-detection
 title: scripts/autopilot-root-lock không tự phát hiện lock chết — chỉ có --force, không có gợi ý PID còn sống hay không
-status: idea
+status: superseded
+superseded_by: design decision đã ghi sẵn — `scripts/autopilot-root-lock:26-28` ("Deliberately NOT auto-stealing stale locks: an automatic steal is exactly the check-then-act race this is meant to remove. `status` prints the age so a human can decide, and `release --force` makes that decision explicit and auditable.").
+superseded_note: **Đóng 2026-08-12 (triage) — declined-by-design, không phải gap.** Script cố ý chọn: signal = **age** (host-portable, không mơ hồ), người quyết, `--force` tường minh + auditable — chính xác để loại liveness-inference race. Task đề xuất thêm hint `kill -0` (PID alive/dead); nhưng (1) đó là đẩy tool về phía suy luận liveness mà dòng 26 cố ý loại, và (2) chính task tự thừa nhận hint đó **false-positive cross-host** ("nếu owner từng chạy trên máy khác, 'not found' sẽ sai") — không đáng tin theo đo lường của chính nó. Đường đúng khi lock chết vẫn là `status` (age) → người kiểm `ps` nếu muốn → `--force`. Không reopen từ nguyên tắc chung. *(Kiểm chéo các gap còn lại cùng shape "code đã từ chối có chủ đích": `ap-merge` clean-tree/`--test`, `ap-finish` squash-verify, breaker-infra, classifier — none có comment declined-on-purpose; đều là gap thật.)*
 risk: P3
 change_class: autopilot-mechanism
 depends_on: []
@@ -2327,6 +2452,33 @@ invariants: [retry-liveness]
 scope: []
 notes: **Mở bởi hai P1 của codex vòng 3 trên `job-schedule-outbox-dispatch` (2026-07-27), owner phân xử là ĐÚNG-nhưng-ngoài-scope-slice-đó.** Cả hai đều có căn cứ, không phải nhiễu. (1) `TDD.md:82` NFR-1c yêu cầu **sync-lag p95 ≤ 3s, p99 ≤ 10s** cho "canonical store + outbox + projection", và `feature_sync_engine.md:129` mang nó như acceptance checkbox. Cron của pg-boss có **sàn một phút**, nên p95 rơi vào khoảng 57s — không đạt được bằng cron, đây là số học chứ không phải tinh chỉnh. (2) `runDispatchCycle` mặc định `DEFAULT_BATCH_LIMIT = 25` và mỗi job schedule gọi nó **đúng một lần**, nên mọi tốc độ trên 25 event/phút tạo backlog tăng không giới hạn dù worker rảnh. **Vì sao không sửa ở slice 3a:** `DD-07` đã chốt `LISTEN/NOTIFY` làm cơ chế realtime, nên trigger sub-minute muốn là NOTIFY phát **từ transaction INSERT outbox event** — tức từ PRODUCER, mà producer là `DEFERRED_OUT_OF_SCOPE` (owner 26/07); slice 3a không có seam nào để gắn vào. Và batch size + drain policy thuộc consumer theo `docs/autopilot/contracts/autopilot-db-job-claim-lease-core.md §4.3`, cùng lý do đã giữ retry/backoff ra khỏi `dispatcher.ts`. **Ràng buộc đã thành cấu trúc:** cờ `OUTBOX_DISPATCH_SCHEDULE_ENABLED` nay ghi điều kiện lật gồm CẢ HAI — off cho tới khi có projector thật VÀ cho tới khi có sub-minute trigger + drain. **depends_on cần điền tên slice producer khi slice đó được author** — NOTIFY phải phát ra từ đó. Giữ cron một phút làm recovery sweep là hợp lý, không phải bỏ.
 
+## task: precondition-halt-and-hashlock-force-full-rebuild
+title: Setup/precondition HALT tự chặn resume + hash-lock không amend tại chỗ ⇒ mỗi lỗi setup = 1 close+rebuild (obs b+c)
+status: idea
+risk: P2
+change_class: kit-maintenance
+depends_on: []
+invariants: [kit-integrity]
+scope: [scripts/autopilot-review-readiness.mjs, scripts/ap-finish.sh]
+manifest: null
+merged_probe: null
+close_by: hand · thuộc `Claude template` (trusted gate file), Plexco mirror; quan sát hành vi + đề xuất, chưa có symbol để probe. Ready quá ngưỡng thì reconcile v8 kêu AGED.
+notes: |
+  **Gom obs (b) + (c) — một cơ chế: blocker-file scan là prefix-match cùn, không phân biệt live với
+  superseded/escalation; và hash-lock không có đường amend tại chỗ.** Cả hai bắn ở static precondition TRƯỚC mọi
+  verification/review, không phán xử việc của slice. Root cause upstream: `level3-workflow.md` §8 gap #4.
+
+  **Đo được, verify trên đĩa:**
+  - `scripts/autopilot-review-readiness.mjs:602-606`: `["HALT-","AWAIT-FOUNDER-"].flatMap(p => readdirSync(stateDir).filter(n => n.startsWith(p)))` → HALT `TERMINAL_CONFLICT`; `scripts/ap-finish.sh:105` dùng cùng cặp prefix. **Hệ quả (c): file `AWAIT-FOUNDER-*` một agent viết để ESCALATE cũng tự chặn resume của chính nó** — kênh báo động = kênh chặn (thực chứng: `deps-osv-transitive-floors-…/state/resolved-AWAIT-FOUNDER-stale-preregistration-halt-files.txt` phải rename `resolved-` để thoát scan).
+  - Hai mã lỗi setup-time: `CONTRACT_INVALID` = một entry `negative_scope` chứa literal `<`/`>` (arrow "31->32" hoặc version selector `esbuild@<0.25.0`) trúng placeholder-regex `/[<>]/`; `READINESS_JSON_INVALID` = readiness.json ENOENT (gọi `ready` trước khi viết readiness.json). Cả hai KHÔNG đọc verification/review.
+  - **Bốn lane bị, remedy là rename tay** (scan dùng `startsWith` nên `attempt-NN-superseded-HALT-*`/`resolved-AWAIT-FOUNDER-*` thoát scan): `.autopilot/state-archive/chat-dm-safety-authority-core--v3-20260810T105628Z/state/` (`attempt-01/02-superseded-HALT-{CONTRACT_INVALID,READINESS_JSON_INVALID}`), `dd38-dd86-chat-schema-core-20260810T161821Z/state/` + `…-stale-register-halt-20260810T134424Z/` (CONTRACT_INVALID `negative_scope[13]` = "31->32"), `deps-osv-transitive-floors-20260811T135211Z/state/`, `chat-dm-safety-config-single-read-20260811T170327Z/state/`.
+  - Suggested resolution của script ("close this terminal lifecycle and create a fresh successor task") vứt một slice đã implement + xanh vì một lỗi setup. Interaction với `breaker-counts-infra-flakes-as-fix-rounds`: re-register reset `fix-round-count` về 0 (§8 item 4) — hợp lệ khi slice ĐÃ CHẤP NHẬN finding và fix cần scope mới; laundering khi định tranh lại cùng finding với budget mới.
+
+  **Đề xuất (chưa chốt, đo trước):** (1) blocker scan phân biệt live với superseded/resolved — formalize marker `superseded-`/`resolved-` (đang bị exploit ngầm qua `startsWith`); tách namespace escalation (`AWAIT-FOUNDER-`) khỏi namespace chặn, hoặc route AWAIT theo `awaitReview()` path đã có thay vì `TERMINAL_CONFLICT`. (2) Đường amend-in-place cho manifest đã hash-lock khi identity/base KHÔNG đổi (chỉ sửa placeholder/verification-literal), thay vì bắt close+re-register.
+  **`launcher-register-path-authored-to-runtime` là một instance hẹp** của cùng hash-lock class (authored path → CONTRACT_INVALID); giữ riêng vì deliverable là cleanup ~40 launcher, không phải sửa cơ chế.
+  **Land (DD-100 D1, owner 2026-08-09):** Plexco-local trước, canonical/backport sau (fork kit v31, nợ backport có chủ) — mở backport entry cho `Claude template` (B5, `level3.1-adoption-plan.md`).
+  ⚠️ **Overlap:** nửa hash-lock của task này = `level3-workflow.md` §8 gap #4, nằm trong Phase 0 của `level3.1-adoption-plan.md` (hiện `NOT_CODE_READY`, blocker B1-B5) — reconcile với plan đó, KHÔNG author lane song song; nửa blocker-scan (obs b/c) là mới, ngoài §8.
+
 ## task: launcher-register-path-authored-to-runtime
 title: ~40 launcher file ở 4 repo gọi `register` bằng authored path — sẽ HALT sau khi sync kit v28
 status: idea
@@ -2341,6 +2493,17 @@ notes: **Không phải regression — là fail-open cũ bị đóng lại.** Kit
   **Vì sao P3 và vì sao không sửa hàng loạt ngay:** (1) HALT chỉ nổ khi một repo tự nó lên v28 — đây là điều kiện per-repo tại thời điểm đọc, không phải danh sách tĩnh: đọc version sống của một repo từ header `scripts/autopilot-scope-gate` của chính nó (dòng `# KIT_VERSION:`, đúng field mà `autopilot-update.sh` tự kiểm); đừng tin version ghim sẵn trong ghi chú này — nó lạc hậu ngay khi bất kỳ repo nào sync; (2) thông điệp HALT tự dạy cách sửa, nó nêu đúng runtime path và trường thiếu, nên sửa là một dòng ngay tại chỗ hỏng; (3) phần lớn launcher thuộc slice **đã merge** — sửa chúng là viết lại lịch sử không ai đọc lại. Đường đúng là để công cụ chặn, rồi dọn khi chạm.
   **Điều cần theo dõi:** repo nào sync v28 mà launcher chưa sửa thì slice tiếp theo ở đó HALT ngay ở bước register. Đó là kết quả **đúng** — nó vốn đang chạy không khoá — nhưng phải là bất ngờ có chuẩn bị, không phải bất ngờ thật. `Trum Bia Hoi` dùng default branch `master` và có reservation `ready`; kiểm trước khi sync repo đó.
   **Gốc:** CLAUDE.md của Plexco từng ghi authored path và mô tả là "fail-closed" (sửa 2026-08-01, `340ddc8`); các launcher chép theo dòng đó. Canonical `parallel-scope-gate.md` của kit ghi đúng runtime path từ đầu.
+
+  **Addendum 2026-08-12 (triage — reclassify HYPOTHETICAL→ACTUAL, promote above RC-A cheap wins).** Đo lại:
+  `grep -rl "register --manifest docs/autopilot-manifests/" .claude/commands/*.md` = **5** launcher còn authored path
+  (`ap-33`, `ap-34`, `ap-35`, `ap-36`, `ap-37`). Fail-open verify tại `scripts/autopilot-scope-gate:607-611`:
+  `registered-manifest.sha256` CHỈ ghi khi `MANIFEST_SCHEMA_VERSION = level3-operational-v2` (authored manifest BỊ
+  CẤM mang field đó), nhưng dòng 611 vẫn in `registered:` **vô điều kiện** ⇒ authored path = không khoá, không lỗi,
+  vẫn "registered" — fail-open trên đúng cơ chế toàn vẹn cả gate dựa vào, nạp sẵn trong 5 file chờ lane kế. **Đã
+  fired 1 lần:** project `CLAUDE.md` (runtime-manifest note) ghi "Một slice đã mất một vòng đăng ký vì làm đúng theo
+  dòng cũ." ⇒ ACTUAL, không hypothetical; trong ordering triage đứng TRÊN cheap wins RC-A. **Land (DD-100 D1, owner
+  2026-08-09):** Plexco-local trước — sửa 5 launcher tại Plexco, mở backport entry cho `Claude template` (B5,
+  `level3.1-adoption-plan.md`).
 
 ## task: chat-definer-role-provisioning
 title: Slice 1 chuỗi in-app-chat — provision role `chat_definer` (bootstrap script, không migration)
