@@ -1,4 +1,4 @@
-<!-- review-readiness: enforce -->
+<!-- review-readiness: code-ready -->
 
 # session-service-create-command-core — task contract
 
@@ -9,8 +9,12 @@
 > **Opened from:** M2 (`docs/sessions/2026-08-07-next-milestones.md` — Session BE vertical root).
 > **Authored:** 2026-08-13 against `origin/main` @ `775cb9e` (docs-batch tip; runtime state = `1303c31`).
 > **Manifest:** `docs/autopilot-manifests/session-service-create-command-core.json`.
-> **Verdict:** `NOT_CODE_READY` — four named blockers (§7), each with a binary resolution. This is an
-> `enforce` evidence artifact, **not** a coding handoff. Do not register or open a worktree from it.
+> **Verdict:** `CODE_READY` at `a9fe5c0` — all four blockers (§7) resolved: B1 acceptance matrix
+> re-traced to FE v2.25 / BE v2.22 (§4–6); B2 module home pinned `packages/db/src/session-service.ts`;
+> B3 outbox producer insert contract pinned (§2 step 6); B4 suspension gate = owner-ratified
+> draft-invisibility exemption (DD-105). This is a `code-ready` coding handoff — but this authoring pass
+> did NOT register, open a worktree or write service code (the build session does that, per §7.2
+> FIRST_IMPLEMENTATION_STEP).
 
 ## 0. Task contract (level3-workflow §3)
 
@@ -20,7 +24,8 @@ OUTCOME (target): a SessionService CreateSession command exists and is the singl
   creating a draft session: validates input per spec edges, dedups by commandId via
   processed_commands, inserts via tenantRepo.sessions.create, and writes one session.created outbox
   event — all in ONE transaction. First real feature-layer service and first outbox producer.
-REPOSITORY_AND_BASE: plexco-app @ origin/main. No base pinned for building — NOT_CODE_READY.
+REPOSITORY_AND_BASE: plexco-app @ origin/main = a9fe5c0 (verified 2026-08-13). The build worktree
+  re-verifies and pins its base from live main at register time.
 CONTEXT_SOURCES: docs/features/BE/feature_session_management_tech.md v2.22 (§1 commands, §2 edges
   1/2/3/7, §3 error codes, §4 events table `session.created` payload session_id/tenant_id/visibility);
   docs/features/FE/feature_session_management.md v2.25 (SES-UC-1, Bất biến);
@@ -44,8 +49,8 @@ AUTONOMY_MODE: supervised
 MODEL_POLICY: planner=primary-agent; worker=assigned-agent; reviewer=scripts/codex-review-pin.sh
   (2 clean code rounds; security round NOT required unless review finds a trust-boundary touch).
 SANDBOX_AND_PERMISSIONS: network none; secrets none; external side effects none.
-HUMAN_DECISIONS_REQUIRED: B4 (suspension-gate class for create) unless the billing contract already
-  answers it at authoring-verify time.
+HUMAN_DECISIONS_REQUIRED: none remaining — B4 resolved by owner 2026-08-13 (DD-105: create-draft
+  ungated under the draft-invisibility exemption).
 SLICE_GRAPH: root of the Session BE vertical. Depends only on merged substrate (schema 0002+,
   processed_commands, outbox 0022/0023, tenantRepo). Runs PARALLEL-SAFE with chat slices (0 migration,
   no shared files) — M2 constraint honored. Blocks: session-service-publish (next), routes, projector.
@@ -85,10 +90,31 @@ One exported service function (name pinned at build: `createSession`), executing
    `slots_max > 0` (edge #7 / E#7 — DB CHECK `0024` is the invariant, service returns the typed error
    before hitting it); price ≥ 0. Typed errors per BE §3 (`MISSING_DISCOVERY_FIELDS`, 400 envelope
    via packages/core `api-contract` codes — map at build).
-4. **Suspension gate:** per B4 — shape decided before build, not invented during it.
+4. **Suspension gate — NONE (owner-ratified, DD-105):** `createSession` does NOT call
+   `authorizeTenantAction`. Creating a `draft` is exempt from the billing Suspended Action Matrix under
+   the **draft-invisibility exemption** (DD-105): a draft is invisible until publish (never projected —
+   TDD §3.8/§3.9, `feature_session_management_tech.md` §4 step 7 project-on-publish) AND money-free (a
+   draft has no `players`/`charges` by design). The gated boundary is `PublishSession`
+   (`publish_new_sessions`, ❌ when suspended) — a separate slice. The exemption is bounded to commands
+   that are BOTH invisible-until-publish AND money-free; publish/announce/close/cancel/update-on-`open`
+   (player-visible) or anything touching `charges` stays under the matrix with its own narrow per-op
+   action class (DD-104 D2a precedent). This step is a no-op by design, not an omission.
 5. **Insert** via `tenantRepo.sessions.create` (status `draft` default — SES-UC-1).
-6. **Outbox:** one `session.created` row (payload exactly `session_id`, `tenant_id`, `visibility` —
-   BE §4 events table:507) in the same transaction; sequence per B3.
+6. **Outbox (first producer — this slice defines the producer insert contract; no shared helper exists
+   on `main`, verified 2026-08-13):** insert one `outbox_events` row in the SAME transaction, columns:
+   `tenant_id` (context), `aggregate_type='session'`, `aggregate_id` = the new session id,
+   `type='session.created'`, `payload = {session_id, tenant_id, visibility}` (BE §4 events:507); let
+   `schema_version` default to 1 and `id`/`created_at` default, and leave
+   `claimed_at`/`lease_expires_at`/`claim_token`/`acked_at` NULL (the available all-null shape that
+   `outbox_events_lease_shape_chk` requires). **Per-aggregate `sequence` derivation (the reusable
+   producer rule this slice establishes):** `sequence := COALESCE((SELECT MAX(sequence) FROM
+   outbox_events WHERE aggregate_id = :sessionId), 0) + 1`, computed inside the writing transaction;
+   `outbox_agg_seq_uq` UNIQUE (`aggregate_id`, `sequence`) is the final fence (allocator-under-lock +
+   unique-constraint pair, same shape as DD-45a). For `CreateSession` this is deterministically **1**:
+   the session id is freshly generated in this same transaction and has no prior `outbox_events` rows,
+   so nothing can collide. The consumer (`claim_outbox_batch`, `autopilot-db-job-claim-lease-core.md`
+   §4.2, `0022`) reads back `(event_id, tenant_id, aggregate_id, sequence, type)` — this producer
+   supplies exactly those fields.
 7. Record `processed_commands` result; commit; return envelope.
 
 Dispatcher schedule stays OFF — rows accumulate unclaimed by design; that is the documented state of
@@ -103,25 +129,98 @@ the job substrate and is not this slice's problem to change.
 - Billing Suspended Action Matrix (billing tech §3): `Admin mutation | active ✅ | past_due ✅ |
   suspended ❌` — row exists; **no action-class literal for it** (only `'publish_new_sessions'`).
 
-## 4–6. Acceptance direction (to be completed at B1 resolution)
+## 4–6. Slice-local acceptance matrix (B1 — enumerated before code, gate G4)
 
-Slice-local acceptance matrix = create-related rows of the checklist re-traced to FE v2.25 / BE v2.22
-+ spec edges #1/#2/#3/#7 + dedup-replay + outbox-exactly-once + RLS isolation (create in tenant A
-invisible to tenant B). Exact expected assertions are the B1 deliverable — enumerated before code,
-per gate G4.
+**Re-traced to the CURRENT specs `FE v2.25` / `BE v2.22`** (NOT the checklist's stale `P v2.17` /
+`T v2.18a`). Every row below is an intent-faithful restatement of a specific line in the current
+specs; expected results are pinned. `commandId`/`tenantId`/`actor` arrive from trusted context (never
+from payload). The service runs one `withTenant` transaction; `visibility` defaults `private`,
+`status` defaults `draft`, `version` = 1.
 
-## 7. Verdict — canonical block
+| # | Group | Input / precondition | Expected state / output | Test layer | Trace (FE v2.25 / BE v2.22) |
+|---|---|---|---|---|---|
+| A1 | Happy path | valid private create (sport active, `ends_at > starts_at`, price ≥ 0) | one `sessions` row `status='draft'`, `version=1`; **exactly one** `session.created` outbox row (`aggregate_type='session'`, `aggregate_id=session.id`, `sequence=1`, `payload={session_id,tenant_id,visibility}`); one `processed_commands` row; returns success envelope | real-PG unit | SES-UC-1; BE `U#1`; BE §4 events:507 |
+| A2 | Happy path (public) | valid public create with sport + area + `starts_at` + finite `slots_max > 0` | draft, `visibility='public'`; outbox `payload.visibility='public'` | real-PG unit | E#7; BE#12 |
+| B1 | Boundary | `ends_at <= starts_at` | `INVALID_TIME_RANGE` (400); **zero** mutation (no session / outbox / processed_commands row) | unit | E#1 / BL-DATA-1; BE §3; `U#2` |
+| B2 | Boundary | `sport_id` not in the active sport taxonomy | `SPORT_INACTIVE` (400); zero mutation | unit | E#2; BE §3; `U#3` |
+| B3 | Boundary | `visibility='public'` missing any of {sport, area, `starts_at`, finite `slots_max`} | `MISSING_DISCOVERY_FIELDS` (400) returned by the service **before** the `0024` DB CHECK fires; zero mutation | unit | E#7; BE#12; `U#9` |
+| B4 | Boundary | `price_amount < 0` | rejected, zero mutation (service guard; DB CHECK `price_amount >= 0` is the final fence) | unit | BE §2 DDL:71; `U#38` |
+| B5 | Boundary | `slots_max = 0` or negative | rejected (service typed error first; DB CHECK `slots_max IS NULL OR slots_max > 0` is the fence) | unit | BE §2 DDL:81 |
+| C1 | Concurrency / **dedup-replay** | same `(tenant_id, command_id)` submitted twice | second call returns the **stored** result envelope; **zero** new `sessions` row, **zero** new `outbox_events` row, **zero** new `processed_commands` row (dedup via `processed_commands_tenant_cmd_uq`) | real-PG unit | edge #3; BE#3; `U#13` |
+| OBS1 | **outbox-exactly-once** | one successful create, then a `commandId` replay | the successful create writes **exactly one** `session.created` row (`aggregate_id=session.id`, `sequence=1`); the replay writes **none**. `payload` is the whitelist `{session_id, tenant_id, visibility}` only — no roster/PII/venue | real-PG unit | BE §4 events:507; edge #3 |
+| SEC1 | **cross-tenant-invisibility** | create in tenant A, then read as tenant B | the row is invisible to tenant B: `tenantRepo(B).sessions.list()`/`getById` return 0 rows (RLS `FORCE` via `withTenant` GUC). `tenant_id` is injected by `tenantRepo`, never read from input | real-PG unit + `rls-invariants.test.ts` unchanged-green | Bất biến (RLS choke-point); `U#18`; BE §4 Security Checklist |
+| SEC2 | Security / trusted-context | `tenantId` non-UUID, or `tenant_id`/`actor` supplied in the payload | `assertTenantId` throws (never trusts payload); tenant/actor come from context only | unit | Bất biến; BE §1 / §4 |
+| MIG1 | Migration | — | **NONE**: zero migration, zero `schema.ts` change; reuses merged substrate (`sessions` 0002, `processed_commands` + `outbox_events` 0005, lease/ack 0022/0023, `sessions_public_capacity_chk` 0024). A diff touching any migration or `schema.ts` is a STOP_CONDITION | asserted by scope gate | §0 NEGATIVE_SCOPE |
+| REG1 | Regression | run the canonical db suite | `rls-invariants.test.ts` stays green (tenant isolation unchanged); the full db suite (813 at the 0032 gate) stays green | full db suite | canonical runner |
+| OBS2 | Observability | successful create | canonical outbox `session.created` carries the identifiers; the surface analytics `session_created` (FE §5: `tenant_id`, `session_id`, `sport_id`, `visibility`, `source`) is emitted by the projector/route layer, out of this slice — this slice writes the canonical outbox row | trace only | FE §5; BE §1/§4 |
+
+> **Authorization group (gate B2):** the non-admin **403** on create (BE#10 / `U#17`) is enforced by
+> AuthZ middleware **before** the service, at the route layer — that is the later route slice, OUT of
+> this service-only scope (§0 OUT_OF_SCOPE). The "wrong tenant" dimension is covered here by **SEC1**
+> (RLS at the repo layer); role/capability authz is the route slice's responsibility. This is stated
+> so G4 is honest about what the service tests can and cannot assert.
+
+**B1 survival proof — the create rows survived BOTH passes (not assumed):**
+
+- **DD-104 strip (FE changelog v2.25:875; BE header v2.22; decisions v2.27) removed ONLY DeleteSession
+  content** — SES-UC-15, FE edges #27–#30, delete surfaces/analytics/state-transitions/permission row.
+  It touched **no** create use-case, edge, or error code: SES-UC-1, E#1/#2/#7 and
+  `INVALID_TIME_RANGE`/`SPORT_INACTIVE`/`MISSING_DISCOVERY_FIELDS` are byte-unchanged; the removed edge
+  IDs were left blank, not renumbered, so the create edge numbers are stable.
+- **The invite-friend pass (FE v2.21:879, "Additive-only — không đổi existing contract") added
+  SES-UC-16/17/18 + edges #31–#38** (invite / guest-note / approve) with their own error codes; it did
+  not alter create validation. The create-relevant BE DDL CHECKs (`ends_at > starts_at`,
+  `price_amount >= 0`, `slots_max IS NULL OR slots_max > 0`, `sessions_public_capacity_chk`) are
+  unchanged from `0002`/`0024`.
+
+**B2 resolution — service module home = `packages/db/src/session-service.ts` (§0 SCOPE).** TDD **§3.2**
+(Data Model, read 2026-08-13) names data-model tables, not a service-layer file; TDD §9 (Dependencies)
+lists libraries only; §3.1/§3.6 say "PostgreSQL/domain services là canonical" and "CMD bus → Service →
+tenantRepo". No TDD line pins a create-service file, so the **precedent** decides: the package's domain
+services all live in `packages/db/src/` — `auth.ts` ("Auth/identity service", typed wrappers over the
+0012 SECURITY DEFINER functions), `tenant.ts` (`tenantRepo`), `authorization.ts` (`authorizeTenantAction`).
+`createSession` writes (`sessions` insert + `outbox_events` + `processed_commands`) inside one
+`withTenant` transaction — all `packages/db` primitives — so `packages/db/src/session-service.ts` is
+exactly on-precedent.
+
+**B3 resolution — the outbox PRODUCER insert contract is pinned in §2 step 6** (this slice is the first
+producer; no shared helper exists on `main`, verified 2026-08-13). It defines the reusable per-aggregate
+`sequence` derivation and cites the consumer contract (`autopilot-db-job-claim-lease-core.md` §4.2,
+`0022`) so `claim_outbox_batch`'s read-back of `(event_id, tenant_id, aggregate_id, sequence, type)`
+lines up.
+
+## 7. Closure matrix (12/12) + canonical verdict
+
+### 7.1 Closure matrix — 12/12 PASS (re-run at the CODE_READY flip, `a9fe5c0`)
+
+| # | Gate | Evidence | PASS/FAIL |
+|---|---|---|---|
+| 1 | Authority snapshot pinned by SHA | `git rev-parse HEAD` = `a9fe5c0…` (= `origin/main`); exact TARGET_FILES, no glob | PASS |
+| 2 | In-scope decisions closed | B4 = **DD-105** (owner 2026-08-13, ungated draft-invisibility exemption); no product choice left on the create path | PASS |
+| 3 | Scope IN/OUT + owner clear | §0 SCOPE / NEGATIVE_SCOPE; mechanism-named (`CreateSession` boundary); one writer | PASS |
+| 4 | Dependency classified | all MERGED: `sessions` (0002), `processed_commands` + `outbox_events` (0005), lease/ack (0022/0023), `sessions_public_capacity_chk` (0024), `tenantRepo.sessions.create` (tenant.ts:82-102); B4→(b) adds **none** | PASS |
+| 5 | Live schema/code matches doc | verified at `a9fe5c0`: schema.ts:583/1296/1308-1345, tenant.ts:41-105, authorization.ts:91-136, 0005_sync_engine.sql:21-35 | PASS |
+| 6 | Data/API/state/auth contract complete | §2 mechanism, §4–6 acceptance matrix, outbox producer insert (B3, §2 step 6), error codes (BE §3) | PASS |
+| 7 | Fail-closed / idempotency / order pinned | dedup-first (edge #3), typed errors before DB CHECK, per-aggregate `sequence` + `outbox_agg_seq_uq` fence, RLS by construction | PASS |
+| 8 | In-scope open questions = 0 | B1–B4 resolved; SES-OQ-2 (recurrence-edit) / timezone-input (checklist §9-A) are NOT on the create path | PASS |
+| 9 | Acceptance matrix has expected results | §4–6 rows A1..OBS2, each with expected state/output + test layer | PASS |
+| 10 | Migration / security / rollback pinned | zero migration (STOP_CONDITION guards it); security = cross-tenant RLS invariant pre-specified (SEC1); rollback = delete the two new files | PASS |
+| 11 | First slice hard deps merged | root slice of the Session BE vertical; all substrate merged + verified | PASS |
+| 12 | Implementation handoff ready | authored contract (this file) + authored manifest + backlog block, mutually consistent; runtime manifest authored at register (first build step) | PASS |
+
+### 7.2 Verdict — canonical block
 
 ```text
 REVIEW_POLICY_VERSION: 1.3
-REVIEW_VERDICT: NOT_CODE_READY
+REVIEW_VERDICT: CODE_READY
 REVIEWED_AT: 2026-08-13
-AUTHORITY_SHA: 775cb9eefc593df2d30684e48899709af55fe50e
+AUTHORITY_SHA: a9fe5c0b8b8731dff1ca8e688eea43c8b724dc2f
 BASE_BRANCH: main
 TARGET_FILES:
   - docs/autopilot/contracts/autopilot-session-service-create-command-core.md
   - docs/autopilot-manifests/session-service-create-command-core.json
   - docs/autopilot-backlog.md
+  - docs/standards/decisions.md
 SLICE: session-service-create-command-core
 IN_SCOPE: the CreateSession command boundary as one service function in one transaction — dedup lookup
   in processed_commands, validation subset (edges 1/2/7), tenantRepo.sessions.create insert, one
@@ -130,55 +229,31 @@ IN_SCOPE: the CreateSession command boundary as one service function in one tran
 OUT_OF_SCOPE: publish/cancel/close/update/delete commands; any route/API/UI; any billing file (the
   action-class literal is a billing slice); any migration or schema.ts change; projector/dispatcher/
   schedule; waitlist/join/player/charge logic; channel adapters.
-G1_DECISION: FAIL
-G2_SPEC: PARTIAL
-G3_DEPENDENCY: FAIL
-G4_TEST: FAIL
-G5_SCOPE: PARTIAL
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
 G6_EXTERNAL: PASS
-HARD_DEPENDENCIES: none unmerged today — sessions/processed_commands/outbox substrate,
-  tenantRepo.sessions.create and authorizeTenantAction are all on main (verified 2026-08-13, §3).
-  CONDITIONAL: if B4 resolves to branch (a), the billing action-class docs slice becomes a hard
-  dependency and must be added to the manifest before the verdict flips.
+HARD_DEPENDENCIES: none — root slice. sessions/processed_commands/outbox substrate (0002/0005/0022/
+  0023/0024), tenantRepo.sessions.create (tenant.ts:82-102) and authorizeTenantAction (authorization.ts:91)
+  are all merged on main, verified 2026-08-13 at a9fe5c0. B4 resolved to the ungated draft-invisibility
+  exemption (DD-105), so NO billing docs slice is a dependency.
 PRIOR_SLICES: none — this is the root slice of the Session BE vertical (M2).
-OPEN_QUESTIONS_IN_SCOPE: 4
+OPEN_QUESTIONS_IN_SCOPE: 0
 ENABLEMENT_ONLY_GATES: none
 LIVE_REPO_VERIFICATION: PASS
-CONTRACT_MATRIX: PARTIAL
-CLOSURE_MATRIX: FAIL
-ACCEPTANCE_MATRIX: FAIL
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS
+ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS
-IMPLEMENTATION_ARTIFACTS: FAIL
-FIRST_IMPLEMENTATION_STEP: blocked — do not register or open a worktree. The next step is the S1
-  authoring session (next-lanes 2026-08-13): resolve B1-B4, run closure matrix 12/12, flip the marker
-  to code-ready with a strict CODE_READY block, then author the runtime manifest.
-REMAINING_BLOCKERS:
-  - blocker: B1 (G4/G2) — slice-local acceptance matrix not extracted; the checklist v1.2 traces spec
-    versions P v2.17 / T v2.18a while current files are FE v2.25 / BE v2.22 (DD-104 strip +
-    invite-friend pass), so every create-related row must be re-traced, and dedup-replay /
-    outbox-exactly-once / cross-tenant-invisibility assertions enumerated.
-    owner: S1 authoring session
-    resolution: contract §6 lists the exact assertions verified against the CURRENT spec versions.
-  - blocker: B2 (G5) — service module home unpinned; proposal packages/db/src/session-service.ts on
-    the auth.ts precedent.
-    owner: S1 authoring session
-    resolution: TDD §3.2 read and cited — either it names the location (use it) or the precedent is
-    recorded with the checked line.
-  - blocker: B3 (G3) — outbox PRODUCER insert contract unpinned; outbox_agg_seq_uq demands a
-    per-aggregate monotonic sequence and 0022/0023 authored only the consumer side. This slice is the
-    first producer.
-    owner: S1 authoring session
-    resolution: the exact insert shape including sequence derivation is written into §2 step 6, citing
-    the db-job-claim-lease-core contract and the 0022 header.
-  - blocker: B4 (G1) — suspension gate for CreateSession undecided: billing matrix row 'Admin
-    mutation | suspended blocked' exists with no action-class literal for create (only
-    publish_new_sessions); DD-104 D2a set the narrow-per-op-class precedent and D4a the ordering.
-    owner: owner (one line) or the billing-contract docs slice
-    resolution: recorded in decisions.md as either (a) narrow class added to the billing contract
-    first, with that slice added here as a hard dependency, or (b) create-draft pinned ungated with
-    written rationale (drafts invisible; publish is the gated boundary).
-NEXT_REVIEW_TRIGGER: the S1 authoring session (next-lanes-2026-08-13-RUN.md) resolves B1-B4 —
-  B1-B3 are read-and-pin within one session, B4 may need one owner line — completes closure matrix
-  12/12 and flips this packet to strict CODE_READY. AP-51 precedent (NOT_CODE_READY 08-10 ->
-  CODE_READY 08-11) is the intended shape.
+IMPLEMENTATION_ARTIFACTS: PASS
+FIRST_IMPLEMENTATION_STEP: author the runtime manifest
+  .autopilot/state/session-service-create-command-core/manifest.json from the authored manifest (schema
+  level3-operational-v2), register it via scripts/autopilot-scope-gate, confirm
+  .autopilot/state/session-service-create-command-core/registered-manifest.sha256 exists, open one worktree
+  from verified main, then implement createSession in packages/db/src/session-service.ts per §2 mechanism +
+  §4–6 acceptance matrix (validate -> dedup -> tenantRepo.sessions.create -> one session.created outbox row
+  -> processed_commands, one withTenant transaction) with session-service.test.ts on real PG.
+REMAINING_BLOCKERS: none
 ```

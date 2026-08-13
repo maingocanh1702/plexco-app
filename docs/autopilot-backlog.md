@@ -717,31 +717,33 @@ notes: |
 
 ## task: session-service-create-command-core
 title: SessionService root — `CreateSession` command (validate → dedup → tenantRepo → outbox, 1 tx, 0 migration)
-status: planned
-_readiness: NOT_CODE_READY — 4 blocker có tên, mỗi cái binary; xem `../autopilot/contracts/autopilot-session-service-create-command-core.md` §7
+status: ready
+_readiness: CODE_READY — 4 blocker resolved tại a9fe5c0 (B1 acceptance matrix re-trace FE v2.25/BE v2.22 + dedup-replay/outbox-exactly-once/cross-tenant; B2 `packages/db/src/session-service.ts`; B3 outbox producer insert §2 step 6; B4 DD-105 draft-invisibility exemption → create-draft ungated); xem `../autopilot/contracts/autopilot-session-service-create-command-core.md` §7
 risk: P2
 change_class: code
 depends_on: []
 invariants: [test-chain]
-scope: []
+scope: [packages/db/src/session-service.ts, packages/db/src/session-service.test.ts, packages/db/src/index.ts]
 manifest: docs/autopilot-manifests/session-service-create-command-core.json
 launcher: null
 merged_probe: null
-_probe_note: "`scope: []` vì chưa authorize write. Probe thật khi merge: `packages/db/src/session-service.ts :: createSession`."
+_probe_note: "Write authorized (CODE_READY). merged_probe=null vì chưa merge; probe khi land: `packages/db/src/session-service.ts :: createSession`. Build session tự author runtime manifest + register trước khi ghi."
 notes: |
   **Mở 2026-08-13 từ M2 (`docs/sessions/2026-08-07-next-milestones.md`) — root slice của Session BE
   vertical, service-only (0 migration) để chạy song song an toàn với lane chat.** Substrate đã merged
   và verify 13/08: `sessions`/`processed_commands`/`outbox_events` trong schema, `tenantRepo.sessions.create`
   (tenant.ts:61-107), `authorizeTenantAction` (0 callers). Slice này là **outbox producer đầu tiên**.
 
-  **4 blocker trước khi flip CODE_READY (contract §7):** B1 acceptance matrix phải re-trace về spec
-  hiện hành FE v2.25 / BE v2.22 (checklist v1.2 đang trace v2.17/v2.18a — stale); B2 pin vị trí module
-  theo TDD §3.2 (đề xuất `packages/db/src/session-service.ts`, tiền lệ `auth.ts`); B3 pin producer-side
-  outbox contract (per-aggregate `sequence` cho `outbox_agg_seq_uq` — 0022/0023 mới author consumer
-  side); B4 suspension gate: matrix billing có hàng `Admin mutation | suspended ❌` nhưng **không có
-  action-class literal** cho create — hoặc billing docs slice thêm class hẹp (tiền lệ DD-104 D2a) rồi
-  slice này hard-depend nó, hoặc pin create-draft ungated kèm rationale vào decisions.md. B1–B3 là
-  read-and-pin (≤1 session); B4 có thể cần 1 dòng owner.
+  **4 blocker resolved 2026-08-13 → CODE_READY (contract §7):** B1 acceptance matrix re-traced về
+  FE v2.25 / BE v2.22 (contract §4-6, thêm dedup-replay/outbox-exactly-once/cross-tenant-invisibility;
+  chứng minh create rows sống sót cả DD-104 strip lẫn invite-friend pass); B2 pin
+  `packages/db/src/session-service.ts` (TDD §3.2 không nêu service file → tiền lệ `auth.ts`/`tenant.ts`/
+  `authorization.ts` cùng ở `packages/db/src`); B3 pin producer insert ở contract §2 step 6
+  (`aggregate_type='session'`, `sequence=COALESCE(MAX(sequence),0)+1` per `outbox_agg_seq_uq`,
+  deterministically 1 cho create mới; slice là producer đầu tiên nên tự định nghĩa rule); B4 owner chốt
+  create-draft **ungated** theo draft-invisibility exemption (decisions.md **DD-105**) — không
+  hard-depend billing. Build session: author runtime manifest + register + worktree rồi code
+  `createSession`.
 
 ---
 
