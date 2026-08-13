@@ -392,6 +392,54 @@ notes: |
 
 ---
 
+## task: test-harness-acquire-chat-definer-lock-leaks-client-on-error
+title: acquireChatDefinerLock leaks its pg.Client if connect()/pg_advisory_lock rejects (no try/catch connect→return)
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [packages/db/src/test-harness.ts]
+manifest: null
+merged_probe: null
+_probe_note: When scheduled, merged_probe MUST bind a symbol the FIX introduces — the error-path guard that closes the client (the try/catch around connect()+pg_advisory_lock that calls lockClient.end() before rethrowing, or a named helper). It must NOT bind `acquireChatDefinerLock`, `guardClientErrors`, or `tearingDown` — all already exist on origin (`tearingDown` is the already-merged merged_probe of `db-test-harness-teardown-57p01`), so any of them false-flips "merged" at author time.
+notes: |
+  **Defect (open on current `main`, `packages/db/src/test-harness.ts:293-313`).** `acquireChatDefinerLock`
+  creates `new pg.Client` (`:296`), connects (`:299`), then runs `SELECT pg_advisory_lock($1)` (`:300`).
+  Only the returned `release()` ever calls `lockClient.end()` (`:310`). There is NO try/catch spanning
+  connect→return: if `connect()` or the `pg_advisory_lock` query rejects (cancellation, statement timeout,
+  auth/permission, network), the function throws, never returns the `release` closure, and the connected
+  client is never closed — a leaked connection (open handle; under Vitest it can keep the pool/process from
+  settling). `guardClientErrors(lockClient, …)` (`:298`) only attaches an `'error'` EVENT handler (async
+  idle-client errors during teardown); it does NOT close the client on the connect/lock rejection path, so
+  it does not cover this.
+
+  **NOT the same defect as `packages/db/src/migrate.test.ts:683`.** That comment (codex round-04 [P2])
+  documents a SECOND-SESSION DEADLOCK — a second `bootstrapChatDefinerForOwner()` before `teardown()`
+  taking the same session advisory lock from a new connection — and it is CLOSED by the idempotency test at
+  `migrate.test.ts:689` plus the memoized bootstrap promise (`test-harness.ts` `chatDefinerBootstrapPromise`).
+  This task is a DIFFERENT, still-open defect: a SINGLE call leaking its client on an ERROR path. Do NOT
+  close it by pointing at the round-04 comment or the idempotency test.
+
+  **Failure-family note (P2, test-harness only, but adjacent to real cost).** This repo spent a week on a
+  test-harness connection race (`57P01`, migration-adjacent — see `db-test-harness-teardown-57p01`, merged).
+  A leaked connection on an error path is the SAME failure family (an unclosed/errored client in the DB test
+  harness); close it before it compounds with a flake.
+
+  **Fix (mechanical).** Wrap connect→lock in try/catch; on failure best-effort `await lockClient.end()`
+  (swallow its own error) then rethrow, so no path returns without either handing the caller a `release()`
+  that closes the client or closing it directly. Add a regression test that forces `pg_advisory_lock` (or
+  `connect()`) to reject and asserts the client is closed / no open handle remains.
+
+  **How it was found (the point — belongs here, not only in the measurement report).** Surfaced by Arm A
+  run 3/3 of the reviewer-determinism measurement on frozen diff `d5b31f9`
+  (`docs/decisions/analysis/codex-reviewer-determinism-2026-08-13/`). Runs 1 and 2 of the SAME pinned
+  reviewer on BYTE-IDENTICAL input returned CLEAN and missed it. That provenance is the concrete instance
+  proving the reviewer's variance direction is **false-CLEAN (misses real findings)**, not false-findings —
+  a "2 clean rounds" pass can ship this leak.
+
+---
+
 ## task: db-test-harness-teardown-57p01
 title: Suite `packages/db` đỏ với 346/346 test PASS — 2 unhandled Postgres 57P01 từ teardown
 status: merged
