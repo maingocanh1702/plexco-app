@@ -59,8 +59,8 @@ VERIFICATION (when built): pnpm test with DATABASE_URL_TEST (real PG); focused: 
   + rls-invariants unchanged-green; build/lint/typecheck; no e2e (no boundary crossed).
 CODE_REVIEW: required — 2 clean rounds via scripts/codex-review-pin.sh.
 SECURITY_REVIEW: not preplanned (no auth/secret/money/external-input); escalate if review disagrees.
-BUDGETS: ≤360 changed LOC (OWNER-RATIFIED AMENDMENT 2026-08-13 — was ≤300; see amendment note below),
-  ≤3 modules (M2 cap); fix_rounds_max 5.
+BUDGETS: ≤440 changed LOC (OWNER-RATIFIED AMENDMENT #2 2026-08-13 — was ≤300, then ≤360; FINAL for
+  this slice, see amendment notes below), ≤3 modules (M2 cap); fix_rounds_max 5.
 STOP_CONDITIONS: any migration appears in the diff · any route/UI file appears · billing files appear ·
   budget exceeded without owner amendment · reviewer unavailable → HALT TOOL_UNAVAILABLE.
 DELIVERABLES (when unblocked): service + tests green on real PG, 2 clean review rounds, backlog flip,
@@ -77,6 +77,21 @@ DELIVERABLES (when unblocked): service + tests green on real PG, 2 clean review 
 > future session-command slices will copy from this ROOT slice — the wrong place to save 47 lines.
 > **Boundary:** no automatic precedent; the ≤300/3-module cap stays for every other session slice;
 > module cap and all other gates unchanged for this one.
+
+> **Budget amendment #2 (owner-ratified 2026-08-13, DD-101 shape — FINAL for this slice):**
+> `changed_loc_max` 360 → **440**. Codex round-2 raised two legitimate findings, both fixed and
+> tested before this ratification: [P1] cross-command false replay on the shared
+> `processed_commands` ledger — dedup keyed `(tenant, command_id)` blind-cast the stored result;
+> fixed with a `command_type='CreateSession'` guard + full-shape `isStoredCreateResult()` check,
+> fail-closed `COMMAND_ID_CONFLICT` (this is exactly the pattern every later command inherits from
+> the ledger's FIRST consumer); [P2] integer validation gap — price/slots accepted
+> fractional/overflow values through to raw DB errors; fixed with `Number.isInteger` + range
+> [0, 2147483647] → typed `INVALID_PRICE`/`INVALID_SLOTS`. Honest LOC 413; both fixes converge on
+> the two existing regions (dedup + validate), no spreading, no scope creep. Compressing to 360
+> would cut the same rationale comments amendment #1 exists to keep — self-contradictory.
+> **Convergence boundary:** 440 (~27 headroom over 413) is the LAST budget amendment for this
+> slice. If a later round pushes past 440, that is a re-slice signal (split the mechanism or the
+> test file into an authorized follow-up), NOT grounds for a third amendment.
 
 ## 1. Why this slice, why now
 

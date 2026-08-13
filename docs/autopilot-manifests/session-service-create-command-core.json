@@ -66,8 +66,8 @@
     "e2e": "none — no real boundary crossed (no route, no channel, dispatcher OFF)"
   },
   "budgets": {
-    "changed_loc_max": 360,
-    "_budget_amendment_note": "Owner-ratified 2026-08-13 (DD-101 shape): 300 -> 360 for THIS slice only, measured 347 driven by codex round-1's required P1 advisory-lock fix + mandated acceptance coverage. No automatic precedent; other session slices keep 300/3-module. See the contract's budget amendment note.",
+    "changed_loc_max": 440,
+    "_budget_amendment_note": "Owner-ratified 2026-08-13 (DD-101 shape), TWO amendments: 300 -> 360 (round-1: measured 347, codex-required P1 advisory-lock fix + acceptance coverage) then 360 -> 440 (round-2: honest 413 after two legitimate findings — P1 cross-command false replay guard on processed_commands, P2 integer validation — both converging on existing regions, no spreading). 440 is FINAL for this slice: past it = re-slice signal, not a third amendment. No automatic precedent; other session slices keep 300/3-module. See the contract's amendment notes.",
     "modules_max": 3,
     "fix_rounds_max": 5
   },
