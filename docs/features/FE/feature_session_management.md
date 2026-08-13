@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P2 (chat CRUD) · P4 (web parity)  
 > **Track:** 📋 Session CRUD  
-> **Version:** 2.19 · 2026-08-10
+> **Version:** 2.25 · 2026-08-13
 > **Status:** Reviewed  
 > **Implementation:** Not started — waitlist schema `0014` và validated public finite-capacity invariant `0024` đã merge; SessionService/routes/projector/auto-promote vẫn chưa build · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P0–P1 foundation stable · P2 tenant routing/authz  
@@ -20,7 +20,12 @@
 
 Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **session thể thao đa môn** — với time, venue, price, capacity, visibility và join policy nhất quán. P2 deliver qua **Zalo + Messenger admin commands**; trên Messenger host dùng được **central Plexco Page hoặc optional Page riêng của club** với chức năng cơ bản tương đương. P4 bổ sung web parity và event projections.
 
-**Ngoài phạm vi:** Đặt sân (court booking), chấm điểm theo môn (sport-specific scoring) — **được theo dõi riêng ở `feature_session_organize.md` + `../BE/feature_session_organize_tech.md` (DD-61..64 ✅ accept-in-principle, build post-P4)**; pointer only, không thêm scope organize vào body Reviewed này. **Dọn draft chưa publish** (draft-lifecycle gap có sẵn từ `create=draft`, v2.12c) nay đã author: host-discard (SES-UC-13) và system auto-expiry draft quá giờ (SES-UC-14) đều flip `draft`→`cancelled` qua `CancelSession` mở rộng (state machine §4, founder-ratified `docs-session-draft-lifecycle`); publish contract giữ nguyên chỉ author `draft`→`open`.
+**Player invite friend (v2.21):** Player đã tham gia session (`players.status='active'`) có thể mời bạn vào session. Hai luồng:
+- **Friend đã follow player** (DD-47 `person_follows.status='accepted'`) → add trực tiếp vào session theo `join_policy`: `open` → `active`, `approval` → `pending` chờ host duyệt. Track `invited_by_person_id`.
+- **Friend chưa follow player** → tạo **guest note** (text: tên người được rủ + ghi chú "Bạn của [player]"). Guest note chiếm slot, KHÔNG phải user/person trong hệ thống. Max 3 notes/player/session. Không tạo charge (offline payment / slot reservation only).
+- Host cấu hình `allow_player_invite` (boolean) lúc tạo session **và** có thể bật/tắt bất kỳ lúc nào.
+
+**Ngoài phạm vi:** Đặt sân (court booking), chấm điểm theo môn (sport-specific scoring) — **được theo dõi riêng ở `feature_session_organize.md` + `../BE/feature_session_organize_tech.md` (DD-61..64 ✅ accept-in-principle, build post-P4)**; pointer only, không thêm scope organize vào body Reviewed này. **Dọn draft chưa publish** (draft-lifecycle gap có sẵn từ `create=draft`, v2.12c) nay đã author: host-discard (SES-UC-13) và system auto-expiry draft quá giờ (SES-UC-14) đều flip `draft`→`cancelled` qua `CancelSession` mở rộng (state machine §4, founder-ratified `docs-session-draft-lifecycle`); publish contract giữ nguyên chỉ author `draft`→`open`. **Hard delete session:** rút khỏi spec 2026-08-13 — cơ chế chốt ở `decisions.md` DD-104 (D0–D4); spec sẽ được author trong slice DD-104 riêng.
 
 ### Entry points
 
@@ -35,6 +40,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 | Deep link | `/sessions/:id` | Any (auth-gated) | Direct navigate to session detail |
 | Notification tap | Push/Inbox → session | Player/Host | Navigate to relevant session |
 | Chat message link | In-app chat → session ref | Player | Shared session link → detail |
+| Session detail → Invite | Session detail → "Mời bạn" | Player (active) | Invite friend picker / Guest note form |
 
 ### Bất biến
 
@@ -67,6 +73,9 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 | SES-UC-12 | Host | Publish session `draft` → `open` | Distinct `PublishSession` command (chat+web cùng service) flip status `draft` → `open` để nhận join (state machine §4). **Status-only** — không đổi `visibility`. Idempotent: re-publish session đã `open` = no-op success. Nếu `visibility='public'`: re-validate discovery completeness (E#7) trước khi mở. Chỉ Host (`session.manage`) |
 | SES-UC-13 | Host | Huỷ (discard) session `draft` chưa publish | `CancelSession` mở rộng nhận nguồn `draft` (ngoài `open` hiện có) → `cancelled` (state machine §4). Draft không thể có roster/charge theo thiết kế (join chỉ mở tại publish — SES-UC-12); hệ thống verify dưới lock — thường rỗng nên xác nhận một chạm, anomaly thì fail-closed (edge #23). Bắt buộc gửi version hiện tại (đóng race với publish concurrent — edge #21). Áp dụng bất kể `starts_at` — **chỉ cho nguồn `draft`** (draft chưa từng "diễn ra"); huỷ session `open` đã quá giờ vẫn giữ nguyên yêu cầu hiện có (edge #24, không đổi). Chỉ Host (`session.manage`) |
 | SES-UC-14 | System | Auto-expiry draft quá giờ chưa publish | Job định kỳ quét `draft` có `starts_at` đã qua → `cancelled` tự động qua cùng transition (`cancel_reason=auto`); draft tương lai và session không-draft không bị đụng |
+| SES-UC-16 | Player (active) | Invite friend (đã follow) vào session | Friend đã follow player (DD-47 `person_follows.status='accepted'`) → join session theo `join_policy`: `open` → `active` ngay, `approval` → `pending` chờ host duyệt. Ghi nhận `invited_by_person_id` trên player row. Chiếm slot (capacity check dưới session lock). Chỉ khi `allow_player_invite=true` trên session + session `status='open'` + inviter `players.status='active'`. Block boundary (DD-55) chặn invite |
+| SES-UC-17 | Player (active) | Thêm guest note (friend chưa follow / người ngoài hệ thống) | Tạo `session_guest_notes` row: tên người được rủ (required) + note (default "Bạn của [player]"). Chiếm slot. Max 3 notes per player per session. Không tạo charge — slot reservation only (thanh toán offline). Chỉ khi `allow_player_invite=true` + session `open` + player `active`. Player có thể xoá note mình tạo → giải phóng slot → trigger waitlist auto-promote |
+| SES-UC-18 | Host | Approve/reject pending invite | Host duyệt player được invite khi `join_policy='approval'`. Approve → `pending` → `active` (chiếm slot). Reject → player row removed. Chỉ Host (`session.manage`) |
 
 ### Edge Cases
 
@@ -98,6 +107,14 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 | 24 | Security | Huỷ session `open` đã quá giờ chơi (`starts_at` trong quá khứ) | Reject — no-past-guard của SES-UC-13 CHỈ áp dụng khi nguồn là `draft`; huỷ một session `open` đã quá giờ vẫn cần xác nhận/audit như trước (edge #11), KHÔNG được đi qua path discard-draft thường. Giữ đúng lời hứa "huỷ session open không đổi hành vi" |
 | 25 | Concurrency/Financial | Host giảm capacity trong khi có live channel payment hold | Reject dưới session lock nếu `new_slots_max < active_count + live_hold_count`; không huỷ hold hoặc lấy chỗ user âm thầm |
 | 26 | Cross-Feature | Paid+unlinked waitlisted candidate được promotion offer | Candidate vẫn waitlisted/ẩn venue; hold chiếm một slot. Settle→active; expiry→release + requeue-tail một lần rồi selector tiếp tục |
+| 31 | Security | Player add friend chưa follow mình vào session | Chỉ tạo guest note (text), KHÔNG add thành player. Follow-guard (DD-47): `person_follows.status='accepted'` bắt buộc cho invite thành player |
+| 32 | Security | `allow_player_invite = false` trên session | Reject mọi invite/note — `INVITE_NOT_ALLOWED`; chỉ host/admin add thủ công |
+| 33 | Security | Player chưa active (`waitlisted`/`left`/`pending`) cố invite friend | Reject `PLAYER_NOT_ACTIVE` — chỉ active players mời được bạn |
+| 34 | Concurrency | Invite friend khi session đã đầy (slots_max reached) | Reject `SESSION_FULL` — occupancy = active players + pending players + guest notes + live holds; check dưới session lock |
+| 35 | Data Integrity | Player tạo guest note thứ 4 (vượt max 3/player/session) | Reject `GUEST_NOTE_LIMIT_REACHED` |
+| 36 | Security | Invite friend đã là player trong session (active/waitlisted/pending) | Reject `ALREADY_JOINED` — idempotent no-op nếu cùng `commandId` |
+| 37 | Security | Invite friend bị block (DD-55) | Reject `MEMBER_BLOCKED` — block boundary overrides follow |
+| 38 | Concurrency | Delete guest note khi đang có waitlist | Release slot → trigger waitlist auto-promote (cùng mechanism SES-UC-9 leave) |
 
 ---
 
@@ -109,7 +126,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 
 **Purpose:** Host tạo kèo nhanh qua chat commands — step-by-step input.
 
-**Flow tree:**
+**Flow tree (updated — Playo-inspired):**
 
 ```
 Host gọi /newsession (central Page hoặc tenant Page)
@@ -120,24 +137,37 @@ Host gọi /newsession (central Page hoặc tenant Page)
   └→ Wizard steps:
         ├→ Step 1: Chọn môn thể thao (chips/quick reply)
         │     └→ Active sport taxonomy only (E#2)
-        ├→ Step 2: Ngày & giờ
+        ├→ Step 2: Khu vực
+        │     └→ Area picker (cho public discovery)
+        ├→ Step 3: Ngày & giờ
         │     ├→ Ngày: date picker / quick "Hôm nay", "Ngày mai", "T7 này"
         │     ├→ Giờ bắt đầu + kết thúc
         │     └→ Validate: ends_at > starts_at (E#1)
-        ├→ Step 3: Địa điểm
-        │     ├→ Input: tên sân / địa chỉ
-        │     └→ Area code (cho public discovery)
-        ├→ Step 4: Hình thức thanh toán
+        ├→ Step 4: Địa điểm
+        │     └→ Input: tên sân / địa chỉ
+        ├→ Step 5: Quyền truy cập
+        │     ├→ Quick reply: [🌐 Công khai] [🔒 Chỉ mời]
+        │     └→ "Chỉ mời": toggle link mời, yêu cầu duyệt
+        ├→ Step 6: Hình thức thanh toán
         │     ├→ Miễn phí — không thu
         │     ├→ Chia đều — input tổng tiền sân → auto ÷ slots
         │     ├→ Cố định/slot — input giá/người
         │     └→ Cố định theo giới tính — input giá nam + giá nữ (DD-39)
-        ├→ Step 5: Số người tham gia (slots_max)
-        │     └→ Public: bắt buộc finite > 0 (E#7)
-        ├→ Step 6: Hiển thị (Public / Private)
-        │     └→ Private: toggle link mời, yêu cầu duyệt
+        ├→ Step 7: Số người tham gia (slots_max)
+        │     └→ Bắt buộc finite > 0 (E#7). Label: "(bao gồm bạn)"
+        ├→ Step 8: Gắn nhóm/CLB (optional)
+        │     ├→ Quick reply: [CLB Cầu Lông Q7] [CLB Badminton SG] [Bỏ qua]
+        │     └→ "Kèo sẽ xuất hiện trong Timeline nhóm và notify thành viên"
+        ├→ Step 9: Hướng dẫn (optional)
+        │     ├→ Quick checkboxes: [BYOE] [Chia sẻ chi phí] [Có nước] [Bỏ qua]
+        │     └→ "Ghi chú thêm?" → free text input (max 500 chars) / "Bỏ qua"
+        ├→ Step 10: Cài đặt nâng cao (optional)
+        │     ├→ "Bạn muốn thêm cài đặt nâng cao?" → [Có] [Bỏ qua]
+        │     ├→ Trình độ: Quick reply level range [Mới – Pro] / "Tất cả"
+        │     ├→ Loại: Quick reply [Bình thường] [Huấn luyện] [Giải đấu]
+        │     └→ Chính sách: [Tự động chấp nhận] [Host duyệt]
         │
-        ├→ Preview card (summary tất cả fields)
+        ├→ Preview card (summary tất cả fields + instructions + tags)
         │     └→ Re-check session.manage + tenant context + snapshot
         │
         └→ Confirm → CreateSession command (idempotent)
@@ -160,7 +190,7 @@ Host gọi /newsession (central Page hoặc tenant Page)
 | State | Nội dung |
 |-------|----------|
 | Loading | Typing indicator |
-| Ready | Step-by-step input (sport → time → venue → price → capacity → visibility → preview → confirm) |
+| Ready | Step-by-step input (sport → area → time → venue → access → price → capacity → tag group → instructions → advanced → preview → confirm) |
 | Error | Inline error per field: "Giờ kết thúc phải sau giờ bắt đầu", "Số người phải > 0" |
 | Empty | N/A (wizard luôn có content) |
 
@@ -232,16 +262,22 @@ Thanh toán: {paidCount}/{totalCount} · {paidAmount}/{totalAmount}₫
 └──────────────────────────────────────────────────────────┘
 ```
 
-**Session row component:**
+**Session row component (unified `SessionCard` variant `list`):**
 
 | Field | Data source | Ghi chú |
 |-------|-------------|---------|
+| Session cover | `sessions.cover_image_url` | Optional thumbnail 48×48px left-aligned; fallback: sport icon |
+| Time pill | `sessions.starts_at` + `ends_at` | Green pill: `HH:mm – HH:mm` |
+| Price pill | `sessions.price_per_slot` | Grey pill: VND + "/Ng"; "Miễn phí" if 0 |
+| Host avatar | Host person avatar | Circular 32px; fallback initials |
+| Going count | `players` aggregate | `N/M Going` (active_count / slots_max) |
+| Urgency badge | `slots_open` | "Chỉ N chỗ!" (đỏ) khi `≤ 3` và `> 0`. Ẩn khi `> 3` |
 | Sport icon + title | `sessions.sport_id` + `sessions.title` | Taxonomy lookup for icon |
 | Status badge | `sessions.status` | `draft`(grey) / `open`(green) / `closed`(red) / `cancelled`(dim) |
-| Date + time | `sessions.starts_at` | Tenant timezone format |
 | Venue | `sessions.venue_name` | Truncate >30 chars |
-| Capacity | `players` aggregate | `active_count / slots_max` |
-| Price | `sessions.price_per_slot` | Format VND; "Miễn phí" if 0 |
+| Skill level tag | `sessions.skill_level` | Range nếu min+max: "Người mới – Trung bình". Green chip pill + sport icon |
+| Booking status | Player state in session | `JOINED` (xanh lá) / `WAITLISTED` (vàng) / `PENDING` (cam) / `AVAILABLE` (xanh dương) / `FULL` (đỏ) |
+| Payment dot | Canonical `getSelfPaymentStatus` | 🔴🟡🟢 (player view only) |
 | Actions | Conditional | Draft: "Đăng kèo" + "Huỷ nháp"; Open: "Sửa" + "Huỷ" |
 
 **4 States:**
@@ -273,20 +309,32 @@ Thanh toán: {paidCount}/{totalCount} · {paidAmount}/{totalAmount}₫
 
 **Purpose:** Host tạo/sửa session qua web — cùng domain service như Bot.
 
-**Layout (desktop):**
+**Layout (mobile-first — Playo-inspired):**
 
 ```
 ┌──────────────────────────────────────────────────────────┐
 │ ← Quay lại         Tạo buổi chơi mới                    │
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
-│  Môn thể thao *     [🏸 Cầu lông ▼]                     │
+│  ─── Thông tin chính ───                                 │
 │                                                          │
-│  Ngày *             [📅 05/08/2026    ]                  │
-│  Giờ bắt đầu *     [18:00  ]   Giờ kết thúc * [20:00]   │
+│  🎾 Môn thể thao *   [Cầu lông           →]             │
 │                                                          │
-│  Địa điểm *         [Sân ABC, Q.Bình Thạnh    ]         │
-│  Khu vực             [Quận Bình Thạnh ▼]                 │
+│  📍 Khu vực *         [Quận Bình Thạnh    →]             │
+│                                                          │
+│  📅 Ngày *            [05/08/2026         →]             │
+│                                                          │
+│  🕐 Giờ *             [18:00 – 20:00      →]             │
+│                                                          │
+│  📍 Địa điểm *        [Sân ABC                ]          │
+│                                                          │
+│  ─── Quyền truy cập ───                                 │
+│                                                          │
+│  ┌────────────────────┐┌───────────────────────┐         │
+│  │   🌐 Công khai     ││   🔒 Chỉ mời          │         │
+│  └────────────────────┘└───────────────────────┘         │
+│  ⓘ Kèo sẽ hiện trên Marketplace và mọi người            │
+│    có thể tham gia qua link chia sẻ.                     │
 │                                                          │
 │  ─── Thanh toán ───                                      │
 │  (○) Miễn phí                                            │
@@ -295,35 +343,130 @@ Thanh toán: {paidCount}/{totalCount} · {paidAmount}/{totalAmount}₫
 │  (○) Theo giới tính (DD-39)                              │
 │  Summary: "8 người · 600,000₫ ÷ 8 = 75,000₫/người"     │
 │                                                          │
-│  Số người *         [- 8 +]                              │
-│  Hiển thị           [Public ▼]                           │
+│  👥 Số người *        [- 8 +]   (bao gồm bạn)           │
 │                                                          │
-│  ─── Cài đặt nâng cao (collapsed) ───                   │
+│  ─── Gắn nhóm ───                                        │
+│                                                          │
+│  🏷️ Gắn nhóm/CLB     [CLB Cầu Lông Q7   →]             │
+│  ⓘ Kèo sẽ xuất hiện trong Timeline nhóm                  │
+│    và tất cả thành viên sẽ nhận thông báo.               │
+│                                                          │
+│  ─── Hướng dẫn ───                                       │
+│                                                          │
+│  ☑️ Tự mang dụng cụ (BYOE)              [ ]             │
+│  ☑️ Chia sẻ chi phí                     [ ]             │
+│  ☑️ Có nước uống                        [ ]             │
+│  ☑️ Có sân dự phòng                     [ ]             │
+│                                                          │
+│  📝 Ghi chú thêm     [                           ]      │
+│                       [Write some additional info ]      │
+│                                                          │
+│  ─── ⚙️ Cài đặt nâng cao (collapsed) ───                │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │                                                    │    │
+│  │  🏅 Trình độ yêu cầu         [ON/OFF]            │    │
+│  │  ┌──────────────────────────────────────────┐      │    │
+│  │  │     Người mới +                          │      │    │
+│  │  │     "Bắt buộc để tham gia kèo này"      │      │    │
+│  │  │  ●────●────●────●────●────●              │      │    │
+│  │  │  Mới  TB-  TB   TB+  Khá  Pro            │      │    │
+│  │  │     ☑️ Bắt buộc (MH)                    │      │    │
+│  │  └──────────────────────────────────────────┘      │    │
+│  │                                                    │    │
+│  │  📋 Loại hoạt động                                │    │
+│  │  (●) Bình thường                                  │    │
+│  │  (○) Huấn luyện                                   │    │
+│  │  (○) Giải đấu                                     │    │
+│  │                                                    │    │
+│  │  🔐 Chính sách duyệt        [Open ▼]             │    │
+│  │  👥 Cho phép thành viên mời bạn  [ON]             │    │
+│  │                                                    │    │
+│  └──────────────────────────────────────────────────┘    │
 │                                                          │
 │         [═══════ Tạo buổi chơi ═══════]                  │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
 ```
 
-**Form field spec:**
+**Form field spec (updated — Playo-inspired):**
 
-| Field | Type | Required? | Validation |
-|-------|------|-----------|------------|
-| Môn thể thao | Select (taxonomy) | ✅ | Active sport taxonomy only (E#2) |
-| Ngày | Date picker | ✅ | ≥ today |
-| Giờ bắt đầu/kết thúc | Time picker | ✅ | ends_at > starts_at (E#1) |
-| Địa điểm | Text input | ✅ | Non-empty |
-| Khu vực | Select | Optional | For public discovery (E#7) |
-| Hình thức thanh toán | Radio group | ✅ | Default: Chia đều |
-| Tổng tiền sân / Giá/slot | Number input | Conditional | Required if paid pricing |
-| Số người (slots_max) | Counter | ✅ | > 0; public bắt buộc finite (E#7) |
-| Hiển thị | Select | ✅ | Public / Private |
+| Field | Type | Required? | Default | Validation / Ghi chú |
+|-------|------|-----------|---------|---------------------|
+| Môn thể thao | Picker (taxonomy) | ✅ Required | — | Active sport taxonomy only (E#2) |
+| Khu vực | Picker (area taxonomy) | ✅ Required | — | For public discovery (E#7). Tách riêng khỏi Địa điểm |
+| Ngày | Date picker | ✅ Required | Today | >= today |
+| Giờ bắt đầu/kết thúc | Time range picker | ✅ Required | — | `ends_at > starts_at` (E#1). Single picker cho cả range |
+| Địa điểm | Text input | ✅ Required | — | Exact venue name (private — chỉ member thấy) |
+| Quyền truy cập | Segmented control | ✅ Required | Công khai | `public` / `invite_only`. Thay dropdown select |
+| Hình thức thanh toán | Radio group | ✅ Required | Chia đều | Miễn phí / Chia đều / Cố định/slot / Theo giới tính (DD-39) |
+| Tổng tiền sân / Giá/slot | Number input | Conditional | — | Required if paid pricing. VND, min 1,000d |
+| Số người (slots_max) | Counter (stepper) | ✅ Required | 8 | > 0; public bắt buộc finite (E#7). Label: "(bao gồm bạn)" |
+| Gắn nhóm/CLB | Picker (club list) | Optional | — | Chọn club mà host manage. Session xuất hiện trong club timeline + notify members |
+| Tự mang dụng cụ (BYOE) | Checkbox | Optional | OFF | Preset instruction |
+| Chia sẻ chi phí | Checkbox | Optional | OFF | Preset instruction |
+| Có nước uống | Checkbox | Optional | OFF | Preset instruction |
+| Có sân dự phòng | Checkbox | Optional | OFF | Preset instruction |
+| Ghi chú thêm | Textarea | Optional | — | Max 500 chars. Free-text instructions |
+| Trình độ yêu cầu | Toggle + Range slider | Optional | OFF | Khi ON: hiện range slider (min-max). DD-41 taxonomy levels. Checkbox "Bắt buộc (MH)" = strict enforcement |
+| Loại hoạt động | Radio group | Optional | Bình thường | `regular` / `coaching` / `tournament` |
+| Chính sách duyệt | Select | ✅ Required | `open` | `open` (tự động) / `approval` (host duyệt) |
+| Cho phép mời bạn | Toggle | ✅ Required | ON | Host có thể bật/tắt bất kỳ lúc nào qua edit |
+
+**Component: Activity Access (segmented control — Playo pattern):**
+
+| Value | Label | Icon | Info text |
+|-------|-------|------|-----------|
+| `public` | Công khai | 🌐 | "Kèo sẽ hiện trên Marketplace và mọi người có thể tham gia qua link chia sẻ." |
+| `invite_only` | Chỉ mời | 🔒 | "Chỉ người được mời mới có thể tham gia. Có thể chia sẻ qua link." |
+
+> **Note:** Thay thế dropdown "Hiển thị" bằng segmented control rõ ràng hơn. `invite_only` = Private cũ. Contextual info text thay đổi theo lựa chọn.
+
+**Component: Skill Range Slider (Playo "Game Skill" pattern):**
+
+| Element | Mô tả |
+|---------|-------|
+| Toggle | ON/OFF — khi OFF, ẩn slider. Khi ON, hiện full slider |
+| Range label | "Người mới +" / "Trung bình – Khá" — text tự động từ min-max selection |
+| Enforcement note | "Bắt buộc để tham gia kèo này" — static text khi toggle ON |
+| Slider | Dual-thumb range slider, 5-6 marks theo DD-41 taxonomy |
+| Marks | Mới - TB- - TB - TB+ - Khá - Pro (tuỳ sport, DD-41) |
+| Must Have checkbox | "Bắt buộc (MH)" — khi checked, system enforce strict (reject join nếu player skill ngoài range). Khi unchecked, chỉ advisory |
+
+> **DD-41 dependency:** Taxonomy levels chưa chốt. Phase-1: legacy text free-form. Phase-2 (sau DD-41): slider + enforcement.
+
+**Component: Activity Type (Playo pattern):**
+
+| Value | Label | Mô tả |
+|-------|-------|-------|
+| `regular` | Bình thường | Session chơi thông thường (default) |
+| `coaching` | Huấn luyện | Session có coach/trainer hướng dẫn. Có thể pricing khác |
+| `tournament` | Giải đấu | Mini-tournament trong session. Link tới `feature_session_organize` |
+
+**Component: Instructions preset (Playo "Add Instructions" pattern):**
+
+| Preset | Icon | Mô tả |
+|--------|------|-------|
+| Tự mang dụng cụ (BYOE) | 🏋️ | Player cần tự mang vợt/bóng/giày |
+| Chia sẻ chi phí | 🍴 | Chi phí sân chia đều (khác pricing — spirit note) |
+| Có nước uống | 💧 | Host cung cấp nước |
+| Có sân dự phòng | 🏟️ | Có sân backup nếu mưa/hỏng |
+
+> **Extensibility:** Preset list có thể mở rộng per-sport (VD: badminton thêm "Có vợt cho mượn"). Free-text textarea cho custom instructions.
+
+**Component: Tag a Group (Playo pattern):**
+
+| Field | Mô tả |
+|-------|-------|
+| Picker | Hiện danh sách clubs/groups mà host manage. Single-select |
+| Info text | "Kèo sẽ xuất hiện trong Timeline nhóm và tất cả thành viên sẽ nhận thông báo" |
+| Behavior | Tagged: session appears in club timeline + push notification to members. Untagged: standalone session |
+| Scope | Chỉ clubs host có quyền `session.manage`. Group chat chưa áp dụng (phase-2) |
 
 **4 States:**
 
 | State | Nội dung |
 |-------|----------|
-| Loading | Skeleton form (6 input blocks shimmer) |
+| Loading | Skeleton form (8 input blocks shimmer + collapsed advanced settings) |
 | Ready | Full form with validation — CTA enabled khi tất cả required fields valid |
 | Error | Inline errors per field: red border + text dưới input |
 | Empty | N/A (form luôn có content) |
@@ -373,8 +516,11 @@ Thanh toán: {paidCount}/{totalCount} · {paidAmount}/{totalAmount}₫
 | Player status | Icon | Hiển thị | Venue visible? |
 |--------------|------|----------|----------------|
 | `active` | ✅/⏳ | Tên + payment status | ✅ Yes (E#6) |
+| `active` (invited) | ✅/⏳ + 👥 | Tên + payment + "Được mời bởi [inviter]" | ✅ Yes |
+| `pending` | 📩 | Tên + "Chờ duyệt" + "Được mời bởi [inviter]" | ❌ |
 | `waitlisted` | 🕐 | Tên + position (#N) | ❌ Area only (E#6) |
 | `left` | ↩️ | Tên + "Đã rời" (dimmed) | ❌ |
+| Guest note | 📝 | Tên khách + note ("Bạn của [player]") | ❌ (không phải user) |
 
 **4 States:**
 
@@ -458,6 +604,9 @@ Thanh toán: {paidCount}/{totalCount} · {paidAmount}/{totalAmount}₫
 | Sport icon | `sport_taxonomy` | Active taxonomy lookup |
 | Publish/Discard controls | `sessions.status` | Conditional: draft-only, host-only |
 | Club info | `tenants` via `sessions.tenant_id` | Display name + host |
+| Invite friend list | `person_follows` WHERE followee = self AND status='accepted' | DD-47 follow-guard |
+| Guest notes | `session_guest_notes` WHERE session_id | Creator-scoped; max 3/player |
+| Invited-by badge | `players.invited_by_person_id` JOIN `persons` | Display inviter name in roster |
 
 ### State coverage matrix
 
@@ -472,9 +621,99 @@ Thanh toán: {paidCount}/{totalCount} · {paidAmount}/{totalAmount}₫
 | Web P4 | Session create/edit | ✅ Skeleton form | ✅ Full form | ✅ Inline errors | ⚪ N/A (form) |
 | Web P4 | Session detail (host) | ✅ Skeleton cards | ✅ Full info + roster | ✅ Banner + retry | ⚪ N/A |
 | Web P4 | Session detail (player) | ✅ Skeleton cards | ✅ Info + status card | ✅ Toast + retry | ⚪ N/A |
+
+### Web P4 — Invite Friend picker
+
+**Purpose:** Player active chọn friend để invite vào session. Chỉ hiện khi `allow_player_invite=true` + session `open` + player `active`.
+
+**Layout (modal/bottom sheet — mobile 375px):**
+
+```
+┌──────────────────────────────────────┐
+│ Mời bạn vào buổi chơi           [x] │
+├──────────────────────────────────────┤
+│ 🔍 Tìm bạn bè...                      │
+│                                      │
+│ Bạn bè đang follow bạn               │
+│ ┌────────────────────────────────┐   │
+│ │ [AV] Nguyễn Văn A     [👥 Mời] │   │
+│ │ [AV] Trần Thị B      [👥 Mời] │   │
+│ │ [AV] Lê Văn C        [👥 Mời] │   │
+│ └────────────────────────────────┘   │
+│                                      │
+│ Không thấy bạn?                      │
+│ [📝 Thêm khách (ghi chú)]            │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+> Danh sách chỉ hiện bạn bè đã follow player (DD-47). Friend đã có trong session (active/waitlisted/pending) hiện disabled + badge "Đã tham gia". Nút "Thêm khách" ở cuối danh sách để tạo guest note cho người không có tài khoản / chưa follow.
+
+**4 States:**
+
+| State | Nội dung |
+|-------|---------|
+| Loading | Skeleton list (3 rows shimmer) |
+| Ready | Friend list + search + "Thêm khách" CTA |
+| Error | Toast "Không tải được danh sách bạn bè" + retry |
+| Empty | Icon 👥 + "Chưa có ai follow bạn" + CTA "Thêm khách" (guest note) |
+
+### Web P4 — Guest Note form
+
+**Purpose:** Player thêm khách vào session (người ngoài hệ thống / friend chưa follow).
+
+**Layout (modal — mobile 375px):**
+
+```
+┌──────────────────────────────────────┐
+│ Thêm khách                     [x] │
+├──────────────────────────────────────┤
+│                                      │
+│ Tên khách *        [              ]   │
+│                                      │
+│ Ghi chú           [Bạn của {bạn} ]   │
+│                                      │
+│ Còn {N} lượt ghi chú (tối đa 3)      │
+│                                      │
+│    [══════ Thêm khách ══════]       │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+**Form field spec (Guest note):**
+
+| Field | Type | Required? | Validation |
+|-------|------|-----------|------------|
+| Tên khách | Text input | ✅ | 1–100 chars, non-empty |
+| Ghi chú | Text input | Optional | Max 200 chars. Default: "Bạn của [player display name]" |
+
+**4 States:**
+
+| State | Nội dung |
+|-------|---------|
+| Loading | N/A (form luôn sẵn) |
+| Ready | Form + counter + CTA |
+| Error | Inline errors: "Tên khách không được để trống" / `GUEST_NOTE_LIMIT_REACHED`: "Đã hết lượt ghi chú" / `SESSION_FULL`: "Buổi chơi đã đầy" |
+| Empty | N/A (form luôn có content) |
+
+### Web P4 — Host Approve/Reject pending invites
+
+**Purpose:** Host duyệt player được invite khi `join_policy='approval'`.
+
+> Hiện trong Session detail (host view) roster section — pending players có nút [Duyệt] (primary) + [Đẩy ra] (danger) inline.
+
+| State | Nội dung |
+|-------|---------|
+| Loading | Button spinner |
+| Ready | Approve/Reject inline buttons |
+| Error | Toast: "Không thể duyệt" / "Buổi chơi đã đầy" |
+| Empty | N/A |
 | Web P4 | Join/Leave action | ✅ Button spinner | ✅ Confirm dialog | ✅ Error toast | ⚪ N/A |
 | Web P4 | Publish control | ✅ Button spinner | ✅ Confirm dialog | ✅ Inline error codes | ⚪ N/A |
 | Web P4 | Discard draft control | ✅ Button spinner | ✅ Confirm dialog | ✅ Inline error codes | ⚪ N/A |
+| Web P4 | Invite Friend picker | ✅ Skeleton list | ✅ Friend list + search + "Đã tham gia" badge | ✅ Toast + retry | ✅ "👥 Chưa có ai follow" + CTA Thêm khách |
+| Web P4 | Guest Note form | ⚪ N/A | ✅ Form + counter | ✅ Inline errors (limit, full) | ⚪ N/A (form) |
+| Web P4 | Approve/Reject pending | ✅ Button spinner | ✅ Inline approve/reject | ✅ Toast error | ⚪ N/A |
 
 ---
 
@@ -482,8 +721,9 @@ Thanh toán: {paidCount}/{totalCount} · {paidAmount}/{totalAmount}₫
 
 | Entity | Vai trò | Key constraints |
 |--------|---------|-----------------|
-| `sessions` | Buổi chơi chính | `tenant_id` FK, `sport_id` FK, `starts_at/ends_at` timestamptz, `slots_max` nullable/positive (`NULL` = unlimited chỉ cho non-public; public bắt buộc finite — E#7), `visibility` enum (private/public), `status` enum |
-| `players` | Player tham gia/waitlist | `UNIQUE(tenant_id, session_id, membership_id)`, `status ∈ active\|left\|waitlisted`; waitlisted có position dương |
+| `sessions` | Buổi chơi chính | `tenant_id` FK, `sport_id` FK, `starts_at/ends_at` timestamptz, `slots_max` nullable/positive (`NULL` = unlimited chỉ cho non-public; public bắt buộc finite — E#7), `visibility` enum (private/public), `status` enum, `join_policy` enum (`open`/`approval`), **`allow_player_invite`** boolean (default `true`) |
+| `players` | Player tham gia/waitlist/pending | `UNIQUE(tenant_id, session_id, membership_id)`, `status ∈ active\|left\|waitlisted\|pending`; waitlisted có position dương; **`invited_by_person_id`** nullable (NULL = join tự mình; non-NULL = được invite bởi player khác) |
+| `session_guest_notes` | Ghi chú về khách ngoài hệ thống | `session_id` FK, `created_by_person_id` FK, `guest_name` (1–100 chars), `note` (max 200 chars). Chiếm slot. Max 3/player/session (trigger guard). KHÔNG tạo charge |
 | `session_surface_refs` | Reference message/session trên từng surface | `tenant_id`, `session_id`, `platform`, `target`, `external_ref`; unique `(session_id, platform, target)` |
 | `session_recurrence_rules` + `session_occurrences` | Template lặp + occurrence idempotent | `rrule`, IANA `timezone`, `last_generated_at`; unique `(recurrence_rule_id, local_occurrence_key)` |
 
@@ -498,9 +738,25 @@ stateDiagram-v2
     open --> cancelled: Host cancel
     closed --> [*]
     cancelled --> [*]
-    note right of open: Accepts join/leave
+    note right of open: Accepts join/leave/invite
     note right of closed: No new joins, read-only
-    note right of cancelled: Read-only, refund flag (draft-origin: 0 roster/refund khi verified-empty — trường hợp thường; draft mang anomaly đi qua cùng review path với open, có thể có impact thật — edge #23)
+    note right of cancelled: Read-only, refund flag
+```
+
+**Player status state machine:**
+
+```mermaid
+stateDiagram-v2
+    [*] --> active: Join (auto-approve or self-join)
+    [*] --> pending: Invited khi join_policy=approval
+    [*] --> waitlisted: Full capacity at join
+    pending --> active: Host approve
+    pending --> [*]: Host reject (row removed)
+    active --> left: Player leave
+    left --> active: Rejoin (DD-49 re-derive)
+    waitlisted --> active: Auto-promote (slot freed)
+    note right of pending: Chiếm slot. Chỉ xảy ra khi invite + join_policy=approval
+    note right of active: Full access + venue visible
 ```
 
 ### Permission matrix
@@ -508,15 +764,17 @@ stateDiagram-v2
 | Action | Host/Admin | Member (same tenant) | Player (cross-club join) | Guest |
 |--------|-----------|---------------------|------------------------|-------|
 | Tạo session | ✅ `session.manage` | ❌ | ❌ | ❌ |
-| Sửa session | ✅ `session.manage` | ❌ | ❌ | ❌ |
+| Sửa session (incl. allow_player_invite) | ✅ `session.manage` | ❌ | ❌ | ❌ |
 | Publish draft | ✅ `session.manage` | ❌ | ❌ | ❌ |
 | Discard draft | ✅ `session.manage` | ❌ | ❌ | ❌ |
 | Close session | ✅ `session.manage` | ❌ | ❌ | ❌ |
 | Cancel session | ✅ `session.manage` | ❌ | ❌ | ❌ |
 | Announce | ✅ `session.manage` | ❌ | ❌ | ❌ |
+| Xét duyệt pending invite | ✅ `session.manage` | ❌ | ❌ | ❌ |
 | Xem roster + payment | ✅ (full roster + amounts) | ❌ | ❌ | ❌ |
 | Join session (public) | ✅ (self) | ✅ | ✅ (per DD-41/42/52) | ❌ (auth gate) |
 | Join session (private) | ✅ (self) | ✅ (invite token DD-44) | ✅ (invite token DD-44) | ❌ |
+| Invite friend / thêm khách | ❌ (host dùng add trực tiếp) | ✅ (if active + allow_player_invite) | ✅ (if active + allow_player_invite) | ❌ |
 | Leave session | ✅ (own) | ✅ (own) | ✅ (own) | ❌ |
 | Xem session detail (host) | ✅ | ❌ | ❌ | ❌ |
 | Xem session detail (player) | ✅ | ✅ (if joined/public) | ✅ (if joined/public) | Public page only |
@@ -534,6 +792,11 @@ stateDiagram-v2
 | `session_announced` | Announcement gửi thành công | `tenant_id`, `session_id`, `channel` |
 | `session_closed` | Session đóng (manual/auto) | `tenant_id`, `session_id`, `close_reason` (manual/auto) |
 | `session_cancelled` | Host huỷ (draft hoặc open), hoặc auto-expiry draft quá giờ | `tenant_id`, `session_id`, `roster_count`, `has_paid`, `cancel_reason` (manual/auto) |
+| `session_friend_invited` | Player invite friend follow thành công vào session | `tenant_id`, `session_id`, `inviter_person_id`, `invitee_person_id`, `join_outcome` (`active`/`pending`), `source` |
+| `session_guest_note_created` | Player tạo guest note cho người ngoài hệ thống | `tenant_id`, `session_id`, `player_person_id`, `note_count` (current count after create), `source` |
+| `session_guest_note_deleted` | Player xoá guest note của mình | `tenant_id`, `session_id`, `player_person_id`, `note_id`, `source` |
+| `session_invite_approved` | Host approve pending invite | `tenant_id`, `session_id`, `player_person_id`, `approved_by_person_id` |
+| `session_invite_rejected` | Host reject pending invite | `tenant_id`, `session_id`, `player_person_id`, `rejected_by_person_id` |
 | `session_projection_failed` | Projector fail | `tenant_id`, `session_id`, `error_code` |
 
 > Không bao giờ log roster names, venue details, contact info trong analytics.
@@ -571,6 +834,21 @@ stateDiagram-v2
 - [ ] Auto-expiry job idempotent dưới concurrent invocation và xuyên tenant (`FOR UPDATE SKIP LOCKED`, tenant isolation qua RLS) — không double-cancel, không double event, không rò rỉ cross-tenant; cơ chế thực thi cross-tenant chính xác là build-slice detail
 - [ ] Draft anomaly bị auto-expiry skip vẫn được re-claim mỗi lượt (rẻ, không phải bug) nhưng owner-facing alert dedupe theo session — không spam lặp lại mỗi lần job chạy
 - [ ] Discard/auto-expiry có surface rõ trên **bot** (lệnh/callback "Huỷ nháp") và **web** (nút "Huỷ nháp" + confirm); cùng `CancelSession` command mở rộng; error states (`SESSION_NOT_OPEN`/`STALE_VERSION`/**"Cần xác nhận huỷ" khi anomaly**) hiển thị đúng (map BE §3)
+- [ ] **Invite friend:** Player `active` trong session `open` có `allow_player_invite=true` mời friend đã follow (DD-47) thành công → friend join theo `join_policy` (`open`→active, `approval`→pending); `invited_by_person_id` được ghi
+- [ ] Invite friend bị block (DD-55) → reject `MEMBER_BLOCKED`; block boundary overrides follow
+- [ ] Invite friend chưa follow player → redirect tới Guest Note form (không add thành player)
+- [ ] Invite friend đã có trong session (active/waitlisted/pending) → reject `ALREADY_JOINED`
+- [ ] `allow_player_invite=false` → reject mọi invite/note `INVITE_NOT_ALLOWED`; "Mời bạn" button hidden
+- [ ] Player chưa active (`waitlisted`/`left`/`pending`) cố invite → reject `PLAYER_NOT_ACTIVE`
+- [ ] **Guest note:** Player active tạo note cho người ngoài hệ thống → chiếm slot (occupancy = active + pending + guest notes + live holds); max 3/player/session; không tạo charge
+- [ ] Guest note thứ 4 → reject `GUEST_NOTE_LIMIT_REACHED`
+- [ ] Invite/note khi session đầy → reject `SESSION_FULL`; capacity check dưới session lock
+- [ ] Player xoá guest note mình tạo → giải phóng slot → trigger waitlist auto-promote (cùng mechanism leave)
+- [ ] **Host approve/reject pending:** Host duyệt pending invite thành công → `pending`→`active` (chiếm slot); reject → player row removed
+- [ ] Approve pending khi session đã đầy → reject `SESSION_FULL` (pending đã chiếm slot nhưng capacity recheck vẫn cần)
+- [ ] Invite Friend picker chỉ hiện friends đã follow player; friend đã có trong session hiện disabled + badge "Đã tham gia"
+- [ ] Session create/edit form có fields `join_policy` (select: open/approval) và `allow_player_invite` (toggle, default ON)
+- [ ] Roster list hiện đúng: invited players có badge "Được mời bởi [inviter]"; pending players có nút Duyệt/Đẩy ra; guest notes có icon 📝 + tên khách + note
 
 ---
 
@@ -587,11 +865,19 @@ stateDiagram-v2
 | SES-OQ-5 | No-show/attendance/reliability + policy deprioritize/ban | ✅ **Chốt DD-42** — per-tenant (attendance trên `players`, reliability trên `memberships`, RLS, không public); build P4+ → `../decisions/analysis/dd-42-reliability-analysis.md` |
 | SES-OQ-6 | Nhãn thành viên + audience targeting khi announce | ✅ **Chốt DD-43** — `membership_tags` per-tenant chỉ cho notification audience; join eligibility vẫn DD-41; public không lộ tag; build P4+ → `../decisions/analysis/dd-43-membership-tags-analysis.md` |
 | SES-OQ-7 | Invite-link token cho kèo private | ✅ **Chốt DD-44/DD-52** — `session_invite_tokens` entropy≥128-bit/hash/bound; current active/waitlisted/pending or exact replay resolves before `max_uses`/DD-41/DD-42/DD-52 and does not consume again. Only a new absent/left transition increments use; token không hạ visibility → `../decisions/analysis/dd-44-invite-token-analysis.md` |
+| SES-OQ-8 | Guest note + pricing: ai trả tiền cho slot chiếm bởi guest note? | ✅ **Chốt v2.21** — Guest note chỉ giữ chỗ, KHÔNG tạo charge trong hệ thống. Thanh toán offline giữa player và khách. Slot chiếm được đếm vào occupancy |
+| SES-OQ-9 | `pending` status cho players khi invite + join_policy='approval' | ✅ **Chốt v2.21** — Thêm `pending` vào `players.status` enum. Pending chiếm slot. Host approve → active; reject → remove row |
 
 ### Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-13 | v2.25 | **Gỡ WIP DeleteSession (rút toàn bộ nội dung v2.20) theo DD-104:** `decisions.md` v2.27 chốt D0–D4 (D1a: mọi FK giữ `NO ACTION` và chặn delete — KHÔNG có cascade, cơ chế v2.20 khai không tồn tại (9 FK trỏ `sessions` đều `NO ACTION`); D2a: action class `delete_draft_session`; D3c: bắt `23503` rồi tra `pg_constraint`; D4a: concurrency ordering chung delete+publish). Gỡ khỏi body: SES-UC-15, edges #27–#30, bot/web delete surfaces + confirm dialog, state-machine transitions, permission row, `session_deleted` analytics, 6 AC bullets, 2 state-coverage rows. ID edges #27–#30 giữ trống, KHÔNG renumber #31+. Spec DeleteSession sẽ được author trong slice DD-104 sau khi `tenant-capability-authority-core` có packet. |
+| 2026-08-12 | v2.24 | **Create Session form upgrade (Playo reference #3):** (1) **Activity Access segmented control:** thay dropdown "Hiển thị" bằng segmented control "🌐 Công khai" / "🔒 Chỉ mời" + contextual info text. (2) **Skill Range Slider:** toggle ON/OFF + dual-thumb range slider (5-6 levels DD-41) + "Bắt buộc (MH)" checkbox enforcement. (3) **Activity Type:** radio `regular`/`coaching`/`tournament`. (4) **Tag a Group:** picker chọn club/group, session xuất hiện trong timeline + notify members. (5) **Instructions preset:** 4 checkbox presets (BYOE, cost shared, water, backup court) + free-text textarea (max 500). (6) **Advanced Settings collapsed section:** gom skill + activity type + join policy + invite toggle. Web form field spec từ 11 → 19 fields. Bot wizard từ 6 → 10 steps (thêm area, access, tag, instructions, advanced). Domain model: `sessions` thêm 7 fields mới (`activity_type`, `skill_level_min/max`, `skill_required`, `instructions_presets`, `instructions_text`, `tagged_tenant_id`, `cover_image_url`). |
+| 2026-08-12 | v2.23 | **SessionCard upgrade (Playo reference #2):** Session list row: thêm `cover_image_url` (thumbnail 48×48px), urgency badge ("Chỉ N chỗ!" đỏ khi ≤3 slots), skill level range format ("Người mới – Trung bình" green chip). 3 fields mới. Không đổi domain model. |
+| 2026-08-12 | v2.22 | **Unified SessionCard variant `list` for Club Sessions:** Update session list row component với: time pill (green `HH:mm – HH:mm`), price pill (VND/Ng), host avatar (32px), `N/M Going` count, skill level tag (legacy text), booking status badge (JOINED/WAITLISTED/PENDING/AVAILABLE/FULL), payment dot (🔴🟡🟢 player view). Thêm 4 fields mới vào component table (host avatar, going, skill level, booking status). Giữ: sport icon, title, status badge, venue, actions. Không đổi domain model/contract. |
+| 2026-08-12 | v2.21 | **Player Invite Friend feature:** thêm 3 use cases mới (SES-UC-16 invite friend follow, SES-UC-17 guest note, SES-UC-18 host approve/reject pending). 8 edge cases mới (#31–#38): follow-guard, allow_player_invite config, player-not-active guard, capacity+note limit, already-joined, block boundary, delete-note auto-promote. **§3 Screens:** Invite Friend picker (modal, follow-guard DD-47, friend list + search + "Thêm khách" CTA), Guest Note form (modal, max 3/player counter), Host Approve/Reject pending inline. Session create/edit form thêm 2 fields: `join_policy` (select open/approval) + `allow_player_invite` (toggle, default ON). Roster component thêm: `pending` status row + `invited` badge + guest note row. **§4 Domain Model:** `sessions` thêm `allow_player_invite` boolean; `players` thêm `pending` status + `invited_by_person_id`; new entity `session_guest_notes`. Player status state machine mới (pending→active→left). Permission matrix thêm 2 rows (invite friend, xét duyệt pending). **§5 Analytics:** 5 events mới (friend_invited, guest_note_created/deleted, invite_approved/rejected). **§6 AC:** 16 bullets mới. **§7 OQ:** SES-OQ-8 (guest note pricing = offline, chốt), SES-OQ-9 (pending status, chốt). 3 state coverage rows mới. Additive-only — không đổi existing contract. |
+| 2026-08-11 | v2.20 | **(RÚT 2026-08-13 — nội dung đã gỡ khỏi body, xem v2.25 + DD-104; row giữ làm audit trail.)** **DeleteSession (hard delete) feature:** thêm `DeleteSession` command mới (parallel với `CancelSession`), chỉ áp dụng cho session `draft`. **SES-UC-15** (Host xoá session draft — hard delete row + cascade FK; guard: không có player paid ngoài host → xoá ngay; có paid → reject `DELETE_REQUIRES_REFUND`, host phải refund trước rồi retry). 4 edge mới (#27–#30): status guard, paid player guard, concurrent delete+publish race, already-deleted 404. §3 Screens: Bot thêm "Xoá" surface (confirm + 3 error codes); Web thêm "Xoá buổi chơi" danger button + delete confirm dialog (2 variants: no-paid → destructive confirm, has-paid → player refund list); session list actions updated. State machine §4 thêm `draft → [deleted]` (row removed). Permission matrix thêm "Xoá session" row. Analytics thêm `session_deleted`. 7 AC bullets mới. 2 state coverage rows mới (Bot delete + Web delete). Additive-only — không đổi cancel/publish/discard contract. |
 | 2026-08-10 | v2.19 | **A-grade uplift:** Thêm entry points table (9 entries: Home hero, Kèo của tôi, Club Sessions, Marketplace, Bot commands, deep link, notification, chat link), player-facing session detail screen (mobile ASCII layout + player status card component + 4 outcome variants), permission matrix (14 actions × 4 roles với capability refs), 2 state coverage rows mới (player detail + join/leave action). Data source mapping mở rộng (+player status card, +club info). Additive-only — không đổi contract/UC/edge/AC. |
 | 2026-08-09 | v2.18 | Mirror DD-32 Option D: admission occupancy = active+live payment holds; capacity reduction guard, paid-unlinked promotion hold/venue boundary and expiry requeue-tail. Contract only; SessionService/intent runtime absent. |
 | 2026-07-28 | v2.16 | Mirror DD-45a owner-final: future promotion slice thêm partial unique position bằng migration monotonic mới; preflight duplicate HALT/manual, không auto-renumber; gaps hợp lệ; session-lock allocator + unique final fence. Schema `0014`/runtime hiện tại không đổi. |

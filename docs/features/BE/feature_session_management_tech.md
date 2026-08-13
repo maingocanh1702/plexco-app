@@ -1,7 +1,7 @@
 # Feature: Session Management — Backend Tech Spec
 
 > **Canonical phase:** P2/P4  
-> **Version:** 2.19 · 2026-08-10
+> **Version:** 2.22 · 2026-08-13
 > **Status:** Reviewed  
 > **Implementation:** Partial DB substrate only — `0014` waitlist, `0019` same-tenant integrity và `0024` public-capacity CHECK đã merge; SessionService/routes/projectors/auto-promote/auto-expiry vẫn chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_session_management.md`  
@@ -22,7 +22,7 @@ Surface (Zalo/Messenger/Web) → Command (CreateSession/Update/Publish/Close/Can
                 Projectors: Zalo/Messenger message, Web SSE, Public search
 ```
 
-Commands: `CreateSession`, `UpdateSession`, `PublishSession`, `AnnounceSession`, `CloseSession`, `CancelSession`, `GenerateOccurrences`. Mỗi command mang `commandId`, tenant/actor từ trusted context, `expected_version` cho conflicting edits. `PublishSession` là transition status-only `draft` → `open` (algorithm §4) — không đổi `visibility`. `CancelSession` nhận nguồn `draft` hoặc `open`, transition sang `cancelled` (algorithm §4, subsection "Draft discard + auto-expiry"); một scheduled job invoke cùng mutation cho draft quá giờ bị bỏ quên, không qua client `commandId`.
+Commands: `CreateSession`, `UpdateSession`, `PublishSession`, `AnnounceSession`, `CloseSession`, `CancelSession`, `InviteFriend`, `CreateGuestNote`, `DeleteGuestNote`, `ApproveInvite`, `RejectInvite`, `GenerateOccurrences`. Mỗi command mang `commandId`, tenant/actor từ trusted context, `expected_version` cho conflicting edits. `PublishSession` là transition status-only `draft` → `open` (algorithm §4) — không đổi `visibility`. `CancelSession` nhận nguồn `draft` hoặc `open`, transition sang `cancelled` (algorithm §4, subsection "Draft discard + auto-expiry"); một scheduled job invoke cùng mutation cho draft quá giờ bị bỏ quên, không qua client `commandId`. *(Hard-delete session: rút khỏi spec 2026-08-13 — cơ chế chốt ở `decisions.md` DD-104 D0–D4, author lại trong slice DD-104.)* `InviteFriend` (player active invite friend đã follow) + `CreateGuestNote` / `DeleteGuestNote` (khách ngoài hệ thống) + `ApproveInvite` / `RejectInvite` (host duyệt pending) — §3 API Contract, §4 Algorithm.
 
 **Design decisions:**
 - Single domain service shared by chat + web — no duplicate logic.
@@ -42,6 +42,12 @@ Commands: `CreateSession`, `UpdateSession`, `PublishSession`, `AnnounceSession`,
 | `POST /api/sessions/:id/announce` | Host | `AnnounceSession` → outbox → channel projectors |
 | `GenerateOccurrences` job (pg-boss) | System | Recurring session → generate future instances |
 | Auto-expiry job (pg-boss) | System | Cancel forgotten drafts past deadline |
+| `POST /api/sessions/:id/invite` | Player (active) | `InviteFriend` command (friend đã follow) |
+| `POST /api/sessions/:id/guest-notes` | Player (active) | `CreateGuestNote` command |
+| `DELETE /api/sessions/:id/guest-notes/:noteId` | Player (note creator) | `DeleteGuestNote` command |
+| `GET /api/sessions/:id/guest-notes` | Player (active) / Host | List guest notes for session |
+| `POST /api/sessions/:id/players/:playerId/approve` | Host | `ApproveInvite` command |
+| `POST /api/sessions/:id/players/:playerId/reject` | Host | `RejectInvite` command |
 | Projectors (Zalo/Messenger/Web SSE/Public) | Outbox consumer | Render canonical session changes |
 
 ---
@@ -66,6 +72,7 @@ CREATE TABLE sessions (
   slots_max integer,  -- NULL = unlimited (chỉ non-public — xem note Capacity × visibility dưới DDL)
   visibility text NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'public')),
   join_policy text NOT NULL DEFAULT 'open' CHECK (join_policy IN ('open', 'approval')),
+  allow_player_invite boolean NOT NULL DEFAULT true,
   status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'open', 'closed', 'cancelled')),
   version integer NOT NULL DEFAULT 1,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -111,8 +118,9 @@ CREATE TABLE players (
   session_id uuid NOT NULL REFERENCES sessions(id),
   membership_id uuid NOT NULL REFERENCES memberships(id),
   status text NOT NULL DEFAULT 'active'
-    CONSTRAINT players_status_chk CHECK (status IN ('active', 'left', 'waitlisted')),
+    CONSTRAINT players_status_chk CHECK (status IN ('active', 'left', 'waitlisted', 'pending')),
   waitlist_position integer,            -- 0014 ALTER TABLE, merged on main (1a6ac38)
+  invited_by_person_id uuid REFERENCES persons(id),  -- NULL = self-join; non-NULL = invited by another player
   joined_at timestamptz NOT NULL DEFAULT now(),
   last_reminded_at timestamptz,
   CONSTRAINT players_waitlist_shape_chk
@@ -132,6 +140,40 @@ CREATE TABLE players (
 -- (tenant_id, session_id) → sessions và (tenant_id, membership_id) → memberships,
 -- đồng thời buộc session_surface_refs(tenant_id, session_id) cùng tenant.
 -- Reuse các constraint đã land; không recreate hoặc liệt kê DD-68 như migration pending.
+
+CREATE TABLE session_guest_notes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL REFERENCES tenants(id),
+  session_id uuid NOT NULL REFERENCES sessions(id),
+  created_by_person_id uuid NOT NULL REFERENCES persons(id),
+  guest_name text NOT NULL
+    CONSTRAINT guest_name_length CHECK (char_length(guest_name) BETWEEN 1 AND 100),
+  note text
+    CONSTRAINT note_length CHECK (note IS NULL OR char_length(note) <= 200),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Trigger: max 3 guest notes per player per session (defense-in-depth;
+-- service also checks under session lock before INSERT)
+CREATE OR REPLACE FUNCTION session_guest_note_limit_guard()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF (SELECT count(*) FROM session_guest_notes
+      WHERE session_id = NEW.session_id
+        AND created_by_person_id = NEW.created_by_person_id) >= 3
+  THEN RAISE EXCEPTION 'GUEST_NOTE_LIMIT_REACHED'
+    USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_session_guest_note_limit
+  BEFORE INSERT ON session_guest_notes
+  FOR EACH ROW EXECUTE FUNCTION session_guest_note_limit_guard();
+
+-- v2.21: pending status docs-note — pending đã thêm vào players_status_chk enum;
+-- waitlist_shape_chk vẫn đúng vì pending KHÔNG có waitlist_position (chỉ waitlisted mới có).
+-- pending chiếm slot và được đếm trong occupancy.
 ```
 
 > **Capacity × visibility (PRD E#7 authority):** `visibility='public'` bắt buộc `slots_max IS NOT NULL` — public session không được unlimited; `NULL` = unlimited vẫn hợp lệ cho non-public. Validated DB constraint `sessions_public_capacity_chk` đã land trong `0024_public_visibility_capacity_check.sql`, nên direct INSERT/UPDATE vi phạm bị reject. SessionService validation trên create **và mọi update dẫn tới public** vẫn bắt buộc để trả domain error `MISSING_DISCOVERY_FIELDS` trước DB exception. Guard consume-time/projector vẫn giữ defense-in-depth cho pre-`0024` data, fixture hoặc constraint-bypass; không được dùng chúng để hạ claim DB invariant hoặc claim service/projector đã build.
@@ -145,6 +187,8 @@ CREATE INDEX idx_sessions_draft_starts_at ON sessions(starts_at) WHERE status = 
 CREATE INDEX idx_session_surface_refs_session ON session_surface_refs(session_id);
 CREATE INDEX idx_players_waitlist_order
   ON players(session_id, status, waitlist_position, joined_at, id);
+CREATE INDEX idx_players_invited_by ON players(invited_by_person_id) WHERE invited_by_person_id IS NOT NULL;
+CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, created_by_person_id);
 ```
 
 ### Migration & Rollback
@@ -195,6 +239,16 @@ CREATE INDEX idx_players_waitlist_order
 | 29 | Concurrency | Auto-expiry job race với `PublishSession` concurrent trên cùng draft | Cả hai lock session row `FOR UPDATE` trước khi mutate (session-lock-ordering, cùng discipline Publish step 2/Waitlist promotion step 1). Job lock trước → publish concurrent chờ, thấy `status` đã `cancelled` → reject `SESSION_NOT_OPEN` (edge #23, không đổi). Publish lock trước → job's `FOR UPDATE SKIP LOCKED` skip row lượt chạy này, row giờ `open` → không mutate, không còn khớp filter lượt sau. Không thứ tự nào double-transition |
 | 30 | Resilience/Concurrency | Hai lượt chạy auto-expiry job chồng lấn (scheduler tick trùng, hoặc nhiều instance) | Claim filter (`status='draft' AND starts_at<=now()`) tự nhiên idempotent — row `cancelled` không còn khớp, không re-select. `FOR UPDATE SKIP LOCKED` — lượt chạy thứ hai skip row lượt đầu đang giữ lock. Không double-transition/double-event |
 | 31 | State/Security | Cancel session `open` với `starts_at<=now()` (past) | Reject `SESSION_NOT_OPEN` — no-past-guard (edge #25) CHỈ áp dụng cho nguồn `draft`; `open`→`cancelled` giữ NGUYÊN yêu cầu past-session-mutation hiện có (edge #11: privileged correction + audit trail, KHÔNG qua path cancel thường) — discard KHÔNG exempt open khỏi past-guard. Paid roster trên session `open` (past hoặc không) vẫn đi qua `CANCEL_REQUIRES_REVIEW` (edge #5) như cũ, không phải path fail-closed mới của draft |
+| 36 | Security | Player invite friend chưa follow mình | Reject: không có `person_follows` row với `follower_id=friend, followee_id=player, status='accepted'` → trả `FOLLOW_REQUIRED`; client redirect tới guest note form |
+| 37 | Security | `allow_player_invite = false` trên session | Reject `INVITE_NOT_ALLOWED` (403) cho mọi invite/note endpoint; chỉ host add trực tiếp |
+| 38 | Security | Player chưa active (`waitlisted`/`left`/`pending`) cố invite friend | Reject `PLAYER_NOT_ACTIVE` (403); query `players WHERE session_id AND membership_id AND status='active'` |
+| 39 | Concurrency | Invite friend khi session đầy | Reject `SESSION_FULL`; occupancy = COUNT(players WHERE status IN ('active','pending')) + COUNT(session_guest_notes) + COUNT(live holds); check dưới session lock `FOR UPDATE` |
+| 40 | Data Integrity | Guest note thứ 4 (vượt max 3/player/session) | Reject `GUEST_NOTE_LIMIT_REACHED`; check COUNT dưới session lock TRƯỚC INSERT + DB trigger guard (defense-in-depth) |
+| 41 | Security | Invite friend đã là player (active/waitlisted/pending) | Reject `ALREADY_JOINED`; query `players WHERE session_id AND membership_id AND status IN ('active','waitlisted','pending')` |
+| 42 | Security | Invite friend bị block (DD-55) | Reject `MEMBER_BLOCKED`; check `person_blocks` trước follow check — block overrides follow |
+| 43 | Concurrency | Delete guest note khi đang có waitlist | Release slot → trigger waitlist auto-promote (cùng occupancy re-count + promotion algorithm SES-UC-9) |
+| 44 | Security | Approve pending invite khi session đầy (capacity recheck) | Approve cần verify capacity dưới session lock; pending đã chiếm slot nên thường OK, nhưng concurrent note/join có thể làm đầy → reject `SESSION_FULL` |
+| 45 | Data Integrity | Reject pending invite | Remove player row (không set `left` — pending chưa bao giờ active). Release slot → trigger waitlist auto-promote |
 
 ---
 
@@ -228,6 +282,18 @@ CREATE INDEX idx_players_waitlist_order
 | 400 | `CANCEL_REQUIRES_REVIEW` | Cần xác nhận huỷ — có người đã thanh toán | Cancel with paid roster (`open`); hoặc discard `draft` mang `players`/`charges` bất thường (data anomaly, edge #28/#30) — cùng error code, cùng review surface, KHÔNG invent code riêng cho draft |
 | 400 | `MISSING_DISCOVERY_FIELDS` | Thiếu thông tin bắt buộc cho buổi chơi public | Public visibility without required fields (incl. finite `slots_max` — E#7, note §2); re-validated at create/update **and publish** (§4 publish) |
 | 409 | `REJOIN_REQUIRES_REVIEW` | Cần host kiểm tra trạng thái tiền trước | `left` nhưng correction core chưa có hoặc không chứng minh được carry-over/refunded disposition |
+| 404 | `SESSION_NOT_FOUND` | Buổi chơi không tồn tại | Session không tồn tại trong tenant context |
+| 403 | `INVITE_NOT_ALLOWED` | Buổi chơi không cho phép mời bạn | `allow_player_invite = false` trên session; mọi invite/note endpoint reject |
+| 403 | `PLAYER_NOT_ACTIVE` | Bạn chưa tham gia buổi chơi này | Player cố invite nhưng `players.status != 'active'` (waitlisted/left/pending) |
+| 400 | `FOLLOW_REQUIRED` | Người này chưa follow bạn | Invite friend chưa follow player (DD-47); client redirect tới guest note form |
+| 409 | `ALREADY_JOINED` | Người này đã tham gia buổi chơi | Invite friend đã là player (active/waitlisted/pending) |
+| 409 | `SESSION_FULL` | Buổi chơi đã đầy | Invite/note/approve khi occupancy ≥ slots_max |
+| 403 | `MEMBER_BLOCKED` | Không thể mời người này | DD-55 block boundary — block overrides follow |
+| 400 | `GUEST_NOTE_LIMIT_REACHED` | Đã hết lượt ghi chú (tối đa 3) | Player đã có 3 guest notes trong session |
+| 403 | `NOT_NOTE_CREATOR` | Bạn không tạo ghi chú này | Delete guest note không phải của mình |
+| 404 | `GUEST_NOTE_NOT_FOUND` | Ghi chú không tồn tại | Delete guest note không tìm thấy |
+| 404 | `PLAYER_NOT_FOUND` | Người chơi không tồn tại | Approve/reject player không tìm thấy |
+| 400 | `PLAYER_NOT_PENDING` | Người chơi không ở trạng thái chờ duyệt | Approve/reject player không ở `pending` |
 
 ### Request/Response Examples
 
@@ -305,6 +371,8 @@ CREATE INDEX idx_players_waitlist_order
 
 - Error khác: session `closed` → `SESSION_NOT_OPEN` (`409`, edge #11/#27). Session `open` với `starts_at<=now()` (past) → **CŨNG** `SESSION_NOT_OPEN` (`409`, edge #31 — no-past-guard KHÔNG áp dụng cho `open`, giữ nguyên hành vi cũ). Nguồn `open` với paid roster (`starts_at` bất kỳ) → `CANCEL_REQUIRES_REVIEW` (`400`, edge #5; mechanism review chưa detail schema trong doc này, chốt ở build slice — cùng gap pre-existing trước slice này). Nguồn `draft` với anomaly (`players`/`charges` bất thường) → **cùng** `CANCEL_REQUIRES_REVIEW` (`400`) + audit (edge #28) — không invent code riêng cho draft. `commandId` dedup theo canonical `processed_commands` (edge #3), cùng cơ chế mọi session command — không đổi cho nguồn `draft`.
 
+- `commandId` dedup theo canonical `processed_commands` (edge #3).
+
 ### Idempotency
 
 | Endpoint | Idempotent? | Key |
@@ -324,6 +392,94 @@ CREATE INDEX idx_players_waitlist_order
 4. Adapter emits the same `CreateSession` input as web/Zalo. `SessionService` owns validation/write/outbox; duplicate confirm returns the stored command result.
 
 
+### Invite Friend & Guest Note endpoints — Request/Response Examples
+
+**POST `/api/sessions/:id/invite`** — Player active invite friend đã follow:
+
+- Request:
+
+```json
+{ "commandId": "cmd_…", "inviteePersonId": "person_…" }
+```
+
+- Success (HTTP 200 — `join_policy='open'`):
+
+```json
+{
+  "data": {
+    "player": { "id": "player_…", "status": "active", "invitedByPersonId": "person_inviter_…" }
+  },
+  "error": null
+}
+```
+
+- Success (HTTP 200 — `join_policy='approval'`):
+
+```json
+{
+  "data": {
+    "player": { "id": "player_…", "status": "pending", "invitedByPersonId": "person_inviter_…" }
+  },
+  "error": null
+}
+```
+
+- Error cases: `INVITE_NOT_ALLOWED` (403), `PLAYER_NOT_ACTIVE` (403), `FOLLOW_REQUIRED` (400), `ALREADY_JOINED` (409), `SESSION_FULL` (409), `MEMBER_BLOCKED` (403), `SESSION_NOT_OPEN` (409)
+
+**POST `/api/sessions/:id/guest-notes`** — Player active tạo guest note:
+
+- Request:
+
+```json
+{ "commandId": "cmd_…", "guestName": "Nguyễn Văn A", "note": "Bạn của Trần B" }
+```
+
+- Success (HTTP 201):
+
+```json
+{
+  "data": {
+    "guestNote": { "id": "note_…", "guestName": "Nguyễn Văn A", "note": "Bạn của Trần B", "createdAt": "…" },
+    "remainingNotes": 2
+  },
+  "error": null
+}
+```
+
+- Error cases: `INVITE_NOT_ALLOWED` (403), `PLAYER_NOT_ACTIVE` (403), `GUEST_NOTE_LIMIT_REACHED` (400), `SESSION_FULL` (409), `SESSION_NOT_OPEN` (409)
+
+**DELETE `/api/sessions/:id/guest-notes/:noteId`** — Player xoá note mình tạo:
+
+- Success (HTTP 200): `{ "data": { "deleted": true, "slotsFreed": 1 }, "error": null }`
+- Error cases: `NOT_NOTE_CREATOR` (403), `GUEST_NOTE_NOT_FOUND` (404)
+
+**GET `/api/sessions/:id/guest-notes`** — List guest notes for session:
+
+- Success (HTTP 200):
+
+```json
+{
+  "data": {
+    "guestNotes": [
+      { "id": "note_…", "guestName": "…", "note": "…", "createdByPersonId": "…", "createdAt": "…" }
+    ]
+  },
+  "error": null
+}
+```
+
+**POST `/api/sessions/:id/players/:playerId/approve`** — Host approve pending invite:
+
+- Request: `{ "commandId": "cmd_…" }`
+- Success (HTTP 200): `{ "data": { "player": { "id": "…", "status": "active" } }, "error": null }`
+- Error cases: `PLAYER_NOT_FOUND` (404), `PLAYER_NOT_PENDING` (400), `SESSION_FULL` (409)
+
+**POST `/api/sessions/:id/players/:playerId/reject`** — Host reject pending invite:
+
+- Request: `{ "commandId": "cmd_…" }`
+- Success (HTTP 200): `{ "data": { "rejected": true }, "error": null }`
+- Error cases: `PLAYER_NOT_FOUND` (404), `PLAYER_NOT_PENDING` (400)
+
 ### Rate Limits
 
 | Endpoint | Limit | Scope |
@@ -334,6 +490,12 @@ CREATE INDEX idx_players_waitlist_order
 | `DELETE /api/sessions/:id/players/:pid` | 10/min | per tenant |
 | `GET /api/sessions` | 60/min | per tenant |
 | `GET /api/sessions/:id` | 60/min | per tenant |
+| `POST /api/sessions/:id/invite` | 10/min | per user per session |
+| `POST /api/sessions/:id/guest-notes` | 10/min | per user per session |
+| `DELETE /api/sessions/:id/guest-notes/:noteId` | 10/min | per user |
+| `GET /api/sessions/:id/guest-notes` | 30/min | per user |
+| `POST /api/sessions/:id/players/:pid/approve` | 10/min | per tenant |
+| `POST /api/sessions/:id/players/:pid/reject` | 10/min | per tenant |
 ---
 
 ## 4. Chi tiết triển khai
@@ -353,6 +515,11 @@ CREATE INDEX idx_players_waitlist_order
 | `player.waitlisted` | Join khi full | `session_id`, `player_id`, `waitlist_position` |
 | `player.promoted` | Leave/capacity+ mở slot | `session_id`, `player_id`, `charge_id` |
 | `waitlist.charge_derivation_failed` | First-activation derivation fail trong capacity opener/retry sweep | `failure_event_id`, `promotion_retry_id`, `session_id`, `player_id`, `waitlist_entry_version`, root `origin_command_id`, `reason_code`; unique candidate key `(session_id,player_id,waitlist_entry_version,origin_command_id,reason_code)`. Sibling events reference one root job; retry command ID không thay origin |
+| `player.invited` | Player active invite friend thành công | `session_id`, `inviter_person_id`, `invitee_person_id`, `invitee_player_id`, `join_outcome` (`active`/`pending`) |
+| `player.invite_approved` | Host approve pending invite | `session_id`, `player_id`, `approved_by_person_id` |
+| `player.invite_rejected` | Host reject pending invite | `session_id`, `player_id`, `rejected_by_person_id` |
+| `guest_note.created` | Player tạo guest note | `session_id`, `note_id`, `created_by_person_id`, `note_count` |
+| `guest_note.deleted` | Player xoá guest note | `session_id`, `note_id`, `deleted_by_person_id` |
 
 ### Publish transition (`draft` → `open`)
 
@@ -407,6 +574,73 @@ Scheduled run → Claim sessions WHERE status='draft' AND starts_at<=now() FOR U
 - **Anomaly fail-closed (edge #28):** một draft anomaly bị skip vẫn còn `status='draft'`, vẫn khớp filter claim — job SẼ re-claim + re-check nó mỗi lượt chạy (rẻ, read-mostly, không mutation — KHÔNG phải bug). `session.expiry_anomaly_detected` ghi mỗi lần phát hiện — cùng canonical outbox mechanism `session.cancelled` dùng (`feature_sync_engine_tech.md` §2, không invent scheme mới, không sửa file đó), không phải cơ chế riêng. Owner-facing alert dedupe theo `session_id` là việc của consumer đọc event đó — mirror "Owner alert/digest dedupes per root" của Waitlist promotion §4 — nhưng consumer/storage chính xác, cùng với execution role/grants/batching/queue registration, là **build-slice detail** (cùng gap pre-existing với `review_policy` chính nó, edge #5, chưa từng detail trước slice này).
 - **Tần suất/batch size** là operational config, không phải spec-level contract (cùng cách xử lý "bounded horizon (configurable)" của Recurrence Implementation, §4).
 - Không cần `commandId`/`processed_commands` dedup cho job path — idempotency đến từ filter claim, cùng lý luận Daily Lifecycle Job tự thân dựa vào (job đó cũng không đi qua client-facing command envelope).
+
+### Invite Friend transition (player active → friend join)
+
+`InviteFriend` command, endpoint `POST /api/sessions/:id/invite`. Player đã `active` trong session invite friend (người đã follow player — DD-47). Kết quả phụ thuộc `join_policy`: `open` → friend vào `active`, `approval` → friend vào `pending` chờ host duyệt. Cả hai đều chiếm slot.
+
+**Algorithm:**
+
+1. Resolve trusted actor/tenant từ context. `commandId` dedup (edge #3).
+2. Lookup session row `FOR UPDATE` trong tenant context. **Row không tồn tại** → 404. **`status != 'open'`** → reject `SESSION_NOT_OPEN`. **`allow_player_invite = false`** → reject `INVITE_NOT_ALLOWED` (edge #37).
+3. **Inviter guard:** query `players WHERE session_id AND membership_id = inviter AND status = 'active'`. Không tìm thấy hoặc status khác → reject `PLAYER_NOT_ACTIVE` (edge #38).
+4. **Block guard (DD-55):** query `person_blocks WHERE (blocker, blocked) IN ((inviter, invitee), (invitee, inviter))`. Có row → reject `MEMBER_BLOCKED` (edge #42). **Check trước follow** — block overrides follow.
+5. **Follow guard (DD-47):** query `person_follows WHERE follower_id = invitee AND followee_id = inviter_person AND status = 'accepted'`. Không tìm thấy → reject `FOLLOW_REQUIRED` (edge #36). Client redirect tới guest note form.
+6. **Duplicate guard:** query `players WHERE session_id AND membership_id = invitee_membership AND status IN ('active','waitlisted','pending')`. Có row → reject `ALREADY_JOINED` (edge #41).
+7. **Capacity check:** compute occupancy = `COUNT(players WHERE status IN ('active','pending'))` + `COUNT(session_guest_notes WHERE session_id)` + `COUNT(live holds)`. Occupancy ≥ `slots_max` (non-NULL) → reject `SESSION_FULL` (edge #39).
+8. **Determine outcome:** `join_policy = 'open'` → `status = 'active'`; `join_policy = 'approval'` → `status = 'pending'`.
+9. **Insert player row:** `INSERT INTO players (session_id, membership_id, status, invited_by_person_id, joined_at) VALUES (...)`. Emit `player.invited` outbox event.
+10. **Commit.** Return player row with outcome status.
+
+> **Pending occupancy:** `pending` players chiếm slot giống `active` — đếm trong occupancy helper. Khi host reject → slot được giải phóng → trigger promotion nếu có waitlist.
+
+### Guest Note management
+
+**`CreateGuestNote`** — endpoint `POST /api/sessions/:id/guest-notes`. Player active tạo ghi chú về khách ngoài hệ thống. Chiếm slot, không tạo charge.
+
+**Algorithm:**
+
+1. Resolve trusted actor/tenant. `commandId` dedup.
+2. Lookup session `FOR UPDATE`. `status != 'open'` → `SESSION_NOT_OPEN`. `allow_player_invite = false` → `INVITE_NOT_ALLOWED`.
+3. **Player guard:** inviter must be `active` → else `PLAYER_NOT_ACTIVE`.
+4. **Note limit check:** `SELECT count(*) FROM session_guest_notes WHERE session_id AND created_by_person_id`. Count ≥ 3 → `GUEST_NOTE_LIMIT_REACHED`.
+5. **Capacity check:** occupancy (active + pending + guest notes + live holds) ≥ `slots_max` → `SESSION_FULL`.
+6. **Validate input:** `guest_name` 1–100 chars (required), `note` max 200 chars (optional, default "Bạn của [player display name]").
+7. **Insert** `session_guest_notes` row. DB trigger `trg_session_guest_note_limit` is defense-in-depth.
+8. Emit `guest_note.created` outbox event. **Commit.**
+
+**`DeleteGuestNote`** — endpoint `DELETE /api/sessions/:id/guest-notes/:noteId`. Player xoá note mình tạo.
+
+**Algorithm:**
+
+1. Resolve actor. Lookup guest note row. **Not found** → 404 `GUEST_NOTE_NOT_FOUND`. **`created_by_person_id != actor`** → 403 `NOT_NOTE_CREATOR`.
+2. Lock session `FOR UPDATE` (cùng ordering discipline).
+3. `DELETE FROM session_guest_notes WHERE id = :noteId`. Emit `guest_note.deleted`.
+4. **Slot release:** re-compute occupancy. Nếu có waitlist candidates → trigger waitlist auto-promote (cùng algorithm §4 Waitlist promotion).
+5. **Commit.**
+
+### Approve/Reject pending invite
+
+**`ApproveInvite`** — endpoint `POST /api/sessions/:id/players/:playerId/approve`. Host duyệt pending invite khi `join_policy='approval'`.
+
+**Algorithm:**
+
+1. Resolve trusted actor/tenant. AuthZ: `session.manage` (Host). `commandId` dedup.
+2. Lookup session `FOR UPDATE`. `status != 'open'` → `SESSION_NOT_OPEN`.
+3. Lookup player row `FOR UPDATE`. **Not found** → 404 `PLAYER_NOT_FOUND`. **`status != 'pending'`** → 400 `PLAYER_NOT_PENDING`.
+4. **Capacity recheck:** pending đã chiếm slot, nhưng concurrent join/note có thể thay đổi occupancy → verify vẫn ≤ `slots_max`. Nếu không OK → `SESSION_FULL`.
+5. **Update player:** `SET status = 'active'`. Emit `player.invite_approved` outbox event.
+6. **Commit.**
+
+**`RejectInvite`** — endpoint `POST /api/sessions/:id/players/:playerId/reject`. Host reject pending invite.
+
+**Algorithm:**
+
+1. Resolve trusted actor/tenant. AuthZ: `session.manage`. `commandId` dedup.
+2. Lookup session `FOR UPDATE`. Lookup player `FOR UPDATE`. Guard: not found → 404, not pending → 400.
+3. **Delete player row** (không set `left` — pending chưa bao giờ active, không có charge). Emit `player.invite_rejected`.
+4. **Slot release:** re-compute occupancy → trigger waitlist auto-promote nếu có candidates.
+5. **Commit.**
 
 ### Waitlist entry + rejoin disposition (DD-45/DD-49)
 
@@ -557,6 +791,20 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 | 59 | Discard draft with anomalous roster/charge (data anomaly) | `draft` session with a `players` or `charges` row present (fixture bypassing the normal join-requires-open path) | Fail-closed: `CANCEL_REQUIRES_REVIEW` (`400`) — same code and review surface edge #5 uses for `open` with a paid roster, not a bespoke draft code; does not silently cancel; `session.expiry_anomaly_detected` outbox event written (edge #28) |
 | 60 | Auto-expiry skips anomalous draft, writes `session.expiry_anomaly_detected` every detection | Past `draft` session with a `players` or `charges` row present (fixture bypass); job runs twice across two scheduled ticks | Both runs leave the row `draft` (zero mutation, zero `session.cancelled` event) and re-claim it (cheap, expected — not a bug); each run writes its own `session.expiry_anomaly_detected` outbox event through the same canonical outbox mechanism `session.cancelled` uses (append-only, no dedupe at this layer, mirrors `waitlist.charge_derivation_failed`'s per-occurrence shape). No HTTP response to return here (background job, no caller) — the host-facing `CANCEL_REQUIRES_REVIEW` code only applies to the discard request path (test #59). Owner-facing alert de-duplication (at-most-one notification across the two runs) is a separate consumer whose storage is a build-slice detail — not asserted by this test, which only covers what this slice actually specifies |
 | 61 | Cancel `open` session past `starts_at` still rejected | `open` session, `starts_at<=now()`, host calls cancel (no anomaly, no paid roster — simplest case) | `SESSION_NOT_OPEN` (`409`); zero mutation. Confirms discard's no-past-guard did NOT leak into the pre-existing `open`-source past-session-mutation restriction (edge #11/#31) — `open`→`cancelled` behavior is provably unchanged, not just claimed |
+| 70 | Invite friend happy path (open join_policy) | Player active, friend follows player, session open + capacity | Friend joins as `active`; `player.invited` event; `invited_by_person_id` set |
+| 71 | Invite friend with approval policy | `join_policy='approval'` session; friend follows player | Friend joins as `pending`; chiếm slot; host notification sent |
+| 72 | Invite friend not following | Friend has no `person_follows` row with player | `FOLLOW_REQUIRED` (400); zero mutation |
+| 73 | Invite friend blocked (DD-55) | `person_blocks` exists between inviter/invitee | `MEMBER_BLOCKED` (403); block checked before follow; zero mutation |
+| 74 | Invite when `allow_player_invite=false` | Session has `allow_player_invite=false` | `INVITE_NOT_ALLOWED` (403); zero mutation |
+| 75 | Invite by non-active player | Inviter is `waitlisted`/`left`/`pending` | `PLAYER_NOT_ACTIVE` (403); zero mutation |
+| 76 | Invite already-joined player | Friend already `active`/`waitlisted`/`pending` in session | `ALREADY_JOINED` (409); zero mutation |
+| 77 | Invite when session full | Occupancy = slots_max | `SESSION_FULL` (409); zero mutation |
+| 78 | Create guest note happy path | Player active, < 3 notes, capacity available | Note created; slot occupied; `guest_note.created` event; `remainingNotes` returned |
+| 79 | Guest note limit reached (4th note) | Player already has 3 notes in session | `GUEST_NOTE_LIMIT_REACHED` (400); zero mutation; DB trigger also rejects |
+| 80 | Delete guest note releases slot + promotes waitlist | Note creator deletes; waitlist has candidates | Note deleted; slot freed; first eligible candidate promoted; `guest_note.deleted` event |
+| 81 | Delete guest note not creator | Different player tries to delete | `NOT_NOTE_CREATOR` (403); zero mutation |
+| 82 | Approve pending invite happy path | Host approves `pending` player | Player `status='active'`; `player.invite_approved` event |
+| 83 | Reject pending invite releases slot | Host rejects `pending` player | Player row removed; slot freed; waitlist auto-promote if applicable; `player.invite_rejected` event |
 
 ### Integration Tests
 
@@ -570,6 +818,8 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 | 6 | Leave + first-activation candidate KMS failure | One leave, two candidates | Leave commits; first unchanged + one audit/origin event; second may promote; bounded retries happen separately |
 | 7 | Hybrid Page host matrix | central + tenant Page; host/player/dual-role across two tenants | Authorized host creates correct tenant session; non-admin and wrong context denied |
 | 8 | Auto-expiry job + host discard both present | Multiple past unpublished drafts across tenants; one also manually discarded by host just before the job runs | Job claim filter (`status='draft'`) no longer matches the manually-discarded one — no double event; remaining past drafts cancel with `cancel_reason='auto'`; tenant isolation holds (RLS) |
+| 10 | Invite friend + approval flow | Player joins session → invites friend (approval policy) → friend becomes `pending` → host approves → friend becomes `active`; host rejects second invite → player row removed + slot freed | Full lifecycle: invite → pending → approve/reject with capacity accounting |
+| 11 | Guest note occupancy + waitlist interaction | Session 4/5 capacity → player creates 1 guest note (5/5) → new join waitlisted → player deletes note → waitlisted promoted to active | Guest notes participate in occupancy; deleting note triggers promotion |
 
 ---
 
@@ -599,6 +849,9 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-13 | v2.22 | **Gỡ WIP DeleteSession (rút toàn bộ nội dung v2.20) theo DD-104:** `decisions.md` v2.27 chốt D0–D4 (D1a: mọi FK giữ `NO ACTION` và chặn delete — cơ chế "FK cascade" v2.20 khai không tồn tại, 9 FK trỏ `sessions` đều `NO ACTION`; D2a: action class `delete_draft_session` — thuộc billing contract, slice riêng; D3c: bắt `23503` rồi tra `pg_constraint` `confrelid='sessions'`; D4a: concurrency ordering chung delete+publish theo precedent publish step 6). Gỡ khỏi body: command trong §1, entry point + API row + endpoint examples §3, 2 error codes delete-specific (giữ `SESSION_NOT_FOUND` generic), idempotency row, rate-limit row, edges #32–#35, §4 "Delete transition", event `session.deleted`, unit tests #62–#69, integration test #9. ID giữ trống, KHÔNG renumber. Spec sẽ được author trong slice DD-104 sau khi `tenant-capability-authority-core` có packet. |
+| 2026-08-12 | v2.21 | **Invite Friend + Guest Note + Approve/Reject feature:** thêm 5 commands mới (`InviteFriend`, `CreateGuestNote`, `DeleteGuestNote`, `ApproveInvite`, `RejectInvite`) + 7 entry points mới. §2: `sessions.allow_player_invite` column mới (boolean, default true); `players.status` enum mở rộng thêm `pending`; `players.invited_by_person_id` FK mới; bảng `session_guest_notes` mới + trigger `trg_session_guest_note_limit` (max 3/player/session); 2 indexes mới. 10 edge cases mới (#36–#45). §3: 12 error codes mới + 7 endpoint docs với request/response examples + idempotency + 6 rate limit rows mới. §4: 3 algorithm subsections mới ("Invite Friend transition", "Guest Note management", "Approve/Reject pending invite") + 5 events mới. §5: 14 unit tests mới (#70–#83) + 2 integration tests (#10–#11). Additive-only — không đổi existing cancel/publish/delete/waitlist contract. |
+| 2026-08-11 | v2.20 | **(RÚT 2026-08-13 — nội dung đã gỡ khỏi body, xem v2.22 + DD-104; row giữ làm audit trail.)** **DeleteSession (hard delete) feature:** thêm `DeleteSession` command mới (parallel với `CancelSession`) + endpoint `DELETE /api/sessions/:id`, chỉ cho session `draft`. §1: thêm command + entry point. §2 Edge Cases: 4 edges mới (#32–#35) — status guard, paid player guard (excl. host), concurrent race, already-deleted 404. §3: endpoint + 3 error codes mới (`SESSION_MUST_BE_DRAFT`, `DELETE_REQUIRES_REFUND` với payload `players_requiring_refund[]`, `SESSION_NOT_FOUND`) + request/response examples + idempotency row + rate limit row (5/min). §4: algorithm subsection "Delete transition" (6-step: authz, lookup+lock, status guard, paid guard excl. host, outbox+delete cascade, projector cleanup) + event `session.deleted`. §5: 8 unit tests mới (#62–#69) + 1 integration test (#9). Additive-only — không đổi cancel/publish/discard contract. |
 | 2026-08-10 | v2.19 | **A-grade upgrade:** thêm Entry points table (9 entries); bump version. Không đổi contract/session model. |
 | 2026-08-03 | v2.18b | **Reconcile `authorizeTenantAction` call in §4 step 6 (`docs-billing-authz-signature-reconcile`):** step 6's mandatory billing re-check documented `authorizeTenantAction(tenantId, 'publish_new_sessions')` — merged code (`ddb69a9`, `packages/db/src/authorization.ts:91-95`) requires the caller's already-open transaction as its first parameter. This was a genuine contradiction, not a stylistic gap: the same sentence requires the call to run inside the transaction holding the session lock while printing a signature that structurally cannot receive that transaction — the same defect `feature_billing_lifecycle_tech.md`'s own reconcile (v2.10) exists to close (codex round-08 [P2] on that slice, verified against this file directly). Updated to `authorizeTenantAction(tx, tenantId, 'publish_new_sessions')`. Every other mention in this file (edge #24, step 1, the "Billing suspension gate" and "Billing suspension — concurrency" blockquotes) is bare-name prose or single-argument action-class shorthand naming which action is being cross-referenced, not a signature assertion, and stays unchanged. Docs-only; code/schema/tests already merged and unaffected by this reconcile. Pre-existing dated changelog giữ verbatim. |
 | 2026-07-28 | v2.18a | Reconcile two DD-32 residual drifts found by acceptance retrace: capacity-decrease step now guards active+live-hold occupancy with exact error split; projector parity keeps `confirmed_count=active` while `slots_open` subtracts active+holds and exposes no hold count. No runtime/schema. |
