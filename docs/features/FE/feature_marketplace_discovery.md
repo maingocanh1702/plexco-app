@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.3 (Marketplace) · P4.5 (Global Search)  
 > **Track:** 🔍 Discovery, Marketplace & Search  
-> **Version:** 2.5 · 2026-08-10
+> **Version:** 2.7 · 2026-08-12
 > **Status:** Reviewed  
 > **Implementation:** Not started — `public_sessions` có sẵn và `0024` đã enforce public session phải finite-capacity; publish/projector/routes/UI vẫn chưa có · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status). *Tail migration hiện hành là `0029` (đo 06/08 tại `2cd52ce`), nhưng `0025`–`0029` không chạm marketplace: rename CHECK, definer read-only và DD-29 billing registry.*
 > **Prerequisites:** P2 session management · P4 sync/public projector  
@@ -83,18 +83,31 @@
 | 17 | Performance | Query quá rộng (1 char) trả millions kết quả | Require min 2 chars; max 50 results/type; cursor pagination |
 | 18 | Security | User enumerate via search (scraping) | Rate limit 30 req/min per account; fuzziness không expose exact match count |
 | 19 | Data Integrity | Stale search index (user đổi tên, club xóa) | Index refresh SLO ≤ 5s; fallback: verify on-click (404 → remove from cache) |
-| 20 | Privacy | Search result lộ member count/roster danh sách thật | Chỉ trả `member_count` aggregate — không roster, không identity |
-| 21 | Security | Competitor enumerate toàn bộ user database | Pagination cap 200 total results; no full-list export; progressive CAPTCHA |
-
----
-
-## 3. Screens & States
-
-> Web = center tab "🔍 Khám phá" (bottom nav slot 3, emphasized/FAB). Bot = `/search` (Zalo) / quick-reply (Messenger). Mobile-first 375px; desktop ≥1024 (2-column grid).
-
-### Web — Marketplace browse
+| 20 | Privacy | Search result lộ member count/roster danh sách thật | Chỉ trả `member_count` aggregate ### Web — Marketplace browse
 
 **Purpose:** Player tìm + filter public sessions across clubs.
+
+**Component: Horizontal Date Selector (thay date picker dropdown — Playo-inspired):**
+
+```
+┌──────────────────────────────────────┐
+│ THÁNG 8                                     │
+│ ┌────┐ ┌────┐ ┌────┐ ┌────┐ ┌────┐ ┌────┐  │  scroll-x, snap-to-item
+│ │Hôm │ │ T5 │ │ T6 │ │ T7 │ │ CN │ │ T2 │  │
+│ │nay │ │ 13 │ │ 14 │ │ 15 │ │ 16 │ │ 17 │  │
+│ │ ●  │ │    │ │ ●  │ │ ●  │ │    │ │    │  │  ● = has sessions
+│ └────┘ └────┘ └────┘ └────┘ └────┘ └────┘  │
+└──────────────────────────────────────┘
+```
+
+| Property | Giá trị |
+|----------|----------|
+| Range | Today → 2 tuần tới (14 ngày) |
+| Default | Today selected (primary color circle) |
+| Session dot | ● dưới số ngày = có ≥1 public session ngày đó |
+| Interaction | Tap → filter sessions cho ngày đó; scroll ngang |
+| Cross-month | Khi scroll qua ngày cuối tháng, label tháng chuyển theo |
+| Data source | `public_sessions` aggregate count per date |
 
 **Layout (mobile):**
 
@@ -102,37 +115,118 @@
 ┌──────────────────────────────────────┐
 │ 🔍 Khám phá                    🔔   │
 ├──────────────────────────────────────┤
+│ THÁNG 8                                     │
+│ [● Hôm nay] [T5 13] [T6 14] [T7 15]...    │  date selector (scroll-x)
+├──────────────────────────────────────┤
 │ [🏸 Cầu lông] [⚽ Bóng đá] [Tất cả]│  sport filter chips (scroll-x)
-│ [📍 Khu vực ▼] [📅 Ngày ▼] [💰 Giá]│  filter bar
+│ [📍 Khu vực ▼] [💰 Giá] [🏅 Trình độ]  │  filter bar (date picker removed)
 ├──────────────────────────────────────┤
 │                                      │
-│ ┌────────────────────────────────┐   │
-│ │ 🏸 Cầu lông chiều T5          │   │  session card
-│ │ 📍 Q3 · 📅 10/08 · 19:00     │   │
-│ │ 💰 120,000₫ · 👥 6/8 · 2 chỗ │   │
-│ │ CLB Rồng Xanh · Host: Anh T  │   │
-│ │ [═══ Tham gia ═══]            │   │
-│ └────────────────────────────────┘   │
-│ ┌────────────────────────────────┐   │
-│ │ ⚽ Bóng đá T7                  │   │
-│ │ 📍 Thủ Đức · 📅 12/08 · 16:00│   │
-│ │ 💰 85,000₫ · 👥 8/10 · 2 chỗ │   │
-│ │ FC Weekend · Host: B          │   │
-│ │ [═══ Tham gia ═══]            │   │
-│ └────────────────────────────────┘   │
+│ ┌──────────────────────────────────┐   │
+│ │ ┌───────────────┐ ┌──────────────┐ ♡ │   │  session card
+│ │ │ 19:00 – 21:00  │ │ 120.000₫/Ng │   │   │  time pill + price pill + favorite
+│ │ └───────────────┘ └──────────────┘   │   │
+│ │                                    │   │
+│ │ [👤] · 6/8 Going                   │   │  host avatar + going count
+│ │                                    │   │
+│ │ 🏸 Cầu lông chiều T5              │   │  sport icon + session title
+│ │ CLB Rồng Xanh · Host: Anh T       │   │  club + host display name
+│ │                                    │   │
+│ │ 📍 Q.Bình Thạnh  ~2.9 km           │   │  area + distance (conditional)
+│ │                                    │   │
+│ │ 🏅 Trung bình                      │   │  skill level tag
+│ │                                    │   │
+│ │ [═══ Tham gia ═══]                │   │  CTA button
+│ └──────────────────────────────────┘   │
+│ ┌──────────────────────────────────┐   │
+│ │ ┌───────────────┐ ┌─────────────┐  ♡ │   │
+│ │ │ 16:00 – 18:00  │ │ 85.000₫/Ng │    │   │
+│ │ └───────────────┘ └─────────────┘    │   │
+│ │ [👤] · 8/10 Going                  │   │
+│ │ ⚽ Bóng đá T7 · FC Weekend           │   │
+│ │ 📍 Thủ Đức  ~3.8 km                │   │
+│ │ 🏅 Trung bình – Khá   ┌────────┐  │   │  skill level + slots status
+│ │                       │ 2 chỗ   │  │   │
+│ │                       └────────┘  │   │
+│ └──────────────────────────────────┘   │
 │                                      │
-│ ┌────────────────────────────────┐   │
+│ ┌──────────────────────────────────┐   │
 │ │        Xem thêm ↓              │   │  cursor pagination
-│ └────────────────────────────────┘   │
+│ └──────────────────────────────────┘   │
 │                                      │
 └──────────────────────────────────────┘
 ```
 
-**Component: Session card (public):**
+**Component: Session card (public) — Unified `SessionCard` variant `browse`:**
 
 | Field | Data source | Ghi chú |
 |-------|-------------|---------|
-| Sport icon + name | `public_sessions.sport_key` → `sports` taxonomy | Không expose internal ID |
+| Session cover | `public_sessions.cover_image_url` | Optional hero image phía trên card; fallback: sport gradient bg. Moderated public field |
+| Time pill | `public_sessions.starts_at` + `ends_at` | Green pill: format `HH:mm – HH:mm` |
+| Time-of-day label | Derived from `starts_at` | Thay time pill khi host chọn time category hoặc chỉ có `starts_at`: "Sáng" / "Chiều" / "Tối" / "Đêm" |
+| Price pill | `public_sessions.price` | White/grey pill: VND scalar + "/Ng"; "Miễn phí" if 0 |
+| Favorite ♡ | Client-local only (phase-1) | Tap → toast "Tính năng sắp ra mắt" — backend `saved_sessions` defer |
+| Host avatar | `public_sessions.host_avatar_url` | Circular 32px; fallback initials |
+| Going count | `confirmed_count` + `slots_max` | Format `N/M Going` |
+| Urgency badge | `slots_open` | 🔴 "Chỉ N chỗ!" khi `slots_open ≤ 3` và `> 0`. Ẩn khi `> 3` hoặc = 0. Red bg, white text, right-aligned cạnh Going |
+| Sport icon + title | `public_sessions.sport_key` + title | Taxonomy icon + session name |
+| Club name | `public_sessions.club_display_name` | Moderated; personal blank → ẩn |
+| Host name | `public_sessions.host_display_name` | Moderated; never raw identity |
+| Area | `public_sessions.area` | Coarse (quận/khu vực), KHÔNG address |
+| Distance | Geolocation API | Conditional: chỉ hiện khi user đã cấp quyền location; fallback ẩn |
+| Skill level tag | `public_sessions.skill_level` | Hiện dạng range khi có min+max: "Người mới – Trung bình". Single value khi chỉ có 1 level. Green chip pill + sport icon bên trái |
+| Booking status | Player's join state | `BOOKED` (xanh lá, right-aligned) khi authenticated player đã join. Chỉ hiện nếu đã tham gia |
+| Slots status | `slots_open` | `N chỗ` badge khi `slots_open > 0` và `> 3`; `Đầy` khi = 0. Ẩn khi urgency badge hiện |
+| Join CTA | Opaque action → `cross_club_join` | Không raw routing ID |
+
+**Component: Time-of-day mapping (Playo "Night" pattern):**
+
+| Khoảng giờ | Label | Pill color |
+|-----------|-------|------------|
+| 05:00 – 11:59 | Sáng | Green |
+| 12:00 – 16:59 | Chiều | Green |
+| 17:00 – 20:59 | Tối | Green |
+| 21:00 – 04:59 | Đêm | Green |
+
+> **Logic:** Khi session có cả `starts_at` + `ends_at` → hiện `HH:mm – HH:mm` (default). Khi chỉ có `starts_at` hoặc host chọn time-of-day category → hiện label. Playo dùng "Night" cho 21:00+.
+
+**Component: Urgency slots badge (Playo "Only N slots" pattern):**
+
+| Condition | Badge | Style |
+|-----------|-------|-------|
+| `slots_open ≤ 3` và `> 0` | "Chỉ {N} chỗ!" | Red background, white text, bold, right-aligned cạnh Going count |
+| `slots_open > 3` | Ẩn urgency badge | Hiện `N chỗ` bình thường |
+| `slots_open = 0` | "Đầy" | Red pill, CTA disabled / thay "Vào danh sách chờ" |
+
+**Component: Booking status badge (Playo "BOOKED" pattern):**
+
+| Condition | Badge | Style |
+|-----------|-------|-------|
+| Player đã join session (status `active`) | `ĐÃ ĐĂNG KÝ` | Green background, white text, right-aligned dưới skill tag |
+| Player chưa join / not authenticated | Ẩn | — |
+| Player waitlisted | `CHỜ` | Yellow background |
+| Player pending approval | `CHỜ DUYỆT` | Orange background |
+
+**Component: Filter bar (update):**
+
+| Filter | Type | Options |
+|--------|------|---------|
+| Môn thể thao | Chip row (scroll-x) | From `sports` taxonomy |
+| Khu vực | Dropdown | Quận/khu vực từ area taxonomy |
+| Giá | Range slider | 0 → 500,000₫ |
+| Trình độ | Chips (DD-41) | Ordered ranks, không lộ player level |
+| Slot còn trống | Toggle: "Chỉ còn chỗ" | `slots_open > 0` filter |
+
+> **Note:** Date filter chuyển từ dropdown lên **Horizontal Date Selector** riêng (phía trên sport chips). Không còn trong filter bar.
+
+**4 States:**
+
+| State | Nội dung |
+|-------|---------|
+| Loading | Skeleton: date selector shimmer + sport chips + filter bar + 4 card skeletons (2×2 grid desktop) |
+| Ready | Session cards grid + pagination |
+| Error | Error banner: "Không tải được" + retry |
+| Empty | Icon 🔍 + "Không tìm thấy buổi chơi nào" + [Reset bộ lọc] CTA |ame | `public_sessions.sport_key` → `sports` taxonomy | Không expose internal ID |
 | Area | `public_sessions.area` | Coarse (quận/khu vực), KHÔNG address |
 | Date/time | `public_sessions.starts_at` | Format `DD/MM · HH:mm` |
 | Price | `public_sessions.price` | VND, scalar — không lộ gender pricing |
@@ -441,6 +535,11 @@
 - [ ] Messenger central/tenant Page local-vs-global context đúng; opaque action TTL/snapshot/replay tests pass
 - [ ] Public DTO emits `confirmed_count` + `slots_open` from one shared occupancy projection; hold count/identities remain private, adapters never re-derive and final mutation ignores stale counts.
 - [ ] Personal-tenant session uses only nonblank moderated owner-membership alias for `club_display_name`; blank alias stays absent and internal tenant/person name never leaks
+- [ ] **Horizontal Date Selector:** render 14 ngày (today → 2 tuần), today highlighted, session dot indicator hiện đúng, tap filter sessions, scroll ngang snap-to-item
+- [ ] **Session card (unified `browse` variant):** time pill (green) + price pill + favorite icon + host avatar (32px, fallback initials) + `N/M Going` + sport icon + title + club name + host name + area + distance (conditional) + skill level tag + slots status badge + CTA "Tham gia"
+- [ ] **Favorite icon:** Tap → toast "Tính năng sắp ra mắt" (phase-1 placeholder); không persist
+- [ ] **Distance:** Chỉ hiện khi user đã cấp quyền geolocation; fallback: ẩn distance, chỉ area text
+- [ ] **Skill level tag:** Hiện legacy `skill_level` text; DD-41 ranked range là separate migration
 - [ ] Global Search debounce 300ms — không fire request mỗi keystroke
 - [ ] Search min 2 chars — 1 char không trigger search
 - [ ] Results grouped by entity type (Users → Clubs → Tournaments → Sessions) với count indicators
@@ -474,6 +573,8 @@
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-12 | v2.7 | **SessionCard upgrade (Playo reference #2):** (1) **Urgency badge:** "Chỉ N chỗ!" (đỏ) khi `slots_open ≤ 3` — tăng conversion. (2) **Booking status badge:** `ĐÃ ĐĂNG KÝ`/`CHỜ`/`CHỜ DUYỆT` (right-aligned) khi authenticated player đã join — nhận ra kèo đã đăng ký trong marketplace. (3) **Skill level range:** hiện range "Người mới – Trung bình" với green chip pill + sport icon, thay single text. (4) **Time-of-day label:** "Sáng"/"Chiều"/"Tối"/"Đêm" thay time pill khi phù hợp. (5) **Session cover image:** optional hero image trên card, fallback sport gradient. Thêm 4 component tables mới (time-of-day mapping, urgency badge, booking status, cover image). 5 fields mới trong session card table. BL-DSC-1: `cover_image_url` là public moderated field. |
+| 2026-08-12 | v2.6 | **Unified SessionCard + Horizontal Date Selector (Playo-inspired):** (1) **Date selector:** thay date picker dropdown bằng horizontal scrollable date selector (14 ngày, today highlighted, session dot indicator, snap-to-item) phía trên sport chips. (2) **Session card redesign:** unified `SessionCard` variant `browse` với: time pill (green) + price pill + favorite icon (♡ placeholder phase-1) + host avatar (32px) + `N/M Going` count + sport icon + title + club/host display name + area + conditional distance (~X km, geolocation-gated) + skill level tag (legacy text, DD-41 sau) + slots status badge (`N chỗ`/`Đầy`). (3) **Filter bar:** remove date dropdown (chuyển lên date selector); giữ khu vực/giá/trình độ/slot. (4) **Loading skeleton:** thêm date selector shimmer. (5) 5 AC bullets mới. BL-DSC-1 whitelist giữ nguyên — `host_avatar_url` là public moderated field như `host_display_name`. Không đổi privacy contract. |
 | 2026-08-10 | v2.5 | **Global Search (P4.5):** Mở rộng doc từ session-only marketplace thành unified search. Thêm: Global Search scope (§1 — multi-entity: Users, Clubs, Tournaments, Sessions), entry points table (6 entries), 6 use cases mới (MKT-UC-11→16), 8 edge cases mới (#14→21 — sanitize, privacy, stale index, enumerate protection), 3 screens mới (Global Search overlay + suggestion dropdown + empty state — tất cả có ASCII layouts), search result component spec (4 entity types), 5 state coverage rows mới, 4 domain model entities (search_index, persons view, tenants view, public_tournaments), 5 analytics events (global_search_*), 17 acceptance criteria mới. Privacy-safe: chỉ public/moderated data, no PII leak. Additive-only — marketplace contract không đổi. |
 | 2026-07-28 | v2.4 | Mirror DD-32 public aggregates: confirmed active count and slots-open (active + live holds) from one occupancy helper; hold count stays private. Bot Join CTA routes safe detail/final gate while web retains cross-club join. No projector/runtime claim. |
 | 2026-07-27 | v2.3 | Mirror `0024`: public + unlimited capacity đã bị DB CHECK loại và dữ liệu hiện có đã validate; đây là invariant nền, không phải publish/projector/Marketplace runtime. |

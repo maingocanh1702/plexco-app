@@ -2,7 +2,7 @@
 
 > **Canonical phase:** S9 (cùng PWA shell; sau P4.6 player_view vì data từ đó) — DD-79 ✅  
 > **Track:** 🏠 Home Hub  
-> **Version:** 0.13 · 2026-08-10
+> **Version:** 0.15 · 2026-08-12
 > **Status:** ✅ **Reviewed contract theo DD-79** — composition-only; implementation pending S9. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY`; không có Home/payment/chat runtime. Fork từ Sporta `feature_home.md` v2.5 + học từ design `app-design-opus-4.6.pen`.
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web auth · P4.6 player_view (data backbone) · P4.3 marketplace (suggested) · 🔔 notifications §A  
@@ -82,18 +82,68 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 │ │ 85.000₫ ·2CLB│  │ 5 ngày        │ │
 │ └──────────────┘  └───────────────┘ │
 │ ┌──────────────────────────────────┐ │
-│ │ ⭐ HERO — kèo kế tiếp            │ │  gradient + glow (theme §7)
-│ │ 🏸 Cầu lông T3 · CLB Rồng Xanh  │ │  role badge · countdown
-│ │ T3 22/07 · 19:30                 │ │
+│ │ ⭐ KÈO KẾ TIẾ P               ⏱️ Còn 2h │ │  gradient + glow (theme §7)
+│ │ ┌──────────────┐ ┌─────────────┐ │ │
+│ │ │19:30 – 21:30 │ │75.000₫/Ng │ │ │  time pill + price pill
+│ │ └──────────────┘ └─────────────┘ │ │
+│ │                                  │ │
+│ │ [👤] · 6/8 Going                 │ │  host avatar + going count
+│ │                                  │ │
+│ │ 🏸 Cầu lông T3 · CLB Rồng Xanh  │ │  sport icon + title + club
+│ │ 📍 Sân Cầu Lông Q.Bình Thạnh    │ │  venue (private — authenticated)
+│ │                                  │ │
+│ │ Host 🏷️ · 🟢 Đã thanh toán       │ │  role badge + payment dot
 │ │ [💳 Thanh toán]                   │ │  CTA conditional (gated: HOME-OQ-4)
 │ └──────────────────────────────────┘ │
 │ KÈO SẮP TỚI                Tất cả → │
-│ · 🏸 Đánh cầu CN — Player · 🔴      │  compact rows, max 4
-│ · ⚽ FC Phượng Hoàng — Host · 🟢    │
+│ ┌──────────────────────────────────┐ │
+│ │┌────────────┐ ┌───────────┐        │ │  compact row (unified SessionCard)
+│ ││ CN 19:00   │ │85.000₫/Ng│  🟢    │ │  time pill + price pill + payment dot
+│ │└────────────┘ └───────────┘        │ │
+│ │ 🏸 Đánh cầu CN · Player · 4/8 Going │ │  title + role badge + going
+│ └──────────────────────────────────┘ │
+│ ┌──────────────────────────────────┐ │
+│ │┌────────────┐ ┌───────────┐        │ │
+│ ││ T7 16:00   │ │50.000₫/Ng│  🟡    │ │
+│ │└────────────┘ └───────────┘        │ │
+│ │ ⚽ FC Phượng Hoàng · Host · 6/10   │ │
+│ └──────────────────────────────────┘ │
 │ KÈO GỢI Ý (marketplace)             │
-│ · 🏸 Cầu lông Q7 · T5 · 120k · 5 chỗ trống │  public whitelist: scalar price + slots_open, no denominator
+│ · 🏸 Cầu lông Q7 · T5 · 120k · 5 chỗ trống │  public whitelist: scalar price + slots_open
 └──────────────────────────────────────┘
 ```
+
+**Hero card component (unified `SessionCard` variant `hero`):**
+
+| Field | Data source | Ghi chú |
+|-------|-------------|---------|
+| Session cover | `cover_image_url` | Optional bg image cho hero card; fallback: sport gradient (theme §7) |
+| Time pill | `starts_at` + `ends_at` | Green pill: format `HH:mm – HH:mm` |
+| Price pill | `price_per_slot` | Grey pill: VND + "/Ng"; "Miễn phí" if 0 |
+| Host avatar | Person avatar (authenticated) | Circular 32px; fallback initials |
+| Going count | `active_count` + `slots_max` | Format `N/M Going` |
+| Urgency badge | `slots_open` | "Chỉ N chỗ!" (đỏ) khi `slots_open ≤ 3` và `> 0`. Ẩn khi `> 3` |
+| Sport icon + title | `sport_id` + `title` | Sport taxonomy icon |
+| Club name | `club_display_name` | Tenant name |
+| Venue | `venue_name` | Private (authenticated) — KHÔNG public |
+| Skill level tag | `skill_level` | Green chip pill; range nếu min+max: "Trung bình – Khá" |
+| Role badge | Host/Player | Host ưu tiên (EC #3) |
+| Payment dot | Canonical `getSelfPaymentStatus` | 🔴🟡🟢 mapping |
+| Countdown | `starts_at - now` | ⏱️ khi ≤24h; ẩn khi >24h |
+| CTA | Conditional (HOME-OQ-4) | 💳 Thanh toán / 📋 Bảng thu tiền |
+
+**Compact upcoming row component (unified `SessionCard` variant `compact`):**
+
+| Field | Data source | Ghi chú |
+|-------|-------------|---------|
+| Time pill | `starts_at` | Day + time format (compact) |
+| Price pill | `price_per_slot` | VND scalar (compact) |
+| Sport icon + title | `sport_id` + `title` | Inline |
+| Role badge | Host/Player | Inline tag |
+| Going count | `active_count` + `slots_max` | `N/M Going` |
+| Urgency badge | `slots_open` | "Chỉ N chỗ!" (đỏ) khi `≤ 3`; ẩn compact row nếu `> 3` |
+| Skill level tag | `skill_level` | Inline, compact text (single level hoặc range) |
+| Payment dot | Canonical `getSelfPaymentStatus` | 🔴🟡🟢 (right-aligned) |
 
 **Payment status dots (compact rows):**
 
@@ -289,7 +339,9 @@ Phase-2 thêm 💰 Chưa thu (host, cross-club, DD-96 Part B): khi > 0 → đẩ
 - [ ] Hero **CTA "Thanh toán"** (player) / **"Bảng thu tiền"** (host) render đúng điều kiện: có `payAction` + chưa paid + không free. Ẩn khi gated (HOME-OQ-4)
 - [ ] Hero countdown badge hiển thị khi session trong 24h; ẩn khi > 24h
 - [ ] Upcoming: dedupe host/player, sort host-first + time ASC, max 4 + "Tất cả →"
-- [ ] Mỗi session card hiện **role badge** (Host/Player) và **payment dot** (🔴🟡🟢) đúng mapping
+- [ ] Mỗi session card hiện **role badge** (Host/Player), **payment dot** (🔴🟡🟢), **time pill** (green), **price pill**, **going count** (`N/M Going`) đúng mapping
+- [ ] **Hero card:** hiện host avatar (32px, fallback initials) + going count + time/price pills trên gradient. Giữ countdown, CTA gating, theme §7 recipe
+- [ ] **Compact upcoming rows:** hiện time pill + price pill + role badge + going count + payment dot — unified `SessionCard` variant `compact`
 - [ ] Suggested chỉ hiện field whitelist; test bất biến HR2 pass
 - [ ] SSE cập nhật chips/rows khi settle/cancel; offline banner + chặn money action
 - [ ] Không cache person-self Home sections; offline chỉ được giữ public suggested projection theo Marketplace cache policy
@@ -337,6 +389,8 @@ Phase-2 thêm 💰 Chưa thu (host, cross-club, DD-96 Part B): khi > 0 → đẩ
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-12 | v0.15 | **SessionCard upgrade (Playo reference #2):** Hero card: thêm `cover_image_url` (optional bg), urgency badge ("Chỉ N chỗ!" đỏ khi ≤3 slots), skill level tag (green chip, range). Compact rows: thêm urgency badge + skill level. Tổng 5 fields mới (3 hero + 2 compact). Không đổi DD-79 composition-only boundary. |
+| 2026-08-12 | v0.14 | **Unified SessionCard — Hero + Compact update (Playo-inspired):** (1) **Hero card redesign:** thêm time pill (green) + price pill + host avatar (32px) + `N/M Going` count + venue (private) + sport icon. Giữ gradient/glow theme §7, countdown, CTA gating (HOME-OQ-4). Thêm hero card component table (11 fields). (2) **Compact upcoming rows redesign:** thêm time pill + price pill + going count. Thêm compact row component table (6 fields). Tất cả dùng unified `SessionCard` variant (`hero`, `compact`). 2 AC bullets update (hero + compact). Không đổi data boundary (composition-only DD-79) — fields lấy từ person-self contract có sẵn. |
 | 2026-08-10 | v0.13 | **Club tab → feature riêng:** Tách Club tab thành `feature_club.md` độc lập. Home chỉ cross-reference. Pin post và News/Announcement chuyển sang `feature_club.md`. |
 | 2026-08-08 | v0.12 | **Port Sporta UX decisions:** (1) Chips chuyển từ cố định 2 → **adaptive selection** (pick top 2 from pool by priority) — phase-1 pool [💸 Còn nợ, 🔥 Streak, 📅 Kèo tuần], phase-2 thêm [💰 Chưa thu] sau B1–B4. (2) **Hero CTA** "Thanh toán" (player) / "Bảng thu tiền" (host) — conditional, gated bởi HOME-OQ-4 (`payAction` trong upcoming DTO). (3) **Streak un-defer** (HOME-OQ-3) — đếm ngày liên tiếp, vào pool phase-1 priority #2. (4) HOME-OQ-1 reopen theo DD-96 Part B. Thêm HOME-UC-4b/UC-5, chip selection matrix, hero CTA spec table, 1 analytics event (`hero_pay_tapped`). Không đổi composition-only boundary DD-79. |
 | 2026-08-08 | v0.11 | Port Sporta ưu điểm: thêm component spec tables (payment dots, role badges, countdown), per-state ASCII layouts (Empty/Onboarding/Loading), 6 analytics events mới (`view_all`, `suggested_view_more`, `onboarding_completed`, `empty_explore`, `notification`, `pull_to_refresh`), AC restructure thành Functional/States/UI/Analytics sub-sections. Không đổi boundary/contract. |

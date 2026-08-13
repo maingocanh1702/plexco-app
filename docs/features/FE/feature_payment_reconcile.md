@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P3
 > **Track:** 💰 Payment Reconciliation
-> **Version:** 1.12 · 2026-08-10
+> **Version:** 1.13 · 2026-08-12
 > **Status:** Reviewed; mirror DD-32/DD-91 `DECISION_FINAL` + regional research boundary. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`; B1/runtime slices vẫn cần strict `CODE_READY`
 > **Implementation:** In progress — core matching/payments-logic + ledger integrity migrations `0019`/`0020` đã có; wiring webhook→settle→notify, `remainingAmount`, `getSelfPaymentStatus` và chat `/pay` chưa · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P0–P1 foundation + P2 tenant routing
@@ -165,6 +165,14 @@ Host mở roster/danh sách nợ (bot Zalo / Messenger / web)
 | 24 | Booking pay-now trả dư | Tạo player + charge + allocation đúng amount due; phần dư của bank transaction vẫn unmatched |
 | 25 | Payment ingest sau hold expiry/booking đã đóng | Không revive booking; giữ evidence và đưa manual review/refund-or-credit flow |
 | 26 | Screenshot hoặc host manual mark-paid cho intent chưa link | Không được coi là proof để instant-confirm; yêu cầu exact provider evidence hoặc link Account |
+| 27 | Buddy: Player trả hộ chính mình | ❌ Reject `BUDDY_SELF_PAY` — payer ≠ recipient; UI ẩn nút "Trả hộ" cho chính mình |
+| 28 | Buddy: Player trả hộ cho người đã `paid` | ❌ Reject `BUDDY_CHARGE_ALREADY_PAID` — charge status phải `open` hoặc `partial` |
+| 29 | Buddy: Duplicate pending request cùng payer→charge | ❌ Reject `BUDDY_REQUEST_DUPLICATE` — UNIQUE constraint `(charge_id, payer_person_id) WHERE status='pending'` |
+| 30 | Buddy: Concurrent confirm + cancel request | Lock request row; first writer wins. Loser nhận 409 Conflict |
+| 31 | Buddy: Charge status thay đổi giữa request và confirm | Host confirm re-validate charge status. Nếu charge đã `paid` (host mark-paid song song) → reject confirm, request auto-cancel |
+| 32 | Buddy: Payer/recipient rời session giữa chừng | Request vẫn valid nếu charge tồn tại. Player `left` vẫn có charge (theo refund policy CLB). Không auto-cancel request |
+| 33 | Buddy: Host confirm nhưng over-allocate | Lock charge; `amount` = `min(request.amount, charge.remaining)`. Nếu remaining = 0 → reject |
+| 34 | Buddy: Reversal sau buddy payment | Host tạo reversal như mọi allocation. Reversal ảnh hưởng charge recipient, không ảnh hưởng payer ngoài audit trail |
 
 ---
 
@@ -177,12 +185,14 @@ Host mở roster/danh sách nợ (bot Zalo / Messenger / web)
 | `payment_allocations` | Ledger phân bổ/reversal | Signed amount; optional bank transaction cho cash/waiver; immutable |
 | `bank_accounts` | Tài khoản nhận + webhook credentials per tenant | UNIQUE webhook token; secret encrypted |
 | `outbox_events` | Phát thay đổi ledger | Cùng transaction với allocation/status change |
+| `buddy_payment_requests` | Yêu cầu trả hộ player→player cùng session | UNIQUE `(charge_id, payer_person_id) WHERE status='pending'`; status pending/confirmed/rejected/cancelled |
 
 ### Ledger rules
 
 - Bank allocation (auto-reconcile, `host_pro`): `bank_transaction_id` bắt buộc; source `auto|manual`.
 - Mark-paid thủ công (mọi tier): tiền mặt → `cash`; CK đã ingest → `manual` + real `bank_transactions`. CK chưa ingest chỉ được ghi sau B1 dedicated source migration (`bank_transaction_id=NULL`, actor + opaque evidence bắt buộc); trước đó reject. **Không synthetic bank transaction** và không map sai `cash|manual`.
 - Waiver: không có bank transaction; source `waiver`, actor admin bắt buộc.
+- **Buddy:** player A trả hộ player B cùng session — `source='buddy'`, `bank_transaction_id=NULL`, `created_by=payer.person_id`. Amount = full remaining charge recipient (phase-1, không partial). Chỉ tạo khi host confirm `buddy_payment_request`.
 - Reversal: amount âm, `reverses_allocation_id` bắt buộc; không reversal quá phần còn hiệu lực.
 - DD-49 correction: price/obligation delta là append-only signed obligation entry trong canonical charge aggregate; allocation reversal chỉ đảo tiền đã nhận. Một helper tính effective due/balance cho mọi consumer. Tên bảng/API chờ design-probe live UNIQUE charge/player/session; không giả định row charge thứ hai.
 - DD-91 read boundary: canonical helper/service nói trên là owner của person-self projection; Chat/Home/Notification không thêm snapshot/formula money riêng.
@@ -386,6 +396,102 @@ Host mở roster (session detail / danh sách nợ)
 | Error | Error banner + retry |
 | Empty | Icon 📊 + "Chưa có giao dịch nào" + subtitle "Giao dịch sẽ xuất hiện khi player thanh toán" |
 
+### Buddy Payment — Player picker (Web P4 + Bot)
+
+**Purpose:** Player chọn player cùng session còn nợ để trả hộ (toàn bộ charge).
+
+**Flow tree:**
+
+```
+Player mở session detail → roster
+  │
+  ├→ Nhấn "Trả hộ bạn" (CTA chỉ hiện khi có ≥1 player khác còn nợ)
+  │
+  ├→ Hiện danh sách player còn nợ (open/partial):
+  │     ┌────────────────────────────────────────┐
+  │     │ 🤝 Trả hộ bạn — Kèo Cầu lông T5       │
+  │     │                                        │
+  │     │  (●) Nguyễn Văn B     75,000₫ còn nợ  │
+  │     │  (○) Trần Thị C       50,000₫ còn nợ  │
+  │     │                                        │
+  │     │  ⚠️ Bạn sẽ thanh toán thay. Host sẽ    │
+  │     │  xác nhận để hoàn tất.                  │
+  │     │                                        │
+  │     │  [Gửi yêu cầu trả hộ]    [Huỷ]        │
+  │     └────────────────────────────────────────┘
+  │
+  ├→ Chọn 1 player → CONFIRM
+  │     ├→ Success → "✅ Đã gửi yêu cầu. Chờ host xác nhận"
+  │     ├→ BUDDY_CHARGE_ALREADY_PAID → "Player này đã thanh toán rồi"
+  │     ├→ BUDDY_REQUEST_DUPLICATE → "Bạn đã gửi yêu cầu cho player này rồi"
+  │     └→ Error → Toast + retry
+  │
+  └→ Pending state hiện trên roster:
+        "[B] — Chờ xác nhận trả hộ bởi [A]"
+```
+
+**Bot layout:**
+
+```
+🤝 Trả hộ bạn — Kèo Cầu lông T5
+
+Chọn player bạn muốn trả hộ:
+
+1️⃣ Nguyễn Văn B · 75,000₫
+2️⃣ Trần Thị C · 50,000₫
+
+⚠️ Host sẽ xác nhận để hoàn tất.
+[1] [2] [Huỷ]
+```
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | "Đang kiểm tra..." |
+| Ready | Player list + amount + confirm |
+| Error | Toast: SELF_PAY / ALREADY_PAID / DUPLICATE / generic |
+| Empty | "Không có player nào còn nợ trong kèo này" |
+
+### Buddy Payment — Host confirm/reject (Web P4)
+
+**Purpose:** Host xem danh sách buddy payment requests pending và confirm/reject.
+
+**Layout (desktop):**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Yêu cầu trả hộ (2 pending)                              │
+├──────────────────────────────────────────────────────────┤
+│ ┌─ Request #1 ──────────────────────────────────────┐   │
+│ │ 🤝 Nguyễn Văn A muốn trả hộ Trần Thị B           │   │
+│ │ Kèo: 🏸 Cầu lông chiều T5 · 09/08                │   │
+│ │ Số tiền: 75,000₫                                  │   │
+│ │ Gửi lúc: 09/08 14:30                              │   │
+│ │                                                    │   │
+│ │ [✅ Xác nhận]  [❌ Từ chối]                        │   │
+│ ├────────────────────────────────────────────────────┤   │
+│ │ 🤝 Lê Văn D muốn trả hộ Phạm E                   │   │
+│ │ Kèo: 🏸 Cầu lông chiều T5 · 09/08                │   │
+│ │ Số tiền: 75,000₫                                  │   │
+│ │ Gửi lúc: 09/08 15:00                              │   │
+│ │                                                    │   │
+│ │ [✅ Xác nhận]  [❌ Từ chối]                        │   │
+│ └────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Reject flow:** Host nhấn "Từ chối" → modal nhập lý do (optional) → CONFIRM → request → `rejected`.
+
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | Skeleton list (2 request blocks) |
+| Ready | Request list + Confirm/Reject CTA |
+| Error | Conflict → reload; network → retry banner |
+| Empty | Icon 🎉 + "Không có yêu cầu trả hộ nào" |
+
 ### In-app Chat `/pay` — Person-self (DD-91 target)
 
 **Purpose:** Player xem trạng thái thanh toán cá nhân từ canonical `getSelfPaymentStatus`.
@@ -438,6 +544,9 @@ Còn lại:   75,000₫
 | Web P4 | Unmatched view (`host_pro`) | ✅ Skeleton list | ✅ Transaction+assign | ✅ Retry banner | ✅ "Không có CK chưa khớp" |
 | Web P4 | Ledger view | ✅ Skeleton table | ✅ Tabbed ledger | ✅ Retry banner | ✅ "Chưa có giao dịch" |
 | Web P4 | Cash confirmation | ✅ Validating | ✅ Amount+confirm | ✅ Duplicate notice | ⚪ N/A |
+| Web P4 | Buddy pay — Player picker | ✅ Loading roster | ✅ Roster + "Trả hộ" CTA | ✅ Toast: SELF_PAY / ALREADY_PAID / DUPLICATE | ✅ "Không có player còn nợ" |
+| Web P4 | Buddy pay — Host confirm | ✅ Loading requests | ✅ Request list + Confirm/Reject | ✅ Conflict reload | ✅ "Không có yêu cầu trả hộ" |
+| Bot | Buddy pay — Player request | ✅ "Đang kiểm tra..." | ✅ Player list + amount + confirm | ✅ SELF_PAY / ALREADY_PAID | ✅ "Không có player còn nợ" |
 
 P2/P3 bắt buộc host flow qua **bot Zalo + web** (mark-paid thủ công mọi tier). Auto-reconcile webhook (`host_pro`) ở P3. Web ledger và realtime projection ở P4; notification đa kênh đầy đủ ở P4.5–P4.7 (Zalo/Messenger). *(Telegram đã loại — DD-37.)*
 
@@ -452,6 +561,9 @@ P2/P3 bắt buộc host flow qua **bot Zalo + web** (mark-paid thủ công mọi
 | `payment_allocation_created` | Auto/manual/cash allocation | allocation_id, source, actor_type, amount |
 | `payment_allocation_reversed` | Reversal | allocation_id, reversal_id, actor_id, reason_code |
 | `payment_charge_settled` | Charge paid | charge_id, settlement_sources |
+| `buddy_payment_requested` | Player tạo request trả hộ | request_id, session_id, payer_person_id (hashed), amount |
+| `buddy_payment_confirmed` | Host confirm buddy payment | request_id, allocation_id, confirmed_by (hashed) |
+| `buddy_payment_rejected` | Host reject buddy payment | request_id, reason_code |
 
 Không log raw bank content, account number, display name, secret hoặc provider payload vào analytics.
 
@@ -484,6 +596,16 @@ Không log raw bank content, account number, display name, secret hoặc provide
 - [ ] Booking pay-now chỉ xuất hiện khi entitlement + provider/bank/market/currency/consent availability đều proven; unknown/false offer link/web, không nhận screenshot/manual attest làm proof.
 - [ ] Exact/overpayment trước expiry gọi một atomic funnel finalizer; exact tạo một booking/charge/allocation, overpay giữ remainder unmatched, underpay/late/wrong-reference không active.
 - [ ] Giao dịch mang exact channel-booking reference không được generic matcher claim; duplicate/retry chỉ có một terminal booking và allocation.
+- [ ] **Buddy payment:** Player chỉ trả hộ player khác **cùng session** có charge `open|partial`; không self-pay.
+- [ ] Buddy request tạo `buddy_payment_requests` (status=`pending`); notify recipient.
+- [ ] Host confirm → INSERT `payment_allocations` (`source='buddy'`, `created_by=payer.person_id`, amount = charge remaining) → cập nhật charge status → notify cả payer + recipient.
+- [ ] Host reject → request `rejected` + notify payer; charge không thay đổi.
+- [ ] Duplicate pending request cùng (charge, payer) bị reject `BUDDY_REQUEST_DUPLICATE`.
+- [ ] Concurrent confirm: lock request + charge; no over-allocate.
+- [ ] Charge đã paid khi host confirm → reject confirm, auto-cancel request.
+- [ ] Buddy allocation reversible giống mọi allocation khác.
+- [ ] Notification payer: "Thanh toán thành công session [X]"; notification recipient: "Thanh toán thành công session [X], [payer_name] đã thanh toán cho bạn".
+- [ ] `getSelfPaymentStatus` phản ánh đúng buddy allocation (cùng truth, không formula riêng).
 
 ---
 
@@ -500,6 +622,7 @@ Không log raw bank content, account number, display name, secret hoặc provide
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-12 | v1.13 | **Pay-for-Buddy:** Thêm player-to-player buddy payment (Player request → Host confirm → Allocation `source='buddy'`). 3 use cases (PAY-UC-19/20/21), 8 edge cases (#27–34), entity `buddy_payment_requests`, ledger rule `source='buddy'`, 4 screen rows (player picker, host confirm, bot request), 3 analytics events, 11 acceptance criteria. Phase-1: full charge only (không partial), cùng session only. Notification: payer + recipient + host. |
 | 2026-08-10 | v1.12 | **A-grade upgrade:** thêm Entry points table (8 entries); bump version. Không đổi contract/ledger model. |
 | 2026-07-28 | v1.10 | Reconcile immutable authority `90d292d` and primary plan v1.8 `PLAN_READY`; retain B1/per-slice `CODE_READY`, regional availability and no-runtime boundaries. |
 | 2026-07-28 | v1.9 | Mirror DD-32 Option D: unlinked paid-session booking có 15-minute pay-now hold khi capability proven; only durable exact full settlement gọi shared finalizer. Pin exact/over/under/late behavior, reserve booking references khỏi generic matcher và cấm screenshot/manual attest bypass Account link. No runtime claim. |

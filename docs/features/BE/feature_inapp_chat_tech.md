@@ -1,7 +1,7 @@
-# Feature: In-app Chat (club-wide + 1-1) — Backend Tech Spec
+# Feature: In-app Chat (club-wide + 1-1 + Group) — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.25 · 2026-08-10
+> **Version:** 0.27 · 2026-08-12
 > **Status:** ✅ Reviewed contract — DD-38/DD-55/DD-86/DD-91/DD-92/DD-93/DD-94/DD-95 ratified; pending migration
 > **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_inapp_chat.md` *(Reviewed)*
@@ -29,10 +29,16 @@ Surface (web/app Plexco) → SendMessageCommand(client_msg_id, channel, actor)
 Chat **chỉ sống trong Plexco** (web + app surface). **KHÔNG bridge** ra group Zalo/Messenger ở phase-1 (CO-7 BRD / DD-38) — không có projector kênh ngoài cho chat. Canonical store là nguồn sự thật; SSE chỉ là surface realtime (reuse DD-07 `LISTEN/NOTIFY`, giống sync engine `web_realtime`).
 
 **Design decisions:**
-- Hai loại kênh: **`club`** (chat toàn CLB — member trong 1 tenant, RLS tenant-private) và **`dm`** (1-1 person ↔ person, person-self path).
+- Ba loại kênh: **`club`** (chat toàn CLB — member trong 1 tenant, RLS tenant-private), **`dm`** (1-1 person ↔ person, person-self path), và **`group`** (nhóm nhiều người 3–50, global hoặc tenant-scoped, membership-gated RLS).
+- **Group chat** hỗ trợ hai scope: **global** (`tenant_id=NULL`) cho bạn bè ngoài CLB và **tenant-scoped** (`tenant_id NOT NULL`) cho subset ad-hoc members trong CLB.
+- **Follow-guard** cho add member vào group: chỉ add được nếu target đã follow actor (DD-47 `person_follows.status='accepted'`). Block boundary (DD-55) cũng chặn add.
+- **Multi-pin:** tối đa 5 pinned messages/channel (áp dụng cho cả group, club, DM).
+- **Poll/Vote:** Telegram-style — single/multi choice, anonymous, quiz mode, deadline, allow add options. Poll gắn 1:1 với message.
+- **Group admin:** creator tự động admin đầu; admin đặt/bỏ admin, kick, rename, đổi avatar.
 - Trợ lý AI (DD-19 pha B, P7) **tái dùng** chính bộ bảng `chat_*` — phát ngôn với `author_type='assistant'` (DD-20), **không** tạo Person/ChannelIdentity mới. Chat cơ bản (DD-38) dựng hạ tầng sớm ở P4; trợ lý plug vào sau.
 - Idempotent theo `client_msg_id` (chống double khi retry/mạng chờn).
 - Anti-spam: rate-limit per (person, channel) + cap kích thước message.
+- **Structured embed:** message có thể kèm `embed_type='session'` + `embed_ref_id`. Server resolve session, validate actor visibility, snapshot BL-DSC-1 whitelist fields vào `embed_snapshot` (JSONB). Client KHÔNG cung cấp snapshot. Extensible to `activity`, `tournament`, `club` sau.
 
 ### Entry points
 
@@ -50,6 +56,20 @@ Chat **chỉ sống trong Plexco** (web + app surface). **KHÔNG bridge** ra gro
 | `POST /api/chat/channels/:id/moderate` | Admin (`chat.message.moderate`) | Soft-hide/restore + timed mute |
 | `POST /api/chat/media/upload` | Player | Private media upload with scan/moderation |
 | SSE `chat:channel:<id>` topic | System | Realtime fan-out via `LISTEN/NOTIFY` |
+| `POST /api/chat/groups` | Player | Create group chat (global or tenant-scoped) |
+| `POST /api/chat/groups/:id/members` | Group member | Add member (follow-guard DD-47) |
+| `DELETE /api/chat/groups/:id/members/:personId` | Group admin | Kick member |
+| `PATCH /api/chat/groups/:id` | Group admin | Rename / change avatar |
+| `PATCH /api/chat/groups/:id/members/:personId/role` | Group admin | Set/unset admin role |
+| `POST /api/chat/groups/:id/leave` | Group member | Leave group (last-admin guard) |
+| `POST /api/chat/channels/:id/pins` | Member | Pin message (max 5/channel) |
+| `DELETE /api/chat/channels/:id/pins/:messageId` | Member | Unpin message |
+| `POST /api/chat/channels/:id/polls` | Member | Create poll (Telegram-style) |
+| `POST /api/chat/polls/:id/vote` | Member | Cast/change vote |
+| `POST /api/chat/polls/:id/close` | Creator/Admin | Close poll early |
+| `POST /api/chat/polls/:id/options` | Member (if allowed) | Add option to poll |
+| `PUT /api/chat/channels/:id/nicknames/:personId` | Member | Set custom nickname (viewer-local) |
+| `DELETE /api/chat/channels/:id/nicknames/:personId` | Member | Remove custom nickname |
 - **DD-55 hard gate:** open DM remains disabled until block, report, per-sender/per-target throttles, and abuse audit all pass. Host/support/tenant-admin roles never gain DM read access.
 - **DD-55 media:** private object storage + short-lived signed access + content-derived MIME/type/size/quota checks + malware scan + moderation + deletion/orphan lifecycle. A message can attach only an actor-owned object in `ready` state.
 - **DD-92 conversation floor:** same-channel authorized reply; immutable structured mentions; one active Unicode reaction/person/message from exact `👍|❤️|😂|😮|😢|🙏`; own human body edit `<15m` and at most five revisions; author soft-delete anytime to an irreversible shared tombstone; current-visible authorized search is a required pre-beta slice.
@@ -78,7 +98,7 @@ One canonical DM safety decision owns enablement, pair block state, per-sender/p
 
 ### DD-86 final multi-channel contract
 
-- Giữ `kind IN ('club','dm')`; bỏ one-channel-per-tenant index. Club thêm `title`, `sort_order`, `post_policy`, `is_default`, `assistant_enabled`, `created_by_membership_id`, `created_by_person_id`; DM CHECK bắt `tenant_id` và mọi club-only/creator field là `NULL`.
+- Giữ `kind IN ('club','dm','group')`; bỏ one-channel-per-tenant index. Club thêm `title`, `sort_order`, `post_policy`, `is_default`, `assistant_enabled`, `created_by_membership_id`, `created_by_person_id`; DM CHECK bắt `tenant_id` và mọi club-only/creator field là `NULL`. Group thêm `group_avatar_url`, `max_members` (default 50), `created_by_person_id` NOT NULL; `dm_key` NULL, `tenant_id` NULL (global) hoặc NOT NULL (tenant-scoped).
 - Creator dùng composite FK `(created_by_membership_id, created_by_person_id, tenant_id) → memberships(id, person_id, tenant_id)`; không dùng một membership id cho FK ba cột. Cặp `NULL/NULL` chỉ hợp lệ trong exact system-bootstrap command, không phải client/admin escape hatch.
 - Partial unique `(tenant_id) WHERE kind='club' AND is_default AND archived_at IS NULL` chỉ chặn **at-most-one**. Create/set-default/archive chạy dưới tenant parent lock và deferred assertion để bảo đảm **exactly-one active default**; archive default bắt buộc replacement cùng transaction.
 - Tạo club channel và activation membership đều upsert đủ membership × active-channel trong cùng transaction, retry-safe; lỗi giữa chừng rollback. `UNIQUE(channel_id, membership_id)`/equivalent là replay fence.
@@ -147,7 +167,7 @@ ALTER TABLE memberships
 CREATE TABLE chat_channels (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id uuid REFERENCES tenants(id),           -- NOT NULL cho 'club'; NULL cho 'dm'
-  kind text NOT NULL CHECK (kind IN ('club','dm')),
+  kind text NOT NULL CHECK (kind IN ('club','dm','group')),
   dm_key text,                                     -- 'least(a,b):greatest(a,b)' của 2 person cho 'dm'
   title text,
   is_default boolean,
@@ -157,9 +177,11 @@ CREATE TABLE chat_channels (
   creation_origin text,
   post_policy text,
   assistant_enabled boolean,
-  pinned_message_id uuid,                          -- 1 pinned post/channel; NULL = no pin; club only
+  pinned_message_id uuid,                          -- 1 pinned post/channel; NULL = no pin; club only (legacy, xem chat_pinned_messages cho multi-pin)
   pinned_at timestamptz,                           -- khi nào pin; NULL nếu chưa pin
   archived_at timestamptz,                          -- soft-close DM (thay cho xoá member)
+  group_avatar_url text,                           -- group only: avatar URL (nullable)
+  max_members smallint DEFAULT 50,                  -- group only: giới hạn member (default 50)
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (
     (kind = 'club'
@@ -167,14 +189,26 @@ CREATE TABLE chat_channels (
       AND title IS NOT NULL AND is_default IS NOT NULL AND sort_order IS NOT NULL
       AND creation_origin IN ('actor','system_bootstrap')
       AND post_policy IN ('all_members','admins_only')
-      AND assistant_enabled IS NOT NULL)
+      AND assistant_enabled IS NOT NULL
+      AND group_avatar_url IS NULL)
     OR
     (kind = 'dm'
       AND tenant_id IS NULL AND dm_key IS NOT NULL
       AND title IS NULL AND is_default IS NULL AND sort_order IS NULL
       AND created_by_membership_id IS NULL AND created_by_person_id IS NULL
       AND creation_origin IS NULL
-      AND post_policy IS NULL AND assistant_enabled IS NULL)
+      AND post_policy IS NULL AND assistant_enabled IS NULL
+      AND group_avatar_url IS NULL AND max_members IS NULL)
+    OR
+    (kind = 'group'
+      AND dm_key IS NULL
+      AND title IS NOT NULL
+      AND is_default IS NULL AND sort_order IS NULL
+      AND post_policy IS NULL AND assistant_enabled IS NULL
+      AND created_by_person_id IS NOT NULL
+      AND created_by_membership_id IS NULL
+      AND creation_origin IS NULL
+      AND max_members IS NOT NULL AND max_members BETWEEN 3 AND 200)
   ),
   CHECK ((created_by_membership_id IS NULL) = (created_by_person_id IS NULL)),
   CHECK (
@@ -263,7 +297,18 @@ CREATE TABLE chat_messages (
   CHECK (author_type <> 'person' OR author_person_id IS NOT NULL),  -- person ⇒ author_person_id NOT NULL
   CHECK (author_type =  'person' OR author_person_id IS NULL),      -- assistant/system ⇒ author_person_id NULL
   CHECK (author_type = 'person' OR membership_id IS NULL),          -- assistant/system: membership NULL (DD-20)
-  CHECK (author_type <> 'person' OR tenant_id IS NULL OR membership_id IS NOT NULL) -- club person phải có membership
+  CHECK (author_type <> 'person' OR tenant_id IS NULL OR membership_id IS NOT NULL), -- club person phải có membership
+  -- Structured embed (optional): session card, extensible to activity/tournament/club later
+  embed_type text CHECK (embed_type IS NULL OR embed_type IN ('session')),
+  embed_ref_id uuid,                                      -- source entity id (session_id for 'session')
+  embed_snapshot jsonb,                                    -- server-rendered BL-DSC-1 whitelist snapshot at send time
+  CHECK (
+    (embed_type IS NULL AND embed_ref_id IS NULL AND embed_snapshot IS NULL)
+    OR
+    (embed_type IS NOT NULL AND embed_ref_id IS NOT NULL AND embed_snapshot IS NOT NULL)
+  ),
+  -- At least one of body or embed must be present
+  CHECK (length(body) > 0 OR embed_type IS NOT NULL)
 );
 CREATE INDEX idx_chat_messages_channel_time ON chat_messages(channel_id, created_at, id);
 CREATE INDEX idx_chat_messages_search_simple
@@ -414,6 +459,122 @@ CREATE TABLE chat_command_receipts (
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, actor_person_id, command_id)
 );
+
+-- ====== GROUP CHAT + PIN + POLL + NICKNAME (v0.26) ======
+
+-- Multi-pin: tối đa 5 pinned messages per channel (áp dụng cho cả group, club, DM).
+-- Thay thế legacy `chat_channels.pinned_message_id` (single pin, club only) bằng mô hình mở rộng hơn.
+CREATE TABLE chat_pinned_messages (
+  channel_id uuid NOT NULL REFERENCES chat_channels(id),
+  message_id uuid NOT NULL,
+  pinned_by_person_id uuid NOT NULL REFERENCES persons(id),
+  pinned_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (channel_id, message_id),
+  FOREIGN KEY (channel_id, message_id) REFERENCES chat_messages(channel_id, id)
+);
+CREATE INDEX idx_chat_pinned_channel ON chat_pinned_messages(channel_id, pinned_at DESC);
+
+-- Trigger: max 5 pinned per channel (serialize dưới channel lock)
+CREATE FUNCTION chat_pin_limit_guard() RETURNS trigger AS $$
+DECLARE c int; BEGIN
+  -- Lock channel row: serialize concurrent pin attempts
+  PERFORM id FROM chat_channels WHERE id = NEW.channel_id FOR UPDATE;
+  SELECT count(*) INTO c FROM chat_pinned_messages WHERE channel_id = NEW.channel_id;
+  IF c >= 5 THEN RAISE EXCEPTION 'PIN_LIMIT_REACHED: channel % already has 5 pinned messages', NEW.channel_id; END IF;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_chat_pin_limit BEFORE INSERT ON chat_pinned_messages
+  FOR EACH ROW EXECUTE FUNCTION chat_pin_limit_guard();
+
+-- Poll: bình chọn Telegram-style, 1:1 với message
+CREATE TABLE chat_polls (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  channel_id uuid NOT NULL REFERENCES chat_channels(id),
+  message_id uuid NOT NULL,
+  creator_person_id uuid NOT NULL REFERENCES persons(id),
+  question text NOT NULL CHECK (octet_length(question) BETWEEN 1 AND 1000),
+  is_multiple_choice boolean NOT NULL DEFAULT false,
+  is_anonymous boolean NOT NULL DEFAULT false,
+  is_quiz boolean NOT NULL DEFAULT false,
+  correct_option_id uuid,                            -- for quiz mode; set after option creation
+  allow_add_options boolean NOT NULL DEFAULT false,
+  deadline_at timestamptz,                           -- NULL = no deadline
+  closed_at timestamptz,                             -- NULL = open; set khi creator/admin đóng hoặc hết deadline
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (channel_id, message_id) REFERENCES chat_messages(channel_id, id),
+  UNIQUE (channel_id, message_id),
+  CHECK (is_quiz = false OR correct_option_id IS NOT NULL OR closed_at IS NULL),
+  -- quiz + closed => correct_option_id phải set; quiz + open => có thể chưa set (set khi tạo option)
+  CHECK (deadline_at IS NULL OR deadline_at > created_at)
+);
+
+CREATE TABLE chat_poll_options (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  poll_id uuid NOT NULL REFERENCES chat_polls(id) ON DELETE CASCADE,
+  option_text text NOT NULL CHECK (octet_length(option_text) BETWEEN 1 AND 500),
+  added_by_person_id uuid NOT NULL REFERENCES persons(id),
+  sort_order smallint NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (poll_id, sort_order)
+);
+-- Trigger: max 10 options per poll
+CREATE FUNCTION chat_poll_option_limit() RETURNS trigger AS $$
+DECLARE c int; BEGIN
+  SELECT count(*) INTO c FROM chat_poll_options WHERE poll_id = NEW.poll_id;
+  IF c >= 10 THEN RAISE EXCEPTION 'POLL_OPTION_LIMIT: poll % already has 10 options', NEW.poll_id; END IF;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_chat_poll_option_limit BEFORE INSERT ON chat_poll_options
+  FOR EACH ROW EXECUTE FUNCTION chat_poll_option_limit();
+
+CREATE TABLE chat_poll_votes (
+  poll_id uuid NOT NULL REFERENCES chat_polls(id) ON DELETE CASCADE,
+  option_id uuid NOT NULL REFERENCES chat_poll_options(id) ON DELETE CASCADE,
+  person_id uuid NOT NULL REFERENCES persons(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (poll_id, option_id, person_id)
+);
+-- Trigger: single-choice enforce max 1 vote per person per poll
+CREATE FUNCTION chat_poll_single_choice_guard() RETURNS trigger AS $$
+DECLARE is_multi boolean; c int; BEGIN
+  SELECT is_multiple_choice INTO is_multi FROM chat_polls WHERE id = NEW.poll_id;
+  IF NOT is_multi THEN
+    SELECT count(*) INTO c FROM chat_poll_votes WHERE poll_id = NEW.poll_id AND person_id = NEW.person_id;
+    IF c >= 1 THEN RAISE EXCEPTION 'POLL_SINGLE_CHOICE: person % already voted in single-choice poll %', NEW.person_id, NEW.poll_id; END IF;
+  END IF;
+  -- Check poll open
+  IF EXISTS (SELECT 1 FROM chat_polls WHERE id = NEW.poll_id AND (
+    closed_at IS NOT NULL OR (deadline_at IS NOT NULL AND statement_timestamp() > deadline_at)
+  )) THEN
+    RAISE EXCEPTION 'POLL_CLOSED: poll % is closed', NEW.poll_id;
+  END IF;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_chat_poll_single_choice BEFORE INSERT ON chat_poll_votes
+  FOR EACH ROW EXECUTE FUNCTION chat_poll_single_choice_guard();
+
+-- Custom nickname (viewer-local, chỉ mình thấy)
+CREATE TABLE chat_member_nicknames (
+  channel_id uuid NOT NULL REFERENCES chat_channels(id),
+  viewer_person_id uuid NOT NULL REFERENCES persons(id),
+  target_person_id uuid NOT NULL REFERENCES persons(id),
+  nickname text NOT NULL CHECK (octet_length(nickname) BETWEEN 1 AND 100),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (channel_id, viewer_person_id, target_person_id)
+);
+
+-- Group member max guard (serialize dưới channel lock)
+CREATE FUNCTION chat_group_member_limit_guard() RETURNS trigger AS $$
+DECLARE k text; mx smallint; c int; BEGIN
+  SELECT kind, max_members INTO k, mx FROM chat_channels WHERE id = NEW.channel_id FOR UPDATE;
+  IF k = 'group' THEN
+    SELECT count(*) INTO c FROM chat_members WHERE channel_id = NEW.channel_id;
+    IF c >= mx THEN RAISE EXCEPTION 'GROUP_MAX_MEMBERS: group % already has % members (max %)', NEW.channel_id, c, mx; END IF;
+  END IF;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_chat_group_member_limit BEFORE INSERT ON chat_members
+  FOR EACH ROW EXECUTE FUNCTION chat_group_member_limit_guard();
 ```
 
 `chat_channels_default_uq` proves only at-most-one. Tenant-locked create/set-default/archive commands plus a deferred exact-one assertion prove exactly one active default. `create_club_channel` derives `assistant_enabled=true` for `all_members` and `false` for `admins_only`; client input never supplies the creation value. A later setting mutation on either policy requires `chat.channel.manage`; accepting `true` and every Assistant consume re-check every tenant-config/entitlement/provider/privacy gate. “Announcements” is not a special case beyond its `admins_only` default. Mention/reaction/revision/search/read-preference/delivery/moderation/mute/receipt tables receive explicit RLS/grant policy in their owning slices; no runtime role gets direct mutation DML.
@@ -913,6 +1074,12 @@ Stable mechanism IDs `1–47` are catalog identifiers, not execution order; the 
 | 24 | Security | Search across guessed/left/blocked channel or hidden/deleted/revision/requester-only content | Live authz + current-visible filter returns zero unauthorized content and no channel-existence oracle; only canonical generated `simple` vector is queried |
 | 25 | Privacy | Notification/digest worker sees unread message | Durable row/payload stays generic and opaque; no body/title/sender/amount/object snapshot |
 | 26 | Security | Access/preference/device/trust changes before provider write | Immediate re-auth cancels on any false/unknown; read advancement cancels obsolete pending work; sticky `unknown` never creates a second send |
+| 27 | Security | Client gửi forged `embed_snapshot` | ❌ REJECT — API không nhận `embed_snapshot` từ client. Chỉ nhận `embed_type` + `embed_ref_id`; server resolve + snapshot tại insert time |
+| 28 | Security | `embed_ref_id` trỏ tới session mà actor không có quyền xem | 422 `CHAT_EMBED_TARGET_NOT_FOUND` — generic, không tiết lộ session tồn tại hay không. Authz: session phải visible cho actor (same-tenant member hoặc public published) |
+| 29 | Data Integrity | Session bị cancel/private/closed sau khi embed đã gửi | Message + snapshot giữ nguyên trong `chat_messages`. Embed là snapshot tại send time, không live-update. Tap CTA phía client re-check live status |
+| 30 | Privacy | Embed snapshot chứa venue/roster/PII/charge/debt | ❌ NEVER — server snapshot chỉ BL-DSC-1 whitelist: `sport_key`, `title`, `starts_at`, `ends_at`, `area`, `price_amount`, `confirmed_count`, `slots_open`, `club_display_name`, `host_display_name`, `join_policy`, `session_type`, `session_slug`. KHÔNG `tenant_id`, exact venue, roster, charge, membership refs |
+| 31 | Data Integrity | Message có embed_type nhưng không có embed_ref_id (hoặc ngược lại) | DDL CHECK constraint enforce all-NULL or all-NOT-NULL. INSERT reject |
+| 32 | Data Integrity | Message không có body và không có embed | DDL CHECK `length(body) > 0 OR embed_type IS NOT NULL`. Ít nhất một phải có |
 
 ---
 
@@ -954,7 +1121,7 @@ Mechanism slices `1–47` own no HTTP route. Every `A*` adapter is bounded to se
 | GET | /api/chat/channels/:id/member-targets | Current club-channel readability | A6 lists active human `{targetRef,safeLabel}` only; opaque ref is requester+channel-bound and short-lived; no global/fuzzy search, raw UUID or PII |
 | GET | /api/chat/channels/:id/messages | Current channel readability | Lịch sử keyset `(createdAt,id)`; shared tombstone-safe renderer; không lộ revision/moderation detail |
 | GET | /api/chat/search | Authenticated Person | Required pre-beta search; `q` + optional opaque `channelRef`; current-readable/current-visible body only via canonical generated PostgreSQL `simple` vector and live authz |
-| POST | /api/chat/channels/:id/messages | Active channel member | Classifier chạy trước RPC. Shared core alone decides `all_members` vs `admins_only` (`chat.channel.post_restricted`, unknown deny). Normal text may include same-channel `replyToMessageId` + structured mentions; API never accepts author fields/direct INSERT |
+| POST | /api/chat/channels/:id/messages | Active channel member | Classifier chạy trước RPC. Shared core alone decides `all_members` vs `admins_only` (`chat.channel.post_restricted`, unknown deny). Normal text may include same-channel `replyToMessageId` + structured mentions + optional `embedType`/`embedRefId` (server resolves and snapshots). API never accepts author fields/direct INSERT/embed_snapshot |
 | PATCH | /api/chat/channels/:id/messages/:messageId | Own current human message | Body-only edit while DB time is `<15m` and edit count `<5`; atomic restricted revision append; author/channel/reply/attachments/mentions immutable |
 | DELETE | /api/chat/channels/:id/messages/:messageId | Own human message | Anytime irreversible author soft-delete; idempotent shared tombstone; no restore/hard delete |
 | POST | /api/chat/commands/execute | Authenticated Person + current surface access | ASCII case-insensitive exact zero-arg/no-alias registry. All surfaces: `/help|/pay|/me|/myclubs|/discover|/name`; club/bot additionally `/sessions|/waitlist`; unsupported human-DM command and every invalid form reject privately before insert. `/help` is registry-derived post-authz. Sync `private, no-store`; no raw tenant authority/result ref/shared persistence |
@@ -991,6 +1158,58 @@ Mechanism slices `1–47` own no HTTP route. Every `A*` adapter is bounded to se
   "body": "Tối nay 19h sân A nhé",
   "replyToMessageId": null,
   "mentions": [{ "targetKind": "person", "targetRef": "opaque_person_ref" }]
+}
+```
+
+**POST `/api/chat/channels/:id/messages`** (với session embed):
+
+- Request:
+
+```json
+{
+  "clientMsgId": "cmsg_…",
+  "body": "Tham gia kèo này đi!",
+  "embedType": "session",
+  "embedRefId": "<session_uuid>"
+}
+```
+
+> Server resolve `embedRefId` → validate actor visibility → snapshot BL-DSC-1 whitelist → atomic insert message + embed. Client KHÔNG gửi `embedSnapshot`.
+
+- `200` — success (embed included):
+
+```json
+{
+  "data": {
+    "message": {
+      "id": "…",
+      "channelId": "…",
+      "authorType": "person",
+      "body": "Tham gia kèo này đi!",
+      "embed": {
+        "type": "session",
+        "refId": "<session_uuid>",
+        "snapshot": {
+          "sportKey": "badminton",
+          "title": "Kèo chiều thứ 5",
+          "startsAt": "2026-08-14T10:00:00Z",
+          "endsAt": "2026-08-14T12:00:00Z",
+          "area": "Quận 7",
+          "priceAmount": 150000,
+          "confirmedCount": 4,
+          "slotsOpen": 2,
+          "clubDisplayName": "CLB Cầu Lông Q7",
+          "hostDisplayName": "Minh Hoàng",
+          "joinPolicy": "open",
+          "sessionType": "pickup",
+          "sessionSlug": "keo-chieu-thu-5-abc123"
+        }
+      },
+      "createdAt": "…"
+    }
+  },
+  "error": null,
+  "meta": { "requestId": "req_…" }
 }
 ```
 
@@ -1308,6 +1527,39 @@ Khi trợ lý bật: bot-participant phát ngôn trong `chat_channels(kind='club
 | 85 | **Current-channel safe-target disclosure** | Authorized member lists targets; outsider/cross-tenant actor guesses channel; inspect every DTO/cache/log | Only active human members of the already-authorized current club channel return as opaque short-lived `{targetRef,safeLabel}`; zero raw UUID, contact, gender, debt, `pay_code`, PII, global/fuzzy result or membership oracle |
 | 86 | **Safe-target consume-time re-authorization** | Issue valid target ref, then change actor/target membership, tenant/channel binding, block/safety or action capability before mention/mute/start-DM; replay from another actor/channel | Every consumer invokes the same resolver and generically denies before message/moderation/DM/audit/notification mutation when any live guard is false or unknown |
 | 87 | **Mechanism/API ownership fence** | Inspect slices `1–47` and routes `A1–A21`; call each adapter with invalid session/action/DTO/cache case | Mechanism owners expose zero HTTP; each route has exactly one thin adapter, delegates to one canonical owner, and does not re-derive protected state |
+| 88 | **Create group (global)** | Player creates group with title, 2 followers | Group channel `kind='group'`, `tenant_id=NULL`, 3 members (creator + 2), creator is admin |
+| 89 | **Create group (tenant-scoped)** | Player creates group within CLB | Group `tenant_id=NOT NULL`, all members have active club membership |
+| 90 | **Follow-guard reject** | Add member who has NOT followed actor | Reject `FOLLOW_REQUIRED`; member not added |
+| 91 | **Follow-guard with block** | Add member who follows actor but is blocked (DD-55) | Reject `MEMBER_BLOCKED`; block boundary overrides follow |
+| 92 | **Group max member limit** | Add 51st member to group (max 50) | Reject `GROUP_MAX_MEMBERS`; concurrent add serialize under channel lock |
+| 93 | **Concurrent group member add** | Two transactions add members to a group near max | Channel lock serializes; no over-capacity; exactly correct final count |
+| 94 | **Group admin set/unset** | Admin sets another member as admin; unsets admin | Role updated; system message generated |
+| 95 | **Last admin leave guard** | Last admin tries to leave group | Reject `LAST_ADMIN_CANNOT_LEAVE`; must set another admin first |
+| 96 | **Kick member** | Admin kicks a member | Member removed; system message; kicked user cannot send/receive |
+| 97 | **Kick idempotent** | Admin kicks already-removed member | 200 no-op; no duplicate system message |
+| 98 | **Group rename** | Admin renames group | Title updated; system message |
+| 99 | **Group avatar change** | Admin changes avatar | `group_avatar_url` updated; system message |
+| 100 | **Member leave group** | Non-last-admin member leaves | Member removed; system message |
+| 101 | **Pin message** | Member pins own message; admin pins any message | Pinned row created; count ≤ 5 |
+| 102 | **Pin limit reached** | Pin 6th message in channel | Reject `PIN_LIMIT_REACHED` |
+| 103 | **Pin authorization (member)** | Member pins message by someone else | Reject `PIN_NOT_AUTHORIZED` |
+| 104 | **Unpin authorization** | Member unpins own pin; admin unpins any | Own pin removed OK; admin unpin any OK; member unpin other’s pin rejected |
+| 105 | **Create poll** | Member creates poll with question + 3 options | Poll + message created; options stored in sort_order |
+| 106 | **Poll option limit** | Create poll with 11 options; add 11th option later | Reject `POLL_OPTION_LIMIT` |
+| 107 | **Poll single-choice vote** | Vote in single-choice poll; then vote for different option | First vote OK; second vote rejected `POLL_SINGLE_CHOICE` (must change vote explicitly) |
+| 108 | **Poll multi-choice vote** | Vote for multiple options in multi-choice poll | Multiple votes per person accepted |
+| 109 | **Vote on closed poll** | Vote after deadline expired or manual close | Reject `POLL_CLOSED` |
+| 110 | **Close poll early** | Creator/admin closes poll before deadline | `closed_at` set; no new votes accepted |
+| 111 | **Custom nickname** | Set nickname for another member | Nickname visible only to setter; does not affect identity |
+| 112 | **Group RLS (global vs tenant)** | Global group member queries; tenant-scoped group cross-tenant | Global: membership-gated only; tenant: RLS tenant-private + membership |
+| 113 | **Send message with session embed (happy path)** | Active member sends message with `embedType='session'` + valid `embedRefId` | Message created with `embed_type`, `embed_ref_id`, `embed_snapshot` (JSONB with BL-DSC-1 whitelist). Body optional (empty string OK) |
+| 114 | **Embed — session not found** | Send with `embedRefId` pointing to non-existent session | 422 `CHAT_EMBED_TARGET_NOT_FOUND`; no message created |
+| 115 | **Embed — actor has no visibility** | Send with session in a different tenant that actor is not member of (non-public) | 422 `CHAT_EMBED_TARGET_NOT_FOUND`; generic, no existence oracle |
+| 116 | **Embed — forged snapshot rejected** | Client includes `embedSnapshot` field in request body | Server ignores client-supplied `embedSnapshot`; always resolves server-side |
+| 117 | **Embed — snapshot whitelist** | Send with valid session; inspect snapshot JSONB | Snapshot contains ONLY: `sportKey`, `title`, `startsAt`, `endsAt`, `area`, `priceAmount`, `confirmedCount`, `slotsOpen`, `clubDisplayName`, `hostDisplayName`, `joinPolicy`, `sessionType`, `sessionSlug`. NO `tenant_id`, venue, roster, charge |
+| 118 | **Embed — DDL constraint (all-or-nothing)** | Direct INSERT with `embed_type` NOT NULL but `embed_ref_id` NULL | CHECK constraint violation; INSERT rejected |
+| 119 | **Embed — DDL constraint (empty message)** | Direct INSERT with `body=''` AND `embed_type` NULL | CHECK constraint violation (`length(body) > 0 OR embed_type IS NOT NULL`); INSERT rejected |
+| 120 | **Embed idempotent (duplicate client_msg_id)** | Send same `clientMsgId` with embed twice | Second call returns same message (idempotent); no duplicate embed |
 
 ---
 
@@ -1358,6 +1610,8 @@ Catalog IDs are stable identifiers, not execution order. Runtime work follows ex
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-12 | v0.27 | **Share Session in Chat (Structured Embed):** Thêm embed columns vào `chat_messages`: `embed_type CHECK IN ('session')`, `embed_ref_id uuid`, `embed_snapshot jsonb` — tất cả all-NULL hoặc all-NOT-NULL (CHECK constraint). Body cho phép rỗng khi có embed (`CHECK length(body) > 0 OR embed_type IS NOT NULL`). Server resolve session, validate actor visibility, snapshot BL-DSC-1 whitelist fields vào JSONB tại insert time — client KHÔNG cung cấp snapshot. API send message nhận optional `embedType` + `embedRefId`. Thêm 6 BE edge cases (#27–32), 8 tests (#113–120), request/response examples. Extensible to `activity`, `tournament`, `club` sau. |
+| 2026-08-11 | v0.26 | **Group Chat expansion:** Thêm `kind='group'` (global + tenant-scoped, 3–50 members) với follow-guard (DD-47), multi-pin (max 5/channel với trigger guard), advanced poll/vote (Telegram-style: single/multi choice, anonymous, quiz, deadline, allow add options — với triggers cho single-choice guard, option limit, poll-closed guard), group admin management, group settings (mute, leave, custom nickname). Thêm 14 entry points mới, 5 tables (`chat_pinned_messages`, `chat_polls`, `chat_poll_options`, `chat_poll_votes`, `chat_member_nicknames`), 4 triggers + 4 functions, 25 tests mới (#88–#112). |
 | 2026-08-10 | v0.25 | **A-grade upgrade:** thêm Entry points table (12 entries); bump version. Không đổi contract/schema. |
 | 2026-08-10 | v0.24 | **Message Forward:** Thêm forward fields vào `chat_messages`: `forward_from_message_id`, `forward_from_channel_id`, `forward_from_author_name`, `forward_from_channel_name`, `forward_from_created_at`. Forward lưu snapshot attribution gốc để hiển thị mà không cần JOIN realtime. Authz: chỉ forward tin mình có quyền đọc; reject tombstone/hidden. Chỉ tạo message mới trong target channel. |
 | 2026-07-28 | v0.23 | Re-pin primary plan v1.8 `PLAN_READY` tại immutable authority `90d292d`; thay gate “commit pack” đã đóng bằng exact next gate: author slice-1 artifacts + strict `CODE_READY` trước worktree. No runtime/migration change. |

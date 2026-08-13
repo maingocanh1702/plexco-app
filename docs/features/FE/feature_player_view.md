@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.6  
 > **Track:** 👤 Player View  
-> **Version:** 2.10 · 2026-08-10
+> **Version:** 2.11 · 2026-08-12
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3.5 identity · P3 ledger · P4 web auth/magic link · P4 sync realtime  
@@ -66,6 +66,7 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 | PVW-UC-13 | Player | Mở authenticated payment notification detail | Cùng status/remaining amount như `/api/me/charges` và `/pay` tại thời điểm đọc |
 | PVW-UC-14 | Player | Gõ exact `/sessions` hoặc `/waitlist` trong club chat/private Club Bot | Requester-only DTO của chính mình từ canonical person-self read; chỉ bật beta sau current Session packets + production-shaped data E2E |
 | PVW-UC-15 | Player | Xem tổng nợ xuyên CLB (chip "Còn nợ" trên Home) | `getSelfPaymentSummary` trả `totalOutstanding` + `clubCount` (số CLB có outstanding > 0) hoặc proven `known_zero`; tap → outstanding detail liệt kê per-club `items[]` = các kèo chưa trả |
+| PVW-UC-16 | Player | **Trả hộ bạn** — vào session detail, chọn player còn nợ cùng session → gửi buddy payment request | Trả full remaining charge. Hiện danh sách player cùng session có charge `open|partial` (ẩn chính mình). Tạo `buddy_payment_request` (pending). Notify recipient. Trạng thái pending hiện trên roster. Cross-ref: `feature_payment_reconcile.md` PAY-UC-19/20/21 |
 
 ### Edge Cases
 
@@ -90,6 +91,7 @@ Cho verified player xem **chỉ dữ liệu của chính mình**: clubs, upcomin
 | 17 | Enablement | Slice 19 read tests xanh nhưng một Session packet hoặc production-shaped E2E còn thiếu | Giữ `/sessions|/waitlist` beta OFF; không suy full Session authority từ read core |
 | 18 | Money/Data | Cross-club summary: 1 CLB `known_amount`, 1 CLB `unknown` | Summary = `unknown` + retry. ❌ NEVER trả tổng của riêng CLB known — con số đó thấp hơn nợ thật và trông authoritative |
 | 19 | Data Integrity | Person chưa thuộc CLB nào gọi summary | `known_zero` (không phải `unknown`) — không CLB nào là bằng chứng không nợ, khác với không đọc được |
+| 20 | Cross-Feature | Player trả hộ: charge thay đổi giữa request và host confirm | Roster realtime cập nhật pending buddy state; nếu charge paid do song song (mark-paid/auto-reconcile) → auto-cancel buddy request, nút "Trả hộ" biến mất. Không over-allocate |
 
 ---
 
@@ -395,6 +397,7 @@ Player gõ /pay trong human DM
 - [ ] Cross-club `getSelfPaymentSummary` là owner duy nhất của tổng xuyên CLB; không consumer nào cộng lại per-club status. Một CLB `unknown` ⇒ summary `unknown`, không partial sum. `clubCount` chỉ đếm CLB có outstanding > 0. Summary không mang `payAction`.
 - [ ] Slice 19 chỉ đọc baseline `players/memberships/sessions`, không duplicate join/leave/promotion/session business rules và không cần full SessionService để author.
 - [ ] `/sessions|/waitlist` beta chỉ enable khi cả ba strict current-authority packets `svc-session-crud`, `svc-session-join-leave`, `svc-waitlist-promotion-core` và production-shaped data E2E đều pass; tên cơ chế trong analysis cũ không tự là authority.
+- [ ] **Buddy payment:** CTA "Trả hộ bạn" chỉ hiện khi ≥ 1 player khác có charge `open|partial`; ẩn chính mình, ẩn `paid|void`. Pending buddy request hiện trên roster. Auto-update khi charge status thay đổi.
 
 ---
 
@@ -404,6 +407,7 @@ Player gõ /pay trong human DM
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-12 | v2.11 | **Pay-for-Buddy — Player surface:** Thêm PVW-UC-16 (player chọn player cùng session còn nợ → buddy request pending). Edge case #20 (charge thay đổi giữa request và confirm). 1 AC mới (CTA "Trả hộ bạn" visibility + pending state on roster). Cross-ref: `feature_payment_reconcile.md` PAY-UC-19/20/21 + `BE/feature_payment_reconcile_tech.md` §5e. Không đổi domain model/`getSelfPaymentStatus` (buddy allocation chỉ là `source='buddy'` trong canonical ledger). |
 | 2026-08-10 | v2.10 | **A-grade upgrade:** thêm Entry points table (8 entries); bump version. Không đổi contract/domain model. |
 | 2026-08-07 | v2.8 | **DD-96 Part A:** thêm cross-club `getSelfPaymentSummary` làm owner duy nhất của tổng nợ xuyên CLB (đóng gap `feature_home_tech.md:166` — `SelfPaymentStatus` là per-club, Home bị cấm tự cộng). Pin unknown-dominates, `clubCount` = số CLB có outstanding > 0, không `payAction` ở tầng aggregate. Thêm PVW-UC-15, edge #18–19, 1 acceptance. Ghi rõ host receivable ("Chưa thu") **không** thuộc feature này (DD-48; xem DD-96 Part B). Không authorize runtime. |
 | 2026-07-31 | v2.7 | Keep paid/void/left-club ledger history outside current `SelfPaymentStatus`; remove historical acceptance claims until a separate Reviewed DTO/route owns them. |

@@ -1,7 +1,7 @@
 # Feature: Payment Reconciliation — Backend Tech Spec
 
 > **Canonical phase:** P3 (auto-reconcile) · P2 (manual mark-paid)
-> **Version:** 1.14 · 2026-08-10
+> **Version:** 1.15 · 2026-08-12
 > **Status:** Reviewed contract; mirror DD-32/DD-91 `DECISION_FINAL` + regional availability boundary. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`; B1/runtime slices vẫn cần strict `CODE_READY`
 > **Implementation:** In progress — core matching/payments-logic + tenant-integrity migrations `0019`/`0020` đã có; wiring webhook→settle→notify, `remainingAmount`, `getSelfPaymentStatus` và chat `/pay` chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_payment_reconcile.md`
@@ -151,7 +151,7 @@ CREATE TABLE payment_allocations (
   --   DD-40 mark-paid thủ công: tiền mặt → 'cash'; CK đã ingest → 'manual' (khớp bank txn).
   --   Host-attested "đã CK" chưa có bank_transaction = dedicated source migration (B1), never synthetic bank txn
   --   HOẶC mở enum qua migration — KHÔNG dùng 'cash' cho CK, KHÔNG thêm 'bank_transfer'.
-  source text NOT NULL CHECK (source IN ('auto','manual','cash','waiver','reversal')),
+  source text NOT NULL CHECK (source IN ('auto','manual','cash','waiver','reversal','buddy')),
   reverses_allocation_id uuid,
   created_by uuid,
   reason_code text,
@@ -168,12 +168,66 @@ CREATE TABLE payment_allocations (
     (source IN ('auto','manual') AND amount > 0 AND bank_transaction_id IS NOT NULL)
     -- cash/waiver: host-initiated, no bank_transaction row, requires actor
     OR (source IN ('cash','waiver') AND amount > 0 AND bank_transaction_id IS NULL AND created_by IS NOT NULL)
+    -- buddy: player-to-player, no bank_transaction, requires payer actor
+    OR (source = 'buddy' AND amount > 0 AND bank_transaction_id IS NULL AND created_by IS NOT NULL)
     OR (source = 'reversal' AND amount < 0 AND reverses_allocation_id IS NOT NULL)
   )
 );
 ```
 
 All four ledger tables are tenant-scoped with ENABLE + FORCE RLS using `app.tenant_id`. Composite FKs are the database fence; RLS remains defense-in-depth and must not be treated as referential integrity. Aggregate invariants cannot rely on CHECK constraints alone; ledger service locks rows and validates sums transactionally.
+
+### Buddy Payment Requests
+
+```sql
+CREATE TABLE buddy_payment_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL REFERENCES tenants(id),
+  session_id uuid NOT NULL,
+  charge_id uuid NOT NULL,
+  payer_person_id uuid NOT NULL REFERENCES persons(id),
+  payer_player_id uuid NOT NULL,
+  recipient_person_id uuid NOT NULL REFERENCES persons(id),
+  recipient_player_id uuid NOT NULL,
+  amount integer NOT NULL CHECK (amount > 0),
+  status text NOT NULL CHECK (status IN ('pending','confirmed','rejected','cancelled')),
+  confirmed_by uuid,             -- host/admin person_id who confirmed
+  confirmed_at timestamptz,
+  rejected_reason text,
+  allocation_id uuid,            -- links to the resulting payment_allocation
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (id, tenant_id),
+  FOREIGN KEY (session_id, tenant_id) REFERENCES sessions(id, tenant_id),
+  FOREIGN KEY (charge_id, tenant_id) REFERENCES charges(id, tenant_id),
+  FOREIGN KEY (payer_player_id, tenant_id, session_id)
+    REFERENCES players(id, tenant_id, session_id),
+  FOREIGN KEY (recipient_player_id, tenant_id, session_id)
+    REFERENCES players(id, tenant_id, session_id),
+  FOREIGN KEY (allocation_id, tenant_id, charge_id)
+    REFERENCES payment_allocations(id, tenant_id, charge_id),
+  -- Prevent duplicate pending requests for same payer→charge
+  CHECK (payer_person_id <> recipient_person_id),
+  CHECK (
+    (status = 'pending'   AND confirmed_by IS NULL AND confirmed_at IS NULL AND allocation_id IS NULL)
+    OR
+    (status = 'confirmed' AND confirmed_by IS NOT NULL AND confirmed_at IS NOT NULL AND allocation_id IS NOT NULL)
+    OR
+    (status = 'rejected'  AND confirmed_by IS NOT NULL AND confirmed_at IS NOT NULL AND allocation_id IS NULL)
+    OR
+    (status = 'cancelled' AND allocation_id IS NULL)
+  )
+);
+CREATE UNIQUE INDEX idx_buddy_request_pending_unique
+  ON buddy_payment_requests(charge_id, payer_person_id)
+  WHERE status = 'pending';
+CREATE INDEX idx_buddy_request_tenant_session
+  ON buddy_payment_requests(tenant_id, session_id, status);
+```
+
+Table is tenant-scoped with ENABLE + FORCE RLS using `app.tenant_id`. Partial unique index ensures one pending request per (charge, payer). Status CHECK constraint enforces state consistency (confirmed must have actor + allocation; pending must have none).
+
+Recommended indexes: pending requests by tenant/session (host confirm queue), requests by charge (duplicate check).
 
 Recommended indexes: pending/unmatched transaction by tenant/received time, open charges by tenant/membership/session, allocations by transaction and charge, partial/paid status.
 
@@ -541,6 +595,63 @@ Screenshot, QR display, “Tôi đã thanh toán” and host manual mark-paid ar
 
 ---
 
+## 5e. Buddy payment (Player request → Host confirm)
+
+Player A (active in session) requests to pay for Player B (active in same session, charge `open|partial`). Host confirms → allocation created.
+
+### Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: Player creates request
+    pending --> confirmed: Host confirms
+    pending --> rejected: Host rejects
+    pending --> cancelled: Payer cancels / charge becomes paid by other means
+    confirmed --> [*]
+    rejected --> [*]
+    cancelled --> [*]
+```
+
+### Validation (request creation)
+
+1. `payer_person_id ≠ recipient_person_id` — DDL CHECK.
+2. Both payer and recipient are active players in the same session.
+3. Recipient’s charge status is `open` or `partial` — reject if `paid|void`.
+4. No existing pending request for same `(charge_id, payer_person_id)` — partial unique index.
+5. Amount = `charge.amount_due - charge.amount_allocated` (full remaining, phase-1). Partial buddy pay deferred.
+
+### Confirm flow (Host)
+
+1. Lock request row (`SELECT ... FOR UPDATE`).
+2. Re-validate request `status = 'pending'`.
+3. Lock charge row. Re-validate `charge.status IN ('open','partial')` and `remaining > 0`.
+4. Compute `amount = min(request.amount, charge.amount_due - charge.amount_allocated)`. If 0 → reject.
+5. `INSERT payment_allocations` with `source='buddy'`, `created_by=request.payer_person_id`, `amount`.
+6. Update `charges.amount_allocated` += amount, derive new `status` (paid/partial).
+7. Update request: `status='confirmed'`, `confirmed_by`, `confirmed_at`, `allocation_id`.
+8. Emit outbox events:
+   - `buddy_payment.confirmed` → notify payer: "Thanh toán thành công session [session_name]"
+   - `buddy_payment.confirmed` → notify recipient: "Thanh toán thành công session [session_name], [payer_name] đã thanh toán cho bạn"
+   - `buddy_payment.confirmed` → notify host (informational)
+   - If charge fully paid: also emit `payment.settled` as normal.
+
+### Reject flow (Host)
+
+1. Lock request row.
+2. Validate `status = 'pending'`.
+3. Update: `status='rejected'`, `confirmed_by=host`, `confirmed_at=now()`, `rejected_reason`.
+4. Notify payer: "Yêu cầu trả hộ bị từ chối: [reason]".
+
+### Auto-cancel
+
+When charge becomes `paid` or `void` by other means (mark-paid, auto-reconcile, reversal) while a buddy request is still `pending`, the system auto-cancels the request (`status='cancelled'`). No notification needed (charge is already settled).
+
+### Timing
+
+Buddy payment is allowed **trước, trong và sau khi session kết thúc**. No session-status gate — the only gate is charge status (`open|partial`).
+
+---
+
 ## 6. API/command contract
 
 | Interface | Auth | Result |
@@ -551,6 +662,11 @@ Screenshot, QR display, “Tôi đã thanh toán” and host manual mark-paid ar
 | `POST /allocations/:id/reverse` | TenantAdmin + reason | Immutable reversal |
 | `/cash` / cash endpoint | TenantAdmin | Cash allocation against charge (single) |
 | Worker reconcile | System job | Auto allocations or unmatched reason (`host_pro`) |
+| `POST /sessions/:id/buddy-pay` | Authenticated Player (active in session) | Create buddy payment request — validate payer/recipient same session, charge open/partial, no duplicate pending |
+| `POST /buddy-payment-requests/:id/confirm` | TenantAdmin + CSRF/session | Lock request + charge → INSERT allocation `source='buddy'` → update charge → notify payer+recipient+host |
+| `POST /buddy-payment-requests/:id/reject` | TenantAdmin + CSRF/session | Set request rejected + reason → notify payer |
+| `DELETE /buddy-payment-requests/:id` | Payer (own request) | Cancel own pending request |
+| `GET /sessions/:id/buddy-payment-requests` | TenantAdmin | List pending buddy requests for session (host confirm queue) |
 
 Manual request includes command ID and allocation array `{chargeId, amount}` (hoặc `playerIds` cho mark-paid multi-select). Server ignores tenant/actor supplied in body and derives both from auth context.
 
@@ -595,6 +711,9 @@ Manual request includes command ID and allocation array `{chargeId, amount}` (ho
 | Worker reconcile | ✅ | Job unique key per transaction/version; at-least-once + idempotent |
 | Mark-paid / manual allocation | ✅ | `commandId` trong `processed_commands` — retry trả kết quả cũ; mỗi (charge, commandId) đúng 1 allocation |
 | Reversal | ✅ | Unique command + target allocation checks |
+| Buddy payment request | ✅ | Partial unique `(charge_id, payer_person_id) WHERE status='pending'` — duplicate returns existing request |
+| Buddy confirm | ✅ | Request row lock + status check; second confirm returns allocation_id |
+| Buddy reject | ✅ | Request row lock + status check; second reject no-op |
 
 ### STK change endpoints (G1)
 
@@ -616,8 +735,11 @@ Manual request includes command ID and allocation array `{chargeId, amount}` (ho
 | `POST /cash` | 30/min per account |
 | `GET /unmatched` | 60/min per account |
 | `PATCH /bank-accounts/:id/primary` | **5/min per account; max 2 changes / 30 days** |
+| `POST /sessions/:id/buddy-pay` | 10/min per person (prevent spam requests) |
+| `POST /buddy-payment-requests/:id/confirm` | 30/min per account |
+| `POST /buddy-payment-requests/:id/reject` | 30/min per account |
 
-Error codes: `INVALID_WEBHOOK_SECRET`, `ACCOUNT_MISMATCH`, `DUPLICATE_TXN` (200), `UNMATCHED`, `ALLOCATION_EXCEEDS_FUNDS`, `CHARGE_ALREADY_SETTLED`, `REVERSAL_EXCEEDS_EFFECTIVE`, `TENANT_SUSPENDED` for admin actions only, `STK_CHANGE_PENDING` (existing pending not yet applied/cancelled), `STK_CHANGE_RATE_LIMITED` (exceeded 2/30d), `RATE_LIMITED` (429).
+Error codes: `INVALID_WEBHOOK_SECRET`, `ACCOUNT_MISMATCH`, `DUPLICATE_TXN` (200), `UNMATCHED`, `ALLOCATION_EXCEEDS_FUNDS`, `CHARGE_ALREADY_SETTLED`, `REVERSAL_EXCEEDS_EFFECTIVE`, `TENANT_SUSPENDED` for admin actions only, `STK_CHANGE_PENDING` (existing pending not yet applied/cancelled), `STK_CHANGE_RATE_LIMITED` (exceeded 2/30d), `RATE_LIMITED` (429), `BUDDY_SELF_PAY` (payer = recipient), `BUDDY_CHARGE_ALREADY_PAID` (charge paid/void), `BUDDY_REQUEST_DUPLICATE` (pending exists), `BUDDY_REQUEST_NOT_FOUND`, `BUDDY_REQUEST_NOT_PENDING` (already confirmed/rejected/cancelled), `BUDDY_PLAYER_NOT_IN_SESSION` (payer or recipient not active player).
 
 ### DD-49 correction/refund core (storage design-probe required)
 
@@ -699,6 +821,18 @@ Error codes: `INVALID_WEBHOOK_SECRET`, `ACCOUNT_MISMATCH`, `DUPLICATE_TXN` (200)
 - **Reversal scope fixtures:** cross-tenant original and same-tenant/different-charge original both fail at the composite FK; self-reversal fails its CHECK. Valid same-charge reversal still passes service sum/remaining validation.
 - Suspended tenant ingestion remains available.
 - Outbox event emitted exactly once per command and projector can retry.
+- **Buddy payment — happy path:** Player A creates request for Player B same session → `pending`. Host confirms → allocation `source='buddy'` created, charge updated, request `confirmed` with `allocation_id`. Both payer and recipient receive notification.
+- **Buddy payment — self-pay reject:** `payer_person_id = recipient_person_id` → DDL CHECK violation + API 422 `BUDDY_SELF_PAY`.
+- **Buddy payment — charge already paid:** Request for charge `paid|void` → 422 `BUDDY_CHARGE_ALREADY_PAID`.
+- **Buddy payment — duplicate pending:** Second pending request for same `(charge, payer)` → 409 `BUDDY_REQUEST_DUPLICATE`.
+- **Buddy payment — concurrent confirm:** Two admins confirm same request → lock serializes; second gets `BUDDY_REQUEST_NOT_PENDING`.
+- **Buddy payment — charge paid between request and confirm:** Charge becomes `paid` (by mark-paid) while request pending → auto-cancel request; host confirm gets `BUDDY_REQUEST_NOT_PENDING`.
+- **Buddy payment — confirm no over-allocate:** Confirm re-computes `min(request.amount, remaining)`. If remaining = 0 → reject + auto-cancel.
+- **Buddy payment — reject + re-request:** After reject, payer can create a new request for same charge (no pending constraint blocks).
+- **Buddy payment — payer cancel:** Payer cancels own pending request → `cancelled`; no allocation.
+- **Buddy payment — cross-tenant isolation:** Player in tenant A cannot create buddy request for charge in tenant B → RLS reject.
+- **Buddy payment — reversal:** Host reverses buddy allocation → same reversal flow as any allocation; charge status regresses. Request stays `confirmed` (historical).
+- **Buddy payment — status CHECK constraint:** INSERT with `status='confirmed'` but `allocation_id=NULL` → DDL CHECK violation.
 
 ### Load
 
@@ -729,6 +863,7 @@ Metrics: durable ACK latency, reconcile lag, auto-match rate by policy version, 
 - [ ] Tenant isolation and authorization tests pass.
 - [ ] Product acceptance criteria in `../FE/feature_payment_reconcile.md` pass.
 - [ ] DD-32 exact-reference dispatch and funnel-finalizer integration tests pass without lock inversion or generic matcher claim.
+- [ ] **Buddy payment:** request lifecycle (pending→confirmed/rejected/cancelled) + allocation `source='buddy'` + auto-cancel + notification triple (payer/recipient/host) + all buddy tests pass.
 
 ---
 
@@ -736,6 +871,7 @@ Metrics: durable ACK latency, reconcile lag, auto-match rate by policy version, 
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-08-12 | v1.15 | **Pay-for-Buddy:** Thêm `buddy_payment_requests` table (tenant-scoped, partial unique index pending, status CHECK constraint). Thêm `source='buddy'` vào `payment_allocations` CHECK. §5e: lifecycle state machine (pending→confirmed/rejected/cancelled), validation rules, confirm/reject/auto-cancel flows. 5 API endpoints (create, confirm, reject, cancel, list), rate limits, 6 error codes mới. 13 integration tests mới (happy path, self-pay, duplicate, concurrent confirm, cross-tenant, reversal). Notification triple: payer + recipient + host. Phase-1: full charge only (không partial buddy). |
 | 2026-08-10 | v1.14 | **A-grade upgrade:** thêm Entry points table (8 entries); bump version. Không đổi contract/ledger model. |
 | 2026-07-28 | v1.13 | Reconcile immutable authority `90d292d` and primary plan v1.8 `PLAN_READY`; retain B1/per-slice `CODE_READY`, regional availability and no-runtime boundaries. |
 | 2026-07-28 | v1.12 | Mirror DD-32 pay-now boundary: exact booking references bypass generic matcher; durable ingest releases bank locks before a dedicated job enters the funnel Session-first finalizer. Pin exact/over/under/late evidence, single player/charge/allocation and no screenshot/manual-attest bypass. No runtime claim. |

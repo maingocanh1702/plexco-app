@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P3 (nhắc/xác nhận baseline) · P4 (Inbox + Web Push mechanisms 36–47) · P4.5–P4.7 (channel delivery) · P4+ (global plane · announcements) — *cross-cutting cụm 🔔*
 > **Track:** 🔔 Notifications
-> **Version:** 3.12 · 2026-08-10
+> **Version:** 3.13 · 2026-08-12
 > **Status:** ✅ **Reviewed contract** — §A giữ nguyên; §B/C/D theo DD-70/71/72 owner-final; §E offline Chat digest theo DD-94 owner-final. DD-88 chỉ còn proposal cho grouping/`message_request`/scoped-bulk rộng hơn. Target runtime/migrations vẫn pending; `Reviewed` không đồng nghĩa `CODE_READY` hay `Implemented`.
 > **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > ⚠️ **Historical:** doc hạ Reviewed → Draft ngày 2026-07-18 do gộp tài liệu, KHÔNG phải mở lại luật tiền §A. DD-70/71/72 được owner chốt 2026-07-21 nên v3.5 promote lại Reviewed; runtime/migration vẫn chưa tồn tại. NTF-OQ-14..16 và các OQ chi tiết theo slice vẫn là build/enablement gates. Nhận định v3.8 rằng digest còn phải trì hoãn đã được DD-94 thay thế; session/activity, `message_request` và scoped/bulk vẫn thuộc proposal DD-88.
@@ -186,6 +186,8 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 | NTF-UC-40 🟡 | Chat digest | Club member | Chọn `all`, `mentions` hoặc `off` cho một club channel | `mentions` là default; `all` nhận mọi activity đủ điều kiện, `mentions` chỉ direct mention/reply, `off` không tạo provider send |
 | NTF-UC-41 🟡 | Chat digest | System | Nhiều message tới cùng person/channel trong coalesce window | Một pending logical signal giữ opaque cursor cao nhất; không per-message Inbox item/push |
 | NTF-UC-42 🟡 | Chat digest | Person/System | Person mark-read, leave club, block DM peer hoặc device trust đổi trước send | Pending signal cũ bị cancel/skip sau live reauth; không provider write, không shared Chat/system message |
+| NTF-UC-43 | Buddy payment | System | `buddy_payment.confirmed` event (host xác nhận player trả hộ) | Gửi **2 notification riêng**: (1) Payer: "Thanh toán thành công session [session_name]" (2) Recipient: "Thanh toán thành công session [session_name], [payer_name] đã thanh toán cho bạn". Cùng pipeline `notification_intents` + Web Push generic + authenticated detail. Không tạo chat message |
+| NTF-UC-44 | Buddy payment | System | `buddy_payment.rejected` event | Notify payer: "Yêu cầu trả hộ cho [recipient_name] bị từ chối: [reason]". Chỉ payer nhận, recipient không nhận |
 
 ### Edge Cases
 
@@ -317,7 +319,7 @@ Ledger events là authoritative — delivery là best-effort, **KHÔNG BAO GIỜ
 | Hoạt động | 🏃 | `session_created`, `session_joined`, `session_cancelled`, `tournament_registered`, `waitlist_promoted` | Unread in group |
 | CLB | 🏢 | `member_joined`, `member_left`, `announcement`, `club_updated`, `role_changed` | Unread in group |
 | Chat | 💬 | `chat_message`, `chat_mention`, `chat_reply`, `chat_digest` (DD-94) | Unread in group |
-| Nhắc nhở | ⏰ | `payment_reminder`, `payment_settled`, `payment_correction`, `session_reminder` | Unread in group |
+| Nhắc nhở | ⏰ | `payment_reminder`, `payment_settled`, `payment_correction`, `session_reminder`, `buddy_payment_confirmed`, `buddy_payment_rejected` | Unread in group |
 | Hệ thống | 🔐 | `security_alert`, `identity_link`, `identity_merged`, `follow_request`, `app_update` | Unread in group |
 
 > Group derive từ `notification_intents.type` — không cần cột `group` trong DB. Mapping có thể update/mở rộng từ client config.
@@ -742,6 +744,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-12 | v3.13 | **Buddy Payment Notifications:** Thêm 2 use cases (NTF-UC-43/44) cho `buddy_payment.confirmed` và `buddy_payment.rejected`. Payer nhận "Thanh toán thành công session [X]", recipient nhận "[payer_name] đã thanh toán cho bạn". Thêm `buddy_payment_confirmed`, `buddy_payment_rejected` vào group tab "Nhắc nhở". Cùng pipeline `notification_intents` + Web Push generic. Không đổi contract/schema. |
 | 2026-08-10 | v3.12 | **Grouped Inbox + Mark All Read + Filter Unread (P4.5):** Rewrite §3 Screens. Thêm: entry points table (6 entries), group tabs (5 groups: Hoạt động/CLB/Chat/Nhắc nhở/Hệ thống — derived từ `type`, không DB column), mark-all-read (✓✓ global + per-group), filter unread toggle, swipe actions (mark read/unread + archive), per-group empty states (6 groups × unique icon+text+CTA), filter-unread empty state ("Đã đọc hết!"), notification settings mở rộng (per-group sections + master toggle + quiet hours + non-opt-out lock 🔒 cho money/security), permission matrix (opt-out rules per type), data source mapping mở rộng (+group tabs, +per-group count, +mark-all, +filter, +quiet hours), state coverage tăng từ 3 → 6 rows. Additive-only — không đổi existing Bất biến, Use Cases, Edge Cases, Domain Model, Analytics, AC, OQs. Groups extensible bằng cách thêm types vào client mapping. |
 | 2026-07-28 | v3.11 | Re-pin primary-surface plan v1.8 `PLAN_READY` tại `90d292d`; closure 12/12. Giữ notification/chat/payment runtime = 0, enablement gates và strict per-slice `CODE_READY`; không đổi delivery contract. |
 | 2026-07-28 | v3.10 | Replace stale S9/S20 ownership bằng exact mechanism graph 36→41, Chat unread 42 và payment lifecycle 43→44/45→46→47; pin HTTP A17–A19 và FE F11/F14/F15 sau F0. Payment enablement requires real producer + exactly-once/correction E2E + authenticated-detail parity. `NOT_PLAN_READY`/runtime = 0 giữ nguyên tới immutable re-pin. |
