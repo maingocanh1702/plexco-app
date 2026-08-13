@@ -93,6 +93,25 @@ DELIVERABLES (when unblocked): service + tests green on real PG, 2 clean review 
 > slice. If a later round pushes past 440, that is a re-slice signal (split the mechanism or the
 > test file into an authorized follow-up), NOT grounds for a third amendment.
 
+> **Measurement-basis clarification (owner 2026-08-13 — NOT a third amendment; the 440 number is
+> unchanged):** every LOC figure in this contract's budget history (347, 413, and the 440 cap
+> itself) was measured on the COMPACT, pre-prettier basis the worker and codex used in-flight. CI
+> enforces `prettier --check .`, which re-expands the same content; the cap was never calibrated on
+> that formatted basis. Ruling: the ≤440 cap reads on the compact basis it was set on. At round-3
+> the lane measures ~433 compact (service + DRY-refactored test 275→231 + index) — INSIDE the cap;
+> the CI-formatted equivalent is recorded as 470 for honesty. No content beyond round-3's
+> codex-required hardening is authorized by this note.
+>
+> **Replay-guard depth boundary (same ruling):** the dedup replay-guard validation depth is pinned
+> at round-3 state — `command_type` guard + full-shape/domain check (UUID + enum + version≥1),
+> fail-closed `COMMAND_ID_CONFLICT`. A later round demanding DEEPER validation of the stored result
+> (referential re-query of `sessions`, cross-row consistency, etc.) changes the shared
+> `processed_commands` ledger contract itself — that belongs to the ledger's canonical contract
+> (the future `request_hash` migration line) and to the `codex-review-verdict-nondeterminism`
+> backlog class, NOT to this slice. Classify such a finding ADVISORY (outside change set) with a
+> backlog pointer; it does not gate this slice's verdict. R2→R3 escalation on the same region is
+> already recorded; do not let it become open-ended.
+
 ## 1. Why this slice, why now
 
 M2 names Session Management the lowest unbuilt node with a closed contract (publish/draft-lifecycle

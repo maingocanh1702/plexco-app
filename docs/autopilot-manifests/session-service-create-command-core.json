@@ -68,6 +68,7 @@
   "budgets": {
     "changed_loc_max": 440,
     "_budget_amendment_note": "Owner-ratified 2026-08-13 (DD-101 shape), TWO amendments: 300 -> 360 (round-1: measured 347, codex-required P1 advisory-lock fix + acceptance coverage) then 360 -> 440 (round-2: honest 413 after two legitimate findings — P1 cross-command false replay guard on processed_commands, P2 integer validation — both converging on existing regions, no spreading). 440 is FINAL for this slice: past it = re-slice signal, not a third amendment. No automatic precedent; other session slices keep 300/3-module. See the contract's amendment notes.",
+    "_loc_basis_note": "Owner clarification 2026-08-13 (not an amendment): the 440 cap reads on the COMPACT pre-prettier basis all in-flight measurements used (347/413/440 were all compact). Round-3 sits at ~433 compact = INSIDE the cap; the CI prettier-formatted equivalent is 470, recorded for honesty. Future session slices should pin their measurement basis up front. Also pinned: replay-guard validation depth frozen at round-3 (command_type + full-shape/domain check); deeper referential validation of stored results is the shared ledger contract's business (request_hash line) — ADVISORY + backlog if a reviewer raises it, not slice-gating.",
     "modules_max": 3,
     "fix_rounds_max": 5
   },
