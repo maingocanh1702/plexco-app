@@ -413,6 +413,11 @@ notes: |
   **slice size quan trọng vì lý do KHÁC** với lý do đã dùng justify split open-decisions — không phải "quá lớn để
   review trong round budget" mà **"quá lớn cho per-run detection"**. Đây là claim TESTABLE; re-measurement là nơi
   test nó (design nó vào cùng pass đo per-run detection ở bước (2)).
+  **Note (review-system reliability, 2026-08-13):** confound (2) pointer-contamination đã được đóng — reviewer giờ
+  chạy trong fresh detached worktree tại HEAD (`codex-review-pin-worktree-isolation-defect`, LANDED). Backport canonical
+  đã land `f990469`, đóng footgun `autopilot-update.sh` (xem `reviewer-isolation-backport-canonical-kit`); `update.sh`
+  giờ an toàn local, còn chờ push canonical. Re-measurement per-run detection ở bước (2) trên sẽ chạy với confound (2)
+  đã bỏ.
 
 ---
 
@@ -3047,23 +3052,57 @@ notes: |
   ⇒ helper-only self-cert; `REVIEW_WORKTREE_UNAVAILABLE` non-durable; temp-dir leak on a failing `git worktree add`) —
   all fixed at `2d5834b` with regression tests. Round 2 found 2 findings that EXCEED the owner's ruled scope, recorded
   as follow-ups rather than chased (loop discipline; the ruled acceptance test is met):
-    - **[OWNER DECISION] Absolute/sibling-path residual.** From the ephemeral worktree `git worktree list` reveals the
-      feature worktree's absolute path, and `codex --sandbox read-only` permits reads there, so a reviewer that HUNTS
-      (never observed in Arm A/B/C, which only followed a cwd pointer) could still read the sibling state. No
-      worktree/clone mechanism fully closes this (the feature-repo path is always discoverable via git metadata); the
-      only complete fix is a sandbox read-deny — the "unreadability/permission" approach the owner deliberately
-      deprioritized ("absence beats unreadability"). Owner's ruling to keep or reverse; the MEASURED cwd-pointer vector
-      is closed either way.
+    - **[THREAT-MODEL BOUNDARY — owner-ratified 2026-08-13, ACCEPTED]** Absolute/sibling-path reads are OUT OF SCOPE by
+      design, not an unfixed finding. **In scope (closed):** a tool that follows a cwd pointer — the observed vector, now
+      absent by construction. **Out of scope:** an *adversarial* reviewer that actively hunts the feature worktree's
+      absolute path through git metadata (`git worktree list`) and reads the sibling state under `--sandbox read-only`.
+      That is a different threat model; defending it needs sandbox-level read-deny, and a project that needs that posture
+      needs it for more than this one path (no worktree/clone mechanism closes it — the feature-repo path is always
+      discoverable via git metadata). **Reopen trigger:** dogfooding a reviewer OBSERVED to hunt the sibling path. The
+      measured cwd-pointer vector is closed regardless.
     - **[nicety] SIGINT/SIGTERM leak.** Cleanup is registered on Node `exit` only; a signal-killed review leaks the
       temp worktree (fresh `mkdtemp` avoids collisions; stale entries are harmless). Low priority.
-  **BACKPORT DEBT (DD-100 D1) — canonical kit `Claude template/autopilot/parallel/`:** (1) apply the same fix +
-  2 hardening edits to `autopilot-review-readiness.mjs` (identical `cwd: repo` defect at its line 698); (2) add the new
-  `autopilot-ephemeral-review-worktree.mjs`; (3) add a `pack_pairs` entry for the helper in `autopilot-update.sh`.
-  ⚠️ `autopilot-review-readiness.mjs` IS packed — do NOT run the manual `autopilot-update.sh` escape-hatch until the
-  canonical is backported, or it OVERWRITES this fix with the unfixed canonical and orphans the helper import (the
-  SessionStart auto-sync does not touch this file, so only that manual action is the risk). Test files + `package.json`
-  are per-repo (not packed).
+  **BACKPORT — DONE (canonical `Claude template` `f990469`, 2026-08-13).** Ported the reviewed fix (gate + new
+  `autopilot-ephemeral-review-worktree.mjs`, both byte-identical to the Plexco copies) into
+  `Claude template/autopilot/parallel/`, and **added a `pack_pairs` entry for the helper** in `autopilot-update.sh` so it
+  travels with the gate from now on. This CLOSES the silent-regression footgun: before `f990469`,
+  `autopilot-review-readiness.mjs` was in `pack_pairs` but the helper was not and did not exist canonically, so a routine
+  `autopilot-update.sh` would have overwritten the gate with the unfixed canonical version, orphaned the helper, and
+  silently returned to reviewing in place with NOTHING failing. **Local `update.sh` is now safe.** Remaining: **push
+  `Claude template` to its origin** so other clones get it (canonical is `ahead 1`, unpushed). Tracked as
+  `reviewer-isolation-backport-canonical-kit`. Test files + `package.json` stay per-repo (not packed), consistent with
+  `check-review-readiness.test.mjs`.
 
+
+## task: reviewer-isolation-backport-canonical-kit
+title: Backport reviewer-isolation fix to the canonical kit (close the autopilot-update.sh silent-regression footgun)
+status: merged
+note_merged: DONE at canonical `Claude template` f990469 (2026-08-13); byte-identical to reviewed Plexco b53bc75+2d5834b. Remaining: push canonical to origin (ahead 1).
+risk: P1
+change_class: kit-maintenance
+depends_on: []
+invariants: [review-integrity]
+scope: [autopilot/parallel/autopilot-review-readiness.mjs, autopilot/parallel/autopilot-ephemeral-review-worktree.mjs, autopilot/parallel/autopilot-update.sh]
+manifest: null
+merged_probe: null
+close_by: hand · lands in the canonical `Claude template` repo (not Plexco); recorded here for cross-repo visibility.
+notes: |
+  **Why P1 / why now (not "when you want it").** Plexco landed the reviewer-isolation fix
+  (`codex-review-pin-worktree-isolation-defect`) Plexco-local per DD-100 D1. But
+  `autopilot/parallel/autopilot-update.sh` lists `autopilot-review-readiness.mjs` in `pack_pairs`, and the canonical
+  `parallel/` had NO `autopilot-ephemeral-review-worktree.mjs`. So the next routine `autopilot-update.sh` run would
+  OVERWRITE the fixed gate with the unfixed canonical version, leave the helper file sitting unused, and silently return
+  the reviewer to reviewing in place — contamination back, NOTHING failing. A silent-failure footgun with a routine
+  trigger, not a loud orphaned-import crash — which is why it was run now, not deferred.
+  **DONE 2026-08-13 (canonical `Claude template` `f990469`).** Ported the reviewed fix — gate (5 mechanism edits + 2
+  hardening: helper in `TRUSTED_GATE_FILES`, `REVIEW_WORKTREE_UNAVAILABLE` durable) + the new
+  `autopilot-ephemeral-review-worktree.mjs` — both byte-identical to the Plexco copies (which passed 2 Codex rounds) —
+  and added a `pack_pairs` entry for the helper so it travels with the gate from now on. Verified: `diff` vs Plexco
+  reviewed files (empty), `node --check`, `bash -n`.
+  **`autopilot-update.sh` status:** was the footgun (pre-`f990469`); now SAFE on this machine. **Remaining: push
+  `Claude template` to origin** so other clones inherit the fix (canonical is `ahead 1`, unpushed) — until then a FRESH
+  clone of the canonical still lacks it. Test files + `package.json` stay per-repo (not packed), consistent with the
+  existing `check-review-readiness.test.mjs`.
 
 ## task: backlog-status-taxonomy-inflight-manual-close-gap
 title: No backlog status expresses "in-flight, manually closed" (docs reconcile w/o code probe)
