@@ -59,12 +59,24 @@ VERIFICATION (when built): pnpm test with DATABASE_URL_TEST (real PG); focused: 
   + rls-invariants unchanged-green; build/lint/typecheck; no e2e (no boundary crossed).
 CODE_REVIEW: required — 2 clean rounds via scripts/codex-review-pin.sh.
 SECURITY_REVIEW: not preplanned (no auth/secret/money/external-input); escalate if review disagrees.
-BUDGETS: ≤300 changed LOC, ≤3 modules (M2 cap); fix_rounds_max 5.
+BUDGETS: ≤360 changed LOC (OWNER-RATIFIED AMENDMENT 2026-08-13 — was ≤300; see amendment note below),
+  ≤3 modules (M2 cap); fix_rounds_max 5.
 STOP_CONDITIONS: any migration appears in the diff · any route/UI file appears · billing files appear ·
   budget exceeded without owner amendment · reviewer unavailable → HALT TOOL_UNAVAILABLE.
 DELIVERABLES (when unblocked): service + tests green on real PG, 2 clean review rounds, backlog flip,
   merged_probe = session-service.ts :: createSession.
 ```
+
+> **Budget amendment (owner-ratified 2026-08-13, DD-101 shape — measurement beats estimate):**
+> `changed_loc_max` 300 → **360** for THIS slice only. Measured in-flight at 347 (service 176 + test
+> 163 + index 8) with the overage driven entirely by codex round-1's required P1 concurrency fix
+> (advisory-lock reserve + the "one wins, one dedup" concurrent test) plus the mandated
+> acceptance-matrix coverage — not scope creep; the worker had already compacted 387 → 347.
+> Rationale for not compressing to ≤300: the cut would fall on required test coverage (forbidden) or
+> on the design-rationale comments (advisory-lock why, outbox producer rule, DD-105 boundary) that
+> future session-command slices will copy from this ROOT slice — the wrong place to save 47 lines.
+> **Boundary:** no automatic precedent; the ≤300/3-module cap stays for every other session slice;
+> module cap and all other gates unchanged for this one.
 
 ## 1. Why this slice, why now
 
