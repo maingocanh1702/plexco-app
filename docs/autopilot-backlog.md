@@ -3035,6 +3035,34 @@ notes: |
   - **Plexco-local first (DD-100 D1), backport debt recorded:** fix the Plexco-local reviewer-invocation path (`scripts/autopilot-review-readiness.mjs` and/or `scripts/codex-review-pin.sh`) FIRST; record the backport obligation to the canonical kit (`Claude template/autopilot/parallel/{autopilot-review-readiness.mjs,codex-review-pin.sh}`) so consumers sync forward — do not leave the canonical copies unfixed.
   - Evidence (in-repo): `docs/decisions/analysis/codex-reviewer-determinism-2026-08-13/` (METHOD/RESULTS/CLASSIFIER + summary-{A,B,C}.tsv; raw `run{B,C}-*.txt` kept outside repo for size).
   - **Honest consequence for the DD-104 split:** the “distinct findings spreading round after round = slice-too-big” signal now has THREE confounds, not two — verdict nondeterminism (findings change run-to-run on a byte-identical input), pointer-contamination (prior findings bleed forward), and subset-sampling (under false-CLEAN variance each round samples a SUBSET of the true finding set, so distinct new findings surface round after round even when scope is CORRECT — under-sampling, not slice-too-big). So it is weaker than it was presented as, including in the DD-104 split reasoning. This strengthens the existing “verify a repeat finding against live HEAD” rule above.
+  **LANDED (Plexco-local) 2026-08-13 — measured defect CLOSED; two out-of-spec hardening follow-ups relayed.**
+  Fix on `main`: `b53bc75` (mechanism) + `2d5834b` (hardening). New `scripts/autopilot-ephemeral-review-worktree.mjs`
+  (fresh detached worktree at HEAD; fail-closed; transactional temp cleanup) + gate wiring in
+  `scripts/autopilot-review-readiness.mjs` (review cwd → ephemeral worktree; helper added to `TRUSTED_GATE_FILES`;
+  `REVIEW_WORKTREE_UNAVAILABLE` made durable) + deterministic file-reachability tests (17/17 review-readiness; lint+prettier clean).
+  **Acceptance test SATISFIED** exactly as ruled: the reviewer's tree lacks `pending-review-finding.json` (absent by
+  construction) while the feature worktree keeps it — asserted directly, never via reviewer output. Both dogfood Codex
+  rounds ran in a fresh worktree whose `.autopilot/` held only `maturity-ledger.md`.
+  **Separate Codex review (2 rounds):** round 1 found 2 REAL in-spec bugs (helper missing from `TRUSTED_GATE_FILES`
+  ⇒ helper-only self-cert; `REVIEW_WORKTREE_UNAVAILABLE` non-durable; temp-dir leak on a failing `git worktree add`) —
+  all fixed at `2d5834b` with regression tests. Round 2 found 2 findings that EXCEED the owner's ruled scope, recorded
+  as follow-ups rather than chased (loop discipline; the ruled acceptance test is met):
+    - **[OWNER DECISION] Absolute/sibling-path residual.** From the ephemeral worktree `git worktree list` reveals the
+      feature worktree's absolute path, and `codex --sandbox read-only` permits reads there, so a reviewer that HUNTS
+      (never observed in Arm A/B/C, which only followed a cwd pointer) could still read the sibling state. No
+      worktree/clone mechanism fully closes this (the feature-repo path is always discoverable via git metadata); the
+      only complete fix is a sandbox read-deny — the "unreadability/permission" approach the owner deliberately
+      deprioritized ("absence beats unreadability"). Owner's ruling to keep or reverse; the MEASURED cwd-pointer vector
+      is closed either way.
+    - **[nicety] SIGINT/SIGTERM leak.** Cleanup is registered on Node `exit` only; a signal-killed review leaks the
+      temp worktree (fresh `mkdtemp` avoids collisions; stale entries are harmless). Low priority.
+  **BACKPORT DEBT (DD-100 D1) — canonical kit `Claude template/autopilot/parallel/`:** (1) apply the same fix +
+  2 hardening edits to `autopilot-review-readiness.mjs` (identical `cwd: repo` defect at its line 698); (2) add the new
+  `autopilot-ephemeral-review-worktree.mjs`; (3) add a `pack_pairs` entry for the helper in `autopilot-update.sh`.
+  ⚠️ `autopilot-review-readiness.mjs` IS packed — do NOT run the manual `autopilot-update.sh` escape-hatch until the
+  canonical is backported, or it OVERWRITES this fix with the unfixed canonical and orphans the helper import (the
+  SessionStart auto-sync does not touch this file, so only that manual action is the risk). Test files + `package.json`
+  are per-repo (not packed).
 
 
 ## task: backlog-status-taxonomy-inflight-manual-close-gap
