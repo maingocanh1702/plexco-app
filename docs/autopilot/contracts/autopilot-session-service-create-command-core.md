@@ -119,6 +119,29 @@ DELIVERABLES (when unblocked): service + tests green on real PG, 2 clean review 
 > consider budgeting service and test LOC separately — this slice's 300 was estimated before either
 > existed, which is where all three ratchets came from.
 
+> **HALT MAX_ROUNDS + successor authorization (owner 2026-08-13):** the lane HALTed at fix-round 5
+> with two legitimate open findings: (1) REAL BUG — the advisory lock was keyed per command type
+> while the `processed_commands` ledger is globally unique on `(tenant_id, command_id)`, so two
+> concurrent DIFFERENT command types sharing a commandId would not serialize (raw 23505 instead of
+> `COMMAND_ID_CONFLICT`); (2) structural-presence validation gaps (missing startsAt/timezone/sportId
+> → TypeError/raw DB error/wrong typed error). Diagnosis accepted: input validation was an UNBOUNDED
+> edge-family — six attempts each surfaced a new per-field edge; patching field-by-field cannot
+> converge. **Owner ruling: option A.** The successor slice
+> (`session-service-create-command-core--v2`, fresh registration from current main; the HALTed
+> branch becomes read-only reference — do NOT prune) redoes the slice with exactly two design
+> changes: (a) a command-type-INDEPENDENT lock key matching the ledger's global uniqueness; (b) ONE
+> comprehensive up-front input validator — presence + type + domain for every field in one place,
+> typed errors — closing the whole family. Option B (push structural validation to the route layer)
+> is REJECTED with recorded rationale: the service is the shared choke-point for web + Zalo +
+> Messenger surfaces, and per this repo's own trap list ("copy logic qua 2 transport → DRIFT")
+> distributing validation across N adapters is the known failure mode; surfaces stay thin.
+> **Successor budget, calibrated on the MEASURED corpus this time (not an estimate):** ≤600 compact
+> LOC (≈500 reusable implementation + validator + lock fix + presence-family tests), basis pinned
+> compact up front, fresh fix_rounds_max 5 (legitimate per level3-workflow §8 — findings accepted,
+> not contested). **NO budget amendments exist for --v2**: any overflow = STOP at AWAIT for owner
+> re-slice, auto-DENY on ratification requests. Regions pinned as before; out-of-region findings =
+> ADVISORY + backlog.
+
 > **Replay-guard depth boundary (same ruling):** the dedup replay-guard validation depth is pinned
 > at round-3 state — `command_type` guard + full-shape/domain check (UUID + enum + version≥1),
 > fail-closed `COMMAND_ID_CONFLICT`. A later round demanding DEEPER validation of the stored result
