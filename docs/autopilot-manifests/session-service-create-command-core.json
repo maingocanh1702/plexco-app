@@ -1,0 +1,79 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — carries NO manifest_schema_version. This slice is NOT_CODE_READY (see docs/autopilot/contracts/autopilot-session-service-create-command-core.md §7): do NOT register or open a worktree from it. Fields describe the INTENDED shape so the flip-to-CODE_READY session inherits a specified target; they are documentation, not authorization.",
+  "_blocked_note": "Four named blockers, each binary (contract §7): B1 acceptance matrix must be re-traced to spec versions FE v2.25 / BE v2.22 (checklist v1.2 traces stale v2.17/v2.18a); B2 service module home must be pinned against TDD §3.2 (proposal packages/db/src/session-service.ts, precedent auth.ts); B3 outbox PRODUCER insert contract (per-aggregate sequence for outbox_agg_seq_uq) must be pinned from the 0022/0023 consumer-side contract — this slice is the FIRST producer; B4 suspension gate: billing matrix row 'Admin mutation | suspended ❌' exists but no action-class literal for create — either a narrow class lands in the billing contract first (DD-104 D2a precedent) or create-draft is pinned ungated with rationale in decisions.md. B1-B3 are read-and-pin; B4 may need one owner line.",
+  "_base_sha_note": "base_sha below is DOCUMENTATION ONLY — origin/main tip at authoring time (2026-08-13). A real base is pinned only when the slice reaches strict CODE_READY.",
+  "base_sha": "775cb9eefc593df2d30684e48899709af55fe50e",
+  "task_id": "plexco:session-service-create-command-core",
+  "feature": "session-service-create-command-core",
+  "branch": "feat/session-service-create-command-core",
+  "base_ref": "origin/main",
+  "risk": "P2",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_dependency_note": "All substrate is MERGED on main (verified 2026-08-13): sessions/processedCommands/outboxEvents in schema.ts (583/1296/1308), tenantRepo.sessions.create in tenant.ts:61-107, authorizeTenantAction in authorization.ts:91 (0 callers). No unmerged slug to depend on TODAY; if B4 resolves to branch (a), add the billing docs slice as a hard dependency here before flipping the verdict.",
+  "invariants": ["test-chain"],
+  "_invariant_note": "test-chain: the slice adds a test file to the canonical runner. NO schema token (zero migration, zero schema.ts change — that is the M2 parallel-safety constraint). A session-domain token: the catalog has publish-suspend-gate and session-lock-ordering, neither of which this create-only slice touches (no publish, no FOR UPDATE ordering — insert only). Per catalog rule, if the flip session judges a domain token necessary, ADD a new one-line token (e.g. session-commands) to the catalog block FIRST, then use it — do not repurpose an existing token with a different meaning.",
+  "scope": [
+    "packages/db/src/session-service.ts",
+    "packages/db/src/session-service.test.ts",
+    "packages/db/src/index.ts",
+    "docs/autopilot-manifests/session-service-create-command-core.json",
+    "docs/autopilot/contracts/autopilot-session-service-create-command-core.md",
+    "docs/autopilot-backlog.md"
+  ],
+  "_scope_note": "INTENDED scope, not authorized yet. session-service.ts location is provisional pending B2. tenant.ts is deliberately NOT in scope: tenantRepo.sessions.create already exists; add tenant.ts ONLY if the flip session proves a missing repo method, and record why. Zero migration files, zero schema.ts — a diff touching either is a STOP_CONDITION.",
+  "negative_scope": [
+    "No PublishSession / CancelSession / CloseSession / UpdateSession / DeleteSession — each is its own slice; publish carries the publish-suspend-gate and lock-ordering obligations, delete is parked behind DD-104 D0.",
+    "No route, API endpoint, page, or UI file — the web/bot boundary is a later slice.",
+    "No edit to feature_billing_lifecycle_tech.md or any billing file — the action-class literal (B4 branch a) is a separate billing docs slice.",
+    "No migration and no schema.ts change — M2 pins this slice service-only so it never serializes against chat migration lanes.",
+    "No projector, dispatcher, or schedule change — OUTBOX_DISPATCH_SCHEDULE_ENABLED stays untouched; unclaimed rows are the documented steady state.",
+    "No waitlist/join/player/charge logic — create makes a draft session row and nothing else."
+  ],
+  "context_sources": [
+    "docs/features/BE/feature_session_management_tech.md",
+    "docs/features/FE/feature_session_management.md",
+    "docs/issues/session-management-acceptance-checklist.md",
+    "docs/features/BE/feature_billing_lifecycle_tech.md",
+    "docs/autopilot/contracts/autopilot-db-job-claim-lease-core.md",
+    "packages/db/src/tenant.ts",
+    "packages/db/src/authorization.ts",
+    "packages/db/schema.ts",
+    "docs/product/TDD.md",
+    "docs/standards/decisions.md",
+    "docs/autopilot-invariant-catalog.md"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "none",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [
+      "pnpm --filter @plexco/db test -- session-service (real PG via DATABASE_URL_TEST)",
+      "rls-invariants.test.ts unchanged-green (tenant A create invisible to tenant B)",
+      "pnpm check:quick (build/lint/typecheck)"
+    ],
+    "e2e": "none — no real boundary crossed (no route, no channel, dispatcher OFF)"
+  },
+  "budgets": {
+    "changed_loc_max": 300,
+    "modules_max": 3,
+    "fix_rounds_max": 5
+  },
+  "stop_conditions": [
+    "any migration file or schema.ts appears in the diff",
+    "any route/UI/billing file appears in the diff",
+    "budget exceeded without an owner-ratified amendment (DD-101 shows the required shape)",
+    "reviewer unavailable -> HALT TOOL_UNAVAILABLE"
+  ]
+}
