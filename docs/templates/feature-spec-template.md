@@ -41,14 +41,17 @@
 
 ### Use Cases
 
-| ID | Actor | Hành động | Kết quả |
-|---|---|---|---|
-| {FT}-UC-1 | {Actor} | {Action} | {Result — mô tả rõ navigation/state change} |
-| {FT}-UC-2 | {Actor} | {Action} | {Result} |
-| {FT}-UC-3 | {Actor} | {Action} | {Result} |
+| ID | Actor | Hành động | Để… (benefit) | Kết quả |
+|---|---|---|---|---|
+| {FT}-UC-1 | {Actor} | {Action} | {Vì sao actor cần việc này — business value} | {Result — mô tả rõ navigation/state change} |
+| {FT}-UC-2 | {Actor} | {Action} | {Benefit} | {Result} |
+| {FT}-UC-3 | {Actor} | {Action} | {Benefit} | {Result} |
 
 > Minimum 8 use cases, cover: happy path, alternative, mutation, cleanup, cross-actor.
 > Mỗi use case có nhiều actors → ghi rõ actor + result khác nhau (VD: UC-4 Player, UC-4b Host).
+> **Cột `Để…` là bắt buộc** — đọc thành "Là {Actor}, tôi muốn {Hành động} **để** {benefit}". Nó tồn tại để
+> reviewer challenge được "UC này có cần không?"; nếu không viết được benefit ngoài việc lặp lại Hành động
+> thì UC đó đang thiếu lý do, không phải thiếu chữ.
 
 ### Edge Cases
 
@@ -240,6 +243,20 @@ stateDiagram-v2
 
 - [ ] Mọi event trong §5 fire đúng trigger + payload
 - [ ] Opaque IDs only — không PII trong analytics payload
+
+### NFR compliance
+
+> Trỏ ngược catalog NFR đã có — **không** định nghĩa NFR mới tại đây. Nguồn:
+> `../../product/BRD.md` §8 (NFR-S / NFR-P / NFR-PF / NFR-R) và bảng `NFR-1..N` của
+> `../../product/TDD.md` (có cột Metric). Mục này tồn tại để audit NFR không phải đọc thủ công từng spec.
+
+| NFR ref | Áp vào đâu trong feature này | Cách chứng minh |
+|---------|------------------------------|-----------------|
+| {VD: NFR-S2 — public layer chỉ field whitelist} | {Screen/endpoint nào chạm public} | {Test bất biến nào cover} |
+| {VD: NFR-PF3 — sync sang surface khác ≤ vài giây} | {Surface nào} | {Metric / test} |
+
+- [ ] Mọi NFR chạm feature này đã liệt kê ở trên
+- [ ] Feature không chạm NFR nào → ghi rõ `none` + lý do, **không** để bảng rỗng
 
 ---
 
