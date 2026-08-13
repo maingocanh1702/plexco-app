@@ -3255,3 +3255,46 @@ notes: |
   **Defect:** the backlog status vocabulary (`idea|planned|ready|in-flight|merged|blocked|superseded|deferred`) has no status for a lane that is actively IN-FLIGHT yet closes by a MANUAL post-landing edit (a docs reconcile with no code-symbol `merged_probe`). `in-flight` is not auto-reconciled (`scripts/autopilot-backlog-reconcile` only auto-probes `planned|ready|blocked`), so it never auto-flips to `merged`; `planned`/`ready` are dispatchable (the scanner selects them), risking a duplicate launch. Both are defensible, so the status oscillated.
   **Evidence:** open-decisions-reconcile-clean round-05 changed the closeout `in-flight`→`planned` (to make it reconcilable), round-06 flagged `planned` as dispatchable and required `in-flight` back. A taxonomy gap, not a lane defect — a new slice inherits it and oscillates again.
   **Proposed fix (kit-maintenance):** either add an explicit terminal-pending status (e.g. `awaiting-manual-close`) that is neither dispatchable nor auto-probed, or document the convention that `in-flight` + `close_by: hand` = manually closed after landing and intentionally not auto-reconciled. `close_by: hand`.
+
+---
+
+## task: ap-finish-untracked-counts-as-dirty
+title: `ap-finish.sh` gate tree-clean bằng `status --porcelain` (tính cả untracked) — `ap-merge.sh` đã học bài này, `ap-finish` thì chưa
+status: idea
+risk: P2
+change_class: kit-maintenance
+depends_on: []
+invariants: []
+scope: [scripts/ap-finish.sh]
+manifest: null
+merged_probe: null
+_probe_note: Khi schedule, merged_probe phải bind symbol do CHÍNH fix tạo ra (vd tên hàm kiểm dirty mới). KHÔNG bind `WORKTREE_DIRTY` hay `dirty` — cả hai đã có trên origin nên false-flip "merged" ngay lúc author.
+close_by: null
+notes: |
+  **Đo 2026-08-14, chặn một closeout thật.** `scripts/ap-finish.sh:83` kiểm worktree sạch bằng
+  `git -C "$WT" --no-optional-locks status --porcelain`. Lệnh đó **tính cả file untracked**. Repo này
+  luôn có `design.pen` + `fe.pen` untracked **có chủ ý** (DD-81, FE PENDING), nên gate báo dirty cho một
+  worktree không hề bẩn.
+
+  **Đây đúng là bug mà `ap-merge.sh` đã ghi lại và đã sửa.** Header `ap-merge.sh:12-18` mô tả sự cố
+  2026-07-22: *"Cổng chặn dùng `git status --porcelain` → lệnh đó TÍNH CẢ FILE UNTRACKED, mà repo luôn có
+  vài file untracked → luôn báo 'bẩn' → BỎ QUA hẳn bước merge, rồi vẫn push và xoá branch."* Kết luận nó
+  tự rút ra: *"Gate tree sạch bằng `git diff --quiet` (chỉ xét TRACKED)"* — và `ap-merge.sh:51` làm đúng
+  thế. **Bài học được viết ra, được sửa ở một script, nhưng không lan sang script anh em.**
+
+  **Có tình tiết tăng nặng làm nó khó chẩn đoán hơn nhiều.** Ca 14/08: thư mục
+  `.autopilot/worktrees/chat-dm-safety-authority-core--v3/` không còn là worktree thật — chỉ còn cây
+  thư mục `infra/` **rỗng** (`find -type f` = 0), không có `.git`. Nên `git -C "$WT" status` **đi ngược
+  lên repo gốc** và báo `design.pen`/`fe.pen` của ROOT. Thông báo HALT vì thế trỏ vào hai file **không
+  liên quan gì tới worktree đang đóng**, và người đọc rất dễ kết luận sai là phải xoá `.pen` — tức đi
+  ngược lệnh FE PENDING của owner.
+
+  **Fix (mechanical, nhưng phải làm cả hai vế):**
+  1. Đổi sang kiểm tracked-only, cùng khuôn `ap-merge.sh:51`: `git -C "$WT" diff --quiet` +
+     `git -C "$WT" diff --cached --quiet`.
+  2. **Assert `$WT` thực sự là worktree trước khi kiểm** (vd `git -C "$WT" rev-parse --show-toplevel`
+     phải bằng chính `$WT`). Không có vế này thì một thư mục rỗng vẫn kéo gate đi đọc repo khác, và
+     thông báo lỗi vẫn trỏ nhầm chỗ. Vế 2 mới là phần chữa được cái *khó chẩn đoán*.
+
+  **Quét luôn cả kit khi sửa:** `grep -rn "status --porcelain" scripts/` để xem còn script nào mang
+  cùng lỗi. Sửa một chỗ rồi để chỗ khác nguyên là cách bug này sống được tới lần thứ hai.
