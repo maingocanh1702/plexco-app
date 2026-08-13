@@ -726,8 +726,8 @@ invariants: [test-chain]
 scope: [packages/db/src/session-service.ts, packages/db/src/session-service.test.ts, packages/db/src/index.ts]
 manifest: docs/autopilot-manifests/session-service-create-command-core.json
 launcher: null
-merged_probe: null
-_probe_note: "Write authorized (CODE_READY). merged_probe=null vì chưa merge; probe khi land: `packages/db/src/session-service.ts :: createSession`. Build session tự author runtime manifest + register trước khi ghi."
+merged_probe: packages/db/src/session-service.ts :: export async function createSession
+_probe_note: "Resolved 2026-08-14 khi lane land (squash `b48625c`, teardown `--squash-verified` xác nhận origin patch = READY feature diff). ⚠️ Probe cố ý bind **cả chữ ký**, không chỉ tên `createSession`: tên trần ĐÃ tồn tại trước slice như một local test helper ở `rls-invariants.test.ts:1357` (6 hit trên `f018d41`), nên `:: createSession` là loại probe mà `autopilot-backlog-reconcile` cảnh báo — khớp nội dung có sẵn trên origin. File `session-service.ts` thì mới hoàn toàn nên cặp file+symbol vẫn phân biệt được, nhưng bind chữ ký `export async function` thì đúng ý 'symbol slice này giới thiệu' hơn và không phụ thuộc vào việc file có mới hay không."
 notes: |
   **Mở 2026-08-13 từ M2 (`docs/sessions/2026-08-07-next-milestones.md`) — root slice của Session BE
   vertical, service-only (0 migration) để chạy song song an toàn với lane chat.** Substrate đã merged
