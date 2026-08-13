@@ -20,6 +20,7 @@ import path from "node:path";
 // the moment this pack lands. Observed in Plexco at kit v11, 2026-07-29. The sibling
 // check-review-readiness.mjs already imports it this way.
 import process from "node:process";
+import { createEphemeralReviewWorktree } from "./autopilot-ephemeral-review-worktree.mjs";
 
 const VERSION = "level3-readiness-v2";
 const REVIEW_TOOL = "scripts/codex-review-pin.sh";
@@ -686,7 +687,15 @@ function runVerificationGroup(group, commands) {
   }
 }
 
+// The reviewer runs in a throwaway detached worktree at HEAD, created just before the review rounds
+// (see below). A clean checkout has no gitignored .autopilot/state, so prior-round findings and the
+// pending-review-finding.json pointer are unreachable by the reviewer. Fail closed if it is missing.
+let reviewWorktree = null;
+
 function runReview(kind, round, cleanMarker, findingsMarker, prompt) {
+  if (!reviewWorktree) {
+    halt("REVIEW_WORKTREE_UNAVAILABLE", "internal: isolated review worktree not initialised before runReview");
+  }
   const connectorPattern = /rmcp|mcp|transport::worker|TokenRefreshFailed/i;
   for (let invocation = 1; invocation <= 2; invocation += 1) {
     const retrySuffix = invocation === 1 ? "" : `-retry-${String(invocation - 1).padStart(2, "0")}`;
@@ -695,7 +704,7 @@ function runReview(kind, round, cleanMarker, findingsMarker, prompt) {
       `gate-attempt-${attemptLabel}-${kind}-round-${String(round).padStart(2, "0")}${retrySuffix}.txt`,
     );
     const result = spawnSync(reviewerPath, ["review", "--base", initialState.diffBase, prompt], {
-      cwd: repo,
+      cwd: reviewWorktree.path,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: remainingMs(),
@@ -773,6 +782,15 @@ runVerificationGroup("focused", verification.focused);
 runVerificationGroup("canonical", verification.canonical);
 runVerificationGroup("e2e", verification.e2e);
 
+// Isolate the reviewer from prior-round state: run every review round in a fresh detached worktree at
+// the reviewed HEAD. Fail closed — if isolation cannot be established, do NOT review in the feature
+// worktree (that is exactly the contamination path this closes).
+try {
+  reviewWorktree = createEphemeralReviewWorktree(repo, initialState.headSha);
+} catch (error) {
+  halt("REVIEW_WORKTREE_UNAVAILABLE", `could not create the isolated review worktree: ${String((error && error.message) || error)}`);
+}
+
 const codePrompt = [
   `Review the exact non-empty diff against base ${initialState.diffBase} for correctness, regressions, tests and scope.`,
   "Report every actionable finding before the verdict.",
@@ -809,6 +827,9 @@ if (securityReview.required) {
     securityPrompt,
   );
 }
+
+// Reviews are done; drop the throwaway worktree now (the process-exit handler remains only as a leak net).
+reviewWorktree.cleanup();
 
 const finalState = liveDiffState();
 if (

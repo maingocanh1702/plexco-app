@@ -15,7 +15,7 @@
     "test:bot": "pnpm --filter @plexco/bot run test",
     "check:quick": "pnpm run lint && pnpm run test:core",
     "smoke:predeploy": "node scripts/smoke-predeploy.mjs",
-    "test:review-readiness": "node --test scripts/check-review-readiness.test.mjs",
+    "test:review-readiness": "node --test scripts/check-review-readiness.test.mjs scripts/autopilot-ephemeral-review-worktree.test.mjs",
     "review:check": "node scripts/check-review-readiness.mjs --all",
     "review:check:changed": "node scripts/check-review-readiness.mjs --changed",
     "build": "pnpm -r run typecheck && pnpm -r run build",
