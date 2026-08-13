@@ -1,0 +1,4 @@
+run	assertion	rc	wall_s	quota	verdict	findings_rough
+A1	CLEAN_no_autopilot_state	0	865	YES	AUTOPILOT_CODE_VERDICT: CLEAN	0
+A2	CLEAN_no_autopilot_state	0	678	ok	AUTOPILOT_CODE_VERDICT: CLEAN	0
+A3	CLEAN_no_autopilot_state	0	738	ok	AUTOPILOT_CODE_VERDICT: FINDINGS	4

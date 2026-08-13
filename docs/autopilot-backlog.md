@@ -364,6 +364,32 @@ notes: |
   (`.autopilot/worktrees/…-v6/.autopilot/state/*/gate-attempt-06-code-review-round-01.txt` 1.2MB @ 01:39 +
   `pending-review-finding.json`, chưa disposition). Chạy khi lane đó đóng + tree sạch.
 
+  **MEASUREMENT 2026-08-13 (đã chạy, owner-authorized measure-only pass) — CONFIRMED REAL.** Detached
+  worktree @ `d5b31f9` (base `75f06c5`), pinned reviewer với marker prompt y hệt
+  `autopilot-review-readiness.mjs:776-783`, **N=3 run SẠCH** (assert không có `.autopilot/state` mỗi run;
+  precondition owner đã thoả: 0 lane mid-review lúc chạy). Verdict trên input BYTE-IDENTICAL:
+  **CLEAN · CLEAN · FINDINGS** ⇒ verdict KHÔNG deterministic. Ba run khác nhau trên MỌI trục pre-registered
+  (verdict · số actionable · tập file:region), kể cả tập advisory (A-1 {torn-read+bootstrap} · A-2
+  {torn-read} · A-3 {torn-read+bootstrap+57P01}); cùng torn-read cite ở ref phụ khác nhau (A-1 `backlog:113`
+  vs A-2/A-3 `decisions.md:1428`); và cùng item bị xếp advisory (A-1/A-2) rồi elevate **[P1] blocking** ở run
+  khác — đúng advisory→blocking flip, nay đo được TRÊN INPUT ĐÓNG BĂNG. Chiều đáng lo: **A-3 (FINDINGS) bắt
+  lỗi code THẬT mà 2 run CLEAN bỏ sót** — `acquireChatDefinerLock` (`test-harness.ts:262-264`) connect client
+  rồi `await pg_advisory_lock` KHÔNG try/catch ⇒ reject là leak connection (verified real). ⇒ "2 vòng codex
+  CLEAN" có thể pass mà VẪN bỏ lọt finding thật; verdict là stochastic sample, không phải hàm của diff — mọi
+  readiness verdict dựa "2 clean rounds" (kể cả `fix_round_count: 0`) YẾU HƠN giả định (re-run có thể lật
+  CLEAN↔FINDINGS, input không đổi). Arm A KHÔNG có prior-round artifact ⇒ variance MODEL thuần, **tách bạch**
+  với contamination (đo riêng, POSITIVE, ở `codex-review-pin-worktree-isolation-defect`). Evidence in-repo:
+  `docs/decisions/analysis/codex-reviewer-determinism-2026-08-13/` (METHOD/RESULTS/CLASSIFIER + summary-{A,B,C}.tsv;
+  raw `run{A,B,C}-*.txt` giữ ngoài repo vì dung lượng).
+  **ĐÂY KHÔNG PHẢI task chờ implement — là QUYẾT ĐỊNH chờ owner.** Đo đã chốt sự tồn tại; owner chọn 1 trong 2:
+  **(a) Chấp nhận "1 clean round = tín hiệu yếu"** và ghi rõ điều đó ở MỌI nơi mô tả gate
+  (`docs/standards/review-code-readiness-gate.md`, `HANDOFF.md`, `level3-workflow.md`). Chi phí: 0 quota. Hàm ý:
+  mọi verdict đã cấp dưới chế độ 1-clean (kể cả `fix_round_count: 0` của AP-53 và các "2 clean" tuần này) mang
+  bất định CHƯA định lượng — không được coi mạnh hơn "một mẫu sạch"; re-run có thể lật CLEAN↔FINDINGS.
+  **(b) Chuyển sang N-of-M quorum** (yêu cầu k/m run CLEAN). Chi phí: nhân quota reviewer ~m lần mỗi vòng (quota
+  khan, 2 lane từng park vì cạn). Hàm ý: giảm false-pass/false-block; verdict cũ nên coi là dưới-chuẩn tới khi
+  re-gate theo quorum nếu material. **KHÔNG viết proposed-fix vào task này** — nó chờ owner ruling (a)/(b).
+
 ---
 
 ## task: db-test-harness-teardown-57p01
@@ -2922,6 +2948,14 @@ notes: |
   **Evidence:** open-decisions-reconcile-core round-03 (2026-08-12) — codex re-returned the already-fixed v2.28 finding verbatim, citing removed content at old line numbers (`decisions.md:1529` = v2.27 after the v2.28 deletion) while the gate metadata correctly targeted HEAD ca3557e0 (diff_sha256 matched). Archiving the accumulated review artifacts unblocked a fresh review that returned different, real findings (the DD-104 authority gap).
   **Consequence (honest):** any multi-round lane may have had contaminated input, so "distinct findings spreading across many files round after round" is a WEAKER slice-too-big / edge-family signal than it was treated as — including in the reasoning that produced the DD-104 split. Verify a repeat finding against live HEAD before trusting it. Related but distinct from `codex-review-verdict-nondeterminism` (verdict variance on a frozen diff; this is stale-input contamination).
   **Proposed fix (kit-maintenance):** run the reviewer against a clean checkout of HEAD with no `.autopilot/state`, or make `.autopilot/` unreadable to the reviewer. Do NOT clear canonical gate state (e.g. `pending-review-finding.json`) — it is the enforcement input that prevents unchanged-HEAD retries (`scripts/autopilot-review-readiness.mjs`). `close_by: hand`.
+  **MEASUREMENT 2026-08-13 (executed — same frozen experiment as `codex-review-verdict-nondeterminism`) — CONFIRMED REAL; the vector is the POINTER, not a bare artifact.** Detached worktree @ `d5b31f9`, pinned reviewer, marker prompt identical to the gate. Two plant arms; sole variable = prior-round state present (gitignored — reviewed diff stayed 10 files/2706 ins every run).
+  - **Arm B (lone artifact):** genuine `gate-attempt-01-code-review-round-01.txt` planted at `.autopilot/state/chat-dm-safety-authority-core/`, N=3. codex NEVER read it — the exact filename has 0 hits across all 3 transcripts. A bare artifact at the slice's own state dir is not auto-discovered.
+  - **Arm C (pointer vector = the documented OCR shape):** genuine `pending-review-finding.json` pointer + the genuine `gate-attempt-05-…txt` it references, N=3. codex followed the pointer and read the artifact in **2/3** runs (C-1: 5 refs, C-2: 245 refs; C-3: 0). The heavy-read run **C-2** injected plant-only content into its verdict: **“…including DB 416/416”** — a figure with ZERO occurrences in d5b31f9's tracked tree AND its diff, present only in the planted artifact (runs reading d5b31f9's own evidence say 417/417). AIRTIGHT: C-2 copied a number that exists nowhere in the worktree except the prior-round artifact. Corroborating (not airtight — the diff embeds its own lane history): an advisory citing `autopilot-dd38-dd86-chat-schema-core.md:325` (a file outside the 10-file change set) and the framing “the PRIOR bootstrap concurrency defect is fixed…”.
+  - **Effect here:** contamination polluted ADVISORY/verification content but did NOT flip the verdict (Arm C 3/3 CLEAN). The OCR natural experiment above shows it CAN flip to a false `HALT REVIEW_FINDINGS`. Range: advisory-pollution → false-blocking.
+  - **Fix (mechanical) — sharpened by the data:** the discovery vector is `pending-review-finding.json`, NOT the review logs — the lone planted log was inert (0 reads), so hiding the logs fixes nothing. The fix must make THAT POINTER unreadable BY THE REVIEWER while keeping it readable BY THE GATE (`scripts/autopilot-review-readiness.mjs` consumes it as enforcement input to block unchanged-HEAD retries). Options: run the reviewer against a checkout/sandbox scope that excludes `.autopilot/state`, or relocate the pointer to a gate-only path outside the reviewer's readable tree — NEVER delete it. That reviewer-vs-gate split is the whole difficulty and is easy to lose.
+  - **Acceptance test (folds in the open verdict-flip question — spend quota ONCE, on the fix):** on a diff that does NOT embed its own review-lane history (so plant tokens separate cleanly), a review WITH the pointer + prior-artifact present must produce the SAME verdict as one WITHOUT, and emit no finding citing content absent from the reviewed diff. Existence is already settled (Arm C `416/416`) and severity is already observed in the wild (OCR 2026-08-12: contamination → false `HALT REVIEW_FINDINGS`), so do NOT run a separate re-measurement.
+  - Evidence (in-repo): `docs/decisions/analysis/codex-reviewer-determinism-2026-08-13/` (METHOD/RESULTS/CLASSIFIER + summary-{A,B,C}.tsv; raw `run{B,C}-*.txt` kept outside repo for size).
+  - **Honest consequence for the DD-104 split:** the “distinct findings spreading round after round = slice-too-big” signal is confounded by BOTH measured failures — verdict nondeterminism (findings change run-to-run on a byte-identical input) AND pointer-contamination (prior findings bleed forward) — so it is weaker than it was presented as, including in the DD-104 split reasoning. This strengthens the existing “verify a repeat finding against live HEAD” rule above.
 
 
 ## task: backlog-status-taxonomy-inflight-manual-close-gap
