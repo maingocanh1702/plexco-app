@@ -52,6 +52,17 @@ detached worktree via the pinned `scripts/codex-review-pin.sh`, marker prompt id
 - Additionally, the isolation defect is independently CONFIRMED (Arm C). Both backlog tasks are REAL and SEPARABLE:
   Arm A shows nondeterminism with NO contamination present; Arm C shows contamination via the pointer.
 
+## Owner rulings (2026-08-13)
+- Nondeterminism: adopt UNANIMITY-of-M, NOT N-of-M-clean. Because the failure direction is false-CLEAN, a CLEAN
+  verdict must require ALL M runs clean; any single findings-run blocks (retrying cannot accumulate a pass). Per-run
+  miss ≈ 2/3 (n=3, 95% CI ≈ [0.09, 0.99]); wrong-pass = 0.67^M (M3≈0.30, M5≈0.13); M=3 floor. Sampling is a weak
+  lever at this miss rate — the real lever is per-run detection. Do NOT re-gate issued verdicts; DO stop calling
+  "2 clean rounds" a strong attestation. Implementing the new rule is a separate, not-yet-authorized lane.
+- Isolation defect: fix lane AUTHORIZED (kit-maintenance, separately reviewed). Acceptance test must be a
+  DETERMINISTIC file-reachability assertion (reviewer cannot read the pointer; gate can), never "codex returned
+  CLEAN" (circular). Recommended mechanism: review in a fresh detached worktree at HEAD (gitignored .autopilot/state
+  absent by construction). Plexco-local first per DD-100 D1, backport debt to the canonical kit recorded.
+
 ## Methodological caveat (honest)
 The frozen diff `d5b31f9` embeds its OWN review-lane history (699-line contract doc, manifest, backlog with
 `3289e3b`, `codex round-0X`, `HALT-MAX_ROUNDS`, state paths, a test named `gate-attempt-01`). So most plant tokens
@@ -59,7 +70,10 @@ are ALSO in the diff — this diff is a POOR clean discriminator for contaminati
 token that is genuinely plant-only and therefore decisive.
 
 ## Consequence for the DD-104 split reasoning
-"distinct findings spreading across many files round after round = slice-too-big" is confounded by BOTH measured
-failures: nondeterminism (findings change run-to-run on a byte-identical input) and pointer-contamination (prior
-findings bleed forward). The signal is weaker than it was presented as — including in the reasoning that produced
-the DD-104 split. Verify any repeat finding against live HEAD before trusting it.
+"distinct findings spreading across many files round after round = slice-too-big" now has THREE confounds, not two:
+(1) model nondeterminism (findings change run-to-run on a byte-identical input); (2) pointer-contamination (prior
+findings bleed forward when the reviewer reads .autopilot/state via the pointer); and (3) subset-sampling — under
+false-CLEAN variance each round samples a SUBSET of the true finding set, so a lane surfaces new distinct findings
+round after round even when its scope is CORRECT (under-sampling, not slice-too-big). The signal is weaker than it
+was presented as — including in the reasoning that produced the DD-104 split. Verify any repeat finding against
+live HEAD before trusting it.
