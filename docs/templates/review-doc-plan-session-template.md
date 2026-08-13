@@ -1,7 +1,7 @@
 <!-- review-readiness: template -->
 # Template — Review Docs / Plans → Readiness Verdict
 
-> **Status:** ✅ Required · **Version:** 1.2 · 2026-07-22
+> **Status:** ✅ Required · **Version:** 1.3 · 2026-08-14
 > **Canonical policy:** `../standards/review-code-readiness-gate.md`
 > **Dùng cho:** mọi session review, reconcile, fix, re-check hoặc final decisions, analysis, feature specs, technical plans, implementation plans và doc packs.
 > **Kết quả bắt buộc:** một verdict nhị phân có bằng chứng; không kết thúc bằng “gần final”.
@@ -204,6 +204,40 @@ Block superseded nằm trong tracker `enforce` phải có `<!-- review-verdict: 
 
 `enforce` + `NOT_*_READY` là kết quả hợp lệ của một read-only/blocker audit, nhưng không phải trạng thái hoàn tất của docs plan. Chỉ `code-ready` + validator xanh mới được handoff sang implementation.
 
+### 5.1 Phép thử: cái gì là "review/readiness artifact"
+
+> Port từ `../standards/review-code-readiness-gate.md` §11.2 (canonical authority). Thiếu điều khoản này
+> từng gây một xung đột authority thật (AP-28, `HALT-AUTHORITY_AMBIGUOUS`). Áp phép thử trước khi quyết định
+> artifact của session có cần verdict block + classification directive hay không.
+
+**Phép thử: artifact kích hoạt §11 machine enforcement khi nó KHẲNG ĐỊNH MỘT TRẠNG THÁI readiness.** Liệt kê
+bằng chứng thì không.
+
+- **Khẳng định trạng thái** = bất kỳ dạng nào của: `MET`/`PARTIAL`/`NOT-MET` per-gate · `READY`/`NOT_READY` ·
+  điểm số hay tỷ lệ (`8/12`) · tính từ hàm ý khoảng cách tới ready ("gần đủ", "chỉ còn"). Một người đọc lướt
+  rút ra được kết luận về mức sẵn sàng ⇒ đã là khẳng định trạng thái.
+- **Kiểm kê bằng chứng** = mỗi tiêu chí ghi bằng chứng **có** gì (`file:line`) và **thiếu** gì, không quy ra
+  trạng thái, không tổng hợp. Không kích hoạt §11.
+
+Lý do §11 tồn tại là chặn đúng một kiểu hỏng: một doc **đọc như** đánh giá readiness bị hiểu thành
+authorization, rồi code được viết dựa trên prose. Kiểm kê bằng chứng không tạo ra được hiểu lầm đó.
+
+**Tên file là heuristic phát hiện, KHÔNG phải định nghĩa.** `CANDIDATE_NAME_RE` (`review|readiness|plan`) và
+dòng `REVIEW_VERDICT:` chỉ là cách validator *nhìn thấy* artifact. Một khẳng định readiness nằm trong file đặt
+tên khác là **vi phạm §11 dù validator xanh** — validator xanh ở đây nghĩa là "không nhìn thấy", không phải
+"đã duyệt". Ngược lại, artifact non-candidate không tự động được miễn: cứ áp phép thử trên.
+
+**Cấm verdict một slice chưa được author.** Nếu không có manifest và không có target code thì `TARGET_FILES`
+phải trỏ vào spec, `AUTHORITY_SHA` không pin cái gì có thật, và `CLOSURE_MATRIX` đánh giá một thứ chưa tồn tại.
+Điền các field đó cho hợp lệ với validator là **bịa bằng chứng có vỏ machine-checked** — tệ hơn không verdict.
+Việc đúng: giữ doc ở dạng kiểm kê bằng chứng, và mở verdict khi slice đã được author. **Không mở slice
+placeholder chỉ để có chỗ verdict.**
+
+Điều khoản này **không** thêm/bớt field nào validator kiểm, nên **không bump `REVIEW_POLICY_VERSION`** (giữ
+1.3) — nó định nghĩa phạm vi áp dụng, không đổi hợp đồng máy. Tiền lệ: AP-28 §C3
+(`../auth/auth-d1-implementation-packet.md`) chuyển từ ma trận per-gate sang kiểm kê tiêu chí→bằng chứng;
+DD-38/39 không nhận verdict vì chưa là slice.
+
 ---
 
 ## 6. Handoff sau verdict
@@ -254,6 +288,7 @@ Cấm:
 
 | Ngày | Version | Thay đổi |
 |---|---|---|
+| 14/08/2026 | 1.3 | Port gate §11.2 (`../standards/review-code-readiness-gate.md`) làm §5.1 — phép thử "khẳng định trạng thái vs kiểm kê bằng chứng" quyết định artifact nào kích hoạt §11 machine enforcement; thiếu nó từng gây `HALT-AUTHORITY_AMBIGUOUS` (AP-28). Doc-version 1.2→1.3; điều khoản không đổi field validator nên `REVIEW_POLICY_VERSION` giữ 1.3. |
 | 22/07/2026 | 1.2 | Final implementation plan mặc định target strict `CODE_READY`; thêm directive `code-ready` fail-closed và cấm coding handoff từ `enforce`/`NOT_*_READY`. |
 | 22/07/2026 | 1.1 | Thêm machine-readable classification, `REVIEW_POLICY_VERSION`, `CLOSURE_MATRIX` và mandatory `pnpm review:check:changed` gate. |
 | 19/07/2026 | 1.0 | Tạo reusable template bắt buộc cho review docs/plans: live-truth workflow, G1–G6, closure 12/12, canonical verdict và code-ready handoff. |

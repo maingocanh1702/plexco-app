@@ -4,9 +4,9 @@
 > **Track:** 🔐 Routing & AuthZ
 > **Version:** 2.8 · 2026-08-10
 > **Status:** Reviewed · reconciled to TDD v3.1 / decisions DD-56/DD-86
-> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P0–P1 foundation stable
-> **Tài liệu liên quan:** `../product/BRD.md` BR-1/BR-3/BR-12 · `../product/PRD.md` §2 + §4.2/4.3 · `../product/TDD.md` §3.3–3.5 · `../standards/decisions.md` DD-27/DD-56/**DD-65..68** · `../BE/feature_tenant_routing_authz_tech.md`
+> **Tài liệu liên quan:** `../../product/BRD.md` BR-1/BR-3/BR-12 · `../../product/PRD.md` §2 + §4.2/4.3 · `../../product/TDD.md` §3.3–3.5 · `../../standards/decisions.md` DD-27/DD-56/**DD-65..68** · `../BE/feature_tenant_routing_authz_tech.md`
 
 > **Authority DD-15/DD-65..68 v1.45 (2026-07-17):** Messenger = central Plexco Page + optional tenant Page. Channel identity/reachability scoped theo Page/bot/OA endpoint cho Messenger + Zalo; endpoint/default context **không tự cấp tenant**. Target tenant/resource chỉ từ protected server-side context/action resolver và eligibility check. Routing không lấy authority từ message body.
 

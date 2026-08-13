@@ -1,13 +1,13 @@
 # Feature: Player Telegram Experience — Product/UX Spec
 
-> ⚠️ **ARCHIVED (DD-37, 2026-07-10):** Telegram loại khỏi phạm vi phase-1. Thay bằng `feature_player_messenger.md` + `feature_zalo_channel.md`. Giữ làm lịch sử. Xem `../standards/decisions.md` DD-37.
+> ⚠️ **ARCHIVED (DD-37, 2026-07-10):** Telegram loại khỏi phạm vi phase-1. Thay bằng `feature_player_messenger.md` + `feature_zalo_channel.md`. Giữ làm lịch sử. Xem `../../standards/decisions.md` DD-37.
 
 > **Canonical phase:** P4.5 *(archived)*
 > **Track:** 📱 Player TG
 > **Version:** 2.1 · 2026-07-13
 > **Status:** Archived (DD-37)
 > **Prerequisites:** P2 routing/authz · P3.5 identity · P2 session/join · P3 notifications · P4 sync
-> **Tài liệu liên quan:** `../product/BRD.md` FR-3.1/BR-4 · `../product/PRD.md` FLOW 3 + §4.2/4.4 · `../product/TDD.md` §3.3/3.4 · `../BE/feature_player_telegram_tech.md`
+> **Tài liệu liên quan:** `../../product/BRD.md` FR-3.1/BR-4 · `../../product/PRD.md` FLOW 3 + §4.2/4.4 · `../../product/TDD.md` §3.3/3.4 · `../BE/feature_player_telegram_tech.md`
 
 ---
 

@@ -4,9 +4,9 @@
 > **Track:** 🏠 Home Hub  
 > **Version:** 0.15 · 2026-08-12
 > **Status:** ✅ **Reviewed contract theo DD-79** — composition-only; implementation pending S9. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY`; không có Home/payment/chat runtime. Fork từ Sporta `feature_home.md` v2.5 + học từ design `app-design-opus-4.6.pen`.
-> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web auth · P4.6 player_view (data backbone) · P4.3 marketplace (suggested) · 🔔 notifications §A  
-> **Tài liệu liên quan:** `../standards/decisions.md` **DD-79/DD-91** · `feature_player_view.md` FR-8 (person-self contract) · `feature_payment_reconcile.md` · `feature_marketplace_discovery.md` · `feature_notifications_reminders.md` §A · `../channels/web/theme-direction-2026-07.md` §7 (hero recipe) · `../BE/feature_home_tech.md` · Sporta ref: `Sporta/docs/Phase 1/FE/feature_home.md`
+> **Tài liệu liên quan:** `../../standards/decisions.md` **DD-79/DD-91** · `feature_player_view.md` FR-8 (person-self contract) · `feature_payment_reconcile.md` · `feature_marketplace_discovery.md` · `feature_notifications_reminders.md` §A · `../../channels/web/theme-direction-2026-07.md` §7 (hero recipe) · `../BE/feature_home_tech.md` · Sporta ref: `Sporta/docs/Phase 1/FE/feature_home.md`
 
 > **Ranh giới DD-91:** Home chỉ **consume** canonical self-payment projection (`remainingAmount`, phân biệt `known_zero`/`unknown`) do Player View/payment core sở hữu. Home không query ledger, không tự cộng lại tiền, không tạo result/history riêng. Exact requester-only `/pay` là target deterministic ở club bot/private bot/human DM; không gọi LLM, không ghi chat transcript và hiện chưa có runtime.
 
@@ -17,6 +17,17 @@
 Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboard tổng hợp: tiền (còn nợ xuyên CLB), kèo sắp tới (mọi CLB, cả vai host lẫn player), và gợi ý kèo từ marketplace. Nguyên tắc: **glanceable, mobile-first 375px, ưu tiên 1 màn không scroll cho nội dung chính**. Đây là màn "có taste" nhất — áp hero recipe từ theme-direction §7.
 
 **Home là composition surface, KHÔNG phải data owner:** mọi dữ liệu đến từ contract đã có — person-self aggregate (player_view), public marketplace (whitelist), notification inbox §A. Home không tạo bảng mới, không mở đường đọc mới vượt person-self/public boundary.
+
+### Entry points
+
+> Home là **root landing** của PWA shell — hầu hết entry là đường *đến* Home. Header 🔔/💬 và các CTA là đường *ra* (xem Use Cases).
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Post-login landing | `/` (sau đăng nhập, S9) | User | Màn đầu tiên sau auth (DD-79) |
+| Bottom nav → Home tab | `/` (slot #1) | User | Home dashboard (`§3` nav) |
+| PWA launch | App icon → `/` | User | Cold-open vào Home |
+| Notification cold-open | Push → mở app → `/` | User | Từ notification về Home |
 
 ### Bất biến
 

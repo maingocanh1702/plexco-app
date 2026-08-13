@@ -4,8 +4,8 @@
 > **Track:** 🏢 Multi-tenant Core + 3-tier
 > **Version:** 1.8 · 2026-08-10
 > **Status:** Reviewed and reconciled to BRD v3.9b / PRD v2.8 / TDD v3.1 / decisions v1.45; P0–P1 live implementation remains the reality baseline, DD-15/DD-65..68 migration pending
-> **Implementation:** Implemented (foundation) — RLS + tenantRepo + migrations 0000–0013 trên `main` · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
-> **Tài liệu liên quan:** `../product/BRD.md` §6–8 · `../product/TDD.md` §3.2–3.4 · `../standards/decisions.md` DD-37/**DD-65..68** · `feature_identity.md` · `../strategy/saas-implementation-plan.md` · `../research/player-side-saas-AUDIT.md`
+> **Implementation:** Implemented (foundation) — RLS + tenantRepo + migrations 0000–0013 trên `main` · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Tài liệu liên quan:** `../../product/BRD.md` §6–8 · `../../product/TDD.md` §3.2–3.4 · `../../standards/decisions.md` DD-37/**DD-65..68** · `feature_identity.md` · `../../strategy/saas-implementation-plan.md` · `../../research/player-side-saas-AUDIT.md`
 
 > **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (bỏ Telegram). Nền multi-tenant/RLS không đổi; chỉ cập nhật tham chiếu kênh ngoài phạm vi.
 >
@@ -256,11 +256,11 @@ Không gửi schema/migration telemetry chứa row data hoặc PII.
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| BRD OD-4 | Managed Postgres provider | ✅ **DD-04 (2026-07-16): (c) co-locate DigitalOcean** (App Platform + Managed PG, VPC private); Fly=fallback; egress-IP gate → `../decisions/analysis/dd-04-hosting-final-decision.md` |
+| BRD OD-4 | Managed Postgres provider | ✅ **DD-04 (2026-07-16): (c) co-locate DigitalOcean** (App Platform + Managed PG, VPC private); Fly=fallback; egress-IP gate → `../../decisions/analysis/dd-04-hosting-final-decision.md` |
 | BRD OD-8 | Danh sách môn + taxonomy trình độ | ✅ **Chốt DD-08** (2026-07-13) — môn mở rộng được + level 5-bậc rank |
 | MT-OQ-1 | Narrow worker functions cụ thể | ✅ Contract đã pin trong `../BE/feature_multi_tenant_tech.md §4`: SECURITY DEFINER claim chỉ trả `job_id/tenant_id/entity_id`, fixed `search_path`, revoke PUBLIC, grant `app_worker`; exact function name thuộc từng queue slice, không còn là founder/P0 gate |
-| MT-OQ-2 | Kèo không thuộc CLB (Skip Club / personal meet) | ✅ **Chốt DD-46** — Option B "personal tenant" (`tenants.kind='personal'`+`owner_person_id`, auto-provision, free; giữ `tenant_id NOT NULL`+RLS; CẤM nullable). Schema/provision propagate lúc build → `../decisions/analysis/dd-46-skip-club-analysis.md` |
-| MT-OQ-3 | Nhãn/hạng thành viên (audience targeting) | ✅ **Chốt DD-43** — `membership_tags` many-to-many per-tenant, host-defined; MVP chỉ announce audience; public không lộ tag; bỏ `membership_tier` MVP → `../decisions/analysis/dd-43-membership-tags-analysis.md` |
+| MT-OQ-2 | Kèo không thuộc CLB (Skip Club / personal meet) | ✅ **Chốt DD-46** — Option B "personal tenant" (`tenants.kind='personal'`+`owner_person_id`, auto-provision, free; giữ `tenant_id NOT NULL`+RLS; CẤM nullable). Schema/provision propagate lúc build → `../../decisions/analysis/dd-46-skip-club-analysis.md` |
+| MT-OQ-3 | Nhãn/hạng thành viên (audience targeting) | ✅ **Chốt DD-43** — `membership_tags` many-to-many per-tenant, host-defined; MVP chỉ announce audience; public không lộ tag; bỏ `membership_tier` MVP → `../../decisions/analysis/dd-43-membership-tags-analysis.md` |
 
 ## Changelog
 
@@ -272,7 +272,7 @@ Không gửi schema/migration telemetry chứa row data hoặc PII.
 | 2026-07-17 | v1.6 | **DD-65..68 boundary propagation:** Messenger registry/identity/endpoint reachability chuyển target contract sang GLOBAL protected+narrow resolver; tenant Page chỉ default context, không cấp target authority. Live P0–P1 RLS baseline không đổi; migration pending. |
 | 2026-07-16 | v1.5 | Reconcile MT-OQ-1 sau P0: worker security boundary đã canonical ở BE §4; exact per-queue function name được pin trong slice triển khai, không còn wording "trước P0". |
 | 2026-07-15 | v1.3 | **Propagation (light):** OD-8 → ✅ DD-08; OD-4 → 🟡 DD-04 reopened; thêm MT-OQ-2 (DD-46 personal tenant) + MT-OQ-3 (DD-43 membership_tags) với pointer. Nền RLS/tenant không đổi; schema (`tenants.kind`/`membership_tags`) propagate lúc build slice. |
-| 2026-07-16 | v1.4 | **DD-04 ✅ Accepted:** OD-4 row → **(c) co-locate DigitalOcean** (App Platform + Managed PG, VPC private); Fly = fallback; egress-IP gate. Nền RLS/tenant không đổi. → `../decisions/analysis/dd-04-hosting-final-decision.md`. |
+| 2026-07-16 | v1.4 | **DD-04 ✅ Accepted:** OD-4 row → **(c) co-locate DigitalOcean** (App Platform + Managed PG, VPC private); Fly = fallback; egress-IP gate. Nền RLS/tenant không đổi. → `../../decisions/analysis/dd-04-hosting-final-decision.md`. |
 | 2026-07-10 | v1.2 | **DD-37:** cập nhật tham chiếu kênh ngoài phạm vi — tenant routing Zalo/Messenger P2, player channels Zalo/Messenger phase-1 (bỏ Telegram, bỏ "Messenger P4.8"). Nền RLS/tenant không đổi. |
 | 2026-06-19 | v1.1 | Thêm Changelog heading, verified format compliance |
 | 2026-06-18 | v1.1 | Canonical phase; chuẩn hóa RLS setting/worker contract; protected identity; permission matrix; public fields |

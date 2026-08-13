@@ -151,6 +151,8 @@ CREATE TABLE payment_allocations (
   --   DD-40 mark-paid thủ công: tiền mặt → 'cash'; CK đã ingest → 'manual' (khớp bank txn).
   --   Host-attested "đã CK" chưa có bank_transaction = dedicated source migration (B1), never synthetic bank txn
   --   HOẶC mở enum qua migration — KHÔNG dùng 'cash' cho CK, KHÔNG thêm 'bank_transfer'.
+  -- 🟡 'buddy' CHƯA CHỐT — DD-106 Q1. Live 0003_payments_ledger.sql:85 có 5 giá trị, KHÔNG có 'buddy'.
+  --    Không migration nào được mở enum này trước khi DD-106 Q1 thành ✅. Xem ../../standards/decisions.md.
   source text NOT NULL CHECK (source IN ('auto','manual','cash','waiver','reversal','buddy')),
   reverses_allocation_id uuid,
   created_by uuid,

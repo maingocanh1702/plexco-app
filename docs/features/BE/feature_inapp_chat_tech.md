@@ -298,6 +298,11 @@ CREATE TABLE chat_messages (
   CHECK (author_type =  'person' OR author_person_id IS NULL),      -- assistant/system ⇒ author_person_id NULL
   CHECK (author_type = 'person' OR membership_id IS NULL),          -- assistant/system: membership NULL (DD-20)
   CHECK (author_type <> 'person' OR tenant_id IS NULL OR membership_id IS NOT NULL), -- club person phải có membership
+  -- 🟡 Structured embed CHƯA CHỐT — DD-106 Q2. `0031_chat_schema_core.sql` ĐÃ LAND (11/08) và KHÔNG có
+  --    ba cột dưới đây ⇒ đây là EXPAND một bảng đã land, tức migration 0033+ với đủ gate, không phải
+  --    spec cho bảng chưa tồn tại. `embed_snapshot` là bản sao dữ liệu session nằm trong bảng chat ⇒
+  --    mặt lộ mới cho whitelist; phải chốt snapshot đóng băng hay refresh, và xử lý embed đã gửi khi
+  --    session chuyển private/cancel. Xem ../../standards/decisions.md → DD-106 Q2.
   -- Structured embed (optional): session card, extensible to activity/tournament/club later
   embed_type text CHECK (embed_type IS NULL OR embed_type IN ('session')),
   embed_ref_id uuid,                                      -- source entity id (session_id for 'session')

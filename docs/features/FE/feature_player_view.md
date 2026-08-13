@@ -4,9 +4,9 @@
 > **Track:** 👤 Player View  
 > **Version:** 2.11 · 2026-08-12
 > **Status:** Reviewed  
-> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3.5 identity · P3 ledger · P4 web auth/magic link · P4 sync realtime  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-8 · `../product/PRD.md` FLOW 10 · `../product/TDD.md` §3.4/§4 (person-self contract) · `../BE/feature_player_view_tech.md` · `../standards/decisions.md` DD-91/DD-96 · `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md`
+> **Tài liệu liên quan:** `../../product/BRD.md` FR-8 · `../../product/PRD.md` FLOW 10 · `../../product/TDD.md` §3.4/§4 (person-self contract) · `../BE/feature_player_view_tech.md` · `../../standards/decisions.md` DD-91/DD-96 · `../../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md`
 
 > **DD-48 boundary:** `/me` vẫn person-self và không nhận arbitrary person id. Cross-user social profile thuộc `feature_user_settings` (`GET /api/persons/:id/profile`) với DTO riêng; host operational member/roster data đi tenant-scoped path riêng. Không tái dùng `/me` serializer cho hai path đó.
 

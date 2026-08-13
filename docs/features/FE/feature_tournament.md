@@ -4,9 +4,9 @@
 > **Track:** 🏆 Session & Competition
 > **Version:** 0.2 · 2026-08-10
 > **Status:** Draft *(chưa qua readiness gate — KHÔNG phải Reviewed contract; DD-82 mới ở mức "chốt hướng")*
-> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md`
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md`
 > **Prerequisites:** Session core (Session Management) ổn định; DD-12 guarded public read model; DD-83 slug registry
-> **Tài liệu liên quan:** `../product/BRD.md` · `../standards/decisions.md` **DD-82** (aggregate độc lập) · DD-83 (URL/slug) · DD-73/DD-75 (share/guarded view) · DD-12 (public read model) · DD-06 (location granularity) · DD-41 (retire `session_type='tournament'`) · HR2 (tiền/PII không public) · `../BE/feature_tournament_tech.md`
+> **Tài liệu liên quan:** `../../product/BRD.md` · `../../standards/decisions.md` **DD-82** (aggregate độc lập) · DD-83 (URL/slug) · DD-73/DD-75 (share/guarded view) · DD-12 (public read model) · DD-06 (location granularity) · DD-41 (retire `session_type='tournament'`) · HR2 (tiền/PII không public) · `../BE/feature_tournament_tech.md`
 
 ---
 

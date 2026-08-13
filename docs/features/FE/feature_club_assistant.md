@@ -4,9 +4,9 @@
 > **Track:** 🤖 Club Assistant
 > **Version:** 0.19 · 2026-08-10
 > **Status:** ✅ **Reviewed contract** — DD-86/DD-91/DD-93 authority đã mirror, Product/BE companion closure hoàn tất; implementation vẫn chưa bắt đầu. **DD-18** (provider LLM + privacy/ToS) chỉ là `ENABLEMENT_ONLY` cho GO-LIVE vì provider nằm sau interface swappable; Reviewed không tự authorize code/runtime.
-> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web/app surface + sync engine · P3.5 identity · P5 billing entitlement · (KHÔNG cần channel adapters — trợ lý chỉ chạy trong app Plexco)
-> **Tài liệu liên quan:** proposal `../proposals/club-ai-bot-knowledge-base.md` · BE `../BE/feature_club_assistant_tech.md` · `feature_inapp_chat.md` (DD-38/DD-86) · `../standards/decisions.md` DD-16..DD-23 · DD-37/DD-38/DD-86/DD-91 · `../standards/core-db-architecture-principles.md`
+> **Tài liệu liên quan:** proposal `../../proposals/club-ai-bot-knowledge-base.md` · BE `../BE/feature_club_assistant_tech.md` · `feature_inapp_chat.md` (DD-38/DD-86) · `../../standards/decisions.md` DD-16..DD-23 · DD-37/DD-38/DD-86/DD-91 · `../../standards/core-db-architecture-principles.md`
 
 > **Cập nhật v3.4 (DD-37 + DD-38, 2026-07-10):** hạ tầng `chat_*` (native chat in-app) nay **được dựng sớm ở P4** bởi **DD-38** (chat cơ bản phase-1, người↔người) — trợ lý (pha B, DD-19) **tái dùng** cùng bộ bảng ở P7, không tạo model song song. Kênh phase-1 = **Zalo + Messenger** (Telegram loại — DD-37); trợ lý vẫn **chỉ trong app Plexco**, không trả lời ở kênh ngoài.
 

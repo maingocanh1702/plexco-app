@@ -1631,6 +1631,110 @@ notes: |
   — the next actionable step is `scripts/autopilot-scope-gate register` from a freshly-verified
   `origin/main` tip, per slice_doc §9 `FIRST_IMPLEMENTATION_STEP`.
 
+## task: chat-shared-message-command-core
+title: Catalog slice 7 — sole `send_chat_message`/history/`mark_read` for club+DM, atomic reply+mention, leading-slash fence
+status: planned
+_readiness: NOT_CODE_READY (blocked) — see `../autopilot/contracts/autopilot-chat-shared-message-command-core.md` §7
+risk: P1
+change_class: schema
+depends_on: [chat-dm-safety-authority-core, dd38-dd86-chat-schema-core, tenant-capability-authority-core]
+invariants: [schema]
+scope: []
+manifest: docs/autopilot-manifests/chat-shared-message-command-core.json
+launcher: null
+merged_probe: null
+_probe_note: Left `null` on purpose — NOT_CODE_READY. depends_on lists only the 3 of 6 catalog hard-deps
+  (primary plan §9 row 7: "Hard-dep 2/3/4/5/6/9") that have a resolvable backlog slug — 2
+  (chat-dm-safety-authority-core) and 3 (dd38-dd86-chat-schema-core) are MERGED with dep_checks proof in
+  the manifest; 4 (tenant-capability-authority-core) is an authored `idea` task, unmet. Catalog slices 5
+  (chat-club-channel-lifecycle-core), 6 (chat-club-moderation-core) and 9 (chat-authorized-member-target-
+  read-core) are ALSO hard dependencies but have NO backlog task at all (verified 2026-08-13, zero grep
+  match, zero manifest file) — they cannot be listed in `depends_on` because there is nothing to resolve.
+  `scope: []` = no authorized write scope yet; the INTENDED target scope lives in the manifest.
+notes: |
+  **Mở 2026-08-13 từ next-lanes lane C7**, sau khi DD-102's hard condition đóng (`0032` merged
+  `main@80a3464`). DD-102 chỉ bảo vệ đúng một defect (torn read trong `assert_dm_allowed`); nó chưa
+  từng là blocker duy nhất — dependency column của primary plan cho catalog row 7 (chốt 27-28/07, không
+  đổi từ đó) đọc **"Hard-dep 2/3/4/5/6/9"**.
+
+  **Đo lại 2026-08-13, 3 nguồn độc lập đồng ý cùng một chuỗi** (plan §13 `PRIOR_SLICES`, backlog note
+  của `tenant-capability-authority-core`/`dd38-dd86-chat-schema-core`, và `docs/features/README.md`
+  chat index row): `1 → 2 → 3 → 4 → 5 → 9 → 6 → 7 → 8`. Slice 7 chỉ có 2/6 hard-dep merged (2, 3); 4 là
+  `idea` (không code, không manifest thật); **5, 6, 9 KHÔNG có backlog task nào** — không phải "chưa
+  merge", mà là "chưa từng được author". Đây không phải một blocker kiểu "đọc-và-ghim" (như S1
+  session-service cùng ngày) — mỗi slice thiếu cần một phiên authoring + strict `CODE_READY` + build
+  đầy đủ riêng.
+
+  **Phát hiện phụ (B5, độc lập, không lường trước lúc mở task) — spec integrity defect trên đúng
+  endpoint slice này sở hữu:** `docs/features/BE/feature_inapp_chat_tech.md` v0.26/v0.27 và
+  `docs/features/FE/feature_inapp_chat.md` (CHT-UC-21..31) chèn thẳng session-embed + group chat
+  (`kind='group'`) + pin/poll/nickname vào **đúng** `chat_messages` và route `POST /api/chat/channels/
+  :id/messages` — không một dòng `decisions.md` nào ratify (grep "kind='group'\|chat_groups\|poll\|pin
+  message\|nickname" trong decisions.md ra rỗng ngoài 2 chỗ "polling" không liên quan), không slice nào
+  trong catalog `1–47`/`A1–A21`/`F0–F15` sở hữu nó, và schema sống không hỗ trợ (`chat_messages` không
+  có cột `embed_*`, `chat_channels_kind_chk` chỉ `IN ('club','dm')`). Cùng dạng lỗi DD-104 đã đặt tên
+  và bắt gỡ hai lần ("quyết định chưa chốt viết thẳng vào spec đã Reviewed") — khác ở chỗ lần này nó
+  nằm ngay trên function/endpoint slice 7 phải build (Route contract dòng `POST /api/chat/channels/:id/
+  messages` liệt kê `embedType`/`embedRefId` như tham số hợp lệ của CHÍNH `send_chat_message`). Mở task
+  riêng `docs-chat-spec-embed-group-scope-reconcile` (block kế tiếp) cho finding này — theo quy tắc
+  Level-3 rằng một out-of-scope finding cần một chỗ chính thức để đáp, không chỉ nằm trong transcript.
+
+  **5 blocker đặt tên đầy đủ ở contract §7** (B1=slice 4, B2=slice 5, B3=slice 6, B4=slice 9,
+  B5=spec integrity). Không cái nào tự đóng bằng cách đọc thêm tài liệu — B1-B4 cần build thật, B5 cần
+  một quyết định owner (ratify hoặc strip).
+
+---
+
+## task: docs-chat-spec-embed-group-scope-reconcile
+title: Chat BE v0.26/v0.27 + FE spec chèn session-embed/group-chat/pin/poll/nickname chưa qua decisions.md
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  **Phát hiện 2026-08-13 trong lúc author packet `chat-shared-message-command-core`** (đọc chi tiết ở
+  contract §7 blocker B5 của task đó). `docs/features/BE/feature_inapp_chat_tech.md` changelog v0.26
+  (2026-08-11, "Group Chat expansion") và v0.27 (2026-08-12, "Share Session in Chat / Structured
+  Embed") thêm: `kind='group'` (global + tenant-scoped, 3-50 members, follow-guard DD-47), 5 bảng mới
+  (`chat_pinned_messages`, `chat_polls`, `chat_poll_options`, `chat_poll_votes`,
+  `chat_member_nicknames`), pin/poll/nickname/group-admin mechanics, và `embed_type`/`embed_ref_id`/
+  `embed_snapshot` columns trên `chat_messages` + tham số `embedType`/`embedRefId` trên route
+  `POST /api/chat/channels/:id/messages`. `docs/features/FE/feature_inapp_chat.md` mirror đủ (CHT-UC-
+  21 tới 31 + edge case #31-40).
+
+  **Đo xác nhận (2026-08-13), cả ba đều thiếu:**
+  - `decisions.md`: grep `kind='group'\|chat_groups\|group chat\|poll\|pin message\|nickname` — rỗng
+    (2 kết quả "polling" thuộc một DD khác về SSE vs WebSocket, không liên quan).
+  - Primary plan (`in-app-chat-primary-player-surface-plan-2026-07-27.md` v1.8, `PLAN_READY` tại
+    `90d292d`): catalog mechanism `1–47`, API `A1–A21`, FE `F0–F15` không nhắc gì tới group/pin/poll/
+    nickname/embed.
+  - Live schema (`packages/db/schema.ts` tại `32b7d47`): `chat_channels_kind_chk` chỉ
+    `IN ('club','dm')`; không bảng `chat_pinned_messages`/`chat_polls`/`chat_poll_options`/
+    `chat_poll_votes`/`chat_member_nicknames`; `chat_messages` không cột `embed_*`.
+
+  **Vì sao đây không chỉ là "implementation chưa bắt đầu" (trạng thái bình thường của mọi spec trong
+  initiative này):** nội dung này KHÔNG xuất hiện ở bất kỳ đâu trong immutable authority pack `90d292d`
+  (owner-final 27-28/07) hay bất kỳ DD nào sau đó. Nó chỉ xuất hiện trong chính spec "✅ Reviewed
+  contract" — đúng pattern DD-104 đã đặt tên: "nội dung chưa-chốt thuộc `decisions.md`, không thuộc
+  spec" (CLAUDE.md). Tệ hơn DD-104 (vốn là WIP tự nhận biết, cùng feature) ở chỗ đây là scope hoàn
+  toàn MỚI (group chat là một `kind` channel thứ ba, chưa bao giờ xuất hiện trong bất kỳ round DD-86
+  nào) chèn thẳng vào field/route slice 7 (`chat-shared-message-command-core`) đang cần build — request/
+  response example của BE spec show `embedType`/`embedRefId` như tham số hợp lệ của CHÍNH
+  `send_chat_message`, khiến một implementer đọc spec theo nghĩa đen có thể nghĩ nhầm nó thuộc scope
+  slice 7.
+
+  **Không đề xuất phương án ở đây** (đúng nguyên tắc "không tự chọn product policy để lấp open
+  question" của gate). Owner chọn: (a) ratify qua `decisions.md` + primary plan nhận thêm slice(s) sở
+  hữu group/pin/poll/embed, hoặc (b) strip/relocate nội dung ra khỏi trạng thái "Reviewed" (tiền lệ
+  DD-104) tới khi nó qua đủ G1-G6 như mọi phần khác của initiative. Chặn `chat-shared-message-command-
+  core` blocker B5 tới khi đóng.
+
+---
+
 ## task: docs-session-management-spec-reconcile
 title: Reconcile 2 pinned Session Management spec defects (projection direction + stale 0014 merge-state) to PRD
 status: merged

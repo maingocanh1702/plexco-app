@@ -4,9 +4,9 @@
 > **Track:** Growth / Channel Acquisition
 > **Version:** 1.3 · 2026-08-12
 > **Status:** Reviewed contract — DD-32 Option D (`browse freely → link hoặc pay-now ở final confirm`)
-> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** Identity/account link · common Session/Join/Waitlist core · payment settlement capability · Zalo/Messenger adapters · web-auth handoff
-> **Tài liệu liên quan:** `../standards/decisions.md` DD-05/06/32/33/39/45/49/50/67 · `../standards/business-rules.md` BL-CBF · `feature_cross_club_join.md` · `feature_identity.md` · `feature_web_auth_onboarding.md` · `../BE/feature_channel_booking_funnel_tech.md`
+> **Tài liệu liên quan:** `../../standards/decisions.md` DD-05/06/32/33/39/45/49/50/67 · `../../standards/business-rules.md` BL-CBF · `feature_cross_club_join.md` · `feature_identity.md` · `feature_web_auth_onboarding.md` · `../BE/feature_channel_booking_funnel_tech.md`
 
 ---
 
@@ -147,7 +147,12 @@ Messenger có thể dùng provider-native account-link CTA khi capability đư�
 
 ### 3.6 Component tables
 
-**Component: Session browse card (bot) — unified `SessionCard` data alignment:**
+**Component: Session browse card (bot) — unified `SessionCard` data alignment:** 🟡
+
+> 🟡 **`SessionCard` canonical CHƯA CHỐT — `DD-106 Q3`.** Shape dùng chung bot/web/home do spec pass 12/08
+> đưa vào nhiều spec cùng lúc mà chưa chốt field set canonical nằm ở đâu, surface nào được degrade, và quan
+> hệ với whitelist BL-DSC-1. Dùng làm tham chiếu được; **không** dùng làm nguồn duy nhất khi implement.
+> Xem `../../standards/decisions.md` → DD-106 Q3.
 
 | Field | Data source | Ghi chú |
 |-------|-------------|---------|

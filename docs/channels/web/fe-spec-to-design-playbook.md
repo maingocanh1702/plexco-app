@@ -1,9 +1,27 @@
 # Playbook: FE Spec → Design Screens (.pen)
 
-> **Version:** 1.0 · 2026-08-10
-> **Dành cho:** Designer bắt đầu vẽ UI/màn cho Plexco App
+> 🔴 **DỪNG — FE PENDING theo lệnh owner 2026-08-13. KHÔNG thực hiện playbook này lúc này.**
+> DD-81 / M0.3 / M4 và **mọi việc FE** đang treo: **không track `.pen`**, không mở page/component,
+> không chạy lane FE. Nguồn: `../../autopilot-templates/next-lanes-2026-08-13-RUN.md`.
+>
+> Cần nói rõ vì playbook này dễ đọc nhầm: đây **không phải** "HOLD chờ gate". Trước 13/08, FE bị chặn bởi
+> một gate (canonical `.pen` được track + owner nghiệm thu) — làm xong gate là đi tiếp. Nay là **lệnh owner
+> tạm dừng**: gate không còn là thứ chặn, và ai làm theo §0.2/§3/§6.3 dưới đây để "mở khoá" — đặc biệt là
+> `git add design.pen` hay ghi canonical node ID vào file — là **đi ngược lệnh owner**.
+>
+> Playbook giữ lại vì nội dung phương pháp vẫn dùng được khi FE mở lại. **Đọc để hiểu, không để thi hành.**
+
+> **Version:** 1.1 · 2026-08-13 *(v1.0 · 2026-08-10 — bản gốc, không có ranh giới gate)*
+> **Dành cho:** Designer bắt đầu vẽ UI/màn cho Plexco App — **khi FE được mở lại**
 > **Prerequisite:** Đã đọc `designer-kickoff.md` (scope + ràng buộc DD-57)
-> **Template kèm theo:** `design-feature-checklist.md` (copy per feature)
+> **Template kèm theo:** `../../templates/design-feature-checklist.md` (copy per feature)
+>
+> ⚠️ **Hai chỗ playbook này KHÔNG còn khớp contract, sửa trước khi dùng lại:**
+> 1. **Breakpoint** (§ Responsive, các dòng 375/768/1440 áp cho *mọi* screen) — DD-99 OQ-1 chốt phương án
+>    (a) ngày 07/08: 768px **chỉ** cho dashboard-shell surface; player-facing pin 375 + desktop và **cấm**
+>    tự đặt số trung gian. Các FE spec đã tuân thủ; playbook thì chưa ⇒ **spec thắng**.
+> 2. **Thứ tự ưu tiên** ở §0.4 tự khai là "theo `designer-kickoff.md §3B`" nhưng **không khớp** §3B, và
+>    không phản ánh thứ tự P2→P4→P3 owner đã chốt ở DD-99. Đừng dùng bảng đó làm thứ tự thi công.
 
 ---
 
@@ -33,8 +51,8 @@ FE Spec (feature_*_fe.md)
 
 | # | File | Thời gian | Mục đích |
 |---|------|-----------|----------|
-| 1 | [designer-kickoff.md](../designer-kickoff.md) | 15 phút | Scope, thứ tự vẽ, ràng buộc DD-57, checklist nghiệm thu |
-| 2 | [design-brief.md](../design-brief.md) | 20 phút | Personas, user journeys, sitemap, deliverables |
+| 1 | [designer-kickoff.md](./designer-kickoff.md) | 15 phút | Scope, thứ tự vẽ, ràng buộc DD-57, checklist nghiệm thu |
+| 2 | [design-brief.md](./design-brief.md) | 20 phút | Personas, user journeys, sitemap, deliverables |
 
 ### 0.2 Setup Design System trong .pen (2 file)
 
@@ -400,15 +418,18 @@ Giao cho Product Owner + FE Lead review theo checklist nghiệm thu trong `desig
 
 | Tài liệu | Đường dẫn | Vai trò |
 |---|---|---|
-| Designer Kickoff | [designer-kickoff.md](../designer-kickoff.md) | Scope + ràng buộc |
-| Design Brief | [design-brief.md](../design-brief.md) | Personas + sitemap |
+| Designer Kickoff | [designer-kickoff.md](./designer-kickoff.md) | Scope + ràng buộc |
+| Design Brief | [design-brief.md](./design-brief.md) | Personas + sitemap |
 | Design Tokens | [design-tokens.md](../../standards/design-tokens.md) | Token values (SoT) |
 | Design System | [design-system.md](../../standards/design-system.md) | Component catalog |
-| Feature Checklist Template | [design-feature-checklist.md](./design-feature-checklist.md) | Copy per feature |
-| Theme Direction | [theme-direction-2026-07.md](../theme-direction-2026-07.md) | Target C Energetic Orange |
-| Handoff Pipeline | [frontend-pipeline.md](../frontend-pipeline.md) | design → code pipeline |
-| BRD-to-pen Playbook | [brd-to-pen-playbook.md](./brd-to-pen-playbook.md) | Generic methodology (reference) |
-| 17 FE Specs | [FE/](../FE/) | ⭐ Nguồn sự thật cho từng màn |
+| Feature Checklist Template | [design-feature-checklist.md](../../templates/design-feature-checklist.md) | Copy per feature |
+| Theme Direction | [theme-direction-2026-07.md](./theme-direction-2026-07.md) | Target C Energetic Orange |
+| Handoff Pipeline | [frontend-pipeline.md](./frontend-pipeline.md) | design → code pipeline |
+| BRD-to-pen Playbook | [brd-to-pen-playbook.md](../../templates/brd-to-pen-playbook.md) | Generic methodology (reference) |
+| 17 FE Specs | [FE/](./FE/) | ⭐ Nguồn sự thật cho từng màn |
+
+> 📌 **9/11 link trong bảng này từng hỏng** (viết như thể file nằm sâu hơn một cấp) — sửa 13/08. Nếu thêm
+> dòng mới: file này ở `docs/channels/web/`, nên `./` là cùng thư mục, `../../` mới ra `docs/`.
 
 ---
 

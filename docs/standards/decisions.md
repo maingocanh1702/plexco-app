@@ -112,6 +112,8 @@
 | DD-96 | **Home money chips** → **Part A ✅** canonical `SelfPaymentSummary` cross-club thuộc `player_view` (Home cấm tự cộng; `feature_home_tech.md:166` đã yêu cầu mở rộng Player View owner), **unknown-dominates**: một CLB `unknown` ⇒ cả summary `unknown`, cấm sum các CLB known; `clubCount` = số CLB có outstanding > 0; không `payAction` ở tầng aggregate. **Part B 🟡** chip "Chưa thu" cross-club — owner chốt direction, đảo HOME-OQ-1(c), nhưng **không thuộc player_view** (DD-48 + DTO allowlist "other charges ❌ NEVER"); cần host-self owner riêng và còn 4 blocker B1–B4 (design-probe · `authorizeTenantAction` 0 caller · chưa Reviewed per-club owner · fan-out semantics) | Part A ✅ `DECISION_FINAL` contract shape (owner 2026-08-07), chưa authorize code · Part B ✅ direction / 🟡 `NOT_PLAN_READY` mechanism | Part A: S9 (cùng Home) sau P4.6 · Part B: sau per-club host receivable owner | DD-48 · DD-79 (HOME-OQ-1) · DD-91 · `../features/BE/feature_player_view_tech.md` · `../features/BE/feature_home_tech.md:166` · `../channels/web/FE/feature_dashboard_fe.md:59-66` |
 | DD-97 | **Collection statement + export sao kê per-session/kỳ (PDF/XLSX)** → composition-only trên `charges`+`payment_allocations` (không bảng/formula tiền mới; DTO cần owner Reviewed — cùng họ blocker B3 của DD-96); export async behavior-contract-only trên DD-89 foundation (không authorize enablement); download authenticated tenant-scoped, không public link (HR2); entitlement ✅ tách lớp: per-session statement view = **free** · kỳ/tháng + export file = **`host_pro`** | ✅ Direction + entitlement chốt (owner-delegated 2026-08-07) · mechanism chờ DTO owner Reviewed | P5+ TBD | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · DD-89 · DD-40 |
 | DD-98 | **Negative scope cho mechanic Sporta không port** → không theo đuổi: custom split per player (đụng derivation DD-39/41/45/49) · timeout-hold release cho linked member (DD-32 Option D giữ pay-later) · OS push kèm tiền/QR (mirror NTF — đã cấm sẵn) · auto-archive "nợ cũ" theo tuổi · geo/radius/distance/map picker (NP-5 — mâu thuẫn DD-06 area-only public) | ✅ Chốt (owner-delegated 2026-08-07) | — | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · `../research/sporta-fe-docs-gap-2026-08-07.md` · DD-06/32/39/49 |
+| DD-107 | **Autonomy mode `autonomous_to_ready` + context/authority protocol** → lane chạy thẳng tới READY **không dừng hỏi owner giữa chừng**. Context = **toàn bộ doc corpus thuộc phạm vi** nhưng ~2 triệu token nên **không nạp được** ⇒ luật là **bảo đảm độ phủ, không phải đã nạp**: luôn nạp lõi nhỏ (HANDOFF live-truth + bảng tổng hợp `decisions.md` + gate + packet), phần còn lại **search rồi GHI LẠI query** (kể cả query rỗng — grep rỗng là bằng chứng về query, không phải về repo). Kèm **thang authority 7 bậc** để tự giải mâu thuẫn: runtime truth > migrations/`schema.ts` > `decisions.md` > spec Reviewed > Draft/plan > ROADMAP/BRD/PRD/TDD theo câu hỏi > index/summary. Owner review **một lượt tại READY** qua Decision Ledger, thay vì bị ngắt từng quyết định. Ba tầng thẩm quyền: **A derivable** (agent quyết, log 1 dòng — dừng ở tầng này là defect) · **B judgment/reversible/in-scope** (agent quyết, log đủ alternatives+lý do, owner review batch) · **C reserved** (vẫn AWAIT — 8 mục: money contract · PII/HARD RULES · sửa contract của spec Reviewed · migration đổi semantics hoặc chung tail · enablement · merge/deploy · vượt negative scope · finding bị phản bác). Budget thành **tín hiệu, không phải cổng**. HALT successor pre-authorized khi finding được chấp nhận + gọi tên được nguyên nhân *thiết kế*. **Không đổi:** worktree isolation, scope-gate, 2 vòng review sạch, loop breaker, **human merge**. | ✅ Chốt (owner 2026-08-14) | — | `../autopilot-templates/level3-workflow.md` §6.1 · DD-100 |
+| DD-106 | **Ba hợp đồng do spec pass 12/08 (`692f9f2`) viết thẳng vào spec đã Reviewed mà không có decision** → Q1 **Pay-for-Buddy** (bảng `buddy_payment_requests` + `payment_allocations.source='buddy'` — ĐƯỜNG TIỀN); Q2 **structured embed** (`chat_messages.embed_type/embed_ref_id/embed_snapshot` — schema thêm sau khi `0031` đã land); Q3 **unified `SessionCard`** (contract hiển thị dùng chung bot/web/home). Ba câu độc lập, chốt riêng được. | 🟡 **Đề xuất — chờ owner** (2026-08-13) | P3/P4 | `../features/FE/feature_payment_reconcile.md` §5/§7 · `../features/BE/feature_payment_reconcile_tech.md` §2/§3 · `../features/BE/feature_inapp_chat_tech.md` §302-311 · `../features/FE/feature_channel_booking_funnel.md` §150 |
 | DD-105 | **Suspension gate cho `CreateSession` — miễn theo TÍNH VÔ HÌNH của draft (KHÔNG phải miễn theo "mutation nhỏ")** → ma trận Suspended Action (`feature_billing_lifecycle_tech.md:273`) có hàng `Admin mutation \| suspended ❌`, nhưng action-class literal cho session hôm nay chỉ có `publish_new_sessions` (DD-104 thêm `delete_draft_session`) — **KHÔNG có literal cho create**. Owner chốt phương án (b): `createSession` **KHÔNG** gọi `authorizeTenantAction` (create-draft ungated). Miễn trừ **bounded** tới đúng command có hiệu ứng **(a) vô hình tới khi publish VÀ (b) không đụng tiền**; publish/announce/close/cancel/update-on-`open` (player-visible) hoặc chạm `charges` vẫn dưới ma trận và nhận narrow per-op action class khi build (tiền lệ DD-104 D2a). Fail-closed vẫn nguyên vẹn tại ranh giới thật (`publish_new_sessions` ❌ khi suspended). | ✅ Chốt (owner 2026-08-13) | P2/P4 (session management) | `../features/BE/feature_billing_lifecycle_tech.md` §3 · `../features/BE/feature_session_management_tech.md` §4 · DD-104 D2a · `../autopilot/contracts/autopilot-session-service-create-command-core.md` §7 B4 |
 | DD-104 | **`DeleteSession` hard delete — cơ chế cascade mà spec dựa vào KHÔNG tồn tại** → `feature_session_management_tech.md` v2.20 (WIP, chưa commit) thêm command `DeleteSession` + `DELETE /api/sessions/:id`, algorithm bước 5 khai *"FK cascade xóa `players`, `session_surface_refs`, `session_occurrences` tự động"*. **Đo 2026-08-11: 9 FK trỏ tới `sessions`, ZERO khai `ON DELETE CASCADE`** ⇒ mặc định `NO ACTION` ⇒ `DELETE FROM sessions` ném FK violation ngay khi có child row, mà draft có người tham gia thì đã có `players` row. Ba quyết định: **D1** có chấp nhận hard delete và trả giá bằng sửa 9 FK (gồm `charges` → cascade xuống sổ tiền, chạm HARD RULE *claim-có-tiền cần khoá mạnh*), hay chỉ xoá khi không còn child row, hay bỏ hard delete; **D2** nếu hard delete thì charge `pending`/`failed` của mọi người và charge `paid` **của host** sẽ bị xoá — guard hiện chỉ chặn `paid` của player ngoài host; **D3** ai được xoá (spec tự mâu thuẫn ba chỗ). **Amendment 2026-08-13: owner chốt D0–D4 theo decision table** — D1a mọi FK `NO ACTION` chặn (final fence, không cascade — câu hỏi kế toán tự giải), D2a action class `delete_draft_session`, D3c tra `pg_constraint`, D4a ordering chung delete+publish, D0 không ưu tiên dependency | ✅ Decision-level chốt 13/08 (slice deferred — chờ `tenant-capability-authority-core` packet) | P2/P4 (session management) | `../features/BE/feature_session_management_tech.md` §4 *Delete transition* · `../features/FE/feature_session_management.md` · `packages/db/migrations/0003_payments_ledger.sql:46` · DD-103 |
 | DD-103 | **Chấp nhận gap Person-merge re-parent của `0031_chat_schema_core`, có ràng buộc cứng** → trigger `chat_members_identity_immutable` / `chat_channels_identity_immutable` chặn vô điều kiện UPDATE lên `person_id`/`dm_key`, cộng composite FK tới `memberships` **không `DEFERRABLE`** ⇒ **cấu trúc chặn** việc re-parent chat rows khi merge Person — không phải "chưa implement". Spec `feature_inapp_chat_tech.md` (hàng `| 10 | Cross-Feature | Account merge → chat authorship |` và acceptance `| 11 | Merge re-parent |`) đang khai hành vi này như yêu cầu, schema hiện tại **không đáp ứng được**. Exposure = 0 (zero implementation của Person-merge trong repo). **Ràng buộc cứng:** slice implement Person-merge **phải** mang theo migration mở đường; chưa có thì đó là blocker của chính slice đó | ✅ Chốt (owner 2026-08-11) | P3.5 (Identity) | `../autopilot-backlog.md` task `chat-identity-merge-reparent-enablement` · `../features/BE/feature_inapp_chat_tech.md` (hàng 10 + acceptance 11) · `../00-start-here/identity-model.md:234-237` |
@@ -1622,6 +1624,207 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 
 ---
 
+## DD-107 — Autonomy mode `autonomous_to_ready`: batch owner ở READY thay vì ngắt giữa chừng · ✅ Chốt (owner 2026-08-14)
+
+### Bối cảnh — chi phí đo được, không phải cảm giác
+
+Lane `session-service-create-command-core` v1 (13/08) dừng hỏi owner **bốn lần chỉ vì budget**
+(300→360→440→470 compact) rồi vẫn kết `HALT MAX_ROUNDS`. Budget chưa bao giờ là ràng buộc thật —
+thiết kế validation mới là. Bốn lần ngắt đó sinh ra bốn con số, không sinh ra một hiểu biết nào.
+
+Ngược lại, trong bốn blocker của packet, **ba** (B1 acceptance matrix · B2 module home · B3 producer
+insert contract) được giải bằng cách **đọc repo**; chỉ B4 (suspension gate) là quyết định owner thật và
+thành DD-105. Tỉ lệ 3:1 là chỗ mode này nhắm vào.
+
+### Quyết định
+
+Thêm `autonomy_mode: autonomous_to_ready`. **Không phải "bỏ owner" mà "gom owner"**: owner chuyển từ
+*bị ngắt từng quyết định* sang *review một lượt tại READY*, đọc **Decision Ledger** mà agent ghi trong lúc
+chạy. Agent quyết trong luồng và **phải biện minh bằng văn bản**.
+
+**Thang thẩm quyền** (agent tự phân loại trước khi quyết; phân loại xuống thấp là vi phạm gate):
+
+- **Tier A — derivable.** Repo/migration/spec/decision log/tiền lệ đã có câu trả lời. Quyết + log 1 dòng.
+  **Dừng ở tầng này là defect** và phải ghi vào ledger như một defect.
+- **Tier B — judgment, reversible, in-scope.** Chưa ghi ở đâu nhưng hệ quả nằm trong scope đã khai và sửa
+  lại được bằng chính file của slice. Quyết + log đủ alternatives/lý do/reversibility/bằng chứng đã đọc.
+- **Tier C — reserved, vẫn AWAIT.** Đúng 8 mục, không thêm không bớt: (1) money contract mới/đổi;
+  (2) PII/identity hoặc chạm 5 HARD RULES; (3) sửa **nội dung contract** của spec đã Reviewed (sửa link
+  hỏng/số mục là Tier A; thêm entity/cột/endpoint là Tier C); (4) migration đổi semantics hoặc dùng chung
+  tail với lane khác đang bay; (5) enablement (bật flag/env ra production); (6) merge/deploy/side effect
+  ngoài worktree; (7) phải vượt negative scope; (8) finding review bị agent phản bác.
+
+**Tiêu chí quyết định** — *lợi ích dài hạn tối đa cho project*, cụ thể hoá thành một phép thử và năm
+tie-break: **phép thử 10×** ("lựa chọn này còn đúng không nếu 6 tháng nữa surface gấp 10 lần?"); tie-break
+theo thứ tự **fail-closed > một nguồn sự thật > ít khái niệm hơn > theo tiền lệ sẵn có > reversible**.
+Hoà cả năm thì chọn cái để lại **nhiều bằng chứng hơn cho người đọc sau**.
+
+**Budget thành tín hiệu.** Overrun không bao giờ dừng lane để hỏi một con số. Agent hoặc re-slice trong
+scope, hoặc chạy tiếp kèm entry ghi **nguyên nhân thiết kế**. Overrun lần hai cùng nguyên nhân = tín hiệu
+thiết kế ⇒ re-slice, ngừng vá. Overrun chỉ giải được bằng cách chạm negative scope ⇒ Tier C.
+
+**HALT successor pre-authorized** khi *cả hai*: finding được chấp nhận (không phản bác) **và** agent gọi
+tên được **nguyên nhân thiết kế** chứ không phải danh sách triệu chứng. "Thử lại kỹ hơn" không phải nguyên
+nhân thiết kế.
+
+**Reviewer không gọi được** vẫn `HALT TOOL_UNAVAILABLE` — đây là phụ thuộc ngoài, không phải quyết định;
+nhưng retry có backoff trước, saturation toàn tài khoản là WAIT chứ không phải lý do hạ gate.
+
+### Context — toàn bộ doc corpus thuộc phạm vi, nhưng KHÔNG nạp được
+
+Ý định đúng và không thương lượng: **không được quyết khi chưa biết một doc đang chi phối quyết định đó.**
+DD-106 chính là giá của việc không biết — spec pass viết money contract vào 2 spec Reviewed trong khi
+`decisions.md` đã có DD-26 nói *"không thêm model 'buddy'"*. Doc có sẵn. Không ai đọc.
+
+Nhưng "nạp hết docs" là việc máy không làm được. Đo tại `1fdba1d`:
+
+| Tập | Kích thước | Ước |
+|---|---|---|
+| Toàn bộ `docs/` | 303 file · 8,5 MB · 1,13 triệu từ | **~2 triệu+ token** |
+| Chỉ 6 doc authority lõi | 871 KB | **~220k+ token** |
+| Riêng bảng tổng hợp `decisions.md` | 60 KB · 126 dòng | ~18k token |
+
+Toàn corpus vượt cửa sổ context một bậc độ lớn; ngay cả 6 doc lõi cũng đã tràn. Bằng chứng sống ngay trong
+repo: session build `session-service` chạm **98% context** khi mới chỉ nạp context pack của chính slice.
+
+Nên luật là **bảo đảm ĐỘ PHỦ, không phải bảo đảm ĐÃ NẠP** — ba nghĩa vụ, đều thực thi được:
+
+1. **Luôn nạp (nhỏ, bắt buộc):** khối live-truth `HANDOFF.md` · **bảng tổng hợp** `decisions.md` (các dòng
+   `| DD-nn |`, không phải toàn thân) · `review-code-readiness-gate.md` · packet + manifest của chính slice.
+2. **Phần còn lại thì TÌM, và ghi lại việc tìm.** Trước mọi quyết định Tier A/B: search toàn corpus theo
+   khái niệm mà quyết định chạm tới — tên entity/cột/endpoint/danh từ feature — trên cả `docs/` lẫn
+   `packages/`|`apps/`, rồi đọc hit nào đáng đọc. Bản đồ: `docs-inventory.md` + `features/README.md`.
+3. **Kết quả rỗng cũng là bằng chứng, và phải ghi như bằng chứng.** *"Search `decisions.md` cho `buddy` →
+   ra DD-26: không thêm model buddy"* chính là câu đáng lẽ ngăn được DD-106. "Không tìm thấy gì" là entry
+   hợp lệ **chỉ khi** query được ghi ra để người sau phán được nó có đúng query không. Search không ghi lại
+   = chưa từng search.
+
+> ⚠️ **Grep rỗng là bằng chứng về QUERY, không phải bằng chứng về REPO.** Đã sập hai lần ở đây: một `awk`
+> viết cho backtick trong khi catalog dùng em-dash → rỗng hai lần, bị đọc thành "không có dữ liệu"; và luật
+> ngôn ngữ grep ra zero cho một luật **có tồn tại** nhưng chưa ai viết ra. Trước khi tin null, kiểm query
+> bằng một control case chắc chắn có.
+
+### Thứ tự authority — giải mâu thuẫn không cần hỏi
+
+Docs trong repo **có** mâu thuẫn nhau; rà soát 13/08 tìm thấy mâu thuẫn đồng thời ở spec, playbook,
+template và index. Lane tự chạy vì thế cần một thứ tự viết ra. Trên thắng dưới:
+
+1. **Runtime truth** — `pg_catalog`, migration đã áp, output canonical runner, code sống. *(Phép đo, không
+   phải khai báo: `schema.ts` khai, `pg_constraint` chứng minh.)*
+2. **`packages/db/migrations/*.sql` + `schema.ts`** — `CLAUDE.md` đánh dấu AUTHORITATIVE.
+3. **`decisions.md`** — spec lệch DD thì **DD thắng**, và spec phải sửa.
+4. **Spec Reviewed** (cặp FE+BE) — chỉ phần Reviewed. Mục gắn 🟡 nằm trong spec Reviewed **không phải**
+   contract.
+5. **Spec Draft / plan / proposal** — định hướng, không phải contract, không bao giờ là căn cứ để implement.
+6. **`ROADMAP.md`** (delivery order + dev progress) · **BRD** scope · **PRD** behavior · **TDD** implementation
+   contract — mỗi cái sở hữu đúng câu hỏi của nó.
+7. **Doc index/summary** — `features/README.md`, `docs-inventory.md`, `BUILD-STATUS.md`, bảng tra nhanh.
+   Mục trước nhất: rà soát 13/08 thấy 46/51 ô version sai trong một index.
+
+Bốn tie-break, mỗi cái đã từng tốn một phiên:
+
+- **Packet trên branch của lane thắng bản trên `main`** — slice hợp lệ khi tự amend contract của nó trong
+  commit của nó; đọc bản `main` rồi kết luận "vi phạm scope" là sai.
+- **Trong cùng một file, khối live-truth mới thắng khối cũ** — và **chỉ thị** của khối cũ cũng mục, không
+  chỉ con số. Quét cả chỉ thị bị mục.
+- **Hai doc cùng khai canonical → cái nào dẫn được decision ID thì thắng**; không cái nào dẫn được ⇒ coi là
+  mâu thuẫn Tier C và AWAIT, đừng tự chọn.
+- **`Doc status ≠ Implementation status`** — `Reviewed` không bao giờ hàm ý runtime.
+
+### Vì sao Tier C không được rút gọn thêm
+
+`DD-106` (13/08) tồn tại vì một spec pass đã viết **money contract** — `buddy_payment_requests`,
+`payment_allocations.source='buddy'` — vào **hai spec đã Reviewed** mà không qua decision. Không ai liều
+lĩnh; chỉ là hợp đồng lúc đó **không có cách rẻ để nói "cái này cần owner"**. Mục 1–3 của Tier C chính là
+bài học đó, đã định giá. Rút gọn Tier C = mua lại DD-106 với giá cao hơn.
+
+Nói thẳng: yêu cầu "mọi decision đều mang lại lợi ích tối đa và long term" **tự nó hàm ý** giữ Tier C —
+một agent tự chốt hợp đồng tiền để đi nhanh hơn là đang tối ưu ngắn hạn, đúng thứ tiêu chí này cấm.
+
+### Hệ quả
+
+- `AWAIT` trong mode này **bị giới hạn vào Tier C**. AWAIT cho Tier A/B là vi phạm contract: giải quyết rồi
+  ghi nhận nhầm-phân-loại vào ledger.
+- `READY` trong mode này **phải kèm Decision Ledger** (`.autopilot/state/<feature>/DECISIONS.md`, ghi dần
+  chứ không dựng lại lúc cuối). Ledger rỗng ở một lane không tầm thường là **cờ đỏ**, không phải run sạch.
+- Tier B nào owner bác → thành slice tiếp theo, **không** mở lại lane đã READY.
+- **Không đổi:** worktree isolation, scope-gate register + hash-lock, hai vòng review sạch, loop breaker,
+  và **human merge**. Mode này bỏ *ngắt giữa chừng*, không bỏ *gate*, và **không hàm ý auto-merge**.
+- Điều kiện vào mode: risk `P1`/`P2` · packet strict `CODE_READY` · scope + negative scope liệt kê tới mức
+  file · verification command gate chạy được · reviewer gọi được. `P0` không bao giờ đủ điều kiện.
+
+---
+
+## DD-106 — Ba hợp đồng chưa chốt do spec pass 12/08 viết vào spec Reviewed · 🟡 Đề xuất (2026-08-13)
+
+> **Status boundary:** DD-106 **không** quyết định gì. Nó ghi nhận rằng ba hợp đồng đã tồn tại trong spec
+> **đã Reviewed** mà chưa qua decision, và đưa chúng về đúng chỗ để owner chốt. Không authorize
+> code/migration/slice nào.
+
+### Bối cảnh — cách phát hiện
+
+Rà soát docs 2026-08-13 tại `main@1fdba1d`. `CLAUDE.md` quy định: *"Quyết định chưa chốt → ghi vào
+`decisions.md` dạng proposal (🟡/⬜), KHÔNG viết vào spec đã Reviewed."* Spec pass 12/08 (`692f9f2`,
++2.022 dòng / 11 file) đã đi ngược điều này ở ba chỗ. Đây **không phải lỗi nội dung** — cả ba đều là ý
+tưởng hợp lý; lỗi là **đường đi**: chúng vào thẳng contract mà không qua cửa quyết định, nên hiện không ai
+phân biệt được phần nào của spec Reviewed là đã chốt và phần nào chưa.
+
+Cơ chế sinh lỗi đáng ghi: cả ba đến từ một pass "tham chiếu Playo" gộp hai lượt vào một commit (6/10 file
+nhảy **hai** version cùng lúc, changelog hai dòng cùng ngày) — bước author dày lên nhanh hơn bước quyết định
+theo kịp.
+
+### Q1 — Pay-for-Buddy (đường tiền) · 🟡
+
+- **Spec đang khai:** `feature_payment_reconcile.md` v1.13 §5/§7 (Reviewed) + BE v1.15 §2/§3/§5e — bảng
+  `buddy_payment_requests`, `payment_allocations.source='buddy'`, 5 endpoint, 6 error code, 3 use case
+  PAY-UC-19/20/21, 8 edge case, 11 acceptance criterion.
+- **Repo nói khác:** `packages/db/migrations/0003_payments_ledger.sql:85` —
+  `CHECK (source IN ('auto','manual','cash','waiver','reversal'))`. Không có `'buddy'`, không có bảng đó,
+  0 hit trong `schema.ts`.
+- **Tiền lệ ngược chiều:** DD-26 chốt "delta wording … **không thêm model mới 'buddy'**" cho lớp identity
+  money-adjacent. Q1 thêm model buddy ở lớp **payment** — khác lớp, nhưng vì thế càng cần một quyết định
+  tường minh chứ không phải im lặng.
+- **Vì sao không tự chốt được:** chạm **HARD RULE "claim-có-tiền cần khoá mạnh"**. A trả hộ B nghĩa là một
+  người tạo nghĩa vụ tài chính gắn với charge của người khác. Cần trả lời tối thiểu: ai được request (cùng
+  session? cùng tenant? đã verified?), host confirm là khoá đủ mạnh hay cần thêm, reversal/refund đi đường
+  nào, và `source='buddy'` có phá invariant FIFO/allocation nào không.
+- **Lựa chọn:** (a) owner chốt → viết DD đầy đủ, spec giữ nguyên; (b) revert §5/§7 về v1.12/v1.14, đưa nội
+  dung sang proposal; (c) giữ trong spec nhưng gắn nhãn 🟡 tại chỗ (đang áp dụng tạm để không mất công tác
+  đã làm — xem "Hệ quả").
+
+### Q2 — Structured embed cho `chat_messages` · 🟡
+
+- **Spec đang khai:** `feature_inapp_chat_tech.md:302-311` — `embed_type` CHECK `IN ('session')`,
+  `embed_ref_id`, `embed_snapshot` JSONB + 2 CHECK, server snapshot theo whitelist BL-DSC-1.
+- **Repo nói khác:** `0031_chat_schema_core.sql` **đã land** (11/08) và không có ba cột này.
+- **Vì sao đáng một quyết định riêng:** đây là **expand một bảng vừa land**, không phải spec cho bảng chưa
+  tồn tại — nên nó là migration `0033+` với đầy đủ gate, và `embed_snapshot` là **bản sao dữ liệu session
+  nằm trong bảng chat**, tức một mặt lộ mới cho whitelist public/tiền/PII. Câu phải trả lời: snapshot
+  refresh hay đóng băng, và khi session chuyển private/cancel thì embed đã gửi xử lý thế nào (cùng họ với
+  nợ immediate-deny của DD-12/DD-73..78).
+
+### Q3 — Unified `SessionCard` · 🟡
+
+- **Spec đang khai:** `feature_channel_booking_funnel.md:150` + `feature_home.md:100` +
+  marketplace/player_view — một shape thẻ dùng chung bot/web/home (time range, `N/M Going`, giá VND
+  "/Người", skill range, urgency ≤3 slot).
+- **Vì sao đáng ghi:** ít rủi ro nhất trong ba, nhưng nó là **contract hiển thị cross-surface** — đúng loại
+  thứ mà nếu không có một nguồn thì mỗi surface trôi một kiểu (chính là failure mode DRIFT đã ghi ở chỗ
+  khác trong repo). Cần chốt: field set canonical nằm ở đâu, surface nào được phép degrade (bot không có
+  pill/badge), và quan hệ với whitelist BL-DSC-1.
+
+### Hệ quả
+
+- Ba mục nhận nhãn 🟡 **tại chỗ trong spec** để không ai đọc nhầm là đã chốt, thay vì revert — nội dung
+  authoring giữ lại, chỉ đính chính trạng thái. Owner chốt cái nào thì gỡ nhãn cái đó.
+- **Không slice nào được author/implement** từ ba mục này khi nhãn 🟡 còn.
+- Không đổi trạng thái DD nào khác. Không đụng delivery order.
+- Bài học quy trình đáng giữ: khi một spec pass thêm **entity/cột/endpoint** chứ không chỉ sửa câu chữ, nó
+  đã vượt khỏi "editorial" và cần đi qua `decisions.md` trước — kể cả khi spec đích đang Reviewed và người
+  viết chắc chắn về ý tưởng.
+
+---
+
 ## DD-105 — Suspension gate cho `CreateSession`: miễn theo tính vô hình của draft · ✅ Chốt (owner 2026-08-13)
 
 > **Status boundary:** DD-105 chốt **một policy suspension** ở decision level cho đúng command `CreateSession`.
@@ -1673,6 +1876,9 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 14/08/2026 | v2.30 | **Thêm DD-107 ✅ — autonomy mode `autonomous_to_ready` + context/authority protocol.** **Context:** toàn bộ doc corpus thuộc phạm vi quyết định, nhưng đo tại `1fdba1d` là **303 file / 8,5 MB / ~2 triệu token** (riêng 6 doc lõi đã ~220k) ⇒ **không nạp được**; bằng chứng sống: session build `session-service` chạm 98% context khi mới nạp context pack của chính nó. Luật thành **bảo đảm ĐỘ PHỦ chứ không phải ĐÃ NẠP**: (1) luôn nạp lõi nhỏ — HANDOFF live-truth + **bảng tổng hợp** `decisions.md` (~18k token, không phải toàn thân) + gate + packet; (2) phần còn lại **search toàn corpus rồi ghi query vào ledger**; (3) **kết quả rỗng là bằng chứng và phải ghi** — "search `buddy` → DD-26 cấm" chính là câu đáng lẽ ngăn được DD-106; kèm cảnh báo grep rỗng là bằng chứng về *query* (đã sập 2 lần: awk backtick vs em-dash, và luật ngôn ngữ grep zero cho luật có thật). **Thang authority 7 bậc** viết lần đầu để lane tự giải mâu thuẫn (rà soát 13/08 tìm thấy mâu thuẫn đồng thời ở spec/playbook/template/index): runtime truth > migrations+`schema.ts` > `decisions.md` > spec Reviewed (mục 🟡 bên trong **không** phải contract) > Draft/plan/proposal > ROADMAP/BRD/PRD/TDD theo đúng câu hỏi mỗi cái sở hữu > index/summary (mục trước nhất — 46/51 ô version sai). Bốn tie-break: packet trên branch thắng bản `main`; khối live-truth mới thắng khối cũ **kể cả phần chỉ thị**; hai doc cùng khai canonical thì cái dẫn được decision ID thắng, không thì AWAIT; `Doc status ≠ Implementation status`. Ledger thêm field **`Searched:`** — trường duy nhất cho phép reviewer biết agent quyết từ corpus hay từ prior. |
+| | | **(tiếp DD-107 — phần autonomy)** Lane chạy thẳng tới READY, owner review **một lượt tại READY** qua Decision Ledger thay vì bị ngắt từng quyết định. Căn cứ đo được: lane `session-service-create-command-core` v1 dừng hỏi owner **4 lần chỉ vì budget** (300→360→440→470) rồi vẫn `HALT MAX_ROUNDS` — budget không phải ràng buộc thật; và 3/4 blocker của packet giải được bằng cách **đọc repo**, chỉ B4 là quyết định owner thật (→ DD-105). Thang thẩm quyền **A derivable** (quyết + log; dừng ở tầng này là defect) · **B judgment/reversible/in-scope** (quyết + log đủ, owner review batch) · **C reserved** (vẫn AWAIT — đúng 8 mục: money contract · PII/HARD RULES · sửa contract spec Reviewed · migration đổi semantics/chung tail · enablement · merge/deploy · vượt negative scope · finding bị phản bác). Tiêu chí: **phép thử 10×** + tie-break `fail-closed > một nguồn sự thật > ít khái niệm > theo tiền lệ > reversible`. Budget thành **tín hiệu** (overrun ⇒ re-slice hoặc log nguyên nhân thiết kế, lần hai cùng nguyên nhân ⇒ re-slice bắt buộc). HALT successor pre-authorized khi finding được chấp nhận **và** gọi tên được nguyên nhân thiết kế. **Tier C không rút gọn thêm** vì DD-106 là hoá đơn của việc thiếu nó. **Không đổi:** worktree isolation, scope-gate, 2 vòng review sạch, loop breaker, **human merge**; mode này không hàm ý auto-merge. Mirror: `../autopilot-templates/level3-workflow.md` §6.1 (+ §9 READY/AWAIT). |
+| 13/08/2026 | v2.29 | **Thêm DD-106 🟡 — ba hợp đồng do spec pass 12/08 (`692f9f2`) viết thẳng vào spec đã Reviewed mà không có decision.** Phát hiện khi rà soát docs tại `main@1fdba1d`. **Q1 Pay-for-Buddy** (đường tiền): bảng `buddy_payment_requests` + `payment_allocations.source='buddy'` + 5 endpoint nằm trong `feature_payment_reconcile.md` v1.13 **Reviewed**, trong khi live `0003_payments_ledger.sql:85` chỉ có 5 giá trị và DD-26 từng chốt "không thêm model 'buddy'" ở lớp identity — chạm HARD RULE claim-có-tiền-cần-khoá-mạnh, không tự chốt được. **Q2 structured embed**: `chat_messages.embed_type/embed_ref_id/embed_snapshot` khai trong BE chat spec nhưng `0031` **đã land** không có; đây là expand bảng vừa land (⇒ migration `0033+` đủ gate) và `embed_snapshot` là mặt lộ mới cho whitelist. **Q3 unified `SessionCard`**: contract hiển thị cross-surface chưa có nguồn canonical. Ba câu độc lập, chốt riêng được (khuôn DD-90). **Xử lý tạm: gắn nhãn 🟡 tại chỗ trong spec thay vì revert** — giữ nội dung authoring, chỉ đính chính trạng thái; không slice nào được author/implement khi nhãn còn. Không đổi DD khác, không đụng delivery order. Ghi kèm cơ chế sinh lỗi: pass gộp hai lượt vào một commit (6/10 file nhảy 2 version) nên bước author vượt bước quyết định. |
 | 13/08/2026 | v2.28 | **Thêm DD-105 ✅ — suspension gate cho `CreateSession`: miễn theo tính vô hình của draft.** Owner chốt phương án (b) (Cowork session, 13/08): `createSession` KHÔNG gọi `authorizeTenantAction` (create-draft ungated). Lý do fail-closed-có-chứng-minh: draft vô hình tới publish (project-on-publish, TDD §3.8/§3.9 + `feature_session_management_tech.md` §4 step 7) + không đụng tiền (draft không có `players`/`charges` theo thiết kế) + ranh giới thật (`publish_new_sessions`) đã ❌ khi suspended. **Ranh giới cứng: miễn trừ theo TÍNH VÔ HÌNH (a invisible-until-publish + b money-free), KHÔNG phải "mutation nhỏ"** — publish/announce/close/cancel/update-on-`open` (player-visible) hoặc chạm `charges` vẫn dưới Suspended Action Matrix + nhận narrow per-op class khi build (tiền lệ DD-104 D2a). Đóng blocker B4 của slice `session-service-create-command-core` (→ `CODE_READY`). Không authorize code/migration/enablement khác. |
 | 13/08/2026 | v2.27 | **DD-104 chốt D0–D4 (decision-level) + gỡ WIP DeleteSession lần hai khỏi 2 spec Session.** Owner chốt theo `../decisions/dd104-delete-session-decision-table.md` (đo tại `main@1303c31`): **D0** không ưu tiên `tenant-capability-authority-core` — bảng để dành, slice DD-104 parked; **D1a** mọi FK trỏ `sessions` giữ `NO ACTION` và chặn delete — `DELETE` là final fence, KHÔNG cascade, không danh sách bảng-được-dọn phái sinh (hệ quả: câu hỏi kế toán D2-cũ v2.24 tự giải — không charges row nào bị xoá); **D2a** action class hẹp `delete_draft_session` trong `authorizeTenantAction` (sửa contract billing, slice riêng) — đóng blocker suspension-gate ở decision level; **D3c** bắt `23503` rồi tra `pg_constraint` `confrelid='sessions'::regclass` (loại allowlist tên tự sinh + pre-check TOCTOU); **D4a** ordering chung delete+publish theo precedent publish §4 step 6 (re-check trong cùng transaction, locking read, ngay trước commit). Old-D3 authz mâu thuẫn giải theo D2a (`session.manage` qua `delete_draft_session`, dùng nhất quán khi author lại spec). 4 deferred-blocker của v2.26 → resolved decision-level, văn bản giữ nguyên làm ràng buộc implementation. Spec-side: WIP DeleteSession (tái xuất hiện trong docs pass 12/08) gỡ lần hai — FE v2.25 / BE v2.22 chỉ giữ pointer + changelog audit trail, ID edges/tests giữ trống không renumber. **Không authorize code/migration/packet/worktree** — slice DD-104 khi mở vẫn qua đủ gate G1–G6 + closure matrix. |
 | 12/08/2026 | v2.26 | **Ratify/reconcile open-decision batch (clean subset) vì lợi ích dài hạn.** DD-14/15 phân loại external enablement/optimization evidence: Login/CTA OFF tới khi có bằng chứng, account-linking chỉ qua verified one-time link-code path (DD-50 `/link`, phase-1 contract chưa build), không auto-link. DD-34/35/36 có exact reopen trigger, không speculative whitelist và tách serving/sync lifecycle; DD-36 replacement lifecycle: last-good chỉ giữ khi fetch fail trước khi accept revision/hash mới, sau accept canonical `kb.ingest` supersede old generation trước processing, DLP/index/activation fail trả zero retrieval (không fallback, không dựng staged-serving state machine thứ hai). **DD-104, DD-18 và DD-96/DD-79 KHÔNG ratify trong subset này** — DD-104 giữ 🟡 đề xuất (blocker: suspension gate + money-FK boundaries D1/D2 + concurrency ordering + 23503 trusted-resolution, xem note trên DD-104 + backlog); DD-18 (blocker tasks ở backlog) và DD-96/DD-79 (blockers B1–B4 ở DD-96 Part B section) ratification deferred (xem note trên DD-18/DD-96). Không authorize code/runtime/enablement. |

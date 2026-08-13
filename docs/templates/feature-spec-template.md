@@ -16,6 +16,19 @@
 
 **{Feature} là {vai trò trong hệ thống}:** {mô tả ngắn — feature này own gì, consume gì, KHÔNG làm gì.}
 
+### Entry points
+
+> **Bắt buộc** (mọi spec — xem `../features/README.md` Document Convention). Liệt kê đủ mọi đường vào
+> feature — route, tab, deep link, bot command, notification, chat link — để reviewer thấy đủ surface
+> trước khi đọc Screens. Đừng bỏ sót bot/notification nếu feature có.
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| {VD: Home tab → hero card} | `/` → tap hero | {Player} | {Điều hướng tới đâu} |
+| {VD: Bot command} | `/command` (Zalo/Messenger) | {Actor} | {Hành động} |
+| {VD: Deep link} | `/path/:id` | {Any (auth-gated)} | {Direct navigate to detail} |
+| {VD: Notification tap} | Push/Inbox → deep link | {Actor} | {Navigate tới đâu} |
+
 ### Bất biến
 
 - {Constraint cứng không bao giờ vi phạm — security/data boundary}

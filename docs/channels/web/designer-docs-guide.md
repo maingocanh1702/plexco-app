@@ -1,6 +1,14 @@
 # Hướng dẫn: Docs nào dùng để đưa Designer thiết kế UI cho Plexco App
 
-> **Ngày:** 2026-08-10 · **Nguồn:** scan toàn bộ `docs/` repo + `fe-design-spec` skill
+> 🔴 **CHƯA GỬI CHO DESIGNER — FE PENDING theo lệnh owner 2026-08-13.**
+> DD-81 / M0.3 / M4 và **mọi việc FE** đang treo: không track `.pen`, không mở page/component, không chạy
+> lane FE. Nguồn: `../../autopilot-templates/next-lanes-2026-08-13-RUN.md`.
+>
+> File này tự mô tả là **gói bàn giao** cho designer (§"Kết luận"), nên nó là file dễ bị forward ra ngoài
+> nhất trong cả bộ — và trước 13/08 nó **không chứa một chữ nào** về ranh giới gate. Ai nhận file này mà
+> không đọc dòng trên sẽ bắt đầu vẽ. Giữ lại làm bản đồ tài liệu; **không dùng làm lệnh khởi công.**
+>
+> **Ngày:** 2026-08-10 · **Cập nhật ranh giới:** 2026-08-13 · **Nguồn:** scan toàn bộ `docs/` repo
 
 ---
 
@@ -126,7 +134,18 @@ graph TD
 | Tournament | [feature_tournament.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/features/FE/feature_tournament.md) v0.1 | [feature_tournament_tech.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/features/BE/feature_tournament_tech.md) v0.2a | ❌ Chưa có | Draft — chưa cần FE spec |
 
 > [!NOTE]
-> **Club Management** là feature mới nhất (2026-08-10), status 🟡 Draft. Nếu muốn designer bắt đầu vẽ Club → cần tạo `feature_club_fe.md` trước theo [fe-design-spec skill](file:///Users/maingocanh/.gemini/config/skills/fe-design-spec/SKILL.md).
+> ⚠️ **Đoạn dưới đã sai từ ngày ra đời — giữ lại kèm đính chính.** Bảng "Feature mới chưa có FE spec" ở
+> trên liệt kê `club` · `club_assistant` · `booking_funnel` · `session_organize` · `tournament` là
+> "❌ Chưa có → cần tạo". **Cả 5 file đã được tạo trong CHÍNH commit tạo ra bảng này** (`8af9601`,
+> 2026-08-11) — xem `FE/feature_club_fe.md` v.v. Doc anh em cùng commit (`fe-spec-to-design-playbook.md`)
+> đếm 17 FE spec; bảng này đếm 12. Cùng một commit, hai con số mâu thuẫn.
+>
+> Đính chính thêm: 5 file đó **thiếu cả 4 section DD-99** (Analytics · State Machine · AC · Testing) nên
+> **không đủ điều kiện lên Reviewed** — nguyên nhân gốc là `../../templates/feature-dev/fe-spec-template.md`
+> v0.4 không có bốn section (đã sửa ở v0.5, 13/08). Cần backfill trước khi promote.
+>
+> *(Link `fe-design-spec skill` cũ trỏ tới đường dẫn máy cá nhân ngoài repo — đã gỡ; dùng
+> `../../templates/feature-dev/fe-spec-template.md`.)*
 
 ---
 

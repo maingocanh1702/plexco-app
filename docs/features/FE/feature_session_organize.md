@@ -4,9 +4,9 @@
 > **Track:** 🎾 In-session Organize
 > **Version:** 0.6 · 2026-08-10
 > **Status:** ✅ Accept-in-principle (owner 2026-07-18, DD-61..64) — build **post-P4**, phased. Vẫn **chưa phải build contract**: schema/migration/service/engine chưa có trong code; không triển khai trước khi có prerequisite. DD-63 `balanced` degrade tới khi có level source per-sport.
-> **Implementation:** Not started — build post-P4 · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started — build post-P4 · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** SessionService/Session CRUD · DD-41 session gating · DD-42 attendance/reliability · DD-45 waitlist · DD-56 authz action registry · DD-08 taxonomy trình độ
-> **Tài liệu liên quan:** `feature_session_management.md` · `../standards/decisions.md` DD-61..64 · `../standards/business-rules.md` · `../BE/feature_session_organize_tech.md`
+> **Tài liệu liên quan:** `feature_session_management.md` · `../../standards/decisions.md` DD-61..64 · `../../standards/business-rules.md` · `../BE/feature_session_organize_tech.md`
 
 > **⚠️ Live-repo reality:** Cặp tài liệu này mô tả design đã accepted-in-principle. `packages/db/schema.ts` hiện chỉ có `sessions`/`players` nền tảng; chưa có 5 bảng organize, migration, OrganizeService, assign/scoring engine, SSE topic, hay capability/grant session-scoped. Các choke-point như `removeMemberFromSession` và session close/cancel hook dưới đây là **contract tương lai**, không phải tên hàm đã tồn tại. Owner acceptance đã xong; build vẫn phải đợi Session CRUD/Sync, DD-56 registry/grant storage, slice manifest và migration/service implementation tương ứng.
 

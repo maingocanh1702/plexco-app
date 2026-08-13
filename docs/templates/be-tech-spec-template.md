@@ -32,6 +32,18 @@ apps/api/src/{feature}/
 
 {Design decisions quan trọng — VD: composition-only, read-only, hoặc owns state.}
 
+### Entry points
+
+> **Bắt buộc** (mọi spec — xem `../features/README.md` Document Convention). Mọi caller vào feature —
+> route, worker/job (pg-boss), projector, webhook, slash command. Ánh xạ 1-1 với §3 API Contract và
+> outbox consumers.
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `POST /api/{resource}` | {Actor (web/Messenger)} | {Command / handler} |
+| `{job}` (pg-boss) | System | {Scheduled/queued work} |
+| Projectors ({channels}) | Outbox consumer | {Render canonical changes} |
+
 ---
 
 ## 2. Database Schema + Edge Cases (BE)

@@ -4,9 +4,9 @@
 > **Track:** 💬 Zalo Channel  
 > **Version:** 2.7 · 2026-08-10
 > **Status:** Reviewed · reconciled to DD-15/DD-32/DD-45/DD-49/DD-67
-> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 onboarding (Zalo token connect) · P3.5 identity/account-link · P2 session/join · payment evidence/finalizer · P3 notifications · P4 sync
-> **Tài liệu liên quan:** `../product/PRD.md` FLOW 4 + §4.2/4.4 · `../product/BRD.md` CO-2 · `../standards/decisions.md` DD-32 · `feature_channel_booking_funnel.md` · `../BE/feature_zalo_channel_tech.md`
+> **Tài liệu liên quan:** `../../product/PRD.md` FLOW 4 + §4.2/4.4 · `../../product/BRD.md` CO-2 · `../../standards/decisions.md` DD-32 · `feature_channel_booking_funnel.md` · `../BE/feature_zalo_channel_tech.md`
 
 ---
 

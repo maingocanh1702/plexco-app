@@ -4,9 +4,9 @@
 > **Track:** 💰 Payment Reconciliation
 > **Version:** 1.13 · 2026-08-12
 > **Status:** Reviewed; mirror DD-32/DD-91 `DECISION_FINAL` + regional research boundary. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`; B1/runtime slices vẫn cần strict `CODE_READY`
-> **Implementation:** In progress — core matching/payments-logic + ledger integrity migrations `0019`/`0020` đã có; wiring webhook→settle→notify, `remainingAmount`, `getSelfPaymentStatus` và chat `/pay` chưa · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
+> **Implementation:** In progress — core matching/payments-logic + ledger integrity migrations `0019`/`0020` đã có; wiring webhook→settle→notify, `remainingAmount`, `getSelfPaymentStatus` và chat `/pay` chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P0–P1 foundation + P2 tenant routing
-> **Tài liệu liên quan:** `../product/BRD.md` FR-5 · `../product/PRD.md` FLOW 6/9 + §4.1 · `../product/TDD.md` §3.2/3.6/3.7 · `../standards/decisions.md` DD-25/DD-32/DD-40/DD-91 · **DD-97** (statement/export — composition consumer trên ledger này, surface riêng) · **DD-98** (negative scope: NP-1 custom split · NP-4 auto-archive) · `../standards/business-rules.md` BL-PAY/BL-CBF · `feature_channel_booking_funnel.md` · `../BE/feature_channel_booking_funnel_tech.md` · `../research/player-side-saas-reconciliation.md` · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
+> **Tài liệu liên quan:** `../../product/BRD.md` FR-5 · `../../product/PRD.md` FLOW 6/9 + §4.1 · `../../product/TDD.md` §3.2/3.6/3.7 · `../../standards/decisions.md` DD-25/DD-32/DD-40/DD-91 · **DD-97** (statement/export — composition consumer trên ledger này, surface riêng) · **DD-98** (negative scope: NP-1 custom split · NP-4 auto-archive) · `../../standards/business-rules.md` BL-PAY/BL-CBF · `feature_channel_booking_funnel.md` · `../BE/feature_channel_booking_funnel_tech.md` · `../../research/player-side-saas-reconciliation.md` · `../../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
 
 > **Cập nhật v3.4 (DD-40, 2026-07-10):** **Mark-paid thủ công (tiền mặt/CK, tap/multi-select) mặc định MỌI tier** (kể cả `free`) — áp DD-25 (human-initiated money mutation cần preview+confirm). **Đối soát CK tự động** (webhook match) là tính năng **`host_pro`**.
 
@@ -185,7 +185,14 @@ Host mở roster/danh sách nợ (bot Zalo / Messenger / web)
 | `payment_allocations` | Ledger phân bổ/reversal | Signed amount; optional bank transaction cho cash/waiver; immutable |
 | `bank_accounts` | Tài khoản nhận + webhook credentials per tenant | UNIQUE webhook token; secret encrypted |
 | `outbox_events` | Phát thay đổi ledger | Cùng transaction với allocation/status change |
-| `buddy_payment_requests` | Yêu cầu trả hộ player→player cùng session | UNIQUE `(charge_id, payer_person_id) WHERE status='pending'`; status pending/confirmed/rejected/cancelled |
+| `buddy_payment_requests` 🟡 | Yêu cầu trả hộ player→player cùng session | UNIQUE `(charge_id, payer_person_id) WHERE status='pending'`; status pending/confirmed/rejected/cancelled |
+
+> 🟡 **Pay-for-Buddy CHƯA CHỐT — `DD-106 Q1`, không implement từ mục này.** Toàn bộ nội dung Pay-for-Buddy
+> trong spec này (bảng `buddy_payment_requests`, `source='buddy'`, PAY-UC-19/20/21, edge case #27–34, 4 dòng
+> screen, 3 analytics event, 11 acceptance criterion) do spec pass 12/08 viết vào **trước khi có decision**.
+> Live `0003_payments_ledger.sql:85` chỉ có `('auto','manual','cash','waiver','reversal')`. Đây là đường
+> tiền ⇒ chạm HARD RULE claim-có-tiền-cần-khoá-mạnh. Status Reviewed của spec **không phủ** phần này.
+> Xem `../../standards/decisions.md` → DD-106.
 
 ### Ledger rules
 

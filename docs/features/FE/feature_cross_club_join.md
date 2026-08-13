@@ -4,9 +4,9 @@
 > **Track:** 🤝 Cross-club Join  
 > **Version:** 2.12 · 2026-08-10
 > **Status:** Reviewed  
-> **Implementation:** Not started — `join_requests` có sẵn từ `0006` · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started — `join_requests` có sẵn từ `0006` · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4.3 discovery · P3.5 identity · P2 session/slot transaction · P4 sync/notifications  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-3.2 · `../product/PRD.md` FLOW 13 · `../standards/decisions.md` DD-05/DD-06/**DD-32/DD-45/DD-49** · `../standards/business-rules.md` BL-DSC-3/BL-CBF/BL-SES-9/10 · `../BE/feature_cross_club_join_tech.md`
+> **Tài liệu liên quan:** `../../product/BRD.md` FR-3.2 · `../../product/PRD.md` FLOW 13 · `../../standards/decisions.md` DD-05/DD-06/**DD-32/DD-45/DD-49** · `../../standards/business-rules.md` BL-DSC-3/BL-CBF/BL-SES-9/10 · `../BE/feature_cross_club_join_tech.md`
 
 ---
 
@@ -216,7 +216,7 @@ stateDiagram-v2
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| CCJ-OQ-1 | BRD OD-5: default open vs approval policy | ✅ Chốt (DD-05/45/49, v1.67): default `open`; approval first-entry pending only. Existing-left request-create preflight live disposition, no proof storage; approve re-derive under lock, drift keeps pending. Full→waitlisted/no new lifecycle/venue; active→carry-over hoặc append refunded lifecycle. `../standards/decisions.md` |
+| CCJ-OQ-1 | BRD OD-5: default open vs approval policy | ✅ Chốt (DD-05/45/49, v1.67): default `open`; approval first-entry pending only. Existing-left request-create preflight live disposition, no proof storage; approve re-derive under lock, drift keeps pending. Full→waitlisted/no new lifecycle/venue; active→carry-over hoặc append refunded lifecycle. `../../standards/decisions.md` |
 | CCJ-OQ-2 | Guest → full membership transition + club ban policy | ✅ **Chốt DD-52 + DD-56 (2026-07-16)** — host invite/approve **và** player-request+host-approve coexist (auto-upgrade defer); manual safety ban = **TenantOwner + co-admin** (DD-56 amend), reason+evidence bắt buộc, `expires_at` hoặc permanent, **không auto-evict** (waitlisted giữ queue + skip theo DD-45); storage tách khỏi reliability-ban DD-42; mọi join path qua một `evaluateJoinRestriction()` core. Schema/command propagate lúc build |
 
 ### Changelog

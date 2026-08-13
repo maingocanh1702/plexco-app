@@ -4,9 +4,9 @@
 > **Track:** 📣 Share & Social
 > **Version:** 1.0 · 2026-08-12
 > **Status:** Draft
-> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P2 session management · P4 web auth · P4 sync · DD-12 marketplace guarded view (P4.3) · DD-42 attendance · DD-47/48 follow/visibility · DD-55 block/report
-> **Tài liệu liên quan:** `../product/BRD.md` FR-3 · `../product/PRD.md` FLOW 12/14 · `../standards/decisions.md` **DD-73 · DD-74 · DD-75 · DD-76 · DD-77 · DD-78** · `../decisions/analysis/dd-73-78-share-activity-analysis.md` · `feature_marketplace_discovery.md` · `feature_user_settings.md` (DD-47/48) · `feature_player_view.md` · `../BE/feature_share_activities_tech.md`
+> **Tài liệu liên quan:** `../../product/BRD.md` FR-3 · `../../product/PRD.md` FLOW 12/14 · `../../standards/decisions.md` **DD-73 · DD-74 · DD-75 · DD-76 · DD-77 · DD-78** · `../../decisions/analysis/dd-73-78-share-activity-analysis.md` · `feature_marketplace_discovery.md` · `feature_user_settings.md` (DD-47/48) · `feature_player_view.md` · `../BE/feature_share_activities_tech.md`
 
 > **3 phát hiện quan trọng (DD-73–78 analysis):**
 > 1. Strava activity = single-owner. Plexco session = **tenant-owned, multi-participant** → không map 1-1.

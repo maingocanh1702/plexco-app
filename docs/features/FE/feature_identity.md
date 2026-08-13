@@ -4,9 +4,9 @@
 > **Track:** 🆔 Identity & Merge
 > **Version:** 1.12 · 2026-08-10
 > **Status:** Reviewed identity contract; DD-32 Account-backed channel link predicate added. Endpoint-scoped identity/reachability schema/runtime pending build slices
-> **Implementation:** Not started — bảng `link_codes`/`merge_*` có sẵn · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started — bảng `link_codes`/`merge_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 tenant routing + P3 ledger stable
-> **Tài liệu liên quan:** `../product/BRD.md` FR-7 · `../product/PRD.md` FLOW 5 + §4.2 · `../product/TDD.md` §3.2–3.4/§4 · `../standards/decisions.md` DD-13/DD-33/DD-37/DD-50/DD-53/**DD-65..68** · `feature_player_messenger.md` · `../research/player-side-saas-AUDIT.md` C1–C5
+> **Tài liệu liên quan:** `../../product/BRD.md` FR-7 · `../../product/PRD.md` FLOW 5 + §4.2 · `../../product/TDD.md` §3.2–3.4/§4 · `../../standards/decisions.md` DD-13/DD-33/DD-37/DD-50/DD-53/**DD-65..68** · `feature_player_messenger.md` · `../../research/player-side-saas-AUDIT.md` C1–C5
 
 > **Cập nhật DD-50/v1.37:** phase-1 không thu SĐT. Strong proof cho claim/merge có tiền = verified account email (Google OIDC đủ claim hoặc email-password đã verify) hoặc deterministic one-time `link_code`; phone fields dormant.
 >

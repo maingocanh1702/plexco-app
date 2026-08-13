@@ -1,14 +1,14 @@
 # Feature: In-app Chat (toàn CLB + 1-1 + Group) — Product/UX Spec
 
-> ⚙️ **Status:** ✅ **Reviewed contract** — DD-38/DD-55/DD-86/DD-91..95 ratified; pending migration. DD-88 là broader proposal. Nguồn canonical: `../standards/decisions.md` + companion BE spec.
+> ⚙️ **Status:** ✅ **Reviewed contract** — DD-38/DD-55/DD-86/DD-91..95 ratified; pending migration. DD-88 là broader proposal. Nguồn canonical: `../../standards/decisions.md` + companion BE spec.
 
 > **Canonical phase:** P4 (đề xuất — dựng sớm hạ tầng `chat_*`)
 > **Track:** 💬 In-app Chat
 > **Version:** 0.20 · 2026-08-12
 > **Status:** ✅ Reviewed — final Product contract, pending migration
-> **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web/app surface + sync engine · **DD-07** (SSE + `LISTEN/NOTIFY`) · P3.5 identity (Person/Membership)
-> **Tài liệu liên quan:** `../product/BRD.md` MODULE 10 / BR-15 / AC-10 / FR-10 · `../standards/decisions.md` **DD-38/DD-55/DD-56/DD-86/DD-88/DD-91..95** · DD-07 · DD-19/DD-20 (trợ lý tái dùng `chat_*` ở P7) · `feature_club_assistant.md` · `feature_notifications_reminders.md` · `feature_identity.md` · `packages/db/schema.ts` (**AUTHORITATIVE** khi triển khai)
+> **Tài liệu liên quan:** `../../product/BRD.md` MODULE 10 / BR-15 / AC-10 / FR-10 · `../../standards/decisions.md` **DD-38/DD-55/DD-56/DD-86/DD-88/DD-91..95** · DD-07 · DD-19/DD-20 (trợ lý tái dùng `chat_*` ở P7) · `feature_club_assistant.md` · `feature_notifications_reminders.md` · `feature_identity.md` · `packages/db/schema.ts` (**AUTHORITATIVE** khi triển khai)
 
 > ✅ **DD-86 final boundary (2026-07-28):** Option B đã `DECISION_FINAL`: N `kind='club'` channel/tenant, exact-one active default, atomic auto-provision; lifecycle/restricted post dùng exact `chat.channel.manage`/`chat.channel.post_restricted`. Assistant mặc định true cho `all_members`, false cho `admins_only`; chỉ `chat.channel.manage` được đổi flag trên cả hai policy, và channel flag luôn **AND** tenant config/exact `assistant_ai_kb` entitlement/cap/provider/privacy gates. Migration vẫn **HOLD** tới strict slice readiness; Reviewed docs không phải runtime proof hay build authorization.
 
@@ -37,6 +37,18 @@ Chat **chỉ sống trong Plexco** (web + surface app của Plexco), **KHÔNG br
 **Execution ownership theo primary-surface plan v1.8:** colliding DB worktrees serialize `chat-definer-role-provisioning` (1) → `chat-dm-safety-authority-core` (2) → `dd38-dd86-chat-schema-core` (3) → `tenant-capability-authority-core` (4). Sau đó explicit dependency là club lifecycle (5) → safe target core (9) → club moderation (6) → shared-message core (7) → DM lifecycle (8); stable catalog ID không phải execution order. Slice 4 sở hữu closed DD-56 registry, least-privilege preset, grant expiry/revocation và **append-only grant audit**. Slice 9 sở hữu short-lived requester+channel-bound opaque target ref + safe label và consume-time resolver cho mention/mute/start-DM; không global/fuzzy people search, raw UUID, persistent directory hoặc PII.
 
 Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt sở hữu channel list/create/update, default/archive, history/send/read, DM list/create, block/report, safe current-member target, reaction, own edit/delete, authorized search, upload/status, attachment read/delete, club moderation và slash/private picker. Sau F0 tracked design authority, F1–F10 sở hữu channel shell, safe target picker, history/realtime, text composer, requester command overlay, private bot/mention, message interactions, search, media và safety/moderation. Adapter/UI chỉ gọi canonical mechanism owner, không tái dựng authz, membership, moderation, unread hay command state. Initiative `PLAN_READY` tại authority `90d292d`, nhưng runtime = 0, B4/worktree chưa author và từng slice vẫn phải strict `CODE_READY`.
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Header → 💬 | Shell header `💬` (cạnh 🔔) | User (auth) | Channel list (CLB + DM + Group) |
+| Club detail → Chat | Club → Chat | Member | Channel `kind='club'` (`feature_club.md`) |
+| Notification → chat | Push/Inbox → message | User | Deep link tới channel/message |
+| Start DM (safe target) | Member picker → start DM | User (auth) | 1-1 DM person-self (safe target ref, DD-91) |
+| Group create/invite | Channel list → new group / invite | User | Group (follow-guard DD-47) |
+| Session ref in chat | Chat message → `/session/<slug>` | User | Shared session link (cross-feature) |
+| Slash command | `/pay` … requester-only (DD-91) | User (auth) | Command overlay — không ghi transcript |
 
 ### Bất biến
 
@@ -623,7 +635,7 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 
 ## 4. Domain Model
 
-> **Target contract Reviewed; runtime chưa có.** Nguồn AUTHORITATIVE khi triển khai: `../standards/decisions.md` DD-38/DD-86 + companion BE spec + `packages/db/schema.ts` + migration. **Dùng chung** bộ bảng `chat_*` với trợ lý (DD-19/DD-20) — KHÔNG tạo bảng song song.
+> **Target contract Reviewed; runtime chưa có.** Nguồn AUTHORITATIVE khi triển khai: `../../standards/decisions.md` DD-38/DD-86 + companion BE spec + `packages/db/schema.ts` + migration. **Dùng chung** bộ bảng `chat_*` với trợ lý (DD-19/DD-20) — KHÔNG tạo bảng song song.
 
 | Entity (target) | Plane | Vai trò | Key constraints |
 |--------|-------|---------|-----------------|

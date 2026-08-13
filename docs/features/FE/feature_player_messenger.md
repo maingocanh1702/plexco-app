@@ -4,9 +4,9 @@
 > **Track:** 📱 Shared Host & Player Messenger
 > **Version:** 0.10 · 2026-08-10
 > **Status:** Reviewed contract · Implementation pending
-> **Implementation:** Not started — shared job mechanics đã merge nhưng Messenger adapter/handler/projector chưa có; schedule OFF/placeholder · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
+> **Implementation:** Not started — shared job mechanics đã merge nhưng Messenger adapter/handler/projector chưa có; schedule OFF/placeholder · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P2 routing/authz · P3.5 identity · P2 session/join · P3 notifications · P4 sync · **App Review Meta** (DD-33)
-> **Tài liệu liên quan:** `../product/BRD.md` FR-3.3 / BR-17 / CO-3 · `../standards/decisions.md` **DD-32/DD-33/DD-37/DD-45/DD-49/DD-65..68** · `../channels/messenger/messenger-channel-design.md` · `feature_channel_booking_funnel.md` · `feature_session_management.md` · `feature_tenant_routing_authz.md` · `feature_identity.md` · `../BE/feature_player_messenger_tech.md`
+> **Tài liệu liên quan:** `../../product/BRD.md` FR-3.3 / BR-17 / CO-3 · `../../standards/decisions.md` **DD-32/DD-33/DD-37/DD-45/DD-49/DD-65..68** · `../../channels/messenger/messenger-channel-design.md` · `feature_channel_booking_funnel.md` · `feature_session_management.md` · `feature_tenant_routing_authz.md` · `feature_identity.md` · `../BE/feature_player_messenger_tech.md`
 
 > **Kênh (DD-37 ✅):** Facebook Messenger là kênh phase-1. **Link tài khoản Facebook (DD-33 ✅ phase-1):** App Review/BM verification submission pending; nếu chậm → degrade sang transactional one-time `/link` code.
 
@@ -177,7 +177,7 @@ Bot: Bạn muốn xem kèo môn nào?
 
 ## 4. Domain Model
 
-> Kênh Messenger **dùng lại** identity/routing/sync có sẵn. Schema binding Page ở mức **proposal** — nguồn AUTHORITATIVE: `../standards/decisions.md` DD-37/DD-33 + `packages/db/schema.ts`.
+> Kênh Messenger **dùng lại** identity/routing/sync có sẵn. Schema binding Page ở mức **proposal** — nguồn AUTHORITATIVE: `../../standards/decisions.md` DD-37/DD-33 + `packages/db/schema.ts`.
 
 | Entity | Vai trò | Key constraints (dự kiến) |
 |--------|---------|-----------------|

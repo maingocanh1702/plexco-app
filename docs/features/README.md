@@ -1,6 +1,27 @@
 # Plexco Feature Specs — Coverage Index
 
-> **Version:** 2.63 · 2026-08-12
+> 🔴 **LIVE TRUTH 2026-08-13 tại `main@1fdba1d` — đọc trước các bảng bên dưới.**
+> **Inventory thật: 26 Product (`FE/feature_*.md`) + 26 BE (`BE/feature_*_tech.md`) = 26 cặp.** Mọi câu "25 cặp"
+> trong changelog bên dưới là snapshot lúc viết, không phải hiện tại.
+> - **`FE/feature_share_activities.md` (v1.0, Draft, thêm 12/08):** BE companion
+>   `BE/feature_share_activities_tech.md` v0.1 (thêm 2026-08-14, docs-debt §8) nay **đã tồn tại** — cặp đã
+>   đủ, không còn "lệch". Cả hai vẫn 🟡 Draft (không phải Reviewed); xem section *Share / Activity* dưới.
+> - **Cột version trong các bảng dưới: 46/51 ô đã stale** (vd session_management ghi v2.17, trên đĩa v2.25).
+>   Theo đúng chính sách của file này — *"inventory/count được derive từ … trên disk, không hand-maintain
+>   tại đây"* — **đĩa là authority, không phải ô trong bảng.** Tái tạo:
+>   `grep -m1 '^> \*\*Version' docs/features/FE/*.md docs/features/BE/*.md`
+> - **`BE/auth-security-invariant-table.md` KHÔNG phải spec** (bảng hỗ trợ, không có Testing Plan) — đừng
+>   đếm vào 25.
+> - **🟡 DD-106:** ba hợp đồng do spec pass 12/08 viết vào spec **đã Reviewed** mà chưa có decision —
+>   Pay-for-Buddy (đường tiền), `chat_messages.embed_*`, unified `SessionCard`. Đã gắn nhãn 🟡 tại chỗ;
+>   **không implement từ các mục đó.** Xem `../standards/decisions.md` → DD-106.
+> - **Entry Points table (đã đóng 2026-08-14):** `8af9601` thêm cho 45 spec (không phải 49 như commit
+>   khai). Bốn file còn thiếu — `FE/feature_club.md` · `FE/feature_home.md` · `FE/feature_inapp_chat.md`
+>   · `BE/feature_club_tech.md` — nay đã backfill; cả 2 template (`feature-spec-template.md`,
+>   `be-tech-spec-template.md`) đã cấp section `### Entry points`, và Document Convention dưới đây liệt
+>   kê nó là subsection §1 bắt buộc. Xem `../sessions/2026-08-13-docs-audit.md` §8.
+
+> **Version:** 2.65 · 2026-08-14 *(2.64 · 2026-08-13)*
 > **Scope source:** `../product/BRD.md` · `../product/PRD.md` · `../product/TDD.md` · `../product/ROADMAP.md` · `../standards/decisions.md` (current versions — không hard-pin số). DD-32 đã reopen và `DECISION_FINAL` theo Option D; DD-70/71/72/86/91–95 owner-final; DD-96 Part A `DECISION_FINAL`, Part B direction-only (mechanism chưa chốt — xem `decisions.md` DD-96); per-decision readiness boundaries recorded in `decisions.md`; runtime gates không đổi.
 
 > **Cập nhật DD-37 (2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (**Telegram loại khỏi phạm vi**). `FE/feature_player_telegram` → **Archived (DD-37)**, thay bằng `FE/feature_player_messenger`. Thêm phase-1: `FE/feature_inapp_chat` (DD-38 ✅), `FE/feature_user_settings` (DD-39 ✅), Google login (DD-13 ✅, trong `FE/feature_web_auth_onboarding`), mark-paid thủ công (DD-40 ✅, trong `FE/feature_payment_reconcile`).
@@ -11,6 +32,7 @@ Core docs remain authoritative by topic. Feature specs add build/test detail but
 
 - **Product/UX spec** (`FE/feature_{name}.md`) — 7 sections: Mô tả, Use Cases + Edge Cases, Screens & States, Domain Model, Analytics Events, Acceptance Criteria, Open Questions / Changelog.
 - **Backend Tech spec** (`BE/feature_{name}_tech.md`) — 6 sections: Tổng quan triển khai, Database Schema + Edge Cases (BE), API Contract, Chi tiết triển khai, Testing Plan, Rollout Plan + Changelog.
+- **Entry points (bắt buộc mọi spec)** — subsection `### Entry points` trong §1 (`Mô tả` FE / `Tổng quan triển khai` BE), đặt trước `### Bất biến`. **Không** phải section top-level thứ 8 — là subsection của §1, nên count 7/6 section ở trên không đổi. FE dùng bảng `Entry | Route / Surface | Actor | Mô tả`; BE dùng `Entry | Caller | Mô tả`. Liệt kê đủ mọi surface: route, tab, deep link, bot command, notification, chat link, projector/job. Cả 2 template cấp section này (thêm 2026-08-14); spec mới thiếu nó không đạt review gate.
 - Template files: `../templates/feature-spec-template.md` and `../templates/be-tech-spec-template.md`.
 - Language: Vietnamese numbered headers (`## 1. Mô tả`, `## 2. Use Cases + Edge Cases`, ...).
 - **BE subsections bắt buộc (từ template v2.30, uplift theo chuẩn Sporta):** §2 **Migration & Rollback** · §3 **Request/Response Examples** (error envelope `{error, message, code}`; DTO minh hoạ theo invariant đã pin, field name chốt ở build slice) + **Idempotency** · §4 **Caching Strategy**. Edge-case categories gồm thêm **Infra**. Áp dụng bắt buộc cho spec mới; spec hiện có bổ sung khi được sửa lần kế (pilot: CCJ BE v2.8). Product spec: Error state trong Screens & States phải map về Error Codes catalog ở BE §3.
@@ -35,7 +57,7 @@ Các nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**,
 
 > ⚠️ **Reconcile với `../standards/BUILD-STATUS.md`:** inventory/count được derive từ các Product/BE pair đang có trên disk và bảng hiện hành, không hand-maintain tại đây. Coverage chỉ nghĩa là file tồn tại; không phải canonical phase hay implementation readiness.
 >
-> **Live boundary 12/08:** DD-102 torn-read obligation đã đóng (xem `decisions.md` v2.25); migration tail verify tại `packages/db/migrations/`, không hard-pin SHA/số. Waitlist/same-tenant/capacity, shared job substrate và serialized Chat DB slices 1–3 có evidence từng phần, nhưng không suy thành Session/Marketplace/Sync/Channel Booking hay production Chat API/UI. DD-32 Option D và DD-86/DD-91–95 là final; DD-56 grant-read/`hasCapability` consumers vẫn thiếu. DD-104 (pristine-draft delete) vẫn 🟡 đề xuất — deferred trong clean subset này (blocker: suspension gate + money-FK boundaries D1/D2 + concurrency ordering + 23503 trusted-resolution). DD-18 vẫn **open** và DD-96 Part A giữ `DECISION_FINAL` — cả hai KHÔNG re-ratify/reconcile trong clean subset này; contradictions ghi ở backlog blocker tasks + `decisions.md` deferred notes. Chat primary plan v1.8 tại `90d292d` (readiness ghi ở plan doc); mỗi unmerged slice vẫn qua strict readiness gate trước merge. `payment_reconcile_auto` entitlement khác provider/market availability; manual mark-paid vẫn global.
+> **Live boundary 12/08:** DD-102 torn-read obligation đã đóng (xem `decisions.md` v2.25); migration tail verify tại `packages/db/migrations/`, không hard-pin SHA/số. Waitlist/same-tenant/capacity, shared job substrate và serialized Chat DB slices 1–3 có evidence từng phần, nhưng không suy thành Session/Marketplace/Sync/Channel Booking hay production Chat API/UI. DD-32 Option D và DD-86/DD-91–95 là final; DD-56 grant-read/`hasCapability` consumers vẫn thiếu. ~~DD-104 (pristine-draft delete) vẫn 🟡 đề xuất — deferred trong clean subset này (blocker: suspension gate + money-FK boundaries D1/D2 + concurrency ordering + 23503 trusted-resolution).~~ **Mục này đã mục — sửa 13/08:** DD-104 nay là **✅ chốt D0–D4 ở decision level** (owner 13/08, `decisions.md` v2.27) và cả **bốn blocker kể trên đã resolved**; chỉ **slice** là DEFERRED (chờ packet `tenant-capability-authority-core`). Spec-WIP `DeleteSession` đã gỡ khỏi 2 spec Session lần thứ hai. DD-18 vẫn **open** và DD-96 Part A giữ `DECISION_FINAL` — cả hai KHÔNG re-ratify/reconcile trong clean subset này; contradictions ghi ở backlog blocker tasks + `decisions.md` deferred notes. Chat primary plan v1.8 tại `90d292d` (readiness ghi ở plan doc); mỗi unmerged slice vẫn qua strict readiness gate trước merge. `payment_reconcile_auto` entitlement khác provider/market availability; manual mark-paid vẫn global.
 
 ### Legacy coverage (gồm Telegram Archived)
 
@@ -93,6 +115,18 @@ Nhóm cross-cutting mở rộng cụm 🔔 Notifications — cùng khuôn `FE/fe
 
 > Reviewed docs cập nhật theo DD ✅: `FE/feature_web_auth_onboarding` (DD-13 Google+email), `FE/feature_payment_reconcile` (DD-40 mark-paid thủ công), `FE/feature_tenant_routing_authz` + `FE/feature_identity` + `FE/feature_multi_tenant` + `FE/feature_billing_lifecycle` + `FE/feature_session_management` (DD-37 channel pivot), và `FE/feature_notifications_reminders` (DD-70/71/72; runtime vẫn Not started).
 
+### Share / Activity (thêm 12/08)
+
+| Phase | Feature | Product/System spec | Backend/Engineering spec | Status |
+|---|---|---|---|---|
+| P4.3+ (DD-73..78) | Share Activities — activity card · share link · preview | `FE/feature_share_activities.md` v1.0 | `BE/feature_share_activities_tech.md` v0.1 (thêm 2026-08-14) | 🟡 Draft · cặp đã đủ |
+
+> Spec FE §4 định nghĩa **5 bảng** (`player_activity_shares` tenant/RLS · `person_activity_cards`,
+> `activity_card_slugs`, `public_projection_fences`, `activity_reactions` global-protected). BE companion
+> `feature_share_activities_tech.md` v0.1 nay sở hữu DDL/RLS/grants/migration/rollback cho chúng và pin
+> ranh giới hai slice (DD-73 Q5): **DD-12** sở hữu fence + guarded session view + grant migration; **DD-74/75**
+> sở hữu activity stores; **DD-73** sở hữu route/OG/telemetry. Cả cặp 🟡 Draft — chưa Reviewed, chưa runtime.
+
 ## Post-MVP
 
 | Phase | Feature | Current source | Required before implementation |
@@ -117,6 +151,8 @@ Với spec mới hoặc spec được promote sang **Reviewed**, review gate k�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-14 | v2.65 | **Đóng nợ docs-debt-2026-08-13 §8 (docs-only).** (1) **BE companion Share Activities:** thêm `BE/feature_share_activities_tech.md` v0.1 — lift 5 bảng từ FE §4 + RLS/grants/guarded view/narrow SECURITY DEFINER, pin ranh giới hai slice (DD-12 sở hữu fence/guarded session view/grant migration; DD-74/75 sở hữu activity stores), mirror DD-73–78. Inventory **26 Product + 25 BE → 26 Product + 26 BE = 26 cặp**; "cặp lệch duy nhất" đã đóng. (2) **Entry Points:** thêm subsection `### Entry points` vào 2 template (`../templates/feature-spec-template.md` FE 4-cột · `../templates/be-tech-spec-template.md` BE 3-cột) + liệt kê trong Document Convention là **subsection §1 bắt buộc** (không phải section top-level thứ 8, count 7/6 không đổi). Backfill 4 spec thiếu: `FE/feature_club.md` · `feature_home.md` · `feature_inapp_chat.md` · `BE/feature_club_tech.md`. Không đổi status/scope/contract của spec nào — cả hai Share Activities specs vẫn 🟡 Draft. |
+| 2026-08-13 | v2.64 | **Reconcile index với đĩa tại `main@1fdba1d` (rà soát docs 13/08).** (1) Inventory **25 → 26 Product + 25 BE**; thêm section *Share / Activity* cho `FE/feature_share_activities.md` v1.0 (thêm 12/08, chưa từng có dòng trong bảng nào) và ghi rõ **BE companion không tồn tại** ⇒ cặp lệch duy nhất, không phải product-only có chủ ý. (2) **Đính chính boundary DD-104** ở Live boundary 12/08: nay ✅ chốt D0–D4 decision-level (owner 13/08, decisions v2.27), cả 4 blocker đã resolved, chỉ *slice* DEFERRED — bản cũ khai ngược. (3) Ghi nhận **46/51 ô version trong bảng đã stale**; theo đúng chính sách "derive từ disk, không hand-maintain", **đĩa là authority** và kèm lệnh tái tạo — không sửa tay 46 ô để rồi stale tiếp tuần sau. (4) Ghi **🟡 DD-106**: ba hợp đồng (Pay-for-Buddy · `chat_messages.embed_*` · unified `SessionCard`) do spec pass 12/08 viết vào spec **đã Reviewed** mà chưa có decision — đã gắn nhãn tại chỗ, không implement. (5) Ghi Entry Points thực tế **45 spec** (commit `8af9601` khai 49), còn thiếu 4 file, và **chưa template nào cấp section này**. Không đổi status/scope của spec nào. |
 | 2026-08-12 | v2.63 | Open-decision reconcile (clean subset): de-pin decisions pointer + derive inventory/status from tables; DD-104 (Session delete) deferred — giữ 🟡 đề xuất, Session row unchanged from base. DD-18 (Assistant) and DD-96/DD-79 (Home) ratification deferred pending blockers — Assistant/Home rows unchanged from base. No runtime/readiness promotion. |
 | 2026-08-10 | v2.62 | **Thêm cặp Club Management** (`FE/feature_club.md` v1.0 + `BE/feature_club_tech.md` v1.0, 🟡 Draft). Tách Club tab từ `feature_home.md` thành feature riêng biệt. Sub-features: Club list, Club detail, News/Announcement (pin 1 post lên top), Members, Sessions, Chat, Settings, Tạo CLB. Tái dùng `chat_channels`/`chat_messages`. Thêm forward message vào Chat FE v0.16 + BE v0.24. Home v0.13 cross-ref Club. On-disk → **25 Product + 25 BE = 25 cặp**. |
 | 2026-07-28 | v2.61 | Sync current as-built mirror versions after re-pin to `main@784bc8d`: Sync 2.5/2.7, Security BE 2.6 and Connector BE 0.9. Runtime/enablement statuses are unchanged. |

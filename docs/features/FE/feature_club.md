@@ -4,9 +4,9 @@
 > **Track:** 🏸 Club Management
 > **Version:** 1.0 · 2026-08-10
 > **Status:** Draft
-> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md`
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md`
 > **Prerequisites:** P3.5 identity (Person/Membership) · P4 web auth · P4.6 player_view (person-self data)
-> **Tài liệu liên quan:** `../product/BRD.md` BR-1/BR-5/FR-2 · `feature_home.md` (bottom nav slot #4) · `feature_inapp_chat.md` (chat CLB) · `feature_session_management.md` (sessions CLB) · `feature_cross_club_join.md` (join flow) · `feature_connector_onboarding.md` (tạo CLB) · `feature_club_assistant.md` (AI trợ lý) · `../BE/feature_club_tech.md`
+> **Tài liệu liên quan:** `../../product/BRD.md` BR-1/BR-5/FR-2 · `feature_home.md` (bottom nav slot #4) · `feature_inapp_chat.md` (chat CLB) · `feature_session_management.md` (sessions CLB) · `feature_cross_club_join.md` (join flow) · `feature_connector_onboarding.md` (tạo CLB) · `feature_club_assistant.md` (AI trợ lý) · `../BE/feature_club_tech.md`
 
 ---
 
@@ -26,6 +26,19 @@ Bên trong mỗi CLB là nhiều sub-features:
 | **Chat** | Chat CLB — kênh `kind='club'` | `feature_inapp_chat.md` |
 | **Settings** | Cài đặt CLB (host/admin) | §3.7 |
 | **Tạo CLB** | Wizard tạo CLB mới | `feature_connector_onboarding.md` |
+
+### Entry points
+
+| Entry | Route / Surface | Actor | Mô tả |
+|-------|----------------|-------|-------|
+| Bottom nav → Club tab | `/me/clubs` (slot #4) | User (member+) | Danh sách CLB person-self (`feature_home.md §3`) |
+| Club list → tap CLB | `/me/clubs` → tap | User (member) | → Club detail hub |
+| Club detail → sub-feature | `/clubs/:tenantId` → News/Members/Sessions/Chat/Settings | Member (role-gated) | Hub điều hướng sub-features |
+| Deep link CLB | `club_<slug>` sticky context (RTE-UC-4/DD-83) | User (member) | Direct vào Club detail |
+| News → notification | Push/Inbox → club post | Member | → News/Announcement |
+| Tạo CLB CTA | Club list → "Tạo CLB" | User | Wizard (`feature_connector_onboarding.md`) |
+| Club Chat | Club detail → Chat | Member | Channel `kind='club'` (`feature_inapp_chat.md`) |
+| Club Sessions | Club detail → Sessions | Host/Member | Kèo CLB (`feature_session_management.md`) |
 
 ### Bất biến
 

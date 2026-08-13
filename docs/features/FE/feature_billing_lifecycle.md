@@ -4,9 +4,9 @@
 > **Track:** 💳 Host Billing  
 > **Version:** 2.10 · 2026-08-10
 > **Status:** Reviewed  
-> **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 tenant/authz · P3 durable payment ingestion · P3 notifications  
-> **Tài liệu liên quan:** `../product/BRD.md` FR-9/BR-11 · `../product/PRD.md` FLOW 11 · `../standards/decisions.md` DD-29/DD-37/DD-40/DD-91 · `../BE/feature_billing_lifecycle_tech.md` · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
+> **Tài liệu liên quan:** `../../product/BRD.md` FR-9/BR-11 · `../../product/PRD.md` FLOW 11 · `../../standards/decisions.md` DD-29/DD-37/DD-40/DD-91 · `../BE/feature_billing_lifecycle_tech.md` · `../../research/auto-debt-reconciliation-regional-availability-2026-07-27.md`
 
 > **Cập nhật v3.4 (DD-40 + DD-37, 2026-07-10):** free-tier bots = **Zalo + Facebook Messenger** (bỏ Telegram). Capability flags DD-40: **free** = `payment_mark_manual` (cash/bank), `reminders_manual`; **`host_pro`** += `payment_reconcile_auto`, `reminders_auto`, `assistant_ai_kb`, `crm_dashboard`.
 

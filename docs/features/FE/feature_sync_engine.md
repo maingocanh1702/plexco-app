@@ -4,9 +4,9 @@
 > **Track:** 🔄 Sync Engine
 > **Version:** 2.6 · 2026-08-10
 > **Status:** Reviewed (v2.3: canonical command/outbox keys + endpoint-exact channel delivery)
-> **Implementation:** Infrastructure in progress — lease/ack + preflight/dispatcher/flagged scheduler đã merge, nhưng schedule OFF/placeholder và chưa có producer/real projector/replay/sub-minute drain; business sync E2E chưa bắt đầu · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
+> **Implementation:** Infrastructure in progress — lease/ack + preflight/dispatcher/flagged scheduler đã merge, nhưng schedule OFF/placeholder và chưa có producer/real projector/replay/sub-minute drain; business sync E2E chưa bắt đầu · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P2 canonical domain services · P3 pg-boss/outbox · P4 channel adapters
-> **Tài liệu liên quan:** `../product/BRD.md` FR-4 · `../product/PRD.md` FLOW 14 · `../product/TDD.md` §3.8 · BRD OD-7 · `../BE/feature_sync_engine_tech.md`
+> **Tài liệu liên quan:** `../../product/BRD.md` FR-4 · `../../product/PRD.md` FLOW 14 · `../../product/TDD.md` §3.8 · BRD OD-7 · `../BE/feature_sync_engine_tech.md`
 
 > **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (bỏ Telegram). Projector fan-out ra **Zalo DM / Messenger (cửa sổ 24h) / web realtime / public projection** — **không còn TG projector**; "Messenger P4.8" cũ nay là **phase-1 P2.5**. Các đề cập "TG" dưới đây là projector Zalo/Messenger tương ứng.
 >

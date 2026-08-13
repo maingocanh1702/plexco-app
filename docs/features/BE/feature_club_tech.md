@@ -33,6 +33,18 @@ News/Announcement → reuse chat_channels(kind='club', post_policy='admins_only'
 | Chat infrastructure | Tái dùng `chat_channels`, `chat_messages` từ `feature_inapp_chat_tech.md` |
 | `PlayerViewService` | Person-self membership resolver (canonical) |
 
+### Entry points
+
+| Entry | Caller | Mô tả |
+|-------|--------|-------|
+| `GET /api/me/clubs` | User (person-self) | Club list — grouped by role, `ClubService` |
+| `GET /api/clubs/:tenantId` | Member (RLS) | Club detail hub → sub-features |
+| `GET /api/clubs/:tenantId/announcements` | Member | News feed (pinned-first), `ClubNewsService` |
+| `PATCH /api/clubs/:tenantId/channels/:channelId/pin` | Host/Admin | Pin 1 post — auto-unpin cũ |
+| `DELETE /api/clubs/:tenantId/channels/:channelId/pin` | Host/Admin | Unpin post |
+| Auto-unpin trigger | System (DB) | Pinned message soft-deleted/hidden → auto unpin |
+| `chat_channels`/`chat_messages` | Reuse `feature_inapp_chat_tech.md` | Announcement + chat storage |
+
 ---
 
 ## 2. Database Schema + Edge Cases (BE)

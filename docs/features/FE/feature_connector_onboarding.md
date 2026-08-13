@@ -4,9 +4,9 @@
 > **Track:** 🔌 Connector / Onboarding
 > **Version:** 1.1 · 2026-08-10
 > **Status:** Draft (standard provider contracts reviewed; ApiPay enterprise provider gate open)
-> **Implementation:** Not started · authority: `../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P3 webhook ingest stable · P4 onboarding wizard scaffold
-> **Tài liệu liên quan:** `feature_web_auth_onboarding.md` (nâng cấp step bank/zalo/messenger) · `feature_zalo_channel.md` · `feature_player_messenger.md` · `feature_payment_reconcile.md` · `../channels/zalo/README.md` §6–7 · `../standards/decisions.md` DD-30/DD-37/DD-33 · `../product/TDD.md` · `../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `../research/player-side-saas-AUDIT.md` §B2 · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md` (research input, không phải provider/rollout authority)
+> **Tài liệu liên quan:** `feature_web_auth_onboarding.md` (nâng cấp step bank/zalo/messenger) · `feature_zalo_channel.md` · `feature_player_messenger.md` · `feature_payment_reconcile.md` · `../../channels/zalo/README.md` §6–7 · `../../standards/decisions.md` DD-30/DD-37/DD-33 · `../../product/TDD.md` · `../../standards/business-rules.md` BL-PAY-6, BL-SEC-1/2, BL-TEN-1, BL-ID-6, BL-SEC-5 · `../../research/player-side-saas-AUDIT.md` §B2 · `../../research/auto-debt-reconciliation-regional-availability-2026-07-27.md` (research input, không phải provider/rollout authority)
 
 > **Authority DD-65 (2026-07-17):** doc này vẫn cover connector Zalo/SePay/ApiPay. Messenger central Page do platform vận hành; FB Login + Page riêng là **optional tenant connector**, không chặn tenant readiness. Chi tiết ở `feature_player_messenger.md` + `feature_web_auth_onboarding.md`.
 >
@@ -418,7 +418,7 @@ Platform giữ **1 credential ApiPay enterprise** và tự động provision per
 - **Bảo mật:** enterprise credential là tài sản **KMS cấp platform** (không per-tenant); lộ = ảnh hưởng nhiều tenant → rotation + audit riêng + rate-limit provisioning. `provider_connections.auth_mode='enterprise'` phân biệt rõ với `api_key`.
 - **Production gate:** xác nhận điều khoản + request/response thực tế của enterprise ApiPay (giới hạn account/webhook, phí, SLA) và một replay mechanism chứng minh được: provider idempotency key **hoặc** exact lookup/reuse bằng deterministic provision ref. Không có một trong hai → `APIPAY_ENTERPRISE_UNAVAILABLE`, không gọi create mù sau timeout và không suy từ standard BYO API.
 
-> Nguồn authority: **DD-30** (`../standards/decisions.md`). Provider vẫn `apipay`; chỉ khác ai cấp credential và ai provision. KHÔNG đụng ledger/reconcile core. Internal endpoint chi tiết ở `../BE/feature_connector_onboarding_tech.md` §3.
+> Nguồn authority: **DD-30** (`../../standards/decisions.md`). Provider vẫn `apipay`; chỉ khác ai cấp credential và ai provision. KHÔNG đụng ledger/reconcile core. Internal endpoint chi tiết ở `../BE/feature_connector_onboarding_tech.md` §3.
 
 #### 4.3.2 Fallback — BYO API key + auto-register (standard API ✅ verified)
 
