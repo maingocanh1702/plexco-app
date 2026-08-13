@@ -298,11 +298,15 @@ CREATE TABLE chat_messages (
   CHECK (author_type =  'person' OR author_person_id IS NULL),      -- assistant/system ⇒ author_person_id NULL
   CHECK (author_type = 'person' OR membership_id IS NULL),          -- assistant/system: membership NULL (DD-20)
   CHECK (author_type <> 'person' OR tenant_id IS NULL OR membership_id IS NOT NULL), -- club person phải có membership
-  -- 🟡 Structured embed CHƯA CHỐT — DD-106 Q2. `0031_chat_schema_core.sql` ĐÃ LAND (11/08) và KHÔNG có
-  --    ba cột dưới đây ⇒ đây là EXPAND một bảng đã land, tức migration 0033+ với đủ gate, không phải
-  --    spec cho bảng chưa tồn tại. `embed_snapshot` là bản sao dữ liệu session nằm trong bảng chat ⇒
-  --    mặt lộ mới cho whitelist; phải chốt snapshot đóng băng hay refresh, và xử lý embed đã gửi khi
-  --    session chuyển private/cancel. Xem ../../standards/decisions.md → DD-106 Q2.
+  -- ⬜ Structured embed HOÃN, ràng buộc NHỊ PHÂN — DD-106 Q2 (owner-delegated 2026-08-14).
+  --    KHÔNG thêm ba cột dưới đây cho tới khi `public_projection_fences` + guarded view +
+  --    narrow raise/CAS-clear ĐÃ MERGE.
+  --    Lý do: `embed_snapshot` là projection THỨ HAI của session state, trong khi projection thứ
+  --    nhất còn chưa có đường invalidate — DD-73..78 ghi rõ kèo chuyển private/cancel hiện phải chờ
+  --    projector async mới hết lộ, và fence là nợ DD-12 chưa land. Thêm cái thứ hai khi cái thứ nhất
+  --    chưa invalidate được là NHÂN ĐÔI một lỗi đã biết, không phải thêm tính năng.
+  --    Khi fence land, Q2 mở lại và phải trả lời: snapshot đóng băng hay refresh, và embed ĐÃ GỬI xử
+  --    lý thế nào khi session chuyển private/cancel. Xem ../../standards/decisions.md → DD-106 Q2.
   -- Structured embed (optional): session card, extensible to activity/tournament/club later
   embed_type text CHECK (embed_type IS NULL OR embed_type IN ('session')),
   embed_ref_id uuid,                                      -- source entity id (session_id for 'session')

@@ -151,8 +151,12 @@ CREATE TABLE payment_allocations (
   --   DD-40 mark-paid thủ công: tiền mặt → 'cash'; CK đã ingest → 'manual' (khớp bank txn).
   --   Host-attested "đã CK" chưa có bank_transaction = dedicated source migration (B1), never synthetic bank txn
   --   HOẶC mở enum qua migration — KHÔNG dùng 'cash' cho CK, KHÔNG thêm 'bank_transfer'.
-  -- 🟡 'buddy' CHƯA CHỐT — DD-106 Q1. Live 0003_payments_ledger.sql:85 có 5 giá trị, KHÔNG có 'buddy'.
-  --    Không migration nào được mở enum này trước khi DD-106 Q1 thành ✅. Xem ../../standards/decisions.md.
+  -- ⛔ 'buddy' ĐÃ BỊ BÁC — DD-106 Q1 (owner-delegated 2026-08-14). KHÔNG mở enum này.
+  --    Lý do: created_by đã tồn tại (0003:87) và CHECK đã cho phép ('cash'|'waiver') + created_by
+  --    NOT NULL (0003:92), nên "A trả hộ charge của B" = ('cash', created_by=A) — không cần giá trị
+  --    mới. Mỗi enum trên đường tiền là một nhánh vĩnh viễn trong mọi đối soát/report/reversal.
+  --    Muốn mở lại: DD riêng, trả lời được 'buddy' mang thông tin gì mà ('cash'|'manual', created_by)
+  --    không mang. Dòng dưới giữ nguyên làm dấu vết đề xuất, KHÔNG phải contract.
   source text NOT NULL CHECK (source IN ('auto','manual','cash','waiver','reversal','buddy')),
   reverses_allocation_id uuid,
   created_by uuid,

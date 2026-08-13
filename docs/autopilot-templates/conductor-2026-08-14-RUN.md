@@ -144,10 +144,24 @@ ROOT COMMITS:
 DO NOT TOUCH:
 - Any FE work — DD-81 / M0.3 / M4 are PENDING by owner order 2026-08-13. No .pen tracking, no
   page/component, no docs/channels/web/**.
-- DD-106 Q1/Q2/Q3 (Pay-for-Buddy, chat_messages.embed_*, unified SessionCard). They are tagged in
-  place inside otherwise-Reviewed specs; implementing from them is Tier C.
 - chat slice 7 — its packet is NOT_CODE_READY behind two slices that do not exist.
 - OUTBOX_DISPATCH_SCHEDULE_ENABLED and GOOGLE_OAUTH_* — enablement is Tier C.
+- `autopilot-update.sh` — blocked by DD-108 until the canonical trust-gate mirror lands. Running it
+  would silently revert the hardened readiness gate, and no test would go red.
+
+DD-106 WAS RESOLVED ON 2026-08-14 — read the ruling, not the old 🟡 labels:
+- Q1 Pay-for-Buddy: the enum value `payment_allocations.source='buddy'` is **REJECTED**, not merely
+  deferred. `created_by` already exists (0003:87) and the CHECK already permits
+  ('cash'|'waiver') + created_by NOT NULL (0003:92), so "A paid for B's charge" is expressible today
+  as ('cash', created_by=A). Do not add the enum value. Do not build the buddy workflow either — it
+  is deferred behind DD-40 manual mark-paid.
+- Q2 chat embed columns: deferred with a BINARY unblock condition — `public_projection_fences` +
+  guarded view + narrow raise/CAS-clear must be merged first. Until then, adding
+  `chat_messages.embed_*` duplicates a known un-invalidated projection. Do not add those columns.
+- Q3 unified SessionCard: direction ACCEPTED. Canonical shape lives in
+  `docs/features/FE/feature_marketplace_discovery.md` §3; other specs reference it rather than
+  redefining. It is NOT yet a contract — do not freeze it until a surface actually renders it. If
+  lane L1 renders session data, this is the shape to follow.
 
 SESSION STOP CONDITIONS (as distinct from a single lane's):
 - your own context near exhaustion;

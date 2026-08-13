@@ -187,12 +187,19 @@ Host mở roster/danh sách nợ (bot Zalo / Messenger / web)
 | `outbox_events` | Phát thay đổi ledger | Cùng transaction với allocation/status change |
 | `buddy_payment_requests` 🟡 | Yêu cầu trả hộ player→player cùng session | UNIQUE `(charge_id, payer_person_id) WHERE status='pending'`; status pending/confirmed/rejected/cancelled |
 
-> 🟡 **Pay-for-Buddy CHƯA CHỐT — `DD-106 Q1`, không implement từ mục này.** Toàn bộ nội dung Pay-for-Buddy
-> trong spec này (bảng `buddy_payment_requests`, `source='buddy'`, PAY-UC-19/20/21, edge case #27–34, 4 dòng
-> screen, 3 analytics event, 11 acceptance criterion) do spec pass 12/08 viết vào **trước khi có decision**.
-> Live `0003_payments_ledger.sql:85` chỉ có `('auto','manual','cash','waiver','reversal')`. Đây là đường
-> tiền ⇒ chạm HARD RULE claim-có-tiền-cần-khoá-mạnh. Status Reviewed của spec **không phủ** phần này.
-> Xem `../../standards/decisions.md` → DD-106.
+> ⬜ **Pay-for-Buddy HOÃN, và giá trị enum `'buddy'` đã bị BÁC — `DD-106 Q1` (owner-delegated 2026-08-14).**
+> **Không implement từ mục này.**
+>
+> Lý do bác vế enum: `payment_allocations` **đã có** `created_by uuid` (`0003_payments_ledger.sql:87` —
+> *"actor for cash/waiver/manual"*) và CHECK **đã cho phép** `source IN ('cash','waiver') AND created_by
+> IS NOT NULL` (`:92`). Nên *"A trả hộ charge của B"* **biểu diễn được ngay hôm nay** bằng
+> `source='cash'` + `created_by = A`. Muốn mở lại phải trả lời được: `'buddy'` mang thông tin gì mà
+> `('cash'|'manual', created_by)` không mang? Mỗi giá trị enum trên đường tiền là một nhánh **vĩnh viễn**
+> trong mọi truy vấn đối soát, report và reversal về sau.
+>
+> Phần **workflow** (player request → host confirm, bảng `buddy_payment_requests`) là chuyện khác loại và
+> chỉ **hoãn**, không bác — nhưng xếp sau DD-40 mark-paid thủ công, vì đó mới là thứ chặn doanh thu.
+> Xem `../../standards/decisions.md` → DD-106 Q1.
 
 ### Ledger rules
 

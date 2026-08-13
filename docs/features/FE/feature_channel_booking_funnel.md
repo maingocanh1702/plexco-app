@@ -147,12 +147,12 @@ Messenger có thể dùng provider-native account-link CTA khi capability đư�
 
 ### 3.6 Component tables
 
-**Component: Session browse card (bot) — unified `SessionCard` data alignment:** 🟡
+**Component: Session browse card (bot) — unified `SessionCard` data alignment:**
 
-> 🟡 **`SessionCard` canonical CHƯA CHỐT — `DD-106 Q3`.** Shape dùng chung bot/web/home do spec pass 12/08
-> đưa vào nhiều spec cùng lúc mà chưa chốt field set canonical nằm ở đâu, surface nào được degrade, và quan
-> hệ với whitelist BL-DSC-1. Dùng làm tham chiếu được; **không** dùng làm nguồn duy nhất khi implement.
-> Xem `../../standards/decisions.md` → DD-106 Q3.
+> ✅ **Hướng đã chấp nhận — `DD-106 Q3` (owner-delegated 2026-08-14).** Canonical của `SessionCard` ở
+> `feature_marketplace_discovery.md` §3; spec này (và home/player_view) **trỏ tới**, không định nghĩa lại.
+> Bot degrade được (không pill/badge) là **hợp lệ và nằm trong shape**, không phải ngoại lệ chữa cháy.
+> ⚠️ Chưa phải contract — chưa surface nào render. Nâng thành contract ở slice đầu tiên render thật.
 
 | Field | Data source | Ghi chú |
 |-------|-------------|---------|
