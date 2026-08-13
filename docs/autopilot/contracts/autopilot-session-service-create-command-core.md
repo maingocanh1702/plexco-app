@@ -102,6 +102,23 @@ DELIVERABLES (when unblocked): service + tests green on real PG, 2 clean review 
 > the CI-formatted equivalent is recorded as 470 for honesty. No content beyond round-3's
 > codex-required hardening is authorized by this note.
 >
+> **TERMINAL amendment (owner 2026-08-13, third and LAST number change — auto-DENY beyond this):**
+> `changed_loc_max` 440 → **470 compact basis** (formatted equivalent recorded separately). Round-4
+> codex raised 3 in-diff actionable findings, all legitimate quality: [P2] malformed `sportId` → raw
+> PG `22P02` instead of a typed error (real gap); [P2] replay spreads `result_ref` — explicit
+> 4-field projection required (tamper-hygiene); [P2] B3 test conflates two guards — split for
+> isolation. Fixing all three ≈455 compact. Why the "past 440 = re-slice" arm does NOT fire: the
+> command is atomic (one function), the test file IS the mandated acceptance matrix (cannot defer),
+> and the minimal-idempotency redesign is semantically weaker for idempotent replay — the re-slice
+> arm was written for splittable scope, which this is not; the constraint stays, the reason is
+> corrected. **Terminal conditions:** (a) >470 compact for ANY reason → lane STOPS at AWAIT for
+> owner re-slice decision, no further ratification requests will be granted; (b) fix_rounds_max 5
+> stands — currently at 4; (c) findings outside the two existing regions (validate/dedup-replay) are
+> per-se out-of-slice → ADVISORY + backlog. **Process lesson recorded for future root slices:** set
+> the LOC budget AFTER enumerating the acceptance matrix, pin the measurement basis up front, and
+> consider budgeting service and test LOC separately — this slice's 300 was estimated before either
+> existed, which is where all three ratchets came from.
+
 > **Replay-guard depth boundary (same ruling):** the dedup replay-guard validation depth is pinned
 > at round-3 state — `command_type` guard + full-shape/domain check (UUID + enum + version≥1),
 > fail-closed `COMMAND_ID_CONFLICT`. A later round demanding DEEPER validation of the stored result
