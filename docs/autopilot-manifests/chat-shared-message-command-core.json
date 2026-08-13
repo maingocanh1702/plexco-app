@@ -1,0 +1,127 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — carries NO manifest_schema_version. This slice is NOT_CODE_READY (see docs/autopilot/contracts/autopilot-chat-shared-message-command-core.md §7): do NOT register or open a worktree from it. The fields below describe the INTENDED shape so a future re-authoring pass inherits a specified target rather than a blank one; they are documentation, not authorization.",
+  "_blocked_note": "BLOCKED on four unmet catalog hard dependencies (primary-plan §9 row 7: 'Hard-dep 2/3/4/5/6/9') plus one spec-integrity defect. Catalog slices 2 (chat-dm-safety-authority-core) and 3 (dd38-dd86-chat-schema-core) are MERGED — see dep_checks. Catalog slice 4 (tenant-capability-authority-core) is an authored backlog task (status idea, scope:[], manifest:null) but not built. Catalog slices 5 (chat-club-channel-lifecycle-core), 6 (chat-club-moderation-core) and 9 (chat-authorized-member-target-read-core) have NO backlog task at all — verified 2026-08-13 via `grep '^## task: chat-club\\|^## task: chat-authorized' docs/autopilot-backlog.md` (zero matches) and a full listing of docs/autopilot-manifests/*.json (no file for any of the three). Separately, docs/features/BE/feature_inapp_chat_tech.md v0.26/v0.27 and docs/features/FE/feature_inapp_chat.md inject session-embed + group-chat + pin/poll/nickname scope directly onto chat_messages and the send-message route this slice owns, with zero decisions.md ratification and zero live schema support — see contract §7 blocker B5.",
+  "_base_sha_note": "base_sha below is DOCUMENTATION ONLY — origin/main tip at authoring time (2026-08-13). Not the base to build from; a real base is pinned only when this slice's actual dependencies (4/5/6/9) have all merged and this packet is re-authored.",
+  "base_sha": "32b7d47b13572a7ce77617aaf45150fa17aaf3e6",
+  "task_id": "plexco:chat-shared-message-command-core",
+  "feature": "chat-shared-message-command-core",
+  "branch": "feat/chat-shared-message-command-core",
+  "base_ref": "origin/main",
+  "risk": "P1",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": ["chat-dm-safety-authority-core", "dd38-dd86-chat-schema-core", "tenant-capability-authority-core"],
+  "dep_checks": [
+    {
+      "feature": "chat-dm-safety-authority-core",
+      "base_sha": "75f06c5dbfb78bd36db57418784b13730f68c182",
+      "landed_sha": "d5b31f942969ad3629bcd673f2fd4de91678147a",
+      "file": "packages/db/migrations/0030_chat_dm_safety_authority_core.sql",
+      "symbol": "dm_safety_enabled"
+    },
+    {
+      "feature": "dd38-dd86-chat-schema-core",
+      "base_sha": "6f63c7dc631d470a9c6da760fbbe24822dc8e0e1",
+      "landed_sha": "3b3bb091205564e181f5c077a7e3390388a31e31",
+      "file": "packages/db/schema.ts",
+      "symbol": "chatChannels"
+    }
+  ],
+  "_dependency_note": "depends_on lists ONLY the 3 of 6 catalog hard-dependencies that have a resolvable backlog slug: chat-dm-safety-authority-core (MERGED, dep_checks proof above — assert_dm_allowed/dm_safety_enabled absent at base 75f06c5, present at landed d5b31f9), dd38-dd86-chat-schema-core (MERGED, dep_checks proof above — chatChannels absent at base 6f63c7d verified via `git show <sha>:packages/db/schema.ts | grep -c chatChannels` = 0, present at landed 3b3bb09), and tenant-capability-authority-core (an authored backlog task, status idea — exists as a slug but is NOT merged, so register would HALT DEP_MISSING on it exactly as designed). Catalog slices 5 (chat-club-channel-lifecycle-core), 6 (chat-club-moderation-core) and 9 (chat-authorized-member-target-read-core) are ALSO hard dependencies per the primary plan's own row for slice 7, but have NO backlog task and therefore no slug to list here — same situation and same handling as chat-identity-merge-reparent-enablement's manifest documented for its own non-existent Person-merge dependency. Their absence is recorded in _blocked_note and the contract's §7 blockers B2/B3/B4, not resolvable by a dep_check because there is nothing yet to check.",
+  "invariants": ["schema"],
+  "_invariant_note": "schema (docs/autopilot-invariant-catalog.md) — this slice would add exactly one migration (new send_chat_message/mark_read SECURITY DEFINER functions + grants) touching the same chat_* tables slices 2/3 already serialize on. No other domain token applies: no money/billing path, no auth/session mutation (consuming DD-56's authorize() primitive is not the same as this repo's 'auth' token, which chat-dm-safety-authority-core and dd38-dd86-chat-schema-core both also declined to add for their own comparable RLS/grant work), no cross-club logic, no identity merge (person_id/dm_key stay untouched per DD-103 boundary).",
+  "scope": [
+    "packages/db/migrations/00NN_chat_shared_message_command_core.sql",
+    "packages/db/schema.ts",
+    "packages/db/src/chat.ts",
+    "packages/db/src/chat.test.ts",
+    "packages/db/README.md",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "docs/autopilot-manifests/chat-shared-message-command-core.json",
+    "docs/autopilot/contracts/autopilot-chat-shared-message-command-core.md",
+    "docs/autopilot-backlog.md"
+  ],
+  "_scope_note": "INTENDED scope, NOT authorized to write yet. Migration number is a placeholder (see _migration_number_note). packages/db/src/chat.ts is a PROPOSED module name (no packages/db/src/chat*.ts non-test file exists on main today) following the auth.ts/tenant.ts/authorization.ts thin-wrapper precedent in the same package — the build session must confirm this name still fits once slices 4/5/6/9 have landed their own packages/db/src modules, which may set a different naming convention this slice should match instead of inventing its own. schema.ts is listed conditionally: this slice's own send-pipeline mechanism needs SOME storage for mention rows (chat_message_mentions or equivalent), which dd38-dd86-chat-schema-core's manifest explicitly deferred out of its own scope to 'DD-92 interaction slices 13/14/15' — none of which is this slice. Whether that storage belongs to THIS slice or must be requested as a dependency of slice 9/13 is an open design question this packet surfaces (contract §2/§3) but does not resolve; it cannot be resolved responsibly before slice 9's real contract exists.",
+  "_migration_number_note": "NO number can be predicted with any confidence. Unlike a slice blocked on one prerequisite, this slice sits behind FOUR unmerged/unauthored slices (4, 5, 6, 9), each of which is itself expected to land its own migration first per the serialized DB-lane precedent already observed twice on this exact chain (0029 guessed -> consumed by unrelated DD-29 migrations; 0031 re-derived a second time). Do not write a placeholder number into this field at all; re-derive with `ls packages/db/migrations/*.sql | sort | tail -1` only once this packet is re-authored after slices 4/5/6/9 merge.",
+  "negative_scope": [
+    "NO mute storage, writer, or receipt, no hide/restore — sole ownership of slice 6 (chat-club-moderation-core); this slice only reads its (not-yet-existing) active-mute state at send time.",
+    "NO DD-56 capability registry, grant storage, append-only grant audit, or authorize() primitive — sole ownership of slice 4 (tenant-capability-authority-core); this slice only calls it for the admins_only post-restriction check.",
+    "NO channel create/rename/set-default/archive, no membership auto-provisioning — sole ownership of slice 5 (chat-club-channel-lifecycle-core).",
+    "NO member-target list/resolution endpoint, no opaque targetRef issuance — sole ownership of slice 9 (chat-authorized-member-target-read-core); this slice only consumes its consume-time resolver.",
+    "NO create_dm / reuse / block / report / DM lifecycle — sole ownership of slice 8; this slice only calls assert_dm_allowed against an already-existing DM channel.",
+    "NO SSE/realtime dispatch beyond the id-only pg NOTIFY payload — slice 10's ownership.",
+    "NO media/attachment upload, scan, or signed-read — slices 11/12; the attachment-validate step is a documented no-op.",
+    "NO reaction (slice 13), NO own edit/delete/revision (slice 14), NO search (slice 15).",
+    "NO slash-command execution or registry ownership, NO /pay or other domain adapter — slice 22/A13; this slice's own obligation is strictly the defensive leading-slash pre-insert fence, self-contained and not dependent on slice 22.",
+    "NO embedType/embedRefId/session-embed columns, params, or snapshot logic — unratified BE spec v0.27 content (zero decisions.md entry, zero live schema support). Excluded until contract §7 blocker B5 closes.",
+    "NO kind='group' channel type, NO chat_pinned_messages/chat_polls/chat_poll_options/chat_poll_votes/chat_member_nicknames table, NO pin/poll/nickname/group-admin/follow-guard mechanic — unratified BE spec v0.26 / FE CHT-UC-21..31 content. Excluded until B5 closes.",
+    "NO HTTP route or API adapter — A3 (chat-history-send-read-api) is a separate later slice.",
+    "NO edit to docs/features/BE/feature_inapp_chat_tech.md or docs/features/FE/feature_inapp_chat.md — B5's resolution is a docs-reconcile slice, not this one.",
+    "NO migration or schema work belonging to slices 4/5/6/9 — this packet does not speculatively pre-build their storage."
+  ],
+  "context_sources": [
+    "docs/proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md",
+    "docs/features/BE/feature_inapp_chat_tech.md",
+    "docs/features/FE/feature_inapp_chat.md",
+    "docs/standards/decisions.md",
+    "packages/db/schema.ts",
+    "packages/db/migrations/0030_chat_dm_safety_authority_core.sql",
+    "packages/db/migrations/0031_chat_schema_core.sql",
+    "packages/db/migrations/0032_chat_dm_safety_config_single_read.sql",
+    "docs/autopilot-backlog.md",
+    "docs/features/README.md",
+    "docs/autopilot-invariant-catalog.md",
+    "docs/autopilot/contracts/autopilot-chat-shared-message-command-core.md"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "none",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm review:check:changed",
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_verification_note": "verification.focused is intentionally EMPTY: the concrete property checks (exact mute-check shape, exact admins_only capability call, exact mention-ref consumption call) cannot be written until slices 4/6/9's real contracts exist. Writing placeholder assertions now would be fabricating evidence-shaped content against interfaces that do not exist, which the gate policy (§11.2) treats as worse than no verdict. They are authored in the re-authoring pass once B1-B4 close.",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 2
+  },
+  "security_review": {
+    "required": true,
+    "reason": "This slice creates the first general-purpose chat-content mutation RPC and is the first consumer of both assert_dm_allowed/dm_safety_flags_enabled (slice 2) and the DD-56 authorize() primitive (slice 4). The eventual security round must prove: (1) app retains zero direct DML on chat_channels/chat_members/chat_messages after this slice lands (test #20 precedent) — mutation exists ONLY through send_chat_message/mark_read/create_dm; (2) the idempotency lock genuinely prevents double-consume of rate/audit side effects under concurrent retry (test #43); (3) the leading-slash pre-insert fence rejects every leading-slash body before any mutation, independent of whether slice 22's classifier has landed; (4) mention-target consumption re-validates the opaque ref at consume time rather than trusting a client-supplied UUID (test #86); (5) the admins_only capability check fails closed on unknown/unavailable registry state, not open.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 180,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE",
+    "This slice is opened before slices 4, 5, 6 and 9 have ALL reached strict CODE_READY and merged — HALT: the primary plan's own dependency row for slice 7 names all four as hard dependencies; opening early means inventing contracts for interfaces that do not yet exist.",
+    "embedType/embedRefId or any group/pin/poll/nickname content appears in this slice's diff — HALT: contract §7 blocker B5 is unresolved; that scope is unratified regardless of what the BE/FE spec currently shows.",
+    "The mention-row storage question (§_scope_note) is resolved by inventing a table inside this slice without first checking whether slice 9 or a sibling interaction slice has since claimed that ownership — HALT and re-check the then-current primary plan / backlog before deciding."
+  ],
+  "readiness_evidence_path": ".autopilot/state/chat-shared-message-command-core/readiness.json"
+}
