@@ -21,12 +21,16 @@ import path from "node:path";
 // check-review-readiness.mjs already imports it this way.
 import process from "node:process";
 import { createEphemeralReviewWorktree } from "./autopilot-ephemeral-review-worktree.mjs";
+import { describeUnknownEvidenceKeys, findUnknownEvidenceKeys } from "./autopilot-readiness-evidence-keys.mjs";
 
 const VERSION = "level3-readiness-v2";
 const REVIEW_TOOL = "scripts/codex-review-pin.sh";
 const TRUSTED_GATE_FILES = new Set([
   "scripts/autopilot-scope-gate",
   "scripts/autopilot-review-readiness.mjs",
+  // The readiness-evidence whitelist lives here: widening it would let a writer self-assert extra
+  // state, so an edit to it must trip SELF_CERTIFYING_GATE_CHANGE like any other trust-gate file.
+  "scripts/autopilot-readiness-evidence-keys.mjs",
   // Reviewer isolation lives here: a helper-only change could alter what the reviewer can read, so it
   // must trip SELF_CERTIFYING_GATE_CHANGE like any other trust-gate file.
   "scripts/autopilot-ephemeral-review-worktree.mjs",
@@ -557,6 +561,22 @@ if (evidenceRelative !== expectedEvidenceRelative) {
 }
 const evidencePath = path.join(repo, evidenceRelative);
 const evidence = readJson(evidencePath, "readiness evidence");
+// Fail closed on any key the whitelist does not name — at the top level AND inside acceptance/breakers.
+// A readiness.json is a precondition INPUT (identity + the writer's attestation that its work is done
+// and no breaker is active), never a place to self-assert verification/review state: the gate reruns
+// verification and the pinned review itself and writes the real verdict to gate-result.json. Without
+// this the presence/value checks below accepted extra fields silently, leaving the permission
+// classifier as the only thing catching a nested self-assertion (the 2026-08-11 true positive).
+// Checked BEFORE identity so "you added a field" is never masked by "your head is stale".
+const unknownEvidenceKeys = findUnknownEvidenceKeys(evidence);
+if (unknownEvidenceKeys.length) {
+  halt(
+    "EVIDENCE_UNKNOWN_KEY",
+    `readiness evidence carries key(s) outside the whitelist: ${describeUnknownEvidenceKeys(unknownEvidenceKeys)} -- `
+      + "a readiness.json records only identity, acceptance.status and breakers.status; remove the "
+      + "extra field(s) rather than self-asserting verification or review state here",
+  );
+}
 if (
   evidence.evidence_schema_version !== VERSION
   || evidence.task_id !== taskId
