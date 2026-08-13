@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -72,4 +72,26 @@ test("cleanup removes the ephemeral worktree and is idempotent", () => {
   assert.equal(existsSync(wt.path), false, "cleanup must remove the worktree directory");
   wt.cleanup(); // idempotent — must not throw
   rmSync(feat.root, { recursive: true, force: true });
+});
+
+test("a failed worktree creation cleans up its temp dir (no leak)", () => {
+  const feat = makeFeatureWorktree();
+  const before = readdirSync(tmpdir()).filter((n) => n.startsWith("ap-review-wt-")).length;
+  // An unresolvable HEAD makes `git worktree add` throw AFTER mkdtempSync created the temp dir; the
+  // helper's transactional cleanup must remove it, so no ap-review-wt-* dir is left behind.
+  assert.throws(() => createEphemeralReviewWorktree(feat.root, "0".repeat(40)));
+  const after = readdirSync(tmpdir()).filter((n) => n.startsWith("ap-review-wt-")).length;
+  assert.equal(after, before, "a failed creation must leave no ap-review-wt-* temp dir behind");
+  rmSync(feat.root, { recursive: true, force: true });
+});
+
+test("the gate protects the isolation helper as a trusted gate file (no helper-only self-cert bypass)", () => {
+  const gate = readFileSync(new URL("./autopilot-review-readiness.mjs", import.meta.url), "utf8");
+  const block = gate.match(/TRUSTED_GATE_FILES\s*=\s*new Set\(\[([\s\S]*?)\]\)/);
+  assert.ok(block, "TRUSTED_GATE_FILES set literal must exist in the gate");
+  assert.match(
+    block[1],
+    /["']scripts\/autopilot-ephemeral-review-worktree\.mjs["']/,
+    "the isolation helper must be a TRUSTED_GATE_FILES entry so a helper-only change cannot self-certify",
+  );
 });

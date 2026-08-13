@@ -34,9 +34,26 @@ export function createEphemeralReviewWorktree(repo, headSha) {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "ap-review-wt-"));
   const worktreePath = path.join(tempRoot, "review");
   // Detached at the exact reviewed HEAD; --detach so no branch ref is created or moved.
-  execFileSync("git", ["-C", repo, "worktree", "add", "--detach", worktreePath, headSha], {
-    stdio: ["ignore", "ignore", "pipe"],
-  });
+  // Transactional: mkdtempSync already created tempRoot, so if `git worktree add` throws we must
+  // remove it (and any partial worktree metadata) before rethrowing — a failed setup must leak
+  // nothing, and the caller then fails closed (REVIEW_WORKTREE_UNAVAILABLE).
+  try {
+    execFileSync("git", ["-C", repo, "worktree", "add", "--detach", worktreePath, headSha], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+  } catch (error) {
+    try {
+      execFileSync("git", ["-C", repo, "worktree", "remove", "--force", worktreePath], { stdio: "ignore" });
+    } catch {
+      // add failed before registering a worktree; nothing to remove
+    }
+    try {
+      rmSync(tempRoot, { recursive: true, force: true });
+    } catch {
+      // best effort
+    }
+    throw error;
+  }
 
   let removed = false;
   const cleanup = () => {

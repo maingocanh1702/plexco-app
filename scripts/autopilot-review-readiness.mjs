@@ -27,6 +27,9 @@ const REVIEW_TOOL = "scripts/codex-review-pin.sh";
 const TRUSTED_GATE_FILES = new Set([
   "scripts/autopilot-scope-gate",
   "scripts/autopilot-review-readiness.mjs",
+  // Reviewer isolation lives here: a helper-only change could alter what the reviewer can read, so it
+  // must trip SELF_CERTIFYING_GATE_CHANGE like any other trust-gate file.
+  "scripts/autopilot-ephemeral-review-worktree.mjs",
   REVIEW_TOOL,
 ]);
 const MAX_BUFFER = 20 * 1024 * 1024;
@@ -53,6 +56,7 @@ const DURABLE_HALT_CODES = new Set([
   "REQUIRED_TOOL_UNAVAILABLE",
   "REVIEW_UNAVAILABLE",
   "REVIEW_VERDICT_INVALID",
+  "REVIEW_WORKTREE_UNAVAILABLE",
   "SCOPE_DRIFT",
   "SELF_CERTIFYING_GATE_CHANGE",
 ]);
