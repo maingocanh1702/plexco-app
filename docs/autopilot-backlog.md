@@ -400,8 +400,19 @@ notes: |
   finding thật ⇒ một lane surface finding mới-khác-nhau vòng này qua vòng khác **DÙ scope đúng** — đây là
   UNDER-SAMPLING, không phải slice-too-big. Split open-decisions từng viện tín hiệu đó; nay nó có **BA confound,
   không phải hai**: model variance + pointer contamination + subset-sampling. (Cũng ghi ở RESULTS.md.)
-  **Implement rule mới = kit-maintenance lane RIÊNG, CHƯA authorize** (đổi logic clean-round trong
-  `scripts/autopilot-review-readiness.mjs`); ruling này chốt HƯỚNG + M sàn, chưa phải lệnh code.
+  **OWNER SEQUENCING 2026-08-13 — HOLD (sequencing, KHÔNG phải reject).** CHƯA mở lane implement unanimity-of-M.
+  Lý do (từ chính phân tích trên): M=3 để wrong-pass 0.30, mỗi run thêm chỉ ×0.67 ⇒ **mitigation, không phải
+  fix**; và đổi logic clean-round trong `scripts/autopilot-review-readiness.mjs` — file **mọi verdict trong repo
+  phụ thuộc** — dựa n=3 với CI [0.09, 0.99] (quá rộng để pin M) ở multiplied-quota cost thì mua ít hơn vẻ ngoài.
+  Nửa zero-cost ĐÃ xong (record không còn gọi "2 clean" là attestation mạnh) — phần từng gây hiểu lầm đã đóng.
+  **Sequence thay thế:** (1) land isolation fix (bỏ HẲN 1 confound); (2) re-measure **per-run detection** với
+  confound đã bỏ + một frozen diff **KHÔNG review lịch sử lane của chính nó** (vehicle limitation ở METHOD.md) —
+  đo này pin được cả real miss-rate LẪN việc diff-size có dịch per-run detection không; (3) chọn M từ đó, HOẶC
+  phát hiện đòn bẩy nằm chỗ khác và bỏ M luôn.
+  **Carry-forward cho thiết kế re-measurement (ghi khi còn tươi):** nếu per-run detection là đòn bẩy thật thì
+  **slice size quan trọng vì lý do KHÁC** với lý do đã dùng justify split open-decisions — không phải "quá lớn để
+  review trong round budget" mà **"quá lớn cho per-run detection"**. Đây là claim TESTABLE; re-measurement là nơi
+  test nó (design nó vào cùng pass đo per-run detection ở bước (2)).
 
 ---
 
