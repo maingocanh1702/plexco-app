@@ -1,6 +1,6 @@
 # Conductor RUN — phiên tự chạy 5–6h · soạn 2026-08-14
 
-> Base: `main` = `origin/main` = **`b48625c`** (S2 `CreateSession` đã merge).
+> Base: `main` = `origin/main` = **`88eeb97`** (S2 `CreateSession` + E1 readiness-strict-keys đã merge; 0 worktree tồn đọng).
 > Mode: `autonomous_to_ready` (DD-107). Owner **không** ra quyết định giữa chừng; review một lượt ở cuối.
 > ⛔ **Không merge gì.** AUTO_MERGE off.
 
@@ -171,25 +171,28 @@ Do NOT merge. Do NOT push to main. AUTO_MERGE stays off.
 | # | Kiểm | Kết quả |
 |---|---|---|
 | 1 | Postgres + `DATABASE_URL_TEST` | ⬜ **owner tự kiểm** — sandbox không có `psql`. `pg_isready -h localhost -p 5432 && echo "$DATABASE_URL_TEST"` |
-| 2 | E1 đã merge? | ❌ **Chưa.** `origin/main` = `b48625c`, 0 hit code fail-closed key. Branch `feat/readiness-evidence-strict-keys` @ `46565d5` còn sống, **4 vòng code review + 1 vòng security**, chưa `READY.txt`/`gate-result.json` |
-| 3 | Codex quota | ✅ **Owner xác nhận 14/08 đủ cho cả hai.** Luật queue đã gỡ (xem §Review) |
-| 4 | Teardown worktree | ❌ **Chưa chạy.** Còn 4 worktree |
+| 2 | E1 đã merge? | ✅ **Rồi** — squash `a3c62ad`. Lane đóng ở **4 fix-round (< 5)**, code r5 CLEAN + security r2 CLEAN |
+| 3 | Codex quota | ✅ **Owner xác nhận 14/08.** Luật queue đã gỡ (xem §Review); giờ cũng không còn lane nào chạy song song |
+| 4 | Teardown worktree | ✅ **Xong** — `88eeb97`, **0 worktree** tồn đọng |
 
-**E1 vẫn chạy song song được** — pha 1 của phiên này **không dùng codex** nên overlap hoàn hảo; tới lúc pha 2
-cần review thì E1 nhiều khả năng đã đóng.
+### Hai thứ E1 vừa đổi, ảnh hưởng trực tiếp phiên này
 
-⚠️ E1 đang ở **fix-round 4/5**. Theo luật margin ở §Review: đừng mở vòng review mới của lane khác khi E1
-còn ở ngưỡng đó. Nếu pha 1 xong mà E1 chưa đóng, chờ nó trước khi để lane đầu tiên gọi codex.
+**a) Luật `readiness.json` minimal nay có hiệu lực THẬT.** Gate fail-closed trên mọi key ngoài whitelist,
+cả top-level lẫn trong `acceptance`/`breakers`, halt riêng `EVIDENCE_UNKNOWN_KEY` kiểm **trước** check
+identity. Sub-agent thêm một trường `notes` "cho dễ đọc" là halt, không phải nhắc nhở.
 
-**Teardown trước khi bắt đầu** — an toàn vì cả hai lane đã trên `main` (verify bằng `git cat-file`):
+**b) Validator layer 17 → 30 test** (`check-review-readiness` 13 + `ephemeral-review-worktree` 17). Lane nào
+báo cáo số test phải dùng mốc mới, nếu không lần full-run kế tiếp bị đọc thành drift.
 
-```bash
-scripts/ap-finish.sh session-service-create-command-core--v2
-scripts/ap-finish.sh chat-dm-safety-authority-core--v3
-```
+### 🔴 Nợ P1 chưa đóng — không chặn phiên, nhưng đừng để trôi
 
-**GIỮ NGUYÊN** worktree `readiness-evidence-strict-keys` — E1 đang dùng. Không `git worktree prune`.
+Canonical kit **vẫn mang bản validator cũ** non-fail-closed, và **cả hai kit cùng `KIT_VERSION: 31`** — nên
+một lần `autopilot-update.sh` sẽ âm thầm revert E1 **mà không có tín hiệu version nào** để ai đó nhận ra, và
+không test nào đỏ vì test bị ghi đè cùng lúc. `SessionStart` hook chỉ auto-overwrite `scope-gate` nên `main`
+Plexco đứng một mình vẫn an toàn; rủi ro chỉ kích hoạt khi chạy update. Mirror phải làm **đủ ba vế**: copy 2
+file · thêm dòng `pack_pairs()` cho module mới · **bump `KIT_VERSION`**. Thiếu vế ba là tái tạo đúng cái mù
+vừa phát hiện. Xem `next-lanes-2026-08-14-RUN.md` → E1b.
 
 ---
 
-_Soạn 2026-08-14 tại `main@b48625c`. Số/SHA là claim lúc soạn — conductor phải tự verify lại ở bước freeze base._
+_Soạn 2026-08-14, cập nhật tại `main@88eeb97`. Số/SHA là claim lúc soạn — conductor phải tự verify lại ở bước freeze base._

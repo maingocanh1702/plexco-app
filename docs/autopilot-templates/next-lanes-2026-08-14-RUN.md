@@ -163,7 +163,9 @@ DO NOT, in this slice
 - change what the readiness gate itself verifies, or touch the review/verification flow.
 - edit docs/autopilot-backlog.md until lanes S2 and D have both merged (shared hot file).
 
-NOTE ON COUNTS: the validator layer is currently 17 tests (13 + 4 from
+NOTE ON COUNTS: the validator layer is now 30 tests, not 17 (13 in
+check-review-readiness.test.mjs + 17 in autopilot-ephemeral-review-worktree.test.mjs after the
+readiness-evidence-strict-keys lane landed at a3c62ad). Historical note, superseded: 17 tests (13 + 4 from
 scripts/autopilot-ephemeral-review-worktree.test.mjs, added by b53bc75 (+2) and 2d5834b (+2)).
 If you add tests, state the new number explicitly in the READY report so the next full-suite
 run is not misread as drift.
