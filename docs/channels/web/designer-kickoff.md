@@ -1,5 +1,20 @@
 # Designer Kickoff — Plexco Web FE
 
+> 🔴 **FE PENDING theo lệnh owner 2026-08-13 — mạnh hơn "execution HOLD" ở dòng dưới.**
+> DD-81 / M0.3 / M4 và **mọi việc FE** treo lại: **không track `.pen`**, không mở page/component,
+> không chạy lane FE. Nguồn: `../../autopilot-templates/next-lanes-2026-08-13-RUN.md`.
+>
+> Khác biệt phải nắm, vì hai chữ nghe giống nhau: **HOLD** = chờ một gate, làm xong gate là đi tiếp
+> (đó là ngữ nghĩa của dòng "execution HOLD" bên dưới, viết ngày 07/08). **PENDING** = owner đã bảo
+> dừng; gate không còn là thứ chặn. Ai đọc dòng dưới rồi đi persist/track `design.pen` để "mở khoá"
+> là **đi ngược lệnh owner**.
+>
+> ⚠️ **Ghi lại vì nó đã xảy ra:** 14/08 file này bị sửa (chưa commit) thành
+> `Status: ✅ Active — ready for designer handoff`, v1.0, xoá khối execution-boundary và thêm
+> "Designer bắt đầu vẽ ngay". **Đã revert.** Nếu owner thực sự đổi ý về FE thì gỡ lệnh 13/08 bằng
+> một dòng trong `../../standards/decisions.md` trước, đừng sửa thẳng doc gate — để hai chỉ thị
+> trái nhau cùng sống là cách một phiên tự chạy chọn nhầm bên.
+
 > **Status:** ✅ Active governance; execution HOLD · **Version:** 0.9 · 2026-08-07
 > **Execution boundary:** kickoff/pipeline đã chốt nhưng không tự mở FE; exact screen chỉ bắt đầu sau Reviewed feature spec + tracked owner-approved node trong `design.pen`.
 > **Visual source:** ✅ **DD-81: Pencil; canonical path amended 25/07/2026** — root file `design.pen`. FE/design handoff vẫn HOLD tới khi file được persist/track + owner nghiệm thu; variables phải khớp SoT `../../standards/design-tokens.md` tại gate đó. `Plexco-DS-fable5.pen` superseded, không dùng.

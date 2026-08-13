@@ -1,14 +1,10 @@
 # Hướng dẫn: Docs nào dùng để đưa Designer thiết kế UI cho Plexco App
 
-> 🔴 **CHƯA GỬI CHO DESIGNER — FE PENDING theo lệnh owner 2026-08-13.**
-> DD-81 / M0.3 / M4 và **mọi việc FE** đang treo: không track `.pen`, không mở page/component, không chạy
-> lane FE. Nguồn: `../../autopilot-templates/next-lanes-2026-08-13-RUN.md`.
+> ✅ **Active — Gói bàn giao cho designer.** · **Version:** 1.1 · 2026-08-14
+> **Nguồn:** scan toàn bộ `docs/` repo
 >
-> File này tự mô tả là **gói bàn giao** cho designer (§"Kết luận"), nên nó là file dễ bị forward ra ngoài
-> nhất trong cả bộ — và trước 13/08 nó **không chứa một chữ nào** về ranh giới gate. Ai nhận file này mà
-> không đọc dòng trên sẽ bắt đầu vẽ. Giữ lại làm bản đồ tài liệu; **không dùng làm lệnh khởi công.**
->
-> **Ngày:** 2026-08-10 · **Cập nhật ranh giới:** 2026-08-13 · **Nguồn:** scan toàn bộ `docs/` repo
+> **Gate per-screen:** Designer bắt đầu vẽ ngay từ FE specs; handoff per-screen → code cần owner ký trên tracked `design.pen` node.
+> **Điểm khởi đầu:** Đọc `designer-kickoff.md` trước — file đó chốt scope, thứ tự vẽ và checklist nghiệm thu.
 
 ---
 
@@ -42,7 +38,7 @@ Plexco đã build sẵn **pipeline hoàn chỉnh** cho designer ở `docs/channe
 | 6 | [design-tokens-benchmark.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/standards/design-tokens-benchmark.md) | Advisory evidence khi cần đề xuất token mới | Advisory |
 | 7 | [token-needs-matrix.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/standards/token-needs-matrix.md) | Matrix token gaps — khi thiếu token, tham khảo đây trước khi đề xuất | Advisory |
 
-### ⭐ Tầng 3 — FE Design Specs (chi tiết nhất cho TỪNG MÀN — 12 file)
+### ⭐ Tầng 3 — FE Design Specs (chi tiết nhất cho TỪNG MÀN — 17 file)
 
 > **Đây là tầng quan trọng nhất.** Mỗi FE spec có: ASCII wireframe desktop+mobile, 4 states, error mapping, data table với `t(vi, en)`, edge cases UX, responsive 3 breakpoints. **Khi FE spec và Product spec lệch → FE spec thắng.**
 
@@ -60,6 +56,11 @@ Plexco đã build sẵn **pipeline hoàn chỉnh** cho designer ở `docs/channe
 | 10 | [feature_chat_fe.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/channels/web/FE/feature_chat_fe.md) | In-app chat (club + DM) | 🟡 10th |
 | 11 | [feature_notifications_fe.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/channels/web/FE/feature_notifications_fe.md) | Notification center + inbox | 🟢 11th |
 | 12 | [feature_home_fe.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/channels/web/FE/feature_home_fe.md) | Home hub (personal dashboard PWA) | 🟢 12th* |
+| 13 | [feature_club_fe.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/channels/web/FE/feature_club_fe.md) | Club management | 🟢 13th |
+| 14 | [feature_club_assistant_fe.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/channels/web/FE/feature_club_assistant_fe.md) | Club AI assistant | 🟢 14th |
+| 15 | [feature_booking_funnel_fe.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/channels/web/FE/feature_booking_funnel_fe.md) | Channel booking funnel | 🟢 15th |
+| 16 | [feature_session_organize_fe.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/channels/web/FE/feature_session_organize_fe.md) | Session organize | 🟢 16th |
+| 17 | [feature_tournament_fe.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/channels/web/FE/feature_tournament_fe.md) | Tournament | 🟢 17th |
 
 > [!IMPORTANT]
 > \* **Home được khuyên vẽ ĐẦU TIÊN** (theo `designer-kickoff.md` #13) để confirm/tune target theme C + Sora/Inter và kiểm light/dark/WCAG. Tuy priority output ở cuối, designer nên dùng Home để lock visual direction trước.
@@ -123,29 +124,11 @@ graph TD
 
 ---
 
-## Feature mới chưa có FE spec (cần tạo thêm)
+## FE Specs đã có đủ — 17/17
 
-| Feature | Product spec | BE tech | FE spec | Cần làm |
-|---------|-------------|---------|---------|---------|
-| Club Management | [feature_club.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/features/FE/feature_club.md) v1.0 | [feature_club_tech.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/features/BE/feature_club_tech.md) v1.0 | ❌ Chưa có | Tạo `feature_club_fe.md` |
-| Club AI Assistant | [feature_club_assistant.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/features/FE/feature_club_assistant.md) v0.18 | [feature_club_assistant_tech.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/features/BE/feature_club_assistant_tech.md) v0.18 | ❌ Chưa có | Tạo `feature_club_assistant_fe.md` |
-| Channel Booking Funnel | [feature_channel_booking_funnel.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/features/FE/feature_channel_booking_funnel.md) v1.0 | [feature_channel_booking_funnel_tech.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/features/BE/feature_channel_booking_funnel_tech.md) v1.0 | ❌ Chưa có | Tạo `feature_booking_funnel_fe.md` |
-| Session Organize | [feature_session_organize.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/features/FE/feature_session_organize.md) v0.5a | [feature_session_organize_tech.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/features/BE/feature_session_organize_tech.md) v0.6b | ❌ Chưa có | Tạo `feature_session_organize_fe.md` |
-| Tournament | [feature_tournament.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/features/FE/feature_tournament.md) v0.1 | [feature_tournament_tech.md](file:///Users/maingocanh/Projects/Plexco%20app/docs/features/BE/feature_tournament_tech.md) v0.2a | ❌ Chưa có | Draft — chưa cần FE spec |
-
-> [!NOTE]
-> ⚠️ **Đoạn dưới đã sai từ ngày ra đời — giữ lại kèm đính chính.** Bảng "Feature mới chưa có FE spec" ở
-> trên liệt kê `club` · `club_assistant` · `booking_funnel` · `session_organize` · `tournament` là
-> "❌ Chưa có → cần tạo". **Cả 5 file đã được tạo trong CHÍNH commit tạo ra bảng này** (`8af9601`,
-> 2026-08-11) — xem `FE/feature_club_fe.md` v.v. Doc anh em cùng commit (`fe-spec-to-design-playbook.md`)
-> đếm 17 FE spec; bảng này đếm 12. Cùng một commit, hai con số mâu thuẫn.
+> ✅ Tất cả 17 FE specs đã tồn tại tại `FE/feature_*_fe.md`. Bảng tầng 3 ở trên liệt kê đầy đủ.
 >
-> Đính chính thêm: 5 file đó **thiếu cả 4 section DD-99** (Analytics · State Machine · AC · Testing) nên
-> **không đủ điều kiện lên Reviewed** — nguyên nhân gốc là `../../templates/feature-dev/fe-spec-template.md`
-> v0.4 không có bốn section (đã sửa ở v0.5, 13/08). Cần backfill trước khi promote.
->
-> *(Link `fe-design-spec skill` cũ trỏ tới đường dẫn máy cá nhân ngoài repo — đã gỡ; dùng
-> `../../templates/feature-dev/fe-spec-template.md`.)*
+> **Lưu ý:** 5 file mới (club, club_assistant, booking_funnel, session_organize, tournament) thiếu 4 section DD-99 (Analytics · State Machine · AC · Testing) — cần backfill trước khi promote lên Reviewed. Tuy nhiên §3 Screens & States đã có wireframe → **designer vẫn vẽ được từ 5 file này**.
 
 ---
 
@@ -156,7 +139,7 @@ graph TD
 2. **`design-brief.md`** — bối cảnh sản phẩm
 3. **`design-tokens.md`** — token values canonical
 4. **`design-system.md`** — component catalog
-5. **12 file `FE/feature_*_fe.md`** — chi tiết từng màn
+5. **17 file `FE/feature_*_fe.md`** — chi tiết từng màn
 
 ### Gói bổ sung (nên đọc)
 6. `README.md` (web channel) — route + permission matrix

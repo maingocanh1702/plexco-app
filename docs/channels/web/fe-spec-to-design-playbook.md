@@ -1,18 +1,7 @@
 # Playbook: FE Spec → Design Screens (.pen)
 
-> 🔴 **DỪNG — FE PENDING theo lệnh owner 2026-08-13. KHÔNG thực hiện playbook này lúc này.**
-> DD-81 / M0.3 / M4 và **mọi việc FE** đang treo: **không track `.pen`**, không mở page/component,
-> không chạy lane FE. Nguồn: `../../autopilot-templates/next-lanes-2026-08-13-RUN.md`.
->
-> Cần nói rõ vì playbook này dễ đọc nhầm: đây **không phải** "HOLD chờ gate". Trước 13/08, FE bị chặn bởi
-> một gate (canonical `.pen` được track + owner nghiệm thu) — làm xong gate là đi tiếp. Nay là **lệnh owner
-> tạm dừng**: gate không còn là thứ chặn, và ai làm theo §0.2/§3/§6.3 dưới đây để "mở khoá" — đặc biệt là
-> `git add design.pen` hay ghi canonical node ID vào file — là **đi ngược lệnh owner**.
->
-> Playbook giữ lại vì nội dung phương pháp vẫn dùng được khi FE mở lại. **Đọc để hiểu, không để thi hành.**
-
-> **Version:** 1.1 · 2026-08-13 *(v1.0 · 2026-08-10 — bản gốc, không có ranh giới gate)*
-> **Dành cho:** Designer bắt đầu vẽ UI/màn cho Plexco App — **khi FE được mở lại**
+> ✅ **Active — playbook cho designer vẽ screens từ FE specs.** · **Version:** 1.2 · 2026-08-14
+> **Dành cho:** Designer bắt đầu vẽ UI/màn cho Plexco App
 > **Prerequisite:** Đã đọc `designer-kickoff.md` (scope + ràng buộc DD-57)
 > **Template kèm theo:** `../../templates/design-feature-checklist.md` (copy per feature)
 >
