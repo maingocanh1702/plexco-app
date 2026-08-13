@@ -23,6 +23,14 @@ export {
   type EffectiveStatus,
 } from "./authorization.js";
 export {
+  createSession,
+  SessionCommandError,
+  type SessionCommandErrorCode,
+  type CreateSessionInputPayload,
+  type CreateSessionParams,
+  type CreateSessionResult,
+} from "./session-service.js";
+export {
   LoginReplayError,
   SlugTakenError,
   armOauthCompletionHandoff,
