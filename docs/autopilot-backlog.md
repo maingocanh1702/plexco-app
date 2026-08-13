@@ -717,7 +717,8 @@ notes: |
 
 ## task: session-service-create-command-core
 title: SessionService root — `CreateSession` command (validate → dedup → tenantRepo → outbox, 1 tx, 0 migration)
-status: ready
+status: merged
+note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (2026-08-14). Was: ready
 _readiness: CODE_READY — 4 blocker resolved tại a9fe5c0 (B1 acceptance matrix re-trace FE v2.25/BE v2.22 + dedup-replay/outbox-exactly-once/cross-tenant; B2 `packages/db/src/session-service.ts`; B3 outbox producer insert §2 step 6; B4 DD-105 draft-invisibility exemption → create-draft ungated); xem `../autopilot/contracts/autopilot-session-service-create-command-core.md` §7
 risk: P2
 change_class: code
@@ -726,8 +727,8 @@ invariants: [test-chain]
 scope: [packages/db/src/session-service.ts, packages/db/src/session-service.test.ts, packages/db/src/index.ts]
 manifest: docs/autopilot-manifests/session-service-create-command-core.json
 launcher: null
-merged_probe: packages/db/src/session-service.ts :: export async function createSession
-_probe_note: "Resolved 2026-08-14 khi lane land (squash `b48625c`, teardown `--squash-verified` xác nhận origin patch = READY feature diff). ⚠️ Probe cố ý bind **cả chữ ký**, không chỉ tên `createSession`: tên trần ĐÃ tồn tại trước slice như một local test helper ở `rls-invariants.test.ts:1357` (6 hit trên `f018d41`), nên `:: createSession` là loại probe mà `autopilot-backlog-reconcile` cảnh báo — khớp nội dung có sẵn trên origin. File `session-service.ts` thì mới hoàn toàn nên cặp file+symbol vẫn phân biệt được, nhưng bind chữ ký `export async function` thì đúng ý 'symbol slice này giới thiệu' hơn và không phụ thuộc vào việc file có mới hay không."
+merged_probe: packages/db/src/session-service.ts :: isStoredCreateResult
+_probe_note: "Resolved 2026-08-14 khi lane land (squash `b48625c`; teardown `--squash-verified` xác nhận origin patch = READY feature diff). Chọn `isStoredCreateResult` sau khi hai ứng viên trước bị chính tool bác — giữ lại vì đây là hai cách hỏng KHÁC nhau: (1) `createSession` trần fail vì **không discriminating** — tên đó đã có trên origin từ trước slice, là local test helper ở `rls-invariants.test.ts:1357` (6 hit tại `f018d41`); (2) `export async function createSession` fail vì **sai shape** — `is_symbol_probe` đòi MỌI token là bare identifier `[A-Za-z_][A-Za-z0-9_]*`, chuỗi có dấu cách bị loại thẳng, không xét tới uniqueness. `isStoredCreateResult` qua cả hai: bare identifier, và `git grep -l` trên `origin/main` chỉ trả đúng `packages/db/src/session-service.ts`. Bài học cho probe sau: kiểm SHAPE trước, UNIQUENESS sau — shape rẻ hơn và tool xét trước."
 notes: |
   **Mở 2026-08-13 từ M2 (`docs/sessions/2026-08-07-next-milestones.md`) — root slice của Session BE
   vertical, service-only (0 migration) để chạy song song an toàn với lane chat.** Substrate đã merged
