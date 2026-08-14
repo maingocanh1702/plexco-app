@@ -1,0 +1,99 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — carries NO manifest_schema_version. This slice is NOT_CODE_READY at 519fb9f91fffe4712668f24a1af697d5f1a002bd (see docs/autopilot/contracts/autopilot-session-commands-update-close-cancel.md §7, verdict NOT_CODE_READY). The packet is an AUTHORING pass: it did NOT register, open a worktree, run codex, or edit the backlog. This manifest records the INTENDED scope for the day the blocker (an owner-minted per-op billing action-class literal, Tier C) is resolved and a build session can register the RUNTIME manifest (.autopilot/state/<feature>/manifest.json, schema level3-operational-v2).",
+  "_blocker_note": "BLOCKED (Tier C, single class of blocker): each of UpdateSession / CloseSession / CancelSession / AnnounceSession needs a NARROW per-op action-class literal in authorizeTenantAction + the billing Suspended Action Matrix (DD-105 HARD BOUNDARY: these ops are player-visible/roster/money → NOT covered by the draft-invisibility exemption; each gets 'a narrow per-op action class when built'). DD-105 names the DIRECTION but NO literal; DD-104 D2a names only 'delete_draft_session' (a different, out-of-scope op). Minting a new money-gate action-class value is a billing-contract change = Tier C item #1, reserved for the owner (per DD-105: for a DIFFERENT session command 'the author must come back here + DD-104 D2a to get the narrow class'). Verified 519fb9f: authorization.ts:25 ActionClass has exactly {publish_new_sessions, admin_mutation, integration_changes}; grep decisions.md for any of these op literals returns EMPTY.",
+  "_base_sha_note": "base_sha below is the AUTHORITY_SHA of the NOT_CODE_READY verdict (git rev-parse HEAD 2026-08-14). When the blocker is closed and the slice re-opens CODE_READY, the RUNTIME worktree re-verifies and re-pins its base from live main at register time.",
+  "base_sha": "519fb9f91fffe4712668f24a1af697d5f1a002bd",
+  "task_id": "plexco:session-commands-update-close-cancel",
+  "feature": "session-commands-update-close-cancel",
+  "branch": "feat/session-commands-update-close-cancel",
+  "base_ref": "origin/main",
+  "risk": "P2",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": ["session-service-create-command-core"],
+  "dep_checks": [
+    {
+      "slug": "session-service-create-command-core",
+      "base_sha": "519fb9f91fffe4712668f24a1af697d5f1a002bd",
+      "landed_sha": "b48625c",
+      "file": "packages/db/src/session-service.ts",
+      "symbol": "isStoredCreateResult",
+      "_note": "S2 (CreateSession root) MERGED at squash b48625c, ancestor of base 519fb9f (git merge-base --is-ancestor → true). This slice EXTENDS session-service.ts (adds the remaining commands on S2's CreateSession pattern). No live-writer conflict: S2 is landed. NOTE: DD-104 D2a (the billing action-class contract edit) is NOT satisfied on base — that is the OPEN Tier-C dependency; see _blocker_note. dep_checks is an attestation of the code dependency only, not proof the action-class contract exists."
+    }
+  ],
+  "invariants": ["session-command", "billing-authz", "test-chain"],
+  "_invariant_note": "session-command: extends the SessionService command family in packages/db/src/session-service.ts (shared with the MERGED S2 — no live writer, but a FUTURE parallel session-command lane must serialize on this token; if the token is absent from docs/autopilot-invariant-catalog.md, ADD a one-line entry FIRST, then use it — do not repurpose publish-suspend-gate or session-lock-ordering, which mean different things). billing-authz: this slice's whole point is to add per-op action-class literals to authorizeTenantAction (packages/db/src/authorization.ts) + the billing Suspended Action Matrix — a lane touching the billing/authorization contract must serialize on it (this is exactly the unresolved Tier-C surface). test-chain: adds a real-PG test file to the canonical runner. NO schema token — zero migration, zero schema.ts change (status enum + free-text outbox type already exist on base).",
+  "scope": [
+    "packages/db/src/session-service.ts",
+    "packages/db/src/session-service.test.ts",
+    "packages/db/src/authorization.ts",
+    "packages/db/src/index.ts",
+    "docs/features/BE/feature_billing_lifecycle_tech.md",
+    "docs/autopilot-manifests/session-commands-update-close-cancel.json",
+    "docs/autopilot/contracts/autopilot-session-commands-update-close-cancel.md",
+    "docs/autopilot-backlog.md"
+  ],
+  "_scope_note": "INTENDED scope, NOT authorized (slice is NOT_CODE_READY). session-service.ts + session-service.test.ts already EXIST on base (S2) — this slice MODIFIES them (adds the remaining command functions + their real-PG tests). authorization.ts + feature_billing_lifecycle_tech.md are in scope BECAUSE the per-op action-class literal must be minted in BOTH the code choke-point and the billing contract that owns it (DD-104 D2a's 'sửa contract billing, slice riêng' shape) — but the CONTENT of that edit (which literal names, which matrix rows) is the OPEN owner decision (Tier C). index.ts = barrel export for the new command functions (shared merge-time touch). Zero migration files, zero schema.ts — a diff touching either is a STOP_CONDITION. tenant.ts is deliberately NOT in scope: the update write path can be a direct tx.update(sessions) in the service (S2 pattern) or a new tenantRepo.sessions.update — a build-time Tier-B choice, add tenant.ts to scope only if the build session picks the repo-method design and records why.",
+  "negative_scope": [
+    "No change to CreateSession — S2 (b48625c) owns createSession; this slice does not touch its function body, dedup, validator, or outbox producer contract.",
+    "No PublishSession — publish_new_sessions is already wired (its own separate slice); this slice does not re-specify or re-gate publish.",
+    "No DeleteSession — spec-WIP, removed twice from the Session specs; parked behind DD-104 slice + tenant-capability-authority-core packet (DD-104 D0 = not prioritized).",
+    "No new action-class literal INVENTED by the author — minting create/update/close/cancel/announce_session as a suspension-gate value is a Tier-C billing-contract decision (DD-105); the author records the blocker, the owner supplies the class name(s).",
+    "No change to the DD-105 draft-invisibility exemption PRINCIPLE, and no widening it to these ops — DD-105 owns that boundary and explicitly excludes player-visible/roster/money commands from it.",
+    "No change to the billing Suspended Action Matrix mechanism, the fail-closed 2-step resolution, or the FOR SHARE locking ordering in authorizeTenantAction — those are pinned (billing §3, merged code); this slice only ADDS recognised action-class value(s) once the owner names them.",
+    "No route, API endpoint, page, or UI file — the web/bot boundary is a later slice; these are service-layer command functions only.",
+    "No migration and no schema.ts change — status enum ('draft','open','closed','cancelled') and free-text outbox 'type' already exist on base; M2 keeps session slices service-only so they never serialize against migration lanes.",
+    "No projector/dispatcher/schedule change — OUTBOX_DISPATCH_SCHEDULE_ENABLED stays untouched; unclaimed rows are the documented steady state.",
+    "No refund/settlement engine — CancelSession-on-open and CloseSession EMIT the outbox event and honor the review_policy gate; the actual refund/charge disposition is owned by the payments/waitlist slices, not this one (state the boundary; do not implement money movement here)."
+  ],
+  "context_sources": [
+    "docs/standards/decisions.md",
+    "docs/features/BE/feature_session_management_tech.md",
+    "docs/features/FE/feature_session_management.md",
+    "docs/features/BE/feature_billing_lifecycle_tech.md",
+    "packages/db/src/session-service.ts",
+    "packages/db/src/authorization.ts",
+    "packages/db/src/tenant.ts",
+    "packages/db/schema.ts",
+    "docs/autopilot/contracts/autopilot-session-service-create-command-core.md",
+    "docs/autopilot-templates/level3-workflow.md",
+    "docs/standards/review-code-readiness-gate.md",
+    "docs/autopilot-invariant-catalog.md"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "none",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [
+      "pnpm --filter @plexco/db test -- session-service (real PG via DATABASE_URL_TEST)",
+      "rls-invariants.test.ts unchanged-green (tenant isolation on update/close/cancel unchanged)",
+      "pnpm check:quick (build/lint/typecheck)"
+    ],
+    "e2e": "none — no real boundary crossed (no route, no channel, dispatcher OFF)",
+    "_security_review_note": "REQUIRED when this slice is authorized: it edits the billing/authorization suspension gate (authorizeTenantAction) — a trust boundary (tenant suspension, money-path visibility). Run a security-focused codex round through scripts/codex-review-pin.sh in addition to 2 clean code rounds. This is void-condition-free: the trigger (a new value on the tenant-suspension gate) is definite, not speculative."
+  },
+  "budgets": {
+    "changed_loc_max": 360,
+    "_loc_basis_note": "Estimate, compact basis, NOT calibrated yet (slice is NOT_CODE_READY). ~360 covers 3 command functions (update/close/cancel) each with dedup + expected_version guard + transition guard + suspension re-check-under-lock + outbox event, sharing S2's validateInput/dedup helpers, PLUS the per-op action-class literal(s) in authorization.ts + billing matrix rows + real-PG tests. AnnounceSession fits ONLY if budget allows (it is money-free/notification, the cheapest). Per DD-107/level3 §6.1, budget is a SIGNAL not a gate: on overrun the build session re-slices (e.g. ship CancelSession alone) or logs the design cause; a second overrun on the same cause = mandatory re-slice. The build session MUST re-pin this after enumerating the acceptance matrix and pinning the measurement basis up front (the S2 process lesson: budget AFTER the matrix, basis pinned).",
+    "modules_max": 3,
+    "_modules_note": "3 modules = session-service.ts + authorization.ts + billing spec doc. index.ts barrel + the packet's own docs are merge-time/authoring touches, not counted against the mechanism cap (same convention as S2). If AnnounceSession + all three others cannot fit 3 modules / 360 LOC, split: ship the cheapest ready subset first.",
+    "fix_rounds_max": 5
+  },
+  "stop_conditions": [
+    "any migration file or schema.ts appears in the diff",
+    "any route/UI file appears in the diff",
+    "the billing action-class literal edit changes ANYTHING beyond adding the owner-named per-op class value(s) + its matrix row(s) — i.e. touches the fail-closed resolution, the FOR SHARE ordering, or an unrelated action class → STOP (contract drift)",
+    "the author is about to INVENT an action-class name not supplied by the owner → HALT (Tier C, the exact blocker this packet raised)",
+    "budget exceeded → re-slice (ship the ready subset), do not request a budget amendment (autonomous_to_ready: budget is a signal)",
+    "reviewer unavailable -> HALT TOOL_UNAVAILABLE"
+  ]
+}

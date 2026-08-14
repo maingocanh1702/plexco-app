@@ -1,0 +1,78 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — carries NO manifest_schema_version (that field belongs only to the runtime .autopilot/state/<feature>/manifest.json; putting it here makes scope-gate register HALT). This slice is NOT_CODE_READY at 519fb9f — see docs/autopilot/contracts/autopilot-session-publish-public-projector.md §7 (verdict NOT_CODE_READY). This authoring pass did NOT register, open a worktree, or write code. scope=[] because there is no AUTHORIZED write scope yet; the INTENDED target scope + the buildable-vs-blocked split live in the notes below.",
+  "_readiness": "NOT_CODE_READY — 2 Tier-C blockers (see contract §7). The projector half of the slice (the OUTCOME) cannot be built with the declared negative scope (NO new migration, ~300 LOC/≤3 modules): (B1) DD-73 Q5 (owner-ratified, decisions.md:254-259/901-913) requires the marketplace projector slice to add public_projection_fences + guarded public view + public_projection_version + a grant migration that REVOKEs readonly SELECT on base public_sessions (HARD RULE #2 immediate-deny path) — a NEW migration the negative scope forbids; (B2) the projector's mandated aggregates need getSessionOccupancy() (0 matches on base), confirmed_count (DD-32 additive column, 0 matches on base) and channel-booking live-hold tables (0 matches on base), plus DD-46 moderated-alias resolution (unbuilt). The PublishSession service half IS buildable (Tier A) but is not the slice outcome on its own.",
+  "_base_sha_note": "base_sha below is the FROZEN authoring authority SHA (= HEAD = origin/main, verified 2026-08-14: git rev-parse HEAD == 519fb9f... and merge-base --is-ancestor ... main). No worktree is pinned to it because the slice is NOT_CODE_READY; a successor re-slice re-pins its base from live main after the Tier-C blockers are resolved.",
+  "base_sha": "519fb9f91fffe4712668f24a1af697d5f1a002bd",
+  "task_id": "plexco:session-publish-public-projector",
+  "feature": "session-publish-public-projector",
+  "branch": "feat/session-publish-public-projector",
+  "base_ref": "origin/main",
+  "risk": "P1",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_dependency_note": "The CreateSession producer S2 is MERGED on base (packages/db/src/session-service.ts:187-292, createSession + first outbox producer; verified 2026-08-14). The PublishSession half depends only on that + authorizeTenantAction (authorization.ts:91, 'publish_new_sessions' action class exists) + the 0022/0023 outbox substrate — all merged. But the PROJECTOR half has UNMERGED hard dependencies that are not code, they are DESIGN/MIGRATION obligations that must be re-sliced (see _readiness): the DD-73 Q5 fence/guarded-view/REVOKE migration, getSessionOccupancy(), the DD-32 confirmed_count column, the channel-booking hold tables, and DD-46 moderated alias resolution. Because those are not yet authored slices, depends_on stays [] and the slice is blocked at authoring, not at dependency ordering.",
+  "invariants": ["schema", "session-lock-ordering", "public-projection"],
+  "_invariant_note": "INTENDED invariants for the eventual re-sliced work, NOT registered here (scope=[]). 'schema' — the projector requires a NEW migration (DD-73 Q5 fence/guarded-view/REVOKE-readonly + DD-32 confirmed_count), which is exactly why the M2-style 'NO migration, parallel-safe' framing FAILS for this slice: it must serialize against any other migration-tail lane. 'session-lock-ordering' — PublishSession locks the sessions row FOR UPDATE (edge #21/#29, same discipline as auto-expiry and waitlist promotion). 'public-projection' — a session-domain public-projection token (add it to docs/autopilot-invariant-catalog.md FIRST if a successor slice registers, per catalog rule; do not repurpose an existing token). These are recorded for the successor, not asserted as a current reservation.",
+  "scope": [],
+  "_scope_note": "scope=[] on purpose — NOT_CODE_READY, no authorized write scope (mirrors chat-identity-merge-reparent-enablement precedent). The INTENDED scope, were the slice buildable as one unit, would be: packages/db/src/session-service.ts (add publishSession), packages/db/src/session-service.test.ts, packages/db/src/session-service.ts + a projector module (e.g. packages/db/src/public-session-projector.ts), packages/db/src/index.ts (barrel, shared merge-time touch), apps/bot/src/dispatcher.ts (wire the projector as the first real outbox consumer — currently productionStubDeliver only DLQs), AND (the blocker) a NEW packages/db/migrations/00NN_*.sql for the DD-73 Q5 fence/guarded-view/REVOKE-readonly + DD-32 confirmed_count column. The migration requirement is precisely why this cannot ship under the declared negative scope. RECOMMENDED re-slice: split into (S-publish) PublishSession service fn ONLY (buildable now, ~120 LOC, 0 migration, Tier A) and (S-projector) the public projector + its mandated fence/aggregate migration (Tier C, its own slice, sequenced after DD-32/DD-46/occupancy).",
+  "negative_scope": [
+    "No new migration in THIS slice as framed — but the projector OUTCOME structurally REQUIRES one (DD-73 Q5 fence/guarded-view/REVOKE-readonly + DD-32 confirmed_count). That contradiction is the core NOT_CODE_READY reason: a slice whose correct end-state needs an out-of-scope migration is a scope-design error → re-slice, do not ship a deferred HARD RULE #2 privacy gap.",
+    "Do NOT loosen or edit rls-invariants.test.ts:171-205 (the 15-column EXACT whitelist forcing function). The projector writes ONLY those 15 cols — NO money, NO PII, NO gender, NO roster, NO exact venue (HARD RULE #2).",
+    "Do NOT enable OUTBOX_DISPATCH_SCHEDULE_ENABLED (Tier C #5 enablement) — the projector is built + testable with schedule OFF, driven via direct dispatch (runDispatchCycle) in tests.",
+    "Do NOT modify createSession (packages/db/src/session-service.ts:187-292) — read it as the producer pattern; publish is a sibling command.",
+    "Do NOT freeze the DD-106 Q3 unified SessionCard shape (direction accepted, NOT a frozen contract) — reference feature_marketplace_discovery.md §3, do not pin it.",
+    "No route/API/UI file — the web/bot HTTP boundary for publish is a later slice; this slice's dispatcher touch is only the outbox-consumer wiring, not a channel adapter."
+  ],
+  "context_sources": [
+    "docs/features/BE/feature_session_management_tech.md",
+    "docs/features/FE/feature_session_management.md",
+    "docs/features/BE/feature_marketplace_discovery_tech.md",
+    "docs/features/FE/feature_marketplace_discovery.md",
+    "docs/features/BE/feature_billing_lifecycle_tech.md",
+    "docs/autopilot/contracts/autopilot-db-job-claim-lease-core.md",
+    "packages/db/migrations/0006_discovery.sql",
+    "packages/db/migrations/0009_rls_policies_grants.sql",
+    "packages/db/src/session-service.ts",
+    "packages/db/src/authorization.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "apps/bot/src/dispatcher.ts",
+    "packages/db/schema.ts",
+    "docs/standards/decisions.md",
+    "docs/autopilot-invariant-catalog.md"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "none",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [
+      "(when re-sliced and buildable) pnpm --filter @plexco/db test -- session-service + public-session-projector (real PG via DATABASE_URL_TEST)",
+      "rls-invariants.test.ts unchanged-green (15-column whitelist + no-money/PII smell)",
+      "pnpm check:quick (build/lint/typecheck)"
+    ],
+    "e2e": "the projector crosses a real trust boundary (public byte-boundary, HARD RULE #2) → a security-focused codex round is REQUIRED for the projector slice (P1), plus the immediate-deny fence integration test before enablement."
+  },
+  "budgets": {
+    "changed_loc_max": 300,
+    "_loc_note": "The default ~300 LOC / ≤3 modules / ≤1 migration budget CANNOT hold this slice as framed: PublishSession (~120 LOC) + a real projector (occupancy read + alias resolution + 15-col upsert + delete-on-unpublish) + dispatcher wiring + a fence/guarded-view/REVOKE + confirmed_count migration is well over budget and >1 migration concern. Over-budget scope without a split is itself a NOT_CODE_READY trigger (§4 gate B3). Re-slice: S-publish (~120 LOC, 0 migration) and S-projector (its own budget + its own migration).",
+    "modules_max": 3,
+    "fix_rounds_max": 5
+  },
+  "merged_probe": null,
+  "_probe_note": "null ON PURPOSE — NOT_CODE_READY / scope=[] (mirrors chat-identity-merge-reparent-enablement). There is no authorized write, so nothing to probe yet. The REAL slice-unique probes, verified ABSENT on base 2026-08-14 with a present control, are recorded for the successor re-slice: S-publish → 'publishSession' (grep -rn 'publishSession\\b' packages/ apps/ = 0 matches; control grep -rc 'createSession' packages/db/src/session-service.ts = 2, greps work); S-projector → 'projectPublicSession' (grep -rn 'projectPublicSession' packages/ apps/ = 0 matches, same control). Do not treat these as authorized until the Tier-C blockers close and the successor is registered.",
+  "stop_conditions": [
+    "This packet is authoring-only; it opens no worktree and registers nothing. A successor slice re-derives its own stop conditions.",
+    "For the eventual S-projector: any diff that upserts a 16th public column, or omits the DD-73 Q5 immediate-deny fence/REVOKE, or leaves confirmed_count unwritten → STOP (HARD RULE #2 / scope-design error).",
+    "reviewer unavailable -> HALT TOOL_UNAVAILABLE"
+  ]
+}

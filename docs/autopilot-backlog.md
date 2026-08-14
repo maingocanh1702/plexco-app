@@ -3298,3 +3298,82 @@ notes: |
 
   **Quét luôn cả kit khi sửa:** `grep -rn "status --porcelain" scripts/` để xem còn script nào mang
   cùng lỗi. Sửa một chỗ rồi để chỗ khác nguyên là cách bug này sống được tới lần thứ hai.
+
+---
+
+## task: email-password-bundle-order-4
+title: DD-80 order-4 email/password provider bundle — NOT_CODE_READY (re-slice required)
+status: blocked
+risk: P1
+change_class: code
+depends_on: []
+invariants: [auth-credential-lifecycle, web-session-issuance, auth-email-token-consume, email-provider-enablement, test-chain]
+scope: []
+manifest: docs/autopilot-manifests/email-password-bundle-order-4.json
+merged_probe: null
+_probe_note: successor probe `auth_finalize_email_login` verified ABSENT on base 519fb9f (only prose in 0016 header:25-27; 0 CREATE FUNCTION / 0 caller; control `normalizeEmail`@auth.ts:336 confirms grep works). Bind it when the re-sliced DB-function lane is authored. scope [] = no authorized write (NOT_CODE_READY).
+close_by: hand · NOT_CODE_READY packet authored 2026-08-14 @ 519fb9f under conductor-2026-08-14 (contract: ../autopilot/contracts/autopilot-email-password-bundle-order-4.md). Do NOT dispatch — 3 Tier-C blockers need owner ruling first.
+notes: |
+  DD-80 + B0 probe PIN every runtime-affecting value (TTLs verify 30m/reset 15m/pending 24h; Argon2id m=19456/t=2/p=1; dual-bucket rate limits; audit taxonomy; error codes) — NOT an unpinned-policy fail. Order-2 STORAGE is merged (0016 tables + _auth_assert_password_phc/_auth_consume_email_token; 0015 auth_audit_events; auth.ts pure helpers). The slice fails on DEPENDENCY + SCOPE. **3 Tier-C blockers (owner ruling required):**
+  1. Order-4 needs a NEW SQL migration for the public SECURITY DEFINER fns (auth_verify_email / auth_reset_password / auth_finalize_email_login + register/forgot owner fns): 0016 header:25-27 binds them to order-4, and B0 §9a/§8.1 forbids a TS implementation (app has zero table grant, password_phc DML revoked, PHC trigger owns every write). The packet's "NO new migration" scope directly contradicts this. Tier C (#4 migration semantics + #7 scope).
+  2. Forgot/reset cannot deliver without the pg-boss pipeline (apps/bot/src/queues.ts auth-email-*, B0 §5.4) — absent on base and outside the declared apps/web + packages/db/src scope. Order-4 is a multi-slice RELEASE UNIT (B0 §10: register/verify → login-finalizer → forgot/reset+link-artifact → pg-boss delivery), not one ~300 LOC slice. Tier C (#7).
+  3. No Reviewed acceptance matrix for the order-4 ROUTES (BE spec D1E-1..23 = order-2 storage only; routes ⬜). D1E-18b (reset ↔ account-issued link_code barrier) is ⏸ DEFERRED with an unbuilt prerequisite (account-issued link_codes; base is person/channel-scoped only). Tier C (#3 spec content).
+  NEXT_REVIEW_TRIGGER: owner re-slices order-4 into B0 §10 sub-slices (a new-migration DB-function slice + an apps/bot delivery slice) AND the BE spec lands a Reviewed order-4 route acceptance matrix → then re-author per-sub-slice packets. Enablement (flag OFF, external gate C7) is enablement-only, correctly out of scope. E3 test-harness rider NOT applicable (this slice does not touch test-harness.ts).
+
+## task: session-publish-public-projector
+title: public_sessions projector (first real outbox consumer) — NOT_CODE_READY; PublishSession half re-sliced out
+status: blocked
+risk: P1
+change_class: code+migration
+depends_on: []
+invariants: [schema, public-projection, session-lock-ordering]
+scope: []
+manifest: docs/autopilot-manifests/session-publish-public-projector.json
+merged_probe: null
+_probe_note: successor probe `projectPublicSession` verified ABSENT on base 519fb9f (control createSession present). scope [] = no authorized write (projector half blocked).
+close_by: hand · NOT_CODE_READY packet authored 2026-08-14 @ 519fb9f under conductor-2026-08-14 (contract: ../autopilot/contracts/autopilot-session-publish-public-projector.md). Projector half BLOCKED on owner Tier-C; PublishSession command half moved to `session-draft-lifecycle-commands`.
+notes: |
+  The briefed slice CONFLATED a buildable command with a blocked projector; the SPLIT was accepted (conductor ledger D3, Tier-B re-slice).
+  • PublishSession COMMAND half → re-sliced into `session-draft-lifecycle-commands` (Tier A, buildable now, 0 migration): draft→open, one session.published outbox, in-tx FOR SHARE billing re-check (DD-105 suspended ❌), authorizeTenantAction('publish_new_sessions') already on base.
+  • public_sessions PROJECTOR half → BLOCKED (this entry). Two Tier-C obligations:
+    1. DD-73 Q5 (owner 2026-07-19, decisions.md:254-259/901-913) MANDATES public_projection_fences + guarded view + public_projection_version + a grant migration REVOKing readonly SELECT on base public_sessions (0009:117) — the HARD RULE #2 immediate-deny path. Without it the base table stays readable after private/cancel until the async delete = a privacy leak. Tier C (#4 migration semantics + #2 HARD RULE #2).
+    2. Aggregate substrate ABSENT on base: getSessionOccupancy() (0), DD-32 confirmed_count column (0), channel-booking hold tables (0), DD-46 moderated alias (unbuilt, decisions.md:617) → the projector's slots_open / confirmed_count / display-name / blank-alias-skip values cannot be specified, so its acceptance matrix is uncompletable.
+  NEXT_REVIEW_TRIGGER: DD-32 confirmed_count + occupancy helper + DD-46 alias + the DD-73 Q5 fence/REVOKE migration land on main → then author S-projector. Owner Q parked: is the DD-73 Q5 fence migration its own slice or bundled into S-projector? OUTBOX_DISPATCH_SCHEDULE_ENABLED stays OFF (enablement-only, correct).
+
+## task: session-commands-update-close-cancel
+title: SessionService Update/Close/Cancel-on-open (+Announce) — NOT_CODE_READY; CancelDraft half re-sliced out
+status: blocked
+risk: P2
+change_class: code
+depends_on: [session-service-create-command-core]
+invariants: [session-command, billing-authz, test-chain]
+scope: []
+manifest: docs/autopilot-manifests/session-commands-update-close-cancel.json
+merged_probe: null
+_probe_note: successor probes `updateSession`/`closeSession`/`cancelSession`/`announceSession` all verified ABSENT on base 519fb9f (git grep → 0 files; control isStoredCreateResult → 1 file). scope [] = no authorized write (blocked).
+close_by: hand · NOT_CODE_READY packet authored 2026-08-14 @ 519fb9f under conductor-2026-08-14 (contract: ../autopilot/contracts/autopilot-session-commands-update-close-cancel.md). Blocked on ONE owner Tier-C decision; the CancelDraft-only path moved to `session-draft-lifecycle-commands`.
+notes: |
+  Extends S2 session-service.ts (createSession, MERGED b48625c — verified ancestor of base). Every player-visible op (Update / Close / Cancel-on-open / Announce) is roster/money, so DD-105 EXCLUDES it from the draft-invisibility exemption → each needs a narrow per-op suspension action-class literal that NO DD names.
+  **B1 (Tier C #1, money/billing contract):** DD-105 (decisions.md:1972-1983) names the DIRECTION ("narrow per-op action class when built") but no literal; DD-104 D2a names only `delete_draft_session` (a different op). authorization.ts:25 recognises exactly {publish_new_sessions, admin_mutation, integration_changes} and fail-closes DENY on any other value. Per the demotion rule (§6.1) DD-105 approving the direction ≠ naming the artifact+change → NOT demoted → stays Tier C. Reusing publish_new_sessions or admin_mutation would silently widen the money-gate → rejected.
+  **B2 (Tier C, dependent):** G6 security round on the authz trust-boundary edit is unspecifiable until B1.
+  **B3 (Tier C #7):** Cancel-on-open cannot ship as a draft-only subset without re-drawing the command boundary → that carve-out IS the re-slice `session-draft-lifecycle-commands` (draft-source cancel, DD-105-exempt).
+  NEXT_REVIEW_TRIGGER: owner adds the exact narrow per-op action-class literal(s) to feature_billing_lifecycle_tech.md Suspended Action Matrix + authorizeTenantAction's ActionClass/RECOGNIZED_ACTION_CLASSES (or a documented reuse ruling), merged on main.
+
+## task: session-draft-lifecycle-commands
+title: PublishSession (draft→open) + CancelDraftSession (draft→cancelled) — Tier-A cores salvaged from P-B and P-C
+status: planned
+risk: P1
+change_class: code
+depends_on: [session-service-create-command-core]
+invariants: [session-command, billing-authz, test-chain]
+scope: [packages/db/src/session-service.ts, packages/db/src/session-service.test.ts, packages/db/src/index.ts]
+manifest: docs/autopilot-manifests/session-draft-lifecycle-commands.json
+merged_probe: packages/db/src/session-service.ts :: publishSession
+_probe_note: `publishSession` bare identifier, verified ABSENT on base 519fb9f (git grep → 0 files; control createSession → present). Companion op `cancelDraftSession` also absent.
+close_by: probe · implementation slice.
+notes: |
+  Conductor ledger D3 (Tier-B re-slice), 2026-08-14. The UNION of the two Tier-A cores that the P-B and P-C authoring passes surfaced, combined into ONE cohesive migration-free / no-new-action-class slice on session-service.ts (they share the file → one slice, not two parallel worktrees):
+  • PublishSession: draft→open sibling of createSession; calls authorizeTenantAction('publish_new_sessions') (EXISTING class, authorization.ts:25 — becomes its FIRST production caller); ❌ when suspended (DD-105); emits one session.published outbox event (the durable producer a future public_sessions projector will consume).
+  • CancelDraftSession: draft-source ONLY → cancelled; DD-105-EXEMPT by invisibility (money-free/invisible draft, same as createSession) → NO authorizeTenantAction call, NO new class.
+  Neither op needs a migration or a new action-class literal — which is exactly why they are CODE_READY where their blocked siblings (the public_sessions projector; Update/Close/Cancel-on-open) are not. NEGATIVE SCOPE: no public_sessions projection, no migration, no new action-class literal, no Update/Close/Cancel-on-OPEN, no DeleteSession.
+  OUTCOME 2026-08-14: v1 shipped PublishSession-only. CancelDraftSession was dropped to follow-up `session-cancel-command-draft-and-open` — the Reviewed spec (feature_session_management_tech.md edges #25-#31 + §4) pins draft-cancel as an EXTENDED CancelSession (source {draft,open}) with a mandatory fail-closed anomaly path (CANCEL_REQUIRES_REVIEW + session.expiry_anomaly_detected), not a new draft-only command, so the simpler shape = Tier C (Reviewed-spec/money deviation). v1 was hardened through 5 fix rounds (511 db tests green; baseline 486, +25) then HALTed MAX_ROUNDS at branch feat/session-draft-lifecycle-commands @ fb2889c with 4 ACCEPTED findings (Date.now→DB now() clock-skew [P1]; reclassify packet IMPLEMENTED [P1]; check:quick label [P2]; add createSession→publishSession sequence test [P2]). PRESERVE the v1 worktree/branch as forensics — do NOT merge, teardown, or relaunch this exact registration. NEXT: a FRESH v2 registration `session-draft-lifecycle-commands--v2` from base 519fb9f carries the hardened publishSession verbatim + applies the 4 fixes up front → 2 clean code + 1 security round → READY. Full spec in .autopilot/worktrees/session-draft-lifecycle-commands/.autopilot/state/session-draft-lifecycle-commands/HALT-MAX_ROUNDS.txt.
