@@ -8,6 +8,29 @@
 
 > **📌 Repo truth snapshot — `main@1fdba1d3ddb662f4106193b9265a93c6abacaba2` (13/08/2026, = `origin/main`).** Mọi số đếm hiện hành trong file này lấy từ cây repo/runner tại commit trên hoặc exact code-identical test snapshot được pin rõ (trục Tests hiện pin runner tại `80a3464` — 24 commit sau đó **không chạm `packages/` hay `apps/`**, chỉ docs + `scripts/autopilot-*`), không phải từ prose. Cách tái tạo: xem §Cách đọc tiến độ → "Lệnh tái tạo số đếm". Nếu số không tái tạo được ⇒ coi như **stale**, không dùng để ra verdict.
 >
+> 🟢 **CẬP NHẬT 14/08 tại `main@93f1e93` — BE nghiệp vụ không còn bằng 0.** Hai command đã land:
+> `createSession` (`b48625c`) và `publishSession` (`1ccbe5d`), cùng file `packages/db/src/session-service.ts`.
+> Kèm theo là **cặp outbox producer có thứ tự đầu tiên** trên cùng aggregate — `session.created` seq 1 →
+> `session.published` seq 2 — nên job substrate merge từ 26–27/07 lần đầu có thứ để chở.
+> **`authorizeTenantAction` hết code-dark:** sau 8 ngày 0 caller, nay `session-service.ts` gọi thật
+> (`publish_new_sessions`, có re-check dưới khoá).
+>
+> ⚠️ **Nhưng ~33% KHÔNG đổi, và lý do phải đọc kỹ vì đây đúng chỗ dễ tự huyễn hoặc.** Theo luật 5, trục yếu
+> nhất là trạng thái thật: **0 route nghiệp vụ · 0 màn FE · schedule vẫn OFF · chưa projector thật**. Hai
+> command tồn tại nhưng **chưa surface nào gọi được chúng từ ngoài** — chúng là thư viện, chưa phải tính
+> năng. Cái đổi là *buildable*, không phải *runnable*.
+>
+> 📊 **Số đo lại tại `93f1e93`:** 33 migrations (không đổi) · **38 test file** · **static 813**
+> (core 146 · db **490** · web 137 · bot 40) · 10 API route (không đổi).
+> ✅ **Canonical runner ĐÃ chạy lại 15/08 (máy owner, `DATABASE_URL_TEST` thật): PASS `854` workspace test**
+> (core **152** · db **516** · web **146** · bot **40**) + **30** validator, 38 file, 0 fail. Đây là số
+> authority cho trục Tests. Đối chiếu luật 4 đóng khít **theo từng package**, không chỉ ở tổng:
+> `146+6=152` · `490+26=516` · `137+9=146` · `40+0=40`, tổng `813 + 41 = 854`. Bảng 6 generator site
+> không sót site nào và hai command mới **không đẻ generator mới**.
+> ⚠️ **Bẫy số học đã gỡ, giữ lại làm tiền lệ:** static tại `93f1e93` = 813 **trùng số** với runner 813 đo
+> tại `80a3464` — hai đại lượng khác nhau, sự trùng nhau là ngẫu nhiên. Runner thật hiện tại là **854**.
+> Bài học: khi static bằng đúng một runner cũ, đó là lúc **dễ suy bậy nhất**, không phải lúc yên tâm.
+>
 > **Static/source inventory đo tại `1fdba1d` (13/08):** **33 migrations (`0000`–`0032`), 37 test files, 772 static test declarations** (core 146 · db **449** · web 137 · bot 40)**, 10 API routes** (8 auth + 2 onboarding, **không đổi từ 22/07**)**, 26 Product (`docs/features/FE/`) + 25 BE (`docs/features/BE/feature_*_tech.md`) feature spec**, cộng **17 FE spec** ở `docs/channels/web/FE/` (Draft). Trục **Tests hết `STALE`**: canonical runner PASS **813** đo 12/08 tại `80a3464` (máy owner) — xem cảnh báo đối chiếu ở luật 4.
 >
 > ⚠️ **`0031` đưa Chat từ "0 migration" sang có DB root thật — nhưng KHÔNG mở hành vi nào.** `chat_channels`/`chat_members`/`chat_messages` (`0031`) và `chat_dm_safety_config`/`chat_blocks`/`chat_reports` (`0030`) đã ở trên `main`, còn **0 câu truy vấn production nào chạm chúng**: `packages/db/schema.ts` có khai báo Drizzle cho cả 6 bảng (đó là **khai báo, không phải phép đo** — xem luật 1), và 4 file test tham chiếu (`chat-dm-safety-invariants` · `chat-schema-invariants` · `rls-invariants` · `migrate`). Đây là **code dark thứ tư**, cùng lớp với `authorizeTenantAction` · DD-29 entitlements · outbox schedule OFF. Chat vẫn **0 service · 0 API · 0 UI**.
@@ -371,7 +394,7 @@ TỔNG (code, theo slice roadmap)  ██████░░░░░░░░░
 | 17 | **Messenger central+optional Page; host/player shared core; 24h/App Review** | 🏢🎯 | **P2.5** | ✅ Reviewed contract | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ · 🔗 App Review |
 | 6 | Migrate data bot cũ → tenant #1 | 🏢 | P3 | ✅ covered | ⬜ | ⬜ | — | ⬜ | ⬜ | ⬜ |
 | 7 | Identity directory + merge (**link Facebook/Zalo**) | 🆔 | P3.5 | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 8 | **Web app surface + canonical backend** | 🌐 | P4 | ✅ Reviewed | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 | ⬜ **BE nghiệp vụ = 0 trên `main`.** *(Ngoài trục, theo luật 1:* branch `…--v2` có `CreateSession` draft + outbox producer nhưng **chưa merge**; lane v1 HALT MAX_ROUNDS, v2 authorized sau DD-105.*)* |
+| 8 | **Web app surface + canonical backend** | 🌐 | P4 | ✅ Reviewed | ⬜ | 🟢 **2 command** merged: `createSession` (`b48625c`) · `publishSession` (`1ccbe5d`) | ⬜ | ✅ per-slice real-PG | 🔴 | 🟢 **BE có command đầu tiên · chưa runnable** — 0 route nên chưa surface nào gọi được; `publishSession` là **caller production đầu tiên** của `authorizeTenantAction` |
 | 9 | **Sync engine** (command/outbox/projection + realtime) | 🌐 | P4 | ✅ Reviewed | 🟡 shared `0022`/`0023` | 🟡 dispatcher/queue/scheduler | ⬜ | ✅ infra tests only | ⬜ | 🟡 **infra-only** — schedule OFF; producer đầu tiên đang ở lane module 8, **chưa merge** |
 | 10 | Onboarding self-serve; Messenger central default + optional Page riêng | 🌐 | P4 | 🟡 Draft | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 | ⬜ |
 | 10b | **In-app Chat primary player target** (DD-38/DD-86/DD-91–95) | 🌐 | P4 | Reviewed; primary plan v1.8 = `PLAN_READY` at `90d292d`; owns mechanism slices 1–47 + API A1–A21 + FE F0–F15; first handoff §9.2, each slice still strict `CODE_READY` | 🟢 **`0030`/`0031`/`0032` merged** | ⬜ **0 service** | ⬜ | ✅ 2 file invariant (`chat-dm-safety` · `chat-schema`) | ⬜ | 🟢 **DB root merged · code dark** — 0 API/UI; slice 7 authored (untracked packet), slice 8 chưa; DD-103 debt `NOT_CODE_READY` |

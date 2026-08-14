@@ -413,6 +413,27 @@ notes: |
   **slice size quan trọng vì lý do KHÁC** với lý do đã dùng justify split open-decisions — không phải "quá lớn để
   review trong round budget" mà **"quá lớn cho per-run detection"**. Đây là claim TESTABLE; re-measurement là nơi
   test nó (design nó vào cùng pass đo per-run detection ở bước (2)).
+  **BẰNG CHỨNG THỰC NGHIỆM 2026-08-14 — chuỗi PublishSession, ủng hộ giả thuyết under-sampling.** Không phải
+  measurement có thiết kế, nhưng là ca tự nhiên sạch nhất tới nay và **đúng câu hỏi task này đang HOLD**.
+  Ba lane trên **cùng một diff**, cùng base-class, cùng reviewer:
+  - **v1** (`507f15a`) — `HALT MAX_ROUNDS` ở vòng 5.
+  - **v2** (`da8385c`) — carry-forward, `HALT MAX_ROUNDS` ở vòng 5 lần nữa. `regions.log`: **5 vòng / 5 vùng
+    KHÁC nhau, không lặp** ⇒ `REGION_THRASH` không hề bắn. Finding-count theo vòng: `4,3,4,1,2,3`.
+  - **v3** (`24465dd` → squash `1ccbe5d`) — carry-forward tiếp, **land trong 4 vòng**, dưới cả trần 5.
+  Diff review-surface ~1.690 dòng, **không đổi** giữa v2 và v3. Thứ đổi là **mật độ finding còn lại**: v3 kế
+  thừa 11 vòng đã dọn. Đó chính là dự đoán của under-sampling — số vòng cần tỉ lệ với *lượng finding chưa
+  lấy mẫu*, không với *kích thước slice*. Nếu slice-too-big là nguyên nhân, v3 phải HALT y như v1/v2.
+  **Hệ quả cho thiết kế re-measurement ở bước (2):** carry-forward-qua-nhiều-lane là một **biến điều khiển
+  tự nhiên** — cùng diff, mật độ finding giảm dần. Đáng đưa vào method thay vì chỉ chạy N lần trên một diff
+  đóng băng: nó tách được "diff to" khỏi "còn nhiều finding chưa tìm ra", thứ mà frozen-diff N-run không tách.
+  **Cảnh báo diễn giải:** n=1 chuỗi, không đo per-run detection trực tiếp, và mỗi lane có người/prompt hơi
+  khác. Đây là **bằng chứng hỗ trợ hướng**, không phải phép đo thay cho bước (2).
+  **Ghi kèm — DD-109 và bài học của nó:** trần được nâng 5→8 cho v3 dựa trên đúng lập luận under-sampling,
+  rồi phát hiện **không thi hành được** (`autopilot-review-readiness.mjs:386` hard-cap `fix_rounds_max` ở 5,
+  reject manifest ngay). Lane escalate thay vì tự sửa validator đang chứng nhận nó. Chạy ở cap 5 và land
+  trong 4 ⇒ **bản nâng trần chưa bao giờ cần tới**. Phần có giá trị thật của DD-109 là **điều kiện cứng bắt
+  phải tới vòng security** — chạy lần đầu sau 15 vòng gộp, và CLEAN.
+
   **Note (review-system reliability, 2026-08-13):** confound (2) pointer-contamination đã được đóng — reviewer giờ
   chạy trong fresh detached worktree tại HEAD (`codex-review-pin-worktree-isolation-defect`, LANDED). Backport canonical
   đã land `f990469`, đóng footgun `autopilot-update.sh` (xem `reviewer-isolation-backport-canonical-kit`); `update.sh`
@@ -3378,3 +3399,110 @@ notes: |
   • CancelDraftSession: draft-source ONLY → cancelled; DD-105-EXEMPT by invisibility (money-free/invisible draft, same as createSession) → NO authorizeTenantAction call, NO new class.
   Neither op needs a migration or a new action-class literal — which is exactly why they are CODE_READY where their blocked siblings (the public_sessions projector; Update/Close/Cancel-on-open) are not. NEGATIVE SCOPE: no public_sessions projection, no migration, no new action-class literal, no Update/Close/Cancel-on-OPEN, no DeleteSession.
   OUTCOME 2026-08-14: v1 shipped PublishSession-only. CancelDraftSession was dropped to follow-up `session-cancel-command-draft-and-open` — the Reviewed spec (feature_session_management_tech.md edges #25-#31 + §4) pins draft-cancel as an EXTENDED CancelSession (source {draft,open}) with a mandatory fail-closed anomaly path (CANCEL_REQUIRES_REVIEW + session.expiry_anomaly_detected), not a new draft-only command, so the simpler shape = Tier C (Reviewed-spec/money deviation). v1 was hardened through 5 fix rounds (511 db tests green; baseline 486, +25) then HALTed MAX_ROUNDS at branch feat/session-draft-lifecycle-commands @ fb2889c with 4 ACCEPTED findings (Date.now→DB now() clock-skew [P1]; reclassify packet IMPLEMENTED [P1]; check:quick label [P2]; add createSession→publishSession sequence test [P2]). PRESERVE the v1 worktree/branch as forensics — do NOT merge, teardown, or relaunch this exact registration. NEXT: a FRESH v2 registration `session-draft-lifecycle-commands--v2` from base 519fb9f carries the hardened publishSession verbatim + applies the 4 fixes up front → 2 clean code + 1 security round → READY. Full spec in .autopilot/worktrees/session-draft-lifecycle-commands/.autopilot/state/session-draft-lifecycle-commands/HALT-MAX_ROUNDS.txt.
+
+---
+
+## task: scope-gate-plants-terminal-signals-on-retryable-register
+title: `halt_gate()` ghi HALT-* cho lỗi register — nhưng register là thao tác RETRY được, nên mỗi lần thử hỏng để lại một mìn chặn `ready` về sau
+status: idea
+risk: P2
+change_class: kit-maintenance
+depends_on: []
+invariants: []
+scope: [scripts/autopilot-scope-gate]
+manifest: null
+merged_probe: null
+_probe_note: Khi schedule, merged_probe phải bind symbol do CHÍNH fix tạo ra (vd tên namespace/prefix mới). KHÔNG bind `halt_gate`, `HALT-`, `TERMINAL_CONFLICT` hay `SCOPE_COLLISION` — cả bốn đã có trên origin nên false-flip "merged" ngay lúc author.
+close_by: null
+notes: |
+  **Ba ca đo được trong MỘT ngày (2026-08-14), mỗi ca chặn một lane hợp lệ và mỗi ca cần owner can thiệp:**
+  `HALT-SCOPE_COLLISION.txt` (v2) · `HALT-BASE_MISMATCH.txt` (v2) · `HALT-BASE_MISMATCH.txt` (v3).
+
+  **Cơ chế.** `scripts/autopilot-scope-gate` dùng chung `halt_gate()` để ghi một file `HALT-<REASON>.txt`
+  vào state dir cho **mọi** lỗi register: `MANIFEST_MISSING`, `MANIFEST_INVALID`, `CONTRACT_INVALID`,
+  `REGISTRY_LOCK_TIMEOUT`, `INVARIANT_UNKNOWN`, `BASE_MISMATCH`, `SCOPE_COLLISION`. Nhưng
+  `scripts/autopilot-review-readiness.mjs:627-630` chặn `ready` nếu **bất kỳ** `HALT-*`/`AWAIT-FOUNDER-*`
+  nào tồn tại trong state dir.
+
+  **Vì sao đó là lỗi phân loại, không phải gate quá chặt.** Register là thao tác **được retry theo thiết
+  kế** — collision tự hết khi lane kia release, lock tự do, base được re-pin, manifest được sửa. Một lần
+  thử hỏng **không phải trạng thái terminal**. Nhưng nó để lại một terminal signal vĩnh viễn cho một gate
+  chạy rất lâu sau đó, ở một thời điểm mà nguyên nhân đã biến mất.
+
+  **Tình tiết làm nó khó chẩn đoán gấp bội** (ca v2 `SCOPE_COLLISION`): nếu thư mục worktree đã rỗng/hỏng
+  link, `git -C "$WT" status` **đi ngược lên repo gốc** và thông báo HALT trỏ vào file untracked của ROOT
+  (`design.pen`, `fe.pen`) — hoàn toàn không liên quan lane đang đóng. Kết luận tự nhiên nhất khi đọc là
+  "xoá `.pen` đi", tức đi ngược lệnh FE PENDING của owner. Xem task chị em
+  `ap-finish-untracked-counts-as-dirty`.
+
+  **Hình dạng fix đã có tiền lệ TRONG chính kit này — v16.** Header `autopilot-scope-gate:262-268` ghi:
+  `claude-notify-hook.sh` từng ghi sentinel forensic thành `AWAIT-FOUNDER-notify.txt`; *"tên đó nằm trong
+  terminal-signal namespace của readiness gate, nên mọi permission prompt âm thầm cắm một terminal signal
+  giả và `ready` kế tiếp từ chối chạy với TERMINAL_CONFLICT; tệ hơn, nội dung file ghi 'Claude needs your
+  permission', nên xoá nó không phân biệt được với việc lách permission system, và agent bị từ chối là
+  đúng."* Fix v16 = **đổi tên ra khỏi namespace** (`notify-sentinel.txt`), **không** nới lỏng luật cấm xoá.
+
+  **Fix đề xuất, cùng hình dạng:** register-mode failure ghi ra `register-attempt-<REASON>.txt` (hoặc
+  namespace tương đương) thay vì `HALT-<REASON>.txt`. Terminal namespace chỉ dành cho HALT thật —
+  readiness/review/verification. Giữ nguyên nội dung forensic và giữ nguyên lệnh cấm xoá `HALT-*`.
+
+  ⚠️ **Bẫy phải pin trong probe:** đừng "sửa" bằng cách cho `ready` bỏ qua một số HALT reason. Cách đó bắt
+  gate phải phán đoán reason nào tha được — đúng loại phán xử ad-hoc mà
+  `classifier-blocks-kit-mandated-readiness-json` vừa được sửa để loại bỏ. Đổi namespace là deterministic;
+  whitelist reason thì không.
+
+  **Standing rule tạm thời (owner, 2026-08-14) — không thay fix:** lane được **đổi tên** (không bao giờ
+  xoá) một file terminal-namespace trong state dir của chính nó khi cả bốn điều kiện đúng và mỗi điều kiện
+  được ghi giá trị quan sát vào ledger: (a) file do lỗi **register-mode** ghi ra, không phải readiness/
+  review/verification; (b) nguyên nhân đã được chứng minh là giải quyết bằng một lần register thành công
+  sau đó — `registered-manifest.sha256` tồn tại VÀ hash bằng `manifest.json` sống; (c) `base_sha` đã đăng
+  ký đúng base được brief; (d) việc đổi tên giữ nguyên nội dung và thêm ghi chú resolution.
+  **Thuộc `Claude template`** — Plexco chỉ mirror; fix phải backport canonical (xem DD-108).
+
+---
+
+## task: dd108-mirror-readiness-evidence-keys-to-canonical
+title: DD-108 — mirror readiness-evidence key-gate sang canonical kit + làm cho divergence ĐO được (P1)
+status: ready
+risk: P1
+change_class: kit-maintenance
+depends_on: []
+invariants: [review-integrity]
+scope: []
+_scope_note: scope rỗng vì phần chính nằm NGOÀI repo này (`~/Projects/Claude template/autopilot/parallel/`). Phần trong Plexco chỉ là bump KIT_VERSION sau khi canonical đã nhận. Không đăng ký scope-gate — trust-gate file, cùng đường f990469/b53bc75/a3c62ad (owner-merge trực tiếp, review vẫn chạy đủ).
+manifest: null
+merged_probe: null
+_probe_note: Khi schedule, merged_probe bind symbol do CHÍNH fix (2) tạo ra — vd tên hàm/test assert byte-identical. KHÔNG bind `findUnknownEvidenceKeys` (đã có trên origin từ a3c62ad) hay `KIT_VERSION` (đã có từ lâu).
+close_by: null
+notes: |
+  **VÌ SAO TASK NÀY TỒN TẠI, và đó là bài học riêng:** DD-108 chốt 2026-08-14 nhưng tới cuối ngày vẫn chưa
+  ai làm. Kiểm nguyên nhân: nó **không có packet, không manifest, không entry INFLIGHT, và không có task
+  backlog** — chỉ sống như một mục trong `decisions.md`. Mọi lượt "việc gì tiếp theo" đều đọc backlog +
+  lane registry, nên nó vô hình với đúng cái quy trình chọn việc. Đối chứng: tiền nhiệm
+  `reviewer-isolation-backport-canonical-kit` **có** task backlog và **đã xong** — cùng loại việc, cùng độ
+  khó, khác mỗi chỗ có người ghi vào danh sách. **Quyết định là ý định; task mới là thứ được lập lịch.**
+
+  **Nội dung (theo DD-108, ba vế — làm cả ba hoặc đừng làm vế nào):**
+  1. Copy `scripts/autopilot-review-readiness.mjs` + `scripts/autopilot-readiness-evidence-keys.mjs` sang
+     `$CANON/autopilot/parallel/`, **byte-identical** với bản Plexco đã review (a3c62ad).
+  2. Thêm dòng `pack_pairs()` trong `$CANON/autopilot-update.sh` cho module mới. **Thiếu vế này thì file
+     mới không được sync và gate ở consumer khác crash vì import thiếu.**
+  3. **Bump `KIT_VERSION`.** Thiếu vế này thì consumer khác không có cách nào biết cần re-sync.
+  Kèm: port cả test chứng minh **wiring** (không chỉ helper) — vòng review E1 đã bắt đúng lỗ đó; backport
+  chỉ chép helper mà bỏ wiring test là tái tạo blind spot ở tầng trên.
+
+  **Fix gốc rễ (vế 2 của DD-108, quan trọng hơn việc mirror lần này):** đo 2026-08-14 thấy **cả hai kit
+  cùng `KIT_VERSION: 31`** trong khi nội dung đã khác — tức số hiệu gõ tay **không đổi khi nội dung đổi**,
+  đúng lỗi "khai báo không phải phép đo". Điều kiện đóng: **divergence phải làm một test ĐỎ** — hoặc kit
+  test suite assert byte-identical cho mọi entry `TRUSTED_GATE_FILES`, hoặc dẫn xuất version từ content
+  hash. Chọn cách nào cũng được; điều kiện là không phụ thuộc ai đó nhớ.
+
+  **Ràng buộc vận hành đang áp:** `autopilot-update.sh` **bị chặn** cho tới khi vế (2) land. Chạy sync
+  trước đó sẽ ghi đè gate đã siết bằng bản cũ non-fail-closed, **và không test nào đỏ** vì test bị ghi đè
+  cùng lúc. `SessionStart` hook chỉ auto-overwrite `scope-gate` nên `main` Plexco đứng một mình vẫn an toàn;
+  rủi ro chỉ kích hoạt khi chạy update.
+
+  **Vì sao P1 chứ không P2:** mục đích tồn tại của a3c62ad là biến một phán xử ad-hoc của permission
+  classifier thành **rule deterministic**. Một lần sync ghi đè xoá đúng tính deterministic đó, im lặng.
+  Đây cũng là **lần thứ hai** cùng footgun ở cùng chỗ — lần một đóng bằng `f990469` rồi tái xuất sau một
+  ngày ở file kế bên. Lặp lại = tín hiệu cơ chế, không phải xui.
