@@ -3361,7 +3361,8 @@ notes: |
 
 ## task: session-draft-lifecycle-commands
 title: PublishSession (draft→open) + CancelDraftSession (draft→cancelled) — Tier-A cores salvaged from P-B and P-C
-status: planned
+status: merged
+note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (2026-08-15). Was: planned
 risk: P1
 change_class: code
 depends_on: [session-service-create-command-core]
