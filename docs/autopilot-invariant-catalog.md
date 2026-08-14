@@ -55,4 +55,6 @@ member-safety — manual safety ban: reason/evidence/expiry/actor/capability `me
 retry-liveness — CAS/lease worker ownership, claimed-attempt budget, DLQ / owner-review sink (DD-45)
 publish-suspend-gate — session `PublishSession` billing-suspension authorization gate (`authorizeTenantAction('publish_new_sessions')` × billing Status Authority, feature_session_management §4 × feature_billing_lifecycle §3)
 session-lock-ordering — session command transaction/row-lock ordering discipline (`FOR UPDATE` + re-check-under-lock, feature_session_management §4)
+session-command — SessionService command family sharing `packages/db/src/session-service.ts` (create/publish/update/close/cancel/announce); one writer at a time across the file, distinct from `session-lock-ordering` (in-transaction discipline) and `publish-suspend-gate` (one specific gate)
+billing-authz — billing/authorization suspension contract: the `ActionClass` enum + recognised-set in `packages/db/src/authorization.ts` × Suspended Action Matrix rows in feature_billing_lifecycle §3 (DD-110 owns the current four session literals)
 <!-- catalog:end -->

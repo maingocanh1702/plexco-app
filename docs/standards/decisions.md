@@ -1626,6 +1626,94 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 
 ---
 
+## DD-110 — Bốn action class hẹp cho session command family, và hàng ma trận của chúng · ✅ Chốt (owner 2026-08-15)
+
+> **Status boundary:** DD-110 chốt **tên literal** + **giá trị hàng Suspended Action Matrix** cho bốn
+> command session còn lại. Nó **KHÔNG** authorize code/migration/enablement. Slice
+> `session-commands-update-close-cancel` vẫn phải tự qua G1–G6 + closure matrix của
+> `review-code-readiness-gate.md`. DD này đóng đúng blocker Tier C mà packet đó tự nêu ở
+> `_blocker_note` (`docs/autopilot-manifests/session-commands-update-close-cancel.json:3`).
+
+### Vì sao cần DD này
+
+DD-105 chốt **hướng** — command player-visible/chạm roster/chạm tiền phải nhận *"narrow per-op action
+class khi build"* — nhưng **không đặt tên** cho cái nào. DD-104 D2a chỉ đặt `delete_draft_session`, cho
+một op khác và đang parked. Packet 14/08 đo tại `519fb9f` và kết luận đúng: `ActionClass` có chính xác
+`{publish_new_sessions, admin_mutation, integration_changes}`, grep `decisions.md` cho mọi tên op còn
+lại trả **rỗng**. Tác giả slice **không được tự đặt tên** — đây là giá trị trên gate tiền, Tier C.
+
+### D1 — Bốn tên, theo dialect `verb_noun` của DD-104 D2a
+
+| Command | Literal | Ghi chú |
+|---|---|---|
+| `UpdateSession` khi `open` | `update_open_session` | update lúc `draft` **giữ nguyên miễn trừ DD-105** (vô hình + không tiền) — tên mang luôn ranh giới đó |
+| `CloseSession` | `close_session` | |
+| `CancelSession` | `cancel_session` | |
+| `AnnounceSession` | `announce_session` | |
+
+**Enum từ nay có hai phương ngữ, cố ý.** `publish_new_sessions`/`admin_mutation`/`integration_changes`
+là danh ngữ; `delete_draft_session` + bốn tên trên là `verb_noun`. **Không đổi tên ba cái cũ:**
+`publish_new_sessions` đã có caller production (`publishSession`, `1ccbe5d`), một hàng ma trận và một
+entry trong invariant catalog — đổi là sửa contract có consumer sống để lấy thẩm mỹ. `verb_noun` là
+chuẩn cho mọi literal **mới**.
+
+### D2 — Hàng ma trận: close/cancel ✅ khi suspended, announce/update ❌
+
+| Action Class | active | past_due | suspended |
+|---|:---:|:---:|:---:|
+| Update open session | ✅ | ✅ | ❌ |
+| Announce session | ✅ | ✅ | ❌ |
+| Close session | ✅ | ✅ | **✅** |
+| Cancel session | ✅ | ✅ | **✅** |
+
+**Căn cứ nằm trong chính ma trận, không phải nguyên tắc nhập từ ngoài.** Hàng `Player CK ingest ✅` cho
+thấy tenant bị suspend **vẫn nhận đối soát chuyển khoản của người chơi** — tức ma trận đã tự khai một
+ranh giới: suspension chặn **hoạt động thương mại mới**, không **đóng băng nghĩa vụ đang chạy**.
+`announce`/`update-on-open` tạo hoạt động mới trên listing sống ⇒ ❌, cùng lớp với publish.
+`close`/`cancel` là đường **kết thúc** nghĩa vụ ⇒ ✅.
+
+**Cái giá của lựa chọn ngược lại là bất đối xứng, nên chọn được.** Nếu để cả bốn ❌: host bị suspend
+không đóng và không huỷ được buổi đã `open`, trong khi người chơi đã join và có thể đã chuyển khoản —
+**thiệt hại chắc chắn, không có đường thoát**, và chỉ lộ ra lần suspend thật đầu tiên trên production.
+Nếu để close/cancel ✅: một tenant abuse huỷ được buổi của chính nó — **phiền, không phải thiệt hại**,
+và đằng nào tenant đó cũng không publish, không announce, không update được.
+
+⚠️ **Giới hạn cấu trúc kế thừa, ghi ra để không ai tưởng DD này giải nó.** `authorizeTenantAction`
+resolve **hai** trục suspend về **một** status rồi tra **một** hàng, trong khi §3 của spec billing
+(`:288-291`) tách rõ `subscriptions.status` = nợ tiền và `tenants.status` = abuse/ToS. Tenant nợ tiền
+đáng được dọn dẹp; tenant abuse thì có thể không. Bốn literal này **không phân biệt được**, y như ba
+literal cũ. Muốn phân biệt phải đổi chữ ký gate — việc riêng, chưa mở, **không** kéo vào slice này.
+
+### D3 — Tên vào decision log ngay, literal vào `ActionClass` cùng commit mang command của nó
+
+Chốt tên **không** đồng nghĩa thêm cả bốn giá trị vào enum ngay. Một literal không caller là **code
+dark** — đúng thứ project đang mất tám ngày để thoát ra với `authorizeTenantAction`. Packet cho phép
+ship subset khi vượt budget (`AnnounceSession` *"fits ONLY if budget allows"*,
+`stop_conditions:96` bắt re-slice), nên gom cả bốn lên trước sẽ tái tạo đúng vấn đề vừa tránh.
+
+**Luật:** command nào ship trong slice thì literal + hàng ma trận của nó vào cùng commit đó; command bị
+cắt thì tên **nằm lại DD này** và chờ. Đây đúng hình DD-104 đã làm — `delete_draft_session` có tên từ
+13/08, tới nay vẫn chưa vào enum, và không sao cả.
+
+### D4 — Nghĩa vụ test kèm theo (đóng lỗ "tên là chú thích, không phải enforcement")
+
+`authorizeTenantAction` **không biết** session đang ở status nào; caller chọn literal. Nên
+`update_open_session` là **quy ước ở call site**, không có gì cưỡng chế — một caller truyền nhầm nó cho
+một `draft` sẽ deny update-trên-draft của tenant suspended và **phá miễn trừ DD-105 âm thầm**, mà
+`authorization.test.ts` không bắt được vì ở tầng đó hành vi là đúng.
+
+Slice **bắt buộc** mang một test âm ở tầng service: *`updateSession` trên session `draft` KHÔNG gọi
+`authorizeTenantAction`*. Không có test này thì D1 chưa được thực thi, chỉ mới được viết ra.
+(`delete_draft_session` có y hệt lỗ này — lỗ kế thừa, không phải lỗ mới; khi slice DD-104 mở, nó nợ
+cùng một test.)
+
+### Không authorize
+
+Code, migration, packet, worktree, enablement. DD-110 chỉ đóng tầng quyết định cho đúng bốn tên + bốn
+hàng. Command session **khác** bốn cái này vẫn phải quay lại DD-105 + DD-104 D2a để lấy class hẹp.
+
+---
+
 ## DD-107 — Autonomy mode `autonomous_to_ready`: batch owner ở READY thay vì ngắt giữa chừng · ✅ Chốt (owner 2026-08-14)
 
 ### Bối cảnh — chi phí đo được, không phải cảm giác
@@ -2059,6 +2147,7 @@ theo kịp.
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 15/08/2026 | v2.33 | **Thêm DD-110 ✅ — bốn action class hẹp cho session command family + hàng ma trận (owner 2026-08-15).** Đóng đúng blocker Tier C mà packet `session-commands-update-close-cancel` tự nêu ở `_blocker_note`: DD-105 chốt **hướng** ("narrow per-op class khi build") nhưng **không đặt tên** cái nào, DD-104 D2a chỉ đặt `delete_draft_session` cho op khác đang parked, và tác giả slice bị `negative_scope:41` HALT nếu tự đặt. **D1 — bốn tên theo dialect `verb_noun`:** `update_open_session` · `close_session` · `cancel_session` · `announce_session`; ba literal cũ (danh ngữ) **không đổi tên** vì `publish_new_sessions` đã có caller production `1ccbe5d` + hàng ma trận + catalog entry — enum có hai phương ngữ là cố ý, `verb_noun` chuẩn cho literal mới. **D2 — close/cancel ✅ khi suspended, announce/update ❌:** căn cứ lấy từ chính ma trận, không nhập từ ngoài — hàng `Player CK ingest ✅` cho thấy tenant suspend **vẫn nhận đối soát chuyển khoản**, tức ranh giới đã khai sẵn là *chặn hoạt động thương mại MỚI, không đóng băng nghĩa vụ ĐANG CHẠY*; bất đối xứng chi phí quyết định lựa chọn: cả bốn ❌ ⇒ host suspend không đóng/huỷ được buổi đã `open` trong khi người chơi đã join và có thể đã chuyển khoản (**thiệt hại chắc chắn, không đường thoát, chỉ lộ ở lần suspend thật đầu tiên**), còn close/cancel ✅ ⇒ tenant abuse huỷ buổi của chính nó (**phiền, không phải thiệt hại**; nó vẫn không publish/announce/update được). ⚠️ **Giới hạn kế thừa, DD này KHÔNG giải:** gate resolve **hai** trục suspend (`subscriptions.status` = nợ tiền vs `tenants.status` = abuse/ToS, spec billing `:288-291`) về **một** hàng ⇒ bốn literal mới không phân biệt được, y như ba cái cũ. **D3 — tên vào decision log ngay, literal vào `ActionClass` cùng commit mang command của nó:** literal không caller là code dark, đúng thứ vừa mất tám ngày để thoát với `authorizeTenantAction`; packet cho phép ship subset khi vượt budget (`AnnounceSession` "ONLY if budget allows") nên gom cả bốn lên trước sẽ tái tạo đúng vấn đề vừa tránh — hình mẫu là `delete_draft_session`, có tên từ 13/08, tới nay vẫn chưa vào enum. **D4 — nghĩa vụ test bắt buộc:** gate **không biết** status của session, caller chọn literal, nên `update_open_session` là quy ước ở call site chứ không phải enforcement; slice phải mang test âm *`updateSession` trên `draft` KHÔNG gọi `authorizeTenantAction`*, nếu không D1 mới chỉ được viết ra chứ chưa được thực thi. **Không authorize** code/migration/packet/worktree/enablement. |
 | 14/08/2026 | v2.32 | **Thêm DD-109 ✅ — nới `fix_rounds_max` 5→8 cho RIÊNG `session-draft-lifecycle-commands--v3`.** `PublishSession` HALT `MAX_ROUNDS` hai lần liên tiếp (v1 validation-edge-family, v2 DB-clock rồi lan sang test fidelity; 11+ vòng gộp). Trước khi cho chạy lần ba phải phân biệt **thrash** với **thứ khác** — và bằng chứng nói không phải thrash: `regions.log` của v2 ghi **5 vòng chạm 5 vùng khác nhau, không lặp**, `REGION_THRASH` không hề bắn, mỗi vòng đóng một lỗ thật khác lỗ trước. **Nguyên nhân thật, đo được và trước nay chưa viết ra:** pinned reviewer đọc `git diff <base>...HEAD` — **toàn bộ 1.690 dòng mỗi vòng, không phải phần vừa sửa** — trong khi per-run miss-rate đã đo ≈ **2/3** (analysis 13/08). Ghép lại: mỗi vòng là một lần **lấy mẫu** trên cùng diff, finding "mới" ở vòng sau là chữ ký **under-sampling** chứ không chứng minh slice sai — đúng điều `codex-review-verdict-nondeterminism` đã ghi. **Hệ quả sửa một phán đoán sai trước đó:** thu hẹp *việc* của successor KHÔNG thu hẹp *bề mặt review*, nên đề xuất "v3 chỉ sửa 2-3 finding" là vô hiệu. Chọn 8: `(2/3)^M` cho M5≈13% → M8≈3,9%, thêm nữa lợi ích giảm nhanh mà rủi ro vá-vô-hạn tăng; **ước lượng có căn cứ, không phải phép đo** (n=3 chỉ pin được hướng). Ghi rõ **trần 5 không sai** — nó có giả định ngầm rằng diff đủ nhỏ để một vòng phủ gần hết, và giả định đó vỡ ở 1.690 dòng dưới reviewer stochastic. **Bốn điều kiện cứng:** (1) v3 **phải tới được vòng security** — chưa attempt nào chạm tới dù slice gọi `authorizeTenantAction`, tức thứ §8 bắt buộc cho trust boundary chưa từng chạy; (2) v3 HALT nữa = **bằng chứng quyết định** cho slice-too-big ⇒ re-slice thật, **cấm thử lần bốn**; (3) `REGION_THRASH` giữ nguyên hiệu lực; (4) DD phải được dẫn trong contract v3. Ngoại lệ **một lane, có ghi chép** theo khuôn DD-101; §8 **không đổi** cho lane khác, và DD này **không thay** E2 re-measurement — v3 là ca thực nghiệm sống, kết quả nên ghi ngược vào task nondeterminism. |
 | 14/08/2026 | v2.31 | **DD-106 phân xử từng câu + thêm DD-108 ✅ (cả hai owner-delegated; tiền lệ DD-97/98/99).** **DD-106 Q1 Pay-for-Buddy ⬜ DEFER và BÁC riêng enum `'buddy'`:** phát hiện `payment_allocations` **đã có** `created_by uuid` (`0003:87`, *"actor for cash/waiver/manual"*) và CHECK **đã cho phép** `source IN ('cash','waiver') AND created_by IS NOT NULL` (`0003:92`) ⇒ *"A trả hộ charge của B"* biểu diễn được **hôm nay** bằng `('cash', created_by=A)`. Spec gộp hai thứ khác loại: đổi money model (thêm enum) vs workflow (request→confirm); bác vế một, hoãn vế hai. Muốn mở lại phải trả lời được `'buddy'` mang thông tin gì mà `('cash'\|'manual', created_by)` không mang — mỗi giá trị enum trên đường tiền là một nhánh vĩnh viễn trong mọi đối soát/report/reversal. Thứ tự cũng sai: project có 0 route nghiệp vụ, Pay-for-Buddy tinh chỉnh luồng chưa tồn tại trong khi DD-40 mark-paid mới chặn doanh thu. **Q2 embed ⬜ DEFER ràng buộc nhị phân vào fence:** `embed_snapshot` là projection **thứ hai** của session state, trong khi projection thứ nhất còn chưa có đường invalidate (`public_projection_fences` — nợ DD-12 chưa land, DD-73..78 ghi rõ private/cancel phải chờ projector async); thêm cái thứ hai là nhân đôi lỗi đã biết. Gỡ hoãn khi fence + guarded view + CAS-clear merge. **Q3 SessionCard ✅ chấp nhận hướng:** pin canonical ở `feature_marketplace_discovery.md` §3, spec khác trỏ tới, **không tạo file mới**, chưa nâng contract cho tới khi có surface render; bot degrade là hợp lệ và phải ghi trong shape. **DD-108:** mirror trust-gate file sang canonical đủ ba vế + fix gốc rễ (test phải đỏ khi hai bản phân kỳ — `KIT_VERSION` gõ tay không đổi khi nội dung đổi, đúng lỗi "khai báo không phải phép đo") + chặn `autopilot-update.sh` tới khi fix land; căn cứ: footgun lần **thứ hai**, đo được cả hai kit cùng `KIT_VERSION: 31`. |
 | 14/08/2026 | v2.30 | **Thêm DD-107 ✅ — autonomy mode `autonomous_to_ready` + context/authority protocol.** **Context:** toàn bộ doc corpus thuộc phạm vi quyết định, nhưng đo tại `1fdba1d` là **303 file / 8,5 MB / ~2 triệu token** (riêng 6 doc lõi đã ~220k) ⇒ **không nạp được**; bằng chứng sống: session build `session-service` chạm 98% context khi mới nạp context pack của chính nó. Luật thành **bảo đảm ĐỘ PHỦ chứ không phải ĐÃ NẠP**: (1) luôn nạp lõi nhỏ — HANDOFF live-truth + **bảng tổng hợp** `decisions.md` (~18k token, không phải toàn thân) + gate + packet; (2) phần còn lại **search toàn corpus rồi ghi query vào ledger**; (3) **kết quả rỗng là bằng chứng và phải ghi** — "search `buddy` → DD-26 cấm" chính là câu đáng lẽ ngăn được DD-106; kèm cảnh báo grep rỗng là bằng chứng về *query* (đã sập 2 lần: awk backtick vs em-dash, và luật ngôn ngữ grep zero cho luật có thật). **Thang authority 7 bậc** viết lần đầu để lane tự giải mâu thuẫn (rà soát 13/08 tìm thấy mâu thuẫn đồng thời ở spec/playbook/template/index): runtime truth > migrations+`schema.ts` > `decisions.md` > spec Reviewed (mục 🟡 bên trong **không** phải contract) > Draft/plan/proposal > ROADMAP/BRD/PRD/TDD theo đúng câu hỏi mỗi cái sở hữu > index/summary (mục trước nhất — 46/51 ô version sai). Bốn tie-break: packet trên branch thắng bản `main`; khối live-truth mới thắng khối cũ **kể cả phần chỉ thị**; hai doc cùng khai canonical thì cái dẫn được decision ID thắng, không thì AWAIT; `Doc status ≠ Implementation status`. Ledger thêm field **`Searched:`** — trường duy nhất cho phép reviewer biết agent quyết từ corpus hay từ prior. |
