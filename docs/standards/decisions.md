@@ -1695,6 +1695,22 @@ ship subset khi vượt budget (`AnnounceSession` *"fits ONLY if budget allows"*
 cắt thì tên **nằm lại DD này** và chờ. Đây đúng hình DD-104 đã làm — `delete_draft_session` có tên từ
 13/08, tới nay vẫn chưa vào enum, và không sao cả.
 
+> **Amendment 15/08 — hệ quả tổng quát, viết ra vì nó vừa tốn một lane.** D3 không chỉ cấm *lần này*:
+> nó làm **mọi slice kiểu "đăng ký literal trước, nối caller sau" trên gate này trở nên không khả thi
+> về cấu trúc**, vĩnh viễn. Đây là điều đáng nói vì "mint class trước cho gọn scope" là một phản xạ
+> hợp lý — nó *trông* như cách thu nhỏ slice, trong khi thực chất nó tách một thay đổi thành hai nửa
+> mà nửa đầu không kiểm chứng được bằng bất cứ test nào có nghĩa. Lane `session-action-class-literals`
+> (branch `feat/session-action-class-literals` @ `9e2e75a`, HALT decision-superseded 15/08, **không
+> merge**) đi đúng vào đây: bốn literal + bốn hàng ma trận, **zero caller theo đúng thiết kế**.
+> Provenance: salvage report của chính lane đó nêu ra khái quát này.
+>
+> Salvage report cũng để lại một cảnh báo cụ thể cho slice kế: bốn test `recognises <literal>` của lane
+> đó **không copy được**. Hai cái `announce_session`/`update_open_session` đúng kết quả nhưng sai thời
+> điểm (D3); hai cái `close_session`/`cancel_session` **sai nội dung** — chúng assert deny-under-suspended,
+> ngược hẳn D2. Chỉ một test dùng lại nguyên được: case near-miss string (`update_session`,
+> `close_draft_session`, `delete_session`…) vẫn deny fail-closed — nó không nói gì về bốn literal thật
+> nên hợp lệ bất kể chúng land lúc nào.
+
 ### D4 — Nghĩa vụ test kèm theo (đóng lỗ "tên là chú thích, không phải enforcement")
 
 `authorizeTenantAction` **không biết** session đang ở status nào; caller chọn literal. Nên
