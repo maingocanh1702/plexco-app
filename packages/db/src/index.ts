@@ -24,11 +24,18 @@ export {
 } from "./authorization.js";
 export {
   createSession,
+  publishSession,
   SessionCommandError,
+  SessionPublishError,
+  SessionPublishAuthorizationError,
   type SessionCommandErrorCode,
   type CreateSessionInputPayload,
   type CreateSessionParams,
   type CreateSessionResult,
+  type PublishSessionErrorCode,
+  type PublishSessionInputPayload,
+  type PublishSessionParams,
+  type PublishSessionResult,
 } from "./session-service.js";
 export {
   LoginReplayError,
