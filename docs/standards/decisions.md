@@ -112,6 +112,7 @@
 | DD-96 | **Home money chips** → **Part A ✅** canonical `SelfPaymentSummary` cross-club thuộc `player_view` (Home cấm tự cộng; `feature_home_tech.md:166` đã yêu cầu mở rộng Player View owner), **unknown-dominates**: một CLB `unknown` ⇒ cả summary `unknown`, cấm sum các CLB known; `clubCount` = số CLB có outstanding > 0; không `payAction` ở tầng aggregate. **Part B 🟡** chip "Chưa thu" cross-club — owner chốt direction, đảo HOME-OQ-1(c), nhưng **không thuộc player_view** (DD-48 + DTO allowlist "other charges ❌ NEVER"); cần host-self owner riêng và còn 4 blocker B1–B4 (design-probe · `authorizeTenantAction` 0 caller · chưa Reviewed per-club owner · fan-out semantics) | Part A ✅ `DECISION_FINAL` contract shape (owner 2026-08-07), chưa authorize code · Part B ✅ direction / 🟡 `NOT_PLAN_READY` mechanism | Part A: S9 (cùng Home) sau P4.6 · Part B: sau per-club host receivable owner | DD-48 · DD-79 (HOME-OQ-1) · DD-91 · `../features/BE/feature_player_view_tech.md` · `../features/BE/feature_home_tech.md:166` · `../channels/web/FE/feature_dashboard_fe.md:59-66` |
 | DD-97 | **Collection statement + export sao kê per-session/kỳ (PDF/XLSX)** → composition-only trên `charges`+`payment_allocations` (không bảng/formula tiền mới; DTO cần owner Reviewed — cùng họ blocker B3 của DD-96); export async behavior-contract-only trên DD-89 foundation (không authorize enablement); download authenticated tenant-scoped, không public link (HR2); entitlement ✅ tách lớp: per-session statement view = **free** · kỳ/tháng + export file = **`host_pro`** | ✅ Direction + entitlement chốt (owner-delegated 2026-08-07) · mechanism chờ DTO owner Reviewed | P5+ TBD | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · DD-89 · DD-40 |
 | DD-98 | **Negative scope cho mechanic Sporta không port** → không theo đuổi: custom split per player (đụng derivation DD-39/41/45/49) · timeout-hold release cho linked member (DD-32 Option D giữ pay-later) · OS push kèm tiền/QR (mirror NTF — đã cấm sẵn) · auto-archive "nợ cũ" theo tuổi · geo/radius/distance/map picker (NP-5 — mâu thuẫn DD-06 area-only public) | ✅ Chốt (owner-delegated 2026-08-07) | — | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · `../research/sporta-fe-docs-gap-2026-08-07.md` · DD-06/32/39/49 |
+| DD-109 | **Nới `fix_rounds_max` 5 → 8 cho RIÊNG `session-draft-lifecycle-commands--v3`** → `PublishSession` HALT `MAX_ROUNDS` hai lần (v1, v2; 11+ vòng). Bằng chứng nói **không phải thrash**: `regions.log` v2 = 5 vòng / **5 vùng khác nhau**, `REGION_THRASH` không bắn. Nguyên nhân thật: reviewer đọc `git diff <base>...HEAD` = **toàn bộ 1.690 dòng mỗi vòng**, miss-rate đo được **≈2/3** ⇒ mỗi vòng là một lần **lấy mẫu**, finding mới là chữ ký **under-sampling** chứ không phải slice sai. Hệ quả: thu hẹp *việc* của successor KHÔNG thu hẹp *bề mặt review*. Chọn 8 vì `(2/3)^M`: M5≈13% → M8≈3,9% (ước lượng có căn cứ, không phải phép đo). **Điều kiện cứng:** v3 PHẢI tới được vòng security (chưa attempt nào chạm tới, dù slice gọi `authorizeTenantAction`); v3 HALT nữa = bằng chứng quyết định cho slice-too-big ⇒ **re-slice thật, cấm lần bốn**; `REGION_THRASH` giữ nguyên. Ngoại lệ MỘT lane, khuôn DD-101; §8 không đổi cho lane khác. | ✅ Chốt (owner 2026-08-14) | — | `../autopilot-templates/level3-workflow.md` §8 · DD-101 · `../decisions/analysis/codex-reviewer-determinism-2026-08-13/` |
 | DD-108 | **Trust-gate file: mirror canonical + version phải ĐO được** → (1) mirror E1 sang canonical đủ **ba vế** (copy · `pack_pairs()` · bump `KIT_VERSION`); (2) fix gốc rễ: `KIT_VERSION` gõ tay không đổi khi nội dung đổi ⇒ **test phải đỏ khi hai bản phân kỳ** (assert byte-identical mọi `TRUSTED_GATE_FILES`, hoặc dẫn xuất version từ content hash); (3) **chặn `autopilot-update.sh`** tới khi (2) land. Căn cứ: footgun lần **thứ hai** cùng chỗ, và đo được **cả hai kit cùng `KIT_VERSION: 31`** — hai file khác nội dung, cùng số hiệu. | ✅ Chốt (owner-delegated 2026-08-14) | — | `../autopilot-backlog.md` → `reviewer-isolation-backport-canonical-kit` (tiền lệ) · E1 `a3c62ad` |
 | DD-107 | **Autonomy mode `autonomous_to_ready` + context/authority protocol** → lane chạy thẳng tới READY **không dừng hỏi owner giữa chừng**. Context = **toàn bộ doc corpus thuộc phạm vi** nhưng ~2 triệu token nên **không nạp được** ⇒ luật là **bảo đảm độ phủ, không phải đã nạp**: luôn nạp lõi nhỏ (HANDOFF live-truth + bảng tổng hợp `decisions.md` + gate + packet), phần còn lại **search rồi GHI LẠI query** (kể cả query rỗng — grep rỗng là bằng chứng về query, không phải về repo). Kèm **thang authority 7 bậc** để tự giải mâu thuẫn: runtime truth > migrations/`schema.ts` > `decisions.md` > spec Reviewed > Draft/plan > ROADMAP/BRD/PRD/TDD theo câu hỏi > index/summary. Owner review **một lượt tại READY** qua Decision Ledger, thay vì bị ngắt từng quyết định. Ba tầng thẩm quyền: **A derivable** (agent quyết, log 1 dòng — dừng ở tầng này là defect) · **B judgment/reversible/in-scope** (agent quyết, log đủ alternatives+lý do, owner review batch) · **C reserved** (vẫn AWAIT — 8 mục: money contract · PII/HARD RULES · sửa contract của spec Reviewed · migration đổi semantics hoặc chung tail · enablement · merge/deploy · vượt negative scope · finding bị phản bác). Budget thành **tín hiệu, không phải cổng**. HALT successor pre-authorized khi finding được chấp nhận + gọi tên được nguyên nhân *thiết kế*. **Không đổi:** worktree isolation, scope-gate, 2 vòng review sạch, loop breaker, **human merge**. | ✅ Chốt (owner 2026-08-14) | — | `../autopilot-templates/level3-workflow.md` §6.1 · DD-100 |
 | DD-106 | **Ba hợp đồng do spec pass 12/08 (`692f9f2`) viết thẳng vào spec đã Reviewed mà không có decision** → Q1 **Pay-for-Buddy** (bảng `buddy_payment_requests` + `payment_allocations.source='buddy'` — ĐƯỜNG TIỀN); Q2 **structured embed** (`chat_messages.embed_type/embed_ref_id/embed_snapshot` — schema thêm sau khi `0031` đã land); Q3 **unified `SessionCard`** (contract hiển thị dùng chung bot/web/home). Ba câu độc lập, chốt riêng được. | ✅ **Đã phân xử từng câu** (owner-delegated 2026-08-14): **Q1 ⬜ DEFER + bác enum `'buddy'`** (`created_by` đã có sẵn ⇒ `('cash'\|'manual', created_by)` biểu diễn được, chưa chứng minh cần giá trị enum mới trên đường tiền) · **Q2 ⬜ DEFER ràng buộc vào fence** (không thêm projection thứ hai trước khi `public_projection_fences` land) · **Q3 ✅ chấp nhận hướng**, pin canonical ở marketplace spec, chưa phải contract | P3/P4 | `../features/FE/feature_payment_reconcile.md` §5/§7 · `../features/BE/feature_payment_reconcile_tech.md` §2/§3 · `../features/BE/feature_inapp_chat_tech.md` §302-311 · `../features/FE/feature_channel_booking_funnel.md` §150 |
@@ -1756,6 +1757,76 @@ một agent tự chốt hợp đồng tiền để đi nhanh hơn là đang tố
 
 ---
 
+## DD-109 — Nới trần fix-round cho `session-draft-lifecycle-commands--v3`: trần 5 có giả định ngầm về kích thước diff · ✅ Chốt (owner 2026-08-14)
+
+> **Ngoại lệ MỘT lane, có ghi chép — không đổi luật chung.** Tiền lệ khuôn: DD-101.
+> Trần 5 vòng ở `level3-workflow.md` §8 **giữ nguyên** cho mọi lane khác.
+
+### Bối cảnh — hai HALT liên tiếp trên cùng một command
+
+`PublishSession` đã HALT `MAX_ROUNDS` **hai lần**: v1 (họ edge-case validation không hội tụ) và v2
+(chuỗi DB-clock, rồi lan sang test fidelity). Cộng lại **11+ vòng** cho một command.
+
+Câu hỏi phải trả lời trước khi cho chạy lần ba: đây là **thrash** (trần đang làm đúng việc) hay là
+**thứ khác** (trần đang cắt nhầm)?
+
+**Bằng chứng nói: không phải thrash.** `regions.log` của v2 ghi 5 vòng chạm **5 vùng khác nhau**,
+không vùng nào lặp: `stale-counts-and-citations` → `updated-at-clock-query` +
+`test-fixture-durability` → `clock-native-test-assertions` → `starts-at-precision-fix` +
+`deterministic-clock-poll`. Breaker `REGION_THRASH` (cùng vùng 3 vòng liên tiếp) **không hề bắn**.
+Mỗi vòng đóng một lỗ thật, khác lỗ trước.
+
+### Nguyên nhân thật — đo được, và trước nay chưa ai viết ra
+
+**Reviewer đọc `git diff <base>...HEAD` mỗi vòng — tức TOÀN BỘ diff, không phải phần vừa sửa.**
+Diff của v2 là **1.690 dòng**. Và per-run miss-rate của reviewer **đã đo được ≈ 2/3**, hướng lỗi
+false-CLEAN (`../decisions/analysis/codex-reviewer-determinism-2026-08-13/`).
+
+Ghép hai dữ kiện đó lại: mỗi vòng là **một lần lấy mẫu** trên cùng 1.690 dòng, và mỗi lần lấy được
+một tập con khác. Finding "mới" ở vòng sau **không chứng minh** slice sai — nó là chữ ký của
+under-sampling, đúng như `codex-review-verdict-nondeterminism` đã ghi:
+*"một lane surface finding mới-khác-nhau vòng này qua vòng khác **DÙ scope đúng** — đây là
+UNDER-SAMPLING, không phải slice-too-big."*
+
+**Hệ quả then chốt, và là chỗ một phán đoán trước đó của tôi sai:** thu hẹp **việc** của successor
+KHÔNG thu hẹp **bề mặt review** của nó. Đề xuất "v3 chỉ sửa 2-3 finding" nghe hợp lý nhưng vô hiệu —
+reviewer vẫn đọc đủ 1.690 dòng mỗi vòng.
+
+### Quyết định
+
+**`fix_rounds_max` = 8 cho riêng `session-draft-lifecycle-commands--v3`.** Không đổi cho lane khác.
+
+Vì sao 8 chứ không phải "bỏ trần": với miss-rate 2/3, xác suất một finding cụ thể còn bị bỏ sót sau
+M vòng là `(2/3)^M` — M5 ≈ 13%, **M8 ≈ 3,9%**. Tám vòng mua được một bậc độ lớn so với năm, còn thêm
+nữa thì lợi ích giảm nhanh trong khi rủi ro "vá vô hạn" tăng. Con số này là **ước lượng có căn cứ,
+không phải phép đo** — n=3 của lần đo cũ chỉ pin được hướng, không pin được độ lớn.
+
+**Trần 5 KHÔNG sai — nó có một giả định ngầm chưa ai viết ra:** nó được đặt để bắt design thrash, và
+ngầm giả định diff đủ nhỏ để một vòng review phủ gần hết. Ở 1.690 dòng dưới reviewer stochastic, giả
+định đó vỡ. Ghi ra đây để lần sau không ai phải suy lại từ đầu.
+
+### Điều kiện cứng — làm nó sinh thông tin dù thắng hay thua
+
+1. **v3 PHẢI tới được vòng security.** Sau 11+ vòng, thứ slice này thật sự cần — security review trên
+   một thay đổi gọi `authorizeTenantAction` (§8 bắt buộc cho trust boundary) — **chưa từng chạy một
+   lần nào**; mọi attempt đều HALT ở code-review round 1 trước đó. Nếu v3 đốt hết 8 vòng mà vẫn chưa
+   chạm security round, thì số vòng không phải vấn đề duy nhất.
+2. **Nếu v3 vẫn HALT: đó là bằng chứng quyết định cho giả thuyết slice-too-big.** Khi đó **re-slice
+   thật**, cấm thử lần bốn với trần cao hơn. Nới trần lần này là để *phân biệt hai giả thuyết*, không
+   phải để mua thêm lượt.
+3. **`REGION_THRASH` giữ nguyên hiệu lực.** Cùng vùng 3 vòng liên tiếp vẫn HALT ngay, bất kể còn bao
+   nhiêu vòng trong ngân sách. Nới trần đếm-vòng không nới trần chống-thrash.
+4. Ghi `fix-round-count` và `regions.log` như thường; DD này phải được dẫn trong contract của v3.
+
+### Việc DD này KHÔNG làm
+
+Không đổi §8 cho lane khác · không hợp thức hoá "chạy thêm vòng khi bí" · không thay cho **E2
+re-measurement per-run detection**, vẫn là thứ duy nhất trả lời dứt điểm câu under-sampling vs
+slice-too-big. Lane này là một ca thực nghiệm sống của chính câu hỏi đó; kết quả của nó nên được ghi
+vào task `codex-review-verdict-nondeterminism`.
+
+---
+
 ## DD-108 — Trust-gate file: mirror canonical + version phải đo được, không phải gõ tay · ✅ Chốt (owner-delegated 2026-08-14)
 
 ### Bối cảnh — footgun lần thứ hai, cùng một chỗ
@@ -1988,6 +2059,7 @@ theo kịp.
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 14/08/2026 | v2.32 | **Thêm DD-109 ✅ — nới `fix_rounds_max` 5→8 cho RIÊNG `session-draft-lifecycle-commands--v3`.** `PublishSession` HALT `MAX_ROUNDS` hai lần liên tiếp (v1 validation-edge-family, v2 DB-clock rồi lan sang test fidelity; 11+ vòng gộp). Trước khi cho chạy lần ba phải phân biệt **thrash** với **thứ khác** — và bằng chứng nói không phải thrash: `regions.log` của v2 ghi **5 vòng chạm 5 vùng khác nhau, không lặp**, `REGION_THRASH` không hề bắn, mỗi vòng đóng một lỗ thật khác lỗ trước. **Nguyên nhân thật, đo được và trước nay chưa viết ra:** pinned reviewer đọc `git diff <base>...HEAD` — **toàn bộ 1.690 dòng mỗi vòng, không phải phần vừa sửa** — trong khi per-run miss-rate đã đo ≈ **2/3** (analysis 13/08). Ghép lại: mỗi vòng là một lần **lấy mẫu** trên cùng diff, finding "mới" ở vòng sau là chữ ký **under-sampling** chứ không chứng minh slice sai — đúng điều `codex-review-verdict-nondeterminism` đã ghi. **Hệ quả sửa một phán đoán sai trước đó:** thu hẹp *việc* của successor KHÔNG thu hẹp *bề mặt review*, nên đề xuất "v3 chỉ sửa 2-3 finding" là vô hiệu. Chọn 8: `(2/3)^M` cho M5≈13% → M8≈3,9%, thêm nữa lợi ích giảm nhanh mà rủi ro vá-vô-hạn tăng; **ước lượng có căn cứ, không phải phép đo** (n=3 chỉ pin được hướng). Ghi rõ **trần 5 không sai** — nó có giả định ngầm rằng diff đủ nhỏ để một vòng phủ gần hết, và giả định đó vỡ ở 1.690 dòng dưới reviewer stochastic. **Bốn điều kiện cứng:** (1) v3 **phải tới được vòng security** — chưa attempt nào chạm tới dù slice gọi `authorizeTenantAction`, tức thứ §8 bắt buộc cho trust boundary chưa từng chạy; (2) v3 HALT nữa = **bằng chứng quyết định** cho slice-too-big ⇒ re-slice thật, **cấm thử lần bốn**; (3) `REGION_THRASH` giữ nguyên hiệu lực; (4) DD phải được dẫn trong contract v3. Ngoại lệ **một lane, có ghi chép** theo khuôn DD-101; §8 **không đổi** cho lane khác, và DD này **không thay** E2 re-measurement — v3 là ca thực nghiệm sống, kết quả nên ghi ngược vào task nondeterminism. |
 | 14/08/2026 | v2.31 | **DD-106 phân xử từng câu + thêm DD-108 ✅ (cả hai owner-delegated; tiền lệ DD-97/98/99).** **DD-106 Q1 Pay-for-Buddy ⬜ DEFER và BÁC riêng enum `'buddy'`:** phát hiện `payment_allocations` **đã có** `created_by uuid` (`0003:87`, *"actor for cash/waiver/manual"*) và CHECK **đã cho phép** `source IN ('cash','waiver') AND created_by IS NOT NULL` (`0003:92`) ⇒ *"A trả hộ charge của B"* biểu diễn được **hôm nay** bằng `('cash', created_by=A)`. Spec gộp hai thứ khác loại: đổi money model (thêm enum) vs workflow (request→confirm); bác vế một, hoãn vế hai. Muốn mở lại phải trả lời được `'buddy'` mang thông tin gì mà `('cash'\|'manual', created_by)` không mang — mỗi giá trị enum trên đường tiền là một nhánh vĩnh viễn trong mọi đối soát/report/reversal. Thứ tự cũng sai: project có 0 route nghiệp vụ, Pay-for-Buddy tinh chỉnh luồng chưa tồn tại trong khi DD-40 mark-paid mới chặn doanh thu. **Q2 embed ⬜ DEFER ràng buộc nhị phân vào fence:** `embed_snapshot` là projection **thứ hai** của session state, trong khi projection thứ nhất còn chưa có đường invalidate (`public_projection_fences` — nợ DD-12 chưa land, DD-73..78 ghi rõ private/cancel phải chờ projector async); thêm cái thứ hai là nhân đôi lỗi đã biết. Gỡ hoãn khi fence + guarded view + CAS-clear merge. **Q3 SessionCard ✅ chấp nhận hướng:** pin canonical ở `feature_marketplace_discovery.md` §3, spec khác trỏ tới, **không tạo file mới**, chưa nâng contract cho tới khi có surface render; bot degrade là hợp lệ và phải ghi trong shape. **DD-108:** mirror trust-gate file sang canonical đủ ba vế + fix gốc rễ (test phải đỏ khi hai bản phân kỳ — `KIT_VERSION` gõ tay không đổi khi nội dung đổi, đúng lỗi "khai báo không phải phép đo") + chặn `autopilot-update.sh` tới khi fix land; căn cứ: footgun lần **thứ hai**, đo được cả hai kit cùng `KIT_VERSION: 31`. |
 | 14/08/2026 | v2.30 | **Thêm DD-107 ✅ — autonomy mode `autonomous_to_ready` + context/authority protocol.** **Context:** toàn bộ doc corpus thuộc phạm vi quyết định, nhưng đo tại `1fdba1d` là **303 file / 8,5 MB / ~2 triệu token** (riêng 6 doc lõi đã ~220k) ⇒ **không nạp được**; bằng chứng sống: session build `session-service` chạm 98% context khi mới nạp context pack của chính nó. Luật thành **bảo đảm ĐỘ PHỦ chứ không phải ĐÃ NẠP**: (1) luôn nạp lõi nhỏ — HANDOFF live-truth + **bảng tổng hợp** `decisions.md` (~18k token, không phải toàn thân) + gate + packet; (2) phần còn lại **search toàn corpus rồi ghi query vào ledger**; (3) **kết quả rỗng là bằng chứng và phải ghi** — "search `buddy` → DD-26 cấm" chính là câu đáng lẽ ngăn được DD-106; kèm cảnh báo grep rỗng là bằng chứng về *query* (đã sập 2 lần: awk backtick vs em-dash, và luật ngôn ngữ grep zero cho luật có thật). **Thang authority 7 bậc** viết lần đầu để lane tự giải mâu thuẫn (rà soát 13/08 tìm thấy mâu thuẫn đồng thời ở spec/playbook/template/index): runtime truth > migrations+`schema.ts` > `decisions.md` > spec Reviewed (mục 🟡 bên trong **không** phải contract) > Draft/plan/proposal > ROADMAP/BRD/PRD/TDD theo đúng câu hỏi mỗi cái sở hữu > index/summary (mục trước nhất — 46/51 ô version sai). Bốn tie-break: packet trên branch thắng bản `main`; khối live-truth mới thắng khối cũ **kể cả phần chỉ thị**; hai doc cùng khai canonical thì cái dẫn được decision ID thắng, không thì AWAIT; `Doc status ≠ Implementation status`. Ledger thêm field **`Searched:`** — trường duy nhất cho phép reviewer biết agent quyết từ corpus hay từ prior. |
 | | | **(tiếp DD-107 — phần autonomy)** Lane chạy thẳng tới READY, owner review **một lượt tại READY** qua Decision Ledger thay vì bị ngắt từng quyết định. Căn cứ đo được: lane `session-service-create-command-core` v1 dừng hỏi owner **4 lần chỉ vì budget** (300→360→440→470) rồi vẫn `HALT MAX_ROUNDS` — budget không phải ràng buộc thật; và 3/4 blocker của packet giải được bằng cách **đọc repo**, chỉ B4 là quyết định owner thật (→ DD-105). Thang thẩm quyền **A derivable** (quyết + log; dừng ở tầng này là defect) · **B judgment/reversible/in-scope** (quyết + log đủ, owner review batch) · **C reserved** (vẫn AWAIT — đúng 8 mục: money contract · PII/HARD RULES · sửa contract spec Reviewed · migration đổi semantics/chung tail · enablement · merge/deploy · vượt negative scope · finding bị phản bác). Tiêu chí: **phép thử 10×** + tie-break `fail-closed > một nguồn sự thật > ít khái niệm > theo tiền lệ > reversible`. Budget thành **tín hiệu** (overrun ⇒ re-slice hoặc log nguyên nhân thiết kế, lần hai cùng nguyên nhân ⇒ re-slice bắt buộc). HALT successor pre-authorized khi finding được chấp nhận **và** gọi tên được nguyên nhân thiết kế. **Tier C không rút gọn thêm** vì DD-106 là hoá đơn của việc thiếu nó. **Không đổi:** worktree isolation, scope-gate, 2 vòng review sạch, loop breaker, **human merge**; mode này không hàm ý auto-merge. Mirror: `../autopilot-templates/level3-workflow.md` §6.1 (+ §9 READY/AWAIT). |
