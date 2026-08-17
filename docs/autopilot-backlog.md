@@ -3495,12 +3495,71 @@ notes: |
   test suite assert byte-identical cho mọi entry `TRUSTED_GATE_FILES`, hoặc dẫn xuất version từ content
   hash. Chọn cách nào cũng được; điều kiện là không phụ thuộc ai đó nhớ.
 
-  **Ràng buộc vận hành đang áp:** `autopilot-update.sh` **bị chặn** cho tới khi vế (2) land. Chạy sync
-  trước đó sẽ ghi đè gate đã siết bằng bản cũ non-fail-closed, **và không test nào đỏ** vì test bị ghi đè
-  cùng lúc. `SessionStart` hook chỉ auto-overwrite `scope-gate` nên `main` Plexco đứng một mình vẫn an toàn;
-  rủi ro chỉ kích hoạt khi chạy update.
+  **Ràng buộc vận hành — ĐO LẠI 2026-08-15, hai câu ở bản gốc SAI, giữ lại để thấy sai ở đâu.** Bản gốc
+  viết: sync sẽ "ghi đè gate đã siết bằng bản cũ non-fail-closed, **và không test nào đỏ** vì test bị ghi
+  đè cùng lúc". Đo trực tiếp cho thấy **cả hai vế đều không đúng**:
+  - `autopilot-update.sh` với hai bên **cùng** `KIT_VERSION` mà khác bytes đi vào nhánh same-version rồi
+    `HALT KIT_DRIFT_SAME_VERSION` (`autopilot-update.sh:231`) **nêu đích danh file** — nó **không** copy.
+  - `.test.mjs` **không** nằm trong `pack_pairs` (0 entry), nên test phía consumer **sống sót** qua sync;
+    `autopilot-ephemeral-review-worktree.test.mjs:224` đọc chính gate và assert `TRUSTED_GATE_FILES` chứa
+    module whitelist ⇒ nếu có ghi đè thật thì test **đỏ**, không im lặng.
+
+  **Nguy cơ thật, hẹp hơn nhưng vẫn có:** chính thông điệp `HALT` khuyên chạy `--repair-current`, và cờ
+  đó **mù hướng** — nó thay bản local bằng canonical bất kể bên nào mới hơn. Làm theo lời khuyên trong
+  lúc canonical đang stale mới là đường gate bị revert. `ap-watch-update-all.sh` **có** direction-check
+  (`:31-36`) nhưng chỉ áp cho `ap-watch.sh`, không áp cho pack.
+
+  **Chặn thứ hai, độc lập:** `autopilot-update.sh` gọi `assert_canonical_suite_green` chạy **cả** `unit.sh`
+  lẫn `e2e.sh` trước khi copy. Đo trên Linux 15/08: `unit` PASS, `e2e` **24 fail** (baseline HEAD trước khi
+  mirror là 40 — mirror sửa 16). Tới khi `e2e` xanh trên máy thật, mọi consumer sync đều `HALT KIT_SUITE_RED`
+  bất kể DD-108. Cần một lần chạy `e2e.sh` trên macOS có `codex` để phân loại 24 lỗi còn lại (12 cái
+  `defect5/6/7b` nhiều khả năng chỉ vì sandbox thiếu binary `codex`).
 
   **Vì sao P1 chứ không P2:** mục đích tồn tại của a3c62ad là biến một phán xử ad-hoc của permission
   classifier thành **rule deterministic**. Một lần sync ghi đè xoá đúng tính deterministic đó, im lặng.
   Đây cũng là **lần thứ hai** cùng footgun ở cùng chỗ — lần một đóng bằng `f990469` rồi tái xuất sau một
   ngày ở file kế bên. Lặp lại = tín hiệu cơ chế, không phải xui.
+
+---
+
+## task: docs-impact-policy-contract
+
+title: Đặc tả `impact_policy` (edge #4) — enum, request DTO, preview, vị trí trong chuỗi lock (P1)
+status: ready
+risk: P1
+change_class: docs-contract
+depends_on: []
+invariants: [session-lock-ordering, api-contract, i18n-surface]
+scope: docs/autopilot-manifests/docs-impact-policy-contract.json
+manifest: docs/autopilot-manifests/docs-impact-policy-contract.json
+merged_probe: null
+close_by: hand · diff thuần prose trong hai spec đã Reviewed + design-system; định danh mới duy nhất
+là hai giá trị enum mà CHÍNH slice này phải chọn, nên không tồn tại symbol nào để probe lúc author —
+cùng lớp với `docs-billing-authz-signature-reconcile`
+\_probe_note: bản đầu bind `PRICE_CHANGE_REQUIRES_POLICY` và reconciler đánh STALE ngay — mã lỗi đó
+ĐÃ có trên origin (BE `:283` và `:733`, FE `:348` đủ `t(vi,en)`). Cùng bẫy mà chú thích này định
+tránh cho `impact_policy`, chỉ đổi token. Đừng bind bất kỳ tên nào đọc được từ spec hôm nay.
+notes: |
+**Vì sao P1 dù chỉ là docs:** nó quyết số phận **tiền người chơi đã nợ** khi host đổi giá/sức chứa.
+Tiền lệ DD-106 Q1: một giá trị enum trên đường tiền được đề xuất, đem đo, rồi **bác** vì model sẵn có
+đã biểu diễn được ca đó. Mỗi giá trị enum trên đường tiền là một nhánh vĩnh viễn trong mọi đối
+soát/report/reversal.
+
+**Phát hiện lúc scope, và nó đổi hình việc:** `impact_policy` và `review_policy` là **hai cơ chế
+ngược chiều**, không phải một "payments subsystem". `impact_policy` là **input caller cung cấp** —
+`PRICE_CHANGE_REQUIRES_POLICY` (400) trừ khi host nói rõ muốn gì. `review_policy` là **deflection hệ
+thống ép ra** — `CANCEL_REQUIRES_REVIEW` (400), đẩy sang người xử lý. Một cái "nói tôi nghe rồi tôi
+làm", cái kia "không có người thì tôi không làm". Gộp = ghép một hợp đồng gần xong với một thiết kế
+workflow chưa bắt đầu, đúng hình dạng đã thrash hai lần trong tuần.
+
+**Đã có sẵn hơn tưởng:** FE spec `feature_sessions_fe.md:400` **đã đặt tên hai policy target** ("Giữ
+obligation hiện tại" / "Áp chênh lệch bằng append-only signed adjustment") và **block Save** thay vì
+tự invent enum. Thiếu: request enum, preview DTO, vị trí tiêu thụ policy trong chuỗi lock của edge #4,
+và khoá ngôn ngữ của mã lỗi.
+
+**Block đã lan sang FE, nên scope phải với tới đó:** `design-system.md:462` ghi `SessionForm` **không
+có** `impact_policy` selector và dẫn chính cái block kia làm lý do. Sửa BE spec mà để hai chỗ đó nói
+ngược lại là tạo đúng lớp drift mà `docs-feature-index-version-freshness-check` đang theo dõi.
+
+**Mở khoá gì:** `update_open_session` (command BE cuối không chạm edge #5) **và** một màn FE đang bị
+chặn. `close_session`/`cancel_session` **không** — chúng chờ `review_policy`, slice riêng, mở sau.

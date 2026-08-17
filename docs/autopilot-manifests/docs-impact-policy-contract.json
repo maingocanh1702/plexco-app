@@ -1,0 +1,109 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — deliberately carries NO manifest_schema_version; adding it makes register HALT CONTRACT_INVALID. The runtime manifest is generated at register time into .autopilot/state/<feature>/manifest.json from _TEMPLATE.json.",
+  "task_id": "plexco:docs-impact-policy-contract",
+  "feature": "docs-impact-policy-contract",
+  "branch": "feat/docs-impact-policy-contract",
+  "base_ref": "origin/main",
+  "risk": "P1",
+  "_risk_note": "P1 not P2 despite being docs-only: this pins the contract that decides what happens to EXISTING charges when a host changes price or capacity. A wrong enum here is a money-model decision that every later implementation inherits, and DD-106 Q1 is the standing precedent for how expensive it is to add a value on a money path and then need it removed.",
+  "autonomy_mode": "autonomous_to_ready",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_dependency_note": "ROOT. Nothing to wait for: edge #4 already exists in the Reviewed BE spec, the two policy targets are already named in the FE spec, and no code reads either token (grep across packages/ and apps/ returns only a comment in authorization.ts). This slice writes the contract those three places are all waiting on.",
+  "invariants": ["session-lock-ordering", "api-contract", "i18n-surface"],
+  "_invariant_note": "session-lock-ordering: edge #4's rule is 'lock session -> root job -> roster/finance, THEN require explicit impact_policy', so the contract cannot be written without pinning where in the lock sequence the policy is consumed. api-contract: this adds a required request field, a preview response shape and an error code. i18n-surface: the error and the two policy labels are user-facing and fall under the t(vi, en) hard rule. Deliberately NOT declaring billing-authz — this slice does not touch authorizeTenantAction or the Suspended Action Matrix, and over-declaring it would serialise this lane against every billing lane for no reason.",
+  "scope": [
+    "docs/features/BE/feature_session_management_tech.md",
+    "docs/channels/web/FE/feature_sessions_fe.md",
+    "docs/standards/design-system.md",
+    "docs/features/README.md",
+    "docs/autopilot-manifests/docs-impact-policy-contract.json",
+    "docs/autopilot/contracts/autopilot-docs-impact-policy-contract.md",
+    "docs/autopilot-backlog.md"
+  ],
+  "_scope_note": "design-system.md is in scope because its SessionForm row at line 462 currently states there is NO impact_policy selector, citing the FE spec's block. Once the contract exists that row is stale, and a docs slice that leaves its own contradiction behind in the component catalogue is the drift class docs-feature-index-version-freshness-check already names. features/README.md carries version cells for both specs. The manifest and contract doc are in scope on purpose — AP-39 spent three fix rounds on a contract the writer had no authority to update.",
+  "negative_scope": [
+    "NO code, NO migration, NO schema.ts change — this slice produces contract text only",
+    "NO review_policy / edge #5 work — that is a DIFFERENT mechanism (a system-forced deflection to human review) and gets its own slice; touching it here recreates the oversized-slice shape that thrashed twice",
+    "NO third policy target beyond the two the FE spec already pins — inventing one is a money-model decision reserved for the owner (DD-106 Q1 precedent)",
+    "NO refund, settlement or charge-reversal engine design — the contract states what the policy MEANS, not how money moves",
+    "NO change to the payment_allocations source enum or any existing money column",
+    "NO unblocking of the FE Save button in code — the FE spec may record that the block is liftable once implemented, but this slice ships no component",
+    "NO change to CANCEL_REQUIRES_REVIEW or anything cancel/close-shaped"
+  ],
+  "context_sources": [
+    "docs/features/BE/feature_session_management_tech.md",
+    "docs/channels/web/FE/feature_sessions_fe.md",
+    "docs/standards/design-system.md",
+    "docs/standards/decisions.md",
+    "docs/features/BE/feature_payment_reconcile_tech.md",
+    "packages/db/migrations/0003_payments_ledger.sql",
+    "packages/db/schema.ts",
+    "docs/templates/be-tech-spec-template.md",
+    "docs/standards/review-code-readiness-gate.md"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "none",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [
+      "grep -q 'impact_policy' docs/features/BE/feature_session_management_tech.md",
+      "npx prettier --check docs/features/BE/feature_session_management_tech.md docs/channels/web/FE/feature_sessions_fe.md docs/standards/design-system.md docs/features/README.md docs/autopilot-backlog.md",
+      "pnpm review:check:changed"
+    ],
+    "canonical": ["pnpm review:check:changed", "pnpm format:check"],
+    "e2e": []
+  },
+  "_verification_note": "Docs slice: there is no runtime behaviour to test, so verification is formatting, the readiness validator, and the acceptance matrix below read by a human reviewer. Do NOT claim a test count. Do NOT run the DB suite as evidence for this slice — a green suite proves nothing about a contract that no code reads yet, and citing it would be the 'docs are not runtime proof' error the gate file names.",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 2
+  },
+  "security_review": {
+    "required": true,
+    "reason": "money contract — the policy decides the fate of existing charges when price or capacity changes; a fail-open default here silently rewrites obligations players already owe",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "changed_loc_max": 220,
+    "modules_max": 4,
+    "fix_rounds_max": 5,
+    "_budget_note": "Estimate, re-pin after enumerating the acceptance matrix. Budget is a signal under autonomous_to_ready: on overrun, re-slice rather than request an amendment. The validator hard-caps fix_rounds_max at 5 and rejects a manifest declaring more (DD-109 established this by trying)."
+  },
+  "stop_conditions": [
+    "any file under packages/ or apps/ appears in the diff",
+    "the contract needs a THIRD policy target to be coherent -> AWAIT, that is an owner money decision",
+    "specifying impact_policy turns out to require specifying review_policy first -> AWAIT with the exact coupling named, do not absorb edge #5",
+    "the append-only adjustment target cannot be expressed without a new payment_allocations source value -> AWAIT (DD-106 Q1 ruled that adding an enum value on the money path needs an owner decision and a reason no existing value covers it)",
+    "reviewer unavailable -> HALT TOOL_UNAVAILABLE",
+    "MAX_ROUNDS",
+    "REGION_THRASH"
+  ],
+  "_already_on_main_do_not_redeliver": "Measured at 57dda43 before this packet was written, because an earlier draft of this acceptance matrix listed work that already exists. PRICE_CHANGE_REQUIRES_POLICY is ALREADY specified: feature_session_management_tech.md:283 carries the error row with its Vietnamese text, :733 carries the acceptance row 'Price change no policy -> PRICE_CHANGE_REQUIRES_POLICY', and feature_sessions_fe.md:348 carries the full t(vi, en) mapping. The fail-closed requirement is therefore already contract. Do NOT re-author any of it, and do NOT count it as delivered work. What is genuinely missing is exactly what feature_sessions_fe.md:400 says is missing: the request enum and the preview DTO.",
+  "_acceptance": {
+    "A1": "the two enum VALUES — the only genuinely unspecified part. Exactly two, in the repo's snake_case dialect, mapping 1:1 onto the targets feature_sessions_fe.md:400 already names: keep existing obligations, and apply the delta as an append-only signed adjustment. Naming them is this slice's core deliverable.",
+    "A2": "each value states what happens to charges that ALREADY exist, expressed in the existing payment_allocations model (0003_payments_ledger.sql), without introducing a new source value",
+    "A3": "the preview DTO: what the host sees before committing, what the server computes and owns (feature_sessions_fe.md pins amounts as server-owned), and what the FE is forbidden to compute client-side",
+    "A4": "where in edge #4's lock sequence the policy is consumed. The rule at :214 reads 'lock session -> root job -> roster/finance, THEN require explicit impact_policy', so the contract must place the check under the lock rather than before it",
+    "A5": "the capacity branch of edge #4 — 'a capacity outcome that is full resolves roots in the same tx' — either stated as contract or explicitly deferred with the reason named",
+    "A6": "feature_sessions_fe.md's Save-is-blocked row and design-system.md:462's 'no impact_policy selector' row are both reconciled, with the block described as liftable-on-implementation rather than silently deleted",
+    "A7": "the boundary with review_policy stated in one sentence in the BE spec: impact_policy is a caller-supplied decision, review_policy is a system-forced deflection to human review, and neither substitutes for the other"
+  },
+  "_evidence_rules": [
+    "Cite spec lines by file and line number and quote them; do not paraphrase a rule you are about to change.",
+    "Identifiers you enumerate yourself (acceptance IDs, policy names under consideration) must be labelled as derived AT THE MOMENT you create them. An authored contract is not owner-ratified authority — that conflation cost two lanes.",
+    "An empty grep is evidence about the query before it is evidence about the repo. Record the query, not just the conclusion.",
+    "Do not claim CODE_READY, IMPLEMENTED or any readiness state from inside the slice."
+  ]
+}
