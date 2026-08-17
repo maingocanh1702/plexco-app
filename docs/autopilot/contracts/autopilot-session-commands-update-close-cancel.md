@@ -142,7 +142,7 @@ fail-closed).
   `expected_version` mandatory on the mutate branch (edge #26). The `open` source is player-visible and
   money-touching. **Needs a suspension class — UNNAMED.** (The draft source ALONE would fit DD-105, but
   the command is spec'd as one unit accepting both — see §4 B4.)
-- **AnnounceSession** (`POST /api/sessions/:id/announce`, SES-UC-3, `session.announced`): notification
+- **AnnounceSession** (`POST /api/sessions/:id/announce`, SES-UC-3, `session.announcement_requested`): notification
   to a linked group; no status transition, no roster/money. Money-free but player-visible. Whether it
   even needs a suspension class is itself a contract question (it is not in the matrix) — DD-105 lists
   it as needing "a narrow class when built". Cheapest; only if budget allows.
@@ -229,7 +229,7 @@ lost updates.
 | CA3 | Happy (open) | Cancel | source `open`, roster/paid-impact preview + review_policy honored, `expected_version` ok | `status='cancelled'`; `version` bump; one `session.cancelled` (`roster_count`, `has_paid`); refund disposition delegated | real-PG | SES-UC-6; edge #5 |
 | CA4 | Boundary | Cancel | already-`cancelled` (either source) | idempotent no-op, `version` unchanged, no duplicate event, `expected_version` NOT required on no-op | unit | edge #27 |
 | CA5 | **Suspend** | Cancel (open) | tenant `suspended`, source `open` | `TENANT_SUSPENDED` (403) UNDER LOCK; zero mutation | real-PG | **BLOCKED B1** |
-| AN1 | Happy | Announce | announce an `open` session, tenant active | one canonical announcement ref + `session.announced` outbox (`channel`); no status change; no roster/money | real-PG | SES-UC-3; §4 events:508 |
+| AN1 | Happy + guard | Announce | announce an `open` session, tenant active | if `ends_at > now()`: one canonical announcement ref + one `session.announcement_requested` outbox (`channel`); no status change; no roster/money. If `ends_at <= now()` (auto-expiry not built, so the row stays `open`): `SESSION_ALREADY_ENDED` (409), zero mutation (DD-111 D1/D2) | real-PG | SES-UC-3; §4 events:514; DD-111 |
 | SEC1 | cross-tenant | all | mutate as tenant B a session in tenant A | invisible/denied via RLS `FORCE` (withTenant GUC); `tenant_id` injected, never from payload | real-PG + rls-invariants unchanged-green | Bất biến |
 | DED1 | dedup-replay | all | same `(tenant_id, command_id)` twice | second returns stored envelope, zero new mutation (shared `processed_commands` ledger, S2 pattern; foreign command_type → `COMMAND_ID_CONFLICT`) | real-PG | edge #3; S2 |
 | MIG1 | Migration | — | — | NONE: zero migration, zero schema.ts; reuses status enum (0002) + free-text outbox `type` | scope gate | §0 |

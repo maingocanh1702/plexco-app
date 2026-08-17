@@ -13,21 +13,30 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
  * fail-closed union itself (§1: "adapters cannot implement inconsistent
  * suspension rules").
  *
- * Recognised action classes are exactly the "mutating" ones billing §3's
- * Concurrency clause names (publish_new_sessions, admin_mutation,
- * integration_changes). The always-allow classes from the product-level
- * Suspended Action Matrix (player CK ingest, read-only queries, system
- * safety) never consult tenant/subscription status at all (edge #9: "Allow —
- * safety path") and so structurally never route through this resolver;
- * recognising them here is a future slice's decision once a real caller
- * exists, not this root dependency's.
+ * Recognised action classes are the "mutating" ones billing §3's Concurrency
+ * clause names (publish_new_sessions, admin_mutation, integration_changes) plus
+ * announce_session — a DD-110 session command that, like publish, is ❌ under
+ * suspension (active/past_due ✅, suspended ❌), landing its narrow per-op class
+ * with its own command (this slice, announceSession). It routes through the
+ * EXISTING fail-closed resolution below unchanged — no special-casing. The
+ * always-allow product-matrix classes (player CK ingest, read-only queries,
+ * system safety) never consult tenant/subscription status at all (edge #9:
+ * "Allow — safety path") and so structurally never route through this resolver.
+ *
+ * DD-110 also mints obligation-termination classes (close_session,
+ * cancel_session) that ALLOW under suspension; per DD-110 D3 a literal enters
+ * this enum only in the commit that lands its command, and those two are blocked
+ * on the payments/review_policy subsystem (spec edge #5), so they — and any
+ * allow-when-suspended handling — are intentionally absent here.
  */
-export type ActionClass = "publish_new_sessions" | "admin_mutation" | "integration_changes";
+export type ActionClass =
+  "publish_new_sessions" | "admin_mutation" | "integration_changes" | "announce_session";
 
 const RECOGNIZED_ACTION_CLASSES: ReadonlySet<ActionClass> = new Set([
   "publish_new_sessions",
   "admin_mutation",
   "integration_changes",
+  "announce_session",
 ]);
 
 export type EffectiveStatus = "trialing" | "active" | "past_due";

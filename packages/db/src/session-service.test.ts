@@ -5,11 +5,17 @@ import { sessions } from "../schema.js";
 import {
   createSession,
   publishSession,
+  announceSession,
   SessionCommandError,
   SessionPublishAuthorizationError,
   SessionPublishError,
+  SessionAnnounceError,
+  SessionAnnounceAuthorizationError,
   type CreateSessionInputPayload,
   type PublishSessionInputPayload,
+  type AnnounceSessionInputPayload,
+  type AnnounceSessionResult,
+  type AnnounceChannel,
 } from "./session-service.js";
 import { tenantRepo, withTenant } from "./tenant.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
@@ -1176,6 +1182,495 @@ describe("publishSession", () => {
       }).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(SessionPublishError);
       expect((err as SessionPublishError).code).toBe("SESSION_NOT_FOUND");
+    }
+  });
+});
+
+// AnnounceSession -- request an announcement of an OPEN session to a linked channel (contract AN1,
+// SEC1, DED1). Real-PG, app role via the RLS harness. announce_session is DENY-path: a suspended
+// tenant is refused (unlike close/cancel, which are deferred). announce does not change status.
+describe("announceSession", () => {
+  const future = () => new Date(Date.now() + 24 * 3600 * 1000);
+  const CH: AnnounceChannel = "zalo"; // a recognised logical channel type (see AnnounceChannel)
+
+  async function seedTenant(tenantStatus: string, subStatus: string | "missing"): Promise<string> {
+    const unique = randomUUID();
+    const t = await ctx.owner.query(
+      `INSERT INTO tenants (name, slug, status) VALUES ($1, $2, $3) RETURNING id`,
+      [`Announce Test ${unique}`, `announce-test-${unique}`, tenantStatus],
+    );
+    const tenantId = (t.rows[0] as { id: string }).id;
+    if (subStatus !== "missing") {
+      await ctx.owner.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
+         VALUES ($1, 'free', 1, $2, now(), now() + interval '30 days')`,
+        [tenantId, subStatus],
+      );
+    }
+    return tenantId;
+  }
+
+  async function seedSession(
+    tenantId: string,
+    status: string,
+  ): Promise<{ sessionId: string; version: number }> {
+    const startsAt = future();
+    const s = await ctx.owner.query(
+      `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, area, slots_max, visibility, status)
+       VALUES ($1, $2, $3, $4, 'Asia/Ho_Chi_Minh', 'Quan 1', 8, 'private', $5)
+       RETURNING id, version`,
+      [
+        tenantId,
+        ctx.badmintonSportId,
+        startsAt,
+        new Date(startsAt.getTime() + 2 * 3600 * 1000),
+        status,
+      ],
+    );
+    const r = s.rows[0] as { id: string; version: number };
+    return { sessionId: r.id, version: r.version };
+  }
+
+  const announce = (tenantId: string, input: AnnounceSessionInputPayload, commandId = cmdId()) =>
+    announceSession(ctx.appDb.db, { tenantId, commandId, input });
+
+  const outboxFor = (sessionId: string) =>
+    rows(
+      `SELECT aggregate_type, sequence, type, payload, claimed_at, acked_at
+         FROM outbox_events WHERE aggregate_id = $1 ORDER BY sequence`,
+      [sessionId],
+    );
+  const sessionRow = (sessionId: string) =>
+    row(`SELECT status, version FROM sessions WHERE id = $1`, [sessionId]);
+
+  async function expectAnnounceReject(
+    run: () => Promise<unknown>,
+    code: string,
+    sessionId: string,
+  ): Promise<void> {
+    const before = await sessionRow(sessionId);
+    const beforeOutbox = await outboxFor(sessionId);
+    const err = await run().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionAnnounceError);
+    expect((err as SessionAnnounceError).code).toBe(code);
+    expect(await sessionRow(sessionId)).toEqual(before);
+    expect(await outboxFor(sessionId)).toEqual(beforeOutbox);
+  }
+
+  it("AN1: announces an open session -- one session.announcement_requested outbox row, no status change, ledger row", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, "open");
+    const commandId = cmdId();
+
+    const result = await announce(tenantId, { sessionId, channel: CH }, commandId);
+
+    expect(result).toEqual({ sessionId, channel: CH, replayed: false });
+    // no status change, no version bump -- announce does not mutate the session
+    expect(await sessionRow(sessionId)).toEqual({ status: "open", version });
+
+    const events = await outboxFor(sessionId);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      aggregate_type: "session",
+      sequence: 1,
+      type: "session.announcement_requested",
+      payload: { session_id: sessionId, channel: CH },
+      claimed_at: null,
+      acked_at: null,
+    });
+
+    const pc = await row(
+      `SELECT command_type, result_ref FROM processed_commands WHERE tenant_id = $1 AND command_id = $2`,
+      [tenantId, commandId],
+    );
+    expect(pc).toMatchObject({
+      command_type: "AnnounceSession",
+      result_ref: { sessionId, channel: CH },
+    });
+  });
+
+  it("SESSION_NOT_OPEN: a draft / closed / cancelled session cannot be announced (zero mutation)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    for (const status of ["draft", "closed", "cancelled"]) {
+      const { sessionId } = await seedSession(tenantId, status);
+      await expectAnnounceReject(
+        () => announce(tenantId, { sessionId, channel: CH }),
+        "SESSION_NOT_OPEN",
+        sessionId,
+      );
+    }
+  });
+
+  it("in-progress open session (started, not yet ended) is announceable -- the ends_at guard is strictly narrower than a starts_at cutoff and does not block a valid late-join invite", async () => {
+    const tenantId = await seedTenant("active", "active");
+    // starts_at in the past, ends_at in the future -- seeded on the DB clock the guard reads.
+    const s = await ctx.owner.query(
+      `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, area, slots_max, visibility, status)
+       VALUES ($1, $2, clock_timestamp() - interval '1 hour', clock_timestamp() + interval '1 hour',
+               'Asia/Ho_Chi_Minh', 'Quan 1', 8, 'private', 'open')
+       RETURNING id`,
+      [tenantId, ctx.badmintonSportId],
+    );
+    const sessionId = (s.rows[0] as { id: string }).id;
+    const result = await announce(tenantId, { sessionId, channel: CH });
+    expect(result).toEqual({ sessionId, channel: CH, replayed: false });
+    expect(await outboxFor(sessionId)).toHaveLength(1);
+  });
+
+  it("SESSION_ALREADY_ENDED: an open session whose ends_at has passed cannot be announced (auto-expiry is not built, so it stays 'open') -- zero mutation, and distinct from SESSION_NOT_OPEN", async () => {
+    const tenantId = await seedTenant("active", "active");
+    // both timestamps in the past on the DB clock -- an ended-but-still-open row.
+    const s = await ctx.owner.query(
+      `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, area, slots_max, visibility, status)
+       VALUES ($1, $2, clock_timestamp() - interval '4 hours', clock_timestamp() - interval '2 hours',
+               'Asia/Ho_Chi_Minh', 'Quan 1', 8, 'private', 'open')
+       RETURNING id`,
+      [tenantId, ctx.badmintonSportId],
+    );
+    const sessionId = (s.rows[0] as { id: string }).id;
+    await expectAnnounceReject(
+      () => announce(tenantId, { sessionId, channel: CH }),
+      "SESSION_ALREADY_ENDED",
+      sessionId,
+    );
+  });
+
+  it("TENANT_SUSPENDED: a suspended tenant cannot announce (deny-path) -- zero mutation, no event", async () => {
+    // Same fixture where close_session would be ALLOWED (DD-110 D2); announce is deny-path, so it
+    // is REFUSED. This is the exact behavioural contrast between the two DD-110 halves.
+    const tenantId = await seedTenant("suspended", "active");
+    const { sessionId, version } = await seedSession(tenantId, "open");
+    const err = await announce(tenantId, { sessionId, channel: CH }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionAnnounceAuthorizationError);
+    expect((err as SessionAnnounceAuthorizationError).code).toBe("TENANT_SUSPENDED");
+    expect(await sessionRow(sessionId)).toEqual({ status: "open", version });
+    expect(await outboxFor(sessionId)).toHaveLength(0);
+  });
+
+  it("TENANT_SUSPENDED: a tenant whose SUBSCRIPTION is suspended is also refused", async () => {
+    const tenantId = await seedTenant("active", "suspended");
+    const { sessionId } = await seedSession(tenantId, "open");
+    const err = await announce(tenantId, { sessionId, channel: CH }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionAnnounceAuthorizationError);
+    expect(await outboxFor(sessionId)).toHaveLength(0);
+  });
+
+  it("INVALID_CHANNEL: anything outside the closed channel enum is rejected before any mutation (empty, raw id, unknown platform, wrong case, non-string)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId } = await seedSession(tenantId, "open");
+    // A raw destination id ("zalo-group-abc123") -- the would-be cross-tenant target codex round-01
+    // flagged -- an unknown platform, a wrong-case value, empty, and non-strings are ALL refused.
+    for (const badChannel of [
+      "",
+      "zalo-group-abc123",
+      "whatsapp",
+      "ZALO",
+      42,
+      null,
+      undefined,
+      {},
+    ]) {
+      const err = await announce(tenantId, {
+        sessionId,
+        channel: badChannel as unknown as AnnounceChannel,
+      }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(SessionAnnounceError);
+      expect((err as SessionAnnounceError).code).toBe("INVALID_CHANNEL");
+    }
+    expect(await outboxFor(sessionId)).toHaveLength(0); // no event emitted for any rejected channel
+  });
+
+  it("SESSION_NOT_FOUND: an unknown sessionId, and a malformed payload, fail closed", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const missingErr = await announce(tenantId, { sessionId: randomUUID(), channel: CH }).catch(
+      (e: unknown) => e,
+    );
+    expect(missingErr).toBeInstanceOf(SessionAnnounceError);
+    expect((missingErr as SessionAnnounceError).code).toBe("SESSION_NOT_FOUND");
+
+    for (const badInput of [null, 42, [], { channel: CH }, { sessionId: "nope", channel: CH }]) {
+      const err = await announceSession(ctx.appDb.db, {
+        tenantId,
+        commandId: cmdId(),
+        input: badInput as unknown as AnnounceSessionInputPayload,
+      }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(SessionAnnounceError);
+      expect((err as SessionAnnounceError).code).toBe("SESSION_NOT_FOUND");
+    }
+  });
+
+  it("DED1: replaying the same commandId returns the stored envelope, no second event", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId } = await seedSession(tenantId, "open");
+    const commandId = cmdId();
+
+    const first = await announce(tenantId, { sessionId, channel: CH }, commandId);
+    expect(first).toMatchObject({ replayed: false, sessionId, channel: CH });
+
+    const replay = await announce(tenantId, { sessionId, channel: CH }, commandId);
+    expect(replay).toEqual({ sessionId, channel: CH, replayed: true });
+    expect(await outboxFor(sessionId)).toHaveLength(1); // still exactly one request
+  });
+
+  it("authz beats replay: a successful announce, then suspension, then replaying the same commandId -> TENANT_SUSPENDED and still exactly one event (authz runs before dedup)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId } = await seedSession(tenantId, "open");
+    const commandId = cmdId();
+
+    const first = await announce(tenantId, { sessionId, channel: CH }, commandId);
+    expect(first.replayed).toBe(false);
+
+    // suspend the tenant AFTER the successful announce
+    await ctx.owner.query(`UPDATE tenants SET status = 'suspended' WHERE id = $1`, [tenantId]);
+
+    // replay the SAME commandId: the upfront gate (before dedup) refuses, so the stored envelope is
+    // NEVER replayed for a now-suspended tenant and no second event is emitted.
+    const err = await announce(tenantId, { sessionId, channel: CH }, commandId).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(SessionAnnounceAuthorizationError);
+    expect((err as SessionAnnounceAuthorizationError).code).toBe("TENANT_SUSPENDED");
+    expect(await outboxFor(sessionId)).toHaveLength(1); // no replay event emitted
+  });
+
+  it("COMMAND_ID_CONFLICT: a commandId reused for a different session or a different channel fails closed", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const a = await seedSession(tenantId, "open");
+    const b = await seedSession(tenantId, "open");
+    const commandId = cmdId();
+
+    await announce(tenantId, { sessionId: a.sessionId, channel: CH }, commandId);
+    // same commandId, different session -> not a replay of A -> conflict, B untouched
+    await expectAnnounceReject(
+      () => announce(tenantId, { sessionId: b.sessionId, channel: CH }, commandId),
+      "COMMAND_ID_CONFLICT",
+      b.sessionId,
+    );
+    // same commandId, same session, DIFFERENT (but valid) channel -> also a conflict (exact-request
+    // idempotency: the stored channel was "zalo", so a "messenger" replay is not that request)
+    const err = await announce(
+      tenantId,
+      { sessionId: a.sessionId, channel: "messenger" },
+      commandId,
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionAnnounceError);
+    expect((err as SessionAnnounceError).code).toBe("COMMAND_ID_CONFLICT");
+  });
+
+  it("COMMAND_ID_CONFLICT: a foreign command_type under this commandId fails closed -- never replayed as an announce, zero new outbox and the foreign ledger row untouched", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId } = await seedSession(tenantId, "open");
+    const commandId = cmdId();
+    // A foreign ledger row (a CreateSession result) squats this commandId.
+    await ctx.owner.query(
+      `INSERT INTO processed_commands (tenant_id, command_id, command_type, result_ref) VALUES ($1, $2, 'CreateSession', $3)`,
+      [
+        tenantId,
+        commandId,
+        JSON.stringify({ sessionId, visibility: "private", status: "draft", version: 1 }),
+      ],
+    );
+    await expectAnnounceReject(
+      () => announce(tenantId, { sessionId, channel: CH }, commandId),
+      "COMMAND_ID_CONFLICT",
+      sessionId,
+    );
+    // the foreign row is not overwritten by an announce envelope
+    const pc = await row(
+      `SELECT command_type FROM processed_commands WHERE tenant_id = $1 AND command_id = $2`,
+      [tenantId, commandId],
+    );
+    expect(pc).toEqual({ command_type: "CreateSession" });
+  });
+
+  it("COMMAND_ID_CONFLICT: an AnnounceSession ledger row with a corrupt/domain-invalid result_ref fails closed (never replayed) -- zero new outbox", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId } = await seedSession(tenantId, "open");
+    // Type-valid (AnnounceSession) but result_ref fails isStoredAnnounceResult: null, non-object,
+    // missing sessionId, non-UUID sessionId, and an unrecognised channel are ALL corrupt -> conflict.
+    const corrupt: unknown[] = [
+      null,
+      42,
+      {},
+      { channel: CH },
+      { sessionId: "not-a-uuid", channel: CH },
+      { sessionId, channel: "whatsapp" },
+    ];
+    for (const result of corrupt) {
+      const commandId = cmdId();
+      await ctx.owner.query(
+        `INSERT INTO processed_commands (tenant_id, command_id, command_type, result_ref) VALUES ($1, $2, 'AnnounceSession', $3)`,
+        [tenantId, commandId, result === null ? null : JSON.stringify(result)],
+      );
+      await expectAnnounceReject(
+        () => announce(tenantId, { sessionId, channel: CH }, commandId),
+        "COMMAND_ID_CONFLICT",
+        sessionId,
+      );
+    }
+  });
+
+  it("SEC1: cross-tenant -- announcing another tenant's session is invisible under RLS (SESSION_NOT_FOUND)", async () => {
+    const owner = await seedTenant("active", "active");
+    const attacker = await seedTenant("active", "active");
+    const { sessionId } = await seedSession(owner, "open");
+    await expectAnnounceReject(
+      () => announce(attacker, { sessionId, channel: CH }),
+      "SESSION_NOT_FOUND",
+      sessionId,
+    );
+  });
+
+  // Deterministic barrier: find whichever backend is blocked specifically by `holderPid` (mirrors the
+  // publishSession CONC tests). announceSession opens its own tx via db.transaction(), so the test has
+  // no direct handle on its pool connection -- discover the blocked waiter via pg_blocking_pids.
+  async function waitUntilBlockedBy(holderPid: number): Promise<void> {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const r = await rows(
+        `SELECT pid FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND $1 = ANY(pg_blocking_pids(pid))`,
+        [holderPid],
+      );
+      if (r.length > 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    throw new Error(`no backend became blocked by holder ${holderPid} within 5s`);
+  }
+
+  it("CONC: FOR UPDATE serializes per-session outbox allocation -- a concurrent announce blocks on a session-row-lock holder and then takes the NEXT sequence (a FOR SHARE read would coexist and collide on outbox_agg_seq_uq)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId } = await seedSession(tenantId, "open");
+    const holder = await ctx.superuserDb.pool.connect();
+    let pending: Promise<AnnounceSessionResult> | undefined;
+    let committed = false;
+    try {
+      await holder.query("BEGIN");
+      const holderPid = (await holder.query("SELECT pg_backend_pid() AS pid")).rows[0]
+        .pid as number;
+      // Holder takes a SHARE lock on the session row -- exactly what a concurrent announce would hold
+      // if announce used a FOR SHARE read -- and seeds an uncommitted seq-1 announcement row. announce
+      // B's FOR UPDATE must CONFLICT with this SHARE lock and block; a FOR SHARE read would coexist and
+      // (reading the pre-commit MAX=0) collide on seq 1.
+      await holder.query("SELECT id FROM sessions WHERE id = $1 FOR SHARE", [sessionId]);
+      await holder.query(
+        `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload)
+         VALUES ($1, 'session', $2, 1, 'session.announcement_requested', $3::jsonb)`,
+        [tenantId, sessionId, JSON.stringify({ session_id: sessionId, channel: "zalo" })],
+      );
+
+      pending = announce(tenantId, { sessionId, channel: "messenger" });
+      // If announce used FOR SHARE it would NOT block here, so this wait is what discriminates the fix
+      // from the bug: it throws if the concurrent announce never blocks on the holder's lock.
+      await waitUntilBlockedBy(holderPid);
+
+      await holder.query("COMMIT"); // release the SHARE lock and make seq 1 visible
+      committed = true;
+      const result = await pending;
+      pending = undefined;
+      expect(result).toMatchObject({ sessionId, channel: "messenger", replayed: false });
+
+      const events = await outboxFor(sessionId);
+      const seqs = events.map((e) => (e as { sequence: number }).sequence).sort((x, y) => x - y);
+      expect(seqs).toEqual([1, 2]); // both requests persisted, consecutive, no collision
+      const bRow = events.find(
+        (e) => (e as { payload: { channel?: string } }).payload.channel === "messenger",
+      );
+      expect((bRow as { sequence: number }).sequence).toBe(2);
+    } finally {
+      // If anything above threw before COMMIT, the holder still holds the SHARE lock and `pending` is
+      // blocked. Roll back to release the lock (skipped once committed) so the awaited announce can
+      // settle, then release -- otherwise teardown closes the app pool while this connection still
+      // holds the lock and deadlocks (codex round-01 [P1]).
+      if (!committed) await holder.query("ROLLBACK").catch(() => undefined);
+      if (pending) await pending.catch(() => undefined);
+      holder.release();
+    }
+  });
+
+  it("REG-CLOCK: a lock wait spanning ends_at rejects with SESSION_ALREADY_ENDED -- proves the SEPARATE post-lock clock_timestamp() query (a now()/tx-start or in-query clock read would enqueue an announcement after ends_at)", async () => {
+    // Mirrors publishSession's REG-CLOCK2 for the ends_at freshness guard. announce reads
+    // `ends_at <= clock_timestamp()` in a SEPARATE query AFTER acquiring the row lock. now()
+    // (frozen at transaction start) or a clock read inside the blocking locked SELECT would
+    // measure the PRE-wait time: a request blocked on the row lock while ends_at passes during
+    // the wait would then wrongly enqueue an announcement for an already-ended session. Engineer
+    // the race: a holder owns the row's FOR UPDATE lock; the real announce blocks behind it; the
+    // holder sets ends_at to a DB-clock-relative near-future instant (future relative to announce's
+    // earlier tx-start, so a frozen clock sees not-ended), waits until it has passed, then releases.
+    // Only the post-lock clock_timestamp() sees the post-wait time and rejects.
+    const tenantId = await seedTenant("active", "active");
+    // starts_at in the past so the holder can push ends_at to ~now without violating
+    // CHECK (ends_at > starts_at); ends_at initially future -> in-progress, announceable.
+    const s = await ctx.owner.query(
+      `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, area, slots_max, visibility, status)
+       VALUES ($1, $2, clock_timestamp() - interval '2 hours', clock_timestamp() + interval '1 hour',
+               'Asia/Ho_Chi_Minh', 'Quan 1', 8, 'private', 'open')
+       RETURNING id`,
+      [tenantId, ctx.badmintonSportId],
+    );
+    const sessionId = (s.rows[0] as { id: string }).id;
+    const commandId = cmdId();
+    const holder = await ctx.superuserDb.pool.connect();
+    let pending: Promise<AnnounceSessionResult> | undefined;
+    let committed = false;
+    try {
+      await holder.query("BEGIN");
+      const holderPid = (await holder.query("SELECT pg_backend_pid() AS pid")).rows[0]
+        .pid as number;
+      await holder.query("SELECT id FROM sessions WHERE id = $1 FOR UPDATE", [sessionId]);
+
+      // start the real announce; its session FOR UPDATE blocks behind the holder
+      pending = announce(tenantId, { sessionId, channel: CH }, commandId).then(
+        (r) => r,
+        (e: unknown) => e as AnnounceSessionResult,
+      );
+      // throws if the concurrent announce never blocks -- discriminates the guard from the bug
+      await waitUntilBlockedBy(holderPid);
+
+      // announce is blocked; its tx has started but has NOT read ends_at yet. The holder owns the
+      // row, so in ONE statement it sets ends_at to a DB-clock-relative near-future instant --
+      // future BY CONSTRUCTION, and future relative to announce's EARLIER tx-start, so a frozen
+      // now() would see not-ended and wrongly enqueue; only the post-lock clock_timestamp() rejects.
+      const establish = await holder.query(
+        `UPDATE sessions SET ends_at = clock_timestamp() + interval '500 milliseconds'
+           WHERE id = $1 RETURNING (ends_at > clock_timestamp()) AS still_future`,
+        [sessionId],
+      );
+      expect((establish.rows[0] as { still_future: boolean }).still_future).toBe(true);
+
+      // Poll the DB's own clock against the just-established ends_at until it has definitely passed
+      // (no app clock, no fixed sleep -- mirrors REG-CLOCK2). 5s deadline like waitUntilBlockedBy.
+      const pollDeadline = Date.now() + 5000;
+      let passed = false;
+      while (Date.now() < pollDeadline) {
+        const check = await holder.query(
+          `SELECT (clock_timestamp() >= ends_at) AS passed FROM sessions WHERE id = $1`,
+          [sessionId],
+        );
+        if ((check.rows[0] as { passed: boolean }).passed) {
+          passed = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 15));
+      }
+      expect(passed).toBe(true); // sanity: the poll itself must have succeeded within budget
+
+      await holder.query("COMMIT"); // release; announce's FOR UPDATE proceeds
+      committed = true;
+      const result = await pending;
+      pending = undefined;
+      expect(result).toBeInstanceOf(SessionAnnounceError);
+      expect((result as unknown as SessionAnnounceError).code).toBe("SESSION_ALREADY_ENDED");
+      // no announcement enqueued, no command recorded
+      expect(await outboxFor(sessionId)).toHaveLength(0);
+      const pc = await rows(
+        `SELECT 1 FROM processed_commands WHERE tenant_id = $1 AND command_id = $2`,
+        [tenantId, commandId],
+      );
+      expect(pc).toHaveLength(0);
+    } finally {
+      if (!committed) await holder.query("ROLLBACK").catch(() => undefined);
+      if (pending) await pending.catch(() => undefined);
+      holder.release();
     }
   });
 });

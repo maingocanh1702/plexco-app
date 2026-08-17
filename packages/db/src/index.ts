@@ -25,9 +25,12 @@ export {
 export {
   createSession,
   publishSession,
+  announceSession,
   SessionCommandError,
   SessionPublishError,
   SessionPublishAuthorizationError,
+  SessionAnnounceError,
+  SessionAnnounceAuthorizationError,
   type SessionCommandErrorCode,
   type CreateSessionInputPayload,
   type CreateSessionParams,
@@ -36,6 +39,11 @@ export {
   type PublishSessionInputPayload,
   type PublishSessionParams,
   type PublishSessionResult,
+  type AnnounceChannel,
+  type AnnounceSessionErrorCode,
+  type AnnounceSessionInputPayload,
+  type AnnounceSessionParams,
+  type AnnounceSessionResult,
 } from "./session-service.js";
 export {
   LoginReplayError,

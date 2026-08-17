@@ -673,3 +673,261 @@ export async function publishSession(
     return { ...stored, replayed: false };
   });
 }
+
+/* ------------------------------------------------------------------------- *
+ * AnnounceSession — request an announcement of an OPEN session to a linked channel
+ * (feature_session_management_tech.md §3/§4 Events, SES-UC-3; contract acceptance AN1).
+ * Sibling of publishSession, same single write path in one withTenant transaction: upfront
+ * billing gate (announce_session, ❌ under suspension — authz beats replay) -> validate payload
+ * -> reserve the command key (advisory xact lock) -> dedup (fail-closed on a foreign/corrupt/
+ * other-request ledger row) -> lock the session row FOR UPDATE and read status -> require open
+ * -> emit exactly one session.announcement_requested outbox row -> record the result.
+ *
+ * DD-110: announce_session is DENY-when-suspended (active/past_due ✅, suspended ❌ — the same
+ * row as publish_new_sessions), so it routes through authorizeTenantAction's existing
+ * fail-closed resolution with NO allow-when-suspended handling. announce does NOT change the
+ * session's status, but it takes the same per-session FOR UPDATE lock create/publish/close use so
+ * concurrent announces serialize their outbox-sequence allocation (see the lock site); it emits the
+ * canonical announcement request and the channel projector sends to the group and retries
+ * downstream (FE SES-UC-3 / edge #10), NOT here. No refund/roster/money/finance-root — announce
+ * never reaches edge #5.
+ * ------------------------------------------------------------------------- */
+
+// Typed announce error codes owned by this service. TENANT_SUSPENDED is NOT one of them: a
+// denied announce surfaces as the billing-owned SessionAnnounceAuthorizationError.
+export type AnnounceSessionErrorCode =
+  | "SESSION_NOT_FOUND"
+  | "SESSION_NOT_OPEN"
+  | "SESSION_ALREADY_ENDED"
+  | "INVALID_CHANNEL"
+  | "COMMAND_ID_CONFLICT";
+
+export class SessionAnnounceError extends Error {
+  readonly code: AnnounceSessionErrorCode;
+  constructor(code: AnnounceSessionErrorCode, message: string) {
+    super(message);
+    this.name = "SessionAnnounceError";
+    this.code = code;
+  }
+}
+
+/**
+ * Raised when the billing gate denies the announce — announce_session is ❌ under suspension
+ * (DD-110), so a suspended tenant gets this even on a replay/no-op (the upfront gate runs
+ * before dedup). Distinct type carrying the cause-agnostic billing code, mirroring
+ * SessionPublishAuthorizationError, so a route maps the billing-owned 403 without this service
+ * inventing a session-scoped suspension literal.
+ */
+export class SessionAnnounceAuthorizationError extends Error {
+  readonly code: "TENANT_SUSPENDED";
+  constructor() {
+    super("tenant is not permitted to announce sessions");
+    this.name = "SessionAnnounceAuthorizationError";
+    this.code = "TENANT_SUSPENDED";
+  }
+}
+
+const failAnnounce = (code: AnnounceSessionErrorCode, message: string): never => {
+  throw new SessionAnnounceError(code, message);
+};
+
+/**
+ * Closed logical channel enum: announce accepts a channel TYPE, never a raw destination id. The
+ * phase-1 channel set is Zalo + Messenger — Telegram was removed (feature_session_management.md:11,
+ * DD-37 2026-07-10; PRD.md FLOW 2 step 3 posts to Zalo/Messenger), matching the subscriptions
+ * .selected_extra_channel CHECK ('zalo'/'messenger'). A caller can therefore only ever name a logical
+ * platform, which the downstream channel projector resolves to the TENANT's OWN linked group (it
+ * reacts to the outbox row's tenant_id) — a raw destination, or another tenant's target, can never be
+ * announced from here. This command validates membership and emits; it does not resolve or send.
+ * (codex round-01 [P1] introduced the closed-enum constraint; round-02 [P1] narrowed it to the
+ * phase-1 set — the earlier platform-superset wrongly admitted Telegram.)
+ */
+export type AnnounceChannel = "zalo" | "messenger";
+const ANNOUNCE_CHANNELS: ReadonlySet<AnnounceChannel> = new Set(["zalo", "messenger"]);
+const isAnnounceChannel = (value: unknown): value is AnnounceChannel =>
+  typeof value === "string" && (ANNOUNCE_CHANNELS as ReadonlySet<string>).has(value);
+
+/** User payload. Carries NO tenant_id/actor/commandId (those are trusted context). */
+export interface AnnounceSessionInputPayload {
+  sessionId: string;
+  /** A closed logical channel type (AnnounceChannel), NOT a raw destination id — the projector
+   *  resolves the tenant-scoped destination downstream. */
+  channel: AnnounceChannel;
+}
+
+export interface AnnounceSessionParams {
+  tenantId: string; // trusted routing context, asserted as a UUID by withTenant
+  commandId: string; // idempotency key from trusted context
+  input: AnnounceSessionInputPayload;
+}
+
+interface StoredAnnounceResult {
+  sessionId: string;
+  channel: AnnounceChannel;
+}
+
+/** replayed=true when a prior processed_commands row was returned (zero new mutation). */
+export interface AnnounceSessionResult extends StoredAnnounceResult {
+  replayed: boolean;
+}
+
+const ANNOUNCE_COMMAND_TYPE = "AnnounceSession";
+
+/**
+ * Guards a replayed processed_commands.result_ref before it is trusted as our envelope: a corrupt or
+ * hand-written row fails closed rather than being replayed. sessionId (UUID) and channel (a recognised
+ * AnnounceChannel) must both be present — the replay must match the exact request, so the caller
+ * equality check compares both.
+ */
+function isStoredAnnounceResult(value: unknown): value is StoredAnnounceResult {
+  if (typeof value !== "object" || value === null) return false;
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.sessionId === "string" && UUID_RE.test(r.sessionId) && isAnnounceChannel(r.channel)
+  );
+}
+
+export async function announceSession(
+  db: Db,
+  params: AnnounceSessionParams,
+): Promise<AnnounceSessionResult> {
+  const { tenantId, commandId, input } = params;
+  return withTenant(db, tenantId, async (tx) => {
+    // Billing suspension — FAIL-FAST, BEFORE dedup and state lookup, mirroring publish:
+    // announce_session is ❌ under suspension (DD-110), so a suspended tenant must get
+    // TENANT_SUSPENDED even on a replay/no-op. authorizeTenantAction takes locking reads
+    // (resolve_tenant_status_locked + subscriptions FOR SHARE) on THIS tx that PERSIST to
+    // commit (authorization.ts), so this single upfront call already serializes against the
+    // Daily Lifecycle Job's suspend -- no suspend can land between here and commit. announce
+    // does not mutate the session, so (unlike publish §4 step 6) there is no session-lock-
+    // scoped mutation needing a separate under-lock re-check.
+    const decision = await authorizeTenantAction(tx, tenantId, "announce_session");
+    if (!decision.allowed) {
+      throw new SessionAnnounceAuthorizationError();
+    }
+
+    // Validate the payload shape UP FRONT (typed error, never a raw TypeError). `input` is
+    // untrusted user payload (only tenantId/commandId are trusted context). A bad sessionId
+    // fails closed as SESSION_NOT_FOUND (never revealing existence); a bad channel is
+    // INVALID_CHANNEL (announce-specific input).
+    if (typeof input !== "object" || input === null || Array.isArray(input)) {
+      failAnnounce("SESSION_NOT_FOUND", "session not found in tenant context");
+    }
+    if (typeof input.sessionId !== "string" || !UUID_RE.test(input.sessionId)) {
+      failAnnounce("SESSION_NOT_FOUND", "session not found in tenant context");
+    }
+    // channel is a CLOSED logical enum (AnnounceChannel), not a free string: anything outside the
+    // recognised platform set — empty, NUL/whitespace, oversized, a raw destination id, or another
+    // tenant's target — fails closed here as INVALID_CHANNEL, before it can reach the outbox.
+    if (!isAnnounceChannel(input.channel)) {
+      failAnnounce("INVALID_CHANNEL", "channel must be a recognised channel type (zalo/messenger)");
+    }
+    // Canonicalize the id ONCE (lowercase) — used for the FOR SHARE query, the replay equality
+    // check, and the stored result — so an upper-case UUID literal does not store a lower-case
+    // result that then fails its own replay.
+    const sessionId = input.sessionId.toLowerCase();
+    const channel = input.channel;
+
+    // Reserve the command key GLOBALLY (command-type-INDEPENDENT), IDENTICAL to create/publish —
+    // matches the processed_commands (tenant_id, command_id) uniqueness.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended('processed-command:' || ${tenantId}::uuid::text || ':' || ${commandId}, 0))`,
+    );
+
+    // Dedup (edge #3): a replayed commandId returns the stored envelope, zero mutation. Fail
+    // closed unless the row is OUR command_type AND a domain-valid envelope AND for THIS exact
+    // request (same session AND same channel) — a commandId reused for a different session or
+    // channel is a genuine idempotency-key collision, so COMMAND_ID_CONFLICT.
+    const prior = await tx
+      .select({
+        commandType: processedCommands.commandType,
+        resultRef: processedCommands.resultRef,
+      })
+      .from(processedCommands)
+      .where(
+        and(eq(processedCommands.tenantId, tenantId), eq(processedCommands.commandId, commandId)),
+      );
+    if (prior.length > 0) {
+      const stored = prior[0]!.resultRef as StoredAnnounceResult | null;
+      if (
+        prior[0]!.commandType === ANNOUNCE_COMMAND_TYPE &&
+        isStoredAnnounceResult(stored) &&
+        stored.sessionId === sessionId &&
+        stored.channel === channel
+      ) {
+        // Explicit projection (never spread `stored`): only the two declared fields leave.
+        return { sessionId: stored.sessionId, channel: stored.channel, replayed: true };
+      }
+      failAnnounce(
+        "COMMAND_ID_CONFLICT",
+        "command_id belongs to a different command or has no usable result",
+      );
+    }
+
+    // Lock the session row FOR UPDATE inside the tenant GUC (RLS choke-point) and read status UNDER
+    // lock. announce does not mutate the session, but it MUST take the same exclusive per-session lock
+    // create/publish/close use, because the outbox producer allocates its sequence as
+    // COALESCE(MAX(sequence),0)+1 for this aggregate: FOR SHARE would let two concurrent announces on
+    // the same session both read the same MAX and both insert seq N+1, and outbox_agg_seq_uq would then
+    // fail one with a raw 23505. FOR UPDATE serializes them so they get consecutive sequences (and it
+    // also keeps the row stable against a concurrent close/cancel). Not found (0 rows under the tenant
+    // GUC) -> SESSION_NOT_FOUND.
+    const [locked] = await tx
+      .select({ status: sessions.status })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .for("update");
+    if (locked === undefined) {
+      failAnnounce("SESSION_NOT_FOUND", "session not found in tenant context");
+    }
+
+    // announce gates on status='open' (a draft is not player-visible/joinable; a closed/cancelled
+    // session is over) -> SESSION_NOT_OPEN. There is deliberately NO starts_at past-guard: a session
+    // stays 'open' and joinable through play, so announcing an in-progress (past-start, still-open)
+    // session is a valid late-join invite. publish's starts_at cutoff is publish-specific (you cannot
+    // OPEN a session whose start has passed) and does not apply to announcing one already open.
+    if (locked!.status !== "open") {
+      failAnnounce("SESSION_NOT_OPEN", "only an open session can be announced");
+    }
+
+    // ends_at freshness guard -- TWO SEPARATE reasons, deliberately not conflated:
+    //  (a) announce is EXEMPT from edge #11 (reject mutation on closed/cancelled/past sessions)
+    //      because it does not mutate the session -- it emits a notification and changes no row; AND
+    //  (b) announce nonetheless rejects a session whose ends_at has passed, because a notification
+    //      about a FINISHED session ("join this session") is a harm a state mutation does not carry.
+    // These are independent: (a) alone would tempt a later reader to delete this guard. auto-expiry
+    // is not built, so an 'open' row persists past ends_at indefinitely -- without this guard an
+    // ended session would be announceable forever.
+    // Clock: mirror publishSession's post-lock pattern -- a SEPARATE query AFTER the row lock using
+    // clock_timestamp(), NOT now()/Date.now(). now() is frozen at transaction start, and a clock read
+    // inside the blocking locked SELECT measures a pre-wait time (publish round-05 [P2]); a separate
+    // post-lock clock_timestamp() measures the real current moment.
+    const clockResult = await tx.execute(
+      sql`select (${sessions.endsAt} <= clock_timestamp()) as "isEnded" from ${sessions} where ${sessions.id} = ${sessionId}`,
+    );
+    const isEnded = (clockResult.rows[0] as { isEnded: boolean }).isEnded;
+    if (isEnded) {
+      failAnnounce("SESSION_ALREADY_ENDED", "cannot announce a session that has already ended");
+    }
+
+    // Emit the canonical announcement request (§4 Events: session.announcement_requested, payload
+    // {session_id, channel}). This is the durable canonical write (FE SES-UC-3); the channel
+    // projector consumes it, sends to the group and retries downstream (FE edge #10), not here.
+    // Per-aggregate sequence COALESCE(MAX,0)+1 fenced by outbox_agg_seq_uq; lease/ack stay NULL.
+    // No session-row mutation and no status change (§4).
+    await tx.insert(outboxEvents).values({
+      tenantId,
+      aggregateType: "session",
+      aggregateId: sessionId,
+      sequence: sql`coalesce((select max(${outboxEvents.sequence}) from ${outboxEvents} where ${outboxEvents.aggregateId} = ${sessionId}), 0) + 1`,
+      type: "session.announcement_requested",
+      payload: { session_id: sessionId, channel },
+    });
+
+    const stored: StoredAnnounceResult = { sessionId, channel };
+    await tx
+      .insert(processedCommands)
+      .values({ tenantId, commandId, commandType: ANNOUNCE_COMMAND_TYPE, resultRef: stored });
+    return { ...stored, replayed: false };
+  });
+}

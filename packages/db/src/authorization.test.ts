@@ -253,6 +253,77 @@ describe("status resolution — decision table cases (feature_billing_lifecycle_
   });
 });
 
+describe("DD-110 -- announce_session is a DENY-path class (allowed in allow states, denied when suspended)", () => {
+  // announce_session shares publish_new_sessions' row (active/past_due ALLOW, suspended DENY): it
+  // routes through the existing fail-closed resolution with NO allow-when-suspended handling. The
+  // obligation-termination classes (close_session, cancel_session) are NOT in the enum this slice.
+  it("is recognised and ALLOWED in the allow states (active/trialing/past_due)", async () => {
+    for (const [tenantStatus, subStatus, effectiveStatus] of [
+      ["active", "active", "active"],
+      ["trialing", "trialing", "trialing"],
+      ["active", "past_due", "past_due"],
+    ] as const) {
+      const tenantId = await seedTenant(ctx.owner, { tenantStatus, subStatus });
+      const decision = await authorizeInOwnTransaction(
+        ctx.superuserDb.db,
+        tenantId,
+        "announce_session",
+      );
+      expect(decision).toEqual({ allowed: true, effectiveStatus });
+    }
+  });
+
+  it("DENIES on every suspended fixture -- same row as publish, no allow-when-suspended", async () => {
+    const suspendedFixtures: { tenantStatus: string; subStatus: string | "missing" }[] = [
+      { tenantStatus: "suspended", subStatus: "active" },
+      { tenantStatus: "cancelled", subStatus: "active" },
+      { tenantStatus: "active", subStatus: "suspended" },
+      { tenantStatus: "active", subStatus: "cancelled" },
+      { tenantStatus: "active", subStatus: "missing" },
+    ];
+    for (const f of suspendedFixtures) {
+      const tenantId = await seedTenant(ctx.owner, {
+        tenantStatus: f.tenantStatus,
+        subStatus: f.subStatus,
+      });
+      const decision = await authorizeInOwnTransaction(
+        ctx.superuserDb.db,
+        tenantId,
+        "announce_session",
+      );
+      expect(decision).toEqual({ allowed: false, code: "TENANT_SUSPENDED" });
+    }
+  });
+
+  it("on an unknown tenant denies fail-closed", async () => {
+    const decision = await authorizeInOwnTransaction(
+      ctx.superuserDb.db,
+      randomUUID(),
+      "announce_session",
+    );
+    expect(decision).toEqual({ allowed: false, code: "TENANT_SUSPENDED" });
+  });
+
+  it("a near-miss unrecognised class still denies fail-closed even in an allow state", async () => {
+    // Owner constraint: keep the near-miss-string fail-closed guard. Plausible-but-wrong names for
+    // the announce op must never be admitted just because they resemble the recognised literal.
+    const tenantId = await seedTenant(ctx.owner, { tenantStatus: "active", subStatus: "active" });
+    for (const nearMiss of [
+      "announce",
+      "announce_sessions",
+      "announce_open_session",
+      "not_a_real",
+    ]) {
+      const decision = await authorizeInOwnTransaction(
+        ctx.superuserDb.db,
+        tenantId,
+        nearMiss as ActionClass,
+      );
+      expect(decision).toEqual({ allowed: false, code: "TENANT_SUSPENDED" });
+    }
+  });
+});
+
 describe("AuthZ / failure / security — C1, C2, D1, G1", () => {
   it("C1: unknown tenantId denies fail-closed without leaking whether it exists", async () => {
     const decision = await authorizeInOwnTransaction(
