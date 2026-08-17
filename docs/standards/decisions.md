@@ -1633,9 +1633,24 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 
 ### D1 — Gate `status='open'` **và** `ends_at > now()`
 
-`AnnounceSession` từ chối khi `ends_at <= now()`, đánh giá **dưới row lock**, dùng **đồng hồ
-DATABASE** (`now()`), không `Date.now()` — cùng lớp lỗi clock-skew mà lane PublishSession đã tốn một
-vòng review (P1, ghi trong DD-109).
+`AnnounceSession` từ chối khi session đã kết thúc, đánh giá **sau khi đã giữ row lock**, bằng đồng hồ
+DATABASE chứ không phải `Date.now()` — cùng lớp lỗi clock-skew mà lane PublishSession đã tốn một vòng
+review (P1, ghi trong DD-109).
+
+> ⚠️ **Amendment 15/08 — câu trên ban đầu owner viết là `ends_at <= now()`. `now()` SAI, và
+> `clock_timestamp()` đặt sai chỗ cũng sai.** Lane `session-command-announce--v2` đo trực tiếp trên
+> Postgres thật (test `REG-CLOCK2`) và tìm ra hai bậc:
+> 1. `now()` = `transaction_timestamp()`, **đóng băng lúc transaction bắt đầu**. Một lượt chờ lock kéo
+>    dài vắt qua `ends_at` sẽ khiến check đọc thời điểm TRƯỚC khi chờ ⇒ announce lọt.
+> 2. Đổi sang `clock_timestamp()` **trong cùng câu lệnh có `FOR UPDATE`** vẫn sai — biểu thức được
+>    lượng giá ở node LockRows, nên nó **cũng** trả về thời điểm trước khi chờ. Đây là bẫy tinh vi hơn,
+>    và là thứ chỉ phép đo mới thấy chứ suy từ tài liệu thì không.
+>
+> **Hình đúng, bắt buộc cho mọi guard thời gian sau này:** một **câu truy vấn riêng, chạy SAU khi lock
+> đã giữ** — `select (ends_at <= clock_timestamp()) ...` — vì câu đó chỉ tới lượt thực thi khi
+> `FOR UPDATE` phía trên đã trả về. Không cần `FOR UPDATE` lần hai; transaction đang giữ lock rồi.
+> Implement tại `session-service.ts:906`, kèm regression `REG-CLOCK2` làm hàng rào — bỏ hình này ra là
+> test đỏ, không phải review mới bắt được.
 
 **Vì sao đây KHÔNG phải đảo ngược quyết định "không cutoff" trước đó.** Quyết định trước nói về
 `starts_at`: không chặn announce khi trận **đang diễn ra** ("đang đá, xuống chơi đi"). `ends_at` là
