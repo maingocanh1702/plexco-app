@@ -1626,6 +1626,82 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 
 ---
 
+## DD-111 — `AnnounceSession`: guard `ends_at` + `SESSION_ALREADY_ENDED`, và edge #11 thuộc về FE · ✅ Chốt (owner 2026-08-15)
+
+> **Status boundary:** DD-111 chốt **hành vi** của `AnnounceSession` quanh thời gian, **mã lỗi** kèm
+> theo, và **ai sở hữu edge #11**. Nó KHÔNG authorize command khác, không mở `close`/`cancel`.
+
+### D1 — Gate `status='open'` **và** `ends_at > now()`
+
+`AnnounceSession` từ chối khi `ends_at <= now()`, đánh giá **dưới row lock**, dùng **đồng hồ
+DATABASE** (`now()`), không `Date.now()` — cùng lớp lỗi clock-skew mà lane PublishSession đã tốn một
+vòng review (P1, ghi trong DD-109).
+
+**Vì sao đây KHÔNG phải đảo ngược quyết định "không cutoff" trước đó.** Quyết định trước nói về
+`starts_at`: không chặn announce khi trận **đang diễn ra** ("đang đá, xuống chơi đi"). `ends_at` là
+**vị từ khác** — nó chỉ chặn buổi **đã kết thúc**, và nhờ `CHECK (ends_at > starts_at)`
+(`0002_tenants_core.sql:98`) nó **không thể** chạm ca late-join. Hai luật cùng tồn tại, không mâu thuẫn.
+
+**Tiền đề cũ bị bác bằng phép đo.** Lập luận ban đầu chấp nhận rằng announce một buổi vừa kết thúc là
+"minor/transient" vì auto-close sẽ dọn. **Không có auto-close.** `feature_session_management_tech.md:533`
+chỉ *viện dẫn* auto-close như một ngưỡng quy ước; cơ chế chưa build. Một hàng `open` quá `ends_at` nằm
+đó **vĩnh viễn**, nên announce sẽ phát "vào chơi đi" cho một buổi đã xong, lặp lại không giới hạn.
+
+**Vì sao announce chịu guard này còn các command đổi-state thì không.** Announce là **thông báo**. Một
+thông báo cũ gây hại theo cách một mutation không gây: nó đi tới người thật, mang thông tin sai, và
+không có trạng thái nào để sửa lại. Khi auto-close land, guard này thành lớp thứ hai chứ không thừa.
+
+### D2 — Mã lỗi mới `SESSION_ALREADY_ENDED` (409), không tái dùng `SESSION_NOT_OPEN`
+
+Buổi chơi **đang** `open`. Trả `SESSION_NOT_OPEN` là phát biểu sai về trạng thái, và i18n nằm trong 5
+HARD RULE: bề mặt tiếng Việt sẽ báo host "chưa mở" về một buổi đã đá xong. Thêm vào §3 Error Codes
+kèm cả hai khoá ngôn ngữ.
+
+### D3 — Edge #11 thuộc FE; dòng BE là bản chép thiếu
+
+`feature_session_management.md:94` (FE, product authority):
+`| 11 | Security | Mutation on closed/cancelled/past session | Reject mọi mutation — trừ privileged correction với audit trail |`
+`feature_session_management_tech.md:221` (BE) chỉ ghi *"after status=closed"* — **thiếu
+`cancelled`/`past`**. Đây **không phải hai thẩm quyền mâu thuẫn**; là một dòng BE chép thiếu một luật
+Security. **Sửa dòng BE cho khớp FE**, không thu hẹp FE.
+
+Hệ quả cho announce, phải viết **cả hai vế** kẻo người sau xoá nhầm guard:
+1. Announce **miễn** edge #11 vì nó **không mutate** session (không đổi status, không bump version).
+2. Announce **vẫn** mang guard `ends_at` của riêng nó, vì lý do D1 — **không** vì edge #11.
+
+Past-weight của cancel tiếp tục do **edge #31** sở hữu, không đẩy ngược lên edge #11.
+
+### D4 — Quyết định trong chat không phải thẩm quyền
+
+Guard này được owner chốt trong một phiên chat, rồi lane mang nó qua gate. Reviewer gắn [P1]
+"unauthorized Tier-C change to a Reviewed spec". **False positive về nội dung, true positive về hình
+thức**: guard *đã* được authorize, nhưng chỗ duy nhất ghi lại điều đó là chat + ledger gitignored +
+chính cái spec đang bị chất vấn — **không có bản ghi bền nào để reviewer đọc**.
+
+**Luật:** một quyết định owner mở đường cho thay đổi spec Reviewed **phải nằm trong `decisions.md`
+trước khi** lane mang nó qua gate. Cùng nguyên tắc đã dùng để bắt slice này re-register: bản ghi bền
+thắng lời khai trong hội thoại — áp cho owner y như áp cho lane.
+
+⚠️ **Đính chính một khiển trách sai của owner.** Owner đã hai lần nói lane "chế ra" `AN1`/`CL1`/`CA1`.
+Sai: chúng nằm trong `docs/autopilot/contracts/autopilot-session-commands-update-close-cancel.md`
+dòng 224/227/232, do một phiên authoring trước viết. Owner grep **spec** rồi kết luận "không tồn tại"
+— đúng lớp lỗi "kết quả rỗng là bằng chứng về truy vấn". Lỗi thật của lane hẹp hơn nhiều: gọi authored
+contract là *"acceptance matrix you ratified"*, tức nâng sai **cấp thẩm quyền** (authored ≠ owner-ratified).
+Các mục DI ghi theo khung cũ phải sửa lại theo mô tả này.
+
+### D5 — Authored packet vào scope, không để "advisory"
+
+`autopilot-session-commands-update-close-cancel.md` giờ stale hai chỗ: AN1 không có guard, và nó khai
+event `session.announced` trong khi spec §4 (`:514`) khai `session.announcement_requested` — bản
+implement theo spec. Một authored contract stale vừa sinh ra một [P1] và hai vòng review; để nguyên là
+để lại đúng cái bẫy đó cho người sau. Slice kéo file này vào scope và reconcile trong commit của mình.
+
+### Không authorize
+
+Command khác, `close`/`cancel`, `ALLOWED_WHEN_SUSPENDED`, migration, enablement, merge.
+
+---
+
 ## DD-110 — Bốn action class hẹp cho session command family, và hàng ma trận của chúng · ✅ Chốt (owner 2026-08-15)
 
 > **Status boundary:** DD-110 chốt **tên literal** + **giá trị hàng Suspended Action Matrix** cho bốn
@@ -2163,6 +2239,7 @@ theo kịp.
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 15/08/2026 | v2.34 | **Thêm DD-111 ✅ — `AnnounceSession` guard `ends_at` + `SESSION_ALREADY_ENDED`, edge #11 thuộc FE (owner 2026-08-15).** **D1:** announce gate `status='open'` **và** `ends_at > now()`, đánh giá dưới row lock bằng đồng hồ DATABASE (cùng lớp clock-skew P1 mà PublishSession tốn một vòng). **Không** đảo ngược ruling "không cutoff" trước đó: ruling đó về `starts_at` (đừng chặn announce khi đang đá), `ends_at` là vị từ khác và nhờ `CHECK (ends_at > starts_at)` (`0002:98`) **không thể** chạm ca late-join. Tiền đề cũ bị bác bằng đo: lập luận ban đầu coi việc announce buổi vừa xong là "transient" vì auto-close sẽ dọn — **auto-close không tồn tại**, `:533` chỉ viện dẫn nó như ngưỡng quy ước, nên hàng `open` quá giờ nằm đó vĩnh viễn và announce phát "vào chơi đi" cho buổi đã xong, lặp vô hạn. Announce chịu guard này còn command đổi-state thì không, vì **thông báo cũ gây hại theo cách mutation không gây**: nó tới người thật, mang tin sai, không có state nào để sửa. **D2:** mã lỗi mới `SESSION_ALREADY_ENDED` (409) — buổi **đang** `open` nên `SESSION_NOT_OPEN` là phát biểu sai về trạng thái, và i18n là HARD RULE (bề mặt tiếng Việt sẽ báo "chưa mở" về buổi đã đá xong). **D3:** edge #11 thuộc **FE** (`feature_session_management.md:94` — "closed/cancelled/past"); dòng BE `:221` chỉ ghi "after status=closed" là **bản chép thiếu một luật Security**, không phải hai thẩm quyền mâu thuẫn ⇒ sửa dòng BE cho khớp FE, KHÔNG thu hẹp FE. Spec phải viết **cả hai vế** kẻo người sau xoá nhầm guard: announce **miễn** edge #11 vì không mutate, **và** announce **vẫn** mang guard `ends_at` riêng vì lý do D1. Past-weight của cancel vẫn do **edge #31** sở hữu. **D4 — quyết định trong chat không phải thẩm quyền:** guard được owner chốt trong chat rồi lane mang qua gate; reviewer gắn [P1] "unauthorized Tier-C change" — **false positive về nội dung, true positive về hình thức**, vì chỗ duy nhất ghi lại authorization là chat + ledger gitignored + chính spec đang bị chất vấn. Luật: quyết định owner mở đường sửa spec Reviewed **phải vào `decisions.md` TRƯỚC khi** lane mang qua gate — cùng nguyên tắc "bản ghi bền thắng lời khai hội thoại" đã dùng để bắt slice re-register, áp cho owner y như áp cho lane. ⚠️ **Đính chính khiển trách sai của owner:** owner hai lần nói lane "chế ra" `AN1`/`CL1`/`CA1`; thực tế chúng nằm ở `docs/autopilot/contracts/autopilot-session-commands-update-close-cancel.md:224,227,232` do phiên authoring trước viết. Owner grep **spec** rồi kết luận "không tồn tại" — đúng lớp lỗi "kết quả rỗng là bằng chứng về truy vấn". Lỗi thật của lane hẹp hơn: gọi authored contract là "acceptance matrix you ratified", tức nâng sai **cấp thẩm quyền** (authored ≠ owner-ratified); các mục DI phải sửa lại theo khung này. **D5:** kéo authored packet vào scope thay vì để "advisory" — nó stale hai chỗ (AN1 không guard; khai `session.announced` trong khi spec `:514` khai `session.announcement_requested`), và một authored contract stale vừa sinh ra một [P1] cùng hai vòng review. |
 | 15/08/2026 | v2.33 | **Thêm DD-110 ✅ — bốn action class hẹp cho session command family + hàng ma trận (owner 2026-08-15).** Đóng đúng blocker Tier C mà packet `session-commands-update-close-cancel` tự nêu ở `_blocker_note`: DD-105 chốt **hướng** ("narrow per-op class khi build") nhưng **không đặt tên** cái nào, DD-104 D2a chỉ đặt `delete_draft_session` cho op khác đang parked, và tác giả slice bị `negative_scope:41` HALT nếu tự đặt. **D1 — bốn tên theo dialect `verb_noun`:** `update_open_session` · `close_session` · `cancel_session` · `announce_session`; ba literal cũ (danh ngữ) **không đổi tên** vì `publish_new_sessions` đã có caller production `1ccbe5d` + hàng ma trận + catalog entry — enum có hai phương ngữ là cố ý, `verb_noun` chuẩn cho literal mới. **D2 — close/cancel ✅ khi suspended, announce/update ❌:** căn cứ lấy từ chính ma trận, không nhập từ ngoài — hàng `Player CK ingest ✅` cho thấy tenant suspend **vẫn nhận đối soát chuyển khoản**, tức ranh giới đã khai sẵn là *chặn hoạt động thương mại MỚI, không đóng băng nghĩa vụ ĐANG CHẠY*; bất đối xứng chi phí quyết định lựa chọn: cả bốn ❌ ⇒ host suspend không đóng/huỷ được buổi đã `open` trong khi người chơi đã join và có thể đã chuyển khoản (**thiệt hại chắc chắn, không đường thoát, chỉ lộ ở lần suspend thật đầu tiên**), còn close/cancel ✅ ⇒ tenant abuse huỷ buổi của chính nó (**phiền, không phải thiệt hại**; nó vẫn không publish/announce/update được). ⚠️ **Giới hạn kế thừa, DD này KHÔNG giải:** gate resolve **hai** trục suspend (`subscriptions.status` = nợ tiền vs `tenants.status` = abuse/ToS, spec billing `:288-291`) về **một** hàng ⇒ bốn literal mới không phân biệt được, y như ba cái cũ. **D3 — tên vào decision log ngay, literal vào `ActionClass` cùng commit mang command của nó:** literal không caller là code dark, đúng thứ vừa mất tám ngày để thoát với `authorizeTenantAction`; packet cho phép ship subset khi vượt budget (`AnnounceSession` "ONLY if budget allows") nên gom cả bốn lên trước sẽ tái tạo đúng vấn đề vừa tránh — hình mẫu là `delete_draft_session`, có tên từ 13/08, tới nay vẫn chưa vào enum. **D4 — nghĩa vụ test bắt buộc:** gate **không biết** status của session, caller chọn literal, nên `update_open_session` là quy ước ở call site chứ không phải enforcement; slice phải mang test âm *`updateSession` trên `draft` KHÔNG gọi `authorizeTenantAction`*, nếu không D1 mới chỉ được viết ra chứ chưa được thực thi. **Không authorize** code/migration/packet/worktree/enablement. |
 | 14/08/2026 | v2.32 | **Thêm DD-109 ✅ — nới `fix_rounds_max` 5→8 cho RIÊNG `session-draft-lifecycle-commands--v3`.** `PublishSession` HALT `MAX_ROUNDS` hai lần liên tiếp (v1 validation-edge-family, v2 DB-clock rồi lan sang test fidelity; 11+ vòng gộp). Trước khi cho chạy lần ba phải phân biệt **thrash** với **thứ khác** — và bằng chứng nói không phải thrash: `regions.log` của v2 ghi **5 vòng chạm 5 vùng khác nhau, không lặp**, `REGION_THRASH` không hề bắn, mỗi vòng đóng một lỗ thật khác lỗ trước. **Nguyên nhân thật, đo được và trước nay chưa viết ra:** pinned reviewer đọc `git diff <base>...HEAD` — **toàn bộ 1.690 dòng mỗi vòng, không phải phần vừa sửa** — trong khi per-run miss-rate đã đo ≈ **2/3** (analysis 13/08). Ghép lại: mỗi vòng là một lần **lấy mẫu** trên cùng diff, finding "mới" ở vòng sau là chữ ký **under-sampling** chứ không chứng minh slice sai — đúng điều `codex-review-verdict-nondeterminism` đã ghi. **Hệ quả sửa một phán đoán sai trước đó:** thu hẹp *việc* của successor KHÔNG thu hẹp *bề mặt review*, nên đề xuất "v3 chỉ sửa 2-3 finding" là vô hiệu. Chọn 8: `(2/3)^M` cho M5≈13% → M8≈3,9%, thêm nữa lợi ích giảm nhanh mà rủi ro vá-vô-hạn tăng; **ước lượng có căn cứ, không phải phép đo** (n=3 chỉ pin được hướng). Ghi rõ **trần 5 không sai** — nó có giả định ngầm rằng diff đủ nhỏ để một vòng phủ gần hết, và giả định đó vỡ ở 1.690 dòng dưới reviewer stochastic. **Bốn điều kiện cứng:** (1) v3 **phải tới được vòng security** — chưa attempt nào chạm tới dù slice gọi `authorizeTenantAction`, tức thứ §8 bắt buộc cho trust boundary chưa từng chạy; (2) v3 HALT nữa = **bằng chứng quyết định** cho slice-too-big ⇒ re-slice thật, **cấm thử lần bốn**; (3) `REGION_THRASH` giữ nguyên hiệu lực; (4) DD phải được dẫn trong contract v3. Ngoại lệ **một lane, có ghi chép** theo khuôn DD-101; §8 **không đổi** cho lane khác, và DD này **không thay** E2 re-measurement — v3 là ca thực nghiệm sống, kết quả nên ghi ngược vào task nondeterminism. |
 | 14/08/2026 | v2.31 | **DD-106 phân xử từng câu + thêm DD-108 ✅ (cả hai owner-delegated; tiền lệ DD-97/98/99).** **DD-106 Q1 Pay-for-Buddy ⬜ DEFER và BÁC riêng enum `'buddy'`:** phát hiện `payment_allocations` **đã có** `created_by uuid` (`0003:87`, *"actor for cash/waiver/manual"*) và CHECK **đã cho phép** `source IN ('cash','waiver') AND created_by IS NOT NULL` (`0003:92`) ⇒ *"A trả hộ charge của B"* biểu diễn được **hôm nay** bằng `('cash', created_by=A)`. Spec gộp hai thứ khác loại: đổi money model (thêm enum) vs workflow (request→confirm); bác vế một, hoãn vế hai. Muốn mở lại phải trả lời được `'buddy'` mang thông tin gì mà `('cash'\|'manual', created_by)` không mang — mỗi giá trị enum trên đường tiền là một nhánh vĩnh viễn trong mọi đối soát/report/reversal. Thứ tự cũng sai: project có 0 route nghiệp vụ, Pay-for-Buddy tinh chỉnh luồng chưa tồn tại trong khi DD-40 mark-paid mới chặn doanh thu. **Q2 embed ⬜ DEFER ràng buộc nhị phân vào fence:** `embed_snapshot` là projection **thứ hai** của session state, trong khi projection thứ nhất còn chưa có đường invalidate (`public_projection_fences` — nợ DD-12 chưa land, DD-73..78 ghi rõ private/cancel phải chờ projector async); thêm cái thứ hai là nhân đôi lỗi đã biết. Gỡ hoãn khi fence + guarded view + CAS-clear merge. **Q3 SessionCard ✅ chấp nhận hướng:** pin canonical ở `feature_marketplace_discovery.md` §3, spec khác trỏ tới, **không tạo file mới**, chưa nâng contract cho tới khi có surface render; bot degrade là hợp lệ và phải ghi trong shape. **DD-108:** mirror trust-gate file sang canonical đủ ba vế + fix gốc rễ (test phải đỏ khi hai bản phân kỳ — `KIT_VERSION` gõ tay không đổi khi nội dung đổi, đúng lỗi "khai báo không phải phép đo") + chặn `autopilot-update.sh` tới khi fix land; căn cứ: footgun lần **thứ hai**, đo được cả hai kit cùng `KIT_VERSION: 31`. |
