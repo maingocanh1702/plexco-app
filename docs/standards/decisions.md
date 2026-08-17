@@ -1626,6 +1626,48 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 
 ---
 
+## DD-112 — ⬜ **CHƯA CHỐT** — đổi **sức chứa** khi đã có charges thì làm gì với tiền? (mở 2026-08-17)
+
+> ⬜ **Đây là câu hỏi mở, KHÔNG phải quyết định.** Không slice nào được viện nó làm thẩm quyền. Ghi ra
+> để nó có chỗ đứng và có người sở hữu, thay vì tiếp tục sống như một coupling không ai đứng sau.
+
+**Phát hiện thế nào.** Lane `docs-impact-policy-contract--narrowed` cạn trần fix-round sau 6 vòng
+codex. Năm vùng khác hội tụ dần (5→3→4→2→1→3) và hợp đồng đã sạch một lần; **chỉ mỗi capacity thrash**,
+bị flag ở vòng 1/3/4/6 với **hướng dẫn ngược nhau** giữa các vòng ("thêm capacity vào DD-49 probe" ↔
+"DD-49 không cover capacity, bỏ ra"). Reviewer dao động vì **văn bản không quyết được**, không phải vì
+tác giả viết dở.
+
+**Sự thật đo được.** `feature_session_management_tech.md:214` (edge #4) ghép *"Price/**capacity**
+change with existing charges"* rồi *"require explicit `impact_policy`"*. Nhưng **DD-49** — quyết định
+duy nhất chi phối `impact_policy` — chỉ có ba mục: **đổi giá**, **leave/cancel/refund**, **rejoin**.
+**Không có capacity.** Nên "capacity cần `impact_policy`" hiện **không có owner decision nào đứng sau**.
+
+**Một cách đọc thứ ba, chưa ai kiểm, và nên kiểm trước khi mở quyết định lớn.** Điều kiện của hàng là
+*"Price/capacity change with existing charges **or retry root**"*; phần hành động có **hai vế ngăn bởi
+`;`**: `require explicit impact_policy` — và — *"a capacity outcome that is full **resolves roots** in
+the same tx"*. Rất có thể vế `impact_policy` chỉ thuộc **price**, còn capacity thuộc vế **retry root**
+(waitlist promotion), tức chuyện job chứ không phải chuyện tiền. Nếu đúng vậy thì đây **không phải
+coupling sai mà là một hàng ghép hai luật**, và cách sửa là tách hàng, không phải mở policy mới.
+
+**Câu hỏi thật sự cần trả lời, theo thứ tự:**
+1. Vế `impact_policy` ở edge #4 có áp cho capacity không, hay chỉ áp cho price? (đọc hàng + lịch sử
+   commit của nó; rẻ, làm trước)
+2. Nếu có: **giảm** sức chứa khi đã có charges mà **không** xuống dưới roster (`CAPACITY_BELOW_ROSTER`
+   ở `:714` đã chặn ca dưới roster) thì ảnh hưởng gì tới tiền? Nếu **không** ảnh hưởng thì yêu cầu
+   `impact_policy` là thừa và phải gỡ. **Tăng** sức chứa gần như chắc chắn không đụng tiền.
+3. Chỉ khi (2) cho ra một ảnh hưởng tiền thật mới cần một policy — và khi đó nó là **quyết định riêng**,
+   không nhét vào DD-49, vì DD-49 chốt cơ chế cho *đổi giá* và ma trận của nó là
+   `{price}×{charge-state}×{lifecycle}`.
+
+**Ràng buộc tới khi chốt:** slice không được (a) viết capacity vào phạm vi DD-49, (b) tự pin một
+capacity policy, (c) sửa edge #4 để tách capacity ra. Cả ba đều là sửa contract spec Reviewed trên
+đường tiền. Slice **được** ghi rằng edge #4 có liệt kê capacity và slice **không giải** nó — đúng cách
+đã xử `impact_policy` token.
+
+**Không chặn gì hiện tại.** `update_open_session` vẫn có `CAPACITY_BELOW_ROSTER` cho ca nguy hiểm nhất.
+
+---
+
 ## DD-111 — `AnnounceSession`: guard `ends_at` + `SESSION_ALREADY_ENDED`, và edge #11 thuộc về FE · ✅ Chốt (owner 2026-08-15)
 
 > **Status boundary:** DD-111 chốt **hành vi** của `AnnounceSession` quanh thời gian, **mã lỗi** kèm
