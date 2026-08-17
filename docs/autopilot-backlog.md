@@ -3290,7 +3290,6 @@ scope: [scripts/ap-finish.sh]
 manifest: null
 merged_probe: null
 _probe_note: Khi schedule, merged_probe phải bind symbol do CHÍNH fix tạo ra (vd tên hàm kiểm dirty mới). KHÔNG bind `WORKTREE_DIRTY` hay `dirty` — cả hai đã có trên origin nên false-flip "merged" ngay lúc author.
-close_by: null
 notes: |
   **Đo 2026-08-14, chặn một closeout thật.** `scripts/ap-finish.sh:83` kiểm worktree sạch bằng
   `git -C "$WT" --no-optional-locks status --porcelain`. Lệnh đó **tính cả file untracked**. Repo này
@@ -3413,7 +3412,6 @@ scope: [scripts/autopilot-scope-gate]
 manifest: null
 merged_probe: null
 _probe_note: Khi schedule, merged_probe phải bind symbol do CHÍNH fix tạo ra (vd tên namespace/prefix mới). KHÔNG bind `halt_gate`, `HALT-`, `TERMINAL_CONFLICT` hay `SCOPE_COLLISION` — cả bốn đã có trên origin nên false-flip "merged" ngay lúc author.
-close_by: null
 notes: |
   **Ba ca đo được trong MỘT ngày (2026-08-14), mỗi ca chặn một lane hợp lệ và mỗi ca cần owner can thiệp:**
   `HALT-SCOPE_COLLISION.txt` (v2) · `HALT-BASE_MISMATCH.txt` (v2) · `HALT-BASE_MISMATCH.txt` (v3).
@@ -3473,7 +3471,7 @@ _scope_note: scope rỗng vì phần chính nằm NGOÀI repo này (`~/Projects/
 manifest: null
 merged_probe: null
 _probe_note: Khi schedule, merged_probe bind symbol do CHÍNH fix (2) tạo ra — vd tên hàm/test assert byte-identical. KHÔNG bind `findUnknownEvidenceKeys` (đã có trên origin từ a3c62ad) hay `KIT_VERSION` (đã có từ lâu).
-close_by: null
+close_by: hand · phần chính land ở `Claude template` (canonical kit), Plexco chỉ nhận qua `autopilot-update.sh` nên không symbol nào của task này xuất hiện trong repo này để probe — cùng lớp với `infra-autopilot-templates-mirror-v061`
 notes: |
   **VÌ SAO TASK NÀY TỒN TẠI, và đó là bài học riêng:** DD-108 chốt 2026-08-14 nhưng tới cuối ngày vẫn chưa
   ai làm. Kiểm nguyên nhân: nó **không có packet, không manifest, không entry INFLIGHT, và không có task
