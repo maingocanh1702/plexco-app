@@ -95,13 +95,19 @@ forward-only, không migrate giữa chừng. Entry point vận hành: `docs/auto
    `manifest_schema_version: level3-operational-v2`, còn authored contract ở
    `docs/autopilot-manifests/<slug>.json` thì BỊ CẤM mang trường đó).
 
-   > ⚠️ **Dòng này trước đây ghi authored path và mô tả là "fail-closed" — cả hai đều sai, sửa
-   > 2026-08-01.** `autopilot-scope-gate` dòng 488-491 chỉ ghi `registered-manifest.sha256` khi
-   > manifest truyền vào có `manifest_schema_version`; đưa authored path vào thì nó **bỏ qua hash-lock,
-   > không báo lỗi, vẫn in `registered`** — fail-OPEN trên đúng cơ chế toàn vẹn mà cả gate dựa vào.
-   > Một slice đã mất một vòng đăng ký vì làm đúng theo dòng cũ.
-   > **Sau mỗi lần register, kiểm `.autopilot/state/<feature>/registered-manifest.sha256` tồn tại
-   > trước khi làm bất cứ việc gì khác.** Đừng tin chữ "registered".
+   > ⚠️ **Lịch sử của dòng này, đọc cả hai lớp.** *(a)* Bản đầu ghi authored path và mô tả gate là
+   > "fail-closed" — cả hai đều sai, sửa 2026-08-01: khi đó `register` chỉ ghi
+   > `registered-manifest.sha256` **nếu** manifest truyền vào có `manifest_schema_version`, nên đưa
+   > authored path vào thì nó **bỏ qua hash-lock, không báo lỗi, vẫn in `registered`** — fail-OPEN
+   > trên đúng cơ chế toàn vẹn mà cả gate dựa vào. Một slice đã mất một vòng đăng ký vì làm đúng theo
+   > dòng cũ. *(b)* **Bản mô tả fail-OPEN đó nay cũng đã mục** (đo 2026-08-21, KIT_VERSION 31):
+   > `register` kiểm `manifest_schema_version == level3-operational-v2` **ngay câu lệnh đầu tiên của
+   > nhánh, trước khi chạm `INFLIGHT.md` hay tạo state dir**, và authored path nay `HALT
+   > CONTRACT_INVALID` chứ không đi lọt. Tự đo, đừng tin số chép tay:
+   > `grep -n 'CONTRACT_INVALID' scripts/autopilot-scope-gate`.
+   > **Lời khuyên vẫn giữ nguyên vì nó rẻ và không phụ thuộc phiên bản: sau mỗi lần register, kiểm
+   > `.autopilot/state/<feature>/registered-manifest.sha256` tồn tại trước khi làm bất cứ việc gì
+   > khác.** Đừng tin chữ "registered".
 
    Kit version đọc từ `scripts/autopilot-scope-gate` header, KHÔNG hard-pin trong prose — số chép tay
    đã stale một lần ở `10` trong khi cài đặt là `11`. Root worktree luôn ở `main`.

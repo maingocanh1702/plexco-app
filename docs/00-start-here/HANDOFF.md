@@ -3,6 +3,80 @@
 > **Đọc file này ĐẦU TIÊN khi tiếp quản project.** Self-contained: không cần context phiên trước.
 > Cập nhật: 2026-07-28 (BRD v3.9n · PRD v2.8m · TDD v3.1h · **ROADMAP v3.4l** · decisions v2.11 current mirror; HEAD `main@ed38106` = `origin/main` — authority snapshot vẫn pin ở `784bc8d`, hai commit sau chỉ là autopilot docs/kit v11, không đụng authority · migration · runtime). Migrations `0000`–**`0024`** (25 file): auth `0015`–`0018`, tenant-integrity DD-68 `0019`–`0021`, job-infra `0022`–`0023`, capacity-visibility CHECK `0024`. Google auth lane đã merge; Safari macOS+iOS M3 **đã đo PASS 26/07**, nhưng Google login **chưa được chứng minh đã enable/go-live** — set credential vẫn là owner go-live decision và các gate khác (vd A3 legal/PII) đứng độc lập. DD-87 `splitNameAmount` core đã merge (`d2a27e1`) nhưng vẫn **không có production caller**. Tầng feature nghiệp vụ vẫn **0 Chat/Assistant/notification route, 0 màn FE**. **DD-32 Option D, DD-70/71/72 và DD-86/DD-91–95 đã owner-final; DD-88 chỉ là broader `DEFERRED_PROPOSAL`.** Channel Booking, In-app Chat v0.15/v0.23, Notifications v3.11/v3.11 và Club Assistant v0.18/v0.18 có Reviewed target contract. Exact 27-file Chat authority pack đã land tại `90d292d`; primary plan v1.8 đạt `PLAN_READY` closure 12/12, nhưng B4/worktree chưa author và từng slice `1–47` / `A1–A21` / `F0–F15` vẫn phải đạt strict `CODE_READY`. `PLAN_READY` không chứng minh runtime.
 >
+> 🟣 **LIVE TRUTH 2026-08-21 (v1.35) — `main` = `origin/main` = `a151b15`. ĐÂY LÀ KHỐI MỚI NHẤT.**
+> ⚠️ **Cách đọc file này, sửa từ v1.35:** các khối LIVE TRUTH bên dưới xếp theo thời gian **tăng dần**
+> (13/08 → 14/08), nên đọc xuôi từ trên xuống bạn gặp khối **cũ nhất trước** — đúng ngược với ý định
+> của chúng. Từ nay khối mới nhất nằm **ngay đây, trên cùng**; mọi khối dưới là lịch sử, và **chỉ thị**
+> của chúng cũng mục chứ không riêng con số.
+> **+11 commit từ pin `93f1e93` (14/08): 9 docs + 2 chạm `packages/db/`.** Kiểm:
+> `git diff --name-only 93f1e93..HEAD -- packages apps`.
+> **`AnnounceSession` đã land (`d925c99`) — command thứ BA của `session-service.ts`, và là command
+> money-free ĐẦU TIÊN.** Gate announce = `status='open'` **và** `ends_at > now()`, đánh giá **dưới row
+> lock bằng đồng hồ DATABASE** (đúng lớp clock-skew P1 mà PublishSession từng dính), lỗi
+> `SESSION_ALREADY_ENDED` — DD-111 (✅ owner 15/08) + amendment D1 (`51fe7e9`): **một time-guard sau khi
+> đã khoá cần query riêng của nó, không chỉ cần gọi đúng hàm.** Lane land là
+> `session-command-announce--v2` (`.autopilot/landings/`). Export hiện có:
+> `grep -nE '^export (async )?function' packages/db/src/session-service.ts`.
+> **DD-110 (✅ owner 15/08) mint bốn action-class literal hẹp cho session command family** + hàng ma
+> trận Suspended Action Matrix tương ứng, đóng đúng blocker Tier C mà packet
+> `session-commands-update-close-cancel` tự nêu; amendment D3 ghi nhận pre-registration chỉ-literal là
+> **bất khả thi về cấu trúc**. Kèm token invariant mới **`billing-authz`** trong catalog.
+> **Decisions: file tự khai `v2.34` (15/08) — nhưng `a151b15` thêm DD-112 mà KHÔNG thêm dòng changelog,
+> nên version đó đang under-report một DD.** Đọc DD mới nhất bằng
+> `grep -nE '^## DD-1[01][0-9]' docs/standards/decisions.md | tail -5`, đừng tin ô version.
+> **DD-112 ⬜ CHƯA CHỐT (mở 17/08):** đổi **sức chứa** khi session đã có charges thì xử lý tiền thế nào —
+> câu hỏi mở **không có owner đứng sau**. Đây là Tier C: slice nào chạm nhánh đó phải AWAIT.
+> **Số đo tại `a151b15` — ĐỀU LÀ STATIC, KHÔNG PHẢI RUNNER:** 33 migration, tail `0032` **không đổi** ·
+> **38 test file** · **static 835** (core 146 · db **512** · web 137 · bot 40) · validator 30 ·
+> 10 API route + `healthz` · 1 `page.tsx`. ⚠️ **Canonical runner CHƯA chạy lại từ 15/08** — số authority
+> cho trục Tests vẫn là **854 workspace + 30 validator @ `93f1e93`**. `835` là static và **cấm khai
+> thành số runner**; db tăng 490→512 khớp với test đi kèm `AnnounceSession`, không phải một lần đo mới.
+> **Không đổi:** 0 route nghiệp vụ · 0 màn FE · schedule OFF · chưa projector thật · FE **PENDING** theo
+> lệnh owner 13/08 · code-dark còn **hai** (DD-29 entitlements · `chat_definer` bootstrap) · thanh ~33%.
+> Ba command trong `session-service.ts` vẫn là **thư viện**: chưa surface nào gọi được từ ngoài.
+>
+> ✅ **ĐÃ ĐÓNG 21/08 — reservation mồ côi `docs-impact-policy-contract--price-only`.** Lane `HALT
+> MAX_ROUNDS` ngày 17/08 (`fix-round-count` 5/5, `gate-attempt-count` 6, `pending-review-finding.json`
+> còn active) nhưng registry vẫn ghi `in-flight` và **không có bản ghi landing/disposition nào** ⇒ nó
+> giữ khoá `session-lock-ordering` · `api-contract` · `i18n-surface` + 7 file docs, chặn mọi slice
+> chạm các thứ đó bằng `SCOPE_COLLISION`. Owner đã đóng bằng `ap-finish.sh --authorized-close`
+> (13:02Z 21/08): disposition record `authorized_close` tại
+> `.autopilot/dispositions/docs-impact-policy-contract--price-only.json` (`head_sha` `2d4861b`, không
+> claim merge), **40 file forensics đã archive** tại
+> `.autopilot/state-archive/docs-impact-policy-contract--price-only-20260821T130206Z/state/` (gồm
+> `HALT-MAX_ROUNDS.txt`, `DECISIONS.md`, `regions.log`, 6 gate-attempt), worktree đã remove, registry
+> đã `cleanup`, **branch `feat/…--price-only` giữ lại** để tra cứu.
+> HALT này **có design cause gọi tên được** (packet reconcile manifest tích tụ 3 lớp thay vì author một
+> manifest price-only sạch — 5/6 vòng là cái đuôi tự gây ra; reviewer attempt-01 đã đề nghị đúng cách
+> kia) **và finding đã được accept** ⇒ successor **được pre-authorize** theo `level3-workflow.md` §6.1,
+> **register mới từ `main` sạch**. Nợ còn lại: `ap-finish` cố ý **không** commit backlog — chạy
+> `scripts/autopilot-backlog-reconcile --check` rồi `--fix` qua đường commit có root-lock.
+>
+> ⚠️ **ĐÍNH CHÍNH LỖI ĐO CỦA CHÍNH KHỐI NÀY — `git worktree list` qua mount của Cowork báo `prunable`
+> SAI.** Bản nháp v1.35 khai ba worktree là `prunable` và dùng đó làm một phần lý do phải đóng gấp.
+> Đo lại 21/08 sau khi đóng: **từ shell của owner, hai worktree PublishSession KHÔNG hề `prunable`**;
+> **từ sandbox Cowork thì CÓ**. Nguyên nhân: worktree đăng ký đường dẫn `/Users/…` còn sandbox nhìn
+> repo ở `/sessions/…/mnt/…`, nên git không khớp gitdir và xếp chúng vào `prunable`. Hệ quả cần nhớ:
+> **mọi phán đoán về `prunable` đo từ một phiên Cowork là vô giá trị — phải đo lại từ shell thật.**
+> Điều này cũng đặt dấu hỏi lên chính câu "cả hai forensics worktree bị flag `prunable`" trong
+> `5186655` (15/08): nếu quan sát đó cũng đến từ một phiên Cowork thì tiền đề của nó cũng sai. Bản
+> archive mà commit đó tạo ra vẫn có giá trị và vẫn là bản primary — chỉ **lý do** cần đọc lại. Lý do
+> đóng `--price-only` thì **không** phụ thuộc vào `prunable`: registry `in-flight` + không disposition
+> record + `pending-review-finding` còn active, cả ba đều verify độc lập được.
+>
+> **Cảnh báo "đừng prune" của v1.31/v1.34 nay có điều kiện mới:** forensics PublishSession v1/v2 đã được
+> **sao ra prune-proof** tại `.autopilot/state-archive/` (`5186655`, 15/08) ⇒ **archive là bản primary,
+> worktree là bản thứ cấp**. Nghĩa là hai worktree đó không còn là bản duy nhất — nhưng luật chung vẫn
+> giữ: đừng prune worktree nào **chưa có** landing/disposition record.
+> **Khối 🔵 "VIỆC ĐANG BAY — `session-service-create-command-core`" bên dưới ĐÃ MỤC:** lane đó đã merge
+> (`.autopilot/landings/session-service-create-command-core--v2.json`). Câu "chưa merge ⇒ BE nghiệp vụ
+> vẫn 0" trong khối đó **không còn đúng** — xem khối 🟢 14/08.
+> **`CLAUDE.md` §Workflow bước 3 đã được sửa cùng phiên này:** cảnh báo `register` fail-OPEN với authored
+> path mô tả một phiên bản kit cũ; KIT_VERSION 31 kiểm `manifest_schema_version` **ngay câu lệnh đầu
+> nhánh `register`** và `HALT CONTRACT_INVALID`. Lời khuyên kiểm `registered-manifest.sha256` vẫn giữ.
+> **Bản đồ quy trình đầy đủ** (hai ray, vòng đời slice, bẫy đã trả giá): `./repo-operating-flow.md` —
+> derived doc, **không phải authority**; file gốc thắng khi lệch.
+>
 > 🔴 **LIVE TRUTH 2026-08-13 (re-pin cuối ngày, v1.33) — `main` = `origin/main` = `1fdba1d`. Đọc mục này TRƯỚC mọi đoạn phía trên/dưới; các con số cũ hơn là lịch sử.**
 > **+60 commits từ pin `64e9ccb` (07/08). Migrations `0000`–`0032` (33 file), tail `0032`:** `0030` DM-safety authority DD-55 (`d5b31f9`, 10/08) · `0031` **chat schema core DD-38/86** (`3b3bb09`, 11/08) · `0032` DM-safety config single-read DD-102 (`80a3464`, 12/08). **Chat epic đã có DB root thật** — nhưng vẫn **0 service/API/UI chat**; slice 7 `chat-shared-message-command-core` **đã author** (packet + manifest còn untracked), slice 8 chưa; nợ P1 `chat-identity-merge-reparent-enablement` (planned, NOT_CODE_READY — DD-103) đứng trước Person-merge, còn `chat-dm-safety-config-single-read` đã merged (nghĩa vụ DD-102 đóng). Lane `chat-dm-safety-authority-core--v2` @`31bd4d9` **ĐÃ ĐÓNG** qua `--authorized-close` (DD-103), successor `--v3` merged — cảnh báo "đừng prune" của v1.31 hết hiệu lực.
 > **Tests: 813 — và phải đọc đúng phạm vi.** **813 là số WORKSPACE (vitest), KHÔNG gồm lớp validator**, đo tại gate `0032` = `80a3464` (12/08, máy owner). Đối chiếu static đóng chính xác: `772 + 41 generated = 813` (core 152 · db 475 · web 146 · bot 40) — chi tiết generator ở `../product/ROADMAP.md` §Cách đọc tiến độ luật 4. Full `pnpm test` = 813 + validator; **lớp validator đã 13 → 17 qua HAI commit**: `b53bc75` tạo `autopilot-ephemeral-review-worktree.test.mjs` (2 test) + wire vào `test:review-readiness` (13→15), rồi `2d5834b` thêm 2 test nữa vào chính file đó **không chạm `package.json`** (15→17) ⇒ full-run kế tiếp kỳ vọng **830** (dự đoán, không khai). ⚠️ Con số `795 @ a8f120f` ở bản v1.32 **không thuộc `main`** (chỉ trên `feat/dd38-dd86-chat-schema-core--v2` + archive) — đừng xen vào chuỗi mốc main-line. Tương tự, mốc **`683` @`528540e` là TỔNG** (13 validator + 670 workspace): trong chuỗi workspace phải đọc là **670**, đừng trộn hai thang đo. Test files **37**. Được phép mang 813 sang `1fdba1d` vì **24 commit sau `80a3464` không chạm `packages/`|`apps/`** (`git diff --name-only 80a3464..HEAD -- packages apps` ⇒ rỗng); chúng chỉ chạm docs/backlog/`.claude/commands/`/kit/**root `package.json`** — nhưng "không chạm code" ≠ "số full-run không đổi", vì lớp validator đổi qua cả `package.json` lẫn file test. **CI infra-block (billing, 06/08) ĐÃ HẾT:** Security/OSV full-scan **GREEN trên main** (run trên `9a5c709`, 11/08 — lần đầu sau đợt đỏ); các merge 0030–0032 đi qua ap-finish gates sạch. Chưa re-verify từng workflow khác — đọc run mới nhất trước khi claim full-matrix xanh.
@@ -264,6 +338,8 @@ Research/reconciliation/strategy là input định hướng, không được ove
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 21/08/2026 | v1.35 | **Re-pin `93f1e93` → `a151b15` (+11 commits: 9 docs + 2 chạm `packages/db/`) và ĐỔI VỊ TRÍ khối live-truth.** Các khối cũ xếp thời gian tăng dần nên người đọc xuôi gặp khối **cũ nhất trước** — từ v1.35 khối mới nhất nằm trên cùng. **Mới:** `AnnounceSession` land (`d925c99`) — command thứ ba, **money-free đầu tiên**, guard `ends_at > now()` dưới row lock bằng đồng hồ DATABASE + `SESSION_ALREADY_ENDED` (DD-111 ✅ 15/08 + amendment D1 `51fe7e9`: time-guard sau khoá cần query RIÊNG, không chỉ cần đúng hàm); DD-110 ✅ mint 4 action-class literal + hàng Suspended Action Matrix (token invariant mới `billing-authz`), amendment D3 ghi pre-registration chỉ-literal là bất khả thi về cấu trúc; **DD-112 ⬜ CHƯA CHỐT** (17/08) — đổi sức chứa khi đã có charges thì xử lý tiền thế nào, **không có owner đứng sau** ⇒ Tier C. **Đính chính đo được:** (1) file `decisions.md` tự khai `v2.34` nhưng `a151b15` thêm DD-112 **không kèm dòng changelog** ⇒ ô version under-report một DD, đọc DD mới nhất bằng grep chứ đừng tin ô đó; (2) số `835` là **STATIC** (core 146 · db 512 · web 137 · bot 40, 38 test file) — **canonical runner CHƯA chạy lại từ 15/08**, số authority trục Tests vẫn là **854 workspace + 30 validator @ `93f1e93`**; (3) `CLAUDE.md` §Workflow bước 3 cảnh báo `register` fail-OPEN với authored path — mô tả kit cũ; KIT_VERSION 31 kiểm `manifest_schema_version` ngay câu lệnh đầu nhánh `register` và `HALT CONTRACT_INVALID` (đã sửa cùng phiên); (4) khối 🔵 `session-service-create-command-core` đã mục — lane đã merge. **✅ Đóng trong cùng phiên:** reservation `docs-impact-policy-contract--price-only` còn `in-flight` trong INFLIGHT nhưng lane đã `HALT MAX_ROUNDS` 17/08 (5/5 fix-round, 6 gate-attempt, `pending-review-finding.json` active) và **không có landing/disposition record** — nó đang khoá `session-lock-ordering`/`api-contract`/`i18n-surface` + 7 file docs. Owner đóng bằng `ap-finish.sh --authorized-close` lúc 13:02Z: disposition record `authorized_close`, **40 file forensics archive** tại `state-archive/…-20260821T130206Z/`, branch giữ lại; successor pre-authorized theo §6.1. Nợ: `ap-finish` không commit backlog ⇒ chạy `autopilot-backlog-reconcile` riêng. **⚠️ Đính chính lỗi đo của chính bản nháp v1.35:** nó khai ba worktree `prunable`; đo lại cho thấy `git worktree list` **qua mount Cowork báo `prunable` SAI** (worktree đăng ký `/Users/…`, sandbox thấy `/sessions/…/mnt/…` ⇒ không khớp gitdir), từ shell owner thì sạch. Mọi phán đoán `prunable` đo từ phiên Cowork là vô giá trị; điều này cũng đặt dấu hỏi lên tiền đề `prunable` của `5186655` — bản archive vẫn primary, chỉ **lý do** cần đọc lại. Lý do đóng `--price-only` không phụ thuộc `prunable`. Thêm doc dẫn quy trình `./repo-operating-flow.md` (derived, không phải authority). Không đổi: 33 migration tail `0032`, 10 route + healthz, 0 route nghiệp vụ, 0 màn FE, schedule OFF, FE PENDING, code-dark còn hai, ~33%. |
+| 14/08/2026 | v1.34 | *(Dòng này được **backfill ngày 21/08** — khối 🟢 LIVE TRUTH 14/08 đã được viết vào file ở `2b07ef9` nhưng **chưa từng có dòng changelog**; ghi lại thay vì sửa im lặng.)* **Re-pin `1fdba1d` → `93f1e93`.** BE nghiệp vụ hết bằng 0: `createSession` (`b48625c`) + `publishSession` (`1ccbe5d`) land trong `packages/db/src/session-service.ts`, kèm **cặp outbox producer có thứ tự đầu tiên** trên cùng aggregate (`session.created` seq 1 → `session.published` seq 2). `authorizeTenantAction` **hết code-dark** sau 8 ngày 0 caller ⇒ trio code-dark còn **hai**. Canonical runner 15/08: **854 workspace + 30 validator**, 0 fail. Chuỗi PublishSession: 3 lane, 15 vòng, 2 `HALT MAX_ROUNDS`; thứ làm nó land là **chẩn đoán đúng** (reviewer đọc toàn bộ diff mỗi vòng, miss-rate ~2/3 ⇒ v1/v2 cạn trần vì **lấy mẫu**), v3 land trong 4 vòng. DD-109 nâng trần 5→8 hoá ra **không cần và không chạy được** (validator hard-cap 5). Vẫn KHÔNG runnable: 0 route nghiệp vụ, 0 màn FE, schedule OFF, chưa projector thật. |
 | 13/08/2026 | v1.33 | **Re-pin cuối ngày `1303c31` → `1fdba1d` (+10 commits) + 5 đính chính của chính v1.32.** (1) **Phạm vi số test:** `813` là **workspace-only**, không gồm validator — v1.32 để mơ hồ và một phiên reconcile sau đó đã trừ nhầm 13 validator rồi khai một mismatch "lệch 11" **không tồn tại**. Đối chiếu thật đóng chính xác `772 + 41 = 813`. Lớp validator 13→**17** qua `b53bc75` (+2) **và** `2d5834b` (+2) ⇒ full-run kế kỳ vọng 830. (2) **`795 @ a8f120f`:** commit đó **không nằm trên `main`**, không được xen vào chuỗi mốc main-line. (3) **`683 @ 528540e` là TỔNG**, không phải workspace — trong chuỗi workspace phải đọc là 670. (4) **decisions v2.27 → v2.28:** DD-105 land sau khi v1.32 viết. (5) **"11 spec bump"** của v1.32 sai — `692f9f2` là **9 spec** + `feature_share_activities.md`, đúng như title commit. **Mới:** `session-service-create-command-core` — slice nghiệp vụ đầu tiên, v1 `HALT MAX_ROUNDS`, v2 authorized, **chưa merge** (⛔ không pin SHA: tip amend liên tục, hai SHA chép vào doc đã thành orphan trong một buổi); chat slice 7 đã author; **FE HOLD → PENDING theo lệnh owner** (đổi bản chất, không phải mức độ); next-lanes chuyển sang bản 13/08. Mirror `ROADMAP.md` v3.4o → **v3.5**, `BUILD-STATUS.md` +block 13/08. Không đổi: 33 migration, 10 route, 0 route nghiệp vụ, 0 màn FE, ~33%. |
 | 13/08/2026 | v1.32 | **Live-truth re-pin `64e9ccb` → `1303c31` (+50 commits).** Migrations tail `0029`→`0032` (33 file): `0030` DM-safety DD-55, `0031` chat schema DD-38/86, `0032` DD-102. Chat lane `--v2` đóng `--authorized-close` (DD-103), `--v3` merged — gỡ cảnh báo prune v1.31. Tests 683→**813** (gate `0032`, 12/08), files 35→37. CI billing-block hết: OSV GREEN trên `9a5c709` (11/08). Decisions v2.19→**v2.27**: DD-100..104, trong đó DD-104 chốt D0–D4 decision-level 13/08 (slice deferred), spec-WIP DeleteSession gỡ lần hai (FE v2.25/BE v2.22). Docs reorg `features/FE\|BE` + A-grade 49 specs. Không đổi: 0 route nghiệp vụ/0 màn FE, FE HOLD DD-81, code-dark trio (`authorizeTenantAction`/DD-29/outbox OFF), Google chưa enablement proof. Next: C (2 nợ chat P1) → B theo next-lanes 2026-08-11. |
 | 07/08/2026 | v1.31 | **Live-truth re-pin `528540e` → `64e9ccb` (review round toàn repo, cuối ngày).** Ghi 3 commit mới: `4cc574c` CI-mitigation (cron/timeout/concurrency — **chưa có run xanh xác nhận**, CI vẫn coi là blocked), `5b2b8f5` commit `app-error.ts` (+14 core tests; per-package core 152 · web 146 máy owner; trục Tests giữ **683 @`528540e`** tới full-run kế; test files 35; static @`64e9ccb` = 669), `64e9ccb` DD-96..99/decisions v2.19. GitNexus hết stale (reindex 02:43 có `api-contract`/`app-error`); còn nợ commit chore gitnexus-block refresh. Ghi lane `chat-dm-safety-authority-core--v2` @`31bd4d9` đỗ chờ codex quota + cấm `worktree prune`. FE HOLD không đổi: `design.pen` + `fe.pen` cùng untracked, DD-81 canonical chưa chọn. Milestones: `../sessions/2026-08-07-next-milestones.md`. |
