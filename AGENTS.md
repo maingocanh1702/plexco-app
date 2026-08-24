@@ -17,6 +17,86 @@ For every session that reviews, reconciles, fixes, or finalizes docs, decisions,
 These rules are repo policy and apply even when the user only says "review", "check", "updated", "fix", "final", or asks whether a plan can start coding.
 <!-- review-code-readiness:end -->
 
+<!-- feature-doc-templates:start -->
+# Feature doc templates — two LAYERS, not two options
+
+`docs/templates/feature-spec-template.md` and `docs/templates/feature-dev/fe-spec-template.md` are
+**not duplicates**; they are consecutive layers. Choose by *what you are writing*, never by which one
+looks more complete.
+
+| Writing | Template | Destination | Precondition |
+|---|---|---|---|
+| A new feature (behavior + contract) | `docs/templates/feature-spec-template.md` (7 sections) | `docs/features/FE/feature_{name}.md` | always paired with BE |
+| The BE side of that same feature | `docs/templates/be-tech-spec-template.md` (6 sections) | `docs/features/BE/feature_{name}_tech.md` | **one feature = one pair**, no orphans (current inventory: 26 pairs) |
+| One specific web screen | `docs/templates/feature-dev/fe-spec-template.md` (11 sections) | `docs/channels/web/FE/feature_{name}_fe.md` | **only after** the Product spec is Reviewed |
+| Build-time tracking | `docs/templates/feature-dev/feature-checklist.md` | — | — |
+
+**The FE Design spec is downstream, not a parallel FE copy.** Its header must pin
+`Source authority: features/FE/feature_{name}.md v{version} · baseline {40-char SHA}` — with no Reviewed
+Product spec there is nothing to pin, so it must not be written yet. The Product/UX spec covers **every
+channel** (web · Zalo · Messenger · notification); the FE Design spec covers `apps/web` only. That is why
+26 Product specs map to 17 FE specs and **the mapping is not 1:1** — never create extra files to "complete
+the pairs".
+
+**`docs/templates/feature-docs-playbook.md` is NOT a template.** It sits in the same directory and is easy
+to copy by mistake, but it is a Sporta port, status *"Reviewed — Active once Adoption B0+B1 completes"*
+(**not Active**), and it describes a structure this repo does not use: FE with 10 sections (including API
+Endpoints · Error Codes · Caching, which Plexco places in the BE spec), the status enum
+`Draft|In Review|Approved|Superseded`, and a `docs/Phase {N}/` layout. Only its *governance* rules were
+absorbed into `docs/features/README.md` v2.33 (`Reviewed` ≡ `Approved`, three-way gate). Read it for the
+rules; never copy it as a skeleton.
+
+> WARNING: do not cite `docs/research/template-comparison-2026-08-14.md` as grounds for deferring the FE
+> spec layer. Its §2.1 and T6 state that the FE Design template has *"no instances written yet"* — false
+> at the time of writing: 17 `docs/channels/web/FE/*_fe.md` files were committed on **10–11 Aug**, three to
+> four days earlier. The rest of that document still holds; that one premise is rotten.
+
+## Missing sections FAIL THE GATE — they are not "missing prose"
+
+**Product/UX spec** — all three are subsections, so the 7-section count is **unchanged**:
+
+- `### Entry points` inside §1, placed before `### Bất biến`. Table `Entry | Route / Surface | Actor | Mô tả`,
+  listing every surface: route · tab · deep link · bot command · notification.
+- The use-case table has **5 columns**: `ID | Actor | Hành động | Để… (benefit) | Kết quả`. A benefit that
+  merely restates the action means the use case has no reason to exist. Already-`Reviewed` specs are
+  **not retrofitted** — add the column the next time the spec is edited.
+- `### NFR compliance` at the end of §6, pointing **back** to `docs/product/BRD.md` §8 and the NFR table in
+  `docs/product/TDD.md`. Never define a new NFR here and never build a third catalog. If the feature touches
+  no NFR, write `none` plus the reason: an empty table cannot distinguish "considered, not applicable" from
+  "never considered".
+
+**FE Design spec:**
+
+- **§8–§11 must exist** (`DD-99` P1 gate) even if their only content is `TBD`. Template v0.4 shipped without
+  all four and produced five specs on 11 Aug — `booking_funnel` · `club` · `club_assistant` ·
+  `session_organize` · `tournament` — at 0/4, none of which can be promoted to this day. **Never delete an
+  empty heading.**
+- A `#### Error mapping` table for **every screen**, with codes copied verbatim from that feature's BE tech
+  doc and closed by an unknown/missing/timeout **fail-closed** row. Prose saying "fails closed" does not
+  replace the table. If BE has not pinned a catalog, write `UNPINNED error catalog — omit active UI` and
+  **never invent codes**.
+- The i18n column carries **real string pairs** `t("vi", "en")` (HARD RULE 5). This repo has no key-based
+  i18n: `t('some.key')` resolves to nothing and no locale file exists in the tree.
+- A field with no owner DTO gets `UNPINNED — omit active UI`. Wireframe fixtures are never implementation
+  authority.
+- Keep **exactly one** Responsive table (dashboard-shell with sidebar · player-facing 375 + desktop) and
+  delete the other. Intermediate breakpoints on player-facing surfaces belong to F0 design authority —
+  do not invent numbers.
+
+## Volume floors — take the HIGHER number
+
+> WARNING: the two sources disagree (measured 2026-08-24). `feature-spec-template.md` §2 says
+> `Minimum 8 use cases`, while the review gate in `docs/features/README.md` v2.33 sets the floor at
+> `≥10 UC`. Following the template exactly still fails the gate — the defect is in the skeleton itself.
+> **Use ≥10 UC** until one side is corrected.
+
+Product/UX: **≥10 use cases** · ≥10 edge cases across 4+ categories.
+BE: ≥12 edge cases across 6 categories · ≥20 unit tests · ≥4 integration tests · ≥3 scenarios per status.
+Any feature touching money, auth, or PII additionally requires a **decision table** for every money and
+permission branch, plus abuse cases.
+Floors are a necessary condition, never a target — hitting the numbers does not by itself pass review.
+<!-- feature-doc-templates:end -->
+
 <!-- level3-workflow:start -->
 # Default workflow — Level 3 supervised autonomy
 
@@ -41,9 +121,19 @@ Operational entry point: `docs/autopilot-ONBOARDING.md`.
    decomposes the outcome, delegates and monitors child agents, then integrates and verifies the
    whole result. It does not ask the owner to route every step.
 3. **One writing slice = one branch + one worktree + at most one live writer.** Register before
-   writing: `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<slug>.json`
-   (KIT_VERSION 10, fail-closed). The root worktree stays on `main`. Slices sharing a migration,
-   stateful invariant, or generated artifact are serialized, never parallelized.
+   writing, passing the **runtime manifest**, never the authored contract:
+   `scripts/autopilot-scope-gate register --manifest .autopilot/state/<feature>/manifest.json`
+   (hand-write that file from `docs/autopilot-manifests/_TEMPLATE.json` first — it carries
+   `manifest_schema_version: level3-operational-v2`, which the authored contract at
+   `docs/autopilot-manifests/<slug>.json` is forbidden to carry). Passing the authored path is
+   `HALT CONTRACT_INVALID`, checked on the branch's first statement before `INFLIGHT.md` is touched
+   or any state dir is created (measured 2026-08-21 at KIT_VERSION 31;
+   `grep -n 'CONTRACT_INVALID' scripts/autopilot-scope-gate`). After every register, confirm
+   `.autopilot/state/<feature>/registered-manifest.sha256` exists before doing anything else — do not
+   trust the printed word `registered`. Never hard-pin the kit version in prose; read it with
+   `awk '/^# KIT_VERSION:/{print $3; exit}' scripts/autopilot-scope-gate` (a hand-copied `10` was
+   already stale against an installed `11`). The root worktree stays on `main`. Slices sharing a
+   migration, stateful invariant, or generated artifact are serialized, never parallelized.
 4. Verify with the repo's real commands (`pnpm test` with `DATABASE_URL_TEST`, build, lint,
    typecheck, e2e when a real boundary is crossed), then the mandatory independent review through
    `scripts/codex-review-pin.sh`; a slice touching auth, secrets, permissions, money, external

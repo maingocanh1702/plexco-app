@@ -34,6 +34,75 @@ Policy này áp dụng kể cả khi user chỉ nói “review”, “check”, 
 
 ---
 
+## Template feature docs — hai TẦNG, không phải hai lựa chọn
+
+`docs/templates/feature-spec-template.md` và `docs/templates/feature-dev/fe-spec-template.md`
+**không trùng nhau** — chúng nối tiếp nhau. Chọn theo *đang viết cái gì*, không theo cái nào "đầy đủ hơn".
+
+| Đang viết | Template | Đích | Điều kiện |
+|---|---|---|---|
+| Feature mới (hành vi + contract) | `docs/templates/feature-spec-template.md` (7 section) | `docs/features/FE/feature_{name}.md` | luôn đi kèm BE |
+| BE của chính feature đó | `docs/templates/be-tech-spec-template.md` (6 section) | `docs/features/BE/feature_{name}_tech.md` | **1 feature = 1 cặp**, không mồ côi (inventory hiện tại 26 cặp) |
+| Một màn web cụ thể | `docs/templates/feature-dev/fe-spec-template.md` (11 section) | `docs/channels/web/FE/feature_{name}_fe.md` | **chỉ sau khi** Product spec đã Reviewed |
+| Tracking lúc build | `docs/templates/feature-dev/feature-checklist.md` | — | — |
+
+**FE Design spec là downstream, không phải "bản FE song song".** Header bắt buộc pin
+`Source authority: features/FE/feature_{name}.md v{version} · baseline {SHA 40 ký tự}` — chưa có Product
+spec Reviewed thì không có gì để pin ⇒ chưa được viết. Product/UX spec phủ **mọi kênh** (web · Zalo ·
+Messenger · notification); FE Design spec chỉ phủ `apps/web`. Vì vậy 26 Product spec ↦ 17 FE spec,
+**không map 1:1** — đừng tạo thêm cho "đủ cặp".
+
+**`docs/templates/feature-docs-playbook.md` KHÔNG phải template.** Nằm cùng thư mục nên rất dễ copy nhầm,
+nhưng nó là bản port từ Sporta, status *"Reviewed — Active khi Adoption B0+B1 hoàn tất"* (**chưa Active**),
+và mô tả cấu trúc khác repo này: FE 10 section (có API Endpoints · Error Codes · Caching — Plexco đặt ở
+BE spec), enum `Draft|In Review|Approved|Superseded`, thư mục `docs/Phase {N}/`. Chỉ phần *governance*
+của nó đã hấp thụ vào `docs/features/README.md` v2.33 (`Reviewed` ≡ `Approved`, gate 3 chiều). Đọc để
+hiểu luật, **không copy làm khuôn**.
+
+> ⚠️ **Đừng dùng `docs/research/template-comparison-2026-08-14.md` làm căn cứ hoãn tầng FE spec.** §2.1 và
+> T6 của nó ghi FE Design template *"chưa instance nào được viết"* — sai ngay lúc viết: 17 file
+> `docs/channels/web/FE/*_fe.md` đã commit **10–11/08**, trước doc đó 3–4 ngày. Phần còn lại của doc vẫn
+> dùng được; riêng tiền đề đó đã mục.
+
+### Thiếu là TRƯỢT GATE, không phải "thiếu chữ"
+
+**Product/UX spec** — cả ba đều là subsection, count 7 section **không đổi**:
+
+- `### Entry points` trong §1, đặt trước `### Bất biến`. Bảng `Entry | Route / Surface | Actor | Mô tả`,
+  liệt kê đủ route · tab · deep link · bot command · notification.
+- UC table **5 cột** `ID | Actor | Hành động | Để… (benefit) | Kết quả`. Benefit chỉ lặp lại Hành động
+  = UC thiếu lý do, không phải thiếu chữ. Spec `Reviewed` cũ **không sửa hồi tố** — bổ sung khi sửa lần kế.
+- `### NFR compliance` cuối §6, **trỏ ngược** `docs/product/BRD.md` §8 + bảng NFR của `docs/product/TDD.md`.
+  Không định nghĩa NFR mới, không dựng catalog thứ ba. Không chạm NFR nào → ghi `none` + lý do; bảng rỗng
+  không phân biệt "đã xét, không áp" với "chưa xét".
+
+**FE Design spec:**
+
+- **§8–§11 phải tồn tại** (gate `DD-99` P1) kể cả khi chỉ ghi `TBD`. Template v0.4 thiếu cả bốn và đã kịp
+  sinh 5 spec ngày 11/08 — `booking_funnel` · `club` · `club_assistant` · `session_organize` · `tournament`
+  — với 0/4, tới nay không promote được. **Đừng xoá heading rỗng.**
+- Bảng `#### Error mapping` cho **từng screen**; mã lấy nguyên văn từ BE tech doc của chính feature đó, kết
+  bằng hàng unknown/missing/timeout **fail closed**. Prose "fail closed" không thay được bảng. BE chưa pin
+  catalog → ghi `UNPINNED error catalog — omit active UI`, **không bịa mã**.
+- Cột i18n ghi **cặp chuỗi thật** `t("vi", "en")` (HARD RULE 5). Repo không có key-based i18n —
+  `t('some.key')` không resolve được và không có locale file nào trong cây.
+- Field chưa có owner DTO → `UNPINNED — omit active UI`. Không dùng wireframe fixture làm implementation authority.
+- Chọn **đúng một** bảng Responsive (dashboard-shell có sidebar · player-facing 375 + desktop), **xoá bảng kia**.
+  Breakpoint trung gian của surface player-facing là thẩm quyền F0 design — không tự đặt số.
+
+### Floor số lượng — lấy con số CAO HƠN
+
+> ⚠️ Hai nguồn đang lệch (đo 2026-08-24): `feature-spec-template.md` §2 ghi `Minimum 8 use cases`, còn
+> review gate ở `docs/features/README.md` v2.33 ghi floor `≥10 UC`. Viết đúng theo template rồi vẫn trượt
+> gate — lỗi nằm sẵn trong khuôn. **Lấy ≥10 UC** cho tới khi một trong hai bên được sửa.
+
+Product/UX: **≥10 UC** · ≥10 edge case, 4+ category.
+BE: ≥12 edge case, 6 category · ≥20 unit test · ≥4 integration test · ≥3 scenario/status.
+Feature chạm money/auth/PII: bắt buộc **decision table** cho mọi nhánh tiền/quyền + abuse cases.
+Floor là **điều kiện cần**, không phải target — đủ số không tự làm spec đạt review gate.
+
+---
+
 ## Ngôn ngữ — ranh giới là NGƯỜI ĐỌC, không phải loại file
 
 **Agent-facing ⇒ English.** Mọi thứ một agent đọc để thực thi: `.claude/commands/*.md`,
