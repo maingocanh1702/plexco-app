@@ -3,6 +3,69 @@
 > **Đọc file này ĐẦU TIÊN khi tiếp quản project.** Self-contained: không cần context phiên trước.
 > Cập nhật: 2026-07-28 (BRD v3.9n · PRD v2.8m · TDD v3.1h · **ROADMAP v3.4l** · decisions v2.11 current mirror; HEAD `main@ed38106` = `origin/main` — authority snapshot vẫn pin ở `784bc8d`, hai commit sau chỉ là autopilot docs/kit v11, không đụng authority · migration · runtime). Migrations `0000`–**`0024`** (25 file): auth `0015`–`0018`, tenant-integrity DD-68 `0019`–`0021`, job-infra `0022`–`0023`, capacity-visibility CHECK `0024`. Google auth lane đã merge; Safari macOS+iOS M3 **đã đo PASS 26/07**, nhưng Google login **chưa được chứng minh đã enable/go-live** — set credential vẫn là owner go-live decision và các gate khác (vd A3 legal/PII) đứng độc lập. DD-87 `splitNameAmount` core đã merge (`d2a27e1`) nhưng vẫn **không có production caller**. Tầng feature nghiệp vụ vẫn **0 Chat/Assistant/notification route, 0 màn FE**. **DD-32 Option D, DD-70/71/72 và DD-86/DD-91–95 đã owner-final; DD-88 chỉ là broader `DEFERRED_PROPOSAL`.** Channel Booking, In-app Chat v0.15/v0.23, Notifications v3.11/v3.11 và Club Assistant v0.18/v0.18 có Reviewed target contract. Exact 27-file Chat authority pack đã land tại `90d292d`; primary plan v1.8 đạt `PLAN_READY` closure 12/12, nhưng B4/worktree chưa author và từng slice `1–47` / `A1–A21` / `F0–F15` vẫn phải đạt strict `CODE_READY`. `PLAN_READY` không chứng minh runtime.
 >
+> 🟠 **LIVE TRUTH 2026-08-22 (v1.37) — QUYẾT ĐỊNH, KHÔNG PHẢI RUNTIME. ĐÂY LÀ KHỐI MỚI NHẤT.**
+> **`main` không đổi kể từ khối v1.35 (`a151b15`); phiên 22/08 chỉ chạm docs, KHÔNG chạm `packages/` hay
+> `apps/`. Mọi số đếm của v1.35 giữ nguyên hiệu lực — v1.36 không đo lại gì.**
+>
+> **DD-113 ✅ (owner 22/08) — GTM re-sequencing: launch = webapp PWA + Zalo bot SONG SONG, app native
+> lùi về phase sau.** Web hết vai "fallback"; phạm vi mỗi surface do **thiết kế** quyết định, không do
+> giới hạn Zalo quyết định. **Launch scope PWA v1 = đúng 5 khối:** signin/signup · link Zalo bot ·
+> session management · session detail · settings. Negative scope launch: discovery public · in-app chat ·
+> feed/kudos · auto-reconcile · rating công khai · tournament/club · **web push** · **fill-slot** ·
+> **native**. Gate mở native nay là ngưỡng đo được (≥5 host ≥4 tuần trên PWA · weekly return ≥60% ·
+> install rate ≥30% **tách iOS/Android** · `/api/v1`+bearer/refresh đã land · nêu được capability PWA
+> **đo được là không làm nổi**), thay cho "TBD". DD-113 **không** đảo DD-69 — chỉ đổi thứ tự và bỏ nhãn
+> fallback.
+> Đã mirror **đủ** trong cùng phiên (cả DD-113 lẫn DD-114): `../strategy/gtm-strategy.md` (rewrite) ·
+> `../standards/decisions.md` **v2.36** · `../product/ROADMAP.md` **v3.7** ·
+> `../strategy/native-app-strategy.md` **2.1** · `../product/BRD.md` **v3.9p** · `../product/PRD.md` **v2.8o**.
+>
+> ⚠️ **DD-113 KHÔNG gỡ lệnh FE PENDING 13/08 — lệnh đó còn nguyên hiệu lực.** Đổi ưu tiên GTM và cấp
+> quyền thực thi FE là hai quyết định khác nhau; trộn chúng vào một DD là cách một DD trở thành authority
+> cho việc nó chưa từng xét. **Hệ quả thực tế: launch scope 5 khối ở trên hiện KHÔNG khởi động được.**
+> ⚠️ **Và đây là phát hiện đáng nhớ hơn cả nội dung DD:** **lệnh FE PENDING chưa từng vào `decisions.md`.**
+> Nguồn duy nhất là `../autopilot-templates/next-lanes-2026-08-13-RUN.md`, rồi mirror sang ROADMAP
+> (`:38`, `:337`, `:378`) và chính file này. Theo đúng luật DD-111 D4 — *quyết định owner phải vào
+> `decisions.md` trước khi lane mang qua gate; bản ghi bền thắng lời khai hội thoại* — thì trạng thái
+> chặn FE, thứ đang chặn toàn bộ launch scope, **đang sống ngoài decision log**. Kiểm lại bằng
+> `grep -n 'PENDING' docs/standards/decisions.md` (22/08: không hit nào nói về FE).
+>
+> **DD-114 ✅ (cùng ngày) — phase-1 = 7 nhóm; launch của DD-113 là SUBSET.** 1 signup/signin Google ·
+> 2 **create club** (tenant provisioning self-serve) · 3 **link club ⇄ Zalo bot** · 4 link account ⇄ Zalo ·
+> 5 **sync data + owner config public/private session** · 6 session management/detail + **nhắc nợ /
+> confirm / gạch nợ** · 7 settings + user/privacy. **Phạm vi này ≈ P0→P5 trừ discovery/chat** — lớn hơn
+> nhiều so với launch, và launch subset chính là thứ giữ nó không trôi.
+>
+> ⚠️ **Hai hard dependency của DD-114, cả hai đắt và cả hai owner-final:**
+> **(a) Billing P5 vào phase-1.** Vế tiền chỉ mở cho `host_pro` (đúng DD-40/DD-29) ⇒ phải có subscription
+> để gate ⇒ **DD-29 entitlement registry phải có reader thật đầu tiên**. Đo tại `a151b15`: `entitlements`
+> /`capabilities` vẫn **0 TS đọc**, code dark từ 07/08. Phase-1 là chỗ nó hết dark, `payment_reconcile_auto`
+> là capability đầu tiên được enforce thật.
+> **(b) Toggle public/private chỉ mở SAU khi land `public_projection_fences`** + guarded view +
+> narrow raise/CAS-clear + `public_projection_version` + grant migration (**(8a)** trong ROADMAP
+> §Next Actions — **nợ sẵn có của DD-12**, không phải chi phí của tính năng mới). Lý do là lỗ đang mở, không
+> phải nguyên tắc: kèo chuyển **private** hoặc **cancel** hiện **vẫn lộ tới khi projector async chạy xong**.
+>
+> ⚠️ **Gate A3 legal (PII data-class matrix) chuyển từ "lead-time item" thành BLOCKER của phase-1** — vì
+> phase-1 có settings/privacy và có bank memo trên đường tiền. Cần luật sư VN ⇒ lead-time dài, khởi động
+> ngay là quyết định rẻ nhất còn lại.
+> ⬜ **OQ chưa chốt (DD-114 D3): public để làm gì khi phase-1 không có discovery?** Kèo `public` chỉ tới
+> người khác qua share link `/s/<id>` (DD-73) — mà DD-73 còn bị **DD-41 projection migration** chặn. Ba
+> khả năng (kéo DD-73+DD-41 vào phase-1 / chỉ toggle+fence / bỏ toggle) chưa chọn ⇒ slice chạm nhánh này
+> **AWAIT**.
+> ⚠️ **"Đăng ký trên bot ⇒ auto signup vào session" KHÔNG phải luồng mới** — nó là **DD-32 Option D** +
+> DD-05 + DD-41 + DD-45 + DD-52. Cấm dựng luồng join thứ hai song song `addMemberToSession`; paid+unlinked
+> giữ chỗ **15 phút**, chỉ active sau verified full payment; provider outage **fail closed**.
+> ⚠️ **BRD §5.1 và DD-114 dùng hai nghĩa khác nhau của "phase-1"** — §5.1 là *MVP scope* và có kể
+> discovery + in-app Chat; DD-114 D7 đặt cả hai **ngoài** phase-1. Không phải mâu thuẫn nếu đọc đúng lớp:
+> §5.1 nói *sản phẩm cuối cùng gồm gì*, DD-114 nói *đợt một gồm gì*. Đã ghi chú tại chỗ trong BRD.
+>
+> ⚠️ **Bảng tổng hợp của `decisions.md` không phải bản kiểm kê DD.** Đo 22/08: **DD-110, DD-111, DD-112
+> không có hàng trong bảng đó** dù đều có mục thân bài. Caveat đã được viết vào chính file. Đọc DD mới
+> nhất bằng `grep -nE '^## DD-1[0-9][0-9]' docs/standards/decisions.md`.
+> **Version `decisions.md` nhảy v2.34 → v2.35 gánh HAI DD** (112 chưa từng có dòng changelog, 113 mới) —
+> đừng đọc chuỗi version như một bậc một DD.
+>
 > 🟣 **LIVE TRUTH 2026-08-21 (v1.35) — `main` = `origin/main` = `a151b15`. ĐÂY LÀ KHỐI MỚI NHẤT.**
 > ⚠️ **Cách đọc file này, sửa từ v1.35:** các khối LIVE TRUTH bên dưới xếp theo thời gian **tăng dần**
 > (13/08 → 14/08), nên đọc xuôi từ trên xuống bạn gặp khối **cũ nhất trước** — đúng ngược với ý định
@@ -144,7 +207,7 @@
 3. Đọc `README.md` (tính năng + setup + doc map).
 4. **TRƯỚC mọi việc đụng code/git: nắm 5 HARD RULES ở §3 — vi phạm = rò rỉ tiền/PII thật.**
 5. Việc mới: theo workflow ở §5 (không tự ý sửa thẳng main).
-6. **Autopilot — bắt đầu ở `docs/autopilot-ONBOARDING.md`** (entry point duy nhất; workflow **Level 3 supervised autonomy**, contract canonical `docs/autopilot-templates/level3-workflow.md`, scope-gate kit version **đọc từ header `scripts/autopilot-scope-gate`** — không hard-pin ở đây vì số chép tay đã stale một lần; sync từ `Claude template` bằng `bash "$HOME/Projects/Claude template/autopilot/parallel/autopilot-update.sh"`). Setup máy nhanh: chạy **`scripts/autopilot-onboard.sh --codex /abs/path/to/codex`** (idempotent: `@import` invariants vào `~/.claude/CLAUDE.md`, pin `AUTOPILOT_CODEX_BIN`, verify kit). Chạy nhiều session/feature song song qua **git worktree riêng (base `main`) + `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<slug>.json`** (HALT nếu đụng `scope`/`invariants`/dep). Token domain chuẩn ở `docs/autopilot-invariant-catalog.md`; backlog ở `docs/autopilot-backlog.md`; bản canonical template ở `docs/autopilot-templates/`. Song song khi scope+invariant rời nhau, tuần tự khi đụng (vd cùng `schema`/`identity`/`money-model`).
+6. **Autopilot — bắt đầu ở `docs/autopilot-ONBOARDING.md`** (entry point duy nhất; workflow **Level 3 supervised autonomy**, contract canonical `docs/autopilot-templates/level3-workflow.md`, scope-gate kit version **đọc từ header `scripts/autopilot-scope-gate`** — không hard-pin ở đây vì số chép tay đã stale một lần; sync từ `Claude template` bằng `bash "$HOME/Projects/Claude template/autopilot/parallel/autopilot-update.sh"`). Setup máy nhanh: chạy **`scripts/autopilot-onboard.sh --codex /abs/path/to/codex`** (idempotent: `@import` invariants vào `~/.claude/CLAUDE.md`, pin `AUTOPILOT_CODEX_BIN`, verify kit). Chạy nhiều session/feature song song qua **git worktree riêng (base `main`) + `scripts/autopilot-scope-gate register --manifest .autopilot/state/<feature>/manifest.json`** (runtime manifest, KHÔNG phải authored contract `docs/autopilot-manifests/<slug>.json` — truyền authored path là `HALT CONTRACT_INVALID`; HALT cả khi đụng `scope`/`invariants`/dep). Token domain chuẩn ở `docs/autopilot-invariant-catalog.md`; backlog ở `docs/autopilot-backlog.md`; bản canonical template ở `docs/autopilot-templates/`. Song song khi scope+invariant rời nhau, tuần tự khi đụng (vd cùng `schema`/`identity`/`money-model`).
 
 ---
 
@@ -240,10 +303,15 @@ DEFAULT_STOP_MODE: STOP_AT_READY   AUTO_MERGE: off
    code/security review · stop conditions (`level3-workflow.md` §3). Thiếu context material →
    `AWAIT_CONTEXT`, không tự bịa.
 2. **Slice + worktree:** 1 writing slice = 1 branch + 1 worktree + tối đa 1 writer, base pin từ
-   `main` đã verify. Register scope trước khi ghi:
-   `scripts/autopilot-scope-gate register --manifest docs/autopilot-manifests/<slug>.json`.
-   Root worktree luôn ở `main`, KHÔNG sửa thẳng main. Slice đụng cùng migration/state/generated
-   artifact → tuần tự, không song song.
+   `main` đã verify. Register scope trước khi ghi — truyền **runtime manifest**, KHÔNG phải authored
+   contract: `scripts/autopilot-scope-gate register --manifest .autopilot/state/<feature>/manifest.json`
+   (tự viết file này từ `docs/autopilot-manifests/_TEMPLATE.json` trước; nó mang
+   `manifest_schema_version: level3-operational-v2`, còn `docs/autopilot-manifests/<slug>.json` thì BỊ
+   CẤM mang trường đó). Truyền authored path là `HALT CONTRACT_INVALID` — kiểm ngay câu lệnh đầu tiên
+   của nhánh, trước khi chạm `INFLIGHT.md`. Sau mỗi lần register, kiểm
+   `.autopilot/state/<feature>/registered-manifest.sha256` tồn tại trước khi làm việc khác; đừng tin
+   chữ `registered`. Root worktree luôn ở `main`, KHÔNG sửa thẳng main. Slice đụng cùng
+   migration/state/generated artifact → tuần tự, không song song.
 3. **Scope nhỏ:** ~300 LOC / ≤3 module per slice; mỗi slice nêu đúng 1 mechanism + negative scope.
 4. **Self-verify:** `pnpm test` (bắt buộc `DATABASE_URL_TEST`) + build/lint/typecheck, e2e khi vượt
    boundary thật, và inspect exact diff so với base đã pin.
@@ -338,6 +406,8 @@ Research/reconciliation/strategy là input định hướng, không được ove
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 22/08/2026 | v1.37 | **Thêm DD-114 ✅ — phase-1 = 7 nhóm, launch (DD-113) là subset (owner 22/08).** 1 signup/signin Google · 2 create club · 3 link club ⇄ Zalo bot · 4 link account ⇄ Zalo · 5 sync data + owner config public/private · 6 session management/detail + nhắc nợ/confirm/gạch nợ · 7 settings/privacy. **Phạm vi ≈ P0→P5 trừ discovery/chat.** Hai hard dependency owner-final: **(a) billing P5 vào phase-1** vì vế tiền chỉ mở cho `host_pro` (DD-40/DD-29) ⇒ **DD-29 entitlement registry phải có reader thật đầu tiên** (đo `a151b15`: vẫn 0 TS đọc, code dark từ 07/08); **(b) toggle public/private chỉ mở sau khi land `public_projection_fences` (8a — nợ sẵn có của DD-12)** vì kèo private/cancel hiện còn lộ tới khi projector async chạy. **A3 legal (PII) từ lead-time item thành blocker phase-1.** ⬜ OQ chưa chốt: public để làm gì khi chưa có discovery (share link DD-73 còn bị DD-41 chặn) ⇒ slice chạm nhánh này AWAIT. Nhắc lại ràng buộc DD-32 Option D cho "auto signup từ bot": cấm luồng join thứ hai, paid+unlinked giữ chỗ 15 phút, provider outage fail closed. Ghi chú thêm: **BRD §5.1 (MVP scope, có kể discovery+chat) và DD-114 D7 (phase-1, không có hai thứ đó) là hai lớp khác nhau**, đã chú tại chỗ. Mirror cùng phiên: decisions **v2.36** · ROADMAP **v3.7** · BRD **v3.9p** · PRD **v2.8o**. |
+| 22/08/2026 | v1.36 | **Mirror DD-113 ✅ — GTM re-sequencing (owner 22/08). KHÔNG phải re-pin: `main` vẫn `a151b15`, phiên này chỉ chạm docs, không số đếm nào được đo lại.** Launch = **webapp PWA + Zalo bot song song**, app native lùi phase sau; web hết vai "fallback" (căn cứ đo được: DD-69 đặt PWA làm phase-1 target từ 18/07 mà tới `a151b15` vẫn 0 màn FE / 1 `page.tsx` / 0 route nghiệp vụ). Launch scope PWA v1 = 5 khối (signin/signup · link Zalo bot · session management · session detail · settings); gate mở native thành ngưỡng đo được thay cho "TBD". Mirror cùng phiên, đủ chuỗi: `../strategy/gtm-strategy.md` rewrite · `../standards/decisions.md` **v2.35** · `../product/ROADMAP.md` **v3.6** · `../strategy/native-app-strategy.md` **2.1** · `../product/BRD.md` **v3.9o** · `../product/PRD.md` **v2.8n**. ⚠️ **DD-113 KHÔNG gỡ FE PENDING 13/08** ⇒ launch scope hiện không khởi động được. ⚠️ **Phát hiện kèm theo, đáng nhớ hơn nội dung DD:** lệnh FE PENDING **chưa từng vào `decisions.md`** — chỉ sống ở `next-lanes-2026-08-13-RUN.md` rồi mirror ROADMAP/HANDOFF, tức thứ đang chặn toàn bộ launch scope nằm ngoài decision log, đúng lớp lỗi DD-111 D4 vừa cấm. ⚠️ Thêm: **bảng tổng hợp `decisions.md` thiếu hàng DD-110/111/112** (caveat đã viết vào chính file); version nhảy v2.34 → v2.35 **gánh hai DD** vì DD-112 chưa từng có dòng changelog. |
 | 21/08/2026 | v1.35 | **Re-pin `93f1e93` → `a151b15` (+11 commits: 9 docs + 2 chạm `packages/db/`) và ĐỔI VỊ TRÍ khối live-truth.** Các khối cũ xếp thời gian tăng dần nên người đọc xuôi gặp khối **cũ nhất trước** — từ v1.35 khối mới nhất nằm trên cùng. **Mới:** `AnnounceSession` land (`d925c99`) — command thứ ba, **money-free đầu tiên**, guard `ends_at > now()` dưới row lock bằng đồng hồ DATABASE + `SESSION_ALREADY_ENDED` (DD-111 ✅ 15/08 + amendment D1 `51fe7e9`: time-guard sau khoá cần query RIÊNG, không chỉ cần đúng hàm); DD-110 ✅ mint 4 action-class literal + hàng Suspended Action Matrix (token invariant mới `billing-authz`), amendment D3 ghi pre-registration chỉ-literal là bất khả thi về cấu trúc; **DD-112 ⬜ CHƯA CHỐT** (17/08) — đổi sức chứa khi đã có charges thì xử lý tiền thế nào, **không có owner đứng sau** ⇒ Tier C. **Đính chính đo được:** (1) file `decisions.md` tự khai `v2.34` nhưng `a151b15` thêm DD-112 **không kèm dòng changelog** ⇒ ô version under-report một DD, đọc DD mới nhất bằng grep chứ đừng tin ô đó; (2) số `835` là **STATIC** (core 146 · db 512 · web 137 · bot 40, 38 test file) — **canonical runner CHƯA chạy lại từ 15/08**, số authority trục Tests vẫn là **854 workspace + 30 validator @ `93f1e93`**; (3) `CLAUDE.md` §Workflow bước 3 cảnh báo `register` fail-OPEN với authored path — mô tả kit cũ; KIT_VERSION 31 kiểm `manifest_schema_version` ngay câu lệnh đầu nhánh `register` và `HALT CONTRACT_INVALID` (đã sửa cùng phiên); (4) khối 🔵 `session-service-create-command-core` đã mục — lane đã merge. **✅ Đóng trong cùng phiên:** reservation `docs-impact-policy-contract--price-only` còn `in-flight` trong INFLIGHT nhưng lane đã `HALT MAX_ROUNDS` 17/08 (5/5 fix-round, 6 gate-attempt, `pending-review-finding.json` active) và **không có landing/disposition record** — nó đang khoá `session-lock-ordering`/`api-contract`/`i18n-surface` + 7 file docs. Owner đóng bằng `ap-finish.sh --authorized-close` lúc 13:02Z: disposition record `authorized_close`, **40 file forensics archive** tại `state-archive/…-20260821T130206Z/`, branch giữ lại; successor pre-authorized theo §6.1. Nợ: `ap-finish` không commit backlog ⇒ chạy `autopilot-backlog-reconcile` riêng. **⚠️ Đính chính lỗi đo của chính bản nháp v1.35:** nó khai ba worktree `prunable`; đo lại cho thấy `git worktree list` **qua mount Cowork báo `prunable` SAI** (worktree đăng ký `/Users/…`, sandbox thấy `/sessions/…/mnt/…` ⇒ không khớp gitdir), từ shell owner thì sạch. Mọi phán đoán `prunable` đo từ phiên Cowork là vô giá trị; điều này cũng đặt dấu hỏi lên tiền đề `prunable` của `5186655` — bản archive vẫn primary, chỉ **lý do** cần đọc lại. Lý do đóng `--price-only` không phụ thuộc `prunable`. Thêm doc dẫn quy trình `./repo-operating-flow.md` (derived, không phải authority). Không đổi: 33 migration tail `0032`, 10 route + healthz, 0 route nghiệp vụ, 0 màn FE, schedule OFF, FE PENDING, code-dark còn hai, ~33%. |
 | 14/08/2026 | v1.34 | *(Dòng này được **backfill ngày 21/08** — khối 🟢 LIVE TRUTH 14/08 đã được viết vào file ở `2b07ef9` nhưng **chưa từng có dòng changelog**; ghi lại thay vì sửa im lặng.)* **Re-pin `1fdba1d` → `93f1e93`.** BE nghiệp vụ hết bằng 0: `createSession` (`b48625c`) + `publishSession` (`1ccbe5d`) land trong `packages/db/src/session-service.ts`, kèm **cặp outbox producer có thứ tự đầu tiên** trên cùng aggregate (`session.created` seq 1 → `session.published` seq 2). `authorizeTenantAction` **hết code-dark** sau 8 ngày 0 caller ⇒ trio code-dark còn **hai**. Canonical runner 15/08: **854 workspace + 30 validator**, 0 fail. Chuỗi PublishSession: 3 lane, 15 vòng, 2 `HALT MAX_ROUNDS`; thứ làm nó land là **chẩn đoán đúng** (reviewer đọc toàn bộ diff mỗi vòng, miss-rate ~2/3 ⇒ v1/v2 cạn trần vì **lấy mẫu**), v3 land trong 4 vòng. DD-109 nâng trần 5→8 hoá ra **không cần và không chạy được** (validator hard-cap 5). Vẫn KHÔNG runnable: 0 route nghiệp vụ, 0 màn FE, schedule OFF, chưa projector thật. |
 | 13/08/2026 | v1.33 | **Re-pin cuối ngày `1303c31` → `1fdba1d` (+10 commits) + 5 đính chính của chính v1.32.** (1) **Phạm vi số test:** `813` là **workspace-only**, không gồm validator — v1.32 để mơ hồ và một phiên reconcile sau đó đã trừ nhầm 13 validator rồi khai một mismatch "lệch 11" **không tồn tại**. Đối chiếu thật đóng chính xác `772 + 41 = 813`. Lớp validator 13→**17** qua `b53bc75` (+2) **và** `2d5834b` (+2) ⇒ full-run kế kỳ vọng 830. (2) **`795 @ a8f120f`:** commit đó **không nằm trên `main`**, không được xen vào chuỗi mốc main-line. (3) **`683 @ 528540e` là TỔNG**, không phải workspace — trong chuỗi workspace phải đọc là 670. (4) **decisions v2.27 → v2.28:** DD-105 land sau khi v1.32 viết. (5) **"11 spec bump"** của v1.32 sai — `692f9f2` là **9 spec** + `feature_share_activities.md`, đúng như title commit. **Mới:** `session-service-create-command-core` — slice nghiệp vụ đầu tiên, v1 `HALT MAX_ROUNDS`, v2 authorized, **chưa merge** (⛔ không pin SHA: tip amend liên tục, hai SHA chép vào doc đã thành orphan trong một buổi); chat slice 7 đã author; **FE HOLD → PENDING theo lệnh owner** (đổi bản chất, không phải mức độ); next-lanes chuyển sang bản 13/08. Mirror `ROADMAP.md` v3.4o → **v3.5**, `BUILD-STATUS.md` +block 13/08. Không đổi: 33 migration, 10 route, 0 route nghiệp vụ, 0 màn FE, ~33%. |

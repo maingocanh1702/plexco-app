@@ -11,6 +11,10 @@
 
 ## Bảng tổng hợp
 
+> ⚠️ **Bảng này không đầy đủ — đo 22/08/2026: DD-110, DD-111, DD-112 KHÔNG có hàng ở đây** dù cả ba đã
+> có mục thân bài. Đọc DD mới nhất bằng `grep -nE '^## DD-1[0-9][0-9]' docs/standards/decisions.md`,
+> đừng dùng bảng này làm bản kiểm kê.
+
 | ID | Quyết định | Trạng thái | Phase | Nguồn |
 |---|---|---|---|---|
 | DD-01 | SĐT verified (share-contact) là khoá merge chính | 🔄 Điều chỉnh bởi DD-50 (phase-1 KHÔNG thu SĐT; khoá mạnh = verified email + link_code; phone = merge signal tương lai, schema giữ dormant) | P3.5 | BRD OD-1 · TDD Q6 |
@@ -112,6 +116,9 @@
 | DD-96 | **Home money chips** → **Part A ✅** canonical `SelfPaymentSummary` cross-club thuộc `player_view` (Home cấm tự cộng; `feature_home_tech.md:166` đã yêu cầu mở rộng Player View owner), **unknown-dominates**: một CLB `unknown` ⇒ cả summary `unknown`, cấm sum các CLB known; `clubCount` = số CLB có outstanding > 0; không `payAction` ở tầng aggregate. **Part B 🟡** chip "Chưa thu" cross-club — owner chốt direction, đảo HOME-OQ-1(c), nhưng **không thuộc player_view** (DD-48 + DTO allowlist "other charges ❌ NEVER"); cần host-self owner riêng và còn 4 blocker B1–B4 (design-probe · `authorizeTenantAction` 0 caller · chưa Reviewed per-club owner · fan-out semantics) | Part A ✅ `DECISION_FINAL` contract shape (owner 2026-08-07), chưa authorize code · Part B ✅ direction / 🟡 `NOT_PLAN_READY` mechanism | Part A: S9 (cùng Home) sau P4.6 · Part B: sau per-club host receivable owner | DD-48 · DD-79 (HOME-OQ-1) · DD-91 · `../features/BE/feature_player_view_tech.md` · `../features/BE/feature_home_tech.md:166` · `../channels/web/FE/feature_dashboard_fe.md:59-66` |
 | DD-97 | **Collection statement + export sao kê per-session/kỳ (PDF/XLSX)** → composition-only trên `charges`+`payment_allocations` (không bảng/formula tiền mới; DTO cần owner Reviewed — cùng họ blocker B3 của DD-96); export async behavior-contract-only trên DD-89 foundation (không authorize enablement); download authenticated tenant-scoped, không public link (HR2); entitlement ✅ tách lớp: per-session statement view = **free** · kỳ/tháng + export file = **`host_pro`** | ✅ Direction + entitlement chốt (owner-delegated 2026-08-07) · mechanism chờ DTO owner Reviewed | P5+ TBD | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · DD-89 · DD-40 |
 | DD-98 | **Negative scope cho mechanic Sporta không port** → không theo đuổi: custom split per player (đụng derivation DD-39/41/45/49) · timeout-hold release cho linked member (DD-32 Option D giữ pay-later) · OS push kèm tiền/QR (mirror NTF — đã cấm sẵn) · auto-archive "nợ cũ" theo tuổi · geo/radius/distance/map picker (NP-5 — mâu thuẫn DD-06 area-only public) | ✅ Chốt (owner-delegated 2026-08-07) | — | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · `../research/sporta-fe-docs-gap-2026-08-07.md` · DD-06/32/39/49 |
+| DD-115 | **Membership — gói hội viên chu kỳ 30 ngày cho player** → player chọn ngày bắt đầu, hệ thống đếm buổi theo lịch cố định trong 30 ngày, thu **một lần** đã chiết khấu. **D1** lớp thương mại **trên** `memberships`, không thêm cột vào bảng đó. **D2** model là **N charge đã chiết khấu + 1 giao dịch allocate sang N charge** — `charges.session_id` NOT NULL + `charges_tenant_session_player_uq` khiến "một charge tổng" phải sửa bất biến đường tiền, **bác**. **D3** số buổi **đo từ `sessions` thật**, cấm nhân số tuần (đo: start 23/08/2026 ⇒ T3+T5=8 nhưng T7+CN=9 ⇒ cả tháng=**17**, không phải 16 như requirement giả định). **D4** config gói có **version, immutable per version**; không dùng `settings` (không version/audit) và không dùng `membership_tags` (DD-43/BL-SES-7 cấm tag tạo giá). **D5** quyền lợi fail-closed, chỉ mở sau khi tiền phủ đủ. ⬜ **D6** quyền vượt `slots_max` là **ngoại lệ với BL-SES-2/BL-CBF-3** ⇒ Tier C. ⬜ **D7** bind allocation vào chu kỳ là **ngoại lệ với BL-PAY-5 FIFO**. ⛔ **D8** chiết khấu phí giải đấu chặn ngoài bởi DD-82 (`tournaments` chưa tồn tại, v1 không đụng tiền). 10 OQ chưa chốt | 🟡 Đề xuất (2026-08-24) | P4+ — **ngoài phase-1** (DD-114 D7) | `../features/FE/feature_membership.md` v0.1 · `../features/BE/feature_membership_tech.md` v0.1 · DD-02 · DD-39 · DD-40 · DD-43 · DD-82 · BL-PAY-2/5/8 · BL-SES-2/3 · BL-CBF-3/5 |
+| DD-114 | **Phase-1 feature scope = 7 nhóm; launch (DD-113) là subset** → 1 signin/signup Google · 2 create club · 3 link club ⇄ Zalo bot · 4 link account ⇄ Zalo · 5 sync data + owner config public/private · 6 session management/detail + nhắc nợ/gạch nợ · 7 settings/privacy. **Hai hard dependency:** vế tiền chỉ `host_pro` (DD-40/DD-29) ⇒ **billing P5 + reader đầu tiên của entitlement registry vào phase-1**; toggle public/private chỉ mở **sau khi land `public_projection_fences` (8a, nợ DD-12)**. A3 legal thành blocker phase-1. ⬜ OQ: public để làm gì khi chưa có discovery | ✅ Chốt (owner 2026-08-22) | P0–P5 (trừ discovery/chat) | DD-113 · DD-40/DD-29 · DD-32 Option D · DD-12/DD-73/DD-41 · `../probes/pre-code-open-items-2026-07-16.md` A3 |
+| DD-113 | **GTM re-sequencing: launch = webapp PWA + Zalo bot song song; app native lùi về phase sau** → web hết vai "fallback"; PWA v1 đúng 5 khối (signin/signup · link Zalo bot · session management · session detail · settings); negative scope launch gồm discovery/chat/feed/auto-reconcile/web push/fill-slot/native; gate native viết thành ngưỡng đo được. **Không** gỡ FE PENDING 13/08, **không** đảo DD-69 | ✅ Chốt (owner 2026-08-22) | — (GTM/surface order, ngoài P-number) | `../strategy/gtm-strategy.md` (rewrite 22/08) · DD-69 · `../strategy/native-app-strategy.md` §1 · `../decisions/analysis/dd-69-app-native-analysis.md` |
 | DD-109 | **Nới `fix_rounds_max` 5 → 8 cho RIÊNG `session-draft-lifecycle-commands--v3`** → `PublishSession` HALT `MAX_ROUNDS` hai lần (v1, v2; 11+ vòng). Bằng chứng nói **không phải thrash**: `regions.log` v2 = 5 vòng / **5 vùng khác nhau**, `REGION_THRASH` không bắn. Nguyên nhân thật: reviewer đọc `git diff <base>...HEAD` = **toàn bộ 1.690 dòng mỗi vòng**, miss-rate đo được **≈2/3** ⇒ mỗi vòng là một lần **lấy mẫu**, finding mới là chữ ký **under-sampling** chứ không phải slice sai. Hệ quả: thu hẹp *việc* của successor KHÔNG thu hẹp *bề mặt review*. Chọn 8 vì `(2/3)^M`: M5≈13% → M8≈3,9% (ước lượng có căn cứ, không phải phép đo). **Điều kiện cứng:** v3 PHẢI tới được vòng security (chưa attempt nào chạm tới, dù slice gọi `authorizeTenantAction`); v3 HALT nữa = bằng chứng quyết định cho slice-too-big ⇒ **re-slice thật, cấm lần bốn**; `REGION_THRASH` giữ nguyên. Ngoại lệ MỘT lane, khuôn DD-101; §8 không đổi cho lane khác. | ✅ Chốt (owner 2026-08-14) | — | `../autopilot-templates/level3-workflow.md` §8 · DD-101 · `../decisions/analysis/codex-reviewer-determinism-2026-08-13/` |
 | DD-108 | **Trust-gate file: mirror canonical + version phải ĐO được** → (1) mirror E1 sang canonical đủ **ba vế** (copy · `pack_pairs()` · bump `KIT_VERSION`); (2) fix gốc rễ: `KIT_VERSION` gõ tay không đổi khi nội dung đổi ⇒ **test phải đỏ khi hai bản phân kỳ** (assert byte-identical mọi `TRUSTED_GATE_FILES`, hoặc dẫn xuất version từ content hash); (3) **chặn `autopilot-update.sh`** tới khi (2) land. Căn cứ: footgun lần **thứ hai** cùng chỗ, và đo được **cả hai kit cùng `KIT_VERSION: 31`** — hai file khác nội dung, cùng số hiệu. | ✅ Chốt (owner-delegated 2026-08-14) | — | `../autopilot-backlog.md` → `reviewer-isolation-backport-canonical-kit` (tiền lệ) · E1 `a3c62ad` |
 | DD-107 | **Autonomy mode `autonomous_to_ready` + context/authority protocol** → lane chạy thẳng tới READY **không dừng hỏi owner giữa chừng**. Context = **toàn bộ doc corpus thuộc phạm vi** nhưng ~2 triệu token nên **không nạp được** ⇒ luật là **bảo đảm độ phủ, không phải đã nạp**: luôn nạp lõi nhỏ (HANDOFF live-truth + bảng tổng hợp `decisions.md` + gate + packet), phần còn lại **search rồi GHI LẠI query** (kể cả query rỗng — grep rỗng là bằng chứng về query, không phải về repo). Kèm **thang authority 7 bậc** để tự giải mâu thuẫn: runtime truth > migrations/`schema.ts` > `decisions.md` > spec Reviewed > Draft/plan > ROADMAP/BRD/PRD/TDD theo câu hỏi > index/summary. Owner review **một lượt tại READY** qua Decision Ledger, thay vì bị ngắt từng quyết định. Ba tầng thẩm quyền: **A derivable** (agent quyết, log 1 dòng — dừng ở tầng này là defect) · **B judgment/reversible/in-scope** (agent quyết, log đủ alternatives+lý do, owner review batch) · **C reserved** (vẫn AWAIT — 8 mục: money contract · PII/HARD RULES · sửa contract của spec Reviewed · migration đổi semantics hoặc chung tail · enablement · merge/deploy · vượt negative scope · finding bị phản bác). Budget thành **tín hiệu, không phải cổng**. HALT successor pre-authorized khi finding được chấp nhận + gọi tên được nguyên nhân *thiết kế*. **Không đổi:** worktree isolation, scope-gate, 2 vòng review sạch, loop breaker, **human merge**. | ✅ Chốt (owner 2026-08-14) | — | `../autopilot-templates/level3-workflow.md` §6.1 · DD-100 |
@@ -1626,6 +1633,299 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 
 ---
 
+## DD-115 — Membership: gói hội viên chu kỳ 30 ngày cho player · 🟡 Đề xuất (chờ owner, 2026-08-24)
+
+> **Nguồn:** requirement owner 2026-08-24. Spec mở cùng lúc: `../features/FE/feature_membership.md` v0.1 + `../features/BE/feature_membership_tech.md` v0.1 — cả hai 🟡 **Draft**, chưa qua readiness gate, **không** authorize code/migration.
+
+- **Bối cảnh:** Player sinh hoạt theo lịch cố định đang trả tiền từng buổi — mỗi buổi một `charge`, một lần CK, một lần đối soát. Requirement: cho phép trả **một lần** cho toàn bộ buổi trong **30 ngày** kể từ ngày player chọn, có chiết khấu theo gói (weekdays / weekends / cả tháng), kèm quyền lợi (vào buổi đã full, chiết khấu phí giải đấu) và **mọi tham số đều config động**.
+
+  Trước khi thiết kế phải gỡ một cái bẫy tên gọi: repo đã có **ba** thứ mang chữ membership/subscription — `memberships` (quan hệ person↔tenant, BL-ID-1/BL-ID-4), `subscriptions`+`plans` (billing SaaS của **host**, `free`/`host_pro`, DD-29) và `membership_tags` (DD-43, chưa migrate). Gói trả phí của **player** không phải cái nào trong ba cái đó. DD-43 + BL-SES-7 còn đóng thẳng đường tắt hấp dẫn nhất: *"tag không tạo eligibility, role, **giá**, quyền"* — nên không được nhét gói vào tag.
+
+### Quyết định đề xuất
+
+- **D1 — Lớp thương mại ĐẶT TRÊN `memberships`, không sửa `memberships`.** `memberships` giữ nguyên 7 cột, tiếp tục là identity anchor duy nhất (`pay_code`, merge chain, `memberships_active_person_unique`). Chu kỳ gói là **bảng con** hang off nó. Đây là cách thoả CLAUDE.md *"không tạo bảng song song với khái niệm đã có"* mà vẫn không nhồi vòng đời tiền vào một bảng định danh.
+
+- **D2 — Model là N charge đã chiết khấu + một giao dịch allocate sang N charge. "Một charge tổng" bị BÁC.** Đo tại live schema (`packages/db/schema.ts:1053`, `0003_payments_ledger.sql`): `charges.session_id` và `charges.player_id` đều **NOT NULL**, có `charges_tenant_session_player_uq (tenant_id, session_id, player_id)`, cộng hai composite FK tenant-integrity `charges_tenant_session_fk`/`charges_tenant_player_fk` vừa land ở `0019` (DD-68). Một charge phủ 17 buổi cần `session_id` NULL ⇒ drop NOT NULL + đổi UNIQUE + nới cả hai FK. Đó là **sửa bất biến đường tiền cho một tính năng bán hàng** — đúng thứ HR2 cấm. Ngược lại, `payment_allocations` vốn đã là quan hệ **nhiều allocation trên một `bank_transaction`** (`idx_alloc_bank_txn`), nên N-charge model chạy được với **zero thay đổi trên mọi bảng tiền**. Chi phí duy nhất chuyển sang **chính sách** (D7), không phải schema.
+
+- **D3 — Số buổi là dữ liệu ĐO từ `sessions` thật, cấm nhân số tuần.** Cửa sổ 30 ngày = 4 tuần + 2 ngày, nên số buổi của mỗi thứ trong tuần **không đều nhau**. Kiểm bằng lịch thật trên chính ví dụ của requirement — `start = 23/08/2026` (Chủ nhật), cửa sổ `[23/08 … 21/09]`:
+
+  | Gói | Các buổi | Số buổi |
+  |---|---|---|
+  | weekdays (T3+T5) | 25/08, 27/08, 01/09, 03/09, 08/09, 10/09, 15/09, 17/09 | **8** |
+  | weekends (T7+CN) | 23/08, 29/08, 30/08, 05/09, 06/09, 12/09, 13/09, 19/09, 20/09 | **9** |
+  | cả tháng | hợp hai tập trên | **17** |
+
+  Requirement giả định cả tháng = 16 buổi. Với chính ngày bắt đầu mà requirement nêu, con số đúng là **17**. Hệ quả phải nói rõ: hai gói "2 buổi/tuần" **không** bằng nhau về giá, và gói cả tháng **không** bằng tổng hai gói kia. Vì vậy: đếm bằng query trên `sessions` trong cửa sổ (lọc theo **ngày địa phương** của từng buổi, không theo UTC), và **fail-closed** khi horizon recurrence chưa sinh đủ buổi tới `ends_on` — không bán gói rồi tạo charge treo.
+
+- **D4 — Config gói có version, immutable per version.** Yêu cầu "mọi tham số config động" **không** được cài bằng `settings(tenant_id, key, jsonb)`: bảng đó không có version, không có provenance, không có kiểu — không đủ cho tham số quyết định tiền (BL-SEC-3 buộc audit mọi thao tác chạm tiền). Đề xuất `membership_plans` với `(tenant_id, plan_key, version)` UNIQUE, `created_by` NOT NULL, sửa = INSERT version mới. Chu kỳ **snapshot** `plan_version` + đơn giá từng buổi ⇒ host đổi giá hay đổi tỉ lệ chiết khấu về sau **không hồi tố** lên chu kỳ đã bán (BL-SES-3 *"không silent mutation"*).
+
+- **D5 — Quyền lợi fail-closed.** Chu kỳ chỉ `active` khi **mọi** charge của nó đã `paid`. CK thiếu ⇒ không kích hoạt một phần, không quyền lợi (cùng nguyên tắc BL-CBF-2: QR và nút "đã trả" không phải bằng chứng). Trạng thái tiền không chứng minh được ⇒ trả `unknown` và **không** cấp quyền (BL-PAY-12).
+
+- ⬜ **D6 — CHƯA CHỐT, chạm HARD RULE: quyền vào buổi đã full.** BL-SES-2 và BL-CBF-3 pin *"một capacity authority"* — admission occupancy không vượt `slots_max`. Cho member vượt là **sửa bất biến đó**, nên phải là quyết định owner, không phải chi tiết spec ⇒ **Tier C** theo DD-107. Kèm theo là một gap hạ tầng: **repo không có khái niệm "sân"** — `sessions` chỉ có `slots_max`, và chuỗi `court` **không xuất hiện ở đâu** trong `packages/db`. "Tối đa 8 người/sân" vì vậy cần thêm `sessions.court_count` (hoặc config tenant-level) trước khi phát biểu được. Hai nhánh: (a) nâng trần hiệu dụng cho member `active` lên `court_count × max_per_court`; (b) không nâng trần, chỉ cho member quyền ưu tiên trong waitlist.
+
+- ⬜ **D7 — CHƯA CHỐT: bind giao dịch vào chu kỳ (ngoại lệ với BL-PAY-5).** BL-PAY-5 quy định FIFO oldest-first. Một CK 1.496.000đ của người **đang nợ buổi lẻ cũ** sẽ bị matcher hút vào nợ cũ trước, khiến gói không đủ tiền và không kích hoạt — trong khi player tin là đã trả xong. Cần cơ chế bind (pay_code riêng cho chu kỳ / allocation group / memo có cấu trúc). Đây là **ngoại lệ có chủ đích** với một business rule đang active, nên phải viết vào DD chứ không giấu trong service.
+
+- ⛔ **D8 — CHẶN NGOÀI: chiết khấu phí giải đấu.** `tournaments` **chưa tồn tại** trong `packages/db`; `../features/BE/feature_tournament_tech.md` v0.3 ghi rõ **v1 không đụng tiền, entry-fee deferred** (DD-82). Quyền lợi này không có nơi tiêu thụ. Thêm nữa, "giải ngay sau đó" chưa định nghĩa được — giải nào đủ điều kiện (bắt đầu trong chu kỳ? giải kế tiếp bất kể ngày?). Spec giữ `tournament_discount_bp` như trường config **không có consumer**, và không viết luồng.
+
+- **Lý do:** Ba ràng buộc kỹ thuật quyết định gần như toàn bộ hình dạng feature này, và cả ba đều đo được chứ không phải suy đoán: `charges` bị khoá theo session (D2), số buổi không chia đều cho 7 (D3), và capacity chỉ có một authority (D6). Thiết kế nào bỏ qua một trong ba đều dẫn tới hoặc sửa bất biến tiền, hoặc bán sai giá, hoặc tạo capacity authority thứ hai.
+
+- **Hệ quả:**
+  - **Schema:** 3 bảng mới (`membership_plans`, `membership_cycles`, `membership_cycle_charges`) tenant-private ENABLE+FORCE RLS, composite FK cùng-tenant theo pattern DD-68; **0 thay đổi** trên `charges`/`payment_allocations`/`bank_transactions`; `memberships` **0 thay đổi**. Thêm `sessions.court_count` **chỉ khi** D6 chọn nhánh (a), đi migration riêng.
+  - **Business rules:** cần bổ sung nhóm `BL-MBS-*` khi DD chốt, và **ghi rõ ngoại lệ** với BL-SES-2 (D6) + BL-PAY-5 (D7) — không để hai rule mâu thuẫn ngầm.
+  - **Rate registry:** thêm hàng `/api/membership/*` vào Appendix BL-SEC-5.
+  - **Phase:** P4+ sau Session core + Payment reconcile; **ngoài phase-1** theo DD-114 D7 và ngoài launch theo DD-113 D3.
+  - **Chưa authorize:** không code, không migration, không packet/worktree/slice, không enablement. DDL trong BE spec là **contract cần build**.
+
+- **Open questions (mirror `MBS-OQ-1..10` của spec):**
+
+  | OQ | Câu hỏi | Chặn gì |
+  |---|---|---|
+  | MBS-OQ-1 | Phạm vi ngày bắt đầu — requirement tự mâu thuẫn: *"chọn 1 ngày bất kỳ trong tháng đó"* vs ví dụ *"hỏi ngày 23/08 thì chỉ được chọn 23/08"* | Luồng bot bước 2 |
+  | MBS-OQ-2 | Số sân — thêm `sessions.court_count`, suy từ `slots_max`, hay config tenant-level | D6, quyền vượt slot |
+  | MBS-OQ-3 | Buổi **ngoài** gói (weekdays muốn chơi T7): giá lẻ hay giá chiết khấu? có quyền vượt slot không? | UC-8 |
+  | MBS-OQ-4 | Cơ chế bind CK vào chu kỳ | D7, kích hoạt gói |
+  | MBS-OQ-5 | Chính sách huỷ/hoàn: buổi bị huỷ · member rời CLB · player huỷ giữa chừng | Rollout GA |
+  | MBS-OQ-6 | Chồng lấn chu kỳ: cấm, cho phép, hay auto-nối tiếp | Constraint EXCLUDE |
+  | MBS-OQ-7 | Ngoại lệ capacity (D6) | Tier C, cần owner |
+  | MBS-OQ-8 | Chiết khấu giải đấu (D8) | Chặn ngoài bởi DD-82 |
+  | MBS-OQ-9 | Đơn vị + hướng làm tròn khi chiết khấu ra số lẻ | Bất biến Σ charge = total |
+  | MBS-OQ-10 | Đặt tên bảng — `membership_cycles`/`membership_plans` đụng ngữ nghĩa `subscriptions`/`plans` của billing host | Tránh nhầm ở code lẫn doc |
+
+---
+
+## DD-114 — Phase-1 feature scope: 7 nhóm; launch (DD-113) là **subset**, không phải cùng một thứ · ✅ Chốt (owner 2026-08-22)
+
+> **Status boundary:** DD-114 định nghĩa **phạm vi phase-1** + **thứ tự ship** + **hai hard dependency**.
+> Nó KHÔNG authorize slice/code/migration/worktree/enablement, KHÔNG đổi canonical P-number, KHÔNG gỡ
+> lệnh FE PENDING 13/08, và **KHÔNG thay DD-113 D2** — launch scope 5 khối giữ nguyên và là subset của
+> phase-1. Hai văn bản không mâu thuẫn: DD-113 trả lời *ship trước cái gì*, DD-114 trả lời *phase-1 gồm
+> những gì*.
+
+### D1 — Phase-1 = 7 nhóm
+
+| # | Nhóm | Spec owner hiện có | P-number ROADMAP | Ở launch DD-113? |
+|---|---|---|---|---|
+| 1 | **Signup / signin bằng Google account** | `../features/BE/feature_web_auth_onboarding_tech.md` + FE pair | P0–P1 | ✅ khối 1 |
+| 2 | **Create club** (tenant provisioning self-serve) | `feature_multi_tenant_tech.md` · `feature_club_tech.md` · `feature_connector_onboarding_tech.md` (R5) | P4 | ❌ **mới so với launch** |
+| 3 | **Link club ⇄ Zalo bot** (tenant routing) | `feature_zalo_channel_tech.md` · `feature_tenant_routing_authz_tech.md` (R1) | P2 | ❌ **mới so với launch** |
+| 4 | **Link Plexco account ⇄ Zalo account** (identity) | `feature_identity_tech.md` · DD-50 `link_code` · DD-14 🔗 | P3.5 | ✅ khối 2 |
+| 5 | **Sync data Plexco ⇄ Zalo bot** + owner config public/private session | `feature_sync_engine_tech.md` · `feature_channel_booking_funnel_tech.md` (DD-32) · `feature_marketplace_discovery_tech.md` (DD-12/DD-73..78) | P4 / P4.3 | ❌ **mới so với launch** |
+| 6 | **Manage session · session detail · auto remind payment** (confirm thanh toán, nhắc nợ, gạch nợ tự động) | `feature_session_management_tech.md` · `feature_payment_reconcile_tech.md` · `feature_notifications_reminders_tech.md` | P2 / P3 / P4 | 🟡 **một phần** — khối 3+4 ở launch; toàn bộ vế tiền ❌ |
+| 7 | **Settings · user setting / privacy** | `feature_user_settings_tech.md` | P4 | 🟡 khối 5 ở mức tối thiểu; vế privacy ❌ |
+
+**Đọc bảng này cho đúng: "phase-1" như định nghĩa ở đây ≈ P0→P5 của ROADMAP trừ discovery/chat.** Nhóm 6
+kéo theo cả P2 (mark-paid) lẫn P3 (đối soát CK) lẫn P5 (billing — xem D2); nhóm 5 kéo theo P4 + P4.3.
+Đây là phạm vi lớn cho một solo dev, và **launch subset của DD-113 chính là thứ giữ cho nó không trôi**:
+launch chứng minh vòng lặp chạy được, phần còn lại của phase-1 mới đáng đầu tư.
+
+**Vì sao nhóm 2 và 3 ở phase-1 nhưng không ở launch:** launch chạy trên **tenant provision thủ công**
+(tenant #1 dogfood, đã có trong kế hoạch migrate). Self-serve create club + link club ⇄ bot là thứ mở
+cửa cho **host ngoài**; chúng cần thiết cho phase-1 nhưng không cần thiết để ship lần đầu.
+
+### D2 — Nhóm 6, vế tiền: giữ đúng DD-40/DD-29 — auto-reconcile **và** nhắc tự động đều là `host_pro`
+
+Owner chốt: **cả hai có trong phase-1, nhưng chỉ cho `host_pro`**; tier free giữ **mark-paid thủ công**
+làm baseline toàn cầu. Đây là đọc đúng DD-40 (mark-paid thủ công mặc định MỌI tier; auto-reconcile +
+nhắc tự động là `host_pro`) chứ không phải ngoại lệ mới.
+
+**Hệ quả bắt buộc, phải nói ra vì nó đắt:**
+
+1. **Billing (P5) vào phase-1.** Không có subscription + lifecycle thì không có `host_pro` để gate. Kéo
+   theo `feature_billing_lifecycle_tech.md`, Suspended Action Matrix, và bốn action-class literal của
+   DD-110 phải thực sự vào enum khi command của chúng land.
+2. **DD-29 entitlement registry phải có reader thật đầu tiên.** Đo tại `a151b15`: `entitlements` /
+   `capabilities` có trong schema (`0028`/`0029`) nhưng **0 TS nào đọc** — code dark từ 07/08. Phase-1
+   biến nó thành đường thực thi, tức `payment_reconcile_auto` là capability đầu tiên được enforce thật.
+3. **Đối soát CK durable vào phase-1:** webhook → transaction → allocation → charge/debt → `/unmatched`
+   (R2), cộng provider onboarding DD-30 (APIpay enterprise auto-provision per-host, tiền vẫn về TK host).
+   Current provider authority là `sepay|apipay` cho Việt Nam.
+4. **Auto-reconcile chỉ `Available` khi ĐỦ chuỗi gate cùng pass:** entitlement + market + provider + bank
+   + currency + consent + runtime. Đây không phải capability toàn cầu và **cấm quảng bá như capability
+   toàn cầu** trong bất kỳ sales script hay landing nào (ràng buộc đã có từ mirror 28/07).
+5. **Chạm HARD RULE.** Vế tiền của nhóm 6 đi thẳng vào *claim-có-tiền cần khoá mạnh* (HR4 — khoá mạnh
+   phase-1 là verified email hoặc `link_code`, DD-50) và *tiền/PII không ra public* (HR2). Mọi slice
+   trong vế này là Tier C theo DD-107; không lane nào tự quyết.
+
+### D3 — Nhóm 5, vế public/private: **trả nợ fence TRƯỚC**, đây là hard dependency
+
+Owner chốt: `public_projection_fences` + guarded view + narrow raise/CAS-clear + `public_projection_version`
++ grant migration đưa consumer khỏi base table (**(8a)** trong `../product/ROADMAP.md` §Next Actions, là
+**nợ sẵn có của DD-12** chứ không phải chi phí của tính năng mới) phải **land trước** khi mở toggle
+public/private cho club owner.
+
+Lý do là một lỗ đang mở, không phải nguyên tắc: hiện kèo chuyển **private** hoặc **cancel** vẫn còn lộ
+trên public read model **cho tới khi projector async chạy xong**. Mở toggle trước khi có immediate-deny
+path nghĩa là trao cho owner một cái công tắc **không tắt ngay được** — đúng thứ HR2 cấm.
+
+⬜ **Open question kèm theo, chưa chốt:** *public để làm gì khi phase-1 chưa có discovery?* Danh sách 7
+nhóm **không** có marketplace discovery/search. Một kèo `public` mà không có surface tìm kiếm thì chỉ
+tới được người khác qua **share link `/s/<id>`** (DD-73) — mà DD-73 lại còn bị chặn bởi **DD-41
+projection migration** (whitelist BL-DSC-1 chưa có trong `public_sessions`). Ba khả năng, chưa chọn:
+(a) public = chỉ để share link ⇒ phải kéo DD-73 + DD-41 vào phase-1; (b) public = chuẩn bị sẵn cho
+discovery phase sau, phase-1 chỉ có toggle + fence; (c) bỏ toggle khỏi phase-1, mọi kèo private. Slice
+nào chạm nhánh này phải **AWAIT** tới khi owner chọn.
+
+### D4 — Nhóm 5, vế "đăng ký trên Zalo bot ⇒ auto signup player vào session tương ứng": đường này **đã có chủ**
+
+Đây không phải luồng mới. Nó là **DD-32 Option D** (phễu channel-first, owner-final 28/07) cộng DD-05
+join policy, DD-41 gating, DD-45 waitlist và shared DD-52 restriction. Ràng buộc đã chốt, nhắc lại vì
+mô tả "auto signup" rất dễ bị hiện thực hoá thành một luồng join thứ hai:
+
+- browse **không** cần link account; free/full/approval giữ nguyên no-pay timing.
+- **paid + linked** ⇒ active + charge / pay-later.
+- **paid + unlinked** ⇒ **giữ chỗ 15 phút**, chỉ active **sau verified full payment**.
+- Account link phải là exact `ChannelIdentity ↔ current Person ↔ verified Plexco Account`.
+- **Provider outage fail closed.**
+
+**Cấm dựng luồng join song song với `addMemberToSession` / `evaluateSessionEligibility`.** Bot là port
+mỏng; rule sống server-side (HR3, no multi-master).
+
+### D5 — Nhóm 7, vế privacy: gate **A3 legal** chuyển từ "lead-time item" thành **blocker của phase-1**
+
+`../probes/pre-code-open-items-2026-07-16.md` A3 (**PII data-class matrix** — scope đã hẹp lại: không thu
+SĐT theo DD-50, PII optional theo platform config DD-54; còn **email, tên, bank memo** là bắt buộc vận
+hành) được đánh dấu **chặn go-live khi thu PII**, và cần luật sư VN ⇒ **lead-time dài**. Phase-1 có
+settings/privacy và có đường tiền (bank memo) ⇒ A3 không còn là việc "chạy song song cho kịp" mà là
+**điều kiện go-live của chính phase-1**. Khởi động ngay là quyết định rẻ nhất còn lại trong DD này.
+
+### D6 — Thứ tự ship (ba làn; **không phải cam kết ngày**)
+
+| Làn | Nội dung | Điều kiện mở |
+|---|---|---|
+| **A — Launch (DD-113)** | 1 signin/signup → 4 link account ⇄ Zalo → 6a session management + detail → 7a settings tối thiểu | Gỡ FE PENDING; tenant provision **thủ công**; pre-beta gate ở `../strategy/gtm-strategy.md` |
+| **B — Mở cửa cho host ngoài** | 2 create club → 3 link club ⇄ bot → 5a sync một chiều (bot → Plexco: đăng ký trên bot vào đúng session) | Làn A chạy thật; DD-32 Option D là contract, không tái phát minh |
+| **C — Nặng nhất, mỗi mục một gate riêng** | 5b toggle public/private **sau fence (8a)** · 6b nhắc nợ + confirm + mark-paid · 6c auto-reconcile + billing/entitlement `host_pro` · 7b privacy **sau A3** | Từng gate ở D2/D3/D5; không mục nào trong làn C được ship bằng cách nới gate |
+
+Làn B và làn C **không** chạy song song bừa: mọi slice dùng chung migration tail / state / generated
+artifact phải tuần tự (luật §3 `CLAUDE.md`).
+
+### D7 — Vẫn NGOÀI phase-1
+
+In-app Chat (DD-38/DD-91) · feed/kudos (DD-76/DD-77) · **marketplace discovery/search** · fill-slot ·
+tournament + club tools nâng cao · Session Organize (DD-61..64) · Club Assistant (P7, DD-16..23) ·
+**app native** (DD-113) · **web push** (DD-67/DD-72 chain, điều kiện iOS install) · Messenger nếu chưa
+qua App Review.
+
+### D8 — Nghĩa vụ mirror
+
+`../product/ROADMAP.md` (§Canonical Delivery Groups + §GTM theo phase + Phụ lục A) →
+`../00-start-here/HANDOFF.md` (khối LIVE TRUTH) → `../strategy/gtm-strategy.md` (§Product roadmap by
+phase) → `../product/BRD.md` §5.1 (phân lớp *MVP scope* vs *phase-1*) + §14 → `../product/PRD.md` header.
+**Trạng thái 22/08: đã propagate đủ chuỗi** — ROADMAP **v3.7** · HANDOFF **v1.37** · gtm-strategy
+(§Product roadmap by phase) · BRD **v3.9p** · PRD **v2.8o**. Mirror **không** phải bằng chứng runtime.
+
+### Không authorize
+
+Code, migration, packet, worktree, slice, enablement, gỡ FE PENDING, nới bất kỳ gate nào ở D2/D3/D5,
+đổi canonical P-number. DD-114 đóng đúng tầng **phạm vi + thứ tự**.
+
+---
+
+## DD-113 — GTM re-sequencing: launch = webapp PWA + Zalo bot song song, app native lùi về phase sau · ✅ Chốt (owner 2026-08-22)
+
+> **Status boundary:** DD-113 chốt **thứ tự surface ra mắt** và **launch scope của PWA v1**. Nó KHÔNG
+> authorize code/migration/slice/worktree/enablement, KHÔNG đảo DD-69 (direction native accepted 18/07,
+> giữ nguyên), KHÔNG đổi canonical P-number của ROADMAP, và **KHÔNG gỡ lệnh FE PENDING 13/08** — xem D5.
+
+### D1 — Launch = hai surface song song; web không còn vai "fallback"
+
+Trước 22/08, doc chiến lược khai **bot-first + web/Messenger fallback** (`../strategy/gtm-strategy.md`
+bản 28/07: *Beta gates* #1, *Market reality* §1, *Week 0*). Từ nay: **webapp PWA và Zalo bot ra mắt
+cùng lúc**; phạm vi mỗi surface do **thiết kế** quyết định, không do giới hạn của Zalo quyết định.
+
+Ranh giới một dòng: thao tác **kết thúc gọn trong một tin nhắn** → bot; thứ cần **nhìn nhiều hơn một
+dòng, hoặc sửa được về sau** → PWA.
+
+**Căn cứ là số đo, không phải sở thích.** Nhãn "fallback" khiến web không được build: đo tại `a151b15`
+là **0 màn FE · 1 `page.tsx` · 0 API route nghiệp vụ**, trong khi DD-69 đã đặt **PWA là phase-1 target
+từ 18/07**. Một surface mang nhãn dự phòng suốt hơn một tháng thì trên thực tế nó không tồn tại — đây
+là lỗi *tổ chức* do cách gọi tên, không phải lỗi ưu tiên.
+
+**Hệ quả thứ hai, nặng hơn:** Zalo OA là rủi ro nhà cung cấp (quota · rate limit · quyền gửi tin ·
+policy; DD-14/DD-15 tới nay vẫn là 🔗 *external evidence*, chưa có bằng chứng attributable). Khi web là
+fallback thì **mất Zalo = mất sản phẩm**; khi web là surface độc lập thì **mất Zalo = mất kênh
+acquisition 0-install** — đắt, nhưng không chết. Đổi vai chính là đổi lớp rủi ro này.
+
+### D2 — Launch scope PWA v1 = đúng năm khối
+
+| # | Khối | Nội dung tối thiểu |
+|---|---|---|
+| 1 | **Signin / signup** | Đăng nhập tài khoản Plexco; root của mọi thứ còn lại |
+| 2 | **Link Zalo bot** | Nối account ⇄ ChannelIdentity Zalo, đúng một Person |
+| 3 | **Session management** | Danh sách kèo của host: tạo/sửa/publish/announce/đóng, xem ai đã nhận slot |
+| 4 | **Session detail** | Một kèo: roster, slot còn trống, trạng thái, thao tác của host |
+| 5 | **Settings** | Hồ sơ tối thiểu, kênh đã liên kết, tuỳ chọn nhắc, ngôn ngữ |
+
+**Khối 2 là khớp nối, không phải tính năng phụ.** Thiếu nó, hai surface là hai sản phẩm rời và toàn bộ
+lập luận D1 sụp. Nó đi qua đúng authority identity đang có (`persons`/`accounts`/`channel_identities`/
+`memberships`, endpoint-scoped theo DD-67) — **không** tạo khái niệm identity song song.
+
+**Điều kiện để được gọi là PWA** chứ không phải "web page": manifest + service worker + installable +
+mobile-first 375px. Chưa có installable shell thì **cấm dùng chữ PWA** trong mọi doc — `apps/web` hiện
+**chưa có `manifest.json`/service worker** (đã ghi trong `../decisions/analysis/dd-69-app-native-analysis.md`
+§1 và DD-67/DD-72 context), nên đây là nghĩa vụ phải land, không phải trạng thái đang có.
+
+### D3 — Negative scope của launch
+
+Không có trong launch: marketplace discovery public · in-app chat (DD-38/DD-91) · feed/kudos
+(DD-76/DD-77) · đối soát chuyển khoản tự động (mark-paid thủ công là baseline toàn cầu — DD-40) ·
+rating công khai · tournament/club tools · **web push** (DD-67/DD-72 chain 36→41) · **fill-slot** ·
+**app native**.
+
+Fill-slot giữ đúng chỗ cũ trong beta plan (Weeks 5-6), sau khi có attendance data. Web push nằm ngoài
+vì trên iOS nó **chỉ chạy khi PWA đã cài** — xem D4.
+
+### D4 — Gate mở bàn app native (đo được, thay cho "TBD")
+
+DD-69 để native ở phase-2 với gate mở; ROADMAP đã ghi traction signal *"PWA (S9/S20) live + retention
+đo được trên PWA trước khi bàn native"*. DD-113 giữ nguyên tinh thần đó và viết thành ngưỡng
+(**working hypotheses**, không phải cam kết ngày):
+
+| Điều kiện | Ngưỡng |
+|---|---|
+| PWA v1 live, có host dùng thật | ≥ 5 host vận hành ≥ 4 tuần liên tục trên PWA |
+| Bằng chứng quay lại | Host weekly return rate ≥ 60% trong 4 tuần |
+| Installable thật sự được dùng | PWA install rate ≥ 30% host, **đo tách iOS/Android** |
+| API/auth boundary ổn định | `/api/v1` + bearer/refresh + client-safe contracts đã land (`../strategy/native-app-strategy.md` §3–4) |
+| Có lý do native cụ thể | Nêu được ≥ 1 capability push/offline mà PWA **đo được là không làm nổi** |
+
+Hàng thứ ba không phải chi tiết vụn: iOS chỉ cho web push khi PWA đã được add-to-home-screen
+(`../features/BE/feature_notifications_reminders_tech.md`, hàng 22 🟡 và gate #4). Nghĩa là mọi lập
+luận "PWA đủ rồi, có push mà" **treo trên một tỉ lệ install chưa ai đo**. Đó cũng là lý do web push
+nằm ngoài launch (D3): reminder ở launch đi qua bot Zalo, kênh không phụ thuộc install.
+
+### D5 — DD này KHÔNG gỡ lệnh FE PENDING; và bản thân lệnh đó cũng chưa có DD
+
+Launch scope D2 **không thể bắt đầu** khi lệnh owner 13/08 (FE PENDING: không track `.pen`, không mở
+page/component, lane FE không chạy) còn hiệu lực. DD-113 **không** gỡ nó: đổi ưu tiên GTM và cấp quyền
+thực thi FE là hai quyết định khác nhau, và trộn hai thứ vào một DD chính là cách một DD trở thành
+authority cho việc nó chưa từng xét.
+
+⚠️ **Đo được và nên sửa:** lệnh FE PENDING **chưa từng vào `decisions.md`**. Nguồn duy nhất là
+`../autopilot-templates/next-lanes-2026-08-13-RUN.md`, rồi mirror sang ROADMAP (`:38`, `:337`, `:378`)
+và HANDOFF. Theo đúng luật DD-111 D4 — *quyết định owner phải vào `decisions.md` trước khi lane mang
+qua gate; bản ghi bền thắng lời khai hội thoại* — thì trạng thái chặn FE hiện đang sống ngoài decision
+log. Việc gỡ (hoặc giữ) PENDING phải là một quyết định **ghi ra**, và nên ghi luôn cả lệnh gốc.
+
+### D6 — Nghĩa vụ mirror
+
+Thứ tự propagate, mỗi bước là một nghĩa vụ riêng, không suy từ nhau: `../strategy/gtm-strategy.md`
+(**đã rewrite 22/08**) → DD này → `../product/ROADMAP.md` (§Positioning · §Canonical Delivery Groups
+hàng *App Native* · §GTM theo phase · Phụ lục A) → `../00-start-here/HANDOFF.md` (khối LIVE TRUTH mới
+nhất) → `../strategy/native-app-strategy.md` §1 → `../product/BRD.md`/`PRD.md`.
+**Trạng thái 22/08: đã propagate đủ chuỗi** — ROADMAP **v3.7** · HANDOFF **v1.37** · native-app-strategy
+**2.1** · BRD **v3.9p** (§14: câu *"ngưỡng chốt khi có baseline"* của product-evidence gate nay được thay
+bằng chính bảng ngưỡng ở D4) · PRD **v2.8o** (header). Mirror **không** phải bằng chứng runtime.
+
+### Không authorize
+
+Code, migration, packet, worktree, slice, enablement, gỡ FE PENDING, đổi canonical P-number. DD-113
+đóng đúng tầng quyết định cho **thứ tự surface** + **launch scope PWA v1** + **gate native**. Ba
+session command trong `packages/db/src/session-service.ts` vẫn là thư viện không caller; launch scope
+là **đích**, không phải mô tả trạng thái hiện có.
+
+---
+
 ## DD-112 — ⬜ **CHƯA CHỐT** — đổi **sức chứa** khi đã có charges thì làm gì với tiền? (mở 2026-08-17)
 
 > ⬜ **Đây là câu hỏi mở, KHÔNG phải quyết định.** Không slice nào được viện nó làm thẩm quyền. Ghi ra
@@ -2296,6 +2596,9 @@ theo kịp.
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 24/08/2026 | v2.37 | **Thêm DD-115 🟡 — Membership: gói hội viên chu kỳ 30 ngày cho player (requirement owner 2026-08-24).** Mở cùng cặp spec `../features/FE/feature_membership.md` v0.1 + `BE/feature_membership_tech.md` v0.1, cả hai **Draft**. **D1 — khái niệm thứ tư, không phải cái nào trong ba cái đang có:** repo đã có `memberships` (person↔tenant), `subscriptions`/`plans` (billing host DD-29) và `membership_tags` (DD-43); gói trả phí của **player** không phải cái nào trong đó, và DD-43 + BL-SES-7 đã đóng đường dùng tag để làm giá ⇒ phải có model riêng, `memberships` **không đổi một cột nào**. **D2 — "thanh toán 1 lần" KHÔNG model được thành một charge:** đo tại live schema, `charges.session_id`/`player_id` đều NOT NULL, có `charges_tenant_session_player_uq` và hai composite FK tenant-integrity vừa land ở `0019`; một charge tổng buộc phải drop NOT NULL + đổi UNIQUE + nới FK — sửa bất biến đường tiền cho một tính năng bán hàng, đúng thứ HR2 cấm. Phương án chọn: **N charge đã chiết khấu + một `bank_transaction` allocate sang N charge**, tận dụng quan hệ nhiều-allocation-một-giao-dịch vốn đã có ⇒ **zero thay đổi trên bảng tiền**. **D3 — số buổi là dữ liệu đo, không phải phép nhân:** cửa sổ 30 ngày = 4 tuần + 2 ngày nên số buổi mỗi thứ không đều. Kiểm bằng lịch thật với chính ví dụ của requirement (start 23/08/2026, Chủ nhật): T3+T5 = 8 buổi nhưng T7+CN = **9** buổi ⇒ gói cả tháng = **17**, không phải 16 — tức hai gói "2 buổi/tuần" **không** bằng nhau và gói cả tháng **không** bằng tổng hai gói kia. Spec vì vậy bắt buộc đếm từ `sessions` thật trong cửa sổ, và fail-closed khi horizon recurrence chưa phủ hết chu kỳ. **D4 — config có version, immutable per version** (yêu cầu "mọi tham số config động"): `settings(tenant_id,key,jsonb)` không có version/audit/kiểu ⇒ không đủ cho tham số quyết định tiền; chu kỳ snapshot `plan_version` để host đổi giá không hồi tố (BL-SES-3). **D5 — quyền lợi fail-closed:** chưa phủ đủ tiền thì không quyền vượt slot, không chiết khấu; trạng thái tiền unknown → không quyền (BL-PAY-12). ⬜ **D6 chưa chốt, chạm HARD RULE:** cho member vào buổi đã full là **ngoại lệ với BL-SES-2/BL-CBF-3 "một capacity authority"** ⇒ Tier C theo DD-107, không được quyết ở tầng spec; kèm theo là **repo không có khái niệm "sân"** — `sessions` chỉ có `slots_max`, chuỗi `court` không xuất hiện ở đâu trong `packages/db` ⇒ "tối đa 8 người/sân" cần cột/config mới. ⬜ **D7 chưa chốt:** BL-PAY-5 quy định FIFO oldest-first, nên một CK trả gói của người đang nợ buổi cũ sẽ bị hút vào nợ cũ; cần cơ chế bind giao dịch vào đúng chu kỳ — cũng là **ngoại lệ có chủ đích với BL-PAY-5**. ⛔ **D8 chặn ngoài:** chiết khấu phí giải đấu không có nơi tiêu thụ — `tournaments` chưa tồn tại trong schema và `feature_tournament_tech.md` v0.3 ghi rõ v1 **không đụng tiền, entry-fee deferred** (DD-82). **10 OQ** (MBS-OQ-1..10) gồm: phạm vi ngày bắt đầu (requirement tự mâu thuẫn — "ngày bất kỳ trong tháng" vs ví dụ "chỉ 23/08"), số sân, buổi ngoài gói, bind CK, chính sách hoàn tiền, chồng lấn chu kỳ, ngoại lệ capacity, chiết khấu giải đấu, làm tròn, đặt tên bảng. **Không authorize** code/migration/packet/worktree/slice/enablement; DDL trong BE spec là contract cần build, chưa migrate. |
+| 22/08/2026 | v2.36 | **Thêm DD-114 ✅ — phase-1 feature scope = 7 nhóm, launch (DD-113) là SUBSET (owner 2026-08-22).** **D1:** 1 signup/signin Google · 2 create club (tenant provisioning self-serve) · 3 link club ⇄ Zalo bot (tenant routing) · 4 link Plexco account ⇄ Zalo account · 5 sync data hai chiều + owner config public/private session · 6 manage session + session detail + nhắc nợ/confirm/gạch nợ · 7 settings + user/privacy. Đọc cho đúng: phạm vi này **≈ P0→P5 trừ discovery/chat**, và launch subset của DD-113 chính là thứ giữ nó không trôi. Nhóm 2/3 ở phase-1 nhưng **không** ở launch vì launch chạy trên **tenant provision thủ công** (tenant #1 dogfood); self-serve là thứ mở cửa cho host ngoài. **D2 — vế tiền giữ đúng DD-40/DD-29: auto-reconcile VÀ nhắc tự động đều là `host_pro`**, free giữ mark-paid thủ công. Bốn hệ quả đắt phải nói ra: (a) **billing P5 vào phase-1** — không có subscription thì không có `host_pro` để gate; (b) **DD-29 entitlement registry phải có reader thật đầu tiên** — đo tại `a151b15` vẫn **0 TS đọc `entitlements`/`capabilities`**, code dark từ 07/08; (c) đối soát CK durable (R2) + provider onboarding DD-30, provider authority `sepay|apipay`; (d) auto-reconcile chỉ `Available` khi **đủ chuỗi** entitlement+market+provider+bank+currency+consent+runtime, **cấm quảng bá như capability toàn cầu**. Toàn bộ vế này chạm HR4 *claim-có-tiền cần khoá mạnh* + HR2 ⇒ Tier C theo DD-107. **D3 — toggle public/private chỉ mở SAU khi land `public_projection_fences` + guarded view + CAS-clear + grant migration (8a — nợ sẵn có của DD-12, không phải chi phí tính năng mới)**: hiện kèo chuyển private/cancel **vẫn lộ tới khi projector async chạy**, mở toggle trước fence là trao cho owner một công tắc không tắt ngay được, đúng thứ HR2 cấm. ⬜ **OQ kèm theo, chưa chốt:** *public để làm gì khi phase-1 không có discovery?* — kèo public chỉ tới người khác qua share link `/s/<id>` (DD-73), mà DD-73 còn bị chặn bởi DD-41 projection migration; ba khả năng (kéo DD-73+DD-41 vào phase-1 / chỉ toggle+fence / bỏ toggle) chưa chọn ⇒ slice chạm nhánh này **AWAIT**. **D4 — "đăng ký trên bot ⇒ auto signup vào session" KHÔNG phải luồng mới:** nó là DD-32 Option D + DD-05 + DD-41 + DD-45 + DD-52; nhắc lại ràng buộc paid+unlinked giữ chỗ **15 phút** chỉ active sau verified full payment, account link phải exact `ChannelIdentity↔Person↔verified Account`, provider outage **fail closed**; **cấm dựng luồng join thứ hai** song song `addMemberToSession`. **D5 — gate A3 legal (PII data-class matrix) chuyển từ lead-time item thành BLOCKER của phase-1** vì phase-1 có settings/privacy + bank memo; cần luật sư VN ⇒ khởi động ngay. **D6 — thứ tự ship ba làn** (A launch · B mở cửa host ngoài: create club → link club ⇄ bot → sync một chiều · C nặng nhất, mỗi mục một gate). **D7 — vẫn ngoài phase-1:** in-app Chat · feed/kudos · discovery/search · fill-slot · tournament/club nâng cao · Session Organize · Club Assistant · native · web push · Messenger chưa App Review. **Không authorize** code/migration/packet/worktree/slice/enablement/gỡ FE PENDING/nới gate/đổi P-number. |
+| 22/08/2026 | v2.35 | **Thêm DD-113 ✅ — GTM re-sequencing: launch = webapp PWA + Zalo bot song song, app native lùi về phase sau (owner 2026-08-22).** **D1:** web hết vai "fallback"; hai surface ra mắt cùng lúc, ranh giới do thiết kế quyết định (một tin nhắn → bot; cần nhìn nhiều hơn một dòng hoặc sửa được về sau → PWA). Căn cứ là số đo chứ không phải sở thích: DD-69 đặt PWA là phase-1 target từ 18/07, nhưng đo tại `a151b15` vẫn là **0 màn FE · 1 `page.tsx` · 0 route nghiệp vụ** — nhãn "fallback" khiến surface đó không được build, đây là lỗi cách gọi tên chứ không phải lỗi ưu tiên. Hệ quả nặng hơn: Zalo OA là rủi ro nhà cung cấp (DD-14/DD-15 vẫn 🔗 external evidence) ⇒ web-là-fallback nghĩa là **mất Zalo = mất sản phẩm**, còn web-là-surface-độc-lập thì mất Zalo chỉ là **mất acquisition 0-install**. **D2:** launch scope PWA v1 = đúng **5 khối** (signin/signup · link Zalo bot · session management · session detail · settings); khối *link Zalo bot* là **khớp nối**, thiếu nó thì hai surface là hai sản phẩm rời và D1 sụp — đi qua identity authority sẵn có, **không** tạo khái niệm song song. Cấm dùng chữ "PWA" khi chưa có manifest + service worker + installable (`apps/web` hiện chưa có). **D3:** negative scope launch — discovery public · in-app chat · feed/kudos · auto-reconcile (mark-paid thủ công vẫn là baseline, DD-40) · rating công khai · tournament/club tools · **web push** · **fill-slot** (giữ Weeks 5-6) · **native**. **D4:** gate mở native viết thành ngưỡng đo được thay cho "TBD" (≥5 host ≥4 tuần · weekly return ≥60% · install rate ≥30% **tách iOS/Android** · `/api/v1`+bearer/refresh đã land · nêu được capability PWA đo được là không làm nổi). Hàng install-rate không vụn: **iOS chỉ cho web push khi PWA đã cài**, nên mọi lập luận "PWA đủ rồi, có push mà" treo trên một tỉ lệ chưa ai đo — cũng là lý do web push nằm ngoài launch. **D5 — DD này KHÔNG gỡ FE PENDING 13/08:** đổi ưu tiên GTM và cấp quyền thực thi FE là hai quyết định khác nhau. ⚠️ Kèm phát hiện: **lệnh FE PENDING chưa từng vào `decisions.md`** — nguồn duy nhất là `next-lanes-2026-08-13-RUN.md` rồi mirror ROADMAP/HANDOFF, tức trạng thái chặn FE đang sống ngoài decision log, đúng thứ DD-111 D4 vừa cấm. **D6:** nghĩa vụ mirror theo thứ tự gtm-strategy (đã xong) → ROADMAP → HANDOFF → native-app-strategy → BRD/PRD nếu chạm surface scope. **Không authorize** code/migration/packet/worktree/slice/enablement/gỡ PENDING/đổi P-number. ⚠️ **Ghi chú version:** v2.34 (15/08) là số cuối được ghi, nhưng **DD-112 (17/08) đã thêm vào file mà không có dòng changelog** ⇒ nhảy v2.34 → v2.35 ở đây thực chất gánh **hai** DD (112 + 113). Đừng đọc chuỗi version như một chuỗi liên tục 1-DD-một-bậc. |
 | 15/08/2026 | v2.34 | **Thêm DD-111 ✅ — `AnnounceSession` guard `ends_at` + `SESSION_ALREADY_ENDED`, edge #11 thuộc FE (owner 2026-08-15).** **D1:** announce gate `status='open'` **và** `ends_at > now()`, đánh giá dưới row lock bằng đồng hồ DATABASE (cùng lớp clock-skew P1 mà PublishSession tốn một vòng). **Không** đảo ngược ruling "không cutoff" trước đó: ruling đó về `starts_at` (đừng chặn announce khi đang đá), `ends_at` là vị từ khác và nhờ `CHECK (ends_at > starts_at)` (`0002:98`) **không thể** chạm ca late-join. Tiền đề cũ bị bác bằng đo: lập luận ban đầu coi việc announce buổi vừa xong là "transient" vì auto-close sẽ dọn — **auto-close không tồn tại**, `:533` chỉ viện dẫn nó như ngưỡng quy ước, nên hàng `open` quá giờ nằm đó vĩnh viễn và announce phát "vào chơi đi" cho buổi đã xong, lặp vô hạn. Announce chịu guard này còn command đổi-state thì không, vì **thông báo cũ gây hại theo cách mutation không gây**: nó tới người thật, mang tin sai, không có state nào để sửa. **D2:** mã lỗi mới `SESSION_ALREADY_ENDED` (409) — buổi **đang** `open` nên `SESSION_NOT_OPEN` là phát biểu sai về trạng thái, và i18n là HARD RULE (bề mặt tiếng Việt sẽ báo "chưa mở" về buổi đã đá xong). **D3:** edge #11 thuộc **FE** (`feature_session_management.md:94` — "closed/cancelled/past"); dòng BE `:221` chỉ ghi "after status=closed" là **bản chép thiếu một luật Security**, không phải hai thẩm quyền mâu thuẫn ⇒ sửa dòng BE cho khớp FE, KHÔNG thu hẹp FE. Spec phải viết **cả hai vế** kẻo người sau xoá nhầm guard: announce **miễn** edge #11 vì không mutate, **và** announce **vẫn** mang guard `ends_at` riêng vì lý do D1. Past-weight của cancel vẫn do **edge #31** sở hữu. **D4 — quyết định trong chat không phải thẩm quyền:** guard được owner chốt trong chat rồi lane mang qua gate; reviewer gắn [P1] "unauthorized Tier-C change" — **false positive về nội dung, true positive về hình thức**, vì chỗ duy nhất ghi lại authorization là chat + ledger gitignored + chính spec đang bị chất vấn. Luật: quyết định owner mở đường sửa spec Reviewed **phải vào `decisions.md` TRƯỚC khi** lane mang qua gate — cùng nguyên tắc "bản ghi bền thắng lời khai hội thoại" đã dùng để bắt slice re-register, áp cho owner y như áp cho lane. ⚠️ **Đính chính khiển trách sai của owner:** owner hai lần nói lane "chế ra" `AN1`/`CL1`/`CA1`; thực tế chúng nằm ở `docs/autopilot/contracts/autopilot-session-commands-update-close-cancel.md:224,227,232` do phiên authoring trước viết. Owner grep **spec** rồi kết luận "không tồn tại" — đúng lớp lỗi "kết quả rỗng là bằng chứng về truy vấn". Lỗi thật của lane hẹp hơn: gọi authored contract là "acceptance matrix you ratified", tức nâng sai **cấp thẩm quyền** (authored ≠ owner-ratified); các mục DI phải sửa lại theo khung này. **D5:** kéo authored packet vào scope thay vì để "advisory" — nó stale hai chỗ (AN1 không guard; khai `session.announced` trong khi spec `:514` khai `session.announcement_requested`), và một authored contract stale vừa sinh ra một [P1] cùng hai vòng review. |
 | 15/08/2026 | v2.33 | **Thêm DD-110 ✅ — bốn action class hẹp cho session command family + hàng ma trận (owner 2026-08-15).** Đóng đúng blocker Tier C mà packet `session-commands-update-close-cancel` tự nêu ở `_blocker_note`: DD-105 chốt **hướng** ("narrow per-op class khi build") nhưng **không đặt tên** cái nào, DD-104 D2a chỉ đặt `delete_draft_session` cho op khác đang parked, và tác giả slice bị `negative_scope:41` HALT nếu tự đặt. **D1 — bốn tên theo dialect `verb_noun`:** `update_open_session` · `close_session` · `cancel_session` · `announce_session`; ba literal cũ (danh ngữ) **không đổi tên** vì `publish_new_sessions` đã có caller production `1ccbe5d` + hàng ma trận + catalog entry — enum có hai phương ngữ là cố ý, `verb_noun` chuẩn cho literal mới. **D2 — close/cancel ✅ khi suspended, announce/update ❌:** căn cứ lấy từ chính ma trận, không nhập từ ngoài — hàng `Player CK ingest ✅` cho thấy tenant suspend **vẫn nhận đối soát chuyển khoản**, tức ranh giới đã khai sẵn là *chặn hoạt động thương mại MỚI, không đóng băng nghĩa vụ ĐANG CHẠY*; bất đối xứng chi phí quyết định lựa chọn: cả bốn ❌ ⇒ host suspend không đóng/huỷ được buổi đã `open` trong khi người chơi đã join và có thể đã chuyển khoản (**thiệt hại chắc chắn, không đường thoát, chỉ lộ ở lần suspend thật đầu tiên**), còn close/cancel ✅ ⇒ tenant abuse huỷ buổi của chính nó (**phiền, không phải thiệt hại**; nó vẫn không publish/announce/update được). ⚠️ **Giới hạn kế thừa, DD này KHÔNG giải:** gate resolve **hai** trục suspend (`subscriptions.status` = nợ tiền vs `tenants.status` = abuse/ToS, spec billing `:288-291`) về **một** hàng ⇒ bốn literal mới không phân biệt được, y như ba cái cũ. **D3 — tên vào decision log ngay, literal vào `ActionClass` cùng commit mang command của nó:** literal không caller là code dark, đúng thứ vừa mất tám ngày để thoát với `authorizeTenantAction`; packet cho phép ship subset khi vượt budget (`AnnounceSession` "ONLY if budget allows") nên gom cả bốn lên trước sẽ tái tạo đúng vấn đề vừa tránh — hình mẫu là `delete_draft_session`, có tên từ 13/08, tới nay vẫn chưa vào enum. **D4 — nghĩa vụ test bắt buộc:** gate **không biết** status của session, caller chọn literal, nên `update_open_session` là quy ước ở call site chứ không phải enforcement; slice phải mang test âm *`updateSession` trên `draft` KHÔNG gọi `authorizeTenantAction`*, nếu không D1 mới chỉ được viết ra chứ chưa được thực thi. **Không authorize** code/migration/packet/worktree/enablement. |
 | 14/08/2026 | v2.32 | **Thêm DD-109 ✅ — nới `fix_rounds_max` 5→8 cho RIÊNG `session-draft-lifecycle-commands--v3`.** `PublishSession` HALT `MAX_ROUNDS` hai lần liên tiếp (v1 validation-edge-family, v2 DB-clock rồi lan sang test fidelity; 11+ vòng gộp). Trước khi cho chạy lần ba phải phân biệt **thrash** với **thứ khác** — và bằng chứng nói không phải thrash: `regions.log` của v2 ghi **5 vòng chạm 5 vùng khác nhau, không lặp**, `REGION_THRASH` không hề bắn, mỗi vòng đóng một lỗ thật khác lỗ trước. **Nguyên nhân thật, đo được và trước nay chưa viết ra:** pinned reviewer đọc `git diff <base>...HEAD` — **toàn bộ 1.690 dòng mỗi vòng, không phải phần vừa sửa** — trong khi per-run miss-rate đã đo ≈ **2/3** (analysis 13/08). Ghép lại: mỗi vòng là một lần **lấy mẫu** trên cùng diff, finding "mới" ở vòng sau là chữ ký **under-sampling** chứ không chứng minh slice sai — đúng điều `codex-review-verdict-nondeterminism` đã ghi. **Hệ quả sửa một phán đoán sai trước đó:** thu hẹp *việc* của successor KHÔNG thu hẹp *bề mặt review*, nên đề xuất "v3 chỉ sửa 2-3 finding" là vô hiệu. Chọn 8: `(2/3)^M` cho M5≈13% → M8≈3,9%, thêm nữa lợi ích giảm nhanh mà rủi ro vá-vô-hạn tăng; **ước lượng có căn cứ, không phải phép đo** (n=3 chỉ pin được hướng). Ghi rõ **trần 5 không sai** — nó có giả định ngầm rằng diff đủ nhỏ để một vòng phủ gần hết, và giả định đó vỡ ở 1.690 dòng dưới reviewer stochastic. **Bốn điều kiện cứng:** (1) v3 **phải tới được vòng security** — chưa attempt nào chạm tới dù slice gọi `authorizeTenantAction`, tức thứ §8 bắt buộc cho trust boundary chưa từng chạy; (2) v3 HALT nữa = **bằng chứng quyết định** cho slice-too-big ⇒ re-slice thật, **cấm thử lần bốn**; (3) `REGION_THRASH` giữ nguyên hiệu lực; (4) DD phải được dẫn trong contract v3. Ngoại lệ **một lane, có ghi chép** theo khuôn DD-101; §8 **không đổi** cho lane khác, và DD này **không thay** E2 re-measurement — v3 là ca thực nghiệm sống, kết quả nên ghi ngược vào task nondeterminism. |

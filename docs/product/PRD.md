@@ -1,8 +1,8 @@
 # TÀI LIỆU YÊU CẦU SẢN PHẨM (PRD) — User Flows
 ## Plexco — platform thể thao đa môn (host + player): Zalo · Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi)*
 
-**Sản phẩm:** **Plexco** — platform quản lý & khám phá hoạt động thể thao đa môn, 2 phía (host + player); bot-in-chat (Zalo/Messenger) + web app sync 2 chiều; **phase-1 không app native** (target = web app PWA installable/offline; S9/S20 chưa phải runtime evidence) — **native là hướng phase-2** (DD-69 direction ✅ accepted; build TBD)
-**Phiên bản:** 2.8m
+**Sản phẩm:** **Plexco** — platform quản lý & khám phá hoạt động thể thao đa môn, 2 phía (host + player); bot-in-chat (Zalo/Messenger) + web app sync 2 chiều; **phase-1 không app native** (target = web app PWA installable/offline; S9/S20 chưa phải runtime evidence) — **native là hướng phase-2** (DD-69 direction ✅ accepted; build TBD). **DD-113 (owner 22/08):** launch = **webapp PWA + Zalo bot ra mắt song song**, web hết vai "fallback"; PWA v1 = 5 khối (signin/signup · link Zalo bot · session management · session detail · settings); native **ngoài launch**, gate mở có ngưỡng đo được — xem BRD §14. **DD-114 (owner 22/08):** phase-1 = 7 nhóm feature (signin Google · create club · link club ⇄ Zalo bot · link account ⇄ Zalo · sync data + owner config public/private · session management/detail + nhắc nợ/confirm/gạch nợ · settings/privacy), launch là **subset**; discovery/search và in-app Chat **ngoài phase-1** — xem BRD §5.1 khối ⚙️
+**Phiên bản:** 2.8o
 **Ngày cập nhật:** 28/07/2026
 **Tài liệu tham chiếu:** `BRD.md` v3.9n · `TDD.md` v3.1h · `../standards/decisions.md` **v2.11 current mirror** (DD-32/DD-86/DD-91–95 `DECISION_FINAL`; DD-88 broader `DEFERRED_PROPOSAL`) · `../features/FE/feature_channel_booking_funnel.md` · `../features/BE/feature_channel_booking_funnel_tech.md` · `../channels/messenger/messenger-channel-design.md` · `../research/player-side-saas-AUDIT.md`
 
@@ -12,6 +12,8 @@
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 22/08/2026 | v2.8o | **Mirror DD-114 ✅ (owner 22/08):** header pin **phase-1 = 7 nhóm feature**, launch (DD-113) là subset; discovery/search + in-app Chat **ngoài phase-1**; vế tiền chỉ `host_pro` ⇒ billing vào phase-1; toggle public/private chỉ mở sau fence của public read model. Chi tiết ở BRD §5.1 + `../standards/decisions.md` DD-114. **Không đổi flow nào trong file này**, runtime vẫn 0. |
+| 22/08/2026 | v2.8n | **Mirror DD-113 ✅ (owner 22/08):** header pin launch = **PWA + Zalo bot song song** (web hết vai "fallback"), PWA v1 = 5 khối, native ngoài launch với gate có ngưỡng đo được (chi tiết ở BRD §14 + `../standards/decisions.md` DD-113). **Không đổi flow nào trong file này**, không đổi phase-1 scope, runtime vẫn 0. |
 | 28/07/2026 | v2.8m | **Readiness mirror re-pin:** primary Chat plan v1.8 đạt `PLAN_READY` tại immutable authority `90d292d`, closure 12/12; live pointer `main@784bc8d`. Giữ rõ `PLAN_READY != CODE_READY != IMPLEMENTED`: mỗi slice còn strict gate riêng, runtime/migration/API/UI vẫn 0 và DD-32 flows không đổi. |
 | 28/07/2026 | v2.8l | **Owner-final Chat authority + delivery map + DD-32 mirror:** FLOW 15 follows decisions v2.10 DD-86/DD-91–95 and the safe current-channel opaque target boundary. Primary plan owns bounded mechanisms `1–47`, API `A1–A21`, design/FE `F0–F15`; DD-88 remains broader `DEFERRED_PROPOSAL`, current readiness remains only at plan §13, runtime remains 0. DD-32 Option D flows remain unchanged. |
 | 28/07/2026 | v2.8k | **SUPERSEDED by v2.8l:** former Chat correction used universal default-OFF, three commands and no-digest floor; no longer current authority. |

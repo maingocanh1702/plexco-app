@@ -6,7 +6,9 @@
 
 > ⚠️ **Version note (19/07/2026):** companion strategy, không phải source of truth. Authority hiện hành: **BRD v3.9f · PRD v2.8e · TDD v3.1 · ROADMAP v3.3e · decisions v1.74/DD-78**. Native direction accepted nhưng build phase-2 TBD.
 >
-> **Current supersession (28/07/2026):** source-of-truth pointers ở header thắng version note lịch sử trên. DD-91 đặt In-app Chat làm primary daily player surface mục tiêu; primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY`. Native vẫn phase-2/TBD, không có runtime hay lịch build. Shared job substrate `0022`/`0023` và DB CHECK `0024` không thay đổi native gates bên dưới.
+> **Current supersession (22/08/2026):** **DD-113** đặt launch = **PWA + Zalo bot song song**, native **ngoài launch** và pin ngưỡng mở native ở cuối §1. Khối 28/07 dưới đây giữ hiệu lực ở phần Chat/plan/provider; phần "native phase-2/TBD" nay đọc là **"phase sau, gate đã có ngưỡng"** chứ không còn để mở vô hạn.
+>
+> **Supersession 28/07/2026:** source-of-truth pointers ở header thắng version note lịch sử trên. DD-91 đặt In-app Chat làm primary daily player surface mục tiêu; primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY`. Native vẫn phase-2/TBD, không có runtime hay lịch build. Shared job substrate `0022`/`0023` và DB CHECK `0024` không thay đổi native gates bên dưới.
 
 > **TL;DR:** Canonical-store + server-owned rules là nền tốt cho native, nhưng native **không chỉ là thêm UI**. Trước GA phải bổ sung client-safe contracts, versioned API, bearer/refresh auth, Apple/equivalent iOS login, protected device push và old-client/store gates. Core domain/RLS/outbox được giữ; identity/channel schema không được mở rộng sai để chứa device token. Offline v1 read-only.
 
@@ -28,6 +30,12 @@ P5:    Billing
 P6:    Hardening
 ```
 
+> ⚙️ **DD-113 (owner 22/08) — re-sequencing, KHÔNG đảo hướng của doc này.** Launch = **webapp PWA
+> + Zalo bot ra mắt song song**, app native **lùi về phase sau**. Điểm đổi so với bản 28/07: web không
+> còn là "fallback" của Zalo mà là surface launch độc lập; và câu *"native = phase-2, build TBD"* nay có
+> **ngưỡng mở cụ thể** thay vì để mở vô hạn (xem cuối §1). Toàn bộ phân tích kiến trúc §2–§10 bên dưới
+> **không đổi** — nó vẫn là điều kiện kỹ thuật phải trả trước khi native khởi động.
+
 ### Native app = phase-2 sau P6 (accepted direction, build chưa schedule)
 
 Work packages đề xuất, **không phải canonical P-number**:
@@ -44,6 +52,28 @@ Work packages đề xuất, **không phải canonical P-number**:
 > - Web = nhanh hơn iterate (deploy instant, không qua App Store review)
 > - Native = **trải nghiệm premium** cho host quản lý hằng ngày + push notification cho player
 > - Build native khi đã có **API ổn định** + user base validate product
+> - **DD-113 bổ sung lý do thứ năm, đo được:** khi web mang nhãn "fallback", nó không được build —
+>   tại `a151b15` vẫn là **0 màn FE / 1 `page.tsx` / 0 route nghiệp vụ**, hơn một tháng sau khi DD-69
+>   đặt PWA làm phase-1 target. Thứ tự web-trước không tự thực hiện nếu web không có vai chính.
+
+### Gate mở bàn native (DD-113, 22/08) — thay cho "TBD"
+
+Ngưỡng dưới đây là **working hypotheses** do owner chốt, không phải cam kết ngày. Chưa đủ thì native ở
+lại phase sau và **không được nhắc trong sales script cho host**.
+
+| Điều kiện | Ngưỡng |
+|---|---|
+| PWA v1 live, có host dùng thật | ≥ 5 host vận hành ≥ 4 tuần liên tục trên PWA |
+| Bằng chứng quay lại | Host weekly return rate ≥ 60% trong 4 tuần |
+| Installable thật sự được dùng | PWA install rate ≥ 30% host, **đo tách iOS/Android** |
+| API/auth boundary ổn định | `/api/v1` + bearer/refresh + client-safe contracts đã land (§3–§4 dưới đây) |
+| Có lý do native cụ thể | Nêu được ≥ 1 capability push/offline mà PWA **đo được là không làm nổi** |
+
+Hàng *install rate* không phải chi tiết vụn: iOS chỉ cho web push khi PWA đã add-to-home-screen
+(`../features/BE/feature_notifications_reminders_tech.md`, hàng 22 🟡 + gate #4), nên nó vừa là điều
+kiện của mọi lập luận "PWA đủ rồi", vừa là bằng chứng mạnh nhất cho hướng ngược lại. Đó cũng là lý do
+**web push nằm ngoài launch scope** của DD-113: reminder ở launch đi qua bot Zalo, kênh không phụ thuộc
+install.
 
 ---
 
@@ -433,6 +463,7 @@ Canonical store, RLS, outbox pattern và server-owned business rules là phần 
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 22/08/2026 | 2.1 | **Mirror DD-113 ✅ (owner 22/08) — re-sequencing, không đảo hướng doc này.** Launch = webapp PWA + Zalo bot **song song**; native lùi phase sau và **nằm ngoài launch**. Thêm: (a) khối ⚙️ đầu §1; (b) lý do thứ năm cho "web trước, native sau" — nhãn "fallback" khiến web không được build, đo tại `a151b15` vẫn 0 màn FE / 1 `page.tsx` / 0 route nghiệp vụ hơn một tháng sau DD-69; (c) mục **Gate mở bàn native** với ngưỡng đo được thay cho "TBD" (≥5 host ≥4 tuần trên PWA · weekly return ≥60% · install rate ≥30% **tách iOS/Android** · `/api/v1`+bearer/refresh+client-safe contracts đã land · nêu được capability PWA đo được là không làm nổi). Hàng install-rate gắn với ràng buộc iOS chỉ cho web push khi PWA đã cài — cũng là lý do web push nằm ngoài launch scope. **§2–§10 không đổi**; chúng vẫn là điều kiện kỹ thuật phải trả trước khi native khởi động. |
 | 28/07/2026 | 2.0 | Refresh current authority refs; mirror primary plan v1.8 `PLAN_READY` at `90d292d` while retaining per-slice `CODE_READY`, native phase-2/TBD and all API/auth/push/store gates. |
 | 27/07/2026 | 1.9 | Refresh current source-of-truth pointers; mirror DD-91 primary-surface target nhưng giữ execution plan `NOT_PLAN_READY`, native phase-2/TBD và toàn bộ API/auth/push/store gates. Không claim runtime hay schedule. |
 | 19/07/2026 | 1.8 | Pointer refresh: BRD v3.9f · PRD v2.8e · ROADMAP v3.3e · decisions v1.74. Không đổi nội dung strategy; native vẫn direction accepted, build phase-2 TBD + gates. |
