@@ -7,6 +7,8 @@
 > **Thứ tự khuyến nghị:** P0 → (P1 ‖ P2 song song nếu scope-gate không báo collision) → P3 (một mình,
 > vì mang migration) → P4 bất kỳ lúc nào máy rảnh → P5 nếu còn thời gian. P0b đưa owner ký càng sớm càng tốt.
 > Chat slice 7 đã authored nhưng **ngoài phase-1 (DD-114 D7)** — hôm nay không ưu tiên.
+>
+> **📌 Trạng thái lane (cập nhật 25/08, phiên reconcile):** **P0 ✅** (docs batch commit+push `fee0a18`…`5a6d8dd`, `_to_delete/` xoá) · **P0b ✅ = DD-116** (owner ký Option B — KEEP) · **P1 🔵 in-flight** — lane gốc HALT MAX_ROUNDS round 6 (fingerprint P1), đóng authorized-close; successor **Slice A** `session-command-update-v3` @ `2ac1f56` (bỏ fingerprint theo DD-117 D5), sau đó còn Slice B (Close+Cancel) · **P2 ✅ merged** `f2af39d` (resolver, 0 caller — wiring AWAIT slice auto-reconcile) · **P3 ✅ merged** `9da3021` (migration `0033`) · **P7 ✅** packet `a49bf96` (việc còn lại của OWNER: gửi luật sư) · **P6 🔵 authored** `94861a0` (migration `0034` trên lane, chưa merge) · **P5 ⬜ chưa chạy** · **P4 🟡 một phần** — phiên docs 25/08 đã làm bước 2/3/4 (backfill bảng DD + BUILD-STATUS refresh + sửa floor UC 8→10) và backlog reconcile --check (No stale entries; AGED re-verified); **còn thiếu bước 1 (canonical runner re-pin, cần Postgres máy owner) + bước 5 (đọc GitHub Actions runs thật)**.
 
 ---
 

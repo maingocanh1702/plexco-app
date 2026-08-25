@@ -6,6 +6,27 @@ versioning theo [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased] — 08/08 → 25/08/2026
+
+> Mốc thô cho giai đoạn sau v0.0.2 (tính tới `main@1215a6a`, 25/08/2026); nguồn sự thật tiến độ vẫn là
+> `docs/standards/BUILD-STATUS.md` + `docs/00-start-here/HANDOFF.md`.
+
+### Added (Code)
+
+- Migrations `0030`–`0033` (tail `0033`, 34 file): chat DM-safety authority DD-55 `0030` · chat schema core DD-38/86 `0031` · DM-safety single-read DD-102 `0032` · **`public_projection_fences` + guarded view `public_session_share_v` + REVOKE base SELECT `public_sessions` khỏi `readonly`/`app` (DD-12 8a) `0033`**
+- `session-service.ts`: 3 command đầu tiên `createSession` · `publishSession` · `announceSession` (+ cặp outbox producer có thứ tự); `authorizeTenantAction` có caller production
+- **DD-29 capability resolver** `resolveCapability()` (`f2af39d`) — reader đầu tiên của capability registry (fail-closed, chưa có caller)
+- Canonical runner authority: **854 workspace + 30 validator** PASS (@ `93f1e93`, 15/08); suite sau merge 25/08 đo informal 919 + 30
+
+### Docs / Decisions
+
+- decisions.md v2.19 → v2.42: DD-100..DD-117 (nổi bật: DD-107 autonomy protocol · DD-110/111 session command family · **DD-113 GTM re-sequencing PWA+Zalo song song** · **DD-114 phase-1 = 7 nhóm** · DD-115 Membership D1–D5 · **DD-116 FE PENDING vào decision log (Option B)** · DD-117 close/cancel fail-closed refuse) + 2 amendment DD-50
+- A3 legal starter packet (`docs/legal/`, DRAFT) — PII data-class matrix + lawyer engagement brief; A3 là blocker phase-1 (DD-114 D5)
+
+### Chưa có (đọc cho đúng)
+
+- Vẫn 0 business API route · 0 màn FE (FE **PENDING** theo DD-116) · scheduler OFF · chưa projector nghiệp vụ · Google login chưa bật
+
 ## [v0.0.2] — 2026-08-07
 
 > Entry gộp giai đoạn 18/06 → 07/08 (README đã tự nhận v0.0.2 từ trước; entry này đóng khoảng trống ghi nhận —
