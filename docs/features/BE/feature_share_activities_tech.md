@@ -1,7 +1,7 @@
 # Feature: Share Activities — Backend Tech Spec
 
 > **Canonical phase:** P4.3 (Share Session · DD-73) · Sau P4 (Activity Card · DD-74/75) · P4+ evidence-gated (Feed/Kudos · DD-76/77)
-> **Version:** 0.1 · 2026-08-14
+> **Version:** 0.2 · 2026-08-25
 > **Status:** Draft
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` — **Doc status ≠ Implementation status.** Chưa có bảng/migration/service/route/projector nào; toàn bộ là target contract.
 > **Product spec:** `../FE/feature_share_activities.md` v1.0
@@ -171,6 +171,12 @@ CREATE UNIQUE INDEX uq_activity_card_slugs_active ON activity_card_slugs (card_i
 > Slug lifecycle (DD-75): CSPRNG entropy ≥128-bit, mint **chỉ** cho `published+public`; public→followers/revoke → tombstone; re-publicize mint slug **mới**, hash cũ vĩnh viễn 404. Terminal retention detach `card_id=NULL` **trước** card deletion để old URL không sống lại.
 
 #### 2.4 `public_projection_fences` — Global Protected, denial-only (DD-12-owned, feature mở rộng `activity_card`)
+
+> ⚠️ **ĐÍNH CHÍNH 2026-08-25:** phần DD-12-owned của bảng này **ĐÃ LAND** — migration `0033` @ `9da3021`
+> (bảng fence + guarded `public_session_share_v` + narrow raise/CAS-clear, surface `'session_share'`).
+> DDL dưới đây giữ nguyên làm **combined target**: slice của feature này KHÔNG tạo lại bảng/fn — chỉ
+> EXTENDS usage sang `surface='activity_card'` (không thêm cột, đúng ghi chú schema `0033`) và mang
+> phần DD-74/75-owned (activity stores + guarded `public_activity_cards_v`) như migration riêng.
 
 ```sql
 -- TẠO bởi DD-12/marketplace slice (cho surface='session_share'). Feature này CHỈ mở rộng usage sang 'activity_card'.
@@ -544,7 +550,7 @@ stateDiagram-v2
 | 3 | Feed audience downgrade | public→followers rồi unfollow | Card biến mất lần read kế; không snapshot follower list |
 | 4 | Block two-way (DD-55) | A block B | B card khỏi feed A; kudos gỡ hai chiều |
 | 5 | Cross-plane isolation | activity card viewer ngoài tenant | Đọc global view only; RLS tenant intact |
-| 6 | DD-12 dependency | migration khi fence table chưa land | HALT — không tạo lại fence; slice tách |
+| 6 | DD-12 dependency | migration khi fence table chưa land *(điều kiện đã hết 25/08: fence `0033` @ `9da3021` ĐÃ land — luật "không tạo lại fence" nay nghĩa là DÙNG bảng/fn `0033` sẵn có, surface EXTENDS sang `activity_card` không thêm cột)* | HALT — không tạo lại fence; slice tách |
 
 > Min 4 integration cho multi-step flows.
 
@@ -581,4 +587,5 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-25 | v0.2 | **Đính chính tiền đề (docs-only, phiên reconcile 25/08):** phần DD-12-owned của §2.4 (`public_projection_fences` + guarded session view + raise/CAS-clear) **ĐÃ LAND** — migration `0033` @ `9da3021`, surface `'session_share'`. §2.4 thêm ghi chú combined-target (slice feature này chỉ EXTENDS `'activity_card'`, không tạo lại); integration case 6 chú thích điều kiện HALT đã hết nhưng luật "không tạo lại fence" giữ nguyên nghĩa mới. Không đổi contract DD-74/75-owned. |
 | 2026-08-14 | v0.1 | **BE companion khởi tạo** cho `../FE/feature_share_activities.md` v1.0 (đóng nợ docs-debt-2026-08-13 §8 — cặp lệch duy nhất). Lift 5 bảng từ FE §4 vào DDL + RLS/grants: `player_activity_shares` (tenant/RLS), `person_activity_cards`/`activity_card_slugs`/`activity_reactions` (global protected, khuôn `0009:11-18`), `public_projection_fences` (DD-12-owned, feature mở rộng `activity_card`). Guarded `public_activity_cards_v` (cột tường minh, `readonly` zero grant) + 4 narrow SECURITY DEFINER function. Pin ranh giới sở hữu hai slice (DD-73 Q5): DD-12 sở hữu fence/guarded session view/grant migration; DD-74/75 sở hữu activity stores; DD-73 sở hữu route/OG/telemetry. 11 endpoint, 7 error code, 20 edge case, 24 unit + 6 integration test, publish/projector algorithm, state machine, security checklist. Mirror DD-73–78 verbatim (không re-derive). **Not started** — chưa schema/migration/service/runtime; số migration không hard-pin. |

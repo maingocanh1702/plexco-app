@@ -1,7 +1,7 @@
 # Feature: In-app Chat (club-wide + 1-1 + Group) — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.27 · 2026-08-12
+> **Version:** 0.28 · 2026-08-25
 > **Status:** ✅ Reviewed contract — DD-38/DD-55/DD-86/DD-91/DD-92/DD-93/DD-94/DD-95 ratified; pending migration
 > **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_inapp_chat.md` *(Reviewed)*
@@ -307,6 +307,10 @@ CREATE TABLE chat_messages (
   --    chưa invalidate được là NHÂN ĐÔI một lỗi đã biết, không phải thêm tính năng.
   --    Khi fence land, Q2 mở lại và phải trả lời: snapshot đóng băng hay refresh, và embed ĐÃ GỬI xử
   --    lý thế nào khi session chuyển private/cancel. Xem ../../standards/decisions.md → DD-106 Q2.
+  -- ⚠️ ĐÍNH CHÍNH 2026-08-25: điều kiện nhị phân ĐÃ ĐẠT — fence + guarded view `public_session_share_v`
+  --    + narrow raise/CAS-clear đã MERGE (migration `0033` @ `9da3021`, DD-12 8a). Q2 nay MỞ LẠI ĐƯỢC,
+  --    nhưng vẫn ⬜ cho tới khi owner trả lời hai câu trên trong decisions.md — ba cột embed vẫn
+  --    KHÔNG được thêm trước đó. Đây là đính chính trạng thái tiền đề, không phải gỡ hoãn.
   -- Structured embed (optional): session card, extensible to activity/tournament/club later
   embed_type text CHECK (embed_type IS NULL OR embed_type IN ('session')),
   embed_ref_id uuid,                                      -- source entity id (session_id for 'session')
@@ -1042,6 +1046,13 @@ Stable mechanism IDs `1–47` are catalog identifiers, not execution order; the 
 
 ### Migration & Rollback
 
+> ⚠️ **ĐÍNH CHÍNH 2026-08-25 — blockquote dưới đây là snapshot lúc viết, nay đã stale ở vế "chưa tồn tại":**
+> chat DB root **ĐÃ land** đúng theo trình tự nó mô tả — safety storage/primitives `0030` (10/08, DD-55) ·
+> chat schema core `0031` (11/08, DD-38/86) · single-read fix `0032` (12/08, DD-102); tail hiện là **`0033`**
+> (xem `../../standards/BUILD-STATUS.md`). Phần **vẫn đúng**: 0 service/API/UI, 0 TS production đọc `chat_*`
+> (code-dark), one-owner split cho post-root slices, và cấm sửa migration đã apply. Giữ blockquote gốc
+> nguyên văn làm ngữ cảnh trình tự:
+>
 > Toàn bộ `chat_*` và safety storage (`chat_blocks`/`chat_reports`/rate-audit state) đều **chưa tồn tại trong canonical migrations** (verified: no `chat_*` in `packages/db/migrations/`, tail hiện là `0024_public_visibility_capacity_check.sql`). Các SQL block trong doc mô tả **combined target**, không cho phép gộp sai dependency: (1) `chat-dm-safety-authority-core` land safety storage/primitives độc lập với `chat_*`; (2) `dd38-dd86-chat-schema-core` dùng số monotonic kế tiếp tại build để land final tables/constraints/RLS/read adapters; (3) post-root command slices land đúng one-owner split ở trên. KHÔNG sửa migration đã apply, không để root tham chiếu helper chưa land và không land baseline one-channel rồi fold. Candidate key `memberships_id_person_tenant_uq` là ALTER additive trên bảng baseline `memberships` (`0002` — LIVE).
 
 | Bước | Hành động | An toàn? |
@@ -1619,6 +1630,7 @@ Catalog IDs are stable identifiers, not execution order. Runtime work follows ex
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-25 | v0.28 | **Đính chính live-baseline (docs-only, phiên reconcile 25/08 — không đổi contract):** (1) ghi chú tại DD-106 Q2 embed comment — điều kiện nhị phân "fence đã merge" ĐÃ ĐẠT (`0033` @ `9da3021`); Q2 vẫn ⬜, ba cột embed vẫn cấm thêm tới khi owner chốt. (2) blockquote migration-baseline §DDL: vế "chat_* chưa tồn tại, tail 0024" đã stale — chat root land `0030`–`0032`, tail hiện `0033`; vế 0 service/API/UI + one-owner split giữ nguyên. Blockquote gốc giữ verbatim làm ngữ cảnh. |
 | 2026-08-12 | v0.27 | **Share Session in Chat (Structured Embed):** Thêm embed columns vào `chat_messages`: `embed_type CHECK IN ('session')`, `embed_ref_id uuid`, `embed_snapshot jsonb` — tất cả all-NULL hoặc all-NOT-NULL (CHECK constraint). Body cho phép rỗng khi có embed (`CHECK length(body) > 0 OR embed_type IS NOT NULL`). Server resolve session, validate actor visibility, snapshot BL-DSC-1 whitelist fields vào JSONB tại insert time — client KHÔNG cung cấp snapshot. API send message nhận optional `embedType` + `embedRefId`. Thêm 6 BE edge cases (#27–32), 8 tests (#113–120), request/response examples. Extensible to `activity`, `tournament`, `club` sau. |
 | 2026-08-11 | v0.26 | **Group Chat expansion:** Thêm `kind='group'` (global + tenant-scoped, 3–50 members) với follow-guard (DD-47), multi-pin (max 5/channel với trigger guard), advanced poll/vote (Telegram-style: single/multi choice, anonymous, quiz, deadline, allow add options — với triggers cho single-choice guard, option limit, poll-closed guard), group admin management, group settings (mute, leave, custom nickname). Thêm 14 entry points mới, 5 tables (`chat_pinned_messages`, `chat_polls`, `chat_poll_options`, `chat_poll_votes`, `chat_member_nicknames`), 4 triggers + 4 functions, 25 tests mới (#88–#112). |
 | 2026-08-10 | v0.25 | **A-grade upgrade:** thêm Entry points table (12 entries); bump version. Không đổi contract/schema. |

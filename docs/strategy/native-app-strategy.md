@@ -1,8 +1,9 @@
 # Phân tích — Thêm Native App (iOS / Android) sau Web MVP
 
-**Phiên bản:** 2.0
-**Ngày tạo:** 18/06/2026 · **Cập nhật:** 28/07/2026
-**Tài liệu tham chiếu:** `../product/BRD.md` v3.9n · `../product/PRD.md` v2.8m · `../product/TDD.md` v3.1h · `../product/ROADMAP.md` v3.4l · `../features/FE/feature_sync_engine.md` · `../features/FE/feature_marketplace_discovery.md` · `../features/FE/feature_identity.md` · `../standards/decisions.md` v2.11 current mirror · `../decisions/analysis/dd-69-app-native-analysis.md`
+**Phiên bản:** 2.2
+> ⚠️ *Đính chính version: header đứng ở 2.0 trong khi changelog đã tới 2.1 (mirror DD-113, 22/08) — dòng header không được bump lần đó. 2.2 gánh cả phần lệch này (cùng lớp lỗi ROADMAP v3.9 từng đính chính).*
+**Ngày tạo:** 18/06/2026 · **Cập nhật:** 25/08/2026
+**Tài liệu tham chiếu:** `../product/BRD.md` v3.9q · `../product/PRD.md` v2.8p · `../product/TDD.md` v3.1k · `../product/ROADMAP.md` v3.10 · `../features/FE/feature_sync_engine.md` · `../features/FE/feature_marketplace_discovery.md` · `../features/FE/feature_identity.md` · `../standards/decisions.md` (current — không pin version, đọc changelog của chính file đó) · `../decisions/analysis/dd-69-app-native-analysis.md`
 
 > ⚠️ **Version note (19/07/2026):** companion strategy, không phải source of truth. Authority hiện hành: **BRD v3.9f · PRD v2.8e · TDD v3.1 · ROADMAP v3.3e · decisions v1.74/DD-78**. Native direction accepted nhưng build phase-2 TBD.
 >
@@ -463,6 +464,7 @@ Canonical store, RLS, outbox pattern và server-owned business rules là phần 
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 25/08/2026 | 2.2 | **Đính chính header + refresh reference line (docs-only, phiên reconcile 25/08):** header từng đứng 2.0 trong khi changelog đã 2.1 (22/08) — sửa; dòng tham chiếu hết pin bộ version 28/07 (BRD v3.9n/PRD v2.8m/TDD v3.1h/ROADMAP v3.4l/decisions v2.11) → BRD v3.9q · PRD v2.8p · TDD v3.1k · ROADMAP v3.10 · decisions current (bỏ pin số theo bài học ROADMAP §Căn cứ). Không đổi nội dung chiến lược/gate native. |
 | 22/08/2026 | 2.1 | **Mirror DD-113 ✅ (owner 22/08) — re-sequencing, không đảo hướng doc này.** Launch = webapp PWA + Zalo bot **song song**; native lùi phase sau và **nằm ngoài launch**. Thêm: (a) khối ⚙️ đầu §1; (b) lý do thứ năm cho "web trước, native sau" — nhãn "fallback" khiến web không được build, đo tại `a151b15` vẫn 0 màn FE / 1 `page.tsx` / 0 route nghiệp vụ hơn một tháng sau DD-69; (c) mục **Gate mở bàn native** với ngưỡng đo được thay cho "TBD" (≥5 host ≥4 tuần trên PWA · weekly return ≥60% · install rate ≥30% **tách iOS/Android** · `/api/v1`+bearer/refresh+client-safe contracts đã land · nêu được capability PWA đo được là không làm nổi). Hàng install-rate gắn với ràng buộc iOS chỉ cho web push khi PWA đã cài — cũng là lý do web push nằm ngoài launch scope. **§2–§10 không đổi**; chúng vẫn là điều kiện kỹ thuật phải trả trước khi native khởi động. |
 | 28/07/2026 | 2.0 | Refresh current authority refs; mirror primary plan v1.8 `PLAN_READY` at `90d292d` while retaining per-slice `CODE_READY`, native phase-2/TBD and all API/auth/push/store gates. |
 | 27/07/2026 | 1.9 | Refresh current source-of-truth pointers; mirror DD-91 primary-surface target nhưng giữ execution plan `NOT_PLAN_READY`, native phase-2/TBD và toàn bộ API/auth/push/store gates. Không claim runtime hay schedule. |
