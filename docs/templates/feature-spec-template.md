@@ -47,7 +47,7 @@
 | {FT}-UC-2 | {Actor} | {Action} | {Benefit} | {Result} |
 | {FT}-UC-3 | {Actor} | {Action} | {Benefit} | {Result} |
 
-> Minimum 8 use cases, cover: happy path, alternative, mutation, cleanup, cross-actor.
+> Minimum 10 use cases (khớp review gate `docs/features/README.md` — floor ≥10 UC; sửa 25/08/2026, trước đó template ghi 8 và lệch gate), cover: happy path, alternative, mutation, cleanup, cross-actor.
 > Mỗi use case có nhiều actors → ghi rõ actor + result khác nhau (VD: UC-4 Player, UC-4b Host).
 > **Cột `Để…` là bắt buộc** — đọc thành "Là {Actor}, tôi muốn {Hành động} **để** {benefit}". Nó tồn tại để
 > reviewer challenge được "UC này có cần không?"; nếu không viết được benefit ngoài việc lặp lại Hành động

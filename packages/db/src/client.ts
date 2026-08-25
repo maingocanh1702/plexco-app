@@ -6,7 +6,9 @@ import * as schema from "../schema.js";
  * Connection factories per DB role (0000_roles_extensions.sql):
  *   app       — HTTP/bot runtime, NOBYPASSRLS, tenant tables only via RLS
  *               (pooled DATABASE_URL);
- *   readonly  — discovery process, SELECT on public_sessions only;
+ *   readonly  — discovery process, SELECT on the guarded view
+ *               public_session_share_v ONLY (0033 revoked base SELECT on
+ *               public_sessions from both readonly and app);
  *   app_worker— scheduler/outbox, narrow functions (DIRECT connection).
  * The MIGRATION role never appears here — it belongs to migrate.ts only.
  */

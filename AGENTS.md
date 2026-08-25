@@ -85,10 +85,9 @@ rules; never copy it as a skeleton.
 
 ## Volume floors — take the HIGHER number
 
-> WARNING: the two sources disagree (measured 2026-08-24). `feature-spec-template.md` §2 says
-> `Minimum 8 use cases`, while the review gate in `docs/features/README.md` v2.33 sets the floor at
-> `≥10 UC`. Following the template exactly still fails the gate — the defect is in the skeleton itself.
-> **Use ≥10 UC** until one side is corrected.
+> RESOLVED 2026-08-25: `feature-spec-template.md` §2 now says `Minimum 10 use cases`, matching the
+> review gate floor of `≥10 UC` in `docs/features/README.md` — the 8-vs-10 mismatch measured by the
+> 24/08 audit (V7) is closed at the source.
 
 Product/UX: **≥10 use cases** · ≥10 edge cases across 4+ categories.
 BE: ≥12 edge cases across 6 categories · ≥20 unit tests · ≥4 integration tests · ≥3 scenarios per status.

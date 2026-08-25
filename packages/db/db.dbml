@@ -437,6 +437,19 @@ Table public_sessions {
   join_policy text [not null]
   projected_at timestamptz [not null]
   expires_at timestamptz [not null]
+  public_projection_version bigint [not null, default: 0, note: '0033 — control metadata (non-PII), whitelist-exception DD-73/DD-78']
+  Note: '0033: base SELECT REVOKED khỏi readonly + app; consumer chỉ đọc qua guarded view public_session_share_v (security_barrier, anti-join fence). CHECK id = session_id.'
+}
+
+Table public_projection_fences {
+  surface text [pk, note: "'session_share' (slice này) | 'activity_card' (sau)"]
+  target_kind text [pk, note: "'session' | 'activity_share' | 'person' | 'tenant'"]
+  target_id uuid [pk]
+  fence_token uuid [not null, note: 'random; projector CAS-clear; không trả về/log']
+  deny_scope text [not null, note: "CHECK IN ('public','all')"]
+  reason text [not null]
+  created_at timestamptz [not null]
+  Note: 'GLOBAL PROTECTED, denial-only (DD-12 8a, migration 0033) — không RLS, zero grant cho app/readonly; mọi truy cập qua narrow SECURITY DEFINER fn: raise_public_session_fence (app) · current_public_session_fence_token / clear_public_session_fence (app_worker)'
 }
 
 Table join_requests {

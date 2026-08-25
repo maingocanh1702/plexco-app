@@ -92,9 +92,8 @@ hiểu luật, **không copy làm khuôn**.
 
 ### Floor số lượng — lấy con số CAO HƠN
 
-> ⚠️ Hai nguồn đang lệch (đo 2026-08-24): `feature-spec-template.md` §2 ghi `Minimum 8 use cases`, còn
-> review gate ở `docs/features/README.md` v2.33 ghi floor `≥10 UC`. Viết đúng theo template rồi vẫn trượt
-> gate — lỗi nằm sẵn trong khuôn. **Lấy ≥10 UC** cho tới khi một trong hai bên được sửa.
+> ✅ Hết lệch (sửa gốc 2026-08-25): `feature-spec-template.md` §2 nay ghi `Minimum 10 use cases`, khớp
+> review gate `docs/features/README.md` floor `≥10 UC` (audit 24/08 V7 từng đo hai nguồn lệch 8 vs 10).
 
 Product/UX: **≥10 UC** · ≥10 edge case, 4+ category.
 BE: ≥12 edge case, 6 category · ≥20 unit test · ≥4 integration test · ≥3 scenario/status.

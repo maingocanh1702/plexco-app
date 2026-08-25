@@ -59,7 +59,7 @@ services:
   #      Không có `psql` host? Dùng psql của CHÍNH container postgres, feed file qua stdin:
   #      docker compose -f infra/docker-compose.yml exec -T postgres \
   #        psql -U plexco -d plexco -v ON_ERROR_STOP=1 -f - < infra/postgres-init/01-job-definer.sql
-  #   1) migrations current baseline 0000→0022 (roles + schema + RLS — runner ở slice db-RLS),
+  #   1) migrations current baseline 0000→0033 (roles + schema + RLS — runner ở slice db-RLS),
   #   2) pgboss provisioning (truyền URL migration AD-HOC, không qua .env —
   #      .env bị nạp vào runtime services):
   #      docker compose -f infra/docker-compose.yml run --rm \

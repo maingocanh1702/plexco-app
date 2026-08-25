@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Phiên bản** | v0.0.2 — Foundation + shared job mechanics merged; product runtime chưa nối |
-| **Trạng thái** | 🟡 `main@64e9ccb` (07/08/2026): monorepo + **migrations `0000–0029`** đã merge; Google auth/session security, waitlist schema, tenant-integrity FK, job lease/ack, worker preflight/dispatcher/scheduler, Session public-capacity invariant, CHECK-naming reconcile, `authorizeTenantAction` (code dark), DD-29 capability registry (2-tier `free\|host_pro`, chưa TS nào đọc) và FE-foundation core (`api-contract` + sealed `toAppError`) đã có. Scheduler mặc định **OFF**, dispatcher vẫn placeholder fail-closed; chưa có business API route, connected product FE, outbox producer hay projector nghiệp vụ. ⛔ CI đang infra-blocked (Actions minutes — xem HANDOFF). Chi tiết: [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md). |
+| **Trạng thái** | 🟡 `main@1215a6a` (25/08/2026): monorepo + **migrations `0000–0033`** (34 file) đã merge; Google auth/session security, waitlist schema, tenant-integrity FK, job lease/ack, worker preflight/dispatcher/scheduler, chat DB root (`0030`–`0032`), `authorizeTenantAction` (đã có caller production), DD-29 capability registry 2-tier + resolver `resolveCapability()` (reader đầu tiên, chưa caller), **`public_projection_fences` + guarded view `public_session_share_v` (`0033` — base SELECT trên `public_sessions` đã REVOKE khỏi `readonly`/`app`)**, 3 session command (`create`/`publish`/`announce`) và FE-foundation core (`api-contract` + sealed `toAppError`) đã có. Scheduler mặc định **OFF**, delivery vẫn placeholder fail-closed; chưa có business API route, connected product FE hay projector nghiệp vụ; FE đang **PENDING** (DD-116). Chi tiết: [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md). |
 | **Ngày tạo** | 18/06/2026 |
 | **Stack** | TypeScript · Next.js App Router · Zalo/Messenger HTTP adapters *(target — chưa build)* · Drizzle ORM · PostgreSQL (RLS) · pg-boss · SSE/`LISTEN/NOTIFY` (DD-07/DD-10) |
 | **Monorepo** | pnpm workspaces: `packages/core` · `apps/bot` · `apps/web` |
@@ -70,7 +70,7 @@ Zalo/Messenger là kênh acquisition/fallback; **In-app Chat là target primary 
 
 ## Setup theo code hiện tại
 
-> Baseline hiện tại là `main@64e9ccb`: monorepo, `.env.example`, local Postgres, `packages/db` + **migrations `0000–0029`**. Shared job mechanics đã có nhưng còn disabled/placeholder; tầng product feature vẫn chưa có business route/connected FE (xem [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md)).
+> Baseline hiện tại là `main@1215a6a` (25/08/2026): monorepo, `.env.example`, local Postgres, `packages/db` + **migrations `0000–0033`** (34 file). Shared job mechanics đã có nhưng còn disabled/placeholder; tầng product feature vẫn chưa có business route/connected FE (xem [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md)).
 
 ### Prerequisites
 
@@ -118,7 +118,7 @@ pnpm --filter @plexco/bot start:worker
 | `pnpm build` | Build tất cả packages |
 | `pnpm test` | Chạy unit + integration tests trên Postgres test database |
 | `pnpm typecheck` | `tsc --noEmit` toàn monorepo |
-| `DATABASE_URL_MIGRATION=... pnpm --filter @plexco/db migrate` | Apply canonical migrations bằng DDL-owner role (tail hiện tại: `0029`) |
+| `DATABASE_URL_MIGRATION=... pnpm --filter @plexco/db migrate` | Apply canonical migrations bằng DDL-owner role (tail hiện tại: `0033`) |
 | `DATABASE_URL_MIGRATION=... pnpm --filter @plexco/bot provision:queue` | Provision pg-boss schema/queues sau migrations |
 | `pnpm --filter @plexco/db exec drizzle-kit studio` | Drizzle Studio (dev only) |
 | `pnpm lint` | Lint toàn monorepo |
@@ -266,4 +266,4 @@ Security:                    quy tắc nghiêm ngặt hơn giữa BRD và AUDIT
 
 ---
 
-*Plexco v0.0.2 — `main@64e9ccb` (07/08/2026), migrations `0000–0029`, canonical runner 670 workspace + 13 readiness-validator = 683 PASS (đo tại `528540e`; sau đó `5b2b8f5` thêm 14 core tests, full-suite kế tiếp kỳ vọng ~697). Shared job mechanics đã merge nhưng còn disabled/placeholder; product business runtime và connected FE chưa có. Build-status: [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md).*
+*Plexco v0.0.2 — `main@1215a6a` (25/08/2026), migrations `0000–0033` (34 file), canonical runner authority 854 workspace + 30 readiness-validator PASS (@ `93f1e93`, 15/08; suite sau merge 25/08 đo informal 919 workspace + 30 validator, chưa re-pin). Shared job mechanics đã merge nhưng còn disabled/placeholder; product business runtime và connected FE chưa có (FE PENDING — DD-116). Build-status: [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md).*
