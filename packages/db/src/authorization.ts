@@ -15,28 +15,40 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
  *
  * Recognised action classes are the "mutating" ones billing §3's Concurrency
  * clause names (publish_new_sessions, admin_mutation, integration_changes) plus
- * announce_session — a DD-110 session command that, like publish, is ❌ under
- * suspension (active/past_due ✅, suspended ❌), landing its narrow per-op class
- * with its own command (this slice, announceSession). It routes through the
- * EXISTING fail-closed resolution below unchanged — no special-casing. The
- * always-allow product-matrix classes (player CK ingest, read-only queries,
- * system safety) never consult tenant/subscription status at all (edge #9:
- * "Allow — safety path") and so structurally never route through this resolver.
+ * the DD-110 session commands that, like publish, are ❌ under suspension
+ * (active/past_due ✅, suspended ❌): announce_session (with announceSession) and
+ * update_open_session (with updateSession — UpdateSession on an `open` session).
+ * Each lands its narrow per-op class in the commit that lands its command (DD-110
+ * D3) and routes through the EXISTING fail-closed resolution below unchanged — no
+ * special-casing. update_open_session is chosen at the call site ONLY when the
+ * session is `open`; updateSession on a `draft` is exempt (DD-105) and does NOT
+ * call this resolver at all — enforced by a service-layer negative test (DD-110
+ * D4). The always-allow product-matrix classes (player CK ingest, read-only
+ * queries, system safety) never consult tenant/subscription status at all (edge
+ * #9: "Allow — safety path") and so structurally never route through this resolver.
  *
- * DD-110 also mints obligation-termination classes (close_session,
- * cancel_session) that ALLOW under suspension; per DD-110 D3 a literal enters
- * this enum only in the commit that lands its command, and those two are blocked
- * on the payments/review_policy subsystem (spec edge #5), so they — and any
- * allow-when-suspended handling — are intentionally absent here.
+ * DD-110 also mints the obligation-termination classes (close_session,
+ * cancel_session) that ALLOW under suspension (✅ in every billing state). Their
+ * literals and allow-when-suspended handling land with CloseSession/CancelSession
+ * (a later slice), per DD-110 D3 — so they are intentionally absent here (this
+ * slice ships UpdateSession only). DD-117 authorizes those two as a fail-closed
+ * refuse on the paid-roster/finance-root path until the payments/review_policy
+ * subsystem exists; it does NOT add an allow-when-suspended branch to this resolver
+ * (that is the later slice's change).
  */
 export type ActionClass =
-  "publish_new_sessions" | "admin_mutation" | "integration_changes" | "announce_session";
+  | "publish_new_sessions"
+  | "admin_mutation"
+  | "integration_changes"
+  | "announce_session"
+  | "update_open_session";
 
 const RECOGNIZED_ACTION_CLASSES: ReadonlySet<ActionClass> = new Set([
   "publish_new_sessions",
   "admin_mutation",
   "integration_changes",
   "announce_session",
+  "update_open_session",
 ]);
 
 export type EffectiveStatus = "trialing" | "active" | "past_due";

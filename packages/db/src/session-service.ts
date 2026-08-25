@@ -1,7 +1,8 @@
 import { and, eq, sql } from "drizzle-orm";
-import { outboxEvents, processedCommands, sessions, sports } from "../schema.js";
+import { charges, outboxEvents, players, processedCommands, sessions, sports } from "../schema.js";
 import { authorizeTenantAction } from "./authorization.js";
 import type { Db } from "./client.js";
+import { raisePublicSessionFence } from "./public-session-fence.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -929,5 +930,639 @@ export async function announceSession(
       .insert(processedCommands)
       .values({ tenantId, commandId, commandType: ANNOUNCE_COMMAND_TYPE, resultRef: stored });
     return { ...stored, replayed: false };
+  });
+}
+
+/* ------------------------------------------------------------------------- *
+ * UpdateSession — a partial field mutation of a draft or open session
+ * (feature_session_management_tech.md SES-UC-4, edges #1/#2/#4/#5/#7/#11/#16/#26;
+ * §3 error codes). Sibling of publishSession, same single write path in one
+ * withTenant transaction: validate payload shape -> reserve the command key
+ * (advisory xact lock, command-type-INDEPENDENT) -> dedup (fail-closed on a
+ * foreign/corrupt/other-request ledger row) -> validate the provided editable
+ * fields -> lock the session row FOR UPDATE and read the current row -> reject a
+ * mutation on a closed/cancelled session (edge #11, SESSION_NOT_OPEN) ->
+ * STATUS-DEPENDENT suspension gate -> compute the changed field-set -> mutate +
+ * one session.updated outbox row -> record.
+ *
+ * The suspension gate is status-dependent (DD-110 D1/D4, DD-105): an `open`
+ * session re-checks authorizeTenantAction('update_open_session') UNDER LOCK (❌
+ * when suspended); a `draft` is EXEMPT (invisible-until-publish + money-free) and
+ * does NOT call authorizeTenantAction at all. Because the literal is chosen at the
+ * call site by status, and status is only known after the FOR UPDATE lock, the
+ * gate runs under lock (unlike publish's upfront call). A consequence: a suspended
+ * REPLAY of a prior open-update returns the stored envelope (dedup short-circuits
+ * before the gate) — a no-op, no new mutation, so this is correct, not a hole.
+ *
+ * Money is FAIL-CLOSED, never moved (DD-117): a price change on a session that
+ * already carries ANY charge (including a `void` one — no status exemption, per
+ * edge #4 "existing charges" + DD-117 D3 fail-closed) is REFUSED with
+ * PRICE_CHANGE_REQUIRES_POLICY (edge #4/#5) rather than resolved — applying an
+ * impact_policy resolution is the payments/review_policy subsystem, which does not
+ * exist on base. Capacity is
+ * guarded by CAPACITY_BELOW_ROSTER only (DD-112 is OPEN — NO impact_policy
+ * coupling, NO edge #4 edit); CAPACITY_BELOW_OCCUPANCY (live holds) and waitlist
+ * promotion on a capacity increase (edge #15) are deferred — those subsystems do
+ * not exist on base, so occupancy == the active roster and a capacity change
+ * mutates only sessions.slots_max. The active-roster count and the charge-existence
+ * probe read `players` / `charges` (both Drizzle-declared) under the tenant GUC (RLS
+ * choke-point). An `open` session past its starts_at is a privileged correction, not
+ * a normal update (edge #11 realized for update, the same past-boundary cancel uses
+ * at edge #31): rejected SESSION_NOT_OPEN via a SEPARATE post-lock clock_timestamp()
+ * query (mirror publish/announce — a lock wait must not read a pre-wait clock). A
+ * `draft` has no past-guard (it is pre-publish and freely editable). Status is never
+ * changed here (draft stays draft, open stays open); the session.published/created
+ * producers keep their own transitions.
+ * ------------------------------------------------------------------------- */
+
+// Typed update error codes owned by this service; the route slice maps them onto
+// the api-contract 400/409 envelope. TENANT_SUSPENDED is NOT one of them — a
+// denied open-update surfaces as SessionUpdateAuthorizationError (like publish).
+export type UpdateSessionErrorCode =
+  | "SESSION_NOT_FOUND"
+  | "SESSION_NOT_OPEN"
+  | "STALE_VERSION"
+  | "CAPACITY_BELOW_ROSTER"
+  | "PRICE_CHANGE_REQUIRES_POLICY"
+  | "MISSING_DISCOVERY_FIELDS"
+  | "INVALID_TIME_RANGE"
+  | "INVALID_TIMEZONE"
+  | "INVALID_VISIBILITY"
+  | "INVALID_JOIN_POLICY"
+  | "INVALID_PRICE"
+  | "INVALID_SLOTS"
+  | "INVALID_TEXT_FIELD"
+  | "COMMAND_ID_CONFLICT";
+
+export class SessionUpdateError extends Error {
+  readonly code: UpdateSessionErrorCode;
+  constructor(code: UpdateSessionErrorCode, message: string) {
+    super(message);
+    this.name = "SessionUpdateError";
+    this.code = code;
+  }
+}
+
+/**
+ * Raised when the billing gate denies an update of an OPEN session —
+ * update_open_session is ❌ under suspension (DD-110). Distinct type carrying the
+ * cause-agnostic billing code, mirroring SessionPublishAuthorizationError, so a
+ * route maps the billing-owned 403 without this service inventing a session-scoped
+ * suspension literal. A DRAFT update never reaches this path (DD-105 exemption).
+ */
+export class SessionUpdateAuthorizationError extends Error {
+  readonly code = "TENANT_SUSPENDED" as const;
+  constructor() {
+    super("tenant is not permitted to update an open session");
+    this.name = "SessionUpdateAuthorizationError";
+  }
+}
+
+const failUpdate = (code: UpdateSessionErrorCode, message: string): never => {
+  throw new SessionUpdateError(code, message);
+};
+
+/** User payload. Carries NO tenant_id/actor/commandId (those are trusted context).
+ *  Every editable field is optional — only PROVIDED fields (key present, value not
+ *  `undefined`) are considered; a provided `null` is a real value (e.g. clear area,
+ *  or slots_max -> unlimited on a private session). */
+export interface UpdateSessionInputPayload {
+  sessionId: string;
+  /** Optimistic-concurrency guard; checked ONLY on the mutate branch (a no-op
+   *  empty change-set does not check it, mirroring publish's idempotent no-op). */
+  expectedVersion?: number;
+  startsAt?: Date;
+  endsAt?: Date;
+  timezone?: string;
+  priceAmount?: number;
+  slotsMax?: number | null;
+  visibility?: "private" | "public";
+  area?: string | null;
+  venueName?: string | null;
+  venueAddress?: string | null;
+  joinPolicy?: "open" | "approval";
+}
+
+export interface UpdateSessionParams {
+  tenantId: string; // trusted routing context, asserted as a UUID by withTenant
+  commandId: string; // idempotency key from trusted context
+  input: UpdateSessionInputPayload;
+}
+
+/**
+ * The processed_commands.result_ref envelope: exactly the four returned fields. Dedup is
+ * on (tenant_id, command_id) ONLY — identical to createSession/publishSession/announceSession
+ * — so a replayed commandId for the same session returns this stored result; NO request
+ * content is fingerprinted or stored (DD-117 D5: the session-command family must not persist
+ * any PII-derivative verifier in the durable ledger, which survives session deletion).
+ */
+interface StoredUpdateResult {
+  sessionId: string;
+  status: string;
+  version: number;
+  visibility: string;
+}
+
+/** The value RETURNED to the caller. replayed=true when a prior processed_commands row
+ *  was returned (zero new mutation). */
+export interface UpdateSessionResult {
+  sessionId: string;
+  status: string;
+  version: number;
+  visibility: string;
+  replayed: boolean;
+}
+
+const UPDATE_COMMAND_TYPE = "UpdateSession";
+
+/** Drizzle `.set()` partial — only columns UpdateSession is allowed to mutate. */
+interface SessionUpdateSet {
+  startsAt?: Date;
+  endsAt?: Date;
+  timezone?: string;
+  priceAmount?: number;
+  slotsMax?: number | null;
+  visibility?: string;
+  area?: string | null;
+  venueName?: string | null;
+  venueAddress?: string | null;
+  joinPolicy?: string;
+}
+
+/**
+ * Guards a replayed processed_commands.result_ref before it is trusted as our envelope —
+ * a SUPERSET of isStoredCreateResult's domain check (UUID id, enum status/visibility,
+ * integer version). status stays what it was at update time (update never changes status),
+ * so a stored result is 'draft' or 'open'; the version must be in the sessions.version int4
+ * domain [1, INT4_MAX] — a corrupt or hand-written row carrying an out-of-int4 version fails
+ * closed (→ COMMAND_ID_CONFLICT) rather than replaying an impossible version, since a real
+ * sessions.version can never exceed int4. No requestFingerprint: dedup is commandId-only
+ * (DD-117 D5), identical to the sibling commands.
+ */
+function isStoredUpdateResult(value: unknown): value is StoredUpdateResult {
+  if (typeof value !== "object" || value === null) return false;
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.sessionId === "string" &&
+    UUID_RE.test(r.sessionId) &&
+    (r.status === "draft" || r.status === "open") &&
+    (r.visibility === "private" || r.visibility === "public") &&
+    typeof r.version === "number" &&
+    Number.isInteger(r.version) &&
+    r.version >= 1 &&
+    r.version <= INT4_MAX
+  );
+}
+
+export async function updateSession(
+  db: Db,
+  params: UpdateSessionParams,
+): Promise<UpdateSessionResult> {
+  const { tenantId, commandId, input } = params;
+  return withTenant(db, tenantId, async (tx) => {
+    // Validate the payload shape UP FRONT (typed error, never a raw TypeError):
+    // `input` is untrusted user payload (only tenantId/commandId are trusted). A
+    // bad sessionId fails closed as SESSION_NOT_FOUND (never revealing existence).
+    if (typeof input !== "object" || input === null || Array.isArray(input)) {
+      failUpdate("SESSION_NOT_FOUND", "session not found in tenant context");
+    }
+    if (typeof input.sessionId !== "string" || !UUID_RE.test(input.sessionId)) {
+      failUpdate("SESSION_NOT_FOUND", "session not found in tenant context");
+    }
+    // Canonicalize the id ONCE (lowercase) — used for the FOR UPDATE query, the
+    // replay equality check, and the stored result — so an upper-case UUID literal
+    // does not store a lower-case result that then fails its own replay.
+    const sessionId = input.sessionId.toLowerCase();
+
+    // Reserve the command key GLOBALLY (command-type-INDEPENDENT), IDENTICAL to
+    // create/publish/announce — matches the processed_commands (tenant_id,
+    // command_id) uniqueness so a concurrent command of ANY type with the same id
+    // serializes and dedups instead of racing past the read to a raw 23505.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended('processed-command:' || ${tenantId}::uuid::text || ':' || ${commandId}, 0))`,
+    );
+
+    // Dedup (edge #3): a replayed commandId returns the stored envelope, zero mutation.
+    // Dedup is on (tenant_id, command_id) ONLY, identical to create/publish/announce —
+    // fail closed unless the row is OUR command_type AND a domain-valid envelope AND for
+    // the SAME session (the operation's identity, like announce's session+channel). A
+    // commandId reused for a DIFFERENT session is a genuine idempotency-key collision
+    // (COMMAND_ID_CONFLICT); the same commandId replayed for the same session returns the
+    // first result regardless of the patch — the caller owns commandId uniqueness per
+    // distinct request. NO request content is fingerprinted (DD-117 D5): storing a hash of
+    // the location fields in this durable ledger, which survives session deletion, would
+    // let a reader dictionary-recover the deleted PII.
+    const prior = await tx
+      .select({
+        commandType: processedCommands.commandType,
+        resultRef: processedCommands.resultRef,
+      })
+      .from(processedCommands)
+      .where(
+        and(eq(processedCommands.tenantId, tenantId), eq(processedCommands.commandId, commandId)),
+      );
+    if (prior.length > 0) {
+      const stored = prior[0]!.resultRef as StoredUpdateResult | null;
+      if (
+        prior[0]!.commandType === UPDATE_COMMAND_TYPE &&
+        isStoredUpdateResult(stored) &&
+        stored.sessionId === sessionId
+      ) {
+        return {
+          sessionId: stored.sessionId,
+          status: stored.status,
+          version: stored.version,
+          visibility: stored.visibility,
+          replayed: true,
+        };
+      }
+      failUpdate(
+        "COMMAND_ID_CONFLICT",
+        "command_id belongs to a different command or session, or has no usable result",
+      );
+    }
+
+    // LEDGER MISS (prior.length === 0) -> a genuinely new command. Validate the PROVIDED
+    // editable fields NOW, AFTER the dedup: a replayed commandId for the same session must
+    // return the stored result REGARDLESS of the (possibly malformed) retry payload —
+    // validating the patch BEFORE the dedup would report failure for an operation that
+    // already committed (DD-117 D5 "regardless of the patch"; only session-IDENTITY, the
+    // sessionId, is validated up front, mirroring announce validating only session+channel).
+    // Each check runs only when the field is present (value !== undefined); a provided
+    // `null` is a real value for the nullable columns. expectedVersion, if provided, must be
+    // a positive int4 (the sessions.version domain: NOT NULL, default 1) — validated here,
+    // before the no-op/mutate branches, so a malformed value cannot slip through the no-op
+    // branch (which does not re-check the version).
+    if (input.expectedVersion !== undefined && !isInt4(input.expectedVersion, 1)) {
+      failUpdate("STALE_VERSION", "expected_version must be a positive integer");
+    }
+    if (input.startsAt !== undefined && !isValidDate(input.startsAt)) {
+      failUpdate("INVALID_TIME_RANGE", "starts_at must be a valid date");
+    }
+    if (input.endsAt !== undefined && !isValidDate(input.endsAt)) {
+      failUpdate("INVALID_TIME_RANGE", "ends_at must be a valid date");
+    }
+    if (
+      input.timezone !== undefined &&
+      (typeof input.timezone !== "string" || !isValidTimezone(input.timezone))
+    ) {
+      failUpdate("INVALID_TIMEZONE", "timezone must be a valid IANA zone");
+    }
+    if (!isEnum(input.visibility, "private", "public")) {
+      failUpdate("INVALID_VISIBILITY", "visibility must be 'private' or 'public'");
+    }
+    if (!isEnum(input.joinPolicy, "open", "approval")) {
+      failUpdate("INVALID_JOIN_POLICY", "join_policy must be 'open' or 'approval'");
+    }
+    if (input.priceAmount !== undefined && !isInt4(input.priceAmount, 0)) {
+      failUpdate("INVALID_PRICE", "price_amount must be an integer in [0, 2147483647]");
+    }
+    if (input.slotsMax !== undefined && input.slotsMax !== null && !isInt4(input.slotsMax, 1)) {
+      failUpdate("INVALID_SLOTS", "slots_max must be an integer in [1, 2147483647] or null");
+    }
+    if (
+      !isOptionalText(input.area) ||
+      !isOptionalText(input.venueName) ||
+      !isOptionalText(input.venueAddress)
+    ) {
+      failUpdate(
+        "INVALID_TEXT_FIELD",
+        "area, venue_name and venue_address must be a string or null",
+      );
+    }
+
+    // Lock the session row FOR UPDATE inside the tenant GUC (RLS choke-point) and
+    // read the current row UNDER lock — decide from the locked row, never a cache.
+    // Not found (0 rows under the tenant GUC) -> SESSION_NOT_FOUND.
+    const [locked] = await tx
+      .select({
+        status: sessions.status,
+        version: sessions.version,
+        visibility: sessions.visibility,
+        startsAt: sessions.startsAt,
+        endsAt: sessions.endsAt,
+        timezone: sessions.timezone,
+        priceAmount: sessions.priceAmount,
+        slotsMax: sessions.slotsMax,
+        area: sessions.area,
+        venueName: sessions.venueName,
+        venueAddress: sessions.venueAddress,
+        joinPolicy: sessions.joinPolicy,
+      })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .for("update");
+    if (locked === undefined) {
+      failUpdate("SESSION_NOT_FOUND", "session not found in tenant context");
+    }
+    const current = locked!;
+
+    // Transition guard (edge #11 / FE edge #11): a closed or cancelled session is
+    // terminal — reject every mutation (a privileged correction with audit trail is
+    // out of scope). Only draft/open proceed.
+    if (current.status !== "draft" && current.status !== "open") {
+      failUpdate("SESSION_NOT_OPEN", "a closed or cancelled session cannot be updated");
+    }
+
+    // Past-guard (edge #11 "past" realized for update — the same past-boundary cancel
+    // uses at edge #31, per DD-111 D3): an OPEN session whose starts_at has passed has
+    // gone live; mutating its price/capacity/time/venue is a privileged correction,
+    // not a normal update -> SESSION_NOT_OPEN. A DRAFT has NO past-guard (pre-publish,
+    // freely editable — e.g. to FIX a wrong starts_at). SEPARATE post-lock query using
+    // clock_timestamp() (NOT now()/Date.now()): mirror publish/announce — a lock wait
+    // spanning starts_at would make an in-statement or transaction-frozen clock read a
+    // PRE-wait time, so the check must be its own statement, reached only after the
+    // FOR UPDATE above has resolved (proven by REG-CLOCK-UPDATE + publish REG-CLOCK2).
+    if (current.status === "open") {
+      const clockRes = await tx.execute(
+        sql`select (${sessions.startsAt} <= clock_timestamp()) as "isPast" from ${sessions} where ${sessions.id} = ${sessionId}`,
+      );
+      if ((clockRes.rows[0] as { isPast: boolean }).isPast) {
+        failUpdate(
+          "SESSION_NOT_OPEN",
+          "a past-start open session cannot be updated (privileged correction required)",
+        );
+      }
+    }
+
+    // STATUS-DEPENDENT suspension gate. An OPEN session is player-visible, so an
+    // update re-checks tenant suspension UNDER LOCK via
+    // authorizeTenantAction('update_open_session') (❌ when suspended, DD-110 D2) —
+    // the resolver's FOR SHARE reads serialize against the Daily Lifecycle Job's
+    // suspend, held to commit. A DRAFT is invisible-until-publish and money-free,
+    // so it is EXEMPT (DD-105) and this resolver is NOT called at all — the
+    // updateSession-on-draft negative test (DD-110 D4) enforces that the literal
+    // is never sent for a draft (which would silently break the DD-105 exemption).
+    if (current.status === "open") {
+      const decision = await authorizeTenantAction(tx, tenantId, "update_open_session");
+      if (!decision.allowed) {
+        throw new SessionUpdateAuthorizationError();
+      }
+    }
+
+    // Compute the changed field-set: a field is "changed" only when PROVIDED and
+    // DIFFERENT from the locked current value. changedFields carries the canonical
+    // snake_case column names for the session.updated event; changes carries the
+    // Drizzle column props for the UPDATE.
+    const changes: SessionUpdateSet = {};
+    const changedFields: string[] = [];
+    if (input.startsAt !== undefined && input.startsAt.getTime() !== current.startsAt.getTime()) {
+      changes.startsAt = input.startsAt;
+      changedFields.push("starts_at");
+    }
+    if (input.endsAt !== undefined && input.endsAt.getTime() !== current.endsAt.getTime()) {
+      changes.endsAt = input.endsAt;
+      changedFields.push("ends_at");
+    }
+    if (input.timezone !== undefined && input.timezone !== current.timezone) {
+      changes.timezone = input.timezone;
+      changedFields.push("timezone");
+    }
+    if (input.priceAmount !== undefined && input.priceAmount !== current.priceAmount) {
+      changes.priceAmount = input.priceAmount;
+      changedFields.push("price_amount");
+    }
+    if (input.slotsMax !== undefined && input.slotsMax !== current.slotsMax) {
+      changes.slotsMax = input.slotsMax;
+      changedFields.push("slots_max");
+    }
+    if (input.visibility !== undefined && input.visibility !== current.visibility) {
+      changes.visibility = input.visibility;
+      changedFields.push("visibility");
+    }
+    if (input.area !== undefined && input.area !== current.area) {
+      changes.area = input.area;
+      changedFields.push("area");
+    }
+    if (input.venueName !== undefined && input.venueName !== current.venueName) {
+      changes.venueName = input.venueName;
+      changedFields.push("venue_name");
+    }
+    if (input.venueAddress !== undefined && input.venueAddress !== current.venueAddress) {
+      changes.venueAddress = input.venueAddress;
+      changedFields.push("venue_address");
+    }
+    if (input.joinPolicy !== undefined && input.joinPolicy !== current.joinPolicy) {
+      changes.joinPolicy = input.joinPolicy;
+      changedFields.push("join_policy");
+    }
+
+    // Idempotent no-op: nothing to change (no field provided, or every provided
+    // field already equals current). Return the current state, record the dedup row
+    // so a later replay short-circuits, no version bump, NO session.updated event.
+    // expectedVersion is NOT checked here (goal state already reached — mirror
+    // publish's idempotent-no-op-wins-version).
+    if (changedFields.length === 0) {
+      const stored: StoredUpdateResult = {
+        sessionId,
+        status: current.status,
+        version: current.version,
+        visibility: current.visibility,
+      };
+      await tx
+        .insert(processedCommands)
+        .values({ tenantId, commandId, commandType: UPDATE_COMMAND_TYPE, resultRef: stored });
+      return {
+        sessionId: stored.sessionId,
+        status: stored.status,
+        version: stored.version,
+        visibility: stored.visibility,
+        replayed: false,
+      };
+    }
+
+    // expectedVersion guard — MANDATORY on the mutate branch (edge #2/#26, matching
+    // cancel: "expectedVersion bắt buộc trên nhánh mutate"). Optimistic locking only
+    // prevents a lost update if the caller PROVES it edited the version it read; an
+    // omitted version would let a stale caller silently overwrite a concurrent edit.
+    // So a NON-EMPTY change-set REQUIRES a version that matches the live row under
+    // lock — missing OR mismatched -> STALE_VERSION, zero mutation. (The idempotent
+    // no-op branch above deliberately does NOT check it — goal state already reached,
+    // mirror publish.)
+    if (input.expectedVersion === undefined || input.expectedVersion !== current.version) {
+      failUpdate(
+        "STALE_VERSION",
+        "expected_version is required and must match the current version — reload",
+      );
+    }
+
+    // Effective post-change values for the cross-field guards (provided-or-current).
+    const effStartsAt = input.startsAt !== undefined ? input.startsAt : current.startsAt;
+    const effEndsAt = input.endsAt !== undefined ? input.endsAt : current.endsAt;
+    const effVisibility = input.visibility !== undefined ? input.visibility : current.visibility;
+    const effArea = input.area !== undefined ? input.area : current.area;
+    const effSlotsMax = input.slotsMax !== undefined ? input.slotsMax : current.slotsMax;
+
+    // Time range (edge #1): the RESULTING ends_at must be after starts_at. Mirrors
+    // the sessions_time_chk CHECK, but returns a typed error instead of a raw 23514.
+    if (effEndsAt.getTime() <= effStartsAt.getTime()) {
+      failUpdate("INVALID_TIME_RANGE", "ends_at must be after starts_at");
+    }
+
+    // Discovery completeness (edge #7/#12): if the RESULTING session is public it
+    // must carry area + a finite slots_max (re-validated at update per §3). Mirrors
+    // sessions_public_capacity_chk; a public private->public flip or a public
+    // session clearing area/slots_max fails MISSING_DISCOVERY_FIELDS.
+    if (effVisibility === "public") {
+      const missing =
+        !(typeof effArea === "string" && effArea.trim().length > 0) || effSlotsMax == null;
+      if (missing) {
+        failUpdate(
+          "MISSING_DISCOVERY_FIELDS",
+          "a public session requires area and a finite slots_max",
+        );
+      }
+    }
+
+    // Capacity guard (edge #16, DD-112): only when slots_max is being CHANGED to a
+    // FINITE value — reject if it would fall below the active roster. Drizzle-typed
+    // `players` query under the tenant GUC (RLS): players is tenant-scoped, and the
+    // session row is already locked in this tenant, so the count is this session's
+    // active roster only. CAPACITY_BELOW_OCCUPANCY (active + live holds) is NOT
+    // implemented: no booking-hold table exists on base, so occupancy == active roster.
+    if (changes.slotsMax !== undefined && changes.slotsMax !== null) {
+      const rosterRows = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(players)
+        .where(and(eq(players.sessionId, sessionId), eq(players.status, "active")));
+      const activeCount = Number(rosterRows[0]!.n);
+      if (changes.slotsMax < activeCount) {
+        failUpdate("CAPACITY_BELOW_ROSTER", "slots_max cannot be below the active roster");
+      }
+    }
+
+    // Price guard (edge #4/#5, DD-117 — FAIL-CLOSED, money never moves): a price
+    // change on a session that already carries ANY charge is REFUSED, not resolved —
+    // with NO status exemption. The Reviewed session contract edge #4 requires policy
+    // for a "price change with existing charges" (no void carve-out), and DD-117 D3
+    // authorizes the charge branch ONLY as a fail-closed refuse, never a success path —
+    // so a `void`-only charge must refuse too (fail-closed: block when we cannot prove
+    // the change is safe; a void charge still evidences prior financial activity whose
+    // reconciliation is a review_policy question). Applying an impact_policy resolution
+    // (re-derive existing charges) is the payments/review_policy subsystem, absent on
+    // base — so this refuses rather than silently mutating money. Drizzle-typed `charges`
+    // existence probe under the tenant GUC (RLS). The retry-root dimension of edge #4 is
+    // vacuously absent (no promotion-retry table on base).
+    if (changes.priceAmount !== undefined) {
+      const chargeRows = await tx
+        .select({ x: sql`1` })
+        .from(charges)
+        .where(eq(charges.sessionId, sessionId))
+        .limit(1);
+      if (chargeRows.length > 0) {
+        failUpdate(
+          "PRICE_CHANGE_REQUIRES_POLICY",
+          "price cannot change while charges exist — resolution requires review_policy",
+        );
+      }
+    }
+
+    // Mutate ONLY the changed columns + version bump. status is UNCHANGED (draft
+    // stays draft, open stays open). updated_at uses clock_timestamp(), not now():
+    // this transaction may have waited on the FOR UPDATE lock or the billing
+    // re-check's locking reads, so now()/transaction_timestamp() (frozen at
+    // transaction start) could stamp a time from before those waits. This UPDATE is
+    // a separate statement issued only after every earlier wait has resolved.
+    const [updated] = await tx
+      .update(sessions)
+      .set({
+        ...changes,
+        version: sql`${sessions.version} + 1`,
+        updatedAt: sql`clock_timestamp()`,
+      })
+      .where(eq(sessions.id, sessionId))
+      .returning({
+        id: sessions.id,
+        status: sessions.status,
+        version: sessions.version,
+        visibility: sessions.visibility,
+      });
+
+    // Final atomic past-fence (edge #11 realized for the EFFECTIVE starts_at — codex
+    // round-3 [P1]). The early past-guard only checked the CURRENT starts_at, and the
+    // time-range guard only checked ends > starts, NOT starts vs the clock. So an update
+    // that SETS starts_at to a past value, OR an open session whose current starts_at is
+    // crossed by the clock DURING a lock / FOR SHARE wait in this transaction, could
+    // otherwise mutate a now-past open session. Re-read the just-WRITTEN starts_at from
+    // the column and compare to the DB clock in ONE post-write query (column value = no
+    // JS ms-truncation; clock_timestamp() = the post-wait instant): a past result throws,
+    // rolling the whole transaction back (this UPDATE included) — zero net mutation. A
+    // DRAFT is exempt: status is never changed here, so updated!.status is 'draft' for a
+    // draft update and this fence is skipped (a draft is pre-publish and freely editable;
+    // publish's own past-guard blocks a past-start draft at publish time).
+    if (updated!.status === "open") {
+      const fenceRes = await tx.execute(
+        sql`select (${sessions.startsAt} <= clock_timestamp()) as "isPast" from ${sessions} where ${sessions.id} = ${sessionId}`,
+      );
+      if ((fenceRes.rows[0] as { isPast: boolean }).isPast) {
+        failUpdate(
+          "SESSION_NOT_OPEN",
+          "the resulting starts_at is in the past — a privileged correction is required",
+        );
+      }
+    }
+
+    // Outbox producer (reuses the per-aggregate sequence rule): sequence :=
+    // COALESCE(MAX(sequence),0)+1 for this aggregate, fenced by outbox_agg_seq_uq.
+    // Lease/ack columns stay NULL. The tenant is on the row's tenant_id COLUMN; the
+    // PAYLOAD is EXACTLY the spec's {session_id, changed_fields[]} (§4 Events — no
+    // tenant_id), where changed_fields are the canonical snake_case column names
+    // (never roster/amount). The dispatcher schedule stays OFF.
+    await tx.insert(outboxEvents).values({
+      tenantId,
+      aggregateType: "session",
+      aggregateId: updated!.id,
+      sequence: sql`coalesce((select max(${outboxEvents.sequence}) from ${outboxEvents} where ${outboxEvents.aggregateId} = ${updated!.id}), 0) + 1`,
+      type: "session.updated",
+      payload: { session_id: updated!.id, changed_fields: changedFields },
+    });
+
+    // A visibility transition (public <-> private) ALSO emits the spec's specific
+    // session.visibility_changed event (§4 Events: {session_id, new_visibility}) — the
+    // signal the public_sessions projector consumes to add/remove the listing (FE edge
+    // #8). Emitted atomically with the NEXT per-aggregate sequence in the SAME tx (the
+    // subquery sees the session.updated row just inserted above, so this is
+    // session.updated + 1). No PII — visibility is a public/private flag.
+    if (changes.visibility !== undefined) {
+      await tx.insert(outboxEvents).values({
+        tenantId,
+        aggregateType: "session",
+        aggregateId: updated!.id,
+        sequence: sql`coalesce((select max(${outboxEvents.sequence}) from ${outboxEvents} where ${outboxEvents.aggregateId} = ${updated!.id}), 0) + 1`,
+        type: "session.visibility_changed",
+        payload: { session_id: updated!.id, new_visibility: updated!.visibility },
+      });
+    }
+
+    // DD-12 immediate-deny fence: raise on EVERY public->private transition, in THIS source
+    // transaction — the guarded view public_session_share_v anti-joins public_projection_fences
+    // and denies the public read path IMMEDIATELY, not after the async projector (the async
+    // session.visibility_changed event above still drives the eventual public_sessions removal +
+    // fence CAS-clear). Deliberately NOT gated on status: public_session_share_v has NO
+    // sessions.status predicate, so "a draft is never publicly served" is a PROJECTOR ASSUMPTION,
+    // not a schema guarantee — the fence PRODUCER must not depend on the behavior of the (unbuilt)
+    // projector (owner ruling 2026-08-25; DD-12 literal "privacy-reducing mutation"). private->
+    // private is not a visibility change, so it raises nothing. Cancel/close (a later slice) reuse
+    // the shared helper with 'cancelled'/'closed' and likewise raise unconditionally.
+    if (changes.visibility === "private") {
+      await raisePublicSessionFence(tx, updated!.id, "visibility_private");
+    }
+
+    const stored: StoredUpdateResult = {
+      sessionId: updated!.id,
+      status: updated!.status,
+      version: updated!.version,
+      visibility: updated!.visibility,
+    };
+    await tx
+      .insert(processedCommands)
+      .values({ tenantId, commandId, commandType: UPDATE_COMMAND_TYPE, resultRef: stored });
+    return {
+      sessionId: stored.sessionId,
+      status: stored.status,
+      version: stored.version,
+      visibility: stored.visibility,
+      replayed: false,
+    };
   });
 }

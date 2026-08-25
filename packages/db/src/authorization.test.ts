@@ -324,6 +324,51 @@ describe("DD-110 -- announce_session is a DENY-path class (allowed in allow stat
   });
 });
 
+describe("DD-110 -- update_open_session is a DENY-path class (allowed in allow states, denied when suspended)", () => {
+  // update_open_session shares publish_new_sessions' row (active/past_due ALLOW, suspended DENY): it
+  // routes through the existing fail-closed resolution with NO allow-when-suspended handling. The
+  // updateSession call site sends this literal ONLY for an OPEN session; a DRAFT update is DD-105-
+  // exempt and never calls the resolver (service-layer negative test, DD-110 D4). The obligation-
+  // termination classes (close_session, cancel_session) are NOT in the enum this slice.
+  it("is recognised and ALLOWED in the allow states (active/trialing/past_due)", async () => {
+    for (const [tenantStatus, subStatus, effectiveStatus] of [
+      ["active", "active", "active"],
+      ["trialing", "trialing", "trialing"],
+      ["active", "past_due", "past_due"],
+    ] as const) {
+      const tenantId = await seedTenant(ctx.owner, { tenantStatus, subStatus });
+      const decision = await authorizeInOwnTransaction(
+        ctx.superuserDb.db,
+        tenantId,
+        "update_open_session",
+      );
+      expect(decision).toEqual({ allowed: true, effectiveStatus });
+    }
+  });
+
+  it("DENIES on every suspended fixture -- same row as publish, no allow-when-suspended", async () => {
+    const suspendedFixtures: { tenantStatus: string; subStatus: string | "missing" }[] = [
+      { tenantStatus: "suspended", subStatus: "active" },
+      { tenantStatus: "cancelled", subStatus: "active" },
+      { tenantStatus: "active", subStatus: "suspended" },
+      { tenantStatus: "active", subStatus: "cancelled" },
+      { tenantStatus: "active", subStatus: "missing" },
+    ];
+    for (const f of suspendedFixtures) {
+      const tenantId = await seedTenant(ctx.owner, {
+        tenantStatus: f.tenantStatus,
+        subStatus: f.subStatus,
+      });
+      const decision = await authorizeInOwnTransaction(
+        ctx.superuserDb.db,
+        tenantId,
+        "update_open_session",
+      );
+      expect(decision).toEqual({ allowed: false, code: "TENANT_SUSPENDED" });
+    }
+  });
+});
+
 describe("AuthZ / failure / security — C1, C2, D1, G1", () => {
   it("C1: unknown tenantId denies fail-closed without leaking whether it exists", async () => {
     const decision = await authorizeInOwnTransaction(

@@ -6,16 +6,21 @@ import {
   createSession,
   publishSession,
   announceSession,
+  updateSession,
   SessionCommandError,
   SessionPublishAuthorizationError,
   SessionPublishError,
   SessionAnnounceError,
   SessionAnnounceAuthorizationError,
+  SessionUpdateError,
+  SessionUpdateAuthorizationError,
   type CreateSessionInputPayload,
   type PublishSessionInputPayload,
   type AnnounceSessionInputPayload,
   type AnnounceSessionResult,
   type AnnounceChannel,
+  type UpdateSessionInputPayload,
+  type UpdateSessionResult,
 } from "./session-service.js";
 import { tenantRepo, withTenant } from "./tenant.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
@@ -1672,5 +1677,905 @@ describe("announceSession", () => {
       if (pending) await pending.catch(() => undefined);
       holder.release();
     }
+  });
+});
+
+// Real-PG tests for UpdateSession (a partial field mutation of a draft/open
+// session). Each test seeds a DEDICATED tenant so global row counts never
+// cross-contaminate; assertions are scoped by session_id / aggregate_id.
+// UpdateSession gives authorizeTenantAction('update_open_session') its production
+// caller: DENY-when-suspended for an OPEN session, while a DRAFT is DD-105-exempt
+// and never calls the resolver (U6, the DD-110 D4 negative test).
+describe("updateSession", () => {
+  const future = () => new Date(Date.now() + 24 * 3600 * 1000);
+
+  async function seedTenant(tenantStatus: string, subStatus: string | "missing"): Promise<string> {
+    const unique = randomUUID();
+    const t = await ctx.owner.query(
+      `INSERT INTO tenants (name, slug, status) VALUES ($1, $2, $3) RETURNING id`,
+      [`Update Test ${unique}`, `update-test-${unique}`, tenantStatus],
+    );
+    const tenantId = (t.rows[0] as { id: string }).id;
+    if (subStatus !== "missing") {
+      await ctx.owner.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
+         VALUES ($1, 'free', 1, $2, now(), now() + interval '30 days')`,
+        [tenantId, subStatus],
+      );
+    }
+    return tenantId;
+  }
+
+  // Seed a session row directly (owner conn, bypasses RLS for setup). Default is an
+  // 'open' private session with discovery fields present.
+  async function seedSession(
+    tenantId: string,
+    over: {
+      status?: string;
+      visibility?: "private" | "public";
+      area?: string | null;
+      slotsMax?: number | null;
+      priceAmount?: number;
+      startsAt?: Date;
+    } = {},
+  ): Promise<{ sessionId: string; version: number }> {
+    const startsAt = over.startsAt ?? future();
+    const s = await ctx.owner.query(
+      `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, area, slots_max, visibility, price_amount, status)
+       VALUES ($1, $2, $3, $4, 'Asia/Ho_Chi_Minh', $5, $6, $7, $8, $9)
+       RETURNING id, version`,
+      [
+        tenantId,
+        ctx.badmintonSportId,
+        startsAt,
+        new Date(startsAt.getTime() + 2 * 3600 * 1000),
+        over.area === undefined ? "Quận 1" : over.area,
+        over.slotsMax === undefined ? 8 : over.slotsMax,
+        over.visibility ?? "private",
+        over.priceAmount ?? 120000,
+        over.status ?? "open",
+      ],
+    );
+    const r = s.rows[0] as { id: string; version: number };
+    return { sessionId: r.id, version: r.version };
+  }
+
+  // person -> membership -> ACTIVE player, for the capacity roster. Returns playerId.
+  async function seedActivePlayer(tenantId: string, sessionId: string): Promise<string> {
+    const unique = randomUUID();
+    const p = await ctx.owner.query(`INSERT INTO persons (display_name) VALUES ($1) RETURNING id`, [
+      `P ${unique}`,
+    ]);
+    const personId = (p.rows[0] as { id: string }).id;
+    const m = await ctx.owner.query(
+      `INSERT INTO memberships (tenant_id, person_id, status) VALUES ($1, $2, 'active') RETURNING id`,
+      [tenantId, personId],
+    );
+    const membershipId = (m.rows[0] as { id: string }).id;
+    const pl = await ctx.owner.query(
+      `INSERT INTO players (tenant_id, session_id, membership_id, status) VALUES ($1, $2, $3, 'active') RETURNING id`,
+      [tenantId, sessionId, membershipId],
+    );
+    return (pl.rows[0] as { id: string }).id;
+  }
+
+  // A charge on an active player (default status 'open' = unpaid). An EXISTING
+  // non-void charge is what fail-closes a price change (edge #4/#5, DD-117).
+  async function seedCharge(
+    tenantId: string,
+    sessionId: string,
+    over: { status?: string; amountDue?: number } = {},
+  ): Promise<void> {
+    const playerId = await seedActivePlayer(tenantId, sessionId);
+    await ctx.owner.query(
+      `INSERT INTO charges (tenant_id, session_id, player_id, amount_due, status) VALUES ($1, $2, $3, $4, $5)`,
+      [tenantId, sessionId, playerId, over.amountDue ?? 120000, over.status ?? "open"],
+    );
+  }
+
+  const update = (tenantId: string, input: UpdateSessionInputPayload, commandId = cmdId()) =>
+    updateSession(ctx.appDb.db, { tenantId, commandId, input });
+
+  const sessionState = (sessionId: string) =>
+    row(
+      `SELECT status, version, visibility, price_amount, slots_max, area FROM sessions WHERE id = $1`,
+      [sessionId],
+    );
+  const updatedEvents = (sessionId: string) =>
+    rows(
+      `SELECT type, sequence, payload FROM outbox_events WHERE aggregate_id = $1 ORDER BY sequence`,
+      [sessionId],
+    );
+
+  // Project a session into the public read model as the async projector would, so the guarded
+  // view public_session_share_v serves it (a live, non-expired row). DD-12 fence test scaffolding.
+  async function projectToPublic(sessionId: string, tenantId: string): Promise<void> {
+    await ctx.owner.query(
+      `INSERT INTO public_sessions
+         (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
+          price_amount, slots_open, club_display_name, join_policy, expires_at)
+       VALUES ($1, $1, $2, 'badminton', now() + interval '1 day',
+          now() + interval '1 day' + interval '2 hours', 'Quận 1', 120000, 4, 'Club A', 'open',
+          now() + interval '1 day')`,
+      [sessionId, tenantId],
+    );
+  }
+  // The guarded public view (discovery role); denies IMMEDIATELY when a fence is raised.
+  const viewHasSession = async (sessionId: string): Promise<boolean> =>
+    (
+      await ctx.readonlyPool.query(`SELECT 1 FROM public_session_share_v WHERE session_id = $1`, [
+        sessionId,
+      ])
+    ).rows.length > 0;
+  // The base public_sessions row still present (proves the async projector has NOT run yet).
+  const baseStillProjected = async (sessionId: string): Promise<boolean> =>
+    (await ctx.owner.query(`SELECT 1 FROM public_sessions WHERE session_id = $1`, [sessionId])).rows
+      .length > 0;
+  const fenceReason = async (sessionId: string): Promise<string | null> =>
+    (
+      (
+        await ctx.owner.query(`SELECT reason FROM public_projection_fences WHERE target_id = $1`, [
+          sessionId,
+        ])
+      ).rows[0] as { reason: string } | undefined
+    )?.reason ?? null;
+
+  async function expectUpdateReject(run: () => Promise<unknown>, code: string): Promise<void> {
+    const err = await run().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionUpdateError);
+    expect((err as SessionUpdateError).code).toBe(code);
+  }
+
+  it("U1: mutates fields on an OPEN session, bumps version, emits one session.updated with changed_fields", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, {
+      area: "Quận 1",
+      slotsMax: 8,
+      priceAmount: 120000,
+    });
+    const result = await update(tenantId, {
+      sessionId,
+      expectedVersion: version,
+      area: "Quận 3",
+      priceAmount: 90000,
+    });
+    expect(result).toMatchObject({
+      sessionId,
+      status: "open",
+      version: version + 1,
+      replayed: false,
+    });
+    const st = await sessionState(sessionId);
+    expect(st).toMatchObject({
+      status: "open",
+      version: version + 1,
+      area: "Quận 3",
+      price_amount: 90000,
+    });
+    const evs = await updatedEvents(sessionId);
+    expect(evs).toHaveLength(1);
+    expect(evs[0]).toMatchObject({ type: "session.updated" });
+    // EXACT payload shape (§4): {session_id, changed_fields[]} — NO tenant_id (that is the
+    // outbox row's own column). changed_fields are the changed snake_case column names.
+    const payload = (evs[0] as { payload: Record<string, unknown> }).payload;
+    expect(Object.keys(payload).sort()).toEqual(["changed_fields", "session_id"]);
+    expect(payload.session_id).toBe(sessionId);
+    expect([...(payload.changed_fields as string[])].sort()).toEqual(["area", "price_amount"]);
+  });
+
+  it("U-ALLFIELDS: a single update maps ALL ten editable fields to their columns, with exact changed_fields (no field silently dropped)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    // Seed a PRIVATE open session at known defaults (timezone Asia/Ho_Chi_Minh, venue NULL,
+    // join_policy 'open'); every one of the ten editable fields below differs from current.
+    const { sessionId, version } = await seedSession(tenantId, {
+      status: "open",
+      visibility: "private",
+      area: "Quận 1",
+      slotsMax: 8,
+      priceAmount: 120000,
+      startsAt: new Date(Date.now() + 24 * 3600 * 1000),
+    });
+    const newStarts = new Date(Date.now() + 48 * 3600 * 1000);
+    const newEnds = new Date(newStarts.getTime() + 3 * 3600 * 1000);
+    const result = await update(tenantId, {
+      sessionId,
+      expectedVersion: version,
+      startsAt: newStarts,
+      endsAt: newEnds,
+      timezone: "Asia/Bangkok",
+      priceAmount: 200000,
+      slotsMax: 12,
+      visibility: "public", // area + finite slots present, so discovery passes
+      area: "Quận 5",
+      venueName: "Sân Cầu Lông A",
+      venueAddress: "123 Đường Lê Lợi",
+      joinPolicy: "approval",
+    });
+    expect(result).toMatchObject({
+      sessionId,
+      status: "open",
+      version: version + 1,
+      replayed: false,
+    });
+    // Every column persisted to its new value (query the FULL row, not just sessionState's six).
+    const full = (await row(
+      `SELECT starts_at, ends_at, timezone, price_amount, slots_max, visibility, area,
+              venue_name, venue_address, join_policy, version, status
+         FROM sessions WHERE id = $1`,
+      [sessionId],
+    )) as {
+      starts_at: string;
+      ends_at: string;
+      timezone: string;
+      price_amount: number;
+      slots_max: number;
+      visibility: string;
+      area: string;
+      venue_name: string;
+      venue_address: string;
+      join_policy: string;
+      version: number;
+      status: string;
+    };
+    expect(new Date(full.starts_at).getTime()).toBe(newStarts.getTime());
+    expect(new Date(full.ends_at).getTime()).toBe(newEnds.getTime());
+    expect(full.timezone).toBe("Asia/Bangkok");
+    expect(full.price_amount).toBe(200000);
+    expect(full.slots_max).toBe(12);
+    expect(full.visibility).toBe("public");
+    expect(full.area).toBe("Quận 5");
+    expect(full.venue_name).toBe("Sân Cầu Lông A");
+    expect(full.venue_address).toBe("123 Đường Lê Lợi");
+    expect(full.join_policy).toBe("approval");
+    expect(full.version).toBe(version + 1);
+    expect(full.status).toBe("open");
+    // session.updated changed_fields lists ALL ten snake_case columns, exactly; plus the
+    // visibility flip emits session.visibility_changed. Both payloads are asserted exactly.
+    const evs = await updatedEvents(sessionId);
+    expect(evs.map((e) => (e as { type: string }).type)).toEqual([
+      "session.updated",
+      "session.visibility_changed",
+    ]);
+    const updPayload = (evs[0] as { payload: Record<string, unknown> }).payload;
+    expect(Object.keys(updPayload).sort()).toEqual(["changed_fields", "session_id"]);
+    expect(updPayload.session_id).toBe(sessionId);
+    expect([...(updPayload.changed_fields as string[])].sort()).toEqual([
+      "area",
+      "ends_at",
+      "join_policy",
+      "price_amount",
+      "slots_max",
+      "starts_at",
+      "timezone",
+      "venue_address",
+      "venue_name",
+      "visibility",
+    ]);
+    const visPayload = (evs[1] as { payload: Record<string, unknown> }).payload;
+    expect(Object.keys(visPayload).sort()).toEqual(["new_visibility", "session_id"]);
+    expect(visPayload.new_visibility).toBe("public");
+  });
+
+  it("U2: STALE_VERSION on expected_version mismatch, zero mutation", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId);
+    await expectUpdateReject(
+      () => update(tenantId, { sessionId, expectedVersion: version + 9, area: "X" }),
+      "STALE_VERSION",
+    );
+    expect(await sessionState(sessionId)).toMatchObject({ version });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("U-VERSION: expected_version is MANDATORY on the mutate branch — a non-empty change with NO version is STALE_VERSION, zero mutation", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { area: "Quận 1" });
+    await expectUpdateReject(
+      () => update(tenantId, { sessionId, area: "Quận 8" }),
+      "STALE_VERSION",
+    );
+    expect(await sessionState(sessionId)).toMatchObject({ version, area: "Quận 1" });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("U3: CAPACITY_BELOW_ROSTER when reducing slots_max below the active roster, zero mutation", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { slotsMax: 8 });
+    await seedActivePlayer(tenantId, sessionId);
+    await seedActivePlayer(tenantId, sessionId); // active roster = 2
+    await expectUpdateReject(
+      () => update(tenantId, { sessionId, expectedVersion: version, slotsMax: 1 }),
+      "CAPACITY_BELOW_ROSTER",
+    );
+    expect(await sessionState(sessionId)).toMatchObject({ version, slots_max: 8 });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("U4: PRICE_CHANGE_REQUIRES_POLICY when price changes with an existing charge, zero mutation (fail-closed, DD-117)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { priceAmount: 120000 });
+    await seedCharge(tenantId, sessionId, { status: "open" });
+    await expectUpdateReject(
+      () => update(tenantId, { sessionId, expectedVersion: version, priceAmount: 90000 }),
+      "PRICE_CHANGE_REQUIRES_POLICY",
+    );
+    expect(await sessionState(sessionId)).toMatchObject({ version, price_amount: 120000 });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("U-VOID: a price change REQUIRES policy even when the only charge is void — no status exemption (edge #4 'existing charges', DD-117 fail-closed)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { priceAmount: 120000 });
+    // The charge-existence probe matches ANY charge on the session, including a `void` one: the
+    // Reviewed session contract edge #4 requires policy for a price change with "existing charges"
+    // (no void carve-out), and DD-117 D3 authorizes the charge branch only as a fail-closed refuse.
+    // So a void-only charge REFUSES too -- money never moves silently.
+    await seedCharge(tenantId, sessionId, { status: "void" });
+    await expectUpdateReject(
+      () => update(tenantId, { sessionId, expectedVersion: version, priceAmount: 90000 }),
+      "PRICE_CHANGE_REQUIRES_POLICY",
+    );
+    expect(await sessionState(sessionId)).toMatchObject({ version, price_amount: 120000 });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("U5: TENANT_SUSPENDED when updating an OPEN session while suspended (update_open_session, under lock)", async () => {
+    const tenantId = await seedTenant("active", "suspended");
+    const { sessionId, version } = await seedSession(tenantId, { status: "open" });
+    const err = await update(tenantId, { sessionId, area: "X" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionUpdateAuthorizationError);
+    expect((err as SessionUpdateAuthorizationError).code).toBe("TENANT_SUSPENDED");
+    expect(await sessionState(sessionId)).toMatchObject({ version });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("U6: DD-110 D4 negative — updating a DRAFT while suspended SUCCEEDS (authorizeTenantAction NOT called for a draft; DD-105)", async () => {
+    const tenantId = await seedTenant("active", "suspended");
+    const { sessionId, version } = await seedSession(tenantId, { status: "draft" });
+    const result = await update(tenantId, { sessionId, expectedVersion: version, area: "Quận 5" });
+    expect(result).toMatchObject({
+      sessionId,
+      status: "draft",
+      version: version + 1,
+      replayed: false,
+    });
+    expect(await sessionState(sessionId)).toMatchObject({
+      status: "draft",
+      version: version + 1,
+      area: "Quận 5",
+    });
+  });
+
+  it("U7: SESSION_NOT_OPEN when updating a closed or cancelled session", async () => {
+    const tenantId = await seedTenant("active", "active");
+    for (const status of ["closed", "cancelled"]) {
+      const { sessionId, version } = await seedSession(tenantId, { status });
+      await expectUpdateReject(
+        () => update(tenantId, { sessionId, area: "X" }),
+        "SESSION_NOT_OPEN",
+      );
+      expect(await sessionState(sessionId)).toMatchObject({ version });
+    }
+  });
+
+  it("U8: MISSING_DISCOVERY_FIELDS when flipping to public without area/slots_max, zero mutation", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, {
+      visibility: "private",
+      area: null,
+      slotsMax: null,
+    });
+    await expectUpdateReject(
+      () => update(tenantId, { sessionId, expectedVersion: version, visibility: "public" }),
+      "MISSING_DISCOVERY_FIELDS",
+    );
+    expect(await sessionState(sessionId)).toMatchObject({ version, visibility: "private" });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("U9: idempotent no-op when the effective change-set is empty — no version bump, no event, wins a stale version", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, {
+      area: "Quận 1",
+      priceAmount: 120000,
+    });
+    // Every provided field already equals current -> empty change-set -> no-op. A
+    // STALE expected_version is NOT checked on the no-op branch (mirror publish).
+    const commandId = cmdId();
+    const noop = { sessionId, expectedVersion: version + 5, area: "Quận 1", priceAmount: 120000 };
+    const result = await update(tenantId, noop, commandId);
+    expect(result).toMatchObject({ sessionId, status: "open", version, replayed: false });
+    expect(await sessionState(sessionId)).toMatchObject({ version });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+    // The no-op PERSISTED its dedup row: replaying the SAME request returns the stored
+    // envelope (replayed=true), still zero mutation and no event.
+    const replay = await update(tenantId, noop, commandId);
+    expect(replay).toMatchObject({ sessionId, status: "open", version, replayed: true });
+    expect(await sessionState(sessionId)).toMatchObject({ version });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("DED1: a replayed commandId for the same session returns the stored envelope REGARDLESS of the patch (commandId-only dedup, DD-117 D5); a different session or a foreign command_type conflicts", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId);
+    const commandId = cmdId();
+    const first = await update(
+      tenantId,
+      { sessionId, expectedVersion: version, area: "Quận 7" },
+      commandId,
+    );
+    expect(first).toMatchObject({ version: version + 1, replayed: false });
+    // Same commandId, SAME session -> replay the stored envelope, zero new mutation. Dedup is
+    // on (tenant_id, command_id) ONLY (like create/publish/announce), so the replay returns the
+    // FIRST result even when the patch DIFFERS: the caller owns commandId uniqueness per distinct
+    // request, and NO request fingerprint is stored (DD-117 D5 — a hash of the location fields in
+    // this delete-surviving ledger would be dictionary-recoverable PII).
+    const replaySame = await update(
+      tenantId,
+      { sessionId, expectedVersion: version, area: "Quận 7" },
+      commandId,
+    );
+    expect(replaySame).toMatchObject({ version: version + 1, replayed: true });
+    const replayDifferentPatch = await update(
+      tenantId,
+      { sessionId, expectedVersion: version, area: "DIFFERENT" },
+      commandId,
+    );
+    expect(replayDifferentPatch).toMatchObject({ version: version + 1, replayed: true });
+    // Same commandId, DIFFERENT session -> collision (the stored envelope's sessionId does not
+    // match): the operation identity differs, so this is a genuine idempotency-key reuse.
+    const other = await seedSession(tenantId);
+    await expectUpdateReject(
+      () =>
+        update(
+          tenantId,
+          { sessionId: other.sessionId, expectedVersion: other.version, area: "Z" },
+          commandId,
+        ),
+      "COMMAND_ID_CONFLICT",
+    );
+    // A commandId owned by a FOREIGN command_type in the shared processed_commands ledger
+    // never replays through updateSession -> COMMAND_ID_CONFLICT (fail-closed, edge #3).
+    const foreignCmd = cmdId();
+    await ctx.owner.query(
+      `INSERT INTO processed_commands (tenant_id, command_id, command_type, result_ref)
+       VALUES ($1, $2, 'CreateSession', $3)`,
+      [
+        tenantId,
+        foreignCmd,
+        JSON.stringify({ sessionId, visibility: "private", status: "draft", version: 1 }),
+      ],
+    );
+    await expectUpdateReject(
+      () => update(tenantId, { sessionId, expectedVersion: version, area: "Q" }, foreignCmd),
+      "COMMAND_ID_CONFLICT",
+    );
+    // Exactly ONE session.updated on the first session — both replays and the conflicts added
+    // none, proving the different-patch replay short-circuited with zero mutation.
+    expect(await updatedEvents(sessionId)).toHaveLength(1);
+  });
+
+  it("DED2: a replayed commandId for an already-committed update returns the stored result even when the RETRY payload is MALFORMED (dedup precedes patch validation, DD-117 D5)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId);
+    const commandId = cmdId();
+    const first = await update(
+      tenantId,
+      { sessionId, expectedVersion: version, area: "Quận 7" },
+      commandId,
+    );
+    expect(first).toMatchObject({ version: version + 1, replayed: false });
+    // The client retries the SAME commandId but its payload is now MALFORMED (a serialization
+    // glitch: null expected_version, then a garbage timezone). Because dedup is on
+    // (tenant_id, command_id) and runs BEFORE patch validation, the committed operation's
+    // result is returned — never a spurious error for an operation that already succeeded.
+    const replayNullVer = await update(
+      tenantId,
+      { sessionId, expectedVersion: null as unknown as number, area: "Quận 7" },
+      commandId,
+    );
+    expect(replayNullVer).toMatchObject({ version: version + 1, replayed: true });
+    const replayBadTz = await update(
+      tenantId,
+      { sessionId, expectedVersion: version, timezone: "Not/AZone" },
+      commandId,
+    );
+    expect(replayBadTz).toMatchObject({ version: version + 1, replayed: true });
+    // Still exactly one mutation — the malformed replays neither errored nor mutated.
+    expect(await updatedEvents(sessionId)).toHaveLength(1);
+  });
+
+  it("SEC1: cannot update another tenant's session (RLS FORCE — tenant_id from context, never payload)", async () => {
+    const tenantA = await seedTenant("active", "active");
+    const tenantB = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantA, { status: "open" });
+    // tenant B sends tenant A's session id -> invisible under B's GUC -> not found.
+    await expectUpdateReject(() => update(tenantB, { sessionId, area: "X" }), "SESSION_NOT_FOUND");
+    expect(await sessionState(sessionId)).toMatchObject({ version });
+  });
+
+  it("U-PAST: SESSION_NOT_OPEN when updating an OPEN session whose starts_at has passed (edge #11 past-guard), zero mutation", async () => {
+    const tenantId = await seedTenant("active", "active");
+    // Auto-close is not built, so an open session past its starts_at persists as 'open'.
+    const { sessionId, version } = await seedSession(tenantId, {
+      status: "open",
+      startsAt: new Date(Date.now() - 24 * 3600 * 1000),
+    });
+    await expectUpdateReject(() => update(tenantId, { sessionId, area: "X" }), "SESSION_NOT_OPEN");
+    expect(await sessionState(sessionId)).toMatchObject({ version });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  // Deterministic barrier (mirrors publishSession's REG-CLOCK2 helper): wait until at least
+  // `min` backends are blocked TRANSITIVELY by `holderPid`. With a row FOR UPDATE, only the
+  // FIRST waiter waits on the holder's XID directly; a SECOND waiter queues behind the first
+  // (a LockTuple wait), so pg_blocking_pids reports the holder only for the first waiter. A
+  // recursive closure over the blocking graph therefore counts BOTH: writer A (blocked by the
+  // holder) and writer B (blocked by A, itself blocked by the holder). updateSession opens its
+  // own tx, so `min=2` proves both competing writers reached the lock barrier before release.
+  async function waitUntilSomeoneBlockedByHolder(holderPid: number, min = 1): Promise<void> {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const { rows } = await ctx.owner.query(
+        `WITH RECURSIVE reach AS (
+           SELECT pid FROM pg_stat_activity
+             WHERE wait_event_type = 'Lock' AND $1 = ANY(pg_blocking_pids(pid))
+           UNION
+           SELECT a.pid FROM pg_stat_activity a
+             JOIN reach r ON r.pid = ANY(pg_blocking_pids(a.pid))
+             WHERE a.wait_event_type = 'Lock'
+         )
+         SELECT count(*)::int AS c FROM reach`,
+        [holderPid],
+      );
+      if (Number((rows[0] as { c: number }).c) >= min) return;
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    throw new Error(`fewer than ${min} backend(s) blocked by holder ${holderPid} within 5s`);
+  }
+
+  it("REG-CLOCK-UPDATE: a lock wait spanning starts_at rejects with SESSION_NOT_OPEN — proves the SEPARATE post-lock clock_timestamp() past-guard (not now()/a same-statement clock)", async () => {
+    // Mirror publish REG-CLOCK2 for update's past-guard: hold the session row's FOR
+    // UPDATE lock on a separate connection, start the REAL update (it blocks), let
+    // starts_at pass in real wall-clock time WHILE blocked, then release. now()/tx-start
+    // is frozen before the wait and a same-statement clock reads a pre-wait time; only
+    // the separate post-lock clock_timestamp() query sees the post-wait instant and rejects.
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, {
+      status: "open",
+      startsAt: new Date(Date.now() + 3600 * 1000), // placeholder; operative value set below
+    });
+    const holder = await ctx.appPool.connect();
+    let pending: Promise<unknown> | undefined;
+    try {
+      await holder.query("BEGIN");
+      await holder.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+      await holder.query(`SELECT id FROM sessions WHERE id = $1 FOR UPDATE`, [sessionId]);
+      const holderPid = (
+        (await holder.query(`SELECT pg_backend_pid() AS pid`)).rows[0] as { pid: number }
+      ).pid;
+
+      // The real update blocks on this row's FOR UPDATE, behind the holder.
+      pending = update(tenantId, { sessionId, area: "Quận 9" }).then(
+        (r) => r,
+        (e: unknown) => e,
+      );
+      await waitUntilSomeoneBlockedByHolder(holderPid);
+
+      // update's tx has begun but has NOT read starts_at (the past-guard runs only after
+      // it acquires the lock). The holder owns the row, so it sets starts_at now, in ONE
+      // statement, to a DB-clock-relative near-future value — future relative to update's
+      // own (earlier) transaction start, so a frozen now() would see not-past and wrongly
+      // mutate; only the post-lock clock query rejects. RETURNING evaluates the new row.
+      const establish = await holder.query(
+        `UPDATE sessions SET starts_at = clock_timestamp() + interval '500 milliseconds'
+           WHERE id = $1 RETURNING (starts_at > clock_timestamp()) AS still_future`,
+        [sessionId],
+      );
+      expect((establish.rows[0] as { still_future: boolean }).still_future).toBe(true);
+
+      // Poll the DATABASE clock (no app clock) until the just-set starts_at has passed.
+      const pollDeadline = Date.now() + 5000;
+      let passed = false;
+      while (Date.now() < pollDeadline) {
+        const check = await holder.query(
+          `SELECT (clock_timestamp() >= starts_at) AS passed FROM sessions WHERE id = $1`,
+          [sessionId],
+        );
+        if ((check.rows[0] as { passed: boolean }).passed) {
+          passed = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 15));
+      }
+      expect(passed).toBe(true); // sanity: the poll itself must have succeeded within budget
+
+      await holder.query("COMMIT"); // release; update's FOR UPDATE proceeds
+      const result = await pending;
+      pending = undefined;
+      expect(result).toBeInstanceOf(SessionUpdateError);
+      expect((result as SessionUpdateError).code).toBe("SESSION_NOT_OPEN");
+      // zero mutation: version unchanged, no session.updated event.
+      expect(await sessionState(sessionId)).toMatchObject({ version });
+      expect(await updatedEvents(sessionId)).toHaveLength(0);
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      if (pending) await pending.catch(() => undefined);
+      holder.release();
+    }
+  });
+
+  it("U-RACE: two competing writers sharing the initial version -> exactly one success and one STALE_VERSION (post-FOR UPDATE optimistic guard, spec :739)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { status: "open" });
+    // Gate BOTH writers behind a holder's FOR UPDATE so the race is DETERMINISTIC: they are
+    // in-flight and contend on the session row's post-lock version check, never accidentally
+    // sequential. The holder only HOLDS the row (no mutation), so on release the version is
+    // still `version`; the two writers then serialize on FOR UPDATE -- exactly one reads
+    // `version` (succeeds, bumps to version+1) and the other then reads version+1 (its
+    // expectedVersion is now stale -> STALE_VERSION). Distinct patches (area A vs B) so the
+    // LOSER always has a non-empty change-set and thus reaches the mandatory version guard.
+    const holder = await ctx.appPool.connect();
+    let a: Promise<unknown> | undefined;
+    let b: Promise<unknown> | undefined;
+    try {
+      await holder.query("BEGIN");
+      await holder.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+      await holder.query(`SELECT id FROM sessions WHERE id = $1 FOR UPDATE`, [sessionId]);
+      const holderPid = (
+        (await holder.query(`SELECT pg_backend_pid() AS pid`)).rows[0] as { pid: number }
+      ).pid;
+      // Two real updateSession commands, both claiming the SAME initial version, each a distinct
+      // commandId (so their per-command advisory locks do not serialize -- only the session
+      // FOR UPDATE does). Capture both outcomes (never reject) so neither leaks.
+      a = update(tenantId, { sessionId, expectedVersion: version, area: "A" }).then(
+        (r) => r,
+        (e: unknown) => e,
+      );
+      b = update(tenantId, { sessionId, expectedVersion: version, area: "B" }).then(
+        (r) => r,
+        (e: unknown) => e,
+      );
+      // Wait until BOTH writers are in the holder's lock-wait graph before releasing. If we
+      // released after only ONE was blocked, the loser could instead start AFTER the winner
+      // committed and see version+1 pre-lock -- a sequential path a faulty pre-lock version
+      // check would also pass. Requiring both blocked proves the loser read the row UNDER the
+      // FOR UPDATE it lost, so its rejection exercises the POST-lock re-check specifically.
+      await waitUntilSomeoneBlockedByHolder(holderPid, 2);
+      await holder.query("COMMIT"); // release; the two writers now serialize on FOR UPDATE
+      const results = await Promise.all([a, b]);
+      a = undefined;
+      b = undefined;
+      const successes = results.filter(
+        (r) => !(r instanceof SessionUpdateError),
+      ) as UpdateSessionResult[];
+      const failures = results.filter(
+        (r): r is SessionUpdateError => r instanceof SessionUpdateError,
+      );
+      expect(successes).toHaveLength(1);
+      expect(failures).toHaveLength(1);
+      expect(successes[0]!).toMatchObject({ version: version + 1, replayed: false });
+      expect(failures[0]!.code).toBe("STALE_VERSION");
+      // One mutation, one event: the version advanced by exactly one.
+      expect(await sessionState(sessionId)).toMatchObject({ version: version + 1 });
+      expect(await updatedEvents(sessionId)).toHaveLength(1);
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      if (a) await a;
+      if (b) await b;
+      holder.release();
+    }
+  });
+
+  it("U-SETPAST: cannot SET starts_at to a past value on an OPEN session (effective past-fence), zero net mutation", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { status: "open" }); // future starts_at
+    // ends_at stays future, so the ends>starts guard passes; only the effective past-fence catches it.
+    await expectUpdateReject(
+      () =>
+        update(tenantId, {
+          sessionId,
+          expectedVersion: version,
+          startsAt: new Date(Date.now() - 24 * 3600 * 1000),
+        }),
+      "SESSION_NOT_OPEN",
+    );
+    // The whole transaction rolled back: version unchanged (the UPDATE bumped it, then the
+    // fence threw), and no session.updated event.
+    expect(await sessionState(sessionId)).toMatchObject({ version });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("U-BADVER: a malformed expected_version on a NEW command (ledger miss) is rejected (STALE_VERSION), even on a would-be no-op", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { area: "Quận 1" });
+    // Each call uses a FRESH commandId -> a ledger MISS, so the patch IS validated (validation
+    // runs after the dedup miss). area equals current -> WOULD be a no-op, but a malformed
+    // version is rejected before the no-op branch. Includes explicit null and an int4-overflow
+    // (> 2147483647) — both fail closed. (A malformed REPLAY of an existing commandId returns
+    // the stored result instead — see DED2.)
+    const bads: unknown[] = [
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      0,
+      -1,
+      "3",
+      null,
+      2_147_483_648,
+    ];
+    for (const bad of bads) {
+      await expectUpdateReject(
+        () =>
+          update(tenantId, {
+            sessionId,
+            expectedVersion: bad as number,
+            area: "Quận 1",
+          }),
+        "STALE_VERSION",
+      );
+    }
+    expect(await sessionState(sessionId)).toMatchObject({ version, area: "Quận 1" });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("U-PII: the processed_commands ledger stores NO request content — only the returned envelope, no venue/area PII and no PII-derivative hash (DD-117 D5, BRD NFR-P1)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId);
+    const secretVenue = "SECRET-VENUE-Nguyễn-Huệ-42";
+    const secretAddr = "SECRET-ADDR-123-Lê-Lợi-Q1";
+    const secretArea = "SECRET-AREA-Quận-Bí-Mật";
+    const commandId = cmdId();
+    await update(
+      tenantId,
+      {
+        sessionId,
+        expectedVersion: version,
+        venueName: secretVenue,
+        venueAddress: secretAddr,
+        area: secretArea,
+      },
+      commandId,
+    );
+    // processed_commands rows survive session deletion. Dedup is commandId-only (DD-117 D5): the
+    // ledger stores ONLY the returned envelope {sessionId, status, version, visibility} and NO
+    // request content — not the raw location PII, and not a fingerprint/hash of it (an unkeyed
+    // hash over low-entropy location fields would be dictionary-recoverable after deletion).
+    const pc = await row(
+      `SELECT result_ref::text AS rr FROM processed_commands WHERE tenant_id = $1 AND command_id = $2`,
+      [tenantId, commandId],
+    );
+    const rr = (pc as { rr: string }).rr;
+    // No raw PII, in whole or in fragment.
+    expect(rr).not.toContain(secretVenue);
+    expect(rr).not.toContain(secretAddr);
+    expect(rr).not.toContain(secretArea);
+    expect(rr).not.toContain("Nguyễn-Huệ");
+    expect(rr).not.toContain("Lê-Lợi");
+    expect(rr).not.toContain("Bí-Mật");
+    // No PII-DERIVATIVE value either: the stored envelope is EXACTLY the four returned keys, with
+    // no fingerprint/hash key of any kind, and no 64-char sha256-shaped digest anywhere in the row.
+    const stored = JSON.parse(rr) as Record<string, unknown>;
+    expect(Object.keys(stored).sort()).toEqual(["sessionId", "status", "version", "visibility"]);
+    expect(stored.sessionId).toBe(sessionId);
+    expect(rr).not.toMatch(/[0-9a-f]{64}/);
+  });
+
+  it("U-CORRUPT: a stored envelope with an out-of-int4 version fails closed (COMMAND_ID_CONFLICT), never replayed as an impossible version", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId);
+    const commandId = cmdId();
+    const req = { sessionId, expectedVersion: version, area: "Quận X" };
+    // A REAL update first stores a VALID envelope for this command...
+    const first = await update(tenantId, req, commandId);
+    expect(first).toMatchObject({ replayed: false });
+    // ...then corrupt ONLY the stored version to 2^31 (exceeds sessions.version's int4 domain).
+    // Dedup matches on (tenant_id, command_id) + sessionId, so ONLY the int4 upper-bound guard in
+    // isStoredUpdateResult can reject the replay (a valid envelope would otherwise REPLAY) — this
+    // is why isStoredUpdateResult adds the upper bound over isStoredCreateResult.
+    await ctx.owner.query(
+      `UPDATE processed_commands
+          SET result_ref = jsonb_set(result_ref, '{version}', '2147483648'::jsonb)
+        WHERE tenant_id = $1 AND command_id = $2`,
+      [tenantId, commandId],
+    );
+    // Replaying now hits the corrupt envelope: isStoredUpdateResult fails closed on the
+    // out-of-int4 version -> COMMAND_ID_CONFLICT, never a replay of an impossible version.
+    await expectUpdateReject(() => update(tenantId, req, commandId), "COMMAND_ID_CONFLICT");
+  });
+
+  it("U-VIS: a visibility transition emits session.updated AND session.visibility_changed (§4 Events)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    // private OPEN session WITH discovery fields so the -> public flip passes edge #7/#12.
+    const { sessionId, version } = await seedSession(tenantId, {
+      status: "open",
+      visibility: "private",
+      area: "Quận 1",
+      slotsMax: 8,
+    });
+    const result = await update(tenantId, {
+      sessionId,
+      expectedVersion: version,
+      visibility: "public",
+    });
+    expect(result).toMatchObject({ visibility: "public", version: version + 1 });
+    const evs = await updatedEvents(sessionId);
+    expect(evs.map((e) => (e as { type: string }).type)).toEqual([
+      "session.updated",
+      "session.visibility_changed",
+    ]);
+    // session.updated: EXACT {session_id, changed_fields:[visibility]} — no extra field.
+    const updEv = evs[0] as { payload: Record<string, unknown> };
+    expect(Object.keys(updEv.payload).sort()).toEqual(["changed_fields", "session_id"]);
+    expect(updEv.payload.session_id).toBe(sessionId);
+    expect(updEv.payload.changed_fields).toEqual(["visibility"]);
+    // session.visibility_changed: assert the EXACT key-set {session_id, new_visibility}. This is
+    // a privacy-sensitive projector signal, so an accidental EXTRA field (e.g. leaked PII) must
+    // fail the test — toMatchObject would silently accept it.
+    const visEv = evs[1] as { payload: Record<string, unknown> };
+    expect(Object.keys(visEv.payload).sort()).toEqual(["new_visibility", "session_id"]);
+    expect(visEv.payload.session_id).toBe(sessionId);
+    expect(visEv.payload.new_visibility).toBe("public");
+  });
+
+  it("U-FENCE: public->private on an OPEN session raises the immediate-deny fence in-tx; the guarded view denies IMMEDIATELY (DD-12), before any projector", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, {
+      status: "open",
+      visibility: "public",
+      area: "Quận 1",
+      slotsMax: 8,
+    });
+    // Project it to the public read model (as the async projector would) so the guarded view serves it.
+    await projectToPublic(sessionId, tenantId);
+    expect(await viewHasSession(sessionId)).toBe(true); // discoverable BEFORE the change
+    const result = await update(tenantId, {
+      sessionId,
+      expectedVersion: version,
+      visibility: "private",
+    });
+    expect(result).toMatchObject({ visibility: "private", version: version + 1 });
+    // The fence is raised in the SAME transaction, with the exact 0033 reason literal.
+    expect(await fenceReason(sessionId)).toBe("visibility_private");
+    // Immediate deny: the base public_sessions row still exists (the async projector has NOT run),
+    // but the guarded view anti-joins the fence, so discovery stops RIGHT AWAY.
+    expect(await baseStillProjected(sessionId)).toBe(true);
+    expect(await viewHasSession(sessionId)).toBe(false);
+  });
+
+  it("U-FENCE-DRAFT: a DRAFT public->private ALSO raises the fence (unconditional, no status gate); private->private raises nothing", async () => {
+    const tenantId = await seedTenant("active", "active");
+    // (a) draft->private: the fence PRODUCER raises on EVERY public->private, regardless of status
+    // (owner ruling 2026-08-25; DD-12 literal). "A draft is never publicly served" is a projector
+    // assumption, not a schema guarantee (public_session_share_v has no sessions.status predicate),
+    // so the producer does not depend on it -> the draft DOES raise the fence.
+    const draft = await seedSession(tenantId, {
+      status: "draft",
+      visibility: "public",
+      area: "Quận 1",
+      slotsMax: 8,
+    });
+    await update(tenantId, {
+      sessionId: draft.sessionId,
+      expectedVersion: draft.version,
+      visibility: "private",
+    });
+    expect(await fenceReason(draft.sessionId)).toBe("visibility_private");
+    // (b) private->private on an OPEN session: NOT a visibility change -> no fence (a real area
+    // change still applies, so the update is not a no-op).
+    const priv = await seedSession(tenantId, {
+      status: "open",
+      visibility: "private",
+      area: "Quận 1",
+      slotsMax: 8,
+    });
+    const r = await update(tenantId, {
+      sessionId: priv.sessionId,
+      expectedVersion: priv.version,
+      visibility: "private",
+      area: "Quận 9",
+    });
+    expect(r).toMatchObject({ version: priv.version + 1 });
+    expect(await fenceReason(priv.sessionId)).toBeNull();
   });
 });

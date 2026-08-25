@@ -1,7 +1,7 @@
 # Feature: Host Billing & Tenant Lifecycle — Backend Tech Spec
 
 > **Canonical phase:** P5  
-> **Version:** 2.15 · 2026-08-15
+> **Version:** 2.16 · 2026-08-25
 > **Status:** Reviewed  
 > **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn; capability/availability resolver, provider wiring và lifecycle runtime chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_billing_lifecycle.md`  
@@ -274,6 +274,7 @@ CREATE TABLE billing_overrides (
 | Integration changes | ✅ | ✅ | ❌ |
 | Publish new sessions | ✅ | ✅ | ❌ |
 | Announce session (`announce_session`) | ✅ | ✅ | ❌ |
+| Update open session (`update_open_session`) | ✅ | ✅ | ❌ |
 | Player CK ingest | ✅ | ✅ | ✅ |
 | Read-only queries | ✅ | ✅ | ✅ |
 | System safety | ✅ | ✅ | ✅ |
@@ -283,11 +284,15 @@ CREATE TABLE billing_overrides (
 > so it is blocked while the tenant is suspended. It is wired in `packages/db/src/authorization.ts`
 > (recognised set only — it routes through the existing fail-closed resolution) with its first caller
 > `announceSession`. DD-110's other three literals enter this matrix and the enum only in the commit
-> that lands each command (DD-110 D3): `update_open_session` (also ❌ suspended) with UpdateSession;
-> and the obligation-termination pair `close_session` / `cancel_session` (✅ suspended) once the
-> payments/review_policy subsystem exists (spec edge #5 requires resolving nonterminal finance roots
-> before commit — absent on base). Until then they are recorded in `../../standards/decisions.md`
-> DD-110, deliberately absent here.
+> that lands each command (DD-110 D3). `update_open_session` (also ❌ suspended — the row above) is now
+> wired with its first caller `updateSession`: the same recognised-set / fail-closed-resolution shape as
+> announce, chosen at the call site ONLY for an `open` session (a `draft` update is DD-105-exempt and
+> never calls the resolver — enforced by a service-layer negative test, DD-110 D4). The obligation-
+> termination pair `close_session` / `cancel_session` (✅ suspended) lands with CloseSession /
+> CancelSession (a later slice); DD-117 authorizes those two as a fail-closed refuse on the
+> paid-roster/finance-root path (spec edge #5 — "no silent cancellation") until the
+> payments/review_policy subsystem exists, and their allow-when-suspended handling lands with them.
+> Recorded in `../../standards/decisions.md` DD-110 + DD-117, deliberately absent from the enum here.
 
 ### Status Authority (`authorizeTenantAction`)
 
@@ -516,6 +521,7 @@ Capability registry là **commercial entitlement**, không phải availability r
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-25 | v2.16 | **DD-110 `update_open_session` matrix row (`session-command-update` slice):** §3 Suspended Action Matrix thêm hàng `Update open session (update_open_session)` = ✅/✅/❌ — deny-path, cùng hàng `Publish new sessions`/`Announce session` (update một session `open` là hoạt động trên listing sống, chặn khi suspended). Wired trong `packages/db/src/authorization.ts` (chỉ recognised set — đi qua resolution fail-closed sẵn có, **KHÔNG** thêm nhánh allow-when-suspended), caller đầu tiên `updateSession`; literal chọn ở call site **CHỈ** cho session `open` — update trên `draft` miễn trừ DD-105 và KHÔNG gọi resolver (test âm tầng service, DD-110 D4). Cặp `close_session`/`cancel_session` (✅ suspended) vẫn chờ commit mang command của chúng (slice sau); DD-117 authorize chúng dạng **fail-closed refuse** trên nhánh paid-roster/finance-root (edge #5 — "no silent cancellation") tới khi payments/review_policy subsystem tồn tại. Không đổi fail-closed resolution / FOR SHARE ordering / schema. |
 | 2026-08-15 | v2.15 | **DD-110 announce_session matrix row (`session-commands-update-close-cancel--announce-session` slice):** §3 Suspended Action Matrix thêm hàng `Announce session (announce_session)` = ✅/✅/❌ — deny-path, cùng hàng `Publish new sessions` (announce lên group là hoạt động outbound mới, chặn khi suspended). Wired trong `packages/db/src/authorization.ts` (chỉ recognised set — đi qua resolution fail-closed sẵn có), caller đầu tiên `announceSession`. Ba literal DD-110 còn lại vào matrix + enum theo commit mang command của chúng (D3): `update_open_session` (❌) với UpdateSession; cặp obligation-termination `close_session`/`cancel_session` (✅ suspended) sau khi payments/review_policy subsystem tồn tại (edge #5 cần resolve nonterminal finance roots trước commit — chưa có trên base). Không đổi fail-closed resolution / FOR SHARE ordering / schema. |
 | 2026-08-10 | v2.14 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/schema. |
 | 2026-08-06 | v2.13 | **Live-truth reconcile tại `main@2cd52ce` (docs-only, không đổi contract):** §2 Migration & Rollback thay câu grep ngày 2026-07-27 (`0000`–`0024`, 25 file) bằng phép đo 2026-08-06 (`0000`–`0029`, 30 file) — nhưng **không hard-pin**, theo đúng quy ước v2.7b đã lập sau khi bản pin `0018` mục một lần; con số ghi kèm ngày đo. Thêm ranh giới **cái gì của DD-29 đã land vs chưa**, vì hai nửa dễ bị đọc gộp: schema đã land trên `main` (`0028`+`0029`, `f901626`) — CHECK narrow về `('free','host_pro')`, seed v1 đúng payload §2 (migration transcribe nguyên văn từ §2, không tự suy), 4 tier cũ đã xoá khỏi catalog, `tenant_provision()` repoint sang `'free'`; nhưng **0 TypeScript đọc `entitlements`/`capabilities`** (grep toàn repo tại `2cd52ce`), nên `hasCapability()` §4b vẫn là target contract chứ chưa phải runtime, và `authorizeTenantAction` (`ddb69a9`) vẫn 0 production caller. Header `Implementation: Not started` giữ nguyên — nó nói về lifecycle/provider/resolver runtime, không phủ nhận phần schema đã land. Thêm operational precondition khi deploy cặp migration (tạm dừng ghi `tenant_provision()`), trích từ header `0028`. |
