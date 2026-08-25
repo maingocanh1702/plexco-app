@@ -1,7 +1,7 @@
 # Feature: Identity Directory & Merge — Backend Tech Spec
 
 > **Canonical phase:** P3.5
-> **Version:** 1.14 · 2026-08-10
+> **Version:** 1.15 · 2026-08-25
 > **Status:** Identity implementation contract; DD-32 Account-backed channel link predicate added. Endpoint-scoped schema/code pending identity/channel build slices
 > **Implementation:** Not started — bảng `link_codes`/`merge_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_identity.md`
@@ -231,7 +231,7 @@ Rate-limit counters outside the row use the same transaction-safe service bounda
 
 1. validates the exact Page/bot-OA relation and authenticated channel actor;
 2. locks/re-resolves current ChannelIdentity→Person when called from a finalizer;
-3. resolves an active Account on that Person with at least one verified account identity;
+3. resolves an active Account on that Person that is **verified per DD-50** — phase-1 predicate (DD-50 amendment, owner 2026-08-25): **≥1 `account_emails` row with `verified_at IS NOT NULL`** (verified account email; covers Google OIDC `email_verified === true` and email/password post-verify-token). Legacy `account_identities` rows do **NOT** qualify — that table is only written by the Telegram-era flow, removed from scope by DD-37. *(The former literal "at least one verified account identity" was pre-DD-37 wording drift, ruled superseded by the amendment.)*;
 4. rejects frozen, merge-pending, stale or ambiguous bindings;
 5. returns only `{qualified, account_ref, person_ref, binding_version}` to the booking core.
 
@@ -477,6 +477,7 @@ Metrics: person/channel creation, merge success/failure by method, claim rejecti
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-08-25 | v1.15 | **Vá wording theo DD-50 amendment (owner 2026-08-25; bản vá được amendment xếp hàng cho phiên docs — lane `identity-account-link-core` cố ý không tự sửa spec Reviewed):** §Account-backed link resolver bước 3 — predicate "verified Account" phase-1 = **≥1 `account_emails.verified_at IS NOT NULL`** (verified email theo DD-50), **KHÔNG** phải literal cũ "≥1 verified account identity" (wording drift từ trước DD-37/trước khi `account_emails` migration `0016` tồn tại; legacy `account_identities` chỉ do luồng Telegram cũ ghi, không tính). Correction của quyết định đã chốt, không phải quyết định mới — theo tiền lệ `docs-billing-authz-signature-reconcile`. Shape truy cập giữ nguyên §2/§4 (SECURITY DEFINER function-only). |
 | 2026-08-10 | v1.14 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/identity model. |
 | 2026-07-28 | v1.13 | Mirror DD-32 Option D: add narrow Account-backed channel-link resolver, binding-version recheck and explicit provider-subject separation for pay-later qualification. No runtime/migration. |
 | 2026-07-24 | v1.12a | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): Live-schema truth header + Migration mới numbering guidance hard-pinned `migrations 0000–0018` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Draft `0014_identity_channel_security.sql` numbering note giữ nguyên. Pre-existing dated changelog giữ verbatim. Không đổi contract. |

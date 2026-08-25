@@ -1,7 +1,7 @@
 # Channel-first Booking Funnel — Backend Technical Spec
 
 > **Canonical phase:** P4.3 / P4.7 + Messenger P2.5
-> **Version:** 1.1 · 2026-08-10
+> **Version:** 1.2 · 2026-08-25
 > **Status:** Reviewed contract · Implementation pending
 > **Implementation:** Not started — live schema has no channel booking intent/payment hold/finalizer
 > **Product spec:** `../FE/feature_channel_booking_funnel.md`
@@ -348,7 +348,7 @@ The predicate is true only when all are true at finalisation:
 
 1. exact active `channel_identities` row resolves to current canonical Person;
 2. an active `accounts` row resolves to that same Person;
-3. the account has at least one currently verified account identity under the web-auth contract;
+3. the account is **verified under the web-auth contract per DD-50** — phase-1 predicate (DD-50 amendment, owner 2026-08-25): **≥1 `account_emails` row with `verified_at IS NOT NULL`** (verified account email). Legacy `account_identities` rows do **NOT** qualify (Telegram-era writer only — DD-37). *(The former literal "at least one currently verified account identity" was pre-DD-37 wording drift, ruled superseded by the amendment.)*;
 4. no merge/freeze/conflict state blocks the identity;
 5. account/channel binding was established through verified auth or a fully consumed transactional link flow with explicit confirmation.
 
@@ -552,5 +552,6 @@ Metrics: funnel conversion, hold creation/expiry, settlement latency, over/under
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-25 | v1.2 | **Vá wording theo DD-50 amendment (owner 2026-08-25; bản vá được amendment xếp hàng cho phiên docs):** §4.1 predicate bước 3 — "verified Account" phase-1 = **≥1 `account_emails.verified_at IS NOT NULL`** (verified email theo DD-50), thay literal cũ "≥1 currently verified account identity" (wording drift trước DD-37; legacy `account_identities` không tính). Correction của quyết định đã chốt (mirror `decisions.md` DD-50 amendment), không phải quyết định mới. Không đổi các vế còn lại của predicate/pipeline. |
 | 2026-08-10 | v1.1 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/pipeline model. |
 | 2026-07-28 | v1.0 | Tạo BE companion cho DD-32 Option D: shared decision core, qualified Account link, durable intent/15-minute hold, occupancy helper, atomic finalizer, approval/waitlist/late-payment behavior, API/security/test/rollout contract. No runtime. |
