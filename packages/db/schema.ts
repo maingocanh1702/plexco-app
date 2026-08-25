@@ -1431,6 +1431,10 @@ export const publicSessions = pgTable("public_sessions", {
   joinPolicy: text("join_policy").notNull(),
   projectedAt: timestamp("projected_at", { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  // control metadata (non-PII) — the sole whitelist-exception column DD-73
+  // permits in the guarded public view; DD-78 authorization-before-cache key.
+  // Added by 0033_public_projection_fences.sql (ALTER TABLE ADD COLUMN DEFAULT 0).
+  publicProjectionVersion: bigint("public_projection_version", { mode: "number" }).notNull().default(0),
 }, (t) => ({
   // plain btree — a WHERE starts_at > now() predicate is invalid (now() is
   // STABLE, not IMMUTABLE); mirrors the 0006 fix
@@ -1438,6 +1442,29 @@ export const publicSessions = pgTable("public_sessions", {
   sportTimeIdx: index("idx_public_sport_time").on(t.sportKey, t.startsAt),
   areaTimeIdx: index("idx_public_area_time").on(t.area, t.startsAt),
   priceIdx: index("idx_public_price").on(t.priceAmount),
+  // id and session_id both mean sessions.id — enforce equality so the guarded
+  // view's session_id fence anti-join matches raise_public_session_fence's
+  // canonical-id fence (0033). Without it, id<>session_id would leak a fenced
+  // row through the view.
+  idSessionIdChk: check("public_sessions_id_session_id_chk", sql`${t.id} = ${t.sessionId}`),
+}));
+
+// public_projection_fences — GLOBAL PROTECTED, denial-only (DD-12-owned, DD-75).
+// No RLS (global / cross-tenant, like public_sessions) and no grant to
+// app/readonly — every access is mediated by the narrow SECURITY DEFINER
+// functions in 0033_public_projection_fences.sql. surface='session_share' this
+// slice; share_activities later EXTENDS usage to 'activity_card' (adds no column).
+export const publicProjectionFences = pgTable("public_projection_fences", {
+  surface: text("surface").notNull(),        // 'session_share' | 'activity_card' (later)
+  targetKind: text("target_kind").notNull(), // 'session' | 'activity_share' | 'person' | 'tenant'
+  targetId: uuid("target_id").notNull(),
+  fenceToken: uuid("fence_token").notNull(), // random; projector CAS-clears; never returned/logged
+  denyScope: text("deny_scope").notNull(),
+  reason: text("reason").notNull(),          // closed enum, validated by the raise function
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.surface, t.targetKind, t.targetId] }),
+  denyScopeChk: check("public_projection_fences_deny_scope_chk", sql`${t.denyScope} IN ('public','all')`),
 }));
 
 export const joinRequests = pgTable("join_requests", {

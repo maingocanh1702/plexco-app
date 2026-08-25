@@ -67,10 +67,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(33); // 0000..0032 (0032 = chat-dm-safety-config-single-read)
+    expect(ctx.migrateResult.applied.length).toBe(34); // 0000..0033 (0033 = public-projection-fences-core)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(33);
+    expect(second.skipped.length).toBe(34);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -191,6 +191,11 @@ describe("public read model (INV-3 / HR2 / DD-12)", () => {
         "join_policy",
         "projected_at",
         "expires_at",
+        // control metadata (non-PII) — the SOLE whitelist-exception column DD-73
+        // permits for the guarded view / DD-78 cache gate (added by 0033). It is
+        // a monotonic version counter, not money/PII; the smell test below still
+        // guards the class.
+        "public_projection_version",
       ].sort(),
     );
   });
@@ -204,9 +209,16 @@ describe("public read model (INV-3 / HR2 / DD-12)", () => {
     expect(rows).toEqual([]);
   });
 
-  it("readonly role reads public_sessions but has ZERO grant on canonical tables", async () => {
+  it("readonly is DENIED on the public_sessions BASE (moved off it by 0033) and reads the guarded view instead; ZERO grant on canonical tables", async () => {
+    // DD-12 / DD-73 Q5 immediate-deny cutover: 0033 REVOKEs readonly's base
+    // SELECT and grants the guarded view public_session_share_v. A base read
+    // would bypass the fence (decisions.md:269), so it must now be denied.
     await expect(
-      ctx.readonlyPool.query(`SELECT count(*) FROM public_sessions`),
+      ctx.readonlyPool.query(`SELECT * FROM public_sessions LIMIT 1`),
+      "readonly must be denied on the public_sessions BASE after the 0033 REVOKE",
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      ctx.readonlyPool.query(`SELECT count(*) FROM public_session_share_v`),
     ).resolves.toBeTruthy();
     for (const table of ["sessions", "charges", "memberships", "bank_transactions", "persons"]) {
       await expect(
@@ -235,6 +247,378 @@ describe("public read model (INV-3 / HR2 / DD-12)", () => {
         `app must be denied on ${table}`,
       ).rejects.toThrow(/permission denied/i);
     }
+  });
+});
+
+describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / DD-75, migration 0033)", () => {
+  // Seed a REAL session (raise verifies tenant ownership against sessions) and a
+  // public_sessions projection row for it. The projection's starts_at/expires_at
+  // are its OWN values (a real projector would set them); the fence only needs a
+  // live, non-expired public row to deny.
+  async function seedProjectedSession(
+    tenantId: string,
+    hour: number,
+    opts: { expiresInPast?: boolean } = {},
+  ): Promise<string> {
+    const session = await createIn(tenantId, hour);
+    const expires = opts.expiresInPast ? "now() - interval '1 minute'" : "now() + interval '1 day'";
+    await ctx.owner.query(
+      `INSERT INTO public_sessions
+         (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
+          price_amount, slots_open, club_display_name, join_policy, expires_at)
+       VALUES ($1, $1, $2, 'badminton', now(), now() + interval '2 hours', 'D1',
+          110000, 4, 'Club A', 'open', ${expires})`,
+      [session.id, tenantId],
+    );
+    return session.id;
+  }
+
+  // Call raise_public_session_fence AS app inside a real transaction with a
+  // tenant GUC (set_config local — deterministic, unlike a possibly-stale pooled
+  // GUC). tenantId "" exercises the fail-closed empty-context path.
+  const raiseAs = async (tenantId: string, sessionId: string, reason: string): Promise<void> => {
+    const client = await ctx.appPool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+      await client.query(`SELECT raise_public_session_fence($1::uuid, $2)`, [sessionId, reason]);
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
+  };
+
+  const viewRows = async (sessionId: string) =>
+    (
+      await ctx.readonlyPool.query(`SELECT * FROM public_session_share_v WHERE session_id = $1`, [
+        sessionId,
+      ])
+    ).rows;
+  const baseRows = async (sessionId: string) =>
+    (await ctx.owner.query(`SELECT * FROM public_sessions WHERE session_id = $1`, [sessionId]))
+      .rows;
+  const observeToken = async (sessionId: string) =>
+    (
+      await ctx.workerPool.query(`SELECT current_public_session_fence_token($1::uuid) AS t`, [
+        sessionId,
+      ])
+    ).rows[0].t as string | null;
+  const clearFence = async (sessionId: string, token: string) =>
+    (
+      await ctx.workerPool.query(
+        `SELECT clear_public_session_fence($1::uuid, $2::uuid) AS cleared`,
+        [sessionId, token],
+      )
+    ).rows[0].cleared as boolean;
+
+  it("(a) IMMEDIATE DENY: after a private/cancel raise and BEFORE any projector run, the row is gone from the guarded view while the base projection row still exists", async () => {
+    const sid = await seedProjectedSession(ctx.tenantA, 3);
+    // pre-raise: the discovery consumer sees the row through the guarded view
+    expect((await viewRows(sid)).length).toBe(1);
+    // the privacy-reducing transition raises the fence in the SAME source tx
+    await raiseAs(ctx.tenantA, sid, "cancelled");
+    // read-time deny is IMMEDIATE — the view no longer returns it ...
+    expect((await viewRows(sid)).length).toBe(0);
+    // ... yet the base projection row is untouched: the async projector has NOT
+    // run. This is exactly the leak window this slice closes at READ time.
+    expect((await baseRows(sid)).length).toBe(1);
+  });
+
+  it("(b) after 0033 NO runtime role can read the base table, and the fence table is global-protected (zero direct grant)", async () => {
+    // NO runtime role may SELECT the base after 0033 — a base read would bypass
+    // the immediate-deny fence (decisions.md:269). readonly and app_worker never
+    // had it (or lost it); `app` — the generic HTTP/bot runtime role — is revoked
+    // here too, so ordinary app code cannot read a stale fenced row. `app` keeps
+    // INSERT/UPDATE/DELETE for the future projector (not asserted here).
+    for (const pool of [ctx.appPool, ctx.readonlyPool, ctx.workerPool]) {
+      await expect(pool.query(`SELECT * FROM public_sessions LIMIT 1`)).rejects.toThrow(
+        /permission denied/i,
+      );
+    }
+    // fence table: no direct grant to ANY runtime role — access only via the
+    // narrow SECURITY DEFINER functions.
+    for (const pool of [ctx.appPool, ctx.readonlyPool, ctx.workerPool]) {
+      await expect(pool.query(`SELECT * FROM public_projection_fences LIMIT 1`)).rejects.toThrow(
+        /permission denied/i,
+      );
+    }
+  });
+
+  it("catalog: EXACT effective privileges — fence table zero-grant of any type to every runtime role; no runtime role has base SELECT at table OR column level; app keeps only INSERT/UPDATE/DELETE on the base; only readonly reads the guarded view", async () => {
+    // A `SELECT *` probe alone (test (b)) misses column-level SELECT and never
+    // checks INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER — a stray write grant
+    // would bypass the typed raise/CAS functions. Assert the exact effective
+    // privilege catalog for every runtime role.
+    const TABLE_PRIVS = [
+      "SELECT",
+      "INSERT",
+      "UPDATE",
+      "DELETE",
+      "TRUNCATE",
+      "REFERENCES",
+      "TRIGGER",
+    ];
+    const ROLES = ["app", "app_worker", "readonly"];
+    const hasTable = async (role: string, table: string, priv: string) =>
+      (await ctx.owner.query(`SELECT has_table_privilege($1, $2, $3) AS ok`, [role, table, priv]))
+        .rows[0].ok as boolean;
+
+    // fence table — zero privilege of ANY type for EVERY runtime role.
+    for (const role of ROLES) {
+      for (const priv of TABLE_PRIVS) {
+        expect(
+          await hasTable(role, "public_projection_fences", priv),
+          `${role} must have NO ${priv} on the fence table`,
+        ).toBe(false);
+      }
+    }
+
+    // base public_sessions — NO runtime role may SELECT at table level ...
+    for (const role of ROLES) {
+      expect(
+        await hasTable(role, "public_sessions", "SELECT"),
+        `${role} must have NO table SELECT on the base`,
+      ).toBe(false);
+    }
+    // ... nor at COLUMN level (has_table_privilege('SELECT') alone misses a per-column grant).
+    const baseCols = (
+      await ctx.owner.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='public_sessions'`,
+      )
+    ).rows.map((r: { column_name: string }) => r.column_name);
+    for (const role of ROLES) {
+      for (const col of baseCols) {
+        const ok = (
+          await ctx.owner.query(
+            `SELECT has_column_privilege($1, 'public_sessions', $2, 'SELECT') AS ok`,
+            [role, col],
+          )
+        ).rows[0].ok as boolean;
+        expect(ok, `${role} must have NO column SELECT on public_sessions.${col}`).toBe(false);
+      }
+    }
+    // app keeps EXACTLY INSERT/UPDATE/DELETE on the base (the future projector writer).
+    for (const priv of ["INSERT", "UPDATE", "DELETE"]) {
+      expect(await hasTable("app", "public_sessions", priv), `app keeps ${priv} on the base`).toBe(
+        true,
+      );
+    }
+    for (const priv of ["TRUNCATE", "REFERENCES", "TRIGGER"]) {
+      expect(
+        await hasTable("app", "public_sessions", priv),
+        `app must have NO ${priv} on the base`,
+      ).toBe(false);
+    }
+    // app_worker + readonly hold nothing at all on the base.
+    for (const role of ["app_worker", "readonly"]) {
+      for (const priv of TABLE_PRIVS) {
+        expect(
+          await hasTable(role, "public_sessions", priv),
+          `${role} must have NO ${priv} on the base`,
+        ).toBe(false);
+      }
+    }
+    // guarded view — only readonly reads it.
+    expect(await hasTable("readonly", "public_session_share_v", "SELECT")).toBe(true);
+    expect(await hasTable("app", "public_session_share_v", "SELECT")).toBe(false);
+    expect(await hasTable("app_worker", "public_session_share_v", "SELECT")).toBe(false);
+  });
+
+  it("(c) the guarded view exposes EXACTLY the BL-DSC-1 existing fields + session_id + public_projection_version — no retired skill_level, no expires_at, no tenant_id, no money/PII, no fence/token", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'public_session_share_v'`,
+    );
+    const cols = (rows as { column_name: string }[]).map((r) => r.column_name).sort();
+    // DD-73:914 — the guarded view follows BL-DSC-1, NOT 0006. skill_level is
+    // retired; expires_at is only the freshness filter; both are excluded. The
+    // sole non-BL-DSC-1 columns are session_id (row identity) and the sanctioned
+    // control column public_projection_version.
+    expect(cols).toEqual(
+      [
+        "session_id",
+        "sport_key",
+        "starts_at",
+        "ends_at",
+        "area",
+        "price_amount",
+        "slots_open",
+        "club_display_name",
+        "host_display_name",
+        "join_policy",
+        "public_projection_version",
+      ].sort(),
+    );
+    expect(cols).not.toContain("skill_level"); // DD-73:914 retired — must not resurface in the guarded view
+    expect(cols).not.toContain("tenant_id"); // HR2: internal routing, never serialized
+    const smelly = cols.filter((c) =>
+      /(phone|email|debt|paid|roster|member|account|secret|token|venue_address|fence)/i.test(c),
+    );
+    expect(smelly).toEqual([]);
+  });
+
+  it("the guarded view is a security_barrier view — a caller's non-leakproof predicate cannot be pushed below the fence/expiry filters to observe a denied row", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT c.reloptions FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'public_session_share_v' AND c.relkind = 'v'`,
+    );
+    expect(rows.length).toBe(1);
+    expect((rows[0] as { reloptions: string[] | null }).reloptions ?? []).toContain(
+      "security_barrier=true",
+    );
+  });
+
+  it("public_sessions enforces id = session_id — the view's session_id fence anti-join cannot diverge from raise's canonical-id fence (a divergent row would leak a fenced session)", async () => {
+    // matched id=session_id inserts already succeed throughout this block via
+    // seedProjectedSession ($1,$1). A divergent row is rejected by the named CHECK.
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO public_sessions
+           (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
+            price_amount, slots_open, club_display_name, join_policy, expires_at)
+         VALUES ($1, $2, $3, 'badminton', now(), now() + interval '2 hours', 'D1',
+            110000, 4, 'Club A', 'open', now() + interval '1 day')`,
+        [randomUUID(), randomUUID(), ctx.tenantA],
+      ),
+    ).rejects.toThrow(/public_sessions_id_session_id_chk/);
+  });
+
+  it("CAS-clear: a stale token is a no-op (fence persists, view stays denied); the observed token clears it (row visible again); a re-raise wins with a fresh token", async () => {
+    const sid = await seedProjectedSession(ctx.tenantA, 4);
+    await raiseAs(ctx.tenantA, sid, "visibility_private");
+    expect((await viewRows(sid)).length).toBe(0);
+
+    const token1 = await observeToken(sid);
+    expect(token1).toBeTruthy();
+
+    // stale/unknown token → clear no-ops, deny persists (new token wins)
+    expect(await clearFence(sid, randomUUID())).toBe(false);
+    expect((await viewRows(sid)).length).toBe(0);
+
+    // exact observed token → clears; the row is visible again (projector converged)
+    expect(await clearFence(sid, token1!)).toBe(true);
+    expect((await viewRows(sid)).length).toBe(1);
+
+    // re-raise REPLACES with a fresh token so a stale worker cannot resurrect it
+    await raiseAs(ctx.tenantA, sid, "closed");
+    const token2 = await observeToken(sid);
+    expect(token2).not.toBe(token1);
+    expect(await clearFence(sid, token1!)).toBe(false); // old token no longer current
+    expect((await viewRows(sid)).length).toBe(0);
+  });
+
+  it("fence race (CONCURRENT two-client lock-wait + recheck, decisions.md:923) — a worker clearing a STALE token blocks behind a newer raise, re-checks under READ COMMITTED and no-ops so denial survives; then it clears the CURRENT token and converges", async () => {
+    const sid = await seedProjectedSession(ctx.tenantA, 9);
+    await raiseAs(ctx.tenantA, sid, "cancelled");
+    const t1 = await observeToken(sid);
+    expect((await viewRows(sid)).length).toBe(0);
+
+    const source = await ctx.appPool.connect(); // client A — the source transition (raise)
+    const worker = await ctx.workerPool.connect(); // client B — the projector worker (clear)
+    try {
+      const workerPid = (await worker.query(`SELECT pg_backend_pid() AS pid`)).rows[0]
+        .pid as number;
+
+      // A raises a NEWER token (T2) and holds the fence-row lock uncommitted.
+      await source.query("BEGIN");
+      await source.query(`SELECT set_config('app.tenant_id', $1, true)`, [ctx.tenantA]);
+      await source.query(`SELECT raise_public_session_fence($1::uuid, 'closed')`, [sid]);
+
+      // B tries to clear the STALE token T1 — it must block on A's uncommitted upsert.
+      const staleClear = worker.query(
+        `SELECT clear_public_session_fence($1::uuid, $2::uuid) AS cleared`,
+        [sid, t1],
+      );
+      // Deterministically wait until B is genuinely blocked ON A (not a fixed sleep).
+      for (let i = 0; ; i++) {
+        const { rows } = await ctx.owner.query(
+          `SELECT COALESCE(array_length(pg_blocking_pids($1), 1), 0) AS n`,
+          [workerPid],
+        );
+        if ((rows[0].n as number) > 0) break;
+        if (i > 200) throw new Error("worker's clear never blocked on the source's fence-row lock");
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      // Commit A → T2 is now current. B unblocks and re-checks its WHERE against the
+      // committed row (token is T2, not T1) under READ COMMITTED → deletes nothing.
+      await source.query("COMMIT");
+      expect((await staleClear).rows[0].cleared).toBe(false);
+      expect((await viewRows(sid)).length).toBe(0); // denial SURVIVED the stale worker
+      const t2 = await observeToken(sid);
+      expect(t2).not.toBe(t1);
+
+      // Other interleaving: the worker clears the CURRENT token → converges, row visible again.
+      const goodClear = (
+        await worker.query(`SELECT clear_public_session_fence($1::uuid, $2::uuid) AS cleared`, [
+          sid,
+          t2,
+        ])
+      ).rows[0].cleared as boolean;
+      expect(goodClear).toBe(true);
+      expect((await viewRows(sid)).length).toBe(1);
+    } finally {
+      await source.query("ROLLBACK").catch(() => {});
+      source.release();
+      worker.release();
+    }
+  });
+
+  it("EXECUTE grants: only app may raise; only app_worker may observe/clear; readonly may call none", async () => {
+    const sid = await seedProjectedSession(ctx.tenantA, 5);
+    const anyUuid = randomUUID();
+    // readonly cannot raise / observe / clear
+    await expect(
+      ctx.readonlyPool.query(`SELECT raise_public_session_fence($1::uuid, 'cancelled')`, [sid]),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      ctx.readonlyPool.query(`SELECT current_public_session_fence_token($1::uuid)`, [sid]),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      ctx.readonlyPool.query(`SELECT clear_public_session_fence($1::uuid, $2::uuid)`, [
+        sid,
+        anyUuid,
+      ]),
+    ).rejects.toThrow(/permission denied/i);
+    // app_worker cannot raise (source-transaction-only)
+    await expect(
+      ctx.workerPool.query(`SELECT raise_public_session_fence($1::uuid, 'cancelled')`, [sid]),
+    ).rejects.toThrow(/permission denied/i);
+    // app cannot observe / clear (projector-worker-only)
+    await expect(
+      ctx.appPool.query(`SELECT current_public_session_fence_token($1::uuid)`, [sid]),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      ctx.appPool.query(`SELECT clear_public_session_fence($1::uuid, $2::uuid)`, [sid, anyUuid]),
+    ).rejects.toThrow(/permission denied/i);
+  });
+
+  it("raise is tenant-scoped and fail-closed: a session outside the caller tenant, and a call with no tenant context, are both refused and write no fence (DD-75 derive+verify server-side)", async () => {
+    const sid = await seedProjectedSession(ctx.tenantA, 6);
+    // tenant B cannot fence tenant A's session
+    await expect(raiseAs(ctx.tenantB, sid, "cancelled")).rejects.toThrow(
+      /not in the caller tenant/i,
+    );
+    // empty tenant context (fail-closed on missing GUC)
+    await expect(raiseAs("", sid, "cancelled")).rejects.toThrow(/not in the caller tenant/i);
+    // nothing was fenced — the view still shows the row
+    expect((await viewRows(sid)).length).toBe(1);
+  });
+
+  it("raise rejects an unknown reason (closed enum: visibility_private|cancelled|closed) and writes no fence", async () => {
+    const sid = await seedProjectedSession(ctx.tenantA, 7);
+    await expect(raiseAs(ctx.tenantA, sid, "deleted")).rejects.toThrow(/reason must be/i);
+    expect((await viewRows(sid)).length).toBe(1);
+  });
+
+  it("the guarded view also hides an EXPIRED projection row even without a fence (expires_at gate), while the base row remains", async () => {
+    const sid = await seedProjectedSession(ctx.tenantA, 8, { expiresInPast: true });
+    expect((await viewRows(sid)).length).toBe(0);
+    expect((await baseRows(sid)).length).toBe(1);
   });
 });
 
@@ -1311,12 +1695,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
           return migrate(url(dbName));
         }),
       );
-      expect(res.applied.length).toBe(33); // 0000..0032
+      expect(res.applied.length).toBe(34); // 0000..0033
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(33);
+        expect(rows.length).toBe(34);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -1594,9 +1978,7 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         await nsCtx.bootstrapJobDefinerForOwner();
         await nsCtx.bootstrapChatDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe(
-          "0032_chat_dm_safety_config_single_read.sql",
-        );
+        expect(res.applied[res.applied.length - 1]).toBe("0033_public_projection_fences.sql");
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -4069,10 +4451,10 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       }
     });
 
-    it("UCC-8: MIGRATION_COUNT (33) matches the actual migrations/ directory listing, and the tail is 0032", async () => {
+    it("UCC-8: MIGRATION_COUNT (34) matches the actual migrations/ directory listing, and the tail is 0033", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      expect(files.length).toBe(33);
-      expect(files[files.length - 1]).toBe("0032_chat_dm_safety_config_single_read.sql");
+      expect(files.length).toBe(34);
+      expect(files[files.length - 1]).toBe("0033_public_projection_fences.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {
