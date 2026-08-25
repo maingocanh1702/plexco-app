@@ -22,6 +22,7 @@ export {
   type AuthorizationDecision,
   type EffectiveStatus,
 } from "./authorization.js";
+export { resolveCapability, type Capability, type CapabilityDecision } from "./capability.js";
 export {
   createSession,
   publishSession,

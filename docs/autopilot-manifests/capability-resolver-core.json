@@ -1,0 +1,85 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). The durable Level-3 task contract + slice packet for capability-resolver-core. Deliberately carries NO manifest_schema_version — that field belongs ONLY on the runtime manifest at .autopilot/state/capability-resolver-core/manifest.json (adding it here makes `register` HALT CONTRACT_INVALID; see level3-workflow.md §11). The ACTIVE registration authority is the runtime manifest, hash-locked at register time; this file is the tracked record.",
+  "task_id": "plexco:capability-resolver-core",
+  "feature": "capability-resolver-core",
+  "branch": "feat/capability-resolver-core",
+  "base_ref": "origin/main",
+  "base_sha": "c37a5c29b8263c45cb8132ed25fb4af3afe85f02",
+  "_base_sha_note": "Documentation-only pin of the immutable base this contract was authored against (codex round-03 [P2]). This authored contract deliberately carries NO manifest_schema_version — that field belongs only on the runtime manifest.",
+  "outcome": "The first READER IMPLEMENTATION of the DD-29 capability registry: a fail-closed resolver (resolveCapability) in @plexco/db that reads plans.entitlements.capabilities[key] for a tenant's current plan and returns a cause-agnostic decision. The entitlements/capabilities jsonb has had 0 PRODUCTION readers since 2026-08-07 (test readers exist — migrate.test.ts asserts the DD-29 seed, capability.test.ts exercises this resolver); this provides the production reader but it remains CODE-DARK (zero production callers — index.ts re-exports it) until a separately-authorized production enforcement point wires it. Hard dependency for DD-114 (money features gate on host_pro).",
+  "risk": "P1",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_lineage": "This slice is the DD-29 §4b COMMERCIAL plan-entitlement resolver ONLY: resolveCapability answers 'does this tenant's paid plan tier (free vs host_pro) include this feature flag', reading plans.entitlements.capabilities. Despite the shared word 'capability', that is a DIFFERENT concern from the DD-56 ACTOR-authorization authority. DD-56 (decisions.md:720 'Co-admin capability') and feature_tenant_routing_authz_tech.md define `tenant-capability-authority-core` as a SEPARATE, MANDATORY, still-UNIMPLEMENTED cross-feature prerequisite: a closed action->capability registry, least-privilege presets for admin|co_admin, a per-tenant/person role resolver, tenant-private grant storage with expiry/revocation, append-only grant audit, and a fail-closed authorize(action, actor, target) over new monotonic migrations. NONE of that is implemented by this slice or satisfied by migrations 0028/0029/0009 — 0028/0029 landed only the DD-29 commercial plan catalog + entitlements shape, and 0009 is the general RLS grant loop, neither is DD-56's actor-capability registry/grants/audit. This slice neither implements nor reduces the DD-56 authority core and makes no part of it optional; that authority remains a full, unimplemented deliverable. The historical backlog task `tenant-capability-authority-core` conflated the two 'capability' concepts; this slice extracts the DD-29 commercial resolver only (codex round-02 [P1]).",
+  "invariants": ["billing"],
+  "scope": [
+    "packages/db/src/capability.ts",
+    "packages/db/src/capability.test.ts",
+    "packages/db/src/index.ts",
+    "docs/autopilot-manifests/capability-resolver-core.json"
+  ],
+  "negative_scope": [
+    "NO new tables or migrations (DD-29 schema 0028/0029 already landed; reader only)",
+    "NO changes to tenant_provision() or any SECURITY DEFINER function body",
+    "NO changes to packages/db/schema.ts",
+    "NO changes to packages/db/src/authorization.ts",
+    "NO pricing/UI/routes, NO subscription lifecycle logic, NO plan upgrade/downgrade path",
+    "NO wiring of resolveCapability into any command/route/enforcement point",
+    "NO new grants"
+  ],
+  "context_sources": [
+    "docs/standards/decisions.md (DD-29 pricing pivot + addendum; DD-40 mark-paid/auto split; DD-114 D2 first enforced capability)",
+    "docs/features/BE/feature_billing_lifecycle_tech.md (§2 plans DDL/seed; §4b capability registry — hasCapability, PLAN_UPGRADE_REQUIRED, entitlement != availability)",
+    "packages/db/migrations/0028_dd29_capability_registry_expand.sql (authoritative jsonb capabilities contract)",
+    "packages/db/migrations/0029_dd29_capability_registry_contract.sql",
+    "packages/db/migrations/0009_rls_policies_grants.sql (app: SELECT on plans, CRUD on subscriptions FORCE RLS)",
+    "packages/db/src/authorization.ts (tx-discipline + fail-closed pattern to mirror)",
+    "packages/db/src/authorization.test.ts (test-harness usage + fake-tx pattern to mirror)",
+    "packages/db/schema.ts (plans/subscriptions column names + FK)"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "primary-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "restricted",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "focused": [
+      "test -f packages/db/src/capability.ts",
+      "grep -qF 'PLAN_UPGRADE_REQUIRED' packages/db/src/capability.ts",
+      "grep -qF 'FOR SHARE' packages/db/src/capability.ts",
+      "grep -qF 'resolveCapability' packages/db/src/index.ts"
+    ],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm build",
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_scope_disposition": "ONE cohesive slice, kept whole on purpose (scope is a ceiling, not a target; the invariants forbid over-splitting cohesive low-risk work). 3 code modules touched: capability.ts (resolver, ~90 non-comment LOC — the rest is docstring), capability.test.ts (the fail-closed + concurrency matrix, appropriately large for a P1 money/authz choke-point), and a one-line index.ts barrel export. The ~300-LOC ceiling governs production logic across ≤3 modules; the total insertion count is dominated by the test matrix and heavy documentation, which the ceiling does not target. Splitting a resolver from its own acceptance suite would be the exact over-split the scope invariant warns against, so this ships as one slice with the LOC disposition recorded explicitly (codex round-01 [P2]).",
+  "code_review": { "required": true, "tool": "scripts/codex-review-pin.sh", "clean_rounds": 2 },
+  "security_review": {
+    "required": true,
+    "reason": "Fail-closed authorization choke-point gating money-adjacent automation (payment_reconcile_auto entitlement, DD-114 D2). A fail-open bug grants a free tenant a host_pro-only money capability.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": { "wall_time_minutes": 180, "fix_rounds_max": 5, "token_budget": null, "cost_budget": null },
+  "stop_conditions": ["MAX_ROUNDS", "REGION_THRASH", "SCOPE_OR_BASE_DRIFT", "MATERIAL_CONTEXT_OR_DECISION_MISSING", "REQUIRED_TOOL_UNAVAILABLE"],
+  "terminal_state_plan": "The resolver + full fail-closed test matrix is a complete, mergeable, code-dark ROOT DEPENDENCY (precedent: authorizeTenantAction merged with 0 production callers as a root dependency). It drives to READY through the scope-gate. The WIRING (first enforcement point) is a separate AWAIT: DD-114 D2 names payment_reconcile_auto as the first enforced capability, but the reconcile pipeline (webhook->settle->notify) does not exist in code today and no Reviewed spec pins an enforcement point on an existing command — so the wiring slice needs one owner decision. Do NOT guess a gate into an existing command without authority.",
+  "_evidence_rules": [
+    "Do NOT re-derive the capabilities vocabulary or seed values from memory — transcribe verbatim from 0028_dd29_capability_registry_expand.sql (feature_billing_lifecycle_tech.md:68-81).",
+    "Docs/contracts are not runtime proof. A passing test against real Postgres is.",
+    "READY (gate passed) means mergeable, not merged. Owner holds merge authority."
+  ]
+}
