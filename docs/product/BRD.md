@@ -8,7 +8,7 @@
 | | |
 |---|---|
 | **Sản phẩm** | **Plexco** — platform quản lý hoạt động thể thao cho **host** và khám phá/tham gia kèo cho **player**, đa môn (cầu lông, pickleball, tennis, bóng đá…), hoạt động ngay trong Zalo/Facebook Messenger + web app đồng bộ |
-| **Phiên bản** | v3.9p — mirror DD-113 (launch = PWA + Zalo bot song song, native ngoài launch; §14 gate native có ngưỡng đo được) + **DD-114** (phase-1 = 7 nhóm feature, launch là subset; §5.1 phân lớp *MVP scope* vs *phase-1*). Runtime/code vẫn absent; DD-32 Option D giữ nguyên. |
+| **Phiên bản** | v3.9q — mirror **DD-115** (Membership gói hội viên 30 ngày: D1–D5 ✅ chốt hình dạng dữ liệu/đường tiền/cách tính; D6–D8 ⬜ blocker — thêm FR-5.6, §5.2 callout, §9.3 phân định doanh thu, OD-23) · v3.9p — mirror DD-113 (launch = PWA + Zalo bot song song, native ngoài launch; §14 gate native có ngưỡng đo được) + **DD-114** (phase-1 = 7 nhóm feature, launch là subset; §5.1 phân lớp *MVP scope* vs *phase-1*). Runtime/code vẫn absent; DD-32 Option D giữ nguyên. |
 | **Ngày** | 28/07/2026 |
 | **Người soạn** | Ngoc-Anh |
 | **Người duyệt (approvers)** | Ngoc-Anh (solo founder, self-approved) |
@@ -134,6 +134,10 @@ Một platform **2 phía** + **đa kênh** + **đa môn**:
 ### 5.2 Ngoài phạm vi
 Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt sân/quản lý lịch sân (booking nhà thi đấu) · **app mobile native trong phase-1** (phase-1 target = web app PWA installable/offline; S9/S20 còn là delivery plan, không phải runtime evidence; native là đích **phase-2** — DD-69/OD-20 direction ✅ accepted, native build TBD) · BI nâng cao · **Telegram và các nền tảng chat ngoài Zalo/Messenger** · **bridge/đồng bộ chat in-app ra group Zalo/Messenger** (chat in-app chỉ sống trong Plexco ở phase-1) · matchmaking xếp cặp theo trình độ tự động (discovery là *tìm kèo*, không phải xếp đối thủ) — để ngỏ tương lai.
 
+> ⚙️ **DD-115 (owner 25/08) — Membership KHÔNG phá vỡ "platform không cầm tiền player".** Gói hội viên là **CLB thu tiền của player**, Plexco chỉ ghi nhận và đối soát y như buổi lẻ — không có ví, không có thẻ, không có dòng tiền chạy qua platform. Ranh giới §5.2 giữ nguyên.
+>
+> ⚙️ **Membership nằm NGOÀI phase-1** (DD-114 D7) và ngoài launch (DD-113 D3): nó ngồi trên Session core + Payment reconcile, mà cả hai còn chưa có runtime. Đưa vào đây để phạm vi sau phase-1 có chỗ ghi, **không phải** để kéo vào phase-1.
+
 ---
 
 ## 6. Yêu cầu nghiệp vụ (Business Requirements)
@@ -199,6 +203,12 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 - **FR-5.3** Mỗi lượt chơi tạo một `charge/debt` (giá suy theo **giới tính member** nếu kèo đặt giá nam/nữ); CK gốc được giữ bất biến và phân bổ qua `payment_allocations`, hỗ trợ một CK trả nhiều khoản/người, trả thiếu/dư và hoàn tác có audit.
 - **FR-5.4** Khớp CK ↔ khoản nợ theo **tên + số tiền + ngày** (mặc định); ưu tiên `pay_code` nếu có; FIFO khi đồng giá cùng ngày; tổng allocation **không vượt số tiền CK** và không mark quá số tiền phủ.
 - **FR-5.5** CK không khớp hoặc còn dư → `/unmatched` gán tay; retry và thao tác gán đều **idempotent**.
+- **FR-5.6** **Membership — gói hội viên chu kỳ 30 ngày (DD-115 D1–D5 ✅; ngoài phase-1).** Player chọn ngày bắt đầu (không được quá khứ), hệ thống **đếm số buổi theo lịch cố định** trong 30 ngày kể từ ngày đó, báo giá đã chiết khấu theo gói và thu **một lần**. Bốn ràng buộc là một phần của yêu cầu, không phải chi tiết triển khai: **(a)** "thu một lần" hiện thực bằng **N charge đã chiết khấu + một CK phân bổ sang N charge** — FR-5.3 *"mỗi lượt chơi tạo một charge"* **giữ nguyên**, không có charge tổng; **(b)** số buổi **đếm từ kèo thật** trong cửa sổ, không nhân số tuần — cửa sổ 30 ngày không chia hết cho 7 nên hai gói "2 buổi/tuần" không cùng giá và gói cả tháng không bằng tổng hai gói kia; **(c)** tham số (đơn giá, tỉ lệ chiết khấu, ngày trong tuần, làm tròn) là **config per-tenant có version**, chu kỳ đã bán **đóng băng** giá — host đổi giá về sau không hồi tố; **(d)** quyền lợi **fail-closed** — chu kỳ chỉ kích hoạt khi tiền phủ đủ **mọi** charge của nó.
+
+> ⚙️ **Hai ngoại lệ của DD-115 còn ⬜ MỞ và chặn build, cả hai đụng luật đang active — đọc kèm FR-5.4:**
+> **D7 — bind CK vào chu kỳ.** FR-5.4 quy định FIFO khi đồng giá cùng ngày; một CK trả gói của người **đang nợ buổi lẻ cũ** sẽ bị hút vào nợ cũ trước, khiến gói không kích hoạt trong khi player tin là đã trả xong. Cơ chế bind chưa chốt ⇒ **FR-5.6 chưa chạy được đầu-cuối**.
+> **D6 — quyền vào buổi đã full.** Đây là **ngoại lệ với luật capacity một-nguồn** (BL-SES-2/BL-CBF-3), nên là quyết định owner chứ không phải chi tiết spec. Kèm một gap hạ tầng: khái niệm **"sân"** chưa tồn tại trong hệ thống — kèo chỉ có tổng số chỗ — nên "tối đa 8 người/sân" chưa phát biểu được.
+> **D8 — chiết khấu phí giải đấu** chặn ngoài bởi DD-82: Tournament v1 **không đụng tiền**, chưa có phí để chiết khấu.
 
 ### MODULE 6 — Nhắc & Xác nhận
 - **FR-6.1** Cron nhắc qua web+Zalo chính; Messenger best-effort theo Page-endpoint reachability, one-route delivery; ngoài cửa sổ/không eligible fallback, chống spam.
@@ -295,6 +305,8 @@ Thanh toán in-app/ví/thẻ (platform **không cầm tiền player**) · đặt
 
 ### 9.3 Dòng tương lai (ngoài MVP)
 Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplace, managed Messenger/Zalo bot trả phí, add-on ngoài tier host hiện tại. **Không** làm loãng MVP.
+
+> ⚙️ **DD-115 — Membership KHÔNG phải một dòng doanh thu của Plexco.** Tiền gói chảy **player → CLB**; Plexco không lấy phần trăm, không cầm tiền. Nó là **feature bán cho host** (giữ chân player, thu gọn một lần thay vì 17 lần), nên giá trị thương mại nằm ở chỗ làm `host_pro` đáng tiền hơn — không nằm ở §9.1. Muốn thu phí trên gói sau này thì đó là **quyết định mới**, phải mở DD riêng và xét lại ranh giới §5.2 *"platform không cầm tiền player"*.
 
 ---
 
@@ -420,6 +432,7 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 | OD-20 | **Định vị app-native:** phase-1 target web app PWA → phase-2 app native; Zalo/Messenger = acquisition 0-install, in-app Chat = daily target, native = retention | ✅ **DD-69 direction accepted (owner 18/07)** — app-first; native ngoài phase-1 committed scope, **build phase-2 TBD**; technical gates (framework/platform/API-auth-push/offline/store) còn mở. Xem `../standards/decisions.md` DD-69 + `../decisions/analysis/dd-69-app-native-analysis.md` |
 | OD-21 | **In-app Chat primary player surface + requester-only `/pay`** | ✅ **DD-91 `DECISION_FINAL` (owner 27/07)** — exact contract đã chốt; current readiness chỉ lấy từ primary plan §13; chưa có migration/code/runtime |
 | OD-22 | **In-app multi-channel + message/search/slash/digest/moderation floor** | ✅ **DD-86/DD-91–95 `DECISION_FINAL` (owner 28/07); DD-88 broader `DEFERRED_PROPOSAL`** — companion contracts Reviewed; primary plan v1.8 = `PLAN_READY` tại `90d292d`, maps bounded mechanisms `1–47`, API `A1–A21`, design/FE `F0–F15`; từng slice vẫn phải strict `CODE_READY`; no runtime/migration/API/UI |
+| OD-23 | **Membership — gói hội viên chu kỳ 30 ngày cho player** (CLB thu, Plexco không cầm tiền) | ✅ **DD-115 D1–D5 chốt (owner 25/08):** lớp thương mại trên `memberships` (bảng đó 0 thay đổi cột) · **N charge đã chiết khấu + 1 CK allocate sang N charge** (không charge tổng — `charges.session_id` NOT NULL + UNIQUE `(tenant,session,player)` chặn) · đếm buổi từ kèo thật (cửa sổ 30 ngày không chia hết cho 7) · config có version, giá đóng băng tại thời điểm mua · quyền lợi fail-closed. ⬜ **Còn mở, chặn build:** D6 quyền vào buổi đã full (**ngoại lệ BL-SES-2/BL-CBF-3**, Tier C; khái niệm "sân" chưa tồn tại) · D7 bind CK vào chu kỳ (**ngoại lệ FR-5.4/BL-PAY-5 FIFO**) · D8 chiết khấu phí giải đấu (chặn bởi DD-82). Xem FR-5.6 |
 
 ## 17. Thuật ngữ (Glossary)
 
@@ -453,6 +466,7 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 25/08/2026 | v3.9q | **Mirror DD-115 (owner 25/08) — Membership gói hội viên 30 ngày; D1–D5 ✅, D6–D8 ⬜.** Thêm **FR-5.6** vào MODULE 5 kèm bốn ràng buộc thuộc *yêu cầu* chứ không phải triển khai: thu-một-lần hiện thực bằng **N charge + 1 CK phân bổ** nên **FR-5.3 giữ nguyên** (không có charge tổng — `charges` bị khoá theo kèo bởi NOT NULL + UNIQUE `(tenant,session,player)` + composite FK `0019`); số buổi **đếm từ kèo thật** vì cửa sổ 30 ngày không chia hết cho 7 (đo trên chính ví dụ requirement: start 23/08/2026 ⇒ T3+T5 = 8 nhưng T7+CN = **9**, cả tháng = **17** chứ không phải 16); config có **version** và chu kỳ **đóng băng giá** (BL-SES-3 không hồi tố); quyền lợi **fail-closed**. Thêm callout §5.2 pin rõ membership **không phá** ranh giới *platform không cầm tiền player* (tiền chảy player → CLB) và **nằm ngoài phase-1** (DD-114 D7) / ngoài launch (DD-113 D3). Thêm callout §9.3 phân định: membership **không phải dòng doanh thu của Plexco** mà là feature làm `host_pro` đáng tiền hơn; muốn thu phí trên gói là **DD mới**. Thêm **OD-23** vào §16. ⬜ **Ghi rõ hai ngoại lệ chưa chốt vì chúng đụng luật đang active, không được để mâu thuẫn ngầm:** D7 vs FR-5.4 FIFO (CK trả gói của người đang nợ cũ bị hút vào nợ cũ) · D6 vs luật capacity một-nguồn (kèm gap: khái niệm "sân" chưa tồn tại, kèo chỉ có tổng số chỗ). D8 chặn ngoài bởi DD-82 (Tournament v1 không đụng tiền). **Không authorize** code/migration/slice/enablement; D6+D7 chưa chốt thì FR-5.6 chưa chạy được đầu-cuối. |
 | 22/08/2026 | v3.9p | **Mirror DD-114 ✅ (owner 22/08) — phase-1 = 7 nhóm feature, launch (DD-113) là subset.** §5.1 thêm khối ⚙️ phân lớp rõ **MVP scope (§5.1, có discovery + in-app Chat)** vs **phase-1 (DD-114, không có hai thứ đó)** — khác lớp chứ không mâu thuẫn, và khi xung đột thì DD-114 thắng cho slice phase-1. Ghi hai hard dependency: **(a)** vế tiền chỉ `host_pro` ⇒ **billing P5 vào phase-1** + **reader đầu tiên của DD-29 entitlement registry** (vẫn 0 TS đọc tại `a151b15`), auto-reconcile cần đủ chuỗi gate và cấm quảng bá như capability toàn cầu; **(b)** toggle public/private chỉ mở **sau `public_projection_fences`** (nợ DD-12) vì private/cancel hiện còn lộ tới khi projector async chạy. Thêm: **A3 legal thành blocker phase-1**; ⬜ OQ public-khi-chưa-có-discovery. ⚠️ **Không đổi:** FR/BR, §5.2, canonical P-number, DD-32 Option D, runtime vẫn 0. |
 | 22/08/2026 | v3.9o | **Mirror DD-113 ✅ (owner 22/08) — GTM re-sequencing.** §14: câu *"ngưỡng chốt khi có baseline"* của product-evidence gate phase-2 native được thay bằng **ngưỡng đo được** (≥5 host ≥4 tuần trên PWA · weekly return ≥60% · **install rate ≥30% host, tách iOS/Android** · `/api/v1`+bearer/refresh+client-safe contracts đã land · nêu được capability PWA đo được là không làm nổi); thêm pin **launch scope**: launch = PWA + Zalo bot **song song**, web hết vai "fallback", PWA v1 = 5 khối (signin/signup · link Zalo bot · session management · session detail · settings), negative scope launch gồm discovery/chat/feed/auto-reconcile/rating/tournament/**web push**/**fill-slot**/**native**. ⚠️ **Không đổi:** phase-1 committed scope, FR/BR, canonical P-number, DD-32 Option D, và runtime vẫn 0. DD-113 **không** đảo DD-69 (§1/§5.2/§16 OD-20 giữ nguyên) và **không** gỡ lệnh FE PENDING 13/08. |
 | 28/07/2026 | v3.9n | **Readiness mirror re-pin:** primary Chat plan v1.8 đạt `PLAN_READY` tại immutable authority `90d292d` (closure 12/12). Cập nhật live pointer `main@784bc8d` và downstream versions; giữ nguyên `runtime = 0`, no migration/API/UI, no coding/worktree authorization và strict per-slice `CODE_READY`. DD-32 behavior không đổi. |

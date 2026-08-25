@@ -1,11 +1,12 @@
 # Feature: Membership (Gói hội viên theo chu kỳ 30 ngày) — Backend Tech Spec
 
 > **Canonical phase:** P4+ — sau Session core + Payment reconcile. **NGOÀI phase-1** (DD-114 D7).
-> **Version:** 0.2 · 2026-08-24
+> **Version:** 0.3 · 2026-08-25
 > **Status:** Draft *(chưa qua readiness gate — KHÔNG phải Reviewed contract; DDL dưới đây là contract cần build, chưa migrate)*
+> **Decision authority:** DD-115 **D1–D5 ✅ chốt** (owner 2026-08-25) → §2 schema shape, §4 pricing logic và money invariants đã có decision đứng sau. **D6–D8 ⬜** → `sessions.court_count` (§2), quyền vượt slot (§4), settlement binding (§4) và `tournament_discount_bp` **chưa được authorize**; slice chạm chúng phải `AWAIT`.
 > **Implementation:** Not started
-> **Product spec:** `../FE/feature_membership.md` v0.2
-> **References:** `../../standards/decisions.md` DD-115 (🟡 mở cùng spec) · DD-02 · DD-29 · DD-32 · DD-39 · DD-40 · DD-43 · DD-45 · DD-68 · DD-82 · `../../standards/business-rules.md` BL-PAY-2/5/8/11 · BL-SES-2/3/9 · BL-CBF-3/5 · BL-TEN-1 · BL-SEC-3 · `../../standards/api-reference-convention.md` (DD-60 envelope)
+> **Product spec:** `../FE/feature_membership.md` v0.3
+> **References:** `../../standards/decisions.md` DD-115 (D1–D5 ✅ / D6–D8 ⬜) · DD-02 · DD-29 · DD-32 · DD-39 · DD-40 · DD-43 · DD-45 · DD-68 · DD-82 · `../../standards/business-rules.md` **BL-MBS-1..5** · BL-PAY-2/5/8/11 · BL-SES-2/3/9 · BL-CBF-3/5 · BL-TEN-1 · BL-SEC-3 · `../../standards/api-reference-convention.md` (DD-60 envelope)
 
 > **Gate 3 chiều (trước khi Reviewed):** mọi claim phải khớp (a) bảng/claim trong spec ↔ (b) snippet DDL/code trong spec ↔ (c) live code/schema trên `main`. Hiện (c) = "chưa tồn tại" cho 2 bảng mới; khi build phải re-verify với `packages/db/schema.ts` + `packages/db/migrations/`.
 
@@ -597,7 +598,7 @@ stateDiagram-v2
 
 ### Rollout
 
-1. **Prerequisite (chặn cứng):** đóng MBS-OQ-1, OQ-2, OQ-4, OQ-5, OQ-7, OQ-9 ở DD-115. OQ-7 chạm bất biến capacity (BL-SES-2/BL-CBF-3) ⇒ Tier C theo DD-107, không được quyết ở tầng spec.
+1. **Prerequisite (chặn cứng):** DD-115 nhánh **D6** (⇒ MBS-OQ-2 + MBS-OQ-7 — ngoại lệ BL-SES-2/BL-CBF-3 ⇒ **Tier C** theo DD-107, không được quyết ở tầng spec) và nhánh **D7** (⇒ MBS-OQ-4 — ngoại lệ BL-PAY-5 FIFO) phải có quyết định owner; nhánh **D8** chờ DD-82. MBS-OQ-1/OQ-5/OQ-9 đóng được ở tầng spec nhưng vẫn phải đóng trước migration. **D1–D5 đã ✅** nên §2 schema shape và §4 pricing/money invariants không mở lại.
 2. Migration bảng mới (staging) + invariant test IT-2/IT-3/IT-4 xanh trước khi mở route.
 3. Feature flag per-tenant; bật cho đúng tenant dogfood trước.
 4. Chạy song song với thu tiền lẻ ít nhất một chu kỳ đầy đủ (30 ngày) trước khi mở rộng.
@@ -624,5 +625,6 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-25 | v0.3 | **DD-115 D1–D5 ✅ chốt (owner), D6–D8 ⬜ + mirror chain đã land.** Header thêm **Decision authority** chỉ đích danh phần nào của spec đã có decision đứng sau (§2 schema shape · §4 pricing + money invariants) và phần nào **chưa được authorize** (`sessions.court_count` · quyền vượt slot · settlement binding · `tournament_discount_bp`) — slice chạm chúng phải `AWAIT`. §6 Rollout prerequisite viết lại theo **nhánh D6/D7/D8** thay vì liệt kê OQ rời, và nói rõ D6 là **Tier C** (DD-107) nên không được quyết ở tầng spec. Trỏ BL-MBS-1..5. Không đổi DDL, index, query pattern, edge case hay test plan. |
 | 2026-08-24 | v0.2 | §5 thêm blockquote trỏ decision table + abuse cases sang Product spec §2 (`MBS-D*` · `MBS-M*` · `MBS-AB-*`), đóng dòng gate "High-risk (money/auth/PII): decision-table coverage + abuse/concurrency cases bắt buộc" của `../../templates/be-tech-spec-template.md` §5 mà không dựng bảng thứ hai. Không đổi DDL/API/test nào. |
 | 2026-08-24 | v0.1 | Khởi tạo từ requirement owner 2026-08-24. 3 bảng mới (contract, chưa migrate) · 4 index · 4 query pattern · 20 edge case · 34 unit test · 7 integration test. Pin: N-charge model (không sửa `charges.session_id`), `memberships` không đổi cột, làm tròn per-buổi, quyền lợi fail-closed. Draft — chưa qua readiness gate, **không authorize** code/migration/slice. |

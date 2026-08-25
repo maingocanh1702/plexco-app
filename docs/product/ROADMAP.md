@@ -1,8 +1,9 @@
 # 🗺️ ROADMAP — Plexco
 
-**Phiên bản:** v3.7
+**Phiên bản:** v3.9
+> ⚠️ *Đính chính version: header đứng ở v3.7 trong khi changelog đã tới v3.8 (mirror DD-116, 24/08) — dòng header không được bump lần đó. v3.9 gánh cả phần lệch này.*
 **Ngày tạo:** 16/06/2026 · **Cập nhật:** 22/08/2026
-**Căn cứ:** `BRD.md` v3.9n · `PRD.md` v2.8m · `TDD.md` v3.1h · `../standards/decisions.md` (current — đọc bảng tổng hợp + changelog của chính file đó; **không pin version decisions ở đây** vì số chép tay đã stale một lần: header này từng ghi v2.11 trong khi live là v2.19) · `../features/FE/feature_channel_booking_funnel.md` + BE companion · `../standards/BUILD-STATUS.md`
+**Căn cứ:** `BRD.md` v3.9q · `PRD.md` v2.8p · `TDD.md` v3.1j · `../standards/decisions.md` (current — đọc bảng tổng hợp + changelog của chính file đó; **không pin version decisions ở đây** vì số chép tay đã stale một lần: header này từng ghi v2.11 trong khi live là v2.19) · `../features/FE/feature_channel_booking_funnel.md` + BE companion · `../standards/BUILD-STATUS.md`
 
 > ROADMAP là nguồn sự thật cho **delivery order + dev progress**. Product scope thuộc BRD; behavior thuộc PRD; implementation contract thuộc TDD.
 
@@ -620,6 +621,23 @@ Pen-test cô lập **+ pen-test public layer** (thử rò tiền/PII/giới tín
 
 ---
 
+## Ngoài lộ trình phase-1 — Membership (DD-115, P4+)
+
+> **Không** nằm trong phase-1 (DD-114 D7) và **không** trong launch (DD-113 D3). Ghi ở đây để thứ tự delivery sau phase-1 có chỗ neo, không phải để kéo lên trước.
+
+**Membership — gói hội viên chu kỳ 30 ngày** (`FE/feature_membership.md` v0.3 + `BE/feature_membership_tech.md` v0.3, Draft · DD-115 D1–D5 ✅ / D6–D8 ⬜).
+
+| Hạng mục | Trạng thái |
+|---|---|
+| **Hard dependency** | Session core (recurrence + capacity) **và** Payment reconcile phải có runtime trước. Cả hai hiện chưa. Membership đọc `sessions` để đếm buổi và ghi `charges`/`payment_allocations` để thu tiền — không có hai thứ đó thì không có gì để dựng lên. |
+| **Chi phí schema** | 3 bảng mới tenant-scoped/RLS. **0 thay đổi** trên `charges`/`payment_allocations`/`bank_transactions` và **0 cột mới** trên `memberships` — đây là lý do nó rẻ hơn vẻ ngoài. |
+| ⬜ **Blocker cứng #1 (D6)** | Quyền vào kèo đã full là **ngoại lệ với BL-SES-2/BL-CBF-3** ⇒ Tier C, cần owner. Kèm gap hạ tầng: khái niệm **"sân" chưa tồn tại** (`grep -rin court packages/db` rỗng). |
+| ⬜ **Blocker cứng #2 (D7)** | Bind CK vào chu kỳ là **ngoại lệ với BL-PAY-5 FIFO**. Chưa chốt ⇒ gói của người đang nợ cũ **không kích hoạt được** ⇒ không có slice nào chạy đầu-cuối. |
+| ⛔ **Blocker ngoài (D8)** | Chiết khấu phí giải đấu chờ DD-82 — Tournament v1 không đụng tiền. |
+| **Thứ tự đề xuất khi mở** | (1) đóng D6+D7 ở decision level → (2) migration 3 bảng + invariant test `Σ amount_due == total`, không-over-allocation, tenant isolation → (3) quote/purchase read-only trước, settlement sau → (4) chạy song song thu tiền lẻ **trọn một chu kỳ 30 ngày** rồi mới GA. |
+
+---
+
 ## Dependency Map
 
 ```mermaid
@@ -884,6 +902,7 @@ Chuỗi kế tiếp (theo `../autopilot-templates/next-lanes-2026-08-13-RUN.md`)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 25/08/2026 | **v3.9** | **Mirror DD-115 (owner 25/08) — Membership gói hội viên 30 ngày; D1–D5 ✅, D6–D8 ⬜.** Thêm section *Ngoài lộ trình phase-1* neo Membership vào **P4+**, ngoài phase-1 (DD-114 D7) và ngoài launch (DD-113 D3). Ghi hard dependency **Session core + Payment reconcile phải có runtime trước** (Membership đọc `sessions` để đếm buổi, ghi `charges`/`payment_allocations` để thu) và chi phí schema thật: 3 bảng mới, **0 thay đổi bảng tiền, 0 cột mới trên `memberships`**. Ghi **hai blocker cứng** — D6 ngoại lệ BL-SES-2/BL-CBF-3 (Tier C; khái niệm "sân" chưa tồn tại) và D7 ngoại lệ BL-PAY-5 FIFO (chưa chốt ⇒ gói không kích hoạt được ⇒ **không slice nào chạy đầu-cuối**) — cộng D8 chặn ngoài bởi DD-82. Kèm thứ tự mở 4 bước, GA chỉ sau khi chạy song song trọn một chu kỳ 30 ngày. ⚠️ Kèm **đính chính version**: header đứng ở v3.7 trong khi changelog đã tới v3.8 (mirror DD-116) — v3.9 gánh cả phần lệch. **Không authorize** code/migration/slice. |
 | 24/08/2026 | **v3.8** | **Mirror DD-116 ✅ Option B — KEEP: FE PENDING vào decision log kèm named trigger (owner 24/08).** Hai khối FE boundary (dòng ~63 + ~407) nay trỏ **nguồn bền = `../standards/decisions.md` DD-116**, RUN doc 13/08 hạ xuống nguồn lịch sử; Phụ lục A thêm hàng DD-116. PENDING **giữ nguyên** (Option B) — gỡ chỉ khi named trigger đủ CẢ BA: (a) owner chọn canonical `.pen` (đúng một) · (b) tracked trên `main` · (c) owner ký nghiệm thu design authority (gate DD-81); khi gỡ ⇒ FE bounded đúng 5 khối launch, mỗi lane vẫn qua Level 3 + readiness gate; không sự kiện khác gỡ. ⚠️ **Không đổi:** canonical P-number, delivery order, thanh %, và **không re-pin/không đo lại** gì. |
 | 22/08/2026 | **v3.7** | **Mirror DD-114 ✅ — phase-1 feature scope = 7 nhóm, launch (DD-113) là subset (owner 22/08).** Sửa 4 chỗ: (1) khối 🟣 đầu file thêm danh sách 7 nhóm + hai hệ quả đắt + OQ; (2) §Canonical Delivery Groups thêm ghi chú **phase-1 cắt ngang bảng** — 7 nhóm rơi vào **P0–P5 trừ discovery/chat**, bảng vẫn thắng về *dependency* còn DD-114 thắng về *phạm vi*; (3) §GTM theo phase — hàng **P5** không còn là bước cuối mà là **điều kiện của nhóm 6** (không có `host_pro` thì không có gì để gate auto-reconcile + nhắc tự động); (4) Phụ lục A thêm hàng DD-114. **Hai hard dependency owner-final:** billing P5 + **reader đầu tiên của DD-29 entitlement registry** (vẫn 0 TS đọc tại `a151b15`) vào phase-1; toggle public/private chỉ mở **sau khi land `public_projection_fences` (8a)** vì kèo private/cancel hiện còn lộ tới khi projector async chạy. **A3 legal (PII) từ lead-time item thành blocker phase-1.** ⬜ OQ chưa chốt: public để làm gì khi chưa có discovery. ⚠️ **Không đổi:** canonical P-number, Dependency Map, delivery order, thanh ~33%, FE PENDING; **v3.7 không phải re-pin**, không số đếm nào được đo lại. |
 | 22/08/2026 | **v3.6** | **Mirror DD-113 ✅ — GTM re-sequencing (owner 22/08).** Launch = **webapp PWA + Zalo bot song song**; app native lùi về phase sau; web hết vai "fallback". Sửa 5 chỗ: (1) khối 🟣 mới trên đầu file; (2) §Positioning — thêm đoạn DD-113 dưới đoạn DD-69, **không** đảo DD-69; (3) hàng *App Native* trong §Canonical Delivery Groups — traction signal "PWA live + retention đo được" nay thành **ngưỡng cụ thể** (≥5 host ≥4 tuần · weekly return ≥60% · install ≥30% tách iOS/Android · `/api/v1`+bearer/refresh · capability PWA không làm nổi); (4) §GTM theo phase — ghi chú bảng đó là GTM theo *phase kỹ thuật*, không khai thứ tự surface, và mọi metric từ nay phải tách theo surface; (5) Phụ lục A thêm hàng DD-113. ⚠️ **Không đổi:** canonical P-number, Dependency Map, delivery order, thanh ~33%, và **lệnh FE PENDING 13/08 vẫn nguyên hiệu lực** — DD-113 cố ý không gỡ nó (đổi ưu tiên GTM ≠ cấp quyền thực thi FE). Live-truth snapshot vẫn pin ở `1fdba1d`/`a151b15` theo các khối cũ; **v3.6 không phải một lần re-pin**, không có số đếm nào được đo lại trong lần sửa này. |

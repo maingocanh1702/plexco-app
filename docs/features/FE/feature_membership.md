@@ -2,12 +2,13 @@
 
 > **Canonical phase:** P4+ — sau Session core + Payment reconcile. **NGOÀI phase-1** theo DD-114 D7 (không nằm trong 7 nhóm phase-1, cũng không nằm trong launch subset DD-113).
 > **Track:** 💰 Money / Player retention
-> **Version:** 0.2 · 2026-08-24
+> **Version:** 0.3 · 2026-08-25
 > **Status:** Draft *(chưa qua readiness gate — KHÔNG phải Reviewed contract, KHÔNG authorize code/migration)*
+> **Decision authority:** DD-115 **D1–D5 ✅ chốt** (owner 2026-08-25) — hình dạng dữ liệu, đường tiền, cách tính số buổi/giá. **D6–D8 ⬜ còn mở và CHẶN build đầu-cuối.** ✅ ở đây là **decision-level**, không phải `PLAN_READY`/`CODE_READY`. *(Lưu ý ký hiệu: `D1..D8` là các nhánh quyết định của **DD-115**; `MBS-D*`/`MBS-M*` ở §2 là **decision table** của spec — hai hệ khác nhau.)*
 > **Implementation:** Not started
 > **Prerequisites:** Session Management (recurrence + capacity) · Payment Reconcile (charge/allocation) · DD-45 waitlist
-> **BE tech spec:** `../BE/feature_membership_tech.md` v0.1
-> **Tài liệu liên quan:** `../../standards/decisions.md` DD-115 (🟡 đề xuất, mở cùng spec này) · DD-02 `pay_code` · DD-32 Option D · DD-39 giá theo giới tính · DD-40 mark-paid · DD-43 `membership_tags` · DD-82 Tournament · `../../standards/business-rules.md` BL-PAY-2/5/8 · BL-SES-2/3/9 · BL-CBF-3/5
+> **BE tech spec:** `../BE/feature_membership_tech.md` v0.3
+> **Tài liệu liên quan:** `../../standards/decisions.md` DD-115 (D1–D5 ✅ / D6–D8 ⬜) · `../../standards/business-rules.md` **BL-MBS-1..5** · BRD **FR-5.6** + OD-23 · PRD **FLOW 16** + edge 7c–7f · TDD §11 **Q16–Q18** · DD-02 `pay_code` · DD-32 Option D · DD-39 giá theo giới tính · DD-40 mark-paid · DD-43 `membership_tags` · DD-82 Tournament · `../../standards/business-rules.md` BL-PAY-2/5/8 · BL-SES-2/3/9 · BL-CBF-3/5
 
 ---
 
@@ -350,13 +351,13 @@ stateDiagram-v2
 | ID | Quyết định | Trạng thái |
 |---|---|---|
 | MBS-OQ-1 | **Phạm vi ngày bắt đầu.** Requirement viết "chọn 1 ngày bất kỳ trong tháng đó, không được quá khứ" nhưng ví dụ lại nói hỏi ngày 23/08 thì **chỉ** được chọn 23/08. Hai vế mâu thuẫn. Chọn: (a) chỉ hôm nay · (b) hôm nay → hết tháng dương lịch · (c) hôm nay → +N ngày cấu hình | ⬜ Chưa chốt — chặn UC-2 |
-| MBS-OQ-2 | **Số sân.** `sessions` hiện **không có** cột số sân; toàn repo không có khái niệm "court" (`slots_max` là tổng chỗ). Quyền "tối đa 8 người/sân" cần: (a) thêm `sessions.court_count` · (b) suy từ `slots_max / người-mỗi-sân` · (c) config tenant-level cố định | ⬜ Chưa chốt — chặn UC-7, edge #20 |
+| MBS-OQ-2 | 🔴 **BLOCKER — DD-115 · nhánh D6.** **Số sân.** `sessions` hiện **không có** cột số sân; toàn repo không có khái niệm "court" (`slots_max` là tổng chỗ). Quyền "tối đa 8 người/sân" cần: (a) thêm `sessions.court_count` · (b) suy từ `slots_max / người-mỗi-sân` · (c) config tenant-level cố định | ⬜ Chưa chốt — chặn UC-7, edge #20 |
 | MBS-OQ-3 | **Buổi ngoài gói.** Gói weekdays muốn chơi thứ 7: trả giá lẻ hay giá chiết khấu? Có quyền vượt slot không? | ⬜ Chưa chốt — chặn UC-8 |
-| MBS-OQ-4 | **Bind CK vào chu kỳ.** BL-PAY-5 quy định FIFO oldest-first; một CK 1.5tr của người đang nợ buổi cũ sẽ bị hút vào nợ cũ trước. Cần cơ chế bind (pay_code riêng cho chu kỳ? memo? allocation group?) — đây là **ngoại lệ có chủ đích với BL-PAY-5**, phải viết vào DD | ⬜ Chưa chốt — chặn UC-5, edge #3 |
+| MBS-OQ-4 | 🔴 **BLOCKER — DD-115 · nhánh D7.** **Bind CK vào chu kỳ.** BL-PAY-5 quy định FIFO oldest-first; một CK 1.5tr của người đang nợ buổi cũ sẽ bị hút vào nợ cũ trước. Cần cơ chế bind (pay_code riêng cho chu kỳ? memo? allocation group?) — đây là **ngoại lệ có chủ đích với BL-PAY-5**, phải viết vào DD | ⬜ Chưa chốt — chặn UC-5, edge #3 |
 | MBS-OQ-5 | **Huỷ & hoàn tiền.** Buổi bị huỷ / member rời CLB / player huỷ gói giữa chừng: hoàn tiền, cấn trừ chu kỳ sau, hay không hoàn? BL-PAY-8 buộc dùng reversal, nhưng **chính sách** thì chưa có | ⬜ Chưa chốt — chặn UC-12, UC-14, edge #14/#15 |
 | MBS-OQ-6 | **Chồng lấn chu kỳ.** Mua chu kỳ mới khi chu kỳ cũ chưa hết: chặn, cho phép chồng, hay auto-đặt `start` = ngày sau khi chu kỳ cũ kết thúc? | ⬜ Chưa chốt — chặn UC-13 |
-| MBS-OQ-7 | **Vượt slot có tạo charge không.** Buổi trong gói: đã trả rồi ⇒ không charge. Nhưng khi vượt `slots_max`, capacity authority (BL-CBF-3) đang là "một nguồn duy nhất" — cho member vượt là **sửa bất biến BL-SES-2**. Chọn: (a) nâng trần hiệu dụng cho member · (b) không nâng trần, chỉ ưu tiên waitlist | ⬜ Chưa chốt — chạm HARD RULE, cần DD riêng |
-| MBS-OQ-8 | **Chiết khấu giải đấu.** `tournaments` chưa tồn tại trong schema; `feature_tournament_tech.md` v0.3 ghi rõ **v1 không đụng tiền, entry-fee deferred**. Ngoài ra "giải ngay sau đó" chưa định nghĩa (giải nào đủ điều kiện?) | ⛔ Chặn ngoài — phụ thuộc DD-82 + slice tiền của tournament |
+| MBS-OQ-7 | 🔴 **BLOCKER — DD-115 · nhánh D6.** **Vượt slot có tạo charge không.** Buổi trong gói: đã trả rồi ⇒ không charge. Nhưng khi vượt `slots_max`, capacity authority (BL-CBF-3) đang là "một nguồn duy nhất" — cho member vượt là **sửa bất biến BL-SES-2**. Chọn: (a) nâng trần hiệu dụng cho member · (b) không nâng trần, chỉ ưu tiên waitlist | ⬜ Chưa chốt — chạm HARD RULE, cần DD riêng |
+| MBS-OQ-8 | ⛔ **BLOCKER ngoài — DD-115 · nhánh D8.** **Chiết khấu giải đấu.** `tournaments` chưa tồn tại trong schema; `feature_tournament_tech.md` v0.3 ghi rõ **v1 không đụng tiền, entry-fee deferred**. Ngoài ra "giải ngay sau đó" chưa định nghĩa (giải nào đủ điều kiện?) | ⛔ Chặn ngoài — phụ thuộc DD-82 + slice tiền của tournament |
 | MBS-OQ-9 | **Làm tròn.** Đơn vị làm tròn (1đ / 1.000đ) và hướng làm tròn (half-up / floor) khi chiết khấu ra số lẻ | ⬜ Chưa chốt — chặn edge #6 |
 | MBS-OQ-10 | **Đặt tên bảng.** `membership_cycles`/`membership_plans` đụng ngữ nghĩa với `subscriptions`/`plans` (billing host, DD-29) đang tồn tại. Cần tên không gây nhầm ở cả code lẫn doc | ⬜ Chưa chốt |
 
@@ -366,5 +367,6 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-25 | v0.3 | **DD-115 D1–D5 ✅ chốt (owner), D6–D8 ⬜ + mirror chain đã land.** Header thêm **Decision authority**, phân biệt rõ decision-level ≠ `PLAN_READY`/`CODE_READY`, và tách ký hiệu `D1..D8` (nhánh của DD-115) khỏi `MBS-D*`/`MBS-M*` (decision table §2 thêm ở v0.2) để người sau không đọc nhầm hai hệ. Đánh dấu **MBS-OQ-2/4/7 🔴 BLOCKER** (D6/D7) và **MBS-OQ-8 ⛔ blocker ngoài** (D8/DD-82) — bốn OQ này chặn build đầu-cuối, sáu OQ còn lại thì không, trước đây bảng OQ không phân biệt. Trỏ ngược mirror: BL-MBS-1..5 · BRD FR-5.6 + OD-23 · PRD FLOW 16 + edge 7c–7f · TDD §11 Q16–Q18. Không đổi UC, edge case, screens hay decision table. |
 | 2026-08-24 | v0.2 | Đóng 2 gap của review gate cho feature tiền (docs-only, không đổi scope/contract): (1) §2 thêm **decision table** nhánh quyền lợi `MBS-D1..D6` + nhánh tiền `MBS-M1..M5` + **abuse cases** `MBS-AB-1..7`, mỗi hàng trỏ test có sẵn ở BE §5 — không thêm hành vi mới, chỉ pin thành bảng thứ mà edge case + Scenarios by Status đã nói rải rác. (2) §3 thêm bảng **Error state → mã lỗi** map về catalog BE §3, kết bằng hàng unknown/missing/timeout fail-closed. Trước đó §3 chỉ ghi "banner + retry" và **không** nhắc mã nào, trong khi BE đã có catalog 13 mã. |
 | 2026-08-24 | v0.1 | Khởi tạo từ requirement owner 2026-08-24. 14 UC · 20 edge case · 10 OQ. Pin: `memberships` không đổi cột; N-charge model do `charges.session_id` NOT NULL; đếm buổi từ `sessions` thật. Draft — chưa qua readiness gate, không authorize code/migration. |

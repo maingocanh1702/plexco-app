@@ -2,9 +2,9 @@
 ## Plexco — platform thể thao đa môn (host + player): Zalo · Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi)*
 
 **Sản phẩm:** **Plexco** — platform quản lý & khám phá hoạt động thể thao đa môn, 2 phía (host + player); bot-in-chat (Zalo/Messenger) + web app sync 2 chiều; **phase-1 không app native** (target = web app PWA installable/offline; S9/S20 chưa phải runtime evidence) — **native là hướng phase-2** (DD-69 direction ✅ accepted; build TBD). **DD-113 (owner 22/08):** launch = **webapp PWA + Zalo bot ra mắt song song**, web hết vai "fallback"; PWA v1 = 5 khối (signin/signup · link Zalo bot · session management · session detail · settings); native **ngoài launch**, gate mở có ngưỡng đo được — xem BRD §14. **DD-114 (owner 22/08):** phase-1 = 7 nhóm feature (signin Google · create club · link club ⇄ Zalo bot · link account ⇄ Zalo · sync data + owner config public/private · session management/detail + nhắc nợ/confirm/gạch nợ · settings/privacy), launch là **subset**; discovery/search và in-app Chat **ngoài phase-1** — xem BRD §5.1 khối ⚙️
-**Phiên bản:** 2.8o
+**Phiên bản:** 2.8p
 **Ngày cập nhật:** 28/07/2026
-**Tài liệu tham chiếu:** `BRD.md` v3.9n · `TDD.md` v3.1h · `../standards/decisions.md` **v2.11 current mirror** (DD-32/DD-86/DD-91–95 `DECISION_FINAL`; DD-88 broader `DEFERRED_PROPOSAL`) · `../features/FE/feature_channel_booking_funnel.md` · `../features/BE/feature_channel_booking_funnel_tech.md` · `../channels/messenger/messenger-channel-design.md` · `../research/player-side-saas-AUDIT.md`
+**Tài liệu tham chiếu:** `BRD.md` v3.9q · `TDD.md` v3.1j · `../standards/decisions.md` **v2.11 current mirror** (DD-32/DD-86/DD-91–95 `DECISION_FINAL`; DD-88 broader `DEFERRED_PROPOSAL`) · `../features/FE/feature_channel_booking_funnel.md` · `../features/BE/feature_channel_booking_funnel_tech.md` · `../channels/messenger/messenger-channel-design.md` · `../research/player-side-saas-AUDIT.md`
 
 > **Current boundary — `main@784bc8d` (28/07 docs snapshot):** current decision mirror v2.11 phản ánh owner-final DD-86/DD-91–95; DD-88 chỉ còn broader `DEFERRED_PROPOSAL`. Assistant Product/BE v0.18, Chat Product/BE v0.15/v0.23 và Notifications Product/BE v3.11 đều Reviewed. Primary plan v1.8 đạt `PLAN_READY` tại authority `90d292d` (closure 12/12), gán đầy đủ bounded mechanisms `1–47`, thin API `A1–A21` và tracked-design FE `F0–F15`; đây là ownership/execution plan, **không** phải runtime hoặc coding authorization. Từng slice vẫn phải đạt strict `CODE_READY`. Chat/payment migration, API và UI chưa tồn tại. Shared dispatcher/scheduler vẫn OFF và chưa có producer/projector nghiệp vụ; `0024` chỉ là DB invariant. Không dùng flow dưới đây để suy `IMPLEMENTED`/`ENABLE_READY`.
 
@@ -12,6 +12,7 @@
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 25/08/2026 | v2.8p | **Mirror DD-115 (owner 25/08) — Membership gói hội viên 30 ngày; D1–D5 ✅, D6–D8 ⬜.** Thêm **FLOW 16** (mua qua bot: chọn ngày bắt đầu không-quá-khứ → hệ **đếm buổi thật** trong 30 ngày → báo giá **per-buổi rồi cộng** → N charge + QR → CK phủ đủ mới kích hoạt → hết hạn theo ngày). Pin lý do không có "một hoá đơn": `charges` khoá theo kèo (`session_id` NOT NULL + UNIQUE `(tenant,session,player)` + composite FK `0019`) ⇒ thu-một-lần = **một CK phân bổ sang N charge**, FLOW 6/FLOW 9 và FR-5.3 **giữ nguyên**, không có đường tiền thứ hai. Thêm 4 edge case §4.1: **7c** ⬜ CK trả gói của người đang nợ cũ bị FIFO (edge #1) hút mất — **ngoại lệ với FR-5.4, chưa chốt, chặn FLOW 16**; **7d** trả thiếu ⇒ không kích hoạt một phần, `unknown` cũng zero quyền; **7e** buổi bị huỷ ⇒ void + reversal, chính sách hoàn tiền chưa chốt; **7f** host đổi giá sau khi bán ⇒ chu kỳ đóng băng giá. FLOW 16 ghi rõ **ba nhánh chặn build**: D6 (ngoại lệ capacity một-nguồn + khái niệm "sân" chưa tồn tại) · D7 (ngoại lệ FIFO) · D8 (DD-82, Tournament v1 không đụng tiền). **Ngoài phase-1** (DD-114 D7), chưa schema/route/runtime. |
 | 22/08/2026 | v2.8o | **Mirror DD-114 ✅ (owner 22/08):** header pin **phase-1 = 7 nhóm feature**, launch (DD-113) là subset; discovery/search + in-app Chat **ngoài phase-1**; vế tiền chỉ `host_pro` ⇒ billing vào phase-1; toggle public/private chỉ mở sau fence của public read model. Chi tiết ở BRD §5.1 + `../standards/decisions.md` DD-114. **Không đổi flow nào trong file này**, runtime vẫn 0. |
 | 22/08/2026 | v2.8n | **Mirror DD-113 ✅ (owner 22/08):** header pin launch = **PWA + Zalo bot song song** (web hết vai "fallback"), PWA v1 = 5 khối, native ngoài launch với gate có ngưỡng đo được (chi tiết ở BRD §14 + `../standards/decisions.md` DD-113). **Không đổi flow nào trong file này**, không đổi phase-1 scope, runtime vẫn 0. |
 | 28/07/2026 | v2.8m | **Readiness mirror re-pin:** primary Chat plan v1.8 đạt `PLAN_READY` tại immutable authority `90d292d`, closure 12/12; live pointer `main@784bc8d`. Giữ rõ `PLAN_READY != CODE_READY != IMPLEMENTED`: mỗi slice còn strict gate riêng, runtime/migration/API/UI vẫn 0 và DD-32 flows không đổi. |
@@ -288,6 +289,32 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 
 ---
 
+## FLOW 16: MEMBERSHIP — gói hội viên chu kỳ 30 ngày *(P4+, DD-115 D1–D5 ✅ · D6–D8 ⬜ · ngoài phase-1)*
+
+> **DD-115 D1–D5 chốt ở mức decision (owner 25/08); D6/D7/D8 còn ⬜ và CHẶN build.** Chưa có schema, chưa có route, chưa có runtime. Spec: `../features/FE/feature_membership.md` v0.3 + `BE/feature_membership_tech.md` v0.3 (Draft). Đọc kèm BRD FR-5.6.
+
+**Luồng mua (bot Zalo — surface chính):**
+
+1. Player gõ `/membership` → bot trả các gói CLB đang bật (VD *ngày thường* T3+T5 · *cuối tuần* T7+CN · *cả tháng*), kèm tỉ lệ chiết khấu. Chưa ghi gì.
+2. Bot hỏi **ngày bắt đầu**; **không cho chọn ngày quá khứ**. ⬜ Phạm vi ngày còn mở (MBS-OQ-1 — requirement gốc tự mâu thuẫn giữa *"ngày bất kỳ trong tháng"* và ví dụ *"chỉ hôm nay"*).
+3. Hệ **đếm buổi thật** theo lịch cố định trong `[start, start+29d]` khớp ngày-trong-tuần của gói. Cửa sổ vượt horizon sinh kèo → **fail-closed**, không bán.
+4. Báo giá: liệt kê **từng ngày**, tính **per-buổi rồi cộng** (không lấy giá × N — các buổi có thể khác giá), hiện tổng sau chiết khấu.
+5. Player xác nhận → tạo chu kỳ `chờ thanh toán` + **N charge đã chiết khấu** + QR/`pay_code`. **Chưa có quyền lợi nào.**
+6. CK về **phủ đủ mọi charge** → chu kỳ `đang chạy` + xác nhận. Thiếu → **không kích hoạt một phần**. Tiền mặt đi đúng đường mark-paid thủ công DD-40.
+7. Hết 30 ngày → chu kỳ `hết hạn`, quyền lợi tắt theo ngày hết hạn (không phụ thuộc job chạy đúng giờ).
+
+**Vì sao không phải "một hoá đơn":** `charges` bị khoá theo kèo (`session_id` NOT NULL + UNIQUE `(tenant, session, player)` + composite FK `0019`), nên "thu một lần" là **một CK phân bổ sang N charge** — FLOW 6/FLOW 9 và FR-5.3 giữ nguyên, không có đường tiền thứ hai.
+
+**⬜ Ba nhánh chưa chốt — chặn FLOW này chạy đầu-cuối:**
+
+| Nhánh | Vấn đề | Đụng gì đang active |
+|---|---|---|
+| D6 | Quyền vào buổi **đã full**, "tối đa 8 người/sân" | Ngoại lệ **BL-SES-2/BL-CBF-3** (capacity một-nguồn) ⇒ Tier C. Kèm gap: khái niệm **"sân" chưa tồn tại**, kèo chỉ có tổng số chỗ |
+| D7 | Bind CK vào đúng chu kỳ | Ngoại lệ **FR-5.4/BL-PAY-5 FIFO** — CK trả gói của người đang nợ cũ bị hút vào nợ cũ, gói không kích hoạt |
+| D8 | Chiết khấu phí giải đấu | Chặn ngoài bởi **DD-82** — Tournament v1 không đụng tiền, chưa có phí để chiết khấu |
+
+---
+
 # 4. EDGE CASES
 
 ## 4.1 Payment
@@ -302,6 +329,10 @@ Sau **mọi** điểm markPaid (thủ công tiền mặt/CK + auto-match CK) →
 | 6 | **CK thiếu id từ provider** | Sinh id tổng hợp `sha256(provider\|acct\|amount\|date\|content)` → vẫn idempotent + unmatched | P3 |
 | 7 | **Hủy buổi khi có CK** | Platform không giữ tiền → owner hoàn tiền tay; log refund | P2 |
 | 7b | **Mark-paid thủ công trùng/nhầm** | markPaid idempotent theo (charge, membership); sửa bằng reversal có audit, không xoá allocation gốc (DD-40) | P2 |
+| 7c | **CK trả gói membership của người đang nợ buổi lẻ cũ** (DD-115 D7) | ⬜ **CHƯA CHỐT — chặn FLOW 16.** FIFO hiện hành (edge #1) sẽ hút CK vào nợ cũ trước, gói không kích hoạt trong khi player tin đã trả xong. Cần cơ chế bind CK ↔ chu kỳ; đây là **ngoại lệ có chủ đích với FR-5.4**, không được cài lén trong service | P4+ |
+| 7d | **Gói membership trả thiếu** (DD-115 D5 ✅) | **Không kích hoạt một phần**: allocate tối đa vào các charge của chu kỳ, chu kỳ giữ `chờ thanh toán`, **zero quyền lợi**. Trạng thái tiền `unknown` cũng ⇒ zero quyền (BL-PAY-12) | P4+ |
+| 7e | **Buổi trong gói bị huỷ sau khi đã trả** (DD-115) | Charge của buổi đó `void` + **reversal** tham chiếu allocation gốc (BL-PAY-8, không sửa ledger). ⬜ Hoàn tiền hay cấn trừ chu kỳ sau: **chưa chốt** (MBS-OQ-5) | P4+ |
+| 7f | **Host đổi giá kèo sau khi đã bán gói** (DD-115 D4 ✅) | Chu kỳ **đóng băng** đơn giá tại thời điểm mua ⇒ charge không đổi (BL-SES-3 *không silent mutation*) | P4+ |
 
 ## 4.2 Identity & Routing
 

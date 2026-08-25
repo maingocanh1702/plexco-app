@@ -412,6 +412,24 @@ F19 → F20
 
 ---
 
+## Membership (DD-115) — vị trí trong graph
+
+```text
+Session core (recurrence + capacity)  ─┐
+                                       ├─→  Membership (P4+, ngoài phase-1)
+Payment reconcile (charge/allocation) ─┘         │
+                                                 ├─ ⬜ D6 capacity exception  → chặn quyền lợi
+                                                 ├─ ⬜ D7 CK↔cycle binding    → chặn kích hoạt gói
+                                                 └─ ⛔ D8 tournament discount → chặn bởi DD-82
+```
+
+- **Consume, không own:** `sessions`/recurrence (đếm buổi) · `charges`/`payment_allocations` (thu tiền) · `players` (chỗ trong buổi) · `memberships` (anchor, **read-only**).
+- **Own:** `membership_plans` (config có version) · `membership_cycles` · `membership_cycle_charges`.
+- **Không skip dependency:** Membership **không** dựng được trước khi Session core và Payment reconcile có runtime — nó không có nguồn đếm buổi và không có đường thu tiền.
+- **Hai blocker không phải kỹ thuật mà là quyết định:** D6 và D7 đều là **ngoại lệ với business rule đang active** (BL-SES-2/BL-CBF-3 và BL-PAY-5), nên không lane nào được tự quyết.
+
+---
+
 ## Quy tắc
 
 1. **Không skip dependency** — F7 cần F6, phải dev F6 xong trước.
@@ -425,6 +443,7 @@ F19 → F20
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 25/08/2026 | v1.16 | **Thêm Membership (DD-115) vào graph.** Neo dependency: Membership ngồi trên **Session core + Payment reconcile**, consume `sessions`/`charges`/`players` và đọc `memberships` read-only; own 3 bảng mới. Ghi rõ ba nhánh chặn: ⬜ D6 (ngoại lệ BL-SES-2/BL-CBF-3 — chặn quyền lợi) · ⬜ D7 (ngoại lệ BL-PAY-5 — chặn kích hoạt gói) · ⛔ D8 (DD-82). Cả D6/D7 là **quyết định owner**, không lane nào tự quyết. |
 | 28/07/2026 | v1.15 | Re-pin current overlay to `main@784bc8d`, decisions v2.11 and primary plan v1.8 `PLAN_READY` at `90d292d`; retain per-slice `CODE_READY` and no-runtime boundaries. |
 | 28/07/2026 | v1.14 | Reconcile canonical primary-surface mechanism graph `1–47` plus separate API `A1–A21` and tracked-design FE `F0–F15`. Pin actual serialized DB worktrees `1→2→3→4`, then execution `5→9→6→7→8`; add current-channel opaque safe-target/consume-time resolver, split media, registry→private-response→domain adapters, KB generation-CAS chain, full DD-67→DD-72 Web Push chain, and payment intent→producers→Inbox/detail→push. Catalog IDs are not execution order; no runtime/code authorization. |
 | 28/07/2026 | v1.13 | Reconcile DD-56/DD-86/DD-91..95 owner-final: add the missing cross-feature `tenant-capability-authority-core` branch before every Chat capability consumer; DD-95 storage/writers land dark before shared send; reply/mention stay atomic in shared while reaction/edit/search use separate canonical mechanism IDs; DD-93/DD-94/Assistant nodes now use the same IDs as plan and BE. DD-88 leaves critical path. Current readiness is referenced only from primary plan §13. No runtime/code authorization. |

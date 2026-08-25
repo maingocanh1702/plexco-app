@@ -4,7 +4,7 @@
 >
 > **Reconcile 28/07/2026:** DD-32 đã reopen thành Option D: channel browse mở, paid final confirm dùng Account-link/pay-later hoặc unlinked verified pay-now; contract chưa có runtime. DD-86/DD-91/DD-92..95 là `DECISION_FINAL`; Chat/Assistant/Notification contracts đã Reviewed nhưng chưa có runtime. Current readiness, blocker và next trigger của primary-surface initiative chỉ lấy từ canonical plan §13. DD-94 sở hữu exact generic coalesced offline chat digest; DD-88 chỉ còn broader `DEFERRED_PROPOSAL`. Chat mention/mute/start-DM dùng một current-channel opaque safe-target authority và re-authorize tại consume time; không có global/fuzzy people search hoặc raw UUID/PII target authority. Retention/legal cleanup và digest timing là enablement gate. Regional auto-reconcile research vẫn là decision input, không tự chốt provider/market expansion.
 > Khi conflict, authority theo topic trong BRD §0; security dùng rule nghiêm ngặt hơn.
-> v1.31 · 2026-07-28 (sync immutable Chat authority/readiness and current core pointers; không có runtime; xem Changelog)
+> v1.32 · 2026-08-25 (thêm BL-MBS-1..5 mirror DD-115 D1–D5; D6/D7 CỐ Ý chưa có rule — xem ghi chú cuối section) · v1.31 · 2026-07-28 (sync immutable Chat authority/readiness and current core pointers; không có runtime; xem Changelog)
 
 ---
 
@@ -162,6 +162,26 @@
 
 ---
 
+## BL-MBS — Membership (gói hội viên chu kỳ 30 ngày)
+
+> Mirror **DD-115 D1–D5 ✅ (owner 25/08)**. Spec: `../features/FE/feature_membership.md` v0.3 + `BE/feature_membership_tech.md` v0.3 (Draft). **Chưa có schema, chưa có runtime.** Phase P4+, ngoài phase-1 (DD-114 D7).
+
+| ID | Luật | Chi tiết | Source |
+|---|---|---|---|
+| **BL-MBS-1** | **`memberships` là anchor, không phải nơi chứa gói** | Gói hội viên là **bảng con** hang off `memberships`; bảng đó giữ nguyên cột, giữ nguyên `memberships_active_person_unique` và merge chain. Merge identity phải re-parent chu kỳ về survivor như charge/history, **không sửa ledger row**. Gói cũng **không** phải `subscriptions`/`plans` (billing host DD-29) và **không** phải `membership_tags` (DD-43 — BL-SES-7 cấm tag tạo giá/quyền). | DD-115 D1 · BL-ID-1/BL-ID-4 · BL-SES-7 |
+| **BL-MBS-2** | **Thu một lần = N charge + một CK phân bổ, KHÔNG charge tổng** | `charges` bị khoá theo kèo (`session_id`/`player_id` NOT NULL + `charges_tenant_session_player_uq` + composite FK `0019`), nên gói tạo **N charge đã chiết khấu**, mỗi buổi một cái, và một `bank_transaction` được allocate sang N charge đó. **Cấm** cột tiền mới, bảng tiền mới, hoặc nới NOT NULL/UNIQUE của `charges`. BL-PAY-2 áp nguyên: mỗi allocation ∈ `[0, amount_due]`. | DD-115 D2 · BL-PAY-2 · BL-PAY-11 · BL-CBF-5 |
+| **BL-MBS-3** | **Số buổi là dữ liệu đo, không phải phép nhân** | Đếm từ `sessions` thật trong `[start, start+cycle_days-1]`, lọc theo **ngày địa phương** của từng buổi (`starts_at AT TIME ZONE sessions.timezone`), khớp weekday mask của gói. Cửa sổ 30 ngày không chia hết cho 7 ⇒ số buổi mỗi thứ **không đều**, hai gói "2 buổi/tuần" không cùng giá, gói cả tháng ≠ tổng hai gói kia. Horizon recurrence chưa phủ hết chu kỳ ⇒ **fail-closed**, không bán, không tạo charge treo. Giá tính **per-buổi rồi cộng** (các buổi có thể khác đơn giá — và khác nữa khi DD-39 land), làm tròn per-buổi; bất biến `Σ charges.amount_due == total_amount`. | DD-115 D3 · BL-SES-1 · DD-39 |
+| **BL-MBS-4** | **Config gói có version; chu kỳ đã bán đóng băng giá** | Tham số (đơn giá, tỉ lệ chiết khấu, ngày trong tuần, làm tròn, trần người/sân) là **config per-tenant có version, immutable per version**, có `created_by` (BL-SEC-3). Sửa = tạo version mới. Chu kỳ snapshot `plan_version` + đơn giá từng buổi ⇒ host đổi giá hoặc đổi chiết khấu về sau **không hồi tố** lên chu kỳ đã bán. `settings(tenant_id,key,jsonb)` **không đủ** cho tham số quyết định tiền vì không có version/audit/kiểu. | DD-115 D4 · BL-SES-3 · BL-SEC-3 |
+| **BL-MBS-5** | **Quyền lợi fail-closed, chỉ sau khi tiền phủ đủ** | Chu kỳ chỉ `active` khi **mọi** charge của nó `paid`. Trả thiếu ⇒ **không kích hoạt một phần**, zero quyền lợi. Trạng thái tiền không chứng minh được ⇒ `unknown` và zero quyền (BL-PAY-12). Quyền tắt theo `ends_on` đọc trực tiếp, không phụ thuộc job expire chạy đúng giờ. Buổi bị huỷ / member rời CLB ⇒ điều chỉnh bằng **reversal có chữ ký** tham chiếu allocation gốc, không sửa/xoá ledger. | DD-115 D5 · BL-PAY-8 · BL-PAY-12 · BL-CBF-2 |
+
+> ⬜ **CỐ Ý CHƯA CÓ RULE cho hai nhánh sau — đừng đọc khoảng trống này là "chưa ai viết".** Cả hai là **ngoại lệ với luật đang active**, nên viết rule trước khi owner chốt sẽ tạo hai luật mâu thuẫn ngầm trong cùng file:
+> - **DD-115 D6 — member vào kèo đã đủ `slots_max`.** Nghịch **BL-SES-2** (*"admission occupancy không vượt `slots_max`"*) và **BL-CBF-3** (*"một capacity authority"*). Tier C theo DD-107. Gap kèm theo: khái niệm **"sân" không tồn tại** — `grep -rin court packages/db` trả rỗng, kèo chỉ có `slots_max` tổng. Tới khi chốt, **BL-SES-2/BL-CBF-3 áp nguyên cho member y như mọi người**.
+> - **DD-115 D7 — bind CK vào chu kỳ.** Nghịch **BL-PAY-5** (FIFO oldest-first). Tới khi chốt, **BL-PAY-5 áp nguyên**, nghĩa là gói của người đang nợ cũ sẽ không kích hoạt được — đó là lý do D7 chặn build chứ không phải chi tiết tinh chỉnh.
+>
+> ⛔ **DD-115 D8** (chiết khấu phí giải đấu) chặn ngoài bởi **DD-82**: `tournaments` chưa tồn tại và Tournament v1 **không đụng tiền**.
+
+---
+
 ## BL-NTF — Nhắc & Xác nhận
 
 | ID | Luật | Chi tiết | Source |
@@ -256,6 +276,7 @@ Business rules file này là **mirror**, không tự tạo authority. Khi phát 
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 25/08/2026 | v1.32 | **Thêm BL-MBS-1..5 — mirror DD-115 D1–D5 ✅ (owner 25/08).** `memberships` là anchor và gói là bảng con, không đụng ba khái niệm trùng tên (BL-MBS-1) · thu-một-lần = **N charge + một CK phân bổ**, cấm nới NOT NULL/UNIQUE của `charges` (BL-MBS-2) · số buổi **đo** từ `sessions` theo ngày địa phương, fail-closed khi horizon chưa phủ, giá per-buổi rồi cộng, bất biến `Σ amount_due == total` (BL-MBS-3) · config có version + chu kỳ đóng băng giá, `settings` không đủ cho tham số tiền (BL-MBS-4) · quyền lợi fail-closed, không kích hoạt một phần, điều chỉnh bằng reversal (BL-MBS-5). **Cố ý KHÔNG viết rule cho D6/D7** và ghi rõ lý do ngay trong section: cả hai là ngoại lệ với BL-SES-2/BL-CBF-3 và BL-PAY-5 đang active; viết trước khi owner chốt sẽ tạo hai luật mâu thuẫn ngầm. Tới khi chốt, các luật hiện hành **áp nguyên**. Mirror only; không runtime, không migration. |
 | 28/07/2026 | v1.31 | Refresh current BRD/PRD/TDD/decisions pointers and mirror immutable Chat authority `90d292d` + primary plan v1.8 `PLAN_READY`; retain per-slice `CODE_READY` and no-runtime boundaries. |
 | 28/07/2026 | v1.30 | Add BL-CHT-7 current-channel opaque safe-target authority for mention/mute/start-DM: active-human safe DTO only, no global/fuzzy search/raw UUID/contact/gender/debt/PII, and mandatory consume-time membership/tenant/channel/block/safety/capability re-authorization before mutation. Contract mirror only; no runtime. |
 | 28/07/2026 | v1.29 | Mirror owner-final Chat authority DD-86/DD-91/DD-92..95: exact slash catalog/surfaces, requester-only `/pay`, reply/mention/reaction/edit/soft-delete/search và capability-scoped moderation/timed mute. Carve exact generic coalesced offline chat digest ra khỏi broader DD-88 proposal sang DD-94, gồm preference defaults, cursor idempotency, mark-read cancellation, dispatch-time re-authorization và fail-closed enablement config. Chat/Assistant/Notification specs Reviewed; current readiness chỉ lấy từ primary plan §13. Không runtime/migration/code. |

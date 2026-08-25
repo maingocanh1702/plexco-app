@@ -376,6 +376,20 @@ Tài liệu hoàn tất (bản mới nhất):
 
 Research/reconciliation/strategy là input định hướng, không được override live schema hoặc DD đã chốt.
 
+## 7b. Membership — đọc trước khi ai đó "thêm gói hội viên" (DD-115)
+
+> Ba cái bẫy dưới đây đã được đo và đóng ở DD-115; chúng lặp lại rất dễ vì trực giác nào cũng dẫn sai đường.
+
+1. **"Membership" trong repo này đã có nghĩa rồi.** `memberships` = quan hệ person↔tenant. Còn `subscriptions`/`plans` = billing SaaS của **host**. Còn `membership_tags` (DD-43) = nhãn audience, và BL-SES-7 cấm tag tạo giá/quyền. Gói trả phí của **player** là khái niệm **thứ tư** — đừng nhét vào ba cái kia, và **đừng thêm cột vào `memberships`**.
+2. **Không có "một hoá đơn cho cả gói".** `charges.session_id`/`player_id` NOT NULL + `charges_tenant_session_player_uq` + composite FK `0019` ⇒ charge tổng buộc phải sửa bất biến đường tiền (HR2 cấm). Đúng cách: **N charge đã chiết khấu + một CK allocate sang N charge** — 0 thay đổi trên bảng tiền.
+3. **Đừng nhân số tuần để ra số buổi.** Cửa sổ 30 ngày = 4 tuần + 2 ngày. Đo thật với start 23/08/2026 (CN): T3+T5 = 8 nhưng T7+CN = **9**, cả tháng = **17** — không phải 16. Hai gói "2 buổi/tuần" **không** cùng giá và gói cả tháng **không** bằng tổng hai gói kia. Luôn đếm từ `sessions` thật.
+
+⬜ **Chưa chốt, chặn build:** quyền vào kèo đã full (ngoại lệ **BL-SES-2/BL-CBF-3**, Tier C — và khái niệm **"sân" chưa tồn tại** trong `packages/db`) · bind CK vào chu kỳ (ngoại lệ **BL-PAY-5** FIFO). ⛔ Chiết khấu phí giải đấu chờ **DD-82**.
+
+Chi tiết: `../standards/decisions.md` DD-115 · `../standards/business-rules.md` BL-MBS-1..5 · `../features/FE/feature_membership.md`.
+
+---
+
 ## 8. Bẫy cần tránh (từ kinh nghiệm bot cũ)
 
 - **Đi fuzzy multi-name cho combo payment → sai tiền.** Dùng pay_code cho deterministic matching.
