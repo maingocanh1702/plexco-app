@@ -1551,7 +1551,8 @@ notes: Phát hiện lặp lại: `docs-billing-authz-signature-reconcile` (slice
 
 ## task: plans-dd29-capability-registry
 title: DD-29 — chuyển plan_key 4-tier sang 2-tier, reshape entitlements sang capabilities.*, reseed
-status: idea
+status: superseded
+superseded_note: đóng ở phiên reconcile 2026-08-25 — deliverable ĐÃ LAND qua lane khác từ 06/08 (cặp expand→contract `0028`/`0029` @ `f901626`: CHECK 2-tier `free|host_pro` + entitlements nested `{"capabilities": {...}}` + reseed + repoint `tenant_provision()`), đúng khuôn `superseded` của reconcile 2026-08-11 (task chưa từng register/in-flight). Ba khoảng cách (a)(b)(c) trong notes đều đã đóng trên live schema; 25/08 registry thêm reader đầu tiên `resolveCapability()` (`f2af39d`, vẫn 0 caller). Notes dưới đây giữ làm lịch sử.
 risk: P1
 change_class: schema-migration
 depends_on: []
@@ -1565,6 +1566,7 @@ notes: **Tiền đề bắt buộc của `hasCapability`, phát hiện 30/07 khi
 title: Shared DD-56 capability authority — closed registry, least-privilege preset, tenant-private grants, append-only audit, fail-closed authorize
 status: idea
 split_note: **Nửa `authorizeTenantAction` đã tách ra `authorize-tenant-action-core` (30/07)** — xem block đó. Phần CÒN LẠI của task này vẫn hợp lệ và vẫn là `schema-migration`: closed registry, least-privilege preset, tenant-private grants, append-only audit, và `hasCapability`. Phần còn lại thêm `depends_on: [plans-dd29-capability-registry]` bên cạnh `dd38-dd86-chat-schema-core` đã khai — `hasCapability` đọc `plans.entitlements.capabilities.*`, mà lớp đó chưa tồn tại trong dữ liệu sống.
+update_2026-08-25: hai tiền đề đã đổi — (1) lớp `capabilities.*` ĐÃ tồn tại trong dữ liệu sống từ `0028`/`0029` (06/08; task dependency `plans-dd29-capability-registry` nay `superseded`); (2) `resolveCapability()` (`packages/db/src/capability.ts`, merged `f2af39d` 25/08) là reader entitlement đầu tiên — fail-closed, `FOR SHARE` pin `(plan_key, plan_version)` trên `subscriptions` — nhưng nó là **capability resolver của DD-29 (billing gate)**, KHÔNG phải DD-56 action registry/grant authority mà task này sở hữu; đừng gộp hai thứ. Phần DD-56 (closed action registry · grants · audit · authorize consume-time) vẫn `idea`, chưa authorize.
 risk: P1
 change_class: schema-migration
 depends_on: [dd38-dd86-chat-schema-core]
@@ -3359,6 +3361,7 @@ notes: |
     1. DD-73 Q5 (owner 2026-07-19, decisions.md:254-259/901-913) MANDATES public_projection_fences + guarded view + public_projection_version + a grant migration REVOKing readonly SELECT on base public_sessions (0009:117) — the HARD RULE #2 immediate-deny path. Without it the base table stays readable after private/cancel until the async delete = a privacy leak. Tier C (#4 migration semantics + #2 HARD RULE #2).
     2. Aggregate substrate ABSENT on base: getSessionOccupancy() (0), DD-32 confirmed_count column (0), channel-booking hold tables (0), DD-46 moderated alias (unbuilt, decisions.md:617) → the projector's slots_open / confirmed_count / display-name / blank-alias-skip values cannot be specified, so its acceptance matrix is uncompletable.
   NEXT_REVIEW_TRIGGER: DD-32 confirmed_count + occupancy helper + DD-46 alias + the DD-73 Q5 fence/REVOKE migration land on main → then author S-projector. Owner Q parked: is the DD-73 Q5 fence migration its own slice or bundled into S-projector? OUTBOX_DISPATCH_SCHEDULE_ENABLED stays OFF (enablement-only, correct).
+  UPDATE 2026-08-25: obligation 1 of 2 CLOSED — the DD-73 Q5 fence migration LANDED as its own slice (`0033` @ `9da3021`: fence table + guarded view `public_session_share_v` + raise/CAS-clear definer fns + REVOKE base SELECT on public_sessions from BOTH readonly AND app), answering the parked owner Q by events. Obligation 2 (aggregate substrate: occupancy/confirmed_count/holds/alias) still ABSENT → task stays blocked. ⚠️ New hard constraint for the future S-projector, from 0033 itself: app_worker holds only the narrow CAS-clear EXECUTEs — the projector MUST write through a definer fn / dedicated writer role; re-granting app or readonly base SELECT is FORBIDDEN (it reopens the exact hole 0033 closed). First fence *caller* is in-flight on lane `session-command-update-v3` (`public-session-fence.ts`), not merged.
 
 ## task: session-commands-update-close-cancel
 title: SessionService Update/Close/Cancel-on-open (+Announce) — NOT_CODE_READY; CancelDraft half re-sliced out
@@ -3378,6 +3381,7 @@ notes: |
   **B2 (Tier C, dependent):** G6 security round on the authz trust-boundary edit is unspecifiable until B1.
   **B3 (Tier C #7):** Cancel-on-open cannot ship as a draft-only subset without re-drawing the command boundary → that carve-out IS the re-slice `session-draft-lifecycle-commands` (draft-source cancel, DD-105-exempt).
   NEXT_REVIEW_TRIGGER: owner adds the exact narrow per-op action-class literal(s) to feature_billing_lifecycle_tech.md Suspended Action Matrix + authorizeTenantAction's ActionClass/RECOGNIZED_ACTION_CLASSES (or a documented reuse ruling), merged on main.
+  UPDATE 2026-08-25: the trigger FIRED in two steps — DD-110 (owner 15/08) minted the four narrow literals (`update_open_session`/`close_session`/`cancel_session`/`announce_session` + matrix rows; B1/B2 closed), and DD-117 (owner 25/08) resolved the remaining Tier-C: close/cancel paid/retry-root branch = fail-closed REFUSE (`CANCEL_REQUIRES_REVIEW` class) until payments/review_policy exists, superseding the 14/08 deferral, and AUTHORIZED building Update+Close+Cancel on the S2 pattern (STOP_AT_READY; DD-117 D5: family dedups on `(tenant_id, command_id)` ONLY — content fingerprint rejected). Delivery is running through successor lanes, NOT a relaunch of this registration: Slice A `session-command-update-v3` (UpdateSession, in-flight @ `2ac1f56`), Slice B (Close+Cancel) queued behind it. When those merge, close this entry `superseded` per the 2026-08-11 reconcile precedent (deliverable landed via a different lane); do not relaunch this packet.
 
 ## task: session-draft-lifecycle-commands
 title: PublishSession (draft→open) + CancelDraftSession (draft→cancelled) — Tier-A cores salvaged from P-B and P-C
@@ -3536,6 +3540,7 @@ merged_probe: null
 close_by: hand · diff thuần prose trong hai spec đã Reviewed + design-system; định danh mới duy nhất
 là hai giá trị enum mà CHÍNH slice này phải chọn, nên không tồn tại symbol nào để probe lúc author —
 cùng lớp với `docs-billing-authz-signature-reconcile`
+aged_recheck_2026-08-25: reconcile --check đánh ⚠ AGED (ready+close_by 8d). Re-verify bằng tay: exemption VẪN ĐÚNG — enum `impact_policy` chưa tồn tại ở đâu trên main (lane `--price-only` mang phần này đã authorized-close 21/08 KHÔNG merge, forensics archived; successor pre-authorized §6.1 nhưng chưa register). DD-117 (25/08) KHÔNG nuốt task này — nó chốt `review_policy`-side refuse cho close/cancel, còn `impact_policy` (input caller cho update-giá) vẫn là hợp đồng chưa đặc tả; DD-117 D3 authorize build Update càng làm task này nóng hơn, vì `update_open_session` chạm edge #4. Giữ `ready`.
 \_probe_note: bản đầu bind `PRICE_CHANGE_REQUIRES_POLICY` và reconciler đánh STALE ngay — mã lỗi đó
 ĐÃ có trên origin (BE `:283` và `:733`, FE `:348` đủ `t(vi,en)`). Cùng bẫy mà chú thích này định
 tránh cho `impact_policy`, chỉ đổi token. Đừng bind bất kỳ tên nào đọc được từ spec hôm nay.
@@ -3563,3 +3568,20 @@ ngược lại là tạo đúng lớp drift mà `docs-feature-index-version-fres
 
 **Mở khoá gì:** `update_open_session` (command BE cuối không chạm edge #5) **và** một màn FE đang bị
 chặn. `close_session`/`cancel_session` **không** — chúng chờ `review_policy`, slice riêng, mở sau.
+
+## task: db-zalo-bots-secret-hardening
+title: `zalo_bots.secret` đang plaintext at-rest — cần hardening (hash/enc + rotation), cơ chế chờ pin KMS
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [schema, auth]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: khi schedule, bind probe vào symbol/cột MỚI mà fix tạo ra (vd `secret_enc`/`secret_hash` hoặc definer fn verify) — KHÔNG bind `zalo_bots` hay `secret` trần, cả hai đã có trên origin.
+notes: |
+  **Nguồn phát hiện:** A3 legal starter packet 24-25/08 (`docs/legal/a3-pii-data-class-matrix-DRAFT.md` — cờ security drift NGOÀI legal, ghi lại ở phiên P4/reconcile 25/08 theo đúng hàng đợi audit). `zalo_bots.secret` là credential webhook/bot của provider, lưu **plaintext** trong bảng tenant-scope; khác lớp với các secret đã có khuôn (`*_enc` cho PII, token hash-at-rest cho auth DD-50/DD-80).
+  **Vì sao chưa author:** cơ chế đúng phụ thuộc quyết định **KMS provider chưa pin** (chính A3 matrix cờ điều này — Q trong §9 cho luật sư/owner). Hai đường khả dĩ, ĐỪNG pre-pick: (a) hash-at-rest nếu secret chỉ cần verify-equality (khuôn verify-token DD-80); (b) envelope-encrypt (`secret_enc`) nếu runtime cần plaintext để ký/gọi provider — khả năng cao là (b) vì bot phải TỰ trình secret ra ngoài, kéo theo câu hỏi key management thật.
+  **Ràng buộc kèm:** rotation path (Zalo OA cho đổi secret), zero-downtime dual-read window, và audit của lần đọc secret. Grep hiện trạng trước khi scope: `grep -rn 'zalo_bots' packages/ apps/` — xác nhận ai đọc cột này hôm nay (bot runtime) và qua role nào.
+  **Không phải blocker phase-1 theo bất kỳ DD nào hiện có** — nhưng nằm trên đường webhook auth (`webhook-verification-matrix.md`) và sẽ thành finding security round đầu tiên chạm nó; đóng chủ động rẻ hơn.
