@@ -66,34 +66,37 @@ describe("sameOriginRequest", () => {
 });
 
 describe("sameOriginRequest — scheme enforcement (codex round-03)", () => {
-  const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
+  // vi.stubEnv / vi.unstubAllEnvs rather than hand-rolled save-and-restore: NODE_ENV is typed
+  // read-only, and the manual form also has to get "absent originally" right by hand — the exact
+  // bug that silently re-zoned a sibling suite when `process.env.X = original` stored the STRING
+  // "undefined". vitest owns the restore.
   afterEach(() => {
-    process.env.NODE_ENV = ORIGINAL_NODE_ENV;
+    vi.unstubAllEnvs();
   });
 
   it("in production, rejects a same-host Origin over the WRONG scheme", () => {
-    process.env.NODE_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
     expect(sameOriginRequest(reqWith({ host: "plexco.app", origin: "http://plexco.app" }))).toBe(
       false,
     );
   });
 
   it("in production, still accepts a same-host Origin over https", () => {
-    process.env.NODE_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
     expect(sameOriginRequest(reqWith({ host: "plexco.app", origin: "https://plexco.app" }))).toBe(
       true,
     );
   });
 
   it("in production, rejects a same-host Referer over the WRONG scheme", () => {
-    process.env.NODE_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
     expect(
       sameOriginRequest(reqWith({ host: "plexco.app", referer: "http://plexco.app/login" })),
     ).toBe(false);
   });
 
   it("outside production, scheme is not enforced (local dev commonly runs plain http)", () => {
-    process.env.NODE_ENV = "test";
+    vi.stubEnv("NODE_ENV", "test");
     expect(sameOriginRequest(reqWith({ host: "plexco.app", origin: "http://plexco.app" }))).toBe(
       true,
     );
@@ -101,13 +104,10 @@ describe("sameOriginRequest — scheme enforcement (codex round-03)", () => {
 });
 
 describe("clientIp — provider-pinned trusted ingress", () => {
-  const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
-  const ORIGINAL_PROVIDER = process.env.TRUSTED_INGRESS_PROVIDER;
-
+  // Same reason as above, and note vi.unstubAllEnvs restores an ORIGINALLY-ABSENT variable by
+  // deleting it — the case the hand-written branch below used to spell out.
   afterEach(() => {
-    process.env.NODE_ENV = ORIGINAL_NODE_ENV;
-    if (ORIGINAL_PROVIDER === undefined) delete process.env.TRUSTED_INGRESS_PROVIDER;
-    else process.env.TRUSTED_INGRESS_PROVIDER = ORIGINAL_PROVIDER;
+    vi.unstubAllEnvs();
   });
 
   it("uses only DigitalOcean's overwritten client-IP header", () => {
@@ -152,29 +152,29 @@ describe("clientIp — provider-pinned trusted ingress", () => {
   });
 
   it("requires an explicit trusted ingress provider in production", () => {
-    process.env.NODE_ENV = "production";
-    delete process.env.TRUSTED_INGRESS_PROVIDER;
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("TRUSTED_INGRESS_PROVIDER", undefined);
 
     expect(() => trustedIngressProvider()).toThrow("TRUSTED_INGRESS_PROVIDER");
   });
 
   it("forbids direct mode in production", () => {
-    process.env.NODE_ENV = "production";
-    process.env.TRUSTED_INGRESS_PROVIDER = "direct";
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("TRUSTED_INGRESS_PROVIDER", "direct");
 
     expect(() => trustedIngressProvider()).toThrow("forbidden in production");
   });
 
   it("rejects an unsupported provider instead of silently falling back", () => {
-    process.env.NODE_ENV = "test";
-    process.env.TRUSTED_INGRESS_PROVIDER = "unknown-edge";
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("TRUSTED_INGRESS_PROVIDER", "unknown-edge");
 
     expect(() => trustedIngressProvider()).toThrow("TRUSTED_INGRESS_PROVIDER");
   });
 
   it("reads the explicit production provider", () => {
-    process.env.NODE_ENV = "production";
-    process.env.TRUSTED_INGRESS_PROVIDER = "digitalocean";
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("TRUSTED_INGRESS_PROVIDER", "digitalocean");
 
     expect(trustedIngressProvider()).toBe("digitalocean");
   });
@@ -305,6 +305,10 @@ describe("buildCompletionLanding (M3 first-party landing)", () => {
     expect(headers["referrer-policy"]).toBe("no-referrer");
     expect(headers["cache-control"]).toBe("no-store");
     const csp = headers["content-security-policy"];
+    // Narrowing GUARD, not a suppression: a missing CSP header becomes a named failure here rather
+    // than an incidental throw inside the first toContain. Strengthens the assertion and satisfies
+    // the compiler for the .match() below, without a cast or a non-null assertion.
+    if (typeof csp !== "string") throw new Error("content-security-policy header is missing");
     expect(csp).toContain("default-src 'none'");
     expect(csp).toContain("form-action 'self'");
     expect(csp).toContain("frame-ancestors 'none'");
