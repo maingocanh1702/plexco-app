@@ -1,7 +1,7 @@
 # Feature: Host Billing & Tenant Lifecycle — Backend Tech Spec
 
 > **Canonical phase:** P5  
-> **Version:** 2.17 · 2026-08-26
+> **Version:** 2.18 · 2026-08-26
 > **Status:** Reviewed  
 > **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn; capability/availability resolver, provider wiring và lifecycle runtime chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_billing_lifecycle.md`  
@@ -276,6 +276,7 @@ CREATE TABLE billing_overrides (
 | Announce session (`announce_session`) | ✅ | ✅ | ❌ |
 | Update open session (`update_open_session`) | ✅ | ✅ | ❌ |
 | Close session (`close_session`) | ✅ | ✅ | ✅ |
+| Cancel session (`cancel_session`) | ✅ | ✅ | ✅ |
 | Player CK ingest | ✅ | ✅ | ✅ |
 | Read-only queries | ✅ | ✅ | ✅ |
 | System safety | ✅ | ✅ | ✅ |
@@ -308,11 +309,23 @@ CREATE TABLE billing_overrides (
 > sequencing (DD-111 D4 requires the durable authority to precede the code review); B1's `close_session` authz
 > enforces exactly that reading and this slice cites `6c67d72` as its authority. B1 does not edit `decisions.md`
 > — the owner landed the amendment directly on main, so it is not in this slice's diff. `cancel_session`'s matrix
-> row, literal and handling still land with B2. Money safety is NOT in the resolver: DD-117 authorizes a fail-closed
-> refuse (`CANCEL_REQUIRES_REVIEW`, spec edge #5 — "no silent cancellation") keyed on the session's own
-> `charges`, which lives in the `closeSession` service command and holds until the payments/review_policy
-> subsystem exists. Recorded in `../../standards/decisions.md` DD-110 + DD-117; `close_session` now present
-> in the enum here, `cancel_session` deliberately still absent until B2.
+> row, literal and handling landed with B2 (the Cancel session row above; see the B2 note below). Money safety is
+> NOT in the resolver: DD-117 authorizes a fail-closed refuse (`CANCEL_REQUIRES_REVIEW`, spec edge #5 — "no silent
+> cancellation") keyed on the session's own `charges`, which lives in the `closeSession` and `cancelSession` service commands and holds
+> until the payments/review_policy subsystem exists. Recorded in `../../standards/decisions.md` DD-110 + DD-117;
+> `close_session` and `cancel_session` are both now present in the enum here.
+
+> **B2 — `cancel_session` (owner-ratified 2026-08-26; `session-commands-cancel` slice).** The obligation-termination
+> class `cancel_session` (✅ for active/past_due/`suspended` — the Cancel session row above) is now wired, both the
+> literal AND its handling, with first caller `cancelSession`. It CONSUMES the same action-class-aware resolution as
+> `close_session` (CASE B below: literal per-axis allowlist, deny-before-matrix — `cancel_session` is a member of
+> `OBLIGATION_TERMINATION`, so there is NO new resolver branch). Money/roster safety is NOT in the resolver: per
+> **DD-117 D1 + owner gate #3 (2026-08-26)**, `cancelSession` fail-closed refuses (`CANCEL_REQUIRES_REVIEW`) an OPEN
+> session carrying ANY charge OR a non-zero ACTIVE roster — `roster_count != 0` is a REFUSAL, not an advisory:
+> cancelling over a roster with no review_policy is the "no silent cancellation" hazard (the proceed-and-record CA3
+> path is out of scope until review_policy lands). A DRAFT carrying any player (any status) or any charge records a
+> `session.expiry_anomaly_detected` audit event then refuses (edge #28). Fence DD-12 raised unconditionally
+> (`raise_public_session_fence` reason `cancelled`).
 
 ### Status Authority (`authorizeTenantAction`)
 
@@ -327,7 +340,7 @@ CREATE TABLE billing_overrides (
 | `subscriptions.status` (`0007`) | **Non-payment billing lifecycle** (trial/grace/quá hạn) — nguồn của Suspended Action Matrix trên. | Daily Lifecycle Job (§4) + billing webhook match — đây đúng là cột matrix mô tả. |
 | `tenants.status` (`0002`) | **Tenant-root hard override** (abuse/ToS) — độc lập thanh toán. | **Chưa có write path nào ngoài** `tenant_provision` (`0012:256`) — hard-set `'active'` lúc tạo tenant, cùng transaction với `subscriptions` (free plan); mọi seed/test fixture khác cũng chỉ từng insert `'active'` explicit. **Cột có `DEFAULT 'trialing'`** (`0002_tenants_core.sql:15`) mà KHÔNG write path nào hiện dùng — `tenant_provision` luôn set `status` tường minh, không rơi vào default. Chưa tồn tại PlatformAdmin/trust-safety mutation nào ghi (hay xoá) cột này; contract dưới đây pin hành vi TRƯỚC khi mechanism đó build, để gate publish không phải sửa lại lúc nó land. **Set ⊥ clear là một cặp chưa xây** — khi trust-safety mechanism đó land, nó phải sở hữu CẢ set lẫn clear; một sự kiện trục billing (payment nhận được, `ApplyOverride`) **không được** ngầm định clear cột này (xem cảnh báo ở `feature_billing_lifecycle.md` §4 Lifecycle State Machine). |
 
-**`authorizeTenantAction(tx, tenantId, actionClass)` rẽ theo `actionClass` TRƯỚC — một OBLIGATION-TERMINATION class (`close_session`; `cancel_session` land ở B2) cho phép literal `suspended` nhưng vẫn phải DENY `cancelled`/thiếu-row/anomaly, nên phép gộp `effective_status` (CASE A) KHÔNG an toàn cho nó và KHÔNG được dùng. Impl: `packages/db/src/authorization.ts` (step 1 dòng 173-179, step 2 dòng 195-203).**
+**`authorizeTenantAction(tx, tenantId, actionClass)` rẽ theo `actionClass` TRƯỚC — một OBLIGATION-TERMINATION class (`close_session`, `cancel_session`) cho phép literal `suspended` nhưng vẫn phải DENY `cancelled`/thiếu-row/anomaly, nên phép gộp `effective_status` (CASE A) KHÔNG an toàn cho nó và KHÔNG được dùng. Impl: `authorizeTenantAction` trong `packages/db/src/authorization.ts` (step 1 = trục tenant, step 2 = trục subscription — hai allowlist check per-axis).**
 
 ```text
 CASE A — actionClass KHÔNG thuộc OBLIGATION_TERMINATION (publish_new_sessions, announce_session,
@@ -352,7 +365,7 @@ CASE A — actionClass KHÔNG thuộc OBLIGATION_TERMINATION (publish_new_sessio
   Phép gộp này CHỈ an toàn ở CASE A vì matrix map `suspended` → ❌ cho MỌI class CASE A, nên gộp
   cancelled/thiếu-row/anomaly vào bucket `suspended` = vẫn deny đúng.
 
-CASE B — actionClass ∈ OBLIGATION_TERMINATION (close_session; cancel_session ở B2):
+CASE B — actionClass ∈ OBLIGATION_TERMINATION (close_session, cancel_session):
   matrix map `suspended` → ✅ (obligation-termination), nên phép gộp CASE A sẽ FAIL-OPEN một tenant
   cancelled/anomaly bị bucket thành 'suspended'. KHÔNG gộp. Đọc LITERAL status từng trục, allowlist
   RIÊNG mỗi trục (khớp step 1/2 code), DENY TRƯỚC mọi matrix lookup nếu trục nào ngoài allowlist của nó:
@@ -380,7 +393,7 @@ Decision table dưới đây không còn case chưa định nghĩa (TBD) **về 
 | 3 | `active` hoặc `trialing` | `trialing` / `active` / `past_due` | = giá trị đó | ✅ Allow — matrix trên chỉ liệt kê cột `active`/`past_due` vì hai cột đó **giống hệt nhau ở mọi hàng**; `trialing` theo cùng pattern (đứng trước `active`, còn tốt hơn `past_due`) |
 | 4 | `active` hoặc `trialing` | thiếu row (tenant chưa có `subscriptions`) | `suspended` (fail-closed) | ❌ `TENANT_SUSPENDED` — **không** phải "chưa vào billing nên bỏ qua": `tenant_provision` tạo `subscriptions` cùng transaction với MỌI tenant (kể cả personal tenant tương lai DD-46 — "tái dùng core… + free sub"), nên thiếu row trên tenant đã tồn tại = provisioning dở dang/data anomaly, không phải trạng thái hợp lệ. Không đủ bằng chứng tenant đang tốt → khoá (cùng nguyên tắc DD-51 fail-closed cho `paid_at` không chứng minh được, không phải coi-như-0/an-toàn) |
 
-**Decision table CASE B — obligation-termination (`close_session`; `cancel_session` land ở B2). Đọc LITERAL status, allowlist RIÊNG từng trục, KHÔNG dùng effective_status collapse:**
+**Decision table CASE B — obligation-termination (`close_session`, `cancel_session`). Đọc LITERAL status, allowlist RIÊNG từng trục, KHÔNG dùng effective_status collapse:**
 
 | # | `tenants.status` | `subscriptions.status` | `close_session` (obligation-termination) |
 |---|---|---|---|
@@ -390,7 +403,7 @@ Decision table dưới đây không còn case chưa định nghĩa (TBD) **về 
 | B4 | `past_due` / `cancelled` / thiếu / unknown | bất kỳ | ❌ `TENANT_SUSPENDED` — trục tenant chỉ nhận `active`/`trialing` (+OT `suspended`); `past_due` cũng anomaly ở trục tenant-root (case 1b) → fail-closed TRƯỚC matrix |
 | B5 | `active`/`trialing`/`suspended` | `cancelled` / thiếu row / unknown | ❌ `TENANT_SUSPENDED` — trục billing `cancelled`/thiếu-row/anomaly ngoài allow-set → fail-closed TRƯỚC matrix |
 
-Điểm khiến obligation-termination KHÔNG fail-open: `cancelled`/thiếu-row/anomaly bị allowlist mỗi trục loại TRƯỚC khi chạm matrix, nên KHÔNG bao giờ đi qua ô ✅-suspended như CASE A sẽ làm khi gộp chúng thành bucket `suspended`. So sánh trực tiếp: case 2b của CASE A (`subscriptions.status='cancelled'`) bucket → `suspended` → ❌ publish; ở CASE B nó là B5, vẫn ❌ close nhưng vì literal `cancelled` bị loại TRƯỚC matrix — KHÔNG vì ô ✅-suspended. Deny-before-matrix (không bucket rồi mới tra) chính là bất biến chống fail-open cho `cancel_session` khi nó land ở B2.
+Điểm khiến obligation-termination KHÔNG fail-open: `cancelled`/thiếu-row/anomaly bị allowlist mỗi trục loại TRƯỚC khi chạm matrix, nên KHÔNG bao giờ đi qua ô ✅-suspended như CASE A sẽ làm khi gộp chúng thành bucket `suspended`. So sánh trực tiếp: case 2b của CASE A (`subscriptions.status='cancelled'`) bucket → `suspended` → ❌ publish; ở CASE B nó là B5, vẫn ❌ close nhưng vì literal `cancelled` bị loại TRƯỚC matrix — KHÔNG vì ô ✅-suspended. Deny-before-matrix (không bucket rồi mới tra) chính là bất biến chống fail-open cho `cancel_session` (đã land ở B2, cùng file).
 
 Hai cột **"mismatch"** (vd `tenants.status='suspended'` nhưng `subscriptions.status='active'`, hoặc ngược lại) không phải trạng thái mơ hồ cần xử lý riêng — cấu trúc 2-step đã resolve theo thứ tự cố định: step 1 (trục tenant) luôn xét trước và thắng vô điều kiện nếu nó khoá; step 2 (trục billing) chỉ chạy khi step 1 đã rõ `'active'`/`'trialing'`. Không có nhánh "ambiguous" cần đoán.
 
@@ -576,6 +589,7 @@ Capability registry là **commercial entitlement**, không phải availability r
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-26 | v2.18 | **DD-110 `cancel_session` matrix row (`session-commands-cancel` slice — B2 của split):** §3 Suspended Action Matrix thêm **1 hàng** `Cancel session (cancel_session)` = ✅/✅/✅ — **allow-when-suspended** (obligation-termination), cùng posture `close_session` (B1): tenant/subscription suspended vẫn huỷ được nghĩa vụ đang chạy. **CONSUMES** action-class-aware §3 CASE B đã có sẵn trên base (literal per-axis allowlist, deny-before-matrix) — `cancel_session` là member của `OBLIGATION_TERMINATION`, **KHÔNG** thêm nhánh resolver mới, **KHÔNG** đổi CASE A/B algorithm/tables. Caller đầu tiên `cancelSession` (`draft` HOẶC `open` → `cancelled`). Guard order = house pattern của `closeSession`: authz upfront → dedup (commandId-only, DD-117 D5) → FOR UPDATE → **no-op** (đã cancelled → success, KHÔNG check version — edge #27; `isInt4` chạy SAU no-op, carry-over #1 từ B1) → transition (closed refuse + defensive) → **past-guard CHỈ cho `open`** (edge #11/#31; `draft` không có — edge #25) → version mandatory (edge #26, ALL sources) → **paid/roster-impact fail-closed** → mutate → fence `cancelled` vô điều kiện (DD-12) → `session.cancelled` outbox → ledger. **Money/roster safety (DD-117 D1 + owner gate #3, 2026-08-26):** OPEN có ANY charge (kể cả `void`) HOẶC active **`roster_count != 0`** → `CANCEL_REQUIRES_REVIEW` (roster là **REFUSAL, KHÔNG advisory** — huỷ đè roster khi chưa có review_policy là "no silent cancellation"; CA3 proceed-and-record hoãn tới khi review_policy tồn tại). DRAFT có any player (mọi status) HOẶC any charge → COMMIT `session.expiry_anomaly_detected` (audit sống sót) rồi throw `CANCEL_REQUIRES_REVIEW` SAU khi tx commit (edge #28; `['charges']` đứng một mình reachable vì FK `(tenant_id, player_id)` ≠ session_id). Clean path `roster_count` = 0. Ported từ tag `ap-reference/session-commands-close-cancel-v2-d9e1148` (port, không cherry-pick). Không đổi schema; KHÔNG migration (0033 đã trên base). `index.ts` barrel export hoãn. |
 | 2026-08-26 | v2.17 | **DD-110 `close_session` matrix row (`session-commands-close` slice — B1 của split):** §3 Suspended Action Matrix thêm **1 hàng** `Close session (close_session)` = ✅/✅/✅ — **allow-when-suspended** (obligation-termination): tenant suspended vẫn phải đóng được nghĩa vụ đang chạy (kết thúc một session), suspension chỉ đóng băng hoạt động thương mại MỚI. Class này chạy **ĐÚNG** fail-closed two-step resolution như announce/update, chỉ **THÊM** trạng thái `suspended` vào allow-set trên **CẢ HAI trục** (tenant + subscription). **Owner-ratified in-session (2026-08-26):** guard so **GIÁ TRỊ LITERAL** của `subscriptions.status`/`tenants.status`, **KHÔNG** suy ra `effective_status` bucket; mọi literal không nhận diện được đều fail-closed — nên allow-set mang literal `'suspended'` DUY NHẤT, KHÔNG mang bucket §3 (cases 1b/2b/4 gộp `cancelled`/thiếu-row/bất thường vào bucket để PUBLISH fail-close qua một ô ❌-suspended; áp ô ✅-suspended lên cả bucket sẽ **fail-OPEN** trên tenant terminal/bất thường). Mọi deny KHÁC giữ nguyên: TENANT hoặc SUBSCRIPTION `cancelled`/thiếu-row/bất thường vẫn fail-closed. Giới hạn hai-trục unpaid-vs-abuse thừa từ DD-110 GIỮ NGUYÊN (named limitation). Amendment chính thức pin literal reading dưới DD-110 vào `decisions.md` **đã land trên `origin/main` là `6c67d72` (2026-08-26)** — author TRƯỚC gate của B1 theo sequencing đã sửa của owner (DD-111 D4); B1 authz enforce đúng literal reading đó và cite `6c67d72` làm authority. B1 **KHÔNG** sửa `decisions.md` (owner land amendment trực tiếp trên main, không nằm trong diff của slice). An toàn tiền KHÔNG nằm ở resolver: DD-117 authorize **fail-closed refuse** (`CANCEL_REQUIRES_REVIEW`, edge #5 — "no silent cancellation") keyed trên `charges` của chính session (KHÔNG lọc status — một charge `void` vẫn chặn; FK `(tenant_id, player_id)`), sống trong service command `closeSession`, giữ tới khi payments/review_policy subsystem tồn tại. Wired trong `packages/db/src/authorization.ts` (union + recognised set + `OBLIGATION_TERMINATION` allow `suspended` trên cả hai trục) với caller đầu tiên `closeSession`. Fence DD-12 raise vô điều kiện trên transition (`raise_public_session_fence` reason `closed`). **Finding #1 (owner: REAL BUG):** kiểm `isInt4(expectedVersion)` chạy SAU nhánh no-op terminal → một session đã `closed` với `expectedVersion:0` là no-op-wins (edge #27), KHÔNG STALE_VERSION. `cancel_session` (row/literal/handling), past-guard, draft-anomaly, roster_count land với **B2** (successor tuần tự, cùng file). Không đổi fail-closed resolution / FOR SHARE ordering / schema; KHÔNG migration (0033 đã trên base). |
 | 2026-08-25 | v2.16 | **DD-110 `update_open_session` matrix row (`session-command-update` slice):** §3 Suspended Action Matrix thêm hàng `Update open session (update_open_session)` = ✅/✅/❌ — deny-path, cùng hàng `Publish new sessions`/`Announce session` (update một session `open` là hoạt động trên listing sống, chặn khi suspended). Wired trong `packages/db/src/authorization.ts` (chỉ recognised set — đi qua resolution fail-closed sẵn có, **KHÔNG** thêm nhánh allow-when-suspended), caller đầu tiên `updateSession`; literal chọn ở call site **CHỈ** cho session `open` — update trên `draft` miễn trừ DD-105 và KHÔNG gọi resolver (test âm tầng service, DD-110 D4). Cặp `close_session`/`cancel_session` (✅ suspended) vẫn chờ commit mang command của chúng (slice sau); DD-117 authorize chúng dạng **fail-closed refuse** trên nhánh paid-roster/finance-root (edge #5 — "no silent cancellation") tới khi payments/review_policy subsystem tồn tại. Không đổi fail-closed resolution / FOR SHARE ordering / schema. |
 | 2026-08-15 | v2.15 | **DD-110 announce_session matrix row (`session-commands-update-close-cancel--announce-session` slice):** §3 Suspended Action Matrix thêm hàng `Announce session (announce_session)` = ✅/✅/❌ — deny-path, cùng hàng `Publish new sessions` (announce lên group là hoạt động outbound mới, chặn khi suspended). Wired trong `packages/db/src/authorization.ts` (chỉ recognised set — đi qua resolution fail-closed sẵn có), caller đầu tiên `announceSession`. Ba literal DD-110 còn lại vào matrix + enum theo commit mang command của chúng (D3): `update_open_session` (❌) với UpdateSession; cặp obligation-termination `close_session`/`cancel_session` (✅ suspended) sau khi payments/review_policy subsystem tồn tại (edge #5 cần resolve nonterminal finance roots trước commit — chưa có trên base). Không đổi fail-closed resolution / FOR SHARE ordering / schema. |

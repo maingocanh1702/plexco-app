@@ -701,7 +701,7 @@ describe("app-role access through resolve_tenant_status_locked (DBG-1, DBG-2, DB
   });
 });
 
-describe("DD-110 D2 -- close_session tolerates a SUSPENDED tenant OR subscription, but stay fail-closed on cancelled/missing/unknown", () => {
+describe("DD-110 D2 -- close_session / cancel_session tolerate a SUSPENDED tenant OR subscription, but stay fail-closed on cancelled/missing/unknown", () => {
   // DD-110 D2: close_session is ✅ for the `suspended` cell on BOTH axes — a suspended tenant may wind
   // down a running obligation, and the decision ACCEPTS this even for a tenant-root abuse/ToS
   // suspension ("một tenant abuse huỷ được buổi của chính nó — phiền, không phải thiệt hại"); its note
@@ -710,7 +710,8 @@ describe("DD-110 D2 -- close_session tolerates a SUSPENDED tenant OR subscriptio
   // effective_status bucket — so it does NOT bypass the resolution: a cancelled/missing/anomalous
   // tenant OR subscription still denies (the §3 collapse that buckets those into 'suspended' is not
   // used; it would fail-OPEN close on terminal states). Money safety is not here (it is the command's
-  // own charges → CANCEL_REQUIRES_REVIEW). (cancel_session gets its own copy of this block with B2.)
+  // own charges → CANCEL_REQUIRES_REVIEW). cancel_session (B2) shares this EXACT resolver behaviour —
+  // both are OBLIGATION_TERMINATION with no per-class branch — so the loop below runs every case for BOTH.
 
   // Normal billing states → allowed with the usual effectiveStatus, exactly like any recognised class.
   const allowedNormal = [
@@ -752,7 +753,7 @@ describe("DD-110 D2 -- close_session tolerates a SUSPENDED tenant OR subscriptio
     },
   ];
 
-  for (const actionClass of ["close_session"] as const) {
+  for (const actionClass of ["close_session", "cancel_session"] as const) {
     it(`${actionClass}: normal billing states → allowed with the usual effectiveStatus`, async () => {
       for (const f of allowedNormal) {
         const tenantId = await seedTenant(ctx.owner, {

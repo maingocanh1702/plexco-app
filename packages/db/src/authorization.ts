@@ -27,8 +27,8 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
  * queries, system safety) never consult tenant/subscription status at all (edge
  * #9: "Allow — safety path") and so structurally never route through this resolver.
  *
- * DD-110 also mints the obligation-termination classes. B1 lands close_session ONLY; cancel_session
- * joins with B2 (DD-110 D3). DD-110 D2's Suspended Action Matrix marks close/cancel ✅ for
+ * DD-110 also mints the obligation-termination classes close_session (landed with B1) and cancel_session
+ * (landed with B2) (DD-110 D3). DD-110 D2's Suspended Action Matrix marks close/cancel ✅ for
  * active/past_due/`suspended` — a suspended tenant may still TERMINATE a running obligation (suspension
  * freezes NEW commercial activity, not the winding-down of existing ones). They do NOT bypass this
  * resolution: they run the SAME fail-closed two-step below.
@@ -44,8 +44,9 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
  * limitation inherited from DD-110 (subscriptions.status = unpaid vs tenants.status = abuse/ToS
  * collapsing into one row, still indistinguishable) is UNCHANGED and stays a NAMED limitation. Their
  * money safety is separate from this resolver — the finance-root fail-closed refuse
- * (CANCEL_REQUIRES_REVIEW, DD-117 / edge #5) lives in the CloseSession service command, keyed on the
- * session's own `charges`, not status.
+ * (CANCEL_REQUIRES_REVIEW, DD-117 / edge #5) lives in the CloseSession and CancelSession service
+ * commands, keyed on the session's own `charges`, not status (CancelSession also refuses a non-zero
+ * active roster per owner gate #3).
  */
 export type ActionClass =
   | "publish_new_sessions"
@@ -53,7 +54,8 @@ export type ActionClass =
   | "integration_changes"
   | "announce_session"
   | "update_open_session"
-  | "close_session";
+  | "close_session"
+  | "cancel_session";
 
 const RECOGNIZED_ACTION_CLASSES: ReadonlySet<ActionClass> = new Set([
   "publish_new_sessions",
@@ -62,10 +64,11 @@ const RECOGNIZED_ACTION_CLASSES: ReadonlySet<ActionClass> = new Set([
   "announce_session",
   "update_open_session",
   "close_session",
+  "cancel_session",
 ]);
 
-// DD-110 D2 obligation-termination classes. B1 lands close_session ONLY; cancel_session joins this set
-// with B2 (DD-110 D3: a literal enters the enum with the command that uses it). They do NOT bypass the
+// DD-110 D2 obligation-termination classes: close_session (landed with B1) and cancel_session (landed
+// with B2) (DD-110 D3: a literal enters the enum with the command that uses it). They do NOT bypass the
 // fail-closed resolution. OWNER-RATIFIED READING (2026-08-26): the guard compares the LITERAL status
 // value; it does NOT compute or infer an "effective status" bucket; any status literal it does not
 // recognise is fail-closed. So obligation-termination ADDITIONALLY tolerates a LITERAL `suspended` on
@@ -74,13 +77,16 @@ const RECOGNIZED_ACTION_CLASSES: ReadonlySet<ActionClass> = new Set([
 // vs tenants.status = abuse/ToS collapsing into one row, still indistinguishable) is UNCHANGED and
 // stays a NAMED limitation — this reading does not silently close it. Every other deny is unchanged:
 // a `cancelled`/missing/anomalous tenant OR subscription still fails closed.
-const OBLIGATION_TERMINATION: ReadonlySet<ActionClass> = new Set(["close_session"]);
+const OBLIGATION_TERMINATION: ReadonlySet<ActionClass> = new Set([
+  "close_session",
+  "cancel_session",
+]);
 
 export type EffectiveStatus = "trialing" | "active" | "past_due";
 
 export type AuthorizationDecision =
   | { allowed: true; effectiveStatus: EffectiveStatus }
-  // Obligation-termination (close_session; cancel_session with B2) allowed when a LITERAL `suspended`
+  // Obligation-termination (close_session, cancel_session) allowed when a LITERAL `suspended`
   // is on EITHER axis (tenant OR subscription, DD-110 D2) — there is no valid EffectiveStatus for
   // `suspended`, so a distinct allowed variant instead of a fake status. Callers gate on
   // `decision.allowed`; both allowed shapes pass.

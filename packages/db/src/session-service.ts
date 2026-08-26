@@ -1415,17 +1415,16 @@ export async function updateSession(
     }
 
     // Capacity guard (edge #16, DD-112): only when slots_max is being CHANGED to a
-    // FINITE value — reject if it would fall below the active roster. Drizzle-typed
-    // `players` query under the tenant GUC (RLS): players is tenant-scoped, and the
-    // session row is already locked in this tenant, so the count is this session's
-    // active roster only. CAPACITY_BELOW_OCCUPANCY (active + live holds) is NOT
-    // implemented: no booking-hold table exists on base, so occupancy == active roster.
+    // FINITE value — reject if it would fall below the active roster. Reads the active
+    // roster through the SINGLE canonical helper `sessionActiveRosterCount` (the one
+    // source for the active-roster aggregate — also consumed by cancelSession's gate-#3
+    // refuse and its event), so capacity and cancellation can never drift on two formulas.
+    // Under the tenant GUC (RLS): players is tenant-scoped, and the session row is already
+    // locked in this tenant, so the count is this session's active roster only.
+    // CAPACITY_BELOW_OCCUPANCY (active + live holds) is NOT implemented: no booking-hold
+    // table exists on base, so occupancy == active roster.
     if (changes.slotsMax !== undefined && changes.slotsMax !== null) {
-      const rosterRows = await tx
-        .select({ n: sql<number>`count(*)::int` })
-        .from(players)
-        .where(and(eq(players.sessionId, sessionId), eq(players.status, "active")));
-      const activeCount = Number(rosterRows[0]!.n);
+      const activeCount = await sessionActiveRosterCount(tx, sessionId);
       if (changes.slotsMax < activeCount) {
         failUpdate("CAPACITY_BELOW_ROSTER", "slots_max cannot be below the active roster");
       }
@@ -1836,4 +1835,398 @@ export async function closeSession(
       replayed: false,
     };
   });
+}
+
+// ============================ CancelSession ============================
+
+export type CancelSessionErrorCode =
+  | "SESSION_NOT_FOUND"
+  | "SESSION_NOT_OPEN"
+  | "STALE_VERSION"
+  | "CANCEL_REQUIRES_REVIEW"
+  | "COMMAND_ID_CONFLICT";
+
+export class SessionCancelError extends Error {
+  readonly code: CancelSessionErrorCode;
+  constructor(code: CancelSessionErrorCode, message: string) {
+    super(message);
+    this.name = "SessionCancelError";
+    this.code = code;
+  }
+}
+
+/** Authorization denial for cancel_session (obligation-termination, DD-110 D2): allowed for
+ *  active/past_due and a `suspended` tenant OR subscription, but DENIED for a `cancelled`/missing
+ *  subscription or a `cancelled`/anomalous tenant — so this error is reachable, not a dead default. */
+export class SessionCancelAuthorizationError extends Error {
+  readonly code: "TENANT_SUSPENDED";
+  constructor() {
+    super("tenant is not permitted to cancel sessions");
+    this.name = "SessionCancelAuthorizationError";
+    this.code = "TENANT_SUSPENDED";
+  }
+}
+
+const failCancel = (code: CancelSessionErrorCode, message: string): never => {
+  throw new SessionCancelError(code, message);
+};
+
+/** User payload. Carries NO tenant_id/actor/commandId (those are trusted context). */
+export interface CancelSessionInputPayload {
+  sessionId: string;
+  /** Optimistic-concurrency guard; MANDATORY on the mutate branch, ALL sources (edge #26). */
+  expectedVersion?: number;
+}
+
+export interface CancelSessionParams {
+  tenantId: string; // trusted routing context, asserted as a UUID by withTenant
+  commandId: string; // idempotency key from trusted context
+  input: CancelSessionInputPayload;
+}
+
+/** result_ref envelope: status is always 'cancelled' after the command. commandId-only dedup. */
+interface StoredCancelResult {
+  sessionId: string;
+  status: string;
+  version: number;
+}
+
+export interface CancelSessionResult {
+  sessionId: string;
+  status: string;
+  version: number;
+  replayed: boolean;
+}
+
+const CANCEL_COMMAND_TYPE = "CancelSession";
+
+/** Guards a replayed result_ref before trusting it: UUID id, status 'cancelled', integer version in
+ *  the sessions.version int4 domain [1, INT4_MAX] — a corrupt/hand-written row fails closed. */
+function isStoredCancelResult(value: unknown): value is StoredCancelResult {
+  if (typeof value !== "object" || value === null) return false;
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.sessionId === "string" &&
+    UUID_RE.test(r.sessionId) &&
+    r.status === "cancelled" &&
+    typeof r.version === "number" &&
+    Number.isInteger(r.version) &&
+    r.version >= 1 &&
+    r.version <= INT4_MAX
+  );
+}
+
+/** CANONICAL active-roster count for a session — the SINGLE source for the active-roster aggregate,
+ *  read by BOTH updateSession's CAPACITY_BELOW_ROSTER guard and cancelSession (so the two can never
+ *  drift on separate formulas). Gate #3 (owner, 2026-08-26) makes a non-zero active roster a
+ *  fail-closed REFUSAL on the open cancel path (see cancelSession), so on cancel's clean path this is
+ *  0. NOT the draft-anomaly probe — that needs ANY player, active or not (see sessionHasAnyPlayer). */
+async function sessionActiveRosterCount(tx: Tx, sessionId: string): Promise<number> {
+  const rows = await tx
+    .select({ n: sql<number>`count(*)` })
+    .from(players)
+    .where(and(eq(players.sessionId, sessionId), eq(players.status, "active")));
+  return Number(rows[0]!.n);
+}
+
+/** ANY player row on a session regardless of status ('active'|'left'|'waitlisted'). The draft-discard
+ *  anomaly invariant (edge #28) is "a draft has NO players at all" — a charge-free 'left'/'waitlisted'
+ *  row is still an anomaly, so the guard must NOT use the active-only count. */
+async function sessionHasAnyPlayer(tx: Tx, sessionId: string): Promise<boolean> {
+  const rows = await tx
+    .select({ x: sql<number>`1` })
+    .from(players)
+    .where(eq(players.sessionId, sessionId))
+    .limit(1);
+  return rows.length > 0;
+}
+
+/**
+ * CancelSession — transition a `draft` OR `open` session to `cancelled` (obligation-termination:
+ * allowed under suspension on EITHER axis, DD-110 D2, but still denies a `cancelled`/missing tenant or
+ * subscription). One withTenant transaction, S2 pattern — the same shape as closeSession: upfront
+ * suspension gate → validate → advisory command-key lock → commandId-only dedup (DD-117 D5) → FOR
+ * UPDATE lock → idempotent no-op (already cancelled) → transition/past guards → MANDATORY
+ * expectedVersion (isInt4 + match, AFTER the no-op) → paid/roster-impact fail-closed → mutate + version
+ * bump + updated_at=clock_timestamp() → DD-12 fence ('cancelled', unconditional) → one session.cancelled
+ * outbox row → record. Guard order (Reviewed "Host-initiated discard"): transition/past (step 4) →
+ * version (step 5) → paid-impact (step 6). Sources differ:
+ *  - `open` (edge #11/#31): past-guard FIRST — an open session whose starts_at has passed →
+ *    SESSION_NOT_OPEN BEFORE version and money (a realized game needs privileged correction). Then
+ *    (open-FUTURE only) paid/roster-impact: an ACTIVE roster (gate #3) OR ANY charge (edge #5) →
+ *    CANCEL_REQUIRES_REVIEW (after the version check, so a stale request → STALE_VERSION).
+ *  - `draft` (edge #25/#28): NO past-guard (never was open). A draft must have NO players (any status)
+ *    and NO charges; any → COMMIT an append-only session.expiry_anomaly_detected audit event (the audit
+ *    must survive the refusal), then fail-closed CANCEL_REQUIRES_REVIEW thrown AFTER the tx commits.
+ *
+ * Two deltas from the historical reference, owner-ratified for this slice:
+ *  (1) no-op-wins-over-version: isInt4(expectedVersion) runs on the mutate branch AFTER the no-op (the
+ *      house pattern B1's closeSession established) — an already-cancelled session no-ops even with a
+ *      malformed version. (The reference validated isInt4 before the lock; that ordering is fixed here.)
+ *  (2) gate #3 (owner, 2026-08-26): an OPEN session with a non-zero ACTIVE roster REFUSES
+ *      (CANCEL_REQUIRES_REVIEW) rather than proceeding-and-recording. review_policy does not exist to
+ *      resolve a roster, so cancelling over one silently is the "no silent cancellation" hazard (edge
+ *      #5) — fail-closed, same as a charge. The proceed-with-roster CA3 path (which records a real
+ *      roster_count) is out of scope until review_policy lands; on the clean path here roster_count is 0.
+ */
+export async function cancelSession(
+  db: Db,
+  params: CancelSessionParams,
+): Promise<CancelSessionResult> {
+  const { tenantId, commandId, input } = params;
+  // A draft-anomaly refusal must COMMIT its audit event and only THEN throw — so the callback returns
+  // a discriminated union (a normal result, or an anomaly-refusal sentinel) and the throw happens
+  // after withTenant has committed (see the function tail). Every other refusal still throws inside
+  // the tx (a correct rollback: zero mutation, no persisted state).
+  const outcome = await withTenant(
+    db,
+    tenantId,
+    async (tx): Promise<CancelSessionResult | { anomalyRefusal: true }> => {
+      // Suspension gate (DD-110 D2): cancel_session is an obligation-termination class — authorize-
+      // TenantAction allows active/past_due AND a `suspended` tenant OR subscription, but DENIES a
+      // `cancelled`/missing subscription or a `cancelled`/anomalous tenant, so the `!allowed` branch is
+      // REACHABLE. Called upfront: the resolver's FOR SHARE locks on tenants/subscriptions persist for
+      // the whole tx, so the decision — including its deny cases — stays stable through the mutation
+      // without a separate under-lock re-check (same concurrency guarantee the deny-path classes use).
+      const decision = await authorizeTenantAction(tx, tenantId, "cancel_session");
+      if (!decision.allowed) {
+        throw new SessionCancelAuthorizationError();
+      }
+
+      if (typeof input !== "object" || input === null || Array.isArray(input)) {
+        failCancel("SESSION_NOT_FOUND", "session not found in tenant context");
+      }
+      if (typeof input.sessionId !== "string" || !UUID_RE.test(input.sessionId)) {
+        failCancel("SESSION_NOT_FOUND", "session not found in tenant context");
+      }
+      const sessionId = input.sessionId.toLowerCase();
+
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended('processed-command:' || ${tenantId}::uuid::text || ':' || ${commandId}, 0))`,
+      );
+
+      // Dedup (edge #3) — commandId-only (DD-117 D5): a replayed commandId for the SAME session returns
+      // the stored envelope; a different session or a foreign command_type conflicts.
+      const prior = await tx
+        .select({
+          commandType: processedCommands.commandType,
+          resultRef: processedCommands.resultRef,
+        })
+        .from(processedCommands)
+        .where(
+          and(eq(processedCommands.tenantId, tenantId), eq(processedCommands.commandId, commandId)),
+        );
+      if (prior.length > 0) {
+        const stored = prior[0]!.resultRef as StoredCancelResult | null;
+        if (
+          prior[0]!.commandType === CANCEL_COMMAND_TYPE &&
+          isStoredCancelResult(stored) &&
+          stored.sessionId === sessionId
+        ) {
+          return {
+            sessionId: stored.sessionId,
+            status: stored.status,
+            version: stored.version,
+            replayed: true,
+          };
+        }
+        failCancel(
+          "COMMAND_ID_CONFLICT",
+          "command_id belongs to a different command or session, or has no usable result",
+        );
+      }
+
+      const [locked] = await tx
+        .select({ status: sessions.status, version: sessions.version })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .for("update");
+      if (locked === undefined) {
+        failCancel("SESSION_NOT_FOUND", "session not found in tenant context");
+      }
+      const current = locked!;
+
+      // Idempotent no-op: already cancelled → success no-op, zero mutation, no duplicate event. Does
+      // NOT check expectedVersion AT ALL — neither match NOR int4 validity — so an already-cancelled
+      // session wins the no-op even with a malformed expectedVersion (edge #27 no-op-wins-over-version).
+      // The int4 validation deliberately runs AFTER this branch, on the mutate path only (carry-over #1
+      // from B1's closeSession — NOT the historical reference's before-the-lock ordering).
+      if (current.status === "cancelled") {
+        const stored: StoredCancelResult = {
+          sessionId,
+          status: "cancelled",
+          version: current.version,
+        };
+        await tx
+          .insert(processedCommands)
+          .values({ tenantId, commandId, commandType: CANCEL_COMMAND_TYPE, resultRef: stored });
+        return { sessionId, status: "cancelled", version: current.version, replayed: false };
+      }
+
+      // Transition guard: a closed session cannot be cancelled (edge #11).
+      if (current.status === "closed") {
+        failCancel("SESSION_NOT_OPEN", "a closed session cannot be cancelled");
+      }
+      // Only draft or open reach here (cancelled/closed handled above). Defensive fail-closed for any
+      // other value (schema drift).
+      if (current.status !== "draft" && current.status !== "open") {
+        failCancel("SESSION_NOT_OPEN", "session is not in a cancellable state");
+      }
+
+      // Step 4 — Past-guard for the `open` source ONLY (edge #11/#31). The Reviewed algorithm
+      // ("Host-initiated discard") pins the order transition/past (step 4) → version (step 5) →
+      // paid-impact (step 6). An `open` session whose starts_at has passed → SESSION_NOT_OPEN
+      // UNCONDITIONALLY here, BEFORE version and paid-impact: a past session is a realized game needing
+      // privileged correction (edge #11), never the ordinary cancel path — so it never reaches step 6,
+      // even if it carries charges or a roster. A `draft` has NO past-guard (edge #25 — never was open).
+      // SEPARATE post-lock clock_timestamp() query (lock-wait-safe, mirror updateSession/announce —
+      // never now()/Date.now()).
+      if (current.status === "open") {
+        const clockResult = await tx.execute(
+          sql`select (${sessions.startsAt} <= clock_timestamp()) as "isPast" from ${sessions} where ${sessions.id} = ${sessionId}`,
+        );
+        if ((clockResult.rows[0] as { isPast: boolean }).isPast) {
+          failCancel(
+            "SESSION_NOT_OPEN",
+            "an open session whose start has passed cannot be cancelled via this path (edge #11/#31)",
+          );
+        }
+      }
+
+      // Step 5 — expectedVersion on the MUTATE branch, ALL sources (edge #26), AFTER the no-op and the
+      // past-guard. isInt4 validity THEN mandatory match — BOTH here (carry-over #1: the house pattern
+      // runs isInt4 on the mutate path, not before the lock, so the no-op wins over a malformed
+      // version). Checked BEFORE paid-impact, so a stale charged/rostered request → STALE_VERSION.
+      if (input.expectedVersion !== undefined && !isInt4(input.expectedVersion, 1)) {
+        failCancel("STALE_VERSION", "expected_version must be a positive integer");
+      }
+      if (input.expectedVersion === undefined || input.expectedVersion !== current.version) {
+        failCancel(
+          "STALE_VERSION",
+          "expected_version is required and must match the current version",
+        );
+      }
+
+      // Step 6 — paid/roster-impact, AFTER the version check (step 5). Only an OPEN-FUTURE session (past
+      // ones exited at step 4) or a DRAFT reaches here.
+      if (current.status === "open") {
+        // Open source: fail-closed on financial OR roster impact until review_policy exists. ANY charge
+        // (edge #5, a nonterminal finance root) OR a non-zero ACTIVE roster (gate #3) →
+        // CANCEL_REQUIRES_REVIEW. The roster REFUSES (owner gate #3, 2026-08-26: "roster_count != 0 is a
+        // refusal path, not an advisory") — cancelling over a roster with no review_policy is the "no
+        // silent cancellation" hazard; the proceed-and-record CA3 path is out of scope until review_policy
+        // lands. Plain rollback, NO event (the spec specifies session.expiry_anomaly_detected only for the
+        // draft path). Runs AFTER the version check, so a stale request against a charged/rostered open
+        // session returns STALE_VERSION. If it reaches the clean path below, the active roster is 0.
+        if (
+          (await sessionActiveRosterCount(tx, sessionId)) !== 0 ||
+          (await sessionHasCharges(tx, sessionId))
+        ) {
+          failCancel(
+            "CANCEL_REQUIRES_REVIEW",
+            "cannot cancel an open session with an active roster or existing charges — resolution requires review_policy",
+          );
+        }
+      } else {
+        // Draft source (edge #25/#28): the app invariant is "a draft has NO players and NO charges". The
+        // probe is ANY player row regardless of status ('active'|'left'|'waitlisted') — a charge-free
+        // 'left'/'waitlisted' row is STILL an anomaly. Fail-closed CANCEL_REQUIRES_REVIEW — AND the
+        // reviewed authority (edge #28 + §4 Events) requires an append-only session.expiry_anomaly_detected
+        // audit event on EVERY host-discard detection. A throw HERE would roll that write back (a throw
+        // inside the tx discards prior writes), so we COMMIT the audit now (no session mutation) and throw
+        // the typed refusal AFTER withTenant returns (function tail). anomaly_fields is the REDACTED set of
+        // violated invariant field names — never the roster size or charge amounts (HARD RULE: no PII/money
+        // in events). `['charges']` CAN appear alone: charges.player_id binds its player only by
+        // `(tenant_id, player_id)` (0019 FK), NOT by `session_id`, so a charge on THIS session may
+        // reference a same-tenant player belonging to a DIFFERENT session — then this session has a charge
+        // (`hasCharges`) but no player row of its own (`hasAnyPlayer` false) → `['charges']`. Both probes
+        // are independent and either alone is fail-closed refused.
+        const hasCharges = await sessionHasCharges(tx, sessionId);
+        const hasAnyPlayer = await sessionHasAnyPlayer(tx, sessionId);
+        if (hasCharges || hasAnyPlayer) {
+          const anomalyFields: string[] = [];
+          if (hasAnyPlayer) anomalyFields.push("players");
+          if (hasCharges) anomalyFields.push("charges");
+          await tx.insert(outboxEvents).values({
+            tenantId,
+            aggregateType: "session",
+            aggregateId: sessionId,
+            sequence: sql`coalesce((select max(${outboxEvents.sequence}) from ${outboxEvents} where ${outboxEvents.aggregateId} = ${sessionId}), 0) + 1`,
+            type: "session.expiry_anomaly_detected",
+            payload: {
+              session_id: sessionId,
+              tenant_id: tenantId,
+              source: "manual",
+              anomaly_fields: anomalyFields,
+            },
+          });
+          return { anomalyRefusal: true };
+        }
+      }
+
+      // Clean path (open-future with no active roster and no charges, or an empty draft). roster_count
+      // is provably 0 here: gate #3 refuses a non-zero active roster on the open path, and an empty
+      // draft has none. It stays in the session.cancelled event as a forward-compat field (the CA3
+      // proceed-with-roster path will record a real count once review_policy lands).
+      const [updated] = await tx
+        .update(sessions)
+        .set({
+          status: "cancelled",
+          version: sql`${sessions.version} + 1`,
+          updatedAt: sql`clock_timestamp()`,
+        })
+        .where(eq(sessions.id, sessionId))
+        .returning({ id: sessions.id, status: sessions.status, version: sessions.version });
+
+      // DD-12 immediate-deny fence: a cancelled session leaves the public projection → raise
+      // UNCONDITIONALLY on the transition (owner carry-forward; shared helper), reason 'cancelled'.
+      await raisePublicSessionFence(tx, updated!.id, "cancelled");
+
+      // One session.cancelled outbox row (§4 Events: {session_id, roster_count, has_paid,
+      // cancel_reason}). has_paid is false and roster_count is 0: this point is reached only after the
+      // paid/roster guard passed (open → no charges and no active roster; draft → empty). cancel_reason
+      // 'manual' — a client/host cancel (the auto-expiry job that emits 'auto' is a separate lane).
+      await tx.insert(outboxEvents).values({
+        tenantId,
+        aggregateType: "session",
+        aggregateId: updated!.id,
+        sequence: sql`coalesce((select max(${outboxEvents.sequence}) from ${outboxEvents} where ${outboxEvents.aggregateId} = ${updated!.id}), 0) + 1`,
+        type: "session.cancelled",
+        payload: {
+          session_id: updated!.id,
+          roster_count: 0,
+          has_paid: false,
+          cancel_reason: "manual",
+        },
+      });
+
+      const stored: StoredCancelResult = {
+        sessionId: updated!.id,
+        status: updated!.status,
+        version: updated!.version,
+      };
+      await tx
+        .insert(processedCommands)
+        .values({ tenantId, commandId, commandType: CANCEL_COMMAND_TYPE, resultRef: stored });
+      return {
+        sessionId: stored.sessionId,
+        status: stored.status,
+        version: stored.version,
+        replayed: false,
+      };
+    },
+  );
+
+  // Draft-anomaly path (edge #28): the session.expiry_anomaly_detected audit event was durably
+  // COMMITTED inside the transaction above (no session mutation). The typed refusal is thrown HERE,
+  // after withTenant has committed, so the rollback a throw-inside-the-tx would trigger cannot discard
+  // the audit. Every other refusal already threw inside the tx (correct: zero mutation, nothing to
+  // persist); only this one needs its side effect to survive the refusal.
+  if ("anomalyRefusal" in outcome) {
+    throw new SessionCancelError(
+      "CANCEL_REQUIRES_REVIEW",
+      "draft carries an unexpected roster or charges (anomaly) — audit recorded; resolution requires review",
+    );
+  }
+  return outcome;
 }
