@@ -1,0 +1,100 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Durable Level-3 task contract + slice record for identity-account-link-core, v3 (bounded successor). Deliberately carries NO manifest_schema_version — that field belongs ONLY on the runtime manifest at .autopilot/state/identity-account-link-core-v3/manifest.json (adding it here makes register HALT CONTRACT_INVALID; see level3-workflow.md §11). The ACTIVE registration authority is the runtime manifest, hash-locked at register time.",
+  "task_id": "plexco:identity-account-link-core-v3",
+  "feature": "identity-account-link-core-v3",
+  "branch": "feat/identity-account-link-core-v3",
+  "base_ref": "origin/main",
+  "base_sha": "a8ae81d2510de23498101548b0c1d440f8aa4cb3",
+  "_base_sha_note": "Immutable base = origin/main after DD-50 amendment 4 (commit a8ae81d): migration ACL trusted-model threat + qualified-link account fail-closed across the whole merge chain. This base carries the ratifications this slice depends on. No manifest_schema_version on this tracked file.",
+  "outcome": "The INTERNAL person-account convergence CORE of DD-32 Option D (owner ruling option A). A SECURITY DEFINER SQL function resolve_deferred_payment_account_core (migration 0034; the bare name resolve_deferred_payment_account is reserved for the future app-granted resolver per decisions.md:683/feature_identity §4) that proves an exact active ChannelIdentity and a verified Plexco Account resolve to the same current canonical Person (fail-closed on merged/deleted/tombstoned/ambiguous/divergent; verified-account = >=1 account_emails.verified_at per the DD-50 amendment; legacy Telegram account_identities excluded). person_id convergence is the ONLY bridge. Two ratified fail-closed disciplines: SEC-1 — per-node tombstone corroboration: every MERGED node in the resolved chain must carry a merge_tombstones row whose canonical_person_id points straight at the final canonical (path-compressed invariant, DD-50 amendment 3 / f6f98ab), checked in BOTH phase-1 and the locked phase-3; F2 — the verified-account count is taken across the WHOLE resolved chain (person_id = ANY(v_chain)), and the single account must resolve to the final active canonical (DD-50 amendment 4 / a8ae81d) — a verified account lingering on a merged source node fails closed. ACL: the 0027 resolve_tenant_status_locked posture (CREATE FUNCTION + SET search_path=public,pg_temp + REVOKE ALL FROM PUBLIC + revoke app/app_worker/readonly, NO grant), per the ratified trusted-migration threat model (DD-50 amendment 4) — NO dynamic-ACL/aclexplode/regprocedure hardening (that finding class is out-of-contract). It is owner/definer-ONLY with NO app-facing TS surface, because it does NOT do the contract's endpointContext/Page-OA/actor validation (live channel_identities lacks the DD-65..68 endpoint columns) and is NOT finalizer-safe (snapshot semantics). The DD-65..68 successor wraps this core, adds endpoint/actor validation + finalizer serialization, and grants EXECUTE to app there.",
+  "risk": "P1",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_lineage": "v1 (branch feat/identity-account-link-core, HEAD c78efcd): 2 clean code rounds, then the first security round returned SEC-1 + SEC-2; at fix-round-count 5 a fix was round 6 -> HALT MAX_ROUNDS; closed via ap-finish --authorized-close. Owner ruling 1b: accept both, ratify the merge_tombstones path-compressed invariant (decisions.md f6f98ab). v2 (branch feat/identity-account-link-core-v2, HEAD 5e6a7ef) implemented SEC-1 + SEC-2, but the owner-only ACL hardening thrashed 3 consecutive rounds (default-privileges -> overload -> search_path) = HALT REGION_THRASH: an unbounded migration-ENVIRONMENT edge-family exceeding repo convention (no migration incl. 0027 schema-qualifies CREATE FUNCTION). Owner ratified (decisions.md a8ae81d, amendment 4): (a) migrations are owner-authored + TRUSTED -> migration-created definers use the 0027 posture, DDL hardening vs hostile search_path/default-privs/overload is OUT of the phase-1 threat model, F1 finding class retired (owner security sign-off, cited here so it is out-of-contract for future reviewer rounds); (b) qualified-link account predicate is fail-closed across the WHOLE merge chain. This v3 successor is built from a8ae81d: ports the reviewer-accepted core (SEC-1 per-node tombstone, verified-email, lock order, revalidation), applies the 0027 ACL posture (drops the dynamic-ACL DO block for a smaller cleaner diff), and adds the chain-wide account fail-closed + regressions. Fresh fix-round budget = SANCTIONED accepted-finding path (level3-workflow §8 gap #4); accepted, not contested.",
+  "invariants": ["identity"],
+  "scope": [
+    "packages/db/migrations/0034_identity_account_link_resolver.sql",
+    "packages/db/src/identity-account-link.test.ts",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "docs/autopilot/contracts/autopilot-identity-account-link-core.md",
+    "docs/autopilot-manifests/identity-account-link-core.json"
+  ],
+  "negative_scope": [
+    "NO GRANT EXECUTE to app / app_worker / readonly (REVOKE ALL FROM PUBLIC + revoke runtime roles, 0027 posture) — owner/definer-only",
+    "NO dynamic-ACL hardening (aclexplode/pg_proc.proacl enumeration, ::regprocedure binding, schema-qualified DDL): the ratified trusted-migration threat model (DD-50 amendment 4) puts that class OUT of the phase-1 threat model for migration-authored objects; use the 0027 posture verbatim",
+    "NO app-facing TS wrapper or barrel export (identity-account-link.ts and the index.ts export were dropped in option A)",
+    "NO endpointContext / endpoint-scope validation / provider_scope_lookup_hash / messenger_page_id / zalo_bot_id (DD-65..68 pending; resume: a successor slice adds the app-facing endpoint-complete resolver)",
+    "NO full concurrency serialization — qualification is snapshot semantics; the finalizer owns the binding_version recheck under its own lock",
+    "NO channel adapters / ports / routes / UI, no intent/hold/finalizer, no phone fields, no link_code UX/merge",
+    "NO merge planner or merge commit — SEC-1/F2 only READ merge_tombstones/accounts and pin the invariants the future merge-commit slice (DD-01/§P6) must honour; they do NOT write merges",
+    "NO changes to packages/db/schema.ts (SQL functions are not mirrored into Drizzle — 0027 precedent)",
+    "NO change to rls-invariants.test.ts beyond the migration count/tail assertions (34 to 35, tail 0034)"
+  ],
+  "context_sources": [
+    "docs/standards/decisions.md (DD-32 Option D; DD-50 + 2026-08-25/26 owner amendments 1-4: verified-email predicate + function-only access shape + merge_tombstones path-compressed invariant + ACL trusted-migration threat model + account fail-closed across chain; DD-01/§P6 person-merge; DD-103 merge-commit re-parenting unbuilt/exposure=0; DD-116 FE PENDING; DD-65..68 endpoint-scope external/pending)",
+    "packages/db/migrations/0027_resolve_tenant_status_locked.sql (SECURITY DEFINER read-only posture: CREATE FUNCTION + SET search_path + REVOKE FROM PUBLIC — the ratified ACL model)",
+    "docs/features/BE/feature_identity_tech.md (§2 global-protected tables; §4 resolveDeferredPaymentAccount contract incl. endpoint/actor validation)",
+    "docs/features/BE/feature_channel_booking_funnel_tech.md (§4.1 linked-for-deferred-payment predicate; PRIOR_SLICES)",
+    "packages/db/migrations/0001_global_directory.sql (merge_tombstones: old_person_id PK, canonical_person_id NOT NULL; accounts.person_id)",
+    "packages/db/migrations/0009_rls_policies_grants.sql (least-privilege: NO app grant on protected identity tables)",
+    "packages/db/migrations/0016_account_email_token_core.sql (account_emails.verified_at; monotonic)",
+    "packages/db/schema.ts (persons.merged_into_person_id merge model; accounts/account_emails/channel_identities columns)",
+    "packages/db/src/test-harness.ts (owner + app/worker/readonly pools for boundary tests)",
+    "packages/db/src/rls-invariants.test.ts (app permission-denied pattern + owner seed + migration count/tail)"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "primary-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": { "network": "restricted", "secrets": "none", "external_side_effects": "none" },
+  "verification": {
+    "focused": [
+      "test -f packages/db/migrations/0034_identity_account_link_resolver.sql",
+      "grep -qF 'SECURITY DEFINER' packages/db/migrations/0034_identity_account_link_resolver.sql",
+      "grep -qF 'CREATE FUNCTION resolve_deferred_payment_account_core(' packages/db/migrations/0034_identity_account_link_resolver.sql",
+      "! grep -qF 'CREATE OR REPLACE' packages/db/migrations/0034_identity_account_link_resolver.sql",
+      "grep -qF 'REVOKE ALL ON FUNCTION resolve_deferred_payment_account_core(uuid) FROM PUBLIC, app, app_worker, readonly' packages/db/migrations/0034_identity_account_link_resolver.sql",
+      "! grep -qF 'GRANT EXECUTE ON FUNCTION resolve_deferred_payment_account_core(uuid)' packages/db/migrations/0034_identity_account_link_resolver.sql",
+      "! grep -qF 'aclexplode' packages/db/migrations/0034_identity_account_link_resolver.sql",
+      "grep -qF 'FOR SHARE' packages/db/migrations/0034_identity_account_link_resolver.sql",
+      "grep -qF 'canonical_person_id = v_canonical' packages/db/migrations/0034_identity_account_link_resolver.sql",
+      "grep -qF 'canonical_person_id = v_r_canonical' packages/db/migrations/0034_identity_account_link_resolver.sql",
+      "grep -qF 'person_id = ANY(v_chain)' packages/db/migrations/0034_identity_account_link_resolver.sql",
+      "grep -qF 'person_id = ANY(v_r_chain)' packages/db/migrations/0034_identity_account_link_resolver.sql",
+      "test ! -f packages/db/src/identity-account-link.ts",
+      "! grep -qF 'resolveDeferredPaymentAccount' packages/db/src/index.ts"
+    ],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm build",
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_scope_disposition": "ONE cohesive slice (v3): a SECURITY DEFINER migration (owner-only, 0027 posture, SEC-1 per-node tombstone + F2 chain-wide account) + its owner-run fail-closed test matrix + two mechanical count/tail edits (migrate.test.ts, rls-invariants.test.ts) + the criteria doc + this manifest. schema.ts untouched. No TS production surface (option A). Smaller/cleaner than v2 (the dynamic-ACL DO block + its 3 tests were dropped per the ratified trusted-migration threat model).",
+  "code_review": { "required": true, "tool": "scripts/codex-review-pin.sh", "clean_rounds": 2 },
+  "security_review": {
+    "required": true,
+    "reason": "HARD RULE 4 identity/claim money boundary (AUDIT C2/C5). SECURITY DEFINER function over global-protected PII tables (persons/accounts/account_emails/channel_identities/merge_tombstones). The definer privilege, pinned search_path, the 0027 owner-only posture (REVOKE FROM PUBLIC + revoke runtime roles; migration-DDL environment-hardening is OUT of the phase-1 threat model per the ratified DD-50 amendment 4, F1 out-of-contract), and the fail-closed convergence predicate — SEC-1 per-node tombstone corroboration + F2 chain-wide verified-account ambiguity — all require a security round.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": { "wall_time_minutes": 180, "fix_rounds_max": 5, "token_budget": null, "cost_budget": null },
+  "stop_conditions": ["MAX_ROUNDS", "REGION_THRASH", "SCOPE_OR_BASE_DRIFT", "MATERIAL_CONTEXT_OR_DECISION_MISSING", "REQUIRED_TOOL_UNAVAILABLE"],
+  "terminal_state_plan": "READY through the scope-gate (2 clean code rounds + 1 security round). A complete, mergeable INTERNAL core with no runtime caller and no runtime EXECUTE grant. WIRING is a separate future slice gated on DD-65..68.",
+  "_evidence_rules": [
+    "ACL posture is the 0027 verbatim posture under the ratified TRUSTED-migration threat model (DD-50 amendment 4 / a8ae81d). The F1 finding class (unqualified CREATE/REVOKE, search_path, aclexplode/regprocedure/schema-qualify) is retired by owner security sign-off and is OUT-OF-CONTRACT — do NOT reintroduce dynamic-ACL hardening.",
+    "F2: the verified-account predicate is fail-closed across the WHOLE resolved chain (person_id = ANY(v_chain)); a verified account on a merged source node must deny. Does NOT rely on merge-commit account re-parenting (DD-103, exposure=0).",
+    "SEC-1 per-node tombstone corroboration depends on the path-compressed merge_tombstones invariant (DD-50 amendment 3). merge_tombstones has no writer yet; the future merge-commit slice (DD-01/§P6) MUST honour it.",
+    "person_id convergence is the ONLY bridge — never a raw PSID/from.id, provider name, or display name.",
+    "This core is owner/definer-only and NOT finalizer-safe (snapshot); the future finalizer rechecks binding_version under its own lock before any money action.",
+    "Docs/contracts are not runtime proof. A passing test against real Postgres (function called as owner; EXECUTE denied to every runtime role) is. READY (gate passed) means mergeable, not merged; owner holds merge authority (STOP_AT_READY)."
+  ]
+}

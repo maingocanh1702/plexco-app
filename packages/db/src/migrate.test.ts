@@ -36,7 +36,7 @@ vi.mock("node:fs/promises", async () => {
 });
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 34;
+const MIGRATION_COUNT = 35;
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -582,7 +582,7 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
         await ctx.bootstrapChatDefinerForOwner();
         return ctx.runMigration();
       });
-      expect(res.applied[res.applied.length - 1]).toBe("0033_public_projection_fences.sql");
+      expect(res.applied[res.applied.length - 1]).toBe("0034_identity_account_link_resolver.sql");
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
