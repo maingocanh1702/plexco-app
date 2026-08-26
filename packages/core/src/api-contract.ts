@@ -14,19 +14,40 @@
  * the rest across web/bot/FE consumers.
  */
 
-/** All error codes currently emitted by API routes (sorted). */
+/**
+ * All error codes currently emitted by API routes (sorted).
+ *
+ * The session-command codes come VERBATIM from the error catalog pinned in
+ * docs/features/BE/feature_session_management_tech.md §3 — that spec, not this
+ * file, decides which literals the API may emit. A domain code the spec does NOT
+ * pin is never added here: the session commands also throw narrower validation
+ * variants (INVALID_INPUT, INVALID_PRICE, INVALID_SLOTS, INVALID_TIMEZONE,
+ * INVALID_VISIBILITY, INVALID_JOIN_POLICY, INVALID_TEXT_FIELD) which the route
+ * collapses onto the already-registered INVALID_BODY 400 rather than inventing
+ * public surface the Reviewed spec does not describe.
+ */
 export const API_ERROR_CODES = [
   "AUTH_INVALID",
   "AUTH_REQUIRED",
   "AUTH_STALE",
   "AUTH_UNAVAILABLE",
+  "CAPACITY_BELOW_ROSTER",
+  "COMMAND_ID_CONFLICT",
   "CSRF_INVALID",
   "FORBIDDEN",
   "INVALID_BODY",
+  "INVALID_TIME_RANGE",
   "LOGIN_RATE_LIMITED",
+  "MISSING_DISCOVERY_FIELDS",
   "NOT_FOUND",
+  "PRICE_CHANGE_REQUIRES_POLICY",
   "RATE_LIMITED",
+  "SESSION_NOT_FOUND",
+  "SESSION_NOT_OPEN",
   "SLUG_TAKEN",
+  "SPORT_INACTIVE",
+  "STALE_VERSION",
+  "TENANT_SUSPENDED",
 ] as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];

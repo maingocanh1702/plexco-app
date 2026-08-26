@@ -21,6 +21,31 @@ describe("API_ERROR_CODES registry", () => {
       expect(code).toMatch(/^[A-Z][A-Z0-9_]*$/);
     }
   });
+
+  it("registers every literal the THREE shipped session routes can emit", () => {
+    // Scoped deliberately, and NOT "every literal in §3" as an earlier revision claimed
+    // (codex round-02 [P3]): §3 also pins INVALID_CHANNEL and SESSION_ALREADY_ENDED (announce,
+    // not shipped) and CANCEL_REQUIRES_REVIEW (cancel, a different lane). Those return to this
+    // registry with their routes. Claiming full §3 coverage would imply this test guards codes
+    // nothing can currently emit.
+    //
+    // The routes cannot emit a code that is not here: err() is typed to ApiErrorCode. Losing one
+    // of these would silently downgrade a spec-pinned response to a generic error.
+    for (const code of [
+      "CAPACITY_BELOW_ROSTER",
+      "COMMAND_ID_CONFLICT",
+      "INVALID_TIME_RANGE",
+      "MISSING_DISCOVERY_FIELDS",
+      "PRICE_CHANGE_REQUIRES_POLICY",
+      "SESSION_NOT_FOUND",
+      "SESSION_NOT_OPEN",
+      "SPORT_INACTIVE",
+      "STALE_VERSION",
+      "TENANT_SUSPENDED",
+    ]) {
+      expect(isApiErrorCode(code)).toBe(true);
+    }
+  });
 });
 
 describe("isApiErrorCode", () => {
