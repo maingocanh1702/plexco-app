@@ -13,3 +13,14 @@ cross-club-feature      | P1   | 0                                 | pilot
 marketplace-feature     | P2   | 0                                 | pilot
 web-feature             | P2   | 0                                 | pilot
 ```
+
+## Evidence notes (design lessons — NOT auto-merge counters)
+
+- **2026-08-26 — split-early beats hardening a thrashing slice.** `session-commands-close-cancel` hit
+  `MAX_ROUNDS` **twice** as one combined slice (two-command surface too wide; each later review round surfaced a
+  new coverage corner while round 1 stayed clean = slice-too-big, not thrash). Split into B1 (`CloseSession`) +
+  B2 (`CancelSession`) it went through cleanly: B1 gate-passed (2 code + 1 security; 4 doc-accuracy fix-rounds)
+  merged `a3654fc`; B2 gate-passed (2 code + 1 security; 2 fix-rounds) landed `8e668a1`. **Second instance the
+  same day:** the api-routes DD-56 guard went `REGION_THRASH` as an invented enforcement *subsystem* and
+  converged only once reduced to an ESLint import restriction on the same logic. Rule reinforced: when a slice
+  keeps thrashing, **split or reduce** it — do not keep hardening it.
