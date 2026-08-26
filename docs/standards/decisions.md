@@ -2360,6 +2360,57 @@ cùng một test.)
 Code, migration, packet, worktree, enablement. DD-110 chỉ đóng tầng quyết định cho đúng bốn tên + bốn
 hàng. Command session **khác** bốn cái này vẫn phải quay lại DD-105 + DD-104 D2a để lấy class hẹp.
 
+### Amendment 2026-08-26 (owner-ratified) — guard obligation-termination đọc LITERAL status, KHÔNG effective_status bucket
+
+**Bối cảnh.** D2 chốt ô ✅-suspended cho `close_session`/`cancel_session`, nhưng KHÔNG nói rõ ô đó áp
+theo **giá trị literal** của cột status, hay theo **`effective_status` bucket** mà §3 status-authority
+của `feature_billing_lifecycle_tech.md` gom `cancelled`/thiếu-row/bất thường vào `'suspended'` (cases
+1b/2b/4). Hai cách đọc cho kết quả khác nhau ở nhánh terminal/anomalous, và slice `session-commands-close`
+implement close_session **buộc** phải chọn một — codex round-1 flag đúng rằng code đang enforce một cách
+đọc chưa có authority nào chốt (DD-111 D4). Amendment này chốt cách đọc.
+
+**Chốt (owner 2026-08-26).** Guard suspension cho hai class obligation-termination so sánh **giá trị
+LITERAL** của `tenants.status` / `subscriptions.status`, đọc thẳng từng cột thô; nó **KHÔNG** tính hay
+suy ra một `effective_status` bucket. Đây là **allowlist, không phải denylist**: mọi status literal
+guard KHÔNG nhận ra (thiếu row, `cancelled`, hay giá trị lạ bất kỳ) đều **fail-closed DENY**. Allow: các
+giá trị bình thường (`active`/`trialing`/`past_due`) trên trục sub + `active`/`trialing` trên trục
+tenant, **CỘNG** literal `'suspended'` trên **CẢ HAI** trục (chỉ cho obligation-termination). Lý do
+KHÔNG dùng bucket: áp ô ✅-suspended lên toàn bộ `effective_status='suspended'` bucket sẽ **fail-OPEN**
+close/cancel trên tenant terminal/anomalous (một tenant `cancelled` / thiếu subscription sẽ được phép
+đóng/huỷ session) — literal reading giữ chúng fail-closed.
+
+**Predicate — trích nguyên văn từ `packages/db/src/authorization.ts` (session-commands-close, be8f67e):**
+
+```ts
+const tenantAllowed =
+  tenantStatus === "active" ||
+  tenantStatus === "trialing" ||
+  (isObligationTermination && tenantStatus === "suspended");
+if (!tenantAllowed) {
+  return DENY;
+}
+// ... (step 2, đọc subscriptions.status thô, FOR SHARE)
+const subSuspendedOt = isObligationTermination && subStatus === "suspended";
+if (
+  subStatus !== "trialing" &&
+  subStatus !== "active" &&
+  subStatus !== "past_due" &&
+  !subSuspendedOt
+) {
+  return DENY;
+}
+// Suspension ở BẤT KỲ trục nào → obligation-termination allow; else effectiveStatus bình thường:
+if (tenantStatus === "suspended" || subStatus === "suspended") {
+  return { allowed: true, obligationTermination: true };
+}
+```
+
+⚠️ **Giới hạn hai-trục của D2 GIỮ NGUYÊN — amendment này KHÔNG đóng nó.** `authorizeTenantAction` vẫn gom
+hai trục suspend về một quyết định và không phân biệt được `subscriptions.status='suspended'` (nợ tiền,
+đáng dọn dẹp) với `tenants.status='suspended'` (abuse/ToS, có thể không). Cả hai literal `'suspended'`
+vẫn được allow như nhau ở đây. Muốn phân biệt vẫn phải đổi chữ ký gate — việc riêng, chưa mở, KHÔNG
+kéo vào slice close/cancel; đây vẫn là **named limitation** của DD-110, không phải đã giải.
+
 ---
 
 ## DD-107 — Autonomy mode `autonomous_to_ready`: batch owner ở READY thay vì ngắt giữa chừng · ✅ Chốt (owner 2026-08-14)
