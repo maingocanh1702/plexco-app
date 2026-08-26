@@ -256,7 +256,7 @@ describe("status resolution — decision table cases (feature_billing_lifecycle_
 describe("DD-110 -- announce_session is a DENY-path class (allowed in allow states, denied when suspended)", () => {
   // announce_session shares publish_new_sessions' row (active/past_due ALLOW, suspended DENY): it
   // routes through the existing fail-closed resolution with NO allow-when-suspended handling. The
-  // obligation-termination classes (close_session, cancel_session) are NOT in the enum this slice.
+  // obligation-termination classes: `close_session` is in the enum (added by the close slice, B1); `cancel_session` enters with B2 (DD-110 D3).
   it("is recognised and ALLOWED in the allow states (active/trialing/past_due)", async () => {
     for (const [tenantStatus, subStatus, effectiveStatus] of [
       ["active", "active", "active"],
@@ -329,7 +329,7 @@ describe("DD-110 -- update_open_session is a DENY-path class (allowed in allow s
   // routes through the existing fail-closed resolution with NO allow-when-suspended handling. The
   // updateSession call site sends this literal ONLY for an OPEN session; a DRAFT update is DD-105-
   // exempt and never calls the resolver (service-layer negative test, DD-110 D4). The obligation-
-  // termination classes (close_session, cancel_session) are NOT in the enum this slice.
+  // termination classes: `close_session` is in the enum (added by the close slice, B1); `cancel_session` enters with B2 (DD-110 D3).
   it("is recognised and ALLOWED in the allow states (active/trialing/past_due)", async () => {
     for (const [tenantStatus, subStatus, effectiveStatus] of [
       ["active", "active", "active"],
@@ -698,5 +698,119 @@ describe("app-role access through resolve_tenant_status_locked (DBG-1, DBG-2, DB
     await expect(
       ctx.readonlyPool.query(`SELECT status FROM resolve_tenant_status_locked($1)`, [tenantId]),
     ).rejects.toThrow(/permission denied/i);
+  });
+});
+
+describe("DD-110 D2 -- close_session tolerates a SUSPENDED tenant OR subscription, but stay fail-closed on cancelled/missing/unknown", () => {
+  // DD-110 D2: close_session is ✅ for the `suspended` cell on BOTH axes — a suspended tenant may wind
+  // down a running obligation, and the decision ACCEPTS this even for a tenant-root abuse/ToS
+  // suspension ("một tenant abuse huỷ được buổi của chính nó — phiền, không phải thiệt hại"); its note
+  // says the gate cannot distinguish the two suspension axes and that distinguishing is out of scope.
+  // OWNER-RATIFIED READING (2026-08-26): the guard compares the LITERAL status value, NOT a billing
+  // effective_status bucket — so it does NOT bypass the resolution: a cancelled/missing/anomalous
+  // tenant OR subscription still denies (the §3 collapse that buckets those into 'suspended' is not
+  // used; it would fail-OPEN close on terminal states). Money safety is not here (it is the command's
+  // own charges → CANCEL_REQUIRES_REVIEW). (cancel_session gets its own copy of this block with B2.)
+
+  // Normal billing states → allowed with the usual effectiveStatus, exactly like any recognised class.
+  const allowedNormal = [
+    { tenantStatus: "active", subStatus: "active", effectiveStatus: "active" },
+    { tenantStatus: "trialing", subStatus: "trialing", effectiveStatus: "trialing" },
+    { tenantStatus: "active", subStatus: "past_due", effectiveStatus: "past_due" },
+  ];
+  // `suspended` on EITHER axis → obligation-termination allowed (DD-110 D2, both axes).
+  const allowedSuspended = [
+    { tenantStatus: "active", subStatus: "suspended", why: "subscription (non-payment) suspended" },
+    {
+      tenantStatus: "suspended",
+      subStatus: "active",
+      why: "tenant-root (abuse/ToS) suspended — DD-110 D2 accepts this",
+    },
+    { tenantStatus: "suspended", subStatus: "suspended", why: "both axes suspended" },
+  ];
+  // Still fail-closed — DD-110 D2 authorizes NONE of these.
+  const denied: { tenantStatus: string; subStatus: string | "missing"; why: string }[] = [
+    {
+      tenantStatus: "active",
+      subStatus: "cancelled",
+      why: "cancelled subscription is terminal, not the suspended cell",
+    },
+    {
+      tenantStatus: "active",
+      subStatus: "missing",
+      why: "missing subscription row is a provisioning anomaly",
+    },
+    {
+      tenantStatus: "cancelled",
+      subStatus: "active",
+      why: "tenant-root cancelled (terminated account) — not suspended",
+    },
+    {
+      tenantStatus: "past_due",
+      subStatus: "active",
+      why: "tenant-root past_due is an anomaly value (no write path on this axis, case 1b) — the tenant allowlist is {active,trialing,+suspended for OT}, so past_due DENIES even for obligation-termination; it must never bucket into 'suspended' and pass",
+    },
+  ];
+
+  for (const actionClass of ["close_session"] as const) {
+    it(`${actionClass}: normal billing states → allowed with the usual effectiveStatus`, async () => {
+      for (const f of allowedNormal) {
+        const tenantId = await seedTenant(ctx.owner, {
+          tenantStatus: f.tenantStatus,
+          subStatus: f.subStatus,
+        });
+        const decision = await authorizeInOwnTransaction(ctx.superuserDb.db, tenantId, actionClass);
+        expect(decision).toEqual({ allowed: true, effectiveStatus: f.effectiveStatus });
+      }
+    });
+
+    it(`${actionClass}: a SUSPENDED tenant OR subscription is allowed as obligation-termination (DD-110 D2, both axes)`, async () => {
+      for (const f of allowedSuspended) {
+        const tenantId = await seedTenant(ctx.owner, {
+          tenantStatus: f.tenantStatus,
+          subStatus: f.subStatus,
+        });
+        const decision = await authorizeInOwnTransaction(ctx.superuserDb.db, tenantId, actionClass);
+        expect(decision).toEqual({ allowed: true, obligationTermination: true });
+      }
+    });
+
+    it(`${actionClass}: cancelled/missing subscription and a cancelled TENANT still DENY fail-closed`, async () => {
+      for (const f of denied) {
+        const tenantId = await seedTenant(ctx.owner, {
+          tenantStatus: f.tenantStatus,
+          subStatus: f.subStatus,
+        });
+        const decision = await authorizeInOwnTransaction(ctx.superuserDb.db, tenantId, actionClass);
+        expect(decision).toEqual({ allowed: false, code: "TENANT_SUSPENDED" });
+      }
+    });
+
+    it(`${actionClass}: an unknown tenant DENIES (no allow-before-lookup short-circuit)`, async () => {
+      const decision = await authorizeInOwnTransaction(
+        ctx.superuserDb.db,
+        randomUUID(),
+        actionClass,
+      );
+      expect(decision).toEqual({ allowed: false, code: "TENANT_SUSPENDED" });
+    });
+  }
+
+  it("a near-miss unrecognised class still denies fail-closed (the RECOGNIZED check precedes resolution)", async () => {
+    const tenantId = await seedTenant(ctx.owner, { tenantStatus: "active", subStatus: "active" });
+    for (const nearMiss of [
+      "close",
+      "cancel",
+      "close_sessions",
+      "cancel_sessions",
+      "terminate_session",
+    ]) {
+      const decision = await authorizeInOwnTransaction(
+        ctx.superuserDb.db,
+        tenantId,
+        nearMiss as ActionClass,
+      );
+      expect(decision).toEqual({ allowed: false, code: "TENANT_SUSPENDED" });
+    }
   });
 });

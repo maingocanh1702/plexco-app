@@ -1566,3 +1566,274 @@ export async function updateSession(
     };
   });
 }
+
+// so a tx from withTenant passes to the helper below without a cast). Used by the shared
+// close/cancel money choke-point.
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+/**
+ * Money choke-point for the obligation-termination commands (edge #5 / DD-117 D3): a session
+ * carrying ANY charge has nonterminal finance roots a review_policy must resolve BEFORE a
+ * close/cancel can commit ("no silent cancellation"). That subsystem does not exist on base, so
+ * close/cancel FAIL-CLOSED (CANCEL_REQUIRES_REVIEW) whenever a charge exists — money never
+ * terminates silently. ANY charge, NO status carve-out (matching updateSession's price guard: a
+ * `void` charge still evidences prior financial activity whose reconciliation is a review
+ * question). On current main this is vacuously false (no join/waitlist/payments → no charges
+ * reachable); the guard exists so the refuse path is in place BEFORE paid rosters become
+ * reachable. SINGLE source for both close and cancel — the derived "has charges" money check.
+ */
+async function sessionHasCharges(tx: Tx, sessionId: string): Promise<boolean> {
+  const rows = await tx
+    .select({ x: sql`1` })
+    .from(charges)
+    .where(eq(charges.sessionId, sessionId))
+    .limit(1);
+  return rows.length > 0;
+}
+
+// ============================ CloseSession ============================
+
+export type CloseSessionErrorCode =
+  | "SESSION_NOT_FOUND"
+  | "SESSION_NOT_OPEN"
+  | "STALE_VERSION"
+  | "CANCEL_REQUIRES_REVIEW"
+  | "COMMAND_ID_CONFLICT";
+
+export class SessionCloseError extends Error {
+  readonly code: CloseSessionErrorCode;
+  constructor(code: CloseSessionErrorCode, message: string) {
+    super(message);
+    this.name = "SessionCloseError";
+    this.code = code;
+  }
+}
+
+/**
+ * Authorization denial for close_session. close_session is a DD-110 D2 obligation-termination class:
+ * allowed for active/past_due AND for a `suspended` tenant OR subscription — but authorizeTenantAction
+ * still DENIES a `cancelled`/missing subscription or a `cancelled`/anomalous tenant, so this error IS
+ * reachable (not a dead default). Carries the cause-agnostic billing code, like the sibling commands.
+ */
+export class SessionCloseAuthorizationError extends Error {
+  readonly code: "TENANT_SUSPENDED";
+  constructor() {
+    super("tenant is not permitted to close sessions");
+    this.name = "SessionCloseAuthorizationError";
+    this.code = "TENANT_SUSPENDED";
+  }
+}
+
+const failClose = (code: CloseSessionErrorCode, message: string): never => {
+  throw new SessionCloseError(code, message);
+};
+
+/** User payload. Carries NO tenant_id/actor/commandId (those are trusted context). */
+export interface CloseSessionInputPayload {
+  sessionId: string;
+  /** Optimistic-concurrency guard; MANDATORY on the mutate branch (edge #26). */
+  expectedVersion?: number;
+}
+
+export interface CloseSessionParams {
+  tenantId: string; // trusted routing context, asserted as a UUID by withTenant
+  commandId: string; // idempotency key from trusted context
+  input: CloseSessionInputPayload;
+}
+
+/** processed_commands.result_ref envelope: the returned fields only. status is always 'closed'
+ *  after the command (real close OR no-op replay of an already-closed session). Dedup is
+ *  commandId-only (DD-117 D5); no request content is stored. */
+interface StoredCloseResult {
+  sessionId: string;
+  status: string;
+  version: number;
+}
+
+/** replayed=true when a prior processed_commands row was returned (zero new mutation). */
+export interface CloseSessionResult {
+  sessionId: string;
+  status: string;
+  version: number;
+  replayed: boolean;
+}
+
+const CLOSE_COMMAND_TYPE = "CloseSession";
+
+/** Guards a replayed result_ref before trusting it: UUID id, status 'closed', integer version in
+ *  the sessions.version int4 domain [1, INT4_MAX] — a corrupt/hand-written row fails closed. */
+function isStoredCloseResult(value: unknown): value is StoredCloseResult {
+  if (typeof value !== "object" || value === null) return false;
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.sessionId === "string" &&
+    UUID_RE.test(r.sessionId) &&
+    r.status === "closed" &&
+    typeof r.version === "number" &&
+    Number.isInteger(r.version) &&
+    r.version >= 1 &&
+    r.version <= INT4_MAX
+  );
+}
+
+/**
+ * CloseSession — transition an `open` session to `closed`. Obligation-termination: allowed under
+ * suspension on EITHER axis (DD-110 D2) but still DENIES a `cancelled`/missing tenant or subscription.
+ * One withTenant transaction on the S2 pattern: upfront suspension gate →
+ * validate → advisory command-key lock → dedup (commandId-only, DD-117 D5) → FOR UPDATE lock →
+ * idempotent no-op (already closed) → transition guard (only `open`) → MANDATORY expectedVersion →
+ * money fail-closed (any charge → CANCEL_REQUIRES_REVIEW, edge #5) → mutate + version bump +
+ * `updated_at = clock_timestamp()` → raise the DD-12 fence ('closed', unconditional) → one
+ * `session.closed` outbox row → record. Close has NO past-guard: closing a session whose start has
+ * passed is the normal completion (unlike cancel's edge #31 past-guard on `open`).
+ */
+export async function closeSession(
+  db: Db,
+  params: CloseSessionParams,
+): Promise<CloseSessionResult> {
+  const { tenantId, commandId, input } = params;
+  return withTenant(db, tenantId, async (tx) => {
+    // Suspension gate (DD-110 D2): close_session is an obligation-termination class — authorize-
+    // TenantAction allows active/past_due AND a `suspended` tenant OR subscription, but DENIES a
+    // `cancelled`/missing subscription or a `cancelled`/anomalous tenant, so the `!allowed` branch is
+    // REACHABLE (a suspended tenant still closes; a cancelled one does not). Called upfront: the
+    // resolver's FOR SHARE locks on tenants/subscriptions persist for the whole tx, so the decision —
+    // including its deny cases — stays stable through the mutation without a separate under-lock
+    // re-check (the same concurrency guarantee the deny-path classes like publish/update rely on).
+    const decision = await authorizeTenantAction(tx, tenantId, "close_session");
+    if (!decision.allowed) {
+      throw new SessionCloseAuthorizationError();
+    }
+
+    if (typeof input !== "object" || input === null || Array.isArray(input)) {
+      failClose("SESSION_NOT_FOUND", "session not found in tenant context");
+    }
+    if (typeof input.sessionId !== "string" || !UUID_RE.test(input.sessionId)) {
+      failClose("SESSION_NOT_FOUND", "session not found in tenant context");
+    }
+    const sessionId = input.sessionId.toLowerCase();
+
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended('processed-command:' || ${tenantId}::uuid::text || ':' || ${commandId}, 0))`,
+    );
+
+    // Dedup (edge #3) — commandId-only (DD-117 D5): a replayed commandId for the SAME session
+    // returns the stored envelope; a different session or a foreign command_type conflicts.
+    const prior = await tx
+      .select({
+        commandType: processedCommands.commandType,
+        resultRef: processedCommands.resultRef,
+      })
+      .from(processedCommands)
+      .where(
+        and(eq(processedCommands.tenantId, tenantId), eq(processedCommands.commandId, commandId)),
+      );
+    if (prior.length > 0) {
+      const stored = prior[0]!.resultRef as StoredCloseResult | null;
+      if (
+        prior[0]!.commandType === CLOSE_COMMAND_TYPE &&
+        isStoredCloseResult(stored) &&
+        stored.sessionId === sessionId
+      ) {
+        return {
+          sessionId: stored.sessionId,
+          status: stored.status,
+          version: stored.version,
+          replayed: true,
+        };
+      }
+      failClose(
+        "COMMAND_ID_CONFLICT",
+        "command_id belongs to a different command or session, or has no usable result",
+      );
+    }
+
+    const [locked] = await tx
+      .select({ status: sessions.status, version: sessions.version })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .for("update");
+    if (locked === undefined) {
+      failClose("SESSION_NOT_FOUND", "session not found in tenant context");
+    }
+    const current = locked!;
+
+    // Idempotent no-op: already closed → success no-op, zero mutation, no duplicate event. Does NOT
+    // check expectedVersion AT ALL — neither match NOR int4 validity — so an already-closed session
+    // wins the no-op even with a malformed expectedVersion (edge #27 no-op-wins-over-version; the int4
+    // validation deliberately runs AFTER this branch, on the mutate path only).
+    if (current.status === "closed") {
+      const stored: StoredCloseResult = { sessionId, status: "closed", version: current.version };
+      await tx
+        .insert(processedCommands)
+        .values({ tenantId, commandId, commandType: CLOSE_COMMAND_TYPE, resultRef: stored });
+      return { sessionId, status: "closed", version: current.version, replayed: false };
+    }
+
+    // Transition guard (edge #11): only an OPEN session can be closed. NO past-guard — closing a
+    // session whose start has passed is the normal completion.
+    if (current.status !== "open") {
+      failClose("SESSION_NOT_OPEN", "only an open session can be closed");
+    }
+
+    // expectedVersion validation runs on the MUTATE branch ONLY — AFTER the idempotent no-op above,
+    // so an already-closed session wins the no-op even with a malformed expectedVersion (edge #27).
+    // A provided value must be a positive int4; then it is MANDATORY (edge #26): missing OR mismatch
+    // → STALE_VERSION. Version is checked BEFORE the money guard (a stale charged request →
+    // STALE_VERSION, not CANCEL_REQUIRES_REVIEW).
+    if (input.expectedVersion !== undefined && !isInt4(input.expectedVersion, 1)) {
+      failClose("STALE_VERSION", "expected_version must be a positive integer");
+    }
+    if (input.expectedVersion === undefined || input.expectedVersion !== current.version) {
+      failClose("STALE_VERSION", "expected_version is required and must match the current version");
+    }
+
+    // Money fail-closed (edge #5 / DD-117): a session with ANY charge → CANCEL_REQUIRES_REVIEW.
+    if (await sessionHasCharges(tx, sessionId)) {
+      failClose(
+        "CANCEL_REQUIRES_REVIEW",
+        "cannot close a session with existing charges — resolution requires review_policy",
+      );
+    }
+
+    const [updated] = await tx
+      .update(sessions)
+      .set({
+        status: "closed",
+        version: sql`${sessions.version} + 1`,
+        updatedAt: sql`clock_timestamp()`,
+      })
+      .where(eq(sessions.id, sessionId))
+      .returning({ id: sessions.id, status: sessions.status, version: sessions.version });
+
+    // DD-12 immediate-deny fence: a closed session leaves the public projection → raise the fence
+    // UNCONDITIONALLY on the transition (owner carry-forward; shared helper), reason 'closed'.
+    await raisePublicSessionFence(tx, updated!.id, "closed");
+
+    // One session.closed outbox row (§4 Events: {session_id, close_reason}). close_reason 'manual'
+    // — a host-initiated close (no auto-close mechanism exists yet).
+    await tx.insert(outboxEvents).values({
+      tenantId,
+      aggregateType: "session",
+      aggregateId: updated!.id,
+      sequence: sql`coalesce((select max(${outboxEvents.sequence}) from ${outboxEvents} where ${outboxEvents.aggregateId} = ${updated!.id}), 0) + 1`,
+      type: "session.closed",
+      payload: { session_id: updated!.id, close_reason: "manual" },
+    });
+
+    const stored: StoredCloseResult = {
+      sessionId: updated!.id,
+      status: updated!.status,
+      version: updated!.version,
+    };
+    await tx
+      .insert(processedCommands)
+      .values({ tenantId, commandId, commandType: CLOSE_COMMAND_TYPE, resultRef: stored });
+    return {
+      sessionId: stored.sessionId,
+      status: stored.status,
+      version: stored.version,
+      replayed: false,
+    };
+  });
+}

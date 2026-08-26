@@ -27,21 +27,33 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
  * queries, system safety) never consult tenant/subscription status at all (edge
  * #9: "Allow — safety path") and so structurally never route through this resolver.
  *
- * DD-110 also mints the obligation-termination classes (close_session,
- * cancel_session) that ALLOW under suspension (✅ in every billing state). Their
- * literals and allow-when-suspended handling land with CloseSession/CancelSession
- * (a later slice), per DD-110 D3 — so they are intentionally absent here (this
- * slice ships UpdateSession only). DD-117 authorizes those two as a fail-closed
- * refuse on the paid-roster/finance-root path until the payments/review_policy
- * subsystem exists; it does NOT add an allow-when-suspended branch to this resolver
- * (that is the later slice's change).
+ * DD-110 also mints the obligation-termination classes. B1 lands close_session ONLY; cancel_session
+ * joins with B2 (DD-110 D3). DD-110 D2's Suspended Action Matrix marks close/cancel ✅ for
+ * active/past_due/`suspended` — a suspended tenant may still TERMINATE a running obligation (suspension
+ * freezes NEW commercial activity, not the winding-down of existing ones). They do NOT bypass this
+ * resolution: they run the SAME fail-closed two-step below.
+ *
+ * OWNER-RATIFIED READING (2026-08-26): the guard compares the LITERAL status value — it does NOT
+ * compute or infer an "effective status" bucket, and any status literal it does not recognise is
+ * fail-closed. So it ADDS the LITERAL `suspended` to the allow-set on BOTH axes, accepting (per
+ * DD-110 D2) a tenant-root abuse/ToS suspension too ("một tenant abuse huỷ được buổi của chính nó —
+ * phiền, không phải thiệt hại"). It does NOT tolerate the billing §3 `effective_status='suspended'`
+ * BUCKET that collapses `cancelled`/missing/anomalous into `'suspended'` — applying ✅-suspended to
+ * that bucket would fail-OPEN close/cancel on terminal/anomalous tenants. Every OTHER deny is
+ * unchanged: a `cancelled`/missing/anomalous TENANT or SUBSCRIPTION still fails closed. The two-axis
+ * limitation inherited from DD-110 (subscriptions.status = unpaid vs tenants.status = abuse/ToS
+ * collapsing into one row, still indistinguishable) is UNCHANGED and stays a NAMED limitation. Their
+ * money safety is separate from this resolver — the finance-root fail-closed refuse
+ * (CANCEL_REQUIRES_REVIEW, DD-117 / edge #5) lives in the CloseSession service command, keyed on the
+ * session's own `charges`, not status.
  */
 export type ActionClass =
   | "publish_new_sessions"
   | "admin_mutation"
   | "integration_changes"
   | "announce_session"
-  | "update_open_session";
+  | "update_open_session"
+  | "close_session";
 
 const RECOGNIZED_ACTION_CLASSES: ReadonlySet<ActionClass> = new Set([
   "publish_new_sessions",
@@ -49,12 +61,30 @@ const RECOGNIZED_ACTION_CLASSES: ReadonlySet<ActionClass> = new Set([
   "integration_changes",
   "announce_session",
   "update_open_session",
+  "close_session",
 ]);
+
+// DD-110 D2 obligation-termination classes. B1 lands close_session ONLY; cancel_session joins this set
+// with B2 (DD-110 D3: a literal enters the enum with the command that uses it). They do NOT bypass the
+// fail-closed resolution. OWNER-RATIFIED READING (2026-08-26): the guard compares the LITERAL status
+// value; it does NOT compute or infer an "effective status" bucket; any status literal it does not
+// recognise is fail-closed. So obligation-termination ADDITIONALLY tolerates a LITERAL `suspended` on
+// BOTH axes (step 1 tenant AND step 2 subscription) — DD-110 D2 accepts this INCLUDING a tenant-root
+// abuse/ToS suspension. The two-axis limitation inherited from DD-110 (subscriptions.status = unpaid
+// vs tenants.status = abuse/ToS collapsing into one row, still indistinguishable) is UNCHANGED and
+// stays a NAMED limitation — this reading does not silently close it. Every other deny is unchanged:
+// a `cancelled`/missing/anomalous tenant OR subscription still fails closed.
+const OBLIGATION_TERMINATION: ReadonlySet<ActionClass> = new Set(["close_session"]);
 
 export type EffectiveStatus = "trialing" | "active" | "past_due";
 
 export type AuthorizationDecision =
   | { allowed: true; effectiveStatus: EffectiveStatus }
+  // Obligation-termination (close_session; cancel_session with B2) allowed when a LITERAL `suspended`
+  // is on EITHER axis (tenant OR subscription, DD-110 D2) — there is no valid EffectiveStatus for
+  // `suspended`, so a distinct allowed variant instead of a fake status. Callers gate on
+  // `decision.allowed`; both allowed shapes pass.
+  | { allowed: true; obligationTermination: true }
   | { allowed: false; code: "TENANT_SUSPENDED" };
 
 const DENY: AuthorizationDecision = { allowed: false, code: "TENANT_SUSPENDED" };
@@ -120,15 +150,31 @@ export async function authorizeTenantAction(
     return DENY;
   }
 
+  const isObligationTermination = OBLIGATION_TERMINATION.has(actionClass);
+
   const tenantResult = await tx.execute(
     sql`SELECT status FROM resolve_tenant_status_locked(${tenantId})`,
   );
   const tenantRows = tenantResult.rows as { status: string }[];
   const tenantStatus = tenantRows[0]?.status;
 
-  // case 1 / 1b: missing row, or any value other than active/trialing —
-  // fail-closed on the whole column, not just the literal 'suspended'.
-  if (tenantStatus !== "active" && tenantStatus !== "trialing") {
+  // Step 1 (tenant axis, abuse/ToS). Allowlist, fail-closed on the whole column — a missing row or any
+  // value other than active/trialing denies (case 1/1b). For OBLIGATION_TERMINATION (close/cancel),
+  // `suspended` is ADDITIONALLY allowed, on THIS axis too: DD-110 D2 accepts that a suspended tenant —
+  // INCLUDING a tenant-root abuse/ToS suspension — may still terminate its own running obligation
+  // ("một tenant abuse huỷ được buổi của chính nó — phiền, không phải thiệt hại", decisions.md
+  // DD-110 D2). The decision's own note says the gate CANNOT distinguish a non-payment suspension from
+  // an abuse one and that building that distinction is explicitly out of scope for this slice — so
+  // a LITERAL `suspended` is allowed without asking which axis it came from (owner-ratified reading
+  // 2026-08-26: the guard compares the literal value, does NOT compute an effective_status bucket).
+  // Still fail-closed on `cancelled`/missing/anomalous — the billing §3 effective_status collapse that
+  // buckets those into `'suspended'` is NOT used here (it would fail-OPEN close/cancel on terminal
+  // states). The two-axis unpaid-vs-abuse limitation is unchanged and stays a named DD-110 limitation.
+  const tenantAllowed =
+    tenantStatus === "active" ||
+    tenantStatus === "trialing" ||
+    (isObligationTermination && tenantStatus === "suspended");
+  if (!tenantAllowed) {
     return DENY;
   }
 
@@ -141,19 +187,30 @@ export async function authorizeTenantAction(
   const subRows = subResult.rows as { status: string }[];
   const subStatus = subRows[0]?.status;
 
-  // case 3: allowlist, not a denylist (codex round-02 [P1] on this slice —
-  // an earlier draft denied only 'suspended'/'cancelled'/missing and
-  // allowed every OTHER value, which fails OPEN on anything unrecognised:
-  // schema drift, a widened CHECK, or a value this resolver simply doesn't
-  // know about yet. Mirrors step 1's own allowlist above, and the same class
-  // of bug billing §3's own round-03 history already fixed once for the
-  // tenant axis — reintroducing it on the subscription axis was the exact
-  // mistake that round closed). Missing row (case 4, provisioning anomaly)
-  // and everything outside the three explicitly-allowed values — including
-  // 'suspended'/'cancelled' (case 2/2b) and anything not even in the CHECK
-  // constraint — fail closed here.
+  // Step 2 (subscription axis, billing) is an ALLOWLIST, not a denylist: only the explicitly-allowed
+  // values pass and every OTHER value (a missing row, `cancelled`, or anything unrecognised) fails
+  // closed — the owner-ratified reading that any status literal the guard does not recognise is
+  // fail-closed. For OBLIGATION_TERMINATION, the LITERAL `suspended` joins the allow-set here too
+  // (DD-110 D2, same rationale as step 1) — but NOT the effective_status bucket.
+  const subSuspendedOt = isObligationTermination && subStatus === "suspended";
+  if (
+    subStatus !== "trialing" &&
+    subStatus !== "active" &&
+    subStatus !== "past_due" &&
+    !subSuspendedOt
+  ) {
+    return DENY;
+  }
+
+  // Allowed. When suspension is involved on EITHER axis there is no valid EffectiveStatus, so return
+  // the distinct obligation-termination shape (only reachable for close/cancel — a non-OT class with a
+  // suspended axis already denied above). Otherwise both axes are in their normal allowed sets and
+  // subStatus is a real EffectiveStatus. Callers gate on `decision.allowed` either way.
+  if (tenantStatus === "suspended" || subStatus === "suspended") {
+    return { allowed: true, obligationTermination: true };
+  }
   if (subStatus === "trialing" || subStatus === "active" || subStatus === "past_due") {
     return { allowed: true, effectiveStatus: subStatus };
   }
-  return DENY;
+  return DENY; // defensive fail-closed — unreachable given the step-2 guard above
 }

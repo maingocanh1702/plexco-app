@@ -14,6 +14,10 @@ import {
   SessionAnnounceAuthorizationError,
   SessionUpdateError,
   SessionUpdateAuthorizationError,
+  closeSession,
+  SessionCloseError,
+  SessionCloseAuthorizationError,
+  type CloseSessionInputPayload,
   type CreateSessionInputPayload,
   type PublishSessionInputPayload,
   type AnnounceSessionInputPayload,
@@ -2577,5 +2581,459 @@ describe("updateSession", () => {
     });
     expect(r).toMatchObject({ version: priv.version + 1 });
     expect(await fenceReason(priv.sessionId)).toBeNull();
+  });
+});
+
+describe("closeSession (B1 of the split)", () => {
+  const future = () => new Date(Date.now() + 24 * 3600 * 1000);
+  const past = () => new Date(Date.now() - 24 * 3600 * 1000);
+
+  async function seedTenant(tenantStatus: string, subStatus: string | "missing"): Promise<string> {
+    const unique = randomUUID();
+    const t = await ctx.owner.query(
+      `INSERT INTO tenants (name, slug, status) VALUES ($1, $2, $3) RETURNING id`,
+      [`CloseCancel ${unique}`, `close-cancel-${unique}`, tenantStatus],
+    );
+    const tenantId = (t.rows[0] as { id: string }).id;
+    if (subStatus !== "missing") {
+      await ctx.owner.query(
+        `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
+         VALUES ($1, 'free', 1, $2, now(), now() + interval '30 days')`,
+        [tenantId, subStatus],
+      );
+    }
+    return tenantId;
+  }
+
+  async function seedSession(
+    tenantId: string,
+    over: { status?: string; visibility?: "private" | "public"; startsAt?: Date } = {},
+  ): Promise<{ sessionId: string; version: number }> {
+    const startsAt = over.startsAt ?? future();
+    const s = await ctx.owner.query(
+      `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, area, slots_max, visibility, price_amount, status)
+       VALUES ($1, $2, $3, $4, 'Asia/Ho_Chi_Minh', 'Quận 1', 8, $5, 120000, $6)
+       RETURNING id, version`,
+      [
+        tenantId,
+        ctx.badmintonSportId,
+        startsAt,
+        new Date(startsAt.getTime() + 2 * 3600 * 1000),
+        over.visibility ?? "private",
+        over.status ?? "open",
+      ],
+    );
+    const r = s.rows[0] as { id: string; version: number };
+    return { sessionId: r.id, version: r.version };
+  }
+
+  // person -> membership -> ACTIVE player + an (open, unpaid) charge — the roster/charge an
+  // obligation-termination refuses on (edge #5 / #28).
+  // A roster player at a given status (default active). Returns the player id so a charge can be
+  // attached to a NON-active player (a charge-only anomaly: hasCharges yet active roster = 0).
+  async function seedRosterPlayer(
+    tenantId: string,
+    sessionId: string,
+    playerStatus = "active",
+  ): Promise<string> {
+    const unique = randomUUID();
+    const p = await ctx.owner.query(`INSERT INTO persons (display_name) VALUES ($1) RETURNING id`, [
+      `P ${unique}`,
+    ]);
+    const personId = (p.rows[0] as { id: string }).id;
+    const m = await ctx.owner.query(
+      `INSERT INTO memberships (tenant_id, person_id, status) VALUES ($1, $2, 'active') RETURNING id`,
+      [tenantId, personId],
+    );
+    const membershipId = (m.rows[0] as { id: string }).id;
+    // players_status_chk / 0014: status='waitlisted' <=> waitlist_position IS NOT NULL.
+    const waitlistPosition = playerStatus === "waitlisted" ? 1 : null;
+    const pl = await ctx.owner.query(
+      `INSERT INTO players (tenant_id, session_id, membership_id, status, waitlist_position) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [tenantId, sessionId, membershipId, playerStatus, waitlistPosition],
+    );
+    return (pl.rows[0] as { id: string }).id;
+  }
+
+  async function seedCharge(
+    tenantId: string,
+    sessionId: string,
+    {
+      chargeStatus = "open",
+      playerStatus = "active",
+    }: { chargeStatus?: string; playerStatus?: string } = {},
+  ): Promise<void> {
+    const playerId = await seedRosterPlayer(tenantId, sessionId, playerStatus);
+    await ctx.owner.query(
+      `INSERT INTO charges (tenant_id, session_id, player_id, amount_due, status) VALUES ($1, $2, $3, 120000, $4)`,
+      [tenantId, sessionId, playerId, chargeStatus],
+    );
+  }
+
+  async function projectToPublic(sessionId: string, tenantId: string): Promise<void> {
+    await ctx.owner.query(
+      `INSERT INTO public_sessions
+         (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
+          price_amount, slots_open, club_display_name, join_policy, expires_at)
+       VALUES ($1, $1, $2, 'badminton', now() + interval '1 day',
+          now() + interval '1 day' + interval '2 hours', 'Quận 1', 120000, 4, 'Club A', 'open',
+          now() + interval '1 day')`,
+      [sessionId, tenantId],
+    );
+  }
+  const viewHasSession = async (sessionId: string): Promise<boolean> =>
+    (
+      await ctx.readonlyPool.query(`SELECT 1 FROM public_session_share_v WHERE session_id = $1`, [
+        sessionId,
+      ])
+    ).rows.length > 0;
+  const fenceReason = async (sessionId: string): Promise<string | null> =>
+    (
+      (
+        await ctx.owner.query(`SELECT reason FROM public_projection_fences WHERE target_id = $1`, [
+          sessionId,
+        ])
+      ).rows[0] as { reason: string } | undefined
+    )?.reason ?? null;
+
+  const sessionState = (sessionId: string) =>
+    row(`SELECT status, version FROM sessions WHERE id = $1`, [sessionId]);
+  const sessionEvents = (sessionId: string) =>
+    rows(`SELECT type, payload FROM outbox_events WHERE aggregate_id = $1 ORDER BY sequence`, [
+      sessionId,
+    ]);
+
+  const close = (tenantId: string, input: CloseSessionInputPayload, commandId = cmdId()) =>
+    closeSession(ctx.appDb.db, { tenantId, commandId, input });
+
+  async function expectCloseReject(run: () => Promise<unknown>, code: string): Promise<void> {
+    const err = await run().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionCloseError);
+    expect((err as SessionCloseError).code).toBe(code);
+  }
+
+  // Wait until at least `min` backends sit (transitively) in the holder's lock-wait graph — the
+  // recursive reach mirrors updateSession's U-RACE helper so C-RACE releases only once BOTH closers
+  // are blocked under the same FOR UPDATE they will contend on (per-describe copy: helpers do not
+  // cross describe scopes).
+  async function waitUntilBlockedByHolder(holderPid: number, min = 1): Promise<void> {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const { rows } = await ctx.owner.query(
+        `WITH RECURSIVE reach AS (
+           SELECT pid FROM pg_stat_activity
+             WHERE wait_event_type = 'Lock' AND $1 = ANY(pg_blocking_pids(pid))
+           UNION
+           SELECT a.pid FROM pg_stat_activity a
+             JOIN reach r ON r.pid = ANY(pg_blocking_pids(a.pid))
+             WHERE a.wait_event_type = 'Lock'
+         )
+         SELECT count(*)::int AS c FROM reach`,
+        [holderPid],
+      );
+      if (Number((rows[0] as { c: number }).c) >= min) return;
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    throw new Error(`fewer than ${min} backend(s) blocked by holder ${holderPid} within 5s`);
+  }
+
+  // ---------------------------- CloseSession ----------------------------
+
+  it("C1: closes an OPEN session -> closed, version+1, one session.closed event, processed_commands row", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { status: "open" });
+    const result = await close(tenantId, { sessionId, expectedVersion: version });
+    expect(result).toMatchObject({
+      sessionId,
+      status: "closed",
+      version: version + 1,
+      replayed: false,
+    });
+    expect(await sessionState(sessionId)).toMatchObject({ status: "closed", version: version + 1 });
+    const evs = await sessionEvents(sessionId);
+    expect(evs).toHaveLength(1);
+    expect((evs[0] as { type: string }).type).toBe("session.closed");
+    const payload = (evs[0] as { payload: Record<string, unknown> }).payload;
+    expect(Object.keys(payload).sort()).toEqual(["close_reason", "session_id"]);
+    expect(payload).toMatchObject({ session_id: sessionId, close_reason: "manual" });
+  });
+
+  it("C2: closing a DRAFT is SESSION_NOT_OPEN (only open -> closed), zero mutation", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { status: "draft" });
+    await expectCloseReject(
+      () => close(tenantId, { sessionId, expectedVersion: version }),
+      "SESSION_NOT_OPEN",
+    );
+    expect(await sessionState(sessionId)).toMatchObject({ status: "draft", version });
+    expect(await sessionEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("C3: closing a CANCELLED session is SESSION_NOT_OPEN", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { status: "cancelled" });
+    await expectCloseReject(
+      () => close(tenantId, { sessionId, expectedVersion: version }),
+      "SESSION_NOT_OPEN",
+    );
+  });
+
+  it("C-NOOP: closing an already-CLOSED session is an idempotent no-op (version unchanged, no duplicate event; no expected_version needed)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { status: "closed" });
+    const result = await close(tenantId, { sessionId }); // no expectedVersion — no-op wins
+    expect(result).toMatchObject({ status: "closed", version, replayed: false });
+    expect(await sessionEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("C-VER: STALE_VERSION on expected_version mismatch; and STALE_VERSION when omitted on the mutate branch (edge #26)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const a = await seedSession(tenantId, { status: "open" });
+    await expectCloseReject(
+      () => close(tenantId, { sessionId: a.sessionId, expectedVersion: a.version + 9 }),
+      "STALE_VERSION",
+    );
+    const b = await seedSession(tenantId, { status: "open" });
+    await expectCloseReject(() => close(tenantId, { sessionId: b.sessionId }), "STALE_VERSION");
+    expect(await sessionState(a.sessionId)).toMatchObject({ status: "open", version: a.version });
+  });
+
+  it("C-CHARGE: closing a session with ANY charge is CANCEL_REQUIRES_REVIEW (fail-closed, edge #5), zero mutation", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { status: "open" });
+    await seedCharge(tenantId, sessionId);
+    await expectCloseReject(
+      () => close(tenantId, { sessionId, expectedVersion: version }),
+      "CANCEL_REQUIRES_REVIEW",
+    );
+    expect(await sessionState(sessionId)).toMatchObject({ status: "open", version });
+    expect(await sessionEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("C-STALE-CHARGE: a STALE close request against a session WITH a charge is STALE_VERSION, NOT CANCEL_REQUIRES_REVIEW — closeSession checks the version before the money guard", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { status: "open" });
+    await seedCharge(tenantId, sessionId);
+    await expectCloseReject(
+      () => close(tenantId, { sessionId, expectedVersion: version + 9 }),
+      "STALE_VERSION",
+    );
+    expect(await sessionState(sessionId)).toMatchObject({ status: "open", version });
+    expect(await sessionEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("C-VOID: a session whose ONLY charge is `void` STILL blocks close — sessionHasCharges has NO status filter (fail-closed money posture, DD-117); CANCEL_REQUIRES_REVIEW, zero mutation, no event", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { status: "open" });
+    await seedCharge(tenantId, sessionId, { chargeStatus: "void" });
+    await expectCloseReject(
+      () => close(tenantId, { sessionId, expectedVersion: version }),
+      "CANCEL_REQUIRES_REVIEW",
+    );
+    expect(await sessionState(sessionId)).toMatchObject({ status: "open", version });
+    expect(await sessionEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("C-SUSPENDED: closing an OPEN session while the SUBSCRIPTION is suspended SUCCEEDS (DD-110 D2 obligation-termination — the one relaxed cell)", async () => {
+    const tenantId = await seedTenant("active", "suspended"); // subscription (billing) suspended
+    const { sessionId, version } = await seedSession(tenantId, { status: "open" });
+    const result = await close(tenantId, { sessionId, expectedVersion: version });
+    expect(result).toMatchObject({ status: "closed", version: version + 1 });
+  });
+
+  it("C-SUSPENDED-TENANT: closing while the TENANT (abuse/ToS axis) is suspended SUCCEEDS — DD-110 D2 allows the suspended cell on BOTH axes, incl. an abuse tenant terminating its own session (codex round-4 [P1])", async () => {
+    const tenantId = await seedTenant("suspended", "active"); // tenant-root suspended
+    const { sessionId, version } = await seedSession(tenantId, { status: "open" });
+    const result = await close(tenantId, { sessionId, expectedVersion: version });
+    expect(result).toMatchObject({ status: "closed", version: version + 1 });
+  });
+
+  it("C-CANCELLED-TENANT: closing while the TENANT is CANCELLED (terminated account) is DENIED — DD-110 D2 authorizes only the suspended cell; cancelled stays fail-closed", async () => {
+    const tenantId = await seedTenant("cancelled", "active"); // tenant-root cancelled
+    const { sessionId, version } = await seedSession(tenantId, { status: "open" });
+    const err = await close(tenantId, { sessionId, expectedVersion: version }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(SessionCloseAuthorizationError);
+    expect((err as SessionCloseAuthorizationError).code).toBe("TENANT_SUSPENDED");
+    expect(await sessionState(sessionId)).toMatchObject({ status: "open", version });
+  });
+
+  it("C-PAST: closing an OPEN session whose starts_at has PASSED SUCCEEDS — close has NO past-guard (unlike cancel)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, {
+      status: "open",
+      startsAt: past(),
+    });
+    const result = await close(tenantId, { sessionId, expectedVersion: version });
+    expect(result).toMatchObject({ status: "closed", version: version + 1 });
+  });
+
+  it("C-FENCE: closing raises the DD-12 fence ('closed', unconditional); the guarded view denies IMMEDIATELY", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, {
+      status: "open",
+      visibility: "public",
+    });
+    await projectToPublic(sessionId, tenantId);
+    expect(await viewHasSession(sessionId)).toBe(true);
+    await close(tenantId, { sessionId, expectedVersion: version });
+    expect(await fenceReason(sessionId)).toBe("closed");
+    expect(await viewHasSession(sessionId)).toBe(false);
+  });
+
+  it("C-FENCE-PRIVATE: closing a PRIVATE session that carries a STALE public projection STILL raises the fence — the raise is unconditional, NOT gated on prior visibility (guarded view denies)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, {
+      status: "open",
+      visibility: "private",
+    });
+    // A stale public_sessions row on a PRIVATE session (e.g. left behind after a public→private flip
+    // before the async projector converged). The fence must fire regardless of the session's own
+    // visibility, so the stale projection is denied immediately.
+    await projectToPublic(sessionId, tenantId);
+    expect(await viewHasSession(sessionId)).toBe(true);
+    await close(tenantId, { sessionId, expectedVersion: version });
+    expect(await fenceReason(sessionId)).toBe("closed");
+    expect(await viewHasSession(sessionId)).toBe(false);
+  });
+
+  it("C-DED: replaying the same commandId for the same session returns the stored envelope; a different session, a foreign command_type, or a CORRUPT same-type envelope all conflict", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { status: "open" });
+    const commandId = cmdId();
+    const first = await close(tenantId, { sessionId, expectedVersion: version }, commandId);
+    expect(first).toMatchObject({ version: version + 1, replayed: false });
+    const replay = await close(tenantId, { sessionId, expectedVersion: version }, commandId);
+    expect(replay).toMatchObject({ version: version + 1, replayed: true });
+    const other = await seedSession(tenantId, { status: "open" });
+    await expectCloseReject(
+      () =>
+        close(tenantId, { sessionId: other.sessionId, expectedVersion: other.version }, commandId),
+      "COMMAND_ID_CONFLICT",
+    );
+    const foreignCmd = cmdId();
+    await ctx.owner.query(
+      `INSERT INTO processed_commands (tenant_id, command_id, command_type, result_ref)
+       VALUES ($1, $2, 'CreateSession', $3)`,
+      [
+        tenantId,
+        foreignCmd,
+        JSON.stringify({ sessionId, visibility: "private", status: "draft", version: 1 }),
+      ],
+    );
+    await expectCloseReject(
+      () => close(tenantId, { sessionId, expectedVersion: version }, foreignCmd),
+      "COMMAND_ID_CONFLICT",
+    );
+    // Same command_type (CloseSession) but a CORRUPT stored envelope (version past INT4_MAX) →
+    // isStoredCloseResult rejects it → COMMAND_ID_CONFLICT (never trusts a malformed prior result).
+    const corruptCmd = cmdId();
+    await ctx.owner.query(
+      `INSERT INTO processed_commands (tenant_id, command_id, command_type, result_ref)
+       VALUES ($1, $2, 'CloseSession', $3)`,
+      [tenantId, corruptCmd, JSON.stringify({ sessionId, status: "closed", version: 2147483648 })],
+    );
+    await expectCloseReject(
+      () => close(tenantId, { sessionId, expectedVersion: version }, corruptCmd),
+      "COMMAND_ID_CONFLICT",
+    );
+    expect(await sessionEvents(sessionId)).toHaveLength(1);
+  });
+
+  it("C-SEC: cannot close another tenant's session (RLS FORCE — tenant_id from context)", async () => {
+    const tenantA = await seedTenant("active", "active");
+    const tenantB = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantA, { status: "open" });
+    await expectCloseReject(
+      () => close(tenantB, { sessionId, expectedVersion: version }),
+      "SESSION_NOT_FOUND",
+    );
+    expect(await sessionState(sessionId)).toMatchObject({ status: "open", version });
+  });
+
+  it("C-NOOP-BADVER: no-op wins over int4 validity (finding #1 / edge #27) — an already-closed session with a MALFORMED expectedVersion (0, below the int4 min of 1) still no-op-succeeds because the int4 check runs AFTER the terminal no-op; the SAME 0 on an OPEN session reaches the mutate branch and is STALE_VERSION, proving the ordering", async () => {
+    const tenantId = await seedTenant("active", "active");
+    // (a) already-closed + malformed expectedVersion 0 -> the terminal no-op branch catches it FIRST,
+    //     so it succeeds with the unchanged version and emits no event (the int4 guard never runs).
+    const closed = await seedSession(tenantId, { status: "closed" });
+    const noop = await close(tenantId, { sessionId: closed.sessionId, expectedVersion: 0 });
+    expect(noop).toMatchObject({ status: "closed", version: closed.version, replayed: false });
+    expect(await sessionEvents(closed.sessionId)).toHaveLength(0);
+    // (b) the SAME malformed 0 on an OPEN session passes the no-op + transition guards and reaches the
+    //     mutate branch, where the int4 check rejects it -> STALE_VERSION, zero mutation. Same input,
+    //     opposite outcome: the ONLY difference is whether the no-op branch fired first (finding #1).
+    const open = await seedSession(tenantId, { status: "open" });
+    await expectCloseReject(
+      () => close(tenantId, { sessionId: open.sessionId, expectedVersion: 0 }),
+      "STALE_VERSION",
+    );
+    expect(await sessionState(open.sessionId)).toMatchObject({
+      status: "open",
+      version: open.version,
+    });
+  });
+
+  it("C-RACE: two competing closers sharing the initial version -> exactly one real close (one session.closed event, version+1); the loser reads the now-closed row under FOR UPDATE and idempotently no-ops (NOT STALE_VERSION, NOT a double event) — competing-writer coverage mirroring updateSession's U-RACE", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { status: "open" });
+    // Gate BOTH closers behind a holder's FOR UPDATE so the race is DETERMINISTIC: they are in-flight
+    // and contend on the same session row, never accidentally sequential. The holder only HOLDS the
+    // row (no mutation), so on release the version is still `version`; the two closers then serialize
+    // on FOR UPDATE. Unlike updateSession's U-RACE (distinct patches -> loser hits STALE_VERSION),
+    // close's loser sees status='closed' after the winner commits and takes the idempotent no-op
+    // branch — so BOTH resolve successfully, but only ONE mutates and emits an event.
+    const holder = await ctx.appPool.connect();
+    let a: Promise<unknown> | undefined;
+    let b: Promise<unknown> | undefined;
+    try {
+      await holder.query("BEGIN");
+      await holder.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+      await holder.query(`SELECT id FROM sessions WHERE id = $1 FOR UPDATE`, [sessionId]);
+      const holderPid = (
+        (await holder.query(`SELECT pg_backend_pid() AS pid`)).rows[0] as { pid: number }
+      ).pid;
+      // Two real closeSession commands, both claiming the SAME initial version, each a distinct
+      // commandId (so their per-command advisory locks do not serialize — only the session FOR UPDATE
+      // does). Capture both outcomes (never reject) so neither leaks.
+      a = close(tenantId, { sessionId, expectedVersion: version }).then(
+        (r) => r,
+        (e: unknown) => e,
+      );
+      b = close(tenantId, { sessionId, expectedVersion: version }).then(
+        (r) => r,
+        (e: unknown) => e,
+      );
+      // Require BOTH blocked before releasing: proves the loser read the row UNDER the FOR UPDATE it
+      // lost, so its no-op exercises the POST-lock terminal-state re-check, not a pre-lock sequential
+      // path a faulty guard would also pass.
+      await waitUntilBlockedByHolder(holderPid, 2);
+      await holder.query("COMMIT"); // release; the two closers now serialize on FOR UPDATE
+      const results = await Promise.all([a, b]);
+      a = undefined;
+      b = undefined;
+      // Neither errored: one real close, one idempotent no-op — both report the terminal {closed, v+1}.
+      const failures = results.filter((r) => r instanceof SessionCloseError);
+      expect(failures).toHaveLength(0);
+      for (const r of results) {
+        expect(r).toMatchObject({
+          sessionId,
+          status: "closed",
+          version: version + 1,
+          replayed: false,
+        });
+      }
+      // Exactly ONE mutation + ONE event: the no-op wrote nothing.
+      expect(await sessionState(sessionId)).toMatchObject({
+        status: "closed",
+        version: version + 1,
+      });
+      expect(await sessionEvents(sessionId)).toHaveLength(1);
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      if (a) await a;
+      if (b) await b;
+      holder.release();
+    }
   });
 });
