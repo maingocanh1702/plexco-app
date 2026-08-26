@@ -10,6 +10,7 @@
 export { createDb, type Db, type DbHandle } from "./client.js";
 export {
   assertTenantId,
+  tenantLocale,
   tenantRepo,
   withTenant,
   type CreateSessionInput,

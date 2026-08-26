@@ -105,3 +105,50 @@ export function tenantRepo(db: Db, tenantId: string) {
 }
 
 export type TenantRepo = ReturnType<typeof tenantRepo>;
+
+/**
+ * The tenant's configured locale as stored, or null when there is no such tenant.
+ *
+ * CONTRACT
+ *   returns  the raw `tenants.locale` value, or null. NULL IS NOT AUTHORITATIVE ABSENCE: it means
+ *            "undetermined". Three paths produce it — no matching tenant row, a non-UUID id, and
+ *            any unexpected failure (logged, never silent). A caller MUST NOT read null as "this
+ *            tenant does not exist"; DD-118 is what says undetermined resolves to vi
+ *   throws   never at the request boundary (see NEVER-THROWS below)
+ *   caller   MUST normalise via DD-118's seam: `resolveLang(null, parseLang(raw ?? "") ?? "vi")`
+ *
+ * READS THROUGH `tenant_locale()` (migration 0035), NOT through the table. The `app` role holds
+ * zero privileges on `tenants`, so the obvious `withTenant` + select shape raises a permission
+ * error for every caller. v1 of this lane did exactly that, swallowed the error, and shipped a
+ * no-op that passed 1191 tests: null means "fall back to vi", so every tenant resolved to
+ * Vietnamese. The privilege class is now gone BY CONSTRUCTION — EXECUTE is granted to `app` —
+ * which is why the migration belongs to this feature rather than to a follow-up.
+ *
+ * NEVER-THROWS, AMENDED. A throw inside the actor-authorization choke-point is an outage, so the
+ * request-time guarantee stands. But it must NOT mean "every failure becomes null", which is the
+ * property that hid v1's defect by collapsing "you lack privilege" onto "no such tenant". So:
+ *   - a non-UUID id returns null WITHOUT reaching the database (a caller bug, benign, tested);
+ *   - a missing tenant returns null — the ordinary, expected path;
+ *   - anything else is genuinely unexpected. It is still not re-thrown — but it is LOGGED with
+ *     the underlying error before the fallback, so the class can never reach production
+ *     unobserved. The app-role suite is what proves the privilege class is not in it.
+ *
+ * Returns a RAW string rather than a validated language on purpose: `packages/db` has no
+ * dependency on `@plexco/core`, and the vocabulary has exactly one owner (`parseLang`).
+ */
+export async function tenantLocale(db: Db, tenantId: string): Promise<string | null> {
+  if (!UUID_RE.test(tenantId)) return null;
+  try {
+    const result = await db.execute(sql`SELECT tenant_locale(${tenantId}::uuid) AS locale`);
+    const rows = result.rows as { locale: string | null }[];
+    return rows[0]?.locale ?? null;
+  } catch (error) {
+    // Deliberately loud. Reaching here means an error class the amendment says must not be
+    // silent — after 0035 the permission failure is impossible, so this is a real anomaly.
+    console.error(
+      "[tenantLocale] unexpected failure; falling back to the default language:",
+      error,
+    );
+    return null;
+  }
+}

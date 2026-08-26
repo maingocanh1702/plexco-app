@@ -1,11 +1,12 @@
 import type { ApiErrorCode } from "@plexco/core";
-import { t } from "@plexco/core/i18n";
+import { parseLang, resolveLang, runWithLang, t, type Lang } from "@plexco/core/i18n";
 import {
   SessionCommandError,
   SessionPublishAuthorizationError,
   SessionPublishError,
   SessionUpdateAuthorizationError,
   SessionUpdateError,
+  tenantLocale,
   tenantsForPerson,
 } from "@plexco/db";
 import { err } from "./api-envelope";
@@ -145,6 +146,8 @@ export interface SessionCommandContext {
   tenantId: string;
   commandId: string;
   body: Record<string, unknown>;
+  /** Resolved from tenants.locale (DD-118). Carried so handleSessionCommand can wrap the handler. */
+  lang: Lang;
 }
 
 /** Returns an already-enveloped error Response, or the resolved trusted context. */
@@ -202,43 +205,71 @@ export async function resolveSessionCommandContext(
     );
   }
 
+  // Language is resolvable HERE, and this line must stay ABOVE the per-tenant 429 below. The
+  // tenant is known and has just been proven to belong to this actor, which is DD-118's condition
+  // for resolving language — so every response from this point on, INCLUDING the rate-limit
+  // rejection, is owed the tenant's language. v1 resolved after the 429 and answered an English
+  // tenant's quota rejection in Vietnamese.
+  //
+  // THE RULE: every `return err(` ABOVE this line is emitted before the tenant is
+  // known-and-authorized, so it stays Vietnamese — DD-118's ratified behaviour, not a gap.
+  //
+  // The membership of that set is deliberately NOT listed here. It was listed twice and was
+  // wrong both times (v1 omitted the per-tenant 429; its fix omitted INVALID_BODY), each time
+  // while asserting completeness. A list maintained in prose is wrong in every copy that was
+  // not the one someone remembered to edit. `session-command-route.test.ts` pins the set and
+  // asserts tenantLocale is un-called at each member; read it there, where it can fail.
+  //
+  // DD-118 pins the SEAM, not just the source: resolveLang(memberLocale, tenantDefault) is called
+  // with memberLocale = null because no member-locale column exists yet. parseLang alone would
+  // produce identical output today and leave nowhere correct for that column to land when it
+  // arrives. tenantLocale returns null for SEVERAL reasons (see its contract — null means
+  // "undetermined", never "no such tenant"); parseLang rejects an unrecognised stored value;
+  // DD-118 says every undetermined case resolves to vi.
+  const tenantDefault: Lang = parseLang((await tenantLocale(appDb().db, tenantId)) ?? "") ?? "vi";
+  const lang: Lang = resolveLang(null, tenantDefault);
+
   // Per-tenant limit (BE tech spec §3 "Rate Limits" scopes these per tenant), now reached only by
-  // an authorized member of THAT tenant.
+  // an authorized member of THAT tenant. Answered in the tenant's language, unlike v1.
   if (await rateLimited(`${rateLimit.bucket}:${tenantId}`, rateLimit.limit, 60)) {
-    return err("RATE_LIMITED", t("Quá nhiều yêu cầu — đợi.", "Too many requests — wait."), 429);
+    return runWithLang(lang, async () =>
+      err("RATE_LIMITED", t("Quá nhiều yêu cầu — đợi.", "Too many requests — wait."), 429),
+    );
   }
 
-  const bodyRead = await readBoundedBody(request);
-  if (!bodyRead.ok) {
-    return bodyRead.reason === "too_large"
-      ? err("INVALID_BODY", t("Dữ liệu quá lớn.", "Payload too large."), 413)
-      : err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
-  }
-  let raw: unknown;
-  try {
-    raw = JSON.parse(bodyRead.text);
-  } catch {
-    return err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
-  }
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    return err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
-  }
-  const body = raw as Record<string, unknown>;
+  return runWithLang(lang, async (): Promise<Response | SessionCommandContext> => {
+    const bodyRead = await readBoundedBody(request);
+    if (!bodyRead.ok) {
+      return bodyRead.reason === "too_large"
+        ? err("INVALID_BODY", t("Dữ liệu quá lớn.", "Payload too large."), 413)
+        : err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(bodyRead.text);
+    } catch {
+      return err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
+    }
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      return err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
+    }
+    const body = raw as Record<string, unknown>;
 
-  // commandId is the idempotency key the whole family dedups on (DD-117 D5: dedup is on
-  // (tenant_id, command_id) ONLY). It is caller-supplied but becomes trusted context only after
-  // the tenant above was proven to belong to this actor.
-  const commandId = body.commandId;
-  if (
-    typeof commandId !== "string" ||
-    commandId.trim().length === 0 ||
-    commandId.length > 200 ||
-    isUnsafeCommandKey(commandId)
-  ) {
-    return err("INVALID_BODY", t("Thiếu commandId.", "Missing commandId."), 400);
-  }
+    // commandId is the idempotency key the whole family dedups on (DD-117 D5: dedup is on
+    // (tenant_id, command_id) ONLY). It is caller-supplied but becomes trusted context only after
+    // the tenant above was proven to belong to this actor.
+    const commandId = body.commandId;
+    if (
+      typeof commandId !== "string" ||
+      commandId.trim().length === 0 ||
+      commandId.length > 200 ||
+      isUnsafeCommandKey(commandId)
+    ) {
+      return err("INVALID_BODY", t("Thiếu commandId.", "Missing commandId."), 400);
+    }
 
-  return { tenantId, commandId, body };
+    return { tenantId, commandId, body, lang };
+  });
 }
 
 /**
@@ -428,6 +459,10 @@ const VALIDATION_VARIANTS: ReadonlySet<string> = new Set([
  * context — and freeze them to the boot fallback for the process lifetime, making `runWithLang`
  * silently ineffective for exactly these responses. `t()` is therefore called per request, in
  * mapSessionCommandError. codex round-02 [P2].
+ *
+ * Measured 2026-08-26 by AST walk over apps/web production code: 0 eager, 47 lazy t() call
+ * sites. This table is the REASON that constraint exists, not evidence that violations are
+ * waiting to be found — there are none. The count is true of that tree, not forever.
  */
 const MESSAGE_BY_CODE: ReadonlyMap<string, readonly [string, string]> = new Map([
   [
@@ -500,4 +535,40 @@ export function mapSessionCommandError(error: unknown): Response | null {
   if (status === undefined || message === undefined) return null;
   // t() resolved HERE, inside the request, so the caller's language applies.
   return err(code as ApiErrorCode, t(message[0], message[1]), status);
+}
+
+/**
+ * The request boundary for a session command: resolve, establish the language context, run the
+ * handler, map domain errors.
+ *
+ * The try/catch lives HERE, inside the runWithLang callback, and that placement is the whole
+ * point. mapSessionCommandError resolves its text through the ALS context; if the catch sat
+ * outside the wrap — in each route, as it used to — the mapper would run after the context had
+ * been torn down and every error response would silently revert to the boot fallback. Nothing
+ * would look wrong until an error path was exercised, which is precisely the defect this lane
+ * exists to fix, one layer up. Owning both the wrap and the catch in one function makes that
+ * ordering structural rather than a convention each new route has to remember.
+ *
+ * Errors raised BEFORE the tenant is known-and-authorized are returned by
+ * resolveSessionCommandContext outside this wrap and stay Vietnamese — DD-118's ratified
+ * behaviour, since no tenant means no language. The set is pinned by test, not restated here:
+ * duplicating it is how it came to be wrong twice.
+ */
+export async function handleSessionCommand(
+  request: Request,
+  rateLimit: { bucket: string; limit: number },
+  handler: (context: SessionCommandContext) => Promise<Response>,
+): Promise<Response> {
+  const context = await resolveSessionCommandContext(request, rateLimit);
+  if (context instanceof Response) return context;
+
+  return runWithLang(context.lang, async () => {
+    try {
+      return await handler(context);
+    } catch (error) {
+      const mapped = mapSessionCommandError(error);
+      if (mapped) return mapped;
+      throw error;
+    }
+  });
 }

@@ -4,6 +4,8 @@ import {
   SessionPublishError,
   SessionUpdateAuthorizationError,
   SessionUpdateError,
+  createSession,
+  tenantLocale,
   tenantsForPerson,
 } from "@plexco/db";
 import { readdirSync, readFileSync } from "node:fs";
@@ -20,12 +22,19 @@ import {
   shapeSessionFields,
 } from "./session-command-route";
 import { csrfOk, currentSession, rateLimited } from "./session-cookies";
+import { POST } from "../app/api/sessions/route";
 
 // Keep the REAL error classes from @plexco/db: mapSessionCommandError dispatches on `instanceof`,
 // so a hand-rolled stub class would make the mapping test pass while the production path fails.
 vi.mock("@plexco/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@plexco/db")>();
-  return { ...actual, createDb: vi.fn(() => ({ pool: {}, db: {} })), tenantsForPerson: vi.fn() };
+  return {
+    ...actual,
+    createDb: vi.fn(() => ({ pool: {}, db: {} })),
+    tenantsForPerson: vi.fn(),
+    createSession: vi.fn(),
+    tenantLocale: vi.fn(),
+  };
 });
 
 vi.mock("./session-cookies", async (importOriginal) => {
@@ -83,6 +92,7 @@ beforeEach(() => {
   vi.mocked(csrfOk).mockReturnValue(true);
   vi.mocked(rateLimited).mockResolvedValue(false);
   vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+  vi.mocked(tenantLocale).mockResolvedValue(null); // default: unresolvable tenant falls back to vi
 });
 
 describe("resolveSessionCommandContext — entry gate", () => {
@@ -154,6 +164,93 @@ describe("resolveSessionCommandContext — entry gate", () => {
     const result = await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT);
     const { error } = await envelope(result as Response);
     expect(error).toMatchObject({ code: "RATE_LIMITED", statusCode: 429 });
+  });
+
+  it("REGRESSION: an English tenant's TENANT-bucket 429 is answered in English, not Vietnamese", async () => {
+    // Code review round 1 on v1, finding 2. The per-tenant limiter fires AFTER membership and role
+    // are proven, so the tenant is known and DD-118 makes language resolvable — but v1 resolved
+    // locale ten lines further down, so this rejection came back Vietnamese to an English tenant.
+    //
+    // The ACTOR-bucket 429 above deliberately stays Vietnamese: it fires before any tenant is
+    // known, which is DD-118's ratified boundary. This test pins the difference between the two,
+    // so a future reordering cannot quietly collapse them.
+    vi.mocked(tenantLocale).mockResolvedValue("en");
+    vi.mocked(rateLimited).mockImplementation(async (bucket: string) =>
+      bucket.startsWith("session-test:"),
+    );
+    const result = await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT);
+    const { error } = await envelope(result as Response);
+    expect(error).toMatchObject({ code: "RATE_LIMITED", statusCode: 429 });
+    expect(error?.message).toBe("Too many requests — wait.");
+  });
+
+  it("PINS THE PRE-TENANT BOUNDARY: all FIVE sites answer in Vietnamese and NONE reads the locale", async () => {
+    // Round-1 finding 3. The source comment enumerating this boundary has been wrong twice —
+    // v1 omitted the per-tenant 429, its fix omitted INVALID_BODY — and both times the comment
+    // claimed completeness. Prose cannot fail; this can. Each case drives the real resolver with
+    // an ENGLISH tenant, so a leak would show up as an English string.
+    const cases: Array<[string, () => void, string]> = [
+      ["AUTH_REQUIRED", () => vi.mocked(currentSession).mockResolvedValue(null), "Chưa đăng nhập."],
+      ["CSRF_INVALID", () => vi.mocked(csrfOk).mockReturnValue(false), "Yêu cầu không hợp lệ."],
+      [
+        "FORBIDDEN",
+        () => vi.mocked(tenantsForPerson).mockResolvedValue([]),
+        "Bạn không có quyền với CLB này.",
+      ],
+      [
+        "RATE_LIMITED (actor bucket)",
+        () =>
+          vi
+            .mocked(rateLimited)
+            .mockImplementation(async (bucket: string) => bucket.startsWith("session-actor:")),
+        "Quá nhiều yêu cầu — đợi.",
+      ],
+    ];
+    for (const [label, arrange, expected] of cases) {
+      vi.clearAllMocks();
+      vi.mocked(currentSession).mockResolvedValue(liveSession);
+      vi.mocked(csrfOk).mockReturnValue(true);
+      vi.mocked(rateLimited).mockResolvedValue(false);
+      vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+      vi.mocked(tenantLocale).mockResolvedValue("en");
+      arrange();
+      const result = await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT);
+      const { error } = await envelope(result as Response);
+      expect(error?.message, label).toBe(expected);
+      // The boundary is not only "answers in Vietnamese" but "has not read the tenant yet".
+      expect(tenantLocale, label).not.toHaveBeenCalled();
+    }
+
+    // The fifth site: a missing/invalid ?tenant= never reaches membership resolution at all.
+    vi.clearAllMocks();
+    vi.mocked(currentSession).mockResolvedValue(liveSession);
+    vi.mocked(csrfOk).mockReturnValue(true);
+    vi.mocked(tenantLocale).mockResolvedValue("en");
+    const bad = await resolveSessionCommandContext(
+      new Request("http://localhost/api/sessions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ commandId: "c1" }),
+      }),
+      LIMIT,
+    );
+    const { error } = await envelope(bad as Response);
+    expect(error).toMatchObject({ code: "INVALID_BODY", statusCode: 400 });
+    expect(error?.message).toBe("Thiếu hoặc sai mã CLB.");
+    expect(tenantLocale).not.toHaveBeenCalled();
+  });
+
+  it("the ACTOR-bucket 429 stays Vietnamese even for an English tenant — the boundary DD-118 ratified", async () => {
+    // Paired with the test above on purpose. Asserting only the English case would let a fix that
+    // localises EVERYTHING pass, erasing the pre-tenant boundary instead of honouring it.
+    vi.mocked(tenantLocale).mockResolvedValue("en");
+    vi.mocked(rateLimited).mockImplementation(async (bucket: string) =>
+      bucket.startsWith("session-actor:"),
+    );
+    const result = await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT);
+    const { error } = await envelope(result as Response);
+    expect(error).toMatchObject({ code: "RATE_LIMITED", statusCode: 429 });
+    expect(error?.message).toBe("Quá nhiều yêu cầu — đợi.");
   });
 });
 
@@ -400,6 +497,133 @@ describe("resolveSessionCommandContext — body", () => {
     const pair = String.fromCharCode(0xd83d, 0xde00); // one emoji, correctly paired
     const result = await resolveSessionCommandContext(req({ commandId: `cmd${pair}` }), LIMIT);
     expect(result).not.toBeInstanceOf(Response);
+  });
+});
+
+/**
+ * CRITERION 1 — the failing test, written BEFORE any production line changes.
+ *
+ * Drives the REAL request path: the create route handler, whose command rejects with a domain
+ * error, against a tenant whose locale is "en". Deliberately does NOT wrap anything in
+ * runWithLang — establishing that context is production's job, and wrapping it here would test
+ * the harness rather than the app. The sibling test further down DOES wrap, which is why it
+ * passes today and this one does not: it proves the mapper honours a context, not that a context
+ * exists.
+ */
+describe("CRITERION 1 — language reaches a real request (expected RED before the fix)", () => {
+  it("a tenant with locale 'en' gets an English error message", async () => {
+    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+    vi.mocked(tenantLocale).mockResolvedValue("en");
+    vi.mocked(createSession).mockRejectedValue(
+      new SessionPublishError("SESSION_NOT_FOUND", "internal"),
+    );
+
+    const request = new Request(`https://plexco.app/api/sessions?tenant=${TENANT}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-csrf-token": "secret" },
+      body: JSON.stringify({
+        commandId: "cmd_i18n",
+        sportId: "55555555-5555-4555-8555-555555555555",
+        startsAt: "2026-09-01T10:00:00.000Z",
+        endsAt: "2026-09-01T12:00:00.000Z",
+        timezone: "Asia/Ho_Chi_Minh",
+      }),
+    });
+
+    const response = await POST(request);
+    const { error } = await envelope(response);
+    expect(error?.message).toBe("Session not found.");
+  });
+});
+
+describe("CRITERION 3 — Vietnamese stays the default on every unresolved path", () => {
+  async function errorMessageFor(locale: string | null): Promise<string> {
+    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+    vi.mocked(tenantLocale).mockResolvedValue(locale);
+    vi.mocked(createSession).mockRejectedValue(
+      new SessionPublishError("SESSION_NOT_FOUND", "internal"),
+    );
+    const request = new Request(`https://plexco.app/api/sessions?tenant=${TENANT}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-csrf-token": "secret" },
+      body: JSON.stringify({
+        commandId: "cmd_default",
+        sportId: "55555555-5555-4555-8555-555555555555",
+        startsAt: "2026-09-01T10:00:00.000Z",
+        endsAt: "2026-09-01T12:00:00.000Z",
+        timezone: "Asia/Ho_Chi_Minh",
+      }),
+    });
+    const { error } = await envelope(await POST(request));
+    return error!.message;
+  }
+
+  it("a tenant whose locale is 'vi' gets Vietnamese", async () => {
+    expect(await errorMessageFor("vi")).toBe("Không tìm thấy kèo.");
+  });
+
+  it("an UNRESOLVABLE tenant gets Vietnamese (tenantLocale returned null)", async () => {
+    // DD-118: unresolvable tenant falls back to vi. tenantLocale never throws, so this is the
+    // shape a dead connection or an RLS-invisible row produces.
+    expect(await errorMessageFor(null)).toBe("Không tìm thấy kèo.");
+  });
+
+  it("an UNRECOGNISED locale gets Vietnamese (column value outside the two-value set)", async () => {
+    // The column is notNull default 'vi', but notNull is not "one of two values" — parseLang is
+    // what makes that true, and DD-118 pins the fallback.
+    expect(await errorMessageFor("de")).toBe("Không tìm thấy kèo.");
+  });
+});
+
+/**
+ * CRITERION 3 (structure) — assert the PROPERTY, not the symptom.
+ *
+ * The error-path test above passes today, and would keep passing if someone later moved the
+ * try/catch out of the runWithLang callback... no: it would break, which is the point. But it
+ * breaks for a reason a future reader has to reconstruct from a language mismatch. This asserts
+ * the arrangement directly, so the failure names the cause.
+ */
+describe("CRITERION 3 (structure) — the try/catch lives INSIDE the runWithLang callback", () => {
+  it("handleSessionCommand's TryStatement is a descendant of the runWithLang callback", () => {
+    const file = fileURLToPath(new URL("./session-command-route.ts", import.meta.url));
+    const src = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+
+    let fn: ts.FunctionDeclaration | undefined;
+    ts.forEachChild(src, (n) => {
+      if (ts.isFunctionDeclaration(n) && n.name?.text === "handleSessionCommand") fn = n;
+    });
+    expect(fn, "handleSessionCommand must exist").toBeDefined();
+
+    // Find the runWithLang(...) call and the arrow function passed to it.
+    let callback: ts.Node | undefined;
+    const findCall = (n: ts.Node): void => {
+      if (
+        ts.isCallExpression(n) &&
+        ts.isIdentifier(n.expression) &&
+        n.expression.text === "runWithLang"
+      ) {
+        callback = n.arguments.find((a) => ts.isArrowFunction(a) || ts.isFunctionExpression(a));
+      }
+      ts.forEachChild(n, findCall);
+    };
+    findCall(fn!);
+    expect(callback, "runWithLang must be called with a callback").toBeDefined();
+
+    // Every try/catch in the function must sit inside that callback.
+    const tries: ts.Node[] = [];
+    const findTries = (n: ts.Node): void => {
+      if (ts.isTryStatement(n)) tries.push(n);
+      ts.forEachChild(n, findTries);
+    };
+    findTries(fn!);
+    expect(tries.length, "handleSessionCommand must own a try/catch").toBeGreaterThan(0);
+
+    for (const t of tries) {
+      expect(
+        t.getStart() > callback!.getStart() && t.getEnd() < callback!.getEnd(),
+        "a try/catch outside the runWithLang callback would run mapSessionCommandError with the language context already torn down",
+      ).toBe(true);
+    }
   });
 });
 

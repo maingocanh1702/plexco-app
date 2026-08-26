@@ -1,9 +1,8 @@
 import { publishSession } from "@plexco/db";
 import { ok } from "../../../../../lib/api-envelope";
 import {
-  mapSessionCommandError,
+  handleSessionCommand,
   readExpectedVersion,
-  resolveSessionCommandContext,
 } from "../../../../../lib/session-command-route";
 import { appDb } from "../../../../../lib/session-cookies";
 
@@ -22,29 +21,23 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const context = await resolveSessionCommandContext(request, {
-    bucket: "session-publish",
-    limit: 10,
-  });
-  if (context instanceof Response) return context;
+  return handleSessionCommand(
+    request,
+    { bucket: "session-publish", limit: 10 },
+    async (context) => {
+      // Passed through unvalidated: dedup precedes validation inside the command (DD-117 D5), so a
+      // retry of an already-committed publish must replay rather than 400. codex round-01 [P1].
+      const expectedVersion = readExpectedVersion(context.body);
 
-  // Passed through unvalidated: dedup precedes validation inside the command (DD-117 D5), so a
-  // retry of an already-committed publish must replay rather than 400. codex round-01 [P1].
-  const expectedVersion = readExpectedVersion(context.body);
-
-  const { id } = await params;
-  try {
-    const result = await publishSession(appDb().db, {
-      tenantId: context.tenantId,
-      commandId: context.commandId,
-      input: { sessionId: id, expectedVersion },
-    });
-    return ok({
-      session: { id: result.sessionId, status: result.status, version: result.version },
-    });
-  } catch (error) {
-    const mapped = mapSessionCommandError(error);
-    if (mapped) return mapped;
-    throw error;
-  }
+      const { id } = await params;
+      const result = await publishSession(appDb().db, {
+        tenantId: context.tenantId,
+        commandId: context.commandId,
+        input: { sessionId: id, expectedVersion },
+      });
+      return ok({
+        session: { id: result.sessionId, status: result.status, version: result.version },
+      });
+    },
+  );
 }
