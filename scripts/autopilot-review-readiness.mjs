@@ -333,8 +333,26 @@ requireStringArray(manifest.context_sources, "context_sources");
 requireStringArray(manifest.applicable_skills, "applicable_skills", { allowEmpty: true });
 const scope = requireStringArray(manifest.scope, "scope");
 requireStringArray(manifest.negative_scope, "negative_scope");
+// A Next.js App Router dynamic segment — `[id]`, `[...slug]`, `[[...slug]]` — is a literal on-disk
+// directory name and the ONLY way to express a path parameter, so the glob guard below must not
+// mistake one for a wildcard. Requiring the parameter to be an identifier keeps a real character
+// class such as `[a-z]` rejected: by shape alone it is indistinguishable from a segment named
+// "a-z", and `-` cannot appear in a parameter name.
+const DYNAMIC_SEGMENT =
+  /^(?:\[\[\.\.\.[A-Za-z_][A-Za-z0-9_]*\]\]|\[\.\.\.[A-Za-z_][A-Za-z0-9_]*\]|\[[A-Za-z_][A-Za-z0-9_]*\])$/;
 for (const item of scope) {
-  if (path.isAbsolute(item) || item.includes("..") || /[*?[\]]/.test(item) || item.endsWith("/")) {
+  const segments = item.split("/");
+  const bracketAbuse = segments.some((s) => /[[\]]/.test(s) && !DYNAMIC_SEGMENT.test(s));
+  // Traversal is a `..` SEGMENT, which is also what the old substring test was reaching for; the
+  // substring form additionally rejected the `...` inside a catch-all segment, so this is stated
+  // per segment. Every real escape (`../x`, `a/../../etc/passwd`, `a/..`) stays rejected.
+  if (
+    path.isAbsolute(item) ||
+    segments.includes("..") ||
+    /[*?]/.test(item) ||
+    bracketAbuse ||
+    item.endsWith("/")
+  ) {
     halt("CONTRACT_INVALID", `scope must contain exact worktree-relative file paths: ${item}`);
   }
   const existing = path.join(repo, item);

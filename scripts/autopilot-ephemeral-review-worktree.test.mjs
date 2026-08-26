@@ -385,3 +385,188 @@ test("readiness gate (end-to-end): the whole emitted EVIDENCE_UNKNOWN_KEY line i
     );
   }
 });
+
+// --- scope path validation (register mode) -----------------------------------------------------
+// autopilot-review-readiness.mjs has no test file of its own, and neither test/unit.sh nor
+// test-level3-operational-kit.sh exercises the scope-path rule (their fixtures only ever use
+// "scope": ["README.md"]). These cases live here because this is the nearest kit test that runs
+// under `pnpm test:review-readiness`.
+//
+// They exist because the rule rejected every Next.js App Router route file: a dynamic segment is
+// written `[id]` on disk and there is no other syntax for a path parameter, so the glob guard's
+// bracket test made an entire class of real files unregisterable. The matrix below is the contract
+// — dynamic segments accepted, every glob/traversal/directory form still rejected.
+function registerRejectsScope(scopeItem, { createDirectory = false } = {}) {
+  const feature = "scope-path-probe";
+  const repo = realpathSync(mkdtempSync(path.join(tmpdir(), "ap-scopepath-")));
+  try {
+    const git = (...a) => execFileSync("git", ["-C", repo, ...a], { stdio: ["ignore", "ignore", "pipe"] });
+    const gitOut = (...a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8" }).trim();
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "t@example.test");
+    git("config", "user.name", "t");
+    git("config", "commit.gpgsign", "false");
+    mkdirSync(path.join(repo, "scripts"), { recursive: true });
+    const stub = path.join(repo, "scripts", "codex-review-pin.sh");
+    writeFileSync(stub, "#!/bin/sh\nexit 0\n");
+    chmodSync(stub, 0o755);
+    writeFileSync(path.join(repo, "note.txt"), "base\n");
+    git("add", "note.txt", "scripts/codex-review-pin.sh");
+    git("commit", "-q", "-m", "base");
+    const base = gitOut("rev-parse", "HEAD");
+    if (createDirectory) {
+      mkdirSync(path.join(repo, scopeItem), { recursive: true });
+    }
+
+    const stateDir = path.join(repo, ".autopilot", "state", feature);
+    mkdirSync(stateDir, { recursive: true });
+    const manifest = {
+      manifest_schema_version: "level3-operational-v2",
+      review_gate_version: "level3-readiness-v2",
+      task_id: `probe:${feature}`,
+      feature,
+      branch: `feat/${feature}`,
+      base_ref: "main",
+      base_sha: base,
+      risk: "P2",
+      autonomy_mode: "supervised",
+      writer_processes_max: 1,
+      context_sources: ["probe"],
+      applicable_skills: [],
+      scope: [scopeItem],
+      negative_scope: ["nothing else"],
+      model_policy: {
+        planner: "x",
+        worker: "x",
+        independent_reviewer: "scripts/codex-review-pin.sh",
+        fallback: "x",
+      },
+      sandbox_and_permissions: { network: "none", secrets: "none", external_side_effects: "none" },
+      verification: { focused: ["node --test"], canonical: ["node --test"], e2e: [] },
+      code_review: { required: true, tool: "scripts/codex-review-pin.sh", clean_rounds: 1 },
+      security_review: { required: false, reason: "probe fixture" },
+      budgets: { wall_time_minutes: 10, fix_rounds_max: 5 },
+      stop_conditions: ["MAX_ROUNDS", "REGION_THRASH", "SCOPE_OR_BASE_DRIFT", "REQUIRED_TOOL_UNAVAILABLE"],
+      depends_on: [],
+      dep_checks: [],
+      readiness_evidence_path: `.autopilot/state/${feature}/readiness.json`,
+    };
+    writeFileSync(path.join(stateDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+
+    const result = spawnSync(
+      "node",
+      [GATE_PATH, "register", "--manifest", `.autopilot/state/${feature}/manifest.json`],
+      { cwd: repo, encoding: "utf8" },
+    );
+    // Assert on the SPECIFIC rule, not merely on CONTRACT_INVALID: an accepted path still halts
+    // later in register on an unrelated precondition, and a coarse check would read that as a pass.
+    return `${result.stderr || ""}${result.stdout || ""}`.includes(
+      "scope must contain exact worktree-relative file paths",
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+}
+
+for (const accepted of [
+  "apps/web/app/api/sessions/[id]/route.ts",
+  "apps/web/app/api/sessions/[id]/publish/route.ts",
+  "app/[locale]/api/[id]/route.ts",
+  "app/blog/[...slug]/page.tsx",
+  "app/shop/[[...filters]]/page.tsx",
+  "packages/core/src/api-contract.ts",
+]) {
+  test(`scope path: ACCEPTS ${accepted}`, () => {
+    assert.equal(registerRejectsScope(accepted), false);
+  });
+}
+
+for (const rejected of [
+  "src/[a-z].ts", // a real glob character class, not a segment name
+  "src/[a-z]", // same, occupying a whole segment
+  "src/[!x]/f.ts",
+  "*.ts",
+  "src/*.ts",
+  "foo?.ts",
+  "dir/",
+  "/etc/passwd",
+  "../outside.ts",
+  "a/../../etc/passwd", // traversal survives the segment-wise `..` check
+  "a/[id/route.ts", // unbalanced
+  "a/id]/route.ts",
+  "a/[]/route.ts", // empty parameter name
+  "a/[id]x/route.ts", // bracket not occupying the whole segment
+  "a/[...]/route.ts",
+  "a/[..slug]/route.ts",
+]) {
+  test(`scope path: REJECTS ${rejected}`, () => {
+    assert.equal(registerRejectsScope(rejected), true);
+  });
+}
+
+test("scope path: REJECTS a bare directory that exists", () => {
+  // Caught by the directory guard rather than the glob guard, so it is asserted separately.
+  const feature = "scope-path-probe";
+  const repo = realpathSync(mkdtempSync(path.join(tmpdir(), "ap-scopedir-")));
+  try {
+    const git = (...a) => execFileSync("git", ["-C", repo, ...a], { stdio: ["ignore", "ignore", "pipe"] });
+    const gitOut = (...a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8" }).trim();
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "t@example.test");
+    git("config", "user.name", "t");
+    git("config", "commit.gpgsign", "false");
+    writeFileSync(path.join(repo, "note.txt"), "base\n");
+    git("add", "note.txt");
+    git("commit", "-q", "-m", "base");
+    const base = gitOut("rev-parse", "HEAD");
+    mkdirSync(path.join(repo, "srcdir"), { recursive: true });
+    const stateDir = path.join(repo, ".autopilot", "state", feature);
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(
+      path.join(stateDir, "manifest.json"),
+      `${JSON.stringify(
+        {
+          manifest_schema_version: "level3-operational-v2",
+          review_gate_version: "level3-readiness-v2",
+          task_id: `probe:${feature}`,
+          feature,
+          branch: `feat/${feature}`,
+          base_ref: "main",
+          base_sha: base,
+          risk: "P2",
+          autonomy_mode: "supervised",
+          writer_processes_max: 1,
+          context_sources: ["probe"],
+          applicable_skills: [],
+          scope: ["srcdir"],
+          negative_scope: ["nothing else"],
+          model_policy: {
+            planner: "x",
+            worker: "x",
+            independent_reviewer: "scripts/codex-review-pin.sh",
+            fallback: "x",
+          },
+          sandbox_and_permissions: { network: "none", secrets: "none", external_side_effects: "none" },
+          verification: { focused: ["node --test"], canonical: ["node --test"], e2e: [] },
+          code_review: { required: true, tool: "scripts/codex-review-pin.sh", clean_rounds: 1 },
+          security_review: { required: false, reason: "probe fixture" },
+          budgets: { wall_time_minutes: 10, fix_rounds_max: 5 },
+          stop_conditions: ["MAX_ROUNDS"],
+          depends_on: [],
+          dep_checks: [],
+          readiness_evidence_path: `.autopilot/state/${feature}/readiness.json`,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const result = spawnSync(
+      "node",
+      [GATE_PATH, "register", "--manifest", `.autopilot/state/${feature}/manifest.json`],
+      { cwd: repo, encoding: "utf8" },
+    );
+    assert.match(`${result.stderr || ""}${result.stdout || ""}`, /scope item is a directory/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
