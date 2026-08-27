@@ -124,13 +124,47 @@ function awaitReview(code, signalName, message) {
   process.exit(1);
 }
 
+// git resolves pathspec magic from FOUR environment variables before it looks at the pathspec, and
+// this gate inherits the environment of the writer it is judging. `GIT_LITERAL_PATHSPECS=1` is the
+// sharp one — it disarms the `:(literal)` prefix by taking the prefix itself literally — but all four
+// are caller-controlled inputs to a trust decision, so all four are stripped. See SCOPE_PATHSPECS.
+//
+// This is deliberately the same shape as `trustedReviewEnvironment`: copy, delete the keys the caller
+// must not control, hand the copy to the child. One idiom, two lists, because the two lists protect
+// different subprocesses — do not merge them into a single "untrusted keys" bag.
+const GIT_PATHSPEC_ENVIRONMENT_KEYS = [
+  "GIT_LITERAL_PATHSPECS",
+  "GIT_GLOB_PATHSPECS",
+  "GIT_NOGLOB_PATHSPECS",
+  "GIT_ICASE_PATHSPECS",
+];
+
+function trustedGitEnvironment() {
+  const environment = { ...process.env };
+  for (const key of GIT_PATHSPEC_ENVIRONMENT_KEYS) {
+    delete environment[key];
+  }
+  return environment;
+}
+
+// Prepended to every git argv rather than added at the one call site that passes scope today. A
+// pathspec operand is easy to add to a git call later and impossible to spot as dangerous in review,
+// so literalness lives at the choke point all three helpers already funnel through, not in the
+// caller's memory. Inert on the pathspec-free subcommands this file runs — measured: rev-parse,
+// cat-file, merge-base, rev-list, status and `diff --binary` return byte-identical output with and
+// without it. Guarded on the command name because the flag is git's, not every binary's.
+function gitAwareArgs(command, args) {
+  return command === "git" ? ["--literal-pathspecs", ...args] : args;
+}
+
 function run(command, args, cwd) {
   try {
-    return execFileSync(command, args, {
+    return execFileSync(command, gitAwareArgs(command, args), {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: MAX_BUFFER,
+      env: trustedGitEnvironment(),
     }).trim();
   } catch (error) {
     const detail = String(error.stderr || error.message || "").trim();
@@ -140,10 +174,11 @@ function run(command, args, cwd) {
 
 function runRaw(command, args, cwd) {
   try {
-    return execFileSync(command, args, {
+    return execFileSync(command, gitAwareArgs(command, args), {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: MAX_BUFFER,
+      env: trustedGitEnvironment(),
     });
   } catch (error) {
     const detail = String(error.stderr || error.message || "").trim();
@@ -152,11 +187,12 @@ function runRaw(command, args, cwd) {
 }
 
 function tryRun(command, args, cwd) {
-  return spawnSync(command, args, {
+  return spawnSync(command, gitAwareArgs(command, args), {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: MAX_BUFFER,
+    env: trustedGitEnvironment(),
   });
 }
 
@@ -261,6 +297,11 @@ function trustedReviewEnvironment() {
     "BASH_ENV",
     "ENV",
     "NODE_OPTIONS",
+    // The reviewer wrapper runs `git diff <base>...HEAD` of its own. It takes no pathspec today, so
+    // this is not a known bypass the way the SCOPE_PATHSPECS one was — it is the same class of input
+    // reaching a second subprocess whose output the gate trusts, stripped for the same reason and at
+    // the same cost. Nothing legitimate sets these.
+    ...GIT_PATHSPEC_ENVIRONMENT_KEYS,
   ]) {
     delete environment[key];
   }
@@ -334,12 +375,21 @@ requireStringArray(manifest.applicable_skills, "applicable_skills", { allowEmpty
 const scope = requireStringArray(manifest.scope, "scope");
 requireStringArray(manifest.negative_scope, "negative_scope");
 // A Next.js App Router dynamic segment — `[id]`, `[...slug]`, `[[...slug]]` — is a literal on-disk
-// directory name and the ONLY way to express a path parameter, so the glob guard below must not
-// mistake one for a wildcard. Requiring the parameter to be an identifier keeps a real character
-// class such as `[a-z]` rejected: by shape alone it is indistinguishable from a segment named
-// "a-z", and `-` cannot appear in a parameter name.
-const DYNAMIC_SEGMENT =
-  /^(?:\[\[\.\.\.[A-Za-z_][A-Za-z0-9_]*\]\]|\[\.\.\.[A-Za-z_][A-Za-z0-9_]*\]|\[[A-Za-z_][A-Za-z0-9_]*\])$/;
+// directory name and the ONLY way to express a path parameter, so the guard below must admit one.
+// What it requires is STRUCTURAL: a bracket may appear only as a whole segment wrapped in one of the
+// three dynamic-segment forms, around a non-empty parameter that nests no further bracket. (`/`
+// needs no exclusion — this is tested against ONE segment, already split on the separator.)
+//
+// It deliberately does NOT constrain the parameter to an identifier. It did until 2026-08-27, on the
+// argument that `[a-z]` is by shape alone indistinguishable from a segment named "a-z" and so had to
+// be refused as a possible glob. SCOPE_PATHSPECS below retired that argument rather than answering
+// it: a scope entry no longer reaches git as a glob at all, so `[a-z]` can only mean the literal
+// directory `[a-z]` — which either exists, and is then a legitimate path, or does not, and is then an
+// ordinary misspelled scope entry, caught loudly by SCOPE_DRIFT the moment the slice commits the file
+// it actually meant. After that the identifier rule bought nothing and cost real work: a hyphen is
+// legal in a route parameter, so `app/[user-id]/page.tsx` was a real path no author could register a
+// slice against, and none of them could rename the route to get past it.
+const DYNAMIC_SEGMENT = /^(?:\[\[\.\.\.[^[\]]+\]\]|\[\.\.\.[^[\]]+\]|\[[^[\]]+\])$/;
 for (const item of scope) {
   const segments = item.split("/");
   const bracketAbuse = segments.some((s) => /[[\]]/.test(s) && !DYNAMIC_SEGMENT.test(s));
@@ -363,6 +413,50 @@ for (const item of scope) {
 if (new Set(scope).size !== scope.length) {
   halt("CONTRACT_INVALID", "scope contains duplicate paths");
 }
+// A scope entry is a DECLARATION of one exact path, but git reads a trailing operand as a PATHSPEC,
+// which is a glob. Both directions were measured against git 2.46 on 2026-08-27, because the review
+// that raised this predicted the wrong one and the wrong one is the scarier-sounding of the two:
+//
+//   OVER-match — REAL. `app/[user-id]/page.tsx` also matches `app/u/page.tsx`, a file the slice never
+//   declared. An unrelated commit touching it on the base branch raises BASE_STALE and kills a
+//   legitimate registration. That is not a cosmetic false positive: it is the exact failure class
+//   v21 and v25 were each written to close, after it terminated three in-flight lifecycles in one
+//   two-day window.
+//
+//   UNDER-match — DOES NOT OCCUR FROM THE BRACKET GRAMMAR. git compares the whole pathspec string
+//   literally before it falls back to wildmatch, so a bracketed pathspec still matches its own
+//   literal spelling; a real change to the declared file raises BASE_STALE either way. Against a
+//   glob this fix closes a false POSITIVE, and only that. Do not restate it as closing an evasion.
+//
+//   Under-match DOES occur by a route that has nothing to do with the grammar: the caller's Git
+//   environment, below. That is a genuine evasion, it was found by the security round rather than the
+//   code rounds, and it is the reason this file no longer trusts a magic prefix. Keep the two apart —
+//   they were fixed in the same region for different reasons.
+//
+// Literalness is imposed by the `--literal-pathspecs` COMMAND OPTION that `run`/`runRaw`/`tryRun`
+// prepend to every git argv, NOT by a `:(literal)` magic prefix on the pathspec itself. The prefix
+// was this file's first attempt and it is defeated by the caller's own environment: measured on git
+// 2.46, `GIT_LITERAL_PATHSPECS=1` makes git read EVERY pathspec as literal text INCLUDING the magic
+// prefix, so it hunts for a file spelled `:(literal)app/…`, finds nothing, and `touched` comes back
+// empty — BASE_STALE never fires, on a base that really did move under the slice. A writer sets one
+// variable and the staleness half of the trust gate stops existing.
+//
+//   magic prefix, GIT_LITERAL_PATHSPECS=1   -> (empty)                 gate bypassed
+//   raw path + --literal-pathspecs, same env -> app/[user-id]/page.tsx  halt still fires
+//
+// So scope reaches git RAW. Two properties make that safe, and they are different properties:
+//   - the command option outranks the environment, which is the whole point of preferring it;
+//   - where the environment contradicts it (`GIT_GLOB_PATHSPECS`, `GIT_ICASE_PATHSPECS`) git does not
+//     quietly pick a winner, it dies with "global 'literal' pathspec setting is incompatible with all
+//     other global pathspec settings" — READINESS_COMMAND_FAILED, a halt. Fail-closed either way,
+//     which is why sanitising those variables (see `trustedGitEnvironment`) is a separate belt from
+//     this brace: it keeps a hostile environment from turning into a confusing halt, and does not
+//     carry the literalness on its own.
+//
+// EVERY git call that takes scope reads THIS array. Do not spread `scope` into a git argv again: the
+// bug is invisible in review precisely because the glob-free case — every scope entry any slice had
+// declared until now — behaves identically either way.
+const SCOPE_PATHSPECS = [...scope];
 
 const modelPolicy = requireObject(manifest.model_policy, "model_policy");
 requireString(modelPolicy.planner, "model_policy.planner");
@@ -441,7 +535,7 @@ function assertBaseUsable(currentBaseRefSha) {
   }
   const touched = run(
     "git",
-    ["diff", "--name-only", `${baseSha}..${currentBaseRefSha}`, "--", ...scope],
+    ["diff", "--name-only", `${baseSha}..${currentBaseRefSha}`, "--", ...SCOPE_PATHSPECS],
     repo,
   );
   if (touched) {

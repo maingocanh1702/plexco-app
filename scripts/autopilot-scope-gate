@@ -1,5 +1,47 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 31
+# KIT_VERSION: 33
+# v33 (2026-08-27) — pack content change, plus one helper added here but not yet called here; no
+# behaviour change in THIS file. Two things, one reason.
+# `autopilot-review-readiness.mjs` gains the dynamic-segment scope guard already reviewed in Plexco:
+# a Next.js App Router segment (`[id]`, `[...slug]`, `[[...slug]]`) is a literal directory name and
+# the only way to spell a path parameter, so the old `/[*?[\]]/` test rejected every scope entry
+# under one. Traversal is now a `..` SEGMENT rather than a substring, which stops `...` inside a
+# catch-all reading as an escape. Consumers must re-sync to get it, which is what this number is for.
+#
+# Two claims stood here until review round 1 and both were wrong; amended in place rather than bumped
+# to v34, because v33 never reached a consumer — it was authored and reviewed inside this same lane,
+# so there is no repo holding the superseded text to be reconciled with.
+#   - "`[a-z]` and every real glob stay rejected" — no longer true, deliberately. The bracket grammar
+#     now constrains STRUCTURE only, not the parameter's characters, because the same round found
+#     that scope entries were reaching git as PATHSPECS, i.e. as globs. Fixed there, which is what
+#     retired the shape guess: with expansion gone, `[a-z]` can only mean the literal directory
+#     `[a-z]`, while the identifier rule was refusing `app/[user-id]/page.tsx`, a legal route with no
+#     way around it.
+#   - "`SCOPE_PATHSPECS` wraps every entry in `:(literal)`" — superseded by the security round, which
+#     showed the prefix is disarmed by the environment of the writer being judged:
+#     `GIT_LITERAL_PATHSPECS=1` makes git read the prefix itself as filename text, match nothing, and
+#     skip BASE_STALE entirely. Scope now reaches git raw under the `--literal-pathspecs` command
+#     option, which the environment cannot override, and the four `GIT_*_PATHSPECS` variables are
+#     stripped from every git child. Same guarantee, no longer forgeable by the caller.
+#   - "The two copies are byte-identical again" — no longer true either. Canonical is now AHEAD of
+#     Plexco's `scripts/autopilot-review-readiness.mjs` by that pathspec fix and this grammar change.
+#     That is the correct direction: canonical is the source, consumers receive on sync. Do not
+#     reconcile by weakening the fix to restore byte-identity.
+# The other reason this version exists at all: canonical `test/e2e.sh` had been red since v32 —
+# 6cd4e66 added two top-level imports to the gate and updated `test/unit.sh` but not the e2e fixture,
+# whose scratch repo therefore tracked the gate without the modules it imports. Since
+# `autopilot-update.sh` runs BOTH suites as a publish gate, a red e2e froze every consumer sync
+# outright: no repo could take any kit fix at all for twelve days. Fixture fixed, and `test/unit.sh`
+# now asserts each trust-gate file the pack ships is byte-identical to its canonical source, so the
+# next such divergence is a red test rather than a silent freeze.
+#
+# The helper, added here and deliberately not called here yet: `canonical_relpath`, one rule for
+# deciding whether two path STRINGS name the same file. That byte-identity assertion needs it,
+# because it was reading destinations as strings — `scripts/x` and `scripts/./x` looked like two
+# destinations with one mapping each, while `copy_pack` hands both to `cp` and the second one wins,
+# so the check passed on the exact drift it was added to catch. It lives here rather than in the test
+# because the SCOPE_COLLISION comparison below is string-exact for the same reason and will adopt it;
+# that defect predates this version and is being closed by its own change, not smuggled into this one.
 # v31 (2026-08-06) — pack content change, no behaviour change in THIS file. `ap-finish.sh` archives a
 # slice's gitignored state directory before removing its worktree, instead of deleting it
 # unconditionally along with everything else. Ported verbatim from `Bestminton Club Payment check
@@ -513,6 +555,68 @@ acquire_ready(){
   READY_LOCK_HELD=1
 }
 release_ready(){ rmdir "$READY_LOCK" 2>/dev/null || true; READY_LOCK_HELD=0; }
+
+# canonical_relpath <path> — decide, by string rules alone, what a repo-relative path IS, so two
+# callers can compare two paths with `=` and be right. Prints the canonical form and returns 0, or
+# prints nothing and returns 1 for an input it refuses. The refusal is the load-bearing half: a
+# caller handed a canonical string may compare it, and a caller handed a refusal has been told — in
+# the only way that fails closed — that it must not conclude "different string, therefore different
+# file". Under `set -e` a caller must therefore write `p="$(canonical_relpath "$x")" || <handle>`,
+# never a bare assignment.
+#
+# Normalises exactly three lexical accidents, each of which two authors can produce for one file
+# without either being wrong: a `.` segment (a/./b), a repeated separator (a//b), and a trailing
+# slash (a/b/).
+#
+# Letter CASE is deliberately not one of them, and that is a decision rather than an omission — the
+# distinction is what the three forms above have in common and case does not. `a/./b`, `a//b` and
+# `a/b/` resolve to one file under POSIX pathname resolution on EVERY filesystem, so folding them
+# asserts nothing about the host. Case-equality is a property of the mounted filesystem: `scripts/x`
+# and `Scripts/x` are one file on APFS/HFS+/NTFS and two distinct files on ext4, so a function that
+# reads only the string and folded case anyway would be asserting a fact it cannot know, and would be
+# wrong on half the hosts this kit installs onto. Two further reasons it must not move in here:
+#   - This function's output is used to OPEN files, not only to compare strings — test/unit.sh takes
+#     `basename` of it and `cmp`s against `$KIT/<that>`. A lowercased return value would fail to find
+#     a legitimately capitalised name (`CLAUDE.md.example`) on a case-sensitive host. A canonicaliser
+#     whose result cannot be handed back to the filesystem is not one.
+#   - The SCOPE_COLLISION caller below reaches git as a LITERAL pathspec (see `--literal-pathspecs`
+#     in the v33 note), and git matches pathspecs byte-wise. So for that caller "names one file" and
+#     "matches one pathspec" are two questions with different answers under case folding, and this
+#     primitive must not pre-answer them for a consumer that has not chosen.
+# A caller that must reject case variance can always do so, because it has something this function
+# does not: a REFERENCE spelling — the kit's or the manifest's own declaration of the path — to
+# compare against. Comparing against a reference is decidable and portable; folding a lone string is
+# neither. test/unit.sh's canonical_source_verdict is the worked example, and its `casealias` verdict
+# is what that comparison produces.
+#
+# Refuses: the empty path; an absolute path; a `..` SEGMENT; and anything that normalises away to
+# nothing (`.`, `./.`). `..` is refused rather than folded because folding it lexically is correct
+# only when no prefix is a symlink, which a string cannot know — and at both call sites the path was
+# typed by a human into a manifest or a pack, where a `..` is a defect to report rather than a form
+# to accept. Refusing keeps this helper small enough that its correctness is settled by reading it,
+# which is the property that lets two gates share it. Note `..` is matched as a whole segment: `a..b`
+# and the catch-all route segment `[...slug]` are ordinary names and pass through untouched.
+#
+# One caller today, and it is deliberately not in this file: test/unit.sh extracts and runs this
+# function to prove no installer pack declares two mappings for one trust-gate destination — two
+# spellings of one destination are two mappings, and copy_pack applies both, last one wins. It lives
+# HERE because the second caller is the SCOPE_COLLISION comparison below, which is string-exact for
+# exactly the same reason the pack check was, so two manifests can today reserve one file as `a/b`
+# and `a/./b` and both register. That defect predates the pack check and is being closed by its own
+# change; what it needs is this primitive, not a second copy of it.
+canonical_relpath() {
+  local _crp_in="$1" _crp_rest="$1" _crp_seg="" _crp_out=""
+  case "$_crp_in" in ""|/*) return 1 ;; esac
+  case "/$_crp_in/" in */../*) return 1 ;; esac
+  while [ -n "$_crp_rest" ]; do
+    _crp_seg="${_crp_rest%%/*}"
+    if [ "$_crp_seg" = "$_crp_rest" ]; then _crp_rest=""; else _crp_rest="${_crp_rest#*/}"; fi
+    case "$_crp_seg" in ""|.) continue ;; esac
+    _crp_out="${_crp_out:+$_crp_out/}$_crp_seg"
+  done
+  [ -n "$_crp_out" ] || return 1
+  printf '%s\n' "$_crp_out"
+}
 
 # lines (scope|invariants values) for every ACTIVE (in-flight|ready) feature != me
 active_others(){ # $1 = scope|invariants

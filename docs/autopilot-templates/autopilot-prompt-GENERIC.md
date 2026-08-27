@@ -166,6 +166,52 @@ The same habit — reading a field and inferring the claim behind it — produce
 declarations and a `negative_scope` clause that called a genuine stale call "shorthand". A field records
 what someone concluded once; the prose records why, and why is what goes stale.
 
+### Prose beside a mechanism is unchecked, which is exactly why it goes false
+
+Every record here mixes two kinds of writing: values a script consumes, and prose a human reads. The
+values are checked continuously — a wrong one fails a run. The prose is checked by nobody, so a
+sentence that was true when written stays in the file long after it stops being true, and the next
+reader believes it because it sits next to values that are correct.
+
+Measured 2026-08-25, three instances in one hour, all by the same session while it was fixing this
+exact class of defect elsewhere:
+
+- An explanatory annotation was appended INSIDE a `merged_probe` value. `ap-land.sh` splits that field
+  on `' :: '` and feeds the right-hand side verbatim to `git grep -qE`, so the prose became part of the
+  regex. Landing would have merged, pushed, and only then failed the post-push probe.
+- A commit message described a revert that was never staged. The claim was accurate about intent and
+  false about the commit; `origin/main` carried the broken value under a message saying it was fixed.
+- A manifest `_note` asserted two slices run in parallel after the contract beside it had been
+  corrected to serial. It was left because "the gate does not read `_note`."
+
+That last reason is the one to distrust. **"Nothing checks this field" is an argument for more care,
+not less** — an unchecked claim is one that will never be corrected by a failing run, only by a person
+who has already been misled by it. A field a script parses is worse still: prose there is not merely
+stale, it is executable.
+
+Two habits close it. Write no sentence about code, state or history that you cannot verify at the
+moment you write it — grep the symbol, read the script that consumes the field, name the commit. And
+when you correct a claim, grep the whole repo for its other copies before you call it fixed; the same
+assertion is usually written in three places by three different authors.
+
+### Docs-only work does not belong in a review gate
+
+An adversarial reviewer converges on code and does not converge on prose. Code has a fixed point:
+the tests pass, the types check, and the next round finds nothing because there is nothing left to
+find. Prose has none — a careful reviewer can always locate one more sentence that overclaims, one
+more citation whose line number moved, one more label that does not survive an edge case.
+
+Measured 2026-08-25: three consecutive docs-only lifecycles on the same two files reached a terminal
+halt. Rounds ran 6 → 3 → 4 → 3 → 6 → 1 on the first and produced five fresh findings on the fifth
+attempt of the second. Every finding was real. None was a design defect. The content was ~95% correct
+from round one and never became mergeable, because the stopping condition the gate enforces —
+consecutive clean review rounds — is not reachable for a long, fact-dense document.
+
+So route it differently: **a slice whose entire deliverable is prose does not go through the code
+review gate.** Write it, verify each claim against live source as you write it, have a person read the
+diff, commit. Keep the gate for changes where a test can say "done". A mixed slice — code plus the
+document describing it — splits: the code goes through the gate, the document ships beside it.
+
 ### Registration mechanics — four facts that each cost a real slice to learn
 
 These are not advice. Each one halted a live slice on first contact, and none of them is discoverable
