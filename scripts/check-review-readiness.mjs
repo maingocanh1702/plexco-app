@@ -44,6 +44,11 @@ export const REQUIRED_FIELDS = [
   "REMAINING_BLOCKERS",
 ];
 
+// SECURITY_AND_MIGRATION_GATE value for a document that has no migration and no security
+// surface to evaluate. Conditionally allowed: PLAN_READY verdicts only, and only with an
+// inline `# reason`. Printing PASS for a check with no referent is the failure it avoids.
+const SECURITY_GATE_NOT_APPLICABLE = "NOT_APPLICABLE";
+
 const ENUMS = {
   REVIEW_VERDICT: new Set([
     "PLAN_READY",
@@ -60,7 +65,12 @@ const ENUMS = {
   CONTRACT_MATRIX: new Set(["PASS", "PARTIAL", "FAIL"]),
   CLOSURE_MATRIX: new Set(["PASS", "PARTIAL", "FAIL"]),
   ACCEPTANCE_MATRIX: new Set(["PASS", "FAIL"]),
-  SECURITY_AND_MIGRATION_GATE: new Set(["PASS", "PARTIAL", "FAIL"]),
+  SECURITY_AND_MIGRATION_GATE: new Set([
+    "PASS",
+    "PARTIAL",
+    "FAIL",
+    SECURITY_GATE_NOT_APPLICABLE,
+  ]),
   IMPLEMENTATION_ARTIFACTS: new Set([
     "PASS",
     "FAIL",
@@ -70,6 +80,15 @@ const ENUMS = {
 
 function firstToken(value) {
   return value.trim().split(/[\s#(]/, 1)[0];
+}
+
+// firstToken() splits on the first whitespace, `#` or `(`, so an inline comment never
+// survives into the token it returns. Any rule that requires a stated reason must read the
+// raw field value instead, which keeps everything written after the field name.
+function inlineReason(value) {
+  const firstLine = value.trim().split("\n", 1)[0];
+  const hash = firstLine.indexOf("#");
+  return hash === -1 ? "" : firstLine.slice(hash + 1).trim();
 }
 
 function addError(errors, file, line, code, message) {
@@ -375,6 +394,27 @@ function validateBlock({
       "IMPLEMENTATION_ARTIFACTS",
     ].map((key) => [key, firstToken(value(key))]),
   );
+
+  if (tokens.SECURITY_AND_MIGRATION_GATE === SECURITY_GATE_NOT_APPLICABLE) {
+    if (verdict !== "PLAN_READY") {
+      addError(
+        errors,
+        file,
+        block.line,
+        "SECURITY_GATE_NOT_APPLICABLE_VERDICT",
+        `SECURITY_AND_MIGRATION_GATE: ${SECURITY_GATE_NOT_APPLICABLE} is allowed only on a PLAN_READY verdict; got ${verdict || "<empty>"}.`,
+      );
+    }
+    if (!inlineReason(value("SECURITY_AND_MIGRATION_GATE"))) {
+      addError(
+        errors,
+        file,
+        block.line,
+        "SECURITY_GATE_NOT_APPLICABLE_REASON",
+        `SECURITY_AND_MIGRATION_GATE: ${SECURITY_GATE_NOT_APPLICABLE} requires a reason on the same line, written as "# <why no migration or security surface is evaluated here>".`,
+      );
+    }
+  }
 
   if (verdict === "CODE_READY") {
     const requiredPass = [

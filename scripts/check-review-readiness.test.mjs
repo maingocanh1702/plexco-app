@@ -49,6 +49,29 @@ function block(overrides = {}) {
     .join("\n");
 }
 
+const CODE_READY_OVERRIDES = {
+  REVIEW_VERDICT: "CODE_READY",
+  G4_TEST: "PASS",
+  CLOSURE_MATRIX: "PASS (12/12)",
+  ACCEPTANCE_MATRIX: "PASS",
+  IMPLEMENTATION_ARTIFACTS: "PASS",
+  FIRST_IMPLEMENTATION_STEP: "run the validator implementation slice",
+  REMAINING_BLOCKERS: "none",
+  NEXT_REVIEW_TRIGGER: "implementation merged",
+};
+
+// Overrides that leave each verdict otherwise valid, so a SECURITY_AND_MIGRATION_GATE
+// assertion is never masked by an unrelated verdict-shape error.
+const VERDICT_FIXTURES = {
+  PLAN_READY: { REVIEW_VERDICT: "PLAN_READY" },
+  CODE_READY: CODE_READY_OVERRIDES,
+  NOT_PLAN_READY: { REVIEW_VERDICT: "NOT_PLAN_READY" },
+  NOT_CODE_READY: { REVIEW_VERDICT: "NOT_CODE_READY" },
+};
+
+const NA_REASON =
+  "NOT_APPLICABLE  # program-control document: no migration, no security surface";
+
 function document(verdictBlock, directive = "enforce", prefix = "") {
   return `<!-- review-readiness: ${directive} -->\n# Example\n${prefix}\n\`\`\`text\n${verdictBlock}\n\`\`\`\n`;
 }
@@ -201,4 +224,103 @@ ${block()}
   });
   assert.deepEqual(result.errors, []);
   assert.equal(result.activeBlocks, 1);
+});
+
+test("accepts SECURITY_AND_MIGRATION_GATE NOT_APPLICABLE with a reason on PLAN_READY", () => {
+  const errors = errorsFor(
+    document(
+      block({
+        ...VERDICT_FIXTURES.PLAN_READY,
+        SECURITY_AND_MIGRATION_GATE: NA_REASON,
+      }),
+    ),
+  );
+  assert.deepEqual(errors, []);
+});
+
+test("rejects SECURITY_AND_MIGRATION_GATE NOT_APPLICABLE without a reason", () => {
+  for (const raw of ["NOT_APPLICABLE", "NOT_APPLICABLE  #", "NOT_APPLICABLE  #   "]) {
+    const errors = errorsFor(
+      document(
+        block({
+          ...VERDICT_FIXTURES.PLAN_READY,
+          SECURITY_AND_MIGRATION_GATE: raw,
+        }),
+      ),
+    );
+    const reasonError = errors.find(
+      (error) => error.code === "SECURITY_GATE_NOT_APPLICABLE_REASON",
+    );
+    assert.ok(reasonError, `expected a missing-reason error for ${JSON.stringify(raw)}`);
+    assert.match(reasonError.message, /requires a reason on the same line/);
+    // The verdict is PLAN_READY, so the reason is the only thing wrong.
+    assert.deepEqual(
+      errors.map((error) => error.code),
+      ["SECURITY_GATE_NOT_APPLICABLE_REASON"],
+    );
+  }
+});
+
+test("rejects SECURITY_AND_MIGRATION_GATE NOT_APPLICABLE on a non-PLAN_READY verdict", () => {
+  for (const verdict of ["CODE_READY", "NOT_PLAN_READY", "NOT_CODE_READY"]) {
+    const errors = errorsFor(
+      document(
+        block({
+          ...VERDICT_FIXTURES[verdict],
+          SECURITY_AND_MIGRATION_GATE: NA_REASON,
+        }),
+      ),
+    );
+    const verdictError = errors.find(
+      (error) => error.code === "SECURITY_GATE_NOT_APPLICABLE_VERDICT",
+    );
+    assert.ok(verdictError, `expected a verdict error for ${verdict}`);
+    assert.match(verdictError.message, /allowed only on a PLAN_READY verdict/);
+    assert.ok(verdictError.message.includes(verdict));
+    // The reason is present, so the verdict is the only NOT_APPLICABLE complaint.
+    assert.equal(
+      errors.filter((error) => error.code === "SECURITY_GATE_NOT_APPLICABLE_REASON")
+        .length,
+      0,
+    );
+  }
+});
+
+test("leaves SECURITY_AND_MIGRATION_GATE PASS/PARTIAL/FAIL unchanged on every verdict", () => {
+  for (const [verdict, overrides] of Object.entries(VERDICT_FIXTURES)) {
+    for (const gate of ["PASS", "PARTIAL", "FAIL"]) {
+      const errors = errorsFor(
+        document(
+          block({ ...overrides, SECURITY_AND_MIGRATION_GATE: gate }),
+        ),
+      );
+      assert.equal(
+        errors.filter((error) =>
+          error.code.startsWith("SECURITY_GATE_NOT_APPLICABLE"),
+        ).length,
+        0,
+        `${verdict}/${gate} must not raise a NOT_APPLICABLE error`,
+      );
+      assert.equal(
+        errors.filter(
+          (error) =>
+            error.code === "ENUM" &&
+            error.message.startsWith("SECURITY_AND_MIGRATION_GATE"),
+        ).length,
+        0,
+        `${verdict}/${gate} must remain a valid enum member`,
+      );
+
+      const codeReadyGate = errors.filter(
+        (error) =>
+          error.code === "CODE_READY_GATE" &&
+          error.message.includes("SECURITY_AND_MIGRATION_GATE"),
+      ).length;
+      if (verdict === "CODE_READY" && gate !== "PASS") {
+        assert.equal(codeReadyGate, 1, `CODE_READY/${gate} must still fail the strict gate`);
+      } else {
+        assert.deepEqual(errors, [], `${verdict}/${gate} must validate clean`);
+      }
+    }
+  }
 });
