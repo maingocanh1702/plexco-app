@@ -297,7 +297,7 @@ No file in this program may claim that all 52 current tasks are implementation-r
 REVIEW_POLICY_VERSION: 1.3
 REVIEW_VERDICT: PLAN_READY
 REVIEWED_AT: 2026-08-26
-AUTHORITY_SHA: da43f60bb8ab9ce19db043295b0081e0b2dc939a
+AUTHORITY_SHA: 5a7a082c0805780f1e0cbc5f8e4a23163658cb52
 BASE_BRANCH: main
 TARGET_FILES:
   - docs/sessions/2026-08-26-plexco-DIRECT-RUN.md
@@ -330,4 +330,13 @@ NOTE: these PASS values evaluate the program-control contract and PC-1..PC-7, no
       a migration or a security surface here, and a PASS printed in gate format for a check with no
       referent is the exact failure class PC-7 exists to prevent. Per-task security and migration
       review is enforced by PC-5 inside each child packet, not by this file.
+      AUTHORITY_SHA was corrected on 2026-08-27. It previously read
+      da43f60bb8ab9ce19db043295b0081e0b2dc939a — a commit at which the sole TARGET_FILES entry does
+      not exist. da43f60 authored the superseded sibling plan; this file first appears at 5a7a082,
+      which is why the field now names that commit. ccf6890 only deleted the superseded sibling and
+      reviewed nothing about this file. A verdict anchored to a commit that predates the artifact it
+      reviews is a field naming a check with no referent, so PC-7 applies to this block itself and
+      not only to the statuses the program emits about its children. Note that the error survived
+      mechanical checking: `scripts/check-review-readiness.mjs` verifies that AUTHORITY_SHA is a
+      40-character commit and an ancestor of main, but not that TARGET_FILES exist at it.
 ```

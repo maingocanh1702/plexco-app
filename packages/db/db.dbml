@@ -1,4 +1,31 @@
-// Plexco DB — auto-generated DBML. Paste into https://dbdiagram.io
+// Plexco DB — hand-maintained DBML. Paste into https://dbdiagram.io
+//
+// NOT generated, despite what this header said until 2026-08-27. No script in any tracked
+// package.json produces this file and no DBML tooling appears in the dependency tree
+// (`git grep -iE 'dbml|dbdiagram' -- '*package.json'` returns nothing). Edit it by hand.
+//
+// KNOWN DRIFT — this diagram lags `packages/db/schema.ts`. Measured 2026-08-27 at e3f8043:
+// 52 `Table` blocks here against 69 `pgTable(` declarations there. Re-measure rather than
+// trusting those numbers, which go stale on the next schema change:
+//     grep -cE '^Table ' packages/db/db.dbml
+//     grep -cE 'pgTable\(' packages/db/schema.ts
+//
+// The gap is drift, not a deliberate core-only subset. Three measured grounds:
+//   1. The set difference is strictly one-directional — 17 tables exist in schema.ts and are
+//      absent here; zero exist here and are absent there. This file never contradicts the
+//      schema, it only lags it, which is the signature of a stalled mirror rather than a
+//      curated selection.
+//   2. It began as a complete mirror. At a0b5c36, where both files were first committed in
+//      this form, the counts were 51 and 51. It has been edited once since (5a335d5, +1
+//      table) while the schema grew to 69.
+//   3. The 17 missing tables cluster by subsystem arrival, not by importance: auth_* (7),
+//      account_emails, email_password_credentials, chat_* (6), job_audit_events,
+//      rate_limit_hits. chat_messages is not a less central table than sports.
+//
+// Closing the gap is a separate mirror task and is deliberately not done here. Until it runs,
+// `packages/db/schema.ts` and `packages/db/migrations/*.sql` are authoritative; this file is a
+// reading aid. `packages/db/ERD.md` points readers here and carries a stale table count of its
+// own — verify against the schema before citing either.
 
 Table sports {
   id uuid [pk]
