@@ -3604,3 +3604,22 @@ notes: |
   **Vì sao chưa author:** cơ chế đúng phụ thuộc quyết định **KMS provider chưa pin** (chính A3 matrix cờ điều này — Q trong §9 cho luật sư/owner). Hai đường khả dĩ, ĐỪNG pre-pick: (a) hash-at-rest nếu secret chỉ cần verify-equality (khuôn verify-token DD-80); (b) envelope-encrypt (`secret_enc`) nếu runtime cần plaintext để ký/gọi provider — khả năng cao là (b) vì bot phải TỰ trình secret ra ngoài, kéo theo câu hỏi key management thật.
   **Ràng buộc kèm:** rotation path (Zalo OA cho đổi secret), zero-downtime dual-read window, và audit của lần đọc secret. Grep hiện trạng trước khi scope: `grep -rn 'zalo_bots' packages/ apps/` — xác nhận ai đọc cột này hôm nay (bot runtime) và qua role nào.
   **Không phải blocker phase-1 theo bất kỳ DD nào hiện có** — nhưng nằm trên đường webhook auth (`webhook-verification-matrix.md`) và sẽ thành finding security round đầu tiên chạm nó; đóng chủ động rẻ hơn.
+
+## task: capacity-floor-active-vs-paid-roster
+title: Sàn của `CAPACITY_BELOW_ROSTER` là roster **active**, không phải roster **đã trả tiền**
+status: blocked
+risk: P1
+change_class: money-model-definition
+design_state: awaiting_trigger
+depends_on: []
+invariants: [schema, money]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: khi schedule, bind probe vào symbol MỚI mà fix tạo ra (vd một `sessionPaidRosterCount` hoặc cột hold) — KHÔNG bind `CAPACITY_BELOW_ROSTER` hay `sessionActiveRosterCount`, cả hai đã có trên origin.
+notes: |
+  **Nguồn:** probe `c8c109e` (27/08), measurement #8 — thứ mà chốt DD-112 ✅ (27/08) KHÔNG trả lời và cố ý không nuốt. Owner ghi thành task riêng vì một DD đã ✅ là thứ không ai đọc lại.
+  **Khẳng định đo được:** `session-service.ts:1426-1431` gọi `sessionActiveRosterCount` (`:1924-1930`), hàm này chỉ đếm `players` với `status='active'`. Với 5 charges và 2 người đã rời chưa hoàn tiền, `activeCount = 3` ⇒ `slots_max` hạ được xuống 3, **dưới** số người đang mang nghĩa vụ tiền.
+  **Vì sao `blocked` chứ không `ready`:** hôm nay vô hại vì `charges`/`payment_allocations` chưa có writer production — không có ca nào để sửa và không có hành vi đúng nào để chọn. Đây là dữ kiện về đấu nối hiện tại, KHÔNG phải thuộc tính của guard, nên nó không tự biến mất.
+  **Trigger mở khoá (bất kỳ cái nào):** (1) migration đầu tiên tạo bảng mang tiền gắn với chỗ ngồi (hold/reservation); (2) writer production đầu tiên ghi vào `charges` hoặc `payment_allocations`. Cả hai trigger này **cũng mở lại DD-112** — hai mục đi cùng nhau.
+  **Quyết định phải ra khi mở:** sàn là roster active hay roster đã-trả-tiền. Đừng pre-pick hôm nay; chọn khi đã có bảng tiền thật để đo.

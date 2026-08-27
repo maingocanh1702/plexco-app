@@ -123,7 +123,7 @@
 | DD-115 | **Membership — gói hội viên chu kỳ 30 ngày cho player** (D1–D5 ✅, D6–D8 ⬜) → player chọn ngày bắt đầu, hệ thống đếm buổi theo lịch cố định trong 30 ngày, thu **một lần** đã chiết khấu. **D1** lớp thương mại **trên** `memberships`, không thêm cột vào bảng đó. **D2** model là **N charge đã chiết khấu + 1 giao dịch allocate sang N charge** — `charges.session_id` NOT NULL + `charges_tenant_session_player_uq` khiến "một charge tổng" phải sửa bất biến đường tiền, **bác**. **D3** số buổi **đo từ `sessions` thật**, cấm nhân số tuần (đo: start 23/08/2026 ⇒ T3+T5=8 nhưng T7+CN=9 ⇒ cả tháng=**17**, không phải 16 như requirement giả định). **D4** config gói có **version, immutable per version**; không dùng `settings` (không version/audit) và không dùng `membership_tags` (DD-43/BL-SES-7 cấm tag tạo giá). **D5** quyền lợi fail-closed, chỉ mở sau khi tiền phủ đủ. ⬜ **D6** quyền vượt `slots_max` là **ngoại lệ với BL-SES-2/BL-CBF-3** ⇒ Tier C. ⬜ **D7** bind allocation vào chu kỳ là **ngoại lệ với BL-PAY-5 FIFO**. ⛔ **D8** chiết khấu phí giải đấu chặn ngoài bởi DD-82 (`tournaments` chưa tồn tại, v1 không đụng tiền). 10 OQ, trong đó **D6 + D7 là blocker cứng trước build** | ✅ Chốt D1–D5 (owner 2026-08-25) · ⬜ D6–D8 | P4+ — **ngoài phase-1** (DD-114 D7) | `../features/FE/feature_membership.md` v0.1 · `../features/BE/feature_membership_tech.md` v0.1 · DD-02 · DD-39 · DD-40 · DD-43 · DD-82 · BL-PAY-2/5/8 · BL-SES-2/3 · BL-CBF-3/5 |
 | DD-114 | **Phase-1 feature scope = 7 nhóm; launch (DD-113) là subset** → 1 signin/signup Google · 2 create club · 3 link club ⇄ Zalo bot · 4 link account ⇄ Zalo · 5 sync data + owner config public/private · 6 session management/detail + nhắc nợ/gạch nợ · 7 settings/privacy. **Hai hard dependency:** vế tiền chỉ `host_pro` (DD-40/DD-29) ⇒ **billing P5 + reader đầu tiên của entitlement registry vào phase-1**; toggle public/private chỉ mở **sau khi land `public_projection_fences` (8a, nợ DD-12)**. A3 legal thành blocker phase-1. **OQ "public để làm gì khi chưa có discovery" ✅ CHỐT phương án (b) (owner 2026-08-26):** phase-1 CÓ toggle + fence immediate-deny, **KHÔNG** chiếu `public_sessions` (bảng không có writer trong phase-1; toggle + fence-raise đã land trong `UpdateSession`). Projector = **epic "public read model" phase sau với BỐN tiền đề** — DD-73 share link · DD-41 projection migration · occupancy helper DUY NHẤT cho `slots_open` (cấm công thức capacity thứ hai) · alias moderated substrate cho `club_display_name`. Slice chạm giá trị projection phải AWAIT. Không authorize code/migration/enablement nào | ✅ Chốt (owner 2026-08-22) · 🔧 OQ D3 chốt (b) (2026-08-26) | P0–P5 (trừ discovery/chat) | DD-113 · DD-40/DD-29 · DD-32 Option D · DD-12/DD-73/DD-41 · `../probes/pre-code-open-items-2026-07-16.md` A3 |
 | DD-113 | **GTM re-sequencing: launch = webapp PWA + Zalo bot song song; app native lùi về phase sau** → web hết vai "fallback"; PWA v1 đúng 5 khối (signin/signup · link Zalo bot · session management · session detail · settings); negative scope launch gồm discovery/chat/feed/auto-reconcile/web push/fill-slot/native; gate native viết thành ngưỡng đo được. **Không** gỡ FE PENDING 13/08, **không** đảo DD-69 | ✅ Chốt (owner 2026-08-22) | — (GTM/surface order, ngoài P-number) | `../strategy/gtm-strategy.md` (rewrite 22/08) · DD-69 · `../strategy/native-app-strategy.md` §1 · `../decisions/analysis/dd-69-app-native-analysis.md` |
-| DD-112 | **Đổi sức chứa (`slots_max`) khi session đã có charges — xử lý tiền thế nào?** Giảm capacity xuống dưới roster đã trả tiền chạm đường tiền; câu hỏi mở **không có owner đứng sau**. DD-117 giữ nguyên hành vi hiện hành `CAPACITY_BELOW_ROSTER`, **không** couple `impact_policy`/DD-49 | ⬜ **CHƯA CHỐT** (mở 2026-08-17) — Tier C theo DD-107: slice chạm nhánh này AWAIT | P2/P4 (session management) | thân DD-112 · DD-49 · DD-110 · DD-117 |
+| DD-112 | **Đổi sức chứa (`slots_max`) khi session đã có charges — xử lý tiền thế nào?** Giảm capacity xuống dưới roster đã trả tiền chạm đường tiền; câu hỏi mở **không có owner đứng sau**. DD-117 giữ nguyên hành vi hiện hành `CAPACITY_BELOW_ROSTER`, **không** couple `impact_policy`/DD-49 | ✅ Chốt (owner 2026-08-27) · mở 2026-08-17 — capacity KHÔNG phải nhánh tiền; guard duy nhất `CAPACITY_BELOW_ROSTER`; hiệu lực có điều kiện (xem thân DD-112) | P2/P4 (session management) | thân DD-112 · DD-49 · DD-110 · DD-117 |
 | DD-111 | **`AnnounceSession`: guard `ends_at > now()` + mã lỗi mới `SESSION_ALREADY_ENDED` (409)** — đánh giá dưới row lock bằng đồng hồ DATABASE (amendment D1: time-guard sau khoá cần query riêng); edge #11 thuộc **FE**, dòng BE là bản chép thiếu; **D4:** quyết định owner phải vào `decisions.md` TRƯỚC khi lane mang qua gate — "bản ghi bền thắng lời khai hội thoại" áp cho owner y như cho lane | ✅ Chốt (owner 2026-08-15) — implemented `d925c99` + D1 `51fe7e9` | P2/P4 (session management) | thân DD-111 · `packages/db/src/session-service.ts` · `../features/BE/feature_session_management_tech.md` |
 | DD-110 | **Bốn action-class literal hẹp cho session command family** — `update_open_session` · `close_session` · `cancel_session` · `announce_session` + hàng Suspended Action Matrix; **close/cancel ✅ khi suspended, announce/update ❌** (chặn thương mại MỚI, không đóng băng nghĩa vụ ĐANG CHẠY); **D3:** literal vào `ActionClass` cùng commit mang command của nó (chống code-dark); **D4:** test âm bắt buộc — `updateSession` trên `draft` không gọi `authorizeTenantAction` | ✅ Chốt (owner 2026-08-15) | P2/P4 (session management) | thân DD-110 · DD-105 · `../features/BE/feature_billing_lifecycle_tech.md` §3 |
 | DD-109 | **Nới `fix_rounds_max` 5 → 8 cho RIÊNG `session-draft-lifecycle-commands--v3`** → `PublishSession` HALT `MAX_ROUNDS` hai lần (v1, v2; 11+ vòng). Bằng chứng nói **không phải thrash**: `regions.log` v2 = 5 vòng / **5 vùng khác nhau**, `REGION_THRASH` không bắn. Nguyên nhân thật: reviewer đọc `git diff <base>...HEAD` = **toàn bộ 1.690 dòng mỗi vòng**, miss-rate đo được **≈2/3** ⇒ mỗi vòng là một lần **lấy mẫu**, finding mới là chữ ký **under-sampling** chứ không phải slice sai. Hệ quả: thu hẹp *việc* của successor KHÔNG thu hẹp *bề mặt review*. Chọn 8 vì `(2/3)^M`: M5≈13% → M8≈3,9% (ước lượng có căn cứ, không phải phép đo). **Điều kiện cứng:** v3 PHẢI tới được vòng security (chưa attempt nào chạm tới, dù slice gọi `authorizeTenantAction`); v3 HALT nữa = bằng chứng quyết định cho slice-too-big ⇒ **re-slice thật, cấm lần bốn**; `REGION_THRASH` giữ nguyên. Ngoại lệ MỘT lane, khuôn DD-101; §8 không đổi cho lane khác. | ✅ Chốt (owner 2026-08-14) | — | `../autopilot-templates/level3-workflow.md` §8 · DD-101 · `../decisions/analysis/codex-reviewer-determinism-2026-08-13/` |
@@ -2151,10 +2151,14 @@ là **đích**, không phải mô tả trạng thái hiện có.
 
 ---
 
-## DD-112 — ⬜ **CHƯA CHỐT** — đổi **sức chứa** khi đã có charges thì làm gì với tiền? (mở 2026-08-17)
+## DD-112 — ✅ **Chốt (owner 2026-08-27)** — đổi **sức chứa** khi đã có charges thì làm gì với tiền? (mở 2026-08-17)
 
-> ⬜ **Đây là câu hỏi mở, KHÔNG phải quyết định.** Không slice nào được viện nó làm thẩm quyền. Ghi ra
-> để nó có chỗ đứng và có người sở hữu, thay vì tiếp tục sống như một coupling không ai đứng sau.
+> ✅ **ĐÃ CHỐT 2026-08-27 — đọc mục "Chốt (owner 2026-08-27)" cuối DD này trước khi viện dẫn.** Chốt
+> có điều kiện, và điều kiện tự huỷ nó (bảng mang tiền gắn với chỗ ngồi ⇒ mở lại).
+>
+> ~~⬜ **Đây là câu hỏi mở, KHÔNG phải quyết định.** Không slice nào được viện nó làm thẩm quyền. Ghi ra
+> để nó có chỗ đứng và có người sở hữu, thay vì tiếp tục sống như một coupling không ai đứng sau.~~
+> *(giữ nguyên chữ mở 17/08–27/08 làm lịch sử — trạng thái đó đã hết hiệu lực.)*
 
 **Phát hiện thế nào.** Lane `docs-impact-policy-contract--narrowed` cạn trần fix-round sau 6 vòng
 codex. Năm vùng khác hội tụ dần (5→3→4→2→1→3) và hợp đồng đã sạch một lần; **chỉ mỗi capacity thrash**,
@@ -2267,6 +2271,43 @@ Owner cần trả lời **đúng một câu**, câu (2) ở trên:
 > renumber"**. Phần lớn trích dẫn `edge #4` còn sống thuộc **vế price** (backlog `impact_policy`,
 > `session-command-update-v3`, `session-service.ts`, `session-service.test.ts`) ⇒ **`4a` = price** giữ
 > được tính liên tục cho chúng; `4b` = capacity/retry-root.
+
+### ✅ Chốt (owner 2026-08-27) — capacity KHÔNG phải nhánh tiền
+
+**Trả lời câu (2): KHÔNG ảnh hưởng.** Giảm `slots_max` khi session đã có charges — miễn không xuống
+dưới roster — không chạm đường tiền. **Không cần `impact_policy`.** `CAPACITY_BELOW_ROSTER` là guard
+duy nhất. Câu (3) không áp dụng.
+
+**Căn cứ đo** (probe `c8c109e` 27/08; owner **tái đo độc lập** trên `e3f8043` — bốn mục dưới đây là số
+đo của owner, không phải lời khai của probe):
+
+- `CAPACITY_BELOW_ROSTER` có **đúng một** raise site: `packages/db/src/session-service.ts:1429`.
+- Guard (`:1426-1431`) chỉ gọi `sessionActiveRosterCount`, không gì khác.
+- `sessionActiveRosterCount` (`:1924-1930`) chỉ đọc `players` với `status='active'` — **không**
+  `charges`, **không** `payment_allocations`.
+- `charges` chỉ được đọc bên trong `if (changes.priceAmount !== undefined)` (`:1445`), nên một lệnh
+  chỉ đổi `slots_max` **không có đường nào** chạm bảng tiền trên bất kỳ nhánh nào.
+- Write-set của lệnh: `sessions` · `outbox_events` · `processed_commands`.
+
+**Hiệu lực.** Ràng buộc (a)/(b)/(c) ở trên **được gỡ**. Tách hàng #4 thành `4a` (price ↦
+`impact_policy`) / `4b` (capacity/retry-root ↦ `CAPACITY_BELOW_ROSTER`) từ đây là **hợp lệ**, theo đúng
+ghi chú "KHÔNG renumber" ngay trên. Nhưng chốt này **không thực hiện** việc tách: nó phải đi bằng một
+slice riêng có gate riêng, và **không lane nào được tách kèm như tác dụng phụ**. `edge #4` giữ nguyên
+trên `main` cho tới khi slice đó land. `docs-impact-policy-contract` chỉ về lại `ready` khi hàng `4a`
+đã tồn tại trên `main`.
+
+**Chốt này CÓ ĐIỀU KIỆN, và điều kiện tự huỷ nó.** Đúng chừng nào **chưa tồn tại một bảng mang tiền
+gắn với chỗ ngồi** (hold/reservation). Migration đầu tiên tạo bảng như vậy — hoặc writer production
+đầu tiên ghi vào `charges`/`payment_allocations` — **mở lại DD-112**.
+
+**Một chênh lệch định nghĩa, ghi ra để chốt này không nuốt nó.** Sàn của guard là roster **active**,
+không phải roster **đã trả tiền**. Với 5 charges và 2 người đã rời chưa hoàn tiền, `activeCount = 3`,
+nên `slots_max` hạ được xuống `3` — **dưới** số người đang mang nghĩa vụ tiền. Hôm nay vô hại **chỉ
+vì** `charges`/`payment_allocations` chưa có writer production; đó là dữ kiện về đấu nối hiện tại,
+**không phải thuộc tính của guard**. Vì vậy nó là task riêng có tên —
+`capacity-floor-active-vs-paid-roster` (`../autopilot-backlog.md`) — chứ không phải một câu nằm trong
+một DD đã ✅, vì một DD đã ✅ là thứ không ai đọc lại.
+
 
 ---
 
