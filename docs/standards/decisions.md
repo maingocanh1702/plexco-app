@@ -2184,12 +2184,89 @@ coupling sai mà là một hàng ghép hai luật**, và cách sửa là tách h
    không nhét vào DD-49, vì DD-49 chốt cơ chế cho *đổi giá* và ma trận của nó là
    `{price}×{charge-state}×{lifecycle}`.
 
+### Trả lời câu hỏi (1) — đo 2026-08-27, lane `d1-decisions-closure` (KHÔNG đóng DD-112)
+
+Câu (1) ở trên yêu cầu *"đọc hàng + lịch sử commit của nó; rẻ, làm trước"*. Đã đọc. Kết quả:
+**vế `impact_policy` được viết cho PRICE, và chỉ price. Capacity bị một sweep refresh pointer version
+chèn vào sau, không có decision nào đứng sau.**
+
+- **Nguyên bản hàng #4** (trước 19/07/2026):
+  ``| 4 | Data Integrity | Price change with existing charges | Service loads charges, requires explicit `impact_policy` parameter |``
+  — **chỉ price**, không một chữ capacity.
+- **Commit `c18ac65`** (19/07/2026 · **99 files changed, 6584 insertions(+), 1038 deletions(-)** ·
+  subject *"docs: authority sweep v1.52→v1.74 — gate v1.1, slice verdicts, DD-73..78 share-activity,
+  pointer refresh (…)"*) viết lại hàng đó thành *"Price/**capacity** change with existing charges **or
+  retry root**"* + *"Lock `session→root job→roster/finance`, then require explicit `impact_policy`; a
+  capacity outcome that is full resolves roots in the same tx"*. Subject của commit nêu gate, slice
+  verdict, DD-73..78 và pointer refresh — **không nhắc capacity, `impact_policy` hay tiền**.
+  Kiểm: `git show c18ac65 -- docs/features/BE/feature_session_management_tech.md`.
+- **DD-49** (`:668` · ✅ 16/07/2026 — **trước sweep ba ngày**) là decision **duy nhất** chi phối
+  `impact_policy`, và có **đúng ba mục**: đổi giá · leave/cancel/refund · rejoin. **Không có capacity.**
+  Capacity chỉ xuất hiện **bên trong** mục rejoin, như một *join gate* (`eligibility/gating/ban +
+  capacity`, `full→waitlisted`) — không phải một nhánh tiền.
+- **Chính spec đó đã có hai hàng capacity riêng, và cả hai KHÔNG nhắc `impact_policy`:** edge #15
+  (`:225`, tăng capacity / finite→unlimited) và edge #16 (`:226`, giảm dưới roster →
+  `CAPACITY_BELOW_ROSTER`; dưới occupancy → `CAPACITY_BELOW_OCCUPANCY`). Nghĩa là hàng #4 **trùng lặp
+  và mâu thuẫn** với chính bảng chứa nó.
+- **Code trên `main` đã hành xử theo bản tách,** không theo hàng #4:
+  `packages/db/src/session-service.ts:962-964` ghi nguyên văn *"Capacity is guarded by
+  CAPACITY_BELOW_ROSTER only (DD-112 is OPEN — NO impact_policy coupling, NO edge #4 edit)"*.
+
+**Cái giá đã trả.** Lane `docs-impact-policy-contract--narrowed` đốt **6 vòng codex tới HALT
+`MAX_ROUNDS`** để cố thoả một coupling mà **chưa decision nào tạo ra**. Bốn vùng khác hội tụ dần; chỉ
+mỗi capacity dao động với hướng dẫn ngược nhau giữa các vòng — đúng chữ ký của *"văn bản không quyết
+được"*, không phải tác giả viết dở.
+
+> **Bài học tái dùng: một thay đổi ngữ nghĩa trên ĐƯỜNG TIỀN đã đi nhờ một sweep refresh pointer
+> version.** Diff 99 file không đọc được bằng mắt ở review, và changelog của sweep không khai rằng
+> hàng #4 đổi nghĩa. Hệ quả: sweep chạm spec money-path phải **liệt kê từng hàng đổi nghĩa**, không
+> gộp vào "pointer refresh".
+
+**Phát hiện này KHÔNG tự đóng DD-112 — và lane này KHÔNG đóng nó.** DD-117 (`:121` · ✅ owner
+25/08/2026) chốt **hành vi tạm** + **luật không-coupling**, nguyên văn: *"DD-112 capacity giữ ⬜ — chỉ
+`CAPACITY_BELOW_ROSTER`, không couple `impact_policy`/DD-49."* Chữ **"giữ ⬜"** là owner **cố ý giữ câu
+hỏi mở**. Tách hai tầng cho rõ:
+
+- **Sub-question "capacity có cần `impact_policy` không?"** → **đã trả lời: KHÔNG** (DD-117 chốt hành
+  vi; đoạn đo trên giải thích *vì sao* hàng #4 từng nói ngược lại).
+- **Câu hỏi tiền của DD-112** — câu (2)/(3) ở trên: giảm capacity khi đã có charges mà **không** xuống
+  dưới roster thì ảnh hưởng gì tới tiền — **vẫn ⬜, vẫn chưa ai trả lời.**
+
+Vì vậy status DD-112 **giữ nguyên ⬜**, và ràng buộc (a)/(b)/(c) ngay dưới **vẫn hiệu lực nguyên vẹn**.
+Muốn sửa hàng #4 trong spec Reviewed thì owner phải đóng DD-112 trước — xem "Điều kiện để mở khoá" cuối mục.
+
 **Ràng buộc tới khi chốt:** slice không được (a) viết capacity vào phạm vi DD-49, (b) tự pin một
 capacity policy, (c) sửa edge #4 để tách capacity ra. Cả ba đều là sửa contract spec Reviewed trên
 đường tiền. Slice **được** ghi rằng edge #4 có liệt kê capacity và slice **không giải** nó — đúng cách
 đã xử `impact_policy` token.
 
 **Không chặn gì hiện tại.** `update_open_session` vẫn có `CAPACITY_BELOW_ROSTER` cho ca nguy hiểm nhất.
+
+### Điều kiện để mở khoá (owner, nhị phân)
+
+Việc đang bị chặn sau DD-112 là **tách hàng #4** trong `feature_session_management_tech.md` (price ↦
+`impact_policy`; capacity/retry-root ↦ `CAPACITY_BELOW_ROSTER`, không tiền) — và task backlog
+`docs-impact-policy-contract` phụ thuộc vào hàng đã tách đó. Ràng buộc (c) cấm mọi slice tự làm.
+
+Owner cần trả lời **đúng một câu**, câu (2) ở trên:
+
+> Giảm `slots_max` khi session đã có charges **mà không** xuống dưới roster đã trả tiền — có ảnh hưởng
+> tới tiền của người đã trả không?
+
+- **KHÔNG ảnh hưởng** (kỳ vọng — tiền buộc vào từng charge của từng người, không vào sức chứa) ⇒
+  DD-112 đóng ✅ với nội dung *"capacity không phải nhánh tiền; `impact_policy` chỉ thuộc price"*.
+  Ràng buộc (c) tự hết hiệu lực, và một lane docs được phép tách hàng #4 (đề xuất **`4a`/`4b`**,
+  **KHÔNG renumber** — xem ghi chú dưới).
+- **CÓ ảnh hưởng** ⇒ cần một **decision riêng cho capacity**, **không** nhét vào DD-49 (ma trận DD-49
+  là `{price}×{charge-state}×{lifecycle}`, không có trục capacity).
+
+> ⚠️ **Khi tách: dùng `4a`/`4b`, KHÔNG đánh số lại.** Đo 2026-08-27: repo có **32** trích dẫn `edge #4`
+> và **55** trích dẫn `edge #5`; bảng chạy tới edge #46. Renumber làm hỏng toàn bộ, gồm chính DD-117
+> (`:121`) đang trỏ *"edge #5 (`../features/BE/feature_session_management_tech.md:215`)"*. Spec này
+> cũng đã có tiền lệ tự nó: changelog v2.22 (13/08) gỡ DeleteSession và ghi rõ **"ID giữ trống, KHÔNG
+> renumber"**. Phần lớn trích dẫn `edge #4` còn sống thuộc **vế price** (backlog `impact_policy`,
+> `session-command-update-v3`, `session-service.ts`, `session-service.test.ts`) ⇒ **`4a` = price** giữ
+> được tính liên tục cho chúng; `4b` = capacity/retry-root.
 
 ---
 
@@ -2437,7 +2514,43 @@ hai trục suspend về một quyết định và không phân biệt được `
 vẫn được allow như nhau ở đây. Muốn phân biệt vẫn phải đổi chữ ký gate — việc riêng, chưa mở, KHÔNG
 kéo vào slice close/cancel; đây vẫn là **named limitation** của DD-110, không phải đã giải.
 
----
+### Amendment 2026-08-27 (owner-ratified) — `updateSession` GIỮ NGUYÊN thứ tự no-op/`expectedVersion` hiện hành
+
+**Chốt (owner 2026-08-27): GIỮ NGUYÊN hành vi `updateSession` đang chạy trên `main`. Không đổi code,
+không mở lane.** Quyết định này đóng vĩnh viễn intake `intake-update-session-noop-version`.
+
+**Bối cảnh.** Slice `session-commands-close` (B1) finding **#1** đổi thứ tự cho `closeSession`: no-op
+thắng **trước** khi kiểm `isInt4(expectedVersion)`, nên `closed` + `expectedVersion=0` → no-op chứ
+không `STALE_VERSION`. Câu hỏi owner đặt ra khi đó: `updateSession` đã merge có nên chỉnh cho khớp
+không? Probe đã có sẵn, **không author probe thứ hai**:
+`../autopilot/contracts/session-commands-close.md:186-199` (finding **F10**) — chính file đó ghi rằng
+đây là *"a **semantic decision for the owner**"* và là *"a **live behavior on `main`**"*.
+
+**Lý do giữ — hai no-op KHÁC LOẠI, không phải một bất đối xứng cần dọn:**
+
+| Lệnh | Loại no-op | Nghĩa |
+|---|---|---|
+| `updateSession` | **GOAL-REACHED** — change-set rỗng (mọi field gửi lên đã bằng giá trị hiện tại) | caller yêu cầu một thay đổi **không tồn tại** |
+| `closeSession`/`cancelSession` | **TERMINAL-STATE REPLAY** — session đã `closed`/`cancelled` | caller phát lại một lệnh **đã thành công** |
+
+Replay một lệnh đã xong thì bỏ qua version rác là đúng: kết quả cuối đã đạt, và bắt lỗi một retry đã
+thành công là báo *failure* cho thứ **đã commit**. Còn một patch rỗng kèm `expectedVersion` **dị dạng**
+là một request **hỏng**, và `updateSession` từ chối nó — cũng đúng. Ép hai cái giống nhau là đổi một
+**live contract trên họ lệnh cạnh đường tiền** để lấy **tính đối xứng** — lý do yếu nhất có thể có cho
+một thay đổi loại đó.
+
+**Đây là chủ ý có ghi chép, không phải drift.** `packages/db/src/session-service.ts:1192-1196` (hàm
+`updateSession` bắt đầu `:1117`) có comment tại chỗ nói rõ `expectedVersion` được validate **trước**
+nhánh no-op/mutate *"so a malformed value cannot slip through the no-op branch (which does not re-check
+the version)"*. Phạm vi lệch **hẹp và đã đo**: chỉ `expectedVersion` **non-int4**, và chỉ với no-op
+"nothing to change". Với version **hợp lệ nhưng lệch**, `updateSession` cũng để no-op thắng — **giống**
+close/cancel. Nên khác biệt duy nhất nằm ở *giá trị dị dạng*, không phải ở mô hình đồng thời.
+
+**Hệ quả.** (1) `intake-update-session-noop-version` **đóng**, không promote thành code task; điều kiện
+promote của nó trong `../sessions/2026-08-26-plexco-DIRECT-RUN.md:115` là *"a decision explicitly
+changes the update no-op contract"* — quyết định này chốt **không đổi**, nên điều kiện đó **không bao
+giờ** thoả bởi chính nó. (2) Reviewer round sau nêu lại bất đối xứng này thì **trỏ về amendment này và
+đi tiếp**, không `AWAIT` — cùng khuôn DD-101/DD-109 đã dùng. (3) Không authorize code/migration/lane.
 
 ## DD-107 — Autonomy mode `autonomous_to_ready`: batch owner ở READY thay vì ngắt giữa chừng · ✅ Chốt (owner 2026-08-14)
 

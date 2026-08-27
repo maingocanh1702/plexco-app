@@ -3529,7 +3529,7 @@ notes: |
 ## task: docs-impact-policy-contract
 
 title: Đặc tả `impact_policy` (edge #4) — enum, request DTO, preview, vị trí trong chuỗi lock (P1)
-status: ready
+status: blocked
 risk: P1
 change_class: docs-contract
 depends_on: []
@@ -3541,6 +3541,25 @@ close_by: hand · diff thuần prose trong hai spec đã Reviewed + design-syste
 là hai giá trị enum mà CHÍNH slice này phải chọn, nên không tồn tại symbol nào để probe lúc author —
 cùng lớp với `docs-billing-authz-signature-reconcile`
 aged_recheck_2026-08-25: reconcile --check đánh ⚠ AGED (ready+close_by 8d). Re-verify bằng tay: exemption VẪN ĐÚNG — enum `impact_policy` chưa tồn tại ở đâu trên main (lane `--price-only` mang phần này đã authorized-close 21/08 KHÔNG merge, forensics archived; successor pre-authorized §6.1 nhưng chưa register). DD-117 (25/08) KHÔNG nuốt task này — nó chốt `review_policy`-side refuse cho close/cancel, còn `impact_policy` (input caller cho update-giá) vẫn là hợp đồng chưa đặc tả; DD-117 D3 authorize build Update càng làm task này nóng hơn, vì `update_open_session` chạm edge #4. Giữ `ready`.
+blocked_recheck_2026-08-27: **`ready` → `blocked`** (lane `d1-decisions-closure`). Dòng
+`aged_recheck_2026-08-25` ở trên vẫn đúng ở vế nó khẳng định — task này CHƯA bị DD-117 nuốt, hợp đồng
+`impact_policy` vẫn chưa đặc tả — nhưng kết luận "Giữ `ready`" thì sai, vì `ready` nghĩa là một session
+có thể pick lên và chạy tới READY, mà **không session nào làm được**. Đo trên base `ccf6890`:
+**ba lần thử, không lần nào land.** `.autopilot/dispositions/` có 3 record `authorized_close` —
+(1) `docs-impact-policy-contract` (17/08, AWAIT superseded bởi manifest amended trên `dd05ca1`);
+(2) `docs-impact-policy-contract--narrowed` (17/08, **HALT MAX_ROUNDS 6 vòng**, reason ghi rõ
+*"Capacity is an ungoverned edge-#4 coupling now recorded as OPEN question DD-112"*);
+(3) `docs-impact-policy-contract--price-only` (21/08, **HALT MAX_ROUNDS**, design cause tự ghi:
+*"reconcile manifest tích tụ 3 lớp thay vì author manifest price-only sạch"*).
+`.autopilot/landings/` có **0** entry cho mọi slug `docs-impact-policy-contract*`. Đúng lớp lỗi mà
+`blocked` sinh ra để chặn (xem đầu file, AP-22): status stale làm bot launch lại việc không thể xong.
+**Ai mở khoá được:** chỉ owner. **Bằng gì:** đóng **DD-112** (`../standards/decisions.md` — mục
+"Điều kiện để mở khoá", một câu hỏi nhị phân), rồi để một lane docs tách hàng #4 thành `4a` price /
+`4b` capacity. Chừng nào DD-112 còn ⬜, ràng buộc (c) của nó **cấm mọi slice** sửa edge #4, nên task
+này không có hàng nguồn sạch để đặc tả. **Điều kiện về lại `ready`:** DD-112 đã ✅ **và** hàng `4a`
+price-only đã tồn tại trong `feature_session_management_tech.md` trên `main`.
+**Successor PHẢI author manifest price-only MỚI, sạch, từ hàng `4a` đã tách** — tái dùng manifest tích
+tụ ngày 17/08 là chạy lại đúng design cause đã được ghi của lần thử thứ ba.
 \_probe_note: bản đầu bind `PRICE_CHANGE_REQUIRES_POLICY` và reconciler đánh STALE ngay — mã lỗi đó
 ĐÃ có trên origin (BE `:283` và `:733`, FE `:348` đủ `t(vi,en)`). Cùng bẫy mà chú thích này định
 tránh cho `impact_policy`, chỉ đổi token. Đừng bind bất kỳ tên nào đọc được từ spec hôm nay.
