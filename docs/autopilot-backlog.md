@@ -3465,7 +3465,14 @@ notes: |
 
 ## task: dd108-mirror-readiness-evidence-keys-to-canonical
 title: DD-108 — mirror readiness-evidence key-gate sang canonical kit + làm cho divergence ĐO được (P1)
-status: ready
+status: merged — hand-closed 2026-08-27 (`close_by: hand`, đúng như khai). Canonical nhận ở `188e756`
+  ("kit v33: close DD-108"), 4 file `+1091 −17`, sau 2 vòng code CLEAN + 1 vòng security CLEAN trên cùng
+  HEAD. Plexco nhận qua `autopilot-update.sh` ở `8e737fe`: `scripts/autopilot-scope-gate` nay đọc
+  `# KIT_VERSION: 33` (trước: 31). Bằng chứng đóng là hai số đo đó, không phải lời khai của lane.
+  Kèm theo: `KIT_SUITE_RED` — thứ đã chặn MỌI consumer sync từ 15/08 — được gỡ; e2e canonical từ
+  48 ok/24 fail thành 101 ok/0 fail. Một file trong pack **cố ý không nhận**:
+  `docs/autopilot-templates/level3-workflow.md` (canonical cũ hơn bản Plexco 147 dòng) — xem `8e737fe`
+  và mục 3 của `kit-init-pack-parity`.
 risk: P1
 change_class: kit-maintenance
 depends_on: []
