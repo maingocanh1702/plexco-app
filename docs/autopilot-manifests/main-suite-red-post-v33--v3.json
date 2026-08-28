@@ -1,0 +1,92 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Carries NO manifest_schema_version by design.",
+  "task_id": "plexco:main-suite-red-post-v33--v3",
+  "feature": "main-suite-red-post-v33--v3",
+  "branch": "feat/main-suite-red-post-v33--v3",
+  "base_ref": "origin/main",
+  "base_sha": "405cc589c17f606f682d22f8038d0d1d5a583f78",
+  "risk": "P2",
+  "_risk_note": "P2, but it goes FIRST and blocks every other code lane. Root `pnpm test` is `test:review-readiness && pnpm -r run test`; the && means these 4 failures stop the run before any package suite executes, so right now every code lane's canonical verification proves nothing. v1 (feat/main-suite-red-post-v33) carried the correct fix but never declared `pnpm test` itself in canonical verification. v2 (feat/main-suite-red-post-v33--v2, HALTed REGISTRATION_CANNOT_EXPRESS_FIX) added that but set DATABASE_URL to the dev connection string alongside DATABASE_URL_TEST in the same command -- code review round 1 correctly flagged this as defeating test-database isolation, and the fix (dropping DATABASE_URL entirely) required a manifest edit that could not be made post-hash-lock. v3 is that fix, registered correctly from a pristine worktree.",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_dependency_note": "ROOT. Owner-measured cause: the KIT_VERSION 33 sync at 8e737fe replaced scripts/autopilot-ephemeral-review-worktree.mjs while this repo's own test still asserts the pre-v33 contract. `grep -n 'test\\.mjs' autopilot/parallel/autopilot-update.sh` returns NOTHING across 265 lines, while line 37 ships the implementation -- the pack ships implementations without their tests, so this .test.mjs is PLEXCO-LOCAL and a lane may fix it (kit-init-pack-parity backlog row covers the kit-side gap; out of scope here).",
+  "invariants": [
+    "kit-integrity"
+  ],
+  "_invariant_note": "kit-integrity is the precise token: this lane exists because a kit sync moved a contract out from under a consumer's assertions, which is the kit/consumer parity domain. Deliberately NOT declaring test-chain -- that token means test-runner registration / CI test list, neither of which changes here, and a sibling lane (route-test-app-db-stubs) touches apps/web tests under that token; declaring it here would collide for no shared state.",
+  "scope": [
+    "scripts/autopilot-ephemeral-review-worktree.test.mjs",
+    "docs/autopilot-manifests/main-suite-red-post-v33--v3.json"
+  ],
+  "_scope_note": "The test file only. Four cases move from rejected to accepted: src/[a-z], src/[!x]/f.ts, a/[...]/route.ts and a/[..slug]/route.ts. Post-v33 the validator treats a whole-segment bracket with non-empty bracket-free content as a LITERAL on-disk directory name (DYNAMIC_SEGMENT at autopilot-review-readiness.mjs:392), because SCOPE_PATHSPECS stopped passing scope entries to git as globs at all. Total case count stays 22; src/[a-z].ts stays rejected (its bracket does not occupy the whole segment).",
+  "negative_scope": [
+    "NO change to scripts/autopilot-ephemeral-review-worktree.mjs or any other implementation -- the implementation is correct; the test is stale",
+    "NO change to scripts/autopilot-review-readiness.mjs, including the :225 angle-bracket placeholder rule (that is a KIT file and belongs in the canonical queue, never patched from inside a consumer)",
+    "NO weakening: the four cases move from the rejected list to the accepted list and are asserted positively. Deleting a case, or loosening one to make it pass, is forbidden -- total case count must stay 22",
+    "NO change to src/[a-z].ts, which must STAY rejected",
+    "NO change to any other assertion in the file",
+    "NO code, migration or schema change",
+    "NO fix for kit-init-pack-parity's root cause (the kit not shipping its own tests) -- that is a canonical-side backlog item, not this lane's"
+  ],
+  "context_sources": [
+    "scripts/autopilot-ephemeral-review-worktree.test.mjs",
+    "scripts/autopilot-review-readiness.mjs",
+    "scripts/autopilot-ephemeral-review-worktree.mjs",
+    "package.json",
+    "apps/web/lib/session-cookies.ts"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "none",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "_note": "Every command below was smoke-run with exactly `/bin/bash -lc '<command>'` (cwd = this worktree) before the hash lock -- the gate's real runner (autopilot-review-readiness.mjs:803 spawns /bin/bash -lc with no env override, so it inherits the ambient shell; it does not sanitize PATH). None contains `<` or `>`. The canonical `pnpm test` command was changed from v2's flawed form after code review round 1 found DATABASE_URL pointed at the dev database in the same command as DATABASE_URL_TEST -- confirmed by direct comparison that the corrected form (DATABASE_URL unset, only DATABASE_URL_TEST set) produces IDENTICAL results: 328/328 web tests, same 106 pre-existing tenantLocale stderr lines either way (unrelated pre-existing issue tracked by the route-test-app-db-stubs lane, not this one's to fix).",
+    "focused": [
+      "node --test scripts/autopilot-ephemeral-review-worktree.test.mjs",
+      "test \"$(git diff --name-only 405cc589c17f606f682d22f8038d0d1d5a583f78 -- scripts/autopilot-ephemeral-review-worktree.mjs | wc -l | tr -d ' ')\" = 0",
+      "test \"$(git diff --name-only 405cc589c17f606f682d22f8038d0d1d5a583f78 -- packages apps | wc -l | tr -d ' ')\" = 0",
+      "test \"$(sed -n '/for (const accepted of \\[/,/^\\]) {/p;/for (const rejected of \\[/,/^\\]) {/p' scripts/autopilot-ephemeral-review-worktree.test.mjs | grep -c '^  \"')\" = 22",
+      "grep -q 'src/\\[a-z\\].ts' scripts/autopilot-ephemeral-review-worktree.test.mjs"
+    ],
+    "canonical": [
+      "pnpm test:review-readiness",
+      "pnpm run lint",
+      "unset DATABASE_URL; DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 1
+  },
+  "security_review": {
+    "required": false,
+    "reason": "Test-assertion update only; no auth, secret, permission, money or external-input surface, and no implementation line changes. VOID if the slice ends up editing any implementation file, the readiness validator, or a grant/role/SQL -- and note the scope guard being asserted here IS a trust boundary, so any change that RELAXES what the validator accepts, rather than recording what it already accepts, voids this too.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 90,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE"
+  ],
+  "readiness_evidence_path": ".autopilot/state/main-suite-red-post-v33--v3/readiness.json"
+}

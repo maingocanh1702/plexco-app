@@ -396,7 +396,7 @@ test("readiness gate (end-to-end): the whole emitted EVIDENCE_UNKNOWN_KEY line i
 // written `[id]` on disk and there is no other syntax for a path parameter, so the glob guard's
 // bracket test made an entire class of real files unregisterable. The matrix below is the contract
 // — dynamic segments accepted, every glob/traversal/directory form still rejected.
-function registerRejectsScope(scopeItem, { createDirectory = false } = {}) {
+function registerScopeOutput(scopeItem, { createDirectory = false } = {}) {
   const feature = "scope-path-probe";
   const repo = realpathSync(mkdtempSync(path.join(tmpdir(), "ap-scopepath-")));
   try {
@@ -458,14 +458,33 @@ function registerRejectsScope(scopeItem, { createDirectory = false } = {}) {
       [GATE_PATH, "register", "--manifest", `.autopilot/state/${feature}/manifest.json`],
       { cwd: repo, encoding: "utf8" },
     );
-    // Assert on the SPECIFIC rule, not merely on CONTRACT_INVALID: an accepted path still halts
-    // later in register on an unrelated precondition, and a coarse check would read that as a pass.
-    return `${result.stderr || ""}${result.stdout || ""}`.includes(
-      "scope must contain exact worktree-relative file paths",
-    );
+    return `${result.stderr || ""}${result.stdout || ""}`;
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
+}
+
+// Assert on the SPECIFIC rule, not merely on CONTRACT_INVALID: an accepted path still halts later in
+// register on an unrelated precondition, and a coarse check would read that as a pass.
+const SCOPE_PATH_RULE = "scope must contain exact worktree-relative file paths";
+
+function registerRejectsScope(scopeItem, opts) {
+  return registerScopeOutput(scopeItem, opts).includes(SCOPE_PATH_RULE);
+}
+
+// The positive half, and it needs to be positive. Asserting only that SCOPE_PATH_RULE is ABSENT
+// proves nothing on its own: the fixture repo sits on `main` while its manifest declares
+// `feat/scope-path-probe`, so an accepted path runs on past the scope check and halts at the NEXT
+// precondition. Absence of one substring would therefore also hold if the entry were refused for
+// some entirely different reason, or if register died early for a reason nobody intended — the test
+// would stay green while the guard it names had stopped being exercised at all.
+//
+// So require the exact sentinel that proves execution got PAST scope validation: BRANCH_MISMATCH,
+// raised at autopilot-review-readiness.mjs:510 once the manifest's branch is compared to the
+// checked-out one. Reaching it means the scope entry was accepted; nothing weaker demonstrates that.
+function registerAcceptsScope(scopeItem, opts) {
+  const out = registerScopeOutput(scopeItem, opts);
+  return !out.includes(SCOPE_PATH_RULE) && out.includes("BRANCH_MISMATCH");
 }
 
 for (const accepted of [
@@ -475,16 +494,35 @@ for (const accepted of [
   "app/blog/[...slug]/page.tsx",
   "app/shop/[[...filters]]/page.tsx",
   "packages/core/src/api-contract.ts",
+  // The four below LOOK like glob syntax and are accepted anyway. That is the post-KIT_VERSION-33
+  // contract, not a relaxation of this guard. SCOPE_PATHSPECS stopped handing scope entries to git
+  // as globs at all (`--literal-pathspecs` on every argv), so a whole-segment bracket carrying
+  // non-empty, bracket-free content can only denote a literal on-disk directory of that exact name
+  // — see DYNAMIC_SEGMENT in autopilot-review-readiness.mjs. A directory literally named `[a-z]` is
+  // legal, and a scope entry naming it is now honoured literally instead of being refused as a
+  // possible wildcard.
+  //
+  // These four previously sat in the rejected list below. The v33 sync replaced the implementation
+  // while these assertions still described the pre-v33 contract, which is what turned the root
+  // suite red — and because root `pnpm test` is `test:review-readiness && pnpm -r run test`, that
+  // failure stopped every package suite from running at all.
+  //
+  // They are MOVED, not deleted: the new behaviour stays asserted, just in the other direction.
+  // Note what deliberately did NOT move — `src/[a-z].ts` stays rejected below, because its bracket
+  // does not occupy the whole segment, and `a/[]/route.ts` stays rejected because the content is
+  // empty. Those two are the edges that keep this guard meaningful.
+  "src/[a-z]",
+  "src/[!x]/f.ts",
+  "a/[...]/route.ts",
+  "a/[..slug]/route.ts",
 ]) {
   test(`scope path: ACCEPTS ${accepted}`, () => {
-    assert.equal(registerRejectsScope(accepted), false);
+    assert.equal(registerAcceptsScope(accepted), true);
   });
 }
 
 for (const rejected of [
-  "src/[a-z].ts", // a real glob character class, not a segment name
-  "src/[a-z]", // same, occupying a whole segment
-  "src/[!x]/f.ts",
+  "src/[a-z].ts", // bracket does not occupy the whole segment — still refused post-v33
   "*.ts",
   "src/*.ts",
   "foo?.ts",
@@ -496,8 +534,6 @@ for (const rejected of [
   "a/id]/route.ts",
   "a/[]/route.ts", // empty parameter name
   "a/[id]x/route.ts", // bracket not occupying the whole segment
-  "a/[...]/route.ts",
-  "a/[..slug]/route.ts",
 ]) {
   test(`scope path: REJECTS ${rejected}`, () => {
     assert.equal(registerRejectsScope(rejected), true);
