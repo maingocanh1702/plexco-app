@@ -1,0 +1,89 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Carries NO manifest_schema_version by design.",
+  "task_id": "plexco:route-test-app-db-stubs",
+  "feature": "route-test-app-db-stubs",
+  "branch": "feat/route-test-app-db-stubs",
+  "base_ref": "origin/main",
+  "risk": "P2",
+  "_risk_note": "P2. Test-fixture only. Three session route test files stub appDb() as { pool: {}, db: {} }; the route passes appDb().db to tenantLocale(), which calls db.execute() and throws TypeError. tenantLocale catches it, logs loudly and falls back to null -> 'vi'. The tests pass, so this is noise rather than a broken assertion — but the log line exists precisely to be loud about an anomaly that 'must not be silent', and 106 false instances per run train the reader to ignore the real one.",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": [
+    "test-chain"
+  ],
+  "_invariant_note": "test-chain only. The change is confined to *.test.ts fixtures; no contract, no i18n string and no route behaviour moves. Deliberately NOT declaring i18n-surface: asserting that an existing language path stays silent is a test of current behaviour, not a change to the language contract (that contract is owned by the separate dd118 lane, which must not serialise against this one).",
+  "scope": [
+    "apps/web/app/api/sessions/route.test.ts",
+    "apps/web/app/api/sessions/[id]/route.test.ts",
+    "apps/web/app/api/sessions/[id]/publish/route.test.ts",
+    "docs/autopilot-manifests/route-test-app-db-stubs.json"
+  ],
+  "_scope_note": "Exactly the three files carrying the defective stub, measured at base 405cc58: route.test.ts:22, [id]/route.test.ts:25, [id]/publish/route.test.ts:25 — each `appDb: vi.fn(() => ({ pool: {}, db: {} }))`.",
+  "negative_scope": [
+    "NO weakening, deletion or relaxation of ANY existing route assertion — if the fix requires touching one, STOP: that is a different task",
+    "NO change to packages/db/src/tenant.ts — the loud console.error is correct behaviour and is the thing being protected, not the thing being fixed",
+    "NO change to any route implementation file, only *.test.ts",
+    "NO change to resolveLang, runWithLang, or the language contract (owned by dd118-person-language-contract-reconcile)",
+    "NO fix to scripts/autopilot-ephemeral-review-worktree.test.mjs — it is red on main at base (4 bracket-path cases) but it is a kit pack file with an owned sync mechanism and must never be hand-edited here",
+    "NO new shared test-helper module — three one-line fixture changes do not justify inventing a shared location"
+  ],
+  "context_sources": [
+    "apps/web/app/api/sessions/route.test.ts",
+    "apps/web/lib/session-command-route.ts",
+    "packages/db/src/tenant.ts",
+    "packages/db/src/client.ts",
+    "apps/web/lib/session-cookies.ts"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "none",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "_note": "Kept in exact agreement with the runtime manifest so this contract resolves directly into a valid readiness manifest. Two runtime constraints are encoded here deliberately. (1) The gate's subprocess inherits NOTHING from an interactive shell, so DATABASE_URL and DATABASE_URL_TEST are inline -- a prior lane lost rounds to a bare `pnpm test` (autopilot-backlog.md). (2) No entry may contain a `<` or `>` character: autopilot-review-readiness.mjs:225 treats ANY angle bracket as an unresolved placeholder and halts CONTRACT_INVALID, which rejects an ordinary `2>&1` redirect. That is why the silence proof is a vitest assertion inside the suite rather than a shell pipeline here -- which is the better home for it anyway, since it then guards against regression on every future run. NOT using `pnpm test`: it is red on base 405cc58 for reasons outside this diff (scripts/autopilot-ephemeral-review-worktree.test.mjs, 4 bracket-path cases), and because it chains with &&, a bare `pnpm test` never even reaches the package suites.",
+    "focused": [
+      "DATABASE_URL=postgres://plexco:plexco_dev@localhost:5432/plexco DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test:web",
+      "test \"$(grep -rl 'db: {}' apps/web/app/api/sessions | wc -l | tr -d ' ')\" = 0",
+      "test \"$(git diff --name-only 405cc589c17f606f682d22f8038d0d1d5a583f78 -- packages | wc -l | tr -d ' ')\" = 0",
+      "test \"$(git diff --name-only 405cc589c17f606f682d22f8038d0d1d5a583f78 -- apps | grep -cv '\\.test\\.ts$')\" = 0"
+    ],
+    "canonical": [
+      "pnpm run lint",
+      "pnpm -r run typecheck"
+    ],
+    "e2e": []
+  },
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 1
+  },
+  "security_review": {
+    "required": false,
+    "reason": "Test fixtures only; no auth, secret, permission, money or external-input surface changes. The stub gains a canned tenant_locale row, not a credential. VOID if the slice ends up touching a route implementation, tenant.ts, or any grant/role/SQL.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 90,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE"
+  ],
+  "readiness_evidence_path": ".autopilot/state/route-test-app-db-stubs/readiness.json"
+}

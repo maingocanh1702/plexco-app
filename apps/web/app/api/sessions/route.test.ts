@@ -9,7 +9,15 @@ vi.mock("@plexco/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@plexco/db")>();
   return {
     ...actual,
-    createDb: vi.fn(() => ({ pool: {}, db: {} })),
+    // `db` needs a working `execute`: the route resolves the tenant's language through the REAL
+    // tenantLocale (packages/db/src/tenant.ts), which calls db.execute. An empty `{}` threw
+    // TypeError into tenantLocale's own catch, which logs a deliberately-loud anomaly line on
+    // every single request. "vi" is exactly what that fallback already produced, so the resolved
+    // language — and therefore every existing assertion — is unchanged.
+    createDb: vi.fn(() => ({
+      pool: {},
+      db: { execute: async () => ({ rows: [{ locale: "vi" }] }) },
+    })),
     createSession: vi.fn(),
     tenantsForPerson: vi.fn(),
   };
@@ -19,7 +27,13 @@ vi.mock("../../../lib/session-cookies", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../lib/session-cookies")>();
   return {
     ...actual,
-    appDb: vi.fn(() => ({ pool: {}, db: {} })),
+    // This is the handle the route actually hands to tenantLocale, so `execute` must exist here
+    // for the same reason as the createDb stub above — otherwise every request logs a false
+    // anomaly. "vi" preserves the language the empty-stub fallback already resolved to.
+    appDb: vi.fn(() => ({
+      pool: {},
+      db: { execute: async () => ({ rows: [{ locale: "vi" }] }) },
+    })),
     currentSession: vi.fn(),
     csrfOk: vi.fn(),
     rateLimited: vi.fn(),
@@ -88,6 +102,24 @@ describe("POST /api/sessions", () => {
     const { data, error } = await envelope(response);
     expect(error).toBeNull();
     expect(data).toEqual({ session: { id: SESSION_ID, status: "draft", version: 1 } });
+  });
+
+  // What the db stubs above are FOR. tenantLocale's catch logs on purpose — it means an error
+  // class that must never be silent. A suite that emits it on every request is a suite where a
+  // real one is invisible, so the absence of that line is pinned here rather than left to habit.
+  it("resolves tenant language without logging a tenantLocale anomaly", async () => {
+    const consoleError = vi.spyOn(console, "error");
+    try {
+      const response = await POST(req(validBody));
+      expect(response.status).toBe(200);
+      expect(
+        consoleError.mock.calls.filter((call) =>
+          call.some((arg) => typeof arg === "string" && /\[tenantLocale\]/.test(arg)),
+        ),
+      ).toEqual([]);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("forwards tenantId and commandId as trusted context, never from the body's own tenant", async () => {
