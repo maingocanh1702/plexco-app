@@ -3630,3 +3630,316 @@ notes: |
   **Vì sao `blocked` chứ không `ready`:** hôm nay vô hại vì `charges`/`payment_allocations` chưa có writer production — không có ca nào để sửa và không có hành vi đúng nào để chọn. Đây là dữ kiện về đấu nối hiện tại, KHÔNG phải thuộc tính của guard, nên nó không tự biến mất.
   **Trigger mở khoá (bất kỳ cái nào):** (1) migration đầu tiên tạo bảng mang tiền gắn với chỗ ngồi (hold/reservation); (2) writer production đầu tiên ghi vào `charges` hoặc `payment_allocations`. Cả hai trigger này **cũng mở lại DD-112** — hai mục đi cùng nhau.
   **Quyết định phải ra khi mở:** sàn là roster active hay roster đã-trả-tiền. Đừng pre-pick hôm nay; chọn khi đã có bảng tiền thật để đo.
+
+## task: kit-init-pack-parity
+title: Pack ships implementations without their tests — a sync can leave a consumer's test asserting a stale contract
+status: idea
+risk: P1
+change_class: kit-maintenance
+design_state: awaiting_owner
+depends_on: []
+invariants: [kit-integrity]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: chưa design ⇒ chưa có symbol để bind. Đừng bịa probe; autopilot-backlog-reconcile v5 tồn tại vì probe bịa gây false-flip.
+notes: |
+  Ba claim đo được, mỗi claim mang lệnh tái tạo — không hard-pin số/tên file đã đo, dùng lệnh để lấy
+  sự thật hiện tại thay vì tin văn xuôi. Mọi lệnh dưới đây dùng `$KIT` — set trước khi chạy bất kỳ lệnh
+  nào: `KIT="$HOME/Projects/Claude template/autopilot/parallel"` (một shell mới, tự copy-paste một lệnh
+  lẻ mà không set biến này trước sẽ resolve `$KIT` thành rỗng và lệnh thất bại — không phải claim sai).
+
+  **Claim 1 (hẹp, đọc đúng phạm vi):** ít nhất một entry `pack_pairs` — `autopilot-ephemeral-review-worktree.mjs`
+  — không có `.test.mjs` CÙNG TÊN cạnh nó trong pack. Đây KHÔNG phải claim "kit thiếu test cho file này" nói
+  chung — bộ suite `test/unit.sh` · `test/e2e.sh` · `test-level3-operational-kit.sh` của canonical kit có
+  thể (hoặc không) phủ hành vi của file đó theo cách khác; lệnh dưới không đo được điều đó, chỉ đo đúng một
+  quy ước hẹp: co-located `.test.mjs`.
+  **Tái tạo (khớp ĐÚNG entry và ĐÚNG test tương ứng, không đếm text tự do trong cả file):**
+  `sed -n '/^pack_pairs() {/,/^}/p' "$KIT/autopilot-update.sh" | grep -c '^autopilot-ephemeral-review-worktree\.mjs:'`
+  phải = 1 (implementation entry còn trong pack — nếu 0, file đã rời pack, claim hết đối tượng, tự đóng
+  KHÔNG phải vì có test) VÀ
+  `sed -n '/^pack_pairs() {/,/^}/p' "$KIT/autopilot-update.sh" | grep -c '^autopilot-ephemeral-review-worktree\.test\.mjs:'`
+  phải = 0 (chưa có entry test tương ứng) — cả hai đúng nghĩa là claim còn đúng cho ĐÚNG file này.
+  **Trigger đóng:** entry thứ hai chuyển thành ≥1 đóng claim cho ĐÚNG file đó; không đóng cả lớp tới khi
+  pack ship test cho mọi implementation nó ship.
+
+  **Claim 2 (quan sát + quy trình ĐỀ XUẤT — status `idea`, CHƯA phải luật đang áp dụng, chưa owner
+  ratify; đọc như một đề xuất, không phải một imperative):** hai file cùng thư mục, tên lệch một từ, có
+  thể khác MỘT TRONG BA chủ sở hữu — kit-synced (`pack_pairs`), kit-aware-nhưng-chưa-quyết-định-chủ
+  (`unsynced_candidates`, report-only, không bao giờ sync), hoặc repo-local (không xuất hiện ở đâu cả)
+  — mà không dấu hiệu nào phân biệt tại chỗ sửa. Grep NGUYÊN FILE `autopilot-update.sh` gộp cả ba nhóm
+  làm một — `ap-merge.sh` khớp grep đó (nó nằm trong `unsynced_candidates`) nhưng KHÔNG nằm trong
+  `pack_pairs`, nên "khớp grep" không có nghĩa là "kit sync file này". Quy trình đề xuất (chưa bắt
+  buộc): trước khi sửa file trong `scripts/`, chạy `sed -n '/^pack_pairs() {/,/^}/p'
+  "$KIT/autopilot-update.sh" | awk -F: -v dst="scripts/<tên file>" '$2 == dst'` — khớp CHÍNH XÁC field
+  đích (không phải grep chuỗi con trên cả dòng, tránh false-positive khi tên file là substring của tên
+  khác hoặc chứa ký tự regex như `.`) — có dòng khớp nghĩa là kit-synced (đụng vào phải port ngược);
+  không có dòng, thử lại với `sed -n '/^unsynced_candidates() {/,/^}/p'` cùng kiểu awk exact-match —
+  có dòng khớp nghĩa là kit-aware
+  report-only (không sync, an toàn sửa local); **0 ở cả hai KHÔNG có nghĩa là repo-local** — canonical
+  tự khai `unsynced_candidates` "chỉ thêm entry khi tìm thấy một bản copy thật ở consumer" (comment
+  ngay trên hàm đó), tức danh sách này CỐ Ý không đầy đủ. 0 ở cả hai nghĩa là `OWNER_UNKNOWN`: cần hỏi
+  owner hoặc tìm provenance khác (vd lịch sử commit, tài liệu kit-design-debt) trước khi coi là an toàn
+  sửa local — không tự suy "0 match = repo-local". Đừng suy chủ sở hữu từ tên file, và đừng dừng ở grep
+  nguyên file. **Trigger đóng:** owner ratify quy trình này thành luật
+  đang áp dụng (ví dụ đưa vào CLAUDE.md hoặc một skill), hoặc kit tự thêm annotation phân biệt ownership
+  tại chỗ khiến quy trình này không còn cần thiết.
+
+  **Claim 3:** một file trong pack (`docs/autopilot-templates/level3-workflow.md`) cố ý KHÔNG được
+  consumer này nhận, vì bản local mang nội dung đo-được mà bản canonical sẽ xoá nếu sync.
+  **Tái tạo (không dùng process-substitution — `/dev/fd/N` có thể bị chặn permission trong sandbox
+  review, đã đo thật, không phải giả định):** đường dẫn canonical thật là `$KIT/../level3-workflow.md`
+  (một cấp TRÊN `parallel/`, không phải `$KIT/autopilot-templates/...` — thư mục con đó không tồn tại
+  phía canonical; xem `pack_pairs()` trong `autopilot-update.sh`, hai dòng cuối dùng `../`) —
+  `test "$(wc -l < "$KIT/../level3-workflow.md")" = "$(wc -l < docs/autopilot-templates/level3-workflow.md)"`
+  cho biết lệch/không lệch nhị phân, và `git --no-optional-locks diff --no-index --stat
+  "$KIT/../level3-workflow.md" docs/autopilot-templates/level3-workflow.md` cho nội dung độ lệch SỐNG
+  — đừng ghi một con số dòng lệch cố định, nó đã sai một lần rồi.
+  **Trigger đóng:** đóng khi nội dung local được port vào canonical và bản pack được nhận sạch — đây
+  chính là phần 3 của việc cần làm khi mở lane này.
+
+  **Vì sao `idea` (không phải `blocked`):** hướng sửa nằm ở canonical kit; repo này read-only với nó,
+  và mục này chưa có `scope`/`manifest`/probe launchable. Cần owner mở lane bên canonical.
+
+## task: manifest-claims-never-rechecked
+title: Manifest là lời khai về thế giới tại thời điểm author — và không gì kiểm lại nó khi thế giới đổi
+status: idea
+risk: P2
+change_class: kit-maintenance
+design_state: awaiting_owner
+depends_on: []
+invariants: [audit-integrity]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: chưa design ⇒ chưa có symbol để bind.
+notes: |
+  **Claim:** `docs/autopilot-manifests/session-publish-public-projector.json` khai blocker B1 (đòi
+  `public_projection_fences` + guarded view + `public_projection_version` + migration REVOKE
+  `readonly` SELECT) như một lý do outcome không build được. Migration `0033_public_projection_fences.sql`
+  giao đúng gói đó.
+  **Tái tạo:** `grep -q 'B1' docs/autopilot-manifests/session-publish-public-projector.json && ls packages/db/migrations/0033_public_projection_fences.sql`
+  — cả hai đúng nghĩa là ngôn ngữ B1 của manifest cần đọc lại bằng tay đối chiếu nội dung 0033 thật (script
+  này không tự đọc được NGỮ NGHĨA đã khớp chưa, chỉ xác nhận tiền đề để kiểm).
+  **Trigger đóng:** đóng khi ai đó sửa chính manifest đó để phản ánh 0033 đã land, hoặc xác nhận B1 vẫn
+  còn lý do khác chưa liệt kê.
+  **Vì sao đáng ghi:** một manifest `NOT_CODE_READY` là thứ người ta đọc để quyết định *không* làm gì.
+  Khi lý do của nó mục, nó tiếp tục chặn công việc đã hết lý do bị chặn — im lặng, và trông y hệt một
+  quyết định còn hiệu lực. Cùng lớp với luật đền bù sống lâu hơn nguyên nhân
+  (`autopilot-invariants` — base-stale-workaround-rule-retirement).
+  **Không đề xuất cơ chế ở đây.** Ứng viên rẻ nhất khi mở: manifest `blocked` mang `blocker_probe`
+  (giống `merged_probe`) để `--check` tự phát hiện blocker đã tự tan. Owner quyết.
+
+## task: two-manifests-nothing-checks-they-agree
+title: Hai manifest tồn tại cho một registration — một cái tracked/human-edited, một cái gitignored/hash-locked/gate-obeyed — và không gì kiểm chúng khớp nhau
+status: idea
+risk: P1
+change_class: kit-maintenance
+design_state: awaiting_owner
+depends_on: []
+invariants: [audit-integrity, review-integrity]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: chưa design ⇒ chưa có symbol để bind.
+notes: |
+  **Claim:** authored contract (`docs/autopilot-manifests/<slug>.json`, tracked, con người/agent đọc và
+  sửa) và runtime manifest (`.autopilot/state/<slug>/manifest.json`, gitignored, hash-lock ngay tại
+  `register`) là HAI FILE RIÊNG. Sau register, sửa authored contract (thêm invariant, thêm verification
+  command, sửa risk tier) KHÔNG tự động lan sang runtime manifest — và runtime manifest mới là cái gate
+  thực sự tuân theo khi chạy `ready`. Không gì cảnh báo khi hai file lệch nhau; một agent tiếp tục sửa
+  file nó đọc được (authored), còn gate tiếp tục cai trị bằng file nó không đọc lại (runtime, đã
+  hash-lock). Kết quả: một fix landed trong báo cáo/review không có nghĩa fix đó có hiệu lực với gate.
+
+  **Tái tạo (lệnh thật, tự lấy danh sách registration `in-flight`/`ready` từ `INFLIGHT.md` — LỌC bỏ
+  entry `merged`/khác, và đọc authored contract TỪ ĐÚNG worktree của lane đó, không phải repo root, vì
+  một lane chưa merge chỉ có authored contract trong worktree riêng của nó; chạy TỪ repo root — một
+  review/feature worktree khác không có `.autopilot/INFLIGHT.md`, lệnh dưới fail-closed thay vì im
+  lặng báo "không lệch nào" khi không đọc được gì. **Giới hạn đã biết, không giải:** giả định tên file
+  authored contract khớp `feature` name — đúng với mọi lane đã đo trong chương trình này, nhưng KHÔNG
+  phải bất biến của kit (vd `identity-account-link-core.json` tự khai `"feature":
+  "identity-account-link-core-v3"` bên trong, lệch tên file); lane có tên file lệch feature-name sẽ
+  đọc sai/miss, không được lệnh dưới bắt):**
+  ```bash
+  [ -f .autopilot/INFLIGHT.md ] || { echo "ERROR: .autopilot/INFLIGHT.md not found -- cannot enumerate active registrations, refusing to report zero mismatches" >&2; exit 1; }
+  for f in $(awk '/^## feature:/ { feature=$3; getline b; getline s; if (s ~ /^status: (in-flight|ready)/) print feature }' .autopilot/INFLIGHT.md); do
+    a=".autopilot/worktrees/${f}/docs/autopilot-manifests/${f}.json"
+    r=".autopilot/worktrees/${f}/.autopilot/state/${f}/manifest.json"
+    [ -f "$a" ] && [ -f "$r" ] || { echo "$f: SKIP (missing authored or runtime file)"; continue; }
+    excl='walk(if type == "object" then with_entries(select(.key | test("^_") or . == "manifest_schema_version" or . == "review_gate_version" | not)) else . end) | .security_review.reason = null'
+    ja=$(jq -S "$excl" "$a" 2>/dev/null); rc_a=$?
+    jr=$(jq -S "$excl" "$r" 2>/dev/null); rc_r=$?
+    if [ "$rc_a" != 0 ] || [ "$rc_r" != 0 ]; then
+      echo "$f: ERROR (jq failed: authored_rc=$rc_a runtime_rc=$rc_r)"; continue
+    fi
+    [ "$ja" = "$jr" ] && echo "$f: MATCH" || echo "$f: MISMATCH"
+  done
+  ```
+  So bằng LOẠI TRỪ (mọi key trừ `_`-prefix, ĐỆ QUY qua mọi độ sâu bằng `walk()` — `with_entries` một
+  mình chỉ gỡ key ở TOP LEVEL, bỏ sót field lồng như `verification._note`, đã đo là bug thật), cộng
+  một trường hợp riêng `security_review.reason` (prose giải thích, KHÔNG `_`-prefix nhưng cũng không
+  phải một điều khoản gate-bound — nội dung của nó được viết lại nhiều lần mà giá trị THẬT
+  của `security_review.required` không đổi; so sánh nguyên object sẽ báo lệch giả trên chính field
+  này). Không phải một danh sách field liệt kê tay — một danh sách liệt-kê-tay đòi biết trước HẾT các
+  field gate đọc, một tập có thể lớn hơn giả định bất cứ lúc nào kit thêm field mới; loại trừ chỉ cần
+  biết field KHÔNG gate đọc (nhóm note/rule, luôn `_`-prefix theo convention của file này) — tập đó
+  nhỏ và ổn định hơn nhiều. Không dùng `diff
+  <(...)`/process-substitution (`/dev/fd/N` có thể bị chặn permission trong sandbox
+  review) và không dùng `cmd && MATCH || MISMATCH` (gộp "khác nhau thật" với "lệnh chạy lỗi" vào cùng
+  nhãn `MISMATCH`) — so sánh chuỗi trực tiếp sau khi xác nhận CẢ HAI lệnh `jq` tự thành công.
+  bất kỳ dòng `MISMATCH` nào là một chứng minh trực tiếp, không phải suy diễn — hai lane trong cùng
+  chương trình này đã đo được ca đó trước khi có claim này (`hash-lock-cost-evidence` claim 1 dùng cùng
+  cơ chế reproducer, phạm vi hẹp hơn — chỉ risk/code_review/security_review; mục này rộng hơn, gồm cả
+  invariants/scope/verification, đúng như finding gốc chỉ ra).
+
+  **Trigger đóng:** đóng khi canonical kit có MỘT trong hai: (a) `register` fail-closed nếu authored
+  contract và runtime manifest tại thời điểm build không khớp field-by-field trên các field gate-bound,
+  hoặc (b) một subcommand mới (vd `scope-gate verify-sync --manifest <path>`) chạy được TỰ ĐỘNG như một
+  bước bắt buộc trước `ready` round đầu tiên, kết quả in ra chứ không chỉ giả định. Cho tới khi kit có
+  một trong hai, quy trình đền bù (không phải luật, một quan sát process cho tới khi ratify): mọi
+  registration MỚI chạy lệnh tái tạo ở trên MỘT LẦN ngay sau khi build runtime manifest từ authored
+  contract, TRƯỚC lệnh `ready` đầu tiên, và in kết quả — không phải một câu khẳng định suông.
+
+  **Vì sao `idea`:** claim đã đo được và có lệnh tái tạo + trigger đóng nhị phân, nhưng cơ chế fix
+  (enforcement tại `register`, hay một subcommand riêng) chưa thiết kế và repo này không sở hữu kit để
+  tự thêm. Cần owner mở lane bên canonical kit.
+
+## task: manifest-verification-smoke-run-before-lock
+title: Smoke-run MỌI verification command qua đúng runner của gate (/bin/bash -lc, KHÔNG sanitize) trước khi hash-lock
+status: idea
+risk: P2
+change_class: process-discipline
+design_state: designed
+depends_on: []
+invariants: [review-integrity]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: process rule, không sinh symbol.
+notes: |
+  **Quan sát + quy trình ĐỀ XUẤT (status `idea`, CHƯA ratify thành luật chính thức ở đâu — session
+  này đã áp dụng nó trong thực tế nhiều lần trong chương trình BE/INFRA ROUND 2, nhưng "đã làm nhiều
+  lần" không phải "đã owner ratify"; đọc bốn mục dưới như đề xuất, không phải mandate đang hiệu lực):**
+  trước hash-lock, chạy thử từng verification command với cwd = worktree — đó là đúng runner của gate
+  (fact, đọc trực tiếp tại `scripts/autopilot-review-readiness.mjs`,
+  tìm `spawnSync.*bin/bash` để xác nhận cơ chế hiện hành thay vì tin dòng này: nó kế thừa môi trường,
+  không truyền `env` riêng). **Cách gọi AN TOÀN, không phải copy-paste text `<command>` vào một dòng
+  lệnh** (nhiều command thật chứa dấu nháy đơn, copy-paste text vỡ lồng-nháy): đọc command vào một biến
+  shell trước — `command=$(jq -r '.verification.focused[0]' <manifest>)` hoặc tương đương cho từng
+  entry — rồi gọi `/bin/bash -lc "$command"` (nháy KÉP quanh biến, không nháy đơn quanh text thô); đo
+  được: dạng văn bản `<command>` chép thẳng exit 1 (parse vỡ) trong khi dạng biến ở trên exit đúng
+  0/1 theo nội dung command thật. KHÔNG có bảng phân loại exit code chung áp cho mọi command — đọc riêng
+  từng command: `test`/`grep -q`-style thường dùng 0/1 làm đúng/sai hợp lệ, nhưng exit 1 CŨNG có thể
+  nghĩa là lỗi invocation/config/runtime của command đó (vd `git` lỗi tham số), không phải "false" hợp
+  lệ — đọc stderr trước khi kết luận. `126`/`127` thường là shell không thực thi được lệnh (permission/
+  not-found), nhưng `127` có thể là DỰ KIẾN khi verify một script/binary mà chính slice đang mở sẽ tạo
+  ra (script chưa tồn tại tại thời điểm smoke-run trước khi code land) — phân biệt "dự kiến vì thứ tự
+  tạo file" với "invocation hỏng thật" bằng cách đọc lại PATH/tên file trong chính command, không suy
+  từ exit code một mình. Exit 2 là application-specific, đọc contract riêng của từng tool trước khi xếp
+  nhóm.
+  **Đề xuất thứ hai:** đọc lại canonical cạnh câu "lane này tồn tại để làm gì" — một verification command
+  chỉ pass sau khi diff của chính lane land là bình thường và bắt buộc; một lane không thể trượt gate
+  của chính nó thì không có gate.
+  **Đề xuất thứ ba:** không command nào chứa `<` hoặc `>` — `scripts/autopilot-review-readiness.mjs`
+  reject bất kỳ angle bracket nào như placeholder chưa resolve (đọc live tại chỗ khai `225` trong file
+  đó thay vì tin số dòng chép tay ở đây, nó có thể dịch chuyển).
+  **Đề xuất thứ tư (ranh giới side-effect):** smoke-run trước hash-lock chỉ AN TOÀN mù quáng cho command
+  KHÔNG mutate. Một command có network side-effect nhưng KHÔNG phải P0/external mutation (như một
+  `git fetch` best-effort) vẫn cần smoke-run để chứng minh nó CHẠY ĐƯỢC, nhưng side-effect đó phải
+  khai rõ trong manifest (`sandbox_and_permissions.network` đúng giá trị, không bao giờ khai `none`
+  cho command có fetch). Một mutation P0/external (tiền, notification, ghi state ngoài repo) KHÔNG BAO
+  GIỜ được xuất hiện trong `verification.focused`/`canonical` dưới bất kỳ hình thức "đã owner-authorize"
+  nào — gate rerun MỌI command trong hai danh sách đó vô điều kiện ở mọi lần `ready` sau, nên một
+  mutation "authorize một lần" sẽ tự động chạy lại và có thể double-fire. Live action loại đó nằm hoàn
+  toàn ngoài danh sách command của manifest, owner tự chạy tay, tách biệt khỏi gate.
+  **Trigger đóng:** owner ratify bốn đề xuất này thành luật chính thức (CLAUDE.md, một skill, hoặc
+  tương đương), hoặc kit tự động hoá smoke-run trước hash-lock khiến quy trình tay này không còn cần.
+  **Vì sao `idea`:** nội dung không cần thiết kế thêm, không phụ thuộc gì — nhưng chưa có
+  `scope`/`manifest`/probe launchable (đây là log quan sát/đề xuất vận hành, không phải task thực thi
+  hay luật đã ratify), nên đúng chỗ của nó là `idea`.
+
+## task: hash-lock-granularity-scope-vs-verification
+title: "[SUPERSEDED — nội dung thuộc precondition-halt-and-hashlock-force-full-rebuild] Hash-lock coi SCOPE và VERIFICATION là một object"
+status: superseded
+superseded_by: precondition-halt-and-hashlock-force-full-rebuild (mục phía trên, cùng file)
+risk: P1
+change_class: kit-maintenance
+design_state: superseded
+depends_on: []
+invariants: [review-integrity]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: SUPERSEDED — không có nội dung độc lập, không cần probe.
+notes: |
+  Nội dung đầy đủ thuộc `precondition-halt-and-hashlock-force-full-rebuild` (mục phía trên). Heading
+  này tồn tại vì hai lane tiền nhiệm (`backlog-rows-2026-08-27--v2`, `--v3`) đã hash-lock verification
+  check đòi đúng tên này trước khi review phát hiện trùng lặp; xoá heading sẽ làm verification của
+  registration đang hash-lock fail. Không mang bằng chứng, đề xuất hay cơ chế nào ở đây — xem
+  `hash-lock-cost-evidence` (mục phía dưới) cho bằng chứng chi phí sống, tái tạo được.
+
+## task: hash-lock-cost-evidence
+title: Bằng chứng chi phí hash-lock/registration — claim + lệnh tái tạo, KHÔNG dossier với số/timestamp đóng băng
+status: idea
+risk: P1
+change_class: kit-maintenance
+design_state: designed
+depends_on: []
+invariants: [review-integrity]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: log bằng chứng, không sinh symbol.
+notes: |
+  **Nguyên tắc của mục này (đọc trước khi thêm bất kỳ mục con nào):** một hàng backlog nêu claim và
+  nói CHỖ để verify, không phải một dossier. Mọi con số/timestamp/SHA cụ thể ghi thẳng vào đây là một
+  fact về một thế giới đang di chuyển, và gate này review tài liệu so với đúng thế giới đó — mỗi commit
+  sửa lại dịch chuyển nó lần nữa. Đăng ký độc lập trước của chính các hàng backlog này đã đo trực tiếp
+  hiện tượng này nhiều lần: hash-lock rồi phát hiện chính prose của mình đã stale trước khi reviewer
+  kịp đọc xong — xem `_predecessor_note` của manifest lane này cho danh sách tên nhánh, không nhắc lại
+  con số ở đây. Không mục con nào dưới đây được phép lặp lại việc đó.
+
+  **Claim 1:** registration terms (risk/round-count/security-required) của một lane có thể được sửa
+  đúng trong authored contract mà vẫn hash-lock sai trong runtime manifest, buộc một close-and-rebuild
+  đầy đủ dù mọi trường thay đổi chỉ SIẾT gate, không trường nào nới lỏng.
+  **Tái tạo (lệnh thật, tự lấy danh sách registration `in-flight`/`ready` từ `INFLIGHT.md` — LỌC bỏ
+  entry `merged`/khác, và đọc authored contract TỪ ĐÚNG worktree của lane đó, không phải repo root;
+  chạy TỪ repo root — lệnh dưới fail-closed nếu không tìm thấy `INFLIGHT.md` thay vì im lặng báo
+  "không lệch nào"):**
+  ```bash
+  [ -f .autopilot/INFLIGHT.md ] || { echo "ERROR: .autopilot/INFLIGHT.md not found -- refusing to report zero mismatches" >&2; exit 1; }
+  for f in $(awk '/^## feature:/ { feature=$3; getline b; getline s; if (s ~ /^status: (in-flight|ready)/) print feature }' .autopilot/INFLIGHT.md); do
+    a=".autopilot/worktrees/${f}/docs/autopilot-manifests/${f}.json"
+    r=".autopilot/worktrees/${f}/.autopilot/state/${f}/manifest.json"
+    [ -f "$a" ] && [ -f "$r" ] || { echo "$f: SKIP (missing authored or runtime file)"; continue; }
+    scalars='{risk, clean_rounds: .code_review.clean_rounds, security_required: .security_review.required}'
+    ja=$(jq -S "$scalars" "$a" 2>/dev/null); rc_a=$?
+    jr=$(jq -S "$scalars" "$r" 2>/dev/null); rc_r=$?
+    if [ "$rc_a" != 0 ] || [ "$rc_r" != 0 ]; then
+      echo "$f: ERROR (jq failed: authored_rc=$rc_a runtime_rc=$rc_r)"; continue
+    fi
+    [ "$ja" = "$jr" ] && echo "$f: MATCH" || echo "$f: MISMATCH"
+  done
+  ```
+  Không dùng process-substitution (`/dev/fd/N` có thể bị chặn permission trong sandbox review) và
+  không dùng `cmd && MATCH || MISMATCH` (gộp "khác nhau thật" với "lệnh chạy lỗi" vào cùng nhãn) — so
+  sánh chuỗi trực tiếp sau khi xác nhận cả hai lệnh `jq` tự thành công.
+  bất kỳ dòng `MISMATCH` nào nghĩa là ca này đang tái diễn; `SKIP` nghĩa là một trong hai file không
+  tồn tại ở đường dẫn quy ước (không tự suy positive/negative).
+  **Trigger đóng:** đóng khi canonical kit có đường amend-in-place cho manifest đã hash-lock khi
+  identity/base không đổi (xem `precondition-halt-and-hashlock-force-full-rebuild`, đề xuất (2)).
+
+  **Claim 2:** region label tự do do agent tự đặt tên mỗi round có thể đánh bại REGION_THRASH's
+  same-region-three-rounds check ngay cả khi cùng một lớp defect tái diễn nhiều round liên tiếp,
+  vì cơ chế so khớp CHUỖI CHÍNH XÁC, không so LỚP defect.
+  **Tái tạo:** đọc trực tiếp cơ chế đang sống — `grep -n 'REGION_THRASH\|roundsByRegion' scripts/autopilot-review-readiness.mjs`
+  — để xác nhận lỗ hổng còn tồn tại trong bản hiện hành, thay vì tin một trích dẫn `regions.log` cũ
+  (file đó đã archive, không portable, và archive không tự chứng minh cơ chế CÒN như vậy hôm nay).
+  **Trigger đóng:** đóng khi cơ chế đổi sang so khớp theo LỚP defect (vd một field khai lớp riêng, tách
+  khỏi chuỗi mô tả tự do) thay vì so khớp chuỗi chính xác.
+
+  **Vì sao `idea`:** hai claim trên đều đo được và có lệnh tái tạo + trigger đóng nhị phân, nhưng đây là
+  log bằng chứng chưa có `scope`/`manifest`/probe launchable — đúng chỗ của nó là `idea`, không phải
+  `ready`/`blocked`. Chỉ giữ claim có trigger đóng nhị phân thật — một phép đo liên tục không có sự kiện
+  đóng (vd tổng `authorized_close` local) không thuộc khuôn claim+trigger+command của lane này; git log
+  của file này là nguồn sự thật cho nội dung đã đổi, không phải một câu văn ở đây.

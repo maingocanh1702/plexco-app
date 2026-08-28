@@ -1,0 +1,116 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest -- carries NO manifest_schema_version (that field belongs only to the runtime .autopilot/state/<feature>/manifest.json; putting it here makes scope-gate register HALT CONTRACT_INVALID).",
+  "task_id": "plexco:backlog-rows-2026-08-27--v5",
+  "feature": "backlog-rows-2026-08-27--v5",
+  "branch": "feat/backlog-rows-2026-08-27--v5",
+  "base_ref": "origin/main",
+  "base_sha": "74eb3bb39c4f71e39543661d9243897940207a29",
+  "risk": "P2",
+  "_risk_note": "P2. Docs-only backlog rows, no code/migration/schema/script change. One row (two-manifests-nothing-checks-they-agree) is authored at P1 in its own right, per owner ruling -- that is the ROW's risk marker inside the backlog table, not this manifest's registration risk; the manifest stays P2 because the diff mechanism is still pure prose with no executable line changes.",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_predecessor_note": "Fifth registration overall (fourth successor-to-a-halt) for this task. feat/backlog-rows-2026-08-27--v4 (disposition .autopilot/dispositions/backlog-rows-2026-08-27--v4.json, head b35daa9) is disposed by owner action: same systemic cause as split-edge-4-price-capacity--v2/v3 -- the hash-locked runtime manifest never received round-1's verification-command fix, so the registration became structurally incapable of expressing its own corrected terms. All four of v4's rounds of content carry forward. No commit in this branch's history captures that carry-forward in isolation -- the first commit (6c3f3ab) bundles it together with three fixes made before registering, not after (v4's two open findings closed, plus the new two-manifests-nothing-checks-they-agree row), so there is no clean empty-diff comparison against v4's tip to cite; do not restate one. `git log --oneline b35daa9..HEAD -- docs/autopilot-backlog.md` is the accurate, regenerating record of what changed and when.",
+  "_manifest_sync_precondition": "MANDATORY, every registration, checked at registration time and after every subsequent edit to this file: before calling `scope-gate ready` for the first time, and again after any edit to this authored contract, diff this file against the runtime manifest at .autopilot/state/backlog-rows-2026-08-27--v5/manifest.json and print the result -- a printed diff, not an assurance that they match. Compare by EXCLUSION, not by an enumerated include-list: `jq 'walk(if type == \"object\" then with_entries(select(.key | test(\"^_\") or . == \"manifest_schema_version\" or . == \"review_gate_version\" | not)) else . end) | .security_review.reason = null'` on both files, then compare the two results directly. Two things this exact form fixes over a naive version: `walk()` strips underscore-prefixed keys recursively at every nesting depth, not just the top level (a bare `with_entries` misses nested fields like `verification._note`, measured as a real false-negative); nulling `security_review.reason` specifically removes the one non-underscore-prefixed field that is prose (an explanatory rationale, rewritten across rounds) rather than a gate-bound term -- comparing it whole produces a false MISMATCH even when the actual term (`security_review.required`) hasn't changed. An include-list needs advance knowledge of every field the gate reads -- a set that can grow whenever the kit adds one; the exclude-list only needs to know which fields the gate does NOT read, a much smaller and more stable set. The runtime manifest is hash-locked at registration and is what the gate actually obeys; this file is what a human or agent actually reads and edits. Nothing enforces that they agree except this check.",
+  "invariants": [
+    "audit-integrity",
+    "review-integrity"
+  ],
+  "scope": [
+    "docs/autopilot-backlog.md",
+    "docs/autopilot-manifests/backlog-rows-2026-08-27--v5.json"
+  ],
+  "negative_scope": [
+    "NO code, migration, schema or script change -- rows only",
+    "NO edit to any kit file, including scripts/autopilot-review-readiness.mjs and scripts/autopilot-backlog-reconcile; the :225 angle-bracket rule is a CANONICAL queue item and must never be patched from inside a consumer",
+    "NO status flip on any PRE-EXISTING task row (any row authored before this lane's own predecessors first existed), and no edit to any pre-existing row's content -- this lane's own carried-forward rows (kit-init-pack-parity, manifest-claims-never-rechecked, two-manifests-nothing-checks-they-agree, manifest-verification-smoke-run-before-lock, hash-lock-granularity-scope-vs-verification, hash-lock-cost-evidence) are this lane's OWN authority, not pre-existing rows, and may be refined",
+    "NO fix for anything these rows describe -- a backlog row records work, it does not perform it",
+    "NO new file outside the declared scope, and specifically nothing under docs/plexco-run/ (closed for this program)",
+    "NO merged_probe invented for a row whose work has not been designed yet -- a probe bound to a symbol that does not exist yet is the false-flip class autopilot-backlog-reconcile v5 exists to prevent",
+    "NO statement anywhere in this lane's own content (rows or manifest) that narrates its own current review-round number or claims to be 'as of' a specific round -- point at git log instead",
+    "NO inline frozen byte-count, timestamp, round-tally or restated SHA in any row this lane owns -- every concrete fact must carry its own regenerating command instead; a row that cannot be written that way is cut to a single bare-claim line rather than shipped with a number that will go stale"
+  ],
+  "context_sources": [
+    "docs/autopilot-backlog.md",
+    "docs/autopilot-manifests/session-publish-public-projector.json",
+    "scripts/autopilot-backlog-reconcile",
+    "scripts/autopilot-review-readiness.mjs",
+    "scripts/autopilot-scope-gate",
+    "docs/autopilot-templates/level3-workflow.md",
+    "packages/db/migrations/0033_public_projection_fences.sql",
+    "external: $HOME/Projects/Claude template/autopilot/parallel/autopilot-update.sh (canonical pack_pairs())",
+    "external: $HOME/Projects/Claude template/autopilot/level3-workflow.md (canonical, one level above parallel/)",
+    ".autopilot/INFLIGHT.md (live registry this lane's own new row's reproducer reads)"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "restricted",
+    "secrets": "none",
+    "external_side_effects": "none",
+    "_network_note": "restricted, not none: this lane's own canonical verification (scripts/autopilot-backlog-reconcile --check) performs a real network side effect (a best-effort `git fetch origin --quiet 2>/dev/null || true`). Kept as canonical, not swapped for a fake offline check, because it is the ONLY command that proves this lane's own purpose: the backlog validator itself. Read-only."
+  },
+  "verification": {
+    "_note": "Every command below was smoke-run via /bin/bash -lc with cwd = the worktree before the hash lock -- the gate's real runner (autopilot-review-readiness.mjs:803: spawnSync of /bin/bash -lc, no env override, INHERITS the environment, sanitizes nothing). No command contains a literal angle-bracket character.",
+    "focused": [
+      "grep -q '^## task: kit-init-pack-parity' docs/autopilot-backlog.md",
+      "grep -q '^## task: manifest-claims-never-rechecked' docs/autopilot-backlog.md",
+      "grep -q '^## task: two-manifests-nothing-checks-they-agree' docs/autopilot-backlog.md",
+      "grep -q '^## task: manifest-verification-smoke-run-before-lock' docs/autopilot-backlog.md",
+      "grep -q '^## task: hash-lock-granularity-scope-vs-verification' docs/autopilot-backlog.md",
+      "grep -q '^## task: hash-lock-cost-evidence' docs/autopilot-backlog.md",
+      "test \"$(grep -c '^## task: kit-init-pack-parity$' docs/autopilot-backlog.md)\" = 1",
+      "test \"$(grep -c '^## task: manifest-claims-never-rechecked$' docs/autopilot-backlog.md)\" = 1",
+      "test \"$(grep -c '^## task: two-manifests-nothing-checks-they-agree$' docs/autopilot-backlog.md)\" = 1",
+      "test \"$(grep -c '^## task: manifest-verification-smoke-run-before-lock$' docs/autopilot-backlog.md)\" = 1",
+      "test \"$(grep -c '^## task: hash-lock-granularity-scope-vs-verification$' docs/autopilot-backlog.md)\" = 1",
+      "test \"$(grep -c '^## task: hash-lock-cost-evidence$' docs/autopilot-backlog.md)\" = 1",
+      "test \"$(awk '/^## task: kit-init-pack-parity$/{f=1; next} f && /^## task:/{exit} f && /^status:/{print; exit}' docs/autopilot-backlog.md)\" = 'status: idea'",
+      "test \"$(awk '/^## task: manifest-claims-never-rechecked$/{f=1; next} f && /^## task:/{exit} f && /^status:/{print; exit}' docs/autopilot-backlog.md)\" = 'status: idea'",
+      "test \"$(awk '/^## task: two-manifests-nothing-checks-they-agree$/{f=1; next} f && /^## task:/{exit} f && /^status:/{print; exit}' docs/autopilot-backlog.md)\" = 'status: idea'",
+      "test \"$(awk '/^## task: two-manifests-nothing-checks-they-agree$/{f=1; next} f && /^## task:/{exit} f && /^risk:/{print; exit}' docs/autopilot-backlog.md)\" = 'risk: P1'",
+      "test \"$(awk '/^## task: manifest-verification-smoke-run-before-lock$/{f=1; next} f && /^## task:/{exit} f && /^status:/{print; exit}' docs/autopilot-backlog.md)\" = 'status: idea'",
+      "test \"$(awk '/^## task: hash-lock-granularity-scope-vs-verification$/{f=1; next} f && /^## task:/{exit} f && /^status:/{print; exit}' docs/autopilot-backlog.md)\" = 'status: superseded'",
+      "test \"$(awk '/^## task: hash-lock-granularity-scope-vs-verification$/{f=1; next} f && /^## task:/{exit} f && /^superseded_by:/{print; exit}' docs/autopilot-backlog.md | grep -c precondition-halt-and-hashlock-force-full-rebuild)\" = 1",
+      "test \"$(awk '/^## task: hash-lock-cost-evidence$/{f=1; next} f && /^## task:/{exit} f && /^status:/{print; exit}' docs/autopilot-backlog.md)\" = 'status: idea'",
+      "grep -q '^## task: precondition-halt-and-hashlock-force-full-rebuild' docs/autopilot-backlog.md",
+      "D=\"$(git diff --name-only 74eb3bb39c4f71e39543661d9243897940207a29 -- packages apps scripts)\" && test -z \"$D\"",
+      "D=\"$(git diff --name-only 74eb3bb39c4f71e39543661d9243897940207a29)\" && test -z \"$(printf '%s\\n' \"$D\" | grep -v '^docs/autopilot')\""
+    ],
+    "canonical": [
+      "scripts/autopilot-backlog-reconcile --check",
+      "pnpm review:check --all"
+    ],
+    "e2e": []
+  },
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 1
+  },
+  "security_review": {
+    "required": false,
+    "reason": "Backlog rows only; no auth, secret, permission, money or external-input surface, no executable line changes, and no gate behaviour altered. VOID if any row is written as an authorization rather than a record, or if the lane touches a script, a gate, or any file outside docs/autopilot*.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 90,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE"
+  ],
+  "readiness_evidence_path": ".autopilot/state/backlog-rows-2026-08-27--v5/readiness.json"
+}
