@@ -3946,41 +3946,72 @@ notes: |
 
 
 ## task: app-dml-on-public-sessions-leftover
-title: `app` còn INSERT/UPDATE/DELETE trên `public_sessions` — grant cấp cho một projector chưa từng được xây
-status: blocked
+title: `app` còn INSERT/UPDATE/DELETE trên `public_sessions` — nửa còn dở của lệnh revoke DD-12
+status: ready
 risk: P1
 change_class: security-posture
-design_state: awaiting_trigger
+design_state: designed
 depends_on: []
 invariants: [schema, marketplace]
-scope: []
+scope:
+- packages/db/migrations/0036_revoke_app_dml_public_sessions.sql
+- packages/db/src/rls-invariants.test.ts
 manifest: null
 merged_probe: null
+_authority: |
+  DD-12, `docs/standards/decisions.md:274`, mục **Bảo mật** (cite kèm nội dung phòng khi số dòng
+  trôi): *"slice DD-12 mở rộng phải REVOKE base SELECT trước khi bật consumer mới… `readonly` giữ
+  zero grant… projector writer giữ quyền hẹp cần thiết."* KHÔNG cite DD-114 D3 — xem mục "Vì sao
+  không phải DD-114" dưới.
 notes: |
-  **Claim:** `public_sessions` được cấp DML cho role `app` từ migration đầu tiên dựng grant, kèm chú
-  thích nói rõ là "projector writes" — projector đó tới nay chưa tồn tại. Một migration sau đó thu hồi
-  SELECT khỏi cả `app` và `readonly` nhưng **để nguyên ba quyền ghi**. Hệ quả: một đường `app` bị chiếm
-  quyền có thể ghi thẳng hàng vào bảng, và hàng đó được phục vụ công khai qua guarded view (view chiếu
-  từ chính bảng này, có cả cột tiền, và được GRANT SELECT cho `readonly`).
+  **Claim:** `public_sessions` được cấp bốn quyền cho role `app` tại `0009_rls_policies_grants.sql:118`
+  kèm chú thích "projector writes"; projector đó tới nay chưa tồn tại. `0033_public_projection_fences.sql`
+  thu hồi **chỉ** SELECT (khỏi cả `readonly` và `app`) và để nguyên INSERT/UPDATE/DELETE. Đây là một
+  **half-revoke**: nửa còn dở của chính lệnh DD-12 đã ra, không phải một hạng mục mới.
+
+  **Vì sao P1:** guarded view `public_session_share_v` chiếu thẳng từ bảng này (kể cả cột tiền
+  `price_amount`) và được GRANT SELECT cho `readonly`. Một đường `app` bị chiếm quyền ghi được hàng
+  hiển thị công khai mang trường tiền. Đo được là **trơ về vận hành hôm nay** (không TS sống nào ghi
+  bảng này; `app_worker` không có table grant), nên đây là đóng cửa bỏ ngỏ, không phải sự cố.
 
   **Tái tạo (đọc lịch sử grant, không dựa vào SHA hay số dòng đóng băng):**
   ```bash
   grep -n 'public_sessions' packages/db/migrations/*.sql | grep -Ei 'grant|revoke'
   ```
-  Đọc theo thứ tự migration: sẽ thấy một GRANT bốn quyền, rồi một REVOKE **chỉ** SELECT. Kiểm trên DB
-  thật:
+  Đọc theo thứ tự migration: một GRANT bốn quyền, rồi một REVOKE **chỉ** SELECT. Kiểm trên DB thật:
   ```bash
   psql "$DATABASE_URL_TEST" -tAc "select privilege_type from information_schema.role_table_grants where grantee='app' and table_name='public_sessions' order by 1"
   ```
 
-  **Vì sao `blocked`, không phải `ready`:** bản vá hiển nhiên là một REVOKE hẹp, nhưng `public_sessions`
-  nằm trong epic "public read model" mà DD-114 D3 đã hoãn cùng bốn tiền đề, và D3 đóng bằng câu "Không
-  authorize code/migration/enablement nào". Một registration đã bị rút vì ship đúng vào ranh giới này.
-  Nên câu hỏi mở là **của owner, không phải của lane**: một migration REVOKE-only có phải là
-  "code/migration" mà D3 cấm, hay là hardening một grant có sẵn và nằm ngoài epic?
+  **Thẩm quyền, và giới hạn của nó — đọc kỹ trước khi viết manifest:** DD-12:274 ra lệnh phẫu thuật
+  grant trên đúng bảng này và đặt nguyên tắc "không blanket grant, chỉ quyền hẹp cần thiết".
+  `0033:237-238` đã thi hành **nửa SELECT** của lệnh đó. Nhưng DD-12:274 **không viết chữ** "revoke
+  DML của `app`" — nó cho **nguyên tắc và hướng**, không cho câu lệnh nguyên văn. Slice khi mở PHẢI
+  khai đúng như vậy: nó **áp nguyên tắc DD-12 vào một grant DD-12 không liệt kê**. Khai là "DD-12 đã
+  ra lệnh đúng việc này" là khai sai.
 
-  **Trigger đóng:** đóng khi câu truy vấn `information_schema` ở trên không còn trả về INSERT/UPDATE/
-  DELETE cho `app`. **Trigger mở lại DD-114 D3:** owner trả lời câu hỏi REVOKE-only ở trên.
+  **Vì sao KHÔNG phải DD-114 D3, và vì sao câu hỏi cũ ở hàng này bị bác:** bản trước của hàng này để
+  ngỏ câu hỏi *"REVOKE-only có phải là code/migration mà D3 cấm không?"*. Câu hỏi đó sai ở ba chỗ.
+  (1) `"Không authorize code/migration/enablement nào"` là **công thức đóng chuẩn** của sổ quyết định
+  — 30 lần trong `decisions.md`, bốn lần là hẳn heading `### Không authorize` — nghĩa là *quyết định
+  này không cấp phép*, KHÔNG phải *cấm khu vực*; `decisions.md:1579` nói toạc: `"Không authorize:
+  code, migration, packet, worktree. Slice DD-104 khi mở vẫn phải tự qua đủ [gate]"`, tức công thức
+  đó dự liệu sẵn slice mở sau. (2) Lệnh cấm thật của D3 là phán quyết khẳng định *"`public_sessions`
+  không có writer trong phase-1"*. (3) Một REVOKE **gỡ bỏ** một quyền ghi, tức đi **về phía** phán
+  quyết đó. Hỏi D3 có cấm việc gỡ writer khỏi một bảng mà D3 tuyên bố không được có writer là một câu
+  hỏi tự mâu thuẫn. Phân biệt còn hiệu lực: một slice **tạo ra** writer path cho bảng này thì trái
+  D3 (tiền lệ: registration `public-projection-writer-privilege` bị rút vì đúng lý do đó); một slice
+  **gỡ** quyền ghi thì không.
+
+  **Hình dạng slice:** migration MỚI (không sửa `0036_public_projection_writer_privilege.sql` — file
+  đó nằm trên branch của registration đã rút và KHÔNG có trên `main`; số `0036` do đó còn trống, cao
+  nhất trên `main` là `0035`), cộng `rls-invariants.test.ts`. Đúng một bảng, đúng một role, đúng ba
+  quyền. `negative_scope` PHẢI không chứa dòng nào kiểu "không đổi grant của app", và scope dương
+  phải nêu thẳng việc revoke — tiền lệ vòng review đã cho thấy một slice khai âm rồi làm ngược là
+  finding [P1].
+
+  **Trigger đóng:** đóng khi truy vấn `information_schema` ở trên không còn trả về INSERT/UPDATE/
+  DELETE cho `app`.
 
 ## task: no-preflight-authority-gate
 title: Không có cửa nào kiểm một slice CÓ ĐƯỢC PHÉP tồn tại hay không, trước khi nó register
