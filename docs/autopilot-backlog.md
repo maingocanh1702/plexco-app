@@ -3943,3 +3943,125 @@ notes: |
   `ready`/`blocked`. Chỉ giữ claim có trigger đóng nhị phân thật — một phép đo liên tục không có sự kiện
   đóng (vd tổng `authorized_close` local) không thuộc khuôn claim+trigger+command của lane này; git log
   của file này là nguồn sự thật cho nội dung đã đổi, không phải một câu văn ở đây.
+
+
+## task: app-dml-on-public-sessions-leftover
+title: `app` còn INSERT/UPDATE/DELETE trên `public_sessions` — grant cấp cho một projector chưa từng được xây
+status: blocked
+risk: P1
+change_class: security-posture
+design_state: awaiting_trigger
+depends_on: []
+invariants: [schema, marketplace]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  **Claim:** `public_sessions` được cấp DML cho role `app` từ migration đầu tiên dựng grant, kèm chú
+  thích nói rõ là "projector writes" — projector đó tới nay chưa tồn tại. Một migration sau đó thu hồi
+  SELECT khỏi cả `app` và `readonly` nhưng **để nguyên ba quyền ghi**. Hệ quả: một đường `app` bị chiếm
+  quyền có thể ghi thẳng hàng vào bảng, và hàng đó được phục vụ công khai qua guarded view (view chiếu
+  từ chính bảng này, có cả cột tiền, và được GRANT SELECT cho `readonly`).
+
+  **Tái tạo (đọc lịch sử grant, không dựa vào SHA hay số dòng đóng băng):**
+  ```bash
+  grep -n 'public_sessions' packages/db/migrations/*.sql | grep -Ei 'grant|revoke'
+  ```
+  Đọc theo thứ tự migration: sẽ thấy một GRANT bốn quyền, rồi một REVOKE **chỉ** SELECT. Kiểm trên DB
+  thật:
+  ```bash
+  psql "$DATABASE_URL_TEST" -tAc "select privilege_type from information_schema.role_table_grants where grantee='app' and table_name='public_sessions' order by 1"
+  ```
+
+  **Vì sao `blocked`, không phải `ready`:** bản vá hiển nhiên là một REVOKE hẹp, nhưng `public_sessions`
+  nằm trong epic "public read model" mà DD-114 D3 đã hoãn cùng bốn tiền đề, và D3 đóng bằng câu "Không
+  authorize code/migration/enablement nào". Một registration đã bị rút vì ship đúng vào ranh giới này.
+  Nên câu hỏi mở là **của owner, không phải của lane**: một migration REVOKE-only có phải là
+  "code/migration" mà D3 cấm, hay là hardening một grant có sẵn và nằm ngoài epic?
+
+  **Trigger đóng:** đóng khi câu truy vấn `information_schema` ở trên không còn trả về INSERT/UPDATE/
+  DELETE cho `app`. **Trigger mở lại DD-114 D3:** owner trả lời câu hỏi REVOKE-only ở trên.
+
+## task: no-preflight-authority-gate
+title: Không có cửa nào kiểm một slice CÓ ĐƯỢC PHÉP tồn tại hay không, trước khi nó register
+status: idea
+risk: P1
+change_class: kit-maintenance
+design_state: designed
+depends_on: []
+invariants: [review-integrity]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: log bằng chứng, không sinh symbol.
+notes: |
+  **Claim:** toàn bộ gate hiện hành kiểm *đúng hay sai* (scope, invariant, hash lock, review round,
+  breaker) và **không có bước nào kiểm *được phép hay không được phép***. Một slice mà decision log đã
+  cấm vẫn register được, chạy hết gate attempt, và chỉ chết khi một reviewer tình cờ đọc tới sổ quyết
+  định — tức là sau khi đã trả đủ chi phí round-trip. Đã có ít nhất một cặp lane đâm vào **cùng một
+  ranh giới**: lane đầu dừng đúng ở AWAIT, lane sau đổi tên chạy lại chính việc đó qua nhiều lần đăng
+  ký. Correctness check nằm giữa ống không bao giờ bắt được "thứ này lẽ ra không nên tồn tại"; chỉ một
+  cửa ở đầu ống mới bắt được.
+
+  **Tái tạo (đọc cơ chế đang sống, không trích lane cũ):**
+  ```bash
+  grep -n 'decisions\.md\|_authority\|authoriz' scripts/autopilot-scope-gate || echo "NO authority check in the gate"
+  for f in $(awk '/^## feature:/ { feature=$3; getline b; getline s; if (s ~ /^status: (in-flight|ready)/) print feature }' .autopilot/INFLIGHT.md); do
+    m=".autopilot/worktrees/${f}/.autopilot/state/${f}/manifest.json"
+    [ -f "$m" ] || { echo "$f: SKIP"; continue; }
+    jq -e 'has("_authority")' "$m" >/dev/null 2>&1 && echo "$f: HAS authority" || echo "$f: NO authority"
+  done
+  ```
+
+  **Đề xuất (property, không phải patch):** manifest phải mang một trường `_authority` trích **nguyên
+  văn** dòng trong `docs/standards/decisions.md` cho phép slice tồn tại, kèm DD id và ngày chốt; lane
+  nào không trích được thì không register. Rẻ hơn nữa: `register` in ra dòng được trích để người đọc
+  đối chiếu, trước khi ghi bất kỳ reservation nào.
+
+  **Trigger đóng:** đóng khi `scripts/autopilot-scope-gate register` HALT trên một manifest không có
+  citation authority phân giải được — verify bằng một manifest scratch thiếu trường đó.
+
+## task: no-registry-answers-is-this-landed
+title: Ba sổ đăng ký, ba câu hỏi khác nhau, không cái nào trả lời "cái này land chưa"
+status: idea
+risk: P2
+change_class: kit-maintenance
+design_state: designed
+depends_on: []
+invariants: [review-integrity]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: log bằng chứng, không sinh symbol.
+notes: |
+  **Claim:** `INFLIGHT.md` theo dõi **chỗ đặt**, `gate-result.json` theo dõi **đã review**, `git log`
+  theo dõi **đã land** — và không có gì nối ba thứ đó lại. Một lane đã land dưới dạng squash commit
+  vẫn đứng nguyên `status: ready` trong registry vô thời hạn, vì `ready` không bao giờ được đối chiếu
+  với `origin/main`. Xác lập "đã land chưa" phải làm bằng cách băm binary diff của lane rồi dò ngược
+  vào các commit **trông có vẻ khớp theo message** — đó là khảo cổ, không phải sổ sách. Đọc `ready`
+  thành "chưa merge" đã sinh ra một lệnh merge cho việc đã nằm trên main.
+
+  **Tái tạo (chạy từ repo root; tự phát hiện, không cần biết trước SHA nào):**
+  ```bash
+  git fetch --quiet origin main
+  for f in $(awk '/^## feature:/ { feature=$3; getline b; getline s; if (s ~ /^status: ready/) print feature }' .autopilot/INFLIGHT.md); do
+    g=".autopilot/worktrees/${f}/.autopilot/state/${f}/gate-result.json"
+    [ -f "$g" ] || { echo "$f: SKIP (no gate-result.json)"; continue; }
+    want=$(jq -r '.diff_sha256' "$g")
+    hit=""
+    for c in $(git rev-list --max-count=200 origin/main); do
+      [ "$(git rev-list --parents -n 1 "$c" | awk '{print NF-1}')" = "1" ] || continue
+      got=$(git diff --binary "${c}^" "$c" | shasum -a 256 | awk '{print $1}')
+      [ "$got" = "$want" ] && { hit="$c"; break; }
+    done
+    [ -n "$hit" ] && echo "$f: LANDED as $hit (registry still says ready)" || echo "$f: not found on origin/main"
+  done
+  ```
+
+  **Đề xuất (property):** một lane `ready` mà `diff_sha256` trong gate-result bằng binary diff của một
+  commit reachable từ `origin/main` **là đã land**, và registry phải tự nói ra điều đó, không bắt ai
+  dựng lại. Bản rẻ: `scripts/autopilot-backlog-reconcile` mọc thêm pass `--detect-landed` chạy đúng so
+  sánh trên cho mọi entry `ready` và in ra các cặp khớp.
+
+  **Trigger đóng:** đóng khi vòng lặp tái tạo ở trên, chạy trên một registry có ít nhất một lane `ready`
+  đã land, được thay bằng một lệnh có sẵn trong kit in ra cùng kết quả.
