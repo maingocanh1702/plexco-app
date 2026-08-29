@@ -7,10 +7,14 @@
 > - **`FE/feature_share_activities.md` (v1.0, Draft, thêm 12/08):** BE companion
 >   `BE/feature_share_activities_tech.md` v0.1 (thêm 2026-08-14, docs-debt §8) nay **đã tồn tại** — cặp đã
 >   đủ, không còn "lệch". Cả hai vẫn 🟡 Draft (không phải Reviewed); xem section *Share / Activity* dưới.
-> - **Cột version trong các bảng dưới: 46/51 ô đã stale** (vd session_management ghi v2.17, trên đĩa v2.25).
->   Theo đúng chính sách của file này — *"inventory/count được derive từ … trên disk, không hand-maintain
->   tại đây"* — **đĩa là authority, không phải ô trong bảng.** Tái tạo:
->   `grep -m1 '^> \*\*Version' docs/features/FE/*.md docs/features/BE/*.md`
+> - **Cột version trong các bảng dưới có ô stale — KHÔNG hard-pin số đếm ở đây.** Số này đã sai hai lần
+>   liên tiếp trong lịch sử của chính dòng này (46/51 rồi 46/54, cả hai đều lẫn "số lần một file được
+>   trích dẫn" với "số file duy nhất", và lệnh tái tạo trước đó chỉ in version thật của từng file, không
+>   tự so sánh được với ô trong bảng — nên không chứng minh được số stale). Theo đúng chính sách của file
+>   này — *"inventory/count được derive từ … trên disk, không hand-maintain tại đây"* — **đĩa là
+>   authority, không phải ô trong bảng, và không phải một con số ghi ở đây.** Tái tạo đúng: liệt kê
+>   version thật từng file bằng `grep -m1 '^> \*\*Version' docs/features/FE/*.md docs/features/BE/*.md`,
+>   rồi so trực tiếp với ô version của đúng hàng đó trong bảng bên dưới — file nào không khớp là stale.
 > - **`BE/auth-security-invariant-table.md` KHÔNG phải spec** (bảng hỗ trợ, không có Testing Plan) — đừng
 >   đếm vào 25.
 > - **🟡 DD-106:** ba hợp đồng do spec pass 12/08 viết vào spec **đã Reviewed** mà chưa có decision —
@@ -22,7 +26,7 @@
 >   `be-tech-spec-template.md`) đã cấp section `### Entry points`, và Document Convention dưới đây liệt
 >   kê nó là subsection §1 bắt buộc. Xem `../sessions/2026-08-13-docs-audit.md` §8.
 
-> **Version:** 2.66 · 2026-08-25 *(2.65 · 2026-08-14)*
+> **Version:** 2.67 · 2026-08-27 *(2.66 · 2026-08-25)*
 > **Scope source:** `../product/BRD.md` · `../product/PRD.md` · `../product/TDD.md` · `../product/ROADMAP.md` · `../standards/decisions.md` (current versions — không hard-pin số). DD-32 đã reopen và `DECISION_FINAL` theo Option D; DD-70/71/72/86/91–95 owner-final; DD-96 Part A `DECISION_FINAL`, Part B direction-only (mechanism chưa chốt — xem `decisions.md` DD-96); per-decision readiness boundaries recorded in `decisions.md`; runtime gates không đổi.
 
 > **Cập nhật DD-37 (2026-07-10):** kênh phase-1 = **Zalo + Facebook Messenger** + web (**Telegram loại khỏi phạm vi**). `FE/feature_player_telegram` → **Archived (DD-37)**, thay bằng `FE/feature_player_messenger`. Thêm phase-1: `FE/feature_inapp_chat` (DD-38 ✅), `FE/feature_user_settings` (DD-39 ✅), Google login (DD-13 ✅, trong `FE/feature_web_auth_onboarding`), mark-paid thủ công (DD-40 ✅, trong `FE/feature_payment_reconcile`).
@@ -68,7 +72,7 @@ Các nhóm inventory **không overlap** — "coverage" = **có spec + BE tech**,
 |---|---|---|---|---|
 | P0–P1 | Multi-tenant Foundation | `FE/feature_multi_tenant.md` v1.7a | `BE/feature_multi_tenant_tech.md` v1.6 | ✅ Reviewed |
 | P2 | Tenant Routing & Authz | `FE/feature_tenant_routing_authz.md` v2.7 | `BE/feature_tenant_routing_authz_tech.md` v2.7 | ✅ Reviewed |
-| P2/P4 | Session Management | `FE/feature_session_management.md` v2.17 | `BE/feature_session_management_tech.md` v2.18a | ✅ Reviewed — DB `0014`/`0019`/`0024` landed; service/routes/projectors/auto-promote/channel holds chưa build |
+| P2/P4 | Session Management | `FE/feature_session_management.md` v2.17 | `BE/feature_session_management_tech.md` v2.25 | ✅ Reviewed — DB `0014`/`0019`/`0024` landed; service/routes/projectors/auto-promote/channel holds chưa build |
 | P3 | Payment Reconciliation | `FE/feature_payment_reconcile.md` v1.10 | `BE/feature_payment_reconcile_tech.md` v1.13 | ✅ Reviewed — one payment truth + DD-32 verified pay-now + DD-91 `/pay` target; primary plan `PLAN_READY`, per-slice `CODE_READY` pending; manual global, auto entitlement ≠ availability; VN provider path chưa có reconcile runtime |
 | P3.5 | Identity Directory & Merge | `FE/feature_identity.md` v1.11 | `BE/feature_identity_tech.md` v1.13 | ✅ Reviewed — DD-32 qualified Account-backed channel link predicate; endpoint-scoped runtime pending |
 | P3 · P4 · P4.5–P4.7 · P4+ | Notifications — Reminders · Inbox · Announcements · Web Push | `FE/feature_notifications_reminders.md` v3.11 | `BE/feature_notifications_reminders_tech.md` v3.11 | ✅ **Reviewed contract** — exact owners: Web Push 36→41, Chat unread 42, payment 43→44/45→46→47; HTTP A17–A19, FE F11/F14/F15. DD-70/71/72/94 owner-final, DD-88 broader deferred; implementation/migration/UI chưa bắt đầu |
@@ -155,6 +159,7 @@ Với spec mới hoặc spec được promote sang **Reviewed**, review gate k�
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-27 | v2.67 | **Sync ô version BE Session Management sau khi tách edge #4 (`split-edge-4-price-capacity`).** Ô đó ghi `v2.18a`, trên đĩa là `v2.24` trước slice này và `v2.25` sau. Chỉ sync **đúng một ô** của file mà slice này sửa; **không** sync ô FE cùng hàng (slice không sửa file FE) và không đụng các ô stale khác. *(Đính chính, cùng ngày: bản trước của dòng này còn ghi một tổng/số-stale toàn bảng — "54 tổng, 46 stale" — con số đó SAI (lẫn số lần trích dẫn với số file duy nhất, và lệnh tái tạo đi kèm không tự so sánh được); đã gỡ, xem khối LIVE TRUTH đầu file cho cách tái tạo đúng thay vì một số chép tay.)* Điều đó nhất quán với chính sách đã ghi ở khối LIVE TRUTH đầu file — *"đĩa là authority, không phải ô trong bảng"* — nên lần sync này **không** phải lời khai rằng cột version đã được hand-maintain trở lại; nó chỉ khép ô của file vừa đổi, theo tiền lệ v2.48 (một slice từng mất một vòng review vì bump spec mà bỏ quên ô index). **Riêng dòng README này** (đồng bộ ô index + changelog của chính `README.md`) không đổi status/scope/contract của spec nào — nhưng slice `split-edge-4-price-capacity` mà dòng này thuộc về THÌ có: xem `feature_session_management_tech.md` changelog v2.25 (tách edge #4 thành `4a`/`4b`), đúng là một thay đổi contract của spec Session Management. |
 | 2026-08-14 | v2.66 | **Áp T1 + T7 từ `../research/template-comparison-2026-08-14.md` v2.1 (docs-only, template + convention).** (1) **T1 — cột `Để… (benefit)`:** UC table trong `../templates/feature-spec-template.md` §2 đổi 4 → 5 cột; 25/26 FE spec đang dùng format 4 cột cũ nên **không sửa hồi tố**, bổ sung khi spec được sửa lần kế. (2) **T7 — `### NFR compliance`:** thêm subsection cuối §6 trỏ ngược `../product/BRD.md` §8 + bảng NFR của `../product/TDD.md`; đóng gap "spec không ref NFR" mà **không** dựng catalog thứ ba (đề xuất tạo `NFR-requirements.md` đã bị loại vì trùng khái niệm đã có). Cả hai là cột/subsection, **count 7/6 section không đổi**. Không đổi status/scope/contract của spec nào. Nguồn: `../proposals/uc-benefit-nfr-ref-2026-08-14.md`. |
 | 2026-08-25 | v2.66 | **Reconcile inventory + đính chính version (phiên docs 25/08):** khối LIVE TRUTH đầu file cập nhật inventory **26 → 27 cặp** (cặp `feature_membership` FE v0.3 + BE v0.3, Draft — thêm 24/08 `635f2e9`, chốt D1–D5 25/08 `15760fa`; hàng chi tiết đã có ở bảng P4+ từ 25/08 nhưng inventory đầu file chưa được đếm lại). ⚠️ Đính chính: các sửa 24–25/08 vào file này (hàng membership + review-gate note) đi **không kèm version bump** — v2.66 gánh cả phần đó. Không đổi status/scope spec nào. |
 | 2026-08-14 | v2.65 | **Đóng nợ docs-debt-2026-08-13 §8 (docs-only).** (1) **BE companion Share Activities:** thêm `BE/feature_share_activities_tech.md` v0.1 — lift 5 bảng từ FE §4 + RLS/grants/guarded view/narrow SECURITY DEFINER, pin ranh giới hai slice (DD-12 sở hữu fence/guarded session view/grant migration; DD-74/75 sở hữu activity stores), mirror DD-73–78. Inventory **26 Product + 25 BE → 26 Product + 26 BE = 26 cặp**; "cặp lệch duy nhất" đã đóng. (2) **Entry Points:** thêm subsection `### Entry points` vào 2 template (`../templates/feature-spec-template.md` FE 4-cột · `../templates/be-tech-spec-template.md` BE 3-cột) + liệt kê trong Document Convention là **subsection §1 bắt buộc** (không phải section top-level thứ 8, count 7/6 không đổi). Backfill 4 spec thiếu: `FE/feature_club.md` · `feature_home.md` · `feature_inapp_chat.md` · `BE/feature_club_tech.md`. Không đổi status/scope/contract của spec nào — cả hai Share Activities specs vẫn 🟡 Draft. |

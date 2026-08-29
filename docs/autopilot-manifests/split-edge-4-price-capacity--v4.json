@@ -1,0 +1,98 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest -- carries NO manifest_schema_version (that field belongs only to the runtime .autopilot/state/<feature>/manifest.json; putting it here makes scope-gate register HALT CONTRACT_INVALID).",
+  "task_id": "plexco:split-edge-4-price-capacity--v4",
+  "feature": "split-edge-4-price-capacity--v4",
+  "branch": "feat/split-edge-4-price-capacity--v4",
+  "base_ref": "origin/main",
+  "base_sha": "ab02ca3f813b782d7c2b65ec234c2aa8cad807f3",
+  "risk": "P1",
+  "_risk_note": "P1. Content topic is money/capacity-adjacent -- this row decides what happens to EXISTING charges when price or capacity changes -- even though the mechanism is pure prose. Matches this repo's own precedent of treating money-adjacent spec rows as P1 regardless of diff mechanism: docs-impact-policy-contract.json, the sibling authoring slice for the SAME row, is P1. This exact row's ambiguity already burned 6 codex rounds to a MAX_ROUNDS HALT in a prior lane (docs-impact-policy-contract--narrowed) from reviewer oscillation on precisely this price/capacity boundary -- proven review-sensitive content, not a hypothetical risk. Counter-consideration, recorded rather than silently dropped: the two closest same-file precedents for a PURE prose split/reconcile (docs-session-management-spec-reconcile.json, docs-session-publish-contract.json) are both P2, and this slice is genuinely non-additive -- it carries forward an already DD-112-closed decision verbatim and invents nothing. Resolved toward the more rigorous tier (2 clean review rounds instead of 1) because the cost of extra review rigor is low and this content class has a proven history of reviewer disagreement.",
+  "_predecessor_note": "Fourth registration for this task. feat/split-edge-4-price-capacity--v3 (disposed by owner action) reached a clean 2-round code review, but round-1 code review returned two real findings this registration's runtime manifest could not absorb in place (hash-locked): [P1] the invariants array omits money-model, and [P2] the mandatory manifest-sync-precondition note has no retirement condition. Both fixed below; all prior content (the edge 4a/4b table split, row 84, the README version-index sync) carries forward unchanged from v3's tip e1f8bd3, proven by empty diff for both scope files before this manifest was authored.",
+  "_manifest_sync_precondition": "MANUAL, not enforced (round-1 [P1] finding, this registration -- the --v3 round-1 [P2] fix asked for a retirement condition on this note; this round holds the note to that promise instead: an unenforced check must not read like one). This is a manual procedure this lane executes and prints: before calling `scope-gate ready` for the first time, and again after any edit to this authored contract, diff this file's risk/invariants/scope/verification/code_review/security_review against the runtime manifest at .autopilot/state/split-edge-4-price-capacity--v4/manifest.json and print the result. Printing the diff is the whole procedure -- nothing here asserts equality, nothing here fails the gate on mismatch, and no verification command in this manifest checks it; it does not gate anything. Building the enforced version is not this slice's job: enforcement is owned by the backlog row `two-manifests-nothing-checks-they-agree` (docs/autopilot-backlog.md, landed at this slice's own base ab02ca3f813b782d7c2b65ec234c2aa8cad807f3) -- an executable, fail-closed check belongs in scripts/autopilot-scope-gate, which this slice's negative_scope excludes touching. RETIREMENT CONDITION (unchanged, first written as the --v3 round-1 [P2] fix): this manual check retires the moment EITHER (a) `scripts/autopilot-scope-gate register` itself fail-closes when the authored contract and the runtime manifest disagree on any gate-consumed field, instead of silently accepting whatever runtime manifest is handed to it, OR (b) a `scope-gate verify-sync` (or equivalently named) command exists and is invoked automatically as a precondition of `ready`, without requiring the executing lane to remember to run it by hand.",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_dependency_note": "ROOT. DD-112 is closed (owner 2026-08-27, decisions.md:2154, closing section 'Chốt (owner 2026-08-27)') and is the sole authority for this split. This slice performs exactly the split that closure requires travel as its own gated slice ('không lane nào được tách kèm như tác dụng phụ') rather than as a side effect of something else.",
+  "invariants": [
+    "session-lock-ordering",
+    "retry-liveness",
+    "money-model"
+  ],
+  "_invariant_note": "The row this slice edits (4a/4b) assigns session->root-job->roster/finance lock ordering AND retry-root resolution semantics -- even though the language is carried over verbatim from the pre-existing fused row rather than newly authored, editing the row that STATES that ordering still needs the token so the parallel gate serializes against other session/retry writers touching the same discipline; a file-disjoint slice mutating this same ordering could otherwise land concurrently. session-lock-ordering per feature_session_management_tech.md §4; retry-liveness because row 4b's retry-root clause governs the same CAS/claimed-attempt discipline DD-45 owns. money-model ADDED (round-1 [P1] fix, this registration): v3's rejection reasoned only about DIRECT collision (this slice touches no calculation, no code path) and that reasoning still holds -- but it did not address a CONTENT-validity race distinct from a code-collision race. Row 4b's own text carries DD-112's documented self-voiding condition (this manifest's negative_scope: capacity-floor-active-vs-paid-roster is DD-112's self-voiding condition, deliberately out of THIS slice's scope but real). If a concurrent, file-disjoint lane introduces a money-linked hold table or a production writer for charges/payment_allocations before this slice lands, DD-112's transcribed decision could become stale the moment it merges, with no file collision to catch it. Declaring money-model serializes this docs slice against exactly that class of concurrent lane, which is what the token is for even though this slice itself performs no calculation and touches no code path.",
+  "scope": [
+    "docs/features/BE/feature_session_management_tech.md",
+    "docs/features/README.md",
+    "docs/autopilot-manifests/split-edge-4-price-capacity--v4.json"
+  ],
+  "_scope_note": "feature_session_management_tech.md: the edge-case table split (row 4 into 4a/4b) with its own changelog row and version bump to 2.25, plus Unit Tests §5 row #84 giving edge 4b its own positive acceptance case (a finite capacity decrease staying at/above the active roster floor, with a non-empty charge and linked payment_allocations fixture, asserting before/after snapshots). docs/features/README.md: the BE Session Management version index cell (synced per the file's own de-pin-not-re-pin policy: 'đĩa là authority, không phải ô trong bảng'), its own changelog row and version bump to 2.67, the LIVE TRUTH stale-cell-count bullet (states a reproduction command rather than a specific count), and a qualification on the v2.67 changelog row's 'no spec contract changed' claim (true for that row's own index-sync scope; false for the slice as a whole -- v2.25 is the contract change). Both files carry the same content forward from feat/split-edge-4-price-capacity--v3's final HEAD (e1f8bd3), proven by empty diff -- see _predecessor_note.",
+  "negative_scope": [
+    "NO renumbering of any edge ID anywhere in the table -- 5..46 stay byte-identical",
+    "NO flip of docs-impact-policy-contract (or any variant of that slug) to ready/active -- its recorded resume condition is that row 4a exist ON MAIN; that is a separate, later commit after this lands, not a side effect of this one",
+    "NO edit to any other row in the edge-case table besides #4 splitting into 4a/4b",
+    "NO code, migration or schema change of any kind -- money-model is declared for the concurrency token only; this slice still performs no calculation and touches no code path",
+    "NO touching capacity-floor-active-vs-paid-roster (separate backlog task, DD-112's self-voiding condition, not this slice's job)",
+    "NO edit to any kit file (scripts/autopilot-review-readiness.mjs, scripts/autopilot-backlog-reconcile, etc.)"
+  ],
+  "context_sources": [
+    "docs/standards/decisions.md (DD-112, DD-49, DD-117)",
+    "docs/features/BE/feature_session_management_tech.md",
+    "docs/features/README.md",
+    "docs/autopilot-invariant-catalog.md",
+    "packages/db/src/session-service.ts (guard behaviour already on main, cited not modified)"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "none",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "_note": "Every command below was smoke-run via /bin/bash -lc '<command>' (cwd = worktree) before the hash lock -- the gate's real runner (spawnSync(\"/bin/bash\", [\"-lc\", command], { cwd: repo }) at autopilot-review-readiness.mjs:803, which inherits environment and sanitizes nothing). No command uses grep -P (BSD /usr/bin/grep resolves ahead of GNU grep under a login shell's PATH on this machine and lacks -P support). No command contains < or >.",
+    "focused": [
+      "grep -q '^| 4a | Data Integrity | \\*\\*Price\\*\\*' docs/features/BE/feature_session_management_tech.md",
+      "grep -q '^| 4b | Data Integrity | \\*\\*Capacity\\*\\*' docs/features/BE/feature_session_management_tech.md",
+      "grep -q '^| 84 | Capacity DECREASE with existing charges' docs/features/BE/feature_session_management_tech.md",
+      "test \"$(grep -c 'Price/capacity change with existing charges or retry root' docs/features/BE/feature_session_management_tech.md)\" = 0",
+      "grep -q '^| 5 | Data Integrity | Cancel/close with paid roster' docs/features/BE/feature_session_management_tech.md",
+      "grep -q '^| 46 | State | Announce session' docs/features/BE/feature_session_management_tech.md",
+      "test \"$(git diff --name-only ab02ca3f813b782d7c2b65ec234c2aa8cad807f3 -- packages apps scripts | wc -l | tr -d ' ')\" = 0",
+      "test \"$(git diff --name-only ab02ca3f813b782d7c2b65ec234c2aa8cad807f3 | grep -cv '^docs/')\" = 0"
+    ],
+    "canonical": [
+      "pnpm review:check --all",
+      "pnpm format:check"
+    ],
+    "e2e": []
+  },
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 2
+  },
+  "security_review": {
+    "required": true,
+    "reason": "The content interprets money-adjacent existing-charge behaviour (this row governs what happens to EXISTING charges when price/capacity changes) and this manifest's own risk is P1 for that reason; Level 3 requires a security round for money-touching changes regardless of whether the diff mechanism is code or prose.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 90,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE"
+  ],
+  "readiness_evidence_path": ".autopilot/state/split-edge-4-price-capacity--v4/readiness.json"
+}
