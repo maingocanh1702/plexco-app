@@ -1,7 +1,7 @@
 # Feature: User Settings & Gender-based Pricing — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.17 · 2026-08-10
+> **Version:** 0.18 · 2026-08-27
 > **Status:** DD-39 ✅ · DD-47/48 ✅ framework — Draft, pending migration/build
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_user_settings.md` *(Draft)*
@@ -18,14 +18,14 @@
 ## 1. Tổng quan triển khai
 
 ```text
-Profile settings (web) → persons.{gender,dob,username,language} (PII enc at-rest)
+Profile settings (web) → persons.{gender,dob,username} (PII enc at-rest)
 Host set session price → sessions single price | price_male/price_female
 Player joins → create charge → deriveChargeAmount(session, person.gender)
 Public projection → field-whitelist (KHÔNG gender, KHÔNG per-gender price/PII)
 ```
 
 **Hai mảng:**
-1. **Hồ sơ người dùng** — giới tính, ngày sinh, tên hiển thị, username (duy nhất toàn hệ), ngôn ngữ (vi/en).
+1. **Hồ sơ người dùng** — giới tính, ngày sinh, tên hiển thị, username (duy nhất toàn hệ). *(Ngôn ngữ **không** thuộc hồ sơ: nguồn là `tenants.locale` theo DD-118 — xem note đầu §2.)*
 2. **Giá theo giới tính** — kèo cho phép **giá đơn** hoặc **giá nam/nữ**; khi tạo `charge`/`debt` cho member → suy giá theo `person.gender`.
 
 **Design decisions:**
@@ -38,7 +38,7 @@ Public projection → field-whitelist (KHÔNG gender, KHÔNG per-gender price/PI
 
 | Entry | Caller | Mô tả |
 |-------|--------|-------|
-| `PATCH /api/me/profile` | Player (web) | Update gender/dob/username/language (PII enc at-rest) |
+| `PATCH /api/me/profile` | Player (web) | Update gender/dob/username (PII enc at-rest) |
 | `PUT /api/me/username` | Player (web) | Set/change unique username (global uniqueness check) |
 | `deriveChargeAmount(session, person.gender)` | SessionService / Join flow | Derive price from gender when host sets male/female pricing |
 | `POST /api/me/follow/:personId` | Player (web) | Create private follow request → global notification (DD-70a) |
@@ -51,13 +51,23 @@ Public projection → field-whitelist (KHÔNG gender, KHÔNG per-gender price/PI
 
 ### Schema (đã pin — trỏ schema.ts/migrations khi thực thi)
 
+> ⛔ **Không có cột ngôn ngữ cấp member trong hợp đồng này.** DD-118 ✅ (owner 26/08/2026,
+> `../../standards/decisions.md` DD-118) chốt nguồn ngôn ngữ là `tenants.locale` **và không nguồn nào
+> khác**, đồng thời **dành riêng** một cột locale cấp member cho **một quyết định độc lập chưa tồn
+> tại**. Bản v0.17 của spec này — viết trước DD-118 — còn khai `persons.language` ở nhiều chỗ mang
+> tính thẩm quyền (DDL, endpoint, sơ đồ flow, sync, CHECK enum, rollout); **v0.18 đã gỡ toàn bộ** —
+> đếm chính xác (chín phát biểu, đo từ diff) xem changelog v0.18 cuối file, đừng chép số ra đây lần
+> nữa. Vì theo `CLAUDE.md`
+> thứ chưa chốt thuộc `decisions.md` dạng proposal, **không** thuộc một mục mang tiêu đề *"contract
+> đã pin"*. Muốn có cột đó thì mở quyết định riêng trước, rồi mới viết lại vào đây. Hành vi ngôn ngữ
+> **đang chạy** nằm ở §4, mục *"Ngôn ngữ — hành vi hiện hành"*.
+
 ```sql
 -- Mở rộng persons (anchor có sẵn) — expand→contract migration, KHÔNG tạo bảng users
 ALTER TABLE persons
   ADD COLUMN gender_enc bytea,                    -- PII enc at-rest (KMS); DD-39 set: male|female|other|undisclosed
   ADD COLUMN dob_enc bytea,                        -- PII enc at-rest
-  ADD COLUMN username text,                        -- duy nhất toàn hệ (unique global)
-  ADD COLUMN language text NOT NULL DEFAULT 'vi' CHECK (language IN ('vi','en'));
+  ADD COLUMN username text;                        -- duy nhất toàn hệ (unique global)
 CREATE UNIQUE INDEX persons_username_uq ON persons(lower(username)) WHERE username IS NOT NULL;
 -- display_name đã có sẵn trên persons (schema.ts).
 
@@ -73,7 +83,10 @@ ALTER TABLE sessions
 
 ### Migration & Rollback
 
-> Grep live `packages/db/migrations/` (`0000`–`0024` đã merge trên main, 25 migrations; tail `0024_public_visibility_capacity_check.sql`): `persons` **đã tồn tại từ `0001_global_directory.sql`**, `sessions` **từ `0002_tenants_core.sql`** — reuse/ALTER additive, **không recreate**, không tạo bảng `users` song song. **Chưa có** trong `0000`–`0024`: `persons.{gender_enc, dob_enc, username, language, profile_visibility}`, `sessions.{price_male, price_female}`, bảng `person_follows` + narrow `SECURITY DEFINER` functions — toàn bộ là genuinely new.
+> **KHÔNG hard-pin dải migration — đo tail hiện hành rồi hãy viết.** Bản v0.17 ghi *"`0000`–`0024`, 25 migrations"*; số đó đã mục (tail thật lúc viết v0.18 là `0035_tenant_locale_reader.sql`), và một dải chép tay sẽ tiếp tục mục sau mỗi migration. Tái tạo bằng lệnh, đừng tin con số trong câu này:
+> `ls packages/db/migrations/*.sql | tail -1` và `git grep -n 'ADD COLUMN <tên cột>' -- packages/db/migrations`.
+>
+> Điều **không** phụ thuộc dải: `persons` **đã tồn tại từ `0001_global_directory.sql`**, `sessions` **từ `0002_tenants_core.sql`** — reuse/ALTER additive, **không recreate**, không tạo bảng `users` song song. Còn **chưa có migration nào tạo** `persons.{gender_enc, dob_enc, username, language, profile_visibility}`, `sessions.{price_male, price_female}`, bảng `person_follows` + narrow `SECURITY DEFINER` functions — toàn bộ là genuinely new; kiểm lại bằng grep ở trên chứ không bằng dải số. *(Riêng `language`: xem note đầu §2 — nó không thuộc hợp đồng này nữa, dòng này chỉ ghi nhận nó chưa từng tồn tại trong schema.)*
 
 - **Migration:** migration mới monotonic sau tail đã merge (số chốt sau khi sync prerequisites — blockquote trên; `0014` đã merge và giữ số của nó, không ảnh hưởng số slice này sẽ nhận). DD-39 = ALTER additive trên `persons`/`sessions`; DD-47/48 = transaction §6.1 (backfill existing `private` → default `public` → NOT NULL/CHECK) + `person_follows` + REVOKE/GRANT narrow functions.
 - **Rollback:**
@@ -138,7 +151,7 @@ deriveChargeAmount(session, person):
 | Method | Path | Auth | Mô tả |
 |--------|------|------|-------|
 | GET | /api/me/settings | Authenticated Person | Hồ sơ của tôi (gender/dob giải mã cho chính chủ) |
-| PUT | /api/me/settings | Authenticated Person | Cập nhật gender/dob/display_name/language (consent) |
+| PUT | /api/me/settings | Authenticated Person | Cập nhật gender/dob/display_name (consent) |
 | PUT | /api/me/username | Authenticated Person | Đổi username (check trùng) |
 | PATCH | /api/sessions/:id/pricing | TenantAdmin | Đặt giá đơn hoặc `price_male`/`price_female` |
 
@@ -197,8 +210,10 @@ deriveChargeAmount(session, person):
 - **PII at-rest:** `gender_enc`/`dob_enc` mã hoá KMS (như `phone_enc`); giải mã dưới authz person-self hoặc host-of-tenant cho suy giá; **không** log plaintext.
 - **Suy giá:** `deriveChargeAmount` chạy trong ledger/charge-create path (`feature_payment_reconcile` FR-5.3); fallback default + nhắc set khi thiếu gender.
 - **Ranh giới read:** kết quả derivation được persist vào canonical `charges.amount_due`; Home/chat/notification đọc qua Player View payment service, không gọi lại `deriveChargeAmount` và không tự re-derive theo gender.
-- **Sync:** đổi hồ sơ = command → canonical → project (username/display_name/language hiện đúng mọi surface).
-- **Ngôn ngữ:** `persons.language` ưu tiên cho message tới person; tenant locale (`tenants.locale`) là mặc định CLB (NFR-L1).
+- **Sync:** đổi hồ sơ = command → canonical → project (username/display_name hiện đúng mọi surface).
+- **Ngôn ngữ — hành vi hiện hành, ĐO ĐƯỢC trên `main`:** DD-118 ✅ (owner 26/08/2026) chốt nguồn ngôn ngữ cho surface đã đăng nhập là `tenants.locale` **và không nguồn nào khác**. Chỗ **đã thực sự đấu nối** là **session-command routes** (`apps/web/lib/session-command-route.ts`): `runWithLang` set ở request boundary, `tenants.locale` đọc qua narrow `SECURITY DEFINER` `tenant_locale()` (migration `0035`) vì role `app` không có quyền trực tiếp trên `tenants`; không phân giải được → `'vi'`, fail-closed theo NFR-L1. **Ba đường trả `null` là đường thật, đo tại `packages/db/src/tenant.ts`:** (1) `tenantId` không phải UUID → trả `null` trước khi truy vấn; (2) không có row tenant khớp → `rows[0]?.locale ?? null`; (3) query ném lỗi → ghi `console.error` *"[tenantLocale] unexpected failure"* rồi trả `null` — nhánh này **cố ý ồn ào**, vì sau `0035` lỗi permission là không thể xảy ra nên chạm vào đây nghĩa là có bất thường thật. **`locale` lưu NULL thì KHÔNG phải một ca:** `tenants.locale` là `notNull().default('vi')` (`packages/db/schema.ts`), nên trạng thái đó không tồn tại được — đừng ghi nó vào bảng ca lỗi.
+- **⚠️ Độ phủ DD-118 CHƯA đủ — đừng đọc mục trên như "mọi surface đã xong".** Đo 2026-08-30: `runWithLang` chỉ có mặt ở đường session-command; ranh giới pre-tenant/post-tenant KHÔNG liệt kê lại bằng prose ở đây — comment trong `session-command-route.ts` (quanh dòng 217) từ chối liệt kê, đúng như lý do nó tự nêu: "liệt kê hai lần, sai cả hai lần"; thẩm quyền là test đã pin `apps/web/lib/session-command-route.test.ts` (case "PINS THE PRE-TENANT BOUNDARY: all FIVE sites answer in Vietnamese and NONE reads the locale") — đọc ở đó, nơi nó có thể fail. Ví dụ đã gỡ vì SAI (round-1 [P2] finding, --v4): `apps/web/app/api/onboarding/readiness/route.ts` dòng `if (!session) return err("AUTH_REQUIRED", ...)` **không phải gap** — trước khi có session thì chưa có tenant, tiếng Việt ở đây là hành vi DD-118 đã ratify, cùng biên giới `session-command-route.ts` tự áp cho chính nó. Ví dụ ĐÚNG, post-authorization thật (tenant đã biết + role `owner` đã confirm ở dòng ngay trên): response `NOT_FOUND` cùng file (`t("Chưa có onboarding run.", "No onboarding run yet.")`) — route này không import `tenantLocale`/`runWithLang` ở đâu cả nên phản hồi đó phát ra **mà không thiết lập language context**, dù tenant đã xác thực xong. Phần phủ còn lại là **việc runtime**, nằm ngoài slice docs này; spec ghi nhận nó là **pending**, không khai là đã xong.
+- **Ngôn ngữ — phụ thuộc schema tương lai, CHƯA tồn tại:** `resolveLang(memberLocale, tenantDefault)` giữ nguyên chữ ký nhưng hôm nay **luôn** được gọi với `memberLocale = null`, vì **không có cột locale cấp member** trên `persons`/`accounts`/`memberships` — xem chính danh sách "Chưa có" ở §2 Migration & Rollback, trong đó `persons.language` đã được liệt kê là genuinely new. Chữ ký đó là **seam để dành**, **không phải** thẩm quyền: đừng đọc nó như bằng chứng rằng cột đã được chốt. Khi nào một cột locale cấp member được quyết định và land, nó cắm vào đúng tham số đầu của `resolveLang` mà không phải sửa seam — bản thân slice này **không** tạo, **không** đề xuất và **không** authorize cột đó.
 
 ### Caching Strategy
 
@@ -214,7 +229,7 @@ deriveChargeAmount(session, person):
 | Mục | Trả lời trong spec |
 |-----|---------------------|
 | Authorization/ownership | §3/§6.4: Authenticated Person / TenantAdmin / Followee per endpoint; actor từ verified session, URL/body chỉ mang target (§6.1 actor binding, edge F4); host chỉ thấy gender ở mức suy giá per-tenant (edge #8, `GENDER_FORBIDDEN`); `person_follows` GLOBAL PROTECTED, no table grant, chỉ narrow `SECURITY DEFINER` (§6.1, edge F10) |
-| Injection/validation | §2: CHECK enums (`language`, giá ≥ 0), UNIQUE `lower(username)`; §3 `INVALID_GENDER` ngoài enum; §6.1 CHECK no-self/decision-shape; §6.3 minimal card cố định, không dùng 403 body biến thiên làm oracle (§6.4) |
+| Injection/validation | §2: CHECK enums (giá ≥ 0), UNIQUE `lower(username)`; §3 `INVALID_GENDER` ngoài enum; §6.1 CHECK no-self/decision-shape; §6.3 minimal card cố định, không dùng 403 body biến thiên làm oracle (§6.4) |
 | Secret & log redaction | §2/§4: `gender_enc`/`dob_enc` KMS at-rest như `phone_enc`, không plaintext trong DB/log (edge #2, test #5); decrypt không log (§2 charge derivation) |
 | Webhook signature + replay | N/A — không có webhook trong feature này |
 | Idempotency | §3 bảng Idempotency + §6.2 state-idempotency (không dùng tenant `processed_commands`) |
@@ -422,7 +437,7 @@ getProfile(viewer V, target T):
 
 ### Rollout gender-pricing (khi DD-39 ✅)
 
-1. Migration `persons.{gender_enc,dob_enc,username,language}` + `sessions.price_male/female`.
+1. Migration `persons.{gender_enc,dob_enc,username}` + `sessions.price_male/female`.
 2. Settings API + username uniqueness.
 3. `deriveChargeAmount` vào mọi **charge-create** path (direct first-entry join/approve + first-activation waitlist promotion); helper chỉ return/throw, caller sở hữu rollback/event. DD-49 rejoin path dùng correction core: active→carry-or-append-refunded, full→carry-history-or-defer-refunded; không tạo charge row mới.
 4. Test bất biến public không lộ gender + no-fallback/no-active-without-charge.
@@ -431,6 +446,7 @@ getProfile(viewer V, target T):
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-08-27 | v0.18 | **Gỡ mâu thuẫn nội bộ về nguồn ngôn ngữ (docs-only, không authorize schema).** §4 từng trao cho `persons.language` quyền ưu tiên khi gửi message tới một person, trong khi **chính spec này** ở §2 Migration & Rollback đã liệt kê `persons.{… language …}` vào danh sách **"Chưa có" trong `0000`–`0024`** — hai câu trong cùng một file nói ngược nhau, và nửa sai là nửa được đọc như build contract. Đo lại trên `main`: `persons` (`schema.ts`) **không có** cột `language`, không migration nào thêm nó, và route thật (`apps/web/lib/session-command-route.ts`) gọi `resolveLang(null, tenantDefault)` — tức nhánh `persons.language` **chưa từng chạy một lần nào**. Nay ghi đúng **hành vi hiện hành** theo DD-118 ✅ (owner 26/08): nguồn là `tenants.locale` và không nguồn nào khác, đọc qua `SECURITY DEFINER` `tenant_locale()` (`0035`, vì role `app` không có quyền trực tiếp trên `tenants`), fail-closed về `'vi'`. Phụ thuộc schema tương lai được **tách thành mục riêng** và ghi rõ chữ ký `resolveLang` là *seam để dành, không phải thẩm quyền*. **KHÔNG** thêm cột `persons.language`, **KHÔNG** đề xuất cột locale cấp member, **KHÔNG** đổi code hay migration; spec giữ nguyên `Draft`. **GỠ HẲN `persons.language` khỏi TÁM chỗ mang tính thẩm quyền** — sơ đồ flow §1 · tóm tắt "Hồ sơ người dùng" §1 · Entry point `PATCH /api/me/profile` §1 · DDL `ADD COLUMN` §2 · Endpoint `PUT /api/me/settings` §3 · Sync §4 · CHECK enums §4 · Rollout bước 1 §7 — **cộng luật ưu tiên gốc ở §4 (thứ chín)** mà chính v0.18 sinh ra để sửa, tức **chín** phát biểu current-contract bị gỡ. *(Bản nháp changelog đầu ghi "bảy" trong khi liệt kê tám: đếm nhầm, đã sửa theo số đo từ diff chứ không theo trí nhớ.)* — vòng review đầu chỉ *dán nhãn* chúng là "blocked", nhưng dán nhãn một dòng `ADD COLUMN` nằm trong mục mang tiêu đề *"contract đã pin"* thì nó vẫn đọc như thẩm quyền thực thi; theo `CLAUDE.md`, thứ chưa chốt thuộc `decisions.md` dạng proposal, không thuộc spec. Còn lại chỉ các câu **mô tả** (danh sách "Chưa có" ở §2 — một phép đo, không phải thẩm quyền; ghi chú độ phủ và seam ở §4). **Ghi rõ độ phủ DD-118 chưa đủ:** `runWithLang` mới chỉ có ở đường session-command; route authenticated khác (ví dụ `onboarding/readiness`) vẫn phát `t(vi,en)` không có language context — pending runtime, không khai là xong. |
 | 2026-08-10 | v0.17 | **A-grade upgrade:** thêm Entry points table (6 entries); bump version. Không đổi contract/settings model. |
 | 2026-07-27 | v0.16 | Reconcile migration live `0000`–`0024` (25 migrations, tail `0024`) và cập nhật mọi current-tail marker. Pin DD-91 one-payment-truth boundary: gender pricing chỉ derive lúc ghi `charges.amount_due`; Home/chat/notification đọc canonical Player View status, không chạy lại công thức. Reconcile DD-70(a) từ stale proposal/conditional sang owner-final target, option (b) đã bị loại; runtime vẫn chưa build. |
 | 2026-07-26 | v0.15 | **Merge-state reconcile:** `0014_players_waitlist` đã merge (`1a6ac38`); tail sync hiện `0000`–`0022` (23 migrations). Sửa 5 dòng current-state stale (dòng 10, 14, 61, 65, 67) từng nói `0000`–`0013` là merged set / `0014` branch-only. Giữ nguyên GUIDANCE đánh số (monotonic kế tiếp sau tail đã sync) và danh sách genuinely-new không đổi. Không đổi schema/code/DD; Status/Implementation không đổi. |
