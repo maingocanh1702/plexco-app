@@ -1,0 +1,36 @@
+-- ============================================================================
+-- 0036_revoke_app_dml_public_sessions.sql
+-- Closes the half-revoke on public_sessions: 0009_rls_policies_grants.sql:118
+-- granted app SELECT, INSERT, UPDATE, DELETE "for projector writes" -- a
+-- projector that was never built. 0033_public_projection_fences.sql:237-238
+-- revoked only SELECT (app now reads nothing on this table directly), and
+-- left the three write privileges as an unclaimed, unintended leftover.
+--
+-- Authority: DD-12 (docs/standards/decisions.md:274, section "Bao mat"):
+-- "slice DD-12 mo rong phai REVOKE base SELECT truoc khi bat consumer moi...
+-- readonly giu zero grant... projector writer giu quyen hep can thiet." DD-12
+-- gives the SURGICAL-GRANT PRINCIPLE for this exact table -- no blanket
+-- grant, only the narrow privilege a real writer needs -- not a verbatim
+-- instruction to revoke app's DML. This migration APPLIES that principle to
+-- a grant DD-12 itself never enumerated; it does not claim DD-12 already
+-- ordered this exact statement.
+--
+-- Explicitly NOT authorized by, and does not need authorization from,
+-- DD-114 D3 (decisions.md:1949, closed 2026-08-26): D3's affirmative ruling
+-- is that public_sessions has NO WRITER in phase-1. A REVOKE removes a write
+-- privilege -- it moves toward that ruling, not against it. Only a slice
+-- that CREATES a writer path for this table needs D3's authorization (and
+-- would not have it; see the withdrawn public-projection-writer-privilege
+-- registrations). This migration creates no writer path and adds no
+-- function; it only narrows an existing role's table-level grant.
+--
+-- Exposure this closes: public_session_share_v (0033:132) selects straight
+-- from public_sessions, including price_amount, and is granted SELECT to
+-- readonly (0033:239). A compromised app path could otherwise write a row
+-- carrying a money field that this view serves publicly. Measured inert
+-- today (no live TypeScript source writes this table; app_worker holds no
+-- table-level grant here at all), so this closes an open door, not an
+-- active incident.
+-- ============================================================================
+
+REVOKE INSERT, UPDATE, DELETE ON public_sessions FROM app;

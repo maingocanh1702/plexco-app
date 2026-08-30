@@ -67,10 +67,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(36); // 0000..0035 (0035 = tenant-locale-reader)
+    expect(ctx.migrateResult.applied.length).toBe(37); // 0000..0036 (0036 = revoke-app-dml-public-sessions)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(36);
+    expect(second.skipped.length).toBe(37);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -331,8 +331,9 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
     // NO runtime role may SELECT the base after 0033 — a base read would bypass
     // the immediate-deny fence (decisions.md:269). readonly and app_worker never
     // had it (or lost it); `app` — the generic HTTP/bot runtime role — is revoked
-    // here too, so ordinary app code cannot read a stale fenced row. `app` keeps
-    // INSERT/UPDATE/DELETE for the future projector (not asserted here).
+    // here too, so ordinary app code cannot read a stale fenced row. `app` also
+    // has ZERO INSERT/UPDATE/DELETE as of 0036_revoke_app_dml_public_sessions.sql
+    // (asserted separately, in the catalog test below).
     for (const pool of [ctx.appPool, ctx.readonlyPool, ctx.workerPool]) {
       await expect(pool.query(`SELECT * FROM public_sessions LIMIT 1`)).rejects.toThrow(
         /permission denied/i,
@@ -347,7 +348,7 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
     }
   });
 
-  it("catalog: EXACT effective privileges — fence table zero-grant of any type to every runtime role; no runtime role has base SELECT at table OR column level; app keeps only INSERT/UPDATE/DELETE on the base; only readonly reads the guarded view", async () => {
+  it("catalog: EXACT effective privileges — fence table zero-grant of any type to every runtime role; no runtime role has base SELECT at table OR column level; app has ZERO grant of any kind on the base (0036_revoke_app_dml_public_sessions.sql); only readonly reads the guarded view", async () => {
     // A `SELECT *` probe alone (test (b)) misses column-level SELECT and never
     // checks INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER — a stray write grant
     // would bypass the typed raise/CAS functions. Assert the exact effective
@@ -401,11 +402,34 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
         expect(ok, `${role} must have NO column SELECT on public_sessions.${col}`).toBe(false);
       }
     }
-    // app keeps EXACTLY INSERT/UPDATE/DELETE on the base (the future projector writer).
+    // app has ZERO direct DML on the base (0036_revoke_app_dml_public_sessions.sql,
+    // applying DD-12:274's surgical-grant principle to the half-revoke 0033
+    // left open: SELECT was already revoked there, INSERT/UPDATE/DELETE were
+    // an unclaimed leftover from 0009's original "projector writes" grant).
     for (const priv of ["INSERT", "UPDATE", "DELETE"]) {
-      expect(await hasTable("app", "public_sessions", priv), `app keeps ${priv} on the base`).toBe(
-        true,
-      );
+      expect(
+        await hasTable("app", "public_sessions", priv),
+        `app must have NO ${priv} on the base`,
+      ).toBe(false);
+    }
+    // ... nor at COLUMN level (round-1 [P1] finding: has_table_privilege alone
+    // misses a per-column INSERT/UPDATE/REFERENCES grant -- DELETE and TRIGGER
+    // have no column-level form in Postgres, so they are not checked here.
+    // REFERENCES added per round-2 [P2] finding: the round-1 fix checked
+    // INSERT/UPDATE only, missing that REFERENCES also has a column-level
+    // form). 0009's original grant and 0036's revoke were both table-level
+    // statements with no column list, so no column-level grant is expected to
+    // exist independently -- this proves that rather than assuming it.
+    for (const col of baseCols) {
+      for (const priv of ["INSERT", "UPDATE", "REFERENCES"]) {
+        const ok = (
+          await ctx.owner.query(
+            `SELECT has_column_privilege($1, 'public_sessions', $2, $3) AS ok`,
+            ["app", col, priv],
+          )
+        ).rows[0].ok as boolean;
+        expect(ok, `app must have NO column ${priv} on public_sessions.${col}`).toBe(false);
+      }
     }
     for (const priv of ["TRUNCATE", "REFERENCES", "TRIGGER"]) {
       expect(
@@ -426,6 +450,39 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
     expect(await hasTable("readonly", "public_session_share_v", "SELECT")).toBe(true);
     expect(await hasTable("app", "public_session_share_v", "SELECT")).toBe(false);
     expect(await hasTable("app_worker", "public_session_share_v", "SELECT")).toBe(false);
+  });
+
+  it("ABSENCE: app cannot INSERT/UPDATE/DELETE public_sessions directly (0036_revoke_app_dml_public_sessions.sql) — a live attempt is rejected, not just a catalog check", async () => {
+    const sid = randomUUID();
+    // the privilege check happens before row-matching, so a live attempt against
+    // an id that does not even exist still proves the grant is gone -- no
+    // sanctioned writer path exists on this table to seed a row through.
+    await expect(
+      ctx.appPool.query(
+        `INSERT INTO public_sessions
+           (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
+            price_amount, slots_open, club_display_name, join_policy, expires_at)
+         VALUES ($1, $1, $2, 'badminton', now(), now() + interval '2 hours', 'D1',
+            1, 1, 'x', 'open', now() + interval '1 day')`,
+        [sid, ctx.tenantA],
+      ),
+      "app must be denied direct INSERT on public_sessions",
+    ).rejects.toThrow(/permission denied/i);
+    // round-1 [P1] finding: a WHERE id = $1 clause requires SELECT(id), which
+    // app already lacked before this migration (0033) -- that probe could pass
+    // for the wrong reason even if UPDATE/DELETE were still granted. Unconditional
+    // statements (no WHERE, no RETURNING) isolate the UPDATE/DELETE check from
+    // the pre-existing SELECT revoke; the privilege check still fires before any
+    // row-matching, so this needs no seeded row and affecting zero rows either
+    // way does not weaken the assertion.
+    await expect(
+      ctx.appPool.query(`UPDATE public_sessions SET slots_open = 0`),
+      "app must be denied direct UPDATE on public_sessions",
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      ctx.appPool.query(`DELETE FROM public_sessions`),
+      "app must be denied direct DELETE on public_sessions",
+    ).rejects.toThrow(/permission denied/i);
   });
 
   it("(c) the guarded view exposes EXACTLY the BL-DSC-1 existing fields + session_id + public_projection_version — no retired skill_level, no expires_at, no tenant_id, no money/PII, no fence/token", async () => {
@@ -1695,12 +1752,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
           return migrate(url(dbName));
         }),
       );
-      expect(res.applied.length).toBe(36); // 0000..0035
+      expect(res.applied.length).toBe(37); // 0000..0036
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(36);
+        expect(rows.length).toBe(37);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -1978,7 +2035,7 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         await nsCtx.bootstrapJobDefinerForOwner();
         await nsCtx.bootstrapChatDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0035_tenant_locale_reader.sql");
+        expect(res.applied[res.applied.length - 1]).toBe("0036_revoke_app_dml_public_sessions.sql");
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -4451,10 +4508,10 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       }
     });
 
-    it("UCC-8: MIGRATION_COUNT (36) matches the actual migrations/ directory listing, and the tail is 0035", async () => {
+    it("UCC-8: MIGRATION_COUNT (37) matches the actual migrations/ directory listing, and the tail is 0036", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      expect(files.length).toBe(36);
-      expect(files[files.length - 1]).toBe("0035_tenant_locale_reader.sql");
+      expect(files.length).toBe(37);
+      expect(files[files.length - 1]).toBe("0036_revoke_app_dml_public_sessions.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {

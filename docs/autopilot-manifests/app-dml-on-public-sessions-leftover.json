@@ -1,0 +1,97 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest -- carries NO manifest_schema_version (that field belongs only to the runtime .autopilot/state/<feature>/manifest.json; putting it here makes scope-gate register HALT CONTRACT_INVALID).",
+  "_authority": "DD-12, docs/standards/decisions.md:274, section \"Bao mat\" (verbatim, quoted in case the line number drifts): \"slice DD-12 mo rong phai REVOKE base SELECT truoc khi bat consumer moi... readonly giu zero grant... projector writer giu quyen hep can thiet.\" This is a PRINCIPLE (surgical grant discipline on this exact table), not a verbatim instruction to revoke app's DML -- DD-12 does not enumerate this specific grant. This slice applies that principle to a grant DD-12 itself never listed; it does not claim DD-12 already ordered this exact statement. Explicitly NOT authorized by, and does not need authorization from, DD-114 D3 (decisions.md:1949, closed 2026-08-26): D3's affirmative ruling is that public_sessions has no writer in phase-1. A REVOKE removes a write privilege, moving toward that ruling, not against it -- only a slice that CREATES a writer path needs D3's authorization (see the withdrawn public-projection-writer-privilege registrations, three of them, all withdrawn on exactly that ground, dispositions dated 2026-08-29). docs/autopilot-backlog.md's app-dml-on-public-sessions-leftover task (status: ready, design_state: designed) carries this same authority citation and the full reasoning for why the D3 question is refuted, including the closing-formula distinction (\"Khong authorize code/migration/enablement nao\" appears 30 times in decisions.md as a standard non-grant formula, not an area prohibition).",
+  "task_id": "plexco:app-dml-on-public-sessions-leftover",
+  "feature": "app-dml-on-public-sessions-leftover",
+  "branch": "feat/app-dml-on-public-sessions-leftover",
+  "base_sha": "a34da5255986a0f0c876699a131c4ae8408c331f",
+  "base_ref": "origin/main",
+  "risk": "P1",
+  "_risk_note": "P1 per the backlog task's own declared risk and change_class (security-posture). Exposure: public_session_share_v (0033:132) selects straight from public_sessions including price_amount, and is granted SELECT to readonly (0033:239) -- a compromised app path could otherwise write a row carrying a money field that this view serves publicly. Measured inert today (no live TypeScript source writes this table; app_worker holds no table-level grant here at all), so this closes an open door, not an active incident.",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_dependency_note": "ROOT. No unmerged hard dependency. base_sha a34da52 is current origin/main tip, confirmed 0036 is free (highest migration on main is 0035) -- 0036_public_projection_writer_privilege.sql only ever existed on the withdrawn public-projection-writer-privilege branches, none of which landed.",
+  "invariants": [
+    "schema",
+    "marketplace"
+  ],
+  "_invariant_note": "schema -- new migration touching the migration tail. marketplace -- public_sessions is the marketplace discovery read model; this migration narrows an existing grant on that exact table.",
+  "scope": [
+    "packages/db/migrations/0036_revoke_app_dml_public_sessions.sql",
+    "packages/db/src/rls-invariants.test.ts",
+    "packages/db/src/migrate.test.ts",
+    "docs/autopilot-manifests/app-dml-on-public-sessions-leftover.json"
+  ],
+  "_scope_note": "migrate.test.ts is NOT in the backlog task's own listed scope, but is a mechanically necessary companion: every new migration file bumps MIGRATION_COUNT (migrate.test.ts:39, 36->37) and every last-applied-filename assertion (migrate.test.ts one spot; rls-invariants.test.ts three spots: the 'migrations' describe block at line 70/73, the JCL-1-adjacent non-superuser-owner replay at line 1728/1733, and UCC-8 at line 4486/4487/4484's title) -- all eight found and fixed by exhaustive grep for '0035' and '(36)'/'(35)' across both files, not just the filename string alone (a narrow grep for the filename alone would have missed four bare-number assertions). Omitting this file makes the full suite go red on an unrelated-looking migration-count mismatch.",
+  "negative_scope": [
+    "NO new SECURITY DEFINER function, no writer path, no projector body of any kind -- this migration ONLY narrows an existing grant; it creates nothing.",
+    "NO change to readonly's grants -- 0033:237-238 already revoked readonly's SELECT; this slice touches app's grant only.",
+    "NO change to app_worker's grants -- app_worker holds zero table-level grant on public_sessions today and this migration does not touch that.",
+    "NO edit to 0033_public_projection_fences.sql or any other existing migration -- this is a new, additive migration file only.",
+    "NO edit to schema.ts -- grants are not mirrored there (no precedent function/grant of this kind has a schema.ts counterpart in this repo).",
+    "NO edit to docs/autopilot-backlog.md -- the task entry stays as-is; closing it is a separate, later action once this lands, per its own stated close trigger.",
+    "NO investigation or fix of any kind to scripts/autopilot-scope-gate or scripts/autopilot-review-readiness.mjs (trust-gate files; out of scope for an ordinary feature lane regardless)."
+  ],
+  "_negative_scope_note": "Deliberately does NOT contain any 'no change to app's grants' style line -- the backlog task's own review-precedent warning: a slice that declares negative_scope forbidding a grant change and then makes one anyway is exactly the [P1] finding that blocked the withdrawn public-projection-writer-privilege slice's round-1 review, before its later, deeper root-cause withdrawal. Positive scope states the revoke directly (see scope above and the migration file itself).",
+  "context_sources": [
+    "docs/standards/decisions.md (DD-12:274, DD-114 D3:1949)",
+    "docs/autopilot-backlog.md (app-dml-on-public-sessions-leftover task)",
+    "packages/db/migrations/0009_rls_policies_grants.sql",
+    "packages/db/migrations/0033_public_projection_fences.sql",
+    "packages/db/src/rls-invariants.test.ts",
+    ".autopilot/dispositions/public-projection-writer-privilege--v3.json",
+    ".autopilot/dispositions/public-projection-writer-privilege--v4.json"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "none",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "_note": "Every command below was smoke-run via /bin/bash -lc '<command>' (cwd = worktree) before the hash lock -- the gate's real runner (spawnSync(\"/bin/bash\", [\"-lc\", command], { cwd: repo }), which inherits environment and sanitizes nothing). No command uses grep -P. No command contains < or >.",
+    "focused": [
+      "DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm --filter @plexco/db test"
+    ],
+    "canonical": [
+      "pnpm run lint",
+      "pnpm run typecheck",
+      "pnpm run build",
+      "unset DATABASE_URL; DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_verification_note": "Canonical list runs build and the full root test suite, not just lint/typecheck -- required per AGENTS.md policy for a database ACL migration, and per the owner's explicit instruction on this exact slice (v2's round-5 on a prior lane failed exactly on this gap).",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 2
+  },
+  "security_review": {
+    "required": true,
+    "reason": "Trust-boundary ACL change on a cross-tenant PUBLIC read model (public_sessions) -- narrows an existing role's DML grant. Level 3 requires a security round for a privilege change on this table regardless of whether the change grants or revokes.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 90,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE"
+  ],
+  "readiness_evidence_path": ".autopilot/state/app-dml-on-public-sessions-leftover/readiness.json"
+}
