@@ -3947,7 +3947,7 @@ notes: |
 
 ## task: app-dml-on-public-sessions-leftover
 title: `app` còn INSERT/UPDATE/DELETE trên `public_sessions` — nửa còn dở của lệnh revoke DD-12
-status: ready
+status: merged — squash `f408693` (2026-08-30) từ `feat/app-dml-on-public-sessions-leftover`; `ap-finish --squash-verified` xác nhận patch trên origin bằng đúng diff đã READY. Đóng theo đúng trigger đã khai: `information_schema.role_table_grants` cho `app` trên `public_sessions` trả về rỗng trên DB test đã migrate.
 risk: P1
 change_class: security-posture
 design_state: designed
@@ -3956,8 +3956,9 @@ invariants: [schema, marketplace]
 scope:
 - packages/db/migrations/0036_revoke_app_dml_public_sessions.sql
 - packages/db/src/rls-invariants.test.ts
-manifest: null
-merged_probe: null
+- packages/db/src/migrate.test.ts
+manifest: docs/autopilot-manifests/app-dml-on-public-sessions-leftover.json
+merged_probe: "0036_revoke_app_dml_public_sessions.sql"
 _authority: |
   DD-12, `docs/standards/decisions.md:274`, mục **Bảo mật** (cite kèm nội dung phòng khi số dòng
   trôi): *"slice DD-12 mở rộng phải REVOKE base SELECT trước khi bật consumer mới… `readonly` giữ
