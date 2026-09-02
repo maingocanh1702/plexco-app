@@ -3,6 +3,35 @@
 **Ngày:** 02/09/2026 · **Base:** `main@7675e03` · **Chương trình:** `completion-program-2026-09-02-RUN.md`
 **Ưu tiên đang áp (owner 25/08, tái xác nhận 02/09):** **BE + infra trước, FE sau.**
 
+## §00 · ĐÍNH CHÍNH BẮT BUỘC — hợp đồng manifest, thêm 02/09 sau HALT của L12
+
+**Hai trường trong mọi prompt của doc này từng sai, và cả hai làm `register` HALT `CONTRACT_INVALID`
+trước khi lane viết được dòng nào.** Đo tại `scripts/autopilot-review-readiness.mjs`:
+
+```
+:363  if (!["P1","P2"].includes(risk))            halt CONTRACT_INVALID "only P1/P2 writing slices may register"
+:366  if (!["supervised","proactive_routine"].includes(autonomyMode)
+        || (risk === "P1" && autonomyMode !== "supervised"))  halt CONTRACT_INVALID
+```
+
+1. **`autonomous_to_ready` chưa bao giờ được validator chấp nhận.** DD-107 chốt mode này (owner
+   14/08), `level3-workflow.md` §6.1 mô tả nó dài 205 dòng, và **không dòng code nào implement nó**.
+   Đây không phải lệch canonical — đây là **khoảng cách decision→code nằm ngay trong consumer**, đúng
+   lớp lỗi mà DD-106 tồn tại để bắt. ⇒ Trường `autonomy_mode` trong manifest phải ghi **`supervised`**.
+   Ý định của DD-107 (quyết Tier A/B tại chỗ, giữ ledger, owner review một lượt ở READY) **vẫn áp dụng**
+   — nó chỉ chưa gọi tên được bằng trường đó.
+2. **Validator từ chối `P3` hoàn toàn.** Năm lane trong doc này từng ghi `RISK: P3` (L0 · L2 · L5 · L8 ·
+   L16) — **cả năm đều ghi file**, nên cả năm là writing slice và phải là **P2**. Đã sửa.
+3. **Còn một mâu thuẫn chưa sửa, để lại nguyên:** §6.1 viết *"`autonomous_to_ready` requires risk `P1`
+   or `P2`"* trong khi `:366` ép `P1 ⇒ supervised`. Doc và validator nói ngược nhau về P1. Không lane
+   nào trong hàng đợi này là P1 nên nó chưa cắn, nhưng nó là **hai edit chứ không phải một** khi ai đó
+   dạy validator mode mới.
+
+⚠️ `autopilot-review-readiness.mjs` **là pack file** (chính là file mang hunk `DYNAMIC_SEGMENT`). Sửa nó
+trong consumer là tạo divergence mới — xem L11-v2.
+
+---
+
 > **Cách dùng:** mỗi lane dưới đây có một khối ` ```text ` dán thẳng vào Claude Code. Prose tiếng Việt là để
 > bạn chọn lane; payload English là để agent thi hành (luật ngôn ngữ của repo).
 > **Chạy theo thứ tự L0 → L6.** Trong cùng một wave, chỉ chạy song song các lane có `scope` và `invariants`
@@ -28,7 +57,14 @@ REPO CONTEXT — read before acting, do not skip
   verify the query finds a known-present control case.
 
   WORKFLOW_LEVEL: 3 · WORKFLOW_MODE: supervised_autonomy
-  AUTONOMY_MODE: autonomous_to_ready · DEFAULT_STOP_MODE: STOP_AT_READY · AUTO_MERGE: off
+  DEFAULT_STOP_MODE: STOP_AT_READY · AUTO_MERGE: off
+  AUTONOMY_MODE in the MANIFEST must be "supervised" (or "proactive_routine" only if
+  level3-workflow.md:172 conditions are all met). It must NOT be
+  "autonomous_to_ready": scripts/autopilot-review-readiness.mjs:366 accepts only
+  ["supervised","proactive_routine"], so a manifest declaring the ratified mode HALTs
+  CONTRACT_INVALID at register. See section 00. The batch-the-owner INTENT of
+  DD-107 still governs how you work — decide Tier A/B in flight, keep the ledger,
+  bring the owner one review at READY — it just cannot be spelled in that field yet.
   Tier A/B/C ladder per level3-workflow section 6.1, verbatim. Tier C is exactly
   its 8-item list; nothing added, nothing removed. Stopping on a Tier A item is a
   defect — log it in the ledger as one. Append every Tier A/B decision to
@@ -63,6 +99,21 @@ REPO CONTEXT — read before acting, do not skip
     Reviewer unreachable => wait and retry with backoff; if truly unavailable,
     HALT TOOL_UNAVAILABLE. Never self-certify, never lower the gate.
 
+  IF THIS LANE BUILDS OR CHANGES A CHECK, STATE ITS THREAT MODEL FIRST
+    Write, in the deliverable itself, one paragraph naming what the check defends
+    against AND what it explicitly does not. Then hold that line under review.
+    Learned mechanically: lane kit-pack-membership-manifest HALTed REGION_THRASH
+    after three rounds circling one line, because its brief never said who the
+    adversary was. The reviewer had no scope to read (the known gate gap: a reviewer
+    is not given scope), so it reasoned toward a deliberate attacker and found a new
+    evasion every round -- correctly, given what it knew. Against a determined
+    insider the evasions are unbounded: an opt-in hook, a documented --no-verify,
+    and a checker whose own table is editable in the same commit.
+    A check that catches MISTAKES is a complete and worthy deliverable. Say so, in
+    writing, and refuse to defend a boundary the lane never claimed. If a reviewer
+    files a tampering finding against a stated mistakes-only boundary, that is a
+    contested finding -- Tier C item 8 -- not a fix round.
+
   TERMINAL STATES
     READY  = exact diff + gates run directly + clean independent review + ledger.
     AWAIT  = Tier C only. One question, one recommendation, one binary resume
@@ -84,7 +135,7 @@ VM Cowork (không có `pnpm`).
 
 ```text
 TASK: repin-canonical-runner-2026-09
-RISK: P3
+RISK: P2   # was P3; see section 00 — the validator refuses P3 registration outright
 OUTCOME
   Replace the STALE marker on the Tests axis with a measured number, and close the
   law-4 reconciliation (static + generated = runner) that cannot be closed today.
@@ -221,7 +272,7 @@ field thật là ra quyết định trên dữ liệu sai. Lane này **không s�
 
 ```text
 TASK: zalo-credential-path-trace
-RISK: P3
+RISK: P2   # was P3; see section 00 — the validator refuses P3 registration outright
 MODE: read-only research. This lane writes exactly one document and no code.
 
 OUTCOME
@@ -391,7 +442,7 @@ bị chặn.** Không có `db:reset:test` nên phải gõ tay `DROP DATABASE ...
 
 ```text
 TASK: local-dev-sanctioned-paths
-RISK: P3
+RISK: P2   # was P3; see section 00 — the validator refuses P3 registration outright
 OUTCOME
   The correct local-dev path is the cheapest one to take, so the forbidden shortcut
   stops being tempting under pressure.
@@ -605,7 +656,7 @@ nó lộ ra.
 
 ```text
 TASK: dev-app-worker-password-not-restored
-RISK: P3
+RISK: P2   # was P3; see section 00 — the validator refuses P3 registration outright
 OUTCOME
   Running the test suite leaves the cluster's app_worker credential exactly as it
   found it, so a later local run of worker.ts does not fail preflight for a reason
@@ -795,7 +846,71 @@ NEGATIVE SCOPE
 
 ---
 
-## L11 · infra/kit · Đồng bộ mirror canonical — **chạy ở repo khác**
+## L11-v2 · infra/kit · Dạy kit cái mode mà owner đã chốt — **thay thế L11 cũ**
+
+> 🔴 **L11 CŨ ĐÃ CHẾT — ĐỪNG CHẠY.** Lane L12 đo được: **nợ `DYNAMIC_SEGMENT` đã trả rồi** — canonical
+> `188e756` port nó **một ngày sau** `0af75a2`, consumer và canonical **byte-identical**. Tiền đề của L11
+> cũ mục hoàn toàn. Đây đúng là lý do prompt L11 mở đầu bằng "VERIFY THE PREMISE FIRST … If any
+> expectation fails, STOP and report" — cơ chế đó đã làm đúng việc của nó.
+>
+> **Nợ pack thật, và chỉ có một:** `level3-workflow.md` — file pack **duy nhất** còn lệch, **205 dòng =
+> trọn §6.1 `autonomous_to_ready`**, khái niệm canonical không có. Sync kế tiếp **xoá operating contract
+> mà cả 16 lane đang trích dẫn**. Cộng với §00: validator cũng chưa từng biết mode đó. Nên lane này là
+> **một việc, ba edit, land cùng nhau**.
+
+```text
+TASK: kit-teach-autonomous-to-ready
+RISK: P2
+REPOSITORY: the canonical kit repo (~/Projects/Claude template), NOT the Plexco repo.
+            Never patch the kit from inside a consumer: that is the two-writers-one-
+            mirror case. Kit changes happen in canonical; each consumer pulls.
+
+WHY THIS LANE REPLACED THE OLD L11
+  Lane L12 measured that the DYNAMIC_SEGMENT debt is already repaid: canonical 188e756
+  ported it one day after 0af75a2, and consumer and canonical are byte-identical.
+  Verify that yourself before anything else; if it is false, stop and report.
+  The real divergence is level3-workflow.md: 205 lines, the whole section 6.1, present
+  in the Plexco consumer and absent from canonical. The next successful sync deletes
+  the operating contract that sixteen queued lanes cite.
+
+THE THREE EDITS, and why they are one lane
+  1. Port section 6.1 (autonomous_to_ready, the Tier A/B/C ladder, the authority
+     precedence table, the Decision Ledger format) from the Plexco copy of
+     level3-workflow.md into canonical.
+  2. Teach the validator the mode. In canonical's autopilot-review-readiness.mjs the
+     accept list at line ~366 is ["supervised","proactive_routine"]. A doc describing
+     a mode no validator accepts is what produced L12's first CONTRACT_INVALID halt,
+     and it is a decision-to-code gap of the DD-106 class: the owner ratified the mode
+     on 2026-08-14 and no code ever learned it.
+  3. Resolve the P1 contradiction rather than porting it. Section 6.1 says the mode
+     "requires risk P1 or P2"; the validator forces P1 to supervised. Those disagree.
+     Decide which is right, state the reasoning, and make doc and code say the same
+     thing. Porting the doc without touching this ships the contradiction upstream to
+     every consumer, which is worse than the divergence you are repaying.
+
+  Edit 1 without 2 ships a doc nothing enforces. Edit 2 without 1 ships an accept
+  value nothing documents. They land together.
+
+DO NOT
+  Do not run autopilot-update.sh in any consumer. Consumer sync is a separate,
+  owner-performed step. Do not fix DYNAMIC_SEGMENT — it is already fixed.
+  Do not patch the consumer's validator to unblock the queue: that creates exactly
+  the divergence L12 exists to surface. The queue's workaround is declaring
+  supervised in manifests, which costs nothing but the field name.
+
+ACCEPTANCE
+  - The byte-identity of autopilot-review-readiness.mjs between consumer and canonical
+    is re-verified and stated, before any edit.
+  - Canonical suites green: test/unit.sh and test/e2e.sh, output pasted.
+  - A test proving a manifest declaring autonomous_to_ready now registers, and one
+    proving the P1 rule behaves as the resolved decision says.
+  - The commit body states that consumers remain unsynced and syncing is the owner's
+    action.
+```
+
+---
+
+## L11-old · infra/kit · Đồng bộ mirror canonical *(GIỮ LÀM LỊCH SỬ — tiền đề đã mục, đừng chạy)*
 
 ⚠️ **Lane này KHÔNG chạy trong repo Plexco.** Nó chạy ở canonical `~/Projects/Claude template/`. Repo Plexco
 là **consumer**; sửa kit từ trong consumer là đúng cái ca "hai writer chung một mirror" mà chương trình cấm.
@@ -1196,7 +1311,7 @@ slice đó. Audit 13/08 đo được **46/51 ô version sai** trong một index.
 
 ```text
 TASK: docs-feature-index-version-freshness-check
-RISK: P3
+RISK: P2   # was P3; see section 00 — the validator refuses P3 registration outright
 OUTCOME
   An index cell that disagrees with the document it points at fails a check instead
   of being flagged as advisory in someone's review round and then forgotten.
